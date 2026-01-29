@@ -1,0 +1,213 @@
+# ============================================================================
+# ConfFlow 配置示例 - 计算化学工作流配置
+# ============================================================================
+
+global:
+  # --- 程序路径 ---
+  gaussian_path: "/opt/g16/g16"
+  orca_path: "/opt/orca601/orca"
+  
+  # --- 资源配置 ---
+  cores_per_task: 12
+  total_memory: "240GB"
+  max_parallel_jobs: 4
+  
+  # --- 体系参数 ---
+  charge: 0
+  multiplicity: 1
+
+  # --- 冻结原子坐标（仅对 opt/opt_freq 生效）---
+  # 对 Gaussian: 在坐标行写 0/-1；对 ORCA: 会生成 %geom Constraints（仅用于 freeze 原子）
+  freeze: [86, 92]
+
+  # --- TS 关键键原子对（用于报告中输出 TSBond；会在后续 SP 步骤中继续计算/输出）---
+  # 默认：若不显式设置 ts_bond_atoms，则自动使用 freeze 的前两个原子（该功能默认开启）
+  # ts_bond_atoms: [1, 2]
+  
+  # --- 去重参数 ---
+  rmsd_threshold: 0.25
+  
+  # --- 动态资源管理 ---
+  enable_dynamic_resources: false  # 设为 true 启用动态资源限制 (CPU<80%, MEM<80%)
+
+  # --- Gaussian checkpoint（.chk）---
+  # 说明：ConfFlow 会尽量使用输入构象 comment 中的 CID 来生成稳定的 job_name：
+  # - CID=1   -> c0001
+  # - CID=abc -> abc（会做安全字符规范化）
+  # 跨步骤传递 chk 时，按 job_name 精确匹配：<source_step>/backups/{job_name}.chk。
+  # gaussian_write_chk: true   # 默认 true；为每个 job 写出 %Chk={job_name}.chk
+
+  # --- TS 救援功能 ---
+  ts_rescue_scan: true       # TS 失败后自动 scan 救援（默认开启）
+  ts_bond_drift_threshold: 0.4  # TS 几何判据：关键键长偏移阈值 (Å)
+  ts_rmsd_threshold: 1.0        # TS 几何判据：RMSD 阈值 (Å)
+
+# ============================================================================
+# 工作流步骤
+# ============================================================================
+steps:
+  
+  # --------------------------------------------------------------------------
+  # 步骤 1: 构象生成
+  # --------------------------------------------------------------------------
+  - name: "step_01"
+    type: "confgen"
+    params:
+      angle_step: 120
+      bond_multiplier: 1.15  
+      optimize: false
+      # 必须指定旋转链（已移除自动柔性键判断）
+      chains: ["1-2-3-4"]     # 链原子编号 (1-based, 用 '-' 连接)
+      # chain_steps: ["120"]  # 可选：每根键的角度步长
+      # chain_angles: ["0,120,240"]  # 可选：显式角度列表
+      # 可选：手动修正拓扑/旋转约束（原子编号 1-based）
+      # add_bond: [[1, 2]]        # 强制添加键
+      # del_bond: [[3, 4]]        # 强制删除键
+      # no_rotate: [[2, 3]]       # 禁止旋转指定键（仅对链上键生效）
+      # force_rotate: [[2, 3]]    # 强制旋转指定键（一般不需要）
+  
+  # --------------------------------------------------------------------------
+  # 步骤 2: 低级优化
+  # --------------------------------------------------------------------------
+  - name: "step_02"
+    type: "calc"
+    params:
+      iprog: orca
+      keyword: "xTB2 Opt"
+      itask: opt
+      cores_per_task: 4
+      total_memory: "240GB"
+      max_parallel_jobs: 12
+  # --------------------------------------------------------------------------
+  # 步骤 3: 低级单点能筛选
+  # --------------------------------------------------------------------------
+  - name: "step_03"
+    type: "calc"
+    params:
+      iprog: orca
+      keyword: "r2SCAN-3c"
+      itask: sp
+      energy_window: 5.0
+      solvent_block: |
+        %cpcm
+          smd true
+          SMDsolvent "toluene"
+        end
+
+  # --------------------------------------------------------------------------
+  # 步骤 4: DFT 优化
+  # --------------------------------------------------------------------------
+  - name: "step_04"
+    type: "calc"
+    params:
+      iprog: orca
+      keyword: "opt TPSS D4 def2-sv(p) def2/J"
+      itask: opt
+      
+  # --------------------------------------------------------------------------
+  # 步骤 5: 低级单点能筛选
+  # --------------------------------------------------------------------------
+  - name: "step_05"
+    type: "calc"
+    params:
+      iprog: orca
+      keyword: "r2SCAN-3c"
+      itask: sp
+      energy_window: 3.0
+      solvent_block: |
+        %cpcm
+          smd true
+          SMDsolvent "toluene"
+        end
+
+  # --------------------------------------------------------------------------
+  # 示例：Gaussian 跨步骤读取 chk（来源不必是“上一步”，可指向任意历史步骤）
+  # --------------------------------------------------------------------------
+  # - name: "step_06_g16_opt"
+  #   type: "calc"
+  #   params:
+  #     iprog: g16
+  #     itask: opt
+  #     keyword: "opt(nomicro) b3lyp/6-31g(d)"
+  #     gaussian_write_chk: true
+  #
+  # - name: "step_07_g16_sp_readchk"
+  #   type: "calc"
+  #   params:
+  #     iprog: g16
+  #     itask: sp
+  #     keyword: "sp guess=read geom=allcheck"
+  #     # 从指定步骤的 backups 读取 chk（可填步骤名或 1-based 步骤序号）
+  #     chk_from_step: "step_06_g16_opt"   # 或者: chk_from_step: 6
+
+  # --------------------------------------------------------------------------
+  # 步骤 6: 过渡态搜索 (TS)
+  # --------------------------------------------------------------------------
+  - name: "step_06_ts"
+    type: "calc"
+    params:
+      iprog: g16
+      itask: ts
+      keyword: "opt=(ts,calcfc,noeigen) b3lyp/6-31g(d) freq"
+      ts_bond_atoms: [86, 92]
+      ts_rescue_scan: true  # 设为 false 则失败后直接报错，不进行 scan 尝试
+
+# ============================================================================
+# 参数说明
+# ============================================================================
+#
+# 【步骤类型】
+# - type: "confgen"  构象生成（生成分子构象）
+# - type: "calc"     量子计算（执行量子化学计算）
+#
+# 【程序选择】iprog
+# - "gaussian" 或 "g16": Gaussian 16
+# - "orca": ORCA
+#
+# 【任务类型】itask
+# - "opt":      结构优化
+# - "sp":       单点能计算
+# - "freq":     频率分析
+# - "opt_freq": 优化 + 频率
+# - "ts":       过渡态搜索
+#
+# 【资源配置】⭐ 支持步骤级别覆盖
+# - cores_per_task:    每个任务的 CPU 核心数
+# - total_memory:      总内存 (如 "64GB", "4000MB")
+# - max_parallel_jobs: 最大并行任务数
+# - 在步骤 params 中指定可覆盖全局配置
+# - 不指定则使用 global 中的默认值
+#
+# 【能量筛选】energy_window
+# - 单位: kcal/mol
+# - 仅保留能量在最低能量 + energy_window 范围内的构象
+#
+# 【溶剂模型】solvent_block (ORCA)
+# - 常用溶剂: water, toluene, acetonitrile, dmso, thf, ch2cl2, ethanol
+#
+# 【冻结原子】freeze
+# - 格式: [86, 92]（从 1 开始）
+# - 仅对 itask=opt / opt_freq 生效；sp / freq / ts 不生效
+#
+# 【过渡态配置】(itask=ts 时使用)
+# - ts_bond_atoms: [1, 2]      # TS 关键键原子对 (1-based)，用于输出键长
+# - ts_rescue_scan: true       # TS 失败后自动 scan 救援（默认开启）
+# - scan_coarse_step: 0.1      # 粗扫步长 (Å)
+# - scan_fine_step: 0.02       # 细扫步长 (Å)
+# - scan_uphill_limit: 10      # 粗扫中连续上坡停止步数
+# - ts_bond_drift_threshold: 0.4  # ✅ 无 freq 时的几何判据：关键键长漂移阈值 (Å)
+# - ts_rmsd_threshold: 1.0        # ✅ 无 freq 时的几何判据：整体 RMSD 阈值 (Å)
+#
+# 【Gaussian chk 传递】
+# - chk_from_step: step_name 或 step_index
+#   - 作用：在运行每个 job 之前，将 <source_step>/backups/{job_name}.chk 复制到当前 job 的 work_dir，
+#           并命名为 {job_name}.old.chk，同时自动在输入文件中注入 %OldChk={job_name}.old.chk。
+#   - 说明：source_step 不必是“上一步”，可以是任意历史步骤（例如上上一步）。
+# - gaussian_write_chk: true/false
+#   - 作用：控制是否为每个 job 写出 %Chk={job_name}.chk（默认 true）。
+#
+# 【Gibbs 矫正传递】
+# - 当某一步（freq/opt_freq）输出注释含 G_corr=... 时，后续 sp 步骤会继承该矫正并输出
+#   final_gibbs_energy = E_sp + G_corr（同时仍会在注释中保留 G_corr=...）。
+#
+# ============================================================================

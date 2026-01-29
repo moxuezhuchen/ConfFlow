@@ -1,0 +1,2 @@
+[ERROR] 配置文件验证失败:
+  - ORCA 路径不存在: /opt/orca601/orca

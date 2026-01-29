@@ -1,0 +1,9 @@
+
+global:
+  force_consistency: false
+
+steps:
+  - name: step_01
+    type: confgen
+    params:
+      chains: ["103-101-100-108-114"]

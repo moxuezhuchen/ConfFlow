@@ -1,0 +1,62 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+"""资源监控模块（可选依赖 psutil）。"""
+
+from __future__ import annotations
+
+import logging
+import time
+from typing import Tuple
+
+logger = logging.getLogger("confflow.calc.resources")
+
+try:
+    import psutil  # type: ignore
+except ImportError:
+    psutil = None
+
+
+class ResourceMonitor:
+    """动态资源监控器。
+
+    用于在启用动态资源管理时，根据 CPU/MEM 占用限制是否启动新任务。
+    """
+
+    def __init__(self, cpu_threshold: int = 80, mem_threshold: int = 80, check_interval: int = 5):
+        self.cpu_threshold = cpu_threshold
+        self.mem_threshold = mem_threshold
+        self.check_interval = check_interval
+        self.enabled = psutil is not None
+
+    def get_current_load(self) -> Tuple[float, float]:
+        if not self.enabled:
+            return 0.0, 0.0
+        try:
+            assert psutil is not None
+            return psutil.cpu_percent(interval=0.5), psutil.virtual_memory().percent
+        except Exception as e:
+            logger.debug(f"获取系统负载失败: {e}")
+            return 0.0, 0.0
+
+    def can_start_new_task(self, current_active_workers: int, max_workers: int) -> bool:
+        if not self.enabled:
+            return True
+        if current_active_workers >= max_workers:
+            return False
+        cpu, mem = self.get_current_load()
+        if cpu > self.cpu_threshold or mem > self.mem_threshold:
+            return False
+        return True
+
+    def wait_for_resources(self, max_wait_seconds: int = 300) -> bool:
+        if not self.enabled:
+            return True
+        waited = 0
+        while waited < max_wait_seconds:
+            cpu, mem = self.get_current_load()
+            if cpu <= self.cpu_threshold and mem <= self.mem_threshold:
+                return True
+            time.sleep(self.check_interval)
+            waited += self.check_interval
+        return False

@@ -1,0 +1,111 @@
+"""schema 模块测试（合并版）"""
+
+import pytest
+from confflow.config.schema import ConfigSchema, merge_step_params
+
+
+def test_schema_parse_freeze_string():
+    assert ConfigSchema._parse_freeze_string("1,2,3") == [1, 2, 3]
+    assert ConfigSchema._parse_freeze_string("1-3,5") == [1, 2, 3, 5]
+    assert ConfigSchema._parse_freeze_string("") == []
+    assert ConfigSchema._parse_freeze_string(None) == []
+
+
+def test_normalize_global_config_basic():
+    raw = {"cores_per_task": 4, "freeze": "1-3,5"}
+    normalized = ConfigSchema.normalize_global_config(raw)
+    assert normalized["cores_per_task"] == 4
+    assert normalized["freeze"] == [1, 2, 3, 5]
+
+
+def test_normalize_global_config_ts_bond_atoms():
+    raw = {"ts_bond_atoms": [1, 2]}
+    normalized = ConfigSchema.normalize_global_config(raw)
+    assert normalized["ts_bond_atoms"] == [1, 2]
+
+
+def test_schema_normalize_global_extended():
+    raw = {"freeze": [1, 2]}
+    norm = ConfigSchema.normalize_global_config(raw)
+    assert norm["freeze"] == [1, 2]
+
+    raw = {"ts_bond_atoms": [1, 2]}
+    norm = ConfigSchema.normalize_global_config(raw)
+    assert norm["ts_bond_atoms"] == [1, 2]
+
+    raw = {"ts_bond_atoms": "1,2"}
+    norm = ConfigSchema.normalize_global_config(raw)
+    assert norm["ts_bond_atoms"] is None
+
+
+def test_normalize_step_config_overrides():
+    global_cfg = {"cores_per_task": 1, "total_memory": "4GB"}
+    step_cfg = {"params": {"cores_per_task": 2}}
+    normalized = ConfigSchema.normalize_step_config(step_cfg, global_cfg)
+    assert normalized["cores_per_task"] == 2
+    assert normalized["total_memory"] == "4GB"
+
+
+def test_normalize_step_config_no_overrides():
+    global_cfg = {"cores_per_task": 1}
+    step_cfg = {"params": {"other_param": "val"}}
+    normalized = ConfigSchema.normalize_step_config(step_cfg, global_cfg)
+    assert normalized["other_param"] == "val"
+    assert normalized["cores_per_task"] == 1
+
+
+def test_schema_normalize_step_extended():
+    global_cfg = {"cores_per_task": 4, "itask": "opt"}
+    step_cfg = {"params": {"cores_per_task": 8}}
+    norm = ConfigSchema.normalize_step_config(step_cfg, global_cfg)
+    assert norm["cores_per_task"] == 8
+    assert norm["itask"] == "opt"
+
+    step_cfg = {"params": {"extra_param": "val"}}
+    norm = ConfigSchema.normalize_step_config(step_cfg, global_cfg)
+    assert norm["extra_param"] == "val"
+
+
+def test_schema_validate_calc_extended():
+    with pytest.raises(ValueError, match="calc 任务缺少必要参数"):
+        ConfigSchema.validate_calc_config({"iprog": "orca"})
+
+    with pytest.raises(ValueError, match="无效的 iprog"):
+        ConfigSchema.validate_calc_config({"iprog": "invalid", "itask": "opt", "keyword": "B3LYP"})
+
+    with pytest.raises(ValueError, match="无效的 itask"):
+        ConfigSchema.validate_calc_config({"iprog": "orca", "itask": "invalid", "keyword": "B3LYP"})
+
+    with pytest.raises(ValueError, match="cores_per_task 必须为整数"):
+        ConfigSchema.validate_calc_config({"iprog": "orca", "itask": "opt", "keyword": "B3LYP", "cores_per_task": "abc"})
+    with pytest.raises(ValueError, match="cores_per_task 必须 >= 1"):
+        ConfigSchema.validate_calc_config({"iprog": "orca", "itask": "opt", "keyword": "B3LYP", "cores_per_task": 0})
+
+    with pytest.raises(ValueError, match="max_parallel_jobs 必须为整数"):
+        ConfigSchema.validate_calc_config({"iprog": "orca", "itask": "opt", "keyword": "B3LYP", "max_parallel_jobs": "abc"})
+    with pytest.raises(ValueError, match="max_parallel_jobs 必须 >= 1"):
+        ConfigSchema.validate_calc_config({"iprog": "orca", "itask": "opt", "keyword": "B3LYP", "max_parallel_jobs": 0})
+
+    with pytest.raises(ValueError, match="charge 必须为整数"):
+        ConfigSchema.validate_calc_config({"iprog": "orca", "itask": "opt", "keyword": "B3LYP", "charge": "abc"})
+    with pytest.raises(ValueError, match="multiplicity 必须为整数"):
+        ConfigSchema.validate_calc_config({"iprog": "orca", "itask": "opt", "keyword": "B3LYP", "multiplicity": "abc"})
+    with pytest.raises(ValueError, match="multiplicity 必须 >= 1"):
+        ConfigSchema.validate_calc_config({"iprog": "orca", "itask": "opt", "keyword": "B3LYP", "multiplicity": 0})
+
+    with pytest.raises(ValueError, match="ts_bond_atoms 格式错误"):
+        ConfigSchema.validate_calc_config({"iprog": "orca", "itask": "opt", "keyword": "B3LYP", "ts_bond_atoms": "1,2,3"})
+    with pytest.raises(ValueError, match="ts_bond_atoms 必须为两个整数"):
+        ConfigSchema.validate_calc_config({"iprog": "orca", "itask": "opt", "keyword": "B3LYP", "ts_bond_atoms": "1,abc"})
+    with pytest.raises(ValueError, match="ts_bond_atoms 必须为两个原子索引"):
+        ConfigSchema.validate_calc_config({"iprog": "orca", "itask": "opt", "keyword": "B3LYP", "ts_bond_atoms": [1, 2, 3]})
+    with pytest.raises(ValueError, match="ts_bond_atoms 必须为两个整数"):
+        ConfigSchema.validate_calc_config({"iprog": "orca", "itask": "opt", "keyword": "B3LYP", "ts_bond_atoms": [1, "abc"]})
+
+
+def test_merge_step_params():
+    global_cfg = {"a": 1}
+    step_cfg = {"params": {"b": 2}}
+    res = merge_step_params(step_cfg, global_cfg)
+    assert res["a"] == 1
+    assert res["b"] == 2

@@ -1,0 +1,27 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+build/
+dist/
+*.egg-info/
+.DS_Store
+
+# caches / test artifacts
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+coverage.xml
+
+# local env
+.venv/
+
+# confflow runtime outputs
+report.html
+results.db
+*.db
+work/
+*_work/
+input_work/
+test_work/

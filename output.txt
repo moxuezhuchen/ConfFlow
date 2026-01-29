@@ -1,0 +1,6 @@
+--- Testing Console Output ---
+INFO: This is an info message.
+
+╭──────────────────────────────────────╮
+│ ==> [01/01] Test Step (TEST) | in=42 │
+╰──────────────────────────────────────╯
