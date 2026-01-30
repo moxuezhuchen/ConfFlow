@@ -500,6 +500,21 @@ def run_workflow(
 
     root_dir = os.path.abspath(work_dir)
     os.makedirs(root_dir, exist_ok=True)
+    failed_dir = os.path.join(root_dir, "failed")
+    os.makedirs(failed_dir, exist_ok=True)
+    try:
+        shutil.copy2(config_file, os.path.join(failed_dir, os.path.basename(config_file)))
+    except Exception:
+        pass
+    if not resume:
+        combined_failed = os.path.join(failed_dir, "isomers_failed.xyz")
+        failed_summary = os.path.join(failed_dir, "failed_summary.txt")
+        for fp in (combined_failed, failed_summary):
+            try:
+                if os.path.exists(fp):
+                    os.remove(fp)
+            except Exception:
+                pass
     if hasattr(logger, "add_file_handler"):
         logger.add_file_handler(os.path.join(root_dir, "confflow.log"))
 
@@ -515,6 +530,91 @@ def run_workflow(
         except Exception as e:
             # 溯源功能增强：失败不应中断主工作流
             logger.warning(f"为 XYZ 文件分配 CID 失败: {xyz_path}, 原因: {e}")
+
+    def _suggest_rescue(error_text: str, step_name: str) -> str:
+        et = (error_text or "").lower()
+        if "scf" in et or "self consistent" in et:
+            return "尝试增加 SCF 步数、改初猜或切换收敛策略"
+        if "convergence" in et or "converge" in et:
+            return "放宽收敛阈值或增加优化步数"
+        if "imag" in et or "imaginary" in et:
+            return "使用 TS 扫描救援或重新优化并检查虚频"
+        if "nan" in et or "overflow" in et:
+            return "检查初始结构，降低步长或切换优化器"
+        if "geometry" in et or "opt" in et:
+            return "改用更稳健优化器或添加轻微约束"
+        return "尝试更小基组预优化或切换方法后再精修"
+
+    def _append_failed_xyz(src_failed: str, dest_failed: str, step_name: str) -> None:
+        try:
+            with open(src_failed, "r", encoding="utf-8") as f:
+                lines = f.readlines()
+        except Exception:
+            return
+
+        out_lines: List[str] = []
+        i = 0
+        while i < len(lines):
+            try:
+                natoms = int(lines[i].strip())
+            except Exception:
+                break
+            if i + 1 >= len(lines):
+                break
+            comment = lines[i + 1].rstrip("\n")
+            if "Step=" not in comment:
+                comment = f"{comment} Step={step_name}"
+            out_lines.append(f"{natoms}\n")
+            out_lines.append(comment + "\n")
+            geom_start = i + 2
+            geom_end = geom_start + natoms
+            out_lines.extend(lines[geom_start:geom_end])
+            if geom_end < len(lines) and not lines[geom_end].endswith("\n"):
+                out_lines.append("\n")
+            i = geom_end
+
+        if out_lines:
+            with open(dest_failed, "a", encoding="utf-8") as f:
+                f.writelines(out_lines)
+
+    def _write_failed_summary(failed_xyz: str, summary_path: str) -> None:
+        if not os.path.exists(failed_xyz):
+            return
+        try:
+            with open(failed_xyz, "r", encoding="utf-8") as f:
+                lines = f.readlines()
+        except Exception:
+            return
+
+        rows: List[str] = []
+        i = 0
+        while i < len(lines):
+            try:
+                natoms = int(lines[i].strip())
+            except Exception:
+                break
+            if i + 1 >= len(lines):
+                break
+            comment = lines[i + 1].strip()
+            job = ""
+            err = ""
+            step = ""
+            for part in comment.split():
+                if part.startswith("Job="):
+                    job = part.replace("Job=", "", 1)
+                elif part.startswith("Error="):
+                    err = part.replace("Error=", "", 1)
+                elif part.startswith("Step="):
+                    step = part.replace("Step=", "", 1)
+            rescue = _suggest_rescue(err, step)
+            name = job or step or "unknown"
+            rows.append(f"{name}\t{err or 'unknown'}\t{rescue}\n")
+            i = i + 2 + natoms
+
+        if rows:
+            with open(summary_path, "w", encoding="utf-8") as f:
+                f.write("name\terror\trescue\n")
+                f.writelines(rows)
 
     def _extract_energy(meta: Dict[str, Any]) -> Optional[float]:
         val = meta.get("G", meta.get("E", meta.get("Energy")))
@@ -776,10 +876,26 @@ def run_workflow(
                     step_stats["status"] = "skipped"
                     current_input = expected_clean
                     _ensure_xyz_has_cids(current_input, prefix=f"s{i+1:02d}")
+                    step_failed = os.path.join(step_dir, "isomers_failed.xyz")
+                    if os.path.exists(step_failed):
+                        combined_failed = os.path.join(failed_dir, "isomers_failed.xyz")
+                        _append_failed_xyz(step_failed, combined_failed, step_name)
+                        _write_failed_summary(
+                            combined_failed,
+                            os.path.join(failed_dir, "failed_summary.txt"),
+                        )
                 elif os.path.exists(expected_raw):
                     step_stats["status"] = "skipped"
                     current_input = expected_raw
                     _ensure_xyz_has_cids(current_input, prefix=f"s{i+1:02d}")
+                    step_failed = os.path.join(step_dir, "isomers_failed.xyz")
+                    if os.path.exists(step_failed):
+                        combined_failed = os.path.join(failed_dir, "isomers_failed.xyz")
+                        _append_failed_xyz(step_failed, combined_failed, step_name)
+                        _write_failed_summary(
+                            combined_failed,
+                            os.path.join(failed_dir, "failed_summary.txt"),
+                        )
                 else:
                     manager = calc.ChemTaskManager(settings_file=config_path)
                     manager.config["auto_clean"] = "true"
@@ -806,6 +922,12 @@ def run_workflow(
                     try:
                         if os.path.exists(work_failed):
                             shutil.copy2(work_failed, os.path.join(step_dir, "isomers_failed.xyz"))
+                            combined_failed = os.path.join(failed_dir, "isomers_failed.xyz")
+                            _append_failed_xyz(work_failed, combined_failed, step_name)
+                            _write_failed_summary(
+                                combined_failed,
+                                os.path.join(failed_dir, "failed_summary.txt"),
+                            )
                     except Exception:
                         pass
 

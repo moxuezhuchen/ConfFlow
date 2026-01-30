@@ -114,28 +114,6 @@ class TaskRunner:
                                     return rescued
                             return {**task_info, "status": "failed", "error": err_msg}
 
-                rmsd_threshold = float(cfg.get("ts_rmsd_threshold", 1.0))
-                coords_initial = _coords_array_from_xyz_lines(task_info["coords"])
-                coords_final = _coords_array_from_xyz_lines(final_coords)
-                if coords_initial is None or coords_final is None:
-                    err_msg = "TS 几何判据失败：无法解析初始/最终坐标用于 RMSD 计算"
-                    if str(cfg.get("ts_rescue_scan", "true")).lower() == "true":
-                        rescued = _ts_rescue_scan(task_info, err_msg)
-                        if rescued is not None:
-                            return rescued
-                    return {**task_info, "status": "failed", "error": err_msg}
-
-                rmsd_val = float(refine.fast_rmsd(coords_initial, coords_final))
-                if rmsd_val > rmsd_threshold:
-                    err_msg = (
-                        f"TS 几何判据失败：RMSD={rmsd_val:.3f} Å 超过阈值 {rmsd_threshold:.3f} Å"
-                    )
-                    if str(cfg.get("ts_rescue_scan", "true")).lower() == "true":
-                        rescued = _ts_rescue_scan(task_info, err_msg)
-                        if rescued is not None:
-                            return rescued
-                    return {**task_info, "status": "failed", "error": err_msg}
-
             inherited_gc = None
             try:
                 meta = task_info.get("metadata") or {}

@@ -81,6 +81,12 @@ confflow a.xyz b.xyz -c confflow.yaml
 - `step_xx/isomers.xyz`：未精炼的原始输出（若未生成 cleaned 则以此为准）
 - `step_xx/isomers_failed.xyz`：该步失败构象集合（始终使用输入结构坐标），注释行包含 `Job/CID/Error`
 
+在 `_work/failed` 目录下会聚合所有步骤的失败信息：
+
+- `_work/failed/isomers_failed.xyz`：合并后的失败构象集合（注释行附带 `Step=...`）
+- `_work/failed/failed_summary.txt`：失败清单（结构名 + 错误原因 + 建议救援方案）
+- `_work/failed/<config>.yaml`：本次运行的工作流配置副本（便于手动重跑）
+
 ## Gaussian `.chk` 跨步骤传递（按 CID 完全对应）
 
 ConfFlow 对每个构象会维护一个稳定的 **CID**（写在 XYZ comment metadata 里），并据此派生稳定的 **job_name**：
@@ -113,7 +119,7 @@ ConfFlow 对每个构象会维护一个稳定的 **CID**（写在 XYZ comment me
 
 ## TS 失败救援功能 (ts_rescue_scan)
 
-对于 `itask=ts` 的步骤，ConfFlow 默认开启了失败救援功能。当 TS 搜索失败（不收敛、虚频不对、几何判据失败等）时，程序会自动尝试通过 Scan 寻找更好的起始点。
+对于 `itask=ts` 的步骤，ConfFlow 默认开启了失败救援功能。当 TS 搜索失败（不收敛、虚频不对、关键键长几何判据失败等）时，程序会自动尝试通过 Scan 寻找更好的起始点。
 
 ### 控制参数
 
@@ -201,7 +207,7 @@ confrefine <input.xyz> [-o <output.xyz>] [-t <rmsd>] [--ewin <kcal/mol>] [--imag
 
 ## 6.2 TS 失败后的 scan 救援（g16）
 
-当 `itask=ts` 任务失败（例如 freq 判据不满足/几何判据失败/运行异常）且配置启用 `ts_rescue_scan=true` 时，ConfFlow 会尝试自动救援：
+当 `itask=ts` 任务失败（例如 freq 判据不满足/关键键长判据失败/运行异常）且配置启用 `ts_rescue_scan=true` 时，ConfFlow 会尝试自动救援：
 
 - **起点结构来源**：优先使用“失败 TS 的输入文件”中的结构（`<work_dir>/<job>.gjf|.com`）；若 TS 失败后已被备份/清理，则会在 `backup_dir/<job>.gjf|.com` 中继续寻找。
 - **扫描方式**：对 `ts_bond_atoms` 指定的键长做多点优化扫描。

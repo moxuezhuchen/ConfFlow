@@ -59,7 +59,7 @@ def test_task_runner_itask4_no_freq_drift(tmp_path):
             assert "偏移 |ΔR|=0.200 Å 超过阈值 0.100 Å" in res["error"]
 
 
-def test_task_runner_itask4_no_freq_rmsd(tmp_path):
+def test_task_runner_itask4_no_freq_allows_large_rmsd(tmp_path):
     from confflow.calc.components.task_runner import TaskRunner
 
     runner = TaskRunner()
@@ -74,8 +74,7 @@ def test_task_runner_itask4_no_freq_rmsd(tmp_path):
         mock_run.return_value = {"final_coords": ["H 0 0 0", "H 0 0 1.1"], "e_low": -1.0}
         with patch("confflow.calc.components.executor.handle_backups"):
             res = runner.run(task_info)
-            assert res["status"] == "failed"
-            assert "RMSD" in res["error"]
+            assert res["status"] == "success"
 
 
 def test_task_runner_itask1_sp_energy(tmp_path):

@@ -603,7 +603,7 @@ def _ts_rescue_scan(task_info: Dict[str, Any], fail_reason: str) -> Optional[Dic
         if not final_coords:
             raise RuntimeError("TS rescue 未产生最终结构")
 
-        # 与主流程保持一致：若 TS keyword 不含 freq，则使用几何判据（关键键长漂移 + RMSD）做 sanity check。
+        # 与主流程保持一致：若 TS keyword 不含 freq，则使用关键键长漂移做 sanity check。
         if not _keyword_requests_freq(cfg):
             bond_drift_threshold = float(cfg.get("ts_bond_drift_threshold", 0.4))
             r_initial = _bond_length_from_xyz_lines(base_coords, a1, a2)
@@ -615,17 +615,6 @@ def _ts_rescue_scan(task_info: Dict[str, Any], fail_reason: str) -> Optional[Dic
                         f"TS rescue 几何判据失败：关键键长偏移 |ΔR|={d_r:.3f} Å 超过阈值 {bond_drift_threshold:.3f} Å "
                         f"(R_initial={r_initial:.3f} Å, R_final={r_final:.3f} Å, TSAtoms={a1},{a2})"
                     )
-
-            rmsd_threshold = float(cfg.get("ts_rmsd_threshold", 1.0))
-            coords_initial = _coords_array_from_xyz_lines(base_coords)
-            coords_final = _coords_array_from_xyz_lines(final_coords)
-            if coords_initial is None or coords_final is None:
-                raise RuntimeError("TS rescue 几何判据失败：无法解析初始/最终坐标用于 RMSD 计算")
-            rmsd_val = float(refine.fast_rmsd(coords_initial, coords_final))
-            if rmsd_val > rmsd_threshold:
-                raise RuntimeError(
-                    f"TS rescue 几何判据失败：RMSD={rmsd_val:.3f} Å 超过阈值 {rmsd_threshold:.3f} Å"
-                )
 
         num_imag_raw = res.get("num_imag_freqs")
         num_imag = 0 if num_imag_raw is None else int(num_imag_raw)

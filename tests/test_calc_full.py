@@ -349,11 +349,11 @@ def test_ts_without_freq_fails_when_ts_bond_drift_too_large(tmp_path, monkeypatc
     assert "键长" in result.get("error", "")
 
 
-def test_ts_without_freq_fails_when_rmsd_too_large(tmp_path, monkeypatch):
+def test_ts_without_freq_allows_large_rmsd_when_no_bond_drift(tmp_path, monkeypatch):
     work_dir = tmp_path / "c0001"
     job_name = "c0001"
 
-    # 两原子：最终结构拉伸到 5.0 Å，Kabsch 对齐后 RMSD 仍很大
+    # 两原子：最终结构拉伸到 5.0 Å（不再用 RMSD 作为 TS 判据）
     initial_coords = ["H 0 0 0", "H 0 0 1.0"]
     final_coords = ["H 0 0 0", "H 0 0 5.0"]
 
@@ -379,13 +379,11 @@ def test_ts_without_freq_fails_when_rmsd_too_large(tmp_path, monkeypatch):
             "itask": "ts",
             "keyword": "opt=(ts,calcfc,noeigen)",
             "ts_rescue_scan": "false",
-            "ts_rmsd_threshold": 1.0,
         },
     }
 
     result = calc.TaskRunner().run(task_info)
-    assert result["status"] == "failed"
-    assert "RMSD" in result.get("error", "")
+    assert result["status"] == "success"
 
 
 def test_ts_bond_length_computed_and_written(tmp_path, monkeypatch):

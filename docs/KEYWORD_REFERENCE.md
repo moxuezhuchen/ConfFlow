@@ -215,6 +215,13 @@ confflow molecule.xyz \
 
 输出：当触发救援扫描时，会在终端打印“键长-能量”关系表，并在 `<work_dir>/scan/scan_table.txt` 写入同样内容（标记能量最高点 `MAX`）。如果配置了 `backup_dir`，该文件会随 scan 目录一起出现在 `<work_dir>/<step>/backups/<job>_scan/scan_table.txt`。
 
+### `ts_bond_drift_threshold`
+
+控制 TS 任务的关键键长漂移判据（仅当 TS keyword 不包含 `freq` 时生效）。
+
+- 默认：`0.4` Å
+- 含义：TS 优化后关键键长相对初始结构的偏移 $|\Delta R|$ 超过阈值则判定失败。
+
 ### `freeze`
 
 冻结原子坐标（仅对 `opt/opt_freq` 生效；`sp/freq/ts` 会强制关闭）。原子编号均为 1-based。

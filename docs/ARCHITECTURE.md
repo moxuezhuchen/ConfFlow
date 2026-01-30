@@ -396,6 +396,7 @@ confflow/__init__.py (包入口)
 
 - `itask=ts` 失败时自动改为 `itask=scan`（受 `ts_rescue_scan` 参数控制）
 - 扫描键长空间以找到正确的 TS 结构
+- 若 TS keyword 不含 `freq`，仅使用关键键长漂移作为几何判据
 - 实现在 `calc/rescue.py`
 
 ### 4. 多程序支持
@@ -415,6 +416,12 @@ confflow/__init__.py (包入口)
 - `work/results.db`：SQLite 结果库（每个 `cXXXX` 的 status/error/error_details）
 - `isomers.xyz` / `isomers_cleaned.xyz`：成功构象输出（是否 cleaned 取决于 auto_clean/refine）
 - `isomers_failed.xyz`：失败构象集合（输入结构坐标，注释行包含失败原因），便于重算与排障
+
+## 失败聚合产物（工作目录）
+
+- `_work/failed/isomers_failed.xyz`：合并后的失败构象（注释行包含 `Step=...`）
+- `_work/failed/failed_summary.txt`：失败清单（结构名 + 错误原因 + 建议救援方案）
+- `_work/failed/<config>.yaml`：运行时配置副本（便于在 failed 目录重跑）
 
 ## 扩展指南
 
