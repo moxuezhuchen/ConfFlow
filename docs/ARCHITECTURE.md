@@ -31,7 +31,7 @@ confflow/
 │   │
 │   └── viz/                  # 可视化模块
 │       ├── __init__.py
-│       └── report.py         # 文本/HTML 报告生成（能量分布、Boltzmann 权重）
+        └── report.py         # 美化纯文本报告生成（Boltzmann 权重、工作流统计）
 │
 ├── calc/                      # 量子化学计算子系统
 │   ├── __init__.py           # 兼容层导出
@@ -60,9 +60,12 @@ confflow/
 │       └── database.py       # SQLite 结果库管理
 │
 ├── workflow/                  # 工作流编排层
-│   ├── __init__.py
-│   ├── engine.py             # 工作流执行引擎（核心调度逻辑）
-│   └── checkpoint.py         # 断点管理与恢复
+│   ├── __init__.py           # 公共 API 导出
+│   ├── engine.py             # 工作流执行引擎（核心调度逻辑，~360 行）
+│   ├── helpers.py            # 辅助工具（pushd、构象计数、列表转换）
+│   ├── validation.py         # 输入验证与标签标准化
+│   ├── config_builder.py     # 任务配置字典构建（YAML→dict）
+│   └── stats.py              # 检查点、统计追踪、构象溯源
 │
 ├── cli.py                     # CLI 参数解析
 ├── main.py                    # 工作流主程序入口
@@ -139,10 +142,10 @@ LICENSE                        # MIT 许可证
   - 拓扑分类
 
 - **`viz/`**：
-  - 生成 HTML 可视化报告
-  - 能量分布图
+  - 生成美化的纯文本总结报告（.txt）
   - Boltzmann 权重计算
   - 工作流统计信息
+  - CID 后向追踪
 
 ### 4. `calc/` - 量子化学计算子系统
 
@@ -191,22 +194,35 @@ LICENSE                        # MIT 许可证
 
   ### Gaussian checkpoint（`.chk`）作为跨步骤工件
 
-  - ConfFlow 将每个构象映射为稳定的 `job_name`（优先使用 `CID`，例如 `CID=1 -> c0001`）。
+  - ConfFlow 将每个构象映射为稳定的 `job_name`（优先使用 `CID`，例如 `CID=A000001 -> A000001`）。
   - 当启用 `gaussian_write_chk`（默认开启）时，Gaussian 输入会写出 `%Chk={job_name}.chk`，并随常规备份规则进入对应步骤的 `backups/`。
   - 当某一步声明 `chk_from_step` 时，会从**指定步骤**（不限定“上一步”）的 `backups/{job_name}.chk` 回填到当前 job 工作目录，并通过 `%OldChk=...` 注入。
 ### 5. `workflow/` - 工作流编排层
 
-**职责**：协调各模块执行，管理工作流逻辑。
+**职责**：协调各模块执行，管理工作流逻辑。v1.0.5 中从原来的单体 `engine.py`（~1177 行）拆分为 5 个职责清晰的模块。
 
-- **`engine.py`** - `run_workflow()`：
-  - 解析工作流配置
-  - 按顺序执行各步骤（confgen → calc → refine → viz）
-  - 管理工作目录和日志
-  - 断点检测与恢复
+- **`engine.py`** - `run_workflow()`（~360 行）：
+  - 纯调度逻辑：按顺序执行各步骤
+  - 从其他模块导入所有辅助功能
 
-- **`checkpoint.py`**：
-  - 断点信息序列化/反序列化
-  - 失败后自动恢复
+- **`helpers.py`**：
+  - 工具函数：`pushd`（目录上下文管理）、`as_list`、`normalize_pair_list`
+  - 构象计数：`count_conformers_any`、`count_conformers_in_xyz`
+
+- **`validation.py`**：
+  - `validate_inputs_compatible`：验证多输入文件兼容性
+  - `normalize_labels`：步骤标签标准化
+
+- **`config_builder.py`**：
+  - `build_task_config`：将 YAML 参数直接构建为 dict（不再生成 INI 文件）
+  - `create_runtask_config`：兼容性 INI 写入函数（外部工具可用）
+
+- **`stats.py`**：
+  - `CheckpointManager`：断点序列化/反序列化与恢复
+  - `WorkflowStatsTracker`：工作流统计信息收集
+  - `TaskStatsCollector`：从 results.db 聚合任务状态
+  - `FailureTracker`：跨步骤失败构象聚合
+  - `Tracer`：低能构象溯源追踪
 
 ### 6. CLI 层
 
@@ -326,35 +342,27 @@ steps:
       energy_window: 5.0
 ```
 
-### INI 计算配置 (`settings.ini`)
+### 计算配置传递
 
-```ini
-[DEFAULT]
-gaussian_path = /opt/g16/g16
-orca_path = /opt/orca/orca
-cores_per_task = 4
-total_memory = 16GB
-charge = 0
-multiplicity = 1
-
-[Task]
-iprog = g16
-itask = opt
-keyword = B3LYP/6-31G* opt freq
-```
+v1.0.5 起，`engine.py` 通过 `build_task_config()` 将 YAML 步骤参数直接构建为 Python dict，传给 `ChemTaskManager(config_dict)`。**不再生成中间 INI 文件**。兼容性函数 `create_runtask_config()` 仍保留，供外部工具使用。
 
 ## 测试组织
 
 ```
 tests/
-├── test_confgen.py           # confgen 单元测试
-├── test_utils.py             # core.utils 单元测试
-├── test_calc_smoke.py        # calc 烟雾测试
-├── test_calc_full.py         # calc 完整测试
-├── test_main.py              # 工作流集成测试
-├── test_refine_*.py          # refine 特定功能测试
-├── test_ts_rescue_scan.py    # TS 救援逻辑测试
-└── test_suite.py             # 完整回归测试
+├── test_core.py              # core 层（IO、配置、报告、CID 溯源）
+├── test_engine.py            # workflow engine 集成测试
+├── test_calc.py              # calc 基础模块测试
+├── test_calc_full.py         # calc 完整集成测试
+├── test_confgen.py           # confgen 构象生成测试
+├── test_refine.py            # refine 筛选与去重测试
+├── test_rescue.py            # TS 救援逻辑测试
+├── test_policies.py          # Gaussian/ORCA Policy 测试
+├── test_schema.py            # 配置 schema 验证测试
+├── test_cli.py               # CLI 参数解析测试
+├── test_validation.py        # 输入验证测试
+├── test_utils_manager.py     # 工具函数与 manager 测试
+└── coverage_push/            # 覆盖率补充测试
 ```
 
 ## 依赖关系图
@@ -413,13 +421,15 @@ confflow/__init__.py (包入口)
 
 ## 标准产物（calc/task step）
 
-- `work/results.db`：SQLite 结果库（每个 `cXXXX` 的 status/error/error_details）
-- `isomers.xyz` / `isomers_cleaned.xyz`：成功构象输出（是否 cleaned 取决于 auto_clean/refine）
-- `isomers_failed.xyz`：失败构象集合（输入结构坐标，注释行包含失败原因），便于重算与排障
+- `results.db`：SQLite 结果库（每个构象的 status/error/error_details）
+- `result.xyz` / `output.xyz`：成功构象输出（是否 cleaned 取决于 auto_clean/refine）
+- `failed.xyz`：失败构象集合（输入结构坐标，注释行包含失败原因），便于重算与排障
+
+> **v1.0.5 变更**：计算任务直接在 `step_xx/` 目录运行，不再创建 `step_xx/work/` 子目录。
 
 ## 失败聚合产物（工作目录）
 
-- `_work/failed/isomers_failed.xyz`：合并后的失败构象（注释行包含 `Step=...`）
+- `_work/failed/failed.xyz`：合并后的失败构象（注释行包含 `Step=...`）
 - `_work/failed/failed_summary.txt`：失败清单（结构名 + 错误原因 + 建议救援方案）
 - `_work/failed/<config>.yaml`：运行时配置副本（便于在 failed 目录重跑）
 

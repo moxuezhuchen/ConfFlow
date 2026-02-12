@@ -187,7 +187,7 @@
 **推荐应用场景**:
 
 1. **快速构象搜索**: `confgen molecule.xyz 120 -opt`
-2. **构象筛选**: `confrefine traj.xyz -t 0.3 -ewin 5 -n 20`
+2. **构象筛选**: `confrefine search.xyz -t 0.3 -ewin 5 -n 20`
 3. **完整工作流**: `confflow hexane.xyz -c confflow.yaml`
 4. **单独计算**: `confcalc structures.xyz -s settings.ini`
 

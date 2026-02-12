@@ -126,7 +126,8 @@ def test_orca_generate_input(tmp_path):
     assert "maxcore 2000" in content
     assert "! B3LYP def2-SVP" in content
     assert "C 0 0 0" in content
-    assert "%geom Constraints" in content
+    assert "%geom" in content
+    assert "Constraints" in content
     assert "{ C 0 C }" in content
 
 
@@ -268,7 +269,7 @@ def test_chem_task_manager_run_smoke_without_external_program(tmp_path, monkeypa
     from confflow import calc
     from confflow.calc.components import executor
 
-    xyz = tmp_path / "traj.xyz"
+    xyz = tmp_path / "search.xyz"
     xyz.write_text("""2\nTest\nH 0 0 0\nH 0 0 0.74\n""", encoding="utf-8")
 
     def _fake_run(work_dir, job_name, prog_id, coords, config, is_sp_task=False):
@@ -305,6 +306,6 @@ def test_chem_task_manager_run_smoke_without_external_program(tmp_path, monkeypa
     )
     manager.run(str(xyz))
 
-    out = tmp_path / "work" / "isomers.xyz"
+    out = tmp_path / "work" / "result.xyz"
     assert out.exists()
     assert "Energy=" in out.read_text(encoding="utf-8")

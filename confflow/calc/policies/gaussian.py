@@ -58,7 +58,16 @@ class GaussianPolicy(CalculationPolicy):
         solvent_block, custom_block = normalize_blocks(
             config.get("solvent_block", ""), config.get("custom_block", "")
         )
+        blocks_str = config.get("blocks", "")
+        if isinstance(blocks_str, dict): # 极少见，但为了健壮性
+            from ..components.input_helpers import format_orca_blocks
+            blocks_str = format_orca_blocks(blocks_str)
+        
         extra_section = solvent_block + custom_block
+        if blocks_str:
+            if extra_section and not extra_section.endswith("\n"):
+                extra_section += "\n"
+            extra_section += str(blocks_str).strip() + "\n"
 
         # Handle modredundant input
         mr = config.get("gaussian_modredundant")

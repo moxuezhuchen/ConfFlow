@@ -147,3 +147,52 @@ def orca_constraint_block(freeze_indices_1based: Sequence[int]) -> str:
     constraint_lines.append("  end")
     constraint_lines.append("end")
     return "\n".join(constraint_lines) + "\n"
+
+
+def format_orca_blocks(blocks: Any) -> str:
+    """将字典或字符串转换为 ORCA 的 %block ... end 语法。
+
+    支持嵌套字典、列表或纯多行字符串。
+    """
+    if not blocks:
+        return ""
+
+    if isinstance(blocks, str):
+        content = blocks.strip()
+        if not content:
+            return ""
+        return content + "\n"
+
+    def _fmt_val(v: Any) -> str:
+        if isinstance(v, bool):
+            return "true" if v else "false"
+        return str(v)
+
+    def _render_content(content: Any, indent: int = 2) -> List[str]:
+        lines = []
+        sp = " " * indent
+        if isinstance(content, dict):
+            for k, v in content.items():
+                if isinstance(v, (dict, list)):
+                    lines.append(f"{sp}{k}")
+                    lines.extend(_render_content(v, indent + 2))
+                    lines.append(f"{sp}end")
+                else:
+                    lines.append(f"{sp}{k} {_fmt_val(v)}")
+        elif isinstance(content, (list, tuple)):
+            for item in content:
+                lines.append(f"{sp}{_fmt_val(item)}")
+        elif isinstance(content, str):
+            for line in content.strip().splitlines():
+                lines.append(f"{sp}{line.strip()}")
+        elif content is not None:
+            lines.append(f"{sp}{_fmt_val(content)}")
+        return lines
+
+    result = []
+    for block_name, content in blocks.items():
+        result.append(f"%{block_name}")
+        result.extend(_render_content(content))
+        result.append("end")
+
+    return "\n".join(result) + "\n"

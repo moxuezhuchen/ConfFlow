@@ -8,6 +8,9 @@ ConfFlow XYZ I/O - 统一的 XYZ 文件读写模块
 """
 
 import re
+import os
+import tempfile
+import shutil
 from typing import List, Dict, Any, Optional, Tuple
 
 
@@ -40,28 +43,39 @@ def ensure_conformer_cids(
     start: int = 1,
     width: int = 6,
 ) -> List[Dict[str, Any]]:
-    """确保每个构象都有 CID，并写回到 comment/metadata。
-
-    说明：
-    - 若 metadata 中已有 CID，则保持不变，并确保 comment 中包含 CID。
-    - 若缺失，则按 frame 顺序分配可复现的 CID（prefix + 序号）。
-    """
+    """确保每个构象都有 CID，并写回到 comment/metadata。"""
     next_id = start
     for conf in conformers:
         meta = conf.get("metadata")
-        if meta is None or not isinstance(meta, dict):
+        if not meta:
             meta = {}
             conf["metadata"] = meta
 
-        cid = meta.get("CID")
-        if cid is None or str(cid).strip() == "":
-            cid = f"{prefix}_{next_id:0{width}d}"
-            meta["CID"] = cid
-            next_id += 1
+        existing_cid = meta.get("CID")
+        if existing_cid:
+            if "CID=" not in conf.get("comment", ""):
+                conf["comment"] = upsert_comment_kv(conf.get("comment", ""), "CID", str(existing_cid))
+            continue
 
-        conf["comment"] = upsert_comment_kv(conf.get("comment", ""), "CID", cid)
+        new_cid = f"{prefix}{next_id:0{width}d}"
+        next_id += 1
+        meta["CID"] = new_cid
+        conf["comment"] = upsert_comment_kv(conf.get("comment", ""), "CID", new_cid)
 
     return conformers
+
+
+def ensure_xyz_cids(xyz_path: str, prefix: str = "cf") -> None:
+    """读取 XYZ 文件，确保所有构象都有 CID，如果不完整则写回。"""
+    if not os.path.exists(xyz_path):
+        return
+    try:
+        confs = read_xyz_file(xyz_path, parse_metadata=True)
+        if confs and (not confs.get("metadata") if isinstance(confs, dict) else (not confs[0].get("metadata") or "CID" not in confs[0]["metadata"])):
+            ensure_conformer_cids(confs, prefix=prefix)
+            write_xyz_file(xyz_path, confs, atomic=True)
+    except Exception:
+        pass
 
 
 def parse_comment_metadata(comment: str) -> Dict[str, Any]:
@@ -267,6 +281,96 @@ def coords_lines_to_array(
         return result
     except Exception:
         return None
+
+
+def parse_gaussian_input(filepath: str) -> Dict[str, Any]:
+    """解析 Gaussian 输入文件 (.gjf/.com)。"""
+    try:
+        with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
+            text = f.read()
+        return parse_gaussian_input_text(text, filepath)
+    except Exception as e:
+        if isinstance(e, (IOError, ValueError)):
+            raise
+        raise IOError(f"Failed to read Gaussian input {filepath}: {e}")
+
+
+def parse_gaussian_input_text(text: str, source_label: str = "text") -> Dict[str, Any]:
+    """解析 Gaussian 输入文本。
+
+    返回:
+        Dict 包含:
+        - charge: 电荷
+        - multiplicity: 多重度
+        - atoms: 原子符号列表
+        - coords: 坐标列表 [[x,y,z], ...]
+        - coords_lines: 格式化后的坐标行 ["Sym x y z", ...]
+    """
+    import re
+    from ..calc.constants import get_element_symbol
+
+    lines = text.splitlines()
+    qm_idx = None
+    charge = 0
+    mult = 1
+    for i, ln in enumerate(lines):
+        s = ln.strip()
+        if not s:
+            continue
+        if re.match(r"^\s*-?\d+\s+-?\d+\s*$", s):
+            qm_idx = i
+            parts = s.split()
+            charge = int(parts[0])
+            mult = int(parts[1])
+            break
+
+    if qm_idx is None:
+        raise ValueError(f"Cannot find charge/multiplicity line in {source_label}")
+
+    atoms: List[str] = []
+    coords_list: List[List[float]] = []
+    coords_formatted: List[str] = []
+    raw_coords_lines: List[str] = []
+
+    for ln in lines[qm_idx + 1 :]:
+        raw_ln = ln.strip()
+        if not raw_ln:
+            break
+        p = raw_ln.split()
+        if len(p) < 4:
+            break
+
+        raw_coords_lines.append(raw_ln)
+        sym = p[0]
+        if sym.isdigit():
+            sym = get_element_symbol(int(sym))
+
+        # 处理可能存在的冻结原子列 (取最后三个数值)
+        xyz: List[float] = []
+        for tok in reversed(p[1:]):
+            try:
+                xyz.append(float(tok))
+            except (ValueError, TypeError):
+                continue
+            if len(xyz) == 3:
+                break
+
+        if len(xyz) != 3:
+            break
+
+        z, y, x = xyz
+        atoms.append(sym)
+        coords_list.append([x, y, z])
+        coords_formatted.append(f"{sym} {x:.8f} {y:.8f} {z:.8f}")
+
+    return {
+        "charge": charge,
+        "multiplicity": mult,
+        "atoms": atoms,
+        "coords": coords_list,
+        "coords_lines": coords_formatted,
+        "raw_coords_lines": raw_coords_lines,
+    }
 
 
 def calculate_bond_length(coords_lines: List[str], atom1: int, atom2: int) -> Optional[float]:

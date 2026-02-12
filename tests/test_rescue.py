@@ -52,7 +52,7 @@ H 0 0.0 0.0 1.0
 """
     gjf_path.write_text(content_freeze)
     coords = rescue._read_gaussian_input_coords(str(gjf_path))
-    assert coords == ["C -1 0.0 0.0", "H 0 0.0 0.0"]
+    assert coords == ["C -1 0.0 0.0 0.0", "H 0 0.0 0.0 1.0"]
 
     assert rescue._read_gaussian_input_coords("non_existent.gjf") is None
 
@@ -248,7 +248,13 @@ def test_ts_failure_triggers_scan_rescue_and_keyword_rewrite(monkeypatch, tmp_pa
         if job_name == "c0001":
             raise RuntimeError("TS failed")
 
-        if "_scan_" in job_name:
+        try:
+            r_val = float(job_name)
+            is_scan = True
+        except ValueError:
+            is_scan = False
+
+        if is_scan:
             r = _bond_length_from_xyz_lines(coords, 1, 2)
             assert r is not None
             scan_rs.append(float(r))
@@ -316,8 +322,8 @@ def test_ts_failure_triggers_scan_rescue_and_keyword_rewrite(monkeypatch, tmp_pa
     scan_table = tmp_path / "c0001" / "scan" / "scan_table.txt"
     assert scan_table.exists()
     txt = scan_table.read_text(encoding="utf-8")
-    assert "Bond: 1-2" in txt
-    assert "E(Eh)" in txt
+    assert "Bond 1-2" in txt  # Updated for Rich table format
+    assert "E (Eh)" in txt    # Updated for Rich table format
     assert "MAX" in txt
 
 

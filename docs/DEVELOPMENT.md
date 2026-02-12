@@ -17,7 +17,7 @@ confflow/
 │   │   └── db/            # 结果数据库
 │   ├── config/            # 配置加载与校验
 │   ├── core/              # 基础 IO 与工具函数
-│   └── workflow/          # 工作流引擎
+│   └── workflow/          # 工作流引擎（拆分为 engine/helpers/validation/config_builder/stats）
 ├── tests/                 # 单元测试
 ├── docs/                  # 文档
 ├── confflow.yaml          # 配置模板
@@ -96,7 +96,7 @@ pytest tests/coverage_push/ -q
 ### 代码覆盖率
 
 ```bash
-pytest tests/ --cov=confflow --cov-report=html
+pytest tests/ --cov=confflow --cov-report=term-missing
 ```
 
 ## 核心模块说明

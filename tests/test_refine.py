@@ -314,13 +314,13 @@ def test_refine_covalent_radii_fallback():
 
 
 def test_refine_preserves_ts_bond_in_comment(tmp_path: Path) -> None:
-    inp = tmp_path / "isomers.xyz"
+    inp = tmp_path / "result.xyz"
     inp.write_text(
         "2\nEnergy=-1.000000 TSBond=0.740000 TSAtoms=1,2\nH 0 0 0\nH 0 0 0.74\n",
         encoding="utf-8",
     )
 
-    out = tmp_path / "isomers_cleaned.xyz"
+    out = tmp_path / "output.xyz"
     args = refine.RefineOptions(
         input_file=str(inp),
         output=str(out),
@@ -341,13 +341,13 @@ def test_refine_preserves_ts_bond_in_comment(tmp_path: Path) -> None:
 
 
 def test_refine_parses_imag_from_calc_output_format(tmp_path: Path) -> None:
-    inp = tmp_path / "isomers.xyz"
+    inp = tmp_path / "result.xyz"
     inp.write_text(
         "2\nEnergy=-1.000000 Imag=1 LowestFreq=-123.4\nH 0 0 0\nH 0 0 0.74\n",
         encoding="utf-8",
     )
 
-    out = tmp_path / "isomers_cleaned.xyz"
+    out = tmp_path / "output.xyz"
     args = refine.RefineOptions(
         input_file=str(inp),
         output=str(out),

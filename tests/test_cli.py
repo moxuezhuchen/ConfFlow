@@ -228,3 +228,199 @@ H  -1   0.0 0.0 0.0
     assert len(frames) == 1
     assert frames[0]["natoms"] == 2
     assert frames[0]["atoms"] == ["O", "H"]
+
+
+def test_convert_gjf_to_xyz_error(tmp_path):
+    """Test _convert_gjf_to_xyz with unreadable file"""
+    non_existent = tmp_path / "missing.gjf"
+    xyz_out = tmp_path / "out.xyz"
+    with pytest.raises(RuntimeError, match="无法读取 Gaussian 输入文件"):
+        _convert_gjf_to_xyz(str(non_existent), str(xyz_out))
+
+
+def test_kill_proc_tree_timeout():
+    """Test kill_proc_tree with timeout triggers SIGKILL"""
+    # Start a process that ignores SIGTERM
+    p = subprocess.Popen(
+        ["python", "-c", "import signal; signal.signal(signal.SIGTERM, signal.SIG_IGN); import time; time.sleep(60)"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    pid = p.pid
+    time.sleep(0.1)  # Let process start
+    
+    # Should timeout and force kill
+    kill_proc_tree(pid, timeout=0.5)
+    time.sleep(0.3)
+    assert p.poll() is not None
+
+
+def test_stop_all_confflow_processes_loop():
+    """Test stop_all_confflow_processes iterates through multiple processes"""
+    mock_p1 = MagicMock()
+    mock_p1.pid = 100
+    mock_p1.status.return_value = "running"
+    mock_p1.info = {"cmdline": ["python", "confflow", "run"], "pid": 100}
+    
+    mock_p2 = MagicMock()
+    mock_p2.pid = 101
+    mock_p2.status.return_value = "running"
+    mock_p2.info = {"cmdline": ["python", "-m", "confflow"], "pid": 101}
+    
+    with patch("psutil.process_iter", return_value=[mock_p1, mock_p2]):
+        with patch("psutil.Process") as mock_proc:
+            mock_myself = MagicMock()
+            mock_myself.pid = 1
+            mock_proc.return_value = mock_myself
+            
+            with patch("confflow.cli.kill_proc_tree") as mock_kill:
+                stop_all_confflow_processes()
+                assert mock_kill.call_count == 2
+
+
+def test_stop_all_confflow_processes_access_denied():
+    """Test stop_all_confflow_processes handles AccessDenied"""
+    mock_p = MagicMock()
+    mock_p.pid = 100
+    mock_p.status.return_value = "running"
+    mock_p.info = {"cmdline": ["confflow"], "pid": 100}
+    
+    with patch("psutil.process_iter", return_value=[mock_p]):
+        with patch("psutil.Process") as mock_proc:
+            mock_myself = MagicMock()
+            mock_myself.pid = 1
+            mock_proc.return_value = mock_myself
+            
+            with patch("confflow.cli.kill_proc_tree", side_effect=Exception("Access Denied")):
+                result = stop_all_confflow_processes()
+                assert result == 0
+
+
+def test_main_value_error_consistency(tmp_path, monkeypatch):
+    """Test main handles ValueError for consistency check"""
+    input_xyz = tmp_path / "input.xyz"
+    input_xyz.write_text("2\ntest\nC 0 0 0\nH 0 0 1\n")
+    config_yaml = tmp_path / "config.yaml"
+    config_yaml.write_text("global: {}\nsteps: []")
+    
+    error_msg = "多文件输入模式要求所有输入具有相同的原子顺序"
+    
+    with patch("confflow.cli.run_workflow", side_effect=ValueError(error_msg)):
+        with patch("sys.stdin.isatty", return_value=False):
+            with patch("sys.stdout.isatty", return_value=False):
+                result = main([str(input_xyz), "-c", str(config_yaml), "-w", str(tmp_path / "work")])
+                assert result == 1
+
+
+def test_main_value_error_chain_consistency(tmp_path, monkeypatch):
+    """Test main handles ValueError for chain consistency"""
+    input_xyz = tmp_path / "input.xyz"
+    input_xyz.write_text("2\ntest\nC 0 0 0\nH 0 0 1\n")
+    config_yaml = tmp_path / "config.yaml"
+    config_yaml.write_text("global: {}\nsteps: []")
+    
+    error_msg = "柔性链在不同输入间不一致"
+    
+    with patch("confflow.cli.run_workflow", side_effect=ValueError(error_msg)):
+        with patch("sys.stdin.isatty", return_value=False):
+            with patch("sys.stdout.isatty", return_value=False):
+                result = main([str(input_xyz), "-c", str(config_yaml), "-w", str(tmp_path / "work")])
+                assert result == 1
+
+
+def test_main_generic_exception(tmp_path):
+    """Test main handles generic exceptions"""
+    input_xyz = tmp_path / "input.xyz"
+    input_xyz.write_text("2\ntest\nC 0 0 0\nH 0 0 1\n")
+    config_yaml = tmp_path / "config.yaml"
+    config_yaml.write_text("global: {}\nsteps: []")
+    
+    with patch("confflow.cli.run_workflow", side_effect=RuntimeError("Unexpected error")):
+        result = main([str(input_xyz), "-c", str(config_yaml), "-w", str(tmp_path / "work")])
+        assert result == 1
+
+
+def test_main_missing_config(tmp_path):
+    """Test main with missing config file"""
+    input_xyz = tmp_path / "input.xyz"
+    input_xyz.write_text("2\ntest\nC 0 0 0\nH 0 0 1\n")
+    
+    with pytest.raises(SystemExit):
+        main([str(input_xyz)])
+
+
+def test_main_resume_flag(tmp_path):
+    """Test main with resume flag"""
+    input_xyz = tmp_path / "input.xyz"
+    input_xyz.write_text("2\ntest\nC 0 0 0\nH 0 0 1\n")
+    config_yaml = tmp_path / "config.yaml"
+    config_yaml.write_text("global: {}\nsteps: []")
+    
+    with patch("confflow.cli.run_workflow") as mock_run:
+        main([str(input_xyz), "-c", str(config_yaml), "-w", str(tmp_path / "work"), "--resume"])
+        assert mock_run.called
+        args, kwargs = mock_run.call_args
+        assert kwargs["resume"] is True
+
+
+def test_main_verbose_flag(tmp_path):
+    """Test main with verbose flag"""
+    input_xyz = tmp_path / "input.xyz"
+    input_xyz.write_text("2\ntest\nC 0 0 0\nH 0 0 1\n")
+    config_yaml = tmp_path / "config.yaml"
+    config_yaml.write_text("global: {}\nsteps: []")
+    
+    with patch("confflow.cli.run_workflow") as mock_run:
+        main([str(input_xyz), "-c", str(config_yaml), "-w", str(tmp_path / "work"), "--verbose"])
+        assert mock_run.called
+        args, kwargs = mock_run.call_args
+        assert kwargs["verbose"] is True
+
+
+def test_main_multiple_inputs(tmp_path):
+    """Test main with multiple input files"""
+    input1 = tmp_path / "input1.xyz"
+    input1.write_text("2\ntest\nC 0 0 0\nH 0 0 1\n")
+    input2 = tmp_path / "input2.xyz"
+    input2.write_text("2\ntest\nC 0 0 0\nH 0 0 1\n")
+    config_yaml = tmp_path / "config.yaml"
+    config_yaml.write_text("global: {}\nsteps: []")
+    
+    with patch("confflow.cli.run_workflow") as mock_run:
+        main([str(input1), str(input2), "-c", str(config_yaml), "-w", str(tmp_path / "work")])
+        assert mock_run.called
+
+
+def test_main_work_dir_default(tmp_path):
+    """Test main with default work directory"""
+    input_xyz = tmp_path / "input.xyz"
+    input_xyz.write_text("2\ntest\nC 0 0 0\nH 0 0 1\n")
+    config_yaml = tmp_path / "config.yaml"
+    config_yaml.write_text("global: {}\nsteps: []")
+    
+    with patch("confflow.cli.run_workflow") as mock_run:
+        main([str(input_xyz), "-c", str(config_yaml)])
+        assert mock_run.called
+        args, kwargs = mock_run.call_args
+        assert "input_work" in kwargs["work_dir"]
+
+
+def test_main_consistency_error_no_interactive_prompt_on_tty(tmp_path):
+    """Consistency errors should be written to txt without interactive prompt, even on TTY."""
+    input_xyz = tmp_path / "input.xyz"
+    input_xyz.write_text("2\ntest\nC 0 0 0\nH 0 0 1\n")
+    config_yaml = tmp_path / "config.yaml"
+    config_yaml.write_text("global: {}\nsteps: []")
+
+    error_msg = "多文件输入模式要求所有输入具有相同的原子顺序"
+
+    with patch("confflow.cli.run_workflow", side_effect=ValueError(error_msg)):
+        with patch("sys.stdin.isatty", return_value=True), patch("sys.stdout.isatty", return_value=True):
+            with patch("builtins.input", side_effect=AssertionError("input() should not be called")):
+                result = main([str(input_xyz), "-c", str(config_yaml), "-w", str(tmp_path / "work")])
+                assert result == 1
+
+    output_txt = tmp_path / "input.txt"
+    assert output_txt.exists()
+    content = output_txt.read_text(encoding="utf-8")
+    assert "输入一致性校验失败" in content

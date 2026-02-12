@@ -18,7 +18,7 @@ pip install -e .
 - `confrefine`：构象去重/筛选（RMSD/能量窗口/虚频过滤）
 - `confts`：TS 专用执行器/工具（TS 失败后 scan 救援、keyword 改写）
 
-> `viz` 当前作为工作流内部步骤使用（生成文本报告并合并到 .txt 输出），不单独提供 console_script；如需单独生成 HTML，可用 `python -m confflow.blocks.viz`。
+> `viz` 当前作为工作流内部步骤自动运行（生成美化的纯文本总结报告并合并到 .txt 输出），无需用户手动调用。
 
 更完整的命令参数与示例见：`docs/COMMAND_REFERENCE.md`。
 
@@ -49,6 +49,11 @@ confflow a.xyz b.xyz -c confflow.yaml
 - `--resume`：从 `.checkpoint` 断点继续
 - `--verbose`：输出更详细日志
 
+> 说明：`confflow` 运行时默认将 stdout/stderr 全部重定向到输入目录下的 `<input_basename>.txt`，
+> 因此终端默认不会有输出；你需要查看该 `.txt` 文件获取运行日志、step 摘要与最终报告。
+
+一致性校验失败（多输入原子顺序/柔性链不一致等）时也不会弹出交互提示；错误信息会写入 `<input>.txt`，并以非 0 退出码结束。
+
 ### 3.3 柔性链一致性与自动映射
 
 当 `confgen` 使用 `chains` 时，系统会在第一个输入文件上校验链定义：
@@ -60,16 +65,16 @@ confflow a.xyz b.xyz -c confflow.yaml
 
 ### 3.4 输出结构（工作目录）
 
-- `confflow.log`：总日志
+- `<input>.txt`：包含运行日志与报告文本（自动合并；默认应以它为准）
+- `confflow.log`：总日志（若工作流内部开启/生成；有些环境下可能不存在）
 - `.checkpoint`：断点信息
 - `workflow_stats.json`：统计信息
-- `<input>.txt`：包含运行日志与报告文本（自动合并）
-- `<input>_lowest.xyz`：最低能量构象（单帧 XYZ）
+- `<input>min.xyz`：最低能量构象（单帧 XYZ）
 - `step_xx/`：每一步的中间结果
 
-### 3.5 Console 输出（每步摘要）
+### 3.5 Step 摘要输出（写入 .txt）
 
-运行 `confflow` 时，每个 step 会在开始/结束各输出一段简洁摘要：
+运行 `confflow` 时，每个 step 会在开始/结束各写入一段简洁摘要（位于 `<input>.txt` 中）：
 
 - 开始行：step 名称、类型、输入构象数；对 `calc/task` 还会输出 `prog/itask/max_jobs/cores/mem/freeze`。
 - keyword：另起一行输出完整 `keyword`（便于复制复现）。
@@ -77,13 +82,13 @@ confflow a.xyz b.xyz -c confflow.yaml
 
 每个 `calc/task` step 目录下常见文件：
 
-- `step_xx/isomers_cleaned.xyz`：该步后处理（refine）输出（若开启 `auto_clean`）
-- `step_xx/isomers.xyz`：未精炼的原始输出（若未生成 cleaned 则以此为准）
-- `step_xx/isomers_failed.xyz`：该步失败构象集合（始终使用输入结构坐标），注释行包含 `Job/CID/Error`
+- `step_xx/output.xyz`：该步后处理（refine）输出（若开启 `auto_clean`）
+- `step_xx/result.xyz`：未精炼的原始输出（若未生成 cleaned 则以此为准）
+- `step_xx/failed.xyz`：该步失败构象集合（始终使用输入结构坐标），注释行包含 `Job/CID/Error`
 
 在 `_work/failed` 目录下会聚合所有步骤的失败信息：
 
-- `_work/failed/isomers_failed.xyz`：合并后的失败构象集合（注释行附带 `Step=...`）
+- `_work/failed/failed.xyz`：合并后的失败构象集合（注释行附带 `Step=...`）
 - `_work/failed/failed_summary.txt`：失败清单（结构名 + 错误原因 + 建议救援方案）
 - `_work/failed/<config>.yaml`：本次运行的工作流配置副本（便于手动重跑）
 
@@ -91,8 +96,9 @@ confflow a.xyz b.xyz -c confflow.yaml
 
 ConfFlow 对每个构象会维护一个稳定的 **CID**（写在 XYZ comment metadata 里），并据此派生稳定的 **job_name**：
 
-- 数字 CID：`CID=1` → `job_name=c0001`
-- 字符串 CID：`CID=abc` → `job_name=abc`（会做安全字符规范化）
+- **来源感知的 CID**：首个输入文件的构象前缀为 `A`，第二个为 `B`，以此类推。
+- **示例**：`CID=A000001` → `job_name=A000001`。
+- **稳定性**：即使在中间步骤（如 `refine`）中丢弃了部分构象，剩余构象的 CID 保持不变，确保了 Gaussian `.chk` 文件等资源在后续步骤中能准确对应。
 
 因此，跨步骤传递 Gaussian checkpoint 时采用 **按 job_name 精确匹配** 的方式，保证“工件与输入文件完全对应”，不会因后续步骤筛选/重排构象而错配。
 
@@ -142,7 +148,7 @@ ConfFlow 对每个构象会维护一个稳定的 **CID**（写在 XYZ comment me
 ```
 
 以便从 chk 继承波函数与几何信息。
-- `step_xx/work/results.db`：任务结果库（success/failed/skipped + error 详情）
+- `step_xx/results.db`：任务结果库（success/failed/skipped + error 详情）
 
 ## 4. confgen：构象生成（链模式）
 
@@ -187,7 +193,7 @@ confgen mol.xyz --chain 1-2-3-4-5 --angles "0,120,240;0,60,120,180;180;0,120" -y
 - `--no_rotate a b`：禁止旋转指定键（可重复；仅对链上键生效）
 - `--force_rotate a b`：强制将指定键视为可旋转（可重复；一般不需要）
 
-输出：当前目录生成 `traj.xyz`（多帧 XYZ）。
+输出：当前目录生成 `search.xyz`（多帧 XYZ）。
 
 ## 5. confrefine：构象后处理
 
@@ -214,16 +220,17 @@ confrefine <input.xyz> [-o <output.xyz>] [-t <rmsd>] [--ewin <kcal/mol>] [--imag
   - 每个点：先把目标键长设到指定值，然后执行 `opt(...)`。
   - **约束方式**：使用 confflow 的 `freeze` 机制冻结 `ts_bond_atoms` 两个原子（Gaussian 输入坐标第二列写 `-1`），不依赖 `modredundant`。
 - **目录结构**：scan 点输出集中在 `<work_dir>/scan/` 下（不再为每个点创建大量子目录）。
-- **Scan 表格输出**：会在终端输出“键长-能量”关系表，并在 `<work_dir>/scan/scan_table.txt` 写入同样内容（标记能量最高点 `MAX`）。
+- **文件命名**：扫描点作业名统一使用格式化后的 **键长数值** (如 `1.746.log`)，方便用户快速定位特定区域的计算。
+- **Scan 表格输出**：会在 `<work_dir>/scan/scan_table.txt` 写入“键长-能量”关系表（标记能量最高点 `MAX`），并同样记录到 `<input>.txt`（终端默认无输出）。
 - **选峰与 TS 重跑**：从 scan 能量曲线中选取局部极大值点作为 TS 初猜，然后用原始 TS 的 `keyword` 重新计算 TS（保持与主流程一致的方法/基组/外部势能等）。
-- **结果汇总**：若 TS rescue 成功，会以 `rescued_by_scan=true` 标记，并按常规流程写入最终 `isomers.xyz`/结果库。
+- **结果汇总**：若 TS rescue 成功，会以 `rescued_by_scan=true` 标记，并按常规流程写入最终 `result.xyz`/结果库。
 
 备注：`scan/` 目录会随该 TS 任务一并备份（若配置了 `backup_dir`）。备份位置为 `<work_dir>/<step>/backups/<job>_scan/`，其中也会包含 `scan_table.txt`。
 
 ### 6.1 命令格式
 
 ```bash
-confcalc <traj.xyz> -s <settings.ini>
+confcalc <search.xyz> -s <settings.ini>
 ```
 
 续传说明：
@@ -254,7 +261,7 @@ global:
   # ORCA 专用：直接写入 %maxcore（单位：MB per core）
   orca_maxcore: 4500
 
-  # TS 专用：指定参与“成键/断键”的两个原子（1-based），用于在 isomers.xyz 注释行输出 TS 键长
+  # TS 专用：指定参与“成键/断键”的两个原子（1-based），用于在 result.xyz 注释行输出 TS 键长
   # - 可写 [12, 15] 或 "12,15"
   # - 若不写，且 freeze 恰好给出两个原子，则默认沿用 freeze
   ts_bond_atoms: [12, 15]
@@ -304,10 +311,23 @@ steps:
     # 可选：覆盖 ORCA %maxcore（单位：MB per core）
     orca_maxcore: 4500
 
-    # TS 可选：指定 TS 成键/断键原子对（1-based）；用于输出 TSAtoms/TSBond 到 isomers.xyz 注释行
+    # TS 可选：指定 TS 成键/断键原子对（1-based）；用于输出 TSAtoms/TSBond 到 result.xyz 注释行
     ts_bond_atoms: [12, 15]
+
+    # [1-based] ORCA 专用：写 ORCA 的 %block ... end
+    # 推荐直接使用多行字符串，格式与 ORCA .inp 文件完全一致。
+    # 程序会自动合并 freeze 产生的 %geom Constraints。
+    blocks: |
+      %method
+        ProgExt "/opt/orcauma.py"
+      end
+      %geom
+        Calc_Hess true
+        NumHess true
+      end
 ```
 
 ### 7.4 已移除功能（不再支持）
 
-- 键冻结 / ModRedundant / constraints：已彻底移除，仅保留 `freeze`（冻结原子坐标）。
+- 键冻结 / ModRedundant / constraints：仅保留 `freeze`（冻结原子坐标）。
+- solvent_block / custom_block：已统一升级为结构化的 `blocks` 字典管理。

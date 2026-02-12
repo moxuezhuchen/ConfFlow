@@ -17,6 +17,7 @@ from confflow.workflow.engine import (
     _count_task_statuses_in_results_db,
     run_workflow,
 )
+from confflow.workflow.config_builder import build_task_config, build_step_dir_name_map
 
 
 def test_as_list():
@@ -40,11 +41,11 @@ def test_normalize_pair_list_variants():
 
 
 def test_normalize_pair_list_extended_errors():
-    with pytest.raises(ValueError, match="键对格式错误"):
+    with pytest.raises(ValueError, match="pair format error"):
         normalize_pair_list(["1,2,3"])
-    with pytest.raises(ValueError, match="键对格式错误"):
+    with pytest.raises(ValueError, match="pair format error"):
         normalize_pair_list("1,2,3")
-    with pytest.raises(ValueError, match="不支持的键对格式"):
+    with pytest.raises(ValueError, match="unsupported pair format"):
         normalize_pair_list(123)
 
 
@@ -69,24 +70,24 @@ def test_count_conformers_any_real(tmp_path):
 
 
 def test_validate_inputs_compatible(tmp_path):
-    with pytest.raises(ValueError, match="未提供输入文件"):
+    with pytest.raises(ValueError, match="no input files provided"):
         validate_inputs_compatible([])
 
     f1 = tmp_path / "f1.xyz"
     f1.write_text("invalid")
-    with pytest.raises(ValueError, match="输入 XYZ 无法解析"):
+    with pytest.raises(ValueError, match="cannot parse input XYZ"):
         validate_inputs_compatible([str(f1)])
 
     f2 = tmp_path / "f2.xyz"
     f2.write_text("2\ntest\nC 0 0 0\nH 0 0 1\n2\ntest\nC 0 0 0\nH 0 0 1.1\n")
-    with pytest.raises(ValueError, match="多文件输入模式要求每个输入为单帧"):
+    with pytest.raises(ValueError, match="multi-input mode requires single-frame XYZ"):
         validate_inputs_compatible([str(f2)])
 
     f3 = tmp_path / "f3.xyz"
     f3.write_text("2\ntest\nC 0 0 0\nH 0 0 1\n")
     f4 = tmp_path / "f4.xyz"
     f4.write_text("2\ntest\nO 0 0 0\nH 0 0 1\n")
-    with pytest.raises(ValueError, match="要求所有输入具有相同的原子数与元素顺序"):
+    with pytest.raises(ValueError, match="all inputs must have the same atom count and element order"):
         validate_inputs_compatible([str(f3), str(f4)])
 
 
@@ -195,13 +196,13 @@ steps:
     work_dir = tmp_path / "work"
 
     def mock_run_generation(*args, **kwargs):
-        with open("traj.xyz", "w") as f:
+        with open("search.xyz", "w") as f:
             f.write("2\ngenerated\nC 0 0 0\nH 0 0 1.1\n")
             f.write("2\ngenerated\nC 0 0 0\nH 0 0 1.2\n")
 
     def mock_manager_run(self, input_xyz_file):
         os.makedirs(self.work_dir, exist_ok=True)
-        with open(os.path.join(self.work_dir, "isomers_cleaned.xyz"), "w") as f:
+        with open(os.path.join(self.work_dir, "output.xyz"), "w") as f:
             f.write("2\ncleaned\nC 0 0 0\nH 0 0 1.1\n")
         import sqlite3
         db_path = os.path.join(self.work_dir, "results.db")
@@ -211,23 +212,23 @@ steps:
         con.commit()
         con.close()
 
-    with patch("confflow.blocks.confgen.run_generation", side_effect=mock_run_generation), \
-         patch("confflow.calc.ChemTaskManager.run", autospec=True, side_effect=mock_manager_run), \
-         patch("confflow.blocks.viz.generate_html_report"):
+        with patch("confflow.blocks.confgen.run_generation", side_effect=mock_run_generation), \
+            patch("confflow.calc.ChemTaskManager.run", autospec=True, side_effect=mock_manager_run), \
+            patch("confflow.blocks.viz.generate_text_report", return_value=""):
 
-        with patch("confflow.config.schema.ConfigSchema.validate_calc_config", side_effect=[None, ValueError("stop here")]):
-            with pytest.raises(ValueError, match="stop here"):
-                run_workflow([str(input_xyz)], str(config_file), str(work_dir))
+            with patch("confflow.config.schema.ConfigSchema.validate_calc_config", side_effect=[None, ValueError("stop here")]):
+                with pytest.raises(ValueError, match="stop here"):
+                    run_workflow([str(input_xyz)], str(config_file), str(work_dir))
 
-        checkpoint_file = work_dir / ".checkpoint"
-        assert checkpoint_file.exists()
-        with open(checkpoint_file, "r") as f:
-            cp = json.load(f)
-        assert cp["last_completed_step"] == 1
+            checkpoint_file = work_dir / ".checkpoint"
+            assert checkpoint_file.exists()
+            with open(checkpoint_file, "r") as f:
+                cp = json.load(f)
+            assert cp["last_completed_step"] == 1
 
-        stats = run_workflow([str(input_xyz)], str(config_file), str(work_dir), resume=True)
-        assert len(stats["steps"]) == 1
-        assert stats["steps"][0]["status"] == "completed"
+            stats = run_workflow([str(input_xyz)], str(config_file), str(work_dir), resume=True)
+            assert len(stats["steps"]) == 1
+            assert stats["steps"][0]["status"] == "completed"
 
 
 def test_run_workflow_low_energy_trace(tmp_path):
@@ -250,11 +251,11 @@ steps:
 
     def mock_manager_run(self, input_xyz_file):
         os.makedirs(self.work_dir, exist_ok=True)
-        with open(os.path.join(self.work_dir, "isomers_cleaned.xyz"), "w") as f:
+        with open(os.path.join(self.work_dir, "output.xyz"), "w") as f:
             f.write("2\nCID=s01_1 E=-1.0\nC 0 0 0\nH 0 0 1.1\n")
 
     with patch("confflow.calc.ChemTaskManager.run", autospec=True, side_effect=mock_manager_run), \
-         patch("confflow.blocks.viz.generate_html_report"):
+        patch("confflow.blocks.viz.generate_text_report", return_value=""):
         stats = run_workflow([str(input_xyz)], str(config_file), str(work_dir))
 
     assert "low_energy_trace" in stats
@@ -338,13 +339,13 @@ def test_confflow_accepts_multiple_xyz_inputs_and_runs_confgen(monkeypatch, tmp_
         assert isinstance(input_files, list)
         assert len(input_files) == 2
         called["inputs"] = list(input_files)
-        with open("traj.xyz", "w", encoding="utf-8") as f:
+        with open("search.xyz", "w", encoding="utf-8") as f:
             f.write("2\nconf1\nH 0 0 0\nH 0 0 1\n")
             f.write("2\nconf2\nH 0 0 0\nH 0 0 1\n")
 
     monkeypatch.setattr(engine.confgen, "run_generation", fake_run_generation)
     monkeypatch.setattr(engine.viz, "parse_xyz_file", lambda p: [])
-    monkeypatch.setattr(engine.viz, "generate_html_report", lambda *a, **k: None)
+    monkeypatch.setattr(engine.viz, "generate_text_report", lambda *a, **k: "")
 
     work_dir = tmp_path / "work"
     engine.run_workflow(
@@ -356,4 +357,54 @@ def test_confflow_accepts_multiple_xyz_inputs_and_runs_confgen(monkeypatch, tmp_
     )
 
     assert called["inputs"] is not None
-    assert os.path.exists(work_dir / "step_01" / "traj.xyz")
+    assert os.path.exists(work_dir / "step_01" / "search.xyz")
+
+
+def test_run_workflow_resume_without_checkpoint(tmp_path):
+    input_xyz = tmp_path / "input.xyz"
+    input_xyz.write_text("2\ntest\nC 0 0 0\nH 0 0 1\n")
+
+    config_file = tmp_path / "workflow.yaml"
+    config_file.write_text(
+        """
+global:
+  iprog: orca
+  keyword: B3LYP
+steps:
+  - name: s1
+    type: calc
+    params:
+      itask: sp
+"""
+    )
+
+    work_dir = tmp_path / "work"
+
+    def mock_manager_run(self, input_xyz_file):
+        os.makedirs(self.work_dir, exist_ok=True)
+        with open(os.path.join(self.work_dir, "output.xyz"), "w") as f:
+            f.write("2\nCID=s01_1 E=-1.0\nC 0 0 0\nH 0 0 1.1\n")
+
+    with patch("confflow.calc.ChemTaskManager.run", autospec=True, side_effect=mock_manager_run), \
+        patch("confflow.blocks.viz.generate_text_report", return_value=""):
+        stats = run_workflow([str(input_xyz)], str(config_file), str(work_dir), resume=True)
+
+    assert isinstance(stats, dict)
+    assert len(stats.get("steps", [])) == 1
+
+
+def test_build_task_config_chk_from_step_uses_sanitized_dir(tmp_path):
+    steps = [
+        {"name": "step/06 ts", "type": "calc", "params": {}},
+        {"name": "step:07?sp", "type": "calc", "params": {}},
+    ]
+    step_dirs, _ = build_step_dir_name_map(steps)
+    assert step_dirs[0] != "step/06 ts"
+
+    cfg = build_task_config(
+        params={"iprog": "g16", "itask": "sp", "keyword": "hf/3-21g", "chk_from_step": "step/06 ts"},
+        global_config={},
+        root_dir=str(tmp_path / "work"),
+        all_steps=steps,
+    )
+    assert cfg.get("input_chk_dir") == os.path.join(str(tmp_path / "work"), step_dirs[0], "backups")

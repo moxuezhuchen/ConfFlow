@@ -179,7 +179,7 @@ def test_cleanup_logic(tmp_path):
 
 def test_chem_task_manager_skip_existing(tmp_path, monkeypatch):
     # Create a dummy xyz
-    xyz = tmp_path / "traj.xyz"
+    xyz = tmp_path / "search.xyz"
     xyz.write_text("1\nTest\nH 0 0 0\n", encoding="utf-8")
 
     work_dir = tmp_path / "work"
@@ -387,8 +387,8 @@ def test_ts_without_freq_allows_large_rmsd_when_no_bond_drift(tmp_path, monkeypa
 
 
 def test_ts_bond_length_computed_and_written(tmp_path, monkeypatch):
-    # 让单任务路径触发写 isomers.xyz
-    inp = tmp_path / "traj.xyz"
+    # 让单任务路径触发写 result.xyz
+    inp = tmp_path / "search.xyz"
     inp.write_text(
         "2\ncomment\nH 0 0 0\nH 0 0 0.74\n",
         encoding="utf-8",
@@ -422,7 +422,7 @@ def test_ts_bond_length_computed_and_written(tmp_path, monkeypatch):
     )
 
     manager.run(str(inp))
-    out_file = tmp_path / "work" / "isomers.xyz"
+    out_file = tmp_path / "work" / "result.xyz"
     assert out_file.exists()
     lines = out_file.read_text(encoding="utf-8").splitlines()
     assert any("TSAtoms=1,2" in ln for ln in lines)
@@ -430,7 +430,7 @@ def test_ts_bond_length_computed_and_written(tmp_path, monkeypatch):
 
 
 def test_manager_writes_isomers_failed_when_tasks_fail(tmp_path, monkeypatch):
-    inp = tmp_path / "traj.xyz"
+    inp = tmp_path / "search.xyz"
     inp.write_text(
         "2\ncomment CID=abc\nH 0 0 0\nH 0 0 0.74\n",
         encoding="utf-8",
@@ -455,7 +455,7 @@ def test_manager_writes_isomers_failed_when_tasks_fail(tmp_path, monkeypatch):
     )
 
     manager.run(str(inp))
-    failed_file = tmp_path / "work" / "isomers_failed.xyz"
+    failed_file = tmp_path / "work" / "failed.xyz"
     assert failed_file.exists()
     txt = failed_file.read_text(encoding="utf-8")
     assert "Failed=1" in txt
@@ -464,7 +464,7 @@ def test_manager_writes_isomers_failed_when_tasks_fail(tmp_path, monkeypatch):
 
 
 def test_sp_task_also_writes_tsbond_when_config_provides_ts_bond_atoms(tmp_path, monkeypatch):
-    inp = tmp_path / "traj.xyz"
+    inp = tmp_path / "search.xyz"
     inp.write_text(
         "2\ncomment\nH 0 0 0\nH 0 0 0.74\n",
         encoding="utf-8",
@@ -498,7 +498,7 @@ def test_sp_task_also_writes_tsbond_when_config_provides_ts_bond_atoms(tmp_path,
     )
 
     manager.run(str(inp))
-    out_file = tmp_path / "work" / "isomers.xyz"
+    out_file = tmp_path / "work" / "result.xyz"
     assert out_file.exists()
     text = out_file.read_text(encoding="utf-8")
     assert "TSAtoms=1,2" in text
@@ -507,7 +507,7 @@ def test_sp_task_also_writes_tsbond_when_config_provides_ts_bond_atoms(tmp_path,
 
 def test_sp_inherits_g_corr_and_outputs_final_gibbs_energy(tmp_path, monkeypatch):
     # 输入 XYZ 的注释带有上一阶段 freq/opt_freq 的热修正
-    inp = tmp_path / "traj.xyz"
+    inp = tmp_path / "search.xyz"
     inp.write_text(
         "2\nRank=1 | E=-1.00000000 | G_corr=0.123 | Imag=0\nH 0 0 0\nH 0 0 0.74\n",
         encoding="utf-8",
@@ -540,7 +540,7 @@ def test_sp_inherits_g_corr_and_outputs_final_gibbs_energy(tmp_path, monkeypatch
     )
     manager.run(str(inp))
 
-    out_file = tmp_path / "work" / "isomers.xyz"
+    out_file = tmp_path / "work" / "result.xyz"
     text = out_file.read_text(encoding="utf-8")
     # Energy/G 应为 E_sp + G_corr = -2.0 + 0.123
     assert ("Energy=-1.877" in text) or ("G=-1.877" in text)
@@ -549,7 +549,7 @@ def test_sp_inherits_g_corr_and_outputs_final_gibbs_energy(tmp_path, monkeypatch
 
 def test_ts_inherits_g_corr_and_outputs_final_gibbs_energy(tmp_path, monkeypatch):
     # 输入 XYZ 的注释带有上一阶段的 G_corr
-    inp = tmp_path / "traj.xyz"
+    inp = tmp_path / "search.xyz"
     inp.write_text(
         "2\nRank=1 | E=-1.00000000 | G_corr=0.123 | CID=abc\nH 0 0 0\nH 0 0 0.74\n",
         encoding="utf-8",
@@ -582,7 +582,7 @@ def test_ts_inherits_g_corr_and_outputs_final_gibbs_energy(tmp_path, monkeypatch
     )
     manager.run(str(inp))
 
-    out_file = tmp_path / "work" / "isomers.xyz"
+    out_file = tmp_path / "work" / "result.xyz"
     text = out_file.read_text(encoding="utf-8")
     # Energy 应为 E_ts + G_corr = -1.5 + 0.123 = -1.377
     assert "Energy=-1.377" in text
@@ -590,7 +590,7 @@ def test_ts_inherits_g_corr_and_outputs_final_gibbs_energy(tmp_path, monkeypatch
 
 
 def test_resume_from_backups_skips_completed(tmp_path, monkeypatch):
-    inp = tmp_path / "traj.xyz"
+    inp = tmp_path / "search.xyz"
     inp.write_text(
         "1\ncomment\nH 0 0 0\n",
         encoding="utf-8",
@@ -634,7 +634,7 @@ def test_resume_from_backups_skips_completed(tmp_path, monkeypatch):
     )
 
     manager.run(str(inp))
-    out_file = work_dir / "isomers.xyz"
+    out_file = work_dir / "result.xyz"
     assert out_file.exists()
     text = out_file.read_text(encoding="utf-8")
     assert "Energy=-1.23456789" in text

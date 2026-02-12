@@ -104,6 +104,32 @@ class TestIO:
         assert calculate_bond_length(coords_lines, 1, 5) is None
 
 
+class TestData:
+    """core.data 模块测试"""
+
+    def test_get_covalent_radius(self):
+        """测试获取共价半径"""
+        from confflow.core.data import get_covalent_radius
+        assert get_covalent_radius(1) == 0.30  # H
+        assert get_covalent_radius(6) == 0.77  # C
+        assert get_covalent_radius(150) == 1.50  # Unknown
+
+    def test_get_element_symbol(self):
+        """测试获取元素符号"""
+        from confflow.core.data import get_element_symbol
+        assert get_element_symbol(1) == "H"
+        assert get_element_symbol(6) == "C"
+        assert get_element_symbol(0) == "X"
+        assert get_element_symbol(400) == "X"
+
+    def test_get_atomic_number(self):
+        """测试获取原子序数"""
+        from confflow.core.data import get_atomic_number
+        assert get_atomic_number("H") == 1
+        assert get_atomic_number("c") == 6
+        assert get_atomic_number("Unknown") == 0
+
+
 # =============================================================================
 # Config 测试 (来自 test_io_config.py)
 # =============================================================================
@@ -173,78 +199,26 @@ class TestVizReport:
         assert format_duration(120) == "2.0min"
         assert format_duration(7200) == "2.0h"
 
-    def test_generate_workflow_section_basic(self):
-        from confflow.blocks.viz.report import generate_workflow_section
-        
+    def test_generate_text_report_basic(self):
+        from confflow.blocks.viz.report import generate_text_report
+
+        conformers = [
+            {"metadata": {"E": -1.0, "G_corr": 0.1}, "comment": "C1"},
+            {"metadata": {"G": -1.1}, "comment": "C2"}
+        ]
         stats = {
             "steps": [
-                {"index": 1, "name": "Step1", "type": "calc", "status": "completed", 
+                {"index": 1, "name": "Step1", "type": "calc", "status": "completed",
                  "input_conformers": 10, "output_conformers": 8, "duration_seconds": 60}
             ],
             "total_duration_seconds": 60,
             "initial_conformers": 10,
             "final_conformers": 8
         }
-        html = generate_workflow_section(stats)
-        assert "Step1" in html
-        assert "completed" in html
-        assert "10" in html
-        assert "8" in html
-        assert "1.0min" in html
-
-    def test_generate_html_report_basic(self, tmp_path):
-        from confflow.blocks.viz.report import generate_html_report
-        
-        conformers = [
-            {"metadata": {"E": -1.0, "G_corr": 0.1}, "comment": "C1"},
-            {"metadata": {"E": -1.1, "G_corr": 0.1}, "comment": "C2"}
-        ]
-        out = tmp_path / "report.html"
-        generate_html_report(conformers, str(out))
-        assert out.exists()
-        content = out.read_text()
-        assert "ConfFlow Analysis Report" in content
-        assert "-0.900000" in content
-        assert "-1.000000" in content
-
-    def test_generate_html_report_does_not_double_add_gcorr(self, tmp_path):
-        from confflow.blocks.viz.report import generate_html_report
-
-        conformers = [
-            {"metadata": {"G": -0.9, "G_corr": 0.1}, "comment": "C1"},
-        ]
-        out = tmp_path / "report.html"
-        generate_html_report(conformers, str(out))
-        content = out.read_text()
-        assert "-0.900000" in content
-        assert "-0.800000" not in content
-
-    def test_generate_html_report_prefers_g_key_over_legacy_fields(self, tmp_path):
-        from confflow.blocks.viz.report import generate_html_report
-
-        conformers = [
-            {"metadata": {"G": -0.95, "E": -1.0, "G_corr": 0.1}, "comment": "C1"},
-        ]
-        out = tmp_path / "report.html"
-        generate_html_report(conformers, str(out))
-        content = out.read_text()
-        assert "-0.950000" in content
-        assert "-0.900000" not in content
-
-    def test_generate_html_report_sorts_by_gibbs_energy(self, tmp_path):
-        from confflow.blocks.viz.report import generate_html_report
-
-        conformers = [
-            {"metadata": {"E": -1.0, "G_corr": 0.1}, "comment": "A"},
-            {"metadata": {"E": -1.1, "G_corr": 0.15}, "comment": "B"},
-        ]
-        out = tmp_path / "report.html"
-        generate_html_report(conformers, str(out))
-        html = out.read_text()
-        first_energy_pos = html.find("-0.950000")
-        second_energy_pos = html.find("-0.900000")
-        assert first_energy_pos != -1 and second_energy_pos != -1
-        assert first_energy_pos < second_energy_pos
+        text = generate_text_report(conformers, stats=stats)
+        assert "WORKFLOW SUMMARY" in text
+        assert "CONFORMER ANALYSIS" in text
+        assert "Step1" in text
 
 
 # =============================================================================
@@ -404,7 +378,8 @@ class TestInputGenerationSnapshot:
         assert text.lstrip().startswith("! opt")
         assert "%pal nprocs 4 end" in text
         assert "%maxcore 512" in text
-        assert "%geom Constraints" in text
+        assert "%geom" in text
+        assert "Constraints" in text
         assert "{ C 0 C }" in text
         assert "{ C 2 C }" in text
         assert "* xyz 0 1" in text
@@ -458,7 +433,7 @@ class TestLowEnergyTrace:
         import confflow.workflow.engine as engine
 
         def fake_run_generation(input_files, **kwargs):
-            with open("traj.xyz", "w", encoding="utf-8") as f:
+            with open("search.xyz", "w", encoding="utf-8") as f:
                 for i in range(6):
                     cid = f"cf_{i+1:06d}"
                     f.write("2\n")
@@ -481,13 +456,13 @@ class TestLowEnergyTrace:
                     c["metadata"] = engine.io_xyz.parse_comment_metadata(c["comment"])
                 out_dir = Path(self.work_dir)
                 out_dir.mkdir(parents=True, exist_ok=True)
-                out = out_dir / "isomers_cleaned.xyz"
+                out = out_dir / "output.xyz"
                 engine.io_xyz.write_xyz_file(str(out), confs, atomic=False)
 
         monkeypatch.setattr(engine.confgen, "run_generation", fake_run_generation)
         monkeypatch.setattr(engine.calc, "ChemTaskManager", FakeManager)
         monkeypatch.setattr(engine.viz, "parse_xyz_file", lambda p: [])
-        monkeypatch.setattr(engine.viz, "generate_html_report", lambda *a, **k: None)
+        monkeypatch.setattr(engine.viz, "generate_text_report", lambda *a, **k: "")
 
         inp = tmp_path / "a.xyz"
         inp.write_text("2\nA\nH 0 0 0\nH 0 0 1\n", encoding="utf-8")
@@ -545,10 +520,10 @@ class TestSuiteQuickCheck:
     """快速体检测试"""
 
     def test_utils_radii_sanity(self):
-        import confflow.core.utils as utils
-        assert len(utils.GV_COVALENT_RADII) >= 100
-        assert abs(utils.GV_COVALENT_RADII[1] - 0.30) < 1e-12
-        assert abs(utils.GV_COVALENT_RADII[6] - 0.77) < 1e-12
+        from confflow.core.data import GV_COVALENT_RADII
+        assert len(GV_COVALENT_RADII) >= 100
+        assert abs(GV_COVALENT_RADII[1] - 0.30) < 1e-12
+        assert abs(GV_COVALENT_RADII[6] - 0.77) < 1e-12
 
     def test_logger_available(self):
         import confflow.core.utils as utils
@@ -573,14 +548,12 @@ class TestSuiteQuickCheck:
 
     def test_viz_report_generation(self, tmp_path):
         import confflow.blocks.viz as viz
-        xyz = tmp_path / "isomers.xyz"
+        xyz = tmp_path / "result.xyz"
         xyz.write_text("2\nEnergy=-1.0\nH 0 0 0\nH 0 0 0.74\n", encoding="utf-8")
         confs = viz.parse_xyz_file(str(xyz))
         assert len(confs) == 1
-        out = tmp_path / "report.html"
-        viz.generate_html_report(confs, str(out), stats={"steps": []})
-        assert out.exists()
-        assert "<html" in out.read_text(encoding="utf-8").lower()
+        text = viz.generate_text_report(confs, stats={"steps": []})
+        assert "CONFORMER ANALYSIS" in text
 
     def test_main_entrypoint_callable(self):
         import importlib

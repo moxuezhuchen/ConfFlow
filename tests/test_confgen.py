@@ -71,8 +71,8 @@ def test_confgen_chain_mode_generates_traj_xyz(tmp_path, monkeypatch) -> None:
         rotate_side="left",
     )
 
-    out = tmp_path / "traj.xyz"
-    assert out.exists(), "confgen 未生成 traj.xyz"
+    out = tmp_path / "search.xyz"
+    assert out.exists(), "confgen 未生成 search.xyz"
     first = out.read_text(encoding="utf-8").splitlines()[0].strip()
     assert first.isdigit() and int(first) > 0
 
@@ -125,25 +125,25 @@ def test_parse_chain_steps_angles():
 
 
 def test_parse_helpers_errors():
-    with pytest.raises(ValueError, match="链格式错误"):
+    with pytest.raises(ValueError, match="chain format error"):
         _parse_chain("1")
-    with pytest.raises(ValueError, match="链必须是整数序列"):
+    with pytest.raises(ValueError, match="chain must be a list of integers"):
         _parse_chain("1-a")
-    with pytest.raises(ValueError, match="正整数"):
+    with pytest.raises(ValueError, match="positive"):
         _parse_chain("1-0")
-    with pytest.raises(ValueError, match="重复原子"):
+    with pytest.raises(ValueError, match="duplicate"):
         _parse_chain("1-2-1")
 
-    with pytest.raises(ValueError, match="需要 2 个值"):
+    with pytest.raises(ValueError, match="steps requires 2 values"):
         _parse_steps("120", 2)
-    with pytest.raises(ValueError, match="必须在 1..360"):
+    with pytest.raises(ValueError, match="steps must be in 1..360"):
         _parse_steps("0,400", 2)
 
-    with pytest.raises(ValueError, match="需要 2 段"):
+    with pytest.raises(ValueError, match="angles requires 2 segments"):
         _parse_angles("0,120", 2)
-    with pytest.raises(ValueError, match="需要 2 段"):
+    with pytest.raises(ValueError, match="angles requires 2 segments"):
         _parse_angles("0,120;", 2)
-    with pytest.raises(ValueError, match="段不能为空"):
+    with pytest.raises(ValueError, match="angles segment cannot be empty"):
         _parse_angles("0,120; , ", 2)
 
 
@@ -153,7 +153,7 @@ def test_run_generation_basic(tmp_path, monkeypatch):
     in_xyz = tmp_path / "in.xyz"
     in_xyz.write_text(xyz_content)
     run_generation(str(in_xyz), chains=["1-2-3"], chain_steps=["180,180"], confirm=False)
-    assert os.path.exists(tmp_path / "traj.xyz")
+    assert os.path.exists(tmp_path / "search.xyz")
 
 
 def test_load_mol_from_xyz_basic(tmp_path):

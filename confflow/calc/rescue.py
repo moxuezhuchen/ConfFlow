@@ -16,16 +16,27 @@ import re
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
+from rich.table import Table
+from rich import box
+
+from .constants import HARTREE_TO_KCALMOL
+from rich.console import Console
+from ..core.console import console, SINGLE_LINE, LINE_WIDTH
+import logging
+
+logger = logging.getLogger("confflow.calc.rescue")
+
 from .analysis import (
     _bond_length_from_xyz_lines,
     _keyword_requests_freq,
     _parse_ts_bond_atoms,
     _coords_array_from_xyz_lines,
 )
-from .core import get_itask, logger, parse_iprog
+from .core import get_itask, parse_iprog
 from .policies.gaussian import GaussianPolicy
 from .components import executor
 
+from ..core import io as io_xyz
 from ..blocks import refine
 
 try:
@@ -55,48 +66,20 @@ def _coords_lines_to_xyz(coords_lines: List[str]):
             z, y, x = xyz
             out.append((sym, float(x), float(y), float(z)))
         return out
-    except Exception:
+    except Exception as e:
+        logger.debug(f"将坐标行转换为 XYZ 失败: {e}")
         return None
 
 
 def _read_gaussian_input_coords(path: str) -> Optional[List[str]]:
-    """从 Gaussian 输入文件（.gjf/.com）解析坐标块。
-
-    目标：用于 TS 失败后的 scan 救援时，回到“失败 TS 的输入结构”作为起点。
-
-    解析策略（尽量鲁棒）：
-    - 找到第一行匹配 charge/multiplicity（两个整数）的行
-    - 其后连续的非空行视为坐标行，直到遇到空行
-    - 坐标行要求至少 4 列（元素符号 + x y z），其余列忽略
-    """
+    """从 Gaussian 输入文件（.gjf/.com）解析坐标块。"""
     try:
         if not path or not os.path.exists(path):
             return None
-        with open(path, "r", encoding="utf-8", errors="ignore") as f:
-            lines = [ln.rstrip("\n") for ln in f.readlines()]
-
-        qm_idx = None
-        for i, ln in enumerate(lines):
-            s = ln.strip()
-            if not s:
-                continue
-            if re.match(r"^\s*-?\d+\s+-?\d+\s*$", s):
-                qm_idx = i
-                break
-        if qm_idx is None:
-            return None
-
-        coords: List[str] = []
-        for ln in lines[qm_idx + 1 :]:
-            if not ln.strip():
-                break
-            p = ln.split()
-            if len(p) < 4:
-                break
-            coords.append(f"{p[0]} {p[1]} {p[2]} {p[3]}")
-
-        return coords or None
-    except Exception:
+        res = io_xyz.parse_gaussian_input(path)
+        return res.get("raw_coords_lines")
+    except Exception as e:
+        logger.debug(f"解析 Gaussian 输入坐标失败 ({path}): {e}")
         return None
 
 
@@ -125,7 +108,8 @@ def _find_failed_ts_input_coords(wd: str, job: str, cfg: Dict[str, Any]) -> Opti
             if coords:
                 return coords
         return None
-    except Exception:
+    except Exception as e:
+        logger.debug(f"寻找失败 TS 输入坐标失败: {e}")
         return None
 
 
@@ -186,48 +170,61 @@ def _write_scan_marker(scan_dir: str, job_name: str, message: str) -> None:
         return
 
 
-def _render_scan_table(
+def _render_scan_table_rich(
     job: str,
     a1: int,
     a2: int,
     rows: List[Tuple[float, float, str]],
-) -> str:
-    """将 scan 点渲染为纯文本表格。
-
-    rows: [(r_angstrom, energy_hartree, stage)] stage in {"coarse","fine"}
-    """
-    if not rows:
-        return ""
-
-    # 按键长排序，方便目测曲线
+    selected_r: Optional[float] = None,
+) -> Table:
+    """构建 scan 数据的 Rich Table 对象（使用统一格式）"""
+    # 按键长排序
     rows_sorted = sorted(rows, key=lambda x: x[0])
+    if not rows_sorted:
+        return Table(title="Empty Scan Data", box=box.SIMPLE)
+
     energies = [e for _, e, _ in rows_sorted]
     e_min = min(energies)
     e_max = max(energies)
-    # Hartree -> kcal/mol
-    hartree_to_kcal = 627.5094740631
 
-    header = [
-        f"TS rescue scan table: {job}",
-        f"Bond: {a1}-{a2}",
-        "Columns: idx  r(Å)     E(Eh)            dE(min)->kcal/mol   stage   note",
-    ]
+    # 创建表格（无边框标题，使用纯文本表头）
+    table = Table(box=box.SIMPLE, show_header=True, header_style="bold", padding=(0, 1))
 
-    lines: List[str] = []
+    table.add_column("Idx", justify="right", no_wrap=True)
+    table.add_column("r (Å)", justify="right")
+    table.add_column("E (Eh)", justify="right")
+    table.add_column("dE (kcal)", justify="right")
+    table.add_column("Stage", justify="center", style="dim")
+    table.add_column("Note", justify="left")
+
     for idx, (r, e, stage) in enumerate(rows_sorted, start=1):
-        de = (e - e_min) * hartree_to_kcal
-        note = "MAX" if e == e_max else ""
-        lines.append(
-            f"{idx:>3d}  {r:>7.3f}  {e:>16.8f}  {de:>16.2f}   {stage:<5s}   {note}"
-        )
-
-    # 概览
-    r_at_max = max(rows_sorted, key=lambda x: x[1])[0]
-    r_at_min = min(rows_sorted, key=lambda x: x[1])[0]
-    footer = [
-        f"Summary: n={len(rows_sorted)}  r@Emax={r_at_max:.3f}Å  r@Emin={r_at_min:.3f}Å  ΔE(max-min)={(e_max-e_min)*hartree_to_kcal:.2f} kcal/mol",
-    ]
-    return "\n".join(header + lines + footer) + "\n"
+        de = (e - e_min) * HARTREE_TO_KCALMOL
+        
+        # 改进 Note 标记逻辑：区分选中的 Peak 和全局 Max
+        notes = []
+        if selected_r is not None and abs(r - selected_r) < 1e-4:
+            notes.append("[bold green]PEAK[/]")  # 救援选中的点
+        
+        if e == e_max:
+            if not any("PEAK" in str(n) for n in notes):
+                notes.append("MAX") # 仅当不是 PEAK 时才标记 MAX，或者是 GMAX
+            else:
+                notes.append("(GMAX)")
+                
+        if e == e_min:
+            notes.append("MIN")
+            
+        note_str = " ".join(notes)
+        
+        # 格式化数值
+        s_idx = str(idx)
+        s_r = f"{r:.3f}"
+        s_e = f"{e:.8f}"
+        s_de = f"{de:.2f}"
+        
+        table.add_row(s_idx, s_r, s_e, s_de, stage, note_str)
+        
+    return table
 
 
 def _emit_and_write_scan_table(
@@ -237,8 +234,9 @@ def _emit_and_write_scan_table(
     a2: int,
     points: List[Tuple[float, float, List[str]]],
     fine_points: Optional[List[Tuple[float, float, List[str]]]] = None,
+    selected_r: Optional[float] = None,
 ) -> None:
-    """在终端输出并写入 scan 目录 scan_table.txt。"""
+    """在终端输出并写入 scan 目录 scan_table.txt（使用统一的美化格式）。"""
     try:
         rows: List[Tuple[float, float, str]] = [(r, e, "coarse") for r, e, _ in points]
         if fine_points:
@@ -255,21 +253,55 @@ def _emit_and_write_scan_table(
                 if merged[key][2] != "fine" and stage == "fine":
                     merged[key] = (float(r), float(e), stage)
 
-        table = _render_scan_table(job, a1, a2, list(merged.values()))
-        if not table.strip():
-            return
+        # 渲染 Rich Table (传入 selected_r)
+        table = _render_scan_table_rich(job, a1, a2, list(merged.values()), selected_r=selected_r)
+        
+        # 获取统计信息
+        rows_sorted = sorted(merged.values(), key=lambda x: x[0])
+        energies = [e for _, e, _ in rows_sorted]
+        e_min = min(energies)
+        e_max = max(energies)
+        r_at_max = max(rows_sorted, key=lambda x: x[1])[0]
+        r_at_min = min(rows_sorted, key=lambda x: x[1])[0]
+        de_total = (e_max - e_min) * HARTREE_TO_KCALMOL
 
-        # 终端输出：逐行 logger.info，避免多行日志被截断/折叠
-        logger.info("📈 scan 键长-能量表格（见 scan_table.txt）")
-        for ln in table.rstrip("\n").splitlines():
-            logger.info(ln)
+        # 1. 打印到主 log (显示给用户) - 使用统一格式
+        console.print()
+        console.print(f"TS RESCUE SCAN: {job}")
+        console.print(SINGLE_LINE)
+        console.print(f"  Bond: {a1}-{a2} | Points: {len(rows_sorted)} | ΔE: {de_total:.2f} kcal/mol")
+        
+        # 更新 Summary 行，明确显示选中的 Peak
+        info_parts = []
+        if selected_r is not None:
+             info_parts.append(f"r@Peak: {selected_r:.3f} Å (Selected)")
+             
+        info_parts.append(f"r@GlobalMax: {r_at_max:.3f} Å")
+        info_parts.append(f"r@Min: {r_at_min:.3f} Å")
+        console.print("  " + " | ".join(info_parts))
+        
+        console.print()
+        console.print(table)
 
+        # 2. 写入到 scan 目录的诊断文件
         scan_dir = os.path.join(wd, "scan")
         os.makedirs(scan_dir, exist_ok=True)
         out_path = os.path.join(scan_dir, "scan_table.txt")
+        
         with open(out_path, "w", encoding="utf-8") as f:
-            f.write(table)
-    except Exception:
+            f.write(f"TS RESCUE SCAN: {job}\n")
+            f.write(f"Bond {a1}-{a2} | Points: {len(rows_sorted)} | ΔE: {de_total:.2f} kcal/mol\n")
+            
+            f.write(" | ".join(info_parts) + "\n\n")
+            
+            # 复用 console 宽度配置
+            file_console = Console(file=f, force_terminal=False, color_system=None, width=console.width)
+            file_console.print(table)
+            
+        logger.info(f"Scan table saved to {out_path}")
+
+    except Exception as e:
+        logger.warning(f"Failed to write scan table: {e}")
         return
 
 
@@ -312,7 +344,8 @@ def _ts_rescue_scan(task_info: Dict[str, Any], fail_reason: str) -> Optional[Dic
     # 起点结构：优先使用“失败 TS 的输入结构”（可能已被移动到 backup_dir）。
     base_coords = _find_failed_ts_input_coords(wd, job, cfg)
     if base_coords:
-        logger.info("📌 scan 起点使用失败 TS 输入结构（work_dir/backup_dir）")
+        console.print(f"  Scan 起点: TS 输入结构（from backup）")
+        logger.info("scan 起点使用失败 TS 输入结构")
 
     if not base_coords:
         base_coords = task_info.get("coords")
@@ -331,9 +364,12 @@ def _ts_rescue_scan(task_info: Dict[str, Any], fail_reason: str) -> Optional[Dic
         _write_ts_failure_report(wd, job, "rescue", "未启用：无法从输入结构计算键长")
         return None
 
-    logger.info(
-        f"🔄 TS 救援扫描启动: {job} | 键 {a1}-{a2} | 起始键长 {r0:.3f} Å | 原因: {fail_reason}"
-    )
+    console.print()
+    console.print("TS RESCUE")
+    console.print(SINGLE_LINE)
+    console.print(f"  Job: {job} | Bond: {a1}-{a2} | r₀: {r0:.3f} Å")
+    console.print(f"  Reason: {fail_reason}")
+    logger.info(f"TS 救援启动: {job} | 键 {a1}-{a2} | r₀={r0:.3f} Å")
 
     coarse_step = float(cfg.get("scan_coarse_step", 0.1))
     fine_step = float(cfg.get("scan_fine_step", 0.02))
@@ -362,7 +398,7 @@ def _ts_rescue_scan(task_info: Dict[str, Any], fail_reason: str) -> Optional[Dic
         return f"opt {kw}".strip()
 
     def run_constrained_opt(
-        point_id: str, start_coords: List[str], target_r: float
+        start_coords: List[str], target_r: float
     ) -> Tuple[Optional[float], Optional[List[str]], Optional[str]]:
         scan_cfg = dict(cfg)
         scan_cfg["itask"] = "opt"
@@ -390,7 +426,8 @@ def _ts_rescue_scan(task_info: Dict[str, Any], fail_reason: str) -> Optional[Dic
 
         scan_dir = os.path.join(wd, "scan")
         os.makedirs(scan_dir, exist_ok=True)
-        job_name = f"{job}_scan_{point_id}"
+        # 简化作业名为纯键长数值
+        job_name = f"{target_r:.3f}"
         work_dir = scan_dir
 
         ok = False
@@ -435,22 +472,23 @@ def _ts_rescue_scan(task_info: Dict[str, Any], fail_reason: str) -> Optional[Dic
     points: List[Tuple[float, float, List[str]]] = []
     initial_coords = base_coords
 
-    e0, c0, err0 = run_constrained_opt("r0", initial_coords, r0)
+    e0, c0, err0 = run_constrained_opt(initial_coords, r0)
     # 初始点必须先做约束优化（得到可比的势能面参考结构）
     if e0 is None or c0 is None:
         msg = f"初始点 r0={r0:.3f} Å 约束优化失败，无法继续救援；err={err0 or 'unknown'}；TS失败原因={fail_reason}"
         _write_ts_failure_report(wd, job, "scan", msg)
-        logger.warning(f"❌ TS scan 初始点失败: {job} | {msg}")
+        console.print(f"  ✗ 初始点优化失败 | r₀={r0:.3f} Å | {err0 or 'unknown'}")
+        logger.warning(f"TS scan 初始点失败: {job}")
         return None
     points.append((r0, e0, c0))
     # 后续扫描都以初始点优化后的结构作为起点，保证势能面连续性
     initial_coords = c0
 
-    e_m, c_m, _ = run_constrained_opt("m1", initial_coords, r0 - coarse_step)
+    e_m, c_m, _ = run_constrained_opt(initial_coords, r0 - coarse_step)
     if e_m is not None and c_m is not None:
         points.append((r0 - coarse_step, e_m, c_m))
 
-    e_p, c_p, _ = run_constrained_opt("p1", initial_coords, r0 + coarse_step)
+    e_p, c_p, _ = run_constrained_opt(initial_coords, r0 + coarse_step)
     if e_p is not None and c_p is not None:
         points.append((r0 + coarse_step, e_p, c_p))
 
@@ -486,7 +524,7 @@ def _ts_rescue_scan(task_info: Dict[str, Any], fail_reason: str) -> Optional[Dic
 
         for k in range(2, k_max + 1):
             r = r0 + direction * coarse_step * k
-            e, c, _ = run_constrained_opt(f"{'p' if direction > 0 else 'm'}{k}", last_coords, r)
+            e, c, _ = run_constrained_opt(last_coords, r)
             if e is None or c is None:
                 uphill += 1
                 all_increasing = False
@@ -529,7 +567,7 @@ def _ts_rescue_scan(task_info: Dict[str, Any], fail_reason: str) -> Optional[Dic
             direct_fine = True
 
         if rising_pos or rising_neg:
-            _emit_and_write_scan_table(wd, job, a1, a2, points, fine_points=None)
+            _emit_and_write_scan_table(wd, job, a1, a2, points, fine_points=None, selected_r=None)
             _write_ts_failure_report(
                 wd,
                 job,
@@ -543,7 +581,7 @@ def _ts_rescue_scan(task_info: Dict[str, Any], fail_reason: str) -> Optional[Dic
         if direct_fine and e0 is not None and c0 is not None:
             coarse_peak = (r0, e0, c0)
         else:
-            _emit_and_write_scan_table(wd, job, a1, a2, points, fine_points=None)
+            _emit_and_write_scan_table(wd, job, a1, a2, points, fine_points=None, selected_r=None)
             _write_ts_failure_report(
                 wd, job, "scan", f"粗扫未找到局部极大值；TS失败原因={fail_reason}"
             )
@@ -563,7 +601,7 @@ def _ts_rescue_scan(task_info: Dict[str, Any], fail_reason: str) -> Optional[Dic
 
     for i in range(n_steps + 1):
         r = r_left + fine_step * i
-        e, c, _ = run_constrained_opt(f"f{i:03d}", last_coords, r)
+        e, c, _ = run_constrained_opt(last_coords, r)
         if e is None or c is None:
             continue
         fine_points.append((r, e, c))
@@ -574,20 +612,18 @@ def _ts_rescue_scan(task_info: Dict[str, Any], fail_reason: str) -> Optional[Dic
         if fine_points:
             fine_peak = max(fine_points, key=lambda x: x[1])
         else:
-            _emit_and_write_scan_table(wd, job, a1, a2, points, fine_points=None)
+            _emit_and_write_scan_table(wd, job, a1, a2, points, fine_points=None, selected_r=None)
             _write_ts_failure_report(wd, job, "scan", "细扫无有效点，无法救援")
             return None
 
     r_best, _, coords_best = fine_peak
 
     # 输出 scan 结果表格（终端 + scan_dir/scan_table.txt）
-    _emit_and_write_scan_table(wd, job, a1, a2, points, fine_points=fine_points)
+    _emit_and_write_scan_table(wd, job, a1, a2, points, fine_points=fine_points, selected_r=r_best)
 
-    ts_dir = os.path.join(wd, "ts_rescue")
-    os.makedirs(ts_dir, exist_ok=True)
-    ts_job = f"{job}_rescue"
-    ts_wd = os.path.join(ts_dir, ts_job)
+    ts_wd = os.path.join(wd, "ts_rescue")
     os.makedirs(ts_wd, exist_ok=True)
+    ts_job = f"{job}_rescue"
 
     ok = False
     try:
@@ -655,16 +691,16 @@ def _ts_rescue_scan(task_info: Dict[str, Any], fail_reason: str) -> Optional[Dic
         if ts_bond_length is not None:
             out["ts_bond_length"] = ts_bond_length
 
-        logger.info(
-            f"✅ TS 救援成功: {job} | 峰值键长 {r_best:.3f} Å | 最终键长 {ts_bond_length:.3f} Å"
-            if ts_bond_length
-            else f"✅ TS 救援成功: {job} | 峰值键长 {r_best:.3f} Å"
-        )
+        console.print()
+        console.print(f"  ✓ TS 救援成功 | r_peak={r_best:.3f} Å | r_final={ts_bond_length:.3f} Å" if ts_bond_length else f"  ✓ TS 救援成功 | r_peak={r_best:.3f} Å")
+        logger.info(f"TS 救援成功: {job} | r_peak={r_best:.3f} Å")
 
         return out
     except Exception as e:
         _write_ts_failure_report(wd, job, "ts_rescue", str(e))
-        logger.warning(f"❌ TS 救援失败: {job} | {e}")
+        console.print()
+        console.print(f"  ✗ TS 救援失败 | {str(e)[:60]}")
+        logger.warning(f"TS 救援失败: {job} | {e}")
         return None
     finally:
         try:

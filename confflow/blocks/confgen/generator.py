@@ -27,33 +27,13 @@ except ImportError as e:
 
 
 from ...core.console import create_progress
+from ...core.utils import get_numba_jit
+from ...core.data import GV_COVALENT_RADII
 
 
 logger = logging.getLogger("confflow.confgen")
 
-try:
-    import numba
-except ImportError:
-    logger.warning("Numba not found. Execution will be slow. Consider: pip install numba")
-
-    class FakeNumba:
-        def njit(self, *args, **kwargs):
-            def decorator(func):
-                return func
-
-            return decorator
-
-    numba = FakeNumba()
-
-# --- 导入共价半径数据（统一从 core.data 导入）---
-try:
-    from ...core.data import GV_COVALENT_RADII
-except ImportError:
-    try:
-        from confflow.core.data import GV_COVALENT_RADII
-    except ImportError:
-        # 最后回退：直接从 core 导入
-        from ...core import GV_COVALENT_RADII
+numba = get_numba_jit("confflow.confgen")
 
 # 构建 numpy 数组用于高性能计算
 GV_RADII_ARRAY = np.zeros(120, dtype=np.float64)
@@ -279,26 +259,30 @@ def load_mol_from_xyz(filename, bond_coeff):
     mol = rw_mol.GetMol()
     try:
         Chem.SanitizeMol(mol)
-    except:
+    except Exception:
         mol.UpdatePropertyCache(strict=False)
 
-    from ...core.console import console
-    from rich.columns import Columns
-    from rich.panel import Panel
-    from rich import box
+    from ...core.console import console, info
+    # info(f"Loaded {filename} — {mol.GetNumBonds()} bonds detected.")
 
-    console.print(f"[info]INFO:[/info] 成功载入 {filename}, 识别到 {mol.GetNumBonds()} 个键。")
-
-    # --- 打印连接表 ---
-    bonds_list = []
+    # --- Print connectivity list (改进格式) ---
+    console.print(f"  Topology (1-based): {mol.GetNumBonds()} bonds")
+    bonds_str = []
     for b in mol.GetBonds():
         a1 = b.GetBeginAtom()
         a2 = b.GetEndAtom()
-        b_str = f"{a1.GetIdx()+1:>3}({a1.GetSymbol()}) - {a2.GetIdx()+1:<3}({a2.GetSymbol()})"
-        bonds_list.append(b_str)
-
-    # 使用 Rich Panel 和 Columns 展示，美观且自动换行
-    console.print(Panel(Columns(bonds_list, equal=True, expand=True), title="当前拓扑连接表 (Index: 1-based)", border_style="dim", expand=False, box=box.ASCII))
+        bonds_str.append(f"{a1.GetIdx()+1}({a1.GetSymbol()})-{a2.GetIdx()+1}({a2.GetSymbol()})")
+    
+    # Dynamic columns based on console width
+    from ...core.console import console
+    cw = console.width or 80
+    num_cols = 4 if cw >= 75 else 3 if cw >= 58 else 2
+    col_w = (cw - 6) // num_cols
+    
+    for i in range(0, len(bonds_str), num_cols):
+        chunk = bonds_str[i:i+num_cols]
+        line_str = "".join(f"{s:<{col_w}}" for s in chunk)
+        console.print(f"    {line_str}")
 
     return mol
 
@@ -313,16 +297,16 @@ def _parse_chain(chain_str: str) -> List[int]:
     """解析链，例如 '81-69-78-86-92' -> [80, 68, 77, 85, 91] (0-based)。"""
     parts = [p.strip() for p in chain_str.replace(",", "-").split("-") if p.strip()]
     if len(parts) < 2:
-        raise ValueError(f"链格式错误: {chain_str}")
+        raise ValueError(f"chain format error: {chain_str}")
     try:
         atoms_1based = [int(x) for x in parts]
     except ValueError:
-        raise ValueError(f"链必须是整数序列: {chain_str}")
+        raise ValueError(f"chain must be a list of integers: {chain_str}")
     if any(x <= 0 for x in atoms_1based):
-        raise ValueError(f"链原子编号必须为 1-based 正整数: {chain_str}")
+        raise ValueError(f"chain indices must be positive (1-based): {chain_str}")
     atoms = [x - 1 for x in atoms_1based]
     if len(set(atoms)) != len(atoms):
-        raise ValueError(f"链中存在重复原子: {chain_str}")
+        raise ValueError(f"chain contains duplicate atoms: {chain_str}")
     return atoms
 
 
@@ -330,11 +314,11 @@ def _parse_steps(steps_str: str, n_bonds: int) -> List[int]:
     parts = [p.strip() for p in steps_str.split(",") if p.strip()]
     if len(parts) != n_bonds:
         raise ValueError(
-            f"steps 需要 {n_bonds} 个值(对应链上 {n_bonds} 根键)，实际 {len(parts)}: {steps_str}"
+            f"steps requires {n_bonds} values (for {n_bonds} bonds), got {len(parts)}: {steps_str}"
         )
     steps = [int(x) for x in parts]
     if any(s <= 0 or s > 360 for s in steps):
-        raise ValueError(f"steps 必须在 1..360: {steps_str}")
+        raise ValueError(f"steps must be in 1..360: {steps_str}")
     return steps
 
 
@@ -342,12 +326,12 @@ def _parse_angles(angles_str: str, n_bonds: int) -> List[List[float]]:
     """解析每根键的角度列表，例如 '0,120,240;0,60,120,180;180;0,120'。"""
     segs = [s.strip() for s in angles_str.split(";") if s.strip()]
     if len(segs) != n_bonds:
-        raise ValueError(f"angles 需要 {n_bonds} 段(用 ';' 分隔)，实际 {len(segs)}: {angles_str}")
+        raise ValueError(f"angles requires {n_bonds} segments (';' separated), got {len(segs)}: {angles_str}")
     out: List[List[float]] = []
     for seg in segs:
         vals = [v.strip() for v in seg.split(",") if v.strip()]
         if not vals:
-            raise ValueError(f"angles 段不能为空: {angles_str}")
+            raise ValueError(f"angles segment cannot be empty: {angles_str}")
         out.append([float(v) for v in vals])
     return out
 
@@ -463,9 +447,18 @@ def write_xyz(mol, conformers, filename):
     with open(filename, "w") as f:
         syms = [a.GetSymbol() for a in mol.GetAtoms()]
         natoms = len(syms)
-        for i, coords in enumerate(conformers):
+        for i, item in enumerate(conformers):
+            if isinstance(item, dict):
+                coords = item.get("coords")
+                cid = item.get("cid")
+            else:
+                coords = item
+                cid = None
+
             # 为后续工作流溯源提供稳定 ID
-            f.write(f"{natoms}\nConformer {i+1} | CID=cf_{i+1:06d}\n")
+            if not cid:
+                cid = f"cf_{i+1:06d}"
+            f.write(f"{natoms}\nConformer {i+1} | CID={cid}\n")
             for j, s in enumerate(syms):
                 x, y, z = coords[j]
                 f.write(f"{s:<4s} {x:12.6f} {y:12.6f} {z:12.6f}\n")
@@ -552,9 +545,23 @@ def run_generation(
     ref_parsed_chains = None
     all_confs_data = []
 
+    from ...core.console import info, warning, error, success
+
+    def _index_to_prefix(idx: int) -> str:
+        # 0 -> A, 1 -> B, ..., 25 -> Z, 26 -> AA, 27 -> AB, ...
+        letters = ""
+        n = idx
+        while True:
+            letters = chr(ord("A") + (n % 26)) + letters
+            n = n // 26 - 1
+            if n < 0:
+                break
+        return letters
+
     for file_idx, xyz_file in enumerate(input_files):
-        console.print()
-        console.rule(f"处理文件: {os.path.basename(xyz_file)}", characters="-")
+        cid_prefix = _index_to_prefix(file_idx)
+        local_count = 0
+        console.rule(f"Processing file: {os.path.basename(xyz_file)}", characters="-")
         
         try:
             mol = load_mol_from_xyz(xyz_file, bond_threshold)
@@ -586,9 +593,9 @@ def run_generation(
                 mol = rw_mol.GetMol()
                 try:
                     Chem.SanitizeMol(mol)
-                except:
+                except Exception:
                     mol.UpdatePropertyCache(strict=False)
-                print(f"INFO: 手动修正后，现有 {mol.GetNumBonds()} 个键。")
+                logging.info(f"手动修正后，现有 {mol.GetNumBonds()} 个键。")
 
             # 记录参考分子（使用修改后的拓扑）
             if file_idx == 0 and ref_mol is None:
@@ -729,26 +736,36 @@ def run_generation(
                     )
                     angle_lists.append([float(x) for x in bond_angles[bi]])
 
-            # 准备数据
-            from rich.table import Table
-            from rich import box
+            # Prepare data
             topo_mat = Chem.GetDistanceMatrix(mol).astype(np.int64)
             atom_nums = np.array([a.GetAtomicNum() for a in mol.GetAtoms()], dtype=np.int64)
 
-            console.print(f"可旋转键数: {len(rot_bonds)}")
+            console.print(f"  Rotatable bonds: {len(rot_bonds)}")
             if len(rot_bonds) > 0:
-                table = Table(show_header=False, box=box.ASCII, padding=(0, 2))
+                bond_items = []
                 for i, b in enumerate(rot_bonds):
                     a1, a2, _ = b
                     aa1, aa2 = mol.GetAtomWithIdx(a1), mol.GetAtomWithIdx(a2)
-                    table.add_row(f"{i+1}:", f"{a1+1}({aa1.GetSymbol()}) - {a2+1}({aa2.GetSymbol()})")
-                console.print(table)
+                    bond_items.append(f"{i+1}: {a1+1}({aa1.GetSymbol()}) - {a2+1}({aa2.GetSymbol()})")
+                
+                cw = console.width or 80
+                col_w = (cw - 8) // 2
+                for i in range(0, len(bond_items), 2):
+                    chunk = bond_items[i:i+2]
+                    line_str = "".join(f"{s:<{col_w}}" for s in chunk)
+                    console.print(f"    {line_str}")
 
-            console.print(f"筛选策略: 软球碰撞系数 {clash_threshold} (理论推荐值)")
+            console.print(f"  Clash filter: {clash_threshold}")
 
             if not rot_bonds:
-                console.print("无旋转键，跳过。")
-                all_confs_data.append(mol.GetConformer(0).GetPositions())
+                warning("No rotatable bonds. Skipping.")
+                local_count += 1
+                all_confs_data.append(
+                    {
+                        "coords": mol.GetConformer(0).GetPositions(),
+                        "cid": f"{cid_prefix}{local_count:06d}",
+                    }
+                )
                 continue
 
             if confirm:
@@ -758,7 +775,7 @@ def run_generation(
             per_bond_angles = angle_lists
             combos = list(itertools.product(*per_bond_angles))
             total_tasks = len(combos)
-            print(f"任务总数: {total_tasks}")
+            # info(f"Total tasks: {total_tasks}")
 
             cpu_count = multiprocessing.cpu_count()
             init_args = (
@@ -786,24 +803,27 @@ def run_generation(
             valid_count = 0
             for res in results:
                 if res is not None:
-                    all_confs_data.append(res)
+                    local_count += 1
+                    all_confs_data.append(
+                        {"coords": res, "cid": f"{cid_prefix}{local_count:06d}"}
+                    )
                     valid_count += 1
 
-            print(f"有效构象: {valid_count} / {total_tasks} ({valid_count/total_tasks*100:.1f}%)")
+            # info(f"Valid conformers: {valid_count} / {total_tasks} ({valid_count/total_tasks*100:.1f}%)")
 
         except Exception as e:
-            print(f"处理文件 {xyz_file} 时出错: {e}")
+            error(f"Failed to process {xyz_file}: {e}")
             import traceback
 
             traceback.print_exc()
 
     if all_confs_data and master_mol:
-        out_name = "traj.xyz"
-        print(f"\n正在写入 {len(all_confs_data)} 个构象到 {out_name}...")
+        out_name = "search.xyz"
+        # info(f"Writing {len(all_confs_data)} conformers to {out_name}...")
         write_xyz(master_mol, all_confs_data, out_name)
-        print("完成!")
+        # success("Done.")
     else:
-        print("\n未生成任何构象。")
+        warning("No conformers generated.")
 
     return all_confs_data
 

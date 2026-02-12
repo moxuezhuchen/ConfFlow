@@ -9,6 +9,7 @@ ConfFlow Config Schema - 配置参数规范化模块
 
 from typing import Dict, Any, Optional, List
 import logging
+import re
 
 from ..core.utils import parse_index_spec
 
@@ -53,6 +54,9 @@ class ConfigSchema:
         "keyword",
         "iprog",
         "itask",
+        "blocks",
+        "solvent_block",
+        "custom_block",
     }
 
     @classmethod
@@ -128,12 +132,12 @@ class ConfigSchema:
         required = ["iprog", "itask", "keyword"]
         for key in required:
             if key not in config:
-                raise ValueError(f"calc 任务缺少必要参数: {key}")
+                raise ValueError(f"calc config missing required parameter: {key}")
 
         # 验证 iprog
         valid_iprogs = {"gaussian", "g16", "orca", "1", "2", 1, 2}
         if config["iprog"] not in valid_iprogs:
-            raise ValueError(f"无效的 iprog: {config['iprog']}，可选: gaussian, g16, orca, 1, 2")
+            raise ValueError(f"invalid iprog: {config['iprog']}, valid: gaussian, g16, orca, 1, 2")
 
         # 验证 itask
         valid_itasks = {
@@ -155,7 +159,7 @@ class ConfigSchema:
         }
         if config["itask"] not in valid_itasks:
             raise ValueError(
-                f"无效的 itask: {config['itask']}，可选: opt, sp, freq, opt_freq, ts, 0-4"
+                f"invalid itask: {config['itask']}, valid: opt, sp, freq, opt_freq, ts, 0-4"
             )
 
         # 验证 cores_per_task
@@ -164,9 +168,18 @@ class ConfigSchema:
             try:
                 cores_int = int(cores)
             except (ValueError, TypeError):
-                raise ValueError(f"cores_per_task 必须为整数，当前: {cores}")
+                raise ValueError(f"cores_per_task must be an integer, current: {cores}")
             if cores_int < 1:
-                raise ValueError(f"cores_per_task 必须 >= 1，当前: {cores}")
+                raise ValueError(f"cores_per_task must be >= 1, current: {cores}")
+
+        # 验证 total_memory 格式 (如 4GB, 500MB)
+        mem = config.get("total_memory")
+        if mem is not None:
+            mem_str = str(mem).strip().upper()
+            if not re.match(r"^\d+(?:\.\d+)?\s*(?:GB|MB|KB|B)$", mem_str):
+                raise ValueError(
+                    f"total_memory format error: '{mem}', expected format like '4GB' or '500MB'"
+                )
 
         # 验证 max_parallel_jobs
         max_jobs = config.get("max_parallel_jobs")
@@ -174,9 +187,9 @@ class ConfigSchema:
             try:
                 max_jobs_int = int(max_jobs)
             except (ValueError, TypeError):
-                raise ValueError(f"max_parallel_jobs 必须为整数，当前: {max_jobs}")
+                raise ValueError(f"max_parallel_jobs must be an integer, current: {max_jobs}")
             if max_jobs_int < 1:
-                raise ValueError(f"max_parallel_jobs 必须 >= 1，当前: {max_jobs}")
+                raise ValueError(f"max_parallel_jobs must be >= 1, current: {max_jobs}")
 
         # 验证 charge/multiplicity
         charge = config.get("charge")
@@ -184,16 +197,16 @@ class ConfigSchema:
             try:
                 int(charge)
             except (ValueError, TypeError):
-                raise ValueError(f"charge 必须为整数，当前: {charge}")
+                raise ValueError(f"charge must be an integer, current: {charge}")
 
         mult = config.get("multiplicity")
         if mult is not None:
             try:
                 mult_int = int(mult)
             except (ValueError, TypeError):
-                raise ValueError(f"multiplicity 必须为整数，当前: {mult}")
+                raise ValueError(f"multiplicity must be an integer, current: {mult}")
             if mult_int < 1:
-                raise ValueError(f"multiplicity 必须 >= 1，当前: {mult}")
+                raise ValueError(f"multiplicity must be >= 1, current: {mult}")
 
         # 验证 ts_bond_atoms 格式
         ts_atoms = config.get("ts_bond_atoms")
@@ -201,20 +214,20 @@ class ConfigSchema:
             if isinstance(ts_atoms, str):
                 parts = ts_atoms.replace(",", " ").split()
                 if len(parts) != 2:
-                    raise ValueError(f"ts_bond_atoms 格式错误: {ts_atoms}，应为 'a,b' 或 [a, b]")
+                    raise ValueError(f"ts_bond_atoms format error: {ts_atoms}, expected 'a,b' or [a, b]")
                 try:
                     int(parts[0])
                     int(parts[1])
                 except (ValueError, TypeError):
-                    raise ValueError(f"ts_bond_atoms 必须为两个整数: {ts_atoms}")
+                    raise ValueError(f"ts_bond_atoms must be two integers: {ts_atoms}")
             elif isinstance(ts_atoms, (list, tuple)):
                 if len(ts_atoms) != 2:
-                    raise ValueError(f"ts_bond_atoms 必须为两个原子索引: {ts_atoms}")
+                    raise ValueError(f"ts_bond_atoms must be two atom indices: {ts_atoms}")
                 try:
                     int(ts_atoms[0])
                     int(ts_atoms[1])
                 except (ValueError, TypeError):
-                    raise ValueError(f"ts_bond_atoms 必须为两个整数: {ts_atoms}")
+                    raise ValueError(f"ts_bond_atoms must be two integers: {ts_atoms}")
 
     @staticmethod
     def _parse_freeze_string(freeze_str: str) -> List[int]:

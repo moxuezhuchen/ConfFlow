@@ -56,7 +56,7 @@ def handle_backups(
 
         # 兼容：rescue 过程会写入 ts_failures.txt（以及可能的诊断 .txt），将其一并备份。
         # 对于 Gaussian(g16)，checkpoint(.chk) 往往是关键中间产物，也需要纳入备份。
-        backup_exts = {".inp", ".gjf", ".out", ".log", ".xyz", ".err", ".txt", ".chk"}
+        backup_exts = {".inp", ".gjf", ".out", ".log", ".xyz", ".err", ".txt", ".chk", ".gbw"}
         for f in os.listdir(work_dir):
             if os.path.splitext(f)[1].lower() in backup_exts:
                 src = os.path.join(work_dir, f)

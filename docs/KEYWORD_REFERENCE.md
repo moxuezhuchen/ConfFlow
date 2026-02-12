@@ -73,25 +73,25 @@ confrefine <input.xyz> [选项]
 
 ```bash
 # 基础去重
-confrefine traj.xyz
+confrefine search.xyz
 
 # 修改RMSD阈值
-confrefine traj.xyz -t 0.3 -o stricter.xyz
+confrefine search.xyz -t 0.3 -o stricter.xyz
 
 # 能量筛选
-confrefine traj.xyz --ewin 5 -o filtered.xyz
+confrefine search.xyz --ewin 5 -o filtered.xyz
 
 # 限制输出数量
-confrefine traj.xyz -n 20 -o top20.xyz
+confrefine search.xyz -n 20 -o top20.xyz
 
 # 忽略氢原子
-confrefine traj.xyz --noH -o noH.xyz
+confrefine search.xyz --noH -o noH.xyz
 
 # 仅去重
-confrefine traj.xyz --dedup-only -o dedup.xyz
+confrefine search.xyz --dedup-only -o dedup.xyz
 
 # 组合多个条件
-confrefine traj.xyz \
+confrefine search.xyz \
   -t 0.25 \
   --ewin 3.0 \
   -n 15 \
@@ -113,17 +113,17 @@ confcalc <input.xyz> -s <settings.ini>
 
 | 参数 | 简写 | 说明 | 格式 | 示例 |
 |------|------|------|------|------|
-| `input_xyz` | - | 输入轨迹文件 | 文件路径 | `traj.xyz` |
+| `input_xyz` | - | 输入轨迹文件 | 文件路径 | `search.xyz` |
 | `--settings` | `-s` | 配置文件 | INI文件 | `-s gaussian.ini` |
 
 ### 常用示例
 
 ```bash
 # 使用Gaussian计算
-confcalc traj.xyz -s gaussian.ini
+confcalc search.xyz -s gaussian.ini
 
 # 使用ORCA计算
-confcalc traj.xyz -s orca.ini
+confcalc search.xyz -s orca.ini
 
 # 仅优化
 confcalc structures.xyz -s opt_settings.ini
@@ -238,19 +238,19 @@ confflow molecule.xyz \
 
 ```bash
 # 严格去重 (0.1 Å)
-confrefine traj.xyz -t 0.1
+confrefine search.xyz -t 0.1
 
 # 中等去重 (0.25 Å) - 默认
-confrefine traj.xyz
+confrefine search.xyz
 
 # 宽松去重 (0.5 Å)
-confrefine traj.xyz -t 0.5
+confrefine search.xyz -t 0.5
 
 # 能量+RMSD去重
-confrefine traj.xyz -t 0.25 -ewin 5 -n 50
+confrefine search.xyz -t 0.25 -ewin 5 -n 50
 
 # 仅保留最优的N个
-confrefine traj.xyz -n 10 --dedup-only
+confrefine search.xyz -n 10 --dedup-only
 ```
 
 ### 构象生成参数组合
@@ -308,7 +308,7 @@ confgen molecule.xyz 120 -y -opt
 
 ### Q: 如何去除相似构象?
 ```bash
-confrefine traj.xyz -t 0.25 -n 50
+confrefine search.xyz -t 0.25 -n 50
 ```
 
 ### Q: 工作目录在哪里?

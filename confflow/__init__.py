@@ -64,7 +64,7 @@ try:
     from .blocks.confgen import generate_conformers as run_generation
     from .calc import ChemTaskManager
     from .blocks.refine import RefineOptions, process_xyz
-    from .blocks.viz import generate_report as generate_html_report, parse_xyz_file
+    from .blocks.viz import parse_xyz_file
     from .core.utils import ConfFlowLogger, get_logger
     from .core.io import read_xyz_file, write_xyz_file, parse_comment_metadata
     from .config.schema import ConfigSchema, merge_step_params
@@ -80,7 +80,6 @@ try:
         "RefineOptions",
         "process_xyz",
         # 可视化
-        "generate_html_report",
         "parse_xyz_file",
         # 日志
         "ConfFlowLogger",

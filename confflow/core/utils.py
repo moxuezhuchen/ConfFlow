@@ -19,124 +19,36 @@ from typing import Optional, List, Dict, Any, Tuple
 # 模块可用性标志 (供其他模块检测)
 UTILS_AVAILABLE = True
 
+
 # ==============================================================================
-# GaussView 官方共价半径 (所有工具统一使用)
+# Numba Fallback 支持
 # ==============================================================================
-# 元素 0-119 的共价半径数据（单位：Ångström），来自 GaussView
-GV_COVALENT_RADII = [
-    0.00,
-    0.30,
-    1.16,
-    1.23,
-    0.89,
-    0.88,
-    0.77,
-    0.70,
-    0.66,
-    0.58,
-    0.55,
-    1.40,
-    1.36,
-    1.25,
-    1.17,
-    1.05,
-    1.01,
-    0.99,
-    1.58,
-    2.03,
-    1.74,
-    1.44,
-    1.32,
-    1.20,
-    1.13,
-    1.17,
-    1.16,
-    1.16,
-    1.15,
-    1.17,
-    1.25,
-    1.25,
-    1.22,
-    1.21,
-    1.17,
-    1.14,
-    1.89,
-    2.25,
-    1.92,
-    1.62,
-    1.45,
-    1.34,
-    1.29,
-    1.23,
-    1.24,
-    1.25,
-    1.28,
-    1.34,
-    1.41,
-    1.50,
-    1.40,
-    1.41,
-    1.37,
-    1.33,
-    2.09,
-    2.35,
-    1.98,
-    1.69,
-    1.65,
-    1.65,
-    1.64,
-    1.64,
-    1.66,
-    1.85,
-    1.61,
-    1.59,
-    1.59,
-    1.58,
-    1.57,
-    1.56,
-    1.70,
-    1.56,
-    1.44,
-    1.34,
-    1.30,
-    1.28,
-    1.26,
-    1.26,
-    1.29,
-    1.34,
-    1.44,
-    1.55,
-    1.54,
-    1.52,
-    1.53,
-    1.52,
-    1.53,
-    2.45,
-    2.02,
-    1.70,
-    1.63,
-    1.46,
-    1.40,
-    1.36,
-    1.25,
-    1.57,
-    1.58,
-    1.54,
-    1.53,
-    1.84,
-    1.61,
-    1.50,
-    1.49,
-    1.38,
-    1.36,
-    1.26,
-    1.20,
-    1.16,
-    1.14,
-    1.06,
-    1.28,
-    1.21,
-]
+
+
+def get_numba_jit(logger_name: str = "confflow"):
+    """获取 numba.njit 装饰器，如果不可用则返回空装饰器。"""
+    try:
+        import numba
+        return numba
+    except ImportError:
+        log = logging.getLogger(logger_name)
+        log.warning("Numba not found. Performance will be impacted. Consider: pip install numba")
+
+        class FakeNumba:
+            __name__ = "FakeNumba"
+
+            def njit(self, *args, **kwargs):
+                def decorator(func):
+                    return func
+                return decorator if not args else args[0]
+
+            def jit(self, *args, **kwargs):
+                def decorator(func):
+                    return func
+                return decorator if not args else args[0]
+
+        return FakeNumba()
+
 
 # ==============================================================================
 # 自定义异常类
@@ -150,22 +62,22 @@ class ConfFlowError(Exception):
 
 
 class InputFileError(ConfFlowError):
-    """输入文件相关错误"""
+    """Input file related error."""
 
     def __init__(self, message: str, filepath: Optional[str] = None):
         self.filepath = filepath
-        super().__init__(f"输入文件错误: {message}" + (f" (文件: {filepath})" if filepath else ""))
+        super().__init__(f"Input file error: {message}" + (f" (file: {filepath})" if filepath else ""))
 
 
 class XYZFormatError(InputFileError):
-    """XYZ 文件格式错误"""
+    """XYZ file format error."""
 
     def __init__(
         self, message: str, filepath: Optional[str] = None, line_num: Optional[int] = None
     ):
         self.line_num = line_num
-        line_info = f", 行 {line_num}" if line_num else ""
-        super().__init__(f"XYZ格式错误: {message}{line_info}", filepath)
+        line_info = f", line {line_num}" if line_num else ""
+        super().__init__(f"XYZ format error: {message}{line_info}", filepath)
 
 
 # ==============================================================================
@@ -239,6 +151,29 @@ class ConfFlowLogger:
         self.logger.addHandler(console_handler)
         self.handlers["console"] = console_handler
 
+    def redirect_console_handler(self, stream=None) -> None:
+        """将控制台 handler 的输出流重定向到指定 stream（默认当前 sys.stdout）。
+
+        用途：CLI 在进入 redirect_stdout/redirect_stderr 后调用，确保日志不会继续写到
+        import 阶段绑定的原始终端 stdout。
+        """
+        if stream is None:
+            stream = sys.stdout
+
+        handler = self.handlers.get("console")
+        if handler is None:
+            return
+
+        if isinstance(handler, logging.StreamHandler):
+            try:
+                handler.setStream(stream)
+            except Exception:
+                # Fallback for older/custom handlers
+                try:
+                    handler.stream = stream  # type: ignore[attr-defined]
+                except Exception:
+                    pass
+
     def add_file_handler(self, log_file: str, level: int = logging.DEBUG):
         """添加文件日志处理器
 
@@ -299,6 +234,30 @@ class ConfFlowLogger:
 def get_logger() -> ConfFlowLogger:
     """获取全局日志实例"""
     return ConfFlowLogger()
+
+
+def redirect_logging_streams(stream=None, include_root: bool = False) -> None:
+    """将已存在的 logging.StreamHandler 输出流统一重定向到指定 stream。
+
+    主要用于 CLI 已将 sys.stdout/stderr 重定向到文件，但 logger handler 仍绑定到原始终端。
+    """
+    if stream is None:
+        stream = sys.stdout
+
+    targets = [logging.getLogger("confflow")]
+    if include_root:
+        targets.insert(0, logging.getLogger())
+
+    for lg in targets:
+        for handler in list(getattr(lg, "handlers", [])):
+            if isinstance(handler, logging.StreamHandler):
+                try:
+                    handler.setStream(stream)
+                except Exception:
+                    try:
+                        handler.stream = stream  # type: ignore[attr-defined]
+                    except Exception:
+                        pass
 
 
 # ==============================================================================
@@ -449,10 +408,10 @@ def validate_yaml_config(
     if required_sections is None:
         required_sections = ["global", "steps"]
 
-    # 检查必需的配置节
+    # Check required sections
     for section in required_sections:
         if section not in config:
-            errors.append(f"缺少必需的配置节: '{section}'")
+            errors.append(f"missing required section: '{section}'")
 
     # 验证 global 配置
     if "global" in config:
@@ -462,28 +421,28 @@ def validate_yaml_config(
         if "gaussian_path" in global_config:
             path = global_config["gaussian_path"]
             if path and not os.path.exists(path) and "/" in path:
-                errors.append(f"Gaussian 路径不存在: {path}")
+                errors.append(f"Gaussian path not found: {path}")
 
         if "orca_path" in global_config:
             path = global_config["orca_path"]
             if path and not os.path.exists(path) and "/" in path:
-                errors.append(f"ORCA 路径不存在: {path}")
+                errors.append(f"ORCA path not found: {path}")
 
         # 检查资源配置
         cores = global_config.get("cores_per_task", 1)
         if not isinstance(cores, int) or cores <= 0:
-            errors.append(f"无效的 cores_per_task 值: {cores}")
+            errors.append(f"invalid cores_per_task: {cores}")
 
         max_jobs = global_config.get("max_parallel_jobs", 1)
         if not isinstance(max_jobs, int) or max_jobs <= 0:
-            errors.append(f"无效的 max_parallel_jobs 值: {max_jobs}")
+            errors.append(f"invalid max_parallel_jobs: {max_jobs}")
 
     # 验证 steps 配置
     if "steps" in config:
         steps = config["steps"]
 
         if not isinstance(steps, list):
-            errors.append("'steps' 必须是一个列表")
+            errors.append("'steps' must be a list")
         else:
             for i, step in enumerate(steps):
                 step_errors = _validate_step_config(step, i)
@@ -495,7 +454,7 @@ def validate_yaml_config(
 def _validate_step_config(step: Dict[str, Any], index: int) -> List[str]:
     """验证单个步骤的配置"""
     errors = []
-    step_id = f"步骤 {index + 1}"
+    step_id = f"step {index + 1}"
 
     def _pair_list_ok(val: Any) -> bool:
         """验证键对列表的形状：支持 [[a,b], ...] / [a,b] / ['a b', ...] / 'a b' 等。"""
@@ -520,19 +479,19 @@ def _validate_step_config(step: Dict[str, Any], index: int) -> List[str]:
 
     # 检查必需字段
     if "name" not in step:
-        errors.append(f"{step_id}: 缺少 'name' 字段")
+        errors.append(f"{step_id}: missing 'name' field")
     else:
-        step_id = f"步骤 '{step['name']}'"
+        step_id = f"step '{step['name']}'"
 
     if "type" not in step:
-        errors.append(f"{step_id}: 缺少 'type' 字段")
+        errors.append(f"{step_id}: missing 'type' field")
     else:
         step_type = step["type"]
         # 支持新旧命名 (向后兼容)
         valid_types = ["confgen", "calc", "gen", "task"]
         if step_type not in valid_types:
             errors.append(
-                f"{step_id}: 无效的类型 '{step_type}'，必须是 'confgen'、'calc'、'gen' 或 'task'"
+                f"{step_id}: invalid type '{step_type}', must be 'confgen', 'calc', 'gen' or 'task'"
             )
 
     # 验证 params
@@ -545,17 +504,17 @@ def _validate_step_config(step: Dict[str, Any], index: int) -> List[str]:
             itask = params.get("itask")
             valid_itasks = ["opt", "sp", "freq", "opt_freq", "ts", 0, 1, 2, 3, 4]
             if itask is not None and itask not in valid_itasks:
-                errors.append(f"{step_id}: 无效的 itask 值 '{itask}'")
+                errors.append(f"{step_id}: invalid itask value '{itask}'")
 
             # 验证 iprog
             iprog = params.get("iprog")
             valid_iprogs = ["gaussian", "g16", "orca", 1, 2]
             if iprog is not None and iprog not in valid_iprogs:
-                errors.append(f"{step_id}: 无效的 iprog 值 '{iprog}'")
+                errors.append(f"{step_id}: invalid iprog value '{iprog}'")
 
             # 检查 keyword（对于 task 类型，通常需要）
             if "keyword" not in params and iprog in ["orca", 2]:
-                errors.append(f"{step_id}: ORCA 任务缺少 'keyword' 参数")
+                errors.append(f"{step_id}: ORCA task missing 'keyword' parameter")
 
         elif step_type in ["confgen", "gen"]:
             # 链模式：必须提供 chain/chains（自动柔性键判断已移除）
@@ -564,21 +523,21 @@ def _validate_step_config(step: Dict[str, Any], index: int) -> List[str]:
                 chains = params.get("chain", None)
             if not chains:
                 errors.append(
-                    f"{step_id}: confgen 步骤必须提供 'chains' (或 'chain')，例如: chains: ['81-79-78-86-92']"
+                    f"{step_id}: confgen step requires 'chains' (or 'chain'), e.g. chains: ['81-79-78-86-92']"
                 )
 
             # 可选：手动修改键/旋转约束（允许但需要基本格式正确）
             for key in ("add_bond", "del_bond", "no_rotate", "force_rotate"):
                 if key in params and not _pair_list_ok(params.get(key)):
                     errors.append(
-                        f"{step_id}: confgen 参数 '{key}' 格式错误，应为 [[a,b], ...] / [a,b] / ['a b', ...] / 'a b'（原子编号 1-based）"
+                        f"{step_id}: confgen parameter '{key}' format error; expected [[a,b], ...] / [a,b] / ['a b', ...] / 'a b' (1-based indices)"
                     )
 
             # 验证 angle_step
             angle_step = params.get("angle_step")
             if angle_step is not None:
                 if not isinstance(angle_step, (int, float)) or angle_step <= 0:
-                    errors.append(f"{step_id}: 无效的 angle_step 值 '{angle_step}'")
+                    errors.append(f"{step_id}: invalid angle_step value '{angle_step}'")
 
     return errors
 

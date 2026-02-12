@@ -223,11 +223,11 @@ def test_calc_manager_failed_output_and_auto_clean_parse_errors(tmp_path):
         ), \
         patch("confflow.calc.manager.refine.RefineOptions") as mock_opts, \
         patch("confflow.calc.manager.refine.process_xyz", side_effect=Exception("boom")):
-        mock_opts.return_value = SimpleNamespace(output=str(tmp_path / "wd" / "isomers_cleaned.xyz"))
+        mock_opts.return_value = SimpleNamespace(output=str(tmp_path / "wd" / "output.xyz"))
         mgr.run(str(tmp_path / "input.xyz"))
 
-        assert (tmp_path / "wd" / "isomers_failed.xyz").exists()
-        assert (tmp_path / "wd" / "isomers.xyz").exists()
+        assert (tmp_path / "wd" / "failed.xyz").exists()
+        assert (tmp_path / "wd" / "result.xyz").exists()
 
 
 def test_calc_manager_executor_path_inserts_results(tmp_path):
@@ -286,4 +286,4 @@ def test_calc_manager_executor_path_inserts_results(tmp_path):
         mgr = ChemTaskManager(settings_file="", resume_dir=str(tmp_path / "wd"))
         mgr.run(str(tmp_path / "input.xyz"))
 
-        assert (tmp_path / "wd" / "isomers.xyz").exists()
+        assert (tmp_path / "wd" / "result.xyz").exists()

@@ -9,8 +9,10 @@
 from typing import Dict, Any
 
 # =============================================================================
-# 程序配置
+# 物理常量
 # =============================================================================
+
+HARTREE_TO_KCALMOL = 627.5094740631  # Hartree to kcal/mol
 
 # =============================================================================
 # 任务类型映射
@@ -143,7 +145,7 @@ GAUSSIAN_TEMPLATE = """{link0}%nproc={cores}
 ORCA_TEMPLATE = """! {keyword}
 %pal nprocs {cores} end
 %maxcore {memory}
-{solvent_block}{custom_block}{constraint_block}* xyz {charge} {multiplicity}
+{generated_blocks}* xyz {charge} {multiplicity}
 {coordinates}
 *
 """

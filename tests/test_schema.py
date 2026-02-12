@@ -67,39 +67,39 @@ def test_schema_normalize_step_extended():
 
 
 def test_schema_validate_calc_extended():
-    with pytest.raises(ValueError, match="calc 任务缺少必要参数"):
+    with pytest.raises(ValueError, match="calc config missing required parameter"):
         ConfigSchema.validate_calc_config({"iprog": "orca"})
 
-    with pytest.raises(ValueError, match="无效的 iprog"):
+    with pytest.raises(ValueError, match="invalid iprog"):
         ConfigSchema.validate_calc_config({"iprog": "invalid", "itask": "opt", "keyword": "B3LYP"})
 
-    with pytest.raises(ValueError, match="无效的 itask"):
+    with pytest.raises(ValueError, match="invalid itask"):
         ConfigSchema.validate_calc_config({"iprog": "orca", "itask": "invalid", "keyword": "B3LYP"})
 
-    with pytest.raises(ValueError, match="cores_per_task 必须为整数"):
+    with pytest.raises(ValueError, match="cores_per_task must be an integer"):
         ConfigSchema.validate_calc_config({"iprog": "orca", "itask": "opt", "keyword": "B3LYP", "cores_per_task": "abc"})
-    with pytest.raises(ValueError, match="cores_per_task 必须 >= 1"):
+    with pytest.raises(ValueError, match="cores_per_task must be >= 1"):
         ConfigSchema.validate_calc_config({"iprog": "orca", "itask": "opt", "keyword": "B3LYP", "cores_per_task": 0})
 
-    with pytest.raises(ValueError, match="max_parallel_jobs 必须为整数"):
+    with pytest.raises(ValueError, match="max_parallel_jobs must be an integer"):
         ConfigSchema.validate_calc_config({"iprog": "orca", "itask": "opt", "keyword": "B3LYP", "max_parallel_jobs": "abc"})
-    with pytest.raises(ValueError, match="max_parallel_jobs 必须 >= 1"):
+    with pytest.raises(ValueError, match="max_parallel_jobs must be >= 1"):
         ConfigSchema.validate_calc_config({"iprog": "orca", "itask": "opt", "keyword": "B3LYP", "max_parallel_jobs": 0})
 
-    with pytest.raises(ValueError, match="charge 必须为整数"):
+    with pytest.raises(ValueError, match="charge must be an integer"):
         ConfigSchema.validate_calc_config({"iprog": "orca", "itask": "opt", "keyword": "B3LYP", "charge": "abc"})
-    with pytest.raises(ValueError, match="multiplicity 必须为整数"):
+    with pytest.raises(ValueError, match="multiplicity must be an integer"):
         ConfigSchema.validate_calc_config({"iprog": "orca", "itask": "opt", "keyword": "B3LYP", "multiplicity": "abc"})
-    with pytest.raises(ValueError, match="multiplicity 必须 >= 1"):
+    with pytest.raises(ValueError, match="multiplicity must be >= 1"):
         ConfigSchema.validate_calc_config({"iprog": "orca", "itask": "opt", "keyword": "B3LYP", "multiplicity": 0})
 
-    with pytest.raises(ValueError, match="ts_bond_atoms 格式错误"):
+    with pytest.raises(ValueError, match="ts_bond_atoms format error"):
         ConfigSchema.validate_calc_config({"iprog": "orca", "itask": "opt", "keyword": "B3LYP", "ts_bond_atoms": "1,2,3"})
-    with pytest.raises(ValueError, match="ts_bond_atoms 必须为两个整数"):
+    with pytest.raises(ValueError, match="ts_bond_atoms must be two integers"):
         ConfigSchema.validate_calc_config({"iprog": "orca", "itask": "opt", "keyword": "B3LYP", "ts_bond_atoms": "1,abc"})
-    with pytest.raises(ValueError, match="ts_bond_atoms 必须为两个原子索引"):
+    with pytest.raises(ValueError, match="ts_bond_atoms must be two atom indices"):
         ConfigSchema.validate_calc_config({"iprog": "orca", "itask": "opt", "keyword": "B3LYP", "ts_bond_atoms": [1, 2, 3]})
-    with pytest.raises(ValueError, match="ts_bond_atoms 必须为两个整数"):
+    with pytest.raises(ValueError, match="ts_bond_atoms must be two integers"):
         ConfigSchema.validate_calc_config({"iprog": "orca", "itask": "opt", "keyword": "B3LYP", "ts_bond_atoms": [1, "abc"]})
 
 

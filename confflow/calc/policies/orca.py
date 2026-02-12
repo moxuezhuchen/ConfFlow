@@ -18,8 +18,7 @@ from ..geometry import check_termination as _check_termination
 from ..geometry import parse_last_geometry
 from ..components.input_helpers import (
     compute_orca_maxcore,
-    normalize_blocks,
-    orca_constraint_block,
+    format_orca_blocks,
     parse_freeze_indices,
 )
 
@@ -55,18 +54,55 @@ class OrcaPolicy(CalculationPolicy):
         charge = config.get("charge", 0)
         multiplicity = config.get("multiplicity", 1)
 
-        solvent_block, custom_block = normalize_blocks(
-            config.get("solvent_block", ""), config.get("custom_block", "")
-        )
+        # 统一块管理 (Unified Block Management)
+        import copy
 
-        constraint_block = ""
+        blocks_config = config.get("blocks", "")
+        # 兼容性处理：如果 blocks 为空，尝试从 solvent_block/custom_block 获取
+        if not blocks_config:
+            s_block = config.get("solvent_block", "").strip()
+            c_block = config.get("custom_block", "").strip()
+            blocks_config = "\n".join(b for b in [s_block, c_block] if b)
+
+        blocks_dict = {}
+        # 注意：从 ConfigParser 读取出来的总是字符串，除非在某些特殊流程中手动转换为 dict
+        # 我们这里主要支持字符串模式，但也保留对 dict 类型的兼容逻辑
+        is_dict_mode = isinstance(blocks_config, dict)
+
+        if is_dict_mode:
+            blocks_dict = copy.deepcopy(blocks_config)
+
+        # 约束块处理 (Constraint Handling)
         freeze = config.get("freeze", "")
         itask_val = config.get("itask", "opt")
-
-        # Only apply freeze constraint for opt/opt_freq tasks in ORCA
-        if freeze and itask_val in ("opt", "opt_freq"):
+        
+        constraint_str = ""
+        if freeze and itask_val in ("opt", "opt_freq", "ts", "optts"):
             freeze_atoms = parse_freeze_indices(freeze)
-            constraint_block = orca_constraint_block(freeze_atoms)
+            if freeze_atoms:
+                clist = [f"{{ C {int(idx) - 1} C }}" for idx in freeze_atoms]
+                if is_dict_mode:
+                    # 字典模式：合并进 blocks_dict
+                    if "geom" not in blocks_dict:
+                        blocks_dict["geom"] = {}
+                    if "Constraints" not in blocks_dict["geom"]:
+                        blocks_dict["geom"]["Constraints"] = clist
+                    else:
+                        existing = blocks_dict["geom"]["Constraints"]
+                        if isinstance(existing, list):
+                            for c in clist:
+                                if c not in existing:
+                                    existing.append(c)
+                        elif isinstance(existing, str):
+                            blocks_dict["geom"]["Constraints"] = existing.splitlines() + clist
+                else:
+                    # 字符串模式：生成独立的约束块
+                    constraint_str = format_orca_blocks({"geom": {"Constraints": clist}})
+
+        if is_dict_mode:
+            generated_blocks = format_orca_blocks(blocks_dict)
+        else:
+            generated_blocks = format_orca_blocks(blocks_config) + constraint_str
 
         coords_str = "\n".join(task_info["coords"])
 
@@ -74,9 +110,7 @@ class OrcaPolicy(CalculationPolicy):
             cores=cores,
             memory=memory,
             keyword=keyword_line,
-            solvent_block=solvent_block,
-            custom_block=custom_block,
-            constraint_block=constraint_block,
+            generated_blocks=generated_blocks,
             charge=charge,
             multiplicity=multiplicity,
             coordinates=coords_str,

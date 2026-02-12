@@ -8,6 +8,12 @@
 confflow <input.xyz> -c <confflow.yaml> [-w <work_dir>] [--resume] [--verbose]
 ```
 
+说明：`confflow` 默认不向终端打印日志；所有 stdout/stderr 会写入输入目录下同名文件 `<input_basename>.txt`。
+
+```bash
+tail -f input.txt
+```
+
 - `-c/--config`：工作流 YAML
 - `-w/--work_dir`：工作目录（默认 `<input_basename>_work`）
 - `--resume`：从断点继续

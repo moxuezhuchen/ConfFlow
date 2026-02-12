@@ -9,17 +9,14 @@ ConfFlow Viz - 可视化报告生成器 (v1.0)
 
 import logging
 import os
-import argparse
-import json
 import math
-import sqlite3
 from datetime import datetime
 from typing import List, Dict, Optional, Tuple
 
 from ...core.io import read_xyz_file
+from ...calc.constants import HARTREE_TO_KCALMOL
 
 # --- 常量定义 ---
-HARTREE_TO_KCALMOL = 627.509
 KB_KCALMOL = 0.001987204  # Boltzmann constant in kcal/(mol·K)
 
 # ==============================================================================
@@ -154,273 +151,30 @@ def get_lowest_energy_conformer(
     return conformers[idx], float(e_min), idx
 
 
-def generate_workflow_section(stats: Dict) -> str:
-    """生成工作流统计 HTML 片段"""
-    if not stats:
-        return ""
-
-    steps = stats.get("steps", [])
-    total_duration = stats.get("total_duration_seconds", 0)
-    initial_confs = stats.get("initial_conformers", 0)
-    final_confs = stats.get("final_conformers", 0)
-
-    # 如果 final_conformers 缺失，尝试从最后一步推导
-    if final_confs == 0 and steps:
-        final_confs = steps[-1].get("output_conformers", 0)
-
-    # 步骤表格行
-    step_rows = ""
-
-    def _count_failed_from_step_output(output_xyz: str) -> Optional[int]:
-        try:
-            if not output_xyz:
-                return None
-            step_dir = os.path.dirname(output_xyz)
-            db_path = os.path.join(step_dir, "work", "results.db")
-            if not os.path.exists(db_path):
-                return None
-            con = sqlite3.connect(db_path)
-            try:
-                cur = con.cursor()
-                cur.execute("select count(*) from task_results where status='failed'")
-                row = cur.fetchone()
-                if not row:
-                    return 0
-                return int(row[0])
-            finally:
-                con.close()
-        except Exception:
-            return None
-
-    for step in steps:
-        name = step.get("name", "Unknown")
-        stype = step.get("type", "")
-        status = step.get("status", "unknown")
-        inp = step.get("input_conformers", 0)
-        out = step.get("output_conformers", 0)
-        failed = step.get("failed_conformers", None)
-        if failed is None and stype in {"calc", "task"}:
-            failed = _count_failed_from_step_output(step.get("output_xyz") or "")
-        dur = step.get("duration_seconds", 0)
-
-        status_icon = "✅" if status == "completed" else ("⏭️" if status == "skipped" else "❌")
-
-        change = out - inp
-        change_cls = "positive" if change > 0 else ("negative" if change < 0 else "neutral")
-        change_str = f"+{change}" if change > 0 else str(change)
-        if inp == 0 and out == 0:
-            change_str = "-"
-
-        failed_str = "-" if failed is None else str(int(failed))
-
-        step_rows += f"""
-        <tr>
-            <td><span class="step-badge">{step.get('index', 0)}</span></td>
-            <td><strong>{name}</strong><br><small class="text-muted">{stype}</small></td>
-            <td>{status_icon} {status}</td>
-            <td>{inp}</td>
-            <td>{out}</td>
-            <td>{failed_str}</td>
-            <td><span class="change-{change_cls}">{change_str}</span></td>
-            <td>{format_duration(dur)}</td>
-        </tr>"""
-
-    return f"""
-    <div class="workflow-section">
-        <h2>📈 工作流统计</h2>
-        <div class="workflow-summary">
-            <div class="summary-card"><div>🔄</div><div><div class="val">{len(steps)}</div><div class="lbl">Steps</div></div></div>
-            <div class="summary-card"><div>⏱️</div><div><div class="val">{format_duration(total_duration)}</div><div class="lbl">Time</div></div></div>
-            <div class="summary-card"><div>📥</div><div><div class="val">{initial_confs or stats.get('initial_conformers', 0)}</div><div class="lbl">Input</div></div></div>
-            <div class="summary-card"><div>📤</div><div><div class="val">{final_confs}</div><div class="lbl">Final</div></div></div>
-        </div>
-        <table class="step-table">
-            <thead><tr><th>#</th><th>Step</th><th>Status</th><th>In</th><th>Out</th><th>Failed</th><th>Δ</th><th>Time</th></tr></thead>
-            <tbody>{step_rows}</tbody>
-        </table>
-    </div>
-    """
-
-
-def generate_html_report(
-    conformers: List[Dict],
-    output_file: str,
-    temperature: float = 298.15,
-    stats: Optional[Dict] = None,
-):
-    """生成完整 HTML 报告"""
-    energies = _extract_energies(conformers)
-
-    # 计算相对能量和 Boltzmann 权重
-    valid_energies = [e for e in energies if e is not None and e != float("inf")]
-    min_energy = min(valid_energies) if valid_energies else 0.0
-
-    rel_energies = []
-    for e in energies:
-        if e is None or e == float("inf"):
-            rel_energies.append(999.9)
-        else:
-            rel_energies.append((e - min_energy) * HARTREE_TO_KCALMOL)
-
-    boltzmann_weights = calculate_boltzmann_weights(energies, temperature)
-    workflow_html = generate_workflow_section(stats) if stats else ""
-
-    # 表格显示按 Gibbs 能量排序（避免输入文件顺序与展示能量不一致导致“看起来没排序”）
-    def _sort_key(i: int) -> float:
-        e = energies[i] if i < len(energies) else None
-        if e is None or e == float("inf"):
-            return float("inf")
-        try:
-            return float(e)
-        except Exception:
-            return float("inf")
-
-    order = sorted(range(len(conformers)), key=_sort_key)
-
-    # HTML 模板
-    html = f"""<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <title>ConfFlow Report</title>
-    <style>
-        :root {{ --primary: #667eea; --secondary: #764ba2; --bg: #f5f7fa; --text: #2d3748; }}
-        body {{ font-family: system-ui, -apple-system, sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 20px; line-height: 1.5; }}
-        .container {{ max-width: 1200px; margin: 0 auto; background: white; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); overflow: hidden; }}
-        header {{ background: linear-gradient(135deg, var(--primary), var(--secondary)); color: white; padding: 40px; }}
-        h1 {{ margin: 0; font-size: 2.2rem; }}
-        .meta {{ opacity: 0.9; margin-top: 10px; }}
-        
-        .section {{ padding: 30px; border-bottom: 1px solid #e2e8f0; }}
-        .summary-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; }}
-        .card {{ background: #f8fafc; padding: 20px; border-radius: 8px; border: 1px solid #e2e8f0; }}
-        .card-label {{ color: #718096; font-size: 0.875rem; text-transform: uppercase; letter-spacing: 0.05em; }}
-        .card-val {{ font-size: 1.5rem; font-weight: 700; color: #2d3748; margin-top: 5px; }}
-        
-        table {{ width: 100%; border-collapse: collapse; margin-top: 20px; font-size: 0.95rem; }}
-        th {{ background: #f1f5f9; text-align: left; padding: 12px 16px; font-weight: 600; color: #4a5568; }}
-        td {{ padding: 12px 16px; border-bottom: 1px solid #e2e8f0; }}
-        tr:hover {{ background: #f8fafc; }}
-        
-        .rank-badge {{ background: var(--primary); color: white; padding: 4px 10px; border-radius: 999px; font-weight: 700; font-size: 0.85rem; }}
-        .bar-container {{ width: 100px; height: 6px; background: #e2e8f0; border-radius: 3px; overflow: hidden; display: inline-block; vertical-align: middle; margin-right: 8px; }}
-        .bar-fill {{ height: 100%; background: var(--secondary); }}
-        
-        /* Workflow Styles */
-        .workflow-summary {{ display: flex; gap: 20px; margin-bottom: 30px; flex-wrap: wrap; }}
-        .summary-card {{ display: flex; align-items: center; gap: 15px; background: white; padding: 15px 25px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); flex: 1; border: 1px solid #edf2f7; }}
-        .summary-card .val {{ font-size: 1.25rem; font-weight: bold; }}
-        .summary-card .lbl {{ font-size: 0.85rem; color: #718096; }}
-        .step-badge {{ background: #edf2f7; color: #4a5568; width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; border-radius: 50%; font-weight: bold; font-size: 0.8rem; }}
-        .change-positive {{ color: #48bb78; font-weight: bold; }}
-        .change-negative {{ color: #f56565; font-weight: bold; }}
-        .change-neutral {{ color: #cbd5e0; }}
-        .resource-bar {{ width: 60px; height: 4px; background: #edf2f7; border-radius: 2px; margin-bottom: 4px; overflow: hidden; }}
-        .cpu-bar {{ height: 100%; background: #4299e1; }}
-        .mem-bar {{ height: 100%; background: #ed8936; }}
-        .text-muted {{ color: #a0aec0; font-size: 0.85rem; }}
-    </style>
-</head>
-<body>
-    <div class="container">
-        <header>
-            <h1>🧪 ConfFlow Analysis Report</h1>
-            <div class="meta">Generated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}</div>
-        </header>
-        
-        {workflow_html}
-        
-        <div class="section">
-            <h2>📊 Conformer Analysis</h2>
-            <div class="summary-grid">
-                <div class="card">
-                    <div class="card-label">Conformers</div>
-                    <div class="card-val">{len(conformers)}</div>
-                </div>
-                <div class="card">
-                    <div class="card-label">Energy Range</div>
-                    <div class="card-val">{max(rel_energies) if rel_energies else 0:.2f} <small>kcal/mol</small></div>
-                </div>
-                <div class="card">
-                    <div class="card-label">Temperature</div>
-                    <div class="card-val">{temperature} K</div>
-                </div>
-                <div class="card">
-                    <div class="card-label">Lowest Energy</div>
-                    <div class="card-val">{min_energy:.6f} <small>Ha</small></div>
-                </div>
-            </div>
-            
-            <table>
-                <thead>
-                    <tr>
-                        <th>Rank</th>
-                        <th>Gibbs Energy (Ha)</th>
-                        <th>ΔG (kcal/mol)</th>
-                        <th>Boltzmann Weight</th>
-                        <th>Imag</th>
-                        <th>TSBond (Å)</th>
-                    </tr>
-                </thead>
-                <tbody>
-"""
-
-    for display_rank, idx in enumerate(order, start=1):
-        conf = conformers[idx]
-        meta = conf["metadata"]
-        energy = energies[idx] if idx < len(energies) else None
-        de = rel_energies[idx] if idx < len(rel_energies) else 999.9
-        imag = meta.get("Imag", meta.get("num_imag_freqs", "-"))
-        tsbond = meta.get("TSBond", meta.get("ts_bond_length", "-"))
-        boltz = boltzmann_weights[idx] if idx < len(boltzmann_weights) else 0.0
-
-        # 格式化能量
-        e_str = f"{float(energy):.6f}" if energy is not None and energy != float("inf") else "N/A"
-
-        # 格式化 TSBond（健壮处理各种类型）
-        if tsbond == "-" or tsbond is None:
-            tsbond_str = "-"
-        else:
-            try:
-                tsbond_str = f"{float(tsbond):.4f}"
-            except (ValueError, TypeError):
-                tsbond_str = str(tsbond)
-
-        html += f"""
-                    <tr>
-                        <td><span class="rank-badge">#{int(display_rank)}</span></td>
-                        <td>{e_str}</td>
-                        <td>{de:.2f}</td>
-                        <td>
-                            <div class="bar-container"><div class="bar-fill" style="width: {boltz}%"></div></div>
-                            {boltz:.1f}%
-                        </td>
-                        <td>{imag}</td>
-                        <td>{tsbond_str}</td>
-                    </tr>"""
-
-    html += """
-                </tbody>
-            </table>
-        </div>
-    </div>
-</body>
-</html>
-"""
-
-    with open(output_file, "w", encoding="utf-8") as f:
-        f.write(html)
-
-
 def generate_text_report(
     conformers: List[Dict],
     temperature: float = 298.15,
     stats: Optional[Dict] = None,
 ) -> str:
-    """生成纯文本报告（用于合并到 txt 输出）。"""
+    """生成纯文本报告（新格式：美化输出）。"""
+    from ...core.console import LINE_WIDTH
+    DOUBLE_LINE = "=" * LINE_WIDTH
+    SINGLE_LINE = "─" * LINE_WIDTH
+    
     lines: List[str] = []
-    lines.append("=== ConfFlow Analysis Report ===")
-    lines.append(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    
+    # === 最终报告头部 ===
+    lines.append("")
+    lines.append(DOUBLE_LINE)
+    lines.append(f"{'FINAL REPORT':^{LINE_WIDTH}}")
+    finished_str = 'Finished: ' + datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    lines.append(f"{finished_str:^{LINE_WIDTH}}")
+    
+    if stats:
+        total_duration = stats.get("total_duration_seconds", 0)
+        time_str = 'Total Time: ' + format_duration(total_duration)
+        lines.append(f"{time_str:^{LINE_WIDTH}}")
+    lines.append(DOUBLE_LINE)
 
     if not conformers:
         lines.append("No conformers found.")
@@ -450,6 +204,7 @@ def generate_text_report(
 
     order = sorted(range(len(conformers)), key=_sort_key)
 
+    # === WORKFLOW SUMMARY ===
     if stats:
         steps = stats.get("steps", [])
         total_duration = stats.get("total_duration_seconds", 0)
@@ -459,48 +214,45 @@ def generate_text_report(
             final_confs = steps[-1].get("output_conformers", 0)
 
         lines.append("")
-        lines.append("== Workflow Summary ==")
-        lines.append(
-            f"Steps: {len(steps)}  Time: {format_duration(total_duration)}  Input: {initial_confs}  Final: {final_confs}"
-        )
-        lines.append(
-            f"{'Step':>4} {'Name':<12} {'Type':<7} {'Status':<10} {'In':>5} {'Out':>5} {'Failed':>6} {'Δ':>4} {'Time':>8}"
-        )
+        lines.append("WORKFLOW SUMMARY")
+        lines.append(SINGLE_LINE)
+        
+        # 步骤表格
+        header = f"  {'Step':>4}   {'Name':<10}  {'Type':<8}  {'Status':<10}  {'In':>5}  {'Out':>5}  {'Failed':>6}  {'Time':>10}"
+        lines.append(header)
+        
         for step in steps:
-            name = str(step.get("name", "Unknown"))[:12]
-            stype = str(step.get("type", ""))[:7]
+            idx = step.get('index', 0)
+            name = str(step.get("name", "Unknown"))[:10]
+            stype = str(step.get("type", ""))[:8]
             status = str(step.get("status", "unknown"))[:10]
             inp = step.get("input_conformers", 0)
             out = step.get("output_conformers", 0)
             failed = step.get("failed_conformers", None)
             dur = step.get("duration_seconds", 0)
-            change = out - inp
-            change_str = f"+{change}" if change > 0 else str(change)
-            if inp == 0 and out == 0:
-                change_str = "-"
+            
             failed_str = "-" if failed is None else str(int(failed))
-            lines.append(
-                f"{step.get('index', 0):>4} {name:<12} {stype:<7} {status:<10} {inp:>5} {out:>5} {failed_str:>6} {change_str:>4} {format_duration(dur):>8}"
-            )
+            dur_str = format_duration(dur)
+            
+            line = f"  {idx:>4}   {name:<10}  {stype:<8}  {status:<10}  {inp:>5}  {out:>5}  {failed_str:>6}  {dur_str:>10}"
+            lines.append(line)
+        
+        lines.append(SINGLE_LINE)
+        lines.append(f"  Total: {initial_confs} → {final_confs} conformers")
 
+    # === CONFORMER ANALYSIS ===
     lines.append("")
-    lines.append("== Conformer Analysis ==")
+    lines.append("CONFORMER ANALYSIS")
+    lines.append(SINGLE_LINE)
     lines.append(
-        f"Conformers: {len(conformers)}  Energy Range: {max(rel_energies) if rel_energies else 0:.2f} kcal/mol  Temperature: {temperature} K  Lowest Energy: {min_energy:.6f} Ha"
+        f"  Conformers: {len(conformers)}    Range: {max(rel_energies) if rel_energies else 0:.2f} kcal/mol    T: {temperature} K"
     )
-    if stats:
-        lowest = stats.get("lowest_conformer") or {}
-        cid = lowest.get("cid")
-        energy = lowest.get("energy")
-        xyz_path = lowest.get("xyz_path")
-        if cid or energy is not None or xyz_path:
-            energy_str = f"{energy:.6f} Ha" if energy is not None else "N/A"
-            lines.append(
-                f"Lowest Conformer: CID={cid or '-'}  Energy={energy_str}  XYZ={xyz_path or '-'}"
-            )
-    lines.append(
-        f"{'Rank':>4} {'Gibbs(Ha)':>12} {'ΔG(kcal/mol)':>12} {'Boltz(%)':>8} {'Imag':>5} {'TSBond(Å)':>10}"
-    )
+    lines.append(f"  Lowest Energy: {min_energy:.6f} Ha")
+    lines.append("")
+    
+    # 构象表格
+    header = f"  {'Rank':>4}  {'Energy (Ha)':>14}  {'ΔG (kcal)':>11}  {'Pop (%)':>9}  {'Imag':>6}  {'TSBond':>10}  {'CID':>10}"
+    lines.append(header)
 
     for display_rank, idx in enumerate(order, start=1):
         conf = conformers[idx]
@@ -509,9 +261,10 @@ def generate_text_report(
         de = rel_energies[idx] if idx < len(rel_energies) else 999.9
         imag = meta.get("Imag", meta.get("num_imag_freqs", "-"))
         tsbond = meta.get("TSBond", meta.get("ts_bond_length", "-"))
+        cid = meta.get("CID", "-")
         boltz = boltzmann_weights[idx] if idx < len(boltzmann_weights) else 0.0
 
-        e_str = f"{float(energy):.6f}" if energy is not None and energy != float("inf") else "N/A"
+        e_str = f"{float(energy):.7f}" if energy is not None and energy != float("inf") else "N/A"
         if tsbond == "-" or tsbond is None:
             tsbond_str = "-"
         else:
@@ -520,51 +273,9 @@ def generate_text_report(
             except (ValueError, TypeError):
                 tsbond_str = str(tsbond)
 
-        lines.append(
-            f"{display_rank:>4} {e_str:>12} {de:>12.2f} {boltz:>8.1f} {str(imag):>5} {tsbond_str:>10}"
-        )
+        line = f"  {display_rank:>4}  {e_str:>14}  {de:>11.2f}  {boltz:>9.1f}  {str(imag):>6}  {tsbond_str:>10}  {str(cid):>10}"
+        lines.append(line)
 
+    lines.append(DOUBLE_LINE)
     return "\n".join(lines)
 
-
-# ==============================================================================
-# CLI Entry Point
-# ==============================================================================
-
-
-def main(argv: Optional[List[str]] = None) -> int:
-    parser = argparse.ArgumentParser(description="ConfFlow Viz (v1.0)")
-    parser.add_argument("input_xyz", help="Input XYZ file")
-    parser.add_argument("-o", "--output", default="report.html", help="Output HTML file")
-    parser.add_argument("-t", "--temperature", type=float, default=298.15, help="Temperature (K)")
-    parser.add_argument("--stats", help="Path to workflow_stats.json")
-
-    args = parser.parse_args(argv)
-
-    if not os.path.exists(args.input_xyz):
-        print(f"Error: File not found: {args.input_xyz}")
-        return 1
-
-    confs = parse_xyz_file(args.input_xyz)
-    if not confs:
-        print("No conformers found.")
-        return 1
-
-    stats_data = None
-    if args.stats and os.path.exists(args.stats):
-        try:
-            with open(args.stats, "r", encoding="utf-8") as f:
-                stats_data = json.load(f)
-        except Exception as e:
-            import logging
-
-            logger = logging.getLogger("confflow.viz")
-            logger.warning(f"无法读取统计文件 {args.stats}: {e}")
-
-    generate_html_report(confs, args.output, args.temperature, stats=stats_data)
-    print(f"✅ Report generated: {args.output}")
-    return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())

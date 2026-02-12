@@ -20,71 +20,21 @@ try:
 except ImportError:
     psutil = None
 
-from .core.utils import get_logger
+from .core.utils import get_logger, redirect_logging_streams
 from .workflow.engine import run_workflow
-from .core.io import write_xyz_file
+from .core.io import write_xyz_file, parse_gaussian_input_text
 from .calc.constants import get_element_symbol
+from .core.console import redirect_console
 
 logger = get_logger()
 
 
 def _parse_gaussian_input_geometry(text: str) -> Tuple[int, int, List[str], List[List[float]]]:
-    """Parse a Gaussian .gjf/.com input file into (charge, multiplicity, atoms, coords).
-
-    Notes:
-    - Finds the first line matching charge/multiplicity: two integers.
-    - Reads subsequent non-empty lines as geometry until a blank line.
-    - For each geometry line, takes the first token as element (or atomic number)
-      and the last three numeric tokens as x/y/z. This supports frozen-atom format
-      where an extra column (e.g. 0 / -1) appears after the element.
-    """
-    lines = text.splitlines()
-    qm_idx = None
-    charge = 0
-    mult = 1
-    for i, ln in enumerate(lines):
-        s = ln.strip()
-        if not s:
-            continue
-        if re.match(r"^\s*-?\d+\s+-?\d+\s*$", s):
-            qm_idx = i
-            parts = s.split()
-            charge = int(parts[0])
-            mult = int(parts[1])
-            break
-    if qm_idx is None:
-        raise ValueError("Cannot find charge/multiplicity line in Gaussian input")
-
-    atoms: List[str] = []
-    coords: List[List[float]] = []
-    for ln in lines[qm_idx + 1 :]:
-        if not ln.strip():
-            break
-        p = ln.split()
-        if len(p) < 4:
-            break
-
-        sym = p[0]
-        if sym.isdigit():
-            sym = get_element_symbol(int(sym))
-
-        xyz: List[float] = []
-        for tok in reversed(p[1:]):
-            try:
-                xyz.append(float(tok))
-            except (ValueError, TypeError):
-                continue
-            if len(xyz) == 3:
-                break
-        if len(xyz) != 3:
-            break
-        z, y, x = xyz
-        atoms.append(sym)
-        coords.append([x, y, z])
-
-    if not atoms:
+    """Parse a Gaussian .gjf/.com input file into (charge, multiplicity, atoms, coords)."""
+    res = parse_gaussian_input_text(text)
+    if not res["atoms"]:
         raise ValueError("No geometry found in Gaussian input")
-    return charge, mult, atoms, coords
+    return res["charge"], res["multiplicity"], res["atoms"], res["coords"]
 
 
 def _convert_gjf_to_xyz(gjf_path: str, xyz_out: str) -> None:
@@ -141,11 +91,23 @@ import time
 def kill_proc_tree(
     pid: int, sig=signal.SIGTERM, include_parent=True, timeout=None, on_terminate=None
 ):
-    """Kill a process tree (including grandchildren) with signal "sig"."""
-    # 兼容参数：当前实现未使用回调。
+    """Kill a process tree (including grandchildren) with signal "sig".
+    
+    如果超时后进程仍未终止，会自动发送 SIGKILL 强制杀死。
+    
+    Args:
+        pid: 要杀死的进程树根 PID
+        sig: 初始信号（默认 SIGTERM）
+        include_parent: 是否包含父进程
+        timeout: 超时时间（秒），超时后发送 SIGKILL
+        on_terminate: 兼容参数（未使用）
+    
+    Returns:
+        (gone, alive): 已终止和仍存活的进程列表
+    """
     del on_terminate
     if not psutil:
-        return
+        return None
 
     if pid == os.getpid():
         raise RuntimeError("I refuse to kill myself")
@@ -153,7 +115,7 @@ def kill_proc_tree(
     try:
         parent = psutil.Process(pid)
     except psutil.NoSuchProcess:
-        return
+        return None
 
     children = parent.children(recursive=True)
 
@@ -193,6 +155,27 @@ def kill_proc_tree(
             break
 
         if timeout is not None and time.time() - start_time > timeout:
+            # 超时后发送 SIGKILL 强制杀死
+            for p in alive:
+                try:
+                    p.kill()  # SIGKILL
+                except psutil.NoSuchProcess:
+                    pass
+            # 等待一小段时间让进程真正终止
+            time.sleep(0.1)
+            # 更新最终状态
+            final_alive = []
+            for p in alive:
+                try:
+                    if p.is_running() and p.status() != psutil.STATUS_ZOMBIE:
+                        final_alive.append(p)
+                    else:
+                        if p not in gone:
+                            gone.append(p)
+                except psutil.NoSuchProcess:
+                    if p not in gone:
+                        gone.append(p)
+            alive = final_alive
             break
 
         time.sleep(0.1)
@@ -294,11 +277,21 @@ def main(args_list: Optional[list[str]] = None):
     output_base = os.path.splitext(os.path.basename(first_input))[0]
     output_path = os.path.join(output_dir, f"{output_base}.txt")
 
-    # 捕获柔性链/原子顺序一致性错误，进行交互提示，除非 --yes/--force
+    # 捕获柔性链/原子顺序一致性错误，进行交互提示
+    # NOTE: this function redirects *all* stdout/stderr to a txt file during the workflow run.
+    # We must restore Rich/logging streams after the run so they never hold a closed file handle.
     try:
-        with open(output_path, "w", encoding="utf-8") as out_f, redirect_stdout(
-            out_f
-        ), redirect_stderr(out_f):
+        with open(output_path, "w", encoding="utf-8") as out_f, redirect_stdout(out_f), redirect_stderr(out_f):
+            # Ensure all output goes into the txt file:
+            # - Rich console is a global singleton created at import-time.
+            # - logging StreamHandlers may still be bound to the original terminal stdout.
+            redirect_console(sys.stdout)
+            try:
+                get_logger().redirect_console_handler(sys.stdout)
+            except Exception:
+                pass
+            redirect_logging_streams(sys.stdout, include_root=False)
+
             try:
                 # Support Gaussian input (.gjf/.com): auto-convert to single-frame XYZ then run workflow.
                 # Converted files are placed under work_dir/_converted_inputs/ to avoid polluting CWD.
@@ -325,16 +318,11 @@ def main(args_list: Optional[list[str]] = None):
                     resume=bool(args.resume),
                     verbose=bool(args.verbose),
                 )
-            except Exception as e:
+            except Exception:
                 # 在文件日志中记录完整 trace
                 import traceback
+
                 traceback.print_exc()
-                # 重新抛出，以便外层从 stderr (文件) 逃逸到终端（如果有机制）
-                # 注意：此时 stderr 指向文件， raise 仍会写入文件
-                
-                # 尝试向原始 stderr 写一条紧急提示，告诉用户去哪里看日志
-                print(f"\n[FATAL ERROR] 程序异常终止: {e}", file=sys.__stderr__)
-                print(f"详细错误信息已写入日志文件: {output_path}", file=sys.__stderr__)
                 raise
 
         return 0
@@ -342,22 +330,10 @@ def main(args_list: Optional[list[str]] = None):
         # 检测是否为多输入一致性相关错误
         msg = str(e)
         if "多文件输入模式要求" in msg or "柔性链在不同输入间不一致" in msg:
-            # 如果用户已经开启了 force_consistency 参数（通过 args.force/yes 传递逻辑待建立）
-            # 暂时只做交互提示
-
-            # 交互式提示（仅在标准输出为终端时）
-            if sys.stdin.isatty() and sys.stdout.isatty():
-                print(f"\n{'!'*60}\n[ERROR] 输入一致性校验失败:\n{msg}\n{'!'*60}")
-                resp = input("\n[交互模式] 是否确认忽略警告并强制继续? (y/N): ").lower()
-                if resp == "y":
-                    print("提示：当前版本请在该配置文件 global 节添加 'force_consistency: true' 以跳过此检查。")
-                    return 1
-                else:
-                    return 1
-            else:
-                # 非交互模式，直接报错
-                _append_to_output(output_path, f"[ERROR] {msg}")
-                return 1
+            # 终端静默策略：不做交互提示，直接写入输出 txt 并返回失败退出码。
+            _append_to_output(output_path, f"[ERROR] 输入一致性校验失败: {msg}")
+            _append_to_output(output_path, "提示：可在配置文件 global 节添加 'force_consistency: true' 以跳过此检查。")
+            return 1
         # 其他 ValueError 原样记录
         _append_to_output(output_path, f"[ERROR] {msg}")
         return 1
@@ -366,3 +342,18 @@ def main(args_list: Optional[list[str]] = None):
         # CLI 层负责退出码
         _append_to_output(output_path, f"[ERROR] {e}")
         return 1
+    finally:
+        # Restore streams for global Rich console and confflow logger.
+        # Important for test environments (pytest capture) and for any subsequent imports/uses in-process.
+        try:
+            redirect_console(sys.stdout)
+        except Exception:
+            pass
+        try:
+            get_logger().redirect_console_handler(sys.stdout)
+        except Exception:
+            pass
+        try:
+            redirect_logging_streams(sys.stdout, include_root=False)
+        except Exception:
+            pass

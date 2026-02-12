@@ -421,24 +421,9 @@ class TestVizReportAdvanced:
     """viz.report 模块测试"""
 
     def test_viz_report_failed_count_from_db(self, tmp_path):
-        """测试从数据库统计失败数量"""
-        import sqlite3
-        from confflow.blocks.viz.report import generate_workflow_section
-        
-        step_dir = tmp_path / "step1"
-        step_dir.mkdir()
-        work_dir = step_dir / "work"
-        work_dir.mkdir()
-        db_path = work_dir / "results.db"
-        
-        conn = sqlite3.connect(db_path)
-        conn.execute("CREATE TABLE task_results (status TEXT)")
-        conn.execute("INSERT INTO task_results VALUES ('failed')")
-        conn.execute("INSERT INTO task_results VALUES ('failed')")
-        conn.execute("INSERT INTO task_results VALUES ('completed')")
-        conn.commit()
-        conn.close()
-        
+        """测试文本报告包含失败数量"""
+        from confflow.blocks.viz.report import generate_text_report
+
         steps = [{
             "index": 1,
             "name": "TestStep",
@@ -446,10 +431,12 @@ class TestVizReportAdvanced:
             "status": "completed",
             "input_conformers": 10,
             "output_conformers": 8,
-            "output_xyz": str(step_dir / "output.xyz"),
+            "failed_conformers": 2,
             "duration_seconds": 100,
             "metadata": {}
         }]
-        
-        html = generate_workflow_section({"steps": steps})
-        assert "<td>2</td>" in html
+
+        conformers = [{"metadata": {"E": -1.0}}]
+        text = generate_text_report(conformers, stats={"steps": steps})
+        assert "TestStep" in text
+        assert "  2" in text

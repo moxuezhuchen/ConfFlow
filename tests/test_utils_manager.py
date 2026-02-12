@@ -37,7 +37,7 @@ def test_validate_yaml_config_requires_chains_for_confgen():
         ],
     }
     errors = validate_yaml_config(cfg)
-    assert any("confgen 步骤必须提供" in e for e in errors)
+    assert any("confgen step requires" in e for e in errors)
 
 
 def test_validate_yaml_config_accepts_freeze_list_global():
@@ -122,7 +122,7 @@ def test_validate_xyz_file_errors(tmp_path):
 
 def test_validate_yaml_config_errors():
     errors = validate_yaml_config({})
-    assert any("缺少必需的配置节" in e for e in errors)
+    assert any("missing required section" in e for e in errors)
 
     config = {
         "global": {
@@ -134,22 +134,22 @@ def test_validate_yaml_config_errors():
         "steps": "not a list",
     }
     errors = validate_yaml_config(config)
-    assert any("Gaussian 路径不存在" in e for e in errors)
-    assert any("ORCA 路径不存在" in e for e in errors)
-    assert any("无效的 cores_per_task" in e for e in errors)
-    assert any("无效的 max_parallel_jobs" in e for e in errors)
-    assert any("'steps' 必须是一个列表" in e for e in errors)
+    assert any("Gaussian path not found" in e for e in errors)
+    assert any("ORCA path not found" in e for e in errors)
+    assert any("invalid cores_per_task" in e for e in errors)
+    assert any("invalid max_parallel_jobs" in e for e in errors)
+    assert any("'steps' must be a list" in e for e in errors)
 
 
 def test_validate_step_config_errors():
     from confflow.core.utils import _validate_step_config
 
     errors = _validate_step_config({}, 0)
-    assert any("缺少 'name' 字段" in e for e in errors)
-    assert any("缺少 'type' 字段" in e for e in errors)
+    assert any("missing 'name' field" in e for e in errors)
+    assert any("missing 'type' field" in e for e in errors)
 
     errors = _validate_step_config({"name": "s1", "type": "invalid"}, 0)
-    assert any("无效的类型" in e for e in errors)
+    assert any("invalid type" in e for e in errors)
 
     step = {
         "name": "s1",
@@ -160,17 +160,26 @@ def test_validate_step_config_errors():
         },
     }
     errors = _validate_step_config(step, 0)
-    assert any("无效的 itask 值" in e for e in errors)
-    assert any("无效的 iprog 值" in e for e in errors)
+    assert any("invalid itask value" in e for e in errors)
+    assert any("invalid iprog value" in e for e in errors)
 
     step = {"name": "s1", "type": "calc", "params": {"iprog": "orca"}}
     errors = _validate_step_config(step, 0)
-    assert any("ORCA 任务缺少 'keyword' 参数" in e for e in errors)
+    assert any("ORCA task missing 'keyword' parameter" in e for e in errors)
 
     step = {"name": "s1", "type": "confgen", "params": {"add_bond": "invalid"}}
     errors = _validate_step_config(step, 0)
-    assert any("必须提供 'chains'" in e for e in errors)
-    assert any("格式错误" in e for e in errors)
+    assert any("requires 'chains'" in e for e in errors)
+    assert any("format error" in e for e in errors)
+
+
+def test_manager_default_backup_dir_is_step_local(tmp_path):
+    mgr = ChemTaskManager(settings={"iprog": "orca", "itask": "sp", "keyword": "B3LYP"})
+    mgr.work_dir = str(tmp_path / "step_01")
+    mgr._ensure_work_dir()
+
+    assert mgr.backup_dir == os.path.join(mgr.work_dir, "backups")
+    assert os.path.isdir(mgr.backup_dir)
 
 
 def test_parse_index_spec():
@@ -362,7 +371,7 @@ def test_manager_run_failed_output(tmp_path, monkeypatch):
 
     manager.run(str(xyz))
 
-    failed_file = tmp_path / "work" / "isomers_failed.xyz"
+    failed_file = tmp_path / "work" / "failed.xyz"
     assert failed_file.exists()
 
 

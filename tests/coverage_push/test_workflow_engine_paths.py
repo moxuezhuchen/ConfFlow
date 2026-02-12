@@ -94,7 +94,7 @@ def test_workflow_engine_resume_logic(tmp_path):
 
     step2_dir = root / "step2"
     step2_dir.mkdir()
-    (step2_dir / "isomers_cleaned.xyz").write_text("1\nCID=1\nC 0 0 0\n")
+    (step2_dir / "output.xyz").write_text("1\nCID=1\nC 0 0 0\n")
 
     res = run_workflow([str(input_xyz)], str(config_file), work_dir=str(root), resume=True)
     assert len(res["steps"]) == 1
@@ -118,7 +118,7 @@ def test_workflow_engine_calc_resume(tmp_path):
 
     step_dir = root / "step1"
     step_dir.mkdir()
-    (step_dir / "isomers_cleaned.xyz").write_text("1\nCID=1\nC 0 0 0\n")
+    (step_dir / "output.xyz").write_text("1\nCID=1\nC 0 0 0\n")
 
     res = run_workflow([str(input_xyz)], str(config_file), work_dir=str(root))
     assert res["steps"][0]["status"] == "skipped"
@@ -164,7 +164,7 @@ def test_workflow_engine_trace_exception_trigger(tmp_path):
     with patch("confflow.workflow.engine.calc.manager.ChemTaskManager.run", return_value={"success": 1}), \
         patch("confflow.workflow.engine.io_xyz.read_xyz_file", side_effect=mock_read_xyz_file), \
         patch("confflow.workflow.engine.viz.parse_xyz_file", return_value=[{"cid": "1", "energy": -1.0, "metadata": {}}]), \
-        patch("confflow.workflow.engine.viz.generate_html_report"), \
+        patch("confflow.workflow.engine.viz.generate_text_report", return_value=""), \
         patch("confflow.workflow.engine.count_conformers_any", return_value=1), \
         patch("confflow.workflow.engine.is_multi_frame_any", return_value=False), \
         patch("confflow.workflow.engine.os.path.exists", return_value=True):
@@ -188,7 +188,7 @@ def test_workflow_engine_low_energy_trace_full(tmp_path):
 
     step1_dir = root / "step1"
     step1_dir.mkdir()
-    (step1_dir / "isomers_cleaned.xyz").write_text("1\nCID=1 Energy=-100.0\nC 0 0 0\n")
+    (step1_dir / "output.xyz").write_text("1\nCID=1 Energy=-100.0\nC 0 0 0\n")
 
     (root / "final.xyz").write_text("1\nCID=1 Energy=-100.0\nC 0 0 0\n")
 
