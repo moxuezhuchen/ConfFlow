@@ -77,6 +77,7 @@ class ConfigSchema:
         "total_memory",
         "max_parallel_jobs",
         "energy_window",
+        "energy_tolerance",
         "keyword",
         "iprog",
         "itask",

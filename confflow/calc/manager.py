@@ -208,19 +208,19 @@ class ChemTaskManager:
         meta = g.get("metadata") or {}
         cid = meta.get("CID") if isinstance(meta, dict) else None
         if cid is None or str(cid).strip() == "":
-            return f"c{i + 1:04d}"
+            return f"A{i + 1:06d}"
 
         cid_raw = str(cid).strip()
         try:
             cid_int = int(cid_raw)
             if cid_int > 0:
-                return f"c{cid_int:04d}"
+                return f"A{cid_int:06d}"
         except (ValueError, TypeError):
             pass
 
         token = re.sub(r"_+", "_", re.sub(r"[^A-Za-z0-9_\-]+", "_", cid_raw)).strip("_")
         if not token:
-            return f"c{i + 1:04d}"
+            return f"A{i + 1:06d}"
         return token[:48] if len(token) > 48 else token
 
     def _build_task_list(self, geoms: list[dict[str, Any]]) -> list[models.TaskContext]:
@@ -412,12 +412,19 @@ class ChemTaskManager:
                     ewin = float(opts_str.split("-ewin")[1].split()[0])
                 except (IndexError, ValueError) as e:
                     logger.debug(f"clean_opts -ewin parse failed: {e}")
+            etol = 0.05
+            if "--energy-tolerance" in opts_str:
+                try:
+                    etol = float(opts_str.split("--energy-tolerance")[1].split()[0])
+                except (IndexError, ValueError) as e:
+                    logger.debug(f"clean_opts --energy-tolerance parse failed: {e}")
             task_cores = int(self.config.get("cores_per_task", 1))
             clean_args = refine.RefineOptions(
                 input_file=out_file,
                 output=os.path.join(os.path.dirname(out_file), "output.xyz"),
                 threshold=thresh,
                 ewin=ewin,
+                energy_tolerance=etol,
                 workers=task_cores,
             )
             refine.process_xyz(clean_args)

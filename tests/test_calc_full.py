@@ -192,7 +192,7 @@ def test_chem_task_manager_skip_existing(tmp_path, monkeypatch):
     db = calc.ResultsDB(str(db_path))
     db.insert_result(
         {
-            "job_name": "c0001",
+            "job_name": "A000001",
             "index": 1,
             "status": "success",
             "energy": -1.0,
@@ -213,7 +213,7 @@ def test_chem_task_manager_skip_existing(tmp_path, monkeypatch):
 
     monkeypatch.setattr(manager_mod, "_run_task", error_run)
 
-    # Run manager - it should skip c0001
+    # Run manager - it should skip A000001
     manager.run(str(xyz))
 
 
@@ -241,8 +241,8 @@ def test_config_hash(tmp_path):
 
 
 def test_ts_without_freq_treated_like_opt(cd_tmp, monkeypatch):
-    work_dir = cd_tmp / "c0001"
-    job_name = "c0001"
+    work_dir = cd_tmp / "A000001"
+    job_name = "A000001"
 
     # mock: do not run external programs, directly return a result with only energy and no frequency info
     def fake_run(*args, **kwargs):
@@ -277,8 +277,8 @@ def test_ts_without_freq_treated_like_opt(cd_tmp, monkeypatch):
 
 
 def test_ts_with_freq_still_requires_one_imag(monkeypatch, cd_tmp):
-    work_dir = cd_tmp / "c0001"
-    job_name = "c0001"
+    work_dir = cd_tmp / "A000001"
+    job_name = "A000001"
 
     def fake_run(*args, **kwargs):
         return {
@@ -312,8 +312,8 @@ def test_ts_with_freq_still_requires_one_imag(monkeypatch, cd_tmp):
 
 
 def test_ts_without_freq_fails_when_ts_bond_drift_too_large(cd_tmp, monkeypatch):
-    work_dir = cd_tmp / "c0001"
-    job_name = "c0001"
+    work_dir = cd_tmp / "A000001"
+    job_name = "A000001"
 
     # initial bond length 1.0 Å
     initial_coords = ["H 0 0 0", "H 0 0 1.0"]
@@ -352,8 +352,8 @@ def test_ts_without_freq_fails_when_ts_bond_drift_too_large(cd_tmp, monkeypatch)
 
 
 def test_ts_without_freq_allows_large_rmsd_when_no_bond_drift(cd_tmp, monkeypatch):
-    work_dir = cd_tmp / "c0001"
-    job_name = "c0001"
+    work_dir = cd_tmp / "A000001"
+    job_name = "A000001"
 
     # two atoms: final structure stretched to 5.0 Å (RMSD is no longer used as TS criterion)
     initial_coords = ["H 0 0 0", "H 0 0 1.0"]
@@ -602,13 +602,13 @@ def test_resume_from_backups_skips_completed(tmp_path, monkeypatch):
     backup_dir = tmp_path / "backups"
     backup_dir.mkdir()
 
-    # prepare a "completed" Gaussian log and xyz backup (job_name=c0001)
-    (backup_dir / "c0001.log").write_text(
+    # prepare a "completed" Gaussian log and xyz backup (job_name=A000001)
+    (backup_dir / "A000001.log").write_text(
         "SCF Done:  E(RB3LYP) =  -1.23456789     A.U. after   10 cycles\n"
         "Normal termination of Gaussian 16\n",
         encoding="utf-8",
     )
-    (backup_dir / "c0001.xyz").write_text(
+    (backup_dir / "A000001.xyz").write_text(
         "1\nEnergy=-1.23456789\nH 0 0 0\n",
         encoding="utf-8",
     )

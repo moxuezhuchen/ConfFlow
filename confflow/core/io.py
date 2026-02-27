@@ -74,7 +74,7 @@ def upsert_comment_kv(comment: str, key: str, value: Any) -> str:
 def ensure_conformer_cids(
     conformers: list[dict[str, Any]],
     *,
-    prefix: str = "cf",
+    prefix: str = "A",
     start: int = 1,
     width: int = 6,
 ) -> list[dict[str, Any]]:
@@ -102,7 +102,7 @@ def ensure_conformer_cids(
     return conformers
 
 
-def ensure_xyz_cids(xyz_path: str, prefix: str = "cf") -> None:
+def ensure_xyz_cids(xyz_path: str, prefix: str = "A") -> None:
     """Read an XYZ file and ensure all conformers have CIDs; re-write if incomplete."""
     if not os.path.exists(xyz_path):
         return

@@ -72,9 +72,30 @@ __all__ = [
     # local
     "UTILS_AVAILABLE",
     "get_numba_jit",
+    "index_to_letter_prefix",
     "validate_xyz_file",
     "validate_yaml_config",
 ]
+
+# ==============================================================================
+# CID letter-prefix helper
+# ==============================================================================
+
+
+def index_to_letter_prefix(idx: int) -> str:
+    """Convert a 0-based index to an uppercase letter prefix.
+
+    Examples: 0 → "A", 1 → "B", … 25 → "Z", 26 → "AA", 27 → "AB".
+    """
+    letters = ""
+    n = idx
+    while True:
+        letters = chr(ord("A") + (n % 26)) + letters
+        n = n // 26 - 1
+        if n < 0:
+            break
+    return letters
+
 
 # ==============================================================================
 # Numba fallback support

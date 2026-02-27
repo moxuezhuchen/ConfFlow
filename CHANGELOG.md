@@ -14,9 +14,20 @@
 - **CLI 新参数**：`confrefine --energy-tolerance <kcal/mol>`
 - **性能影响**：典型场景 <20% 下降（慢路径仅在 PMI 通过 + fast_rmsd 未过阈值时触发）
 
+### 🔤 CID 命名统一
+
+- **统一字母前缀格式**：所有 Conformer ID 统一为 `A000001` 格式（字母前缀 + 6 位数字），覆盖单帧、多帧、多文件三种输入场景
+- **公共工具函数**：提取 `index_to_letter_prefix()` 到 `confflow/core/utils.py`，按 A→Z→AA→AZ… 生成字母前缀
+- **消除旧格式**：移除 `c0001`（manager 无 CID 回退）、`s01_000001`（engine 步骤前缀）、`cf_000001`（confgen 回退）三种不一致格式
+
+### ⚙️ 配置增强
+
+- **`energy_tolerance` YAML 可配**：新增 YAML 参数 `energy_tolerance`，可在全局或步骤级覆盖；`config_builder` 自动转为 `--energy-tolerance` CLI 标志传递给 refine 流程
+- **YAML 完整参数文档**：在参考 YAML 中以注释形式列出所有支持的参数（全局、confgen、calc、TS、Gaussian、ORCA 等），方便用户查阅
+
 ### 🧪 验证结果
 
-- 全量测试：**465 passed**，零失败
+- 全量测试：**480 passed**，零失败
 - 实测效果：11 帧大分子构象（131 原子）去重 11→7，视觉重复的 Rank 3&4、6&7 均成功合并
 
 ---

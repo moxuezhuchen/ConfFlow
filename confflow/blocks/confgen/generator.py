@@ -32,7 +32,7 @@ except ImportError as e:
 from ...core.console import create_progress
 from ...core.contracts import ExitCode, cli_output_to_txt
 from ...core.pairs import normalize_pair_list
-from ...core.utils import get_numba_jit
+from ...core.utils import get_numba_jit, index_to_letter_prefix
 from .collision import GV_RADII_ARRAY, check_clash_core
 from .mapping import transfer_chain_indices
 from .rotations import (
@@ -261,7 +261,7 @@ def write_xyz(mol, conformers, filename):
 
             # Assign a stable ID for downstream workflow traceability
             if not cid:
-                cid = f"cf_{i+1:06d}"
+                cid = f"A{i+1:06d}"
             f.write(f"{natoms}\nConformer {i+1} | CID={cid}\n")
             for j, s in enumerate(syms):
                 assert coords is not None
@@ -456,18 +456,8 @@ def run_generation(
 
     from ...core.console import error, warning
 
-    def _index_to_prefix(idx: int) -> str:
-        letters = ""
-        n = idx
-        while True:
-            letters = chr(ord("A") + (n % 26)) + letters
-            n = n // 26 - 1
-            if n < 0:
-                break
-        return letters
-
     for file_idx, xyz_file in enumerate(input_files):
-        cid_prefix = _index_to_prefix(file_idx)
+        cid_prefix = index_to_letter_prefix(file_idx)
         local_count = 0
         console.print(f"  [muted]·[/muted]  {os.path.basename(xyz_file)}")
 

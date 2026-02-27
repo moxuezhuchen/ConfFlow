@@ -247,7 +247,7 @@ def test_ts_failure_triggers_scan_rescue_and_keyword_rewrite(monkeypatch, tmp_pa
     scan_rs = []
 
     def fake_run_calculation_step(work_dir, job_name, prog_id, coords, config, is_sp_task=False):
-        if job_name == "c0001":
+        if job_name == "A000001":
             raise RuntimeError("TS failed")
 
         try:
@@ -303,8 +303,8 @@ def test_ts_failure_triggers_scan_rescue_and_keyword_rewrite(monkeypatch, tmp_pa
     monkeypatch.setattr(executor, "handle_backups", lambda *a, **k: None)
 
     task_info = {
-        "job_name": "c0001",
-        "work_dir": str(tmp_path / "c0001"),
+        "job_name": "A000001",
+        "work_dir": str(tmp_path / "A000001"),
         "coords": base_coords,
         "config": {
             "iprog": "g16",
@@ -312,7 +312,7 @@ def test_ts_failure_triggers_scan_rescue_and_keyword_rewrite(monkeypatch, tmp_pa
             "ts_rescue_scan": "true",
             "ts_bond_atoms": "1,2",
             "keyword": "opt(nomicro,calcfc,tight,ts,noeigentest) freq",
-            "gaussian_oldchk": "c0001.old.chk",
+            "gaussian_oldchk": "A000001.old.chk",
             "scan_max_steps": 5,
             "scan_uphill_limit": 2,
             "scan_fine_half_window": 0.1,
@@ -326,7 +326,7 @@ def test_ts_failure_triggers_scan_rescue_and_keyword_rewrite(monkeypatch, tmp_pa
     assert res["status"] == "success"
     assert res.get("rescued_by_scan") is True
 
-    scan_table = tmp_path / "c0001" / "scan" / "scan_table.txt"
+    scan_table = tmp_path / "A000001" / "scan" / "scan_table.txt"
     assert scan_table.exists()
     txt = scan_table.read_text(encoding="utf-8")
     assert "Bond 1-2" in txt  # Updated for Rich table format

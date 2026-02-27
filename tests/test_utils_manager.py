@@ -446,7 +446,7 @@ def test_manager_auto_clean(tmp_path, monkeypatch):
 
     manager.results_db.insert_result(
         {
-            "job_name": "c0001",
+            "job_name": "A000001",
             "status": "success",
             "energy": -1.0,
             "final_coords": ["H 0.0 0.0 0.0"],
@@ -628,9 +628,9 @@ def test_calc_manager_failed_output_and_auto_clean_parse_errors(tmp_path):
 
         def get_all_results(self):
             return [
-                {"job_name": "c0001", "status": "failed", "error": long_err},
+                {"job_name": "A000001", "status": "failed", "error": long_err},
                 {
-                    "job_name": "c0001",
+                    "job_name": "A000001",
                     "status": "success",
                     "energy": -1.0,
                     "final_coords": ["H 0 0 0", "H 0 0 1"],
@@ -647,7 +647,7 @@ def test_calc_manager_failed_output_and_auto_clean_parse_errors(tmp_path):
         patch(
             "confflow.calc.manager._run_task",
             return_value={
-                "job_name": "c0001",
+                "job_name": "A000001",
                 "status": "success",
                 "final_coords": ["H 0 0 0", "H 0 0 1"],
                 "energy": -1.0,

@@ -28,6 +28,7 @@ from ..core.types import TaskStatus
 from ..core.utils import (
     format_duration_hms,
     get_logger,
+    index_to_letter_prefix,
 )
 from .config_builder import (
     build_step_dir_name_map,
@@ -253,7 +254,7 @@ def run_workflow(
                     step_stats["status"] = TaskStatus.SKIPPED
 
                 current_input = _run_confgen_step(step_dir, current_input, params, input_files)
-                io_xyz.ensure_xyz_cids(current_input, prefix=f"s{i+1:02d}")
+                io_xyz.ensure_xyz_cids(current_input, prefix=index_to_letter_prefix(0))
                 if step_stats.get("status") not in [TaskStatus.SKIPPED_MULTI, TaskStatus.SKIPPED]:
                     step_stats["status"] = TaskStatus.COMPLETED
 
@@ -274,7 +275,7 @@ def run_workflow(
                     failure_tracker,
                     step_name,
                 )
-                io_xyz.ensure_xyz_cids(current_input, prefix=f"s{i+1:02d}")
+                io_xyz.ensure_xyz_cids(current_input, prefix=index_to_letter_prefix(0))
                 if step_stats.get("status") != TaskStatus.SKIPPED:
                     step_stats["status"] = TaskStatus.COMPLETED
 

@@ -19,7 +19,7 @@ class TestChkArtifactIO:
         prev = tmp_path / "prev_backups"
         prev.mkdir()
 
-        job = "c0001"
+        job = "A000001"
         (prev / f"{job}.chk").write_text("dummy-checkpoint", encoding="utf-8")
 
         work = tmp_path / "work" / job
@@ -53,10 +53,10 @@ class TestChkArtifactIO:
     def test_gaussian_chk_stage_missing_source_is_noop(self, tmp_path):
         from confflow.calc.components import executor
 
-        work = tmp_path / "work" / "c0001"
+        work = tmp_path / "work" / "A000001"
         cfg = {"input_chk_dir": str(tmp_path / "nope")}
 
-        executor.prepare_task_inputs(str(work), "c0001", cfg)
+        executor.prepare_task_inputs(str(work), "A000001", cfg)
 
         assert not work.exists() or not any(work.iterdir())
         assert "gaussian_oldchk" not in cfg

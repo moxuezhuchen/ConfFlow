@@ -176,6 +176,12 @@ def build_task_config(
         if "energy_window" in p and p.get("energy_window") is not None:
             opts.append(f"-ewin {p['energy_window']}")
 
+        etol = p.get("energy_tolerance")
+        if etol is None:
+            etol = gc.get("energy_tolerance")
+        if etol is not None:
+            opts.append(f"--energy-tolerance {etol}")
+
         return " ".join(opts)
 
     def _parse_two_atom_indices(val):

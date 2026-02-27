@@ -19,7 +19,7 @@ from confflow.workflow import presenter
 @pytest.fixture(autouse=False)
 def viz_stubs(monkeypatch):
     """Provide common viz function stubs used by presenter tests."""
-    best_conf = {"metadata": {"CID": "s01_000001"}, "atoms": ["H"], "coords": [[0.0, 0.0, 0.0]]}
+    best_conf = {"metadata": {"CID": "A000001"}, "atoms": ["H"], "coords": [[0.0, 0.0, 0.0]]}
     monkeypatch.setattr(presenter.viz, "parse_xyz_file", lambda path: [best_conf])
     monkeypatch.setattr(presenter.viz, "generate_text_report", lambda confs, stats=None: "REPORT")
     monkeypatch.setattr(
@@ -78,7 +78,7 @@ def test_emit_final_report_and_lowest_updates_stats(viz_stubs, capture_write_xyz
     presenter.emit_final_report_and_lowest(str(input_xyz), [str(input_xyz)], final_stats, logger)
 
     assert "lowest_conformer" in final_stats
-    assert final_stats["lowest_conformer"]["cid"] == "s01_000001"
+    assert final_stats["lowest_conformer"]["cid"] == "A000001"
     assert final_stats["lowest_conformer"]["energy"] == -1.23
     assert capture_write_xyz["path"].endswith("finalmin.xyz")
     logger.info.assert_called_once()
