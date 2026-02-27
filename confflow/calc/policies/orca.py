@@ -1,26 +1,30 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 
 """ORCA Calculation Policy."""
 
 from __future__ import annotations
 
+import copy
 import logging
 import os
 import re
 import shlex
-from typing import Any, Dict, List, Optional
+from typing import Any
 
-from .base import CalculationPolicy
-from ..constants import BUILTIN_TEMPLATES
-from ..core import get_itask
-from ..geometry import check_termination as _check_termination
-from ..geometry import parse_last_geometry
 from ..components.input_helpers import (
     compute_orca_maxcore,
     format_orca_blocks,
     parse_freeze_indices,
 )
+from ..constants import BUILTIN_TEMPLATES
+from ..geometry import check_termination as _check_termination
+from ..geometry import parse_last_geometry
+from .base import CalculationPolicy
+
+__all__ = [
+    "OrcaPolicy",
+    "ORCA_POLICY",
+]
 
 try:
     import psutil  # type: ignore
@@ -43,7 +47,7 @@ class OrcaPolicy(CalculationPolicy):
     def log_ext(self) -> str:
         return "out"
 
-    def generate_input(self, task_info: Dict[str, Any], inp_file_path: str) -> None:
+    def generate_input(self, task_info: dict[str, Any], inp_file_path: str) -> None:
         config = task_info["config"]
         template = BUILTIN_TEMPLATES["orca"]
 
@@ -54,35 +58,34 @@ class OrcaPolicy(CalculationPolicy):
         charge = config.get("charge", 0)
         multiplicity = config.get("multiplicity", 1)
 
-        # 统一块管理 (Unified Block Management)
-        import copy
-
+        # Unified Block Management
         blocks_config = config.get("blocks", "")
-        # 兼容性处理：如果 blocks 为空，尝试从 solvent_block/custom_block 获取
+        # Compat: if blocks is empty, try reading from solvent_block/custom_block
         if not blocks_config:
             s_block = config.get("solvent_block", "").strip()
             c_block = config.get("custom_block", "").strip()
             blocks_config = "\n".join(b for b in [s_block, c_block] if b)
 
         blocks_dict = {}
-        # 注意：从 ConfigParser 读取出来的总是字符串，除非在某些特殊流程中手动转换为 dict
-        # 我们这里主要支持字符串模式，但也保留对 dict 类型的兼容逻辑
+        # Note: values read from ConfigParser are always strings, unless
+        # manually converted to dict in a special flow.
+        # We primarily support string mode but keep dict mode for compatibility.
         is_dict_mode = isinstance(blocks_config, dict)
 
         if is_dict_mode:
             blocks_dict = copy.deepcopy(blocks_config)
 
-        # 约束块处理 (Constraint Handling)
+        # Constraint Handling
         freeze = config.get("freeze", "")
         itask_val = config.get("itask", "opt")
-        
+
         constraint_str = ""
         if freeze and itask_val in ("opt", "opt_freq", "ts", "optts"):
             freeze_atoms = parse_freeze_indices(freeze)
             if freeze_atoms:
                 clist = [f"{{ C {int(idx) - 1} C }}" for idx in freeze_atoms]
                 if is_dict_mode:
-                    # 字典模式：合并进 blocks_dict
+                    # Dict mode: merge into blocks_dict
                     if "geom" not in blocks_dict:
                         blocks_dict["geom"] = {}
                     if "Constraints" not in blocks_dict["geom"]:
@@ -96,7 +99,7 @@ class OrcaPolicy(CalculationPolicy):
                         elif isinstance(existing, str):
                             blocks_dict["geom"]["Constraints"] = existing.splitlines() + clist
                 else:
-                    # 字符串模式：生成独立的约束块
+                    # String mode: generate a standalone constraint block
                     constraint_str = format_orca_blocks({"geom": {"Constraints": clist}})
 
         if is_dict_mode:
@@ -120,12 +123,12 @@ class OrcaPolicy(CalculationPolicy):
             f.write(content)
 
     def parse_output(
-        self, log_file: str, config: Dict[str, Any], is_sp_task: bool = False
-    ) -> Dict[str, Any]:
+        self, log_file: str, config: dict[str, Any], is_sp_task: bool = False
+    ) -> dict[str, Any]:
         if not os.path.exists(log_file):
             return {}
 
-        with open(log_file, "r", errors="ignore") as f:
+        with open(log_file, errors="ignore") as f:
             content = f.read()
 
         e_low = None
@@ -167,7 +170,7 @@ class OrcaPolicy(CalculationPolicy):
             "final_coords": final_coords,
         }
 
-    def get_execution_command(self, config: Dict[str, Any], inp_file: str) -> List[str]:
+    def get_execution_command(self, config: dict[str, Any], inp_file: str) -> list[str]:
         path_key = "orca_path"
         default_exe = "orca"
         prog_path = config.get(path_key) or default_exe
@@ -177,7 +180,7 @@ class OrcaPolicy(CalculationPolicy):
     def check_termination(self, log_file: str) -> bool:
         return _check_termination(log_file, "orca")
 
-    def get_error_details(self, work_dir: str, job_name: str, config: Dict[str, Any]) -> str:
+    def get_error_details(self, work_dir: str, job_name: str, config: dict[str, Any]) -> str:
         log = os.path.join(work_dir, f"{job_name}.{self.log_ext}")
         details = []
         if os.path.exists(log):
@@ -187,14 +190,14 @@ class OrcaPolicy(CalculationPolicy):
                     f.seek(max(0, f.tell() - 2000))
                     tail = f.read().decode("utf-8", errors="ignore")
                     if "ORCA finished by error" in tail:
-                        details.append("程序异常终止")
+                        details.append("Abnormal program termination")
                     if "SCF NOT CONVERGED" in tail:
-                        details.append("SCF不收敛")
-            except Exception as e:
-                logger.debug(f"读取错误日志失败 {log}: {e}")
+                        details.append("SCF not converged")
+            except OSError as e:
+                logger.debug(f"Failed to read error log {log}: {e}")
         return " | ".join(details)
 
-    def cleanup_lingering_processes(self, config: Dict[str, Any]) -> None:
+    def cleanup_lingering_processes(self, config: dict[str, Any]) -> None:
         if psutil is None:
             return
         targets = ["orca", "otool_xtb"]
@@ -203,4 +206,8 @@ class OrcaPolicy(CalculationPolicy):
                 if any(t in (proc.info.get("name") or "") for t in targets):
                     proc.terminate()
             except Exception as e:
-                logger.debug(f"清理进程失败 {proc.info.get('pid')}: {e}")
+                logger.debug(f"Failed to clean up process {proc.info.get('pid')}: {e}")
+
+
+#: Module-level singleton (stateless, safe to reuse)
+ORCA_POLICY = OrcaPolicy()

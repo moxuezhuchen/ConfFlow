@@ -1,42 +1,59 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 
-"""统一的单任务执行器。
+"""Unified single-task executor.
 
-说明
-- 直接封装 `executor` + policy 的执行流程，以便所有调用者统一使用 `TaskRunner().run(...)`。
-- 目前仍在内部通过 `executor` 直接 monkeypatch，而不依赖 `confflow.calc` 的顶层兼容符号。
+Notes
+-----
+Directly wraps the ``executor`` + policy execution flow so that all callers
+can use ``TaskRunner().run(...)`` uniformly.
+Currently still patches through ``executor`` internally, without depending on
+the top-level compatibility symbols in ``confflow.calc``.
 """
 
-import os
-from typing import Any, Dict
+from __future__ import annotations
 
-from . import executor
+import os
+from typing import Any
+
+from ...config.defaults import DEFAULT_TS_BOND_DRIFT_THRESHOLD
+from ...core import models
 from ..analysis import (
     _bond_length_from_xyz_lines,
-    _coords_array_from_xyz_lines,
     _keyword_requests_freq,
     _parse_ts_bond_atoms,
+    is_rescue_enabled,
+    validate_ts_bond_drift,
 )
-from ..core import get_itask, parse_iprog
-from ..policies.gaussian import GaussianPolicy
-from ..policies.orca import OrcaPolicy
+from ..policies import get_policy
 from ..rescue import _ts_rescue_scan
+from ..setup import get_itask, parse_iprog
+from . import executor
 
-from ...blocks import refine
+__all__ = [
+    "TaskRunner",
+]
 
 
 class TaskRunner:
-    def _get_policy(self, config: Dict[str, Any]):
+    def _get_policy(self, config: dict[str, Any]):
         iprog = parse_iprog(config)
-        if iprog == 1:
-            return GaussianPolicy()
-        if iprog == 2:
-            return OrcaPolicy()
-        raise ValueError(f"Unsupported iprog: {iprog}")
+        return get_policy(iprog)
 
-    def run(self, task_info: Dict[str, Any]):
-        job, wd, cfg = task_info["job_name"], task_info["work_dir"], task_info["config"]
+    def _try_rescue(self, cfg: dict, task_dict: dict, err_msg: str) -> dict | None:
+        """Attempt TS rescue scan if enabled. Returns rescued result or None."""
+        if is_rescue_enabled(cfg):
+            rescued = _ts_rescue_scan(task_dict, err_msg)
+            if rescued is not None:
+                return rescued
+        return None
+
+    def run(self, task_info: models.TaskContext | dict[str, Any]):
+        task_dict = (
+            task_info.model_dump() if isinstance(task_info, models.TaskContext) else task_info
+        )
+        job, wd, cfg = task_dict["job_name"], task_dict["work_dir"], task_dict["config"]
+        coords = task_dict["coords"]
+
         os.makedirs(wd, exist_ok=True)
         success = False
 
@@ -45,19 +62,19 @@ class TaskRunner:
         # Stage cross-step artifacts (e.g., Gaussian .chk) into this job work_dir.
         try:
             executor.prepare_task_inputs(wd, job, cfg)
-        except Exception:
+        except OSError:
             pass
 
         try:
-            res = executor._run_calculation_step(wd, job, policy, task_info["coords"], cfg)
+            res = executor._run_calculation_step(wd, job, policy, coords, cfg)
 
             final_coords = res.get("final_coords")
             itask = get_itask(cfg)
             if not final_coords:
                 if itask == 1:
-                    final_coords = task_info["coords"]
+                    final_coords = task_dict["coords"]
                 else:
-                    return {**task_info, "status": "failed", "error": "No coords"}
+                    return {**task_dict, "status": "failed", "error": "No coords"}
 
             num_imag_raw = res.get("num_imag_freqs")
             num_imag = 0 if num_imag_raw is None else int(num_imag_raw)
@@ -65,29 +82,29 @@ class TaskRunner:
 
             if itask == 4 and _keyword_requests_freq(cfg):
                 if num_imag_raw is None:
-                    err_msg = "TS 任务 keyword 包含 freq，但输出中未解析到频率信息"
-                    if str(cfg.get("ts_rescue_scan", "true")).lower() == "true":
-                        rescued = _ts_rescue_scan(task_info, err_msg)
-                        if rescued is not None:
-                            return rescued
-                    return {**task_info, "status": "failed", "error": err_msg}
+                    err_msg = (
+                        "TS task keyword contains freq but no frequency info was parsed from output"
+                    )
+                    rescued = self._try_rescue(cfg, task_dict, err_msg)
+                    if rescued is not None:
+                        return rescued
+                    return {**task_dict, "status": "failed", "error": err_msg}
                 if num_imag != 1:
-                    err_msg = f"TS 任务需要且仅需要 1 个虚频，实际为 {num_imag}"
+                    err_msg = f"TS task requires exactly 1 imaginary frequency, got {num_imag}"
                     if lowest_freq is not None:
-                        err_msg += f"（最低频率: {lowest_freq:.1f} cm⁻¹）"
-                    if str(cfg.get("ts_rescue_scan", "true")).lower() == "true":
-                        rescued = _ts_rescue_scan(task_info, err_msg)
-                        if rescued is not None:
-                            return rescued
-                    return {**task_info, "status": "failed", "error": err_msg}
+                        err_msg += f" (lowest freq: {lowest_freq:.1f} cm⁻¹)"
+                    rescued = self._try_rescue(cfg, task_dict, err_msg)
+                    if rescued is not None:
+                        return rescued
+                    return {**task_dict, "status": "failed", "error": err_msg}
 
             if itask == 3 and num_imag > 0:
-                err_msg = f"优化+频率任务存在 {num_imag} 个虚频"
+                err_msg = f"opt+freq task has {num_imag} imaginary frequencies"
                 if lowest_freq is not None:
-                    err_msg += f"（最低频率: {lowest_freq:.1f} cm⁻¹）"
-                return {**task_info, "status": "failed", "error": err_msg}
+                    err_msg += f" (lowest freq: {lowest_freq:.1f} cm⁻¹)"
+                return {**task_dict, "status": "failed", "error": err_msg}
 
-            ts_bond_atoms = cfg.get("ts_bond_atoms", cfg.get("ts_bond"))
+            ts_bond_atoms = cfg.get("ts_bond_atoms")
             ts_bond_length = None
             ts_pair = _parse_ts_bond_atoms(ts_bond_atoms)
             if ts_pair and final_coords:
@@ -95,37 +112,36 @@ class TaskRunner:
                 ts_bond_atoms = f"{ts_pair[0]},{ts_pair[1]}"
 
             if itask == 4 and not _keyword_requests_freq(cfg):
-                bond_drift_threshold = float(cfg.get("ts_bond_drift_threshold", 0.4))
+                bond_drift_threshold = float(
+                    cfg.get("ts_bond_drift_threshold", DEFAULT_TS_BOND_DRIFT_THRESHOLD)
+                )
                 if ts_pair is not None:
-                    r_initial = _bond_length_from_xyz_lines(
-                        task_info["coords"], ts_pair[0], ts_pair[1]
+                    err_msg = validate_ts_bond_drift(
+                        task_dict["coords"],
+                        final_coords,
+                        ts_pair[0],
+                        ts_pair[1],
+                        bond_drift_threshold,
                     )
-                    r_final = _bond_length_from_xyz_lines(final_coords, ts_pair[0], ts_pair[1])
-                    if r_initial is not None and r_final is not None:
-                        d_r = abs(r_final - r_initial)
-                        if d_r > bond_drift_threshold:
-                            err_msg = (
-                                f"TS 几何判据失败：关键键长偏移 |ΔR|={d_r:.3f} Å 超过阈值 {bond_drift_threshold:.3f} Å "
-                                f"(R_initial={r_initial:.3f} Å, R_final={r_final:.3f} Å, TSAtoms={ts_pair[0]},{ts_pair[1]})"
-                            )
-                            if str(cfg.get("ts_rescue_scan", "true")).lower() == "true":
-                                rescued = _ts_rescue_scan(task_info, err_msg)
-                                if rescued is not None:
-                                    return rescued
-                            return {**task_info, "status": "failed", "error": err_msg}
+                    if err_msg is not None:
+                        rescued = self._try_rescue(cfg, task_dict, err_msg)
+                        if rescued is not None:
+                            return rescued
+                        return {**task_dict, "status": "failed", "error": err_msg}
 
             inherited_gc = None
             try:
-                meta = task_info.get("metadata") or {}
-                # 新约定：一旦某步已经产生 G=...（Gibbs），则不再向下传递 G_corr。
-                # 只有 freq/opt_freq 产出的 G_corr 会向下传递，直到与 sp 能量合成出 G。
+                meta = task_dict.get("metadata") or {}
+                # Convention: once a step has produced G=... (Gibbs), G_corr is
+                # no longer propagated downstream.  Only G_corr from freq/opt_freq
+                # steps is carried forward until combined with an SP energy to form G.
                 if "G" in meta:
                     inherited_gc = None
                 elif "G_corr" in meta:
                     inherited_gc = float(meta.get("G_corr"))
                 elif "g_corr" in meta:
                     inherited_gc = float(meta.get("g_corr"))
-            except Exception:
+            except (ValueError, TypeError):
                 inherited_gc = None
 
             e, g, gc = res.get("e_low"), res.get("g_low"), res.get("g_corr")
@@ -156,7 +172,7 @@ class TaskRunner:
 
             success = True
             result = {
-                **task_info,
+                **task_dict,
                 "status": "success",
                 key: final_val,
                 "final_sp_energy": final_sp_energy,
@@ -172,12 +188,12 @@ class TaskRunner:
             return result
 
         except Exception as e:
-            if get_itask(cfg) == 4 and str(cfg.get("ts_rescue_scan", "true")).lower() == "true":
-                rescued = _ts_rescue_scan(task_info, str(e))
+            if get_itask(cfg) == 4:
+                rescued = self._try_rescue(cfg, task_dict, str(e))
                 if rescued is not None:
                     return rescued
             return {
-                **task_info,
+                **task_dict,
                 "status": "failed",
                 "error": str(e),
                 "error_details": executor._get_error_details(wd, job, cfg, e, policy),

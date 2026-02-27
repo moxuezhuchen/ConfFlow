@@ -1,16 +1,26 @@
-"""量化化学程序策略测试（合并版：Gaussian/ORCA）。"""
+#!/usr/bin/env python3
+
+"""Tests for quantum chemistry program policies (merged: Gaussian/ORCA)."""
+
+from __future__ import annotations
 
 import os
+
 import pytest
+
 from confflow.calc.policies.gaussian import GaussianPolicy
 from confflow.calc.policies.orca import OrcaPolicy
 
 
-def test_gaussian_policy_basic():
-    policy = GaussianPolicy()
-    assert policy.name == "gaussian"
-    assert policy.input_ext == "gjf"
-    assert policy.log_ext == "log"
+@pytest.mark.parametrize(
+    "policy_cls, name, input_ext, log_ext",
+    [(GaussianPolicy, "gaussian", "gjf", "log"), (OrcaPolicy, "orca", "inp", "out")],
+)
+def test_policy_basic(policy_cls, name, input_ext, log_ext):
+    policy = policy_cls()
+    assert policy.name == name
+    assert policy.input_ext == input_ext
+    assert policy.log_ext == log_ext
 
 
 def test_gaussian_generate_input(tmp_path):
@@ -33,17 +43,24 @@ def test_gaussian_generate_input(tmp_path):
     content = inp.read_text()
     assert "%nproc=4" in content
     assert "%mem=4GB" in content
-    assert "#p B3LYP/6-31G(d) Opt" in content
+    assert "# B3LYP/6-31G(d) Opt" in content
     assert "0 1" in content
     assert "C  -1" in content
 
 
-def test_gaussian_parse_output_sp(tmp_path):
-    policy = GaussianPolicy()
+@pytest.mark.parametrize(
+    "policy_cls, content, expected",
+    [
+        (GaussianPolicy, "SCF Done:  E(RB3LYP) =  -1.23456789     A.U.\n", -1.23456789),
+        (OrcaPolicy, "FINAL SINGLE POINT ENERGY      -1.23456789\n", -1.23456789),
+    ],
+)
+def test_policy_parse_output_sp(policy_cls, content, expected, tmp_path):
+    policy = policy_cls()
     log = tmp_path / "test.log"
-    log.write_text("SCF Done:  E(RB3LYP) =  -1.23456789     A.U.\n")
+    log.write_text(content)
     res = policy.parse_output(str(log), {}, is_sp_task=True)
-    assert res["e_high"] == -1.23456789
+    assert res["e_high"] == expected
 
 
 def test_gaussian_parse_output_prefers_last_scf_done_over_archive_hf_real_log():
@@ -82,20 +99,34 @@ def test_gaussian_parse_output_opt(tmp_path):
     assert len(res["final_coords"]) == 2
 
 
-def test_gaussian_get_execution_command():
-    policy = GaussianPolicy()
-    config = {"gaussian_path": "g16"}
-    cmd = policy.get_execution_command(config, "test.gjf")
-    assert cmd == ["g16", "test.gjf"]
+@pytest.mark.parametrize(
+    "policy_cls, cfg_key, cfg_val, filename, expected",
+    [
+        (GaussianPolicy, "gaussian_path", "g16", "test.gjf", ["g16", "test.gjf"]),
+        (OrcaPolicy, "orca_path", "/usr/bin/orca", "test.inp", ["/usr/bin/orca", "test.inp"]),
+    ],
+)
+def test_get_execution_command(policy_cls, cfg_key, cfg_val, filename, expected):
+    policy = policy_cls()
+    config = {cfg_key: cfg_val}
+    cmd = policy.get_execution_command(config, filename)
+    assert cmd == expected
 
 
-def test_gaussian_get_error_details(tmp_path):
-    policy = GaussianPolicy()
-    log = tmp_path / "job1.log"
-    log.write_text("Error termination via Lnk1e\nConvergence failure\n")
+@pytest.mark.parametrize(
+    "policy_cls, filename, log_text",
+    [
+        (GaussianPolicy, "job1.log", "Error termination via Lnk1e\nConvergence failure\n"),
+        (OrcaPolicy, "job1.out", "ORCA finished by error\nSCF NOT CONVERGED\n"),
+    ],
+)
+def test_get_error_details(policy_cls, filename, log_text, tmp_path):
+    policy = policy_cls()
+    log = tmp_path / filename
+    log.write_text(log_text)
     details = policy.get_error_details(str(tmp_path), "job1", {})
-    assert "程序异常终止" in details
-    assert "SCF不收敛" in details
+    assert "Abnormal program termination" in details
+    assert "SCF not converged" in details
 
 
 def test_orca_policy_basic():
@@ -183,12 +214,13 @@ def test_orca_get_error_details(tmp_path):
     log = tmp_path / "job1.out"
     log.write_text("ORCA finished by error\nSCF NOT CONVERGED\n")
     details = policy.get_error_details(str(tmp_path), "job1", {})
-    assert "程序异常终止" in details
-    assert "SCF不收敛" in details
+    assert "Abnormal program termination" in details
+    assert "SCF not converged" in details
 
 
 def test_gaussian_policy_freeze_marks_frozen_atom(tmp_path):
     import re
+
     out = tmp_path / "job.gjf"
     task = {
         "job_name": "job",
@@ -239,6 +271,29 @@ def test_gaussian_policy_keyword_prefix_and_memory_alias(tmp_path):
     assert "%mem=2GB" in text
 
 
+def test_gaussian_policy_keyword_plain_p_prefix_is_preserved(tmp_path):
+    out = tmp_path / "job.gjf"
+    task = {
+        "job_name": "job",
+        "coords": [
+            "H 0.0 0.0 0.0",
+            "H 0.0 0.0 0.74",
+        ],
+        "config": {
+            "iprog": "g16",
+            "keyword": "p opt(rcfc,tight,ts,noeigentest) freq b3lyp 6-31g(d) em=gd3bj",
+            "charge": 0,
+            "multiplicity": 1,
+            "cores_per_task": 1,
+            "max_parallel_jobs": 1,
+            "memory": "2GB",
+        },
+    }
+    GaussianPolicy().generate_input(task, str(out))
+    text = out.read_text(encoding="utf-8")
+    assert "#p opt(rcfc,tight,ts,noeigentest) freq b3lyp 6-31g(d) em=gd3bj" in text
+
+
 def test_orca_policy_freeze_constraint(tmp_path):
     out = tmp_path / "job.inp"
     task = {
@@ -266,6 +321,7 @@ def test_orca_policy_freeze_constraint(tmp_path):
 
 def test_chem_task_manager_run_smoke_without_external_program(tmp_path, monkeypatch):
     import os
+
     from confflow import calc
     from confflow.calc.components import executor
 

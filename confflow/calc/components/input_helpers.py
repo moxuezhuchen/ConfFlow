@@ -1,29 +1,46 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 
-"""输入文件生成的共享 helper（供 policies 复用）。
+"""Shared helpers for input file generation (reused by policies).
 
-约束
-- 只做“纯计算/纯格式化”的小函数，避免引入 I/O。
-- 这些 helper 主要用于减少 policy 间重复逻辑；输出格式由各 policy 自己控制。
+Constraints:
+- Only small pure-computation / pure-formatting functions; avoid introducing I/O.
+- These helpers mainly reduce duplicate logic between policies; output format is
+  controlled by each policy itself.
 """
 
 from __future__ import annotations
 
 import re
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from collections.abc import Sequence
+from typing import Any
 
-from ..core import UTILS_AVAILABLE
+from ..setup import UTILS_AVAILABLE
+
+try:
+    from ...config.defaults import DEFAULT_TOTAL_MEMORY
+except ImportError:  # pragma: no cover
+    DEFAULT_TOTAL_MEMORY = "4GB"
 
 try:
     from ...core.utils import parse_memory
-except Exception:  # pragma: no cover
+except ImportError:  # pragma: no cover
     parse_memory = None
 
 try:
     from ...core.utils import parse_index_spec
-except Exception:  # pragma: no cover
+except ImportError:  # pragma: no cover
     parse_index_spec = None  # type: ignore
+
+__all__ = [
+    "compute_gaussian_mem",
+    "compute_orca_maxcore",
+    "normalize_gaussian_keyword",
+    "normalize_blocks",
+    "parse_freeze_indices",
+    "gaussian_apply_freeze",
+    "orca_constraint_block",
+    "format_orca_blocks",
+]
 
 
 def _total_sys_mb(total_mem_str: Any) -> int:
@@ -41,10 +58,10 @@ def _total_sys_mb(total_mem_str: Any) -> int:
         return 4096
 
 
-def compute_gaussian_mem(config: Dict[str, Any]) -> str:
+def compute_gaussian_mem(config: dict[str, Any]) -> str:
     max_jobs = int(config.get("max_parallel_jobs", 1))
     total_mem_str = config.get(
-        "total_memory", config.get("mem_per_task", config.get("memory", "4GB"))
+        "total_memory", config.get("mem_per_task", config.get("memory", DEFAULT_TOTAL_MEMORY))
     )
 
     sys_mb = _total_sys_mb(total_mem_str)
@@ -55,10 +72,10 @@ def compute_gaussian_mem(config: Dict[str, Any]) -> str:
     return f"{mem_gb}GB"
 
 
-def compute_orca_maxcore(config: Dict[str, Any]) -> str:
-    cores = int(config.get("cores_per_task", 4))
+def compute_orca_maxcore(config: dict[str, Any]) -> str:
+    cores = int(config.get("cores_per_task", 1))
     max_jobs = int(config.get("max_parallel_jobs", 1))
-    total_mem_str = config.get("total_memory", config.get("mem_per_task", "4GB"))
+    total_mem_str = config.get("total_memory", config.get("mem_per_task", DEFAULT_TOTAL_MEMORY))
 
     sys_mb = _total_sys_mb(total_mem_str)
     mem_per_job_mb = sys_mb / max_jobs
@@ -67,7 +84,7 @@ def compute_orca_maxcore(config: Dict[str, Any]) -> str:
     if orca_maxcore is not None and str(orca_maxcore).strip():
         try:
             return str(int(float(str(orca_maxcore).strip())))
-        except Exception:
+        except (ValueError, TypeError):
             return str(orca_maxcore).strip()
 
     mem_per_core_mb = mem_per_job_mb / cores
@@ -83,7 +100,7 @@ def normalize_gaussian_keyword(keyword_line: Any) -> str:
     return re.sub(r"^\s*(?:#\s*[pPnNtT]?\s*)+", "", keyword_line).strip() or ""
 
 
-def normalize_blocks(solvent_block: Any, custom_block: Any) -> Tuple[str, str]:
+def normalize_blocks(solvent_block: Any, custom_block: Any) -> tuple[str, str]:
     s = "" if solvent_block is None else str(solvent_block)
     c = "" if custom_block is None else str(custom_block)
     if s and not s.endswith("\n"):
@@ -93,9 +110,8 @@ def normalize_blocks(solvent_block: Any, custom_block: Any) -> Tuple[str, str]:
     return s, c
 
 
-def parse_freeze_indices(freeze: Any) -> List[int]:
-    """解析 freeze 配置，返回 1-based 原子序号列表。"""
-
+def parse_freeze_indices(freeze: Any) -> list[int]:
+    """Parse freeze configuration and return a list of 1-based atom indices."""
     if freeze is None:
         return []
 
@@ -109,7 +125,7 @@ def parse_freeze_indices(freeze: Any) -> List[int]:
         return list(parse_index_spec(freeze_str))
 
     if isinstance(freeze, (list, tuple)):
-        out: List[int] = []
+        out: list[int] = []
         for x in freeze:
             if x is None:
                 continue
@@ -150,9 +166,9 @@ def orca_constraint_block(freeze_indices_1based: Sequence[int]) -> str:
 
 
 def format_orca_blocks(blocks: Any) -> str:
-    """将字典或字符串转换为 ORCA 的 %block ... end 语法。
+    """Convert a dict or string into ORCA ``%block ... end`` syntax.
 
-    支持嵌套字典、列表或纯多行字符串。
+    Supports nested dicts, lists, or plain multi-line strings.
     """
     if not blocks:
         return ""
@@ -168,7 +184,7 @@ def format_orca_blocks(blocks: Any) -> str:
             return "true" if v else "false"
         return str(v)
 
-    def _render_content(content: Any, indent: int = 2) -> List[str]:
+    def _render_content(content: Any, indent: int = 2) -> list[str]:
         lines = []
         sp = " " * indent
         if isinstance(content, dict):

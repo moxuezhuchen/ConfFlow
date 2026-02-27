@@ -1,24 +1,21 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 
-"""ConfFlow 共享数据模块。
+"""ConfFlow shared data module.
 
-集中管理所有模块共用的常量数据，避免重复定义。
+Centralises constant data shared across all modules to avoid duplicate definitions.
 """
 
 from __future__ import annotations
 
-from typing import Tuple
-
 # ==============================================================================
-# GaussView 官方共价半径 (所有工具统一使用)
+# GaussView official covalent radii (used uniformly across all tools)
 # ==============================================================================
-# 元素 0-119 的共价半径数据（单位：Ångström），来自 GaussView
-# 此数据用于：
-# - 构象生成器的成键判定
-# - RMSD 去重的原子识别
-# - 几何碰撞检测
-GV_COVALENT_RADII: Tuple[float, ...] = (
+# Covalent radii for elements 0-119 (unit: Ångström), sourced from GaussView.
+# Used for:
+# - Bond detection in the conformer generator
+# - Atom identification during RMSD deduplication
+# - Geometric clash detection
+GV_COVALENT_RADII: tuple[float, ...] = (
     0.00,  # 0 - placeholder
     0.30,  # 1 - H
     1.16,  # 2 - He
@@ -135,50 +132,163 @@ GV_COVALENT_RADII: Tuple[float, ...] = (
 GV_RADII_ARRAY = GV_COVALENT_RADII
 
 
-# 元素周期表符号（1-based，索引 0 为空字符串）
-PERIODIC_SYMBOLS: Tuple[str, ...] = (
+# Periodic table symbols (1-based; index 0 is an empty string)
+PERIODIC_SYMBOLS: tuple[str, ...] = (
     "",
-    "H", "He",
-    "Li", "Be", "B", "C", "N", "O", "F", "Ne",
-    "Na", "Mg", "Al", "Si", "P", "S", "Cl", "Ar",
-    "K", "Ca", "Sc", "Ti", "V", "Cr", "Mn", "Fe", "Co", "Ni", "Cu", "Zn",
-    "Ga", "Ge", "As", "Se", "Br", "Kr",
-    "Rb", "Sr", "Y", "Zr", "Nb", "Mo", "Tc", "Ru", "Rh", "Pd", "Ag", "Cd",
-    "In", "Sn", "Sb", "Te", "I", "Xe",
-    "Cs", "Ba", "La", "Ce", "Pr", "Nd", "Pm", "Sm", "Eu", "Gd", "Tb", "Dy",
-    "Ho", "Er", "Tm", "Yb", "Lu", "Hf", "Ta", "W", "Re", "Os", "Ir", "Pt",
-    "Au", "Hg", "Tl", "Pb", "Bi", "Po", "At", "Rn",
-    "Fr", "Ra", "Ac", "Th", "Pa", "U", "Np", "Pu", "Am", "Cm", "Bk", "Cf",
-    "Es", "Fm", "Md", "No", "Lr", "Rf", "Db", "Sg", "Bh", "Hs", "Mt", "Ds",
-    "Rg", "Cn", "Nh", "Fl", "Mc", "Lv", "Ts", "Og",
+    "H",
+    "He",
+    "Li",
+    "Be",
+    "B",
+    "C",
+    "N",
+    "O",
+    "F",
+    "Ne",
+    "Na",
+    "Mg",
+    "Al",
+    "Si",
+    "P",
+    "S",
+    "Cl",
+    "Ar",
+    "K",
+    "Ca",
+    "Sc",
+    "Ti",
+    "V",
+    "Cr",
+    "Mn",
+    "Fe",
+    "Co",
+    "Ni",
+    "Cu",
+    "Zn",
+    "Ga",
+    "Ge",
+    "As",
+    "Se",
+    "Br",
+    "Kr",
+    "Rb",
+    "Sr",
+    "Y",
+    "Zr",
+    "Nb",
+    "Mo",
+    "Tc",
+    "Ru",
+    "Rh",
+    "Pd",
+    "Ag",
+    "Cd",
+    "In",
+    "Sn",
+    "Sb",
+    "Te",
+    "I",
+    "Xe",
+    "Cs",
+    "Ba",
+    "La",
+    "Ce",
+    "Pr",
+    "Nd",
+    "Pm",
+    "Sm",
+    "Eu",
+    "Gd",
+    "Tb",
+    "Dy",
+    "Ho",
+    "Er",
+    "Tm",
+    "Yb",
+    "Lu",
+    "Hf",
+    "Ta",
+    "W",
+    "Re",
+    "Os",
+    "Ir",
+    "Pt",
+    "Au",
+    "Hg",
+    "Tl",
+    "Pb",
+    "Bi",
+    "Po",
+    "At",
+    "Rn",
+    "Fr",
+    "Ra",
+    "Ac",
+    "Th",
+    "Pa",
+    "U",
+    "Np",
+    "Pu",
+    "Am",
+    "Cm",
+    "Bk",
+    "Cf",
+    "Es",
+    "Fm",
+    "Md",
+    "No",
+    "Lr",
+    "Rf",
+    "Db",
+    "Sg",
+    "Bh",
+    "Hs",
+    "Mt",
+    "Ds",
+    "Rg",
+    "Cn",
+    "Nh",
+    "Fl",
+    "Mc",
+    "Lv",
+    "Ts",
+    "Og",
 )
 
-# 元素符号 -> 原子序数映射（大写）
+# Element symbol -> atomic number mapping (upper-case)
 SYMBOL_TO_ATOMIC_NUMBER = {sym.upper(): i for i, sym in enumerate(PERIODIC_SYMBOLS) if sym}
 
 
 def get_covalent_radius(atomic_number: int) -> float:
-    """获取原子的共价半径
+    """Return the covalent radius for a given element.
 
-    Args:
-        atomic_number: 原子序数 (1-based)
+    Parameters
+    ----------
+    atomic_number : int
+        Atomic number (1-based).
 
-    Returns:
-        共价半径（Å），未知元素返回 1.50
+    Returns
+    -------
+    float
+        Covalent radius in Ångström.  Returns 1.50 for unknown elements.
     """
     if 0 < atomic_number < len(GV_COVALENT_RADII):
         return GV_COVALENT_RADII[atomic_number]
-    return 1.50  # 未知元素的默认半径
+    return 1.50  # Default radius for unknown elements
 
 
 def get_element_symbol(atomic_number: int) -> str:
-    """获取元素符号
+    """Return the element symbol for a given atomic number.
 
-    Args:
-        atomic_number: 原子序数 (1-based)
+    Parameters
+    ----------
+    atomic_number : int
+        Atomic number (1-based).
 
-    Returns:
-        元素符号（大写），未知元素返回 "X"
+    Returns
+    -------
+    str
+        Element symbol (upper-case).  Returns ``"X"`` for unknown elements.
     """
     if 0 < atomic_number < len(PERIODIC_SYMBOLS):
         return PERIODIC_SYMBOLS[atomic_number]
@@ -186,13 +296,17 @@ def get_element_symbol(atomic_number: int) -> str:
 
 
 def get_atomic_number(symbol: str) -> int:
-    """获取原子序数
+    """Return the atomic number for a given element symbol.
 
-    Args:
-        symbol: 元素符号（不区分大小写）
+    Parameters
+    ----------
+    symbol : str
+        Element symbol (case-insensitive).
 
-    Returns:
-        原子序数，未知元素返回 0
+    Returns
+    -------
+    int
+        Atomic number.  Returns 0 for unknown elements.
     """
     return SYMBOL_TO_ATOMIC_NUMBER.get(symbol.upper(), 0)
 

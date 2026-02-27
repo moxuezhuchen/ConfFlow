@@ -29,6 +29,28 @@ pip install .
 pip install -e ".[dev]"
 ```
 
+项目已统一为 `pyproject.toml` 构建（PEP 621），不再使用 `setup.py`。
+
+## 工程化改进（2026-02）
+
+- ✅ 统一构建与依赖管理：仅保留 `pyproject.toml`
+- ✅ 引入 `Pydantic v2`：核心上下文模型集中在 `confflow/core/models.py`
+- ✅ 清理重复 I/O：统一复用 `confflow/core/io.py`
+- ✅ 进程终止增强：`cli` 使用 `psutil` 进行进程树回收
+- ✅ 测试架构重构：28 个聚焦测试文件、465 个测试、~6s 运行
+- ✅ 覆盖率基础设施：branch coverage + `fail_under = 70`
+- ✅ 测试回归通过：全量 465 passed，零失败
+- ✅ 构象去重精度提升：对称性感知 RMSD + 能量辅助阈值，解决大分子原子乱序/对称互换导致的去重漏判
+
+## 目录清理
+
+可使用以下命令清理缓存与构建产物：
+
+```bash
+find . -type d -name "__pycache__" -exec rm -rf {} +
+rm -rf confflow.egg-info .pytest_cache build dist .coverage
+```
+
 ## 快速开始
 
 ```bash
@@ -42,7 +64,7 @@ confflow mol.xyz -c confflow.yaml --resume
 confflow mol.xyz -c confflow.yaml --verbose
 ```
 
-运行时默认不会在终端打印日志；所有运行日志与最终报告会写入输入目录下同名的输出文件：`<input_basename>.txt`。
+运行时默认不会在终端打印日志；所有 CLI 运行日志会写入输入目录下同名输出文件：`<input_basename>.txt`。
 
 常用排查方式：
 
@@ -93,6 +115,7 @@ steps:
 - [关键字参考](docs/KEYWORD_REFERENCE.md) - YAML 配置关键字
 - [开发指南](docs/DEVELOPMENT.md) - 扩展与开发说明
 - [测试说明](docs/TESTING.md) - 测试套件文档
+- [风格契约](docs/STYLE_CONTRACT.md) - 代码/输入/输出一致性标准
 
 ## FAQ
 
@@ -126,7 +149,7 @@ pytest
 mypy confflow
 
 # 代码风格
-flake8 confflow
+ruff check .
 ```
 
 ## 许可证

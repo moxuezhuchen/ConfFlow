@@ -1,8 +1,12 @@
-"""refine 模块测试（合并版）"""
+#!/usr/bin/env python3
 
+"""Tests for refine module (merged)."""
+
+from __future__ import annotations
+
+import importlib
 import os
 import sys
-import importlib
 from pathlib import Path
 from unittest.mock import patch
 
@@ -12,12 +16,14 @@ import pytest
 from confflow.blocks import refine
 from confflow.blocks.refine.processor import (
     RefineOptions,
-    get_pmi,
-    fast_rmsd,
-    read_xyz_file,
-    get_topology_hash_worker,
-    get_element_atomic_number,
     process_xyz,
+    read_xyz_file,
+)
+from confflow.blocks.refine.rmsd_engine import (
+    fast_rmsd,
+    get_element_atomic_number,
+    get_pmi,
+    get_topology_hash_worker,
 )
 
 
@@ -45,10 +51,7 @@ def test_get_pmi_empty_and_single_atom():
 
 
 def test_get_pmi_basic():
-    coords = np.array([
-        [-1.0, 0.0, 0.0],
-        [1.0, 0.0, 0.0]
-    ])
+    coords = np.array([[-1.0, 0.0, 0.0], [1.0, 0.0, 0.0]])
     pmi = get_pmi(coords)
     assert len(pmi) == 3
 
@@ -87,7 +90,9 @@ def test_get_topology_hash_basic_and_empty():
     coords = np.array([[0, 0, 0], [1.5, 0, 0]])
     h = get_topology_hash_worker((symbols, coords))
     assert isinstance(h, str)
-    assert len(h) == 10
+    assert (
+        len(h) == 40
+    )  # full SHA-1 digest (no truncation, prevents collisions with large conformer sets)
 
     assert get_topology_hash_worker(([], np.empty((0, 3)))) == "empty"
 
@@ -127,7 +132,7 @@ H 1.5 1.0 0.0
 
     process_xyz(opts)
     assert out_xyz.exists()
-    with open(out_xyz, "r") as f:
+    with open(out_xyz) as f:
         lines = f.readlines()
     assert len(lines) == 5
 
@@ -153,7 +158,7 @@ H 1.5 1.0 1.0
     process_xyz(opts)
 
     assert out_xyz.exists()
-    with open(out_xyz, "r") as f:
+    with open(out_xyz) as f:
         lines = f.readlines()
     assert len(lines) == 5
 
@@ -176,7 +181,7 @@ def test_process_xyz_full(tmp_path):
     process_xyz(opts)
 
     assert os.path.exists(opts.output)
-    with open(opts.output, "r") as f:
+    with open(opts.output) as f:
         lines = f.readlines()
         assert lines.count("2\n") == 2
 
@@ -191,32 +196,15 @@ def test_process_xyz_no_energy(tmp_path):
 
 def test_process_xyz_sort_energy(tmp_path):
     xyz = tmp_path / "input.xyz"
-    xyz.write_text(
-        "2\nE=-1.0\nC 0 0 0\nC 1.5 0 0\n"
-        "2\nE=-2.0\nC 0 0 0\nC 2.0 0 0\n"
-    )
+    xyz.write_text("2\nE=-1.0\nC 0 0 0\nC 1.5 0 0\n" "2\nE=-2.0\nC 0 0 0\nC 2.0 0 0\n")
     opts = RefineOptions(input_file=str(xyz), output=str(tmp_path / "output.xyz"))
     process_xyz(opts)
-    with open(opts.output, "r") as f:
+    with open(opts.output) as f:
         content = f.read()
         assert content.find("E=-2.0") < content.find("E=-1.0")
 
 
-def _sync_executor(monkeypatch):
-    class SyncExecutor:
-        def __init__(self, *args, **kwargs):
-            pass
-        def __enter__(self):
-            return self
-        def __exit__(self, *args):
-            pass
-        def map(self, func, *iterables, **kwargs):
-            return map(func, *iterables)
-    monkeypatch.setattr("confflow.blocks.refine.processor.ProcessPoolExecutor", SyncExecutor)
-
-
-def test_process_xyz_ewin_filter(tmp_path, monkeypatch):
-    _sync_executor(monkeypatch)
+def test_process_xyz_ewin_filter(tmp_path, sync_executor):
 
     xyz_content = """2
 E=-10.000
@@ -239,13 +227,12 @@ H 0.0 0.0 1.2
 
     process_xyz(opts)
 
-    with open(out_xyz, "r") as f:
+    with open(out_xyz) as f:
         lines = f.readlines()
     assert len(lines) == 8
 
 
-def test_process_xyz_no_energy_extended(tmp_path, monkeypatch):
-    _sync_executor(monkeypatch)
+def test_process_xyz_no_energy_extended(tmp_path, sync_executor):
 
     xyz_content = """2
 No Energy
@@ -266,8 +253,7 @@ H 0.0 0.0 1.1
     assert out_xyz.exists()
 
 
-def test_process_xyz_sort_only(tmp_path, monkeypatch):
-    _sync_executor(monkeypatch)
+def test_process_xyz_sort_only(tmp_path, sync_executor):
 
     xyz_content = """2
 E=-5.0
@@ -286,31 +272,46 @@ H 0.0 0.0 1.1
 
     process_xyz(opts)
 
-    with open(out_xyz, "r") as f:
+    with open(out_xyz) as f:
         lines = f.readlines()
     assert "E=-10.0" in lines[1]
     assert "E=-5.0" in lines[5]
 
 
 def test_refine_fallback_imports():
-    with patch.dict(sys.modules, {'numba': None, 'tqdm': None}):
-        import confflow.blocks.refine.processor as processor
-        importlib.reload(processor)
+    with patch.dict(sys.modules, {"numba": None, "tqdm": None}):
+        import confflow.blocks.refine.rmsd_engine as engine
 
-        assert processor.numba.__name__ == "FakeNumba"
-        @processor.numba.njit()
+        importlib.reload(engine)
+
+        assert engine.numba.__name__ == "FakeNumba"
+
+        @engine.numba.njit()
         def test_func(x):
             return x
+
         assert test_func(1) == 1
 
+        # reload to restore
+        importlib.reload(engine)
+        import confflow.blocks.refine.processor as processor
+
+        importlib.reload(processor)
 
 
 def test_refine_covalent_radii_fallback():
-    with patch.dict(sys.modules, {'confflow.core.utils': None}):
+    with patch.dict(sys.modules, {"confflow.core.utils": None}):
+        import confflow.blocks.refine.rmsd_engine as engine
+
+        importlib.reload(engine)
+        assert hasattr(engine, "GV_COVALENT_RADII")
+        assert len(engine.GV_COVALENT_RADII) > 0
+
+        # reload to restore
+        importlib.reload(engine)
         import confflow.blocks.refine.processor as processor
+
         importlib.reload(processor)
-        assert hasattr(processor, "GV_COVALENT_RADII")
-        assert len(processor.GV_COVALENT_RADII) > 0
 
 
 def test_refine_preserves_ts_bond_in_comment(tmp_path: Path) -> None:

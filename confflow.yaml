@@ -28,7 +28,7 @@ global:
   rmsd_threshold: 0.25
   
   # --- TS 救援功能 ---
-  ts_rescue_scan: true       # TS 失败后自动 scan 救援（默认开启）
+  ts_rescue_scan: false       # TS 失败后自动 scan 救援（默认关闭）
   ts_bond_drift_threshold: 0.4  # TS 几何判据：关键键长偏移阈值 (Å)
 
 # ============================================================================
@@ -139,7 +139,7 @@ steps:
       itask: ts
       keyword: "opt=(ts,calcfc,noeigen) b3lyp/6-31g(d) freq"
       ts_bond_atoms: [86, 92]
-      ts_rescue_scan: true  # 设为 false 则失败后直接报错，不进行 scan 尝试
+      ts_rescue_scan: true  # 设为 true 则失败后自动进行 scan 尝试救援
 
 # ============================================================================
 # 参数说明
@@ -178,7 +178,7 @@ steps:
 #
 # 【过渡态配置】(itask=ts 时使用)
 # - ts_bond_atoms: [1, 2]      # TS 关键键原子对 (1-based)，用于输出键长
-# - ts_rescue_scan: true       # TS 失败后自动 scan 救援（默认开启）
+# - ts_rescue_scan: false      # TS 失败后自动 scan 救援（默认关闭）
 # - scan_coarse_step: 0.1      # 粗扫步长 (Å)
 # - scan_fine_step: 0.02       # 细扫步长 (Å)
 # - scan_uphill_limit: 10      # 粗扫中连续上坡停止步数

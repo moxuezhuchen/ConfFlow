@@ -7,6 +7,7 @@ confflow/
 ├── confflow/              # 核心包
 │   ├── main.py            # 工作流主程序
 │   ├── cli.py             # 命令行入口
+│   ├── confts.py          # TS 专用执行器
 │   ├── blocks/            # 工作流步骤块
 │   │   ├── confgen/       # 构象生成
 │   │   ├── refine/        # 结果筛选与精炼
@@ -16,14 +17,13 @@ confflow/
 │   │   ├── components/    # 执行器与任务管理
 │   │   └── db/            # 结果数据库
 │   ├── config/            # 配置加载与校验
-│   ├── core/              # 基础 IO 与工具函数
-│   └── workflow/          # 工作流引擎（拆分为 engine/helpers/validation/config_builder/stats）
-├── tests/                 # 单元测试
+│   ├── core/              # 基础 IO、数据、模型与工具函数
+│   └── workflow/          # 工作流引擎
+├── tests/                 # 单元测试（28 个文件，465 个用例）
 ├── docs/                  # 文档
 ├── confflow.yaml          # 配置模板
 ├── README.md              # 主文档
-├── setup.py               # 打包配置
-└── pyproject.toml         # 项目元数据
+└── pyproject.toml         # 项目元数据与打包配置
 ```
 
 ## 开发环境设置
@@ -31,7 +31,7 @@ confflow/
 ### 1. 克隆仓库
 
 ```bash
-git clone https://github.com/user/confflow.git
+git clone https://github.com/confflow/confflow.git
 cd confflow
 ```
 
@@ -46,7 +46,7 @@ conda activate confflow-dev
 
 ```bash
 pip install -e .  # 可编辑安装
-pip install pytest pytest-cov black flake8 sphinx  # 开发工具
+pip install pytest pytest-cov black ruff mypy sphinx  # 开发工具
 ```
 
 ## 代码规范
@@ -68,8 +68,10 @@ mypy confflow/ --ignore-missing-imports
 ### 代码风格检查
 
 ```bash
-flake8 confflow/ --max-line-length=100
+ruff check .
 ```
+
+统一风格与输入/输出契约见：`docs/STYLE_CONTRACT.md`
 
 ## 运行测试
 
@@ -85,18 +87,42 @@ pytest tests/ -v
 pytest tests/test_confgen.py -v
 ```
 
-### 覆盖率推进（coverage_push）
-
-覆盖率推进过程中产生的迭代测试文件已集中放在 `tests/coverage_push/`：
+### 仅集成测试
 
 ```bash
-pytest tests/coverage_push/ -q
+pytest tests/ -m integration
 ```
 
 ### 代码覆盖率
 
 ```bash
 pytest tests/ --cov=confflow --cov-report=term-missing
+```
+
+覆盖率阈值已配置在 `pyproject.toml` 中（`fail_under = 70`），并启用了分支覆盖率。
+
+### 常用质量门禁（推荐）
+
+```bash
+ruff check .
+mypy confflow
+pytest -q
+```
+
+### 测试产物目录规范
+
+- 统一测试临时目录：`.pytest_basetemp`
+- 统一 pytest 缓存目录：`.pytest_cache`
+- 覆盖率与报告目录：`htmlcov/`、`coverage.xml`、`reports/`
+
+以上目录均已在 `.gitignore` 中忽略，避免污染仓库根目录。
+
+测试架构详见：`docs/TESTING.md`
+
+### 目录清理（缓存/临时文件）
+
+```bash
+bash scripts/clean_artifacts.sh
 ```
 
 ## 核心模块说明
@@ -145,7 +171,6 @@ pytest tests/ --cov=confflow --cov-report=term-missing
 
 **主要功能：**
 - 生成文本报告（可合并到 .txt 输出）。
-- 可选生成 HTML 报告（手动调用）。
 - 能量分布与收敛轨迹可视化。
 
 ## 添加新功能的步骤

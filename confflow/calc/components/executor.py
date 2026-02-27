@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 
-"""任务执行与备份。
+"""Task execution and backup.
 
-负责：
-- 调用外部程序运行计算
-- 解析输出
-- 备份/清理工作目录
-- 错误详情提取与残留进程清理
+Responsible for:
+- Invoking external programs to run calculations.
+- Parsing output.
+- Backing up / cleaning up work directories.
+- Extracting error details and cleaning up lingering processes.
 """
 
 from __future__ import annotations
@@ -17,10 +16,15 @@ import os
 import shutil
 import subprocess
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any
 
-from ..core import logger
 from ..policies.base import CalculationPolicy
+from ..setup import logger
+
+__all__ = [
+    "handle_backups",
+    "prepare_task_inputs",
+]
 
 try:
     import psutil  # type: ignore
@@ -29,9 +33,9 @@ except ImportError:
 
 
 def handle_backups(
-    work_dir: str, config: Dict[str, Any], success: bool, cleanup_work_dir: bool = True
+    work_dir: str, config: dict[str, Any], success: bool, cleanup_work_dir: bool = True
 ):
-    """备份计算文件并清理工作目录。"""
+    """Back up calculation files and clean up the work directory."""
     ibkout = int(config.get("ibkout", 1))
     backup_dir = config.get("backup_dir")
 
@@ -41,7 +45,7 @@ def handle_backups(
 
     if should_backup and backup_dir:
         os.makedirs(backup_dir, exist_ok=True)
-        # 增加 .scan 目录的备份支持（如果存在）
+        # Also back up the .scan directory if it exists
         if os.path.exists(os.path.join(work_dir, "scan")):
             scan_src = os.path.join(work_dir, "scan")
             scan_dst = os.path.join(backup_dir, f"{os.path.basename(work_dir)}_scan")
@@ -49,13 +53,14 @@ def handle_backups(
                 if os.path.exists(scan_dst):
                     shutil.rmtree(scan_dst)
                 shutil.copytree(scan_src, scan_dst)
-            except (IOError, OSError) as e:
-                logger.warning(f"备份 scan 目录失败: {e}")
+            except OSError as e:
+                logger.warning(f"Failed to back up scan directory: {e}")
             except Exception as e:
-                logger.debug(f"备份 scan 目录异常: {e}")
+                logger.debug(f"Scan directory backup exception: {e}")
 
-        # 兼容：rescue 过程会写入 ts_failures.txt（以及可能的诊断 .txt），将其一并备份。
-        # 对于 Gaussian(g16)，checkpoint(.chk) 往往是关键中间产物，也需要纳入备份。
+        # Compat: rescue writes ts_failures.txt (and possibly diagnostic .txt);
+        # back them up too.  For Gaussian (g16), checkpoint (.chk) files are
+        # key intermediate products that also need backing up.
         backup_exts = {".inp", ".gjf", ".out", ".log", ".xyz", ".err", ".txt", ".chk", ".gbw"}
         for f in os.listdir(work_dir):
             if os.path.splitext(f)[1].lower() in backup_exts:
@@ -63,17 +68,17 @@ def handle_backups(
                 dst = os.path.join(backup_dir, f)
                 try:
                     shutil.move(src, dst)
-                except (IOError, OSError):
+                except OSError:
                     try:
                         shutil.copy2(src, dst)
-                    except (IOError, OSError):
+                    except OSError:
                         pass
 
     if cleanup_work_dir and os.path.exists(work_dir):
         try:
             shutil.rmtree(work_dir)
-        except (IOError, OSError) as e:
-            logger.warning(f"删除工作目录失败 {work_dir}: {e}")
+        except OSError as e:
+            logger.warning(f"Failed to remove work directory {work_dir}: {e}")
             try:
                 for f in os.listdir(work_dir):
                     fp = os.path.join(work_dir, f)
@@ -85,19 +90,22 @@ def handle_backups(
                         or f.startswith("tmp")
                     ):
                         os.remove(fp)
-            except (IOError, OSError):
+            except OSError:
                 pass
 
 
-def prepare_task_inputs(work_dir: str, job_name: str, config: Dict[str, Any]) -> None:
-    """将跨步骤依赖的输入工件回填到当前任务 work_dir。
+def prepare_task_inputs(work_dir: str, job_name: str, config: dict[str, Any]) -> None:
+    """Stage cross-step input artifacts back into the current task work_dir.
 
-    当前支持：Gaussian checkpoint (.chk) 的按 job_name(CID) 精确对应。
+    Currently supports: Gaussian checkpoint (.chk) exact match by job_name (CID).
 
-    约定：
-    - config['input_chk_dir'] 指向任意来源步骤的 backups 目录（不限定“上一步”）
-    - 该目录下文件名为 {job_name}.chk
-    - 回填到当前 work_dir 后命名为 {job_name}.old.chk，并通过 config['gaussian_oldchk'] 注入到输入文件
+    Conventions:
+    - ``config['input_chk_dir']`` points to the backups directory of any source
+      step (not limited to "the previous step").
+    - Files in that directory are named ``{job_name}.chk``.
+    - After staging, the file is renamed to ``{job_name}.old.chk`` in the
+      current work_dir, and injected into the input file via
+      ``config['gaussian_oldchk']``.
     """
     try:
         input_chk_dir = config.get("input_chk_dir")
@@ -113,8 +121,8 @@ def prepare_task_inputs(work_dir: str, job_name: str, config: Dict[str, Any]) ->
         dst = os.path.join(work_dir, dst_name)
         try:
             shutil.copy2(src, dst)
-        except Exception:
-            # Fallback to a plain copy
+        except OSError:
+            # Fallback to a plain copy (copy2 can fail preserving metadata)
             shutil.copy(src, dst)
 
         # Make GaussianPolicy emit %OldChk and also ensure %Chk is written for this step.
@@ -124,9 +132,7 @@ def prepare_task_inputs(work_dir: str, job_name: str, config: Dict[str, Any]) ->
         logger.debug(f"prepare_task_inputs failed for {job_name}: {e}")
 
 
-def _cleanup_lingering_processes(
-    config: Dict[str, Any], policy: Optional[CalculationPolicy] = None
-):
+def _cleanup_lingering_processes(config: dict[str, Any], policy: CalculationPolicy | None = None):
     if policy:
         policy.cleanup_lingering_processes(config)
 
@@ -134,9 +140,9 @@ def _cleanup_lingering_processes(
 def _get_error_details(
     work_dir: str,
     job_name: str,
-    config: Dict[str, Any],
+    config: dict[str, Any],
     error: Exception,
-    policy: Optional[CalculationPolicy] = None,
+    policy: CalculationPolicy | None = None,
 ) -> str:
     if policy:
         return policy.get_error_details(work_dir, job_name, config)
@@ -148,7 +154,7 @@ def _run_calculation_step(
     job_name: str,
     policy: CalculationPolicy,
     coords,
-    config: Dict[str, Any],
+    config: dict[str, Any],
     is_sp_task: bool = False,
 ):
     inp = os.path.join(work_dir, f"{job_name}.{policy.input_ext}")
@@ -177,11 +183,11 @@ def _run_calculation_step(
     return policy.parse_output(log, config, is_sp_task)
 
 
-def _save_config_hash(work_dir: str, config: Dict[str, Any]):
+def _save_config_hash(work_dir: str, config: dict[str, Any]):
     try:
-        # 兼容旧逻辑：hash 仅用于标识同类任务，不做安全用途
+        # Compat: hash is only used to identify similar tasks, not for security
         h = hashlib.md5(f"{config.get('itask')}_{config.get('iprog')}".encode()).hexdigest()[:8]
         with open(os.path.join(work_dir, ".config_hash"), "w") as f:
             f.write(h)
     except Exception as e:
-        logger.debug(f"config hash 保存失败: {e}")
+        logger.debug(f"Config hash save failed: {e}")

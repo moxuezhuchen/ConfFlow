@@ -1,25 +1,60 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 
 """
-ConfFlow XYZ I/O - 统一的 XYZ 文件读写模块
+ConfFlow XYZ I/O - unified XYZ file read/write module.
 
-统一了原本分散在 calc.py, refine.py, viz.py, utils.py 中的 XYZ 处理逻辑
+Consolidates XYZ handling logic previously scattered across calc.py,
+refine.py, viz.py, and utils.py.
 """
 
-import re
+from __future__ import annotations
+
+import logging
 import os
-import tempfile
+import re
 import shutil
-from typing import List, Dict, Any, Optional, Tuple
+import tempfile
+from typing import Any
+
+__all__ = [
+    "upsert_comment_kv",
+    "ensure_conformer_cids",
+    "ensure_xyz_cids",
+    "parse_comment_metadata",
+    "read_xyz_file",
+    "read_xyz_file_safe",
+    "write_xyz_file",
+    "append_xyz_conformer",
+    "coords_lines_to_array",
+    "parse_gaussian_input",
+    "parse_gaussian_input_text",
+    "calculate_bond_length",
+]
+
+_io_logger = logging.getLogger("confflow.io")
 
 
 def upsert_comment_kv(comment: str, key: str, value: Any) -> str:
-    """在注释行中更新/插入 key=value（不做数值格式化）。
+    """Update or insert a key=value pair in a comment line (no numeric formatting).
 
-    规则：
-    - 若已存在 key=xxx，则替换为 key=value（只替换第一个匹配）
-    - 若不存在，则追加 " | key=value"（若 comment 为空则仅写 key=value）
+    Parameters
+    ----------
+    comment : str
+        Original comment string.
+    key : str
+        Metadata key.
+    value : Any
+        Value to set.
+
+    Returns
+    -------
+    str
+        Updated comment string.
+
+    Notes
+    -----
+    - If ``key=xxx`` already exists, the first occurrence is replaced.
+    - Otherwise ``" | key=value"`` is appended (or just ``key=value`` if empty).
     """
     comment = (comment or "").strip()
     key = str(key)
@@ -37,13 +72,13 @@ def upsert_comment_kv(comment: str, key: str, value: Any) -> str:
 
 
 def ensure_conformer_cids(
-    conformers: List[Dict[str, Any]],
+    conformers: list[dict[str, Any]],
     *,
     prefix: str = "cf",
     start: int = 1,
     width: int = 6,
-) -> List[Dict[str, Any]]:
-    """确保每个构象都有 CID，并写回到 comment/metadata。"""
+) -> list[dict[str, Any]]:
+    """Ensure every conformer has a CID and write it back to comment/metadata."""
     next_id = start
     for conf in conformers:
         meta = conf.get("metadata")
@@ -54,7 +89,9 @@ def ensure_conformer_cids(
         existing_cid = meta.get("CID")
         if existing_cid:
             if "CID=" not in conf.get("comment", ""):
-                conf["comment"] = upsert_comment_kv(conf.get("comment", ""), "CID", str(existing_cid))
+                conf["comment"] = upsert_comment_kv(
+                    conf.get("comment", ""), "CID", str(existing_cid)
+                )
             continue
 
         new_cid = f"{prefix}{next_id:0{width}d}"
@@ -66,34 +103,42 @@ def ensure_conformer_cids(
 
 
 def ensure_xyz_cids(xyz_path: str, prefix: str = "cf") -> None:
-    """读取 XYZ 文件，确保所有构象都有 CID，如果不完整则写回。"""
+    """Read an XYZ file and ensure all conformers have CIDs; re-write if incomplete."""
     if not os.path.exists(xyz_path):
         return
     try:
         confs = read_xyz_file(xyz_path, parse_metadata=True)
-        if confs and (not confs.get("metadata") if isinstance(confs, dict) else (not confs[0].get("metadata") or "CID" not in confs[0]["metadata"])):
+        if confs and (
+            not confs.get("metadata")
+            if isinstance(confs, dict)
+            else (not confs[0].get("metadata") or "CID" not in confs[0]["metadata"])
+        ):
             ensure_conformer_cids(confs, prefix=prefix)
             write_xyz_file(xyz_path, confs, atomic=True)
-    except Exception:
-        pass
+    except (OSError, ValueError, IndexError) as e:
+        _io_logger.debug(f"ensure_xyz_cids: non-fatal error ({xyz_path}): {e}")
 
 
-def parse_comment_metadata(comment: str) -> Dict[str, Any]:
-    """解析 XYZ 注释行中的 key=value 元数据
+def parse_comment_metadata(comment: str) -> dict[str, Any]:
+    """Parse key=value metadata from an XYZ comment line.
 
-    Args:
-        comment: 注释行字符串，如 "Rank=1 | E=-1.0 | G_corr=0.123"
+    Parameters
+    ----------
+    comment : str
+        Comment string, e.g. ``"Rank=1 | E=-1.0 | G_corr=0.123"``.
 
-    Returns:
-        解析后的字典，值会尝试转换为 float
+    Returns
+    -------
+    dict[str, Any]
+        Parsed dictionary; values are converted to float when possible.
     """
-    meta: Dict[str, Any] = {}
-    # 匹配形如 key=value 的模式（兼容空格、逗号、竖线分隔）
+    meta: dict[str, Any] = {}
+    # Match key=value patterns (compatible with space, comma, or pipe separators)
     for m in re.finditer(r"([A-Za-z_][A-Za-z0-9_]*)\s*=\s*([^\s|,]+)", comment or ""):
         k, v = m.group(1), m.group(2)
         try:
             meta[k] = float(v)
-            # 兼容：Energy 也存为 E
+            # Compatibility: also store Energy as E
             if k == "Energy":
                 meta["E"] = float(v)
         except (ValueError, TypeError):
@@ -101,28 +146,34 @@ def parse_comment_metadata(comment: str) -> Dict[str, Any]:
     return meta
 
 
-def read_xyz_file(filepath: str, parse_metadata: bool = True) -> List[Dict[str, Any]]:
-    """读取 XYZ 文件，返回构象列表
+def read_xyz_file(filepath: str, parse_metadata: bool = True) -> list[dict[str, Any]]:
+    """Read an XYZ file and return a list of conformers.
 
-    Args:
-        filepath: XYZ 文件路径
-        parse_metadata: 是否解析注释行的 key=value 元数据
+    Parameters
+    ----------
+    filepath : str
+        Path to the XYZ file.
+    parse_metadata : bool
+        Whether to parse key=value metadata from comment lines.
 
-    Returns:
-        构象列表，每个元素为 dict:
-            - natoms: 原子数
-            - comment: 原始注释行
-            - atoms: 原子符号列表（大写）
-            - coords: 坐标列表 [[x,y,z], ...]
-            - metadata: 元数据字典（如果 parse_metadata=True）
+    Returns
+    -------
+    list[dict[str, Any]]
+        List of conformer dicts, each containing:
+
+        - ``natoms``: number of atoms
+        - ``comment``: raw comment line
+        - ``atoms``: list of atom symbols (upper-case)
+        - ``coords``: coordinate list ``[[x, y, z], ...]``
+        - ``metadata``: metadata dict (if *parse_metadata* is True)
     """
     conformers = []
 
     try:
-        with open(filepath, "r", encoding="utf-8") as f:
+        with open(filepath, encoding="utf-8") as f:
             lines = f.readlines()
-    except (IOError, OSError) as e:
-        raise IOError(f"无法读取 XYZ 文件 {filepath}: {e}")
+    except OSError as e:
+        raise OSError(f"Cannot read XYZ file {filepath}: {e}") from e
 
     i = 0
     frame_idx = 0
@@ -154,7 +205,7 @@ def read_xyz_file(filepath: str, parse_metadata: bool = True) -> List[Dict[str, 
 
             atoms.append(parts[0].upper())
             try:
-                # 取最后三列作为坐标（兼容有额外列的情况）
+                # Use last three columns as coordinates (compatible with extra columns)
                 x, y, z = float(parts[-3]), float(parts[-2]), float(parts[-1])
                 coords.append([x, y, z])
             except (ValueError, IndexError):
@@ -180,16 +231,47 @@ def read_xyz_file(filepath: str, parse_metadata: bool = True) -> List[Dict[str, 
     return conformers
 
 
-def write_xyz_file(filepath: str, conformers: List[Dict[str, Any]], atomic: bool = True) -> None:
-    """写入 XYZ 文件
+def read_xyz_file_safe(filepath: str, parse_metadata: bool = True) -> list[dict[str, Any]]:
+    """Read an XYZ file safely; return an empty list on failure and log at debug level."""
+    try:
+        return read_xyz_file(filepath, parse_metadata=parse_metadata)
+    except Exception as e:
+        _io_logger.debug(f"read_xyz_file_safe failed for {filepath}: {e}")
+        return []
 
-    Args:
-        filepath: 输出文件路径
-        conformers: 构象列表，每个元素需包含 natoms, comment, atoms, coords
-        atomic: 是否使用原子写入模式（先写临时文件再重命名，防止并发损坏）
+
+def append_xyz_conformer(filepath: str, coord_lines: list[str], comment: str) -> None:
+    """Append a single conformer block to an XYZ file.
+
+    Parameters
+    ----------
+    filepath : str
+        Target XYZ file path. Created if it does not exist.
+    coord_lines : list[str]
+        Coordinate lines, each formatted as ``"ATOM  x  y  z"`` strings,
+        matching the format stored in ``res["final_coords"]``.
+    comment : str
+        Comment line (second line of the XYZ block).
     """
-    import tempfile
-    import shutil
+    natoms = len(coord_lines)
+    with open(filepath, "a", encoding="utf-8") as f:
+        f.write(f"{natoms}\n{comment}\n" + "\n".join(coord_lines) + "\n")
+
+
+def write_xyz_file(filepath: str, conformers: list[dict[str, Any]], atomic: bool = True) -> None:
+    """Write conformers to an XYZ file.
+
+    Parameters
+    ----------
+    filepath : str
+        Output file path.
+    conformers : list[dict[str, Any]]
+        Conformer list; each element must contain ``natoms``, ``comment``,
+        ``atoms``, and ``coords``.
+    atomic : bool
+        Whether to use atomic write mode (write to a temporary file first,
+        then rename) to prevent corruption from concurrent writes.
+    """
 
     def _write_to_file(f):
         for conf in conformers:
@@ -199,7 +281,9 @@ def write_xyz_file(filepath: str, conformers: List[Dict[str, Any]], atomic: bool
             coords = conf.get("coords", [])
 
             if len(atoms) != len(coords):
-                raise ValueError(f"原子数与坐标数不匹配: {len(atoms)} vs {len(coords)}")
+                raise ValueError(
+                    f"Atom count / coordinate count mismatch: {len(atoms)} vs {len(coords)}"
+                )
 
             f.write(f"{natoms}\n")
             f.write(f"{comment}\n")
@@ -208,11 +292,7 @@ def write_xyz_file(filepath: str, conformers: List[Dict[str, Any]], atomic: bool
                 f.write(f"{atom:<2s} {x:12.8f} {y:12.8f} {z:12.8f}\n")
 
     if atomic:
-        # 原子写入：先写临时文件，再原子重命名
-        import os
-        import logging
-        
-        io_logger = logging.getLogger("confflow.io")
+        # Atomic write: write to a temporary file, then atomically rename
         dir_path = os.path.dirname(filepath) or "."
         os.makedirs(dir_path, exist_ok=True)
 
@@ -220,23 +300,23 @@ def write_xyz_file(filepath: str, conformers: List[Dict[str, Any]], atomic: bool
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as f:
                 _write_to_file(f)
-            # 原子重命名
+            # Atomic rename
             shutil.move(tmp_path, filepath)
-        except (IOError, OSError) as e:
-            # 清理临时文件
+        except OSError as e:
+            # Clean up temporary file
             try:
                 os.unlink(tmp_path)
             except OSError:
                 pass
-            io_logger.error(f"写入 XYZ 文件失败: {filepath}, 原因: {e}")
+            _io_logger.error(f"Failed to write XYZ file: {filepath}, reason: {e}")
             raise
-        except Exception as e:
-            # 清理临时文件
+        except (ValueError, RuntimeError) as e:
+            # Clean up temporary file
             try:
                 os.unlink(tmp_path)
             except OSError:
                 pass
-            io_logger.error(f"写入 XYZ 文件异常: {filepath}, 原因: {e}")
+            _io_logger.error(f"Error writing XYZ file: {filepath}, reason: {e}")
             raise
     else:
         with open(filepath, "w", encoding="utf-8") as f:
@@ -244,15 +324,19 @@ def write_xyz_file(filepath: str, conformers: List[Dict[str, Any]], atomic: bool
 
 
 def coords_lines_to_array(
-    coords_lines: List[str],
-) -> Optional[List[Tuple[str, float, float, float]]]:
-    """将坐标行列表转换为 (symbol, x, y, z) 元组列表
+    coords_lines: list[str],
+) -> list[tuple[str, float, float, float]] | None:
+    """Convert coordinate lines to a list of (symbol, x, y, z) tuples.
 
-    Args:
-        coords_lines: 如 ["H 0.0 0.0 0.0", "C 1.0 0.0 0.0"]
+    Parameters
+    ----------
+    coords_lines : list[str]
+        Lines such as ``["H 0.0 0.0 0.0", "C 1.0 0.0 0.0"]``.
 
-    Returns:
-        [(symbol, x, y, z), ...] 或 None（解析失败）
+    Returns
+    -------
+    list[tuple[str, float, float, float]] or None
+        Parsed tuples, or None on parse failure.
     """
     try:
         result = []
@@ -262,7 +346,7 @@ def coords_lines_to_array(
                 return None
 
             symbol = parts[0]
-            # 取最后三个可转 float 的值
+            # Take the last three float-convertible values
             xyz = []
             for tok in reversed(parts[1:]):
                 try:
@@ -279,35 +363,35 @@ def coords_lines_to_array(
             result.append((symbol, float(x), float(y), float(z)))
 
         return result
-    except Exception:
+    except (ValueError, TypeError, IndexError):
         return None
 
 
-def parse_gaussian_input(filepath: str) -> Dict[str, Any]:
-    """解析 Gaussian 输入文件 (.gjf/.com)。"""
+def parse_gaussian_input(filepath: str) -> dict[str, Any]:
+    """Parse a Gaussian input file (.gjf/.com)."""
     try:
-        with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
+        with open(filepath, encoding="utf-8", errors="ignore") as f:
             text = f.read()
         return parse_gaussian_input_text(text, filepath)
-    except Exception as e:
-        if isinstance(e, (IOError, ValueError)):
-            raise
-        raise IOError(f"Failed to read Gaussian input {filepath}: {e}")
+    except OSError as e:
+        raise OSError(f"Failed to read Gaussian input {filepath}: {e}") from e
 
 
-def parse_gaussian_input_text(text: str, source_label: str = "text") -> Dict[str, Any]:
-    """解析 Gaussian 输入文本。
+def parse_gaussian_input_text(text: str, source_label: str = "text") -> dict[str, Any]:
+    """Parse Gaussian input text.
 
-    返回:
-        Dict 包含:
-        - charge: 电荷
-        - multiplicity: 多重度
-        - atoms: 原子符号列表
-        - coords: 坐标列表 [[x,y,z], ...]
-        - coords_lines: 格式化后的坐标行 ["Sym x y z", ...]
+    Returns
+    -------
+    dict[str, Any]
+        Dictionary containing:
+
+        - ``charge``: molecular charge
+        - ``multiplicity``: spin multiplicity
+        - ``atoms``: list of element symbols
+        - ``coords``: coordinate list ``[[x, y, z], ...]``
+        - ``coords_lines``: formatted coordinate lines ``["Sym x y z", ...]``
     """
-    import re
-    from ..calc.constants import get_element_symbol
+    from .data import get_element_symbol
 
     lines = text.splitlines()
     qm_idx = None
@@ -327,10 +411,10 @@ def parse_gaussian_input_text(text: str, source_label: str = "text") -> Dict[str
     if qm_idx is None:
         raise ValueError(f"Cannot find charge/multiplicity line in {source_label}")
 
-    atoms: List[str] = []
-    coords_list: List[List[float]] = []
-    coords_formatted: List[str] = []
-    raw_coords_lines: List[str] = []
+    atoms: list[str] = []
+    coords_list: list[list[float]] = []
+    coords_formatted: list[str] = []
+    raw_coords_lines: list[str] = []
 
     for ln in lines[qm_idx + 1 :]:
         raw_ln = ln.strip()
@@ -345,8 +429,8 @@ def parse_gaussian_input_text(text: str, source_label: str = "text") -> Dict[str
         if sym.isdigit():
             sym = get_element_symbol(int(sym))
 
-        # 处理可能存在的冻结原子列 (取最后三个数值)
-        xyz: List[float] = []
+        # Handle possible frozen-atom columns (take the last three numeric values)
+        xyz: list[float] = []
         for tok in reversed(p[1:]):
             try:
                 xyz.append(float(tok))
@@ -373,15 +457,20 @@ def parse_gaussian_input_text(text: str, source_label: str = "text") -> Dict[str
     }
 
 
-def calculate_bond_length(coords_lines: List[str], atom1: int, atom2: int) -> Optional[float]:
-    """计算两原子间距离
+def calculate_bond_length(coords_lines: list[str], atom1: int, atom2: int) -> float | None:
+    """Calculate the distance between two atoms.
 
-    Args:
-        coords_lines: 坐标行列表
-        atom1, atom2: 1-based 原子索引
+    Parameters
+    ----------
+    coords_lines : list[str]
+        Coordinate lines.
+    atom1, atom2 : int
+        1-based atom indices.
 
-    Returns:
-        键长（Å）或 None（解析失败）
+    Returns
+    -------
+    float or None
+        Bond length in Ångström, or None on parse failure.
     """
     coords_array = coords_lines_to_array(coords_lines)
     if coords_array is None:

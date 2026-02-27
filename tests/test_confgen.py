@@ -1,4 +1,6 @@
-"""confgen 测试（合并版）"""
+#!/usr/bin/env python3
+
+"""Tests for confgen module (merged)."""
 
 from __future__ import annotations
 
@@ -11,22 +13,24 @@ from rdkit import Chem
 from rdkit.Chem import AllChem
 
 from confflow.blocks import confgen
+from confflow.blocks.confgen.collision import check_clash_core
 from confflow.blocks.confgen.generator import (
-    check_clash_core,
-    _rotate_atoms_around_bond,
-    run_generation,
-    load_mol_from_xyz,
     get_rotatable_bonds,
-    _parse_chain,
-    _parse_steps,
-    _parse_angles,
+    init_worker,
+    load_mol_from_xyz,
+    main,
+    run_generation,
+    write_xyz,
+)
+from confflow.blocks.confgen.rotations import (
     _bfs_distances,
     _bfs_distances_multi,
     _component_nodes,
     _edge_in_cycle,
-    write_xyz,
-    init_worker,
-    main,
+    _parse_angles,
+    _parse_chain,
+    _parse_steps,
+    _rotate_atoms_around_bond,
 )
 from confflow.core.data import GV_COVALENT_RADII
 
@@ -53,12 +57,11 @@ H      4.620000    0.000000    1.000000
         f.write(content)
 
 
-def test_confgen_chain_mode_generates_traj_xyz(tmp_path, monkeypatch) -> None:
-    monkeypatch.chdir(tmp_path)
-    xyz_path = tmp_path / "butane.xyz"
+def test_confgen_chain_mode_generates_traj_xyz(cd_tmp) -> None:
+    xyz_path = cd_tmp / "butane.xyz"
     _write_butane_xyz(str(xyz_path))
 
-    confgen.generate_conformers(
+    confgen.run_generation(
         input_files=str(xyz_path),
         angle_step=120,
         bond_threshold=1.15,
@@ -71,8 +74,8 @@ def test_confgen_chain_mode_generates_traj_xyz(tmp_path, monkeypatch) -> None:
         rotate_side="left",
     )
 
-    out = tmp_path / "search.xyz"
-    assert out.exists(), "confgen 未生成 search.xyz"
+    out = cd_tmp / "search.xyz"
+    assert out.exists(), "confgen did not generate search.xyz"
     first = out.read_text(encoding="utf-8").splitlines()[0].strip()
     assert first.isdigit() and int(first) > 0
 
@@ -83,7 +86,9 @@ def test_check_clash_core_no_clash():
     clash_threshold = 0.5
     topo_dist_matrix = np.array([[0, 1], [1, 0]], dtype=np.int64)
     radii_array = np.array(GV_COVALENT_RADII)
-    assert not check_clash_core(atom_numbers, coords, clash_threshold, topo_dist_matrix, radii_array)
+    assert not check_clash_core(
+        atom_numbers, coords, clash_threshold, topo_dist_matrix, radii_array
+    )
 
 
 def test_check_clash_core_with_clash():
@@ -96,11 +101,7 @@ def test_check_clash_core_with_clash():
 
 
 def test_rotate_atoms_around_bond():
-    coords = np.array([
-        [0.0, 0.0, 0.0],
-        [1.5, 0.0, 0.0],
-        [1.5, 1.0, 0.0]
-    ])
+    coords = np.array([[0.0, 0.0, 0.0], [1.5, 0.0, 0.0], [1.5, 1.0, 0.0]])
     _rotate_atoms_around_bond(coords, 0, 1, np.array([2]), 180.0)
     assert np.allclose(coords[2], [1.5, -1.0, 0.0])
 
@@ -147,13 +148,12 @@ def test_parse_helpers_errors():
         _parse_angles("0,120; , ", 2)
 
 
-def test_run_generation_basic(tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
+def test_run_generation_basic(cd_tmp):
     xyz_content = "3\n\nC 0.0 0.0 0.0\nC 1.5 0.0 0.0\nH 1.5 1.0 0.0\n"
-    in_xyz = tmp_path / "in.xyz"
+    in_xyz = cd_tmp / "in.xyz"
     in_xyz.write_text(xyz_content)
     run_generation(str(in_xyz), chains=["1-2-3"], chain_steps=["180,180"], confirm=False)
-    assert os.path.exists(tmp_path / "search.xyz")
+    assert os.path.exists(cd_tmp / "search.xyz")
 
 
 def test_load_mol_from_xyz_basic(tmp_path):
@@ -168,29 +168,29 @@ def test_load_mol_from_xyz_errors(tmp_path):
     with pytest.raises(FileNotFoundError):
         load_mol_from_xyz(str(tmp_path / "nonexistent.xyz"), 1.15)
 
-    with pytest.raises(ValueError, match="路径不是文件"):
+    with pytest.raises(ValueError, match="path is not a file"):
         load_mol_from_xyz(str(tmp_path), 1.15)
 
     empty = tmp_path / "empty.xyz"
     empty.write_text("")
-    with pytest.raises(ValueError, match="文件为空"):
+    with pytest.raises(ValueError, match="file is empty"):
         load_mol_from_xyz(str(empty), 1.15)
 
     f1 = tmp_path / "f1.xyz"
     f1.write_text("1\n")
-    with pytest.raises(ValueError, match="行数不足"):
+    with pytest.raises(ValueError, match="insufficient lines"):
         load_mol_from_xyz(str(f1), 1.15)
 
     f2 = tmp_path / "f2.xyz"
     f2.write_text("abc\ntest\nC 0 0 0\n")
-    with pytest.raises(ValueError, match="无法解析原子数量"):
+    with pytest.raises(ValueError, match="cannot parse atom count"):
         load_mol_from_xyz(str(f2), 1.15)
 
 
 def test_get_rotatable_bonds_raises():
     mol = Chem.MolFromSmiles("CCCC")
     mol = Chem.AddHs(mol)
-    with pytest.raises(RuntimeError, match="自动柔性键判断已移除"):
+    with pytest.raises(RuntimeError, match="automatic flexible bond detection has been removed"):
         get_rotatable_bonds(mol, None, None)
 
 
@@ -239,6 +239,7 @@ def test_write_xyz(tmp_path):
 
 def test_init_worker():
     import confflow.blocks.confgen.generator as gen
+
     init_worker("mol", "conf", "bonds", "clash", "topo", "atoms", "opt")
     assert gen.w_mol == "mol"
     assert gen.w_conf == "conf"
@@ -249,9 +250,8 @@ def test_init_worker():
     assert gen.w_opt == "opt"
 
 
-def test_run_generation_with_chains(tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
-    xyz = tmp_path / "test.xyz"
+def test_run_generation_with_chains(cd_tmp):
+    xyz = cd_tmp / "test.xyz"
     xyz.write_text("4\n\nC 0 0 0\nC 1.5 0 0\nC 3.0 0 0\nC 4.5 0 0\n")
     res = run_generation(
         str(xyz),
@@ -262,9 +262,8 @@ def test_run_generation_with_chains(tmp_path, monkeypatch):
     assert len(res) > 0
 
 
-def test_run_generation_with_bond_overrides(tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
-    xyz = tmp_path / "test.xyz"
+def test_run_generation_with_bond_overrides(cd_tmp):
+    xyz = cd_tmp / "test.xyz"
     xyz.write_text("2\n\nC 0 0 0\nH 0 0 1.5\n")
     res = run_generation(
         str(xyz),
@@ -276,31 +275,33 @@ def test_run_generation_with_bond_overrides(tmp_path, monkeypatch):
     assert len(res) > 0
 
 
-def test_run_generation_advanced(tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
-    xyz = tmp_path / "test.xyz"
+def test_run_generation_advanced(cd_tmp):
+    xyz = cd_tmp / "test.xyz"
     xyz.write_text("4\ntest\nC 0 0 0\nC 1.5 0 0\nC 3.0 0 0\nC 4.5 0 0\n")
-    run_generation(str(xyz), chains=["1-2"], add_bond=[[1, 4]], del_bond=[[2, 3]])
-    run_generation(str(xyz), chains=["1-2-3"], rotate_side="right")
-    run_generation(str(xyz), chains=["1-2"], optimize=True)
+    res1 = run_generation(str(xyz), chains=["1-2"], add_bond=[[1, 4]], del_bond=[[2, 3]])
+    assert isinstance(res1, list), "run_generation should return a list"
+    res2 = run_generation(str(xyz), chains=["1-2-3"], rotate_side="right")
+    assert isinstance(res2, list)
+    res3 = run_generation(str(xyz), chains=["1-2"], optimize=True)
+    assert isinstance(res3, list)
 
 
-def test_run_generation_multi_input(tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
-    f1 = tmp_path / "f1.xyz"
+def test_run_generation_multi_input(cd_tmp):
+    f1 = cd_tmp / "f1.xyz"
     f1.write_text("2\ntest\nC 0 0 0\nH 0 0 1\n")
-    f2 = tmp_path / "f2.xyz"
+    f2 = cd_tmp / "f2.xyz"
     f2.write_text("2\ntest\nC 0 0 0\nH 0 0 1.1\n")
-    run_generation([str(f1), str(f2)], chains=["1-2"])
+    res = run_generation([str(f1), str(f2)], chains=["1-2"])
+    assert isinstance(res, list)
+    assert len(res) > 0, "multi-input generation should produce at least one result"
 
 
-def test_run_generation_edge_cases(tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
+def test_run_generation_edge_cases(cd_tmp):
     mol = Chem.MolFromSmiles("CCC")
     mol = Chem.AddHs(mol)
     AllChem.EmbedMolecule(mol)
-    
-    xyz_path = tmp_path / "propane.xyz"
+
+    xyz_path = cd_tmp / "propane.xyz"
     with open(xyz_path, "w") as f:
         f.write(f"{mol.GetNumAtoms()}\n\n")
         for i in range(mol.GetNumAtoms()):
@@ -372,28 +373,26 @@ def test_main_cli(tmp_path):
             main()
 
 
-def test_run_generation_wrapper(tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
-    xyz_path = tmp_path / "test.xyz"
+def test_run_generation_wrapper(cd_tmp):
+    xyz_path = cd_tmp / "test.xyz"
     with open(xyz_path, "w") as f:
         f.write("3\n\nC 0 0 0\nC 1.5 0 0\nC 3.0 0 0\n")
-    
+
     with patch("confflow.blocks.confgen.generator.load_mol_from_xyz") as mock_load:
         mol = Chem.MolFromSmiles("CCC")
         mol = Chem.AddHs(mol)
         AllChem.EmbedMolecule(mol)
         mock_load.return_value = mol
-        
+
         res = run_generation([str(xyz_path)], chains=["1-2"], confirm=False)
         assert len(res) > 0
 
 
-def test_sanitize_fallback(tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
-    xyz_path = tmp_path / "bad.xyz"
+def test_sanitize_fallback(cd_tmp):
+    xyz_path = cd_tmp / "bad.xyz"
     with open(xyz_path, "w") as f:
         f.write("2\n\nC 0 0 0\nC 0.5 0 0\n")
-    
+
     with patch("rdkit.Chem.SanitizeMol", side_effect=Exception("Sanitize failed")):
         res = run_generation(
             [str(xyz_path)],

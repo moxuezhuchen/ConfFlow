@@ -1,3 +1,5 @@
-"""
-ConfFlow 测试套件
-"""
+#!/usr/bin/env python3
+
+"""ConfFlow test suite."""
+
+from __future__ import annotations

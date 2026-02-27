@@ -1,25 +1,17 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 
-"""
-ConfFlow - 自动化计算化学构象搜索工作流引擎
+"""ConfFlow - Automated computational chemistry conformer search workflow engine."""
 
-模块导出:
-  - main: 工作流主程序入口
-  - run_generation: 构象生成
-  - ChemTaskManager: 量子计算管理器
-  - RefineOptions: 筛选配置
-  - ConfFlowLogger: 日志系统
-"""
+from __future__ import annotations
 
 __version__ = "1.0"
 __author__ = "ConfFlow Team"
 
 # ============================================================================
-# 可选依赖的集中管理
+# Centralized optional dependency management
 # ============================================================================
 
-# RDKit - 构象生成必需
+# RDKit - required for conformer generation
 try:
     from rdkit import Chem
     from rdkit.Chem import AllChem
@@ -30,7 +22,7 @@ except ImportError:
     Chem = None  # type: ignore
     AllChem = None  # type: ignore
 
-# psutil - 资源监控（可选）
+# psutil - resource monitoring (optional)
 try:
     import psutil
 
@@ -39,7 +31,7 @@ except ImportError:
     PSUTIL_AVAILABLE = False
     psutil = None  # type: ignore
 
-# numba - JIT 加速（可选）
+# numba - JIT acceleration (optional)
 try:
     from numba import njit
 
@@ -47,7 +39,7 @@ try:
 except ImportError:
     NUMBA_AVAILABLE = False
 
-    # 回退：返回原函数的装饰器
+    # Fallback: decorator that returns the original function
     def njit(*args, **kwargs):
         def decorator(func):
             return func
@@ -56,51 +48,51 @@ except ImportError:
 
 
 # ============================================================================
-# 核心模块导出
+# Core module exports
 # ============================================================================
 
 try:
-    from .main import main
-    from .blocks.confgen import generate_conformers as run_generation
-    from .calc import ChemTaskManager
+    from .blocks.confgen import run_generation
     from .blocks.refine import RefineOptions, process_xyz
     from .blocks.viz import parse_xyz_file
-    from .core.utils import ConfFlowLogger, get_logger
-    from .core.io import read_xyz_file, write_xyz_file, parse_comment_metadata
+    from .calc import ChemTaskManager
     from .config.schema import ConfigSchema, merge_step_params
+    from .core.io import parse_comment_metadata, read_xyz_file, write_xyz_file
+    from .core.utils import ConfFlowLogger, get_logger
+    from .main import main
 
     __all__ = [
-        # 工作流入口
+        # Workflow entry
         "main",
-        # 构象生成
+        # Conformer generation
         "run_generation",
-        # 量子计算
+        # Quantum chemistry computation
         "ChemTaskManager",
-        # 构象筛选
+        # Conformer refinement
         "RefineOptions",
         "process_xyz",
-        # 可视化
+        # Visualization
         "parse_xyz_file",
-        # 日志
+        # Logging
         "ConfFlowLogger",
         "get_logger",
         # I/O
         "read_xyz_file",
         "write_xyz_file",
         "parse_comment_metadata",
-        # 配置
+        # Configuration
         "ConfigSchema",
         "merge_step_params",
-        # 版本
+        # Version
         "__version__",
-        # 可选依赖状态
+        # Optional dependency availability flags
         "RDKIT_AVAILABLE",
         "PSUTIL_AVAILABLE",
         "NUMBA_AVAILABLE",
     ]
 except ImportError as e:
-    # 调试模式：如果导入失败，打印错误但不中断
+    # Debug mode: print error on import failure without interrupting
     import warnings
 
-    warnings.warn(f"ConfFlow 模块导入警告: {e}")
+    warnings.warn(f"ConfFlow module import warning: {e}", stacklevel=2)
     __all__ = ["__version__", "RDKIT_AVAILABLE", "PSUTIL_AVAILABLE", "NUMBA_AVAILABLE"]

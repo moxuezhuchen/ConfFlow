@@ -1,35 +1,37 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 
-"""ConfFlow CLI 入口（不包含业务逻辑）。"""
+"""ConfFlow CLI entrypoint (without business logic)."""
 
 from __future__ import annotations
 
 import argparse
 import os
-import sys
 import signal
-import re
-from typing import Optional
+import sys
+import traceback
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
-from contextlib import redirect_stdout, redirect_stderr
 
 try:
     import psutil
 except ImportError:
     psutil = None
 
-from .core.utils import get_logger, redirect_logging_streams
+from .core.contracts import ExitCode, cli_output_to_txt
+from .core.io import parse_gaussian_input_text, write_xyz_file
+from .core.utils import get_logger
 from .workflow.engine import run_workflow
-from .core.io import write_xyz_file, parse_gaussian_input_text
-from .calc.constants import get_element_symbol
-from .core.console import redirect_console
+
+__all__ = [
+    "build_parser",
+    "kill_proc_tree",
+    "stop_all_confflow_processes",
+    "main",
+]
 
 logger = get_logger()
 
 
-def _parse_gaussian_input_geometry(text: str) -> Tuple[int, int, List[str], List[List[float]]]:
+def _parse_gaussian_input_geometry(text: str) -> tuple[int, int, list[str], list[list[float]]]:
     """Parse a Gaussian .gjf/.com input file into (charge, multiplicity, atoms, coords)."""
     res = parse_gaussian_input_text(text)
     if not res["atoms"]:
@@ -38,12 +40,12 @@ def _parse_gaussian_input_geometry(text: str) -> Tuple[int, int, List[str], List
 
 
 def _convert_gjf_to_xyz(gjf_path: str, xyz_out: str) -> None:
-    """将 Gaussian 输入文件转换为 XYZ 格式"""
+    """Convert Gaussian input to XYZ format."""
     try:
         text = Path(gjf_path).read_text(encoding="utf-8", errors="ignore")
-    except (IOError, OSError) as e:
-        raise RuntimeError(f"无法读取 Gaussian 输入文件 {gjf_path}: {e}") from e
-    
+    except OSError as e:
+        raise RuntimeError(f"Failed to read Gaussian input file {gjf_path}: {e}") from e
+
     charge, mult, atoms, coords = _parse_gaussian_input_geometry(text)
     comment = f"SourceGJF={os.path.abspath(gjf_path)} | charge={charge} | multiplicity={mult}"
     conf = {
@@ -57,8 +59,8 @@ def _convert_gjf_to_xyz(gjf_path: str, xyz_out: str) -> None:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="ConfFlow - 自动化计算化学工作流",
-        epilog="示例: confflow hexane.xyz -c confflow.yaml\n工作目录将自动生成为 hexane_work/",
+        description="ConfFlow - automated computational chemistry workflow",
+        epilog="Example: confflow hexane.xyz -c confflow.yaml\nDefault work dir: hexane_work/",
     )
     parser.add_argument("input_xyz", nargs="*", help="Input XYZ file(s)")
     parser.add_argument("-c", "--config", help="Path to YAML configuration file")
@@ -81,29 +83,36 @@ def _append_to_output(output_path: str, text: str) -> None:
             f.write(text)
             if not text.endswith("\n"):
                 f.write("\n")
-    except Exception:
-        pass
-
-
-import time
+    except OSError as e:
+        logger.warning(f"Failed to append to output file {output_path}: {e}")
 
 
 def kill_proc_tree(
     pid: int, sig=signal.SIGTERM, include_parent=True, timeout=None, on_terminate=None
 ):
-    """Kill a process tree (including grandchildren) with signal "sig".
-    
-    如果超时后进程仍未终止，会自动发送 SIGKILL 强制杀死。
-    
-    Args:
-        pid: 要杀死的进程树根 PID
-        sig: 初始信号（默认 SIGTERM）
-        include_parent: 是否包含父进程
-        timeout: 超时时间（秒），超时后发送 SIGKILL
-        on_terminate: 兼容参数（未使用）
-    
-    Returns:
-        (gone, alive): 已终止和仍存活的进程列表
+    """Gracefully kill a process tree using psutil (including recursive children).
+
+    Sends the specified signal, waits for the given timeout, then sends
+    SIGKILL to any processes still alive.
+
+    Parameters
+    ----------
+    pid : int
+        The root process ID to kill.
+    sig : signal.Signals
+        Signal to send (default: SIGTERM).
+    include_parent : bool
+        Whether to include the parent process itself.
+    timeout : float or None
+        Seconds to wait for graceful termination.
+    on_terminate : callable or None
+        Ignored.
+
+    Returns
+    -------
+    tuple or None
+        (gone, alive) lists of terminated and still-alive processes,
+        or None if psutil is unavailable or process not found.
     """
     del on_terminate
     if not psutil:
@@ -117,68 +126,34 @@ def kill_proc_tree(
     except psutil.NoSuchProcess:
         return None
 
-    children = parent.children(recursive=True)
+    # Collect all child processes
+    try:
+        children = parent.children(recursive=True)
+    except psutil.NoSuchProcess:
+        children = []
 
-    # Send signal to children first
-    for p in children:
+    procs = children + ([parent] if include_parent else [])
+
+    # First round: attempt graceful termination
+    for p in procs:
         try:
             p.send_signal(sig)
         except psutil.NoSuchProcess:
             pass
 
-    if include_parent:
-        try:
-            parent.send_signal(sig)
-        except psutil.NoSuchProcess:
-            pass
+    # Efficiently wait for processes to terminate
+    gone, alive = psutil.wait_procs(procs, timeout=timeout)
 
-    # Wait for processes to terminate (manual polling to avoid ChildProcessError on non-children)
-    procs = children + ([parent] if include_parent else [])
-    gone = []
-    alive = []
-
-    start_time = time.time()
-    while True:
-        alive = []
-        for p in procs:
+    # Second round: force-kill any remaining alive processes
+    if alive:
+        for p in alive:
             try:
-                if p.is_running() and p.status() != psutil.STATUS_ZOMBIE:
-                    alive.append(p)
-                else:
-                    if p not in gone:
-                        gone.append(p)
+                p.kill()  # SIGKILL
             except psutil.NoSuchProcess:
-                if p not in gone:
-                    gone.append(p)
-
-        if not alive:
-            break
-
-        if timeout is not None and time.time() - start_time > timeout:
-            # 超时后发送 SIGKILL 强制杀死
-            for p in alive:
-                try:
-                    p.kill()  # SIGKILL
-                except psutil.NoSuchProcess:
-                    pass
-            # 等待一小段时间让进程真正终止
-            time.sleep(0.1)
-            # 更新最终状态
-            final_alive = []
-            for p in alive:
-                try:
-                    if p.is_running() and p.status() != psutil.STATUS_ZOMBIE:
-                        final_alive.append(p)
-                    else:
-                        if p not in gone:
-                            gone.append(p)
-                except psutil.NoSuchProcess:
-                    if p not in gone:
-                        gone.append(p)
-            alive = final_alive
-            break
-
-        time.sleep(0.1)
+                pass
+        # Check final status
+        gone_final, alive = psutil.wait_procs(alive, timeout=0.2)
+        gone.extend(gone_final)
 
     return (gone, alive)
 
@@ -238,7 +213,7 @@ def stop_all_confflow_processes() -> int:
     return 0
 
 
-def main(args_list: Optional[list[str]] = None):
+def main(args_list: list[str] | None = None):
     parser = build_parser()
     args = parser.parse_args(args_list)
 
@@ -259,7 +234,7 @@ def main(args_list: Optional[list[str]] = None):
         default_cfg = os.path.join(os.path.dirname(input_files[0]), "confflow.yaml")
         if not os.path.exists(default_cfg):
             parser.error(
-                f"配置文件未指定，且未在输入文件目录找到默认配置: {default_cfg}"
+                f"Config file is not provided and default config was not found: {default_cfg}"
             )
         config_file = default_cfg
 
@@ -271,31 +246,14 @@ def main(args_list: Optional[list[str]] = None):
     else:
         work_dir = args.work_dir
 
-    # Output file: same name as first input, placed in input directory
     first_input = os.path.abspath(args.input_xyz[0])
-    output_dir = os.path.dirname(first_input)
-    output_base = os.path.splitext(os.path.basename(first_input))[0]
-    output_path = os.path.join(output_dir, f"{output_base}.txt")
 
-    # 捕获柔性链/原子顺序一致性错误，进行交互提示
-    # NOTE: this function redirects *all* stdout/stderr to a txt file during the workflow run.
-    # We must restore Rich/logging streams after the run so they never hold a closed file handle.
     try:
-        with open(output_path, "w", encoding="utf-8") as out_f, redirect_stdout(out_f), redirect_stderr(out_f):
-            # Ensure all output goes into the txt file:
-            # - Rich console is a global singleton created at import-time.
-            # - logging StreamHandlers may still be bound to the original terminal stdout.
-            redirect_console(sys.stdout)
-            try:
-                get_logger().redirect_console_handler(sys.stdout)
-            except Exception:
-                pass
-            redirect_logging_streams(sys.stdout, include_root=False)
-
+        with cli_output_to_txt(first_input) as output_path:
             try:
                 # Support Gaussian input (.gjf/.com): auto-convert to single-frame XYZ then run workflow.
                 # Converted files are placed under work_dir/_converted_inputs/ to avoid polluting CWD.
-                converted_inputs: List[str] = []
+                converted_inputs: list[str] = []
                 os.makedirs(work_dir, exist_ok=True)
                 conv_dir = os.path.join(work_dir, "_converted_inputs")
                 for path in input_files:
@@ -319,41 +277,23 @@ def main(args_list: Optional[list[str]] = None):
                     verbose=bool(args.verbose),
                 )
             except Exception:
-                # 在文件日志中记录完整 trace
-                import traceback
-
+                # Log full traceback to file log
                 traceback.print_exc()
                 raise
 
-        return 0
+        return ExitCode.SUCCESS
     except ValueError as e:
-        # 检测是否为多输入一致性相关错误
         msg = str(e)
-        if "多文件输入模式要求" in msg or "柔性链在不同输入间不一致" in msg:
-            # 终端静默策略：不做交互提示，直接写入输出 txt 并返回失败退出码。
-            _append_to_output(output_path, f"[ERROR] 输入一致性校验失败: {msg}")
-            _append_to_output(output_path, "提示：可在配置文件 global 节添加 'force_consistency: true' 以跳过此检查。")
-            return 1
-        # 其他 ValueError 原样记录
+        if "multi-input mode requires" in msg or "element order mismatch" in msg:
+            _append_to_output(output_path, f"[ERROR] Input consistency validation failed: {msg}")
+            _append_to_output(
+                output_path,
+                "Hint: add 'force_consistency: true' under global config to skip this check.",
+            )
+            return ExitCode.USAGE_ERROR
         _append_to_output(output_path, f"[ERROR] {msg}")
-        return 1
+        return ExitCode.USAGE_ERROR
 
     except Exception as e:
-        # CLI 层负责退出码
         _append_to_output(output_path, f"[ERROR] {e}")
-        return 1
-    finally:
-        # Restore streams for global Rich console and confflow logger.
-        # Important for test environments (pytest capture) and for any subsequent imports/uses in-process.
-        try:
-            redirect_console(sys.stdout)
-        except Exception:
-            pass
-        try:
-            get_logger().redirect_console_handler(sys.stdout)
-        except Exception:
-            pass
-        try:
-            redirect_logging_streams(sys.stdout, include_root=False)
-        except Exception:
-            pass
+        return ExitCode.RUNTIME_ERROR

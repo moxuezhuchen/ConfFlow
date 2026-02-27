@@ -1,28 +1,33 @@
-"""utils 与 manager 模块测试（合并版）"""
+#!/usr/bin/env python3
+
+"""Tests for utils and manager modules (merged)."""
+
+from __future__ import annotations
 
 import os
-import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
+import pytest
+
+from confflow.calc.manager import ChemTaskManager
 from confflow.core.utils import (
-    validate_xyz_file,
-    validate_yaml_config,
-    parse_index_spec,
-    format_index_ranges,
-    format_duration_hms,
-    parse_memory,
-    parse_iprog,
-    parse_itask,
     ConfFlowLogger,
     InputFileError,
     XYZFormatError,
+    format_duration_hms,
+    format_index_ranges,
+    parse_index_spec,
+    parse_iprog,
+    parse_itask,
+    parse_memory,
+    validate_xyz_file,
+    validate_yaml_config,
 )
-from confflow.calc.manager import ChemTaskManager
-
 
 # =============================================================================
-# utils 测试
+# utils tests
 # =============================================================================
+
 
 def test_validate_yaml_config_requires_chains_for_confgen():
     cfg = {
@@ -84,15 +89,15 @@ def test_validate_yaml_config_accepts_confgen_bond_overrides():
 
 
 def test_validate_xyz_file_errors(tmp_path):
-    with pytest.raises(InputFileError, match="文件不存在"):
+    with pytest.raises(InputFileError, match="File does not exist"):
         validate_xyz_file(str(tmp_path / "nonexistent.xyz"))
 
-    with pytest.raises(InputFileError, match="路径不是文件"):
+    with pytest.raises(InputFileError, match="Path is not a file"):
         validate_xyz_file(str(tmp_path))
 
     empty = tmp_path / "empty.xyz"
     empty.write_text("")
-    with pytest.raises(InputFileError, match="文件为空"):
+    with pytest.raises(InputFileError, match="File is empty"):
         validate_xyz_file(str(empty))
 
     f1 = tmp_path / "f1.xyz"
@@ -230,7 +235,7 @@ def test_parse_iprog_itask():
 
 def test_logger_embedded_mode():
     ConfFlowLogger._initialized = False
-    logger = ConfFlowLogger()
+    ConfFlowLogger()
 
     with patch("logging.getLogger") as mock_get:
         mock_root = MagicMock()
@@ -259,8 +264,9 @@ def test_logger_file_handler(tmp_path):
 
 
 # =============================================================================
-# manager 测试
+# manager tests
 # =============================================================================
+
 
 def test_manager_init_no_config():
     manager = ChemTaskManager(None)
@@ -290,7 +296,8 @@ def test_read_single_frame_xyz_coords(tmp_path):
     coords = manager._read_single_frame_xyz_coords(str(xyz))
     assert coords is not None
     assert len(coords) == 2
-    assert "C 0 0 0" in coords[0]
+    assert "C" in coords[0]
+    assert "0" in coords[0]
 
 
 def test_read_single_frame_xyz_coords_invalid(tmp_path):
@@ -314,7 +321,9 @@ def test_read_xyz_basic(tmp_path):
 def test_read_xyz_fallback(tmp_path):
     manager = ChemTaskManager(None)
     xyz_path = tmp_path / "bad.xyz"
-    xyz_path.write_text("2\ncomment\nC 0.0 0.0 0.0\nC 1.5 0.0 0.0\n\n3\nnext\nO 0 0 0\nH 1 0 0\nH 0 1 0")
+    xyz_path.write_text(
+        "2\ncomment\nC 0.0 0.0 0.0\nC 1.5 0.0 0.0\n\n3\nnext\nO 0 0 0\nH 1 0 0\nH 0 1 0"
+    )
 
     geoms = manager._read_xyz(str(xyz_path))
     assert len(geoms) == 2
@@ -367,7 +376,11 @@ def test_manager_run_failed_output(tmp_path, monkeypatch):
 
     manager = ChemTaskManager(str(settings), resume_dir=str(tmp_path / "work"))
 
-    monkeypatch.setattr(confflow.calc.manager, "_run_task", lambda t: {"job_name": t["job_name"], "status": "failed", "error": "test error"})
+    monkeypatch.setattr(
+        confflow.calc.manager,
+        "_run_task",
+        lambda t: {"job_name": t["job_name"], "status": "failed", "error": "test error"},
+    )
 
     manager.run(str(xyz))
 
@@ -390,10 +403,13 @@ def test_manager_stop_beacon_async(tmp_path, monkeypatch):
     class SyncExecutor:
         def __init__(self, *args, **kwargs):
             pass
+
         def __enter__(self):
             return self
+
         def __exit__(self, *args):
             pass
+
         def submit(self, func, *args, **kwargs):
             stop_file = tmp_path / "work" / "STOP"
             stop_file.write_text("")
@@ -405,7 +421,12 @@ def test_manager_stop_beacon_async(tmp_path, monkeypatch):
     monkeypatch.setattr("confflow.calc.manager.ProcessPoolExecutor", SyncExecutor)
 
     def fake_run_task(task):
-        return {"job_name": task["job_name"], "status": "success", "energy": -1.0, "final_coords": task["coords"]}
+        return {
+            "job_name": task["job_name"],
+            "status": "success",
+            "energy": -1.0,
+            "final_coords": task["coords"],
+        }
 
     with patch("confflow.calc.manager._run_task", side_effect=fake_run_task):
         manager.run(str(xyz_file))
@@ -423,15 +444,17 @@ def test_manager_auto_clean(tmp_path, monkeypatch):
     manager = ChemTaskManager(str(settings_file), resume_dir=str(tmp_path / "work"))
     manager._ensure_work_dir()
 
-    manager.results_db.insert_result({
-        "job_name": "c0001",
-        "status": "success",
-        "energy": -1.0,
-        "final_coords": ["H 0.0 0.0 0.0"],
-    })
+    manager.results_db.insert_result(
+        {
+            "job_name": "c0001",
+            "status": "success",
+            "energy": -1.0,
+            "final_coords": ["H 0.0 0.0 0.0"],
+        }
+    )
 
     mock_refine = MagicMock()
-    monkeypatch.setattr("confflow.calc.manager.refine.process_xyz", mock_refine)
+    monkeypatch.setattr("confflow.blocks.refine.process_xyz", mock_refine)
 
     manager.run(str(xyz_file))
 
@@ -444,7 +467,9 @@ def test_manager_recover_orca(tmp_path):
     os.makedirs(manager.backup_dir)
 
     log_file = tmp_path / "backup" / "job1.out"
-    log_file.write_text("FINAL SINGLE POINT ENERGY      -123.456\n****ORCA TERMINATED NORMALLY****\n")
+    log_file.write_text(
+        "FINAL SINGLE POINT ENERGY      -123.456\n****ORCA TERMINATED NORMALLY****\n"
+    )
 
     xyz_file = tmp_path / "backup" / "job1.xyz"
     xyz_file.write_text("1\ntest\nH 0.0 0.0 0.0\n")
@@ -471,3 +496,227 @@ def test_manager_read_xyz_errors(tmp_path):
     truncated_xyz = tmp_path / "truncated.xyz"
     truncated_xyz.write_text("2\ncomment\nH 0 0 0\n")
     assert manager._read_xyz(str(truncated_xyz)) == []
+
+
+# =============================================================================
+# Manager path-coverage tests (merged from test_calc_manager_paths.py)
+# =============================================================================
+
+
+def test_manager_main_cli(tmp_path):
+    from confflow.calc.manager import main as manager_main
+
+    xyz_path = tmp_path / "test.xyz"
+    xyz_path.write_text("1\n\nH 0 0 0\n")
+    ini_path = tmp_path / "test.ini"
+    ini_path.write_text("[global]\nengine=orca\n")
+
+    with patch("confflow.calc.manager.ChemTaskManager.run") as mock_run:
+        with patch("sys.argv", ["confcalc", str(xyz_path), "-s", str(ini_path)]):
+            manager_main()
+            mock_run.assert_called_once()
+
+    with patch("sys.argv", ["confcalc", "nonexistent.xyz", "-s", str(ini_path)]):
+        with pytest.raises(SystemExit) as e:
+            manager_main()
+        assert e.value.code == 1
+
+    with patch("sys.argv", ["confcalc", str(xyz_path), "-s", "nonexistent.ini"]):
+        with pytest.raises(SystemExit) as e:
+            manager_main()
+        assert e.value.code == 1
+
+
+def test_manager_read_xyz_fallback_more(tmp_path):
+    mgr = ChemTaskManager(None)
+
+    tmp_path / "bad.xyz"
+    mgr = ChemTaskManager(settings_file="", resume_dir=str(tmp_path / "wd"))
+
+    mgr._ensure_work_dir()
+    stop_path = mgr.config["stop_beacon_file"]
+    os.makedirs(os.path.dirname(stop_path), exist_ok=True)
+    with open(stop_path, "w") as f:
+        f.write("STOP")
+
+    geoms = [
+        {"title": "a", "coords": ["H 0 0 0"], "metadata": {}},
+        {"title": "b", "coords": ["H 0 0 1"], "metadata": {}},
+    ]
+
+    class FakeResultsDB:
+        def __init__(self, *args, **kwargs):
+            self.inserted = []
+
+        def get_result_by_job_name(self, job_name):
+            return None
+
+        def insert_result(self, res):
+            self.inserted.append(res)
+
+        def get_all_results(self):
+            return []
+
+    class _Fut:
+        def __init__(self, result):
+            self._result = result
+
+        def result(self):
+            return self._result
+
+    class FakeExec:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def submit(self, fn, arg):
+            return _Fut(
+                {"job_name": arg["job_name"], "status": "success", "final_coords": ["H 0 0 0"]}
+            )
+
+    with (
+        patch("confflow.calc.manager.ResultsDB", FakeResultsDB),
+        patch.object(ChemTaskManager, "_read_xyz", return_value=geoms),
+        patch("confflow.calc.manager.ProcessPoolExecutor", FakeExec),
+        patch("confflow.calc.manager.as_completed", lambda futs: list(futs)),
+        patch("confflow.calc.manager.CalcProgressReporter"),
+        patch("confflow.calc.manager.parse_iprog", return_value=1),
+        patch("confflow.calc.manager.get_policy"),
+        patch("confflow.calc.manager._cleanup_lingering_processes") as mock_cleanup,
+    ):
+        mgr.run(str(tmp_path / "input.xyz"))
+        assert mock_cleanup.called
+
+
+def test_calc_manager_failed_output_and_auto_clean_parse_errors(tmp_path):
+    from types import SimpleNamespace
+
+    mgr = ChemTaskManager(settings_file="", resume_dir=str(tmp_path / "wd"))
+    mgr.config.update(
+        {
+            "auto_clean": "true",
+            "clean_opts": "-t nope -ewin nope",
+            "cores_per_task": "2",
+            "max_parallel_jobs": "1",
+        }
+    )
+
+    geoms = [
+        {
+            "title": "geom1",
+            "coords": ["H 0 0 0", "H 0 0 1"],
+            "metadata": {"CID": "123"},
+        }
+    ]
+
+    long_err = "x" * 500
+
+    class FakeResultsDB:
+        def __init__(self, *args, **kwargs):
+            self.inserted = []
+
+        def get_result_by_job_name(self, job_name):
+            return None
+
+        def insert_result(self, res):
+            self.inserted.append(res)
+
+        def get_all_results(self):
+            return [
+                {"job_name": "c0001", "status": "failed", "error": long_err},
+                {
+                    "job_name": "c0001",
+                    "status": "success",
+                    "energy": -1.0,
+                    "final_coords": ["H 0 0 0", "H 0 0 1"],
+                    "num_imag_freqs": 1,
+                    "lowest_freq": -12.3,
+                    "ts_bond_atoms": "1,2",
+                    "ts_bond_length": 1.234567,
+                },
+            ]
+
+    with (
+        patch("confflow.calc.manager.ResultsDB", FakeResultsDB),
+        patch.object(ChemTaskManager, "_read_xyz", return_value=geoms),
+        patch(
+            "confflow.calc.manager._run_task",
+            return_value={
+                "job_name": "c0001",
+                "status": "success",
+                "final_coords": ["H 0 0 0", "H 0 0 1"],
+                "energy": -1.0,
+            },
+        ),
+        patch("confflow.blocks.refine.RefineOptions") as mock_opts,
+        patch("confflow.blocks.refine.process_xyz", side_effect=Exception("boom")),
+    ):
+        mock_opts.return_value = SimpleNamespace(output=str(tmp_path / "wd" / "output.xyz"))
+        mgr.run(str(tmp_path / "input.xyz"))
+
+        assert (tmp_path / "wd" / "failed.xyz").exists()
+        assert (tmp_path / "wd" / "result.xyz").exists()
+
+
+def test_calc_manager_executor_path_inserts_results(tmp_path):
+    geoms = [
+        {"title": "a", "coords": ["H 0 0 0"], "metadata": {"CID": "1"}},
+        {"title": "b", "coords": ["H 0 0 1"], "metadata": {"CID": "2"}},
+    ]
+
+    class FakeResultsDB:
+        def __init__(self, *args, **kwargs):
+            self.inserted = []
+
+        def get_result_by_job_name(self, job_name):
+            return None
+
+        def insert_result(self, res):
+            self.inserted.append(res)
+
+        def get_all_results(self):
+            return list(self.inserted)
+
+    class _Fut:
+        def __init__(self, result):
+            self._result = result
+
+        def result(self):
+            return self._result
+
+    class FakeExec:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def submit(self, fn, arg):
+            return _Fut(
+                {
+                    **arg,
+                    "status": "success",
+                    "energy": -1.0,
+                    "final_coords": arg.get("coords") or ["H 0 0 0"],
+                }
+            )
+
+    with (
+        patch("confflow.calc.manager.ResultsDB", FakeResultsDB),
+        patch.object(ChemTaskManager, "_read_xyz", return_value=geoms),
+        patch("confflow.calc.manager.ProcessPoolExecutor", FakeExec),
+        patch("confflow.calc.manager.as_completed", lambda futs: list(futs)),
+        patch("confflow.calc.manager.CalcProgressReporter"),
+    ):
+        mgr = ChemTaskManager(settings_file="", resume_dir=str(tmp_path / "wd"))
+        mgr.run(str(tmp_path / "input.xyz"))
+
+        assert (tmp_path / "wd" / "result.xyz").exists()

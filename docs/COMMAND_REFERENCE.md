@@ -8,7 +8,7 @@
 confflow <input.xyz> -c <confflow.yaml> [-w <work_dir>] [--resume] [--verbose]
 ```
 
-说明：`confflow` 默认不向终端打印日志；所有 stdout/stderr 会写入输入目录下同名文件 `<input_basename>.txt`。
+说明：所有 CLI（`confflow`/`confcalc`/`confgen`/`confrefine`/`confts`）默认不向终端打印运行日志；stdout/stderr 会写入输入目录下同名文件 `<input_basename>.txt`。
 
 ```bash
 tail -f input.txt
@@ -25,7 +25,7 @@ tail -f input.txt
 confcalc <input.xyz> -s <settings.ini>
 ```
 
-用于直接对多帧 XYZ 执行量化计算（Gaussian/ORCA）。
+用于直接对多帧 XYZ 执行量化计算（Gaussian/ORCA），运行日志写入 `<input_basename>.txt`。
 
 ## confgen
 
@@ -37,12 +37,23 @@ confgen <mol.xyz> [<angle_step>] --chain <a-b-c-...> [--steps <...> | --angles "
 
 - 多输入时仅需指定第一份输入的 `--chain`，其余输入会基于拓扑映射自动识别对应柔性链。
 - 链上相邻原子必须成键，否则会报错并提示调整 `--add_bond` 或 `bond_threshold`。
+- 运行日志写入第一个输入文件对应的 `<input_basename>.txt`。
 
 ## confrefine
 
 ```bash
-confrefine <input.xyz> [-o <output.xyz>] [-t <rmsd>] [--ewin <kcal/mol>] [--imag <n>] [--noH] [-n <max>] [--dedup-only] [-w <workers>]
+confrefine <input.xyz> [-o <output.xyz>] [-t <rmsd>] [--ewin <kcal/mol>] [--imag <n>] [--noH] [-n <max>] [--dedup-only] [-w <workers>] [--energy-tolerance <kcal/mol>]
 ```
+
+- `-t/--threshold`：RMSD 阈值（默认 0.25 Å）
+- `--energy-tolerance`：能量辅助去重容差（默认 0.05 kcal/mol）。当两个构象能量差 ≤ 此值时，RMSD 阈值自动放宽 1.5 倍，提高大分子去重召回率
+- `--ewin`：能量窗口（kcal/mol）
+- `--noH`：RMSD 计算忽略氢原子
+- `-n/--max-conformers`：最大输出构象数
+- `--dedup-only`：仅去重，不做能量窗口筛选
+- `-w/--workers`：并行 worker 数
+
+运行日志写入 `<input_basename>.txt`。
 
 ## confts
 
@@ -55,3 +66,9 @@ confts --rewrite-scan-keyword "opt(nomicro,calcfc,tight,ts,noeigentest) freq b3l
 ```
 
 TS 失败后的 scan 救援由 calc 执行器在运行 TS 任务失败时自动触发，细节见 `docs/USAGE.md`。
+
+## 统一返回码
+
+- `0`: success
+- `1`: usage/input/config error
+- `2`: runtime failure

@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 
-"""工作流执行引擎（从 confflow.main 拆分）。
+"""Workflow execution engine (split from confflow.main).
 
-设计目标
-- 纯业务逻辑：不做 sys.exit
-- 便于测试：核心入口 `run_workflow()` 接受显式参数
+Design goals:
+- Pure business logic: no sys.exit calls.
+- Testable: core entry ``run_workflow()`` accepts explicit parameters.
 """
 
 from __future__ import annotations
@@ -15,58 +14,50 @@ import shutil
 import sys
 import time
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Union
+from typing import Any
 
-from ..blocks import confgen, viz
 from .. import calc
-from ..core.types import TaskStatus
-
-from ..core import io as io_xyz
+from ..blocks import confgen, viz
 from ..config.schema import ConfigSchema
-from ..core.console import console, DOUBLE_LINE, SINGLE_LINE, LINE_WIDTH
+from ..core import io as io_xyz
+from ..core.console import console
+
+# Import extracted modules
+from ..core.pairs import normalize_pair_list
+from ..core.types import TaskStatus
 from ..core.utils import (
     format_duration_hms,
-    format_index_ranges,
     get_logger,
-    parse_index_spec,
-    parse_itask,
 )
-
-# 引入抽离的模块
-from .helpers import (
-    pushd, 
-    as_list, 
-    normalize_pair_list, 
-    count_conformers_any, 
-    is_multi_frame_any
+from .config_builder import (
+    build_step_dir_name_map,
+    build_task_config,
+    load_workflow_config,
 )
-from .validation import validate_inputs_compatible
-from .config_builder import build_task_config
+from .config_builder import _itask_label as _itask_label  # re-export for test compatibility
+from .config_builder import _normalize_iprog_label as _normalize_iprog_label  # re-export
+from .helpers import as_list, count_conformers_any, is_multi_frame_any, pushd
+from .presenter import print_step_footer_block, print_step_header_block, print_workflow_start
 from .stats import (
     CheckpointManager,
-    WorkflowStatsTracker,
-    TaskStatsCollector,
     FailureTracker,
-    Tracer
+    TaskStatsCollector,
+    Tracer,
+    WorkflowStatsTracker,
 )
+from .validation import validate_inputs_compatible
+
+__all__ = [
+    "run_workflow",
+]
 
 logger = get_logger()
 
-# 从拆分模块导入，消除重复定义
-from .config_builder import (
-    _normalize_iprog_label,
-    _itask_label,
-    load_workflow_config,
-    create_runtask_config,
-    build_step_dir_name_map,
-)
-from .helpers import count_conformers_in_xyz
-from .stats import count_task_statuses_in_results_db as _count_task_statuses_in_results_db
 
 def _run_confgen_step(
-    step_dir: str, current_input: Union[str, List[str]], params: Dict[str, Any], input_files: List[str]
+    step_dir: str, current_input: str | list[str], params: dict[str, Any], input_files: list[str]
 ) -> str:
-    """执行构象生成步骤"""
+    """Execute a conformer generation step."""
     expected_output = os.path.join(step_dir, "search.xyz")
     multi_frame = len(input_files) == 1 and is_multi_frame_any(current_input)
 
@@ -96,16 +87,16 @@ def _run_confgen_step(
 
 
 def _run_calc_step(
-    step_dir: str, 
-    current_input: Union[str, List[str]], 
-    params: Dict[str, Any], 
-    global_config: Dict[str, Any], 
-    root_dir: str, 
-    steps: List[Dict[str, Any]],
+    step_dir: str,
+    current_input: str | list[str],
+    params: dict[str, Any],
+    global_config: dict[str, Any],
+    root_dir: str,
+    steps: list[dict[str, Any]],
     failure_tracker: FailureTracker,
-    step_name: str
+    step_name: str,
 ) -> str:
-    """执行计算任务步骤"""
+    """Execute a calculation task step."""
     task_config = build_task_config(params, global_config, root_dir, steps)
     ConfigSchema.validate_calc_config(task_config)
 
@@ -121,65 +112,69 @@ def _run_calc_step(
 
     manager = calc.ChemTaskManager(task_config)
     manager.work_dir = step_dir
-    manager.run(input_xyz_file=current_input if isinstance(current_input, str) else current_input[0])
+    manager.run(
+        input_xyz_file=current_input if isinstance(current_input, str) else current_input[0]
+    )
 
     work_cleaned = os.path.join(step_dir, "output.xyz")
     work_raw = os.path.join(step_dir, "result.xyz")
     work_failed = os.path.join(step_dir, "failed.xyz")
-    
+
     if os.path.exists(work_cleaned):
         final_input = work_cleaned
     elif os.path.exists(work_raw):
         final_input = work_raw
     else:
-        raise RuntimeError("计算任务未产生预期输出")
+        raise RuntimeError("Calculation task did not produce expected output")
 
     if os.path.exists(work_failed):
         failure_tracker.append(work_failed, step_name)
-    
+
     return final_input
 
 
 def run_workflow(
-    input_xyz: List[str],
+    input_xyz: list[str],
     config_file: str,
     work_dir: str,
-    original_input_files: Optional[List[str]] = None,
+    original_input_files: list[str] | None = None,
     resume: bool = False,
     verbose: bool = False,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     if verbose and hasattr(logger, "set_level"):
         logger.set_level(10)
 
     input_files = [os.path.abspath(x) for x in input_xyz]
     original_inputs = (
-        [os.path.abspath(x) for x in original_input_files]
-        if original_input_files
-        else input_files
+        [os.path.abspath(x) for x in original_input_files] if original_input_files else input_files
     )
     for fp in input_files:
         if not os.path.exists(fp):
-            raise FileNotFoundError(f"输入文件不存在: {fp}")
+            raise FileNotFoundError(f"Input file does not exist: {fp}")
 
     cfg = load_workflow_config(config_file)
     global_config = cfg["global"]
     steps = cfg["steps"]
     step_dirnames, _ = build_step_dir_name_map(steps)
 
-    # 预加载 confgen 参数用于多输入柔性链一致性检查
+    # Pre-load confgen params for multi-input flexible chain consistency check
     confgen_params = None
     if len(input_files) > 1:
         for step in steps:
-             if step.get("type", "").lower() == "confgen":
-                 confgen_params = step.get("params", {})
-                 break
-        validate_inputs_compatible(input_files, confgen_params, force_consistency=global_config.get("force_consistency", False))
+            if step.get("type", "").lower() == "confgen":
+                confgen_params = step.get("params", {})
+                break
+        validate_inputs_compatible(
+            input_files,
+            confgen_params,
+            force_consistency=global_config.get("force_consistency", False),
+        )
 
     root_dir = os.path.abspath(work_dir)
     os.makedirs(root_dir, exist_ok=True)
     failed_dir = os.path.join(root_dir, "failed")
     os.makedirs(failed_dir, exist_ok=True)
-    
+
     try:
         shutil.copy2(config_file, os.path.join(failed_dir, os.path.basename(config_file)))
     except Exception:
@@ -191,29 +186,19 @@ def run_workflow(
     checkpoint = CheckpointManager(root_dir)
     stats_tracker = WorkflowStatsTracker(input_files, original_inputs)
     failure_tracker = FailureTracker(failed_dir)
-    
+
     if not resume:
         failure_tracker.clear_previous()
 
     resume_from_step = checkpoint.load() if resume else -1
-    current_input: Union[str, List[str]] = input_files[0] if len(input_files) == 1 else input_files
+    current_input: str | list[str] = input_files[0] if len(input_files) == 1 else input_files
 
-    # === 打印工作流开始头部 ===
-    from ..core.console import DOUBLE_LINE
-    input_basename = os.path.basename(input_files[0]) if len(input_files) == 1 else f"{len(input_files)} files"
-    console.print(DOUBLE_LINE)
-    console.print(f"{'ConfFlow v1.0':^80}")
-    started_str = 'Started: ' + datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    console.print(f"{started_str:^80}")
-    initial_count = count_conformers_any(current_input)
-    conf_str = f"conformer{'s' if initial_count > 1 else ''}"
-    input_str = f"Input: {input_basename} ({initial_count} {conf_str})"
-    console.print(f"{input_str:^80}")
-    console.print(DOUBLE_LINE)
+    # === Print workflow start header ===
+    print_workflow_start(input_files, current_input)
 
     for i, step in enumerate(steps):
         if resume_from_step >= i:
-            # 如果是恢复且该步已完成，需要更新 current_input 为该步的输出
+            # If resuming and this step is already completed, update current_input to its output
             step_dir = os.path.join(root_dir, step_dirnames[i])
             expected_output = os.path.join(step_dir, "output.xyz")
             if not os.path.exists(expected_output):
@@ -223,7 +208,7 @@ def run_workflow(
             if os.path.exists(expected_output):
                 current_input = expected_output
             continue
-            
+
         if not step.get("enabled", True):
             continue
 
@@ -234,7 +219,7 @@ def run_workflow(
 
         step_start = time.time()
         in_n = count_conformers_any(current_input)
-        
+
         step_stats = {
             "name": step_name,
             "type": step_type,
@@ -247,49 +232,26 @@ def run_workflow(
 
         # === Step header ===
         total_steps = len(steps)
-        if step_type in ["calc", "task"]:
-            merged = {**global_config, **params}
-            iprog = _normalize_iprog_label(merged.get("iprog", "orca"))
-            itask = _itask_label(merged.get("itask", "opt"))
-            cores = merged.get("cores_per_task", 4)
-            mem = merged.get("total_memory", "4GB")
-            max_jobs = merged.get("max_parallel_jobs", 4)
-
-            itask_int = parse_itask(merged.get("itask", "opt"))
-            freeze_raw = merged.get("freeze", "0") if itask_int in [0, 3] else "0"
-            freeze_idx = parse_index_spec(freeze_raw)
-            freeze_fmt = format_index_ranges(freeze_idx)
-            freeze_show = f"{freeze_fmt} ({len(freeze_idx)})" if freeze_idx else "none"
-
-            console.print()
-            header = f"[Step {i + 1}/{total_steps}] {step_name} | {step_type} ({iprog}/{itask})"
-            right_info = f"Input: {in_n}"
-            padding = LINE_WIDTH - len(header) - len(right_info)
-            console.print(f"{header}{' ' * max(1, padding)}{right_info}")
-            console.print(SINGLE_LINE)
-            
-            kw = merged.get("keyword")
-            if kw and str(kw).strip():
-                console.print(f"  Keyword : {str(kw).strip()}")
-            console.print(f"  Resource: {max_jobs} jobs × {cores} cores, {mem:<12} Freeze: {freeze_show}")
-        else:
-            console.print()
-            header = f"[Step {i + 1}/{total_steps}] {step_name} | {step_type}"
-            right_info = f"Input: {in_n}"
-            padding = LINE_WIDTH - len(header) - len(right_info)
-            console.print(f"{header}{' ' * max(1, padding)}{right_info}")
-            console.print(SINGLE_LINE)
+        print_step_header_block(
+            step_index=i + 1,
+            total_steps=total_steps,
+            step_name=step_name,
+            step_type=step_type,
+            global_config=global_config,
+            params=params,
+            in_count=in_n,
+        )
 
         try:
             if step_type in ["confgen", "gen"]:
                 multi_frame = len(input_files) == 1 and is_multi_frame_any(current_input)
                 expected_output = os.path.join(step_dir, "search.xyz")
-                
+
                 if multi_frame and isinstance(current_input, str):
                     step_stats["status"] = TaskStatus.SKIPPED_MULTI
                 elif os.path.exists(expected_output):
                     step_stats["status"] = TaskStatus.SKIPPED
-                
+
                 current_input = _run_confgen_step(step_dir, current_input, params, input_files)
                 io_xyz.ensure_xyz_cids(current_input, prefix=f"s{i+1:02d}")
                 if step_stats.get("status") not in [TaskStatus.SKIPPED_MULTI, TaskStatus.SKIPPED]:
@@ -301,9 +263,16 @@ def run_workflow(
 
                 if os.path.exists(expected_clean) or os.path.exists(expected_raw):
                     step_stats["status"] = TaskStatus.SKIPPED
-                
+
                 current_input = _run_calc_step(
-                    step_dir, current_input, params, global_config, root_dir, steps, failure_tracker, step_name
+                    step_dir,
+                    current_input,
+                    params,
+                    global_config,
+                    root_dir,
+                    steps,
+                    failure_tracker,
+                    step_name,
                 )
                 io_xyz.ensure_xyz_cids(current_input, prefix=f"s{i+1:02d}")
                 if step_stats.get("status") != TaskStatus.SKIPPED:
@@ -328,28 +297,29 @@ def run_workflow(
                 step_stats["failed_conformers"] = failed_count
 
             # === Step footer summary ===
-            dur = format_duration_hms(step_stats["duration_seconds"])
-            status = step_stats["status"]
-            mark = "✓" if status in (TaskStatus.COMPLETED, TaskStatus.SKIPPED, TaskStatus.SKIPPED_MULTI) else "✗"
-            failed_str = f" ({failed_count} failed)" if failed_count > 0 else ""
-            console.print(f"  {mark} {status.capitalize()} | {in_n} → {step_stats['output_conformers']}{failed_str} | {dur}")
-            if status == TaskStatus.FAILED:
-                console.print(f"  Error: {step_stats.get('error')}")
-            console.print()
+            print_step_footer_block(
+                step_stats=step_stats,
+                in_count=in_n,
+                failed_count=failed_count,
+            )
 
             stats_tracker.add_step(step_stats)
-            if step_stats["status"] in [TaskStatus.COMPLETED, TaskStatus.SKIPPED, TaskStatus.SKIPPED_MULTI]:
+            if step_stats["status"] in [
+                TaskStatus.COMPLETED,
+                TaskStatus.SKIPPED,
+                TaskStatus.SKIPPED_MULTI,
+            ]:
                 checkpoint.save(i, stats_tracker.get_stats())
 
     final_stats = stats_tracker.finalize(current_input)
-    
-    # 溯源
+
+    # Tracing
     try:
         Tracer.trace_low_energy(final_stats)
     except Exception as e:
         logger.debug(f"Trace failed: {e}")
 
-    # 报告与最低能量输出
+    # Report and lowest energy output
     if isinstance(current_input, str) and os.path.exists(current_input):
         confs = viz.parse_xyz_file(current_input)
         report_text = viz.generate_text_report(confs, stats=final_stats)
@@ -365,19 +335,20 @@ def run_workflow(
             input_base = os.path.splitext(os.path.basename(original_inputs[0]))[0]
             lowest_path = os.path.join(input_dir, f"{input_base}min.xyz")
             io_xyz.write_xyz_file(lowest_path, [best_conf], atomic=True)
-            
+
             best_meta = best_conf.get("metadata") or {}
             final_stats["lowest_conformer"] = {
                 "cid": best_meta.get("CID"),
                 "energy": best_energy,
                 "xyz_path": lowest_path,
             }
-            logger.info(f"已输出最低能量构象: {lowest_path}")
+            logger.info(f"Lowest-energy conformer written: {lowest_path}")
 
-    # 写入最终统计
+    # Write final statistics
     stats_file = os.path.join(root_dir, "workflow_stats.json")
     with open(stats_file, "w", encoding="utf-8") as f:
         import json
+
         json.dump(final_stats, f, indent=2, ensure_ascii=False)
 
     return final_stats

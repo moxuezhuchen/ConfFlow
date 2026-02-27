@@ -40,13 +40,12 @@ requires-python = ">=3.9"
 dependencies = [
     "numpy>=1.20.0",
     "scipy>=1.7.0",
-    "tqdm>=4.60.0",
     "pyyaml>=5.4.0",
     "psutil>=5.8.0",
     "jinja2>=3.0.0",
-    "typing-extensions>=4.0.0",
+    "rich>=10.0.0",
+    "pydantic>=2.0.0",
     "rdkit>=2021.09.0",
-    "numba>=0.55.0",
 ]
 
 [project.optional-dependencies]
@@ -54,17 +53,20 @@ dev = [
     "pytest>=6.0.0",
     "pytest-cov>=2.12.0",
     "black>=21.0.0",
-    "flake8>=3.9.0",
+    "ruff>=0.8.0",
     "mypy>=0.900",
     "types-PyYAML>=6.0.0",
     "pyright>=1.1.0",
+]
+# numba provides JIT acceleration; the code has a pure-Python fallback when absent
+speed = [
+    "numba>=0.55.0",
 ]
 viz = [
     "matplotlib>=3.3.0",
     "plotly>=5.0.0",
 ]
 all = [
-    "rdkit>=2021.09.0",
     "numba>=0.55.0",
     "matplotlib>=3.3.0",
     "plotly>=5.0.0",
@@ -78,10 +80,10 @@ confrefine = "confflow.blocks.refine:main"
 confcalc = "confflow.calc.manager:main"
 
 [project.urls]
-Homepage = "https://github.com/user/confflow"
-Documentation = "https://github.com/user/confflow#readme"
-Repository = "https://github.com/user/confflow.git"
-Issues = "https://github.com/user/confflow/issues"
+Homepage = "https://github.com/confflow/confflow"
+Documentation = "https://github.com/confflow/confflow#readme"
+Repository = "https://github.com/confflow/confflow.git"
+Issues = "https://github.com/confflow/confflow/issues"
 
 [tool.setuptools.packages.find]
 where = ["."]
@@ -94,7 +96,43 @@ confflow = ["*.yaml", "*.md"]
 line-length = 100
 target-version = ['py39', 'py310', 'py311']
 
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "D"]
+# E501 (line-too-long) is intentionally delegated to black, which enforces the 100-char
+# limit during formatting.  Enabling it here would produce duplicate/spurious warnings
+# for long strings and URLs that black cannot auto-wrap.
+# D1xx (missing-docstring) rules are deferred until full docstring coverage is achieved.
+ignore = ["E501", "D100", "D101", "D102", "D103", "D104", "D105", "D107"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "numpy"
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
-addopts = "-v --tb=short"
+addopts = "-v --tb=short --basetemp=.pytest_basetemp"
+cache_dir = ".pytest_cache"
+markers = [
+    "integration: end-to-end tests that exercise the full workflow",
+]
+
+[tool.coverage.run]
+source = ["confflow"]
+branch = true
+
+[tool.coverage.report]
+fail_under = 70
+show_missing = true
+exclude_lines = [
+    "pragma: no cover",
+    "if __name__ == .__main__.",
+    "if TYPE_CHECKING:",
+]

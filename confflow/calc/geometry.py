@@ -1,35 +1,38 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 
-"""几何与通用解析工具。
+"""Geometry and general parsing utilities.
 
-- 解析日志尾部结构
-- 终止检查
+- Parse the last structure from log files.
+- Check for normal termination.
 """
 
 from __future__ import annotations
 
 import os
 import re
-from typing import List, Optional
 
 from .constants import get_element_symbol
-from .core import logger
+from .setup import logger
+
+__all__ = [
+    "parse_last_geometry",
+    "check_termination",
+]
 
 
-def parse_last_geometry(log_file: str, prog_id: int) -> Optional[List[str]]:
-    """从 Gaussian/ORCA 输出文件中提取最后一个结构坐标块。"""
+def parse_last_geometry(log_file: str, prog_id: int) -> list[str] | None:
+    """Extract the last geometry coordinate block from a Gaussian/ORCA output file."""
     if not os.path.exists(log_file):
         return None
 
-    coords: List[str] = []
+    coords: list[str] = []
 
-    # ORCA: 优先尝试同名 .xyz 文件
+    # ORCA: try the companion .xyz file first
     if prog_id == 2:
         xyz_file_path = os.path.splitext(log_file)[0] + ".xyz"
         if os.path.exists(xyz_file_path):
             try:
-                with open(xyz_file_path, "r") as f:
+                with open(xyz_file_path) as f:
                     lines = f.readlines()
                     num = int(lines[0].strip())
                     for line in lines[2 : 2 + num]:
@@ -39,13 +42,13 @@ def parse_last_geometry(log_file: str, prog_id: int) -> Optional[List[str]]:
                                 f"{p[0]:<2s} {float(p[1]): >12.6f} {float(p[2]): >12.6f} {float(p[3]): >12.6f}"
                             )
                     return coords
-            except Exception as e:
-                logger.debug(f"ORCA XYZ 读取失败 {xyz_file_path}: {e}")
+            except (OSError, IndexError, ValueError) as e:
+                logger.debug(f"ORCA XYZ read failed {xyz_file_path}: {e}")
 
     try:
-        with open(log_file, "r", errors="ignore") as f:
+        with open(log_file, errors="ignore") as f:
             lines = f.read().splitlines()
-    except IOError:
+    except OSError:
         return None
 
     if prog_id == 1:  # Gaussian
@@ -65,8 +68,8 @@ def parse_last_geometry(log_file: str, prog_id: int) -> Optional[List[str]]:
                         coords.append(
                             f"{sym:<2s} {float(p[3]): >12.6f} {float(p[4]): >12.6f} {float(p[5]): >12.6f}"
                         )
-                    except Exception as e:
-                        logger.debug(f"Gaussian 坐标解析失败 line {idx}: {e}")
+                    except (IndexError, ValueError) as e:
+                        logger.debug(f"Gaussian coordinate parse failed at line {idx}: {e}")
                 idx += 1
     elif prog_id == 2:  # ORCA Log Fallback
         content = "\n".join(lines)
@@ -89,7 +92,7 @@ def parse_last_geometry(log_file: str, prog_id: int) -> Optional[List[str]]:
 
 
 def check_termination(log_file: str, prog_name: str) -> bool:
-    """检查 Gaussian/ORCA 是否正常终止（尾部关键字）。"""
+    """Check whether Gaussian/ORCA terminated normally (tail keyword check)."""
     if not os.path.exists(log_file):
         return False
     try:
@@ -102,6 +105,6 @@ def check_termination(log_file: str, prog_name: str) -> bool:
                 return True
             if prog_name == "orca" and "****ORCA TERMINATED NORMALLY****" in content:
                 return True
-    except Exception as e:
-        logger.debug(f"终止检查失败 {log_file}: {e}")
+    except OSError as e:
+        logger.debug(f"Termination check failed {log_file}: {e}")
     return False

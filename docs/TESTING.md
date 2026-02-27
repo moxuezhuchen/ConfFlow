@@ -1,195 +1,169 @@
-# ConfFlow 测试
+# ConfFlow 测试指南
 
-## 如何运行
+## 快速开始
 
-- 全量测试：`pytest tests/ -q`
-- 覆盖率（命令行输出缺失行）：`pytest tests/ --cov=confflow --cov-report=term-missing`
-- 仅运行覆盖率推进组：`pytest tests/coverage_push/ -q`
+```bash
+# 全量测试
+pytest tests/ -q
 
----
+# 带覆盖率
+pytest tests/ --cov=confflow --cov-report=term-missing
 
-# ConfFlow 测试报告
+# 仅集成测试
+pytest tests/ -m integration
 
-**测试日期**: 2025年12月2日  
-**项目版本**: v1.0  
-**测试环境**: Linux + Python 3.9
-
----
-
-## 📊 测试概览
-
-**测试统计**:
-- 总测试数: 21 个功能要素
-- 通过数: 21 个 ✅
-- 失败数: 0 个
-- 成功率: 100% 🎉
+# 跳过集成测试
+pytest tests/ -m "not integration"
+```
 
 ---
 
-## 🧪 工具测试详情
+## 测试概览
 
-### confgen - 构象生成工具
+| 指标 | 数值 |
+|------|------|
+| 总测试数 | 465 |
+| 测试文件 | 28 |
+| 通过率 | 100% |
+| 运行时间 | ~6s |
 
-**关键词总数**: 8/8 ✅
+---
 
-| 关键词 | 功能 | 用例 | 状态 |
-|--------|------|------|------|
-| `--add_bond` | 添加键 | `--add_bond 1 2` | ✅ |
-| `--del_bond` | 删除键 | `--del_bond 1 2` | ✅ |
-| `--no_rotate` | 禁止旋转 | `--no_rotate 2 3` | ✅ |
-| `--force_rotate` | 强制旋转 | `--force_rotate 2 3` | ✅ |
-| `--optimize` | MMFF94s 预优化 | `-opt` | ✅ |
-| `--bond_threshold` | 成键系数 | `-b 1.0` | ✅ |
-| `--clash_threshold` | 碰撞系数 | `-c 0.5` | ✅ |
-| `--yes` | 自动确认 | `-y` | ✅ |
+## 测试文件清单
 
-### confrefine - 构象后处理工具
+### 核心层 (`core/`)
 
-**关键词总数**: 8/8 ✅
+| 文件 | 覆盖模块 | 说明 |
+|------|----------|------|
+| `test_core.py` | config/schema, package exports | 配置归一化、包导出、低能量溯源 |
+| `test_io.py` | core/io | XYZ 文件读写、元数据解析、键长计算 |
+| `test_data.py` | core/data | 共价半径、元素符号、原子序数 |
+| `test_models.py` | core/models | TaskContext Pydantic 模型 |
+| `test_console.py` | core/console | 控制台输出格式化 |
+| `test_contracts.py` | core/contracts | 输入/输出契约验证 |
+| `test_keyword_rewrite.py` | core/keyword_rewrite | TS→scan 关键字改写 |
 
-| 关键词 | 功能 | 默认值 | 状态 |
-|--------|------|--------|------|
-| `-t, --threshold` | RMSD 阈值 | 0.25 Å | ✅ |
-| `-o, --output` | 输出文件 | 自动 | ✅ |
-| `-n, --max-conformers` | 最大数量 | 无 | ✅ |
-| `-ewin` | 能量窗口 | 无 | ✅ |
-| `-noH` | 忽略氢原子 | 否 | ✅ |
-| `--dedup-only` | 仅去重 | 否 | ✅ |
-| `-w, --workers` | 并行核心数 | CPU-2 | ✅ |
-| `--keep-all-topos` | 保留拓扑 | 否 | ✅ |
+### 配置层 (`config/`)
 
-**实测输出验证**:
-- 默认 (t=0.25) → 22 构象 ✅
-- -t 0.5 → 22 构象 ✅
-- -n 10 → 10 构象 (正确限制) ✅
-- -t 0.3 -n 15 → 15 构象 (组合正确) ✅
+| 文件 | 覆盖模块 | 说明 |
+|------|----------|------|
+| `test_schema.py` | config/schema | Schema 验证、参数合并、遗留键检测 |
+| `test_defaults.py` | config/defaults | 默认常量类型与值检查 |
+| `test_loader.py` | config/loader | 配置文件加载边界条件 |
+| `test_validation.py` | workflow/validation | 输入验证与兼容性校验 |
 
-### confcalc - 量子化学计算工具
+### 构象生成 (`blocks/confgen/`)
 
-**参数总数**: 2/2 ✅
+| 文件 | 覆盖模块 | 说明 |
+|------|----------|------|
+| `test_confgen.py` | confgen/generator | 构象生成核心、链旋转、CLI 入口 |
+| `test_confgen_validator.py` | confgen/validator | 构象验证器 |
+| `test_confts_keyword.py` | confts | TS 关键字解析、confts CLI |
 
-| 参数 | 说明 | 状态 |
+### 构象筛选 (`blocks/refine/`)
+
+| 文件 | 覆盖模块 | 说明 |
+|------|----------|------|
+| `test_refine.py` | refine/processor, rmsd_engine | RMSD 去重、能量筛选、虚频过滤 |
+
+### 回退测试
+
+| 文件 | 覆盖模块 | 说明 |
+|------|----------|------|
+| `test_confgen_refine_fallbacks.py` | confgen, refine | numba 缺失时的纯 Python 回退路径 |
+
+### 量化计算 (`calc/`)
+
+| 文件 | 覆盖模块 | 说明 |
+|------|----------|------|
+| `test_calc.py` | calc 基础 + task_runner + input_helpers | 任务运行器、输入生成、资源计算 |
+| `test_calc_full.py` | calc 完整集成 | 端到端计算流程、多步骤场景 |
+| `test_policies.py` | policies/gaussian, orca | Gaussian/ORCA 输入生成与输出解析 |
+| `test_rescue.py` | calc/rescue, scan_ops | TS 失败救援、约束扫描 |
+| `test_utils_manager.py` | calc/manager, core/utils | 任务管理器、工具函数 |
+| `test_geometry.py` | calc/geometry | 几何解析、正常终止检测 |
+
+### 工作流 (`workflow/`)
+
+| 文件 | 覆盖模块 | 说明 |
+|------|----------|------|
+| `test_engine.py` | workflow/engine, helpers | 工作流引擎、断点恢复、步骤调度 |
+| `test_runtime_context.py` | workflow/runtime_context | 运行时上下文初始化 |
+| `test_presenter.py` | workflow/presenter | 步骤展示与报告输出 |
+
+### 可视化与报告
+
+| 文件 | 覆盖模块 | 说明 |
+|------|----------|------|
+| `test_viz_report.py` | viz/report, core/types | Boltzmann 权重、报告生成、时间格式化 |
+
+### 其他
+
+| 文件 | 覆盖模块 | 说明 |
+|------|----------|------|
+| `test_cli.py` | cli, main | CLI 参数解析、主入口集成 |
+| `test_input_snapshot.py` | core/io (快照) | Gaussian/ORCA 输入文件生成快照 |
+
+---
+
+## Fixtures 与 Helpers
+
+### 共享 Fixtures (`conftest.py`)
+
+| Fixture | 说明 |
+|---------|------|
+| `input_xyz` | 在 `tmp_path` 中创建一个最小 XYZ 文件 |
+| `config_yaml` | 在 `tmp_path` 中创建一个最小 YAML 配置 |
+| `cd_tmp` | 切换到 `tmp_path` 并在结束后恢复 |
+| `sync_executor` | 同步执行器（替代 ProcessPoolExecutor） |
+
+### 共享 Helpers (`_helpers.py`)
+
+| Helper | 说明 |
+|--------|------|
+| `FakeRunner` | 计算任务的假执行器 |
+| `FakeResultsDB` | 可配置结果的假数据库 |
+| `FakeFuture` | 返回预设值的假 Future |
+| `FakeExecutor` | 使用 FakeFuture 的假线程池 |
+| `assert_raises_match` | 带正则匹配的异常断言 |
+| `reload_with_import_block` | 模拟模块导入失败后重新加载 |
+
+---
+
+## 测试标记
+
+| 标记 | 说明 | 用法 |
 |------|------|------|
-| `input_xyz` | 输入轨迹文件 | ✅ |
-| `-s, --settings` | 配置文件 | ✅ |
-
-**功能验证**:
-- ✅ Gaussian 支持
-- ✅ ORCA 支持
-- ✅ 资源管理
-- ✅ 输出解析
-- ✅ 结果去重
-
-### confflow - 完整工作流
-
-**选项总数**: 3/3 ✅
-
-| 选项 | 功能 | 状态 |
-|------|------|------|
-| `-c, --config` | YAML 配置 | ✅ |
-| `--resume` | 断点恢复 | ✅ |
-| `--verbose` | 调试日志 | ✅ |
-
-**高级功能**:
-- ✅ 工作目录自动生成 (hexane.xyz → hexane_work/)
-- ✅ 断点管理和恢复
-- ✅ 信号处理 (Ctrl+C)
-- ✅ 日志管理
+| `integration` | 端到端集成测试 | `pytest -m integration` |
 
 ---
 
-## 🎯 关键词分类统计
+## 覆盖率
 
-按功能分类:
-- 拓扑修改: 4 个 (add_bond, del_bond, no_rotate, force_rotate)
-- 优化控制: 3 个 (optimize, bond_threshold, clash_threshold)
-- 去重选项: 5 个 (threshold, output, dedup-only, noH, keep-all-topos)
-- 能量筛选: 2 个 (energy-window, max-conformers)
-- 并行管理: 2 个 (workers)
-- 工作流: 3 个 (config, resume, verbose)
+已在 `pyproject.toml` 中配置：
 
-按工具分布:
-- confgen: 8 个关键词 ✅
-- confrefine: 8 个关键词 ✅
-- confcalc: 2 个参数 ✅
-- confflow: 3 个选项 ✅
-- **总计: 21 个功能要素** ✅
+```toml
+[tool.coverage.run]
+source = ["confflow"]
+branch = true
 
----
+[tool.coverage.report]
+fail_under = 70
+show_missing = true
+```
 
-## ✨ 性能指标
+运行带覆盖率检查的测试：
 
-**构象去重性能**:
-- 处理规模: 24 个构象
-- 执行时间: ~3 秒 (并行 8 核)
-- 吞吐量: ~8 构象/秒
-
-**并行效率**:
-- 单核: ~1 构象/秒
-- 4核: ~4 构象/秒
-- 8核: ~8 构象/秒 (线性扩展)
+```bash
+pytest tests/ --cov=confflow --cov-report=term-missing
+```
 
 ---
 
-## ✅ 核心功能验证
+## 编写测试的约定
 
-【构象生成模块】
-- ✅ 基础构象生成
-- ✅ 拓扑修改 (add_bond / del_bond)
-- ✅ 旋转控制 (no_rotate / force_rotate)
-- ✅ 预优化 (-opt)
-- ✅ 参数调整 (-b / -c)
-- ✅ 命令行独立运行
-
-【构象去重模块】
-- ✅ RMSD 去重 (-t)
-- ✅ 能量筛选 (-ewin)
-- ✅ 数量限制 (-n)
-- ✅ 氢原子处理 (-noH)
-- ✅ 拓扑保留 (--keep-all-topos)
-- ✅ 命令行独立运行
-- ✅ 并行加速
-
-【计算任务模块】
-- ✅ 轨迹文件读取
-- ✅ Gaussian 支持
-- ✅ ORCA 支持
-- ✅ 资源管理
-- ✅ 命令行独立运行
-
-【工作流集成】
-- ✅ 多步骤管理
-- ✅ 断点续传
-- ✅ 日志管理
-- ✅ 信号处理
-
----
-
-## 📋 测试覆盖
-
-✅ 所有 4 个命令行工具 (confgen, confrefine, confcalc, confflow)
-✅ 所有 21 个关键词/参数
-✅ 参数组合测试
-✅ 输出验证
-✅ 性能测试
-
----
-
-## 🎯 最终结论
-
-**所有关键词功能测试通过！**
-
-- ✅ 构象生成工具 (confgen) - 完全可用
-- ✅ 构象后处理工具 (confrefine) - 完全可用
-- ✅ 量子计算工具 (confcalc) - 完全可用
-- ✅ 集成工作流 (confflow) - 完全可用
-
-**推荐应用场景**:
-
-1. **快速构象搜索**: `confgen molecule.xyz 120 -opt`
-2. **构象筛选**: `confrefine search.xyz -t 0.3 -ewin 5 -n 20`
-3. **完整工作流**: `confflow hexane.xyz -c confflow.yaml`
-4. **单独计算**: `confcalc structures.xyz -s settings.ini`
-
-**所有功能均已准备好用于生产环境！** 🚀
-
+1. **使用 `tmp_path`**：所有文件操作使用 pytest 内置的 `tmp_path` fixture，不要用 `tempfile` + 手动清理
+2. **try/finally 保护 `importlib.reload`**：回退测试中修改模块状态后必须在 `finally` 中恢复
+3. **每个测试必须有断言**：不允许仅调用函数而不检查结果的"烟雾测试"
+4. **参数化优于复制**：相同逻辑不同输入使用 `@pytest.mark.parametrize`
+5. **Fake 对象集中维护**：放在 `_helpers.py`，不在各测试文件内重复定义

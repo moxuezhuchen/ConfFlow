@@ -1,117 +1,130 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 
-"""配置加载与校验的统一入口。
+"""Unified entry point for configuration loading and validation.
 
-目标：让 CLI/engine/tests 都复用同一套逻辑：
-- 读取 YAML
-- validate_yaml_config 结构校验
-- ConfigSchema.normalize_global_config 标准化
+Goals: allow CLI, engine, and tests to share the same logic:
+- Read YAML
+- ``validate_yaml_config`` for structural validation
+- ``ConfigSchema.normalize_global_config`` for normalization
 
-返回结构保持简单的 dict，避免引入新的复杂类型。
+The returned structure is a simple dict to avoid introducing complex types.
 """
 
 from __future__ import annotations
 
 import logging
 import os
-from typing import Any, Dict, List
+from typing import Any
 
 import yaml
 
-from .schema import ConfigSchema
-from ..core.utils import validate_yaml_config
+from ..core.exceptions import ConfigurationError  # noqa: F401 — re-export
+from .schema import ConfigSchema, validate_yaml_config
+
+__all__ = [
+    "load_workflow_config_file",
+]
 
 logger = logging.getLogger("confflow.config")
 
 
-class ConfigurationError(ValueError):
-    """配置错误异常"""
+def load_workflow_config_file(config_file: str) -> dict[str, Any]:
+    """Read and validate a workflow configuration file.
 
-    def __init__(self, message: str, errors: List[str] = None):
-        self.errors = errors or []
-        if errors:
-            full_msg = f"{message}:\n" + "\n".join(f"  - {e}" for e in errors)
-        else:
-            full_msg = message
-        super().__init__(full_msg)
+    Parameters
+    ----------
+    config_file : str
+        Path to the YAML configuration file.
 
+    Returns
+    -------
+    dict
+        Configuration dictionary containing ``global``, ``steps``, and ``raw`` keys.
 
-def load_workflow_config_file(config_file: str) -> Dict[str, Any]:
-    """读取并校验工作流配置文件。
-
-    Args:
-        config_file: 配置文件路径
-
-    Returns:
-        包含 global、steps、raw 的配置字典
-
-    Raises:
-        FileNotFoundError: 配置文件不存在
-        ConfigurationError: 配置验证失败
-        yaml.YAMLError: YAML 解析失败
+    Raises
+    ------
+    FileNotFoundError
+        If the configuration file does not exist.
+    ConfigurationError
+        If configuration validation fails.
+    yaml.YAMLError
+        If YAML parsing fails.
     """
     if not config_file:
-        raise ConfigurationError("配置文件路径不能为空")
+        raise ConfigurationError("Configuration file path must not be empty")
 
     if not os.path.exists(config_file):
-        raise FileNotFoundError(f"配置文件不存在: {config_file}")
+        raise FileNotFoundError(f"Configuration file not found: {config_file}")
 
     if not os.path.isfile(config_file):
-        raise ConfigurationError(f"配置路径不是文件: {config_file}")
+        raise ConfigurationError(f"Configuration path is not a file: {config_file}")
 
-    logger.info(f"加载配置文件: {config_file}")
+    logger.info(f"Loading configuration file: {config_file}")
 
     try:
-        with open(config_file, "r", encoding="utf-8") as f:
+        with open(config_file, encoding="utf-8") as f:
             full_config = yaml.safe_load(f) or {}
     except yaml.YAMLError as e:
-        logger.error(f"YAML 解析失败: {e}")
-        raise ConfigurationError(f"YAML 解析失败: {e}") from e
-    except (IOError, OSError) as e:
-        logger.error(f"读取配置文件失败: {e}")
-        raise ConfigurationError(f"读取配置文件失败: {e}") from e
+        logger.error(f"YAML parsing failed: {e}")
+        raise ConfigurationError(f"YAML parsing failed: {e}") from e
+    except OSError as e:
+        logger.error(f"Failed to read configuration file: {e}")
+        raise ConfigurationError(f"Failed to read configuration file: {e}") from e
 
-    # 基础类型检查
+    # Basic type check
     if not isinstance(full_config, dict):
-        raise ConfigurationError(f"配置文件根节点必须是字典类型，当前: {type(full_config).__name__}")
+        raise ConfigurationError(
+            f"Configuration file root must be a dict, got: {type(full_config).__name__}"
+        )
 
-    # 结构验证
+    # Structural validation
     errors = validate_yaml_config(full_config)
     if errors:
-        logger.error(f"配置验证失败，共 {len(errors)} 个错误")
-        raise ConfigurationError("配置文件验证失败", errors)
+        logger.error(f"Configuration validation failed with {len(errors)} error(s)")
+        raise ConfigurationError("Configuration file validation failed", errors)
 
-    # 标准化全局配置
+    # Normalize global configuration
     global_raw = full_config.get("global", {})
     if global_raw is None:
         global_raw = {}
     if not isinstance(global_raw, dict):
-        raise ConfigurationError(f"global 配置必须是字典类型，当前: {type(global_raw).__name__}")
+        raise ConfigurationError(
+            f"'global' config must be a dict, got: {type(global_raw).__name__}"
+        )
 
     global_config = ConfigSchema.normalize_global_config(global_raw)
 
-    # 验证步骤配置
+    if "ts_bond" in global_raw:
+        raise ConfigurationError("Legacy key 'ts_bond' is not supported. Use 'ts_bond_atoms'.")
+
+    # Validate step configurations
     steps = full_config.get("steps", [])
     if steps is None:
         steps = []
     if not isinstance(steps, list):
-        raise ConfigurationError(f"steps 配置必须是列表类型，当前: {type(steps).__name__}")
+        raise ConfigurationError(f"'steps' config must be a list, got: {type(steps).__name__}")
 
-    # 验证每个步骤的基本结构
+    # Validate basic structure of each step
     for i, step in enumerate(steps):
         if not isinstance(step, dict):
-            raise ConfigurationError(f"步骤 {i+1} 必须是字典类型，当前: {type(step).__name__}")
+            raise ConfigurationError(f"Step {i+1} must be a dict, got: {type(step).__name__}")
         if "name" not in step:
-            raise ConfigurationError(f"步骤 {i+1} 缺少必要的 'name' 字段")
+            raise ConfigurationError(f"Step {i+1} is missing the required 'name' field")
         if "type" not in step:
-            raise ConfigurationError(f"步骤 {i+1} ({step.get('name', 'unnamed')}) 缺少必要的 'type' 字段")
+            raise ConfigurationError(
+                f"Step {i+1} ({step.get('name', 'unnamed')}) is missing the required 'type' field"
+            )
+        params = step.get("params") or {}
+        if isinstance(params, dict) and "ts_bond" in params:
+            step_name = step.get("name", f"step_{i+1}")
+            raise ConfigurationError(
+                f"Legacy key 'ts_bond' is not supported in step '{step_name}'. Use 'ts_bond_atoms'."
+            )
 
-    logger.info(f"配置加载成功: {len(steps)} 个步骤")
+    logger.info(f"Configuration loaded successfully: {len(steps)} step(s)")
 
     return {
         "global": global_config,
         "steps": steps,
         "raw": full_config,
     }
-

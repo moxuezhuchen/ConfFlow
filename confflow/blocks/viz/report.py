@@ -1,52 +1,69 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 
 """
-ConfFlow Viz - 可视化报告生成器 (v1.0)
-功能: 生成构象分析 HTML 报告 (能量分布, Boltzmann 权重, 工作流统计)
-架构: 模块化设计 (Library & Script)
+ConfFlow Viz - Report Generator (v1.0).
+
+Generates plain-text conformer analysis reports
+(energy distribution, Boltzmann weights, workflow statistics).
+Modular design (Library & Script).
 """
+
+from __future__ import annotations
 
 import logging
-import os
 import math
+import os
 from datetime import datetime
-from typing import List, Dict, Optional, Tuple
 
-from ...core.io import read_xyz_file
-from ...calc.constants import HARTREE_TO_KCALMOL
+from ...core.constants import HARTREE_TO_KCALMOL
+from ...core.io import read_xyz_file_safe
 
-# --- 常量定义 ---
+# --- Constant definitions ---
 KB_KCALMOL = 0.001987204  # Boltzmann constant in kcal/(mol·K)
 
+__all__ = [
+    "KB_KCALMOL",
+    "parse_xyz_file",
+    "calculate_boltzmann_weights",
+    "format_duration",
+    "get_lowest_energy_conformer",
+    "generate_text_report",
+]
+
 # ==============================================================================
-# 核心逻辑
+# Core logic
 # ==============================================================================
 
 logger = logging.getLogger("confflow.viz")
 
 
-def parse_xyz_file(filepath: str) -> List[Dict]:
-    """解析 XYZ 文件并提取构象元数据（统一走 io_xyz）。"""
+def parse_xyz_file(filepath: str) -> list[dict]:
+    """Parse an XYZ file and extract conformer metadata."""
     if not os.path.exists(filepath):
-        logger.debug(f"XYZ 文件不存在: {filepath}")
+        logger.debug(f"XYZ file does not exist: {filepath}")
         return []
-    try:
-        return read_xyz_file(filepath, parse_metadata=True)
-    except (IOError, OSError) as e:
-        logger.warning(f"读取 XYZ 文件失败: {filepath}, 原因: {e}")
-        return []
-    except ValueError as e:
-        logger.warning(f"解析 XYZ 文件格式错误: {filepath}, 原因: {e}")
-        return []
+    return read_xyz_file_safe(filepath, parse_metadata=True)
 
 
-def calculate_boltzmann_weights(energies: List[float], temperature: float = 298.15) -> List[float]:
-    """计算 Boltzmann 权重"""
+def calculate_boltzmann_weights(energies: list[float], temperature: float = 298.15) -> list[float]:
+    """Calculate Boltzmann population weights.
+
+    Parameters
+    ----------
+    energies : list[float]
+        Absolute energies in Hartree.
+    temperature : float
+        Temperature in Kelvin (default 298.15).
+
+    Returns
+    -------
+    list[float]
+        Boltzmann weights as percentages.
+    """
     if not energies:
         return []
 
-    # 过滤无效能量
+    # Filter invalid energies
     valid_energies = [e for e in energies if e is not None and e != float("inf")]
     if not valid_energies:
         return [0] * len(energies)
@@ -60,16 +77,16 @@ def calculate_boltzmann_weights(energies: List[float], temperature: float = 298.
         else:
             rel_energies.append((e - min_energy) * HARTREE_TO_KCALMOL)
 
-    # 计算 Boltzmann 因子
+    # Compute Boltzmann factors
     beta = 1.0 / (KB_KCALMOL * temperature)
     boltzmann_factors = []
     for de in rel_energies:
-        if de < 50:  # 能量过高贡献为0
+        if de < 50:  # Contribution negligible at high energies
             boltzmann_factors.append(math.exp(-beta * de))
         else:
             boltzmann_factors.append(0.0)
 
-    # 归一化为百分比
+    # Normalize to percentages
     total = sum(boltzmann_factors)
     if total > 0:
         return [bf / total * 100 for bf in boltzmann_factors]
@@ -77,7 +94,7 @@ def calculate_boltzmann_weights(energies: List[float], temperature: float = 298.
 
 
 def format_duration(seconds: float) -> str:
-    """格式化时间显示"""
+    """Format a duration in seconds for display."""
     if seconds < 60:
         return f"{seconds:.1f}s"
     elif seconds < 3600:
@@ -86,9 +103,9 @@ def format_duration(seconds: float) -> str:
         return f"{seconds/3600:.1f}h"
 
 
-def _extract_energies(conformers: List[Dict]) -> List[Optional[float]]:
-    """从构象元数据中提取能量（优先 Gibbs）。"""
-    energies: List[Optional[float]] = []
+def _extract_energies(conformers: list[dict]) -> list[float | None]:
+    """Extract energies from conformer metadata (Gibbs preferred)."""
+    energies: list[float | None] = []
 
     for c in conformers:
         meta = c.get("metadata") or {}
@@ -98,9 +115,9 @@ def _extract_energies(conformers: List[Dict]) -> List[Optional[float]]:
         g_corr = meta.get("G_corr")
         includes = meta.get("E_includes_gcorr")
 
-        val: Optional[float] = None
+        val: float | None = None
         try:
-            # 新约定：若存在 G，则直接使用（不再叠加/传递 G_corr）。
+            # New convention: if G exists, use it directly (no G_corr stacking).
             if g is not None:
                 val = float(g)
                 energies.append(val)
@@ -111,12 +128,12 @@ def _extract_energies(conformers: List[Dict]) -> List[Optional[float]]:
             g_corr_f = float(g_corr) if g_corr is not None else None
             includes_flag = bool(includes) if includes is not None else False
 
-            # 兼容旧文件：很多 calc/refine 产物会同时携带 E/Energy 与 G_corr，
-            # 且其中 E/Energy 已经是 Gibbs（E_sp + G_corr）。这些文件可能没有 E_includes_gcorr 标记。
-            # 经验规则：
-            # - calc 输出通常使用 Energy=...（metadata 中会保留 Energy 键）
-            # - refine 输出通常包含 DE=... / Rank=...
-            # 这两类情况下若没有显式 E_sp，则默认视为“已包含 G_corr”。
+            # Backward compatibility: many calc/refine outputs carry both E/Energy and G_corr,
+            # where E/Energy is already Gibbs (E_sp + G_corr). These files may lack E_includes_gcorr.
+            # Heuristic rules:
+            # - calc output typically uses Energy=... (metadata retains the Energy key)
+            # - refine output typically includes DE=... / Rank=...
+            # In both cases, if E_sp is absent, assume G_corr is already included.
             if not includes_flag and e_sp_f is None and g_corr_f is not None:
                 if ("Energy" in meta) or ("DE" in meta) or ("Rank" in meta):
                     includes_flag = True
@@ -126,9 +143,9 @@ def _extract_energies(conformers: List[Dict]) -> List[Optional[float]]:
             elif e_f is not None:
                 val = e_f
                 if g_corr_f is not None and not includes_flag:
-                    # 兼容旧行为：默认 E 视作未矫正能量
+                    # Backward compatibility: treat E as uncorrected energy by default
                     val += g_corr_f
-        except Exception:
+        except (TypeError, ValueError):
             val = None
         energies.append(val)
 
@@ -136,9 +153,9 @@ def _extract_energies(conformers: List[Dict]) -> List[Optional[float]]:
 
 
 def get_lowest_energy_conformer(
-    conformers: List[Dict],
-) -> Tuple[Optional[Dict], Optional[float], Optional[int]]:
-    """获取最低能量构象及其能量与索引。"""
+    conformers: list[dict],
+) -> tuple[dict | None, float | None, int | None]:
+    """Get the lowest-energy conformer along with its energy and index."""
     if not conformers:
         return None, None, None
 
@@ -152,27 +169,25 @@ def get_lowest_energy_conformer(
 
 
 def generate_text_report(
-    conformers: List[Dict],
+    conformers: list[dict],
     temperature: float = 298.15,
-    stats: Optional[Dict] = None,
+    stats: dict | None = None,
 ) -> str:
-    """生成纯文本报告（新格式：美化输出）。"""
-    from ...core.console import LINE_WIDTH
-    DOUBLE_LINE = "=" * LINE_WIDTH
-    SINGLE_LINE = "─" * LINE_WIDTH
-    
-    lines: List[str] = []
-    
-    # === 最终报告头部 ===
+    """Generate a plain-text report (formatted output)."""
+    from ...core.console import DOUBLE_LINE, LINE_WIDTH, SINGLE_LINE, wrap_text
+
+    lines: list[str] = []
+
+    # === Final report header ===
     lines.append("")
     lines.append(DOUBLE_LINE)
-    lines.append(f"{'FINAL REPORT':^{LINE_WIDTH}}")
-    finished_str = 'Finished: ' + datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    lines.append(f"{'WORKFLOW SUMMARY':^{LINE_WIDTH}}")
+    finished_str = "Finished: " + datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     lines.append(f"{finished_str:^{LINE_WIDTH}}")
-    
+
     if stats:
         total_duration = stats.get("total_duration_seconds", 0)
-        time_str = 'Total Time: ' + format_duration(total_duration)
+        time_str = "Total Time: " + format_duration(total_duration)
         lines.append(f"{time_str:^{LINE_WIDTH}}")
     lines.append(DOUBLE_LINE)
 
@@ -199,7 +214,7 @@ def generate_text_report(
             return float("inf")
         try:
             return float(e)
-        except Exception:
+        except (TypeError, ValueError):
             return float("inf")
 
     order = sorted(range(len(conformers)), key=_sort_key)
@@ -216,13 +231,13 @@ def generate_text_report(
         lines.append("")
         lines.append("WORKFLOW SUMMARY")
         lines.append(SINGLE_LINE)
-        
-        # 步骤表格
+
+        # Step table
         header = f"  {'Step':>4}   {'Name':<10}  {'Type':<8}  {'Status':<10}  {'In':>5}  {'Out':>5}  {'Failed':>6}  {'Time':>10}"
         lines.append(header)
-        
+
         for step in steps:
-            idx = step.get('index', 0)
+            idx = step.get("index", 0)
             name = str(step.get("name", "Unknown"))[:10]
             stype = str(step.get("type", ""))[:8]
             status = str(step.get("status", "unknown"))[:10]
@@ -230,13 +245,13 @@ def generate_text_report(
             out = step.get("output_conformers", 0)
             failed = step.get("failed_conformers", None)
             dur = step.get("duration_seconds", 0)
-            
+
             failed_str = "-" if failed is None else str(int(failed))
             dur_str = format_duration(dur)
-            
+
             line = f"  {idx:>4}   {name:<10}  {stype:<8}  {status:<10}  {inp:>5}  {out:>5}  {failed_str:>6}  {dur_str:>10}"
             lines.append(line)
-        
+
         lines.append(SINGLE_LINE)
         lines.append(f"  Total: {initial_confs} → {final_confs} conformers")
 
@@ -244,13 +259,15 @@ def generate_text_report(
     lines.append("")
     lines.append("CONFORMER ANALYSIS")
     lines.append(SINGLE_LINE)
-    lines.append(
-        f"  Conformers: {len(conformers)}    Range: {max(rel_energies) if rel_energies else 0:.2f} kcal/mol    T: {temperature} K"
+    summary_line = (
+        f"  Conformers: {len(conformers)}    Range: {max(rel_energies) if rel_energies else 0:.2f} kcal/mol"
+        f"    T: {temperature} K"
     )
+    lines.extend(wrap_text(summary_line, width=LINE_WIDTH))
     lines.append(f"  Lowest Energy: {min_energy:.6f} Ha")
     lines.append("")
-    
-    # 构象表格
+
+    # Conformer table
     header = f"  {'Rank':>4}  {'Energy (Ha)':>14}  {'ΔG (kcal)':>11}  {'Pop (%)':>9}  {'Imag':>6}  {'TSBond':>10}  {'CID':>10}"
     lines.append(header)
 
@@ -278,4 +295,3 @@ def generate_text_report(
 
     lines.append(DOUBLE_LINE)
     return "\n".join(lines)
-

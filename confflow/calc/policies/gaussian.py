@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 
 """Gaussian Calculation Policy."""
 
@@ -9,13 +8,8 @@ import logging
 import os
 import re
 import shlex
-from typing import Any, Dict, List, Optional
+from typing import Any
 
-from .base import CalculationPolicy
-from ..constants import BUILTIN_TEMPLATES
-from ..core import get_itask
-from ..geometry import check_termination as _check_termination
-from ..geometry import parse_last_geometry
 from ..components.input_helpers import (
     compute_gaussian_mem,
     gaussian_apply_freeze,
@@ -23,6 +17,16 @@ from ..components.input_helpers import (
     normalize_gaussian_keyword,
     parse_freeze_indices,
 )
+from ..constants import BUILTIN_TEMPLATES
+from ..geometry import check_termination as _check_termination
+from ..geometry import parse_last_geometry
+from ..setup import get_itask
+from .base import CalculationPolicy
+
+__all__ = [
+    "GaussianPolicy",
+    "GAUSSIAN_POLICY",
+]
 
 try:
     import psutil  # type: ignore
@@ -45,13 +49,18 @@ class GaussianPolicy(CalculationPolicy):
     def log_ext(self) -> str:
         return "log"
 
-    def generate_input(self, task_info: Dict[str, Any], inp_file_path: str) -> None:
+    def generate_input(self, task_info: dict[str, Any], inp_file_path: str) -> None:
         config = task_info["config"]
         template = BUILTIN_TEMPLATES["gaussian"]
 
         cores = int(config.get("cores_per_task", 4))
         memory = compute_gaussian_mem(config)
-        keyword_line = normalize_gaussian_keyword(config.get("keyword", "#p"))
+        keyword_cfg = str(config.get("keyword", "") or "")
+        keyword_raw = re.sub(r"^\s*#+\s*", "", keyword_cfg).strip()
+        if re.match(r"^[pP](?:\s|$)", keyword_raw):
+            keyword_line = f"#{keyword_raw}".rstrip()
+        else:
+            keyword_line = f"# {normalize_gaussian_keyword(keyword_cfg)}".rstrip()
         charge = config.get("charge", 0)
         multiplicity = config.get("multiplicity", 1)
 
@@ -59,10 +68,11 @@ class GaussianPolicy(CalculationPolicy):
             config.get("solvent_block", ""), config.get("custom_block", "")
         )
         blocks_str = config.get("blocks", "")
-        if isinstance(blocks_str, dict): # 极少见，但为了健壮性
+        if isinstance(blocks_str, dict):  # Extremely rare, but for robustness
             from ..components.input_helpers import format_orca_blocks
+
             blocks_str = format_orca_blocks(blocks_str)
-        
+
         extra_section = solvent_block + custom_block
         if blocks_str:
             if extra_section and not extra_section.endswith("\n"):
@@ -89,7 +99,7 @@ class GaussianPolicy(CalculationPolicy):
         coords_str = gaussian_apply_freeze(coords_lines, freeze_indices)
 
         # Link0 directives (e.g., %Chk / %OldChk). Keep optional for backward compatibility.
-        link0_lines: List[str] = []
+        link0_lines: list[str] = []
 
         # Optional: inherit checkpoint from previous step
         oldchk = config.get("gaussian_oldchk") or config.get("gaussian_oldchk_file")
@@ -104,7 +114,7 @@ class GaussianPolicy(CalculationPolicy):
             chk = str(chk_name).strip() if chk_name is not None and str(chk_name).strip() else None
             if chk is None:
                 chk = f"{task_info['job_name']}.chk"
-            
+
             # Ensure %Chk is in link0_lines
             chk_line = f"%Chk={chk}"
             if chk_line not in link0_lines:
@@ -142,12 +152,12 @@ class GaussianPolicy(CalculationPolicy):
             f.write(content)
 
     def parse_output(
-        self, log_file: str, config: Dict[str, Any], is_sp_task: bool = False
-    ) -> Dict[str, Any]:
+        self, log_file: str, config: dict[str, Any], is_sp_task: bool = False
+    ) -> dict[str, Any]:
         if not os.path.exists(log_file):
             return {}
 
-        with open(log_file, "r", errors="ignore") as f:
+        with open(log_file, errors="ignore") as f:
             content = f.read()
 
         e_low = None
@@ -157,7 +167,7 @@ class GaussianPolicy(CalculationPolicy):
         e_high = None
         lowest_freq = None
 
-        itask = get_itask(config)
+        get_itask(config)
 
         # NOTE:
         # - Gaussian Archive section (e.g., \HF=...) is convenient but can be misleading in large
@@ -171,7 +181,7 @@ class GaussianPolicy(CalculationPolicy):
         if sl := re.findall(r"SCF Done:.*", content):
             try:
                 energy = float(sl[-1].replace("D", "E").split()[4])
-            except Exception:
+            except (IndexError, ValueError):
                 energy = None
         if energy is None:
             # Use the last occurrence, in case Archive appears multiple times.
@@ -217,14 +227,14 @@ class GaussianPolicy(CalculationPolicy):
             "final_coords": final_coords,
         }
 
-    def get_execution_command(self, config: Dict[str, Any], inp_file: str) -> List[str]:
+    def get_execution_command(self, config: dict[str, Any], inp_file: str) -> list[str]:
         path_key = "gaussian_path"
         default_exe = "g16"
         prog_path = config.get(path_key) or default_exe
         cmd = shlex.split(str(prog_path)) + [os.path.basename(inp_file)]
         return cmd
 
-    def get_environment(self, config: Dict[str, Any], cmd: List[str]) -> Dict[str, str]:
+    def get_environment(self, config: dict[str, Any], cmd: list[str]) -> dict[str, str]:
         env = os.environ.copy()
         if len(cmd) > 0 and os.path.isabs(cmd[0]):
             env["GAUSS_EXEDIR"] = os.path.dirname(cmd[0])
@@ -233,7 +243,7 @@ class GaussianPolicy(CalculationPolicy):
     def check_termination(self, log_file: str) -> bool:
         return _check_termination(log_file, "gaussian")
 
-    def get_error_details(self, work_dir: str, job_name: str, config: Dict[str, Any]) -> str:
+    def get_error_details(self, work_dir: str, job_name: str, config: dict[str, Any]) -> str:
         log = os.path.join(work_dir, f"{job_name}.{self.log_ext}")
         details = []
         if os.path.exists(log):
@@ -243,16 +253,16 @@ class GaussianPolicy(CalculationPolicy):
                     f.seek(max(0, f.tell() - 2000))
                     tail = f.read().decode("utf-8", errors="ignore")
                     if "Error termination" in tail:
-                        details.append("程序异常终止")
+                        details.append("Abnormal program termination")
                     if "Convergence failure" in tail or "SCF NOT CONVERGED" in tail:
-                        details.append("SCF不收敛")
+                        details.append("SCF not converged")
                     if "memory" in tail.lower():
-                        details.append("内存不足")
-            except Exception as e:
-                logger.debug(f"读取错误日志失败 {log}: {e}")
+                        details.append("Insufficient memory")
+            except OSError as e:
+                logger.debug(f"Failed to read error log {log}: {e}")
         return " | ".join(details)
 
-    def cleanup_lingering_processes(self, config: Dict[str, Any]) -> None:
+    def cleanup_lingering_processes(self, config: dict[str, Any]) -> None:
         if psutil is None:
             return
         targets = ["g16", "l9999.exe"]
@@ -261,4 +271,8 @@ class GaussianPolicy(CalculationPolicy):
                 if any(t in (proc.info.get("name") or "") for t in targets):
                     proc.terminate()
             except Exception as e:
-                logger.debug(f"清理进程失败 {proc.info.get('pid')}: {e}")
+                logger.debug(f"Failed to clean up process {proc.info.get('pid')}: {e}")
+
+
+#: Module-level singleton (stateless, safe to reuse)
+GAUSSIAN_POLICY = GaussianPolicy()

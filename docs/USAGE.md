@@ -18,6 +18,8 @@ pip install -e .
 - `confrefine`：构象去重/筛选（RMSD/能量窗口/虚频过滤）
 - `confts`：TS 专用执行器/工具（TS 失败后 scan 救援、keyword 改写）
 
+所有 CLI 的运行日志默认写入输入目录中的 `<input_basename>.txt`。
+
 > `viz` 当前作为工作流内部步骤自动运行（生成美化的纯文本总结报告并合并到 .txt 输出），无需用户手动调用。
 
 更完整的命令参数与示例见：`docs/COMMAND_REFERENCE.md`。
@@ -51,8 +53,11 @@ confflow a.xyz b.xyz -c confflow.yaml
 
 > 说明：`confflow` 运行时默认将 stdout/stderr 全部重定向到输入目录下的 `<input_basename>.txt`，
 > 因此终端默认不会有输出；你需要查看该 `.txt` 文件获取运行日志、step 摘要与最终报告。
+> 文本输出采用固定 100 列宽，分隔线与表格按同一宽度对齐。
 
 一致性校验失败（多输入原子顺序/柔性链不一致等）时也不会弹出交互提示；错误信息会写入 `<input>.txt`，并以非 0 退出码结束。
+
+统一返回码：`0` 成功，`1` 输入/配置/用法错误，`2` 运行时失败。
 
 ### 3.3 柔性链一致性与自动映射
 
@@ -63,14 +68,13 @@ confflow a.xyz b.xyz -c confflow.yaml
 
 若映射失败（例如骨架不一致或 MCS 覆盖率过低），会报错并终止。
 
-### 3.4 输出结构（工作目录）
+### 3.4 主要输出文件（用户重点关注）
 
-- `<input>.txt`：包含运行日志与报告文本（自动合并；默认应以它为准）
-- `confflow.log`：总日志（若工作流内部开启/生成；有些环境下可能不存在）
-- `.checkpoint`：断点信息
-- `workflow_stats.json`：统计信息
+- `<input>.txt`：运行日志 + FINAL REPORT（统一主输出）
 - `<input>min.xyz`：最低能量构象（单帧 XYZ）
-- `step_xx/`：每一步的中间结果
+- 最后一步输出多帧 XYZ：通常为 `step_xx/output.xyz`（若未生成 cleaned 则为 `step_xx/result.xyz`）
+
+其余如 `.checkpoint`、`workflow_stats.json`、`results.db`、`confflow.log` 属于过程/诊断工件，不作为主交付物。
 
 ### 3.5 Step 摘要输出（写入 .txt）
 
@@ -78,7 +82,7 @@ confflow a.xyz b.xyz -c confflow.yaml
 
 - 开始行：step 名称、类型、输入构象数；对 `calc/task` 还会输出 `prog/itask/max_jobs/cores/mem/freeze`。
 - keyword：另起一行输出完整 `keyword`（便于复制复现）。
-- 结束行：step 状态与汇总统计（`success/failed/skipped/total`，来源于 `work/results.db`）、输出文件路径与耗时。
+- 结束行：step 状态与汇总统计（输入/输出/失败数）及耗时。
 
 每个 `calc/task` step 目录下常见文件：
 
@@ -125,14 +129,14 @@ ConfFlow 对每个构象会维护一个稳定的 **CID**（写在 XYZ comment me
 
 ## TS 失败救援功能 (ts_rescue_scan)
 
-对于 `itask=ts` 的步骤，ConfFlow 默认开启了失败救援功能。当 TS 搜索失败（不收敛、虚频不对、关键键长几何判据失败等）时，程序会自动尝试通过 Scan 寻找更好的起始点。
+对于 `itask=ts` 的步骤，ConfFlow 提供了失败救援功能。当 TS 搜索失败（不收敛、虚频不对、关键键长几何判据失败等）时，程序可以自动尝试通过 Scan 寻找更好的起始点。
 
 ### 控制参数
 
-在步骤的 `params` 中设置：
+在步骤的 `params` 或 `global` 中设置：
 
-- `ts_rescue_scan: true` (默认)：开启救援。
-- `ts_rescue_scan: false`：关闭救援，失败后直接报错。
+- `ts_rescue_scan: true`：开启救援。
+- `ts_rescue_scan: false` (默认)：关闭救援，失败后直接报错。
 
 ### 示例
 
@@ -143,7 +147,7 @@ ConfFlow 对每个构象会维护一个稳定的 **CID**（写在 XYZ comment me
       iprog: g16
       itask: ts
       keyword: "opt=(ts,calcfc,noeigen) b3lyp/6-31g(d) freq"
-      ts_rescue_scan: false  # 在此步骤关闭救援
+      ts_rescue_scan: true  # 显式开启救援
       ts_bond_atoms: [1, 2]
 ```
 
@@ -257,6 +261,7 @@ global:
   # - 字符串："1,5" / "1 5"
   # - 范围："1-5" / "1,2,5-7"
   freeze: [1, 5]
+
 
   # ORCA 专用：直接写入 %maxcore（单位：MB per core）
   orca_maxcore: 4500

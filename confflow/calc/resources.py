@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 
-"""资源监控模块（可选依赖 psutil）。"""
+"""Resource monitoring module (optional dependency: psutil)."""
 
 from __future__ import annotations
 
 import logging
 import time
-from typing import Tuple
 
 logger = logging.getLogger("confflow.calc.resources")
+
+__all__ = [
+    "ResourceMonitor",
+]
 
 try:
     import psutil  # type: ignore
@@ -18,9 +20,10 @@ except ImportError:
 
 
 class ResourceMonitor:
-    """动态资源监控器。
+    """Dynamic resource monitor.
 
-    用于在启用动态资源管理时，根据 CPU/MEM 占用限制是否启动新任务。
+    Limits whether new tasks can be launched based on CPU/memory usage
+    when dynamic resource management is enabled.
     """
 
     def __init__(self, cpu_threshold: int = 80, mem_threshold: int = 80, check_interval: int = 5):
@@ -29,14 +32,14 @@ class ResourceMonitor:
         self.check_interval = check_interval
         self.enabled = psutil is not None
 
-    def get_current_load(self) -> Tuple[float, float]:
+    def get_current_load(self) -> tuple[float, float]:
         if not self.enabled:
             return 0.0, 0.0
         try:
             assert psutil is not None
             return psutil.cpu_percent(interval=0.5), psutil.virtual_memory().percent
         except Exception as e:
-            logger.debug(f"获取系统负载失败: {e}")
+            logger.debug(f"Failed to get system load: {e}")
             return 0.0, 0.0
 
     def can_start_new_task(self, current_active_workers: int, max_workers: int) -> bool:

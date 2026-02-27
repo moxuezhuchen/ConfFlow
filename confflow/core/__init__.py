@@ -1,61 +1,65 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 
-"""ConfFlow 核心模块。
+"""ConfFlow core package.
 
-提供基础设施层功能：共享数据、I/O、工具函数、类型定义、验证。
+Provides infrastructure-layer utilities: shared data, I/O, helper functions,
+type definitions, and validation.
 """
 
+from __future__ import annotations
+
+from .constants import HARTREE_TO_KCALMOL
 from .data import (
     GV_COVALENT_RADII,
     PERIODIC_SYMBOLS,
     SYMBOL_TO_ATOMIC_NUMBER,
+    get_atomic_number,
     get_covalent_radius,
     get_element_symbol,
-    get_atomic_number,
 )
-
+from .models import TaskContext
 from .types import (
+    AtomList,
+    ConformerData,
     CoordLine,
     CoordLines,
     Coords3D,
-    AtomList,
     GlobalConfig,
-    StepParams,
-    ConformerData,
-    TaskResult,
-    WorkflowStats,
-    StepStats,
     ParsedOutput,
+    StepParams,
+    StepStats,
+    TaskResult,
     ValidationResult,
+    WorkflowStats,
 )
-
 from .validation import (
     ValidationError,
-    validate_positive,
-    validate_non_negative,
-    validate_integer,
-    validate_float_range,
-    validate_not_empty,
-    validate_file_exists,
-    validate_dir_exists,
-    validate_coords_array,
     validate_atom_indices,
     validate_bond_pair,
     validate_choice,
-    validate_string_not_empty,
+    validate_coords_array,
+    validate_dir_exists,
+    validate_file_exists,
+    validate_float_range,
+    validate_integer,
+    validate_non_negative,
+    validate_not_empty,
     validate_params,
+    validate_positive,
+    validate_string_not_empty,
 )
 
 __all__ = [
-    # 数据
+    # Constants
+    "HARTREE_TO_KCALMOL",
+    # Data
     "GV_COVALENT_RADII",
     "PERIODIC_SYMBOLS",
     "SYMBOL_TO_ATOMIC_NUMBER",
     "get_covalent_radius",
     "get_element_symbol",
     "get_atomic_number",
-    # 类型
+    # Types (TypedDict — for type annotations)
     "CoordLine",
     "CoordLines",
     "Coords3D",
@@ -68,7 +72,9 @@ __all__ = [
     "StepStats",
     "ParsedOutput",
     "ValidationResult",
-    # 验证
+    # Models (Pydantic — runtime validation)
+    "TaskContext",
+    # Validation
     "ValidationError",
     "validate_positive",
     "validate_non_negative",

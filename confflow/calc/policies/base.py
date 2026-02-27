@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 
 """Calculation Policy Abstract Base Class."""
 
@@ -7,7 +6,11 @@ from __future__ import annotations
 
 import os
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional
+from typing import Any
+
+__all__ = [
+    "CalculationPolicy",
+]
 
 
 class CalculationPolicy(ABC):
@@ -32,23 +35,23 @@ class CalculationPolicy(ABC):
         pass
 
     @abstractmethod
-    def generate_input(self, task_info: Dict[str, Any], inp_file_path: str) -> None:
+    def generate_input(self, task_info: dict[str, Any], inp_file_path: str) -> None:
         """Generate the input file for the calculation."""
         pass
 
     @abstractmethod
     def parse_output(
-        self, log_file: str, config: Dict[str, Any], is_sp_task: bool = False
-    ) -> Dict[str, Any]:
+        self, log_file: str, config: dict[str, Any], is_sp_task: bool = False
+    ) -> dict[str, Any]:
         """Parse the output file to extract results."""
         pass
 
     @abstractmethod
-    def get_execution_command(self, config: Dict[str, Any], inp_file: str) -> List[str]:
+    def get_execution_command(self, config: dict[str, Any], inp_file: str) -> list[str]:
         """Construct the command line arguments to execute the calculation."""
         pass
 
-    def get_environment(self, config: Dict[str, Any], cmd: List[str]) -> Dict[str, str]:
+    def get_environment(self, config: dict[str, Any], cmd: list[str]) -> dict[str, str]:
         """Get the environment variables for the execution."""
         return os.environ.copy()
 
@@ -58,11 +61,11 @@ class CalculationPolicy(ABC):
         pass
 
     @abstractmethod
-    def get_error_details(self, work_dir: str, job_name: str, config: Dict[str, Any]) -> str:
+    def get_error_details(self, work_dir: str, job_name: str, config: dict[str, Any]) -> str:
         """Extract error details from the log file."""
         pass
 
     @abstractmethod
-    def cleanup_lingering_processes(self, config: Dict[str, Any]) -> None:
+    def cleanup_lingering_processes(self, config: dict[str, Any]) -> None:
         """Kill any lingering processes associated with this software."""
         pass

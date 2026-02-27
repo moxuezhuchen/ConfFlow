@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 
-"""ConfFlow 输入验证模块。
+"""ConfFlow input validation module.
 
-提供统一的参数验证功能，用于在函数入口处检查参数合法性。
+Provides unified parameter validation utilities for checking argument
+legality at function entry points.
 """
 
 from __future__ import annotations
@@ -11,244 +11,295 @@ from __future__ import annotations
 import logging
 import os
 from functools import wraps
-from typing import Any, Callable, List, Optional, TypeVar, Union
+from typing import Any, Callable, TypeVar
 
 import numpy as np
+
+from .exceptions import ValidationError  # noqa: F401 — re-export for compatibility
 
 logger = logging.getLogger("confflow.validation")
 
 F = TypeVar("F", bound=Callable[..., Any])
 
 
-class ValidationError(ValueError):
-    """验证错误异常"""
-
-    def __init__(self, param_name: str, message: str, value: Any = None):
-        self.param_name = param_name
-        self.value = value
-        full_msg = f"参数 '{param_name}' 验证失败: {message}"
-        if value is not None:
-            full_msg += f" (当前值: {value!r})"
-        super().__init__(full_msg)
-
-
 def validate_positive(value: Any, name: str) -> None:
-    """验证参数为正数"""
+    """Validate that a value is positive."""
     try:
         num = float(value)
     except (ValueError, TypeError) as e:
-        raise ValidationError(name, "必须为数值类型", value) from e
+        raise ValidationError(name, "must be a numeric type", value) from e
 
     if num <= 0:
-        raise ValidationError(name, "必须为正数", value)
+        raise ValidationError(name, "must be positive", value)
 
 
 def validate_non_negative(value: Any, name: str) -> None:
-    """验证参数为非负数"""
+    """Validate that a value is non-negative."""
     try:
         num = float(value)
     except (ValueError, TypeError) as e:
-        raise ValidationError(name, "必须为数值类型", value) from e
+        raise ValidationError(name, "must be a numeric type", value) from e
 
     if num < 0:
-        raise ValidationError(name, "必须为非负数", value)
+        raise ValidationError(name, "must be non-negative", value)
 
 
-def validate_integer(value: Any, name: str, min_val: Optional[int] = None, max_val: Optional[int] = None) -> int:
-    """验证参数为整数，可选范围检查"""
+def validate_integer(
+    value: Any, name: str, min_val: int | None = None, max_val: int | None = None
+) -> int:
+    """Validate that a value is an integer, with optional range checking.
+
+    Parameters
+    ----------
+    value : Any
+        Value to validate.
+    name : str
+        Parameter name (used in error messages).
+    min_val : int or None
+        Minimum allowed value.
+    max_val : int or None
+        Maximum allowed value.
+
+    Returns
+    -------
+    int
+        The validated integer.
+    """
     try:
         num = int(value)
     except (ValueError, TypeError) as e:
-        raise ValidationError(name, "必须为整数", value) from e
+        raise ValidationError(name, "must be an integer", value) from e
 
     if min_val is not None and num < min_val:
-        raise ValidationError(name, f"必须 >= {min_val}", value)
+        raise ValidationError(name, f"must be >= {min_val}", value)
     if max_val is not None and num > max_val:
-        raise ValidationError(name, f"必须 <= {max_val}", value)
+        raise ValidationError(name, f"must be <= {max_val}", value)
 
     return num
 
 
-def validate_float_range(value: Any, name: str, min_val: Optional[float] = None, max_val: Optional[float] = None) -> float:
-    """验证参数为浮点数，可选范围检查"""
+def validate_float_range(
+    value: Any, name: str, min_val: float | None = None, max_val: float | None = None
+) -> float:
+    """Validate that a value is a float, with optional range checking.
+
+    Parameters
+    ----------
+    value : Any
+        Value to validate.
+    name : str
+        Parameter name (used in error messages).
+    min_val : float or None
+        Minimum allowed value.
+    max_val : float or None
+        Maximum allowed value.
+
+    Returns
+    -------
+    float
+        The validated float.
+    """
     try:
         num = float(value)
     except (ValueError, TypeError) as e:
-        raise ValidationError(name, "必须为浮点数", value) from e
+        raise ValidationError(name, "must be a float", value) from e
 
     if min_val is not None and num < min_val:
-        raise ValidationError(name, f"必须 >= {min_val}", value)
+        raise ValidationError(name, f"must be >= {min_val}", value)
     if max_val is not None and num > max_val:
-        raise ValidationError(name, f"必须 <= {max_val}", value)
+        raise ValidationError(name, f"must be <= {max_val}", value)
 
     return num
 
 
 def validate_not_empty(value: Any, name: str) -> None:
-    """验证参数非空"""
+    """Validate that a value is not empty (None or zero-length)."""
     if value is None:
-        raise ValidationError(name, "不能为 None")
+        raise ValidationError(name, "must not be None")
     if isinstance(value, (str, list, tuple, dict)) and len(value) == 0:
-        raise ValidationError(name, "不能为空")
+        raise ValidationError(name, "must not be empty")
 
 
 def validate_file_exists(filepath: str, name: str) -> None:
-    """验证文件存在"""
+    """Validate that a file exists."""
     if not filepath:
-        raise ValidationError(name, "文件路径不能为空")
+        raise ValidationError(name, "file path must not be empty")
     if not os.path.exists(filepath):
-        raise ValidationError(name, f"文件不存在: {filepath}")
+        raise ValidationError(name, f"file does not exist: {filepath}")
     if not os.path.isfile(filepath):
-        raise ValidationError(name, f"路径不是文件: {filepath}")
+        raise ValidationError(name, f"path is not a file: {filepath}")
 
 
 def validate_dir_exists(dirpath: str, name: str) -> None:
-    """验证目录存在"""
+    """Validate that a directory exists."""
     if not dirpath:
-        raise ValidationError(name, "目录路径不能为空")
+        raise ValidationError(name, "directory path must not be empty")
     if not os.path.exists(dirpath):
-        raise ValidationError(name, f"目录不存在: {dirpath}")
+        raise ValidationError(name, f"directory does not exist: {dirpath}")
     if not os.path.isdir(dirpath):
-        raise ValidationError(name, f"路径不是目录: {dirpath}")
+        raise ValidationError(name, f"path is not a directory: {dirpath}")
 
 
-def validate_coords_array(coords: Any, name: str, expected_atoms: Optional[int] = None) -> np.ndarray:
-    """验证坐标数组
+def validate_coords_array(coords: Any, name: str, expected_atoms: int | None = None) -> np.ndarray:
+    """Validate a coordinate array.
 
-    Args:
-        coords: 坐标数据（list 或 numpy array）
-        name: 参数名称
-        expected_atoms: 预期的原子数（可选）
+    Parameters
+    ----------
+    coords : Any
+        Coordinate data (list or numpy array).
+    name : str
+        Parameter name.
+    expected_atoms : int or None
+        Expected number of atoms (optional).
 
-    Returns:
-        验证后的 numpy 数组 (N, 3)
+    Returns
+    -------
+    numpy.ndarray
+        Validated numpy array of shape ``(N, 3)``.
     """
     if coords is None:
-        raise ValidationError(name, "坐标不能为 None")
+        raise ValidationError(name, "coordinates must not be None")
 
     try:
         arr = np.asarray(coords, dtype=float)
     except (ValueError, TypeError) as e:
-        raise ValidationError(name, "无法转换为数值数组", coords) from e
+        raise ValidationError(name, "cannot convert to numeric array", coords) from e
 
     if arr.ndim != 2:
-        raise ValidationError(name, f"坐标必须是二维数组，当前维度: {arr.ndim}")
+        raise ValidationError(name, f"coordinates must be a 2D array, got {arr.ndim}D")
 
     if arr.shape[1] != 3:
-        raise ValidationError(name, f"坐标必须是 (N, 3) 形状，当前: {arr.shape}")
+        raise ValidationError(name, f"coordinates must have shape (N, 3), got {arr.shape}")
 
     if expected_atoms is not None and arr.shape[0] != expected_atoms:
-        raise ValidationError(name, f"原子数不匹配，预期 {expected_atoms}，实际 {arr.shape[0]}")
+        raise ValidationError(
+            name, f"atom count mismatch, expected {expected_atoms}, got {arr.shape[0]}"
+        )
 
-    # 检查 NaN 和 Inf
+    # Check for NaN and Inf
     if np.any(np.isnan(arr)):
-        raise ValidationError(name, "坐标包含 NaN 值")
+        raise ValidationError(name, "coordinates contain NaN values")
     if np.any(np.isinf(arr)):
-        raise ValidationError(name, "坐标包含无穷大值")
+        raise ValidationError(name, "coordinates contain Inf values")
 
-    return arr
+    return arr  # type: ignore[no-any-return]
 
 
-def validate_atom_indices(indices: List[int], name: str, max_index: int) -> None:
-    """验证原子索引列表
+def validate_atom_indices(indices: list[int], name: str, max_index: int) -> None:
+    """Validate atom index list.
 
-    Args:
-        indices: 原子索引列表（1-based）
-        name: 参数名称
-        max_index: 最大允许索引
+    Parameters
+    ----------
+    indices : list[int]
+        Atom index list (1-based).
+    name : str
+        Parameter name.
+    max_index : int
+        Maximum allowed index.
     """
     if not indices:
         return
 
     for i, idx in enumerate(indices):
         if not isinstance(idx, int):
-            raise ValidationError(name, f"索引 {i} 不是整数: {idx}")
+            raise ValidationError(name, f"index {i} is not an integer: {idx}")
         if idx < 1:
-            raise ValidationError(name, f"原子索引必须 >= 1（1-based），当前: {idx}")
+            raise ValidationError(name, f"atom index must be >= 1 (1-based), got: {idx}")
         if idx > max_index:
-            raise ValidationError(name, f"原子索引 {idx} 超出范围（最大: {max_index}）")
+            raise ValidationError(name, f"atom index {idx} out of range (max: {max_index})")
 
 
-def validate_bond_pair(pair: Union[List[int], tuple], name: str, max_index: int) -> tuple:
-    """验证键对
+def validate_bond_pair(pair: list[int] | tuple, name: str, max_index: int) -> tuple:
+    """Validate a bond pair.
 
-    Args:
-        pair: 键对 [a, b] 或 (a, b)（1-based）
-        name: 参数名称
-        max_index: 最大允许索引
+    Parameters
+    ----------
+    pair : list[int] or tuple
+        Bond pair ``[a, b]`` or ``(a, b)`` (1-based).
+    name : str
+        Parameter name.
+    max_index : int
+        Maximum allowed index.
 
-    Returns:
-        验证后的元组 (a, b)
+    Returns
+    -------
+    tuple
+        Validated pair ``(a, b)``.
     """
     if not isinstance(pair, (list, tuple)) or len(pair) != 2:
-        raise ValidationError(name, "键对必须是长度为 2 的列表或元组", pair)
+        raise ValidationError(name, "bond pair must be a list or tuple of length 2", pair)
 
     a, b = pair
     try:
         a, b = int(a), int(b)
     except (ValueError, TypeError) as e:
-        raise ValidationError(name, "键对元素必须是整数", pair) from e
+        raise ValidationError(name, "bond pair elements must be integers", pair) from e
 
     if a < 1 or b < 1:
-        raise ValidationError(name, f"原子索引必须 >= 1（1-based），当前: ({a}, {b})")
+        raise ValidationError(name, f"atom index must be >= 1 (1-based), got: ({a}, {b})")
     if a > max_index or b > max_index:
-        raise ValidationError(name, f"原子索引超出范围（最大: {max_index}），当前: ({a}, {b})")
+        raise ValidationError(name, f"atom index out of range (max: {max_index}), got: ({a}, {b})")
     if a == b:
-        raise ValidationError(name, f"键对不能是同一个原子: ({a}, {b})")
+        raise ValidationError(name, f"bond pair must not refer to the same atom: ({a}, {b})")
 
     return (a, b)
 
 
-def validate_choice(value: Any, name: str, choices: List[Any]) -> None:
-    """验证参数在允许的选项中"""
+def validate_choice(value: Any, name: str, choices: list[Any]) -> None:
+    """Validate that a value is in the allowed choices."""
     if value not in choices:
-        raise ValidationError(name, f"必须是以下选项之一: {choices}", value)
+        raise ValidationError(name, f"must be one of: {choices}", value)
 
 
 def validate_string_not_empty(value: Any, name: str) -> str:
-    """验证参数为非空字符串"""
+    """Validate that a value is a non-empty string."""
     if value is None:
-        raise ValidationError(name, "不能为 None")
+        raise ValidationError(name, "must not be None")
     if not isinstance(value, str):
-        raise ValidationError(name, "必须是字符串类型", value)
+        raise ValidationError(name, "must be a string type", value)
     if not value.strip():
-        raise ValidationError(name, "不能为空字符串")
+        raise ValidationError(name, "must not be an empty string")
     return value.strip()
 
 
 # ==============================================================================
-# 验证装饰器
+# Validation decorator
 # ==============================================================================
 
 
 def validate_params(**validators: Callable[[Any, str], None]) -> Callable[[F], F]:
-    """参数验证装饰器
+    """Parameter validation decorator.
 
-    用法:
-        @validate_params(
-            threshold=lambda v, n: validate_positive(v, n),
-            coords=lambda v, n: validate_not_empty(v, n),
-        )
-        def my_function(threshold, coords):
-            ...
+    Parameters
+    ----------
+    **validators : Callable[[Any, str], None]
+        Mapping of parameter name to validation function.
 
-    Args:
-        validators: 参数名 -> 验证函数的映射
+    Examples
+    --------
+    >>> @validate_params(
+    ...     threshold=lambda v, n: validate_positive(v, n),
+    ...     coords=lambda v, n: validate_not_empty(v, n),
+    ... )
+    ... def my_function(threshold, coords):
+    ...     ...
     """
+
     def decorator(func: F) -> F:
         @wraps(func)
         def wrapper(*args, **kwargs):
-            # 获取函数签名以映射位置参数
+            # Get function signature to map positional arguments
             import inspect
+
             sig = inspect.signature(func)
             bound = sig.bind_partial(*args, **kwargs)
             bound.apply_defaults()
 
-            # 执行验证
+            # Run validations
             for param_name, validator in validators.items():
                 if param_name in bound.arguments:
                     value = bound.arguments[param_name]
-                    if value is not None:  # 跳过 None 值（允许可选参数）
+                    if value is not None:  # Skip None values (allow optional params)
                         try:
                             validator(value, param_name)
                         except ValidationError:
@@ -257,7 +308,9 @@ def validate_params(**validators: Callable[[Any, str], None]) -> Callable[[F], F
                             raise ValidationError(param_name, str(e), value) from e
 
             return func(*args, **kwargs)
+
         return wrapper  # type: ignore
+
     return decorator
 
 

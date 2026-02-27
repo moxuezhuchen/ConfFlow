@@ -10,15 +10,19 @@ dist/
 # caches / test artifacts
 .pytest_cache/
 .mypy_cache/
+.ruff_cache/
 .coverage
-htmlcov/
 coverage.xml
+htmlcov/
+reports/
+.pytest_basetemp/
+.artifacts/
 
 # local env
 .venv/
+venv/
 
 # confflow runtime outputs
-report.html
 results.db
 *.db
 work/

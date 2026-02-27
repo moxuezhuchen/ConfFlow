@@ -1,32 +1,37 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 
-"""与任务后处理相关的解析/计算（TSBond、RMSD 解析辅助等）。"""
+"""Post-processing parsing and analysis (TS bond, RMSD helpers, etc.)."""
 
 from __future__ import annotations
 
 import re
-from typing import Any, List, Optional, Tuple
+from typing import Any
 
 import numpy as np
 
+from ..config.defaults import DEFAULT_TS_BOND_DRIFT_THRESHOLD
 from ..core import io as io_xyz
+
+__all__ = [
+    "validate_ts_bond_drift",
+    "is_rescue_enabled",
+]
 
 
 def _keyword_requests_freq(config: dict) -> bool:
-    """判断 keyword 是否显式请求频率计算。"""
+    """Check whether the keyword explicitly requests a frequency calculation."""
     kw = str(config.get("keyword", "") or "")
     if not kw.strip():
         return False
     return re.search(r"(?i)\bfreq\b", kw) is not None
 
 
-def _parse_ts_bond_atoms(val: Any) -> Optional[Tuple[int, int]]:
-    """解析 TS 成键/断键原子对（1-based）。"""
+def _parse_ts_bond_atoms(val: Any) -> tuple[int, int] | None:
+    """Parse the TS bond-forming/breaking atom pair (1-based indices)."""
     if val is None:
         return None
     if isinstance(val, (list, tuple)):
-        nums: List[int] = []
+        nums: list[int] = []
         for x in val:
             try:
                 nums.append(int(x))
@@ -47,23 +52,74 @@ def _parse_ts_bond_atoms(val: Any) -> Optional[Tuple[int, int]]:
     return a, b
 
 
-def _bond_length_from_xyz_lines(coords_lines: List[str], a1: int, a2: int) -> Optional[float]:
-    """从 XYZ 坐标行计算两原子距离（Å）。"""
+def _bond_length_from_xyz_lines(coords_lines: list[str], a1: int, a2: int) -> float | None:
+    """Compute the distance between two atoms from XYZ coordinate lines (Å)."""
     return io_xyz.calculate_bond_length(coords_lines, a1, a2)
 
 
-def _coords_array_from_xyz_lines(coords_lines: List[str]) -> Optional[np.ndarray]:
-    """将 XYZ 坐标行解析为 (N, 3) 的 numpy 数组。"""
+def validate_ts_bond_drift(
+    initial_coords: list[str],
+    final_coords: list[str],
+    a1: int,
+    a2: int,
+    threshold: float | None = None,
+    *,
+    context: str = "TS",
+) -> str | None:
+    """Validate whether the critical bond length drift in a TS task exceeds the threshold.
+
+    Parameters
+    ----------
+    initial_coords : list[str]
+        Coordinate lines of the input structure.
+    final_coords : list[str]
+        Coordinate lines of the output structure.
+    a1 : int
+        First atom index of the TS bond pair (1-based).
+    a2 : int
+        Second atom index of the TS bond pair (1-based).
+    threshold : float or None, optional
+        Drift threshold in angstroms. Defaults to ``DEFAULT_TS_BOND_DRIFT_THRESHOLD``.
+    context : str, optional
+        Context label used as a prefix in error messages.
+
+    Returns
+    -------
+    str or None
+        None if the check passes; otherwise an error message string.
+    """
+    if threshold is None:
+        threshold = DEFAULT_TS_BOND_DRIFT_THRESHOLD
+    r_initial = _bond_length_from_xyz_lines(initial_coords, a1, a2)
+    r_final = _bond_length_from_xyz_lines(final_coords, a1, a2)
+    if r_initial is None or r_final is None:
+        return None
+    d_r = abs(r_final - r_initial)
+    if d_r > threshold:
+        return (
+            f"{context} geometry criterion failed: critical bond drift |ΔR|={d_r:.3f} Å exceeds threshold {threshold:.3f} Å "
+            f"(R_initial={r_initial:.3f} Å, R_final={r_final:.3f} Å, TSAtoms={a1},{a2})"
+        )
+    return None
+
+
+def is_rescue_enabled(cfg: dict) -> bool:
+    """Check whether ts_rescue_scan is enabled."""
+    return str(cfg.get("ts_rescue_scan", "false")).lower() == "true"
+
+
+def _coords_array_from_xyz_lines(coords_lines: list[str]) -> np.ndarray | None:
+    """Parse XYZ coordinate lines into an (N, 3) numpy array."""
     if not coords_lines:
         return None
     try:
-        coords: List[List[float]] = []
+        coords: list[list[float]] = []
         for line in coords_lines:
-            # 跳过空行或 None
+            # Skip empty lines or None
             if line is None or not isinstance(line, str):
                 return None
             parts = line.split()
-            xyz: List[float] = []
+            xyz: list[float] = []
             for tok in reversed(parts):
                 try:
                     xyz.append(float(tok))
@@ -75,7 +131,7 @@ def _coords_array_from_xyz_lines(coords_lines: List[str]) -> Optional[np.ndarray
                 return None
             z, y, x = xyz  # reversed
             coords.append([x, y, z])
-        return np.array(coords, dtype=float)
+        return np.array(coords, dtype=float)  # type: ignore[no-any-return]
     except (ValueError, TypeError, AttributeError):
-        # 数值转换失败或类型错误
+        # Numeric conversion failed or type error
         return None

@@ -210,8 +210,8 @@ confflow molecule.xyz \
 
 控制 TS 失败后的自动救援功能。
 
-- `true` (默认)：开启救援。当 TS 搜索失败时，自动尝试通过 Scan 寻找更好的起始点。
-- `false`：关闭救援。
+- `true`：开启救援。当 TS 搜索失败时，自动尝试通过 Scan 寻找更好的起始点。
+- `false` (默认)：关闭救援。
 
 输出：当触发救援扫描时，会在终端打印“键长-能量”关系表，并在 `<work_dir>/scan/scan_table.txt` 写入同样内容（标记能量最高点 `MAX`）。如果配置了 `backup_dir`，该文件会随 scan 目录一起出现在 `<work_dir>/<step>/backups/<job>_scan/scan_table.txt`。
 

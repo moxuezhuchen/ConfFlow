@@ -1,11 +1,18 @@
+#!/usr/bin/env python3
+from __future__ import annotations
 
 import logging
-from typing import Dict, List
 
 from rdkit import Chem
 from rdkit.Chem import rdFMCS
 
 logger = logging.getLogger("confflow.confgen")
+
+__all__ = [
+    "get_mcs_mapping",
+    "transfer_chain_indices",
+]
+
 
 def get_mcs_mapping(
     ref_mol: Chem.Mol,
@@ -13,22 +20,38 @@ def get_mcs_mapping(
     timeout: int = 30,
     verbose: bool = False,
     min_coverage: float = 0.7,
-) -> Dict[int, int]:
+) -> dict[int, int]:
+    """Compute atom index mapping from reference to target molecule (0-based).
+
+    Uses whole-molecule MCS (Maximum Common Substructure) matching,
+    ignoring element types and bond orders for topology-only matching.
+
+    Parameters
+    ----------
+    ref_mol : Chem.Mol
+        Reference molecule.
+    target_mol : Chem.Mol
+        Target molecule.
+    timeout : int
+        MCS search timeout in seconds.
+    verbose : bool
+        Whether to log MCS match details.
+    min_coverage : float
+        Minimum fraction of atoms that must be covered by MCS.
+
+    Returns
+    -------
+    dict[int, int]
+        Mapping of ref_idx -> target_idx.
+
+    Raises
+    ------
+    ValueError
+        If no match covering enough atoms is found.
     """
-    计算 Reference 分子到 Target 分子的原子索引映射 (0-based)
-    
-    采用全分子 MCS (Maximum Common Substructure) 匹配策略，
-    忽略元素类型与键级差异，仅基于拓扑匹配。
-    
-    Returns:
-        Dict[ref_idx, target_idx]
-    
-    Raises:
-        ValueError: 若无法找到覆盖大部分原子的匹配 (覆盖率过低或 MCS 搜索失败)
-    """
-    # 1. 计算 MCS
-    # compareAny: 忽略原子类型和键类型（最宽松模式，适配“原子序号不一致”甚至“元素微变”）
-    # completeRingsOnly: 确保环完整匹配，增加稳健性
+    # 1. Compute MCS
+    # compareAny: ignore atom and bond types (most permissive, handles mismatched atomic numbers)
+    # completeRingsOnly: ensure complete ring matching for robustness
     params = rdFMCS.MCSParameters()
     params.AtomTyper = rdFMCS.AtomCompare.CompareAny
     params.BondTyper = rdFMCS.BondCompare.CompareAny
@@ -36,73 +59,85 @@ def get_mcs_mapping(
     params.Timeout = timeout
 
     res = rdFMCS.FindMCS([ref_mol, target_mol], params)
-    
+
     if not res.canceled and res.numAtoms == 0:
-        raise ValueError("MCS 搜索未能找到公共子结构")
+        raise ValueError("MCS search found no common substructure")
 
     if verbose:
-        logger.info(f"MCS 匹配: {res.numAtoms} 原字, {res.numBonds} 键")
+        logger.info(f"MCS match: {res.numAtoms} atoms, {res.numBonds} bonds")
 
-    # 简单覆盖率检查
+    # Simple coverage check
     ratio = res.numAtoms / max(ref_mol.GetNumAtoms(), 1)
     if ratio < min_coverage:
-        raise ValueError(f"MCS 覆盖率过低 ({ratio:.1%} < {min_coverage:.1%})")
+        raise ValueError(f"MCS coverage too low ({ratio:.1%} < {min_coverage:.1%})")
 
-    # 2. 获取映射 (Pattern -> Ref, Pattern -> Target)
+    # 2. Obtain mapping (Pattern -> Ref, Pattern -> Target)
     patt = Chem.MolFromSmarts(res.smartsString)
     if patt is None:
-         # 极少情况 smarts 失效
-         raise ValueError("无法解析 MCS SMARTs")
+        # Rare case where SMARTS parsing fails
+        raise ValueError("cannot parse MCS SMARTS")
 
-    # GetSubstructMatch 返回的是 tuple of indices
+    # GetSubstructMatch returns a tuple of indices
     ref_match = ref_mol.GetSubstructMatch(patt)
     target_match = target_mol.GetSubstructMatch(patt)
 
     if not ref_match or not target_match:
-        raise ValueError("无法将 MCS 映射回原分子")
+        raise ValueError("cannot map MCS back to original molecule")
 
-    # 3. 建立 Ref -> Target 映射
-    # ref_match[i] 是 pattern 中第 i 个原子在 ref 中的索引
-    # target_match[i] 是 pattern 中第 i 个原子在 target 中的索引
-    # 因此对应关系是 ref_match[i] <-> target_match[i]
-    
-    # 优化：处理多重匹配问题 (symmetry)
-    # 对于 confgen 目的，我们通常只需任意一组有效映射即可。
-    # 如果分子高度对称，RDKit 只返回第一组。
-    
+    # 3. Build Ref -> Target mapping
+    # ref_match[i] is the index in ref of the i-th pattern atom
+    # target_match[i] is the index in target of the i-th pattern atom
+    # Therefore the correspondence is ref_match[i] <-> target_match[i]
+
+    # Optimization: handle multiple matches (symmetry)
+    # For confgen purposes, any single valid mapping suffices.
+    # For highly symmetric molecules, RDKit returns only the first match.
+
     mapping = {}
     for r_idx, t_idx in zip(ref_match, target_match):
         mapping[r_idx] = t_idx
-        
+
     return mapping
 
 
 def transfer_chain_indices(
-    ref_mol: Chem.Mol,
-    target_mol: Chem.Mol,
-    ref_chain: List[int]
-) -> List[int]:
-    """
-    将 Ref 分子的链索引迁移到 Target 分子。
-    
-    Args:
-        ref_chain: 0-based indices in Ref
-    
-    Returns:
-        target_chain: 0-based indices in Target
+    ref_mol: Chem.Mol, target_mol: Chem.Mol, ref_chain: list[int]
+) -> list[int]:
+    """Transfer chain indices from reference to target molecule.
+
+    Parameters
+    ----------
+    ref_mol : Chem.Mol
+        Reference molecule.
+    target_mol : Chem.Mol
+        Target molecule.
+    ref_chain : list[int]
+        0-based atom indices in the reference molecule.
+
+    Returns
+    -------
+    list[int]
+        0-based atom indices in the target molecule.
+
+    Raises
+    ------
+    ValueError
+        If any chain atom cannot be mapped via MCS.
     """
     mapping = get_mcs_mapping(ref_mol, target_mol)
-    
+
     target_chain = []
     missing = []
-    
+
     for idx in ref_chain:
         if idx in mapping:
             target_chain.append(mapping[idx])
         else:
             missing.append(idx)
-            
+
     if missing:
-        raise ValueError(f"链原子 {missing} 未能通过 MCS 映射到目标分子 (可能位于非同构区域)")
-        
+        raise ValueError(
+            f"chain atoms {missing} could not be mapped to target molecule via MCS (possibly in non-isomorphic region)"
+        )
+
     return target_chain

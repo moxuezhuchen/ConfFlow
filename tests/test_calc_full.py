@@ -1,10 +1,12 @@
-import os
-import sqlite3
+#!/usr/bin/env python3
+from __future__ import annotations
+
 import pytest
+
 from confflow import calc
+from confflow.calc.components import executor
 from confflow.calc.policies.gaussian import GaussianPolicy
 from confflow.calc.policies.orca import OrcaPolicy
-from confflow.calc.components import executor
 
 
 def test_memory_calculation_gaussian(tmp_path):
@@ -85,7 +87,7 @@ def test_parse_output_gaussian(tmp_path):
 
 def test_parse_output_gaussian_archive_hf(tmp_path):
     log = tmp_path / "job.log"
-    # 模拟：没有 SCF Done，但 archive 段包含 \HF=...\@（真实 Gaussian 结尾就是这样）
+    # Simulate: no SCF Done, but archive section contains \HF=...\@ (this is how real Gaussian logs end)
     log.write_text(
         """
  Some header
@@ -226,8 +228,8 @@ def test_get_error_details(tmp_path):
     details = executor._get_error_details(
         str(work_dir), "test", config, Exception("test error"), policy
     )
-    assert "程序异常终止" in details
-    assert "SCF不收敛" in details
+    assert "Abnormal program termination" in details
+    assert "SCF not converged" in details
 
 
 def test_config_hash(tmp_path):
@@ -238,11 +240,11 @@ def test_config_hash(tmp_path):
     assert (work_dir / ".config_hash").exists()
 
 
-def test_ts_without_freq_treated_like_opt(tmp_path, monkeypatch):
-    work_dir = tmp_path / "c0001"
+def test_ts_without_freq_treated_like_opt(cd_tmp, monkeypatch):
+    work_dir = cd_tmp / "c0001"
     job_name = "c0001"
 
-    # mock: 不执行外部程序，直接返回一个“只有能量、没有频率信息”的结果
+    # mock: do not run external programs, directly return a result with only energy and no frequency info
     def fake_run(*args, **kwargs):
         return {
             "e_low": -1.23,
@@ -263,7 +265,7 @@ def test_ts_without_freq_treated_like_opt(tmp_path, monkeypatch):
         "config": {
             "iprog": "g16",
             "itask": "ts",
-            # 关键：不包含 freq
+            # key: does not contain freq
             "keyword": "opt=(ts,calcfc,noeigen)",
         },
     }
@@ -274,8 +276,8 @@ def test_ts_without_freq_treated_like_opt(tmp_path, monkeypatch):
     assert result.get("num_imag_freqs") is None
 
 
-def test_ts_with_freq_still_requires_one_imag(monkeypatch, tmp_path):
-    work_dir = tmp_path / "c0001"
+def test_ts_with_freq_still_requires_one_imag(monkeypatch, cd_tmp):
+    work_dir = cd_tmp / "c0001"
     job_name = "c0001"
 
     def fake_run(*args, **kwargs):
@@ -283,7 +285,7 @@ def test_ts_with_freq_still_requires_one_imag(monkeypatch, tmp_path):
             "e_low": -1.23,
             "g_low": None,
             "g_corr": None,
-            # 返回 0 个虚频 -> 应失败
+            # returns 0 imaginary frequencies -> should fail
             "num_imag_freqs": 0,
             "lowest_freq": 12.3,
             "final_coords": ["H 0 0 0"],
@@ -299,23 +301,23 @@ def test_ts_with_freq_still_requires_one_imag(monkeypatch, tmp_path):
         "config": {
             "iprog": "g16",
             "itask": "ts",
-            # 关键：包含 freq
+            # key: contains freq
             "keyword": "opt=(ts,calcfc,noeigen) freq",
         },
     }
 
     result = calc.TaskRunner().run(task_info)
     assert result["status"] == "failed"
-    assert "虚频" in result.get("error", "")
+    assert "imaginary frequenc" in result.get("error", "")
 
 
-def test_ts_without_freq_fails_when_ts_bond_drift_too_large(tmp_path, monkeypatch):
-    work_dir = tmp_path / "c0001"
+def test_ts_without_freq_fails_when_ts_bond_drift_too_large(cd_tmp, monkeypatch):
+    work_dir = cd_tmp / "c0001"
     job_name = "c0001"
 
-    # 初始键长 1.0 Å
+    # initial bond length 1.0 Å
     initial_coords = ["H 0 0 0", "H 0 0 1.0"]
-    # 最终键长 1.6 Å -> |ΔR|=0.6 > 默认阈值 0.4
+    # final bond length 1.6 Å -> |ΔR|=0.6 > default threshold 0.4
     final_coords = ["H 0 0 0", "H 0 0 1.6"]
 
     def fake_run(*args, **kwargs):
@@ -346,14 +348,14 @@ def test_ts_without_freq_fails_when_ts_bond_drift_too_large(tmp_path, monkeypatc
 
     result = calc.TaskRunner().run(task_info)
     assert result["status"] == "failed"
-    assert "键长" in result.get("error", "")
+    assert "bond drift" in result.get("error", "")
 
 
-def test_ts_without_freq_allows_large_rmsd_when_no_bond_drift(tmp_path, monkeypatch):
-    work_dir = tmp_path / "c0001"
+def test_ts_without_freq_allows_large_rmsd_when_no_bond_drift(cd_tmp, monkeypatch):
+    work_dir = cd_tmp / "c0001"
     job_name = "c0001"
 
-    # 两原子：最终结构拉伸到 5.0 Å（不再用 RMSD 作为 TS 判据）
+    # two atoms: final structure stretched to 5.0 Å (RMSD is no longer used as TS criterion)
     initial_coords = ["H 0 0 0", "H 0 0 1.0"]
     final_coords = ["H 0 0 0", "H 0 0 5.0"]
 
@@ -386,15 +388,15 @@ def test_ts_without_freq_allows_large_rmsd_when_no_bond_drift(tmp_path, monkeypa
     assert result["status"] == "success"
 
 
-def test_ts_bond_length_computed_and_written(tmp_path, monkeypatch):
-    # 让单任务路径触发写 result.xyz
-    inp = tmp_path / "search.xyz"
+def test_ts_bond_length_computed_and_written(cd_tmp, monkeypatch):
+    # trigger single-task path to write result.xyz
+    inp = cd_tmp / "search.xyz"
     inp.write_text(
         "2\ncomment\nH 0 0 0\nH 0 0 0.74\n",
         encoding="utf-8",
     )
 
-    # mock 外部计算：返回 final_coords（两原子距离 0.74）
+    # mock external calculation: return final_coords (distance between two atoms is 0.74)
     def fake_run(*args, **kwargs):
         return {
             "e_low": -1.0,
@@ -409,7 +411,7 @@ def test_ts_bond_length_computed_and_written(tmp_path, monkeypatch):
     monkeypatch.setattr(executor, "handle_backups", lambda *a, **k: None)
 
     manager = calc.ChemTaskManager(settings_file=None)
-    manager.work_dir = str(tmp_path / "work")
+    manager.work_dir = str(cd_tmp / "work")
     manager.config.update(
         {
             "iprog": "g16",
@@ -422,15 +424,15 @@ def test_ts_bond_length_computed_and_written(tmp_path, monkeypatch):
     )
 
     manager.run(str(inp))
-    out_file = tmp_path / "work" / "result.xyz"
+    out_file = cd_tmp / "work" / "result.xyz"
     assert out_file.exists()
     lines = out_file.read_text(encoding="utf-8").splitlines()
     assert any("TSAtoms=1,2" in ln for ln in lines)
     assert any("TSBond=" in ln for ln in lines)
 
 
-def test_manager_writes_isomers_failed_when_tasks_fail(tmp_path, monkeypatch):
-    inp = tmp_path / "search.xyz"
+def test_manager_writes_isomers_failed_when_tasks_fail(cd_tmp, monkeypatch):
+    inp = cd_tmp / "search.xyz"
     inp.write_text(
         "2\ncomment CID=abc\nH 0 0 0\nH 0 0 0.74\n",
         encoding="utf-8",
@@ -443,7 +445,7 @@ def test_manager_writes_isomers_failed_when_tasks_fail(tmp_path, monkeypatch):
     monkeypatch.setattr(executor, "handle_backups", lambda *a, **k: None)
 
     manager = calc.ChemTaskManager(settings_file=None)
-    manager.work_dir = str(tmp_path / "work")
+    manager.work_dir = str(cd_tmp / "work")
     manager.config.update(
         {
             "iprog": "g16",
@@ -455,7 +457,7 @@ def test_manager_writes_isomers_failed_when_tasks_fail(tmp_path, monkeypatch):
     )
 
     manager.run(str(inp))
-    failed_file = tmp_path / "work" / "failed.xyz"
+    failed_file = cd_tmp / "work" / "failed.xyz"
     assert failed_file.exists()
     txt = failed_file.read_text(encoding="utf-8")
     assert "Failed=1" in txt
@@ -463,14 +465,14 @@ def test_manager_writes_isomers_failed_when_tasks_fail(tmp_path, monkeypatch):
     assert "Error=boom" in txt
 
 
-def test_sp_task_also_writes_tsbond_when_config_provides_ts_bond_atoms(tmp_path, monkeypatch):
-    inp = tmp_path / "search.xyz"
+def test_sp_task_also_writes_tsbond_when_config_provides_ts_bond_atoms(cd_tmp, monkeypatch):
+    inp = cd_tmp / "search.xyz"
     inp.write_text(
         "2\ncomment\nH 0 0 0\nH 0 0 0.74\n",
         encoding="utf-8",
     )
 
-    # SP 不应改变结构；final_coords 直接返回输入坐标
+    # SP should not change geometry; final_coords directly returns input coordinates
     def fake_run(*args, **kwargs):
         return {
             "e_low": -1.0,
@@ -485,7 +487,7 @@ def test_sp_task_also_writes_tsbond_when_config_provides_ts_bond_atoms(tmp_path,
     monkeypatch.setattr(executor, "handle_backups", lambda *a, **k: None)
 
     manager = calc.ChemTaskManager(settings_file=None)
-    manager.work_dir = str(tmp_path / "work")
+    manager.work_dir = str(cd_tmp / "work")
     manager.config.update(
         {
             "iprog": "g16",
@@ -498,22 +500,22 @@ def test_sp_task_also_writes_tsbond_when_config_provides_ts_bond_atoms(tmp_path,
     )
 
     manager.run(str(inp))
-    out_file = tmp_path / "work" / "result.xyz"
+    out_file = cd_tmp / "work" / "result.xyz"
     assert out_file.exists()
     text = out_file.read_text(encoding="utf-8")
     assert "TSAtoms=1,2" in text
     assert "TSBond=" in text
 
 
-def test_sp_inherits_g_corr_and_outputs_final_gibbs_energy(tmp_path, monkeypatch):
-    # 输入 XYZ 的注释带有上一阶段 freq/opt_freq 的热修正
-    inp = tmp_path / "search.xyz"
+def test_sp_inherits_g_corr_and_outputs_final_gibbs_energy(cd_tmp, monkeypatch):
+    # input XYZ comment carries thermal correction from previous freq/opt_freq stage
+    inp = cd_tmp / "search.xyz"
     inp.write_text(
         "2\nRank=1 | E=-1.00000000 | G_corr=0.123 | Imag=0\nH 0 0 0\nH 0 0 0.74\n",
         encoding="utf-8",
     )
 
-    # mock SP：返回单点能 -2.0
+    # mock SP: return single-point energy -2.0
     def fake_run(*args, **kwargs):
         return {
             "e_low": -2.0,
@@ -528,7 +530,7 @@ def test_sp_inherits_g_corr_and_outputs_final_gibbs_energy(tmp_path, monkeypatch
     monkeypatch.setattr(executor, "handle_backups", lambda *a, **k: None)
 
     manager = calc.ChemTaskManager(settings_file=None)
-    manager.work_dir = str(tmp_path / "work")
+    manager.work_dir = str(cd_tmp / "work")
     manager.config.update(
         {
             "iprog": "g16",
@@ -540,22 +542,22 @@ def test_sp_inherits_g_corr_and_outputs_final_gibbs_energy(tmp_path, monkeypatch
     )
     manager.run(str(inp))
 
-    out_file = tmp_path / "work" / "result.xyz"
+    out_file = cd_tmp / "work" / "result.xyz"
     text = out_file.read_text(encoding="utf-8")
-    # Energy/G 应为 E_sp + G_corr = -2.0 + 0.123
+    # Energy/G should be E_sp + G_corr = -2.0 + 0.123
     assert ("Energy=-1.877" in text) or ("G=-1.877" in text)
     assert ("G_corr=0.123" in text) or ("G=-1.877" in text)
 
 
-def test_ts_inherits_g_corr_and_outputs_final_gibbs_energy(tmp_path, monkeypatch):
-    # 输入 XYZ 的注释带有上一阶段的 G_corr
-    inp = tmp_path / "search.xyz"
+def test_ts_inherits_g_corr_and_outputs_final_gibbs_energy(cd_tmp, monkeypatch):
+    # input XYZ comment carries G_corr from previous stage
+    inp = cd_tmp / "search.xyz"
     inp.write_text(
         "2\nRank=1 | E=-1.00000000 | G_corr=0.123 | CID=abc\nH 0 0 0\nH 0 0 0.74\n",
         encoding="utf-8",
     )
 
-    # mock TS：返回能量 -1.5，没有 g_low
+    # mock TS: return energy -1.5, no g_low
     def fake_run(*args, **kwargs):
         return {
             "e_low": -1.5,
@@ -570,7 +572,7 @@ def test_ts_inherits_g_corr_and_outputs_final_gibbs_energy(tmp_path, monkeypatch
     monkeypatch.setattr(executor, "handle_backups", lambda *a, **k: None)
 
     manager = calc.ChemTaskManager(settings_file=None)
-    manager.work_dir = str(tmp_path / "work")
+    manager.work_dir = str(cd_tmp / "work")
     manager.config.update(
         {
             "iprog": "g16",
@@ -582,9 +584,9 @@ def test_ts_inherits_g_corr_and_outputs_final_gibbs_energy(tmp_path, monkeypatch
     )
     manager.run(str(inp))
 
-    out_file = tmp_path / "work" / "result.xyz"
+    out_file = cd_tmp / "work" / "result.xyz"
     text = out_file.read_text(encoding="utf-8")
-    # Energy 应为 E_ts + G_corr = -1.5 + 0.123 = -1.377
+    # Energy should be E_ts + G_corr = -1.5 + 0.123 = -1.377
     assert "Energy=-1.377" in text
     assert "G_corr=0.123" in text
 
@@ -600,7 +602,7 @@ def test_resume_from_backups_skips_completed(tmp_path, monkeypatch):
     backup_dir = tmp_path / "backups"
     backup_dir.mkdir()
 
-    # 准备一个“已完成”的 Gaussian 日志与 xyz 备份（job_name=c0001）
+    # prepare a "completed" Gaussian log and xyz backup (job_name=c0001)
     (backup_dir / "c0001.log").write_text(
         "SCF Done:  E(RB3LYP) =  -1.23456789     A.U. after   10 cycles\n"
         "Normal termination of Gaussian 16\n",
@@ -611,7 +613,7 @@ def test_resume_from_backups_skips_completed(tmp_path, monkeypatch):
         encoding="utf-8",
     )
 
-    # 如果走到真正计算则直接失败：说明没有跳过
+    # if actual calculation is reached, fail immediately: means it was not skipped
     def boom(*args, **kwargs):
         pytest.fail("run_single_task should be skipped when backups are available")
 

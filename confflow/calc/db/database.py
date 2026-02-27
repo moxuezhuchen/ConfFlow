@@ -1,42 +1,54 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-数据库模块
 
-管理计算任务结果的 SQLite 存储，支持任务状态跟踪和断点续算。
+"""
+Database module.
+
+Manages SQLite storage of calculation task results, supporting task status
+tracking and checkpoint-based resumption.
 """
 
-import sqlite3
+from __future__ import annotations
+
 import json
 import logging
 import os
 import shutil
+import sqlite3
 import tempfile
-from typing import Dict, Any, List, Optional
-
+from typing import Any
 
 logger = logging.getLogger("confflow.calc.database")
 
+__all__ = [
+    "ResultsDB",
+]
+
 
 class ResultsDB:
-    """任务结果数据库管理器。
+    """Task results database manager.
 
-    使用 SQLite 存储计算任务的结果，支持：
-    - 任务状态跟踪（成功/失败/跳过）
-    - 能量和频率数据存储
-    - 最终结构坐标保存
-    - TS 键长和热力学校正保存
+    Uses SQLite to store calculation task results.  Supports:
 
-    Attributes:
-        db_path: 数据库文件路径
-        conn: SQLite 连接对象
+    - Task status tracking (success / failed / skipped).
+    - Energy and frequency data storage.
+    - Final structure coordinate persistence.
+    - TS bond length and thermodynamic correction storage.
+
+    Attributes
+    ----------
+    db_path : str
+        Path to the database file.
+    conn : sqlite3.Connection
+        SQLite connection object.
     """
 
     def __init__(self, db_path: str):
-        """初始化数据库连接。
+        """Initialize the database connection.
 
-        Args:
-            db_path: SQLite 数据库文件路径
+        Parameters
+        ----------
+        db_path : str
+            Path to the SQLite database file.
         """
         self.db_path = db_path
         self.conn = sqlite3.connect(db_path, check_same_thread=False)
@@ -44,13 +56,12 @@ class ResultsDB:
         self._create_table()
 
     def _create_table(self) -> None:
-        """创建任务结果表（如不存在）。"""
-        # 启用 WAL 模式以提高并发性能
+        """Create the task results table if it does not exist."""
+        # Enable WAL mode for better concurrency
         self.conn.execute("PRAGMA journal_mode=WAL;")
         self.conn.execute("PRAGMA synchronous=NORMAL;")
 
-        self.conn.execute(
-            """
+        self.conn.execute("""
             CREATE TABLE IF NOT EXISTS task_results (
                 task_id INTEGER PRIMARY KEY AUTOINCREMENT,
                 job_name TEXT NOT NULL,
@@ -68,10 +79,9 @@ class ResultsDB:
                 error TEXT,
                 timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
             )
-        """
-        )
+        """)
 
-        # 兼容旧数据库：补齐可能缺失的列
+        # Compat: add missing columns for older databases
         try:
             cols = {r[1] for r in self.conn.execute("PRAGMA table_info(task_results)")}
             if "ts_bond_atoms" not in cols:
@@ -79,20 +89,24 @@ class ResultsDB:
             if "ts_bond_length" not in cols:
                 self.conn.execute("ALTER TABLE task_results ADD COLUMN ts_bond_length REAL")
         except sqlite3.OperationalError as e:
-            logger.warning(f"数据库列检查失败（操作错误）: {e}")
+            logger.warning(f"Database column check failed (operational error): {e}")
         except sqlite3.DatabaseError as e:
-            logger.warning(f"数据库列检查失败（数据库错误）: {e}")
+            logger.warning(f"Database column check failed (database error): {e}")
 
         self.conn.commit()
 
-    def insert_result(self, task_info: Dict[str, Any]) -> int:
-        """插入任务结果。
+    def insert_result(self, task_info: dict[str, Any]) -> int:
+        """Insert a task result.
 
-        Args:
-            task_info: 任务结果字典，包含 job_name, status, energy 等字段
+        Parameters
+        ----------
+        task_info : dict[str, Any]
+            Result dictionary containing job_name, status, energy, etc.
 
-        Returns:
-            插入的记录 ID
+        Returns
+        -------
+        int
+            The inserted record ID.
         """
         cursor = self.conn.execute(
             """
@@ -126,30 +140,36 @@ class ResultsDB:
         self.conn.commit()
         return int(cursor.lastrowid or 0)
 
-    def get_all_results(self) -> List[Dict[str, Any]]:
-        """获取所有任务结果。
+    def get_all_results(self) -> list[dict[str, Any]]:
+        """Retrieve all task results.
 
-        Returns:
-            按任务索引排序的结果列表
+        Returns
+        -------
+        list[dict[str, Any]]
+            List of results sorted by task index.
         """
         cursor = self.conn.execute("SELECT * FROM task_results ORDER BY task_index")
         return [self._row_to_dict(row) for row in cursor]
 
-    def get_result_by_job_name(self, job_name: str) -> Optional[Dict[str, Any]]:
-        """根据任务名查询结果。
+    def get_result_by_job_name(self, job_name: str) -> dict[str, Any] | None:
+        """Query a result by job name.
 
-        Args:
-            job_name: 任务名称（如 geom_0001）
+        Parameters
+        ----------
+        job_name : str
+            The job name (e.g. ``geom_0001``).
 
-        Returns:
-            任务结果字典，不存在则返回 None
+        Returns
+        -------
+        dict or None
+            Result dict, or None if not found.
         """
         cursor = self.conn.execute("SELECT * FROM task_results WHERE job_name = ?", (job_name,))
         row = cursor.fetchone()
         return self._row_to_dict(row) if row else None
 
-    def _row_to_dict(self, row: sqlite3.Row) -> Dict[str, Any]:
-        """将数据库行转换为字典。"""
+    def _row_to_dict(self, row: sqlite3.Row) -> dict[str, Any]:
+        """Convert a database row to a dictionary."""
         return {
             "index": row["task_index"],
             "job_name": row["job_name"],
@@ -166,19 +186,23 @@ class ResultsDB:
             "error": row["error"],
         }
 
-    def backup(self, backup_path: Optional[str] = None) -> str:
-        """备份数据库到指定路径（原子操作）。
+    def backup(self, backup_path: str | None = None) -> str:
+        """Back up the database to the specified path (atomic operation).
 
-        Args:
-            backup_path: 备份文件路径，默认为 db_path + '.backup'
+        Parameters
+        ----------
+        backup_path : str or None, optional
+            Backup file path. Defaults to ``db_path + '.backup'``.
 
-        Returns:
-            备份文件路径
+        Returns
+        -------
+        str
+            The backup file path.
         """
         if backup_path is None:
             backup_path = self.db_path + ".backup"
 
-        # 使用临时文件 + 原子重命名确保完整性
+        # Use a temp file + atomic rename for integrity
         fd, tmp_path = tempfile.mkstemp(suffix=".db", dir=os.path.dirname(self.db_path))
         os.close(fd)
 
@@ -188,19 +212,19 @@ class ResultsDB:
                 self.conn.backup(backup_conn)
             backup_conn.close()
 
-            # 原子重命名
+            # Atomic rename
             shutil.move(tmp_path, backup_path)
-            logger.debug(f"数据库已备份到: {backup_path}")
+            logger.debug(f"Database backed up to: {backup_path}")
             return backup_path
-        except Exception as e:
-            # 清理临时文件
+        except (OSError, sqlite3.Error) as e:
+            # Clean up temp file
             try:
                 os.unlink(tmp_path)
-            except Exception:
+            except OSError:
                 pass
-            logger.warning(f"数据库备份失败: {e}")
+            logger.warning(f"Database backup failed: {e}")
             raise
 
     def close(self) -> None:
-        """关闭数据库连接。"""
+        """Close the database connection."""
         self.conn.close()

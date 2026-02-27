@@ -1,27 +1,50 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 
-"""Workflow 输入校验模块"""
+"""Workflow input validation module."""
 
-from typing import Any, Dict, List, Optional
-from ..core.utils import validate_xyz_file
+from __future__ import annotations
+
+import logging
+from typing import Any
+
 from ..blocks.confgen.generator import load_mol_from_xyz
 from ..blocks.confgen.validator import ChainValidator
+from ..core.utils import validate_xyz_file
 from .helpers import as_list
+
+__all__ = [
+    "validate_inputs_compatible",
+]
+
+logger = logging.getLogger("confflow.workflow.validation")
 
 
 def validate_inputs_compatible(
-    input_files: List[str],
-    confgen_params: Optional[Dict[str, Any]] = None,
+    input_files: list[str],
+    confgen_params: dict[str, Any] | None = None,
     force_consistency: bool = False,
 ) -> None:
-    """确保多输入可被 confgen 合并：单帧、原子数与元素序列一致。
+    """Ensure multiple inputs are compatible for confgen merging.
 
-    Args:
-        input_files: 输入文件列表
-        confgen_params: (Optional) confgen 步骤参数，用于柔性链对齐检查
-        force_consistency: 即使不一致也不抛出异常（用于 --yes / --force 模式绕过检查）
+    Validates that all inputs are single-frame, and that atom counts and
+    element sequences are consistent.
+
+    Parameters
+    ----------
+    input_files : list of str
+        Input file paths.
+    confgen_params : dict or None
+        Optional confgen step parameters, used for flexible-chain alignment checks.
+    force_consistency : bool
+        If True, log a warning instead of raising on inconsistency.
     """
+
+    def _raise_or_warn(message: str) -> None:
+        if force_consistency:
+            logger.warning(f"force_consistency=true, skip input consistency error: {message}")
+            return
+        raise ValueError(message)
+
     if not input_files:
         raise ValueError("no input files provided")
 
@@ -32,11 +55,13 @@ def validate_inputs_compatible(
     for fp in input_files:
         ok, geoms = validate_xyz_file(fp)
         if not ok or not geoms:
-            raise ValueError(f"cannot parse input XYZ: {fp}")
+            _raise_or_warn(f"cannot parse input XYZ: {fp}")
+            return
         if len(geoms) != 1:
-            raise ValueError(
+            _raise_or_warn(
                 f"multi-input mode requires single-frame XYZ per input (current {fp} has {len(geoms)} frames)."
             )
+            return
         atoms = list(geoms[0].get("atoms") or [])
         natoms = len(atoms)
         if ref_atoms is None:
@@ -44,19 +69,19 @@ def validate_inputs_compatible(
             ref_natoms = natoms
             continue
         if natoms != ref_natoms:
-            raise ValueError(
-                f"atom count mismatch: {fp} ({natoms}) vs reference ({ref_natoms})"
-            )
+            _raise_or_warn(f"atom count mismatch: {fp} ({natoms}) vs reference ({ref_natoms})")
+            return
 
         if allow_chain_mapping:
-            # 允许原子顺序不同，但要求元素计数一致
+            # Allow different atom ordering, but require same element counts
             if sorted(atoms) != sorted(ref_atoms):
-                raise ValueError(
+                _raise_or_warn(
                     "element composition mismatch (chains mode requires equal element counts):\n"
                     f"File: {fp}"
                 )
+                return
         else:
-            # 默认严格要求原子顺序一致
+            # Default: strictly require same atom ordering
             if atoms != ref_atoms:
                 diffs = []
                 for i, (a1, a2) in enumerate(zip(atoms, ref_atoms)):
@@ -64,14 +89,15 @@ def validate_inputs_compatible(
                         diffs.append(f"#{i+1} {a1} vs {a2}")
                         if len(diffs) >= 3:
                             break
-                raise ValueError(
+                _raise_or_warn(
                     "all inputs must have the same atom count and element order.\n"
                     "element order mismatch (multi-input mode requires full match):\n"
                     f"File: {fp}\nDifference: {', '.join(diffs)}..."
                 )
+                return
 
     # -------------------------------------------------------------------------
-    # 柔性链一致性检查（如果有 confgen 参数）
+    # Flexible chain consistency check (if confgen params are present)
     # -------------------------------------------------------------------------
     if confgen_params and "chains" in confgen_params:
         chains = as_list(confgen_params.get("chains"))
@@ -82,16 +108,20 @@ def validate_inputs_compatible(
                 validator = ChainValidator(chains)
                 bond_threshold = float(confgen_params.get("bond_threshold", 1.15))
 
-                # 仅检查第一个输入文件中的链合法性与成键性
+                # Only validate chain legality and bonding in the first input file
                 ref_fp = input_files[0]
                 mol = load_mol_from_xyz(ref_fp, bond_threshold)
                 ref_data = validator.validate_mol(mol, ref_fp)
                 invalid = [d for d in ref_data if not d.get("valid")]
                 if invalid:
                     messages = [f"{d.get('raw_chain')}: {d.get('error')}" for d in invalid]
-                    raise ValueError(
-                        "柔性链在参考输入文件中无效：\n" + "\n".join(messages)
+                    _raise_or_warn(
+                        "Flexible chains are invalid in the reference input file:\n"
+                        + "\n".join(messages)
                     )
-            except Exception as e:
-                if isinstance(e, ValueError):
-                    raise
+                    return
+            except ValueError:
+                raise
+            except (OSError, RuntimeError) as e:
+                _raise_or_warn(f"failed to validate flexible chains: {e}")
+                return

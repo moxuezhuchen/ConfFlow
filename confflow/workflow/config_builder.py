@@ -1,14 +1,32 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 
-"""Workflow 配置构建模块"""
+"""Workflow configuration builder module."""
+
+from __future__ import annotations
 
 import os
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any
+
+from ..calc import format_orca_blocks
+from ..config.defaults import (
+    DEFAULT_CHARGE,
+    DEFAULT_CORES_PER_TASK,
+    DEFAULT_ENABLE_DYNAMIC_RESOURCES,
+    DEFAULT_MAX_PARALLEL_JOBS,
+    DEFAULT_MULTIPLICITY,
+    DEFAULT_TOTAL_MEMORY,
+)
 from ..config.loader import load_workflow_config_file
 from ..core.utils import parse_itask
-from ..calc.components.input_helpers import format_orca_blocks
+
+__all__ = [
+    "sanitize_step_dir_name",
+    "build_step_dir_name_map",
+    "load_workflow_config",
+    "build_task_config",
+    "create_runtask_config",
+]
 
 
 def sanitize_step_dir_name(name: Any, fallback: str) -> str:
@@ -26,15 +44,16 @@ def sanitize_step_dir_name(name: Any, fallback: str) -> str:
     return safe or fallback
 
 
-def build_step_dir_name_map(steps: List[Dict[str, Any]]) -> tuple[List[str], Dict[str, str]]:
+def build_step_dir_name_map(steps: list[dict[str, Any]]) -> tuple[list[str], dict[str, str]]:
     """Build deterministic, unique directory names for workflow steps.
 
-    Returns:
+    Returns
+    -------
         (dirnames_by_index, first_match_by_step_name)
     """
-    used: Dict[str, int] = {}
-    dirnames: List[str] = []
-    by_name: Dict[str, str] = {}
+    used: dict[str, int] = {}
+    dirnames: list[str] = []
+    by_name: dict[str, str] = {}
 
     for idx, step in enumerate(steps, start=1):
         step_name = str(step.get("name", "")).strip()
@@ -78,22 +97,39 @@ def _itask_label(itask: Any) -> str:
     return mapping.get(s, str(itask).strip())
 
 
-def load_workflow_config(config_file: str) -> Dict[str, Any]:
-    """加载工作流配置文件"""
+def load_workflow_config(config_file: str) -> dict[str, Any]:
+    """Load a workflow configuration file."""
     return load_workflow_config_file(config_file)
 
 
 def build_task_config(
-    params: Dict[str, Any],
-    global_config: Dict[str, Any],
-    root_dir: Optional[str] = None,
-    all_steps: Optional[List[Dict[str, Any]]] = None,
-) -> Dict[str, str]:
-    """将 workflow YAML 参数规范化为 calc 模块可消费的 dict 配置。
+    params: dict[str, Any],
+    global_config: dict[str, Any],
+    root_dir: str | None = None,
+    all_steps: list[dict[str, Any]] | None = None,
+) -> dict[str, str]:
+    """Normalize workflow YAML parameters into a flat dict consumable by the calc module.
 
-    替代原有的 create_runtask_config()，直接生成扁平的 Dict[str, str]。
+    Replaces the legacy ``create_runtask_config()`` by directly producing
+    a ``Dict[str, str]``.
+
+    Parameters
+    ----------
+    params : dict
+        Step-level parameters from the YAML config.
+    global_config : dict
+        Global configuration section.
+    root_dir : str or None
+        Workflow root directory (used for cross-step chk resolution).
+    all_steps : list of dict or None
+        All workflow steps (used for cross-step chk resolution).
+
+    Returns
+    -------
+    dict of str
+        Flat configuration dictionary.
     """
-    # 处理跨步骤 chk 输入
+    # Handle cross-step chk input
     final_params = dict(params)
     chk_from = (
         params.get("chk_from_step")
@@ -110,18 +146,18 @@ def build_task_config(
                 from_dir = step_dirs[idx - 1]
         else:
             from_dir = by_name.get(s)
-        
+
         if from_dir:
             final_params["input_chk_dir"] = os.path.join(root_dir, from_dir, "backups")
 
     params = final_params
 
-    def build_clean_opts(p: Dict[str, Any], gc: Dict[str, Any]) -> str:
+    def build_clean_opts(p: dict[str, Any], gc: dict[str, Any]) -> str:
         clean_params = p.get("clean_params")
         if clean_params:
             return str(clean_params)
 
-        opts: List[str] = []
+        opts: list[str] = []
         if p.get("dedup_only"):
             opts.append("--dedup-only")
         if p.get("keep_all_topos"):
@@ -150,14 +186,14 @@ def build_task_config(
             for x in val:
                 try:
                     nums.append(int(x))
-                except Exception:
+                except (ValueError, TypeError):
                     continue
         else:
             nums = []
             for m in re.findall(r"\d+", str(val)):
                 try:
                     nums.append(int(m))
-                except Exception:
+                except (ValueError, TypeError):
                     continue
         if len(nums) >= 2:
             a, b = nums[0], nums[1]
@@ -165,32 +201,44 @@ def build_task_config(
                 return f"{a},{b}"
         return None
 
-    # 初始化配置字典 (对应 INI 的 DEFAULT + Task)
-    config: Dict[str, str] = {
+    # Initialize configuration dict (corresponds to INI DEFAULT + Task sections)
+    config: dict[str, str] = {
         "gaussian_path": str(global_config.get("gaussian_path", "g16")),
         "orca_path": str(global_config.get("orca_path", "orca")),
-        "cores_per_task": str(params.get("cores_per_task", global_config.get("cores_per_task", 4))),
+        "cores_per_task": str(
+            params.get(
+                "cores_per_task", global_config.get("cores_per_task", DEFAULT_CORES_PER_TASK)
+            )
+        ),
         "total_memory": str(
             params.get(
                 "total_memory",
-                global_config.get("total_memory", global_config.get("mem_per_task", "4GB")),
+                global_config.get(
+                    "total_memory", global_config.get("mem_per_task", DEFAULT_TOTAL_MEMORY)
+                ),
             )
         ),
         "max_parallel_jobs": str(
-            params.get("max_parallel_jobs", global_config.get("max_parallel_jobs", 4))
+            params.get(
+                "max_parallel_jobs",
+                global_config.get("max_parallel_jobs", DEFAULT_MAX_PARALLEL_JOBS),
+            )
         ),
-        "charge": str(params.get("charge", global_config.get("charge", 0))),
-        "multiplicity": str(params.get("multiplicity", global_config.get("multiplicity", 1))),
+        "charge": str(params.get("charge", global_config.get("charge", DEFAULT_CHARGE))),
+        "multiplicity": str(
+            params.get("multiplicity", global_config.get("multiplicity", DEFAULT_MULTIPLICITY))
+        ),
         "enable_dynamic_resources": str(
             params.get(
-                "enable_dynamic_resources", global_config.get("enable_dynamic_resources", False)
+                "enable_dynamic_resources",
+                global_config.get("enable_dynamic_resources", DEFAULT_ENABLE_DYNAMIC_RESOURCES),
             )
         ).lower(),
         "auto_clean": "true",
         "delete_work_dir": "true",
     }
 
-    # 处理 input_chk_dir / gaussian_write_chk
+    # Handle input_chk_dir / gaussian_write_chk
     for key in ["input_chk_dir", "gaussian_write_chk"]:
         val = params.get(key, global_config.get(key))
         if val is not None and str(val).strip() != "":
@@ -206,12 +254,12 @@ def build_task_config(
     itask_int = parse_itask(params.get("itask", "opt"))
     itask_str = _itask_label(params.get("itask", "opt"))
 
-    # freeze 只对 opt/opt_freq 生效
+    # freeze only applies to opt/opt_freq
     if itask_int in [0, 3]:
         freeze_val = params.get("freeze", global_config.get("freeze", "0"))
     else:
         freeze_val = "0"
-    
+
     if isinstance(freeze_val, list):
         freeze_val = ",".join(str(x) for x in freeze_val)
     elif freeze_val is None:
@@ -225,11 +273,9 @@ def build_task_config(
     config["clean_opts"] = str(build_clean_opts(params, global_config))
 
     # TS: rescue + scan params
-    ts_pair = _parse_two_atom_indices(params.get("ts_bond_atoms", params.get("ts_bond")))
+    ts_pair = _parse_two_atom_indices(params.get("ts_bond_atoms"))
     if ts_pair is None:
-        ts_pair = _parse_two_atom_indices(
-            global_config.get("ts_bond_atoms", global_config.get("ts_bond"))
-        )
+        ts_pair = _parse_two_atom_indices(global_config.get("ts_bond_atoms"))
     if ts_pair is None:
         ts_pair = _parse_two_atom_indices(params.get("freeze", global_config.get("freeze")))
 
@@ -237,7 +283,7 @@ def build_task_config(
         config["ts_bond_atoms"] = ts_pair
 
     if itask_int == 4:
-        rescue_val = params.get("ts_rescue_scan", global_config.get("ts_rescue_scan", True))
+        rescue_val = params.get("ts_rescue_scan", global_config.get("ts_rescue_scan", False))
         config["ts_rescue_scan"] = str(bool(rescue_val)).lower()
 
         for k in [
@@ -253,7 +299,7 @@ def build_task_config(
             if val is not None:
                 config[k] = str(val)
 
-    # 任务关键字与 Block
+    # Task keyword and block
     kw = params.get("keyword", global_config.get("keyword"))
     if kw:
         config["keyword"] = str(kw)
@@ -269,10 +315,18 @@ def build_task_config(
         if k in params:
             config[k] = str(params[k])
 
-    # 捕捉其他可能缺失的参数
+    # Capture any other parameters that may be missing
     excluded = {
-        "itask", "iprog", "freeze", "clean_params", "rmsd_threshold", "energy_window",
-        "blocks", "keyword", "solvent_block", "custom_block"
+        "itask",
+        "iprog",
+        "freeze",
+        "clean_params",
+        "rmsd_threshold",
+        "energy_window",
+        "blocks",
+        "keyword",
+        "solvent_block",
+        "custom_block",
     }
     for k, v in params.items():
         if k not in config and k not in excluded and v is not None:
@@ -281,27 +335,44 @@ def build_task_config(
     return {k: v for k, v in config.items() if v is not None and v != ""}
 
 
-def create_runtask_config(filename: str, params: Dict[str, Any], global_config: Dict[str, Any]):
-    """旧代码兼容：将 build_task_config 生成的字典写入 INI 文件。"""
+def create_runtask_config(filename: str, params: dict[str, Any], global_config: dict[str, Any]):
+    """Legacy compatibility: write build_task_config output to an INI file."""
     import configparser
+
     config_dict = build_task_config(params, global_config)
-    
+
     cfg = configparser.ConfigParser(interpolation=None)
     cfg.optionxform = str
-    
-    # 拆分项到 DEFAULT 和 Task
+
+    # Split entries into DEFAULT and Task sections
     default_keys = {
-        "gaussian_path", "orca_path", "cores_per_task", "total_memory",
-        "max_parallel_jobs", "charge", "multiplicity", "enable_dynamic_resources",
-        "auto_clean", "delete_work_dir", "input_chk_dir", "gaussian_write_chk",
-        "ts_bond_atoms", "orca_maxcore", "ts_rescue_scan", "scan_coarse_step",
-        "scan_fine_step", "scan_uphill_limit", "scan_max_steps",
-        "scan_fine_half_window", "ts_rescue_keep_scan_dirs", "ts_rescue_scan_backup"
+        "gaussian_path",
+        "orca_path",
+        "cores_per_task",
+        "total_memory",
+        "max_parallel_jobs",
+        "charge",
+        "multiplicity",
+        "enable_dynamic_resources",
+        "auto_clean",
+        "delete_work_dir",
+        "input_chk_dir",
+        "gaussian_write_chk",
+        "ts_bond_atoms",
+        "orca_maxcore",
+        "ts_rescue_scan",
+        "scan_coarse_step",
+        "scan_fine_step",
+        "scan_uphill_limit",
+        "scan_max_steps",
+        "scan_fine_half_window",
+        "ts_rescue_keep_scan_dirs",
+        "ts_rescue_scan_backup",
     }
-    
+
     cfg["DEFAULT"] = {k: v for k, v in config_dict.items() if k in default_keys}
     cfg["Task"] = {k: v for k, v in config_dict.items() if k not in default_keys}
-    
+
     os.makedirs(os.path.dirname(filename) or ".", exist_ok=True)
     with open(filename, "w", encoding="utf-8") as f:
         cfg.write(f)
