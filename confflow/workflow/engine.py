@@ -342,7 +342,8 @@ def run_workflow(
                 "energy": best_energy,
                 "xyz_path": lowest_path,
             }
-            logger.info(f"Lowest-energy conformer written: {lowest_path}")
+            logger.info("Lowest-energy conformer written:")
+            logger.info("  %s", lowest_path)
 
     # Write final statistics
     stats_file = os.path.join(root_dir, "workflow_stats.json")
