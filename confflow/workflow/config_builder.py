@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 from typing import Any
@@ -15,10 +16,13 @@ from ..config.defaults import (
     DEFAULT_ENABLE_DYNAMIC_RESOURCES,
     DEFAULT_MAX_PARALLEL_JOBS,
     DEFAULT_MULTIPLICITY,
+    DEFAULT_RESUME_FROM_BACKUPS,
     DEFAULT_TOTAL_MEMORY,
 )
 from ..config.loader import load_workflow_config_file
 from ..core.utils import parse_itask
+
+logger = logging.getLogger("confflow.workflow.config_builder")
 
 __all__ = [
     "sanitize_step_dir_name",
@@ -131,11 +135,7 @@ def build_task_config(
     """
     # Handle cross-step chk input
     final_params = dict(params)
-    chk_from = (
-        params.get("chk_from_step")
-        or params.get("input_chk_from_step")
-        or params.get("read_chk_from_step")
-    )
+    chk_from = params.get("chk_from_step")
     if chk_from and root_dir and all_steps:
         step_dirs, by_name = build_step_dir_name_map(all_steps)
         from_dir = None
@@ -173,8 +173,11 @@ def build_task_config(
         if rmsd is not None:
             opts.append(f"-t {rmsd}")
 
-        if "energy_window" in p and p.get("energy_window") is not None:
-            opts.append(f"-ewin {p['energy_window']}")
+        ewin = p.get("energy_window")
+        if ewin is None:
+            ewin = gc.get("energy_window")
+        if ewin is not None:
+            opts.append(f"-ewin {ewin}")
 
         etol = p.get("energy_tolerance")
         if etol is None:
@@ -219,9 +222,7 @@ def build_task_config(
         "total_memory": str(
             params.get(
                 "total_memory",
-                global_config.get(
-                    "total_memory", global_config.get("mem_per_task", DEFAULT_TOTAL_MEMORY)
-                ),
+                global_config.get("total_memory", DEFAULT_TOTAL_MEMORY),
             )
         ),
         "max_parallel_jobs": str(
@@ -238,6 +239,12 @@ def build_task_config(
             params.get(
                 "enable_dynamic_resources",
                 global_config.get("enable_dynamic_resources", DEFAULT_ENABLE_DYNAMIC_RESOURCES),
+            )
+        ).lower(),
+        "resume_from_backups": str(
+            params.get(
+                "resume_from_backups",
+                global_config.get("resume_from_backups", DEFAULT_RESUME_FROM_BACKUPS),
             )
         ).lower(),
         "auto_clean": "true",
@@ -293,6 +300,8 @@ def build_task_config(
         config["ts_rescue_scan"] = str(bool(rescue_val)).lower()
 
         for k in [
+            "ts_bond_drift_threshold",
+            "ts_rmsd_threshold",
             "scan_coarse_step",
             "scan_fine_step",
             "scan_uphill_limit",
@@ -317,25 +326,39 @@ def build_task_config(
         else:
             config["blocks"] = str(blocks)
 
-    for k in ["solvent_block", "custom_block"]:
-        if k in params:
-            config[k] = str(params[k])
-
-    # Capture any other parameters that may be missing
-    excluded = {
-        "itask",
-        "iprog",
-        "freeze",
-        "clean_params",
-        "rmsd_threshold",
-        "energy_window",
+    # Known calc parameters — unknown keys are warned and ignored
+    _KNOWN_CALC_PARAMS = {
+        # Core
+        "iprog", "itask", "keyword",
+        # Resources
+        "cores_per_task", "total_memory", "max_parallel_jobs",
+        # Molecule
+        "charge", "multiplicity", "freeze",
+        # Dedup / clean
+        "energy_window", "rmsd_threshold", "noH", "dedup_only", "keep_all_topos",
+        "max_conformers", "imag", "energy_tolerance", "clean_params",
+        # Programs
+        "gaussian_path", "orca_path", "orca_maxcore",
+        # Blocks
         "blocks",
-        "keyword",
-        "solvent_block",
-        "custom_block",
+        # Gaussian-specific
+        "gaussian_write_chk", "gaussian_modredundant", "gaussian_link0",
+        # Cross-step chk
+        "chk_from_step",
+        # TS
+        "ts_bond_atoms", "ts_rescue_scan", "ts_bond_drift_threshold", "ts_rmsd_threshold",
+        "scan_coarse_step", "scan_fine_step", "scan_uphill_limit", "scan_max_steps",
+        "scan_fine_half_window", "ts_rescue_keep_scan_dirs", "ts_rescue_scan_backup",
+        # Backup / misc
+        "ibkout",
+        # Feature flags
+        "enable_dynamic_resources", "resume_from_backups",
     }
     for k, v in params.items():
-        if k not in config and k not in excluded and v is not None:
+        if k not in _KNOWN_CALC_PARAMS:
+            logger.warning("build_task_config: unknown parameter '%s' ignored", k)
+            continue
+        if k not in config and v is not None:
             config[k] = str(v)
 
     return {k: v for k, v in config.items() if v is not None and v != ""}

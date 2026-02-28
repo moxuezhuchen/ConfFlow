@@ -22,10 +22,11 @@ pytest tests/ -m "not integration"
 
 | 指标 | 数值 |
 |------|------|
-| 总测试数 | 465 |
-| 测试文件 | 28 |
+| 总测试数 | 529 |
+| 测试文件 | 31 |
 | 通过率 | 100% |
-| 运行时间 | ~6s |
+| 分支覆盖率 | 84.92% |
+| 运行时间 | ~7s |
 
 ---
 
@@ -38,7 +39,7 @@ pytest tests/ -m "not integration"
 | `test_core.py` | config/schema, package exports | 配置归一化、包导出、低能量溯源 |
 | `test_io.py` | core/io | XYZ 文件读写、元数据解析、键长计算 |
 | `test_data.py` | core/data | 共价半径、元素符号、原子序数 |
-| `test_models.py` | core/models | TaskContext Pydantic 模型 |
+| `test_models.py` | core/models | TaskContext、GlobalConfigModel、CalcConfigModel |
 | `test_console.py` | core/console | 控制台输出格式化 |
 | `test_contracts.py` | core/contracts | 输入/输出契约验证 |
 | `test_keyword_rewrite.py` | core/keyword_rewrite | TS→scan 关键字改写 |
@@ -70,7 +71,7 @@ pytest tests/ -m "not integration"
 
 | 文件 | 覆盖模块 | 说明 |
 |------|----------|------|
-| `test_confgen_refine_fallbacks.py` | confgen, refine | numba 缺失时的纯 Python 回退路径 |
+| `test_confgen_refine_fallbacks.py` | confgen, refine | 回退路径、RMSD/collision 边界测试 |
 
 ### 量化计算 (`calc/`)
 
@@ -88,6 +89,7 @@ pytest tests/ -m "not integration"
 | 文件 | 覆盖模块 | 说明 |
 |------|----------|------|
 | `test_engine.py` | workflow/engine, helpers | 工作流引擎、断点恢复、步骤调度 |
+| `test_step_handlers.py` | workflow/step_handlers | 步骤执行适配器（confgen/calc 步骤） |
 | `test_runtime_context.py` | workflow/runtime_context | 运行时上下文初始化 |
 | `test_presenter.py` | workflow/presenter | 步骤展示与报告输出 |
 

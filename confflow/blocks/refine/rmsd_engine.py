@@ -25,7 +25,7 @@ try:
     from ...core.console import create_progress
 except (ImportError, ModuleNotFoundError):
 
-    def create_progress():  # type: ignore[misc]
+    def create_progress():  # type: ignore[no-redef]
         return type(
             "Mock",
             (),
@@ -43,7 +43,7 @@ try:
     from ...core.utils import get_numba_jit
 except (ImportError, ModuleNotFoundError):
 
-    def get_numba_jit(logger_name: str = "confflow"):  # type: ignore[misc]
+    def get_numba_jit(logger_name: str = "confflow"):  # type: ignore[no-redef]
         class FakeNumba:
             __name__ = "FakeNumba"
 

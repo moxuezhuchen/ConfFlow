@@ -168,7 +168,7 @@ def test_create_runtask_config(tmp_path):
     global_cfg = {
         "gaussian_path": "/usr/bin/g16",
         "orca_path": "/usr/bin/orca",
-        "mem_per_task": "8GB",
+        "total_memory": "8GB",
     }
 
     create_runtask_config(str(ini_path), params, global_cfg)

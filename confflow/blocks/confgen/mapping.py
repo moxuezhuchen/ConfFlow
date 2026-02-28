@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+"""MCS-based atom mapping and chain index transfer between molecules."""
+
 from __future__ import annotations
 
 import logging

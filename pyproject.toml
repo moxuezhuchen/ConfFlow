@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "confflow"
-version = "1.0"
+version = "1.0.10"
 description = "Automated molecular conformation search workflow engine for computational chemistry"
 readme = "README.md"
 license = {text = "MIT"}
@@ -105,8 +105,9 @@ select = ["E", "F", "I", "B", "UP", "D"]
 # E501 (line-too-long) is intentionally delegated to black, which enforces the 100-char
 # limit during formatting.  Enabling it here would produce duplicate/spurious warnings
 # for long strings and URLs that black cannot auto-wrap.
-# D1xx (missing-docstring) rules are deferred until full docstring coverage is achieved.
-ignore = ["E501", "D100", "D101", "D102", "D103", "D104", "D105", "D107"]
+# D100/D104 now enforced (module & package docstrings complete).
+# D101-D107 (class/method/function/__init__/magic) deferred — see DEVELOPMENT.md.
+ignore = ["E501", "D101", "D102", "D103", "D105", "D107"]
 
 [tool.ruff.lint.pydocstyle]
 convention = "numpy"

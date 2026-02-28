@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+"""Rich console output utilities and formatting helpers."""
+
 from __future__ import annotations
 
 import io
@@ -414,7 +416,7 @@ class CalcProgressReporter:
         self._fail = 0
         self._start: float = 0.0
 
-    def __enter__(self) -> "CalcProgressReporter":
+    def __enter__(self) -> CalcProgressReporter:
         self._start = time.time()
         return self
 

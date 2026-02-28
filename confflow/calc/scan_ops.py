@@ -97,7 +97,7 @@ def _read_gaussian_input_coords(path: str) -> list[str] | None:
             return None
         res = io_xyz.parse_gaussian_input(path)
         return res.get("raw_coords_lines")
-    except Exception as e:
+    except (OSError, ValueError, IndexError, KeyError) as e:
         logger.debug(f"Failed to parse Gaussian input coordinates ({path}): {e}")
         return None
 
@@ -122,7 +122,7 @@ def _find_failed_ts_input_coords(wd: str, job: str, cfg: dict[str, Any]) -> list
             if coords:
                 return coords
         return None
-    except Exception as e:
+    except (OSError, ValueError, IndexError) as e:
         logger.debug(f"Failed to find input coordinates for failed TS: {e}")
         return None
 
@@ -142,7 +142,7 @@ def _write_ts_failure_report(work_dir: str, job_name: str, stage: str, message: 
             f.write(f"[{ts}] {job_name} | {stage} | {message}\n")
     except OSError as e:
         logger.warning(f"Failed to write TS failure report (I/O error): {e}")
-    except Exception as e:
+    except (UnicodeError, TypeError) as e:
         logger.warning(f"Failed to write TS failure report (exception): {e}")
 
 
@@ -156,7 +156,8 @@ def _write_scan_marker(scan_dir: str, job_name: str, message: str) -> None:
         ts = datetime.now().isoformat(timespec="seconds")
         with open(path, "w", encoding="utf-8") as f:
             f.write(f"[{ts}] {job_name}: {message}\n")
-    except Exception:
+    except (OSError, UnicodeError) as e:
+        logger.debug(f"Failed to write scan marker for {job_name}: {e}")
         return
 
 

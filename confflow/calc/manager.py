@@ -21,7 +21,6 @@ from typing import Any
 from ..core import io as io_xyz
 from ..core import models
 from ..core.cli_base import require_existing_path
-
 from ..core.console import CalcProgressReporter, console, error
 from ..core.contracts import ExitCode, cli_output_to_txt
 from .analysis import _bond_length_from_xyz_lines, _parse_ts_bond_atoms
@@ -41,7 +40,8 @@ logger = logging.getLogger("confflow.calc.manager")
 
 
 def _run_task(task_info: models.TaskContext | dict[str, Any]) -> dict[str, Any]:
-    return TaskRunner().run(task_info)  # type: ignore[no-any-return]
+    result = TaskRunner().run(task_info)
+    return result if isinstance(result, dict) else {}
 
 
 class ChemTaskManager:
@@ -400,24 +400,7 @@ class ChemTaskManager:
             from ..blocks import refine  # Lazy import, only triggered when called directly via CLI
 
             opts_str = self.config.get("clean_opts", "-t 0.25")
-            thresh = 0.25
-            ewin = None
-            if "-t" in opts_str:
-                try:
-                    thresh = float(opts_str.split("-t")[1].split()[0])
-                except (IndexError, ValueError) as e:
-                    logger.debug(f"failed to parse clean_opts -t: {e}")
-            if "-ewin" in opts_str:
-                try:
-                    ewin = float(opts_str.split("-ewin")[1].split()[0])
-                except (IndexError, ValueError) as e:
-                    logger.debug(f"clean_opts -ewin parse failed: {e}")
-            etol = 0.05
-            if "--energy-tolerance" in opts_str:
-                try:
-                    etol = float(opts_str.split("--energy-tolerance")[1].split()[0])
-                except (IndexError, ValueError) as e:
-                    logger.debug(f"clean_opts --energy-tolerance parse failed: {e}")
+            thresh, ewin, etol = self._parse_clean_opts(opts_str)
             task_cores = int(self.config.get("cores_per_task", 1))
             clean_args = refine.RefineOptions(
                 input_file=out_file,
@@ -430,6 +413,68 @@ class ChemTaskManager:
             refine.process_xyz(clean_args)
         except Exception as e:
             error(f"Refine auto-clean failed: {e}")
+
+    @staticmethod
+    def _parse_clean_opts(opts_str: str) -> tuple[float, float | None, float]:
+        """Parse clean_opts string into (threshold, ewin, energy_tolerance).
+
+        Uses shlex-based tokenization for robust flag parsing instead of
+        fragile str.split() substring matching.
+        """
+        import shlex
+
+        thresh = 0.25
+        ewin: float | None = None
+        etol = 0.05
+
+        try:
+            tokens = shlex.split(opts_str)
+        except ValueError:
+            tokens = opts_str.split()
+
+        i = 0
+        while i < len(tokens):
+            tok = tokens[i]
+            if tok == "-t" and i + 1 < len(tokens):
+                try:
+                    thresh = float(tokens[i + 1])
+                except (ValueError, TypeError):
+                    pass
+                i += 2
+            elif tok == "-ewin" and i + 1 < len(tokens):
+                try:
+                    ewin = float(tokens[i + 1])
+                except (ValueError, TypeError):
+                    pass
+                i += 2
+            elif tok == "--energy-tolerance" and i + 1 < len(tokens):
+                try:
+                    etol = float(tokens[i + 1])
+                except (ValueError, TypeError):
+                    pass
+                i += 2
+            elif tok.startswith("-t="):
+                try:
+                    thresh = float(tok.split("=", 1)[1])
+                except (ValueError, IndexError):
+                    pass
+                i += 1
+            elif tok.startswith("-ewin="):
+                try:
+                    ewin = float(tok.split("=", 1)[1])
+                except (ValueError, IndexError):
+                    pass
+                i += 1
+            elif tok.startswith("--energy-tolerance="):
+                try:
+                    etol = float(tok.split("=", 1)[1])
+                except (ValueError, IndexError):
+                    pass
+                i += 1
+            else:
+                i += 1
+
+        return thresh, ewin, etol
 
     # ------------------------------------------------------------------
     # Main entry point

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+"""CLI output contracts and exit code definitions."""
 
 from __future__ import annotations
 
@@ -37,9 +38,9 @@ def output_txt_path_for_input(input_path: str) -> str:
 
 @contextmanager
 def cli_output_to_txt(input_path: str) -> Iterator[str]:
-    """Context manager that redirects all stdout/stderr to a plain-text .txt
-    file.  The terminal receives no output.
+    """Redirect all stdout/stderr to a plain-text .txt file.
 
+    The terminal receives no output.
     The .txt file path is ``<input_stem>.txt`` next to the input file.
     """
     output_path = output_txt_path_for_input(input_path)

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+"""Atom pair list normalization utilities."""
 
 from __future__ import annotations
 

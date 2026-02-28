@@ -82,8 +82,6 @@ class ConfigSchema:
         "iprog",
         "itask",
         "blocks",
-        "solvent_block",
-        "custom_block",
     }
 
     @classmethod

@@ -74,7 +74,9 @@ class WorkflowStatsTracker:
         }
 
     def add_step(self, step_stats: dict[str, Any]) -> None:
-        self.stats["steps"].append(step_stats)  # type: ignore[attr-defined]
+        steps = self.stats["steps"]
+        if isinstance(steps, list):
+            steps.append(step_stats)
 
     def finalize(self, final_output: Any) -> dict[str, Any]:
         self.stats["end_time"] = datetime.now().isoformat()

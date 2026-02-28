@@ -13,7 +13,6 @@ from typing import Any
 from ..components.input_helpers import (
     compute_gaussian_mem,
     gaussian_apply_freeze,
-    normalize_blocks,
     normalize_gaussian_keyword,
     parse_freeze_indices,
 )
@@ -29,7 +28,7 @@ __all__ = [
 ]
 
 try:
-    import psutil  # type: ignore
+    import psutil  # type: ignore[import-untyped]
 except ImportError:
     psutil = None
 
@@ -64,20 +63,12 @@ class GaussianPolicy(CalculationPolicy):
         charge = config.get("charge", 0)
         multiplicity = config.get("multiplicity", 1)
 
-        solvent_block, custom_block = normalize_blocks(
-            config.get("solvent_block", ""), config.get("custom_block", "")
-        )
-        blocks_str = config.get("blocks", "")
-        if isinstance(blocks_str, dict):  # Extremely rare, but for robustness
-            from ..components.input_helpers import format_orca_blocks
-
-            blocks_str = format_orca_blocks(blocks_str)
-
-        extra_section = solvent_block + custom_block
-        if blocks_str:
-            if extra_section and not extra_section.endswith("\n"):
-                extra_section += "\n"
-            extra_section += str(blocks_str).strip() + "\n"
+        blocks_raw = config.get("blocks", "")
+        if isinstance(blocks_raw, dict):
+            from ..components.input_helpers import format_orca_blocks as _fmt_blocks
+            blocks_raw = _fmt_blocks(blocks_raw)
+        blocks_raw = str(blocks_raw or "").strip()
+        extra_section = (blocks_raw + "\n") if blocks_raw else ""
 
         # Handle modredundant input
         mr = config.get("gaussian_modredundant")

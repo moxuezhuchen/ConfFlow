@@ -34,12 +34,13 @@ pip install -e ".[dev]"
 ## 工程化改进（2026-02）
 
 - ✅ 统一构建与依赖管理：仅保留 `pyproject.toml`
-- ✅ 引入 `Pydantic v2`：核心上下文模型集中在 `confflow/core/models.py`
+- ✅ 引入 `Pydantic v2`：核心上下文模型集中在 `confflow/core/models.py`（含 `GlobalConfigModel`、`CalcConfigModel`）
 - ✅ 清理重复 I/O：统一复用 `confflow/core/io.py`
 - ✅ 进程终止增强：`cli` 使用 `psutil` 进行进程树回收
-- ✅ 测试架构重构：28 个聚焦测试文件、465 个测试、~6s 运行
-- ✅ 覆盖率基础设施：branch coverage + `fail_under = 70`
-- ✅ 测试回归通过：全量 465 passed，零失败
+- ✅ 测试架构重构：31 个测试文件、**529 个测试**、~7s 运行
+- ✅ 覆盖率：branch coverage **84.92%**（`fail_under = 70`）
+- ✅ 类型安全：mypy **0 错误**、ruff **0 警告**、裸 `type: ignore` **0 处**
+- ✅ 异常精确化：`scan_ops`/`executor`/`generator` 中 8 处 `except Exception` 收窄为具体异常
 - ✅ 构象去重精度提升：对称性感知 RMSD + 能量辅助阈值，解决大分子原子乱序/对称互换导致的去重漏判
 
 ## 目录清理

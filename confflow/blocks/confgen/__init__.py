@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+"""Conformer generation block."""
+
 from __future__ import annotations
 
 from .collision import check_clash_core as check_clash_core

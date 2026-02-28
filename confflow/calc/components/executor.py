@@ -27,7 +27,7 @@ __all__ = [
 ]
 
 try:
-    import psutil  # type: ignore
+    import psutil  # type: ignore[import-untyped]
 except ImportError:
     psutil = None
 
@@ -55,7 +55,7 @@ def handle_backups(
                 shutil.copytree(scan_src, scan_dst)
             except OSError as e:
                 logger.warning(f"Failed to back up scan directory: {e}")
-            except Exception as e:
+            except (ValueError, TypeError) as e:
                 logger.debug(f"Scan directory backup exception: {e}")
 
         # Compat: rescue writes ts_failures.txt (and possibly diagnostic .txt);
@@ -128,7 +128,7 @@ def prepare_task_inputs(work_dir: str, job_name: str, config: dict[str, Any]) ->
         # Make GaussianPolicy emit %OldChk and also ensure %Chk is written for this step.
         config["gaussian_oldchk"] = dst_name
         config.setdefault("gaussian_write_chk", "true")
-    except Exception as e:
+    except (OSError, shutil.SameFileError) as e:
         logger.debug(f"prepare_task_inputs failed for {job_name}: {e}")
 
 
@@ -189,5 +189,5 @@ def _save_config_hash(work_dir: str, config: dict[str, Any]):
         h = hashlib.md5(f"{config.get('itask')}_{config.get('iprog')}".encode()).hexdigest()[:8]
         with open(os.path.join(work_dir, ".config_hash"), "w") as f:
             f.write(h)
-    except Exception as e:
+    except (OSError, ValueError, TypeError) as e:
         logger.debug(f"Config hash save failed: {e}")

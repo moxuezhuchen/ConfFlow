@@ -27,7 +27,7 @@ __all__ = [
 ]
 
 try:
-    import psutil  # type: ignore
+    import psutil  # type: ignore[import-untyped]
 except ImportError:
     psutil = None
 
@@ -60,11 +60,6 @@ class OrcaPolicy(CalculationPolicy):
 
         # Unified Block Management
         blocks_config = config.get("blocks", "")
-        # Compat: if blocks is empty, try reading from solvent_block/custom_block
-        if not blocks_config:
-            s_block = config.get("solvent_block", "").strip()
-            c_block = config.get("custom_block", "").strip()
-            blocks_config = "\n".join(b for b in [s_block, c_block] if b)
 
         blocks_dict = {}
         # Note: values read from ConfigParser are always strings, unless

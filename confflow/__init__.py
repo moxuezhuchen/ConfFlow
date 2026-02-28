@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-__version__ = "1.0"
+__version__ = "1.0.10"
 __author__ = "ConfFlow Team"
 
 # ============================================================================
@@ -19,8 +19,8 @@ try:
     RDKIT_AVAILABLE = True
 except ImportError:
     RDKIT_AVAILABLE = False
-    Chem = None  # type: ignore
-    AllChem = None  # type: ignore
+    Chem = None  # type: ignore[assignment]
+    AllChem = None  # type: ignore[assignment]
 
 # psutil - resource monitoring (optional)
 try:
@@ -29,7 +29,7 @@ try:
     PSUTIL_AVAILABLE = True
 except ImportError:
     PSUTIL_AVAILABLE = False
-    psutil = None  # type: ignore
+    psutil = None  # type: ignore[assignment]
 
 # numba - JIT acceleration (optional)
 try:

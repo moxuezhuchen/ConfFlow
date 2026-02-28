@@ -20,23 +20,19 @@ from .. import calc
 from ..blocks import confgen, viz
 from ..config.schema import ConfigSchema
 from ..core import io as io_xyz
-from ..core.console import console
-
-# Import extracted modules
 from ..core.pairs import normalize_pair_list
 from ..core.types import TaskStatus
 from ..core.utils import (
-    format_duration_hms,
     get_logger,
     index_to_letter_prefix,
 )
+from .config_builder import _itask_label as _itask_label  # re-export for test compatibility
+from .config_builder import _normalize_iprog_label as _normalize_iprog_label  # re-export
 from .config_builder import (
     build_step_dir_name_map,
     build_task_config,
     load_workflow_config,
 )
-from .config_builder import _itask_label as _itask_label  # re-export for test compatibility
-from .config_builder import _normalize_iprog_label as _normalize_iprog_label  # re-export
 from .helpers import as_list, count_conformers_any, is_multi_frame_any, pushd
 from .presenter import print_step_footer_block, print_step_header_block, print_workflow_start
 from .stats import (
@@ -279,7 +275,10 @@ def run_workflow(
                 if step_stats.get("status") != TaskStatus.SKIPPED:
                     step_stats["status"] = TaskStatus.COMPLETED
 
-            step_stats["output_xyz"] = os.path.abspath(current_input)
+            if isinstance(current_input, list):
+                step_stats["output_xyz"] = [os.path.abspath(p) for p in current_input]
+            else:
+                step_stats["output_xyz"] = os.path.abspath(current_input)
 
         except Exception as e:
             step_stats["status"] = TaskStatus.FAILED

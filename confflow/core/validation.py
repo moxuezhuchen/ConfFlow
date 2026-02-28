@@ -309,7 +309,7 @@ def validate_params(**validators: Callable[[Any, str], None]) -> Callable[[F], F
 
             return func(*args, **kwargs)
 
-        return wrapper  # type: ignore
+        return wrapper  # type: ignore[return-value]
 
     return decorator
 

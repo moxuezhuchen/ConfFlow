@@ -1,5 +1,48 @@
 # ConfFlow 更新日志
 
+## v1.0.10 (2026-02-28)
+
+### 🔧 工程质量全面提升
+
+#### 测试增强（+49 tests → 529 passed）
+- **step_handlers 测试**：新增 `test_step_handlers.py`（12 个测试），覆盖 `run_confgen_step` / `run_calc_step` 的正常、跳过、失败、默认参数等路径，消除 0% 覆盖盲区
+- **Pydantic 配置模型测试**：新增 `TestGlobalConfigModel`（12 tests）+ `TestCalcConfigModel`（8 tests），验证字段默认值、强制转换、类型校验、序列化
+- **RMSD/collision 边界测试**：新增 14 个测试覆盖 `greedy_permutation_rmsd`、`get_principal_axes`、`check_one_against_many`、`get_topology_hash_worker`、`collision` 边界路径
+
+#### 异常处理精确化
+- **scan_ops.py**：4 处 `except Exception` → 具体类型 `(OSError, ValueError, IndexError, KeyError)` + `logger.debug()` 替代静默 `return`
+- **executor.py**：3 处 `except Exception` → `(ValueError, TypeError)` / `(OSError, shutil.SameFileError)`
+- **generator.py**：MMFF 优化 `except Exception` → `(RuntimeError, ValueError)`
+
+#### 类型安全
+- **mypy 错误清零**：修复 `engine.py` 中 `str|list[str]` 类型处理（1→0 errors）
+- **type: ignore 精确化**：27 处裸 `# type: ignore` → 全部使用具体错误码 `[assignment]`/`[no-redef]`/`[import-untyped]`/`[return-value]`，或通过 `isinstance` 运行时检查消除
+- **新增 Pydantic 配置模型**：`GlobalConfigModel`（15 字段 + 6 个 validator）+ `CalcConfigModel`（3 字段 + 3 个 validator）
+
+#### 代码重构
+- **`_auto_clean` 重构**（manager.py）：`str.split("-t")` 字符串分割 → `shlex.split()` + token 解析，支持 `-t 0.25` 和 `-t=0.25` 两种格式
+- **`StepContext` 数据类**（step_handlers.py）：封装 `run_calc_step` 的 8 个参数为结构化类型
+
+#### Lint 清零
+- **ruff 0 warnings**：修复 F401（未使用导入）、I001（导入排序）、UP037（引号注解）、D205（文档字符串格式）
+- **D100/D104 规则启用**：补充 12 个模块/包级 docstring，从 ignore 列表中移除 D100/D104
+
+#### 覆盖率提升
+- 分支覆盖率：83.61% → **84.92%**
+- `step_handlers.py` 从 0% 提升到有效覆盖
+
+### 🧪 验证结果
+
+| 指标 | v1.0.9 | v1.0.10 |
+|------|--------|---------|
+| 测试数 | 480 | **529** |
+| 覆盖率 | 83.61% | **84.92%** |
+| mypy 错误 | 1 | **0** |
+| ruff 警告 | 6 | **0** |
+| 裸 type: ignore | 14 | **0** |
+
+---
+
 ## v1.0.9 (2026-02-28)
 
 ### 🎯 构象去重精度提升

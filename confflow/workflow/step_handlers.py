@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import os
 import shutil
+from dataclasses import dataclass, field
 from typing import Any
 
 from .. import calc
@@ -18,9 +19,29 @@ from .helpers import as_list, is_multi_frame_any, pushd, resolve_step_output
 from .stats import FailureTracker
 
 __all__ = [
+    "StepContext",
     "run_confgen_step",
     "run_calc_step",
 ]
+
+
+@dataclass
+class StepContext:
+    """Encapsulates common parameters shared between step handler functions.
+
+    Reduces the parameter count of ``run_calc_step`` from 8 positional
+    arguments to a single context object, improving readability and
+    making it easier to add new context fields in the future.
+    """
+
+    step_dir: str
+    current_input: str | list[str]
+    params: dict[str, Any]
+    global_config: dict[str, Any] = field(default_factory=dict)
+    root_dir: str = ""
+    steps: list[dict[str, Any]] = field(default_factory=list)
+    failure_tracker: FailureTracker | None = None
+    step_name: str = ""
 
 
 def run_confgen_step(

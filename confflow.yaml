@@ -31,12 +31,12 @@ global:
   # energy_tolerance: 0.05      # RMSD 阈值松弛的能量容差 (kcal/mol)；ΔE ≤ tolerance 时阈值放宽 1.5 倍
   
   # --- TS 救援功能 ---
-  ts_rescue_scan: false         # TS 失败后自动 scan 救援（默认关闭）
-  ts_bond_drift_threshold: 0.4  # TS 几何判据：关键键长偏移阈值 (Å)
-  # ts_rmsd_threshold: 1.0      # TS 几何判据：整体 RMSD 阈值 (Å)
-  # scan_coarse_step: 0.1       # TS 救援粗扫步长 (Å)
-  # scan_fine_step: 0.02        # TS 救援细扫步长 (Å)
-  # scan_uphill_limit: 10       # 粗扫中连续能量上坡时停止的步数
+  # ts_rescue_scan: false         # TS 失败后自动 scan 救援（默认关闭）
+  # ts_bond_drift_threshold: 0.4  # TS 几何判据：关键键长偏移阈值 (Å)，matches default
+  # ts_rmsd_threshold: 1.0        # TS 几何判据：整体 RMSD 阈值 (Å)
+  # scan_coarse_step: 0.1         # TS 救援粗扫步长 (Å)
+  # scan_fine_step: 0.02          # TS 救援细扫步长 (Å)
+  # scan_uphill_limit: 10         # 粗扫中连续能量上坡时停止的步数
   
   # --- 高级选项 ---
   # enable_dynamic_resources: false      # 动态资源监控
@@ -58,7 +58,7 @@ steps:
     params:
       angle_step: 120
       bond_multiplier: 1.15  
-      optimize: false             # MMFF94s 力场预优化
+      # optimize: false           # MMFF94s 力场预优化（默认关闭）
       # clash_threshold: 0.65     # 碰撞阈值缩放系数
       # rotate_side: "left"       # 旋转哪一侧: "left" 或 "right"
       # validate_chain_bonds: false  # 多文件模式下校验链键合法性
@@ -97,13 +97,10 @@ steps:
       # clean_params: null       # 手动指定 clean_opts 字符串（覆盖自动生成）
       # --- ORCA 专用 ---
       # orca_maxcore: null       # ORCA maxcore (MB/core)，自动计算除非手动指定
-      # blocks: |                # ORCA 额外输入块
+      # blocks: |                # 附加输入块（溶剂模型、自定义块等）
       #   %scf
       #     MaxIter 300
       #   end
-      # --- 溶剂 / 自定义块 ---
-      # solvent_block: ""        # 溶剂模型块
-      # custom_block: ""         # 自定义输入块
   # --------------------------------------------------------------------------
   # 步骤 3: 低级单点能筛选
   # --------------------------------------------------------------------------
@@ -254,13 +251,13 @@ steps:
 # - gaussian_modredundant: null     # 额外 modredundant 输入行
 # - gaussian_link0: null            # 自定义 Link0 行
 #
-# 【ORCA 专用参数】
+# 【额外输入块】blocks（ORCA / Gaussian 通用）
 # - orca_maxcore: null    # 手动指定 maxcore (MB/core)，不设则自动计算
-# - blocks: |             # ORCA 额外输入块
-#
-# 【溶剂 / 自定义块】
-# - solvent_block: ""     # 溶剂模型块（Gaussian 兼容）
-# - custom_block: ""      # 自定义输入块
+# - blocks: |             # 附加输入块文本（ORCA %block 或 Gaussian section 均以此字段传入）
+#     %cpcm
+#       smd true
+#       SMDsolvent "toluene"
+#     end
 #
 # 【备份控制】
 # - ibkout: 1             # 0=不备份, 1=全部, 2=仅成功, 3=仅失败

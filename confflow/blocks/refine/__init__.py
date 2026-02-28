@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+"""Conformer refinement and RMSD filtering block."""
+
 from __future__ import annotations
 
 from .processor import RefineOptions as RefineOptions

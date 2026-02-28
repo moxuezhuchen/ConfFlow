@@ -110,7 +110,7 @@ def process_task(angle_combo):
             m_opt.AddConformer(temp_conf)
             AllChem.MMFFOptimizeMolecule(m_opt, maxIters=200, mmffVariant="MMFF94s")  # type: ignore[attr-defined]
             temp_conf = m_opt.GetConformer(0)
-        except Exception as e:
+        except (RuntimeError, ValueError) as e:
             logger = logging.getLogger("confflow.confgen")
             logger.debug(f"MMFF optimization failed: {e}")
 

@@ -14,7 +14,8 @@ from .cli import main as _cli_main
 
 def main(args_list: list | None = None) -> int:
     """Entry point function (returns exit code)."""
-    return _cli_main(args_list)  # type: ignore[no-any-return]
+    result = _cli_main(args_list)
+    return result if isinstance(result, int) else 0
 
 
 __all__ = [

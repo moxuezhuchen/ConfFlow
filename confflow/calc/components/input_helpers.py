@@ -29,7 +29,7 @@ except ImportError:  # pragma: no cover
 try:
     from ...core.utils import parse_index_spec
 except ImportError:  # pragma: no cover
-    parse_index_spec = None  # type: ignore
+    parse_index_spec = None  # type: ignore[assignment]
 
 __all__ = [
     "compute_gaussian_mem",
@@ -60,9 +60,7 @@ def _total_sys_mb(total_mem_str: Any) -> int:
 
 def compute_gaussian_mem(config: dict[str, Any]) -> str:
     max_jobs = int(config.get("max_parallel_jobs", 1))
-    total_mem_str = config.get(
-        "total_memory", config.get("mem_per_task", config.get("memory", DEFAULT_TOTAL_MEMORY))
-    )
+    total_mem_str = config.get("total_memory", config.get("memory", DEFAULT_TOTAL_MEMORY))
 
     sys_mb = _total_sys_mb(total_mem_str)
     mem_per_job_mb = sys_mb / max_jobs
@@ -75,7 +73,7 @@ def compute_gaussian_mem(config: dict[str, Any]) -> str:
 def compute_orca_maxcore(config: dict[str, Any]) -> str:
     cores = int(config.get("cores_per_task", 1))
     max_jobs = int(config.get("max_parallel_jobs", 1))
-    total_mem_str = config.get("total_memory", config.get("mem_per_task", DEFAULT_TOTAL_MEMORY))
+    total_mem_str = config.get("total_memory", DEFAULT_TOTAL_MEMORY)
 
     sys_mb = _total_sys_mb(total_mem_str)
     mem_per_job_mb = sys_mb / max_jobs

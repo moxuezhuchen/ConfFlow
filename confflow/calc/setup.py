@@ -25,14 +25,14 @@ try:
     )
 except ImportError:
     UTILS_AVAILABLE = False
-    parse_memory = None  # type: ignore
+    parse_memory = None  # type: ignore[assignment]
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
-    def get_logger():  # type: ignore
+    def get_logger():  # type: ignore[no-redef]
         return logging.getLogger("confflow.calc")
 
-    def utils_parse_itask(config: dict[str, Any]) -> int:  # type: ignore
+    def utils_parse_itask(config: dict[str, Any]) -> int:  # type: ignore[no-redef]
         val = config.get("itask", 3)
         if isinstance(val, int):
             return val
@@ -40,7 +40,7 @@ except ImportError:
             return int(val)
         return ITASK_MAP.get(str(val).lower(), 3)
 
-    def utils_parse_iprog(config: dict[str, Any]) -> int:  # type: ignore
+    def utils_parse_iprog(config: dict[str, Any]) -> int:  # type: ignore[no-redef]
         iprog_val = config.get("iprog", 1)
         if isinstance(iprog_val, str):
             prog_map = {"gaussian": 1, "g16": 1, "orca": 2}

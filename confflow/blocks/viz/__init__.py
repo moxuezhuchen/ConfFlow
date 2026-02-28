@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+"""Visualization and energy reporting block."""
+
 from __future__ import annotations
 
 from .report import generate_text_report as generate_text_report

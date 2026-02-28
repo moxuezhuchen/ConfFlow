@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+"""Calculation program policy registry."""
+
 from __future__ import annotations
 
 from .base import CalculationPolicy

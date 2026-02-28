@@ -19,7 +19,7 @@ confflow/
 │   ├── config/            # 配置加载与校验
 │   ├── core/              # 基础 IO、数据、模型与工具函数
 │   └── workflow/          # 工作流引擎
-├── tests/                 # 单元测试（28 个文件，465 个用例）
+├── tests/                 # 单元测试（31 个文件，529 个用例）
 ├── docs/                  # 文档
 ├── confflow.yaml          # 配置模板
 ├── README.md              # 主文档

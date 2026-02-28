@@ -14,7 +14,7 @@ __all__ = [
 ]
 
 try:
-    import psutil  # type: ignore
+    import psutil  # type: ignore[import-untyped]
 except ImportError:
     psutil = None
 

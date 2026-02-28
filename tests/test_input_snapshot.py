@@ -77,8 +77,7 @@ class TestInputGenerationSnapshot:
             "charge": 0,
             "multiplicity": 1,
             "freeze": "2",
-            "solvent_block": "SCRF=(SMD,Solvent=Water)",
-            "custom_block": "IOp(3/33=1)",
+            "blocks": "SCRF=(SMD,Solvent=Water)\nIOp(3/33=1)",
             "gaussian_modredundant": ["B 1 2 F", "A 1 2 3 F"],
         }
 

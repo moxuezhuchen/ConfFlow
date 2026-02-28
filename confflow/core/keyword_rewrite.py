@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+"""Keyword line rewriting for scan jobs from TS keywords."""
 
 from __future__ import annotations
 

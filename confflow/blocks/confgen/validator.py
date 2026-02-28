@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+"""Chain consistency validation for conformer generation inputs."""
+
 from __future__ import annotations
 
 from typing import Any

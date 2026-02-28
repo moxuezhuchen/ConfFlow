@@ -70,7 +70,7 @@ steps:
       keyword: "r2SCAN-3c"
       itask: sp
       energy_window: 5.0
-      solvent_block: |
+      blocks: |
         %cpcm
           smd true
           SMDsolvent "toluene"
@@ -106,7 +106,7 @@ steps:
 # - 单位: kcal/mol
 # - 仅保留能量在最低能量 + energy_window 范围内的构象
 #
-# 【溶剂模型】solvent_block (ORCA)
+# 【溶剂模型 / 自定义块】blocks
 # - 常用溶剂: water, toluene, acetonitrile, dmso, thf, ch2cl2, ethanol
 #
 # 【冻结原子】freeze
