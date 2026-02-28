@@ -70,8 +70,8 @@ custom_theme = Theme(
     }
 )
 
-# Fixed output width: 100 columns
-FIXED_WIDTH = 100
+# Fixed output width: 80 columns
+FIXED_WIDTH = 80
 target_width = FIXED_WIDTH
 
 # ---------------------------------------------------------------------------

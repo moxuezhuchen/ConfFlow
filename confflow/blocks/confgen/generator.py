@@ -228,8 +228,9 @@ def load_mol_from_xyz(filename, bond_coeff):
 
     # Dynamic columns based on console width
     cw = console.width or 80
+    # Indent is 14 chars ("  Topology  " label area); subtract it before dividing.
     num_cols = 4 if cw >= 75 else 3 if cw >= 58 else 2
-    col_w = (cw - 6) // num_cols
+    col_w = (cw - 14) // num_cols
 
     for i in range(0, len(bonds_str), num_cols):
         chunk = bonds_str[i : i + num_cols]
