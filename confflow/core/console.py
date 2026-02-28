@@ -101,7 +101,12 @@ class _ConsoleProxy:
     def _sync(self) -> None:
         try:
             # Always follow the current sys.stdout (which may be redirected/captured)
-            self._inner.file = sys.stdout  # type: ignore[attr-defined]
+            stream = sys.stdout
+            self._inner.file = stream  # type: ignore[attr-defined]
+            # Re-evaluate ANSI capability: disable colour for non-TTY destinations
+            # (e.g. pytest capsys capture buffers or redirected .txt files).
+            is_tty = hasattr(stream, "isatty") and stream.isatty()
+            self._inner._force_terminal = is_tty  # type: ignore[attr-defined]
         except (AttributeError, TypeError):
             pass
 
@@ -492,11 +497,21 @@ def create_progress():
 
 
 def redirect_console(stream=None) -> None:
-    """Force the underlying Rich Console to write to *stream*."""
+    """Force the underlying Rich Console to write to *stream*.
+
+    Also re-evaluates terminal capability: if *stream* is not a TTY (e.g. a
+    plain file), ANSI escape codes are suppressed so the .txt output stays
+    human-readable.
+    """
     if stream is None:
         stream = sys.stdout
     try:
         _console.file = stream  # type: ignore[attr-defined]
+        # Re-check whether the new destination is a real terminal.
+        # _force_terminal=None lets Rich call isatty() on each write; setting it
+        # to False explicitly disables ANSI codes for non-TTY destinations.
+        is_tty = hasattr(stream, "isatty") and stream.isatty()
+        _console._force_terminal = is_tty  # type: ignore[attr-defined]
     except AttributeError:
         pass
 

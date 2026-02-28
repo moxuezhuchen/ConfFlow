@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import sys
 from collections.abc import Iterator
 from contextlib import contextmanager, redirect_stderr, redirect_stdout
@@ -36,6 +37,32 @@ def output_txt_path_for_input(input_path: str) -> str:
     return os.path.join(output_dir, f"{output_base}.txt")
 
 
+class _AnsiStripWriter:
+    """File-like wrapper that strips ANSI/VT100 escape sequences before writing.
+
+    Rich Console caches its colour-system at construction time (``_color_system``),
+    so changing ``_force_terminal`` after the fact is not enough to suppress escape
+    codes.  Stripping them here is therefore the most reliable solution.
+    """
+
+    _ANSI_RE = re.compile(r"\x1b\[[0-9;]*[a-zA-Z]")
+
+    def __init__(self, f) -> None:
+        self._f = f
+
+    def write(self, s: str) -> int:
+        return self._f.write(self._ANSI_RE.sub("", s))
+
+    def flush(self) -> None:
+        self._f.flush()
+
+    def isatty(self) -> bool:
+        return False
+
+    def __getattr__(self, name: str):
+        return getattr(self._f, name)
+
+
 @contextmanager
 def cli_output_to_txt(input_path: str) -> Iterator[str]:
     """Redirect all stdout/stderr to a plain-text .txt file.
@@ -46,7 +73,8 @@ def cli_output_to_txt(input_path: str) -> Iterator[str]:
     output_path = output_txt_path_for_input(input_path)
 
     with open(output_path, "w", encoding="utf-8") as out_f:
-        with redirect_stdout(out_f), redirect_stderr(out_f):
+        stripped = _AnsiStripWriter(out_f)
+        with redirect_stdout(stripped), redirect_stderr(stripped):  # type: ignore[arg-type]
             redirect_console(sys.stdout)
             try:
                 get_logger().redirect_console_handler(sys.stdout)
