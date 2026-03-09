@@ -81,6 +81,9 @@ def test_manager_read_xyz_fallback_more(tmp_path):
         def __exit__(self, exc_type, exc, tb):
             return False
 
+        def shutdown(self, *args, **kwargs):
+            pass
+
         def submit(self, fn, arg):
             return _Fut(
                 {"job_name": arg["job_name"], "status": "success", "final_coords": ["H 0 0 0"]}
@@ -207,6 +210,9 @@ def test_calc_manager_executor_path_inserts_results(tmp_path):
 
         def __exit__(self, exc_type, exc, tb):
             return False
+
+        def shutdown(self, *args, **kwargs):
+            pass
 
         def submit(self, fn, arg):
             return _Fut(

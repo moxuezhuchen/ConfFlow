@@ -583,6 +583,12 @@ def run_generation(
     if all_confs_data and master_mol:
         out_name = "search.xyz"
         write_xyz(master_mol, all_confs_data, out_name)
+    elif master_mol is None and input_files:
+        # P3-1: No file was parseable at all; raise so the engine surfaces the real error.
+        raise RuntimeError(
+            "No conformers were generated: all input files failed to process. "
+            "Check the error messages above for per-file details."
+        )
     else:
         warning("No conformers generated.")
 

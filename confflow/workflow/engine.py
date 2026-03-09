@@ -107,6 +107,15 @@ def _run_calc_step(
             failure_tracker.append(step_failed, step_name)
         return final_input
 
+    # P1-4: Warn when multiple input files arrive at a calc step (only the first is used).
+    if isinstance(current_input, list) and len(current_input) > 1:
+        logger.warning(
+            "calc step received %d input files; only '%s' will be used. "
+            "Add a confgen step to merge multi-input files before calc.",
+            len(current_input),
+            current_input[0],
+        )
+
     manager = calc.ChemTaskManager(task_config)
     manager.work_dir = step_dir
     manager.run(
@@ -174,8 +183,8 @@ def run_workflow(
 
     try:
         shutil.copy2(config_file, os.path.join(failed_dir, os.path.basename(config_file)))
-    except Exception:
-        pass
+    except OSError as e:  # P2-1: log instead of silently swallowing
+        logger.debug("Could not copy config to failed dir: %s", e)
 
     if hasattr(logger, "add_file_handler"):
         logger.add_file_handler(os.path.join(root_dir, "confflow.log"))
@@ -204,6 +213,15 @@ def run_workflow(
                 expected_output = os.path.join(step_dir, "search.xyz")
             if os.path.exists(expected_output):
                 current_input = expected_output
+            else:
+                # P1-3: Warn when the expected output is missing during resume.
+                logger.warning(
+                    "Resume: step %d ('%s') output not found in %s; "
+                    "current_input is unchanged. Consider re-running from this step.",
+                    i + 1,
+                    step_dirnames[i],
+                    step_dir,
+                )
             continue
 
         if not step.get("enabled", True):

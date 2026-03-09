@@ -24,6 +24,7 @@ from confflow.blocks.refine.rmsd_engine import (
     get_element_atomic_number,
     get_pmi,
     get_topology_hash_worker,
+    greedy_permutation_rmsd,
 )
 
 
@@ -279,9 +280,10 @@ H 0.0 0.0 1.1
 
 
 def test_refine_fallback_imports():
-    with patch.dict(sys.modules, {"numba": None, "tqdm": None}):
-        import confflow.blocks.refine.rmsd_engine as engine
+    import confflow.blocks.refine.rmsd_engine as engine
+    import confflow.blocks.refine.processor as processor
 
+    with patch.dict(sys.modules, {"numba": None, "tqdm": None}):
         importlib.reload(engine)
 
         assert engine.numba.__name__ == "FakeNumba"
@@ -292,26 +294,23 @@ def test_refine_fallback_imports():
 
         assert test_func(1) == 1
 
-        # reload to restore
-        importlib.reload(engine)
-        import confflow.blocks.refine.processor as processor
-
-        importlib.reload(processor)
+    # Restore outside the patch.dict block so real numba is available
+    importlib.reload(engine)
+    importlib.reload(processor)
 
 
 def test_refine_covalent_radii_fallback():
-    with patch.dict(sys.modules, {"confflow.core.utils": None}):
-        import confflow.blocks.refine.rmsd_engine as engine
+    import confflow.blocks.refine.rmsd_engine as engine
+    import confflow.blocks.refine.processor as processor
 
+    with patch.dict(sys.modules, {"confflow.core.utils": None}):
         importlib.reload(engine)
         assert hasattr(engine, "GV_COVALENT_RADII")
         assert len(engine.GV_COVALENT_RADII) > 0
 
-        # reload to restore
-        importlib.reload(engine)
-        import confflow.blocks.refine.processor as processor
-
-        importlib.reload(processor)
+    # Restore outside the patch.dict block so real numba is available
+    importlib.reload(engine)
+    importlib.reload(processor)
 
 
 def test_refine_preserves_ts_bond_in_comment(tmp_path: Path) -> None:
@@ -365,3 +364,63 @@ def test_refine_parses_imag_from_calc_output_format(tmp_path: Path) -> None:
     refine.process_xyz(args)
     text = out.read_text(encoding="utf-8")
     assert "Imag=1" in text
+
+
+# ---------------------------------------------------------------------------
+# P1-5: greedy_permutation_rmsd unit tests
+# ---------------------------------------------------------------------------
+
+
+def _elem_ids(*symbols):
+    """Return an integer array of element IDs (atomic numbers) for given symbols."""
+    from confflow.blocks.refine.rmsd_engine import get_element_atomic_number
+
+    return np.array([get_element_atomic_number(s) for s in symbols])
+
+
+def test_greedy_permutation_rmsd_identical():
+    """Two identical structures → RMSD ≈ 0."""
+    coords = np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [2.0, 0.0, 0.0]])
+    ids = _elem_ids("C", "C", "C")
+    assert greedy_permutation_rmsd(coords, coords.copy(), ids, ids.copy()) < 1e-6
+
+
+def test_greedy_permutation_rmsd_translated():
+    """Pure translation: centering should make RMSD ≈ 0."""
+    coords1 = np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [2.0, 0.0, 0.0]])
+    coords2 = coords1 + 5.0
+    ids = _elem_ids("C", "C", "C")
+    assert greedy_permutation_rmsd(coords1, coords2, ids, ids) < 1e-6
+
+
+def test_greedy_permutation_rmsd_symmetry_permuted():
+    """Symmetric pair: two H atoms swapped → RMSD should still be ≈ 0."""
+    # O at origin, two H symmetrically placed
+    coords1 = np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [-1.0, 0.0, 0.0]])
+    coords2 = np.array([[0.0, 0.0, 0.0], [-1.0, 0.0, 0.0], [1.0, 0.0, 0.0]])  # H's swapped
+    ids = _elem_ids("O", "H", "H")
+    assert greedy_permutation_rmsd(coords1, coords2, ids, ids) < 1e-6
+
+
+def test_greedy_permutation_rmsd_impossible_element_match():
+    """Completely different element sets → 999.9 (no valid match)."""
+    coords = np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]])
+    ids1 = _elem_ids("C", "C")
+    ids2 = _elem_ids("N", "N")
+    assert greedy_permutation_rmsd(coords, coords.copy(), ids1, ids2) == 999.9
+
+
+def test_greedy_permutation_rmsd_size_mismatch():
+    """n1 ≠ n2 → guard returns 999.9."""
+    c1 = np.array([[0.0, 0.0, 0.0]])
+    c2 = np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]])
+    ids1 = _elem_ids("C")
+    ids2 = _elem_ids("C", "C")
+    assert greedy_permutation_rmsd(c1, c2, ids1, ids2) == 999.9
+
+
+def test_greedy_permutation_rmsd_empty():
+    """n=0 → guard returns 999.9."""
+    empty = np.empty((0, 3))
+    empty_ids = np.array([], dtype=np.int64)
+    assert greedy_permutation_rmsd(empty, empty, empty_ids, empty_ids) == 999.9

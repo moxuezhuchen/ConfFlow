@@ -285,8 +285,29 @@ class ChemTaskManager:
                 for fut in as_completed(futures):
                     if os.path.exists(self.config["stop_beacon_file"]):
                         self.stop_requested = True
+                        # P1-2: Cancel pending futures immediately (Python ≥3.9).
+                        exc.shutdown(wait=False, cancel_futures=True)
                         break
-                    res = fut.result()
+                    # P1-1: Guard against worker crashes (OOM kill, signal, etc.).
+                    try:
+                        res = fut.result()
+                    except Exception as e:  # noqa: BLE001 – includes BrokenProcessPool
+                        task = futures[fut]
+                        logger.warning(
+                            "Task %s raised an unexpected exception: %s",
+                            task.job_name,
+                            e,
+                        )
+                        failed_result: dict[str, Any] = {
+                            "job_name": task.job_name,
+                            "status": "failed",
+                            "error": str(e),
+                            "final_coords": None,
+                        }
+                        assert self.results_db is not None
+                        self.results_db.insert_result(failed_result)
+                        reporter.report("failed")
+                        continue
                     self.results_db.insert_result(res)
                     self._append_result(res)
                     reporter.report(res.get("status", "failed"))

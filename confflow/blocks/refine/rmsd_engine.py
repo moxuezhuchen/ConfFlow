@@ -314,15 +314,30 @@ def get_topology_hash_worker(args):
         tuple(sorted(atoms))
 
         radii = np.array([GV_COVALENT_RADII[get_element_atomic_number(a)] for a in atoms])
-        delta = coords[:, np.newaxis, :] - coords[np.newaxis, :, :]
-        dist_sq = np.sum(delta**2, axis=-1)
-        thresh_sq = ((radii[:, np.newaxis] + radii[np.newaxis, :]) * BOND_SCALE_FACTOR) ** 2
-        adj = (dist_sq < thresh_sq).astype(np.int8)
-        np.fill_diagonal(adj, 0)
+
+        # P2-3: Use cKDTree instead of O(N²) full distance matrix.
+        # For N=500, the full matrix is ~3 MB per worker; cKDTree reduces that
+        # to only the pairs within the bonding threshold.
+        from scipy.spatial import cKDTree  # scipy is a listed dependency
+
+        n = len(atoms)
+        max_threshold = float(np.max(radii) * 2.0 * BOND_SCALE_FACTOR)
+        tree = cKDTree(coords)
+        candidate_pairs = tree.query_pairs(max_threshold, output_type="ndarray")
+
+        adj: list[list[int]] = [[] for _ in range(n)]
+        for i, j in candidate_pairs:
+            ri, rj = radii[i], radii[j]
+            threshold = (ri + rj) * BOND_SCALE_FACTOR
+            diff = coords[i] - coords[j]
+            dist_sq = float(np.dot(diff, diff))
+            if dist_sq < threshold * threshold:
+                adj[i].append(j)
+                adj[j].append(i)
 
         desc = []
-        for i in range(len(atoms)):
-            neighs = sorted([atoms[k] for k in np.where(adj[i] == 1)[0]])
+        for i in range(n):
+            neighs = sorted([atoms[k] for k in adj[i]])
             desc.append(f"{atoms[i]}-({''.join(neighs)})")
         return hashlib.sha1("".join(sorted(desc)).encode()).hexdigest()
     except (ValueError, TypeError, IndexError, KeyError):

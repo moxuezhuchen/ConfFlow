@@ -36,25 +36,34 @@ __all__: list[str] = []
 
 
 def _coords_lines_to_xyz(coords_lines: list[str]):
+    """Parse coordinate lines into (symbol, x, y, z) tuples.
+
+    Handles optional prefix integers (e.g. Gaussian freeze codes) by
+    extracting the three rightmost numeric tokens as z, y, x respectively
+    (right-to-left collection), then reassigning to the correct x, y, z order.
+    """
     try:
         out = []
         for ln in coords_lines:
-            p = ln.split()
-            if len(p) < 4:
+            parts = ln.split()
+            if len(parts) < 4:
                 return None
-            sym = p[0]
-            xyz = []
-            for tok in reversed(p[1:]):
+            sym = parts[0]
+            # Collect the last 3 parseable floats scanning right-to-left.
+            # This skips any non-numeric prefix tokens (e.g. Gaussian freeze codes).
+            floats_rtl: list[float] = []
+            for tok in reversed(parts[1:]):
                 try:
-                    xyz.append(float(tok))
+                    floats_rtl.append(float(tok))
                 except ValueError:
                     continue
-                if len(xyz) == 3:
+                if len(floats_rtl) == 3:
                     break
-            if len(xyz) != 3:
+            if len(floats_rtl) != 3:
                 return None
-            z, y, x = xyz
-            out.append((sym, float(x), float(y), float(z)))
+            # floats_rtl = [z_val, y_val, x_val] (collected right-to-left)
+            x_val, y_val, z_val = floats_rtl[2], floats_rtl[1], floats_rtl[0]
+            out.append((sym, x_val, y_val, z_val))
         return out
     except (ValueError, IndexError) as e:
         logger.debug(f"Failed to convert coordinate lines to XYZ: {e}")

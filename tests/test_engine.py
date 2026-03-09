@@ -672,3 +672,76 @@ def test_workflow_engine_low_energy_trace_full(tmp_path):
     assert "low_energy_trace" in stats
     assert len(stats["low_energy_trace"]["conformers"]) > 0
     assert "trace" in stats["low_energy_trace"]["conformers"][0]
+
+
+# ---------------------------------------------------------------------------
+# P1-6: validate_inputs_compatible with validate_chain_bonds=True
+# ---------------------------------------------------------------------------
+
+
+def test_validate_inputs_compatible_chain_bonds_valid(tmp_path):
+    """validate_chain_bonds=True with all-valid chains → no exception raised."""
+    xyz = tmp_path / "mol.xyz"
+    xyz.write_text("2\n\nC 0.0 0.0 0.0\nC 1.5 0.0 0.0\n")
+
+    with (
+        patch("confflow.workflow.validation.load_mol_from_xyz") as mock_load,
+        patch("confflow.workflow.validation.ChainValidator") as MockCV,
+    ):
+        mock_load.return_value = object()  # any truthy mol object
+        MockCV.return_value.validate_mol.return_value = [
+            {"valid": True, "raw_chain": "1-2", "error": None}
+        ]
+
+        # Should complete without raising
+        validate_inputs_compatible(
+            [str(xyz)],
+            confgen_params={"chains": ["1-2"], "validate_chain_bonds": True},
+        )
+
+
+def test_validate_inputs_compatible_chain_bonds_invalid_chain(tmp_path):
+    """validate_chain_bonds=True with an invalid chain → raises ValueError."""
+    xyz = tmp_path / "mol.xyz"
+    xyz.write_text("2\n\nC 0.0 0.0 0.0\nC 1.5 0.0 0.0\n")
+
+    with (
+        patch("confflow.workflow.validation.load_mol_from_xyz") as mock_load,
+        patch("confflow.workflow.validation.ChainValidator") as MockCV,
+    ):
+        mock_load.return_value = object()
+        MockCV.return_value.validate_mol.return_value = [
+            {"valid": False, "raw_chain": "1-2", "error": "atoms not bonded"}
+        ]
+
+        with pytest.raises(ValueError, match="atoms not bonded"):
+            validate_inputs_compatible(
+                [str(xyz)],
+                confgen_params={"chains": ["1-2"], "validate_chain_bonds": True},
+            )
+
+
+def test_validate_inputs_compatible_chain_bonds_load_oserror(tmp_path):
+    """OSError from load_mol_from_xyz → _raise_or_warn path (raises by default)."""
+    xyz = tmp_path / "mol.xyz"
+    xyz.write_text("2\n\nC 0.0 0.0 0.0\nC 1.5 0.0 0.0\n")
+
+    with patch("confflow.workflow.validation.load_mol_from_xyz", side_effect=OSError("read error")):
+        with pytest.raises(ValueError, match="failed to validate flexible chains"):
+            validate_inputs_compatible(
+                [str(xyz)],
+                confgen_params={"chains": ["1-2"], "validate_chain_bonds": True},
+            )
+
+
+def test_validate_inputs_compatible_chain_bonds_disabled(tmp_path):
+    """validate_chain_bonds=False (default) → chain path not entered, no mol load."""
+    xyz = tmp_path / "mol.xyz"
+    xyz.write_text("2\n\nC 0.0 0.0 0.0\nC 1.5 0.0 0.0\n")
+
+    with patch("confflow.workflow.validation.load_mol_from_xyz") as mock_load:
+        validate_inputs_compatible(
+            [str(xyz)],
+            confgen_params={"chains": ["1-2"], "validate_chain_bonds": False},
+        )
+        mock_load.assert_not_called()
