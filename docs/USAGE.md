@@ -12,7 +12,7 @@ pip install -e .
 
 本项目提供 5 个命令行工具（安装后可直接调用）：
 
-- `confflow`：按 YAML 工作流调度（confgen/calc/refine/viz）
+- `confflow`：按 YAML 工作流调度（当前支持 `confgen` / `calc` 步骤，并在流程结束后自动生成报告）
 - `confgen`：构象生成（链模式）
 - `confcalc`：对轨迹执行量化计算（读取 INI 配置）
 - `confrefine`：构象去重/筛选（RMSD/能量窗口/虚频过滤）
@@ -32,7 +32,7 @@ pip install -e .
 confflow <input.xyz> -c <config.yaml> [-w <work_dir>] [--resume] [--verbose]
 ```
 
-也支持一次输入多个 XYZ（会在 confgen 步骤对每个输入生成构象并合并后，进入后续统一优化/精炼）：
+也支持一次输入多个 XYZ（会在 confgen 步骤对每个输入生成构象并合并后，进入后续统一计算/报告）：
 
 ```bash
 confflow a.xyz b.xyz -c confflow.yaml
@@ -152,7 +152,7 @@ ConfFlow 对每个构象会维护一个稳定的 **CID**（写在 XYZ comment me
 ```
 
 以便从 chk 继承波函数与几何信息。
-- `step_xx/results.db`：任务结果库（success/failed/skipped + error 详情）
+- `step_xx/results.db`：任务结果库（按 `job_name` / `CID` 记录 success/failed/skipped 与 error 详情；统计默认读取每个任务的最新状态）
 
 ## 4. confgen：构象生成（链模式）
 
@@ -238,7 +238,7 @@ confcalc <search.xyz> -s <settings.ini>
 ```
 
 续传说明：
-- 默认会在工作目录生成 `results.db`，再次运行会自动跳过已成功的 `geom_XXXX`。
+- 默认会在工作目录生成 `results.db`，再次运行会自动跳过已成功的 `job_name` / `CID`。
 - 若 `results.db` 丢失但 `backups/` 仍在（例如断电后只保留了备份文件），默认也会尝试从 `backups` 中恢复已完成任务并跳过（可用 `resume_from_backups=false` 关闭）。
 
 ## 7. YAML 配置：工作流格式

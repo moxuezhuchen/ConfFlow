@@ -137,6 +137,41 @@ def test_count_task_statuses_in_results_db(tmp_path):
     assert counts["total"] == 3
 
 
+def test_count_task_statuses_in_results_db_latest_records_only(tmp_path):
+    import sqlite3
+
+    db_path = tmp_path / "results_latest.db"
+    con = sqlite3.connect(str(db_path))
+    con.execute("""
+        CREATE TABLE task_results (
+            task_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            job_name TEXT NOT NULL,
+            task_index INTEGER,
+            status TEXT NOT NULL,
+            energy REAL,
+            final_gibbs_energy REAL,
+            final_sp_energy REAL,
+            num_imag_freqs INTEGER,
+            lowest_freq REAL,
+            g_corr REAL,
+            ts_bond_atoms TEXT,
+            ts_bond_length REAL,
+            final_coords TEXT,
+            error TEXT,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    con.execute("INSERT INTO task_results (job_name, status, error) VALUES ('job1', 'failed', 'boom')")
+    con.execute("INSERT INTO task_results (job_name, status, energy) VALUES ('job1', 'success', -1.0)")
+    con.commit()
+    con.close()
+
+    counts = count_task_statuses_in_results_db(str(db_path))
+    assert counts["success"] == 1
+    assert counts["failed"] == 0
+    assert counts["total"] == 1
+
+
 def test_resolve_step_output(tmp_path):
     step_dir = tmp_path / "step_01"
     step_dir.mkdir()
@@ -154,6 +189,11 @@ def test_resolve_step_output(tmp_path):
     search = step_dir / "search.xyz"
     search.write_text("1\n\nH 0 0 0\n")
     assert resolve_step_output(str(step_dir), "confgen") == str(search)
+
+    calc_search_dir = tmp_path / "step_calc_search"
+    calc_search_dir.mkdir()
+    (calc_search_dir / "search.xyz").write_text("1\n\nH 0 0 0\n")
+    assert resolve_step_output(str(calc_search_dir), "calc") is None
 
 
 def test_create_runtask_config(tmp_path):
@@ -559,13 +599,84 @@ def test_workflow_engine_resume_logic(tmp_path):
         )
     )
 
+    step1_dir = root / "step1"
+    step1_dir.mkdir()
+    (step1_dir / "output.xyz").write_text("1\nCID=1\nC 0 0 0\n", encoding="utf-8")
     step2_dir = root / "step2"
     step2_dir.mkdir()
-    (step2_dir / "output.xyz").write_text("1\nCID=1\nC 0 0 0\n")
+    (step2_dir / "output.xyz").write_text("1\nCID=1\nC 0 0 0\n", encoding="utf-8")
 
     res = run_workflow([str(input_xyz)], str(config_file), work_dir=str(root), resume=True)
     assert len(res["steps"]) == 1
     assert res["steps"][0]["name"] == "step2"
+
+
+def test_workflow_engine_resume_missing_output_raises(tmp_path):
+    from datetime import datetime
+
+    root = tmp_path / "resume_missing"
+    root.mkdir()
+
+    input_xyz = root / "input.xyz"
+    input_xyz.write_text("1\nCID=1\nC 0 0 0\n", encoding="utf-8")
+
+    config_file = root / "config.yaml"
+    config_file.write_text(
+        "global:\n  iprog: gaussian\n  itask: opt\n  keyword: opt\n"
+        "steps:\n  - type: calc\n    name: step1\n  - type: calc\n    name: step2\n",
+        encoding="utf-8",
+    )
+
+    checkpoint = root / ".checkpoint"
+    checkpoint.write_text(
+        json.dumps(
+            {
+                "last_completed_step": 0,
+                "timestamp": datetime.now().isoformat(),
+                "stats": {"steps": [{"name": "step1", "status": "success"}]},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(RuntimeError, match="Resume failed"):
+        run_workflow([str(input_xyz)], str(config_file), work_dir=str(root), resume=True)
+
+
+def test_workflow_engine_resume_calc_does_not_accept_search_xyz(tmp_path):
+    from datetime import datetime
+
+    root = tmp_path / "resume_calc_search_only"
+    root.mkdir()
+
+    input_xyz = root / "input.xyz"
+    input_xyz.write_text("1\nCID=1\nC 0 0 0\n", encoding="utf-8")
+
+    config_file = root / "config.yaml"
+    config_file.write_text(
+        "global:\n  iprog: gaussian\n  itask: opt\n  keyword: opt\n"
+        "steps:\n  - type: calc\n    name: step1\n",
+        encoding="utf-8",
+    )
+
+    checkpoint = root / ".checkpoint"
+    checkpoint.write_text(
+        json.dumps(
+            {
+                "last_completed_step": 0,
+                "timestamp": datetime.now().isoformat(),
+                "stats": {"steps": [{"name": "step1", "status": "success"}]},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    step1_dir = root / "step1"
+    step1_dir.mkdir()
+    (step1_dir / "search.xyz").write_text("1\nCID=1\nC 0 0 0\n", encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="Resume failed"):
+        run_workflow([str(input_xyz)], str(config_file), work_dir=str(root), resume=True)
 
 
 def test_workflow_engine_calc_resume(tmp_path):

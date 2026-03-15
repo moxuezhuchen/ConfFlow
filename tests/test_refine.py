@@ -280,8 +280,8 @@ H 0.0 0.0 1.1
 
 
 def test_refine_fallback_imports():
-    import confflow.blocks.refine.rmsd_engine as engine
     import confflow.blocks.refine.processor as processor
+    import confflow.blocks.refine.rmsd_engine as engine
 
     with patch.dict(sys.modules, {"numba": None, "tqdm": None}):
         importlib.reload(engine)
@@ -300,8 +300,8 @@ def test_refine_fallback_imports():
 
 
 def test_refine_covalent_radii_fallback():
-    import confflow.blocks.refine.rmsd_engine as engine
     import confflow.blocks.refine.processor as processor
+    import confflow.blocks.refine.rmsd_engine as engine
 
     with patch.dict(sys.modules, {"confflow.core.utils": None}):
         importlib.reload(engine)

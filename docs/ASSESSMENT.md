@@ -1,13 +1,13 @@
 # ConfFlow 代码评估报告 & 整改路线图
 
-**评估日期**: 2026-03-09  
+**评估日期**: 2026-03-15  
 **评估范围**: 架构可维护性 · 可靠性与潜在缺陷 · 测试覆盖 · 性能与资源  
-**方法**: 全量静态阅读 + 覆盖率采集 (`pytest --cov`, 529 tests, 85% branch)  
-**基线**: 全部 529 测试通过；无静态报错；2 条 Numba 性能警告
+**方法**: 全量静态阅读 + 验证执行（`pytest -q`, `pytest --cov`, `ruff check .`, `mypy confflow`）  
+**基线**: 全部 630 测试通过；branch coverage 90.74%；无静态报错
 
-**当前执行状态**: 部分整改已完成并落地，最新验证为 544/544 测试通过。  
-**最近验证**: `python -m pytest tests/ -q --tb=short` 与 `python -m pytest tests/ -q --cov=confflow --cov-report=term-missing` 均通过。  
-**当前覆盖率快照**: `workflow/validation.py` 86%，`generator.py` 91%，`scan_ops.py` 89%，`stats.py` 89%，`engine.py` 83%，`manager.py` 83%。
+**当前执行状态**: 主要整改项已继续落地，最近补齐了 calc/resume 工件识别与 `results.db` 最新记录聚合的一致性回归。  
+**最近验证**: `pytest -q`、`pytest tests/ --cov=confflow --cov-report=term`、`ruff check .`、`mypy confflow` 均通过。  
+**当前覆盖率快照**: 总 branch coverage 90.74%；`workflow/validation.py` 86%，`generator.py` 91%，`scan_ops.py` 89%，`stats.py` 89%，`engine.py` 87%，`manager.py` 83%。
 
 ---
 
@@ -25,14 +25,15 @@
 - `scan_ops.py`：整理坐标解析逻辑，降低后续维护误判风险
 - `rmsd_engine.py`：将 topology hash 的 O(N²) 全距离矩阵替换为 `cKDTree.query_pairs`
 - `stats.py`：将 summary 解析中的宽泛吞错收紧为带日志的定向异常处理
+- `stats.py`：`results.db` 状态统计改为优先按每个 `job_name` 的最新记录聚合，避免旧失败记录污染 step 统计
+- `helpers.py` / `engine.py` / `step_handlers.py`：收紧 calc/resume 工件契约，`calc` 只认 `output.xyz` / `result.xyz`，不再把 `search.xyz` 误判为完成输出
 - `generator.py`：当所有输入文件都无法生成构象时，直接抛出更接近根因的异常
 - 测试：新增 `tests/test_collision.py`，并补齐 `test_refine.py`、`test_engine.py`、manager 假执行器兼容性测试
+- 测试：新增针对 `search.xyz` 误判与 latest-record 统计的一组回归用例
 
 仍未完成：
 
 - `mapping.py` 的 MCS timeout / 对称映射专项单测尚未补齐
-- `engine.py` 的 resume 缺失输出专项测试尚未补齐
-- `engine.py` 的 multi-input 首步为 calc 的专项测试尚未补齐
 - `manager.py` 的 `BrokenProcessPool` 专项测试尚未补齐
 - `pyproject.toml` 尚未对 Numba JIT 函数体 coverage 统计做专门排除
 

@@ -4,8 +4,6 @@
 
 from __future__ import annotations
 
-import os
-
 from confflow.calc.geometry import check_termination, parse_last_geometry
 
 

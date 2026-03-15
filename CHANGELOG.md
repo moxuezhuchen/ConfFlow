@@ -1,5 +1,21 @@
 # ConfFlow 更新日志
 
+## Unreleased
+
+### 工作流与统计修复
+
+- `workflow/helpers.py` / `workflow/engine.py` / `workflow/step_handlers.py`
+  - 按步骤类型收紧标准产物解析：`confgen` 只识别 `search.xyz`，`calc` 只识别 `output.xyz` / `result.xyz`
+  - resume 复用同一套工件判定逻辑，避免把 `search.xyz` 误当成 calc 已完成输出
+- `workflow/stats.py`
+  - `TaskStatsCollector` 优先按每个 `job_name` 的最新记录统计 `results.db` 状态
+  - step footer / `workflow_stats.json` 与 `ResultsDB.get_all_results()` 的最新结果视图保持一致
+
+### 文档同步
+
+- README、ARCHITECTURE、TESTING、DEVELOPMENT、ASSESSMENT 已更新到当前基线
+- 当前本地验证结果：41 个测试文件、630 个测试、branch coverage 90.74%
+
 ## v1.0.10 (2026-02-28)
 
 ### 🔧 工程质量全面提升

@@ -98,7 +98,7 @@ docs/                          # 文档
 ├── STYLE_CONTRACT.md         # 代码/输入/输出一致性标准
 └── DEVELOPMENT.md            # 开发指南
 
-tests/                         # 测试套件（28 个文件，465 个测试）
+tests/                         # 测试套件（41 个文件，630 个测试）
 ├── conftest.py               # 共享 fixtures
 ├── _helpers.py               # 共享 fake 对象与工具函数
 ├── test_core.py              # 配置、包导出、低能量溯源
@@ -233,8 +233,8 @@ LICENSE                        # MIT 许可证
 **职责**：协调各模块执行，管理工作流逻辑。当前版本已将原单体 `engine.py` 拆分为“编排 + 执行适配 + 展示 + 运行时上下文 + 统计”的多模块结构。
 
 - **`engine.py`**：
-  - 入口 `run_workflow()` 只保留三段主流程：prepare / execute / finalize
-  - 内部使用 `StepExecutionContext` 降低参数扇出，统一单步执行上下文
+  - 入口 `run_workflow()` 负责 prepare / execute / finalize 三段主流程
+  - resume 时复用 `resolve_step_output()` 按 step type 校验标准工件，避免把 `search.xyz` 误当成 calc 完成输出
   - 明确 step type 合同（`confgen/gen/calc/task`）并做早期校验
 
 - **`runtime_context.py`**：
@@ -251,6 +251,7 @@ LICENSE                        # MIT 许可证
 
 - **`helpers.py`**：
   - 工具函数：`pushd`、`as_list`、`resolve_step_output`
+  - `resolve_step_output` 按 step type 区分 `search.xyz` 与 `output.xyz` / `result.xyz`
   - 构象计数：`count_conformers_any`、`count_conformers_in_xyz`
 
 - **`validation.py`**：
@@ -264,7 +265,7 @@ LICENSE                        # MIT 许可证
 - **`stats.py`**：
   - `CheckpointManager`：断点序列化/反序列化
   - `WorkflowStatsTracker`：流程统计追踪
-  - `TaskStatsCollector`：results.db 状态聚合
+  - `TaskStatsCollector`：results.db 状态聚合（优先按每个 `job_name` 的最新记录统计）
   - `FailureTracker`：跨步骤失败构象汇总
   - `Tracer`：低能构象溯源
 
@@ -378,12 +379,6 @@ steps:
       itask: "opt"
       keyword: "B3LYP/6-31G* opt freq"
       ...
-
-  - name: "refine_step"
-    type: "refine"
-    params:
-      rmsd_threshold: 0.25
-      energy_window: 5.0
 ```
 
 ### 计算配置传递
@@ -433,7 +428,7 @@ tests/
 └── test_input_snapshot.py    # 输入文件快照
 ```
 
-共 28 个测试文件，465 个测试用例。
+当前测试套件共 41 个测试文件、630 个测试用例；完整清单见 `docs/TESTING.md`。除主测试文件外，还包含一组 `*_hotspots.py` 用例，专门覆盖回退逻辑、异常路径和历史回归点。
 
 ## 依赖关系图
 
@@ -463,6 +458,8 @@ confflow/__init__.py (包入口)
 - 工作目录中保存 `.checkpoint` 文件
 - 记录已完成的步骤和构象处理状态
 - 使用 `--resume` 标志从中断点恢复
+- resume 会按步骤类型验证标准产物：`confgen` 只接受 `search.xyz`，`calc` 只接受 `output.xyz` / `result.xyz`
+- 若工作目录缺少对应工件，会直接报错而不是沿用错误输入继续运行
 
 ### 2. 并行执行
 
@@ -491,7 +488,7 @@ confflow/__init__.py (包入口)
 
 ## 标准产物（calc/task step）
 
-- `results.db`：SQLite 结果库（每个构象的 status/error/error_details）
+- `results.db`：SQLite 结果库（持久化每个 `job_name` 的运行结果；读取/统计时默认使用最新记录视图）
 - `result.xyz` / `output.xyz`：成功构象输出（是否 cleaned 取决于 auto_clean/refine）
 - `failed.xyz`：失败构象集合（输入结构坐标，注释行包含失败原因），便于重算与排障
 

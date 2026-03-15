@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+"""Integration-style tests for calc manager and policies."""
+
 from __future__ import annotations
 
 import pytest

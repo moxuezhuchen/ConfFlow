@@ -10,6 +10,7 @@ import sys
 from collections.abc import Iterator
 from contextlib import contextmanager, redirect_stderr, redirect_stdout
 from enum import IntEnum
+from typing import TextIO
 
 from .console import redirect_console
 from .utils import get_logger, redirect_logging_streams
@@ -47,11 +48,11 @@ class _AnsiStripWriter:
 
     _ANSI_RE = re.compile(r"\x1b\[[0-9;]*[a-zA-Z]")
 
-    def __init__(self, f) -> None:
+    def __init__(self, f: TextIO) -> None:
         self._f = f
 
     def write(self, s: str) -> int:
-        return self._f.write(self._ANSI_RE.sub("", s))
+        return int(self._f.write(self._ANSI_RE.sub("", s)))
 
     def flush(self) -> None:
         self._f.flush()
@@ -71,6 +72,7 @@ def cli_output_to_txt(input_path: str) -> Iterator[str]:
     The .txt file path is ``<input_stem>.txt`` next to the input file.
     """
     output_path = output_txt_path_for_input(input_path)
+    original_stdout = sys.stdout
 
     with open(output_path, "w", encoding="utf-8") as out_f:
         stripped = _AnsiStripWriter(out_f)
@@ -85,14 +87,14 @@ def cli_output_to_txt(input_path: str) -> Iterator[str]:
                 yield output_path
             finally:
                 try:
-                    redirect_console(sys.stdout)
+                    redirect_console(original_stdout)
                 except (AttributeError, OSError) as e:
                     logger.debug(f"redirect console failed on exit: {e}")
                 try:
-                    get_logger().redirect_console_handler(sys.stdout)
+                    get_logger().redirect_console_handler(original_stdout)
                 except (AttributeError, OSError) as e:
                     logger.debug(f"redirect console handler failed on exit: {e}")
                 try:
-                    redirect_logging_streams(sys.stdout, include_root=False)
+                    redirect_logging_streams(original_stdout, include_root=False)
                 except (AttributeError, OSError) as e:
                     logger.debug(f"redirect logging streams failed on exit: {e}")

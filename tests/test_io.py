@@ -4,8 +4,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 
 class TestIO:
     """Tests for core.io module."""

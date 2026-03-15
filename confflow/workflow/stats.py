@@ -99,7 +99,22 @@ class TaskStatsCollector:
             con = sqlite3.connect(db_path)
             try:
                 cur = con.cursor()
-                cur.execute("select status, count(*) from task_results group by status")
+                cols = {row[1] for row in cur.execute("PRAGMA table_info(task_results)")}
+                if {"job_name", "task_id"}.issubset(cols):
+                    cur.execute("""
+                        SELECT tr.status, COUNT(*)
+                        FROM task_results tr
+                        JOIN (
+                            SELECT job_name, MAX(task_id) AS max_task_id
+                            FROM task_results
+                            GROUP BY job_name
+                        ) latest
+                            ON latest.job_name = tr.job_name
+                           AND latest.max_task_id = tr.task_id
+                        GROUP BY tr.status
+                    """)
+                else:
+                    cur.execute("select status, count(*) from task_results group by status")
                 rows = cur.fetchall() or []
                 counts: dict[str, int] = {}
                 for st, n in rows:

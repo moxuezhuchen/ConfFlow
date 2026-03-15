@@ -6,8 +6,6 @@ from __future__ import annotations
 
 import re
 
-import pytest
-
 
 class TestChkArtifactIO:
     """Tests for checkpoint file artifact IO."""

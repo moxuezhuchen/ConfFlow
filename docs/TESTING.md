@@ -22,11 +22,11 @@ pytest tests/ -m "not integration"
 
 | 指标 | 数值 |
 |------|------|
-| 总测试数 | 529 |
-| 测试文件 | 31 |
+| 总测试数 | 630 |
+| 测试文件 | 41 |
 | 通过率 | 100% |
-| 分支覆盖率 | 84.92% |
-| 运行时间 | ~7s |
+| 分支覆盖率 | 90.74% |
+| 运行时间 | `pytest -q` 约 6s；带覆盖率约 8s |
 
 ---
 
@@ -43,6 +43,7 @@ pytest tests/ -m "not integration"
 | `test_console.py` | core/console | 控制台输出格式化 |
 | `test_contracts.py` | core/contracts | 输入/输出契约验证 |
 | `test_keyword_rewrite.py` | core/keyword_rewrite | TS→scan 关键字改写 |
+| `test_logging_hotspots.py` | core/logging | 日志重定向、handler 切换热点路径 |
 
 ### 配置层 (`config/`)
 
@@ -59,6 +60,8 @@ pytest tests/ -m "not integration"
 |------|----------|------|
 | `test_confgen.py` | confgen/generator | 构象生成核心、链旋转、CLI 入口 |
 | `test_confgen_validator.py` | confgen/validator | 构象验证器 |
+| `test_collision.py` | confgen/collision | 碰撞检测核心与拓扑过滤 |
+| `test_mapping.py` | confgen/mapping | 多输入拓扑映射与柔性链索引转移 |
 | `test_confts_keyword.py` | confts | TS 关键字解析、confts CLI |
 
 ### 构象筛选 (`blocks/refine/`)
@@ -66,6 +69,8 @@ pytest tests/ -m "not integration"
 | 文件 | 覆盖模块 | 说明 |
 |------|----------|------|
 | `test_refine.py` | refine/processor, rmsd_engine | RMSD 去重、能量筛选、虚频过滤 |
+| `test_processor_hotspots.py` | refine/processor | 去重、能量窗口、失败路径热点 |
+| `test_rmsd_engine_hotspots.py` | refine/rmsd_engine | 对称 RMSD 与拓扑分组热点路径 |
 
 ### 回退测试
 
@@ -83,6 +88,9 @@ pytest tests/ -m "not integration"
 | `test_rescue.py` | calc/rescue, scan_ops | TS 失败救援、约束扫描 |
 | `test_utils_manager.py` | calc/manager, core/utils | 任务管理器、工具函数 |
 | `test_geometry.py` | calc/geometry | 几何解析、正常终止检测 |
+| `test_input_helpers_hotspots.py` | calc/components/input_helpers | 内存、约束、冻结参数热点路径 |
+| `test_policies_hotspots.py` | calc/policies | Gaussian/ORCA 策略边缘路径 |
+| `test_rescue_hotspots.py` | calc/rescue | TS 救援扫描与重优化热点路径 |
 
 ### 工作流 (`workflow/`)
 
@@ -92,6 +100,7 @@ pytest tests/ -m "not integration"
 | `test_step_handlers.py` | workflow/step_handlers | 步骤执行适配器（confgen/calc 步骤） |
 | `test_runtime_context.py` | workflow/runtime_context | 运行时上下文初始化 |
 | `test_presenter.py` | workflow/presenter | 步骤展示与报告输出 |
+| `test_runtime_and_policy_base_hotspots.py` | workflow/runtime_context, policies/base | 运行时上下文与策略基类热点路径 |
 
 ### 可视化与报告
 
@@ -105,6 +114,7 @@ pytest tests/ -m "not integration"
 |------|----------|------|
 | `test_cli.py` | cli, main | CLI 参数解析、主入口集成 |
 | `test_input_snapshot.py` | core/io (快照) | Gaussian/ORCA 输入文件生成快照 |
+| `test_collision_hotspots.py` | confgen/collision | Numba/Python 回退执行路径 |
 
 ---
 
@@ -159,6 +169,13 @@ show_missing = true
 ```bash
 pytest tests/ --cov=confflow --cov-report=term-missing
 ```
+
+最近一次本地验证基线：
+
+- `pytest -q`：630 passed
+- `pytest tests/ --cov=confflow --cov-report=term`：branch coverage 90.74%
+- `ruff check .`：通过
+- `mypy confflow`：通过
 
 ---
 

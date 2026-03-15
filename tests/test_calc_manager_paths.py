@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+"""Path-handling tests for calc manager edge cases."""
+
 from __future__ import annotations
 
 import os

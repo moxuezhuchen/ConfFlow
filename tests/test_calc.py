@@ -337,6 +337,29 @@ class TestResultsDB:
 
         res = db.get_result_by_job_name("test")
         assert res["status"] == "success"
+        db.close()
+
+    def test_insert_result_updates_existing_job(self, tmp_path):
+        from confflow.calc.db.database import ResultsDB
+
+        db = ResultsDB(str(tmp_path / "test.db"))
+        db.insert_result({"job_name": "job1", "status": "failed", "error": "boom"})
+        db.insert_result(
+            {
+                "job_name": "job1",
+                "status": "success",
+                "energy": -1.23,
+                "final_coords": ["H 0 0 0"],
+            }
+        )
+
+        got = db.get_result_by_job_name("job1")
+        assert got is not None
+        assert got["status"] == "success"
+        assert got["energy"] == -1.23
+        assert got["error"] is None
+        assert len(db.get_all_results()) == 1
+        db.close()
 
 
 # =============================================================================

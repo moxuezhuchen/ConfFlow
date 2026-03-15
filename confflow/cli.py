@@ -16,7 +16,7 @@ try:
 except ImportError:
     psutil = None
 
-from .core.contracts import ExitCode, cli_output_to_txt
+from .core.contracts import ExitCode, cli_output_to_txt, output_txt_path_for_input
 from .core.io import parse_gaussian_input_text, write_xyz_file
 from .core.utils import get_logger
 from .workflow.engine import run_workflow
@@ -247,6 +247,7 @@ def main(args_list: list[str] | None = None):
         work_dir = args.work_dir
 
     first_input = os.path.abspath(args.input_xyz[0])
+    output_path = output_txt_path_for_input(first_input)
 
     try:
         with cli_output_to_txt(first_input) as output_path:

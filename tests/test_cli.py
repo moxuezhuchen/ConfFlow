@@ -335,6 +335,24 @@ def test_main_generic_exception(tmp_path):
         assert result == 2
 
 
+def test_main_handles_cli_output_setup_failure(tmp_path):
+    """Failure entering cli_output_to_txt should still return runtime error cleanly."""
+    input_xyz = tmp_path / "input.xyz"
+    input_xyz.write_text("2\ntest\nC 0 0 0\nH 0 0 1\n", encoding="utf-8")
+    config_yaml = tmp_path / "config.yaml"
+    config_yaml.write_text("global: {}\nsteps: []\n", encoding="utf-8")
+
+    with (
+        patch("confflow.cli.cli_output_to_txt", side_effect=OSError("cannot open output")),
+        patch("confflow.cli._append_to_output") as mock_append,
+    ):
+        result = main([str(input_xyz), "-c", str(config_yaml), "-w", str(tmp_path / "work")])
+
+    assert result == 2
+    assert mock_append.called
+    assert str(input_xyz.with_suffix(".txt")) in mock_append.call_args.args[0]
+
+
 def test_main_missing_config(tmp_path):
     """Test main with missing config file."""
     input_xyz = tmp_path / "input.xyz"

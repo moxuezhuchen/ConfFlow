@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+"""Validation tests for CLI and workflow config helpers."""
+
 from __future__ import annotations
 
 import pytest

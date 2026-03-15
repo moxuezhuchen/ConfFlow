@@ -37,6 +37,7 @@ def initialize_runtime_context(
     resume: bool,
     logger: Any,
 ) -> WorkflowRuntimeContext:
+    """Create the runtime directories, trackers, and current input state."""
     root_dir = os.path.abspath(work_dir)
     os.makedirs(root_dir, exist_ok=True)
 
@@ -45,8 +46,11 @@ def initialize_runtime_context(
 
     try:
         shutil.copy2(config_file, os.path.join(failed_dir, os.path.basename(config_file)))
-    except Exception as e:
-        logger.warning(f"Failed to copy config into failed dir: {e}")
+    except OSError as e:
+        if hasattr(logger, "debug"):
+            logger.debug("Could not copy config to failed dir: %s", e)
+        elif hasattr(logger, "warning"):
+            logger.warning(f"Could not copy config to failed dir: {e}")
 
     if hasattr(logger, "add_file_handler"):
         logger.add_file_handler(os.path.join(root_dir, "confflow.log"))

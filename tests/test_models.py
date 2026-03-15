@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import pytest
+from pydantic import ValidationError
 
 from confflow.core.models import CalcConfigModel, GlobalConfigModel, TaskContext
 
@@ -51,7 +52,7 @@ class TestTaskContext:
         assert ctx2 == ctx
 
     def test_missing_required_field_raises(self):
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             TaskContext(job_name="j")  # type: ignore[call-arg]
 
 

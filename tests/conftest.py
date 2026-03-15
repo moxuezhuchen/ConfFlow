@@ -8,8 +8,6 @@ from pathlib import Path
 
 import pytest
 
-from ._helpers import make_config, write_file
-
 # All old test files have been merged and removed; no need to ignore any
 collect_ignore: list[str] = []
 

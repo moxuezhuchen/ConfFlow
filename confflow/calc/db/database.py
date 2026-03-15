@@ -81,6 +81,10 @@ class ResultsDB:
             )
         """)
 
+        self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_task_results_job_name ON task_results(job_name)"
+        )
+
         # Compat: add missing columns for older databases
         try:
             cols = {r[1] for r in self.conn.execute("PRAGMA table_info(task_results)")}
@@ -108,37 +112,53 @@ class ResultsDB:
         int
             The inserted record ID.
         """
-        cursor = self.conn.execute(
-            """
-            INSERT INTO task_results (
-                job_name, task_index, status, energy, 
-                final_gibbs_energy, final_sp_energy, num_imag_freqs,
-                lowest_freq, g_corr, ts_bond_atoms, ts_bond_length, 
-                final_coords, error
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-            (
-                task_info.get("job_name"),
-                task_info.get("index"),
-                task_info.get("status"),
-                task_info.get("energy"),
-                task_info.get("final_gibbs_energy"),
-                task_info.get("final_sp_energy"),
-                task_info.get("num_imag_freqs"),
-                task_info.get("lowest_freq"),
-                task_info.get("g_corr"),
-                task_info.get("ts_bond_atoms"),
-                task_info.get("ts_bond_length"),
-                (
-                    json.dumps(task_info.get("final_coords"))
-                    if task_info.get("final_coords")
-                    else None
-                ),
-                task_info.get("error"),
-            ),
+        payload = (
+            task_info.get("job_name"),
+            task_info.get("index"),
+            task_info.get("status"),
+            task_info.get("energy"),
+            task_info.get("final_gibbs_energy"),
+            task_info.get("final_sp_energy"),
+            task_info.get("num_imag_freqs"),
+            task_info.get("lowest_freq"),
+            task_info.get("g_corr"),
+            task_info.get("ts_bond_atoms"),
+            task_info.get("ts_bond_length"),
+            json.dumps(task_info.get("final_coords")) if task_info.get("final_coords") else None,
+            task_info.get("error"),
         )
+        existing = self.conn.execute(
+            "SELECT task_id FROM task_results WHERE job_name = ? ORDER BY task_id DESC LIMIT 1",
+            (task_info.get("job_name"),),
+        ).fetchone()
+        if existing is not None:
+            cursor = self.conn.execute(
+                """
+                UPDATE task_results
+                SET task_index = ?, status = ?, energy = ?, final_gibbs_energy = ?,
+                    final_sp_energy = ?, num_imag_freqs = ?, lowest_freq = ?, g_corr = ?,
+                    ts_bond_atoms = ?, ts_bond_length = ?, final_coords = ?, error = ?,
+                    timestamp = CURRENT_TIMESTAMP
+                WHERE task_id = ?
+            """,
+                payload[1:] + (existing["task_id"],),
+            )
+            row_id = int(existing["task_id"])
+        else:
+            cursor = self.conn.execute(
+                """
+                INSERT INTO task_results (
+                    job_name, task_index, status, energy,
+                    final_gibbs_energy, final_sp_energy, num_imag_freqs,
+                    lowest_freq, g_corr, ts_bond_atoms, ts_bond_length,
+                    final_coords, error
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+                payload,
+            )
+            row_id = int(cursor.lastrowid or 0)
         self.conn.commit()
-        return int(cursor.lastrowid or 0)
+        return row_id
 
     def get_all_results(self) -> list[dict[str, Any]]:
         """Retrieve all task results.
@@ -148,7 +168,18 @@ class ResultsDB:
         list[dict[str, Any]]
             List of results sorted by task index.
         """
-        cursor = self.conn.execute("SELECT * FROM task_results ORDER BY task_index")
+        cursor = self.conn.execute("""
+            SELECT tr.*
+            FROM task_results tr
+            JOIN (
+                SELECT job_name, MAX(task_id) AS max_task_id
+                FROM task_results
+                GROUP BY job_name
+            ) latest
+                ON latest.job_name = tr.job_name
+               AND latest.max_task_id = tr.task_id
+            ORDER BY tr.task_index, tr.task_id
+        """)
         return [self._row_to_dict(row) for row in cursor]
 
     def get_result_by_job_name(self, job_name: str) -> dict[str, Any] | None:
@@ -164,7 +195,10 @@ class ResultsDB:
         dict or None
             Result dict, or None if not found.
         """
-        cursor = self.conn.execute("SELECT * FROM task_results WHERE job_name = ?", (job_name,))
+        cursor = self.conn.execute(
+            "SELECT * FROM task_results WHERE job_name = ? ORDER BY task_id DESC LIMIT 1",
+            (job_name,),
+        )
         row = cursor.fetchone()
         return self._row_to_dict(row) if row else None
 
@@ -228,3 +262,15 @@ class ResultsDB:
     def close(self) -> None:
         """Close the database connection."""
         self.conn.close()
+
+    def __enter__(self) -> ResultsDB:
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        self.close()
+
+    def __del__(self) -> None:
+        try:
+            self.conn.close()
+        except Exception:
+            pass

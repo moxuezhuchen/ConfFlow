@@ -10,17 +10,15 @@ Design goals:
 from __future__ import annotations
 
 import os
-import shutil
 import sys
 import time
 from datetime import datetime
 from typing import Any
 
-from .. import calc
-from ..blocks import confgen, viz
-from ..config.schema import ConfigSchema
+from .. import calc as calc  # re-export for test compatibility
+from ..blocks import confgen as confgen  # re-export for test compatibility
+from ..blocks import viz
 from ..core import io as io_xyz
-from ..core.pairs import normalize_pair_list
 from ..core.types import TaskStatus
 from ..core.utils import (
     get_logger,
@@ -30,18 +28,19 @@ from .config_builder import _itask_label as _itask_label  # re-export for test c
 from .config_builder import _normalize_iprog_label as _normalize_iprog_label  # re-export
 from .config_builder import (
     build_step_dir_name_map,
-    build_task_config,
     load_workflow_config,
 )
-from .helpers import as_list, count_conformers_any, is_multi_frame_any, pushd
+from .helpers import as_list as as_list  # re-export for test compatibility
+from .helpers import count_conformers_any, is_multi_frame_any, resolve_step_output
 from .presenter import print_step_footer_block, print_step_header_block, print_workflow_start
+from .runtime_context import initialize_runtime_context
 from .stats import (
-    CheckpointManager,
     FailureTracker,
     TaskStatsCollector,
     Tracer,
-    WorkflowStatsTracker,
 )
+from .step_handlers import run_calc_step as step_run_calc_step
+from .step_handlers import run_confgen_step as step_run_confgen_step
 from .validation import validate_inputs_compatible
 
 __all__ = [
@@ -55,32 +54,7 @@ def _run_confgen_step(
     step_dir: str, current_input: str | list[str], params: dict[str, Any], input_files: list[str]
 ) -> str:
     """Execute a conformer generation step."""
-    expected_output = os.path.join(step_dir, "search.xyz")
-    multi_frame = len(input_files) == 1 and is_multi_frame_any(current_input)
-
-    if multi_frame and isinstance(current_input, str):
-        shutil.copy2(current_input, expected_output)
-    elif not os.path.exists(expected_output):
-        with pushd(step_dir):
-            confgen.run_generation(
-                input_files=current_input,
-                angle_step=params.get("angle_step", 120),
-                bond_threshold=params.get("bond_multiplier", 1.15),
-                clash_threshold=0.65,
-                add_bond=normalize_pair_list(params.get("add_bond")),
-                del_bond=normalize_pair_list(params.get("del_bond")),
-                no_rotate=normalize_pair_list(params.get("no_rotate")),
-                force_rotate=normalize_pair_list(params.get("force_rotate")),
-                optimize=params.get("optimize", False),
-                confirm=False,
-                chains=as_list(params.get("chains", params.get("chain"))),
-                chain_steps=as_list(params.get("chain_steps", params.get("steps"))),
-                chain_angles=as_list(params.get("chain_angles", params.get("angles"))),
-                rotate_side=params.get("rotate_side", "left"),
-            )
-        if not os.path.exists(expected_output):
-            raise RuntimeError("confgen did not generate search.xyz")
-    return expected_output
+    return step_run_confgen_step(step_dir, current_input, params, input_files)
 
 
 def _run_calc_step(
@@ -94,49 +68,16 @@ def _run_calc_step(
     step_name: str,
 ) -> str:
     """Execute a calculation task step."""
-    task_config = build_task_config(params, global_config, root_dir, steps)
-    ConfigSchema.validate_calc_config(task_config)
-
-    expected_clean = os.path.join(step_dir, "output.xyz")
-    expected_raw = os.path.join(step_dir, "result.xyz")
-
-    if os.path.exists(expected_clean) or os.path.exists(expected_raw):
-        final_input = expected_clean if os.path.exists(expected_clean) else expected_raw
-        step_failed = os.path.join(step_dir, "failed.xyz")
-        if os.path.exists(step_failed):
-            failure_tracker.append(step_failed, step_name)
-        return final_input
-
-    # P1-4: Warn when multiple input files arrive at a calc step (only the first is used).
-    if isinstance(current_input, list) and len(current_input) > 1:
-        logger.warning(
-            "calc step received %d input files; only '%s' will be used. "
-            "Add a confgen step to merge multi-input files before calc.",
-            len(current_input),
-            current_input[0],
-        )
-
-    manager = calc.ChemTaskManager(task_config)
-    manager.work_dir = step_dir
-    manager.run(
-        input_xyz_file=current_input if isinstance(current_input, str) else current_input[0]
+    return step_run_calc_step(
+        step_dir=step_dir,
+        current_input=current_input,
+        params=params,
+        global_config=global_config,
+        root_dir=root_dir,
+        steps=steps,
+        failure_tracker=failure_tracker,
+        step_name=step_name,
     )
-
-    work_cleaned = os.path.join(step_dir, "output.xyz")
-    work_raw = os.path.join(step_dir, "result.xyz")
-    work_failed = os.path.join(step_dir, "failed.xyz")
-
-    if os.path.exists(work_cleaned):
-        final_input = work_cleaned
-    elif os.path.exists(work_raw):
-        final_input = work_raw
-    else:
-        raise RuntimeError("Calculation task did not produce expected output")
-
-    if os.path.exists(work_failed):
-        failure_tracker.append(work_failed, step_name)
-
-    return final_input
 
 
 def run_workflow(
@@ -176,28 +117,20 @@ def run_workflow(
             force_consistency=global_config.get("force_consistency", False),
         )
 
-    root_dir = os.path.abspath(work_dir)
-    os.makedirs(root_dir, exist_ok=True)
-    failed_dir = os.path.join(root_dir, "failed")
-    os.makedirs(failed_dir, exist_ok=True)
-
-    try:
-        shutil.copy2(config_file, os.path.join(failed_dir, os.path.basename(config_file)))
-    except OSError as e:  # P2-1: log instead of silently swallowing
-        logger.debug("Could not copy config to failed dir: %s", e)
-
-    if hasattr(logger, "add_file_handler"):
-        logger.add_file_handler(os.path.join(root_dir, "confflow.log"))
-
-    checkpoint = CheckpointManager(root_dir)
-    stats_tracker = WorkflowStatsTracker(input_files, original_inputs)
-    failure_tracker = FailureTracker(failed_dir)
-
-    if not resume:
-        failure_tracker.clear_previous()
-
-    resume_from_step = checkpoint.load() if resume else -1
-    current_input: str | list[str] = input_files[0] if len(input_files) == 1 else input_files
+    runtime = initialize_runtime_context(
+        work_dir=work_dir,
+        config_file=config_file,
+        input_files=input_files,
+        original_inputs=original_inputs,
+        resume=resume,
+        logger=logger,
+    )
+    root_dir = runtime.root_dir
+    checkpoint = runtime.checkpoint
+    stats_tracker = runtime.stats_tracker
+    failure_tracker = runtime.failure_tracker
+    resume_from_step = runtime.resume_from_step
+    current_input = runtime.current_input
 
     # === Print workflow start header ===
     print_workflow_start(input_files, current_input)
@@ -206,21 +139,14 @@ def run_workflow(
         if resume_from_step >= i:
             # If resuming and this step is already completed, update current_input to its output
             step_dir = os.path.join(root_dir, step_dirnames[i])
-            expected_output = os.path.join(step_dir, "output.xyz")
-            if not os.path.exists(expected_output):
-                expected_output = os.path.join(step_dir, "result.xyz")
-            if not os.path.exists(expected_output):
-                expected_output = os.path.join(step_dir, "search.xyz")
-            if os.path.exists(expected_output):
+            expected_output = resolve_step_output(step_dir, step.get("type"))
+            if expected_output is not None and os.path.exists(expected_output):
                 current_input = expected_output
             else:
-                # P1-3: Warn when the expected output is missing during resume.
-                logger.warning(
-                    "Resume: step %d ('%s') output not found in %s; "
-                    "current_input is unchanged. Consider re-running from this step.",
-                    i + 1,
-                    step_dirnames[i],
-                    step_dir,
+                raise RuntimeError(
+                    "Resume failed: step "
+                    f"{i + 1} ('{step_dirnames[i]}') output not found in {step_dir}. "
+                    "The working directory is incomplete; re-run from this step or remove resume."
                 )
             continue
 

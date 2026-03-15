@@ -4,7 +4,7 @@
 
 This package is responsible for:
 - Parsing and normalizing configuration
-- Executing steps (confgen/calc/refine/viz)
+- Executing workflow steps (currently confgen/calc) and producing final reports
 - Checkpoint resume and statistics collection
 
 CLI entry point is in ``confflow.cli``.

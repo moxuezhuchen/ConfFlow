@@ -14,6 +14,7 @@ from ..blocks import confgen
 from ..config.schema import ConfigSchema
 from ..core.exceptions import ConfFlowError
 from ..core.pairs import normalize_pair_list
+from ..core.utils import get_logger
 from .config_builder import build_task_config
 from .helpers import as_list, is_multi_frame_any, pushd, resolve_step_output
 from .stats import FailureTracker
@@ -23,6 +24,8 @@ __all__ = [
     "run_confgen_step",
     "run_calc_step",
 ]
+
+logger = get_logger()
 
 
 @dataclass
@@ -100,6 +103,14 @@ def run_calc_step(
         if os.path.exists(step_failed):
             failure_tracker.append(step_failed, step_name)
         return final_input
+
+    if isinstance(current_input, list) and len(current_input) > 1:
+        logger.warning(
+            "calc step received %d input files; only '%s' will be used. "
+            "Add a confgen step to merge multi-input files before calc.",
+            len(current_input),
+            current_input[0],
+        )
 
     manager = calc.ChemTaskManager(task_config)
     manager.work_dir = step_dir

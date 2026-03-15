@@ -19,7 +19,7 @@ confflow/
 │   ├── config/            # 配置加载与校验
 │   ├── core/              # 基础 IO、数据、模型与工具函数
 │   └── workflow/          # 工作流引擎
-├── tests/                 # 单元测试（31 个文件，529 个用例）
+├── tests/                 # 单元测试（41 个文件，630 个用例）
 ├── docs/                  # 文档
 ├── confflow.yaml          # 配置模板
 ├── README.md              # 主文档
@@ -31,8 +31,8 @@ confflow/
 ### 1. 克隆仓库
 
 ```bash
-git clone https://github.com/confflow/confflow.git
-cd confflow
+git clone https://github.com/moxuezhuchen/ConfFlow.git
+cd ConfFlow
 ```
 
 ### 2. 创建虚拟环境
@@ -45,8 +45,7 @@ conda activate confflow-dev
 ### 3. 安装开发依赖
 
 ```bash
-pip install -e .  # 可编辑安装
-pip install pytest pytest-cov black ruff mypy sphinx  # 开发工具
+pip install -e ".[dev]"
 ```
 
 ## 代码规范
@@ -62,7 +61,7 @@ black confflow/ tests/
 ### 类型检查
 
 ```bash
-mypy confflow/ --ignore-missing-imports
+mypy confflow
 ```
 
 ### 代码风格检查
@@ -122,7 +121,8 @@ pytest -q
 ### 目录清理（缓存/临时文件）
 
 ```bash
-bash scripts/clean_artifacts.sh
+find . -type d -name "__pycache__" -exec rm -rf {} +
+rm -rf .pytest_cache .pytest_basetemp .mypy_cache .ruff_cache confflow.egg-info build dist htmlcov coverage.xml reports .coverage
 ```
 
 ## 核心模块说明

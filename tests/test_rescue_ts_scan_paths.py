@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+"""TS rescue scan path coverage tests."""
+
 from __future__ import annotations
 
 import os

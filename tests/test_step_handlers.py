@@ -11,9 +11,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from confflow.core.exceptions import ConfFlowError
-from confflow.workflow.step_handlers import run_calc_step, run_confgen_step
 from confflow.workflow.stats import FailureTracker
-
+from confflow.workflow.step_handlers import run_calc_step, run_confgen_step
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -231,6 +230,44 @@ class TestRunCalcStep:
         assert result == output
 
     @patch("confflow.workflow.step_handlers.calc")
+    def test_search_xyz_does_not_skip_calc(
+        self,
+        mock_calc: MagicMock,
+        step_dir: str,
+        single_input_xyz: str,
+        failure_tracker: FailureTracker,
+    ):
+        """search.xyz is an input artifact for calc steps, not a completed result."""
+        search = os.path.join(step_dir, "search.xyz")
+        with open(search, "w") as f:
+            f.write("2\nseed\nC 0 0 0\nH 0 0 1\n")
+
+        output = os.path.join(step_dir, "output.xyz")
+
+        def fake_run(input_xyz_file):
+            with open(output, "w") as f:
+                f.write("2\ncalculated\nC 0 0 0\nH 0 0 1\n")
+
+        mock_manager = MagicMock()
+        mock_manager.run.side_effect = fake_run
+        mock_calc.ChemTaskManager.return_value = mock_manager
+
+        result = run_calc_step(
+            step_dir=step_dir,
+            current_input=single_input_xyz,
+            params=self.MINIMAL_PARAMS,
+            global_config=self.MINIMAL_GLOBAL,
+            root_dir=os.path.dirname(step_dir),
+            steps=[],
+            failure_tracker=failure_tracker,
+            step_name="step_02",
+        )
+
+        mock_calc.ChemTaskManager.assert_called_once()
+        mock_manager.run.assert_called_once_with(input_xyz_file=single_input_xyz)
+        assert result == output
+
+    @patch("confflow.workflow.step_handlers.calc")
     def test_normal_calc_run(
         self,
         mock_calc: MagicMock,
@@ -318,6 +355,40 @@ class TestRunCalcStep:
         )
         assert result == output
         mock_manager.run.assert_called_once_with(input_xyz_file=single_input_xyz)
+
+    @patch("confflow.workflow.step_handlers.calc")
+    def test_list_input_logs_warning(
+        self,
+        mock_calc: MagicMock,
+        step_dir: str,
+        single_input_xyz: str,
+        failure_tracker: FailureTracker,
+        caplog: pytest.LogCaptureFixture,
+    ):
+        """Multi-input calc emits a warning before taking the first file."""
+        output = os.path.join(step_dir, "output.xyz")
+
+        def fake_run(input_xyz_file):
+            with open(output, "w", encoding="utf-8") as f:
+                f.write("2\nout\nC 0 0 0\nH 0 0 1\n")
+
+        mock_manager = MagicMock()
+        mock_manager.run.side_effect = fake_run
+        mock_calc.ChemTaskManager.return_value = mock_manager
+
+        with caplog.at_level("WARNING"):
+            run_calc_step(
+                step_dir=step_dir,
+                current_input=[single_input_xyz, "other.xyz"],
+                params=self.MINIMAL_PARAMS,
+                global_config=self.MINIMAL_GLOBAL,
+                root_dir=os.path.dirname(step_dir),
+                steps=[],
+                failure_tracker=failure_tracker,
+                step_name="step_02",
+            )
+
+        assert "only" in caplog.text and "will be used" in caplog.text
 
     @patch("confflow.workflow.step_handlers.calc")
     def test_result_xyz_fallback(

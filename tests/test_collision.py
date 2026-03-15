@@ -12,7 +12,6 @@ Tests the Numba JIT-compiled clash detection logic directly, covering the cases:
 from __future__ import annotations
 
 import numpy as np
-import pytest
 
 from confflow.blocks.confgen.collision import GV_RADII_ARRAY, check_clash_core
 

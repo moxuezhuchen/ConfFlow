@@ -43,10 +43,12 @@ def resolve_step_output(step_dir: str, step_type: str | None = None) -> str | No
     """Resolve an existing standard output file by step type."""
     st = (step_type or "").lower()
     if st in {"confgen", "gen"}:
-        path = os.path.join(step_dir, "search.xyz")
-        return path if os.path.exists(path) else None
+        candidates = ["search.xyz"]
+    elif st in {"calc", "task"}:
+        candidates = ["output.xyz", "result.xyz"]
+    else:
+        candidates = ["output.xyz", "result.xyz", "search.xyz"]
 
-    candidates = ["output.xyz", "result.xyz", "search.xyz"]
     for name in candidates:
         path = os.path.join(step_dir, name)
         if os.path.exists(path):

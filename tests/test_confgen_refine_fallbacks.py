@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+"""Fallback and algorithm tests for confgen/refine modules."""
+
 from __future__ import annotations
 
 import importlib
@@ -288,7 +290,6 @@ def test_check_one_against_many_empty_coords():
 def test_check_one_against_many_energy_tolerance():
     """Energy-assisted threshold relaxation: close energy → wider threshold."""
     from confflow.blocks.refine.rmsd_engine import (
-        HARTREE_TO_KCALMOL,
         check_one_against_many,
         get_pmi,
     )
