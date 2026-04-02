@@ -62,7 +62,7 @@ class ChainValidator:
             # Check indices bounds
             if any(idx >= n_atoms for idx in chain_indices):
                 chain_info["valid"] = False
-                chain_info["error"] = f"Indices out of range (max {n_atoms-1})"
+                chain_info["error"] = f"Indices out of range (max {n_atoms - 1})"
                 results.append(chain_info)
                 continue
 
@@ -83,7 +83,7 @@ class ChainValidator:
                 if mol.GetBondBetweenAtoms(int(a), int(b)) is None:
                     chain_info["connected"] = False
                     chain_info["valid"] = False
-                    chain_info["error"] = f"not bonded: {a+1}-{b+1}"
+                    chain_info["error"] = f"not bonded: {a + 1}-{b + 1}"
                     break
 
             results.append(chain_info)

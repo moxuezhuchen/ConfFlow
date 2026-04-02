@@ -64,7 +64,7 @@ def test_parse_gaussian_input_geometry_errors():
     with pytest.raises(ValueError, match="Cannot find charge/multiplicity"):
         _parse_gaussian_input_geometry("title\n\nno charge mult here\n")
 
-    with pytest.raises(ValueError, match="No geometry found"):
+    with pytest.raises(ValueError, match="does not contain a geometry section"):
         _parse_gaussian_input_geometry("0 1\n\n")
 
 
@@ -99,7 +99,7 @@ def test_stop_process_tree():
 
 
 def test_kill_proc_tree_refuse_self():
-    with pytest.raises(RuntimeError, match="I refuse to kill myself"):
+    with pytest.raises(RuntimeError, match="Refusing to stop the current process"):
         kill_proc_tree(os.getpid())
 
 
@@ -456,11 +456,11 @@ def test_cli_parse_gaussian_errors():
     with pytest.raises(ValueError, match="Cannot find charge/multiplicity line"):
         _parse_gaussian_input_geometry("title\n\ngeometry\n")
 
-    with pytest.raises(ValueError, match="No geometry found"):
+    with pytest.raises(ValueError, match="does not contain a geometry section"):
         _parse_gaussian_input_geometry("title\n\n0 1\n\n")
 
     text = "title\n\n0 1\nC 0.0 0.0\n\n"
-    with pytest.raises(ValueError, match="No geometry found"):
+    with pytest.raises(ValueError, match="does not contain a geometry section"):
         _parse_gaussian_input_geometry(text)
 
 

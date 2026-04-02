@@ -1,12 +1,6 @@
 #!/usr/bin/env python3
 
-"""
-ConfFlow Viz - Report Generator (v1.0).
-
-Generates plain-text conformer analysis reports
-(energy distribution, Boltzmann weights, workflow statistics).
-Modular design (Library & Script).
-"""
+"""Generate plain-text conformer reports and workflow summaries."""
 
 from __future__ import annotations
 
@@ -18,7 +12,7 @@ from datetime import datetime
 from ...core.constants import HARTREE_TO_KCALMOL
 from ...core.io import read_xyz_file_safe
 
-# --- Constant definitions ---
+# Constants
 KB_KCALMOL = 0.001987204  # Boltzmann constant in kcal/(mol·K)
 
 __all__ = [
@@ -29,10 +23,6 @@ __all__ = [
     "get_lowest_energy_conformer",
     "generate_text_report",
 ]
-
-# ==============================================================================
-# Core logic
-# ==============================================================================
 
 logger = logging.getLogger("confflow.viz")
 
@@ -98,9 +88,9 @@ def format_duration(seconds: float) -> str:
     if seconds < 60:
         return f"{seconds:.1f}s"
     elif seconds < 3600:
-        return f"{seconds/60:.1f}min"
+        return f"{seconds / 60:.1f}min"
     else:
-        return f"{seconds/3600:.1f}h"
+        return f"{seconds / 3600:.1f}h"
 
 
 def _extract_energies(conformers: list[dict]) -> list[float | None]:

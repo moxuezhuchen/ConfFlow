@@ -100,9 +100,7 @@ class TestConftsCli:
         xyz.write_text("3\n\nC 0 0 0\nH 0 0 1\nH 0 0 -1")
 
         conf = tmp_path / "conf.yaml"
-        conf.write_text(
-            "global:\n  itask: 4\n  keyword: opt(ts,calcfc)\n  iprog: gaussian\n"
-        )
+        conf.write_text("global:\n  itask: 4\n  keyword: opt(ts,calcfc)\n  iprog: gaussian\n")
 
         with patch("confflow.calc.ChemTaskManager") as mock_manager:
             _cli([str(xyz), "-s", str(conf)])

@@ -29,6 +29,8 @@ __all__ = [
 
 _itask_label = _task_config_itask_label
 _normalize_iprog_label = _task_config_normalize_iprog_label
+
+
 def load_workflow_config(config_file: str) -> dict[str, Any]:
     """Load a workflow configuration file."""
     return load_workflow_config_file(config_file)

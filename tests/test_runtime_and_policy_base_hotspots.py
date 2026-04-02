@@ -80,7 +80,9 @@ def test_initialize_runtime_context_logs_copy_failure_via_debug_and_keeps_multip
 
     logger = _Logger()
 
-    with patch("confflow.workflow.runtime_context.shutil.copy2", side_effect=OSError("copy failed")):
+    with patch(
+        "confflow.workflow.runtime_context.shutil.copy2", side_effect=OSError("copy failed")
+    ):
         runtime = initialize_runtime_context(
             work_dir=str(tmp_path / "work"),
             config_file=str(config_file),
@@ -91,7 +93,7 @@ def test_initialize_runtime_context_logs_copy_failure_via_debug_and_keeps_multip
         )
 
     assert runtime.current_input == inputs
-    assert logger.debugs and "Could not copy config" in logger.debugs[0]
+    assert logger.debugs and "Failed to copy the config file" in logger.debugs[0]
     assert (tmp_path / "work" / "failed").exists()
 
 
@@ -111,7 +113,9 @@ def test_initialize_runtime_context_logs_copy_failure_via_warning_when_debug_mis
 
     logger = _Logger()
 
-    with patch("confflow.workflow.runtime_context.shutil.copy2", side_effect=OSError("copy failed")):
+    with patch(
+        "confflow.workflow.runtime_context.shutil.copy2", side_effect=OSError("copy failed")
+    ):
         runtime = initialize_runtime_context(
             work_dir=str(tmp_path / "work"),
             config_file=str(config_file),
@@ -122,4 +126,4 @@ def test_initialize_runtime_context_logs_copy_failure_via_warning_when_debug_mis
         )
 
     assert runtime.current_input == str(xyz)
-    assert logger.warnings and "Could not copy config" in logger.warnings[0]
+    assert logger.warnings and "Failed to copy the config file" in logger.warnings[0]

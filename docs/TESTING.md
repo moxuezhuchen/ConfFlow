@@ -22,11 +22,11 @@ pytest tests/ -m "not integration"
 
 | 指标 | 数值 |
 |------|------|
-| 总测试数 | 630 |
+| 总测试数 | 655 |
 | 测试文件 | 41 |
 | 通过率 | 100% |
-| 分支覆盖率 | 90.74% |
-| 运行时间 | `pytest -q` 约 6s；带覆盖率约 8s |
+| 分支覆盖率 | 90.52% |
+| 运行时间 | `pytest -q` 约 6s；带覆盖率约 7s |
 
 ---
 
@@ -160,7 +160,7 @@ source = ["confflow"]
 branch = true
 
 [tool.coverage.report]
-fail_under = 70
+fail_under = 85
 show_missing = true
 ```
 
@@ -172,8 +172,8 @@ pytest tests/ --cov=confflow --cov-report=term-missing
 
 最近一次本地验证基线：
 
-- `pytest -q`：630 passed
-- `pytest tests/ --cov=confflow --cov-report=term`：branch coverage 90.74%
+- `pytest -q`：655 passed
+- `pytest tests/ --cov=confflow --cov-report=term`：branch coverage 90.52%
 - `ruff check .`：通过
 - `mypy confflow`：通过
 

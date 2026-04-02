@@ -1,11 +1,6 @@
 #!/usr/bin/env python3
 
-"""
-ConfGen - Conformer Generator (v1.0).
-
-Systematic conformational search based on RDKit.
-Dual-mode architecture (importable as library or runnable as script).
-"""
+"""Generate conformers from one or more XYZ inputs."""
 
 from __future__ import annotations
 
@@ -19,7 +14,6 @@ from typing import Any
 import numpy as np
 from scipy.spatial import cKDTree
 
-# --- Library Imports ---
 try:
     from rdkit import Chem, RDLogger
     from rdkit.Chem import AllChem, rdMolTransforms
@@ -224,7 +218,7 @@ def load_mol_from_xyz(filename, bond_coeff):
     for b in mol.GetBonds():
         a1 = b.GetBeginAtom()
         a2 = b.GetEndAtom()
-        bonds_str.append(f"{a1.GetIdx()+1}({a1.GetSymbol()})-{a2.GetIdx()+1}({a2.GetSymbol()})")
+        bonds_str.append(f"{a1.GetIdx() + 1}({a1.GetSymbol()})-{a2.GetIdx() + 1}({a2.GetSymbol()})")
 
     # Dynamic columns based on console width
     cw = console.width or 80
@@ -262,8 +256,8 @@ def write_xyz(mol, conformers, filename):
 
             # Assign a stable ID for downstream workflow traceability
             if not cid:
-                cid = f"A{i+1:06d}"
-            f.write(f"{natoms}\nConformer {i+1} | CID={cid}\n")
+                cid = f"A{i + 1:06d}"
+            f.write(f"{natoms}\nConformer {i + 1} | CID={cid}\n")
             for j, s in enumerate(syms):
                 assert coords is not None
                 x, y, z = coords[j]
@@ -531,6 +525,7 @@ def run_generation(
 
             # Print rotatable bond information
             from ...core.console import print_kv as _pkv
+
             _pkv("Rotatable", f"{len(rot_bonds)} bonds")
             if rot_bonds:
                 bond_items = []
@@ -538,7 +533,7 @@ def run_generation(
                     a1, a2, _ = b
                     aa1, aa2 = mol.GetAtomWithIdx(a1), mol.GetAtomWithIdx(a2)
                     bond_items.append(
-                        f"{i+1}: {a1+1}({aa1.GetSymbol()}) - {a2+1}({aa2.GetSymbol()})"
+                        f"{i + 1}: {a1 + 1}({aa1.GetSymbol()}) - {a2 + 1}({aa2.GetSymbol()})"
                     )
                 cw = console.width or 80
                 col_w = (cw - 8) // 2
@@ -548,6 +543,7 @@ def run_generation(
                     console.print(f"[muted]{'':14}{line_str}[/muted]")
 
             from ...core.console import print_kv as _pkv2
+
             _pkv2("Clash", f"threshold = {clash_threshold}")
 
             if not rot_bonds:
@@ -595,9 +591,7 @@ def run_generation(
     return all_confs_data
 
 
-# ------------------------------------------------------------------------------
-# Command-line entry
-# ------------------------------------------------------------------------------
+# CLI entry point
 
 
 def main():
@@ -605,20 +599,24 @@ def main():
     import argparse
 
     parser = argparse.ArgumentParser(
-        description="ConfGen v1.0 - Conformer Generator",
+        description="Generate conformers from one or more XYZ inputs",
         epilog=(
-            "Chain mode example (default angle step=120): confgen mol.xyz --chain 81-69-78-86-92 --steps 120,60,120,120 -y\n"
-            "Chain mode (explicit angle list): confgen mol.xyz --chain 81-69-78-86-92 --angles '0,120,240;0,60,120,180;180;0,120' -y\n"
-            "Optional: append angle_step at the end to override default, e.g.: confgen mol.xyz 60 --chain 81-69-78-86-92 -y\n"
-            "Note: automatic flexible bond detection has been removed, --chain is required"
+            "Chain-mode example (default angle step = 120): confgen mol.xyz --chain 81-69-78-86-92 --steps 120,60,120,120 -y\n"
+            "Chain-mode example with explicit angles: confgen mol.xyz --chain 81-69-78-86-92 --angles '0,120,240;0,60,120,180;180;0,120' -y\n"
+            "Optional: append angle_step at the end to override the default, for example: confgen mol.xyz 60 --chain 81-69-78-86-92 -y\n"
+            "Note: automatic flexible-bond detection has been removed, so --chain is required"
         ),
     )
-    # Compatible positional arguments:
+    # Preserve compatibility with legacy positional angle-step arguments.
+    # Examples:
     # - Legacy usage: confgen mol.xyz 120
-    # - Multi-file: confgen a.xyz b.xyz 120
-    # Parse strategy: collect as inputs; if last token is an integer and not a file, treat as angle_step.
+    # - Multi-file usage: confgen a.xyz b.xyz 120
+    # Parse all tokens as inputs first; if the last token is an integer and not a
+    # file path, reinterpret it as angle_step.
     parser.add_argument(
-        "inputs", nargs="+", help="Input XYZ files (+ optional trailing angle_step, default=120)"
+        "inputs",
+        nargs="+",
+        help="Path to one or more input XYZ files, optionally followed by angle_step",
     )
 
     # Add -m alias for backward compatibility
@@ -628,14 +626,14 @@ def main():
         "--bond_threshold",
         type=float,
         default=1.15,
-        help="Bond detection scale (default 1.15)",
+        help="Bond-detection scale factor (default: 1.15)",
     )
     parser.add_argument(
         "-c",
         "--clash_threshold",
         type=float,
         default=0.65,
-        help="Clash threshold scale (default 0.65).",
+        help="Clash-threshold scale factor (default: 0.65)",
     )
 
     parser.add_argument("--add_bond", nargs=2, type=int, action="append")
@@ -648,28 +646,28 @@ def main():
         "--chain",
         action="append",
         default=None,
-        help="specify a chain (1-based, dash-separated), e.g. 81-69-78-86-92; repeatable",
+        help="Specify a 1-based dash-separated chain, for example 81-69-78-86-92; repeatable",
     )
     parser.add_argument(
         "--steps",
         action="append",
         default=None,
-        help="per-chain per-bond angle step list (comma-separated), e.g. 120,60,120,120; repeatable, corresponds to --chain",
+        help="Specify per-bond angle steps for each chain, for example 120,60,120,120; repeatable with --chain",
     )
     parser.add_argument(
         "--angles",
         action="append",
         default=None,
-        help="per-chain per-bond angle list, e.g. '0,120,240;0,60,120,180;180;0,120' (';' separates bonds, ',' separates angles)",
+        help="Specify explicit per-bond angle lists; ';' separates bonds and ',' separates angles",
     )
     parser.add_argument(
         "--rotate_side",
         choices=["left", "right"],
         default="left",
-        help="which side to rotate around the chain: left=side containing first chain atom (default), right=side containing last chain atom",
+        help="Choose which side of the chain rotates: left keeps the first atom fixed, right keeps the last atom fixed",
     )
-    parser.add_argument("-y", "--yes", action="store_true", help="Auto confirm")
-    parser.add_argument("--optimize", "--opt", action="store_true", help="MMFF94s pre-optimization")
+    parser.add_argument("-y", "--yes", action="store_true", help="Skip the confirmation prompt")
+    parser.add_argument("--optimize", "--opt", action="store_true", help="Run MMFF94s pre-optimization")
 
     args = parser.parse_args()
 
@@ -682,7 +680,7 @@ def main():
             angle_step = int(last)
             input_files = input_files[:-1]
     if not input_files:
-        parser.error("Missing input XYZ file")
+        parser.error("At least one input XYZ file is required.")
 
     with cli_output_to_txt(input_files[0]):
         run_generation(

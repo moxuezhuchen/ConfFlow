@@ -22,8 +22,7 @@ from ..core.console import SINGLE_LINE, console, print_kv
 from ..core.constants import HARTREE_TO_KCALMOL
 from ..core.keyword_rewrite import make_scan_keyword_from_ts_keyword
 from .components import executor
-from .policies import get_policy as _get_policy_by_id
-from .setup import parse_iprog
+from .policies import get_policy_for_config as _get_policy
 
 logger = logging.getLogger("confflow.calc.rescue")
 
@@ -295,7 +294,7 @@ def _emit_and_write_scan_table(
             )
             file_console.print(table)
 
-        logger.info(f"Scan table saved to {out_path}")
+        logger.info(f"Wrote the scan table to: {out_path}")
 
     except (OSError, UnicodeError, TypeError, ValueError) as e:
         logger.warning(f"Failed to write scan table: {e}")
@@ -365,12 +364,6 @@ class _ScanParams:
             self.coarse_k_max = max(1, min(k, 10))
         except (ValueError, ZeroDivisionError, OverflowError):
             self.coarse_k_max = 10
-
-
-def _get_policy(cfg: dict[str, Any]):
-    """Parse the program ID from config and return the corresponding Policy instance."""
-    iprog = parse_iprog(cfg)
-    return _get_policy_by_id(iprog)
 
 
 class _ConstrainedScanner:

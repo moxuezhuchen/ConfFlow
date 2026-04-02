@@ -1,11 +1,6 @@
 #!/usr/bin/env python3
 
-"""Task manager (migrated from the legacy confflow/calc.py ChemTaskManager).
-
-Compatibility goals:
-- Call interface remains unchanged: ``ChemTaskManager(settings_file).run(input_xyz_file)``
-- Results DB path / backup-restore / result.xyz output / auto_clean behaviour preserved.
-"""
+"""Manage calculation tasks for a calc step or direct ``confcalc`` run."""
 
 from __future__ import annotations
 
@@ -462,18 +457,18 @@ def main():
     import argparse
 
     parser = argparse.ArgumentParser(
-        description="ConfFlow Calc (v1.0) - quantum chemistry task executor",
+        description="Run quantum-chemistry calculation tasks for an XYZ trajectory",
         epilog="Example: confcalc search.xyz -s settings.ini",
     )
-    parser.add_argument("input_xyz", help="Input XYZ trajectory")
-    parser.add_argument("-s", "--settings", required=True, help="Path to INI settings file")
+    parser.add_argument("input_xyz", help="Path to the input XYZ trajectory")
+    parser.add_argument("-s", "--settings", required=True, help="Path to the INI settings file")
     args = parser.parse_args()
 
     try:
         require_existing_path(args.input_xyz, "Input file")
         require_existing_path(args.settings, "Settings file")
     except SystemExit as e:
-        print(f"ERROR: {e}")
+        print(f"Error: {e}")
         raise SystemExit(ExitCode.USAGE_ERROR) from e
 
     with cli_output_to_txt(args.input_xyz):

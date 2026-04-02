@@ -165,7 +165,7 @@ def _validate_chain_bonds(mol: Any, parsed_chains: list[list[int]], filename: st
             if mol.GetBondBetweenAtoms(a, b) is None:
                 missing.append((a, b))
     if missing:
-        pairs = ", ".join([f"{a+1}-{b+1}" for a, b in missing[:5]])
+        pairs = ", ".join([f"{a + 1}-{b + 1}" for a, b in missing[:5]])
         extra = "" if len(missing) <= 5 else f" ... {len(missing)} total"
         raise ValueError(
             f"adjacent chain atoms not bonded: {pairs}{extra} (file: {filename}). "
@@ -315,7 +315,7 @@ def _build_chain_rotations(
 
             if mol.GetBondBetweenAtoms(a_left, a_right) is None:
                 raise ValueError(
-                    f"no bond between adjacent chain atoms: {a_left+1}-{a_right+1} (use --add_bond or check chain indices)"
+                    f"no bond between adjacent chain atoms: {a_left + 1}-{a_right + 1} (use --add_bond or check chain indices)"
                 )
 
             if no_rotate:

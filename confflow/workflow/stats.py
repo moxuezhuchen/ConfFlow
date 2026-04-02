@@ -13,6 +13,7 @@ from datetime import datetime
 from typing import Any
 
 from ..core import io as io_xyz
+from ..core.exceptions import InputFileError
 
 __all__ = [
     "count_task_statuses_in_results_db",
@@ -79,8 +80,20 @@ class WorkflowStatsTracker:
             steps.append(step_stats)
 
     def finalize(self, final_output: Any) -> dict[str, Any]:
+        from .helpers import count_conformers_any
+
         self.stats["end_time"] = datetime.now().isoformat()
         self.stats["final_output"] = final_output if isinstance(final_output, str) else None
+        self.stats["final_outputs"] = (
+            [os.path.abspath(p) for p in final_output]
+            if isinstance(final_output, list)
+            else ([os.path.abspath(final_output)] if isinstance(final_output, str) else [])
+        )
+        try:
+            self.stats["final_conformers"] = count_conformers_any(final_output)
+        except (InputFileError, OSError, ValueError, TypeError) as e:
+            logger.debug(f"Failed to count final conformers from {final_output}: {e}")
+            self.stats["final_conformers"] = 0
         start_ts_raw = self.stats.pop("_start_ts", time.time())
         start_ts = float(start_ts_raw) if isinstance(start_ts_raw, (int, float)) else time.time()
         self.stats["total_duration_seconds"] = round(time.time() - start_ts, 2)
@@ -125,6 +138,8 @@ class TaskStatsCollector:
                     "success": counts.get("success", 0),
                     "failed": counts.get("failed", 0),
                     "skipped": counts.get("skipped", 0),
+                    "canceled": counts.get("canceled", 0),
+                    "pending": counts.get("pending", 0),
                     "total": sum(int(n) for st, n in rows if st),
                 }
             finally:
@@ -189,7 +204,7 @@ class FailureTracker:
     def _update_summary(self) -> None:
         if not os.path.exists(self.combined_failed):
             return
-        rows = ["name\terror\trescue\n"]
+        rows = ["name\terror_kind\terror\trescue\n"]
         with open(self.combined_failed, encoding="utf-8") as f:
             lines = f.readlines()
         i = 0
@@ -198,16 +213,19 @@ class FailureTracker:
                 natoms = int(lines[i].strip())
                 comment = lines[i + 1].strip()
                 job = "unknown"
+                err_kind = "unknown"
                 err = "unknown"
                 for p in comment.split():
                     if p.startswith("Job="):
                         job = p.split("=")[1]
+                    if p.startswith("ErrorKind="):
+                        err_kind = p.split("=")[1]
                     if p.startswith("Error="):
                         err = p.split("=")[1]
-                rows.append(f"{job}\t{err}\tCheck logs\n")
+                rows.append(f"{job}\t{err_kind}\t{err}\tCheck logs\n")
                 i += 2 + natoms
             except (ValueError, IndexError) as e:  # P2-4: typed exception + debug log
-                logger.debug("_update_summary: failed to parse failed.xyz at line %d: %s", i, e)
+                logger.debug("Failed to parse failed.xyz while updating the summary at line %d: %s", i, e)
                 break
         with open(self.summary_path, "w", encoding="utf-8") as f:
             f.writelines(rows)

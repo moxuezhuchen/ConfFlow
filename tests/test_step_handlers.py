@@ -128,7 +128,7 @@ class TestRunConfgenStep:
         """If confgen runs but doesn't produce output, raise ConfFlowError."""
         mock_confgen.run_generation.return_value = None
 
-        with pytest.raises(ConfFlowError, match="confgen did not generate"):
+        with pytest.raises(ConfFlowError, match="confgen did not produce"):
             run_confgen_step(
                 step_dir=step_dir,
                 current_input=single_input_xyz,
@@ -312,7 +312,7 @@ class TestRunCalcStep:
         mock_manager.run.return_value = None
         mock_calc.ChemTaskManager.return_value = mock_manager
 
-        with pytest.raises(ConfFlowError, match="did not produce expected output"):
+        with pytest.raises(ConfFlowError, match="did not produce an output XYZ file"):
             run_calc_step(
                 step_dir=step_dir,
                 current_input=single_input_xyz,
@@ -388,8 +388,7 @@ class TestRunCalcStep:
             )
 
         mock_warning.assert_called_once()
-        assert "only" in mock_warning.call_args.args[0]
-        assert "will be used" in mock_warning.call_args.args[0]
+        assert "using only" in mock_warning.call_args.args[0]
 
     @patch("confflow.workflow.step_handlers.calc")
     def test_result_xyz_fallback(
@@ -430,7 +429,9 @@ class TestRunCalcStep:
         with open(output, "w", encoding="utf-8") as f:
             f.write("2\nexisting\nC 0 0 0\nH 0 0 1\n")
 
-        with patch("confflow.workflow.step_handlers.ConfigSchema.validate_calc_config") as mock_validate:
+        with patch(
+            "confflow.workflow.step_handlers.ConfigSchema.validate_calc_config"
+        ) as mock_validate:
             result = run_calc_step(
                 step_dir=step_dir,
                 current_input=single_input_xyz,

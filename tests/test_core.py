@@ -115,9 +115,9 @@ class TestLowEnergyTrace:
         def fake_run_generation(input_files, **kwargs):
             with open("search.xyz", "w", encoding="utf-8") as f:
                 for i in range(6):
-                    cid = f"A{i+1:06d}"
+                    cid = f"A{i + 1:06d}"
                     f.write("2\n")
-                    f.write(f"Conformer {i+1} | CID={cid}\n")
+                    f.write(f"Conformer {i + 1} | CID={cid}\n")
                     f.write("H 0 0 0\n")
                     f.write("H 0 0 0.74\n")
 
@@ -133,7 +133,7 @@ class TestLowEnergyTrace:
                 for i, c in enumerate(confs):
                     meta = c.get("metadata") or {}
                     cid = meta.get("CID")
-                    c["comment"] = f"Energy={-(i+1)} CID={cid}"
+                    c["comment"] = f"Energy={-(i + 1)} CID={cid}"
                     c["metadata"] = engine.io_xyz.parse_comment_metadata(c["comment"])
                 out_dir = Path(self.work_dir)
                 out_dir.mkdir(parents=True, exist_ok=True)

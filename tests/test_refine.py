@@ -197,7 +197,7 @@ def test_process_xyz_no_energy(tmp_path):
 
 def test_process_xyz_sort_energy(tmp_path):
     xyz = tmp_path / "input.xyz"
-    xyz.write_text("2\nE=-1.0\nC 0 0 0\nC 1.5 0 0\n" "2\nE=-2.0\nC 0 0 0\nC 2.0 0 0\n")
+    xyz.write_text("2\nE=-1.0\nC 0 0 0\nC 1.5 0 0\n2\nE=-2.0\nC 0 0 0\nC 2.0 0 0\n")
     opts = RefineOptions(input_file=str(xyz), output=str(tmp_path / "output.xyz"))
     process_xyz(opts)
     with open(opts.output) as f:

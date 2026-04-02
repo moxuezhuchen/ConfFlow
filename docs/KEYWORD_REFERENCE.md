@@ -159,17 +159,17 @@ multiplicity = 1
 
 ### 基本用法
 ```bash
-confflow <input.xyz> -c <confflow.yaml> [选项]
+confflow <input.xyz> [-c <config.yaml>] [选项]
 ```
 
 ### 关键词列表
 
 | 关键词 | 简写 | 说明 | 示例 |
 |--------|------|------|------|
-| `--config` | `-c` | 配置文件(必需) | `-c confflow.yaml` |
+| `--config` | `-c` | 配置文件（可选；默认读取输入目录下的 `confflow.yaml`） | `-c confflow.yaml` |
 | `--resume` | - | 从断点恢复 | `--resume` |
-| `--verbose` | - | DEBUG日志 | `--verbose` |
-| `--work_dir` | `-w` | 工作目录(可选) | `-w custom_dir` |
+| `--verbose` | - | 启用更详细日志 | `--verbose` |
+| `--work_dir` | `-w` | 工作目录（可选） | `-w custom_dir` |
 
 ### 工作目录自动生成
 
@@ -344,4 +344,3 @@ cat README.md               # 快速开始
 cat QUICK_START.txt        # 快速入门
 cat DEVELOPMENT.md         # 详细开发文档
 ```
-

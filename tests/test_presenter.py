@@ -82,3 +82,40 @@ def test_emit_final_report_and_lowest_updates_stats(viz_stubs, capture_write_xyz
     assert final_stats["lowest_conformer"]["energy"] == -1.23
     assert capture_write_xyz["path"].endswith("finalmin.xyz")
     logger.info.assert_called_once()
+
+
+def test_write_final_statistics_outputs_both_json_files(tmp_path):
+    final_stats = {
+        "input_files": ["a.xyz"],
+        "original_input_files": ["a.xyz"],
+        "initial_conformers": 2,
+        "final_conformers": 1,
+        "final_output": str(tmp_path / "final.xyz"),
+        "final_outputs": [str(tmp_path / "final.xyz")],
+        "total_duration_seconds": 1.23,
+        "steps": [
+            {
+                "index": 1,
+                "name": "step_01",
+                "type": "calc",
+                "status": "completed",
+                "input_conformers": 2,
+                "output_conformers": 1,
+                "failed_conformers": 1,
+                "duration_seconds": 1.23,
+                "output_xyz": str(tmp_path / "final.xyz"),
+            }
+        ],
+        "lowest_conformer": {"cid": "A000001", "energy": -1.23},
+    }
+
+    presenter.write_final_statistics(str(tmp_path), final_stats)
+
+    workflow_stats = tmp_path / "workflow_stats.json"
+    run_summary = tmp_path / "run_summary.json"
+    assert workflow_stats.exists()
+    assert run_summary.exists()
+
+    summary_data = run_summary.read_text(encoding="utf-8")
+    assert '"final_conformers": 1' in summary_data
+    assert '"completed": 1' in summary_data

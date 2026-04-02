@@ -78,7 +78,7 @@ def _format_ts_bond_pair(value: Any) -> str | None:
             return f"{a},{b}"
         return None
 
-    # Legacy fallback: when freeze carries multiple atoms, keep using the first pair.
+    # Preserve the legacy behavior of reusing the first freeze pair.
     indices = _coerce_freeze_indices(value)
     if len(indices) >= 2:
         a, b = indices[0], indices[1]
@@ -138,7 +138,9 @@ def _build_clean_opts(params: dict[str, Any], global_config: dict[str, Any]) -> 
     return " ".join(opts)
 
 
-def _build_base_task_config(params: dict[str, Any], global_config: dict[str, Any]) -> dict[str, str]:
+def _build_base_task_config(
+    params: dict[str, Any], global_config: dict[str, Any]
+) -> dict[str, str]:
     """Build the base flat config shared by all calc tasks."""
     return {
         "gaussian_path": str(global_config.get("gaussian_path", "g16")),
@@ -168,9 +170,7 @@ def _build_base_task_config(params: dict[str, Any], global_config: dict[str, Any
             _coerce_bool_flag(
                 params.get(
                     "enable_dynamic_resources",
-                    global_config.get(
-                        "enable_dynamic_resources", DEFAULT_ENABLE_DYNAMIC_RESOURCES
-                    ),
+                    global_config.get("enable_dynamic_resources", DEFAULT_ENABLE_DYNAMIC_RESOURCES),
                 )
             )
         ).lower(),
@@ -320,7 +320,7 @@ def build_task_config(
     }
     for key, value in params.items():
         if key not in known_calc_params:
-            logger.warning("build_task_config: unknown parameter '%s' ignored", key)
+            logger.warning("Ignored unknown calc parameter '%s' while building the task config", key)
             continue
         if key not in config and value is not None:
             config[key] = str(value)

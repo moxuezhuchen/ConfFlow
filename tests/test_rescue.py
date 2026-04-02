@@ -693,9 +693,7 @@ def test_ts_rescue_scan_internal_patches_v8_style(tmp_path):
             patch("confflow.calc.rescue._get_policy"),
             patch("confflow.calc.rescue._keyword_requests_freq", return_value=False),
             patch("confflow.calc.rescue.make_scan_keyword_from_ts_keyword", return_value="scan"),
-            patch(
-                "confflow.calc.rescue._bond_length_from_xyz_lines", side_effect=mock_bond_length
-            ),
+            patch("confflow.calc.rescue._bond_length_from_xyz_lines", side_effect=mock_bond_length),
             patch("confflow.blocks.refine.rmsd_engine.fast_rmsd", return_value=0.01),
             patch(
                 "confflow.calc.scan_ops._set_bond_length_on_coords",

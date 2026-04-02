@@ -116,9 +116,7 @@ class TestVizReport:
             {"metadata": {"E": "-1.0", "G_corr": "0.1", "TSBond": {"bad": 1}}},
             {"metadata": {"Energy": -2.0, "ts_bond_length": None}},
         ]
-        text = viz_report.generate_text_report(
-            conformers, temperature=298.15, stats={"steps": []}
-        )
+        text = viz_report.generate_text_report(conformers, temperature=298.15, stats={"steps": []})
         assert "CONFORMER ANALYSIS" in text
 
     def test_viz_report_generation(self, tmp_path):

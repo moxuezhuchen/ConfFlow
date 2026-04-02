@@ -182,7 +182,11 @@ def test_validate_step_config_errors():
     assert any("invalid itask value" in e for e in errors)
     assert any("invalid iprog value" in e for e in errors)
 
-    step_ok = {"name": "s1", "type": "calc", "params": {"itask": "1", "iprog": "2", "keyword": "HF"}}
+    step_ok = {
+        "name": "s1",
+        "type": "calc",
+        "params": {"itask": "1", "iprog": "2", "keyword": "HF"},
+    }
     assert _validate_step_config(step_ok, 0) == []
 
     step = {"name": "s1", "type": "calc", "params": {"iprog": "orca"}}

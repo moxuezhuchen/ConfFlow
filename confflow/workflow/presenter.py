@@ -4,8 +4,10 @@
 
 from __future__ import annotations
 
+import json
 import os
 import sys
+from datetime import datetime
 from typing import Any
 
 from ..blocks import viz
@@ -32,6 +34,8 @@ __all__ = [
     "print_step_header_block",
     "print_step_footer_block",
     "emit_final_report_and_lowest",
+    "build_run_summary",
+    "write_final_statistics",
 ]
 
 
@@ -127,4 +131,76 @@ def emit_final_report_and_lowest(
         "energy": best_energy,
         "xyz_path": lowest_path,
     }
-    logger.info(f"Lowest energy conformer written to: {lowest_path}")
+    logger.info(f"Wrote the lowest-energy conformer to: {lowest_path}")
+
+
+def build_run_summary(final_stats: dict[str, Any]) -> dict[str, Any]:
+    """Build a concise machine-readable run summary."""
+
+    def _status_value(raw: Any) -> str:
+        if hasattr(raw, "value"):
+            return str(raw.value)
+        return str(raw)
+
+    steps = list(final_stats.get("steps", []) or [])
+    step_status_counts: dict[str, int] = {}
+    compact_steps = []
+
+    for step in steps:
+        status = _status_value(step.get("status", "unknown"))
+        step_status_counts[status] = step_status_counts.get(status, 0) + 1
+        compact_steps.append(
+            {
+                "index": step.get("index"),
+                "name": step.get("name"),
+                "type": step.get("type"),
+                "status": status,
+                "input_conformers": step.get("input_conformers"),
+                "output_conformers": step.get("output_conformers"),
+                "failed_conformers": step.get("failed_conformers"),
+                "duration_seconds": step.get("duration_seconds"),
+                "output_xyz": step.get("output_xyz"),
+            }
+        )
+
+    summary: dict[str, Any] = {
+        "generated_at": datetime.now().isoformat(),
+        "input_files": final_stats.get("input_files", []),
+        "original_input_files": final_stats.get("original_input_files", []),
+        "initial_conformers": final_stats.get("initial_conformers", 0),
+        "final_conformers": final_stats.get("final_conformers", 0),
+        "final_output": final_stats.get("final_output"),
+        "final_outputs": final_stats.get("final_outputs", []),
+        "total_duration_seconds": final_stats.get("total_duration_seconds", 0),
+        "step_status_counts": step_status_counts,
+        "steps": compact_steps,
+        "lowest_conformer": final_stats.get("lowest_conformer"),
+    }
+
+    low_energy_trace = final_stats.get("low_energy_trace")
+    if isinstance(low_energy_trace, dict):
+        trace_rows = []
+        for row in low_energy_trace.get("conformers", []) or []:
+            trace_rows.append(
+                {
+                    "cid": row.get("cid"),
+                    "final_energy": row.get("final_energy"),
+                }
+            )
+        summary["low_energy_trace"] = {
+            "top_k": low_energy_trace.get("top_k", len(trace_rows)),
+            "conformers": trace_rows,
+        }
+
+    return summary
+
+
+def write_final_statistics(root_dir: str, final_stats: dict[str, Any]) -> None:
+    """Persist detailed workflow stats and a compact run summary."""
+    stats_file = os.path.join(root_dir, "workflow_stats.json")
+    with open(stats_file, "w", encoding="utf-8") as f:
+        json.dump(final_stats, f, indent=2, ensure_ascii=False)
+
+    run_summary_file = os.path.join(root_dir, "run_summary.json")
+    with open(run_summary_file, "w", encoding="utf-8") as f:
+        json.dump(build_run_summary(final_stats), f, indent=2, ensure_ascii=False)

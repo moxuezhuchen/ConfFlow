@@ -19,6 +19,26 @@ __all__ = [
 ]
 
 
+def _future_done(fut: Any) -> bool:
+    done_fn = getattr(fut, "done", None)
+    if callable(done_fn):
+        try:
+            return bool(done_fn())
+        except Exception:
+            return False
+    return False
+
+
+def _future_cancelled(fut: Any) -> bool:
+    cancelled_fn = getattr(fut, "cancelled", None)
+    if callable(cancelled_fn):
+        try:
+            return bool(cancelled_fn())
+        except Exception:
+            return False
+    return False
+
+
 def execute_tasks(
     todo: list[models.TaskContext],
     config: dict[str, Any],
@@ -36,8 +56,21 @@ def execute_tasks(
         return
 
     report_every = max(1, len(todo) // 10)
+    stop_file = config.get("stop_beacon_file")
 
     if len(todo) == 1:
+        if stop_requested_fn() or (stop_file and os.path.exists(stop_file)):
+            set_stop_requested_fn(True)
+            results_db.insert_result(
+                {
+                    "job_name": todo[0].job_name,
+                    "status": "canceled",
+                    "error": "STOP requested before task start",
+                    "error_kind": "stop_requested",
+                    "final_coords": None,
+                }
+            )
+            return
         with progress_reporter_cls(total=1, report_every=1) as reporter:
             res = run_task_fn(todo[0].model_dump())
             results_db.insert_result(res)
@@ -48,11 +81,33 @@ def execute_tasks(
     max_jobs = int(config.get("max_parallel_jobs", 4))
     with executor_cls(max_workers=max_jobs) as exc:
         futures = {exc.submit(run_task_fn, t.model_dump()): t for t in todo}
+        recorded: set[Any] = set()
         with progress_reporter_cls(total=len(todo), report_every=report_every) as reporter:
             for fut in as_completed_fn(futures):
-                if stop_requested_fn() or os.path.exists(config["stop_beacon_file"]):
+                if stop_requested_fn() or (stop_file and os.path.exists(stop_file)):
                     set_stop_requested_fn(True)
                     exc.shutdown(wait=False, cancel_futures=True)
+                    for other_fut, task in futures.items():
+                        if other_fut in recorded:
+                            continue
+                        status = "pending" if _future_done(other_fut) else "canceled"
+                        if _future_cancelled(other_fut):
+                            status = "canceled"
+                        results_db.insert_result(
+                            {
+                                "job_name": task.job_name,
+                                "status": status,
+                                "error": (
+                                    "Task stopped before result collection"
+                                    if status == "pending"
+                                    else "STOP requested"
+                                ),
+                                "error_kind": "stop_requested",
+                                "final_coords": None,
+                            }
+                        )
+                        recorded.add(other_fut)
+                        reporter.report(status)
                     break
                 try:
                     res = fut.result()
@@ -67,11 +122,14 @@ def execute_tasks(
                         "job_name": task.job_name,
                         "status": "failed",
                         "error": str(e),
+                        "error_kind": "worker_exception",
                         "final_coords": None,
                     }
                     results_db.insert_result(failed_result)
+                    recorded.add(fut)
                     reporter.report("failed")
                     continue
                 results_db.insert_result(res)
+                recorded.add(fut)
                 append_result_fn(res)
                 reporter.report(res.get("status", "failed"))

@@ -1,19 +1,6 @@
 #!/usr/bin/env python3
 
-"""confts - TS-specific entry point (primarily provides scan keyword rewriting).
-
-Notes
------
-- Name: confts
-- The scan "method" is the same as TS (uses the same program/basis set),
-  but Gaussian keywords need rule-based rewriting.
-
-Rewriting rules (for Gaussian keyword strings):
-- Inside opt(...) / opt=(...) parentheses: remove calcfc, tight, ts, noeigentest.
-- If a freq keyword exists (any form: freq / freq=... / freq(...)), remove it.
-- nomicro is left untouched (preserved).
-- "ts" appearing outside opt() parentheses is not removed.
-"""
+"""Provide the TS-specific CLI entry point and scan-keyword rewrite helper."""
 
 from __future__ import annotations
 
@@ -31,14 +18,14 @@ __all__ = [
 def _cli(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="confts",
-        description="confts - TS executor (with TS-scan rescue support)",
+        description="Run TS calculations with scan-keyword rewrite support",
     )
-    parser.add_argument("input_xyz", nargs="?", help="Input XYZ file (may contain multiple frames)")
-    parser.add_argument("-s", "--settings", help="INI configuration file path (same as confcalc)")
+    parser.add_argument("input_xyz", nargs="?", help="Path to the input XYZ file")
+    parser.add_argument("-s", "--settings", help="Path to the INI settings file")
     parser.add_argument(
         "--rewrite-scan-keyword",
         metavar="KEYWORD",
-        help="Output scan keyword (rewritten from TS keyword rules)",
+        help="Print the scan keyword rewritten from the TS keyword rules",
     )
 
     args = parser.parse_args(argv)
@@ -51,8 +38,7 @@ def _cli(argv: list[str] | None = None) -> int:
         parser.print_help()
         return ExitCode.USAGE_ERROR
 
-    # Run as executor: equivalent to confcalc, but ts_rescue_scan can
-    # also be enabled in the YAML for itask=ts.
+    # Run as a calc executor. YAML can still enable ts_rescue_scan for TS tasks.
     if args.input_xyz and args.settings:
         from . import calc
 
@@ -61,7 +47,7 @@ def _cli(argv: list[str] | None = None) -> int:
 
         with cli_output_to_txt(args.input_xyz):
             manager = calc.ChemTaskManager(settings_file=args.settings)
-            # Respect YAML config instead of forcing ts_rescue_scan
+            # Respect the YAML configuration instead of forcing ts_rescue_scan.
             manager.run(args.input_xyz)
         return ExitCode.SUCCESS
 

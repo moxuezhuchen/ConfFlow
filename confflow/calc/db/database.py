@@ -29,7 +29,7 @@ class ResultsDB:
 
     Uses SQLite to store calculation task results.  Supports:
 
-    - Task status tracking (success / failed / skipped).
+    - Task status tracking (success / failed / skipped / canceled / pending).
     - Energy and frequency data storage.
     - Final structure coordinate persistence.
     - TS bond length and thermodynamic correction storage.
@@ -77,6 +77,8 @@ class ResultsDB:
                 ts_bond_length REAL,
                 final_coords TEXT,
                 error TEXT,
+                error_kind TEXT,
+                error_details TEXT,
                 timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
             )
         """)
@@ -85,13 +87,17 @@ class ResultsDB:
             "CREATE INDEX IF NOT EXISTS idx_task_results_job_name ON task_results(job_name)"
         )
 
-        # Compat: add missing columns for older databases
+        # Add missing columns when opening databases created by older versions.
         try:
             cols = {r[1] for r in self.conn.execute("PRAGMA table_info(task_results)")}
             if "ts_bond_atoms" not in cols:
                 self.conn.execute("ALTER TABLE task_results ADD COLUMN ts_bond_atoms TEXT")
             if "ts_bond_length" not in cols:
                 self.conn.execute("ALTER TABLE task_results ADD COLUMN ts_bond_length REAL")
+            if "error_kind" not in cols:
+                self.conn.execute("ALTER TABLE task_results ADD COLUMN error_kind TEXT")
+            if "error_details" not in cols:
+                self.conn.execute("ALTER TABLE task_results ADD COLUMN error_details TEXT")
         except sqlite3.OperationalError as e:
             logger.warning(f"Database column check failed (operational error): {e}")
         except sqlite3.DatabaseError as e:
@@ -126,6 +132,8 @@ class ResultsDB:
             task_info.get("ts_bond_length"),
             json.dumps(task_info.get("final_coords")) if task_info.get("final_coords") else None,
             task_info.get("error"),
+            task_info.get("error_kind"),
+            task_info.get("error_details"),
         )
         existing = self.conn.execute(
             "SELECT task_id FROM task_results WHERE job_name = ? ORDER BY task_id DESC LIMIT 1",
@@ -138,6 +146,7 @@ class ResultsDB:
                 SET task_index = ?, status = ?, energy = ?, final_gibbs_energy = ?,
                     final_sp_energy = ?, num_imag_freqs = ?, lowest_freq = ?, g_corr = ?,
                     ts_bond_atoms = ?, ts_bond_length = ?, final_coords = ?, error = ?,
+                    error_kind = ?, error_details = ?,
                     timestamp = CURRENT_TIMESTAMP
                 WHERE task_id = ?
             """,
@@ -151,8 +160,8 @@ class ResultsDB:
                     job_name, task_index, status, energy,
                     final_gibbs_energy, final_sp_energy, num_imag_freqs,
                     lowest_freq, g_corr, ts_bond_atoms, ts_bond_length,
-                    final_coords, error
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    final_coords, error, error_kind, error_details
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
                 payload,
             )
@@ -218,6 +227,8 @@ class ResultsDB:
             "ts_bond_length": row["ts_bond_length"] if "ts_bond_length" in row.keys() else None,
             "final_coords": json.loads(row["final_coords"]) if row["final_coords"] else None,
             "error": row["error"],
+            "error_kind": row["error_kind"] if "error_kind" in row.keys() else None,
+            "error_details": row["error_details"] if "error_details" in row.keys() else None,
         }
 
     def backup(self, backup_path: str | None = None) -> str:
@@ -248,7 +259,7 @@ class ResultsDB:
 
             # Atomic rename
             shutil.move(tmp_path, backup_path)
-            logger.debug(f"Database backed up to: {backup_path}")
+            logger.debug(f"Wrote the database backup to: {backup_path}")
             return backup_path
         except (OSError, sqlite3.Error) as e:
             # Clean up temp file
@@ -256,7 +267,7 @@ class ResultsDB:
                 os.unlink(tmp_path)
             except OSError:
                 pass
-            logger.warning(f"Database backup failed: {e}")
+            logger.warning(f"Failed to back up the database: {e}")
             raise
 
     def close(self) -> None:

@@ -98,7 +98,7 @@ class FakeResultsDB:
         self._fixed = fixed_results
 
     def get_result_by_job_name(self, job_name: str):
-        for r in self.inserted:
+        for r in reversed(self.inserted):
             if r.get("job_name") == job_name:
                 return r
         return None
@@ -118,11 +118,19 @@ class FakeResultsDB:
 class FakeFuture:
     """Minimal Future-like object that wraps a pre-computed result."""
 
-    def __init__(self, result):
+    def __init__(self, result, *, done: bool = True, cancelled: bool = False):
         self._result = result
+        self._done = done
+        self._cancelled = cancelled
 
     def result(self):
         return self._result
+
+    def done(self):
+        return self._done
+
+    def cancelled(self):
+        return self._cancelled
 
 
 class FakeExecutor:

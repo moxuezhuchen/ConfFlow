@@ -75,7 +75,7 @@ def test_confgen_chain_mode_generates_traj_xyz(cd_tmp) -> None:
     )
 
     out = cd_tmp / "search.xyz"
-    assert out.exists(), "confgen did not generate search.xyz"
+    assert out.exists(), "confgen did not produce search.xyz"
     first = out.read_text(encoding="utf-8").splitlines()[0].strip()
     assert first.isdigit() and int(first) > 0
 

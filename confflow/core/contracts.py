@@ -24,7 +24,6 @@ __all__ = [
 logger = logging.getLogger("confflow.core.contracts")
 
 
-
 class ExitCode(IntEnum):
     SUCCESS = 0
     USAGE_ERROR = 1
@@ -81,7 +80,7 @@ def cli_output_to_txt(input_path: str) -> Iterator[str]:
             try:
                 get_logger().redirect_console_handler(sys.stdout)
             except (AttributeError, OSError) as e:
-                logger.debug(f"redirect console handler failed on enter: {e}")
+                logger.debug(f"Failed to redirect the console handler on entry: {e}")
             redirect_logging_streams(sys.stdout, include_root=False)
             try:
                 yield output_path
@@ -89,12 +88,12 @@ def cli_output_to_txt(input_path: str) -> Iterator[str]:
                 try:
                     redirect_console(original_stdout)
                 except (AttributeError, OSError) as e:
-                    logger.debug(f"redirect console failed on exit: {e}")
+                    logger.debug(f"Failed to redirect the console output on exit: {e}")
                 try:
                     get_logger().redirect_console_handler(original_stdout)
                 except (AttributeError, OSError) as e:
-                    logger.debug(f"redirect console handler failed on exit: {e}")
+                    logger.debug(f"Failed to restore the console handler on exit: {e}")
                 try:
                     redirect_logging_streams(original_stdout, include_root=False)
                 except (AttributeError, OSError) as e:
-                    logger.debug(f"redirect logging streams failed on exit: {e}")
+                    logger.debug(f"Failed to restore the logging streams on exit: {e}")

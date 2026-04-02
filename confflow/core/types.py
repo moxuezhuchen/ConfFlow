@@ -21,10 +21,10 @@ from typing_extensions import TypedDict
 CoordLine = str
 CoordLines = list[CoordLine]
 
-# Coordinate type: [[x, y, z], ...]
+# Cartesian coordinate array shape: ``[[x, y, z], ...]``.
 Coords3D = list[list[float]]
 
-# Atom list: ["C", "H", "H", ...]
+# Atom symbol sequence such as ``["C", "H", "H", ...]``.
 AtomList = list[str]
 
 
@@ -43,6 +43,7 @@ class TaskStatus(str, Enum):
     COMPLETED = "completed"
     RUNNING = "running"
     PENDING = "pending"
+    CANCELED = "canceled"
 
 
 # ==============================================================================
@@ -156,8 +157,9 @@ class TaskResult(TypedDict, total=False):
     """Calculation task result type definition."""
 
     job_name: str
-    status: str  # "success", "failed", "skipped"
+    status: str  # "success", "failed", "skipped", "canceled", "pending"
     error: str
+    error_kind: str
     error_details: str
 
     # Energy

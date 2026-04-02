@@ -55,18 +55,18 @@ __all__ = [
 custom_theme = Theme(
     {
         # Brand / structural
-        "brand":    "bold #A8DADC",   # soft teal — titles, brand name
-        "step_tag": "bold #BDB2FF",   # lavender — step badges
-        "sep":      "#555577",        # muted indigo — separator characters
+        "brand": "bold #A8DADC",  # soft teal — titles, brand name
+        "step_tag": "bold #BDB2FF",  # lavender — step badges
+        "sep": "#555577",  # muted indigo — separator characters
         # Message levels
-        "info":     "#7EC8E3",        # sky blue
-        "warning":  "#FFD166",        # amber
-        "error":    "#EF8585",        # coral
-        "success":  "#95D5B2",        # sage green
+        "info": "#7EC8E3",  # sky blue
+        "warning": "#FFD166",  # amber
+        "error": "#EF8585",  # coral
+        "success": "#95D5B2",  # sage green
         # Text roles
-        "label":    "#A0A0B8",        # silver-blue — kv labels
-        "muted":    "#777799",        # dimmed — secondary values
-        "hi":       "bold",           # highlight numbers inline
+        "label": "#A0A0B8",  # silver-blue — kv labels
+        "muted": "#777799",  # dimmed — secondary values
+        "hi": "bold",  # highlight numbers inline
     }
 )
 
@@ -80,7 +80,7 @@ target_width = FIXED_WIDTH
 _console = Console(
     theme=custom_theme,
     soft_wrap=False,
-    highlight=False,          # prevent Rich from auto-styling numbers/paths
+    highlight=False,  # prevent Rich from auto-styling numbers/paths
     width=target_width,
 )
 
@@ -124,7 +124,7 @@ console = _ConsoleProxy(_console)
 LINE_WIDTH = _console.width
 DOUBLE_LINE = "═" * LINE_WIDTH
 SINGLE_LINE = "─" * LINE_WIDTH
-_THIN_LINE  = "┄" * LINE_WIDTH   # thin dotted — step entry separator
+_THIN_LINE = "┄" * LINE_WIDTH  # thin dotted — step entry separator
 
 
 def _render_table_to_str(table: Table) -> str:
@@ -133,7 +133,6 @@ def _render_table_to_str(table: Table) -> str:
     tmp = Console(file=buf, no_color=True, highlight=False, width=LINE_WIDTH, theme=custom_theme)
     tmp.print(table)
     return buf.getvalue()
-
 
 
 def print_step_header(
@@ -159,7 +158,6 @@ def print_step_header(
         f"{' ' * padding}[muted]{right_plain}[/muted]"
     )
     console.print(f"[sep]{SINGLE_LINE}[/sep]")
-
 
 
 def wrap_text(
@@ -240,11 +238,11 @@ def print_error(message: str) -> None:
     console.print(f"  [error]✘[/error]  {message}")
 
 
-# Compatibility aliases (preferred short names)
-info    = print_info
+# Keep the short aliases for compatibility with older call sites.
+info = print_info
 success = print_success
 warning = print_warning
-error   = print_error
+error = print_error
 
 
 def heading(title: str) -> None:
@@ -266,7 +264,7 @@ def print_workflow_header(input_file: str, input_count: int) -> None:
     """Print the workflow start header."""
     console.print()
     console.print(f"[sep]{DOUBLE_LINE}[/sep]")
-    title = "✦  ConfFlow  v1.0  ✦"
+    title = "✦  ConfFlow  ✦"
     console.print(f"[brand]{title:^{LINE_WIDTH}}[/brand]")
     console.print(f"[sep]{DOUBLE_LINE}[/sep]")
     started = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -276,7 +274,9 @@ def print_workflow_header(input_file: str, input_count: int) -> None:
     console.print(f"[sep]{SINGLE_LINE}[/sep]")
 
 
-def print_step_result(status: str, in_count: int, out_count: int, failed: int, duration: str) -> None:
+def print_step_result(
+    status: str, in_count: int, out_count: int, failed: int, duration: str
+) -> None:
     """Print the step completion result line."""
     ok = status in ("completed", "skipped", "skipped_multi_frame")
     mark_style = "success" if ok else "error"
@@ -320,24 +320,24 @@ def format_step_table(steps: list[dict]) -> str:
         padding=(0, 1),
         show_edge=False,
     )
-    tbl.add_column("Step",   justify="right",  style="muted",   min_width=4)
-    tbl.add_column("Name",   justify="left",   min_width=12)
-    tbl.add_column("Type",   justify="left",   style="muted",   min_width=8)
-    tbl.add_column("Status", justify="left",   min_width=10)
-    tbl.add_column("In",     justify="right",  style="muted",   min_width=5)
-    tbl.add_column("Out",    justify="right",  min_width=5)
-    tbl.add_column("Failed", justify="right",  min_width=6)
-    tbl.add_column("Time",   justify="right",  style="muted",   min_width=10)
+    tbl.add_column("Step", justify="right", style="muted", min_width=4)
+    tbl.add_column("Name", justify="left", min_width=12)
+    tbl.add_column("Type", justify="left", style="muted", min_width=8)
+    tbl.add_column("Status", justify="left", min_width=10)
+    tbl.add_column("In", justify="right", style="muted", min_width=5)
+    tbl.add_column("Out", justify="right", min_width=5)
+    tbl.add_column("Failed", justify="right", min_width=6)
+    tbl.add_column("Time", justify="right", style="muted", min_width=10)
 
     for step in steps:
-        idx    = str(step.get("index", 0))
-        name   = str(step.get("name", ""))
-        stype  = str(step.get("type", ""))
+        idx = str(step.get("index", 0))
+        name = str(step.get("name", ""))
+        stype = str(step.get("type", ""))
         status = str(step.get("status", "unknown"))
-        inp    = str(step.get("input_conformers", 0))
-        out    = str(step.get("output_conformers", 0))
+        inp = str(step.get("input_conformers", 0))
+        out = str(step.get("output_conformers", 0))
         failed = step.get("failed_conformers")
-        dur    = str(step.get("duration_str", step.get("duration_seconds", "")))
+        dur = str(step.get("duration_str", step.get("duration_seconds", "")))
 
         failed_str = "–" if failed is None else str(int(failed))
 
@@ -364,19 +364,19 @@ def format_conformer_table(conformers: list[dict]) -> str:
         padding=(0, 1),
         show_edge=False,
     )
-    tbl.add_column("Rank",        justify="right",  style="muted",   min_width=4)
-    tbl.add_column("Energy (Ha)", justify="right",  min_width=14)
-    tbl.add_column("ΔG (kcal)",  justify="right",  style="muted",   min_width=10)
-    tbl.add_column("Pop (%)",    justify="right",  style="muted",   min_width=8)
-    tbl.add_column("Imag",       justify="right",  min_width=5)
-    tbl.add_column("TSBond",     justify="right",  style="muted",   min_width=10)
+    tbl.add_column("Rank", justify="right", style="muted", min_width=4)
+    tbl.add_column("Energy (Ha)", justify="right", min_width=14)
+    tbl.add_column("ΔG (kcal)", justify="right", style="muted", min_width=10)
+    tbl.add_column("Pop (%)", justify="right", style="muted", min_width=8)
+    tbl.add_column("Imag", justify="right", min_width=5)
+    tbl.add_column("TSBond", justify="right", style="muted", min_width=10)
 
     for conf in conformers:
-        rank   = str(conf.get("rank", 0))
+        rank = str(conf.get("rank", 0))
         energy = conf.get("energy")
-        dg     = conf.get("dg", 0.0)
-        pop    = conf.get("pop", 0.0)
-        imag   = conf.get("imag", "-")
+        dg = conf.get("dg", 0.0)
+        pop = conf.get("pop", 0.0)
+        imag = conf.get("imag", "-")
         tsbond = conf.get("tsbond", "-")
 
         e_str = f"{energy:.7f}" if energy is not None else "N/A"
@@ -417,7 +417,7 @@ class CalcProgressReporter:
         self.label = label
         self.report_every = report_every if report_every is not None else max(1, total // 10)
         self._done = 0
-        self._ok   = 0
+        self._ok = 0
         self._fail = 0
         self._start: float = 0.0
 

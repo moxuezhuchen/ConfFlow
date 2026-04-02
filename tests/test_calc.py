@@ -267,6 +267,36 @@ class TestExecutor:
         handle_backups(str(work_dir), config, success=True, cleanup_work_dir=False)
         assert (backup_dir / "work_scan" / "scan.out").exists()
 
+    def test_handle_backups_failure_preserves_workdir(self, tmp_path, monkeypatch):
+        import shutil
+
+        from confflow.calc.components.executor import handle_backups
+
+        work_dir = tmp_path / "work"
+        work_dir.mkdir()
+        (work_dir / "test.out").write_text("content")
+        backup_dir = tmp_path / "backup"
+
+        def fail_move(src, dst):
+            raise OSError("move failed")
+
+        def fail_copy2(src, dst):
+            raise OSError("copy failed")
+
+        monkeypatch.setattr(shutil, "move", fail_move)
+        monkeypatch.setattr(shutil, "copy2", fail_copy2)
+
+        backup_ok = handle_backups(
+            str(work_dir),
+            {"ibkout": 1, "backup_dir": str(backup_dir)},
+            success=True,
+            cleanup_work_dir=True,
+        )
+
+        assert backup_ok is False
+        assert work_dir.exists()
+        assert (work_dir / "test.out").exists()
+
     def test_save_config_hash(self, tmp_path):
         from confflow.calc.components.executor import _save_config_hash
 
@@ -465,6 +495,106 @@ class TestExecutorAdvanced:
                 _run_calculation_step(str(work_dir), "job", policy, None, config)
 
 
+def test_execute_tasks_marks_pending_and_canceled_on_stop(tmp_path):
+    from confflow.calc.task_execution import execute_tasks
+    from confflow.core.models import TaskContext
+
+    stop_file = tmp_path / "STOP"
+    inserted = []
+
+    class FakeResultsDB:
+        def insert_result(self, res):
+            inserted.append(res)
+
+    class Reporter:
+        def __init__(self, *args, **kwargs):
+            self.reported = []
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def report(self, status):
+            self.reported.append(status)
+
+    class Future:
+        def __init__(self, result, *, done=False, cancelled=False):
+            self._result = result
+            self._done = done
+            self._cancelled = cancelled
+
+        def result(self):
+            return self._result
+
+        def done(self):
+            return self._done
+
+        def cancelled(self):
+            return self._cancelled
+
+    class FakeExecutor:
+        def __init__(self, *args, **kwargs):
+            self.futures = {}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def shutdown(self, *args, **kwargs):
+            return None
+
+        def submit(self, fn, arg):
+            job_name = arg["job_name"]
+            if job_name == "A000001":
+                fut = Future({**arg, "status": "success", "final_coords": arg["coords"]}, done=True)
+            else:
+                fut = Future(None, done=False, cancelled=True)
+            self.futures[job_name] = fut
+            return fut
+
+    tasks = [
+        TaskContext(
+            job_name="A000001",
+            work_dir=str(tmp_path / "A000001"),
+            coords=["H 0 0 0"],
+            config={},
+        ),
+        TaskContext(
+            job_name="A000002",
+            work_dir=str(tmp_path / "A000002"),
+            coords=["H 0 0 1"],
+            config={},
+        ),
+    ]
+
+    def fake_as_completed(futures):
+        stop_file.write_text("STOP", encoding="utf-8")
+        return [next(iter(futures.keys()))]
+
+    execute_tasks(
+        todo=tasks,
+        config={"max_parallel_jobs": 2, "stop_beacon_file": str(stop_file)},
+        results_db=FakeResultsDB(),
+        run_task_fn=lambda task: {**task, "status": "success", "final_coords": task["coords"]},
+        append_result_fn=lambda res: None,
+        stop_requested_fn=lambda: False,
+        set_stop_requested_fn=lambda value: None,
+        progress_reporter_cls=Reporter,
+        executor_cls=FakeExecutor,
+        as_completed_fn=fake_as_completed,
+    )
+
+    by_job = {row["job_name"]: row for row in inserted}
+    assert by_job["A000001"]["status"] == "pending"
+    assert by_job["A000001"]["error_kind"] == "stop_requested"
+    assert by_job["A000002"]["status"] == "canceled"
+    assert by_job["A000002"]["error_kind"] == "stop_requested"
+
+
 # =============================================================================
 # Viz Report extended tests
 # =============================================================================
@@ -536,6 +666,7 @@ def test_task_runner_itask3_imag(tmp_path):
         with patch("confflow.calc.components.executor.handle_backups"):
             res = runner.run(task_info)
             assert res["status"] == "failed"
+            assert res["error_kind"] == "parse_error"
             assert "has 1 imaginary frequenc" in res["error"]
 
 
@@ -560,6 +691,7 @@ def test_task_runner_itask4_no_freq_drift(tmp_path):
         with patch("confflow.calc.components.executor.handle_backups"):
             res = runner.run(task_info)
             assert res["status"] == "failed"
+            assert res["error_kind"] == "parse_error"
             assert "bond drift |ΔR|=0.200 Å exceeds threshold 0.100 Å" in res["error"]
 
 
@@ -621,6 +753,28 @@ def test_task_runner_exception_rescue(tmp_path):
             with patch("confflow.calc.components.executor.handle_backups"):
                 res = runner.run(task_info)
                 assert res["status"] == "rescued"
+
+
+def test_task_runner_stop_requested_classified(tmp_path):
+    from confflow.calc.components.task_runner import TaskRunner
+    from confflow.core.exceptions import StopRequestedError
+
+    runner = TaskRunner()
+    task_info = {
+        "job_name": "test",
+        "work_dir": str(tmp_path / "work"),
+        "config": {"itask": 1, "iprog": 1},
+        "coords": ["H 0 0 0"],
+    }
+
+    with patch(
+        "confflow.calc.components.executor._run_calculation_step",
+        side_effect=StopRequestedError("STOP signal received"),
+    ):
+        with patch("confflow.calc.components.executor.handle_backups"):
+            res = runner.run(task_info)
+            assert res["status"] == "canceled"
+            assert res["error_kind"] == "stop_requested"
 
 
 def test_input_helpers_total_sys_mb():

@@ -6,12 +6,12 @@ global:
   # --- 程序路径 ---
   gaussian_path: "/opt/g16/g16"
   orca_path: "/opt/orca601/orca"
-  
+
   # --- 资源配置 ---
   cores_per_task: 12
   total_memory: "240GB"
   max_parallel_jobs: 4
-  
+
   # --- 体系参数 ---
   charge: 0
   multiplicity: 1
@@ -23,13 +23,13 @@ global:
   # --- TS 关键键原子对（用于报告中输出 TSBond；会在后续 SP 步骤中继续计算/输出）---
   # 默认：若不显式设置 ts_bond_atoms，则自动使用 freeze 的前两个原子（该功能默认开启）
   # ts_bond_atoms: [1, 2]
-  
+
   # --- 构象去重/筛选参数 ---
   rmsd_threshold: 0.25          # RMSD 去重阈值 (Å)
   # noH: false                  # RMSD 计算时忽略氢原子（默认 false）
   # energy_window: 5.0          # 全局能量窗口 (kcal/mol)；步骤级 energy_window 会覆盖此值
   # energy_tolerance: 0.05      # RMSD 阈值松弛的能量容差 (kcal/mol)；ΔE ≤ tolerance 时阈值放宽 1.5 倍
-  
+
   # --- TS 救援功能 ---
   # ts_rescue_scan: false         # TS 失败后自动 scan 救援（默认关闭）
   # ts_bond_drift_threshold: 0.4  # TS 几何判据：关键键长偏移阈值 (Å)，matches default
@@ -37,7 +37,7 @@ global:
   # scan_coarse_step: 0.1         # TS 救援粗扫步长 (Å)
   # scan_fine_step: 0.02          # TS 救援细扫步长 (Å)
   # scan_uphill_limit: 10         # 粗扫中连续能量上坡时停止的步数
-  
+
   # --- 高级选项 ---
   # enable_dynamic_resources: false      # 动态资源监控
   # resume_from_backups: true            # 从备份中恢复已完成任务
@@ -48,7 +48,7 @@ global:
 # 工作流步骤
 # ============================================================================
 steps:
-  
+
   # --------------------------------------------------------------------------
   # 步骤 1: 构象生成
   # --------------------------------------------------------------------------
@@ -57,7 +57,7 @@ steps:
     # enabled: true               # 设为 false 可跳过此步骤
     params:
       angle_step: 120
-      bond_multiplier: 1.15  
+      bond_multiplier: 1.15
       # optimize: false           # MMFF94s 力场预优化（默认关闭）
       # clash_threshold: 0.65     # 碰撞阈值缩放系数
       # rotate_side: "left"       # 旋转哪一侧: "left" 或 "right"
@@ -71,7 +71,7 @@ steps:
       # del_bond: [[3, 4]]        # 强制删除键
       # no_rotate: [[2, 3]]       # 禁止旋转指定键（仅对链上键生效）
       # force_rotate: [[2, 3]]    # 强制旋转指定键（一般不需要）
-  
+
   # --------------------------------------------------------------------------
   # 步骤 2: 低级优化
   # --------------------------------------------------------------------------
@@ -126,7 +126,7 @@ steps:
       iprog: orca
       keyword: "opt TPSS D4 def2-sv(p) def2/J"
       itask: opt
-      
+
   # --------------------------------------------------------------------------
   # 步骤 5: 低级单点能筛选
   # --------------------------------------------------------------------------

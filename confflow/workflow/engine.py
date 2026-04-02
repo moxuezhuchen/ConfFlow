@@ -1,33 +1,34 @@
 #!/usr/bin/env python3
 
-"""Workflow execution engine (split from confflow.main).
-
-Design goals:
-- Pure business logic: no sys.exit calls.
-- Testable: core entry ``run_workflow()`` accepts explicit parameters.
-"""
+"""Run the workflow without calling ``sys.exit`` directly."""
 
 from __future__ import annotations
 
 import os
-import sys
 import time
 from datetime import datetime
 from typing import Any
 
 from .. import calc as calc  # re-export for test compatibility
 from ..blocks import confgen as confgen  # re-export for test compatibility
-from ..blocks import viz
+from ..blocks import viz as viz  # re-export for test compatibility
 from ..core import io as io_xyz
 from ..core.types import TaskStatus
 from ..core.utils import (
     get_logger,
     index_to_letter_prefix,
+    validate_xyz_file,
 )
 from .config_builder import load_workflow_config
 from .helpers import as_list as as_list  # re-export for test compatibility
 from .helpers import count_conformers_any, is_multi_frame_any, resolve_step_output
-from .presenter import print_step_footer_block, print_step_header_block, print_workflow_start
+from .presenter import (
+    emit_final_report_and_lowest,
+    print_step_footer_block,
+    print_step_header_block,
+    print_workflow_start,
+    write_final_statistics,
+)
 from .runtime_context import initialize_runtime_context
 from .stats import (
     FailureTracker,
@@ -98,6 +99,7 @@ def run_workflow(
     for fp in input_files:
         if not os.path.exists(fp):
             raise FileNotFoundError(f"Input file does not exist: {fp}")
+        validate_xyz_file(fp, strict=True)
 
     cfg = load_workflow_config(config_file)
     global_config = cfg["global"]
@@ -131,6 +133,7 @@ def run_workflow(
     failure_tracker = runtime.failure_tracker
     resume_from_step = runtime.resume_from_step
     current_input = runtime.current_input
+    stats_tracker.stats["initial_conformers"] = count_conformers_any(current_input)
 
     # === Print workflow start header ===
     print_workflow_start(input_files, current_input)
@@ -263,37 +266,7 @@ def run_workflow(
     except (OSError, ValueError, TypeError, KeyError, AttributeError) as e:
         logger.debug(f"Trace failed: {e}")
 
-    # Report and lowest energy output
-    if isinstance(current_input, str) and os.path.exists(current_input):
-        confs = viz.parse_xyz_file(current_input)
-        report_text = viz.generate_text_report(confs, stats=final_stats)
-        if report_text:
-            # CLI redirects stdout to <input>.txt (isatty=False). When used as a library from a TTY,
-            # keep silent by default.
-            if not sys.stdout.isatty():
-                print(report_text)
-
-        best_conf, best_energy, _ = viz.get_lowest_energy_conformer(confs)
-        if best_conf:
-            input_dir = os.path.dirname(os.path.abspath(original_inputs[0]))
-            input_base = os.path.splitext(os.path.basename(original_inputs[0]))[0]
-            lowest_path = os.path.join(input_dir, f"{input_base}min.xyz")
-            io_xyz.write_xyz_file(lowest_path, [best_conf], atomic=True)
-
-            best_meta = best_conf.get("metadata") or {}
-            final_stats["lowest_conformer"] = {
-                "cid": best_meta.get("CID"),
-                "energy": best_energy,
-                "xyz_path": lowest_path,
-            }
-            logger.info("Lowest-energy conformer written:")
-            logger.info("  %s", lowest_path)
-
-    # Write final statistics
-    stats_file = os.path.join(root_dir, "workflow_stats.json")
-    with open(stats_file, "w", encoding="utf-8") as f:
-        import json
-
-        json.dump(final_stats, f, indent=2, ensure_ascii=False)
+    emit_final_report_and_lowest(current_input, original_inputs, final_stats, logger)
+    write_final_statistics(root_dir, final_stats)
 
     return final_stats

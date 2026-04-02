@@ -98,7 +98,7 @@ docs/                          # 文档
 ├── STYLE_CONTRACT.md         # 代码/输入/输出一致性标准
 └── DEVELOPMENT.md            # 开发指南
 
-tests/                         # 测试套件（41 个文件，630 个测试）
+tests/                         # 测试套件（41 个文件，655 个测试）
 ├── conftest.py               # 共享 fixtures
 ├── _helpers.py               # 共享 fake 对象与工具函数
 ├── test_core.py              # 配置、包导出、低能量溯源
@@ -428,7 +428,7 @@ tests/
 └── test_input_snapshot.py    # 输入文件快照
 ```
 
-当前测试套件共 41 个测试文件、630 个测试用例；完整清单见 `docs/TESTING.md`。除主测试文件外，还包含一组 `*_hotspots.py` 用例，专门覆盖回退逻辑、异常路径和历史回归点。
+当前测试套件共 41 个测试文件、655 个测试用例；完整清单见 `docs/TESTING.md`。除主测试文件外，还包含一组 `*_hotspots.py` 用例，专门覆盖回退逻辑、异常路径和历史回归点。
 
 ## 依赖关系图
 
@@ -524,22 +524,27 @@ confflow/__init__.py (包入口)
 
 ## 常见问题
 
-**Q: 为什么要用策略模式？**  
+**Q: 为什么要用策略模式？**
+
 A: 不同程序（Gaussian/ORCA）的输入输出格式完全不同，策略模式可以将这些差异隐藏起来，让上层代码不需要关心具体使用哪个程序。
 
-**Q: 如何添加对新程序的支持？**  
+**Q: 如何添加对新程序的支持？**
+
 A: 创建新的 Policy 类，实现 `generate_input()` 和 `parse_output()` 方法，其他代码无需修改。
 
-**Q: 断点续传如何工作？**  
+**Q: 断点续传如何工作？**
+
 A: 每次运行记录已完成的任务到 `results.db`，再次运行时自动跳过已完成的任务。如果 DB 丢失但备份存在，会从备份恢复。
 
-**Q: 可以自定义资源限制吗？**  
+**Q: 可以自定义资源限制吗？**
+
 A: 可以，在步骤级别 (`params`) 中覆盖全局配置：
-  ```yaml
-  steps:
-    - name: heavy_calc
-      type: calc
-      params:
-        cores_per_task: 16
-        total_memory: "64GB"
-  ```
+
+```yaml
+steps:
+  - name: heavy_calc
+    type: calc
+    params:
+      cores_per_task: 16
+      total_memory: "64GB"
+```

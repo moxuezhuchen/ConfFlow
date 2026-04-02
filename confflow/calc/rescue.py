@@ -25,7 +25,7 @@ from .analysis import (
     validate_ts_bond_drift,
 )
 from .components import executor
-from .policies import get_policy as _get_policy_by_id
+from .policies import get_policy_for_config as _get_policy
 from .scan_ops import (
     _ConstrainedScanner,
     _emit_and_write_scan_table,
@@ -35,13 +35,6 @@ from .scan_ops import (
     _write_ts_failure_report,
 )
 from .setup import get_itask, parse_iprog
-
-
-def _get_policy(cfg: dict[str, Any]):
-    """Parse the program ID from config and return the corresponding Policy instance."""
-    iprog = parse_iprog(cfg)
-    return _get_policy_by_id(iprog)
-
 
 try:
     from ..config.defaults import DEFAULT_TS_BOND_DRIFT_THRESHOLD
@@ -93,7 +86,7 @@ def _prepare_rescue_context(
     base_coords = _find_failed_ts_input_coords(wd, job, cfg)
     if base_coords:
         console.print("  Scan origin: TS input structure (from backup)")
-        logger.info("scan origin uses failed TS input structure")
+        logger.info("Using the failed TS input structure as the scan origin")
     if not base_coords:
         base_coords = task_info.get("coords")
     if not base_coords:
@@ -120,7 +113,7 @@ def _prepare_rescue_context(
     print_kv("Bond", f"{a1}-{a2}")
     print_kv("r0", f"{r0:.3f} Å")
     print_kv("Reason", str(fail_reason))
-    logger.info(f"TS rescue started: {job} | bond {a1}-{a2} | r₀={r0:.3f} Å")
+    logger.info(f"Started TS rescue for {job} | bond {a1}-{a2} | r₀={r0:.3f} Å")
 
     return {
         "cfg": cfg,
@@ -218,7 +211,7 @@ def _run_coarse_and_fine_scan(
         console.print(
             f"  ✗ initial point optimization failed | r₀={r0:.3f} Å | {err0 or 'unknown'}"
         )
-        logger.warning(f"TS scan initial point failed: {job}")
+        logger.warning(f"TS scan initial-point optimization failed for {job}")
         return None
 
     points.append((r0, e0, c0))
@@ -412,13 +405,13 @@ def _run_ts_reoptimization(
             if ts_bond_length
             else f"  ✓ TS rescue succeeded | r_peak={r_best:.3f} Å"
         )
-        logger.info(f"TS rescue succeeded: {job} | r_peak={r_best:.3f} Å")
+        logger.info(f"TS rescue succeeded for {job} | r_peak={r_best:.3f} Å")
         return out
     except Exception as e:
         _write_ts_failure_report(wd, job, "ts_rescue", str(e))
         console.print()
         console.print(f"  ✗ TS rescue failed | {str(e)[:60]}")
-        logger.warning(f"TS rescue failed: {job} | {e}")
+        logger.warning(f"TS rescue failed for {job}: {e}")
         return None
     finally:
         try:

@@ -27,7 +27,7 @@ def parse_last_geometry(log_file: str, prog_id: int) -> list[str] | None:
 
     coords: list[str] = []
 
-    # ORCA: try the companion .xyz file first
+    # For ORCA, prefer the companion .xyz file when it is available.
     if prog_id == 2:
         xyz_file_path = os.path.splitext(log_file)[0] + ".xyz"
         if os.path.exists(xyz_file_path):
@@ -71,7 +71,7 @@ def parse_last_geometry(log_file: str, prog_id: int) -> list[str] | None:
                     except (IndexError, ValueError) as e:
                         logger.debug(f"Gaussian coordinate parse failed at line {idx}: {e}")
                 idx += 1
-    elif prog_id == 2:  # ORCA Log Fallback
+    elif prog_id == 2:  # Fall back to parsing the ORCA log file directly.
         content = "\n".join(lines)
         blocks = list(
             re.finditer(

@@ -19,6 +19,7 @@ from ..components.input_helpers import (
 from ..constants import BUILTIN_TEMPLATES
 from ..geometry import check_termination as _check_termination
 from ..geometry import parse_last_geometry
+from ..psutil_compat import maybe_import_psutil, psutil_exception_types
 from ..setup import get_itask
 from .base import CalculationPolicy
 
@@ -27,21 +28,9 @@ __all__ = [
     "GAUSSIAN_POLICY",
 ]
 
-try:
-    import psutil  # type: ignore[import-untyped]
-except ImportError:
-    psutil = None
+psutil = maybe_import_psutil()
 
 logger = logging.getLogger("confflow.calc.policies.gaussian")
-
-
-def _psutil_exception_types() -> tuple[type[BaseException], ...]:
-    """Return supported psutil-related exception types, tolerant of test doubles."""
-    base: tuple[type[BaseException], ...] = (AttributeError, OSError, RuntimeError)
-    err_type = getattr(psutil, "Error", None)
-    if isinstance(err_type, type) and issubclass(err_type, BaseException):
-        return (err_type, *base)
-    return base
 
 
 class GaussianPolicy(CalculationPolicy):
@@ -75,6 +64,7 @@ class GaussianPolicy(CalculationPolicy):
         blocks_raw = config.get("blocks", "")
         if isinstance(blocks_raw, dict):
             from ..components.input_helpers import format_orca_blocks as _fmt_blocks
+
             blocks_raw = _fmt_blocks(blocks_raw)
         blocks_raw = str(blocks_raw or "").strip()
         extra_section = (blocks_raw + "\n") if blocks_raw else ""
@@ -169,13 +159,12 @@ class GaussianPolicy(CalculationPolicy):
 
         get_itask(config)
 
-        # NOTE:
-        # - Gaussian Archive section (e.g., \HF=...) is convenient but can be misleading in large
-        #   concatenated logs or in rare wrapped/truncated cases.
-        # - Archive numeric fields can be wrapped across lines (e.g., "\HF=-3\n 576.57...");
-        #   remove all whitespace so wrapped numbers are reconstructed.
-        # - For robustness we prefer the final "SCF Done" electronic energy; only fall back to
-        #   Archive values if SCF Done is unavailable.
+        # Gaussian Archive data (for example ``\HF=...``) is convenient, but it can
+        # be misleading in concatenated logs or rare wrapped/truncated outputs.
+        # Archive numeric fields may wrap across lines (for example
+        # ``\HF=-3\n 576.57...``), so strip whitespace before parsing them.
+        # Prefer the final ``SCF Done`` energy whenever it is present and only fall
+        # back to Archive values when the explicit SCF record is missing.
         compact = re.sub(r"\s+", "", content.replace("D", "E"))
         energy = None
         if sl := re.findall(r"SCF Done:.*", content):
@@ -270,7 +259,7 @@ class GaussianPolicy(CalculationPolicy):
             try:
                 if any(t in (proc.info.get("name") or "") for t in targets):
                     proc.terminate()
-            except _psutil_exception_types() as e:
+            except psutil_exception_types(psutil) as e:
                 logger.debug(f"Failed to clean up process {proc.info.get('pid')}: {e}")
 
 

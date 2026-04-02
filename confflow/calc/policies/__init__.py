@@ -3,6 +3,9 @@
 
 from __future__ import annotations
 
+from typing import Any
+
+from ..setup import parse_iprog
 from .base import CalculationPolicy
 from .gaussian import GAUSSIAN_POLICY
 from .orca import ORCA_POLICY
@@ -42,4 +45,15 @@ def get_policy(iprog: int) -> CalculationPolicy:
     return policy
 
 
-__all__ = ["CalculationPolicy", "get_policy", "GAUSSIAN_POLICY", "ORCA_POLICY"]
+def get_policy_for_config(config: dict[str, Any]) -> CalculationPolicy:
+    """Resolve the calculation policy directly from a task config."""
+    return get_policy(parse_iprog(config))
+
+
+__all__ = [
+    "CalculationPolicy",
+    "get_policy",
+    "get_policy_for_config",
+    "GAUSSIAN_POLICY",
+    "ORCA_POLICY",
+]

@@ -33,6 +33,7 @@ classifiers = [
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Topic :: Scientific/Engineering :: Chemistry",
     "Topic :: Scientific/Engineering :: Physics",
 ]
@@ -94,7 +95,7 @@ confflow = ["*.yaml", "*.md"]
 
 [tool.black]
 line-length = 100
-target-version = ['py39', 'py310', 'py311']
+target-version = ['py39', 'py310', 'py311', 'py312', 'py313']
 
 [tool.ruff]
 line-length = 100
@@ -130,7 +131,7 @@ source = ["confflow"]
 branch = true
 
 [tool.coverage.report]
-fail_under = 70
+fail_under = 85
 show_missing = true
 exclude_lines = [
     "pragma: no cover",

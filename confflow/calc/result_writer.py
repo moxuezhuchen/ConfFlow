@@ -38,11 +38,14 @@ def write_failed_xyz(
             orig_meta = job_meta_map.get(job_name, {})
             cid = orig_meta.get("CID")
             err = (res.get("error") or "").strip()
+            err_kind = (res.get("error_kind") or "").strip()
             if len(err) > 200:
                 err = err[:200] + "..."
             info = f"Failed=1 Job={job_name}"
             if cid is not None and str(cid).strip() != "":
                 info += f" CID={cid}"
+            if err_kind:
+                info += f" ErrorKind={err_kind}"
             if err:
                 info += f" Error={err}"
             f.write(f"{len(coords)}\n{info}\n" + "\n".join(coords) + "\n")

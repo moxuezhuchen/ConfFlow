@@ -138,7 +138,7 @@ def parse_comment_metadata(comment: str) -> dict[str, Any]:
         k, v = m.group(1), m.group(2)
         try:
             meta[k] = float(v)
-            # Compatibility: also store Energy as E
+        # Keep the legacy Energy alias in sync with E.
             if k == "Energy":
                 meta["E"] = float(v)
         except (ValueError, TypeError):
@@ -146,7 +146,16 @@ def parse_comment_metadata(comment: str) -> dict[str, Any]:
     return meta
 
 
-def read_xyz_file(filepath: str, parse_metadata: bool = True) -> list[dict[str, Any]]:
+def _raise_xyz_parse_error(filepath: str, line_num: int, message: str) -> None:
+    """Raise a detailed XYZ parse error with file/line context."""
+    raise ValueError(f"{filepath}: line {line_num}: {message}")
+
+
+def read_xyz_file(
+    filepath: str,
+    parse_metadata: bool = True,
+    strict: bool = False,
+) -> list[dict[str, Any]]:
     """Read an XYZ file and return a list of conformers.
 
     Parameters
@@ -155,6 +164,8 @@ def read_xyz_file(filepath: str, parse_metadata: bool = True) -> list[dict[str, 
         Path to the XYZ file.
     parse_metadata : bool
         Whether to parse key=value metadata from comment lines.
+    strict : bool
+        When True, raise on malformed frames instead of silently skipping them.
 
     Returns
     -------
@@ -180,17 +191,30 @@ def read_xyz_file(filepath: str, parse_metadata: bool = True) -> list[dict[str, 
 
     while i < len(lines):
         line = lines[i].strip()
-        if not line or not line.isdigit():
+        if not line:
+            i += 1
+            continue
+        if not line.isdigit():
+            if strict:
+                _raise_xyz_parse_error(filepath, i + 1, f"invalid atom-count line: {line!r}")
             i += 1
             continue
 
         try:
             num_atoms = int(line)
         except ValueError:
+            if strict:
+                _raise_xyz_parse_error(filepath, i + 1, f"cannot parse atom count: {line!r}")
             i += 1
             continue
 
         if i + 2 + num_atoms > len(lines):
+            if strict:
+                _raise_xyz_parse_error(
+                    filepath,
+                    i + 1,
+                    f"incomplete frame: declared {num_atoms} atoms but file ended early",
+                )
             break
 
         comment = lines[i + 1].strip()
@@ -201,6 +225,12 @@ def read_xyz_file(filepath: str, parse_metadata: bool = True) -> list[dict[str, 
             atom_line = lines[i + 2 + j].strip()
             parts = atom_line.split()
             if len(parts) < 4:
+                if strict:
+                    _raise_xyz_parse_error(
+                        filepath,
+                        i + 3 + j,
+                        f"coordinate line has fewer than 4 columns: {atom_line!r}",
+                    )
                 break
 
             atoms.append(parts[0].upper())
@@ -209,6 +239,12 @@ def read_xyz_file(filepath: str, parse_metadata: bool = True) -> list[dict[str, 
                 x, y, z = float(parts[-3]), float(parts[-2]), float(parts[-1])
                 coords.append([x, y, z])
             except (ValueError, IndexError):
+                if strict:
+                    _raise_xyz_parse_error(
+                        filepath,
+                        i + 3 + j,
+                        f"cannot parse coordinates from line: {atom_line!r}",
+                    )
                 break
 
         if len(coords) == num_atoms:
@@ -225,16 +261,29 @@ def read_xyz_file(filepath: str, parse_metadata: bool = True) -> list[dict[str, 
 
             conformers.append(frame)
             frame_idx += 1
+        elif strict:
+            _raise_xyz_parse_error(
+                filepath,
+                i + 1,
+                f"frame {frame_idx + 1} is malformed or truncated",
+            )
 
         i += 2 + num_atoms
+
+    if strict and not conformers:
+        raise ValueError(f"{filepath}: no valid XYZ frames found")
 
     return conformers
 
 
-def read_xyz_file_safe(filepath: str, parse_metadata: bool = True) -> list[dict[str, Any]]:
+def read_xyz_file_safe(
+    filepath: str,
+    parse_metadata: bool = True,
+    strict: bool = False,
+) -> list[dict[str, Any]]:
     """Read an XYZ file safely; return an empty list on failure and log at debug level."""
     try:
-        return read_xyz_file(filepath, parse_metadata=parse_metadata)
+        return read_xyz_file(filepath, parse_metadata=parse_metadata, strict=strict)
     except (OSError, ValueError) as e:
         _io_logger.debug(f"read_xyz_file_safe failed for {filepath}: {e}")
         return []
@@ -316,7 +365,7 @@ def write_xyz_file(filepath: str, conformers: list[dict[str, Any]], atomic: bool
                 os.unlink(tmp_path)
             except OSError:
                 pass
-            _io_logger.error(f"Error writing XYZ file: {filepath}, reason: {e}")
+            _io_logger.error(f"Failed to write XYZ file: {filepath}, reason: {e}")
             raise
     else:
         with open(filepath, "w", encoding="utf-8") as f:

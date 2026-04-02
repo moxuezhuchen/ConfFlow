@@ -1,13 +1,13 @@
 # ConfFlow 代码评估报告 & 整改路线图
 
-**评估日期**: 2026-03-15  
-**评估范围**: 架构可维护性 · 可靠性与潜在缺陷 · 测试覆盖 · 性能与资源  
-**方法**: 全量静态阅读 + 验证执行（`pytest -q`, `pytest --cov`, `ruff check .`, `mypy confflow`）  
-**基线**: 全部 630 测试通过；branch coverage 90.74%；无静态报错
+**评估日期**: 2026-03-15
+**评估范围**: 架构可维护性 · 可靠性与潜在缺陷 · 测试覆盖 · 性能与资源
+**方法**: 全量静态阅读 + 验证执行（`pytest -q`, `pytest --cov`, `ruff check .`, `mypy confflow`）
+**基线**: 全部 655 测试通过；branch coverage 90.52%；无静态报错
 
-**当前执行状态**: 主要整改项已继续落地，最近补齐了 calc/resume 工件识别与 `results.db` 最新记录聚合的一致性回归。  
-**最近验证**: `pytest -q`、`pytest tests/ --cov=confflow --cov-report=term`、`ruff check .`、`mypy confflow` 均通过。  
-**当前覆盖率快照**: 总 branch coverage 90.74%；`workflow/validation.py` 86%，`generator.py` 91%，`scan_ops.py` 89%，`stats.py` 89%，`engine.py` 87%，`manager.py` 83%。
+**当前执行状态**: 主要整改项已继续落地，最近补齐了 calc/resume 工件识别与 `results.db` 最新记录聚合的一致性回归。
+**最近验证**: `pytest -q`、`pytest tests/ --cov=confflow --cov-report=term`、`ruff check .`、`mypy confflow` 均通过。
+**当前覆盖率快照**: 总 branch coverage 90.52%；`workflow/validation.py` 84%，`generator.py` 91%，`scan_ops.py` 89%，`stats.py` 89%，`engine.py` 87%，`manager.py` 82%。
 
 ---
 
@@ -44,8 +44,8 @@
 ### P0 — 正确性风险（直接导致错误结果）
 
 #### P0-1 · MCS 超时后部分匹配被静默接受
-**文件**: `confflow/blocks/confgen/mapping.py:63`  
-**覆盖率**: lines 66-87 仅 77%，超时分支未测
+- **文件**: `confflow/blocks/confgen/mapping.py:63`
+- **覆盖率**: lines 66-87 仅 77%，超时分支未测
 
 ```python
 # 当前代码
@@ -56,19 +56,21 @@ if not res.canceled and res.numAtoms == 0:
 # 部分匹配可能导致链索引被映射到错误原子，后续构象旋转全部错误。
 ```
 
+
 **修复方向**: `res.canceled` 时无论 `numAtoms` 是否为 0，均 raise 或 warn+degrade，不静默放行。
 
 ---
 
 #### P0-2 · `transfer_chain_indices` 对称分子只取第一个 MCS 匹配
-**文件**: `confflow/blocks/confgen/mapping.py:97-141`  
+- **文件**: `confflow/blocks/confgen/mapping.py:97-141`
 
 ```python
 ref_match = ref_mol.GetSubstructMatch(patt)     # RDKit 只返回一个任意匹配
 target_match = target_mol.GetSubstructMatch(patt)
 ```
 
-对 C₂ᵥ/C₃ᵥ 等对称分子，`GetSubstructMatch` 返回任意一个等价匹配，可能将链原子映射到完全不同的原子上。  
+对 C₂ᵥ/C₃ᵥ 等对称分子，`GetSubstructMatch` 返回任意一个等价匹配，可能将链原子映射到完全不同的原子上。
+
 **修复方向**: 枚举 `GetSubstructMatches` 并选取链原子索引差异最小的映射；或记录 warning，提示对称分子需手动指定。
 
 ---
@@ -76,8 +78,8 @@ target_match = target_mol.GetSubstructMatch(patt)
 ### P1 — 可靠性风险（可能导致流程中断或结果丢失）
 
 #### P1-1 · `_execute_tasks` 中 `fut.result()` 没有异常保护
-**文件**: `confflow/calc/manager.py:295`  
-**覆盖率**: lines 301-302 未测
+- **文件**: `confflow/calc/manager.py:295`
+- **覆盖率**: lines 301-302 未测
 
 ```python
 for fut in as_completed(futures):
@@ -85,13 +87,14 @@ for fut in as_completed(futures):
     self.results_db.insert_result(res)
 ```
 
-进程崩溃时 `fut.result()` 抛 `BrokenProcessPool` / `concurrent.futures.process.BrokenProcessPool`，此异常会穿透 `with ProcessPoolExecutor` 块，`finally` 中 DB `close()` 虽会执行，但已完成任务结果不会被写入 DB（DB.insert_result 在 raise 之前从未调用），导致任务结果永久丢失。  
+进程崩溃时 `fut.result()` 抛 `BrokenProcessPool` / `concurrent.futures.process.BrokenProcessPool`，此异常会穿透 `with ProcessPoolExecutor` 块，`finally` 中 DB `close()` 虽会执行，但已完成任务结果不会被写入 DB（DB.insert_result 在 raise 之前从未调用），导致任务结果永久丢失。
+
 **修复方向**: 包裹 `res = fut.result()` 在 `try/except (BrokenProcessPool, Exception) as e`，记录失败任务并继续。
 
 ---
 
 #### P1-2 · 停止信号后 `ProcessPoolExecutor` 等待所有已提交任务完成
-**文件**: `confflow/calc/manager.py:283-293`  
+- **文件**: `confflow/calc/manager.py:283-293`
 
 ```python
 for fut in as_completed(futures):
@@ -100,13 +103,14 @@ for fut in as_completed(futures):
         break         # break 后 with-block __exit__ 调用 shutdown(wait=True)
 ```
 
-`break` 仅退出 `for` 循环，`ProcessPoolExecutor.__exit__` 依然等待所有已提交的 future 执行完毕（Python ≥3.9 默认行为）。对于大型任务集，"停止"可能需要等待数小时。  
+`break` 仅退出 `for` 循环，`ProcessPoolExecutor.__exit__` 依然等待所有已提交的 future 执行完毕（Python ≥3.9 默认行为）。对于大型任务集，"停止"可能需要等待数小时。
+
 **修复方向**: 用 `executor.shutdown(wait=False, cancel_futures=True)` 替代隐式 exit，或将 STOP 文件轮询逻辑下沉到 worker 内部。
 
 ---
 
 #### P1-3 · resume 时若步骤输出文件缺失，`current_input` 静默保留旧值
-**文件**: `confflow/workflow/engine.py:196-211 `  
+- **文件**: `confflow/workflow/engine.py:196-211 `
 
 ```python
 if resume_from_step >= i:
@@ -116,13 +120,14 @@ if resume_from_step >= i:
     continue
 ```
 
-若重启前某步骤输出文件被手动删除或磁盘满，resume 时该步骤的 `current_input` 不更新，后续步骤会以错误数据运行，且不会报错。  
+若重启前某步骤输出文件被手动删除或磁盘满，resume 时该步骤的 `current_input` 不更新，后续步骤会以错误数据运行，且不会报错。
+
 **修复方向**: 文件不存在时发出 `logger.warning` 并记录到统计；或直接 `raise RuntimeError` 让用户 re-run。
 
 ---
 
 #### P1-4 · 多输入时第一步为 `calc` 步骤，仅 `current_input[0]` 被使用
-**文件**: `confflow/workflow/engine.py:_run_calc_step` 调用处  
+- **文件**: `confflow/workflow/engine.py:_run_calc_step` 调用处
 
 ```python
 manager.run(
@@ -130,25 +135,28 @@ manager.run(
 )
 ```
 
-若工作流没有 confgen 步骤（多输入直接进 calc），`current_input` 是 `list[str]`，只有第一个文件被处理，其余静默丢弃。没有任何 warning 或错误提示。  
+若工作流没有 confgen 步骤（多输入直接进 calc），`current_input` 是 `list[str]`，只有第一个文件被处理，其余静默丢弃。没有任何 warning 或错误提示。
+
 **修复方向**: 在 `_run_calc_step` 入口检查 `isinstance(current_input, list) and len(current_input) > 1` 时发出 warning，说明只使用第一个文件（或改用 confgen pipeline 合并多输入）。
 
 ---
 
 #### P1-5 · `greedy_permutation_rmsd` 几乎 0% 测试覆盖
-**文件**: `confflow/blocks/refine/rmsd_engine.py:195-262`  
-**覆盖率**: lines 202-262 完全未触达
+- **文件**: `confflow/blocks/refine/rmsd_engine.py:195-262`
+- **覆盖率**: lines 202-262 完全未触达
 
-该函数是对称感知 RMSD 的核心，逻辑包含 4 种坐标轴符号变换 + 贪心元素匹配。130 行 Numba JIT 代码完全没有独立单元测试，任何算法 bug 均无法被现有测试集发现。  
+该函数是对称感知 RMSD 的核心，逻辑包含 4 种坐标轴符号变换 + 贪心元素匹配。130 行 Numba JIT 代码完全没有独立单元测试，任何算法 bug 均无法被现有测试集发现。
+
 **修复方向**: 针对已知对称分子添加 `test_greedy_permutation_rmsd_{identical,mirror,symmetric_mol,large}` 系列测试。
 
 ---
 
 #### P1-6 · `workflow/validation.py` 链验证路径完全未测
-**文件**: `confflow/workflow/validation.py:108-127`  
-**覆盖率**: 70%，lines 108-127（`validate_chain_bonds=True` 分支）为 0%
+- **文件**: `confflow/workflow/validation.py:108-127`
+- **覆盖率**: 70%，lines 108-127（`validate_chain_bonds=True` 分支）为 0%
 
-该分支调用 `load_mol_from_xyz` + `ChainValidator.validate_mol`，在金属原子、非标准键型等情况下行为未知。  
+该分支调用 `load_mol_from_xyz` + `ChainValidator.validate_mol`，在金属原子、非标准键型等情况下行为未知。
+
 **修复方向**: 补充 `test_validate_inputs_compatible_chain_validation_enabled` 测试用例。
 
 ---
@@ -156,7 +164,7 @@ manager.run(
 ### P2 — 可维护性 / 调试性问题
 
 #### P2-1 · `except Exception: pass`（无日志）
-**文件**: `confflow/workflow/engine.py:177`  
+- **文件**: `confflow/workflow/engine.py:177`
 
 ```python
 try:
@@ -165,12 +173,13 @@ except Exception:
     pass    # 磁盘满、权限错误等 I/O 故障完全静默
 ```
 
+
 **修复方向**: 改为 `except OSError as e: logger.debug(f"copy config failed: {e}")`。
 
 ---
 
 #### P2-2 · `_coords_lines_to_xyz` 变量命名混淆
-**文件**: `confflow/calc/scan_ops.py:38-61`  
+- **文件**: `confflow/calc/scan_ops.py:38-61`
 
 ```python
 for tok in reversed(p[1:]):   # 逆序遍历 x,y,z tokens
@@ -180,40 +189,44 @@ z, y, x = xyz   # xyz[0] 实际是 z，xyz[2] 实际是 x（逆向赋值）
 out.append((sym, float(x), float(y), float(z)))  # 最终顺序正确但极易误读
 ```
 
-逻辑正确，但命名反直觉，维护者极易在未来修改时引入 `x/y/z` 顺序 bug。  
+逻辑正确，但命名反直觉，维护者极易在未来修改时引入 `x/y/z` 顺序 bug。
+
 **修复方向**: 改为正向读取并去除逆序绕路：`x, y, z = float(p[-3]), float(p[-2]), float(p[-1])`。
 
 ---
 
 #### P2-3 · `get_topology_hash_worker` 中 O(N²) 全距离矩阵
-**文件**: `confflow/blocks/refine/rmsd_engine.py:300-311`  
+- **文件**: `confflow/blocks/refine/rmsd_engine.py:300-311`
 
 ```python
 delta = coords[:, np.newaxis, :] - coords[np.newaxis, :, :]   # (N, N, 3) 全矩阵
 dist_sq = np.sum(delta**2, axis=-1)                            # (N, N)
 ```
 
-N=500 时 delta 矩阵占 ~3 MB，N=2000 时 ~48 MB。对于大批量 refine，每个 topology-group worker 独立分配此矩阵。可用 `scipy.spatial.cKDTree` 替代。  
+N=500 时 delta 矩阵占 ~3 MB，N=2000 时 ~48 MB。对于大批量 refine，每个 topology-group worker 独立分配此矩阵。可用 `scipy.spatial.cKDTree` 替代。
+
 **修复方向**: topology hash 使用 `cKDTree.query_pairs` 或仅在小分子时使用全矩阵，超过阈值切换稀疏策略。
 
 ---
 
 #### P2-4 · `FailureTracker._update_summary` 的 `except Exception: break` 截断日志
-**文件**: `confflow/workflow/stats.py:194`  
+- **文件**: `confflow/workflow/stats.py:194`
 
 ```python
 except Exception:
     break   # failed.xyz 任何格式异常都静默截断 summary
 ```
 
+
 **修复方向**: `except (ValueError, IndexError): logger.debug(...); break` 并记录截断位置。
 
 ---
 
 #### P2-5 · Numba 覆盖率假盲区：`collision.py` 40%
-**文件**: `confflow/blocks/confgen/collision.py:56-84`  
+- **文件**: `confflow/blocks/confgen/collision.py:56-84`
 
-`check_clash_core` 被 `@numba.njit` 编译为本地代码，Python coverage 无法追踪其函数体。实际上函数通过集成测试被调用，但 **没有独立单元测试** 验证碰撞检测的正确性与边界情况（如 1-4 拓扑过滤、极小键长、H-H 对）。  
+`check_clash_core` 被 `@numba.njit` 编译为本地代码，Python coverage 无法追踪其函数体。实际上函数通过集成测试被调用，但 **没有独立单元测试** 验证碰撞检测的正确性与边界情况（如 1-4 拓扑过滤、极小键长、H-H 对）。
+
 **修复方向**: 添加 `test_check_clash_core_{no_clash,1_4_filtered,heavy_clash,hydrogen_pair}` 测试；并在 `pyproject.toml` 中排除 `@numba.njit` 函数体的覆盖率计数。
 
 ---
@@ -221,7 +234,8 @@ except Exception:
 ### P3 — 低优先级（代码风格 / 未来风险）
 
 #### P3-1 · `run_generation` 按文件失败改 `continue`，不向上传播
-若所有输入文件均处理异常，`all_confs_data` 为空，`search.xyz` 不生成，引擎层再抛 `RuntimeError("confgen did not generate search.xyz")`，真实原因被淹没。  
+若所有输入文件均处理异常，`all_confs_data` 为空，`search.xyz` 不生成，引擎层再抛 `RuntimeError("confgen did not produce search.xyz")`，真实原因被淹没。
+
 **修复方向**: 若所有文件均失败，改 raise；若部分失败，在统计中标记。
 
 #### P3-2 · `process_topology_group` BATCH_SIZE 硬编码
@@ -271,7 +285,7 @@ except Exception:
 7. **P1-6** 添加 `validate_chain_bonds=True` 路径测试
 8. **P1-3** 在 `engine.py` resume 路径添加 logger.warning，补 `test_resume_missing_output` 测试
 
-验证: `pytest tests/ -q --cov=confflow --cov-report=term-missing`  
+验证: `pytest tests/ -q --cov=confflow --cov-report=term-missing`
 目标: `rmsd_engine.py` ≥ 80%，`validation.py` ≥ 85%，`collision.py` 专项测试固化 4 个场景。
 
 ---

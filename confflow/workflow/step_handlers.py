@@ -78,7 +78,7 @@ def run_confgen_step(
                 rotate_side=params.get("rotate_side", "left"),
             )
         if not os.path.exists(expected_output):
-            raise ConfFlowError("confgen did not generate search.xyz")
+            raise ConfFlowError("confgen did not produce search.xyz")
     return expected_output
 
 
@@ -106,8 +106,8 @@ def run_calc_step(
 
     if isinstance(current_input, list) and len(current_input) > 1:
         logger.warning(
-            "calc step received %d input files; only '%s' will be used. "
-            "Add a confgen step to merge multi-input files before calc.",
+            "Calc step received %d input files; using only '%s'. "
+            "Add a confgen step to merge multiple inputs before calc.",
             len(current_input),
             current_input[0],
         )
@@ -122,7 +122,7 @@ def run_calc_step(
 
     final_input = resolve_step_output(step_dir, "calc")
     if final_input is None:
-        raise ConfFlowError("Calculation task did not produce expected output")
+        raise ConfFlowError("Calculation step did not produce an output XYZ file")
 
     if os.path.exists(work_failed):
         failure_tracker.append(work_failed, step_name)

@@ -25,10 +25,7 @@ def test_compute_orca_maxcore_has_100mb_floor():
 
 def test_normalize_gaussian_keyword_handles_non_string_and_repeated_prefixes():
     assert input_helpers.normalize_gaussian_keyword(123) == "123"
-    assert (
-        input_helpers.normalize_gaussian_keyword("  #T   #P   opt freq")
-        == "opt freq"
-    )
+    assert input_helpers.normalize_gaussian_keyword("  #T   #P   opt freq") == "opt freq"
 
 
 def test_normalize_blocks_appends_newlines_and_handles_none():
@@ -52,11 +49,7 @@ def test_gaussian_apply_freeze_formats_cartesian_lines():
 
 def test_orca_constraint_block_renders_indices():
     assert input_helpers.orca_constraint_block([1, 3]) == (
-        "%geom Constraints\n"
-        "  { C 0 C }\n"
-        "  { C 2 C }\n"
-        "  end\n"
-        "end\n"
+        "%geom Constraints\n  { C 0 C }\n  { C 2 C }\n  end\nend\n"
     )
 
 

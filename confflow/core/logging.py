@@ -29,7 +29,7 @@ class ConfFlowLogger:
 
     _instance = None
     _initialized = False
-    _embedded_mode = False  # Whether running in embedded mode (e.g. called by GibbsFlow)
+    _embedded_mode = False  # Track whether logging is delegated to a parent process.
 
     def __new__(cls):
         if cls._instance is None:
@@ -45,15 +45,15 @@ class ConfFlowLogger:
         self.logger.setLevel(logging.DEBUG)
         self.handlers: dict[str, logging.Handler] = {}
 
-        # Check whether called in embedded mode (parent logger already configured)
+        # Detect embedded mode when the parent process already configured logging.
         root_logger = logging.getLogger()
         if root_logger.hasHandlers():
-            # Parent process already configured logging; use embedded mode
+            # Reuse the parent logger configuration in embedded mode.
             ConfFlowLogger._embedded_mode = True
-            # Propagate to the parent logger
+            # Propagate records to the parent logger.
             self.logger.propagate = True
         else:
-            # Standalone run; add our own handlers
+            # Standalone runs manage their own handlers.
             self.logger.propagate = False
             self._add_console_handler()
 
@@ -63,7 +63,7 @@ class ConfFlowLogger:
         cls._embedded_mode = enabled
         if cls._instance:
             cls._instance.logger.propagate = enabled
-            # If embedded mode is enabled, remove the standalone console handler
+            # Remove the standalone console handler when embedded mode is enabled.
             if enabled and "console" in cls._instance.handlers:
                 cls._instance.logger.removeHandler(cls._instance.handlers["console"])
                 del cls._instance.handlers["console"]
@@ -76,7 +76,7 @@ class ConfFlowLogger:
         console_handler = logging.StreamHandler(sys.stdout)
         console_handler.setLevel(logging.INFO)
 
-        # Compact formatter: time + level + message
+        # Keep console output compact and scan-friendly.
         formatter = logging.Formatter(
             "[%(asctime)s]  %(levelname)-5s  %(message)s", datefmt="%H:%M:%S"
         )

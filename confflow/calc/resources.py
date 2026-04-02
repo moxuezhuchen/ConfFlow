@@ -7,25 +7,15 @@ from __future__ import annotations
 import logging
 import time
 
+from .psutil_compat import maybe_import_psutil, psutil_exception_types
+
 logger = logging.getLogger("confflow.calc.resources")
 
 __all__ = [
     "ResourceMonitor",
 ]
 
-try:
-    import psutil  # type: ignore[import-untyped]
-except ImportError:
-    psutil = None
-
-
-def _psutil_exception_types() -> tuple[type[BaseException], ...]:
-    """Return supported psutil-related exception types, tolerant of test doubles."""
-    base: tuple[type[BaseException], ...] = (AttributeError, OSError, RuntimeError)
-    err_type = getattr(psutil, "Error", None)
-    if isinstance(err_type, type) and issubclass(err_type, BaseException):
-        return (err_type, *base)
-    return base
+psutil = maybe_import_psutil()
 
 
 class ResourceMonitor:
@@ -47,7 +37,7 @@ class ResourceMonitor:
         try:
             assert psutil is not None
             return psutil.cpu_percent(interval=0.5), psutil.virtual_memory().percent
-        except _psutil_exception_types() as e:
+        except psutil_exception_types(psutil) as e:
             logger.debug(f"Failed to get system load: {e}")
             return 0.0, 0.0
 

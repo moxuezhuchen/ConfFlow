@@ -34,7 +34,7 @@ def _parse_gaussian_input_geometry(text: str) -> tuple[int, int, list[str], list
     """Parse a Gaussian .gjf/.com input file into (charge, multiplicity, atoms, coords)."""
     res = parse_gaussian_input_text(text)
     if not res["atoms"]:
-        raise ValueError("No geometry found in Gaussian input")
+        raise ValueError("Gaussian input does not contain a geometry section")
     return res["charge"], res["multiplicity"], res["atoms"], res["coords"]
 
 
@@ -58,20 +58,23 @@ def _convert_gjf_to_xyz(gjf_path: str, xyz_out: str) -> None:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="ConfFlow - automated computational chemistry workflow",
-        epilog="Example: confflow hexane.xyz -c confflow.yaml\nDefault work dir: hexane_work/",
+        description="Run the ConfFlow workflow for one or more XYZ inputs",
+        epilog="Example: confflow hexane.xyz -c confflow.yaml\nDefault working directory: hexane_work/",
     )
-    parser.add_argument("input_xyz", nargs="*", help="Input XYZ file(s)")
-    parser.add_argument("-c", "--config", help="Path to YAML configuration file")
+    parser.add_argument("input_xyz", nargs="*", help="Path to one or more input XYZ files")
+    parser.add_argument("-c", "--config", help="Path to the workflow YAML configuration file")
     parser.add_argument(
-        "-w", "--work_dir", default=None, help="Working directory (default: <input_name>_work)"
+        "-w",
+        "--work_dir",
+        default=None,
+        help="Path to the working directory (default: <input_name>_work)",
     )
-    parser.add_argument("--resume", action="store_true", help="Resume from checkpoint if available")
-    parser.add_argument("--verbose", action="store_true", help="Enable DEBUG level logging")
+    parser.add_argument("--resume", action="store_true", help="Resume from an existing checkpoint")
+    parser.add_argument("--verbose", action="store_true", help="Enable debug logging")
     parser.add_argument(
         "--stop",
         action="store_true",
-        help="Stop all running confflow tasks (including child processes)",
+        help="Stop all running ConfFlow tasks, including child processes",
     )
     return parser
 
@@ -118,14 +121,14 @@ def kill_proc_tree(
         return None
 
     if pid == os.getpid():
-        raise RuntimeError("I refuse to kill myself")
+        raise RuntimeError("Refusing to stop the current process")
 
     try:
         parent = psutil.Process(pid)
     except psutil.NoSuchProcess:
         return None
 
-    # Collect all child processes
+    # Collect the child process tree first.
     try:
         children = parent.children(recursive=True)
     except psutil.NoSuchProcess:
@@ -133,24 +136,24 @@ def kill_proc_tree(
 
     procs = children + ([parent] if include_parent else [])
 
-    # First round: attempt graceful termination
+    # First, attempt graceful termination.
     for p in procs:
         try:
             p.send_signal(sig)
         except psutil.NoSuchProcess:
             pass
 
-    # Efficiently wait for processes to terminate
+    # Wait for graceful termination before escalating.
     gone, alive = psutil.wait_procs(procs, timeout=timeout)
 
-    # Second round: force-kill any remaining alive processes
+    # Then force-kill any remaining processes.
     if alive:
         for p in alive:
             try:
                 p.kill()  # SIGKILL
             except psutil.NoSuchProcess:
                 pass
-        # Check final status
+        # Refresh the final process state after SIGKILL.
         gone_final, alive = psutil.wait_procs(alive, timeout=0.2)
         gone.extend(gone_final)
 
@@ -160,12 +163,12 @@ def kill_proc_tree(
 def stop_all_confflow_processes() -> int:
     if psutil is None:
         print(
-            "Error: 'psutil' module is required for the --stop command. Please install it via 'pip install psutil'.",
+            "Error: the 'psutil' module is required for the --stop command. Install it with 'pip install psutil'.",
             file=sys.stderr,
         )
         return 1
 
-    # Find confflow processes
+    # Discover candidate ConfFlow processes.
     confflow_procs = []
     myself = psutil.Process()
     for p in psutil.process_iter(["pid", "name", "cmdline", "create_time", "cwd", "status"]):
@@ -190,24 +193,24 @@ def stop_all_confflow_processes() -> int:
             pass
 
     if not confflow_procs:
-        print("No running confflow processes found.")
+        print("No running ConfFlow processes were found.")
         return 0
 
     print(
-        f"Found {len(confflow_procs)} running confflow process(es). Stopping them and their children..."
+        f"Found {len(confflow_procs)} running ConfFlow process(es). Stopping each process tree..."
     )
 
     for p in confflow_procs:
         try:
-            print(f"Stopping process tree for PID {p.pid}...")
+            print(f"Stopping the process tree for PID {p.pid}...")
             kill_proc_tree(p.pid, timeout=3)
-            print(f"Stopped PID {p.pid} and its children.")
+            print(f"Stopped the process tree for PID {p.pid}.")
         except psutil.NoSuchProcess:
             pass
         except psutil.AccessDenied:
-            print(f"Failed to stop PID {p.pid} (Access Denied)")
+            print(f"Failed to stop PID {p.pid}: access denied.")
         except (psutil.Error, OSError, RuntimeError) as e:
-            print(f"Error stopping PID {p.pid}: {e}")
+            print(f"Failed to stop PID {p.pid}: {e}")
 
     return 0
 
@@ -221,7 +224,7 @@ def main(args_list: list[str] | None = None):
 
     # Manual validation for required arguments when not stopping
     if not args.input_xyz:
-        parser.error("the following arguments are required: input_xyz")
+        parser.error("At least one input XYZ file is required.")
 
     input_files = [os.path.abspath(x) for x in args.input_xyz]
     original_input_files = list(input_files)
@@ -233,7 +236,7 @@ def main(args_list: list[str] | None = None):
         default_cfg = os.path.join(os.path.dirname(input_files[0]), "confflow.yaml")
         if not os.path.exists(default_cfg):
             parser.error(
-                f"Config file is not provided and default config was not found: {default_cfg}"
+                f"No configuration file was provided, and the default file was not found: {default_cfg}"
             )
         config_file = default_cfg
 
@@ -279,11 +282,12 @@ def main(args_list: list[str] | None = None):
         return ExitCode.SUCCESS
     except ValueError as e:
         msg = str(e)
-        if "multi-input mode requires" in msg or "element order mismatch" in msg:
+        msg_lower = msg.lower()
+        if "multi-input mode requires" in msg_lower or "element order mismatch" in msg_lower:
             _append_to_output(output_path, f"[ERROR] Input consistency validation failed: {msg}")
             _append_to_output(
                 output_path,
-                "Hint: add 'force_consistency: true' under global config to skip this check.",
+                "Hint: set 'force_consistency: true' under the global config to skip this check.",
             )
             return ExitCode.USAGE_ERROR
         _append_to_output(output_path, f"[ERROR] {msg}")

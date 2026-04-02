@@ -96,15 +96,15 @@ class TestLoadWorkflowConfigFile:
             "      keyword: B3LYP\n",
             encoding="utf-8",
         )
-        with pytest.raises(ConfigurationError, match="Global configuration model validation failed"):
+        with pytest.raises(
+            ConfigurationError, match="Global configuration model validation failed"
+        ):
             load_workflow_config_file(str(cfg))
 
     def test_step_missing_name_raises(self, tmp_path):
         cfg = tmp_path / "no_name.yaml"
         cfg.write_text(
-            "global: {}\n"
-            "steps:\n"
-            "  - type: calc\n",
+            "global: {}\nsteps:\n  - type: calc\n",
             encoding="utf-8",
         )
         with pytest.raises(ConfigurationError, match="missing.*'name'"):
@@ -113,9 +113,7 @@ class TestLoadWorkflowConfigFile:
     def test_step_missing_type_raises(self, tmp_path):
         cfg = tmp_path / "no_type.yaml"
         cfg.write_text(
-            "global: {}\n"
-            "steps:\n"
-            "  - name: s1\n",
+            "global: {}\nsteps:\n  - name: s1\n",
             encoding="utf-8",
         )
         with pytest.raises(ConfigurationError, match="missing.*'type'"):
@@ -141,9 +139,7 @@ class TestLoadWorkflowConfigFile:
     def test_non_dict_step_item_raises_validation_error(self, tmp_path):
         cfg = tmp_path / "bad_step_shape.yaml"
         cfg.write_text(
-            "global: {}\n"
-            "steps:\n"
-            "  - invalid\n",
+            "global: {}\nsteps:\n  - invalid\n",
             encoding="utf-8",
         )
         with pytest.raises(ConfigurationError, match="step 1 must be a dict"):
@@ -152,12 +148,7 @@ class TestLoadWorkflowConfigFile:
     def test_step_params_not_dict_raises_validation_error(self, tmp_path):
         cfg = tmp_path / "bad_params_shape.yaml"
         cfg.write_text(
-            "global: {}\n"
-            "steps:\n"
-            "  - name: step1\n"
-            "    type: calc\n"
-            "    params:\n"
-            "      - invalid\n",
+            "global: {}\nsteps:\n  - name: step1\n    type: calc\n    params:\n      - invalid\n",
             encoding="utf-8",
         )
         with pytest.raises(ConfigurationError, match="'params' must be a dict"):

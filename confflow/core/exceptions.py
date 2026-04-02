@@ -16,6 +16,10 @@ __all__ = [
     "XYZFormatError",
     "ValidationError",
     "ConfigurationError",
+    "CalculationInputError",
+    "CalculationExecutionError",
+    "CalculationParseError",
+    "StopRequestedError",
 ]
 
 
@@ -74,3 +78,19 @@ class ConfigurationError(ConfFlowError, ValueError):
         else:
             full_msg = message
         super().__init__(full_msg)
+
+
+class CalculationInputError(ConfFlowError, RuntimeError):
+    """Calculation input preparation/generation error."""
+
+
+class CalculationExecutionError(ConfFlowError, RuntimeError):
+    """External program execution error."""
+
+
+class CalculationParseError(ConfFlowError, RuntimeError):
+    """Calculation output parse/validation error."""
+
+
+class StopRequestedError(ConfFlowError, RuntimeError):
+    """Raised when a STOP signal interrupts a running calculation."""

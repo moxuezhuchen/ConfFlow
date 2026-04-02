@@ -48,9 +48,9 @@ def initialize_runtime_context(
         shutil.copy2(config_file, os.path.join(failed_dir, os.path.basename(config_file)))
     except OSError as e:
         if hasattr(logger, "debug"):
-            logger.debug("Could not copy config to failed dir: %s", e)
+            logger.debug("Failed to copy the config file into the failed directory: %s", e)
         elif hasattr(logger, "warning"):
-            logger.warning(f"Could not copy config to failed dir: {e}")
+            logger.warning(f"Failed to copy the config file into the failed directory: {e}")
 
     if hasattr(logger, "add_file_handler"):
         logger.add_file_handler(os.path.join(root_dir, "confflow.log"))

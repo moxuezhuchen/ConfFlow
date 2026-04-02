@@ -46,7 +46,7 @@ confflow a.xyz b.xyz -c confflow.yaml
 ### 3.2 参数说明
 
 - `<input.xyz>`：输入 XYZ（单帧或多帧）
-- `-c/--config`：YAML 配置文件路径
+- `-c/--config`：YAML 配置文件路径；省略时默认读取第一个输入文件同目录下的 `confflow.yaml`
 - `-w/--work_dir`：工作目录（默认：`<input_basename>_work`）
 - `--resume`：从 `.checkpoint` 断点继续
 - `--verbose`：输出更详细日志

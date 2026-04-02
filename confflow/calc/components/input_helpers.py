@@ -118,7 +118,7 @@ def parse_freeze_indices(freeze: Any) -> list[int]:
         if not freeze_str or freeze_str.lower() == "0":
             return []
         if parse_index_spec is None:
-            # fallback: comma list
+            # Fall back to parsing a comma-separated list.
             return [int(x.strip()) for x in freeze_str.split(",") if x.strip()]
         return list(parse_index_spec(freeze_str))
 

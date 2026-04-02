@@ -19,6 +19,7 @@ from ..components.input_helpers import (
 from ..constants import BUILTIN_TEMPLATES
 from ..geometry import check_termination as _check_termination
 from ..geometry import parse_last_geometry
+from ..psutil_compat import maybe_import_psutil, psutil_exception_types
 from .base import CalculationPolicy
 
 __all__ = [
@@ -26,21 +27,9 @@ __all__ = [
     "ORCA_POLICY",
 ]
 
-try:
-    import psutil  # type: ignore[import-untyped]
-except ImportError:
-    psutil = None
+psutil = maybe_import_psutil()
 
 logger = logging.getLogger("confflow.calc.policies.orca")
-
-
-def _psutil_exception_types() -> tuple[type[BaseException], ...]:
-    """Return supported psutil-related exception types, tolerant of test doubles."""
-    base: tuple[type[BaseException], ...] = (AttributeError, OSError, RuntimeError)
-    err_type = getattr(psutil, "Error", None)
-    if isinstance(err_type, type) and issubclass(err_type, BaseException):
-        return (err_type, *base)
-    return base
 
 
 class OrcaPolicy(CalculationPolicy):
@@ -63,23 +52,22 @@ class OrcaPolicy(CalculationPolicy):
         cores = int(config.get("cores_per_task", 4))
         memory = compute_orca_maxcore(config)
 
-        keyword_line = config.get("keyword", "#p")  # Default fallback
+        keyword_line = config.get("keyword", "#p")  # Keep a minimal fallback keyword.
         charge = config.get("charge", 0)
         multiplicity = config.get("multiplicity", 1)
 
-        # Unified Block Management
+        # Normalize block handling for both string and dict inputs.
         blocks_config = config.get("blocks", "")
 
         blocks_dict = {}
-        # Note: values read from ConfigParser are always strings, unless
-        # manually converted to dict in a special flow.
-        # We primarily support string mode but keep dict mode for compatibility.
+        # ConfigParser values arrive as strings unless another layer converts them.
+        # Prefer string mode, but keep dict mode for compatibility.
         is_dict_mode = isinstance(blocks_config, dict)
 
         if is_dict_mode:
             blocks_dict = copy.deepcopy(blocks_config)
 
-        # Constraint Handling
+        # Merge freeze constraints into the generated ORCA blocks.
         freeze = config.get("freeze", "")
         itask_val = config.get("itask", "opt")
 
@@ -89,7 +77,7 @@ class OrcaPolicy(CalculationPolicy):
             if freeze_atoms:
                 clist = [f"{{ C {int(idx) - 1} C }}" for idx in freeze_atoms]
                 if is_dict_mode:
-                    # Dict mode: merge into blocks_dict
+                    # Merge generated constraints into dict-mode blocks.
                     if "geom" not in blocks_dict:
                         blocks_dict["geom"] = {}
                     if "Constraints" not in blocks_dict["geom"]:
@@ -103,7 +91,7 @@ class OrcaPolicy(CalculationPolicy):
                         elif isinstance(existing, str):
                             blocks_dict["geom"]["Constraints"] = existing.splitlines() + clist
                 else:
-                    # String mode: generate a standalone constraint block
+                    # Render a standalone constraint block for string-mode input.
                     constraint_str = format_orca_blocks({"geom": {"Constraints": clist}})
 
         if is_dict_mode:
@@ -209,7 +197,7 @@ class OrcaPolicy(CalculationPolicy):
             try:
                 if any(t in (proc.info.get("name") or "") for t in targets):
                     proc.terminate()
-            except _psutil_exception_types() as e:
+            except psutil_exception_types(psutil) as e:
                 logger.debug(f"Failed to clean up process {proc.info.get('pid')}: {e}")
 
 

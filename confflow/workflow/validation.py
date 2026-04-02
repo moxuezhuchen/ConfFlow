@@ -9,6 +9,7 @@ from typing import Any
 
 from ..blocks.confgen.generator import load_mol_from_xyz
 from ..blocks.confgen.validator import ChainValidator
+from ..core.exceptions import InputFileError, XYZFormatError
 from ..core.utils import validate_xyz_file
 from .helpers import as_list
 
@@ -41,7 +42,9 @@ def validate_inputs_compatible(
 
     def _raise_or_warn(message: str) -> None:
         if force_consistency:
-            logger.warning(f"force_consistency=true, skip input consistency error: {message}")
+            logger.warning(
+                "Skipping the input consistency error because force_consistency=true: %s", message
+            )
             return
         raise ValueError(message)
 
@@ -53,7 +56,11 @@ def validate_inputs_compatible(
     ref_atoms = None
     ref_natoms = None
     for fp in input_files:
-        ok, geoms = validate_xyz_file(fp)
+        try:
+            ok, geoms = validate_xyz_file(fp, strict=True)
+        except (InputFileError, XYZFormatError) as e:
+            _raise_or_warn(f"cannot parse input XYZ: {fp} ({e})")
+            return
         if not ok or not geoms:
             _raise_or_warn(f"cannot parse input XYZ: {fp}")
             return
@@ -73,7 +80,7 @@ def validate_inputs_compatible(
             return
 
         if allow_chain_mapping:
-            # Allow different atom ordering, but require same element counts
+            # Allow atom reordering, but require identical element counts.
             if sorted(atoms) != sorted(ref_atoms):
                 _raise_or_warn(
                     "element composition mismatch (chains mode requires equal element counts):\n"
@@ -81,12 +88,12 @@ def validate_inputs_compatible(
                 )
                 return
         else:
-            # Default: strictly require same atom ordering
+            # By default, require identical atom ordering across all inputs.
             if atoms != ref_atoms:
                 diffs = []
                 for i, (a1, a2) in enumerate(zip(atoms, ref_atoms)):
                     if a1 != a2:
-                        diffs.append(f"#{i+1} {a1} vs {a2}")
+                        diffs.append(f"#{i + 1} {a1} vs {a2}")
                         if len(diffs) >= 3:
                             break
                 _raise_or_warn(

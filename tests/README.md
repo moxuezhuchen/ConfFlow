@@ -15,7 +15,7 @@
 
 **CI 与覆盖**
 - 默认 CI 执行 `pytest tests`，所有核心测试应快速且确定性强。
-- 覆盖率阈值 `fail_under = 70`，已在 `pyproject.toml` 中配置。
+- 覆盖率阈值 `fail_under = 85`，已在 `pyproject.toml` 中配置。
 
 **变更流程**
 - 提交影响多个测试文件的重构前，请先在本地运行 `pytest -q tests` 并确保通过。

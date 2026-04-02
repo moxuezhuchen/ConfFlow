@@ -6,7 +6,43 @@ on:
   pull_request:
 
 jobs:
-  quality-and-test:
+  test-matrix:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Black (gate)
+        if: matrix.python-version == '3.11'
+        run: black --check .
+
+      - name: Ruff (gate)
+        if: matrix.python-version == '3.11'
+        run: ruff check .
+
+      - name: Mypy (gate)
+        if: matrix.python-version == '3.11'
+        run: mypy confflow
+
+      - name: Pytest
+        run: pytest -q
+
+  coverage:
     runs-on: ubuntu-latest
 
     steps:
@@ -23,14 +59,11 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
 
-      - name: Black (gate)
-        run: black --check .
+      - name: Coverage (gate)
+        run: pytest tests/ --cov=confflow --cov-report=term-missing --cov-report=xml
 
-      - name: Ruff (gate)
-        run: ruff check .
-
-      - name: Mypy (gate)
-        run: mypy confflow
-
-      - name: Pytest
-        run: pytest -q
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-xml
+          path: coverage.xml

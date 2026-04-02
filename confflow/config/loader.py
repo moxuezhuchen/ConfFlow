@@ -59,14 +59,14 @@ def load_workflow_config_file(config_file: str) -> dict[str, Any]:
     if not os.path.isfile(config_file):
         raise ConfigurationError(f"Configuration path is not a file: {config_file}")
 
-    logger.info(f"Loading configuration file: {config_file}")
+    logger.info(f"Loading configuration from: {config_file}")
 
     try:
         with open(config_file, encoding="utf-8") as f:
             full_config = yaml.safe_load(f) or {}
     except yaml.YAMLError as e:
-        logger.error(f"YAML parsing failed: {e}")
-        raise ConfigurationError(f"YAML parsing failed: {e}") from e
+        logger.error(f"Failed to parse the YAML configuration: {e}")
+        raise ConfigurationError(f"Failed to parse the YAML configuration: {e}") from e
     except OSError as e:
         logger.error(f"Failed to read configuration file: {e}")
         raise ConfigurationError(f"Failed to read configuration file: {e}") from e
@@ -110,12 +110,12 @@ def load_workflow_config_file(config_file: str) -> dict[str, Any]:
             continue
         params = step.get("params") or {}
         if isinstance(params, dict) and "ts_bond" in params:
-            step_name = step.get("name", f"step_{i+1}")
+            step_name = step.get("name", f"step_{i + 1}")
             raise ConfigurationError(
                 f"Legacy key 'ts_bond' is not supported in step '{step_name}'. Use 'ts_bond_atoms'."
             )
 
-    logger.info(f"Configuration loaded successfully: {len(steps)} step(s)")
+    logger.info(f"Loaded configuration with {len(steps)} step(s)")
 
     return {
         "global": global_config,

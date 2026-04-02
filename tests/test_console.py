@@ -208,7 +208,7 @@ class TestFormatFunctions:
         result = format_step_table(steps)
         assert "confgen" in result
         assert "opt" in result
-        assert "done" in result   # "✔ done" replaces "completed"
+        assert "done" in result  # "✔ done" replaces "completed"
         assert "50" in result
         assert "45" in result
         assert "5" in result

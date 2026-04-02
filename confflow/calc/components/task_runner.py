@@ -1,14 +1,6 @@
 #!/usr/bin/env python3
 
-"""Unified single-task executor.
-
-Notes
------
-Directly wraps the ``executor`` + policy execution flow so that all callers
-can use ``TaskRunner().run(...)`` uniformly.
-Currently still patches through ``executor`` internally, without depending on
-the top-level compatibility symbols in ``confflow.calc``.
-"""
+"""Execute a single calculation task through the shared executor flow."""
 
 from __future__ import annotations
 
@@ -17,6 +9,12 @@ from typing import Any
 
 from ...config.defaults import DEFAULT_TS_BOND_DRIFT_THRESHOLD
 from ...core import models
+from ...core.exceptions import (
+    CalculationExecutionError,
+    CalculationInputError,
+    CalculationParseError,
+    StopRequestedError,
+)
 from ..analysis import (
     _bond_length_from_xyz_lines,
     _keyword_requests_freq,
@@ -24,9 +22,9 @@ from ..analysis import (
     is_rescue_enabled,
     validate_ts_bond_drift,
 )
-from ..policies import get_policy
+from ..policies import get_policy_for_config
 from ..rescue import _ts_rescue_scan
-from ..setup import get_itask, parse_iprog
+from ..setup import get_itask
 from . import executor
 
 __all__ = [
@@ -36,8 +34,7 @@ __all__ = [
 
 class TaskRunner:
     def _get_policy(self, config: dict[str, Any]):
-        iprog = parse_iprog(config)
-        return get_policy(iprog)
+        return get_policy_for_config(config)
 
     def _try_rescue(self, cfg: dict, task_dict: dict, err_msg: str) -> dict | None:
         """Attempt TS rescue scan if enabled. Returns rescued result or None."""
@@ -46,6 +43,40 @@ class TaskRunner:
             if rescued is not None:
                 return rescued
         return None
+
+    @staticmethod
+    def _classify_error(exc: Exception) -> str:
+        """Map runtime exceptions to stable failure categories."""
+        if isinstance(exc, StopRequestedError):
+            return "stop_requested"
+        if isinstance(exc, CalculationInputError):
+            return "input_error"
+        if isinstance(exc, CalculationParseError):
+            return "parse_error"
+        if isinstance(exc, CalculationExecutionError):
+            msg = str(exc)
+            if "Abnormal termination" in msg or "nonzero exit" in msg:
+                return "abnormal_termination"
+            return "exec_error"
+        return "worker_exception"
+
+    @staticmethod
+    def _failed_result(
+        task_dict: dict[str, Any],
+        error: str,
+        error_kind: str,
+        error_details: str | None = None,
+    ) -> dict[str, Any]:
+        """Build a normalized failed/canceled result payload."""
+        result: dict[str, Any] = {
+            **task_dict,
+            "status": "canceled" if error_kind == "stop_requested" else "failed",
+            "error": error,
+            "error_kind": error_kind,
+        }
+        if error_details is not None:
+            result["error_details"] = error_details
+        return result
 
     def run(self, task_info: models.TaskContext | dict[str, Any]):
         task_dict = (
@@ -74,7 +105,7 @@ class TaskRunner:
                 if itask == 1:
                     final_coords = task_dict["coords"]
                 else:
-                    return {**task_dict, "status": "failed", "error": "No coords"}
+                    return self._failed_result(task_dict, "No coords", "parse_error")
 
             num_imag_raw = res.get("num_imag_freqs")
             num_imag = 0 if num_imag_raw is None else int(num_imag_raw)
@@ -88,7 +119,8 @@ class TaskRunner:
                     rescued = self._try_rescue(cfg, task_dict, err_msg)
                     if rescued is not None:
                         return rescued
-                    return {**task_dict, "status": "failed", "error": err_msg}
+                    error_kind = "rescue_failed" if is_rescue_enabled(cfg) else "parse_error"
+                    return self._failed_result(task_dict, err_msg, error_kind)
                 if num_imag != 1:
                     err_msg = f"TS task requires exactly 1 imaginary frequency, got {num_imag}"
                     if lowest_freq is not None:
@@ -96,13 +128,14 @@ class TaskRunner:
                     rescued = self._try_rescue(cfg, task_dict, err_msg)
                     if rescued is not None:
                         return rescued
-                    return {**task_dict, "status": "failed", "error": err_msg}
+                    error_kind = "rescue_failed" if is_rescue_enabled(cfg) else "parse_error"
+                    return self._failed_result(task_dict, err_msg, error_kind)
 
             if itask == 3 and num_imag > 0:
                 err_msg = f"opt+freq task has {num_imag} imaginary frequencies"
                 if lowest_freq is not None:
                     err_msg += f" (lowest freq: {lowest_freq:.1f} cm⁻¹)"
-                return {**task_dict, "status": "failed", "error": err_msg}
+                return self._failed_result(task_dict, err_msg, "parse_error")
 
             ts_bond_atoms = cfg.get("ts_bond_atoms")
             ts_bond_length = None
@@ -127,14 +160,15 @@ class TaskRunner:
                         rescued = self._try_rescue(cfg, task_dict, err_msg)
                         if rescued is not None:
                             return rescued
-                        return {**task_dict, "status": "failed", "error": err_msg}
+                        error_kind = "rescue_failed" if is_rescue_enabled(cfg) else "parse_error"
+                        return self._failed_result(task_dict, err_msg, error_kind)
 
             inherited_gc = None
             try:
                 meta = task_dict.get("metadata") or {}
-                # Convention: once a step has produced G=... (Gibbs), G_corr is
-                # no longer propagated downstream.  Only G_corr from freq/opt_freq
-                # steps is carried forward until combined with an SP energy to form G.
+                # Once a step has produced G=... (Gibbs), stop propagating G_corr.
+                # Only G_corr from freq/opt_freq steps is carried forward until it
+                # is combined with a downstream SP energy to form Gibbs energy.
                 if "G" in meta:
                     inherited_gc = None
                 elif "G_corr" in meta:
@@ -188,15 +222,20 @@ class TaskRunner:
             return result
 
         except Exception as e:
+            error_kind = self._classify_error(e)
+            if error_kind == "stop_requested":
+                return self._failed_result(task_dict, str(e), error_kind)
             if get_itask(cfg) == 4:
                 rescued = self._try_rescue(cfg, task_dict, str(e))
                 if rescued is not None:
                     return rescued
-            return {
-                **task_dict,
-                "status": "failed",
-                "error": str(e),
-                "error_details": executor._get_error_details(wd, job, cfg, e, policy),
-            }
+                if is_rescue_enabled(cfg):
+                    error_kind = "rescue_failed"
+            return self._failed_result(
+                task_dict,
+                str(e),
+                error_kind,
+                error_details=executor._get_error_details(wd, job, cfg, e, policy),
+            )
         finally:
             executor.handle_backups(wd, cfg, success, cleanup_work_dir=True)

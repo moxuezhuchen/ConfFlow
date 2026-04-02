@@ -37,9 +37,10 @@ pip install -e ".[dev]"
 - ✅ 引入 `Pydantic v2`：核心上下文模型集中在 `confflow/core/models.py`（含 `GlobalConfigModel`、`CalcConfigModel`）
 - ✅ 清理重复 I/O：统一复用 `confflow/core/io.py`
 - ✅ 进程终止增强：`cli` 使用 `psutil` 进行进程树回收
-- ✅ 测试架构重构：41 个测试文件、**630 个测试**、`pytest -q` 约 6s
-- ✅ 覆盖率：branch coverage **90.74%**（`fail_under = 70`）
+- ✅ 测试架构重构：41 个测试文件、**655 个测试**、`pytest -q` 约 6s
+- ✅ 覆盖率：branch coverage **90.52%**（`fail_under = 85`）
 - ✅ 类型安全：当前基线为 `mypy confflow`、`ruff check .`、`pytest`
+- ✅ 支持矩阵明确：CI 现验证 Python **3.9-3.13**
 - ✅ 异常精确化：`scan_ops`/`executor`/`generator` 中 8 处 `except Exception` 收窄为具体异常
 - ✅ 构象去重精度提升：对称性感知 RMSD + 能量辅助阈值，解决大分子原子乱序/对称互换导致的去重漏判
 - ✅ 工作流工件契约收紧：`calc`/`resume` 仅接受 `output.xyz` / `result.xyz` 作为已完成输出，避免误把 `search.xyz` 当成计算结果
@@ -121,10 +122,12 @@ steps:
 
 ## FAQ
 
-**Q: RDKit/numba 是必须的吗？**  
+**Q: RDKit/numba 是必须的吗？**
+
 A: RDKit 是必须的（用于 MMFF 预优化与分子操作）。Numba 是可选的（用于 RMSD 加速），缺失时会自动降级使用纯 Python 实现，但速度会变慢。
 
-**Q: 如何查看任务失败原因？**  
+**Q: 如何查看任务失败原因？**
+
 A: 优先看对应 step 的两类信息：
 
 - `step_xx/failed.xyz`：失败构象（输入结构）集合，注释行包含 `Job/CID/Error`，方便定位与重算。
@@ -132,10 +135,17 @@ A: 优先看对应 step 的两类信息：
 
 此外也可查看 `confflow.log` 以及 `backups/` 中的 `.log/.out` 备份文件。
 
-**Q: 断点续传如何工作？**  
+工作流根目录还会额外写出两份 JSON：
+
+- `workflow_stats.json`：完整运行统计与低能构象追踪
+- `run_summary.json`：面向脚本消费的精简摘要
+
+**Q: 断点续传如何工作？**
+
 A: 再次运行相同命令会自动跳过已成功的任务。如果 `results.db` 丢失但 `backups/` 存在，也会尝试从备份恢复。恢复时会按 step 类型检查标准产物：`confgen` 只接受 `search.xyz`，`calc` 只接受 `output.xyz` / `result.xyz`；工作目录不完整会直接报错，避免误用错误工件继续运行。
 
-**Q: TS 任务失败后如何救援？**  
+**Q: TS 任务失败后如何救援？**
+
 A: 设置 `ts_rescue_scan: true`（默认关闭），会自动执行 scan 寻找正确的 TS 结构。
 
 ## 开发

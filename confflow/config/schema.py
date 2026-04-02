@@ -199,7 +199,9 @@ class ConfigSchema:
         cls._merge_validated_calc_config(config, validated.model_dump())
 
     @staticmethod
-    def _merge_validated_calc_config(config: dict[str, Any], validated_dict: dict[str, Any]) -> None:
+    def _merge_validated_calc_config(
+        config: dict[str, Any], validated_dict: dict[str, Any]
+    ) -> None:
         """Write validated/coerced calc fields back to the original config dict."""
         for key in list(config):
             if key in validated_dict:
@@ -411,7 +413,23 @@ def _validate_step_config(step: dict[str, Any], index: int) -> list[str]:
 
         if step_type in ["calc", "task"]:
             itask = params.get("itask")
-            valid_itasks = {"opt", "sp", "freq", "opt_freq", "ts", "0", "1", "2", "3", "4", 0, 1, 2, 3, 4}
+            valid_itasks = {
+                "opt",
+                "sp",
+                "freq",
+                "opt_freq",
+                "ts",
+                "0",
+                "1",
+                "2",
+                "3",
+                "4",
+                0,
+                1,
+                2,
+                3,
+                4,
+            }
             if itask is not None and itask not in valid_itasks:
                 errors.append(f"{step_id}: invalid itask value '{itask}'")
 

@@ -10,6 +10,7 @@ from unittest.mock import patch
 
 import pytest
 
+from confflow.core.exceptions import XYZFormatError
 from confflow.core.pairs import normalize_pair_list
 from confflow.workflow.config_builder import (
     build_step_dir_name_map,
@@ -102,6 +103,20 @@ def test_validate_inputs_compatible(tmp_path):
         validate_inputs_compatible([str(f3), str(f4)])
 
 
+def test_run_workflow_rejects_malformed_xyz_strict(tmp_path):
+    bad_xyz = tmp_path / "bad.xyz"
+    bad_xyz.write_text("2\ncomment\nC 0 0 0\nH not-a-number 0 1\n", encoding="utf-8")
+
+    config_file = tmp_path / "workflow.yaml"
+    config_file.write_text(
+        "global:\n  iprog: orca\n  keyword: B3LYP\nsteps:\n  - name: s1\n    type: calc\n    params:\n      itask: sp\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(XYZFormatError, match="cannot parse coordinates"):
+        run_workflow([str(bad_xyz)], str(config_file), str(tmp_path / "work"))
+
+
 def test_normalize_labels():
     assert _normalize_iprog_label("1") == "g16"
     assert _normalize_iprog_label("orca") == "orca"
@@ -161,8 +176,12 @@ def test_count_task_statuses_in_results_db_latest_records_only(tmp_path):
             timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
         )
     """)
-    con.execute("INSERT INTO task_results (job_name, status, error) VALUES ('job1', 'failed', 'boom')")
-    con.execute("INSERT INTO task_results (job_name, status, energy) VALUES ('job1', 'success', -1.0)")
+    con.execute(
+        "INSERT INTO task_results (job_name, status, error) VALUES ('job1', 'failed', 'boom')"
+    )
+    con.execute(
+        "INSERT INTO task_results (job_name, status, energy) VALUES ('job1', 'success', -1.0)"
+    )
     con.commit()
     con.close()
 
@@ -288,7 +307,6 @@ steps:
             patch("confflow.calc.ChemTaskManager.run", autospec=True, side_effect=mock_manager_run),
             patch("confflow.blocks.viz.generate_text_report", return_value=""),
         ):
-
             with patch(
                 "confflow.config.schema.ConfigSchema.validate_calc_config",
                 side_effect=[None, ValueError("stop here")],
@@ -604,9 +622,7 @@ def test_workflow_engine_helpers_extended():
 
 
 def test_workflow_engine_misses(tmp_path):
-    from confflow.core.utils import InputFileError
-
-    with pytest.raises(InputFileError):
+    with pytest.raises(ValueError, match="cannot parse input XYZ"):
         validate_inputs_compatible(["a.xyz", "b.xyz"])
 
     assert as_list(None) is None
@@ -819,6 +835,9 @@ def test_workflow_engine_trace_exception_trigger(tmp_path):
         patch(
             "confflow.workflow.engine.calc.manager.ChemTaskManager.run", return_value={"success": 1}
         ),
+        patch(
+            "confflow.workflow.engine.validate_xyz_file", return_value=(True, [{"atoms": ["C"]}])
+        ),
         patch("confflow.workflow.engine.io_xyz.read_xyz_file", side_effect=mock_read_xyz_file),
         patch(
             "confflow.workflow.engine.viz.parse_xyz_file",
@@ -854,14 +873,20 @@ def test_workflow_engine_low_energy_trace_full(tmp_path):
     run_workflow([str(input_xyz)], str(config_file), work_dir=str(root))
 
     stats_path = root / "workflow_stats.json"
+    summary_path = root / "run_summary.json"
     assert stats_path.exists()
+    assert summary_path.exists()
 
     with open(stats_path) as f:
         stats = json.load(f)
+    with open(summary_path) as f:
+        summary = json.load(f)
 
     assert "low_energy_trace" in stats
     assert len(stats["low_energy_trace"]["conformers"]) > 0
     assert "trace" in stats["low_energy_trace"]["conformers"][0]
+    assert summary["final_conformers"] >= 1
+    assert summary["step_status_counts"]["skipped"] == 1
 
 
 # ---------------------------------------------------------------------------

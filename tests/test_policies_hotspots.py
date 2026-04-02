@@ -88,7 +88,9 @@ def test_gaussian_parse_output_falls_back_to_archive_energy_and_gibbs(tmp_path, 
     assert parsed["final_coords"] == ["C 0 0 0"]
 
 
-def test_gaussian_parse_output_ignores_malformed_scf_and_keeps_explicit_gibbs(tmp_path, monkeypatch):
+def test_gaussian_parse_output_ignores_malformed_scf_and_keeps_explicit_gibbs(
+    tmp_path, monkeypatch
+):
     log = tmp_path / "job.log"
     log.write_text(
         "SCF Done: malformed entry\n"
@@ -127,9 +129,10 @@ def test_gaussian_get_error_details_logs_debug_on_oserror(tmp_path):
     log = tmp_path / "job.log"
     log.write_text("Error termination", encoding="utf-8")
 
-    with patch("confflow.calc.policies.gaussian.open", side_effect=OSError("boom")), patch(
-        "confflow.calc.policies.gaussian.logger.debug"
-    ) as mock_debug:
+    with (
+        patch("confflow.calc.policies.gaussian.open", side_effect=OSError("boom")),
+        patch("confflow.calc.policies.gaussian.logger.debug") as mock_debug,
+    ):
         details = GaussianPolicy().get_error_details(str(tmp_path), "job", {})
 
     assert details == ""
@@ -138,7 +141,9 @@ def test_gaussian_get_error_details_logs_debug_on_oserror(tmp_path):
 
 def test_gaussian_get_error_details_detects_memory_failure(tmp_path):
     log = tmp_path / "job.log"
-    log.write_text("Error termination\nConvergence failure\nMemory request failed\n", encoding="utf-8")
+    log.write_text(
+        "Error termination\nConvergence failure\nMemory request failed\n", encoding="utf-8"
+    )
     details = GaussianPolicy().get_error_details(str(tmp_path), "job", {})
     assert "Abnormal program termination" in details
     assert "SCF not converged" in details
@@ -161,9 +166,10 @@ def test_gaussian_cleanup_lingering_processes_terminates_targets_and_logs_failur
 
     fake_psutil = SimpleNamespace(process_iter=lambda *_args, **_kwargs: [target, failing, other])
 
-    with patch("confflow.calc.policies.gaussian.psutil", fake_psutil), patch(
-        "confflow.calc.policies.gaussian.logger.debug"
-    ) as mock_debug:
+    with (
+        patch("confflow.calc.policies.gaussian.psutil", fake_psutil),
+        patch("confflow.calc.policies.gaussian.logger.debug") as mock_debug,
+    ):
         GaussianPolicy().cleanup_lingering_processes({})
 
     target.terminate.assert_called_once()
@@ -290,9 +296,10 @@ def test_orca_get_error_details_logs_debug_on_oserror(tmp_path):
     log = tmp_path / "job.out"
     log.write_text("ORCA finished by error", encoding="utf-8")
 
-    with patch("confflow.calc.policies.orca.open", side_effect=OSError("boom")), patch(
-        "confflow.calc.policies.orca.logger.debug"
-    ) as mock_debug:
+    with (
+        patch("confflow.calc.policies.orca.open", side_effect=OSError("boom")),
+        patch("confflow.calc.policies.orca.logger.debug") as mock_debug,
+    ):
         details = OrcaPolicy().get_error_details(str(tmp_path), "job", {})
 
     assert details == ""
@@ -318,9 +325,10 @@ def test_orca_cleanup_lingering_processes_terminates_targets_and_logs_failures()
 
     fake_psutil = SimpleNamespace(process_iter=lambda *_args, **_kwargs: [target, failing, other])
 
-    with patch("confflow.calc.policies.orca.psutil", fake_psutil), patch(
-        "confflow.calc.policies.orca.logger.debug"
-    ) as mock_debug:
+    with (
+        patch("confflow.calc.policies.orca.psutil", fake_psutil),
+        patch("confflow.calc.policies.orca.logger.debug") as mock_debug,
+    ):
         OrcaPolicy().cleanup_lingering_processes({})
 
     target.terminate.assert_called_once()

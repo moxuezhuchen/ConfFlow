@@ -1,13 +1,6 @@
 #!/usr/bin/env python3
 
-"""
-ConfFlow Refine - Conformer Post-processing Tool (v1.0).
-
-RMSD deduplication, energy filtering, and topology analysis.
-Modular design (Library & Script).
-
-Core computations (PMI, RMSD, topology hash, batch dedup) are in rmsd_engine.
-"""
+"""Refine, filter, and deduplicate conformers from XYZ inputs."""
 
 from __future__ import annotations
 
@@ -22,59 +15,22 @@ import numpy as np
 
 from ...core.constants import HARTREE_TO_KCALMOL
 from ...core.contracts import ExitCode, cli_output_to_txt
+from ._compat import load_console_bindings
 
 logger = logging.getLogger("confflow.refine")
 
-try:
-    from ...core.console import (
-        console,
-        create_progress,
-        error,
-        heading,
-        info,
-        print_table,
-        success,
-        warning,
-    )
-except (ImportError, ModuleNotFoundError):
-    console = type("Mock", (), {"print": print})
-
-    def create_progress():
-        return type(
-            "Mock",
-            (),
-            {
-                "__enter__": lambda s: s,
-                "__exit__": lambda *a: None,
-                "add_task": lambda *a: 0,
-                "update": lambda *a: None,
-            },
-        )()
-
-    def info(m):
-        print(f"INFO: {m}")
-
-    def success(m):
-        print(f"SUCCESS: {m}")
-
-    def warning(m):
-        print(f"WARNING: {m}")
-
-    def error(m):
-        print(f"ERROR: {m}")
-
-    def heading(m):
-        print(f"=== {m} ===")
-
-    def print_table(*a, **k):
-        pass
+_console_bindings = load_console_bindings()
+console = _console_bindings["console"]
+create_progress = _console_bindings["create_progress"]
+error = _console_bindings["error"]
+heading = _console_bindings["heading"]
+info = _console_bindings["info"]
+print_table = _console_bindings["print_table"]
+success = _console_bindings["success"]
+warning = _console_bindings["warning"]
 
 
-from .rmsd_engine import (  # noqa: E402
-    fast_rmsd,
-    get_topology_hash_worker,
-    process_topology_group,
-)
+from . import rmsd_engine  # noqa: E402
 
 __all__ = [
     "RefineOptions",
@@ -82,6 +38,19 @@ __all__ = [
     "process_xyz",
     "main",
 ]
+
+
+def fast_rmsd(*args, **kwargs):
+    return rmsd_engine.fast_rmsd(*args, **kwargs)
+
+
+def get_topology_hash_worker(*args, **kwargs):
+    return rmsd_engine.get_topology_hash_worker(*args, **kwargs)
+
+
+def process_topology_group(*args, **kwargs):
+    return rmsd_engine.process_topology_group(*args, **kwargs)
+
 
 # ==============================================================================
 # Parameter container (API)
@@ -115,11 +84,11 @@ class RefineOptions:
         self.dedup_only = dedup_only
         self.keep_all_topos = keep_all_topos
         self.energy_tolerance = energy_tolerance
-        # Improvement: cap workers at CPU count to avoid over-parallelization
+        # Cap workers at the local CPU count to avoid over-parallelization.
         cpu_count = multiprocessing.cpu_count()
         self.workers = max(1, min(workers, cpu_count))
 
-        # Validation logic
+        # Normalize the default output path eagerly.
         if self.output is None:
             base, _ = os.path.splitext(self.input_file)
             self.output = f"{base}_cleaned.xyz"
@@ -324,8 +293,11 @@ def process_xyz(args):
     # 4. RMSD deduplication
     if frames_to_process:
         final_unique, report_data = process_topology_group(
-            frames_to_process, args.threshold, args.noH, args.workers,
-            getattr(args, 'energy_tolerance', 0.05)
+            frames_to_process,
+            args.threshold,
+            args.noH,
+            args.workers,
+            getattr(args, "energy_tolerance", 0.05),
         )
     else:
         final_unique, report_data = [], []
@@ -345,47 +317,41 @@ def process_xyz(args):
 
     _write_refine_output(args.output, final_unique, global_min)
 
-
-# ==============================================================================
-# Command-line entry
-# ==============================================================================
-
-
 def main():
     """Command-line entry point."""
     try:
         multiprocessing.set_start_method("fork")
     except RuntimeError as e:
-        logger.debug(f"failed to set multiprocessing start method: {e}")
+        logger.debug(f"Failed to set the multiprocessing start method: {e}")
 
     parser = argparse.ArgumentParser(
-        description="ConfFlow Refine (v1.0) - conformer post-processing"
+        description="Refine and deduplicate conformers from an XYZ file"
     )
-    parser.add_argument("input_file", help="Input XYZ file")
-    parser.add_argument("-o", "--output", help="Output file")
+    parser.add_argument("input_file", help="Path to the input XYZ file")
+    parser.add_argument("-o", "--output", help="Path to the output XYZ file")
     parser.add_argument(
-        "-t", "--threshold", type=float, default=0.25, help="RMSD threshold (default 0.25)"
+        "-t", "--threshold", type=float, default=0.25, help="RMSD threshold (default: 0.25)"
     )
-    parser.add_argument("--ewin", type=float, help="Energy window (kcal/mol)")
+    parser.add_argument("--ewin", type=float, help="Energy window in kcal/mol")
     parser.add_argument("--imag", type=int, help="Number of imaginary frequencies to keep")
-    parser.add_argument("--noH", action="store_true", help="Ignore H atoms in RMSD")
+    parser.add_argument("--noH", action="store_true", help="Ignore hydrogen atoms in RMSD")
     parser.add_argument(
-        "-n", "--max-conformers", type=int, help="Maximum number of output conformers"
+        "-n", "--max-conformers", type=int, help="Maximum number of conformers to write"
     )
-    parser.add_argument("--dedup-only", action="store_true", help="Deduplicate only")
-    parser.add_argument("--keep-all-topos", action="store_true", help="Keep all topologies")
+    parser.add_argument("--dedup-only", action="store_true", help="Only deduplicate conformers")
+    parser.add_argument("--keep-all-topos", action="store_true", help="Keep all detected topologies")
     parser.add_argument(
         "-w",
         "--workers",
         type=int,
         default=max(1, multiprocessing.cpu_count() - 2),
-        help="Parallel worker count",
+        help="Number of worker processes to use",
     )
     parser.add_argument(
         "--energy-tolerance",
         type=float,
         default=0.05,
-        help="Energy tolerance (kcal/mol) for RMSD threshold relaxation (default 0.05)",
+        help="Energy tolerance in kcal/mol for RMSD-threshold relaxation (default: 0.05)",
     )
 
     args = parser.parse_args()

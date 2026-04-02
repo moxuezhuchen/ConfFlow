@@ -39,7 +39,7 @@ try:
 except ImportError:
     NUMBA_AVAILABLE = False
 
-    # Fallback: decorator that returns the original function
+    # Return the original function when Numba is unavailable.
     def njit(*args, **kwargs):
         def decorator(func):
             return func
@@ -91,7 +91,7 @@ try:
         "NUMBA_AVAILABLE",
     ]
 except ImportError as e:
-    # Debug mode: print error on import failure without interrupting
+    # Emit an import warning without interrupting package loading.
     import warnings
 
     warnings.warn(f"ConfFlow module import warning: {e}", stacklevel=2)

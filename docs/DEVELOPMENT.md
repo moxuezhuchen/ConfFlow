@@ -19,7 +19,7 @@ confflow/
 │   ├── config/            # 配置加载与校验
 │   ├── core/              # 基础 IO、数据、模型与工具函数
 │   └── workflow/          # 工作流引擎
-├── tests/                 # 单元测试（41 个文件，630 个用例）
+├── tests/                 # 单元测试（41 个文件，655 个用例）
 ├── docs/                  # 文档
 ├── confflow.yaml          # 配置模板
 ├── README.md              # 主文档
@@ -98,7 +98,7 @@ pytest tests/ -m integration
 pytest tests/ --cov=confflow --cov-report=term-missing
 ```
 
-覆盖率阈值已配置在 `pyproject.toml` 中（`fail_under = 70`），并启用了分支覆盖率。
+覆盖率阈值已配置在 `pyproject.toml` 中（`fail_under = 85`），并启用了分支覆盖率。
 
 ### 常用质量门禁（推荐）
 
@@ -240,26 +240,28 @@ def process_batch(conformers):
 
 ### Python 文档字符串
 
-使用 Google 风格的文档字符串：
+使用英文 NumPy 风格的文档字符串：
 
 ```python
-def calculate_energy(conformer):
-    """计算构象能量。
-    
-    Args:
-        conformer: Nx3 numpy 数组，分子坐标
-        
-    Returns:
-        float: 能量值，单位 Ha
-        
-    Raises:
-        ValueError: 如果构象无效
-        
-    Example:
-        >>> energy = calculate_energy(conf)
-        >>> print(f"{energy:.6f}")
+def calculate_energy(conformer: np.ndarray) -> float:
+    """Calculate the conformer energy.
+
+    Parameters
+    ----------
+    conformer : np.ndarray
+        Cartesian coordinates with shape ``(N, 3)``.
+
+    Returns
+    -------
+    float
+        Energy in Hartree.
+
+    Raises
+    ------
+    ValueError
+        Raised when the conformer is invalid.
     """
-    pass
+    return 0.0
 ```
 
 ### Markdown 文档
@@ -267,6 +269,8 @@ def calculate_energy(conformer):
 - 使用清晰的标题层级
 - 提供代码示例
 - 包含常见问题解答
+- 用户文档统一使用中文说明，不依赖尾随空格实现换行
+- 风格基准以 `docs/STYLE_CONTRACT.md` 为准
 
 ## 版本管理
 

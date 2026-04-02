@@ -168,11 +168,14 @@ def validate_xyz_file(filepath: str, strict: bool = False) -> tuple[bool, list[d
         raise InputFileError(f"File is empty: {filepath}", filepath)
 
     try:
-        frames = _read_xyz(filepath, parse_metadata=False)
+        frames = _read_xyz(filepath, parse_metadata=False, strict=strict)
     except (OSError, ValueError) as exc:
         if strict:
             raise XYZFormatError(str(exc), filepath) from exc
         return False, []
+
+    if strict and not frames:
+        raise XYZFormatError("no valid XYZ frames found", filepath)
 
     errors: list[str] = []
     geometries: list[dict[str, Any]] = []
@@ -185,7 +188,7 @@ def validate_xyz_file(filepath: str, strict: bool = False) -> tuple[bool, list[d
         for idx, sym in enumerate(atoms):
             if not re.match(r"^[A-Za-z]{1,2}$", sym):
                 atom_errors.append(
-                    f"Frame {fr.get('frame_index', '?')}, atom {idx+1}: invalid symbol '{sym}'"
+                    f"Frame {fr.get('frame_index', '?')}, atom {idx + 1}: invalid symbol '{sym}'"
                 )
         if atom_errors:
             errors.extend(atom_errors)
