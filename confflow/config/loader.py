@@ -83,7 +83,6 @@ def load_workflow_config_file(config_file: str) -> dict[str, Any]:
         logger.error(f"Configuration validation failed with {len(errors)} error(s)")
         raise ConfigurationError("Configuration file validation failed", errors)
 
-    # Normalize global configuration
     global_raw = full_config.get("global", {})
     if global_raw is None:
         global_raw = {}
@@ -92,10 +91,11 @@ def load_workflow_config_file(config_file: str) -> dict[str, Any]:
             f"'global' config must be a dict, got: {type(global_raw).__name__}"
         )
 
-    global_config = ConfigSchema.normalize_global_config(global_raw)
-
     if "ts_bond" in global_raw:
         raise ConfigurationError("Legacy key 'ts_bond' is not supported. Use 'ts_bond_atoms'.")
+
+    # Normalize and validate global configuration through the schema entry point.
+    global_config = ConfigSchema.validate_global_config(global_raw)
 
     # Validate step configurations
     steps = full_config.get("steps", [])
@@ -104,16 +104,10 @@ def load_workflow_config_file(config_file: str) -> dict[str, Any]:
     if not isinstance(steps, list):
         raise ConfigurationError(f"'steps' config must be a list, got: {type(steps).__name__}")
 
-    # Validate basic structure of each step
+    # Legacy key checks that are not covered by generic schema validation.
     for i, step in enumerate(steps):
         if not isinstance(step, dict):
-            raise ConfigurationError(f"Step {i+1} must be a dict, got: {type(step).__name__}")
-        if "name" not in step:
-            raise ConfigurationError(f"Step {i+1} is missing the required 'name' field")
-        if "type" not in step:
-            raise ConfigurationError(
-                f"Step {i+1} ({step.get('name', 'unnamed')}) is missing the required 'type' field"
-            )
+            continue
         params = step.get("params") or {}
         if isinstance(params, dict) and "ts_bond" in params:
             step_name = step.get("name", f"step_{i+1}")

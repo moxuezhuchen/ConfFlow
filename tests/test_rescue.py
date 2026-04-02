@@ -114,6 +114,29 @@ def test_write_reports(tmp_path):
     scan_ops._write_scan_marker("", "job1", "error1")
 
 
+def test_constrained_scanner_writes_marker_on_runtime_error(tmp_path):
+    scanner = scan_ops._ConstrainedScanner(
+        cfg={"keyword": "opt ts", "iprog": 1},
+        wd=str(tmp_path),
+        a1=1,
+        a2=2,
+    )
+
+    with (
+        patch("confflow.calc.scan_ops._get_policy"),
+        patch(
+            "confflow.calc.scan_ops.executor._run_calculation_step",
+            side_effect=RuntimeError("scan failed"),
+        ),
+    ):
+        energy, final_coords, err = scanner.run(["H 0 0 0", "H 0 0 1.0"], 1.2)
+
+    assert energy is None
+    assert final_coords is None
+    assert err == "scan failed"
+    assert (tmp_path / "scan" / "1.200.scan_error.txt").exists()
+
+
 def test_find_failed_ts_input_coords(tmp_path):
     wd = tmp_path / "work"
     wd.mkdir()

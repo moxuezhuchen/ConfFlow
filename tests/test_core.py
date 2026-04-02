@@ -66,6 +66,13 @@ class TestConfflowPackage:
         main_mod = importlib.import_module("confflow.main")
         assert callable(main_mod.main)
 
+    def test_main_entrypoint_non_integer_result_maps_to_runtime_error(self):
+        main_mod = importlib.import_module("confflow.main")
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(main_mod, "_cli_main", lambda _args=None: None)
+            assert main_mod.main([]) == 2
+
     def test_confgen_key_symbols_present(self):
         import confflow.blocks.confgen as confgen
 

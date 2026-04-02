@@ -24,12 +24,7 @@ from ..core.utils import (
     get_logger,
     index_to_letter_prefix,
 )
-from .config_builder import _itask_label as _itask_label  # re-export for test compatibility
-from .config_builder import _normalize_iprog_label as _normalize_iprog_label  # re-export
-from .config_builder import (
-    build_step_dir_name_map,
-    load_workflow_config,
-)
+from .config_builder import load_workflow_config
 from .helpers import as_list as as_list  # re-export for test compatibility
 from .helpers import count_conformers_any, is_multi_frame_any, resolve_step_output
 from .presenter import print_step_footer_block, print_step_header_block, print_workflow_start
@@ -41,6 +36,11 @@ from .stats import (
 )
 from .step_handlers import run_calc_step as step_run_calc_step
 from .step_handlers import run_confgen_step as step_run_confgen_step
+from .step_naming import build_step_dir_name_map
+from .task_config import (  # re-export for test compatibility
+    _itask_label as _itask_label,
+)
+from .task_config import _normalize_iprog_label as _normalize_iprog_label  # re-export
 from .validation import validate_inputs_compatible
 
 __all__ = [
@@ -260,7 +260,7 @@ def run_workflow(
     # Tracing
     try:
         Tracer.trace_low_energy(final_stats)
-    except Exception as e:
+    except (OSError, ValueError, TypeError, KeyError, AttributeError) as e:
         logger.debug(f"Trace failed: {e}")
 
     # Report and lowest energy output

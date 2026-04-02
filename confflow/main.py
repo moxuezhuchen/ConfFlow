@@ -10,12 +10,13 @@ is in ``confflow.workflow.engine``.
 from __future__ import annotations
 
 from .cli import main as _cli_main
+from .core.contracts import ExitCode
 
 
 def main(args_list: list | None = None) -> int:
     """Entry point function (returns exit code)."""
     result = _cli_main(args_list)
-    return result if isinstance(result, int) else 0
+    return result if isinstance(result, int) else ExitCode.RUNTIME_ERROR
 
 
 __all__ = [

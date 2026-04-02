@@ -166,7 +166,7 @@ def test_calc_manager_failed_output_and_auto_clean_parse_errors(tmp_path):
             },
         ),
         patch("confflow.blocks.refine.RefineOptions") as mock_opts,
-        patch("confflow.blocks.refine.process_xyz", side_effect=Exception("boom")),
+        patch("confflow.blocks.refine.process_xyz", side_effect=RuntimeError("boom")),
     ):
         mock_opts.return_value = SimpleNamespace(output=str(tmp_path / "wd" / "output.xyz"))
         mgr.run(str(tmp_path / "input.xyz"))

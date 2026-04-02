@@ -136,7 +136,7 @@ A: 优先看对应 step 的两类信息：
 A: 再次运行相同命令会自动跳过已成功的任务。如果 `results.db` 丢失但 `backups/` 存在，也会尝试从备份恢复。恢复时会按 step 类型检查标准产物：`confgen` 只接受 `search.xyz`，`calc` 只接受 `output.xyz` / `result.xyz`；工作目录不完整会直接报错，避免误用错误工件继续运行。
 
 **Q: TS 任务失败后如何救援？**  
-A: 设置 `ts_rescue_scan: true`（默认开启），会自动执行 scan 寻找正确的 TS 结构。
+A: 设置 `ts_rescue_scan: true`（默认关闭），会自动执行 scan 寻找正确的 TS 结构。
 
 ## 开发
 

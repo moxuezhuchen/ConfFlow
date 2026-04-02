@@ -272,5 +272,5 @@ class ResultsDB:
     def __del__(self) -> None:
         try:
             self.conn.close()
-        except Exception:
+        except (AttributeError, OSError, sqlite3.Error):
             pass

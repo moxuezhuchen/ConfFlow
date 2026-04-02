@@ -169,7 +169,7 @@ def validate_xyz_file(filepath: str, strict: bool = False) -> tuple[bool, list[d
 
     try:
         frames = _read_xyz(filepath, parse_metadata=False)
-    except Exception as exc:
+    except (OSError, ValueError) as exc:
         if strict:
             raise XYZFormatError(str(exc), filepath) from exc
         return False, []

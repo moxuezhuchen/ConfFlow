@@ -34,6 +34,15 @@ except ImportError:
 logger = logging.getLogger("confflow.calc.policies.orca")
 
 
+def _psutil_exception_types() -> tuple[type[BaseException], ...]:
+    """Return supported psutil-related exception types, tolerant of test doubles."""
+    base: tuple[type[BaseException], ...] = (AttributeError, OSError, RuntimeError)
+    err_type = getattr(psutil, "Error", None)
+    if isinstance(err_type, type) and issubclass(err_type, BaseException):
+        return (err_type, *base)
+    return base
+
+
 class OrcaPolicy(CalculationPolicy):
     @property
     def name(self) -> str:
@@ -200,7 +209,7 @@ class OrcaPolicy(CalculationPolicy):
             try:
                 if any(t in (proc.info.get("name") or "") for t in targets):
                     proc.terminate()
-            except Exception as e:
+            except _psutil_exception_types() as e:
                 logger.debug(f"Failed to clean up process {proc.info.get('pid')}: {e}")
 
 

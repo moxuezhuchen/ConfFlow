@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from unittest.mock import patch
+
 
 class TestIO:
     """Tests for core.io module."""
@@ -53,6 +55,13 @@ class TestIO:
         assert conformers[0]["metadata"]["E"] == -1.5
         assert conformers[0]["metadata"]["Rank"] == 1.0
         assert conformers[1]["metadata"]["E"] == -1.2
+
+    def test_read_xyz_file_safe_returns_empty_list_on_supported_errors(self):
+        """read_xyz_file_safe should gracefully degrade on parse/read errors."""
+        from confflow.core.io import read_xyz_file_safe
+
+        with patch("confflow.core.io.read_xyz_file", side_effect=ValueError("bad xyz")):
+            assert read_xyz_file_safe("broken.xyz") == []
 
     def test_write_xyz_file(self, tmp_path):
         """Test XYZ file writing."""

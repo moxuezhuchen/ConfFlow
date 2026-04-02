@@ -7,6 +7,7 @@ from __future__ import annotations
 import pytest
 
 from confflow.config.schema import ConfigSchema, merge_step_params
+from confflow.core.exceptions import ConfigurationError
 
 
 def test_schema_parse_freeze_string():
@@ -34,6 +35,10 @@ def test_schema_normalize_global_extended():
     norm = ConfigSchema.normalize_global_config(raw)
     assert norm["freeze"] == [1, 2]
 
+    raw = {"freeze": [1, "2-3", 5]}
+    norm = ConfigSchema.normalize_global_config(raw)
+    assert norm["freeze"] == [1, 2, 3, 5]
+
     raw = {"ts_bond_atoms": [1, 2]}
     norm = ConfigSchema.normalize_global_config(raw)
     assert norm["ts_bond_atoms"] == [1, 2]
@@ -41,6 +46,32 @@ def test_schema_normalize_global_extended():
     raw = {"ts_bond_atoms": "1,2"}
     norm = ConfigSchema.normalize_global_config(raw)
     assert norm["ts_bond_atoms"] == [1, 2]
+
+
+def test_schema_validate_global_config_coerces_scalars_and_preserves_shape():
+    cfg = ConfigSchema.validate_global_config(
+        {
+            "cores_per_task": "4",
+            "max_parallel_jobs": "2",
+            "enable_dynamic_resources": "true",
+            "resume_from_backups": "false",
+            "ts_bond_atoms": "1,2",
+            "custom_param": "value",
+        }
+    )
+
+    assert cfg["cores_per_task"] == 4
+    assert cfg["max_parallel_jobs"] == 2
+    assert cfg["enable_dynamic_resources"] is True
+    assert cfg["resume_from_backups"] is False
+    assert cfg["ts_bond_atoms"] == [1, 2]
+    assert cfg["custom_param"] == "value"
+    assert "gaussian_path" not in cfg
+
+
+def test_schema_validate_global_config_raises_configuration_error():
+    with pytest.raises(ConfigurationError, match="Global configuration model validation failed"):
+        ConfigSchema.validate_global_config({"total_memory": "invalid"})
 
 
 def test_normalize_step_config_overrides():
@@ -130,6 +161,27 @@ def test_schema_validate_calc_extended():
         ConfigSchema.validate_calc_config(
             {"iprog": "orca", "itask": "opt", "keyword": "B3LYP", "ts_bond_atoms": [1, "abc"]}
         )
+
+
+def test_schema_validate_calc_accepts_int_like_strings_and_coerces_ts_bond_atoms():
+    cfg = {
+        "iprog": "2",
+        "itask": "1",
+        "keyword": "HF",
+        "cores_per_task": "4",
+        "max_parallel_jobs": "2",
+        "charge": "-1",
+        "multiplicity": "1",
+        "ts_bond_atoms": "1,2",
+    }
+
+    ConfigSchema.validate_calc_config(cfg)
+
+    assert cfg["cores_per_task"] == 4
+    assert cfg["max_parallel_jobs"] == 2
+    assert cfg["charge"] == -1
+    assert cfg["multiplicity"] == 1
+    assert cfg["ts_bond_atoms"] == [1, 2]
 
 
 def test_merge_step_params():

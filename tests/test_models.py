@@ -92,6 +92,10 @@ class TestGlobalConfigModel:
         cfg = GlobalConfigModel(freeze="1,2,3")
         assert cfg.freeze == [1, 2, 3]
 
+    def test_freeze_from_range_string(self):
+        cfg = GlobalConfigModel(freeze="1-3,5")
+        assert cfg.freeze == [1, 2, 3, 5]
+
     def test_freeze_from_none(self):
         cfg = GlobalConfigModel(freeze=None)
         assert cfg.freeze == []

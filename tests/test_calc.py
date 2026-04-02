@@ -130,7 +130,7 @@ class TestResourceMonitor:
         from confflow.calc import resources
 
         mock_psutil = MagicMock()
-        mock_psutil.cpu_percent.side_effect = Exception("psutil error")
+        mock_psutil.cpu_percent.side_effect = RuntimeError("psutil error")
         monkeypatch.setattr(resources, "psutil", mock_psutil)
 
         monitor = resources.ResourceMonitor()

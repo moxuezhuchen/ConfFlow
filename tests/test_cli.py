@@ -300,7 +300,7 @@ def test_stop_all_confflow_processes_access_denied():
             mock_myself.pid = 1
             mock_proc.return_value = mock_myself
 
-            with patch("confflow.cli.kill_proc_tree", side_effect=Exception("Access Denied")):
+            with patch("confflow.cli.kill_proc_tree", side_effect=OSError("Access Denied")):
                 result = stop_all_confflow_processes()
                 assert result == 0
 

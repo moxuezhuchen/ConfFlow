@@ -495,6 +495,85 @@ def test_build_task_config_chk_from_step_uses_sanitized_dir(tmp_path):
     assert cfg.get("input_chk_dir") == os.path.join(str(tmp_path / "work"), step_dirs[0], "backups")
 
 
+def test_build_task_config_normalizes_freeze_and_ts_sources():
+    cfg = build_task_config(
+        params={
+            "iprog": "2",
+            "itask": "opt",
+            "keyword": "HF",
+            "freeze": [1, "2-3", 5],
+        },
+        global_config={"ts_bond_atoms": [7, 8]},
+    )
+
+    assert cfg["iprog"] == "orca"
+    assert cfg["freeze"] == "1,2,3,5"
+    assert cfg["ts_bond_atoms"] == "7,8"
+
+
+def test_build_task_config_falls_back_to_freeze_for_ts_pair():
+    cfg = build_task_config(
+        params={
+            "iprog": "1",
+            "itask": "ts",
+            "keyword": "opt=(ts,calcfc)",
+            "freeze": [4, "5-6"],
+        },
+        global_config={},
+    )
+
+    assert cfg["iprog"] == "g16"
+    assert cfg["freeze"] == "0"
+    assert cfg["ts_bond_atoms"] == "4,5"
+
+
+def test_build_task_config_respects_string_false_flags():
+    cfg = build_task_config(
+        params={
+            "iprog": "orca",
+            "itask": "ts",
+            "keyword": "HF",
+            "dedup_only": "false",
+            "keep_all_topos": "false",
+            "noH": "false",
+            "ts_rescue_scan": "false",
+            "enable_dynamic_resources": "false",
+            "resume_from_backups": "false",
+        },
+        global_config={},
+    )
+
+    assert "clean_opts" not in cfg
+    assert cfg["ts_rescue_scan"] == "false"
+    assert cfg["enable_dynamic_resources"] == "false"
+    assert cfg["resume_from_backups"] == "false"
+
+
+def test_build_task_config_respects_string_true_flags():
+    cfg = build_task_config(
+        params={
+            "iprog": "orca",
+            "itask": "ts",
+            "keyword": "HF",
+            "dedup_only": "true",
+            "keep_all_topos": "yes",
+            "noH": "1",
+            "ts_rescue_scan": "on",
+        },
+        global_config={
+            "enable_dynamic_resources": "true",
+            "resume_from_backups": "yes",
+        },
+    )
+
+    assert "--dedup-only" in cfg["clean_opts"]
+    assert "--keep-all-topos" in cfg["clean_opts"]
+    assert "--noH" in cfg["clean_opts"]
+    assert cfg["ts_rescue_scan"] == "true"
+    assert cfg["enable_dynamic_resources"] == "true"
+    assert cfg["resume_from_backups"] == "true"
+
+
 def test_validate_inputs_compatible_force_consistency_bypass(tmp_path):
     from confflow.workflow.validation import validate_inputs_compatible
 
@@ -724,7 +803,7 @@ def test_workflow_engine_trace_exception_trigger(tmp_path):
         if "step1" in str(path) and "trace" not in basename:
             return [{"cid": "1", "energy": -1.0, "atoms": []}]
         if "trace" in basename:
-            raise Exception("Simulated trace error")
+            raise ValueError("Simulated trace error")
         return []
 
     xyz = tmp_path / "test.xyz"

@@ -297,7 +297,7 @@ def _emit_and_write_scan_table(
 
         logger.info(f"Scan table saved to {out_path}")
 
-    except Exception as e:
+    except (OSError, UnicodeError, TypeError, ValueError) as e:
         logger.warning(f"Failed to write scan table: {e}")
         return
 
@@ -432,7 +432,7 @@ class _ConstrainedScanner:
                 (res.get("final_coords") or adjusted),
                 None,
             )
-        except Exception as exc:
+        except (OSError, RuntimeError, ValueError, TypeError, KeyError) as exc:
             msg = str(exc)
             _write_scan_marker(scan_dir, job_name, msg)
             return None, None, msg

@@ -235,7 +235,7 @@ def read_xyz_file_safe(filepath: str, parse_metadata: bool = True) -> list[dict[
     """Read an XYZ file safely; return an empty list on failure and log at debug level."""
     try:
         return read_xyz_file(filepath, parse_metadata=parse_metadata)
-    except Exception as e:
+    except (OSError, ValueError) as e:
         _io_logger.debug(f"read_xyz_file_safe failed for {filepath}: {e}")
         return []
 

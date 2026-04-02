@@ -8,7 +8,6 @@ import argparse
 import os
 import signal
 import sys
-import traceback
 from pathlib import Path
 
 try:
@@ -207,7 +206,7 @@ def stop_all_confflow_processes() -> int:
             pass
         except psutil.AccessDenied:
             print(f"Failed to stop PID {p.pid} (Access Denied)")
-        except Exception as e:
+        except (psutil.Error, OSError, RuntimeError) as e:
             print(f"Error stopping PID {p.pid}: {e}")
 
     return 0
@@ -251,36 +250,31 @@ def main(args_list: list[str] | None = None):
 
     try:
         with cli_output_to_txt(first_input) as output_path:
-            try:
-                # Support Gaussian input (.gjf/.com): auto-convert to single-frame XYZ then run workflow.
-                # Converted files are placed under work_dir/_converted_inputs/ to avoid polluting CWD.
-                converted_inputs: list[str] = []
-                os.makedirs(work_dir, exist_ok=True)
-                conv_dir = os.path.join(work_dir, "_converted_inputs")
-                for path in input_files:
-                    ext = os.path.splitext(path)[1].lower()
-                    if ext not in {".gjf", ".com"}:
-                        converted_inputs.append(path)
-                        continue
-                    stem = os.path.splitext(os.path.basename(path))[0]
-                    os.makedirs(conv_dir, exist_ok=True)
-                    out_xyz = os.path.join(conv_dir, f"{stem}.xyz")
-                    _convert_gjf_to_xyz(path, out_xyz)
-                    converted_inputs.append(os.path.abspath(out_xyz))
-                input_files = converted_inputs
+            # Support Gaussian input (.gjf/.com): auto-convert to single-frame XYZ then run workflow.
+            # Converted files are placed under work_dir/_converted_inputs/ to avoid polluting CWD.
+            converted_inputs: list[str] = []
+            os.makedirs(work_dir, exist_ok=True)
+            conv_dir = os.path.join(work_dir, "_converted_inputs")
+            for path in input_files:
+                ext = os.path.splitext(path)[1].lower()
+                if ext not in {".gjf", ".com"}:
+                    converted_inputs.append(path)
+                    continue
+                stem = os.path.splitext(os.path.basename(path))[0]
+                os.makedirs(conv_dir, exist_ok=True)
+                out_xyz = os.path.join(conv_dir, f"{stem}.xyz")
+                _convert_gjf_to_xyz(path, out_xyz)
+                converted_inputs.append(os.path.abspath(out_xyz))
+            input_files = converted_inputs
 
-                run_workflow(
-                    input_xyz=input_files,
-                    config_file=config_file,
-                    work_dir=work_dir,
-                    original_input_files=original_input_files,
-                    resume=bool(args.resume),
-                    verbose=bool(args.verbose),
-                )
-            except Exception:
-                # Log full traceback to file log
-                traceback.print_exc()
-                raise
+            run_workflow(
+                input_xyz=input_files,
+                config_file=config_file,
+                work_dir=work_dir,
+                original_input_files=original_input_files,
+                resume=bool(args.resume),
+                verbose=bool(args.verbose),
+            )
 
         return ExitCode.SUCCESS
     except ValueError as e:

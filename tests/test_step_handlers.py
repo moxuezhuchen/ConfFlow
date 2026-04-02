@@ -363,7 +363,6 @@ class TestRunCalcStep:
         step_dir: str,
         single_input_xyz: str,
         failure_tracker: FailureTracker,
-        caplog: pytest.LogCaptureFixture,
     ):
         """Multi-input calc emits a warning before taking the first file."""
         output = os.path.join(step_dir, "output.xyz")
@@ -376,7 +375,7 @@ class TestRunCalcStep:
         mock_manager.run.side_effect = fake_run
         mock_calc.ChemTaskManager.return_value = mock_manager
 
-        with caplog.at_level("WARNING"):
+        with patch("confflow.workflow.step_handlers.logger.warning") as mock_warning:
             run_calc_step(
                 step_dir=step_dir,
                 current_input=[single_input_xyz, "other.xyz"],
@@ -388,7 +387,9 @@ class TestRunCalcStep:
                 step_name="step_02",
             )
 
-        assert "only" in caplog.text and "will be used" in caplog.text
+        mock_warning.assert_called_once()
+        assert "only" in mock_warning.call_args.args[0]
+        assert "will be used" in mock_warning.call_args.args[0]
 
     @patch("confflow.workflow.step_handlers.calc")
     def test_result_xyz_fallback(
@@ -420,6 +421,45 @@ class TestRunCalcStep:
             step_name="step_02",
         )
         assert result == result_xyz
+
+    def test_calc_config_validation_runs_in_main_flow(
+        self, step_dir: str, single_input_xyz: str, failure_tracker: FailureTracker
+    ):
+        """run_calc_step should validate through ConfigSchema in the workflow path."""
+        output = os.path.join(step_dir, "output.xyz")
+        with open(output, "w", encoding="utf-8") as f:
+            f.write("2\nexisting\nC 0 0 0\nH 0 0 1\n")
+
+        with patch("confflow.workflow.step_handlers.ConfigSchema.validate_calc_config") as mock_validate:
+            result = run_calc_step(
+                step_dir=step_dir,
+                current_input=single_input_xyz,
+                params=self.MINIMAL_PARAMS,
+                global_config=self.MINIMAL_GLOBAL,
+                root_dir=os.path.dirname(step_dir),
+                steps=[],
+                failure_tracker=failure_tracker,
+                step_name="step_02",
+            )
+
+        mock_validate.assert_called_once()
+        assert result == output
+
+    def test_invalid_calc_config_uses_schema_compatibility_message(
+        self, step_dir: str, single_input_xyz: str, failure_tracker: FailureTracker
+    ):
+        """Invalid calc config should surface the schema compatibility error."""
+        with pytest.raises(ValueError, match="invalid iprog"):
+            run_calc_step(
+                step_dir=step_dir,
+                current_input=single_input_xyz,
+                params={"iprog": "invalid", "itask": "sp", "keyword": "HF"},
+                global_config=self.MINIMAL_GLOBAL,
+                root_dir=os.path.dirname(step_dir),
+                steps=[],
+                failure_tracker=failure_tracker,
+                step_name="step_02",
+            )
 
     @patch("confflow.workflow.step_handlers.calc")
     def test_calc_with_failed_xyz_tracked(

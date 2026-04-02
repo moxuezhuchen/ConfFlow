@@ -29,7 +29,9 @@ from .components.task_runner import TaskRunner
 from .db.database import ResultsDB
 from .policies import get_policy
 from .resources import ResourceMonitor
+from .result_writer import append_result, format_result_comment, write_failed_xyz
 from .setup import get_itask, parse_iprog, setup_logging
+from .task_execution import execute_tasks
 
 __all__ = [
     "ChemTaskManager",
@@ -265,52 +267,18 @@ class ChemTaskManager:
     def _execute_tasks(self, todo: list[models.TaskContext]) -> None:
         """Dispatch tasks in serial or parallel mode."""
         assert self.results_db is not None
-        if not todo:
-            return
-
-        report_every = max(1, len(todo) // 10)
-
-        if len(todo) == 1:
-            with CalcProgressReporter(total=1, report_every=1) as reporter:
-                res = _run_task(todo[0].model_dump())
-                self.results_db.insert_result(res)
-                self._append_result(res)
-                reporter.report(res.get("status", "failed"))
-            return
-
-        max_jobs = int(self.config.get("max_parallel_jobs", 4))
-        with ProcessPoolExecutor(max_workers=max_jobs) as exc:
-            futures = {exc.submit(_run_task, t.model_dump()): t for t in todo}
-            with CalcProgressReporter(total=len(todo), report_every=report_every) as reporter:
-                for fut in as_completed(futures):
-                    if os.path.exists(self.config["stop_beacon_file"]):
-                        self.stop_requested = True
-                        # P1-2: Cancel pending futures immediately (Python ≥3.9).
-                        exc.shutdown(wait=False, cancel_futures=True)
-                        break
-                    # P1-1: Guard against worker crashes (OOM kill, signal, etc.).
-                    try:
-                        res = fut.result()
-                    except Exception as e:  # noqa: BLE001 – includes BrokenProcessPool
-                        task = futures[fut]
-                        logger.warning(
-                            "Task %s raised an unexpected exception: %s",
-                            task.job_name,
-                            e,
-                        )
-                        failed_result: dict[str, Any] = {
-                            "job_name": task.job_name,
-                            "status": "failed",
-                            "error": str(e),
-                            "final_coords": None,
-                        }
-                        assert self.results_db is not None
-                        self.results_db.insert_result(failed_result)
-                        reporter.report("failed")
-                        continue
-                    self.results_db.insert_result(res)
-                    self._append_result(res)
-                    reporter.report(res.get("status", "failed"))
+        execute_tasks(
+            todo=todo,
+            config=self.config,
+            results_db=self.results_db,
+            run_task_fn=_run_task,
+            append_result_fn=self._append_result,
+            stop_requested_fn=lambda: self.stop_requested,
+            set_stop_requested_fn=lambda value: setattr(self, "stop_requested", value),
+            progress_reporter_cls=CalcProgressReporter,
+            executor_cls=ProcessPoolExecutor,
+            as_completed_fn=as_completed,
+        )
 
     def _handle_stop(self) -> bool:
         """Return True and clean up lingering processes if a stop signal was received."""
@@ -331,81 +299,16 @@ class ChemTaskManager:
         tasks: list[models.TaskContext],
     ) -> None:
         """Write failed conformers to failed.xyz (using original input structures)."""
-        if not failed:
-            return
-        job_meta_map = {tc.job_name: tc.metadata for tc in tasks}
-        job_coords_map = {tc.job_name: tc.coords for tc in tasks}
-
-        failed_file = os.path.join(self.work_dir, "failed.xyz")
-        with open(failed_file, "w") as f:
-            for res in failed:
-                job_name = res.get("job_name")
-                coords = job_coords_map.get(job_name) or []
-                if not coords:
-                    continue
-                orig_meta = job_meta_map.get(job_name, {})
-                cid = orig_meta.get("CID")
-                err = (res.get("error") or "").strip()
-                if len(err) > 200:
-                    err = err[:200] + "..."
-                info = f"Failed=1 Job={job_name}"
-                if cid is not None and str(cid).strip() != "":
-                    info += f" CID={cid}"
-                if err:
-                    info += f" Error={err}"
-                f.write(f"{len(coords)}\n{info}\n" + "\n".join(coords) + "\n")
+        write_failed_xyz(self.work_dir, failed, tasks)
 
     @staticmethod
     def _format_result_comment(res: dict[str, Any], orig_meta: dict[str, Any]) -> str:
         """Build the XYZ comment line for a single successful result."""
-        e_gibbs = res.get("final_gibbs_energy")
-        e_sp = res.get("final_sp_energy")
-        g_corr_res = res.get("g_corr")
-        combined_to_g = (e_gibbs is not None) and (e_sp is not None) and (g_corr_res is not None)
-
-        if combined_to_g:
-            info = f"G={e_gibbs}"
-        else:
-            e_any = e_gibbs if e_gibbs is not None else res.get("energy")
-            info = f"Energy={e_any}"
-
-        cid = orig_meta.get("CID")
-        if cid is not None and str(cid).strip() != "":
-            info += f" CID={cid}"
-
-        if not combined_to_g:
-            g_corr = g_corr_res
-            if g_corr is None:
-                g_corr = orig_meta.get("G_corr")
-            if g_corr is not None:
-                info += f" G_corr={g_corr}"
-
-        imag = res.get("num_imag_freqs")
-        if imag is None:
-            imag = orig_meta.get("Imag") or orig_meta.get("num_imag_freqs")
-        if imag is not None:
-            info += f" Imag={imag}"
-
-        if res.get("lowest_freq") is not None:
-            info += f" LowestFreq={res['lowest_freq']:.1f}"
-        if res.get("ts_bond_atoms") is not None:
-            info += f" TSAtoms={res['ts_bond_atoms']}"
-        if res.get("ts_bond_length") is not None:
-            info += f" TSBond={float(res['ts_bond_length']):.6f}"
-        return info
+        return format_result_comment(res, orig_meta)
 
     def _append_result(self, res: dict[str, Any]) -> None:
         """Append a single successful result to result.xyz immediately."""
-        if res.get("status") not in ("success", "skipped"):
-            return
-        if not self._result_xyz_path:
-            return
-        coord_lines = res.get("final_coords")
-        if not coord_lines:
-            return
-        orig_meta = self._job_meta_map.get(res.get("job_name", ""), {})
-        comment = self._format_result_comment(res, orig_meta)
-        io_xyz.append_xyz_conformer(self._result_xyz_path, coord_lines, comment)
+        append_result(self._result_xyz_path, self._job_meta_map, res)
 
     def _run_auto_clean(self, out_file: str) -> None:
         """Invoke external post-processing callback on result.xyz.
@@ -432,7 +335,7 @@ class ChemTaskManager:
                 workers=task_cores,
             )
             refine.process_xyz(clean_args)
-        except Exception as e:
+        except (ImportError, OSError, TypeError, ValueError, RuntimeError) as e:
             error(f"Refine auto-clean failed: {e}")
 
     @staticmethod

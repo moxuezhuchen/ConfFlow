@@ -19,6 +19,15 @@ except ImportError:
     psutil = None
 
 
+def _psutil_exception_types() -> tuple[type[BaseException], ...]:
+    """Return supported psutil-related exception types, tolerant of test doubles."""
+    base: tuple[type[BaseException], ...] = (AttributeError, OSError, RuntimeError)
+    err_type = getattr(psutil, "Error", None)
+    if isinstance(err_type, type) and issubclass(err_type, BaseException):
+        return (err_type, *base)
+    return base
+
+
 class ResourceMonitor:
     """Dynamic resource monitor.
 
@@ -38,7 +47,7 @@ class ResourceMonitor:
         try:
             assert psutil is not None
             return psutil.cpu_percent(interval=0.5), psutil.virtual_memory().percent
-        except Exception as e:
+        except _psutil_exception_types() as e:
             logger.debug(f"Failed to get system load: {e}")
             return 0.0, 0.0
 

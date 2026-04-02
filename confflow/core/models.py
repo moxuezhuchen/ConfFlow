@@ -33,12 +33,46 @@ from ..config.defaults import (
     DEFAULT_TS_RESCUE_SCAN,
     DEFAULT_TS_RMSD_THRESHOLD,
 )
+from .parsers import parse_index_spec
 
 __all__ = [
     "TaskContext",
     "GlobalConfigModel",
     "CalcConfigModel",
 ]
+
+
+def _coerce_freeze_indices(v: Any) -> list[int]:
+    """Coerce freeze indices from list/range string/None into a list of ints."""
+    if v is None:
+        return []
+    if isinstance(v, str):
+        return parse_index_spec(v)
+    if isinstance(v, (list, tuple)):
+        result: list[int] = []
+        for item in v:
+            if isinstance(item, str):
+                result.extend(parse_index_spec(item))
+            else:
+                result.append(int(item))
+        return result
+    return []
+
+
+def _coerce_two_atom_indices(v: Any) -> list[int] | None:
+    """Coerce two-atom index input from list or string into ``[a, b]``."""
+    if v is None:
+        return None
+    if isinstance(v, str):
+        parts = v.replace(",", " ").split()
+        if len(parts) == 2:
+            return [int(parts[0]), int(parts[1])]
+        return None
+    if isinstance(v, (list, tuple)):
+        if len(v) == 2:
+            return [int(v[0]), int(v[1])]
+        return None
+    return None
 
 
 class TaskContext(BaseModel):
@@ -136,30 +170,13 @@ class GlobalConfigModel(BaseModel):
     @classmethod
     def coerce_freeze(cls, v: Any) -> list[int]:
         """Accept list or comma-separated string for freeze indices."""
-        if v is None:
-            return []
-        if isinstance(v, str):
-            return [int(x.strip()) for x in v.replace(",", " ").split() if x.strip()]
-        if isinstance(v, (list, tuple)):
-            return [int(x) for x in v]
-        return []
+        return _coerce_freeze_indices(v)
 
     @field_validator("ts_bond_atoms", mode="before")
     @classmethod
     def coerce_ts_bond_atoms(cls, v: Any) -> list[int] | None:
         """Accept list or comma/space-separated string for ts_bond_atoms."""
-        if v is None:
-            return None
-        if isinstance(v, str):
-            parts = v.replace(",", " ").split()
-            if len(parts) == 2:
-                return [int(parts[0]), int(parts[1])]
-            return None
-        if isinstance(v, (list, tuple)):
-            if len(v) == 2:
-                return [int(v[0]), int(v[1])]
-            return None
-        return None
+        return _coerce_two_atom_indices(v)
 
 
 class CalcConfigModel(BaseModel):
@@ -173,6 +190,12 @@ class CalcConfigModel(BaseModel):
     iprog: str | int
     itask: str | int
     keyword: str
+    cores_per_task: int | None = None
+    total_memory: str | None = None
+    max_parallel_jobs: int | None = None
+    charge: int | None = None
+    multiplicity: int | None = None
+    ts_bond_atoms: list[int] | None = None
 
     @field_validator("keyword")
     @classmethod
@@ -199,3 +222,51 @@ class CalcConfigModel(BaseModel):
         if v not in valid:
             raise ValueError(f"invalid itask: {v}, valid: opt, sp, freq, opt_freq, ts, 0-4")
         return v
+
+    @field_validator("cores_per_task")
+    @classmethod
+    def validate_cores_per_task(cls, v: int | None) -> int | None:
+        """Ensure cores_per_task >= 1 when provided."""
+        if v is not None and v < 1:
+            raise ValueError(f"cores_per_task must be >= 1, got {v}")
+        return v
+
+    @field_validator("max_parallel_jobs")
+    @classmethod
+    def validate_max_parallel_jobs(cls, v: int | None) -> int | None:
+        """Ensure max_parallel_jobs >= 1 when provided."""
+        if v is not None and v < 1:
+            raise ValueError(f"max_parallel_jobs must be >= 1, got {v}")
+        return v
+
+    @field_validator("multiplicity")
+    @classmethod
+    def validate_calc_multiplicity(cls, v: int | None) -> int | None:
+        """Ensure multiplicity >= 1 when provided."""
+        if v is not None and v < 1:
+            raise ValueError(f"multiplicity must be >= 1, got {v}")
+        return v
+
+    @field_validator("total_memory")
+    @classmethod
+    def validate_calc_memory_format(cls, v: str | None) -> str | None:
+        """Validate memory format like '4GB' or '500MB' when provided."""
+        if v is None:
+            return None
+        v_upper = str(v).strip().upper()
+        if not re.match(r"^\d+(?:\.\d+)?\s*(?:GB|MB|KB|B)$", v_upper):
+            raise ValueError(f"total_memory format error: '{v}', expected '4GB' or '500MB'")
+        return v
+
+    @field_validator("ts_bond_atoms", mode="before")
+    @classmethod
+    def coerce_calc_ts_bond_atoms(cls, v: Any) -> list[int] | None:
+        """Accept list or comma/space-separated string for ts_bond_atoms."""
+        if v is None:
+            return None
+        coerced = _coerce_two_atom_indices(v)
+        if coerced is not None:
+            return coerced
+        if isinstance(v, str) or isinstance(v, (list, tuple)):
+            raise ValueError("ts_bond_atoms must contain exactly two atom indices")
+        raise ValueError("ts_bond_atoms must be a list or comma-separated string")

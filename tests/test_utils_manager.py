@@ -146,6 +146,20 @@ def test_validate_yaml_config_errors():
     assert any("'steps' must be a list" in e for e in errors)
 
 
+def test_validate_yaml_config_handles_invalid_shapes():
+    errors = validate_yaml_config({"global": [], "steps": ["bad"]})
+    assert "'global' must be a dict" in errors
+    assert "step 1 must be a dict" in errors
+
+    errors = validate_yaml_config(
+        {
+            "global": {},
+            "steps": [{"name": "s1", "type": "calc", "params": ["bad"]}],
+        }
+    )
+    assert "step 's1': 'params' must be a dict" in errors
+
+
 def test_validate_step_config_errors():
     from confflow.core.utils import _validate_step_config
 
@@ -167,6 +181,9 @@ def test_validate_step_config_errors():
     errors = _validate_step_config(step, 0)
     assert any("invalid itask value" in e for e in errors)
     assert any("invalid iprog value" in e for e in errors)
+
+    step_ok = {"name": "s1", "type": "calc", "params": {"itask": "1", "iprog": "2", "keyword": "HF"}}
+    assert _validate_step_config(step_ok, 0) == []
 
     step = {"name": "s1", "type": "calc", "params": {"iprog": "orca"}}
     errors = _validate_step_config(step, 0)
@@ -660,7 +677,7 @@ def test_calc_manager_failed_output_and_auto_clean_parse_errors(tmp_path):
             },
         ),
         patch("confflow.blocks.refine.RefineOptions") as mock_opts,
-        patch("confflow.blocks.refine.process_xyz", side_effect=Exception("boom")),
+        patch("confflow.blocks.refine.process_xyz", side_effect=RuntimeError("boom")),
     ):
         mock_opts.return_value = SimpleNamespace(output=str(tmp_path / "wd" / "output.xyz"))
         mgr.run(str(tmp_path / "input.xyz"))

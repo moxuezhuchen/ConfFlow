@@ -138,7 +138,7 @@ def _best_mapping_for_chain(
         ref_pos = np.array(ref_mol.GetConformer().GetPositions())
         tgt_pos = np.array(target_mol.GetConformer().GetPositions())
         has_coords = True
-    except Exception:
+    except (AttributeError, RuntimeError, ValueError):
         has_coords = False
 
     chain_set = set(ref_chain)

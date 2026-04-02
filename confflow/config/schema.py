@@ -13,7 +13,15 @@ import logging
 import re
 from typing import Any
 
-from ..core.utils import parse_index_spec
+from pydantic import ValidationError as PydanticValidationError
+
+from ..core.exceptions import ConfigurationError
+from ..core.models import (
+    CalcConfigModel,
+    GlobalConfigModel,
+    _coerce_freeze_indices,
+    _coerce_two_atom_indices,
+)
 from .defaults import (
     DEFAULT_CHARGE,
     DEFAULT_CORES_PER_TASK,
@@ -103,25 +111,9 @@ class ConfigSchema:
         # Update with user-provided values
         for key, value in raw_config.items():
             if key == "freeze":
-                # Convert to integer list
-                if isinstance(value, list):
-                    normalized[key] = [int(x) for x in value]
-                elif isinstance(value, str):
-                    normalized[key] = cls._parse_freeze_string(value)
-                else:
-                    normalized[key] = []
+                normalized[key] = _coerce_freeze_indices(value)
             elif key == "ts_bond_atoms":
-                # Convert to integer list
-                if isinstance(value, list):
-                    normalized[key] = [int(x) for x in value]
-                elif isinstance(value, str):
-                    parts = value.replace(",", " ").split()
-                    if len(parts) == 2:
-                        normalized[key] = [int(parts[0]), int(parts[1])]
-                    else:
-                        normalized[key] = None
-                else:
-                    normalized[key] = None
+                normalized[key] = _coerce_two_atom_indices(value)
             else:
                 normalized[key] = value
 
@@ -161,6 +153,26 @@ class ConfigSchema:
         return normalized
 
     @classmethod
+    def validate_global_config(cls, raw_config: dict[str, Any]) -> dict[str, Any]:
+        """Normalize and validate global configuration through GlobalConfigModel."""
+        normalized = cls.normalize_global_config(raw_config)
+        try:
+            validated = GlobalConfigModel(**normalized)
+        except PydanticValidationError as e:
+            errors = []
+            for err in e.errors():
+                loc = ".".join(str(x) for x in err.get("loc", ())) or "global"
+                errors.append(f"global.{loc}: {err.get('msg', 'invalid value')}")
+            raise ConfigurationError("Global configuration model validation failed", errors) from e
+
+        validated_dict = validated.model_dump()
+        merged = dict(normalized)
+        for key in set(normalized) | set(raw_config):
+            if key in validated_dict:
+                merged[key] = validated_dict[key]
+        return merged
+
+    @classmethod
     def validate_calc_config(cls, config: dict[str, Any]) -> None:
         """Validate a calc task configuration.
 
@@ -178,108 +190,63 @@ class ConfigSchema:
         for key in required:
             if key not in config:
                 raise ValueError(f"calc config missing required parameter: {key}")
+        try:
+            validated = CalcConfigModel(**config)
+        except PydanticValidationError as e:
+            field, message = cls._translate_calc_model_error(e)
+            raise ValueError(message) from e
 
-        # Validate keyword
-        keyword = config.get("keyword", "")
-        if not isinstance(keyword, str) or not keyword.strip():
-            raise ValueError("keyword must be a non-empty string")
+        cls._merge_validated_calc_config(config, validated.model_dump())
 
-        # Validate iprog
-        valid_iprogs = {"gaussian", "g16", "orca", "1", "2", 1, 2}
-        if config["iprog"] not in valid_iprogs:
-            raise ValueError(f"invalid iprog: {config['iprog']}, valid: gaussian, g16, orca, 1, 2")
+    @staticmethod
+    def _merge_validated_calc_config(config: dict[str, Any], validated_dict: dict[str, Any]) -> None:
+        """Write validated/coerced calc fields back to the original config dict."""
+        for key in list(config):
+            if key in validated_dict:
+                config[key] = validated_dict[key]
 
-        # Validate itask
-        valid_itasks = {
-            "opt",
-            "sp",
-            "freq",
-            "opt_freq",
-            "ts",
-            "0",
-            "1",
-            "2",
-            "3",
-            "4",
-            0,
-            1,
-            2,
-            3,
-            4,
-        }
-        if config["itask"] not in valid_itasks:
-            raise ValueError(
-                f"invalid itask: {config['itask']}, valid: opt, sp, freq, opt_freq, ts, 0-4"
-            )
+    @staticmethod
+    def _translate_calc_model_error(exc: PydanticValidationError) -> tuple[str, str]:
+        """Translate Pydantic calc-model errors to legacy ValueError messages."""
+        err = exc.errors()[0]
+        field = str(err.get("loc", ("calc",))[0])
+        value = err.get("input")
+        msg = err.get("msg", "invalid value")
 
-        # Validate cores_per_task
-        cores = config.get("cores_per_task")
-        if cores is not None:
-            try:
-                cores_int = int(cores)
-            except (ValueError, TypeError) as e:
-                raise ValueError(f"cores_per_task must be an integer, current: {cores}") from e
-            if cores_int < 1:
-                raise ValueError(f"cores_per_task must be >= 1, current: {cores}")
+        if field in {"iprog", "itask", "keyword"}:
+            return field, msg
 
-        # Validate total_memory format (e.g. 4GB, 500MB)
-        mem = config.get("total_memory")
-        if mem is not None:
-            mem_str = str(mem).strip().upper()
-            if not re.match(r"^\d+(?:\.\d+)?\s*(?:GB|MB|KB|B)$", mem_str):
-                raise ValueError(
-                    f"total_memory format error: '{mem}', expected format like '4GB' or '500MB'"
-                )
+        if field in {"cores_per_task", "max_parallel_jobs", "charge", "multiplicity"}:
+            return field, ConfigSchema._translate_legacy_integer_error(field, value, msg)
 
-        # Validate max_parallel_jobs
-        max_jobs = config.get("max_parallel_jobs")
-        if max_jobs is not None:
-            try:
-                max_jobs_int = int(max_jobs)
-            except (ValueError, TypeError) as e:
-                raise ValueError(
-                    f"max_parallel_jobs must be an integer, current: {max_jobs}"
-                ) from e
-            if max_jobs_int < 1:
-                raise ValueError(f"max_parallel_jobs must be >= 1, current: {max_jobs}")
+        if field == "total_memory":
+            return field, msg
 
-        # Validate charge/multiplicity
-        charge = config.get("charge")
-        if charge is not None:
-            try:
-                int(charge)
-            except (ValueError, TypeError) as e:
-                raise ValueError(f"charge must be an integer, current: {charge}") from e
+        if field == "ts_bond_atoms":
+            return field, ConfigSchema._translate_ts_bond_atoms_error(value)
 
-        mult = config.get("multiplicity")
-        if mult is not None:
-            try:
-                mult_int = int(mult)
-            except (ValueError, TypeError) as e:
-                raise ValueError(f"multiplicity must be an integer, current: {mult}") from e
-            if mult_int < 1:
-                raise ValueError(f"multiplicity must be >= 1, current: {mult}")
+        return field, msg
 
-        # Validate and normalize ts_bond_atoms format to [int, int]
-        ts_atoms = config.get("ts_bond_atoms")
-        if ts_atoms is not None:
-            if isinstance(ts_atoms, str):
-                parts = ts_atoms.replace(",", " ").split()
-                if len(parts) != 2:
-                    raise ValueError(
-                        f"ts_bond_atoms format error: {ts_atoms}, expected 'a,b' or [a, b]"
-                    )
-                try:
-                    config["ts_bond_atoms"] = [int(parts[0]), int(parts[1])]
-                except (ValueError, TypeError) as e:
-                    raise ValueError(f"ts_bond_atoms must be two integers: {ts_atoms}") from e
-            elif isinstance(ts_atoms, (list, tuple)):
-                if len(ts_atoms) != 2:
-                    raise ValueError(f"ts_bond_atoms must be two atom indices: {ts_atoms}")
-                try:
-                    config["ts_bond_atoms"] = [int(ts_atoms[0]), int(ts_atoms[1])]
-                except (ValueError, TypeError) as e:
-                    raise ValueError(f"ts_bond_atoms must be two integers: {ts_atoms}") from e
+    @staticmethod
+    def _translate_legacy_integer_error(field: str, value: Any, msg: str) -> str:
+        """Translate Pydantic integer parsing errors to legacy schema wording."""
+        if "valid integer" in msg.lower():
+            return f"{field} must be an integer, current: {value}"
+        return msg
+
+    @staticmethod
+    def _translate_ts_bond_atoms_error(value: Any) -> str:
+        """Translate ``ts_bond_atoms`` model errors to legacy schema wording."""
+        if isinstance(value, str):
+            parts = value.replace(",", " ").split()
+            if len(parts) != 2:
+                return f"ts_bond_atoms format error: {value}, expected 'a,b' or [a, b]"
+            return f"ts_bond_atoms must be two integers: {value}"
+        if isinstance(value, (list, tuple)):
+            if len(value) != 2:
+                return f"ts_bond_atoms must be two atom indices: {value}"
+            return f"ts_bond_atoms must be two integers: {value}"
+        return "ts_bond_atoms must be a list or comma-separated string"
 
     @staticmethod
     def _parse_freeze_string(freeze_str: str) -> list[int]:
@@ -295,7 +262,7 @@ class ConfigSchema:
         list of int
             Atom indices (1-based).
         """
-        return parse_index_spec(freeze_str)
+        return _coerce_freeze_indices(freeze_str)
 
 
 def merge_step_params(step_config: dict[str, Any], global_config: dict[str, Any]) -> dict[str, Any]:
@@ -342,6 +309,12 @@ def validate_yaml_config(
 
     errors: list[str] = []
 
+    def _is_positive_int_like(value: Any) -> bool:
+        try:
+            return int(value) > 0
+        except (ValueError, TypeError):
+            return False
+
     if required_sections is None:
         required_sections = ["global", "steps"]
 
@@ -351,24 +324,28 @@ def validate_yaml_config(
 
     if "global" in config:
         global_config = config["global"]
+        if global_config is None:
+            global_config = {}
+        if not isinstance(global_config, dict):
+            errors.append("'global' must be a dict")
+        else:
+            if "gaussian_path" in global_config:
+                path = global_config["gaussian_path"]
+                if path and not os.path.exists(path) and "/" in path:
+                    errors.append(f"Gaussian path not found: {path}")
 
-        if "gaussian_path" in global_config:
-            path = global_config["gaussian_path"]
-            if path and not os.path.exists(path) and "/" in path:
-                errors.append(f"Gaussian path not found: {path}")
+            if "orca_path" in global_config:
+                path = global_config["orca_path"]
+                if path and not os.path.exists(path) and "/" in path:
+                    errors.append(f"ORCA path not found: {path}")
 
-        if "orca_path" in global_config:
-            path = global_config["orca_path"]
-            if path and not os.path.exists(path) and "/" in path:
-                errors.append(f"ORCA path not found: {path}")
+            cores = global_config.get("cores_per_task", 1)
+            if not _is_positive_int_like(cores):
+                errors.append(f"invalid cores_per_task: {cores}")
 
-        cores = global_config.get("cores_per_task", 1)
-        if not isinstance(cores, int) or cores <= 0:
-            errors.append(f"invalid cores_per_task: {cores}")
-
-        max_jobs = global_config.get("max_parallel_jobs", 1)
-        if not isinstance(max_jobs, int) or max_jobs <= 0:
-            errors.append(f"invalid max_parallel_jobs: {max_jobs}")
+            max_jobs = global_config.get("max_parallel_jobs", 1)
+            if not _is_positive_int_like(max_jobs):
+                errors.append(f"invalid max_parallel_jobs: {max_jobs}")
 
     if "steps" in config:
         steps = config["steps"]
@@ -377,6 +354,9 @@ def validate_yaml_config(
             errors.append("'steps' must be a list")
         else:
             for i, step in enumerate(steps):
+                if not isinstance(step, dict):
+                    errors.append(f"step {i + 1} must be a dict")
+                    continue
                 step_errors = _validate_step_config(step, i)
                 errors.extend(step_errors)
 
@@ -422,20 +402,25 @@ def _validate_step_config(step: dict[str, Any], index: int) -> list[str]:
 
     if "params" in step:
         params = step["params"]
+        if params is None:
+            params = {}
+        if not isinstance(params, dict):
+            errors.append(f"{step_id}: 'params' must be a dict")
+            return errors
         step_type = step.get("type", "")
 
         if step_type in ["calc", "task"]:
             itask = params.get("itask")
-            valid_itasks = ["opt", "sp", "freq", "opt_freq", "ts", 0, 1, 2, 3, 4]
+            valid_itasks = {"opt", "sp", "freq", "opt_freq", "ts", "0", "1", "2", "3", "4", 0, 1, 2, 3, 4}
             if itask is not None and itask not in valid_itasks:
                 errors.append(f"{step_id}: invalid itask value '{itask}'")
 
             iprog = params.get("iprog")
-            valid_iprogs = ["gaussian", "g16", "orca", 1, 2]
+            valid_iprogs = {"gaussian", "g16", "orca", "1", "2", 1, 2}
             if iprog is not None and iprog not in valid_iprogs:
                 errors.append(f"{step_id}: invalid iprog value '{iprog}'")
 
-            if "keyword" not in params and iprog in ["orca", 2]:
+            if "keyword" not in params and iprog in {"orca", "2", 2}:
                 errors.append(f"{step_id}: ORCA task missing 'keyword' parameter")
 
         elif step_type in ["confgen", "gen"]:
