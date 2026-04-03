@@ -9,9 +9,6 @@ import time
 from datetime import datetime
 from typing import Any
 
-from .. import calc as calc  # re-export for test compatibility
-from ..blocks import confgen as confgen  # re-export for test compatibility
-from ..blocks import viz as viz  # re-export for test compatibility
 from ..core import io as io_xyz
 from ..core.types import TaskStatus
 from ..core.utils import (
@@ -20,7 +17,6 @@ from ..core.utils import (
     validate_xyz_file,
 )
 from .config_builder import load_workflow_config
-from .helpers import as_list as as_list  # re-export for test compatibility
 from .helpers import count_conformers_any, is_multi_frame_any, resolve_step_output
 from .presenter import (
     emit_final_report_and_lowest,
@@ -38,10 +34,6 @@ from .stats import (
 from .step_handlers import run_calc_step as step_run_calc_step
 from .step_handlers import run_confgen_step as step_run_confgen_step
 from .step_naming import build_step_dir_name_map
-from .task_config import (  # re-export for test compatibility
-    _itask_label as _itask_label,
-)
-from .task_config import _normalize_iprog_label as _normalize_iprog_label  # re-export
 from .validation import validate_inputs_compatible
 
 __all__ = [

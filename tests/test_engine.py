@@ -10,6 +10,8 @@ from unittest.mock import patch
 
 import pytest
 
+import confflow.blocks.confgen as confgen
+import confflow.blocks.viz as viz
 from confflow.core.exceptions import XYZFormatError
 from confflow.core.pairs import normalize_pair_list
 from confflow.workflow.config_builder import (
@@ -17,16 +19,10 @@ from confflow.workflow.config_builder import (
     build_task_config,
     create_runtask_config,
 )
-from confflow.workflow.engine import (
-    _itask_label,
-    _normalize_iprog_label,
-    as_list,
-    count_conformers_any,
-    run_workflow,
-    validate_inputs_compatible,
-)
-from confflow.workflow.helpers import count_conformers_in_xyz, resolve_step_output
+from confflow.workflow.engine import count_conformers_any, run_workflow, validate_inputs_compatible
+from confflow.workflow.helpers import as_list, count_conformers_in_xyz, resolve_step_output
 from confflow.workflow.stats import count_task_statuses_in_results_db
+from confflow.workflow.task_config import _itask_label, _normalize_iprog_label
 
 
 def test_as_list():
@@ -442,9 +438,9 @@ def test_confflow_accepts_multiple_xyz_inputs_and_runs_confgen(monkeypatch, tmp_
             f.write("2\nconf1\nH 0 0 0\nH 0 0 1\n")
             f.write("2\nconf2\nH 0 0 0\nH 0 0 1\n")
 
-    monkeypatch.setattr(engine.confgen, "run_generation", fake_run_generation)
-    monkeypatch.setattr(engine.viz, "parse_xyz_file", lambda p: [])
-    monkeypatch.setattr(engine.viz, "generate_text_report", lambda *a, **k: "")
+    monkeypatch.setattr(confgen, "run_generation", fake_run_generation)
+    monkeypatch.setattr(viz, "parse_xyz_file", lambda p: [])
+    monkeypatch.setattr(viz, "generate_text_report", lambda *a, **k: "")
 
     work_dir = tmp_path / "work"
     engine.run_workflow(
@@ -675,7 +671,7 @@ def test_workflow_engine_resume_logic(tmp_path):
     root.mkdir()
 
     input_xyz = root / "input.xyz"
-    input_xyz.write_text("1\nCID=1\nC 0 0 0\n")
+    input_xyz.write_text("1\nCID=A000001\nC 0 0 0\n")
 
     config_file = root / "config.yaml"
     config_file.write_text(
@@ -696,10 +692,10 @@ def test_workflow_engine_resume_logic(tmp_path):
 
     step1_dir = root / "step1"
     step1_dir.mkdir()
-    (step1_dir / "output.xyz").write_text("1\nCID=1\nC 0 0 0\n", encoding="utf-8")
+    (step1_dir / "output.xyz").write_text("1\nCID=A000001\nC 0 0 0\n", encoding="utf-8")
     step2_dir = root / "step2"
     step2_dir.mkdir()
-    (step2_dir / "output.xyz").write_text("1\nCID=1\nC 0 0 0\n", encoding="utf-8")
+    (step2_dir / "output.xyz").write_text("1\nCID=A000001\nC 0 0 0\n", encoding="utf-8")
 
     res = run_workflow([str(input_xyz)], str(config_file), work_dir=str(root), resume=True)
     assert len(res["steps"]) == 1
@@ -713,7 +709,7 @@ def test_workflow_engine_resume_missing_output_raises(tmp_path):
     root.mkdir()
 
     input_xyz = root / "input.xyz"
-    input_xyz.write_text("1\nCID=1\nC 0 0 0\n", encoding="utf-8")
+    input_xyz.write_text("1\nCID=A000001\nC 0 0 0\n", encoding="utf-8")
 
     config_file = root / "config.yaml"
     config_file.write_text(
@@ -745,7 +741,7 @@ def test_workflow_engine_resume_calc_does_not_accept_search_xyz(tmp_path):
     root.mkdir()
 
     input_xyz = root / "input.xyz"
-    input_xyz.write_text("1\nCID=1\nC 0 0 0\n", encoding="utf-8")
+    input_xyz.write_text("1\nCID=A000001\nC 0 0 0\n", encoding="utf-8")
 
     config_file = root / "config.yaml"
     config_file.write_text(
@@ -768,7 +764,7 @@ def test_workflow_engine_resume_calc_does_not_accept_search_xyz(tmp_path):
 
     step1_dir = root / "step1"
     step1_dir.mkdir()
-    (step1_dir / "search.xyz").write_text("1\nCID=1\nC 0 0 0\n", encoding="utf-8")
+    (step1_dir / "search.xyz").write_text("1\nCID=A000001\nC 0 0 0\n", encoding="utf-8")
 
     with pytest.raises(RuntimeError, match="Resume failed"):
         run_workflow([str(input_xyz)], str(config_file), work_dir=str(root), resume=True)
@@ -779,7 +775,7 @@ def test_workflow_engine_calc_resume(tmp_path):
     root.mkdir()
 
     input_xyz = root / "input.xyz"
-    input_xyz.write_text("1\nCID=1\nC 0 0 0\n")
+    input_xyz.write_text("1\nCID=A000001\nC 0 0 0\n")
 
     config_file = root / "config.yaml"
     config_file.write_text(
@@ -789,7 +785,7 @@ def test_workflow_engine_calc_resume(tmp_path):
 
     step_dir = root / "step1"
     step_dir.mkdir()
-    (step_dir / "output.xyz").write_text("1\nCID=1\nC 0 0 0\n")
+    (step_dir / "output.xyz").write_text("1\nCID=A000001\nC 0 0 0\n")
 
     res = run_workflow([str(input_xyz)], str(config_file), work_dir=str(root))
     assert res["steps"][0]["status"] == "skipped"
@@ -833,17 +829,17 @@ def test_workflow_engine_trace_exception_trigger(tmp_path):
 
     with (
         patch(
-            "confflow.workflow.engine.calc.manager.ChemTaskManager.run", return_value={"success": 1}
+            "confflow.calc.manager.ChemTaskManager.run", return_value={"success": 1}
         ),
         patch(
             "confflow.workflow.engine.validate_xyz_file", return_value=(True, [{"atoms": ["C"]}])
         ),
         patch("confflow.workflow.engine.io_xyz.read_xyz_file", side_effect=mock_read_xyz_file),
         patch(
-            "confflow.workflow.engine.viz.parse_xyz_file",
+            "confflow.blocks.viz.parse_xyz_file",
             return_value=[{"cid": "1", "energy": -1.0, "metadata": {}}],
         ),
-        patch("confflow.workflow.engine.viz.generate_text_report", return_value=""),
+        patch("confflow.blocks.viz.generate_text_report", return_value=""),
         patch("confflow.workflow.engine.count_conformers_any", return_value=1),
         patch("confflow.workflow.engine.is_multi_frame_any", return_value=False),
         patch("confflow.workflow.engine.os.path.exists", return_value=True),
@@ -856,7 +852,7 @@ def test_workflow_engine_low_energy_trace_full(tmp_path):
     root.mkdir()
 
     input_xyz = root / "input.xyz"
-    input_xyz.write_text("1\nCID=1\nC 0 0 0\n")
+    input_xyz.write_text("1\nCID=A000001\nC 0 0 0\n")
 
     config_file = root / "config.yaml"
     config_file.write_text(
@@ -866,9 +862,9 @@ def test_workflow_engine_low_energy_trace_full(tmp_path):
 
     step1_dir = root / "step1"
     step1_dir.mkdir()
-    (step1_dir / "output.xyz").write_text("1\nCID=1 Energy=-100.0\nC 0 0 0\n")
+    (step1_dir / "output.xyz").write_text("1\nCID=A000001 Energy=-100.0\nC 0 0 0\n")
 
-    (root / "final.xyz").write_text("1\nCID=1 Energy=-100.0\nC 0 0 0\n")
+    (root / "final.xyz").write_text("1\nCID=A000001 Energy=-100.0\nC 0 0 0\n")
 
     run_workflow([str(input_xyz)], str(config_file), work_dir=str(root))
 

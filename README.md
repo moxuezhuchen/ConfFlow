@@ -37,9 +37,9 @@ pip install -e ".[dev]"
 - ✅ 引入 `Pydantic v2`：核心上下文模型集中在 `confflow/core/models.py`（含 `GlobalConfigModel`、`CalcConfigModel`）
 - ✅ 清理重复 I/O：统一复用 `confflow/core/io.py`
 - ✅ 进程终止增强：`cli` 使用 `psutil` 进行进程树回收
-- ✅ 测试架构重构：41 个测试文件、**655 个测试**、`pytest -q` 约 6s
-- ✅ 覆盖率：branch coverage **90.52%**（`fail_under = 85`）
-- ✅ 类型安全：当前基线为 `mypy confflow`、`ruff check .`、`pytest`
+- ✅ 测试架构重构：41 个测试文件、**660 个测试**、`pytest -q` 约 6s
+- ✅ 覆盖率：branch coverage **90.72%**（`fail_under = 85`）
+- ✅ 类型安全：当前基线为 `mypy confflow`、`ruff check .`、`pytest`（最近一次本地复核：2026-04-03）
 - ✅ 支持矩阵明确：CI 现验证 Python **3.9-3.13**
 - ✅ 异常精确化：`scan_ops`/`executor`/`generator` 中 8 处 `except Exception` 收窄为具体异常
 - ✅ 构象去重精度提升：对称性感知 RMSD + 能量辅助阈值，解决大分子原子乱序/对称互换导致的去重漏判

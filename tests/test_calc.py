@@ -45,7 +45,6 @@ class TestCalcCore:
         monkeypatch.setattr(confflow.calc.setup, "UTILS_AVAILABLE", False)
 
         log_dir = tmp_path / "logs_fallback"
-        log_dir.mkdir()
         logger = confflow.calc.setup.setup_logging(str(log_dir))
         assert logger is not None
         log_file = log_dir / "calc.log"
@@ -593,6 +592,98 @@ def test_execute_tasks_marks_pending_and_canceled_on_stop(tmp_path):
     assert by_job["A000001"]["error_kind"] == "stop_requested"
     assert by_job["A000002"]["status"] == "canceled"
     assert by_job["A000002"]["error_kind"] == "stop_requested"
+
+
+def test_execute_tasks_records_broken_process_pool_and_continues(tmp_path):
+    from concurrent.futures.process import BrokenProcessPool
+
+    from confflow.calc.task_execution import execute_tasks
+    from confflow.core.models import TaskContext
+
+    inserted = []
+    appended = []
+
+    class FakeResultsDB:
+        def insert_result(self, res):
+            inserted.append(res)
+
+    class Reporter:
+        def __init__(self, *args, **kwargs):
+            self.reported = []
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def report(self, status):
+            self.reported.append(status)
+
+    class Future:
+        def __init__(self, *, result=None, exc=None):
+            self._result = result
+            self._exc = exc
+
+        def result(self):
+            if self._exc is not None:
+                raise self._exc
+            return self._result
+
+    class FakeExecutor:
+        def __init__(self, *args, **kwargs):
+            self.futures = []
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def submit(self, fn, arg):
+            del fn
+            if arg["job_name"] == "A000001":
+                fut = Future(exc=BrokenProcessPool("worker lost"))
+            else:
+                fut = Future(result={**arg, "status": "success", "final_coords": arg["coords"]})
+            self.futures.append(fut)
+            return fut
+
+    tasks = [
+        TaskContext(
+            job_name="A000001",
+            work_dir=str(tmp_path / "A000001"),
+            coords=["H 0 0 0"],
+            config={},
+        ),
+        TaskContext(
+            job_name="A000002",
+            work_dir=str(tmp_path / "A000002"),
+            coords=["H 0 0 1"],
+            config={},
+        ),
+    ]
+
+    execute_tasks(
+        todo=tasks,
+        config={"max_parallel_jobs": 2},
+        results_db=FakeResultsDB(),
+        run_task_fn=lambda task: {**task, "status": "success", "final_coords": task["coords"]},
+        append_result_fn=appended.append,
+        stop_requested_fn=lambda: False,
+        set_stop_requested_fn=lambda value: None,
+        progress_reporter_cls=Reporter,
+        executor_cls=FakeExecutor,
+        as_completed_fn=lambda futures: list(futures.keys()),
+    )
+
+    by_job = {row["job_name"]: row for row in inserted}
+    assert by_job["A000001"]["status"] == "failed"
+    assert by_job["A000001"]["error_kind"] == "worker_exception"
+    assert "worker lost" in by_job["A000001"]["error"]
+    assert by_job["A000002"]["status"] == "success"
+    assert len(appended) == 1
+    assert appended[0]["job_name"] == "A000002"
 
 
 # =============================================================================

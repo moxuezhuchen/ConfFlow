@@ -89,6 +89,24 @@ def _append_to_output(output_path: str, text: str) -> None:
         logger.warning(f"Failed to append to output file {output_path}: {e}")
 
 
+def _safe_log_cli_exception(message: str, exc: BaseException | None = None) -> None:
+    """Best-effort CLI exception logging that never raises back into the CLI."""
+    try:
+        if exc is None:
+            logger.error(message)
+        else:
+            logger.exception(message)
+    except Exception:
+        pass
+
+
+def _write_cli_error(output_path: str, exc: BaseException, hint: str | None = None) -> None:
+    """Write a user-facing CLI error message plus an optional follow-up hint."""
+    _append_to_output(output_path, f"[ERROR] {type(exc).__name__}: {exc}")
+    if hint:
+        _append_to_output(output_path, hint)
+
+
 def kill_proc_tree(
     pid: int, sig=signal.SIGTERM, include_parent=True, timeout=None, on_terminate=None
 ):
@@ -293,6 +311,16 @@ def main(args_list: list[str] | None = None):
         _append_to_output(output_path, f"[ERROR] {msg}")
         return ExitCode.USAGE_ERROR
 
+    except KeyboardInterrupt as e:
+        _safe_log_cli_exception("ConfFlow interrupted by user", e)
+        _write_cli_error(output_path, e)
+        return ExitCode.RUNTIME_ERROR
+
     except Exception as e:
-        _append_to_output(output_path, f"[ERROR] {e}")
+        _safe_log_cli_exception("ConfFlow CLI failed", e)
+        _write_cli_error(
+            output_path,
+            e,
+            hint="Hint: inspect the generated log output for a traceback if the cause is unclear.",
+        )
         return ExitCode.RUNTIME_ERROR

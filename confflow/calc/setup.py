@@ -69,6 +69,7 @@ def parse_iprog(config: dict[str, Any]) -> int:
 
 def setup_logging(work_dir: str):
     """Set up the logging system."""
+    os.makedirs(work_dir, exist_ok=True)
     log_file = os.path.join(work_dir, "calc.log")
     if UTILS_AVAILABLE:
         unified_logger = get_logger()

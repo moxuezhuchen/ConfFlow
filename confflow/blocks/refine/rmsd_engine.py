@@ -10,8 +10,10 @@ from __future__ import annotations
 
 import hashlib
 import logging
+from collections.abc import Sequence
 from concurrent.futures import ProcessPoolExecutor
 from itertools import repeat
+from typing import cast
 
 import numpy as np
 
@@ -29,7 +31,8 @@ logger = logging.getLogger("confflow.refine")
 # ---------------------------------------------------------------------------
 
 create_progress = load_console_bindings()["create_progress"]
-PERIODIC_SYMBOLS, GV_COVALENT_RADII = load_refine_data()
+_periodic_symbols, GV_COVALENT_RADII = load_refine_data()
+PERIODIC_SYMBOLS: Sequence[str] = cast(Sequence[str], _periodic_symbols)
 HARTREE_TO_KCALMOL = load_hartree_to_kcal()
 
 # ---------------------------------------------------------------------------

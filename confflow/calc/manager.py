@@ -34,6 +34,7 @@ __all__ = [
 ]
 
 logger = logging.getLogger("confflow.calc.manager")
+_LEGACY_NUMERIC_CID_RE = re.compile(r"^\d+(?:\.0+)?$")
 
 
 def _run_task(task_info: models.TaskContext | dict[str, Any]) -> dict[str, Any]:
@@ -204,16 +205,12 @@ class ChemTaskManager:
         """Generate a job name from the index and the CID in metadata."""
         meta = g.get("metadata") or {}
         cid = meta.get("CID") if isinstance(meta, dict) else None
-        if cid is None or str(cid).strip() == "":
+        if not isinstance(cid, str):
             return f"A{i + 1:06d}"
 
-        cid_raw = str(cid).strip()
-        try:
-            cid_int = int(cid_raw)
-            if cid_int > 0:
-                return f"A{cid_int:06d}"
-        except (ValueError, TypeError):
-            pass
+        cid_raw = cid.strip()
+        if not cid_raw or _LEGACY_NUMERIC_CID_RE.fullmatch(cid_raw):
+            return f"A{i + 1:06d}"
 
         token = re.sub(r"_+", "_", re.sub(r"[^A-Za-z0-9_\-]+", "_", cid_raw)).strip("_")
         if not token:

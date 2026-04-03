@@ -11,10 +11,22 @@ from __future__ import annotations
 
 import logging
 import os
-import re
 import shutil
 import tempfile
 from typing import Any
+
+from .gaussian_input import (
+    calculate_bond_length,
+    coords_lines_to_array,
+    parse_gaussian_input,
+    parse_gaussian_input_text,
+)
+from .xyz_metadata import (
+    ensure_conformer_cids,
+    parse_comment_metadata,
+    upsert_comment_kv,
+    xyz_needs_cid_rewrite,
+)
 
 __all__ = [
     "upsert_comment_kv",
@@ -32,118 +44,17 @@ __all__ = [
 ]
 
 _io_logger = logging.getLogger("confflow.io")
-
-
-def upsert_comment_kv(comment: str, key: str, value: Any) -> str:
-    """Update or insert a key=value pair in a comment line (no numeric formatting).
-
-    Parameters
-    ----------
-    comment : str
-        Original comment string.
-    key : str
-        Metadata key.
-    value : Any
-        Value to set.
-
-    Returns
-    -------
-    str
-        Updated comment string.
-
-    Notes
-    -----
-    - If ``key=xxx`` already exists, the first occurrence is replaced.
-    - Otherwise ``" | key=value"`` is appended (or just ``key=value`` if empty).
-    """
-    comment = (comment or "").strip()
-    key = str(key)
-    val_str = str(value)
-
-    pattern = re.compile(rf"(?P<prefix>^|[\s|,])(?P<k>{re.escape(key)})\s*=\s*(?P<v>[^\s|,]+)")
-    m = pattern.search(comment)
-    if not m:
-        if not comment:
-            return f"{key}={val_str}"
-        return f"{comment} | {key}={val_str}"
-
-    start, end = m.span("v")
-    return comment[:start] + val_str + comment[end:]
-
-
-def ensure_conformer_cids(
-    conformers: list[dict[str, Any]],
-    *,
-    prefix: str = "A",
-    start: int = 1,
-    width: int = 6,
-) -> list[dict[str, Any]]:
-    """Ensure every conformer has a CID and write it back to comment/metadata."""
-    next_id = start
-    for conf in conformers:
-        meta = conf.get("metadata")
-        if not meta:
-            meta = {}
-            conf["metadata"] = meta
-
-        existing_cid = meta.get("CID")
-        if existing_cid:
-            if "CID=" not in conf.get("comment", ""):
-                conf["comment"] = upsert_comment_kv(
-                    conf.get("comment", ""), "CID", str(existing_cid)
-                )
-            continue
-
-        new_cid = f"{prefix}{next_id:0{width}d}"
-        next_id += 1
-        meta["CID"] = new_cid
-        conf["comment"] = upsert_comment_kv(conf.get("comment", ""), "CID", new_cid)
-
-    return conformers
-
-
 def ensure_xyz_cids(xyz_path: str, prefix: str = "A") -> None:
     """Read an XYZ file and ensure all conformers have CIDs; re-write if incomplete."""
     if not os.path.exists(xyz_path):
         return
     try:
         confs = read_xyz_file(xyz_path, parse_metadata=True)
-        if confs and (
-            not confs.get("metadata")
-            if isinstance(confs, dict)
-            else (not confs[0].get("metadata") or "CID" not in confs[0]["metadata"])
-        ):
+        if confs and xyz_needs_cid_rewrite(confs):
             ensure_conformer_cids(confs, prefix=prefix)
             write_xyz_file(xyz_path, confs, atomic=True)
     except (OSError, ValueError, IndexError) as e:
         _io_logger.debug(f"ensure_xyz_cids: non-fatal error ({xyz_path}): {e}")
-
-
-def parse_comment_metadata(comment: str) -> dict[str, Any]:
-    """Parse key=value metadata from an XYZ comment line.
-
-    Parameters
-    ----------
-    comment : str
-        Comment string, e.g. ``"Rank=1 | E=-1.0 | G_corr=0.123"``.
-
-    Returns
-    -------
-    dict[str, Any]
-        Parsed dictionary; values are converted to float when possible.
-    """
-    meta: dict[str, Any] = {}
-    # Match key=value patterns (compatible with space, comma, or pipe separators)
-    for m in re.finditer(r"([A-Za-z_][A-Za-z0-9_]*)\s*=\s*([^\s|,]+)", comment or ""):
-        k, v = m.group(1), m.group(2)
-        try:
-            meta[k] = float(v)
-        # Keep the legacy Energy alias in sync with E.
-            if k == "Energy":
-                meta["E"] = float(v)
-        except (ValueError, TypeError):
-            meta[k] = v
-    return meta
 
 
 def _raise_xyz_parse_error(filepath: str, line_num: int, message: str) -> None:
@@ -370,166 +281,3 @@ def write_xyz_file(filepath: str, conformers: list[dict[str, Any]], atomic: bool
     else:
         with open(filepath, "w", encoding="utf-8") as f:
             _write_to_file(f)
-
-
-def coords_lines_to_array(
-    coords_lines: list[str],
-) -> list[tuple[str, float, float, float]] | None:
-    """Convert coordinate lines to a list of (symbol, x, y, z) tuples.
-
-    Parameters
-    ----------
-    coords_lines : list[str]
-        Lines such as ``["H 0.0 0.0 0.0", "C 1.0 0.0 0.0"]``.
-
-    Returns
-    -------
-    list[tuple[str, float, float, float]] or None
-        Parsed tuples, or None on parse failure.
-    """
-    try:
-        result = []
-        for line in coords_lines:
-            parts = line.split()
-            if len(parts) < 4:
-                return None
-
-            symbol = parts[0]
-            # Take the last three float-convertible values
-            xyz = []
-            for tok in reversed(parts[1:]):
-                try:
-                    xyz.append(float(tok))
-                    if len(xyz) == 3:
-                        break
-                except (ValueError, TypeError):
-                    continue
-
-            if len(xyz) != 3:
-                return None
-
-            z, y, x = xyz  # reversed
-            result.append((symbol, float(x), float(y), float(z)))
-
-        return result
-    except (ValueError, TypeError, IndexError):
-        return None
-
-
-def parse_gaussian_input(filepath: str) -> dict[str, Any]:
-    """Parse a Gaussian input file (.gjf/.com)."""
-    try:
-        with open(filepath, encoding="utf-8", errors="ignore") as f:
-            text = f.read()
-        return parse_gaussian_input_text(text, filepath)
-    except OSError as e:
-        raise OSError(f"Failed to read Gaussian input {filepath}: {e}") from e
-
-
-def parse_gaussian_input_text(text: str, source_label: str = "text") -> dict[str, Any]:
-    """Parse Gaussian input text.
-
-    Returns
-    -------
-    dict[str, Any]
-        Dictionary containing:
-
-        - ``charge``: molecular charge
-        - ``multiplicity``: spin multiplicity
-        - ``atoms``: list of element symbols
-        - ``coords``: coordinate list ``[[x, y, z], ...]``
-        - ``coords_lines``: formatted coordinate lines ``["Sym x y z", ...]``
-    """
-    from .data import get_element_symbol
-
-    lines = text.splitlines()
-    qm_idx = None
-    charge = 0
-    mult = 1
-    for i, ln in enumerate(lines):
-        s = ln.strip()
-        if not s:
-            continue
-        if re.match(r"^\s*-?\d+\s+-?\d+\s*$", s):
-            qm_idx = i
-            parts = s.split()
-            charge = int(parts[0])
-            mult = int(parts[1])
-            break
-
-    if qm_idx is None:
-        raise ValueError(f"Cannot find charge/multiplicity line in {source_label}")
-
-    atoms: list[str] = []
-    coords_list: list[list[float]] = []
-    coords_formatted: list[str] = []
-    raw_coords_lines: list[str] = []
-
-    for ln in lines[qm_idx + 1 :]:
-        raw_ln = ln.strip()
-        if not raw_ln:
-            break
-        p = raw_ln.split()
-        if len(p) < 4:
-            break
-
-        raw_coords_lines.append(raw_ln)
-        sym = p[0]
-        if sym.isdigit():
-            sym = get_element_symbol(int(sym))
-
-        # Handle possible frozen-atom columns (take the last three numeric values)
-        xyz: list[float] = []
-        for tok in reversed(p[1:]):
-            try:
-                xyz.append(float(tok))
-            except (ValueError, TypeError):
-                continue
-            if len(xyz) == 3:
-                break
-
-        if len(xyz) != 3:
-            break
-
-        z, y, x = xyz
-        atoms.append(sym)
-        coords_list.append([x, y, z])
-        coords_formatted.append(f"{sym} {x:.8f} {y:.8f} {z:.8f}")
-
-    return {
-        "charge": charge,
-        "multiplicity": mult,
-        "atoms": atoms,
-        "coords": coords_list,
-        "coords_lines": coords_formatted,
-        "raw_coords_lines": raw_coords_lines,
-    }
-
-
-def calculate_bond_length(coords_lines: list[str], atom1: int, atom2: int) -> float | None:
-    """Calculate the distance between two atoms.
-
-    Parameters
-    ----------
-    coords_lines : list[str]
-        Coordinate lines.
-    atom1, atom2 : int
-        1-based atom indices.
-
-    Returns
-    -------
-    float or None
-        Bond length in Ångström, or None on parse failure.
-    """
-    coords_array = coords_lines_to_array(coords_lines)
-    if coords_array is None:
-        return None
-
-    if atom1 < 1 or atom2 < 1 or atom1 > len(coords_array) or atom2 > len(coords_array):
-        return None
-
-    _, x1, y1, z1 = coords_array[atom1 - 1]
-    _, x2, y2, z2 = coords_array[atom2 - 1]
-
-    dx, dy, dz = x1 - x2, y1 - y2, z1 - z2
-    return float((dx * dx + dy * dy + dz * dz) ** 0.5)

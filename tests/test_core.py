@@ -10,6 +10,10 @@ import json
 import pytest
 import yaml
 
+import confflow.blocks.confgen as confgen
+import confflow.blocks.viz as viz
+import confflow.calc as calc
+
 
 class TestConfig:
     """Tests for config module."""
@@ -140,10 +144,10 @@ class TestLowEnergyTrace:
                 out = out_dir / "output.xyz"
                 engine.io_xyz.write_xyz_file(str(out), confs, atomic=False)
 
-        monkeypatch.setattr(engine.confgen, "run_generation", fake_run_generation)
-        monkeypatch.setattr(engine.calc, "ChemTaskManager", FakeManager)
-        monkeypatch.setattr(engine.viz, "parse_xyz_file", lambda p: [])
-        monkeypatch.setattr(engine.viz, "generate_text_report", lambda *a, **k: "")
+        monkeypatch.setattr(confgen, "run_generation", fake_run_generation)
+        monkeypatch.setattr(calc, "ChemTaskManager", FakeManager)
+        monkeypatch.setattr(viz, "parse_xyz_file", lambda p: [])
+        monkeypatch.setattr(viz, "generate_text_report", lambda *a, **k: "")
 
         inp = tmp_path / "a.xyz"
         inp.write_text("2\nA\nH 0 0 0\nH 0 0 1\n", encoding="utf-8")

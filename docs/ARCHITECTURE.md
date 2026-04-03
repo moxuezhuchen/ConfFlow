@@ -11,7 +11,9 @@ confflow/
 ├── core/                      # 基础设施层（共享工具、I/O、日志）
 │   ├── __init__.py
 │   ├── utils.py              # 统一的工具函数、异常类、日志系统
-│   ├── io.py                 # 统一的 XYZ 文件读写模块
+│   ├── io.py                 # XYZ I/O 门面与读写入口
+│   ├── xyz_metadata.py       # XYZ 注释元数据与 CID 处理
+│   ├── gaussian_input.py     # Gaussian 输入与坐标解析
 │   ├── data.py               # 共价半径、元素符号等化学数据
 │   ├── models.py             # Pydantic 数据模型定义
 │   ├── types.py              # 类型定义与常量
@@ -98,7 +100,7 @@ docs/                          # 文档
 ├── STYLE_CONTRACT.md         # 代码/输入/输出一致性标准
 └── DEVELOPMENT.md            # 开发指南
 
-tests/                         # 测试套件（41 个文件，655 个测试）
+tests/                         # 测试套件（41 个文件，660 个测试）
 ├── conftest.py               # 共享 fixtures
 ├── _helpers.py               # 共享 fake 对象与工具函数
 ├── test_core.py              # 配置、包导出、低能量溯源
@@ -138,9 +140,12 @@ LICENSE                        # MIT 许可证
   - 工具函数（内存解析、iprog/itask 解析、freeze 索引范围解析）
 
 - **`io.py`**：
-  - 统一的 XYZ 文件读写接口
-  - 元数据解析（energy, imag_freq, geom_id 等）
-  - 坐标转换与几何计算
+  - 统一的 XYZ 文件读写入口
+  - 对外保持兼容 API，内部转发到更小的解析子模块
+
+- **`xyz_metadata.py` / `gaussian_input.py`**：
+  - 分离 XYZ 注释/CID 规则与 Gaussian 坐标解析
+  - 降低 `io.py` 的职责耦合和维护成本
 
 - **`types.py`**：
   - 枚举类型（`TaskType`, `ProgType` 等）
@@ -428,7 +433,7 @@ tests/
 └── test_input_snapshot.py    # 输入文件快照
 ```
 
-当前测试套件共 41 个测试文件、655 个测试用例；完整清单见 `docs/TESTING.md`。除主测试文件外，还包含一组 `*_hotspots.py` 用例，专门覆盖回退逻辑、异常路径和历史回归点。
+当前测试套件共 41 个测试文件、660 个测试用例；完整清单见 `docs/TESTING.md`。除主测试文件外，还包含一组 `*_hotspots.py` 用例，专门覆盖回退逻辑、异常路径和历史回归点。
 
 ## 依赖关系图
 
@@ -447,7 +452,9 @@ confflow/__init__.py (包入口)
   │
   └── core/
       ├── utils.py (日志、异常、验证)
-      ├── io.py (XYZ 文件 I/O)
+      ├── io.py (XYZ 文件 I/O 门面)
+      ├── xyz_metadata.py (XYZ 注释/CID)
+      ├── gaussian_input.py (Gaussian/坐标解析)
       └── types.py (类型定义)
 ```
 

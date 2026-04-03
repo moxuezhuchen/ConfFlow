@@ -29,6 +29,9 @@ class TestIO:
         meta = parse_comment_metadata("Status=success")
         assert meta["Status"] == "success"
 
+        meta = parse_comment_metadata("CID=000123")
+        assert meta["CID"] == "000123"
+
     def test_read_xyz_file(self, tmp_path):
         """Test XYZ file reading."""
         from confflow.core.io import read_xyz_file
@@ -82,6 +85,73 @@ class TestIO:
         assert len(result) == 1
         assert result[0]["atoms"] == ["H", "C"]
         assert result[0]["metadata"]["E"] == -0.5
+
+    def test_ensure_conformer_cids_skips_existing_ids_and_preserves_comment_ids(self):
+        """CID backfill should avoid duplicates and reuse IDs already present in comments."""
+        from confflow.core.io import ensure_conformer_cids
+
+        conformers = [
+            {"comment": "CID=A000001", "metadata": {"CID": "A000001"}},
+            {"comment": "CID=A000003", "metadata": {}},
+            {"comment": "", "metadata": {}},
+        ]
+
+        ensure_conformer_cids(conformers, prefix="A")
+
+        assert conformers[0]["metadata"]["CID"] == "A000001"
+        assert conformers[1]["metadata"]["CID"] == "A000003"
+        assert conformers[2]["metadata"]["CID"] == "A000002"
+        assert "CID=A000002" in conformers[2]["comment"]
+
+    def test_ensure_conformer_cids_replaces_legacy_numeric_cids(self):
+        """Legacy numeric CID tokens should be discarded and replaced with new-format IDs."""
+        from confflow.core.io import ensure_conformer_cids
+
+        conformers = [
+            {"comment": "CID=1", "metadata": {}},
+            {"comment": "CID=2.0", "metadata": {"CID": "2.0"}},
+            {"comment": "", "metadata": {}},
+        ]
+
+        ensure_conformer_cids(conformers, prefix="A")
+
+        assert conformers[0]["metadata"]["CID"] == "A000001"
+        assert conformers[1]["metadata"]["CID"] == "A000002"
+        assert conformers[2]["metadata"]["CID"] == "A000003"
+        assert "CID=A000001" in conformers[0]["comment"]
+        assert "CID=A000002" in conformers[1]["comment"]
+
+    def test_ensure_xyz_cids_rewrites_when_later_frames_are_missing(self, tmp_path):
+        """All frames should receive a CID, not just the first frame."""
+        from confflow.core.io import ensure_xyz_cids, read_xyz_file, write_xyz_file
+
+        xyz = tmp_path / "multi.xyz"
+        write_xyz_file(
+            str(xyz),
+            [
+                {
+                    "natoms": 1,
+                    "comment": "CID=A000001",
+                    "atoms": ["H"],
+                    "coords": [[0.0, 0.0, 0.0]],
+                    "metadata": {"CID": "A000001"},
+                },
+                {
+                    "natoms": 1,
+                    "comment": "",
+                    "atoms": ["H"],
+                    "coords": [[1.0, 0.0, 0.0]],
+                    "metadata": {},
+                },
+            ],
+        )
+
+        ensure_xyz_cids(str(xyz), prefix="A")
+
+        reread = read_xyz_file(str(xyz), parse_metadata=True)
+        assert reread[0]["metadata"]["CID"] == "A000001"
+        assert reread[1]["metadata"]["CID"] == "A000002"
+        assert "CID=A000002" in reread[1]["comment"]
 
     def test_calculate_bond_length(self):
         """Test bond length calculation."""

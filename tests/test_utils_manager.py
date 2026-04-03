@@ -302,6 +302,11 @@ def test_manager_init_with_config(tmp_path):
     assert manager.config["program"] == "gaussian"
 
 
+def test_job_name_for_geom_discards_legacy_numeric_cid():
+    assert ChemTaskManager._job_name_for_geom(2, {"metadata": {"CID": 1.0}}) == "A000003"
+    assert ChemTaskManager._job_name_for_geom(2, {"metadata": {"CID": "2.0"}}) == "A000003"
+
+
 def test_manager_ensure_work_dir(tmp_path):
     manager = ChemTaskManager(None, resume_dir=str(tmp_path / "work"))
     manager._ensure_work_dir()

@@ -38,8 +38,7 @@ def _coords_lines_to_xyz(coords_lines: list[str]):
     """Parse coordinate lines into (symbol, x, y, z) tuples.
 
     Handles optional prefix integers (e.g. Gaussian freeze codes) by
-    extracting the three rightmost numeric tokens as z, y, x respectively
-    (right-to-left collection), then reassigning to the correct x, y, z order.
+    treating the three rightmost columns as x, y, z.
     """
     try:
         out = []
@@ -48,20 +47,7 @@ def _coords_lines_to_xyz(coords_lines: list[str]):
             if len(parts) < 4:
                 return None
             sym = parts[0]
-            # Collect the last 3 parseable floats scanning right-to-left.
-            # This skips any non-numeric prefix tokens (e.g. Gaussian freeze codes).
-            floats_rtl: list[float] = []
-            for tok in reversed(parts[1:]):
-                try:
-                    floats_rtl.append(float(tok))
-                except ValueError:
-                    continue
-                if len(floats_rtl) == 3:
-                    break
-            if len(floats_rtl) != 3:
-                return None
-            # floats_rtl = [z_val, y_val, x_val] (collected right-to-left)
-            x_val, y_val, z_val = floats_rtl[2], floats_rtl[1], floats_rtl[0]
+            x_val, y_val, z_val = float(parts[-3]), float(parts[-2]), float(parts[-1])
             out.append((sym, x_val, y_val, z_val))
         return out
     except (ValueError, IndexError) as e:
