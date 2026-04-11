@@ -8,18 +8,18 @@ import copy
 import logging
 import os
 import re
-import shlex
 from typing import Any
 
 from ..components.input_helpers import (
     compute_orca_maxcore,
-    format_orca_blocks,
     parse_freeze_indices,
 )
 from ..constants import BUILTIN_TEMPLATES
 from ..geometry import check_termination as _check_termination
 from ..geometry import parse_last_geometry
 from ..psutil_compat import maybe_import_psutil, psutil_exception_types
+from ...core.path_policy import validate_executable_setting
+from ...shared.orca_blocks import format_orca_blocks
 from .base import CalculationPolicy
 
 __all__ = [
@@ -166,8 +166,15 @@ class OrcaPolicy(CalculationPolicy):
         path_key = "orca_path"
         default_exe = "orca"
         prog_path = config.get(path_key) or default_exe
-        cmd = shlex.split(str(prog_path)) + [os.path.basename(inp_file)]
-        return cmd
+        allowed = config.get("allowed_executables")
+        if isinstance(allowed, str):
+            allowed = [item.strip() for item in allowed.split(",") if item.strip()]
+        executable = validate_executable_setting(
+            prog_path,
+            label=path_key,
+            allowed_executables=allowed,
+        )
+        return [executable, os.path.basename(inp_file)]
 
     def check_termination(self, log_file: str) -> bool:
         return _check_termination(log_file, "orca")
@@ -190,15 +197,28 @@ class OrcaPolicy(CalculationPolicy):
         return " | ".join(details)
 
     def cleanup_lingering_processes(self, config: dict[str, Any]) -> None:
+        del config
         if psutil is None:
             return
         targets = ["orca", "otool_xtb"]
-        for proc in psutil.process_iter(["pid", "name", "cmdline"]):
+        try:
+            current = psutil.Process()
+            processes = current.children(recursive=True)
+        except psutil_exception_types(psutil) as e:
+            logger.debug(f"Failed to enumerate descendant processes: {e}")
+            return
+
+        for proc in processes:
             try:
-                if any(t in (proc.info.get("name") or "") for t in targets):
+                info = getattr(proc, "info", {}) or {}
+                name = info.get("name")
+                if not name and hasattr(proc, "name"):
+                    name = proc.name()
+                if any(t in str(name or "") for t in targets):
                     proc.terminate()
             except psutil_exception_types(psutil) as e:
-                logger.debug(f"Failed to clean up process {proc.info.get('pid')}: {e}")
+                pid = (getattr(proc, "info", {}) or {}).get("pid")
+                logger.debug(f"Failed to clean up process {pid}: {e}")
 
 
 #: Module-level singleton (stateless, safe to reuse)

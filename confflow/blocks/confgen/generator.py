@@ -9,6 +9,8 @@ import logging
 import multiprocessing
 import os
 import traceback
+from dataclasses import dataclass, field
+from math import prod
 from typing import Any
 
 import numpy as np
@@ -25,6 +27,7 @@ except ImportError as e:
 
 from ...core.console import create_progress
 from ...core.contracts import ExitCode, cli_output_to_txt
+from ...core.io import append_xyz_conformer
 from ...core.pairs import normalize_pair_list
 from ...core.utils import get_numba_jit, index_to_letter_prefix
 from .collision import GV_RADII_ARRAY, check_clash_core
@@ -62,6 +65,43 @@ w_clash: Any = None
 w_topo: Any = None
 w_atoms: Any = None
 w_opt: Any = None
+
+
+@dataclass
+class _StreamingConfgenOutput:
+    """Incrementally write conformers and optionally keep them in memory."""
+
+    output_path: str
+    collect_results: bool = True
+    count: int = 0
+    _items: list[dict[str, Any]] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        self.temp_path = f"{self.output_path}.tmp"
+        try:
+            os.remove(self.temp_path)
+        except FileNotFoundError:
+            pass
+
+    def append(self, *, coords: Any, atoms: list[str], cid: str) -> None:
+        self.count += 1
+        if self.collect_results:
+            self._items.append({"coords": coords, "atoms": atoms, "cid": cid})
+        coord_lines = [
+            f"{symbol:<4s} {float(x):12.6f} {float(y):12.6f} {float(z):12.6f}"
+            for symbol, (x, y, z) in zip(atoms, coords)
+        ]
+        append_xyz_conformer(self.temp_path, coord_lines, f"Conformer {self.count} | CID={cid}")
+
+    def finalize(self) -> list[dict[str, Any]]:
+        if self.count > 0:
+            os.replace(self.temp_path, self.output_path)
+        else:
+            try:
+                os.remove(self.temp_path)
+            except FileNotFoundError:
+                pass
+        return list(self._items)
 
 
 def init_worker(mol, conf, bonds, clash, topo, atoms, opt):
@@ -207,7 +247,7 @@ def load_mol_from_xyz(filename, bond_coeff):
     mol = rw_mol.GetMol()
     try:
         Chem.SanitizeMol(mol)
-    except Exception:  # RDKit raises arbitrary exception types; fall back gracefully
+    except Exception:
         mol.UpdatePropertyCache(strict=False)
 
     from ...core.console import console, print_kv
@@ -244,15 +284,21 @@ def get_rotatable_bonds(mol, no_rot, force_rot):
 
 def write_xyz(mol, conformers, filename):
     with open(filename, "w") as f:
-        syms = [a.GetSymbol() for a in mol.GetAtoms()]
-        natoms = len(syms)
+        default_syms = [a.GetSymbol() for a in mol.GetAtoms()]
         for i, item in enumerate(conformers):
             if isinstance(item, dict):
                 coords = item.get("coords")
                 cid = item.get("cid")
+                atoms = item.get("atoms")
             else:
                 coords = item
                 cid = None
+                atoms = None
+
+            # Preserve per-conformer atom ordering for multi-input workflows
+            # where equivalent structures may arrive with different layouts.
+            syms = list(atoms) if atoms else default_syms
+            natoms = len(syms)
 
             # Assign a stable ID for downstream workflow traceability
             if not cid:
@@ -309,21 +355,21 @@ def _modify_topology(
         mol = rw_mol.GetMol()
         try:
             Chem.SanitizeMol(mol)
-        except Exception:  # RDKit raises arbitrary exception types; fall back gracefully
+        except Exception:
             mol.UpdatePropertyCache(strict=False)
         logging.info(f"after manual correction, now {mol.GetNumBonds()} bonds.")
 
     return mol, is_mod
 
 
-def _run_parallel_confgen(
+def _iter_parallel_confgen(
     mol: Any,
     rot_bonds: list[tuple[int, int, Any]],
     angle_lists: list[list[float]],
     clash_threshold: float,
     optimize: bool,
-) -> list[Any]:
-    """Run parallel conformer generation and return valid coordinate arrays.
+) -> Any:
+    """Yield valid coordinate arrays produced by the parallel confgen workers.
 
     Parameters
     ----------
@@ -338,17 +384,18 @@ def _run_parallel_confgen(
     optimize : bool
         Whether to apply MMFF94s pre-optimization.
 
-    Returns
-    -------
-    list[Any]
-        List of valid coordinate arrays.
+    Yields
+    ------
+    Any
+        Coordinate arrays that survived clash filtering.
     """
     topo_mat = Chem.GetDistanceMatrix(mol).astype(np.int64)
     atom_nums = np.array([a.GetAtomicNum() for a in mol.GetAtoms()], dtype=np.int64)
 
     per_bond_angles = angle_lists
-    combos = list(itertools.product(*per_bond_angles))
-    total_tasks = len(combos)
+    total_tasks = prod(len(angles) for angles in per_bond_angles)
+    if total_tasks <= 0:
+        return
 
     cpu_count = multiprocessing.cpu_count()
     init_args = (
@@ -363,14 +410,16 @@ def _run_parallel_confgen(
 
     with multiprocessing.Pool(cpu_count, initializer=init_worker, initargs=init_args) as pool:
         chunk = max(1, total_tasks // (cpu_count * 10))
-        results: list[Any] = []
         with create_progress() as progress:
             task_id = progress.add_task("ConfGen", total=total_tasks)
-            for res in pool.imap(process_task, combos, chunksize=chunk):
-                results.append(res)
+            for res in pool.imap(
+                process_task,
+                itertools.product(*per_bond_angles),
+                chunksize=chunk,
+            ):
                 progress.advance(task_id)
-
-    return [r for r in results if r is not None]
+                if res is not None:
+                    yield res
 
 
 # ------------------------------------------------------------------------------
@@ -393,6 +442,8 @@ def run_generation(
     chain_steps: list[str] | None = None,
     chain_angles: list[str] | None = None,
     rotate_side: str = "left",
+    output_file: str = "search.xyz",
+    collect_results: bool = True,
 ):
     """Entry point for conformer generation.
 
@@ -430,7 +481,9 @@ def run_generation(
     Returns
     -------
     list[dict]
-        List of generated conformer data dicts.
+        List of generated conformer data dicts. Multi-input runs preserve
+        each conformer's atom-symbol order so downstream XYZ output matches
+        the source structure layout.
     """
     from ...core.console import console
 
@@ -444,10 +497,10 @@ def run_generation(
     if isinstance(input_files, str):
         input_files = [input_files]
 
-    master_mol = None
+    parsed_any = False
     ref_mol = None
     ref_parsed_chains = None
-    all_confs_data = []
+    output_sink = _StreamingConfgenOutput(output_file, collect_results=collect_results)
 
     from ...core.console import error, warning
 
@@ -458,8 +511,7 @@ def run_generation(
 
         try:
             mol = load_mol_from_xyz(xyz_file, bond_threshold)
-            if master_mol is None:
-                master_mol = Chem.Mol(mol)
+            parsed_any = True
 
             # Pre-parse chains (reference only); mapping performed after topology modification
             parsed_chains = None
@@ -549,11 +601,11 @@ def run_generation(
             if not rot_bonds:
                 warning("No rotatable bonds. Skipping.")
                 local_count += 1
-                all_confs_data.append(
-                    {
-                        "coords": mol.GetConformer(0).GetPositions(),
-                        "cid": f"{cid_prefix}{local_count:06d}",
-                    }
+                atom_symbols = [atom.GetSymbol() for atom in mol.GetAtoms()]
+                output_sink.append(
+                    coords=mol.GetConformer(0).GetPositions(),
+                    atoms=atom_symbols,
+                    cid=f"{cid_prefix}{local_count:06d}",
                 )
                 continue
 
@@ -561,33 +613,35 @@ def run_generation(
                 if input("Start generation? (y/n): ").lower() != "y":
                     continue
 
-            valid_coords = _run_parallel_confgen(
+            atom_symbols = [atom.GetSymbol() for atom in mol.GetAtoms()]
+            for coords in _iter_parallel_confgen(
                 mol,
                 rot_bonds,
                 angle_lists,
                 clash_threshold,
                 optimize,
-            )
-            for coords in valid_coords:
+            ):
                 local_count += 1
-                all_confs_data.append({"coords": coords, "cid": f"{cid_prefix}{local_count:06d}"})
+                output_sink.append(
+                    coords=coords,
+                    atoms=atom_symbols,
+                    cid=f"{cid_prefix}{local_count:06d}",
+                )
 
         except (ValueError, RuntimeError, OSError) as e:
             error(f"Failed to process {xyz_file}: {e}")
             traceback.print_exc()
 
-    if all_confs_data and master_mol:
-        out_name = "search.xyz"
-        write_xyz(master_mol, all_confs_data, out_name)
-    elif master_mol is None and input_files:
+    all_confs_data = output_sink.finalize()
+    if output_sink.count > 0:
+        return all_confs_data
+    if not parsed_any and input_files:
         # P3-1: No file was parseable at all; raise so the engine surfaces the real error.
         raise RuntimeError(
             "No conformers were generated: all input files failed to process. "
             "Check the error messages above for per-file details."
         )
-    else:
-        warning("No conformers generated.")
-
+    warning("No conformers generated.")
     return all_confs_data
 
 
@@ -693,11 +747,12 @@ def main():
             no_rotate=args.no_rotate,
             force_rotate=args.force_rotate,
             optimize=args.optimize,
-            confirm=args.yes,
+            confirm=not args.yes,
             chains=args.chain,
             chain_steps=args.steps,
             chain_angles=args.angles,
             rotate_side=args.rotate_side,
+            collect_results=False,
         )
     return ExitCode.SUCCESS
 

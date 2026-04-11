@@ -10,9 +10,7 @@ runtime validation, use the Pydantic models in ``core.models``.
 from __future__ import annotations
 
 from enum import Enum
-from typing import Any
-
-from typing_extensions import TypedDict
+from typing import Any, TypedDict
 
 # ==============================================================================
 # Basic type aliases

@@ -17,9 +17,10 @@ from typing import Any
 from ..setup import UTILS_AVAILABLE
 
 try:
-    from ...config.defaults import DEFAULT_TOTAL_MEMORY
+    from ...shared.defaults import DEFAULT_TOTAL_MEMORY
 except ImportError:  # pragma: no cover
     DEFAULT_TOTAL_MEMORY = "4GB"
+from ...shared.orca_blocks import format_orca_blocks
 
 try:
     from ...core.utils import parse_memory
@@ -161,52 +162,3 @@ def orca_constraint_block(freeze_indices_1based: Sequence[int]) -> str:
     constraint_lines.append("  end")
     constraint_lines.append("end")
     return "\n".join(constraint_lines) + "\n"
-
-
-def format_orca_blocks(blocks: Any) -> str:
-    """Convert a dict or string into ORCA ``%block ... end`` syntax.
-
-    Supports nested dicts, lists, or plain multi-line strings.
-    """
-    if not blocks:
-        return ""
-
-    if isinstance(blocks, str):
-        content = blocks.strip()
-        if not content:
-            return ""
-        return content + "\n"
-
-    def _fmt_val(v: Any) -> str:
-        if isinstance(v, bool):
-            return "true" if v else "false"
-        return str(v)
-
-    def _render_content(content: Any, indent: int = 2) -> list[str]:
-        lines = []
-        sp = " " * indent
-        if isinstance(content, dict):
-            for k, v in content.items():
-                if isinstance(v, (dict, list)):
-                    lines.append(f"{sp}{k}")
-                    lines.extend(_render_content(v, indent + 2))
-                    lines.append(f"{sp}end")
-                else:
-                    lines.append(f"{sp}{k} {_fmt_val(v)}")
-        elif isinstance(content, (list, tuple)):
-            for item in content:
-                lines.append(f"{sp}{_fmt_val(item)}")
-        elif isinstance(content, str):
-            for line in content.strip().splitlines():
-                lines.append(f"{sp}{line.strip()}")
-        elif content is not None:
-            lines.append(f"{sp}{_fmt_val(content)}")
-        return lines
-
-    result = []
-    for block_name, content in blocks.items():
-        result.append(f"%{block_name}")
-        result.extend(_render_content(content))
-        result.append("end")
-
-    return "\n".join(result) + "\n"

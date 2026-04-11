@@ -166,6 +166,137 @@ def test_process_xyz_no_conformers_after_filtering(tmp_path, monkeypatch):
     assert any("No conformers remain" in msg for msg in seen)
 
 
+def test_process_xyz_no_conformers_after_imag_and_ewin(tmp_path, monkeypatch):
+    xyz = tmp_path / "in.xyz"
+    xyz.write_text("1\nx\nH 0 0 0\n", encoding="utf-8")
+    frames = [
+        {
+            "atoms": ["H"],
+            "coords": np.array([[0.0, 0.0, 0.0]], dtype=np.float64),
+            "energy": 0.0,
+            "num_imag_freqs": 0,
+            "original_index": 0,
+            "natoms": 1,
+            "energy_key": "E",
+            "extra_data": {},
+            "original_atoms": ["H"],
+        }
+    ]
+
+    class _Exec:
+        def __init__(self, *args, **kwargs):
+            del args, kwargs
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            del exc_type, exc, tb
+            return False
+
+        def map(self, func, iterable, chunksize=None):
+            del chunksize
+            return map(func, iterable)
+
+    class _Prog:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            del exc_type, exc, tb
+            return False
+
+        def add_task(self, *args, **kwargs):
+            del args, kwargs
+            return 1
+
+        def advance(self, *args, **kwargs):
+            del args, kwargs
+            return None
+
+    seen = []
+    monkeypatch.setattr(processor, "read_xyz_file", lambda path: frames.copy())
+    monkeypatch.setattr(processor, "ProcessPoolExecutor", _Exec)
+    monkeypatch.setattr(processor, "create_progress", lambda: _Prog())
+    monkeypatch.setattr(processor, "get_topology_hash_worker", lambda pair: "topo")
+    monkeypatch.setattr(processor.console, "print", lambda msg: seen.append(msg))
+
+    args = processor.RefineOptions(
+        input_file=str(xyz),
+        output=str(tmp_path / "out.xyz"),
+        imag=1,
+        ewin=5.0,
+    )
+    processor.process_xyz(args)
+
+    assert any("No conformers remain" in msg for msg in seen)
+
+
+def test_process_xyz_zero_result_removes_stale_output(tmp_path, monkeypatch):
+    xyz = tmp_path / "in.xyz"
+    xyz.write_text("1\nx\nH 0 0 0\n", encoding="utf-8")
+    stale = tmp_path / "out.xyz"
+    stale.write_text("old", encoding="utf-8")
+
+    class _Exec:
+        def __init__(self, *args, **kwargs):
+            del args, kwargs
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            del exc_type, exc, tb
+            return False
+
+        def map(self, func, iterable, chunksize=None):
+            del chunksize
+            return map(func, iterable)
+
+    class _Prog:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            del exc_type, exc, tb
+            return False
+
+        def add_task(self, *args, **kwargs):
+            del args, kwargs
+            return 1
+
+        def advance(self, *args, **kwargs):
+            del args, kwargs
+            return None
+
+    frames = [
+        {
+            "atoms": ["H"],
+            "coords": np.array([[0.0, 0.0, 0.0]], dtype=np.float64),
+            "energy": 0.0,
+            "num_imag_freqs": 0,
+            "original_index": 0,
+            "natoms": 1,
+            "energy_key": "E",
+            "extra_data": {},
+            "original_atoms": ["H"],
+        }
+    ]
+
+    monkeypatch.setattr(processor, "read_xyz_file", lambda path: frames.copy())
+    monkeypatch.setattr(processor, "ProcessPoolExecutor", _Exec)
+    monkeypatch.setattr(processor, "create_progress", lambda: _Prog())
+    monkeypatch.setattr(processor, "get_topology_hash_worker", lambda pair: "topo")
+    monkeypatch.setattr(processor.console, "print", lambda msg: None)
+
+    result = processor.process_xyz(
+        processor.RefineOptions(input_file=str(xyz), output=str(stale), imag=1)
+    )
+
+    assert result.produced_output is False
+    assert not stale.exists()
+
+
 def test_processor_main_sets_default_output_and_calls_process(monkeypatch, tmp_path: Path):
     input_xyz = tmp_path / "in.xyz"
     input_xyz.write_text("1\nx\nH 0 0 0\n", encoding="utf-8")

@@ -9,8 +9,8 @@ from typing import Any
 
 import numpy as np
 
-from ..config.defaults import DEFAULT_TS_BOND_DRIFT_THRESHOLD
 from ..core import io as io_xyz
+from ..shared.defaults import DEFAULT_TS_BOND_DRIFT_THRESHOLD
 
 __all__ = [
     "validate_ts_bond_drift",

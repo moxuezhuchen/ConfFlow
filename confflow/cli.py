@@ -9,14 +9,18 @@ import os
 import signal
 import sys
 from pathlib import Path
+from typing import Any
 
 try:
     import psutil
 except ImportError:
     psutil = None
 
+import yaml
+
 from .core.contracts import ExitCode, cli_output_to_txt, output_txt_path_for_input
 from .core.io import parse_gaussian_input_text, write_xyz_file
+from .core.path_policy import resolve_sandbox_root, validate_managed_path
 from .core.utils import get_logger
 from .workflow.engine import run_workflow
 
@@ -28,6 +32,19 @@ __all__ = [
 ]
 
 logger = get_logger()
+
+
+def _resolve_default_work_dir(
+    input_files: list[str],
+    *,
+    sandbox_root: str | None,
+) -> str:
+    """Resolve the implicit CLI work_dir, preferring sandbox_root when present."""
+    input_basename = os.path.splitext(os.path.basename(input_files[0]))[0]
+    dirname = f"{input_basename}_work" if len(input_files) == 1 else f"{input_basename}_multi_work"
+    if sandbox_root:
+        return os.path.join(sandbox_root, dirname)
+    return dirname
 
 
 def _parse_gaussian_input_geometry(text: str) -> tuple[int, int, list[str], list[list[float]]]:
@@ -105,6 +122,21 @@ def _write_cli_error(output_path: str, exc: BaseException, hint: str | None = No
     _append_to_output(output_path, f"[ERROR] {type(exc).__name__}: {exc}")
     if hint:
         _append_to_output(output_path, hint)
+
+
+def _load_sandbox_root_hint(config_file: str) -> str | None:
+    """Best-effort read of ``global.sandbox_root`` without full schema validation."""
+    try:
+        with open(config_file, encoding="utf-8") as handle:
+            raw: Any = yaml.safe_load(handle) or {}
+    except (OSError, yaml.YAMLError):
+        return None
+    if not isinstance(raw, dict):
+        return None
+    global_cfg = raw.get("global") or {}
+    if not isinstance(global_cfg, dict):
+        return None
+    return resolve_sandbox_root(global_cfg)
 
 
 def kill_proc_tree(
@@ -258,24 +290,26 @@ def main(args_list: list[str] | None = None):
             )
         config_file = default_cfg
 
+    first_input = os.path.abspath(args.input_xyz[0])
+    output_path = output_txt_path_for_input(first_input)
+    sandbox_root = _load_sandbox_root_hint(config_file)
     if args.work_dir is None:
-        input_basename = os.path.splitext(os.path.basename(input_files[0]))[0]
-        work_dir = (
-            f"{input_basename}_work" if len(input_files) == 1 else f"{input_basename}_multi_work"
-        )
+        work_dir = _resolve_default_work_dir(input_files, sandbox_root=sandbox_root)
     else:
         work_dir = args.work_dir
 
-    first_input = os.path.abspath(args.input_xyz[0])
-    output_path = output_txt_path_for_input(first_input)
-
     try:
+        work_dir = validate_managed_path(work_dir, label="work_dir", sandbox_root=sandbox_root)
         with cli_output_to_txt(first_input) as output_path:
             # Support Gaussian input (.gjf/.com): auto-convert to single-frame XYZ then run workflow.
             # Converted files are placed under work_dir/_converted_inputs/ to avoid polluting CWD.
             converted_inputs: list[str] = []
             os.makedirs(work_dir, exist_ok=True)
-            conv_dir = os.path.join(work_dir, "_converted_inputs")
+            conv_dir = validate_managed_path(
+                os.path.join(work_dir, "_converted_inputs"),
+                label="_converted_inputs",
+                sandbox_root=sandbox_root,
+            )
             for path in input_files:
                 ext = os.path.splitext(path)[1].lower()
                 if ext not in {".gjf", ".com"}:

@@ -33,6 +33,7 @@ __all__ = [
     "ensure_conformer_cids",
     "ensure_xyz_cids",
     "parse_comment_metadata",
+    "iter_xyz_frames",
     "read_xyz_file",
     "read_xyz_file_safe",
     "write_xyz_file",
@@ -62,6 +63,109 @@ def _raise_xyz_parse_error(filepath: str, line_num: int, message: str) -> None:
     raise ValueError(f"{filepath}: line {line_num}: {message}")
 
 
+def iter_xyz_frames(
+    filepath: str,
+    *,
+    parse_metadata: bool = True,
+    strict: bool = False,
+):
+    """Yield XYZ frames one at a time without reading the whole file into memory."""
+    try:
+        handle = open(filepath, encoding="utf-8")
+    except OSError as e:
+        raise OSError(f"Cannot read XYZ file {filepath}: {e}") from e
+
+    frame_idx = 0
+    line_num = 0
+
+    try:
+        while True:
+            header = handle.readline()
+            if not header:
+                break
+            line_num += 1
+            line = header.strip()
+            if not line:
+                continue
+            if not line.isdigit():
+                if strict:
+                    _raise_xyz_parse_error(filepath, line_num, f"invalid atom-count line: {line!r}")
+                continue
+
+            try:
+                num_atoms = int(line)
+            except ValueError:
+                if strict:
+                    _raise_xyz_parse_error(filepath, line_num, f"cannot parse atom count: {line!r}")
+                continue
+
+            comment_line = handle.readline()
+            if not comment_line:
+                if strict:
+                    _raise_xyz_parse_error(filepath, line_num + 1, "missing comment line")
+                break
+            line_num += 1
+            comment = comment_line.strip()
+
+            atoms: list[str] = []
+            coords: list[list[float]] = []
+            malformed = False
+            for atom_offset in range(num_atoms):
+                atom_line = handle.readline()
+                if not atom_line:
+                    if strict:
+                        _raise_xyz_parse_error(
+                            filepath,
+                            line_num + 1,
+                            f"incomplete frame: declared {num_atoms} atoms but file ended early",
+                        )
+                    malformed = True
+                    break
+                line_num += 1
+                raw = atom_line.strip()
+                parts = raw.split()
+                if len(parts) < 4:
+                    if strict:
+                        _raise_xyz_parse_error(
+                            filepath,
+                            line_num,
+                            f"coordinate line has fewer than 4 columns: {raw!r}",
+                        )
+                    malformed = True
+                    break
+
+                atoms.append(parts[0].upper())
+                try:
+                    x, y, z = float(parts[-3]), float(parts[-2]), float(parts[-1])
+                except (ValueError, IndexError):
+                    if strict:
+                        _raise_xyz_parse_error(
+                            filepath,
+                            line_num,
+                            f"cannot parse coordinates from line: {raw!r}",
+                        )
+                    malformed = True
+                    break
+                coords.append([x, y, z])
+
+            if malformed:
+                continue
+
+            frame = {
+                "natoms": num_atoms,
+                "comment": comment,
+                "atoms": atoms,
+                "coords": coords,
+                "frame_index": frame_idx,
+            }
+            if parse_metadata:
+                frame["metadata"] = parse_comment_metadata(comment)
+            frame_idx += 1
+            yield frame
+    finally:
+        handle.close()
+
+
 def read_xyz_file(
     filepath: str,
     parse_metadata: bool = True,
@@ -89,97 +193,7 @@ def read_xyz_file(
         - ``coords``: coordinate list ``[[x, y, z], ...]``
         - ``metadata``: metadata dict (if *parse_metadata* is True)
     """
-    conformers = []
-
-    try:
-        with open(filepath, encoding="utf-8") as f:
-            lines = f.readlines()
-    except OSError as e:
-        raise OSError(f"Cannot read XYZ file {filepath}: {e}") from e
-
-    i = 0
-    frame_idx = 0
-
-    while i < len(lines):
-        line = lines[i].strip()
-        if not line:
-            i += 1
-            continue
-        if not line.isdigit():
-            if strict:
-                _raise_xyz_parse_error(filepath, i + 1, f"invalid atom-count line: {line!r}")
-            i += 1
-            continue
-
-        try:
-            num_atoms = int(line)
-        except ValueError:
-            if strict:
-                _raise_xyz_parse_error(filepath, i + 1, f"cannot parse atom count: {line!r}")
-            i += 1
-            continue
-
-        if i + 2 + num_atoms > len(lines):
-            if strict:
-                _raise_xyz_parse_error(
-                    filepath,
-                    i + 1,
-                    f"incomplete frame: declared {num_atoms} atoms but file ended early",
-                )
-            break
-
-        comment = lines[i + 1].strip()
-
-        atoms = []
-        coords = []
-        for j in range(num_atoms):
-            atom_line = lines[i + 2 + j].strip()
-            parts = atom_line.split()
-            if len(parts) < 4:
-                if strict:
-                    _raise_xyz_parse_error(
-                        filepath,
-                        i + 3 + j,
-                        f"coordinate line has fewer than 4 columns: {atom_line!r}",
-                    )
-                break
-
-            atoms.append(parts[0].upper())
-            try:
-                # Use last three columns as coordinates (compatible with extra columns)
-                x, y, z = float(parts[-3]), float(parts[-2]), float(parts[-1])
-                coords.append([x, y, z])
-            except (ValueError, IndexError):
-                if strict:
-                    _raise_xyz_parse_error(
-                        filepath,
-                        i + 3 + j,
-                        f"cannot parse coordinates from line: {atom_line!r}",
-                    )
-                break
-
-        if len(coords) == num_atoms:
-            frame = {
-                "natoms": num_atoms,
-                "comment": comment,
-                "atoms": atoms,
-                "coords": coords,
-                "frame_index": frame_idx,
-            }
-
-            if parse_metadata:
-                frame["metadata"] = parse_comment_metadata(comment)
-
-            conformers.append(frame)
-            frame_idx += 1
-        elif strict:
-            _raise_xyz_parse_error(
-                filepath,
-                i + 1,
-                f"frame {frame_idx + 1} is malformed or truncated",
-            )
-
-        i += 2 + num_atoms
+    conformers = list(iter_xyz_frames(filepath, parse_metadata=parse_metadata, strict=strict))
 
     if strict and not conformers:
         raise ValueError(f"{filepath}: no valid XYZ frames found")

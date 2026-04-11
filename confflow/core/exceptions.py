@@ -16,6 +16,8 @@ __all__ = [
     "XYZFormatError",
     "ValidationError",
     "ConfigurationError",
+    "PathSafetyError",
+    "ExecutionPolicyError",
     "CalculationInputError",
     "CalculationExecutionError",
     "CalculationParseError",
@@ -78,6 +80,14 @@ class ConfigurationError(ConfFlowError, ValueError):
         else:
             full_msg = message
         super().__init__(full_msg)
+
+
+class PathSafetyError(ConfFlowError, ValueError):
+    """Raised when a configured path escapes the allowed execution boundary."""
+
+
+class ExecutionPolicyError(ConfFlowError, ValueError):
+    """Raised when an executable setting violates the execution policy."""
 
 
 class CalculationInputError(ConfFlowError, RuntimeError):

@@ -11,6 +11,7 @@ import os
 import re
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from datetime import datetime
+from collections.abc import Iterable
 from typing import Any
 
 from ..core import io as io_xyz
@@ -22,10 +23,22 @@ from .analysis import _bond_length_from_xyz_lines, _parse_ts_bond_atoms
 from .components.executor import _cleanup_lingering_processes
 from .components.task_runner import TaskRunner
 from .db.database import ResultsDB
+from .postprocess import run_refine_postprocess
 from .policies import get_policy
+from .run_services import (
+    ResultAssemblyService,
+    TaskRecoveryService,
+    TaskSourceBuilder,
+    WorkDirService,
+)
 from .resources import ResourceMonitor
 from .result_writer import append_result, format_result_comment, write_failed_xyz
 from .setup import get_itask, parse_iprog, setup_logging
+from .step_contract import (
+    compute_calc_input_signature,
+    prepare_calc_step_dir,
+    record_calc_step_signature,
+)
 from .task_execution import execute_tasks
 
 __all__ = [
@@ -72,7 +85,9 @@ class ChemTaskManager:
 
         self.backup_dir: str | None = None
         self.results_db: ResultsDB | None = None
+        self._results_db_factory = lambda db_path: ResultsDB(db_path)
         self._result_xyz_path: str | None = None
+        self._input_signature_override: str | None = None
         self._job_meta_map: dict[str, dict] = {}
         self.monitor = (
             ResourceMonitor()
@@ -80,28 +95,17 @@ class ChemTaskManager:
             else None
         )
         self.stop_requested = False
+        self._work_dir_service = WorkDirService(self)
 
     def _ensure_work_dir(self):
-        if self._work_dir_initialized:
-            return
-        os.makedirs(self.work_dir, exist_ok=True)
-        setup_logging(self.work_dir)
-
-        backup_dir_cfg = self.config.get("backup_dir")
-        if backup_dir_cfg and str(backup_dir_cfg).strip():
-            self.backup_dir = str(backup_dir_cfg).strip()
-        else:
-            self.backup_dir = os.path.join(self.work_dir, "backups")
-            self.config["backup_dir"] = self.backup_dir
-        os.makedirs(self.backup_dir, exist_ok=True)
-
-        self.config["stop_beacon_file"] = os.path.join(self.work_dir, "STOP")
-        self.results_db = ResultsDB(os.path.join(self.work_dir, "results.db"))
-        self._work_dir_initialized = True
+        self._work_dir_service.ensure_ready()
 
     def _read_single_frame_xyz_coords(self, xyz_path: str) -> list[str] | None:
         """Read the first frame coordinate list (with atom symbols) from an XYZ file."""
-        confs = io_xyz.read_xyz_file_safe(xyz_path, parse_metadata=False)
+        try:
+            confs = io_xyz.read_xyz_file(xyz_path, parse_metadata=False, strict=True)
+        except (OSError, ValueError):
+            return None
         if not confs:
             return None
         conf = confs[0]
@@ -184,7 +188,10 @@ class ChemTaskManager:
 
     def _read_xyz(self, f: str):
         """Read an input trajectory (XYZ), supporting multi-frame files with metadata."""
-        conformers = io_xyz.read_xyz_file_safe(f, parse_metadata=True)
+        try:
+            conformers = io_xyz.read_xyz_file(f, parse_metadata=True, strict=False)
+        except (OSError, ValueError):
+            return []
         return [
             {
                 "title": conf["comment"],
@@ -195,6 +202,30 @@ class ChemTaskManager:
             }
             for conf in conformers
         ]
+
+    def _load_input_geometries(self, filepath: str) -> list[dict[str, Any]]:
+        geoms = self._read_xyz(filepath)
+        if not geoms:
+            raise ValueError(f"no readable XYZ frames found in input: {filepath}")
+        return geoms
+
+    def _iter_input_geometries(self, filepath: str) -> Iterable[dict[str, Any]]:
+        try:
+            streamed = io_xyz.iter_xyz_frames(filepath, parse_metadata=True, strict=False)
+            for conf in streamed:
+                yield {
+                    "title": conf["comment"],
+                    "coords": [
+                        f"{a} {x} {y} {z}" for a, (x, y, z) in zip(conf["atoms"], conf["coords"])
+                    ],
+                    "metadata": conf.get("metadata", {}),
+                }
+            return
+        except (OSError, ValueError):
+            pass
+
+        for geom in self._read_xyz(filepath):
+            yield geom
 
     # ------------------------------------------------------------------
     # Sub-methods split from run()
@@ -219,42 +250,23 @@ class ChemTaskManager:
 
     def _build_task_list(self, geoms: list[dict[str, Any]]) -> list[models.TaskContext]:
         """Build a deduplicated task list from the conformer list."""
-        tasks: list[models.TaskContext] = []
-        used_names: dict[str, int] = {}
-        for i, g in enumerate(geoms):
-            job_name = self._job_name_for_geom(i, g)
-            if job_name in used_names:
-                used_names[job_name] += 1
-                job_name = f"{job_name}_dup{used_names[job_name]}"
-            else:
-                used_names[job_name] = 0
-
-            tasks.append(
-                models.TaskContext(
-                    job_name=job_name,
-                    work_dir=os.path.join(self.work_dir, job_name),
-                    coords=g.get("coords", []),
-                    metadata=g.get("metadata", {}),
-                    config=self.config,
-                )
-            )
+        builder = TaskSourceBuilder(
+            work_dir=self.work_dir,
+            config=self.config,
+            iter_geometries_fn=lambda _path: geoms,
+            job_name_fn=self._job_name_for_geom,
+        )
+        tasks, _ = builder.build_from_input("<in-memory>")
         return tasks
 
     def _filter_pending(self, tasks: list[models.TaskContext]) -> list[models.TaskContext]:
         """Filter completed/recoverable tasks and return the list of pending ones."""
         assert self.results_db is not None
-        todo: list[models.TaskContext] = []
-        for t in tasks:
-            res = self.results_db.get_result_by_job_name(t.job_name)
-            if res and res.get("status") == "success":
-                continue
-            if str(self.config.get("resume_from_backups", "true")).lower() == "true":
-                recovered = self._recover_result_from_backups(t)
-                if recovered and recovered.get("status") == "success":
-                    self.results_db.insert_result(recovered)
-                    continue
-            todo.append(t)
-        return todo
+        return TaskRecoveryService(
+            results_db=self.results_db,
+            config=self.config,
+            recover_result_fn=self._recover_result_from_backups,
+        ).filter_pending(tasks)
 
     def _execute_tasks(self, todo: list[models.TaskContext]) -> None:
         """Dispatch tasks in serial or parallel mode."""
@@ -313,20 +325,17 @@ class ChemTaskManager:
             return
         console.print("  Refine: ", end="")
         try:
-            from ..blocks import refine  # Lazy import, only triggered when called directly via CLI
-
             opts_str = self.config.get("clean_opts", "-t 0.25")
             thresh, ewin, etol = self._parse_clean_opts(opts_str)
             task_cores = int(self.config.get("cores_per_task", 1))
-            clean_args = refine.RefineOptions(
+            run_refine_postprocess(
                 input_file=out_file,
-                output=os.path.join(os.path.dirname(out_file), "output.xyz"),
+                output_file=os.path.join(os.path.dirname(out_file), "output.xyz"),
                 threshold=thresh,
                 ewin=ewin,
                 energy_tolerance=etol,
                 workers=task_cores,
             )
-            refine.process_xyz(clean_args)
         except (ImportError, OSError, TypeError, ValueError, RuntimeError) as e:
             error(f"Refine auto-clean failed: {e}")
 
@@ -398,50 +407,68 @@ class ChemTaskManager:
 
     def run(self, input_xyz_file: str) -> None:
         self._ensure_work_dir()
-        assert self.results_db is not None
-
+        stop_path = os.path.join(self.work_dir, "STOP")
         try:
-            geoms = self._read_xyz(input_xyz_file)
-            tasks = self._build_task_list(geoms)
+            input_signature = self._input_signature_override or compute_calc_input_signature(
+                input_xyz_file
+            )
+            if not os.path.exists(stop_path):
+                prepared = prepare_calc_step_dir(
+                    self.work_dir,
+                    self.config,
+                    input_signature=input_signature,
+                )
+                if prepared.cleaned_stale_artifacts:
+                    logger.warning(
+                        "Discarded stale calc artifacts in %s before starting the run.",
+                        self.work_dir,
+                    )
+                    if self.results_db is not None:
+                        self.results_db.close()
+                    self.results_db = self._results_db_factory(
+                        os.path.join(self.work_dir, "results.db")
+                    )
+                    setup_logging(self.work_dir)
+            record_calc_step_signature(
+                self.work_dir,
+                self.config,
+                input_signature=input_signature,
+            )
+            assert self.results_db is not None
+            task_builder = TaskSourceBuilder(
+                work_dir=self.work_dir,
+                config=self.config,
+                iter_geometries_fn=self._iter_input_geometries,
+                job_name_fn=self._job_name_for_geom,
+            )
+            tasks, self._job_meta_map = task_builder.build_from_input(input_xyz_file)
 
-            # Build metadata map used by _append_result throughout this run
-            self._job_meta_map = {tc.job_name: tc.metadata for tc in tasks}
-
-            # Clear any stale result.xyz so the file reflects only THIS run's results
-            self._result_xyz_path = os.path.join(self.work_dir, "result.xyz")
-            try:
-                os.remove(self._result_xyz_path)
-            except FileNotFoundError:
-                pass
+            assembly = ResultAssemblyService(
+                work_dir=self.work_dir,
+                results_db=self.results_db,
+                job_meta_map=self._job_meta_map,
+                append_result_fn=self._append_result,
+            )
+            self._result_xyz_path = assembly.reset_result_xyz()
 
             todo = self._filter_pending(tasks)
-
-            # Immediately flush already-completed conformers (from DB / backup recovery)
-            todo_names = {t.job_name for t in todo}
-            for tc in tasks:
-                if tc.job_name in todo_names:
-                    continue
-                done_res = self.results_db.get_result_by_job_name(tc.job_name)
-                if done_res:
-                    self._append_result(done_res)
+            assembly.flush_completed_results(tasks, todo)
 
             self._execute_tasks(todo)
 
             if self._handle_stop():
                 return
 
-            all_res = self.results_db.get_all_results()
-            success = [r for r in all_res if r["status"] in ["success", "skipped"]]
-            failed = [r for r in all_res if r.get("status") == "failed"]
+            success_count, failed = assembly.collect_outcomes()
+            assembly.write_failed_xyz(failed, tasks)
 
-            self._write_failed_xyz(failed, tasks)
-
-            if not success:
+            if success_count == 0:
                 return
 
             out_file = self._result_xyz_path
             self._run_auto_clean(out_file)
         finally:
+            self._input_signature_override = None
             try:
                 if self.results_db:
                     self.results_db.close()

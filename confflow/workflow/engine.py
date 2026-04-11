@@ -9,6 +9,12 @@ import time
 from datetime import datetime
 from typing import Any
 
+from ..calc.step_contract import (
+    compute_calc_input_signature,
+    inspect_calc_step_state,
+    prepare_calc_step_dir,
+)
+from ..config.schema import ConfigSchema
 from ..core import io as io_xyz
 from ..core.types import TaskStatus
 from ..core.utils import (
@@ -16,7 +22,7 @@ from ..core.utils import (
     index_to_letter_prefix,
     validate_xyz_file,
 )
-from .config_builder import load_workflow_config
+from .config_builder import build_task_config, load_workflow_config
 from .helpers import count_conformers_any, is_multi_frame_any, resolve_step_output
 from .presenter import (
     emit_final_report_and_lowest,
@@ -118,6 +124,7 @@ def run_workflow(
         original_inputs=original_inputs,
         resume=resume,
         logger=logger,
+        global_config=global_config,
     )
     root_dir = runtime.root_dir
     checkpoint = runtime.checkpoint
@@ -134,16 +141,40 @@ def run_workflow(
         if resume_from_step >= i:
             # If resuming and this step is already completed, update current_input to its output
             step_dir = os.path.join(root_dir, step_dirnames[i])
+            if step.get("type") in ["calc", "task"]:
+                params = step.get("params", {}) or {}
+                task_config = build_task_config(params, global_config, root_dir, steps)
+                ConfigSchema.validate_calc_config(task_config)
+                state = inspect_calc_step_state(
+                    step_dir,
+                    task_config,
+                    input_signature=compute_calc_input_signature(current_input),
+                )
+                if state.is_reusable and state.output_path is not None:
+                    current_input = state.output_path
+                    continue
+                if state.has_resume_state:
+                    prepare_calc_step_dir(
+                        step_dir,
+                        task_config,
+                        input_signature=compute_calc_input_signature(current_input),
+                    )
+                raise RuntimeError(
+                    "Resume failed: calc step "
+                    f"{i + 1} ('{step_dirnames[i]}') is incomplete or stale in {step_dir}. "
+                    "The step directory was cleaned; rerun from this step without relying on the old checkpoint."
+                )
+
             expected_output = resolve_step_output(step_dir, step.get("type"))
             if expected_output is not None and os.path.exists(expected_output):
                 current_input = expected_output
-            else:
-                raise RuntimeError(
-                    "Resume failed: step "
-                    f"{i + 1} ('{step_dirnames[i]}') output not found in {step_dir}. "
-                    "The working directory is incomplete; re-run from this step or remove resume."
-                )
-            continue
+                continue
+
+            raise RuntimeError(
+                "Resume failed: step "
+                f"{i + 1} ('{step_dirnames[i]}') output not found in {step_dir}. "
+                "The working directory is incomplete; re-run from this step or remove resume."
+            )
 
         if not step.get("enabled", True):
             continue
@@ -194,10 +225,14 @@ def run_workflow(
                     step_stats["status"] = TaskStatus.COMPLETED
 
             elif step_type in ["calc", "task"]:
-                expected_clean = os.path.join(step_dir, "output.xyz")
-                expected_raw = os.path.join(step_dir, "result.xyz")
-
-                if os.path.exists(expected_clean) or os.path.exists(expected_raw):
+                task_config = build_task_config(params, global_config, root_dir, steps)
+                ConfigSchema.validate_calc_config(task_config)
+                state = inspect_calc_step_state(
+                    step_dir,
+                    task_config,
+                    input_signature=compute_calc_input_signature(current_input),
+                )
+                if state.is_reusable:
                     step_stats["status"] = TaskStatus.SKIPPED
 
                 current_input = _run_calc_step(

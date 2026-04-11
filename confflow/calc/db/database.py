@@ -169,14 +169,8 @@ class ResultsDB:
         self.conn.commit()
         return row_id
 
-    def get_all_results(self) -> list[dict[str, Any]]:
-        """Retrieve all task results.
-
-        Returns
-        -------
-        list[dict[str, Any]]
-            List of results sorted by task index.
-        """
+    def iter_all_results(self):
+        """Iterate through the latest result row for each job."""
         cursor = self.conn.execute("""
             SELECT tr.*
             FROM task_results tr
@@ -189,7 +183,12 @@ class ResultsDB:
                AND latest.max_task_id = tr.task_id
             ORDER BY tr.task_index, tr.task_id
         """)
-        return [self._row_to_dict(row) for row in cursor]
+        for row in cursor:
+            yield self._row_to_dict(row)
+
+    def get_all_results(self) -> list[dict[str, Any]]:
+        """Retrieve all task results."""
+        return list(self.iter_all_results())
 
     def get_result_by_job_name(self, job_name: str) -> dict[str, Any] | None:
         """Query a result by job name.
@@ -213,6 +212,18 @@ class ResultsDB:
 
     def _row_to_dict(self, row: sqlite3.Row) -> dict[str, Any]:
         """Convert a database row to a dictionary."""
+        final_coords = None
+        raw_coords = row["final_coords"]
+        if raw_coords:
+            try:
+                final_coords = json.loads(raw_coords)
+            except (TypeError, json.JSONDecodeError) as exc:
+                logger.warning(
+                    "Failed to decode final_coords for job %s in %s: %s",
+                    row["job_name"],
+                    self.db_path,
+                    exc,
+                )
         return {
             "index": row["task_index"],
             "job_name": row["job_name"],
@@ -225,7 +236,7 @@ class ResultsDB:
             "g_corr": row["g_corr"],
             "ts_bond_atoms": row["ts_bond_atoms"] if "ts_bond_atoms" in row.keys() else None,
             "ts_bond_length": row["ts_bond_length"] if "ts_bond_length" in row.keys() else None,
-            "final_coords": json.loads(row["final_coords"]) if row["final_coords"] else None,
+            "final_coords": final_coords,
             "error": row["error"],
             "error_kind": row["error_kind"] if "error_kind" in row.keys() else None,
             "error_details": row["error_details"] if "error_details" in row.keys() else None,

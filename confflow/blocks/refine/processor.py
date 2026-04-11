@@ -15,7 +15,9 @@ import numpy as np
 
 from ...core.constants import HARTREE_TO_KCALMOL
 from ...core.contracts import ExitCode, cli_output_to_txt
+from ...core.io import read_xyz_file as read_xyz_frames_strict
 from ._compat import load_console_bindings
+from .result import RefineResult
 
 logger = logging.getLogger("confflow.refine")
 
@@ -35,6 +37,7 @@ from . import rmsd_engine  # noqa: E402
 __all__ = [
     "RefineOptions",
     "read_xyz_file",
+    "RefineResult",
     "process_xyz",
     "main",
 ]
@@ -104,9 +107,7 @@ def read_xyz_file(filepath):
     if not os.path.exists(filepath):
         return []
 
-    from ...core.io import read_xyz_file_safe as io_read_xyz_file_safe
-
-    frames = io_read_xyz_file_safe(filepath, parse_metadata=True)
+    frames = read_xyz_frames_strict(filepath, parse_metadata=True, strict=True)
     out = []
     for frame_idx, fr in enumerate(frames):
         meta = fr.get("metadata", {}) or {}
@@ -243,7 +244,7 @@ def process_xyz(args):
     """
     if not os.path.exists(args.input_file):
         error(f"Input file not found: {args.input_file}")
-        return
+        return RefineResult(False, args.output, 0, "missing_input")
 
     # Simplified output: single-line refine parameter display
     ewin_str = f"{args.ewin} kcal/mol" if args.ewin is not None else "none"
@@ -251,7 +252,9 @@ def process_xyz(args):
 
     all_frames = read_xyz_file(args.input_file)
     if not all_frames:
-        return
+        if os.path.exists(args.output):
+            os.remove(args.output)
+        return RefineResult(False, args.output, 0, "empty_input")
 
     # 1. Topology analysis
     topologies = defaultdict(list)
@@ -272,7 +275,9 @@ def process_xyz(args):
         topologies[h].append(all_frames[i])
 
     if not topologies:
-        return
+        if os.path.exists(args.output):
+            os.remove(args.output)
+        return RefineResult(False, args.output, 0, "no_topology")
 
     # 2. Determine main topology
     main_topo_hash = max(topologies, key=lambda k: len(topologies[k]))
@@ -281,6 +286,14 @@ def process_xyz(args):
     # 3. Filtering (energy / imaginary frequencies)
     if args.imag is not None:
         frames_to_process = [f for f in frames_to_process if f.get("num_imag_freqs") == args.imag]
+
+    # Exit early so downstream energy-window and RMSD logic does not assume
+    # that at least one conformer survived the metadata-based filters.
+    if not frames_to_process:
+        console.print("  No conformers remain after filtering.")
+        if os.path.exists(args.output):
+            os.remove(args.output)
+        return RefineResult(False, args.output, 0, "filtered_to_zero")
 
     if args.ewin is not None and not args.dedup_only:
         min_e = min(f["energy"] for f in frames_to_process)
@@ -304,7 +317,9 @@ def process_xyz(args):
 
     if not final_unique:
         console.print("  No conformers remain after filtering.")
-        return
+        if os.path.exists(args.output):
+            os.remove(args.output)
+        return RefineResult(False, args.output, 0, "deduped_to_zero")
 
     # 5. Statistics and output
     final_unique.sort(key=lambda x: x["energy"])
@@ -316,6 +331,7 @@ def process_xyz(args):
         final_unique = final_unique[: args.max_conformers]
 
     _write_refine_output(args.output, final_unique, global_min)
+    return RefineResult(True, args.output, len(final_unique), "ok")
 
 def main():
     """Command-line entry point."""

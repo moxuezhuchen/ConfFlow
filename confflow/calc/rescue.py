@@ -18,6 +18,7 @@ from typing import Any
 
 from ..core.console import SINGLE_LINE, console, print_kv
 from ..core.keyword_rewrite import make_scan_keyword_from_ts_keyword
+from ..shared.defaults import DEFAULT_TS_BOND_DRIFT_THRESHOLD
 from .analysis import (
     _bond_length_from_xyz_lines,
     _keyword_requests_freq,
@@ -35,11 +36,6 @@ from .scan_ops import (
     _write_ts_failure_report,
 )
 from .setup import get_itask, parse_iprog
-
-try:
-    from ..config.defaults import DEFAULT_TS_BOND_DRIFT_THRESHOLD
-except ImportError:  # pragma: no cover
-    DEFAULT_TS_BOND_DRIFT_THRESHOLD = 0.4
 
 logger = logging.getLogger("confflow.calc.rescue")
 

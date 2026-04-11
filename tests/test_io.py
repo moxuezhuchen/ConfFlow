@@ -34,7 +34,7 @@ class TestIO:
 
     def test_read_xyz_file(self, tmp_path):
         """Test XYZ file reading."""
-        from confflow.core.io import read_xyz_file
+        from confflow.core.io import iter_xyz_frames, read_xyz_file
 
         xyz = tmp_path / "test.xyz"
         xyz.write_text(
@@ -58,6 +58,10 @@ class TestIO:
         assert conformers[0]["metadata"]["E"] == -1.5
         assert conformers[0]["metadata"]["Rank"] == 1.0
         assert conformers[1]["metadata"]["E"] == -1.2
+
+        streamed = list(iter_xyz_frames(str(xyz)))
+        assert len(streamed) == 2
+        assert streamed[1]["comment"] == "E=-1.2 | Rank=2"
 
     def test_read_xyz_file_safe_returns_empty_list_on_supported_errors(self):
         """read_xyz_file_safe should gracefully degrade on parse/read errors."""

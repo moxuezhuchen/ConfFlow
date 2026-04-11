@@ -11,7 +11,7 @@ from datetime import datetime
 from typing import Any
 
 from ..blocks import viz
-from ..config.defaults import (
+from ..shared.defaults import (
     DEFAULT_CORES_PER_TASK,
     DEFAULT_MAX_PARALLEL_JOBS,
     DEFAULT_TOTAL_MEMORY,

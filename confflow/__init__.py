@@ -4,6 +4,9 @@
 
 from __future__ import annotations
 
+import importlib
+import warnings
+
 __version__ = "1.0.10"
 __author__ = "ConfFlow Team"
 
@@ -47,52 +50,55 @@ except ImportError:
         return decorator if not args else args[0]
 
 
-# ============================================================================
-# Core module exports
-# ============================================================================
+_LAZY_EXPORTS: dict[str, tuple[str, str]] = {
+    "main": (".main", "main"),
+    "run_generation": (".blocks.confgen", "run_generation"),
+    "RefineOptions": (".blocks.refine", "RefineOptions"),
+    "RefineResult": (".blocks.refine", "RefineResult"),
+    "process_xyz": (".blocks.refine", "process_xyz"),
+    "parse_xyz_file": (".blocks.viz", "parse_xyz_file"),
+    "ChemTaskManager": (".calc.manager", "ChemTaskManager"),
+    "ConfigSchema": (".config.schema", "ConfigSchema"),
+    "merge_step_params": (".config.schema", "merge_step_params"),
+    "read_xyz_file": (".core.io", "read_xyz_file"),
+    "write_xyz_file": (".core.io", "write_xyz_file"),
+    "parse_comment_metadata": (".core.io", "parse_comment_metadata"),
+    "ConfFlowLogger": (".core.logging", "ConfFlowLogger"),
+    "get_logger": (".core.logging", "get_logger"),
+}
 
-try:
-    from .blocks.confgen import run_generation
-    from .blocks.refine import RefineOptions, process_xyz
-    from .blocks.viz import parse_xyz_file
-    from .calc import ChemTaskManager
-    from .config.schema import ConfigSchema, merge_step_params
-    from .core.io import parse_comment_metadata, read_xyz_file, write_xyz_file
-    from .core.utils import ConfFlowLogger, get_logger
-    from .main import main
+_DEPRECATED_EXPORTS = {
+    "main",
+    "run_generation",
+    "RefineOptions",
+    "RefineResult",
+    "process_xyz",
+    "parse_xyz_file",
+    "ChemTaskManager",
+    "merge_step_params",
+}
 
-    __all__ = [
-        # Workflow entry
-        "main",
-        # Conformer generation
-        "run_generation",
-        # Quantum chemistry computation
-        "ChemTaskManager",
-        # Conformer refinement
-        "RefineOptions",
-        "process_xyz",
-        # Visualization
-        "parse_xyz_file",
-        # Logging
-        "ConfFlowLogger",
-        "get_logger",
-        # I/O
-        "read_xyz_file",
-        "write_xyz_file",
-        "parse_comment_metadata",
-        # Configuration
-        "ConfigSchema",
-        "merge_step_params",
-        # Version
-        "__version__",
-        # Optional dependency availability flags
-        "RDKIT_AVAILABLE",
-        "PSUTIL_AVAILABLE",
-        "NUMBA_AVAILABLE",
-    ]
-except ImportError as e:
-    # Emit an import warning without interrupting package loading.
-    import warnings
+__all__ = [
+    "__version__",
+    "RDKIT_AVAILABLE",
+    "PSUTIL_AVAILABLE",
+    "NUMBA_AVAILABLE",
+    *sorted(_LAZY_EXPORTS),
+]
 
-    warnings.warn(f"ConfFlow module import warning: {e}", stacklevel=2)
-    __all__ = ["__version__", "RDKIT_AVAILABLE", "PSUTIL_AVAILABLE", "NUMBA_AVAILABLE"]
+
+def __getattr__(name: str):
+    export = _LAZY_EXPORTS.get(name)
+    if export is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    module_name, attr_name = export
+    module = importlib.import_module(module_name, package=__name__)
+    value = getattr(module, attr_name)
+    if name in _DEPRECATED_EXPORTS:
+        warnings.warn(
+            f"confflow.{name} is retained for compatibility; import it from its submodule instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+    globals()[name] = value
+    return value

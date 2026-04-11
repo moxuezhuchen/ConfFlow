@@ -7,7 +7,6 @@ from __future__ import annotations
 import os
 from typing import Any
 
-from ...config.defaults import DEFAULT_TS_BOND_DRIFT_THRESHOLD
 from ...core import models
 from ...core.exceptions import (
     CalculationExecutionError,
@@ -15,6 +14,7 @@ from ...core.exceptions import (
     CalculationParseError,
     StopRequestedError,
 )
+from ...shared.defaults import DEFAULT_TS_BOND_DRIFT_THRESHOLD
 from ..analysis import (
     _bond_length_from_xyz_lines,
     _keyword_requests_freq,
@@ -97,7 +97,38 @@ class TaskRunner:
             pass
 
         try:
-            res = executor._run_calculation_step(wd, job, policy, coords, cfg)
+            try:
+                res = executor._run_calculation_step(wd, job, policy, coords, cfg)
+            except StopRequestedError as e:
+                return self._failed_result(task_dict, str(e), "stop_requested")
+            except (CalculationInputError, CalculationExecutionError, CalculationParseError) as e:
+                error_kind = self._classify_error(e)
+                if get_itask(cfg) == 4:
+                    rescued = self._try_rescue(cfg, task_dict, str(e))
+                    if rescued is not None:
+                        return rescued
+                    if is_rescue_enabled(cfg):
+                        error_kind = "rescue_failed"
+                return self._failed_result(
+                    task_dict,
+                    str(e),
+                    error_kind,
+                    error_details=executor._get_error_details(wd, job, cfg, e, policy),
+                )
+            except Exception as e:
+                error_kind = "worker_exception"
+                if get_itask(cfg) == 4:
+                    rescued = self._try_rescue(cfg, task_dict, str(e))
+                    if rescued is not None:
+                        return rescued
+                    if is_rescue_enabled(cfg):
+                        error_kind = "rescue_failed"
+                return self._failed_result(
+                    task_dict,
+                    str(e),
+                    error_kind,
+                    error_details=executor._get_error_details(wd, job, cfg, e, policy),
+                )
 
             final_coords = res.get("final_coords")
             itask = get_itask(cfg)
@@ -220,22 +251,5 @@ class TaskRunner:
             if ts_bond_length is not None:
                 result["ts_bond_length"] = ts_bond_length
             return result
-
-        except Exception as e:
-            error_kind = self._classify_error(e)
-            if error_kind == "stop_requested":
-                return self._failed_result(task_dict, str(e), error_kind)
-            if get_itask(cfg) == 4:
-                rescued = self._try_rescue(cfg, task_dict, str(e))
-                if rescued is not None:
-                    return rescued
-                if is_rescue_enabled(cfg):
-                    error_kind = "rescue_failed"
-            return self._failed_result(
-                task_dict,
-                str(e),
-                error_kind,
-                error_details=executor._get_error_details(wd, job, cfg, e, policy),
-            )
         finally:
             executor.handle_backups(wd, cfg, success, cleanup_work_dir=True)

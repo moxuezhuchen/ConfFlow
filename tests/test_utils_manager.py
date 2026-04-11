@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import os
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -80,6 +81,32 @@ def test_validate_yaml_config_accepts_confgen_bond_overrides():
                     "del_bond": [[3, 4]],
                     "no_rotate": [[2, 3]],
                     "force_rotate": [[2, 3]],
+                },
+            },
+        ],
+    }
+    errors = validate_yaml_config(cfg)
+    assert errors == []
+
+
+def test_validate_yaml_config_accepts_confgen_bond_override_strings():
+    cfg = {
+        "global": {
+            "cores_per_task": 1,
+            "max_parallel_jobs": 1,
+            "gaussian_path": "g16",
+            "orca_path": "orca",
+        },
+        "steps": [
+            {
+                "name": "step_01",
+                "type": "confgen",
+                "params": {
+                    "chains": ["1-2-3-4"],
+                    "add_bond": "1 2",
+                    "del_bond": ["3-4"],
+                    "no_rotate": "2,3",
+                    "force_rotate": ["2 3"],
                 },
             },
         ],
@@ -472,6 +499,10 @@ def test_manager_auto_clean(tmp_path, monkeypatch):
 
     manager = ChemTaskManager(str(settings_file), resume_dir=str(tmp_path / "work"))
     manager._ensure_work_dir()
+    monkeypatch.setattr(
+        "confflow.calc.manager.prepare_calc_step_dir",
+        lambda *args, **kwargs: SimpleNamespace(cleaned_stale_artifacts=False),
+    )
 
     manager.results_db.insert_result(
         {
@@ -488,6 +519,66 @@ def test_manager_auto_clean(tmp_path, monkeypatch):
     manager.run(str(xyz_file))
 
     assert mock_refine.called
+
+
+def test_manager_recreates_results_db_after_stale_cleanup(tmp_path, monkeypatch):
+    xyz_file = tmp_path / "input.xyz"
+    xyz_file.write_text("1\ntest\nH 0.0 0.0 0.0\n", encoding="utf-8")
+
+    manager = ChemTaskManager(settings={"iprog": "orca", "itask": "sp", "keyword": "xTB"})
+    manager.work_dir = str(tmp_path / "work")
+    manager._ensure_work_dir()
+    original_db = tmp_path / "work" / "results.db"
+    assert original_db.exists()
+
+    def fake_prepare(step_dir, config, input_signature=None):
+        original_db.unlink(missing_ok=True)
+        return SimpleNamespace(cleaned_stale_artifacts=True)
+
+    monkeypatch.setattr("confflow.calc.manager.prepare_calc_step_dir", fake_prepare)
+    monkeypatch.setattr(
+        "confflow.calc.manager.record_calc_step_signature",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        "confflow.calc.manager.TaskSourceBuilder.build_from_input",
+        lambda self, input_xyz_file: ([], {}),
+    )
+
+    manager.run(str(xyz_file))
+
+    assert original_db.exists()
+    assert (tmp_path / "work" / "calc.log").exists()
+
+
+def test_manager_run_uses_overridden_input_signature(tmp_path, monkeypatch):
+    xyz_file = tmp_path / "input.xyz"
+    xyz_file.write_text("1\ntest\nH 0.0 0.0 0.0\n", encoding="utf-8")
+
+    manager = ChemTaskManager(settings={"iprog": "orca", "itask": "sp", "keyword": "xTB"})
+    manager.work_dir = str(tmp_path / "work")
+    manager._input_signature_override = "combinedsig"
+
+    seen: list[str | None] = []
+
+    monkeypatch.setattr(
+        "confflow.calc.manager.prepare_calc_step_dir",
+        lambda step_dir, config, input_signature=None: (
+            seen.append(input_signature), SimpleNamespace(cleaned_stale_artifacts=False)
+        )[1],
+    )
+    monkeypatch.setattr(
+        "confflow.calc.manager.record_calc_step_signature",
+        lambda step_dir, config, input_signature=None: seen.append(input_signature),
+    )
+    monkeypatch.setattr(
+        "confflow.calc.manager.TaskSourceBuilder.build_from_input",
+        lambda self, input_xyz_file: ([], {}),
+    )
+
+    manager.run(str(xyz_file))
+
+    assert seen == ["combinedsig", "combinedsig"]
 
 
 def test_manager_recover_orca(tmp_path):
@@ -525,6 +616,23 @@ def test_manager_read_xyz_errors(tmp_path):
     truncated_xyz = tmp_path / "truncated.xyz"
     truncated_xyz.write_text("2\ncomment\nH 0 0 0\n")
     assert manager._read_xyz(str(truncated_xyz)) == []
+
+
+def test_manager_iter_input_geometries_skips_bad_frame_and_keeps_later_valid(tmp_path):
+    xyz = tmp_path / "mixed.xyz"
+    xyz.write_text(
+        "1\nok1\nH 0 0 0\n"
+        "1\nbad\nH nope 0 0\n"
+        "1\nok2\nH 0 0 1\n",
+        encoding="utf-8",
+    )
+
+    manager = ChemTaskManager("")
+    geoms = list(manager._iter_input_geometries(str(xyz)))
+
+    assert len(geoms) == 2
+    assert geoms[0]["title"] == "ok1"
+    assert geoms[1]["title"] == "ok2"
 
 
 # =============================================================================
@@ -673,6 +781,9 @@ def test_calc_manager_failed_output_and_auto_clean_parse_errors(tmp_path):
                 },
             ]
 
+        def close(self):
+            pass
+
     with (
         patch("confflow.calc.manager.ResultsDB", FakeResultsDB),
         patch.object(ChemTaskManager, "_read_xyz", return_value=geoms),
@@ -713,6 +824,9 @@ def test_calc_manager_executor_path_inserts_results(tmp_path):
 
         def get_all_results(self):
             return list(self.inserted)
+
+        def close(self):
+            pass
 
     class _Fut:
         def __init__(self, result):

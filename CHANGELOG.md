@@ -2,19 +2,57 @@
 
 ## Unreleased
 
+### 架构审查收尾
+
+- `pyproject.toml`
+  - 移除未使用运行时依赖 `jinja2`
+  - 移除未落地的 `viz` optional extra
+- `core/types.py` / `shared/config_validation.py` / `config/schema.py` / `core/utils.py`
+  - `TypedDict` 切换到标准库 `typing.TypedDict`
+  - YAML 结构校验抽到 `shared/config_validation.py`
+  - `core.utils` 不再反向依赖 `config.schema`
+- `core/chem_validation.py` / `workflow/validation.py`
+  - 柔性链校验走稳定的中立服务边界，避免 workflow 直接耦合 `blocks.confgen`
+- `calc/step_contract.py` / `calc/run_services.py` / `calc/postprocess.py` / `core/path_policy.py`
+  - 固化 calc step 工件合同、输入签名与恢复语义
+  - 将 `ChemTaskManager` 的工作目录准备、任务来源、恢复过滤、结果装配拆为内部服务
+  - 统一 calc 后处理适配与路径/可执行文件安全策略
+- `blocks/confgen/generator.py` / `blocks/refine/rmsd_engine.py` / `calc/db/database.py`
+  - `confgen` 改为边生成边写 `search.xyz`
+  - `refine` 去重不再 `list(executor.map(...))` 全量物化
+  - `results.db` 提供迭代读取并对损坏 `final_coords` 做降级处理
+- 文档
+  - 删除 `docs/ARCHITECTURE_REVIEW_2026-04-10.md`
+  - README / ARCHITECTURE / USAGE 同步到当前实现基线
+
 ### 工作流与统计修复
 
 - `workflow/helpers.py` / `workflow/engine.py` / `workflow/step_handlers.py`
   - 按步骤类型收紧标准产物解析：`confgen` 只识别 `search.xyz`，`calc` 只识别 `output.xyz` / `result.xyz`
   - resume 复用同一套工件判定逻辑，避免把 `search.xyz` 误当成 calc 已完成输出
+- `calc/components/executor.py` / `workflow/engine.py` / `workflow/step_handlers.py`
+  - calc step 的复用条件从“目录里有输出文件”升级为“输出文件存在且 `.config_hash` 与当前任务配置一致”
+  - 配置不匹配或缺少哈希时，会丢弃旧的 step 局部工件并重新计算，避免 resume 误复用过期结果
 - `workflow/stats.py`
   - `TaskStatsCollector` 优先按每个 `job_name` 的最新记录统计 `results.db` 状态
   - step footer / `workflow_stats.json` 与 `ResultsDB.get_all_results()` 的最新结果视图保持一致
 
+### 输入解析与后处理修复
+
+- `core/gaussian_input.py`
+  - 解析 Gaussian 输入时，优先识别“后面紧跟坐标块”的电荷/多重度行，避免把纯数字标题行误判为 `charge multiplicity`
+- `blocks/refine/processor.py`
+  - `--imag` 过滤后若构象数已归零，会在能量窗口/RMSD 之前直接给出提示并安全返回
+- `blocks/confgen/generator.py`
+  - `search.xyz` 现保留每个输入构象自己的原子符号顺序，不再强制回写为参考分子的元素顺序
+- `config/schema.py` / `workflow/validation.py`
+  - `add_bond` / `del_bond` / `no_rotate` / `force_rotate` 支持字符串形式的键定义校验
+  - 工作流多输入一致性校验同时接受 `chain` 与 `chains` 两种 YAML 写法
+
 ### 文档同步
 
-- README、ARCHITECTURE、TESTING、DEVELOPMENT、ASSESSMENT 已更新到当前基线
-- 当前本地验证结果：41 个测试文件、630 个测试、branch coverage 90.74%
+- README、USAGE、ARCHITECTURE、TESTING、DEVELOPMENT、ASSESSMENT 已更新到当前基线
+- 当前本地验证结果：49 个测试文件、673 个测试、`pytest -q` 全绿
 
 ## v1.0.10 (2026-02-28)
 

@@ -40,8 +40,8 @@ confflow a.xyz b.xyz -c confflow.yaml
 
 约束：多文件输入模式要求每个输入为单帧 XYZ。
 
-- 未指定 `chains`：要求所有输入具有相同的原子数与元素顺序。
-- 指定 `chains`：允许原子顺序不同，但要求原子数一致且元素计数一致；柔性链将基于拓扑映射自动对齐。
+- 未指定 `chains` / `chain`：要求所有输入具有相同的原子数与元素顺序。
+- 指定 `chains` 或 `chain`：允许原子顺序不同，但要求原子数一致且元素计数一致；柔性链将基于拓扑映射自动对齐。
 
 ### 3.2 参数说明
 
@@ -59,9 +59,19 @@ confflow a.xyz b.xyz -c confflow.yaml
 
 统一返回码：`0` 成功，`1` 输入/配置/用法错误，`2` 运行时失败。
 
+若要限制运行边界，可在 YAML `global` 中加入：
+
+```yaml
+global:
+  sandbox_root: "/scratch/confjobs"
+  allowed_executables: ["g16", "/opt/orca/orca"]
+```
+
+其中 `sandbox_root` 会限制 `work_dir`、`backup_dir`、`input_chk_dir`，`allowed_executables` 会限制 `gaussian_path` / `orca_path` 只能命中白名单中的单个可执行目标。
+
 ### 3.3 柔性链一致性与自动映射
 
-当 `confgen` 使用 `chains` 时，系统会在第一个输入文件上校验链定义：
+当 `confgen` 使用 `chains`（或兼容别名 `chain`）时，系统会在第一个输入文件上校验链定义：
 
 - 链上相邻原子必须有键连接（否则报错，并提示使用 `--add_bond` 或调整 `bond_threshold`）。
 - 多输入情况下，后续输入会通过拓扑 MCS 映射自动识别对应柔性链，即便原子序号不同也可匹配。
@@ -73,6 +83,8 @@ confflow a.xyz b.xyz -c confflow.yaml
 - `<input>.txt`：运行日志 + FINAL REPORT（统一主输出）
 - `<input>min.xyz`：最低能量构象（单帧 XYZ）
 - 最后一步输出多帧 XYZ：通常为 `step_xx/output.xyz`（若未生成 cleaned 则为 `step_xx/result.xyz`）
+
+`confgen` 现在会边生成边写 `search.xyz`，结束后再原子替换目标文件；中途失败时不会留下半帧损坏文件。
 
 其余如 `.checkpoint`、`workflow_stats.json`、`results.db`、`confflow.log` 属于过程/诊断工件，不作为主交付物。
 
@@ -89,6 +101,8 @@ confflow a.xyz b.xyz -c confflow.yaml
 - `step_xx/output.xyz`：该步后处理（refine）输出（若开启 `auto_clean`）
 - `step_xx/result.xyz`：未精炼的原始输出（若未生成 cleaned 则以此为准）
 - `step_xx/failed.xyz`：该步失败构象集合（始终使用输入结构坐标），注释行包含 `Job/CID/Error`
+- `step_xx/.config_hash`：当前 calc 任务配置摘要；`--resume` 只有在它与现配置一致时才会复用该步输出
+- `.config_hash` 同时绑定本步输入签名；上游输入变化时会自动触发重算
 
 在 `_work/failed` 目录下会聚合所有步骤的失败信息：
 
@@ -199,6 +213,8 @@ confgen mol.xyz --chain 1-2-3-4-5 --angles "0,120,240;0,60,120,180;180;0,120" -y
 
 输出：当前目录生成 `search.xyz`（多帧 XYZ）。
 
+补充说明：多输入链模式下，`search.xyz` 会保留每个输入构象原始的原子顺序，不会被参考输入的元素顺序覆盖。
+
 ## 5. confrefine：构象后处理
 
 ### 5.1 命令格式
@@ -210,6 +226,7 @@ confrefine <input.xyz> [-o <output.xyz>] [-t <rmsd>] [--ewin <kcal/mol>] [--imag
 ### 5.2 输出
 
 - 默认输出为 `<input>_cleaned.xyz`，或由 `-o` 指定。
+- 若 `--imag` 或 `--ewin` 过滤后没有剩余构象，程序会提示 `No conformers remain after filtering.` 并直接结束，不再进入 RMSD 去重。
 
 ## 6. confcalc：量化计算执行器
 

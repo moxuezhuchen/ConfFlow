@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import logging
 import os
+from concurrent.futures.process import BrokenProcessPool
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from typing import Any, Callable
 
@@ -17,6 +18,15 @@ logger = logging.getLogger("confflow.calc.manager")
 __all__ = [
     "execute_tasks",
 ]
+
+
+def _classify_future_exception(exc: Exception) -> str:
+    if isinstance(exc, BrokenProcessPool):
+        return "broken_process_pool"
+    msg = str(exc).lower()
+    if any(token in msg for token in ("pickle", "serialize", "serializ", "deserializ")):
+        return "serialization_error"
+    return "worker_exception"
 
 
 def _future_done(fut: Any) -> bool:
@@ -113,6 +123,7 @@ def execute_tasks(
                     res = fut.result()
                 except Exception as e:  # noqa: BLE001 – includes BrokenProcessPool
                     task = futures[fut]
+                    error_kind = _classify_future_exception(e)
                     logger.warning(
                         "Task %s raised an unexpected exception: %s",
                         task.job_name,
@@ -122,7 +133,7 @@ def execute_tasks(
                         "job_name": task.job_name,
                         "status": "failed",
                         "error": str(e),
-                        "error_kind": "worker_exception",
+                        "error_kind": error_kind,
                         "final_coords": None,
                     }
                     results_db.insert_result(failed_result)

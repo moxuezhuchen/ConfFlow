@@ -66,6 +66,13 @@ class TestConfflowPackage:
         assert hasattr(confflow, "read_xyz_file")
         assert hasattr(confflow, "ConfigSchema")
 
+    def test_confflow___all___retains_public_exports(self):
+        import confflow
+
+        assert "ChemTaskManager" in confflow.__all__
+        assert "run_generation" in confflow.__all__
+        assert "read_xyz_file" in confflow.__all__
+
     def test_main_entrypoint_callable(self):
         main_mod = importlib.import_module("confflow.main")
         assert callable(main_mod.main)

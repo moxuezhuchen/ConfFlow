@@ -12,6 +12,8 @@ confflow/
 │   ├── __init__.py
 │   ├── utils.py              # 统一的工具函数、异常类、日志系统
 │   ├── io.py                 # XYZ I/O 门面与读写入口
+│   ├── chem_validation.py    # 中立化学结构/柔性链校验服务
+│   ├── path_policy.py        # 路径/可执行文件安全策略
 │   ├── xyz_metadata.py       # XYZ 注释元数据与 CID 处理
 │   ├── gaussian_input.py     # Gaussian 输入与坐标解析
 │   ├── data.py               # 共价半径、元素符号等化学数据
@@ -33,6 +35,12 @@ confflow/
 │   ├── schema.py             # 配置架构定义与验证
 │   └── defaults.py           # 默认配置值
 │
+├── shared/                    # 轻量共享层（稳定常量/格式化/结构校验）
+│   ├── __init__.py
+│   ├── defaults.py           # 与 config 解耦的默认常量
+│   ├── orca_blocks.py        # ORCA blocks 格式化
+│   └── config_validation.py  # YAML 结构校验
+│
 ├── blocks/                    # 业务逻辑层（具体功能模块）
 │   ├── confgen/              # 构象生成模块
 │   │   ├── __init__.py
@@ -50,8 +58,11 @@ confflow/
 ├── calc/                      # 量子化学计算子系统
 │   ├── __init__.py           # 兼容层导出
 │   ├── manager.py            # 任务管理器（ChemTaskManager）
+│   ├── run_services.py       # WorkDir / TaskSource / Recovery / ResultAssembly 服务
 │   ├── setup.py              # 计算模块初始化
 │   ├── analysis.py           # 计算分析工具函数
+│   ├── step_contract.py      # calc step 工件合同与签名
+│   ├── postprocess.py        # calc -> refine 共享后处理适配器
 │   ├── constants.py          # 程序常量（路径、参数等）
 │   ├── geometry.py           # 几何解析（parse_last_geometry, check_termination）
 │   ├── resources.py          # 资源监控（CPU、内存）
@@ -89,7 +100,7 @@ confflow/
 ├── cli.py                     # CLI 参数解析
 ├── main.py                    # 工作流主程序入口
 ├── confts.py                  # TS 专用执行器与 keyword 改写工具
-└── __init__.py               # 包导出与依赖管理
+└── __init__.py               # 轻量包入口与兼容懒导出
 
 docs/                          # 文档
 ├── ARCHITECTURE.md           # 本文档（项目架构说明）
@@ -100,7 +111,7 @@ docs/                          # 文档
 ├── STYLE_CONTRACT.md         # 代码/输入/输出一致性标准
 └── DEVELOPMENT.md            # 开发指南
 
-tests/                         # 测试套件（41 个文件，660 个测试）
+tests/                         # 测试套件（49 个文件，673 个测试）
 ├── conftest.py               # 共享 fixtures
 ├── _helpers.py               # 共享 fake 对象与工具函数
 ├── test_core.py              # 配置、包导出、低能量溯源
@@ -136,12 +147,12 @@ LICENSE                        # MIT 许可证
 - **`utils.py`**：
   - 基础异常与输入校验（`ConfFlowError`, `InputFileError`, `XYZFormatError` 等）
   - 日志系统（`ConfFlowLogger`, `get_logger()`）
-  - 输入验证（XYZ、YAML）
+  - 输入验证（XYZ）
   - 工具函数（内存解析、iprog/itask 解析、freeze 索引范围解析）
 
 - **`io.py`**：
   - 统一的 XYZ 文件读写入口
-  - 对外保持兼容 API，内部转发到更小的解析子模块
+  - 提供 `iter_xyz_frames()` 流式读取接口，避免大轨迹全量装载
 
 - **`xyz_metadata.py` / `gaussian_input.py`**：
   - 分离 XYZ 注释/CID 规则与 Gaussian 坐标解析
@@ -151,13 +162,16 @@ LICENSE                        # MIT 许可证
   - 枚举类型（`TaskType`, `ProgType` 等）
   - 常量定义
 
-### 2. `config/` - 配置层
+### 2. `config/` 与 `shared/` - 配置层与轻量共享层
 
-**职责**：处理工作流的所有配置（YAML 工作流配置和 INI 计算配置）。
+**职责**：处理工作流配置，并把稳定常量/格式化/结构校验从 `config` 中抽离出去，避免 `core -> config` 反向依赖。
 
 - **`loader.py`**：加载并解析 YAML/INI 文件
 - **`schema.py`**：配置架构定义、验证与合并
-- **`defaults.py`**：全局默认值
+- **`defaults.py`**：兼容层默认值导出
+- **`shared/defaults.py`**：真实默认常量来源
+- **`shared/config_validation.py`**：YAML 结构校验
+- **`shared/orca_blocks.py`**：ORCA blocks 渲染
 
 ### 3. `blocks/` - 业务逻辑层
 
@@ -190,10 +204,14 @@ LICENSE                        # MIT 许可证
 **设计**：使用**策略模式** (Policy Pattern) 区分不同程序（Gaussian/ORCA）的实现细节。
 
 - **`manager.py`** - `ChemTaskManager`：
-  - 任务队列管理
-  - 并行执行与资源调度
-  - 结果数据库管理
-  - 断点恢复
+  - 仅保留 calc run 编排与生命周期控制
+  - 通过内部服务组合完成工作目录准备、任务来源构建、恢复过滤与结果装配
+
+- **`run_services.py`**：
+  - `WorkDirService`：`work_dir` / `backup_dir` / `results.db` 初始化
+  - `TaskSourceBuilder`：流式读取 XYZ 并构建 `TaskContext`
+  - `TaskRecoveryService`：`results.db` / `backups` 恢复与 pending 过滤
+  - `ResultAssemblyService`：`result.xyz` / `failed.xyz` 聚合与收尾
 
 - **`policies/`** - 程序专用实现：
   - `base.py`：抽象基类 `CalculationPolicy`
@@ -209,6 +227,7 @@ LICENSE                        # MIT 许可证
 - **`db/`** - 结果数据库：
   - `database.py`：SQLite 数据库管理
   - 存储：任务 ID、状态、能量、虚频、错误信息等
+  - 提供 `iter_all_results()`，避免一次性反序列化全部结果
 
 - **其他**：
   - `core.py`：任务类型和程序类型的解析函数
@@ -240,6 +259,7 @@ LICENSE                        # MIT 许可证
 - **`engine.py`**：
   - 入口 `run_workflow()` 负责 prepare / execute / finalize 三段主流程
   - resume 时复用 `resolve_step_output()` 按 step type 校验标准工件，避免把 `search.xyz` 误当成 calc 完成输出
+  - 对 `calc/task` 额外结合 `.config_hash` 校验配置是否变化，防止 resume 复用过期结果
   - 明确 step type 合同（`confgen/gen/calc/task`）并做早期校验
 
 - **`runtime_context.py`**：
@@ -248,6 +268,7 @@ LICENSE                        # MIT 许可证
 
 - **`step_handlers.py`**：
   - `run_confgen_step` / `run_calc_step` 的执行适配层
+  - calc 输出复用前会通过 `calc.step_contract` 检查标准产物、配置签名与输入签名
   - 对接 `confgen`、`ChemTaskManager` 与失败聚合逻辑
 
 - **`presenter.py`**：
@@ -261,6 +282,7 @@ LICENSE                        # MIT 许可证
 
 - **`validation.py`**：
   - `validate_inputs_compatible`：多输入兼容性校验
+  - `chain` / `chains` 两种配置键都会触发柔性链映射模式
   - 支持 `force_consistency=true` 的“警告并继续”分支
 
 - **`config_builder.py`**：
@@ -311,17 +333,12 @@ class OrcaPolicy(CalculationPolicy):
 
 - **分层**：core → config → blocks/calc → workflow
 - **单一职责**：每个模块只处理一个功能域
-- **依赖明确**：高层依赖低层，不存在循环依赖
+- **依赖明确**：`shared` 承担轻量公共边界，`core` 不再反向依赖 `config.schema`
 
 ### 3. 兼容性设计
 
-- **`confflow/calc/__init__.py`** 提供导出兼容层，确保旧代码仍可用：
-  ```python
-  from .db.database import ResultsDB
-  from .manager import ChemTaskManager
-  # ...
-  __all__ = [...]
-  ```
+- 顶层 `confflow.__init__` 与 `confflow.calc.__init__` 仍保留兼容懒导出
+- 仓库内部代码应直接从真实子模块导入，避免重新扩大包初始化耦合
 
 ## 工作流执行流程
 
@@ -466,6 +483,7 @@ confflow/__init__.py (包入口)
 - 记录已完成的步骤和构象处理状态
 - 使用 `--resume` 标志从中断点恢复
 - resume 会按步骤类型验证标准产物：`confgen` 只接受 `search.xyz`，`calc` 只接受 `output.xyz` / `result.xyz`
+- `calc` resume 还要求 `.config_hash` 与当前任务配置一致；不一致时会丢弃该 step 的旧局部工件并重跑
 - 若工作目录缺少对应工件，会直接报错而不是沿用错误输入继续运行
 
 ### 2. 并行执行
@@ -498,6 +516,7 @@ confflow/__init__.py (包入口)
 - `results.db`：SQLite 结果库（持久化每个 `job_name` 的运行结果；读取/统计时默认使用最新记录视图）
 - `result.xyz` / `output.xyz`：成功构象输出（是否 cleaned 取决于 auto_clean/refine）
 - `failed.xyz`：失败构象集合（输入结构坐标，注释行包含失败原因），便于重算与排障
+- `.config_hash`：calc 任务配置摘要，用于 resume 判断现有工件是否仍可复用
 
 > **v1.0.5 变更**：计算任务直接在 `step_xx/` 目录运行，不再创建 `step_xx/work/` 子目录。
 

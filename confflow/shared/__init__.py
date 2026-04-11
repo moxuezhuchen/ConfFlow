@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 
-"""Backward-compatible re-export of shared defaults."""
+"""Shared, dependency-light helpers used across package boundaries."""
 
 from __future__ import annotations
 
-from ..shared.defaults import (
+from .defaults import (
     BOLTZMANN_ENERGY_CUTOFF,
     DEFAULT_CHARGE,
     DEFAULT_CORES_PER_TASK,
@@ -23,6 +23,7 @@ from ..shared.defaults import (
     DEFAULT_TS_RESCUE_SCAN,
     DEFAULT_TS_RMSD_THRESHOLD,
 )
+from .orca_blocks import format_orca_blocks
 
 __all__ = [
     "DEFAULT_CORES_PER_TASK",
@@ -42,4 +43,5 @@ __all__ = [
     "DEFAULT_STOP_CHECK_INTERVAL_SECONDS",
     "DEFAULT_FORCE_CONSISTENCY",
     "BOLTZMANN_ENERGY_CUTOFF",
+    "format_orca_blocks",
 ]

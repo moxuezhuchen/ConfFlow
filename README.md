@@ -31,19 +31,24 @@ pip install -e ".[dev]"
 
 项目已统一为 `pyproject.toml` 构建（PEP 621），不再使用 `setup.py`。
 
-## 工程化改进（2026-03）
+## 工程化改进（2026-04）
 
 - ✅ 统一构建与依赖管理：仅保留 `pyproject.toml`
+- ✅ 依赖清单收敛：移除未使用的 `jinja2` 与空置 `viz` extra
 - ✅ 引入 `Pydantic v2`：核心上下文模型集中在 `confflow/core/models.py`（含 `GlobalConfigModel`、`CalcConfigModel`）
 - ✅ 清理重复 I/O：统一复用 `confflow/core/io.py`
+- ✅ XYZ 流式处理：新增 `iter_xyz_frames()`，`confgen` 改为边生成边写 `search.xyz`
 - ✅ 进程终止增强：`cli` 使用 `psutil` 进行进程树回收
-- ✅ 测试架构重构：41 个测试文件、**660 个测试**、`pytest -q` 约 6s
+- ✅ 架构边界收口：新增 calc step contract、路径策略、后处理适配器、内部 run services
+- ✅ 测试架构重构：49 个测试文件、**673 个测试**、`pytest -q` 约 8s
 - ✅ 覆盖率：branch coverage **90.72%**（`fail_under = 85`）
-- ✅ 类型安全：当前基线为 `mypy confflow`、`ruff check .`、`pytest`（最近一次本地复核：2026-04-03）
+- ✅ 类型安全：`core/types.py` 改为标准库 `typing.TypedDict`
+- ✅ 类型安全：当前基线为 `mypy confflow`、`ruff check .`、`pytest`（最近一次本地复核：2026-04-11）
 - ✅ 支持矩阵明确：CI 现验证 Python **3.9-3.13**
 - ✅ 异常精确化：`scan_ops`/`executor`/`generator` 中 8 处 `except Exception` 收窄为具体异常
 - ✅ 构象去重精度提升：对称性感知 RMSD + 能量辅助阈值，解决大分子原子乱序/对称互换导致的去重漏判
 - ✅ 工作流工件契约收紧：`calc`/`resume` 仅接受 `output.xyz` / `result.xyz` 作为已完成输出，避免误把 `search.xyz` 当成计算结果
+- ✅ calc 断点复用更安全：仅当 step 目录中的 `.config_hash` 与当前任务配置一致时才复用旧结果，配置变化会自动重算
 - ✅ 状态统计与结果视图一致：`results.db` 按每个 `job_name` 的最新记录聚合 step 失败数与汇总统计
 
 ## 目录清理
@@ -93,6 +98,8 @@ global:
   gaussian_path: "/opt/g16/g16"
   cores_per_task: 4
   total_memory: "16GB"
+  sandbox_root: "/scratch/confjobs"
+  allowed_executables: ["g16", "/opt/orca/orca"]
   charge: 0
   multiplicity: 1
 
@@ -142,7 +149,11 @@ A: 优先看对应 step 的两类信息：
 
 **Q: 断点续传如何工作？**
 
-A: 再次运行相同命令会自动跳过已成功的任务。如果 `results.db` 丢失但 `backups/` 存在，也会尝试从备份恢复。恢复时会按 step 类型检查标准产物：`confgen` 只接受 `search.xyz`，`calc` 只接受 `output.xyz` / `result.xyz`；工作目录不完整会直接报错，避免误用错误工件继续运行。
+A: 再次运行相同命令会自动跳过已成功的任务。如果 `results.db` 丢失但 `backups/` 存在，也会尝试从备份恢复。恢复时会按 step 类型检查标准产物：`confgen` 只接受 `search.xyz`，`calc` 只接受 `output.xyz` / `result.xyz`；对 `calc` 还会校验 step 目录中的 `.config_hash` 是否与当前任务配置一致，不一致时会清理该 step 的旧工件并重新计算。工作目录不完整会直接报错，避免误用错误工件继续运行。
+
+**Q: 如何限制工作目录和外部程序路径？**
+
+A: 在 YAML `global` 中设置 `sandbox_root` 和 `allowed_executables`。前者限制 `work_dir`、`backup_dir`、`input_chk_dir` 必须位于指定根目录下，后者限制 `gaussian_path` / `orca_path` 只能命中白名单中的单个可执行目标。未配置时仍会执行基础安全校验，拒绝明显危险的删除目标和带参数的可执行字符串。
 
 **Q: TS 任务失败后如何救援？**
 

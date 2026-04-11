@@ -7,6 +7,7 @@ import pytest
 
 from confflow import calc
 from confflow.calc.components import executor
+from confflow.calc.step_contract import compute_calc_input_signature, record_calc_step_signature
 from confflow.calc.policies.gaussian import GaussianPolicy
 from confflow.calc.policies.orca import OrcaPolicy
 
@@ -206,6 +207,11 @@ def test_chem_task_manager_skip_existing(tmp_path, monkeypatch):
     manager = calc.ChemTaskManager(settings_file=None)
     manager.work_dir = str(work_dir)
     manager.config.update({"iprog": "orca", "itask": "sp", "auto_clean": "false"})
+    record_calc_step_signature(
+        str(work_dir),
+        manager.config,
+        input_signature=compute_calc_input_signature(str(xyz)),
+    )
 
     # Mock run_single_task to fail if called
     def error_run(*args, **kwargs):

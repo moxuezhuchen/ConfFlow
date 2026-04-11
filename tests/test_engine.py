@@ -12,12 +12,16 @@ import pytest
 
 import confflow.blocks.confgen as confgen
 import confflow.blocks.viz as viz
+from confflow.calc.components.executor import _save_config_hash
+from confflow.calc.step_contract import compute_calc_input_signature, record_calc_step_signature
+from confflow.config.schema import ConfigSchema
 from confflow.core.exceptions import XYZFormatError
 from confflow.core.pairs import normalize_pair_list
 from confflow.workflow.config_builder import (
     build_step_dir_name_map,
     build_task_config,
     create_runtask_config,
+    load_workflow_config,
 )
 from confflow.workflow.engine import count_conformers_any, run_workflow, validate_inputs_compatible
 from confflow.workflow.helpers import as_list, count_conformers_in_xyz, resolve_step_output
@@ -675,8 +679,20 @@ def test_workflow_engine_resume_logic(tmp_path):
 
     config_file = root / "config.yaml"
     config_file.write_text(
-        "global:\n  iprog: gaussian\n  itask: opt\n  keyword: opt\n"
-        "steps:\n  - type: calc\n    name: step1\n  - type: calc\n    name: step2\n"
+        "global: {}\n"
+        "steps:\n"
+        "  - type: calc\n"
+        "    name: step1\n"
+        "    params:\n"
+        "      iprog: gaussian\n"
+        "      itask: opt\n"
+        "      keyword: opt\n"
+        "  - type: calc\n"
+        "    name: step2\n"
+        "    params:\n"
+        "      iprog: gaussian\n"
+        "      itask: opt\n"
+        "      keyword: opt\n"
     )
 
     checkpoint = root / ".checkpoint"
@@ -696,6 +712,31 @@ def test_workflow_engine_resume_logic(tmp_path):
     step2_dir = root / "step2"
     step2_dir.mkdir()
     (step2_dir / "output.xyz").write_text("1\nCID=A000001\nC 0 0 0\n", encoding="utf-8")
+    cfg_data = load_workflow_config(str(config_file))
+    cfg1 = build_task_config(
+        cfg_data["steps"][0]["params"],
+        cfg_data["global"],
+        root_dir=str(root),
+        all_steps=cfg_data["steps"],
+    )
+    ConfigSchema.validate_calc_config(cfg1)
+    record_calc_step_signature(
+        str(step1_dir),
+        cfg1,
+        input_signature=compute_calc_input_signature(str(input_xyz)),
+    )
+    cfg = build_task_config(
+        cfg_data["steps"][1]["params"],
+        cfg_data["global"],
+        root_dir=str(root),
+        all_steps=cfg_data["steps"],
+    )
+    ConfigSchema.validate_calc_config(cfg)
+    record_calc_step_signature(
+        str(step2_dir),
+        cfg,
+        input_signature=compute_calc_input_signature(str(step1_dir / "output.xyz")),
+    )
 
     res = run_workflow([str(input_xyz)], str(config_file), work_dir=str(root), resume=True)
     assert len(res["steps"]) == 1
@@ -779,13 +820,32 @@ def test_workflow_engine_calc_resume(tmp_path):
 
     config_file = root / "config.yaml"
     config_file.write_text(
-        "global:\n  iprog: gaussian\n  itask: opt\n  keyword: opt\n"
-        "steps:\n  - type: calc\n    name: step1\n"
+        "global: {}\n"
+        "steps:\n"
+        "  - type: calc\n"
+        "    name: step1\n"
+        "    params:\n"
+        "      iprog: gaussian\n"
+        "      itask: opt\n"
+        "      keyword: opt\n"
     )
 
     step_dir = root / "step1"
     step_dir.mkdir()
     (step_dir / "output.xyz").write_text("1\nCID=A000001\nC 0 0 0\n")
+    cfg_data = load_workflow_config(str(config_file))
+    cfg = build_task_config(
+        cfg_data["steps"][0]["params"],
+        cfg_data["global"],
+        root_dir=str(root),
+        all_steps=cfg_data["steps"],
+    )
+    ConfigSchema.validate_calc_config(cfg)
+    record_calc_step_signature(
+        str(step_dir),
+        cfg,
+        input_signature=compute_calc_input_signature(str(input_xyz)),
+    )
 
     res = run_workflow([str(input_xyz)], str(config_file), work_dir=str(root))
     assert res["steps"][0]["status"] == "skipped"
@@ -856,13 +916,32 @@ def test_workflow_engine_low_energy_trace_full(tmp_path):
 
     config_file = root / "config.yaml"
     config_file.write_text(
-        "global:\n  iprog: gaussian\n  itask: opt\n  keyword: opt\n"
-        "steps:\n  - type: calc\n    name: step1\n"
+        "global: {}\n"
+        "steps:\n"
+        "  - type: calc\n"
+        "    name: step1\n"
+        "    params:\n"
+        "      iprog: gaussian\n"
+        "      itask: opt\n"
+        "      keyword: opt\n"
     )
 
     step1_dir = root / "step1"
     step1_dir.mkdir()
     (step1_dir / "output.xyz").write_text("1\nCID=A000001 Energy=-100.0\nC 0 0 0\n")
+    cfg_data = load_workflow_config(str(config_file))
+    cfg = build_task_config(
+        cfg_data["steps"][0]["params"],
+        cfg_data["global"],
+        root_dir=str(root),
+        all_steps=cfg_data["steps"],
+    )
+    ConfigSchema.validate_calc_config(cfg)
+    record_calc_step_signature(
+        str(step1_dir),
+        cfg,
+        input_signature=compute_calc_input_signature(str(input_xyz)),
+    )
 
     (root / "final.xyz").write_text("1\nCID=A000001 Energy=-100.0\nC 0 0 0\n")
 
@@ -956,3 +1035,34 @@ def test_validate_inputs_compatible_chain_bonds_disabled(tmp_path):
             confgen_params={"chains": ["1-2"], "validate_chain_bonds": False},
         )
         mock_load.assert_not_called()
+
+
+def test_validate_inputs_compatible_accepts_chain_alias_for_mapping(tmp_path):
+    xyz1 = tmp_path / "a.xyz"
+    xyz1.write_text("3\n\nC 0 0 0\nH 0 0 1\nO 1 0 0\n", encoding="utf-8")
+    xyz2 = tmp_path / "b.xyz"
+    xyz2.write_text("3\n\nO 1 0 0\nH 0 0 1\nC 0 0 0\n", encoding="utf-8")
+
+    validate_inputs_compatible(
+        [str(xyz1), str(xyz2)],
+        confgen_params={"chain": "1-2"},
+    )
+
+
+def test_build_task_config_propagates_safety_policy(tmp_path):
+    global_config = {
+        "gaussian_path": "g16",
+        "orca_path": "orca",
+        "sandbox_root": str(tmp_path / "sandbox"),
+        "allowed_executables": ["g16", "/opt/orca/orca"],
+    }
+
+    cfg = build_task_config(
+        {"iprog": "orca", "itask": "sp", "keyword": "xTB"},
+        global_config,
+        root_dir=str(tmp_path),
+        all_steps=[],
+    )
+
+    assert cfg["sandbox_root"] == str(tmp_path / "sandbox")
+    assert cfg["allowed_executables"] == "g16,/opt/orca/orca"

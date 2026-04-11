@@ -11,6 +11,11 @@ from typing import Any
 
 from .. import calc
 from ..blocks import confgen
+from ..calc.step_contract import (
+    compute_calc_input_signature,
+    prepare_calc_step_dir,
+    record_calc_step_signature,
+)
 from ..config.schema import ConfigSchema
 from ..core.exceptions import ConfFlowError
 from ..core.pairs import normalize_pair_list
@@ -76,6 +81,7 @@ def run_confgen_step(
                 chain_steps=as_list(params.get("chain_steps", params.get("steps"))),
                 chain_angles=as_list(params.get("chain_angles", params.get("angles"))),
                 rotate_side=params.get("rotate_side", "left"),
+                collect_results=False,
             )
         if not os.path.exists(expected_output):
             raise ConfFlowError("confgen did not produce search.xyz")
@@ -95,14 +101,19 @@ def run_calc_step(
     """Execute a calculation step (execution adapter layer)."""
     task_config = build_task_config(params, global_config, root_dir, steps)
     ConfigSchema.validate_calc_config(task_config)
+    input_signature = compute_calc_input_signature(current_input)
+    input_source = current_input if isinstance(current_input, str) else current_input[0]
 
-    existing_output = resolve_step_output(step_dir, "calc")
-    if existing_output is not None:
-        final_input = existing_output
-        step_failed = os.path.join(step_dir, "failed.xyz")
-        if os.path.exists(step_failed):
-            failure_tracker.append(step_failed, step_name)
-        return final_input
+    prepared = prepare_calc_step_dir(step_dir, task_config, input_signature=input_signature)
+    if prepared.cleaned_stale_artifacts:
+        logger.warning(
+            "Discarding stale calc artifacts in '%s' because the step state is incomplete or outdated.",
+            step_dir,
+        )
+    if prepared.reusable_output is not None:
+        if prepared.state.failed_path is not None:
+            failure_tracker.append(prepared.state.failed_path, step_name)
+        return prepared.reusable_output
 
     if isinstance(current_input, list) and len(current_input) > 1:
         logger.warning(
@@ -114,8 +125,10 @@ def run_calc_step(
 
     manager = calc.ChemTaskManager(task_config)
     manager.work_dir = step_dir
+    manager._input_signature_override = input_signature
+    record_calc_step_signature(step_dir, task_config, input_signature=input_signature)
     manager.run(
-        input_xyz_file=current_input if isinstance(current_input, str) else current_input[0]
+        input_xyz_file=input_source
     )
 
     work_failed = os.path.join(step_dir, "failed.xyz")

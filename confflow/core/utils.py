@@ -220,12 +220,12 @@ def validate_xyz_file(filepath: str, strict: bool = False) -> tuple[bool, list[d
 def validate_yaml_config(
     config: dict[str, Any], required_sections: list[str] | None = None
 ) -> list[str]:
-    from ..config.schema import validate_yaml_config as _impl
+    from ..shared.config_validation import validate_yaml_config as _impl
 
     return _impl(config, required_sections)
 
 
 def _validate_step_config(step: dict[str, Any], index: int) -> list[str]:
-    from ..config.schema import _validate_step_config as _impl
+    from ..shared.config_validation import validate_step_config as _impl
 
     return _impl(step, index)

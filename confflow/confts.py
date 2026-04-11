@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib
 
 from .core.cli_base import require_existing_path
 from .core.contracts import ExitCode, cli_output_to_txt
@@ -40,7 +41,7 @@ def _cli(argv: list[str] | None = None) -> int:
 
     # Run as a calc executor. YAML can still enable ts_rescue_scan for TS tasks.
     if args.input_xyz and args.settings:
-        from . import calc
+        calc = importlib.import_module("confflow.calc")
 
         require_existing_path(args.input_xyz, "Input file")
         require_existing_path(args.settings, "Settings file")

@@ -7,7 +7,6 @@ from __future__ import annotations
 import logging
 import os
 import re
-import shlex
 from typing import Any
 
 from ..components.input_helpers import (
@@ -21,6 +20,8 @@ from ..geometry import check_termination as _check_termination
 from ..geometry import parse_last_geometry
 from ..psutil_compat import maybe_import_psutil, psutil_exception_types
 from ..setup import get_itask
+from ...core.path_policy import validate_executable_setting
+from ...shared.orca_blocks import format_orca_blocks
 from .base import CalculationPolicy
 
 __all__ = [
@@ -63,9 +64,7 @@ class GaussianPolicy(CalculationPolicy):
 
         blocks_raw = config.get("blocks", "")
         if isinstance(blocks_raw, dict):
-            from ..components.input_helpers import format_orca_blocks as _fmt_blocks
-
-            blocks_raw = _fmt_blocks(blocks_raw)
+            blocks_raw = format_orca_blocks(blocks_raw)
         blocks_raw = str(blocks_raw or "").strip()
         extra_section = (blocks_raw + "\n") if blocks_raw else ""
 
@@ -220,8 +219,15 @@ class GaussianPolicy(CalculationPolicy):
         path_key = "gaussian_path"
         default_exe = "g16"
         prog_path = config.get(path_key) or default_exe
-        cmd = shlex.split(str(prog_path)) + [os.path.basename(inp_file)]
-        return cmd
+        allowed = config.get("allowed_executables")
+        if isinstance(allowed, str):
+            allowed = [item.strip() for item in allowed.split(",") if item.strip()]
+        executable = validate_executable_setting(
+            prog_path,
+            label=path_key,
+            allowed_executables=allowed,
+        )
+        return [executable, os.path.basename(inp_file)]
 
     def get_environment(self, config: dict[str, Any], cmd: list[str]) -> dict[str, str]:
         env = os.environ.copy()
@@ -252,15 +258,28 @@ class GaussianPolicy(CalculationPolicy):
         return " | ".join(details)
 
     def cleanup_lingering_processes(self, config: dict[str, Any]) -> None:
+        del config
         if psutil is None:
             return
         targets = ["g16", "l9999.exe"]
-        for proc in psutil.process_iter(["pid", "name", "cmdline"]):
+        try:
+            current = psutil.Process()
+            processes = current.children(recursive=True)
+        except psutil_exception_types(psutil) as e:
+            logger.debug(f"Failed to enumerate descendant processes: {e}")
+            return
+
+        for proc in processes:
             try:
-                if any(t in (proc.info.get("name") or "") for t in targets):
+                info = getattr(proc, "info", {}) or {}
+                name = info.get("name")
+                if not name and hasattr(proc, "name"):
+                    name = proc.name()
+                if any(t in str(name or "") for t in targets):
                     proc.terminate()
             except psutil_exception_types(psutil) as e:
-                logger.debug(f"Failed to clean up process {proc.info.get('pid')}: {e}")
+                pid = (getattr(proc, "info", {}) or {}).get("pid")
+                logger.debug(f"Failed to clean up process {pid}: {e}")
 
 
 #: Module-level singleton (stateless, safe to reuse)

@@ -9,6 +9,7 @@ import shutil
 from dataclasses import dataclass
 from typing import Any
 
+from ..core.path_policy import resolve_sandbox_root, validate_managed_path
 from .stats import CheckpointManager, FailureTracker, WorkflowStatsTracker
 
 __all__ = [
@@ -36,9 +37,14 @@ def initialize_runtime_context(
     original_inputs: list[str],
     resume: bool,
     logger: Any,
+    global_config: dict[str, Any] | None = None,
 ) -> WorkflowRuntimeContext:
     """Create the runtime directories, trackers, and current input state."""
-    root_dir = os.path.abspath(work_dir)
+    root_dir = validate_managed_path(
+        work_dir,
+        label="work_dir",
+        sandbox_root=resolve_sandbox_root(global_config),
+    )
     os.makedirs(root_dir, exist_ok=True)
 
     failed_dir = os.path.join(root_dir, "failed")

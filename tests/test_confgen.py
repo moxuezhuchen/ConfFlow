@@ -33,6 +33,7 @@ from confflow.blocks.confgen.rotations import (
     _rotate_atoms_around_bond,
 )
 from confflow.core.data import GV_COVALENT_RADII
+from confflow.core.io import read_xyz_file
 
 
 def _write_butane_xyz(path: str) -> None:
@@ -237,6 +238,23 @@ def test_write_xyz(tmp_path):
     assert content.count("C ") == 2
 
 
+def test_write_xyz_preserves_per_conformer_atoms(tmp_path):
+    mol = Chem.MolFromSmiles("CO")
+    conformers = [
+        {
+            "coords": np.array([[0.0, 0.0, 0.0], [1.2, 0.0, 0.0]]),
+            "atoms": ["O", "C"],
+            "cid": "B000001",
+        }
+    ]
+    out = tmp_path / "out.xyz"
+
+    write_xyz(mol, conformers, str(out))
+
+    frames = read_xyz_file(str(out), parse_metadata=False)
+    assert frames[0]["atoms"] == ["O", "C"]
+
+
 def test_init_worker():
     import confflow.blocks.confgen.generator as gen
 
@@ -294,6 +312,18 @@ def test_run_generation_multi_input(cd_tmp):
     res = run_generation([str(f1), str(f2)], chains=["1-2"])
     assert isinstance(res, list)
     assert len(res) > 0, "multi-input generation should produce at least one result"
+
+
+def test_run_generation_multi_input_preserves_atom_order_in_output(cd_tmp):
+    f1 = cd_tmp / "f1.xyz"
+    f1.write_text("3\nfirst\nC 0 0 0\nO 1.2 0 0\nH 2.2 0 0\n", encoding="utf-8")
+    f2 = cd_tmp / "f2.xyz"
+    f2.write_text("3\nsecond\nH 2.2 0 0\nO 1.2 0 0\nC 0 0 0\n", encoding="utf-8")
+
+    run_generation([str(f1), str(f2)], chains=["1-2"], confirm=False)
+
+    frames = read_xyz_file(str(cd_tmp / "search.xyz"), parse_metadata=False)
+    assert any(frame["atoms"] == ["H", "O", "C"] for frame in frames)
 
 
 def test_run_generation_edge_cases(cd_tmp):
@@ -360,7 +390,7 @@ def test_main_cli(tmp_path):
             args, kwargs = mock_run.call_args
             assert kwargs["angle_step"] == 60
             assert kwargs["chains"] == ["1-2-3"]
-            assert kwargs["confirm"] is True
+            assert kwargs["confirm"] is False
 
     with patch("confflow.blocks.confgen.generator.run_generation") as mock_run:
         with patch("sys.argv", ["confgen", str(xyz_path), str(xyz_path), "90", "--chain", "1-2"]):

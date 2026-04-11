@@ -11,7 +11,6 @@ Deprecated helpers (`run_single_task`, `generate_input_file`, and
 from __future__ import annotations
 
 from .components.executor import handle_backups
-from .components.input_helpers import format_orca_blocks
 from .components.parser import parse_output
 from .components.task_runner import TaskRunner
 from .db.database import ResultsDB
@@ -31,5 +30,4 @@ __all__ = [
     "parse_iprog",
     "setup_logging",
     "get_policy",
-    "format_orca_blocks",
 ]

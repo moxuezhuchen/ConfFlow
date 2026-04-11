@@ -15,6 +15,7 @@ import pytest
 from confflow.cli import (
     _convert_gjf_to_xyz,
     _parse_gaussian_input_geometry,
+    _resolve_default_work_dir,
     build_parser,
     kill_proc_tree,
     main,
@@ -41,6 +42,24 @@ H 1.0 0.0 0.0
     assert atoms == ["C", "H", "H", "H"]
     assert len(coords) == 4
     assert coords[0] == [0.0, 0.0, 0.0]
+
+
+def test_parse_gaussian_input_geometry_ignores_numeric_title_line():
+    text = """%mem=4GB
+# opt
+
+1 1
+
+0 1
+C 0.0 0.0 0.0
+H 0.0 0.0 1.0
+
+"""
+    charge, mult, atoms, coords = _parse_gaussian_input_geometry(text)
+    assert charge == 0
+    assert mult == 1
+    assert atoms == ["C", "H"]
+    assert coords[1] == [0.0, 0.0, 1.0]
 
 
 def test_parse_gaussian_input_geometry_frozen_and_atomic_numbers():
@@ -400,6 +419,41 @@ def test_main_work_dir_default(tmp_path):
         assert mock_run.called
         args, kwargs = mock_run.call_args
         assert "input_work" in kwargs["work_dir"]
+
+
+def test_resolve_default_work_dir_uses_sandbox_root(tmp_path):
+    input_xyz = tmp_path / "input.xyz"
+    input_xyz.write_text("2\ntest\nC 0 0 0\nH 0 0 1\n", encoding="utf-8")
+    sandbox = tmp_path / "sandbox"
+
+    resolved = _resolve_default_work_dir([str(input_xyz)], sandbox_root=str(sandbox))
+
+    assert resolved == str(sandbox / "input_work")
+
+
+def test_main_default_work_dir_inside_sandbox_root(tmp_path):
+    input_xyz = tmp_path / "input.xyz"
+    input_xyz.write_text("2\ntest\nC 0 0 0\nH 0 0 1\n", encoding="utf-8")
+    config_yaml = tmp_path / "config.yaml"
+    config_yaml.write_text("global:\n  sandbox_root: " + str(tmp_path / "sandbox") + "\nsteps: []\n")
+
+    with patch("confflow.cli.run_workflow") as mock_run:
+        main([str(input_xyz), "-c", str(config_yaml)])
+        _, kwargs = mock_run.call_args
+        assert kwargs["work_dir"] == str(tmp_path / "sandbox" / "input_work")
+
+
+def test_main_invalid_work_dir_returns_usage_error(tmp_path):
+    input_xyz = tmp_path / "input.xyz"
+    input_xyz.write_text("2\ntest\nC 0 0 0\nH 0 0 1\n", encoding="utf-8")
+    config_yaml = tmp_path / "config.yaml"
+    config_yaml.write_text("global:\n  sandbox_root: " + str(tmp_path / "sandbox") + "\nsteps: []\n")
+
+    result = main([str(input_xyz), "-c", str(config_yaml), "-w", str(tmp_path / "outside")])
+
+    assert result == 1
+    content = (tmp_path / "input.txt").read_text(encoding="utf-8")
+    assert "work_dir escapes sandbox_root" in content
 
 
 def test_main_consistency_error_no_interactive_prompt_on_tty(tmp_path):

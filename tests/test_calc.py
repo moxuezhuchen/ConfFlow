@@ -679,7 +679,7 @@ def test_execute_tasks_records_broken_process_pool_and_continues(tmp_path):
 
     by_job = {row["job_name"]: row for row in inserted}
     assert by_job["A000001"]["status"] == "failed"
-    assert by_job["A000001"]["error_kind"] == "worker_exception"
+    assert by_job["A000001"]["error_kind"] == "broken_process_pool"
     assert "worker lost" in by_job["A000001"]["error"]
     assert by_job["A000002"]["status"] == "success"
     assert len(appended) == 1

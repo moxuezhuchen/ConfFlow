@@ -9,8 +9,7 @@ import logging
 import os
 from typing import Any
 
-from ..calc import format_orca_blocks
-from ..config.defaults import (
+from ..shared.defaults import (
     DEFAULT_CHARGE,
     DEFAULT_CORES_PER_TASK,
     DEFAULT_ENABLE_DYNAMIC_RESOURCES,
@@ -19,6 +18,7 @@ from ..config.defaults import (
     DEFAULT_RESUME_FROM_BACKUPS,
     DEFAULT_TOTAL_MEMORY,
 )
+from ..shared.orca_blocks import format_orca_blocks
 from ..core.models import _coerce_freeze_indices, _coerce_two_atom_indices
 from ..core.utils import parse_itask
 from .step_naming import build_step_dir_name_map
@@ -213,10 +213,13 @@ def build_task_config(
     params = final_params
     config = _build_base_task_config(params, global_config)
 
-    for key in ["input_chk_dir", "gaussian_write_chk"]:
+    for key in ["input_chk_dir", "gaussian_write_chk", "sandbox_root", "allowed_executables"]:
         val = params.get(key, global_config.get(key))
         if val is not None and str(val).strip() != "":
-            config[key] = str(val).strip()
+            if key == "allowed_executables" and isinstance(val, (list, tuple, set)):
+                config[key] = ",".join(str(item).strip() for item in val if str(item).strip())
+            else:
+                config[key] = str(val).strip()
 
     orca_maxcore = params.get(
         "orca_maxcore", global_config.get("orca_maxcore", global_config.get("maxcore"))

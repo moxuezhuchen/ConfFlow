@@ -51,11 +51,29 @@ def parse_gaussian_input(filepath: str) -> dict[str, Any]:
 
 
 def parse_gaussian_input_text(text: str, source_label: str = "text") -> dict[str, Any]:
-    """Parse Gaussian input text."""
+    """Parse Gaussian input text.
+
+    Prefer the charge/multiplicity line that is immediately followed by a
+    coordinate block. This avoids mistaking an all-numeric title line such
+    as ``1 1`` for the real QM header.
+    """
     from .data import get_element_symbol
+
+    def _looks_like_coordinate_line(raw_line: str) -> bool:
+        parts = raw_line.split()
+        if len(parts) < 4:
+            return False
+        try:
+            _parse_tail_coordinates(parts)
+        except (ValueError, TypeError, IndexError):
+            return False
+        return True
 
     lines = text.splitlines()
     qm_idx = None
+    fallback_qm_idx = None
+    fallback_charge = 0
+    fallback_mult = 1
     charge = 0
     mult = 1
     for i, ln in enumerate(lines):
@@ -63,11 +81,30 @@ def parse_gaussian_input_text(text: str, source_label: str = "text") -> dict[str
         if not s:
             continue
         if re.match(r"^\s*-?\d+\s+-?\d+\s*$", s):
-            qm_idx = i
             parts = s.split()
-            charge = int(parts[0])
-            mult = int(parts[1])
-            break
+            if fallback_qm_idx is None:
+                fallback_qm_idx = i
+                fallback_charge = int(parts[0])
+                fallback_mult = int(parts[1])
+            for candidate in lines[i + 1 :]:
+                candidate_stripped = candidate.strip()
+                if not candidate_stripped:
+                    break
+                if _looks_like_coordinate_line(candidate_stripped):
+                    qm_idx = i
+                    charge = int(parts[0])
+                    mult = int(parts[1])
+                    break
+            if qm_idx is not None:
+                break
+
+    # Fall back to the first numeric pair only when no coordinate-backed
+    # header is found. This keeps compatibility with minimal inputs while
+    # still preferring unambiguous Gaussian structure blocks.
+    if qm_idx is None and fallback_qm_idx is not None:
+        qm_idx = fallback_qm_idx
+        charge = fallback_charge
+        mult = fallback_mult
 
     if qm_idx is None:
         raise ValueError(f"Cannot find charge/multiplicity line in {source_label}")

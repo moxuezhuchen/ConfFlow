@@ -10,9 +10,13 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from confflow.calc.components.executor import _save_config_hash
+from confflow.calc.step_contract import compute_calc_input_signature, record_calc_step_signature
+from confflow.config.schema import ConfigSchema
 from confflow.core.exceptions import ConfFlowError
 from confflow.workflow.stats import FailureTracker
 from confflow.workflow.step_handlers import run_calc_step, run_confgen_step
+from confflow.workflow.task_config import build_task_config
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -184,6 +188,20 @@ class TestRunCalcStep:
         "keyword": "HF def2-SVP",
     }
 
+    def _write_matching_config_hash(self, step_dir: str, input_path: str) -> None:
+        task_config = build_task_config(
+            self.MINIMAL_PARAMS,
+            self.MINIMAL_GLOBAL,
+            root_dir=os.path.dirname(step_dir),
+            all_steps=[],
+        )
+        ConfigSchema.validate_calc_config(task_config)
+        record_calc_step_signature(
+            step_dir,
+            task_config,
+            input_signature=compute_calc_input_signature(input_path),
+        )
+
     def test_existing_output_skips_calc(
         self, step_dir: str, single_input_xyz: str, failure_tracker: FailureTracker
     ):
@@ -191,6 +209,7 @@ class TestRunCalcStep:
         output = os.path.join(step_dir, "output.xyz")
         with open(output, "w") as f:
             f.write("2\nexisting\nC 0 0 0\nH 0 0 1\n")
+        self._write_matching_config_hash(step_dir, single_input_xyz)
 
         with patch("confflow.workflow.step_handlers.calc") as mock_calc:
             result = run_calc_step(
@@ -213,6 +232,7 @@ class TestRunCalcStep:
         output = os.path.join(step_dir, "output.xyz")
         with open(output, "w") as f:
             f.write("2\nout\nC 0 0 0\nH 0 0 1\n")
+        self._write_matching_config_hash(step_dir, single_input_xyz)
         failed = os.path.join(step_dir, "failed.xyz")
         with open(failed, "w") as f:
             f.write("2\nfailed\nC 0 0 0\nH 0 0 1\n")
@@ -428,9 +448,11 @@ class TestRunCalcStep:
         output = os.path.join(step_dir, "output.xyz")
         with open(output, "w", encoding="utf-8") as f:
             f.write("2\nexisting\nC 0 0 0\nH 0 0 1\n")
+        self._write_matching_config_hash(step_dir, single_input_xyz)
 
         with patch(
-            "confflow.workflow.step_handlers.ConfigSchema.validate_calc_config"
+            "confflow.workflow.step_handlers.ConfigSchema.validate_calc_config",
+            wraps=ConfigSchema.validate_calc_config,
         ) as mock_validate:
             result = run_calc_step(
                 step_dir=step_dir,
@@ -445,6 +467,135 @@ class TestRunCalcStep:
 
         mock_validate.assert_called_once()
         assert result == output
+
+    @patch("confflow.workflow.step_handlers.calc")
+    def test_stale_output_is_cleared_and_recomputed(
+        self,
+        mock_calc: MagicMock,
+        step_dir: str,
+        single_input_xyz: str,
+        failure_tracker: FailureTracker,
+    ):
+        output = os.path.join(step_dir, "output.xyz")
+        with open(output, "w", encoding="utf-8") as f:
+            f.write("2\nstale\nC 0 0 0\nH 0 0 1\n")
+        (Path(step_dir) / ".config_hash").write_text("stalehash", encoding="utf-8")
+        (Path(step_dir) / "results.db").write_text("olddb", encoding="utf-8")
+        backups_dir = Path(step_dir) / "backups"
+        backups_dir.mkdir()
+        (backups_dir / "old.out").write_text("old", encoding="utf-8")
+
+        def fake_run(input_xyz_file):
+            assert not backups_dir.exists()
+            with open(output, "w", encoding="utf-8") as f:
+                f.write("2\nfresh\nC 0 0 0\nH 0 0 1\n")
+
+        mock_manager = MagicMock()
+        mock_manager.run.side_effect = fake_run
+        mock_calc.ChemTaskManager.return_value = mock_manager
+
+        result = run_calc_step(
+            step_dir=step_dir,
+            current_input=single_input_xyz,
+            params=self.MINIMAL_PARAMS,
+            global_config=self.MINIMAL_GLOBAL,
+            root_dir=os.path.dirname(step_dir),
+            steps=[],
+            failure_tracker=failure_tracker,
+            step_name="step_02",
+        )
+
+        assert result == output
+        mock_calc.ChemTaskManager.assert_called_once()
+        mock_manager.run.assert_called_once_with(input_xyz_file=single_input_xyz)
+        assert (Path(step_dir) / ".config_hash").exists()
+
+    @patch("confflow.workflow.step_handlers.calc")
+    def test_input_change_invalidates_existing_output(
+        self,
+        mock_calc: MagicMock,
+        step_dir: str,
+        single_input_xyz: str,
+        failure_tracker: FailureTracker,
+        tmp_path: Path,
+    ):
+        output = os.path.join(step_dir, "output.xyz")
+        with open(output, "w", encoding="utf-8") as f:
+            f.write("2\nstale\nC 0 0 0\nH 0 0 1\n")
+
+        task_config = build_task_config(
+            self.MINIMAL_PARAMS,
+            self.MINIMAL_GLOBAL,
+            root_dir=os.path.dirname(step_dir),
+            all_steps=[],
+        )
+        ConfigSchema.validate_calc_config(task_config)
+        _save_config_hash(step_dir, task_config)
+
+        changed_input = tmp_path / "changed.xyz"
+        changed_input.write_text("2\nchanged\nC 0 0 0\nH 0 0 2\n", encoding="utf-8")
+
+        def fake_run(input_xyz_file):
+            assert input_xyz_file == str(changed_input)
+            with open(output, "w", encoding="utf-8") as handle:
+                handle.write("2\nfresh\nC 0 0 0\nH 0 0 2\n")
+
+        mock_manager = MagicMock()
+        mock_manager.run.side_effect = fake_run
+        mock_calc.ChemTaskManager.return_value = mock_manager
+
+        result = run_calc_step(
+            step_dir=step_dir,
+            current_input=str(changed_input),
+            params=self.MINIMAL_PARAMS,
+            global_config=self.MINIMAL_GLOBAL,
+            root_dir=os.path.dirname(step_dir),
+            steps=[],
+            failure_tracker=failure_tracker,
+            step_name="step_02",
+        )
+
+        assert result == output
+        mock_calc.ChemTaskManager.assert_called_once()
+        mock_manager.run.assert_called_once_with(input_xyz_file=str(changed_input))
+
+    @patch("confflow.workflow.step_handlers.record_calc_step_signature")
+    @patch("confflow.workflow.step_handlers.calc")
+    def test_multi_input_calc_records_combined_input_signature(
+        self,
+        mock_calc: MagicMock,
+        mock_record_signature: MagicMock,
+        step_dir: str,
+        failure_tracker: FailureTracker,
+        tmp_path: Path,
+    ):
+        input_a = tmp_path / "a.xyz"
+        input_b = tmp_path / "b.xyz"
+        input_a.write_text("1\na\nH 0 0 0\n", encoding="utf-8")
+        input_b.write_text("1\nb\nH 0 0 1\n", encoding="utf-8")
+        output = os.path.join(step_dir, "output.xyz")
+
+        def fake_run(input_xyz_file):
+            with open(output, "w", encoding="utf-8") as handle:
+                handle.write("1\nfresh\nH 0 0 0\n")
+
+        mock_manager = MagicMock()
+        mock_manager.run.side_effect = fake_run
+        mock_calc.ChemTaskManager.return_value = mock_manager
+
+        run_calc_step(
+            step_dir=step_dir,
+            current_input=[str(input_a), str(input_b)],
+            params=self.MINIMAL_PARAMS,
+            global_config=self.MINIMAL_GLOBAL,
+            root_dir=os.path.dirname(step_dir),
+            steps=[],
+            failure_tracker=failure_tracker,
+            step_name="step_02",
+        )
+
+        _, kwargs = mock_record_signature.call_args
+        assert kwargs["input_signature"] == compute_calc_input_signature([str(input_a), str(input_b)])
 
     def test_invalid_calc_config_uses_schema_compatibility_message(
         self, step_dir: str, single_input_xyz: str, failure_tracker: FailureTracker

@@ -164,7 +164,9 @@ def test_gaussian_cleanup_lingering_processes_terminates_targets_and_logs_failur
     other = MagicMock()
     other.info = {"pid": 12, "name": "python"}
 
-    fake_psutil = SimpleNamespace(process_iter=lambda *_args, **_kwargs: [target, failing, other])
+    current = MagicMock()
+    current.children.return_value = [target, failing, other]
+    fake_psutil = SimpleNamespace(Process=lambda: current)
 
     with (
         patch("confflow.calc.policies.gaussian.psutil", fake_psutil),
@@ -323,7 +325,9 @@ def test_orca_cleanup_lingering_processes_terminates_targets_and_logs_failures()
     other = MagicMock()
     other.info = {"pid": 22, "name": "python"}
 
-    fake_psutil = SimpleNamespace(process_iter=lambda *_args, **_kwargs: [target, failing, other])
+    current = MagicMock()
+    current.children.return_value = [target, failing, other]
+    fake_psutil = SimpleNamespace(Process=lambda: current)
 
     with (
         patch("confflow.calc.policies.orca.psutil", fake_psutil),

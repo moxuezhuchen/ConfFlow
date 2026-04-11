@@ -11,13 +11,22 @@ Responsible for:
 
 from __future__ import annotations
 
-import hashlib
 import os
 import shutil
 import subprocess
 import time
 from typing import Any
 
+from ...core.path_policy import (
+    resolve_sandbox_root,
+    validate_cleanup_target,
+    validate_managed_path,
+)
+from ..step_contract import (
+    compute_calc_config_signature,
+    load_calc_config_signature,
+    record_calc_step_signature,
+)
 from ...core.exceptions import (
     CalculationExecutionError,
     CalculationInputError,
@@ -77,6 +86,8 @@ def handle_backups(
         ``True`` when all requested backup operations succeeded, otherwise ``False``.
         Cleanup is skipped on backup failure to preserve crash artifacts.
     """
+    sandbox_root = resolve_sandbox_root(config)
+    work_dir = validate_managed_path(work_dir, label="work_dir", sandbox_root=sandbox_root)
     ibkout = int(config.get("ibkout", 1))
     backup_dir = config.get("backup_dir")
     backup_ok = True
@@ -87,6 +98,11 @@ def handle_backups(
     )
 
     if should_backup and backup_dir:
+        backup_dir = validate_managed_path(
+            str(backup_dir),
+            label="backup_dir",
+            sandbox_root=sandbox_root,
+        )
         try:
             os.makedirs(backup_dir, exist_ok=True)
         except OSError as e:
@@ -132,7 +148,7 @@ def handle_backups(
             )
             return False
         try:
-            shutil.rmtree(work_dir)
+            shutil.rmtree(validate_cleanup_target(work_dir, sandbox_root=sandbox_root))
         except OSError as e:
             logger.warning(f"Failed to remove work directory {work_dir}: {e}")
             try:
@@ -165,11 +181,18 @@ def prepare_task_inputs(work_dir: str, job_name: str, config: dict[str, Any]) ->
       ``config['gaussian_oldchk']``.
     """
     try:
+        sandbox_root = resolve_sandbox_root(config)
+        work_dir = validate_managed_path(work_dir, label="work_dir", sandbox_root=sandbox_root)
         input_chk_dir = config.get("input_chk_dir")
         if not input_chk_dir or not str(input_chk_dir).strip():
             return
 
-        src = os.path.join(str(input_chk_dir), f"{job_name}.chk")
+        input_chk_dir = validate_managed_path(
+            str(input_chk_dir),
+            label="input_chk_dir",
+            sandbox_root=sandbox_root,
+        )
+        src = os.path.join(input_chk_dir, f"{job_name}.chk")
         if not os.path.exists(src):
             return
 
@@ -253,9 +276,17 @@ def _run_calculation_step(
 
 def _save_config_hash(work_dir: str, config: dict[str, Any]):
     try:
-        # Use a lightweight compatibility hash for task identity, not for security.
-        h = hashlib.md5(f"{config.get('itask')}_{config.get('iprog')}".encode()).hexdigest()[:8]
-        with open(os.path.join(work_dir, ".config_hash"), "w") as f:
-            f.write(h)
+        record_calc_step_signature(work_dir, config)
     except (OSError, ValueError, TypeError) as e:
         logger.debug(f"Config hash save failed: {e}")
+
+
+def _load_config_hash(work_dir: str) -> str | None:
+    return load_calc_config_signature(work_dir)
+
+
+def _config_hash_matches(work_dir: str, config: dict[str, Any]) -> bool:
+    stored = load_calc_config_signature(work_dir)
+    if stored is None:
+        return False
+    return stored == compute_calc_config_signature(config)

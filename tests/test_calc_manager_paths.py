@@ -153,6 +153,9 @@ def test_calc_manager_failed_output_and_auto_clean_parse_errors(tmp_path):
                 },
             ]
 
+        def close(self):
+            pass
+
     with (
         patch("confflow.calc.manager.ResultsDB", FakeResultsDB),
         patch.object(ChemTaskManager, "_read_xyz", return_value=geoms),
@@ -196,6 +199,9 @@ def test_calc_manager_executor_path_inserts_results(tmp_path):
         def get_all_results(self):
             return list(self.inserted)
 
+        def close(self):
+            pass
+
     class _Fut:
         def __init__(self, result):
             self._result = result
@@ -237,3 +243,62 @@ def test_calc_manager_executor_path_inserts_results(tmp_path):
         mgr.run(str(tmp_path / "input.xyz"))
 
         assert (tmp_path / "wd" / "result.xyz").exists()
+
+
+def test_validate_executable_setting_rejects_argument_string():
+    from confflow.core.exceptions import ExecutionPolicyError
+    from confflow.core.path_policy import validate_executable_setting
+
+    assert validate_executable_setting("g16", label="gaussian_path") == "g16"
+    with pytest.raises(ExecutionPolicyError, match="exactly one executable"):
+        validate_executable_setting("g16 --debug", label="gaussian_path")
+
+
+def test_validate_executable_setting_absolute_allowlist_requires_exact_path(tmp_path):
+    from confflow.core.exceptions import ExecutionPolicyError
+    from confflow.core.path_policy import validate_executable_setting
+
+    allowed = str(tmp_path / "opt" / "orca")
+    malicious = str(tmp_path / "tmp" / "orca")
+
+    with pytest.raises(ExecutionPolicyError, match="not allowed"):
+        validate_executable_setting(
+            malicious,
+            label="orca_path",
+            allowed_executables=[allowed],
+        )
+
+
+def test_manager_rejects_backup_dir_outside_sandbox(tmp_path):
+    from confflow.calc.manager import ChemTaskManager
+    from confflow.core.exceptions import PathSafetyError
+
+    sandbox = tmp_path / "sandbox"
+    sandbox.mkdir()
+    outside = tmp_path / "outside"
+
+    mgr = ChemTaskManager(settings={"sandbox_root": str(sandbox), "backup_dir": str(outside)})
+    mgr.work_dir = str(sandbox / "work")
+
+    with pytest.raises(PathSafetyError, match="backup_dir escapes sandbox_root"):
+        mgr._ensure_work_dir()
+
+
+def test_manager_rejects_work_dir_outside_sandbox_before_cleanup(tmp_path):
+    from confflow.calc.manager import ChemTaskManager
+    from confflow.core.exceptions import PathSafetyError
+
+    sandbox = tmp_path / "sandbox"
+    sandbox.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    victim = outside / "should_stay.txt"
+    victim.write_text("keep", encoding="utf-8")
+
+    mgr = ChemTaskManager(settings={"sandbox_root": str(sandbox)})
+    mgr.work_dir = str(outside)
+
+    with pytest.raises(PathSafetyError, match="work_dir escapes sandbox_root"):
+        mgr.run(str(tmp_path / "missing.xyz"))
+
+    assert victim.read_text(encoding="utf-8") == "keep"

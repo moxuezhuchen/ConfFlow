@@ -351,7 +351,7 @@ def process_topology_group(
             while candidates:
                 curr_batch = candidates[:BATCH_SIZE]
                 candidates = candidates[BATCH_SIZE:]
-                unique_snap = [
+                unique_snap = tuple(
                     (
                         u["heavy_coords"],
                         u["pmi"],
@@ -360,29 +360,26 @@ def process_topology_group(
                         u["energy"],
                     )
                     for u in unique_frames
-                ]
+                )
                 batch_data = [
                     (c["heavy_coords"], c["pmi"], c["heavy_elem_ids"], c["energy"])
                     for c in curr_batch
                 ]
 
                 chunk = max(1, len(curr_batch) // (workers * 4) + 1)
-                results = list(
-                    executor.map(
-                        check_one_against_many,
-                        zip(
-                            batch_data,
-                            repeat(unique_snap),
-                            repeat(rmsd_threshold),
-                            repeat(energy_tolerance),
-                        ),
-                        chunksize=chunk,
-                    )
+                result_iter = executor.map(
+                    check_one_against_many,
+                    zip(
+                        batch_data,
+                        repeat(unique_snap),
+                        repeat(rmsd_threshold),
+                        repeat(energy_tolerance),
+                    ),
+                    chunksize=chunk,
                 )
 
                 newly_kept: list[dict] = []
-                for i, cand in enumerate(curr_batch):
-                    is_dup, mid = results[i]
+                for cand, (is_dup, mid) in zip(curr_batch, result_iter):
                     if is_dup:
                         report_data.append(
                             {
@@ -401,7 +398,7 @@ def process_topology_group(
                                     cand["heavy_elem_ids"],
                                     cand["energy"],
                                 ),
-                                [
+                                tuple(
                                     (
                                         k["heavy_coords"],
                                         k["pmi"],
@@ -410,7 +407,7 @@ def process_topology_group(
                                         k["energy"],
                                     )
                                     for k in newly_kept
-                                ],
+                                ),
                                 rmsd_threshold,
                                 energy_tolerance,
                             )

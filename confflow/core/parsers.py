@@ -140,7 +140,7 @@ def parse_memory(mem_str: Any, unit: str = "MB") -> int:
     >>> parse_memory('4GB', 'GB')
     4
     """
-    from ..config.defaults import DEFAULT_TOTAL_MEMORY
+    from ..shared.defaults import DEFAULT_TOTAL_MEMORY
 
     mem_str = str(mem_str).strip().upper()
 
