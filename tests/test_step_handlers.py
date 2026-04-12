@@ -11,6 +11,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from confflow.calc.components.executor import _save_config_hash
+from confflow.calc.config_types import CalcTaskConfig, Program, TaskKind
 from confflow.calc.step_contract import compute_calc_input_signature, record_calc_step_signature
 from confflow.config.schema import ConfigSchema
 from confflow.core.exceptions import ConfFlowError
@@ -317,6 +318,163 @@ class TestRunCalcStep:
             step_name="step_02",
         )
         assert result == output
+        mock_manager.run.assert_called_once_with(input_xyz_file=single_input_xyz)
+
+    @patch("confflow.workflow.step_handlers.record_calc_step_signature")
+    @patch("confflow.workflow.step_handlers.prepare_calc_step_dir")
+    @patch("confflow.workflow.step_handlers.build_structured_task_config")
+    @patch("confflow.workflow.step_handlers.build_task_config")
+    @patch("confflow.workflow.step_handlers.calc")
+    def test_calc_handoff_uses_structured_config_but_preserves_legacy_signature_inputs(
+        self,
+        mock_calc: MagicMock,
+        mock_build_task_config: MagicMock,
+        mock_build_structured_task_config: MagicMock,
+        mock_prepare_calc_step_dir: MagicMock,
+        mock_record_signature: MagicMock,
+        step_dir: str,
+        single_input_xyz: str,
+        failure_tracker: FailureTracker,
+    ):
+        output = os.path.join(step_dir, "output.xyz")
+        legacy_config = {
+            "iprog": "orca",
+            "itask": "sp",
+            "keyword": "HF def2-SVP",
+            "cores_per_task": "1",
+            "total_memory": "4GB",
+            "max_parallel_jobs": "1",
+            "charge": "0",
+            "multiplicity": "1",
+        }
+        structured_config = CalcTaskConfig(
+            program=Program.ORCA,
+            task=TaskKind.SP,
+            keyword="HF def2-SVP",
+            cores_per_task=1,
+            total_memory="4GB",
+            max_parallel_jobs=1,
+            charge=0,
+            multiplicity=1,
+        )
+        mock_build_task_config.return_value = legacy_config
+        mock_build_structured_task_config.return_value = structured_config
+        mock_prepare_calc_step_dir.return_value = MagicMock(
+            cleaned_stale_artifacts=False,
+            reusable_output=None,
+            state=MagicMock(failed_path=None),
+        )
+
+        def fake_run(*, input_xyz_file: str):
+            with open(output, "w", encoding="utf-8") as handle:
+                handle.write("2\ncalculated\nC 0 0 0\nH 0 0 1\n")
+
+        mock_manager = MagicMock()
+        mock_manager.run.side_effect = fake_run
+        mock_calc.ChemTaskManager.return_value = mock_manager
+
+        result = run_calc_step(
+            step_dir=step_dir,
+            current_input=single_input_xyz,
+            params=self.MINIMAL_PARAMS,
+            global_config=self.MINIMAL_GLOBAL,
+            root_dir=os.path.dirname(step_dir),
+            steps=[],
+            failure_tracker=failure_tracker,
+            step_name="step_02",
+        )
+
+        assert result == output
+        mock_build_task_config.assert_called_once()
+        mock_build_structured_task_config.assert_called_once()
+        mock_prepare_calc_step_dir.assert_called_once_with(
+            step_dir,
+            legacy_config,
+            input_signature=compute_calc_input_signature(single_input_xyz),
+            execution_config=structured_config,
+        )
+        mock_calc.ChemTaskManager.assert_called_once_with(
+            settings=legacy_config,
+            execution_config=structured_config,
+        )
+        mock_record_signature.assert_called_once_with(
+            step_dir,
+            legacy_config,
+            input_signature=compute_calc_input_signature(single_input_xyz),
+            execution_config=structured_config,
+        )
+        mock_manager.run.assert_called_once_with(input_xyz_file=single_input_xyz)
+
+    @patch("confflow.workflow.step_handlers.build_structured_task_config")
+    def test_reusable_output_builds_structured_config_for_signature(
+        self,
+        mock_build_structured_task_config: MagicMock,
+        step_dir: str,
+        single_input_xyz: str,
+        failure_tracker: FailureTracker,
+    ):
+        """Structured config is now built before prepare_calc_step_dir for signature."""
+        output = os.path.join(step_dir, "output.xyz")
+        with open(output, "w", encoding="utf-8") as handle:
+            handle.write("2\nexisting\nC 0 0 0\nH 0 0 1\n")
+        self._write_matching_config_hash(step_dir, single_input_xyz)
+        mock_build_structured_task_config.return_value = {}
+
+        result = run_calc_step(
+            step_dir=step_dir,
+            current_input=single_input_xyz,
+            params=self.MINIMAL_PARAMS,
+            global_config=self.MINIMAL_GLOBAL,
+            root_dir=os.path.dirname(step_dir),
+            steps=[],
+            failure_tracker=failure_tracker,
+            step_name="step_02",
+        )
+
+        assert result == output
+        # Structured config is now built even for reusable output (needed for signature)
+        mock_build_structured_task_config.assert_called_once()
+
+    @patch("confflow.workflow.step_handlers.calc")
+    def test_calc_handoff_passes_real_structured_config_to_manager(
+        self,
+        mock_calc: MagicMock,
+        step_dir: str,
+        single_input_xyz: str,
+        failure_tracker: FailureTracker,
+    ):
+        output = os.path.join(step_dir, "output.xyz")
+
+        def fake_run(*, input_xyz_file: str):
+            with open(output, "w", encoding="utf-8") as handle:
+                handle.write("2\ncalculated\nC 0 0 0\nH 0 0 1\n")
+
+        mock_manager = MagicMock()
+        mock_manager.run.side_effect = fake_run
+        mock_calc.ChemTaskManager.return_value = mock_manager
+
+        result = run_calc_step(
+            step_dir=step_dir,
+            current_input=single_input_xyz,
+            params=self.MINIMAL_PARAMS,
+            global_config=self.MINIMAL_GLOBAL,
+            root_dir=os.path.dirname(step_dir),
+            steps=[],
+            failure_tracker=failure_tracker,
+            step_name="step_02",
+        )
+
+        assert result == output
+        _, kwargs = mock_calc.ChemTaskManager.call_args
+        expected_legacy = build_task_config(
+            self.MINIMAL_PARAMS,
+            self.MINIMAL_GLOBAL,
+            root_dir=os.path.dirname(step_dir),
+            all_steps=[],
+        )
+        ConfigSchema.validate_calc_config(expected_legacy)
+        assert kwargs["settings"] == expected_legacy
+        assert isinstance(kwargs["execution_config"], CalcTaskConfig)
         mock_manager.run.assert_called_once_with(input_xyz_file=single_input_xyz)
 
     @patch("confflow.workflow.step_handlers.calc")
@@ -647,3 +805,266 @@ class TestRunCalcStep:
         )
         # failure_tracker should have recorded the failed file
         assert os.path.exists(failure_tracker.combined_failed) or os.path.exists(failed)
+
+
+    def test_calc_step_invalid_cleanup_preserves_old_artifacts(
+        self, step_dir: str, single_input_xyz: str, failure_tracker: FailureTracker
+    ):
+        """Invalid cleanup params should fail before deleting old artifacts."""
+        # Create old artifacts
+        output = os.path.join(step_dir, "output.xyz")
+        results_db = os.path.join(step_dir, "results.db")
+        backups_dir = os.path.join(step_dir, "backups")
+        
+        with open(output, "w") as f:
+            f.write("2\nold\nC 0 0 0\nH 0 0 1\n")
+        with open(results_db, "w") as f:
+            f.write("old db")
+        os.makedirs(backups_dir, exist_ok=True)
+        with open(os.path.join(backups_dir, "old.log"), "w") as f:
+            f.write("old log")
+        
+        # Write mismatched config hash to trigger stale detection
+        with open(os.path.join(step_dir, ".config_hash"), "w") as f:
+            f.write("oldstale")
+        
+        # Invalid rmsd_threshold should fail during structured config build
+        with pytest.raises((ValueError, TypeError)):
+            run_calc_step(
+                step_dir=step_dir,
+                current_input=single_input_xyz,
+                params={
+                    **self.MINIMAL_PARAMS,
+                    "rmsd_threshold": "not_a_number",  # Will fail float() conversion
+                },
+                global_config=self.MINIMAL_GLOBAL,
+                root_dir=os.path.dirname(step_dir),
+                steps=[],
+                failure_tracker=failure_tracker,
+                step_name="step_02",
+            )
+        
+        # Old artifacts should still exist
+        assert os.path.exists(output)
+        assert os.path.exists(results_db)
+        assert os.path.exists(backups_dir)
+        assert os.path.exists(os.path.join(backups_dir, "old.log"))
+
+    def test_calc_step_invalid_cleanup_does_not_overwrite_config_hash(
+        self, step_dir: str, single_input_xyz: str, failure_tracker: FailureTracker
+    ):
+        """Invalid cleanup params should not overwrite .config_hash."""
+        # Write old config hash
+        config_hash_path = os.path.join(step_dir, ".config_hash")
+        with open(config_hash_path, "w") as f:
+            f.write("oldstale")
+        
+        # Invalid rmsd_threshold should fail during structured config build
+        with pytest.raises((ValueError, TypeError)):
+            run_calc_step(
+                step_dir=step_dir,
+                current_input=single_input_xyz,
+                params={
+                    **self.MINIMAL_PARAMS,
+                    "rmsd_threshold": "not_a_number",
+                },
+                global_config=self.MINIMAL_GLOBAL,
+                root_dir=os.path.dirname(step_dir),
+                steps=[],
+                failure_tracker=failure_tracker,
+                step_name="step_02",
+            )
+        
+        # .config_hash should still be old value
+        with open(config_hash_path) as f:
+            assert f.read().strip() == "oldstale"
+
+    @patch("confflow.workflow.step_handlers.calc")
+    def test_calc_step_cleanup_change_triggers_stale(
+        self,
+        mock_calc: MagicMock,
+        step_dir: str,
+        single_input_xyz: str,
+        failure_tracker: FailureTracker,
+    ):
+        """Cleanup parameter change (when auto_clean=true) should trigger stale detection."""
+        # First run with threshold=0.25
+        output = os.path.join(step_dir, "output.xyz")
+        
+        def fake_run(input_xyz_file):
+            with open(output, "w") as f:
+                f.write("2\nfirst\nC 0 0 0\nH 0 0 1\n")
+        
+        mock_manager = MagicMock()
+        mock_manager.run.side_effect = fake_run
+        mock_calc.ChemTaskManager.return_value = mock_manager
+        
+        run_calc_step(
+            step_dir=step_dir,
+            current_input=single_input_xyz,
+            params={
+                **self.MINIMAL_PARAMS,
+                "auto_clean": True,
+                "clean_params": {"threshold": 0.25},
+            },
+            global_config=self.MINIMAL_GLOBAL,
+            root_dir=os.path.dirname(step_dir),
+            steps=[],
+            failure_tracker=failure_tracker,
+            step_name="step_02",
+        )
+        
+        first_hash = open(os.path.join(step_dir, ".config_hash")).read().strip()
+        
+        # Second run with threshold=0.5 should have different hash
+        def fake_run2(input_xyz_file):
+            with open(output, "w") as f:
+                f.write("2\nsecond\nC 0 0 0\nH 0 0 1\n")
+        
+        mock_manager2 = MagicMock()
+        mock_manager2.run.side_effect = fake_run2
+        mock_calc.ChemTaskManager.return_value = mock_manager2
+        
+        run_calc_step(
+            step_dir=step_dir,
+            current_input=single_input_xyz,
+            params={
+                **self.MINIMAL_PARAMS,
+                "auto_clean": True,
+                "clean_params": {"threshold": 0.5},  # Changed
+            },
+            global_config=self.MINIMAL_GLOBAL,
+            root_dir=os.path.dirname(step_dir),
+            steps=[],
+            failure_tracker=failure_tracker,
+            step_name="step_02",
+        )
+        
+        second_hash = open(os.path.join(step_dir, ".config_hash")).read().strip()
+        assert first_hash != second_hash
+
+    @patch("confflow.workflow.step_handlers.calc")
+    def test_calc_step_only_execution_cleanup_change_triggers_stale(
+        self,
+        mock_calc: MagicMock,
+        step_dir: str,
+        single_input_xyz: str,
+        failure_tracker: FailureTracker,
+    ):
+        """Only execution_config.cleanup change (auto_clean=true) should trigger stale."""
+        output = os.path.join(step_dir, "output.xyz")
+        
+        def fake_run(input_xyz_file):
+            with open(output, "w") as f:
+                f.write("2\nfirst\nC 0 0 0\nH 0 0 1\n")
+        
+        mock_manager = MagicMock()
+        mock_manager.run.side_effect = fake_run
+        mock_calc.ChemTaskManager.return_value = mock_manager
+        
+        # First run with auto_clean=true, threshold=0.25
+        run_calc_step(
+            step_dir=step_dir,
+            current_input=single_input_xyz,
+            params={
+                **self.MINIMAL_PARAMS,
+                "auto_clean": True,
+                "clean_params": {"threshold": 0.25},
+            },
+            global_config=self.MINIMAL_GLOBAL,
+            root_dir=os.path.dirname(step_dir),
+            steps=[],
+            failure_tracker=failure_tracker,
+            step_name="step_02",
+        )
+        
+        first_hash = open(os.path.join(step_dir, ".config_hash")).read().strip()
+        
+        # Second run with threshold=0.3 (only cleanup changed)
+        def fake_run2(input_xyz_file):
+            with open(output, "w") as f:
+                f.write("2\nsecond\nC 0 0 0\nH 0 0 1\n")
+        
+        mock_manager2 = MagicMock()
+        mock_manager2.run.side_effect = fake_run2
+        mock_calc.ChemTaskManager.return_value = mock_manager2
+        
+        run_calc_step(
+            step_dir=step_dir,
+            current_input=single_input_xyz,
+            params={
+                **self.MINIMAL_PARAMS,
+                "auto_clean": True,
+                "clean_params": {"threshold": 0.3},  # Only this changed
+            },
+            global_config=self.MINIMAL_GLOBAL,
+            root_dir=os.path.dirname(step_dir),
+            steps=[],
+            failure_tracker=failure_tracker,
+            step_name="step_02",
+        )
+        
+        second_hash = open(os.path.join(step_dir, ".config_hash")).read().strip()
+        assert first_hash != second_hash
+
+    @patch("confflow.workflow.step_handlers.calc")
+    def test_calc_step_cleanup_change_no_stale_when_auto_clean_disabled(
+        self,
+        mock_calc: MagicMock,
+        step_dir: str,
+        single_input_xyz: str,
+        failure_tracker: FailureTracker,
+    ):
+        """Cleanup change should NOT trigger stale when auto_clean=false."""
+        output = os.path.join(step_dir, "output.xyz")
+        
+        def fake_run(input_xyz_file):
+            with open(output, "w") as f:
+                f.write("2\nfirst\nC 0 0 0\nH 0 0 1\n")
+        
+        mock_manager = MagicMock()
+        mock_manager.run.side_effect = fake_run
+        mock_calc.ChemTaskManager.return_value = mock_manager
+        
+        # First run with auto_clean=false, threshold=0.25
+        run_calc_step(
+            step_dir=step_dir,
+            current_input=single_input_xyz,
+            params={
+                **self.MINIMAL_PARAMS,
+                "auto_clean": False,
+                "clean_params": {"threshold": 0.25},
+            },
+            global_config=self.MINIMAL_GLOBAL,
+            root_dir=os.path.dirname(step_dir),
+            steps=[],
+            failure_tracker=failure_tracker,
+            step_name="step_02",
+        )
+        
+        first_hash = open(os.path.join(step_dir, ".config_hash")).read().strip()
+        
+        # Second run with threshold=0.5 but auto_clean still false
+        mock_manager2 = MagicMock()
+        mock_calc.ChemTaskManager.return_value = mock_manager2
+        
+        run_calc_step(
+            step_dir=step_dir,
+            current_input=single_input_xyz,
+            params={
+                **self.MINIMAL_PARAMS,
+                "auto_clean": False,
+                "clean_params": {"threshold": 0.5},  # Changed but shouldn't matter
+            },
+            global_config=self.MINIMAL_GLOBAL,
+            root_dir=os.path.dirname(step_dir),
+            steps=[],
+            failure_tracker=failure_tracker,
+            step_name="step_02",
+        )
+        
+        second_hash = open(os.path.join(step_dir, ".config_hash")).read().strip()
+        # Hash should be the same because auto_clean=false
+        assert first_hash == second_hash
+        # Should skip because output exists and hash matches
+        mock_manager2.run.assert_not_called()

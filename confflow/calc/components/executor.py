@@ -17,24 +17,24 @@ import subprocess
 import time
 from typing import Any
 
-from ...core.path_policy import (
-    resolve_sandbox_root,
-    validate_cleanup_target,
-    validate_managed_path,
-)
-from ..step_contract import (
-    compute_calc_config_signature,
-    load_calc_config_signature,
-    record_calc_step_signature,
-)
 from ...core.exceptions import (
     CalculationExecutionError,
     CalculationInputError,
     CalculationParseError,
     StopRequestedError,
 )
+from ...core.path_policy import (
+    resolve_sandbox_root,
+    validate_cleanup_target,
+    validate_managed_path,
+)
 from ..policies.base import CalculationPolicy
 from ..setup import logger
+from ..step_contract import (
+    compute_calc_config_signature,
+    load_calc_config_signature,
+    record_calc_step_signature,
+)
 
 __all__ = [
     "handle_backups",

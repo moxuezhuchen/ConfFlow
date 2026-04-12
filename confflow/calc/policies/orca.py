@@ -10,6 +10,8 @@ import os
 import re
 from typing import Any
 
+from ...core.path_policy import validate_executable_setting
+from ...shared.orca_blocks import format_orca_blocks
 from ..components.input_helpers import (
     compute_orca_maxcore,
     parse_freeze_indices,
@@ -18,8 +20,6 @@ from ..constants import BUILTIN_TEMPLATES
 from ..geometry import check_termination as _check_termination
 from ..geometry import parse_last_geometry
 from ..psutil_compat import maybe_import_psutil, psutil_exception_types
-from ...core.path_policy import validate_executable_setting
-from ...shared.orca_blocks import format_orca_blocks
 from .base import CalculationPolicy
 
 __all__ = [

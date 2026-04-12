@@ -110,7 +110,7 @@ def iter_xyz_frames(
             atoms: list[str] = []
             coords: list[list[float]] = []
             malformed = False
-            for atom_offset in range(num_atoms):
+            for _atom_offset in range(num_atoms):
                 atom_line = handle.readline()
                 if not atom_line:
                     if strict:
