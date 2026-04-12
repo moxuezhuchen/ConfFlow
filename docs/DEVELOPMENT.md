@@ -77,8 +77,8 @@ ruff check confflow tests
 ### 核心架构
 
 - `docs/ARCHITECTURE.md`：完整的架构设计与模块说明
-- `docs/COMPAT_EXECUTION_BOUNDARY.md`：Compat/Execution 边界契约（workflow→calc 双轨接口）
-- `docs/HANDOFF_PHASE2_WORKFLOW_CALC.md`：阶段 2 完整历史与问题台账
+- `docs/internal/COMPAT_EXECUTION_BOUNDARY.md`：Compat/Execution 边界契约（workflow→calc 双轨接口）
+- `docs/archive/HANDOFF_PHASE2_WORKFLOW_CALC.md`：阶段 2 完整历史与问题台账
 
 ### 开发指南
 

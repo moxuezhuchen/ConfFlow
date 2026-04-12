@@ -464,7 +464,7 @@ ruff check confflow
 
 ## 9. 参考文档
 
-- `docs/HANDOFF_PHASE2_WORKFLOW_CALC.md`：阶段 2 完整历史与问题台账
+- `docs/archive/HANDOFF_PHASE2_WORKFLOW_CALC.md`：阶段 2 完整历史与问题台账
 - `confflow/calc/step_contract.py`：边界交汇点的实现
 - `confflow/calc/manager.py`：manager 内部的 semantic accessors
 - `confflow/workflow/step_handlers.py`：workflow 侧的 dual-lane handoff

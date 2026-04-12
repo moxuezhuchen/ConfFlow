@@ -189,7 +189,7 @@ def resolve_effective_auto_clean(
     - ``execution_config`` can override with structured cleanup options
     - Both signature computation and runtime auto-clean use the same priority rules
 
-    See ``docs/COMPAT_EXECUTION_BOUNDARY.md`` for the complete parameter
+    See ``docs/internal/COMPAT_EXECUTION_BOUNDARY.md`` for the complete parameter
     classification table and boundary contract.
 
     Parameters
@@ -292,7 +292,7 @@ def compute_calc_config_signature(
     - ``execution_config`` provides structured cleanup that must be reflected in signature
     - Effective cleanup is overlaid onto signature ONLY if auto-clean is enabled
 
-    See ``docs/COMPAT_EXECUTION_BOUNDARY.md`` for the complete parameter
+    See ``docs/internal/COMPAT_EXECUTION_BOUNDARY.md`` for the complete parameter
     classification table and boundary contract.
 
     Parameters
@@ -420,7 +420,7 @@ def record_calc_step_signature(
     - Signature is computed via ``compute_calc_config_signature()`` with the same
       dual-lane parameters
 
-    See ``docs/COMPAT_EXECUTION_BOUNDARY.md`` for the complete parameter
+    See ``docs/internal/COMPAT_EXECUTION_BOUNDARY.md`` for the complete parameter
     classification table and boundary contract.
 
     Parameters
@@ -563,7 +563,7 @@ def prepare_calc_step_dir(
     - ``execution_config`` provides structured cleanup that must be reflected in signature
     - Stale artifacts are cleaned ONLY if stored signature != current signature
 
-    See ``docs/COMPAT_EXECUTION_BOUNDARY.md`` for the complete parameter
+    See ``docs/internal/COMPAT_EXECUTION_BOUNDARY.md`` for the complete parameter
     classification table and boundary contract.
 
     Parameters
