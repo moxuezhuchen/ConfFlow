@@ -113,8 +113,8 @@ indent-style = "space"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
-addopts = "-v --tb=short --basetemp=.pytest_basetemp"
-cache_dir = ".pytest_cache"
+addopts = "-v --tb=short"
+cache_dir = ".pytest_cache_temp"
 markers = [
     "integration: end-to-end tests that exercise the full workflow",
 ]
@@ -122,6 +122,7 @@ markers = [
 [tool.coverage.run]
 source = ["confflow"]
 branch = true
+data_file = ".coverage_temp"
 
 [tool.coverage.report]
 fail_under = 85

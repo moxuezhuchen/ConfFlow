@@ -9,9 +9,11 @@ dist/
 
 # caches / test artifacts
 .pytest_cache/
+.pytest_cache_temp/
 .mypy_cache/
 .ruff_cache/
 .coverage
+.coverage_temp
 coverage.xml
 htmlcov/
 reports/

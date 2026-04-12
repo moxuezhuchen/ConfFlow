@@ -407,8 +407,9 @@ def test_main_multiple_inputs(tmp_path):
         assert mock_run.called
 
 
-def test_main_work_dir_default(tmp_path):
+def test_main_work_dir_default(tmp_path, monkeypatch):
     """Test main with default work directory."""
+    monkeypatch.chdir(tmp_path)
     input_xyz = tmp_path / "input.xyz"
     input_xyz.write_text("2\ntest\nC 0 0 0\nH 0 0 1\n")
     config_yaml = tmp_path / "config.yaml"

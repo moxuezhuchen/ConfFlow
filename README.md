@@ -60,8 +60,12 @@ pip install -e ".[dev]"
 
 ```bash
 find . -type d -name "__pycache__" -exec rm -rf {} +
-rm -rf confflow.egg-info .pytest_cache .pytest_basetemp .mypy_cache .ruff_cache build dist htmlcov coverage.xml reports .coverage
+rm -rf confflow.egg-info .mypy_cache .ruff_cache build dist htmlcov coverage.xml reports .pytest_cache_temp .coverage_temp
 ```
+
+注意：
+- 推荐使用 `./scripts/test.sh` 运行测试，所有产物在系统临时目录，测试后自动清理
+- 直接运行 `pytest` 会在项目根目录产生 `.pytest_cache_temp` 和 `.coverage_temp`（已在 .gitignore 中）
 
 ## 快速开始
 
@@ -168,7 +172,10 @@ A: 设置 `ts_rescue_scan: true`（默认关闭），会自动执行 scan 寻找
 # 安装开发依赖
 pip install -e ".[dev]"
 
-# 运行测试
+# 运行测试（推荐，零产物）
+./scripts/test.sh
+
+# 或直接运行 pytest（会在根目录产生 .pytest_cache_temp 和 .coverage_temp）
 pytest
 
 # 类型检查
@@ -177,6 +184,11 @@ mypy confflow
 # 代码风格
 ruff check .
 ```
+
+**测试说明**：
+- `./scripts/test.sh` 将所有 pytest/coverage 产物重定向到系统临时目录，测试后自动清理
+- 可透传参数：`./scripts/test.sh -v tests/test_core.py`
+- 直接运行 `pytest` 会在项目根目录产生临时文件（已在 .gitignore 中）
 
 ## 许可证
 

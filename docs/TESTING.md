@@ -2,19 +2,37 @@
 
 ## 快速开始
 
+### 推荐方式（零产物）
+
 ```bash
 # 全量测试
-pytest tests/ -q
+./scripts/test.sh
 
 # 带覆盖率
-pytest tests/ --cov=confflow --cov-report=term-missing
+./scripts/test.sh --cov=confflow --cov-report=term-missing
 
 # 仅集成测试
-pytest tests/ -m integration
+./scripts/test.sh -m integration
 
 # 跳过集成测试
-pytest tests/ -m "not integration"
+./scripts/test.sh -m "not integration"
+
+# 指定测试文件
+./scripts/test.sh tests/test_core.py -v
+
+# 透传任意 pytest 参数
+./scripts/test.sh -k test_manager --maxfail=1
 ```
+
+`./scripts/test.sh` 将所有 pytest 和 coverage 产物重定向到系统临时目录，测试结束后自动清理。
+
+### 直接运行 pytest
+
+```bash
+pytest tests/ -q
+```
+
+直接运行 `pytest` 会在项目根目录产生 `.pytest_cache_temp` 和 `.coverage_temp`（已在 .gitignore 中，不会提交）。由于 pytest 和 pytest-cov 的初始化机制限制，无法在不传参数的情况下完全避免这些文件。
 
 ---
 
@@ -158,6 +176,7 @@ pytest tests/ -m "not integration"
 [tool.coverage.run]
 source = ["confflow"]
 branch = true
+data_file = ".coverage_temp"
 
 [tool.coverage.report]
 fail_under = 85
@@ -167,8 +186,16 @@ show_missing = true
 运行带覆盖率检查的测试：
 
 ```bash
+# 推荐方式（零产物）
+./scripts/test.sh --cov=confflow --cov-report=term-missing
+
+# 或直接运行 pytest
 pytest tests/ --cov=confflow --cov-report=term-missing
 ```
+
+**注意**：
+- `./scripts/test.sh` 将 coverage 数据文件重定向到系统临时目录
+- 直接运行 `pytest` 会在项目根目录生成 `.coverage_temp`（已在 .gitignore 中）
 
 最近一次本地验证基线（2026-04-12）：
 

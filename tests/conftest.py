@@ -4,9 +4,26 @@
 
 from __future__ import annotations
 
+import os
+import tempfile
 from pathlib import Path
 
 import pytest
+
+
+# Create process-isolated temp directory for basetemp
+_temp_base = Path(tempfile.gettempdir()) / f"confflow_pytest_{os.getpid()}"
+_temp_base.mkdir(exist_ok=True)
+
+
+def pytest_configure(config):
+    """Configure pytest to use isolated temp directory for basetemp."""
+    # Set basetemp if not already set via command line
+    if config.option.basetemp is None:
+        config.option.basetemp = str(_temp_base / "basetemp")
+
+
+
 
 # All old test files have been merged and removed; no need to ignore any
 collect_ignore: list[str] = []
