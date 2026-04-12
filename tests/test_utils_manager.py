@@ -1158,3 +1158,102 @@ def test_calc_manager_executor_path_inserts_results(tmp_path):
         mgr.run(str(tmp_path / "input.xyz"))
 
         assert (tmp_path / "wd" / "result.xyz").exists()
+def test_config_hash_matches_auto_clean_effective_semantics(tmp_path):
+    """Verify .config_hash effective cleanup semantics match _run_auto_clean() actual clean_opts."""
+    from confflow.calc.step_contract import (
+        compute_calc_config_signature,
+        resolve_effective_auto_clean,
+    )
+
+    legacy = {
+        "iprog": "orca",
+        "itask": "sp",
+        "keyword": "xTB",
+        "auto_clean": "true",
+        "clean_opts": "-t 0.33 -ewin 9.5 --energy-tolerance 0.05",
+    }
+    structured = CalcTaskConfig(
+        program=Program.ORCA,
+        task=TaskKind.SP,
+        keyword="xTB",
+        cleanup=CleanupOptions(
+            enabled=True,
+            rmsd_threshold=0.22,
+            energy_window=6.0,
+            energy_tolerance=0.03,
+        ),
+        execution=ExecutionOptions(auto_clean=True),
+    )
+
+    # Compute signature hash
+    sig_hash = compute_calc_config_signature(legacy, execution_config=structured)
+
+    # Resolve effective auto-clean (same logic used by _run_auto_clean)
+    enabled, effective_clean_opts = resolve_effective_auto_clean(legacy, structured)
+
+    assert enabled is True
+    # Legacy clean_opts should take priority over structured cleanup
+    assert "0.33" in effective_clean_opts
+    assert "9.5" in effective_clean_opts
+    assert "0.05" in effective_clean_opts
+
+    # Verify signature changes when effective cleanup changes
+    legacy2 = dict(legacy)
+    legacy2["clean_opts"] = "-t 0.44 -ewin 10.0 --energy-tolerance 0.06"
+    sig_hash2 = compute_calc_config_signature(legacy2, execution_config=structured)
+    assert sig_hash != sig_hash2
+
+
+def test_dual_lane_clean_opts_update_syncs_signature_and_auto_clean(tmp_path):
+    """Verify manager.config.update(clean_opts) syncs both signature and auto-clean."""
+    from confflow.calc.step_contract import compute_calc_config_signature
+
+    legacy = {
+        "iprog": "orca",
+        "itask": "sp",
+        "keyword": "xTB",
+        "auto_clean": "true",
+    }
+    structured = CalcTaskConfig(
+        program=Program.ORCA,
+        task=TaskKind.SP,
+        keyword="xTB",
+        cleanup=CleanupOptions(
+            enabled=True,
+            rmsd_threshold=0.15,
+            energy_window=5.0,
+            energy_tolerance=0.02,
+        ),
+        execution=ExecutionOptions(auto_clean=True),
+    )
+
+    manager = ChemTaskManager(settings=legacy, execution_config=structured)
+
+    # Initial signature uses structured cleanup (no legacy clean_opts)
+    sig_before = compute_calc_config_signature(manager.config, execution_config=manager.execution_config)
+    _, clean_opts_before = manager._resolve_effective_clean_opts()
+    assert "0.15" in clean_opts_before  # From structured cleanup
+
+    # Update public clean_opts
+    manager.config.update({"clean_opts": "-t 0.55 -ewin 12.0 --energy-tolerance 0.07"})
+
+    # Both signature and auto-clean should now use updated value
+    sig_after = compute_calc_config_signature(manager.config, execution_config=manager.execution_config)
+    _, clean_opts_after = manager._resolve_effective_clean_opts()
+
+    assert sig_before != sig_after
+    assert "0.55" in clean_opts_after
+    assert "12.0" in clean_opts_after
+    assert "0.07" in clean_opts_after
+
+    # Verify auto-clean actually uses the updated value
+    out_file = tmp_path / "result.xyz"
+    out_file.write_text("1\ntest\nH 0 0 0\n", encoding="utf-8")
+
+    with patch("confflow.calc.manager.run_refine_postprocess") as mock_refine:
+        manager._run_auto_clean(str(out_file))
+
+    kwargs = mock_refine.call_args.kwargs
+    assert kwargs["threshold"] == 0.55
+    assert kwargs["ewin"] == 12.0
+    assert kwargs["energy_tolerance"] == 0.07
