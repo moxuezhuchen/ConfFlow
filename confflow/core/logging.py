@@ -57,18 +57,35 @@ class ConfFlowLogger:
 
     @classmethod
     def _should_auto_embed(cls) -> bool:
-        """Auto-enable embedded mode for real host loggers, not pytest capture handlers."""
+        """Auto-enable embedded mode only for explicit host-managed handlers."""
         root_logger = logging.getLogger()
         root_handlers = list(getattr(root_logger, "handlers", []))
         if not root_handlers:
             return False
 
-        return any(not cls._is_pytest_handler(handler) for handler in root_handlers)
+        return any(cls._is_host_managed_handler(handler) for handler in root_handlers)
 
     @staticmethod
     def _is_pytest_handler(handler: logging.Handler) -> bool:
         """Return True for pytest's internal logging handlers."""
         return type(handler).__module__.startswith("_pytest.")
+
+    @classmethod
+    def _is_host_managed_handler(cls, handler: logging.Handler) -> bool:
+        """Return True only for non-generic handlers that likely belong to an embedded host."""
+        if cls._is_pytest_handler(handler):
+            return False
+        if isinstance(handler, logging.NullHandler):
+            return False
+
+        module_name = type(handler).__module__
+        if module_name == "logging" or module_name.startswith("logging."):
+            return False
+        if module_name.startswith(
+            ("IPython.", "ipykernel.", "jupyter_client.", "traitlets.", "tornado.")
+        ):
+            return False
+        return True
 
     @classmethod
     def set_embedded_mode(cls, enabled: bool = True):

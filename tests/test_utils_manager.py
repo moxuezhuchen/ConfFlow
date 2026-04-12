@@ -374,12 +374,15 @@ def test_manager_run_uses_legacy_config_for_signature_paths_with_structured_exec
     monkeypatch.setattr(
         "confflow.calc.manager.prepare_calc_step_dir",
         lambda step_dir, config, input_signature=None, execution_config=None: (
-            seen.append(("prepare", config)), SimpleNamespace(cleaned_stale_artifacts=False)
+            seen.append(("prepare", config)),
+            SimpleNamespace(cleaned_stale_artifacts=False),
         )[1],
     )
     monkeypatch.setattr(
         "confflow.calc.manager.record_calc_step_signature",
-        lambda step_dir, config, input_signature=None, execution_config=None: seen.append(("record", config)),
+        lambda step_dir, config, input_signature=None, execution_config=None: seen.append(
+            ("record", config)
+        ),
     )
     monkeypatch.setattr(
         "confflow.calc.manager.TaskSourceBuilder.build_from_input",
@@ -420,12 +423,15 @@ def test_manager_config_updates_affect_signature_paths_with_dual_lane(tmp_path, 
     monkeypatch.setattr(
         "confflow.calc.manager.prepare_calc_step_dir",
         lambda step_dir, config, input_signature=None, execution_config=None: (
-            seen.append(("prepare", config)), SimpleNamespace(cleaned_stale_artifacts=False)
+            seen.append(("prepare", config)),
+            SimpleNamespace(cleaned_stale_artifacts=False),
         )[1],
     )
     monkeypatch.setattr(
         "confflow.calc.manager.record_calc_step_signature",
-        lambda step_dir, config, input_signature=None, execution_config=None: seen.append(("record", config)),
+        lambda step_dir, config, input_signature=None, execution_config=None: seen.append(
+            ("record", config)
+        ),
     )
     monkeypatch.setattr(
         "confflow.calc.manager.TaskSourceBuilder.build_from_input",
@@ -852,12 +858,15 @@ def test_manager_run_uses_overridden_input_signature(tmp_path, monkeypatch):
     monkeypatch.setattr(
         "confflow.calc.manager.prepare_calc_step_dir",
         lambda step_dir, config, input_signature=None, execution_config=None: (
-            seen.append(input_signature), SimpleNamespace(cleaned_stale_artifacts=False)
+            seen.append(input_signature),
+            SimpleNamespace(cleaned_stale_artifacts=False),
         )[1],
     )
     monkeypatch.setattr(
         "confflow.calc.manager.record_calc_step_signature",
-        lambda step_dir, config, input_signature=None, execution_config=None: seen.append(input_signature),
+        lambda step_dir, config, input_signature=None, execution_config=None: seen.append(
+            input_signature
+        ),
     )
     monkeypatch.setattr(
         "confflow.calc.manager.TaskSourceBuilder.build_from_input",
@@ -909,9 +918,7 @@ def test_manager_read_xyz_errors(tmp_path):
 def test_manager_iter_input_geometries_skips_bad_frame_and_keeps_later_valid(tmp_path):
     xyz = tmp_path / "mixed.xyz"
     xyz.write_text(
-        "1\nok1\nH 0 0 0\n"
-        "1\nbad\nH nope 0 0\n"
-        "1\nok2\nH 0 0 1\n",
+        "1\nok1\nH 0 0 0\n" "1\nbad\nH nope 0 0\n" "1\nok2\nH 0 0 1\n",
         encoding="utf-8",
     )
 
@@ -1157,6 +1164,8 @@ def test_calc_manager_executor_path_inserts_results(tmp_path):
         mgr.run(str(tmp_path / "input.xyz"))
 
         assert (tmp_path / "wd" / "result.xyz").exists()
+
+
 def test_config_hash_matches_auto_clean_effective_semantics(tmp_path):
     """Verify .config_hash effective cleanup semantics match _run_auto_clean() actual clean_opts."""
     from confflow.calc.step_contract import (
@@ -1229,7 +1238,9 @@ def test_dual_lane_clean_opts_update_syncs_signature_and_auto_clean(tmp_path):
     manager = ChemTaskManager(settings=legacy, execution_config=structured)
 
     # Initial signature uses structured cleanup (no legacy clean_opts)
-    sig_before = compute_calc_config_signature(manager.config, execution_config=manager.execution_config)
+    sig_before = compute_calc_config_signature(
+        manager.config, execution_config=manager.execution_config
+    )
     _, clean_opts_before = manager._resolve_effective_clean_opts()
     assert "0.15" in clean_opts_before  # From structured cleanup
 
@@ -1237,7 +1248,9 @@ def test_dual_lane_clean_opts_update_syncs_signature_and_auto_clean(tmp_path):
     manager.config.update({"clean_opts": "-t 0.55 -ewin 12.0 --energy-tolerance 0.07"})
 
     # Both signature and auto-clean should now use updated value
-    sig_after = compute_calc_config_signature(manager.config, execution_config=manager.execution_config)
+    sig_after = compute_calc_config_signature(
+        manager.config, execution_config=manager.execution_config
+    )
     _, clean_opts_after = manager._resolve_effective_clean_opts()
 
     assert sig_before != sig_after
@@ -1256,3 +1269,50 @@ def test_dual_lane_clean_opts_update_syncs_signature_and_auto_clean(tmp_path):
     assert kwargs["threshold"] == 0.55
     assert kwargs["ewin"] == 12.0
     assert kwargs["energy_tolerance"] == 0.07
+
+
+def test_config_hash_ignores_execution_only_runtime_knobs():
+    from confflow.calc.step_contract import compute_calc_config_signature
+
+    base = {
+        "iprog": "orca",
+        "itask": "sp",
+        "keyword": "xTB",
+        "auto_clean": "false",
+        "gaussian_write_chk": "false",
+        "enable_dynamic_resources": "false",
+        "resume_from_backups": "false",
+    }
+    changed = dict(base)
+    changed.update(
+        {
+            "gaussian_write_chk": "true",
+            "enable_dynamic_resources": "true",
+            "resume_from_backups": "true",
+        }
+    )
+
+    assert compute_calc_config_signature(base) == compute_calc_config_signature(changed)
+
+
+def test_clean_params_alias_keeps_runtime_and_signature_in_sync():
+    from confflow.calc.step_contract import (
+        compute_calc_config_signature,
+        resolve_effective_auto_clean,
+    )
+
+    cfg = {
+        "iprog": "orca",
+        "itask": "sp",
+        "keyword": "xTB",
+        "auto_clean": "true",
+        "clean_params": {"threshold": 0.4, "energy_window": 8.0},
+    }
+    changed = dict(cfg)
+    changed["clean_params"] = {"threshold": 0.5, "energy_window": 8.0}
+
+    enabled, clean_opts = resolve_effective_auto_clean(cfg)
+
+    assert enabled is True
+    assert clean_opts == "-t 0.4 -ewin 8.0"
+    assert compute_calc_config_signature(cfg) != compute_calc_config_signature(changed)

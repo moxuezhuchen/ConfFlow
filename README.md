@@ -40,7 +40,7 @@ pip install -e ".[dev]"
 - ✅ XYZ 流式处理：新增 `iter_xyz_frames()`，`confgen` 改为边生成边写 `search.xyz`
 - ✅ 进程终止增强：`cli` 使用 `psutil` 进行进程树回收
 - ✅ 架构边界收口：新增 calc step contract、路径策略、后处理适配器、内部 run services
-- ✅ 测试基线（2026-04-12 验证）：41 个 `test_*.py` 测试文件、**708 个测试**、`pytest -q` 约 7s
+- ✅ 测试基线（2026-04-12 验证）：41 个 `test_*.py` 测试文件、**714 个测试**，`pytest -q` 当前通过
 - ✅ 覆盖率门禁：`pyproject.toml` 中配置 `fail_under = 85`
 - ✅ 类型安全：`core/types.py` 改为标准库 `typing.TypedDict`
 - ✅ 类型/风格基线（2026-04-12 验证）：`mypy confflow`、`ruff check confflow tests`、`pytest -q` 均通过

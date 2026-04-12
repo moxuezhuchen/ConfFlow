@@ -19,7 +19,7 @@ confflow/
 │   ├── config/            # 配置加载与校验
 │   ├── core/              # 基础 IO、数据、模型与工具函数
 │   └── workflow/          # 工作流引擎
-├── tests/                 # 测试目录（2026-04-12 验证：41 个 test 文件，708 个测试）
+├── tests/                 # 测试目录（2026-04-12 验证：41 个 test 文件，714 个测试）
 ├── docs/                  # 文档
 ├── confflow.yaml          # 配置模板
 ├── README.md              # 主文档
@@ -330,7 +330,8 @@ confflow input.xyz -c confflow.yaml --verbose
 A: ConfFlow 日志系统默认运行在 **standalone 模式**：
 - CLI 运行时，日志写入 `<input_basename>.txt` 文件
 - 同时在终端显示 INFO 级别的简洁输出
-- 不依赖自动检测，始终使用独立的 console handler
+- 默认使用独立的 console handler；但当检测到明确的 host-managed 自定义 root handler 时，会自动切换到 embedded 模式
+- `pytest` capture、标准库通用 handler、`NullHandler`、常见 notebook handler 不会触发该自动 embedded
 
 如果 ConfFlow 被嵌入到其他应用（如 GibbsFlow）中，外部调用方可以显式启用 **embedded 模式**：
 ```python

@@ -259,9 +259,11 @@ def _config_for_auto_clean(self) -> dict[str, Any]:
 
 **Clean opts**（仅当 `auto_clean=True` 时）：
 1. `config["clean_opts"]`（compat 基线）
-2. `execution_config.cleanup.to_legacy_clean_opts()`（structured 覆盖）
-3. `execution_config["clean_opts"]`（fallback）
-4. 默认 `"-t 0.25"`
+2. `config["clean_params"]`（compat 基线 legacy alias）
+3. `execution_config.cleanup.to_legacy_clean_opts()`（structured 覆盖）
+4. `execution_config["clean_opts"]`（fallback）
+5. `execution_config["clean_params"]`（fallback legacy alias）
+6. 默认 `"-t 0.25"`
 
 ### 5.3 关键测试覆盖
 
@@ -291,7 +293,7 @@ def _config_for_auto_clean(self) -> dict[str, Any]:
 | `max_parallel_jobs` | ✓ | - | - | 并行任务数，影响 signature |
 | `auto_clean` | ✓ | ✓ | - | **双重语义**：compat 基线可被 execution 覆盖，影响 signature |
 | `clean_opts` | ✓ | ✓ | - | **双重语义**：compat 基线可被 execution 覆盖，影响 signature（仅当 `auto_clean=True`） |
-| `clean_params` | ✓ | ✓ | - | **双重语义**：legacy 别名，等价于 `clean_opts` |
+| `clean_params` | ✓ | ✓ | - | **双重语义**：legacy alias，运行时按 `clean_opts` 同语义解析 |
 | `ts_bond_atoms` | ✓ | - | - | TS 键原子对，影响 signature |
 | `ts_rescue_scan` | ✓ | - | - | TS 救援开关，影响 signature |
 | `ts_bond_drift_threshold` | ✓ | - | - | TS 键漂移阈值，影响 signature |
@@ -307,9 +309,9 @@ def _config_for_auto_clean(self) -> dict[str, Any]:
 | `orca_maxcore` | ✓ | - | - | ORCA maxcore，影响 signature |
 | `gaussian_modredundant` | ✓ | - | - | Gaussian modredundant，影响 signature |
 | `gaussian_link0` | ✓ | - | - | Gaussian link0，影响 signature |
-| `gaussian_write_chk` | ✓ | - | ✓ | **Execution-only**：不影响 signature，仅控制 .chk 写入行为 |
-| `enable_dynamic_resources` | ✓ | - | ✓ | **Execution-only**：不影响 signature，仅控制运行期资源调整 |
-| `resume_from_backups` | ✓ | - | ✓ | **Execution-only**：不影响 signature，仅控制断点续传行为 |
+| `gaussian_write_chk` | ✓ | - | - | **Runtime-only in compat lane**：当前仍存在于 legacy/compat config 并被运行时读取，但已从 signature 排除，仅控制 .chk 写入行为 |
+| `enable_dynamic_resources` | ✓ | - | - | **Runtime-only in compat lane**：当前仍存在于 legacy/compat config 并被运行时读取，但已从 signature 排除，仅控制运行期资源调整 |
+| `resume_from_backups` | ✓ | - | - | **Runtime-only in compat lane**：当前仍存在于 legacy/compat config 并被运行时读取，但已从 signature 排除，仅控制断点续传行为 |
 | `sandbox_root` | - | - | ✓ | **Execution-only**：不影响 signature，仅用于路径安全校验 |
 | `input_chk_dir` | - | - | ✓ | **Execution-only**：不影响 signature，仅用于跨 step .chk 传递 |
 | `allowed_executables` | - | - | ✓ | **Execution-only**：不影响 signature，仅用于可执行路径白名单校验 |
@@ -327,6 +329,7 @@ def _config_for_auto_clean(self) -> dict[str, Any]:
 
 1. **Cleanup 的双重语义**：
    - `auto_clean` / `clean_opts` / `clean_params` 既影响 runtime（决定是否执行 auto-clean），又影响 signature（当 `auto_clean=True` 时）
+   - `clean_params` 在 compat/execution 边界中作为 `clean_opts` 的 legacy alias 处理，并在 signature 中规范化为 `clean_opts`
    - 优先级规则：`config` 基线 → `execution_config` 覆盖 → 默认值
    - `resolve_effective_auto_clean()` 和 `compute_calc_config_signature()` 必须使用相同的优先级规则
 

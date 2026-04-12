@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import ast
 import hashlib
 import json
 import os
@@ -51,6 +52,7 @@ class CompatConfig(TypedDict, total=False):
     # Auto-clean baseline
     auto_clean: bool | str
     clean_opts: str
+    clean_params: str | Mapping[str, Any]
 
     # Signature-excluded runtime paths (not part of config hash)
     backup_dir: str
@@ -79,6 +81,8 @@ class ExecutionConfig(TypedDict, total=False):
     # Flat fallback keys (when not CalcTaskConfig)
     auto_clean: bool | str
     clean_opts: str
+    clean_params: str | Mapping[str, Any]
+
 
 _CONFIG_HASH_EXCLUDE_KEYS = {
     "backup_dir",
@@ -86,6 +90,9 @@ _CONFIG_HASH_EXCLUDE_KEYS = {
     "gaussian_oldchk",
     "gaussian_oldchk_file",
     "input_chk_dir",
+    "gaussian_write_chk",
+    "enable_dynamic_resources",
+    "resume_from_backups",
 }
 
 _CALC_RESUME_ARTIFACTS = (
@@ -116,6 +123,61 @@ def _normalize_config_for_signature(value: Any) -> Any:
     return str(value)
 
 
+def _coerce_clean_flag(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    return bool(value)
+
+
+def _format_clean_opts_from_mapping(value: Mapping[str, Any]) -> str:
+    opts: list[str] = []
+    if _coerce_clean_flag(value.get("dedup_only")):
+        opts.append("--dedup-only")
+    if _coerce_clean_flag(value.get("keep_all_topos")):
+        opts.append("--keep-all-topos")
+    if _coerce_clean_flag(value.get("noH", value.get("no_h"))):
+        opts.append("--noH")
+
+    threshold = value.get("threshold", value.get("rmsd_threshold"))
+    if threshold is not None and str(threshold).strip():
+        opts.append(f"-t {threshold}")
+
+    energy_window = value.get("energy_window", value.get("ewin"))
+    if energy_window is not None and str(energy_window).strip():
+        opts.append(f"-ewin {energy_window}")
+
+    energy_tolerance = value.get("energy_tolerance", value.get("etol"))
+    if energy_tolerance is not None and str(energy_tolerance).strip():
+        opts.append(f"--energy-tolerance {energy_tolerance}")
+
+    return " ".join(opts)
+
+
+def _resolve_clean_opts_value(value: Any) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, Mapping):
+        clean_opts = _format_clean_opts_from_mapping(value)
+        return clean_opts or None
+    if isinstance(value, str):
+        stripped = value.strip()
+        if not stripped:
+            return None
+        if stripped.startswith("{") and stripped.endswith("}"):
+            try:
+                parsed = ast.literal_eval(stripped)
+            except (SyntaxError, ValueError):
+                return stripped
+            if isinstance(parsed, Mapping):
+                clean_opts = _format_clean_opts_from_mapping(parsed)
+                return clean_opts or None
+        return stripped
+    stripped = str(value).strip()
+    return stripped or None
+
+
 def resolve_effective_auto_clean(
     config: CompatConfig,
     execution_config: ExecutionConfig | Mapping[str, Any] | None = None,
@@ -134,11 +196,12 @@ def resolve_effective_auto_clean(
     ----------
     config : CompatConfig
         Compat config (legacy flat dict). Provides baseline for ``auto_clean``
-        and ``clean_opts``.
+        and ``clean_opts`` / ``clean_params``.
     execution_config : ExecutionConfig | Mapping[str, Any] | None
         Execution config (structured or flat). Can override cleanup semantics
         via ``cleanup.enabled`` / ``cleanup.to_legacy_clean_opts()`` (if
-        CalcTaskConfig) or ``auto_clean`` / ``clean_opts`` (if flat dict).
+        CalcTaskConfig) or ``auto_clean`` / ``clean_opts`` / ``clean_params``
+        (if flat dict).
 
     Returns
     -------
@@ -155,9 +218,11 @@ def resolve_effective_auto_clean(
 
     Priority for clean_opts (only when enabled=True):
         1. config["clean_opts"] (compat baseline)
-        2. execution_config.cleanup.to_legacy_clean_opts() (structured override)
-        3. execution_config["clean_opts"] (flat fallback)
-        4. default "-t 0.25"
+        2. config["clean_params"] (compat baseline legacy alias)
+        3. execution_config.cleanup.to_legacy_clean_opts() (structured override)
+        4. execution_config["clean_opts"] (flat fallback)
+        5. execution_config["clean_params"] (flat fallback legacy alias)
+        6. default "-t 0.25"
 
     Notes
     -----
@@ -192,9 +257,11 @@ def resolve_effective_auto_clean(
         return False, ""
 
     # Resolve clean_opts (only when enabled)
-    clean_opts_raw = config.get("clean_opts")
-    if clean_opts_raw is not None and str(clean_opts_raw).strip():
-        return True, str(clean_opts_raw)
+    clean_opts_raw = _resolve_clean_opts_value(config.get("clean_opts"))
+    if clean_opts_raw is None:
+        clean_opts_raw = _resolve_clean_opts_value(config.get("clean_params"))
+    if clean_opts_raw is not None:
+        return True, clean_opts_raw
 
     if execution_config is None:
         return True, "-t 0.25"
@@ -204,9 +271,11 @@ def resolve_effective_auto_clean(
         if clean_opts.strip():
             return True, clean_opts
 
-    clean_opts_fallback = execution_config.get("clean_opts")
-    if clean_opts_fallback is not None and str(clean_opts_fallback).strip():
-        return True, str(clean_opts_fallback)
+    clean_opts_fallback = _resolve_clean_opts_value(execution_config.get("clean_opts"))
+    if clean_opts_fallback is None:
+        clean_opts_fallback = _resolve_clean_opts_value(execution_config.get("clean_params"))
+    if clean_opts_fallback is not None:
+        return True, clean_opts_fallback
 
     return True, "-t 0.25"
 
@@ -261,6 +330,7 @@ def compute_calc_config_signature(
     )
     if auto_clean_enabled:
         signature_view["clean_opts"] = effective_clean_opts
+        signature_view.pop("clean_params", None)
         signature_view["auto_clean"] = "true"
     else:
         # Normalize auto_clean to false and remove all cleanup params from signature
@@ -460,14 +530,18 @@ def inspect_calc_step_state(
     input_signature: str | None = None,
     execution_config: ExecutionConfig | Mapping[str, Any] | None = None,
 ) -> CalcStepState:
-    current_signature = compute_calc_config_signature(task_config, execution_config=execution_config)
+    current_signature = compute_calc_config_signature(
+        task_config, execution_config=execution_config
+    )
     if input_signature is not None:
         current_signature = f"{current_signature}:{input_signature}"
     return CalcStepState(
         step_dir=step_dir,
         output_path=resolve_calc_step_output(step_dir),
         failed_path=(
-            os.path.join(step_dir, "failed.xyz") if os.path.exists(os.path.join(step_dir, "failed.xyz")) else None
+            os.path.join(step_dir, "failed.xyz")
+            if os.path.exists(os.path.join(step_dir, "failed.xyz"))
+            else None
         ),
         stored_signature=load_calc_config_signature(step_dir),
         current_signature=current_signature,
@@ -534,6 +608,9 @@ def prepare_calc_step_dir(
     if should_clean:
         _clear_step_dir_contents(step_dir)
         state = inspect_calc_step_state(
-            step_dir, task_config, input_signature=input_signature, execution_config=execution_config
+            step_dir,
+            task_config,
+            input_signature=input_signature,
+            execution_config=execution_config,
         )
     return PreparedCalcStep(state=state, cleaned_stale_artifacts=should_clean)
