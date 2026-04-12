@@ -11,11 +11,6 @@ from datetime import datetime
 from typing import Any
 
 from ..blocks import viz
-from ..shared.defaults import (
-    DEFAULT_CORES_PER_TASK,
-    DEFAULT_MAX_PARALLEL_JOBS,
-    DEFAULT_TOTAL_MEMORY,
-)
 from ..core import io as io_xyz
 from ..core.console import (
     console,
@@ -26,6 +21,11 @@ from ..core.console import (
 )
 from ..core.types import TaskStatus
 from ..core.utils import format_duration_hms, format_index_ranges, parse_index_spec, parse_itask
+from ..shared.defaults import (
+    DEFAULT_CORES_PER_TASK,
+    DEFAULT_MAX_PARALLEL_JOBS,
+    DEFAULT_TOTAL_MEMORY,
+)
 from .config_builder import _itask_label, _normalize_iprog_label
 from .helpers import count_conformers_any
 

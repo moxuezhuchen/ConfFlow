@@ -23,6 +23,7 @@ from ..core.utils import get_logger
 from .config_builder import build_task_config
 from .helpers import as_list, is_multi_frame_any, pushd, resolve_step_output
 from .stats import FailureTracker
+from .task_config import build_structured_task_config
 
 __all__ = [
     "StepContext",
@@ -99,12 +100,31 @@ def run_calc_step(
     step_name: str,
 ) -> str:
     """Execute a calculation step (execution adapter layer)."""
-    task_config = build_task_config(params, global_config, root_dir, steps)
-    ConfigSchema.validate_calc_config(task_config)
+    # 1. Build legacy config
+    legacy_task_config = build_task_config(params, global_config, root_dir, steps)
+    
+    # 2. Validate legacy config
+    ConfigSchema.validate_calc_config(legacy_task_config)
+    
+    # 3. Build structured config (may fail on invalid cleanup params)
+    structured_task_config = build_structured_task_config(
+        params,
+        global_config,
+        root_dir=root_dir,
+        all_steps=steps,
+    )
+    
+    # 4. Compute input signature
     input_signature = compute_calc_input_signature(current_input)
     input_source = current_input if isinstance(current_input, str) else current_input[0]
 
-    prepared = prepare_calc_step_dir(step_dir, task_config, input_signature=input_signature)
+    # 5. Prepare step dir (only after structured config validated)
+    prepared = prepare_calc_step_dir(
+        step_dir,
+        legacy_task_config,
+        input_signature=input_signature,
+        execution_config=structured_task_config,
+    )
     if prepared.cleaned_stale_artifacts:
         logger.warning(
             "Discarding stale calc artifacts in '%s' because the step state is incomplete or outdated.",
@@ -123,13 +143,24 @@ def run_calc_step(
             current_input[0],
         )
 
-    manager = calc.ChemTaskManager(task_config)
+    # 6. Create manager
+    manager = calc.ChemTaskManager(
+        settings=legacy_task_config,
+        execution_config=structured_task_config,
+    )
     manager.work_dir = step_dir
     manager._input_signature_override = input_signature
-    record_calc_step_signature(step_dir, task_config, input_signature=input_signature)
-    manager.run(
-        input_xyz_file=input_source
+    
+    # 7. Record signature
+    record_calc_step_signature(
+        step_dir,
+        legacy_task_config,
+        input_signature=input_signature,
+        execution_config=structured_task_config,
     )
+    
+    # 8. Run
+    manager.run(input_xyz_file=input_source)
 
     work_failed = os.path.join(step_dir, "failed.xyz")
 

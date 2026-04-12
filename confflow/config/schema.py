@@ -10,7 +10,6 @@ reducing complexity in the YAML -> INI -> dict conversion chain.
 from __future__ import annotations
 
 import logging
-import re
 from typing import Any
 
 from pydantic import ValidationError as PydanticValidationError
@@ -24,6 +23,8 @@ from ..core.models import (
 )
 from ..shared.config_validation import (
     validate_step_config as shared_validate_step_config,
+)
+from ..shared.config_validation import (
     validate_yaml_config as shared_validate_yaml_config,
 )
 from .defaults import (

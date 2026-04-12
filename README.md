@@ -40,10 +40,10 @@ pip install -e ".[dev]"
 - ✅ XYZ 流式处理：新增 `iter_xyz_frames()`，`confgen` 改为边生成边写 `search.xyz`
 - ✅ 进程终止增强：`cli` 使用 `psutil` 进行进程树回收
 - ✅ 架构边界收口：新增 calc step contract、路径策略、后处理适配器、内部 run services
-- ✅ 测试架构重构：49 个测试文件、**673 个测试**、`pytest -q` 约 8s
-- ✅ 覆盖率：branch coverage **90.72%**（`fail_under = 85`）
+- ✅ 测试基线（2026-04-12）：41 个 `test_*.py` 测试文件、**682 个测试**、`pytest -q` 本地约 6.4s
+- ✅ 覆盖率门禁：`pyproject.toml` 中配置 `fail_under = 85`
 - ✅ 类型安全：`core/types.py` 改为标准库 `typing.TypedDict`
-- ✅ 类型安全：当前基线为 `mypy confflow`、`ruff check .`、`pytest`（最近一次本地复核：2026-04-11）
+- ✅ 类型/风格基线（2026-04-12）：`mypy confflow`、`ruff check confflow tests`、`pytest -q` 均通过
 - ✅ 支持矩阵明确：CI 现验证 Python **3.9-3.13**
 - ✅ 异常精确化：`scan_ops`/`executor`/`generator` 中 8 处 `except Exception` 收窄为具体异常
 - ✅ 构象去重精度提升：对称性感知 RMSD + 能量辅助阈值，解决大分子原子乱序/对称互换导致的去重漏判

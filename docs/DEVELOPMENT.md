@@ -19,7 +19,7 @@ confflow/
 │   ├── config/            # 配置加载与校验
 │   ├── core/              # 基础 IO、数据、模型与工具函数
 │   └── workflow/          # 工作流引擎
-├── tests/                 # 单元测试（41 个文件，655 个用例）
+├── tests/                 # 测试目录（当前 41 个 test 文件，682 个测试）
 ├── docs/                  # 文档
 ├── confflow.yaml          # 配置模板
 ├── README.md              # 主文档
@@ -67,7 +67,7 @@ mypy confflow
 ### 代码风格检查
 
 ```bash
-ruff check .
+ruff check confflow tests
 ```
 
 统一风格与输入/输出契约见：`docs/STYLE_CONTRACT.md`
@@ -103,10 +103,16 @@ pytest tests/ --cov=confflow --cov-report=term-missing
 ### 常用质量门禁（推荐）
 
 ```bash
-ruff check .
+ruff check confflow tests
 mypy confflow
 pytest -q
 ```
+
+当前本地基线（2026-04-12）：
+
+- `ruff check confflow tests`：通过
+- `mypy confflow`：通过
+- `pytest -q`：682 passed
 
 ### 测试产物目录规范
 

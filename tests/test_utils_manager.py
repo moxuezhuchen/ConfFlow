@@ -10,6 +10,13 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from confflow.calc.config_types import (
+    CalcTaskConfig,
+    CleanupOptions,
+    ExecutionOptions,
+    Program,
+    TaskKind,
+)
 from confflow.calc.manager import ChemTaskManager
 from confflow.core.utils import (
     ConfFlowLogger,
@@ -329,6 +336,288 @@ def test_manager_init_with_config(tmp_path):
     assert manager.config["program"] == "gaussian"
 
 
+def test_manager_init_with_structured_config_preserves_object_and_bool_flags():
+    structured = CalcTaskConfig(
+        program=Program.ORCA,
+        task=TaskKind.SP,
+        keyword="HF def2-SVP",
+        execution=ExecutionOptions(enable_dynamic_resources=True),
+    )
+    legacy = {"iprog": "orca", "itask": "sp", "keyword": "HF def2-SVP"}
+    manager = ChemTaskManager(settings=legacy, execution_config=structured)
+    assert manager.compat_config is manager.config
+    assert manager.execution_config is structured
+    assert manager.config == legacy
+    assert manager.monitor is not None
+
+
+def test_manager_run_uses_legacy_config_for_signature_paths_with_structured_execution(
+    tmp_path, monkeypatch
+):
+    xyz_file = tmp_path / "input.xyz"
+    xyz_file.write_text("1\ntest\nH 0.0 0.0 0.0\n", encoding="utf-8")
+
+    legacy = {"iprog": "orca", "itask": "sp", "keyword": "xTB", "auto_clean": "false"}
+    structured = CalcTaskConfig(
+        program=Program.ORCA,
+        task=TaskKind.SP,
+        keyword="xTB",
+        execution=ExecutionOptions(auto_clean=False),
+    )
+    manager = ChemTaskManager(
+        settings=legacy,
+        execution_config=structured,
+        resume_dir=str(tmp_path / "work"),
+    )
+
+    seen: list[tuple[str, object]] = []
+
+    monkeypatch.setattr(
+        "confflow.calc.manager.prepare_calc_step_dir",
+        lambda step_dir, config, input_signature=None, execution_config=None: (
+            seen.append(("prepare", config)), SimpleNamespace(cleaned_stale_artifacts=False)
+        )[1],
+    )
+    monkeypatch.setattr(
+        "confflow.calc.manager.record_calc_step_signature",
+        lambda step_dir, config, input_signature=None, execution_config=None: seen.append(("record", config)),
+    )
+    monkeypatch.setattr(
+        "confflow.calc.manager.TaskSourceBuilder.build_from_input",
+        lambda self, input_xyz_file: ([], {}),
+    )
+
+    manager.run(str(xyz_file))
+
+    assert manager.compat_config is manager.config
+    assert seen[0][0] == "prepare"
+    assert seen[1][0] == "record"
+    assert seen[0][1] is manager.config
+    assert seen[1][1] is manager.config
+    assert manager.config["iprog"] == "orca"
+    assert manager.config["auto_clean"] == "false"
+
+
+def test_manager_config_updates_affect_signature_paths_with_dual_lane(tmp_path, monkeypatch):
+    xyz_file = tmp_path / "input.xyz"
+    xyz_file.write_text("1\ntest\nH 0.0 0.0 0.0\n", encoding="utf-8")
+
+    legacy = {"iprog": "orca", "itask": "sp", "keyword": "xTB"}
+    structured = CalcTaskConfig(
+        program=Program.ORCA,
+        task=TaskKind.SP,
+        keyword="xTB",
+        execution=ExecutionOptions(auto_clean=False),
+    )
+    manager = ChemTaskManager(
+        settings=legacy,
+        execution_config=structured,
+        resume_dir=str(tmp_path / "work"),
+    )
+    manager.config.update({"max_parallel_jobs": "7"})
+
+    seen: list[tuple[str, object]] = []
+
+    monkeypatch.setattr(
+        "confflow.calc.manager.prepare_calc_step_dir",
+        lambda step_dir, config, input_signature=None, execution_config=None: (
+            seen.append(("prepare", config)), SimpleNamespace(cleaned_stale_artifacts=False)
+        )[1],
+    )
+    monkeypatch.setattr(
+        "confflow.calc.manager.record_calc_step_signature",
+        lambda step_dir, config, input_signature=None, execution_config=None: seen.append(("record", config)),
+    )
+    monkeypatch.setattr(
+        "confflow.calc.manager.TaskSourceBuilder.build_from_input",
+        lambda self, input_xyz_file: ([], {}),
+    )
+
+    manager.run(str(xyz_file))
+
+    assert manager.compat_config is manager.config
+    assert seen[0][1] is manager.config
+    assert seen[1][1] is manager.config
+    assert manager.config["max_parallel_jobs"] == "7"
+
+
+def test_manager_auto_clean_accepts_bool_flag(tmp_path):
+    manager = ChemTaskManager(
+        settings={"iprog": "orca", "itask": "sp", "keyword": "xTB"},
+        execution_config=CalcTaskConfig(
+            program=Program.ORCA,
+            task=TaskKind.SP,
+            keyword="xTB",
+            execution=ExecutionOptions(auto_clean=True),
+        ),
+    )
+    out_file = tmp_path / "result.xyz"
+    out_file.write_text("1\ntest\nH 0 0 0\n", encoding="utf-8")
+
+    with patch("confflow.calc.manager.run_refine_postprocess") as mock_refine:
+        manager._run_auto_clean(str(out_file))
+
+    mock_refine.assert_called_once()
+
+
+def test_manager_auto_clean_uses_structured_cleanup_values(tmp_path):
+    manager = ChemTaskManager(
+        settings={
+            "iprog": "orca",
+            "itask": "sp",
+            "keyword": "xTB",
+            "auto_clean": "true",
+        },
+        execution_config=CalcTaskConfig(
+            program=Program.ORCA,
+            task=TaskKind.SP,
+            keyword="xTB",
+            cleanup=CleanupOptions(
+                enabled=True,
+                rmsd_threshold=0.12,
+                energy_window=7.5,
+                energy_tolerance=0.03,
+                dedup_only=True,
+                no_h=True,
+            ),
+            execution=ExecutionOptions(auto_clean=True),
+        ),
+    )
+    out_file = tmp_path / "result.xyz"
+    out_file.write_text("1\ntest\nH 0 0 0\n", encoding="utf-8")
+
+    with patch("confflow.calc.manager.run_refine_postprocess") as mock_refine:
+        manager._run_auto_clean(str(out_file))
+
+    kwargs = mock_refine.call_args.kwargs
+    assert kwargs["threshold"] == 0.12
+    assert kwargs["ewin"] == 7.5
+    assert kwargs["energy_tolerance"] == 0.03
+
+
+def test_manager_auto_clean_prefers_updated_public_clean_opts_over_structured_cleanup(tmp_path):
+    manager = ChemTaskManager(
+        settings={
+            "iprog": "orca",
+            "itask": "sp",
+            "keyword": "xTB",
+            "auto_clean": "true",
+        },
+        execution_config=CalcTaskConfig(
+            program=Program.ORCA,
+            task=TaskKind.SP,
+            keyword="xTB",
+            cleanup=CleanupOptions(
+                enabled=True,
+                rmsd_threshold=0.12,
+                energy_window=7.5,
+                energy_tolerance=0.03,
+            ),
+            execution=ExecutionOptions(auto_clean=True),
+        ),
+    )
+    manager.config.update({"clean_opts": "-t 0.44 -ewin 11.0 --energy-tolerance 0.08"})
+    out_file = tmp_path / "result.xyz"
+    out_file.write_text("1\ntest\nH 0 0 0\n", encoding="utf-8")
+
+    with patch("confflow.calc.manager.run_refine_postprocess") as mock_refine:
+        manager._run_auto_clean(str(out_file))
+
+    kwargs = mock_refine.call_args.kwargs
+    assert kwargs["threshold"] == 0.44
+    assert kwargs["ewin"] == 11.0
+    assert kwargs["energy_tolerance"] == 0.08
+
+
+def test_manager_auto_clean_falls_back_to_legacy_clean_opts(tmp_path):
+    manager = ChemTaskManager(
+        settings={
+            "iprog": "orca",
+            "itask": "sp",
+            "keyword": "xTB",
+            "auto_clean": "true",
+            "clean_opts": "-t 0.21 -ewin 8.0 --energy-tolerance 0.07",
+        },
+    )
+    out_file = tmp_path / "result.xyz"
+    out_file.write_text("1\ntest\nH 0 0 0\n", encoding="utf-8")
+
+    with patch("confflow.calc.manager.run_refine_postprocess") as mock_refine:
+        manager._run_auto_clean(str(out_file))
+
+    kwargs = mock_refine.call_args.kwargs
+    assert kwargs["threshold"] == 0.21
+    assert kwargs["ewin"] == 8.0
+    assert kwargs["energy_tolerance"] == 0.07
+
+
+def test_manager_auto_clean_prefers_structured_cleanup_over_legacy_clean_opts(tmp_path):
+    manager = ChemTaskManager(
+        settings={
+            "iprog": "orca",
+            "itask": "sp",
+            "keyword": "xTB",
+            "auto_clean": "true",
+            "clean_opts": "-t 0.99 -ewin 99.0 --energy-tolerance 0.99",
+        },
+        execution_config=CalcTaskConfig(
+            program=Program.ORCA,
+            task=TaskKind.SP,
+            keyword="xTB",
+            cleanup=CleanupOptions(
+                enabled=True,
+                rmsd_threshold=0.18,
+                energy_window=5.0,
+                energy_tolerance=0.02,
+            ),
+            execution=ExecutionOptions(auto_clean=True),
+        ),
+    )
+    out_file = tmp_path / "result.xyz"
+    out_file.write_text("1\ntest\nH 0 0 0\n", encoding="utf-8")
+
+    with patch("confflow.calc.manager.run_refine_postprocess") as mock_refine:
+        manager._run_auto_clean(str(out_file))
+
+    kwargs = mock_refine.call_args.kwargs
+    assert kwargs["threshold"] == 0.99
+    assert kwargs["ewin"] == 99.0
+    assert kwargs["energy_tolerance"] == 0.99
+
+
+def test_manager_auto_clean_uses_structured_cleanup_when_public_clean_opts_absent(tmp_path):
+    manager = ChemTaskManager(
+        settings={
+            "iprog": "orca",
+            "itask": "sp",
+            "keyword": "xTB",
+            "auto_clean": "true",
+        },
+        execution_config=CalcTaskConfig(
+            program=Program.ORCA,
+            task=TaskKind.SP,
+            keyword="xTB",
+            cleanup=CleanupOptions(
+                enabled=True,
+                rmsd_threshold=0.18,
+                energy_window=5.0,
+                energy_tolerance=0.02,
+            ),
+            execution=ExecutionOptions(auto_clean=True),
+        ),
+    )
+    out_file = tmp_path / "result.xyz"
+    out_file.write_text("1\ntest\nH 0 0 0\n", encoding="utf-8")
+
+    with patch("confflow.calc.manager.run_refine_postprocess") as mock_refine:
+        manager._run_auto_clean(str(out_file))
+
+    kwargs = mock_refine.call_args.kwargs
+    assert kwargs["threshold"] == 0.18
+    assert kwargs["ewin"] == 5.0
+    assert kwargs["energy_tolerance"] == 0.02
+
+
 def test_job_name_for_geom_discards_legacy_numeric_cid():
     assert ChemTaskManager._job_name_for_geom(2, {"metadata": {"CID": 1.0}}) == "A000003"
     assert ChemTaskManager._job_name_for_geom(2, {"metadata": {"CID": "2.0"}}) == "A000003"
@@ -531,7 +820,7 @@ def test_manager_recreates_results_db_after_stale_cleanup(tmp_path, monkeypatch)
     original_db = tmp_path / "work" / "results.db"
     assert original_db.exists()
 
-    def fake_prepare(step_dir, config, input_signature=None):
+    def fake_prepare(step_dir, config, input_signature=None, execution_config=None):
         original_db.unlink(missing_ok=True)
         return SimpleNamespace(cleaned_stale_artifacts=True)
 
@@ -563,13 +852,13 @@ def test_manager_run_uses_overridden_input_signature(tmp_path, monkeypatch):
 
     monkeypatch.setattr(
         "confflow.calc.manager.prepare_calc_step_dir",
-        lambda step_dir, config, input_signature=None: (
+        lambda step_dir, config, input_signature=None, execution_config=None: (
             seen.append(input_signature), SimpleNamespace(cleaned_stale_artifacts=False)
         )[1],
     )
     monkeypatch.setattr(
         "confflow.calc.manager.record_calc_step_signature",
-        lambda step_dir, config, input_signature=None: seen.append(input_signature),
+        lambda step_dir, config, input_signature=None, execution_config=None: seen.append(input_signature),
     )
     monkeypatch.setattr(
         "confflow.calc.manager.TaskSourceBuilder.build_from_input",

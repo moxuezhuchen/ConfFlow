@@ -9,9 +9,9 @@ import logging
 import multiprocessing
 import os
 import re
+from collections.abc import Iterable, Mapping
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from datetime import datetime
-from collections.abc import Iterable
 from typing import Any
 
 from ..core import io as io_xyz
@@ -22,17 +22,18 @@ from ..core.contracts import ExitCode, cli_output_to_txt
 from .analysis import _bond_length_from_xyz_lines, _parse_ts_bond_atoms
 from .components.executor import _cleanup_lingering_processes
 from .components.task_runner import TaskRunner
+from .config_types import CalcTaskConfig
 from .db.database import ResultsDB
-from .postprocess import run_refine_postprocess
 from .policies import get_policy
+from .postprocess import run_refine_postprocess
+from .resources import ResourceMonitor
+from .result_writer import append_result, format_result_comment, write_failed_xyz
 from .run_services import (
     ResultAssemblyService,
     TaskRecoveryService,
     TaskSourceBuilder,
     WorkDirService,
 )
-from .resources import ResourceMonitor
-from .result_writer import append_result, format_result_comment, write_failed_xyz
 from .setup import get_itask, parse_iprog, setup_logging
 from .step_contract import (
     compute_calc_input_signature,
@@ -50,6 +51,15 @@ logger = logging.getLogger("confflow.calc.manager")
 _LEGACY_NUMERIC_CID_RE = re.compile(r"^\d+(?:\.0+)?$")
 
 
+def _is_enabled_flag(value: Any) -> bool:
+    """Interpret common bool-like config values without assuming string input."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() == "true"
+    return str(value).strip().lower() == "true"
+
+
 def _run_task(task_info: models.TaskContext | dict[str, Any]) -> dict[str, Any]:
     result = TaskRunner().run(task_info)
     return result if isinstance(result, dict) else {}
@@ -60,22 +70,36 @@ class ChemTaskManager:
         self,
         settings_file: Any | None = None,
         resume_dir: str | None = None,
-        settings: dict[str, Any] | None = None,
+        settings: Mapping[str, Any] | None = None,
+        execution_config: Mapping[str, Any] | None = None,
     ):
         if settings is not None:
-            self.config = dict(settings)
+            compat_config: Mapping[str, Any] = settings
         elif isinstance(settings_file, dict):
-            self.config = dict(settings_file)
+            compat_config = dict(settings_file)
         elif settings_file and os.path.exists(settings_file):
             cfg = configparser.ConfigParser(interpolation=None)
             cfg.optionxform = str
             cfg.read(settings_file)
-            self.config = {
+            compat_config = {
                 k: v.strip('"') for sec in cfg.sections() for k, v in cfg.items(sec) if v
             }
-            self.config.update({k: v.strip('"') for k, v in cfg.defaults().items() if v})
+            compat_config.update({k: v.strip('"') for k, v in cfg.defaults().items() if v})
         else:
-            self.config = {}
+            compat_config = {}
+
+        if execution_config is None:
+            effective_execution: Mapping[str, Any] = compat_config
+        else:
+            effective_execution = execution_config
+
+        self.config = compat_config if isinstance(compat_config, CalcTaskConfig) else dict(compat_config)
+        self.compat_config = self.config
+        self.execution_config = (
+            effective_execution
+            if isinstance(effective_execution, CalcTaskConfig)
+            else dict(effective_execution)
+        )
 
         self._default_work_dir = os.path.join(
             os.getcwd(), f"chem_tasks_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
@@ -91,7 +115,12 @@ class ChemTaskManager:
         self._job_meta_map: dict[str, dict] = {}
         self.monitor = (
             ResourceMonitor()
-            if self.config.get("enable_dynamic_resources", "false").lower() == "true"
+            if _is_enabled_flag(
+                self.config.get(
+                    "enable_dynamic_resources",
+                    self.execution_config.get("enable_dynamic_resources", "false"),
+                )
+            )
             else None
         )
         self.stop_requested = False
@@ -186,7 +215,7 @@ class ChemTaskManager:
             logger.debug(f"Recovery failed: {e}")
             return None
 
-    def _read_xyz(self, f: str):
+    def _read_xyz(self, f: str) -> list[dict[str, Any]]:
         """Read an input trajectory (XYZ), supporting multi-frame files with metadata."""
         try:
             conformers = io_xyz.read_xyz_file(f, parse_metadata=True, strict=False)
@@ -224,8 +253,7 @@ class ChemTaskManager:
         except (OSError, ValueError):
             pass
 
-        for geom in self._read_xyz(filepath):
-            yield geom
+        yield from self._read_xyz(filepath)
 
     # ------------------------------------------------------------------
     # Sub-methods split from run()
@@ -314,6 +342,12 @@ class ChemTaskManager:
         """Append a single successful result to result.xyz immediately."""
         append_result(self._result_xyz_path, self._job_meta_map, res)
 
+    def _resolve_effective_clean_opts(self) -> tuple[bool, str]:
+        """Resolve effective auto-clean flag and opts (delegates to shared logic)."""
+        from .step_contract import resolve_effective_auto_clean
+
+        return resolve_effective_auto_clean(self.config, self.execution_config)
+
     def _run_auto_clean(self, out_file: str) -> None:
         """Invoke external post-processing callback on result.xyz.
 
@@ -321,13 +355,15 @@ class ChemTaskManager:
         (step_handlers).  ChemTaskManager only calls this method in standalone
         CLI mode, using a lazy import to keep the layers decoupled.
         """
-        if self.config.get("auto_clean", "false").lower() != "true":
+        enabled, opts_str = self._resolve_effective_clean_opts()
+        if not enabled:
             return
         console.print("  Refine: ", end="")
         try:
-            opts_str = self.config.get("clean_opts", "-t 0.25")
             thresh, ewin, etol = self._parse_clean_opts(opts_str)
-            task_cores = int(self.config.get("cores_per_task", 1))
+            task_cores = int(
+                self.config.get("cores_per_task", self.execution_config.get("cores_per_task", 1))
+            )
             run_refine_postprocess(
                 input_file=out_file,
                 output_file=os.path.join(os.path.dirname(out_file), "output.xyz"),
@@ -415,8 +451,9 @@ class ChemTaskManager:
             if not os.path.exists(stop_path):
                 prepared = prepare_calc_step_dir(
                     self.work_dir,
-                    self.config,
+                    self.compat_config,
                     input_signature=input_signature,
+                    execution_config=self.execution_config,
                 )
                 if prepared.cleaned_stale_artifacts:
                     logger.warning(
@@ -431,8 +468,9 @@ class ChemTaskManager:
                     setup_logging(self.work_dir)
             record_calc_step_signature(
                 self.work_dir,
-                self.config,
+                self.compat_config,
                 input_signature=input_signature,
+                execution_config=self.execution_config,
             )
             assert self.results_db is not None
             task_builder = TaskSourceBuilder(

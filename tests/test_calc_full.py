@@ -7,9 +7,9 @@ import pytest
 
 from confflow import calc
 from confflow.calc.components import executor
-from confflow.calc.step_contract import compute_calc_input_signature, record_calc_step_signature
 from confflow.calc.policies.gaussian import GaussianPolicy
 from confflow.calc.policies.orca import OrcaPolicy
+from confflow.calc.step_contract import compute_calc_input_signature, record_calc_step_signature
 
 
 def test_memory_calculation_gaussian(tmp_path):

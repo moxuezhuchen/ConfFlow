@@ -12,8 +12,11 @@ import pytest
 
 import confflow.blocks.confgen as confgen
 import confflow.blocks.viz as viz
-from confflow.calc.components.executor import _save_config_hash
-from confflow.calc.step_contract import compute_calc_input_signature, record_calc_step_signature
+from confflow.calc.step_contract import (
+    compute_calc_config_signature,
+    compute_calc_input_signature,
+    record_calc_step_signature,
+)
 from confflow.config.schema import ConfigSchema
 from confflow.core.exceptions import XYZFormatError
 from confflow.core.pairs import normalize_pair_list
@@ -26,7 +29,11 @@ from confflow.workflow.config_builder import (
 from confflow.workflow.engine import count_conformers_any, run_workflow, validate_inputs_compatible
 from confflow.workflow.helpers import as_list, count_conformers_in_xyz, resolve_step_output
 from confflow.workflow.stats import count_task_statuses_in_results_db
-from confflow.workflow.task_config import _itask_label, _normalize_iprog_label
+from confflow.workflow.task_config import (
+    _itask_label,
+    _normalize_iprog_label,
+    build_structured_task_config,
+)
 
 
 def test_as_list():
@@ -529,6 +536,109 @@ def test_build_task_config_normalizes_freeze_and_ts_sources():
     assert cfg["ts_bond_atoms"] == "7,8"
 
 
+def test_build_structured_task_config_keeps_typed_fields():
+    cfg = build_structured_task_config(
+        params={
+            "iprog": "2",
+            "itask": "ts",
+            "keyword": "HF",
+            "freeze": [1, "2-3"],
+            "ts_rescue_scan": "true",
+            "dedup_only": "true",
+            "noH": "true",
+            "rmsd_threshold": 0.4,
+            "allowed_executables": ["/usr/bin/orca", "orca"],
+        },
+        global_config={},
+    )
+
+    assert cfg["iprog"] == "orca"
+    assert cfg["itask"] == "ts"
+    assert cfg["freeze"] == []
+    assert cfg["ts_bond_atoms"] == [1, 2]
+    assert cfg["ts_rescue_scan"] is True
+    assert cfg["allowed_executables"] == ["/usr/bin/orca", "orca"]
+    assert cfg.cleanup.enabled is True
+    assert cfg.cleanup.dedup_only is True
+    assert cfg.cleanup.no_h is True
+    assert cfg.cleanup.rmsd_threshold == 0.4
+
+
+def test_build_structured_task_config_preserves_typed_blocks_and_lists():
+    cfg = build_structured_task_config(
+        params={
+            "iprog": "g16",
+            "itask": "opt",
+            "keyword": "HF",
+            "freeze": [1, 2],
+            "blocks": {"geom": {"Constraints": ["{ C 0 C }"]}},
+            "gaussian_link0": ["%Mem=8GB", "%NoSave"],
+            "gaussian_modredundant": ["B 1 2 F"],
+            "allowed_executables": ["/opt/g16/g16", "g16"],
+        },
+        global_config={},
+    )
+
+    assert cfg["freeze"] == [1, 2]
+    assert cfg["blocks"] == {"geom": {"Constraints": ["{ C 0 C }"]}}
+    assert cfg["gaussian_link0"] == ["%Mem=8GB", "%NoSave"]
+    assert cfg["gaussian_modredundant"] == ["B 1 2 F"]
+    assert cfg["allowed_executables"] == ["/opt/g16/g16", "g16"]
+
+
+def test_build_structured_task_config_preserves_clean_params_thresholds():
+    cfg = build_structured_task_config(
+        params={
+            "iprog": "orca",
+            "itask": "sp",
+            "keyword": "HF",
+            "clean_params": "-t 0.12 -ewin 7.5 --energy-tolerance 0.03 --dedup-only --noH",
+        },
+        global_config={},
+    )
+
+    assert cfg.cleanup.enabled is True
+    assert cfg.cleanup.rmsd_threshold == 0.12
+    assert cfg.cleanup.energy_window == 7.5
+    assert cfg.cleanup.energy_tolerance == 0.03
+    assert cfg.cleanup.dedup_only is True
+    assert cfg.cleanup.no_h is True
+
+
+def test_build_structured_task_config_preserves_explicit_input_chk_dir(tmp_path):
+    cfg = build_structured_task_config(
+        params={
+            "iprog": "g16",
+            "itask": "sp",
+            "keyword": "HF",
+            "input_chk_dir": str(tmp_path / "step_override"),
+        },
+        global_config={"input_chk_dir": str(tmp_path / "global_override")},
+        root_dir=str(tmp_path),
+        all_steps=[],
+    )
+
+    assert cfg.execution.input_chk_dir == str(tmp_path / "step_override")
+    assert cfg["input_chk_dir"] == str(tmp_path / "step_override")
+
+
+def test_build_structured_task_config_uses_chk_from_step_input_chk_dir_fallback(tmp_path):
+    cfg = build_structured_task_config(
+        params={
+            "iprog": "g16",
+            "itask": "sp",
+            "keyword": "HF",
+            "chk_from_step": "step_01",
+        },
+        global_config={},
+        root_dir=str(tmp_path),
+        all_steps=[{"name": "step_01"}],
+    )
+
+    assert cfg.execution.input_chk_dir == str(tmp_path / "step_01" / "backups")
+    assert cfg["input_chk_dir"] == str(tmp_path / "step_01" / "backups")
+
+
 def test_build_task_config_falls_back_to_freeze_for_ts_pair():
     cfg = build_task_config(
         params={
@@ -590,6 +700,42 @@ def test_build_task_config_respects_string_true_flags():
     assert cfg["ts_rescue_scan"] == "true"
     assert cfg["enable_dynamic_resources"] == "true"
     assert cfg["resume_from_backups"] == "true"
+
+
+def test_build_task_config_non_ts_does_not_emit_ts_rescue_scan_default():
+    cfg = build_task_config(
+        params={
+            "iprog": "orca",
+            "itask": "sp",
+            "keyword": "HF",
+            "rmsd_threshold": 0.25,
+        },
+        global_config={},
+    )
+
+    assert "ts_rescue_scan" not in cfg
+
+
+def test_build_task_config_signature_stable_for_legacy_output():
+    params = {
+        "iprog": "orca",
+        "itask": "sp",
+        "keyword": "HF",
+        "dedup_only": "true",
+        "noH": "true",
+        "rmsd_threshold": 0.5,
+        "allowed_executables": ["/usr/bin/orca", "orca"],
+    }
+    global_cfg = {
+        "enable_dynamic_resources": "true",
+        "resume_from_backups": "true",
+    }
+
+    cfg1 = build_task_config(params, global_cfg)
+    cfg2 = build_task_config(params, global_cfg)
+
+    assert cfg1 == cfg2
+    assert compute_calc_config_signature(cfg1) == compute_calc_config_signature(cfg2)
 
 
 def test_validate_inputs_compatible_force_consistency_bypass(tmp_path):
