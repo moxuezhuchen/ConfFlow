@@ -322,10 +322,10 @@ def test_logger_file_handler(tmp_path):
 # =============================================================================
 
 
-def test_manager_init_no_config():
-    manager = ChemTaskManager(None)
+def test_manager_init_no_config(tmp_path):
+    manager = ChemTaskManager(None, resume_dir=str(tmp_path / "work"))
     assert manager.config == {}
-    assert "chem_tasks_" in manager.work_dir
+    assert manager.work_dir == str(tmp_path / "work")
 
 
 def test_manager_init_with_config(tmp_path):
@@ -335,7 +335,7 @@ def test_manager_init_with_config(tmp_path):
     assert manager.config["program"] == "gaussian"
 
 
-def test_manager_init_with_structured_config_preserves_object_and_bool_flags():
+def test_manager_init_with_structured_config_preserves_object_and_bool_flags(tmp_path):
     structured = CalcTaskConfig(
         program=Program.ORCA,
         task=TaskKind.SP,
@@ -343,7 +343,9 @@ def test_manager_init_with_structured_config_preserves_object_and_bool_flags():
         execution=ExecutionOptions(enable_dynamic_resources=True),
     )
     legacy = {"iprog": "orca", "itask": "sp", "keyword": "HF def2-SVP"}
-    manager = ChemTaskManager(settings=legacy, execution_config=structured)
+    manager = ChemTaskManager(
+        settings=legacy, execution_config=structured, resume_dir=str(tmp_path / "work")
+    )
     assert manager.compat_config is manager.config
     assert manager.execution_config is structured
     assert manager.config == legacy

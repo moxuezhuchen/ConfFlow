@@ -54,3 +54,29 @@ def sync_executor(monkeypatch):
 
     monkeypatch.setattr("confflow.blocks.refine.processor.ProcessPoolExecutor", SyncExecutor)
     return SyncExecutor
+
+
+@pytest.fixture(autouse=True, scope="function")
+def guard_repo_root_pollution():
+    """Prevent tests from creating chem_tasks_* directories in repo root."""
+    import os
+    from pathlib import Path
+
+    repo_root = Path(__file__).parent.parent
+    before = set(repo_root.glob("chem_tasks_*"))
+    
+    yield
+    
+    after = set(repo_root.glob("chem_tasks_*"))
+    new_dirs = after - before
+    if new_dirs:
+        # Clean up and fail
+        for d in new_dirs:
+            if d.is_dir():
+                import shutil
+                shutil.rmtree(d)
+        pytest.fail(
+            f"Test created chem_tasks_* directories in repo root: {[d.name for d in new_dirs]}. "
+            "Use tmp_path or resume_dir parameter to avoid polluting repo root."
+        )
+

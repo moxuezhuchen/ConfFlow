@@ -27,5 +27,6 @@ results.db
 *.db
 work/
 *_work/
+chem_tasks_*/
 input_work/
 test_work/
