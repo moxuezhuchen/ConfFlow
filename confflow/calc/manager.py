@@ -126,6 +126,24 @@ class ChemTaskManager:
         self.stop_requested = False
         self._work_dir_service = WorkDirService(self)
 
+    @property
+    def _config_for_signature(self) -> dict[str, Any]:
+        """Semantic accessor for signature/hash computation.
+
+        Returns the same mutable self.config to preserve phase2 contract:
+        runtime updates to self.config must be visible to signature path.
+        """
+        return self.config
+
+    @property
+    def _config_for_auto_clean(self) -> dict[str, Any]:
+        """Semantic accessor for auto-clean resolution.
+
+        Returns the same mutable self.config to preserve phase2 contract:
+        runtime updates to self.config must be visible to auto-clean path.
+        """
+        return self.config
+
     def _ensure_work_dir(self):
         self._work_dir_service.ensure_ready()
 
@@ -346,7 +364,7 @@ class ChemTaskManager:
         """Resolve effective auto-clean flag and opts (delegates to shared logic)."""
         from .step_contract import resolve_effective_auto_clean
 
-        return resolve_effective_auto_clean(self.config, self.execution_config)
+        return resolve_effective_auto_clean(self._config_for_auto_clean, self.execution_config)
 
     def _run_auto_clean(self, out_file: str) -> None:
         """Invoke external post-processing callback on result.xyz.
@@ -451,7 +469,7 @@ class ChemTaskManager:
             if not os.path.exists(stop_path):
                 prepared = prepare_calc_step_dir(
                     self.work_dir,
-                    self.compat_config,
+                    self._config_for_signature,
                     input_signature=input_signature,
                     execution_config=self.execution_config,
                 )
@@ -468,7 +486,7 @@ class ChemTaskManager:
                     setup_logging(self.work_dir)
             record_calc_step_signature(
                 self.work_dir,
-                self.compat_config,
+                self._config_for_signature,
                 input_signature=input_signature,
                 execution_config=self.execution_config,
             )

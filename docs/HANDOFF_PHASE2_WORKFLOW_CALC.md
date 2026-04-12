@@ -269,7 +269,95 @@ All checks passed! (ruff)
 - 最新提交：`9056517 test(calc): add cleanup consistency tests and close phase2 validation gaps`
 - 状态：所有修复已完成，测试全部通过
 
-## 6. 面向下一阶段的结论
+## 6. 阶段 3 进展与暂停点（2026-04-12）
+
+### 阶段 3 第 1 小步已完成
+
+**目标**：在 `ChemTaskManager` 内部建立语义锚点，显式化最关键的 config 访问意图。
+
+**已实施内容**：
+- 在 `confflow/calc/manager.py` 中新增 2 个 semantic accessor property：
+  - `_config_for_signature`：用于 signature/hash 计算
+  - `_config_for_auto_clean`：用于 auto-clean 解析
+- 替换 3 处关键调用点：
+  - `_resolve_effective_clean_opts()` 中的 auto-clean 解析
+  - `run()` 中 `prepare_calc_step_dir()` 的 config 传递
+  - `run()` 中 `record_calc_step_signature()` 的 config 传递
+- 两个 accessor 都返回同一个可变的 `self.config`，保持阶段 2 确立的契约：运行期 `manager.config.update(...)` 对 signature 和 auto-clean 路径同步可见
+
+**验收结果**：
+- ✅ 708 个测试全部通过，0 个测试需要修改
+- ✅ mypy / ruff 检查通过
+- ✅ 阶段 2 关键测试仍然通过：
+  - `test_dual_lane_clean_opts_update_syncs_signature_and_auto_clean`
+  - `test_config_hash_matches_auto_clean_effective_semantics`
+
+**提交记录**：
+- commit `06faa55`: refactor(calc): add semantic accessors for manager config
+
+### 当前建议暂停，不继续扩展
+
+**暂停理由**：
+
+1. **已覆盖最关键路径**：
+   - signature 计算和 auto-clean 解析是阶段 2 最核心的契约路径
+   - 这两条路径的语义锚点已建立，继续扩展的边际收益递减
+
+2. **下一步扩展存在复杂性**：
+   - `confflow/calc/run_services.py` 中的 config 访问包含**运行期写入操作**（`self.manager.config["backup_dir"] = ...`）
+   - 单纯引入 semantic accessor 无法清晰表达"这是写入操作"的语义
+   - `WorkDirService.ensure_ready()` 混合了 execution policy 读取、路径配置读取、运行期状态写入三种语义
+   - 继续扩展需要更大的结构性重构，已超出"最小语义显式化"的范围
+
+3. **当前语义锚点已为后续重构提供基础**：
+   - 如果未来需要分离 compat 和 execution config，可以从 `_config_for_signature` 和 `_config_for_auto_clean` 开始
+   - 如果未来需要重构 `run_services`，可以参考 manager 中的 semantic accessor 模式
+   - 如果未来需要引入 TypedDict 或 Pydantic 模型，可以从这两个 accessor 的返回类型开始
+
+### 未来若继续的唯一最小候选（当前不实施）
+
+**方案**：在 `manager.py` 内新增 `_config_for_execution` accessor
+
+**目标**：覆盖 manager 内部明确用于 execution 语义的访问点（如 `enable_dynamic_resources`、`cores_per_task`）
+
+**改动范围**：
+- `confflow/calc/manager.py`：+1 个 property 定义，~3-5 处调用点替换
+- 不触及 `run_services.py`（因为写入操作和混合语义问题）
+
+**涉及调用点**：
+- L119-122: `enable_dynamic_resources` 判断
+- L365: `cores_per_task` 读取
+- 可能还有 1-2 处类似的 execution 参数读取
+
+**为什么当前不实施**：
+- 这些访问点的语义意图相对清晰（都是 execution 参数读取）
+- 没有像 signature/auto-clean 那样的"必须先做"的紧迫性
+- 继续扩展会增加间接层，但实质收益不明显
+- 建议等待后续有更明确的重构需求时再推进
+
+### 其他候选方向（留待后续评估）
+
+按优先级排序：
+
+1. **P2: compat / execution 边界收紧**
+   - `step_contract.py` 的 `prepare_calc_step_dir()` / `record_calc_step_signature()` 同时接受两个 config 对象
+   - `resolve_effective_auto_clean()` 需要同时读取两个 config 对象
+   - 缺乏明确的"哪些参数属于 compat 基线，哪些属于 execution 覆盖"的边界文档
+
+2. **P3: 异常模型与失败语义分层**
+   - calc 模块内部仍有 3 处 `except Exception:` 用于防御性捕获
+   - `TaskRunner._classify_error()` 将异常映射为字符串，缺乏类型安全的失败语义枚举
+   - `rescue.py` 中的 TS 救援逻辑抛出 `RuntimeError`，与专用异常混用
+
+3. **P4: task_config.py 的 838 行单文件复杂度**
+   - 包含 legacy builder、structured builder、cleanup 解析、TS 解析、execution 解析等多个职责
+   - 缺乏清晰的子模块划分
+
+4. **P5: calc 模块内部 dict-based config 传递的类型安全缺失**
+   - 29 处函数签名使用 `dict[str, Any]`
+   - 无法从类型系统区分 legacy compat config 和 structured execution config
+
+## 7. 面向下一阶段的结论
 
 阶段 2 已完成收口：
 - R1-R11 所有 review 问题已修复并验证通过
@@ -278,6 +366,14 @@ All checks passed! (ruff)
 - 一致性测试已补齐，覆盖 signature 与 auto-clean 同步
 - 708 个测试全部通过，mypy 和 ruff 检查通过
 
-下一阶段可推进内容（留待后续）：
+阶段 3 第 1 小步已完成并暂停：
+- manager 内部最关键的 signature 和 auto-clean 路径已建立语义锚点
+- 继续扩展的边际收益递减，建议暂停
+- 为后续可能的重构提供了清晰的参考点
+
+下一阶段可推进内容（留待后续评估）：
+- P2: compat / execution 边界收紧
+- P3: 异常模型与失败语义分层
+- P4: 大模块拆分（task_config.py）
+- P5: 类型安全提升
 - TaskRunner / policy / setup 的结构化消费
-- 异常体系调整、运行时重构、大模块拆分
