@@ -16,6 +16,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -29,7 +31,32 @@ jobs:
 
       - name: Black (gate)
         if: matrix.python-version == '3.11'
-        run: black --check .
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            base_sha="${{ github.event.pull_request.base.sha }}"
+            head_sha="${{ github.event.pull_request.head.sha }}"
+            changed_files="$(git diff --name-only --diff-filter=ACMR "$base_sha" "$head_sha" -- '*.py')"
+          else
+            base_sha="${{ github.event.before }}"
+            head_sha="${{ github.sha }}"
+            if [ "$base_sha" = "0000000000000000000000000000000000000000" ]; then
+              base_sha="$(git rev-parse "${head_sha}^" 2>/dev/null || true)"
+            fi
+            if [ -n "$base_sha" ]; then
+              changed_files="$(git diff --name-only --diff-filter=ACMR "$base_sha" "$head_sha" -- '*.py')"
+            else
+              changed_files="$(git diff-tree --no-commit-id --name-only --diff-filter=ACMR -r "$head_sha" -- '*.py')"
+            fi
+          fi
+
+          if [ -z "$changed_files" ]; then
+            echo "No changed Python files to format-check."
+            exit 0
+          fi
+
+          printf '%s\n' "$changed_files"
+          mapfile -t python_files <<<"$changed_files"
+          printf '%s\0' "${python_files[@]}" | xargs -0 black --check
 
       - name: Ruff (gate)
         if: matrix.python-version == '3.11'
