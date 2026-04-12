@@ -55,8 +55,6 @@ __all__ = [
 ]
 
 
-
-
 def _build_clean_opts(params: dict[str, Any], global_config: dict[str, Any]) -> str:
     clean_params = params.get("clean_params")
     if clean_params:
@@ -93,8 +91,6 @@ def _build_clean_opts(params: dict[str, Any], global_config: dict[str, Any]) -> 
     return " ".join(opts)
 
 
-
-
 def _resolve_chk_input_dir(
     params: dict[str, Any],
     root_dir: str | None,
@@ -118,7 +114,9 @@ def _resolve_chk_input_dir(
     return os.path.join(root_dir, from_dir, "backups")
 
 
-def _resolve_freeze_for_task(params: dict[str, Any], global_config: dict[str, Any]) -> tuple[int, ...]:
+def _resolve_freeze_for_task(
+    params: dict[str, Any], global_config: dict[str, Any]
+) -> tuple[int, ...]:
     itask_int = parse_itask(params.get("itask", "opt"))
     if itask_int in [0, 3]:
         freeze_val = params.get("freeze", global_config.get("freeze", "0"))
@@ -126,7 +124,9 @@ def _resolve_freeze_for_task(params: dict[str, Any], global_config: dict[str, An
     return ()
 
 
-def _resolve_ts_pair(params: dict[str, Any], global_config: dict[str, Any]) -> tuple[int, int] | None:
+def _resolve_ts_pair(
+    params: dict[str, Any], global_config: dict[str, Any]
+) -> tuple[int, int] | None:
     pair = _coerce_two_atom_indices(params.get("ts_bond_atoms"))
     if pair is None:
         pair = _coerce_two_atom_indices(global_config.get("ts_bond_atoms"))
@@ -144,7 +144,9 @@ def _resolve_ts_pair(params: dict[str, Any], global_config: dict[str, Any]) -> t
     return (a, b)
 
 
-def _resolve_cleanup_options(params: dict[str, Any], global_config: dict[str, Any]) -> CleanupOptions:
+def _resolve_cleanup_options(
+    params: dict[str, Any], global_config: dict[str, Any]
+) -> CleanupOptions:
     clean_params = params.get("clean_params")
     if clean_params:
         thresh, ewin, etol = _parse_clean_opts_like_string(str(clean_params))
@@ -246,7 +248,9 @@ def _resolve_execution_options(
     else:
         input_chk_dir = str(input_chk_dir_raw).strip()
     sandbox_root_val = params.get("sandbox_root", global_config.get("sandbox_root"))
-    gaussian_write_chk_val = params.get("gaussian_write_chk", global_config.get("gaussian_write_chk"))
+    gaussian_write_chk_val = params.get(
+        "gaussian_write_chk", global_config.get("gaussian_write_chk")
+    )
     allowed_execs = params.get("allowed_executables", global_config.get("allowed_executables"))
     if isinstance(allowed_execs, str):
         allowed_tuple = tuple(item.strip() for item in allowed_execs.split(",") if item.strip())
@@ -271,7 +275,9 @@ def _resolve_execution_options(
         auto_clean=True,
         delete_work_dir=True,
         sandbox_root=(
-            None if sandbox_root_val is None or str(sandbox_root_val).strip() == "" else str(sandbox_root_val).strip()
+            None
+            if sandbox_root_val is None or str(sandbox_root_val).strip() == ""
+            else str(sandbox_root_val).strip()
         ),
         input_chk_dir=input_chk_dir,
         allowed_executables=allowed_tuple,
@@ -343,7 +349,9 @@ def _merge_remaining_known_params(params: dict[str, Any], config: dict[str, str]
     """Validate params against known set and merge non-None values into config."""
     for key, value in params.items():
         if key not in _KNOWN_CALC_PARAMS_BASE:
-            logger.warning("Ignored unknown calc parameter '%s' while building the task config", key)
+            logger.warning(
+                "Ignored unknown calc parameter '%s' while building the task config", key
+            )
             continue
         if key not in config and value is not None:
             config[key] = str(value)
@@ -449,7 +457,9 @@ def _validate_known_params(params: dict[str, Any]) -> None:
     """Validate params against known set and warn about unknown parameters."""
     for key in params:
         if key not in _KNOWN_CALC_PARAMS_STRUCTURED:
-            logger.warning("Ignored unknown calc parameter '%s' while building the task config", key)
+            logger.warning(
+                "Ignored unknown calc parameter '%s' while building the task config", key
+            )
 
 
 def _collect_extra_params(params: dict[str, Any]) -> dict[str, Any]:
@@ -482,11 +492,15 @@ def build_structured_task_config(
     _validate_known_params(params)
 
     return CalcTaskConfig(
-        program=Program.GAUSSIAN
-        if _normalize_iprog_label(params.get("iprog", "orca")) == Program.GAUSSIAN.value
-        else Program.ORCA
-        if _normalize_iprog_label(params.get("iprog", "orca")) == Program.ORCA.value
-        else _normalize_iprog_label(params.get("iprog", "orca")),
+        program=(
+            Program.GAUSSIAN
+            if _normalize_iprog_label(params.get("iprog", "orca")) == Program.GAUSSIAN.value
+            else (
+                Program.ORCA
+                if _normalize_iprog_label(params.get("iprog", "orca")) == Program.ORCA.value
+                else _normalize_iprog_label(params.get("iprog", "orca"))
+            )
+        ),
         task=(
             TaskKind(_itask_label(params.get("itask", "opt")))
             if _itask_label(params.get("itask", "opt")) in {item.value for item in TaskKind}
@@ -496,7 +510,9 @@ def build_structured_task_config(
         gaussian_path=str(global_config.get("gaussian_path", "g16")),
         orca_path=str(global_config.get("orca_path", "orca")),
         cores_per_task=int(
-            params.get("cores_per_task", global_config.get("cores_per_task", DEFAULT_CORES_PER_TASK))
+            params.get(
+                "cores_per_task", global_config.get("cores_per_task", DEFAULT_CORES_PER_TASK)
+            )
         ),
         total_memory=str(
             params.get("total_memory", global_config.get("total_memory", DEFAULT_TOTAL_MEMORY))
