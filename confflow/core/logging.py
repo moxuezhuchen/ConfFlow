@@ -30,6 +30,7 @@ class ConfFlowLogger:
     _instance = None
     _initialized = False
     _embedded_mode = False  # Track whether logging is delegated to a parent process.
+    _embedded_mode_override: bool | None = None
 
     def __new__(cls):
         if cls._instance is None:
@@ -45,28 +46,70 @@ class ConfFlowLogger:
         self.logger.setLevel(logging.DEBUG)
         self.handlers: dict[str, logging.Handler] = {}
 
-        # Detect embedded mode when the parent process already configured logging.
+        self._apply_embedded_mode(self._resolve_embedded_mode())
+
+    @classmethod
+    def _resolve_embedded_mode(cls) -> bool:
+        """Resolve embedded mode from an explicit override or host logger state."""
+        if cls._embedded_mode_override is not None:
+            return cls._embedded_mode_override
+        return cls._should_auto_embed()
+
+    @classmethod
+    def _should_auto_embed(cls) -> bool:
+        """Auto-enable embedded mode only for explicit host-managed handlers."""
         root_logger = logging.getLogger()
-        if root_logger.hasHandlers():
-            # Reuse the parent logger configuration in embedded mode.
-            ConfFlowLogger._embedded_mode = True
-            # Propagate records to the parent logger.
-            self.logger.propagate = True
-        else:
-            # Standalone runs manage their own handlers.
-            self.logger.propagate = False
-            self._add_console_handler()
+        root_handlers = list(getattr(root_logger, "handlers", []))
+        if not root_handlers:
+            return False
+
+        return any(cls._is_host_managed_handler(handler) for handler in root_handlers)
+
+    @staticmethod
+    def _is_pytest_handler(handler: logging.Handler) -> bool:
+        """Return True for pytest's internal logging handlers."""
+        return type(handler).__module__.startswith("_pytest.")
+
+    @classmethod
+    def _is_host_managed_handler(cls, handler: logging.Handler) -> bool:
+        """Return True only for non-generic handlers that likely belong to an embedded host."""
+        if cls._is_pytest_handler(handler):
+            return False
+        if isinstance(handler, logging.NullHandler):
+            return False
+
+        module_name = type(handler).__module__
+        if module_name == "logging" or module_name.startswith("logging."):
+            return False
+        if module_name.startswith(
+            ("IPython.", "ipykernel.", "jupyter_client.", "traitlets.", "tornado.")
+        ):
+            return False
+        return True
 
     @classmethod
     def set_embedded_mode(cls, enabled: bool = True):
         """Set embedded mode (called by external callers such as GibbsFlow)."""
+        cls._embedded_mode_override = True if enabled else None
         cls._embedded_mode = enabled
         if cls._instance:
-            cls._instance.logger.propagate = enabled
-            # Remove the standalone console handler when embedded mode is enabled.
-            if enabled and "console" in cls._instance.handlers:
-                cls._instance.logger.removeHandler(cls._instance.handlers["console"])
-                del cls._instance.handlers["console"]
+            cls._instance._apply_embedded_mode(enabled)
+
+    def _apply_embedded_mode(self, enabled: bool) -> None:
+        """Apply the resolved run mode to the logger instance."""
+        ConfFlowLogger._embedded_mode = enabled
+        self.logger.propagate = enabled
+        if enabled:
+            self._remove_console_handler()
+        else:
+            self._add_console_handler()
+
+    def _remove_console_handler(self) -> None:
+        """Remove the standalone console handler if present."""
+        handler = self.handlers.pop("console", None)
+        if handler is None:
+            return
+        self.logger.removeHandler(handler)
 
     def _add_console_handler(self):
         """Add a console log handler."""

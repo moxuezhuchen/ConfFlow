@@ -7,6 +7,8 @@ import io
 import logging
 from unittest.mock import MagicMock, patch
 
+from _pytest.logging import LogCaptureHandler
+
 import confflow.core.logging as cf_logging
 
 
@@ -21,12 +23,24 @@ def _reset_logger_singleton() -> None:
     cf_logging.ConfFlowLogger._instance = None
     cf_logging.ConfFlowLogger._initialized = False
     cf_logging.ConfFlowLogger._embedded_mode = False
+    cf_logging.ConfFlowLogger._embedded_mode_override = None
+
+
+class EmbeddedHostHandler(logging.StreamHandler):
+    """Simulate a real host-owned handler class."""
+
+
+class NotebookHandler(logging.StreamHandler):
+    """Simulate a notebook-installed handler class that should not auto-embed."""
+
+
+NotebookHandler.__module__ = "ipykernel.iostream"
 
 
 def test_confflow_logger_standalone_adds_console_handler():
     _reset_logger_singleton()
     root_mock = MagicMock()
-    root_mock.hasHandlers.return_value = False
+    root_mock.handlers = []
     real_get_logger = logging.getLogger
 
     def fake_get_logger(name=None):
@@ -42,10 +56,11 @@ def test_confflow_logger_standalone_adds_console_handler():
     logger.close()
 
 
-def test_confflow_logger_embedded_mode_skips_console_handler():
+def test_confflow_logger_auto_embeds_with_external_root_handler():
+    """Test auto-detection for real embedded hosts with external root handlers."""
     _reset_logger_singleton()
     root_mock = MagicMock()
-    root_mock.hasHandlers.return_value = True
+    root_mock.handlers = [EmbeddedHostHandler(io.StringIO())]
     real_get_logger = logging.getLogger
 
     def fake_get_logger(name=None):
@@ -60,10 +75,60 @@ def test_confflow_logger_embedded_mode_skips_console_handler():
     assert "console" not in logger.handlers
 
 
+def test_confflow_logger_ignores_generic_root_handlers():
+    """Generic root handlers should not force embedded mode."""
+    for handler in (
+        logging.StreamHandler(io.StringIO()),
+        logging.NullHandler(),
+        NotebookHandler(io.StringIO()),
+    ):
+        _reset_logger_singleton()
+        root_mock = MagicMock()
+        root_mock.handlers = [handler]
+        real_get_logger = logging.getLogger
+
+        def fake_get_logger(name=None, root_mock=root_mock, real_get_logger=real_get_logger):
+            if name is None:
+                return root_mock
+            return real_get_logger(name)
+
+        with patch("logging.getLogger", side_effect=fake_get_logger):
+            logger = cf_logging.ConfFlowLogger()
+
+        assert logger.logger.propagate is False
+        assert "console" in logger.handlers
+        logger.close()
+        handler.close()
+
+
+def test_confflow_logger_ignores_pytest_capture_handlers():
+    """Test that pytest/caplog handlers do not trigger embedded mode."""
+    _reset_logger_singleton()
+    root_mock = MagicMock()
+    capture_handler = LogCaptureHandler()
+    root_mock.handlers = [capture_handler]
+    real_get_logger = logging.getLogger
+
+    def fake_get_logger(name=None):
+        if name is None:
+            return root_mock
+        return real_get_logger(name)
+
+    try:
+        with patch("logging.getLogger", side_effect=fake_get_logger):
+            logger = cf_logging.ConfFlowLogger()
+
+        assert logger.logger.propagate is False
+        assert "console" in logger.handlers
+        logger.close()
+    finally:
+        capture_handler.close()
+
+
 def test_set_embedded_mode_removes_console_handler():
     _reset_logger_singleton()
     root_mock = MagicMock()
-    root_mock.hasHandlers.return_value = False
+    root_mock.handlers = []
     real_get_logger = logging.getLogger
 
     def fake_get_logger(name=None):
@@ -78,13 +143,49 @@ def test_set_embedded_mode_removes_console_handler():
     cf_logging.ConfFlowLogger.set_embedded_mode(True)
     assert "console" not in logger.handlers
     cf_logging.ConfFlowLogger.set_embedded_mode(False)
+    assert logger.logger.propagate is False
+    assert "console" in logger.handlers
+    logger.close()
+
+
+def test_set_embedded_mode_before_logger_creation_is_applied():
+    _reset_logger_singleton()
+    cf_logging.ConfFlowLogger.set_embedded_mode(True)
+
+    logger = cf_logging.ConfFlowLogger()
+
+    assert logger.logger.propagate is True
+    assert "console" not in logger.handlers
+    logger.close()
+
+
+def test_set_embedded_mode_false_before_creation_restores_auto_detect():
+    _reset_logger_singleton()
+    cf_logging.ConfFlowLogger.set_embedded_mode(True)
+    cf_logging.ConfFlowLogger.set_embedded_mode(False)
+
+    root_mock = MagicMock()
+    root_mock.handlers = [EmbeddedHostHandler(io.StringIO())]
+    real_get_logger = logging.getLogger
+
+    def fake_get_logger(name=None):
+        if name is None:
+            return root_mock
+        return real_get_logger(name)
+
+    with patch("logging.getLogger", side_effect=fake_get_logger):
+        logger = cf_logging.ConfFlowLogger()
+
+    assert cf_logging.ConfFlowLogger._embedded_mode_override is None
+    assert logger.logger.propagate is True
+    assert "console" not in logger.handlers
     logger.close()
 
 
 def test_add_console_handler_idempotent():
     _reset_logger_singleton()
     root_mock = MagicMock()
-    root_mock.hasHandlers.return_value = False
+    root_mock.handlers = []
     real_get_logger = logging.getLogger
 
     def fake_get_logger(name=None):
@@ -104,7 +205,7 @@ def test_add_console_handler_idempotent():
 def test_redirect_console_handler_falls_back_to_stream_attr():
     _reset_logger_singleton()
     root_mock = MagicMock()
-    root_mock.hasHandlers.return_value = False
+    root_mock.handlers = []
     real_get_logger = logging.getLogger
 
     def fake_get_logger(name=None):
@@ -142,7 +243,7 @@ def test_add_file_handler_skipped_in_embedded_mode(tmp_path):
 def test_add_file_handler_replaces_existing_and_set_level(tmp_path):
     _reset_logger_singleton()
     root_mock = MagicMock()
-    root_mock.hasHandlers.return_value = False
+    root_mock.handlers = []
     real_get_logger = logging.getLogger
 
     def fake_get_logger(name=None):

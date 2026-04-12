@@ -19,7 +19,7 @@ confflow/
 │   ├── config/            # 配置加载与校验
 │   ├── core/              # 基础 IO、数据、模型与工具函数
 │   └── workflow/          # 工作流引擎
-├── tests/                 # 测试目录（当前 41 个 test 文件，682 个测试）
+├── tests/                 # 测试目录（2026-04-12 验证：41 个 test 文件，714 个测试）
 ├── docs/                  # 文档
 ├── confflow.yaml          # 配置模板
 ├── README.md              # 主文档
@@ -71,6 +71,26 @@ ruff check confflow tests
 ```
 
 统一风格与输入/输出契约见：`docs/STYLE_CONTRACT.md`
+
+## 架构与设计文档
+
+### 核心架构
+
+- `docs/ARCHITECTURE.md`：完整的架构设计与模块说明
+- `docs/COMPAT_EXECUTION_BOUNDARY.md`：Compat/Execution 边界契约（workflow→calc 双轨接口）
+- `docs/HANDOFF_PHASE2_WORKFLOW_CALC.md`：阶段 2 完整历史与问题台账
+
+### 开发指南
+
+- `docs/DEVELOPMENT.md`：本文档
+- `docs/TESTING.md`：测试套件文档
+- `docs/STYLE_CONTRACT.md`：代码/输入/输出一致性标准
+
+### 用户文档
+
+- `docs/USAGE.md`：快速开始指南
+- `docs/COMMAND_REFERENCE.md`：所有命令的完整参考
+- `docs/KEYWORD_REFERENCE.md`：YAML 配置关键字
 
 ## 运行测试
 
@@ -304,6 +324,22 @@ A: 使用 `--verbose` 启用调试日志：
 ```bash
 confflow input.xyz -c confflow.yaml --verbose
 ```
+
+### Q: 日志系统的工作模式是什么？
+
+A: ConfFlow 日志系统默认运行在 **standalone 模式**：
+- CLI 运行时，日志写入 `<input_basename>.txt` 文件
+- 同时在终端显示 INFO 级别的简洁输出
+- 默认使用独立的 console handler；但当检测到明确的 host-managed 自定义 root handler 时，会自动切换到 embedded 模式
+- `pytest` capture、标准库通用 handler、`NullHandler`、常见 notebook handler 不会触发该自动 embedded
+
+如果 ConfFlow 被嵌入到其他应用（如 GibbsFlow）中，外部调用方可以显式启用 **embedded 模式**：
+```python
+from confflow.core.logging import ConfFlowLogger
+ConfFlowLogger.set_embedded_mode(True)  # 移除独立 console handler，日志传播到父 logger
+```
+
+这样可以避免日志重复输出，并让外部应用统一管理日志格式。
 
 ### Q: 如何添加新的量子化学程序？
 

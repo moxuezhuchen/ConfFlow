@@ -8,6 +8,7 @@ them with a single ``except ConfFlowError`` clause.
 
 from __future__ import annotations
 
+from enum import Enum
 from typing import Any
 
 __all__ = [
@@ -22,7 +23,22 @@ __all__ = [
     "CalculationExecutionError",
     "CalculationParseError",
     "StopRequestedError",
+    "FailureKind",
 ]
+
+
+class FailureKind(str, Enum):
+    """Stable enumeration of calculation task failure categories."""
+
+    STOP_REQUESTED = "stop_requested"
+    INPUT_ERROR = "input_error"
+    PARSE_ERROR = "parse_error"
+    ABNORMAL_TERMINATION = "abnormal_termination"
+    EXEC_ERROR = "exec_error"
+    WORKER_EXCEPTION = "worker_exception"
+    RESCUE_FAILED = "rescue_failed"
+    BROKEN_PROCESS_POOL = "broken_process_pool"
+    SERIALIZATION_ERROR = "serialization_error"
 
 
 class ConfFlowError(Exception):

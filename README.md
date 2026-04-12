@@ -40,16 +40,19 @@ pip install -e ".[dev]"
 - ✅ XYZ 流式处理：新增 `iter_xyz_frames()`，`confgen` 改为边生成边写 `search.xyz`
 - ✅ 进程终止增强：`cli` 使用 `psutil` 进行进程树回收
 - ✅ 架构边界收口：新增 calc step contract、路径策略、后处理适配器、内部 run services
-- ✅ 测试基线（2026-04-12）：41 个 `test_*.py` 测试文件、**682 个测试**、`pytest -q` 本地约 6.4s
+- ✅ 测试基线（2026-04-12 验证）：41 个 `test_*.py` 测试文件、**714 个测试**，`pytest -q` 当前通过
 - ✅ 覆盖率门禁：`pyproject.toml` 中配置 `fail_under = 85`
 - ✅ 类型安全：`core/types.py` 改为标准库 `typing.TypedDict`
-- ✅ 类型/风格基线（2026-04-12）：`mypy confflow`、`ruff check confflow tests`、`pytest -q` 均通过
+- ✅ 类型/风格基线（2026-04-12 验证）：`mypy confflow`、`ruff check confflow tests`、`pytest -q` 均通过
 - ✅ 支持矩阵明确：CI 现验证 Python **3.9-3.13**
-- ✅ 异常精确化：`scan_ops`/`executor`/`generator` 中 8 处 `except Exception` 收窄为具体异常
+- ✅ 异常精确化：`scan_ops`/`executor`/`generator`/`rescue` 中 9 处 `except Exception` 收窄为当前已知的具体异常类型
 - ✅ 构象去重精度提升：对称性感知 RMSD + 能量辅助阈值，解决大分子原子乱序/对称互换导致的去重漏判
 - ✅ 工作流工件契约收紧：`calc`/`resume` 仅接受 `output.xyz` / `result.xyz` 作为已完成输出，避免误把 `search.xyz` 当成计算结果
 - ✅ calc 断点复用更安全：仅当 step 目录中的 `.config_hash` 与当前任务配置一致时才复用旧结果，配置变化会自动重算
 - ✅ 状态统计与结果视图一致：`results.db` 按每个 `job_name` 的最新记录聚合 step 失败数与汇总统计
+- ✅ workflow 配置模块化：`task_config.py` 拆分为 constants/helpers，保留兼容入口
+- ✅ calc 类型边界明确：`step_contract.py` 引入 `CompatConfig`/`ExecutionConfig` TypedDict，明确 config 传递语义
+- ✅ rescue 异常语义清晰：`_run_ts_reoptimization()` 收窄为 7 种语义上预期的具体异常，覆盖当前已知失败场景
 
 ## 目录清理
 

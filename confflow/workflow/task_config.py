@@ -7,7 +7,6 @@ from __future__ import annotations
 import configparser
 import logging
 import os
-import shlex
 from typing import Any
 
 from ..calc.config_types import (
@@ -31,6 +30,19 @@ from ..shared.defaults import (
 )
 from ..shared.orca_blocks import format_orca_blocks
 from .step_naming import build_step_dir_name_map
+from .task_config_constants import (
+    _EXPLICIT_CALC_CONFIG_FIELDS,
+    _KNOWN_CALC_PARAMS_BASE,
+    _KNOWN_CALC_PARAMS_STRUCTURED,
+)
+from .task_config_helpers import (
+    _coerce_bool_flag,
+    _format_freeze_value,
+    _format_ts_bond_pair,
+    _itask_label,
+    _normalize_iprog_label,
+    _parse_clean_opts_like_string,
+)
 
 logger = logging.getLogger("confflow.workflow.config_builder")
 
@@ -41,75 +53,6 @@ __all__ = [
     "build_task_config",
     "create_runtask_config",
 ]
-
-
-def _normalize_iprog_label(iprog: Any) -> str:
-    s = str(iprog).strip().lower()
-    if s in {"1", "g16", "gaussian", "gau", "g09", "g03"}:
-        return "g16"
-    if s in {"2", "orca"}:
-        return "orca"
-    return str(iprog).strip()
-
-
-def _itask_label(itask: Any) -> str:
-    s = str(itask).strip().lower()
-    mapping = {
-        "0": "opt",
-        "1": "sp",
-        "2": "freq",
-        "3": "opt_freq",
-        "4": "ts",
-        "opt": "opt",
-        "sp": "sp",
-        "freq": "freq",
-        "opt_freq": "opt_freq",
-        "optfreq": "opt_freq",
-        "ts": "ts",
-    }
-    return mapping.get(s, str(itask).strip())
-
-
-def _format_freeze_value(value: Any) -> str:
-    """Format freeze indices into the flat CSV string expected by calc config."""
-    indices = _coerce_freeze_indices(value)
-    return ",".join(str(x) for x in indices) if indices else "0"
-
-
-def _format_ts_bond_pair(value: Any) -> str | None:
-    """Format a two-atom index value into ``a,b`` when possible."""
-    try:
-        pair = _coerce_two_atom_indices(value)
-    except (TypeError, ValueError):
-        pair = None
-    if pair is not None:
-        a, b = pair
-        if a > 0 and b > 0 and a != b:
-            return f"{a},{b}"
-        return None
-
-    # Preserve the legacy behavior of reusing the first freeze pair.
-    indices = _coerce_freeze_indices(value)
-    if len(indices) >= 2:
-        a, b = indices[0], indices[1]
-        if a > 0 and b > 0 and a != b:
-            return f"{a},{b}"
-    return None
-
-
-def _coerce_bool_flag(value: Any) -> bool:
-    """Interpret common YAML/INI boolean spellings without Python truthiness surprises."""
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        normalized = value.strip().lower()
-        if normalized in {"1", "true", "yes", "on"}:
-            return True
-        if normalized in {"0", "false", "no", "off", ""}:
-            return False
-    if isinstance(value, (int, float)):
-        return bool(value)
-    return bool(value)
 
 
 def _build_clean_opts(params: dict[str, Any], global_config: dict[str, Any]) -> str:
@@ -148,62 +91,6 @@ def _build_clean_opts(params: dict[str, Any], global_config: dict[str, Any]) -> 
     return " ".join(opts)
 
 
-def _parse_clean_opts_like_string(opts_str: str) -> tuple[float | None, float | None, float | None]:
-    """Parse threshold-like cleanup values from a clean_opts/clean_params style string."""
-    thresh: float | None = None
-    ewin: float | None = None
-    etol: float | None = None
-
-    try:
-        tokens = shlex.split(opts_str)
-    except ValueError:
-        tokens = opts_str.split()
-
-    i = 0
-    while i < len(tokens):
-        tok = tokens[i]
-        if tok == "-t" and i + 1 < len(tokens):
-            try:
-                thresh = float(tokens[i + 1])
-            except (TypeError, ValueError):
-                pass
-            i += 2
-        elif tok == "-ewin" and i + 1 < len(tokens):
-            try:
-                ewin = float(tokens[i + 1])
-            except (TypeError, ValueError):
-                pass
-            i += 2
-        elif tok == "--energy-tolerance" and i + 1 < len(tokens):
-            try:
-                etol = float(tokens[i + 1])
-            except (TypeError, ValueError):
-                pass
-            i += 2
-        elif tok.startswith("-t="):
-            try:
-                thresh = float(tok.split("=", 1)[1])
-            except (IndexError, TypeError, ValueError):
-                pass
-            i += 1
-        elif tok.startswith("-ewin="):
-            try:
-                ewin = float(tok.split("=", 1)[1])
-            except (IndexError, TypeError, ValueError):
-                pass
-            i += 1
-        elif tok.startswith("--energy-tolerance="):
-            try:
-                etol = float(tok.split("=", 1)[1])
-            except (IndexError, TypeError, ValueError):
-                pass
-            i += 1
-        else:
-            i += 1
-
-    return thresh, ewin, etol
-
-
 def _resolve_chk_input_dir(
     params: dict[str, Any],
     root_dir: str | None,
@@ -227,7 +114,9 @@ def _resolve_chk_input_dir(
     return os.path.join(root_dir, from_dir, "backups")
 
 
-def _resolve_freeze_for_task(params: dict[str, Any], global_config: dict[str, Any]) -> tuple[int, ...]:
+def _resolve_freeze_for_task(
+    params: dict[str, Any], global_config: dict[str, Any]
+) -> tuple[int, ...]:
     itask_int = parse_itask(params.get("itask", "opt"))
     if itask_int in [0, 3]:
         freeze_val = params.get("freeze", global_config.get("freeze", "0"))
@@ -235,7 +124,9 @@ def _resolve_freeze_for_task(params: dict[str, Any], global_config: dict[str, An
     return ()
 
 
-def _resolve_ts_pair(params: dict[str, Any], global_config: dict[str, Any]) -> tuple[int, int] | None:
+def _resolve_ts_pair(
+    params: dict[str, Any], global_config: dict[str, Any]
+) -> tuple[int, int] | None:
     pair = _coerce_two_atom_indices(params.get("ts_bond_atoms"))
     if pair is None:
         pair = _coerce_two_atom_indices(global_config.get("ts_bond_atoms"))
@@ -253,7 +144,9 @@ def _resolve_ts_pair(params: dict[str, Any], global_config: dict[str, Any]) -> t
     return (a, b)
 
 
-def _resolve_cleanup_options(params: dict[str, Any], global_config: dict[str, Any]) -> CleanupOptions:
+def _resolve_cleanup_options(
+    params: dict[str, Any], global_config: dict[str, Any]
+) -> CleanupOptions:
     clean_params = params.get("clean_params")
     if clean_params:
         thresh, ewin, etol = _parse_clean_opts_like_string(str(clean_params))
@@ -305,6 +198,22 @@ def _resolve_cleanup_options(params: dict[str, Any], global_config: dict[str, An
     )
 
 
+def _get_param(
+    key: str,
+    params: dict[str, Any],
+    global_config: dict[str, Any],
+    cast: type[int] | type[float] | type[bool] | None = None,
+) -> Any:
+    val = params.get(key, global_config.get(key))
+    if val is None:
+        return None
+    if cast is bool:
+        return _coerce_bool_flag(val)
+    if cast is not None:
+        return cast(val)
+    return val
+
+
 def _resolve_ts_options(params: dict[str, Any], global_config: dict[str, Any]) -> TSOptions:
     itask_int = parse_itask(params.get("itask", "opt"))
     pair = _resolve_ts_pair(params, global_config)
@@ -315,61 +224,15 @@ def _resolve_ts_options(params: dict[str, Any], global_config: dict[str, Any]) -
     return TSOptions(
         bond_atoms=pair,
         rescue_scan=_coerce_bool_flag(rescue_val),
-        bond_drift_threshold=(
-            None
-            if params.get("ts_bond_drift_threshold", global_config.get("ts_bond_drift_threshold"))
-            is None
-            else float(
-                params.get("ts_bond_drift_threshold", global_config.get("ts_bond_drift_threshold"))
-            )
-        ),
-        rmsd_threshold=(
-            None
-            if params.get("ts_rmsd_threshold", global_config.get("ts_rmsd_threshold")) is None
-            else float(params.get("ts_rmsd_threshold", global_config.get("ts_rmsd_threshold")))
-        ),
-        scan_coarse_step=(
-            None
-            if params.get("scan_coarse_step", global_config.get("scan_coarse_step")) is None
-            else float(params.get("scan_coarse_step", global_config.get("scan_coarse_step")))
-        ),
-        scan_fine_step=(
-            None
-            if params.get("scan_fine_step", global_config.get("scan_fine_step")) is None
-            else float(params.get("scan_fine_step", global_config.get("scan_fine_step")))
-        ),
-        scan_uphill_limit=(
-            None
-            if params.get("scan_uphill_limit", global_config.get("scan_uphill_limit")) is None
-            else int(params.get("scan_uphill_limit", global_config.get("scan_uphill_limit")))
-        ),
-        scan_max_steps=(
-            None if params.get("scan_max_steps", global_config.get("scan_max_steps")) is None else int(params.get("scan_max_steps", global_config.get("scan_max_steps")))
-        ),
-        scan_fine_half_window=(
-            None
-            if params.get("scan_fine_half_window", global_config.get("scan_fine_half_window"))
-            is None
-            else float(
-                params.get("scan_fine_half_window", global_config.get("scan_fine_half_window"))
-            )
-        ),
-        keep_scan_dirs=(
-            None
-            if params.get("ts_rescue_keep_scan_dirs", global_config.get("ts_rescue_keep_scan_dirs"))
-            is None
-            else _coerce_bool_flag(
-                params.get("ts_rescue_keep_scan_dirs", global_config.get("ts_rescue_keep_scan_dirs"))
-            )
-        ),
-        scan_backup=(
-            None
-            if params.get("ts_rescue_scan_backup", global_config.get("ts_rescue_scan_backup"))
-            is None
-            else _coerce_bool_flag(
-                params.get("ts_rescue_scan_backup", global_config.get("ts_rescue_scan_backup"))
-            )
-        ),
+        bond_drift_threshold=_get_param("ts_bond_drift_threshold", params, global_config, float),
+        rmsd_threshold=_get_param("ts_rmsd_threshold", params, global_config, float),
+        scan_coarse_step=_get_param("scan_coarse_step", params, global_config, float),
+        scan_fine_step=_get_param("scan_fine_step", params, global_config, float),
+        scan_uphill_limit=_get_param("scan_uphill_limit", params, global_config, int),
+        scan_max_steps=_get_param("scan_max_steps", params, global_config, int),
+        scan_fine_half_window=_get_param("scan_fine_half_window", params, global_config, float),
+        keep_scan_dirs=_get_param("ts_rescue_keep_scan_dirs", params, global_config, bool),
+        scan_backup=_get_param("ts_rescue_scan_backup", params, global_config, bool),
     )
 
 
@@ -385,7 +248,9 @@ def _resolve_execution_options(
     else:
         input_chk_dir = str(input_chk_dir_raw).strip()
     sandbox_root_val = params.get("sandbox_root", global_config.get("sandbox_root"))
-    gaussian_write_chk_val = params.get("gaussian_write_chk", global_config.get("gaussian_write_chk"))
+    gaussian_write_chk_val = params.get(
+        "gaussian_write_chk", global_config.get("gaussian_write_chk")
+    )
     allowed_execs = params.get("allowed_executables", global_config.get("allowed_executables"))
     if isinstance(allowed_execs, str):
         allowed_tuple = tuple(item.strip() for item in allowed_execs.split(",") if item.strip())
@@ -410,7 +275,9 @@ def _resolve_execution_options(
         auto_clean=True,
         delete_work_dir=True,
         sandbox_root=(
-            None if sandbox_root_val is None or str(sandbox_root_val).strip() == "" else str(sandbox_root_val).strip()
+            None
+            if sandbox_root_val is None or str(sandbox_root_val).strip() == ""
+            else str(sandbox_root_val).strip()
         ),
         input_chk_dir=input_chk_dir,
         allowed_executables=allowed_tuple,
@@ -476,6 +343,18 @@ def _build_base_task_config(
         ).lower(),
         "delete_work_dir": "true",
     }
+
+
+def _merge_remaining_known_params(params: dict[str, Any], config: dict[str, str]) -> None:
+    """Validate params against known set and merge non-None values into config."""
+    for key, value in params.items():
+        if key not in _KNOWN_CALC_PARAMS_BASE:
+            logger.warning(
+                "Ignored unknown calc parameter '%s' while building the task config", key
+            )
+            continue
+        if key not in config and value is not None:
+            config[key] = str(value)
 
 
 def _build_legacy_task_config(
@@ -570,59 +449,26 @@ def _build_legacy_task_config(
         else:
             config["blocks"] = str(blocks)
 
-    known_calc_params = {
-        "iprog",
-        "itask",
-        "keyword",
-        "cores_per_task",
-        "total_memory",
-        "max_parallel_jobs",
-        "charge",
-        "multiplicity",
-        "freeze",
-        "energy_window",
-        "rmsd_threshold",
-        "noH",
-        "dedup_only",
-        "keep_all_topos",
-        "max_conformers",
-        "imag",
-        "energy_tolerance",
-        "clean_params",
-        "clean_opts",
-        "auto_clean",
-        "gaussian_path",
-        "orca_path",
-        "allowed_executables",
-        "orca_maxcore",
-        "blocks",
-        "gaussian_write_chk",
-        "gaussian_modredundant",
-        "gaussian_link0",
-        "chk_from_step",
-        "ts_bond_atoms",
-        "ts_rescue_scan",
-        "ts_bond_drift_threshold",
-        "ts_rmsd_threshold",
-        "scan_coarse_step",
-        "scan_fine_step",
-        "scan_uphill_limit",
-        "scan_max_steps",
-        "scan_fine_half_window",
-        "ts_rescue_keep_scan_dirs",
-        "ts_rescue_scan_backup",
-        "ibkout",
-        "enable_dynamic_resources",
-        "resume_from_backups",
-    }
-    for key, value in params.items():
-        if key not in known_calc_params:
-            logger.warning("Ignored unknown calc parameter '%s' while building the task config", key)
-            continue
-        if key not in config and value is not None:
-            config[key] = str(value)
-
+    _merge_remaining_known_params(params, config)
     return {key: value for key, value in config.items() if value is not None and value != ""}
+
+
+def _validate_known_params(params: dict[str, Any]) -> None:
+    """Validate params against known set and warn about unknown parameters."""
+    for key in params:
+        if key not in _KNOWN_CALC_PARAMS_STRUCTURED:
+            logger.warning(
+                "Ignored unknown calc parameter '%s' while building the task config", key
+            )
+
+
+def _collect_extra_params(params: dict[str, Any]) -> dict[str, Any]:
+    """Collect extra params that are known but not explicit config fields."""
+    return {
+        key: value
+        for key, value in params.items()
+        if key in _KNOWN_CALC_PARAMS_STRUCTURED and key not in _EXPLICIT_CALC_CONFIG_FIELDS
+    }
 
 
 def build_structured_task_config(
@@ -643,64 +489,18 @@ def build_structured_task_config(
     else:
         blocks_value = blocks
 
-    known_calc_params = {
-        "iprog",
-        "itask",
-        "keyword",
-        "cores_per_task",
-        "total_memory",
-        "max_parallel_jobs",
-        "charge",
-        "multiplicity",
-        "freeze",
-        "energy_window",
-        "rmsd_threshold",
-        "noH",
-        "dedup_only",
-        "keep_all_topos",
-        "max_conformers",
-        "imag",
-        "energy_tolerance",
-        "clean_params",
-        "clean_opts",
-        "auto_clean",
-        "gaussian_path",
-        "orca_path",
-        "allowed_executables",
-        "orca_maxcore",
-        "blocks",
-        "gaussian_write_chk",
-        "gaussian_modredundant",
-        "gaussian_link0",
-        "chk_from_step",
-        "ts_bond_atoms",
-        "ts_rescue_scan",
-        "ts_bond_drift_threshold",
-        "ts_rmsd_threshold",
-        "scan_coarse_step",
-        "scan_fine_step",
-        "scan_uphill_limit",
-        "scan_max_steps",
-        "scan_fine_half_window",
-        "ts_rescue_keep_scan_dirs",
-        "ts_rescue_scan_backup",
-        "ibkout",
-        "enable_dynamic_resources",
-        "resume_from_backups",
-        "sandbox_root",
-        "input_chk_dir",
-    }
-
-    for key in params:
-        if key not in known_calc_params:
-            logger.warning("Ignored unknown calc parameter '%s' while building the task config", key)
+    _validate_known_params(params)
 
     return CalcTaskConfig(
-        program=Program.GAUSSIAN
-        if _normalize_iprog_label(params.get("iprog", "orca")) == Program.GAUSSIAN.value
-        else Program.ORCA
-        if _normalize_iprog_label(params.get("iprog", "orca")) == Program.ORCA.value
-        else _normalize_iprog_label(params.get("iprog", "orca")),
+        program=(
+            Program.GAUSSIAN
+            if _normalize_iprog_label(params.get("iprog", "orca")) == Program.GAUSSIAN.value
+            else (
+                Program.ORCA
+                if _normalize_iprog_label(params.get("iprog", "orca")) == Program.ORCA.value
+                else _normalize_iprog_label(params.get("iprog", "orca"))
+            )
+        ),
         task=(
             TaskKind(_itask_label(params.get("itask", "opt")))
             if _itask_label(params.get("itask", "opt")) in {item.value for item in TaskKind}
@@ -710,7 +510,9 @@ def build_structured_task_config(
         gaussian_path=str(global_config.get("gaussian_path", "g16")),
         orca_path=str(global_config.get("orca_path", "orca")),
         cores_per_task=int(
-            params.get("cores_per_task", global_config.get("cores_per_task", DEFAULT_CORES_PER_TASK))
+            params.get(
+                "cores_per_task", global_config.get("cores_per_task", DEFAULT_CORES_PER_TASK)
+            )
         ),
         total_memory=str(
             params.get("total_memory", global_config.get("total_memory", DEFAULT_TOTAL_MEMORY))
@@ -736,55 +538,7 @@ def build_structured_task_config(
         gaussian_modredundant=params.get("gaussian_modredundant"),
         gaussian_link0=params.get("gaussian_link0"),
         ibkout=params.get("ibkout"),
-        extra={
-            key: value
-            for key, value in params.items()
-            if key in known_calc_params
-            and key
-            not in {
-                "iprog",
-                "itask",
-                "keyword",
-                "cores_per_task",
-                "total_memory",
-                "max_parallel_jobs",
-                "charge",
-                "multiplicity",
-                "freeze",
-                "energy_window",
-                "rmsd_threshold",
-                "noH",
-                "dedup_only",
-                "keep_all_topos",
-                "energy_tolerance",
-                "clean_params",
-                "clean_opts",
-                "auto_clean",
-                "allowed_executables",
-                "orca_maxcore",
-                "blocks",
-                "gaussian_write_chk",
-                "gaussian_modredundant",
-                "gaussian_link0",
-                "chk_from_step",
-                "ts_bond_atoms",
-                "ts_rescue_scan",
-                "ts_bond_drift_threshold",
-                "ts_rmsd_threshold",
-                "scan_coarse_step",
-                "scan_fine_step",
-                "scan_uphill_limit",
-                "scan_max_steps",
-                "scan_fine_half_window",
-                "ts_rescue_keep_scan_dirs",
-                "ts_rescue_scan_backup",
-                "ibkout",
-                "enable_dynamic_resources",
-                "resume_from_backups",
-                "sandbox_root",
-                "input_chk_dir",
-            }
-        },
+        extra=_collect_extra_params(params),
     )
 
 
