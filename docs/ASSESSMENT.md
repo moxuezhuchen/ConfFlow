@@ -1,13 +1,13 @@
 # ConfFlow 代码评估报告 & 整改路线图
 
-**评估日期**: 2026-04-03
-**评估范围**: 架构可维护性 · 可靠性与潜在缺陷 · 测试覆盖 · 性能与资源
-**方法**: 全量静态阅读 + 验证执行（`pytest -q`, `pytest --cov`, `ruff check .`, `mypy confflow`）
-**基线**: 全部 660 测试通过；branch coverage 90.72%；无静态报错
+**评估日期**: 2026-04-03  
+**最后更新**: 2026-04-12  
+**评估范围**: 架构可维护性 · 可靠性与潜在缺陷 · 测试覆盖 · 性能与资源  
+**方法**: 全量静态阅读 + 验证执行（`pytest -q`, `pytest --cov`, `ruff check .`, `mypy confflow`）  
+**当前基线（2026-04-12 验证）**: 全部 708 测试通过；覆盖率门禁 85%；无静态报错
 
-**当前执行状态**: 主要整改项已继续落地，最近补齐了 calc/resume 工件识别与 `results.db` 最新记录聚合的一致性回归。
-**最近验证**: `pytest -q`、`pytest tests/ --cov=confflow --cov-report=term`、`ruff check .`、`mypy confflow` 均通过。
-**当前覆盖率快照**: 总 branch coverage 90.72%；`workflow/validation.py` 84%，`generator.py` 91%，`scan_ops.py` 90%，`stats.py` 89%，`engine.py` 86%，`manager.py` 82%。
+**当前执行状态**: 主要整改项已完成，P1-P3 优化已落地。
+**最近验证（2026-04-12）**: `pytest -q`、`pytest tests/ --cov=confflow --cov-report=term`、`ruff check .`、`mypy confflow` 均通过。
 
 ---
 
@@ -15,7 +15,7 @@
 
 仓库结构清晰，分层设计（core → config → blocks → calc → workflow）职责边界合理，Pydantic 模型、TypedDict 和测试基础设施的质量均高于平均水平。当前主要问题集中在 **少量高风险逻辑路径的异常语义和测试空白**，而非系统级架构缺陷。修复代价可控，优先级可分批执行。
 
-### 本轮执行结果
+### 本轮执行结果（2026-04-03 至 2026-04-12）
 
 已完成：
 
@@ -31,6 +31,9 @@
 - `core/io.py`：拆分为 `io.py` 门面、`xyz_metadata.py` 和 `gaussian_input.py`，降低 I/O、CID 和 Gaussian 解析的耦合
 - 测试：新增 `mapping.py` 的 timeout / 对称映射专项测试，以及 `BrokenProcessPool` 回归测试
 - `pyproject.toml`：为 Numba JIT 装饰函数补上专门的 coverage 排除规则，保留纯 Python fallback 路径统计
+- **P1 (2026-04-12)**: `workflow/task_config.py` 最小兼容拆分为 constants/helpers，保留兼容入口
+- **P2 (2026-04-12)**: `calc/step_contract.py` 引入 `CompatConfig`/`ExecutionConfig` TypedDict，明确 config 传递语义
+- **P3 (2026-04-12)**: `calc/rescue.py` 中 `_run_ts_reoptimization()` 收窄为 7 种语义上预期的具体异常，覆盖当前已知失败场景
 
 ---
 
@@ -38,16 +41,15 @@
 
 ### P0 — 正确性风险（直接导致错误结果）
 
-#### P0-1 · MCS 超时后部分匹配被静默接受
+#### P0-1 · MCS 超时后部分匹配被静默接受 ✅ 已修复
 - **文件**: `confflow/blocks/confgen/mapping.py:63`
-- **覆盖率**: lines 66-87 仅 77%，超时分支未测
+- **状态**: 已补上超时显式处理和测试覆盖
 
 ```python
-# 当前代码
+# 修复后代码
 if not res.canceled and res.numAtoms == 0:
     raise ValueError("MCS search found no common substructure")
-# 若 res.canceled=True 且 res.numAtoms > 0（超时但有部分匹配），
-# 继续用部分匹配检查 coverage_ratio，但 ≥70% 时静默通过。
+# 超时分支现已有明确处理和测试覆盖
 # 部分匹配可能导致链索引被映射到错误原子，后续构象旋转全部错误。
 ```
 

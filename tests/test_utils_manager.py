@@ -289,22 +289,21 @@ def test_parse_iprog_itask():
 
 
 def test_logger_embedded_mode():
+    """Test that explicit embedded mode is honored before logger creation."""
+    ConfFlowLogger._instance = None
     ConfFlowLogger._initialized = False
-    ConfFlowLogger()
-
-    with patch("logging.getLogger") as mock_get:
-        mock_root = MagicMock()
-        mock_root.hasHandlers.return_value = True
-        mock_get.side_effect = lambda name=None: mock_root if name is None else MagicMock()
-
-        ConfFlowLogger._initialized = False
-        ConfFlowLogger()
-        assert ConfFlowLogger._embedded_mode is True
-
+    ConfFlowLogger._embedded_mode = False
+    ConfFlowLogger._embedded_mode_override = None
     ConfFlowLogger.set_embedded_mode(True)
+    logger = ConfFlowLogger()
+
     assert ConfFlowLogger._embedded_mode is True
+    assert logger.logger.propagate is True
+    assert "console" not in logger.handlers
+
     ConfFlowLogger.set_embedded_mode(False)
     assert ConfFlowLogger._embedded_mode is False
+    logger.close()
 
 
 def test_logger_file_handler(tmp_path):

@@ -17,6 +17,12 @@ import os
 from typing import Any
 
 from ..core.console import SINGLE_LINE, console, print_kv
+from ..core.exceptions import (
+    CalculationExecutionError,
+    CalculationInputError,
+    CalculationParseError,
+    StopRequestedError,
+)
 from ..core.keyword_rewrite import make_scan_keyword_from_ts_keyword
 from ..shared.defaults import DEFAULT_TS_BOND_DRIFT_THRESHOLD
 from .analysis import (
@@ -403,7 +409,15 @@ def _run_ts_reoptimization(
         )
         logger.info(f"TS rescue succeeded for {job} | r_peak={r_best:.3f} Å")
         return out
-    except Exception as e:
+    except (
+        CalculationInputError,
+        CalculationExecutionError,
+        CalculationParseError,
+        StopRequestedError,
+        RuntimeError,
+        ValueError,
+        TypeError,
+    ) as e:
         _write_ts_failure_report(wd, job, "ts_rescue", str(e))
         console.print()
         console.print(f"  ✗ TS rescue failed | {str(e)[:60]}")
