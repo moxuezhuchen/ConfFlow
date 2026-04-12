@@ -9,6 +9,7 @@ independent testing and reuse.
 from __future__ import annotations
 
 import numpy as np
+from numpy.typing import NDArray
 
 from ...core.data import GV_COVALENT_RADII
 from ...core.utils import get_numba_jit
@@ -21,7 +22,7 @@ __all__ = [
 ]
 
 # Build NumPy array for high-performance computation
-GV_RADII_ARRAY = np.zeros(120, dtype=np.float64)
+GV_RADII_ARRAY: NDArray[np.float64] = np.zeros(120, dtype=np.float64)
 for _i, _r in enumerate(GV_COVALENT_RADII):
     GV_RADII_ARRAY[_i] = _r
 for _i in range(112, 120):
@@ -54,7 +55,7 @@ def check_clash_core(atom_numbers, coords, clash_threshold, topo_dist_matrix, ra
         True if a clash is detected.
     """
     num_atoms = len(atom_numbers)
-    radii = np.empty(num_atoms, dtype=np.float64)
+    radii: NDArray[np.float64] = np.empty(num_atoms, dtype=np.float64)
     for i in range(num_atoms):
         radii[i] = radii_array[atom_numbers[i]]
 
