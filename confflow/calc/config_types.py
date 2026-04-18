@@ -244,6 +244,35 @@ def _parse_clean_opts(opts_str: str) -> dict[str, Any]:
     return parsed
 
 
+def _resolve_clean_opts_value(value: Any) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, Mapping):
+        return CleanupOptions(
+            enabled=True,
+            dedup_only=_coerce_bool_flag(value.get("dedup_only")),
+            keep_all_topos=_coerce_bool_flag(value.get("keep_all_topos")),
+            no_h=_coerce_bool_flag(value.get("noH", value.get("no_h"))),
+            rmsd_threshold=(
+                None
+                if value.get("threshold", value.get("rmsd_threshold")) is None
+                else float(value.get("threshold", value.get("rmsd_threshold")))
+            ),
+            energy_window=(
+                None
+                if value.get("energy_window", value.get("ewin")) is None
+                else float(value.get("energy_window", value.get("ewin")))
+            ),
+            energy_tolerance=(
+                None
+                if value.get("energy_tolerance", value.get("etol")) is None
+                else float(value.get("energy_tolerance", value.get("etol")))
+            ),
+        ).to_legacy_clean_opts() or None
+    stripped = str(value).strip()
+    return stripped or None
+
+
 class CalcTaskConfig(dict[str, Any]):
     """Structured calc config that remains dict-compatible for legacy call sites."""
 
@@ -317,26 +346,29 @@ class CalcTaskConfig(dict[str, Any]):
         if ibkout is not None:
             payload["ibkout"] = ibkout
 
+        task_name = task.value if isinstance(task, TaskKind) else str(task)
+
         if self.ts.bond_atoms is not None:
             payload["ts_bond_atoms"] = [self.ts.bond_atoms[0], self.ts.bond_atoms[1]]
-        payload["ts_rescue_scan"] = self.ts.rescue_scan
-        if self.ts.bond_drift_threshold is not None:
+        if task_name == TaskKind.TS.value:
+            payload["ts_rescue_scan"] = self.ts.rescue_scan
+        if task_name == TaskKind.TS.value and self.ts.bond_drift_threshold is not None:
             payload["ts_bond_drift_threshold"] = self.ts.bond_drift_threshold
-        if self.ts.rmsd_threshold is not None:
+        if task_name == TaskKind.TS.value and self.ts.rmsd_threshold is not None:
             payload["ts_rmsd_threshold"] = self.ts.rmsd_threshold
-        if self.ts.scan_coarse_step is not None:
+        if task_name == TaskKind.TS.value and self.ts.scan_coarse_step is not None:
             payload["scan_coarse_step"] = self.ts.scan_coarse_step
-        if self.ts.scan_fine_step is not None:
+        if task_name == TaskKind.TS.value and self.ts.scan_fine_step is not None:
             payload["scan_fine_step"] = self.ts.scan_fine_step
-        if self.ts.scan_uphill_limit is not None:
+        if task_name == TaskKind.TS.value and self.ts.scan_uphill_limit is not None:
             payload["scan_uphill_limit"] = self.ts.scan_uphill_limit
-        if self.ts.scan_max_steps is not None:
+        if task_name == TaskKind.TS.value and self.ts.scan_max_steps is not None:
             payload["scan_max_steps"] = self.ts.scan_max_steps
-        if self.ts.scan_fine_half_window is not None:
+        if task_name == TaskKind.TS.value and self.ts.scan_fine_half_window is not None:
             payload["scan_fine_half_window"] = self.ts.scan_fine_half_window
-        if self.ts.keep_scan_dirs is not None:
+        if task_name == TaskKind.TS.value and self.ts.keep_scan_dirs is not None:
             payload["ts_rescue_keep_scan_dirs"] = self.ts.keep_scan_dirs
-        if self.ts.scan_backup is not None:
+        if task_name == TaskKind.TS.value and self.ts.scan_backup is not None:
             payload["ts_rescue_scan_backup"] = self.ts.scan_backup
 
         if extra:
@@ -458,6 +490,7 @@ class CalcTaskConfig(dict[str, Any]):
             "multiplicity",
             "freeze",
             "clean_opts",
+            "clean_params",
             "dedup_only",
             "keep_all_topos",
             "noH",
@@ -490,6 +523,12 @@ class CalcTaskConfig(dict[str, Any]):
             "ibkout",
         }
 
+        preserved_extra = {key: value for key, value in raw.items() if key not in known_keys}
+        if raw.get("clean_opts") is not None:
+            preserved_extra["clean_opts"] = raw.get("clean_opts")
+        if raw.get("clean_params") is not None:
+            preserved_extra["clean_params"] = raw.get("clean_params")
+
         return cls(
             program=_normalize_program(raw.get("iprog", Program.ORCA.value)),
             task=_normalize_task(raw.get("itask", TaskKind.OPT_FREQ.value)),
@@ -510,46 +549,56 @@ class CalcTaskConfig(dict[str, Any]):
             gaussian_modredundant=raw.get("gaussian_modredundant"),
             gaussian_link0=raw.get("gaussian_link0"),
             ibkout=raw.get("ibkout"),
-            extra={key: value for key, value in raw.items() if key not in known_keys},
+            extra=preserved_extra,
         )
 
     def to_legacy_dict(self) -> dict[str, str]:
+        raw = dict(self)
+        task_value = str(raw.get("itask", TaskKind.OPT_FREQ.value))
         data: dict[str, str] = {
-            "iprog": self["iprog"],
-            "itask": self["itask"],
-            "keyword": str(self["keyword"]),
-            "gaussian_path": str(self.get("gaussian_path", "g16")),
-            "orca_path": str(self.get("orca_path", "orca")),
-            "cores_per_task": str(self.get("cores_per_task", DEFAULT_CORES_PER_TASK)),
-            "total_memory": str(self.get("total_memory", DEFAULT_TOTAL_MEMORY)),
-            "max_parallel_jobs": str(self.get("max_parallel_jobs", DEFAULT_MAX_PARALLEL_JOBS)),
-            "charge": str(self.get("charge", DEFAULT_CHARGE)),
-            "multiplicity": str(self.get("multiplicity", DEFAULT_MULTIPLICITY)),
-            "enable_dynamic_resources": str(self.execution.enable_dynamic_resources).lower(),
-            "resume_from_backups": str(self.execution.resume_from_backups).lower(),
-            "auto_clean": str(self.execution.auto_clean).lower(),
-            "delete_work_dir": str(self.execution.delete_work_dir).lower(),
+            "iprog": str(raw.get("iprog", Program.ORCA.value)),
+            "itask": task_value,
+            "keyword": str(raw.get("keyword", "")),
+            "gaussian_path": str(raw.get("gaussian_path", "g16")),
+            "orca_path": str(raw.get("orca_path", "orca")),
+            "cores_per_task": str(raw.get("cores_per_task", DEFAULT_CORES_PER_TASK)),
+            "total_memory": str(raw.get("total_memory", DEFAULT_TOTAL_MEMORY)),
+            "max_parallel_jobs": str(raw.get("max_parallel_jobs", DEFAULT_MAX_PARALLEL_JOBS)),
+            "charge": str(raw.get("charge", DEFAULT_CHARGE)),
+            "multiplicity": str(raw.get("multiplicity", DEFAULT_MULTIPLICITY)),
+            "enable_dynamic_resources": str(_coerce_bool_flag(raw.get("enable_dynamic_resources", self.execution.enable_dynamic_resources))).lower(),
+            "resume_from_backups": str(_coerce_bool_flag(raw.get("resume_from_backups", self.execution.resume_from_backups))).lower(),
+            "auto_clean": str(_coerce_bool_flag(raw.get("auto_clean", self.execution.auto_clean))).lower(),
+            "delete_work_dir": str(_coerce_bool_flag(raw.get("delete_work_dir", self.execution.delete_work_dir))).lower(),
         }
 
-        freeze_vals = self.get("freeze", [])
+        freeze_vals = raw.get("freeze", [])
         if isinstance(freeze_vals, (list, tuple)):
             data["freeze"] = ",".join(str(x) for x in freeze_vals) if freeze_vals else "0"
         else:
             data["freeze"] = str(freeze_vals)
 
-        if self.execution.sandbox_root:
-            data["sandbox_root"] = self.execution.sandbox_root
-        if self.execution.input_chk_dir:
-            data["input_chk_dir"] = self.execution.input_chk_dir
-        if self.execution.allowed_executables:
-            data["allowed_executables"] = ",".join(self.execution.allowed_executables)
+        sandbox_root = self.execution.sandbox_root
+        if sandbox_root:
+            data["sandbox_root"] = str(sandbox_root)
+        input_chk_dir = self.execution.input_chk_dir
+        if input_chk_dir:
+            data["input_chk_dir"] = str(input_chk_dir)
+        allowed_executables = self.execution.allowed_executables or _normalize_allowed_executables(
+            raw.get("allowed_executables")
+        )
+        if allowed_executables:
+            data["allowed_executables"] = ",".join(allowed_executables)
         if self.execution.gaussian_write_chk is not None:
             data["gaussian_write_chk"] = str(self.execution.gaussian_write_chk).lower()
+        elif raw.get("gaussian_write_chk") is not None:
+            data["gaussian_write_chk"] = str(_coerce_bool_flag(raw.get("gaussian_write_chk"))).lower()
 
-        ts_pair = self.ts.bond_atoms
+        ts_pair = self.ts.bond_atoms or _normalize_pair(raw.get("ts_bond_atoms"))
         if ts_pair is not None:
             data["ts_bond_atoms"] = f"{ts_pair[0]},{ts_pair[1]}"
-        data["ts_rescue_scan"] = str(self.ts.rescue_scan).lower()
+        if task_value == TaskKind.TS.value:
+            data["ts_rescue_scan"] = str(self.ts.rescue_scan).lower()
 
         for key in [
             "ts_bond_drift_threshold",
@@ -571,16 +620,67 @@ class CalcTaskConfig(dict[str, Any]):
             "gaussian_oldchk",
             "gaussian_oldchk_file",
         ]:
-            if key in self and self.get(key) is not None:
-                data[key] = str(self[key])
+            if key == "ts_bond_drift_threshold" and self.ts.bond_drift_threshold is not None:
+                data[key] = str(self.ts.bond_drift_threshold)
+                continue
+            if key == "ts_rmsd_threshold" and self.ts.rmsd_threshold is not None:
+                data[key] = str(self.ts.rmsd_threshold)
+                continue
+            if key == "scan_coarse_step" and self.ts.scan_coarse_step is not None:
+                data[key] = str(self.ts.scan_coarse_step)
+                continue
+            if key == "scan_fine_step" and self.ts.scan_fine_step is not None:
+                data[key] = str(self.ts.scan_fine_step)
+                continue
+            if key == "scan_uphill_limit" and self.ts.scan_uphill_limit is not None:
+                data[key] = str(self.ts.scan_uphill_limit)
+                continue
+            if key == "scan_max_steps" and self.ts.scan_max_steps is not None:
+                data[key] = str(self.ts.scan_max_steps)
+                continue
+            if key == "scan_fine_half_window" and self.ts.scan_fine_half_window is not None:
+                data[key] = str(self.ts.scan_fine_half_window)
+                continue
+            if key == "ts_rescue_keep_scan_dirs" and self.ts.keep_scan_dirs is not None:
+                data[key] = str(self.ts.keep_scan_dirs).lower()
+                continue
+            if key == "ts_rescue_scan_backup" and self.ts.scan_backup is not None:
+                data[key] = str(self.ts.scan_backup).lower()
+                continue
+            if key in raw and raw.get(key) is not None:
+                data[key] = str(raw[key])
 
-        clean_opts = self.cleanup.to_legacy_clean_opts()
+        clean_opts = _resolve_clean_opts_value(raw.get("clean_opts"))
+        if clean_opts is None:
+            clean_opts = _resolve_clean_opts_value(raw.get("clean_params"))
+        if clean_opts is None:
+            auto_clean_flag = _coerce_bool_flag(raw.get("auto_clean", self.execution.auto_clean))
+            if auto_clean_flag:
+                clean_opts = self.cleanup.to_legacy_clean_opts()
+            else:
+                clean_opts = CleanupOptions(
+                    enabled=False,
+                    dedup_only=_coerce_bool_flag(raw.get("dedup_only", False)),
+                    keep_all_topos=_coerce_bool_flag(raw.get("keep_all_topos", False)),
+                    no_h=_coerce_bool_flag(raw.get("noH", False)),
+                    rmsd_threshold=(
+                        None if raw.get("rmsd_threshold") is None else float(raw.get("rmsd_threshold"))
+                    ),
+                    energy_window=(
+                        None if raw.get("energy_window") is None else float(raw.get("energy_window"))
+                    ),
+                    energy_tolerance=(
+                        None
+                        if raw.get("energy_tolerance") is None
+                        else float(raw.get("energy_tolerance"))
+                    ),
+                ).to_legacy_clean_opts()
         if clean_opts:
             data["clean_opts"] = clean_opts
 
         passthrough = {
             key: value
-            for key, value in self.items()
+            for key, value in raw.items()
             if key not in data
             and key
             not in {

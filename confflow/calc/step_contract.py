@@ -199,9 +199,9 @@ def resolve_effective_auto_clean(
         and ``clean_opts`` / ``clean_params``.
     execution_config : ExecutionConfig | Mapping[str, Any] | None
         Execution config (structured or flat). Can override cleanup semantics
-        via ``cleanup.enabled`` / ``cleanup.to_legacy_clean_opts()`` (if
-        CalcTaskConfig) or ``auto_clean`` / ``clean_opts`` / ``clean_params``
-        (if flat dict).
+        via explicit ``auto_clean`` and can provide cleanup options via
+        ``cleanup.to_legacy_clean_opts()`` (if CalcTaskConfig) or
+        ``clean_opts`` / ``clean_params`` (if flat dict).
 
     Returns
     -------
@@ -212,9 +212,8 @@ def resolve_effective_auto_clean(
 
     Priority for auto_clean flag:
         1. config["auto_clean"] (compat baseline)
-        2. execution_config.cleanup.enabled (structured override)
-        3. execution_config["auto_clean"] (flat fallback)
-        4. default False
+        2. execution_config["auto_clean"] (structured/flat explicit override)
+        3. default False
 
     Priority for clean_opts (only when enabled=True):
         1. config["clean_opts"] (compat baseline)
@@ -239,15 +238,12 @@ def resolve_effective_auto_clean(
             return value.strip().lower() == "true"
         return str(value).strip().lower() == "true"
 
-    # Resolve auto_clean flag
+    # Resolve auto_clean flag. Cleanup params only provide options and must not
+    # implicitly re-enable cleanup after an explicit false.
     auto_clean_raw = config.get("auto_clean")
     if auto_clean_raw is None:
         if execution_config is None:
             auto_clean_enabled = False
-        elif isinstance(execution_config, CalcTaskConfig):
-            auto_clean_enabled = execution_config.cleanup.enabled or _is_enabled(
-                execution_config.get("auto_clean", "false")
-            )
         else:
             auto_clean_enabled = _is_enabled(execution_config.get("auto_clean", "false"))
     else:

@@ -7,9 +7,11 @@ import pytest
 
 from confflow import calc
 from confflow.calc.components import executor
+from confflow.calc.config_types import CalcTaskConfig, CleanupOptions, ExecutionOptions, Program, TaskKind
 from confflow.calc.policies.gaussian import GaussianPolicy
 from confflow.calc.policies.orca import OrcaPolicy
 from confflow.calc.step_contract import compute_calc_input_signature, record_calc_step_signature
+from confflow.workflow.task_config import build_task_config
 
 
 def test_memory_calculation_gaussian(tmp_path):
@@ -189,11 +191,15 @@ def test_chem_task_manager_skip_existing(tmp_path, monkeypatch):
 
     work_dir = tmp_path / "work"
     work_dir.mkdir()
-    db_path = work_dir / "results.db"
 
-    # Pre-insert a result
-    db = calc.ResultsDB(str(db_path))
-    db.insert_result(
+    # Mock ChemTaskManager to use this work_dir
+    manager = calc.ChemTaskManager(settings_file=None)
+    manager.work_dir = str(work_dir)
+    manager.config.update({"iprog": "orca", "itask": "sp", "auto_clean": "false"})
+    manager._ensure_work_dir()
+    
+    # Pre-insert a result after work_dir is initialized
+    manager.results_db.insert_result(
         {
             "job_name": "A000001",
             "index": 1,
@@ -202,15 +208,19 @@ def test_chem_task_manager_skip_existing(tmp_path, monkeypatch):
             "final_coords": ["H 0 0 0"],
         }
     )
-
-    # Mock ChemTaskManager to use this work_dir
-    manager = calc.ChemTaskManager(settings_file=None)
-    manager.work_dir = str(work_dir)
-    manager.config.update({"iprog": "orca", "itask": "sp", "auto_clean": "false"})
+    
+    # Do NOT write output.xyz - test results-db-only resume path
+    # This ensures we test can_resume_without_output, not is_reusable
+    
+    expected_signature_baseline = build_task_config(
+        {"iprog": "orca", "itask": "sp", "auto_clean": False},
+        {},
+    )
     record_calc_step_signature(
         str(work_dir),
-        manager.config,
+        expected_signature_baseline,
         input_signature=compute_calc_input_signature(str(xyz)),
+        execution_config=manager.execution_config,
     )
 
     # Mock run_single_task to fail if called
@@ -222,6 +232,65 @@ def test_chem_task_manager_skip_existing(tmp_path, monkeypatch):
     monkeypatch.setattr(manager_mod, "_run_task", error_run)
 
     # Run manager - it should skip A000001
+    manager.run(str(xyz))
+
+
+def test_chem_task_manager_results_db_resume_stable_with_overlay_false_and_clean_params(
+    tmp_path, monkeypatch
+):
+    xyz = tmp_path / "search.xyz"
+    xyz.write_text("1\nTest\nH 0 0 0\n", encoding="utf-8")
+
+    work_dir = tmp_path / "work"
+    work_dir.mkdir()
+
+    structured = CalcTaskConfig(
+        program=Program.ORCA,
+        task=TaskKind.SP,
+        keyword="xTB",
+        cleanup=CleanupOptions(enabled=True, rmsd_threshold=0.25, energy_window=8.0),
+        execution=ExecutionOptions(auto_clean=False),
+    )
+    manager = calc.ChemTaskManager(
+        settings={"iprog": "orca", "itask": "sp", "keyword": "xTB"},
+        execution_config=structured,
+    )
+    manager.work_dir = str(work_dir)
+    manager._ensure_work_dir()
+    manager.results_db.insert_result(
+        {
+            "job_name": "A000001",
+            "index": 1,
+            "status": "success",
+            "energy": -1.0,
+            "final_coords": ["H 0 0 0"],
+        }
+    )
+
+    expected_signature_baseline = build_task_config(
+        {
+            "iprog": "orca",
+            "itask": "sp",
+            "keyword": "xTB",
+            "auto_clean": False,
+            "clean_params": {"threshold": 0.25, "energy_window": 8.0},
+        },
+        {},
+    )
+    record_calc_step_signature(
+        str(work_dir),
+        expected_signature_baseline,
+        input_signature=compute_calc_input_signature(str(xyz)),
+        execution_config=manager.execution_config,
+    )
+
+    def error_run(*args, **kwargs):
+        pytest.fail("run_single_task should not be called for existing results")
+
+    import confflow.calc.manager as manager_mod
+
+    monkeypatch.setattr(manager_mod, "_run_task", error_run)
+
     manager.run(str(xyz))
 
 

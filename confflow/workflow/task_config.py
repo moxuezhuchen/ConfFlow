@@ -149,6 +149,20 @@ def _resolve_cleanup_options(
 ) -> CleanupOptions:
     clean_params = params.get("clean_params")
     if clean_params:
+        if isinstance(clean_params, dict):
+            thresh_raw = clean_params.get("threshold", clean_params.get("rmsd_threshold"))
+            ewin_raw = clean_params.get("energy_window", clean_params.get("ewin"))
+            etol_raw = clean_params.get("energy_tolerance", clean_params.get("etol"))
+            return CleanupOptions(
+                enabled=True,
+                dedup_only=_coerce_bool_flag(clean_params.get("dedup_only")),
+                keep_all_topos=_coerce_bool_flag(clean_params.get("keep_all_topos")),
+                no_h=_coerce_bool_flag(clean_params.get("noH", clean_params.get("no_h"))),
+                rmsd_threshold=None if thresh_raw is None else float(thresh_raw),
+                energy_window=None if ewin_raw is None else float(ewin_raw),
+                energy_tolerance=None if etol_raw is None else float(etol_raw),
+            )
+
         thresh, ewin, etol = _parse_clean_opts_like_string(str(clean_params))
         return CleanupOptions(
             enabled=True,
@@ -272,7 +286,12 @@ def _resolve_execution_options(
                 global_config.get("resume_from_backups", DEFAULT_RESUME_FROM_BACKUPS),
             )
         ),
-        auto_clean=True,
+        auto_clean=_coerce_bool_flag(
+            params.get(
+                "auto_clean",
+                global_config.get("auto_clean", True),
+            )
+        ),
         delete_work_dir=True,
         sandbox_root=(
             None
@@ -549,7 +568,7 @@ def build_task_config(
     all_steps: list[dict[str, Any]] | None = None,
 ) -> dict[str, str]:
     """Build the legacy flat calc config expected by existing compatibility paths."""
-    return _build_legacy_task_config(params, global_config, root_dir, all_steps)
+    return build_structured_task_config(params, global_config, root_dir, all_steps).to_legacy_dict()
 
 
 def create_runtask_config(filename: str, params: dict[str, Any], global_config: dict[str, Any]):

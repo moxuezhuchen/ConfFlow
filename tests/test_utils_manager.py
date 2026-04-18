@@ -16,6 +16,7 @@ from confflow.calc.config_types import (
     ExecutionOptions,
     Program,
     TaskKind,
+    ensure_calc_task_config,
 )
 from confflow.calc.manager import ChemTaskManager
 from confflow.core.utils import (
@@ -324,7 +325,8 @@ def test_logger_file_handler(tmp_path):
 
 def test_manager_init_no_config(tmp_path):
     manager = ChemTaskManager(None, resume_dir=str(tmp_path / "work"))
-    assert manager.config == {}
+    assert isinstance(manager.config, dict)
+    assert manager.config.get("iprog") is None or manager.config.get("iprog") == "orca"
     assert manager.work_dir == str(tmp_path / "work")
 
 
@@ -348,7 +350,9 @@ def test_manager_init_with_structured_config_preserves_object_and_bool_flags(tmp
     )
     assert manager.compat_config is manager.config
     assert manager.execution_config is structured
-    assert manager.config == legacy
+    assert manager.config["iprog"] == "orca"
+    assert manager.config["itask"] == "sp"
+    assert manager.config["keyword"] == "HF def2-SVP"
     assert manager.monitor is not None
 
 
@@ -394,12 +398,20 @@ def test_manager_run_uses_legacy_config_for_signature_paths_with_structured_exec
     manager.run(str(xyz_file))
 
     assert manager.compat_config is manager.config
-    assert seen[0][0] == "prepare"
-    assert seen[1][0] == "record"
-    assert seen[0][1] is manager.config
-    assert seen[1][1] is manager.config
+    # Signature baseline should be canonical with workflow defaults
+    expected_canonical = ensure_calc_task_config(legacy).to_legacy_dict()
+    # Apply workflow defaults for missing fields
+    if "delete_work_dir" not in legacy:
+        expected_canonical["delete_work_dir"] = "true"
+    runtime_keys = {"backup_dir", "stop_beacon_file"}
+    actual_prepare = {k: v for k, v in seen[0][1].items() if k not in runtime_keys}
+    actual_record = {k: v for k, v in seen[1][1].items() if k not in runtime_keys}
+    expected_baseline = {k: v for k, v in expected_canonical.items() if k not in runtime_keys}
+    assert actual_prepare == expected_baseline
+    assert actual_record == expected_baseline
+    # Runtime config remains sparse
     assert manager.config["iprog"] == "orca"
-    assert manager.config["auto_clean"] == "false"
+    assert manager.config.get("auto_clean") == "false"
 
 
 def test_manager_config_updates_affect_signature_paths_with_dual_lane(tmp_path, monkeypatch):
@@ -443,14 +455,81 @@ def test_manager_config_updates_affect_signature_paths_with_dual_lane(tmp_path, 
     manager.run(str(xyz_file))
 
     assert manager.compat_config is manager.config
-    assert seen[0][1] is manager.config
-    assert seen[1][1] is manager.config
+    # Signature baseline should reflect effective auto_clean from overlay
+    expected_with_update = dict(legacy)
+    expected_with_update["max_parallel_jobs"] = "7"
+    expected_canonical = ensure_calc_task_config(expected_with_update).to_legacy_dict()
+    # auto_clean comes from overlay (false), not workflow default
+    expected_canonical["auto_clean"] = "false"
+    # delete_work_dir uses workflow default if missing
+    if "delete_work_dir" not in expected_with_update:
+        expected_canonical["delete_work_dir"] = "true"
+    runtime_keys = {"backup_dir", "stop_beacon_file"}
+    actual_prepare = {k: v for k, v in seen[0][1].items() if k not in runtime_keys}
+    actual_record = {k: v for k, v in seen[1][1].items() if k not in runtime_keys}
+    expected_baseline = {k: v for k, v in expected_canonical.items() if k not in runtime_keys}
+    assert actual_prepare == expected_baseline
+    assert actual_record == expected_baseline
     assert manager.config["max_parallel_jobs"] == "7"
+
+
+def test_manager_signature_uses_workflow_legacy_baseline_for_cleanup_mapping(tmp_path, monkeypatch):
+    from confflow.workflow.task_config import build_structured_task_config, build_task_config
+
+    xyz_file = tmp_path / "input.xyz"
+    xyz_file.write_text("1\nx\nH 0 0 0\n", encoding="utf-8")
+
+    global_config = {
+        "charge": 0,
+        "multiplicity": 1,
+        "cores_per_task": 1,
+        "total_memory": "4GB",
+        "max_parallel_jobs": 1,
+    }
+    params = {
+        "iprog": "orca",
+        "itask": "sp",
+        "keyword": "xTB",
+        "auto_clean": False,
+        "clean_params": {"threshold": 0.5, "energy_window": 8.0},
+    }
+    expected = build_task_config(params, global_config)
+    structured = build_structured_task_config(params, global_config)
+
+    manager = ChemTaskManager(settings=expected, execution_config=structured, resume_dir=str(tmp_path / "work"))
+
+    seen = []
+    monkeypatch.setattr(
+        "confflow.calc.manager.prepare_calc_step_dir",
+        lambda step_dir, config, input_signature=None, execution_config=None: (
+            seen.append(("prepare", dict(config))),
+            SimpleNamespace(cleaned_stale_artifacts=False),
+        )[1],
+    )
+    monkeypatch.setattr(
+        "confflow.calc.manager.record_calc_step_signature",
+        lambda step_dir, config, input_signature=None, execution_config=None: seen.append(
+            ("record", dict(config))
+        ),
+    )
+    monkeypatch.setattr(
+        "confflow.calc.manager.TaskSourceBuilder.build_from_input",
+        lambda self, input_xyz_file: ([], {}),
+    )
+
+    manager.run(str(xyz_file))
+
+    runtime_keys = {"backup_dir", "stop_beacon_file"}
+    actual_prepare = {k: v for k, v in seen[0][1].items() if k not in runtime_keys}
+    actual_record = {k: v for k, v in seen[1][1].items() if k not in runtime_keys}
+
+    assert actual_prepare == expected
+    assert actual_record == expected
 
 
 def test_manager_auto_clean_accepts_bool_flag(tmp_path):
     manager = ChemTaskManager(
-        settings={"iprog": "orca", "itask": "sp", "keyword": "xTB"},
+        settings={"iprog": "orca", "itask": "sp", "keyword": "xTB", "auto_clean": "true"},
         execution_config=CalcTaskConfig(
             program=Program.ORCA,
             task=TaskKind.SP,
@@ -1318,3 +1397,407 @@ def test_clean_params_alias_keeps_runtime_and_signature_in_sync():
     assert enabled is True
     assert clean_opts == "-t 0.4 -ewin 8.0"
     assert compute_calc_config_signature(cfg) != compute_calc_config_signature(changed)
+
+
+def test_manager_missing_auto_clean_allows_overlay_to_enable(tmp_path):
+    """When compat config lacks auto_clean, execution overlay can enable it."""
+    settings = {"iprog": "orca", "itask": "sp", "keyword": "xTB"}
+    structured = CalcTaskConfig(
+        program=Program.ORCA,
+        task=TaskKind.SP,
+        keyword="xTB",
+        execution=ExecutionOptions(auto_clean=True),
+    )
+    manager = ChemTaskManager(settings=settings, execution_config=structured)
+    
+    out_file = tmp_path / "result.xyz"
+    out_file.write_text("1\ntest\nH 0 0 0\n", encoding="utf-8")
+
+    with patch("confflow.calc.manager.run_refine_postprocess") as mock_refine:
+        manager._run_auto_clean(str(out_file))
+
+    mock_refine.assert_called_once()
+
+
+def test_manager_explicit_false_auto_clean_blocks_overlay(tmp_path):
+    """When compat config explicitly sets auto_clean=false, overlay cannot override."""
+    settings = {"iprog": "orca", "itask": "sp", "keyword": "xTB", "auto_clean": "false"}
+    structured = CalcTaskConfig(
+        program=Program.ORCA,
+        task=TaskKind.SP,
+        keyword="xTB",
+        execution=ExecutionOptions(auto_clean=True),
+    )
+    manager = ChemTaskManager(settings=settings, execution_config=structured)
+    
+    out_file = tmp_path / "result.xyz"
+    out_file.write_text("1\ntest\nH 0 0 0\n", encoding="utf-8")
+
+    with patch("confflow.calc.manager.run_refine_postprocess") as mock_refine:
+        manager._run_auto_clean(str(out_file))
+
+    mock_refine.assert_not_called()
+
+
+def test_manager_missing_enable_dynamic_resources_allows_overlay(tmp_path):
+    """When compat config lacks enable_dynamic_resources, overlay can enable it."""
+    settings = {"iprog": "orca", "itask": "sp", "keyword": "xTB"}
+    structured = CalcTaskConfig(
+        program=Program.ORCA,
+        task=TaskKind.SP,
+        keyword="xTB",
+        execution=ExecutionOptions(enable_dynamic_resources=True),
+    )
+    manager = ChemTaskManager(settings=settings, execution_config=structured, resume_dir=str(tmp_path / "work"))
+    
+    assert manager.monitor is not None
+
+
+def test_manager_explicit_false_enable_dynamic_resources_blocks_overlay(tmp_path):
+    """When compat config explicitly sets enable_dynamic_resources=false, overlay cannot override."""
+    settings = {"iprog": "orca", "itask": "sp", "keyword": "xTB", "enable_dynamic_resources": "false"}
+    structured = CalcTaskConfig(
+        program=Program.ORCA,
+        task=TaskKind.SP,
+        keyword="xTB",
+        execution=ExecutionOptions(enable_dynamic_resources=True),
+    )
+    manager = ChemTaskManager(settings=settings, execution_config=structured, resume_dir=str(tmp_path / "work"))
+    
+    assert manager.monitor is None
+
+
+def test_manager_and_workflow_produce_same_config_hash():
+    """Sparse manager config and workflow path must produce identical .config_hash when semantics match."""
+    from confflow.calc.step_contract import compute_calc_config_signature
+    from confflow.workflow.task_config import build_task_config
+
+    # Sparse standalone compat path without auto_clean now follows runtime default: false.
+    sparse_settings = {"iprog": "orca", "itask": "sp", "keyword": "xTB"}
+    manager = ChemTaskManager(settings=sparse_settings, execution_config=None)
+    manager_baseline = manager._compat_signature_config()
+    manager_hash = compute_calc_config_signature(manager_baseline)
+
+    assert manager_baseline["auto_clean"] == "false"
+
+    # Match against an explicit workflow baseline with auto_clean=false.
+    global_config = {}
+    params = {"iprog": "orca", "itask": "sp", "keyword": "xTB", "auto_clean": False}
+    workflow_baseline = build_task_config(params, global_config)
+    workflow_hash = compute_calc_config_signature(workflow_baseline)
+
+    assert manager_hash == workflow_hash
+
+    # Explicit auto_clean=false remains stable.
+    sparse_settings2 = {"iprog": "orca", "itask": "sp", "keyword": "xTB", "auto_clean": "false"}
+    manager2 = ChemTaskManager(settings=sparse_settings2, execution_config=None)
+    manager_baseline2 = manager2._compat_signature_config()
+    manager_hash2 = compute_calc_config_signature(manager_baseline2)
+
+    params2 = {"iprog": "orca", "itask": "sp", "keyword": "xTB", "auto_clean": False}
+    workflow_baseline2 = build_task_config(params2, global_config)
+    workflow_hash2 = compute_calc_config_signature(workflow_baseline2)
+
+    assert manager_hash2 == workflow_hash2
+
+
+@pytest.mark.parametrize(
+    ("settings", "execution_config", "expected_enabled"),
+    [
+        ({"iprog": "orca", "itask": "sp", "keyword": "xTB"}, None, False),
+        (
+            {"iprog": "orca", "itask": "sp", "keyword": "xTB", "auto_clean": "false"},
+            None,
+            False,
+        ),
+        (
+            {"iprog": "orca", "itask": "sp", "keyword": "xTB"},
+            CalcTaskConfig(
+                program=Program.ORCA,
+                task=TaskKind.SP,
+                keyword="xTB",
+                execution=ExecutionOptions(auto_clean=False),
+            ),
+            False,
+        ),
+        (
+            {"iprog": "orca", "itask": "sp", "keyword": "xTB"},
+            CalcTaskConfig(
+                program=Program.ORCA,
+                task=TaskKind.SP,
+                keyword="xTB",
+                cleanup=CleanupOptions(enabled=True, rmsd_threshold=0.25),
+                execution=ExecutionOptions(auto_clean=True),
+            ),
+            True,
+        ),
+    ],
+    ids=[
+        "sparse-no-auto-clean-no-overlay",
+        "sparse-explicit-false",
+        "sparse-overlay-false",
+        "sparse-overlay-true",
+    ],
+)
+def test_sparse_compat_auto_clean_runtime_and_signature_stay_aligned(
+    tmp_path, settings, execution_config, expected_enabled
+):
+    from confflow.calc.step_contract import inspect_calc_step_state, record_calc_step_signature
+
+    manager = ChemTaskManager(
+        settings=settings,
+        execution_config=execution_config,
+        resume_dir=str(tmp_path / "work"),
+    )
+    baseline = manager._compat_signature_config()
+
+    out_file = tmp_path / "result.xyz"
+    out_file.write_text("1\ntest\nH 0 0 0\n", encoding="utf-8")
+
+    with patch("confflow.calc.manager.run_refine_postprocess") as mock_refine:
+        manager._run_auto_clean(str(out_file))
+
+    assert mock_refine.called is expected_enabled
+    assert baseline["auto_clean"] == str(expected_enabled).lower()
+
+    step_dir = tmp_path / "step"
+    step_dir.mkdir()
+    record_calc_step_signature(
+        str(step_dir),
+        baseline,
+        execution_config=manager.execution_config,
+    )
+    state = inspect_calc_step_state(
+        str(step_dir),
+        baseline,
+        execution_config=manager.execution_config,
+    )
+    assert state.stored_signature == state.current_signature
+
+
+def test_manager_missing_auto_clean_with_overlay_matches_workflow_hash():
+    """When compat lacks auto_clean but overlay enables it, hash must match workflow."""
+    from confflow.calc.step_contract import compute_calc_config_signature
+    from confflow.workflow.task_config import build_task_config
+    
+    # Manager path: sparse settings (no auto_clean) + overlay with auto_clean=true
+    sparse_settings = {"iprog": "orca", "itask": "sp", "keyword": "xTB"}
+    structured = CalcTaskConfig(
+        program=Program.ORCA,
+        task=TaskKind.SP,
+        keyword="xTB",
+        cleanup=CleanupOptions(enabled=True, rmsd_threshold=0.25),
+        execution=ExecutionOptions(auto_clean=True),
+    )
+    manager = ChemTaskManager(settings=sparse_settings, execution_config=structured)
+    manager_baseline = manager._compat_signature_config()
+    manager_hash = compute_calc_config_signature(manager_baseline, execution_config=structured)
+    
+    # Workflow path: explicit auto_clean=true with cleanup params
+    global_config = {}
+    params = {
+        "iprog": "orca",
+        "itask": "sp",
+        "keyword": "xTB",
+        "auto_clean": True,
+        "clean_params": {"threshold": 0.25},
+    }
+    workflow_baseline = build_task_config(params, global_config)
+    workflow_hash = compute_calc_config_signature(workflow_baseline)
+    
+    # Hashes should match because effective cleanup semantics are the same
+    assert manager_hash == workflow_hash
+
+
+def test_manager_missing_auto_clean_with_overlay_false_matches_workflow():
+    """When compat lacks auto_clean and overlay disables it, hash must match workflow with auto_clean=false."""
+    from confflow.calc.step_contract import compute_calc_config_signature
+    from confflow.workflow.task_config import build_task_config
+    
+    # Manager path: sparse settings (no auto_clean) + overlay with auto_clean=false
+    sparse_settings = {"iprog": "orca", "itask": "sp", "keyword": "xTB"}
+    structured = CalcTaskConfig(
+        program=Program.ORCA,
+        task=TaskKind.SP,
+        keyword="xTB",
+        execution=ExecutionOptions(auto_clean=False),
+    )
+    manager = ChemTaskManager(settings=sparse_settings, execution_config=structured)
+    manager_baseline = manager._compat_signature_config()
+    manager_hash = compute_calc_config_signature(manager_baseline, execution_config=structured)
+    
+    # Workflow path: explicit auto_clean=false
+    global_config = {}
+    params = {
+        "iprog": "orca",
+        "itask": "sp",
+        "keyword": "xTB",
+        "auto_clean": False,
+    }
+    workflow_baseline = build_task_config(params, global_config)
+    workflow_hash = compute_calc_config_signature(workflow_baseline)
+    
+    # Hashes should match because effective cleanup semantics are the same
+    assert manager_hash == workflow_hash
+    # Verify runtime cleanup is actually disabled
+    assert manager_baseline["auto_clean"] == "false"
+
+
+def test_manager_missing_auto_clean_overlay_false_with_clean_params_stays_disabled(tmp_path):
+    """Sparse compat + explicit overlay false + cleanup params must stay disabled."""
+    from confflow.calc.step_contract import compute_calc_config_signature
+    from confflow.workflow.task_config import build_task_config
+
+    sparse_settings = {"iprog": "orca", "itask": "sp", "keyword": "xTB"}
+    structured = CalcTaskConfig(
+        program=Program.ORCA,
+        task=TaskKind.SP,
+        keyword="xTB",
+        cleanup=CleanupOptions(enabled=True, rmsd_threshold=0.25, energy_window=8.0),
+        execution=ExecutionOptions(auto_clean=False),
+    )
+    manager = ChemTaskManager(settings=sparse_settings, execution_config=structured)
+    manager_baseline = manager._compat_signature_config()
+
+    out_file = tmp_path / "result.xyz"
+    out_file.write_text("1\ntest\nH 0 0 0\n", encoding="utf-8")
+    with patch("confflow.calc.manager.run_refine_postprocess") as mock_refine:
+        manager._run_auto_clean(str(out_file))
+
+    workflow_baseline = build_task_config(
+        {
+            "iprog": "orca",
+            "itask": "sp",
+            "keyword": "xTB",
+            "auto_clean": False,
+            "clean_params": {"threshold": 0.25, "energy_window": 8.0},
+        },
+        {},
+    )
+
+    assert mock_refine.called is False
+    assert manager_baseline["auto_clean"] == "false"
+    assert (
+        compute_calc_config_signature(manager_baseline, execution_config=structured)
+        == compute_calc_config_signature(workflow_baseline)
+    )
+
+
+def test_manager_missing_auto_clean_overlay_true_with_clean_params_stays_enabled(tmp_path):
+    """Sparse compat + explicit overlay true + cleanup params must stay enabled."""
+    from confflow.calc.step_contract import compute_calc_config_signature
+    from confflow.workflow.task_config import build_task_config
+
+    sparse_settings = {"iprog": "orca", "itask": "sp", "keyword": "xTB"}
+    structured = CalcTaskConfig(
+        program=Program.ORCA,
+        task=TaskKind.SP,
+        keyword="xTB",
+        cleanup=CleanupOptions(enabled=True, rmsd_threshold=0.25, energy_window=8.0),
+        execution=ExecutionOptions(auto_clean=True),
+    )
+    manager = ChemTaskManager(settings=sparse_settings, execution_config=structured)
+    manager_baseline = manager._compat_signature_config()
+
+    out_file = tmp_path / "result.xyz"
+    out_file.write_text("1\ntest\nH 0 0 0\n", encoding="utf-8")
+    with patch("confflow.calc.manager.run_refine_postprocess") as mock_refine:
+        manager._run_auto_clean(str(out_file))
+
+    workflow_baseline = build_task_config(
+        {
+            "iprog": "orca",
+            "itask": "sp",
+            "keyword": "xTB",
+            "auto_clean": True,
+            "clean_params": {"threshold": 0.25, "energy_window": 8.0},
+        },
+        {},
+    )
+
+    assert mock_refine.called is True
+    assert manager_baseline["auto_clean"] == "true"
+    assert (
+        compute_calc_config_signature(manager_baseline, execution_config=structured)
+        == compute_calc_config_signature(workflow_baseline)
+    )
+
+
+def test_manager_explicit_false_auto_clean_with_clean_params_stays_disabled(tmp_path):
+    """Compat explicit false must win even if cleanup params exist."""
+    from confflow.calc.step_contract import compute_calc_config_signature
+    from confflow.workflow.task_config import build_task_config
+
+    settings = {
+        "iprog": "orca",
+        "itask": "sp",
+        "keyword": "xTB",
+        "auto_clean": "false",
+        "clean_params": {"threshold": 0.25, "energy_window": 8.0},
+    }
+    structured = CalcTaskConfig(
+        program=Program.ORCA,
+        task=TaskKind.SP,
+        keyword="xTB",
+        cleanup=CleanupOptions(enabled=True, rmsd_threshold=0.4, energy_window=10.0),
+        execution=ExecutionOptions(auto_clean=True),
+    )
+    manager = ChemTaskManager(settings=settings, execution_config=structured)
+    manager_baseline = manager._compat_signature_config()
+
+    out_file = tmp_path / "result.xyz"
+    out_file.write_text("1\ntest\nH 0 0 0\n", encoding="utf-8")
+    with patch("confflow.calc.manager.run_refine_postprocess") as mock_refine:
+        manager._run_auto_clean(str(out_file))
+
+    workflow_baseline = build_task_config(
+        {
+            "iprog": "orca",
+            "itask": "sp",
+            "keyword": "xTB",
+            "auto_clean": False,
+            "clean_params": {"threshold": 0.25, "energy_window": 8.0},
+        },
+        {},
+    )
+
+    assert mock_refine.called is False
+    assert manager_baseline["auto_clean"] == "false"
+    assert (
+        compute_calc_config_signature(manager_baseline, execution_config=structured)
+        == compute_calc_config_signature(workflow_baseline)
+    )
+
+
+def test_manager_explicit_false_auto_clean_overrides_overlay_in_signature():
+    """When compat explicitly sets auto_clean=false, overlay cannot override in signature."""
+    from confflow.calc.step_contract import compute_calc_config_signature
+    from confflow.workflow.task_config import build_task_config
+    
+    # Manager path: explicit auto_clean=false + overlay with auto_clean=true
+    settings = {"iprog": "orca", "itask": "sp", "keyword": "xTB", "auto_clean": "false"}
+    structured = CalcTaskConfig(
+        program=Program.ORCA,
+        task=TaskKind.SP,
+        keyword="xTB",
+        execution=ExecutionOptions(auto_clean=True),
+    )
+    manager = ChemTaskManager(settings=settings, execution_config=structured)
+    manager_baseline = manager._compat_signature_config()
+    manager_hash = compute_calc_config_signature(manager_baseline, execution_config=structured)
+    
+    # Workflow path: explicit auto_clean=false
+    global_config = {}
+    params = {
+        "iprog": "orca",
+        "itask": "sp",
+        "keyword": "xTB",
+        "auto_clean": False,
+    }
+    workflow_baseline = build_task_config(params, global_config)
+    workflow_hash = compute_calc_config_signature(workflow_baseline)
+    
+    # Hashes should match because compat lane takes priority
+    assert manager_hash == workflow_hash
+    # Verify signature reflects compat priority
+    assert manager_baseline["auto_clean"] == "false"

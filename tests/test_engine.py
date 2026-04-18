@@ -605,6 +605,24 @@ def test_build_structured_task_config_preserves_clean_params_thresholds():
     assert cfg.cleanup.no_h is True
 
 
+def test_build_structured_task_config_keeps_explicit_auto_clean_false_with_clean_params():
+    cfg = build_structured_task_config(
+        params={
+            "iprog": "orca",
+            "itask": "sp",
+            "keyword": "HF",
+            "auto_clean": False,
+            "clean_params": {"threshold": 0.12, "energy_window": 7.5},
+        },
+        global_config={},
+    )
+
+    assert cfg.execution.auto_clean is False
+    assert cfg.cleanup.enabled is True
+    assert cfg.cleanup.rmsd_threshold == 0.12
+    assert cfg.cleanup.energy_window == 7.5
+
+
 def test_build_structured_task_config_preserves_explicit_input_chk_dir(tmp_path):
     cfg = build_structured_task_config(
         params={

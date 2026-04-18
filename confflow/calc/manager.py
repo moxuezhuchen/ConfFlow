@@ -22,7 +22,7 @@ from ..core.contracts import ExitCode, cli_output_to_txt
 from .analysis import _bond_length_from_xyz_lines, _parse_ts_bond_atoms
 from .components.executor import _cleanup_lingering_processes
 from .components.task_runner import TaskRunner
-from .config_types import CalcTaskConfig
+from .config_types import CalcTaskConfig, ensure_calc_task_config
 from .db.database import ResultsDB
 from .policies import get_policy
 from .postprocess import run_refine_postprocess
@@ -73,32 +73,29 @@ class ChemTaskManager:
         settings: Mapping[str, Any] | None = None,
         execution_config: Mapping[str, Any] | None = None,
     ):
+        raw_config: Mapping[str, Any]
         if settings is not None:
-            compat_config: Mapping[str, Any] = settings
+            raw_config = settings
         elif isinstance(settings_file, dict):
-            compat_config = dict(settings_file)
+            raw_config = dict(settings_file)
         elif settings_file and os.path.exists(settings_file):
             cfg = configparser.ConfigParser(interpolation=None)
             cfg.optionxform = str
             cfg.read(settings_file)
-            compat_config = {
+            raw_config = {
                 k: v.strip('"') for sec in cfg.sections() for k, v in cfg.items(sec) if v
             }
-            compat_config.update({k: v.strip('"') for k, v in cfg.defaults().items() if v})
+            raw_config = dict(raw_config)
+            raw_config.update({k: v.strip('"') for k, v in cfg.defaults().items() if v})
         else:
-            compat_config = {}
+            raw_config = {}
 
-        if execution_config is None:
-            effective_execution: Mapping[str, Any] = compat_config
-        else:
-            effective_execution = execution_config
-
-        self.config = compat_config if isinstance(compat_config, CalcTaskConfig) else dict(compat_config)
+        self.config = dict(raw_config)
         self.compat_config = self.config
         self.execution_config = (
-            effective_execution
-            if isinstance(effective_execution, CalcTaskConfig)
-            else dict(effective_execution)
+            ensure_calc_task_config(execution_config)
+            if execution_config is not None
+            else None
         )
 
         self._default_work_dir = os.path.join(
@@ -113,39 +110,42 @@ class ChemTaskManager:
         self._result_xyz_path: str | None = None
         self._input_signature_override: str | None = None
         self._job_meta_map: dict[str, dict] = {}
-        self.monitor = (
-            ResourceMonitor()
-            if _is_enabled_flag(
-                self.config.get(
-                    "enable_dynamic_resources",
-                    self.execution_config.get("enable_dynamic_resources", "false"),
-                )
-            )
-            else None
-        )
+        
+        if "enable_dynamic_resources" in self.config:
+            enable_dynamic = _is_enabled_flag(self.config["enable_dynamic_resources"])
+        elif self.execution_config is not None:
+            enable_dynamic = _is_enabled_flag(self.execution_config.get("enable_dynamic_resources", False))
+        else:
+            enable_dynamic = False
+        self.monitor = ResourceMonitor() if enable_dynamic else None
         self.stop_requested = False
         self._work_dir_service = WorkDirService(self)
 
-    @property
-    def _config_for_signature(self) -> dict[str, Any]:
-        """Semantic accessor for signature/hash computation.
-
-        Returns the same mutable self.config to preserve phase2 contract:
-        runtime updates to self.config must be visible to signature path.
-        """
-        return self.config
-
-    @property
-    def _config_for_auto_clean(self) -> dict[str, Any]:
-        """Semantic accessor for auto-clean resolution.
-
-        Returns the same mutable self.config to preserve phase2 contract:
-        runtime updates to self.config must be visible to auto-clean path.
-        """
-        return self.config
-
     def _ensure_work_dir(self):
         self._work_dir_service.ensure_ready()
+
+    def _compat_signature_config(self) -> dict[str, Any]:
+        """Return the canonical legacy config used for calc-step signatures.
+        
+        This must match workflow's build_task_config() output to ensure
+        manager runs and workflow runs produce identical .config_hash for
+        the same calc step configuration.
+        
+        For fields missing from sparse config, we apply the effective value
+        considering execution overlay, matching the actual runtime semantics.
+        """
+        canonical = ensure_calc_task_config(self.config).to_legacy_dict()
+
+        # Keep signature baseline aligned with runtime effective cleanup semantics.
+        if "auto_clean" not in self.config:
+            auto_clean_enabled, _ = self._resolve_effective_clean_opts()
+            canonical["auto_clean"] = str(auto_clean_enabled).lower()
+
+        # For delete_work_dir: use workflow default if missing
+        if "delete_work_dir" not in self.config:
+            canonical["delete_work_dir"] = "true"
+
+        return canonical
 
     def _read_single_frame_xyz_coords(self, xyz_path: str) -> list[str] | None:
         """Read the first frame coordinate list (with atom symbols) from an XYZ file."""
@@ -168,11 +168,11 @@ class ChemTaskManager:
 
             if isinstance(task, models.TaskContext):
                 job_name = task.job_name
-                cfg = task.config or self.config
+                cfg = ensure_calc_task_config(task.config or self.config)
                 task_dict = task.model_dump()
             else:
                 job_name = task["job_name"]
-                cfg = task.get("config", self.config)
+                cfg = ensure_calc_task_config(task.get("config", self.config))
                 task_dict = task
 
             iprog = parse_iprog(cfg)
@@ -364,7 +364,7 @@ class ChemTaskManager:
         """Resolve effective auto-clean flag and opts (delegates to shared logic)."""
         from .step_contract import resolve_effective_auto_clean
 
-        return resolve_effective_auto_clean(self._config_for_auto_clean, self.execution_config)
+        return resolve_effective_auto_clean(self.config, self.execution_config)
 
     def _run_auto_clean(self, out_file: str) -> None:
         """Invoke external post-processing callback on result.xyz.
@@ -379,9 +379,7 @@ class ChemTaskManager:
         console.print("  Refine: ", end="")
         try:
             thresh, ewin, etol = self._parse_clean_opts(opts_str)
-            task_cores = int(
-                self.config.get("cores_per_task", self.execution_config.get("cores_per_task", 1))
-            )
+            task_cores = int(self.config.get("cores_per_task", 1))
             run_refine_postprocess(
                 input_file=out_file,
                 output_file=os.path.join(os.path.dirname(out_file), "output.xyz"),
@@ -466,10 +464,11 @@ class ChemTaskManager:
             input_signature = self._input_signature_override or compute_calc_input_signature(
                 input_xyz_file
             )
+            signature_config = self._compat_signature_config()
             if not os.path.exists(stop_path):
                 prepared = prepare_calc_step_dir(
                     self.work_dir,
-                    self._config_for_signature,
+                    signature_config,
                     input_signature=input_signature,
                     execution_config=self.execution_config,
                 )
@@ -486,7 +485,7 @@ class ChemTaskManager:
                     setup_logging(self.work_dir)
             record_calc_step_signature(
                 self.work_dir,
-                self._config_for_signature,
+                signature_config,
                 input_signature=input_signature,
                 execution_config=self.execution_config,
             )
