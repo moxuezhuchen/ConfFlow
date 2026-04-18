@@ -56,7 +56,8 @@ confflow/
 │       └── report.py         # 美化纯文本报告生成（Boltzmann 权重、工作流统计）
 │
 ├── calc/                      # 量子化学计算子系统
-│   ├── __init__.py           # 兼容层导出
+│   ├── __init__.py           # calc 官方入口与兼容导出
+│   ├── api.py               # workflow -> calc 官方 facade
 │   ├── manager.py            # 任务管理器（ChemTaskManager）
 │   ├── run_services.py       # WorkDir / TaskSource / Recovery / ResultAssembly 服务
 │   ├── setup.py              # 计算模块初始化
@@ -89,12 +90,12 @@ confflow/
 ├── workflow/                  # 工作流编排层
 │   ├── __init__.py           # 公共 API 导出
 │   ├── engine.py             # 工作流执行引擎（核心调度逻辑，~360 行）
-│   ├── step_handlers.py      # 步骤执行适配层（confgen/calc）
+│   ├── step_handlers.py      # 步骤执行适配层（薄壳，默认调用 calc 官方入口）
 │   ├── presenter.py          # 步骤展示与报告输出
 │   ├── runtime_context.py    # 运行时状态初始化与恢复
 │   ├── helpers.py            # 辅助工具（pushd、构象计数、列表转换）
 │   ├── validation.py         # 输入验证与标签标准化
-│   ├── config_builder.py     # 任务配置字典构建（YAML→dict）
+│   ├── config_builder.py     # 兼容 facade（旧 imports 保留）
 │   └── stats.py              # 检查点、统计追踪、构象溯源
 │
 ├── cli.py                     # CLI 参数解析
@@ -203,8 +204,13 @@ LICENSE                        # MIT 许可证
 
 **设计**：使用**策略模式** (Policy Pattern) 区分不同程序（Gaussian/ORCA）的实现细节。
 
+- **`__init__.py` / `api.py`**：
+  - `run_calc_workflow_step(...)` 是 workflow -> calc 的官方入口
+  - `ChemTaskManager` 继续保留，但定位为 standalone / compat facade，不再是 workflow 新代码的推荐入口
+
 - **`manager.py`** - `ChemTaskManager`：
-  - 仅保留 calc run 编排与生命周期控制
+  - 仅保留 manager-based calc run 编排与生命周期控制
+  - 主执行流尽量把 compat/signature/resume 解释交给 `step_contract`
   - 通过内部服务组合完成工作目录准备、任务来源构建、恢复过滤与结果装配
 
 - **`run_services.py`**：
@@ -268,8 +274,8 @@ LICENSE                        # MIT 许可证
 
 - **`step_handlers.py`**：
   - `run_confgen_step` / `run_calc_step` 的执行适配层
-  - calc 输出复用前会通过 `calc.step_contract` 检查标准产物、配置签名与输入签名
-  - 对接 `confgen`、`ChemTaskManager` 与失败聚合逻辑
+  - 只负责组装 step 上下文、调用 `calc.run_calc_workflow_step(...)`、处理失败聚合和返回路径
+  - 不再作为 calc compat/signature/stale/resume 的主语义中心
 
 - **`presenter.py`**：
   - 统一 step header/footer 输出
@@ -286,8 +292,8 @@ LICENSE                        # MIT 许可证
   - 支持 `force_consistency=true` 的“警告并继续”分支
 
 - **`config_builder.py`**：
-  - `build_task_config`：YAML 参数构建为 calc 可消费 dict
-  - `create_runtask_config`：兼容 INI 写入接口（外部工具可用）
+  - 兼容 facade：为旧 imports 保留 `load_workflow_config` / `build_task_config` / `create_runtask_config`
+  - 新的 workflow 内部代码优先从 `workflow.task_config` 获取配置组装能力
 
 - **`stats.py`**：
   - `CheckpointManager`：断点序列化/反序列化
@@ -337,7 +343,9 @@ class OrcaPolicy(CalculationPolicy):
 
 ### 3. 兼容性设计
 
-- 顶层 `confflow.__init__` 与 `confflow.calc.__init__` 仍保留兼容懒导出
+- 顶层 `confflow.__init__` 暴露轻量官方入口（如 `run_workflow`、`run_calc_workflow_step`）
+- `confflow.calc.__init__` 同时暴露官方 calc facade 与兼容导出
+- `ChemTaskManager`、`workflow.config_builder`、`create_runtask_config()` 继续保留，但都属于 compat/facade 路径，不再推荐新增代码直接依赖
 - 仓库内部代码应直接从真实子模块导入，避免重新扩大包初始化耦合
 
 ## 工作流执行流程

@@ -1,6 +1,13 @@
 #!/usr/bin/env python3
 
-"""Workflow configuration builder compatibility facade."""
+"""Workflow configuration builder compatibility facade.
+
+New workflow -> calc code should prefer:
+- ``confflow.workflow.task_config`` for task config assembly
+- ``confflow.calc.run_calc_workflow_step`` for calc execution
+
+This module remains as a thin facade for existing imports and legacy helpers.
+"""
 
 from __future__ import annotations
 

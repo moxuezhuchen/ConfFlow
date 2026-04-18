@@ -2,14 +2,18 @@
 
 """ConfFlow calc sub-package.
 
-Exposes the public API: `TaskRunner`, `ChemTaskManager`, `ResultsDB`,
-`ResourceMonitor`, and basic parsing/execution support.
-Deprecated helpers (`run_single_task`, `generate_input_file`, and
-``_``-prefixed utilities) were removed in Phase 3.
+Recommended public entrypoints:
+- ``run_calc_workflow_step`` for workflow -> calc step execution
+- ``TaskRunner`` for single-task internals
+- ``step_contract`` helpers for calc-step artifact compatibility
+
+``ChemTaskManager`` remains available as a compatibility/facade entry for
+standalone manager-based flows and existing imports.
 """
 
 from __future__ import annotations
 
+from .api import CalcStepExecutionResult, run_calc_workflow_step
 from .components.executor import handle_backups
 from .components.parser import parse_output
 from .components.task_runner import TaskRunner
@@ -24,6 +28,8 @@ __all__ = [
     "ResourceMonitor",
     "parse_output",
     "handle_backups",
+    "CalcStepExecutionResult",
+    "run_calc_workflow_step",
     "TaskRunner",
     "ChemTaskManager",
     "get_itask",

@@ -11,17 +11,12 @@ from typing import Any
 
 from .. import calc
 from ..blocks import confgen
-from ..calc.step_contract import (
-    compute_calc_input_signature,
-    prepare_calc_step_dir,
-    record_calc_step_signature,
-)
 from ..config.schema import ConfigSchema
 from ..core.exceptions import ConfFlowError
 from ..core.pairs import normalize_pair_list
 from ..core.utils import get_logger
 from .config_builder import build_task_config
-from .helpers import as_list, is_multi_frame_any, pushd, resolve_step_output
+from .helpers import as_list, is_multi_frame_any, pushd
 from .stats import FailureTracker
 from .task_config import build_structured_task_config
 
@@ -119,42 +114,34 @@ def run_calc_step(
     failure_tracker: FailureTracker,
     step_name: str,
 ) -> str:
-    """Execute a calculation step (execution adapter layer)."""
-    # 1. Build legacy config
+    """Execute a calculation step via the calc package facade."""
     legacy_task_config = build_task_config(params, global_config, root_dir, steps)
-    
-    # 2. Validate legacy config
     ConfigSchema.validate_calc_config(legacy_task_config)
-    
-    # 3. Build structured config (may fail on invalid cleanup params)
+
     structured_task_config = build_structured_task_config(
         params,
         global_config,
         root_dir=root_dir,
         all_steps=steps,
     )
-    
-    # 4. Compute input signature
-    input_signature = compute_calc_input_signature(current_input)
-    input_source = current_input if isinstance(current_input, str) else current_input[0]
 
-    # 5. Prepare step dir (only after structured config validated)
-    prepared = prepare_calc_step_dir(
-        step_dir,
-        legacy_task_config,
-        input_signature=input_signature,
-        execution_config=structured_task_config,
-    )
-    if prepared.cleaned_stale_artifacts:
+    try:
+        result = calc.run_calc_workflow_step(
+            step_dir=step_dir,
+            input_source=current_input,
+            legacy_task_config=legacy_task_config,
+            execution_config=structured_task_config,
+        )
+    except RuntimeError as exc:
+        if "did not produce an output XYZ file" in str(exc):
+            raise ConfFlowError(str(exc)) from exc
+        raise
+
+    if result.cleaned_stale_artifacts:
         logger.warning(
             "Discarding stale calc artifacts in '%s' because the step state is incomplete or outdated.",
             step_dir,
         )
-    if prepared.reusable_output is not None:
-        if prepared.state.failed_path is not None:
-            failure_tracker.append(prepared.state.failed_path, step_name)
-        return CalcStepResult(prepared.reusable_output, reused_existing=True)
-
     if isinstance(current_input, list) and len(current_input) > 1:
         logger.warning(
             "Calc step received %d input files; using only '%s'. "
@@ -163,37 +150,14 @@ def run_calc_step(
             current_input[0],
         )
 
-    # 6. Create manager
-    manager = calc.ChemTaskManager(
-        settings=legacy_task_config,
-        execution_config=structured_task_config,
-    )
-    manager.work_dir = step_dir
-    manager._input_signature_override = input_signature
-    
-    # 7. Record signature via the step-contract boundary before execution so
-    # mocked manager paths and partial resume state share the same contract.
-    record_calc_step_signature(
-        step_dir,
-        legacy_task_config,
-        input_signature=input_signature,
-        execution_config=structured_task_config,
-    )
+    if result.failed_path is not None:
+        failure_tracker.append(result.failed_path, step_name)
 
-    # 8. Run
-    manager.run(input_xyz_file=input_source)
-
-    work_failed = os.path.join(step_dir, "failed.xyz")
-
-    final_input = resolve_step_output(step_dir, "calc")
-    if final_input is None:
+    if not os.path.exists(result.output_path):
         raise ConfFlowError("Calculation step did not produce an output XYZ file")
 
-    if os.path.exists(work_failed):
-        failure_tracker.append(work_failed, step_name)
-
     return CalcStepResult(
-        final_input,
-        reused_existing=False,
-        cleaned_stale_artifacts=prepared.cleaned_stale_artifacts,
+        result.output_path,
+        reused_existing=result.reused_existing,
+        cleaned_stale_artifacts=result.cleaned_stale_artifacts,
     )

@@ -80,6 +80,19 @@ ruff check confflow tests
 - `docs/internal/COMPAT_EXECUTION_BOUNDARY.md`：Compat/Execution 边界契约（workflow→calc 双轨接口）
 - `docs/archive/HANDOFF_PHASE2_WORKFLOW_CALC.md`：阶段 2 完整历史与问题台账
 
+## 当前推荐入口
+
+- 工作流主入口：`confflow.workflow.run_workflow` 或顶层 `confflow.run_workflow`
+- workflow -> calc 官方入口：`confflow.calc.run_calc_workflow_step`
+- calc step 工件/签名/复用边界：`confflow.calc.step_contract`
+
+以下入口仍保留，但视为兼容/门面层，不建议新增代码直接依赖：
+
+- `confflow.calc.ChemTaskManager`
+- `confflow.workflow.config_builder`
+- `confflow.workflow.task_config.build_task_config()` 返回的 legacy dict
+- `confflow.workflow.task_config.create_runtask_config()`
+
 ### 开发指南
 
 - `docs/DEVELOPMENT.md`：本文档
@@ -165,10 +178,17 @@ rm -rf .pytest_cache .pytest_basetemp .mypy_cache .ruff_cache confflow.egg-info 
 ### calc - 量子计算
 
 **架构：**
+- `calc.run_calc_workflow_step(...)`：workflow 调用 calc 的官方 facade
+- `step_contract.py`：calc step 的 signature / stale / resume / reuse 契约边界
 - `policies/`：定义不同程序的输入生成与输出解析逻辑（如 `GaussianPolicy`, `OrcaPolicy`）。
 - `components/task_runner.py`：管理单个任务的生命周期（生成、执行、解析、救援）。
 - `components/executor.py`：底层 shell 命令执行。
-- `manager.py`：多任务并行管理。
+- `manager.py`：standalone / compat manager 门面。
+
+**分层建议：**
+- 新功能如果影响 calc step 工件复用、`.config_hash`、stale/resume 判定，应优先落在 `calc.step_contract`
+- 新功能如果只是 workflow 编排，应落在 `workflow.engine` / `workflow.step_handlers`
+- 不要在 `workflow.step_handlers` 或 `manager` 中各自再实现一套 signature/stale/resume 语义
 
 **支持的程序：**
 - Gaussian 16
@@ -178,6 +198,20 @@ rm -rf .pytest_cache .pytest_basetemp .mypy_cache .ruff_cache confflow.egg-info 
 1. 在 `calc/policies/` 下创建新的 Policy 类，继承自 `CalculationPolicy`。
 2. 实现 `generate_input` 和 `parse_output` 方法。
 3. 在 `calc/policies/__init__.py` 中注册新程序。
+
+## workflow -> calc 调用约定
+
+推荐流程：
+
+1. workflow 侧用 `workflow.task_config` 组装 structured config，并在必要时生成 legacy compat dict。
+2. `workflow.step_handlers` 只组装 step 上下文并调用 `calc.run_calc_workflow_step(...)`。
+3. calc facade 内部再协调 `step_contract`、`ChemTaskManager` 和旧兼容路径。
+
+不推荐的新依赖方式：
+
+- 在 workflow 新代码里直接实例化 `ChemTaskManager`
+- 在 workflow 新代码里直接拼 `.config_hash` / stale / resume 逻辑
+- 从 `workflow.config_builder` 引入新能力，而不是放到 `workflow.task_config`
 
 ### blocks/refine - 结果筛选
 

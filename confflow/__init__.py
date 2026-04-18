@@ -52,6 +52,8 @@ except ImportError:
 
 _LAZY_EXPORTS: dict[str, tuple[str, str]] = {
     "main": (".main", "main"),
+    "run_workflow": (".workflow", "run_workflow"),
+    "run_calc_workflow_step": (".calc", "run_calc_workflow_step"),
     "run_generation": (".blocks.confgen", "run_generation"),
     "RefineOptions": (".blocks.refine", "RefineOptions"),
     "RefineResult": (".blocks.refine", "RefineResult"),

@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 
-"""Workflow task configuration assembly helpers."""
+"""Workflow task configuration assembly helpers.
+
+Recommended usage:
+- ``build_structured_task_config()`` for workflow-internal config assembly
+- ``build_task_config()`` only when a legacy compat dict is still required
+"""
 
 from __future__ import annotations
 
@@ -567,12 +572,12 @@ def build_task_config(
     root_dir: str | None = None,
     all_steps: list[dict[str, Any]] | None = None,
 ) -> dict[str, str]:
-    """Build the legacy flat calc config expected by existing compatibility paths."""
+    """Build the legacy flat calc config expected by compatibility paths."""
     return build_structured_task_config(params, global_config, root_dir, all_steps).to_legacy_dict()
 
 
 def create_runtask_config(filename: str, params: dict[str, Any], global_config: dict[str, Any]):
-    """Legacy compatibility: write build_task_config output to an INI file."""
+    """Legacy compatibility: write ``build_task_config()`` output to an INI file."""
     config_dict = _build_legacy_task_config(params, global_config)
 
     cfg = configparser.ConfigParser(interpolation=None)
