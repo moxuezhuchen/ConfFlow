@@ -27,6 +27,7 @@ from .task_config import build_structured_task_config
 
 __all__ = [
     "StepContext",
+    "CalcStepResult",
     "run_confgen_step",
     "run_calc_step",
 ]
@@ -51,6 +52,25 @@ class StepContext:
     steps: list[dict[str, Any]] = field(default_factory=list)
     failure_tracker: FailureTracker | None = None
     step_name: str = ""
+
+
+class CalcStepResult(str):
+    """String-like calc step output path plus reuse metadata for engine callers."""
+
+    reused_existing: bool
+    cleaned_stale_artifacts: bool
+
+    def __new__(
+        cls,
+        value: str,
+        *,
+        reused_existing: bool = False,
+        cleaned_stale_artifacts: bool = False,
+    ) -> "CalcStepResult":
+        obj = str.__new__(cls, value)
+        obj.reused_existing = reused_existing
+        obj.cleaned_stale_artifacts = cleaned_stale_artifacts
+        return obj
 
 
 def run_confgen_step(
@@ -133,7 +153,7 @@ def run_calc_step(
     if prepared.reusable_output is not None:
         if prepared.state.failed_path is not None:
             failure_tracker.append(prepared.state.failed_path, step_name)
-        return prepared.reusable_output
+        return CalcStepResult(prepared.reusable_output, reused_existing=True)
 
     if isinstance(current_input, list) and len(current_input) > 1:
         logger.warning(
@@ -151,14 +171,15 @@ def run_calc_step(
     manager.work_dir = step_dir
     manager._input_signature_override = input_signature
     
-    # 7. Record signature
+    # 7. Record signature via the step-contract boundary before execution so
+    # mocked manager paths and partial resume state share the same contract.
     record_calc_step_signature(
         step_dir,
         legacy_task_config,
         input_signature=input_signature,
         execution_config=structured_task_config,
     )
-    
+
     # 8. Run
     manager.run(input_xyz_file=input_source)
 
@@ -171,4 +192,8 @@ def run_calc_step(
     if os.path.exists(work_failed):
         failure_tracker.append(work_failed, step_name)
 
-    return final_input
+    return CalcStepResult(
+        final_input,
+        reused_existing=False,
+        cleaned_stale_artifacts=prepared.cleaned_stale_artifacts,
+    )

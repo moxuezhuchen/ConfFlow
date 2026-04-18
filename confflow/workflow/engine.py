@@ -11,7 +11,6 @@ from typing import Any
 
 from ..calc.step_contract import (
     compute_calc_input_signature,
-    inspect_calc_step_state,
     prepare_calc_step_dir,
 )
 from ..config.schema import ConfigSchema
@@ -145,23 +144,18 @@ def run_workflow(
                 params = step.get("params", {}) or {}
                 task_config = build_task_config(params, global_config, root_dir, steps)
                 ConfigSchema.validate_calc_config(task_config)
-                state = inspect_calc_step_state(
+                prepared = prepare_calc_step_dir(
                     step_dir,
                     task_config,
                     input_signature=compute_calc_input_signature(current_input),
                 )
-                if state.is_reusable and state.output_path is not None:
-                    current_input = state.output_path
+                if prepared.reusable_output is not None:
+                    current_input = prepared.reusable_output
                     continue
-                if state.has_resume_state:
-                    prepare_calc_step_dir(
-                        step_dir,
-                        task_config,
-                        input_signature=compute_calc_input_signature(current_input),
-                    )
-                raise RuntimeError(
-                    "Resume failed: calc step "
-                    f"{i + 1} ('{step_dirnames[i]}') is incomplete or stale in {step_dir}. "
+                if prepared.state.has_resume_state:
+                    raise RuntimeError(
+                        "Resume failed: calc step "
+                        f"{i + 1} ('{step_dirnames[i]}') is incomplete or stale in {step_dir}. "
                     "The step directory was cleaned; rerun from this step without relying on the old checkpoint."
                 )
 
@@ -225,16 +219,6 @@ def run_workflow(
                     step_stats["status"] = TaskStatus.COMPLETED
 
             elif step_type in ["calc", "task"]:
-                task_config = build_task_config(params, global_config, root_dir, steps)
-                ConfigSchema.validate_calc_config(task_config)
-                state = inspect_calc_step_state(
-                    step_dir,
-                    task_config,
-                    input_signature=compute_calc_input_signature(current_input),
-                )
-                if state.is_reusable:
-                    step_stats["status"] = TaskStatus.SKIPPED
-
                 current_input = _run_calc_step(
                     step_dir,
                     current_input,
@@ -246,7 +230,9 @@ def run_workflow(
                     step_name,
                 )
                 io_xyz.ensure_xyz_cids(current_input, prefix=index_to_letter_prefix(0))
-                if step_stats.get("status") != TaskStatus.SKIPPED:
+                if getattr(current_input, "reused_existing", False):
+                    step_stats["status"] = TaskStatus.SKIPPED
+                else:
                     step_stats["status"] = TaskStatus.COMPLETED
 
             if isinstance(current_input, list):

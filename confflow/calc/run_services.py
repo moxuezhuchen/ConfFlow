@@ -10,6 +10,7 @@ from typing import Any
 
 from ..core import models
 from ..core.path_policy import resolve_sandbox_root, validate_managed_path
+from .config_types import CalcTaskConfig, ensure_calc_task_config
 from .result_writer import write_failed_xyz
 from .setup import setup_logging
 
@@ -65,12 +66,12 @@ class TaskSourceBuilder:
         self,
         *,
         work_dir: str,
-        config: dict[str, Any],
+        config: CalcTaskConfig | dict[str, Any],
         iter_geometries_fn: Callable[[str], Iterable[dict[str, Any]]],
         job_name_fn: Callable[[int, dict[str, Any]], str],
     ) -> None:
         self.work_dir = work_dir
-        self.config = config
+        self.config = ensure_calc_task_config(config)
         self.iter_geometries_fn = iter_geometries_fn
         self.job_name_fn = job_name_fn
 
@@ -111,11 +112,11 @@ class TaskRecoveryService:
         self,
         *,
         results_db: Any,
-        config: dict[str, Any],
+        config: CalcTaskConfig | dict[str, Any],
         recover_result_fn: Callable[[models.TaskContext | dict[str, Any]], dict[str, Any] | None],
     ) -> None:
         self.results_db = results_db
-        self.config = config
+        self.config = ensure_calc_task_config(config)
         self.recover_result_fn = recover_result_fn
 
     def filter_pending(self, tasks: list[models.TaskContext]) -> list[models.TaskContext]:

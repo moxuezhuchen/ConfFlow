@@ -16,7 +16,7 @@ from confflow.calc.step_contract import compute_calc_input_signature, record_cal
 from confflow.config.schema import ConfigSchema
 from confflow.core.exceptions import ConfFlowError
 from confflow.workflow.stats import FailureTracker
-from confflow.workflow.step_handlers import run_calc_step, run_confgen_step
+from confflow.workflow.step_handlers import CalcStepResult, run_calc_step, run_confgen_step
 from confflow.workflow.task_config import build_task_config
 
 # ---------------------------------------------------------------------------
@@ -320,7 +320,6 @@ class TestRunCalcStep:
         assert result == output
         mock_manager.run.assert_called_once_with(input_xyz_file=single_input_xyz)
 
-    @patch("confflow.workflow.step_handlers.record_calc_step_signature")
     @patch("confflow.workflow.step_handlers.prepare_calc_step_dir")
     @patch("confflow.workflow.step_handlers.build_structured_task_config")
     @patch("confflow.workflow.step_handlers.build_task_config")
@@ -331,7 +330,6 @@ class TestRunCalcStep:
         mock_build_task_config: MagicMock,
         mock_build_structured_task_config: MagicMock,
         mock_prepare_calc_step_dir: MagicMock,
-        mock_record_signature: MagicMock,
         step_dir: str,
         single_input_xyz: str,
         failure_tracker: FailureTracker,
@@ -397,12 +395,6 @@ class TestRunCalcStep:
             settings=legacy_config,
             execution_config=structured_config,
         )
-        mock_record_signature.assert_called_once_with(
-            step_dir,
-            legacy_config,
-            input_signature=compute_calc_input_signature(single_input_xyz),
-            execution_config=structured_config,
-        )
         mock_manager.run.assert_called_once_with(input_xyz_file=single_input_xyz)
 
     @patch("confflow.workflow.step_handlers.build_structured_task_config")
@@ -432,6 +424,8 @@ class TestRunCalcStep:
         )
 
         assert result == output
+        assert isinstance(result, CalcStepResult)
+        assert result.reused_existing is True
         # Structured config is now built even for reusable output (needed for signature)
         mock_build_structured_task_config.assert_called_once()
 

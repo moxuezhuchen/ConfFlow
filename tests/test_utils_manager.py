@@ -16,7 +16,6 @@ from confflow.calc.config_types import (
     ExecutionOptions,
     Program,
     TaskKind,
-    ensure_calc_task_config,
 )
 from confflow.calc.manager import ChemTaskManager
 from confflow.core.utils import (
@@ -398,17 +397,8 @@ def test_manager_run_uses_legacy_config_for_signature_paths_with_structured_exec
     manager.run(str(xyz_file))
 
     assert manager.compat_config is manager.config
-    # Signature baseline should be canonical with workflow defaults
-    expected_canonical = ensure_calc_task_config(legacy).to_legacy_dict()
-    # Apply workflow defaults for missing fields
-    if "delete_work_dir" not in legacy:
-        expected_canonical["delete_work_dir"] = "true"
-    runtime_keys = {"backup_dir", "stop_beacon_file"}
-    actual_prepare = {k: v for k, v in seen[0][1].items() if k not in runtime_keys}
-    actual_record = {k: v for k, v in seen[1][1].items() if k not in runtime_keys}
-    expected_baseline = {k: v for k, v in expected_canonical.items() if k not in runtime_keys}
-    assert actual_prepare == expected_baseline
-    assert actual_record == expected_baseline
+    assert seen[0][1] == manager.config
+    assert seen[1][1] == manager.config
     # Runtime config remains sparse
     assert manager.config["iprog"] == "orca"
     assert manager.config.get("auto_clean") == "false"
@@ -455,21 +445,8 @@ def test_manager_config_updates_affect_signature_paths_with_dual_lane(tmp_path, 
     manager.run(str(xyz_file))
 
     assert manager.compat_config is manager.config
-    # Signature baseline should reflect effective auto_clean from overlay
-    expected_with_update = dict(legacy)
-    expected_with_update["max_parallel_jobs"] = "7"
-    expected_canonical = ensure_calc_task_config(expected_with_update).to_legacy_dict()
-    # auto_clean comes from overlay (false), not workflow default
-    expected_canonical["auto_clean"] = "false"
-    # delete_work_dir uses workflow default if missing
-    if "delete_work_dir" not in expected_with_update:
-        expected_canonical["delete_work_dir"] = "true"
-    runtime_keys = {"backup_dir", "stop_beacon_file"}
-    actual_prepare = {k: v for k, v in seen[0][1].items() if k not in runtime_keys}
-    actual_record = {k: v for k, v in seen[1][1].items() if k not in runtime_keys}
-    expected_baseline = {k: v for k, v in expected_canonical.items() if k not in runtime_keys}
-    assert actual_prepare == expected_baseline
-    assert actual_record == expected_baseline
+    assert seen[0][1] == manager.config
+    assert seen[1][1] == manager.config
     assert manager.config["max_parallel_jobs"] == "7"
 
 
@@ -519,12 +496,12 @@ def test_manager_signature_uses_workflow_legacy_baseline_for_cleanup_mapping(tmp
 
     manager.run(str(xyz_file))
 
+    assert seen[0][1] == manager.config
+    assert seen[1][1] == manager.config
     runtime_keys = {"backup_dir", "stop_beacon_file"}
-    actual_prepare = {k: v for k, v in seen[0][1].items() if k not in runtime_keys}
-    actual_record = {k: v for k, v in seen[1][1].items() if k not in runtime_keys}
-
-    assert actual_prepare == expected
-    assert actual_record == expected
+    assert {
+        k: v for k, v in manager._compat_signature_config().items() if k not in runtime_keys
+    } == {k: v for k, v in expected.items() if k not in runtime_keys}
 
 
 def test_manager_auto_clean_accepts_bool_flag(tmp_path):
@@ -1801,3 +1778,32 @@ def test_manager_explicit_false_auto_clean_overrides_overlay_in_signature():
     assert manager_hash == workflow_hash
     # Verify signature reflects compat priority
     assert manager_baseline["auto_clean"] == "false"
+
+
+def test_step_contract_signature_from_sparse_manager_config_matches_workflow_baseline():
+    from confflow.calc.step_contract import compute_calc_config_signature
+    from confflow.workflow.task_config import build_task_config
+
+    sparse_settings = {"iprog": "orca", "itask": "sp", "keyword": "xTB"}
+    structured = CalcTaskConfig(
+        program=Program.ORCA,
+        task=TaskKind.SP,
+        keyword="xTB",
+        cleanup=CleanupOptions(enabled=True, rmsd_threshold=0.25, energy_window=8.0),
+        execution=ExecutionOptions(auto_clean=True),
+    )
+    workflow_baseline = build_task_config(
+        {
+            "iprog": "orca",
+            "itask": "sp",
+            "keyword": "xTB",
+            "auto_clean": True,
+            "clean_params": {"threshold": 0.25, "energy_window": 8.0},
+        },
+        {},
+    )
+
+    assert compute_calc_config_signature(
+        sparse_settings,
+        execution_config=structured,
+    ) == compute_calc_config_signature(workflow_baseline)

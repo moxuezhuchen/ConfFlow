@@ -12,6 +12,7 @@ from typing import Any, Callable
 
 from ..core import models
 from ..core.console import CalcProgressReporter
+from .config_types import CalcTaskConfig, ensure_calc_task_config
 
 logger = logging.getLogger("confflow.calc.manager")
 
@@ -51,7 +52,7 @@ def _future_cancelled(fut: Any) -> bool:
 
 def execute_tasks(
     todo: list[models.TaskContext],
-    config: dict[str, Any],
+    config: CalcTaskConfig | dict[str, Any],
     results_db: Any,
     run_task_fn: Callable[[models.TaskContext | dict[str, Any]], dict[str, Any]],
     append_result_fn: Callable[[dict[str, Any]], None],
@@ -65,8 +66,15 @@ def execute_tasks(
     if not todo:
         return
 
+    calc_config = ensure_calc_task_config(config)
+
     report_every = max(1, len(todo) // 10)
-    stop_file = config.get("stop_beacon_file")
+    stop_file = calc_config.get("stop_beacon_file")
+
+    def _task_payload(task: models.TaskContext) -> dict[str, Any]:
+        payload = task.model_dump()
+        payload["config"] = calc_config
+        return payload
 
     if len(todo) == 1:
         if stop_requested_fn() or (stop_file and os.path.exists(stop_file)):
@@ -82,15 +90,15 @@ def execute_tasks(
             )
             return
         with progress_reporter_cls(total=1, report_every=1) as reporter:
-            res = run_task_fn(todo[0].model_dump())
+            res = run_task_fn(_task_payload(todo[0]))
             results_db.insert_result(res)
             append_result_fn(res)
             reporter.report(res.get("status", "failed"))
         return
 
-    max_jobs = int(config.get("max_parallel_jobs", 4))
+    max_jobs = int(calc_config.get("max_parallel_jobs", 4))
     with executor_cls(max_workers=max_jobs) as exc:
-        futures = {exc.submit(run_task_fn, t.model_dump()): t for t in todo}
+        futures = {exc.submit(run_task_fn, _task_payload(t)): t for t in todo}
         recorded: set[Any] = set()
         with progress_reporter_cls(total=len(todo), report_every=report_every) as reporter:
             for fut in as_completed_fn(futures):

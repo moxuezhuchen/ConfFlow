@@ -36,6 +36,7 @@ from .run_services import (
 )
 from .setup import get_itask, parse_iprog, setup_logging
 from .step_contract import (
+    canonicalize_calc_step_config,
     compute_calc_input_signature,
     prepare_calc_step_dir,
     record_calc_step_signature,
@@ -125,27 +126,8 @@ class ChemTaskManager:
         self._work_dir_service.ensure_ready()
 
     def _compat_signature_config(self) -> dict[str, Any]:
-        """Return the canonical legacy config used for calc-step signatures.
-        
-        This must match workflow's build_task_config() output to ensure
-        manager runs and workflow runs produce identical .config_hash for
-        the same calc step configuration.
-        
-        For fields missing from sparse config, we apply the effective value
-        considering execution overlay, matching the actual runtime semantics.
-        """
-        canonical = ensure_calc_task_config(self.config).to_legacy_dict()
-
-        # Keep signature baseline aligned with runtime effective cleanup semantics.
-        if "auto_clean" not in self.config:
-            auto_clean_enabled, _ = self._resolve_effective_clean_opts()
-            canonical["auto_clean"] = str(auto_clean_enabled).lower()
-
-        # For delete_work_dir: use workflow default if missing
-        if "delete_work_dir" not in self.config:
-            canonical["delete_work_dir"] = "true"
-
-        return canonical
+        """Compatibility wrapper around the step-contract canonical boundary."""
+        return canonicalize_calc_step_config(self.config, execution_config=self.execution_config)
 
     def _read_single_frame_xyz_coords(self, xyz_path: str) -> list[str] | None:
         """Read the first frame coordinate list (with atom symbols) from an XYZ file."""
@@ -464,11 +446,10 @@ class ChemTaskManager:
             input_signature = self._input_signature_override or compute_calc_input_signature(
                 input_xyz_file
             )
-            signature_config = self._compat_signature_config()
             if not os.path.exists(stop_path):
                 prepared = prepare_calc_step_dir(
                     self.work_dir,
-                    signature_config,
+                    self.config,
                     input_signature=input_signature,
                     execution_config=self.execution_config,
                 )
@@ -485,7 +466,7 @@ class ChemTaskManager:
                     setup_logging(self.work_dir)
             record_calc_step_signature(
                 self.work_dir,
-                signature_config,
+                self.config,
                 input_signature=input_signature,
                 execution_config=self.execution_config,
             )

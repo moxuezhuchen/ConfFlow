@@ -18,6 +18,7 @@ __all__ = [
     "PreparedCalcStep",
     "CompatConfig",
     "ExecutionConfig",
+    "canonicalize_calc_step_config",
     "compute_calc_config_signature",
     "compute_calc_input_signature",
     "load_calc_config_signature",
@@ -276,6 +277,26 @@ def resolve_effective_auto_clean(
     return True, "-t 0.25"
 
 
+def canonicalize_calc_step_config(
+    config: CompatConfig | Mapping[str, Any],
+    *,
+    execution_config: ExecutionConfig | Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build the single compat/signature baseline used by calc-step contracts."""
+    from .config_types import ensure_calc_task_config
+
+    canonical = ensure_calc_task_config(config).to_legacy_dict()
+
+    if "auto_clean" not in config:
+        auto_clean_enabled, _ = resolve_effective_auto_clean(config, execution_config)
+        canonical["auto_clean"] = str(auto_clean_enabled).lower()
+
+    if "delete_work_dir" not in config:
+        canonical["delete_work_dir"] = "true"
+
+    return canonical
+
+
 def compute_calc_config_signature(
     config: CompatConfig,
     *,
@@ -317,8 +338,8 @@ def compute_calc_config_signature(
     - Signature stability is critical: changing this algorithm breaks断点续传 for
       all existing step artifacts.
     """
-    # Create shallow copy for signature overlay
-    signature_view = dict(config)
+    # Create shallow copy from the canonical compat baseline
+    signature_view = canonicalize_calc_step_config(config, execution_config=execution_config)
 
     # Overlay effective cleanup ONLY if auto-clean is actually enabled
     auto_clean_enabled, effective_clean_opts = resolve_effective_auto_clean(
@@ -526,8 +547,13 @@ def inspect_calc_step_state(
     input_signature: str | None = None,
     execution_config: ExecutionConfig | Mapping[str, Any] | None = None,
 ) -> CalcStepState:
+    canonical_config = canonicalize_calc_step_config(
+        task_config,
+        execution_config=execution_config,
+    )
     current_signature = compute_calc_config_signature(
-        task_config, execution_config=execution_config
+        canonical_config,
+        execution_config=execution_config,
     )
     if input_signature is not None:
         current_signature = f"{current_signature}:{input_signature}"

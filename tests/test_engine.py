@@ -20,6 +20,7 @@ from confflow.calc.step_contract import (
 from confflow.config.schema import ConfigSchema
 from confflow.core.exceptions import XYZFormatError
 from confflow.core.pairs import normalize_pair_list
+from confflow.core.types import TaskStatus
 from confflow.workflow.config_builder import (
     build_step_dir_name_map,
     build_task_config,
@@ -34,6 +35,7 @@ from confflow.workflow.task_config import (
     _normalize_iprog_label,
     build_structured_task_config,
 )
+from confflow.workflow.step_handlers import CalcStepResult
 
 
 def test_as_list():
@@ -496,6 +498,38 @@ steps:
 
     assert isinstance(stats, dict)
     assert len(stats.get("steps", [])) == 1
+
+
+def test_run_workflow_marks_reused_calc_step_as_skipped(input_xyz, tmp_path, monkeypatch):
+    config_file = tmp_path / "workflow.yaml"
+    config_file.write_text(
+        """
+global:
+  iprog: orca
+  keyword: B3LYP
+steps:
+  - name: s1
+    type: calc
+    params:
+      itask: sp
+""",
+        encoding="utf-8",
+    )
+
+    work_dir = tmp_path / "work"
+    output = work_dir / "step_01" / "output.xyz"
+    output.parent.mkdir(parents=True)
+    output.write_text("2\nCID=s01_1 E=-1.0\nC 0 0 0\nH 0 0 1.1\n", encoding="utf-8")
+
+    monkeypatch.setattr(
+        "confflow.workflow.engine.step_run_calc_step",
+        lambda **kwargs: CalcStepResult(str(output), reused_existing=True),
+    )
+    monkeypatch.setattr(viz, "generate_text_report", lambda *args, **kwargs: "")
+
+    stats = run_workflow([str(input_xyz)], str(config_file), str(work_dir))
+
+    assert stats["steps"][0]["status"] == TaskStatus.SKIPPED
 
 
 def test_build_task_config_chk_from_step_uses_sanitized_dir(tmp_path):
