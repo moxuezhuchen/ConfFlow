@@ -21,7 +21,7 @@ confflow/
 │   └── workflow/          # 工作流引擎
 ├── tests/                 # 测试目录（数量以 docs/TESTING.md 和 CI 输出为准）
 ├── docs/                  # 文档
-├── confflow.yaml          # 配置模板
+├── confflow.example.yaml  # 配置模板
 ├── README.md              # 主文档
 └── pyproject.toml         # 项目元数据与打包配置
 ```
@@ -353,7 +353,7 @@ def calculate_energy(conformer: np.ndarray) -> float:
 
 A: 使用 `--verbose` 启用调试日志：
 ```bash
-confflow input.xyz -c confflow.yaml --verbose
+confflow input.xyz -c confflow.example.yaml --verbose
 ```
 
 ### Q: 日志系统的工作模式是什么？
@@ -378,7 +378,7 @@ A: 参考"添加新功能的步骤"中的量子化学程序部分，实现新的
 
 ### Q: 如何优化性能？
 
-A: 查看"性能优化"部分，或调整 `confflow.yaml` 中的 `max_jobs` 并行数。
+A: 查看"性能优化"部分，或调整 `confflow.example.yaml` 中的 `max_jobs` 并行数。
 
 ## 联系与反馈
 

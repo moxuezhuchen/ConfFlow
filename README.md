@@ -89,13 +89,13 @@ rm -rf confflow.egg-info .mypy_cache .ruff_cache build dist htmlcov coverage.xml
 
 ```bash
 # 基础用法
-confflow mol.xyz -c confflow.yaml
+confflow mol.xyz -c confflow.example.yaml
 
 # 从断点恢复
-confflow mol.xyz -c confflow.yaml --resume
+confflow mol.xyz -c confflow.example.yaml --resume
 
 # 详细日志
-confflow mol.xyz -c confflow.yaml --verbose
+confflow mol.xyz -c confflow.example.yaml --verbose
 ```
 
 运行时默认不会在终端打印日志；所有 CLI 运行日志会写入输入目录下同名输出文件：`<input_basename>.txt`。
