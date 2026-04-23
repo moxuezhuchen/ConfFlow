@@ -38,7 +38,7 @@ cd ConfFlow
 ### 2. 创建虚拟环境
 
 ```bash
-conda create -n confflow-dev python=3.9 -y
+conda create -n confflow-dev python=3.10 -y
 conda activate confflow-dev
 ```
 

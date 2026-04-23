@@ -61,7 +61,7 @@ class CalcStepResult(str):
         *,
         reused_existing: bool = False,
         cleaned_stale_artifacts: bool = False,
-    ) -> "CalcStepResult":
+    ) -> CalcStepResult:
         obj = str.__new__(cls, value)
         obj.reused_existing = reused_existing
         obj.cleaned_stale_artifacts = cleaned_stale_artifacts
