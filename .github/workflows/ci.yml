@@ -35,6 +35,10 @@ jobs:
       - name: Black (gate)
         if: matrix.python-version == '3.11'
         run: |
+          git_commit_exists() {
+            git rev-parse --verify --quiet "$1^{commit}" >/dev/null
+          }
+
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             base_sha="${{ github.event.pull_request.base.sha }}"
             head_sha="${{ github.event.pull_request.head.sha }}"
@@ -42,10 +46,10 @@ jobs:
           else
             base_sha="${{ github.event.before }}"
             head_sha="${{ github.sha }}"
-            if [ "$base_sha" = "0000000000000000000000000000000000000000" ]; then
+            if [ "$base_sha" = "0000000000000000000000000000000000000000" ] || ! git_commit_exists "$base_sha"; then
               base_sha="$(git rev-parse "${head_sha}^" 2>/dev/null || true)"
             fi
-            if [ -n "$base_sha" ]; then
+            if [ -n "$base_sha" ] && git_commit_exists "$base_sha"; then
               changed_files="$(git diff --name-only --diff-filter=ACMR "$base_sha" "$head_sha" -- '*.py')"
             else
               changed_files="$(git diff-tree --no-commit-id --name-only --diff-filter=ACMR -r "$head_sha" -- '*.py')"
