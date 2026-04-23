@@ -30,7 +30,7 @@ jobs:
           pytest tests/ --cov=confflow --cov-report=term-missing --cov-report=xml
 
       - name: Upload coverage artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: coverage-push-xml
           path: coverage.xml
