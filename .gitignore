@@ -23,6 +23,12 @@ reports/
 # local env
 .venv/
 venv/
+.vscode/
+.idea/
+.agent
+.agent/
+.codex
+.codex/
 
 # confflow runtime outputs
 results.db
