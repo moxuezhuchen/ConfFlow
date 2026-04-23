@@ -32,10 +32,10 @@ class TestDefaults:
         assert defaults.DEFAULT_TS_BOND_DRIFT_THRESHOLD > 0
         assert defaults.DEFAULT_TS_RMSD_THRESHOLD > 0
 
-    def test_readme_ts_rescue_scan_default_matches_code(self):
-        readme = Path(__file__).resolve().parents[1] / "README.md"
-        text = readme.read_text(encoding="utf-8")
-        assert "`ts_rescue_scan: true`（默认关闭）" in text
+    def test_example_config_ts_rescue_scan_default_matches_code(self):
+        example = Path(__file__).resolve().parents[1] / "confflow.example.yaml"
+        text = example.read_text(encoding="utf-8")
+        assert "# ts_rescue_scan: false" in text
 
     def test_workflow_defaults(self):
         assert isinstance(defaults.DEFAULT_ENABLE_DYNAMIC_RESOURCES, bool)
