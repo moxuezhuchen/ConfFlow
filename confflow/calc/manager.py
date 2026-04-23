@@ -22,7 +22,7 @@ from ..core.contracts import ExitCode, cli_output_to_txt
 from .analysis import _bond_length_from_xyz_lines, _parse_ts_bond_atoms
 from .components.executor import _cleanup_lingering_processes
 from .components.task_runner import TaskRunner
-from .config_types import CalcTaskConfig, ensure_calc_task_config
+from .config_types import ensure_calc_task_config
 from .db.database import ResultsDB
 from .policies import get_policy
 from .postprocess import run_refine_postprocess
@@ -83,9 +83,7 @@ class ChemTaskManager:
             cfg = configparser.ConfigParser(interpolation=None)
             cfg.optionxform = str
             cfg.read(settings_file)
-            raw_config = {
-                k: v.strip('"') for sec in cfg.sections() for k, v in cfg.items(sec) if v
-            }
+            raw_config = {k: v.strip('"') for sec in cfg.sections() for k, v in cfg.items(sec) if v}
             raw_config = dict(raw_config)
             raw_config.update({k: v.strip('"') for k, v in cfg.defaults().items() if v})
         else:
@@ -94,9 +92,7 @@ class ChemTaskManager:
         self.config = dict(raw_config)
         self.compat_config = self.config
         self.execution_config = (
-            ensure_calc_task_config(execution_config)
-            if execution_config is not None
-            else None
+            ensure_calc_task_config(execution_config) if execution_config is not None else None
         )
 
         self._default_work_dir = os.path.join(
@@ -111,11 +107,13 @@ class ChemTaskManager:
         self._result_xyz_path: str | None = None
         self._input_signature_override: str | None = None
         self._job_meta_map: dict[str, dict] = {}
-        
+
         if "enable_dynamic_resources" in self.config:
             enable_dynamic = _is_enabled_flag(self.config["enable_dynamic_resources"])
         elif self.execution_config is not None:
-            enable_dynamic = _is_enabled_flag(self.execution_config.get("enable_dynamic_resources", False))
+            enable_dynamic = _is_enabled_flag(
+                self.execution_config.get("enable_dynamic_resources", False)
+            )
         else:
             enable_dynamic = False
         self.monitor = ResourceMonitor() if enable_dynamic else None

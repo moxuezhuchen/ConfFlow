@@ -7,7 +7,13 @@ import pytest
 
 from confflow import calc
 from confflow.calc.components import executor
-from confflow.calc.config_types import CalcTaskConfig, CleanupOptions, ExecutionOptions, Program, TaskKind
+from confflow.calc.config_types import (
+    CalcTaskConfig,
+    CleanupOptions,
+    ExecutionOptions,
+    Program,
+    TaskKind,
+)
 from confflow.calc.policies.gaussian import GaussianPolicy
 from confflow.calc.policies.orca import OrcaPolicy
 from confflow.calc.step_contract import compute_calc_input_signature, record_calc_step_signature
@@ -197,7 +203,7 @@ def test_chem_task_manager_skip_existing(tmp_path, monkeypatch):
     manager.work_dir = str(work_dir)
     manager.config.update({"iprog": "orca", "itask": "sp", "auto_clean": "false"})
     manager._ensure_work_dir()
-    
+
     # Pre-insert a result after work_dir is initialized
     manager.results_db.insert_result(
         {
@@ -208,10 +214,10 @@ def test_chem_task_manager_skip_existing(tmp_path, monkeypatch):
             "final_coords": ["H 0 0 0"],
         }
     )
-    
+
     # Do NOT write output.xyz - test results-db-only resume path
     # This ensures we test can_resume_without_output, not is_reusable
-    
+
     expected_signature_baseline = build_task_config(
         {"iprog": "orca", "itask": "sp", "auto_clean": False},
         {},

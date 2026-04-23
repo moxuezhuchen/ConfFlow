@@ -30,12 +30,12 @@ from confflow.workflow.config_builder import (
 from confflow.workflow.engine import count_conformers_any, run_workflow, validate_inputs_compatible
 from confflow.workflow.helpers import as_list, count_conformers_in_xyz, resolve_step_output
 from confflow.workflow.stats import count_task_statuses_in_results_db
+from confflow.workflow.step_handlers import CalcStepResult
 from confflow.workflow.task_config import (
     _itask_label,
     _normalize_iprog_label,
     build_structured_task_config,
 )
-from confflow.workflow.step_handlers import CalcStepResult
 
 
 def test_as_list():
@@ -1086,9 +1086,7 @@ def test_workflow_engine_trace_exception_trigger(tmp_path):
     )
 
     with (
-        patch(
-            "confflow.calc.manager.ChemTaskManager.run", return_value={"success": 1}
-        ),
+        patch("confflow.calc.manager.ChemTaskManager.run", return_value={"success": 1}),
         patch(
             "confflow.workflow.engine.validate_xyz_file", return_value=(True, [{"atoms": ["C"]}])
         ),

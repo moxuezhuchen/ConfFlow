@@ -10,7 +10,6 @@ from pathlib import Path
 
 import pytest
 
-
 # Create process-isolated temp directory for basetemp
 _temp_base = Path(tempfile.gettempdir()) / f"confflow_pytest_{os.getpid()}"
 _temp_base.mkdir(exist_ok=True)
@@ -21,8 +20,6 @@ def pytest_configure(config):
     # Set basetemp if not already set via command line
     if config.option.basetemp is None:
         config.option.basetemp = str(_temp_base / "basetemp")
-
-
 
 
 # All old test files have been merged and removed; no need to ignore any
@@ -76,14 +73,13 @@ def sync_executor(monkeypatch):
 @pytest.fixture(autouse=True, scope="function")
 def guard_repo_root_pollution():
     """Prevent tests from creating chem_tasks_* directories in repo root."""
-    import os
     from pathlib import Path
 
     repo_root = Path(__file__).parent.parent
     before = set(repo_root.glob("chem_tasks_*"))
-    
+
     yield
-    
+
     after = set(repo_root.glob("chem_tasks_*"))
     new_dirs = after - before
     if new_dirs:
@@ -91,9 +87,9 @@ def guard_repo_root_pollution():
         for d in new_dirs:
             if d.is_dir():
                 import shutil
+
                 shutil.rmtree(d)
         pytest.fail(
             f"Test created chem_tasks_* directories in repo root: {[d.name for d in new_dirs]}. "
             "Use tmp_path or resume_dir parameter to avoid polluting repo root."
         )
-
