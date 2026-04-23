@@ -29,7 +29,6 @@ classifiers = [
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
@@ -37,7 +36,7 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Chemistry",
     "Topic :: Scientific/Engineering :: Physics",
 ]
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 dependencies = [
     "numpy>=1.20.0",
     "scipy>=1.7.0",
@@ -88,11 +87,11 @@ confflow = ["*.yaml", "*.md"]
 
 [tool.black]
 line-length = 100
-target-version = ['py39']
+target-version = ['py310']
 
 [tool.ruff]
 line-length = 100
-target-version = "py39"
+target-version = "py310"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "D"]
@@ -101,7 +100,7 @@ select = ["E", "F", "I", "B", "UP", "D"]
 # for long strings and URLs that black cannot auto-wrap.
 # D100/D104 now enforced (module & package docstrings complete).
 # D101-D107 (class/method/function/__init__/magic) deferred — see DEVELOPMENT.md.
-ignore = ["E501", "D101", "D102", "D103", "D105", "D107"]
+ignore = ["E501", "B905", "D101", "D102", "D103", "D105", "D107"]
 
 [tool.ruff.lint.pydocstyle]
 convention = "numpy"

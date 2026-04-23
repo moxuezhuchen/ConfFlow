@@ -3,7 +3,7 @@
 ConfFlow 是一个自动化工作流工具：从 XYZ 输入出发，按 YAML 配置完成构象生成、量化计算、去重与报告输出（合并到 .txt）。
 
 [![CI](https://github.com/user/confflow/actions/workflows/ci.yml/badge.svg)](https://github.com/user/confflow/actions/workflows/ci.yml)
-[![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 ## 特性
@@ -44,7 +44,7 @@ pip install -e ".[dev]"
 - ✅ 覆盖率门禁：`pyproject.toml` 中配置 `fail_under = 85`
 - ✅ 类型安全：`core/types.py` 改为标准库 `typing.TypedDict`
 - ✅ 类型/风格基线（2026-04-12 验证）：`mypy confflow`、`ruff check confflow tests`、`pytest -q` 均通过
-- ✅ 支持矩阵明确：CI 现验证 Python **3.9-3.13**
+- ✅ 支持矩阵明确：CI 现验证 Python **3.10-3.13**
 - ✅ 异常精确化：`scan_ops`/`executor`/`generator`/`rescue` 中 9 处 `except Exception` 收窄为当前已知的具体异常类型
 - ✅ 构象去重精度提升：对称性感知 RMSD + 能量辅助阈值，解决大分子原子乱序/对称互换导致的去重漏判
 - ✅ 工作流工件契约收紧：`calc`/`resume` 仅接受 `output.xyz` / `result.xyz` 作为已完成输出，避免误把 `search.xyz` 当成计算结果

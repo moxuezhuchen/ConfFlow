@@ -6,9 +6,10 @@ from __future__ import annotations
 
 import logging
 import os
+from collections.abc import Callable
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from concurrent.futures.process import BrokenProcessPool
-from typing import Any, Callable
+from typing import Any
 
 from ..core import models
 from ..core.console import CalcProgressReporter
