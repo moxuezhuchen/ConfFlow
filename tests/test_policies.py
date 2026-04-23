@@ -64,7 +64,9 @@ def test_policy_parse_output_sp(policy_cls, content, expected, tmp_path):
 
 
 def test_gaussian_parse_output_prefers_last_scf_done_over_archive_hf_real_log():
-    log_path = os.path.join(os.path.dirname(__file__), "real-s-ml-dla-ts1.log")
+    log_path = os.path.join(
+        os.path.dirname(__file__), "fixtures", "gaussian_parse_output_minimal.log"
+    )
     assert os.path.exists(log_path)
 
     parsed = GaussianPolicy().parse_output(log_path, config={}, is_sp_task=False)
