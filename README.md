@@ -8,6 +8,10 @@ ConfFlow 是一个面向计算化学的自动化工作流工具：从 XYZ 输入
 
 当前公开等级：alpha preview。项目可用于熟悉计算化学环境的用户试用和反馈，但尚不声明 production-ready。
 
+## Public status / roadmap
+
+ConfFlow 适合以 alpha preview 形式公开，用于源码安装、文档审阅、CI/发布流程验证和熟悉计算化学环境的早期试用。下一步重点是 dry-run / read-only 模式、真实 Gaussian/ORCA 环境的可选集成验证，以及更完整的 release provenance / attestation；当前不承诺具体发布日期。
+
 ## 特性
 
 - 🔄 **完整工作流**：构象生成 → 量化计算 → 去重筛选 → 文本报告（合并到 .txt）
