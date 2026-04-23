@@ -2,11 +2,21 @@ name: Scorecard
 
 on:
   workflow_dispatch:
+    inputs:
+      upload_sarif:
+        description: "Upload SARIF to code scanning when it is enabled for this repository."
+        required: false
+        type: boolean
+        default: false
   schedule:
     - cron: "24 3 * * 1"
 
 permissions:
+  actions: read
+  checks: read
   contents: read
+  issues: read
+  pull-requests: read
   security-events: write
   id-token: write
 
@@ -18,19 +28,75 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           persist-credentials: false
 
       - name: Run Scorecard
-        uses: ossf/scorecard-action@v2.4.0
+        uses: ossf/scorecard-action@v2.4.3
         with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
           results_file: scorecard-results.sarif
           results_format: sarif
           publish_results: false
 
-      - name: Upload SARIF
-        uses: github/codeql-action/upload-sarif@v3
+      - name: Validate SARIF
+        id: sarif
         if: always()
+        shell: bash
+        run: |
+          sarif_file="scorecard-results.sarif"
+
+          if [ ! -s "$sarif_file" ]; then
+            echo "upload=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Scorecard SARIF file was not generated or is empty: $sarif_file"
+            exit 0
+          fi
+
+          if ! python -m json.tool "$sarif_file" > /dev/null; then
+            echo "upload=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Scorecard output is not valid JSON; skipping SARIF upload."
+            sed -n '1,20p' "$sarif_file"
+            exit 0
+          fi
+
+          python - <<'PY'
+          from __future__ import annotations
+
+          import json
+          import os
+          from pathlib import Path
+
+          sarif_file = Path("scorecard-results.sarif")
+          data = json.loads(sarif_file.read_text(encoding="utf-8"))
+          is_sarif = data.get("version") == "2.1.0" and isinstance(data.get("runs"), list)
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              print(f"upload={str(is_sarif).lower()}", file=output)
+
+          if not is_sarif:
+              print(
+                  "::warning::Scorecard output is JSON but not SARIF 2.1.0; "
+                  "skipping SARIF upload."
+              )
+          PY
+
+      - name: Upload Scorecard artifact
+        uses: actions/upload-artifact@v7
+        if: always() && steps.sarif.outputs.upload == 'true'
+        with:
+          name: scorecard-results-sarif
+          path: scorecard-results.sarif
+
+      - name: Upload SARIF
+        uses: github/codeql-action/upload-sarif@v4
+        # Private repositories may not have code scanning enabled. Keep Scorecard
+        # informational by default, but allow an explicit manual upload when
+        # code scanning is available.
+        if: >-
+          always() &&
+          steps.sarif.outputs.upload == 'true' &&
+          (github.event.repository.private == false ||
+          (github.event_name == 'workflow_dispatch' && inputs.upload_sarif))
         with:
           sarif_file: scorecard-results.sarif

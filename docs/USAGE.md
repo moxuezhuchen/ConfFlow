@@ -35,7 +35,7 @@ confflow <input.xyz> -c <config.yaml> [-w <work_dir>] [--resume] [--verbose]
 也支持一次输入多个 XYZ（会在 confgen 步骤对每个输入生成构象并合并后，进入后续统一计算/报告）：
 
 ```bash
-confflow a.xyz b.xyz -c confflow.yaml
+confflow a.xyz b.xyz -c confflow.example.yaml
 ```
 
 约束：多文件输入模式要求每个输入为单帧 XYZ。

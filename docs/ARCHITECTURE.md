@@ -133,7 +133,7 @@ tests/                         # 测试套件（49 个文件，673 个测试）
 ├── test_validation.py        # 输入验证
 └── ...                       # 完整清单见 docs/TESTING.md
 
-confflow.yaml                  # 工作流示例配置
+confflow.example.yaml          # 工作流示例配置
 pyproject.toml                 # 项目配置（PEP 621 + 构建系统）
 README.md                      # 项目简介
 LICENSE                        # MIT 许可证
@@ -382,7 +382,7 @@ confflow <input.xyz> -c <config.yaml>
 
 ## 配置系统
 
-### YAML 工作流配置 (`confflow.yaml`)
+### YAML 工作流配置 (`confflow.example.yaml`)
 
 ```yaml
 global:

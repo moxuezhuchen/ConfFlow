@@ -166,7 +166,7 @@ confflow <input.xyz> [-c <config.yaml>] [选项]
 
 | 关键词 | 简写 | 说明 | 示例 |
 |--------|------|------|------|
-| `--config` | `-c` | 配置文件（可选；默认读取输入目录下的 `confflow.yaml`） | `-c confflow.yaml` |
+| `--config` | `-c` | 配置文件（可选；默认读取输入目录下的 `confflow.yaml`） | `-c confflow.example.yaml` |
 | `--resume` | - | 从断点恢复 | `--resume` |
 | `--verbose` | - | 启用更详细日志 | `--verbose` |
 | `--work_dir` | `-w` | 工作目录（可选） | `-w custom_dir` |
@@ -181,30 +181,30 @@ confflow <input.xyz> [-c <config.yaml>] [选项]
 
 ```bash
 # 基础工作流
-confflow molecule.xyz -c confflow.yaml
+confflow molecule.xyz -c confflow.example.yaml
 
 # 自动生成的工作目录
 # molecule.xyz → molecule_work/
 
 # 自定义工作目录
-confflow molecule.xyz -c confflow.yaml -w my_workflow
+confflow molecule.xyz -c confflow.example.yaml -w my_workflow
 
 # 从断点恢复
-confflow molecule.xyz -c confflow.yaml --resume
+confflow molecule.xyz -c confflow.example.yaml --resume
 
 # 启用调试
-confflow molecule.xyz -c confflow.yaml --verbose
+confflow molecule.xyz -c confflow.example.yaml --verbose
 
 # 组合选项
 confflow molecule.xyz \
-  -c confflow.yaml \
+  -c confflow.example.yaml \
   --resume \
   --verbose
 ```
 
 ---
 
-## YAML 常用字段速记（confflow.yaml）
+## YAML 常用字段速记（confflow.example.yaml）
 
 ### `ts_rescue_scan`
 
@@ -276,10 +276,10 @@ confgen molecule.xyz 120 -y --force_rotate 2 3
 
 ```bash
 # 标准流程
-confflow input.xyz -c confflow.yaml
+confflow input.xyz -c confflow.example.yaml
 
 # 完整流程+调试
-confflow input.xyz -c confflow.yaml --resume --verbose
+confflow input.xyz -c confflow.example.yaml --resume --verbose
 
 # 自定义路径
 confflow input.xyz -c ./configs/setup.yaml -w ./results/exp1
@@ -314,18 +314,18 @@ confrefine search.xyz -t 0.25 -n 50
 ### Q: 工作目录在哪里?
 ```bash
 # 自动在当前目录生成: <input_name>_work/
-confflow molecule.xyz -c confflow.yaml
+confflow molecule.xyz -c confflow.example.yaml
 # → 创建 molecule_work/ 目录
 ```
 
 ### Q: 如何从中间步骤恢复?
 ```bash
-confflow molecule.xyz -c confflow.yaml --resume
+confflow molecule.xyz -c confflow.example.yaml --resume
 ```
 
 ### Q: 如何查看详细日志?
 ```bash
-confflow molecule.xyz -c confflow.yaml --verbose
+confflow molecule.xyz -c confflow.example.yaml --verbose
 ```
 
 ---

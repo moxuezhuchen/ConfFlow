@@ -1,7 +1,0 @@
-{
-    "chat.tools.terminal.autoApprove": {
-        "black": true,
-        "ruff": true,
-        "mypy": true
-    }
-}

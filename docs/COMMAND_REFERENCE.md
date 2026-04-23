@@ -8,7 +8,7 @@
 confflow <input.xyz> [-c <config.yaml>] [-w <work_dir>] [--resume] [--verbose]
 ```
 
-说明：所有 CLI（`confflow`/`confcalc`/`confgen`/`confrefine`/`confts`）默认不向终端打印运行日志；stdout/stderr 会写入输入目录下同名文件 `<input_basename>.txt`。
+说明：仓库根目录提供 `confflow.example.yaml` 作为示例配置；所有 CLI（`confflow`/`confcalc`/`confgen`/`confrefine`/`confts`）默认不向终端打印运行日志；stdout/stderr 会写入输入目录下同名文件 `<input_basename>.txt`。
 
 ```bash
 tail -f input.txt

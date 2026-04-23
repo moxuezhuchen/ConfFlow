@@ -1,0 +1,14 @@
+ SCF Done:  E(RB3LYP) =  -3576.10000000     A.U. after   10 cycles
+ SCF Done:  E(RB3LYP) =  -3576.57992642     A.U. after   11 cycles
+ Thermal correction to Gibbs Free Energy=               0.946649
+ Sum of electronic and thermal Free Energies=       -3575.633277
+ Frequencies --  -123.4567   200.0000   350.0000
+ Standard orientation:
+ ---------------------------------------------------------------------
+ Center     Atomic      Atomic             Coordinates (Angstroms)
+ Number     Number       Type             X           Y           Z
+ ---------------------------------------------------------------------
+      1          6           0        0.000000    0.000000    0.000000
+      2          1           0        0.000000    0.000000    1.089000
+ ---------------------------------------------------------------------
+ \HF=-1.23456789\Gibbs=-9.87654321\

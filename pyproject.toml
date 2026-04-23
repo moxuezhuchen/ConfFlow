@@ -9,10 +9,10 @@ description = "Automated molecular conformation search workflow engine for compu
 readme = "README.md"
 license = {text = "MIT"}
 authors = [
-    {name = "ConfFlow Team", email = "team@confflow.org"}
+    {name = "ConfFlow Team"}
 ]
 maintainers = [
-    {name = "ConfFlow Team", email = "team@confflow.org"}
+    {name = "ConfFlow Team"}
 ]
 keywords = [
     "computational-chemistry",

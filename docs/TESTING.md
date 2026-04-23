@@ -40,11 +40,11 @@ pytest tests/ -q
 
 | 指标 | 数值 |
 |------|------|
-| 总测试数 | 当前本地基线为 734；以 `pytest --collect-only -q` 和 CI 输出为准 |
-| 测试文件 | 41 |
-| 通过率 | 100% |
+| 总测试数 | 以 `pytest --collect-only -q` 和 CI 输出为准 |
+| 测试文件 | 以当前 `tests/` 目录为准 |
+| 通过率 | 以当前 CI 和本地测试输出为准 |
 | 覆盖率门禁 | `fail_under = 85`（见 `pyproject.toml`） |
-| 运行时间 | `pytest -q` 本地约 6.4s |
+| 运行时间 | 取决于机器、依赖版本和测试范围 |
 
 ---
 
@@ -199,7 +199,7 @@ pytest tests/ --cov=confflow --cov-report=term-missing
 
 最近一次本地验证基线（2026-04-12）：
 
-- `pytest -q`：当前测试数量会随仓库演进变化；最近本地检查为 734 passed
+- `pytest -q`：当前测试数量会随仓库演进变化；以当前 CI 输出为准
 - `ruff check confflow tests`：通过
 - `mypy confflow`：通过
 - 本轮未重跑 `pytest tests/ --cov=confflow --cov-report=term`，因此不在此处重复历史覆盖率数值

@@ -21,7 +21,7 @@ confflow/
 │   └── workflow/          # 工作流引擎
 ├── tests/                 # 测试目录（数量以 docs/TESTING.md 和 CI 输出为准）
 ├── docs/                  # 文档
-├── confflow.yaml          # 配置模板
+├── confflow.example.yaml  # 配置模板
 ├── README.md              # 主文档
 └── pyproject.toml         # 项目元数据与打包配置
 ```
@@ -110,25 +110,25 @@ ruff check confflow tests
 ### 所有测试
 
 ```bash
-pytest tests/ -v
+./scripts/test.sh
 ```
 
 ### 指定测试文件
 
 ```bash
-pytest tests/test_confgen.py -v
+./scripts/test.sh tests/test_confgen.py -v
 ```
 
 ### 仅集成测试
 
 ```bash
-pytest tests/ -m integration
+./scripts/test.sh -m integration
 ```
 
 ### 代码覆盖率
 
 ```bash
-pytest tests/ --cov=confflow --cov-report=term-missing
+./scripts/test.sh --cov=confflow --cov-report=term-missing
 ```
 
 覆盖率阈值已配置在 `pyproject.toml` 中（`fail_under = 85`），并启用了分支覆盖率。
@@ -138,7 +138,7 @@ pytest tests/ --cov=confflow --cov-report=term-missing
 ```bash
 ruff check confflow tests
 mypy confflow
-pytest -q
+./scripts/test.sh -q
 ```
 
 当前本地基线（2026-04-12）：
@@ -149,11 +149,10 @@ pytest -q
 
 ### 测试产物目录规范
 
-- 统一测试临时目录：`.pytest_basetemp`
-- 统一 pytest 缓存目录：`.pytest_cache`
-- 覆盖率与报告目录：`htmlcov/`、`coverage.xml`、`reports/`
+- 推荐测试入口：`./scripts/test.sh`（pytest/coverage 产物重定向到系统临时目录，并在结束后自动清理）
+- 直接运行 `pytest` 时，仓库根目录可能出现：`.pytest_cache_temp`、`.coverage_temp`、`coverage.xml`、`htmlcov/`、`reports/`
 
-以上目录均已在 `.gitignore` 中忽略，避免污染仓库根目录。
+以上路径均已在 `.gitignore` 中忽略，避免污染仓库根目录。
 
 测试架构详见：`docs/TESTING.md`
 
@@ -161,7 +160,7 @@ pytest -q
 
 ```bash
 find . -type d -name "__pycache__" -exec rm -rf {} +
-rm -rf .pytest_cache .pytest_basetemp .mypy_cache .ruff_cache confflow.egg-info build dist htmlcov coverage.xml reports .coverage
+rm -rf .pytest_cache_temp .mypy_cache .ruff_cache confflow.egg-info build dist htmlcov coverage.xml reports .coverage_temp
 ```
 
 ## 核心模块说明
@@ -353,7 +352,7 @@ def calculate_energy(conformer: np.ndarray) -> float:
 
 A: 使用 `--verbose` 启用调试日志：
 ```bash
-confflow input.xyz -c confflow.yaml --verbose
+confflow input.xyz -c confflow.example.yaml --verbose
 ```
 
 ### Q: 日志系统的工作模式是什么？
@@ -378,7 +377,7 @@ A: 参考"添加新功能的步骤"中的量子化学程序部分，实现新的
 
 ### Q: 如何优化性能？
 
-A: 查看"性能优化"部分，或调整 `confflow.yaml` 中的 `max_jobs` 并行数。
+A: 查看"性能优化"部分，或调整 `confflow.example.yaml` 中的 `max_jobs` 并行数。
 
 ## 联系与反馈
 
