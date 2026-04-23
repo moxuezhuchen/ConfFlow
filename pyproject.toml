@@ -24,7 +24,7 @@ keywords = [
     "workflow"
 ]
 classifiers = [
-    "Development Status :: 4 - Beta",
+    "Development Status :: 3 - Alpha",
     "Intended Audience :: Science/Research",
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
@@ -73,10 +73,10 @@ confrefine = "confflow.blocks.refine:main"
 confcalc = "confflow.calc.manager:main"
 
 [project.urls]
-Homepage = "https://github.com/confflow/confflow"
-Documentation = "https://github.com/confflow/confflow#readme"
-Repository = "https://github.com/confflow/confflow.git"
-Issues = "https://github.com/confflow/confflow/issues"
+Homepage = "https://github.com/moxuezhuchen/ConfFlow"
+Documentation = "https://github.com/moxuezhuchen/ConfFlow#readme"
+Repository = "https://github.com/moxuezhuchen/ConfFlow.git"
+Issues = "https://github.com/moxuezhuchen/ConfFlow/issues"
 
 [tool.setuptools.packages.find]
 where = ["."]

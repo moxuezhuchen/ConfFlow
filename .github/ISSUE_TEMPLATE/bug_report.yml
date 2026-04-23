@@ -1,0 +1,76 @@
+name: Bug report
+description: Report a reproducible ConfFlow bug
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug. Do not include private molecular structures, proprietary logs, license details, tokens, or credentials. Redact paths and calculation data before posting. For security issues, use the private reporting guidance in SECURITY.md.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What failed, and what did you expect to happen?
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      placeholder: "Ubuntu 24.04, macOS 14, Windows 11, ..."
+    validations:
+      required: true
+  - type: input
+    id: python
+    attributes:
+      label: Python version
+      placeholder: "Python 3.11.8"
+    validations:
+      required: true
+  - type: input
+    id: confflow
+    attributes:
+      label: ConfFlow version or commit
+      placeholder: "1.0.10 or git SHA"
+    validations:
+      required: true
+  - type: input
+    id: rdkit
+    attributes:
+      label: RDKit version
+      placeholder: "2023.09.6"
+  - type: input
+    id: external_programs
+    attributes:
+      label: Gaussian / ORCA version
+      placeholder: "Gaussian 16 C.01, ORCA 5.0.4, not used, ..."
+  - type: textarea
+    id: command
+    attributes:
+      label: Command
+      description: Paste the command you ran.
+      render: bash
+  - type: textarea
+    id: config
+    attributes:
+      label: Minimal sanitized YAML configuration
+      description: Include only the smallest config needed to reproduce. Redact private paths and sensitive values.
+      render: yaml
+  - type: textarea
+    id: input
+    attributes:
+      label: Minimal sanitized input
+      description: Provide a minimal XYZ/Gaussian/ORCA input if possible. Redact private structures when needed.
+      render: text
+  - type: textarea
+    id: logs
+    attributes:
+      label: Redacted logs or traceback
+      description: Include relevant snippets only. Do not upload raw .log/.out/.err/.chk files containing private data.
+      render: text
+  - type: textarea
+    id: extra
+    attributes:
+      label: Additional context
+      description: Anything else that helps reproduce or triage the issue.

@@ -1,0 +1,46 @@
+name: Feature request
+description: Suggest a workflow, chemistry, or usability improvement
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: scenario
+    attributes:
+      label: Scenario
+      description: What computational chemistry workflow or user problem are you trying to solve?
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What should ConfFlow do?
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Describe workarounds or other tools you considered.
+  - type: dropdown
+    id: external
+    attributes:
+      label: Does this involve external programs or new workflow steps?
+      options:
+        - "No"
+        - "Yes, Gaussian"
+        - "Yes, ORCA"
+        - "Yes, another external program"
+        - "Yes, a new ConfFlow workflow step"
+        - "Not sure"
+    validations:
+      required: true
+  - type: textarea
+    id: compatibility
+    attributes:
+      label: Compatibility and security notes
+      description: Mention file writes/deletes, executable paths, logs, sensitive data, or backward compatibility concerns.
+  - type: textarea
+    id: extra
+    attributes:
+      label: Additional context

@@ -40,7 +40,7 @@ pytest tests/ -q
 
 | 指标 | 数值 |
 |------|------|
-| 总测试数 | 682 |
+| 总测试数 | 当前本地基线为 734；以 `pytest --collect-only -q` 和 CI 输出为准 |
 | 测试文件 | 41 |
 | 通过率 | 100% |
 | 覆盖率门禁 | `fail_under = 85`（见 `pyproject.toml`） |
@@ -199,10 +199,46 @@ pytest tests/ --cov=confflow --cov-report=term-missing
 
 最近一次本地验证基线（2026-04-12）：
 
-- `pytest -q`：682 passed
+- `pytest -q`：当前测试数量会随仓库演进变化；最近本地检查为 734 passed
 - `ruff check confflow tests`：通过
 - `mypy confflow`：通过
 - 本轮未重跑 `pytest tests/ --cov=confflow --cov-report=term`，因此不在此处重复历史覆盖率数值
+
+---
+
+## 公共 CI 覆盖边界
+
+公共 GitHub Actions CI 当前覆盖：
+
+- Python 3.10、3.11、3.12、3.13 上运行 `pytest -q`。
+- Python 3.11 上运行 Black gate、`ruff check .`、`mypy confflow`。
+- 独立 coverage job 在 Python 3.11 上运行 `pytest tests/ --cov=confflow --cov-report=term-missing --cov-report=xml`，并使用 `pyproject.toml` 中的 coverage 门禁。
+- Gaussian/ORCA policy、输入生成、输出解析、错误处理、TS rescue、workflow resume 等逻辑通过单元测试、fake runner、mock、fixture 和样例日志覆盖。
+
+公共 CI 当前不完整覆盖：
+
+- 真实 Gaussian 16 或 ORCA 安装环境中的端到端计算。
+- 商业软件许可证、环境模块、集群调度器、scratch 目录和站点特定 wrapper。
+- 大规模分子体系、长时间运行任务、真实 checkpoint 文件生命周期。
+- 每个操作系统和 RDKit 安装组合；公共 CI 主要在 Ubuntu runner 上验证。
+
+### Fake/Mock 与真实 E2E 的区别
+
+仓库测试会使用 fake ORCA/Gaussian 输出、mock policy、fake executor 或预制日志来验证 ConfFlow 的解析、调度和错误处理逻辑。这些测试可以证明 ConfFlow 的内部控制流和数据契约，但不能证明真实外部程序在目标机器上已正确安装、授权、收敛或生成完全一致的输出格式。
+
+真实 Gaussian/ORCA 环境仍需要手动或站点内 CI 验证。
+
+### 真实环境手动验证建议
+
+在公开或部署到新的计算环境前，建议至少手动验证：
+
+1. `confflow --help`、`confgen --help`、`confcalc --help` 能正常运行。
+2. RDKit 能导入，并能完成一个最小 XYZ 的构象生成。
+3. `allowed_executables` 指向的 Gaussian/ORCA 可执行文件存在且不带额外 shell 参数。
+4. 一个最小 Gaussian 或 ORCA `sp` 任务能生成 `results.db`、`output.xyz` / `result.xyz` 和日志。
+5. 一个失败任务能写入 `failed.xyz` 和可诊断的 `error_details`。
+6. 如果使用 `sandbox_root`，确认 `work_dir`、`backup_dir`、`input_chk_dir` 均被限制在预期目录下。
+7. 对包含敏感结构或私有路径的日志进行脱敏后再分享。
 
 ---
 

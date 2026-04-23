@@ -1,10 +1,12 @@
 ## ConfFlow
 
-ConfFlow 是一个自动化工作流工具：从 XYZ 输入出发，按 YAML 配置完成构象生成、量化计算、去重与报告输出（合并到 .txt）。
+ConfFlow 是一个面向计算化学的自动化工作流工具：从 XYZ 输入出发，按 YAML 配置完成构象生成、量化计算、去重与报告输出（合并到 .txt）。
 
-[![CI](https://github.com/user/confflow/actions/workflows/ci.yml/badge.svg)](https://github.com/user/confflow/actions/workflows/ci.yml)
+[![CI](https://github.com/moxuezhuchen/ConfFlow/actions/workflows/ci.yml/badge.svg)](https://github.com/moxuezhuchen/ConfFlow/actions/workflows/ci.yml)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
+当前公开等级：alpha preview。项目可用于熟悉计算化学环境的用户试用和反馈，但尚不声明 production-ready。
 
 ## 特性
 
@@ -31,6 +33,14 @@ pip install -e ".[dev]"
 
 项目已统一为 `pyproject.toml` 构建（PEP 621），不再使用 `setup.py`。
 
+## 支持平台与外部依赖
+
+- Python：3.10-3.13（CI 覆盖该版本矩阵）。
+- 操作系统：代码元数据声明为 OS independent；公共 CI 当前在 Ubuntu 上运行。其他平台需结合 RDKit、Gaussian/ORCA 安装情况验证。
+- 必需 Python 依赖：RDKit、NumPy、SciPy、PyYAML、Pydantic v2、psutil、rich。
+- 外部程序：Gaussian 16 和 ORCA 需要由用户自行安装、授权和配置；ConfFlow 不负责安装或验证商业/第三方软件许可证。
+- 当前推荐从源码安装；如未建立正式 PyPI 发布流程，请不要假设 `pip install confflow` 已可用。
+
 ## 工程化改进（2026-04）
 
 - ✅ 统一构建与依赖管理：仅保留 `pyproject.toml`
@@ -40,7 +50,7 @@ pip install -e ".[dev]"
 - ✅ XYZ 流式处理：新增 `iter_xyz_frames()`，`confgen` 改为边生成边写 `search.xyz`
 - ✅ 进程终止增强：`cli` 使用 `psutil` 进行进程树回收
 - ✅ 架构边界收口：新增 calc step contract、路径策略、后处理适配器、内部 run services
-- ✅ 测试基线（2026-04-12 验证）：41 个 `test_*.py` 测试文件、**714 个测试**，`pytest -q` 当前通过
+- ✅ 测试基线：当前测试数量以 `docs/TESTING.md` 和 CI 输出为准，`pytest -q` 当前通过
 - ✅ 覆盖率门禁：`pyproject.toml` 中配置 `fail_under = 85`
 - ✅ 类型安全：`core/types.py` 改为标准库 `typing.TypedDict`
 - ✅ 类型/风格基线（2026-04-12 验证）：`mypy confflow`、`ruff check confflow tests`、`pytest -q` 均通过
@@ -130,9 +140,29 @@ steps:
 - [使用说明](docs/USAGE.md) - 快速开始指南
 - [命令参考](docs/COMMAND_REFERENCE.md) - 所有命令的完整参考
 - [关键字参考](docs/KEYWORD_REFERENCE.md) - YAML 配置关键字
+- [安全模型](docs/SECURITY_MODEL.md) - 可信输入、外部程序、文件和日志边界
 - [开发指南](docs/DEVELOPMENT.md) - 扩展与开发说明
 - [测试说明](docs/TESTING.md) - 测试套件文档
+- [发布流程](docs/RELEASE.md) - 手动发布、校验、回滚和供应链记录
 - [风格契约](docs/STYLE_CONTRACT.md) - 代码/输入/输出一致性标准
+
+## 安全与限制
+
+ConfFlow 会根据可信 YAML 配置读写工作目录、生成/覆盖工作流产物，并调用用户配置的 Gaussian、ORCA 或其他允许的外部可执行文件。不要直接运行陌生来源的 YAML、XYZ、Gaussian keyword、ORCA blocks 或外部程序路径。
+
+建议在 YAML `global` 中配置 `sandbox_root` 和 `allowed_executables`，限制工作目录和可执行文件范围。日志、`.out`、`.err`、`.chk`、报告和备份文件可能包含路径、输入结构、外部程序输出或私有计算数据。公开提交 issue 前请脱敏；安全问题优先按 [SECURITY.md](SECURITY.md) 私密提报。
+
+当前没有 dry-run / read-only / preview 模式。详细边界见 [安全模型](docs/SECURITY_MODEL.md)。
+
+## 治理与供应链状态
+
+- 行为准则：见 [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)。
+- 安全提报：见 [SECURITY.md](SECURITY.md)。
+- 依赖更新：Dependabot 当前按月检查 GitHub Actions 和 Python 依赖。
+- Scorecard：OpenSSF Scorecard workflow 当前为 non-blocking / informational，用于观察治理短板，不代表项目已达到高分。
+- Release artifacts：tag 或手动触发的 release workflow 会构建 wheel/sdist、生成 SHA256 checksum，并尝试生成 CycloneDX SBOM；PyPI 发布和 artifact attestation 当前未自动化。
+
+后续重点：`dry-run` / read-only 模式、更完整的 release provenance / attestation、真实 Gaussian/ORCA 环境的可选集成验证。
 
 ## FAQ
 
@@ -196,4 +226,4 @@ MIT License
 
 ---
 
-**ConfFlow** - 让计算化学更简单 🧪
+**ConfFlow** - computational chemistry workflow automation.
