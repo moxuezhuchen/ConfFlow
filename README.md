@@ -8,9 +8,9 @@ ConfFlow 是一个面向计算化学的自动化工作流工具：从 XYZ 输入
 
 当前公开等级：alpha preview。项目可用于熟悉计算化学环境的用户试用和反馈，但尚不声明 production-ready。
 
-## Public status / roadmap
+## Project status
 
-ConfFlow 适合以 alpha preview 形式公开，用于源码安装、文档审阅、CI/发布流程验证和熟悉计算化学环境的早期试用。下一步重点是 dry-run / read-only 模式、真实 Gaussian/ORCA 环境的可选集成验证，以及更完整的 release provenance / attestation；当前不承诺具体发布日期。
+ConfFlow 当前定位为 **public alpha preview**。它适合源码安装、文档审阅、CI/发布流程验证，以及熟悉计算化学环境的早期试用；不适合 production-ready、无人值守或未隔离的真实生产计算场景。下一步重点是 dry-run / read-only 模式、真实 Gaussian/ORCA 环境的可选集成验证，以及更完整的 release provenance / attestation；当前不承诺具体发布日期。
 
 ## 特性
 
@@ -36,6 +36,10 @@ pip install -e ".[dev]"
 ```
 
 项目已统一为 `pyproject.toml` 构建（PEP 621），不再使用 `setup.py`。
+
+## How to evaluate / try
+
+建议先在隔离目录中使用非敏感 XYZ/YAML 输入评估 `confflow --help`、`confgen` 和一个最小工作流。真实 Gaussian/ORCA 任务应在确认许可证、可执行文件路径、`sandbox_root` 和 `allowed_executables` 后再运行；公开 issue 前请脱敏日志、结构和路径。
 
 ## 支持平台与外部依赖
 
@@ -145,6 +149,7 @@ steps:
 - [命令参考](docs/COMMAND_REFERENCE.md) - 所有命令的完整参考
 - [关键字参考](docs/KEYWORD_REFERENCE.md) - YAML 配置关键字
 - [安全模型](docs/SECURITY_MODEL.md) - 可信输入、外部程序、文件和日志边界
+- [公开 Alpha 说明](docs/PUBLIC_ALPHA.md) - 当前公开等级、适用范围和切 public 后检查清单
 - [开发指南](docs/DEVELOPMENT.md) - 扩展与开发说明
 - [测试说明](docs/TESTING.md) - 测试套件文档
 - [发布流程](docs/RELEASE.md) - 手动发布、校验、回滚和供应链记录

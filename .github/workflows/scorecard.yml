@@ -90,6 +90,9 @@ jobs:
 
       - name: Upload SARIF
         uses: github/codeql-action/upload-sarif@v4
+        # Private repositories may not have code scanning enabled. Keep Scorecard
+        # informational by default, but allow an explicit manual upload when
+        # code scanning is available.
         if: >-
           always() &&
           steps.sarif.outputs.upload == 'true' &&
