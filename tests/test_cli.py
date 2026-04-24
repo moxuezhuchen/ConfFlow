@@ -21,6 +21,7 @@ from confflow.cli import (
     main,
     stop_all_confflow_processes,
 )
+from confflow.workflow.dry_run import estimate_confgen_combinations
 
 
 def test_parse_gaussian_input_geometry_basic():
@@ -173,6 +174,105 @@ def test_main_stop_command():
     with patch("confflow.cli.stop_all_confflow_processes", return_value=0) as mock_stop:
         assert main(["--stop"]) == 0
         mock_stop.assert_called_once()
+
+
+def test_main_dry_run_does_not_call_run_workflow(tmp_path, capsys):
+    input_xyz = tmp_path / "input.xyz"
+    input_xyz.write_text("3\ntest\nC 0 0 0\nH 0 0 1\nH 0 1 0\n", encoding="utf-8")
+    config_yaml = tmp_path / "config.yaml"
+    config_yaml.write_text(
+        "global: {}\n"
+        "steps:\n"
+        "  - name: gen\n"
+        "    type: confgen\n"
+        "    params:\n"
+        "      chains: ['1-2']\n",
+        encoding="utf-8",
+    )
+
+    with patch("confflow.cli.run_workflow") as mock_run:
+        result = main([str(input_xyz), "-c", str(config_yaml), "--dry-run"])
+
+    captured = capsys.readouterr()
+    assert result == 0
+    assert "ConfFlow dry-run" in captured.out
+    assert "gen (confgen)" in captured.out
+    mock_run.assert_not_called()
+
+
+def test_main_dry_run_config_error_returns_usage_error(tmp_path, capsys):
+    input_xyz = tmp_path / "input.xyz"
+    input_xyz.write_text("2\ntest\nC 0 0 0\nH 0 0 1\n", encoding="utf-8")
+    config_yaml = tmp_path / "config.yaml"
+    config_yaml.write_text(
+        "global: {}\n" "steps:\n" "  - name: gen\n" "    type: confgen\n" "    params: {}\n",
+        encoding="utf-8",
+    )
+
+    result = main([str(input_xyz), "-c", str(config_yaml), "--dry-run"])
+
+    captured = capsys.readouterr()
+    assert result == 1
+    assert "confgen step requires" in captured.err
+
+
+def test_dry_run_confgen_combination_estimate():
+    assert estimate_confgen_combinations({"chains": ["1-2-3"], "angle_step": 120}) == 9
+
+
+def test_main_dry_run_calc_resolved_config_shows_step_override(tmp_path, capsys):
+    input_xyz = tmp_path / "input.xyz"
+    input_xyz.write_text("2\ntest\nC 0 0 0\nH 0 0 1\n", encoding="utf-8")
+    config_yaml = tmp_path / "config.yaml"
+    config_yaml.write_text(
+        "global:\n"
+        "  iprog: orca\n"
+        "  itask: sp\n"
+        "  keyword: global-keyword\n"
+        "  cores_per_task: 1\n"
+        "  max_parallel_jobs: 2\n"
+        "  total_memory: 4GB\n"
+        "steps:\n"
+        "  - name: calc1\n"
+        "    type: calc\n"
+        "    params:\n"
+        "      keyword: step-keyword\n"
+        "      cores_per_task: 4\n",
+        encoding="utf-8",
+    )
+
+    result = main([str(input_xyz), "-c", str(config_yaml), "--dry-run"])
+
+    captured = capsys.readouterr()
+    assert result == 0
+    assert "calc1 (calc)" in captured.out
+    assert "keyword=step-keyword" in captured.out
+    assert "cores_per_task=4" in captured.out
+
+
+def test_main_dry_run_missing_executable_path_returns_usage_error(tmp_path, capsys):
+    input_xyz = tmp_path / "input.xyz"
+    input_xyz.write_text("2\ntest\nC 0 0 0\nH 0 0 1\n", encoding="utf-8")
+    config_yaml = tmp_path / "config.yaml"
+    missing_g16 = tmp_path / "missing" / "g16"
+    config_yaml.write_text(
+        "global:\n"
+        "  iprog: gaussian\n"
+        "  itask: sp\n"
+        "  keyword: hf/sto-3g\n"
+        f"  gaussian_path: {missing_g16}\n"
+        "steps:\n"
+        "  - name: calc1\n"
+        "    type: calc\n"
+        "    params: {}\n",
+        encoding="utf-8",
+    )
+
+    result = main([str(input_xyz), "-c", str(config_yaml), "--dry-run"])
+
+    captured = capsys.readouterr()
+    assert result == 1
+    assert "Gaussian path not found" in captured.err
 
 
 @patch("confflow.cli.run_workflow")
@@ -436,7 +536,9 @@ def test_main_default_work_dir_inside_sandbox_root(tmp_path):
     input_xyz = tmp_path / "input.xyz"
     input_xyz.write_text("2\ntest\nC 0 0 0\nH 0 0 1\n", encoding="utf-8")
     config_yaml = tmp_path / "config.yaml"
-    config_yaml.write_text("global:\n  sandbox_root: " + str(tmp_path / "sandbox") + "\nsteps: []\n")
+    config_yaml.write_text(
+        "global:\n  sandbox_root: " + str(tmp_path / "sandbox") + "\nsteps: []\n"
+    )
 
     with patch("confflow.cli.run_workflow") as mock_run:
         main([str(input_xyz), "-c", str(config_yaml)])
@@ -448,7 +550,9 @@ def test_main_invalid_work_dir_returns_usage_error(tmp_path):
     input_xyz = tmp_path / "input.xyz"
     input_xyz.write_text("2\ntest\nC 0 0 0\nH 0 0 1\n", encoding="utf-8")
     config_yaml = tmp_path / "config.yaml"
-    config_yaml.write_text("global:\n  sandbox_root: " + str(tmp_path / "sandbox") + "\nsteps: []\n")
+    config_yaml.write_text(
+        "global:\n  sandbox_root: " + str(tmp_path / "sandbox") + "\nsteps: []\n"
+    )
 
     result = main([str(input_xyz), "-c", str(config_yaml), "-w", str(tmp_path / "outside")])
 

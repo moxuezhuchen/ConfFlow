@@ -19,9 +19,11 @@ except ImportError:
 import yaml
 
 from .core.contracts import ExitCode, cli_output_to_txt, output_txt_path_for_input
+from .core.exceptions import ConfigurationError, InputFileError, PathSafetyError, XYZFormatError
 from .core.io import parse_gaussian_input_text, write_xyz_file
 from .core.path_policy import resolve_sandbox_root, validate_managed_path
 from .core.utils import get_logger
+from .workflow.dry_run import run_dry_run
 from .workflow.engine import run_workflow
 
 __all__ = [
@@ -88,6 +90,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--resume", action="store_true", help="Resume from an existing checkpoint")
     parser.add_argument("--verbose", action="store_true", help="Enable debug logging")
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Validate inputs and configuration, then print the planned workflow without running it",
+    )
     parser.add_argument(
         "--stop",
         action="store_true",
@@ -297,6 +304,22 @@ def main(args_list: list[str] | None = None):
         work_dir = _resolve_default_work_dir(input_files, sandbox_root=sandbox_root)
     else:
         work_dir = args.work_dir
+
+    if args.dry_run:
+        try:
+            run_dry_run(input_files, config_file, work_dir)
+        except (
+            ConfigurationError,
+            FileNotFoundError,
+            InputFileError,
+            OSError,
+            PathSafetyError,
+            ValueError,
+            XYZFormatError,
+        ) as e:
+            print(f"Error: {e}", file=sys.stderr)
+            return ExitCode.USAGE_ERROR
+        return ExitCode.SUCCESS
 
     try:
         work_dir = validate_managed_path(work_dir, label="work_dir", sandbox_root=sandbox_root)
