@@ -26,6 +26,11 @@ from .core.utils import get_logger
 from .workflow.dry_run import run_dry_run
 from .workflow.engine import run_workflow
 from .workflow.export import NoExportableResultsError, export_results
+from .workflow.rerun_failed import (
+    RerunFailedRuntimeError,
+    RerunFailedUsageError,
+    run_rerun_failed,
+)
 
 __all__ = [
     "build_parser",
@@ -115,7 +120,20 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "-o",
         "--output",
-        help="Output file for --export (default: <work_dir>/confflow_results.<format>)",
+        help=(
+            "Output file for --export (default: <work_dir>/confflow_results.<format>), "
+            "or output directory for --rerun-failed"
+        ),
+    )
+    parser.add_argument(
+        "--rerun-failed",
+        dest="rerun_failed_step_dir",
+        help="Rerun failed.xyz from an existing calc/task step directory",
+    )
+    parser.add_argument(
+        "--step",
+        dest="rerun_step",
+        help="Workflow calc/task step name or 1-based step index for --rerun-failed",
     )
     return parser
 
@@ -318,6 +336,47 @@ def main(args_list: list[str] | None = None):
         for warning in result.warnings:
             print(f"Warning: {warning}", file=sys.stderr)
         print(f"Exported {result.row_count} result row(s) to {result.output_path}")
+        return ExitCode.SUCCESS
+
+    if args.rerun_failed_step_dir:
+        if not args.config:
+            print("Error: --config is required with --rerun-failed", file=sys.stderr)
+            return ExitCode.USAGE_ERROR
+        if not args.rerun_step:
+            print("Error: --step is required with --rerun-failed", file=sys.stderr)
+            return ExitCode.USAGE_ERROR
+        try:
+            rerun_result = run_rerun_failed(
+                step_dir=args.rerun_failed_step_dir,
+                config_file=args.config,
+                step_ref=args.rerun_step,
+                output_dir=args.output,
+            )
+        except (FileNotFoundError, PathSafetyError, RerunFailedUsageError) as e:
+            print(f"Error: {e}", file=sys.stderr)
+            return ExitCode.USAGE_ERROR
+        except (
+            ConfigurationError,
+            InputFileError,
+            OSError,
+            RerunFailedRuntimeError,
+            ValueError,
+            XYZFormatError,
+        ) as e:
+            print(f"Error: {e}", file=sys.stderr)
+            return ExitCode.RUNTIME_ERROR
+
+        print(f"Rerun failed conformers from: {rerun_result.failed_path}")
+        print(f"Workflow config: {rerun_result.config_file}")
+        print(f"Workflow step: {rerun_result.step_label}")
+        print(f"Rerun output directory: {rerun_result.output_dir}")
+        print(
+            "Rerun summary: "
+            f"input={rerun_result.input_count}, "
+            f"output={rerun_result.output_count}, "
+            f"failed={rerun_result.failed_count}"
+        )
+        print("Use --export on the rerun output directory to export rerun results.")
         return ExitCode.SUCCESS
 
     # Manual validation for required arguments when not stopping
