@@ -9,8 +9,10 @@ import logging
 import multiprocessing
 import os
 import re
+import sys
 from collections.abc import Iterable, Mapping
 from concurrent.futures import ProcessPoolExecutor, as_completed
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
@@ -19,6 +21,7 @@ from ..core import models
 from ..core.cli_base import require_existing_path
 from ..core.console import CalcProgressReporter, console, error
 from ..core.contracts import ExitCode, cli_output_to_txt
+from ..core.exceptions import ConfFlowError
 from .analysis import _bond_length_from_xyz_lines, _parse_ts_bond_atoms
 from .components.executor import _cleanup_lingering_processes
 from .components.task_runner import TaskRunner
@@ -44,12 +47,45 @@ from .step_contract import (
 from .task_execution import execute_tasks
 
 __all__ = [
+    "CalcRunSummary",
     "ChemTaskManager",
+    "format_all_failed_message",
     "main",
 ]
 
 logger = logging.getLogger("confflow.calc.manager")
 _LEGACY_NUMERIC_CID_RE = re.compile(r"^\d+(?:\.0+)?$")
+
+
+@dataclass(frozen=True)
+class CalcRunSummary:
+    total_tasks: int
+    success_count: int
+    failed: list[dict[str, Any]]
+
+    @property
+    def failed_count(self) -> int:
+        return len(self.failed)
+
+    @property
+    def all_tasks_failed(self) -> bool:
+        return self.total_tasks > 0 and self.success_count == 0
+
+
+def _first_failure_reason(failed: list[dict[str, Any]]) -> str:
+    for result in failed:
+        error_msg = str(result.get("error") or "").strip()
+        if error_msg:
+            return error_msg
+    return "unknown error"
+
+
+def format_all_failed_message(summary: CalcRunSummary) -> str:
+    reason = _first_failure_reason(summary.failed)
+    return (
+        f"All calculation tasks failed ({summary.failed_count}/{summary.total_tasks}). "
+        f"First failure: {reason}"
+    )
 
 
 def _is_enabled_flag(value: Any) -> bool:
@@ -437,7 +473,7 @@ class ChemTaskManager:
     # Main entry point
     # ------------------------------------------------------------------
 
-    def run(self, input_xyz_file: str) -> None:
+    def run(self, input_xyz_file: str) -> CalcRunSummary:
         self._ensure_work_dir()
         stop_path = os.path.join(self.work_dir, "STOP")
         try:
@@ -476,6 +512,7 @@ class ChemTaskManager:
                 job_name_fn=self._job_name_for_geom,
             )
             tasks, self._job_meta_map = task_builder.build_from_input(input_xyz_file)
+            total_tasks = len(tasks)
 
             assembly = ResultAssemblyService(
                 work_dir=self.work_dir,
@@ -491,16 +528,18 @@ class ChemTaskManager:
             self._execute_tasks(todo)
 
             if self._handle_stop():
-                return
+                return CalcRunSummary(total_tasks, 0, [])
 
             success_count, failed = assembly.collect_outcomes()
             assembly.write_failed_xyz(failed, tasks)
+            summary = CalcRunSummary(total_tasks, success_count, failed)
 
             if success_count == 0:
-                return
+                return summary
 
             out_file = self._result_xyz_path
             self._run_auto_clean(out_file)
+            return summary
         finally:
             self._input_signature_override = None
             try:
@@ -529,8 +568,15 @@ def main():
         print(f"Error: {e}")
         raise SystemExit(ExitCode.USAGE_ERROR) from e
 
-    with cli_output_to_txt(args.input_xyz):
-        ChemTaskManager(args.settings).run(args.input_xyz)
+    try:
+        with cli_output_to_txt(args.input_xyz):
+            summary = ChemTaskManager(args.settings).run(args.input_xyz)
+    except (configparser.Error, ConfFlowError, OSError, ValueError) as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return ExitCode.RUNTIME_ERROR
+    if isinstance(summary, CalcRunSummary) and summary.all_tasks_failed:
+        print(format_all_failed_message(summary), file=sys.stderr)
+        return ExitCode.RUNTIME_ERROR
     return ExitCode.SUCCESS
 
 

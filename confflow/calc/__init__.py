@@ -18,7 +18,7 @@ from .components.executor import handle_backups
 from .components.parser import parse_output
 from .components.task_runner import TaskRunner
 from .db.database import ResultsDB
-from .manager import ChemTaskManager
+from .manager import CalcRunSummary, ChemTaskManager, format_all_failed_message
 from .policies import get_policy
 from .resources import ResourceMonitor
 from .setup import get_itask, parse_iprog, setup_logging
@@ -31,7 +31,9 @@ __all__ = [
     "CalcStepExecutionResult",
     "run_calc_workflow_step",
     "TaskRunner",
+    "CalcRunSummary",
     "ChemTaskManager",
+    "format_all_failed_message",
     "get_itask",
     "parse_iprog",
     "setup_logging",

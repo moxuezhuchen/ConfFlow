@@ -5,10 +5,13 @@
 from __future__ import annotations
 
 import argparse
+import configparser
 import importlib
+import sys
 
 from .core.cli_base import require_existing_path
 from .core.contracts import ExitCode, cli_output_to_txt
+from .core.exceptions import ConfFlowError
 from .core.keyword_rewrite import make_scan_keyword_from_ts_keyword
 
 __all__ = [
@@ -46,10 +49,17 @@ def _cli(argv: list[str] | None = None) -> int:
         require_existing_path(args.input_xyz, "Input file")
         require_existing_path(args.settings, "Settings file")
 
-        with cli_output_to_txt(args.input_xyz):
-            manager = calc.ChemTaskManager(settings_file=args.settings)
-            # Respect the YAML configuration instead of forcing ts_rescue_scan.
-            manager.run(args.input_xyz)
+        try:
+            with cli_output_to_txt(args.input_xyz):
+                manager = calc.ChemTaskManager(settings_file=args.settings)
+                # Respect the YAML configuration instead of forcing ts_rescue_scan.
+                summary = manager.run(args.input_xyz)
+        except (configparser.Error, ConfFlowError, OSError, ValueError) as e:
+            print(f"Error: {e}", file=sys.stderr)
+            return ExitCode.RUNTIME_ERROR
+        if isinstance(summary, calc.CalcRunSummary) and summary.all_tasks_failed:
+            print(calc.format_all_failed_message(summary), file=sys.stderr)
+            return ExitCode.RUNTIME_ERROR
         return ExitCode.SUCCESS
 
     parser.print_help()

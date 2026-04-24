@@ -8,6 +8,7 @@ import argparse
 import logging
 import multiprocessing
 import os
+import sys
 from collections import defaultdict
 from concurrent.futures import ProcessPoolExecutor
 
@@ -229,6 +230,16 @@ def _write_refine_output(output_path: str, final_unique: list[dict], global_min:
                 f.write(f"{a:<4s} {c[0]:12.8f} {c[1]:12.8f} {c[2]:12.8f}\n")
 
 
+def _refine_failure_message(result: RefineResult, input_file: str) -> str:
+    if result.reason == "missing_input":
+        return f"Input file not found: {input_file}"
+    if result.reason in {"empty_input", "no_topology"}:
+        return f"No input conformers found in {input_file}"
+    if result.reason in {"filtered_to_zero", "deduped_to_zero"}:
+        return "No conformers remain after filtering."
+    return "Refine failed."
+
+
 # ==============================================================================
 # Core entry logic
 # ==============================================================================
@@ -250,8 +261,16 @@ def process_xyz(args):
     ewin_str = f"{args.ewin} kcal/mol" if args.ewin is not None else "none"
     console.print(f"RMSD={args.threshold}, E-window={ewin_str}")
 
-    all_frames = read_xyz_file(args.input_file)
+    try:
+        all_frames = read_xyz_file(args.input_file)
+    except (OSError, ValueError) as e:
+        error(f"No input conformers found in {args.input_file}: {e}")
+        if os.path.exists(args.output):
+            os.remove(args.output)
+        return RefineResult(False, args.output, 0, "empty_input")
+
     if not all_frames:
+        error(f"No input conformers found in {args.input_file}")
         if os.path.exists(args.output):
             os.remove(args.output)
         return RefineResult(False, args.output, 0, "empty_input")
@@ -381,8 +400,19 @@ def main():
         base, _ = os.path.splitext(args.input_file)
         args.output = f"{base}_cleaned.xyz"
 
-    with cli_output_to_txt(args.input_file):
-        process_xyz(args)
+    if not os.path.exists(args.input_file):
+        print(f"Input file not found: {args.input_file}", file=sys.stderr)
+        return ExitCode.USAGE_ERROR
+
+    try:
+        with cli_output_to_txt(args.input_file):
+            result = process_xyz(args)
+    except OSError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return ExitCode.RUNTIME_ERROR
+    if isinstance(result, RefineResult) and not result.produced_output:
+        print(_refine_failure_message(result, args.input_file), file=sys.stderr)
+        return ExitCode.RUNTIME_ERROR
     return ExitCode.SUCCESS
 
 

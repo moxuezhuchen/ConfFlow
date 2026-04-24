@@ -5,6 +5,9 @@
 from __future__ import annotations
 
 import os
+import subprocess
+import sys
+from pathlib import Path
 from unittest.mock import patch
 
 import numpy as np
@@ -34,6 +37,28 @@ from confflow.blocks.confgen.rotations import (
 )
 from confflow.core.data import GV_COVALENT_RADII
 from confflow.core.io import read_xyz_file
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
+def _run_confgen_cli(cwd, *args: str) -> subprocess.CompletedProcess[str]:
+    env = os.environ.copy()
+    env["PYTHONPATH"] = os.pathsep.join(
+        part for part in [str(REPO_ROOT), env.get("PYTHONPATH", "")] if part
+    )
+    return subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "from confflow.blocks.confgen import main; raise SystemExit(main())",
+            *args,
+        ],
+        cwd=cwd,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
 
 
 def _write_butane_xyz(path: str) -> None:
@@ -401,6 +426,17 @@ def test_main_cli(tmp_path):
     with patch("sys.argv", ["confgen"]):
         with pytest.raises(SystemExit):
             main()
+
+
+def test_confgen_missing_input_returns_error_without_traceback(tmp_path):
+    missing = tmp_path / "missing.xyz"
+
+    result = _run_confgen_cli(tmp_path, str(missing), "--chain", "1-2", "-y")
+
+    assert result.returncode != 0
+    assert "input file does not exist" in result.stderr
+    assert "Traceback" not in result.stderr
+    assert "Traceback" not in result.stdout
 
 
 def test_run_generation_wrapper(cd_tmp):

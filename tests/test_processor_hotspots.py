@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import importlib
+import subprocess
 import sys
 from contextlib import contextmanager
 from pathlib import Path
@@ -12,6 +13,20 @@ from unittest.mock import patch
 import numpy as np
 
 import confflow.blocks.refine.processor as processor
+
+
+def _run_confrefine_cli(*args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "from confflow.blocks.refine import main; raise SystemExit(main())",
+            *args,
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
 
 
 def test_processor_console_fallback_module_reload(capsys):
@@ -372,3 +387,42 @@ def test_processor_main_start_method_valueerror_logs_debug(monkeypatch, tmp_path
 
     rc = processor.main()
     assert rc == processor.ExitCode.SUCCESS
+
+
+def test_processor_main_missing_input_returns_nonzero(tmp_path: Path):
+    missing = tmp_path / "missing_input.xyz"
+    output = tmp_path / "refined.xyz"
+    result = _run_confrefine_cli(str(missing), "-o", str(output))
+
+    assert result.returncode != processor.ExitCode.SUCCESS
+    assert "Input file not found" in result.stderr
+    assert "Traceback" not in result.stderr
+    assert "Traceback" not in result.stdout
+    assert not output.exists()
+
+
+def test_processor_main_empty_input_returns_nonzero(tmp_path: Path):
+    empty = tmp_path / "empty.xyz"
+    empty.write_text("", encoding="utf-8")
+    output = tmp_path / "refined.xyz"
+    result = _run_confrefine_cli(str(empty), "-o", str(output))
+
+    assert result.returncode != processor.ExitCode.SUCCESS
+    assert "No input conformers found" in result.stderr
+    assert not output.exists()
+
+
+def test_processor_main_two_frame_xyz_refine_succeeds(
+    tmp_path: Path,
+):
+    input_xyz = tmp_path / "two_frames.xyz"
+    input_xyz.write_text(
+        "2\nE=-1.0\nC 0 0 0\nH 0 0 1\n"
+        "2\nE=-0.9\nC 0 0 0\nH 0 0 1.2\n",
+        encoding="utf-8",
+    )
+    output = tmp_path / "refined.xyz"
+    result = _run_confrefine_cli(str(input_xyz), "-o", str(output))
+
+    assert result.returncode == processor.ExitCode.SUCCESS
+    assert output.exists()

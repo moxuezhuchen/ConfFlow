@@ -4,10 +4,51 @@
 from __future__ import annotations
 
 import os
+import subprocess
+import sys
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
+
+from confflow.calc.manager import CalcRunSummary
+from confflow.calc.manager import main as manager_main
+from confflow.core.contracts import ExitCode
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
+def _run_module_cli(cwd, code: str, *args: str) -> subprocess.CompletedProcess[str]:
+    env = os.environ.copy()
+    env["PYTHONPATH"] = os.pathsep.join(
+        part for part in [str(REPO_ROOT), env.get("PYTHONPATH", "")] if part
+    )
+    return subprocess.run(
+        [sys.executable, "-c", code, *args],
+        cwd=cwd,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def _write_minimal_calc_inputs(tmp_path, *, orca_path: str) -> tuple[object, object]:
+    xyz_path = tmp_path / "input.xyz"
+    xyz_path.write_text("2\nCID=A000001\nH 0 0 0\nH 0 0 0.74\n", encoding="utf-8")
+    settings_path = tmp_path / "settings.ini"
+    settings_path.write_text(
+        "[global]\n"
+        "iprog=orca\n"
+        "itask=sp\n"
+        "keyword=xTB\n"
+        f"orca_path={orca_path}\n"
+        "max_parallel_jobs=1\n"
+        "auto_clean=false\n",
+        encoding="utf-8",
+    )
+    return xyz_path, settings_path
 
 
 def test_manager_main_cli(tmp_path):
@@ -32,6 +73,76 @@ def test_manager_main_cli(tmp_path):
         with pytest.raises(SystemExit) as e:
             manager_main()
         assert e.value.code == 1
+
+
+def test_confcalc_all_tasks_failed_invalid_orca_path_returns_nonzero(tmp_path):
+    xyz_path, settings_path = _write_minimal_calc_inputs(tmp_path, orca_path="orca --version")
+
+    result = _run_module_cli(
+        tmp_path,
+        "from confflow.calc.manager import main; raise SystemExit(main())",
+        str(xyz_path),
+        "-s",
+        str(settings_path),
+    )
+
+    assert result.returncode == ExitCode.RUNTIME_ERROR
+    assert "All calculation tasks failed" in result.stderr
+    assert "orca_path must name exactly one executable" in result.stderr
+    assert "Traceback" not in result.stderr
+    assert "Traceback" not in result.stdout
+    failed_files = list(tmp_path.glob("chem_tasks_*/failed.xyz"))
+    assert len(failed_files) == 1
+    failed_text = failed_files[0].read_text(encoding="utf-8")
+    assert "Failed=1" in failed_text
+    assert "orca_path must name exactly one executable" in failed_text
+
+
+def test_confts_all_tasks_failed_invalid_orca_path_returns_nonzero(tmp_path):
+    xyz_path, settings_path = _write_minimal_calc_inputs(tmp_path, orca_path="orca --version")
+
+    result = _run_module_cli(
+        tmp_path,
+        "from confflow.confts import main; main()",
+        str(xyz_path),
+        "-s",
+        str(settings_path),
+    )
+
+    assert result.returncode == ExitCode.RUNTIME_ERROR
+    assert "All calculation tasks failed" in result.stderr
+    assert "orca_path must name exactly one executable" in result.stderr
+    assert "Traceback" not in result.stderr
+    assert "Traceback" not in result.stdout
+    failed_files = list(tmp_path.glob("chem_tasks_*/failed.xyz"))
+    assert len(failed_files) == 1
+    assert "Failed=1" in failed_files[0].read_text(encoding="utf-8")
+
+
+def test_confcalc_successful_run_summary_returns_zero(tmp_path):
+    xyz_path, settings_path = _write_minimal_calc_inputs(tmp_path, orca_path="orca")
+
+    with (
+        patch("confflow.calc.manager.ChemTaskManager.run") as mock_run,
+        patch("sys.argv", ["confcalc", str(xyz_path), "-s", str(settings_path)]),
+    ):
+        mock_run.return_value = CalcRunSummary(total_tasks=1, success_count=1, failed=[])
+        assert manager_main() == ExitCode.SUCCESS
+
+
+def test_confcalc_partial_failure_keeps_zero_exit(tmp_path):
+    xyz_path, settings_path = _write_minimal_calc_inputs(tmp_path, orca_path="orca")
+
+    with (
+        patch("confflow.calc.manager.ChemTaskManager.run") as mock_run,
+        patch("sys.argv", ["confcalc", str(xyz_path), "-s", str(settings_path)]),
+    ):
+        mock_run.return_value = CalcRunSummary(
+            total_tasks=2,
+            success_count=1,
+            failed=[{"job_name": "A000002", "error": "boom"}],
+        )
+        assert manager_main() == ExitCode.SUCCESS
 
 
 def test_manager_read_xyz_fallback_more(tmp_path):

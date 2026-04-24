@@ -8,7 +8,7 @@ import itertools
 import logging
 import multiprocessing
 import os
-import traceback
+import sys
 from dataclasses import dataclass, field
 from math import prod
 from typing import Any
@@ -630,7 +630,6 @@ def run_generation(
 
         except (ValueError, RuntimeError, OSError) as e:
             error(f"Failed to process {xyz_file}: {e}")
-            traceback.print_exc()
 
     all_confs_data = output_sink.finalize()
     if output_sink.count > 0:
@@ -735,25 +734,33 @@ def main():
             input_files = input_files[:-1]
     if not input_files:
         parser.error("At least one input XYZ file is required.")
+    missing_inputs = [path for path in input_files if not os.path.exists(path)]
+    if len(missing_inputs) == len(input_files):
+        print(f"Error: input file does not exist: {missing_inputs[0]}", file=sys.stderr)
+        return ExitCode.USAGE_ERROR
 
-    with cli_output_to_txt(input_files[0]):
-        run_generation(
-            input_files=input_files,
-            angle_step=angle_step,
-            bond_threshold=args.bond_threshold,
-            clash_threshold=args.clash_threshold,
-            add_bond=args.add_bond,
-            del_bond=args.del_bond,
-            no_rotate=args.no_rotate,
-            force_rotate=args.force_rotate,
-            optimize=args.optimize,
-            confirm=not args.yes,
-            chains=args.chain,
-            chain_steps=args.steps,
-            chain_angles=args.angles,
-            rotate_side=args.rotate_side,
-            collect_results=False,
-        )
+    try:
+        with cli_output_to_txt(input_files[0]):
+            run_generation(
+                input_files=input_files,
+                angle_step=angle_step,
+                bond_threshold=args.bond_threshold,
+                clash_threshold=args.clash_threshold,
+                add_bond=args.add_bond,
+                del_bond=args.del_bond,
+                no_rotate=args.no_rotate,
+                force_rotate=args.force_rotate,
+                optimize=args.optimize,
+                confirm=not args.yes,
+                chains=args.chain,
+                chain_steps=args.steps,
+                chain_angles=args.angles,
+                rotate_side=args.rotate_side,
+                collect_results=False,
+            )
+    except (FileNotFoundError, ValueError, RuntimeError, OSError) as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return ExitCode.USAGE_ERROR
     return ExitCode.SUCCESS
 
 
