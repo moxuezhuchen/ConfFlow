@@ -254,6 +254,105 @@ def test_validate_executable_setting_rejects_argument_string():
         validate_executable_setting("g16 --debug", label="gaussian_path")
 
 
+@pytest.mark.parametrize(
+    "value",
+    [
+        r"C:\Program Files\ORCA\orca.exe",
+        "C:/Program Files/ORCA/orca.exe",
+        "/usr/bin/orca",
+        "orca",
+        "g16",
+    ],
+)
+def test_validate_executable_setting_accepts_single_executable_specs(value):
+    from confflow.core.path_policy import validate_executable_setting
+
+    assert validate_executable_setting(value, label="orca_path") == value
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "orca --version",
+        "/usr/bin/orca --flag",
+        "/usr/bin/orca /tmp/input.inp",
+        "python script.py",
+        "cmd /c orca",
+        "orca C:/inputs/job.inp",
+        "orca && rm -rf /",
+        "orca | tee log.txt",
+        r"C:\Program Files\ORCA\orca.exe --version",
+        r"C:\Program Files\ORCA\orca.exe C:\job.inp",
+        r"C:\Program Files\ORCA\orca.exe C:\job.exe",
+        r"C:\Program Files\ORCA\orca.exe --bad.exe",
+        r"C:\Program Files\ORCA\orca.exe input.exe",
+        r"C:\Program Files\ORCA\orca.exe /some/path/job.exe",
+        "C:/Program Files/ORCA/orca.exe C:/job.inp",
+        "C:/Program Files/ORCA/orca.exe C:/job.exe",
+    ],
+)
+def test_validate_executable_setting_rejects_commands_with_arguments(value):
+    from confflow.core.exceptions import ExecutionPolicyError
+    from confflow.core.path_policy import validate_executable_setting
+
+    with pytest.raises(ExecutionPolicyError, match="exactly one executable"):
+        validate_executable_setting(value, label="orca_path")
+
+
+def test_validate_executable_setting_allowlist_accepts_windows_path_with_spaces():
+    from confflow.core.exceptions import ExecutionPolicyError
+    from confflow.core.path_policy import validate_executable_setting
+
+    executable = r"C:\Program Files\ORCA\orca.exe"
+
+    assert (
+        validate_executable_setting(
+            executable,
+            label="orca_path",
+            allowed_executables=[executable],
+        )
+        == executable
+    )
+
+    with pytest.raises(ExecutionPolicyError, match="not allowed"):
+        validate_executable_setting(
+            executable,
+            label="orca_path",
+            allowed_executables=[r"C:\ORCA\orca.exe"],
+        )
+
+
+def test_validate_executable_setting_allowlist_accepts_named_and_posix_path(tmp_path):
+    from confflow.core.exceptions import ExecutionPolicyError
+    from confflow.core.path_policy import validate_executable_setting
+
+    allowed_path = str(tmp_path / "bin" / "orca")
+
+    assert (
+        validate_executable_setting(
+            "orca",
+            label="orca_path",
+            allowed_executables=["orca"],
+        )
+        == "orca"
+    )
+    assert (
+        validate_executable_setting(
+            allowed_path,
+            label="orca_path",
+            allowed_executables=[allowed_path],
+        )
+        == allowed_path
+    )
+
+    with pytest.raises(ExecutionPolicyError, match="not allowed"):
+        validate_executable_setting(
+            "g16",
+            label="gaussian_path",
+            allowed_executables=["orca"],
+        )
+
+
 def test_validate_executable_setting_absolute_allowlist_requires_exact_path(tmp_path):
     from confflow.core.exceptions import ExecutionPolicyError
     from confflow.core.path_policy import validate_executable_setting

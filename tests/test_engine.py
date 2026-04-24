@@ -941,6 +941,49 @@ def test_workflow_engine_resume_logic(tmp_path):
     assert res["steps"][0]["name"] == "step2"
 
 
+def test_workflow_engine_resume_skips_disabled_completed_step(input_xyz, tmp_path):
+    config_file = tmp_path / "workflow.yaml"
+    config_file.write_text(
+        """
+global: {}
+steps:
+  - name: disabled_step
+    type: confgen
+    enabled: false
+    params:
+      chains: ["1-2"]
+      angle_step: 120
+  - name: enabled_step
+    type: confgen
+    params:
+      chains: ["1-2"]
+      angle_step: 120
+""",
+        encoding="utf-8",
+    )
+
+    work_dir = tmp_path / "work"
+
+    def mock_run_generation(*args, **kwargs):
+        with open("search.xyz", "w", encoding="utf-8") as f:
+            f.write("2\ngenerated\nC 0 0 0\nH 0 0 1.1\n")
+
+    with patch("confflow.blocks.confgen.run_generation", side_effect=mock_run_generation):
+        run_workflow([str(input_xyz)], str(config_file), str(work_dir))
+
+    assert not (work_dir / "disabled_step").exists()
+    checkpoint = json.loads((work_dir / ".checkpoint").read_text(encoding="utf-8"))
+    assert checkpoint["last_completed_step"] == 1
+
+    with patch(
+        "confflow.blocks.confgen.run_generation",
+        side_effect=AssertionError("resume should reuse completed enabled step"),
+    ):
+        stats = run_workflow([str(input_xyz)], str(config_file), str(work_dir), resume=True)
+
+    assert stats["final_conformers"] == 1
+
+
 def test_workflow_engine_resume_missing_output_raises(tmp_path):
     from datetime import datetime
 

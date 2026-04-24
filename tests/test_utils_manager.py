@@ -180,6 +180,46 @@ def test_validate_yaml_config_errors():
     assert any("'steps' must be a list" in e for e in errors)
 
 
+def test_validate_yaml_config_rejects_missing_windows_absolute_executable_path():
+    config = {
+        "global": {
+            "orca_path": r"C:\Program Files\ORCA\orca.exe",
+        },
+        "steps": [],
+    }
+
+    errors = validate_yaml_config(config)
+
+    assert any("ORCA path not found" in e for e in errors)
+
+
+def test_validate_yaml_config_keeps_plain_executable_names_unchecked():
+    config = {
+        "global": {
+            "gaussian_path": "g16",
+            "orca_path": "orca",
+        },
+        "steps": [],
+    }
+
+    errors = validate_yaml_config(config)
+
+    assert errors == []
+
+
+def test_validate_yaml_config_rejects_missing_posix_absolute_executable_path():
+    config = {
+        "global": {
+            "gaussian_path": "/nonexistent/g16",
+        },
+        "steps": [],
+    }
+
+    errors = validate_yaml_config(config)
+
+    assert any("Gaussian path not found" in e for e in errors)
+
+
 def test_validate_yaml_config_handles_invalid_shapes():
     errors = validate_yaml_config({"global": [], "steps": ["bad"]})
     assert "'global' must be a dict" in errors

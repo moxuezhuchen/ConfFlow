@@ -349,3 +349,26 @@ def test_processor_main_start_method_runtimeerror_logs_debug(monkeypatch, tmp_pa
 
     rc = processor.main()
     assert rc == processor.ExitCode.SUCCESS
+
+
+def test_processor_main_start_method_valueerror_logs_debug(monkeypatch, tmp_path: Path):
+    input_xyz = tmp_path / "in.xyz"
+    input_xyz.write_text("1\nx\nH 0 0 0\n", encoding="utf-8")
+
+    @contextmanager
+    def fake_cli_output(path):
+        del path
+        yield str(tmp_path / "log.txt")
+
+    monkeypatch.setattr(
+        processor.multiprocessing,
+        "set_start_method",
+        lambda method: (_ for _ in ()).throw(ValueError("unsupported start method")),
+    )
+    monkeypatch.setattr(processor, "cli_output_to_txt", fake_cli_output)
+    monkeypatch.setattr(processor, "process_xyz", lambda args: None)
+    monkeypatch.setattr(processor.logger, "debug", lambda msg: None)
+    monkeypatch.setattr(sys, "argv", ["confrefine", str(input_xyz)])
+
+    rc = processor.main()
+    assert rc == processor.ExitCode.SUCCESS

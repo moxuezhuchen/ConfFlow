@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import ntpath
 import os
 import re
 from typing import Any
@@ -12,6 +13,12 @@ __all__ = [
     "validate_yaml_config",
     "validate_step_config",
 ]
+
+
+def _should_validate_executable_path(path: Any) -> bool:
+    if not isinstance(path, str):
+        return False
+    return os.path.isabs(path) or ntpath.isabs(path) or "/" in path or "\\" in path
 
 
 def validate_yaml_config(
@@ -42,12 +49,12 @@ def validate_yaml_config(
         else:
             if "gaussian_path" in global_config:
                 path = global_config["gaussian_path"]
-                if path and not os.path.exists(path) and "/" in path:
+                if path and not os.path.exists(path) and _should_validate_executable_path(path):
                     errors.append(f"Gaussian path not found: {path}")
 
             if "orca_path" in global_config:
                 path = global_config["orca_path"]
-                if path and not os.path.exists(path) and "/" in path:
+                if path and not os.path.exists(path) and _should_validate_executable_path(path):
                     errors.append(f"ORCA path not found: {path}")
 
             cores = global_config.get("cores_per_task", 1)

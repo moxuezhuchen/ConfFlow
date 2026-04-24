@@ -335,10 +335,11 @@ def process_xyz(args):
 
 def main():
     """Command-line entry point."""
-    try:
-        multiprocessing.set_start_method("fork")
-    except RuntimeError as e:
-        logger.debug(f"Failed to set the multiprocessing start method: {e}")
+    if "fork" in multiprocessing.get_all_start_methods():
+        try:
+            multiprocessing.set_start_method("fork")
+        except (RuntimeError, ValueError) as e:
+            logger.debug(f"Failed to set the multiprocessing start method: {e}")
 
     parser = argparse.ArgumentParser(
         description="Refine and deduplicate conformers from an XYZ file"

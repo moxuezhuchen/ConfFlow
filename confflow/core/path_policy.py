@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shlex
 from typing import Any
 
@@ -20,6 +21,9 @@ __all__ = [
 
 _REPO_ROOT = os.path.realpath(os.path.join(os.path.dirname(__file__), "..", ".."))
 _HOME_DIR = os.path.realpath(os.path.expanduser("~"))
+_SHELL_CONTROL_CHARS = frozenset(";&|<>`$\n\r")
+_WINDOWS_PATH_PREFIX_RE = re.compile(r"^(?:[A-Za-z]:[\\/]|\\\\)")
+_WINDOWS_EXECUTABLE_EXT_RE = re.compile(r"\.(?:exe|cmd|bat|com)", re.IGNORECASE)
 
 
 def _common_path_or_none(path_a: str, path_b: str) -> str | None:
@@ -75,6 +79,53 @@ def validate_cleanup_target(path: str, *, sandbox_root: str | None = None) -> st
     return normalized
 
 
+def _has_whitespace(value: str) -> bool:
+    return any(char.isspace() for char in value)
+
+
+def _starts_with_windows_path_prefix(value: str) -> bool:
+    return _WINDOWS_PATH_PREFIX_RE.match(value) is not None
+
+
+def _looks_like_single_windows_executable_path(value: str) -> bool:
+    if not _starts_with_windows_path_prefix(value):
+        return False
+
+    match = _WINDOWS_EXECUTABLE_EXT_RE.search(value)
+    if match is None:
+        return False
+
+    return not value[match.end() :].strip()
+
+
+def _parse_single_executable(value: str, *, label: str) -> str:
+    if any(char in _SHELL_CONTROL_CHARS for char in value):
+        raise ExecutionPolicyError(f"{label} must name exactly one executable, got: {value}")
+
+    if _starts_with_windows_path_prefix(value):
+        if _looks_like_single_windows_executable_path(value):
+            return value
+        raise ExecutionPolicyError(f"{label} must name exactly one executable, got: {value}")
+
+    if not _has_whitespace(value):
+        return value
+
+    try:
+        parts = shlex.split(value)
+    except ValueError as exc:
+        raise ExecutionPolicyError(f"{label} is not a valid executable spec: {value}") from exc
+
+    if len(parts) == 1:
+        executable = parts[0]
+        if _starts_with_windows_path_prefix(executable):
+            if _looks_like_single_windows_executable_path(executable):
+                return executable
+        elif not _has_whitespace(executable):
+            return executable
+
+    raise ExecutionPolicyError(f"{label} must name exactly one executable, got: {value}")
+
+
 def validate_executable_setting(
     value: Any,
     *,
@@ -89,17 +140,7 @@ def validate_executable_setting(
     if not raw:
         raise ExecutionPolicyError(f"{label} must not be empty")
 
-    try:
-        parts = shlex.split(raw)
-    except ValueError as exc:
-        raise ExecutionPolicyError(f"{label} is not a valid executable spec: {raw}") from exc
-
-    if len(parts) != 1:
-        raise ExecutionPolicyError(
-            f"{label} must name exactly one executable, got: {raw}"
-        )
-
-    executable = parts[0]
+    executable = _parse_single_executable(raw, label=label)
     if allowed_executables:
         allowed = {str(item).strip() for item in allowed_executables if str(item).strip()}
         allowed_absolute = {normalize_managed_path(item) for item in allowed if os.path.isabs(item)}

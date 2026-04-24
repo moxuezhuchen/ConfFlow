@@ -138,6 +138,9 @@ def run_workflow(
 
     for i, step in enumerate(steps):
         if resume_from_step >= i:
+            if not step.get("enabled", True):
+                continue
+
             # If resuming and this step is already completed, update current_input to its output
             step_dir = os.path.join(root_dir, step_dirnames[i])
             if step.get("type") in ["calc", "task"]:
