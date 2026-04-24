@@ -720,7 +720,9 @@ def main():
         help="Choose which side of the chain rotates: left keeps the first atom fixed, right keeps the last atom fixed",
     )
     parser.add_argument("-y", "--yes", action="store_true", help="Skip the confirmation prompt")
-    parser.add_argument("--optimize", "--opt", action="store_true", help="Run MMFF94s pre-optimization")
+    parser.add_argument(
+        "--optimize", "--opt", action="store_true", help="Run MMFF94s pre-optimization"
+    )
 
     args = parser.parse_args()
 

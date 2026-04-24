@@ -417,8 +417,7 @@ def test_processor_main_two_frame_xyz_refine_succeeds(
 ):
     input_xyz = tmp_path / "two_frames.xyz"
     input_xyz.write_text(
-        "2\nE=-1.0\nC 0 0 0\nH 0 0 1\n"
-        "2\nE=-0.9\nC 0 0 0\nH 0 0 1.2\n",
+        "2\nE=-1.0\nC 0 0 0\nH 0 0 1\n" "2\nE=-0.9\nC 0 0 0\nH 0 0 1.2\n",
         encoding="utf-8",
     )
     output = tmp_path / "refined.xyz"
