@@ -513,7 +513,9 @@ def test_manager_signature_uses_workflow_legacy_baseline_for_cleanup_mapping(tmp
     expected = build_task_config(params, global_config)
     structured = build_structured_task_config(params, global_config)
 
-    manager = ChemTaskManager(settings=expected, execution_config=structured, resume_dir=str(tmp_path / "work"))
+    manager = ChemTaskManager(
+        settings=expected, execution_config=structured, resume_dir=str(tmp_path / "work")
+    )
 
     seen = []
     monkeypatch.setattr(
@@ -1426,7 +1428,7 @@ def test_manager_missing_auto_clean_allows_overlay_to_enable(tmp_path):
         execution=ExecutionOptions(auto_clean=True),
     )
     manager = ChemTaskManager(settings=settings, execution_config=structured)
-    
+
     out_file = tmp_path / "result.xyz"
     out_file.write_text("1\ntest\nH 0 0 0\n", encoding="utf-8")
 
@@ -1446,7 +1448,7 @@ def test_manager_explicit_false_auto_clean_blocks_overlay(tmp_path):
         execution=ExecutionOptions(auto_clean=True),
     )
     manager = ChemTaskManager(settings=settings, execution_config=structured)
-    
+
     out_file = tmp_path / "result.xyz"
     out_file.write_text("1\ntest\nH 0 0 0\n", encoding="utf-8")
 
@@ -1465,22 +1467,31 @@ def test_manager_missing_enable_dynamic_resources_allows_overlay(tmp_path):
         keyword="xTB",
         execution=ExecutionOptions(enable_dynamic_resources=True),
     )
-    manager = ChemTaskManager(settings=settings, execution_config=structured, resume_dir=str(tmp_path / "work"))
-    
+    manager = ChemTaskManager(
+        settings=settings, execution_config=structured, resume_dir=str(tmp_path / "work")
+    )
+
     assert manager.monitor is not None
 
 
 def test_manager_explicit_false_enable_dynamic_resources_blocks_overlay(tmp_path):
     """When compat config explicitly sets enable_dynamic_resources=false, overlay cannot override."""
-    settings = {"iprog": "orca", "itask": "sp", "keyword": "xTB", "enable_dynamic_resources": "false"}
+    settings = {
+        "iprog": "orca",
+        "itask": "sp",
+        "keyword": "xTB",
+        "enable_dynamic_resources": "false",
+    }
     structured = CalcTaskConfig(
         program=Program.ORCA,
         task=TaskKind.SP,
         keyword="xTB",
         execution=ExecutionOptions(enable_dynamic_resources=True),
     )
-    manager = ChemTaskManager(settings=settings, execution_config=structured, resume_dir=str(tmp_path / "work"))
-    
+    manager = ChemTaskManager(
+        settings=settings, execution_config=structured, resume_dir=str(tmp_path / "work")
+    )
+
     assert manager.monitor is None
 
 
@@ -1596,7 +1607,7 @@ def test_manager_missing_auto_clean_with_overlay_matches_workflow_hash():
     """When compat lacks auto_clean but overlay enables it, hash must match workflow."""
     from confflow.calc.step_contract import compute_calc_config_signature
     from confflow.workflow.task_config import build_task_config
-    
+
     # Manager path: sparse settings (no auto_clean) + overlay with auto_clean=true
     sparse_settings = {"iprog": "orca", "itask": "sp", "keyword": "xTB"}
     structured = CalcTaskConfig(
@@ -1609,7 +1620,7 @@ def test_manager_missing_auto_clean_with_overlay_matches_workflow_hash():
     manager = ChemTaskManager(settings=sparse_settings, execution_config=structured)
     manager_baseline = manager._compat_signature_config()
     manager_hash = compute_calc_config_signature(manager_baseline, execution_config=structured)
-    
+
     # Workflow path: explicit auto_clean=true with cleanup params
     global_config = {}
     params = {
@@ -1621,7 +1632,7 @@ def test_manager_missing_auto_clean_with_overlay_matches_workflow_hash():
     }
     workflow_baseline = build_task_config(params, global_config)
     workflow_hash = compute_calc_config_signature(workflow_baseline)
-    
+
     # Hashes should match because effective cleanup semantics are the same
     assert manager_hash == workflow_hash
 
@@ -1630,7 +1641,7 @@ def test_manager_missing_auto_clean_with_overlay_false_matches_workflow():
     """When compat lacks auto_clean and overlay disables it, hash must match workflow with auto_clean=false."""
     from confflow.calc.step_contract import compute_calc_config_signature
     from confflow.workflow.task_config import build_task_config
-    
+
     # Manager path: sparse settings (no auto_clean) + overlay with auto_clean=false
     sparse_settings = {"iprog": "orca", "itask": "sp", "keyword": "xTB"}
     structured = CalcTaskConfig(
@@ -1642,7 +1653,7 @@ def test_manager_missing_auto_clean_with_overlay_false_matches_workflow():
     manager = ChemTaskManager(settings=sparse_settings, execution_config=structured)
     manager_baseline = manager._compat_signature_config()
     manager_hash = compute_calc_config_signature(manager_baseline, execution_config=structured)
-    
+
     # Workflow path: explicit auto_clean=false
     global_config = {}
     params = {
@@ -1653,7 +1664,7 @@ def test_manager_missing_auto_clean_with_overlay_false_matches_workflow():
     }
     workflow_baseline = build_task_config(params, global_config)
     workflow_hash = compute_calc_config_signature(workflow_baseline)
-    
+
     # Hashes should match because effective cleanup semantics are the same
     assert manager_hash == workflow_hash
     # Verify runtime cleanup is actually disabled
@@ -1694,10 +1705,9 @@ def test_manager_missing_auto_clean_overlay_false_with_clean_params_stays_disabl
 
     assert mock_refine.called is False
     assert manager_baseline["auto_clean"] == "false"
-    assert (
-        compute_calc_config_signature(manager_baseline, execution_config=structured)
-        == compute_calc_config_signature(workflow_baseline)
-    )
+    assert compute_calc_config_signature(
+        manager_baseline, execution_config=structured
+    ) == compute_calc_config_signature(workflow_baseline)
 
 
 def test_manager_missing_auto_clean_overlay_true_with_clean_params_stays_enabled(tmp_path):
@@ -1734,10 +1744,9 @@ def test_manager_missing_auto_clean_overlay_true_with_clean_params_stays_enabled
 
     assert mock_refine.called is True
     assert manager_baseline["auto_clean"] == "true"
-    assert (
-        compute_calc_config_signature(manager_baseline, execution_config=structured)
-        == compute_calc_config_signature(workflow_baseline)
-    )
+    assert compute_calc_config_signature(
+        manager_baseline, execution_config=structured
+    ) == compute_calc_config_signature(workflow_baseline)
 
 
 def test_manager_explicit_false_auto_clean_with_clean_params_stays_disabled(tmp_path):
@@ -1780,17 +1789,16 @@ def test_manager_explicit_false_auto_clean_with_clean_params_stays_disabled(tmp_
 
     assert mock_refine.called is False
     assert manager_baseline["auto_clean"] == "false"
-    assert (
-        compute_calc_config_signature(manager_baseline, execution_config=structured)
-        == compute_calc_config_signature(workflow_baseline)
-    )
+    assert compute_calc_config_signature(
+        manager_baseline, execution_config=structured
+    ) == compute_calc_config_signature(workflow_baseline)
 
 
 def test_manager_explicit_false_auto_clean_overrides_overlay_in_signature():
     """When compat explicitly sets auto_clean=false, overlay cannot override in signature."""
     from confflow.calc.step_contract import compute_calc_config_signature
     from confflow.workflow.task_config import build_task_config
-    
+
     # Manager path: explicit auto_clean=false + overlay with auto_clean=true
     settings = {"iprog": "orca", "itask": "sp", "keyword": "xTB", "auto_clean": "false"}
     structured = CalcTaskConfig(
@@ -1802,7 +1810,7 @@ def test_manager_explicit_false_auto_clean_overrides_overlay_in_signature():
     manager = ChemTaskManager(settings=settings, execution_config=structured)
     manager_baseline = manager._compat_signature_config()
     manager_hash = compute_calc_config_signature(manager_baseline, execution_config=structured)
-    
+
     # Workflow path: explicit auto_clean=false
     global_config = {}
     params = {
@@ -1813,7 +1821,7 @@ def test_manager_explicit_false_auto_clean_overrides_overlay_in_signature():
     }
     workflow_baseline = build_task_config(params, global_config)
     workflow_hash = compute_calc_config_signature(workflow_baseline)
-    
+
     # Hashes should match because compat lane takes priority
     assert manager_hash == workflow_hash
     # Verify signature reflects compat priority

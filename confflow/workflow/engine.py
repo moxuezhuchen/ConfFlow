@@ -159,8 +159,8 @@ def run_workflow(
                     raise RuntimeError(
                         "Resume failed: calc step "
                         f"{i + 1} ('{step_dirnames[i]}') is incomplete or stale in {step_dir}. "
-                    "The step directory was cleaned; rerun from this step without relying on the old checkpoint."
-                )
+                        "The step directory was cleaned; rerun from this step without relying on the old checkpoint."
+                    )
 
             expected_output = resolve_step_output(step_dir, step.get("type"))
             if expected_output is not None and os.path.exists(expected_output):

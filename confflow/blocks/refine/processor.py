@@ -333,6 +333,7 @@ def process_xyz(args):
     _write_refine_output(args.output, final_unique, global_min)
     return RefineResult(True, args.output, len(final_unique), "ok")
 
+
 def main():
     """Command-line entry point."""
     if "fork" in multiprocessing.get_all_start_methods():
@@ -356,7 +357,9 @@ def main():
         "-n", "--max-conformers", type=int, help="Maximum number of conformers to write"
     )
     parser.add_argument("--dedup-only", action="store_true", help="Only deduplicate conformers")
-    parser.add_argument("--keep-all-topos", action="store_true", help="Keep all detected topologies")
+    parser.add_argument(
+        "--keep-all-topos", action="store_true", help="Keep all detected topologies"
+    )
     parser.add_argument(
         "-w",
         "--workers",
