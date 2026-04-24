@@ -25,6 +25,7 @@ from .core.path_policy import resolve_sandbox_root, validate_managed_path
 from .core.utils import get_logger
 from .workflow.dry_run import run_dry_run
 from .workflow.engine import run_workflow
+from .workflow.export import NoExportableResultsError, export_results
 
 __all__ = [
     "build_parser",
@@ -99,6 +100,22 @@ def build_parser() -> argparse.ArgumentParser:
         "--stop",
         action="store_true",
         help="Stop all running ConfFlow tasks, including child processes",
+    )
+    parser.add_argument(
+        "--export",
+        dest="export_work_dir",
+        help="Export existing workflow results from a work directory without running ConfFlow",
+    )
+    parser.add_argument(
+        "--format",
+        choices=("csv", "json"),
+        default="csv",
+        help="Output format for --export (default: csv)",
+    )
+    parser.add_argument(
+        "-o",
+        "--output",
+        help="Output file for --export (default: <work_dir>/confflow_results.<format>)",
     )
     return parser
 
@@ -278,6 +295,30 @@ def main(args_list: list[str] | None = None):
 
     if args.stop:
         return stop_all_confflow_processes()
+
+    if args.export_work_dir:
+        try:
+            result = export_results(
+                args.export_work_dir,
+                output_format=args.format,
+                output_path=args.output,
+            )
+        except (FileNotFoundError, PathSafetyError) as e:
+            print(f"Error: {e}", file=sys.stderr)
+            return ExitCode.USAGE_ERROR
+        except NoExportableResultsError as e:
+            for warning in e.warnings:
+                print(f"Warning: {warning}", file=sys.stderr)
+            print(f"Error: {e}", file=sys.stderr)
+            return ExitCode.RUNTIME_ERROR
+        except (OSError, ValueError) as e:
+            print(f"Error: {e}", file=sys.stderr)
+            return ExitCode.RUNTIME_ERROR
+
+        for warning in result.warnings:
+            print(f"Warning: {warning}", file=sys.stderr)
+        print(f"Exported {result.row_count} result row(s) to {result.output_path}")
+        return ExitCode.SUCCESS
 
     # Manual validation for required arguments when not stopping
     if not args.input_xyz:
