@@ -102,6 +102,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Validate inputs and configuration, then print the planned workflow without running it",
     )
     parser.add_argument(
+        "--config-show",
+        action="store_true",
+        help="Show the resolved configuration for a workflow YAML without running it",
+    )
+    parser.add_argument(
         "--stop",
         action="store_true",
         help="Stop all running ConfFlow tasks, including child processes",
@@ -113,9 +118,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--format",
-        choices=("csv", "json"),
+        choices=("csv", "json", "text"),
         default="csv",
-        help="Output format for --export (default: csv)",
+        help="Output format for --export (csv/json) or --config-show (text/json, default: csv for --export, text for --config-show)",
     )
     parser.add_argument(
         "-o",
@@ -132,8 +137,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--step",
-        dest="rerun_step",
-        help="Workflow calc/task step name or 1-based step index for --rerun-failed",
+        dest="step",
+        help="Workflow step name or 1-based index for --rerun-failed or --config-show",
     )
     return parser
 
@@ -342,14 +347,14 @@ def main(args_list: list[str] | None = None):
         if not args.config:
             print("Error: --config is required with --rerun-failed", file=sys.stderr)
             return ExitCode.USAGE_ERROR
-        if not args.rerun_step:
+        if not args.step:
             print("Error: --step is required with --rerun-failed", file=sys.stderr)
             return ExitCode.USAGE_ERROR
         try:
             rerun_result = run_rerun_failed(
                 step_dir=args.rerun_failed_step_dir,
                 config_file=args.config,
-                step_ref=args.rerun_step,
+                step_ref=args.step,
                 output_dir=args.output,
             )
         except (FileNotFoundError, PathSafetyError, RerunFailedUsageError) as e:
@@ -377,6 +382,27 @@ def main(args_list: list[str] | None = None):
             f"failed={rerun_result.failed_count}"
         )
         print("Use --export on the rerun output directory to export rerun results.")
+        return ExitCode.SUCCESS
+
+    if args.config_show:
+        if not args.config:
+            print("Error: --config is required with --config-show", file=sys.stderr)
+            return ExitCode.USAGE_ERROR
+        # Determine effective format: for --config-show, treat "csv" as "text"
+        show_format = args.format if args.format in ("json", "text") else "text"
+        try:
+            from .workflow.config_show import show_resolved_config
+            show_resolved_config(
+                config_file=os.path.abspath(args.config),
+                step_ref=args.step,
+                output_format=show_format,
+            )
+        except (ConfigurationError, FileNotFoundError, PathSafetyError) as e:
+            print(f"Error: {e}", file=sys.stderr)
+            return ExitCode.USAGE_ERROR
+        except ValueError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            return ExitCode.USAGE_ERROR
         return ExitCode.SUCCESS
 
     # Manual validation for required arguments when not stopping

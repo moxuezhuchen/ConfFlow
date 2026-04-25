@@ -720,3 +720,29 @@ def test_cli_main_logger_error_failure(tmp_path):
         with patch("confflow.cli.logger.error", side_effect=Exception("logger failed")):
             ret = main([str(xyz), "-c", str(conf), "-w", str(tmp_path / "work")])
             assert ret == 2
+
+
+def test_build_parser_config_show():
+    """Test that --config-show flag is correctly parsed."""
+    parser = build_parser()
+    args = parser.parse_args(["--config-show", "-c", "config.yaml"])
+    assert args.config_show is True
+    assert args.config == "config.yaml"
+
+
+def test_build_parser_step_dest():
+    """Test that --step parameter has correct dest."""
+    parser = build_parser()
+    args = parser.parse_args(["--rerun-failed", "dir", "-c", "conf.yaml", "--step", "opt1"])
+    assert args.step == "opt1"
+    assert args.rerun_failed_step_dir == "dir"
+
+
+def test_build_parser_format_extended():
+    """Test that --format choices include text."""
+    parser = build_parser()
+    args = parser.parse_args(["--config-show", "-c", "config.yaml", "--format", "text"])
+    assert args.format == "text"
+
+    args = parser.parse_args(["--config-show", "-c", "config.yaml", "--format", "json"])
+    assert args.format == "json"
