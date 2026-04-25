@@ -27,7 +27,8 @@ confflow/
 │   ├── logging.py            # 日志配置
 │   ├── parsers.py            # 通用解析工具
 │   ├── pairs.py              # 原子对操作
-│   └── validation.py         # 核心验证逻辑
+│   ├── validation.py         # 核心验证逻辑
+│   └── cli_base.py           # CLI 基础工具
 │
 ├── config/                    # 配置层（配置加载、解析、验证）
 │   ├── __init__.py
@@ -44,12 +45,18 @@ confflow/
 ├── blocks/                    # 业务逻辑层（具体功能模块）
 │   ├── confgen/              # 构象生成模块
 │   │   ├── __init__.py
-│   │   └── generator.py      # 构象生成核心（链旋转模式）
+│   │   ├── generator.py      # 构象生成核心（链旋转模式）
+│   │   ├── collision.py      # 碰撞检测
+│   │   ├── mapping.py        # 多输入拓扑映射
+│   │   ├── rotations.py      # 旋转操作
+│   │   └── validator.py      # 构象验证器
 │   │
 │   ├── refine/               # 构象筛选模块
 │   │   ├── __init__.py
 │   │   ├── processor.py      # RMSD 去重、能量筛选、虚频过滤
-│   │   └── rmsd_engine.py    # RMSD/PMI 计算引擎（Numba JIT 加速、对称性感知 RMSD）
+│   │   ├── rmsd_engine.py    # RMSD/PMI 计算引擎（Numba JIT 加速、对称性感知 RMSD）
+│   │   ├── _compat.py        # 兼容层
+│   │   └── result.py         # 结果数据结构
 │   │
 │   └── viz/                  # 可视化模块
 │       ├── __init__.py
@@ -65,10 +72,14 @@ confflow/
 │   ├── step_contract.py      # calc step 工件合同与签名
 │   ├── postprocess.py        # calc -> refine 共享后处理适配器
 │   ├── constants.py          # 程序常量（路径、参数等）
+│   ├── config_types.py       # 计算配置类型定义
 │   ├── geometry.py           # 几何解析（parse_last_geometry, check_termination）
+│   ├── psutil_compat.py      # psutil 兼容层
+│   ├── result_writer.py      # 结果写入器
 │   ├── resources.py          # 资源监控（CPU、内存）
 │   ├── rescue.py             # TS 失败救援逻辑
 │   ├── scan_ops.py           # 扫描操作
+│   ├── task_execution.py     # 任务执行逻辑
 │   │
 │   ├── policies/             # 策略模式实现（按程序区分）
 │   │   ├── __init__.py
@@ -96,7 +107,14 @@ confflow/
 │   ├── helpers.py            # 辅助工具（pushd、构象计数、列表转换）
 │   ├── validation.py         # 输入验证与标签标准化
 │   ├── config_builder.py     # 兼容 facade（旧 imports 保留）
-│   └── stats.py              # 检查点、统计追踪、构象溯源
+│   ├── stats.py              # 检查点、统计追踪、构象溯源
+│   ├── dry_run.py            # 干运行支持
+│   ├── export.py             # 导出功能
+│   ├── rerun_failed.py       # 失败重跑
+│   ├── step_naming.py        # 步骤命名
+│   ├── task_config.py        # 任务配置构建
+│   ├── task_config_constants.py # 任务配置常量
+│   └── task_config_helpers.py   # 任务配置辅助函数
 │
 ├── cli.py                     # CLI 参数解析
 ├── main.py                    # 工作流主程序入口
@@ -112,7 +130,7 @@ docs/                          # 文档
 ├── STYLE_CONTRACT.md         # 代码/输入/输出一致性标准
 └── DEVELOPMENT.md            # 开发指南
 
-tests/                         # 测试套件（49 个文件，673 个测试）
+tests/                         # 测试套件（以 pytest --collect-only -q 和 CI 输出为准）
 ├── conftest.py               # 共享 fixtures
 ├── _helpers.py               # 共享 fake 对象与工具函数
 ├── test_core.py              # 配置、包导出、低能量溯源
@@ -126,9 +144,13 @@ tests/                         # 测试套件（49 个文件，673 个测试）
 ├── test_refine.py            # 构象筛选
 ├── test_calc.py              # 计算任务基础
 ├── test_calc_full.py         # 计算完整集成
+├── test_calc_manager_paths.py # manager 路径相关测试
 ├── test_policies.py          # Gaussian/ORCA 策略
 ├── test_rescue.py            # TS 救援
+├── test_rescue_ts_scan_paths.py # TS 救援扫描路径测试
 ├── test_engine.py            # 工作流引擎
+├── test_export.py            # 导出功能测试
+├── test_rerun_failed.py      # 失败重跑测试
 ├── test_cli.py               # CLI 入口
 ├── test_validation.py        # 输入验证
 └── ...                       # 完整清单见 docs/TESTING.md
@@ -236,7 +258,6 @@ LICENSE                        # MIT 许可证
   - 提供 `iter_all_results()`，避免一次性反序列化全部结果
 
 - **其他**：
-  - `core.py`：任务类型和程序类型的解析函数
   - `analysis.py`：TS 键长分析、频率分析等
   - `constants.py`：程序路径、任务常量等
   - `resources.py`：CPU/内存监控
@@ -440,12 +461,16 @@ tests/
 ├── test_refine.py            # refine 筛选与去重
 ├── test_calc.py              # calc 基础 + task_runner
 ├── test_calc_full.py         # calc 完整集成
+├── test_calc_manager_paths.py # manager 路径相关测试
 ├── test_policies.py          # Gaussian/ORCA Policy
 ├── test_rescue.py            # TS 救援逻辑
+├── test_rescue_ts_scan_paths.py # TS 救援扫描路径测试
 ├── test_geometry.py          # 几何解析与终止检测
 ├── test_utils_manager.py     # manager 与工具函数
 │
 ├── test_engine.py            # workflow engine
+├── test_export.py            # 导出功能测试
+├── test_rerun_failed.py      # 失败重跑测试
 ├── test_runtime_context.py   # 运行时上下文
 ├── test_presenter.py         # 步骤展示与报告
 ├── test_schema.py            # Schema 校验
@@ -458,7 +483,7 @@ tests/
 └── test_input_snapshot.py    # 输入文件快照
 ```
 
-当前测试套件共 41 个测试文件、660 个测试用例；完整清单见 `docs/TESTING.md`。除主测试文件外，还包含一组 `*_hotspots.py` 用例，专门覆盖回退逻辑、异常路径和历史回归点。
+当前测试套件的文件数与用例数以 `pytest --collect-only -q` 和 CI 输出为准；完整清单见 `docs/TESTING.md`。除主测试文件外，还包含一组 `*_hotspots.py` 用例，专门覆盖回退逻辑、异常路径和历史回归点。
 
 ## 依赖关系图
 
@@ -540,7 +565,7 @@ confflow/__init__.py (包入口)
 
 1. 在 `calc/policies/` 中创建新文件，例如 `mopac.py`
 2. 实现 `CalculationPolicy` 基类
-3. 在 `calc/core.py` 中注册新程序
+3. 在 `calc/policies/__init__.py` 中注册新程序
 4. 在 `calc/constants.py` 中添加程序常量
 
 ### 添加新的分析工具
@@ -552,7 +577,7 @@ confflow/__init__.py (包入口)
 
 ### 添加新的计算任务类型
 
-1. 在 `calc/core.py` 中扩展 `TaskType` 枚举
+1. 在 `core/types.py` 中扩展 `TaskType` 枚举
 2. 在各 Policy 中实现新任务的输入/输出处理
 3. 添加相应的测试
 

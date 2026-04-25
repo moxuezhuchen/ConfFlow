@@ -102,8 +102,10 @@ pytest tests/ -q
 |------|----------|------|
 | `test_calc.py` | calc 基础 + task_runner + input_helpers | 任务运行器、输入生成、资源计算 |
 | `test_calc_full.py` | calc 完整集成 | 端到端计算流程、多步骤场景 |
+| `test_calc_manager_paths.py` | calc/manager 路径 | manager 路径策略与工作目录测试 |
 | `test_policies.py` | policies/gaussian, orca | Gaussian/ORCA 输入生成与输出解析 |
 | `test_rescue.py` | calc/rescue, scan_ops | TS 失败救援、约束扫描 |
+| `test_rescue_ts_scan_paths.py` | calc/rescue, scan_ops | TS 救援扫描路径与目录策略 |
 | `test_utils_manager.py` | calc/manager, core/utils | 任务管理器、工具函数 |
 | `test_geometry.py` | calc/geometry | 几何解析、正常终止检测 |
 | `test_input_helpers_hotspots.py` | calc/components/input_helpers | 内存、约束、冻结参数热点路径 |
@@ -115,6 +117,8 @@ pytest tests/ -q
 | 文件 | 覆盖模块 | 说明 |
 |------|----------|------|
 | `test_engine.py` | workflow/engine, helpers | 工作流引擎、断点恢复、步骤调度 |
+| `test_export.py` | workflow/export | 导出功能测试 |
+| `test_rerun_failed.py` | workflow/rerun_failed | 失败重跑功能测试 |
 | `test_step_handlers.py` | workflow/step_handlers | 步骤执行适配器（confgen/calc 步骤） |
 | `test_runtime_context.py` | workflow/runtime_context | 运行时上下文初始化 |
 | `test_presenter.py` | workflow/presenter | 步骤展示与报告输出 |

@@ -377,7 +377,7 @@ A: 参考"添加新功能的步骤"中的量子化学程序部分，实现新的
 
 ### Q: 如何优化性能？
 
-A: 查看"性能优化"部分，或调整 `confflow.example.yaml` 中的 `max_jobs` 并行数。
+A: 查看"性能优化"部分，或调整 `confflow.example.yaml` 中的 `max_parallel_jobs` 并行数。
 
 ## 联系与反馈
 

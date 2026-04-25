@@ -341,6 +341,5 @@ confflow --help
 
 # 文档位置
 cat README.md               # 快速开始
-cat QUICK_START.txt        # 快速入门
-cat DEVELOPMENT.md         # 详细开发文档
+cat docs/DEVELOPMENT.md    # 详细开发文档
 ```

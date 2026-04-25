@@ -52,7 +52,7 @@
 ### 文档同步
 
 - README、USAGE、ARCHITECTURE、TESTING、DEVELOPMENT、ASSESSMENT 已更新到当前基线
-- 当前本地验证结果：49 个测试文件、673 个测试、`pytest -q` 全绿
+- 当前本地验证结果：`pytest -q` 全绿（测试文件数与用例数以当前 CI 输出为准）
 
 ## v1.0.10 (2026-02-28)
 
