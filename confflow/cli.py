@@ -392,6 +392,7 @@ def main(args_list: list[str] | None = None):
         show_format = args.format if args.format in ("json", "text") else "text"
         try:
             from .workflow.config_show import show_resolved_config
+
             show_resolved_config(
                 config_file=os.path.abspath(args.config),
                 step_ref=args.step,

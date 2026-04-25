@@ -43,15 +43,9 @@ def _select_step(steps: list[dict[str, Any]], step_ref: str) -> tuple[int, dict[
         index = int(ref)
         if 1 <= index <= len(steps):
             return index - 1, steps[index - 1]
-        raise ValueError(
-            f"--step index {ref} is out of range (1..{len(steps)})"
-        )
+        raise ValueError(f"--step index {ref} is out of range (1..{len(steps)})")
 
-    matches = [
-        (idx, step)
-        for idx, step in enumerate(steps)
-        if str(step.get("name", "")) == ref
-    ]
+    matches = [(idx, step) for idx, step in enumerate(steps) if str(step.get("name", "")) == ref]
     if not matches:
         raise ValueError(f"No workflow step named '{step_ref}' was found")
     if len(matches) > 1:
@@ -59,9 +53,7 @@ def _select_step(steps: list[dict[str, Any]], step_ref: str) -> tuple[int, dict[
     return matches[0]
 
 
-def _resolve_step_config(
-    step: dict[str, Any], global_config: dict[str, Any]
-) -> dict[str, Any]:
+def _resolve_step_config(step: dict[str, Any], global_config: dict[str, Any]) -> dict[str, Any]:
     """Resolve a single step's merged configuration."""
     return ConfigSchema.normalize_step_config(step, global_config)
 
@@ -131,12 +123,14 @@ def show_resolved_config(
             steps_output = []
             for idx, step in enumerate(steps):
                 resolved = _resolve_step_config(step, global_config)
-                steps_output.append({
-                    "step_index": idx + 1,
-                    "step_name": str(step.get("name", f"step_{idx + 1}")),
-                    "step_type": str(step.get("type", "")),
-                    "resolved_config": resolved,
-                })
+                steps_output.append(
+                    {
+                        "step_index": idx + 1,
+                        "step_name": str(step.get("name", f"step_{idx + 1}")),
+                        "step_type": str(step.get("type", "")),
+                        "resolved_config": resolved,
+                    }
+                )
             output = {
                 "config_file": config_file,
                 "global_config": global_config,
@@ -153,8 +147,4 @@ def show_resolved_config(
                 step_name = str(step.get("name", f"step_{idx + 1}"))
                 step_type = str(step.get("type", ""))
                 print()
-                print(
-                    _format_text_section(
-                        f"[{idx + 1}] {step_name} ({step_type})", resolved
-                    )
-                )
+                print(_format_text_section(f"[{idx + 1}] {step_name} ({step_type})", resolved))

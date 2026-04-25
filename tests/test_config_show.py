@@ -195,7 +195,9 @@ steps:
         config_file = tmp_path / "config.yaml"
         config_file.write_text(config_content)
 
-        result = main(["--config-show", "-c", str(config_file), "--step", "gen", "--format", "json"])
+        result = main(
+            ["--config-show", "-c", str(config_file), "--step", "gen", "--format", "json"]
+        )
         assert result == ExitCode.SUCCESS
 
         captured = capsys.readouterr()
@@ -223,7 +225,9 @@ steps:
         config_file = tmp_path / "config.yaml"
         config_file.write_text(config_content)
 
-        result = main(["--config-show", "-c", str(config_file), "--step", "opt", "--format", "json"])
+        result = main(
+            ["--config-show", "-c", str(config_file), "--step", "opt", "--format", "json"]
+        )
         assert result == ExitCode.SUCCESS
 
         captured = capsys.readouterr()
