@@ -105,7 +105,7 @@ class ExecutionOptions:
     enable_dynamic_resources: bool = DEFAULT_ENABLE_DYNAMIC_RESOURCES
     resume_from_backups: bool = DEFAULT_RESUME_FROM_BACKUPS
     auto_clean: bool = False
-    delete_work_dir: bool = False
+    delete_work_dir: bool = True
     sandbox_root: str | None = None
     input_chk_dir: str | None = None
     allowed_executables: tuple[str, ...] = ()
@@ -462,7 +462,7 @@ class CalcTaskConfig(dict[str, Any]):
                 raw.get("resume_from_backups", DEFAULT_RESUME_FROM_BACKUPS)
             ),
             auto_clean=cleanup_enabled,
-            delete_work_dir=_coerce_bool_flag(raw.get("delete_work_dir", False)),
+            delete_work_dir=_coerce_bool_flag(raw.get("delete_work_dir", True)),
             sandbox_root=(
                 str(raw.get("sandbox_root")).strip() if raw.get("sandbox_root") is not None else None
             ),

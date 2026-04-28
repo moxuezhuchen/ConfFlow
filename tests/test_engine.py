@@ -598,6 +598,109 @@ def test_build_structured_task_config_keeps_typed_fields():
     assert cfg.cleanup.rmsd_threshold == 0.4
 
 
+def test_build_structured_task_config_inherits_global_program_and_task():
+    cfg = build_structured_task_config(
+        params={"keyword": "HF"},
+        global_config={"iprog": "g16", "itask": "sp", "keyword": "B3LYP"},
+    )
+
+    assert cfg["iprog"] == "g16"
+    assert cfg["itask"] == "sp"
+    assert cfg["keyword"] == "HF"
+
+
+@pytest.mark.parametrize("global_itask", ["sp", "freq", "ts"])
+def test_build_structured_task_config_global_non_opt_suppresses_freeze(global_itask):
+    cfg = build_structured_task_config(
+        params={"keyword": "HF"},
+        global_config={"itask": global_itask, "freeze": [1, "2-3"]},
+    )
+
+    assert cfg["itask"] == global_itask
+    assert cfg["freeze"] == []
+    assert cfg.freeze == ()
+
+
+def test_build_structured_task_config_step_opt_override_uses_freeze():
+    cfg = build_structured_task_config(
+        params={"itask": "opt", "keyword": "HF"},
+        global_config={"itask": "sp", "freeze": [1, "2-3"]},
+    )
+
+    assert cfg["itask"] == "opt"
+    assert cfg["freeze"] == [1, 2, 3]
+    assert cfg.freeze == (1, 2, 3)
+
+
+def test_build_structured_task_config_global_ts_uses_ts_options():
+    cfg = build_structured_task_config(
+        params={"keyword": "HF"},
+        global_config={
+            "iprog": "g16",
+            "itask": "ts",
+            "ts_rescue_scan": "true",
+            "scan_coarse_step": 0.2,
+            "scan_fine_step": 0.05,
+            "scan_uphill_limit": 4,
+        },
+    )
+
+    assert cfg["itask"] == "ts"
+    assert cfg["ts_rescue_scan"] is True
+    assert cfg["scan_coarse_step"] == 0.2
+    assert cfg["scan_fine_step"] == 0.05
+    assert cfg["scan_uphill_limit"] == 4
+    assert cfg.ts.rescue_scan is True
+    assert cfg.ts.scan_coarse_step == 0.2
+    assert cfg.ts.scan_fine_step == 0.05
+    assert cfg.ts.scan_uphill_limit == 4
+
+
+def test_build_structured_task_config_step_program_and_task_override_global():
+    cfg = build_structured_task_config(
+        params={"iprog": "orca", "itask": "opt", "keyword": "HF"},
+        global_config={
+            "iprog": "g16",
+            "itask": "ts",
+            "keyword": "B3LYP",
+            "ts_rescue_scan": "true",
+            "scan_coarse_step": 0.2,
+        },
+    )
+
+    assert cfg["iprog"] == "orca"
+    assert cfg["itask"] == "opt"
+    assert cfg["keyword"] == "HF"
+    assert "ts_rescue_scan" not in cfg
+    assert "scan_coarse_step" not in cfg
+    assert cfg.ts.rescue_scan is False
+    assert cfg.ts.scan_coarse_step is None
+
+
+def test_build_structured_task_config_respects_delete_work_dir_override():
+    cfg = build_structured_task_config(
+        params={"keyword": "HF", "delete_work_dir": "false"},
+        global_config={"delete_work_dir": True},
+    )
+    default_cfg = build_structured_task_config(params={"keyword": "HF"}, global_config={})
+
+    assert cfg["delete_work_dir"] is False
+    assert cfg.execution.delete_work_dir is False
+    assert default_cfg["delete_work_dir"] is True
+    assert default_cfg.execution.delete_work_dir is True
+
+
+def test_build_structured_task_config_delete_work_dir_is_known(caplog):
+    with caplog.at_level("WARNING", logger="confflow.workflow.config_builder"):
+        cfg = build_structured_task_config(
+            params={"keyword": "HF", "delete_work_dir": "false"},
+            global_config={},
+        )
+
+    assert cfg["delete_work_dir"] is False
+    assert "Ignored unknown calc parameter 'delete_work_dir'" not in caplog.text
+
+
 def test_build_structured_task_config_preserves_typed_blocks_and_lists():
     cfg = build_structured_task_config(
         params={

@@ -79,11 +79,30 @@ class TaskRunner:
             result["error_details"] = error_details
         return result
 
+    @staticmethod
+    def _cleanup_work_dir_enabled(
+        cfg: dict[str, Any],
+        raw_config: Any,
+    ) -> bool:
+        if isinstance(raw_config, dict) and "delete_work_dir" not in raw_config:
+            return True
+        raw = cfg.get("delete_work_dir", True)
+        if isinstance(raw, bool):
+            return raw
+        if isinstance(raw, str):
+            normalized = raw.strip().lower()
+            if normalized in {"0", "false", "no", "off", ""}:
+                return False
+            if normalized in {"1", "true", "yes", "on"}:
+                return True
+        return bool(raw)
+
     def run(self, task_info: models.TaskContext | dict[str, Any]):
         task_dict = (
             task_info.model_dump() if isinstance(task_info, models.TaskContext) else task_info
         )
-        cfg = ensure_calc_task_config(task_dict["config"])
+        raw_config = task_dict["config"]
+        cfg = ensure_calc_task_config(raw_config)
         task_dict = {**task_dict, "config": cfg}
         job, wd = task_dict["job_name"], task_dict["work_dir"]
         coords = task_dict["coords"]
@@ -238,6 +257,20 @@ class TaskRunner:
                     final_val = e
                     key = "energy"
 
+            if final_val is None:
+                err_msg = "No energy parsed from calculation output"
+                if itask == 4:
+                    rescued = self._try_rescue(cfg, task_dict, err_msg)
+                    if rescued is not None:
+                        return rescued
+                    error_kind = "rescue_failed" if is_rescue_enabled(cfg) else "parse_error"
+                    return self._failed_result(task_dict, err_msg, error_kind)
+                return self._failed_result(
+                    task_dict,
+                    err_msg,
+                    "parse_error",
+                )
+
             success = True
             result = {
                 **task_dict,
@@ -255,4 +288,9 @@ class TaskRunner:
                 result["ts_bond_length"] = ts_bond_length
             return result
         finally:
-            executor.handle_backups(wd, cfg, success, cleanup_work_dir=True)
+            executor.handle_backups(
+                wd,
+                cfg,
+                success,
+                cleanup_work_dir=self._cleanup_work_dir_enabled(cfg, raw_config),
+            )
