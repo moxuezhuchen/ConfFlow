@@ -597,6 +597,7 @@ class TestRunCalcStep:
         (backups_dir / "old.out").write_text("old", encoding="utf-8")
 
         with patch("confflow.workflow.step_handlers.calc.run_calc_workflow_step") as mock_run:
+
             def side_effect(**kwargs):
                 if backups_dir.exists():
                     for entry in backups_dir.iterdir():
@@ -737,7 +738,6 @@ class TestRunCalcStep:
         # failure_tracker should have recorded the failed file
         assert os.path.exists(failure_tracker.combined_failed) or os.path.exists(failed)
 
-
     def test_calc_step_invalid_cleanup_preserves_old_artifacts(
         self, step_dir: str, single_input_xyz: str, failure_tracker: FailureTracker
     ):
@@ -746,7 +746,7 @@ class TestRunCalcStep:
         output = os.path.join(step_dir, "output.xyz")
         results_db = os.path.join(step_dir, "results.db")
         backups_dir = os.path.join(step_dir, "backups")
-        
+
         with open(output, "w") as f:
             f.write("2\nold\nC 0 0 0\nH 0 0 1\n")
         with open(results_db, "w") as f:
@@ -754,11 +754,11 @@ class TestRunCalcStep:
         os.makedirs(backups_dir, exist_ok=True)
         with open(os.path.join(backups_dir, "old.log"), "w") as f:
             f.write("old log")
-        
+
         # Write mismatched config hash to trigger stale detection
         with open(os.path.join(step_dir, ".config_hash"), "w") as f:
             f.write("oldstale")
-        
+
         # Invalid rmsd_threshold should fail during structured config build
         with pytest.raises((ValueError, TypeError)):
             run_calc_step(
@@ -774,7 +774,7 @@ class TestRunCalcStep:
                 failure_tracker=failure_tracker,
                 step_name="step_02",
             )
-        
+
         # Old artifacts should still exist
         assert os.path.exists(output)
         assert os.path.exists(results_db)
@@ -789,7 +789,7 @@ class TestRunCalcStep:
         config_hash_path = os.path.join(step_dir, ".config_hash")
         with open(config_hash_path, "w") as f:
             f.write("oldstale")
-        
+
         # Invalid rmsd_threshold should fail during structured config build
         with pytest.raises((ValueError, TypeError)):
             run_calc_step(
@@ -805,7 +805,7 @@ class TestRunCalcStep:
                 failure_tracker=failure_tracker,
                 step_name="step_02",
             )
-        
+
         # .config_hash should still be old value
         with open(config_hash_path) as f:
             assert f.read().strip() == "oldstale"
@@ -819,8 +819,9 @@ class TestRunCalcStep:
         """Cleanup parameter change (when auto_clean=true) should trigger stale detection."""
         # First run with threshold=0.25
         output = os.path.join(step_dir, "output.xyz")
-        
+
         with patch("confflow.workflow.step_handlers.calc.run_calc_workflow_step") as mock_run:
+
             def first_run(**kwargs):
                 with open(output, "w") as f:
                     f.write("2\nfirst\nC 0 0 0\nH 0 0 1\n")
@@ -847,11 +848,12 @@ class TestRunCalcStep:
                 failure_tracker=failure_tracker,
                 step_name="step_02",
             )
-        
+
         first_hash = open(os.path.join(step_dir, ".config_hash")).read().strip()
-        
+
         # Second run with threshold=0.5 should have different hash
         with patch("confflow.workflow.step_handlers.calc.run_calc_workflow_step") as mock_run:
+
             def second_run(**kwargs):
                 with open(output, "w") as f:
                     f.write("2\nsecond\nC 0 0 0\nH 0 0 1\n")
@@ -878,7 +880,7 @@ class TestRunCalcStep:
                 failure_tracker=failure_tracker,
                 step_name="step_02",
             )
-        
+
         second_hash = open(os.path.join(step_dir, ".config_hash")).read().strip()
         assert first_hash != second_hash
 
@@ -890,8 +892,9 @@ class TestRunCalcStep:
     ):
         """Only execution_config.cleanup change (auto_clean=true) should trigger stale."""
         output = os.path.join(step_dir, "output.xyz")
-        
+
         with patch("confflow.workflow.step_handlers.calc.run_calc_workflow_step") as mock_run:
+
             def first_run(**kwargs):
                 with open(output, "w") as f:
                     f.write("2\nfirst\nC 0 0 0\nH 0 0 1\n")
@@ -918,11 +921,12 @@ class TestRunCalcStep:
                 failure_tracker=failure_tracker,
                 step_name="step_02",
             )
-        
+
         first_hash = open(os.path.join(step_dir, ".config_hash")).read().strip()
-        
+
         # Second run with threshold=0.3 (only cleanup changed)
         with patch("confflow.workflow.step_handlers.calc.run_calc_workflow_step") as mock_run:
+
             def second_run(**kwargs):
                 with open(output, "w") as f:
                     f.write("2\nsecond\nC 0 0 0\nH 0 0 1\n")
@@ -949,7 +953,7 @@ class TestRunCalcStep:
                 failure_tracker=failure_tracker,
                 step_name="step_02",
             )
-        
+
         second_hash = open(os.path.join(step_dir, ".config_hash")).read().strip()
         assert first_hash != second_hash
 
@@ -961,8 +965,9 @@ class TestRunCalcStep:
     ):
         """Cleanup change should NOT trigger stale when auto_clean=false."""
         output = os.path.join(step_dir, "output.xyz")
-        
+
         with patch("confflow.workflow.step_handlers.calc.run_calc_workflow_step") as mock_run:
+
             def first_run(**kwargs):
                 with open(output, "w") as f:
                     f.write("2\nfirst\nC 0 0 0\nH 0 0 1\n")
@@ -989,9 +994,9 @@ class TestRunCalcStep:
                 failure_tracker=failure_tracker,
                 step_name="step_02",
             )
-        
+
         first_hash = open(os.path.join(step_dir, ".config_hash")).read().strip()
-        
+
         # Second run with threshold=0.5 but auto_clean still false
         with patch("confflow.workflow.step_handlers.calc.run_calc_workflow_step") as mock_run:
             mock_run.return_value = CalcStepExecutionResult(output, reused_existing=True)
@@ -1009,7 +1014,7 @@ class TestRunCalcStep:
                 failure_tracker=failure_tracker,
                 step_name="step_02",
             )
-        
+
         second_hash = open(os.path.join(step_dir, ".config_hash")).read().strip()
         # Hash should be the same because auto_clean=false
         assert first_hash == second_hash

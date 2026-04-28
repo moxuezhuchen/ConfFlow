@@ -137,7 +137,13 @@ class TestLowEnergyTrace:
                     f.write("H 0 0 0.74\n")
 
         class FakeManager:
-            def __init__(self, settings_file: str = None, settings: dict = None, execution_config: dict = None, **kwargs):
+            def __init__(
+                self,
+                settings_file: str = None,
+                settings: dict = None,
+                execution_config: dict = None,
+                **kwargs,
+            ):
                 self.config = {}
                 self.work_dir = ""
 

@@ -536,11 +536,7 @@ def build_structured_task_config(
         program=(
             Program.GAUSSIAN
             if iprog_label == Program.GAUSSIAN.value
-            else (
-                Program.ORCA
-                if iprog_label == Program.ORCA.value
-                else iprog_label
-            )
+            else (Program.ORCA if iprog_label == Program.ORCA.value else iprog_label)
         ),
         task=(
             TaskKind(itask_label)

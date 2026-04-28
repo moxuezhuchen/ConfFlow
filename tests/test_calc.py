@@ -862,9 +862,7 @@ def test_task_runner_missing_energy_is_parse_error(tmp_path):
         ({"itask": 1, "iprog": 1, "delete_work_dir": "false"}, False),
     ],
 )
-def test_task_runner_delete_work_dir_controls_success_cleanup(
-    tmp_path, config, expected_cleanup
-):
+def test_task_runner_delete_work_dir_controls_success_cleanup(tmp_path, config, expected_cleanup):
     from confflow.calc.components.task_runner import TaskRunner
 
     runner = TaskRunner()

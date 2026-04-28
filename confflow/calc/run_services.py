@@ -187,5 +187,7 @@ class ResultAssemblyService:
                 failed.append(result)
         return success_count, failed
 
-    def write_failed_xyz(self, failed: list[dict[str, Any]], tasks: list[models.TaskContext]) -> None:
+    def write_failed_xyz(
+        self, failed: list[dict[str, Any]], tasks: list[models.TaskContext]
+    ) -> None:
         write_failed_xyz(self.work_dir, failed, tasks)

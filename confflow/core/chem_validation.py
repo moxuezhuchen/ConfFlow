@@ -35,4 +35,8 @@ def validate_chain_definitions(
     validator = ChainValidator(chains)
     mol = load_mol_from_xyz(input_file, bond_threshold)
     ref_data = validator.validate_mol(mol, input_file)
-    return [f"{entry.get('raw_chain')}: {entry.get('error')}" for entry in ref_data if not entry.get("valid")]
+    return [
+        f"{entry.get('raw_chain')}: {entry.get('error')}"
+        for entry in ref_data
+        if not entry.get("valid")
+    ]
