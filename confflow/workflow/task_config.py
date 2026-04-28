@@ -120,9 +120,11 @@ def _resolve_chk_input_dir(
 
 
 def _resolve_freeze_for_task(
-    params: dict[str, Any], global_config: dict[str, Any]
+    params: dict[str, Any],
+    global_config: dict[str, Any],
+    effective_itask: Any,
 ) -> tuple[int, ...]:
-    itask_int = parse_itask(params.get("itask", "opt"))
+    itask_int = parse_itask(effective_itask)
     if itask_int in [0, 3]:
         freeze_val = params.get("freeze", global_config.get("freeze", "0"))
         return tuple(_coerce_freeze_indices(freeze_val))
@@ -233,8 +235,12 @@ def _get_param(
     return val
 
 
-def _resolve_ts_options(params: dict[str, Any], global_config: dict[str, Any]) -> TSOptions:
-    itask_int = parse_itask(params.get("itask", "opt"))
+def _resolve_ts_options(
+    params: dict[str, Any],
+    global_config: dict[str, Any],
+    effective_itask: Any,
+) -> TSOptions:
+    itask_int = parse_itask(effective_itask)
     pair = _resolve_ts_pair(params, global_config)
     if itask_int != 4:
         return TSOptions(bond_atoms=pair, rescue_scan=False)
@@ -297,7 +303,9 @@ def _resolve_execution_options(
                 global_config.get("auto_clean", True),
             )
         ),
-        delete_work_dir=True,
+        delete_work_dir=_coerce_bool_flag(
+            params.get("delete_work_dir", global_config.get("delete_work_dir", True))
+        ),
         sandbox_root=(
             None
             if sandbox_root_val is None or str(sandbox_root_val).strip() == ""
@@ -365,7 +373,11 @@ def _build_base_task_config(
                 )
             )
         ).lower(),
-        "delete_work_dir": "true",
+        "delete_work_dir": str(
+            _coerce_bool_flag(
+                params.get("delete_work_dir", global_config.get("delete_work_dir", True))
+            )
+        ).lower(),
     }
 
 
@@ -515,20 +527,21 @@ def build_structured_task_config(
 
     _validate_known_params(params)
 
+    raw_iprog = params.get("iprog", global_config.get("iprog", "orca"))
+    iprog_label = _normalize_iprog_label(raw_iprog)
+    raw_itask = params.get("itask", global_config.get("itask", "opt"))
+    itask_label = _itask_label(raw_itask)
+
     return CalcTaskConfig(
         program=(
             Program.GAUSSIAN
-            if _normalize_iprog_label(params.get("iprog", "orca")) == Program.GAUSSIAN.value
-            else (
-                Program.ORCA
-                if _normalize_iprog_label(params.get("iprog", "orca")) == Program.ORCA.value
-                else _normalize_iprog_label(params.get("iprog", "orca"))
-            )
+            if iprog_label == Program.GAUSSIAN.value
+            else (Program.ORCA if iprog_label == Program.ORCA.value else iprog_label)
         ),
         task=(
-            TaskKind(_itask_label(params.get("itask", "opt")))
-            if _itask_label(params.get("itask", "opt")) in {item.value for item in TaskKind}
-            else _itask_label(params.get("itask", "opt"))
+            TaskKind(itask_label)
+            if itask_label in {item.value for item in TaskKind}
+            else itask_label
         ),
         keyword=keyword,
         gaussian_path=str(global_config.get("gaussian_path", "g16")),
@@ -551,9 +564,9 @@ def build_structured_task_config(
         multiplicity=int(
             params.get("multiplicity", global_config.get("multiplicity", DEFAULT_MULTIPLICITY))
         ),
-        freeze=_resolve_freeze_for_task(params, global_config),
+        freeze=_resolve_freeze_for_task(params, global_config, itask_label),
         cleanup=_resolve_cleanup_options(params, global_config),
-        ts=_resolve_ts_options(params, global_config),
+        ts=_resolve_ts_options(params, global_config, itask_label),
         execution=_resolve_execution_options(params, global_config, root_dir, all_steps),
         blocks=blocks_value,
         orca_maxcore=params.get(

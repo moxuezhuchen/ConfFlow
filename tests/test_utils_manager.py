@@ -583,6 +583,7 @@ def test_manager_auto_clean_uses_structured_cleanup_values(tmp_path):
                 energy_window=7.5,
                 energy_tolerance=0.03,
                 dedup_only=True,
+                keep_all_topos=True,
                 no_h=True,
             ),
             execution=ExecutionOptions(auto_clean=True),
@@ -598,6 +599,9 @@ def test_manager_auto_clean_uses_structured_cleanup_values(tmp_path):
     assert kwargs["threshold"] == 0.12
     assert kwargs["ewin"] == 7.5
     assert kwargs["energy_tolerance"] == 0.03
+    assert kwargs["dedup_only"] is True
+    assert kwargs["keep_all_topos"] is True
+    assert kwargs["noH"] is True
 
 
 def test_manager_auto_clean_prefers_updated_public_clean_opts_over_structured_cleanup(tmp_path):
@@ -654,6 +658,77 @@ def test_manager_auto_clean_falls_back_to_legacy_clean_opts(tmp_path):
     assert kwargs["threshold"] == 0.21
     assert kwargs["ewin"] == 8.0
     assert kwargs["energy_tolerance"] == 0.07
+
+
+def test_manager_auto_clean_propagates_refine_flags_and_workers(tmp_path):
+    manager = ChemTaskManager(
+        settings={
+            "iprog": "orca",
+            "itask": "sp",
+            "keyword": "xTB",
+            "auto_clean": "true",
+            "clean_opts": (
+                "-t 0.21 -ewin 8.0 --energy-tolerance 0.07 "
+                "--noH --keep-all-topos --dedup-only --workers 3"
+            ),
+        },
+    )
+    out_file = tmp_path / "result.xyz"
+    out_file.write_text("1\ntest\nH 0 0 0\n", encoding="utf-8")
+
+    with patch("confflow.calc.manager.run_refine_postprocess") as mock_refine:
+        manager._run_auto_clean(str(out_file))
+
+    kwargs = mock_refine.call_args.kwargs
+    assert kwargs["threshold"] == 0.21
+    assert kwargs["ewin"] == 8.0
+    assert kwargs["energy_tolerance"] == 0.07
+    assert kwargs["noH"] is True
+    assert kwargs["keep_all_topos"] is True
+    assert kwargs["dedup_only"] is True
+    assert kwargs["workers"] == 3
+
+
+def test_run_refine_postprocess_passes_refine_options(tmp_path):
+    from confflow.blocks.refine.result import RefineResult
+    from confflow.calc.postprocess import run_refine_postprocess
+
+    input_file = tmp_path / "result.xyz"
+    output_file = tmp_path / "output.xyz"
+    input_file.write_text("1\ntest\nH 0 0 0\n", encoding="utf-8")
+
+    with patch("confflow.calc.postprocess.refine.process_xyz") as mock_process:
+        mock_process.return_value = RefineResult(
+            produced_output=True,
+            output_path=str(output_file),
+            kept_count=1,
+            reason="ok",
+        )
+        result = run_refine_postprocess(
+            input_file=str(input_file),
+            output_file=str(output_file),
+            threshold=0.21,
+            ewin=8.0,
+            energy_tolerance=0.07,
+            workers=1,
+            noH=True,
+            keep_all_topos=True,
+            dedup_only=True,
+            imag=1,
+            max_conformers=5,
+        )
+
+    options = mock_process.call_args.args[0]
+    assert result.kept_count == 1
+    assert options.threshold == 0.21
+    assert options.ewin == 8.0
+    assert options.energy_tolerance == 0.07
+    assert options.noH is True
+    assert options.keep_all_topos is True
+    assert options.dedup_only is True
+    assert options.imag == 1
+    assert options.max_conformers == 5
+    assert options.workers == 1
 
 
 def test_manager_auto_clean_prefers_structured_cleanup_over_legacy_clean_opts(tmp_path):

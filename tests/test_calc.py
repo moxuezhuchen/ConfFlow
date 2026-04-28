@@ -825,6 +825,172 @@ def test_task_runner_itask1_sp_energy(tmp_path):
             assert res["final_sp_energy"] == -100.0
 
 
+def test_task_runner_missing_energy_is_parse_error(tmp_path):
+    from confflow.calc.components.task_runner import TaskRunner
+
+    runner = TaskRunner()
+    task_info = {
+        "job_name": "test",
+        "work_dir": str(tmp_path / "work"),
+        "config": {"itask": 1, "iprog": 1},
+        "coords": ["C 0 0 0"],
+    }
+
+    with patch("confflow.calc.components.executor._run_calculation_step") as mock_run:
+        mock_run.return_value = {
+            "final_coords": ["C 0 0 0"],
+            "e_low": None,
+            "g_low": None,
+        }
+        with patch("confflow.calc.components.executor.handle_backups") as mock_backups:
+            res = runner.run(task_info)
+
+    assert res["status"] == "failed"
+    assert res["error_kind"] == "parse_error"
+    assert "No energy parsed" in res["error"]
+    assert "energy" not in res
+    assert "final_gibbs_energy" not in res
+    mock_backups.assert_called_once()
+    assert mock_backups.call_args.args[2] is False
+
+
+@pytest.mark.parametrize(
+    ("config", "expected_cleanup"),
+    [
+        ({"itask": 1, "iprog": 1}, True),
+        ({"itask": 1, "iprog": 1, "delete_work_dir": "true"}, True),
+        ({"itask": 1, "iprog": 1, "delete_work_dir": "false"}, False),
+    ],
+)
+def test_task_runner_delete_work_dir_controls_success_cleanup(tmp_path, config, expected_cleanup):
+    from confflow.calc.components.task_runner import TaskRunner
+
+    runner = TaskRunner()
+    task_info = {
+        "job_name": "test",
+        "work_dir": str(tmp_path / "work"),
+        "config": config,
+        "coords": ["C 0 0 0"],
+    }
+
+    with patch("confflow.calc.components.executor._run_calculation_step") as mock_run:
+        mock_run.return_value = {"final_coords": ["C 0 0 0"], "e_low": -100.0}
+        with patch("confflow.calc.components.executor.handle_backups") as mock_backups:
+            res = runner.run(task_info)
+
+    assert res["status"] == "success"
+    mock_backups.assert_called_once()
+    assert mock_backups.call_args.kwargs["cleanup_work_dir"] is expected_cleanup
+
+
+def test_task_runner_delete_work_dir_false_controls_failure_cleanup(tmp_path):
+    from confflow.calc.components.task_runner import TaskRunner
+
+    runner = TaskRunner()
+    task_info = {
+        "job_name": "test",
+        "work_dir": str(tmp_path / "work"),
+        "config": {"itask": 1, "iprog": 1, "delete_work_dir": False},
+        "coords": ["C 0 0 0"],
+    }
+
+    with patch("confflow.calc.components.executor._run_calculation_step") as mock_run:
+        mock_run.return_value = {
+            "final_coords": ["C 0 0 0"],
+            "e_low": None,
+            "g_low": None,
+        }
+        with patch("confflow.calc.components.executor.handle_backups") as mock_backups:
+            res = runner.run(task_info)
+
+    assert res["status"] == "failed"
+    assert res["error_kind"] == "parse_error"
+    mock_backups.assert_called_once()
+    assert mock_backups.call_args.kwargs["cleanup_work_dir"] is False
+
+
+def test_task_runner_normalized_config_default_cleans_work_dir(tmp_path):
+    from confflow.calc.components.task_runner import TaskRunner
+    from confflow.calc.config_types import ensure_calc_task_config
+
+    runner = TaskRunner()
+    normalized_config = ensure_calc_task_config({"itask": 1, "iprog": 1})
+    task_info = {
+        "job_name": "test",
+        "work_dir": str(tmp_path / "work"),
+        "config": normalized_config,
+        "coords": ["C 0 0 0"],
+    }
+
+    with patch("confflow.calc.components.executor._run_calculation_step") as mock_run:
+        mock_run.return_value = {"final_coords": ["C 0 0 0"], "e_low": -100.0}
+        with patch("confflow.calc.components.executor.handle_backups") as mock_backups:
+            res = runner.run(task_info)
+
+    assert normalized_config["delete_work_dir"] is True
+    assert res["status"] == "success"
+    mock_backups.assert_called_once()
+    assert mock_backups.call_args.kwargs["cleanup_work_dir"] is True
+
+
+def test_task_runner_ts_missing_energy_attempts_rescue(tmp_path):
+    from confflow.calc.components.task_runner import TaskRunner
+
+    runner = TaskRunner()
+    task_info = {
+        "job_name": "test",
+        "work_dir": str(tmp_path / "work"),
+        "config": {"itask": 4, "iprog": 1, "ts_rescue_scan": "true"},
+        "coords": ["C 0 0 0"],
+    }
+
+    with patch("confflow.calc.components.executor._run_calculation_step") as mock_run:
+        mock_run.return_value = {
+            "final_coords": ["C 0 0 0"],
+            "e_low": None,
+            "g_low": None,
+        }
+        with patch("confflow.calc.components.task_runner._ts_rescue_scan") as mock_rescue:
+            mock_rescue.return_value = {"status": "rescued", "energy": -1.0}
+            with patch("confflow.calc.components.executor.handle_backups"):
+                res = runner.run(task_info)
+
+    assert res["status"] == "rescued"
+    assert res["energy"] == -1.0
+    mock_rescue.assert_called_once()
+    assert "No energy parsed" in mock_rescue.call_args.args[1]
+
+
+def test_task_runner_ts_missing_energy_reports_rescue_failed_when_rescue_fails(tmp_path):
+    from confflow.calc.components.task_runner import TaskRunner
+
+    runner = TaskRunner()
+    task_info = {
+        "job_name": "test",
+        "work_dir": str(tmp_path / "work"),
+        "config": {"itask": 4, "iprog": 1, "ts_rescue_scan": "true"},
+        "coords": ["C 0 0 0"],
+    }
+
+    with patch("confflow.calc.components.executor._run_calculation_step") as mock_run:
+        mock_run.return_value = {
+            "final_coords": ["C 0 0 0"],
+            "e_low": None,
+            "g_low": None,
+        }
+        with patch("confflow.calc.components.task_runner._ts_rescue_scan") as mock_rescue:
+            mock_rescue.return_value = None
+            with patch("confflow.calc.components.executor.handle_backups"):
+                res = runner.run(task_info)
+
+    assert res["status"] == "failed"
+    assert res["error_kind"] == "rescue_failed"
+    assert "No energy parsed" in res["error"]
+    assert "energy" not in res
+    assert "final_gibbs_energy" not in res
+    mock_rescue.assert_called_once()
+
+
 def test_task_runner_exception_rescue(tmp_path):
     from confflow.calc.components.task_runner import TaskRunner
 

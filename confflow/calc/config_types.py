@@ -105,7 +105,7 @@ class ExecutionOptions:
     enable_dynamic_resources: bool = DEFAULT_ENABLE_DYNAMIC_RESOURCES
     resume_from_backups: bool = DEFAULT_RESUME_FROM_BACKUPS
     auto_clean: bool = False
-    delete_work_dir: bool = False
+    delete_work_dir: bool = True
     sandbox_root: str | None = None
     input_chk_dir: str | None = None
     allowed_executables: tuple[str, ...] = ()
@@ -248,27 +248,30 @@ def _resolve_clean_opts_value(value: Any) -> str | None:
     if value is None:
         return None
     if isinstance(value, Mapping):
-        return CleanupOptions(
-            enabled=True,
-            dedup_only=_coerce_bool_flag(value.get("dedup_only")),
-            keep_all_topos=_coerce_bool_flag(value.get("keep_all_topos")),
-            no_h=_coerce_bool_flag(value.get("noH", value.get("no_h"))),
-            rmsd_threshold=(
-                None
-                if value.get("threshold", value.get("rmsd_threshold")) is None
-                else float(value.get("threshold", value.get("rmsd_threshold")))
-            ),
-            energy_window=(
-                None
-                if value.get("energy_window", value.get("ewin")) is None
-                else float(value.get("energy_window", value.get("ewin")))
-            ),
-            energy_tolerance=(
-                None
-                if value.get("energy_tolerance", value.get("etol")) is None
-                else float(value.get("energy_tolerance", value.get("etol")))
-            ),
-        ).to_legacy_clean_opts() or None
+        return (
+            CleanupOptions(
+                enabled=True,
+                dedup_only=_coerce_bool_flag(value.get("dedup_only")),
+                keep_all_topos=_coerce_bool_flag(value.get("keep_all_topos")),
+                no_h=_coerce_bool_flag(value.get("noH", value.get("no_h"))),
+                rmsd_threshold=(
+                    None
+                    if value.get("threshold", value.get("rmsd_threshold")) is None
+                    else float(value.get("threshold", value.get("rmsd_threshold")))
+                ),
+                energy_window=(
+                    None
+                    if value.get("energy_window", value.get("ewin")) is None
+                    else float(value.get("energy_window", value.get("ewin")))
+                ),
+                energy_tolerance=(
+                    None
+                    if value.get("energy_tolerance", value.get("etol")) is None
+                    else float(value.get("energy_tolerance", value.get("etol")))
+                ),
+            ).to_legacy_clean_opts()
+            or None
+        )
     stripped = str(value).strip()
     return stripped or None
 
@@ -387,10 +390,14 @@ class CalcTaskConfig(dict[str, Any]):
         raw = dict(mapping)
 
         cleanup_enabled = _coerce_bool_flag(raw.get("auto_clean", False))
-        cleanup_raw = _parse_clean_opts(str(raw.get("clean_opts", ""))) if raw.get("clean_opts") else {}
+        cleanup_raw = (
+            _parse_clean_opts(str(raw.get("clean_opts", ""))) if raw.get("clean_opts") else {}
+        )
         cleanup = CleanupOptions(
             enabled=cleanup_enabled,
-            dedup_only=_coerce_bool_flag(raw.get("dedup_only", cleanup_raw.get("dedup_only", False))),
+            dedup_only=_coerce_bool_flag(
+                raw.get("dedup_only", cleanup_raw.get("dedup_only", False))
+            ),
             keep_all_topos=_coerce_bool_flag(
                 raw.get("keep_all_topos", cleanup_raw.get("keep_all_topos", False))
             ),
@@ -405,11 +412,11 @@ class CalcTaskConfig(dict[str, Any]):
                 if raw.get("energy_window", cleanup_raw.get("energy_window")) is None
                 else float(raw.get("energy_window", cleanup_raw.get("energy_window")))
             ),
-            energy_tolerance=float(
-                raw.get("energy_tolerance", cleanup_raw.get("energy_tolerance"))
-            )
-            if raw.get("energy_tolerance", cleanup_raw.get("energy_tolerance")) is not None
-            else None,
+            energy_tolerance=(
+                float(raw.get("energy_tolerance", cleanup_raw.get("energy_tolerance")))
+                if raw.get("energy_tolerance", cleanup_raw.get("energy_tolerance")) is not None
+                else None
+            ),
         )
 
         freeze = tuple(_coerce_freeze_indices(raw.get("freeze")))
@@ -423,7 +430,9 @@ class CalcTaskConfig(dict[str, Any]):
                 else float(raw.get("ts_bond_drift_threshold"))
             ),
             rmsd_threshold=(
-                None if raw.get("ts_rmsd_threshold") is None else float(raw.get("ts_rmsd_threshold"))
+                None
+                if raw.get("ts_rmsd_threshold") is None
+                else float(raw.get("ts_rmsd_threshold"))
             ),
             scan_coarse_step=(
                 None if raw.get("scan_coarse_step") is None else float(raw.get("scan_coarse_step"))
@@ -462,12 +471,16 @@ class CalcTaskConfig(dict[str, Any]):
                 raw.get("resume_from_backups", DEFAULT_RESUME_FROM_BACKUPS)
             ),
             auto_clean=cleanup_enabled,
-            delete_work_dir=_coerce_bool_flag(raw.get("delete_work_dir", False)),
+            delete_work_dir=_coerce_bool_flag(raw.get("delete_work_dir", True)),
             sandbox_root=(
-                str(raw.get("sandbox_root")).strip() if raw.get("sandbox_root") is not None else None
+                str(raw.get("sandbox_root")).strip()
+                if raw.get("sandbox_root") is not None
+                else None
             ),
             input_chk_dir=(
-                str(raw.get("input_chk_dir")).strip() if raw.get("input_chk_dir") is not None else None
+                str(raw.get("input_chk_dir")).strip()
+                if raw.get("input_chk_dir") is not None
+                else None
             ),
             allowed_executables=_normalize_allowed_executables(raw.get("allowed_executables")),
             gaussian_write_chk=(
@@ -566,10 +579,22 @@ class CalcTaskConfig(dict[str, Any]):
             "max_parallel_jobs": str(raw.get("max_parallel_jobs", DEFAULT_MAX_PARALLEL_JOBS)),
             "charge": str(raw.get("charge", DEFAULT_CHARGE)),
             "multiplicity": str(raw.get("multiplicity", DEFAULT_MULTIPLICITY)),
-            "enable_dynamic_resources": str(_coerce_bool_flag(raw.get("enable_dynamic_resources", self.execution.enable_dynamic_resources))).lower(),
-            "resume_from_backups": str(_coerce_bool_flag(raw.get("resume_from_backups", self.execution.resume_from_backups))).lower(),
-            "auto_clean": str(_coerce_bool_flag(raw.get("auto_clean", self.execution.auto_clean))).lower(),
-            "delete_work_dir": str(_coerce_bool_flag(raw.get("delete_work_dir", self.execution.delete_work_dir))).lower(),
+            "enable_dynamic_resources": str(
+                _coerce_bool_flag(
+                    raw.get("enable_dynamic_resources", self.execution.enable_dynamic_resources)
+                )
+            ).lower(),
+            "resume_from_backups": str(
+                _coerce_bool_flag(
+                    raw.get("resume_from_backups", self.execution.resume_from_backups)
+                )
+            ).lower(),
+            "auto_clean": str(
+                _coerce_bool_flag(raw.get("auto_clean", self.execution.auto_clean))
+            ).lower(),
+            "delete_work_dir": str(
+                _coerce_bool_flag(raw.get("delete_work_dir", self.execution.delete_work_dir))
+            ).lower(),
         }
 
         freeze_vals = raw.get("freeze", [])
@@ -592,7 +617,9 @@ class CalcTaskConfig(dict[str, Any]):
         if self.execution.gaussian_write_chk is not None:
             data["gaussian_write_chk"] = str(self.execution.gaussian_write_chk).lower()
         elif raw.get("gaussian_write_chk") is not None:
-            data["gaussian_write_chk"] = str(_coerce_bool_flag(raw.get("gaussian_write_chk"))).lower()
+            data["gaussian_write_chk"] = str(
+                _coerce_bool_flag(raw.get("gaussian_write_chk"))
+            ).lower()
 
         ts_pair = self.ts.bond_atoms or _normalize_pair(raw.get("ts_bond_atoms"))
         if ts_pair is not None:
@@ -664,10 +691,14 @@ class CalcTaskConfig(dict[str, Any]):
                     keep_all_topos=_coerce_bool_flag(raw.get("keep_all_topos", False)),
                     no_h=_coerce_bool_flag(raw.get("noH", False)),
                     rmsd_threshold=(
-                        None if raw.get("rmsd_threshold") is None else float(raw.get("rmsd_threshold"))
+                        None
+                        if raw.get("rmsd_threshold") is None
+                        else float(raw.get("rmsd_threshold"))
                     ),
                     energy_window=(
-                        None if raw.get("energy_window") is None else float(raw.get("energy_window"))
+                        None
+                        if raw.get("energy_window") is None
+                        else float(raw.get("energy_window"))
                     ),
                     energy_tolerance=(
                         None

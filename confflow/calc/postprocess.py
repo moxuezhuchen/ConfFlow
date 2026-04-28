@@ -20,6 +20,11 @@ def run_refine_postprocess(
     ewin: float | None,
     energy_tolerance: float,
     workers: int,
+    noH: bool = False,
+    dedup_only: bool = False,
+    keep_all_topos: bool = False,
+    imag: int | None = None,
+    max_conformers: int | None = None,
 ) -> RefineResult:
     """Run refine post-processing through a shared stable adapter."""
     options = refine.RefineOptions(
@@ -27,6 +32,11 @@ def run_refine_postprocess(
         output=output_file,
         threshold=threshold,
         ewin=ewin,
+        imag=imag,
+        noH=noH,
+        max_conformers=max_conformers,
+        dedup_only=dedup_only,
+        keep_all_topos=keep_all_topos,
         energy_tolerance=energy_tolerance,
         workers=workers,
     )

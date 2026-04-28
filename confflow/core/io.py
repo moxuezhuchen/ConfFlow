@@ -45,6 +45,8 @@ __all__ = [
 ]
 
 _io_logger = logging.getLogger("confflow.io")
+
+
 def ensure_xyz_cids(xyz_path: str, prefix: str = "A") -> None:
     """Read an XYZ file and ensure all conformers have CIDs; re-write if incomplete."""
     if not os.path.exists(xyz_path):

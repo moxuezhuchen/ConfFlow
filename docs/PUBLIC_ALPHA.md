@@ -36,6 +36,7 @@ ConfFlow is suitable to publish as a public alpha preview. It is not production-
 - Public CI uses fake/mock external-program behavior; real Gaussian/ORCA environments still need local or site-specific validation.
 - PyPI publishing, GitHub Release publishing, artifact provenance, and attestations are not automated.
 - OpenSSF Scorecard is informational. Private repositories skip SARIF code-scanning upload by default and keep the result as a workflow artifact.
+- Dependency security updates currently rely on Dependabot and existing GitHub security signals. `pip-audit` and `safety` are not part of the supported local or CI baseline; if added later, they should start as scheduled or non-blocking checks.
 - Branch protection and GitHub About metadata must be configured manually in GitHub Settings.
 
 ## First Checks After Switching Public

@@ -394,31 +394,36 @@ class ChemTaskManager:
             return
         console.print("  Refine: ", end="")
         try:
-            thresh, ewin, etol = self._parse_clean_opts(opts_str)
             task_cores = int(self.config.get("cores_per_task", 1))
+            clean_kwargs = self._parse_clean_opts(opts_str)
+            clean_kwargs.setdefault("workers", task_cores)
             run_refine_postprocess(
                 input_file=out_file,
                 output_file=os.path.join(os.path.dirname(out_file), "output.xyz"),
-                threshold=thresh,
-                ewin=ewin,
-                energy_tolerance=etol,
-                workers=task_cores,
+                **clean_kwargs,
             )
         except (ImportError, OSError, TypeError, ValueError, RuntimeError) as e:
             error(f"Refine auto-clean failed: {e}")
 
     @staticmethod
-    def _parse_clean_opts(opts_str: str) -> tuple[float, float | None, float]:
-        """Parse clean_opts string into (threshold, ewin, energy_tolerance).
+    def _parse_clean_opts(opts_str: str) -> dict[str, Any]:
+        """Parse clean_opts string into ``run_refine_postprocess`` keyword args.
 
         Uses shlex-based tokenization for robust flag parsing instead of
         fragile str.split() substring matching.
         """
         import shlex
 
-        thresh = 0.25
-        ewin: float | None = None
-        etol = 0.05
+        parsed: dict[str, Any] = {
+            "threshold": 0.25,
+            "ewin": None,
+            "energy_tolerance": 0.05,
+            "noH": False,
+            "dedup_only": False,
+            "keep_all_topos": False,
+            "imag": None,
+            "max_conformers": None,
+        }
 
         try:
             tokens = shlex.split(opts_str)
@@ -430,44 +435,89 @@ class ChemTaskManager:
             tok = tokens[i]
             if tok == "-t" and i + 1 < len(tokens):
                 try:
-                    thresh = float(tokens[i + 1])
+                    parsed["threshold"] = float(tokens[i + 1])
                 except (ValueError, TypeError):
                     pass
                 i += 2
             elif tok == "-ewin" and i + 1 < len(tokens):
                 try:
-                    ewin = float(tokens[i + 1])
+                    parsed["ewin"] = float(tokens[i + 1])
                 except (ValueError, TypeError):
                     pass
                 i += 2
             elif tok == "--energy-tolerance" and i + 1 < len(tokens):
                 try:
-                    etol = float(tokens[i + 1])
+                    parsed["energy_tolerance"] = float(tokens[i + 1])
                 except (ValueError, TypeError):
                     pass
                 i += 2
+            elif tok == "--imag" and i + 1 < len(tokens):
+                try:
+                    parsed["imag"] = int(tokens[i + 1])
+                except (ValueError, TypeError):
+                    pass
+                i += 2
+            elif tok in {"-n", "--max-conformers"} and i + 1 < len(tokens):
+                try:
+                    parsed["max_conformers"] = int(tokens[i + 1])
+                except (ValueError, TypeError):
+                    pass
+                i += 2
+            elif tok in {"-w", "--workers"} and i + 1 < len(tokens):
+                try:
+                    parsed["workers"] = int(tokens[i + 1])
+                except (ValueError, TypeError):
+                    pass
+                i += 2
+            elif tok == "--noH":
+                parsed["noH"] = True
+                i += 1
+            elif tok == "--dedup-only":
+                parsed["dedup_only"] = True
+                i += 1
+            elif tok == "--keep-all-topos":
+                parsed["keep_all_topos"] = True
+                i += 1
             elif tok.startswith("-t="):
                 try:
-                    thresh = float(tok.split("=", 1)[1])
+                    parsed["threshold"] = float(tok.split("=", 1)[1])
                 except (ValueError, IndexError):
                     pass
                 i += 1
             elif tok.startswith("-ewin="):
                 try:
-                    ewin = float(tok.split("=", 1)[1])
+                    parsed["ewin"] = float(tok.split("=", 1)[1])
                 except (ValueError, IndexError):
                     pass
                 i += 1
             elif tok.startswith("--energy-tolerance="):
                 try:
-                    etol = float(tok.split("=", 1)[1])
+                    parsed["energy_tolerance"] = float(tok.split("=", 1)[1])
+                except (ValueError, IndexError):
+                    pass
+                i += 1
+            elif tok.startswith("--imag="):
+                try:
+                    parsed["imag"] = int(tok.split("=", 1)[1])
+                except (ValueError, IndexError):
+                    pass
+                i += 1
+            elif tok.startswith("--max-conformers="):
+                try:
+                    parsed["max_conformers"] = int(tok.split("=", 1)[1])
+                except (ValueError, IndexError):
+                    pass
+                i += 1
+            elif tok.startswith("--workers="):
+                try:
+                    parsed["workers"] = int(tok.split("=", 1)[1])
                 except (ValueError, IndexError):
                     pass
                 i += 1
             else:
                 i += 1
 
-        return thresh, ewin, etol
+        return parsed
 
     # ------------------------------------------------------------------
     # Main entry point

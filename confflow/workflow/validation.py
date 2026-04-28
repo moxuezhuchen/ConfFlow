@@ -19,6 +19,8 @@ __all__ = [
 ]
 
 logger = logging.getLogger("confflow.workflow.validation")
+
+
 def validate_inputs_compatible(
     input_files: list[str],
     confgen_params: dict[str, Any] | None = None,

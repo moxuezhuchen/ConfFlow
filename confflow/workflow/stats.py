@@ -225,7 +225,9 @@ class FailureTracker:
                 rows.append(f"{job}\t{err_kind}\t{err}\tCheck logs\n")
                 i += 2 + natoms
             except (ValueError, IndexError) as e:  # P2-4: typed exception + debug log
-                logger.debug("Failed to parse failed.xyz while updating the summary at line %d: %s", i, e)
+                logger.debug(
+                    "Failed to parse failed.xyz while updating the summary at line %d: %s", i, e
+                )
                 break
         with open(self.summary_path, "w", encoding="utf-8") as f:
             f.writelines(rows)
