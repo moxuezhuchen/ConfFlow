@@ -114,7 +114,8 @@ ConfFlow should be evaluated carefully and in isolation.
 
 Important limitations:
 
-- ConfFlow does not currently provide a dry-run, read-only, or preview mode
+- Use `--dry-run` to validate inputs/configuration and preview planned steps before launching external programs
+- `--dry-run` is a planning aid, not a full sandbox or guarantee that a later real run cannot write files
 - Running a workflow can write files, overwrite managed artifacts, clean stale outputs, and launch configured external executables
 - ConfFlow is not a sandbox for untrusted workloads
 
