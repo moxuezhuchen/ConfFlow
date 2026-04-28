@@ -32,7 +32,8 @@ ConfFlow is suitable to publish as a public alpha preview. It is not production-
 
 ## Known Limitations
 
-- No dry-run, read-only, or preview mode yet.
+- `--dry-run` can preview planned workflow steps, inputs, output paths, and selected calculation settings without executing workflow steps.
+- `--dry-run` is not a full sandbox; real runs can still write files, clean managed artifacts, and execute configured Gaussian/ORCA programs.
 - Public CI uses fake/mock external-program behavior; real Gaussian/ORCA environments still need local or site-specific validation.
 - PyPI publishing, GitHub Release publishing, artifact provenance, and attestations are not automated.
 - OpenSSF Scorecard is informational. Private repositories skip SARIF code-scanning upload by default and keep the result as a workflow artifact.

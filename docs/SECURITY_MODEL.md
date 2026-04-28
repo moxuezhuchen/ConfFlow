@@ -75,9 +75,9 @@ Do not post raw logs or artifacts publicly until they have been reviewed and red
 
 ## Dry-Run Status
 
-ConfFlow currently does not provide a dry-run, read-only, or preview mode. Running a workflow can write files, overwrite managed artifacts, clean stale outputs, and execute configured external programs.
+ConfFlow provides a CLI `--dry-run` mode that validates inputs/configuration and previews planned workflow steps, input files, output paths, selected calculation settings, and configured executable paths without running workflow steps.
 
-A future dry-run mode should print planned input files, output paths, cleanup targets, and external commands without executing them.
+Dry-run is a planning and validation aid, not a full sandbox or complete read-only execution environment. A real workflow run can still write files, overwrite managed artifacts, clean stale outputs, and execute configured external programs.
 
 ## Network Behavior
 
