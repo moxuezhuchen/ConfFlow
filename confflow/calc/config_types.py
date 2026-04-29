@@ -104,6 +104,7 @@ class ExecutionOptions:
 
     enable_dynamic_resources: bool = DEFAULT_ENABLE_DYNAMIC_RESOURCES
     resume_from_backups: bool = DEFAULT_RESUME_FROM_BACKUPS
+    max_wall_time_seconds: float | None = None
     auto_clean: bool = False
     delete_work_dir: bool = True
     sandbox_root: str | None = None
@@ -329,6 +330,8 @@ class CalcTaskConfig(dict[str, Any]):
             "delete_work_dir": self.execution.delete_work_dir,
         }
 
+        if self.execution.max_wall_time_seconds is not None:
+            payload["max_wall_time_seconds"] = self.execution.max_wall_time_seconds
         if self.execution.sandbox_root is not None:
             payload["sandbox_root"] = self.execution.sandbox_root
         if self.execution.input_chk_dir is not None:
@@ -470,6 +473,11 @@ class CalcTaskConfig(dict[str, Any]):
             resume_from_backups=_coerce_bool_flag(
                 raw.get("resume_from_backups", DEFAULT_RESUME_FROM_BACKUPS)
             ),
+            max_wall_time_seconds=(
+                None
+                if raw.get("max_wall_time_seconds") is None
+                else float(raw.get("max_wall_time_seconds"))
+            ),
             auto_clean=cleanup_enabled,
             delete_work_dir=_coerce_bool_flag(raw.get("delete_work_dir", True)),
             sandbox_root=(
@@ -512,6 +520,7 @@ class CalcTaskConfig(dict[str, Any]):
             "energy_tolerance",
             "enable_dynamic_resources",
             "resume_from_backups",
+            "max_wall_time_seconds",
             "auto_clean",
             "delete_work_dir",
             "sandbox_root",
@@ -620,6 +629,8 @@ class CalcTaskConfig(dict[str, Any]):
             data["gaussian_write_chk"] = str(
                 _coerce_bool_flag(raw.get("gaussian_write_chk"))
             ).lower()
+        if self.execution.max_wall_time_seconds is not None:
+            data["max_wall_time_seconds"] = str(self.execution.max_wall_time_seconds)
 
         ts_pair = self.ts.bond_atoms or _normalize_pair(raw.get("ts_bond_atoms"))
         if ts_pair is not None:

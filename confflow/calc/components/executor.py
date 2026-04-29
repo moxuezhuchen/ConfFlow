@@ -246,6 +246,16 @@ def _run_calculation_step(
     if not isfinite(stop_check_interval) or stop_check_interval <= 0:
         raise ConfigurationError("stop_check_interval_seconds must be a finite positive number")
 
+    max_wall_time_raw = config.get("max_wall_time_seconds")
+    max_wall_time_seconds: float | None = None
+    if max_wall_time_raw is not None:
+        try:
+            max_wall_time_seconds = float(max_wall_time_raw)
+        except (TypeError, ValueError) as e:
+            raise ConfigurationError("max_wall_time_seconds must be a positive number") from e
+        if not isfinite(max_wall_time_seconds) or max_wall_time_seconds <= 0:
+            raise ConfigurationError("max_wall_time_seconds must be a finite positive number")
+
     inp = os.path.join(work_dir, f"{job_name}.{policy.input_ext}")
     log = os.path.join(work_dir, f"{job_name}.{policy.log_ext}")
 
@@ -264,10 +274,21 @@ def _run_calculation_step(
         raise CalculationExecutionError(f"Failed to launch {policy.name}: {e}") from e
 
     stop_file = config.get("stop_beacon_file")
+    start_time = time.monotonic() if max_wall_time_seconds is not None else None
     while proc.poll() is None:
         if stop_file and os.path.exists(stop_file):
             proc.kill()
             raise StopRequestedError("STOP signal received")
+        if (
+            max_wall_time_seconds is not None
+            and start_time is not None
+            and time.monotonic() - start_time > max_wall_time_seconds
+        ):
+            proc.kill()
+            proc.wait()
+            raise CalculationExecutionError(
+                f"{policy.name} exceeded max_wall_time_seconds={max_wall_time_seconds:g}"
+            )
         time.sleep(stop_check_interval)
 
     if proc.returncode != 0:

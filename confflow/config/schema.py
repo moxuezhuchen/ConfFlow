@@ -94,6 +94,7 @@ class ConfigSchema:
         "keyword",
         "iprog",
         "itask",
+        "max_wall_time_seconds",
         "blocks",
     }
 
