@@ -6,8 +6,12 @@ from __future__ import annotations
 
 import importlib
 import warnings
+from importlib.metadata import PackageNotFoundError, version
 
-__version__ = "1.0.10"
+try:
+    __version__ = version("confflow")
+except PackageNotFoundError:
+    __version__ = "1.0.10"
 __author__ = "ConfFlow Team"
 
 # ============================================================================
@@ -98,7 +102,8 @@ def __getattr__(name: str):
     value = getattr(module, attr_name)
     if name in _DEPRECATED_EXPORTS:
         warnings.warn(
-            f"confflow.{name} is retained for compatibility; import it from its submodule instead.",
+            f"confflow.{name} is retained for compatibility and will be removed in v2.0; "
+            "import it from its submodule instead.",
             DeprecationWarning,
             stacklevel=2,
         )
