@@ -305,11 +305,24 @@ class TestExecutor:
         _save_config_hash(str(work_dir), config)
         assert (work_dir / ".config_hash").exists()
         h1 = (work_dir / ".config_hash").read_text()
+        assert h1.startswith("sha256:")
 
         config2 = {"itask": "freq", "iprog": "orca"}
         _save_config_hash(str(work_dir), config2)
         h2 = (work_dir / ".config_hash").read_text()
         assert h1 != h2
+
+    def test_config_hash_matches_accepts_legacy_md5(self, tmp_path):
+        from confflow.calc import step_contract
+        from confflow.calc.components.executor import _config_hash_matches
+
+        work_dir = tmp_path / "work"
+        work_dir.mkdir()
+        config = {"itask": "opt", "iprog": "g16"}
+        legacy_signature = step_contract._compute_legacy_calc_config_signature(config)
+        (work_dir / ".config_hash").write_text(legacy_signature, encoding="utf-8")
+
+        assert _config_hash_matches(str(work_dir), config) is True
 
 
 # =============================================================================

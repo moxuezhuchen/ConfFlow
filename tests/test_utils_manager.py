@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import os
+import re
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -1395,6 +1396,137 @@ def test_config_hash_matches_auto_clean_effective_semantics(tmp_path):
     legacy2["clean_opts"] = "-t 0.44 -ewin 10.0 --energy-tolerance 0.06"
     sig_hash2 = compute_calc_config_signature(legacy2, execution_config=structured)
     assert sig_hash != sig_hash2
+
+
+def test_calc_config_signature_uses_versioned_sha256():
+    from confflow.calc.step_contract import compute_calc_config_signature
+
+    signature = compute_calc_config_signature({"iprog": "orca", "itask": "sp", "keyword": "xTB"})
+
+    assert re.fullmatch(r"sha256:[0-9a-f]{64}", signature)
+
+
+def test_calc_input_signature_uses_versioned_sha256(tmp_path):
+    from confflow.calc.step_contract import compute_calc_input_signature
+
+    input_xyz = tmp_path / "input.xyz"
+    input_xyz.write_text("1\ninput\nH 0 0 0\n", encoding="utf-8")
+
+    signature = compute_calc_input_signature(str(input_xyz))
+
+    assert re.fullmatch(r"sha256:[0-9a-f]{64}", signature)
+
+
+def test_record_calc_step_signature_writes_versioned_sha256(tmp_path):
+    from confflow.calc.step_contract import (
+        compute_calc_input_signature,
+        record_calc_step_signature,
+    )
+
+    step_dir = tmp_path / "step"
+    input_xyz = tmp_path / "input.xyz"
+    input_xyz.write_text("1\ninput\nH 0 0 0\n", encoding="utf-8")
+    input_signature = compute_calc_input_signature(str(input_xyz))
+
+    record_calc_step_signature(
+        str(step_dir),
+        {"iprog": "orca", "itask": "sp", "keyword": "xTB"},
+        input_signature=input_signature,
+    )
+
+    stored = (step_dir / ".config_hash").read_text(encoding="utf-8")
+    assert re.fullmatch(r"sha256:[0-9a-f]{64}:[0-9a-f]{64}", stored)
+
+
+def test_inspect_calc_step_state_accepts_legacy_config_md5(tmp_path):
+    from confflow.calc import step_contract
+
+    config = {"iprog": "orca", "itask": "sp", "keyword": "xTB"}
+    step_dir = tmp_path / "step"
+    step_dir.mkdir()
+    (step_dir / "output.xyz").write_text("1\nout\nH 0 0 0\n", encoding="utf-8")
+    legacy_signature = step_contract._compute_legacy_calc_config_signature(config)
+    (step_dir / ".config_hash").write_text(legacy_signature, encoding="utf-8")
+
+    state = step_contract.inspect_calc_step_state(str(step_dir), config)
+
+    assert state.signature_matches is True
+    assert state.is_reusable is True
+
+
+def test_inspect_calc_step_state_accepts_legacy_config_and_input_md5(tmp_path):
+    from confflow.calc import step_contract
+
+    config = {"iprog": "orca", "itask": "sp", "keyword": "xTB"}
+    step_dir = tmp_path / "step"
+    step_dir.mkdir()
+    (step_dir / "output.xyz").write_text("1\nout\nH 0 0 0\n", encoding="utf-8")
+    input_xyz = tmp_path / "input.xyz"
+    input_xyz.write_text("1\ninput\nH 0 0 0\n", encoding="utf-8")
+    input_signature = step_contract.compute_calc_input_signature(str(input_xyz))
+    legacy_config = step_contract._compute_legacy_calc_config_signature(config)
+    legacy_input = input_signature.legacy_signature
+    (step_dir / ".config_hash").write_text(
+        f"{legacy_config}:{legacy_input}",
+        encoding="utf-8",
+    )
+
+    state = step_contract.inspect_calc_step_state(
+        str(step_dir),
+        config,
+        input_signature=input_signature,
+    )
+
+    assert state.signature_matches is True
+    assert state.is_reusable is True
+
+
+def test_legacy_config_md5_is_stale_after_config_change(tmp_path):
+    from confflow.calc import step_contract
+
+    old_config = {"iprog": "orca", "itask": "sp", "keyword": "xTB"}
+    new_config = {"iprog": "orca", "itask": "sp", "keyword": "HF"}
+    step_dir = tmp_path / "step"
+    step_dir.mkdir()
+    (step_dir / "output.xyz").write_text("1\nout\nH 0 0 0\n", encoding="utf-8")
+    (step_dir / ".config_hash").write_text(
+        step_contract._compute_legacy_calc_config_signature(old_config),
+        encoding="utf-8",
+    )
+
+    state = step_contract.inspect_calc_step_state(str(step_dir), new_config)
+
+    assert state.signature_matches is False
+    assert state.is_reusable is False
+
+
+def test_legacy_input_md5_is_stale_after_input_change(tmp_path):
+    from confflow.calc import step_contract
+
+    config = {"iprog": "orca", "itask": "sp", "keyword": "xTB"}
+    step_dir = tmp_path / "step"
+    step_dir.mkdir()
+    (step_dir / "output.xyz").write_text("1\nout\nH 0 0 0\n", encoding="utf-8")
+    old_input = tmp_path / "old.xyz"
+    old_input.write_text("1\nold\nH 0 0 0\n", encoding="utf-8")
+    new_input = tmp_path / "new.xyz"
+    new_input.write_text("1\nnew\nH 0 0 1\n", encoding="utf-8")
+    old_input_signature = step_contract.compute_calc_input_signature(str(old_input))
+    new_input_signature = step_contract.compute_calc_input_signature(str(new_input))
+    legacy_config = step_contract._compute_legacy_calc_config_signature(config)
+    (step_dir / ".config_hash").write_text(
+        f"{legacy_config}:{old_input_signature.legacy_signature}",
+        encoding="utf-8",
+    )
+
+    state = step_contract.inspect_calc_step_state(
+        str(step_dir),
+        config,
+        input_signature=new_input_signature,
+    )
+
+    assert state.signature_matches is False
+    assert state.is_reusable is False
 
 
 def test_dual_lane_clean_opts_update_syncs_signature_and_auto_clean(tmp_path):

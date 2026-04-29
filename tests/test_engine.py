@@ -1216,6 +1216,51 @@ def test_workflow_engine_calc_resume(tmp_path):
     assert res["steps"][0]["status"] == "skipped"
 
 
+def test_workflow_engine_calc_resume_accepts_legacy_md5_hash(tmp_path):
+    from confflow.calc import step_contract
+
+    root = tmp_path / "workflow_resume_legacy"
+    root.mkdir()
+
+    input_xyz = root / "input.xyz"
+    input_xyz.write_text("1\nCID=A000001\nC 0 0 0\n", encoding="utf-8")
+
+    config_file = root / "config.yaml"
+    config_file.write_text(
+        "global: {}\n"
+        "steps:\n"
+        "  - type: calc\n"
+        "    name: step1\n"
+        "    params:\n"
+        "      iprog: gaussian\n"
+        "      itask: opt\n"
+        "      keyword: opt\n",
+        encoding="utf-8",
+    )
+
+    step_dir = root / "step1"
+    step_dir.mkdir()
+    (step_dir / "output.xyz").write_text("1\nCID=A000001\nC 0 0 0\n", encoding="utf-8")
+    cfg_data = load_workflow_config(str(config_file))
+    cfg = build_task_config(
+        cfg_data["steps"][0]["params"],
+        cfg_data["global"],
+        root_dir=str(root),
+        all_steps=cfg_data["steps"],
+    )
+    ConfigSchema.validate_calc_config(cfg)
+    input_signature = compute_calc_input_signature(str(input_xyz))
+    legacy_config = step_contract._compute_legacy_calc_config_signature(cfg)
+    (step_dir / ".config_hash").write_text(
+        f"{legacy_config}:{input_signature.legacy_signature}",
+        encoding="utf-8",
+    )
+
+    res = run_workflow([str(input_xyz)], str(config_file), work_dir=str(root))
+
+    assert res["steps"][0]["status"] == "skipped"
+
+
 def test_workflow_engine_load_checkpoint_exception(tmp_path):
     xyz = tmp_path / "test.xyz"
     xyz.write_text("3\n\nC 0 0 0\nH 0 0 1\nH 0 0 -1")
