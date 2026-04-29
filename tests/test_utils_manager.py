@@ -811,6 +811,16 @@ def test_manager_ensure_work_dir(tmp_path):
     assert manager.backup_dir is not None
 
 
+def test_manager_results_db_guard_raises_clear_error():
+    from confflow.core.exceptions import ConfFlowError
+
+    manager = ChemTaskManager(None)
+    manager.results_db = None
+
+    with pytest.raises(ConfFlowError, match="Results database is not initialized"):
+        manager._filter_pending([])
+
+
 def test_read_single_frame_xyz_coords(tmp_path):
     manager = ChemTaskManager(None)
     xyz = tmp_path / "test.xyz"

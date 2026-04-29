@@ -15,12 +15,14 @@ import os
 import shutil
 import subprocess
 import time
+from math import isfinite
 from typing import Any
 
 from ...core.exceptions import (
     CalculationExecutionError,
     CalculationInputError,
     CalculationParseError,
+    ConfigurationError,
     StopRequestedError,
 )
 from ...core.path_policy import (
@@ -237,6 +239,13 @@ def _run_calculation_step(
     config: dict[str, Any],
     is_sp_task: bool = False,
 ):
+    try:
+        stop_check_interval = float(config.get("stop_check_interval_seconds", 1))
+    except (TypeError, ValueError) as e:
+        raise ConfigurationError("stop_check_interval_seconds must be a positive number") from e
+    if not isfinite(stop_check_interval) or stop_check_interval <= 0:
+        raise ConfigurationError("stop_check_interval_seconds must be a finite positive number")
+
     inp = os.path.join(work_dir, f"{job_name}.{policy.input_ext}")
     log = os.path.join(work_dir, f"{job_name}.{policy.log_ext}")
 
@@ -259,7 +268,7 @@ def _run_calculation_step(
         if stop_file and os.path.exists(stop_file):
             proc.kill()
             raise StopRequestedError("STOP signal received")
-        time.sleep(int(config.get("stop_check_interval_seconds", 1)))
+        time.sleep(stop_check_interval)
 
     if proc.returncode != 0:
         raise CalculationExecutionError(f"{policy.name} nonzero exit: {proc.returncode}")
