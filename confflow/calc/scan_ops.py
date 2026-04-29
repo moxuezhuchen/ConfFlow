@@ -20,6 +20,7 @@ from rich.table import Table
 from ..core import io as io_xyz
 from ..core.console import SINGLE_LINE, console, print_kv
 from ..core.constants import HARTREE_TO_KCALMOL
+from ..core.exceptions import ConfigurationError
 from ..core.keyword_rewrite import make_scan_keyword_from_ts_keyword
 from .components import executor
 from .policies import get_policy_for_config as _get_policy
@@ -339,7 +340,12 @@ class _ScanParams:
     )
 
     def __init__(self, cfg: dict[str, Any]) -> None:
-        self.coarse_step = float(cfg.get("scan_coarse_step", 0.1))
+        try:
+            self.coarse_step = float(cfg.get("scan_coarse_step", 0.1))
+        except (TypeError, ValueError) as e:
+            raise ConfigurationError("scan_coarse_step must be a positive number") from e
+        if self.coarse_step <= 0:
+            raise ConfigurationError("scan_coarse_step must be > 0")
         self.fine_step = float(cfg.get("scan_fine_step", 0.02))
         self.uphill_limit = int(cfg.get("scan_uphill_limit", 10))
         self.max_steps = int(cfg.get("scan_max_steps", 60))

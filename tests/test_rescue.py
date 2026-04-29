@@ -6,10 +6,13 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
+import pytest
+
 from confflow import calc
 from confflow.calc import rescue, scan_ops
 from confflow.calc.analysis import _bond_length_from_xyz_lines
 from confflow.calc.components import executor
+from confflow.core.exceptions import ConfigurationError
 
 
 def test_coords_lines_to_xyz_valid():
@@ -18,6 +21,17 @@ def test_coords_lines_to_xyz_valid():
     assert len(result) == 2
     assert result[0] == ("C", 0.0, 0.0, 0.0)
     assert result[1] == ("H", 0.0, 0.0, 1.0)
+
+
+@pytest.mark.parametrize("value", [0, -0.1, "0", "-1"])
+def test_scan_params_rejects_nonpositive_coarse_step(value):
+    with pytest.raises(ConfigurationError, match="scan_coarse_step must be > 0"):
+        scan_ops._ScanParams({"scan_coarse_step": value})
+
+
+def test_scan_params_accepts_positive_coarse_step():
+    params = scan_ops._ScanParams({"scan_coarse_step": 0.2})
+    assert params.coarse_step == 0.2
 
 
 def test_coords_lines_to_xyz_invalid():

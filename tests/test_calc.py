@@ -429,6 +429,76 @@ class TestExecutorAdvanced:
 
             mock_proc.kill.assert_called_once()
 
+    @pytest.mark.parametrize(
+        "value",
+        [
+            "bad",
+            0,
+            -1,
+            "0",
+            "nan",
+            ".nan",
+            "inf",
+            ".inf",
+            "-inf",
+            float("nan"),
+            float("inf"),
+            float("-inf"),
+        ],
+    )
+    def test_executor_rejects_invalid_stop_check_interval(self, cd_tmp, value):
+        """Invalid stop polling intervals should fail before launching the process."""
+        from unittest.mock import MagicMock, patch
+
+        from confflow.calc.components.executor import _run_calculation_step
+        from confflow.core.exceptions import ConfigurationError
+
+        work_dir = cd_tmp / "work"
+        work_dir.mkdir()
+
+        policy = MagicMock()
+        config = {"stop_check_interval_seconds": value}
+
+        with patch("subprocess.Popen") as mock_popen:
+            with pytest.raises(ConfigurationError, match="stop_check_interval_seconds"):
+                _run_calculation_step(str(work_dir), "job", policy, None, config)
+
+            mock_popen.assert_not_called()
+
+    @pytest.mark.parametrize(
+        ("config", "expected_sleep"),
+        [({"stop_check_interval_seconds": 0.25}, 0.25), ({}, 1.0)],
+    )
+    def test_executor_uses_validated_stop_check_interval(self, cd_tmp, config, expected_sleep):
+        """Valid/default stop polling intervals are parsed once and reused."""
+        from unittest.mock import MagicMock, patch
+
+        from confflow.calc.components.executor import _run_calculation_step
+
+        work_dir = cd_tmp / "work"
+        work_dir.mkdir()
+
+        policy = MagicMock()
+        policy.input_ext = "inp"
+        policy.log_ext = "log"
+        policy.name = "Mock"
+        policy.get_execution_command.return_value = ["true"]
+        policy.get_environment.return_value = None
+        policy.check_termination.return_value = True
+        policy.parse_output.return_value = {"energy": -1.0}
+
+        with patch("subprocess.Popen") as mock_popen, patch("time.sleep") as mock_sleep:
+            mock_proc = MagicMock()
+            mock_proc.poll.side_effect = [None, 0]
+            mock_proc.returncode = 0
+            mock_popen.return_value = mock_proc
+
+            result = _run_calculation_step(str(work_dir), "job", policy, None, dict(config))
+
+        assert result == {"energy": -1.0}
+        mock_popen.assert_called_once()
+        mock_sleep.assert_called_once_with(expected_sleep)
+
     def test_save_config_hash_failure(self, tmp_path):
         """Test config hash save failure."""
         from unittest.mock import patch

@@ -159,6 +159,13 @@ class ChemTaskManager:
     def _ensure_work_dir(self):
         self._work_dir_service.ensure_ready()
 
+    def _require_results_db(self) -> ResultsDB:
+        if self.results_db is None:
+            raise ConfFlowError(
+                "Results database is not initialized; call _ensure_work_dir() before using it."
+            )
+        return self.results_db
+
     def _compat_signature_config(self) -> dict[str, Any]:
         """Compatibility wrapper around the step-contract canonical boundary."""
         return canonicalize_calc_step_config(self.config, execution_config=self.execution_config)
@@ -323,20 +330,20 @@ class ChemTaskManager:
 
     def _filter_pending(self, tasks: list[models.TaskContext]) -> list[models.TaskContext]:
         """Filter completed/recoverable tasks and return the list of pending ones."""
-        assert self.results_db is not None
+        results_db = self._require_results_db()
         return TaskRecoveryService(
-            results_db=self.results_db,
+            results_db=results_db,
             config=self.config,
             recover_result_fn=self._recover_result_from_backups,
         ).filter_pending(tasks)
 
     def _execute_tasks(self, todo: list[models.TaskContext]) -> None:
         """Dispatch tasks in serial or parallel mode."""
-        assert self.results_db is not None
+        results_db = self._require_results_db()
         execute_tasks(
             todo=todo,
             config=self.config,
-            results_db=self.results_db,
+            results_db=results_db,
             run_task_fn=_run_task,
             append_result_fn=self._append_result,
             stop_requested_fn=lambda: self.stop_requested,
@@ -554,7 +561,7 @@ class ChemTaskManager:
                 input_signature=input_signature,
                 execution_config=self.execution_config,
             )
-            assert self.results_db is not None
+            results_db = self._require_results_db()
             task_builder = TaskSourceBuilder(
                 work_dir=self.work_dir,
                 config=self.config,
@@ -566,7 +573,7 @@ class ChemTaskManager:
 
             assembly = ResultAssemblyService(
                 work_dir=self.work_dir,
-                results_db=self.results_db,
+                results_db=results_db,
                 job_meta_map=self._job_meta_map,
                 append_result_fn=self._append_result,
             )
