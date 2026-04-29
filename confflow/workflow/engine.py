@@ -48,6 +48,30 @@ __all__ = [
 logger = get_logger()
 
 
+def _resume_failure_message(
+    *,
+    step_index: int,
+    step_name: str,
+    step_dir: str,
+    reason: str,
+) -> str:
+    return (
+        f"Resume failed: step {step_index} ('{step_name}') cannot be reused: {reason}. "
+        "Strict resume does not automatically re-run stale or incomplete steps. "
+        f"Next action: back up or remove {step_dir}, then run again without --resume "
+        "if recomputing this step is intended."
+    )
+
+
+def _expected_output_reason(step_type: str | None) -> str:
+    st = (step_type or "").lower()
+    if st in {"calc", "task"}:
+        return "missing expected output file output.xyz or result.xyz"
+    if st in {"confgen", "gen"}:
+        return "missing expected output file search.xyz"
+    return "missing expected step output"
+
+
 def _run_confgen_step(
     step_dir: str, current_input: str | list[str], params: dict[str, Any], input_files: list[str]
 ) -> str:
@@ -142,6 +166,7 @@ def run_workflow(
                 continue
 
             # If resuming and this step is already completed, update current_input to its output
+            step_name = str(step.get("name", step_dirnames[i]))
             step_dir = os.path.join(root_dir, step_dirnames[i])
             if step.get("type") in ["calc", "task"]:
                 params = step.get("params", {}) or {}
@@ -155,11 +180,35 @@ def run_workflow(
                 if prepared.reusable_output is not None:
                     current_input = prepared.reusable_output
                     continue
-                if prepared.state.has_resume_state:
+                if prepared.cleaned_stale_artifacts:
                     raise RuntimeError(
-                        "Resume failed: calc step "
-                        f"{i + 1} ('{step_dirnames[i]}') is incomplete or stale in {step_dir}. "
-                        "The step directory was cleaned; rerun from this step without relying on the old checkpoint."
+                        _resume_failure_message(
+                            step_index=i + 1,
+                            step_name=step_name,
+                            step_dir=step_dir,
+                            reason=(
+                                "stale calc artifacts were cleaned because the stored "
+                                "signature did not match the current config/input signature"
+                            ),
+                        )
+                    )
+                if prepared.state.has_resume_state:
+                    reason = (
+                        "resume-only calc state was found, but strict resume requires "
+                        "a reusable final output for completed prior steps"
+                        if prepared.state.can_resume_without_output
+                        else (
+                            "incomplete calc resume state; artifacts exist but no "
+                            "reusable final output or matching resumable results/backups were found"
+                        )
+                    )
+                    raise RuntimeError(
+                        _resume_failure_message(
+                            step_index=i + 1,
+                            step_name=step_name,
+                            step_dir=step_dir,
+                            reason=reason,
+                        )
                     )
 
             expected_output = resolve_step_output(step_dir, step.get("type"))
@@ -168,9 +217,12 @@ def run_workflow(
                 continue
 
             raise RuntimeError(
-                "Resume failed: step "
-                f"{i + 1} ('{step_dirnames[i]}') output not found in {step_dir}. "
-                "The working directory is incomplete; re-run from this step or remove resume."
+                _resume_failure_message(
+                    step_index=i + 1,
+                    step_name=step_name,
+                    step_dir=step_dir,
+                    reason=_expected_output_reason(step.get("type")),
+                )
             )
 
         if not step.get("enabled", True):

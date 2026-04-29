@@ -1136,8 +1136,15 @@ def test_workflow_engine_resume_missing_output_raises(tmp_path):
         encoding="utf-8",
     )
 
-    with pytest.raises(RuntimeError, match="Resume failed"):
+    with pytest.raises(RuntimeError) as excinfo:
         run_workflow([str(input_xyz)], str(config_file), work_dir=str(root), resume=True)
+
+    message = str(excinfo.value)
+    assert "step 1 ('step1')" in message
+    assert "missing expected output file output.xyz or result.xyz" in message
+    assert "Strict resume does not automatically re-run stale or incomplete steps" in message
+    assert "back up or remove" in message
+    assert "without --resume" in message
 
 
 def test_workflow_engine_resume_calc_does_not_accept_search_xyz(tmp_path):
@@ -1172,8 +1179,125 @@ def test_workflow_engine_resume_calc_does_not_accept_search_xyz(tmp_path):
     step1_dir.mkdir()
     (step1_dir / "search.xyz").write_text("1\nCID=A000001\nC 0 0 0\n", encoding="utf-8")
 
-    with pytest.raises(RuntimeError, match="Resume failed"):
+    with pytest.raises(RuntimeError) as excinfo:
         run_workflow([str(input_xyz)], str(config_file), work_dir=str(root), resume=True)
+
+    message = str(excinfo.value)
+    assert "step 1 ('step1')" in message
+    assert "stale calc artifacts were cleaned" in message
+    assert "stored signature did not match the current config/input signature" in message
+    assert "Strict resume does not automatically re-run stale or incomplete steps" in message
+    assert "without --resume" in message
+
+
+def test_workflow_engine_resume_stale_calc_message_is_actionable(tmp_path):
+    from datetime import datetime
+
+    root = tmp_path / "resume_stale_calc"
+    root.mkdir()
+
+    input_xyz = root / "input.xyz"
+    input_xyz.write_text("1\nCID=A000001\nC 0 0 0\n", encoding="utf-8")
+
+    config_file = root / "config.yaml"
+    config_file.write_text(
+        "global:\n  iprog: gaussian\n  itask: opt\n  keyword: opt\n"
+        "steps:\n  - type: calc\n    name: step1\n",
+        encoding="utf-8",
+    )
+
+    checkpoint = root / ".checkpoint"
+    checkpoint.write_text(
+        json.dumps(
+            {
+                "last_completed_step": 0,
+                "timestamp": datetime.now().isoformat(),
+                "stats": {"steps": [{"name": "step1", "status": "success"}]},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    step1_dir = root / "step1"
+    step1_dir.mkdir()
+    (step1_dir / "output.xyz").write_text("1\nCID=A000001\nC 0 0 0\n", encoding="utf-8")
+    (step1_dir / ".config_hash").write_text("stale-signature", encoding="utf-8")
+
+    with pytest.raises(RuntimeError) as excinfo:
+        run_workflow([str(input_xyz)], str(config_file), work_dir=str(root), resume=True)
+
+    message = str(excinfo.value)
+    assert "step 1 ('step1')" in message
+    assert "stale calc artifacts were cleaned" in message
+    assert "stored signature did not match the current config/input signature" in message
+    assert "Strict resume does not automatically re-run stale or incomplete steps" in message
+    assert "back up or remove" in message
+    assert "without --resume" in message
+
+
+def test_workflow_engine_resume_only_calc_state_message_is_accurate(tmp_path):
+    from datetime import datetime
+
+    root = tmp_path / "resume_only_calc"
+    root.mkdir()
+
+    input_xyz = root / "input.xyz"
+    input_xyz.write_text("1\nCID=A000001\nC 0 0 0\n", encoding="utf-8")
+
+    config_file = root / "config.yaml"
+    config_file.write_text(
+        "global: {}\n"
+        "steps:\n"
+        "  - type: calc\n"
+        "    name: step1\n"
+        "    params:\n"
+        "      iprog: gaussian\n"
+        "      itask: opt\n"
+        "      keyword: opt\n",
+        encoding="utf-8",
+    )
+
+    checkpoint = root / ".checkpoint"
+    checkpoint.write_text(
+        json.dumps(
+            {
+                "last_completed_step": 0,
+                "timestamp": datetime.now().isoformat(),
+                "stats": {"steps": [{"name": "step1", "status": "success"}]},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    step1_dir = root / "step1"
+    step1_dir.mkdir()
+    (step1_dir / "results.db").write_bytes(b"")
+    cfg_data = load_workflow_config(str(config_file))
+    cfg = build_task_config(
+        cfg_data["steps"][0]["params"],
+        cfg_data["global"],
+        root_dir=str(root),
+        all_steps=cfg_data["steps"],
+    )
+    ConfigSchema.validate_calc_config(cfg)
+    record_calc_step_signature(
+        str(step1_dir),
+        cfg,
+        input_signature=compute_calc_input_signature(str(input_xyz)),
+    )
+
+    with pytest.raises(RuntimeError) as excinfo:
+        run_workflow([str(input_xyz)], str(config_file), work_dir=str(root), resume=True)
+
+    message = str(excinfo.value)
+    assert "step 1 ('step1')" in message
+    assert "resume-only calc state was found" in message
+    assert "strict resume requires a reusable final output" in message
+    assert (
+        "no reusable final output or matching resumable results/backups were found" not in message
+    )
+    assert "Strict resume does not automatically re-run stale or incomplete steps" in message
+    assert "without --resume" in message
 
 
 def test_workflow_engine_calc_resume(tmp_path):
