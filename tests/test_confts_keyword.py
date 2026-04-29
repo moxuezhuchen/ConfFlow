@@ -54,6 +54,17 @@ class TestConftsKeyword:
         res = _cli([])
         assert res == 1
 
+    def test_confts_cli_missing_required_args_does_not_import_calc(self, tmp_path, capsys):
+        from confflow.confts import _cli
+
+        xyz = tmp_path / "test.xyz"
+        xyz.write_text("1\n\nC 0 0 0\n")
+
+        with patch("confflow.confts.importlib.import_module") as mock_import:
+            assert _cli([str(xyz)]) == 1
+
+        mock_import.assert_not_called()
+
 
 class TestConftsCli:
     """Tests for confts CLI entry points."""

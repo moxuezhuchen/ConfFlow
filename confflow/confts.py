@@ -43,27 +43,23 @@ def _cli(argv: list[str] | None = None) -> int:
         return ExitCode.USAGE_ERROR
 
     # Run as a calc executor. YAML can still enable ts_rescue_scan for TS tasks.
-    if args.input_xyz and args.settings:
-        calc = importlib.import_module("confflow.calc")
+    calc = importlib.import_module("confflow.calc")
 
-        require_existing_path(args.input_xyz, "Input file")
-        require_existing_path(args.settings, "Settings file")
+    require_existing_path(args.input_xyz, "Input file")
+    require_existing_path(args.settings, "Settings file")
 
-        try:
-            with cli_output_to_txt(args.input_xyz):
-                manager = calc.ChemTaskManager(settings_file=args.settings)
-                # Respect the YAML configuration instead of forcing ts_rescue_scan.
-                summary = manager.run(args.input_xyz)
-        except (configparser.Error, ConfFlowError, OSError, ValueError) as e:
-            print(f"Error: {e}", file=sys.stderr)
-            return ExitCode.RUNTIME_ERROR
-        if isinstance(summary, calc.CalcRunSummary) and summary.all_tasks_failed:
-            print(calc.format_all_failed_message(summary), file=sys.stderr)
-            return ExitCode.RUNTIME_ERROR
-        return ExitCode.SUCCESS
-
-    parser.print_help()
-    return ExitCode.USAGE_ERROR
+    try:
+        with cli_output_to_txt(args.input_xyz):
+            manager = calc.ChemTaskManager(settings_file=args.settings)
+            # Respect the YAML configuration instead of forcing ts_rescue_scan.
+            summary = manager.run(args.input_xyz)
+    except (configparser.Error, ConfFlowError, OSError, ValueError) as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return ExitCode.RUNTIME_ERROR
+    if isinstance(summary, calc.CalcRunSummary) and summary.all_tasks_failed:
+        print(calc.format_all_failed_message(summary), file=sys.stderr)
+        return ExitCode.RUNTIME_ERROR
+    return ExitCode.SUCCESS
 
 
 def main(args_list: list[str] | None = None):

@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import importlib
+import importlib.metadata
 import json
 
 import pytest
@@ -60,6 +61,8 @@ class TestConfflowPackage:
         import confflow
 
         assert hasattr(confflow, "__version__")
+        assert isinstance(confflow.__version__, str)
+        assert confflow.__version__
         assert hasattr(confflow, "RDKIT_AVAILABLE")
         assert hasattr(confflow, "PSUTIL_AVAILABLE")
         assert hasattr(confflow, "NUMBA_AVAILABLE")
@@ -76,6 +79,27 @@ class TestConfflowPackage:
         assert "read_xyz_file" in confflow.__all__
         assert "run_workflow" in confflow.__all__
         assert "run_calc_workflow_step" in confflow.__all__
+
+    def test_confflow_version_falls_back_when_package_metadata_missing(self, monkeypatch):
+        import confflow
+
+        def raise_missing(_name):
+            raise importlib.metadata.PackageNotFoundError
+
+        with monkeypatch.context() as mp:
+            mp.setattr(importlib.metadata, "version", raise_missing)
+            reloaded = importlib.reload(confflow)
+            assert reloaded.__version__ == "1.0.10"
+
+        importlib.reload(confflow)
+
+    def test_deprecated_package_export_warning_includes_removal_target(self):
+        import confflow
+
+        confflow.__dict__.pop("merge_step_params", None)
+
+        with pytest.warns(DeprecationWarning, match="will be removed in v2.0"):
+            _ = confflow.merge_step_params
 
     def test_main_entrypoint_callable(self):
         main_mod = importlib.import_module("confflow.main")
