@@ -4,8 +4,12 @@
 
 ### 基本用法
 ```bash
-confgen <input.xyz> <angle_step> [选项]
+confgen <input.xyz> --chain <a-b-c-...> [--steps <s1,s2,...> | --angles "..."] [选项]
 ```
+
+说明：已移除自动柔性键识别，必须用 `--chain` 指定要旋转的链。兼容位置参数
+`angle_step` 仍可在链模式下使用（例如 `confgen molecule.xyz 60 --chain 1-2-3-4-5 -y`），
+但不再推荐作为省略 `--chain` 的独立调用方式。
 
 ### 关键词列表
 
@@ -15,6 +19,9 @@ confgen <input.xyz> <angle_step> [选项]
 | `--del_bond` | - | 键 | 删除现有键 | `--del_bond 2 3` |
 | `--no_rotate` | - | 旋转 | 禁止某键旋转 | `--no_rotate 1 2` |
 | `--force_rotate` | - | 旋转 | 强制某键旋转 | `--force_rotate 3 4` |
+| `--chain` | - | 链 | 指定要旋转的 1-based 原子链 | `--chain 1-2-3-4-5` |
+| `--steps` | - | 角度 | 每根链内键的角度步长 | `--steps 120,120,120,120` |
+| `--angles` | - | 角度 | 显式角度列表；`;` 分隔键，`,` 分隔角度 | `--angles "0,120,240;0,180;0,120;0,60,120"` |
 | `--yes` | `-y` | 控制 | 自动确认所有提示 | `-y` |
 | `--optimize` | `--opt` | 优化 | 启用MMFF94s预优化 | `--opt` |
 | `--bond_threshold` | `-b, -m` | 系数 | 成键判定系数(默认1.15) | `-b 1.0` |
@@ -23,23 +30,25 @@ confgen <input.xyz> <angle_step> [选项]
 ### 常用示例
 
 ```bash
-# 基础构象生成
-confgen molecule.xyz 120
+# 基础构象生成（链模式）
+confgen molecule.xyz --chain 1-2-3-4-5 --steps 120,120,120,120
 
 # 自动确认 + 预优化
-confgen molecule.xyz 120 -y --opt
+confgen molecule.xyz --chain 1-2-3-4-5 --steps 120,120,120,120 -y --opt
 
 # 修改拓扑
-confgen molecule.xyz 120 --add_bond 1 2 --del_bond 3 4
+confgen molecule.xyz --chain 1-2-3-4-5 --steps 120,120,120,120 --add_bond 1 2 --del_bond 3 4
 
 # 控制旋转
-confgen molecule.xyz 120 --force_rotate 2 3 --no_rotate 3 4
+confgen molecule.xyz --chain 1-2-3-4-5 --steps 120,120,120,120 --force_rotate 2 3 --no_rotate 3 4
 
 # 调整参数
-confgen molecule.xyz 60 -b 1.1 -c 0.6 -y
+confgen molecule.xyz --chain 1-2-3-4-5 --steps 60,60,60,60 -b 1.1 -c 0.6 -y
 
 # 组合使用
-confgen molecule.xyz 120 \
+confgen molecule.xyz \
+  --chain 1-2-3-4-5 \
+  --steps 120,120,120,120 \
   -y --opt \
   --force_rotate 2 3 \
   --no_rotate 3 4 \
@@ -257,19 +266,19 @@ confrefine search.xyz -n 10 --dedup-only
 
 ```bash
 # 快速搜索 (大步进)
-confgen molecule.xyz 180 -y
+confgen molecule.xyz --chain 1-2-3-4-5 --steps 180,180,180,180 -y
 
 # 细致搜索 (小步进)
-confgen molecule.xyz 60 -y
+confgen molecule.xyz --chain 1-2-3-4-5 --steps 60,60,60,60 -y
 
 # 预优化搜索
-confgen molecule.xyz 120 -y -opt
+confgen molecule.xyz --chain 1-2-3-4-5 --steps 120,120,120,120 -y -opt
 
 # 修改拓扑后搜索
-confgen molecule.xyz 120 -y --add_bond 1 2
+confgen molecule.xyz --chain 1-2-3-4-5 --steps 120,120,120,120 -y --add_bond 1 2
 
 # 控制旋转搜索
-confgen molecule.xyz 120 -y --force_rotate 2 3
+confgen molecule.xyz --chain 1-2-3-4-5 --steps 120,120,120,120 -y --force_rotate 2 3
 ```
 
 ### 工作流参数组合
@@ -303,7 +312,7 @@ confflow input.xyz -c ./configs/setup.yaml -w ./results/exp1
 
 ### Q: 如何快速生成构象?
 ```bash
-confgen molecule.xyz 120 -y -opt
+confgen molecule.xyz --chain 1-2-3-4-5 --steps 120,120,120,120 -y -opt
 ```
 
 ### Q: 如何去除相似构象?
