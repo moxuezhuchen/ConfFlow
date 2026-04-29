@@ -499,6 +499,133 @@ class TestExecutorAdvanced:
         mock_popen.assert_called_once()
         mock_sleep.assert_called_once_with(expected_sleep)
 
+    @pytest.mark.parametrize(
+        "value",
+        ["bad", 0, -1, "0", "nan", "inf", "-inf", float("nan"), float("inf")],
+    )
+    def test_executor_rejects_invalid_max_wall_time_before_launch(self, cd_tmp, value):
+        """Invalid wall-time limits should fail before launching the process."""
+        from unittest.mock import MagicMock, patch
+
+        from confflow.calc.components.executor import _run_calculation_step
+        from confflow.core.exceptions import ConfigurationError
+
+        work_dir = cd_tmp / "work"
+        work_dir.mkdir()
+
+        policy = MagicMock()
+        config = {"max_wall_time_seconds": value}
+
+        with patch("subprocess.Popen") as mock_popen:
+            with pytest.raises(ConfigurationError, match="max_wall_time_seconds"):
+                _run_calculation_step(str(work_dir), "job", policy, None, config)
+
+            mock_popen.assert_not_called()
+
+    def test_executor_omitted_max_wall_time_does_not_check_timeout(self, cd_tmp):
+        """Omitting max_wall_time_seconds preserves the no-timeout polling path."""
+        from unittest.mock import MagicMock, patch
+
+        from confflow.calc.components.executor import _run_calculation_step
+
+        work_dir = cd_tmp / "work"
+        work_dir.mkdir()
+
+        policy = MagicMock()
+        policy.input_ext = "inp"
+        policy.log_ext = "log"
+        policy.name = "Mock"
+        policy.get_execution_command.return_value = ["true"]
+        policy.get_environment.return_value = None
+        policy.check_termination.return_value = True
+        policy.parse_output.return_value = {"energy": -1.0}
+
+        with (
+            patch("subprocess.Popen") as mock_popen,
+            patch("time.sleep") as mock_sleep,
+            patch("time.monotonic") as mock_monotonic,
+        ):
+            mock_proc = MagicMock()
+            mock_proc.poll.side_effect = [None, 0]
+            mock_proc.returncode = 0
+            mock_popen.return_value = mock_proc
+
+            result = _run_calculation_step(str(work_dir), "job", policy, None, {})
+
+        assert result == {"energy": -1.0}
+        mock_popen.assert_called_once()
+        mock_sleep.assert_called_once_with(1.0)
+        mock_monotonic.assert_not_called()
+
+    def test_executor_valid_max_wall_time_allows_quick_process(self, cd_tmp):
+        """A valid wall-time limit should not affect a quickly exiting process."""
+        from unittest.mock import MagicMock, patch
+
+        from confflow.calc.components.executor import _run_calculation_step
+
+        work_dir = cd_tmp / "work"
+        work_dir.mkdir()
+
+        policy = MagicMock()
+        policy.input_ext = "inp"
+        policy.log_ext = "log"
+        policy.name = "Mock"
+        policy.get_execution_command.return_value = ["true"]
+        policy.get_environment.return_value = None
+        policy.check_termination.return_value = True
+        policy.parse_output.return_value = {"energy": -1.0}
+
+        config = {"max_wall_time_seconds": 60, "stop_check_interval_seconds": 0.1}
+        with (
+            patch("subprocess.Popen") as mock_popen,
+            patch("time.sleep") as mock_sleep,
+            patch("time.monotonic", side_effect=[0.0, 0.5]),
+        ):
+            mock_proc = MagicMock()
+            mock_proc.poll.side_effect = [None, 0]
+            mock_proc.returncode = 0
+            mock_popen.return_value = mock_proc
+
+            result = _run_calculation_step(str(work_dir), "job", policy, None, config)
+
+        assert result == {"energy": -1.0}
+        mock_popen.assert_called_once()
+        mock_sleep.assert_called_once_with(0.1)
+
+    def test_executor_max_wall_time_kills_and_reaps_timed_out_process(self, cd_tmp):
+        """A timed-out subprocess should be killed and reaped before reporting failure."""
+        from unittest.mock import MagicMock, patch
+
+        from confflow.calc.components.executor import _run_calculation_step
+        from confflow.core.exceptions import CalculationExecutionError
+
+        work_dir = cd_tmp / "work"
+        work_dir.mkdir()
+
+        policy = MagicMock()
+        policy.input_ext = "inp"
+        policy.log_ext = "log"
+        policy.name = "Mock"
+        policy.get_execution_command.return_value = ["sleep", "10"]
+        policy.get_environment.return_value = None
+
+        config = {"max_wall_time_seconds": 1, "stop_check_interval_seconds": 0.1}
+        with (
+            patch("subprocess.Popen") as mock_popen,
+            patch("time.sleep") as mock_sleep,
+            patch("time.monotonic", side_effect=[0.0, 1.5]),
+        ):
+            mock_proc = MagicMock()
+            mock_proc.poll.return_value = None
+            mock_popen.return_value = mock_proc
+
+            with pytest.raises(CalculationExecutionError, match="exceeded max_wall_time_seconds"):
+                _run_calculation_step(str(work_dir), "job", policy, None, config)
+
+        mock_proc.kill.assert_called_once()
+        mock_proc.wait.assert_called_once()
+        mock_sleep.assert_not_called()
+
     def test_save_config_hash_failure(self, tmp_path):
         """Test config hash save failure."""
         from unittest.mock import patch

@@ -57,6 +57,7 @@ _KNOWN_CALC_PARAMS_BASE = frozenset(
         "ibkout",
         "enable_dynamic_resources",
         "resume_from_backups",
+        "max_wall_time_seconds",
     }
 )
 
@@ -106,6 +107,7 @@ _EXPLICIT_CALC_CONFIG_FIELDS = frozenset(
         "ibkout",
         "enable_dynamic_resources",
         "resume_from_backups",
+        "max_wall_time_seconds",
         "sandbox_root",
         "input_chk_dir",
     }

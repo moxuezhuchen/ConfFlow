@@ -297,6 +297,7 @@ def _resolve_execution_options(
                 global_config.get("resume_from_backups", DEFAULT_RESUME_FROM_BACKUPS),
             )
         ),
+        max_wall_time_seconds=_get_param("max_wall_time_seconds", params, global_config, float),
         auto_clean=_coerce_bool_flag(
             params.get(
                 "auto_clean",
@@ -325,7 +326,7 @@ def _build_base_task_config(
     params: dict[str, Any], global_config: dict[str, Any]
 ) -> dict[str, str]:
     """Build the base flat config shared by all calc tasks."""
-    return {
+    config = {
         "gaussian_path": str(global_config.get("gaussian_path", "g16")),
         "orca_path": str(global_config.get("orca_path", "orca")),
         "cores_per_task": str(
@@ -379,6 +380,12 @@ def _build_base_task_config(
             )
         ).lower(),
     }
+    max_wall_time_seconds = params.get(
+        "max_wall_time_seconds", global_config.get("max_wall_time_seconds")
+    )
+    if max_wall_time_seconds is not None:
+        config["max_wall_time_seconds"] = str(max_wall_time_seconds)
+    return config
 
 
 def _merge_remaining_known_params(params: dict[str, Any], config: dict[str, str]) -> None:

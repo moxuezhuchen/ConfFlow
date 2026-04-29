@@ -701,6 +701,27 @@ def test_build_structured_task_config_delete_work_dir_is_known(caplog):
     assert "Ignored unknown calc parameter 'delete_work_dir'" not in caplog.text
 
 
+def test_build_structured_task_config_max_wall_time_is_known(caplog):
+    with caplog.at_level("WARNING", logger="confflow.workflow.config_builder"):
+        cfg = build_structured_task_config(
+            params={"keyword": "HF", "max_wall_time_seconds": 120},
+            global_config={},
+        )
+
+    assert cfg["max_wall_time_seconds"] == 120.0
+    assert cfg.execution.max_wall_time_seconds == 120.0
+    assert "Ignored unknown calc parameter 'max_wall_time_seconds'" not in caplog.text
+
+
+def test_build_task_config_preserves_global_max_wall_time():
+    cfg = build_task_config(
+        params={"keyword": "HF"},
+        global_config={"max_wall_time_seconds": 300},
+    )
+
+    assert float(cfg["max_wall_time_seconds"]) == 300.0
+
+
 def test_build_structured_task_config_preserves_typed_blocks_and_lists():
     cfg = build_structured_task_config(
         params={
