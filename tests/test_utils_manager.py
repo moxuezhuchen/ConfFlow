@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import os
 import re
+import warnings
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -17,6 +18,7 @@ from confflow.calc.config_types import (
     ExecutionOptions,
     Program,
     TaskKind,
+    TSOptions,
 )
 from confflow.calc.manager import ChemTaskManager
 from confflow.core.utils import (
@@ -361,6 +363,80 @@ def test_logger_file_handler(tmp_path):
 # =============================================================================
 # manager tests
 # =============================================================================
+
+
+def test_calc_task_config_structured_key_setitem_warns_without_sync():
+    cfg = CalcTaskConfig(
+        program=Program.ORCA,
+        task=TaskKind.TS,
+        keyword="HF def2-SVP",
+        ts=TSOptions(rescue_scan=False),
+    )
+    before = cfg.to_legacy_dict()
+
+    with pytest.warns(RuntimeWarning, match="may not update the structured attributes"):
+        cfg["ts_rescue_scan"] = True
+
+    assert cfg["ts_rescue_scan"] is True
+    assert cfg.ts.rescue_scan is False
+    assert cfg.to_legacy_dict()["ts_rescue_scan"] == before["ts_rescue_scan"] == "false"
+
+
+def test_calc_task_config_structured_key_update_warns_without_sync():
+    cfg = CalcTaskConfig(
+        program=Program.ORCA,
+        task=TaskKind.SP,
+        keyword="HF def2-SVP",
+    )
+
+    with pytest.warns(RuntimeWarning, match="max_wall_time_seconds"):
+        cfg.update({"max_wall_time_seconds": 10})
+
+    assert cfg["max_wall_time_seconds"] == 10
+    assert cfg.execution.max_wall_time_seconds is None
+
+
+def test_calc_task_config_runtime_key_setitem_does_not_warn():
+    cfg = CalcTaskConfig(
+        program=Program.GAUSSIAN,
+        task=TaskKind.SP,
+        keyword="HF/3-21G",
+    )
+
+    with warnings.catch_warnings(record=True) as captured:
+        warnings.simplefilter("always")
+        cfg["gaussian_oldchk"] = "x.chk"
+
+    assert captured == []
+    assert cfg["gaussian_oldchk"] == "x.chk"
+
+
+def test_calc_task_config_copy_returns_independent_config():
+    cfg = CalcTaskConfig(
+        program=Program.ORCA,
+        task=TaskKind.TS,
+        keyword="HF def2-SVP",
+        cleanup=CleanupOptions(enabled=True, rmsd_threshold=0.35),
+        ts=TSOptions(rescue_scan=True, scan_coarse_step=0.2),
+        execution=ExecutionOptions(max_wall_time_seconds=30),
+    )
+
+    copied = cfg.copy()
+
+    assert copied is not cfg
+    assert copied == cfg
+    assert copied.program == cfg.program
+    assert copied.task == cfg.task
+    assert copied.keyword == cfg.keyword
+    assert copied.cleanup == cfg.cleanup
+    assert copied.ts == cfg.ts
+    assert copied.execution == cfg.execution
+
+    with pytest.warns(RuntimeWarning, match="keyword"):
+        copied["keyword"] = "B3LYP def2-SVP"
+
+    assert cfg["keyword"] == "HF def2-SVP"
+    assert copied["keyword"] == "B3LYP def2-SVP"
 
 
 def test_manager_init_no_config(tmp_path):
