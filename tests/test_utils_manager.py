@@ -1557,6 +1557,181 @@ def test_inspect_calc_step_state_accepts_legacy_config_and_input_md5(tmp_path):
     assert state.is_reusable is True
 
 
+def test_calc_signature_matches_legacy_combined_config_input(tmp_path):
+    from confflow.calc import step_contract
+
+    config = {"iprog": "orca", "itask": "sp", "keyword": "xTB"}
+    changed_config = {"iprog": "orca", "itask": "sp", "keyword": "HF"}
+    old_input = tmp_path / "old.xyz"
+    old_input.write_text("1\nold\nH 0 0 0\n", encoding="utf-8")
+    new_input = tmp_path / "new.xyz"
+    new_input.write_text("1\nnew\nH 0 0 1\n", encoding="utf-8")
+    old_input_signature = step_contract.compute_calc_input_signature(str(old_input))
+    new_input_signature = step_contract.compute_calc_input_signature(str(new_input))
+    legacy_config = step_contract._compute_legacy_calc_config_signature(config)
+    legacy_combined = f"{legacy_config}:{old_input_signature.legacy_signature}"
+
+    assert step_contract.calc_signature_matches(
+        legacy_combined,
+        config,
+        input_signature=old_input_signature,
+    )
+    assert not step_contract.calc_signature_matches(
+        legacy_combined,
+        changed_config,
+        input_signature=old_input_signature,
+    )
+    assert not step_contract.calc_signature_matches(
+        legacy_combined,
+        config,
+        input_signature=new_input_signature,
+    )
+
+
+def _old_delete_work_dir_config_signatures(
+    step_contract, config: dict[str, str], delete_work_dir: str = "true"
+) -> tuple[str, str]:
+    payload = step_contract._config_signature_payload(
+        config,
+        exclude_keys=step_contract._CONFIG_HASH_EXCLUDE_KEYS_BEFORE_DELETE_WORK_DIR_RUNTIME,
+        delete_work_dir_override=delete_work_dir,
+    )
+    return str(step_contract._sha256_signature(payload)), step_contract._legacy_md5_signature(
+        payload
+    )
+
+
+def test_calc_signature_matches_old_delete_work_dir_sha256_signature():
+    from confflow.calc import step_contract
+
+    config = {"iprog": "orca", "itask": "sp", "keyword": "xTB"}
+    changed_config = {"iprog": "orca", "itask": "sp", "keyword": "HF"}
+    old_true_sha256, _ = _old_delete_work_dir_config_signatures(
+        step_contract,
+        config,
+        delete_work_dir="true",
+    )
+    old_false_sha256, _ = _old_delete_work_dir_config_signatures(
+        step_contract,
+        config,
+        delete_work_dir="false",
+    )
+
+    assert step_contract.calc_signature_matches(old_true_sha256, config)
+    assert step_contract.calc_signature_matches(
+        old_true_sha256,
+        {**config, "delete_work_dir": "false"},
+    )
+    assert step_contract.calc_signature_matches(
+        old_false_sha256,
+        {**config, "delete_work_dir": "true"},
+    )
+    assert not step_contract.calc_signature_matches(old_true_sha256, changed_config)
+
+
+def test_inspect_calc_step_state_reuses_old_delete_work_dir_sha256_signature(tmp_path):
+    from confflow.calc import step_contract
+
+    config = {"iprog": "orca", "itask": "sp", "keyword": "xTB"}
+    old_sha256, _ = _old_delete_work_dir_config_signatures(step_contract, config)
+    step_dir = tmp_path / "step"
+    step_dir.mkdir()
+    (step_dir / "output.xyz").write_text("1\nout\nH 0 0 0\n", encoding="utf-8")
+    (step_dir / ".config_hash").write_text(old_sha256, encoding="utf-8")
+
+    state = step_contract.inspect_calc_step_state(
+        str(step_dir),
+        {**config, "delete_work_dir": "false"},
+    )
+
+    assert state.signature_matches is True
+    assert state.is_reusable is True
+
+
+def test_calc_signature_matches_old_delete_work_dir_sha256_combined_input(tmp_path):
+    from confflow.calc import step_contract
+
+    config = {"iprog": "orca", "itask": "sp", "keyword": "xTB"}
+    changed_config = {"iprog": "orca", "itask": "sp", "keyword": "HF"}
+    old_input = tmp_path / "old.xyz"
+    old_input.write_text("1\nold\nH 0 0 0\n", encoding="utf-8")
+    new_input = tmp_path / "new.xyz"
+    new_input.write_text("1\nnew\nH 0 0 1\n", encoding="utf-8")
+    old_input_signature = step_contract.compute_calc_input_signature(str(old_input))
+    new_input_signature = step_contract.compute_calc_input_signature(str(new_input))
+    old_config_sha256, _ = _old_delete_work_dir_config_signatures(step_contract, config)
+    old_combined = step_contract._combine_signatures(old_config_sha256, old_input_signature)
+
+    assert step_contract.calc_signature_matches(
+        old_combined,
+        config,
+        input_signature=old_input_signature,
+    )
+    assert not step_contract.calc_signature_matches(
+        old_combined,
+        changed_config,
+        input_signature=old_input_signature,
+    )
+    assert not step_contract.calc_signature_matches(
+        old_combined,
+        config,
+        input_signature=new_input_signature,
+    )
+
+
+def test_calc_signature_matches_old_delete_work_dir_legacy_md5_signature():
+    from confflow.calc import step_contract
+
+    config = {"iprog": "orca", "itask": "sp", "keyword": "xTB"}
+    changed_config = {"iprog": "orca", "itask": "sp", "keyword": "HF"}
+    _, old_true_md5 = _old_delete_work_dir_config_signatures(
+        step_contract,
+        config,
+        delete_work_dir="true",
+    )
+    _, old_false_md5 = _old_delete_work_dir_config_signatures(
+        step_contract,
+        config,
+        delete_work_dir="false",
+    )
+
+    assert step_contract.calc_signature_matches(old_true_md5, config)
+    assert step_contract.calc_signature_matches(
+        old_true_md5,
+        {**config, "delete_work_dir": "false"},
+    )
+    assert step_contract.calc_signature_matches(
+        old_false_md5,
+        {**config, "delete_work_dir": "true"},
+    )
+    assert not step_contract.calc_signature_matches(old_true_md5, changed_config)
+
+
+def test_calc_signature_matches_old_delete_work_dir_legacy_md5_combined_input(tmp_path):
+    from confflow.calc import step_contract
+
+    config = {"iprog": "orca", "itask": "sp", "keyword": "xTB"}
+    old_input = tmp_path / "old.xyz"
+    old_input.write_text("1\nold\nH 0 0 0\n", encoding="utf-8")
+    new_input = tmp_path / "new.xyz"
+    new_input.write_text("1\nnew\nH 0 0 1\n", encoding="utf-8")
+    old_input_signature = step_contract.compute_calc_input_signature(str(old_input))
+    new_input_signature = step_contract.compute_calc_input_signature(str(new_input))
+    _, old_config_md5 = _old_delete_work_dir_config_signatures(step_contract, config)
+    old_combined = f"{old_config_md5}:{old_input_signature.legacy_signature}"
+
+    assert step_contract.calc_signature_matches(
+        old_combined,
+        {**config, "delete_work_dir": "false"},
+        input_signature=old_input_signature,
+    )
+    assert not step_contract.calc_signature_matches(
+        old_combined,
+        config,
+        input_signature=new_input_signature,
+    )
+
+
 def test_legacy_config_md5_is_stale_after_config_change(tmp_path):
     from confflow.calc import step_contract
 
@@ -1686,6 +1861,24 @@ def test_config_hash_ignores_execution_only_runtime_knobs():
     )
 
     assert compute_calc_config_signature(base) == compute_calc_config_signature(changed)
+
+
+def test_delete_work_dir_does_not_affect_signature():
+    from confflow.calc.step_contract import compute_calc_config_signature
+
+    base = {
+        "iprog": "orca",
+        "itask": "sp",
+        "keyword": "xTB",
+        "auto_clean": "false",
+    }
+
+    omitted = compute_calc_config_signature(base)
+    explicit_true = compute_calc_config_signature({**base, "delete_work_dir": "true"})
+    explicit_false = compute_calc_config_signature({**base, "delete_work_dir": "false"})
+
+    assert explicit_true == omitted
+    assert explicit_false == omitted
 
 
 def test_clean_params_alias_keeps_runtime_and_signature_in_sync():

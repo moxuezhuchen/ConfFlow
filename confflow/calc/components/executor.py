@@ -311,10 +311,6 @@ def _save_config_hash(work_dir: str, config: dict[str, Any]):
         logger.debug(f"Config hash save failed: {e}")
 
 
-def _load_config_hash(work_dir: str) -> str | None:
-    return load_calc_config_signature(work_dir)
-
-
 def _config_hash_matches(work_dir: str, config: dict[str, Any]) -> bool:
     stored = load_calc_config_signature(work_dir)
     return calc_signature_matches(stored, config)

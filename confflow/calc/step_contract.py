@@ -95,7 +95,12 @@ _CONFIG_HASH_EXCLUDE_KEYS = {
     "gaussian_write_chk",
     "enable_dynamic_resources",
     "resume_from_backups",
+    "delete_work_dir",
 }
+_CONFIG_HASH_EXCLUDE_KEYS_BEFORE_DELETE_WORK_DIR_RUNTIME = _CONFIG_HASH_EXCLUDE_KEYS - {
+    "delete_work_dir"
+}
+_DELETE_WORK_DIR_COMPAT_VALUES = ("true", "false")
 
 _CALC_RESUME_ARTIFACTS = (
     "output.xyz",
@@ -123,17 +128,31 @@ class _VersionedSignature(str):
         return obj
 
 
-def _normalize_config_for_signature(value: Any) -> Any:
+def _normalize_config_for_signature(
+    value: Any,
+    *,
+    exclude_keys: set[str] | None = None,
+) -> Any:
+    effective_exclude_keys = _CONFIG_HASH_EXCLUDE_KEYS if exclude_keys is None else exclude_keys
     if isinstance(value, dict):
         return {
-            str(key): _normalize_config_for_signature(val)
+            str(key): _normalize_config_for_signature(
+                val,
+                exclude_keys=effective_exclude_keys,
+            )
             for key, val in sorted(value.items(), key=lambda item: str(item[0]))
-            if str(key) not in _CONFIG_HASH_EXCLUDE_KEYS
+            if str(key) not in effective_exclude_keys
         }
     if isinstance(value, (list, tuple)):
-        return [_normalize_config_for_signature(item) for item in value]
+        return [
+            _normalize_config_for_signature(item, exclude_keys=effective_exclude_keys)
+            for item in value
+        ]
     if isinstance(value, set):
-        return sorted(_normalize_config_for_signature(item) for item in value)
+        return sorted(
+            _normalize_config_for_signature(item, exclude_keys=effective_exclude_keys)
+            for item in value
+        )
     if isinstance(value, (str, int, float, bool)) or value is None:
         return value
     return str(value)
@@ -316,6 +335,8 @@ def _config_signature_payload(
     config: CompatConfig,
     *,
     execution_config: ExecutionConfig | Mapping[str, Any] | None = None,
+    exclude_keys: set[str] | None = None,
+    delete_work_dir_override: str | None = None,
 ) -> str:
     signature_view = canonicalize_calc_step_config(config, execution_config=execution_config)
 
@@ -332,8 +353,11 @@ def _config_signature_payload(
         signature_view.pop("clean_params", None)
         signature_view["auto_clean"] = "false"
 
+    if delete_work_dir_override is not None:
+        signature_view["delete_work_dir"] = delete_work_dir_override
+
     return json.dumps(
-        _normalize_config_for_signature(signature_view),
+        _normalize_config_for_signature(signature_view, exclude_keys=exclude_keys),
         sort_keys=True,
         separators=(",", ":"),
         ensure_ascii=True,
@@ -373,6 +397,28 @@ def compute_calc_config_signature(
     """
     payload = _config_signature_payload(config, execution_config=execution_config)
     return _sha256_signature(payload)
+
+
+def _delete_work_dir_compat_config_signatures(
+    config: CompatConfig,
+    *,
+    execution_config: ExecutionConfig | Mapping[str, Any] | None = None,
+) -> tuple[tuple[str, str], ...]:
+    """Return old config signatures from before delete_work_dir became runtime-only."""
+    signatures: list[tuple[str, str]] = []
+    seen_payloads: set[str] = set()
+    for delete_work_dir in _DELETE_WORK_DIR_COMPAT_VALUES:
+        payload = _config_signature_payload(
+            config,
+            execution_config=execution_config,
+            exclude_keys=_CONFIG_HASH_EXCLUDE_KEYS_BEFORE_DELETE_WORK_DIR_RUNTIME,
+            delete_work_dir_override=delete_work_dir,
+        )
+        if payload in seen_payloads:
+            continue
+        seen_payloads.add(payload)
+        signatures.append((str(_sha256_signature(payload)), _legacy_md5_signature(payload)))
+    return tuple(signatures)
 
 
 def _file_content_digest(path: str, algorithm: str) -> str:
@@ -517,6 +563,48 @@ def _build_legacy_calc_step_signature(
     return _combine_signatures(signature, legacy_input)
 
 
+def _build_calc_step_signature_candidates(
+    config: CompatConfig,
+    *,
+    input_signature: str | None = None,
+    execution_config: ExecutionConfig | Mapping[str, Any] | None = None,
+) -> tuple[str, ...]:
+    candidates: list[str] = []
+    seen: set[str] = set()
+
+    def add(signature: str | None) -> None:
+        if signature is None or signature in seen:
+            return
+        seen.add(signature)
+        candidates.append(signature)
+
+    add(
+        build_calc_step_signature(
+            config,
+            input_signature=input_signature,
+            execution_config=execution_config,
+        )
+    )
+    add(
+        _build_legacy_calc_step_signature(
+            config,
+            input_signature=input_signature,
+            execution_config=execution_config,
+        )
+    )
+
+    legacy_input = _legacy_input_signature(input_signature)
+    for sha256_signature, legacy_md5_signature in _delete_work_dir_compat_config_signatures(
+        config,
+        execution_config=execution_config,
+    ):
+        add(_combine_signatures(sha256_signature, input_signature))
+        if input_signature is None or legacy_input is not None:
+            add(_combine_signatures(legacy_md5_signature, legacy_input))
+
+    return tuple(candidates)
+
+
 def calc_signature_matches(
     stored_signature: str | None,
     config: CompatConfig,
@@ -528,20 +616,11 @@ def calc_signature_matches(
     if stored_signature is None:
         return False
 
-    current_signature = build_calc_step_signature(
+    return stored_signature in _build_calc_step_signature_candidates(
         config,
         input_signature=input_signature,
         execution_config=execution_config,
     )
-    if stored_signature == current_signature:
-        return True
-
-    legacy_signature = _build_legacy_calc_step_signature(
-        config,
-        input_signature=input_signature,
-        execution_config=execution_config,
-    )
-    return legacy_signature is not None and stored_signature == legacy_signature
 
 
 def record_calc_step_signature(
@@ -685,10 +764,14 @@ def inspect_calc_step_state(
         input_signature=input_signature,
         execution_config=execution_config,
     )
-    legacy_signature = _build_legacy_calc_step_signature(
-        canonical_config,
-        input_signature=input_signature,
-        execution_config=execution_config,
+    compatible_signatures = tuple(
+        signature
+        for signature in _build_calc_step_signature_candidates(
+            canonical_config,
+            input_signature=input_signature,
+            execution_config=execution_config,
+        )
+        if signature != current_signature
     )
     return CalcStepState(
         step_dir=step_dir,
@@ -700,7 +783,7 @@ def inspect_calc_step_state(
         ),
         stored_signature=load_calc_config_signature(step_dir),
         current_signature=current_signature,
-        compatible_signatures=((legacy_signature,) if legacy_signature is not None else ()),
+        compatible_signatures=compatible_signatures,
         artifact_names=tuple(_list_resume_artifacts(step_dir)),
     )
 
