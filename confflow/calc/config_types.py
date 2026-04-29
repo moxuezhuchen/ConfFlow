@@ -4,7 +4,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+import warnings
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any
@@ -277,6 +278,44 @@ def _resolve_clean_opts_value(value: Any) -> str | None:
     return stripped or None
 
 
+_CALC_TASK_CONFIG_STRUCTURED_MIRROR_KEYS = frozenset(
+    {
+        "iprog",
+        "itask",
+        "keyword",
+        "freeze",
+        "clean_opts",
+        "clean_params",
+        "dedup_only",
+        "keep_all_topos",
+        "noH",
+        "rmsd_threshold",
+        "energy_window",
+        "energy_tolerance",
+        "enable_dynamic_resources",
+        "resume_from_backups",
+        "max_wall_time_seconds",
+        "auto_clean",
+        "delete_work_dir",
+        "sandbox_root",
+        "input_chk_dir",
+        "allowed_executables",
+        "gaussian_write_chk",
+        "ts_bond_atoms",
+        "ts_rescue_scan",
+        "ts_bond_drift_threshold",
+        "ts_rmsd_threshold",
+        "scan_coarse_step",
+        "scan_fine_step",
+        "scan_uphill_limit",
+        "scan_max_steps",
+        "scan_fine_half_window",
+        "ts_rescue_keep_scan_dirs",
+        "ts_rescue_scan_backup",
+    }
+)
+
+
 class CalcTaskConfig(dict[str, Any]):
     """Structured calc config that remains dict-compatible for legacy call sites."""
 
@@ -381,9 +420,50 @@ class CalcTaskConfig(dict[str, Any]):
             payload.update(dict(extra))
 
         super().__init__(payload)
+        self._warn_on_structured_mutation = True
 
     def copy(self) -> CalcTaskConfig:
-        return ensure_calc_task_config(self)
+        copied = type(self).__new__(type(self))
+        dict.__init__(copied, self)
+        copied.program = self.program
+        copied.task = self.task
+        copied.keyword = self.keyword
+        copied.freeze = self.freeze
+        copied.cleanup = self.cleanup
+        copied.ts = self.ts
+        copied.execution = self.execution
+        copied._warn_on_structured_mutation = True
+        return copied
+
+    def __setitem__(self, key: str, value: Any) -> None:
+        if getattr(self, "_warn_on_structured_mutation", False):
+            self._warn_if_structured_mirror_keys({key})
+        super().__setitem__(key, value)
+
+    def update(self, *args: Any, **kwargs: Any) -> None:
+        updates = dict(*args, **kwargs)
+        if getattr(self, "_warn_on_structured_mutation", False):
+            self._warn_if_structured_mirror_keys(updates.keys())
+        super().update(updates)
+
+    @staticmethod
+    def _warn_if_structured_mirror_keys(keys: Iterable[object]) -> None:
+        mirrored = sorted(
+            {
+                key
+                for key in keys
+                if isinstance(key, str) and key in _CALC_TASK_CONFIG_STRUCTURED_MIRROR_KEYS
+            }
+        )
+        if not mirrored:
+            return
+        warnings.warn(
+            "Mutating CalcTaskConfig structured fields via dict syntax may not update "
+            "the structured attributes. Rebuild the config or use structured options "
+            f"instead. Affected key(s): {', '.join(mirrored)}",
+            RuntimeWarning,
+            stacklevel=3,
+        )
 
     @classmethod
     def from_mapping(cls, mapping: Mapping[str, Any]) -> CalcTaskConfig:
