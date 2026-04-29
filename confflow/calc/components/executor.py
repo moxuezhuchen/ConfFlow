@@ -33,7 +33,7 @@ from ...core.path_policy import (
 from ..policies.base import CalculationPolicy
 from ..setup import logger
 from ..step_contract import (
-    compute_calc_config_signature,
+    calc_signature_matches,
     load_calc_config_signature,
     record_calc_step_signature,
 )
@@ -317,6 +317,4 @@ def _load_config_hash(work_dir: str) -> str | None:
 
 def _config_hash_matches(work_dir: str, config: dict[str, Any]) -> bool:
     stored = load_calc_config_signature(work_dir)
-    if stored is None:
-        return False
-    return stored == compute_calc_config_signature(config)
+    return calc_signature_matches(stored, config)

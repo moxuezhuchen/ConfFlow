@@ -19,6 +19,7 @@ __all__ = [
     "CompatConfig",
     "ExecutionConfig",
     "canonicalize_calc_step_config",
+    "calc_signature_matches",
     "compute_calc_config_signature",
     "compute_calc_input_signature",
     "load_calc_config_signature",
@@ -106,6 +107,20 @@ _CALC_RESUME_ARTIFACTS = (
     "STOP",
     ".config_hash",
 )
+
+_SIGNATURE_ALGORITHM = "sha256"
+_SIGNATURE_PREFIX = f"{_SIGNATURE_ALGORITHM}:"
+
+
+class _VersionedSignature(str):
+    """String signature with a legacy candidate retained for compatibility."""
+
+    legacy_signature: str | None
+
+    def __new__(cls, value: str, legacy_signature: str | None = None):
+        obj = str.__new__(cls, value)
+        obj.legacy_signature = legacy_signature
+        return obj
 
 
 def _normalize_config_for_signature(value: Any) -> Any:
@@ -297,51 +312,13 @@ def canonicalize_calc_step_config(
     return canonical
 
 
-def compute_calc_config_signature(
+def _config_signature_payload(
     config: CompatConfig,
     *,
     execution_config: ExecutionConfig | Mapping[str, Any] | None = None,
 ) -> str:
-    """Compute calc step signature with effective cleanup overlay.
-
-    This function implements the dual-lane handoff contract for signature computation:
-    - ``config`` provides the compat/signature baseline (legacy flat dict)
-    - ``execution_config`` provides structured cleanup that must be reflected in signature
-    - Effective cleanup is overlaid onto signature ONLY if auto-clean is enabled
-
-    See ``docs/internal/COMPAT_EXECUTION_BOUNDARY.md`` for the complete parameter
-    classification table and boundary contract.
-
-    Parameters
-    ----------
-    config : CompatConfig
-        Compat config (legacy flat dict). Provides the signature baseline.
-        All parameters in this dict (except those in ``_CONFIG_HASH_EXCLUDE_KEYS``)
-        contribute to the signature.
-    execution_config : ExecutionConfig | Mapping[str, Any] | None
-        Execution config (structured or flat). If provided, effective cleanup
-        semantics are resolved via ``resolve_effective_auto_clean()`` and
-        overlaid onto the signature view.
-
-    Returns
-    -------
-    str
-        12-character MD5 hex digest of the normalized config JSON.
-
-    Notes
-    -----
-    - If ``auto_clean=False``, cleanup parameters do NOT affect signature.
-    - If ``auto_clean=True``, effective cleanup (resolved from both config and
-      execution_config) MUST be reflected in signature to ensure stale detection.
-    - Runtime updates to ``config`` (e.g., ``manager.config.update({"clean_opts": ...})``)
-      must produce a different signature if they change effective cleanup semantics.
-    - Signature stability is critical: changing this algorithm breaks断点续传 for
-      all existing step artifacts.
-    """
-    # Create shallow copy from the canonical compat baseline
     signature_view = canonicalize_calc_step_config(config, execution_config=execution_config)
 
-    # Overlay effective cleanup ONLY if auto-clean is actually enabled
     auto_clean_enabled, effective_clean_opts = resolve_effective_auto_clean(
         config, execution_config
     )
@@ -355,17 +332,51 @@ def compute_calc_config_signature(
         signature_view.pop("clean_params", None)
         signature_view["auto_clean"] = "false"
 
-    payload = json.dumps(
+    return json.dumps(
         _normalize_config_for_signature(signature_view),
         sort_keys=True,
         separators=(",", ":"),
         ensure_ascii=True,
     )
+
+
+def _sha256_signature(payload: str) -> _VersionedSignature:
+    digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()
+    return _VersionedSignature(f"{_SIGNATURE_PREFIX}{digest}")
+
+
+def _legacy_md5_signature(payload: str) -> str:
     return hashlib.md5(payload.encode("utf-8")).hexdigest()[:12]
 
 
-def _file_content_digest(path: str) -> str:
-    digest = hashlib.md5()
+def _compute_legacy_calc_config_signature(
+    config: CompatConfig,
+    *,
+    execution_config: ExecutionConfig | Mapping[str, Any] | None = None,
+) -> str:
+    payload = _config_signature_payload(config, execution_config=execution_config)
+    return _legacy_md5_signature(payload)
+
+
+def compute_calc_config_signature(
+    config: CompatConfig,
+    *,
+    execution_config: ExecutionConfig | Mapping[str, Any] | None = None,
+) -> str:
+    """Compute a versioned SHA-256 calc step signature.
+
+    The normalized config semantics are unchanged from the legacy signature:
+    runtime-only keys stay excluded, and effective cleanup only contributes when
+    auto-clean is enabled. New signatures are written as ``sha256:<64hex>``.
+    Legacy bare 12-character MD5 values remain accepted by
+    ``calc_signature_matches()`` for existing work directories.
+    """
+    payload = _config_signature_payload(config, execution_config=execution_config)
+    return _sha256_signature(payload)
+
+
+def _file_content_digest(path: str, algorithm: str) -> str:
+    digest = hashlib.new(algorithm)
     with open(path, "rb") as handle:
         while True:
             chunk = handle.read(1024 * 1024)
@@ -375,8 +386,12 @@ def _file_content_digest(path: str) -> str:
     return digest.hexdigest()
 
 
-def compute_calc_input_signature(input_source: str | list[str] | tuple[str, ...] | None) -> str:
-    """Build a stable signature for the calc step input files/content."""
+def _input_signature_payload(
+    input_source: str | list[str] | tuple[str, ...] | None,
+    *,
+    content_key: str,
+    content_algorithm: str,
+) -> str:
     if input_source is None:
         return "no-input"
 
@@ -399,11 +414,35 @@ def compute_calc_input_signature(input_source: str | list[str] | tuple[str, ...]
                 "path": real,
                 "size": stat.st_size,
                 "mtime_ns": stat.st_mtime_ns,
-                "content_md5": _file_content_digest(real),
+                content_key: _file_content_digest(real, content_algorithm),
             }
         )
-    payload = json.dumps(normalized, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
-    return hashlib.md5(payload.encode("utf-8")).hexdigest()[:12]
+    return json.dumps(normalized, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+
+
+def _compute_legacy_calc_input_signature(
+    input_source: str | list[str] | tuple[str, ...] | None,
+) -> str:
+    if input_source is None:
+        return "no-input"
+    payload = _input_signature_payload(
+        input_source,
+        content_key="content_md5",
+        content_algorithm="md5",
+    )
+    return _legacy_md5_signature(payload)
+
+
+def compute_calc_input_signature(input_source: str | list[str] | tuple[str, ...] | None) -> str:
+    """Build a stable versioned SHA-256 signature for calc step input files/content."""
+    payload = _input_signature_payload(
+        input_source,
+        content_key="content_sha256",
+        content_algorithm="sha256",
+    )
+    signature = _sha256_signature(payload)
+    signature.legacy_signature = _compute_legacy_calc_input_signature(input_source)
+    return signature
 
 
 def _signature_path(step_dir: str) -> str:
@@ -420,6 +459,89 @@ def load_calc_config_signature(step_dir: str) -> str | None:
     except OSError:
         return None
     return value or None
+
+
+def _strip_sha256_prefix(signature: str) -> str | None:
+    if not signature.startswith(_SIGNATURE_PREFIX):
+        return None
+    digest = signature[len(_SIGNATURE_PREFIX) :]
+    if len(digest) != 64:
+        return None
+    try:
+        int(digest, 16)
+    except ValueError:
+        return None
+    return digest
+
+
+def _combine_signatures(config_signature: str, input_signature: str | None = None) -> str:
+    if input_signature is None:
+        return config_signature
+
+    config_digest = _strip_sha256_prefix(config_signature)
+    input_digest = _strip_sha256_prefix(input_signature)
+    if config_digest is not None and input_digest is not None:
+        return f"{_SIGNATURE_PREFIX}{config_digest}:{input_digest}"
+    return f"{config_signature}:{input_signature}"
+
+
+def _legacy_input_signature(input_signature: str | None) -> str | None:
+    if input_signature is None:
+        return None
+    legacy_signature = getattr(input_signature, "legacy_signature", None)
+    if isinstance(legacy_signature, str) and legacy_signature:
+        return legacy_signature
+    return None
+
+
+def build_calc_step_signature(
+    config: CompatConfig,
+    *,
+    input_signature: str | None = None,
+    execution_config: ExecutionConfig | Mapping[str, Any] | None = None,
+) -> str:
+    signature = compute_calc_config_signature(config, execution_config=execution_config)
+    return _combine_signatures(signature, input_signature)
+
+
+def _build_legacy_calc_step_signature(
+    config: CompatConfig,
+    *,
+    input_signature: str | None = None,
+    execution_config: ExecutionConfig | Mapping[str, Any] | None = None,
+) -> str | None:
+    signature = _compute_legacy_calc_config_signature(config, execution_config=execution_config)
+    legacy_input = _legacy_input_signature(input_signature)
+    if input_signature is not None and legacy_input is None:
+        return None
+    return _combine_signatures(signature, legacy_input)
+
+
+def calc_signature_matches(
+    stored_signature: str | None,
+    config: CompatConfig,
+    *,
+    input_signature: str | None = None,
+    execution_config: ExecutionConfig | Mapping[str, Any] | None = None,
+) -> bool:
+    """Return whether a stored calc signature matches current or legacy formats."""
+    if stored_signature is None:
+        return False
+
+    current_signature = build_calc_step_signature(
+        config,
+        input_signature=input_signature,
+        execution_config=execution_config,
+    )
+    if stored_signature == current_signature:
+        return True
+
+    legacy_signature = _build_legacy_calc_step_signature(
+        config,
+        input_signature=input_signature,
+        execution_config=execution_config,
+    )
+    return legacy_signature is not None and stored_signature == legacy_signature
 
 
 def record_calc_step_signature(
@@ -448,7 +570,7 @@ def record_calc_step_signature(
         Compat config (legacy flat dict). Provides the signature baseline.
     input_signature : str | None
         Optional input file signature (from ``compute_calc_input_signature()``).
-        If provided, the final signature is ``<config_sig>:<input_sig>``.
+        If provided, the new final signature is ``sha256:<config64>:<input64>``.
     execution_config : ExecutionConfig | Mapping[str, Any] | None
         Execution config (structured or flat). If provided, effective cleanup
         semantics are resolved and overlaid onto the signature.
@@ -463,10 +585,13 @@ def record_calc_step_signature(
     """
     os.makedirs(step_dir, exist_ok=True)
     with open(_signature_path(step_dir), "w", encoding="utf-8") as handle:
-        signature = compute_calc_config_signature(config, execution_config=execution_config)
-        if input_signature is not None:
-            signature = f"{signature}:{input_signature}"
-        handle.write(signature)
+        handle.write(
+            build_calc_step_signature(
+                config,
+                input_signature=input_signature,
+                execution_config=execution_config,
+            )
+        )
 
 
 def resolve_calc_step_output(step_dir: str) -> str | None:
@@ -503,6 +628,7 @@ class CalcStepState:
     failed_path: str | None
     stored_signature: str | None
     current_signature: str
+    compatible_signatures: tuple[str, ...] = field(default_factory=tuple)
     artifact_names: tuple[str, ...] = field(default_factory=tuple)
 
     @property
@@ -519,7 +645,10 @@ class CalcStepState:
 
     @property
     def signature_matches(self) -> bool:
-        return self.stored_signature is not None and self.stored_signature == self.current_signature
+        return self.stored_signature is not None and self.stored_signature in (
+            self.current_signature,
+            *self.compatible_signatures,
+        )
 
     @property
     def can_resume_without_output(self) -> bool:
@@ -551,12 +680,16 @@ def inspect_calc_step_state(
         task_config,
         execution_config=execution_config,
     )
-    current_signature = compute_calc_config_signature(
+    current_signature = build_calc_step_signature(
         canonical_config,
+        input_signature=input_signature,
         execution_config=execution_config,
     )
-    if input_signature is not None:
-        current_signature = f"{current_signature}:{input_signature}"
+    legacy_signature = _build_legacy_calc_step_signature(
+        canonical_config,
+        input_signature=input_signature,
+        execution_config=execution_config,
+    )
     return CalcStepState(
         step_dir=step_dir,
         output_path=resolve_calc_step_output(step_dir),
@@ -567,6 +700,7 @@ def inspect_calc_step_state(
         ),
         stored_signature=load_calc_config_signature(step_dir),
         current_signature=current_signature,
+        compatible_signatures=((legacy_signature,) if legacy_signature is not None else ()),
         artifact_names=tuple(_list_resume_artifacts(step_dir)),
     )
 
@@ -596,7 +730,7 @@ def prepare_calc_step_dir(
         Compat config (legacy flat dict). Provides the signature baseline.
     input_signature : str | None
         Optional input file signature (from ``compute_calc_input_signature()``).
-        If provided, the final signature is ``<config_sig>:<input_sig>``.
+        If provided, the new final signature is ``sha256:<config64>:<input64>``.
     execution_config : ExecutionConfig | Mapping[str, Any] | None
         Execution config (structured or flat). If provided, effective cleanup
         semantics are resolved and overlaid onto the signature.

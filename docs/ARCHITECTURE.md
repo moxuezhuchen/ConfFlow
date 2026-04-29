@@ -549,7 +549,7 @@ confflow/__init__.py (包入口)
 - `results.db`：SQLite 结果库（持久化每个 `job_name` 的运行结果；读取/统计时默认使用最新记录视图）
 - `result.xyz` / `output.xyz`：成功构象输出（是否 cleaned 取决于 auto_clean/refine）
 - `failed.xyz`：失败构象集合（输入结构坐标，注释行包含失败原因），便于重算与排障
-- `.config_hash`：calc 任务配置摘要，用于 resume 判断现有工件是否仍可复用
+- `.config_hash`：calc 任务配置与输入摘要，用于 resume 判断现有工件是否仍可复用；新写入使用 `sha256:<config64>` 或 `sha256:<config64>:<input64>`，并兼容历史 bare MD5 摘要
 
 > **v1.0.5 变更**：计算任务直接在 `step_xx/` 目录运行，不再创建 `step_xx/work/` 子目录。
 

@@ -65,8 +65,8 @@ calc (manager.py)
 
 **Compat config 的不可替代性**：
 - 历史 step 工件的 `.config_hash` 是基于 legacy flat config 计算的
-- 改变 signature 计算方式会导致所有旧 step 工件被误判为 stale
-- 必须保持 legacy config 作为 signature 基线，直到所有用户的旧工件都失效
+- 改变 signature 计算方式如果没有兼容比较，会导致所有旧 step 工件被误判为 stale
+- 必须保持 legacy config 作为 signature 基线，并继续接受历史 bare MD5 `.config_hash`
 
 **Execution config 的必要性**：
 - 某些参数（如 `cleanup`）需要结构化表达（`CleanupOptions`）
@@ -175,7 +175,8 @@ def record_calc_step_signature(
 **关键契约**：
 - 必须在 calc step 成功完成后调用
 - 写入的 signature 必须包含 effective cleanup 语义
-- 后续运行会读取这个 signature 进行 stale 判定
+- 新写入格式为 `sha256:<config64>` 或 `sha256:<config64>:<input64>`
+- 后续运行会读取这个 signature 进行 stale 判定，并兼容历史 `<12md5>` / `<12md5>:<12md5>` 格式
 
 ## 4. manager.config.update(...) 的影响路径
 
@@ -352,8 +353,8 @@ def _config_for_auto_clean(self) -> dict[str, Any]:
 
 ### 6.2 已稳定契约（绝对不能破坏）
 - legacy flat config 必须继续作为 signature 计算的基底
-- `.config_hash` 文件格式不能改变
-- signature 计算算法不能改变（除非有明确的迁移方案）
+- `.config_hash` 新写入格式必须是显式版本化格式
+- signature 计算算法不能改变，除非同时提供旧格式兼容比较
 
 ✅ **Dual-lane handoff 接口**：
 - `prepare_calc_step_dir(config, execution_config=...)`

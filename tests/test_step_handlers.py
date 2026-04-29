@@ -249,6 +249,42 @@ class TestRunCalcStep:
         mock_calc.run_calc_workflow_step.assert_called_once()
         assert result == output
 
+    def test_existing_output_with_legacy_hash_skips_calc(
+        self, step_dir: str, single_input_xyz: str, failure_tracker: FailureTracker
+    ):
+        """Legacy MD5 .config_hash should still allow existing calc output reuse."""
+        from confflow.calc import step_contract
+
+        output = os.path.join(step_dir, "output.xyz")
+        with open(output, "w", encoding="utf-8") as f:
+            f.write("2\nexisting\nC 0 0 0\nH 0 0 1\n")
+        task_config = build_task_config(
+            self.MINIMAL_PARAMS,
+            self.MINIMAL_GLOBAL,
+            root_dir=os.path.dirname(step_dir),
+            all_steps=[],
+        )
+        ConfigSchema.validate_calc_config(task_config)
+        input_signature = compute_calc_input_signature(single_input_xyz)
+        legacy_config = step_contract._compute_legacy_calc_config_signature(task_config)
+        with open(os.path.join(step_dir, ".config_hash"), "w", encoding="utf-8") as f:
+            f.write(f"{legacy_config}:{input_signature.legacy_signature}")
+
+        result = run_calc_step(
+            step_dir=step_dir,
+            current_input=single_input_xyz,
+            params=self.MINIMAL_PARAMS,
+            global_config=self.MINIMAL_GLOBAL,
+            root_dir=os.path.dirname(step_dir),
+            steps=[],
+            failure_tracker=failure_tracker,
+            step_name="step_02",
+        )
+
+        assert result == output
+        assert isinstance(result, CalcStepResult)
+        assert result.reused_existing is True
+
     def test_existing_output_with_failed_xyz(
         self, step_dir: str, single_input_xyz: str, failure_tracker: FailureTracker
     ):
