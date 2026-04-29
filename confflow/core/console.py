@@ -124,7 +124,6 @@ console = _ConsoleProxy(_console)
 LINE_WIDTH = _console.width
 DOUBLE_LINE = "═" * LINE_WIDTH
 SINGLE_LINE = "─" * LINE_WIDTH
-_THIN_LINE = "┄" * LINE_WIDTH  # thin dotted — step entry separator
 
 
 def _render_table_to_str(table: Table) -> str:
