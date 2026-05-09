@@ -11,6 +11,37 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+
+def test_calc_append_result_canonicalizes_final_coords(tmp_path):
+    from confflow.calc.result_writer import append_result
+
+    out = tmp_path / "result.xyz"
+    append_result(
+        str(out),
+        {"job1": {"CID": "A000001"}},
+        {
+            "job_name": "job1",
+            "status": "success",
+            "energy": -1.0,
+            "final_coords": [
+                "AL 0 0 0",
+                "O 1 0 0",
+                "C 2 0 0",
+                "CL 3 0 0",
+                "BR 4 0 0",
+            ],
+        },
+    )
+
+    text = out.read_text(encoding="utf-8")
+    assert "\nAl" in text
+    assert "\nCl" in text
+    assert "\nBr" in text
+    assert "\nAL" not in text
+    assert "\nCL" not in text
+    assert "\nBR" not in text
+
+
 # =============================================================================
 # calc.core tests
 # =============================================================================

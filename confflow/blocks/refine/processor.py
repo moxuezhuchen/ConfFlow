@@ -16,6 +16,7 @@ import numpy as np
 
 from ...core.constants import HARTREE_TO_KCALMOL
 from ...core.contracts import ExitCode, cli_output_to_txt
+from ...core.elements import canonicalize_element_symbol
 from ...core.io import read_xyz_file as read_xyz_frames_strict
 from ._compat import load_console_bindings
 from .result import RefineResult
@@ -227,7 +228,8 @@ def _write_refine_output(output_path: str, final_unique: list[dict], global_min:
 
             f.write(f"{frame['natoms']}\n{line}\n")
             for a, c in zip(frame["original_atoms"], frame["coords"]):
-                f.write(f"{a:<4s} {c[0]:12.8f} {c[1]:12.8f} {c[2]:12.8f}\n")
+                atom = canonicalize_element_symbol(a)
+                f.write(f"{atom:<4s} {c[0]:12.8f} {c[1]:12.8f} {c[2]:12.8f}\n")
 
 
 def _refine_failure_message(result: RefineResult, input_file: str) -> str:

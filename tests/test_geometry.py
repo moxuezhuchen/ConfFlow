@@ -53,24 +53,28 @@ class TestParseLastGeometry:
         log = tmp_path / "orca.out"
         log.write_text("dummy orca log")
         xyz = tmp_path / "orca.xyz"
-        xyz.write_text("2\ncomment\nC  0.0  0.0  0.0\nH  1.0  0.0  0.0\n")
+        xyz.write_text("2\ncomment\nAL  0.0  0.0  0.0\nCL  1.0  0.0  0.0\n")
         coords = parse_last_geometry(str(log), prog_id=2)
         assert coords is not None
         assert len(coords) == 2
+        assert coords[0].startswith("Al")
+        assert coords[1].startswith("Cl")
 
     def test_orca_log_fallback(self, tmp_path):
         log = tmp_path / "orca.out"
         log.write_text(
             "CARTESIAN COORDINATES (ANGSTROEM)\n"
             "-----------------------------------\n"
-            "C     0.000000     0.000000     0.000000\n"
-            "H     1.089000     0.000000     0.000000\n"
+            "BR    0.000000     0.000000     0.000000\n"
+            "FE    1.089000     0.000000     0.000000\n"
             "\n"
             "other stuff\n"
         )
         coords = parse_last_geometry(str(log), prog_id=2)
         assert coords is not None
         assert len(coords) == 2
+        assert coords[0].startswith("Br")
+        assert coords[1].startswith("Fe")
 
     def test_empty_log_returns_none(self, tmp_path):
         log = tmp_path / "empty.log"

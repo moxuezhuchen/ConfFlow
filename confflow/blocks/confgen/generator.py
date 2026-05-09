@@ -27,6 +27,7 @@ except ImportError as e:
 
 from ...core.console import create_progress
 from ...core.contracts import ExitCode, cli_output_to_txt
+from ...core.elements import canonicalize_element_symbol
 from ...core.io import append_xyz_conformer
 from ...core.pairs import normalize_pair_list
 from ...core.utils import get_numba_jit, index_to_letter_prefix
@@ -213,7 +214,7 @@ def load_mol_from_xyz(filename, bond_coeff):
         parts = line.split()
         if len(parts) < 4:
             raise ValueError(f"coordinate line format error: {line.strip()}")
-        symbols.append(parts[0])
+        symbols.append(canonicalize_element_symbol(parts[0]))
         positions.append((float(parts[1]), float(parts[2]), float(parts[3])))
 
     # Build RDKit Mol
@@ -297,7 +298,10 @@ def write_xyz(mol, conformers, filename):
 
             # Preserve per-conformer atom ordering for multi-input workflows
             # where equivalent structures may arrive with different layouts.
-            syms = list(atoms) if atoms else default_syms
+            syms = [
+                canonicalize_element_symbol(atom)
+                for atom in (atoms if atoms else default_syms)
+            ]
             natoms = len(syms)
 
             # Assign a stable ID for downstream workflow traceability

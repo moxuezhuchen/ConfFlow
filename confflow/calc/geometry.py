@@ -11,6 +11,7 @@ from __future__ import annotations
 import os
 import re
 
+from ..core.elements import canonicalize_element_symbol
 from .constants import get_element_symbol
 from .setup import logger
 
@@ -38,8 +39,9 @@ def parse_last_geometry(log_file: str, prog_id: int) -> list[str] | None:
                     for line in lines[2 : 2 + num]:
                         if line.strip():
                             p = line.split()
+                            sym = canonicalize_element_symbol(p[0])
                             coords.append(
-                                f"{p[0]:<2s} {float(p[1]): >12.6f} {float(p[2]): >12.6f} {float(p[3]): >12.6f}"
+                                f"{sym:<2s} {float(p[1]): >12.6f} {float(p[2]): >12.6f} {float(p[3]): >12.6f}"
                             )
                     return coords
             except (OSError, IndexError, ValueError) as e:
@@ -84,8 +86,9 @@ def parse_last_geometry(log_file: str, prog_id: int) -> list[str] | None:
             for line in blocks[-1].group(1).strip().split("\n"):
                 p = line.split()
                 if len(p) == 4:
+                    sym = canonicalize_element_symbol(p[0])
                     coords.append(
-                        f"{p[0]:<2s} {float(p[1]): >12.6f} {float(p[2]): >12.6f} {float(p[3]): >12.6f}"
+                        f"{sym:<2s} {float(p[1]): >12.6f} {float(p[2]): >12.6f} {float(p[3]): >12.6f}"
                     )
 
     return coords if coords else None

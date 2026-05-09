@@ -48,7 +48,8 @@ def write_failed_xyz(
                 info += f" ErrorKind={err_kind}"
             if err:
                 info += f" Error={err}"
-            f.write(f"{len(coords)}\n{info}\n" + "\n".join(coords) + "\n")
+            canonical_coords = [io_xyz.canonicalize_xyz_coord_line(line) for line in coords]
+            f.write(f"{len(canonical_coords)}\n{info}\n" + "\n".join(canonical_coords) + "\n")
 
 
 def format_result_comment(res: dict[str, Any], orig_meta: dict[str, Any]) -> str:

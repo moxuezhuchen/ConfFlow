@@ -6,6 +6,8 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
+import pytest
+
 
 class TestIO:
     """Tests for core.io module."""
@@ -89,6 +91,84 @@ class TestIO:
         assert len(result) == 1
         assert result[0]["atoms"] == ["H", "C"]
         assert result[0]["metadata"]["E"] == -0.5
+
+    @pytest.mark.parametrize(
+        ("raw", "expected"),
+        [
+            ("AL", "Al"),
+            ("CL", "Cl"),
+            ("BR", "Br"),
+            ("FE", "Fe"),
+            ("ZN", "Zn"),
+            ("Al", "Al"),
+            ("C", "C"),
+            ("c", "C"),
+        ],
+    )
+    def test_canonicalize_element_symbol(self, raw, expected):
+        from confflow.core.io import canonicalize_element_symbol
+
+        assert canonicalize_element_symbol(raw) == expected
+
+    @pytest.mark.parametrize("raw", ["O_chain", "C1", "M"])
+    def test_canonicalize_element_symbol_rejects_atom_labels(self, raw):
+        from confflow.core.io import canonicalize_element_symbol
+
+        with pytest.raises(ValueError, match="Invalid element symbol"):
+            canonicalize_element_symbol(raw)
+
+    def test_write_xyz_file_canonicalizes_element_symbols(self, tmp_path):
+        from confflow.core.io import read_xyz_file, write_xyz_file
+
+        conformers = [
+            {
+                "natoms": 5,
+                "comment": "mixed symbols",
+                "atoms": ["AL", "O", "C", "CL", "BR"],
+                "coords": [
+                    [0.0, 0.0, 0.0],
+                    [1.0, 0.0, 0.0],
+                    [2.0, 0.0, 0.0],
+                    [3.0, 0.0, 0.0],
+                    [4.0, 0.0, 0.0],
+                ],
+            }
+        ]
+
+        out = tmp_path / "out.xyz"
+        write_xyz_file(str(out), conformers)
+
+        text = out.read_text(encoding="utf-8")
+        assert "\nAl" in text
+        assert "\nCl" in text
+        assert "\nBr" in text
+        assert "\nAL" not in text
+        assert "\nCL" not in text
+        assert "\nBR" not in text
+        assert read_xyz_file(str(out))[0]["atoms"] == ["Al", "O", "C", "Cl", "Br"]
+
+    def test_append_xyz_conformer_canonicalizes_element_symbols(self, tmp_path):
+        from confflow.core.io import append_xyz_conformer, read_xyz_file
+
+        out = tmp_path / "result.xyz"
+        append_xyz_conformer(
+            str(out),
+            [
+                "AL 0 0 0",
+                "O 1 0 0",
+                "C 2 0 0",
+                "CL 3 0 0",
+                "BR 4 0 0",
+            ],
+            "calc result",
+        )
+
+        text = out.read_text(encoding="utf-8")
+        assert "\nAl" in text
+        assert "\nCl" in text
+        assert "\nBr" in text
+        assert "\nAL" not in text
+        assert read_xyz_file(str(out))[0]["atoms"] == ["Al", "O", "C", "Cl", "Br"]
 
     def test_ensure_conformer_cids_skips_existing_ids_and_preserves_comment_ids(self):
         """CID backfill should avoid duplicates and reuse IDs already present in comments."""

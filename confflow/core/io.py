@@ -15,6 +15,7 @@ import shutil
 import tempfile
 from typing import Any
 
+from .elements import canonicalize_element_symbol
 from .gaussian_input import (
     calculate_bond_length,
     coords_lines_to_array,
@@ -38,6 +39,8 @@ __all__ = [
     "read_xyz_file_safe",
     "write_xyz_file",
     "append_xyz_conformer",
+    "canonicalize_element_symbol",
+    "canonicalize_xyz_coord_line",
     "coords_lines_to_array",
     "parse_gaussian_input",
     "parse_gaussian_input_text",
@@ -136,7 +139,14 @@ def iter_xyz_frames(
                     malformed = True
                     break
 
-                atoms.append(parts[0].upper())
+                try:
+                    atom = canonicalize_element_symbol(parts[0])
+                except ValueError as e:
+                    if strict:
+                        _raise_xyz_parse_error(filepath, line_num, str(e))
+                    malformed = True
+                    break
+                atoms.append(atom)
                 try:
                     x, y, z = float(parts[-3]), float(parts[-2]), float(parts[-1])
                 except (ValueError, IndexError):
@@ -191,7 +201,7 @@ def read_xyz_file(
 
         - ``natoms``: number of atoms
         - ``comment``: raw comment line
-        - ``atoms``: list of atom symbols (upper-case)
+        - ``atoms``: list of atom symbols (standard capitalization)
         - ``coords``: coordinate list ``[[x, y, z], ...]``
         - ``metadata``: metadata dict (if *parse_metadata* is True)
     """
@@ -216,6 +226,19 @@ def read_xyz_file_safe(
         return []
 
 
+def canonicalize_xyz_coord_line(line: str) -> str:
+    """Return one XYZ coordinate line with a canonical element symbol."""
+    parts = line.split()
+    if len(parts) < 4:
+        raise ValueError(f"Invalid XYZ coordinate line: {line!r}")
+    atom = canonicalize_element_symbol(parts[0])
+    try:
+        x, y, z = float(parts[-3]), float(parts[-2]), float(parts[-1])
+    except (ValueError, IndexError) as e:
+        raise ValueError(f"Invalid XYZ coordinate line: {line!r}") from e
+    return f"{atom:<2s} {x:12.8f} {y:12.8f} {z:12.8f}"
+
+
 def append_xyz_conformer(filepath: str, coord_lines: list[str], comment: str) -> None:
     """Append a single conformer block to an XYZ file.
 
@@ -229,9 +252,10 @@ def append_xyz_conformer(filepath: str, coord_lines: list[str], comment: str) ->
     comment : str
         Comment line (second line of the XYZ block).
     """
-    natoms = len(coord_lines)
+    canonical_lines = [canonicalize_xyz_coord_line(line) for line in coord_lines]
+    natoms = len(canonical_lines)
     with open(filepath, "a", encoding="utf-8") as f:
-        f.write(f"{natoms}\n{comment}\n" + "\n".join(coord_lines) + "\n")
+        f.write(f"{natoms}\n{comment}\n" + "\n".join(canonical_lines) + "\n")
 
 
 def write_xyz_file(filepath: str, conformers: list[dict[str, Any]], atomic: bool = True) -> None:
@@ -265,7 +289,8 @@ def write_xyz_file(filepath: str, conformers: list[dict[str, Any]], atomic: bool
             f.write(f"{comment}\n")
 
             for atom, (x, y, z) in zip(atoms, coords):
-                f.write(f"{atom:<2s} {x:12.8f} {y:12.8f} {z:12.8f}\n")
+                canonical_atom = canonicalize_element_symbol(atom)
+                f.write(f"{canonical_atom:<2s} {x:12.8f} {y:12.8f} {z:12.8f}\n")
 
     if atomic:
         # Atomic write: write to a temporary file, then atomically rename
