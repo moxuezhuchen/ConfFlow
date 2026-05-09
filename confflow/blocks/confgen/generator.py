@@ -299,8 +299,7 @@ def write_xyz(mol, conformers, filename):
             # Preserve per-conformer atom ordering for multi-input workflows
             # where equivalent structures may arrive with different layouts.
             syms = [
-                canonicalize_element_symbol(atom)
-                for atom in (atoms if atoms else default_syms)
+                canonicalize_element_symbol(atom) for atom in (atoms if atoms else default_syms)
             ]
             natoms = len(syms)
 
