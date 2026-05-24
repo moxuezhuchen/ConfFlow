@@ -100,6 +100,7 @@ class TestIO:
             ("BR", "Br"),
             ("FE", "Fe"),
             ("ZN", "Zn"),
+            ("SI", "Si"),
             ("Al", "Al"),
             ("C", "C"),
             ("c", "C"),
@@ -146,6 +147,34 @@ class TestIO:
         assert "\nCL" not in text
         assert "\nBR" not in text
         assert read_xyz_file(str(out))[0]["atoms"] == ["Al", "O", "C", "Cl", "Br"]
+
+    def test_xyz_round_trip_preserves_two_letter_element_symbols(self, tmp_path):
+        from confflow.core.io import read_xyz_file, write_xyz_file
+
+        source = tmp_path / "source.xyz"
+        source.write_text(
+            "5\n"
+            "two-letter elements\n"
+            "CL 0 0 0\n"
+            "BR 4 0 0\n"
+            "AL 8 0 0\n"
+            "SI 12 0 0\n"
+            "ZN 16 0 0\n",
+            encoding="utf-8",
+        )
+
+        expected = ["Cl", "Br", "Al", "Si", "Zn"]
+        conformers = read_xyz_file(str(source), strict=True)
+        assert conformers[0]["atoms"] == expected
+
+        out = tmp_path / "round_trip.xyz"
+        write_xyz_file(str(out), conformers)
+
+        atom_columns = [
+            line.split()[0] for line in out.read_text(encoding="utf-8").splitlines()[2:]
+        ]
+        assert atom_columns == expected
+        assert read_xyz_file(str(out), strict=True)[0]["atoms"] == expected
 
     def test_append_xyz_conformer_canonicalizes_element_symbols(self, tmp_path):
         from confflow.core.io import append_xyz_conformer, read_xyz_file

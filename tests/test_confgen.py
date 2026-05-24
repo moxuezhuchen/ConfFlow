@@ -190,6 +190,31 @@ def test_load_mol_from_xyz_basic(tmp_path):
     assert mol.GetNumBonds() == 1
 
 
+def test_load_mol_from_xyz_preserves_two_letter_element_symbols(tmp_path):
+    xyz = tmp_path / "elements.xyz"
+    xyz.write_text("5\n\nCL 0 0 0\nBR 4 0 0\nAL 8 0 0\nSI 12 0 0\nZN 16 0 0\n")
+
+    mol = load_mol_from_xyz(str(xyz), 1.2)
+
+    assert [atom.GetSymbol() for atom in mol.GetAtoms()] == ["Cl", "Br", "Al", "Si", "Zn"]
+
+
+def test_rdkit_smiles_hydrogen_and_embedding_smoke():
+    mol = Chem.MolFromSmiles("CCO")
+    assert mol is not None, "RDKit failed to parse a simple SMILES molecule"
+
+    heavy_atom_count = mol.GetNumAtoms()
+    with_hydrogens = Chem.AddHs(mol)
+    assert with_hydrogens.GetNumAtoms() > heavy_atom_count
+
+    status = AllChem.EmbedMolecule(with_hydrogens, randomSeed=0xF00D)
+    assert status == 0, f"RDKit failed to embed a simple molecule in 3D (status={status})"
+    assert with_hydrogens.GetNumConformers() == 1
+
+    without_hydrogens = Chem.RemoveHs(with_hydrogens)
+    assert without_hydrogens.GetNumAtoms() == heavy_atom_count
+
+
 def test_load_mol_from_xyz_errors(tmp_path):
     with pytest.raises(FileNotFoundError):
         load_mol_from_xyz(str(tmp_path / "nonexistent.xyz"), 1.15)
