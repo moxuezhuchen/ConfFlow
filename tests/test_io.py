@@ -170,7 +170,9 @@ class TestIO:
         out = tmp_path / "round_trip.xyz"
         write_xyz_file(str(out), conformers)
 
-        atom_columns = [line.split()[0] for line in out.read_text(encoding="utf-8").splitlines()[2:]]
+        atom_columns = [
+            line.split()[0] for line in out.read_text(encoding="utf-8").splitlines()[2:]
+        ]
         assert atom_columns == expected
         assert read_xyz_file(str(out), strict=True)[0]["atoms"] == expected
 
