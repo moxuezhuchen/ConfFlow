@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+### Changed
+
+- Raised minimum runtime dependency versions:
+  - `numpy >=2.2.6`
+  - `scipy >=1.15.3`
+  - `rdkit >=2026.3.2`
+- Raised minimum build/development dependency versions:
+  - `setuptools >=82.0.1`
+  - `ruff >=0.15.12`
+
+### Added
+
+- Added persistent regression coverage for RDKit/XYZ handling of two-letter element symbols (`Cl`, `Br`, `Al`, `Si`, `Zn`).
+- Added RDKit smoke coverage for `MolFromSmiles`, `AddHs`, `EmbedMolecule`, and `RemoveHs`.
+
 ### 架构审查收尾
 
 - `pyproject.toml`
