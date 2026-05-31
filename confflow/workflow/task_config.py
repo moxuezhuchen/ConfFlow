@@ -598,7 +598,7 @@ def build_task_config(
 
 def create_runtask_config(filename: str, params: dict[str, Any], global_config: dict[str, Any]):
     """Legacy compatibility: write ``build_task_config()`` output to an INI file."""
-    config_dict = _build_legacy_task_config(params, global_config)
+    config_dict = build_task_config(params, global_config)
 
     cfg = configparser.ConfigParser(interpolation=None)
     cfg.optionxform = str

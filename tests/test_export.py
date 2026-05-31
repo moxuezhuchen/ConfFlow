@@ -57,6 +57,29 @@ def test_export_csv_writes_default_output(tmp_path):
     assert rows[1]["source_db"] == str(step_dir / "results.db")
 
 
+def test_export_csv_escapes_formula_like_text_fields(tmp_path):
+    work_dir = tmp_path / "work"
+    step_dir = work_dir / "calc_step"
+    step_dir.mkdir(parents=True)
+    _write_result_db(
+        step_dir / "results.db",
+        [
+            {
+                "job_name": "=job",
+                "status": "failed",
+                "error": "+cmd",
+            }
+        ],
+    )
+
+    result = export_results(str(work_dir), output_format="csv")
+
+    with open(result.output_path, newline="", encoding="utf-8") as handle:
+        rows = list(csv.DictReader(handle))
+    assert rows[0]["job_name"] == "'=job"
+    assert rows[0]["error"] == "'+cmd"
+
+
 def test_export_json_writes_explicit_output(tmp_path):
     work_dir = tmp_path / "work"
     step_dir = work_dir / "task_step"

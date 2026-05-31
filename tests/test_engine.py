@@ -380,6 +380,37 @@ def _read_ini(path) -> dict:
     return out
 
 
+def test_create_runtask_config_matches_build_task_config(tmp_path):
+    ini = tmp_path / "config.ini"
+    params = {
+        "iprog": "orca",
+        "itask": "ts",
+        "keyword": "B3LYP",
+        "ts_bond_atoms": "1,2",
+        "dedup_only": True,
+        "rmsd_threshold": 0.5,
+        "orca_blocks": {"pal": ["nprocs 4"]},
+        "ts_rescue_scan": True,
+    }
+    global_cfg = {
+        "gaussian_path": "g16",
+        "orca_path": "orca",
+        "cores_per_task": 4,
+        "total_memory": "8GB",
+        "max_parallel_jobs": 2,
+        "charge": 0,
+        "multiplicity": 1,
+        "freeze": [1, 2],
+    }
+
+    create_runtask_config(str(ini), params, global_cfg)
+    ini_data = _read_ini(ini)
+    expected = build_task_config(params, global_cfg)
+
+    for key, value in ini_data.items():
+        assert expected[key] == value
+
+
 def test_freeze_only_effective_for_opt_and_opt_freq(tmp_path):
     from confflow.workflow.config_builder import create_runtask_config
 
@@ -1433,7 +1464,6 @@ def test_workflow_engine_trace_exception_trigger(tmp_path):
         ),
         patch("confflow.blocks.viz.generate_text_report", return_value=""),
         patch("confflow.workflow.engine.count_conformers_any", return_value=1),
-        patch("confflow.workflow.engine.is_multi_frame_any", return_value=False),
         patch("confflow.workflow.engine.os.path.exists", return_value=True),
     ):
         run_workflow([str(xyz)], str(conf), work_dir=str(tmp_path))

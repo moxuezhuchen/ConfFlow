@@ -1124,6 +1124,30 @@ def test_task_runner_delete_work_dir_controls_success_cleanup(tmp_path, config, 
     assert mock_backups.call_args.kwargs["cleanup_work_dir"] is expected_cleanup
 
 
+def test_task_runner_records_success_backup_failure(tmp_path):
+    from confflow.calc.components.task_runner import TaskRunner
+
+    runner = TaskRunner()
+    task_info = {
+        "job_name": "test",
+        "work_dir": str(tmp_path / "work"),
+        "config": {"itask": 1, "iprog": 1},
+        "coords": ["C 0 0 0"],
+    }
+
+    with patch("confflow.calc.components.executor._run_calculation_step") as mock_run:
+        mock_run.return_value = {"final_coords": ["C 0 0 0"], "e_low": -100.0}
+        with patch(
+            "confflow.calc.components.executor.handle_backups",
+            return_value=False,
+        ):
+            res = runner.run(task_info)
+
+    assert res["status"] == "success"
+    assert res["backup_ok"] is False
+    assert "backup operations failed" in res["error_details"]
+
+
 def test_task_runner_delete_work_dir_false_controls_failure_cleanup(tmp_path):
     from confflow.calc.components.task_runner import TaskRunner
 

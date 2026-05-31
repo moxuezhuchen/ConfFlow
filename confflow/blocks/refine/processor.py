@@ -9,6 +9,7 @@ import logging
 import multiprocessing
 import os
 import sys
+import tempfile
 from collections import defaultdict
 from concurrent.futures import ProcessPoolExecutor
 
@@ -232,6 +233,30 @@ def _write_refine_output(output_path: str, final_unique: list[dict], global_min:
                 f.write(f"{atom:<4s} {c[0]:12.8f} {c[1]:12.8f} {c[2]:12.8f}\n")
 
 
+def _write_refine_output_atomic(
+    output_path: str,
+    final_unique: list[dict],
+    global_min: float,
+) -> None:
+    """Write refine output without clobbering an existing file on failure."""
+    output_dir = os.path.dirname(os.path.abspath(output_path))
+    fd, tmp_path = tempfile.mkstemp(
+        prefix=f".{os.path.basename(output_path)}.",
+        suffix=".tmp",
+        dir=output_dir,
+    )
+    os.close(fd)
+    try:
+        _write_refine_output(tmp_path, final_unique, global_min)
+        os.replace(tmp_path, output_path)
+    except Exception:
+        try:
+            os.remove(tmp_path)
+        except FileNotFoundError:
+            pass
+        raise
+
+
 def _refine_failure_message(result: RefineResult, input_file: str) -> str:
     if result.reason == "missing_input":
         return f"Input file not found: {input_file}"
@@ -267,14 +292,10 @@ def process_xyz(args):
         all_frames = read_xyz_file(args.input_file)
     except (OSError, ValueError) as e:
         error(f"No input conformers found in {args.input_file}: {e}")
-        if os.path.exists(args.output):
-            os.remove(args.output)
         return RefineResult(False, args.output, 0, "empty_input")
 
     if not all_frames:
         error(f"No input conformers found in {args.input_file}")
-        if os.path.exists(args.output):
-            os.remove(args.output)
         return RefineResult(False, args.output, 0, "empty_input")
 
     # 1. Topology analysis
@@ -296,8 +317,6 @@ def process_xyz(args):
         topologies[h].append(all_frames[i])
 
     if not topologies:
-        if os.path.exists(args.output):
-            os.remove(args.output)
         return RefineResult(False, args.output, 0, "no_topology")
 
     # 2. Determine main topology
@@ -312,8 +331,6 @@ def process_xyz(args):
     # that at least one conformer survived the metadata-based filters.
     if not frames_to_process:
         console.print("  No conformers remain after filtering.")
-        if os.path.exists(args.output):
-            os.remove(args.output)
         return RefineResult(False, args.output, 0, "filtered_to_zero")
 
     if args.ewin is not None and not args.dedup_only:
@@ -338,8 +355,6 @@ def process_xyz(args):
 
     if not final_unique:
         console.print("  No conformers remain after filtering.")
-        if os.path.exists(args.output):
-            os.remove(args.output)
         return RefineResult(False, args.output, 0, "deduped_to_zero")
 
     # 5. Statistics and output
@@ -351,7 +366,7 @@ def process_xyz(args):
     if args.max_conformers and len(final_unique) > args.max_conformers:
         final_unique = final_unique[: args.max_conformers]
 
-    _write_refine_output(args.output, final_unique, global_min)
+    _write_refine_output_atomic(args.output, final_unique, global_min)
     return RefineResult(True, args.output, len(final_unique), "ok")
 
 

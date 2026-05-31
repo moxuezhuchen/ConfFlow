@@ -146,9 +146,6 @@ class GaussianPolicy(CalculationPolicy):
         if not os.path.exists(log_file):
             return {}
 
-        with open(log_file, errors="ignore") as f:
-            content = f.read()
-
         e_low = None
         g_low = None
         num_imag_freqs = None
@@ -158,19 +155,41 @@ class GaussianPolicy(CalculationPolicy):
 
         get_itask(config)
 
+        energy = None
+        all_freqs: list[float] = []
+        archive_chunks: list[str] = []
+        in_archive = False
+
+        with open(log_file, errors="ignore") as f:
+            for raw_line in f:
+                line = raw_line.replace("D", "E")
+                if "SCF Done:" in raw_line:
+                    try:
+                        energy = float(line.split()[4])
+                    except (IndexError, ValueError):
+                        energy = None
+                if m := re.search(
+                    r"Sum\s+of\s+electronic\s+and\s+thermal\s+Free\s+Energies=\s*(\S+)",
+                    line,
+                ):
+                    g_low = float(m.group(1))
+                if m := re.search(
+                    r"Thermal\s+correction\s+to\s+Gibbs\s+Free\s+Energy=\s*(\S+)",
+                    line,
+                ):
+                    g_corr = float(m.group(1))
+                if fm := re.search(r"Frequencies --\s+([-\d\.\s]+)", raw_line):
+                    all_freqs.extend(float(freq) for freq in fm.group(1).split())
+
+                if "\\" in line or in_archive:
+                    archive_chunks.append(line.strip())
+                    in_archive = "\\@" not in line
+
         # Gaussian Archive data (for example ``\HF=...``) is convenient, but it can
         # be misleading in concatenated logs or rare wrapped/truncated outputs.
-        # Archive numeric fields may wrap across lines (for example
-        # ``\HF=-3\n 576.57...``), so strip whitespace before parsing them.
-        # Prefer the final ``SCF Done`` energy whenever it is present and only fall
-        # back to Archive values when the explicit SCF record is missing.
-        compact = re.sub(r"\s+", "", content.replace("D", "E"))
-        energy = None
-        if sl := re.findall(r"SCF Done:.*", content):
-            try:
-                energy = float(sl[-1].replace("D", "E").split()[4])
-            except (IndexError, ValueError):
-                energy = None
+        # Archive numeric fields may wrap across lines, so strip whitespace before
+        # parsing them. Prefer the final ``SCF Done`` energy whenever it is present.
+        compact = re.sub(r"\s+", "", "".join(archive_chunks))
         if energy is None:
             # Use the last occurrence, in case Archive appears multiple times.
             hfs = re.findall(r"\\HF=([-+]?\d*\.?\d+(?:[Ee][-+]?\d+)?)", compact)
@@ -182,26 +201,15 @@ class GaussianPolicy(CalculationPolicy):
         else:
             e_low = energy
 
-        cs = content.replace("D", "E")
-        if m := re.search(
-            r"Sum\s+of\s+electronic\s+and\s+thermal\s+Free\s+Energies=\s*(\S+)",
-            cs,
-        ):
-            g_low = float(m.group(1))
         # Archive Gibbs as a fallback only (avoid overriding the explicit thermochemistry line).
         if g_low is None:
             gibbs_vals = re.findall(r"\\Gibbs=([-+]?\d*\.?\d+(?:[Ee][-+]?\d+)?)", compact)
             if gibbs_vals:
                 g_low = float(gibbs_vals[-1])
 
-        if m := re.search(r"Thermal\s+correction\s+to\s+Gibbs\s+Free\s+Energy=\s*(\S+)", cs):
-            g_corr = float(m.group(1))
-
-        if fm := re.findall(r"Frequencies --\s+([-\d\.\s]+)", content):
-            all_freqs = [float(f) for f in " ".join(fm).split()]
+        if all_freqs:
             num_imag_freqs = sum(1 for f in all_freqs if f < 0)
-            if all_freqs:
-                lowest_freq = min(all_freqs)
+            lowest_freq = min(all_freqs)
 
         final_coords = parse_last_geometry(log_file, 1)
 

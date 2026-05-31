@@ -185,12 +185,21 @@ def _sort_key(row: dict[str, Any], step_order: dict[str, int]) -> tuple[int, str
     )
 
 
+def _escape_csv_cell(value: Any) -> Any:
+    if not isinstance(value, str):
+        return value
+    stripped = value.lstrip()
+    if stripped and stripped[0] in {"=", "+", "-", "@"}:
+        return "'" + value
+    return value
+
+
 def _write_csv(path: str, rows: list[dict[str, Any]]) -> None:
     with open(path, "w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=EXPORT_FIELDS)
         writer.writeheader()
         for row in rows:
-            writer.writerow({field: row.get(field) for field in EXPORT_FIELDS})
+            writer.writerow({field: _escape_csv_cell(row.get(field)) for field in EXPORT_FIELDS})
 
 
 def _write_json(path: str, rows: list[dict[str, Any]]) -> None:

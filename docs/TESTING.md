@@ -26,6 +26,19 @@
 
 `./scripts/test.sh` 将所有 pytest 和 coverage 产物重定向到系统临时目录，测试结束后自动清理。
 
+### 干净环境安装验证
+
+发布前或调整依赖边界后，应在全新虚拟环境中验证声明依赖和打包配置：
+
+```bash
+python -m pip install --upgrade pip
+python -m pip install -e ".[dev]"
+python -m pip check
+python -m pytest
+```
+
+CI 也会执行 `pip check`，用于尽早发现声明依赖与解析结果不一致的问题。
+
 ### 直接运行 pytest
 
 ```bash

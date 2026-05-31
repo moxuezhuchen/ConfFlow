@@ -257,6 +257,31 @@ def kill_proc_tree(
     return (gone, alive)
 
 
+def _is_confflow_process_cmdline(cmdline: list[str]) -> bool:
+    """Return True only for known ConfFlow entrypoint command lines."""
+    if not cmdline or "--stop" in cmdline:
+        return False
+
+    entrypoints = {"confflow", "confts", "confgen", "confrefine", "confcalc"}
+    first = os.path.basename(cmdline[0])
+    if first in entrypoints:
+        return True
+
+    if not first.startswith("python"):
+        return False
+
+    args = cmdline[1:]
+    if len(args) >= 2 and args[0] == "-m":
+        module = args[1]
+        return module == "confflow" or module.startswith("confflow.")
+
+    if args:
+        script_name = os.path.basename(args[0])
+        return script_name in entrypoints
+
+    return False
+
+
 def stop_all_confflow_processes() -> int:
     if psutil is None:
         print(
@@ -279,12 +304,7 @@ def stop_all_confflow_processes() -> int:
             if not cmdline:
                 continue
 
-            cmd_str = " ".join(cmdline)
-            # Simple heuristic to identify confflow processes
-            if "confflow" in cmd_str and "--stop" not in cmd_str:
-                # Exclude common editors and tools
-                if any(x in cmd_str for x in ["grep", "vim", "nano", "code", "emacs", "pytest"]):
-                    continue
+            if _is_confflow_process_cmdline(cmdline):
                 confflow_procs.append(p)
         except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
             pass

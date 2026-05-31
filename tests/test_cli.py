@@ -14,6 +14,7 @@ import pytest
 
 from confflow.cli import (
     _convert_gjf_to_xyz,
+    _is_confflow_process_cmdline,
     _parse_gaussian_input_geometry,
     _resolve_default_work_dir,
     build_parser,
@@ -161,6 +162,16 @@ def test_stop_all_confflow_processes(mock_proc_class, mock_iter):
     with patch("confflow.cli.kill_proc_tree") as mock_kill:
         stop_all_confflow_processes()
         mock_kill.assert_called_with(2, timeout=3)
+
+
+def test_stop_process_cmdline_matcher_ignores_unrelated_paths():
+    assert _is_confflow_process_cmdline(["python", "-m", "confflow", "input.xyz"])
+    assert _is_confflow_process_cmdline(["/usr/bin/confflow", "input.xyz"])
+    assert _is_confflow_process_cmdline(["python", "confflow", "run"])
+
+    assert not _is_confflow_process_cmdline(["python", "/tmp/confflow-not-a-run.py"])
+    assert not _is_confflow_process_cmdline(["vim", "confflow.yaml"])
+    assert not _is_confflow_process_cmdline(["python", "-m", "confflow", "--stop"])
 
 
 def test_main_no_args(monkeypatch):

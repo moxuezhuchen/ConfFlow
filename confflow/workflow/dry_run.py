@@ -11,7 +11,6 @@ from typing import Any
 from ..blocks.confgen.rotations import _parse_chain, _resolve_angle_lists
 from ..config.loader import load_workflow_config_file
 from ..config.schema import ConfigSchema
-from ..core.console import console
 from ..core.io import parse_gaussian_input_text
 from ..core.path_policy import (
     resolve_sandbox_root,
@@ -108,7 +107,7 @@ def _check_executable_setting(config: dict[str, Any], key: str) -> str:
 
 
 def _print_calc_preview(config: dict[str, Any]) -> None:
-    console.print(
+    print(
         "  calc: "
         f"iprog={config.get('iprog')} "
         f"itask={config.get('itask')} "
@@ -117,8 +116,8 @@ def _print_calc_preview(config: dict[str, Any]) -> None:
         f"max_parallel_jobs={config.get('max_parallel_jobs')} "
         f"total_memory={config.get('total_memory')}"
     )
-    console.print(f"  gaussian_path: {_check_executable_setting(config, 'gaussian_path')}")
-    console.print(f"  orca_path: {_check_executable_setting(config, 'orca_path')}")
+    print(f"  gaussian_path: {_check_executable_setting(config, 'gaussian_path')}")
+    print(f"  orca_path: {_check_executable_setting(config, 'orca_path')}")
 
 
 def run_dry_run(input_files: list[str], config_file: str, work_dir: str) -> None:
@@ -132,12 +131,12 @@ def run_dry_run(input_files: list[str], config_file: str, work_dir: str) -> None
     step_dirnames, _ = build_step_dir_name_map(steps)
     current_input: str | list[str] = input_files[0] if len(input_files) == 1 else list(input_files)
 
-    console.print("ConfFlow dry-run")
-    console.print(f"Config: {config_file}")
-    console.print(f"Work dir: {work_dir}")
+    print("ConfFlow dry-run")
+    print(f"Config: {config_file}")
+    print(f"Work dir: {work_dir}")
     for path, desc in zip(input_files, checked_inputs):
-        console.print(f"Input: {path} ({desc})")
-    console.print(f"Steps: {len(steps)}")
+        print(f"Input: {path} ({desc})")
+    print(f"Steps: {len(steps)}")
 
     for idx, step in enumerate(steps, start=1):
         params = step.get("params") or {}
@@ -146,14 +145,14 @@ def run_dry_run(input_files: list[str], config_file: str, work_dir: str) -> None
         step_dir = os.path.join(work_dir, step_dirnames[idx - 1])
         output_path = _preview_output_path(step_dir, step_type)
 
-        console.print("")
-        console.print(f"[{idx}] {step_name} ({step_type})")
-        console.print(f"  input: {_format_input_source(current_input)}")
-        console.print(f"  step_dir: {step_dir}")
-        console.print(f"  output: {output_path}")
+        print("")
+        print(f"[{idx}] {step_name} ({step_type})")
+        print(f"  input: {_format_input_source(current_input)}")
+        print(f"  step_dir: {step_dir}")
+        print(f"  output: {output_path}")
 
         if step_type in {"confgen", "gen"}:
-            console.print(f"  confgen combinations: {estimate_confgen_combinations(params)}")
+            print(f"  confgen combinations: {estimate_confgen_combinations(params)}")
         elif step_type in {"calc", "task"}:
             resolved = build_task_config(params, global_config, work_dir, steps)
             ConfigSchema.validate_calc_config(resolved)

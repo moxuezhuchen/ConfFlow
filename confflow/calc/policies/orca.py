@@ -120,35 +120,45 @@ class OrcaPolicy(CalculationPolicy):
         if not os.path.exists(log_file):
             return {}
 
-        with open(log_file, errors="ignore") as f:
-            content = f.read()
-
         e_low = None
         g_low = None
         num_imag_freqs = None
         g_corr = None
         e_high = None
         lowest_freq = None
+        single_point_energy = None
+        all_freqs: list[float] = []
+        in_freq_section = False
+
+        with open(log_file, errors="ignore") as f:
+            for line in f:
+                if m := re.search(r"FINAL SINGLE POINT ENERGY\s+([\d.-]+)", line):
+                    single_point_energy = float(m.group(1))
+                if is_sp_task:
+                    continue
+                if m := re.search(r"G-E\(el\)\s+\.\.\.\s+([\d.-]+)\s+Eh", line):
+                    g_corr = float(m.group(1))
+                if m := re.search(r"Final Gibbs free energy\s+\.\.\.\s+([\d.-]+)\s+Eh", line):
+                    g_low = float(m.group(1))
+                if "VIBRATIONAL FREQUENCIES" in line:
+                    all_freqs = []
+                    in_freq_section = True
+                    continue
+                if in_freq_section:
+                    all_freqs.extend(
+                        float(freq) for freq in re.findall(r"\d+:\s+([-\d.]+)\s+cm", line)
+                    )
 
         if is_sp_task:
-            if m := re.search(r"FINAL SINGLE POINT ENERGY\s+([\d.-]+)", content):
-                e_high = float(m.group(1))
-        else:
-            if m := re.search(r"G-E\(el\)\s+\.\.\.\s+([\d.-]+)\s+Eh", content):
-                g_corr = float(m.group(1))
-            if m := re.search(r"Final Gibbs free energy\s+\.\.\.\s+([\d.-]+)\s+Eh", content):
-                g_low = float(m.group(1))
-            if g_low is None and (
-                m := re.search(r"FINAL SINGLE POINT ENERGY\s+([\d.-]+)", content)
-            ):
-                e_low = float(m.group(1))
-            if "VIBRATIONAL FREQUENCIES" in content:
-                freq_section = content.split("VIBRATIONAL FREQUENCIES")[-1]
-                all_freqs = [float(f) for f in re.findall(r"\d+:\s+([-\d.]+)\s+cm", freq_section)]
-                num_imag_freqs = sum(1 for f in all_freqs if f < 0)
-                real_freqs = [f for f in all_freqs[6:] if abs(f) > 0.1]
-                if real_freqs:
-                    lowest_freq = min(real_freqs)
+            e_high = single_point_energy
+        elif g_low is None:
+            e_low = single_point_energy
+
+        if not is_sp_task and all_freqs:
+            num_imag_freqs = sum(1 for f in all_freqs if f < 0)
+            real_freqs = [f for f in all_freqs[6:] if abs(f) > 0.1]
+            if real_freqs:
+                lowest_freq = min(real_freqs)
 
         final_coords = parse_last_geometry(log_file, 2)
 

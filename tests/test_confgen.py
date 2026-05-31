@@ -364,6 +364,17 @@ def test_run_generation_multi_input(cd_tmp):
     assert len(res) > 0, "multi-input generation should produce at least one result"
 
 
+def test_run_generation_multi_input_partial_missing_fails(cd_tmp):
+    f1 = cd_tmp / "f1.xyz"
+    f1.write_text("2\ntest\nC 0 0 0\nH 0 0 1\n", encoding="utf-8")
+    missing = cd_tmp / "missing.xyz"
+
+    with pytest.raises(RuntimeError, match="Failed to process 1 input file"):
+        run_generation([str(f1), str(missing)], chains=["1-2"], confirm=False)
+
+    assert not (cd_tmp / "search.xyz").exists()
+
+
 def test_run_generation_multi_input_preserves_atom_order_in_output(cd_tmp):
     f1 = cd_tmp / "f1.xyz"
     f1.write_text("3\nfirst\nC 0 0 0\nO 1.2 0 0\nH 2.2 0 0\n", encoding="utf-8")
@@ -398,17 +409,19 @@ def test_run_generation_edge_cases(cd_tmp):
     )
     assert len(res) > 0
 
-    run_generation(
-        [str(xyz_path)],
-        chains=["1-2", "2-3"],
-        chain_angles=["0,120", "0,120", "0,120"],
-    )
+    with pytest.raises(RuntimeError, match="--angles count"):
+        run_generation(
+            [str(xyz_path)],
+            chains=["1-2", "2-3"],
+            chain_angles=["0,120", "0,120", "0,120"],
+        )
 
-    run_generation(
-        [str(xyz_path)],
-        chains=["1-2", "2-3"],
-        chain_steps=["120", "120", "120"],
-    )
+    with pytest.raises(RuntimeError, match="--steps count"):
+        run_generation(
+            [str(xyz_path)],
+            chains=["1-2", "2-3"],
+            chain_steps=["120", "120", "120"],
+        )
 
     res = run_generation(
         [str(xyz_path)],
@@ -418,11 +431,12 @@ def test_run_generation_edge_cases(cd_tmp):
     )
     assert len(res) == 1
 
-    run_generation(
-        [str(xyz_path)],
-        chains=["1-2"],
-        rotate_side="invalid",
-    )
+    with pytest.raises(RuntimeError, match="rotate_side"):
+        run_generation(
+            [str(xyz_path)],
+            chains=["1-2"],
+            rotate_side="invalid",
+        )
 
     with patch("builtins.input", return_value="n"):
         run_generation([str(xyz_path)], chains=["1-2"], confirm=True)

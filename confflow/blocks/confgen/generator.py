@@ -104,6 +104,13 @@ class _StreamingConfgenOutput:
                 pass
         return list(self._items)
 
+    def discard(self) -> None:
+        """Drop partial output without replacing the target file."""
+        try:
+            os.remove(self.temp_path)
+        except FileNotFoundError:
+            pass
+
 
 def init_worker(mol, conf, bonds, clash, topo, atoms, opt):
     global w_mol, w_conf, w_bonds, w_clash, w_topo, w_atoms, w_opt
@@ -504,6 +511,7 @@ def run_generation(
     ref_mol = None
     ref_parsed_chains = None
     output_sink = _StreamingConfgenOutput(output_file, collect_results=collect_results)
+    failed_inputs: list[str] = []
 
     from ...core.console import error, warning
 
@@ -633,6 +641,14 @@ def run_generation(
 
         except (ValueError, RuntimeError, OSError) as e:
             error(f"Failed to process {xyz_file}: {e}")
+            failed_inputs.append(f"{xyz_file}: {e}")
+
+    if failed_inputs:
+        output_sink.discard()
+        details = "; ".join(failed_inputs[:3])
+        if len(failed_inputs) > 3:
+            details += f"; ... {len(failed_inputs) - 3} more"
+        raise RuntimeError(f"Failed to process {len(failed_inputs)} input file(s): {details}")
 
     all_confs_data = output_sink.finalize()
     if output_sink.count > 0:

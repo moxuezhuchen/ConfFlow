@@ -25,7 +25,7 @@ from ..analysis import (
 from ..config_types import ensure_calc_task_config
 from ..policies import get_policy_for_config
 from ..rescue import _ts_rescue_scan
-from ..setup import get_itask
+from ..setup import get_itask, logger
 from . import executor
 
 __all__ = [
@@ -109,6 +109,7 @@ class TaskRunner:
 
         os.makedirs(wd, exist_ok=True)
         success = False
+        result_payload: dict[str, Any] | None = None
 
         policy = self._get_policy(cfg)
 
@@ -286,11 +287,17 @@ class TaskRunner:
                 result["ts_bond_atoms"] = str(ts_bond_atoms)
             if ts_bond_length is not None:
                 result["ts_bond_length"] = ts_bond_length
+            result_payload = result
             return result
         finally:
-            executor.handle_backups(
+            backup_ok = executor.handle_backups(
                 wd,
                 cfg,
                 success,
                 cleanup_work_dir=self._cleanup_work_dir_enabled(cfg, raw_config),
             )
+            if success and not backup_ok:
+                if result_payload is not None:
+                    result_payload["backup_ok"] = False
+                    result_payload["error_details"] = "One or more backup operations failed."
+                logger.warning("Backup failed for successful task %s in %s", job, wd)

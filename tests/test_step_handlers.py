@@ -17,7 +17,12 @@ from confflow.calc.step_contract import compute_calc_input_signature, record_cal
 from confflow.config.schema import ConfigSchema
 from confflow.core.exceptions import ConfFlowError
 from confflow.workflow.stats import FailureTracker
-from confflow.workflow.step_handlers import CalcStepResult, run_calc_step, run_confgen_step
+from confflow.workflow.step_handlers import (
+    CalcStepResult,
+    ConfgenStepResult,
+    run_calc_step,
+    run_confgen_step,
+)
 from confflow.workflow.task_config import build_task_config
 
 # ---------------------------------------------------------------------------
@@ -80,21 +85,72 @@ class TestRunConfgenStep:
         assert "frame1" in content
         assert "frame2" in content
 
-    def test_existing_output_skips_generation(self, step_dir: str, single_input_xyz: str):
-        """If search.xyz already exists, confgen should not be called."""
+    def test_matching_existing_output_skips_generation(
+        self,
+        step_dir: str,
+        single_input_xyz: str,
+    ):
+        """If search.xyz and its signature match, confgen should not be called."""
         expected = os.path.join(step_dir, "search.xyz")
-        with open(expected, "w") as f:
-            f.write("2\nexisting\nC 0 0 0\nH 0 0 1\n")
+
+        def fake_run(**kwargs):
+            with open(expected, "w", encoding="utf-8") as f:
+                f.write("2\ngenerated\nC 0 0 0\nH 0 0 1\n")
+
+        with patch("confflow.workflow.step_handlers.confgen") as mock_confgen:
+            mock_confgen.run_generation.side_effect = fake_run
+            result = run_confgen_step(
+                step_dir=step_dir,
+                current_input=single_input_xyz,
+                params={"chains": ["1-2"]},
+                input_files=[single_input_xyz],
+            )
+            assert isinstance(result, ConfgenStepResult)
+            assert result.reused_existing is False
 
         with patch("confflow.workflow.step_handlers.confgen") as mock_confgen:
             result = run_confgen_step(
                 step_dir=step_dir,
                 current_input=single_input_xyz,
                 params={"chains": ["1-2"]},
-                input_files=[single_input_xyz, "other.xyz"],
+                input_files=[single_input_xyz],
             )
         mock_confgen.run_generation.assert_not_called()
+        assert isinstance(result, ConfgenStepResult)
+        assert result.reused_existing is True
         assert result == expected
+
+    def test_stale_existing_output_is_recomputed(self, step_dir: str, single_input_xyz: str):
+        """Changed confgen params should invalidate an existing search.xyz."""
+        expected = os.path.join(step_dir, "search.xyz")
+
+        def write_output(label: str):
+            with open(expected, "w", encoding="utf-8") as f:
+                f.write(f"2\n{label}\nC 0 0 0\nH 0 0 1\n")
+
+        with patch("confflow.workflow.step_handlers.confgen") as mock_confgen:
+            mock_confgen.run_generation.side_effect = lambda **kwargs: write_output("first")
+            run_confgen_step(
+                step_dir=step_dir,
+                current_input=single_input_xyz,
+                params={"chains": ["1-2"], "angle_step": 120},
+                input_files=[single_input_xyz],
+            )
+
+        with patch("confflow.workflow.step_handlers.confgen") as mock_confgen:
+            mock_confgen.run_generation.side_effect = lambda **kwargs: write_output("second")
+            result = run_confgen_step(
+                step_dir=step_dir,
+                current_input=single_input_xyz,
+                params={"chains": ["1-2"], "angle_step": 60},
+                input_files=[single_input_xyz],
+            )
+
+        mock_confgen.run_generation.assert_called_once()
+        assert isinstance(result, ConfgenStepResult)
+        assert result.cleaned_stale_artifacts is True
+        with open(expected, encoding="utf-8") as f:
+            assert "second" in f.read()
 
     @patch("confflow.workflow.step_handlers.confgen")
     def test_normal_generation(self, mock_confgen: MagicMock, step_dir: str, single_input_xyz: str):
@@ -514,20 +570,20 @@ class TestRunCalcStep:
             )
 
     @patch("confflow.workflow.step_handlers.calc")
-    def test_list_input_uses_first_file(
+    def test_single_item_list_input_is_normalized(
         self,
         mock_calc: MagicMock,
         step_dir: str,
         single_input_xyz: str,
         failure_tracker: FailureTracker,
     ):
-        """When current_input is a list, the first file should be used."""
+        """A single-item list is normalized before entering the calc facade."""
         output = os.path.join(step_dir, "output.xyz")
         self._mock_facade_result(mock_calc, output)
 
         result = run_calc_step(
             step_dir=step_dir,
-            current_input=[single_input_xyz, "other.xyz"],
+            current_input=[single_input_xyz],
             params=self.MINIMAL_PARAMS,
             global_config=self.MINIMAL_GLOBAL,
             root_dir=os.path.dirname(step_dir),
@@ -537,21 +593,18 @@ class TestRunCalcStep:
         )
         assert result == output
         _, kwargs = mock_calc.run_calc_workflow_step.call_args
-        assert kwargs["input_source"] == [single_input_xyz, "other.xyz"]
+        assert kwargs["input_source"] == single_input_xyz
 
     @patch("confflow.workflow.step_handlers.calc")
-    def test_list_input_logs_warning(
+    def test_multi_input_list_fails_before_warning_path(
         self,
         mock_calc: MagicMock,
         step_dir: str,
         single_input_xyz: str,
         failure_tracker: FailureTracker,
     ):
-        """Multi-input calc emits a warning before taking the first file."""
-        output = os.path.join(step_dir, "output.xyz")
-        self._mock_facade_result(mock_calc, output)
-
-        with patch("confflow.workflow.step_handlers.logger.warning") as mock_warning:
+        """Multi-input calc is rejected instead of warning after execution."""
+        with pytest.raises(ConfFlowError, match="requires exactly one input file"):
             run_calc_step(
                 step_dir=step_dir,
                 current_input=[single_input_xyz, "other.xyz"],
@@ -563,8 +616,7 @@ class TestRunCalcStep:
                 step_name="step_02",
             )
 
-        mock_warning.assert_called_once()
-        assert "using only" in mock_warning.call_args.args[0]
+        mock_calc.run_calc_workflow_step.assert_not_called()
 
     @patch("confflow.workflow.step_handlers.calc")
     def test_result_xyz_fallback(
@@ -703,7 +755,7 @@ class TestRunCalcStep:
         assert kwargs["input_source"] == str(changed_input)
 
     @patch("confflow.workflow.step_handlers.calc")
-    def test_multi_input_calc_records_combined_input_signature(
+    def test_multi_input_calc_is_rejected_before_execution(
         self,
         mock_calc: MagicMock,
         step_dir: str,
@@ -714,22 +766,20 @@ class TestRunCalcStep:
         input_b = tmp_path / "b.xyz"
         input_a.write_text("1\na\nH 0 0 0\n", encoding="utf-8")
         input_b.write_text("1\nb\nH 0 0 1\n", encoding="utf-8")
-        output = os.path.join(step_dir, "output.xyz")
-        self._mock_facade_result(mock_calc, output)
 
-        run_calc_step(
-            step_dir=step_dir,
-            current_input=[str(input_a), str(input_b)],
-            params=self.MINIMAL_PARAMS,
-            global_config=self.MINIMAL_GLOBAL,
-            root_dir=os.path.dirname(step_dir),
-            steps=[],
-            failure_tracker=failure_tracker,
-            step_name="step_02",
-        )
+        with pytest.raises(ConfFlowError, match="requires exactly one input file"):
+            run_calc_step(
+                step_dir=step_dir,
+                current_input=[str(input_a), str(input_b)],
+                params=self.MINIMAL_PARAMS,
+                global_config=self.MINIMAL_GLOBAL,
+                root_dir=os.path.dirname(step_dir),
+                steps=[],
+                failure_tracker=failure_tracker,
+                step_name="step_02",
+            )
 
-        _, kwargs = mock_calc.run_calc_workflow_step.call_args
-        assert kwargs["input_source"] == [str(input_a), str(input_b)]
+        mock_calc.run_calc_workflow_step.assert_not_called()
 
     def test_invalid_calc_config_uses_schema_compatibility_message(
         self, step_dir: str, single_input_xyz: str, failure_tracker: FailureTracker

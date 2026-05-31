@@ -22,7 +22,7 @@ from ..core.utils import (
     validate_xyz_file,
 )
 from .config_builder import build_task_config, load_workflow_config
-from .helpers import count_conformers_any, is_multi_frame_any, resolve_step_output
+from .helpers import count_conformers_any, resolve_step_output
 from .presenter import (
     emit_final_report_and_lowest,
     print_step_footer_block,
@@ -260,17 +260,13 @@ def run_workflow(
 
         try:
             if step_type in ["confgen", "gen"]:
-                multi_frame = len(input_files) == 1 and is_multi_frame_any(current_input)
-                expected_output = os.path.join(step_dir, "search.xyz")
-
-                if multi_frame and isinstance(current_input, str):
-                    step_stats["status"] = TaskStatus.SKIPPED_MULTI
-                elif os.path.exists(expected_output):
-                    step_stats["status"] = TaskStatus.SKIPPED
-
                 current_input = _run_confgen_step(step_dir, current_input, params, input_files)
                 io_xyz.ensure_xyz_cids(current_input, prefix=index_to_letter_prefix(0))
-                if step_stats.get("status") not in [TaskStatus.SKIPPED_MULTI, TaskStatus.SKIPPED]:
+                if getattr(current_input, "copied_multi_frame", False):
+                    step_stats["status"] = TaskStatus.SKIPPED_MULTI
+                elif getattr(current_input, "reused_existing", False):
+                    step_stats["status"] = TaskStatus.SKIPPED
+                else:
                     step_stats["status"] = TaskStatus.COMPLETED
 
             elif step_type in ["calc", "task"]:

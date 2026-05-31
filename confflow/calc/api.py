@@ -43,8 +43,16 @@ def run_calc_workflow_step(
     out of `ChemTaskManager` lifecycle details while preserving the existing
     compat/signature/resume contract implemented by `step_contract`.
     """
+    if isinstance(input_source, list):
+        if len(input_source) != 1:
+            raise ValueError(
+                "Calc workflow step requires exactly one input file. "
+                "Add a confgen step to merge multiple inputs before calc."
+            )
+        input_source = input_source[0]
+
     input_signature = compute_calc_input_signature(input_source)
-    input_path = input_source if isinstance(input_source, str) else input_source[0]
+    input_path = input_source
 
     prepared = prepare_calc_step_dir(
         step_dir,

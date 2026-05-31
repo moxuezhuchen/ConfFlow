@@ -31,6 +31,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
+          python -m pip check
 
       - name: Black (gate)
         if: matrix.python-version == '3.11'
@@ -92,6 +93,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
+          python -m pip check
 
       - name: Coverage (gate)
         run: pytest tests/ --cov=confflow --cov-report=term-missing --cov-report=xml

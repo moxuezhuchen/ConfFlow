@@ -109,14 +109,17 @@ def test_process_xyz_missing_input_calls_error(monkeypatch):
 def test_process_xyz_no_frames_returns_after_banner(tmp_path, monkeypatch):
     xyz = tmp_path / "in.xyz"
     xyz.write_text("1\nx\nH 0 0 0\n", encoding="utf-8")
+    out = tmp_path / "out.xyz"
+    out.write_text("existing output\n", encoding="utf-8")
     seen = []
     monkeypatch.setattr(processor, "read_xyz_file", lambda path: [])
     monkeypatch.setattr(processor.console, "print", lambda msg: seen.append(msg))
 
-    args = processor.RefineOptions(input_file=str(xyz), output=str(tmp_path / "out.xyz"))
+    args = processor.RefineOptions(input_file=str(xyz), output=str(out))
     processor.process_xyz(args)
 
     assert seen and "RMSD=" in seen[0]
+    assert out.read_text(encoding="utf-8") == "existing output\n"
 
 
 def test_process_xyz_no_conformers_after_filtering(tmp_path, monkeypatch):
@@ -175,10 +178,13 @@ def test_process_xyz_no_conformers_after_filtering(tmp_path, monkeypatch):
     monkeypatch.setattr(processor, "process_topology_group", lambda *args: ([], []))
     monkeypatch.setattr(processor.console, "print", lambda msg: seen.append(msg))
 
-    args = processor.RefineOptions(input_file=str(xyz), output=str(tmp_path / "out.xyz"), imag=0)
+    out = tmp_path / "out.xyz"
+    out.write_text("existing output\n", encoding="utf-8")
+    args = processor.RefineOptions(input_file=str(xyz), output=str(out), imag=0)
     processor.process_xyz(args)
 
     assert any("No conformers remain" in msg for msg in seen)
+    assert out.read_text(encoding="utf-8") == "existing output\n"
 
 
 def test_process_xyz_no_conformers_after_imag_and_ewin(tmp_path, monkeypatch):
@@ -247,7 +253,7 @@ def test_process_xyz_no_conformers_after_imag_and_ewin(tmp_path, monkeypatch):
     assert any("No conformers remain" in msg for msg in seen)
 
 
-def test_process_xyz_zero_result_removes_stale_output(tmp_path, monkeypatch):
+def test_process_xyz_zero_result_preserves_existing_output(tmp_path, monkeypatch):
     xyz = tmp_path / "in.xyz"
     xyz.write_text("1\nx\nH 0 0 0\n", encoding="utf-8")
     stale = tmp_path / "out.xyz"
@@ -309,7 +315,7 @@ def test_process_xyz_zero_result_removes_stale_output(tmp_path, monkeypatch):
     )
 
     assert result.produced_output is False
-    assert not stale.exists()
+    assert stale.read_text(encoding="utf-8") == "old"
 
 
 def test_processor_main_sets_default_output_and_calls_process(monkeypatch, tmp_path: Path):
