@@ -368,11 +368,26 @@ def test_run_generation_multi_input_partial_missing_fails(cd_tmp):
     f1 = cd_tmp / "f1.xyz"
     f1.write_text("2\ntest\nC 0 0 0\nH 0 0 1\n", encoding="utf-8")
     missing = cd_tmp / "missing.xyz"
+    stale = cd_tmp / "search.xyz"
+    stale.write_text("stale\n", encoding="utf-8")
 
     with pytest.raises(RuntimeError, match="Failed to process 1 input file"):
         run_generation([str(f1), str(missing)], chains=["1-2"], confirm=False)
 
     assert not (cd_tmp / "search.xyz").exists()
+
+
+def test_run_generation_zero_output_removes_stale_search_xyz(cd_tmp):
+    xyz = cd_tmp / "test.xyz"
+    xyz.write_text("3\n\nC 0 0 0\nC 1.5 0 0\nC 3.0 0 0\n", encoding="utf-8")
+    stale = cd_tmp / "search.xyz"
+    stale.write_text("old conformers\n", encoding="utf-8")
+
+    with patch("builtins.input", return_value="n"):
+        result = run_generation([str(xyz)], chains=["1-2-3"], confirm=True)
+
+    assert result == []
+    assert not stale.exists()
 
 
 def test_run_generation_multi_input_preserves_atom_order_in_output(cd_tmp):

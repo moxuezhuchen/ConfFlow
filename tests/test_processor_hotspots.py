@@ -67,6 +67,36 @@ def test_compute_dedup_counts_breaks_cycle():
     assert final_unique[0]["rmsd_to_min"] == 0.0
 
 
+def test_process_topology_group_preserves_input_frames_for_dedup_counts():
+    frames = [
+        {
+            "atoms": ["C", "H"],
+            "coords": np.array([[0.0, 0.0, 0.0], [0.0, 0.0, 1.0]], dtype=np.float64),
+            "energy": -1.0,
+            "original_index": 1,
+        },
+        {
+            "atoms": ["C", "H"],
+            "coords": np.array([[0.0, 0.0, 0.0], [0.0, 0.0, 1.0]], dtype=np.float64),
+            "energy": -0.99999,
+            "original_index": 2,
+        },
+    ]
+
+    final_unique, report_data = processor.process_topology_group(
+        frames,
+        rmsd_threshold=0.25,
+        heavy_atoms_only=False,
+        workers=1,
+        energy_tolerance=0.05,
+    )
+    processor._compute_dedup_counts(final_unique, frames, report_data)
+
+    assert len(frames) == 2
+    assert len(final_unique) == 1
+    assert final_unique[0]["count"] == 2
+
+
 def test_write_refine_output_emits_g_and_skips_aux_fields(tmp_path: Path):
     out = tmp_path / "out.xyz"
     final_unique = [

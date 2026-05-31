@@ -238,6 +238,80 @@ steps:
         assert resolved["cores_per_task"] == 16
         assert resolved["max_parallel_jobs"] == 4
 
+    def test_config_show_calc_uses_runtime_resolved_params(self, tmp_path: Path, capsys):
+        """Calc config-show should include real runtime fields, not only schema overrides."""
+        from confflow.cli import main
+
+        config_content = """
+global:
+  charge: 0
+  multiplicity: 1
+  auto_clean: true
+  delete_work_dir: true
+  allowed_executables:
+    - orca
+
+steps:
+  - name: opt
+    type: calc
+    params:
+      iprog: orca
+      itask: opt
+      keyword: B3LYP
+      charge: 1
+      multiplicity: 2
+      auto_clean: false
+      delete_work_dir: false
+      sandbox_root: /tmp/confflow-sandbox
+"""
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(config_content)
+
+        result = main(
+            ["--config-show", "-c", str(config_file), "--step", "opt", "--format", "json"]
+        )
+        assert result == ExitCode.SUCCESS
+
+        data = json.loads(capsys.readouterr().out)
+        resolved = data["resolved_config"]
+        assert resolved["charge"] == 1
+        assert resolved["multiplicity"] == 2
+        assert resolved["auto_clean"] is False
+        assert resolved["delete_work_dir"] is False
+        assert resolved["sandbox_root"] == "/tmp/confflow-sandbox"
+        assert resolved["allowed_executables"] == ["orca"]
+
+    def test_config_show_confgen_includes_step_specific_params(self, tmp_path: Path, capsys):
+        """Confgen config-show should not drop params such as bond_multiplier."""
+        from confflow.cli import main
+
+        config_content = """
+global:
+  max_parallel_jobs: 2
+
+steps:
+  - name: gen
+    type: confgen
+    params:
+      chains: "1-2-3"
+      bond_multiplier: 1.3
+      angle_step: 60
+"""
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(config_content)
+
+        result = main(
+            ["--config-show", "-c", str(config_file), "--step", "gen", "--format", "json"]
+        )
+        assert result == ExitCode.SUCCESS
+
+        data = json.loads(capsys.readouterr().out)
+        resolved = data["resolved_config"]
+        assert resolved["chains"] == "1-2-3"
+        assert resolved["bond_multiplier"] == 1.3
+        assert resolved["bond_threshold"] == 1.3
+        assert resolved["angle_step"] == 60
+
     def test_config_show_csv_format_treated_as_text(self, tmp_path: Path, capsys):
         """Test that --format csv is treated as text for --config-show."""
         from confflow.cli import main

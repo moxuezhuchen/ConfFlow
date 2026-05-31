@@ -314,7 +314,7 @@ def get_topology_hash_worker(args):
 def process_topology_group(
     frames_in_group, rmsd_threshold, heavy_atoms_only, workers, energy_tolerance=0.05
 ):
-    frames_in_group.sort(key=lambda x: x["energy"])
+    frames_in_group = sorted(frames_in_group, key=lambda x: x["energy"])
     unique_frames, report_data = [], []
     if not frames_in_group:
         return [], []
@@ -334,13 +334,13 @@ def process_topology_group(
         )
         f["pmi"] = get_pmi(coords)
 
-    first = frames_in_group.pop(0)
+    first = frames_in_group[0]
     unique_frames.append(first)
     report_data.append(
         {"Input_Frame_ID": first["original_index"], "Status": "Kept", "Duplicate_Of_Input_ID": "-"}
     )
 
-    candidates = frames_in_group
+    candidates = frames_in_group[1:]
     if not candidates:
         return unique_frames, report_data
 

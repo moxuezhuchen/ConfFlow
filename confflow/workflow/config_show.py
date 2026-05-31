@@ -8,7 +8,7 @@ import json
 from typing import Any
 
 from ..config.loader import load_workflow_config_file
-from ..config.schema import ConfigSchema
+from .task_config import build_structured_task_config
 
 __all__ = [
     "show_resolved_config",
@@ -53,9 +53,37 @@ def _select_step(steps: list[dict[str, Any]], step_ref: str) -> tuple[int, dict[
     return matches[0]
 
 
-def _resolve_step_config(step: dict[str, Any], global_config: dict[str, Any]) -> dict[str, Any]:
+def _resolve_step_config(
+    step: dict[str, Any],
+    global_config: dict[str, Any],
+    *,
+    root_dir: str | None = None,
+    all_steps: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     """Resolve a single step's merged configuration."""
-    return ConfigSchema.normalize_step_config(step, global_config)
+    params = step.get("params") or {}
+    if not isinstance(params, dict):
+        params = {}
+
+    step_type = str(step.get("type", "calc")).lower()
+    if step_type in {"calc", "task"}:
+        resolved = dict(
+            build_structured_task_config(
+                params,
+                global_config,
+                root_dir=root_dir,
+                all_steps=all_steps,
+            )
+        )
+    else:
+        resolved = dict(global_config)
+        resolved.update(params)
+        if step_type in {"confgen", "gen"} and "bond_threshold" not in resolved:
+            resolved["bond_threshold"] = params.get("bond_multiplier", 1.15)
+
+    resolved["step_type"] = step.get("type", "calc")
+    resolved["step_name"] = step.get("name", "unnamed")
+    return resolved
 
 
 def _format_text_section(title: str, data: dict[str, Any], indent: int = 2) -> str:
@@ -96,11 +124,17 @@ def show_resolved_config(
     cfg = load_workflow_config_file(config_file)
     global_config = cfg["global"]
     steps = cfg["steps"]
+    root_dir = None
 
     if step_ref is not None:
         # Show only the specified step
         step_index, step = _select_step(steps, step_ref)
-        resolved = _resolve_step_config(step, global_config)
+        resolved = _resolve_step_config(
+            step,
+            global_config,
+            root_dir=root_dir,
+            all_steps=steps,
+        )
         step_name = str(step.get("name", f"step_{step_index + 1}"))
 
         if output_format == "json":
@@ -122,7 +156,12 @@ def show_resolved_config(
         if output_format == "json":
             steps_output = []
             for idx, step in enumerate(steps):
-                resolved = _resolve_step_config(step, global_config)
+                resolved = _resolve_step_config(
+                    step,
+                    global_config,
+                    root_dir=root_dir,
+                    all_steps=steps,
+                )
                 steps_output.append(
                     {
                         "step_index": idx + 1,
@@ -143,7 +182,12 @@ def show_resolved_config(
             print()
             print(_format_text_section("Global config", global_config))
             for idx, step in enumerate(steps):
-                resolved = _resolve_step_config(step, global_config)
+                resolved = _resolve_step_config(
+                    step,
+                    global_config,
+                    root_dir=root_dir,
+                    all_steps=steps,
+                )
                 step_name = str(step.get("name", f"step_{idx + 1}"))
                 step_type = str(step.get("type", ""))
                 print()

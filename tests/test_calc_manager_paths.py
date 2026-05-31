@@ -14,7 +14,9 @@ import pytest
 
 from confflow.calc.manager import CalcRunSummary
 from confflow.calc.manager import main as manager_main
+from confflow.calc.step_contract import prepare_calc_step_dir
 from confflow.core.contracts import ExitCode
+from confflow.core.exceptions import PathSafetyError
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -143,6 +145,24 @@ def test_confcalc_partial_failure_keeps_zero_exit(tmp_path):
             failed=[{"job_name": "A000002", "error": "boom"}],
         )
         assert manager_main() == ExitCode.SUCCESS
+
+
+def test_prepare_calc_step_dir_refuses_stale_cleanup_outside_sandbox(tmp_path):
+    sandbox = tmp_path / "sandbox"
+    sandbox.mkdir()
+    step_dir = tmp_path / "outside" / "step_01"
+    step_dir.mkdir(parents=True)
+    stale_output = step_dir / "output.xyz"
+    stale_output.write_text("stale\n", encoding="utf-8")
+
+    with pytest.raises(PathSafetyError, match="escapes sandbox_root"):
+        prepare_calc_step_dir(
+            str(step_dir),
+            {"auto_clean": "false"},
+            execution_config={"sandbox_root": str(sandbox)},
+        )
+
+    assert stale_output.exists()
 
 
 def test_manager_read_xyz_fallback_more(tmp_path):

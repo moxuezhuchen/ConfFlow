@@ -119,7 +119,12 @@ def validate_inputs_compatible(
             try:
                 if not bool(confgen_params.get("validate_chain_bonds", False)):
                     return
-                bond_threshold = float(confgen_params.get("bond_threshold", 1.15))
+                bond_threshold = float(
+                    confgen_params.get(
+                        "bond_threshold",
+                        confgen_params.get("bond_multiplier", 1.15),
+                    )
+                )
                 validator = ChainValidator(chains)
                 mol = load_mol_from_xyz(input_files[0], bond_threshold)
                 ref_data = validator.validate_mol(mol, input_files[0])

@@ -74,6 +74,11 @@ def test_schema_validate_global_config_raises_configuration_error():
         ConfigSchema.validate_global_config({"total_memory": "invalid"})
 
 
+def test_schema_validate_global_config_rejects_invalid_ts_bond_atoms():
+    with pytest.raises(ConfigurationError, match="ts_bond_atoms"):
+        ConfigSchema.validate_global_config({"ts_bond_atoms": "1,2,3"})
+
+
 def test_normalize_step_config_overrides():
     global_cfg = {"cores_per_task": 1, "total_memory": "4GB"}
     step_cfg = {"params": {"cores_per_task": 2}}

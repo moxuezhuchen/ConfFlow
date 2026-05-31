@@ -13,6 +13,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, TypedDict
 
+from ..core.path_policy import validate_cleanup_target
+
 __all__ = [
     "CalcStepState",
     "PreparedCalcStep",
@@ -691,10 +693,30 @@ def _list_resume_artifacts(step_dir: str) -> list[str]:
     return sorted(entries)
 
 
-def _clear_step_dir_contents(step_dir: str) -> None:
-    for entry in os.listdir(step_dir):
-        path = os.path.join(step_dir, entry)
-        if os.path.isdir(path):
+def _cleanup_sandbox_root(
+    task_config: Mapping[str, Any] | None,
+    execution_config: ExecutionConfig | Mapping[str, Any] | None,
+) -> str | None:
+    if hasattr(execution_config, "execution"):
+        sandbox_root = getattr(execution_config.execution, "sandbox_root", None)
+        if sandbox_root:
+            return str(sandbox_root)
+    if isinstance(execution_config, Mapping):
+        sandbox_root = execution_config.get("sandbox_root")
+        if sandbox_root:
+            return str(sandbox_root)
+    if isinstance(task_config, Mapping):
+        sandbox_root = task_config.get("sandbox_root")
+        if sandbox_root:
+            return str(sandbox_root)
+    return None
+
+
+def _clear_step_dir_contents(step_dir: str, *, sandbox_root: str | None = None) -> None:
+    safe_step_dir = validate_cleanup_target(step_dir, sandbox_root=sandbox_root)
+    for entry in os.listdir(safe_step_dir):
+        path = os.path.join(safe_step_dir, entry)
+        if os.path.isdir(path) and not os.path.islink(path):
             shutil.rmtree(path)
         else:
             os.remove(path)
@@ -845,7 +867,10 @@ def prepare_calc_step_dir(
         state.is_reusable or state.can_resume_without_output
     )
     if should_clean:
-        _clear_step_dir_contents(step_dir)
+        _clear_step_dir_contents(
+            step_dir,
+            sandbox_root=_cleanup_sandbox_root(task_config, execution_config),
+        )
         state = inspect_calc_step_state(
             step_dir,
             task_config,

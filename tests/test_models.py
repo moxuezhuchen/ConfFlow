@@ -103,8 +103,8 @@ class TestGlobalConfigModel:
         assert cfg.ts_bond_atoms == [86, 92]
 
     def test_ts_bond_atoms_invalid_string(self):
-        cfg = GlobalConfigModel(ts_bond_atoms="1,2,3")
-        assert cfg.ts_bond_atoms is None
+        with pytest.raises(ValidationError, match="ts_bond_atoms"):
+            GlobalConfigModel(ts_bond_atoms="1,2,3")
 
     def test_cores_validation(self):
         with pytest.raises(Exception, match="cores_per_task"):

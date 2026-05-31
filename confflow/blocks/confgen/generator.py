@@ -102,12 +102,20 @@ class _StreamingConfgenOutput:
                 os.remove(self.temp_path)
             except FileNotFoundError:
                 pass
+            self._remove_output_path()
         return list(self._items)
 
     def discard(self) -> None:
-        """Drop partial output without replacing the target file."""
+        """Drop partial output and remove any stale target file."""
         try:
             os.remove(self.temp_path)
+        except FileNotFoundError:
+            pass
+        self._remove_output_path()
+
+    def _remove_output_path(self) -> None:
+        try:
+            os.remove(self.output_path)
         except FileNotFoundError:
             pass
 

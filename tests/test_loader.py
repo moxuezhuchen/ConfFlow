@@ -101,6 +101,23 @@ class TestLoadWorkflowConfigFile:
         ):
             load_workflow_config_file(str(cfg))
 
+    def test_invalid_global_ts_bond_atoms_raises_configuration_error(self, tmp_path):
+        cfg = tmp_path / "bad_ts_bond.yaml"
+        cfg.write_text(
+            "global:\n"
+            "  ts_bond_atoms: '1,2,3'\n"
+            "steps:\n"
+            "  - name: step1\n"
+            "    type: calc\n"
+            "    params:\n"
+            "      iprog: gaussian\n"
+            "      itask: opt\n"
+            "      keyword: B3LYP\n",
+            encoding="utf-8",
+        )
+        with pytest.raises(ConfigurationError, match="ts_bond_atoms"):
+            load_workflow_config_file(str(cfg))
+
     def test_step_missing_name_raises(self, tmp_path):
         cfg = tmp_path / "no_name.yaml"
         cfg.write_text(

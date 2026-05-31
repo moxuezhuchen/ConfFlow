@@ -176,7 +176,17 @@ class GlobalConfigModel(BaseModel):
     @classmethod
     def coerce_ts_bond_atoms(cls, v: Any) -> list[int] | None:
         """Accept list or comma/space-separated string for ts_bond_atoms."""
-        return _coerce_two_atom_indices(v)
+        if v is None:
+            return None
+        try:
+            coerced = _coerce_two_atom_indices(v)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("ts_bond_atoms must contain exactly two atom indices") from exc
+        if coerced is not None:
+            return coerced
+        if isinstance(v, str) or isinstance(v, (list, tuple)):
+            raise ValueError("ts_bond_atoms must contain exactly two atom indices")
+        raise ValueError("ts_bond_atoms must be a list or comma-separated string")
 
 
 class CalcConfigModel(BaseModel):

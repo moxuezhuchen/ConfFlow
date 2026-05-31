@@ -119,11 +119,24 @@ class ConfigSchema:
             if key == "freeze":
                 normalized[key] = _coerce_freeze_indices(value)
             elif key == "ts_bond_atoms":
-                normalized[key] = _coerce_two_atom_indices(value)
+                normalized[key] = cls._coerce_global_ts_bond_atoms(value)
             else:
                 normalized[key] = value
 
         return normalized
+
+    @classmethod
+    def _coerce_global_ts_bond_atoms(cls, value: Any) -> list[int] | None:
+        """Coerce global ``ts_bond_atoms`` and reject malformed explicit values."""
+        if value is None:
+            return None
+        try:
+            coerced = _coerce_two_atom_indices(value)
+        except (TypeError, ValueError):
+            coerced = None
+        if coerced is not None:
+            return coerced
+        raise ValueError(cls._translate_ts_bond_atoms_error(value))
 
     @classmethod
     def normalize_step_config(
@@ -161,7 +174,14 @@ class ConfigSchema:
     @classmethod
     def validate_global_config(cls, raw_config: dict[str, Any]) -> dict[str, Any]:
         """Normalize and validate global configuration through GlobalConfigModel."""
-        normalized = cls.normalize_global_config(raw_config)
+        try:
+            normalized = cls.normalize_global_config(raw_config)
+        except ValueError as e:
+            raise ConfigurationError(
+                "Global configuration model validation failed",
+                [f"global: {e}"],
+            ) from e
+
         try:
             validated = GlobalConfigModel(**normalized)
         except PydanticValidationError as e:

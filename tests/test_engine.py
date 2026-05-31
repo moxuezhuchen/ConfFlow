@@ -1550,6 +1550,33 @@ def test_validate_inputs_compatible_chain_bonds_valid(tmp_path):
             [str(xyz)],
             confgen_params={"chains": ["1-2"], "validate_chain_bonds": True},
         )
+        mock_load.assert_called_once_with(str(xyz), 1.15)
+
+
+def test_validate_inputs_compatible_chain_bonds_uses_bond_multiplier(tmp_path):
+    """Workflow validation should use the same bond_multiplier alias as confgen runtime."""
+    xyz = tmp_path / "mol.xyz"
+    xyz.write_text("2\n\nC 0.0 0.0 0.0\nC 1.5 0.0 0.0\n")
+
+    with (
+        patch("confflow.workflow.validation.load_mol_from_xyz") as mock_load,
+        patch("confflow.workflow.validation.ChainValidator") as MockCV,
+    ):
+        mock_load.return_value = object()
+        MockCV.return_value.validate_mol.return_value = [
+            {"valid": True, "raw_chain": "1-2", "error": None}
+        ]
+
+        validate_inputs_compatible(
+            [str(xyz)],
+            confgen_params={
+                "chains": ["1-2"],
+                "validate_chain_bonds": True,
+                "bond_multiplier": 1.3,
+            },
+        )
+
+        mock_load.assert_called_once_with(str(xyz), 1.3)
 
 
 def test_validate_inputs_compatible_chain_bonds_invalid_chain(tmp_path):
