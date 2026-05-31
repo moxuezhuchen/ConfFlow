@@ -697,8 +697,9 @@ def _cleanup_sandbox_root(
     task_config: Mapping[str, Any] | None,
     execution_config: ExecutionConfig | Mapping[str, Any] | None,
 ) -> str | None:
-    if hasattr(execution_config, "execution"):
-        sandbox_root = getattr(execution_config.execution, "sandbox_root", None)
+    execution_options = getattr(execution_config, "execution", None)
+    if execution_options is not None:
+        sandbox_root = getattr(execution_options, "sandbox_root", None)
         if sandbox_root:
             return str(sandbox_root)
     if isinstance(execution_config, Mapping):
