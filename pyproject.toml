@@ -40,7 +40,7 @@ requires-python = ">=3.10"
 dependencies = [
 "numpy>=2.2.6",
     "scipy>=1.15.3",
-    "pyyaml>=5.4.0",
+    "pyyaml>=6.0.3",
     "psutil>=7.2.2",
     "rich>=10.0.0",
     "pydantic>=2.13.3",
