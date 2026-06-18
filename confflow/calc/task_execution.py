@@ -9,7 +9,7 @@ import os
 from collections.abc import Callable
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from concurrent.futures.process import BrokenProcessPool
-from typing import Any
+from typing import Any, cast
 
 from ..core import models
 from ..core.console import CalcProgressReporter
@@ -73,7 +73,7 @@ def execute_tasks(
     stop_file = calc_config.get("stop_beacon_file")
 
     def _task_payload(task: models.TaskContext) -> dict[str, Any]:
-        payload = task.model_dump()
+        payload = cast(dict[str, Any], task.model_dump())
         payload["config"] = calc_config
         return payload
 
