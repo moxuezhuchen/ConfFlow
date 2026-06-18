@@ -219,6 +219,8 @@ def redirect_logging_streams(stream=None, include_root: bool = False) -> None:
 
     for lg in targets:
         for handler in list(getattr(lg, "handlers", [])):
+            if ConfFlowLogger._is_pytest_handler(handler):
+                continue
             if isinstance(handler, logging.StreamHandler):
                 try:
                     handler.setStream(stream)

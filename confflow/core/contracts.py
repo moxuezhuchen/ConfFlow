@@ -71,29 +71,29 @@ def cli_output_to_txt(input_path: str) -> Iterator[str]:
     The .txt file path is ``<input_stem>.txt`` next to the input file.
     """
     output_path = output_txt_path_for_input(input_path)
-    original_stdout = sys.stdout
 
     with open(output_path, "w", encoding="utf-8") as out_f:
         stripped = _AnsiStripWriter(out_f)
-        with redirect_stdout(stripped), redirect_stderr(stripped):  # type: ignore[arg-type]
-            redirect_console(sys.stdout)
+        try:
+            with redirect_stdout(stripped), redirect_stderr(stripped):  # type: ignore[arg-type]
+                redirect_console(sys.stdout)
+                try:
+                    get_logger().redirect_console_handler(sys.stdout)
+                except (AttributeError, OSError) as e:
+                    logger.debug(f"Failed to redirect the console handler on entry: {e}")
+                redirect_logging_streams(sys.stdout, include_root=False)
+                yield output_path
+        finally:
+            # Restore after contextlib has put pytest/terminal streams back in place.
+            try:
+                redirect_console(sys.stdout)
+            except (AttributeError, OSError) as e:
+                logger.debug(f"Failed to redirect the console output on exit: {e}")
             try:
                 get_logger().redirect_console_handler(sys.stdout)
             except (AttributeError, OSError) as e:
-                logger.debug(f"Failed to redirect the console handler on entry: {e}")
-            redirect_logging_streams(sys.stdout, include_root=False)
+                logger.debug(f"Failed to restore the console handler on exit: {e}")
             try:
-                yield output_path
-            finally:
-                try:
-                    redirect_console(original_stdout)
-                except (AttributeError, OSError) as e:
-                    logger.debug(f"Failed to redirect the console output on exit: {e}")
-                try:
-                    get_logger().redirect_console_handler(original_stdout)
-                except (AttributeError, OSError) as e:
-                    logger.debug(f"Failed to restore the console handler on exit: {e}")
-                try:
-                    redirect_logging_streams(original_stdout, include_root=False)
-                except (AttributeError, OSError) as e:
-                    logger.debug(f"Failed to restore the logging streams on exit: {e}")
+                redirect_logging_streams(sys.stdout, include_root=False)
+            except (AttributeError, OSError) as e:
+                logger.debug(f"Failed to restore the logging streams on exit: {e}")
