@@ -26,8 +26,36 @@ from ..shared.defaults import (
     DEFAULT_MAX_PARALLEL_JOBS,
     DEFAULT_TOTAL_MEMORY,
 )
-from .config_builder import DEFAULT_CALC_TASK, _itask_label, _normalize_iprog_label
 from .helpers import count_conformers_any
+
+DEFAULT_CALC_TASK = "opt_freq"
+
+
+def _normalize_iprog_label(value: Any) -> str:
+    raw = str(value).strip().lower()
+    if raw in {"1", "g16", "gaussian", "gau", "g09", "g03"}:
+        return "g16"
+    if raw in {"2", "orca"}:
+        return "orca"
+    return str(value).strip()
+
+
+def _itask_label(value: Any) -> str:
+    raw = str(value).strip().lower()
+    mapping = {
+        "0": "opt",
+        "1": "sp",
+        "2": "freq",
+        "3": "opt_freq",
+        "4": "ts",
+        "opt": "opt",
+        "sp": "sp",
+        "freq": "freq",
+        "opt_freq": "opt_freq",
+        "optfreq": "opt_freq",
+        "ts": "ts",
+    }
+    return mapping.get(raw, str(value).strip())
 
 __all__ = [
     "print_workflow_start",

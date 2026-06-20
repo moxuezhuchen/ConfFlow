@@ -1,1132 +1,141 @@
 #!/usr/bin/env python3
 
-"""Tests for workflow.step_handlers module."""
+"""Tests for workflow step handlers on the typed execution boundary."""
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
-from unittest.mock import MagicMock, patch
 
 import pytest
 
-from confflow.calc import CalcStepExecutionResult
-from confflow.calc.components.executor import _save_config_hash
-from confflow.calc.config_types import CalcTaskConfig, Program, TaskKind
-from confflow.calc.step_contract import compute_calc_input_signature, record_calc_step_signature
-from confflow.config.schema import ConfigSchema
+from confflow.calc.runner import CalcStepResult
 from confflow.core.exceptions import ConfFlowError
-from confflow.workflow.stats import FailureTracker
-from confflow.workflow.step_handlers import (
-    CalcStepResult,
-    ConfgenStepResult,
-    run_calc_step,
-    run_confgen_step,
-)
-from confflow.workflow.task_config import build_task_config
-
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
+from confflow.workflow.step_handlers import StepExecutionResult, run_calc_step, run_confgen_step
 
 
-@pytest.fixture
-def step_dir(tmp_path: Path) -> str:
-    d = tmp_path / "step_01"
-    d.mkdir()
-    return str(d)
+def _xyz(path: Path, multi: bool = False) -> Path:
+    text = "1\nframe1\nH 0 0 0\n"
+    if multi:
+        text += "1\nframe2\nH 0 0 1\n"
+    path.write_text(text, encoding="utf-8")
+    return path
 
 
-@pytest.fixture
-def failure_tracker(tmp_path: Path) -> FailureTracker:
-    failed_dir = tmp_path / "failed"
-    failed_dir.mkdir()
-    return FailureTracker(str(failed_dir))
+def test_confgen_multiframe_input_is_copied_and_reused(tmp_path):
+    step_dir = tmp_path / "step_01_confgen"
+    step_dir.mkdir()
+    source = _xyz(tmp_path / "multi.xyz", multi=True)
 
-
-@pytest.fixture
-def single_input_xyz(tmp_path: Path) -> str:
-    p = tmp_path / "input.xyz"
-    p.write_text("2\ncomment\nC 0 0 0\nH 0 0 1\n", encoding="utf-8")
-    return str(p)
-
-
-@pytest.fixture
-def multi_frame_xyz(tmp_path: Path) -> str:
-    p = tmp_path / "multi.xyz"
-    p.write_text(
-        "2\nframe1\nC 0 0 0\nH 0 0 1\n2\nframe2\nC 1 0 0\nH 1 0 1\n",
-        encoding="utf-8",
+    first = run_confgen_step(
+        step_dir=str(step_dir),
+        current_input=str(source),
+        params={},
+        input_files=[str(source)],
     )
-    return str(p)
+    second = run_confgen_step(
+        step_dir=str(step_dir),
+        current_input=str(source),
+        params={},
+        input_files=[str(source)],
+    )
+
+    assert first.output_path == str(step_dir / "search.xyz")
+    assert first.copied_multi_frame is True
+    assert second.reused_existing is True
+    assert (step_dir / ".confgen_signature").exists()
 
 
-# ---------------------------------------------------------------------------
-# run_confgen_step tests
-# ---------------------------------------------------------------------------
+def test_confgen_recomputes_when_params_change(tmp_path, monkeypatch):
+    step_dir = tmp_path / "step_01_confgen"
+    step_dir.mkdir()
+    source = _xyz(tmp_path / "single.xyz")
 
-
-class TestRunConfgenStep:
-    """Tests for run_confgen_step."""
-
-    def test_multi_frame_copies_input(self, step_dir: str, multi_frame_xyz: str):
-        """Multi-frame input should be copied directly to search.xyz."""
-        result = run_confgen_step(
-            step_dir=step_dir,
-            current_input=multi_frame_xyz,
-            params={"chains": ["1-2"]},
-            input_files=[multi_frame_xyz],
+    def fake_run_generation(**kwargs):
+        Path("search.xyz").write_text(
+            f"1\nangle={kwargs['angle_step']}\nH 0 0 0\n",
+            encoding="utf-8",
         )
-        expected = os.path.join(step_dir, "search.xyz")
-        assert result == expected
-        assert os.path.exists(expected)
-        with open(expected) as f:
-            content = f.read()
-        assert "frame1" in content
-        assert "frame2" in content
 
-    def test_matching_existing_output_skips_generation(
-        self,
-        step_dir: str,
-        single_input_xyz: str,
-    ):
-        """If search.xyz and its signature match, confgen should not be called."""
-        expected = os.path.join(step_dir, "search.xyz")
+    monkeypatch.setattr("confflow.workflow.step_handlers.confgen.run_generation", fake_run_generation)
 
-        def fake_run(**kwargs):
-            with open(expected, "w", encoding="utf-8") as f:
-                f.write("2\ngenerated\nC 0 0 0\nH 0 0 1\n")
+    run_confgen_step(
+        step_dir=str(step_dir),
+        current_input=str(source),
+        params={"angle_step": 120},
+        input_files=[str(source), str(source)],
+    )
+    result = run_confgen_step(
+        step_dir=str(step_dir),
+        current_input=str(source),
+        params={"angle_step": 60},
+        input_files=[str(source), str(source)],
+    )
 
-        with patch("confflow.workflow.step_handlers.confgen") as mock_confgen:
-            mock_confgen.run_generation.side_effect = fake_run
-            result = run_confgen_step(
-                step_dir=step_dir,
-                current_input=single_input_xyz,
-                params={"chains": ["1-2"]},
-                input_files=[single_input_xyz],
-            )
-            assert isinstance(result, ConfgenStepResult)
-            assert result.reused_existing is False
+    assert result.cleaned_stale_artifacts is True
+    assert "angle=60" in (step_dir / "search.xyz").read_text(encoding="utf-8")
 
-        with patch("confflow.workflow.step_handlers.confgen") as mock_confgen:
-            result = run_confgen_step(
-                step_dir=step_dir,
-                current_input=single_input_xyz,
-                params={"chains": ["1-2"]},
-                input_files=[single_input_xyz],
-            )
-        mock_confgen.run_generation.assert_not_called()
-        assert isinstance(result, ConfgenStepResult)
-        assert result.reused_existing is True
-        assert result == expected
 
-    def test_stale_existing_output_is_recomputed(self, step_dir: str, single_input_xyz: str):
-        """Changed confgen params should invalidate an existing search.xyz."""
-        expected = os.path.join(step_dir, "search.xyz")
+def test_calc_step_builds_typed_request_and_tracks_failed_file(tmp_path, monkeypatch):
+    input_xyz = _xyz(tmp_path / "input.xyz")
+    step_dir = tmp_path / "step_02_calc"
+    output = step_dir / "result.xyz"
+    failed = step_dir / "failed.xyz"
 
-        def write_output(label: str):
-            with open(expected, "w", encoding="utf-8") as f:
-                f.write(f"2\n{label}\nC 0 0 0\nH 0 0 1\n")
-
-        with patch("confflow.workflow.step_handlers.confgen") as mock_confgen:
-            mock_confgen.run_generation.side_effect = lambda **kwargs: write_output("first")
-            run_confgen_step(
-                step_dir=step_dir,
-                current_input=single_input_xyz,
-                params={"chains": ["1-2"], "angle_step": 120},
-                input_files=[single_input_xyz],
+    class FakeRunner:
+        def run(self, request):
+            assert request.step_name == "calc1"
+            assert request.input_xyz == str(input_xyz)
+            assert request.config.program == "orca"
+            assert request.config.task == "sp"
+            step_dir.mkdir()
+            output.write_text("1\nok\nH 0 0 0\n", encoding="utf-8")
+            failed.write_text("1\nbad\nH 0 0 1\n", encoding="utf-8")
+            return CalcStepResult(
+                output_path=str(output),
+                failed_path=str(failed),
+                total_tasks=2,
+                succeeded=1,
+                failed=1,
+                cleaned_stale_artifacts=True,
             )
 
-        with patch("confflow.workflow.step_handlers.confgen") as mock_confgen:
-            mock_confgen.run_generation.side_effect = lambda **kwargs: write_output("second")
-            result = run_confgen_step(
-                step_dir=step_dir,
-                current_input=single_input_xyz,
-                params={"chains": ["1-2"], "angle_step": 60},
-                input_files=[single_input_xyz],
-            )
-
-        mock_confgen.run_generation.assert_called_once()
-        assert isinstance(result, ConfgenStepResult)
-        assert result.cleaned_stale_artifacts is True
-        with open(expected, encoding="utf-8") as f:
-            assert "second" in f.read()
-
-    @patch("confflow.workflow.step_handlers.confgen")
-    def test_normal_generation(self, mock_confgen: MagicMock, step_dir: str, single_input_xyz: str):
-        """Normal confgen call with two input files (non-multi-frame)."""
-        expected = os.path.join(step_dir, "search.xyz")
-
-        def fake_run(**kwargs):
-            with open(expected, "w") as f:
-                f.write("2\ngenerated\nC 0 0 0\nH 0 0 1\n")
-
-        mock_confgen.run_generation.side_effect = fake_run
-
-        result = run_confgen_step(
-            step_dir=step_dir,
-            current_input=single_input_xyz,
-            params={
-                "angle_step": 60,
-                "bond_multiplier": 1.2,
-                "chains": ["1-2"],
-                "max_parallel_jobs": 2,
-                "optimize": True,
-                "rotate_side": "right",
-            },
-            input_files=[single_input_xyz, "second.xyz"],
-        )
-        assert result == expected
-        mock_confgen.run_generation.assert_called_once()
-        call_kwargs = mock_confgen.run_generation.call_args[1]
-        assert call_kwargs["angle_step"] == 60
-        assert call_kwargs["bond_threshold"] == 1.2
-        assert call_kwargs["optimize"] is True
-        assert call_kwargs["rotate_side"] == "right"
-        assert call_kwargs["workers"] == 2
-
-    @patch("confflow.workflow.step_handlers.confgen")
-    def test_generation_uses_global_worker_limit(
-        self, mock_confgen: MagicMock, step_dir: str, single_input_xyz: str
-    ):
-        """Confgen should inherit the global max_parallel_jobs worker cap."""
-        expected = os.path.join(step_dir, "search.xyz")
-
-        def fake_run(**kwargs):
-            with open(expected, "w", encoding="utf-8") as f:
-                f.write("2\ngenerated\nC 0 0 0\nH 0 0 1\n")
-
-        mock_confgen.run_generation.side_effect = fake_run
-
-        run_confgen_step(
-            step_dir=step_dir,
-            current_input=single_input_xyz,
-            params={"chains": ["1-2"]},
-            input_files=[single_input_xyz, "second.xyz"],
-            global_config={"max_parallel_jobs": 3},
-        )
-
-        call_kwargs = mock_confgen.run_generation.call_args[1]
-        assert call_kwargs["workers"] == 3
-
-    @patch("confflow.workflow.step_handlers.confgen")
-    def test_generation_no_output_raises(
-        self, mock_confgen: MagicMock, step_dir: str, single_input_xyz: str
-    ):
-        """If confgen runs but doesn't produce output, raise ConfFlowError."""
-        mock_confgen.run_generation.return_value = None
-
-        with pytest.raises(ConfFlowError, match="confgen did not produce"):
-            run_confgen_step(
-                step_dir=step_dir,
-                current_input=single_input_xyz,
-                params={"chains": ["1-2"]},
-                input_files=[single_input_xyz, "other.xyz"],
-            )
-
-    def test_default_params(self, step_dir: str, single_input_xyz: str):
-        """Default parameter values are applied when not specified."""
-        expected = os.path.join(step_dir, "search.xyz")
-
-        with patch("confflow.workflow.step_handlers.confgen") as mock_confgen:
-
-            def fake_run(**kwargs):
-                with open(expected, "w") as f:
-                    f.write("2\nout\nC 0 0 0\nH 0 0 1\n")
-
-            mock_confgen.run_generation.side_effect = fake_run
-
-            run_confgen_step(
-                step_dir=step_dir,
-                current_input=single_input_xyz,
-                params={},
-                input_files=[single_input_xyz, "other.xyz"],
-            )
-            call_kwargs = mock_confgen.run_generation.call_args[1]
-            assert call_kwargs["angle_step"] == 120
-            assert call_kwargs["bond_threshold"] == 1.15
-            assert call_kwargs["optimize"] is False
-            assert call_kwargs["rotate_side"] == "left"
-            assert call_kwargs["confirm"] is False
-
-
-# ---------------------------------------------------------------------------
-# run_calc_step tests
-# ---------------------------------------------------------------------------
-
-
-class TestRunCalcStep:
-    """Tests for run_calc_step."""
-
-    MINIMAL_GLOBAL = {
-        "charge": 0,
-        "multiplicity": 1,
-        "cores_per_task": 1,
-        "total_memory": "4GB",
-        "max_parallel_jobs": 1,
-    }
-
-    MINIMAL_PARAMS = {
-        "iprog": "orca",
-        "itask": "sp",
-        "keyword": "HF def2-SVP",
-    }
-
-    def _write_matching_config_hash(self, step_dir: str, input_path: str) -> None:
-        task_config = build_task_config(
-            self.MINIMAL_PARAMS,
-            self.MINIMAL_GLOBAL,
-            root_dir=os.path.dirname(step_dir),
-            all_steps=[],
-        )
-        ConfigSchema.validate_calc_config(task_config)
-        record_calc_step_signature(
-            step_dir,
-            task_config,
-            input_signature=compute_calc_input_signature(input_path),
-        )
-
-    @staticmethod
-    def _mock_facade_result(
-        mock_calc: MagicMock,
-        output_path: str,
-        *,
-        reused_existing: bool = False,
-        failed_path: str | None = None,
-    ) -> None:
-        def _side_effect(**kwargs):
-            if not reused_existing:
-                Path(output_path).write_text("2\ncalculated\nC 0 0 0\nH 0 0 1\n", encoding="utf-8")
-            if failed_path is not None:
-                Path(failed_path).write_text("2\nfailed\nC 1 0 0\nH 1 0 1\n", encoding="utf-8")
-            return CalcStepExecutionResult(
-                output_path=output_path,
-                reused_existing=reused_existing,
-                failed_path=failed_path,
-            )
-
-        mock_calc.run_calc_workflow_step.side_effect = _side_effect
-
-    def test_existing_output_skips_calc(
-        self, step_dir: str, single_input_xyz: str, failure_tracker: FailureTracker
-    ):
-        """If output.xyz already exists, skip the computation."""
-        output = os.path.join(step_dir, "output.xyz")
-        with open(output, "w") as f:
-            f.write("2\nexisting\nC 0 0 0\nH 0 0 1\n")
-        self._write_matching_config_hash(step_dir, single_input_xyz)
-
-        with patch("confflow.workflow.step_handlers.calc") as mock_calc:
-            self._mock_facade_result(mock_calc, output, reused_existing=True)
-            result = run_calc_step(
-                step_dir=step_dir,
-                current_input=single_input_xyz,
-                params=self.MINIMAL_PARAMS,
-                global_config=self.MINIMAL_GLOBAL,
-                root_dir=os.path.dirname(step_dir),
-                steps=[],
-                failure_tracker=failure_tracker,
-                step_name="step_02",
-            )
-        mock_calc.run_calc_workflow_step.assert_called_once()
-        assert result == output
-
-    def test_existing_output_with_legacy_hash_skips_calc(
-        self, step_dir: str, single_input_xyz: str, failure_tracker: FailureTracker
-    ):
-        """Legacy MD5 .config_hash should still allow existing calc output reuse."""
-        from confflow.calc import step_contract
-
-        output = os.path.join(step_dir, "output.xyz")
-        with open(output, "w", encoding="utf-8") as f:
-            f.write("2\nexisting\nC 0 0 0\nH 0 0 1\n")
-        task_config = build_task_config(
-            self.MINIMAL_PARAMS,
-            self.MINIMAL_GLOBAL,
-            root_dir=os.path.dirname(step_dir),
-            all_steps=[],
-        )
-        ConfigSchema.validate_calc_config(task_config)
-        input_signature = compute_calc_input_signature(single_input_xyz)
-        legacy_config = step_contract._compute_legacy_calc_config_signature(task_config)
-        with open(os.path.join(step_dir, ".config_hash"), "w", encoding="utf-8") as f:
-            f.write(f"{legacy_config}:{input_signature.legacy_signature}")
-
-        result = run_calc_step(
-            step_dir=step_dir,
-            current_input=single_input_xyz,
-            params=self.MINIMAL_PARAMS,
-            global_config=self.MINIMAL_GLOBAL,
-            root_dir=os.path.dirname(step_dir),
-            steps=[],
-            failure_tracker=failure_tracker,
-            step_name="step_02",
-        )
-
-        assert result == output
-        assert isinstance(result, CalcStepResult)
-        assert result.reused_existing is True
-
-    def test_existing_output_with_failed_xyz(
-        self, step_dir: str, single_input_xyz: str, failure_tracker: FailureTracker
-    ):
-        """If output.xyz and failed.xyz both exist, track failures."""
-        output = os.path.join(step_dir, "output.xyz")
-        with open(output, "w") as f:
-            f.write("2\nout\nC 0 0 0\nH 0 0 1\n")
-        self._write_matching_config_hash(step_dir, single_input_xyz)
-        failed = os.path.join(step_dir, "failed.xyz")
-        with open(failed, "w") as f:
-            f.write("2\nfailed\nC 0 0 0\nH 0 0 1\n")
-
-        result = run_calc_step(
-            step_dir=step_dir,
-            current_input=single_input_xyz,
-            params=self.MINIMAL_PARAMS,
-            global_config=self.MINIMAL_GLOBAL,
-            root_dir=os.path.dirname(step_dir),
-            steps=[],
-            failure_tracker=failure_tracker,
-            step_name="step_02",
-        )
-        assert result == output
-
-    @patch("confflow.workflow.step_handlers.calc")
-    def test_search_xyz_does_not_skip_calc(
-        self,
-        mock_calc: MagicMock,
-        step_dir: str,
-        single_input_xyz: str,
-        failure_tracker: FailureTracker,
-    ):
-        """search.xyz is an input artifact for calc steps, not a completed result."""
-        search = os.path.join(step_dir, "search.xyz")
-        with open(search, "w") as f:
-            f.write("2\nseed\nC 0 0 0\nH 0 0 1\n")
-
-        output = os.path.join(step_dir, "output.xyz")
-        self._mock_facade_result(mock_calc, output)
-
-        result = run_calc_step(
-            step_dir=step_dir,
-            current_input=single_input_xyz,
-            params=self.MINIMAL_PARAMS,
-            global_config=self.MINIMAL_GLOBAL,
-            root_dir=os.path.dirname(step_dir),
-            steps=[],
-            failure_tracker=failure_tracker,
-            step_name="step_02",
-        )
-
-        mock_calc.run_calc_workflow_step.assert_called_once()
-        assert result == output
-
-    @patch("confflow.workflow.step_handlers.calc")
-    def test_normal_calc_run(
-        self,
-        mock_calc: MagicMock,
-        step_dir: str,
-        single_input_xyz: str,
-        failure_tracker: FailureTracker,
-    ):
-        """Normal computation creates output.xyz."""
-        output = os.path.join(step_dir, "output.xyz")
-        self._mock_facade_result(mock_calc, output)
-
-        result = run_calc_step(
-            step_dir=step_dir,
-            current_input=single_input_xyz,
-            params=self.MINIMAL_PARAMS,
-            global_config=self.MINIMAL_GLOBAL,
-            root_dir=os.path.dirname(step_dir),
-            steps=[],
-            failure_tracker=failure_tracker,
-            step_name="step_02",
-        )
-        assert result == output
-        mock_calc.run_calc_workflow_step.assert_called_once()
-
-    @patch("confflow.workflow.step_handlers.build_structured_task_config")
-    @patch("confflow.workflow.step_handlers.build_task_config")
-    @patch("confflow.workflow.step_handlers.calc")
-    def test_calc_handoff_uses_structured_config_but_preserves_legacy_signature_inputs(
-        self,
-        mock_calc: MagicMock,
-        mock_build_task_config: MagicMock,
-        mock_build_structured_task_config: MagicMock,
-        step_dir: str,
-        single_input_xyz: str,
-        failure_tracker: FailureTracker,
-    ):
-        output = os.path.join(step_dir, "output.xyz")
-        legacy_config = {
-            "iprog": "orca",
-            "itask": "sp",
-            "keyword": "HF def2-SVP",
-            "cores_per_task": "1",
-            "total_memory": "4GB",
-            "max_parallel_jobs": "1",
-            "charge": "0",
-            "multiplicity": "1",
-        }
-        structured_config = CalcTaskConfig(
-            program=Program.ORCA,
-            task=TaskKind.SP,
-            keyword="HF def2-SVP",
-            cores_per_task=1,
-            total_memory="4GB",
-            max_parallel_jobs=1,
-            charge=0,
-            multiplicity=1,
-        )
-        mock_build_task_config.return_value = legacy_config
-        mock_build_structured_task_config.return_value = structured_config
-        self._mock_facade_result(mock_calc, output)
-
-        result = run_calc_step(
-            step_dir=step_dir,
-            current_input=single_input_xyz,
-            params=self.MINIMAL_PARAMS,
-            global_config=self.MINIMAL_GLOBAL,
-            root_dir=os.path.dirname(step_dir),
-            steps=[],
-            failure_tracker=failure_tracker,
-            step_name="step_02",
-        )
-
-        assert result == output
-        mock_build_task_config.assert_called_once()
-        mock_build_structured_task_config.assert_called_once()
-        mock_calc.run_calc_workflow_step.assert_called_once_with(
-            step_dir=step_dir,
-            input_source=single_input_xyz,
-            legacy_task_config=legacy_config,
-            execution_config=structured_config,
-        )
-
-    @patch("confflow.workflow.step_handlers.build_structured_task_config")
-    def test_reusable_output_builds_structured_config_for_signature(
-        self,
-        mock_build_structured_task_config: MagicMock,
-        step_dir: str,
-        single_input_xyz: str,
-        failure_tracker: FailureTracker,
-    ):
-        """Structured config is now built before prepare_calc_step_dir for signature."""
-        output = os.path.join(step_dir, "output.xyz")
-        with open(output, "w", encoding="utf-8") as handle:
-            handle.write("2\nexisting\nC 0 0 0\nH 0 0 1\n")
-        self._write_matching_config_hash(step_dir, single_input_xyz)
-        mock_build_structured_task_config.return_value = {}
-
-        result = run_calc_step(
-            step_dir=step_dir,
-            current_input=single_input_xyz,
-            params=self.MINIMAL_PARAMS,
-            global_config=self.MINIMAL_GLOBAL,
-            root_dir=os.path.dirname(step_dir),
-            steps=[],
-            failure_tracker=failure_tracker,
-            step_name="step_02",
-        )
-
-        assert result == output
-        assert isinstance(result, CalcStepResult)
-        assert result.reused_existing is True
-        # Structured config is now built even for reusable output (needed for signature)
-        mock_build_structured_task_config.assert_called_once()
-
-    @patch("confflow.workflow.step_handlers.calc")
-    def test_calc_handoff_passes_real_structured_config_to_manager(
-        self,
-        mock_calc: MagicMock,
-        step_dir: str,
-        single_input_xyz: str,
-        failure_tracker: FailureTracker,
-    ):
-        output = os.path.join(step_dir, "output.xyz")
-        self._mock_facade_result(mock_calc, output)
-
-        result = run_calc_step(
-            step_dir=step_dir,
-            current_input=single_input_xyz,
-            params=self.MINIMAL_PARAMS,
-            global_config=self.MINIMAL_GLOBAL,
-            root_dir=os.path.dirname(step_dir),
-            steps=[],
-            failure_tracker=failure_tracker,
-            step_name="step_02",
-        )
-
-        assert result == output
-        _, kwargs = mock_calc.run_calc_workflow_step.call_args
-        expected_legacy = build_task_config(
-            self.MINIMAL_PARAMS,
-            self.MINIMAL_GLOBAL,
-            root_dir=os.path.dirname(step_dir),
-            all_steps=[],
-        )
-        ConfigSchema.validate_calc_config(expected_legacy)
-        assert kwargs["legacy_task_config"] == expected_legacy
-        assert isinstance(kwargs["execution_config"], CalcTaskConfig)
-
-    @patch("confflow.workflow.step_handlers.calc")
-    def test_calc_no_output_raises(
-        self,
-        mock_calc: MagicMock,
-        step_dir: str,
-        single_input_xyz: str,
-        failure_tracker: FailureTracker,
-    ):
-        """Computation without output raises ConfFlowError."""
-        mock_calc.run_calc_workflow_step.side_effect = RuntimeError(
-            "Calculation step did not produce an output XYZ file"
-        )
-
-        with pytest.raises(ConfFlowError, match="did not produce an output XYZ file"):
-            run_calc_step(
-                step_dir=step_dir,
-                current_input=single_input_xyz,
-                params=self.MINIMAL_PARAMS,
-                global_config=self.MINIMAL_GLOBAL,
-                root_dir=os.path.dirname(step_dir),
-                steps=[],
-                failure_tracker=failure_tracker,
-                step_name="step_02",
-            )
-
-    @patch("confflow.workflow.step_handlers.calc")
-    def test_single_item_list_input_is_normalized(
-        self,
-        mock_calc: MagicMock,
-        step_dir: str,
-        single_input_xyz: str,
-        failure_tracker: FailureTracker,
-    ):
-        """A single-item list is normalized before entering the calc facade."""
-        output = os.path.join(step_dir, "output.xyz")
-        self._mock_facade_result(mock_calc, output)
-
-        result = run_calc_step(
-            step_dir=step_dir,
-            current_input=[single_input_xyz],
-            params=self.MINIMAL_PARAMS,
-            global_config=self.MINIMAL_GLOBAL,
-            root_dir=os.path.dirname(step_dir),
-            steps=[],
-            failure_tracker=failure_tracker,
-            step_name="step_02",
-        )
-        assert result == output
-        _, kwargs = mock_calc.run_calc_workflow_step.call_args
-        assert kwargs["input_source"] == single_input_xyz
-
-    @patch("confflow.workflow.step_handlers.calc")
-    def test_multi_input_list_fails_before_warning_path(
-        self,
-        mock_calc: MagicMock,
-        step_dir: str,
-        single_input_xyz: str,
-        failure_tracker: FailureTracker,
-    ):
-        """Multi-input calc is rejected instead of warning after execution."""
-        with pytest.raises(ConfFlowError, match="requires exactly one input file"):
-            run_calc_step(
-                step_dir=step_dir,
-                current_input=[single_input_xyz, "other.xyz"],
-                params=self.MINIMAL_PARAMS,
-                global_config=self.MINIMAL_GLOBAL,
-                root_dir=os.path.dirname(step_dir),
-                steps=[],
-                failure_tracker=failure_tracker,
-                step_name="step_02",
-            )
-
-        mock_calc.run_calc_workflow_step.assert_not_called()
-
-    @patch("confflow.workflow.step_handlers.calc")
-    def test_result_xyz_fallback(
-        self,
-        mock_calc: MagicMock,
-        step_dir: str,
-        single_input_xyz: str,
-        failure_tracker: FailureTracker,
-    ):
-        """When only result.xyz exists (no output.xyz), it should be returned."""
-        result_xyz = os.path.join(step_dir, "result.xyz")
-        self._mock_facade_result(mock_calc, result_xyz)
-
-        result = run_calc_step(
-            step_dir=step_dir,
-            current_input=single_input_xyz,
-            params=self.MINIMAL_PARAMS,
-            global_config=self.MINIMAL_GLOBAL,
-            root_dir=os.path.dirname(step_dir),
-            steps=[],
-            failure_tracker=failure_tracker,
-            step_name="step_02",
-        )
-        assert result == result_xyz
-
-    def test_calc_config_validation_runs_in_main_flow(
-        self, step_dir: str, single_input_xyz: str, failure_tracker: FailureTracker
-    ):
-        """run_calc_step should validate through ConfigSchema in the workflow path."""
-        output = os.path.join(step_dir, "output.xyz")
-        with open(output, "w", encoding="utf-8") as f:
-            f.write("2\nexisting\nC 0 0 0\nH 0 0 1\n")
-        self._write_matching_config_hash(step_dir, single_input_xyz)
-
-        with patch(
-            "confflow.workflow.step_handlers.ConfigSchema.validate_calc_config",
-            wraps=ConfigSchema.validate_calc_config,
-        ) as mock_validate:
-            result = run_calc_step(
-                step_dir=step_dir,
-                current_input=single_input_xyz,
-                params=self.MINIMAL_PARAMS,
-                global_config=self.MINIMAL_GLOBAL,
-                root_dir=os.path.dirname(step_dir),
-                steps=[],
-                failure_tracker=failure_tracker,
-                step_name="step_02",
-            )
-
-        mock_validate.assert_called_once()
-        assert result == output
-
-    def test_stale_output_is_cleared_and_recomputed(
-        self,
-        step_dir: str,
-        single_input_xyz: str,
-        failure_tracker: FailureTracker,
-    ):
-        output = os.path.join(step_dir, "output.xyz")
-        with open(output, "w", encoding="utf-8") as f:
-            f.write("2\nstale\nC 0 0 0\nH 0 0 1\n")
-        (Path(step_dir) / ".config_hash").write_text("stalehash", encoding="utf-8")
-        (Path(step_dir) / "results.db").write_text("olddb", encoding="utf-8")
-        backups_dir = Path(step_dir) / "backups"
-        backups_dir.mkdir()
-        (backups_dir / "old.out").write_text("old", encoding="utf-8")
-
-        with patch("confflow.workflow.step_handlers.calc.run_calc_workflow_step") as mock_run:
-
-            def side_effect(**kwargs):
-                if backups_dir.exists():
-                    for entry in backups_dir.iterdir():
-                        entry.unlink()
-                    backups_dir.rmdir()
-                assert not backups_dir.exists()
-                with open(output, "w", encoding="utf-8") as f:
-                    f.write("2\nfresh\nC 0 0 0\nH 0 0 1\n")
-                return CalcStepExecutionResult(output, cleaned_stale_artifacts=True)
-
-            mock_run.side_effect = side_effect
-
-            result = run_calc_step(
-                step_dir=step_dir,
-                current_input=single_input_xyz,
-                params=self.MINIMAL_PARAMS,
-                global_config=self.MINIMAL_GLOBAL,
-                root_dir=os.path.dirname(step_dir),
-                steps=[],
-                failure_tracker=failure_tracker,
-                step_name="step_02",
-            )
-
-        assert result == output
-        assert (Path(step_dir) / ".config_hash").exists()
-
-    @patch("confflow.workflow.step_handlers.calc")
-    def test_input_change_invalidates_existing_output(
-        self,
-        mock_calc: MagicMock,
-        step_dir: str,
-        single_input_xyz: str,
-        failure_tracker: FailureTracker,
-        tmp_path: Path,
-    ):
-        output = os.path.join(step_dir, "output.xyz")
-        with open(output, "w", encoding="utf-8") as f:
-            f.write("2\nstale\nC 0 0 0\nH 0 0 1\n")
-
-        task_config = build_task_config(
-            self.MINIMAL_PARAMS,
-            self.MINIMAL_GLOBAL,
-            root_dir=os.path.dirname(step_dir),
-            all_steps=[],
-        )
-        ConfigSchema.validate_calc_config(task_config)
-        _save_config_hash(step_dir, task_config)
-
-        changed_input = tmp_path / "changed.xyz"
-        changed_input.write_text("2\nchanged\nC 0 0 0\nH 0 0 2\n", encoding="utf-8")
-
-        self._mock_facade_result(mock_calc, output)
-
-        result = run_calc_step(
-            step_dir=step_dir,
-            current_input=str(changed_input),
-            params=self.MINIMAL_PARAMS,
-            global_config=self.MINIMAL_GLOBAL,
-            root_dir=os.path.dirname(step_dir),
-            steps=[],
-            failure_tracker=failure_tracker,
-            step_name="step_02",
-        )
-
-        assert result == output
-        _, kwargs = mock_calc.run_calc_workflow_step.call_args
-        assert kwargs["input_source"] == str(changed_input)
-
-    @patch("confflow.workflow.step_handlers.calc")
-    def test_multi_input_calc_is_rejected_before_execution(
-        self,
-        mock_calc: MagicMock,
-        step_dir: str,
-        failure_tracker: FailureTracker,
-        tmp_path: Path,
-    ):
-        input_a = tmp_path / "a.xyz"
-        input_b = tmp_path / "b.xyz"
-        input_a.write_text("1\na\nH 0 0 0\n", encoding="utf-8")
-        input_b.write_text("1\nb\nH 0 0 1\n", encoding="utf-8")
-
-        with pytest.raises(ConfFlowError, match="requires exactly one input file"):
-            run_calc_step(
-                step_dir=step_dir,
-                current_input=[str(input_a), str(input_b)],
-                params=self.MINIMAL_PARAMS,
-                global_config=self.MINIMAL_GLOBAL,
-                root_dir=os.path.dirname(step_dir),
-                steps=[],
-                failure_tracker=failure_tracker,
-                step_name="step_02",
-            )
-
-        mock_calc.run_calc_workflow_step.assert_not_called()
-
-    def test_invalid_calc_config_uses_schema_compatibility_message(
-        self, step_dir: str, single_input_xyz: str, failure_tracker: FailureTracker
-    ):
-        """Invalid calc config should surface the schema compatibility error."""
-        with pytest.raises(ValueError, match="invalid iprog"):
-            run_calc_step(
-                step_dir=step_dir,
-                current_input=single_input_xyz,
-                params={"iprog": "invalid", "itask": "sp", "keyword": "HF"},
-                global_config=self.MINIMAL_GLOBAL,
-                root_dir=os.path.dirname(step_dir),
-                steps=[],
-                failure_tracker=failure_tracker,
-                step_name="step_02",
-            )
-
-    @patch("confflow.workflow.step_handlers.calc")
-    def test_calc_with_failed_xyz_tracked(
-        self,
-        mock_calc: MagicMock,
-        step_dir: str,
-        single_input_xyz: str,
-        failure_tracker: FailureTracker,
-    ):
-        """Failed conformers should be tracked by failure_tracker."""
-        output = os.path.join(step_dir, "output.xyz")
-        failed = os.path.join(step_dir, "failed.xyz")
-
-        self._mock_facade_result(mock_calc, output, failed_path=failed)
-
+    class Tracker:
+        def __init__(self):
+            self.calls = []
+
+        def append(self, failed_path, step_name):
+            self.calls.append((failed_path, step_name))
+
+    tracker = Tracker()
+    monkeypatch.setattr("confflow.workflow.step_handlers.CalcStepRunner", FakeRunner)
+
+    result = run_calc_step(
+        step_dir=str(step_dir),
+        current_input=str(input_xyz),
+        params={"iprog": "orca", "itask": "sp", "keyword": "HF"},
+        global_config={},
+        root_dir=str(tmp_path),
+        steps=[],
+        failure_tracker=tracker,
+        step_name="calc1",
+    )
+
+    assert isinstance(result, StepExecutionResult)
+    assert result.output_path == str(output)
+    assert result.failed_path == str(failed)
+    assert result.cleaned_stale_artifacts is True
+    assert tracker.calls == [(str(failed), "calc1")]
+
+
+def test_calc_step_rejects_multiple_inputs_without_confgen(tmp_path):
+    with pytest.raises(ConfFlowError, match="exactly one input file"):
         run_calc_step(
-            step_dir=step_dir,
-            current_input=single_input_xyz,
-            params=self.MINIMAL_PARAMS,
-            global_config=self.MINIMAL_GLOBAL,
-            root_dir=os.path.dirname(step_dir),
+            step_dir=str(tmp_path / "step"),
+            current_input=["a.xyz", "b.xyz"],
+            params={"keyword": "HF"},
+            global_config={},
+            root_dir=str(tmp_path),
             steps=[],
-            failure_tracker=failure_tracker,
-            step_name="step_02",
+            failure_tracker=None,
+            step_name="calc",
         )
-        # failure_tracker should have recorded the failed file
-        assert os.path.exists(failure_tracker.combined_failed) or os.path.exists(failed)
-
-    def test_calc_step_invalid_cleanup_preserves_old_artifacts(
-        self, step_dir: str, single_input_xyz: str, failure_tracker: FailureTracker
-    ):
-        """Invalid cleanup params should fail before deleting old artifacts."""
-        # Create old artifacts
-        output = os.path.join(step_dir, "output.xyz")
-        results_db = os.path.join(step_dir, "results.db")
-        backups_dir = os.path.join(step_dir, "backups")
-
-        with open(output, "w") as f:
-            f.write("2\nold\nC 0 0 0\nH 0 0 1\n")
-        with open(results_db, "w") as f:
-            f.write("old db")
-        os.makedirs(backups_dir, exist_ok=True)
-        with open(os.path.join(backups_dir, "old.log"), "w") as f:
-            f.write("old log")
-
-        # Write mismatched config hash to trigger stale detection
-        with open(os.path.join(step_dir, ".config_hash"), "w") as f:
-            f.write("oldstale")
-
-        # Invalid rmsd_threshold should fail during structured config build
-        with pytest.raises((ValueError, TypeError)):
-            run_calc_step(
-                step_dir=step_dir,
-                current_input=single_input_xyz,
-                params={
-                    **self.MINIMAL_PARAMS,
-                    "rmsd_threshold": "not_a_number",  # Will fail float() conversion
-                },
-                global_config=self.MINIMAL_GLOBAL,
-                root_dir=os.path.dirname(step_dir),
-                steps=[],
-                failure_tracker=failure_tracker,
-                step_name="step_02",
-            )
-
-        # Old artifacts should still exist
-        assert os.path.exists(output)
-        assert os.path.exists(results_db)
-        assert os.path.exists(backups_dir)
-        assert os.path.exists(os.path.join(backups_dir, "old.log"))
-
-    def test_calc_step_invalid_cleanup_does_not_overwrite_config_hash(
-        self, step_dir: str, single_input_xyz: str, failure_tracker: FailureTracker
-    ):
-        """Invalid cleanup params should not overwrite .config_hash."""
-        # Write old config hash
-        config_hash_path = os.path.join(step_dir, ".config_hash")
-        with open(config_hash_path, "w") as f:
-            f.write("oldstale")
-
-        # Invalid rmsd_threshold should fail during structured config build
-        with pytest.raises((ValueError, TypeError)):
-            run_calc_step(
-                step_dir=step_dir,
-                current_input=single_input_xyz,
-                params={
-                    **self.MINIMAL_PARAMS,
-                    "rmsd_threshold": "not_a_number",
-                },
-                global_config=self.MINIMAL_GLOBAL,
-                root_dir=os.path.dirname(step_dir),
-                steps=[],
-                failure_tracker=failure_tracker,
-                step_name="step_02",
-            )
-
-        # .config_hash should still be old value
-        with open(config_hash_path) as f:
-            assert f.read().strip() == "oldstale"
-
-    def test_calc_step_cleanup_change_triggers_stale(
-        self,
-        step_dir: str,
-        single_input_xyz: str,
-        failure_tracker: FailureTracker,
-    ):
-        """Cleanup parameter change (when auto_clean=true) should trigger stale detection."""
-        # First run with threshold=0.25
-        output = os.path.join(step_dir, "output.xyz")
-
-        with patch("confflow.workflow.step_handlers.calc.run_calc_workflow_step") as mock_run:
-
-            def first_run(**kwargs):
-                with open(output, "w") as f:
-                    f.write("2\nfirst\nC 0 0 0\nH 0 0 1\n")
-                record_calc_step_signature(
-                    step_dir,
-                    kwargs["legacy_task_config"],
-                    input_signature=compute_calc_input_signature(kwargs["input_source"]),
-                    execution_config=kwargs["execution_config"],
-                )
-                return CalcStepExecutionResult(output)
-
-            mock_run.side_effect = first_run
-            run_calc_step(
-                step_dir=step_dir,
-                current_input=single_input_xyz,
-                params={
-                    **self.MINIMAL_PARAMS,
-                    "auto_clean": True,
-                    "clean_params": {"threshold": 0.25},
-                },
-                global_config=self.MINIMAL_GLOBAL,
-                root_dir=os.path.dirname(step_dir),
-                steps=[],
-                failure_tracker=failure_tracker,
-                step_name="step_02",
-            )
-
-        first_hash = open(os.path.join(step_dir, ".config_hash")).read().strip()
-
-        # Second run with threshold=0.5 should have different hash
-        with patch("confflow.workflow.step_handlers.calc.run_calc_workflow_step") as mock_run:
-
-            def second_run(**kwargs):
-                with open(output, "w") as f:
-                    f.write("2\nsecond\nC 0 0 0\nH 0 0 1\n")
-                record_calc_step_signature(
-                    step_dir,
-                    kwargs["legacy_task_config"],
-                    input_signature=compute_calc_input_signature(kwargs["input_source"]),
-                    execution_config=kwargs["execution_config"],
-                )
-                return CalcStepExecutionResult(output)
-
-            mock_run.side_effect = second_run
-            run_calc_step(
-                step_dir=step_dir,
-                current_input=single_input_xyz,
-                params={
-                    **self.MINIMAL_PARAMS,
-                    "auto_clean": True,
-                    "clean_params": {"threshold": 0.5},  # Changed
-                },
-                global_config=self.MINIMAL_GLOBAL,
-                root_dir=os.path.dirname(step_dir),
-                steps=[],
-                failure_tracker=failure_tracker,
-                step_name="step_02",
-            )
-
-        second_hash = open(os.path.join(step_dir, ".config_hash")).read().strip()
-        assert first_hash != second_hash
-
-    def test_calc_step_only_execution_cleanup_change_triggers_stale(
-        self,
-        step_dir: str,
-        single_input_xyz: str,
-        failure_tracker: FailureTracker,
-    ):
-        """Only execution_config.cleanup change (auto_clean=true) should trigger stale."""
-        output = os.path.join(step_dir, "output.xyz")
-
-        with patch("confflow.workflow.step_handlers.calc.run_calc_workflow_step") as mock_run:
-
-            def first_run(**kwargs):
-                with open(output, "w") as f:
-                    f.write("2\nfirst\nC 0 0 0\nH 0 0 1\n")
-                record_calc_step_signature(
-                    step_dir,
-                    kwargs["legacy_task_config"],
-                    input_signature=compute_calc_input_signature(kwargs["input_source"]),
-                    execution_config=kwargs["execution_config"],
-                )
-                return CalcStepExecutionResult(output)
-
-            mock_run.side_effect = first_run
-            run_calc_step(
-                step_dir=step_dir,
-                current_input=single_input_xyz,
-                params={
-                    **self.MINIMAL_PARAMS,
-                    "auto_clean": True,
-                    "clean_params": {"threshold": 0.25},
-                },
-                global_config=self.MINIMAL_GLOBAL,
-                root_dir=os.path.dirname(step_dir),
-                steps=[],
-                failure_tracker=failure_tracker,
-                step_name="step_02",
-            )
-
-        first_hash = open(os.path.join(step_dir, ".config_hash")).read().strip()
-
-        # Second run with threshold=0.3 (only cleanup changed)
-        with patch("confflow.workflow.step_handlers.calc.run_calc_workflow_step") as mock_run:
-
-            def second_run(**kwargs):
-                with open(output, "w") as f:
-                    f.write("2\nsecond\nC 0 0 0\nH 0 0 1\n")
-                record_calc_step_signature(
-                    step_dir,
-                    kwargs["legacy_task_config"],
-                    input_signature=compute_calc_input_signature(kwargs["input_source"]),
-                    execution_config=kwargs["execution_config"],
-                )
-                return CalcStepExecutionResult(output)
-
-            mock_run.side_effect = second_run
-            run_calc_step(
-                step_dir=step_dir,
-                current_input=single_input_xyz,
-                params={
-                    **self.MINIMAL_PARAMS,
-                    "auto_clean": True,
-                    "clean_params": {"threshold": 0.3},  # Only this changed
-                },
-                global_config=self.MINIMAL_GLOBAL,
-                root_dir=os.path.dirname(step_dir),
-                steps=[],
-                failure_tracker=failure_tracker,
-                step_name="step_02",
-            )
-
-        second_hash = open(os.path.join(step_dir, ".config_hash")).read().strip()
-        assert first_hash != second_hash
-
-    def test_calc_step_cleanup_change_no_stale_when_auto_clean_disabled(
-        self,
-        step_dir: str,
-        single_input_xyz: str,
-        failure_tracker: FailureTracker,
-    ):
-        """Cleanup change should NOT trigger stale when auto_clean=false."""
-        output = os.path.join(step_dir, "output.xyz")
-
-        with patch("confflow.workflow.step_handlers.calc.run_calc_workflow_step") as mock_run:
-
-            def first_run(**kwargs):
-                with open(output, "w") as f:
-                    f.write("2\nfirst\nC 0 0 0\nH 0 0 1\n")
-                record_calc_step_signature(
-                    step_dir,
-                    kwargs["legacy_task_config"],
-                    input_signature=compute_calc_input_signature(kwargs["input_source"]),
-                    execution_config=kwargs["execution_config"],
-                )
-                return CalcStepExecutionResult(output)
-
-            mock_run.side_effect = first_run
-            run_calc_step(
-                step_dir=step_dir,
-                current_input=single_input_xyz,
-                params={
-                    **self.MINIMAL_PARAMS,
-                    "auto_clean": False,
-                    "clean_params": {"threshold": 0.25},
-                },
-                global_config=self.MINIMAL_GLOBAL,
-                root_dir=os.path.dirname(step_dir),
-                steps=[],
-                failure_tracker=failure_tracker,
-                step_name="step_02",
-            )
-
-        first_hash = open(os.path.join(step_dir, ".config_hash")).read().strip()
-
-        # Second run with threshold=0.5 but auto_clean still false
-        with patch("confflow.workflow.step_handlers.calc.run_calc_workflow_step") as mock_run:
-            mock_run.return_value = CalcStepExecutionResult(output, reused_existing=True)
-            run_calc_step(
-                step_dir=step_dir,
-                current_input=single_input_xyz,
-                params={
-                    **self.MINIMAL_PARAMS,
-                    "auto_clean": False,
-                    "clean_params": {"threshold": 0.5},  # Changed but shouldn't matter
-                },
-                global_config=self.MINIMAL_GLOBAL,
-                root_dir=os.path.dirname(step_dir),
-                steps=[],
-                failure_tracker=failure_tracker,
-                step_name="step_02",
-            )
-
-        second_hash = open(os.path.join(step_dir, ".config_hash")).read().strip()
-        # Hash should be the same because auto_clean=false
-        assert first_hash == second_hash

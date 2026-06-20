@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-"""Task execution helpers for ``ChemTaskManager``."""
+"""Task execution helpers for calc step runners."""
 
 from __future__ import annotations
 
@@ -13,7 +13,6 @@ from typing import Any, cast
 
 from ..core import models
 from ..core.console import CalcProgressReporter
-from .config_types import CalcTaskConfig, ensure_calc_task_config
 
 logger = logging.getLogger("confflow.calc.manager")
 
@@ -53,7 +52,7 @@ def _future_cancelled(fut: Any) -> bool:
 
 def execute_tasks(
     todo: list[models.TaskContext],
-    config: CalcTaskConfig | dict[str, Any],
+    config: dict[str, Any],
     results_db: Any,
     run_task_fn: Callable[[models.TaskContext | dict[str, Any]], dict[str, Any]],
     append_result_fn: Callable[[dict[str, Any]], None],
@@ -67,7 +66,7 @@ def execute_tasks(
     if not todo:
         return
 
-    calc_config = ensure_calc_task_config(config)
+    calc_config = dict(config)
 
     report_every = max(1, len(todo) // 10)
     stop_file = calc_config.get("stop_beacon_file")

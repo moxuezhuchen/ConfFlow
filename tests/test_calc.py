@@ -327,33 +327,21 @@ class TestExecutor:
         assert work_dir.exists()
         assert (work_dir / "test.out").exists()
 
-    def test_save_config_hash(self, tmp_path):
-        from confflow.calc.components.executor import _save_config_hash
+    def test_executor_handles_runtime_config_dicts(self, tmp_path):
+        from confflow.calc.components.executor import handle_backups
 
         work_dir = tmp_path / "work"
         work_dir.mkdir()
-        config = {"itask": "opt", "iprog": "g16"}
-        _save_config_hash(str(work_dir), config)
-        assert (work_dir / ".config_hash").exists()
-        h1 = (work_dir / ".config_hash").read_text()
-        assert h1.startswith("sha256:")
+        (work_dir / "job.out").write_text("ok", encoding="utf-8")
+        backup_dir = tmp_path / "backup"
 
-        config2 = {"itask": "freq", "iprog": "orca"}
-        _save_config_hash(str(work_dir), config2)
-        h2 = (work_dir / ".config_hash").read_text()
-        assert h1 != h2
-
-    def test_config_hash_matches_accepts_legacy_md5(self, tmp_path):
-        from confflow.calc import step_contract
-        from confflow.calc.components.executor import _config_hash_matches
-
-        work_dir = tmp_path / "work"
-        work_dir.mkdir()
-        config = {"itask": "opt", "iprog": "g16"}
-        legacy_signature = step_contract._compute_legacy_calc_config_signature(config)
-        (work_dir / ".config_hash").write_text(legacy_signature, encoding="utf-8")
-
-        assert _config_hash_matches(str(work_dir), config) is True
+        assert handle_backups(
+            str(work_dir),
+            {"ibkout": 1, "backup_dir": str(backup_dir)},
+            success=True,
+            cleanup_work_dir=False,
+        ) is True
+        assert (backup_dir / "job.out").exists()
 
 
 # =============================================================================
@@ -671,14 +659,31 @@ class TestExecutorAdvanced:
         mock_proc.wait.assert_called_once()
         mock_sleep.assert_not_called()
 
-    def test_save_config_hash_failure(self, tmp_path):
-        """Test config hash save failure."""
-        from unittest.mock import patch
+    def test_calc_manifest_mark_failed_records_error(self, tmp_path):
+        """Failed calc steps record diagnostic state in manifest.json."""
+        import json
 
-        from confflow.calc.components.executor import _save_config_hash
+        from confflow.calc.artifacts import CalcArtifactManager
+        from confflow.config.models import CalcStepParams, GlobalOptions
 
-        with patch("builtins.open", side_effect=OSError("Permission denied")):
-            _save_config_hash(str(tmp_path), {"itask": 1, "iprog": 1})
+        input_xyz = tmp_path / "input.xyz"
+        input_xyz.write_text("1\nx\nH 0 0 0\n", encoding="utf-8")
+        config = CalcStepParams.from_params(
+            {"iprog": "orca", "itask": "sp", "keyword": "HF"},
+            GlobalOptions.from_mapping({}),
+        )
+        manager = CalcArtifactManager(
+            tmp_path / "step",
+            step_name="calc",
+            config=config,
+            input_path=input_xyz,
+        )
+
+        manager.mark_failed("boom")
+
+        manifest = json.loads((tmp_path / "step" / "manifest.json").read_text(encoding="utf-8"))
+        assert manifest["status"] == "failed"
+        assert manifest["error"] == "boom"
 
     def test_executor_nonzero_exit(self, cd_tmp):
         """Test nonzero exit code."""
@@ -1177,10 +1182,9 @@ def test_task_runner_delete_work_dir_false_controls_failure_cleanup(tmp_path):
 
 def test_task_runner_normalized_config_default_cleans_work_dir(tmp_path):
     from confflow.calc.components.task_runner import TaskRunner
-    from confflow.calc.config_types import ensure_calc_task_config
 
     runner = TaskRunner()
-    normalized_config = ensure_calc_task_config({"itask": 1, "iprog": 1})
+    normalized_config = {"itask": 1, "iprog": 1, "delete_work_dir": True}
     task_info = {
         "job_name": "test",
         "work_dir": str(tmp_path / "work"),

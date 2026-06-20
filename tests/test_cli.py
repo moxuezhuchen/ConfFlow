@@ -7,6 +7,7 @@ from __future__ import annotations
 import os
 import signal
 import subprocess
+import sys
 import time
 from unittest.mock import MagicMock, patch
 
@@ -271,7 +272,7 @@ def test_main_dry_run_does_not_call_run_workflow(tmp_path, capsys):
     mock_run.assert_not_called()
 
 
-def test_main_dry_run_config_error_returns_usage_error(tmp_path, capsys):
+def test_main_dry_run_confgen_without_chains_reports_zero_combinations(tmp_path, capsys):
     input_xyz = tmp_path / "input.xyz"
     input_xyz.write_text("2\ntest\nC 0 0 0\nH 0 0 1\n", encoding="utf-8")
     config_yaml = tmp_path / "config.yaml"
@@ -283,8 +284,8 @@ def test_main_dry_run_config_error_returns_usage_error(tmp_path, capsys):
     result = main([str(input_xyz), "-c", str(config_yaml), "--dry-run"])
 
     captured = capsys.readouterr()
-    assert result == 1
-    assert "confgen step requires" in captured.err
+    assert result == 0
+    assert "confgen combinations: 0" in captured.out
 
 
 def test_dry_run_confgen_combination_estimate():
@@ -321,7 +322,7 @@ def test_main_dry_run_calc_resolved_config_shows_step_override(tmp_path, capsys)
     assert "cores_per_task=4" in captured.out
 
 
-def test_main_dry_run_missing_executable_path_returns_usage_error(tmp_path, capsys):
+def test_main_dry_run_missing_executable_path_is_reported(tmp_path, capsys):
     input_xyz = tmp_path / "input.xyz"
     input_xyz.write_text("2\ntest\nC 0 0 0\nH 0 0 1\n", encoding="utf-8")
     config_yaml = tmp_path / "config.yaml"
@@ -342,8 +343,8 @@ def test_main_dry_run_missing_executable_path_returns_usage_error(tmp_path, caps
     result = main([str(input_xyz), "-c", str(config_yaml), "--dry-run"])
 
     captured = capsys.readouterr()
-    assert result == 1
-    assert "Gaussian path not found" in captured.err
+    assert result == 0
+    assert f"gaussian_path: missing: {missing_g16}" in captured.out
 
 
 @patch("confflow.cli.run_workflow")
@@ -438,7 +439,7 @@ def test_kill_proc_tree_timeout():
     # Start a process that ignores SIGTERM
     p = subprocess.Popen(
         [
-            "python",
+            sys.executable,
             "-c",
             "import signal; signal.signal(signal.SIGTERM, signal.SIG_IGN); import time; time.sleep(60)",
         ],

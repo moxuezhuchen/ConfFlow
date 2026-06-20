@@ -52,11 +52,11 @@ ConfFlow may create or update:
 
 - Workflow directories and step directories.
 - `search.xyz`, `output.xyz`, `result.xyz`, `failed.xyz`, and related XYZ files.
-- `results.db`, `.config_hash`, checkpoint metadata, and JSON summary files.
+- `results.db`, `manifest.json`, checkpoint metadata, and JSON summary files.
 - `<input_basename>.txt` CLI output reports.
 - `confflow.log` and backup copies of external program logs and outputs.
 
-ConfFlow may remove stale step artifacts when resuming or when configuration hashes no longer match the current task. Path checks exist to reject obviously dangerous cleanup targets such as filesystem roots, home directories, repository roots, or paths outside configured sandbox roots.
+ConfFlow may remove stale step artifacts when manifest digests no longer match the current task. Path checks exist to reject obviously dangerous cleanup targets such as filesystem roots, home directories, repository roots, or paths outside configured sandbox roots.
 
 Users should still assume workflow directories are mutable and should not point work directories at valuable source data directories.
 

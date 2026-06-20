@@ -54,16 +54,13 @@ class TestConftsKeyword:
         res = _cli([])
         assert res == 1
 
-    def test_confts_cli_missing_required_args_does_not_import_calc(self, tmp_path, capsys):
+    def test_confts_cli_missing_config_returns_usage_error(self, tmp_path, capsys):
         from confflow.confts import _cli
 
         xyz = tmp_path / "test.xyz"
         xyz.write_text("1\n\nC 0 0 0\n")
 
-        with patch("confflow.confts.importlib.import_module") as mock_import:
-            assert _cli([str(xyz)]) == 1
-
-        mock_import.assert_not_called()
+        assert _cli([str(xyz)]) == 1
 
 
 class TestConftsCli:
@@ -87,22 +84,39 @@ class TestConftsCli:
             except Exception:
                 pass
 
-    def test_confts_cli_more(self, tmp_path):
+    def test_confts_cli_runs_typed_runner(self, tmp_path, monkeypatch):
         from confflow.confts import _cli
-
-        with pytest.raises(SystemExit):
-            _cli(["nonexistent.xyz", "-s", "nonexistent.ini"])
+        from confflow.calc.runner import CalcStepResult
 
         xyz = tmp_path / "test.xyz"
         xyz.write_text("1\n\nC 0 0 0\n")
 
-        ini = tmp_path / "test.ini"
-        ini.write_text("[DEFAULT]\nitask=4\nts_rescue_scan=false\n")
+        cfg = tmp_path / "workflow.yaml"
+        cfg.write_text(
+            "global: {}\n"
+            "steps:\n"
+            "  - name: ts1\n"
+            "    type: calc\n"
+            "    params:\n"
+            "      iprog: gaussian\n"
+            "      itask: ts\n"
+            "      keyword: opt(ts,calcfc) HF\n",
+            encoding="utf-8",
+        )
+        work_dir = tmp_path / "ts_work"
 
-        with patch("confflow.calc.ChemTaskManager") as mock_mgr:
-            mock_mgr.return_value.config = {"itask": 4, "ts_rescue_scan": "false"}
-            _cli([str(xyz), "-s", str(ini)])
-            assert mock_mgr.return_value.config["ts_rescue_scan"] == "false"
+        class FakeRunner:
+            def run(self, request):
+                assert request.step_name == "ts1"
+                assert request.config.task == "ts"
+                assert request.input_xyz == str(xyz)
+                work_dir.mkdir()
+                output = work_dir / "result.xyz"
+                output.write_text("1\nok\nC 0 0 0\n", encoding="utf-8")
+                return CalcStepResult(str(output), None, 1, 1, 0)
+
+        monkeypatch.setattr("confflow.confts.CalcStepRunner", FakeRunner)
+        assert _cli([str(xyz), "-c", str(cfg), "-w", str(work_dir)]) == 0
 
     def test_confts_cli_full_and_errors(self, tmp_path):
         from confflow.confts import _cli
@@ -111,14 +125,15 @@ class TestConftsCli:
         xyz.write_text("3\n\nC 0 0 0\nH 0 0 1\nH 0 0 -1")
 
         conf = tmp_path / "conf.yaml"
-        conf.write_text("global:\n  itask: 4\n  keyword: opt(ts,calcfc)\n  iprog: gaussian\n")
-
-        with patch("confflow.calc.ChemTaskManager") as mock_manager:
-            _cli([str(xyz), "-s", str(conf)])
-            mock_manager.assert_called_once()
+        conf.write_text(
+            "global:\n"
+            "  itask: 4\n"
+            "  keyword: opt(ts,calcfc)\n"
+            "  iprog: gaussian\n",
+            encoding="utf-8",
+        )
 
         with pytest.raises(SystemExit):
-            _cli(["nonexistent.xyz", "-s", "nonexistent.yaml"])
-
+            _cli(["nonexistent.xyz", "-c", "nonexistent.yaml"])
         with pytest.raises(SystemExit):
-            _cli([str(xyz), "-s", "nonexistent.yaml"])
+            _cli([str(xyz), "-c", "nonexistent.yaml"])

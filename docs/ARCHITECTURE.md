@@ -4,6 +4,18 @@
 
 ConfFlow 是一个自动化计算化学工作流引擎，用于分子构象搜索、量子化学计算、构象筛选和结果可视化。核心设计遵循模块化、可扩展原则，支持多种量子化学程序（Gaussian 16、ORCA）。
 
+## 当前重构主线
+
+当前主执行路径已切换到破兼容后的结构：
+
+- 配置入口：`confflow.config.models.WorkflowConfig` / `CalcStepParams`
+- workflow -> calc：`workflow.step_handlers` 直接构造 typed calc config
+- calc step 执行：`confflow.calc.runner.CalcStepRunner`
+- calc step 状态：`manifest.json`，不再以 `.config_hash` 作为新主路径合同
+- standalone calc CLI：`confcalc input.xyz -c workflow.yaml --step <name-or-index>`
+
+旧的 `ChemTaskManager`、INI settings、legacy flat calc config、MD5 `.config_hash` 兼容路径已从主执行路径和公共导出中移除。
+
 ## 目录结构
 
 ```
@@ -32,9 +44,7 @@ confflow/
 │
 ├── config/                    # 配置层（配置加载、解析、验证）
 │   ├── __init__.py
-│   ├── loader.py             # YAML/INI 配置文件加载器
-│   ├── schema.py             # 配置架构定义与验证
-│   └── defaults.py           # 默认配置值
+│   └── models.py             # typed workflow/calc 配置模型
 │
 ├── shared/                    # 轻量共享层（稳定常量/格式化/结构校验）
 │   ├── __init__.py
@@ -63,16 +73,14 @@ confflow/
 │       └── report.py         # 美化纯文本报告生成（Boltzmann 权重、工作流统计）
 │
 ├── calc/                      # 量子化学计算子系统
-│   ├── __init__.py           # calc 官方入口与兼容导出
-│   ├── api.py               # workflow -> calc 官方 facade
-│   ├── manager.py            # 任务管理器（ChemTaskManager）
-│   ├── run_services.py       # WorkDir / TaskSource / Recovery / ResultAssembly 服务
+│   ├── __init__.py           # calc 官方入口
+│   ├── runner.py             # typed calc step runner
+│   ├── artifacts.py          # manifest / digest / stale / reuse 合同
+│   ├── run_services.py       # TaskSource / Recovery / ResultAssembly 服务
 │   ├── setup.py              # 计算模块初始化
 │   ├── analysis.py           # 计算分析工具函数
-│   ├── step_contract.py      # calc step 工件合同与签名
 │   ├── postprocess.py        # calc -> refine 共享后处理适配器
 │   ├── constants.py          # 程序常量（路径、参数等）
-│   ├── config_types.py       # 计算配置类型定义
 │   ├── geometry.py           # 几何解析（parse_last_geometry, check_termination）
 │   ├── psutil_compat.py      # psutil 兼容层
 │   ├── result_writer.py      # 结果写入器
@@ -106,20 +114,16 @@ confflow/
 │   ├── runtime_context.py    # 运行时状态初始化与恢复
 │   ├── helpers.py            # 辅助工具（pushd、构象计数、列表转换）
 │   ├── validation.py         # 输入验证与标签标准化
-│   ├── config_builder.py     # 兼容 facade（旧 imports 保留）
 │   ├── stats.py              # 检查点、统计追踪、构象溯源
 │   ├── dry_run.py            # 干运行支持
 │   ├── export.py             # 导出功能
 │   ├── rerun_failed.py       # 失败重跑
-│   ├── step_naming.py        # 步骤命名
-│   ├── task_config.py        # 任务配置构建
-│   ├── task_config_constants.py # 任务配置常量
-│   └── task_config_helpers.py   # 任务配置辅助函数
+│   └── step_naming.py        # 步骤命名
 │
 ├── cli.py                     # CLI 参数解析
 ├── main.py                    # 工作流主程序入口
 ├── confts.py                  # TS 专用执行器与 keyword 改写工具
-└── __init__.py               # 轻量包入口与兼容懒导出
+└── __init__.py               # 轻量包入口
 
 docs/                          # 文档
 ├── ARCHITECTURE.md           # 本文档（项目架构说明）
@@ -133,18 +137,17 @@ docs/                          # 文档
 tests/                         # 测试套件（以 pytest --collect-only -q 和 CI 输出为准）
 ├── conftest.py               # 共享 fixtures
 ├── _helpers.py               # 共享 fake 对象与工具函数
-├── test_core.py              # 配置、包导出、低能量溯源
+├── test_core.py              # 包导出与核心公共入口
 ├── test_io.py                # XYZ 读写、元数据解析
 ├── test_data.py              # 共价半径、元素符号
 ├── test_models.py            # Pydantic 数据模型
-├── test_defaults.py          # 默认常量验证
-├── test_loader.py            # 配置文件加载
-├── test_schema.py            # Schema 校验
+├── test_config_models.py     # typed YAML 配置模型
 ├── test_confgen.py           # 构象生成
 ├── test_refine.py            # 构象筛选
 ├── test_calc.py              # 计算任务基础
-├── test_calc_full.py         # 计算完整集成
-├── test_calc_manager_paths.py # manager 路径相关测试
+├── test_calc_artifacts.py    # manifest 复用与 stale cleanup
+├── test_calc_runner.py       # typed calc runner
+├── test_calc_full.py         # policy 与 typed config 集成
 ├── test_policies.py          # Gaussian/ORCA 策略
 ├── test_rescue.py            # TS 救援
 ├── test_rescue_ts_scan_paths.py # TS 救援扫描路径测试
@@ -226,14 +229,14 @@ LICENSE                        # MIT 许可证
 
 **设计**：使用**策略模式** (Policy Pattern) 区分不同程序（Gaussian/ORCA）的实现细节。
 
-- **`__init__.py` / `api.py`**：
-  - `run_calc_workflow_step(...)` 是 workflow -> calc 的官方入口
-  - `ChemTaskManager` 继续保留，但定位为 standalone / compat facade，不再是 workflow 新代码的推荐入口
+- **`runner.py`**：
+  - `CalcStepRunner` 是 workflow -> calc 的官方入口
+  - 输入为 `CalcStepRequest(step_name, step_dir, input_xyz, CalcStepParams)`
+  - 输出为显式 `CalcStepResult`
 
-- **`manager.py`** - `ChemTaskManager`：
-  - 仅保留 manager-based calc run 编排与生命周期控制
-  - 主执行流尽量把 compat/signature/resume 解释交给 `step_contract`
-  - 通过内部服务组合完成工作目录准备、任务来源构建、恢复过滤与结果装配
+- **`artifacts.py`**：
+  - 负责 `manifest.json`、typed config digest、input digest、stale cleanup、reuse 判断
+  - 区分 `running` / `completed` / `failed` 状态
 
 - **`run_services.py`**：
   - `WorkDirService`：`work_dir` / `backup_dir` / `results.db` 初始化
@@ -286,7 +289,7 @@ LICENSE                        # MIT 许可证
 - **`engine.py`**：
   - 入口 `run_workflow()` 负责 prepare / execute / finalize 三段主流程
   - resume 时复用 `resolve_step_output()` 按 step type 校验标准工件，避免把 `search.xyz` 误当成 calc 完成输出
-  - 对 `calc/task` 额外结合 `.config_hash` 校验配置是否变化，防止 resume 复用过期结果
+  - calc step 的配置/input digest、stale 判断和复用语义由 `calc.artifacts` 的 `manifest.json` 合同负责
   - 明确 step type 合同（`confgen/gen/calc/task`）并做早期校验
 
 - **`runtime_context.py`**：
@@ -295,8 +298,8 @@ LICENSE                        # MIT 许可证
 
 - **`step_handlers.py`**：
   - `run_confgen_step` / `run_calc_step` 的执行适配层
-  - 只负责组装 step 上下文、调用 `calc.run_calc_workflow_step(...)`、处理失败聚合和返回路径
-  - 不再作为 calc compat/signature/stale/resume 的主语义中心
+  - 只负责组装 step 上下文、构造 `CalcStepParams`、调用 `CalcStepRunner`、处理失败聚合和返回路径
+  - 不再作为 calc artifact/stale/resume 的主语义中心
 
 - **`presenter.py`**：
   - 统一 step header/footer 输出
@@ -311,10 +314,6 @@ LICENSE                        # MIT 许可证
   - `validate_inputs_compatible`：多输入兼容性校验
   - `chain` / `chains` 两种配置键都会触发柔性链映射模式
   - 支持 `force_consistency=true` 的“警告并继续”分支
-
-- **`config_builder.py`**：
-  - 兼容 facade：为旧 imports 保留 `load_workflow_config` / `build_task_config` / `create_runtask_config`
-  - 新的 workflow 内部代码优先从 `workflow.task_config` 获取配置组装能力
 
 - **`stats.py`**：
   - `CheckpointManager`：断点序列化/反序列化
@@ -362,11 +361,11 @@ class OrcaPolicy(CalculationPolicy):
 - **单一职责**：每个模块只处理一个功能域
 - **依赖明确**：`shared` 承担轻量公共边界，`core` 不再反向依赖 `config.schema`
 
-### 3. 兼容性设计
+### 3. 公共入口设计
 
-- 顶层 `confflow.__init__` 暴露轻量官方入口（如 `run_workflow`、`run_calc_workflow_step`）
-- `confflow.calc.__init__` 同时暴露官方 calc facade 与兼容导出
-- `ChemTaskManager`、`workflow.config_builder`、`create_runtask_config()` 继续保留，但都属于 compat/facade 路径，不再推荐新增代码直接依赖
+- 顶层 `confflow.__init__` 暴露轻量官方入口（如 `run_workflow`、`CalcStepRunner`）
+- `confflow.calc.__init__` 暴露 typed calc runner 和低层组件
+- 旧 INI / legacy flat config / `.config_hash` / manager facade 已从主路径移除
 - 仓库内部代码应直接从真实子模块导入，避免重新扩大包初始化耦合
 
 ## 工作流执行流程
@@ -434,7 +433,7 @@ steps:
 
 ### 计算配置传递
 
-v1.0.5 起，`engine.py` 通过 `build_task_config()` 将 YAML 步骤参数直接构建为 Python dict，传给 `ChemTaskManager(config_dict)`。**不再生成中间 INI 文件**。兼容性函数 `create_runtask_config()` 仍保留，供外部工具使用。
+YAML 由 `confflow.config.models.WorkflowConfig` 解析为 typed model。calc step 通过 `CalcStepParams` 进入 `CalcStepRunner`；仅在调用现有 policy/task runner 时生成 runtime dict，不再存在 legacy flat config 作为公共合同。
 
 ## 测试组织
 
@@ -445,12 +444,11 @@ tests/
 ├── conftest.py               # 共享 fixtures（input_xyz, cd_tmp, sync_executor）
 ├── _helpers.py               # 共享 fake 对象（FakeResultsDB, FakeExecutor 等）
 │
-├── test_core.py              # 配置归一化、包导出、低能量溯源
+├── test_core.py              # 包导出与核心公共入口
 ├── test_io.py                # XYZ 文件读写、元数据解析
 ├── test_data.py              # 共价半径、元素符号、原子序数
 ├── test_models.py            # TaskContext Pydantic 模型
-├── test_defaults.py          # 默认常量验证
-├── test_loader.py            # 配置加载边界条件
+├── test_config_models.py     # typed YAML 配置模型
 ├── test_keyword_rewrite.py   # TS→scan 关键字改写
 │
 ├── test_confgen.py           # confgen 构象生成
@@ -460,20 +458,19 @@ tests/
 │
 ├── test_refine.py            # refine 筛选与去重
 ├── test_calc.py              # calc 基础 + task_runner
-├── test_calc_full.py         # calc 完整集成
-├── test_calc_manager_paths.py # manager 路径相关测试
+├── test_calc_artifacts.py    # manifest 复用与 stale cleanup
+├── test_calc_runner.py       # typed calc runner
+├── test_calc_full.py         # policy 与 typed config 集成
 ├── test_policies.py          # Gaussian/ORCA Policy
 ├── test_rescue.py            # TS 救援逻辑
 ├── test_rescue_ts_scan_paths.py # TS 救援扫描路径测试
 ├── test_geometry.py          # 几何解析与终止检测
-├── test_utils_manager.py     # manager 与工具函数
 │
 ├── test_engine.py            # workflow engine
 ├── test_export.py            # 导出功能测试
 ├── test_rerun_failed.py      # 失败重跑测试
 ├── test_runtime_context.py   # 运行时上下文
 ├── test_presenter.py         # 步骤展示与报告
-├── test_schema.py            # Schema 校验
 ├── test_validation.py        # 输入验证
 │
 ├── test_cli.py               # CLI 参数解析
@@ -491,9 +488,9 @@ tests/
 confflow/__init__.py (包入口)
   ├── main.py (工作流主程序)
   │   └── workflow.engine.run_workflow()
-  │       ├── config/loader.py (配置加载)
+  │       ├── config/models.py (typed 配置加载)
   │       ├── blocks/confgen (构象生成)
-  │       ├── calc/manager.py (量子计算)
+  │       ├── calc/runner.py (量子计算)
   │       │   ├── calc/policies/* (Gaussian/ORCA)
   │       │   ├── calc/db/database.py (结果库)
   │       │   └── calc/components/* (I/O 与执行)
@@ -516,7 +513,7 @@ confflow/__init__.py (包入口)
 - 记录已完成的步骤和构象处理状态
 - 使用 `--resume` 标志从中断点恢复
 - resume 会按步骤类型验证标准产物：`confgen` 只接受 `search.xyz`，`calc` 只接受 `output.xyz` / `result.xyz`
-- `calc` resume 还要求 `.config_hash` 与当前任务配置一致；不一致时会丢弃该 step 的旧局部工件并重跑
+- calc step 的 manifest 记录配置/input digest；digest 不匹配时由 `calc.artifacts` 清理 stale 工件并重跑
 - 若工作目录缺少对应工件，会直接报错而不是沿用错误输入继续运行
 
 ### 2. 并行执行
@@ -549,7 +546,7 @@ confflow/__init__.py (包入口)
 - `results.db`：SQLite 结果库（持久化每个 `job_name` 的运行结果；读取/统计时默认使用最新记录视图）
 - `result.xyz` / `output.xyz`：成功构象输出（是否 cleaned 取决于 auto_clean/refine）
 - `failed.xyz`：失败构象集合（输入结构坐标，注释行包含失败原因），便于重算与排障
-- `.config_hash`：calc 任务配置与输入摘要，用于 resume 判断现有工件是否仍可复用；新写入使用 `sha256:<config64>` 或 `sha256:<config64>:<input64>`，并兼容历史 bare MD5 摘要
+- `manifest.json`：calc step 状态、typed config digest、input digest、输出路径和任务统计
 
 > **v1.0.5 变更**：计算任务直接在 `step_xx/` 目录运行，不再创建 `step_xx/work/` 子目录。
 

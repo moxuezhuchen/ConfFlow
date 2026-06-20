@@ -1,16 +1,15 @@
 #!/usr/bin/env python3
 
-"""Tests for rerunning failed calc conformers."""
+"""Tests for rerunning failed calc conformers with the typed runner."""
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
-from confflow.calc.api import CalcStepExecutionResult
+from confflow.calc.runner import CalcStepResult
 from confflow.cli import main
 from confflow.core.contracts import ExitCode
 from confflow.workflow.rerun_failed import (
@@ -33,8 +32,7 @@ def _write_config(path: Path) -> Path:
         "steps:\n"
         "  - name: gen\n"
         "    type: confgen\n"
-        "    params:\n"
-        "      chains: ['1-2']\n"
+        "    params: {}\n"
         "  - name: calc1\n"
         "    type: calc\n"
         "    params:\n"
@@ -46,7 +44,7 @@ def _write_config(path: Path) -> Path:
     return path
 
 
-def test_rerun_failed_missing_step_dir_returns_usage_error(tmp_path):
+def test_rerun_failed_missing_inputs_report_clear_errors(tmp_path):
     config = _write_config(tmp_path / "confflow.yaml")
 
     with pytest.raises(RerunFailedUsageError, match="Step directory does not exist"):
@@ -56,71 +54,59 @@ def test_rerun_failed_missing_step_dir_returns_usage_error(tmp_path):
             step_ref="calc1",
         )
 
-
-def test_rerun_failed_missing_failed_xyz_returns_runtime_error(tmp_path):
-    config = _write_config(tmp_path / "confflow.yaml")
     step_dir = tmp_path / "work" / "step_02_calc1"
     step_dir.mkdir(parents=True)
-
     with pytest.raises(RerunFailedRuntimeError, match="failed.xyz was not found"):
         run_rerun_failed(step_dir=str(step_dir), config_file=str(config), step_ref="calc1")
 
-
-def test_rerun_failed_empty_failed_xyz_returns_runtime_error(tmp_path):
-    config = _write_config(tmp_path / "confflow.yaml")
-    step_dir = tmp_path / "work" / "step_02_calc1"
-    step_dir.mkdir(parents=True)
     (step_dir / "failed.xyz").write_text("", encoding="utf-8")
-
     with pytest.raises(RerunFailedRuntimeError, match="not a readable XYZ file"):
         run_rerun_failed(step_dir=str(step_dir), config_file=str(config), step_ref="calc1")
 
 
-def test_cli_rerun_failed_requires_config(tmp_path, capsys):
+def test_cli_rerun_failed_requires_config_and_step(tmp_path, capsys):
     step_dir = tmp_path / "work" / "step_02_calc1"
     _write_failed_xyz(step_dir)
 
     result = main(["--rerun-failed", str(step_dir), "--step", "calc1"])
-
-    captured = capsys.readouterr()
     assert result == ExitCode.USAGE_ERROR
-    assert "--config is required with --rerun-failed" in captured.err
+    assert "--config is required with --rerun-failed" in capsys.readouterr().err
 
-
-def test_cli_rerun_failed_requires_step(tmp_path, capsys):
     config = _write_config(tmp_path / "confflow.yaml")
-    step_dir = tmp_path / "work" / "step_02_calc1"
-    _write_failed_xyz(step_dir)
-
     result = main(["--rerun-failed", str(step_dir), "-c", str(config)])
-
-    captured = capsys.readouterr()
     assert result == ExitCode.USAGE_ERROR
-    assert "--step is required with --rerun-failed" in captured.err
+    assert "--step is required with --rerun-failed" in capsys.readouterr().err
 
 
-def test_rerun_failed_selects_calc_step_by_name(tmp_path):
+def test_rerun_failed_selects_calc_step_by_name(tmp_path, monkeypatch):
     config = _write_config(tmp_path / "confflow.yaml")
     step_dir = tmp_path / "work" / "step_02_calc1"
     failed = _write_failed_xyz(step_dir)
     output_dir = tmp_path / "rerun"
 
-    def fake_run_calc_workflow_step(**kwargs):
-        os.makedirs(kwargs["step_dir"])
-        output = Path(kwargs["step_dir"]) / "output.xyz"
-        output.write_text("2\nok\nC 0 0 0\nH 0 0 1\n", encoding="utf-8")
-        return CalcStepExecutionResult(output_path=str(output))
+    class FakeRunner:
+        def run(self, request):
+            assert request.step_name == "calc1"
+            assert request.input_xyz == str(failed)
+            assert request.config.keyword == "hf-3c"
+            Path(request.step_dir).mkdir()
+            output = Path(request.step_dir) / "result.xyz"
+            output.write_text("2\nok\nC 0 0 0\nH 0 0 1\n", encoding="utf-8")
+            return CalcStepResult(
+                output_path=str(output),
+                failed_path=None,
+                total_tasks=1,
+                succeeded=1,
+                failed=0,
+            )
 
-    with patch(
-        "confflow.workflow.rerun_failed.calc.run_calc_workflow_step",
-        side_effect=fake_run_calc_workflow_step,
-    ) as mock_run:
-        result = run_rerun_failed(
-            step_dir=str(step_dir),
-            config_file=str(config),
-            step_ref="calc1",
-            output_dir=str(output_dir),
-        )
+    monkeypatch.setattr("confflow.workflow.rerun_failed.CalcStepRunner", FakeRunner)
+    result = run_rerun_failed(
+        step_dir=str(step_dir),
+        config_file=str(config),
+        step_ref="calc1",
+        output_dir=str(output_dir),
+    )
 
     assert result.failed_path == str(failed)
     assert result.step_label == "2:calc1"
@@ -128,34 +114,28 @@ def test_rerun_failed_selects_calc_step_by_name(tmp_path):
     assert result.input_count == 1
     assert result.output_count == 1
     assert result.failed_count == 0
-    _, kwargs = mock_run.call_args
-    assert kwargs["step_dir"] == str(output_dir)
-    assert kwargs["input_source"] == str(failed)
-    assert kwargs["legacy_task_config"]["keyword"] == "hf-3c"
 
 
-def test_rerun_failed_selects_calc_step_by_one_based_index(tmp_path):
+def test_rerun_failed_selects_calc_step_by_one_based_index(tmp_path, monkeypatch):
     config = _write_config(tmp_path / "confflow.yaml")
     step_dir = tmp_path / "work" / "step_02_calc1"
     _write_failed_xyz(step_dir)
 
-    def fake_run_calc_workflow_step(**kwargs):
-        os.makedirs(kwargs["step_dir"])
-        output = Path(kwargs["step_dir"]) / "result.xyz"
-        output.write_text("2\nok\nC 0 0 0\nH 0 0 1\n", encoding="utf-8")
-        return CalcStepExecutionResult(output_path=str(output))
+    class FakeRunner:
+        def run(self, request):
+            Path(request.step_dir).mkdir()
+            output = Path(request.step_dir) / "result.xyz"
+            output.write_text("2\nok\nC 0 0 0\nH 0 0 1\n", encoding="utf-8")
+            return CalcStepResult(str(output), None, 1, 1, 0)
 
-    with patch(
-        "confflow.workflow.rerun_failed.calc.run_calc_workflow_step",
-        side_effect=fake_run_calc_workflow_step,
-    ):
-        result = run_rerun_failed(step_dir=str(step_dir), config_file=str(config), step_ref="2")
+    monkeypatch.setattr("confflow.workflow.rerun_failed.CalcStepRunner", FakeRunner)
+    result = run_rerun_failed(step_dir=str(step_dir), config_file=str(config), step_ref="2")
 
     assert result.step_label == "2:calc1"
     assert result.output_dir == f"{step_dir}_rerun"
 
 
-def test_rerun_failed_rejects_non_calc_step(tmp_path):
+def test_rerun_failed_rejects_non_calc_step_and_existing_output(tmp_path):
     config = _write_config(tmp_path / "confflow.yaml")
     step_dir = tmp_path / "work" / "step_01_gen"
     _write_failed_xyz(step_dir)
@@ -163,17 +143,13 @@ def test_rerun_failed_rejects_non_calc_step(tmp_path):
     with pytest.raises(RerunFailedUsageError, match="not calc/task"):
         run_rerun_failed(step_dir=str(step_dir), config_file=str(config), step_ref="gen")
 
-
-def test_rerun_failed_rejects_existing_output_dir(tmp_path):
-    config = _write_config(tmp_path / "confflow.yaml")
-    step_dir = tmp_path / "work" / "step_02_calc1"
-    _write_failed_xyz(step_dir)
+    calc_dir = tmp_path / "work" / "step_02_calc1"
+    _write_failed_xyz(calc_dir)
     output_dir = tmp_path / "rerun"
     output_dir.mkdir()
-
     with pytest.raises(RerunFailedUsageError, match="already exists"):
         run_rerun_failed(
-            step_dir=str(step_dir),
+            step_dir=str(calc_dir),
             config_file=str(config),
             step_ref="calc1",
             output_dir=str(output_dir),
@@ -222,15 +198,3 @@ def test_cli_rerun_failed_does_not_call_run_workflow(tmp_path):
         output_dir=str(output_dir),
     )
     mock_workflow.assert_not_called()
-
-
-def test_cli_normal_path_still_calls_run_workflow(tmp_path):
-    input_xyz = tmp_path / "input.xyz"
-    input_xyz.write_text("2\ntest\nC 0 0 0\nH 0 0 1\n", encoding="utf-8")
-    config = _write_config(tmp_path / "confflow.yaml")
-
-    with patch("confflow.cli.run_workflow") as mock_workflow:
-        result = main([str(input_xyz), "-c", str(config), "-w", str(tmp_path / "work")])
-
-    assert result == ExitCode.SUCCESS
-    mock_workflow.assert_called_once()

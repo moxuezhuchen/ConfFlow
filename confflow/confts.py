@@ -5,10 +5,10 @@
 from __future__ import annotations
 
 import argparse
-import configparser
-import importlib
 import sys
 
+from .calc.runner import CalcStepRequest, CalcStepRunner
+from .config.models import CalcStepParams, load_workflow_model
 from .core.cli_base import require_existing_path
 from .core.contracts import ExitCode, cli_output_to_txt
 from .core.exceptions import ConfFlowError
@@ -25,7 +25,9 @@ def _cli(argv: list[str] | None = None) -> int:
         description="Run TS calculations with scan-keyword rewrite support",
     )
     parser.add_argument("input_xyz", nargs="?", help="Path to the input XYZ file")
-    parser.add_argument("-s", "--settings", help="Path to the INI settings file")
+    parser.add_argument("-c", "--config", help="Path to the workflow YAML configuration file")
+    parser.add_argument("--step", help="TS calc step name or 1-based calc-step index")
+    parser.add_argument("-w", "--work-dir", help="Output step directory")
     parser.add_argument(
         "--rewrite-scan-keyword",
         metavar="KEYWORD",
@@ -38,26 +40,59 @@ def _cli(argv: list[str] | None = None) -> int:
         print(make_scan_keyword_from_ts_keyword(args.rewrite_scan_keyword))
         return ExitCode.SUCCESS
 
-    if not args.input_xyz or not args.settings:
+    if not args.input_xyz or not args.config:
         parser.print_help()
         return ExitCode.USAGE_ERROR
 
-    # Run as a calc executor. YAML can still enable ts_rescue_scan for TS tasks.
-    calc = importlib.import_module("confflow.calc")
-
     require_existing_path(args.input_xyz, "Input file")
-    require_existing_path(args.settings, "Settings file")
+    require_existing_path(args.config, "Config file")
 
     try:
         with cli_output_to_txt(args.input_xyz):
-            manager = calc.ChemTaskManager(settings_file=args.settings)
-            # Respect the YAML configuration instead of forcing ts_rescue_scan.
-            summary = manager.run(args.input_xyz)
-    except (configparser.Error, ConfFlowError, OSError, ValueError) as e:
+            workflow = load_workflow_model(args.config)
+            calc_steps = [step for step in workflow.steps if step.type == "calc"]
+            ts_steps = [
+                step
+                for step in calc_steps
+                if str(step.params.get("itask", workflow.global_options.itask)).lower()
+                in {"4", "ts"}
+            ]
+            candidates = ts_steps or calc_steps
+            if not candidates:
+                print("Error: no calc step found in workflow config", file=sys.stderr)
+                return ExitCode.USAGE_ERROR
+
+            selected = candidates[0]
+            if args.step:
+                raw = str(args.step).strip()
+                if raw.isdigit():
+                    idx = int(raw)
+                    if idx < 1 or idx > len(candidates):
+                        print(f"Error: step index out of range: {idx}", file=sys.stderr)
+                        return ExitCode.USAGE_ERROR
+                    selected = candidates[idx - 1]
+                else:
+                    matches = [step for step in candidates if step.name == raw]
+                    if not matches:
+                        print(f"Error: step not found: {raw}", file=sys.stderr)
+                        return ExitCode.USAGE_ERROR
+                    selected = matches[0]
+
+            config = CalcStepParams.from_params(selected.params, workflow.global_options)
+            step_dir = args.work_dir or f"{args.input_xyz}_ts_{selected.name}"
+            result = CalcStepRunner().run(
+                CalcStepRequest(
+                    step_name=selected.name,
+                    step_dir=step_dir,
+                    input_xyz=args.input_xyz,
+                    config=config,
+                )
+            )
+            if result.failed == result.total_tasks and result.total_tasks > 0:
+                print("All TS calculation tasks failed", file=sys.stderr)
+                return ExitCode.RUNTIME_ERROR
+    except (ConfFlowError, OSError, ValueError) as e:
         print(f"Error: {e}", file=sys.stderr)
-        return ExitCode.RUNTIME_ERROR
-    if isinstance(summary, calc.CalcRunSummary) and summary.should_return_error:
-        print(calc.format_all_failed_message(summary), file=sys.stderr)
         return ExitCode.RUNTIME_ERROR
     return ExitCode.SUCCESS
 

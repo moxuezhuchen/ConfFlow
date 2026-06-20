@@ -69,7 +69,7 @@ confflow = "confflow.main:main"
 confts = "confflow.confts:main"
 confgen = "confflow.blocks.confgen:main"
 confrefine = "confflow.blocks.refine:main"
-confcalc = "confflow.calc.manager:main"
+confcalc = "confflow.calc.runner:main"
 
 [project.urls]
 Homepage = "https://github.com/moxuezhuchen/ConfFlow"

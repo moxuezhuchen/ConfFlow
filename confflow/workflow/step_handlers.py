@@ -11,23 +11,20 @@ import shutil
 from dataclasses import dataclass, field
 from typing import Any
 
-from .. import calc
 from ..blocks import confgen
-from ..calc.step_contract import compute_calc_input_signature
-from ..config.schema import ConfigSchema
+from ..calc.runner import CalcStepRequest, CalcStepRunner
+from ..config.models import CalcStepParams, GlobalOptions
 from ..core.exceptions import ConfFlowError
 from ..core.pairs import normalize_pair_list
 from ..core.utils import get_logger
 from ..shared.defaults import DEFAULT_MAX_PARALLEL_JOBS
-from .config_builder import build_task_config
 from .helpers import as_list, is_multi_frame_any, pushd
+from .step_naming import build_step_dir_name_map
 from .stats import FailureTracker
-from .task_config import build_structured_task_config
 
 __all__ = [
     "StepContext",
-    "ConfgenStepResult",
-    "CalcStepResult",
+    "StepExecutionResult",
     "run_confgen_step",
     "run_calc_step",
 ]
@@ -56,45 +53,15 @@ class StepContext:
     step_name: str = ""
 
 
-class CalcStepResult(str):
-    """String-like calc step output path plus reuse metadata for engine callers."""
+@dataclass(frozen=True)
+class StepExecutionResult:
+    """Explicit step result passed from handlers back to the workflow engine."""
 
-    reused_existing: bool
-    cleaned_stale_artifacts: bool
-
-    def __new__(
-        cls,
-        value: str,
-        *,
-        reused_existing: bool = False,
-        cleaned_stale_artifacts: bool = False,
-    ) -> CalcStepResult:
-        obj = str.__new__(cls, value)
-        obj.reused_existing = reused_existing
-        obj.cleaned_stale_artifacts = cleaned_stale_artifacts
-        return obj
-
-
-class ConfgenStepResult(str):
-    """String-like confgen output path plus reuse metadata for engine callers."""
-
-    reused_existing: bool
-    copied_multi_frame: bool
-    cleaned_stale_artifacts: bool
-
-    def __new__(
-        cls,
-        value: str,
-        *,
-        reused_existing: bool = False,
-        copied_multi_frame: bool = False,
-        cleaned_stale_artifacts: bool = False,
-    ) -> ConfgenStepResult:
-        obj = str.__new__(cls, value)
-        obj.reused_existing = reused_existing
-        obj.copied_multi_frame = copied_multi_frame
-        obj.cleaned_stale_artifacts = cleaned_stale_artifacts
-        return obj
+    output_path: str
+    failed_path: str | None = None
+    reused_existing: bool = False
+    copied_multi_frame: bool = False
+    cleaned_stale_artifacts: bool = False
 
 
 def _normalize_confgen_signature_value(value: Any) -> Any:
@@ -110,6 +77,30 @@ def _normalize_confgen_signature_value(value: Any) -> Any:
     if isinstance(value, (str, int, float, bool)) or value is None:
         return value
     return str(value)
+
+
+def _file_sha256(path: str) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        while True:
+            chunk = handle.read(1024 * 1024)
+            if not chunk:
+                break
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _compute_input_signature(input_source: str | list[str]) -> str:
+    paths = [input_source] if isinstance(input_source, str) else list(input_source)
+    payload = []
+    for path in paths:
+        abspath = os.path.abspath(str(path))
+        try:
+            payload.append({"path": os.path.basename(abspath), "sha256": _file_sha256(abspath)})
+        except OSError:
+            payload.append({"path": os.path.basename(abspath), "missing": True})
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return f"sha256:{hashlib.sha256(encoded.encode('utf-8')).hexdigest()}"
 
 
 def _confgen_signature_path(step_dir: str) -> str:
@@ -172,8 +163,8 @@ def _compute_confgen_step_signature(
     multi_frame: bool,
 ) -> str:
     payload = {
-        "input_signature": str(compute_calc_input_signature(current_input)),
-        "input_files_signature": str(compute_calc_input_signature(input_files)),
+        "input_signature": _compute_input_signature(current_input),
+        "input_files_signature": _compute_input_signature(input_files),
         "multi_frame": multi_frame,
         "run_kwargs": _normalize_confgen_signature_value(run_kwargs),
     }
@@ -216,7 +207,7 @@ def run_confgen_step(
     params: dict[str, Any],
     input_files: list[str],
     global_config: dict[str, Any] | None = None,
-) -> str:
+) -> StepExecutionResult:
     """Execute a conformer generation step (execution adapter layer)."""
     expected_output = os.path.join(step_dir, "search.xyz")
     multi_frame = len(input_files) == 1 and is_multi_frame_any(current_input)
@@ -231,8 +222,8 @@ def run_confgen_step(
 
     if os.path.exists(expected_output):
         if _load_confgen_step_signature(step_dir) == signature:
-            return ConfgenStepResult(
-                expected_output,
+            return StepExecutionResult(
+                output_path=expected_output,
                 reused_existing=True,
                 copied_multi_frame=multi_frame,
             )
@@ -241,8 +232,8 @@ def run_confgen_step(
     if multi_frame and isinstance(current_input, str):
         shutil.copy2(current_input, expected_output)
         _record_confgen_step_signature(step_dir, signature)
-        return ConfgenStepResult(
-            expected_output,
+        return StepExecutionResult(
+            output_path=expected_output,
             copied_multi_frame=True,
             cleaned_stale_artifacts=cleaned_stale_artifacts,
         )
@@ -252,10 +243,32 @@ def run_confgen_step(
         if not os.path.exists(expected_output):
             raise ConfFlowError("confgen did not produce search.xyz")
         _record_confgen_step_signature(step_dir, signature)
-    return ConfgenStepResult(
-        expected_output,
+    return StepExecutionResult(
+        output_path=expected_output,
         cleaned_stale_artifacts=cleaned_stale_artifacts,
     )
+
+
+def _resolve_chk_input_dir(
+    params: dict[str, Any],
+    root_dir: str,
+    steps: list[dict[str, Any]],
+) -> str | None:
+    chk_from = params.get("chk_from_step")
+    if not chk_from:
+        return None
+    step_dirs, by_name = build_step_dir_name_map(steps)
+    raw = str(chk_from).strip()
+    from_dir = None
+    if raw.isdigit():
+        idx = int(raw)
+        if 1 <= idx <= len(step_dirs):
+            from_dir = step_dirs[idx - 1]
+    else:
+        from_dir = by_name.get(raw)
+    if from_dir is None:
+        return None
+    return os.path.join(root_dir, from_dir, "backups")
 
 
 def run_calc_step(
@@ -267,8 +280,8 @@ def run_calc_step(
     steps: list[dict[str, Any]],
     failure_tracker: FailureTracker,
     step_name: str,
-) -> str:
-    """Execute a calculation step via the calc package facade."""
+) -> StepExecutionResult:
+    """Execute a calculation step via the typed calc runner."""
     if isinstance(current_input, list):
         if len(current_input) != 1:
             raise ConfFlowError(
@@ -277,24 +290,24 @@ def run_calc_step(
             )
         current_input = current_input[0]
 
-    legacy_task_config = build_task_config(params, global_config, root_dir, steps)
-    ConfigSchema.validate_calc_config(legacy_task_config)
-
-    structured_task_config = build_structured_task_config(
+    typed_global = GlobalOptions.from_mapping(global_config)
+    calc_config = CalcStepParams.from_params(
         params,
-        global_config,
-        root_dir=root_dir,
-        all_steps=steps,
+        typed_global,
+        input_chk_dir=_resolve_chk_input_dir(params, root_dir, steps),
     )
 
     try:
-        result = calc.run_calc_workflow_step(
-            step_dir=step_dir,
-            input_source=current_input,
-            legacy_task_config=legacy_task_config,
-            execution_config=structured_task_config,
+        result = CalcStepRunner().run(
+            CalcStepRequest(
+                step_name=step_name,
+                step_dir=step_dir,
+                input_xyz=current_input,
+                config=calc_config,
+                resume=False,
+            )
         )
-    except RuntimeError as exc:
+    except (RuntimeError, ValueError) as exc:
         if "did not produce an output XYZ file" in str(exc):
             raise ConfFlowError(str(exc)) from exc
         raise
@@ -312,14 +325,15 @@ def run_calc_step(
             current_input[0],
         )
 
-    if result.failed_path is not None:
+    if result.failed_path is not None and failure_tracker is not None:
         failure_tracker.append(result.failed_path, step_name)
 
     if not os.path.exists(result.output_path):
         raise ConfFlowError("Calculation step did not produce an output XYZ file")
 
-    return CalcStepResult(
-        result.output_path,
-        reused_existing=result.reused_existing,
+    return StepExecutionResult(
+        output_path=result.output_path,
+        failed_path=result.failed_path,
+        reused_existing=result.reused,
         cleaned_stale_artifacts=result.cleaned_stale_artifacts,
     )

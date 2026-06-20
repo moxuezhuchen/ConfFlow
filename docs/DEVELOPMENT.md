@@ -83,15 +83,11 @@ ruff check confflow tests
 ## 当前推荐入口
 
 - 工作流主入口：`confflow.workflow.run_workflow` 或顶层 `confflow.run_workflow`
-- workflow -> calc 官方入口：`confflow.calc.run_calc_workflow_step`
-- calc step 工件/签名/复用边界：`confflow.calc.step_contract`
+- workflow -> calc 执行入口：`confflow.calc.runner.CalcStepRunner`
+- typed 配置入口：`confflow.config.models.WorkflowConfig` / `CalcStepParams`
+- calc step 工件边界：`confflow.calc.artifacts.CalcArtifactManager` 和 `manifest.json`
 
-以下入口仍保留，但视为兼容/门面层，不建议新增代码直接依赖：
-
-- `confflow.calc.ChemTaskManager`
-- `confflow.workflow.config_builder`
-- `confflow.workflow.task_config.build_task_config()` 返回的 legacy dict
-- `confflow.workflow.task_config.create_runtask_config()`
+不要为新代码新增 INI settings、legacy flat calc config、`.config_hash` MD5 兼容或 `ChemTaskManager` 依赖。
 
 ### 开发指南
 
@@ -177,17 +173,16 @@ rm -rf .pytest_cache_temp .mypy_cache .ruff_cache confflow.egg-info build dist h
 ### calc - 量子计算
 
 **架构：**
-- `calc.run_calc_workflow_step(...)`：workflow 调用 calc 的官方 facade
-- `step_contract.py`：calc step 的 signature / stale / resume / reuse 契约边界
+- `calc.runner.CalcStepRunner`：workflow 调用 calc 的 typed 执行入口
+- `calc.artifacts.CalcArtifactManager`：calc step 的 manifest / stale / reuse 契约边界
 - `policies/`：定义不同程序的输入生成与输出解析逻辑（如 `GaussianPolicy`, `OrcaPolicy`）。
 - `components/task_runner.py`：管理单个任务的生命周期（生成、执行、解析、救援）。
 - `components/executor.py`：底层 shell 命令执行。
-- `manager.py`：standalone / compat manager 门面。
 
 **分层建议：**
-- 新功能如果影响 calc step 工件复用、`.config_hash`、stale/resume 判定，应优先落在 `calc.step_contract`
+- 新功能如果影响 calc step 工件复用、manifest、stale/resume 判定，应优先落在 `calc.artifacts`
 - 新功能如果只是 workflow 编排，应落在 `workflow.engine` / `workflow.step_handlers`
-- 不要在 `workflow.step_handlers` 或 `manager` 中各自再实现一套 signature/stale/resume 语义
+- 不要在 `workflow.step_handlers` 中再实现一套 artifact/stale/resume 语义
 
 **支持的程序：**
 - Gaussian 16
@@ -202,15 +197,14 @@ rm -rf .pytest_cache_temp .mypy_cache .ruff_cache confflow.egg-info build dist h
 
 推荐流程：
 
-1. workflow 侧用 `workflow.task_config` 组装 structured config，并在必要时生成 legacy compat dict。
-2. `workflow.step_handlers` 只组装 step 上下文并调用 `calc.run_calc_workflow_step(...)`。
-3. calc facade 内部再协调 `step_contract`、`ChemTaskManager` 和旧兼容路径。
+1. workflow 侧用 `config.models.CalcStepParams` 组装 typed calc config。
+2. `workflow.step_handlers` 只组装 step 上下文并调用 `CalcStepRunner`。
+3. `CalcStepRunner` 内部协调 manifest、任务构建、执行、结果库和 auto-clean。
 
 不推荐的新依赖方式：
 
-- 在 workflow 新代码里直接实例化 `ChemTaskManager`
-- 在 workflow 新代码里直接拼 `.config_hash` / stale / resume 逻辑
-- 从 `workflow.config_builder` 引入新能力，而不是放到 `workflow.task_config`
+- 在 workflow 新代码里直接拼 manifest / stale / resume 逻辑
+- 新增 INI settings、legacy flat config 或 `.config_hash` 兼容路径
 
 ### blocks/refine - 结果筛选
 
@@ -238,7 +232,7 @@ rm -rf .pytest_cache_temp .mypy_cache .ruff_cache confflow.egg-info build dist h
 
 **文件修改：**
 - `confflow/calc/policies/`：添加新的 Policy 实现。
-- `confflow/config/schema.py`：如果需要新的程序特定配置项，更新 Schema。
+- `confflow/config/models.py`：如果需要新的程序特定配置项，更新 typed model。
 
 **示例：**
 
@@ -255,7 +249,7 @@ class MyProgPolicy(CalculationPolicy):
 
 **文件修改：**
 - `confflow/blocks/confgen/generator.py`：添加新的生成逻辑。
-- `confflow/config/schema.py`：添加新参数。
+- `confflow/config/models.py`：添加新参数。
 
 ### 3. 新的筛选条件
 

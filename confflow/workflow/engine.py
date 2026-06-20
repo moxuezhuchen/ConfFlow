@@ -9,11 +9,8 @@ import time
 from datetime import datetime
 from typing import Any
 
-from ..calc.step_contract import (
-    compute_calc_input_signature,
-    prepare_calc_step_dir,
-)
-from ..config.schema import ConfigSchema
+from ..calc.artifacts import CalcArtifactManager
+from ..config.models import CalcStepParams, GlobalOptions, load_workflow_model
 from ..core import io as io_xyz
 from ..core.types import TaskStatus
 from ..core.utils import (
@@ -21,7 +18,6 @@ from ..core.utils import (
     index_to_letter_prefix,
     validate_xyz_file,
 )
-from .config_builder import build_task_config, load_workflow_config
 from .helpers import count_conformers_any, resolve_step_output
 from .presenter import (
     emit_final_report_and_lowest,
@@ -126,7 +122,7 @@ def run_workflow(
             raise FileNotFoundError(f"Input file does not exist: {fp}")
         validate_xyz_file(fp, strict=True)
 
-    cfg = load_workflow_config(config_file)
+    cfg = load_workflow_model(config_file).as_legacy_shape()
     global_config = cfg["global"]
     steps = cfg["steps"]
     step_dirnames, _ = build_step_dir_name_map(steps)
@@ -174,15 +170,17 @@ def run_workflow(
             step_dir = os.path.join(root_dir, step_dirnames[i])
             if step.get("type") in ["calc", "task"]:
                 params = step.get("params", {}) or {}
-                task_config = build_task_config(params, global_config, root_dir, steps)
-                ConfigSchema.validate_calc_config(task_config)
-                prepared = prepare_calc_step_dir(
+                typed_global = GlobalOptions.from_mapping(global_config)
+                calc_config = CalcStepParams.from_params(params, typed_global)
+                input_for_digest = current_input if isinstance(current_input, str) else current_input[0]
+                prepared = CalcArtifactManager(
                     step_dir,
-                    task_config,
-                    input_signature=compute_calc_input_signature(current_input),
-                )
+                    step_name=step_name,
+                    config=calc_config,
+                    input_path=input_for_digest,
+                ).prepare(resume=True)
                 if prepared.reusable_output is not None:
-                    current_input = prepared.reusable_output
+                    current_input = str(prepared.reusable_output)
                     continue
                 if prepared.cleaned_stale_artifacts:
                     raise RuntimeError(
@@ -190,28 +188,7 @@ def run_workflow(
                             step_index=i + 1,
                             step_name=step_name,
                             step_dir=step_dir,
-                            reason=(
-                                "stale calc artifacts were cleaned because the stored "
-                                "signature did not match the current config/input signature"
-                            ),
-                        )
-                    )
-                if prepared.state.has_resume_state:
-                    reason = (
-                        "resume-only calc state was found, but strict resume requires "
-                        "a reusable final output for completed prior steps"
-                        if prepared.state.can_resume_without_output
-                        else (
-                            "incomplete calc resume state; artifacts exist but no "
-                            "reusable final output or matching resumable results/backups were found"
-                        )
-                    )
-                    raise RuntimeError(
-                        _resume_failure_message(
-                            step_index=i + 1,
-                            step_name=step_name,
-                            step_dir=step_dir,
-                            reason=reason,
+                            reason="manifest digest did not match current config/input",
                         )
                     )
 
@@ -264,23 +241,24 @@ def run_workflow(
 
         try:
             if step_type in ["confgen", "gen"]:
-                current_input = _run_confgen_step(
+                step_result = _run_confgen_step(
                     step_dir,
                     current_input,
                     params,
                     input_files,
                     global_config,
                 )
+                current_input = step_result.output_path
                 io_xyz.ensure_xyz_cids(current_input, prefix=index_to_letter_prefix(0))
-                if getattr(current_input, "copied_multi_frame", False):
+                if step_result.copied_multi_frame:
                     step_stats["status"] = TaskStatus.SKIPPED_MULTI
-                elif getattr(current_input, "reused_existing", False):
+                elif step_result.reused_existing:
                     step_stats["status"] = TaskStatus.SKIPPED
                 else:
                     step_stats["status"] = TaskStatus.COMPLETED
 
             elif step_type in ["calc", "task"]:
-                current_input = _run_calc_step(
+                step_result = _run_calc_step(
                     step_dir,
                     current_input,
                     params,
@@ -290,8 +268,9 @@ def run_workflow(
                     failure_tracker,
                     step_name,
                 )
+                current_input = step_result.output_path
                 io_xyz.ensure_xyz_cids(current_input, prefix=index_to_letter_prefix(0))
-                if getattr(current_input, "reused_existing", False):
+                if step_result.reused_existing:
                     step_stats["status"] = TaskStatus.SKIPPED
                 else:
                     step_stats["status"] = TaskStatus.COMPLETED

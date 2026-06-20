@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 import importlib
-import warnings
 from importlib.metadata import PackageNotFoundError, version
 
 try:
@@ -57,31 +56,14 @@ except ImportError:
 _LAZY_EXPORTS: dict[str, tuple[str, str]] = {
     "main": (".main", "main"),
     "run_workflow": (".workflow", "run_workflow"),
-    "run_calc_workflow_step": (".calc", "run_calc_workflow_step"),
-    "run_generation": (".blocks.confgen", "run_generation"),
-    "RefineOptions": (".blocks.refine", "RefineOptions"),
-    "RefineResult": (".blocks.refine", "RefineResult"),
-    "process_xyz": (".blocks.refine", "process_xyz"),
-    "parse_xyz_file": (".blocks.viz", "parse_xyz_file"),
-    "ChemTaskManager": (".calc.manager", "ChemTaskManager"),
-    "ConfigSchema": (".config.schema", "ConfigSchema"),
-    "merge_step_params": (".config.schema", "merge_step_params"),
+    "CalcStepRunner": (".calc", "CalcStepRunner"),
+    "CalcStepRequest": (".calc", "CalcStepRequest"),
+    "CalcStepResult": (".calc", "CalcStepResult"),
     "read_xyz_file": (".core.io", "read_xyz_file"),
     "write_xyz_file": (".core.io", "write_xyz_file"),
     "parse_comment_metadata": (".core.io", "parse_comment_metadata"),
     "ConfFlowLogger": (".core.logging", "ConfFlowLogger"),
     "get_logger": (".core.logging", "get_logger"),
-}
-
-_DEPRECATED_EXPORTS = {
-    "main",
-    "run_generation",
-    "RefineOptions",
-    "RefineResult",
-    "process_xyz",
-    "parse_xyz_file",
-    "ChemTaskManager",
-    "merge_step_params",
 }
 
 __all__ = [
@@ -100,12 +82,5 @@ def __getattr__(name: str):
     module_name, attr_name = export
     module = importlib.import_module(module_name, package=__name__)
     value = getattr(module, attr_name)
-    if name in _DEPRECATED_EXPORTS:
-        warnings.warn(
-            f"confflow.{name} is retained for compatibility and will be removed in v2.0; "
-            "import it from its submodule instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
     globals()[name] = value
     return value

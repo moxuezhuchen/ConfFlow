@@ -4,6 +4,4 @@
 
 ## 文档清单
 
-- **COMPAT_EXECUTION_BOUNDARY.md** - Calc step 的 compat/execution 双轨机制设计契约，详细描述了配置传递、签名计算、工件复用的内部实现
-
-这些文档对深度维护和重构有价值，但不影响日常功能开发。
+当前没有独立的内部契约文档。旧 compat/execution 双轨设计已从主路径移除；历史资料保留在 `docs/archive/`。

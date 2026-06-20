@@ -8,13 +8,11 @@ import os
 from dataclasses import dataclass
 from typing import Any
 
-from .. import calc
-from ..config.schema import ConfigSchema
+from ..calc.runner import CalcStepRequest, CalcStepRunner
+from ..config.models import CalcStepParams, load_workflow_model
 from ..core.exceptions import ConfigurationError
 from ..core.io import read_xyz_file
 from ..core.path_policy import resolve_sandbox_root, validate_managed_path
-from .config_builder import build_task_config, load_workflow_config
-from .task_config import build_structured_task_config
 
 __all__ = [
     "RerunFailedResult",
@@ -104,10 +102,13 @@ def run_rerun_failed(
     if not step_ref:
         raise RerunFailedUsageError("--step is required with --rerun-failed")
 
-    cfg = load_workflow_config(config_file)
-    global_config = cfg["global"]
-    steps = cfg["steps"]
-    sandbox_root = resolve_sandbox_root(global_config)
+    workflow = load_workflow_model(config_file)
+    global_config = workflow.global_options
+    steps = [
+        {"name": step.name, "type": step.type, "enabled": step.enabled, "params": dict(step.params)}
+        for step in workflow.steps
+    ]
+    sandbox_root = resolve_sandbox_root(global_config.__dict__)
 
     resolved_step_dir = validate_managed_path(
         step_dir,
@@ -136,20 +137,14 @@ def run_rerun_failed(
         raise ConfigurationError(f"Step {step_index + 1} params must be a dict")
 
     root_dir = os.path.dirname(resolved_step_dir)
-    legacy_task_config = build_task_config(params, global_config, root_dir, steps)
-    ConfigSchema.validate_calc_config(legacy_task_config)
-    structured_task_config = build_structured_task_config(
-        params,
-        global_config,
-        root_dir=root_dir,
-        all_steps=steps,
-    )
-
-    result = calc.run_calc_workflow_step(
-        step_dir=rerun_dir,
-        input_source=failed_path,
-        legacy_task_config=legacy_task_config,
-        execution_config=structured_task_config,
+    calc_config = CalcStepParams.from_params(params, global_config)
+    result = CalcStepRunner().run(
+        CalcStepRequest(
+            step_name=str(step.get("name", f"step_{step_index + 1}")),
+            step_dir=rerun_dir,
+            input_xyz=failed_path,
+            config=calc_config,
+        )
     )
 
     output_count = 0

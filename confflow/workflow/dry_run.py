@@ -9,8 +9,7 @@ from math import prod
 from typing import Any
 
 from ..blocks.confgen.rotations import _parse_chain, _resolve_angle_lists
-from ..config.loader import load_workflow_config_file
-from ..config.schema import ConfigSchema
+from ..config.models import CalcStepParams, load_workflow_model
 from ..core.io import parse_gaussian_input_text
 from ..core.path_policy import (
     resolve_sandbox_root,
@@ -20,7 +19,6 @@ from ..core.path_policy import (
 from ..core.utils import validate_xyz_file
 from .helpers import as_list
 from .step_naming import build_step_dir_name_map
-from .task_config import build_task_config
 
 __all__ = [
     "estimate_confgen_combinations",
@@ -123,10 +121,14 @@ def _print_calc_preview(config: dict[str, Any]) -> None:
 def run_dry_run(input_files: list[str], config_file: str, work_dir: str) -> None:
     """Print a workflow dry-run plan without executing workflow steps."""
     checked_inputs = [_check_input_file(path) for path in input_files]
-    cfg = load_workflow_config_file(config_file)
-    global_config = cfg["global"]
-    steps = cfg["steps"]
-    _validate_path_settings(global_config, work_dir)
+    workflow = load_workflow_model(config_file)
+    global_config = workflow.global_options
+    global_dict = global_config.__dict__
+    steps = [
+        {"name": step.name, "type": step.type, "enabled": step.enabled, "params": dict(step.params)}
+        for step in workflow.steps
+    ]
+    _validate_path_settings(global_dict, work_dir)
 
     step_dirnames, _ = build_step_dir_name_map(steps)
     current_input: str | list[str] = input_files[0] if len(input_files) == 1 else list(input_files)
@@ -154,9 +156,9 @@ def run_dry_run(input_files: list[str], config_file: str, work_dir: str) -> None
         if step_type in {"confgen", "gen"}:
             print(f"  confgen combinations: {estimate_confgen_combinations(params)}")
         elif step_type in {"calc", "task"}:
-            resolved = build_task_config(params, global_config, work_dir, steps)
-            ConfigSchema.validate_calc_config(resolved)
-            _validate_path_settings({**global_config, **resolved}, work_dir)
+            typed = CalcStepParams.from_params(params, global_config)
+            resolved = typed.to_runtime_dict()
+            _validate_path_settings({**global_dict, **resolved}, work_dir)
             _print_calc_preview(resolved)
 
         current_input = output_path

@@ -67,7 +67,7 @@ pytest tests/ -q
 
 | 文件 | 覆盖模块 | 说明 |
 |------|----------|------|
-| `test_core.py` | config/schema, package exports | 配置归一化、包导出、低能量溯源 |
+| `test_core.py` | package exports, shared entrypoints | 包导出、核心公共入口 |
 | `test_io.py` | core/io | XYZ 文件读写、元数据解析、键长计算 |
 | `test_data.py` | core/data | 共价半径、元素符号、原子序数 |
 | `test_models.py` | core/models | TaskContext、GlobalConfigModel、CalcConfigModel |
@@ -80,9 +80,7 @@ pytest tests/ -q
 
 | 文件 | 覆盖模块 | 说明 |
 |------|----------|------|
-| `test_schema.py` | config/schema | Schema 验证、参数合并、遗留键检测 |
-| `test_defaults.py` | config/defaults | 默认常量类型与值检查 |
-| `test_loader.py` | config/loader | 配置文件加载边界条件 |
+| `test_config_models.py` | config/models | typed YAML 加载、全局参数合并、calc step runtime dict |
 | `test_validation.py` | workflow/validation | 输入验证与兼容性校验 |
 
 ### 构象生成 (`blocks/confgen/`)
@@ -114,12 +112,12 @@ pytest tests/ -q
 | 文件 | 覆盖模块 | 说明 |
 |------|----------|------|
 | `test_calc.py` | calc 基础 + task_runner + input_helpers | 任务运行器、输入生成、资源计算 |
-| `test_calc_full.py` | calc 完整集成 | 端到端计算流程、多步骤场景 |
-| `test_calc_manager_paths.py` | calc/manager 路径 | manager 路径策略与工作目录测试 |
+| `test_calc_artifacts.py` | calc/artifacts | manifest 复用、stale cleanup、sandbox 边界 |
+| `test_calc_runner.py` | calc/runner | typed runner 执行、manifest 写入与复用 |
+| `test_calc_full.py` | calc policies + typed config | policy 解析/输入生成与 runtime dict 集成 |
 | `test_policies.py` | policies/gaussian, orca | Gaussian/ORCA 输入生成与输出解析 |
 | `test_rescue.py` | calc/rescue, scan_ops | TS 失败救援、约束扫描 |
 | `test_rescue_ts_scan_paths.py` | calc/rescue, scan_ops | TS 救援扫描路径与目录策略 |
-| `test_utils_manager.py` | calc/manager, core/utils | 任务管理器、工具函数 |
 | `test_geometry.py` | calc/geometry | 几何解析、正常终止检测 |
 | `test_input_helpers_hotspots.py` | calc/components/input_helpers | 内存、约束、冻结参数热点路径 |
 | `test_policies_hotspots.py` | calc/policies | Gaussian/ORCA 策略边缘路径 |
@@ -220,6 +218,12 @@ pytest tests/ --cov=confflow --cov-report=term-missing
 - `ruff check confflow tests`：通过
 - `mypy confflow`：通过
 - 本轮未重跑 `pytest tests/ --cov=confflow --cov-report=term`，因此不在此处重复历史覆盖率数值
+
+最近一次重构验证（2026-06-20）：
+
+- `python3 -m compileall confflow tests`：通过
+- `.venv/bin/python -m pytest --collect-only -q`：652 tests collected
+- `.venv/bin/python -m pytest -q`：652 passed
 
 ---
 

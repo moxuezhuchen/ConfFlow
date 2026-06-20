@@ -22,10 +22,10 @@ tail -f input.txt
 ## confcalc
 
 ```bash
-confcalc <input.xyz> -s <settings.ini>
+confcalc <input.xyz> -c <workflow.yaml> [--step <name-or-index>] [-w <step_dir>]
 ```
 
-用于直接对多帧 XYZ 执行量化计算（Gaussian/ORCA），运行日志写入 `<input_basename>.txt`。
+用于直接对多帧 XYZ 执行 workflow YAML 中的某个 calc step（Gaussian/ORCA）。
 
 ## confgen
 

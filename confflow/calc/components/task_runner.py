@@ -22,7 +22,6 @@ from ..analysis import (
     is_rescue_enabled,
     validate_ts_bond_drift,
 )
-from ..config_types import ensure_calc_task_config
 from ..policies import get_policy_for_config
 from ..rescue import _ts_rescue_scan
 from ..setup import get_itask, logger
@@ -102,7 +101,7 @@ class TaskRunner:
             task_info.model_dump() if isinstance(task_info, models.TaskContext) else task_info
         )
         raw_config = task_dict["config"]
-        cfg = ensure_calc_task_config(raw_config)
+        cfg = dict(raw_config)
         task_dict = {**task_dict, "config": cfg}
         job, wd = task_dict["job_name"], task_dict["work_dir"]
         coords = task_dict["coords"]

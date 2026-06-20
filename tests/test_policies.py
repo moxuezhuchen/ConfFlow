@@ -321,49 +321,55 @@ def test_orca_policy_freeze_constraint(tmp_path):
     assert "{ C 0 C }" in text
 
 
-def test_chem_task_manager_run_smoke_without_external_program(tmp_path, monkeypatch):
-    import os
+def test_calc_step_runner_smoke_without_external_program(tmp_path, monkeypatch):
+    from pathlib import Path
 
-    from confflow import calc
-    from confflow.calc.components import executor
+    from confflow.calc.runner import CalcStepRequest, CalcStepRunner
+    from confflow.config.models import CalcStepParams, GlobalOptions
 
     xyz = tmp_path / "search.xyz"
     xyz.write_text("""2\nTest\nH 0 0 0\nH 0 0 0.74\n""", encoding="utf-8")
 
-    def _fake_run(work_dir, job_name, prog_id, coords, config, is_sp_task=False):
-        inp = os.path.join(work_dir, f"{job_name}.inp")
-        os.makedirs(work_dir, exist_ok=True)
-        OrcaPolicy().generate_input({"job_name": job_name, "coords": coords, "config": config}, inp)
-        return {
-            "e_low": -1.0,
-            "g_low": None,
-            "g_corr": None,
-            "num_imag_freqs": 0,
-            "lowest_freq": None,
-            "final_coords": coords,
-        }
+    def fake_execute_tasks(*, todo, results_db, append_result_fn, **kwargs):
+        for task in todo:
+            data = task.model_dump()
+            inp = Path(data["work_dir"]) / f"{data['job_name']}.inp"
+            inp.parent.mkdir(parents=True, exist_ok=True)
+            OrcaPolicy().generate_input(
+                {"job_name": data["job_name"], "coords": data["coords"], "config": data["config"]},
+                str(inp),
+            )
+            res = {
+                **data,
+                "status": "success",
+                "energy": -1.0,
+                "final_coords": data["coords"],
+            }
+            results_db.insert_result(res)
+            append_result_fn(res)
 
-    monkeypatch.setattr(executor, "_run_calculation_step", _fake_run)
-    monkeypatch.setattr(executor, "handle_backups", lambda *args, **kwargs: None)
-
-    manager = calc.ChemTaskManager(settings_file=None)
-    manager.work_dir = str(tmp_path / "work")
-    manager.config.update(
+    monkeypatch.setattr("confflow.calc.runner.execute_tasks", fake_execute_tasks)
+    config = CalcStepParams.from_params(
         {
             "iprog": "orca",
-            "orca_path": "orca",
-            "gaussian_path": "g16",
-            "keyword": "r2SCAN-3c",
             "itask": "sp",
-            "cores_per_task": "1",
+            "keyword": "r2SCAN-3c",
             "total_memory": "1000MB",
-            "max_parallel_jobs": "1",
-            "auto_clean": "false",
+            "auto_clean": False,
+            "delete_work_dir": False,
             "freeze": "1",
-        }
+        },
+        GlobalOptions.from_mapping({}),
     )
-    manager.run(str(xyz))
+    result = CalcStepRunner().run(
+        CalcStepRequest(
+            step_name="calc",
+            step_dir=str(tmp_path / "work"),
+            input_xyz=str(xyz),
+            config=config,
+        )
+    )
 
     out = tmp_path / "work" / "result.xyz"
-    assert out.exists()
+    assert result.output_path == str(out)
     assert "Energy=" in out.read_text(encoding="utf-8")

@@ -115,7 +115,7 @@ confrefine search.xyz \
 
 ### 基本用法
 ```bash
-confcalc <input.xyz> -s <settings.ini>
+confcalc <input.xyz> -c <workflow.yaml> [--step <name-or-index>]
 ```
 
 ### 必需参数
@@ -123,43 +123,17 @@ confcalc <input.xyz> -s <settings.ini>
 | 参数 | 简写 | 说明 | 格式 | 示例 |
 |------|------|------|------|------|
 | `input_xyz` | - | 输入轨迹文件 | 文件路径 | `search.xyz` |
-| `--settings` | `-s` | 配置文件 | INI文件 | `-s gaussian.ini` |
+| `--config` | `-c` | 工作流配置 | YAML文件 | `-c confflow.yaml` |
+| `--step` | - | calc step 名称或序号 | 字符串/整数 | `--step opt_b3lyp` |
 
 ### 常用示例
 
 ```bash
-# 使用Gaussian计算
-confcalc search.xyz -s gaussian.ini
+# 使用工作流 YAML 中的第一个 calc step
+confcalc search.xyz -c confflow.yaml
 
-# 使用ORCA计算
-confcalc search.xyz -s orca.ini
-
-# 仅优化
-confcalc structures.xyz -s opt_settings.ini
-
-# 频率分析
-confcalc optimized.xyz -s freq_settings.ini
-```
-
-### 配置文件示例
-
-```ini
-[gaussian]
-path = /opt/g16/g16
-method = B3LYP
-basis = 6-31G(d)
-
-[orca]
-path = /opt/orca601/orca
-method = r2SCAN-3c
-basis = def2-SVP
-
-[calculation]
-cores_per_task = 12
-total_memory = 240GB
-max_parallel_jobs = 4
-charge = 0
-multiplicity = 1
+# 指定 calc step
+confcalc search.xyz -c confflow.yaml --step opt_b3lyp
 ```
 
 ---

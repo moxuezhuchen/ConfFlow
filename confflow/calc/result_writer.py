@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-"""Result XYZ / failed XYZ writing helpers for ``ChemTaskManager``."""
+"""Result XYZ / failed XYZ writing helpers for calc step runners."""
 
 from __future__ import annotations
 

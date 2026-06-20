@@ -32,11 +32,6 @@ from ...core.path_policy import (
 )
 from ..policies.base import CalculationPolicy
 from ..setup import logger
-from ..step_contract import (
-    calc_signature_matches,
-    load_calc_config_signature,
-    record_calc_step_signature,
-)
 
 __all__ = [
     "handle_backups",
@@ -304,14 +299,3 @@ def _run_calculation_step(
             f"Failed to parse {policy.name} output for {job_name}: {e}"
         ) from e
 
-
-def _save_config_hash(work_dir: str, config: dict[str, Any]):
-    try:
-        record_calc_step_signature(work_dir, config)
-    except (OSError, ValueError, TypeError) as e:
-        logger.debug(f"Config hash save failed: {e}")
-
-
-def _config_hash_matches(work_dir: str, config: dict[str, Any]) -> bool:
-    stored = load_calc_config_signature(work_dir)
-    return calc_signature_matches(stored, config)

@@ -12,7 +12,6 @@ CLI entry point is in ``confflow.cli``.
 
 from __future__ import annotations
 
-from .config_builder import load_workflow_config
 from .engine import run_workflow
 from .helpers import (
     as_list,
@@ -27,19 +26,15 @@ from .stats import (
     Tracer,
     WorkflowStatsTracker,
 )
-from .task_config import build_task_config, create_runtask_config
 from .validation import validate_inputs_compatible
 
 __all__ = [
     "run_workflow",
-    "load_workflow_config",
     "pushd",
     "as_list",
     "count_conformers_any",
     "count_conformers_in_xyz",
     "validate_inputs_compatible",
-    "build_task_config",
-    "create_runtask_config",
     "CheckpointManager",
     "WorkflowStatsTracker",
     "TaskStatsCollector",

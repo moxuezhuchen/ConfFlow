@@ -146,8 +146,8 @@ Examples:
 confgen mol.xyz --chain 1-2-3-4-5 --steps 180,180,180,180 -y
 # Explicit angle sets
 confgen mol.xyz --chain 1-2-3-4-5 --angles "0,120,240;0,60,120,180;180;0,120" -y
-# Direct calculation on an existing trajectory
-confcalc <search.xyz> -s <settings.ini>
+# Direct calculation on an existing trajectory using a workflow YAML calc step
+confcalc <search.xyz> -c confflow.example.yaml --step opt_b3lyp
 ```
 
 See the [Command Reference](docs/COMMAND_REFERENCE.md) for the full CLI reference.

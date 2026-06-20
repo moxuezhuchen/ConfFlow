@@ -91,7 +91,7 @@ class GlobalConfigModel(BaseModel):
     """Pydantic model for global configuration validation.
 
     Provides runtime type coercion and validation for all global parameters.
-    Used as a validation layer alongside the existing ConfigSchema.
+    Used for runtime validation in low-level task contexts.
     """
 
     model_config = ConfigDict(extra="allow")

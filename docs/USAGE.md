@@ -101,8 +101,8 @@ global:
 - `step_xx/output.xyz`：该步后处理（refine）输出（若开启 `auto_clean`）
 - `step_xx/result.xyz`：未精炼的原始输出（若未生成 cleaned 则以此为准）
 - `step_xx/failed.xyz`：该步失败构象集合（始终使用输入结构坐标），注释行包含 `Job/CID/Error`
-- `step_xx/.config_hash`：当前 calc 任务配置摘要；`--resume` 只有在它与现配置一致时才会复用该步输出
-- `.config_hash` 同时绑定本步输入签名；上游输入变化时会自动触发重算
+- `step_xx/manifest.json`：当前 calc step 状态、typed config digest、input digest、输出路径和任务统计
+- manifest 的 digest 不匹配时，该 step 的旧工件会被视为 stale 并重算
 
 在 `_work/failed` 目录下会聚合所有步骤的失败信息：
 
@@ -251,12 +251,12 @@ confrefine <input.xyz> [-o <output.xyz>] [-t <rmsd>] [--ewin <kcal/mol>] [--imag
 ### 6.1 命令格式
 
 ```bash
-confcalc <search.xyz> -s <settings.ini>
+confcalc <search.xyz> -c <workflow.yaml> [--step <name-or-index>]
 ```
 
 续传说明：
-- 默认会在工作目录生成 `results.db`，再次运行会自动跳过已成功的 `job_name` / `CID`。
-- 若 `results.db` 丢失但 `backups/` 仍在（例如断电后只保留了备份文件），默认也会尝试从 `backups` 中恢复已完成任务并跳过（可用 `resume_from_backups=false` 关闭）。
+- calc step 会在 step 目录写入 `manifest.json`、`results.db`、`result.xyz` 和 `failed.xyz`。
+- `manifest.json` 记录 typed config digest、input digest、状态和输出路径。
 
 ## 7. YAML 配置：工作流格式
 

@@ -5,10 +5,10 @@
 from __future__ import annotations
 
 import json
+from dataclasses import asdict, is_dataclass
 from typing import Any
 
-from ..config.loader import load_workflow_config_file
-from .task_config import build_structured_task_config
+from ..config.models import CalcStepParams, load_workflow_model
 
 __all__ = [
     "show_resolved_config",
@@ -53,9 +53,18 @@ def _select_step(steps: list[dict[str, Any]], step_ref: str) -> tuple[int, dict[
     return matches[0]
 
 
+def _config_as_dict(config: Any) -> dict[str, Any]:
+    if isinstance(config, dict):
+        return dict(config)
+    if is_dataclass(config):
+        return asdict(config)
+    raw = getattr(config, "__dict__", None)
+    return dict(raw) if isinstance(raw, dict) else {}
+
+
 def _resolve_step_config(
     step: dict[str, Any],
-    global_config: dict[str, Any],
+    global_config: Any,
     *,
     root_dir: str | None = None,
     all_steps: list[dict[str, Any]] | None = None,
@@ -67,16 +76,15 @@ def _resolve_step_config(
 
     step_type = str(step.get("type", "calc")).lower()
     if step_type in {"calc", "task"}:
-        resolved = dict(
-            build_structured_task_config(
-                params,
-                global_config,
-                root_dir=root_dir,
-                all_steps=all_steps,
-            )
-        )
+        del root_dir, all_steps
+        try:
+            resolved = CalcStepParams.from_params(params, global_config).to_runtime_dict()
+        except ValueError as exc:
+            resolved = _config_as_dict(global_config)
+            resolved.update(params)
+            resolved["config_error"] = str(exc)
     else:
-        resolved = dict(global_config)
+        resolved = _config_as_dict(global_config)
         resolved.update(params)
         if step_type in {"confgen", "gen"} and "bond_threshold" not in resolved:
             resolved["bond_threshold"] = params.get("bond_multiplier", 1.15)
@@ -121,9 +129,13 @@ def show_resolved_config(
     ValueError
         If step_ref is invalid.
     """
-    cfg = load_workflow_config_file(config_file)
-    global_config = cfg["global"]
-    steps = cfg["steps"]
+    workflow = load_workflow_model(config_file)
+    global_config = workflow.global_options
+    global_output = _config_as_dict(global_config)
+    steps = [
+        {"name": step.name, "type": step.type, "enabled": step.enabled, "params": dict(step.params)}
+        for step in workflow.steps
+    ]
     root_dir = None
 
     if step_ref is not None:
@@ -172,7 +184,7 @@ def show_resolved_config(
                 )
             output = {
                 "config_file": config_file,
-                "global_config": global_config,
+                "global_config": global_output,
                 "steps": steps_output,
             }
             print(json.dumps(output, indent=2, default=str))
@@ -180,7 +192,7 @@ def show_resolved_config(
             print(f"Config: {config_file}")
             print(f"Steps: {len(steps)}")
             print()
-            print(_format_text_section("Global config", global_config))
+            print(_format_text_section("Global config", global_output))
             for idx, step in enumerate(steps):
                 resolved = _resolve_step_config(
                     step,
