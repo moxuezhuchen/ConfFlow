@@ -95,7 +95,9 @@ def test_run_workflow_dispatches_to_step_handlers(tmp_path, monkeypatch):
 
         return StepExecutionResult(output_path=str(path))
 
-    def fake_calc(step_dir, current_input, params, global_config, root_dir, steps, failure_tracker, step_name):
+    def fake_calc(
+        step_dir, current_input, params, global_config, root_dir, steps, failure_tracker, step_name
+    ):
         del current_input, params, global_config, root_dir, steps, failure_tracker, step_name
         path = Path(step_dir) / "result.xyz"
         Path(step_dir).mkdir(parents=True, exist_ok=True)

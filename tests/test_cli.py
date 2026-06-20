@@ -342,7 +342,9 @@ def test_main_dry_run_skips_disabled_step_input_chain(tmp_path, capsys):
         encoding="utf-8",
     )
 
-    result = main([str(input_xyz), "-c", str(config_yaml), "--dry-run", "-w", str(tmp_path / "work")])
+    result = main(
+        [str(input_xyz), "-c", str(config_yaml), "--dry-run", "-w", str(tmp_path / "work")]
+    )
 
     output = capsys.readouterr().out
     assert result == 0

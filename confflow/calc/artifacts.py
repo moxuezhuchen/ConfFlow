@@ -245,9 +245,7 @@ class CalcArtifactManager:
                 input_digest=self.input_digest,
                 output=os.path.relpath(output_path, self.step_dir),
                 failed=(
-                    None
-                    if failed_path is None
-                    else os.path.relpath(failed_path, self.step_dir)
+                    None if failed_path is None else os.path.relpath(failed_path, self.step_dir)
                 ),
                 total_tasks=total_tasks,
                 succeeded=succeeded,

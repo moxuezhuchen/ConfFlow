@@ -126,10 +126,7 @@ class TestConftsCli:
 
         conf = tmp_path / "conf.yaml"
         conf.write_text(
-            "global:\n"
-            "  itask: 4\n"
-            "  keyword: opt(ts,calcfc)\n"
-            "  iprog: gaussian\n",
+            "global:\n" "  itask: 4\n" "  keyword: opt(ts,calcfc)\n" "  iprog: gaussian\n",
             encoding="utf-8",
         )
 

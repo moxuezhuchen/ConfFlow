@@ -57,6 +57,7 @@ def _itask_label(value: Any) -> str:
     }
     return mapping.get(raw, str(value).strip())
 
+
 __all__ = [
     "print_workflow_start",
     "print_step_header_block",

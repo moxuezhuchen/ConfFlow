@@ -173,7 +173,9 @@ def run_workflow(
                 params = step.get("params", {}) or {}
                 typed_global = GlobalOptions.from_mapping(global_config)
                 calc_config = CalcStepParams.from_params(params, typed_global)
-                input_for_digest = current_input if isinstance(current_input, str) else current_input[0]
+                input_for_digest = (
+                    current_input if isinstance(current_input, str) else current_input[0]
+                )
                 prepared = CalcArtifactManager(
                     step_dir,
                     step_name=step_name,

@@ -335,12 +335,15 @@ class TestExecutor:
         (work_dir / "job.out").write_text("ok", encoding="utf-8")
         backup_dir = tmp_path / "backup"
 
-        assert handle_backups(
-            str(work_dir),
-            {"ibkout": 1, "backup_dir": str(backup_dir)},
-            success=True,
-            cleanup_work_dir=False,
-        ) is True
+        assert (
+            handle_backups(
+                str(work_dir),
+                {"ibkout": 1, "backup_dir": str(backup_dir)},
+                success=True,
+                cleanup_work_dir=False,
+            )
+            is True
+        )
         assert (backup_dir / "job.out").exists()
 
 

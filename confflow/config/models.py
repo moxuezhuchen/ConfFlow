@@ -196,7 +196,9 @@ class CleanupOptions:
         clean_params = params.get("clean_params")
         if clean_params is None:
             clean_params = params.get("clean_opts")
-        enabled = _coerce_bool_flag(_merge(global_options, params, "auto_clean", DEFAULT_WORKFLOW_AUTO_CLEAN))
+        enabled = _coerce_bool_flag(
+            _merge(global_options, params, "auto_clean", DEFAULT_WORKFLOW_AUTO_CLEAN)
+        )
         dedup_only = _coerce_bool_flag(params.get("dedup_only", False))
         keep_all_topos = _coerce_bool_flag(params.get("keep_all_topos", False))
         no_h = _coerce_bool_flag(params.get("noH", global_options.noH))
@@ -483,18 +485,20 @@ class CalcStepParams:
         )
         ts = TSOptions(
             bond_atoms=ts_pair,
-            rescue_scan=_coerce_bool_flag(
-                params.get("ts_rescue_scan", global_options.ts_rescue_scan)
-            )
-            if task == "ts"
-            else False,
+            rescue_scan=(
+                _coerce_bool_flag(params.get("ts_rescue_scan", global_options.ts_rescue_scan))
+                if task == "ts"
+                else False
+            ),
             bond_drift_threshold=float(
                 params.get("ts_bond_drift_threshold", global_options.ts_bond_drift_threshold)
             ),
             rmsd_threshold=float(params.get("ts_rmsd_threshold", global_options.ts_rmsd_threshold)),
             scan_coarse_step=float(params.get("scan_coarse_step", global_options.scan_coarse_step)),
             scan_fine_step=float(params.get("scan_fine_step", global_options.scan_fine_step)),
-            scan_uphill_limit=int(params.get("scan_uphill_limit", global_options.scan_uphill_limit)),
+            scan_uphill_limit=int(
+                params.get("scan_uphill_limit", global_options.scan_uphill_limit)
+            ),
             scan_max_steps=(
                 None if params.get("scan_max_steps") is None else int(params["scan_max_steps"])
             ),
@@ -573,7 +577,9 @@ class CalcStepParams:
         if self.cleanup.max_conformers is not None:
             data["max_conformers"] = self.cleanup.max_conformers
         if self.blocks is not None:
-            data["blocks"] = format_orca_blocks(self.blocks) if isinstance(self.blocks, dict) else self.blocks
+            data["blocks"] = (
+                format_orca_blocks(self.blocks) if isinstance(self.blocks, dict) else self.blocks
+            )
         if self.orca_maxcore is not None:
             data["orca_maxcore"] = self.orca_maxcore
         if self.gaussian_modredundant is not None:

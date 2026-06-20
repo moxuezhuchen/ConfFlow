@@ -56,7 +56,9 @@ def test_confgen_recomputes_when_params_change(tmp_path, monkeypatch):
             encoding="utf-8",
         )
 
-    monkeypatch.setattr("confflow.workflow.step_handlers.confgen.run_generation", fake_run_generation)
+    monkeypatch.setattr(
+        "confflow.workflow.step_handlers.confgen.run_generation", fake_run_generation
+    )
 
     run_confgen_step(
         step_dir=str(step_dir),

@@ -63,11 +63,15 @@ def test_manifest_marks_completed_and_reuses_matching_output(tmp_path):
 def test_manifest_cleans_stale_output_when_config_changes(tmp_path):
     input_xyz = _xyz(tmp_path / "input.xyz")
     step_dir = tmp_path / "step_01_calc"
-    old = CalcArtifactManager(step_dir, step_name="calc", config=_calc_config(), input_path=input_xyz)
+    old = CalcArtifactManager(
+        step_dir, step_name="calc", config=_calc_config(), input_path=input_xyz
+    )
     step_dir.mkdir()
     stale = step_dir / "result.xyz"
     stale.write_text("stale", encoding="utf-8")
-    old.mark_completed(output_path=stale, failed_path=None, total_tasks=1, succeeded=1, failed_count=0)
+    old.mark_completed(
+        output_path=stale, failed_path=None, total_tasks=1, succeeded=1, failed_count=0
+    )
 
     new = CalcArtifactManager(
         step_dir,

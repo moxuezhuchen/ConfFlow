@@ -298,4 +298,3 @@ def _run_calculation_step(
         raise CalculationParseError(
             f"Failed to parse {policy.name} output for {job_name}: {e}"
         ) from e
-

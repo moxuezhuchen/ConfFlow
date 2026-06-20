@@ -222,8 +222,9 @@ pytest tests/ --cov=confflow --cov-report=term-missing
 最近一次重构验证（2026-06-20）：
 
 - `python3 -m compileall confflow tests`：通过
-- `.venv/bin/python -m pytest --collect-only -q`：653 tests collected
-- `.venv/bin/python -m pytest -q`：653 passed
+- `.venv/bin/python -m pytest --collect-only -q`：700 tests collected
+- `.venv/bin/python -m pytest -q`：700 passed
+- `.venv/bin/python -m pytest tests/ --cov=confflow --cov-report=term-missing --cov-report=xml`：通过，total coverage 85.01%
 - `.venv/bin/ruff check confflow tests`：通过
 - `.venv/bin/mypy confflow`：通过（`mypy.ini` 仍提示存在未使用的 `[mypy-tests.*]` section）
 - `.venv/bin/python -m pip check`：通过

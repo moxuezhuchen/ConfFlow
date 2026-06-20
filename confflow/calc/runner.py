@@ -69,8 +69,7 @@ class CalcStepRunner:
             yield {
                 "title": conf["comment"],
                 "coords": [
-                    f"{atom} {x} {y} {z}"
-                    for atom, (x, y, z) in zip(conf["atoms"], conf["coords"])
+                    f"{atom} {x} {y} {z}" for atom, (x, y, z) in zip(conf["atoms"], conf["coords"])
                 ],
                 "metadata": conf.get("metadata", {}),
             }
