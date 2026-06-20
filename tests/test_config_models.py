@@ -6,13 +6,13 @@ from __future__ import annotations
 
 import pytest
 
+from confflow.calc.artifacts import compute_config_digest
 from confflow.config.models import (
     CalcStepParams,
     GlobalOptions,
     WorkflowConfig,
     load_workflow_model,
 )
-from confflow.calc.artifacts import compute_config_digest
 
 
 def test_load_workflow_model_coerces_global_and_steps(tmp_path):

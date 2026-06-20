@@ -349,6 +349,8 @@ steps:
       end
 ```
 
+`itask` 只定义 ConfFlow 的任务语义，用于结果解析、能量字段分类、频率/TS 后处理和 manifest 签名；它不会自动改写外部程序输入文件的 route keyword。真实 Gaussian/ORCA 的 `opt`、`freq`、`opt_freq`、`ts` 计算必须在 `keyword` 中显式写对应程序关键字，例如 Gaussian `HF/STO-3G Opt Freq`，或 ORCA `HF STO-3G Freq`。
+
 ### 7.4 已移除功能（不再支持）
 
 - 键冻结 / ModRedundant / constraints：仅保留 `freeze`（冻结原子坐标）。

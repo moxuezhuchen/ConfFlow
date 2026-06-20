@@ -85,8 +85,8 @@ class TestConftsCli:
                 pass
 
     def test_confts_cli_runs_typed_runner(self, tmp_path, monkeypatch):
-        from confflow.confts import _cli
         from confflow.calc.runner import CalcStepResult
+        from confflow.confts import _cli
 
         xyz = tmp_path / "test.xyz"
         xyz.write_text("1\n\nC 0 0 0\n")

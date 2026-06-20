@@ -71,7 +71,7 @@ class CalcManifest:
     error: str | None = None
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "CalcManifest":
+    def from_dict(cls, data: dict[str, Any]) -> CalcManifest:
         return cls(
             schema_version=int(data.get("schema_version", 0)),
             step_name=str(data.get("step_name", "")),
@@ -234,6 +234,7 @@ class CalcArtifactManager:
         succeeded: int,
         failed_count: int,
     ) -> None:
+        existing = self.load()
         self._write(
             CalcManifest(
                 schema_version=MANIFEST_SCHEMA_VERSION,
@@ -251,12 +252,13 @@ class CalcArtifactManager:
                 total_tasks=total_tasks,
                 succeeded=succeeded,
                 failed_count=failed_count,
-                created_at=(self.load().created_at if self.load() else None) or _utc_now(),
+                created_at=(existing.created_at if existing else None) or _utc_now(),
                 completed_at=_utc_now(),
             )
         )
 
     def mark_failed(self, error: str) -> None:
+        existing = self.load()
         self._write(
             CalcManifest(
                 schema_version=MANIFEST_SCHEMA_VERSION,
@@ -266,7 +268,7 @@ class CalcArtifactManager:
                 config_digest=self.config_digest,
                 input_digest=self.input_digest,
                 error=error,
-                created_at=(self.load().created_at if self.load() else None) or _utc_now(),
+                created_at=(existing.created_at if existing else None) or _utc_now(),
                 completed_at=_utc_now(),
             )
         )

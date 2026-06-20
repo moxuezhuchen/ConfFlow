@@ -137,7 +137,7 @@ def _parse_clean_opts_like_string(opts_str: str) -> tuple[float | None, float | 
     return threshold, energy_window, energy_tolerance
 
 
-def _merge(global_options: "GlobalOptions", params: dict[str, Any], key: str, default: Any = None):
+def _merge(global_options: GlobalOptions, params: dict[str, Any], key: str, default: Any = None):
     if key in params and params[key] is not None:
         return params[key]
     return getattr(global_options, key, default)
@@ -192,7 +192,7 @@ class CleanupOptions:
     max_conformers: int | None = None
 
     @classmethod
-    def from_params(cls, params: dict[str, Any], global_options: "GlobalOptions") -> "CleanupOptions":
+    def from_params(cls, params: dict[str, Any], global_options: GlobalOptions) -> CleanupOptions:
         clean_params = params.get("clean_params")
         if clean_params is None:
             clean_params = params.get("clean_opts")
@@ -322,7 +322,7 @@ class GlobalOptions:
     orca_maxcore: int | str | None = None
 
     @classmethod
-    def from_mapping(cls, raw: dict[str, Any] | None) -> "GlobalOptions":
+    def from_mapping(cls, raw: dict[str, Any] | None) -> GlobalOptions:
         raw = _as_dict(raw)
         allowed = raw.get("allowed_executables")
         if isinstance(allowed, str):
@@ -422,7 +422,7 @@ class CalcStepParams:
         global_options: GlobalOptions,
         *,
         input_chk_dir: str | None = None,
-    ) -> "CalcStepParams":
+    ) -> CalcStepParams:
         params = _as_dict(params)
         program = _normalize_iprog_label(params.get("iprog", global_options.iprog))
         if program not in {"g16", "orca"}:
@@ -538,7 +538,10 @@ class CalcStepParams:
         )
 
     def canonical_dict(self) -> dict[str, Any]:
-        return json.loads(json.dumps(self.to_runtime_dict(include_runtime_paths=False), sort_keys=True))
+        data = json.loads(
+            json.dumps(self.to_runtime_dict(include_runtime_paths=False), sort_keys=True)
+        )
+        return data if isinstance(data, dict) else {}
 
     def to_runtime_dict(self, *, include_runtime_paths: bool = True) -> dict[str, Any]:
         data: dict[str, Any] = {
@@ -629,7 +632,7 @@ class WorkflowConfig:
     raw: dict[str, Any]
 
     @classmethod
-    def from_mapping(cls, raw: dict[str, Any]) -> "WorkflowConfig":
+    def from_mapping(cls, raw: dict[str, Any]) -> WorkflowConfig:
         if not isinstance(raw, dict):
             raise ValueError("workflow config root must be a mapping")
         global_options = GlobalOptions.from_mapping(raw.get("global"))

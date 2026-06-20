@@ -141,6 +141,11 @@ def run_dry_run(input_files: list[str], config_file: str, work_dir: str) -> None
     print(f"Steps: {len(steps)}")
 
     for idx, step in enumerate(steps, start=1):
+        if not step.get("enabled", True):
+            print("")
+            print(f"[{idx}] {step.get('name', f'step_{idx}')} ({step.get('type', '')})")
+            print("  disabled: true")
+            continue
         params = step.get("params") or {}
         step_type = str(step.get("type", "")).lower()
         step_name = str(step.get("name", f"step_{idx}"))

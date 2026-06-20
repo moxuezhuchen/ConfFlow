@@ -322,6 +322,34 @@ def test_main_dry_run_calc_resolved_config_shows_step_override(tmp_path, capsys)
     assert "cores_per_task=4" in captured.out
 
 
+def test_main_dry_run_skips_disabled_step_input_chain(tmp_path, capsys):
+    input_xyz = tmp_path / "input.xyz"
+    input_xyz.write_text("1\ntest\nH 0 0 0\n", encoding="utf-8")
+    config_yaml = tmp_path / "config.yaml"
+    config_yaml.write_text(
+        "global:\n"
+        "  iprog: orca\n"
+        "  itask: sp\n"
+        "  keyword: HF\n"
+        "steps:\n"
+        "  - name: disabled\n"
+        "    type: calc\n"
+        "    enabled: false\n"
+        "    params: {}\n"
+        "  - name: active\n"
+        "    type: calc\n"
+        "    params: {}\n",
+        encoding="utf-8",
+    )
+
+    result = main([str(input_xyz), "-c", str(config_yaml), "--dry-run", "-w", str(tmp_path / "work")])
+
+    output = capsys.readouterr().out
+    assert result == 0
+    assert "disabled: true" in output
+    assert f"input: {input_xyz}" in output
+
+
 def test_main_dry_run_missing_executable_path_is_reported(tmp_path, capsys):
     input_xyz = tmp_path / "input.xyz"
     input_xyz.write_text("2\ntest\nC 0 0 0\nH 0 0 1\n", encoding="utf-8")

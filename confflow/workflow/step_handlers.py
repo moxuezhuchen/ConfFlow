@@ -19,8 +19,8 @@ from ..core.pairs import normalize_pair_list
 from ..core.utils import get_logger
 from ..shared.defaults import DEFAULT_MAX_PARALLEL_JOBS
 from .helpers import as_list, is_multi_frame_any, pushd
-from .step_naming import build_step_dir_name_map
 from .stats import FailureTracker
+from .step_naming import build_step_dir_name_map
 
 __all__ = [
     "StepContext",
@@ -92,7 +92,7 @@ def _file_sha256(path: str) -> str:
 
 def _compute_input_signature(input_source: str | list[str]) -> str:
     paths = [input_source] if isinstance(input_source, str) else list(input_source)
-    payload = []
+    payload: list[dict[str, Any]] = []
     for path in paths:
         abspath = os.path.abspath(str(path))
         try:

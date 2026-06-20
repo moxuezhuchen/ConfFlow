@@ -4,24 +4,22 @@
 
 from __future__ import annotations
 
-import os
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 
-from ..config.models import load_workflow_model
 from ..blocks.refine.result import RefineResult
-from ..config.models import CalcStepParams
+from ..config.models import CalcStepParams, load_workflow_model
 from ..core import io as io_xyz
+from ..core import models
 from ..core.console import CalcProgressReporter
 from ..core.exceptions import ConfFlowError
 from ..core.path_policy import resolve_sandbox_root, validate_managed_path
-from ..core import models
 from .artifacts import CalcArtifactManager
 from .components.task_runner import TaskRunner
 from .db.database import ResultsDB
 from .postprocess import run_refine_postprocess
-from .result_writer import append_result, write_failed_xyz
+from .result_writer import append_result
 from .run_services import ResultAssemblyService, TaskRecoveryService, TaskSourceBuilder
 from .setup import setup_logging
 from .task_execution import execute_tasks
@@ -187,7 +185,7 @@ class CalcStepRunner:
                         workers=request.config.resources.cores_per_task
                     ),
                 )
-                if isinstance(clean_result, RefineResult) and clean_result.output_count > 0:
+                if isinstance(clean_result, RefineResult) and clean_result.kept_count > 0:
                     output_path = clean_output
                 elif clean_output.exists():
                     output_path = clean_output

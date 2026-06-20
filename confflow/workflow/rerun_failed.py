@@ -136,7 +136,6 @@ def run_rerun_failed(
     if not isinstance(params, dict):
         raise ConfigurationError(f"Step {step_index + 1} params must be a dict")
 
-    root_dir = os.path.dirname(resolved_step_dir)
     calc_config = CalcStepParams.from_params(params, global_config)
     result = CalcStepRunner().run(
         CalcStepRequest(

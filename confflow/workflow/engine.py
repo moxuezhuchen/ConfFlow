@@ -32,6 +32,7 @@ from .stats import (
     TaskStatsCollector,
     Tracer,
 )
+from .step_handlers import StepExecutionResult
 from .step_handlers import run_calc_step as step_run_calc_step
 from .step_handlers import run_confgen_step as step_run_confgen_step
 from .step_naming import build_step_dir_name_map
@@ -74,7 +75,7 @@ def _run_confgen_step(
     params: dict[str, Any],
     input_files: list[str],
     global_config: dict[str, Any],
-) -> str:
+) -> StepExecutionResult:
     """Execute a conformer generation step."""
     return step_run_confgen_step(step_dir, current_input, params, input_files, global_config)
 
@@ -88,7 +89,7 @@ def _run_calc_step(
     steps: list[dict[str, Any]],
     failure_tracker: FailureTracker,
     step_name: str,
-) -> str:
+) -> StepExecutionResult:
     """Execute a calculation task step."""
     return step_run_calc_step(
         step_dir=step_dir,
