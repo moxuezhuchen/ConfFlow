@@ -135,9 +135,7 @@ def _resolve_confgen_workers(
             f"confgen workers must be an integer >= 1, got {raw_workers!r}"
         ) from exc
     if workers < 1:
-        raise ConfFlowError(
-            f"confgen workers must be an integer >= 1, got {raw_workers!r}"
-        )
+        raise ConfFlowError(f"confgen workers must be an integer >= 1, got {raw_workers!r}")
     return workers
 
 

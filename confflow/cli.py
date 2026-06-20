@@ -340,6 +340,9 @@ def main(args_list: list[str] | None = None):
         return stop_all_confflow_processes()
 
     if args.export_work_dir:
+        if args.format not in {"csv", "json"}:
+            print("Error: --export supports --format csv or json", file=sys.stderr)
+            return ExitCode.USAGE_ERROR
         try:
             result = export_results(
                 args.export_work_dir,

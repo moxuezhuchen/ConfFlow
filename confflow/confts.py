@@ -56,7 +56,7 @@ def _cli(argv: list[str] | None = None) -> int:
     except (configparser.Error, ConfFlowError, OSError, ValueError) as e:
         print(f"Error: {e}", file=sys.stderr)
         return ExitCode.RUNTIME_ERROR
-    if isinstance(summary, calc.CalcRunSummary) and summary.all_tasks_failed:
+    if isinstance(summary, calc.CalcRunSummary) and summary.should_return_error:
         print(calc.format_all_failed_message(summary), file=sys.stderr)
         return ExitCode.RUNTIME_ERROR
     return ExitCode.SUCCESS

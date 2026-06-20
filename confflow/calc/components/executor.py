@@ -278,6 +278,7 @@ def _run_calculation_step(
     while proc.poll() is None:
         if stop_file and os.path.exists(stop_file):
             proc.kill()
+            proc.wait()
             raise StopRequestedError("STOP signal received")
         if (
             max_wall_time_seconds is not None

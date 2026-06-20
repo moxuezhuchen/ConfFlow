@@ -68,6 +68,31 @@ def test_print_step_header_block_calc(monkeypatch):
     assert labels == ["Keyword", "Resource", "Freeze", "Refine"]
 
 
+def test_print_step_header_block_uses_calc_default_itask(monkeypatch):
+    calls = []
+
+    def _mock_step_header(step_idx, total_steps, name, step_type, in_count):
+        calls.append(("header", step_idx, total_steps, name, step_type, in_count))
+
+    def _mock_kv(label, value):
+        calls.append(("kv", label, value))
+
+    monkeypatch.setattr(presenter, "print_step_header", _mock_step_header)
+    monkeypatch.setattr(presenter, "print_kv", _mock_kv)
+
+    presenter.print_step_header_block(
+        step_index=1,
+        total_steps=1,
+        step_name="step_01",
+        step_type="calc",
+        global_config={},
+        params={"iprog": "orca"},
+        in_count=1,
+    )
+
+    assert "calc (orca/opt_freq)" in calls[0][4]
+
+
 def test_emit_final_report_and_lowest_updates_stats(viz_stubs, capture_write_xyz, tmp_path):
     input_xyz = tmp_path / "final.xyz"
     input_xyz.write_text("1\n\nH 0 0 0\n", encoding="utf-8")

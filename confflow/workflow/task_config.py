@@ -52,6 +52,7 @@ from .task_config_helpers import (
 )
 
 logger = logging.getLogger("confflow.workflow.config_builder")
+DEFAULT_CALC_TASK = TaskKind.OPT_FREQ.value
 
 __all__ = [
     "_itask_label",
@@ -465,9 +466,7 @@ def _build_legacy_task_config(
     else:
         freeze_val = "0"
 
-    iprog_label = _normalize_iprog_label(
-        params.get("iprog", global_config.get("iprog", "orca"))
-    )
+    iprog_label = _normalize_iprog_label(params.get("iprog", global_config.get("iprog", "orca")))
     config["itask"] = itask_str
     config["iprog"] = iprog_label
     config["freeze"] = _format_freeze_value(freeze_val)
@@ -557,7 +556,7 @@ def build_structured_task_config(
 
     raw_iprog = params.get("iprog", global_config.get("iprog", "orca"))
     iprog_label = _normalize_iprog_label(raw_iprog)
-    raw_itask = params.get("itask", global_config.get("itask", "opt"))
+    raw_itask = params.get("itask", global_config.get("itask", DEFAULT_CALC_TASK))
     itask_label = _itask_label(raw_itask)
     _validate_program_blocks(iprog_label, blocks_value)
 

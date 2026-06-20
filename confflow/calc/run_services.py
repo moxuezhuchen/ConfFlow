@@ -183,7 +183,7 @@ class ResultAssemblyService:
         for result in result_iter:
             if result["status"] in ["success", "skipped"]:
                 success_count += 1
-            elif result.get("status") == "failed":
+            elif result.get("status") in {"failed", "canceled", "pending"}:
                 failed.append(result)
         return success_count, failed
 

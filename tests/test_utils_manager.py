@@ -20,7 +20,7 @@ from confflow.calc.config_types import (
     TaskKind,
     TSOptions,
 )
-from confflow.calc.manager import ChemTaskManager
+from confflow.calc.manager import ChemTaskManager, format_all_failed_message
 from confflow.core.utils import (
     ConfFlowLogger,
     InputFileError,
@@ -970,8 +970,13 @@ def test_manager_run_stop_beacon(tmp_path):
     stop_file = tmp_path / "work" / "STOP"
     stop_file.touch()
 
-    manager.run(str(xyz))
+    summary = manager.run(str(xyz))
     assert manager.stop_requested is True
+    assert summary.stopped is True
+    assert summary.canceled_count + summary.pending_count == 2
+    assert summary.failed_count == 0
+    assert summary.non_success_count == 2
+    assert "stopped before completion" in format_all_failed_message(summary)
 
 
 def test_manager_run_failed_output(tmp_path, monkeypatch):
@@ -1180,7 +1185,7 @@ def test_manager_read_xyz_errors(tmp_path):
 def test_manager_iter_input_geometries_skips_bad_frame_and_keeps_later_valid(tmp_path):
     xyz = tmp_path / "mixed.xyz"
     xyz.write_text(
-        "1\nok1\nH 0 0 0\n" "1\nbad\nH nope 0 0\n" "1\nok2\nH 0 0 1\n",
+        "1\nok1\nH 0 0 0\n1\nbad\nH nope 0 0\n1\nok2\nH 0 0 1\n",
         encoding="utf-8",
     )
 

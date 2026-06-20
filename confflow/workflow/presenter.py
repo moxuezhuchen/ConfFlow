@@ -26,7 +26,7 @@ from ..shared.defaults import (
     DEFAULT_MAX_PARALLEL_JOBS,
     DEFAULT_TOTAL_MEMORY,
 )
-from .config_builder import _itask_label, _normalize_iprog_label
+from .config_builder import DEFAULT_CALC_TASK, _itask_label, _normalize_iprog_label
 from .helpers import count_conformers_any
 
 __all__ = [
@@ -71,12 +71,13 @@ def print_step_header_block(
     if step_type in ["calc", "task"]:
         merged = {**global_config, **params}
         iprog = _normalize_iprog_label(merged.get("iprog", "orca"))
-        itask = _itask_label(merged.get("itask", "opt"))
+        raw_itask = merged.get("itask", DEFAULT_CALC_TASK)
+        itask = _itask_label(raw_itask)
         cores = merged.get("cores_per_task", DEFAULT_CORES_PER_TASK)
         mem = merged.get("total_memory", DEFAULT_TOTAL_MEMORY)
         max_jobs = merged.get("max_parallel_jobs", DEFAULT_MAX_PARALLEL_JOBS)
 
-        itask_int = parse_itask(merged.get("itask", "opt"))
+        itask_int = parse_itask(raw_itask)
         freeze_raw = merged.get("freeze", "0") if itask_int in [0, 3] else "0"
         freeze_idx = parse_index_spec(freeze_raw)
         freeze_fmt = format_index_ranges(freeze_idx)

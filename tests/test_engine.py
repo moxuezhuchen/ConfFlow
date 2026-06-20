@@ -12,7 +12,7 @@ import pytest
 
 import confflow.blocks.confgen as confgen
 import confflow.blocks.viz as viz
-from confflow.calc.config_types import ExecutionOptions
+from confflow.calc.config_types import ExecutionOptions, ensure_calc_task_config
 from confflow.calc.step_contract import (
     compute_calc_config_signature,
     compute_calc_input_signature,
@@ -730,6 +730,13 @@ def test_auto_clean_defaults_are_explicit_for_workflow_and_standalone():
 
     assert workflow_cfg["auto_clean"] == "true"
     assert ExecutionOptions().auto_clean is False
+
+
+def test_default_itask_is_consistent_for_workflow_and_standalone():
+    workflow_cfg = build_workflow_task_config(params={"keyword": "HF"}, global_config={})
+    standalone_cfg = ensure_calc_task_config({"keyword": "HF"})
+
+    assert workflow_cfg["itask"] == standalone_cfg["itask"] == "opt_freq"
 
 
 def test_build_structured_task_config_delete_work_dir_is_known(caplog):

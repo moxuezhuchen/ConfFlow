@@ -62,14 +62,25 @@ class CalcRunSummary:
     total_tasks: int
     success_count: int
     failed: list[dict[str, Any]]
+    canceled_count: int = 0
+    pending_count: int = 0
+    stopped: bool = False
 
     @property
     def failed_count(self) -> int:
+        return sum(1 for result in self.failed if result.get("status") == "failed")
+
+    @property
+    def non_success_count(self) -> int:
         return len(self.failed)
 
     @property
     def all_tasks_failed(self) -> bool:
         return self.total_tasks > 0 and self.success_count == 0
+
+    @property
+    def should_return_error(self) -> bool:
+        return self.stopped or self.all_tasks_failed
 
 
 def _first_failure_reason(failed: list[dict[str, Any]]) -> str:
@@ -81,6 +92,13 @@ def _first_failure_reason(failed: list[dict[str, Any]]) -> str:
 
 
 def format_all_failed_message(summary: CalcRunSummary) -> str:
+    if summary.stopped:
+        return (
+            f"Calculation stopped before completion "
+            f"(success={summary.success_count}, failed={summary.failed_count}, "
+            f"canceled={summary.canceled_count}, pending={summary.pending_count}, "
+            f"total={summary.total_tasks})."
+        )
     reason = _first_failure_reason(summary.failed)
     return (
         f"All calculation tasks failed ({summary.failed_count}/{summary.total_tasks}). "
@@ -374,6 +392,24 @@ class ChemTaskManager:
         """Write failed conformers to failed.xyz (using original input structures)."""
         write_failed_xyz(self.work_dir, failed, tasks)
 
+    def _count_non_success_statuses(self) -> tuple[int, int]:
+        """Return (canceled, pending) counts from the current results DB."""
+        results_db = self._require_results_db()
+        result_iter = (
+            results_db.iter_all_results()
+            if hasattr(results_db, "iter_all_results")
+            else iter(results_db.get_all_results())
+        )
+        canceled = 0
+        pending = 0
+        for result in result_iter:
+            status = result.get("status")
+            if status == "canceled":
+                canceled += 1
+            elif status == "pending":
+                pending += 1
+        return canceled, pending
+
     @staticmethod
     def _format_result_comment(res: dict[str, Any], orig_meta: dict[str, Any]) -> str:
         """Build the XYZ comment line for a single successful result."""
@@ -585,7 +621,17 @@ class ChemTaskManager:
             self._execute_tasks(todo)
 
             if self._handle_stop():
-                return CalcRunSummary(total_tasks, 0, [])
+                success_count, failed = assembly.collect_outcomes()
+                assembly.write_failed_xyz(failed, tasks)
+                canceled_count, pending_count = self._count_non_success_statuses()
+                return CalcRunSummary(
+                    total_tasks,
+                    success_count,
+                    failed,
+                    canceled_count=canceled_count,
+                    pending_count=pending_count,
+                    stopped=True,
+                )
 
             success_count, failed = assembly.collect_outcomes()
             assembly.write_failed_xyz(failed, tasks)
@@ -631,7 +677,7 @@ def main():
     except (configparser.Error, ConfFlowError, OSError, ValueError) as e:
         print(f"Error: {e}", file=sys.stderr)
         return ExitCode.RUNTIME_ERROR
-    if isinstance(summary, CalcRunSummary) and summary.all_tasks_failed:
+    if isinstance(summary, CalcRunSummary) and summary.should_return_error:
         print(format_all_failed_message(summary), file=sys.stderr)
         return ExitCode.RUNTIME_ERROR
     return ExitCode.SUCCESS

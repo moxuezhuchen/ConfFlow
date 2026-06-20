@@ -223,6 +223,17 @@ def test_main_export_missing_work_dir_returns_usage_error(tmp_path, capsys):
     assert "Work directory does not exist" in captured.err
 
 
+def test_main_export_text_format_returns_usage_error(tmp_path, capsys):
+    work_dir = tmp_path / "work"
+    work_dir.mkdir()
+
+    result = main(["--export", str(work_dir), "--format", "text"])
+
+    captured = capsys.readouterr()
+    assert result == 1
+    assert "--export supports --format csv or json" in captured.err
+
+
 def test_main_normal_path_still_calls_run_workflow(tmp_path):
     input_xyz = tmp_path / "input.xyz"
     input_xyz.write_text("2\ntest\nC 0 0 0\nH 0 0 1\n", encoding="utf-8")
@@ -265,7 +276,7 @@ def test_main_dry_run_config_error_returns_usage_error(tmp_path, capsys):
     input_xyz.write_text("2\ntest\nC 0 0 0\nH 0 0 1\n", encoding="utf-8")
     config_yaml = tmp_path / "config.yaml"
     config_yaml.write_text(
-        "global: {}\n" "steps:\n" "  - name: gen\n" "    type: confgen\n" "    params: {}\n",
+        "global: {}\nsteps:\n  - name: gen\n    type: confgen\n    params: {}\n",
         encoding="utf-8",
     )
 

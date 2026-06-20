@@ -245,6 +245,7 @@ class Tracer:
         k : int
             Number of top low-energy conformers to trace.
         """
+
         def _existing_xyz_paths(value: Any) -> list[str]:
             if isinstance(value, str):
                 return [value] if os.path.exists(value) else []

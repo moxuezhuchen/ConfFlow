@@ -84,6 +84,9 @@ include = ["confflow*"]
 [tool.setuptools.package-data]
 confflow = ["*.yaml", "*.md"]
 
+[tool.setuptools.data-files]
+"share/confflow" = ["confflow.example.yaml"]
+
 [tool.black]
 line-length = 100
 target-version = ['py310']

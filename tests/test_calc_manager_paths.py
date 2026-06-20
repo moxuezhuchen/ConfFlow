@@ -6,6 +6,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -145,6 +146,46 @@ def test_confcalc_partial_failure_keeps_zero_exit(tmp_path):
             failed=[{"job_name": "A000002", "error": "boom"}],
         )
         assert manager_main() == ExitCode.SUCCESS
+
+
+def test_confcalc_partial_stop_returns_nonzero(tmp_path, capsys):
+    xyz_path, settings_path = _write_minimal_calc_inputs(tmp_path, orca_path="orca")
+
+    with (
+        patch("confflow.calc.manager.ChemTaskManager.run") as mock_run,
+        patch("sys.argv", ["confcalc", str(xyz_path), "-s", str(settings_path)]),
+    ):
+        mock_run.return_value = CalcRunSummary(
+            total_tasks=2,
+            success_count=1,
+            failed=[{"job_name": "A000002", "status": "canceled"}],
+            canceled_count=1,
+            stopped=True,
+        )
+        assert manager_main() == ExitCode.RUNTIME_ERROR
+
+    assert "Calculation stopped before completion" in capsys.readouterr().err
+
+
+def test_confts_partial_stop_returns_nonzero(tmp_path, capsys):
+    from confflow.confts import _cli
+
+    xyz_path, settings_path = _write_minimal_calc_inputs(tmp_path, orca_path="orca")
+
+    with (
+        patch("confflow.calc.ChemTaskManager") as mock_manager_cls,
+        patch("confflow.confts.cli_output_to_txt", return_value=nullcontext()),
+    ):
+        mock_manager_cls.return_value.run.return_value = CalcRunSummary(
+            total_tasks=2,
+            success_count=1,
+            failed=[{"job_name": "A000002", "status": "canceled"}],
+            canceled_count=1,
+            stopped=True,
+        )
+        assert _cli([str(xyz_path), "-s", str(settings_path)]) == ExitCode.RUNTIME_ERROR
+
+    assert "Calculation stopped before completion" in capsys.readouterr().err
 
 
 def test_prepare_calc_step_dir_refuses_stale_cleanup_outside_sandbox(tmp_path):

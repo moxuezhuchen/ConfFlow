@@ -472,6 +472,7 @@ class TestExecutorAdvanced:
                 _run_calculation_step(str(work_dir), "job", policy, None, config)
 
             mock_proc.kill.assert_called_once()
+            mock_proc.wait.assert_called_once()
 
     @pytest.mark.parametrize(
         "value",

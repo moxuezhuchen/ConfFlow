@@ -16,14 +16,15 @@ from typing import Any
 from ..config.loader import load_workflow_config_file
 from .step_naming import build_step_dir_name_map, sanitize_step_dir_name
 from .task_config import (
+    DEFAULT_CALC_TASK,
+    build_task_config,
+    create_runtask_config,
+)
+from .task_config import (
     _itask_label as _task_config_itask_label,
 )
 from .task_config import (
     _normalize_iprog_label as _task_config_normalize_iprog_label,
-)
-from .task_config import (
-    build_task_config,
-    create_runtask_config,
 )
 
 __all__ = [
@@ -32,6 +33,7 @@ __all__ = [
     "load_workflow_config",
     "build_task_config",
     "create_runtask_config",
+    "DEFAULT_CALC_TASK",
 ]
 
 _itask_label = _task_config_itask_label
