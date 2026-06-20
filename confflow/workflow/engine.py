@@ -73,10 +73,14 @@ def _expected_output_reason(step_type: str | None) -> str:
 
 
 def _run_confgen_step(
-    step_dir: str, current_input: str | list[str], params: dict[str, Any], input_files: list[str]
+    step_dir: str,
+    current_input: str | list[str],
+    params: dict[str, Any],
+    input_files: list[str],
+    global_config: dict[str, Any],
 ) -> str:
     """Execute a conformer generation step."""
-    return step_run_confgen_step(step_dir, current_input, params, input_files)
+    return step_run_confgen_step(step_dir, current_input, params, input_files, global_config)
 
 
 def _run_calc_step(
@@ -260,7 +264,13 @@ def run_workflow(
 
         try:
             if step_type in ["confgen", "gen"]:
-                current_input = _run_confgen_step(step_dir, current_input, params, input_files)
+                current_input = _run_confgen_step(
+                    step_dir,
+                    current_input,
+                    params,
+                    input_files,
+                    global_config,
+                )
                 io_xyz.ensure_xyz_cids(current_input, prefix=index_to_letter_prefix(0))
                 if getattr(current_input, "copied_multi_frame", False):
                     step_stats["status"] = TaskStatus.SKIPPED_MULTI

@@ -12,6 +12,7 @@ import pytest
 
 import confflow.blocks.confgen as confgen
 import confflow.blocks.viz as viz
+from confflow.calc.config_types import ExecutionOptions
 from confflow.calc.step_contract import (
     compute_calc_config_signature,
     compute_calc_input_signature,
@@ -35,6 +36,9 @@ from confflow.workflow.task_config import (
     _itask_label,
     _normalize_iprog_label,
     build_structured_task_config,
+)
+from confflow.workflow.task_config import (
+    build_task_config as build_workflow_task_config,
 )
 
 
@@ -721,6 +725,13 @@ def test_build_structured_task_config_respects_delete_work_dir_override():
     assert default_cfg.execution.delete_work_dir is True
 
 
+def test_auto_clean_defaults_are_explicit_for_workflow_and_standalone():
+    workflow_cfg = build_workflow_task_config(params={"keyword": "HF"}, global_config={})
+
+    assert workflow_cfg["auto_clean"] == "true"
+    assert ExecutionOptions().auto_clean is False
+
+
 def test_build_structured_task_config_delete_work_dir_is_known(caplog):
     with caplog.at_level("WARNING", logger="confflow.workflow.config_builder"):
         cfg = build_structured_task_config(
@@ -756,23 +767,52 @@ def test_build_task_config_preserves_global_max_wall_time():
 def test_build_structured_task_config_preserves_typed_blocks_and_lists():
     cfg = build_structured_task_config(
         params={
-            "iprog": "g16",
+            "iprog": "orca",
             "itask": "opt",
             "keyword": "HF",
             "freeze": [1, 2],
             "blocks": {"geom": {"Constraints": ["{ C 0 C }"]}},
-            "gaussian_link0": ["%Mem=8GB", "%NoSave"],
-            "gaussian_modredundant": ["B 1 2 F"],
-            "allowed_executables": ["/opt/g16/g16", "g16"],
+            "allowed_executables": ["/opt/orca/orca", "orca"],
         },
         global_config={},
     )
 
     assert cfg["freeze"] == [1, 2]
     assert cfg["blocks"] == {"geom": {"Constraints": ["{ C 0 C }"]}}
+    assert cfg["allowed_executables"] == ["/opt/orca/orca", "orca"]
+
+
+def test_build_structured_task_config_preserves_gaussian_string_sections():
+    cfg = build_structured_task_config(
+        params={
+            "iprog": "g16",
+            "itask": "opt",
+            "keyword": "HF",
+            "blocks": "SCRF=(SMD,Solvent=Water)",
+            "gaussian_link0": ["%Mem=8GB", "%NoSave"],
+            "gaussian_modredundant": ["B 1 2 F"],
+        },
+        global_config={},
+    )
+
+    assert cfg["blocks"] == "SCRF=(SMD,Solvent=Water)"
     assert cfg["gaussian_link0"] == ["%Mem=8GB", "%NoSave"]
     assert cfg["gaussian_modredundant"] == ["B 1 2 F"]
-    assert cfg["allowed_executables"] == ["/opt/g16/g16", "g16"]
+
+
+def test_build_task_config_rejects_gaussian_dict_blocks():
+    params = {
+        "iprog": "g16",
+        "itask": "opt",
+        "keyword": "HF",
+        "blocks": {"geom": {"MaxIter": 50}},
+    }
+
+    with pytest.raises(ValueError, match="Gaussian calc steps do not support dict 'blocks'"):
+        build_structured_task_config(params=params, global_config={})
+
+    with pytest.raises(ValueError, match="Gaussian calc steps do not support dict 'blocks'"):
+        build_task_config(params=params, global_config={})
 
 
 def test_build_structured_task_config_preserves_clean_params_thresholds():

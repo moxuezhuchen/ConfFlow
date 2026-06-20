@@ -14,7 +14,7 @@ from ...core.exceptions import (
     CalculationParseError,
     StopRequestedError,
 )
-from ...shared.defaults import DEFAULT_TS_BOND_DRIFT_THRESHOLD
+from ...shared.defaults import DEFAULT_DELETE_WORK_DIR, DEFAULT_TS_BOND_DRIFT_THRESHOLD
 from ..analysis import (
     _bond_length_from_xyz_lines,
     _keyword_requests_freq,
@@ -85,8 +85,8 @@ class TaskRunner:
         raw_config: Any,
     ) -> bool:
         if isinstance(raw_config, dict) and "delete_work_dir" not in raw_config:
-            return True
-        raw = cfg.get("delete_work_dir", True)
+            return DEFAULT_DELETE_WORK_DIR
+        raw = cfg.get("delete_work_dir", DEFAULT_DELETE_WORK_DIR)
         if isinstance(raw, bool):
             return raw
         if isinstance(raw, str):

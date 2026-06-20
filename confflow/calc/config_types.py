@@ -14,10 +14,12 @@ from ..core.models import _coerce_freeze_indices, _coerce_two_atom_indices
 from ..shared.defaults import (
     DEFAULT_CHARGE,
     DEFAULT_CORES_PER_TASK,
+    DEFAULT_DELETE_WORK_DIR,
     DEFAULT_ENABLE_DYNAMIC_RESOURCES,
     DEFAULT_MAX_PARALLEL_JOBS,
     DEFAULT_MULTIPLICITY,
     DEFAULT_RESUME_FROM_BACKUPS,
+    DEFAULT_STANDALONE_AUTO_CLEAN,
     DEFAULT_TOTAL_MEMORY,
     DEFAULT_TS_RESCUE_SCAN,
 )
@@ -106,8 +108,8 @@ class ExecutionOptions:
     enable_dynamic_resources: bool = DEFAULT_ENABLE_DYNAMIC_RESOURCES
     resume_from_backups: bool = DEFAULT_RESUME_FROM_BACKUPS
     max_wall_time_seconds: float | None = None
-    auto_clean: bool = False
-    delete_work_dir: bool = True
+    auto_clean: bool = DEFAULT_STANDALONE_AUTO_CLEAN
+    delete_work_dir: bool = DEFAULT_DELETE_WORK_DIR
     sandbox_root: str | None = None
     input_chk_dir: str | None = None
     allowed_executables: tuple[str, ...] = ()
@@ -472,7 +474,9 @@ class CalcTaskConfig(dict[str, Any]):
 
         raw = dict(mapping)
 
-        cleanup_enabled = _coerce_bool_flag(raw.get("auto_clean", False))
+        cleanup_enabled = _coerce_bool_flag(
+            raw.get("auto_clean", DEFAULT_STANDALONE_AUTO_CLEAN)
+        )
         cleanup_raw = (
             _parse_clean_opts(str(raw.get("clean_opts", ""))) if raw.get("clean_opts") else {}
         )
@@ -559,7 +563,9 @@ class CalcTaskConfig(dict[str, Any]):
                 else float(raw.get("max_wall_time_seconds"))
             ),
             auto_clean=cleanup_enabled,
-            delete_work_dir=_coerce_bool_flag(raw.get("delete_work_dir", True)),
+            delete_work_dir=_coerce_bool_flag(
+                raw.get("delete_work_dir", DEFAULT_DELETE_WORK_DIR)
+            ),
             sandbox_root=(
                 str(raw.get("sandbox_root")).strip()
                 if raw.get("sandbox_root") is not None

@@ -18,6 +18,7 @@ from rdkit.Chem import AllChem
 from confflow.blocks import confgen
 from confflow.blocks.confgen.collision import check_clash_core
 from confflow.blocks.confgen.generator import (
+    _resolve_worker_count,
     get_rotatable_bonds,
     init_worker,
     load_mol_from_xyz,
@@ -39,6 +40,16 @@ from confflow.core.data import GV_COVALENT_RADII
 from confflow.core.io import read_xyz_file
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_resolve_worker_count_caps_requested_workers():
+    assert _resolve_worker_count(None, cpu_count=8, total_tasks=3) == 3
+    assert _resolve_worker_count(4, cpu_count=8, total_tasks=20) == 4
+    assert _resolve_worker_count(12, cpu_count=8, total_tasks=20) == 8
+    assert _resolve_worker_count(4, cpu_count=8, total_tasks=2) == 2
+
+    with pytest.raises(ValueError, match="workers must be an integer"):
+        _resolve_worker_count(0, cpu_count=8, total_tasks=20)
 
 
 def _run_confgen_cli(cwd, *args: str) -> subprocess.CompletedProcess[str]:

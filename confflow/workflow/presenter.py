@@ -39,6 +39,18 @@ __all__ = [
 ]
 
 
+def _existing_xyz_paths(value: Any) -> list[str]:
+    if isinstance(value, str):
+        return [value] if os.path.exists(value) else []
+    if isinstance(value, list):
+        paths: list[str] = []
+        for item in value:
+            if isinstance(item, str) and os.path.exists(item):
+                paths.append(item)
+        return paths
+    return []
+
+
 def print_workflow_start(input_files: list[str], current_input: str | list[str]) -> None:
     input_basename = (
         os.path.basename(input_files[0]) if len(input_files) == 1 else f"{len(input_files)} files"
@@ -108,10 +120,16 @@ def emit_final_report_and_lowest(
     final_stats: dict[str, Any],
     logger: Any,
 ) -> None:
-    if not (isinstance(current_input, str) and os.path.exists(current_input)):
+    final_paths = _existing_xyz_paths(current_input)
+    if not final_paths:
         return
 
-    confs = viz.parse_xyz_file(current_input)
+    confs = []
+    for path in final_paths:
+        confs.extend(viz.parse_xyz_file(path))
+    if not confs:
+        return
+
     report_text = viz.generate_text_report(confs, stats=final_stats)
     if report_text and not sys.stdout.isatty():
         print(report_text)
@@ -130,6 +148,7 @@ def emit_final_report_and_lowest(
         "cid": best_meta.get("CID"),
         "energy": best_energy,
         "xyz_path": lowest_path,
+        "source_outputs": [os.path.abspath(path) for path in final_paths],
     }
     logger.info(f"Wrote the lowest-energy conformer to: {lowest_path}")
 

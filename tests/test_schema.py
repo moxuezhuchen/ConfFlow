@@ -191,11 +191,22 @@ def test_schema_validate_calc_accepts_int_like_strings_and_coerces_ts_bond_atoms
 
 def test_merge_step_params():
     global_cfg = {"a": 1}
-    step_cfg = {"params": {"keyword": "B3LYP"}}
+    step_cfg = {
+        "params": {
+            "auto_clean": False,
+            "charge": 1,
+            "freeze": "1-3",
+            "keyword": "B3LYP",
+            "multiplicity": 2,
+        }
+    }
     res = merge_step_params(step_cfg, global_cfg)
     assert res["a"] == 1
-    # keyword is in STEP_OVERRIDES, so it should be applied
+    assert res["auto_clean"] is False
+    assert res["charge"] == 1
+    assert res["freeze"] == "1-3"
     assert res["keyword"] == "B3LYP"
+    assert res["multiplicity"] == 2
 
     # Non-override params should be ignored
     step_cfg2 = {"params": {"b": 2}}

@@ -84,6 +84,30 @@ def test_emit_final_report_and_lowest_updates_stats(viz_stubs, capture_write_xyz
     logger.info.assert_called_once()
 
 
+def test_emit_final_report_and_lowest_handles_multiple_final_outputs(
+    viz_stubs, capture_write_xyz, tmp_path
+):
+    first_xyz = tmp_path / "first.xyz"
+    second_xyz = tmp_path / "second.xyz"
+    first_xyz.write_text("1\n\nH 0 0 0\n", encoding="utf-8")
+    second_xyz.write_text("1\n\nH 0 0 1\n", encoding="utf-8")
+
+    final_stats = {}
+    logger = MagicMock()
+
+    presenter.emit_final_report_and_lowest(
+        [str(first_xyz), str(second_xyz)],
+        [str(first_xyz)],
+        final_stats,
+        logger,
+    )
+
+    assert final_stats["lowest_conformer"]["cid"] == "A000001"
+    assert len(final_stats["lowest_conformer"]["source_outputs"]) == 2
+    assert capture_write_xyz["path"].endswith("firstmin.xyz")
+    logger.info.assert_called_once()
+
+
 def test_write_final_statistics_outputs_both_json_files(tmp_path):
     final_stats = {
         "input_files": ["a.xyz"],

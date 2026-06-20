@@ -10,7 +10,6 @@ import re
 from typing import Any
 
 from ...core.path_policy import validate_executable_setting
-from ...shared.orca_blocks import format_orca_blocks
 from ..components.input_helpers import (
     compute_gaussian_mem,
     gaussian_apply_freeze,
@@ -64,7 +63,10 @@ class GaussianPolicy(CalculationPolicy):
 
         blocks_raw = config.get("blocks", "")
         if isinstance(blocks_raw, dict):
-            blocks_raw = format_orca_blocks(blocks_raw)
+            raise ValueError(
+                "Gaussian blocks must be a string extra section; dict blocks use ORCA syntax. "
+                "Use gaussian_modredundant or gaussian_link0 for Gaussian-specific sections."
+            )
         blocks_raw = str(blocks_raw or "").strip()
         extra_section = (blocks_raw + "\n") if blocks_raw else ""
 

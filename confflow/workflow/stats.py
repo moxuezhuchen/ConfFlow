@@ -245,8 +245,17 @@ class Tracer:
         k : int
             Number of top low-energy conformers to trace.
         """
-        final_xyz = workflow_stats.get("final_output")
-        if not final_xyz or not os.path.exists(final_xyz):
+        def _existing_xyz_paths(value: Any) -> list[str]:
+            if isinstance(value, str):
+                return [value] if os.path.exists(value) else []
+            if isinstance(value, list):
+                return [path for path in value if isinstance(path, str) and os.path.exists(path)]
+            return []
+
+        final_paths = _existing_xyz_paths(workflow_stats.get("final_output"))
+        if not final_paths:
+            final_paths = _existing_xyz_paths(workflow_stats.get("final_outputs"))
+        if not final_paths:
             return
 
         def _extract_energy(meta: dict[str, Any]) -> float | None:
@@ -256,25 +265,38 @@ class Tracer:
             except (TypeError, ValueError):
                 return None
 
-        def _build_idx(xyz):
-            confs = io_xyz.read_xyz_file(xyz, parse_metadata=True)
-            io_xyz.ensure_conformer_cids(confs, prefix="trace")
-            cid_map = {}
-            e_rows = []
-            for idx, c in enumerate(confs):
-                cid = c.get("metadata", {}).get("CID")
-                if not cid:
-                    continue
-                e = _extract_energy(c.get("metadata", {}))
-                cid_map[str(cid)] = {"frame_index": idx, "energy": e}
-                if e is not None:
-                    e_rows.append((e, str(cid)))
+        def _build_idx(xyz_paths: list[str]) -> tuple[dict[str, dict[str, Any]], dict[str, int]]:
+            cid_map: dict[str, dict[str, Any]] = {}
+            e_rows: list[tuple[float, str]] = []
+            frame_offset = 0
+            for xyz in xyz_paths:
+                confs = io_xyz.read_xyz_file(xyz, parse_metadata=True)
+                io_xyz.ensure_conformer_cids(confs, prefix="trace")
+                for idx, c in enumerate(confs):
+                    cid = c.get("metadata", {}).get("CID")
+                    if not cid:
+                        continue
+                    e = _extract_energy(c.get("metadata", {}))
+                    cid_map.setdefault(
+                        str(cid),
+                        {
+                            "frame_index": frame_offset + idx,
+                            "energy": e,
+                            "source_xyz": xyz,
+                        },
+                    )
+                    if e is not None:
+                        e_rows.append((e, str(cid)))
+                frame_offset += len(confs)
             e_rows.sort()
             ranks = {cid: r for r, (e, cid) in enumerate(e_rows, 1)}
             return cid_map, ranks
 
-        final_confs = io_xyz.read_xyz_file(final_xyz, parse_metadata=True)
-        io_xyz.ensure_conformer_cids(final_confs, prefix="final")
+        final_confs: list[dict[str, Any]] = []
+        for final_xyz in final_paths:
+            confs = io_xyz.read_xyz_file(final_xyz, parse_metadata=True)
+            io_xyz.ensure_conformer_cids(confs, prefix="final")
+            final_confs.extend(confs)
 
         candidates = []
         for c in final_confs:
@@ -289,8 +311,9 @@ class Tracer:
         step_outputs = [s for s in workflow_stats.get("steps", []) if s.get("output_xyz")]
         step_indexes = []
         for s in step_outputs:
-            if os.path.exists(s.get("output_xyz", "")):
-                cm, rk = _build_idx(s["output_xyz"])
+            step_paths = _existing_xyz_paths(s.get("output_xyz"))
+            if step_paths:
+                cm, rk = _build_idx(step_paths)
                 step_indexes.append({"step": s, "cid_map": cm, "ranks": rk})
 
         results = []
@@ -314,7 +337,8 @@ class Tracer:
             results.append({"cid": cid, "final_energy": e_final, "trace": trace})
 
         workflow_stats["low_energy_trace"] = {
-            "source_xyz": final_xyz,
+            "source_xyz": final_paths[0] if len(final_paths) == 1 else None,
+            "source_xyzs": final_paths,
             "top_k": len(results),
             "conformers": results,
         }

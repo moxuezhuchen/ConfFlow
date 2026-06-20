@@ -7,11 +7,13 @@ from __future__ import annotations
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from confflow.calc.policies.gaussian import GaussianPolicy
 from confflow.calc.policies.orca import OrcaPolicy
 
 
-def test_gaussian_generate_input_supports_dict_blocks_and_link0_options(tmp_path):
+def test_gaussian_generate_input_supports_string_blocks_and_link0_options(tmp_path):
     task = {
         "job_name": "job",
         "coords": ["C 0 0 0", "H 0 0 1"],
@@ -19,7 +21,7 @@ def test_gaussian_generate_input_supports_dict_blocks_and_link0_options(tmp_path
             "cores_per_task": 2,
             "total_memory": "2GB",
             "keyword": "opt b3lyp/6-31g(d)",
-            "blocks": {"geom": {"MaxIter": 50, "UseSymmetry": False}},
+            "blocks": "SCRF=(SMD,Solvent=Water)",
             "gaussian_modredundant": ["B 1 2 F", "", "A 1 2 3 90.0 F"],
             "gaussian_oldchk": "prev.chk",
             "gaussian_chk": "next.chk",
@@ -35,10 +37,23 @@ def test_gaussian_generate_input_supports_dict_blocks_and_link0_options(tmp_path
     assert "%OldChk=prev.chk" in text
     assert "%NoSave" in text
     assert "%Mem=extra" in text
-    assert "%geom" in text
-    assert "UseSymmetry false" in text
+    assert "SCRF=(SMD,Solvent=Water)" in text
     assert "B 1 2 F" in text
     assert "A 1 2 3 90.0 F" in text
+
+
+def test_gaussian_generate_input_rejects_dict_blocks(tmp_path):
+    task = {
+        "job_name": "job",
+        "coords": ["C 0 0 0"],
+        "config": {
+            "keyword": "sp b3lyp/6-31g(d)",
+            "blocks": {"geom": {"MaxIter": 50}},
+        },
+    }
+
+    with pytest.raises(ValueError, match="Gaussian blocks must be a string"):
+        GaussianPolicy().generate_input(task, str(tmp_path / "job.gjf"))
 
 
 def test_gaussian_generate_input_supports_string_link0_and_disabling_chk(tmp_path):

@@ -27,11 +27,13 @@ from ..core.utils import parse_itask
 from ..shared.defaults import (
     DEFAULT_CHARGE,
     DEFAULT_CORES_PER_TASK,
+    DEFAULT_DELETE_WORK_DIR,
     DEFAULT_ENABLE_DYNAMIC_RESOURCES,
     DEFAULT_MAX_PARALLEL_JOBS,
     DEFAULT_MULTIPLICITY,
     DEFAULT_RESUME_FROM_BACKUPS,
     DEFAULT_TOTAL_MEMORY,
+    DEFAULT_WORKFLOW_AUTO_CLEAN,
 )
 from ..shared.orca_blocks import format_orca_blocks
 from .step_naming import build_step_dir_name_map
@@ -94,6 +96,15 @@ def _build_clean_opts(params: dict[str, Any], global_config: dict[str, Any]) -> 
         opts.append(f"--energy-tolerance {etol}")
 
     return " ".join(opts)
+
+
+def _validate_program_blocks(iprog_label: str, blocks: Any) -> None:
+    """Reject ORCA-style structured blocks for Gaussian tasks."""
+    if iprog_label == Program.GAUSSIAN.value and isinstance(blocks, dict):
+        raise ValueError(
+            "Gaussian calc steps do not support dict 'blocks'; use a string extra section, "
+            "'gaussian_modredundant', or 'gaussian_link0' instead."
+        )
 
 
 def _resolve_chk_input_dir(
@@ -301,11 +312,14 @@ def _resolve_execution_options(
         auto_clean=_coerce_bool_flag(
             params.get(
                 "auto_clean",
-                global_config.get("auto_clean", True),
+                global_config.get("auto_clean", DEFAULT_WORKFLOW_AUTO_CLEAN),
             )
         ),
         delete_work_dir=_coerce_bool_flag(
-            params.get("delete_work_dir", global_config.get("delete_work_dir", True))
+            params.get(
+                "delete_work_dir",
+                global_config.get("delete_work_dir", DEFAULT_DELETE_WORK_DIR),
+            )
         ),
         sandbox_root=(
             None
@@ -370,13 +384,16 @@ def _build_base_task_config(
             _coerce_bool_flag(
                 params.get(
                     "auto_clean",
-                    global_config.get("auto_clean", True),
+                    global_config.get("auto_clean", DEFAULT_WORKFLOW_AUTO_CLEAN),
                 )
             )
         ).lower(),
         "delete_work_dir": str(
             _coerce_bool_flag(
-                params.get("delete_work_dir", global_config.get("delete_work_dir", True))
+                params.get(
+                    "delete_work_dir",
+                    global_config.get("delete_work_dir", DEFAULT_DELETE_WORK_DIR),
+                )
             )
         ).lower(),
     }
@@ -448,8 +465,11 @@ def _build_legacy_task_config(
     else:
         freeze_val = "0"
 
+    iprog_label = _normalize_iprog_label(
+        params.get("iprog", global_config.get("iprog", "orca"))
+    )
     config["itask"] = itask_str
-    config["iprog"] = _normalize_iprog_label(params.get("iprog", "orca"))
+    config["iprog"] = iprog_label
     config["freeze"] = _format_freeze_value(freeze_val)
     config["clean_opts"] = _build_clean_opts(params, global_config)
 
@@ -487,6 +507,7 @@ def _build_legacy_task_config(
 
     blocks = params.get("blocks")
     if blocks:
+        _validate_program_blocks(iprog_label, blocks)
         if isinstance(blocks, dict):
             config["blocks"] = format_orca_blocks(blocks)
         else:
@@ -538,6 +559,7 @@ def build_structured_task_config(
     iprog_label = _normalize_iprog_label(raw_iprog)
     raw_itask = params.get("itask", global_config.get("itask", "opt"))
     itask_label = _itask_label(raw_itask)
+    _validate_program_blocks(iprog_label, blocks_value)
 
     return CalcTaskConfig(
         program=(

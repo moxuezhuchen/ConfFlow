@@ -18,6 +18,7 @@ from ..config.schema import ConfigSchema
 from ..core.exceptions import ConfFlowError
 from ..core.pairs import normalize_pair_list
 from ..core.utils import get_logger
+from ..shared.defaults import DEFAULT_MAX_PARALLEL_JOBS
 from .config_builder import build_task_config
 from .helpers import as_list, is_multi_frame_any, pushd
 from .stats import FailureTracker
@@ -115,7 +116,36 @@ def _confgen_signature_path(step_dir: str) -> str:
     return os.path.join(step_dir, _CONFGEN_SIGNATURE_FILE)
 
 
-def _build_confgen_run_kwargs(params: dict[str, Any], current_input: str | list[str]) -> dict:
+def _resolve_confgen_workers(
+    params: dict[str, Any],
+    global_config: dict[str, Any] | None,
+) -> int:
+    global_config = global_config or {}
+    raw_workers = params.get("workers")
+    if raw_workers is None:
+        raw_workers = params.get("max_workers")
+    if raw_workers is None:
+        raw_workers = params.get("max_parallel_jobs")
+    if raw_workers is None:
+        raw_workers = global_config.get("max_parallel_jobs", DEFAULT_MAX_PARALLEL_JOBS)
+    try:
+        workers = int(raw_workers)
+    except (TypeError, ValueError) as exc:
+        raise ConfFlowError(
+            f"confgen workers must be an integer >= 1, got {raw_workers!r}"
+        ) from exc
+    if workers < 1:
+        raise ConfFlowError(
+            f"confgen workers must be an integer >= 1, got {raw_workers!r}"
+        )
+    return workers
+
+
+def _build_confgen_run_kwargs(
+    params: dict[str, Any],
+    current_input: str | list[str],
+    global_config: dict[str, Any] | None = None,
+) -> dict:
     return {
         "input_files": current_input,
         "angle_step": params.get("angle_step", 120),
@@ -132,6 +162,7 @@ def _build_confgen_run_kwargs(params: dict[str, Any], current_input: str | list[
         "chain_angles": as_list(params.get("chain_angles", params.get("angles"))),
         "rotate_side": params.get("rotate_side", "left"),
         "collect_results": False,
+        "workers": _resolve_confgen_workers(params, global_config),
     }
 
 
@@ -186,11 +217,12 @@ def run_confgen_step(
     current_input: str | list[str],
     params: dict[str, Any],
     input_files: list[str],
+    global_config: dict[str, Any] | None = None,
 ) -> str:
     """Execute a conformer generation step (execution adapter layer)."""
     expected_output = os.path.join(step_dir, "search.xyz")
     multi_frame = len(input_files) == 1 and is_multi_frame_any(current_input)
-    run_kwargs = _build_confgen_run_kwargs(params, current_input)
+    run_kwargs = _build_confgen_run_kwargs(params, current_input, global_config)
     signature = _compute_confgen_step_signature(
         current_input=current_input,
         input_files=input_files,

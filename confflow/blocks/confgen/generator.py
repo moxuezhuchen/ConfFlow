@@ -386,6 +386,7 @@ def _iter_parallel_confgen(
     angle_lists: list[list[float]],
     clash_threshold: float,
     optimize: bool,
+    workers: int | None = None,
 ) -> Any:
     """Yield valid coordinate arrays produced by the parallel confgen workers.
 
@@ -401,6 +402,9 @@ def _iter_parallel_confgen(
         Clash detection threshold.
     optimize : bool
         Whether to apply MMFF94s pre-optimization.
+    workers : int or None
+        Maximum worker processes to use. ``None`` preserves the direct API
+        default of using available CPUs.
 
     Yields
     ------
@@ -416,6 +420,11 @@ def _iter_parallel_confgen(
         return
 
     cpu_count = multiprocessing.cpu_count()
+    worker_count = _resolve_worker_count(
+        workers,
+        cpu_count=cpu_count,
+        total_tasks=total_tasks,
+    )
     init_args = (
         mol,
         mol.GetConformer(0),
@@ -426,8 +435,8 @@ def _iter_parallel_confgen(
         optimize,
     )
 
-    with multiprocessing.Pool(cpu_count, initializer=init_worker, initargs=init_args) as pool:
-        chunk = max(1, total_tasks // (cpu_count * 10))
+    with multiprocessing.Pool(worker_count, initializer=init_worker, initargs=init_args) as pool:
+        chunk = max(1, total_tasks // (worker_count * 10))
         with create_progress() as progress:
             task_id = progress.add_task("ConfGen", total=total_tasks)
             for res in pool.imap(
@@ -438,6 +447,27 @@ def _iter_parallel_confgen(
                 progress.advance(task_id)
                 if res is not None:
                     yield res
+
+
+def _resolve_worker_count(
+    workers: int | None,
+    *,
+    cpu_count: int,
+    total_tasks: int,
+) -> int:
+    """Resolve a bounded worker count for conformer generation."""
+    if total_tasks < 1:
+        return 1
+    if workers is None:
+        requested = cpu_count
+    else:
+        try:
+            requested = int(workers)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"workers must be an integer >= 1, got {workers!r}") from exc
+        if requested < 1:
+            raise ValueError(f"workers must be an integer >= 1, got {workers!r}")
+    return max(1, min(int(cpu_count), int(total_tasks), requested))
 
 
 # ------------------------------------------------------------------------------
@@ -462,6 +492,7 @@ def run_generation(
     rotate_side: str = "left",
     output_file: str = "search.xyz",
     collect_results: bool = True,
+    workers: int | None = None,
 ):
     """Entry point for conformer generation.
 
@@ -495,6 +526,9 @@ def run_generation(
         Per-chain explicit angle lists.
     rotate_side : str
         Which side to rotate ('left' or 'right').
+    workers : int or None
+        Maximum worker processes. ``None`` uses available CPUs for direct API
+        calls; workflow callers pass a configured cap.
 
     Returns
     -------
@@ -639,6 +673,7 @@ def run_generation(
                 angle_lists,
                 clash_threshold,
                 optimize,
+                workers,
             ):
                 local_count += 1
                 output_sink.append(
@@ -750,6 +785,12 @@ def main():
     parser.add_argument(
         "--optimize", "--opt", action="store_true", help="Run MMFF94s pre-optimization"
     )
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=None,
+        help="Maximum worker processes for conformer generation",
+    )
 
     args = parser.parse_args()
 
@@ -786,6 +827,7 @@ def main():
                 chain_angles=args.angles,
                 rotate_side=args.rotate_side,
                 collect_results=False,
+                workers=args.workers,
             )
     except (FileNotFoundError, ValueError, RuntimeError, OSError) as e:
         print(f"Error: {e}", file=sys.stderr)

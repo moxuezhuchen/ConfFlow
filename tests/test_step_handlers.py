@@ -170,6 +170,7 @@ class TestRunConfgenStep:
                 "angle_step": 60,
                 "bond_multiplier": 1.2,
                 "chains": ["1-2"],
+                "max_parallel_jobs": 2,
                 "optimize": True,
                 "rotate_side": "right",
             },
@@ -182,6 +183,31 @@ class TestRunConfgenStep:
         assert call_kwargs["bond_threshold"] == 1.2
         assert call_kwargs["optimize"] is True
         assert call_kwargs["rotate_side"] == "right"
+        assert call_kwargs["workers"] == 2
+
+    @patch("confflow.workflow.step_handlers.confgen")
+    def test_generation_uses_global_worker_limit(
+        self, mock_confgen: MagicMock, step_dir: str, single_input_xyz: str
+    ):
+        """Confgen should inherit the global max_parallel_jobs worker cap."""
+        expected = os.path.join(step_dir, "search.xyz")
+
+        def fake_run(**kwargs):
+            with open(expected, "w", encoding="utf-8") as f:
+                f.write("2\ngenerated\nC 0 0 0\nH 0 0 1\n")
+
+        mock_confgen.run_generation.side_effect = fake_run
+
+        run_confgen_step(
+            step_dir=step_dir,
+            current_input=single_input_xyz,
+            params={"chains": ["1-2"]},
+            input_files=[single_input_xyz, "second.xyz"],
+            global_config={"max_parallel_jobs": 3},
+        )
+
+        call_kwargs = mock_confgen.run_generation.call_args[1]
+        assert call_kwargs["workers"] == 3
 
     @patch("confflow.workflow.step_handlers.confgen")
     def test_generation_no_output_raises(
