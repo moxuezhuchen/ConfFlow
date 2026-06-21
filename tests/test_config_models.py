@@ -128,11 +128,7 @@ def test_workflow_model_as_legacy_shape_keeps_engine_contract(tmp_path):
 def test_workflow_model_rejects_step_types_not_executed_by_engine(tmp_path):
     cfg = tmp_path / "workflow.yaml"
     cfg.write_text(
-        "global:\n"
-        "  keyword: HF\n"
-        "steps:\n"
-        "  - name: unsupported\n"
-        "    type: refine\n",
+        "global:\n" "  keyword: HF\n" "steps:\n" "  - name: unsupported\n" "    type: refine\n",
         encoding="utf-8",
     )
 
