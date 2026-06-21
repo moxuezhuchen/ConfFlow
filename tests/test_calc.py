@@ -936,6 +936,193 @@ def test_execute_tasks_records_broken_process_pool_and_continues(tmp_path):
     assert appended[0]["job_name"] == "A000002"
 
 
+def test_execute_tasks_uses_dynamic_resource_monitor_for_single_task(tmp_path):
+    from confflow.calc.task_execution import execute_tasks
+    from confflow.core.models import TaskContext
+
+    inserted = []
+    appended = []
+    waits = []
+
+    class FakeResultsDB:
+        def insert_result(self, res):
+            inserted.append(res)
+
+    class Reporter:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def report(self, status):
+            pass
+
+    class FakeMonitor:
+        def wait_for_resources(self):
+            waits.append("wait")
+            return True
+
+    task = TaskContext(
+        job_name="A000001",
+        work_dir=str(tmp_path / "A000001"),
+        coords=["H 0 0 0"],
+        config={},
+    )
+
+    execute_tasks(
+        todo=[task],
+        config={"enable_dynamic_resources": True},
+        results_db=FakeResultsDB(),
+        run_task_fn=lambda payload: {
+            **payload,
+            "status": "success",
+            "final_coords": payload["coords"],
+        },
+        append_result_fn=appended.append,
+        stop_requested_fn=lambda: False,
+        set_stop_requested_fn=lambda value: None,
+        progress_reporter_cls=Reporter,
+        resource_monitor_cls=FakeMonitor,
+    )
+
+    assert waits == ["wait"]
+    assert inserted[0]["status"] == "success"
+    assert appended[0]["job_name"] == "A000001"
+
+
+def test_execute_tasks_records_resource_timeout_before_single_task(tmp_path):
+    from confflow.calc.task_execution import execute_tasks
+    from confflow.core.models import TaskContext
+
+    inserted = []
+    appended = []
+
+    class FakeResultsDB:
+        def insert_result(self, res):
+            inserted.append(res)
+
+    class Reporter:
+        def __init__(self, *args, **kwargs):
+            self.reported = []
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def report(self, status):
+            self.reported.append(status)
+
+    class FakeMonitor:
+        def wait_for_resources(self):
+            return False
+
+    task = TaskContext(
+        job_name="A000001",
+        work_dir=str(tmp_path / "A000001"),
+        coords=["H 0 0 0"],
+        config={},
+    )
+
+    execute_tasks(
+        todo=[task],
+        config={"enable_dynamic_resources": True},
+        results_db=FakeResultsDB(),
+        run_task_fn=lambda payload: {
+            **payload,
+            "status": "success",
+            "final_coords": payload["coords"],
+        },
+        append_result_fn=appended.append,
+        stop_requested_fn=lambda: False,
+        set_stop_requested_fn=lambda value: None,
+        progress_reporter_cls=Reporter,
+        resource_monitor_cls=FakeMonitor,
+    )
+
+    assert inserted == [appended[0]]
+    assert inserted[0]["status"] == "failed"
+    assert inserted[0]["error_kind"] == "resource_unavailable"
+
+
+def test_execute_tasks_dynamic_resources_submit_incrementally(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+
+    from confflow.calc.task_execution import execute_tasks
+    from confflow.core.models import TaskContext
+
+    inserted = []
+    appended = []
+    active_counts = []
+
+    class FakeResultsDB:
+        def insert_result(self, res):
+            inserted.append(res)
+
+    class Reporter:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def report(self, status):
+            pass
+
+    class FakeMonitor:
+        def can_start_new_task(self, current_active_workers, max_workers):
+            active_counts.append((current_active_workers, max_workers))
+            return current_active_workers < 1
+
+        def wait_for_resources(self):
+            return True
+
+    tasks = [
+        TaskContext(
+            job_name="A000001",
+            work_dir=str(tmp_path / "A000001"),
+            coords=["H 0 0 0"],
+            config={},
+        ),
+        TaskContext(
+            job_name="A000002",
+            work_dir=str(tmp_path / "A000002"),
+            coords=["H 0 0 1"],
+            config={},
+        ),
+    ]
+
+    execute_tasks(
+        todo=tasks,
+        config={"enable_dynamic_resources": True, "max_parallel_jobs": 2},
+        results_db=FakeResultsDB(),
+        run_task_fn=lambda payload: {
+            **payload,
+            "status": "success",
+            "final_coords": payload["coords"],
+        },
+        append_result_fn=appended.append,
+        stop_requested_fn=lambda: False,
+        set_stop_requested_fn=lambda value: None,
+        progress_reporter_cls=Reporter,
+        executor_cls=ThreadPoolExecutor,
+        resource_monitor_cls=FakeMonitor,
+    )
+
+    assert active_counts[0] == (0, 2)
+    assert (1, 2) in active_counts
+    assert {row["job_name"] for row in inserted} == {"A000001", "A000002"}
+    assert {row["job_name"] for row in appended} == {"A000001", "A000002"}
+
+
 # =============================================================================
 # Viz Report extended tests
 # =============================================================================

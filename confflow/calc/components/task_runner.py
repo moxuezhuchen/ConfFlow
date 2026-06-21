@@ -96,6 +96,11 @@ class TaskRunner:
                 return True
         return bool(raw)
 
+    @staticmethod
+    def _rescued_result_successful(result: dict[str, Any]) -> bool:
+        status = str(result.get("status", "")).strip().lower()
+        return status in {"success", "rescued", "skipped"}
+
     def run(self, task_info: models.TaskContext | dict[str, Any]):
         task_dict = (
             task_info.model_dump() if isinstance(task_info, models.TaskContext) else task_info
@@ -128,6 +133,8 @@ class TaskRunner:
                 if get_itask(cfg) == 4:
                     rescued = self._try_rescue(cfg, task_dict, str(e))
                     if rescued is not None:
+                        success = self._rescued_result_successful(rescued)
+                        result_payload = rescued if success else None
                         return rescued
                     if is_rescue_enabled(cfg):
                         error_kind = "rescue_failed"
@@ -142,6 +149,8 @@ class TaskRunner:
                 if get_itask(cfg) == 4:
                     rescued = self._try_rescue(cfg, task_dict, str(e))
                     if rescued is not None:
+                        success = self._rescued_result_successful(rescued)
+                        result_payload = rescued if success else None
                         return rescued
                     if is_rescue_enabled(cfg):
                         error_kind = "rescue_failed"
@@ -171,6 +180,8 @@ class TaskRunner:
                     )
                     rescued = self._try_rescue(cfg, task_dict, err_msg)
                     if rescued is not None:
+                        success = self._rescued_result_successful(rescued)
+                        result_payload = rescued if success else None
                         return rescued
                     error_kind = "rescue_failed" if is_rescue_enabled(cfg) else "parse_error"
                     return self._failed_result(task_dict, err_msg, error_kind)
@@ -180,6 +191,8 @@ class TaskRunner:
                         err_msg += f" (lowest freq: {lowest_freq:.1f} cm⁻¹)"
                     rescued = self._try_rescue(cfg, task_dict, err_msg)
                     if rescued is not None:
+                        success = self._rescued_result_successful(rescued)
+                        result_payload = rescued if success else None
                         return rescued
                     error_kind = "rescue_failed" if is_rescue_enabled(cfg) else "parse_error"
                     return self._failed_result(task_dict, err_msg, error_kind)
@@ -212,6 +225,8 @@ class TaskRunner:
                     if err_msg is not None:
                         rescued = self._try_rescue(cfg, task_dict, err_msg)
                         if rescued is not None:
+                            success = self._rescued_result_successful(rescued)
+                            result_payload = rescued if success else None
                             return rescued
                         error_kind = "rescue_failed" if is_rescue_enabled(cfg) else "parse_error"
                         return self._failed_result(task_dict, err_msg, error_kind)
@@ -262,6 +277,8 @@ class TaskRunner:
                 if itask == 4:
                     rescued = self._try_rescue(cfg, task_dict, err_msg)
                     if rescued is not None:
+                        success = self._rescued_result_successful(rescued)
+                        result_payload = rescued if success else None
                         return rescued
                     error_kind = "rescue_failed" if is_rescue_enabled(cfg) else "parse_error"
                     return self._failed_result(task_dict, err_msg, error_kind)

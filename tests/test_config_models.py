@@ -125,6 +125,21 @@ def test_workflow_model_as_legacy_shape_keeps_engine_contract(tmp_path):
     assert legacy["steps"][0]["params"]["keyword"] == "HF"
 
 
+def test_workflow_model_rejects_step_types_not_executed_by_engine(tmp_path):
+    cfg = tmp_path / "workflow.yaml"
+    cfg.write_text(
+        "global:\n"
+        "  keyword: HF\n"
+        "steps:\n"
+        "  - name: unsupported\n"
+        "    type: refine\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="unsupported type: 'refine'"):
+        load_workflow_model(str(cfg))
+
+
 def test_calc_step_params_honors_clean_opts_and_digest_changes():
     global_options = GlobalOptions.from_mapping({"keyword": "HF"})
     base = CalcStepParams.from_params(
@@ -141,3 +156,22 @@ def test_calc_step_params_honors_clean_opts_and_digest_changes():
     assert base.cleanup.energy_window == 5.0
     assert base.canonical_dict()["rmsd_threshold"] == 0.4
     assert compute_config_digest(base) != compute_config_digest(changed)
+
+
+def test_calc_step_digest_tracks_checkpoint_inheritance_and_gaussian_chk_write():
+    global_options = GlobalOptions.from_mapping({"keyword": "HF", "iprog": "g16"})
+    base = CalcStepParams.from_params({"itask": "sp"}, global_options)
+    inherited = CalcStepParams.from_params(
+        {"itask": "sp"},
+        global_options,
+        input_chk_dir="/tmp/previous_chks",
+    )
+    write_chk = CalcStepParams.from_params(
+        {"itask": "sp", "gaussian_write_chk": True},
+        global_options,
+    )
+
+    assert "input_chk_dir" in inherited.canonical_dict()
+    assert "gaussian_write_chk" in write_chk.canonical_dict()
+    assert compute_config_digest(base) != compute_config_digest(inherited)
+    assert compute_config_digest(base) != compute_config_digest(write_chk)

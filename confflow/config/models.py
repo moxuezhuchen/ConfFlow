@@ -37,7 +37,7 @@ from ..shared.orca_blocks import format_orca_blocks
 
 ProgramName = Literal["g16", "orca"]
 TaskName = Literal["opt", "sp", "freq", "opt_freq", "ts"]
-StepType = Literal["confgen", "calc", "refine", "viz"]
+StepType = Literal["confgen", "calc"]
 
 
 def _as_dict(value: Any) -> dict[str, Any]:
@@ -609,15 +609,15 @@ class CalcStepParams:
                 data["ts_rescue_keep_scan_dirs"] = self.ts.keep_scan_dirs
             if self.ts.scan_backup is not None:
                 data["ts_rescue_scan_backup"] = self.ts.scan_backup
+        if self.execution.input_chk_dir:
+            data["input_chk_dir"] = self.execution.input_chk_dir
+        if self.execution.gaussian_write_chk is not None:
+            data["gaussian_write_chk"] = self.execution.gaussian_write_chk
         if include_runtime_paths:
             if self.execution.sandbox_root:
                 data["sandbox_root"] = self.execution.sandbox_root
-            if self.execution.input_chk_dir:
-                data["input_chk_dir"] = self.execution.input_chk_dir
             if self.execution.allowed_executables:
                 data["allowed_executables"] = list(self.execution.allowed_executables)
-            if self.execution.gaussian_write_chk is not None:
-                data["gaussian_write_chk"] = self.execution.gaussian_write_chk
             if self.execution.max_wall_time_seconds is not None:
                 data["max_wall_time_seconds"] = self.execution.max_wall_time_seconds
         return data
@@ -654,7 +654,7 @@ class WorkflowConfig:
                 step_type = "confgen"
             if step_type == "task":
                 step_type = "calc"
-            if step_type not in {"confgen", "calc", "refine", "viz"}:
+            if step_type not in {"confgen", "calc"}:
                 raise ValueError(f"step {index} has unsupported type: {step_type!r}")
             name = str(step.get("name") or f"{step_type}_{index}")
             enabled = _coerce_bool_flag(step.get("enabled", True))

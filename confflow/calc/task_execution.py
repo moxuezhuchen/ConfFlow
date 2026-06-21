@@ -7,12 +7,13 @@ from __future__ import annotations
 import logging
 import os
 from collections.abc import Callable
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, as_completed, wait
 from concurrent.futures.process import BrokenProcessPool
 from typing import Any, cast
 
 from ..core import models
 from ..core.console import CalcProgressReporter
+from .resources import ResourceMonitor
 
 logger = logging.getLogger("confflow.calc.manager")
 
@@ -50,6 +51,24 @@ def _future_cancelled(fut: Any) -> bool:
     return False
 
 
+def _truthy_flag(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    return bool(value)
+
+
+def _resource_unavailable_result(task: models.TaskContext) -> dict[str, Any]:
+    return {
+        "job_name": task.job_name,
+        "status": "failed",
+        "error": "Dynamic resource wait timed out before task start",
+        "error_kind": "resource_unavailable",
+        "final_coords": None,
+    }
+
+
 def execute_tasks(
     todo: list[models.TaskContext],
     config: dict[str, Any],
@@ -61,6 +80,7 @@ def execute_tasks(
     progress_reporter_cls: type[CalcProgressReporter] = CalcProgressReporter,
     executor_cls: type[ProcessPoolExecutor] = ProcessPoolExecutor,
     as_completed_fn: Callable[[Any], Any] = as_completed,
+    resource_monitor_cls: type[ResourceMonitor] = ResourceMonitor,
 ) -> None:
     """Dispatch tasks in serial or parallel mode."""
     if not todo:
@@ -76,6 +96,8 @@ def execute_tasks(
         payload["config"] = calc_config
         return payload
 
+    dynamic_resources = _truthy_flag(calc_config.get("enable_dynamic_resources", False))
+
     if len(todo) == 1:
         if stop_requested_fn() or (stop_file and os.path.exists(stop_file)):
             set_stop_requested_fn(True)
@@ -90,6 +112,14 @@ def execute_tasks(
             )
             return
         with progress_reporter_cls(total=1, report_every=1) as reporter:
+            if dynamic_resources:
+                monitor = resource_monitor_cls()
+                if not monitor.wait_for_resources():
+                    res = _resource_unavailable_result(todo[0])
+                    results_db.insert_result(res)
+                    append_result_fn(res)
+                    reporter.report("failed")
+                    return
             res = run_task_fn(_task_payload(todo[0]))
             results_db.insert_result(res)
             append_result_fn(res)
@@ -97,6 +127,92 @@ def execute_tasks(
         return
 
     max_jobs = int(calc_config.get("max_parallel_jobs", 4))
+    if dynamic_resources:
+        pending = list(todo)
+        monitor = resource_monitor_cls()
+        with executor_cls(max_workers=max_jobs) as exc:
+            futures: dict[Any, models.TaskContext] = {}
+            with progress_reporter_cls(total=len(todo), report_every=report_every) as reporter:
+                while pending or futures:
+                    if stop_requested_fn() or (stop_file and os.path.exists(stop_file)):
+                        set_stop_requested_fn(True)
+                        exc.shutdown(wait=False, cancel_futures=True)
+                        for other_fut, task in futures.items():
+                            status = "pending" if _future_done(other_fut) else "canceled"
+                            if _future_cancelled(other_fut):
+                                status = "canceled"
+                            results_db.insert_result(
+                                {
+                                    "job_name": task.job_name,
+                                    "status": status,
+                                    "error": (
+                                        "Task stopped before result collection"
+                                        if status == "pending"
+                                        else "STOP requested"
+                                    ),
+                                    "error_kind": "stop_requested",
+                                    "final_coords": None,
+                                }
+                            )
+                            reporter.report(status)
+                        for task in pending:
+                            results_db.insert_result(
+                                {
+                                    "job_name": task.job_name,
+                                    "status": "canceled",
+                                    "error": "STOP requested",
+                                    "error_kind": "stop_requested",
+                                    "final_coords": None,
+                                }
+                            )
+                            reporter.report("canceled")
+                        break
+
+                    while pending and monitor.can_start_new_task(len(futures), max_jobs):
+                        task = pending.pop(0)
+                        futures[exc.submit(run_task_fn, _task_payload(task))] = task
+
+                    if not futures and pending:
+                        if not monitor.wait_for_resources():
+                            for task in pending:
+                                res = _resource_unavailable_result(task)
+                                results_db.insert_result(res)
+                                reporter.report("failed")
+                            pending.clear()
+                            break
+                        task = pending.pop(0)
+                        futures[exc.submit(run_task_fn, _task_payload(task))] = task
+
+                    if not futures:
+                        continue
+
+                    done, _ = wait(futures, return_when=FIRST_COMPLETED)
+                    for fut in done:
+                        task = futures.pop(fut)
+                        try:
+                            res = fut.result()
+                        except Exception as e:  # noqa: BLE001 – includes BrokenProcessPool
+                            error_kind = _classify_future_exception(e)
+                            logger.warning(
+                                "Task %s raised an unexpected exception: %s",
+                                task.job_name,
+                                e,
+                            )
+                            dynamic_failed_result: dict[str, Any] = {
+                                "job_name": task.job_name,
+                                "status": "failed",
+                                "error": str(e),
+                                "error_kind": error_kind,
+                                "final_coords": None,
+                            }
+                            results_db.insert_result(dynamic_failed_result)
+                            reporter.report("failed")
+                            continue
+                        results_db.insert_result(res)
+                        append_result_fn(res)
+                        reporter.report(res.get("status", "failed"))
+        return
+
     with executor_cls(max_workers=max_jobs) as exc:
         futures = {exc.submit(run_task_fn, _task_payload(t)): t for t in todo}
         recorded: set[Any] = set()
