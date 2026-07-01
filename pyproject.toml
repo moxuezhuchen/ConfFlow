@@ -54,7 +54,7 @@ dev = [
     "black>=26.5.1",
     "ruff>=0.15.17",
     "mypy>=2.1.0,<2.2",
-    "types-PyYAML>=6.0.0",
+    "types-PyYAML>=6.0.12.20260518",
 ]
 # numba provides JIT acceleration; the code has a pure-Python fallback when absent
 speed = [
