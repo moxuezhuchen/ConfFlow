@@ -44,7 +44,7 @@ dependencies = [
     "psutil>=7.2.2",
     "rich>=15.0.0",
     "pydantic>=2.13.3",
-    "rdkit>=2026.3.2",
+    "rdkit>=2026.3.3",
 ]
 
 [project.optional-dependencies]
