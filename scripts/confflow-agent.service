@@ -1,0 +1,24 @@
+[Unit]
+Description=ConfFlow Workflow Agent
+Documentation=https://github.com/moxuezhuchen/ConfFlow
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/confflow-agent serve \
+    --queue-dir %h/confflow-queue \
+    --state-db %h/.local/share/confflow-agent/state.db \
+    --log-dir %h/.local/log/confflow-agent \
+    --slots 2
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=86400
+StandardOutput=journal
+StandardError=journal
+# Keep the agent alive after user logs out
+# (requires `loginctl enable-linger $USER` to be run once)
+KillMode=mixed
+KillSignal=SIGTERM
+
+[Install]
+WantedBy=default.target

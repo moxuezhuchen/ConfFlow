@@ -7,7 +7,7 @@ from __future__ import annotations
 import os
 import time
 from datetime import datetime
-from typing import Any
+from typing import Any, Callable
 
 from ..calc.artifacts import CalcArtifactManager
 from ..config.models import CalcStepParams, GlobalOptions, load_workflow_model
@@ -37,6 +37,7 @@ from .step_handlers import run_calc_step as step_run_calc_step
 from .step_handlers import run_confgen_step as step_run_confgen_step
 from .step_naming import build_step_dir_name_map
 from .validation import validate_inputs_compatible
+from ..core.exceptions import StopRequestedError
 
 __all__ = [
     "run_workflow",
@@ -110,6 +111,8 @@ def run_workflow(
     original_input_files: list[str] | None = None,
     resume: bool = False,
     verbose: bool = False,
+    pause_beacon_file: str | None = None,
+    step_started_callback: Callable[[str, str, str], None] | None = None,
 ) -> dict[str, Any]:
     if verbose and hasattr(logger, "set_level"):
         logger.set_level(10)
@@ -209,6 +212,10 @@ def run_workflow(
                 )
             )
 
+        # Check pause beacon before executing new step
+        if pause_beacon_file and os.path.exists(pause_beacon_file):
+            raise StopRequestedError(f"Pause beacon found at {pause_beacon_file}")
+
         if not step.get("enabled", True):
             continue
 
@@ -229,6 +236,10 @@ def run_workflow(
         }
 
         params = step.get("params", {}) or {}
+
+        # Notify server of the current step_dir for STOP beacon injection
+        if step_started_callback:
+            step_started_callback(step_name, step_type, step_dir)
 
         # === Step header ===
         total_steps = len(steps)

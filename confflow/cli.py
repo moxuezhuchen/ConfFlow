@@ -31,6 +31,7 @@ from .workflow.rerun_failed import (
     RerunFailedUsageError,
     run_rerun_failed,
 )
+from .agent.cli import main as agent_main
 
 __all__ = [
     "build_parser",
@@ -139,6 +140,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--step",
         dest="step",
         help="Workflow step name or 1-based index for --rerun-failed or --config-show",
+    )
+    parser.add_argument(
+        "--agent",
+        action="store_true",
+        help="Forward to the confflow-agent CLI (serve, status, submit, list, pause, resume, cancel, stop, logs)",
     )
     return parser
 
@@ -333,6 +339,14 @@ def stop_all_confflow_processes() -> int:
 
 
 def main(args_list: list[str] | None = None):
+    # Fast-path: if --agent is present, strip it and forward directly to
+    # the agent CLI without confflow's argument parser seeing agent flags.
+    # Use sys.argv[1:] when args_list is None (i.e., when called as entry point).
+    effective_args = args_list if args_list is not None else sys.argv[1:]
+    if "--agent" in effective_args:
+        stripped = [a for a in effective_args if a != "--agent"]
+        return agent_main(stripped if stripped else None)
+
     parser = build_parser()
     args = parser.parse_args(args_list)
 
@@ -502,6 +516,8 @@ def main(args_list: list[str] | None = None):
                 original_input_files=original_input_files,
                 resume=bool(args.resume),
                 verbose=bool(args.verbose),
+                pause_beacon_file=None,
+                step_started_callback=None,
             )
 
         return ExitCode.SUCCESS
