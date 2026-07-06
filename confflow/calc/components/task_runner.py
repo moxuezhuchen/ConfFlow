@@ -145,6 +145,7 @@ class TaskRunner:
                     error_details=executor._get_error_details(wd, job, cfg, e, policy),
                 )
             except Exception as e:
+                # noqa: BLE001 - must be broad: _try_rescue callers mock plain `Exception` (see test_task_runner_exception_rescue) and rescue internals can surface any subclass
                 error_kind = "worker_exception"
                 if get_itask(cfg) == 4:
                     rescued = self._try_rescue(cfg, task_dict, str(e))

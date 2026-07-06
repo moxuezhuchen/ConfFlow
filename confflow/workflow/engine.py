@@ -296,6 +296,7 @@ def run_workflow(
                 step_stats["output_xyz"] = os.path.abspath(current_input)
 
         except Exception as e:
+            # noqa: BLE001 - dispatcher-level: any step failure must mark FAILED + checkpoint + re-raise for the engine to abort the pipeline
             step_stats["status"] = TaskStatus.FAILED
             step_stats["error"] = str(e)
             checkpoint.save(i - 1, stats_tracker.get_stats())
