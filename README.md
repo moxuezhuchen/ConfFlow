@@ -1,8 +1,11 @@
 # ConfFlow
 
-ConfFlow is a workflow automation tool for computational chemistry. Starting from XYZ inputs and a YAML configuration, it can run conformer generation, quantum-chemistry steps, deduplication and filtering, and a final text report.
+> **Archived**: ConfFlow is now part of the [JobDesk](https://github.com/moxuezhuchen/jobdesk) monorepo.
+> This repository is kept for reference. All active development continues in JobDesk.
 
-[![CI](https://github.com/moxuezhuchen/ConfFlow/actions/workflows/ci.yml/badge.svg)](https://github.com/moxuezhuchen/ConfFlow/actions/workflows/ci.yml) [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+## ConfFlow (Archived)
+
+ConfFlow was a workflow automation tool for computational chemistry. It has been migrated into the **JobDesk** monorepo as `jobdesk_app/workflow/` and `jobdesk_app/agent/`.
 
 ## Project Status
 
