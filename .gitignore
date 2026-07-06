@@ -39,3 +39,18 @@ chem_tasks_*/
 input_work/
 test_work/
 e2e_real/
+
+# editor / IDE
+.cursor/
+.vscode/
+.idea/
+
+# local scratch directories
+.agent-test/
+.agent/
+
+# staging / migration scripts (intentionally never tracked)
+jobdesk-staging/
+migrate_confflow.py
+fix_migration.py
+REVIEW.md

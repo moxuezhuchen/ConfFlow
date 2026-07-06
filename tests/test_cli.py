@@ -431,7 +431,15 @@ H  -1   0.0 0.0 0.0
     seen = {}
 
     def fake_run_workflow(
-        *, input_xyz, config_file, work_dir, original_input_files=None, resume=False, verbose=False, pause_beacon_file=None, step_started_callback=None
+        *,
+        input_xyz,
+        config_file,
+        work_dir,
+        original_input_files=None,
+        resume=False,
+        verbose=False,
+        pause_beacon_file=None,
+        step_started_callback=None,
     ):
         seen["input_xyz"] = input_xyz
         seen["config_file"] = config_file

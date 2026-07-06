@@ -3,16 +3,16 @@
 from __future__ import annotations
 
 import logging
-import os
 import signal
 import threading
+from collections.abc import Callable
 from pathlib import Path
 
+from .progress import ProgressTracker
 from .queue import JobQueue, JobSpec
 from .runner import JobContext, JobRunner
 from .slots import SlotManager
 from .state import AgentStateDB, JobStatus
-from .progress import ProgressTracker
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +28,7 @@ class AgentServer:
         state_db: AgentStateDB,
         num_slots: int = 2,
         runs_base_dir: str | None = None,
+        install_signal_handlers: bool = True,
     ):
         self.queue = JobQueue(queue_dir)
         self.state_db = state_db
@@ -43,9 +44,32 @@ class AgentServer:
         # job_id → step_dir of the currently-running step (for STOP beacon injection)
         self._running_steps: dict[str, str] = {}
         self._running_steps_lock = threading.Lock()
+        self._handlers_installed = False
+        self._install_signal_handlers = install_signal_handlers
+        if install_signal_handlers:
+            self._install_handlers()
 
-        signal.signal(signal.SIGTERM, self._on_signal)
-        signal.signal(signal.SIGINT, self._on_signal)
+    def _install_handlers(self) -> None:
+        """Install SIGTERM/SIGINT handlers that call self.stop().
+
+        Only installs once per process. Skipped entirely when
+        ``install_signal_handlers=False`` (e.g. unit tests or in-process
+        embedding) so that constructing an ``AgentServer`` does not mutate
+        the process-wide signal disposition.
+        """
+        if self._handlers_installed:
+            return
+        try:
+            signal.signal(signal.SIGTERM, self._on_signal)
+            signal.signal(signal.SIGINT, self._on_signal)
+            self._handlers_installed = True
+        except ValueError:
+            # signal.signal() raises in non-main threads; in that case the
+            # caller is responsible for driving shutdown explicitly.
+            logger.warning(
+                "Cannot install SIGTERM/SIGINT handlers from this thread; "
+                "use server.stop() to drive shutdown explicitly."
+            )
 
     def _on_signal(self, signum: int, frame) -> None:
         logger.info("Received signal %d, initiating graceful shutdown", signum)
@@ -53,11 +77,19 @@ class AgentServer:
 
     def serve(self) -> None:
         """Start the server and block until shutdown."""
-        logger.info("ConfFlow Agent starting (slots=%d, queue=%s)", self.slots.num_slots, self.queue_dir)
+        # Re-attempt handler install in case we were constructed in
+        # tests with install_signal_handlers=False.
+        if self._install_signal_handlers:
+            self._install_handlers()
+        logger.info(
+            "ConfFlow Agent starting (slots=%d, queue=%s)", self.slots.num_slots, self.queue_dir
+        )
         self._running = True
 
         for i in range(self.slots.num_slots):
-            t = threading.Thread(target=self._worker_loop, args=(i,), daemon=True, name=f"agent-worker-{i}")
+            t = threading.Thread(
+                target=self._worker_loop, args=(i,), daemon=True, name=f"agent-worker-{i}"
+            )
             t.start()
             self._workers.append(t)
 
@@ -93,13 +125,16 @@ class AgentServer:
             step_dir = self._running_steps.get(job_id)
         if step_dir:
             stop_file = Path(step_dir) / "STOP"
+            stop_file.parent.mkdir(parents=True, exist_ok=True)
             stop_file.touch()
             logger.info("Triggered STOP beacon for job %s at %s", job_id, stop_file)
 
-    def _make_pause_callback(self, job_id: str) -> callable:
+    def _make_pause_callback(self, job_id: str) -> Callable[[], None]:
         """Return the on_pause_requested callback bound to this job_id."""
+
         def callback() -> None:
             self._trigger_stop_beacon(job_id)
+
         return callback
 
     def _worker_loop(self, worker_id: int) -> None:
@@ -111,26 +146,39 @@ class AgentServer:
                 self._sleep(0.5)
                 continue
 
-            reservation = self.slots.acquire(timeout=5.0)
+            reservation = self.slots.acquire(timeout=0.5)
             if reservation is None:
                 self._sleep(0.5)
                 continue
 
             slot = reservation.slot
-            job = pending[0]
-            job_id = job.job_id
+            claimed_any = False
+            job_id: str | None = None
+            job: JobSpec | None = None
 
             try:
-                state = self.state_db.get_job(job_id)
-                if state and state["status"] not in (JobStatus.PENDING.value, JobStatus.PAUSED.value):
+                # Iterate all pending jobs and try to atomically claim one.
+                # Two workers can both see the same pending list, but only one
+                # can win the SQL CAS in AgentStateDB.claim().
+                for candidate in pending:
+                    work_dir_str = str(self.runs_base / f"run_{candidate.job_id}")
+                    if self.state_db.claim(candidate.job_id, slot.id, work_dir_str):
+                        job = candidate
+                        job_id = candidate.job_id
+                        slot.job_id = job_id
+                        logger.info(
+                            "Worker %d claimed job %s on slot %d",
+                            worker_id,
+                            job_id,
+                            slot.id,
+                        )
+                        claimed_any = True
+                        break
+
+                if not claimed_any or job is None or job_id is None:
                     self.slots.release(slot)
                     continue
 
-                logger.info("Worker %d picking up job %s on slot %d", worker_id, job_id, slot.id)
-                slot.job_id = job_id
-                self.state_db.set_status(job_id, JobStatus.RUNNING, slot_id=slot.id)
-
-                work_dir_str = str(self.runs_base / f"run_{job_id}")
                 ctx = JobContext(
                     job_id=job_id,
                     config_file=job.config_file,
@@ -138,9 +186,11 @@ class AgentServer:
                     work_dir=work_dir_str,
                     pause_beacon_file=str(Path(work_dir_str) / "PAUSE"),
                     state_db=self.state_db,
-                    on_progress=lambda e: self._on_progress(job_id, e),
+                    on_progress=lambda e, _job_id=job_id: self._on_progress(_job_id, e),
                     on_pause_requested=self._make_pause_callback(job_id),
-                    on_step_started=lambda name, step_type, step_dir: self._on_step_started(job_id, step_type, step_dir),
+                    on_step_started=lambda name, step_type, step_dir, _job_id=job_id: self._on_step_started(
+                        _job_id, step_type, step_dir
+                    ),
                 )
                 runner = JobRunner(ctx)
                 runner.run()
@@ -148,8 +198,9 @@ class AgentServer:
             except Exception:
                 logger.exception("Worker %d error on job %s", worker_id, job_id)
             finally:
-                with self._running_steps_lock:
-                    self._running_steps.pop(job_id, None)
+                if job_id is not None:
+                    with self._running_steps_lock:
+                        self._running_steps.pop(job_id, None)
                 self.slots.release(slot)
 
     def _on_progress(self, job_id: str, event: dict) -> None:
@@ -183,4 +234,5 @@ class AgentServer:
     @staticmethod
     def _sleep(duration: float) -> None:
         import time
+
         time.sleep(duration)

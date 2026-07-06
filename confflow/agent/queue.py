@@ -4,10 +4,9 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import time
+from collections.abc import Callable, Iterator
 from pathlib import Path
-from typing import Callable, Iterator
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +33,7 @@ class JobSpec:
         self.submitted_by = submitted_by
 
     @classmethod
-    def from_file(cls, path: str) -> "JobSpec":
+    def from_file(cls, path: str) -> JobSpec:
         """Load a JobSpec from a YAML/JSON file written by JobDesk."""
         with open(path, encoding="utf-8") as f:
             raw = json.load(f)
@@ -124,7 +123,9 @@ class JobQueue:
         ``serve`` module which wraps it.
         """
         self._running = True
-        logger.info("JobQueue watching %s (poll_interval=%.1fs)", self.queue_dir, self.poll_interval)
+        logger.info(
+            "JobQueue watching %s (poll_interval=%.1fs)", self.queue_dir, self.poll_interval
+        )
 
         while self._running:
             for job in self.iter_new_jobs():

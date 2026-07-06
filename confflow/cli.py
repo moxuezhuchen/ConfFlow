@@ -18,6 +18,7 @@ except ImportError:
 
 import yaml
 
+from .agent.cli import main as agent_main
 from .core.contracts import ExitCode, cli_output_to_txt, output_txt_path_for_input
 from .core.exceptions import ConfigurationError, InputFileError, PathSafetyError, XYZFormatError
 from .core.io import parse_gaussian_input_text, write_xyz_file
@@ -31,7 +32,6 @@ from .workflow.rerun_failed import (
     RerunFailedUsageError,
     run_rerun_failed,
 )
-from .agent.cli import main as agent_main
 
 __all__ = [
     "build_parser",

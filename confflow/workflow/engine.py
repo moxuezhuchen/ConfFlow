@@ -6,12 +6,14 @@ from __future__ import annotations
 
 import os
 import time
+from collections.abc import Callable
 from datetime import datetime
-from typing import Any, Callable
+from typing import Any
 
 from ..calc.artifacts import CalcArtifactManager
 from ..config.models import CalcStepParams, GlobalOptions, load_workflow_model
 from ..core import io as io_xyz
+from ..core.exceptions import StopRequestedError
 from ..core.types import TaskStatus
 from ..core.utils import (
     get_logger,
@@ -37,7 +39,6 @@ from .step_handlers import run_calc_step as step_run_calc_step
 from .step_handlers import run_confgen_step as step_run_confgen_step
 from .step_naming import build_step_dir_name_map
 from .validation import validate_inputs_compatible
-from ..core.exceptions import StopRequestedError
 
 __all__ = [
     "run_workflow",

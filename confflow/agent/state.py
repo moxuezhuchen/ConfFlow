@@ -4,21 +4,27 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeAlias
 
 logger = logging.getLogger(__name__)
+
 
 # Sentinel value to explicitly clear a nullable column
 class _CLEAR_TYPE:
     __slots__ = ()
-    def __repr__(self): return "CLEAR"
+
+    def __repr__(self):
+        return "CLEAR"
+
 
 CLEAR = _CLEAR_TYPE()
+
+# Type alias so mypy accepts _Unset in parameter unions.
+_Unset: TypeAlias = _CLEAR_TYPE
 
 _DB_SCHEMA = """
 CREATE TABLE IF NOT EXISTS jobs (
@@ -81,6 +87,32 @@ class AgentStateDB:
         )
         self._conn.commit()
 
+    def claim(
+        self,
+        job_id: str,
+        slot_id: int,
+        work_dir: str,
+    ) -> bool:
+        """Atomically transition a job to RUNNING iff it is currently PENDING or PAUSED.
+
+        Uses an SQL ``UPDATE ... WHERE status IN (...)`` so that exactly one worker
+        wins the race when multiple workers pick up the same job. Returns True iff
+        this caller successfully claimed the job.
+        """
+        now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        cursor = self._conn.execute(
+            """UPDATE jobs
+               SET status = 'running',
+                   slot_id = ?,
+                   work_dir = COALESCE(work_dir, ?),
+                   started_at = COALESCE(started_at, ?)
+               WHERE job_id = ?
+                 AND status IN ('pending', 'paused')""",
+            (slot_id, work_dir, now, job_id),
+        )
+        self._conn.commit()
+        return cursor.rowcount == 1
+
     def set_status(
         self,
         job_id: str,
@@ -88,13 +120,13 @@ class AgentStateDB:
         *,
         work_dir: str | None = None,
         slot_id: int | None = None,
-        error_message: str | type[CLEAR] | None = CLEAR,
-        progress_pct: float | type[CLEAR] | None = CLEAR,
-        current_step: str | type[CLEAR] | None = CLEAR,
-        completed_at: str | type[CLEAR] | None = CLEAR,
+        error_message: str | _Unset | None = CLEAR,
+        progress_pct: float | _Unset | None = CLEAR,
+        current_step: str | _Unset | None = CLEAR,
+        completed_at: str | _Unset | None = CLEAR,
         extra: dict | None = None,
     ) -> None:
-        now = datetime.utcnow().isoformat() + "Z"
+        now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
         fields = ["status = ?"]
         vals: list[Any] = [status.value]
 
@@ -132,9 +164,7 @@ class AgentStateDB:
         self._conn.commit()
 
     def get_job(self, job_id: str) -> dict | None:
-        row = self._conn.execute(
-            "SELECT * FROM jobs WHERE job_id = ?", (job_id,)
-        ).fetchone()
+        row = self._conn.execute("SELECT * FROM jobs WHERE job_id = ?", (job_id,)).fetchone()
         return dict(row) if row else None
 
     def list_jobs(self, status: JobStatus | None = None) -> list[dict]:

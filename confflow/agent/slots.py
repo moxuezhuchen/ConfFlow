@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import logging
 import threading
-from dataclasses import dataclass, field
+from collections.abc import Callable
+from dataclasses import dataclass
 from enum import Enum
-from typing import Callable
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +59,9 @@ class SlotManager:
                     if slot.state == SlotState.FREE:
                         slot.state = SlotState.BUSY
                         logger.debug("Slot %d acquired", slot.id)
-                        return SlotReservation(slot=slot, release=lambda: self._release(slot))
+                        return SlotReservation(
+                            slot=slot, release=lambda _slot=slot: self._release(_slot)
+                        )
 
                 # No free slot — wait
                 remaining: float | None = None
@@ -94,12 +96,12 @@ class SlotManager:
                 "free": sum(1 for s in self._slots if s.state == SlotState.FREE),
                 "busy": sum(1 for s in self._slots if s.state == SlotState.BUSY),
                 "slots": [
-                    {"id": s.id, "state": s.state.value, "job_id": s.job_id}
-                    for s in self._slots
+                    {"id": s.id, "state": s.state.value, "job_id": s.job_id} for s in self._slots
                 ],
             }
 
 
 def _monotonic() -> float:
     import time
+
     return time.monotonic()

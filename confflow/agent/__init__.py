@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from .queue import JobQueue
-from .state import AgentStateDB
-from .slots import SlotManager
-from .runner import JobRunner
 from .progress import ProgressTracker
+from .queue import JobQueue
+from .runner import JobRunner
 from .server import AgentServer
+from .slots import SlotManager
+from .state import AgentStateDB
 
 __all__ = [
     "JobQueue",
