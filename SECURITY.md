@@ -1,5 +1,11 @@
 # Security Policy
 
+> **Notice — Archived Repository**
+> ConfFlow has been folded into the
+> [JobDesk](https://github.com/moxuezhuchen/jobdesk) monorepo. Security
+> reports for the live code should go to JobDesk.
+> This page is kept verbatim for historical accuracy.
+
 ConfFlow is an alpha preview computational chemistry workflow tool. It reads user-provided chemistry inputs and YAML configuration, writes workflow artifacts, and invokes external chemistry programs such as Gaussian and ORCA when configured to do so.
 
 ## Supported Versions
@@ -13,6 +19,14 @@ ConfFlow is an alpha preview computational chemistry workflow tool. It reads use
 The project currently does not provide a long-term support schedule.
 
 ## How To Report A Vulnerability
+
+> **For the live, supported codebase:** report at
+> [moxuezhuchen/jobdesk](https://github.com/moxuezhuchen/jobdesk/security/advisories/new).
+>
+> Reports sent against this archived ConfFlow repository will be acknowledged
+> but normally closed as "won't fix" — fixes live in JobDesk. If the issue
+> genuinely only exists in this reference snapshot and has no JobDesk
+> counterpart, follow the process below as a best-effort fallback.
 
 Prefer a private report instead of a public issue. If GitHub private vulnerability reporting or Security Advisories are enabled for this repository, use that channel.
 

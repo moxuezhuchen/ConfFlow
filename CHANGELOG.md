@@ -1,6 +1,13 @@
 # ConfFlow 更新日志
 
-## Unreleased
+> **Notice — Archived Repository**
+> ConfFlow 已被合并到 [JobDesk](https://github.com/moxuezhuchen/jobdesk)
+> monorepo。本仓库保留为只读快照，不再有新版本发布。下方的"Unreleased"
+> 段是 archive 之前最后一次重构的累积变更，作为最终快照记录在
+> `v1.1.0-archived` tag 中。后续变更请见 JobDesk 的
+> `jobdesk_app/workflow/` / `jobdesk_app/agent/` 模块历史。
+
+## Unreleased (archived snapshot — locked at v1.1.0-archived)
 
 ### Changed
 
@@ -68,6 +75,29 @@
 
 - README、USAGE、ARCHITECTURE、TESTING、DEVELOPMENT、ASSESSMENT 已更新到当前基线
 - 当前本地验证结果：`pytest -q` 全绿（测试文件数与用例数以当前 CI 输出为准）
+
+## Archived (2026-07-06) — final reference snapshot
+
+ConfFlow 已被合并进 [JobDesk](https://github.com/moxuezhuchen/jobdesk)
+monorepo（路径 `jobdesk_app/workflow/` + `jobdesk_app/agent/`）。本仓库
+保留为只读 archive，不再发版本。
+
+最后版本号：`v1.1.0-archived`（指向 HEAD）。
+
+### 已知吸纳路径
+
+| ConfFlow 模块 | JobDesk 落点 |
+| --- | --- |
+| `confflow/workflow/`、`confflow/blocks/`、`confflow/core/`、`confflow/cli.py` | `jobdesk_app/workflow/` |
+| `confflow/agent/`、`confflow/calc/agent_*` | `jobdesk_app/agent/` |
+| `confflow/calc/`（量子化学计算步骤） | 已被 JobDesk 通过 process abstraction 重写 |
+| ConfFlow 文档 `docs/USAGE.md` 等 | JobDesk 内 `docs/CONFFLOW_WSL_SINGLE_RUN.md` |
+
+### 关联迁移计划
+
+`.cursor/plans/merge_confflow_into_jobdesk_9fff6a34.plan.md` 是合并
+过  程的 32 KB 实施计划文档；在 archive 时被删除，避免日后访问者误
+以为尚未实施。整合事实以 JobDesk 仓的 `docs/` 与 `tests/` 为准。
 
 ## v1.0.10 (2026-02-28)
 
