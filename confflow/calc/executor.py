@@ -154,7 +154,7 @@ class LocalCalcExecutor:
         proc = handle.executor_data.get("_proc")
         if proc is None:
             return False
-        return proc.returncode == 0
+        return bool(proc.returncode == 0)
 
     def error(self, handle: CalcHandle) -> str | None:
         proc = handle.executor_data.get("_proc")

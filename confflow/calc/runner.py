@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import sys
+from collections.abc import Callable
 from concurrent.futures import Executor, ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
@@ -27,7 +28,7 @@ from .setup import setup_logging
 from .task_execution import execute_tasks
 
 
-def _task_pool_type() -> type[Executor]:
+def _task_pool_type() -> Callable[[int], Executor]:
     """Use threads on Windows so custom executors need not be pickleable."""
     if sys.platform == "win32":
         return ThreadPoolExecutor
