@@ -7,7 +7,7 @@ from __future__ import annotations
 import logging
 import os
 from collections.abc import Callable
-from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, as_completed, wait
+from concurrent.futures import FIRST_COMPLETED, Executor, ProcessPoolExecutor, as_completed, wait
 from concurrent.futures.process import BrokenProcessPool
 from typing import Any, cast
 
@@ -78,7 +78,7 @@ def execute_tasks(
     stop_requested_fn: Callable[[], bool],
     set_stop_requested_fn: Callable[[bool], None],
     progress_reporter_cls: type[CalcProgressReporter] = CalcProgressReporter,
-    executor_cls: type[ProcessPoolExecutor] = ProcessPoolExecutor,
+    executor_cls: Callable[[int], Executor] = ProcessPoolExecutor,
     as_completed_fn: Callable[[Any], Any] = as_completed,
     resource_monitor_cls: type[ResourceMonitor] = ResourceMonitor,
 ) -> None:
@@ -130,7 +130,7 @@ def execute_tasks(
     if dynamic_resources:
         pending = list(todo)
         monitor = resource_monitor_cls()
-        with executor_cls(max_workers=max_jobs) as exc:
+        with executor_cls(max_jobs) as exc:
             futures: dict[Any, models.TaskContext] = {}
             with progress_reporter_cls(total=len(todo), report_every=report_every) as reporter:
                 while pending or futures:
@@ -213,7 +213,7 @@ def execute_tasks(
                         reporter.report(res.get("status", "failed"))
         return
 
-    with executor_cls(max_workers=max_jobs) as exc:
+    with executor_cls(max_jobs) as exc:
         futures = {exc.submit(run_task_fn, _task_payload(t)): t for t in todo}
         recorded: set[Any] = set()
         with progress_reporter_cls(total=len(todo), report_every=report_every) as reporter:
