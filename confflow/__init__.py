@@ -10,7 +10,7 @@ from importlib.metadata import PackageNotFoundError, version
 try:
     __version__ = version("confflow")
 except PackageNotFoundError:
-    __version__ = "1.0.10"
+    __version__ = "1.2.1"
 __author__ = "ConfFlow Team"
 
 # ============================================================================
