@@ -7,7 +7,7 @@ from __future__ import annotations
 import logging
 import os
 from collections.abc import Callable
-from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, as_completed, wait
+from concurrent.futures import Executor, FIRST_COMPLETED, ProcessPoolExecutor, as_completed, wait
 from concurrent.futures.process import BrokenProcessPool
 from typing import Any, cast
 
@@ -78,7 +78,7 @@ def execute_tasks(
     stop_requested_fn: Callable[[], bool],
     set_stop_requested_fn: Callable[[bool], None],
     progress_reporter_cls: type[CalcProgressReporter] = CalcProgressReporter,
-    executor_cls: type[ProcessPoolExecutor] = ProcessPoolExecutor,
+    executor_cls: type[Executor] = ProcessPoolExecutor,
     as_completed_fn: Callable[[Any], Any] = as_completed,
     resource_monitor_cls: type[ResourceMonitor] = ResourceMonitor,
 ) -> None:

@@ -462,7 +462,7 @@ class TestExecutorAdvanced:
             with pytest.raises(RuntimeError, match="STOP signal received"):
                 _run_calculation_step(str(work_dir), "job", policy, None, config)
 
-            mock_proc.kill.assert_called_once()
+            mock_proc.terminate.assert_called_once()
             mock_proc.wait.assert_called_once()
 
     @pytest.mark.parametrize(
@@ -628,8 +628,8 @@ class TestExecutorAdvanced:
         mock_popen.assert_called_once()
         mock_sleep.assert_called_once_with(0.1)
 
-    def test_executor_max_wall_time_kills_and_reaps_timed_out_process(self, cd_tmp):
-        """A timed-out subprocess should be killed and reaped before reporting failure."""
+    def test_executor_max_wall_time_terminates_and_reaps_timed_out_process(self, cd_tmp):
+        """A timed-out subprocess is terminated before reporting failure."""
         from unittest.mock import MagicMock, patch
 
         from confflow.calc.components.executor import _run_calculation_step
@@ -658,7 +658,7 @@ class TestExecutorAdvanced:
             with pytest.raises(CalculationExecutionError, match="exceeded max_wall_time_seconds"):
                 _run_calculation_step(str(work_dir), "job", policy, None, config)
 
-        mock_proc.kill.assert_called_once()
+        mock_proc.terminate.assert_called_once()
         mock_proc.wait.assert_called_once()
         mock_sleep.assert_not_called()
 

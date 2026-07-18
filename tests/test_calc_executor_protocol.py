@@ -5,10 +5,7 @@ from __future__ import annotations
 import sys
 import subprocess
 import threading
-from pathlib import Path
 from unittest.mock import MagicMock
-
-import pytest
 
 
 def _policy(*, input_ext: str = "inp", log_ext: str = "log", name: str = "Mock"):
@@ -112,29 +109,62 @@ def test_mock_executor_marks_terminal_via_polled_state(tmp_path):
     assert status_b.succeeded is True
 
 
-def test_protocol_passthrough_through_executor_module():
-    """MockCalcExecutor must satisfy the CalcExecutor duck-typing surface."""
-    from confflow.calc.executor import CalcExecutor, LocalCalcExecutor
+def test_protocol_passthrough_through_calculation_step(tmp_path):
+    """A supplied executor owns launch, polling, and output parsing."""
+    from confflow.calc.components.executor import _run_calculation_step
 
-    assert hasattr(CalcExecutor, "submit")
-    assert hasattr(CalcExecutor, "poll")
+    policy = _policy()
+    policy.check_termination.return_value = True
     mock = MockCalcExecutor()
-    # The Protocol is structural; just call all required methods without error.
-    handle = mock.submit("/tmp", "x", _policy(), None, {}, ["true"], None)
-    mock.poll(handle)
-    mock.is_terminal(handle)
-    mock.succeeded(handle)
-    mock.error(handle)
-    mock.cancel(handle)
-    mock.fetch_output(handle, "/tmp/job.log", {}, is_sp_task=False)
+    mock._terminal["job"] = True
+    mock._succeeded["job"] = True
+
+    result = _run_calculation_step(
+        str(tmp_path),
+        "job",
+        policy,
+        ["H 0 0 0"],
+        {"stop_check_interval_seconds": 0.01},
+        calc_executor=mock,
+    )
+
+    assert result == {"mock": True, "job": "job"}
+    assert mock.submitted[0]["job_name"] == "job"
+    assert mock.polled == ["job"]
+    assert mock.handles["job"]["fetched"][1] is False
+
+
+def test_protocol_default_uses_local_executor(tmp_path, monkeypatch):
+    """Omitting the Protocol preserves the local executor fallback."""
+    from confflow.calc.components import executor as component_executor
+
+    policy = _policy()
+    policy.check_termination.return_value = True
+    mock = MockCalcExecutor()
+    mock._terminal["job"] = True
+    mock._succeeded["job"] = True
+    monkeypatch.setattr(component_executor, "LocalCalcExecutor", lambda: mock)
+
+    result = component_executor._run_calculation_step(
+        str(tmp_path),
+        "job",
+        policy,
+        ["H 0 0 0"],
+        {"stop_check_interval_seconds": 0.01},
+    )
+
+    assert result == {"mock": True, "job": "job"}
+    assert mock.submitted[0]["job_name"] == "job"
 
 
 def test_local_executor_popen(tmp_path):
     from confflow.calc.executor import LocalCalcExecutor
 
     exe = LocalCalcExecutor()
+    policy = _policy()
+    policy.parse_output.return_value = {"energy": -1.0}
     cmd = [sys.executable, "-c", "print('hi')"]
-    handle = exe.submit(str(tmp_path), "ping", _policy(), None, {}, cmd, None)
+    handle = exe.submit(str(tmp_path), "ping", policy, None, {}, cmd, None)
     proc = handle.executor_data["_proc"]
     assert isinstance(proc, subprocess.Popen)
     rc = proc.wait(timeout=10)
@@ -160,17 +190,65 @@ def test_local_executor_failure_path(tmp_path):
 
 
 def test_windows_threadpool_selection(monkeypatch):
-    """On sys.platform=='win32', the runner layer must select ThreadPoolExecutor."""
+    """The production runner chooses a thread pool on Windows."""
     from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
+    from confflow.calc import runner
 
-    monkeypatch.setattr(sys, "platform", "win32")
-    if sys.platform == "win32":
-        from concurrent.futures import ThreadPoolExecutor as Pool
-    else:  # pragma: no cover - only reached on non-win32 test machines
-        from concurrent.futures import ProcessPoolExecutor as Pool
+    monkeypatch.setattr(runner.sys, "platform", "win32")
 
-    assert Pool is ThreadPoolExecutor
-    assert Pool is not ProcessPoolExecutor
+    assert runner._task_pool_type() is ThreadPoolExecutor
+    assert runner._task_pool_type() is not ProcessPoolExecutor
+
+
+def test_task_runner_preserves_legacy_monkeypatch_signature(tmp_path, monkeypatch):
+    """No custom executor means existing patched callables receive no new kwargs."""
+    from confflow.calc.components import executor as component_executor
+    from confflow.calc.components.task_runner import TaskRunner
+
+    def legacy_run(work_dir, job_name, policy, coords, config, is_sp_task=False):
+        del work_dir, job_name, policy, config, is_sp_task
+        return {"final_coords": coords, "e_low": -1.0}
+
+    monkeypatch.setattr(component_executor, "_run_calculation_step", legacy_run)
+    monkeypatch.setattr(component_executor, "handle_backups", lambda *args, **kwargs: True)
+    result = TaskRunner().run(
+        {
+            "job_name": "job",
+            "work_dir": str(tmp_path / "work"),
+            "config": {"itask": 1, "iprog": 1},
+            "coords": ["H 0 0 0"],
+        }
+    )
+
+    assert result["status"] == "success"
+
+
+def test_task_runner_forwards_custom_executor(tmp_path, monkeypatch):
+    """TaskRunner forwards a caller-supplied executor to the calc step."""
+    from confflow.calc.components import executor as component_executor
+    from confflow.calc.components.task_runner import TaskRunner
+
+    supplied = MockCalcExecutor()
+    seen: dict[str, object] = {}
+
+    def custom_run(work_dir, job_name, policy, coords, config, is_sp_task=False, *, calc_executor):
+        del work_dir, job_name, policy, config, is_sp_task
+        seen["executor"] = calc_executor
+        return {"final_coords": coords, "e_low": -1.0}
+
+    monkeypatch.setattr(component_executor, "_run_calculation_step", custom_run)
+    monkeypatch.setattr(component_executor, "handle_backups", lambda *args, **kwargs: True)
+    result = TaskRunner(calc_executor=supplied).run(
+        {
+            "job_name": "job",
+            "work_dir": str(tmp_path / "work"),
+            "config": {"itask": 1, "iprog": 1},
+            "coords": ["H 0 0 0"],
+        }
+    )
+
+    assert result["status"] == "success"
+    assert seen["executor"] is supplied
 
 
 def test_local_executor_thread_safe_handle(tmp_path):

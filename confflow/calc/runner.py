@@ -4,9 +4,10 @@
 
 from __future__ import annotations
 
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import Executor, ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
+import sys
 
 from ..blocks.refine.result import RefineResult
 from ..config.models import CalcStepParams, load_workflow_model
@@ -18,11 +19,19 @@ from ..core.path_policy import resolve_sandbox_root, validate_managed_path
 from .artifacts import CalcArtifactManager
 from .components.task_runner import TaskRunner
 from .db.database import ResultsDB
+from .executor import CalcExecutor
 from .postprocess import run_refine_postprocess
 from .result_writer import append_result
 from .run_services import ResultAssemblyService, TaskRecoveryService, TaskSourceBuilder
 from .setup import setup_logging
 from .task_execution import execute_tasks
+
+
+def _task_pool_type() -> type[Executor]:
+    """Use threads on Windows so custom executors need not be pickleable."""
+    if sys.platform == "win32":
+        return ThreadPoolExecutor
+    return ProcessPoolExecutor
 
 
 @dataclass(frozen=True)
@@ -48,7 +57,8 @@ class CalcStepResult:
 class CalcStepRunner:
     """Run one calc step using typed config and manifest artifacts."""
 
-    def __init__(self) -> None:
+    def __init__(self, calc_executor: CalcExecutor | None = None) -> None:
+        self._calc_executor = calc_executor
         self.stop_requested = False
 
     @staticmethod
@@ -74,9 +84,8 @@ class CalcStepRunner:
                 "metadata": conf.get("metadata", {}),
             }
 
-    @staticmethod
-    def _run_task(task_info: models.TaskContext | dict) -> dict:
-        result = TaskRunner().run(task_info)
+    def _run_task(self, task_info: models.TaskContext | dict) -> dict:
+        result = TaskRunner(calc_executor=self._calc_executor).run(task_info)
         return result if isinstance(result, dict) else {}
 
     @staticmethod
@@ -166,7 +175,7 @@ class CalcStepRunner:
                 stop_requested_fn=lambda: self.stop_requested,
                 set_stop_requested_fn=lambda value: setattr(self, "stop_requested", value),
                 progress_reporter_cls=CalcProgressReporter,
-                executor_cls=ProcessPoolExecutor,
+                executor_cls=_task_pool_type(),
                 as_completed_fn=as_completed,
             )
             succeeded, failed_rows = assembly.collect_outcomes()

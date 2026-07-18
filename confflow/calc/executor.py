@@ -15,6 +15,7 @@ or the ``executor_cls`` argument of ``execute_tasks``.
 
 from __future__ import annotations
 
+import os
 import subprocess
 import time
 from dataclasses import dataclass, field
@@ -115,35 +116,49 @@ class LocalCalcExecutor:
         cmd: list[str],
         env: dict[str, str] | None,
     ) -> CalcHandle:
+        log_path = os.path.join(work_dir, f"{job_name}.{policy.log_ext}")
+        err_path = os.path.join(work_dir, f"{job_name}.err")
+        out = open(log_path, "w", encoding="utf-8")
+        err = open(err_path, "w", encoding="utf-8")
         try:
-            proc = subprocess.Popen(cmd, cwd=work_dir, env=env, text=True)
+            proc = subprocess.Popen(cmd, cwd=work_dir, env=env, stdout=out, stderr=err, text=True)
         except OSError as exc:
+            out.close()
+            err.close()
             raise RuntimeError(f"Failed to launch {cmd!r}: {exc}") from exc
         self._handles[job_name] = proc
         return CalcHandle(
             job_name=job_name,
             work_dir=work_dir,
             submitted_at=time.time(),
-            executor_data={"_proc": proc},
+            executor_data={"_proc": proc, "_stdout": out, "_stderr": err, "_policy": policy},
         )
+
+    @staticmethod
+    def _close_streams(handle: CalcHandle) -> None:
+        for key in ("_stdout", "_stderr"):
+            stream = handle.executor_data.pop(key, None)
+            if stream is not None:
+                stream.close()
 
     def is_terminal(self, handle: CalcHandle) -> bool:
         proc = handle.executor_data.get("_proc")
         if proc is None:
             return True
-        return proc.poll() is not None
+        is_terminal = proc.poll() is not None
+        if is_terminal:
+            self._close_streams(handle)
+        return is_terminal
 
     def succeeded(self, handle: CalcHandle) -> bool:
         proc = handle.executor_data.get("_proc")
         if proc is None:
             return False
-        if proc.poll() is None:
-            return False
         return proc.returncode == 0
 
     def error(self, handle: CalcHandle) -> str | None:
         proc = handle.executor_data.get("_proc")
-        if proc is None or proc.poll() is None:
+        if proc is None or proc.returncode is None:
             return None
         if proc.returncode == 0:
             return None
@@ -154,11 +169,14 @@ class LocalCalcExecutor:
         if proc is None:
             return
         if proc.poll() is None:
-            proc.kill()
+            proc.terminate()
             try:
-                proc.wait(timeout=5)
+                proc.wait(timeout=10)
             except subprocess.TimeoutExpired:
-                pass
+                proc.kill()
+                proc.wait(timeout=5)
+            finally:
+                self._close_streams(handle)
 
     def fetch_output(
         self,
@@ -167,11 +185,14 @@ class LocalCalcExecutor:
         config: dict[str, Any],
         is_sp_task: bool = False,
     ) -> dict[str, Any]:
-        from ..calc.setup import get_itask, parse_iprog
-        from ..calc.policies import get_policy
+        from .setup import get_itask
 
-        iprog = parse_iprog(config)
-        policy = get_policy(iprog)
+        policy = handle.executor_data.get("_policy")
+        if policy is None:
+            from .policies import get_policy
+            from .setup import parse_iprog
+
+            policy = get_policy(parse_iprog(config))
         return policy.parse_output(log, config, is_sp_task=is_sp_task or get_itask(config) == 1)
 
     def poll(self, handle: CalcHandle) -> CalcStatus:
@@ -181,6 +202,7 @@ class LocalCalcExecutor:
         rc = proc.poll()
         if rc is None:
             return CalcStatus(is_terminal=False, succeeded=False)
+        self._close_streams(handle)
         return CalcStatus(
             is_terminal=True,
             succeeded=rc == 0,
