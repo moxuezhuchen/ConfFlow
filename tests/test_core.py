@@ -40,7 +40,7 @@ def test_confflow_version_falls_back_when_package_metadata_missing(monkeypatch):
     with monkeypatch.context() as mp:
         mp.setattr(importlib.metadata, "version", raise_missing)
         reloaded = importlib.reload(confflow)
-        assert reloaded.__version__ == "1.2.1"
+        assert reloaded.__version__ == "1.3.0"
 
     importlib.reload(confflow)
 
