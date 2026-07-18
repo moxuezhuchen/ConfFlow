@@ -478,7 +478,9 @@ def _validate_state_steps(
         raise RuntimeError("Workflow state does not match the configured workflow steps")
     for dirname, step in zip(step_dirnames, steps, strict=True):
         record = state.steps[dirname]
-        if record.name != str(step.get("name", dirname)) or record.type != str(step.get("type", "")):
+        if record.name != str(step.get("name", dirname)) or record.type != str(
+            step.get("type", "")
+        ):
             raise RuntimeError("Workflow state does not match the configured workflow steps")
 
 
