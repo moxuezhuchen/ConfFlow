@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import sys
 import subprocess
+import sys
 import threading
 from unittest.mock import MagicMock
 
@@ -192,6 +192,7 @@ def test_local_executor_failure_path(tmp_path):
 def test_windows_threadpool_selection(monkeypatch):
     """The production runner chooses a thread pool on Windows."""
     from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
+
     from confflow.calc import runner
 
     monkeypatch.setattr(runner.sys, "platform", "win32")

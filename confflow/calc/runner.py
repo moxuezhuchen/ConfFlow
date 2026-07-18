@@ -4,10 +4,10 @@
 
 from __future__ import annotations
 
+import sys
 from concurrent.futures import Executor, ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
-import sys
 
 from ..blocks.refine.result import RefineResult
 from ..config.models import CalcStepParams, load_workflow_model

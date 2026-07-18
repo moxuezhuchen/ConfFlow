@@ -7,7 +7,7 @@ from __future__ import annotations
 import logging
 import os
 from collections.abc import Callable
-from concurrent.futures import Executor, FIRST_COMPLETED, ProcessPoolExecutor, as_completed, wait
+from concurrent.futures import FIRST_COMPLETED, Executor, ProcessPoolExecutor, as_completed, wait
 from concurrent.futures.process import BrokenProcessPool
 from typing import Any, cast
 
