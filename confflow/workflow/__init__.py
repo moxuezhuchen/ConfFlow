@@ -19,6 +19,7 @@ from .helpers import (
     count_conformers_in_xyz,
     pushd,
 )
+from .state import StepRecord, WorkflowState, WorkflowStateStore
 from .stats import (
     CheckpointManager,
     FailureTracker,
@@ -26,10 +27,15 @@ from .stats import (
     Tracer,
     WorkflowStatsTracker,
 )
+from .supervisor import WorkflowSupervisor
 from .validation import validate_inputs_compatible
 
 __all__ = [
     "run_workflow",
+    "StepRecord",
+    "WorkflowState",
+    "WorkflowStateStore",
+    "WorkflowSupervisor",
     "pushd",
     "as_list",
     "count_conformers_any",
