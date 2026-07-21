@@ -1,5 +1,27 @@
 # ConfFlow 更新日志
 
+> **Status update (2026-07-21): releases resumed.** The archived-snapshot
+> notice below describes the earlier repository state. ConfFlow is active again
+> as JobDesk's external chemistry workflow dependency beginning with v1.4.0.
+
+## v1.4.0 (2026-07-21)
+
+### Added
+
+- Added the public `confflow.workflow.dag` module with deterministic
+  `build_step_graph` and `topo_order` helpers.
+- Added pure-Python DAG regression coverage for chains, fan-out, fan-in,
+  duplicate names, unknown predecessors, cycles, disabled steps, and legacy
+  linear workflows.
+
+### Changed
+
+- The workflow engine now honors explicit step `inputs` and routes actual
+  predecessor outputs while preserving linear behavior when no step declares
+  `inputs`.
+- Workflow configuration round-tripping now preserves explicitly declared
+  `inputs` fields.
+
 > **Notice — Archived Repository**
 > ConfFlow 已被合并到 [JobDesk](https://github.com/moxuezhuchen/jobdesk)
 > monorepo。本仓库保留为只读快照，不再有新版本发布。下方的"Unreleased"
