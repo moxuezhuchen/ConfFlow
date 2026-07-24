@@ -5,12 +5,20 @@
 from __future__ import annotations
 
 import importlib
+import logging
+import sys
 from importlib.metadata import PackageNotFoundError, version
+
+# Keep machine-readable CLI probes free of import-time warning noise while
+# preserving the normal console logging behavior for workflow execution.
+_HANDSHAKE_PROBE = any(flag in sys.argv[1:] for flag in ("--version", "--capabilities"))
+if _HANDSHAKE_PROBE:
+    logging.disable(logging.WARNING)
 
 try:
     __version__ = version("confflow")
 except PackageNotFoundError:
-    __version__ = "1.4.0"
+    __version__ = "1.4.1"
 __author__ = "ConfFlow Team"
 
 # ============================================================================

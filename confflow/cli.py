@@ -5,6 +5,8 @@
 from __future__ import annotations
 
 import argparse
+import json
+import logging
 import os
 import signal
 import sys
@@ -32,6 +34,22 @@ from .workflow.rerun_failed import (
     RerunFailedUsageError,
     run_rerun_failed,
 )
+
+# Package initialization suppresses import-time warnings for the real probes.
+_HANDSHAKE_PROBE = any(flag in sys.argv[1:] for flag in ("--version", "--capabilities"))
+
+# Capability-contract constants (JobDesk <-> ConfFlow handshake)
+_CAPABILITY_SCHEMA_VERSION: int = 1
+_CAPABILITY_PAYLOAD: dict = {
+    "schema_version": _CAPABILITY_SCHEMA_VERSION,
+    "version": __import__("confflow").__version__,
+    "capabilities": {
+        "workflow_state": True,
+        "resume": True,
+        "dag": True,
+    },
+}
+
 
 __all__ = [
     "build_parser",
@@ -145,6 +163,21 @@ def build_parser() -> argparse.ArgumentParser:
         "--agent",
         action="store_true",
         help="Forward to the confflow-agent CLI (serve, status, submit, list, pause, resume, cancel, stop, logs)",
+    )
+    parser.add_argument(
+        "--version",
+        action="store_true",
+        help="Print the ConfFlow version and exit",
+    )
+    parser.add_argument(
+        "--capabilities",
+        action="store_true",
+        help="Print ConfFlow capability-contract JSON and exit",
+    )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Use JSON output with --capabilities",
     )
     return parser
 
@@ -343,12 +376,28 @@ def main(args_list: list[str] | None = None):
     # the agent CLI without confflow's argument parser seeing agent flags.
     # Use sys.argv[1:] when args_list is None (i.e., when called as entry point).
     effective_args = args_list if args_list is not None else sys.argv[1:]
+
     if "--agent" in effective_args:
         stripped = [a for a in effective_args if a != "--agent"]
         return agent_main(stripped if stripped else None)
 
     parser = build_parser()
     args = parser.parse_args(args_list)
+
+    if args.json and not args.capabilities:
+        parser.error("--json requires --capabilities")
+
+    # These probes return before input/config/workflow validation or execution.
+    if args.version:
+        print(__import__("confflow").__version__)
+        if _HANDSHAKE_PROBE:
+            logging.disable(logging.NOTSET)
+        return ExitCode.SUCCESS
+    if args.capabilities:
+        print(json.dumps(_CAPABILITY_PAYLOAD, indent=2))
+        if _HANDSHAKE_PROBE:
+            logging.disable(logging.NOTSET)
+        return ExitCode.SUCCESS
 
     if args.stop:
         return stop_all_confflow_processes()

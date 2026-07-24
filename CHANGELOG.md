@@ -4,6 +4,24 @@
 > notice below describes the earlier repository state. ConfFlow is active again
 > as JobDesk's external chemistry workflow dependency beginning with v1.4.0.
 
+## v1.4.1 (2026-07-23)
+
+### Added
+
+- Added `--version` flag: prints the ConfFlow version and exits immediately
+  without loading any workflow, input files, or configuration.
+- Added `--capabilities` flag: prints the JobDesk ↔ ConfFlow capability-contract
+  as JSON (schema version 1) and exits immediately. Reports three capabilities:
+  `workflow_state`, `resume`, and `dag` — all `true`.
+- Added `_CAPABILITY_SCHEMA_VERSION` and `_CAPABILITY_PAYLOAD` constants to
+  `confflow.cli` to formalise the handshake contract.
+
+### Changed
+
+- ConfFlow CLI now parses `--version` and `--capabilities` at the top of `main()`
+  before any workflow, input, or configuration loading occurs.
+- ConfFlow is now pinned to the JobDesk `>=1.4.1,<2.0` range.
+
 ## v1.4.0 (2026-07-21)
 
 ### Added

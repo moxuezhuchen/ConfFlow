@@ -433,7 +433,9 @@ def run_workflow(
                     step_stats["status"] = TaskStatus.COMPLETED
 
             step_outputs[step_name] = current_input
-            step_stats["output_xyz"] = os.path.abspath(current_input)
+            step_stats["output_xyz"] = (
+                os.path.abspath(current_input) if isinstance(current_input, str) else current_input
+            )
 
         except Exception as e:
             # noqa: BLE001 - dispatcher-level: any step failure must mark FAILED + checkpoint + re-raise for the engine to abort the pipeline

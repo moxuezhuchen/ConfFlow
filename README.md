@@ -59,6 +59,33 @@ Requirements and packaging notes:
 - RDKit is required
 - `numba` is optional and only used for acceleration when installed
 
+## ConfFlow ↔ JobDesk Capability Handshake (v1.4.1)
+
+ConfFlow v1.4.1 implements a version/capability probe used by JobDesk to
+validate compatibility before submitting workflow tasks:
+
+```bash
+confflow --version          # prints "1.4.1"
+confflow --capabilities     # prints JSON capability contract
+```
+
+Capability contract (JSON, schema version 1):
+
+```json
+{
+  "schema_version": 1,
+  "version": "1.4.1",
+  "capabilities": {
+    "workflow_state": true,
+    "resume": true,
+    "dag": true
+  }
+}
+```
+
+JobDesk requires `confflow>=1.4.1,<2.0` and will reject older versions at
+pre-flight time.
+
 ## Quick Start
 
 Run a workflow with an XYZ input and a YAML config:

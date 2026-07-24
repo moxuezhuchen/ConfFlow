@@ -807,3 +807,137 @@ def test_build_parser_format_extended():
 
     args = parser.parse_args(["--config-show", "-c", "config.yaml", "--format", "json"])
     assert args.format == "json"
+
+
+# =============================================================================
+# Capability handshake tests (JobDesk <-> ConfFlow v1.4.1)
+# =============================================================================
+
+
+def test_version_flag_exits_zero(monkeypatch, capsys):
+    """--version prints the version string and exits with code 0."""
+    import re
+    import sys
+
+    monkeypatch.setattr(sys, "argv", ["confflow", "--version"])
+    result = main(["--version"])
+    assert result == 0
+    captured = capsys.readouterr()
+    assert captured.out.strip()
+    assert re.match(r"\d+\.\d+\.\d+", captured.out.strip())
+
+
+def test_version_flag_does_not_require_input_xyz(monkeypatch):
+    """--version exits before the input-XYZ check."""
+    import sys
+
+    monkeypatch.setattr(sys, "argv", ["confflow", "--version"])
+    result = main(["--version"])
+    assert result == 0
+
+
+def test_capabilities_flag_exits_zero_and_returns_json(monkeypatch, capsys):
+    """--capabilities prints JSON and exits with code 0."""
+    import json
+    import sys
+
+    monkeypatch.setattr(sys, "argv", ["confflow", "--capabilities"])
+    result = main(["--capabilities"])
+    assert result == 0
+    captured = capsys.readouterr()
+    data = json.loads(captured.out)
+    assert data["schema_version"] == 1
+    assert "version" in data
+    assert isinstance(data["version"], str)
+    caps = data["capabilities"]
+    assert "workflow_state" in caps
+    assert "resume" in caps
+    assert "dag" in caps
+    assert caps["workflow_state"] is True
+    assert caps["resume"] is True
+    assert caps["dag"] is True
+
+
+def test_capabilities_json_alias_is_accepted(monkeypatch, capsys):
+    """JobDesk's exact --capabilities --json command is accepted."""
+    import json
+
+    result = main(["--capabilities", "--json"])
+    assert result == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["schema_version"] == 1
+
+
+def test_capabilities_subprocess_stdout_is_pure_json():
+    """The installed CLI must not mix import warnings into JSON stdout."""
+    import json
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "from confflow.cli import main; raise SystemExit(main())",
+            "--capabilities",
+            "--json",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert completed.returncode == 0
+    assert completed.stderr == ""
+    payload = json.loads(completed.stdout)
+    assert payload["schema_version"] == 1
+    assert payload["capabilities"] == {
+        "workflow_state": True,
+        "resume": True,
+        "dag": True,
+    }
+
+
+def test_capabilities_rejects_unknown_arguments():
+    """The capability probe must not silently accept misspelled options."""
+    with pytest.raises(SystemExit):
+        main(["--capabilities", "--definitely-invalid"])
+
+
+def test_capabilities_flag_does_not_require_input_xyz(monkeypatch):
+    """--capabilities exits before the input-XYZ check."""
+    import sys
+
+    monkeypatch.setattr(sys, "argv", ["confflow", "--capabilities"])
+    result = main(["--capabilities"])
+    assert result == 0
+
+
+def test_capabilities_does_not_call_run_workflow(monkeypatch, tmp_path):
+    """--capabilities must never invoke run_workflow."""
+    import sys
+
+    monkeypatch.setattr(sys, "argv", ["confflow", "--capabilities"])
+    from unittest.mock import patch
+
+    with patch("confflow.cli.run_workflow") as mock_run:
+        result = main(["--capabilities"])
+        mock_run.assert_not_called()
+        assert result == 0
+
+
+def test_capabilities_does_not_touch_work_dir(monkeypatch, tmp_path):
+    """--capabilities must not create any working directory."""
+    work_dir = tmp_path / "work"
+    from unittest.mock import patch
+
+    with patch("confflow.cli.run_workflow") as mock_run:
+        result = main(["--capabilities", "--json", "-w", str(work_dir)])
+        mock_run.assert_not_called()
+        assert result == 0
+        assert not work_dir.exists()
+
+
+def test_agent_fast_path_is_preserved(monkeypatch):
+    """Agent commands continue to bypass the workflow parser."""
+    seen = []
+    monkeypatch.setattr("confflow.cli.agent_main", lambda args: seen.append(args) or 7)
+    assert main(["--agent", "status"]) == 7
+    assert seen == [["status"]]
