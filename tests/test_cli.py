@@ -810,7 +810,7 @@ def test_build_parser_format_extended():
 
 
 # =============================================================================
-# Capability handshake tests (JobDesk <-> ConfFlow v1.4.1)
+# Capability handshake tests (JobDesk <-> ConfFlow v1.4.2)
 # =============================================================================
 
 
@@ -841,12 +841,19 @@ def test_capabilities_flag_exits_zero_and_returns_json(monkeypatch, capsys):
     import json
     import sys
 
+    from confflow.contract import (
+        CAPABILITY_SCHEMA_VERSION,
+        RUN_SUMMARY_FILE,
+        WORKFLOW_STATE_FILE,
+        WORKFLOW_STATS_FILE,
+    )
+
     monkeypatch.setattr(sys, "argv", ["confflow", "--capabilities"])
     result = main(["--capabilities"])
     assert result == 0
     captured = capsys.readouterr()
     data = json.loads(captured.out)
-    assert data["schema_version"] == 1
+    assert data["schema_version"] == CAPABILITY_SCHEMA_VERSION == 2
     assert "version" in data
     assert isinstance(data["version"], str)
     caps = data["capabilities"]
@@ -856,21 +863,36 @@ def test_capabilities_flag_exits_zero_and_returns_json(monkeypatch, capsys):
     assert caps["workflow_state"] is True
     assert caps["resume"] is True
     assert caps["dag"] is True
+    artifacts = data["artifacts"]
+    assert artifacts == {
+        "run_summary": RUN_SUMMARY_FILE,
+        "workflow_stats": WORKFLOW_STATS_FILE,
+        "workflow_state": WORKFLOW_STATE_FILE,
+    }
 
 
 def test_capabilities_json_alias_is_accepted(monkeypatch, capsys):
     """JobDesk's exact --capabilities --json command is accepted."""
     import json
 
+    from confflow.contract import CAPABILITY_SCHEMA_VERSION
+
     result = main(["--capabilities", "--json"])
     assert result == 0
     data = json.loads(capsys.readouterr().out)
-    assert data["schema_version"] == 1
+    assert data["schema_version"] == CAPABILITY_SCHEMA_VERSION == 2
 
 
 def test_capabilities_subprocess_stdout_is_pure_json():
     """The installed CLI must not mix import warnings into JSON stdout."""
     import json
+
+    from confflow.contract import (
+        CAPABILITY_SCHEMA_VERSION,
+        RUN_SUMMARY_FILE,
+        WORKFLOW_STATE_FILE,
+        WORKFLOW_STATS_FILE,
+    )
 
     completed = subprocess.run(
         [
@@ -887,11 +909,16 @@ def test_capabilities_subprocess_stdout_is_pure_json():
     assert completed.returncode == 0
     assert completed.stderr == ""
     payload = json.loads(completed.stdout)
-    assert payload["schema_version"] == 1
+    assert payload["schema_version"] == CAPABILITY_SCHEMA_VERSION == 2
     assert payload["capabilities"] == {
         "workflow_state": True,
         "resume": True,
         "dag": True,
+    }
+    assert payload["artifacts"] == {
+        "run_summary": RUN_SUMMARY_FILE,
+        "workflow_stats": WORKFLOW_STATS_FILE,
+        "workflow_state": WORKFLOW_STATE_FILE,
     }
 
 

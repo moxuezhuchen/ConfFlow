@@ -11,6 +11,7 @@ from datetime import datetime
 from typing import Any
 
 from ..blocks import viz
+from ..contract import RUN_SUMMARY_FILE, WORKFLOW_STATS_FILE
 from ..core import io as io_xyz
 from ..core.console import (
     console,
@@ -246,10 +247,10 @@ def build_run_summary(final_stats: dict[str, Any]) -> dict[str, Any]:
 
 def write_final_statistics(root_dir: str, final_stats: dict[str, Any]) -> None:
     """Persist detailed workflow stats and a compact run summary."""
-    stats_file = os.path.join(root_dir, "workflow_stats.json")
+    stats_file = os.path.join(root_dir, WORKFLOW_STATS_FILE)
     with open(stats_file, "w", encoding="utf-8") as f:
         json.dump(final_stats, f, indent=2, ensure_ascii=False)
 
-    run_summary_file = os.path.join(root_dir, "run_summary.json")
+    run_summary_file = os.path.join(root_dir, RUN_SUMMARY_FILE)
     with open(run_summary_file, "w", encoding="utf-8") as f:
         json.dump(build_run_summary(final_stats), f, indent=2, ensure_ascii=False)

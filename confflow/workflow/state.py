@@ -10,6 +10,8 @@ import time
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
+from ..contract import WORKFLOW_STATE_FILE
+
 __all__ = ["StepRecord", "WorkflowState", "WorkflowStateStore"]
 
 
@@ -83,10 +85,14 @@ class WorkflowState:
 
 
 class WorkflowStateStore:
-    """Atomically read and write ``<work_dir>/.workflow_state.json``."""
+    """Atomically read and write ``<work_dir>/{WORKFLOW_STATE_FILE}``.
+
+    The filename is sourced from :mod:`confflow.contract` so the on-disk
+    layout and the cross-repository capability payload can never drift.
+    """
 
     def __init__(self, work_dir: str):
-        self.path = os.path.join(work_dir, ".workflow_state.json")
+        self.path = os.path.join(work_dir, WORKFLOW_STATE_FILE)
 
     def load(self) -> WorkflowState | None:
         """Return saved state, or ``None`` when no workflow state exists yet."""

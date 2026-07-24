@@ -21,6 +21,12 @@ except ImportError:
 import yaml
 
 from .agent.cli import main as agent_main
+from .contract import (
+    CAPABILITY_SCHEMA_VERSION,
+    RUN_SUMMARY_FILE,
+    WORKFLOW_STATE_FILE,
+    WORKFLOW_STATS_FILE,
+)
 from .core.contracts import ExitCode, cli_output_to_txt, output_txt_path_for_input
 from .core.exceptions import ConfigurationError, InputFileError, PathSafetyError, XYZFormatError
 from .core.io import parse_gaussian_input_text, write_xyz_file
@@ -38,8 +44,11 @@ from .workflow.rerun_failed import (
 # Package initialization suppresses import-time warnings for the real probes.
 _HANDSHAKE_PROBE = any(flag in sys.argv[1:] for flag in ("--version", "--capabilities"))
 
-# Capability-contract constants (JobDesk <-> ConfFlow handshake)
-_CAPABILITY_SCHEMA_VERSION: int = 1
+# Capability-contract constants (JobDesk <-> ConfFlow handshake).
+# The producer-side single source of truth lives in ``confflow.contract``;
+# this module must import from there so the CLI payload and the artifacts
+# it advertises can never drift apart.
+_CAPABILITY_SCHEMA_VERSION: int = CAPABILITY_SCHEMA_VERSION
 _CAPABILITY_PAYLOAD: dict = {
     "schema_version": _CAPABILITY_SCHEMA_VERSION,
     "version": __import__("confflow").__version__,
@@ -47,6 +56,11 @@ _CAPABILITY_PAYLOAD: dict = {
         "workflow_state": True,
         "resume": True,
         "dag": True,
+    },
+    "artifacts": {
+        "run_summary": RUN_SUMMARY_FILE,
+        "workflow_stats": WORKFLOW_STATS_FILE,
+        "workflow_state": WORKFLOW_STATE_FILE,
     },
 }
 
