@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ..blocks import confgen
+from ..calc.executor import CalcExecutor
 from ..calc.runner import CalcStepRequest, CalcStepRunner
 from ..config.models import CalcStepParams, GlobalOptions
 from ..core.exceptions import ConfFlowError
@@ -280,6 +281,8 @@ def run_calc_step(
     steps: list[dict[str, Any]],
     failure_tracker: FailureTracker,
     step_name: str,
+    *,
+    calc_executor: CalcExecutor | None = None,
 ) -> StepExecutionResult:
     """Execute a calculation step via the typed calc runner."""
     if isinstance(current_input, list):
@@ -298,7 +301,12 @@ def run_calc_step(
     )
 
     try:
-        result = CalcStepRunner().run(
+        runner = (
+            CalcStepRunner(calc_executor=calc_executor)
+            if calc_executor is not None
+            else CalcStepRunner()
+        )
+        result = runner.run(
             CalcStepRequest(
                 step_name=step_name,
                 step_dir=step_dir,

@@ -22,6 +22,7 @@ from ..analysis import (
     is_rescue_enabled,
     validate_ts_bond_drift,
 )
+from ..executor import CalcExecutor
 from ..policies import get_policy_for_config
 from ..rescue import _ts_rescue_scan
 from ..setup import get_itask, logger
@@ -33,6 +34,9 @@ __all__ = [
 
 
 class TaskRunner:
+    def __init__(self, calc_executor: CalcExecutor | None = None) -> None:
+        self._calc_executor = calc_executor
+
     def _get_policy(self, config: dict[str, Any]):
         return get_policy_for_config(config)
 
@@ -125,7 +129,18 @@ class TaskRunner:
 
         try:
             try:
-                res = executor._run_calculation_step(wd, job, policy, coords, cfg)
+                if self._calc_executor is None:
+                    # Preserve legacy monkeypatch call signatures for existing callers.
+                    res = executor._run_calculation_step(wd, job, policy, coords, cfg)
+                else:
+                    res = executor._run_calculation_step(
+                        wd,
+                        job,
+                        policy,
+                        coords,
+                        cfg,
+                        calc_executor=self._calc_executor,
+                    )
             except StopRequestedError as e:
                 return self._failed_result(task_dict, str(e), "stop_requested")
             except (CalculationInputError, CalculationExecutionError, CalculationParseError) as e:

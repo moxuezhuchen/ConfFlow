@@ -665,17 +665,27 @@ class WorkflowConfig:
         return cls(global_options=global_options, steps=tuple(steps), raw=raw)
 
     def as_legacy_shape(self) -> dict[str, Any]:
+        legacy_steps: list[dict[str, Any]] = []
+        raw_steps = self.raw.get("steps")
+        for index, step in enumerate(self.steps):
+            legacy_step: dict[str, Any] = {
+                "name": step.name,
+                "type": step.type,
+                "enabled": step.enabled,
+                "params": dict(step.params),
+            }
+            if (
+                isinstance(raw_steps, list)
+                and index < len(raw_steps)
+                and isinstance(raw_steps[index], dict)
+                and "inputs" in raw_steps[index]
+            ):
+                legacy_step["inputs"] = raw_steps[index]["inputs"]
+            legacy_steps.append(legacy_step)
+
         return {
             "global": self.global_options.__dict__,
-            "steps": [
-                {
-                    "name": step.name,
-                    "type": step.type,
-                    "enabled": step.enabled,
-                    "params": dict(step.params),
-                }
-                for step in self.steps
-            ],
+            "steps": legacy_steps,
             "raw": self.raw,
         }
 

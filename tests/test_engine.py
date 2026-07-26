@@ -140,3 +140,54 @@ def test_run_workflow_skips_disabled_steps(tmp_path, monkeypatch):
 
     assert stats["final_output"] == str(input_xyz.resolve())
     assert stats["steps"] == []
+
+
+def test_run_workflow_forwards_custom_calc_executor_and_notifies_status(tmp_path, monkeypatch):
+    input_xyz = tmp_path / "input.xyz"
+    input_xyz.write_text("1\nseed\nH 0 0 0\n", encoding="utf-8")
+    config = tmp_path / "workflow.yaml"
+    config.write_text(
+        "global: {}\n"
+        "steps:\n"
+        "  - name: calc\n"
+        "    type: calc\n"
+        "    params:\n"
+        "      keyword: HF\n",
+        encoding="utf-8",
+    )
+    supplied_executor = object()
+    seen: dict[str, object] = {}
+
+    def fake_calc(
+        step_dir,
+        current_input,
+        params,
+        global_config,
+        root_dir,
+        steps,
+        failure_tracker,
+        step_name,
+        *,
+        calc_executor,
+    ):
+        del current_input, params, global_config, root_dir, steps, failure_tracker, step_name
+        seen["executor"] = calc_executor
+        path = Path(step_dir) / "result.xyz"
+        Path(step_dir).mkdir(parents=True, exist_ok=True)
+        path.write_text("1\ncalc | Energy=-1.0\nH 0 0 0\n", encoding="utf-8")
+        from confflow.workflow.step_handlers import StepExecutionResult
+
+        return StepExecutionResult(output_path=str(path))
+
+    statuses: list[str] = []
+    monkeypatch.setattr("confflow.workflow.engine._run_calc_step", fake_calc)
+    run_workflow(
+        [str(input_xyz)],
+        str(config),
+        work_dir=str(tmp_path / "run"),
+        calc_executor=supplied_executor,
+        on_step_status_change=lambda step: statuses.append(step.status),
+    )
+
+    assert seen["executor"] is supplied_executor
+    assert statuses == ["submitted", "completed"]

@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import os
 import shutil
-import subprocess
 import time
 from math import isfinite
 from typing import Any
@@ -30,6 +29,7 @@ from ...core.path_policy import (
     validate_cleanup_target,
     validate_managed_path,
 )
+from ..executor import CalcExecutor, LocalCalcExecutor
 from ..policies.base import CalculationPolicy
 from ..setup import logger
 
@@ -233,6 +233,7 @@ def _run_calculation_step(
     coords,
     config: dict[str, Any],
     is_sp_task: bool = False,
+    calc_executor: CalcExecutor | None = None,
 ):
     try:
         stop_check_interval = float(config.get("stop_check_interval_seconds", 1))
@@ -261,39 +262,38 @@ def _run_calculation_step(
 
     cmd = policy.get_execution_command(config, inp)
     env = policy.get_environment(config, cmd)
+    active_executor = calc_executor if calc_executor is not None else LocalCalcExecutor()
 
     try:
-        with open(log, "w") as out, open(os.path.join(work_dir, f"{job_name}.err"), "w") as err:
-            proc = subprocess.Popen(cmd, cwd=work_dir, stdout=out, stderr=err, env=env, text=True)
-    except OSError as e:
+        handle = active_executor.submit(work_dir, job_name, policy, coords, config, cmd, env)
+    except (OSError, RuntimeError) as e:
         raise CalculationExecutionError(f"Failed to launch {policy.name}: {e}") from e
 
     stop_file = config.get("stop_beacon_file")
     start_time = time.monotonic() if max_wall_time_seconds is not None else None
-    while proc.poll() is None:
+    while not active_executor.is_terminal(handle):
         if stop_file and os.path.exists(stop_file):
-            proc.kill()
-            proc.wait()
+            active_executor.cancel(handle)
             raise StopRequestedError("STOP signal received")
         if (
             max_wall_time_seconds is not None
             and start_time is not None
             and time.monotonic() - start_time > max_wall_time_seconds
         ):
-            proc.kill()
-            proc.wait()
+            active_executor.cancel(handle)
             raise CalculationExecutionError(
                 f"{policy.name} exceeded max_wall_time_seconds={max_wall_time_seconds:g}"
             )
         time.sleep(stop_check_interval)
 
-    if proc.returncode != 0:
-        raise CalculationExecutionError(f"{policy.name} nonzero exit: {proc.returncode}")
+    if not active_executor.succeeded(handle):
+        details = active_executor.error(handle)
+        raise CalculationExecutionError(f"{policy.name} nonzero exit: {details or 'unknown error'}")
     if not policy.check_termination(log):
         raise CalculationExecutionError("Abnormal termination")
 
     try:
-        return policy.parse_output(log, config, is_sp_task)
+        return active_executor.fetch_output(handle, log, config, is_sp_task=is_sp_task)
     except (OSError, TypeError, ValueError, RuntimeError) as e:
         raise CalculationParseError(
             f"Failed to parse {policy.name} output for {job_name}: {e}"

@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from confflow.contract import RUN_SUMMARY_FILE, WORKFLOW_STATS_FILE
 from confflow.core.path_policy import validate_managed_path
 from confflow.workflow.step_naming import sanitize_step_dir_name
 
@@ -97,7 +98,7 @@ def _load_json_file(path: Path) -> dict[str, Any] | None:
 
 
 def _load_step_meta(work_dir: str) -> _StepMeta:
-    for filename in ("workflow_stats.json", "run_summary.json"):
+    for filename in (WORKFLOW_STATS_FILE, RUN_SUMMARY_FILE):
         data = _load_json_file(Path(work_dir) / filename)
         if not data:
             continue
