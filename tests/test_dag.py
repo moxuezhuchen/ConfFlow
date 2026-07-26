@@ -6,17 +6,9 @@ from __future__ import annotations
 import pytest
 import sys, pathlib
 
-# Always reload from source
-_source_path = pathlib.Path("/opt/ConfFlow/confflow/workflow/dag/__init__.py")
-assert _source_path.exists(), f"Source not found at {_source_path}"
-_spec = __import__("importlib").util.spec_from_file_location("dag_src", _source_path)
-assert _spec is not None
-_dag_mod = __import__("importlib").util.module_from_spec(_spec)
-_spec.loader.exec_module(_dag_mod)
-
-DAGGraph = _dag_mod.DAGGraph
-DAGStep = _dag_mod.DAGStep
-WorkflowDAG = _dag_mod.WorkflowDAG
+# Import the dag package normally; the relative imports inside
+# confflow/workflow/dag/__init__.py resolve against the installed package.
+from confflow.workflow.dag import DAGGraph, DAGStep, WorkflowDAG
 
 
 class TestDAGGraphDebug:
