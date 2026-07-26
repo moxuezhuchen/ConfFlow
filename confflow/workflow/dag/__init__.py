@@ -14,10 +14,14 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+from .explicit import build_step_graph, topo_order
+
 __all__ = [
     "DAGStep",
     "DAGGraph",
     "WorkflowDAG",
+    "build_step_graph",
+    "topo_order",
 ]
 
 

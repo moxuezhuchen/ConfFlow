@@ -20,18 +20,21 @@ from confflow import contract
 
 
 def test_contract_public_api_is_exactly_what_we_expect():
-    """The public contract surface must be exactly these four names."""
+    """The public contract surface must be exactly these seven names."""
     assert contract.__all__ == [
         "CAPABILITY_SCHEMA_VERSION",
         "RUN_SUMMARY_FILE",
         "WORKFLOW_STATS_FILE",
         "WORKFLOW_STATE_FILE",
+        "RUN_REPORT_FILE",
+        "RUN_MIN_XYZ_TEMPLATE",
+        "REQUIRED_COMMANDS",
     ]
 
 
-def test_capability_schema_version_is_v2():
-    """Producer is locked to schema_version=2; JobDesk rejects any other value."""
-    assert contract.CAPABILITY_SCHEMA_VERSION == 2
+def test_capability_schema_version_is_v3():
+    """Producer is locked to schema_version=3; JobDesk rejects any other value."""
+    assert contract.CAPABILITY_SCHEMA_VERSION == 3
     assert isinstance(contract.CAPABILITY_SCHEMA_VERSION, int)
 
 
@@ -40,6 +43,9 @@ def test_artifact_filenames_have_expected_values():
     assert contract.RUN_SUMMARY_FILE == "run_summary.json"
     assert contract.WORKFLOW_STATS_FILE == "workflow_stats.json"
     assert contract.WORKFLOW_STATE_FILE == ".workflow_state.json"
+    assert contract.RUN_REPORT_FILE == "{basename}.txt"
+    assert contract.RUN_MIN_XYZ_TEMPLATE == "{basename}min.xyz"
+    assert contract.REQUIRED_COMMANDS == ("bash", "nohup", "setsid", "xargs", "sha256sum", "mktemp", "base64")
 
 
 def test_contract_is_not_re_exported_from_package_root():
@@ -68,7 +74,12 @@ def test_cli_capability_payload_uses_contract_constants():
         "run_summary": contract.RUN_SUMMARY_FILE,
         "workflow_stats": contract.WORKFLOW_STATS_FILE,
         "workflow_state": contract.WORKFLOW_STATE_FILE,
+        "run_report": contract.RUN_REPORT_FILE,
+        "min_xyz": contract.RUN_MIN_XYZ_TEMPLATE,
     }
+    assert set(payload["commands"]) == set(contract.REQUIRED_COMMANDS)
+    assert all(isinstance(value, bool) for value in payload["commands"].values())
+    assert payload["build"] == {"commit": None, "dirty": None}
     assert payload["capabilities"] == {
         "workflow_state": True,
         "resume": True,

@@ -28,9 +28,17 @@ __all__ = [
     "RUN_SUMMARY_FILE",
     "WORKFLOW_STATS_FILE",
     "WORKFLOW_STATE_FILE",
+    "RUN_REPORT_FILE",
+    "RUN_MIN_XYZ_TEMPLATE",
+    "REQUIRED_COMMANDS",
 ]
 
-CAPABILITY_SCHEMA_VERSION: int = 2
+CAPABILITY_SCHEMA_VERSION: int = 3
 RUN_SUMMARY_FILE: str = "run_summary.json"
 WORKFLOW_STATS_FILE: str = "workflow_stats.json"
 WORKFLOW_STATE_FILE: str = ".workflow_state.json"
+RUN_REPORT_FILE: str = "{basename}.txt"
+RUN_MIN_XYZ_TEMPLATE: str = "{basename}min.xyz"
+REQUIRED_COMMANDS: tuple[str, ...] = (
+    "bash", "nohup", "setsid", "xargs", "sha256sum", "mktemp", "base64",
+)

@@ -4,7 +4,9 @@
 
 from __future__ import annotations
 
+import json
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -843,6 +845,9 @@ def test_capabilities_flag_exits_zero_and_returns_json(monkeypatch, capsys):
 
     from confflow.contract import (
         CAPABILITY_SCHEMA_VERSION,
+        REQUIRED_COMMANDS,
+        RUN_MIN_XYZ_TEMPLATE,
+        RUN_REPORT_FILE,
         RUN_SUMMARY_FILE,
         WORKFLOW_STATE_FILE,
         WORKFLOW_STATS_FILE,
@@ -853,7 +858,7 @@ def test_capabilities_flag_exits_zero_and_returns_json(monkeypatch, capsys):
     assert result == 0
     captured = capsys.readouterr()
     data = json.loads(captured.out)
-    assert data["schema_version"] == CAPABILITY_SCHEMA_VERSION == 2
+    assert data["schema_version"] == CAPABILITY_SCHEMA_VERSION == 3
     assert "version" in data
     assert isinstance(data["version"], str)
     caps = data["capabilities"]
@@ -868,7 +873,12 @@ def test_capabilities_flag_exits_zero_and_returns_json(monkeypatch, capsys):
         "run_summary": RUN_SUMMARY_FILE,
         "workflow_stats": WORKFLOW_STATS_FILE,
         "workflow_state": WORKFLOW_STATE_FILE,
+        "run_report": RUN_REPORT_FILE,
+        "min_xyz": RUN_MIN_XYZ_TEMPLATE,
     }
+    assert set(data["commands"]) == set(REQUIRED_COMMANDS)
+    assert all(isinstance(value, bool) for value in data["commands"].values())
+    assert data["build"] == {"commit": None, "dirty": None}
 
 
 def test_capabilities_json_alias_is_accepted(monkeypatch, capsys):
@@ -880,7 +890,13 @@ def test_capabilities_json_alias_is_accepted(monkeypatch, capsys):
     result = main(["--capabilities", "--json"])
     assert result == 0
     data = json.loads(capsys.readouterr().out)
-    assert data["schema_version"] == CAPABILITY_SCHEMA_VERSION == 2
+    assert data["schema_version"] == CAPABILITY_SCHEMA_VERSION == 3
+
+
+def test_capability_payload_from_source_with_placeholder_build():
+    from confflow.__build__ import COMMIT, DIRTY
+
+    assert {"commit": COMMIT, "dirty": DIRTY} == {"commit": None, "dirty": None}
 
 
 def test_capabilities_subprocess_stdout_is_pure_json():
@@ -889,6 +905,9 @@ def test_capabilities_subprocess_stdout_is_pure_json():
 
     from confflow.contract import (
         CAPABILITY_SCHEMA_VERSION,
+        REQUIRED_COMMANDS,
+        RUN_MIN_XYZ_TEMPLATE,
+        RUN_REPORT_FILE,
         RUN_SUMMARY_FILE,
         WORKFLOW_STATE_FILE,
         WORKFLOW_STATS_FILE,
@@ -909,7 +928,7 @@ def test_capabilities_subprocess_stdout_is_pure_json():
     assert completed.returncode == 0
     assert completed.stderr == ""
     payload = json.loads(completed.stdout)
-    assert payload["schema_version"] == CAPABILITY_SCHEMA_VERSION == 2
+    assert payload["schema_version"] == CAPABILITY_SCHEMA_VERSION == 3
     assert payload["capabilities"] == {
         "workflow_state": True,
         "resume": True,
@@ -919,7 +938,12 @@ def test_capabilities_subprocess_stdout_is_pure_json():
         "run_summary": RUN_SUMMARY_FILE,
         "workflow_stats": WORKFLOW_STATS_FILE,
         "workflow_state": WORKFLOW_STATE_FILE,
+        "run_report": RUN_REPORT_FILE,
+        "min_xyz": RUN_MIN_XYZ_TEMPLATE,
     }
+    assert set(payload["commands"]) == set(REQUIRED_COMMANDS)
+    assert all(isinstance(value, bool) for value in payload["commands"].values())
+    assert payload["build"] == {"commit": None, "dirty": None}
 
 
 def test_capabilities_rejects_unknown_arguments():
@@ -968,3 +992,43 @@ def test_agent_fast_path_is_preserved(monkeypatch):
     monkeypatch.setattr("confflow.cli.agent_main", lambda args: seen.append(args) or 7)
     assert main(["--agent", "status"]) == 7
     assert seen == [["status"]]
+
+
+@pytest.mark.skipif(
+    not os.environ.get("CONFFLOW_TEST_WHEEL"),
+    reason="set CONFFLOW_TEST_WHEEL for the clean-worktree wheel provenance gate",
+)
+def test_capability_payload_from_wheel_with_real_build(tmp_path):
+    """Install a prebuilt wheel and verify its embedded git provenance."""
+    wheel = os.environ["CONFFLOW_TEST_WHEEL"]
+    expected_head = os.environ.get("CONFFLOW_TEST_HEAD")
+    venv_dir = tmp_path / "venv"
+    subprocess.run([sys.executable, "-m", "venv", "--system-site-packages", str(venv_dir)], check=True)
+    confflow_exe = venv_dir / "bin" / "confflow"
+    subprocess.run(
+        [
+            str(venv_dir / "bin" / "python"),
+            "-m",
+            "pip",
+            "install",
+            "--no-index",
+            "--no-deps",
+            "--force-reinstall",
+            wheel,
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    completed = subprocess.run(
+        [str(confflow_exe), "--capabilities", "--json"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    payload = json.loads(completed.stdout)
+    assert payload["schema_version"] == 3
+    assert payload["build"]["dirty"] is False
+    assert re.fullmatch(r"[0-9a-f]{7,40}", payload["build"]["commit"])
+    if expected_head:
+        assert payload["build"]["commit"] == expected_head

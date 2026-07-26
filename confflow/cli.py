@@ -9,6 +9,7 @@ import json
 import logging
 import os
 import signal
+import shutil
 import sys
 from pathlib import Path
 from typing import Any
@@ -20,9 +21,13 @@ except ImportError:
 
 import yaml
 
+from .__build__ import COMMIT, DIRTY
 from .agent.cli import main as agent_main
 from .contract import (
     CAPABILITY_SCHEMA_VERSION,
+    REQUIRED_COMMANDS,
+    RUN_MIN_XYZ_TEMPLATE,
+    RUN_REPORT_FILE,
     RUN_SUMMARY_FILE,
     WORKFLOW_STATE_FILE,
     WORKFLOW_STATS_FILE,
@@ -61,7 +66,11 @@ _CAPABILITY_PAYLOAD: dict = {
         "run_summary": RUN_SUMMARY_FILE,
         "workflow_stats": WORKFLOW_STATS_FILE,
         "workflow_state": WORKFLOW_STATE_FILE,
+        "run_report": RUN_REPORT_FILE,
+        "min_xyz": RUN_MIN_XYZ_TEMPLATE,
     },
+    "commands": {name: shutil.which(name) is not None for name in REQUIRED_COMMANDS},
+    "build": {"commit": COMMIT, "dirty": DIRTY},
 }
 
 

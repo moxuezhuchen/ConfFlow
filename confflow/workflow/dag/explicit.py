@@ -7,7 +7,7 @@ from __future__ import annotations
 from graphlib import CycleError, TopologicalSorter
 from typing import Any
 
-from ..core.exceptions import ConfFlowError
+from ...core.exceptions import ConfFlowError
 
 __all__ = [
     "build_step_graph",
