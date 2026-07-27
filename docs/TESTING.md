@@ -258,7 +258,7 @@ pytest tests/ --cov=confflow --cov-report=term-missing
 
 在公开或部署到新的计算环境前，建议至少手动验证：
 
-1. `confflow --help`、`confgen --help`、`confcalc --help` 能正常运行。
+1. `confflow --help`、`confgen --help`、`confrefine --help` 能正常运行。
 2. RDKit 能导入，并能完成一个最小 XYZ 的构象生成。
 3. `allowed_executables` 指向的 Gaussian/ORCA 可执行文件存在且不带额外 shell 参数。
 4. 一个最小 Gaussian 或 ORCA `sp` 任务能生成 `results.db`、`output.xyz` / `result.xyz` 和日志。
@@ -272,7 +272,7 @@ pytest tests/ --cov=confflow --cov-report=term-missing
 
 已通过：
 
-- CLI 入口：`confflow --help`、`confcalc --help`、`confts --rewrite-scan-keyword`、`confrefine --help`。
+- CLI 入口：`confflow --help`、`confts --rewrite-scan-keyword`、`confrefine --help`。
 - ORCA：`sp`、`opt`、`freq`、`opt_freq` 最小水分子真实任务，manifest 均为 `completed`。
 - Gaussian 16：`sp`、`opt`、`freq`、`opt_freq` 最小水分子真实任务，使用独立可写 `GAUSS_SCRDIR`，manifest 均为 `completed`。
 - Gaussian checkpoint 继承：两步 `g16_seed_sp -> g16_readchk_sp`，第二步生成 `%OldChk=WATER001.old.chk`，并从上一阶段 `backups/WATER001.chk` 复制 checkpoint。
@@ -282,7 +282,7 @@ pytest tests/ --cov=confflow --cov-report=term-missing
 - `allowed_executables` 负向：`orca_path: /bin/echo` 被拒绝，`failed.xyz` 记录 `ErrorKind=worker_exception` 和 allowlist 错误。
 - `max_wall_time_seconds`：真实 ORCA 进程被超时杀掉，`failed.xyz` 记录 `ErrorKind=exec_error` 和 `exceeded max_wall_time_seconds`。
 - STOP beacon：对 decane ORCA freq 运行期间连续写入 `STOP`，CLI 返回非零，`failed.xyz` 记录 `ErrorKind=stop_requested`。
-- `confcalc`：ORCA SP 和 Gaussian SP 均完成。
+- Workflow `calc` steps：ORCA SP 和 Gaussian SP 均完成。
 - `confgen`：butane 旋转搜索生成 27 个 conformer；workflow 方式也完成。
 - `confrefine`：butane conformer 去重筛选完成。
 - export/report：ORCA/Gaussian 工作目录可导出 JSON/CSV，文本报告生成路径可调用。

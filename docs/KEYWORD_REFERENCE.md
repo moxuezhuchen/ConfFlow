@@ -111,33 +111,6 @@ confrefine search.xyz \
 
 ---
 
-## confcalc - 量子化学计算工具
-
-### 基本用法
-```bash
-confcalc <input.xyz> -c <workflow.yaml> [--step <name-or-index>]
-```
-
-### 必需参数
-
-| 参数 | 简写 | 说明 | 格式 | 示例 |
-|------|------|------|------|------|
-| `input_xyz` | - | 输入轨迹文件 | 文件路径 | `search.xyz` |
-| `--config` | `-c` | 工作流配置 | YAML文件 | `-c confflow.yaml` |
-| `--step` | - | calc step 名称或序号 | 字符串/整数 | `--step opt_b3lyp` |
-
-### 常用示例
-
-```bash
-# 使用工作流 YAML 中的第一个 calc step
-confcalc search.xyz -c confflow.yaml
-
-# 指定 calc step
-confcalc search.xyz -c confflow.yaml --step opt_b3lyp
-```
-
----
-
 ## confflow - 完整工作流
 
 ### 基本用法
@@ -276,7 +249,6 @@ confflow input.xyz -c ./configs/setup.yaml -w ./results/exp1
 |--------|------|------|
 | `.xyz` | XYZ坐标文件 | 分子结构,输入/输出 |
 | `.yaml` | YAML配置文件 | confflow工作流配置 |
-| `.ini` | INI配置文件 | confcalc计算配置 |
 | `.log` | 日志文件 | 执行日志 |
 | `.db` | 数据库文件 | 结果数据库 |
 
@@ -319,7 +291,7 @@ confflow molecule.xyz -c confflow.example.yaml --verbose
 # 查看各工具帮助
 confgen --help
 confrefine --help
-confcalc --help
+confflow --help
 confflow --help
 
 # 文档位置

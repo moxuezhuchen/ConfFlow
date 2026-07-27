@@ -1,6 +1,6 @@
 # ConfFlow 使用说明（精简版）
 
-本文档只保留必要信息：安装、命令行工具参数、YAML 配置格式。
+本文档只保留必要信息：安装、工作流命令行参数、YAML 配置格式。
 
 ## 1. 安装
 
@@ -10,11 +10,10 @@ pip install -e .
 
 ## 2. 工具总览
 
-本项目提供 5 个命令行工具（安装后可直接调用）：
+本项目提供 4 个公开命令行工具（安装后可直接调用）：
 
 - `confflow`：按 YAML 工作流调度（当前支持 `confgen` / `calc` 步骤，并在流程结束后自动生成报告）
 - `confgen`：构象生成（链模式）
-- `confcalc`：对轨迹执行量化计算（读取 INI 配置）
 - `confrefine`：构象去重/筛选（RMSD/能量窗口/虚频过滤）
 - `confts`：TS 专用执行器/工具（TS 失败后 scan 救援、keyword 改写）
 
@@ -228,11 +227,11 @@ confrefine <input.xyz> [-o <output.xyz>] [-t <rmsd>] [--ewin <kcal/mol>] [--imag
 - 默认输出为 `<input>_cleaned.xyz`，或由 `-o` 指定。
 - 若 `--imag` 或 `--ewin` 过滤后没有剩余构象，程序会提示 `No conformers remain after filtering.` 并直接结束，不再进入 RMSD 去重。
 
-## 6. confcalc：量化计算执行器
+## 6. Calc step 与 TS 救援
 
-`confcalc` 主要用于直接对轨迹跑计算（更常见用法是通过 `confflow` 的 `calc` 步骤调用）。
+量化计算通过工作流中的 `type: calc` step 执行。该 step 读取 YAML 中的 typed 配置，并在 step 目录中维护 `manifest.json`、`results.db`、`result.xyz` 与 `failed.xyz`。
 
-## 6.2 TS 失败后的 scan 救援（g16）
+### 6.1 TS 失败后的 scan 救援（g16）
 
 当 `itask=ts` 任务失败（例如 freq 判据不满足/关键键长判据失败/运行异常）且配置启用 `ts_rescue_scan=true` 时，ConfFlow 会尝试自动救援：
 
@@ -247,16 +246,6 @@ confrefine <input.xyz> [-o <output.xyz>] [-t <rmsd>] [--ewin <kcal/mol>] [--imag
 - **结果汇总**：若 TS rescue 成功，会以 `rescued_by_scan=true` 标记，并按常规流程写入最终 `result.xyz`/结果库。
 
 备注：`scan/` 目录会随该 TS 任务一并备份（若配置了 `backup_dir`）。备份位置为 `<work_dir>/<step>/backups/<job>_scan/`，其中也会包含 `scan_table.txt`。
-
-### 6.1 命令格式
-
-```bash
-confcalc <search.xyz> -c <workflow.yaml> [--step <name-or-index>]
-```
-
-续传说明：
-- calc step 会在 step 目录写入 `manifest.json`、`results.db`、`result.xyz` 和 `failed.xyz`。
-- `manifest.json` 记录 typed config digest、input digest、状态和输出路径。
 
 ## 7. YAML 配置：工作流格式
 

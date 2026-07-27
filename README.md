@@ -59,22 +59,22 @@ Requirements and packaging notes:
 - RDKit is required
 - `numba` is optional and only used for acceleration when installed
 
-## ConfFlow ↔ JobDesk Capability Handshake (v1.4.2)
+## ConfFlow ↔ JobDesk Capability Handshake (v1.4.3)
 
-ConfFlow 1.4.2 implements a version/capability probe used by JobDesk to
+ConfFlow 1.4.3 implements a version/capability probe used by JobDesk to
 validate compatibility before uploading or submitting workflow tasks:
 
 ```bash
-confflow --version          # prints "1.4.2"
+confflow --version          # prints "1.4.3"
 confflow --capabilities --json
 ```
 
-Capability contract (JSON, schema version 2):
+Capability contract (JSON, schema version 3):
 
 ```json
 {
-  "schema_version": 2,
-  "version": "1.4.2",
+  "schema_version": 3,
+  "version": "1.4.3",
   "capabilities": {
     "workflow_state": true,
     "resume": true,
@@ -83,13 +83,33 @@ Capability contract (JSON, schema version 2):
   "artifacts": {
     "run_summary": "run_summary.json",
     "workflow_stats": "workflow_stats.json",
-    "workflow_state": ".workflow_state.json"
+    "workflow_state": ".workflow_state.json",
+    "run_report": "{basename}.txt",
+    "min_xyz": "{basename}min.xyz"
+  },
+  "commands": {
+    "bash": true,
+    "nohup": true,
+    "setsid": true,
+    "xargs": true,
+    "sha256sum": true,
+    "mktemp": true,
+    "base64": true
+  },
+  "build": {
+    "commit": "7b37c223d2c07a062ab62965911c3cd8d6641591",
+    "dirty": false
   }
 }
 ```
 
-JobDesk requires `confflow>=1.4.2,<2.0`, validates the capability contract
+JobDesk requires `confflow>=1.4.3,<2.0`, validates the capability contract
 before the first input upload, and repeats the preflight at submit time.
+The `commands` block reports the host-side utilities that ConfFlow relies
+on for shell launching, scratch staging, and integrity checks. The
+`build` block surfaces the exact 40-character git commit that produced
+the running wheel plus a `dirty` flag; a non-zero `dirty` value triggers a
+non-fatal warning at submit time so operators can spot local rebuilds.
 
 ## Quick Start
 
@@ -170,19 +190,19 @@ ConfFlow is not recommended for unattended use or for non-isolated production co
 | --- | --- |
 | `confflow` | Run a YAML-defined workflow |
 | `confgen` | Generate conformers in chain mode |
-| `confcalc` | Run quantum-chemistry calculations directly |
 | `confrefine` | Deduplicate and filter conformers |
 | `confts` | TS-focused tooling, including scan rescue support |
 
-Examples:
+Calc-step execution ships only as a workflow step (`type: calc`) driven by
+the YAML config; no standalone calc CLI is exposed in 1.4.3. Examples:
 
 ```bash
 # Chain-based conformer generation
 confgen mol.xyz --chain 1-2-3-4-5 --steps 180,180,180,180 -y
 # Explicit angle sets
 confgen mol.xyz --chain 1-2-3-4-5 --angles "0,120,240;0,60,120,180;180;0,120" -y
-# Direct calculation on an existing trajectory using a workflow YAML calc step
-confcalc <search.xyz> -c confflow.example.yaml --step opt_b3lyp
+# Run a calc step (B3LYP optimization + frequency) from the workflow YAML
+confflow search.xyz -c confflow.example.yaml
 ```
 
 See the [Command Reference](docs/COMMAND_REFERENCE.md) for the full CLI reference.

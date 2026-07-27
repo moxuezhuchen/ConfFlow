@@ -1,7 +1,8 @@
 # ConfFlow 更新日志
 
-> **Status update (2026-07-21): releases resumed.** The archived-snapshot
-> notice below describes the earlier repository state. ConfFlow is active again
+> **Status update (2026-07-21): releases resumed.**
+>
+> The archived-snapshot notice below describes the earlier repository state. ConfFlow is active again
 > as JobDesk's external chemistry workflow dependency beginning with v1.4.0.
 
 ## v1.4.1 (2026-07-23)
@@ -39,13 +40,6 @@
   `inputs`.
 - Workflow configuration round-tripping now preserves explicitly declared
   `inputs` fields.
-
-> **Notice — Archived Repository**
-> ConfFlow 已被合并到 [JobDesk](https://github.com/moxuezhuchen/jobdesk)
-> monorepo。本仓库保留为只读快照，不再有新版本发布。下方的"Unreleased"
-> 段是 archive 之前最后一次重构的累积变更，作为最终快照记录在
-> `v1.1.0-archived` tag 中。后续变更请见 JobDesk 的
-> `jobdesk_app/workflow/` / `jobdesk_app/agent/` 模块历史。
 
 ## Unreleased (archived snapshot — locked at v1.1.0-archived)
 

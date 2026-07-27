@@ -12,7 +12,7 @@ ConfFlow 是一个自动化计算化学工作流引擎，用于分子构象搜�
 - workflow -> calc：`workflow.step_handlers` 直接构造 typed calc config
 - calc step 执行：`confflow.calc.runner.CalcStepRunner`
 - calc step 状态：`manifest.json`，不再以 `.config_hash` 作为新主路径合同
-- standalone calc CLI：`confcalc input.xyz -c workflow.yaml --step <name-or-index>`
+- calc step：通过 `confflow input.xyz -c workflow.yaml` 执行 `type: calc` workflow step
 
 旧的 `ChemTaskManager`、INI settings、legacy flat calc config、MD5 `.config_hash` 兼容路径已从主执行路径和公共导出中移除。
 
