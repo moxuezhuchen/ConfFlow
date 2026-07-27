@@ -115,7 +115,7 @@ class TestAsyncTaskExecutor:
         assert (result.job_name, result.status) in calls
 
     def test_map_multiple_tasks(self):
-        payloads = [{"job_name": "A{}".format(i), "sleep": 0.02} for i in range(3)]
+        payloads = [{"job_name": f"A{i}", "sleep": 0.02} for i in range(3)]
         with AsyncTaskExecutor(max_workers=2, timeout_seconds=5.0) as exc:
             results = exc.map(_slow_task, payloads)
         assert len(results) == 3

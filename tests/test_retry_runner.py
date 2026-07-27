@@ -3,8 +3,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from confflow.calc.retry_runner import RetryAwareTaskRunner, RetryConfig
 
 
