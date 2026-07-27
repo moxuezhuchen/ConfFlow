@@ -3,12 +3,9 @@
 
 from __future__ import annotations
 
-import pytest
-import sys, pathlib
-
 # Import the dag package normally; the relative imports inside
 # confflow/workflow/dag/__init__.py resolve against the installed package.
-from confflow.workflow.dag import DAGGraph, DAGStep, WorkflowDAG
+from confflow.workflow.dag import DAGGraph, DAGStep
 
 
 class TestDAGGraphDebug:

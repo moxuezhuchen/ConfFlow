@@ -13,7 +13,7 @@ class TestConftsCli:
         # _cli([]) prints help and exits with 0
         try:
             _cli([])
-        except SystemExit as e:
+        except SystemExit:
             pass  # may raise after printing help
         # Either raised or printed help
         captured = capsys.readouterr()
