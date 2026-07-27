@@ -50,7 +50,7 @@ class TestRetryConfig:
         cfg = RetryConfig(jitter=True, base_delay=1.0)
         for attempt in range(5):
             delay = cfg.backoff(attempt)
-            base = min(1.0 * (2 ** attempt), 60.0)
+            base = min(1.0 * (2**attempt), 60.0)
             assert 0.3 * base <= delay <= 1.7 * base
 
     def test_retry_on_default(self):
@@ -95,7 +95,11 @@ class TestAsyncTaskExecutor:
         with AsyncTaskExecutor(max_workers=1, timeout_seconds=5.0) as exc:
             result = exc.submit(_error_task, {"job_name": "err"})
         assert result.status == "failed"
-        assert result.error_kind in {"worker_exception", "broken_process_pool", "serialization_error"}
+        assert result.error_kind in {
+            "worker_exception",
+            "broken_process_pool",
+            "serialization_error",
+        }
 
     def test_retry_on_transient_failure(self):
         cfg = RetryConfig(max_retries=2, base_delay=0.01)
@@ -107,6 +111,7 @@ class TestAsyncTaskExecutor:
 
     def test_progress_callback(self):
         calls = []
+
         def callback(name, status):
             calls.append((name, status))
 

@@ -28,6 +28,7 @@ class TestRetryConfig:
 class TestRetryAwareTaskRunner:
     def test_non_transient_not_retried(self, monkeypatch):
         calls = []
+
         def fake_inner_run(self_, task_info):
             calls.append(1)
             return {
@@ -48,6 +49,7 @@ class TestRetryAwareTaskRunner:
 
     def test_transient_retried(self, monkeypatch):
         calls = []
+
         def fake_inner_run(self_, task_info):
             calls.append(1)
             return {
@@ -68,6 +70,7 @@ class TestRetryAwareTaskRunner:
 
     def test_success_passthrough(self, monkeypatch):
         calls = []
+
         def fake_inner_run(self_, task_info):
             calls.append(1)
             return {
