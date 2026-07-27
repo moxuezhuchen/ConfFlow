@@ -12,6 +12,7 @@ from __future__ import annotations
 import time
 from collections.abc import Callable
 from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeoutError
 from dataclasses import dataclass
 from typing import Any, cast
 
@@ -36,9 +37,10 @@ class RetryConfig:
 
     def backoff(self, attempt: int) -> float:
         """Return delay in seconds for the given attempt (0-based)."""
-        delay = min(self.base_delay * (2 ** attempt), self.max_delay)
+        delay = min(self.base_delay * (2**attempt), self.max_delay)
         if self.jitter:
             import random
+
             jitter: float = 0.5 + random.random()
             delay = delay * jitter
         return cast(float, delay)
@@ -118,9 +120,7 @@ class AsyncTaskExecutor:
                 elapsed = time.monotonic() - start
                 status = raw_result.get("status", "unknown")
                 error_kind = _classify_result_error(raw_result)
-                transient = (
-                    error_kind in self.retry_config.retry_on if error_kind else False
-                )
+                transient = error_kind in self.retry_config.retry_on if error_kind else False
                 can_retry = (
                     status in {"failed", "canceled"}
                     and transient
@@ -146,7 +146,7 @@ class AsyncTaskExecutor:
                     elapsed_seconds=elapsed,
                     raw_result=raw_result,
                 )
-            except TimeoutError:
+            except FutureTimeoutError:
                 elapsed = time.monotonic() - start
                 if self.progress_callback:
                     self.progress_callback(job_name, "failed")
