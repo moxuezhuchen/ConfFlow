@@ -37,6 +37,7 @@ def test_state_store_save_is_atomic_and_loads_records(tmp_path):
     assert (tmp_path / ".workflow_state.json").exists()
     assert not (tmp_path / ".workflow_state.json.tmp").exists()
     raw = json.loads((tmp_path / ".workflow_state.json").read_text(encoding="utf-8"))
+    assert raw["content_schema"] == "confflow.workflow_state.v1"
     assert raw["steps"]["calc"]["executor_handle_data"] == {"remote_job_id": "abc"}
 
     loaded = store.load()

@@ -24,7 +24,12 @@ the JobDesk consumer.
 from __future__ import annotations
 
 __all__ = [
+    "OUTPUT_MANIFEST_SCHEMA",
+    "OUTPUT_MANIFEST_FILE",
     "CAPABILITY_SCHEMA_VERSION",
+    "RUN_SUMMARY_SCHEMA",
+    "WORKFLOW_STATS_SCHEMA",
+    "WORKFLOW_STATE_SCHEMA",
     "RUN_SUMMARY_FILE",
     "WORKFLOW_STATS_FILE",
     "WORKFLOW_STATE_FILE",
@@ -33,9 +38,15 @@ __all__ = [
     "REQUIRED_COMMANDS",
 ]
 
-CAPABILITY_SCHEMA_VERSION: int = 3
+# Schema v4 preserves every v3 field and adds producer/executable provenance.
+CAPABILITY_SCHEMA_VERSION: int = 4
+RUN_SUMMARY_SCHEMA: str = "confflow.run_summary.v1"
+WORKFLOW_STATS_SCHEMA: str = "confflow.workflow_stats.v1"
+WORKFLOW_STATE_SCHEMA: str = "confflow.workflow_state.v1"
 RUN_SUMMARY_FILE: str = "run_summary.json"
 WORKFLOW_STATS_FILE: str = "workflow_stats.json"
+OUTPUT_MANIFEST_SCHEMA: str = "confflow.output_manifest.v1"
+OUTPUT_MANIFEST_FILE: str = "output_manifest.json"
 WORKFLOW_STATE_FILE: str = ".workflow_state.json"
 RUN_REPORT_FILE: str = "{basename}.txt"
 RUN_MIN_XYZ_TEMPLATE: str = "{basename}min.xyz"

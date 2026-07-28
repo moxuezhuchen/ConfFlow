@@ -10,7 +10,8 @@ import time
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
-from ..contract import WORKFLOW_STATE_FILE
+from ..artifact_json import write_atomic_json
+from ..contract import WORKFLOW_STATE_FILE, WORKFLOW_STATE_SCHEMA
 
 __all__ = ["StepRecord", "WorkflowState", "WorkflowStateStore"]
 
@@ -63,6 +64,12 @@ class WorkflowState:
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> WorkflowState:
         """Deserialize a state file and validate its minimum shape."""
+        content_schema = raw.get("content_schema")
+        if content_schema is not None and content_schema != WORKFLOW_STATE_SCHEMA:
+            raise ValueError(
+                f"unsupported workflow state content_schema {content_schema!r}; "
+                f"expected {WORKFLOW_STATE_SCHEMA!r}"
+            )
         steps_raw = raw.get("steps", {})
         if not isinstance(steps_raw, dict):
             raise ValueError("workflow state 'steps' must be an object")
@@ -114,11 +121,8 @@ class WorkflowStateStore:
         """Persist state by replacing the destination only after JSON is complete."""
         os.makedirs(os.path.dirname(self.path) or ".", exist_ok=True)
         state.last_updated_at = time.time()
-        tmp_path = f"{self.path}.tmp"
-        with open(tmp_path, "w", encoding="utf-8") as handle:
-            json.dump(asdict(state), handle, indent=2, sort_keys=True)
-            handle.write("\n")
-        os.replace(tmp_path, self.path)
+        payload = {"content_schema": WORKFLOW_STATE_SCHEMA, **asdict(state)}
+        write_atomic_json(self.path, payload)
 
 
 def _optional_float(value: Any) -> float | None:

@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import logging
 import os
@@ -21,7 +22,7 @@ except ImportError:
 
 import yaml
 
-from .__build__ import COMMIT, DIRTY
+from .__build__ import COMMIT, DIRTY, WHEEL_FILENAME, WHEEL_SHA256
 from .agent.cli import main as agent_main
 from .contract import (
     CAPABILITY_SCHEMA_VERSION,
@@ -54,24 +55,56 @@ _HANDSHAKE_PROBE = any(flag in sys.argv[1:] for flag in ("--version", "--capabil
 # this module must import from there so the CLI payload and the artifacts
 # it advertises can never drift apart.
 _CAPABILITY_SCHEMA_VERSION: int = CAPABILITY_SCHEMA_VERSION
-_CAPABILITY_PAYLOAD: dict = {
-    "schema_version": _CAPABILITY_SCHEMA_VERSION,
-    "version": __import__("confflow").__version__,
-    "capabilities": {
-        "workflow_state": True,
-        "resume": True,
-        "dag": True,
-    },
-    "artifacts": {
-        "run_summary": RUN_SUMMARY_FILE,
-        "workflow_stats": WORKFLOW_STATS_FILE,
-        "workflow_state": WORKFLOW_STATE_FILE,
-        "run_report": RUN_REPORT_FILE,
-        "min_xyz": RUN_MIN_XYZ_TEMPLATE,
-    },
-    "commands": {name: shutil.which(name) is not None for name in REQUIRED_COMMANDS},
-    "build": {"commit": COMMIT, "dirty": DIRTY},
-}
+def _resolved_confflow_executable() -> str | None:
+    """Return the PATH-resolved entry point used for producer provenance."""
+    executable = shutil.which("confflow")
+    return os.path.realpath(executable) if executable else None
+
+
+def _file_sha256(path: str | None) -> str | None:
+    """Return a SHA-256 digest for an executable when it is a regular file."""
+    if path is None or not os.path.isfile(path):
+        return None
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _build_capability_payload() -> dict[str, Any]:
+    """Build the handshake payload with v3 compatibility and v4 provenance."""
+    executable = _resolved_confflow_executable()
+    build = {"commit": COMMIT, "dirty": DIRTY}
+    version = __import__("confflow").__version__
+    return {
+        "schema_version": _CAPABILITY_SCHEMA_VERSION,
+        "version": version,
+        "capabilities": {"workflow_state": True, "resume": True, "dag": True},
+        "artifacts": {
+            "run_summary": RUN_SUMMARY_FILE,
+            "workflow_stats": WORKFLOW_STATS_FILE,
+            "workflow_state": WORKFLOW_STATE_FILE,
+            "run_report": RUN_REPORT_FILE,
+            "min_xyz": RUN_MIN_XYZ_TEMPLATE,
+        },
+        "commands": {name: shutil.which(name) is not None for name in REQUIRED_COMMANDS},
+        "build": build,
+        "producer": {
+            "package": "confflow",
+            "version": version,
+            "build": build,
+            "wheel": {"filename": WHEEL_FILENAME, "sha256": WHEEL_SHA256},
+        },
+        "executable": {
+            "path": executable,
+            "sha256": _file_sha256(executable),
+            "python": os.path.realpath(sys.executable),
+        },
+    }
+
+
+_CAPABILITY_PAYLOAD: dict[str, Any] = _build_capability_payload()
 
 
 __all__ = [
@@ -417,7 +450,7 @@ def main(args_list: list[str] | None = None):
             logging.disable(logging.NOTSET)
         return ExitCode.SUCCESS
     if args.capabilities:
-        print(json.dumps(_CAPABILITY_PAYLOAD, indent=2))
+        print(json.dumps(_build_capability_payload(), indent=2))
         if _HANDSHAKE_PROBE:
             logging.disable(logging.NOTSET)
         return ExitCode.SUCCESS

@@ -9,6 +9,7 @@ assertions rather than setup noise.
 
 from __future__ import annotations
 
+import json
 from unittest.mock import MagicMock
 
 import pytest
@@ -162,9 +163,20 @@ def test_write_final_statistics_outputs_both_json_files(tmp_path):
 
     workflow_stats = tmp_path / "workflow_stats.json"
     run_summary = tmp_path / "run_summary.json"
+    output_manifest = tmp_path / "output_manifest.json"
     assert workflow_stats.exists()
     assert run_summary.exists()
+    assert output_manifest.exists()
 
     summary_data = run_summary.read_text(encoding="utf-8")
     assert '"final_conformers": 1' in summary_data
     assert '"completed": 1' in summary_data
+    stats_data = json.loads(workflow_stats.read_text(encoding="utf-8"))
+    summary_json = json.loads(summary_data)
+    assert stats_data["content_schema"] == "confflow.workflow_stats.v1"
+    assert summary_json["content_schema"] == "confflow.run_summary.v1"
+    manifest = json.loads(output_manifest.read_text(encoding="utf-8"))
+    assert manifest == {
+        "content_schema": "confflow.output_manifest.v1",
+        "terminals": {},
+    }

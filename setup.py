@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
 
@@ -40,7 +41,9 @@ class BuildPyWithProvenance(_build_py):
         target.write_text(
             '"""Build provenance populated by setup.py."""\n'
             f"COMMIT: str | None = {commit!r}\n"
-            f"DIRTY: bool | None = {dirty!r}\n",
+            f"DIRTY: bool | None = {dirty!r}\n"
+            f"WHEEL_FILENAME: str | None = {os.environ.get('CONFFLOW_WHEEL_FILENAME')!r}\n"
+            f"WHEEL_SHA256: str | None = {os.environ.get('CONFFLOW_WHEEL_SHA256')!r}\n",
             encoding="utf-8",
         )
 

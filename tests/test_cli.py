@@ -858,7 +858,7 @@ def test_capabilities_flag_exits_zero_and_returns_json(monkeypatch, capsys):
     assert result == 0
     captured = capsys.readouterr()
     data = json.loads(captured.out)
-    assert data["schema_version"] == CAPABILITY_SCHEMA_VERSION == 3
+    assert data["schema_version"] == CAPABILITY_SCHEMA_VERSION == 4
     assert "version" in data
     assert isinstance(data["version"], str)
     caps = data["capabilities"]
@@ -890,7 +890,7 @@ def test_capabilities_json_alias_is_accepted(monkeypatch, capsys):
     result = main(["--capabilities", "--json"])
     assert result == 0
     data = json.loads(capsys.readouterr().out)
-    assert data["schema_version"] == CAPABILITY_SCHEMA_VERSION == 3
+    assert data["schema_version"] == CAPABILITY_SCHEMA_VERSION == 4
 
 
 def test_capability_payload_from_source_with_placeholder_build():
@@ -928,7 +928,7 @@ def test_capabilities_subprocess_stdout_is_pure_json():
     assert completed.returncode == 0
     assert completed.stderr == ""
     payload = json.loads(completed.stdout)
-    assert payload["schema_version"] == CAPABILITY_SCHEMA_VERSION == 3
+    assert payload["schema_version"] == CAPABILITY_SCHEMA_VERSION == 4
     assert payload["capabilities"] == {
         "workflow_state": True,
         "resume": True,

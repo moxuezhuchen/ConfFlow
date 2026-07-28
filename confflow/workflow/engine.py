@@ -15,7 +15,7 @@ from ..calc.artifacts import CalcArtifactManager
 from ..calc.executor import CalcExecutor
 from ..config.models import CalcStepParams, GlobalOptions, load_workflow_model
 from ..core import io as io_xyz
-from ..core.exceptions import ConfFlowError, StopRequestedError
+from ..core.exceptions import StopRequestedError
 from ..core.types import TaskStatus
 from ..core.utils import (
     get_logger,
@@ -184,15 +184,9 @@ def run_workflow(
             for step_predecessors in predecessors.values()
             for predecessor in step_predecessors
         }
-        terminal_steps = [
-            name for name in predecessors if name not in predecessor_names
-        ]
-        if len(terminal_steps) != 1:
-            terminals = ", ".join(map(repr, terminal_steps)) or "none"
-            raise ConfFlowError(
-                "explicit workflow DAG must have exactly one terminal step; "
-                f"found {len(terminal_steps)}: {terminals}"
-            )
+        terminal_steps = [name for name in predecessors if name not in predecessor_names]
+    else:
+        terminal_steps = [execution_order[-1]]
 
     step_dirnames, _ = build_step_dir_name_map(steps)
     step_index_by_name = {name: index for index, name in enumerate(by_step_name)}
@@ -495,7 +489,11 @@ def run_workflow(
                 state_store.save(state)
                 _notify_step_status_change(on_step_status_change, state_record)
 
-    final_stats = stats_tracker.finalize(current_input)
+    terminal_outputs = {name: _as_artifact_list(step_outputs[name]) for name in terminal_steps}
+    final_outputs = [artifact for artifacts in terminal_outputs.values() for artifact in artifacts]
+    final_output = step_outputs[terminal_steps[0]] if len(terminal_steps) == 1 else final_outputs
+    final_stats = stats_tracker.finalize(final_output)
+    final_stats["terminal_outputs"] = terminal_outputs
     state.final_status = "completed"
     state.wavefront_index = len(execution_order)
     state_store.save(state)
@@ -506,7 +504,7 @@ def run_workflow(
     except (OSError, ValueError, TypeError, KeyError, AttributeError) as e:
         logger.debug(f"Trace failed: {e}")
 
-    emit_final_report_and_lowest(current_input, original_inputs, final_stats, logger)
+    emit_final_report_and_lowest(final_output, original_inputs, final_stats, logger)
     write_final_statistics(root_dir, final_stats)
 
     return final_stats
@@ -527,6 +525,8 @@ def _initial_workflow_state(
             name=str(step.get("name", dirname)),
             type=str(step.get("type", "")),
             status="skipped" if not step.get("enabled", True) else "pending",
+
+
         )
         for dirname, step in zip(step_dirnames, steps, strict=True)
     }
@@ -538,6 +538,15 @@ def _initial_workflow_state(
         config_file=os.path.abspath(config_file),
         steps=records,
     )
+
+
+def _as_artifact_list(output: str | list[str]) -> list[str]:
+    """Normalize a terminal step output to absolute artifact paths."""
+    if isinstance(output, str):
+        return [os.path.abspath(output)]
+    if isinstance(output, list):
+        return [os.path.abspath(path) for path in output if isinstance(path, str)]
+    return []
 
 
 def _validate_state_steps(

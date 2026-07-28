@@ -20,9 +20,14 @@ from confflow import contract
 
 
 def test_contract_public_api_is_exactly_what_we_expect():
-    """The public contract surface must be exactly these seven names."""
+    """The public contract surface must include all versioned artifact schemas."""
     assert contract.__all__ == [
+        "OUTPUT_MANIFEST_SCHEMA",
+        "OUTPUT_MANIFEST_FILE",
         "CAPABILITY_SCHEMA_VERSION",
+        "RUN_SUMMARY_SCHEMA",
+        "WORKFLOW_STATS_SCHEMA",
+        "WORKFLOW_STATE_SCHEMA",
         "RUN_SUMMARY_FILE",
         "WORKFLOW_STATS_FILE",
         "WORKFLOW_STATE_FILE",
@@ -32,9 +37,9 @@ def test_contract_public_api_is_exactly_what_we_expect():
     ]
 
 
-def test_capability_schema_version_is_v3():
-    """Producer is locked to schema_version=3; JobDesk rejects any other value."""
-    assert contract.CAPABILITY_SCHEMA_VERSION == 3
+def test_capability_schema_version_is_v4():
+    """Producer is locked to schema_version=4; JobDesk rejects any other value."""
+    assert contract.CAPABILITY_SCHEMA_VERSION == 4
     assert isinstance(contract.CAPABILITY_SCHEMA_VERSION, int)
 
 
@@ -46,6 +51,9 @@ def test_artifact_filenames_have_expected_values():
     assert contract.RUN_REPORT_FILE == "{basename}.txt"
     assert contract.RUN_MIN_XYZ_TEMPLATE == "{basename}min.xyz"
     assert contract.REQUIRED_COMMANDS == ("bash", "nohup", "setsid", "xargs", "sha256sum", "mktemp", "base64")
+    assert contract.RUN_SUMMARY_SCHEMA == "confflow.run_summary.v1"
+    assert contract.WORKFLOW_STATS_SCHEMA == "confflow.workflow_stats.v1"
+    assert contract.WORKFLOW_STATE_SCHEMA == "confflow.workflow_state.v1"
 
 
 def test_contract_is_not_re_exported_from_package_root():
@@ -85,6 +93,13 @@ def test_cli_capability_payload_uses_contract_constants():
         "resume": True,
         "dag": True,
     }
+    assert payload["producer"] == {
+        "package": "confflow",
+        "version": payload["version"],
+        "build": payload["build"],
+        "wheel": {"filename": None, "sha256": None},
+    }
+    assert set(payload["executable"]) == {"path", "sha256", "python"}
 
 
 def test_presenter_uses_contract_filenames():

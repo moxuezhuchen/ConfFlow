@@ -4,14 +4,21 @@
 
 from __future__ import annotations
 
-import json
 import os
 import sys
 from datetime import datetime
 from typing import Any
 
+from ..artifact_json import write_atomic_json
 from ..blocks import viz
-from ..contract import RUN_SUMMARY_FILE, WORKFLOW_STATS_FILE
+from ..contract import (
+    OUTPUT_MANIFEST_FILE,
+    OUTPUT_MANIFEST_SCHEMA,
+    RUN_SUMMARY_FILE,
+    RUN_SUMMARY_SCHEMA,
+    WORKFLOW_STATS_FILE,
+    WORKFLOW_STATS_SCHEMA,
+)
 from ..core import io as io_xyz
 from ..core.console import (
     console,
@@ -64,6 +71,7 @@ __all__ = [
     "print_step_header_block",
     "print_step_footer_block",
     "emit_final_report_and_lowest",
+    "build_output_manifest",
     "build_run_summary",
     "write_final_statistics",
 ]
@@ -215,6 +223,7 @@ def build_run_summary(final_stats: dict[str, Any]) -> dict[str, Any]:
 
     summary: dict[str, Any] = {
         "generated_at": datetime.now().isoformat(),
+        "content_schema": RUN_SUMMARY_SCHEMA,
         "input_files": final_stats.get("input_files", []),
         "original_input_files": final_stats.get("original_input_files", []),
         "initial_conformers": final_stats.get("initial_conformers", 0),
@@ -245,12 +254,29 @@ def build_run_summary(final_stats: dict[str, Any]) -> dict[str, Any]:
     return summary
 
 
+
+def build_output_manifest(final_stats: dict[str, Any]) -> dict[str, Any]:
+    """Build a terminal-to-artifact manifest for multi-output workflows."""
+    raw_terminals = final_stats.get("terminal_outputs", {})
+    terminals: dict[str, list[str]] = {}
+    if isinstance(raw_terminals, dict):
+        for name, artifacts in raw_terminals.items():
+            if isinstance(artifacts, str):
+                terminals[str(name)] = [artifacts]
+            elif isinstance(artifacts, list):
+                terminals[str(name)] = [item for item in artifacts if isinstance(item, str)]
+    return {"content_schema": OUTPUT_MANIFEST_SCHEMA, "terminals": terminals}
+
+
+
 def write_final_statistics(root_dir: str, final_stats: dict[str, Any]) -> None:
     """Persist detailed workflow stats and a compact run summary."""
     stats_file = os.path.join(root_dir, WORKFLOW_STATS_FILE)
-    with open(stats_file, "w", encoding="utf-8") as f:
-        json.dump(final_stats, f, indent=2, ensure_ascii=False)
+    workflow_stats = {"content_schema": WORKFLOW_STATS_SCHEMA, **final_stats}
+    workflow_stats["content_schema"] = WORKFLOW_STATS_SCHEMA
+
+    write_atomic_json(os.path.join(root_dir, OUTPUT_MANIFEST_FILE), build_output_manifest(final_stats))
+    write_atomic_json(stats_file, workflow_stats)
 
     run_summary_file = os.path.join(root_dir, RUN_SUMMARY_FILE)
-    with open(run_summary_file, "w", encoding="utf-8") as f:
-        json.dump(build_run_summary(final_stats), f, indent=2, ensure_ascii=False)
+    write_atomic_json(run_summary_file, build_run_summary(final_stats))
