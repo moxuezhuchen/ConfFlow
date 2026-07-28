@@ -1,11 +1,9 @@
 # ConfFlow
 
-> **Archived**: ConfFlow is now part of the [JobDesk](https://github.com/moxuezhuchen/jobdesk) monorepo.
-> This repository is kept for reference. All active development continues in JobDesk.
-
-## ConfFlow (Archived)
-
-ConfFlow was a workflow automation tool for computational chemistry. It has been migrated into the **JobDesk** monorepo as `jobdesk_app/workflow/` and `jobdesk_app/agent/`.
+ConfFlow is an independent workflow automation tool for computational
+chemistry. JobDesk can act as a GUI/remote-execution consumer through the
+versioned capability and artifact contracts, but neither project embeds the
+other's runtime implementation.
 
 ## Project Status
 

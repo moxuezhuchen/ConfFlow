@@ -123,7 +123,7 @@ def test_engine_preserves_fan_out_and_fan_in_lineage(tmp_path, monkeypatch) -> N
     assert stats["final_output"] == outputs["join"]
 
 
-def test_engine_mixed_inputs_make_implicit_steps_roots(tmp_path, monkeypatch) -> None:
+def test_engine_rejects_multiple_terminal_steps_before_execution(tmp_path, monkeypatch) -> None:
     input_xyz = tmp_path / "input.xyz"
     _write_xyz(input_xyz, "seed")
     config = tmp_path / "workflow.yaml"
@@ -139,18 +139,21 @@ def test_engine_mixed_inputs_make_implicit_steps_roots(tmp_path, monkeypatch) ->
         "    type: confgen\n",
         encoding="utf-8",
     )
-    seen: dict = {}
-    outputs: dict = {}
-    monkeypatch.setattr(
-        "confflow.workflow.engine._run_confgen_step",
-        _fake_confgen_factory(seen, outputs),
-    )
+    called = False
 
-    run_workflow([str(input_xyz)], str(config), str(tmp_path / "run"))
+    def fail_if_called(*args, **kwargs):
+        nonlocal called
+        called = True
+        raise AssertionError("multi-terminal DAG must be rejected before execution")
 
-    assert seen["later_root"] == str(input_xyz.resolve())
-    assert seen["source"] == str(input_xyz.resolve())
-    assert seen["child"] == outputs["source"]
+    monkeypatch.setattr("confflow.workflow.engine._run_confgen_step", fail_if_called)
+    run_dir = tmp_path / "run"
+
+    with pytest.raises(ConfFlowError, match="exactly one terminal step.*2"):
+        run_workflow([str(input_xyz)], str(config), str(run_dir))
+
+    assert called is False
+    assert not run_dir.exists()
 
 
 def test_engine_keeps_linear_fallback_without_inputs(tmp_path, monkeypatch) -> None:

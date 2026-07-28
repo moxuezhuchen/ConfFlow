@@ -15,7 +15,7 @@ from ..calc.artifacts import CalcArtifactManager
 from ..calc.executor import CalcExecutor
 from ..config.models import CalcStepParams, GlobalOptions, load_workflow_model
 from ..core import io as io_xyz
-from ..core.exceptions import StopRequestedError
+from ..core.exceptions import ConfFlowError, StopRequestedError
 from ..core.types import TaskStatus
 from ..core.utils import (
     get_logger,
@@ -178,6 +178,21 @@ def run_workflow(
         }
     del declared_inputs
     execution_order = [name for wave in topo_order(predecessors) for name in wave]
+    if explicit_inputs:
+        predecessor_names = {
+            predecessor
+            for step_predecessors in predecessors.values()
+            for predecessor in step_predecessors
+        }
+        terminal_steps = [
+            name for name in predecessors if name not in predecessor_names
+        ]
+        if len(terminal_steps) != 1:
+            terminals = ", ".join(map(repr, terminal_steps)) or "none"
+            raise ConfFlowError(
+                "explicit workflow DAG must have exactly one terminal step; "
+                f"found {len(terminal_steps)}: {terminals}"
+            )
 
     step_dirnames, _ = build_step_dir_name_map(steps)
     step_index_by_name = {name: index for index, name in enumerate(by_step_name)}

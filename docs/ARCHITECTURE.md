@@ -20,6 +20,7 @@ ConfFlow 是一个自动化计算化学工作流引擎，用于分子构象搜�
 
 ```
 confflow/
+├── contract.py                # JobDesk capability/artifact wire contract
 ├── core/                      # 基础设施层（共享工具、I/O、日志）
 │   ├── __init__.py
 │   ├── utils.py              # 统一的工具函数、异常类、日志系统
@@ -108,7 +109,9 @@ confflow/
 │
 ├── workflow/                  # 工作流编排层
 │   ├── __init__.py           # 公共 API 导出
-│   ├── engine.py             # 工作流执行引擎（核心调度逻辑，~360 行）
+│   ├── dag/                   # 显式 inputs DAG 构建、校验与拓扑排序
+│   ├── engine.py             # 工作流执行引擎（核心调度逻辑）
+│   ├── state.py              # .workflow_state.json 原子状态模型与存储
 │   ├── step_handlers.py      # 步骤执行适配层（薄壳，默认调用 calc 官方入口）
 │   ├── presenter.py          # 步骤展示与报告输出
 │   ├── runtime_context.py    # 运行时状态初始化与恢复
@@ -118,7 +121,17 @@ confflow/
 │   ├── dry_run.py            # 干运行支持
 │   ├── export.py             # 导出功能
 │   ├── rerun_failed.py       # 失败重跑
+│   ├── supervisor.py         # 子进程监督与停止处理
 │   └── step_naming.py        # 步骤命名
+│
+├── agent/                     # 可选的远程队列/进度服务入口
+│   ├── cli.py                # confflow-agent CLI
+│   ├── server.py             # agent 服务循环
+│   ├── runner.py             # workflow runner 适配
+│   ├── queue.py              # 持久队列
+│   ├── slots.py              # 资源槽位
+│   ├── state.py              # agent 状态
+│   └── progress.py           # 进度事件
 │
 ├── cli.py                     # CLI 参数解析
 ├── main.py                    # 工作流主程序入口
@@ -291,6 +304,16 @@ LICENSE                        # MIT 许可证
   - resume 时复用 `resolve_step_output()` 按 step type 校验标准工件，避免把 `search.xyz` 误当成 calc 完成输出
   - calc step 的配置/input digest、stale 判断和复用语义由 `calc.artifacts` 的 `manifest.json` 合同负责
   - 明确 step type 合同（`confgen/gen/calc/task`）并做早期校验
+  - 只要任一步声明 `inputs` 就进入显式 DAG 模式；无 `inputs` 的旧配置继续按声明顺序线性执行
+  - 显式 DAG 在初始化运行目录或调用 step handler 前完成未知依赖、环和终端数校验
+  - 当前显式 DAG 必须恰好有一个终端 step；不支持多输出聚合
+
+- **`dag/explicit.py`**：
+  - 规范化 step 名称与 `inputs`，构建 predecessor map
+  - 使用确定性拓扑 wave 校验未知依赖与环
+
+- **`state.py`**：
+  - 通过临时文件 + 原子替换维护 `.workflow_state.json`
 
 - **`runtime_context.py`**：
   - 初始化 `root_dir/failed/.checkpoint/workflow_stats` 等运行时状态
@@ -327,6 +350,13 @@ LICENSE                        # MIT 许可证
 - **`cli.py`**：参数解析（`confflow` 命令）
 - **`main.py`**：工作流主程序入口
 - **`confts.py`**：TS 专用执行器与 keyword 改写工具
+- **`contract.py`**：版本、schema、能力、产物名以及构建身份的 wire contract；`cli.py` 负责发出 capability JSON
+
+### 7. `agent/` - 可选远程服务层
+
+`confflow-agent` 通过 `agent/cli.py` 进入队列、槽位、runner 和进度模块。
+它是 ConfFlow 的可选执行入口，不是 JobDesk 的内嵌模块；JobDesk 默认仍通过
+SSH 调用公开 `confflow` CLI 和 capability/artifact contract。
 
 ## 设计模式与架构原则
 
@@ -521,6 +551,8 @@ confflow/__init__.py (包入口)
 - 使用 `ProcessPoolExecutor` 并行运行多个计算任务
 - 资源限制：`max_parallel_jobs`, `cores_per_task`, `total_memory`
 - 自动队列管理与负载均衡
+- 上述并行发生在单个 calc step 内部的构象任务层
+- DAG step 当前按确定性拓扑顺序串行执行；本里程碑不承诺 wave 级并发
 
 ### 3. TS 失败救援
 
