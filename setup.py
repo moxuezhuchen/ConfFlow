@@ -1,8 +1,15 @@
-"""Setuptools build hook for reproducible ConfFlow wheel provenance."""
+"""Setuptools build hook for reproducible ConfFlow wheel provenance.
+
+Only the build commit and working-tree cleanliness are written into the
+wheel itself. The wheel filename and the final byte digest are decided
+by the release workflow's external ``SHA256SUMS`` and the deployer's
+``install-provenance.json``; baking those identifiers into the wheel
+content would require a two-stage self-describing build that is never
+performed. ConfFlow 1.4.4 forbids that pattern explicitly.
+"""
 
 from __future__ import annotations
 
-import os
 import subprocess
 from pathlib import Path
 
@@ -41,9 +48,7 @@ class BuildPyWithProvenance(_build_py):
         target.write_text(
             '"""Build provenance populated by setup.py."""\n'
             f"COMMIT: str | None = {commit!r}\n"
-            f"DIRTY: bool | None = {dirty!r}\n"
-            f"WHEEL_FILENAME: str | None = {os.environ.get('CONFFLOW_WHEEL_FILENAME')!r}\n"
-            f"WHEEL_SHA256: str | None = {os.environ.get('CONFFLOW_WHEEL_SHA256')!r}\n",
+            f"DIRTY: bool | None = {dirty!r}\n",
             encoding="utf-8",
         )
 

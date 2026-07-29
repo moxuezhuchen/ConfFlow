@@ -22,10 +22,11 @@ except ImportError:
 
 import yaml
 
-from .__build__ import COMMIT, DIRTY, WHEEL_FILENAME, WHEEL_SHA256
+from .__build__ import COMMIT, DIRTY
 from .agent.cli import main as agent_main
 from .contract import (
     CAPABILITY_SCHEMA_VERSION,
+    OUTPUT_MANIFEST_FILE,
     REQUIRED_COMMANDS,
     RUN_MIN_XYZ_TEMPLATE,
     RUN_REPORT_FILE,
@@ -38,6 +39,7 @@ from .core.exceptions import ConfigurationError, InputFileError, PathSafetyError
 from .core.io import parse_gaussian_input_text, write_xyz_file
 from .core.path_policy import resolve_sandbox_root, validate_managed_path
 from .core.utils import get_logger
+from .install_provenance import read_install_provenance
 from .workflow.dry_run import run_dry_run
 from .workflow.engine import run_workflow
 from .workflow.export import NoExportableResultsError, export_results
@@ -73,10 +75,21 @@ def _file_sha256(path: str | None) -> str | None:
 
 
 def _build_capability_payload() -> dict[str, Any]:
-    """Build the handshake payload with v3 compatibility and v4 provenance."""
+    """Build the handshake payload with v3 compatibility and v4 provenance.
+
+    v4 adds ``producer.install_provenance`` as the source of truth for
+    the wheel filename and final SHA-256. When the file at
+    ``<sys.prefix>/share/confflow/install-provenance.json`` is missing
+    or invalid the payload surfaces the v4 diagnostic shape
+    (``wheel.filename/sha256 = null`` plus ``status`` /
+    ``reason_code``); JobDesk production gates must reject any
+    non-``verified`` status. ConfFlow never emits the literal string
+    ``"unbound"`` for either field.
+    """
     executable = _resolved_confflow_executable()
     build = {"commit": COMMIT, "dirty": DIRTY}
     version = __import__("confflow").__version__
+    provenance, _errors = read_install_provenance()
     return {
         "schema_version": _CAPABILITY_SCHEMA_VERSION,
         "version": version,
@@ -87,6 +100,7 @@ def _build_capability_payload() -> dict[str, Any]:
             "workflow_state": WORKFLOW_STATE_FILE,
             "run_report": RUN_REPORT_FILE,
             "min_xyz": RUN_MIN_XYZ_TEMPLATE,
+            "output_manifest": OUTPUT_MANIFEST_FILE,
         },
         "commands": {name: shutil.which(name) is not None for name in REQUIRED_COMMANDS},
         "build": build,
@@ -94,7 +108,14 @@ def _build_capability_payload() -> dict[str, Any]:
             "package": "confflow",
             "version": version,
             "build": build,
-            "wheel": {"filename": WHEEL_FILENAME, "sha256": WHEEL_SHA256},
+            "wheel": {
+                "filename": provenance.wheel_filename,
+                "sha256": provenance.wheel_sha256,
+            },
+            "install_provenance": {
+                "status": provenance.status,
+                "reason_code": provenance.reason_code,
+            },
         },
         "executable": {
             "path": executable,
@@ -357,6 +378,12 @@ def _is_confflow_process_cmdline(cmdline: list[str]) -> bool:
     if not cmdline or "--stop" in cmdline:
         return False
 
+    # NOTE (P2 audit, v1.4.4 Gate A): "confcalc" remains in the
+    # process-recognizer set as a historical entry. Current README,
+    # [project.scripts], and the pyproject CLI entry do not register a
+    # `confcalc` command. Removing this entry requires an independent
+    # code change with its own tests; per the P2 plan this Gate A
+    # stage does not delete or restore a `confcalc` CLI surface.
     entrypoints = {"confflow", "confts", "confgen", "confrefine", "confcalc"}
     first = os.path.basename(cmdline[0])
     if first in entrypoints:

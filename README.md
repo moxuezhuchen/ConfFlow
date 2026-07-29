@@ -57,22 +57,22 @@ Requirements and packaging notes:
 - RDKit is required
 - `numba` is optional and only used for acceleration when installed
 
-## ConfFlow ↔ JobDesk Capability Handshake (v1.4.3)
+## ConfFlow ↔ JobDesk Capability Handshake (v1.4.4)
 
-ConfFlow 1.4.3 implements a version/capability probe used by JobDesk to
+ConfFlow 1.4.4 implements a version/capability probe used by JobDesk to
 validate compatibility before uploading or submitting workflow tasks:
 
 ```bash
-confflow --version          # prints "1.4.3"
+confflow --version          # prints "1.4.4"
 confflow --capabilities --json
 ```
 
-Capability contract (JSON, schema version 3):
+Capability contract (JSON, schema version **4**):
 
 ```json
 {
-  "schema_version": 3,
-  "version": "1.4.3",
+  "schema_version": 4,
+  "version": "1.4.4",
   "capabilities": {
     "workflow_state": true,
     "resume": true,
@@ -83,7 +83,8 @@ Capability contract (JSON, schema version 3):
     "workflow_stats": "workflow_stats.json",
     "workflow_state": ".workflow_state.json",
     "run_report": "{basename}.txt",
-    "min_xyz": "{basename}min.xyz"
+    "min_xyz": "{basename}min.xyz",
+    "output_manifest": "output_manifest.json"
   },
   "commands": {
     "bash": true,
@@ -95,19 +96,88 @@ Capability contract (JSON, schema version 3):
     "base64": true
   },
   "build": {
-    "commit": "7b37c223d2c07a062ab62965911c3cd8d6641591",
+    "commit": "<40-char git commit>",
     "dirty": false
+  },
+  "producer": {
+    "package": "confflow",
+    "version": "1.4.4",
+    "build": {
+      "commit": "<40-char git commit>",
+      "dirty": false
+    },
+    "wheel": {
+      "filename": "confflow-1.4.4-py3-none-any.whl",
+      "sha256": "<external SHA-256SUMS digest>"
+    },
+    "install_provenance": {
+      "status": "verified",
+      "reason_code": null
+    }
+  },
+  "executable": {
+    "path": "/path/to/confflow",
+    "sha256": "<executable SHA-256>",
+    "python": "/path/to/installer/python"
   }
 }
 ```
 
-JobDesk requires `confflow>=1.4.3,<2.0`, validates the capability contract
+JobDesk requires `confflow>=1.4.4,<2.0`, validates the capability contract
 before the first input upload, and repeats the preflight at submit time.
-The `commands` block reports the host-side utilities that ConfFlow relies
-on for shell launching, scratch staging, and integrity checks. The
-`build` block surfaces the exact 40-character git commit that produced
-the running wheel plus a `dirty` flag; a non-zero `dirty` value triggers a
-non-fatal warning at submit time so operators can spot local rebuilds.
+
+### v4 contract additions
+
+* **`producer`** block reports the *install* provenance: package name,
+  version, build commit/dirty, the **wheel filename and SHA-256** that
+  were actually deployed, and an `install_provenance.status` /
+  `reason_code` snapshot. `status` is one of `"verified"`,
+  `"missing"`, `"invalid"`. Only `"verified"` is acceptable as
+  production input.
+* **`executable`** block reports the resolved on-disk `confflow` path,
+  its own SHA-256 (so a tampered or locally-rebuilt executable is
+  detectable), and the `python` interpreter that hosts the venv.
+* **Six artifacts**, in addition to the v3 set:
+  * `output_manifest` — machine-readable multi-terminal output
+    index written alongside the run artifacts.
+  * `run_summary`, `workflow_stats`, `workflow_state`, `run_report`,
+    `min_xyz` — unchanged.
+
+### Four content schemas stamped into producer artifacts
+
+Each producer artifact carries a stable `content_schema` field. The
+producer contract enumerates them; JobDesk matches the exact string,
+not a prefix.
+
+| Artifact | Filename | content_schema |
+| --- | --- | --- |
+| run_summary | `run_summary.json` | `confflow.run_summary.v1` |
+| workflow_stats | `workflow_stats.json` | `confflow.workflow_stats.v1` |
+| workflow_state | `.workflow_state.json` | `confflow.workflow_state.v1` |
+| output_manifest | `output_manifest.json` | `confflow.output_manifest.v1` |
+
+### Release / install provenance — three layers
+
+ConfFlow no longer bakes its own wheel digest into the wheel.
+
+1. **Wheel-internal build provenance** — `confflow.__build__.COMMIT`
+   and `DIRTY` are set by `setup.py`'s build hook and describe only
+   *what source built this wheel*, never the wheel file itself.
+2. **External release provenance** — the release workflow writes a
+   `SHA256SUMS` file next to the wheel in `dist/`. The deployer
+   refuses to install on checksum mismatch.
+3. **Target venv install provenance** — the deployer creates
+   `<sys.prefix>/share/confflow/install-provenance.json` after
+   verifying the wheel against `SHA256SUMS` (and, in production,
+   against the approved attestation). The capability probe reads
+   this file; the wheel's `__build__.COMMIT` is *not* trusted as
+   the wheel's identity.
+
+The capability probe surfaces `producer.wheel.filename` /
+`producer.wheel.sha256` and `producer.install_provenance.status`
+from this record. A `status` other than `"verified"` means the
+candidate is diagnostic-only; JobDesk's production gate rejects
+it.
 
 ## Quick Start
 
