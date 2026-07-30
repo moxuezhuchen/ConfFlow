@@ -18,11 +18,10 @@ import sys
 import warnings
 from types import ModuleType
 
-import pytest
-
 import confflow.workflow.dag as dag_pkg
 import confflow.workflow.dag.explicit as explicit_module
 import confflow.workflow.dag.legacy as legacy_module
+import pytest
 from confflow.workflow.dag import build_step_graph, topo_order
 
 
