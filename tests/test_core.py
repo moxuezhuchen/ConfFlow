@@ -55,9 +55,10 @@ def test_main_entrypoint_callable_and_non_integer_mapping():
 
 
 def test_confgen_and_refine_key_symbols_present():
+    import numpy as np
+
     import confflow.blocks.confgen as confgen
     import confflow.blocks.refine as refine
-    import numpy as np
 
     assert hasattr(confgen, "run_generation")
     assert hasattr(confgen, "check_clash_core")

@@ -14,6 +14,7 @@ import time
 from unittest.mock import MagicMock, patch
 
 import pytest
+
 from confflow.cli import (
     _convert_gjf_to_xyz,
     _is_confflow_process_cmdline,
