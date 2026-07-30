@@ -35,7 +35,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 INSTALL_PROVENANCE_RELATIVE_PATH = "share/confflow/install-provenance.json"
-INSTALL_PROVENANCE_SCHEMA = "confflow.install-provenance.v1"
+INSTALL_PROVENANCE_SCHEMA = "confflow.install-provenance.v2"
 
 # Status/reason codes must stay stable and machine-readable.
 STATUS_VERIFIED = "verified"
@@ -61,6 +61,12 @@ class InstallProvenanceRecord:
     version: str = ""
     wheel_filename: str = ""
     wheel_sha256: str = ""
+    dependency_lock_sha256: str = ""
+    wheelhouse_manifest_sha256: str = ""
+    python_version: str = ""
+    python_implementation: str = ""
+    platform: str = ""
+    machine: str = ""
     build_commit: str = ""
     build_dirty: bool | None = None
     release_repository: str = ""
@@ -237,6 +243,41 @@ def read_install_provenance(
                 wheel_sha256=None,
             ),
             ["install-provenance is missing version or build commit"],
+        )
+    digest_fields = (
+        record.dependency_lock_sha256,
+        record.wheelhouse_manifest_sha256,
+        record.wheel_sha256,
+        record.attestation_subject_digest,
+    )
+    if any(
+        len(value) != 64
+        or any(character not in "0123456789abcdef" for character in value.lower())
+        for value in digest_fields
+    ):
+        return (
+            CapabilityProvenanceDigest(
+                status=STATUS_INVALID,
+                reason_code=REASON_SCHEMA_MISMATCH,
+                wheel_filename=None,
+                wheel_sha256=None,
+            ),
+            ["install-provenance is missing or has an invalid digest"],
+        )
+    if not (
+        record.python_version
+        and record.python_implementation
+        and record.platform
+        and record.machine
+    ):
+        return (
+            CapabilityProvenanceDigest(
+                status=STATUS_INVALID,
+                reason_code=REASON_SCHEMA_MISMATCH,
+                wheel_filename=None,
+                wheel_sha256=None,
+            ),
+            ["install-provenance is missing runtime identity"],
         )
     return (
         CapabilityProvenanceDigest(

@@ -46,6 +46,11 @@ Gate B build (not back-filling this candidate's wheel digest).
      and never reports a wheel digest derived from the wheel file
      itself. The literal string `"unbound"` is no longer a trusted
      provenance output.
+- **Controlled runtime dependency closure**:
+  - locks the verified 1.4.4 production venv runtime baseline for
+    CPython 3.12/Linux x86_64 with exact hashes;
+  - requires an offline binary-only wheelhouse and its SHA256 manifest;
+  - records lock/manifest digests and runtime identity in install provenance.
 - **Tested-isolation deployer** (`scripts/install_release_wheel.py`):
   - Accepts `--mode candidate` (Gate A, attestation_unverified) and
     `--mode production` (Gate B, requires approved attestation).

@@ -21,7 +21,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = REPO_ROOT / "scripts" / "install_release_wheel.py"
 
 
-def _build_minimal_wheel(wheel_path, *, version, commit):
+def _build_minimal_wheel(wheel_path, *, version, commit, requires=()):
     """Materialize a real pip-installable wheel for the deployer tests.
 
     Routes through ``python -m build`` so the resulting wheel has a proper
@@ -83,6 +83,13 @@ def _build_minimal_wheel(wheel_path, *, version, commit):
             "from .cli import main\nimport sys\nsys.exit(main(sys.argv[1:]))\n",
             encoding="utf-8",
         )
+        dependency_lines = (
+            "dependencies = ["
+            + ", ".join(repr(item) for item in requires)
+            + "]\n"
+            if requires
+            else ""
+        )
         (project / "pyproject.toml").write_text(
             "[build-system]\n"
             "requires = ['setuptools>=82', 'wheel']\n"
@@ -90,6 +97,7 @@ def _build_minimal_wheel(wheel_path, *, version, commit):
             "[project]\n"
             f"name = 'confflow'\nversion = '{version}'\n"
             "requires-python = '>=3.10'\n"
+            f"{dependency_lines}"
             "[project.scripts]\n"
             "confflow = 'confflow.cli:main'\n"
             "[tool.setuptools.packages.find]\n"
@@ -115,22 +123,40 @@ def _write_sha256sums(sums_path, *, wheel):
 
 
 def _alloc_paths(tmp_path, name="confflow-stage1"):
-    return {
+    paths = {
         "wheel_dir": tmp_path / "wheel",
         "sums_path": tmp_path / "SHA256SUMS",
+        "dependency_lock": tmp_path / "runtime.lock",
+        "wheelhouse": tmp_path / "wheelhouse",
         "target_venv": tmp_path / name,
         "parent": tmp_path,
     }
+    paths["dependency_lock"].write_text("--only-binary=:all:\n", encoding="utf-8")
+    paths["wheelhouse"].mkdir()
+    (paths["wheelhouse"] / "SHA256SUMS").write_text("", encoding="utf-8")
+    return paths
 
 
-def _run_deployer(*, args):
+def _run_deployer(*, args, include_dependency_inputs=True):
     # Use the worktree's source tree; the deployer lives in the candidate
     # worktree and imports confflow.* from it, not from any globally installed
     # confflow in /opt/ConfFlow/.venv.
     env = os.environ.copy()
     env["PYTHONPATH"] = str(REPO_ROOT) + os.pathsep + env.get("PYTHONPATH", "")
+    full_args = list(args)
+    if include_dependency_inputs:
+        target_index = full_args.index("--target-venv")
+        root = Path(full_args[target_index + 1]).parent
+        full_args.extend(
+            [
+                "--dependency-lock",
+                str(root / "runtime.lock"),
+                "--wheelhouse",
+                str(root / "wheelhouse"),
+            ]
+        )
     return subprocess.run(
-        [sys.executable, str(SCRIPT), *args],
+        [sys.executable, str(SCRIPT), *full_args],
         check=False,
         capture_output=True,
         text=True,
@@ -315,6 +341,18 @@ def test_candidate_mode_record_is_unverified(tmp_path):
     assert record_path.is_file()
     record = json.loads(record_path.read_text(encoding="utf-8"))
     assert record["attestation_verified"] is False
+    assert record["schema"] == "confflow.install-provenance.v2"
+    assert record["dependency_lock_sha256"] == hashlib.sha256(
+        paths["dependency_lock"].read_bytes()
+    ).hexdigest()
+    assert record["wheelhouse_manifest_sha256"] == hashlib.sha256(
+        (paths["wheelhouse"] / "SHA256SUMS").read_bytes()
+    ).hexdigest()
+    assert record["python_version"].startswith("3.12.")
+    assert record["platform"] == "linux-x86_64"
+    assert "include-system-site-packages = false" in (
+        (paths["target_venv"] / "pyvenv.cfg").read_text(encoding="utf-8").lower()
+    )
 
 
 def test_candidate_record_status_is_unverified(tmp_path):
@@ -340,3 +378,46 @@ def test_candidate_record_status_is_unverified(tmp_path):
     digest_obj, _errors = read_install_provenance(sys_prefix=str(paths["target_venv"]))
     assert digest_obj.status == "invalid"
     assert digest_obj.reason_code == REASON_ATTESTATION_UNVERIFIED
+
+
+def test_lock_and_wheelhouse_are_required(tmp_path):
+    result = _run_deployer(
+        args=["--mode", "candidate"],
+        include_dependency_inputs=False,
+    )
+    assert result.returncode != 0
+    assert "--dependency-lock" in result.stderr
+
+
+def test_pip_check_failure_rolls_back_staging(tmp_path):
+    paths = _alloc_paths(tmp_path, name="confflow-pip-check-venv")
+    wheel = paths["wheel_dir"] / "confflow-1.4.5-py3-none-any.whl"
+    _build_minimal_wheel(
+        wheel,
+        version="1.4.5",
+        commit="a" * 40,
+        requires=("missing-dependency==1.0",),
+    )
+    _write_sha256sums(paths["sums_path"], wheel=wheel)
+    result = _run_deployer(
+        args=[
+            "--mode",
+            "candidate",
+            "--wheel",
+            str(wheel),
+            "--sha256sums",
+            str(paths["sums_path"]),
+            "--target-venv",
+            str(paths["target_venv"]),
+            "--expected-version",
+            "1.4.5",
+            "--expected-commit",
+            "a" * 40,
+            "--expected-tag",
+            "v1.4.5-candidate",
+        ]
+    )
+    assert result.returncode != 0
+    assert "pip check failed" in result.stderr.lower()
+    assert not paths["target_venv"].exists()
+    assert not list(tmp_path.glob("confflow-pip-check-venv.staging*"))

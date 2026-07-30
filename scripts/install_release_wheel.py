@@ -33,8 +33,8 @@ In either mode the deployer:
   is given in candidate mode but produces a release-record block
   identical to production (with ``attestation_verified=False``);
 * creates an isolated staging venv in the same parent directory as
-  ``--target-venv``, installs the wheel from ``--wheelhouse`` (default
-  the candidate wheel itself) without touching any prior venv;
+  ``--target-venv``, installs the complete dependency lock from the
+  binary-only ``--wheelhouse`` and the exact wheel without touching any prior venv;
 * runs the deployed ``confflow --capabilities --json`` once, aborts on
   any error, then atomically renames the staging directory onto the
   final ``--target-venv`` path;
@@ -54,6 +54,7 @@ import sys
 from pathlib import Path
 
 from confflow import install_provenance as ip
+from confflow import release_dependencies as rd
 from confflow.install_provenance import INSTALL_PROVENANCE_SCHEMA
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -118,12 +119,12 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         "Optional in candidate mode; when provided the digest is recorded "
         "verbatim.",
     )
+    parser.add_argument("--dependency-lock", required=True, type=Path)
     parser.add_argument(
         "--wheelhouse",
+        required=True,
         type=Path,
-        default=None,
-        help="Optional pre-populated wheel directory used in lieu of the "
-        "network when installing dependencies.",
+        help="Offline binary-wheel directory containing SHA256SUMS.",
     )
     parser.add_argument("--dry-run", action="store_true")
     return parser.parse_args(argv)
@@ -227,6 +228,64 @@ def _validate_metadata(
             f"wheel build commit {build_commit} != --expected-commit {args.expected_commit}",
         )
 
+_RUNTIME_IDENTITY_CODE = (
+    "import json,platform,sys,sysconfig;"
+    "print(json.dumps({"
+    "'python_version':platform.python_version(),"
+    "'python_implementation':platform.python_implementation(),"
+    "'platform':sysconfig.get_platform(),"
+    "'machine':platform.machine()"
+    "},sort_keys=True))"
+)
+
+
+def _read_runtime_identity(
+    interpreter: Path,
+    *,
+    env: dict[str, str] | None = None,
+) -> dict[str, object]:
+    """Read Python/platform identity from the interpreter being installed."""
+    if not interpreter.is_file():
+        raise _fail_roll_back(None, f"target Python does not exist: {interpreter}")
+    result = subprocess.run(
+        [str(interpreter), "-c", _RUNTIME_IDENTITY_CODE],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    if result.returncode != 0:
+        raise _fail_roll_back(None, f"target Python identity probe failed: {result.stderr}")
+    try:
+        payload = json.loads(result.stdout)
+    except json.JSONDecodeError as exc:
+        raise _fail_roll_back(None, f"target Python identity is not JSON: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise _fail_roll_back(None, "target Python identity is not a JSON object")
+    return payload
+
+
+def _validate_dependency_inputs(
+    args: argparse.Namespace,
+    *,
+    runtime_identity: dict[str, object],
+) -> rd.DependencyEvidence:
+    try:
+        return rd.validate_dependency_inputs(
+            args.dependency_lock,
+            args.wheelhouse,
+            runtime_identity=runtime_identity,
+        )
+    except rd.DependencyInputError as exc:
+        raise _fail_roll_back(None, str(exc)) from exc
+
+
+def _validate_runtime_identity(identity: dict[str, object]) -> None:
+    try:
+        rd.validate_runtime_identity(identity)
+    except rd.DependencyInputError as exc:
+        raise _fail_roll_back(None, str(exc)) from exc
+
 
 def _build_staging_venv(
     args: argparse.Namespace,
@@ -257,6 +316,13 @@ def _build_staging_venv(
     )
     if result.returncode != 0:
         raise _fail_roll_back(staging, f"venv creation failed: {result.stderr}")
+    config = staging / "pyvenv.cfg"
+    config_text = config.read_text(encoding="utf-8").lower() if config.is_file() else ""
+    if "include-system-site-packages = false" not in config_text:
+        raise _fail_roll_back(
+            staging,
+            "staging venv is not isolated: include-system-site-packages is not false",
+        )
     return staging
 
 
@@ -280,26 +346,63 @@ def _staging_env(staging: Path) -> dict[str, str]:
     return env
 
 
-def _pip_install(
+def _pip_install_dependencies(
     staging: Path,
-    wheel: Path,
-    *,
-    wheelhouse: Path | None,
+    dependency_lock: Path,
+    wheelhouse: Path,
 ) -> None:
+    """Install the complete lock from the local wheelhouse only."""
     pip = staging / "bin" / "pip"
     cmd = [
         str(pip),
         "install",
-        "--no-deps",
+        "--no-index",
+        "--find-links",
+        str(wheelhouse),
+        "--require-hashes",
+        "--only-binary=:all:",
         "--disable-pip-version-check",
-        str(wheel),
+        "-r",
+        str(dependency_lock),
     ]
-    if wheelhouse is not None:
-        # Restrict resolution to the local wheelhouse — no network.
-        cmd.extend(["--no-index", "--find-links", str(wheelhouse)])
     result = subprocess.run(cmd, check=False, capture_output=True, text=True, env=_staging_env(staging))
     if result.returncode != 0:
-        raise _fail_roll_back(staging, f"pip install failed: {result.stderr}")
+        raise _fail_roll_back(staging, f"dependency install failed: {result.stderr}")
+
+
+def _pip_install_confflow(staging: Path, wheel: Path) -> None:
+    """Install only the exact, already-verified ConfFlow wheel."""
+    pip = staging / "bin" / "pip"
+    result = subprocess.run(
+        [
+            str(pip),
+            "install",
+            "--no-index",
+            "--no-deps",
+            "--disable-pip-version-check",
+            str(wheel),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=_staging_env(staging),
+    )
+    if result.returncode != 0:
+        raise _fail_roll_back(staging, f"confflow wheel install failed: {result.stderr}")
+
+
+def _run_pip_check(staging: Path) -> None:
+    """Require pip's installed-distribution dependency check to pass."""
+    result = subprocess.run(
+        [str(staging / "bin" / "pip"), "check"],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=_staging_env(staging),
+    )
+    if result.returncode != 0:
+        detail = (result.stdout or result.stderr).strip()
+        raise _fail_roll_back(staging, f"pip check failed: {detail}")
 
 
 def _run_capability_probe(staging: Path) -> dict[str, object]:
@@ -331,6 +434,9 @@ def _commit_record(
     build_commit: str | None,
     payload: dict[str, object],
     staging: Path,
+    dependency_lock_sha256: str,
+    wheelhouse_manifest_sha256: str,
+    runtime_identity: dict[str, object],
 ) -> None:
     """Write ``install-provenance.json`` into ``staging`` (NOT into ``target``).
 
@@ -368,6 +474,12 @@ def _commit_record(
         "version": args.expected_version,
         "wheel_filename": wheel.name,
         "wheel_sha256": digest,
+        "dependency_lock_sha256": dependency_lock_sha256,
+        "wheelhouse_manifest_sha256": wheelhouse_manifest_sha256,
+        "python_version": str(runtime_identity["python_version"]),
+        "python_implementation": str(runtime_identity["python_implementation"]),
+        "platform": str(runtime_identity["platform"]),
+        "machine": str(runtime_identity["machine"]),
         "build_commit": build_commit or "",
         "build_dirty": False if build_commit is not None else None,
         "release_repository": args.expected_repository,
@@ -484,6 +596,14 @@ def main(argv: list[str] | None = None) -> int:
     parent, target = _resolve_target_venv(args)
     build_commit, _dirty = _read_build_constants(wheel)
     _validate_metadata(args, build_commit=build_commit)
+    target_identity = _read_runtime_identity(
+        args.target_python or Path(sys.executable)
+    )
+    _validate_runtime_identity(target_identity)
+    dependency_evidence = _validate_dependency_inputs(
+        args,
+        runtime_identity=target_identity,
+    )
 
     if args.dry_run:
         print(
@@ -495,6 +615,9 @@ def main(argv: list[str] | None = None) -> int:
                     "build_commit": build_commit,
                     "target_venv": str(target),
                     "mode": args.mode,
+                    "dependency_lock_sha256": dependency_evidence.dependency_lock_sha256,
+                    "wheelhouse_manifest_sha256": dependency_evidence.wheelhouse_manifest_sha256,
+                    "runtime_identity": target_identity,
                 },
                 sort_keys=True,
             )
@@ -504,7 +627,26 @@ def main(argv: list[str] | None = None) -> int:
     staging = _build_staging_venv(args, parent, args.target_python)
     succeeded = False
     try:
-        _pip_install(staging, wheel, wheelhouse=args.wheelhouse)
+        staged_identity = _read_runtime_identity(
+            staging / "bin" / "python",
+            env=_staging_env(staging),
+        )
+        _validate_runtime_identity(staged_identity)
+        if any(
+            staged_identity.get(key) != target_identity.get(key)
+            for key in ("python_version", "python_implementation", "platform", "machine")
+        ):
+            raise _fail_roll_back(
+                staging,
+                "staging venv runtime identity differs from target Python identity",
+            )
+        _pip_install_dependencies(
+            staging,
+            args.dependency_lock,
+            args.wheelhouse,
+        )
+        _pip_install_confflow(staging, wheel)
+        _run_pip_check(staging)
         payload = _run_capability_probe(staging)
         _commit_record(
             args=args,
@@ -513,6 +655,9 @@ def main(argv: list[str] | None = None) -> int:
             build_commit=build_commit,
             payload=payload,
             staging=staging,
+            dependency_lock_sha256=dependency_evidence.dependency_lock_sha256,
+            wheelhouse_manifest_sha256=dependency_evidence.wheelhouse_manifest_sha256,
+            runtime_identity=staged_identity,
         )
         _fixup_script_shebangs(staging, target)
         _atomic_rename(staging, target)

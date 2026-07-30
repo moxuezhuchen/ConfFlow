@@ -146,6 +146,32 @@ Format:
 `SHA256SUMS` must contain exactly one row for the target wheel. Globs
 (`*.whl`) and duplicate entries are rejected.
 
+### Layer 2a - Controlled Python runtime dependencies
+
+The 1.4.5 Linux x86_64 / CPython 3.12 runtime is based on the verified
+1.4.4 production venv. The committed lock is
+release/confflow-1.4.5-py312-linux-x86_64.lock and contains every direct
+and transitive runtime distribution at an exact version with SHA-256 hashes.
+The matching wheelhouse manifest is
+release/confflow-1.4.5-py312-linux-x86_64.SHA256SUMS.
+
+The installer requires both --dependency-lock and --wheelhouse. The
+wheelhouse must contain only the manifest and the binary wheels listed by it.
+Candidate and production mode both fail closed when either input is absent,
+when a wheel is missing, extra, altered, an sdist, or incompatible with
+Python 3.12 Linux x86_64. No system site-packages or network index is used.
+
+The staged install sequence is:
+
+1. pip install --no-index --find-links --require-hashes -r <lock>, with
+   --only-binary=:all:.
+2. pip install --no-index --no-deps <exact-confflow-wheel>.
+3. pip check followed by the capability probe.
+
+The install provenance records the lock digest, wheelhouse manifest digest,
+Python version/implementation, and platform/machine identity alongside the
+wheel and release attestation fields.
+
 ### Layer 3 — Target-venv `install-provenance.json`
 
 After successful checksum verification the deployer writes
@@ -154,11 +180,17 @@ target venv. The schema is:
 
 ```json
 {
-  "schema": "confflow.install-provenance.v1",
+  "schema": "confflow.install-provenance.v2",
   "package": "confflow",
   "version": "X.Y.Z",
   "wheel_filename": "confflow-X.Y.Z-py3-none-any.whl",
   "wheel_sha256": "<digest>",
+  "dependency_lock_sha256": "<digest>",
+  "wheelhouse_manifest_sha256": "<digest>",
+  "python_version": "3.12.3",
+  "python_implementation": "CPython",
+  "platform": "linux-x86_64",
+  "machine": "x86_64",
   "build_commit": "<40-char git commit>",
   "build_dirty": false,
   "release_repository": "<owner>/<repo>",
