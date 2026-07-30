@@ -18,7 +18,7 @@ if _HANDSHAKE_PROBE:
 try:
     __version__ = version("confflow")
 except PackageNotFoundError:
-    __version__ = "1.4.3"
+    __version__ = "1.4.5"
 __author__ = "ConfFlow Team"
 
 # ============================================================================

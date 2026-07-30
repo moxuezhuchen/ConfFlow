@@ -58,9 +58,22 @@ _HANDSHAKE_PROBE = any(flag in sys.argv[1:] for flag in ("--version", "--capabil
 # it advertises can never drift apart.
 _CAPABILITY_SCHEMA_VERSION: int = CAPABILITY_SCHEMA_VERSION
 def _resolved_confflow_executable() -> str | None:
-    """Return the PATH-resolved entry point used for producer provenance."""
-    executable = shutil.which("confflow")
-    return os.path.realpath(executable) if executable else None
+    """Return the entry point belonging to the interpreter running this probe.
+
+    A capability probe may be invoked with an absolute path while another
+    ConfFlow shim remains earlier on ``PATH``. Prefer the console script next
+    to ``sys.executable`` so the reported executable cannot silently describe
+    a different venv; retain argv/PATH fallbacks for legacy module launchers.
+    """
+    candidates = [Path(sys.executable).with_name("confflow"), Path(sys.argv[0])]
+    path_executable = shutil.which("confflow")
+    if path_executable:
+        candidates.append(Path(path_executable))
+    for candidate in candidates:
+        candidate_text = os.fspath(candidate)
+        if candidate_text and os.path.isfile(candidate_text):
+            return os.path.realpath(os.path.abspath(candidate_text))
+    return None
 
 
 def _file_sha256(path: str | None) -> str | None:
@@ -120,7 +133,9 @@ def _build_capability_payload() -> dict[str, Any]:
         "executable": {
             "path": executable,
             "sha256": _file_sha256(executable),
-            "python": os.path.realpath(sys.executable),
+            # Keep the venv path spelling; realpath() would collapse a venv's
+            # python symlink to /usr/bin and break executable identity binding.
+            "python": os.path.abspath(sys.executable),
         },
     }
 
@@ -378,7 +393,7 @@ def _is_confflow_process_cmdline(cmdline: list[str]) -> bool:
     if not cmdline or "--stop" in cmdline:
         return False
 
-    # NOTE (P2 audit, v1.4.4 Gate A): "confcalc" remains in the
+    # NOTE (P2 audit, v1.4.5 Gate A): "confcalc" remains in the
     # process-recognizer set as a historical entry. Current README,
     # [project.scripts], and the pyproject CLI entry do not register a
     # `confcalc` command. Removing this entry requires an independent

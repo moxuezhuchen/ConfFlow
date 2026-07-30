@@ -5,7 +5,7 @@ wheel itself. The wheel filename and the final byte digest are decided
 by the release workflow's external ``SHA256SUMS`` and the deployer's
 ``install-provenance.json``; baking those identifiers into the wheel
 content would require a two-stage self-describing build that is never
-performed. ConfFlow 1.4.4 forbids that pattern explicitly.
+performed. ConfFlow 1.4.5 forbids that pattern explicitly.
 """
 
 from __future__ import annotations

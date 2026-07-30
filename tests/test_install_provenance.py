@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tests for the install-side provenance layer introduced in 1.4.4.
+"""Tests for the install-side provenance layer introduced in 1.4.5.
 
 These tests cover the layered provenance model from the M2-4 release
 plan:
@@ -46,7 +46,7 @@ def test_build_hook_only_writes_commit_and_dirty():
 
     The wheel can never be its own source of truth for its final byte
     digest because embedding it changes the digest, creating a
-    chicken-and-egg problem.  v1.4.4 removes both constants from
+    chicken-and-egg problem.  v1.4.5 removes both constants from
     ``__build__.py`` and ``setup.py``.
     """
     project_root = Path(__file__).resolve().parents[1]
@@ -121,13 +121,13 @@ def test_read_install_provenance_attestation_unverified(tmp_path):
     record = {
         "schema": "confflow.install-provenance.v1",
         "package": "confflow",
-        "version": "1.4.4",
-        "wheel_filename": "confflow-1.4.4-py3-none-any.whl",
+        "version": "1.4.5",
+        "wheel_filename": "confflow-1.4.5-py3-none-any.whl",
         "wheel_sha256": "a" * 64,
         "build_commit": "b" * 40,
         "build_dirty": False,
         "release_repository": "moxuezhuchen/ConfFlow",
-        "release_tag": "v1.4.4",
+        "release_tag": "v1.4.5",
         "release_tag_commit": "b" * 40,
         "attestation_verified": False,
         "attestation_subject_digest": "a" * 64,
@@ -150,13 +150,13 @@ def test_read_install_provenance_verified_payload(tmp_path):
         {
             "schema": "confflow.install-provenance.v1",
             "package": "confflow",
-            "version": "1.4.4",
-            "wheel_filename": "confflow-1.4.4-py3-none-any.whl",
+            "version": "1.4.5",
+            "wheel_filename": "confflow-1.4.5-py3-none-any.whl",
             "wheel_sha256": "b" * 64,
             "build_commit": "c" * 40,
             "build_dirty": False,
             "release_repository": "moxuezhuchen/ConfFlow",
-            "release_tag": "v1.4.4",
+            "release_tag": "v1.4.5",
             "release_tag_commit": "c" * 40,
             "attestation_verified": True,
             "attestation_subject_digest": "b" * 64,
@@ -167,7 +167,7 @@ def test_read_install_provenance_verified_payload(tmp_path):
     assert errors == []
     assert digest.status == STATUS_VERIFIED
     assert digest.reason_code is None
-    assert digest.wheel_filename == "confflow-1.4.4-py3-none-any.whl"
+    assert digest.wheel_filename == "confflow-1.4.5-py3-none-any.whl"
     assert digest.wheel_sha256 == "b" * 64
 
 
@@ -195,7 +195,7 @@ def test_sha256sums_parser_rejects_glob_and_duplicates(tmp_path):
     sums.write_text(
         "\n".join(
             [
-                good + "  confflow-1.4.4-py3-none-any.whl",
+                good + "  confflow-1.4.5-py3-none-any.whl",
                 "0123456789abcdef" * 4 + "  *-candidate.whl",
                 "not hex  somefile",
                 "badline-no-second-column",
@@ -205,7 +205,7 @@ def test_sha256sums_parser_rejects_glob_and_duplicates(tmp_path):
         encoding="utf-8",
     )
     parsed = read_sha256sums(sums)
-    assert "confflow-1.4.4-py3-none-any.whl" in parsed
+    assert "confflow-1.4.5-py3-none-any.whl" in parsed
     assert "*-candidate.whl" not in parsed
 
 
@@ -230,13 +230,13 @@ def test_install_provenance_record_round_trip():
     """Serialising and deserialising the dataclass preserves every field."""
     record = InstallProvenanceRecord(
         package="confflow",
-        version="1.4.4",
-        wheel_filename="confflow-1.4.4-py3-none-any.whl",
+        version="1.4.5",
+        wheel_filename="confflow-1.4.5-py3-none-any.whl",
         wheel_sha256="a" * 64,
         build_commit="b" * 40,
         build_dirty=False,
         release_repository="moxuezhuchen/ConfFlow",
-        release_tag="v1.4.4",
+        release_tag="v1.4.5",
         release_tag_commit="b" * 40,
         attestation_verified=True,
         attestation_subject_digest="a" * 64,

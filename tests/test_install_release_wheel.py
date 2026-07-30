@@ -141,8 +141,8 @@ def _run_deployer(*, args):
 
 def test_dry_run_with_no_target_venv(tmp_path):
     paths = _alloc_paths(tmp_path)
-    wheel = paths["wheel_dir"] / "confflow-1.4.4-py3-none-any.whl"
-    _build_minimal_wheel(wheel, version="1.4.4", commit="a" * 40)
+    wheel = paths["wheel_dir"] / "confflow-1.4.5-py3-none-any.whl"
+    _build_minimal_wheel(wheel, version="1.4.5", commit="a" * 40)
     _write_sha256sums(paths["sums_path"], wheel=wheel)
 
     result = _run_deployer(args=[
@@ -150,9 +150,9 @@ def test_dry_run_with_no_target_venv(tmp_path):
         "--wheel", str(wheel),
         "--sha256sums", str(paths["sums_path"]),
         "--target-venv", str(paths["target_venv"]),
-        "--expected-version", "1.4.4",
+        "--expected-version", "1.4.5",
         "--expected-commit", "a" * 40,
-        "--expected-tag", "v1.4.4-candidate",
+        "--expected-tag", "v1.4.5-candidate",
         "--dry-run",
     ])
     assert result.returncode == 0, result.stderr
@@ -164,8 +164,8 @@ def test_dry_run_with_no_target_venv(tmp_path):
 
 def test_checksum_mismatch_aborts(tmp_path):
     paths = _alloc_paths(tmp_path)
-    wheel = paths["wheel_dir"] / "confflow-1.4.4-py3-none-any.whl"
-    _build_minimal_wheel(wheel, version="1.4.4", commit="a" * 40)
+    wheel = paths["wheel_dir"] / "confflow-1.4.5-py3-none-any.whl"
+    _build_minimal_wheel(wheel, version="1.4.5", commit="a" * 40)
     paths["sums_path"].parent.mkdir(parents=True, exist_ok=True)
     paths["sums_path"].write_text("0" * 64 + "  " + wheel.name + "\n", encoding="utf-8")
     result = _run_deployer(args=[
@@ -173,9 +173,9 @@ def test_checksum_mismatch_aborts(tmp_path):
         "--wheel", str(wheel),
         "--sha256sums", str(paths["sums_path"]),
         "--target-venv", str(paths["target_venv"]),
-        "--expected-version", "1.4.4",
+        "--expected-version", "1.4.5",
         "--expected-commit", "a" * 40,
-        "--expected-tag", "v1.4.4-candidate",
+        "--expected-tag", "v1.4.5-candidate",
         "--dry-run",
     ])
     assert result.returncode != 0
@@ -192,9 +192,9 @@ def test_basename_must_match_expected_version(tmp_path):
         "--wheel", str(wrong),
         "--sha256sums", str(paths["sums_path"]),
         "--target-venv", str(paths["target_venv"]),
-        "--expected-version", "1.4.4",
+        "--expected-version", "1.4.5",
         "--expected-commit", "a" * 40,
-        "--expected-tag", "v1.4.4-candidate",
+        "--expected-tag", "v1.4.5-candidate",
         "--dry-run",
     ])
     assert result.returncode != 0
@@ -204,13 +204,13 @@ def test_basename_must_match_expected_version(tmp_path):
 def test_glob_in_sha256sums_is_rejected(tmp_path):
     """A ``*`` glob inside ``SHA256SUMS`` must not count as a wheel row."""
     paths = _alloc_paths(tmp_path)
-    wheel = paths["wheel_dir"] / "confflow-1.4.4-py3-none-any.whl"
-    _build_minimal_wheel(wheel, version="1.4.4", commit="a" * 40)
+    wheel = paths["wheel_dir"] / "confflow-1.4.5-py3-none-any.whl"
+    _build_minimal_wheel(wheel, version="1.4.5", commit="a" * 40)
     sums = paths["sums_path"]
     sums.parent.mkdir(parents=True, exist_ok=True)
     digest = hashlib.sha256(wheel.read_bytes()).hexdigest()
     # A ``*`` glob is silently dropped by ``read_sha256sums``; with no row
-    # remaining for ``confflow-1.4.4-py3-none-any.whl`` the deployer must
+    # remaining for ``confflow-1.4.5-py3-none-any.whl`` the deployer must
     # reject the install.
     sums.write_text(f"{digest}  *.whl\n", encoding="utf-8")
     result = _run_deployer(args=[
@@ -218,9 +218,9 @@ def test_glob_in_sha256sums_is_rejected(tmp_path):
         "--wheel", str(wheel),
         "--sha256sums", str(sums),
         "--target-venv", str(paths["target_venv"]),
-        "--expected-version", "1.4.4",
+        "--expected-version", "1.4.5",
         "--expected-commit", "a" * 40,
-        "--expected-tag", "v1.4.4-candidate",
+        "--expected-tag", "v1.4.5-candidate",
         "--dry-run",
     ])
     assert result.returncode != 0
@@ -234,17 +234,17 @@ def test_glob_in_sha256sums_is_rejected(tmp_path):
 def test_existing_target_venv_refused(tmp_path):
     paths = _alloc_paths(tmp_path)
     paths["target_venv"].mkdir()
-    wheel = paths["wheel_dir"] / "confflow-1.4.4-py3-none-any.whl"
-    _build_minimal_wheel(wheel, version="1.4.4", commit="a" * 40)
+    wheel = paths["wheel_dir"] / "confflow-1.4.5-py3-none-any.whl"
+    _build_minimal_wheel(wheel, version="1.4.5", commit="a" * 40)
     _write_sha256sums(paths["sums_path"], wheel=wheel)
     result = _run_deployer(args=[
         "--mode", "candidate",
         "--wheel", str(wheel),
         "--sha256sums", str(paths["sums_path"]),
         "--target-venv", str(paths["target_venv"]),
-        "--expected-version", "1.4.4",
+        "--expected-version", "1.4.5",
         "--expected-commit", "a" * 40,
-        "--expected-tag", "v1.4.4-candidate",
+        "--expected-tag", "v1.4.5-candidate",
         "--dry-run",
     ])
     assert result.returncode != 0
@@ -253,37 +253,59 @@ def test_existing_target_venv_refused(tmp_path):
 
 def test_build_commit_mismatch_aborts(tmp_path):
     paths = _alloc_paths(tmp_path)
-    wheel = paths["wheel_dir"] / "confflow-1.4.4-py3-none-any.whl"
-    _build_minimal_wheel(wheel, version="1.4.4", commit="a" * 40)
+    wheel = paths["wheel_dir"] / "confflow-1.4.5-py3-none-any.whl"
+    _build_minimal_wheel(wheel, version="1.4.5", commit="a" * 40)
     _write_sha256sums(paths["sums_path"], wheel=wheel)
     result = _run_deployer(args=[
         "--mode", "candidate",
         "--wheel", str(wheel),
         "--sha256sums", str(paths["sums_path"]),
         "--target-venv", str(paths["target_venv"]),
-        "--expected-version", "1.4.4",
+        "--expected-version", "1.4.5",
         "--expected-commit", "b" * 40,
-        "--expected-tag", "v1.4.4-candidate",
+        "--expected-tag", "v1.4.5-candidate",
         "--dry-run",
     ])
     assert result.returncode != 0
     assert "commit" in result.stderr.lower()
 
 
-def test_candidate_mode_record_is_unverified(tmp_path):
-    """End-to-end: candidate install writes an unverified record + runnable venv."""
-    paths = _alloc_paths(tmp_path, name="confflow-candidate-venv")
-    wheel = paths["wheel_dir"] / "confflow-1.4.4-py3-none-any.whl"
-    _build_minimal_wheel(wheel, version="1.4.4", commit="a" * 40)
+def test_candidate_install_rewrites_console_script_shebang_to_final_target(tmp_path):
+    paths = _alloc_paths(tmp_path, name="confflow-shebang-venv")
+    wheel = paths["wheel_dir"] / "confflow-1.4.5-py3-none-any.whl"
+    _build_minimal_wheel(wheel, version="1.4.5", commit="a" * 40)
     _write_sha256sums(paths["sums_path"], wheel=wheel)
     result = _run_deployer(args=[
         "--mode", "candidate",
         "--wheel", str(wheel),
         "--sha256sums", str(paths["sums_path"]),
         "--target-venv", str(paths["target_venv"]),
-        "--expected-version", "1.4.4",
+        "--expected-version", "1.4.5",
         "--expected-commit", "a" * 40,
-        "--expected-tag", "v1.4.4-candidate",
+        "--expected-tag", "v1.4.5-candidate",
+    ])
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    script = paths["target_venv"] / "bin" / "confflow"
+    shebang = script.read_text(encoding="utf-8").splitlines()[0]
+    assert shebang.startswith("#!")
+    assert str(paths["target_venv"]) in shebang
+    assert str(paths["target_venv"]) + ".staging" not in shebang
+
+
+def test_candidate_mode_record_is_unverified(tmp_path):
+    """End-to-end: candidate install writes an unverified record + runnable venv."""
+    paths = _alloc_paths(tmp_path, name="confflow-candidate-venv")
+    wheel = paths["wheel_dir"] / "confflow-1.4.5-py3-none-any.whl"
+    _build_minimal_wheel(wheel, version="1.4.5", commit="a" * 40)
+    _write_sha256sums(paths["sums_path"], wheel=wheel)
+    result = _run_deployer(args=[
+        "--mode", "candidate",
+        "--wheel", str(wheel),
+        "--sha256sums", str(paths["sums_path"]),
+        "--target-venv", str(paths["target_venv"]),
+        "--expected-version", "1.4.5",
+        "--expected-commit", "a" * 40,
+        "--expected-tag", "v1.4.5-candidate",
     ])
     assert result.returncode == 0, (result.stdout, result.stderr)
     payload = json.loads(result.stdout)
@@ -302,17 +324,17 @@ def test_candidate_record_status_is_unverified(tmp_path):
         read_install_provenance,
     )
     paths = _alloc_paths(tmp_path, name="confflow-elev-venv")
-    wheel = paths["wheel_dir"] / "confflow-1.4.4-py3-none-any.whl"
-    _build_minimal_wheel(wheel, version="1.4.4", commit="a" * 40)
+    wheel = paths["wheel_dir"] / "confflow-1.4.5-py3-none-any.whl"
+    _build_minimal_wheel(wheel, version="1.4.5", commit="a" * 40)
     _write_sha256sums(paths["sums_path"], wheel=wheel)
     result = _run_deployer(args=[
         "--mode", "candidate",
         "--wheel", str(wheel),
         "--sha256sums", str(paths["sums_path"]),
         "--target-venv", str(paths["target_venv"]),
-        "--expected-version", "1.4.4",
+        "--expected-version", "1.4.5",
         "--expected-commit", "a" * 40,
-        "--expected-tag", "v1.4.4-candidate",
+        "--expected-tag", "v1.4.5-candidate",
     ])
     assert result.returncode == 0, (result.stdout, result.stderr)
     digest_obj, _errors = read_install_provenance(sys_prefix=str(paths["target_venv"]))

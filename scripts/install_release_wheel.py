@@ -75,7 +75,7 @@ def _fail_roll_back(staging: Path | None, why: str) -> Exception:
 def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="install_release_wheel.py",
-        description="Tested-isolation ConfFlow wheel deployer (1.4.4 release closure).",
+        description="Tested-isolation ConfFlow wheel deployer (1.4.5 release closure).",
     )
     parser.add_argument(
         "--mode",
@@ -103,7 +103,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument(
         "--expected-tag",
         required=True,
-        help="e.g. v1.4.4 (or 'v1.4.4-candidate' for Gate A).",
+        help="e.g. v1.4.5 (or 'v1.4.5-candidate' for Gate A).",
     )
     parser.add_argument(
         "--expected-tag-commit",
@@ -439,6 +439,44 @@ def _atomic_rename(staging: Path, target: Path) -> None:
         raise _fail_roll_back(staging, f"atomic rename failed: {exc}") from exc
 
 
+def _fixup_script_shebangs(staging: Path, target: Path) -> None:
+    """Rewrite console-script shebangs before atomically renaming the venv.
+
+    Setuptools records the staging venv's absolute interpreter path in each
+    console script. Rewrite only the first line of scripts under the staging
+    venv's ``bin`` directory, and only when it contains the exact staging root.
+    Doing this before the rename keeps failures recoverable through the normal
+    staging cleanup path and never mutates an existing target venv.
+    """
+    bin_dir = staging / "bin"
+    if not bin_dir.is_dir():
+        return
+    staging_root = str(staging)
+    target_root = str(target)
+    for entry in sorted(bin_dir.iterdir()):
+        if not entry.is_file():
+            continue
+        try:
+            source = entry.read_text(encoding="utf-8", errors="strict")
+        except (UnicodeDecodeError, OSError):
+            continue
+        first_line, newline, rest = source.partition("\n")
+        if not first_line.startswith("#!") or staging_root not in first_line:
+            continue
+        rewritten = first_line.replace(staging_root, target_root, 1) + newline + rest
+        tmp = entry.with_name(f".{entry.name}.shebangfix")
+        try:
+            tmp.write_text(rewritten, encoding="utf-8")
+            os.chmod(tmp, entry.stat().st_mode)
+            os.replace(tmp, entry)
+        except OSError:
+            try:
+                tmp.unlink()
+            except FileNotFoundError:
+                pass
+            raise
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv if argv is not None else sys.argv[1:])
     wheel, _ = _resolve_wheel(args)
@@ -476,6 +514,7 @@ def main(argv: list[str] | None = None) -> int:
             payload=payload,
             staging=staging,
         )
+        _fixup_script_shebangs(staging, target)
         _atomic_rename(staging, target)
         succeeded = True
     finally:

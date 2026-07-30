@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "confflow"
-version = "1.4.3"
+version = "1.4.5"
 description = "Automated molecular conformation search workflow engine for computational chemistry"
 readme = "README.md"
 license = {text = "MIT"}

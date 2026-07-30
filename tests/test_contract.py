@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import inspect
 import json
+from pathlib import Path
 
 import confflow.cli as cli_module
 import confflow.workflow.export as export_module
@@ -106,6 +107,28 @@ def test_cli_capability_payload_uses_contract_constants():
     assert "unbound" not in json.dumps(payload), (
         "Producer must not emit the literal \"unbound\" placeholder"
     )
+
+
+def test_capability_executable_identity_binds_to_invoked_venv(tmp_path, monkeypatch):
+    import confflow.cli as cli_module
+
+    venv = tmp_path / "confflow-1.4.5-candidate"
+    bin_dir = venv / "bin"
+    bin_dir.mkdir(parents=True)
+    python = bin_dir / "python"
+    executable = bin_dir / "confflow"
+    python.write_text("python", encoding="utf-8")
+    executable.write_text("#!/bin/sh\n", encoding="utf-8")
+
+    monkeypatch.setattr(cli_module.sys, "executable", str(python))
+    monkeypatch.setattr(cli_module.sys, "argv", [str(executable), "--capabilities", "--json"])
+    monkeypatch.setattr(cli_module.sys, "prefix", str(venv))
+
+    payload = cli_module._build_capability_payload()
+    assert payload["executable"]["path"] == str(executable.resolve())
+    assert payload["executable"]["python"] == str(python)
+    assert Path(payload["executable"]["path"]).is_relative_to(venv)
+    assert Path(payload["executable"]["python"]).is_relative_to(venv)
 
 
 def test_presenter_uses_contract_filenames():

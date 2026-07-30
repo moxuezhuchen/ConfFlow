@@ -57,13 +57,13 @@ Requirements and packaging notes:
 - RDKit is required
 - `numba` is optional and only used for acceleration when installed
 
-## ConfFlow ↔ JobDesk Capability Handshake (v1.4.4)
+## ConfFlow ↔ JobDesk Capability Handshake (v1.4.5)
 
-ConfFlow 1.4.4 implements a version/capability probe used by JobDesk to
+ConfFlow 1.4.5 implements a version/capability probe used by JobDesk to
 validate compatibility before uploading or submitting workflow tasks:
 
 ```bash
-confflow --version          # prints "1.4.4"
+confflow --version          # prints "1.4.5"
 confflow --capabilities --json
 ```
 
@@ -72,7 +72,7 @@ Capability contract (JSON, schema version **4**):
 ```json
 {
   "schema_version": 4,
-  "version": "1.4.4",
+  "version": "1.4.5",
   "capabilities": {
     "workflow_state": true,
     "resume": true,
@@ -101,13 +101,13 @@ Capability contract (JSON, schema version **4**):
   },
   "producer": {
     "package": "confflow",
-    "version": "1.4.4",
+    "version": "1.4.5",
     "build": {
       "commit": "<40-char git commit>",
       "dirty": false
     },
     "wheel": {
-      "filename": "confflow-1.4.4-py3-none-any.whl",
+      "filename": "confflow-1.4.5-py3-none-any.whl",
       "sha256": "<external SHA-256SUMS digest>"
     },
     "install_provenance": {
@@ -123,7 +123,7 @@ Capability contract (JSON, schema version **4**):
 }
 ```
 
-JobDesk requires `confflow>=1.4.4,<2.0`, validates the capability contract
+JobDesk requires `confflow>=1.4.5,<2.0`, validates the capability contract
 before the first input upload, and repeats the preflight at submit time.
 
 ### v4 contract additions

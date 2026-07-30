@@ -5,7 +5,20 @@
 > The archived-snapshot notice below describes the earlier repository state. ConfFlow is active again
 > as JobDesk's external chemistry workflow dependency beginning with v1.4.0.
 
-## v1.4.4 (2026-07-29) — pre-tag candidate
+## v1.4.5 (2026-07-30) — post-M2 acceptance remediation candidate
+
+This candidate closes the post-M2 release/install and producer-consumer
+acceptance gaps. It is not a production release until the independent
+tag, artifact, and remote-verification gates are authorized and complete.
+
+### Fixed
+
+- Unified the current release and install-provenance test contract at 1.4.5.
+- Bound capability executable/python identity to the invoked candidate venv.
+- Rewrote staged console-script shebangs before the atomic venv rename.
+- Consumed Gaussian/ORCA single-point `e_high` energy without weakening
+  missing-energy fail-closed behavior.
+
 
 Pre-tag, Gate A candidate. Do not promote to production; the formal
 `v1.4.4` tag will be cut from a clean tagged checkout as a separate
