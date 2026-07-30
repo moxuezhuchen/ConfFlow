@@ -1,4 +1,5 @@
 """Fail-closed validation for the ConfFlow runtime lock and wheelhouse.
+
 The release installer deliberately keeps dependency resolution separate from
 the exact ConfFlow wheel install. This module validates the two offline
 inputs before a staging venv is created, so a candidate or production install
@@ -9,8 +10,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from .install_provenance import sha256_hex
 
+from .install_provenance import sha256_hex
 
 WHEELHOUSE_MANIFEST_NAME = "SHA256SUMS"
 _LOCK_DIRECTIVE = "--only-binary=:all:"
@@ -21,6 +22,8 @@ _LOCK_RE = re.compile(
 try:
     from pip._vendor.packaging.utils import (
         canonicalize_name as _packaging_canonicalize_name,
+    )
+    from pip._vendor.packaging.utils import (
         parse_wheel_filename as _packaging_parse_wheel_filename,
     )
 except ImportError:  # pragma: no cover - pip is present in every supported venv
@@ -35,6 +38,7 @@ class DependencyInputError(ValueError):
 @dataclass(frozen=True)
 class LockedDependency:
     """One exact distribution entry from the runtime lock."""
+
     name: str
     version: str
     hashes: tuple[str, ...]
@@ -43,6 +47,7 @@ class LockedDependency:
 @dataclass(frozen=True)
 class DependencyEvidence:
     """Digests and selected wheel names recorded in install provenance."""
+
     dependency_lock_sha256: str
     wheelhouse_manifest_sha256: str
     wheel_filenames: tuple[str, ...]

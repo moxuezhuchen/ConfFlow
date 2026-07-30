@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-import hashlib
 from pathlib import Path
 
 import pytest
-
 from confflow.install_provenance import sha256_hex
 from confflow.release_dependencies import (
     DependencyInputError,
