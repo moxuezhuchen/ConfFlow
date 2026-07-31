@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
 
 import pytest
+import rfc8785
 from referencing import Registry, Resource
 
 jsonschema = pytest.importorskip("jsonschema")
@@ -35,6 +37,14 @@ def _validator(schema_name: str):
     return jsonschema.Draft202012Validator(selected, registry=registry)
 
 
+def _request_digest(payload: dict[str, Any]) -> str:
+    """Compute the frozen RFC 8785 request digest without its digest field."""
+    semantic_payload = dict(payload)
+    semantic_payload.pop("_schema", None)
+    semantic_payload.pop("request_digest", None)
+    return hashlib.sha256(rfc8785.dumps(semantic_payload)).hexdigest()
+
+
 def _manifest_rows(kind: str) -> list[dict[str, str]]:
     """Return one fixture kind after validating the manifest's file inventory."""
     manifest = _load_json(_MANIFEST_PATH)
@@ -57,7 +67,7 @@ def _manifest_rows(kind: str) -> list[dict[str, str]]:
             raise AssertionError(f"Fixture manifest {kind!r} has missing or duplicate path: {path}")
         expected.add(target)
         parsed.append({"path": path, "validator": validator})
-    actual = set((_FIXTURE_DIR / kind).glob("*.json"))
+    actual = set((_FIXTURE_DIR / kind).rglob("*.json"))
     if actual != expected:
         raise AssertionError(f"Fixture manifest {kind!r} does not exactly match files")
     return parsed
@@ -85,6 +95,22 @@ def test_fixture_manifest_rejects_unlisted_file(monkeypatch: pytest.MonkeyPatch,
         _manifest_rows("golden")
 
 
+def test_fixture_manifest_rejects_nested_unlisted_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    """Fixture inventory must recurse into nested directories."""
+    fixture_dir = tmp_path / "fixtures"
+    nested_dir = fixture_dir / "golden" / "nested"
+    nested_dir.mkdir(parents=True)
+    (nested_dir / "unlisted.json").write_text("{}", encoding="utf-8")
+    manifest_path = fixture_dir / "manifest.json"
+    _write_fixture_manifest(manifest_path, [])
+    monkeypatch.setattr("tests.test_control_protocol_schema._FIXTURE_DIR", fixture_dir)
+    monkeypatch.setattr("tests.test_control_protocol_schema._MANIFEST_PATH", manifest_path)
+    with pytest.raises(AssertionError, match="does not exactly match files"):
+        _manifest_rows("golden")
+
+
 def test_fixture_manifest_rejects_missing_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     """Fixture inventory must reject a manifest row whose file is absent."""
     fixture_dir = tmp_path / "fixtures"
@@ -95,6 +121,35 @@ def test_fixture_manifest_rejects_missing_file(monkeypatch: pytest.MonkeyPatch, 
     monkeypatch.setattr("tests.test_control_protocol_schema._MANIFEST_PATH", manifest_path)
     with pytest.raises(AssertionError, match="missing or duplicate path"):
         _manifest_rows("golden")
+
+
+def test_prepare_request_digest_matches_rfc8785_fixture():
+    """Prepare fixture must bind every semantic field with RFC 8785 JCS."""
+    fixture = _load_json(_FIXTURE_DIR / "golden" / "prepare_request.json")
+    assert fixture["request_digest"] == _request_digest(fixture)
+
+
+def test_prepare_request_digest_binds_locator_semantics():
+    """Changing either relative locator or content digest must change the request digest."""
+    fixture = _load_json(_FIXTURE_DIR / "golden" / "prepare_request.json")
+    original = _request_digest(fixture)
+    changed_path = json.loads(json.dumps(fixture))
+    changed_path["workflow_config"]["path"] = "config/workflow.yaml"
+    changed_content = json.loads(json.dumps(fixture))
+    changed_content["input_manifest"]["sha256"] = "f" * 64
+    assert _request_digest(changed_path) != original
+    assert _request_digest(changed_content) != original
+
+
+def test_input_manifest_fixture_has_contiguous_unique_order():
+    """Golden manifest must demonstrate the Phase C sequence constraints."""
+    fixture = _load_json(_FIXTURE_DIR / "golden" / "input_manifest.json")
+    inputs = fixture["inputs"]
+    assert isinstance(inputs, list)
+    ordinals = [entry["ordinal"] for entry in inputs]
+    paths = [entry["path"] for entry in inputs]
+    assert ordinals == list(range(len(inputs)))
+    assert len(paths) == len(set(paths))
 
 
 @pytest.mark.parametrize("row", _manifest_rows("golden"))
