@@ -11,6 +11,7 @@
     {"path": "golden/events_request.json", "validator": "requests.schema.json"},
     {"path": "golden/events_response.json", "validator": "responses.schema.json"},
     {"path": "golden/execute_request.json", "validator": "requests.schema.json"},
+    {"path": "golden/execute_duplicate_terminal_response.json", "validator": "responses.schema.json"},
     {"path": "golden/execute_response.json", "validator": "responses.schema.json"},
     {"path": "golden/prepare_request.json", "validator": "requests.schema.json"},
     {"path": "golden/prepare_response.json", "validator": "responses.schema.json"},

@@ -75,11 +75,13 @@ JobDesk fails before persisting its journal, JobDesk repeats `prepare` with the
 same key and then persists the returned handle, or explicitly cancels a still
 `prepared` run.  It must not submit a second payload.
 
-`execute` is idempotent per `run_id`: the first accepted launch advances the
-prepared record, while every duplicate returns the same run's current snapshot
-and must not create a second calculation process.  A duplicate execute never
-uses `already_running`; that code is reserved for a non-idempotent operation
-that v1 explicitly rejects.
+`execute` is idempotent per `run_id`: the first accepted launch must atomically
+advance `prepared` to `queued` and return that queued snapshot. Every duplicate
+returns the same run's current snapshot and must not create a second calculation
+process. A duplicate may therefore return `queued`, `running`, `paused`,
+`completed`, `failed`, or `cancelled`; it cannot return `prepared` after an
+execute was accepted. A duplicate execute never uses `already_running`; that
+code is reserved for a non-idempotent operation that v1 explicitly rejects.
 
 The JobDesk journal is authoritative for upload, prepare, launcher start, and
 remote-acceptance checkpoints.  ConfFlow is authoritative from its durable
@@ -122,9 +124,11 @@ Before a service or adapter is accepted, Phase C must add executable sequence
 fixtures for: monotonic revisions and terminal non-regression; ordered cursor
 replay, empty-page `next_cursor`, and reconnect; same-key same-digest prepare;
 same-key different-digest conflict; duplicate execute returning the current
-snapshot without another process; valid, missing, stale, running, and terminal
-resume; and normalized artifact target conflicts. These are cross-frame rules,
-not claims that a single JSON Schema instance can prove.
+snapshot without another process, specifically first execute = `queued` and
+duplicate execute = the unchanged running or terminal snapshot; valid, missing,
+stale, running, and terminal resume; and normalized artifact target conflicts.
+These are cross-frame rules, not claims that a single JSON Schema instance can
+prove.
 
 ## Fixture manifest
 
