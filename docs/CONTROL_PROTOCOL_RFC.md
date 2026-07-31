@@ -2,11 +2,12 @@
 
 ## Status and scope
 
-This is a design-only RFC for the future `confflow control ... --json` one-shot
-protocol.  It freezes the wire contract needed by JobDesk and ConfFlow before
-any new CLI entry point, `ExecutionService`, persistence adapter, or capability
-payload is implemented.  The current `confflow` CLI, `confflow-agent`, workflow
-engine, and capability v4 payload remain unchanged in this phase.
+This RFC freezes the future `confflow control ... --json` one-shot protocol.
+Phase C's internal `ExecutionService` core and in-memory contract repository
+are implemented and tested, but no control CLI, normal-CLI adapter, agent
+adapter, production persistence adapter, or capability-payload change is
+implemented.  The current `confflow` CLI, `confflow-agent`, workflow engine,
+and capability v4 payload therefore remain unchanged in this phase.
 
 This v1 revision is still pre-publication. It replaces the earlier locator-free
 draft; the v1 identifiers become immutable only when this design gate is
