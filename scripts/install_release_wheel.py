@@ -76,7 +76,7 @@ def _fail_roll_back(staging: Path | None, why: str) -> Exception:
 def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="install_release_wheel.py",
-        description="Tested-isolation ConfFlow wheel deployer (1.4.5 release closure).",
+        description="Tested-isolation ConfFlow wheel deployer (1.4.6 release closure).",
     )
     parser.add_argument(
         "--mode",
@@ -104,7 +104,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument(
         "--expected-tag",
         required=True,
-        help="e.g. v1.4.5 (or 'v1.4.5-candidate' for Gate A).",
+        help="e.g. v1.4.6 (or 'v1.4.6-candidate' for Gate A).",
     )
     parser.add_argument(
         "--expected-tag-commit",

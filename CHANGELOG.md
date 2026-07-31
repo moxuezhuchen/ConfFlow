@@ -5,6 +5,15 @@
 > The archived-snapshot notice below describes the earlier repository state. ConfFlow is active again
 > as JobDesk's external chemistry workflow dependency beginning with v1.4.0.
 
+## v1.4.6 (2026-07-31) — output-manifest path hotfix candidate
+
+### Fixed
+
+- Emit terminal artifact paths in `output_manifest.json` relative to the
+  workflow root, using portable POSIX separators.
+- Reject terminal artifact paths that escape the workflow root, including
+  traversal and symbolic-link escapes.
+
 ## v1.4.5 (2026-07-30) — post-M2 acceptance remediation candidate
 
 This candidate closes the post-M2 release/install and producer-consumer
