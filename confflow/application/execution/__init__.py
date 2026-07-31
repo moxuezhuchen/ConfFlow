@@ -19,10 +19,14 @@ from .models import (
     RunState,
 )
 from .service import ExecutionLifecycle, ExecutionService
+from .shared_fs_approval import ApprovalVerifier, SharedFilesystemApproval
+from .sqlite import SQLiteExecutionRepository
+from .state_root import RunPaths, StateRoot
 
 __all__ = [
     "Artifact",
     "ArtifactManifest",
+    "ApprovalVerifier",
     "CancelReceipt",
     "CancelRequest",
     "Checkpoint",
@@ -40,4 +44,8 @@ __all__ = [
     "PrepareRequest",
     "RunSnapshot",
     "RunState",
+    "RunPaths",
+    "SQLiteExecutionRepository",
+    "SharedFilesystemApproval",
+    "StateRoot",
 ]

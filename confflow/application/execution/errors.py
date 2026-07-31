@@ -19,6 +19,7 @@ class ErrorCode(str, Enum):
     EXECUTABLE_IDENTITY_MISMATCH = "executable_identity_mismatch"
     ARTIFACT_PATH_INVALID = "artifact_path_invalid"
     ARTIFACT_INTEGRITY_FAILED = "artifact_integrity_failed"
+    REPOSITORY_UNAVAILABLE = "repository_unavailable"
     INTERNAL = "internal"
 
 
