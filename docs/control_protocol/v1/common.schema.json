@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.confflow.dev/control/v1/common.schema.json",
+  "title": "ConfFlow control protocol v1 common types",
+  "$defs": {
+    "protocol": {"const": "confflow.control.v1"},
+    "run_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"},
+    "digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "revision": {"type": "integer", "minimum": 0},
+    "cursor": {"type": "string", "pattern": "^[A-Za-z0-9._~-]{1,256}$"},
+    "relative_file": {"type": "string", "pattern": "^(?!/)(?!.*//)(?!.*(?:^|/)\\.(?:/|$))(?!.*(?:^|/)\\.\\.(?:/|$))[A-Za-z0-9][A-Za-z0-9._-]*(?:/[A-Za-z0-9][A-Za-z0-9._-]*)*$"},
+    "content_locator": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": {"$ref": "#/$defs/relative_file"},
+        "sha256": {"$ref": "#/$defs/digest"}
+      }
+    },
+    "state": {"enum": ["prepared", "queued", "running", "paused", "completed", "failed", "cancelled"]},
+    "error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message", "retryable"],
+      "properties": {
+        "code": {"enum": ["invalid_request", "unsupported_protocol", "unknown_run", "idempotency_conflict", "invalid_state_transition", "invalid_checkpoint", "already_running", "terminal_run", "executable_identity_mismatch", "artifact_path_invalid", "artifact_integrity_failed", "repository_unavailable", "internal"]},
+        "message": {"type": "string", "minLength": 1},
+        "retryable": {"type": "boolean"}
+      }
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["terminal", "path", "sha256", "size", "content_schema"],
+      "properties": {
+        "terminal": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"},
+        "path": {"$ref": "#/$defs/relative_file"},
+        "sha256": {"$ref": "#/$defs/digest"},
+        "size": {"type": "integer", "minimum": 0},
+        "content_schema": {"type": "string", "minLength": 1}
+      }
+    }
+  }
+}

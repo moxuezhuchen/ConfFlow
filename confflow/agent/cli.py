@@ -12,8 +12,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import cast
 
+from ..application.execution.errors import ErrorCode, ExecutionServiceError
+from ..application.execution.models import RunState
+from ..application.execution.workflow_adapter import open_control_service
 from .queue import JobQueue, JobSpec
-from .server import AgentServer
+from .server import RUNS_DIR, AgentServer
 from .state import CLEAR, AgentStateDB, JobStatus
 
 logger = logging.getLogger(__name__)
@@ -36,6 +39,23 @@ def _queue_dir_from_args(args: argparse.Namespace) -> str:
     return cast(str, args.queue_dir)
 
 
+def _execution_state_root(queue_dir: str) -> Path:
+    """Return the durable service root shared by one agent installation."""
+    return Path(queue_dir).expanduser().resolve().parent / RUNS_DIR / ".execution_state"
+
+
+def _service_snapshot(args: argparse.Namespace, job_id: str):
+    """Read service state when this job has crossed the service boundary."""
+    try:
+        service = open_control_service(_execution_state_root(args.queue_dir))
+        return service, service.status(job_id)
+    except ExecutionServiceError as error:
+        if error.code is ErrorCode.UNKNOWN_RUN:
+            return None, None
+        logger.warning("Cannot read service state for %s: %s", job_id, error)
+        return None, None
+
+
 # ---------------------------------------------------------------------------------------
 # serve
 # ---------------------------------------------------------------------------------------
@@ -44,11 +64,10 @@ def _queue_dir_from_args(args: argparse.Namespace) -> str:
 def cmd_serve(args: argparse.Namespace) -> int:
     _setup_logging(args.verbose)
     db = _state_db_from_args(args)
-    server = AgentServer(
-        queue_dir=args.queue_dir,
-        state_db=db,
-        num_slots=args.slots,
-    )
+    server = AgentServer(queue_dir=args.queue_dir, state_db=db, num_slots=args.slots)
+    enable_service = getattr(server, "enable_execution_service", None)
+    if enable_service is not None:
+        enable_service()
     print(f"ConfFlow Agent serving on queue={args.queue_dir} slots={args.slots}")
     print("Press Ctrl+C or send SIGTERM to stop.")
     try:
@@ -80,9 +99,13 @@ def cmd_status(args: argparse.Namespace) -> int:
         except (OSError, json.JSONDecodeError):
             pass
 
+    _service, service_snapshot = _service_snapshot(args, args.job_id)
+    displayed_status = (
+        service_snapshot.state.value if service_snapshot is not None else job["status"]
+    )
     print(textwrap.dedent(f"""\
         Job ID:         {job['job_id']}
-        Status:         {job['status']}
+        Status:         {displayed_status}
         Config:         {job['config_file']}
         Input:          {job['input_xyz']}
         Work Dir:       {job['work_dir'] or '(not started)'}
@@ -187,6 +210,10 @@ def cmd_pause(args: argparse.Namespace) -> int:
 
     beacon = Path(work_dir) / "PAUSE"
     beacon.touch()
+    _, service_snapshot = _service_snapshot(args, args.job_id)
+    if service_snapshot is not None:
+        print(f"Job {args.job_id} pause requested (beacon={beacon})")
+        return 0
     db.set_status(args.job_id, JobStatus.PAUSED)
     print(f"Job {args.job_id} paused (beacon={beacon})")
     return 0
@@ -238,6 +265,25 @@ def cmd_cancel(args: argparse.Namespace) -> int:
         return 1
 
     work_dir = job.get("work_dir")
+    service, service_snapshot = _service_snapshot(args, args.job_id)
+    if service is not None and service_snapshot is not None:
+        if service_snapshot.state in {
+            RunState.COMPLETED,
+            RunState.FAILED,
+            RunState.CANCELLED,
+        }:
+            projection = {
+                RunState.COMPLETED: JobStatus.DONE,
+                RunState.FAILED: JobStatus.FAILED,
+                RunState.CANCELLED: JobStatus.CANCELLED,
+            }[service_snapshot.state]
+            db.set_status(args.job_id, projection)
+            print(f"Job {args.job_id} is already {service_snapshot.state.value}")
+            return 0
+        service.cancel(args.job_id)
+        db.set_status(args.job_id, JobStatus.CANCELLED)
+        print(f"Job {args.job_id} cancelled")
+        return 0
     if work_dir:
         beacon = Path(work_dir) / "PAUSE"
         beacon.touch()
@@ -287,6 +333,10 @@ def cmd_stop(args: argparse.Namespace) -> int:
         if work_dir:
             beacon = Path(work_dir) / "PAUSE"
             beacon.touch()
+        _, service_snapshot = _service_snapshot(args, job["job_id"])
+        if service_snapshot is not None:
+            print(f"Pause requested for job {job['job_id']}")
+            continue
         db.set_status(job["job_id"], JobStatus.PAUSED)
         print(f"Paused job {job['job_id']}")
     print("All running jobs paused. Agent remains running.")

@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -140,6 +141,11 @@ def test_run_workflow_skips_disabled_steps(tmp_path, monkeypatch):
 
     assert stats["final_output"] == str(input_xyz.resolve())
     assert stats["steps"] == []
+    manifest = json.loads((tmp_path / "run" / "output_manifest.json").read_text(encoding="utf-8"))
+    assert manifest == {
+        "content_schema": "confflow.output_manifest.v1",
+        "terminals": {},
+    }
 
 
 def test_run_workflow_forwards_custom_calc_executor_and_notifies_status(tmp_path, monkeypatch):

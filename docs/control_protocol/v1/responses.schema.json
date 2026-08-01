@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.confflow.dev/control/v1/responses.schema.json",
+  "title": "ConfFlow control protocol v1 responses",
+  "oneOf": [
+    {"$ref": "#/$defs/error"}, {"$ref": "#/$defs/capabilities"},
+    {"$ref": "#/$defs/prepare"}, {"$ref": "#/$defs/execute"},
+    {"$ref": "#/$defs/status"}, {"$ref": "#/$defs/events"},
+    {"$ref": "#/$defs/cancel"}, {"$ref": "#/$defs/resume"},
+    {"$ref": "#/$defs/artifacts"}
+  ],
+  "$defs": {
+    "base": {"type": "object", "required": ["protocol_schema", "operation", "ok"], "properties": {"protocol_schema": {"$ref": "common.schema.json#/$defs/protocol"}, "operation": {"enum": ["capabilities", "prepare", "execute", "status", "events", "cancel", "resume", "artifacts"]}, "ok": {"type": "boolean"}}},
+    "snapshot": {"type": "object", "required": ["run_id", "revision", "state"], "properties": {"run_id": {"$ref": "common.schema.json#/$defs/run_id"}, "revision": {"$ref": "common.schema.json#/$defs/revision"}, "state": {"$ref": "common.schema.json#/$defs/state"}}},
+    "error": {"unevaluatedProperties": false, "allOf": [{"$ref": "#/$defs/base"}, {"properties": {"ok": {"const": false}, "error": {"$ref": "common.schema.json#/$defs/error"}}, "required": ["error"]}]},
+    "capabilities": {"unevaluatedProperties": false, "allOf": [{"$ref": "#/$defs/base"}, {"properties": {"operation": {"const": "capabilities"}, "ok": {"const": true}, "supported_protocols": {"type": "array", "minItems": 1, "items": {"const": "confflow.control.v1"}}}, "required": ["supported_protocols"]}]},
+    "prepare": {"unevaluatedProperties": false, "allOf": [{"$ref": "#/$defs/base"}, {"$ref": "#/$defs/snapshot"}, {"properties": {"operation": {"const": "prepare"}, "ok": {"const": true}, "state": {"const": "prepared"}}}]},
+    "execute": {"unevaluatedProperties": false, "allOf": [{"$ref": "#/$defs/base"}, {"$ref": "#/$defs/snapshot"}, {"properties": {"operation": {"const": "execute"}, "ok": {"const": true}, "state": {"enum": ["queued", "running", "paused", "completed", "failed", "cancelled"]}}}]},
+    "status": {"unevaluatedProperties": false, "allOf": [{"$ref": "#/$defs/base"}, {"$ref": "#/$defs/snapshot"}, {"properties": {"operation": {"const": "status"}, "ok": {"const": true}}}]},
+    "events": {"unevaluatedProperties": false, "allOf": [{"$ref": "#/$defs/base"}, {"$ref": "#/$defs/snapshot"}, {"properties": {"operation": {"const": "events"}, "ok": {"const": true}, "next_cursor": {"anyOf": [{"$ref": "common.schema.json#/$defs/cursor"}, {"type": "null"}]}, "events": {"type": "array", "items": {"type": "object", "additionalProperties": true, "required": ["cursor", "revision", "type"], "properties": {"cursor": {"$ref": "common.schema.json#/$defs/cursor"}, "revision": {"$ref": "common.schema.json#/$defs/revision"}, "type": {"type": "string", "minLength": 1}}}}}, "required": ["next_cursor", "events"]}]},
+    "cancel": {"unevaluatedProperties": false, "allOf": [{"$ref": "#/$defs/base"}, {"$ref": "#/$defs/snapshot"}, {"properties": {"operation": {"const": "cancel"}, "ok": {"const": true}, "state": {"const": "cancelled"}}}]},
+    "resume": {"unevaluatedProperties": false, "allOf": [{"$ref": "#/$defs/base"}, {"$ref": "#/$defs/snapshot"}, {"properties": {"operation": {"const": "resume"}, "ok": {"const": true}, "state": {"enum": ["queued", "running"]}}}]},
+    "artifacts": {"unevaluatedProperties": false, "allOf": [{"$ref": "#/$defs/base"}, {"$ref": "#/$defs/snapshot"}, {"properties": {"operation": {"const": "artifacts"}, "ok": {"const": true}, "state": {"enum": ["completed", "failed", "cancelled"]}, "artifacts": {"type": "array", "items": {"$ref": "common.schema.json#/$defs/artifact"}}}, "required": ["artifacts"]}]}
+  }
+}

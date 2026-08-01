@@ -1,0 +1,1 @@
+{"_schema":"responses.schema.json","protocol_schema":"confflow.control.v1","operation":"artifacts","ok":true,"run_id":"run-20260731-001","revision":8,"state":"completed","artifacts":[{"terminal":"g16_opt","path":"g16_opt/output.xyz","sha256":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee","size":42,"content_schema":"chemical/x-xyz"}]}

@@ -22,10 +22,12 @@ except ImportError:
 
 import yaml
 
-from .__build__ import COMMIT, DIRTY, WHEEL_FILENAME, WHEEL_SHA256
+from .__build__ import COMMIT, DIRTY
 from .agent.cli import main as agent_main
+from .application.execution.workflow_adapter import run_workflow_through_service
 from .contract import (
     CAPABILITY_SCHEMA_VERSION,
+    OUTPUT_MANIFEST_FILE,
     REQUIRED_COMMANDS,
     RUN_MIN_XYZ_TEMPLATE,
     RUN_REPORT_FILE,
@@ -38,6 +40,7 @@ from .core.exceptions import ConfigurationError, InputFileError, PathSafetyError
 from .core.io import parse_gaussian_input_text, write_xyz_file
 from .core.path_policy import resolve_sandbox_root, validate_managed_path
 from .core.utils import get_logger
+from .install_provenance import read_install_provenance
 from .workflow.dry_run import run_dry_run
 from .workflow.engine import run_workflow
 from .workflow.export import NoExportableResultsError, export_results
@@ -56,9 +59,22 @@ _HANDSHAKE_PROBE = any(flag in sys.argv[1:] for flag in ("--version", "--capabil
 # it advertises can never drift apart.
 _CAPABILITY_SCHEMA_VERSION: int = CAPABILITY_SCHEMA_VERSION
 def _resolved_confflow_executable() -> str | None:
-    """Return the PATH-resolved entry point used for producer provenance."""
-    executable = shutil.which("confflow")
-    return os.path.realpath(executable) if executable else None
+    """Return the entry point belonging to the interpreter running this probe.
+
+    A capability probe may be invoked with an absolute path while another
+    ConfFlow shim remains earlier on ``PATH``. Prefer the console script next
+    to ``sys.executable`` so the reported executable cannot silently describe
+    a different venv; retain argv/PATH fallbacks for legacy module launchers.
+    """
+    candidates = [Path(sys.executable).with_name("confflow"), Path(sys.argv[0])]
+    path_executable = shutil.which("confflow")
+    if path_executable:
+        candidates.append(Path(path_executable))
+    for candidate in candidates:
+        candidate_text = os.fspath(candidate)
+        if candidate_text and os.path.isfile(candidate_text):
+            return os.path.realpath(os.path.abspath(candidate_text))
+    return None
 
 
 def _file_sha256(path: str | None) -> str | None:
@@ -73,10 +89,21 @@ def _file_sha256(path: str | None) -> str | None:
 
 
 def _build_capability_payload() -> dict[str, Any]:
-    """Build the handshake payload with v3 compatibility and v4 provenance."""
+    """Build the handshake payload with v3 compatibility and v4 provenance.
+
+    v4 adds ``producer.install_provenance`` as the source of truth for
+    the wheel filename and final SHA-256. When the file at
+    ``<sys.prefix>/share/confflow/install-provenance.json`` is missing
+    or invalid the payload surfaces the v4 diagnostic shape
+    (``wheel.filename/sha256 = null`` plus ``status`` /
+    ``reason_code``); JobDesk production gates must reject any
+    non-``verified`` status. ConfFlow never emits the literal string
+    ``"unbound"`` for either field.
+    """
     executable = _resolved_confflow_executable()
     build = {"commit": COMMIT, "dirty": DIRTY}
     version = __import__("confflow").__version__
+    provenance, _errors = read_install_provenance()
     return {
         "schema_version": _CAPABILITY_SCHEMA_VERSION,
         "version": version,
@@ -87,6 +114,7 @@ def _build_capability_payload() -> dict[str, Any]:
             "workflow_state": WORKFLOW_STATE_FILE,
             "run_report": RUN_REPORT_FILE,
             "min_xyz": RUN_MIN_XYZ_TEMPLATE,
+            "output_manifest": OUTPUT_MANIFEST_FILE,
         },
         "commands": {name: shutil.which(name) is not None for name in REQUIRED_COMMANDS},
         "build": build,
@@ -94,12 +122,21 @@ def _build_capability_payload() -> dict[str, Any]:
             "package": "confflow",
             "version": version,
             "build": build,
-            "wheel": {"filename": WHEEL_FILENAME, "sha256": WHEEL_SHA256},
+            "wheel": {
+                "filename": provenance.wheel_filename,
+                "sha256": provenance.wheel_sha256,
+            },
+            "install_provenance": {
+                "status": provenance.status,
+                "reason_code": provenance.reason_code,
+            },
         },
         "executable": {
             "path": executable,
             "sha256": _file_sha256(executable),
-            "python": os.path.realpath(sys.executable),
+            # Keep the venv path spelling; realpath() would collapse a venv's
+            # python symlink to /usr/bin and break executable identity binding.
+            "python": os.path.abspath(sys.executable),
         },
     }
 
@@ -357,6 +394,12 @@ def _is_confflow_process_cmdline(cmdline: list[str]) -> bool:
     if not cmdline or "--stop" in cmdline:
         return False
 
+    # NOTE (P2 audit, v1.4.5 Gate A): "confcalc" remains in the
+    # process-recognizer set as a historical entry. Current README,
+    # [project.scripts], and the pyproject CLI entry do not register a
+    # `confcalc` command. Removing this entry requires an independent
+    # code change with its own tests; per the P2 plan this Gate A
+    # stage does not delete or restore a `confcalc` CLI surface.
     entrypoints = {"confflow", "confts", "confgen", "confrefine", "confcalc"}
     first = os.path.basename(cmdline[0])
     if first in entrypoints:
@@ -427,11 +470,30 @@ def stop_all_confflow_processes() -> int:
     return 0
 
 
+def _service_run_id(config_file: str, input_files: list[str], work_dir: str) -> str:
+    """Derive a stable service run ID for one CLI work directory."""
+    payload = json.dumps(
+        {
+            "config_file": os.path.abspath(config_file),
+            "input_files": [os.path.abspath(path) for path in input_files],
+            "work_dir": os.path.abspath(work_dir),
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return "run_" + hashlib.sha256(payload).hexdigest()[:48]
+
+
 def main(args_list: list[str] | None = None):
     # Fast-path: if --agent is present, strip it and forward directly to
     # the agent CLI without confflow's argument parser seeing agent flags.
     # Use sys.argv[1:] when args_list is None (i.e., when called as entry point).
     effective_args = args_list if args_list is not None else sys.argv[1:]
+
+    if effective_args and effective_args[0] == "control":
+        from .control import main as control_main
+
+        return control_main(effective_args[1:])
 
     if "--agent" in effective_args:
         stripped = [a for a in effective_args if a != "--agent"]
@@ -614,15 +676,18 @@ def main(args_list: list[str] | None = None):
                 converted_inputs.append(os.path.abspath(out_xyz))
             input_files = converted_inputs
 
-            run_workflow(
+            run_workflow_through_service(
                 input_xyz=input_files,
                 config_file=config_file,
                 work_dir=work_dir,
+                state_root=os.path.join(work_dir, ".confflow_execution"),
+                run_id=_service_run_id(config_file, input_files, work_dir),
                 original_input_files=original_input_files,
                 resume=bool(args.resume),
                 verbose=bool(args.verbose),
                 pause_beacon_file=None,
                 step_started_callback=None,
+                workflow_runner=run_workflow,
             )
 
         return ExitCode.SUCCESS

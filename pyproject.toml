@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "confflow"
-version = "1.4.3"
+version = "1.4.6"
 description = "Automated molecular conformation search workflow engine for computational chemistry"
 readme = "README.md"
 license = {text = "MIT"}
@@ -45,6 +45,9 @@ dependencies = [
     "rich>=15.0.0",
     "pydantic>=2.13.3",
     "rdkit>=2026.3.2",
+    "jsonschema>=4.23.0",
+    "referencing>=0.30.0",
+    "rfc8785>=0.1.4",
 ]
 
 [project.optional-dependencies]
@@ -54,6 +57,9 @@ dev = [
     "black>=26.5.1",
     "ruff>=0.15.17",
     "mypy>=2.1.0,<2.2",
+    "jsonschema>=4.23.0",
+    "referencing>=0.30.0",
+    "rfc8785>=0.1.4",
     "types-PyYAML>=6.0.0",
 ]
 # numba provides JIT acceleration; the code has a pure-Python fallback when absent
@@ -88,6 +94,7 @@ confflow = ["*.yaml", "*.md"]
 
 [tool.setuptools.data-files]
 "share/confflow" = ["confflow.example.yaml"]
+"share/confflow/control_protocol/v1" = ["docs/control_protocol/v1/*.json"]
 
 [tool.black]
 line-length = 100

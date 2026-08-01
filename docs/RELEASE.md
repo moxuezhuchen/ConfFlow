@@ -109,9 +109,133 @@ PyPI publication is not automated. Do not assume a package is available on PyPI 
 
 If PyPI publishing is introduced later, document token handling, trusted publishing, test PyPI validation, and rollback limitations.
 
-## 9. Provenance And Attestation Status
+## 9. Three-Layer Release / Install Provenance (since v1.4.4)
 
-Artifact provenance and GitHub artifact attestation are not currently configured. Future work should evaluate GitHub Artifact Attestations or a SLSA-compatible workflow after the release artifact process is stable.
+ConfFlow v1.4.4 introduces a three-layer provenance model that the
+wheel build, the release workflow, and the deployer all participate in.
+**The wheel never describes its own digest.**
+
+### Layer 1 — Wheel-internal build provenance
+
+`setup.py` (`BuildPyWithProvenance`) injects exactly two constants into
+`confflow/__build__.py` at wheel build time:
+
+```python
+COMMIT: str | None = "<40-char git commit>"
+DIRTY: bool | None = True/False
+```
+
+These describe *what source built this wheel* — they are not a hash of
+the wheel file and they must never be treated as such. The wheel's own
+filename and digest are deliberately absent from `__build__.py` and
+must never be added back.
+
+### Layer 2 — External `SHA256SUMS` (authoritative wheel digest)
+
+The release artifact workflow writes `dist/SHA256SUMS` next to the
+wheel. The deployer (`scripts/install_release_wheel.py`) requires this
+file and refuses to install when the on-disk wheel digest does not
+match the row in `SHA256SUMS`.
+
+Format:
+
+```
+<sha256>  confflow-X.Y.Z-py3-none-any.whl
+```
+
+`SHA256SUMS` must contain exactly one row for the target wheel. Globs
+(`*.whl`) and duplicate entries are rejected.
+
+### Layer 2a - Controlled Python runtime dependencies
+
+The 1.4.5 Linux x86_64 / CPython 3.12 runtime is based on the verified
+1.4.4 production venv. The committed lock is
+release/confflow-1.4.5-py312-linux-x86_64.lock and contains every direct
+and transitive runtime distribution at an exact version with SHA-256 hashes.
+The matching wheelhouse manifest is
+release/confflow-1.4.5-py312-linux-x86_64.SHA256SUMS.
+
+The installer requires both --dependency-lock and --wheelhouse. The
+wheelhouse must contain only the manifest and the binary wheels listed by it.
+Candidate and production mode both fail closed when either input is absent,
+when a wheel is missing, extra, altered, an sdist, or incompatible with
+Python 3.12 Linux x86_64. No system site-packages or network index is used.
+
+The staged install sequence is:
+
+1. pip install --no-index --find-links --require-hashes -r <lock>, with
+   --only-binary=:all:.
+2. pip install --no-index --no-deps <exact-confflow-wheel>.
+3. pip check followed by the capability probe.
+
+The install provenance records the lock digest, wheelhouse manifest digest,
+Python version/implementation, and platform/machine identity alongside the
+wheel and release attestation fields.
+
+### Layer 3 — Target-venv `install-provenance.json`
+
+After successful checksum verification the deployer writes
+`<sys.prefix>/share/confflow/install-provenance.json` inside the
+target venv. The schema is:
+
+```json
+{
+  "schema": "confflow.install-provenance.v2",
+  "package": "confflow",
+  "version": "X.Y.Z",
+  "wheel_filename": "confflow-X.Y.Z-py3-none-any.whl",
+  "wheel_sha256": "<digest>",
+  "dependency_lock_sha256": "<digest>",
+  "wheelhouse_manifest_sha256": "<digest>",
+  "python_version": "3.12.3",
+  "python_implementation": "CPython",
+  "platform": "linux-x86_64",
+  "machine": "x86_64",
+  "build_commit": "<40-char git commit>",
+  "build_dirty": false,
+  "release_repository": "<owner>/<repo>",
+  "release_tag": "vX.Y.Z",
+  "release_tag_commit": "<peeled commit>",
+  "attestation_verified": true,
+  "attestation_subject_digest": "<digest>",
+  "installed_at": "<UTC timestamp>"
+}
+```
+
+The capability probe (`confflow --capabilities --json`) reads this
+record and surfaces it as:
+
+```json
+"producer": {
+  "wheel": {"filename": "...", "sha256": "..."},
+  "install_provenance": {"status": "verified", "reason_code": null}
+}
+```
+
+When the file is missing or invalid the probe surfaces the v4
+diagnostic shape (`wheel.filename/sha256 = null` plus a non-`verified`
+status). JobDesk's production gate rejects every non-`verified`
+status. The literal string `"unbound"` is never emitted.
+
+### Gate A (pre-tag) vs Gate B (tagged) provenance rules
+
+* **Gate A — pre-tag candidate** uses `--mode candidate`. The deployer
+  writes `attestation_verified=false` even if an attestation is
+  provided. Candidate venvs never pass JobDesk's production gate.
+* **Gate B — tagged release** uses `--mode production` with an
+  approved `--attestation`. `attestation_verified=true` only ever
+  appears for Gate B installs.
+* Gate A and Gate B are independent builds. Gate B's wheel digest is
+  not back-filled into a Gate A wheel; each gate builds its own wheel
+  from its own clean checkout.
+
+### Attestation (status: future work)
+
+GitHub Artifact Attestations and SLSA-style provenance are not yet
+wired into the release artifact workflow. Until they are, the deployer
+accepts a manually-prepared `--attestation` JSON file (matching the
+expected `subject_digest`) for `--mode production` Gate B installs.
+
 
 ## 10. Post-Release Checks
 
