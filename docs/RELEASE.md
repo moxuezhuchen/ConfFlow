@@ -63,7 +63,10 @@ python -m pip install build
 Build artifacts:
 
 ```bash
-python -m build
+# Keep the wheel build rooted in the clean git checkout so __build__.py
+# receives the commit and dirty-state provenance.
+python -m build --sdist --outdir dist
+python -m build --wheel --outdir dist
 ```
 
 Expected outputs are under `dist/`, typically:

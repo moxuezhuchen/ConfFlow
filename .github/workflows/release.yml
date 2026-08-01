@@ -54,7 +54,12 @@ jobs:
           set -euo pipefail
           rm -rf dist
           mkdir -p dist
-          python -m build --wheel --sdist --outdir dist
+          # Build the sdist and wheel in separate source-checkout invocations.
+          # `python -m build --wheel --sdist` may rebuild the wheel from the
+          # sdist, where setup.py cannot read the tagged git commit and would
+          # emit null wheel-internal provenance.
+          python -m build --sdist --outdir dist
+          python -m build --wheel --outdir dist
 
       - name: Verify final wheel metadata and build provenance
         run: |
