@@ -37,10 +37,10 @@ class StateRoot:
             path = raw.resolve(strict=True)
         except OSError as error:
             raise _unavailable(f"Cannot resolve state root: {error}", retryable=True) from error
-        if not path.is_dir() or path == Path("/") or path == Path.home().resolve():
+        if path == Path("/") or path == Path.home().resolve():
             raise _unavailable("State root must be an existing non-home non-root directory")
         uid = _current_uid() if expected_uid is None else expected_uid
-        _validate_private_directory(path, uid)
+        _validate_open_root(path, uid)
         return cls(path)
 
     @property
@@ -109,13 +109,23 @@ def _current_uid() -> int:
     return int(getuid())
 
 
-def _validate_private_directory(path: Path, uid: int) -> None:
-    """Reject foreign-owned or group/other-writable state directories."""
+def _validate_open_root(path: Path, uid: int) -> None:
+    """Validate the final root through an open no-follow directory descriptor."""
+    directory_flag = getattr(os, "O_DIRECTORY", 0)
+    nofollow_flag = getattr(os, "O_NOFOLLOW", 0)
+    if not directory_flag or not nofollow_flag:
+        raise _unavailable("Secure state paths require O_DIRECTORY and O_NOFOLLOW")
+    descriptor: int | None = None
     try:
-        metadata = path.stat()
+        descriptor = os.open(path, os.O_RDONLY | directory_flag | nofollow_flag)
+        _validate_directory_metadata(os.fstat(descriptor), uid)
+    except ExecutionServiceError:
+        raise
     except OSError as error:
-        raise _unavailable(f"Cannot stat state path: {error}", retryable=True) from error
-    _validate_directory_metadata(metadata, uid)
+        raise _unavailable(f"Cannot securely open state root: {error}", retryable=True) from error
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
 
 
 def _validate_directory_metadata(metadata: os.stat_result, uid: int) -> None:

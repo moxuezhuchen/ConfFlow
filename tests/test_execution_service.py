@@ -272,6 +272,24 @@ def test_executor_identity_rejection_fails_the_claimed_queued_attempt():
     assert [event.type for event in service.events("run-001").events] == ["prepared", "queued"]
 
 
+def test_cancel_prepared_run_skips_executor_and_commits_terminal_state():
+    """A prepared run has no launch work, so cancellation is repository-only."""
+    repository = InMemoryExecutionRepository()
+    executor = FakeExecutor()
+    service = _service(repository, executor)
+    service.prepare(_request())
+
+    cancelled = service.cancel("run-001")
+
+    assert cancelled.state is RunState.CANCELLED
+    assert executor.cancel_calls == []
+    assert [event.type for event in service.events("run-001").events] == [
+        "prepared",
+        "cancel_requested",
+    ]
+    assert service.status("run-001") == cancelled
+
+
 def test_cancel_side_effect_failure_retries_the_same_durable_intent():
     """Cancellation is not claimed complete until the executor confirms its token."""
     repository = InMemoryExecutionRepository()

@@ -298,6 +298,8 @@ class ExecutionService:
         """Confirm cancellation outside CAS, then atomically enter the terminal state."""
         if record.cancel_token is None:
             return record.snapshot()
+        if record.launch_token is None:
+            return self._commit_cancelled(record)
         try:
             receipt = self._executor.ensure_cancelled(
                 CancelRequest(
@@ -316,15 +318,19 @@ class ExecutionService:
             raise _terminal_error(record.run_id)
         if latest.cancel_token != record.cancel_token or not latest.cancel_pending:
             return latest.snapshot()
+        return self._commit_cancelled(latest)
+
+    def _commit_cancelled(self, record: ExecutionAggregate) -> RunSnapshot:
+        """Atomically finish a cancellation that has no executor work to stop."""
         try:
-            cancelled = self._repository.compare_and_mutate(
-                latest.run_id,
-                latest.revision,
+            return self._repository.compare_and_mutate(
+                record.run_id,
+                record.revision,
                 lambda current: (
                     replace(current, state=RunState.CANCELLED, cancel_pending=False),
                     "cancelled",
                 ),
-            )
+            ).snapshot()
         except RepositoryConflict:
             latest = self._require(record.run_id)
             if latest.state in TERMINAL_STATES:
@@ -332,7 +338,6 @@ class ExecutionService:
             return latest.snapshot()
         except RepositoryMutationError as error:
             raise ExecutionServiceError(ErrorCode.INTERNAL, str(error), retryable=True) from error
-        return cancelled.snapshot()
 
     def _lifecycle_mutate(
         self,
