@@ -65,14 +65,16 @@ Build artifacts:
 ```bash
 # Keep the wheel build rooted in the clean git checkout so __build__.py
 # receives the commit and dirty-state provenance.
-python -m build --sdist --outdir dist
-python -m build --wheel --outdir dist
+BUILD_DIR="$(mktemp -d "${TMPDIR:-/tmp}/confflow-build.XXXXXX")"
+python -m build --sdist --outdir "$BUILD_DIR"
+python -m build --wheel --outdir "$BUILD_DIR"
+echo "Release artifacts: $BUILD_DIR"
 ```
 
-Expected outputs are under `dist/`, typically:
+Expected outputs are under `$BUILD_DIR`, typically:
 
-- `dist/confflow-X.Y.Z-py3-none-any.whl`
-- `dist/confflow-X.Y.Z.tar.gz`
+- `$BUILD_DIR/confflow-X.Y.Z-py3-none-any.whl`
+- `$BUILD_DIR/confflow-X.Y.Z.tar.gz`
 
 ## 5. Generate Checksums
 

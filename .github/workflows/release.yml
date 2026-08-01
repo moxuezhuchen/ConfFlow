@@ -52,14 +52,19 @@ jobs:
       - name: Clean dedicated dist and build final wheel and sdist once
         run: |
           set -euo pipefail
+          BUILD_DIR="${RUNNER_TEMP}/confflow-release-dist"
+          rm -rf "$BUILD_DIR"
+          mkdir -p "$BUILD_DIR"
           rm -rf dist
-          mkdir -p dist
           # Build the sdist and wheel in separate source-checkout invocations.
           # `python -m build --wheel --sdist` may rebuild the wheel from the
           # sdist, where setup.py cannot read the tagged git commit and would
-          # emit null wheel-internal provenance.
-          python -m build --sdist --outdir dist
-          python -m build --wheel --outdir dist
+          # emit null wheel-internal provenance. Keep the output outside the
+          # checkout so it cannot make the source tree appear dirty.
+          python -m build --sdist --outdir "$BUILD_DIR"
+          python -m build --wheel --outdir "$BUILD_DIR"
+          mkdir -p dist
+          cp -- "$BUILD_DIR"/* dist/
 
       - name: Verify final wheel metadata and build provenance
         run: |
