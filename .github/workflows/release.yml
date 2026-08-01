@@ -2,12 +2,20 @@ name: Release Artifacts
 
 on:
   workflow_dispatch:
+    inputs:
+      tag:
+        description: Annotated tag to release
+        required: true
+        default: v1.4.5
+        type: string
   push:
     tags:
-      - "v*"
+      - "v1.4.5"
 
 permissions:
-  contents: read
+  contents: write
+  id-token: write
+  attestations: write
 
 jobs:
   build:
@@ -17,22 +25,204 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+          fetch-depth: 0
 
       - name: Setup Python
         uses: actions/setup-python@v6
         with:
-          python-version: "3.11"
+          python-version: "3.12"
 
       - name: Install build tools
         run: |
+          set -euo pipefail
           python -m pip install --upgrade pip
           python -m pip install build cyclonedx-bom
 
-      - name: Build wheel and source distribution
-        run: python -m build
-
-      - name: Generate checksums
+      - name: Verify tagged clean checkout
+        env:
+          EXPECTED_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
         run: |
+          set -euo pipefail
+          test "$EXPECTED_TAG" = "v1.4.5"
+          test -z "$(git status --porcelain)"
+          test "$(git rev-parse HEAD)" = "$(git rev-parse "$EXPECTED_TAG^{commit}")"
+
+      - name: Clean dedicated dist and build final wheel and sdist once
+        run: |
+          set -euo pipefail
+          BUILD_DIR="${RUNNER_TEMP}/confflow-release-dist"
+          rm -rf "$BUILD_DIR"
+          mkdir -p "$BUILD_DIR"
+          rm -rf dist
+          # Build the sdist and wheel in separate source-checkout invocations.
+          # `python -m build --wheel --sdist` may rebuild the wheel from the
+          # sdist, where setup.py cannot read the tagged git commit and would
+          # emit null wheel-internal provenance. Keep the output outside the
+          # checkout so it cannot make the source tree appear dirty.
+          python -m build --sdist --outdir "$BUILD_DIR"
+          python -m build --wheel --outdir "$BUILD_DIR"
+          mkdir -p dist
+          cp -- "$BUILD_DIR"/* dist/
+
+      - name: Verify final wheel metadata and build provenance
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from __future__ import annotations
+
+          import ast
+          import subprocess
+          import zipfile
+          from pathlib import Path
+
+          dist = Path("dist")
+          wheels = sorted(dist.glob("confflow-1.4.5-*.whl"))
+          sdists = sorted(dist.glob("confflow-1.4.5.tar.gz"))
+          if len(wheels) != 1 or len(sdists) != 1:
+              raise SystemExit(
+                  f"expected exactly one 1.4.5 wheel and sdist; got {wheels} / {sdists}"
+              )
+          wheel = wheels[0]
+          expected_commit = subprocess.check_output(
+              ["git", "rev-parse", "HEAD"], text=True
+          ).strip()
+          with zipfile.ZipFile(wheel) as archive:
+              metadata = archive.read("confflow-1.4.5.dist-info/METADATA").decode()
+              build_module = ast.parse(archive.read("confflow/__build__.py").decode())
+          if "Version: 1.4.5" not in metadata:
+              raise SystemExit("wheel metadata does not declare version 1.4.5")
+          values = {}
+          for node in build_module.body:
+              target = node.target if isinstance(node, ast.AnnAssign) else None
+              if isinstance(target, ast.Name) and target.id in {"COMMIT", "DIRTY"}:
+                  values[target.id] = ast.literal_eval(node.value)
+          if values.get("COMMIT") != expected_commit or values.get("DIRTY") is not False:
+              raise SystemExit(
+                  f"wheel provenance mismatch: {values!r}, expected {expected_commit}/False"
+              )
+          print(f"verified {wheel.name}: commit={expected_commit} dirty=false")
+          PY
+
+      - name: Generate CycloneDX SBOM from the controlled runtime lock
+        run: |
+          set -euo pipefail
+          cyclonedx-py requirements \
+            release/confflow-1.4.5-py312-linux-x86_64.lock \
+            --output-format JSON \
+            --output-file dist/sbom.cdx.json
+          test -s dist/sbom.cdx.json
+
+      - name: Attest final wheel build provenance
+        id: attest
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: dist/confflow-1.4.5-*.whl
+          show-summary: true
+
+      - name: Export attestation bundle and release attestation record
+        env:
+          EXPECTED_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+          ATTESTATION_BUNDLE: ${{ steps.attest.outputs.bundle-path }}
+        run: |
+          set -euo pipefail
+          test -s "$ATTESTATION_BUNDLE"
+          cp -- "$ATTESTATION_BUNDLE" dist/attestation.bundle.json
+          python - <<'PY'
+          from __future__ import annotations
+
+          import hashlib
+          import json
+          import os
+          import subprocess
+          from pathlib import Path
+
+          def digest(path: Path) -> str:
+              return hashlib.sha256(path.read_bytes()).hexdigest()
+
+          dist = Path("dist")
+          wheel = next(dist.glob("confflow-1.4.5-*.whl"))
+          bundle = dist / "attestation.bundle.json"
+          commit = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+          payload = {
+              "schema": "confflow.release-attestation.v1",
+              "subject_filename": wheel.name,
+              "subject_digest": digest(wheel),
+              "repository": os.environ["GITHUB_REPOSITORY"],
+              "tag": os.environ["EXPECTED_TAG"],
+              "peeled_commit": commit,
+              "bundle_filename": bundle.name,
+              "bundle_sha256": digest(bundle),
+          }
+          (dist / "attestation.json").write_text(
+              json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+          )
+          PY
+
+      - name: Write release provenance
+        env:
+          EXPECTED_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from __future__ import annotations
+
+          import hashlib
+          import json
+          import os
+          import subprocess
+          from pathlib import Path
+
+          def digest(path: Path) -> str:
+              return hashlib.sha256(path.read_bytes()).hexdigest()
+
+          dist = Path("dist")
+          wheel = next(dist.glob("confflow-1.4.5-*.whl"))
+          sdist = next(dist.glob("confflow-1.4.5.tar.gz"))
+          sbom = dist / "sbom.cdx.json"
+          attestation = dist / "attestation.json"
+          attestation_bundle = dist / "attestation.bundle.json"
+          lock = Path("release/confflow-1.4.5-py312-linux-x86_64.lock")
+          wheelhouse_manifest = Path("release/confflow-1.4.5-py312-linux-x86_64.SHA256SUMS")
+          commit = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+          payload = {
+              "schema": "confflow.release-provenance.v1",
+              "package": "confflow",
+              "version": "1.4.5",
+              "repository": os.environ["GITHUB_REPOSITORY"],
+              "tag": os.environ["EXPECTED_TAG"],
+              "commit": commit,
+              "wheel_filename": wheel.name,
+              "wheel_sha256": digest(wheel),
+              "sdist_filename": sdist.name,
+              "sdist_sha256": digest(sdist),
+              "sbom_filename": sbom.name,
+              "sbom_sha256": digest(sbom),
+              "attestation_filename": attestation.name,
+              "attestation_sha256": digest(attestation),
+              "attestation_bundle_filename": attestation_bundle.name,
+              "attestation_bundle_sha256": digest(attestation_bundle),
+              "attestation_subject_digest": digest(wheel),
+              "dependency_lock_sha256": digest(lock),
+              "wheelhouse_manifest_sha256": digest(wheelhouse_manifest),
+          }
+          (dist / "provenance.json").write_text(
+              json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+          )
+          PY
+
+      - name: Write release notes and SHA256SUMS
+        env:
+          EXPECTED_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          {
+            echo "ConfFlow ${EXPECTED_TAG} release artifacts"
+            echo
+            echo "The wheel was built once from the peeled tag commit."
+            echo "GitHub build provenance attestation subject: final wheel."
+          } > dist/RELEASE_ARTIFACTS.md
           python - <<'PY'
           from __future__ import annotations
 
@@ -40,35 +230,31 @@ jobs:
           from pathlib import Path
 
           dist = Path("dist")
-          lines = []
-          for path in sorted(dist.glob("*")):
-              if path.is_file():
-                  digest = hashlib.sha256(path.read_bytes()).hexdigest()
-                  lines.append(f"{digest}  {path.name}")
+          paths = sorted(path for path in dist.iterdir() if path.is_file())
+          lines = [
+              f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.name}"
+              for path in paths
+              if path.name != "SHA256SUMS"
+          ]
           (dist / "SHA256SUMS").write_text("\n".join(lines) + "\n", encoding="utf-8")
           PY
+          (cd dist && sha256sum --check SHA256SUMS)
 
-      - name: Generate CycloneDX SBOM
-        continue-on-error: true
-        run: |
-          python -m pip install -e .
-          cyclonedx-py environment --output-format JSON --output-file dist/sbom.cdx.json
-
-      - name: Write release notes placeholder
-        run: |
-          {
-            echo "Release artifact bundle for ${GITHUB_REF_NAME:-manual-run}"
-            echo
-            echo "Contents:"
-            echo "- wheel and source distribution"
-            echo "- SHA256SUMS"
-            echo "- sbom.cdx.json when SBOM generation succeeds"
-            echo
-            echo "PyPI publishing and artifact attestation are not automated in this workflow."
-          } > dist/RELEASE_ARTIFACTS.md
-
-      - name: Upload release artifact bundle
+      - name: Upload workflow artifact bundle
         uses: actions/upload-artifact@v7
         with:
           name: confflow-release-artifacts
+          if-no-files-found: error
           path: dist/
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          gh release create "$EXPECTED_TAG" \
+            --verify-tag \
+            --title "ConfFlow $EXPECTED_TAG" \
+            --notes-file dist/RELEASE_ARTIFACTS.md \
+            dist/*

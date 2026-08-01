@@ -1,11 +1,19 @@
 #!/usr/bin/env python3
-"""Tests for the workflow DAG introspection and conditional execution module."""
+"""Tests for the workflow DAG introspection and conditional execution module.
+
+The implementation lives under :mod:`confflow.workflow.dag.legacy`. The
+public ``confflow.workflow.dag`` package only re-exports the explicit DAG
+API (v1.4.3+) and warns when the legacy classes are accessed; importing
+them straight from ``legacy`` avoids the deprecation warning while the
+classes are still part of the v1.4.x compatibility window.
+"""
 
 from __future__ import annotations
 
-# Import the dag package normally; the relative imports inside
-# confflow/workflow/dag/__init__.py resolve against the installed package.
-from confflow.workflow.dag import DAGGraph, DAGStep
+# Import legacy classes directly from their canonical home. These names are
+# still re-exported via ``confflow.workflow.dag`` for backward compatibility,
+# but accessing them through the package surfaces a DeprecationWarning.
+from confflow.workflow.dag.legacy import DAGGraph, DAGStep
 
 
 class TestDAGGraphDebug:

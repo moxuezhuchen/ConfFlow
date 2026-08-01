@@ -845,6 +845,7 @@ def test_capabilities_flag_exits_zero_and_returns_json(monkeypatch, capsys):
 
     from confflow.contract import (
         CAPABILITY_SCHEMA_VERSION,
+        OUTPUT_MANIFEST_FILE,
         REQUIRED_COMMANDS,
         RUN_MIN_XYZ_TEMPLATE,
         RUN_REPORT_FILE,
@@ -875,6 +876,7 @@ def test_capabilities_flag_exits_zero_and_returns_json(monkeypatch, capsys):
         "workflow_state": WORKFLOW_STATE_FILE,
         "run_report": RUN_REPORT_FILE,
         "min_xyz": RUN_MIN_XYZ_TEMPLATE,
+        "output_manifest": OUTPUT_MANIFEST_FILE,
     }
     assert set(data["commands"]) == set(REQUIRED_COMMANDS)
     assert all(isinstance(value, bool) for value in data["commands"].values())
@@ -905,6 +907,7 @@ def test_capabilities_subprocess_stdout_is_pure_json():
 
     from confflow.contract import (
         CAPABILITY_SCHEMA_VERSION,
+        OUTPUT_MANIFEST_FILE,
         REQUIRED_COMMANDS,
         RUN_MIN_XYZ_TEMPLATE,
         RUN_REPORT_FILE,
@@ -940,6 +943,7 @@ def test_capabilities_subprocess_stdout_is_pure_json():
         "workflow_state": WORKFLOW_STATE_FILE,
         "run_report": RUN_REPORT_FILE,
         "min_xyz": RUN_MIN_XYZ_TEMPLATE,
+        "output_manifest": OUTPUT_MANIFEST_FILE,
     }
     assert set(payload["commands"]) == set(REQUIRED_COMMANDS)
     assert all(isinstance(value, bool) for value in payload["commands"].values())
@@ -1003,7 +1007,9 @@ def test_capability_payload_from_wheel_with_real_build(tmp_path):
     wheel = os.environ["CONFFLOW_TEST_WHEEL"]
     expected_head = os.environ.get("CONFFLOW_TEST_HEAD")
     venv_dir = tmp_path / "venv"
-    subprocess.run([sys.executable, "-m", "venv", "--system-site-packages", str(venv_dir)], check=True)
+    subprocess.run(
+        [sys.executable, "-m", "venv", "--system-site-packages", str(venv_dir)], check=True
+    )
     confflow_exe = venv_dir / "bin" / "confflow"
     subprocess.run(
         [

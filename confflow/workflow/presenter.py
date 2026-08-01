@@ -7,6 +7,7 @@ from __future__ import annotations
 import os
 import sys
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from ..artifact_json import write_atomic_json
@@ -254,19 +255,37 @@ def build_run_summary(final_stats: dict[str, Any]) -> dict[str, Any]:
     return summary
 
 
+def _relative_manifest_artifact(root_dir: str, artifact: str) -> str:
+    """Return a POSIX path contained by the resolved workflow root."""
+    root = Path(root_dir).resolve()
+    candidate = Path(artifact)
+    if not candidate.is_absolute():
+        candidate = root / candidate
+    resolved = candidate.resolve()
+    try:
+        relative = resolved.relative_to(root)
+    except ValueError as exc:
+        raise ValueError(f"output manifest artifact is outside workflow root: {artifact}") from exc
+    if relative == Path("."):
+        raise ValueError(f"output manifest artifact is not a file path: {artifact}")
+    return relative.as_posix()
 
-def build_output_manifest(final_stats: dict[str, Any]) -> dict[str, Any]:
-    """Build a terminal-to-artifact manifest for multi-output workflows."""
+
+def build_output_manifest(root_dir: str, final_stats: dict[str, Any]) -> dict[str, Any]:
+    """Build a safe, workflow-relative terminal-to-artifact manifest."""
     raw_terminals = final_stats.get("terminal_outputs", {})
     terminals: dict[str, list[str]] = {}
     if isinstance(raw_terminals, dict):
         for name, artifacts in raw_terminals.items():
             if isinstance(artifacts, str):
-                terminals[str(name)] = [artifacts]
+                terminals[str(name)] = [_relative_manifest_artifact(root_dir, artifacts)]
             elif isinstance(artifacts, list):
-                terminals[str(name)] = [item for item in artifacts if isinstance(item, str)]
+                terminals[str(name)] = [
+                    _relative_manifest_artifact(root_dir, item)
+                    for item in artifacts
+                    if isinstance(item, str)
+                ]
     return {"content_schema": OUTPUT_MANIFEST_SCHEMA, "terminals": terminals}
-
 
 
 def write_final_statistics(root_dir: str, final_stats: dict[str, Any]) -> None:
@@ -275,7 +294,18 @@ def write_final_statistics(root_dir: str, final_stats: dict[str, Any]) -> None:
     workflow_stats = {"content_schema": WORKFLOW_STATS_SCHEMA, **final_stats}
     workflow_stats["content_schema"] = WORKFLOW_STATS_SCHEMA
 
-    write_atomic_json(os.path.join(root_dir, OUTPUT_MANIFEST_FILE), build_output_manifest(final_stats))
+    manifest_stats = final_stats
+    if final_stats.get("steps") == []:
+        # A workflow with every step disabled legitimately finishes with its
+        # original input outside ``root_dir``.  It produced no exportable
+        # terminal artifact, so keep the public manifest empty while retaining
+        # the original path in the detailed workflow statistics.
+        manifest_stats = {**final_stats, "terminal_outputs": {}}
+
+    write_atomic_json(
+        os.path.join(root_dir, OUTPUT_MANIFEST_FILE),
+        build_output_manifest(root_dir, manifest_stats),
+    )
     write_atomic_json(stats_file, workflow_stats)
 
     run_summary_file = os.path.join(root_dir, RUN_SUMMARY_FILE)

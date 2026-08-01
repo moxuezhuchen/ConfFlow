@@ -1,0 +1,11 @@
+ Initial guess from the checkpoint file:  "A000001.chk"
+ Standard orientation:
+ ---------------------------------------------------------------------
+ Center     Atomic      Atomic             Coordinates (Angstroms)
+ Number     Number      Type        X           Y           Z
+ ---------------------------------------------------------------------
+      1          6           0        0.000000    0.000000    0.000000
+      2          1           0        0.631259    0.631259    0.631259
+ ---------------------------------------------------------------------
+ SCF Done:  E(RHF) =  -39.7265059209     A.U. after    6 cycles
+ Normal termination of Gaussian 16 at Thu Jul 30 13:16:57 2026.

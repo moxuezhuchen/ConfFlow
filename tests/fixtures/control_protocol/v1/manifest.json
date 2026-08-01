@@ -1,0 +1,41 @@
+{
+  "schema": "confflow.control.fixtures.v1",
+  "golden": [
+    {"path": "golden/artifacts_request.json", "validator": "requests.schema.json"},
+    {"path": "golden/artifacts_response.json", "validator": "responses.schema.json"},
+    {"path": "golden/cancel_request.json", "validator": "requests.schema.json"},
+    {"path": "golden/cancel_response.json", "validator": "responses.schema.json"},
+    {"path": "golden/capabilities_request.json", "validator": "requests.schema.json"},
+    {"path": "golden/capabilities_response.json", "validator": "responses.schema.json"},
+    {"path": "golden/conflict_response.json", "validator": "responses.schema.json"},
+    {"path": "golden/events_request.json", "validator": "requests.schema.json"},
+    {"path": "golden/events_response.json", "validator": "responses.schema.json"},
+    {"path": "golden/execute_request.json", "validator": "requests.schema.json"},
+    {"path": "golden/execute_duplicate_terminal_response.json", "validator": "responses.schema.json"},
+    {"path": "golden/execute_response.json", "validator": "responses.schema.json"},
+    {"path": "golden/input_manifest.json", "validator": "input-manifest.schema.json"},
+    {"path": "golden/prepare_request.json", "validator": "requests.schema.json"},
+    {"path": "golden/prepare_response.json", "validator": "responses.schema.json"},
+    {"path": "golden/repository_unavailable_response.json", "validator": "responses.schema.json"},
+    {"path": "golden/resume_request.json", "validator": "requests.schema.json"},
+    {"path": "golden/resume_response.json", "validator": "responses.schema.json"},
+    {"path": "golden/status_request.json", "validator": "requests.schema.json"},
+    {"path": "golden/status_response.json", "validator": "responses.schema.json"}
+  ],
+  "negative": [
+    {"path": "negative/artifact_dot_segment.json", "validator": "responses.schema.json"},
+    {"path": "negative/artifact_empty_segment.json", "validator": "responses.schema.json"},
+    {"path": "negative/artifact_trailing_slash.json", "validator": "responses.schema.json"},
+    {"path": "negative/artifact_traversal.json", "validator": "responses.schema.json"},
+    {"path": "negative/input_manifest_dot_path.json", "validator": "input-manifest.schema.json"},
+    {"path": "negative/input_manifest_negative_size.json", "validator": "input-manifest.schema.json"},
+    {"path": "negative/prepare_absolute_config_path.json", "validator": "requests.schema.json"},
+    {"path": "negative/prepare_config_backslash.json", "validator": "requests.schema.json"},
+    {"path": "negative/prepare_embeds_state_root.json", "validator": "requests.schema.json"},
+    {"path": "negative/prepare_manifest_traversal.json", "validator": "requests.schema.json"},
+    {"path": "negative/prepare_missing_digest.json", "validator": "requests.schema.json"},
+    {"path": "negative/status_unrelated_artifacts.json", "validator": "responses.schema.json"},
+    {"path": "negative/success_with_error.json", "validator": "responses.schema.json"},
+    {"path": "negative/unknown_protocol.json", "validator": "requests.schema.json"}
+  ]
+}
