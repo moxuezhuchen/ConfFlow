@@ -272,6 +272,29 @@ def test_executor_identity_rejection_fails_the_claimed_queued_attempt():
     assert [event.type for event in service.events("run-001").events] == ["prepared", "queued"]
 
 
+def test_identity_is_rechecked_when_a_queued_launch_is_retried():
+    """A queued durable intent remains retryable but cannot bypass identity replacement."""
+    repository = InMemoryExecutionRepository()
+    verifier = FakeIdentityVerifier()
+    executor = FakeExecutor(raise_after_accept_once=True)
+    service = _service(repository, executor, verifier)
+    service.prepare(_request())
+
+    with pytest.raises(ExecutionServiceError):
+        service.execute("run-001")
+    verifier.measured = ExecutableIdentity(sha256="f" * 64)
+
+    with pytest.raises(ExecutionServiceError) as error:
+        service.execute("run-001")
+
+    aggregate = repository.read("run-001")
+    assert error.value.code is ErrorCode.EXECUTABLE_IDENTITY_MISMATCH
+    assert aggregate is not None
+    assert aggregate.state is RunState.QUEUED
+    assert aggregate.attempt == 1
+    assert executor.launch_calls == [aggregate.launch_token]
+
+
 def test_cancel_prepared_run_skips_executor_and_commits_terminal_state():
     """A prepared run has no launch work, so cancellation is repository-only."""
     repository = InMemoryExecutionRepository()
@@ -383,7 +406,9 @@ def test_stale_lifecycle_token_cannot_modify_the_resumed_attempt():
     old_lifecycle.paused()
     service.resume("run-001")
 
-    assert old_lifecycle.started().state is RunState.QUEUED
+    with pytest.raises(ExecutionServiceError) as error:
+        old_lifecycle.started()
+    assert error.value.code is ErrorCode.INVALID_STATE_TRANSITION
     aggregate = repository.read("run-001")
     assert aggregate is not None and aggregate.launch_token is not None
     new_lifecycle = ExecutionLifecycle(service, "run-001", aggregate.launch_token)
@@ -408,6 +433,42 @@ def test_injected_repository_failure_does_not_tear_record_event_or_intent():
     assert aggregate.launch_token is None
     assert [event.type for event in aggregate.events] == ["prepared"]
     assert executor.launch_calls == []
+
+
+def test_cross_run_lifecycle_token_is_rejected_without_mutating_either_aggregate():
+    """A valid token is scoped to exactly one run and cannot be replayed elsewhere."""
+    repository = InMemoryExecutionRepository()
+    executor = FakeExecutor()
+    service = _service(repository, executor)
+    first = _running(service, executor)
+    service.prepare(_request(run_id="run-002", key="key-002"))
+    service.execute("run-002")
+    second = repository.read("run-002")
+    assert second is not None and second.launch_token is not None
+
+    with pytest.raises(ExecutionServiceError) as error:
+        service.lifecycle_started("run-002", first._token)  # noqa: SLF001 - token binding contract
+
+    assert error.value.code is ErrorCode.INVALID_STATE_TRANSITION
+    assert service.status("run-002").state is RunState.QUEUED
+
+
+def test_out_of_order_lifecycle_callback_is_rejected_without_revision_change():
+    """Terminal reports cannot skip the required queued-to-running lifecycle transition."""
+    repository = InMemoryExecutionRepository()
+    executor = FakeExecutor()
+    service = _service(repository, executor)
+    service.prepare(_request())
+    service.execute("run-001")
+    aggregate = repository.read("run-001")
+    assert aggregate is not None and aggregate.launch_token is not None
+    before = aggregate.revision
+
+    with pytest.raises(ExecutionServiceError) as error:
+        service.lifecycle_terminal("run-001", aggregate.launch_token, RunState.COMPLETED, ())
+
+    assert error.value.code is ErrorCode.INVALID_STATE_TRANSITION
+    assert service.status("run-001").revision == before
 
 
 def test_terminal_artifacts_validate_inside_the_atomic_terminal_mutation():

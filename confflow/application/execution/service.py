@@ -27,7 +27,7 @@ _ID_CHARS = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz01234
 
 
 class ExecutionLifecycle:
-    """Token-bound callback surface; stale callbacks are harmless no-ops."""
+    """Token-bound callback surface that rejects stale lifecycle reports."""
 
     def __init__(self, service: ExecutionService, run_id: str, token: str) -> None:
         self._service = service
@@ -226,9 +226,10 @@ class ExecutionService:
                 raise ExecutionServiceError(ErrorCode.INTERNAL, str(error), retryable=True) from error
 
     def _ensure_launch(self, record: ExecutionAggregate) -> RunSnapshot:
-        """Invoke only the idempotent executor hand-off after the CAS transaction."""
+        """Verify the accepted identity before every idempotent executor hand-off."""
         if record.launch_token is None:
             return record.snapshot()
+        self._verify_identity(record.expected_executable_identity)
         request = LaunchRequest(
             run_id=record.run_id,
             token=record.launch_token,
@@ -352,12 +353,18 @@ class ExecutionService:
         """CAS a lifecycle callback only while its token remains current and legal."""
         while True:
             record = self._require(run_id)
-            if (
-                record.launch_token != token
-                or record.state is not allowed_state
-                or (record.cancel_pending and not allow_cancel_pending)
+            if record.launch_token != token:
+                raise ExecutionServiceError(
+                    ErrorCode.INVALID_STATE_TRANSITION,
+                    "Lifecycle token does not match the active launch attempt",
+                )
+            if record.state is not allowed_state or (
+                record.cancel_pending and not allow_cancel_pending
             ):
-                return record.snapshot()
+                raise ExecutionServiceError(
+                    ErrorCode.INVALID_STATE_TRANSITION,
+                    f"Lifecycle callback is invalid while run is {record.state.value}",
+                )
             try:
                 return self._repository.compare_and_mutate(
                     run_id,

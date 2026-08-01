@@ -22,6 +22,13 @@ from .service import ExecutionLifecycle, ExecutionService
 from .shared_fs_approval import ApprovalVerifier, SharedFilesystemApproval
 from .sqlite import SQLiteExecutionRepository
 from .state_root import RunPaths, StateRoot
+from .workflow_adapter import (
+    ServiceWorkflowExecutor,
+    WorkflowRunSpec,
+    build_workflow_service,
+    open_control_service,
+    run_workflow_through_service,
+)
 
 __all__ = [
     "Artifact",
@@ -45,7 +52,12 @@ __all__ = [
     "RunSnapshot",
     "RunState",
     "RunPaths",
+    "ServiceWorkflowExecutor",
     "SQLiteExecutionRepository",
     "SharedFilesystemApproval",
     "StateRoot",
+    "WorkflowRunSpec",
+    "build_workflow_service",
+    "open_control_service",
+    "run_workflow_through_service",
 ]

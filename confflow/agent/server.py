@@ -29,6 +29,7 @@ class AgentServer:
         num_slots: int = 2,
         runs_base_dir: str | None = None,
         install_signal_handlers: bool = True,
+        execution_service_enabled: bool = False,
     ):
         self.queue = JobQueue(queue_dir)
         self.state_db = state_db
@@ -37,6 +38,10 @@ class AgentServer:
         self.queue_dir = Path(queue_dir)
         self.runs_base = Path(runs_base_dir or str(self.queue_dir.parent / RUNS_DIR))
         self.runs_base.mkdir(parents=True, exist_ok=True)
+        self.execution_service_enabled = False
+        self.execution_state_root = self.runs_base / ".execution_state"
+        if execution_service_enabled:
+            self.enable_execution_service()
 
         self._workers: list[threading.Thread] = []
         self._running = False
@@ -48,6 +53,12 @@ class AgentServer:
         self._install_signal_handlers = install_signal_handlers
         if install_signal_handlers:
             self._install_handlers()
+
+    def enable_execution_service(self) -> None:
+        """Enable the unified service path after compatibility construction."""
+        self.execution_service_enabled = True
+        self.execution_state_root.mkdir(parents=True, exist_ok=True, mode=0o700)
+        self.execution_state_root.chmod(0o700)
 
     def _install_handlers(self) -> None:
         """Install SIGTERM/SIGINT handlers that call self.stop().
@@ -155,6 +166,7 @@ class AgentServer:
             claimed_any = False
             job_id: str | None = None
             job: JobSpec | None = None
+            was_paused = False
 
             try:
                 # Iterate all pending jobs and try to atomically claim one.
@@ -162,6 +174,8 @@ class AgentServer:
                 # can win the SQL CAS in AgentStateDB.claim().
                 for candidate in pending:
                     work_dir_str = str(self.runs_base / f"run_{candidate.job_id}")
+                    previous = self.state_db.get_job(candidate.job_id)
+                    was_paused = bool(previous and previous.get("status") == JobStatus.PAUSED.value)
                     if self.state_db.claim(candidate.job_id, slot.id, work_dir_str):
                         job = candidate
                         job_id = candidate.job_id
@@ -191,6 +205,10 @@ class AgentServer:
                     on_step_started=lambda name, step_type, step_dir, _job_id=job_id: self._on_step_started(
                         _job_id, step_type, step_dir
                     ),
+                    execution_state_root=(
+                        str(self.execution_state_root) if self.execution_service_enabled else None
+                    ),
+                    resume=was_paused,
                 )
                 runner = JobRunner(ctx)
                 runner.run()

@@ -24,6 +24,7 @@ import yaml
 
 from .__build__ import COMMIT, DIRTY
 from .agent.cli import main as agent_main
+from .application.execution.workflow_adapter import run_workflow_through_service
 from .contract import (
     CAPABILITY_SCHEMA_VERSION,
     OUTPUT_MANIFEST_FILE,
@@ -469,6 +470,20 @@ def stop_all_confflow_processes() -> int:
     return 0
 
 
+def _service_run_id(config_file: str, input_files: list[str], work_dir: str) -> str:
+    """Derive a stable service run ID for one CLI work directory."""
+    payload = json.dumps(
+        {
+            "config_file": os.path.abspath(config_file),
+            "input_files": [os.path.abspath(path) for path in input_files],
+            "work_dir": os.path.abspath(work_dir),
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return "run_" + hashlib.sha256(payload).hexdigest()[:48]
+
+
 def main(args_list: list[str] | None = None):
     # Fast-path: if --agent is present, strip it and forward directly to
     # the agent CLI without confflow's argument parser seeing agent flags.
@@ -656,15 +671,18 @@ def main(args_list: list[str] | None = None):
                 converted_inputs.append(os.path.abspath(out_xyz))
             input_files = converted_inputs
 
-            run_workflow(
+            run_workflow_through_service(
                 input_xyz=input_files,
                 config_file=config_file,
                 work_dir=work_dir,
+                state_root=os.path.join(work_dir, ".confflow_execution"),
+                run_id=_service_run_id(config_file, input_files, work_dir),
                 original_input_files=original_input_files,
                 resume=bool(args.resume),
                 verbose=bool(args.verbose),
                 pause_beacon_file=None,
                 step_started_callback=None,
+                workflow_runner=run_workflow,
             )
 
         return ExitCode.SUCCESS
