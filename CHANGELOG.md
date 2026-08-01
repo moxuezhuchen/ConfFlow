@@ -5,6 +5,22 @@
 > The archived-snapshot notice below describes the earlier repository state. ConfFlow is active again
 > as JobDesk's external chemistry workflow dependency beginning with v1.4.0.
 
+## v1.5.0 (2026-08-01) - control producer release
+
+### Added
+
+- Unified the control, CLI, and agent producer paths through the shared
+  execution service.
+- Added the typed control JSON adapter with fail-closed protocol handling,
+  durable locator/idempotency/identity/launch/cancel operations, and schema
+  fixtures.
+- Documented the installed control-protocol schemas and fixture metadata.
+
+### Validation
+
+- ConfFlow CI, release provenance, and JobDesk consumer compatibility were
+  validated against the merged control producer commit.
+
 ## v1.4.6 (2026-07-31) — output-manifest path hotfix candidate
 
 ### Fixed
