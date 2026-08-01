@@ -237,6 +237,7 @@ def test_shared_fs_mode_uses_delete_journal(tmp_path: Path, monkeypatch):
     """Shared filesystem operation is explicit and never silently enables WAL."""
     root_dir = tmp_path / "state"
     root_dir.mkdir(mode=0o700)
+
     def verify(self, path, *, root, filesystem_type):
         del self
         assert path == "/admin/approval.json"
@@ -291,6 +292,7 @@ def test_shared_fs_approval_file_and_repository_binding(tmp_path: Path, monkeypa
     monkeypatch.setattr(
         "confflow.application.execution.shared_fs_approval.os.fstat", root_owned_fstat
     )
+    monkeypatch.setattr("confflow.application.execution.state_root.os.fstat", root_owned_fstat)
     verified = ApprovalVerifier().verify(approval_path, root=root_dir, filesystem_type="nfs4")
     assert verified.approval_id == "approval-1"
     invalid = json.loads(approval_path.read_text(encoding="utf-8"))
@@ -359,9 +361,7 @@ def test_sqlite_rejects_precreated_sidecar_symlink(tmp_path: Path, suffix: str):
         "DELETE FROM events WHERE run_id='run-001' AND revision=1",
     ],
 )
-def test_sqlite_loader_rejects_noncanonical_or_discontinuous_data(
-    tmp_path: Path, corruption: str
-):
+def test_sqlite_loader_rejects_noncanonical_or_discontinuous_data(tmp_path: Path, corruption: str):
     """Direct database corruption cannot cross the repository boundary."""
     root_dir = tmp_path / "state"
     root_dir.mkdir(mode=0o700)
@@ -399,9 +399,26 @@ def test_newer_schema_and_corrupt_json_fail_closed(tmp_path: Path):
     connection.execute("PRAGMA user_version=1")
     connection.execute(
         "INSERT INTO aggregates VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-        ("run-001", "key-001", "a" * 64, "b" * 64, "c" * 64, "{bad", 1, "prepared", 0, None, None, None, 0, None),
+        (
+            "run-001",
+            "key-001",
+            "a" * 64,
+            "b" * 64,
+            "c" * 64,
+            "{bad",
+            1,
+            "prepared",
+            0,
+            None,
+            None,
+            None,
+            0,
+            None,
+        ),
     )
-    connection.execute("INSERT INTO events VALUES(?,?,?,?)", ("run-001", 1, "r00000000000000000001", "prepared"))
+    connection.execute(
+        "INSERT INTO events VALUES(?,?,?,?)", ("run-001", 1, "r00000000000000000001", "prepared")
+    )
     connection.commit()
     connection.close()
     repository = SQLiteExecutionRepository(root)
@@ -456,7 +473,10 @@ def test_two_connections_and_two_processes_share_one_cas_launch_attempt(tmp_path
 
     context = multiprocessing.get_context("spawn")
     result_queue = context.Queue()
-    processes = [context.Process(target=_process_execute, args=(str(root_dir), result_queue)) for _ in range(2)]
+    processes = [
+        context.Process(target=_process_execute, args=(str(root_dir), result_queue))
+        for _ in range(2)
+    ]
     for process in processes:
         process.start()
     for process in processes:
@@ -513,7 +533,10 @@ def test_sqlite_inflight_launch_cancel_tombstone_persists_cursor(tmp_path: Path)
     assert record is not None and record.state is RunState.CANCELLED
     assert record.launch_token not in executor.started
     assert [event.type for event in record.events][-2:] == ["cancel_requested", "cancelled"]
-    assert second.events("run-001", after="r00000000000000000002").next_cursor == "r00000000000000000004"
+    assert (
+        second.events("run-001", after="r00000000000000000002").next_cursor
+        == "r00000000000000000004"
+    )
 
 
 def test_parent_symlink_and_migration_failure_fail_closed(tmp_path: Path, monkeypatch):
@@ -535,7 +558,10 @@ def test_parent_symlink_and_migration_failure_fail_closed(tmp_path: Path, monkey
     )
     with pytest.raises(ExecutionServiceError):
         SQLiteExecutionRepository(root)
-    assert not root.database_path.exists() or sqlite3.connect(root.database_path).execute("PRAGMA user_version").fetchone()[0] == 0
+    assert (
+        not root.database_path.exists()
+        or sqlite3.connect(root.database_path).execute("PRAGMA user_version").fetchone()[0] == 0
+    )
 
 
 def test_wal_policy_and_operation_lock_release(tmp_path: Path):
@@ -569,18 +595,21 @@ def test_duplicate_run_id_and_missing_mounts_fail_closed(tmp_path: Path, monkeyp
     repository.create_or_get(_request())
     with pytest.raises(ExecutionServiceError) as error:
         repository.create_or_get(
-            PrepareRequest(
-                "run-001", "key-other", "d" * 64, "b" * 64, "c" * 64, IDENTITY
-            )
+            PrepareRequest("run-001", "key-other", "d" * 64, "b" * 64, "c" * 64, IDENTITY)
         )
     assert error.value.code is ErrorCode.INVALID_REQUEST
-    monkeypatch.setattr("confflow.application.execution.sqlite.Path.read_text", lambda self, **kwargs: (_ for _ in ()).throw(FileNotFoundError()))
+    monkeypatch.setattr(
+        "confflow.application.execution.sqlite.Path.read_text",
+        lambda self, **kwargs: (_ for _ in ()).throw(FileNotFoundError()),
+    )
     with pytest.raises(ExecutionServiceError) as error:
         SQLiteExecutionRepository(StateRoot.resolve(root_dir), filesystem_detector=None)
     assert error.value.code is ErrorCode.REPOSITORY_UNAVAILABLE
 
 
-def test_optional_identity_checkpoint_and_artifact_roundtrip_and_rollback(tmp_path: Path, monkeypatch):
+def test_optional_identity_checkpoint_and_artifact_roundtrip_and_rollback(
+    tmp_path: Path, monkeypatch
+):
     """Round-trip optional identity fields/checkpoint/artifacts and roll back failed replacement."""
     root_dir = tmp_path / "state"
     root_dir.mkdir(mode=0o700)
@@ -604,7 +633,11 @@ def test_optional_identity_checkpoint_and_artifact_roundtrip_and_rollback(tmp_pa
     assert updated.checkpoint == Checkpoint("cp-1")
     assert updated.expected_executable_identity.realpath is None
     assert updated.artifacts == (artifact,)
-    monkeypatch.setattr(repository, "_insert_artifacts", lambda *args: (_ for _ in ()).throw(OSError("artifact fail")))
+    monkeypatch.setattr(
+        repository,
+        "_insert_artifacts",
+        lambda *args: (_ for _ in ()).throw(OSError("artifact fail")),
+    )
     with pytest.raises(ExecutionServiceError) as error:
         repository.compare_and_mutate(
             updated.run_id,
