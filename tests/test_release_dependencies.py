@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import re
-import tomllib
 from pathlib import Path
 
 import pytest
+import tomllib
 
 from confflow.install_provenance import sha256_hex
 from confflow.release_dependencies import (
