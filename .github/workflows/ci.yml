@@ -74,8 +74,12 @@ jobs:
         if: matrix.python-version == '3.11'
         run: mypy confflow
 
-      - name: Pytest
+      - name: Pytest (release wheel installer pinned to 3.12)
+        if: matrix.python-version == '3.12'
         run: pytest -q
+      - name: Pytest (matrix excluding release installer lock-dependent tests)
+        if: matrix.python-version != '3.12'
+        run: pytest -q --ignore=tests/test_install_release_wheel.py
 
   coverage:
     runs-on: ubuntu-latest
@@ -96,7 +100,7 @@ jobs:
           python -m pip check
 
       - name: Coverage (gate)
-        run: pytest tests/ --cov=confflow --cov-report=term-missing --cov-report=xml
+        run: pytest tests/ --ignore=tests/test_install_release_wheel.py --cov=confflow --cov-report=term-missing --cov-report=xml
 
       - name: Upload coverage artifact
         uses: actions/upload-artifact@v7
