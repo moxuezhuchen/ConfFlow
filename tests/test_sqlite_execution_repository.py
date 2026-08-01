@@ -293,6 +293,7 @@ def test_shared_fs_approval_file_and_repository_binding(tmp_path: Path, monkeypa
         "confflow.application.execution.shared_fs_approval.os.fstat", root_owned_fstat
     )
     monkeypatch.setattr("confflow.application.execution.state_root.os.fstat", root_owned_fstat)
+    monkeypatch.setattr("confflow.application.execution.state_root._current_uid", lambda: 0)
     verified = ApprovalVerifier().verify(approval_path, root=root_dir, filesystem_type="nfs4")
     assert verified.approval_id == "approval-1"
     invalid = json.loads(approval_path.read_text(encoding="utf-8"))
