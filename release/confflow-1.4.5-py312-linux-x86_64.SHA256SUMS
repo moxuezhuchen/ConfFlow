@@ -13,3 +13,9 @@
 ba1cc08a7ccde2d2ec775841541641e4548226580ab850948cbfda66a1befcdc  pyyaml-6.0.3-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl
 bec605934ad781e91aa10d434ac986ee18e191ae9dfa65fcabb1784aadf33edb  rdkit-2026.3.4-cp312-cp312-manylinux_2_28_x86_64.whl
 f072f4d804ea359e4eaf198b1af7a8b0943881a87f31bb764f8bf219bb9419e0  annotated_types-0.8.0-py3-none-any.whl
+c647aa4a12dfbad9333ca4e71fe62ddc36f4e63b2d260a37a8b83d2f043ac309  attrs-26.1.0-py3-none-any.whl
+d489f15263b8d200f8387e64b4c3a75f06629559fb73deb8fdfb525f2dab50ce  jsonschema-4.26.0-py3-none-any.whl
+98802fee3a11ee76ecaca44429fda8a41bff98b00a0f2838151b113f210cc6fe  jsonschema_specifications-2025.9.1-py3-none-any.whl
+381329a9f99628c9069361716891d34ad94af76e461dcb0335825aecc7692231  referencing-0.37.0-py3-none-any.whl
+520d690b448ecf0703691c76e1a34a24ddcd4fc5bc41d589cb7c58ec651bcd48  rfc8785-0.1.4-py3-none-any.whl
+ecabd69db66de867690f9797f2f8fa27ba501bbc24540cbdbdc649cd15888ba6  rpds_py-2026.6.3-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
