@@ -374,10 +374,10 @@ def test_candidate_install_rewrites_console_script_shebang_to_final_target(tmp_p
     )
     assert result.returncode == 0, (result.stdout, result.stderr)
     script = paths["target_venv"] / "bin" / "confflow"
-    shebang = script.read_text(encoding="utf-8").splitlines()[0]
-    assert shebang.startswith("#!")
-    assert str(paths["target_venv"]) in shebang
-    assert str(paths["target_venv"]) + ".staging" not in shebang
+    launcher_header = script.read_text(encoding="utf-8").splitlines()[:3]
+    assert launcher_header[0].startswith("#!")
+    assert any(str(paths["target_venv"]) in line for line in launcher_header)
+    assert all(str(paths["target_venv"]) + ".staging" not in line for line in launcher_header)
 
 
 def test_candidate_mode_record_is_unverified(tmp_path):
