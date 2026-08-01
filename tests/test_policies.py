@@ -76,9 +76,7 @@ def test_gaussian_parse_output_prefers_last_scf_done_over_archive_hf_real_log():
 
 
 def test_gaussian_checkpoint_sp_fixture_parses_energy_and_geometry():
-    fixture = os.path.join(
-        os.path.dirname(__file__), "fixtures", "gaussian_checkpoint_sp_read.log"
-    )
+    fixture = os.path.join(os.path.dirname(__file__), "fixtures", "gaussian_checkpoint_sp_read.log")
     parsed = GaussianPolicy().parse_output(fixture, {"itask": 1}, is_sp_task=True)
     assert parsed["e_high"] == -39.7265059209
     assert parsed["final_coords"] is not None

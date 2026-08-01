@@ -133,12 +133,15 @@ def test_all_operations_map_to_the_service_public_methods(monkeypatch, capsys, t
     assert service.events_args == ("run-1", "r00000000000000000002")
     assert service.cancel_run_id == "run-1"
     assert service.resume_args == ("run-1", "checkpoint-1")
-    assert [item["terminal"] for item in _capture(
-        monkeypatch,
-        service,
-        ["artifacts", "--state-root", str(tmp_path), "--run-id", "run-1", "--json"],
-        capsys,
-    )[1]["artifacts"]] == ["a_terminal", "z_terminal"]
+    assert [
+        item["terminal"]
+        for item in _capture(
+            monkeypatch,
+            service,
+            ["artifacts", "--state-root", str(tmp_path), "--run-id", "run-1", "--json"],
+            capsys,
+        )[1]["artifacts"]
+    ] == ["a_terminal", "z_terminal"]
 
 
 def test_prepare_decodes_schema_and_maps_the_complete_service_request(
@@ -170,7 +173,10 @@ def test_prepare_decodes_schema_and_maps_the_complete_service_request(
     [
         (b"", "invalid_request"),
         (b"{} {}", "invalid_request"),
-        (b'{"protocol_schema":"confflow.control.v2","operation":"capabilities"}', "unsupported_protocol"),
+        (
+            b'{"protocol_schema":"confflow.control.v2","operation":"capabilities"}',
+            "unsupported_protocol",
+        ),
     ],
 )
 def test_malformed_empty_extra_and_unknown_protocol_are_typed_errors(
@@ -207,7 +213,11 @@ def test_service_error_preserves_typed_code_retryable_and_runtime_exit(
         capsys,
     )
     assert code == 2
-    assert response["error"] == {"code": "repository_unavailable", "message": "locked", "retryable": True}
+    assert response["error"] == {
+        "code": "repository_unavailable",
+        "message": "locked",
+        "retryable": True,
+    }
 
 
 def test_installed_console_entrypoint_has_pure_stdout():

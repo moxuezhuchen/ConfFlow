@@ -52,7 +52,15 @@ def test_artifact_filenames_have_expected_values():
     assert contract.WORKFLOW_STATE_FILE == ".workflow_state.json"
     assert contract.RUN_REPORT_FILE == "{basename}.txt"
     assert contract.RUN_MIN_XYZ_TEMPLATE == "{basename}min.xyz"
-    assert contract.REQUIRED_COMMANDS == ("bash", "nohup", "setsid", "xargs", "sha256sum", "mktemp", "base64")
+    assert contract.REQUIRED_COMMANDS == (
+        "bash",
+        "nohup",
+        "setsid",
+        "xargs",
+        "sha256sum",
+        "mktemp",
+        "base64",
+    )
     assert contract.RUN_SUMMARY_SCHEMA == "confflow.run_summary.v1"
     assert contract.WORKFLOW_STATS_SCHEMA == "confflow.workflow_stats.v1"
     assert contract.WORKFLOW_STATE_SCHEMA == "confflow.workflow_state.v1"
@@ -68,9 +76,9 @@ def test_contract_is_not_re_exported_from_package_root():
     import confflow
 
     for name in contract.__all__:
-        assert not hasattr(confflow, name), (
-            f"confflow.{name} must not be re-exported from the package root"
-        )
+        assert not hasattr(
+            confflow, name
+        ), f"confflow.{name} must not be re-exported from the package root"
 
 
 def test_cli_capability_payload_uses_contract_constants():
@@ -104,9 +112,9 @@ def test_cli_capability_payload_uses_contract_constants():
         "install_provenance": {"status": "missing", "reason_code": "missing_file"},
     }
     assert set(payload["executable"]) == {"path", "sha256", "python"}
-    assert "unbound" not in json.dumps(payload), (
-        "Producer must not emit the literal \"unbound\" placeholder"
-    )
+    assert "unbound" not in json.dumps(
+        payload
+    ), 'Producer must not emit the literal "unbound" placeholder'
 
 
 def test_capability_executable_identity_binds_to_invoked_venv(tmp_path, monkeypatch):

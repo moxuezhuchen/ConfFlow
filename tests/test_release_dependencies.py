@@ -22,10 +22,7 @@ RUNTIME_IDENTITY = {
 
 def _lock(path: Path, entries: list[tuple[str, str, str]]) -> None:
     lines = ["--only-binary=:all:"]
-    lines.extend(
-        f"{name}=={version} --hash=sha256:{digest}"
-        for name, version, digest in entries
-    )
+    lines.extend(f"{name}=={version} --hash=sha256:{digest}" for name, version, digest in entries)
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
@@ -136,9 +133,7 @@ def test_manifest_and_lock_digests_are_returned(tmp_path):
     evidence = _validate(lock_path, wheelhouse)
 
     assert evidence.dependency_lock_sha256 == sha256_hex(lock_path)
-    assert evidence.wheelhouse_manifest_sha256 == sha256_hex(
-        wheelhouse / "SHA256SUMS"
-    )
+    assert evidence.wheelhouse_manifest_sha256 == sha256_hex(wheelhouse / "SHA256SUMS")
     assert len(evidence.wheel_filenames) == 1
 
 

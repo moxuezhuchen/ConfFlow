@@ -41,6 +41,7 @@ from confflow.install_provenance import (
 # 1. Wheel build hook no longer bakes wheel name/hash
 # ----------------------------------------------------------------------
 
+
 def test_build_hook_only_writes_commit_and_dirty():
     """``setup.py`` must not embed ``WHEEL_FILENAME``/``WHEEL_SHA256``.
 
@@ -61,12 +62,8 @@ def test_build_hook_only_writes_commit_and_dirty():
     assert "COMMIT" in setup_src_no_doc
     assert "DIRTY" in setup_src_no_doc
 
-    build_src = (project_root / "confflow" / "__build__.py").read_text(
-        encoding="utf-8"
-    )
-    build_src_no_doc = re.sub(
-        r'^\s*""".*?"""\s*', "", build_src, count=1, flags=re.DOTALL
-    )
+    build_src = (project_root / "confflow" / "__build__.py").read_text(encoding="utf-8")
+    build_src_no_doc = re.sub(r'^\s*""".*?"""\s*', "", build_src, count=1, flags=re.DOTALL)
     assert "WHEEL_FILENAME" not in build_src_no_doc
     assert "WHEEL_SHA256" not in build_src_no_doc
     assert "COMMIT" in build_src_no_doc
@@ -76,6 +73,7 @@ def test_build_hook_only_writes_commit_and_dirty():
 # ----------------------------------------------------------------------
 # 2. install-provenance.json model + diagnostics
 # ----------------------------------------------------------------------
+
 
 def test_read_install_provenance_missing_file(tmp_path):
     """When no install-provenance.json exists, diagnostic shape is produced."""
@@ -200,6 +198,7 @@ def test_atomic_write_replaces_destination(tmp_path):
 # 3. SHA256SUMS parser and digest helpers
 # ----------------------------------------------------------------------
 
+
 def test_sha256sums_parser_rejects_glob_and_duplicates(tmp_path):
     """Globs / duplicates / malformed lines are surfaced for the deployer."""
     sums = tmp_path / "SHA256SUMS"
@@ -221,8 +220,6 @@ def test_sha256sums_parser_rejects_glob_and_duplicates(tmp_path):
     assert "*-candidate.whl" not in parsed
 
 
-
-
 def test_sha256_hex_matches_hashlib(tmp_path):
     """``sha256_hex`` agrees with the stdlib on a small file."""
     sample = tmp_path / "sample.bin"
@@ -233,9 +230,7 @@ def test_sha256_hex_matches_hashlib(tmp_path):
 
 def test_install_provenance_path_is_canonical():
     """The path always lives at ``share/confflow/install-provenance.json``."""
-    assert str(install_provenance_path()).endswith(
-        "share/confflow/install-provenance.json"
-    )
+    assert str(install_provenance_path()).endswith("share/confflow/install-provenance.json")
 
 
 def test_install_provenance_record_round_trip():

@@ -5,6 +5,7 @@ the exact ConfFlow wheel install. This module validates the two offline
 inputs before a staging venv is created, so a candidate or production install
 cannot silently fall back to an index, an sdist, or host site-packages.
 """
+
 from __future__ import annotations
 
 import re
@@ -82,9 +83,7 @@ def parse_dependency_lock(path: Path) -> dict[str, LockedDependency]:
         raise DependencyInputError(f"dependency lock does not exist: {path}")
     result: dict[str, LockedDependency] = {}
     directive_seen = False
-    for line_number, raw_line in enumerate(
-        path.read_text(encoding="utf-8").splitlines(), start=1
-    ):
+    for line_number, raw_line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
         line = raw_line.strip()
         if not line or line.startswith("#"):
             continue
@@ -98,27 +97,19 @@ def parse_dependency_lock(path: Path) -> dict[str, LockedDependency]:
         match = _LOCK_RE.fullmatch(line)
         if match is None:
             raise DependencyInputError(
-                "dependency lock contains a non-exact or unhashed entry "
-                f"at line {line_number}"
+                "dependency lock contains a non-exact or unhashed entry " f"at line {line_number}"
             )
         name = _canonicalize_name(match.group("name"))
         if name in result:
-            raise DependencyInputError(
-                f"dependency lock contains duplicate package {name!r}"
-            )
-        hashes = tuple(
-            token.rsplit(":", 1)[1].lower()
-            for token in match.group("hashes").split()
-        )
+            raise DependencyInputError(f"dependency lock contains duplicate package {name!r}")
+        hashes = tuple(token.rsplit(":", 1)[1].lower() for token in match.group("hashes").split())
         result[name] = LockedDependency(
             name=name,
             version=match.group("version"),
             hashes=hashes,
         )
     if not directive_seen:
-        raise DependencyInputError(
-            f"dependency lock must contain {_LOCK_DIRECTIVE!r}"
-        )
+        raise DependencyInputError(f"dependency lock must contain {_LOCK_DIRECTIVE!r}")
     return result
 
 
@@ -127,21 +118,16 @@ def parse_wheelhouse_manifest(path: Path) -> dict[str, str]:
     if not path.is_file():
         raise DependencyInputError(f"wheelhouse manifest does not exist: {path}")
     result: dict[str, str] = {}
-    for line_number, raw_line in enumerate(
-        path.read_text(encoding="utf-8").splitlines(), start=1
-    ):
+    for line_number, raw_line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
         line = raw_line.strip()
         if not line or line.startswith("#"):
             continue
         parts = line.split()
         if len(parts) != 2:
-            raise DependencyInputError(
-                f"wheelhouse manifest has malformed line {line_number}"
-            )
+            raise DependencyInputError(f"wheelhouse manifest has malformed line {line_number}")
         digest, filename = parts
-        if (
-            len(digest) != 64
-            or any(character not in "0123456789abcdefABCDEF" for character in digest)
+        if len(digest) != 64 or any(
+            character not in "0123456789abcdefABCDEF" for character in digest
         ):
             raise DependencyInputError(
                 f"wheelhouse manifest has invalid SHA256 at line {line_number}"
@@ -220,9 +206,7 @@ def validate_dependency_inputs(
     """Validate the full offline dependency closure and return its digests."""
     validate_runtime_identity(runtime_identity)
     if not wheelhouse.is_dir():
-        raise DependencyInputError(
-            f"wheelhouse does not exist or is not a directory: {wheelhouse}"
-        )
+        raise DependencyInputError(f"wheelhouse does not exist or is not a directory: {wheelhouse}")
     manifest_path = wheelhouse / WHEELHOUSE_MANIFEST_NAME
     locked = parse_dependency_lock(dependency_lock)
     manifest = parse_wheelhouse_manifest(manifest_path)
@@ -231,9 +215,7 @@ def validate_dependency_inputs(
         if entry.name == WHEELHOUSE_MANIFEST_NAME:
             continue
         if entry.is_symlink() or not entry.is_file():
-            raise DependencyInputError(
-                f"wheelhouse contains a non-wheel entry: {entry.name!r}"
-            )
+            raise DependencyInputError(f"wheelhouse contains a non-wheel entry: {entry.name!r}")
         if not entry.name.endswith(".whl"):
             raise DependencyInputError(
                 f"wheelhouse contains a non-binary-wheel entry: {entry.name!r}"
@@ -263,9 +245,7 @@ def validate_dependency_inputs(
             )
         package_name, version, tags = _wheel_metadata(filename)
         if package_name not in locked:
-            raise DependencyInputError(
-                f"wheelhouse contains an extra dependency wheel: {filename}"
-            )
+            raise DependencyInputError(f"wheelhouse contains an extra dependency wheel: {filename}")
         if package_name in seen_packages:
             raise DependencyInputError(
                 f"wheelhouse contains multiple wheels for locked package {package_name!r}"
@@ -274,8 +254,7 @@ def validate_dependency_inputs(
         expected = locked[package_name]
         if version != expected.version:
             raise DependencyInputError(
-                f"wheel version mismatch for {filename}: "
-                f"lock={expected.version} file={version}"
+                f"wheel version mismatch for {filename}: " f"lock={expected.version} file={version}"
             )
         if manifest_digest not in expected.hashes:
             raise DependencyInputError(
@@ -288,8 +267,7 @@ def validate_dependency_inputs(
     missing_packages = sorted(set(locked) - seen_packages)
     if missing_packages:
         raise DependencyInputError(
-            "wheelhouse is missing locked dependency wheel(s): "
-            + ", ".join(missing_packages)
+            "wheelhouse is missing locked dependency wheel(s): " + ", ".join(missing_packages)
         )
     return DependencyEvidence(
         dependency_lock_sha256=sha256_hex(dependency_lock),

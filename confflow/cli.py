@@ -58,6 +58,8 @@ _HANDSHAKE_PROBE = any(flag in sys.argv[1:] for flag in ("--version", "--capabil
 # this module must import from there so the CLI payload and the artifacts
 # it advertises can never drift apart.
 _CAPABILITY_SCHEMA_VERSION: int = CAPABILITY_SCHEMA_VERSION
+
+
 def _resolved_confflow_executable() -> str | None:
     """Return the entry point belonging to the interpreter running this probe.
 

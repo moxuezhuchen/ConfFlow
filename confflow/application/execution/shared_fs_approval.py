@@ -25,7 +25,9 @@ class SharedFilesystemApproval:
 class ApprovalVerifier:
     """Verify external root-owned approval JSON without trusting caller-supplied objects."""
 
-    def verify(self, path: str | Path, *, root: Path, filesystem_type: str) -> SharedFilesystemApproval:
+    def verify(
+        self, path: str | Path, *, root: Path, filesystem_type: str
+    ) -> SharedFilesystemApproval:
         """Read a regular root-owned immutable-to-user approval and bind every identity field."""
         candidate = Path(path)
         descriptor: int | None = None
@@ -76,7 +78,11 @@ class ApprovalVerifier:
             ):
                 raise ValueError("approval does not bind current root/filesystem guarantees")
             return SharedFilesystemApproval(
-                payload["approval_id"], payload["root_realpath"], payload["device"], payload["inode"], payload["filesystem_type"]
+                payload["approval_id"],
+                payload["root_realpath"],
+                payload["device"],
+                payload["inode"],
+                payload["filesystem_type"],
             )
         except ExecutionServiceError:
             raise

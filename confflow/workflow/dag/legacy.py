@@ -53,9 +53,7 @@ class DAGGraph:
         for step in self.steps:
             for dep in step.depends_on:
                 if dep not in step_names:
-                    errors.append(
-                        f"Step '{step.name}' depends on unknown step '{dep}'"
-                    )
+                    errors.append(f"Step '{step.name}' depends on unknown step '{dep}'")
 
         for src, dst in self.edges:
             if src not in step_names:
@@ -235,7 +233,7 @@ class WorkflowDAG:
                     decisions[name] = comparisons.get(op, False)
                 except ValueError:
                     left = str(actual).strip().lower()
-                    right = raw_value.strip("\"").strip("\"").lower()  # noqa: Q003
+                    right = raw_value.strip('"').strip('"').lower()  # noqa: Q003
                     if op == "==":
                         decisions[name] = left == right
                     else:

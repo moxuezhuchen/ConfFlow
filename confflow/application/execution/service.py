@@ -48,11 +48,15 @@ class ExecutionLifecycle:
 
     def completed(self, artifacts: Sequence[Artifact] = ()) -> RunSnapshot:
         """Commit a matching terminal completion and its validated manifest."""
-        return self._service.lifecycle_terminal(self._run_id, self._token, RunState.COMPLETED, artifacts)
+        return self._service.lifecycle_terminal(
+            self._run_id, self._token, RunState.COMPLETED, artifacts
+        )
 
     def failed(self, artifacts: Sequence[Artifact] = ()) -> RunSnapshot:
         """Commit a matching terminal failure and its validated manifest."""
-        return self._service.lifecycle_terminal(self._run_id, self._token, RunState.FAILED, artifacts)
+        return self._service.lifecycle_terminal(
+            self._run_id, self._token, RunState.FAILED, artifacts
+        )
 
 
 class ExecutionService:
@@ -96,8 +100,12 @@ class ExecutionService:
         """Return ordered replay strictly after a known revision-derived cursor."""
         record = self._require(run_id)
         after_revision = _parse_cursor(after) if after is not None else 0
-        if after is not None and not any(event.revision == after_revision for event in record.events):
-            raise ExecutionServiceError(ErrorCode.INVALID_REQUEST, f"Unknown or expired cursor: {after}")
+        if after is not None and not any(
+            event.revision == after_revision for event in record.events
+        ):
+            raise ExecutionServiceError(
+                ErrorCode.INVALID_REQUEST, f"Unknown or expired cursor: {after}"
+            )
         page = tuple(event for event in record.events if event.revision > after_revision)[
             : self._event_page_size
         ]
@@ -124,8 +132,12 @@ class ExecutionService:
                 f"Cannot resume a run in {record.state.value} state",
             )
         checkpoint = record.checkpoint
-        if checkpoint is None or (checkpoint_id is not None and checkpoint_id != checkpoint.checkpoint_id):
-            raise ExecutionServiceError(ErrorCode.INVALID_CHECKPOINT, "Checkpoint is missing or stale")
+        if checkpoint is None or (
+            checkpoint_id is not None and checkpoint_id != checkpoint.checkpoint_id
+        ):
+            raise ExecutionServiceError(
+                ErrorCode.INVALID_CHECKPOINT, "Checkpoint is missing or stale"
+            )
         self._verify_identity(record.expected_executable_identity)
         claimed = self._claim_launch(record, checkpoint_id=checkpoint.checkpoint_id)
         return self._ensure_launch(claimed)
@@ -153,7 +165,9 @@ class ExecutionService:
     def lifecycle_checkpoint(self, run_id: str, token: str, checkpoint_id: str) -> RunSnapshot:
         """Apply a token-bound checkpoint callback."""
         if not checkpoint_id:
-            raise ExecutionServiceError(ErrorCode.INVALID_REQUEST, "Checkpoint ID must not be empty")
+            raise ExecutionServiceError(
+                ErrorCode.INVALID_REQUEST, "Checkpoint ID must not be empty"
+            )
         return self._lifecycle_mutate(
             run_id,
             token,
@@ -196,7 +210,9 @@ class ExecutionService:
             allow_cancel_pending=True,
         )
 
-    def _claim_launch(self, record: ExecutionAggregate, *, checkpoint_id: str | None) -> ExecutionAggregate:
+    def _claim_launch(
+        self, record: ExecutionAggregate, *, checkpoint_id: str | None
+    ) -> ExecutionAggregate:
         """Atomically create or reuse one queued launch intent."""
         while True:
             if record.state is RunState.QUEUED and record.launch_token is not None:
@@ -223,7 +239,9 @@ class ExecutionService:
             except RepositoryConflict:
                 record = self._require(record.run_id)
             except RepositoryMutationError as error:
-                raise ExecutionServiceError(ErrorCode.INTERNAL, str(error), retryable=True) from error
+                raise ExecutionServiceError(
+                    ErrorCode.INTERNAL, str(error), retryable=True
+                ) from error
 
     def _ensure_launch(self, record: ExecutionAggregate) -> RunSnapshot:
         """Verify the accepted identity before every idempotent executor hand-off."""
@@ -239,7 +257,9 @@ class ExecutionService:
         try:
             receipt = self._executor.ensure_launched(request)
         except Exception as error:
-            raise ExecutionServiceError(ErrorCode.INTERNAL, f"Launch acknowledgement unknown: {error}", retryable=True) from error
+            raise ExecutionServiceError(
+                ErrorCode.INTERNAL, f"Launch acknowledgement unknown: {error}", retryable=True
+            ) from error
         if not receipt.accepted:
             if receipt.cancelled:
                 # An in-flight launch lost the executor's token-arbitration
@@ -293,7 +313,9 @@ class ExecutionService:
             except RepositoryConflict:
                 record = self._require(record.run_id)
             except RepositoryMutationError as error:
-                raise ExecutionServiceError(ErrorCode.INTERNAL, str(error), retryable=True) from error
+                raise ExecutionServiceError(
+                    ErrorCode.INTERNAL, str(error), retryable=True
+                ) from error
 
     def _ensure_cancel(self, record: ExecutionAggregate) -> RunSnapshot:
         """Confirm cancellation outside CAS, then atomically enter the terminal state."""
@@ -311,9 +333,13 @@ class ExecutionService:
                 )
             )
         except Exception as error:
-            raise ExecutionServiceError(ErrorCode.INTERNAL, f"Cancel acknowledgement unknown: {error}", retryable=True) from error
+            raise ExecutionServiceError(
+                ErrorCode.INTERNAL, f"Cancel acknowledgement unknown: {error}", retryable=True
+            ) from error
         if not receipt.confirmed:
-            raise ExecutionServiceError(ErrorCode.INTERNAL, "Executor did not confirm cancellation", retryable=True)
+            raise ExecutionServiceError(
+                ErrorCode.INTERNAL, "Executor did not confirm cancellation", retryable=True
+            )
         latest = self._require(record.run_id)
         if latest.state in TERMINAL_STATES:
             raise _terminal_error(record.run_id)
@@ -374,7 +400,9 @@ class ExecutionService:
             except RepositoryConflict:
                 continue
             except RepositoryMutationError as error:
-                raise ExecutionServiceError(ErrorCode.INTERNAL, str(error), retryable=True) from error
+                raise ExecutionServiceError(
+                    ErrorCode.INTERNAL, str(error), retryable=True
+                ) from error
 
     def _verify_identity(self, expected: ExecutableIdentity) -> None:
         """Measure and compare before durable launch claiming or external execution."""
@@ -401,8 +429,14 @@ def _validate_prepare(request: PrepareRequest) -> None:
     """Validate frozen v1 identifiers and digests before durable creation."""
     for value in (request.run_id, request.idempotency_key):
         if not _is_identifier(value):
-            raise ExecutionServiceError(ErrorCode.INVALID_REQUEST, "Invalid run ID or idempotency key")
-    for digest in (request.request_digest, request.workflow_config_digest, request.input_manifest_digest):
+            raise ExecutionServiceError(
+                ErrorCode.INVALID_REQUEST, "Invalid run ID or idempotency key"
+            )
+    for digest in (
+        request.request_digest,
+        request.workflow_config_digest,
+        request.input_manifest_digest,
+    ):
         if not _is_digest(digest):
             raise ExecutionServiceError(ErrorCode.INVALID_REQUEST, "Invalid request digest")
     if not _is_digest(request.expected_executable_identity.sha256):
@@ -411,7 +445,12 @@ def _validate_prepare(request: PrepareRequest) -> None:
 
 def _is_identifier(value: str) -> bool:
     """Match the frozen v1 identifier grammar."""
-    return bool(value) and len(value) <= 128 and value[0].isalnum() and all(char in _ID_CHARS for char in value)
+    return (
+        bool(value)
+        and len(value) <= 128
+        and value[0].isalnum()
+        and all(char in _ID_CHARS for char in value)
+    )
 
 
 def _is_digest(value: str) -> bool:
@@ -431,7 +470,9 @@ def _identities_match(expected: ExecutableIdentity, measured: ExecutableIdentity
 def _parse_cursor(cursor: str) -> int:
     """Decode the only stable cursor format emitted by this aggregate."""
     if len(cursor) != 21 or not cursor.startswith("r") or not cursor[1:].isdigit():
-        raise ExecutionServiceError(ErrorCode.INVALID_REQUEST, f"Unknown or expired cursor: {cursor}")
+        raise ExecutionServiceError(
+            ErrorCode.INVALID_REQUEST, f"Unknown or expired cursor: {cursor}"
+        )
     return int(cursor[1:])
 
 
@@ -449,7 +490,9 @@ def _validated_artifacts(artifacts: Sequence[Artifact]) -> tuple[Artifact, ...]:
             or artifact.size < 0
             or not artifact.content_schema
         ):
-            raise ExecutionServiceError(ErrorCode.ARTIFACT_PATH_INVALID, "Invalid artifact manifest")
+            raise ExecutionServiceError(
+                ErrorCode.ARTIFACT_PATH_INVALID, "Invalid artifact manifest"
+            )
         seen.add(key)
         result.append(replace(artifact, path=normalized))
     return tuple(sorted(result, key=lambda item: (item.terminal, item.path)))
@@ -458,7 +501,9 @@ def _validated_artifacts(artifacts: Sequence[Artifact]) -> tuple[Artifact, ...]:
 def _canonical_path(path: str) -> str:
     """Enforce a canonical regular-file relative POSIX path."""
     if not path or path.startswith("/") or path.endswith("/") or "//" in path:
-        raise ExecutionServiceError(ErrorCode.ARTIFACT_PATH_INVALID, f"Invalid artifact path: {path}")
+        raise ExecutionServiceError(
+            ErrorCode.ARTIFACT_PATH_INVALID, f"Invalid artifact path: {path}"
+        )
     segments = path.split("/")
     if any(
         not segment
@@ -467,8 +512,12 @@ def _canonical_path(path: str) -> str:
         or any(char not in _ID_CHARS for char in segment)
         for segment in segments
     ):
-        raise ExecutionServiceError(ErrorCode.ARTIFACT_PATH_INVALID, f"Invalid artifact path: {path}")
+        raise ExecutionServiceError(
+            ErrorCode.ARTIFACT_PATH_INVALID, f"Invalid artifact path: {path}"
+        )
     normalized = PurePosixPath(path).as_posix()
     if normalized != path:
-        raise ExecutionServiceError(ErrorCode.ARTIFACT_PATH_INVALID, f"Invalid artifact path: {path}")
+        raise ExecutionServiceError(
+            ErrorCode.ARTIFACT_PATH_INVALID, f"Invalid artifact path: {path}"
+        )
     return normalized

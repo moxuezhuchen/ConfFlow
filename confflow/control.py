@@ -32,7 +32,12 @@ _OPERATIONS = frozenset(
     {"capabilities", "prepare", "execute", "status", "events", "cancel", "resume", "artifacts"}
 )
 _SCHEMA_FILES = frozenset(
-    {"common.schema.json", "requests.schema.json", "responses.schema.json", "input-manifest.schema.json"}
+    {
+        "common.schema.json",
+        "requests.schema.json",
+        "responses.schema.json",
+        "input-manifest.schema.json",
+    }
 )
 _ERROR_CODES = {code.value for code in ErrorCode}
 
@@ -127,12 +132,17 @@ def _validate_cli_shape(args: argparse.Namespace) -> None:
         raise ControlRequestError(ErrorCode.INVALID_REQUEST, "--request is required for prepare")
     if args.operation != "prepare" and args.request:
         raise ControlRequestError(ErrorCode.INVALID_REQUEST, "--request is only valid for prepare")
-    if args.operation in {"execute", "status", "events", "cancel", "resume", "artifacts"} and not args.run_id:
+    if (
+        args.operation in {"execute", "status", "events", "cancel", "resume", "artifacts"}
+        and not args.run_id
+    ):
         raise ControlRequestError(ErrorCode.INVALID_REQUEST, "--run-id is required")
     if args.operation == "events" and args.after == "":
         raise ControlRequestError(ErrorCode.INVALID_REQUEST, "--after must not be empty")
     if args.operation != "resume" and args.checkpoint is not None:
-        raise ControlRequestError(ErrorCode.INVALID_REQUEST, "--checkpoint is only valid for resume")
+        raise ControlRequestError(
+            ErrorCode.INVALID_REQUEST, "--checkpoint is only valid for resume"
+        )
 
 
 def _request_from_args(args: argparse.Namespace) -> dict[str, Any]:
@@ -141,7 +151,9 @@ def _request_from_args(args: argparse.Namespace) -> dict[str, Any]:
             text = Path(args.request).read_text(encoding="utf-8")
             payload = json.loads(text)
         except (OSError, UnicodeError, json.JSONDecodeError) as error:
-            raise ControlRequestError(ErrorCode.INVALID_REQUEST, f"Invalid request JSON: {error}") from error
+            raise ControlRequestError(
+                ErrorCode.INVALID_REQUEST, f"Invalid request JSON: {error}"
+            ) from error
         if not isinstance(payload, dict):
             raise ControlRequestError(ErrorCode.INVALID_REQUEST, "Request JSON must be an object")
         return cast(dict[str, Any], payload)
@@ -159,19 +171,27 @@ def _validate_request(payload: dict[str, Any], operation: str) -> None:
     protocol = payload.get("protocol_schema")
     if protocol != PROTOCOL:
         if isinstance(protocol, str) and protocol.startswith("confflow.control."):
-            raise ControlRequestError(ErrorCode.UNSUPPORTED_PROTOCOL, f"Unsupported protocol: {protocol}")
+            raise ControlRequestError(
+                ErrorCode.UNSUPPORTED_PROTOCOL, f"Unsupported protocol: {protocol}"
+            )
         raise ControlRequestError(ErrorCode.INVALID_REQUEST, "protocol_schema is required")
     if payload.get("operation") != operation:
-        raise ControlRequestError(ErrorCode.INVALID_REQUEST, "Request operation does not match the CLI operation")
+        raise ControlRequestError(
+            ErrorCode.INVALID_REQUEST, "Request operation does not match the CLI operation"
+        )
     validator = _validator("requests.schema.json")
     try:
         validator.validate(payload)
     except Exception as error:
-        raise ControlRequestError(ErrorCode.INVALID_REQUEST, f"Request schema validation failed: {error}") from error
+        raise ControlRequestError(
+            ErrorCode.INVALID_REQUEST, f"Request schema validation failed: {error}"
+        ) from error
     if operation == "prepare":
         expected = _request_digest(payload)
         if payload["request_digest"] != expected:
-            raise ControlRequestError(ErrorCode.INVALID_REQUEST, "request_digest does not match RFC 8785 JCS")
+            raise ControlRequestError(
+                ErrorCode.INVALID_REQUEST, "request_digest does not match RFC 8785 JCS"
+            )
 
 
 def _prepare_response(state_root: str, request: dict[str, Any]) -> dict[str, Any]:
@@ -223,7 +243,9 @@ def _dispatch(service: ExecutionService, request: dict[str, Any]) -> dict[str, A
     if operation == "cancel":
         return _snapshot_response(operation, service.cancel(run_id))
     if operation == "resume":
-        return _snapshot_response(operation, service.resume(run_id, checkpoint_id=request.get("checkpoint")))
+        return _snapshot_response(
+            operation, service.resume(run_id, checkpoint_id=request.get("checkpoint"))
+        )
     if operation == "artifacts":
         return _artifacts_response(service.artifacts(run_id))
     raise ControlRequestError(ErrorCode.INVALID_REQUEST, f"Unsupported operation: {operation}")
@@ -287,9 +309,13 @@ def _resolve_state_root(explicit: str | None) -> str:
     elif os.environ.get("HOME"):
         value = str(Path(os.environ["HOME"]) / ".local" / "state" / "confflow" / "control")
     else:
-        raise ControlRequestError(ErrorCode.INVALID_REQUEST, "No state-root or absolute HOME is available")
+        raise ControlRequestError(
+            ErrorCode.INVALID_REQUEST, "No state-root or absolute HOME is available"
+        )
     if not value.startswith("/"):
-        raise ControlRequestError(ErrorCode.INVALID_REQUEST, "State root must be an absolute POSIX path")
+        raise ControlRequestError(
+            ErrorCode.INVALID_REQUEST, "State root must be an absolute POSIX path"
+        )
     return value
 
 
@@ -297,7 +323,9 @@ def _request_digest(payload: dict[str, Any]) -> str:
     try:
         import rfc8785
     except ImportError as error:  # pragma: no cover - dependency gate catches this
-        raise ControlRequestError(ErrorCode.INTERNAL, "rfc8785 is required for control requests") from error
+        raise ControlRequestError(
+            ErrorCode.INTERNAL, "rfc8785 is required for control requests"
+        ) from error
     semantic = dict(payload)
     semantic.pop("request_digest", None)
     return hashlib.sha256(rfc8785.dumps(semantic)).hexdigest()
@@ -309,9 +337,14 @@ def _schema_store() -> tuple[dict[str, Any], ...]:
     if not schema_dir.is_dir():
         schema_dir = Path(sys.prefix) / "share" / "confflow" / "control_protocol" / "v1"
     try:
-        return tuple(json.loads((schema_dir / name).read_text(encoding="utf-8")) for name in sorted(_SCHEMA_FILES))
+        return tuple(
+            json.loads((schema_dir / name).read_text(encoding="utf-8"))
+            for name in sorted(_SCHEMA_FILES)
+        )
     except (OSError, json.JSONDecodeError) as error:
-        raise ExecutionServiceError(ErrorCode.INTERNAL, "Control protocol schemas are unavailable") from error
+        raise ExecutionServiceError(
+            ErrorCode.INTERNAL, "Control protocol schemas are unavailable"
+        ) from error
 
 
 @lru_cache(maxsize=8)
@@ -320,9 +353,13 @@ def _validator(schema_name: str):
         import jsonschema
         from referencing import Registry, Resource
     except ImportError as error:  # pragma: no cover - dependency gate catches this
-        raise ExecutionServiceError(ErrorCode.INTERNAL, "jsonschema is required for control requests") from error
+        raise ExecutionServiceError(
+            ErrorCode.INTERNAL, "jsonschema is required for control requests"
+        ) from error
     schemas = _schema_store()
-    selected = next((schema for schema in schemas if str(schema.get("$id", "")).endswith(schema_name)), None)
+    selected = next(
+        (schema for schema in schemas if str(schema.get("$id", "")).endswith(schema_name)), None
+    )
     if selected is None:
         raise ExecutionServiceError(ErrorCode.INTERNAL, f"Missing control schema: {schema_name}")
     registry = Registry().with_resources(
@@ -335,7 +372,9 @@ def _validate_response(response: dict[str, Any]) -> None:
     try:
         _validator("responses.schema.json").validate(response)
     except Exception as error:
-        raise ExecutionServiceError(ErrorCode.INTERNAL, "Service returned an invalid control response") from error
+        raise ExecutionServiceError(
+            ErrorCode.INTERNAL, "Service returned an invalid control response"
+        ) from error
 
 
 def _write_response(response: dict[str, Any]) -> None:

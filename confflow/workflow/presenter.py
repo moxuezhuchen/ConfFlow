@@ -255,7 +255,6 @@ def build_run_summary(final_stats: dict[str, Any]) -> dict[str, Any]:
     return summary
 
 
-
 def _relative_manifest_artifact(root_dir: str, artifact: str) -> str:
     """Return a POSIX path contained by the resolved workflow root."""
     root = Path(root_dir).resolve()
@@ -289,7 +288,6 @@ def build_output_manifest(root_dir: str, final_stats: dict[str, Any]) -> dict[st
     return {"content_schema": OUTPUT_MANIFEST_SCHEMA, "terminals": terminals}
 
 
-
 def write_final_statistics(root_dir: str, final_stats: dict[str, Any]) -> None:
     """Persist detailed workflow stats and a compact run summary."""
     stats_file = os.path.join(root_dir, WORKFLOW_STATS_FILE)
@@ -305,7 +303,8 @@ def write_final_statistics(root_dir: str, final_stats: dict[str, Any]) -> None:
         manifest_stats = {**final_stats, "terminal_outputs": {}}
 
     write_atomic_json(
-        os.path.join(root_dir, OUTPUT_MANIFEST_FILE), build_output_manifest(root_dir, manifest_stats)
+        os.path.join(root_dir, OUTPUT_MANIFEST_FILE),
+        build_output_manifest(root_dir, manifest_stats),
     )
     write_atomic_json(stats_file, workflow_stats)
 

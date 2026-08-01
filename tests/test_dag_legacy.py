@@ -78,9 +78,7 @@ def test_star_import_does_not_inject_legacy_silently():
         assert "DAGStep" not in star_module.__dict__
         assert "DAGGraph" not in star_module.__dict__
         assert "WorkflowDAG" not in star_module.__dict__
-        assert not any(
-            issubclass(w.category, DeprecationWarning) for w in caught
-        )
+        assert not any(issubclass(w.category, DeprecationWarning) for w in caught)
     finally:
         sys.modules.pop(star_module_name, None)
 
@@ -101,9 +99,9 @@ def test_explicit_engine_path_does_not_use_legacy():
     assert "build_step_graph" in source
     assert "topo_order" in source
     for name in ("DAGGraph", "DAGStep", "WorkflowDAG"):
-        assert f"import {name}" not in source, (
-            f"engine must not import legacy {name!r}; rely on the explicit API"
-        )
+        assert (
+            f"import {name}" not in source
+        ), f"engine must not import legacy {name!r}; rely on the explicit API"
 
 
 def test_legacy_classes_have_correct_behavior_regression():
@@ -117,7 +115,12 @@ def test_legacy_classes_have_correct_behavior_regression():
     dag = legacy_module.WorkflowDAG(
         steps=[
             {"name": "gen", "type": "confgen"},
-            {"name": "opt", "type": "calc", "depends_on": ["gen"], "when": "prev.failed_count == 0"},
+            {
+                "name": "opt",
+                "type": "calc",
+                "depends_on": ["gen"],
+                "when": "prev.failed_count == 0",
+            },
         ]
     )
     assert dag.validate() == []

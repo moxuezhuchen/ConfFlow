@@ -156,13 +156,20 @@ def _validate_ancestors(path: Path) -> None:
     except ExecutionServiceError:
         raise
     except OSError as error:
-        raise _unavailable(f"Cannot validate state-root ancestors: {error}", retryable=True) from error
+        raise _unavailable(
+            f"Cannot validate state-root ancestors: {error}", retryable=True
+        ) from error
 
 
 def _is_run_id(value: str) -> bool:
     """Match the frozen v1 run-ID grammar without importing service internals."""
     allowed = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-")
-    return bool(value) and len(value) <= 128 and value[0].isalnum() and all(char in allowed for char in value)
+    return (
+        bool(value)
+        and len(value) <= 128
+        and value[0].isalnum()
+        and all(char in allowed for char in value)
+    )
 
 
 def _unavailable(message: str, *, retryable: bool = False) -> ExecutionServiceError:

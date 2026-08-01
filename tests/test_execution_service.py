@@ -245,7 +245,9 @@ def test_identity_mismatch_before_claim_writes_no_launch_intent():
     """Service-side verification fails closed before any queue/intent mutation."""
     repository = InMemoryExecutionRepository()
     executor = FakeExecutor()
-    service = _service(repository, executor, FakeIdentityVerifier(ExecutableIdentity(sha256="f" * 64)))
+    service = _service(
+        repository, executor, FakeIdentityVerifier(ExecutableIdentity(sha256="f" * 64))
+    )
     service.prepare(_request())
 
     with pytest.raises(ExecutionServiceError) as error:
@@ -544,7 +546,9 @@ def test_initial_empty_event_page_returns_null_cursor():
             return aggregate if run_id == aggregate.run_id else None
 
     service = ExecutionService(
-        repository=ReadOnlyRepository(), executor=FakeExecutor(), identity_verifier=FakeIdentityVerifier()
+        repository=ReadOnlyRepository(),
+        executor=FakeExecutor(),
+        identity_verifier=FakeIdentityVerifier(),
     )
     page = service.events("recovered-001")
     assert page.events == ()

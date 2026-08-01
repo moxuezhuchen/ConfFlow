@@ -51,8 +51,7 @@ __all__ = [
 class WorkflowRunner(Protocol):
     """Subset of the legacy engine used by the adapter."""
 
-    def __call__(self, **kwargs: Any) -> dict[str, Any] | None:
-        ...
+    def __call__(self, **kwargs: Any) -> dict[str, Any] | None: ...
 
 
 @dataclass(frozen=True)
@@ -172,8 +171,7 @@ class ServiceWorkflowExecutor(WorkflowExecutor):
             }
             parameters = inspect.signature(self._workflow_runner).parameters
             if "on_step_status_change" in parameters or any(
-                parameter.kind is inspect.Parameter.VAR_KEYWORD
-                for parameter in parameters.values()
+                parameter.kind is inspect.Parameter.VAR_KEYWORD for parameter in parameters.values()
             ):
                 runner_kwargs["on_step_status_change"] = checkpoint_update
             self._result = self._workflow_runner(
@@ -366,7 +364,9 @@ def _resolve_executable(value: str) -> str:
     if not candidate.is_absolute():
         found = shutil.which(value)
         if found is None:
-            raise ExecutionServiceError(ErrorCode.EXECUTABLE_IDENTITY_MISMATCH, f"Executable not found: {value}")
+            raise ExecutionServiceError(
+                ErrorCode.EXECUTABLE_IDENTITY_MISMATCH, f"Executable not found: {value}"
+            )
         candidate = Path(found)
     return str(candidate.resolve(strict=True))
 

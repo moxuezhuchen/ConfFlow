@@ -251,8 +251,7 @@ def read_install_provenance(
         record.attestation_subject_digest,
     )
     if any(
-        len(value) != 64
-        or any(character not in "0123456789abcdef" for character in value.lower())
+        len(value) != 64 or any(character not in "0123456789abcdef" for character in value.lower())
         for value in digest_fields
     ):
         return (

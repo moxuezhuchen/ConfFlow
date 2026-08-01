@@ -204,13 +204,23 @@ def _read_build_constants(whl_path: Path) -> tuple[str | None, bool | None]:
     commit: str | None = None
     dirty: bool | None = None
     for node in tree.body:
-        if isinstance(node, __import__("ast").AnnAssign) and isinstance(node.target, __import__("ast").Name):
+        if isinstance(node, __import__("ast").AnnAssign) and isinstance(
+            node.target, __import__("ast").Name
+        ):
             if node.target.id == "COMMIT":
-                commit = getattr(node.value, "value", None) if isinstance(node.value, __import__("ast").Constant) else None
+                commit = (
+                    getattr(node.value, "value", None)
+                    if isinstance(node.value, __import__("ast").Constant)
+                    else None
+                )
             elif node.target.id == "DIRTY":
-                if isinstance(node.value, __import__("ast").Constant) and isinstance(node.value.value, bool):
+                if isinstance(node.value, __import__("ast").Constant) and isinstance(
+                    node.value.value, bool
+                ):
                     dirty = node.value.value
-                elif isinstance(node.value, __import__("ast").Constant) and node.value.value is None:
+                elif (
+                    isinstance(node.value, __import__("ast").Constant) and node.value.value is None
+                ):
                     dirty = None
     return commit, dirty
 
@@ -227,6 +237,7 @@ def _validate_metadata(
             None,
             f"wheel build commit {build_commit} != --expected-commit {args.expected_commit}",
         )
+
 
 _RUNTIME_IDENTITY_CODE = (
     "import json,platform,sys,sysconfig;"
@@ -365,7 +376,9 @@ def _pip_install_dependencies(
         "-r",
         str(dependency_lock),
     ]
-    result = subprocess.run(cmd, check=False, capture_output=True, text=True, env=_staging_env(staging))
+    result = subprocess.run(
+        cmd, check=False, capture_output=True, text=True, env=_staging_env(staging)
+    )
     if result.returncode != 0:
         raise _fail_roll_back(staging, f"dependency install failed: {result.stderr}")
 
@@ -484,9 +497,7 @@ def _commit_record(
         "build_dirty": False if build_commit is not None else None,
         "release_repository": args.expected_repository,
         "release_tag": args.expected_tag,
-        "release_tag_commit": (
-            args.expected_tag_commit or args.expected_commit
-        ),
+        "release_tag_commit": (args.expected_tag_commit or args.expected_commit),
         "attestation_verified": attestation_verified,
         "attestation_subject_digest": attestation_subject or digest,
     }
@@ -510,10 +521,7 @@ def _commit_record(
                 target,
                 f"install-provenance status {digest_obj.status!r} != expected 'verified'",
             )
-        if (
-            digest_obj.wheel_filename != wheel.name
-            or digest_obj.wheel_sha256 != digest
-        ):
+        if digest_obj.wheel_filename != wheel.name or digest_obj.wheel_sha256 != digest:
             raise _fail_roll_back(
                 target,
                 "install-provenance round-trip mismatches the wheel filename/digest",
@@ -596,9 +604,7 @@ def main(argv: list[str] | None = None) -> int:
     parent, target = _resolve_target_venv(args)
     build_commit, _dirty = _read_build_constants(wheel)
     _validate_metadata(args, build_commit=build_commit)
-    target_identity = _read_runtime_identity(
-        args.target_python or Path(sys.executable)
-    )
+    target_identity = _read_runtime_identity(args.target_python or Path(sys.executable))
     _validate_runtime_identity(target_identity)
     dependency_evidence = _validate_dependency_inputs(
         args,

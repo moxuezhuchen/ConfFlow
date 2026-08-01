@@ -75,7 +75,9 @@ def test_direct_adapter_resume_reuses_idempotency_request_and_checkpoint_boundar
         if calls["count"] == 1:
             from confflow.workflow.state import StepRecord
 
-            kwargs["on_step_status_change"](StepRecord(name="step", type="confgen", status="completed"))
+            kwargs["on_step_status_change"](
+                StepRecord(name="step", type="confgen", status="completed")
+            )
             raise StopRequestedError("pause")
         return {"resumed": kwargs["resume"]}
 
