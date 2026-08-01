@@ -89,7 +89,7 @@ jobs:
           path: scorecard-results.sarif
 
       - name: Upload SARIF
-        uses: github/codeql-action/upload-sarif@v4
+        uses: github/codeql-action/upload-sarif@v4.37.3
         # Private repositories may not have code scanning enabled. Keep Scorecard
         # informational by default, but allow an explicit manual upload when
         # code scanning is available.
