@@ -452,7 +452,7 @@ def _validated_artifacts(artifacts: Sequence[Artifact]) -> tuple[Artifact, ...]:
             raise ExecutionServiceError(ErrorCode.ARTIFACT_PATH_INVALID, "Invalid artifact manifest")
         seen.add(key)
         result.append(replace(artifact, path=normalized))
-    return tuple(result)
+    return tuple(sorted(result, key=lambda item: (item.terminal, item.path)))
 
 
 def _canonical_path(path: str) -> str:

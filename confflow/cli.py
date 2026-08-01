@@ -490,6 +490,11 @@ def main(args_list: list[str] | None = None):
     # Use sys.argv[1:] when args_list is None (i.e., when called as entry point).
     effective_args = args_list if args_list is not None else sys.argv[1:]
 
+    if effective_args and effective_args[0] == "control":
+        from .control import main as control_main
+
+        return control_main(effective_args[1:])
+
     if "--agent" in effective_args:
         stripped = [a for a in effective_args if a != "--agent"]
         return agent_main(stripped if stripped else None)

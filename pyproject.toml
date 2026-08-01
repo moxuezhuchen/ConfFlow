@@ -45,6 +45,9 @@ dependencies = [
     "rich>=15.0.0",
     "pydantic>=2.13.3",
     "rdkit>=2026.3.2",
+    "jsonschema>=4.23.0",
+    "referencing>=0.30.0",
+    "rfc8785>=0.1.4",
 ]
 
 [project.optional-dependencies]
@@ -91,6 +94,7 @@ confflow = ["*.yaml", "*.md"]
 
 [tool.setuptools.data-files]
 "share/confflow" = ["confflow.example.yaml"]
+"share/confflow/control_protocol/v1" = ["docs/control_protocol/v1/*.json"]
 
 [tool.black]
 line-length = 100
