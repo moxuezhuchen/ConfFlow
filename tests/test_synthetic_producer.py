@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import sqlite3
 import sys
 import threading
@@ -47,6 +48,7 @@ from confflow.application.execution.synthetic_producer import (
     SYNTHETIC_CHECKPOINT_ID,
     SyntheticProducerExecutor,
     open_synthetic_service,
+    synthetic_agent_entry,
 )
 from confflow.application.execution.workflow_adapter import (
     FileIdentityVerifier,
@@ -435,17 +437,27 @@ def test_service_execute_produces_full_terminal_lifecycle(tmp_path: Path):
     assert hashlib.sha256(artifact_file.read_bytes()).hexdigest() == SYNTHETIC_ARTIFACT.sha256
     claim = _claim_file(root, run_id, token)
     assert claim.is_file()
-    assert json.loads(claim.read_text(encoding="utf-8")) == {
-        "v": 1,
+    lease = json.loads(claim.read_text(encoding="utf-8"))
+    assert lease == {
+        "v": 2,
+        "owner": lease["owner"],
         "run_id": run_id,
         "token": token,
     }
+    assert lease["owner"].startswith(f"{os.getpid()}.")
 
 
-def test_control_prepare_execute_and_artifacts_end_to_end(tmp_path: Path, capsys):
-    """Control prepare, then the opt-in service execute, then control artifacts."""
+def test_control_execute_creates_intent_then_fixture_entry_closes_the_loop(
+    tmp_path: Path, capsys
+):
+    """Real control prepare/execute create the queued intent; the entry consumes it.
+
+    The opt-in fixture/agent entry consumes the same queued launch intent that
+    real ``control execute`` created, and real control ``status``/``events``/
+    ``artifacts`` verify the terminal facts.
+    """
     root = tmp_path / "state"
-    run_id = "synthetic-run-002"
+    run_id = "run-closed-loop"
     identity = measure_executable(sys.executable)
     payload = {
         "protocol_schema": "confflow.control.v1",
@@ -460,6 +472,8 @@ def test_control_prepare_execute_and_artifacts_end_to_end(tmp_path: Path, capsys
     payload["request_digest"] = hashlib.sha256(rfc8785.dumps(semantic)).hexdigest()
     request_path = tmp_path / "prepare.json"
     request_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    # 1. Real control prepare.
     assert (
         control_main(
             ["prepare", "--state-root", str(root), "--request", str(request_path), "--json"]
@@ -468,16 +482,55 @@ def test_control_prepare_execute_and_artifacts_end_to_end(tmp_path: Path, capsys
     )
     assert json.loads(capsys.readouterr().out)["state"] == "prepared"
 
-    service = open_synthetic_service(root)
-    service.execute(run_id)
-    terminal = _wait_terminal(service, run_id)
+    # 2. Real control execute: the default adapter creates the formal queued
+    # launch intent and must not drive the fixture itself.
+    assert control_main(["execute", "--state-root", str(root), "--run-id", run_id, "--json"]) == 0
+    response = json.loads(capsys.readouterr().out)
+    assert response["state"] == "queued"
+    assert response["revision"] == 2
+    intent = _aggregate(root, run_id)
+    assert intent is not None
+    assert intent.state is RunState.QUEUED
+    assert intent.launch_token == f"{run_id}.launch.1"
+    assert intent.attempt == 1
+
+    # 3. The opt-in fixture/agent entry consumes the SAME queued intent and
+    # runs it to a terminal state through the official lifecycle.
+    terminal = synthetic_agent_entry(root, run_id)
     assert terminal.state is RunState.COMPLETED
+    assert terminal.revision == 5
+    consumed = _aggregate(root, run_id)
+    assert consumed is not None
+    assert consumed.launch_token == f"{run_id}.launch.1"
+    assert consumed.attempt == 1
+    assert consumed.checkpoint is not None
+    assert consumed.checkpoint.checkpoint_id == SYNTHETIC_CHECKPOINT_ID
+    assert consumed.artifacts == (SYNTHETIC_ARTIFACT,)
+
+    # 4. Real control surfaces verify the terminal, revision/cursor and manifest.
+    assert control_main(["status", "--state-root", str(root), "--run-id", run_id, "--json"]) == 0
+    status = json.loads(capsys.readouterr().out)
+    assert status["state"] == "completed"
+    assert status["revision"] == 5
+
+    assert control_main(["events", "--state-root", str(root), "--run-id", run_id, "--json"]) == 0
+    events = json.loads(capsys.readouterr().out)
+    assert [event["type"] for event in events["events"]] == [
+        "prepared",
+        "queued",
+        "running",
+        "checkpointed",
+        "completed",
+    ]
+    assert [event["cursor"] for event in events["events"]] == [
+        f"r{revision:020d}" for revision in (1, 2, 3, 4, 5)
+    ]
+    assert [event["revision"] for event in events["events"]] == [1, 2, 3, 4, 5]
+    assert events["next_cursor"] == "r00000000000000000005"
 
     assert control_main(["artifacts", "--state-root", str(root), "--run-id", run_id, "--json"]) == 0
-    response = json.loads(capsys.readouterr().out)
-    assert response["ok"] is True
-    assert response["state"] == "completed"
-    assert response["artifacts"] == [
+    artifacts = json.loads(capsys.readouterr().out)
+    assert artifacts["artifacts"] == [
         {
             "terminal": SYNTHETIC_ARTIFACT_TERMINAL,
             "path": SYNTHETIC_ARTIFACT_PATH,
@@ -486,6 +539,8 @@ def test_control_prepare_execute_and_artifacts_end_to_end(tmp_path: Path, capsys
             "content_schema": SYNTHETIC_ARTIFACT_SCHEMA,
         }
     ]
+    artifact_file = _run_dir(root, run_id) / "synthetic" / "artifact.txt"
+    assert artifact_file.read_bytes() == SYNTHETIC_ARTIFACT_CONTENT.encode("utf-8")
 
 
 # -------------------------------------------------------------------------------------
@@ -665,6 +720,167 @@ def test_repeated_direct_launch_intent_is_consumed_without_second_worker(tmp_pat
     receipt = second_executor.ensure_launched(request)
     assert receipt.accepted is True
     assert second_executor.worker_count == 0
+
+
+def _blocked_before_started(monkeypatch) -> tuple[threading.Event, threading.Event]:
+    """Gate ``ExecutionLifecycle.started`` for deterministic race tests.
+
+    A worker pauses before the queued-to-running CAS commits, so the per-token
+    lease must stay held during the pause.
+    """
+    gate = threading.Event()
+    crash = threading.Event()
+    original = ExecutionLifecycle.started
+
+    def gated_started(self, *args, **kwargs):
+        gate.wait(timeout=15)
+        if crash.is_set():
+            crash.clear()
+            raise SystemExit("simulated producer crash before started()")
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(ExecutionLifecycle, "started", gated_started)
+    return gate, crash
+
+
+def test_second_executor_never_starts_a_worker_while_the_lease_is_held(
+    tmp_path: Path, monkeypatch
+):
+    """A blocked first worker's lease stops a second executor from starting.
+
+    While the first worker is blocked before ``started()``, a second executor
+    consuming the same token attaches and never spawns a second worker.
+    """
+    root = tmp_path / "state"
+    service1, executor1 = _build(root)
+    service2, executor2 = _build(root)
+    identity = executor_identity(service1)
+    run_id = "run-lease-race"
+    service1.prepare(_request(run_id, identity))
+
+    gate, crash = _blocked_before_started(monkeypatch)
+    try:
+        service1.execute(run_id)
+        deadline = time.monotonic() + 15
+        while executor1.worker_count != 1 and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert executor1.worker_count == 1
+
+        token = _aggregate(root, run_id).launch_token
+        assert token is not None
+        request = LaunchRequest(
+            run_id=run_id,
+            token=token,
+            checkpoint_id=None,
+            expected_identity=identity,
+        )
+        # The first worker holds the lease while blocked before started();
+        # both a direct intent and a full service execute must attach only.
+        assert executor2.ensure_launched(request).accepted is True
+        assert executor2.worker_count == 0
+        service2.execute(run_id)
+        assert executor2.worker_count == 0
+        assert service2.status(run_id).state is RunState.QUEUED
+        assert _event_types(_aggregate(root, run_id)) == ["prepared", "queued"]
+
+        gate.set()
+        terminal = _wait_terminal(service1, run_id)
+        assert terminal.state is RunState.COMPLETED
+        aggregate = _aggregate(root, run_id)
+        assert _event_types(aggregate) == [
+            "prepared",
+            "queued",
+            "running",
+            "checkpointed",
+            "completed",
+        ]
+        assert [event.revision for event in aggregate.events] == [1, 2, 3, 4, 5]
+        assert aggregate.artifacts == (SYNTHETIC_ARTIFACT,)
+        assert executor1.worker_count == 1
+        assert executor2.worker_count == 0
+        assert not executor2.worker_errors
+
+        # An attach that did acquire the (already released) lease must release
+        # it again; a further executor can attach without a stale holder.
+        assert executor2.ensure_launched(request).accepted is True
+        assert not executor2._lease_fds  # noqa: SLF001
+        third = SyntheticProducerExecutor(StateRoot.resolve(root))
+        third.bind(service2)
+        assert third.ensure_launched(request).accepted is True
+        assert third.worker_count == 0
+    finally:
+        gate.set()
+        crash.clear()
+
+
+def test_crash_takeover_after_lease_release_starts_exactly_one_worker(
+    tmp_path: Path, monkeypatch
+):
+    """A dead holder's lease is auto-released for a single takeover worker.
+
+    A later executor takes over only while the aggregate is still queued, and
+    the survivor still produces exactly one event stream and manifest.
+    """
+    root = tmp_path / "state"
+    service1, executor1 = _build(root)
+    service2, executor2 = _build(root)
+    identity = executor_identity(service1)
+    run_id = "run-crash-takeover"
+    service1.prepare(_request(run_id, identity))
+
+    gate, crash = _blocked_before_started(monkeypatch)
+    try:
+        service1.execute(run_id)
+        deadline = time.monotonic() + 15
+        while executor1.worker_count != 1 and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert executor1.worker_count == 1
+
+        token = _aggregate(root, run_id).launch_token
+        assert token is not None
+        request = LaunchRequest(
+            run_id=run_id,
+            token=token,
+            checkpoint_id=None,
+            expected_identity=identity,
+        )
+        assert executor2.ensure_launched(request).accepted is True
+        assert executor2.worker_count == 0
+
+        # The holder crashes before started(); the worker releases the lease
+        # on its exit path (a real crash releases the kernel flock).
+        crash.set()
+        gate.set()
+        deadline = time.monotonic() + 15
+        while executor1._lease_fds and time.monotonic() < deadline:  # noqa: SLF001
+            time.sleep(0.01)
+        assert not executor1._lease_fds  # noqa: SLF001
+        assert executor1.worker_errors  # the simulated crash was recorded
+
+        # Only now may the second executor take over, and only because the
+        # aggregate is still queued.
+        deadline = time.monotonic() + 15
+        while executor2.worker_count == 0 and time.monotonic() < deadline:
+            executor2.ensure_launched(request)
+            time.sleep(0.01)
+        assert executor2.worker_count == 1
+
+        terminal = _wait_terminal(service2, run_id)
+        assert terminal.state is RunState.COMPLETED
+        aggregate = _aggregate(root, run_id)
+        assert _event_types(aggregate) == [
+            "prepared",
+            "queued",
+            "running",
+            "checkpointed",
+            "completed",
+        ]
+        assert [event.revision for event in aggregate.events] == [1, 2, 3, 4, 5]
+        assert aggregate.artifacts == (SYNTHETIC_ARTIFACT,)
+        assert not executor2.worker_errors
+    finally:
+        gate.set()
+        crash.clear()
 
 
 # -------------------------------------------------------------------------------------

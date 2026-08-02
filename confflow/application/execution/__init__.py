@@ -31,6 +31,7 @@ from .synthetic_producer import (
     SYNTHETIC_CHECKPOINT_ID,
     SyntheticProducerExecutor,
     open_synthetic_service,
+    synthetic_agent_entry,
 )
 from .workflow_adapter import (
     ServiceWorkflowExecutor,
@@ -78,4 +79,5 @@ __all__ = [
     "open_control_service",
     "open_synthetic_service",
     "run_workflow_through_service",
+    "synthetic_agent_entry",
 ]

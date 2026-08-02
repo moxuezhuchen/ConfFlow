@@ -9,14 +9,25 @@ the official token-bound ``ExecutionLifecycle`` surface:
 The fixture exists only for launcher-path control acceptance and is never
 wired into production defaults: ``open_control_service`` and the regular
 ``confflow control execute`` path keep using the real control adapter.
-Callers must explicitly build the fixture with ``open_synthetic_service`` or
-by constructing ``SyntheticProducerExecutor`` directly.
+Callers must explicitly build the fixture with ``open_synthetic_service``,
+drive one existing queued intent with ``synthetic_agent_entry``, or construct
+``SyntheticProducerExecutor`` directly.
 
 Payload is restricted to one fixed, small, built-in text artifact.  No shell
 command, external executable, user content, or caller-supplied path is ever
 accepted.  The fixture never writes the producer SQLite repository and never
 invokes the workflow engine; only the service's CAS mutations produce events,
 revisions, cursors, checkpoints and the validated artifact manifest.
+
+Single-worker arbitration is a per-token kernel lease (``flock`` on POSIX):
+the lease file ``run_<run_id>/synthetic.claim.<token>`` is opened exclusively
+and the advisory lock is held from the claim until ``started()`` is durably
+committed.  A competing executor or process that cannot acquire the lease
+attaches without starting a worker, so at most one worker may ever run per
+token.  A crashed holder releases the lease automatically when its process
+dies; a later executor may then take over only if the aggregate is still
+queued.  On platforms without ``flock``, a claim marker that already exists
+attaches only and is never overtaken.
 """
 
 from __future__ import annotations
@@ -26,10 +37,25 @@ import json
 import os
 import sys
 import threading
+import time
 from pathlib import Path
 
+try:
+    import fcntl as _fcntl
+except ImportError:  # pragma: no cover - non-POSIX platforms
+    _fcntl = None  # type: ignore[assignment]
+
 from .errors import ErrorCode, ExecutionServiceError
-from .models import Artifact, CancelReceipt, CancelRequest, LaunchReceipt, LaunchRequest, RunState
+from .models import (
+    TERMINAL_STATES,
+    Artifact,
+    CancelReceipt,
+    CancelRequest,
+    LaunchReceipt,
+    LaunchRequest,
+    RunSnapshot,
+    RunState,
+)
 from .ports import WorkflowExecutor
 from .service import ExecutionLifecycle, ExecutionService
 from .sqlite import SQLiteExecutionRepository
@@ -45,6 +71,7 @@ __all__ = [
     "SYNTHETIC_CHECKPOINT_ID",
     "SyntheticProducerExecutor",
     "open_synthetic_service",
+    "synthetic_agent_entry",
 ]
 
 SYNTHETIC_ARTIFACT_CONTENT = "ConfFlow synthetic producer fixture artifact\n"
@@ -65,9 +92,10 @@ SYNTHETIC_ARTIFACT = Artifact(
 class SyntheticProducerExecutor(WorkflowExecutor):
     """Token-arbitrated non-computing producer behind service lifecycle tokens.
 
-    Exactly one worker thread ever exists per launch token in this process, and
-    the durable claim marker in the runs directory prevents a second process
-    from spawning a second worker for the same token.  Repeated or concurrent
+    Exactly one worker thread ever runs per launch token: the per-token kernel
+    lease (``flock``, or an exclusive claim marker without it) is held from the
+    claim until ``started()`` commits, and any executor that cannot acquire the
+    lease attaches without starting a worker.  Repeated or concurrent
     ``ensure_launched`` calls attach to the existing attempt and never start
     another producer.  A confirmed cancellation tombstones the token and
     signals the worker to back off; the service owns the terminal transition.
@@ -75,11 +103,13 @@ class SyntheticProducerExecutor(WorkflowExecutor):
 
     def __init__(self, state_root: StateRoot) -> None:
         self._runs_root = state_root.path.parent
+        self._owner = f"{os.getpid()}.{id(self):x}"
         self._service: ExecutionService | None = None
         self._lock = threading.Lock()
         self._threads: dict[str, threading.Thread] = {}
         self._tombstones: set[str] = set()
         self._errors: dict[str, str] = {}
+        self._lease_fds: dict[str, int] = {}
 
     def bind(self, service: ExecutionService) -> None:
         """Bind the service after construction to avoid a circular dependency."""
@@ -98,19 +128,42 @@ class SyntheticProducerExecutor(WorkflowExecutor):
             return dict(self._errors)
 
     def ensure_launched(self, request: LaunchRequest) -> LaunchReceipt:
-        """Consume one launch token idempotently and attach without duplication."""
+        """Consume one launch token idempotently and attach without duplication.
+
+        Exactly one worker may start per token.  A live lease holder means
+        another executor or process is driving the token: this call attaches
+        and returns immediately.  Only a lease acquirer may start a worker, and
+        only when the durable aggregate is still queued - a running or terminal
+        run is always attach-only.
+        """
         with self._lock:
             if request.token in self._tombstones or self._cancelled_marker(request.run_id):
                 return LaunchReceipt(accepted=False, cancelled=True)
             if request.token in self._threads:
                 return LaunchReceipt(accepted=True)
-            if self._claim(request):
-                self._start_worker(request)
-                return LaunchReceipt(accepted=True)
-            if not self._may_take_over(request):
-                return LaunchReceipt(accepted=True)
-            self._start_worker(request)
+        fd = self._acquire_lease(request)
+        if fd < 0:
+            # Another live owner holds the per-token lease: attach only.
             return LaunchReceipt(accepted=True)
+        with self._lock:
+            self._lease_fds[request.token] = fd
+        try:
+            with self._lock:
+                if request.token in self._tombstones or self._cancelled_marker(request.run_id):
+                    attach = LaunchReceipt(accepted=False, cancelled=True)
+                elif request.token in self._threads:
+                    attach = LaunchReceipt(accepted=True)
+                elif self._state(request.run_id) is not RunState.QUEUED:
+                    # Durable facts (running/terminal) already exist: attach.
+                    attach = LaunchReceipt(accepted=True)
+                else:
+                    self._start_worker(request)
+                    return LaunchReceipt(accepted=True)
+        except BaseException:
+            self._release_lease(request.token)
+            raise
+        self._release_lease(request.token)
+        return attach
 
     def ensure_cancelled(self, request: CancelRequest) -> CancelReceipt:
         """Tombstone the bound launch token and signal the worker to back off."""
@@ -121,33 +174,63 @@ class SyntheticProducerExecutor(WorkflowExecutor):
         (run_dir / "synthetic.cancelled").touch()
         return CancelReceipt(confirmed=True)
 
-    def _claim(self, request: LaunchRequest) -> bool:
-        """Atomically claim the token with an exclusive marker; True on first claim."""
+    def _acquire_lease(self, request: LaunchRequest) -> int:
+        """Acquire the exclusive per-token lease; return an open fd or -1.
+
+        On POSIX the advisory ``flock`` is held until the worker commits
+        ``started()`` and the kernel releases it automatically if the owning
+        process dies.  Without ``flock`` the claim marker is created
+        exclusively and an existing marker attaches only.
+        """
         run_dir = self._runs_root / f"run_{request.run_id}"
         run_dir.mkdir(parents=True, exist_ok=True)
-        marker = run_dir / f"synthetic.claim.{request.token}"
-        try:
-            with open(marker, "x", encoding="utf-8") as handle:
-                json.dump(
-                    {"v": 1, "run_id": request.run_id, "token": request.token},
-                    handle,
-                    sort_keys=True,
-                    separators=(",", ":"),
-                )
-            return True
-        except FileExistsError:
-            return False
+        lease_path = run_dir / f"synthetic.claim.{request.token}"
+        payload = json.dumps(
+            {"v": 2, "owner": self._owner, "run_id": request.run_id, "token": request.token},
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        if _fcntl is None:
+            try:
+                fd = os.open(lease_path, os.O_RDWR | os.O_CREAT | os.O_EXCL, 0o600)
+            except FileExistsError:
+                return -1
+        else:
+            fd = os.open(lease_path, os.O_RDWR | os.O_CREAT, 0o600)
+            try:
+                _fcntl.flock(fd, _fcntl.LOCK_EX | _fcntl.LOCK_NB)
+            except OSError:
+                os.close(fd)
+                return -1
+        os.ftruncate(fd, 0)
+        os.write(fd, payload)
+        return fd
 
-    def _may_take_over(self, request: LaunchRequest) -> bool:
-        """Decide whether an attach may drive a still-queued foreign claim."""
+    def _release_lease(self, token: str) -> None:
+        """Release the per-token lease fd; idempotent and crash-safe."""
+        with self._lock:
+            fd = self._lease_fds.pop(token, -1)
+        if fd < 0:
+            return
+        if _fcntl is not None:
+            try:
+                _fcntl.flock(fd, _fcntl.LOCK_UN)
+            except OSError:
+                pass
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+
+    def _state(self, run_id: str) -> RunState | None:
+        """Read the current durable state; None if it cannot be established."""
         service = self._service
         if service is None:
-            return False
+            return None
         try:
-            state = service.status(request.run_id).state
+            return service.status(run_id).state
         except ExecutionServiceError:
-            return False
-        return state is RunState.QUEUED
+            return None
 
     def _cancelled_marker(self, run_id: str) -> bool:
         return (self._runs_root / f"run_{run_id}" / "synthetic.cancelled").exists()
@@ -171,6 +254,9 @@ class SyntheticProducerExecutor(WorkflowExecutor):
                 return
             lifecycle = ExecutionLifecycle(service, request.run_id, request.token)
             lifecycle.started()
+            # started() is durably committed (the aggregate is RUNNING), so any
+            # later lease acquirer attaches instead of starting another worker.
+            self._release_lease(request.token)
             if self._is_cancelled(request):
                 return
             run_dir = self._runs_root / f"run_{request.run_id}"
@@ -183,15 +269,17 @@ class SyntheticProducerExecutor(WorkflowExecutor):
             lifecycle.completed((SYNTHETIC_ARTIFACT,))
         except ExecutionServiceError as error:
             if error.code is ErrorCode.INVALID_STATE_TRANSITION:
-                # Token-arbitration loser: another worker won a lifecycle race,
-                # a confirmed cancellation claimed the aggregate, or a terminal
-                # winner already owns the run.  Nothing further may be written.
+                # Token-arbitration loser: a confirmed cancellation claimed the
+                # aggregate or a terminal winner already owns the run.  Nothing
+                # further may be written.
                 return
             self._record_error(request, error)
             self._fail(request)
         except BaseException as error:  # noqa: BLE001 - preserve worker failures
             self._record_error(request, error)
             self._fail(request)
+        finally:
+            self._release_lease(request.token)
 
     def _fail(self, request: LaunchRequest) -> None:
         """Commit a terminal failure only through the official lifecycle surface."""
@@ -216,7 +304,7 @@ class SyntheticProducerExecutor(WorkflowExecutor):
 def open_synthetic_service(state_root: str | Path) -> ExecutionService:
     """Open the explicit opt-in synthetic service for one state root.
 
-    This is the only supported entry point for launcher-path control
+    This is the only supported service entry point for launcher-path control
     acceptance.  Production defaults must keep using
     ``workflow_adapter.open_control_service``.
     """
@@ -229,6 +317,32 @@ def open_synthetic_service(state_root: str | Path) -> ExecutionService:
     )
     executor.bind(service)
     return service
+
+
+def synthetic_agent_entry(state_root: str | Path, run_id: str) -> RunSnapshot:
+    """Explicit opt-in synthetic fixture/agent entry (default off).
+
+    Consumes the *existing* queued launch intent for ``run_id`` through the
+    formal ``ExecutionService.execute`` claim - the same atomic path
+    ``confflow control execute`` uses - and waits until the fixture has driven
+    the run to a terminal state through the official ``ExecutionLifecycle``:
+
+        control prepare -> control execute -> synthetic_agent_entry
+                                             -> control status/events/artifacts
+
+    The entry never re-claims a fresh attempt: a queued intent created by the
+    control adapter is consumed with its original launch token.  Production
+    defaults never reach this entry; ``open_control_service`` and the regular
+    control CLI keep the real control adapter, and the fixture only ever
+    consumes the formal ``LaunchRequest`` (no direct SQLite or state writes).
+    """
+    service = open_synthetic_service(state_root)
+    service.execute(run_id)
+    while True:
+        snapshot = service.status(run_id)
+        if snapshot.state in TERMINAL_STATES:
+            return snapshot
+        time.sleep(0.02)
 
 
 def _ensure_state_root(value: str | Path) -> StateRoot:
