@@ -139,6 +139,16 @@ class SyntheticProducerExecutor(WorkflowExecutor):
         with self._lock:
             if request.token in self._tombstones or self._cancelled_marker(request.run_id):
                 return LaunchReceipt(accepted=False, cancelled=True)
+        service = self._service
+        if service is None:
+            return LaunchReceipt(accepted=False)
+        try:
+            snapshot = service.validate_launch_request(request)
+        except ExecutionServiceError:
+            return LaunchReceipt(accepted=False)
+        if snapshot.state is not RunState.QUEUED:
+            return LaunchReceipt(accepted=True)
+        with self._lock:
             if request.token in self._threads:
                 return LaunchReceipt(accepted=True)
         fd = self._acquire_lease(request)
@@ -153,12 +163,18 @@ class SyntheticProducerExecutor(WorkflowExecutor):
                     attach = LaunchReceipt(accepted=False, cancelled=True)
                 elif request.token in self._threads:
                     attach = LaunchReceipt(accepted=True)
-                elif self._state(request.run_id) is not RunState.QUEUED:
-                    # Durable facts (running/terminal) already exist: attach.
-                    attach = LaunchReceipt(accepted=True)
                 else:
-                    self._start_worker(request)
-                    return LaunchReceipt(accepted=True)
+                    try:
+                        snapshot = service.validate_launch_request(request)
+                    except ExecutionServiceError:
+                        attach = LaunchReceipt(accepted=False)
+                    else:
+                        if snapshot.state is not RunState.QUEUED:
+                            # Durable facts (running/terminal) already exist: attach.
+                            attach = LaunchReceipt(accepted=True)
+                        else:
+                            self._start_worker(request)
+                            return LaunchReceipt(accepted=True)
         except BaseException:
             self._release_lease(request.token)
             raise
@@ -222,16 +238,6 @@ class SyntheticProducerExecutor(WorkflowExecutor):
         except OSError:
             pass
 
-    def _state(self, run_id: str) -> RunState | None:
-        """Read the current durable state; None if it cannot be established."""
-        service = self._service
-        if service is None:
-            return None
-        try:
-            return service.status(run_id).state
-        except ExecutionServiceError:
-            return None
-
     def _cancelled_marker(self, run_id: str) -> bool:
         return (self._runs_root / f"run_{run_id}" / "synthetic.cancelled").exists()
 
@@ -246,6 +252,7 @@ class SyntheticProducerExecutor(WorkflowExecutor):
         thread.start()
 
     def _drive(self, request: LaunchRequest) -> None:
+        completed = False
         try:
             service = self._service
             if service is None:
@@ -264,9 +271,14 @@ class SyntheticProducerExecutor(WorkflowExecutor):
             artifact_dir.mkdir(parents=True, exist_ok=True)
             (artifact_dir / "artifact.txt").write_text(SYNTHETIC_ARTIFACT_CONTENT, encoding="utf-8")
             lifecycle.checkpoint(SYNTHETIC_CHECKPOINT_ID)
+            self._before_completed(request)
             if self._is_cancelled(request):
                 return
-            lifecycle.completed((SYNTHETIC_ARTIFACT,))
+            artifact = self._verified_artifact(request)
+            if self._is_cancelled(request):
+                return
+            lifecycle.completed((artifact,))
+            completed = True
         except ExecutionServiceError as error:
             if error.code is ErrorCode.INVALID_STATE_TRANSITION:
                 # Token-arbitration loser: a confirmed cancellation claimed the
@@ -279,17 +291,59 @@ class SyntheticProducerExecutor(WorkflowExecutor):
             self._record_error(request, error)
             self._fail(request)
         finally:
+            if not completed:
+                self._cleanup_fixed_artifact(request)
             self._release_lease(request.token)
 
     def _fail(self, request: LaunchRequest) -> None:
-        """Commit a terminal failure only through the official lifecycle surface."""
+        """Commit a terminal failure without unverified fixture artifact metadata."""
         service = self._service
         if service is None:
             return
         try:
-            ExecutionLifecycle(service, request.run_id, request.token).failed((SYNTHETIC_ARTIFACT,))
+            ExecutionLifecycle(service, request.run_id, request.token).failed()
         except ExecutionServiceError:
             pass
+
+    def _before_completed(self, request: LaunchRequest) -> None:
+        """Provide a no-op hook for deterministic lifecycle-race tests."""
+
+    def _artifact_path(self, run_id: str) -> Path:
+        """Return the one fixed fixture path; callers cannot supply a path."""
+        return self._runs_root / f"run_{run_id}" / SYNTHETIC_ARTIFACT_PATH
+
+    def _verified_artifact(self, request: LaunchRequest) -> Artifact:
+        """Read the fixed file and build metadata only after all facts match."""
+        path = self._artifact_path(request.run_id)
+        if path.is_symlink() or not path.is_file():
+            raise RuntimeError("Synthetic artifact is missing or not a regular file")
+        try:
+            content = path.read_bytes()
+        except OSError as error:
+            raise RuntimeError(f"Synthetic artifact cannot be read: {error}") from error
+        digest = hashlib.sha256(content).hexdigest()
+        size = len(content)
+        expected = SYNTHETIC_ARTIFACT_CONTENT.encode("utf-8")
+        if content != expected:
+            raise RuntimeError("Synthetic artifact content does not match the built-in payload")
+        if size != SYNTHETIC_ARTIFACT.size:
+            raise RuntimeError("Synthetic artifact size does not match the built-in payload")
+        if digest != SYNTHETIC_ARTIFACT.sha256:
+            raise RuntimeError("Synthetic artifact digest does not match the built-in payload")
+        return Artifact(
+            terminal=SYNTHETIC_ARTIFACT_TERMINAL,
+            path=SYNTHETIC_ARTIFACT_PATH,
+            sha256=digest,
+            size=size,
+            content_schema=SYNTHETIC_ARTIFACT_SCHEMA,
+        )
+
+    def _cleanup_fixed_artifact(self, request: LaunchRequest) -> None:
+        """Remove only the fixed fixture file after a non-completed attempt."""
+        try:
+            self._artifact_path(request.run_id).unlink(missing_ok=True)
+        except OSError as error:
+            self._record_error(request, error)
 
     def _is_cancelled(self, request: LaunchRequest) -> bool:
         if request.token in self._tombstones:
@@ -322,11 +376,11 @@ def open_synthetic_service(state_root: str | Path) -> ExecutionService:
 def synthetic_agent_entry(state_root: str | Path, run_id: str) -> RunSnapshot:
     """Explicit opt-in synthetic fixture/agent entry (default off).
 
-    Reads the formal service snapshot before handing off to
-    ``ExecutionService.execute``.  Only a ``QUEUED`` run with an existing,
-    non-empty launch token may enter that hand-off - the same atomic path
-    ``confflow control execute`` uses - and wait until the fixture has driven
-    the run to a terminal state through the official ``ExecutionLifecycle``.
+    Reads the formal service snapshot before handing off through the public
+    queued-intent consumer.  Only a ``QUEUED`` run with an existing,
+    non-empty launch token may enter that hand-off; the fixture then waits
+    until it has driven the run to a terminal state through the official
+    ``ExecutionLifecycle``.
     Terminal runs attach by returning their existing snapshot; ``PREPARED``,
     ``PAUSED`` and ``RUNNING`` runs are rejected without claiming, resuming or
     launching anything:
@@ -349,17 +403,7 @@ def synthetic_agent_entry(state_root: str | Path, run_id: str) -> RunSnapshot:
             f"Cannot attach synthetic fixture in {snapshot.state.value} state",
         )
 
-    # ``RunSnapshot`` intentionally does not expose launch-token details on
-    # the control wire.  Read the same formal service repository before
-    # execute() so a queued state without an intent cannot be mistaken for a
-    # valid fixture hand-off.
-    record = service._repository.read(run_id)  # noqa: SLF001
-    if record is None or not record.launch_token:
-        raise ExecutionServiceError(
-            ErrorCode.INVALID_STATE_TRANSITION,
-            f"Queued run has no launch token: {run_id}",
-        )
-    service.execute(run_id)
+    service.consume_queued_launch(run_id)
     while True:
         snapshot = service.status(run_id)
         if snapshot.state in TERMINAL_STATES:

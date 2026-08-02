@@ -17,7 +17,7 @@ import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 import pytest
@@ -447,9 +447,7 @@ def test_service_execute_produces_full_terminal_lifecycle(tmp_path: Path):
     assert lease["owner"].startswith(f"{os.getpid()}.")
 
 
-def test_control_execute_creates_intent_then_fixture_entry_closes_the_loop(
-    tmp_path: Path, capsys
-):
+def test_control_execute_creates_intent_then_fixture_entry_closes_the_loop(tmp_path: Path, capsys):
     """Real control prepare/execute create the queued intent; the entry consumes it.
 
     The opt-in fixture/agent entry consumes the same queued launch intent that
@@ -528,7 +526,6 @@ def test_control_execute_creates_intent_then_fixture_entry_closes_the_loop(
     assert [event["revision"] for event in events["events"]] == [1, 2, 3, 4, 5]
     assert events["next_cursor"] == "r00000000000000000005"
 
-
     assert control_main(["artifacts", "--state-root", str(root), "--run-id", run_id, "--json"]) == 0
     artifacts = json.loads(capsys.readouterr().out)
     assert artifacts["artifacts"] == [
@@ -542,6 +539,74 @@ def test_control_execute_creates_intent_then_fixture_entry_closes_the_loop(
     ]
     artifact_file = _run_dir(root, run_id) / "synthetic" / "artifact.txt"
     assert artifact_file.read_bytes() == SYNTHETIC_ARTIFACT_CONTENT.encode("utf-8")
+
+
+@pytest.mark.parametrize("mutation", ["missing", "content", "size"])
+def test_fixture_rejects_unverified_artifact_before_failed_manifest(
+    tmp_path: Path, monkeypatch, mutation: str
+):
+    """Missing or changed fixed files cannot become terminal artifact metadata."""
+    root = tmp_path / "state"
+    service, executor = _build(root)
+    identity = executor_identity(service)
+    run_id = f"run-artifact-{mutation}"
+    artifact_file = _run_dir(root, run_id) / SYNTHETIC_ARTIFACT_PATH
+
+    def mutate_file(_executor: SyntheticProducerExecutor, _request: LaunchRequest) -> None:
+        if mutation == "missing":
+            artifact_file.unlink()
+        elif mutation == "content":
+            artifact_file.write_bytes(b"X" * SYNTHETIC_ARTIFACT.size)
+        else:
+            artifact_file.write_bytes(SYNTHETIC_ARTIFACT_CONTENT.encode("utf-8") + b"tampered")
+
+    monkeypatch.setattr(SyntheticProducerExecutor, "_before_completed", mutate_file)
+    service.prepare(_request(run_id, identity))
+    service.execute(run_id)
+    terminal = _wait_terminal(service, run_id)
+
+    assert terminal.state is RunState.FAILED
+    aggregate = _aggregate(root, run_id)
+    assert aggregate is not None
+    assert aggregate.artifacts == ()
+    assert service.artifacts(run_id).artifacts == ()
+    assert not artifact_file.exists()
+    assert executor.worker_errors
+
+
+def test_cancel_after_artifact_write_cleans_uncommitted_fixture_artifact(
+    tmp_path: Path, monkeypatch
+):
+    """A cancellation winner removes the fixed file and commits no manifest."""
+    root = tmp_path / "state"
+    service, executor = _build(root)
+    identity = executor_identity(service)
+    run_id = "run-artifact-cancel-race"
+    artifact_file = _run_dir(root, run_id) / SYNTHETIC_ARTIFACT_PATH
+
+    def cancel_after_write(_executor: SyntheticProducerExecutor, _request: LaunchRequest) -> None:
+        assert service.cancel(run_id).state is RunState.CANCELLED
+
+    monkeypatch.setattr(SyntheticProducerExecutor, "_before_completed", cancel_after_write)
+    service.prepare(_request(run_id, identity))
+    service.execute(run_id)
+    terminal = _wait_terminal(service, run_id)
+
+    assert terminal.state is RunState.CANCELLED
+    aggregate = _aggregate(root, run_id)
+    assert aggregate is not None
+    assert aggregate.artifacts == ()
+    assert service.artifacts(run_id).artifacts == ()
+    assert not artifact_file.exists()
+    assert _event_types(aggregate) == [
+        "prepared",
+        "queued",
+        "running",
+        "checkpointed",
+        "cancel_requested",
+        "cancelled",
+    ]
+    assert not executor.worker_errors
 
 
 @pytest.mark.parametrize(
@@ -632,6 +697,39 @@ def test_synthetic_agent_entry_terminal_attach_is_idempotent_without_execute(
     assert executor.worker_count == worker_count
 
 
+def test_synthetic_agent_entry_uses_public_queued_consumer_api(tmp_path: Path, monkeypatch):
+    """The entry point hands off through the service API, never a repository."""
+    root = tmp_path / "state"
+    control = open_control_service(root)
+    identity = executor_identity(control)
+    run_id = "run-public-consumer"
+    control.prepare(_request(run_id, identity))
+    assert control.execute(run_id).state is RunState.QUEUED
+
+    service = open_synthetic_service(root)
+    calls: list[str] = []
+    consume = service.consume_queued_launch
+
+    def public_consume(value: str):
+        calls.append(value)
+        return consume(value)
+
+    monkeypatch.setattr(
+        "confflow.application.execution.synthetic_producer.open_synthetic_service",
+        lambda _state_root: service,
+    )
+    monkeypatch.setattr(service, "consume_queued_launch", public_consume)
+    monkeypatch.setattr(
+        service,
+        "execute",
+        lambda *_args, **_kwargs: pytest.fail("synthetic entry must not call execute"),
+    )
+
+    terminal = synthetic_agent_entry(root, run_id)
+    assert terminal.state is RunState.COMPLETED
+    assert calls == [run_id]
+
+
 # -------------------------------------------------------------------------------------
 # Checkpoint and cancel/terminal legality
 # -------------------------------------------------------------------------------------
@@ -716,6 +814,116 @@ def test_lifecycle_callbacks_are_token_bound_and_terminal_stable(tmp_path: Path)
     assert after.revision == before.revision
 
 
+def test_synthetic_executor_rejects_forged_and_wrong_run_launch_requests(tmp_path: Path):
+    """Invalid run/token bindings cannot start a worker or mutate the aggregate."""
+    root = tmp_path / "state"
+    control = open_control_service(root)
+    identity = executor_identity(control)
+    run_id = "run-forged-launch"
+    control.prepare(_request(run_id, identity))
+    assert control.execute(run_id).state is RunState.QUEUED
+    fixture = open_synthetic_service(root)
+    executor = fixture._executor  # noqa: SLF001 - external worker behavior is asserted below
+    aggregate = _aggregate(root, run_id)
+    assert aggregate is not None
+    assert aggregate.launch_token is not None
+    before = aggregate
+    requests = [
+        LaunchRequest(
+            run_id=run_id,
+            token="forged-token",
+            attempt=aggregate.attempt,
+            checkpoint_id=aggregate.launch_checkpoint,
+            expected_identity=identity,
+        ),
+        LaunchRequest(
+            run_id="wrong-run",
+            token=aggregate.launch_token,
+            attempt=aggregate.attempt,
+            checkpoint_id=aggregate.launch_checkpoint,
+            expected_identity=identity,
+        ),
+    ]
+
+    for request in requests:
+        assert executor.ensure_launched(request) == LaunchReceipt(accepted=False)
+        assert _aggregate(root, run_id) == before
+
+    assert executor.worker_count == 0
+    assert not _run_dir(root, run_id).exists()
+
+
+def test_synthetic_executor_rejects_expired_token_without_relaunch(tmp_path: Path):
+    """A superseded attempt token cannot consume the newer queued intent."""
+    root = tmp_path / "state"
+    control = open_control_service(root)
+    identity = executor_identity(control)
+    run_id = "run-expired-launch"
+    control.prepare(_request(run_id, identity))
+    assert control.execute(run_id).state is RunState.QUEUED
+    first = _aggregate(root, run_id)
+    assert first is not None and first.launch_token is not None
+    lifecycle = ExecutionLifecycle(control, run_id, first.launch_token)
+    lifecycle.started()
+    lifecycle.checkpoint(SYNTHETIC_CHECKPOINT_ID)
+    lifecycle.paused()
+    assert control.resume(run_id).state is RunState.QUEUED
+    current = _aggregate(root, run_id)
+    assert current is not None
+    assert current.attempt == 2
+    assert current.launch_token != first.launch_token
+
+    fixture = open_synthetic_service(root)
+    executor = fixture._executor  # noqa: SLF001 - external worker behavior is asserted below
+    request = LaunchRequest(
+        run_id=run_id,
+        token=first.launch_token,
+        attempt=first.attempt,
+        checkpoint_id=first.launch_checkpoint,
+        expected_identity=identity,
+    )
+    assert executor.ensure_launched(request) == LaunchReceipt(accepted=False)
+    assert _aggregate(root, run_id) == current
+    assert executor.worker_count == 0
+    assert not _run_dir(root, run_id).exists()
+
+
+def test_synthetic_executor_rejects_queued_run_without_token(tmp_path: Path):
+    """A malformed queued aggregate without a token cannot reach the fixture."""
+    root = tmp_path / "state"
+    control = open_control_service(root)
+    identity = executor_identity(control)
+    run_id = "run-queued-without-token"
+    control.prepare(_request(run_id, identity))
+    prepared = _aggregate(root, run_id)
+    assert prepared is not None
+    repository = SQLiteExecutionRepository(StateRoot.resolve(root))
+    repository.compare_and_mutate(
+        run_id,
+        prepared.revision,
+        lambda current: (replace(current, state=RunState.QUEUED), "queued_without_token"),
+    )
+    malformed = _aggregate(root, run_id)
+    assert malformed is not None
+    fixture = open_synthetic_service(root)
+    executor = fixture._executor  # noqa: SLF001 - external worker behavior is asserted below
+    with pytest.raises(ExecutionServiceError) as caught:
+        fixture.consume_queued_launch(run_id)
+    assert caught.value.code is ErrorCode.INVALID_STATE_TRANSITION
+    assert executor.ensure_launched(
+        LaunchRequest(
+            run_id=run_id,
+            token="",
+            attempt=0,
+            checkpoint_id=None,
+            expected_identity=identity,
+        )
+    ) == LaunchReceipt(accepted=False)
+    assert _aggregate(root, run_id) == malformed
+    assert executor.worker_count == 0
+    assert not _run_dir(root, run_id).exists()
+
+
 # -------------------------------------------------------------------------------------
 # Idempotent token consumption and single-worker guarantees
 # -------------------------------------------------------------------------------------
@@ -796,6 +1004,7 @@ def test_repeated_direct_launch_intent_is_consumed_without_second_worker(tmp_pat
     request = LaunchRequest(
         run_id=run_id,
         token=token,
+        attempt=1,
         checkpoint_id=None,
         expected_identity=identity,
     )
@@ -832,9 +1041,7 @@ def _blocked_before_started(monkeypatch) -> tuple[threading.Event, threading.Eve
     return gate, crash
 
 
-def test_second_executor_never_starts_a_worker_while_the_lease_is_held(
-    tmp_path: Path, monkeypatch
-):
+def test_second_executor_never_starts_a_worker_while_the_lease_is_held(tmp_path: Path, monkeypatch):
     """A blocked first worker's lease stops a second executor from starting.
 
     While the first worker is blocked before ``started()``, a second executor
@@ -860,6 +1067,7 @@ def test_second_executor_never_starts_a_worker_while_the_lease_is_held(
         request = LaunchRequest(
             run_id=run_id,
             token=token,
+            attempt=1,
             checkpoint_id=None,
             expected_identity=identity,
         )
@@ -902,9 +1110,7 @@ def test_second_executor_never_starts_a_worker_while_the_lease_is_held(
         crash.clear()
 
 
-def test_crash_takeover_after_lease_release_starts_exactly_one_worker(
-    tmp_path: Path, monkeypatch
-):
+def test_crash_takeover_after_lease_release_starts_exactly_one_worker(tmp_path: Path, monkeypatch):
     """A dead holder's lease is auto-released for a single takeover worker.
 
     A later executor takes over only while the aggregate is still queued, and
@@ -930,6 +1136,7 @@ def test_crash_takeover_after_lease_release_starts_exactly_one_worker(
         request = LaunchRequest(
             run_id=run_id,
             token=token,
+            attempt=1,
             checkpoint_id=None,
             expected_identity=identity,
         )
@@ -997,6 +1204,7 @@ def test_attach_reconnect_reads_same_terminal_snapshot_events_and_manifest(tmp_p
     request = LaunchRequest(
         run_id=run_id,
         token=token,
+        attempt=1,
         checkpoint_id=None,
         expected_identity=identity,
     )
@@ -1129,6 +1337,7 @@ def test_fixture_consumes_formal_launch_and_cancel_requests(tmp_path: Path):
         late_intent = LaunchRequest(
             run_id=cancel_run_id,
             token=f"{cancel_run_id}.launch.1",
+            attempt=1,
             checkpoint_id=None,
             expected_identity=identity,
         )
@@ -1184,9 +1393,7 @@ def test_concurrent_reads_never_observe_torn_state(tmp_path: Path):
                     ):
                         violations.append("torn: non-contiguous events")
                     expected = (
-                        (SYNTHETIC_ARTIFACT,)
-                        if aggregate.state is RunState.COMPLETED
-                        else ()
+                        (SYNTHETIC_ARTIFACT,) if aggregate.state is RunState.COMPLETED else ()
                     )
                     if aggregate.artifacts != expected:
                         violations.append("torn: artifacts mismatch")
