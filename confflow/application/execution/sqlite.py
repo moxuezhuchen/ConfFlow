@@ -253,8 +253,13 @@ class SQLiteExecutionRepository:
                 continue
             if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
                 raise _unavailable("Repository database files must be regular non-symlink files")
-            os.chmod(path, 0o600, follow_symlinks=False)
-            verified = os.lstat(path)
+            try:
+                os.chmod(path, 0o600, follow_symlinks=False)
+                verified = os.lstat(path)
+            except FileNotFoundError:
+                # SQLite may remove a sidecar as another connection closes it.
+                # A vanished sidecar is safe; a new connection will recreate it.
+                continue
             if stat.S_ISLNK(verified.st_mode) or stat.S_IMODE(verified.st_mode) != 0o600:
                 raise _unavailable("Repository database files must have mode 0600")
 
