@@ -111,7 +111,13 @@ def test_cli_capability_payload_uses_contract_constants():
         "wheel": {"filename": None, "sha256": None},
         "install_provenance": {"status": "missing", "reason_code": "missing_file"},
     }
-    assert set(payload["executable"]) == {"path", "sha256", "python"}
+    assert set(payload["executable"]) == {
+        "path",
+        "realpath",
+        "device_inode",
+        "sha256",
+        "python",
+    }
     assert "unbound" not in json.dumps(
         payload
     ), 'Producer must not emit the literal "unbound" placeholder'
@@ -134,6 +140,9 @@ def test_capability_executable_identity_binds_to_invoked_venv(tmp_path, monkeypa
 
     payload = cli_module._build_capability_payload()
     assert payload["executable"]["path"] == str(executable.resolve())
+    assert payload["executable"]["realpath"] == str(executable.resolve())
+    metadata = executable.stat()
+    assert payload["executable"]["device_inode"] == f"{metadata.st_dev}:{metadata.st_ino}"
     assert payload["executable"]["python"] == str(python)
     assert Path(payload["executable"]["path"]).is_relative_to(venv)
     assert Path(payload["executable"]["python"]).is_relative_to(venv)

@@ -8,6 +8,7 @@ import json
 import logging
 import os
 import sys
+from collections.abc import Callable
 from contextlib import redirect_stdout
 from functools import lru_cache
 from pathlib import Path
@@ -58,6 +59,24 @@ class _Parser(argparse.ArgumentParser):
 
 def main(args_list: list[str]) -> int:
     """Run one control operation and emit exactly one protocol response."""
+    exit_code, response = run_request(args_list)
+    _write_response(response)
+    return exit_code
+
+
+def run_request(
+    args_list: list[str],
+    *,
+    post_execute: Callable[[str, str, dict[str, Any]], dict[str, Any]] | None = None,
+    identity_executable: str | None = None,
+) -> tuple[int, dict[str, Any]]:
+    """Run one control operation without writing its protocol response.
+
+    The optional hook is reserved for an alternate executable that must hand
+    off a formally queued execute intent before emitting the one final control
+    response.  Parsing, schema validation, service dispatch, response
+    validation and exit-code mapping stay in this adapter.
+    """
     operation = _operation_hint(args_list)
     try:
         args = _parse_args(args_list)
@@ -69,25 +88,26 @@ def main(args_list: list[str]) -> int:
         else:
             state_root = _resolve_state_root(args.state_root)
             if operation == "prepare":
-                response = _prepare_response(state_root, request)
+                response = _prepare_response(
+                    state_root, request, identity_executable=identity_executable
+                )
             else:
                 # The application service is the only stateful operation owner.
                 with redirect_stdout(sys.stderr):
-                    service = open_control_service(state_root)
+                    service = _open_control_service(state_root, identity_executable)
                     response = _dispatch(service, request)
+                    if operation == "execute" and post_execute is not None and response["ok"]:
+                        response = post_execute(state_root, args.run_id, response)
         _validate_response(response)
-        _write_response(response)
-        return ExitCode.SUCCESS
+        return ExitCode.SUCCESS, response
     except ExecutionServiceError as error:
         response = _error_response(operation, error)
-        _write_response(response)
-        return _exit_code(error)
+        return _exit_code(error), response
     except Exception:  # pragma: no cover - final protocol safety net
         logger.exception("ConfFlow control adapter failed")
         typed = ExecutionServiceError(ErrorCode.INTERNAL, "Control adapter failed", retryable=True)
         response = _error_response(operation, typed)
-        _write_response(response)
-        return _exit_code(typed)
+        return _exit_code(typed), response
 
 
 def _parse_args(args_list: list[str]) -> argparse.Namespace:
@@ -194,14 +214,29 @@ def _validate_request(payload: dict[str, Any], operation: str) -> None:
             )
 
 
-def _prepare_response(state_root: str, request: dict[str, Any]) -> dict[str, Any]:
+def _prepare_response(
+    state_root: str,
+    request: dict[str, Any],
+    *,
+    identity_executable: str | None = None,
+) -> dict[str, Any]:
     service: ExecutionService
     # Content verification is read-only protocol input validation. Durable state
     # and idempotency remain exclusively owned by ExecutionService.prepare().
     with redirect_stdout(sys.stderr):
-        service = open_control_service(state_root)
-        snapshot = service.prepare(_prepare_model(request))
+        service = _open_control_service(state_root, identity_executable)
+        model = _prepare_model(request)
+        if identity_executable is not None:
+            service.verify_executable_identity(model.expected_executable_identity)
+        snapshot = service.prepare(model)
     return _snapshot_response("prepare", snapshot)
+
+
+def _open_control_service(state_root: str, identity_executable: str | None) -> ExecutionService:
+    """Keep the ordinary adapter call unchanged while allowing fixture binding."""
+    if identity_executable is None:
+        return open_control_service(state_root)
+    return open_control_service(state_root, identity_executable=identity_executable)
 
 
 def _prepare_model(request: dict[str, Any]) -> PrepareRequest:
@@ -395,4 +430,4 @@ def _operation_hint(args_list: list[str]) -> str:
     return "capabilities"
 
 
-__all__ = ["main"]
+__all__ = ["main", "run_request"]

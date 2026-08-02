@@ -355,7 +355,9 @@ class SyntheticProducerExecutor(WorkflowExecutor):
             self._errors[request.token] = f"{type(error).__name__}: {error}"
 
 
-def open_synthetic_service(state_root: str | Path) -> ExecutionService:
+def open_synthetic_service(
+    state_root: str | Path, *, identity_executable: str | None = None
+) -> ExecutionService:
     """Open the explicit opt-in synthetic service for one state root.
 
     This is the only supported service entry point for launcher-path control
@@ -367,13 +369,20 @@ def open_synthetic_service(state_root: str | Path) -> ExecutionService:
     service = ExecutionService(
         repository=SQLiteExecutionRepository(root),
         executor=executor,
-        identity_verifier=FileIdentityVerifier(sys.executable),
+        identity_verifier=FileIdentityVerifier(
+            sys.executable if identity_executable is None else identity_executable
+        ),
     )
     executor.bind(service)
     return service
 
 
-def synthetic_agent_entry(state_root: str | Path, run_id: str) -> RunSnapshot:
+def synthetic_agent_entry(
+    state_root: str | Path,
+    run_id: str,
+    *,
+    identity_executable: str | None = None,
+) -> RunSnapshot:
     """Explicit opt-in synthetic fixture/agent entry (default off).
 
     Reads the formal service snapshot before handing off through the public
@@ -393,7 +402,10 @@ def synthetic_agent_entry(state_root: str | Path, run_id: str) -> RunSnapshot:
     only ever consumes the formal ``LaunchRequest`` (no direct SQLite or state
     writes).
     """
-    service = open_synthetic_service(state_root)
+    if identity_executable is None:
+        service = open_synthetic_service(state_root)
+    else:
+        service = open_synthetic_service(state_root, identity_executable=identity_executable)
     snapshot = service.status(run_id)
     if snapshot.state in TERMINAL_STATES:
         return snapshot

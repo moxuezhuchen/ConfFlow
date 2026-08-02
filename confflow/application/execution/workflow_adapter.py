@@ -228,8 +228,8 @@ class _AgentControlExecutor(WorkflowExecutor):
 class _CurrentProcessIdentity(FileIdentityVerifier):
     """Use the running ConfFlow interpreter as the service launch identity."""
 
-    def __init__(self) -> None:
-        super().__init__(sys.executable)
+    def __init__(self, executable: str | None = None) -> None:
+        super().__init__(sys.executable if executable is None else executable)
 
 
 def build_workflow_service(
@@ -252,13 +252,15 @@ def build_workflow_service(
     return service, executor
 
 
-def open_control_service(state_root: str | Path) -> ExecutionService:
+def open_control_service(
+    state_root: str | Path, *, identity_executable: str | None = None
+) -> ExecutionService:
     """Open the same service for a separate agent control command."""
     root = _ensure_state_root(state_root)
     return ExecutionService(
         repository=SQLiteExecutionRepository(root),
         executor=_AgentControlExecutor(root),
-        identity_verifier=_CurrentProcessIdentity(),
+        identity_verifier=_CurrentProcessIdentity(identity_executable),
     )
 
 

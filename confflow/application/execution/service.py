@@ -82,6 +82,15 @@ class ExecutionService:
         _validate_prepare(request)
         return self._repository.create_or_get(request).snapshot()
 
+    def verify_executable_identity(self, expected: ExecutableIdentity) -> None:
+        """Verify a complete identity before an alternate adapter persists a prepare."""
+        if expected.realpath is None or expected.device_inode is None:
+            raise ExecutionServiceError(
+                ErrorCode.EXECUTABLE_IDENTITY_MISMATCH,
+                "Fixture executable identity must include realpath and device_inode",
+            )
+        self._verify_identity(expected)
+
     def execute(self, run_id: str) -> RunSnapshot:
         """Claim a launch intent, then ensure its token outside repository mutation."""
         record = self._require(run_id)
