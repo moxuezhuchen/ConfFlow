@@ -8,6 +8,7 @@ import json
 import logging
 import os
 import sys
+from collections.abc import Callable
 from contextlib import redirect_stdout
 from functools import lru_cache
 from pathlib import Path
@@ -58,6 +59,23 @@ class _Parser(argparse.ArgumentParser):
 
 def main(args_list: list[str]) -> int:
     """Run one control operation and emit exactly one protocol response."""
+    exit_code, response = run_request(args_list)
+    _write_response(response)
+    return exit_code
+
+
+def run_request(
+    args_list: list[str],
+    *,
+    post_execute: Callable[[str, str, dict[str, Any]], dict[str, Any]] | None = None,
+) -> tuple[int, dict[str, Any]]:
+    """Run one control operation without writing its protocol response.
+
+    The optional hook is reserved for an alternate executable that must hand
+    off a formally queued execute intent before emitting the one final control
+    response.  Parsing, schema validation, service dispatch, response
+    validation and exit-code mapping stay in this adapter.
+    """
     operation = _operation_hint(args_list)
     try:
         args = _parse_args(args_list)
@@ -75,19 +93,18 @@ def main(args_list: list[str]) -> int:
                 with redirect_stdout(sys.stderr):
                     service = open_control_service(state_root)
                     response = _dispatch(service, request)
+                    if operation == "execute" and post_execute is not None and response["ok"]:
+                        response = post_execute(state_root, args.run_id, response)
         _validate_response(response)
-        _write_response(response)
-        return ExitCode.SUCCESS
+        return ExitCode.SUCCESS, response
     except ExecutionServiceError as error:
         response = _error_response(operation, error)
-        _write_response(response)
-        return _exit_code(error)
+        return _exit_code(error), response
     except Exception:  # pragma: no cover - final protocol safety net
         logger.exception("ConfFlow control adapter failed")
         typed = ExecutionServiceError(ErrorCode.INTERNAL, "Control adapter failed", retryable=True)
         response = _error_response(operation, typed)
-        _write_response(response)
-        return _exit_code(typed)
+        return _exit_code(typed), response
 
 
 def _parse_args(args_list: list[str]) -> argparse.Namespace:
@@ -395,4 +412,4 @@ def _operation_hint(args_list: list[str]) -> str:
     return "capabilities"
 
 
-__all__ = ["main"]
+__all__ = ["main", "run_request"]

@@ -60,7 +60,7 @@ _HANDSHAKE_PROBE = any(flag in sys.argv[1:] for flag in ("--version", "--capabil
 _CAPABILITY_SCHEMA_VERSION: int = CAPABILITY_SCHEMA_VERSION
 
 
-def _resolved_confflow_executable() -> str | None:
+def _resolved_confflow_executable(executable_override: str | None = None) -> str | None:
     """Return the entry point belonging to the interpreter running this probe.
 
     A capability probe may be invoked with an absolute path while another
@@ -68,6 +68,12 @@ def _resolved_confflow_executable() -> str | None:
     to ``sys.executable`` so the reported executable cannot silently describe
     a different venv; retain argv/PATH fallbacks for legacy module launchers.
     """
+    if executable_override is not None:
+        candidate = Path(executable_override)
+        if candidate.is_file():
+            return os.path.realpath(os.path.abspath(os.fspath(candidate)))
+        return None
+
     candidates = [Path(sys.executable).with_name("confflow"), Path(sys.argv[0])]
     path_executable = shutil.which("confflow")
     if path_executable:
@@ -90,7 +96,7 @@ def _file_sha256(path: str | None) -> str | None:
     return digest.hexdigest()
 
 
-def _build_capability_payload() -> dict[str, Any]:
+def _build_capability_payload(executable_override: str | None = None) -> dict[str, Any]:
     """Build the handshake payload with v3 compatibility and v4 provenance.
 
     v4 adds ``producer.install_provenance`` as the source of truth for
@@ -102,7 +108,7 @@ def _build_capability_payload() -> dict[str, Any]:
     non-``verified`` status. ConfFlow never emits the literal string
     ``"unbound"`` for either field.
     """
-    executable = _resolved_confflow_executable()
+    executable = _resolved_confflow_executable(executable_override)
     build = {"commit": COMMIT, "dirty": DIRTY}
     version = __import__("confflow").__version__
     provenance, _errors = read_install_provenance()
@@ -486,7 +492,11 @@ def _service_run_id(config_file: str, input_files: list[str], work_dir: str) -> 
     return "run_" + hashlib.sha256(payload).hexdigest()[:48]
 
 
-def main(args_list: list[str] | None = None):
+def main(
+    args_list: list[str] | None = None,
+    *,
+    executable_override: str | None = None,
+):
     # Fast-path: if --agent is present, strip it and forward directly to
     # the agent CLI without confflow's argument parser seeing agent flags.
     # Use sys.argv[1:] when args_list is None (i.e., when called as entry point).
@@ -514,7 +524,7 @@ def main(args_list: list[str] | None = None):
             logging.disable(logging.NOTSET)
         return ExitCode.SUCCESS
     if args.capabilities:
-        print(json.dumps(_build_capability_payload(), indent=2))
+        print(json.dumps(_build_capability_payload(executable_override), indent=2))
         if _HANDSHAKE_PROBE:
             logging.disable(logging.NOTSET)
         return ExitCode.SUCCESS
