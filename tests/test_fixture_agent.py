@@ -9,7 +9,6 @@ import sys
 from pathlib import Path
 
 import rfc8785
-import tomllib
 
 from confflow.application.execution.synthetic_producer import (
     SYNTHETIC_ARTIFACT,
@@ -64,12 +63,8 @@ def test_fixture_entrypoint_capabilities_bind_to_actual_executable(
 
 
 def test_fixture_console_script_is_declared_as_a_package_entrypoint():
-    project = tomllib.loads(
-        (Path(__file__).parents[1] / "pyproject.toml").read_text(encoding="utf-8")
-    )
-    assert project["project"]["scripts"]["confflow-fixture-agent"] == (
-        "confflow.fixture_agent:main"
-    )
+    pyproject = (Path(__file__).parents[1] / "pyproject.toml").read_text(encoding="utf-8")
+    assert 'confflow-fixture-agent = "confflow.fixture_agent:main"' in pyproject
 
 
 def test_fixture_cli_runs_one_json_control_chain_to_fixed_manifest(capsys, tmp_path: Path):
