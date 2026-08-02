@@ -5,6 +5,21 @@
 > The archived-snapshot notice below describes the earlier repository state. ConfFlow is active again
 > as JobDesk's external chemistry workflow dependency beginning with v1.4.0.
 
+## v1.5.1 (2026-08-02) - fixture agent entry release
+
+### Added
+
+- Added the explicit `confflow-fixture-agent` console entrypoint for the
+  synthetic, non-compute producer lifecycle fixture used by JobDesk
+  launcher-path acceptance.
+- Bound fixture lifecycle execution to the invoked console-script identity
+  and retained the existing fail-closed control protocol behavior.
+
+### Validation
+
+- Merged the fixture agent entry PR through the normal ConfFlow mainline
+  review and CI path before this release preparation.
+
 ## v1.4.6 (2026-07-31) — output-manifest path hotfix candidate
 
 ### Fixed
