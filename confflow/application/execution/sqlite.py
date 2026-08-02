@@ -110,7 +110,15 @@ class SQLiteExecutionRepository:
     def read(self, run_id: str) -> ExecutionAggregate | None:
         try:
             with closing(self._connect()) as con:
-                return self._load(con, run_id, missing_ok=True)
+                con.execute("BEGIN")
+                try:
+                    return self._load(con, run_id, missing_ok=True)
+                finally:
+                    # One explicit read transaction keeps the aggregate, events
+                    # and artifacts SELECTs on the same WAL snapshot; without
+                    # it a concurrent CAS commit between statements produces a
+                    # torn projection.
+                    con.execute("COMMIT")
         except ExecutionServiceError:
             raise
         except Exception as error:
