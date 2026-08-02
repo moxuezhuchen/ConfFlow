@@ -563,8 +563,10 @@ def _fixup_script_shebangs(staging: Path, target: Path) -> None:
     """Rewrite console-script shebangs before atomically renaming the venv.
 
     Setuptools records the staging venv's absolute interpreter path in each
-    console script. Rewrite only the first line of scripts under the staging
-    venv's ``bin`` directory, and only when it contains the exact staging root.
+    console script. Rewrite direct shebangs and the interpreter line in the
+    POSIX shell-compatible launcher setuptools emits when the interpreter path
+    is too long for a direct shebang. Only exact staging-root references in
+    scripts under the staging venv's ``bin`` directory are changed.
     Doing this before the rename keeps failures recoverable through the normal
     staging cleanup path and never mutates an existing target venv.
     """
@@ -580,10 +582,24 @@ def _fixup_script_shebangs(staging: Path, target: Path) -> None:
             source = entry.read_text(encoding="utf-8", errors="strict")
         except (UnicodeDecodeError, OSError):
             continue
-        first_line, newline, rest = source.partition("\n")
-        if not first_line.startswith("#!") or staging_root not in first_line:
+        lines = source.splitlines(keepends=True)
+        if not lines or not lines[0].startswith("#!"):
             continue
-        rewritten = first_line.replace(staging_root, target_root, 1) + newline + rest
+        changed = False
+        if staging_root in lines[0]:
+            lines[0] = lines[0].replace(staging_root, target_root, 1)
+            changed = True
+        elif (
+            lines[0].rstrip("\r\n") == "#!/bin/sh"
+            and len(lines) > 1
+            and lines[1].lstrip().startswith("'''exec'")
+            and staging_root in lines[1]
+        ):
+            lines[1] = lines[1].replace(staging_root, target_root, 1)
+            changed = True
+        if not changed:
+            continue
+        rewritten = "".join(lines)
         tmp = entry.with_name(f".{entry.name}.shebangfix")
         try:
             tmp.write_text(rewritten, encoding="utf-8")
