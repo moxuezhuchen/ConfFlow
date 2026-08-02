@@ -68,6 +68,7 @@ def run_request(
     args_list: list[str],
     *,
     post_execute: Callable[[str, str, dict[str, Any]], dict[str, Any]] | None = None,
+    identity_executable: str | None = None,
 ) -> tuple[int, dict[str, Any]]:
     """Run one control operation without writing its protocol response.
 
@@ -87,11 +88,13 @@ def run_request(
         else:
             state_root = _resolve_state_root(args.state_root)
             if operation == "prepare":
-                response = _prepare_response(state_root, request)
+                response = _prepare_response(
+                    state_root, request, identity_executable=identity_executable
+                )
             else:
                 # The application service is the only stateful operation owner.
                 with redirect_stdout(sys.stderr):
-                    service = open_control_service(state_root)
+                    service = _open_control_service(state_root, identity_executable)
                     response = _dispatch(service, request)
                     if operation == "execute" and post_execute is not None and response["ok"]:
                         response = post_execute(state_root, args.run_id, response)
@@ -211,14 +214,29 @@ def _validate_request(payload: dict[str, Any], operation: str) -> None:
             )
 
 
-def _prepare_response(state_root: str, request: dict[str, Any]) -> dict[str, Any]:
+def _prepare_response(
+    state_root: str,
+    request: dict[str, Any],
+    *,
+    identity_executable: str | None = None,
+) -> dict[str, Any]:
     service: ExecutionService
     # Content verification is read-only protocol input validation. Durable state
     # and idempotency remain exclusively owned by ExecutionService.prepare().
     with redirect_stdout(sys.stderr):
-        service = open_control_service(state_root)
-        snapshot = service.prepare(_prepare_model(request))
+        service = _open_control_service(state_root, identity_executable)
+        model = _prepare_model(request)
+        if identity_executable is not None:
+            service.verify_executable_identity(model.expected_executable_identity)
+        snapshot = service.prepare(model)
     return _snapshot_response("prepare", snapshot)
+
+
+def _open_control_service(state_root: str, identity_executable: str | None) -> ExecutionService:
+    """Keep the ordinary adapter call unchanged while allowing fixture binding."""
+    if identity_executable is None:
+        return open_control_service(state_root)
+    return open_control_service(state_root, identity_executable=identity_executable)
 
 
 def _prepare_model(request: dict[str, Any]) -> PrepareRequest:

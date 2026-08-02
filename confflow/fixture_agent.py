@@ -31,10 +31,13 @@ def _actual_entrypoint() -> str | None:
 
 
 def _fixture_after_execute(
-    state_root: str, run_id: str, _queued_response: dict[str, Any]
+    identity_executable: str,
+    state_root: str,
+    run_id: str,
+    _queued_response: dict[str, Any],
 ) -> dict[str, Any]:
     """Consume the same durable queued intent and return its final snapshot."""
-    snapshot = synthetic_agent_entry(state_root, run_id)
+    snapshot = synthetic_agent_entry(state_root, run_id, identity_executable=identity_executable)
     return _snapshot_response("execute", snapshot)
 
 
@@ -52,9 +55,20 @@ def main(args_list: list[str] | None = None) -> int:
         )
         return ExitCode.USAGE_ERROR
 
+    identity_executable = _actual_entrypoint()
+    if identity_executable is None:
+        print("Unable to resolve the fixture console executable identity", file=sys.stderr)
+        return ExitCode.RUNTIME_ERROR
+
+    def after_execute(
+        state_root: str, run_id: str, queued_response: dict[str, Any]
+    ) -> dict[str, Any]:
+        return _fixture_after_execute(identity_executable, state_root, run_id, queued_response)
+
     exit_code, response = run_request(
         effective_args[1:],
-        post_execute=_fixture_after_execute,
+        post_execute=after_execute,
+        identity_executable=identity_executable,
     )
     _write_response(response)
     return exit_code

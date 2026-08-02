@@ -96,6 +96,17 @@ def _file_sha256(path: str | None) -> str | None:
     return digest.hexdigest()
 
 
+def _file_device_inode(path: str | None) -> str | None:
+    """Return the device/inode binding for an executable regular file."""
+    if path is None or not os.path.isfile(path):
+        return None
+    try:
+        metadata = os.stat(path)
+    except OSError:
+        return None
+    return f"{metadata.st_dev}:{metadata.st_ino}"
+
+
 def _build_capability_payload(executable_override: str | None = None) -> dict[str, Any]:
     """Build the handshake payload with v3 compatibility and v4 provenance.
 
@@ -141,6 +152,8 @@ def _build_capability_payload(executable_override: str | None = None) -> dict[st
         },
         "executable": {
             "path": executable,
+            "realpath": executable,
+            "device_inode": _file_device_inode(executable),
             "sha256": _file_sha256(executable),
             # Keep the venv path spelling; realpath() would collapse a venv's
             # python symlink to /usr/bin and break executable identity binding.
