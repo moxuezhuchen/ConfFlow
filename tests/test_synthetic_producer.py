@@ -528,6 +528,7 @@ def test_control_execute_creates_intent_then_fixture_entry_closes_the_loop(
     assert [event["revision"] for event in events["events"]] == [1, 2, 3, 4, 5]
     assert events["next_cursor"] == "r00000000000000000005"
 
+
     assert control_main(["artifacts", "--state-root", str(root), "--run-id", run_id, "--json"]) == 0
     artifacts = json.loads(capsys.readouterr().out)
     assert artifacts["artifacts"] == [
@@ -541,6 +542,94 @@ def test_control_execute_creates_intent_then_fixture_entry_closes_the_loop(
     ]
     artifact_file = _run_dir(root, run_id) / "synthetic" / "artifact.txt"
     assert artifact_file.read_bytes() == SYNTHETIC_ARTIFACT_CONTENT.encode("utf-8")
+
+
+@pytest.mark.parametrize(
+    ("state", "expected_events"),
+    [
+        (RunState.PREPARED, ["prepared"]),
+        (RunState.RUNNING, ["prepared", "queued", "running"]),
+        (RunState.PAUSED, ["prepared", "queued", "running", "paused"]),
+    ],
+)
+def test_synthetic_agent_entry_rejects_nonqueued_runs_without_side_effects(
+    tmp_path: Path, monkeypatch, state: RunState, expected_events: list[str]
+):
+    """The fixture entry cannot claim, resume or launch a non-queued run."""
+    root = tmp_path / "state"
+    service = open_control_service(root)
+    identity = executor_identity(service)
+    run_id = f"run-entry-reject-{state.value}"
+    service.prepare(_request(run_id, identity))
+    if state is RunState.RUNNING or state is RunState.PAUSED:
+        service.execute(run_id)
+        aggregate = _aggregate(root, run_id)
+        assert aggregate is not None and aggregate.launch_token is not None
+        lifecycle = ExecutionLifecycle(service, run_id, aggregate.launch_token)
+        lifecycle.started()
+        if state is RunState.PAUSED:
+            lifecycle.paused()
+
+    before = _aggregate(root, run_id)
+    assert before is not None
+    assert before.state is state
+    assert before.revision == len(expected_events)
+    assert _event_types(before) == expected_events
+
+    def unexpected_worker(*args, **kwargs):
+        raise AssertionError("synthetic_agent_entry must not start a worker")
+
+    monkeypatch.setattr(SyntheticProducerExecutor, "_start_worker", unexpected_worker)
+    with pytest.raises(ExecutionServiceError) as caught:
+        synthetic_agent_entry(root, run_id)
+    assert caught.value.code is ErrorCode.INVALID_STATE_TRANSITION
+    assert str(caught.value) == f"Cannot attach synthetic fixture in {state.value} state"
+
+    after = _aggregate(root, run_id)
+    assert after == before
+    if state is RunState.PREPARED:
+        assert after.revision == 1
+        assert after.launch_token is None
+    else:
+        assert after.revision == before.revision
+        assert after.launch_token is not None
+    assert not _run_dir(root, run_id).exists()
+
+
+def test_synthetic_agent_entry_terminal_attach_is_idempotent_without_execute(
+    tmp_path: Path, monkeypatch
+):
+    """Terminal attach returns existing facts without rewriting events or manifest."""
+    root = tmp_path / "state"
+    service, executor = _build(root)
+    identity = executor_identity(service)
+    run_id = "run-entry-terminal-attach"
+    service.prepare(_request(run_id, identity))
+    service.execute(run_id)
+    terminal = _wait_terminal(service, run_id)
+    before = _aggregate(root, run_id)
+    assert before is not None
+    before_events = service.events(run_id)
+    before_manifest = service.artifacts(run_id)
+    worker_count = executor.worker_count
+
+    monkeypatch.setattr(
+        "confflow.application.execution.synthetic_producer.open_synthetic_service",
+        lambda _state_root: service,
+    )
+
+    def unexpected_execute(*args, **kwargs):
+        raise AssertionError("terminal attach must not call execute")
+
+    monkeypatch.setattr(service, "execute", unexpected_execute)
+    assert synthetic_agent_entry(root, run_id) == terminal
+    assert synthetic_agent_entry(root, run_id) == terminal
+
+    after = _aggregate(root, run_id)
+    assert after == before
+    assert service.events(run_id) == before_events
+    assert service.artifacts(run_id) == before_manifest
+    assert executor.worker_count == worker_count
 
 
 # -------------------------------------------------------------------------------------

@@ -322,21 +322,43 @@ def open_synthetic_service(state_root: str | Path) -> ExecutionService:
 def synthetic_agent_entry(state_root: str | Path, run_id: str) -> RunSnapshot:
     """Explicit opt-in synthetic fixture/agent entry (default off).
 
-    Consumes the *existing* queued launch intent for ``run_id`` through the
-    formal ``ExecutionService.execute`` claim - the same atomic path
-    ``confflow control execute`` uses - and waits until the fixture has driven
-    the run to a terminal state through the official ``ExecutionLifecycle``:
+    Reads the formal service snapshot before handing off to
+    ``ExecutionService.execute``.  Only a ``QUEUED`` run with an existing,
+    non-empty launch token may enter that hand-off - the same atomic path
+    ``confflow control execute`` uses - and wait until the fixture has driven
+    the run to a terminal state through the official ``ExecutionLifecycle``.
+    Terminal runs attach by returning their existing snapshot; ``PREPARED``,
+    ``PAUSED`` and ``RUNNING`` runs are rejected without claiming, resuming or
+    launching anything:
 
         control prepare -> control execute -> synthetic_agent_entry
                                              -> control status/events/artifacts
 
-    The entry never re-claims a fresh attempt: a queued intent created by the
-    control adapter is consumed with its original launch token.  Production
-    defaults never reach this entry; ``open_control_service`` and the regular
-    control CLI keep the real control adapter, and the fixture only ever
-    consumes the formal ``LaunchRequest`` (no direct SQLite or state writes).
+    Production defaults never reach this entry; ``open_control_service`` and
+    the regular control CLI keep the real control adapter, and the fixture
+    only ever consumes the formal ``LaunchRequest`` (no direct SQLite or state
+    writes).
     """
     service = open_synthetic_service(state_root)
+    snapshot = service.status(run_id)
+    if snapshot.state in TERMINAL_STATES:
+        return snapshot
+    if snapshot.state is not RunState.QUEUED:
+        raise ExecutionServiceError(
+            ErrorCode.INVALID_STATE_TRANSITION,
+            f"Cannot attach synthetic fixture in {snapshot.state.value} state",
+        )
+
+    # ``RunSnapshot`` intentionally does not expose launch-token details on
+    # the control wire.  Read the same formal service repository before
+    # execute() so a queued state without an intent cannot be mistaken for a
+    # valid fixture hand-off.
+    record = service._repository.read(run_id)  # noqa: SLF001
+    if record is None or not record.launch_token:
+        raise ExecutionServiceError(
+            ErrorCode.INVALID_STATE_TRANSITION,
+            f"Queued run has no launch token: {run_id}",
+        )
     service.execute(run_id)
     while True:
         snapshot = service.status(run_id)
