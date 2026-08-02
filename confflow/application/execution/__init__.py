@@ -22,6 +22,17 @@ from .service import ExecutionLifecycle, ExecutionService
 from .shared_fs_approval import ApprovalVerifier, SharedFilesystemApproval
 from .sqlite import SQLiteExecutionRepository
 from .state_root import RunPaths, StateRoot
+from .synthetic_producer import (
+    SYNTHETIC_ARTIFACT,
+    SYNTHETIC_ARTIFACT_CONTENT,
+    SYNTHETIC_ARTIFACT_PATH,
+    SYNTHETIC_ARTIFACT_SCHEMA,
+    SYNTHETIC_ARTIFACT_TERMINAL,
+    SYNTHETIC_CHECKPOINT_ID,
+    SyntheticProducerExecutor,
+    open_synthetic_service,
+    synthetic_agent_entry,
+)
 from .workflow_adapter import (
     ServiceWorkflowExecutor,
     WorkflowRunSpec,
@@ -56,8 +67,17 @@ __all__ = [
     "SQLiteExecutionRepository",
     "SharedFilesystemApproval",
     "StateRoot",
+    "SYNTHETIC_ARTIFACT",
+    "SYNTHETIC_ARTIFACT_CONTENT",
+    "SYNTHETIC_ARTIFACT_PATH",
+    "SYNTHETIC_ARTIFACT_SCHEMA",
+    "SYNTHETIC_ARTIFACT_TERMINAL",
+    "SYNTHETIC_CHECKPOINT_ID",
+    "SyntheticProducerExecutor",
     "WorkflowRunSpec",
     "build_workflow_service",
     "open_control_service",
+    "open_synthetic_service",
     "run_workflow_through_service",
+    "synthetic_agent_entry",
 ]

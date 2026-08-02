@@ -92,6 +92,57 @@ class ExecutionService:
             return record.snapshot()
         return self._ensure_launch(record)
 
+    def consume_queued_launch(self, run_id: str) -> RunSnapshot:
+        """Consume one existing queued launch intent without creating an attempt.
+
+        This is the explicit agent/launcher hand-off for callers that must not
+        claim ``PREPARED`` or resume ``PAUSED`` state.  Terminal calls attach
+        to the durable result; only a queued aggregate with its existing,
+        non-empty token reaches the executor port.
+        """
+        record = self._require(run_id)
+        if record.state in TERMINAL_STATES:
+            return record.snapshot()
+        if record.state is not RunState.QUEUED:
+            raise ExecutionServiceError(
+                ErrorCode.INVALID_STATE_TRANSITION,
+                f"Cannot consume launch intent in {record.state.value} state",
+            )
+        if record.attempt < 1 or not record.launch_token:
+            raise ExecutionServiceError(
+                ErrorCode.INVALID_STATE_TRANSITION,
+                f"Queued run has no launch token: {run_id}",
+            )
+        return self._ensure_launch(record)
+
+    def validate_launch_request(self, request: LaunchRequest) -> RunSnapshot:
+        """Validate a formal hand-off against the current durable run facts.
+
+        Executors use this service-level check instead of reaching into the
+        repository.  A matching non-queued state is attach-only; a matching
+        queued state is launchable.  Every other token, run, attempt,
+        checkpoint, identity, or cancellation-pending combination is rejected.
+        """
+        record = self._require(request.run_id)
+        if (
+            record.launch_token != request.token
+            or record.attempt != request.attempt
+            or record.launch_checkpoint != request.checkpoint_id
+            or record.expected_executable_identity != request.expected_identity
+        ):
+            raise ExecutionServiceError(
+                ErrorCode.INVALID_STATE_TRANSITION,
+                "Launch request does not match the active durable attempt",
+            )
+        if record.state is RunState.QUEUED and not record.cancel_pending:
+            return record.snapshot()
+        if record.state in {RunState.RUNNING, RunState.PAUSED} or record.state in TERMINAL_STATES:
+            return record.snapshot()
+        raise ExecutionServiceError(
+            ErrorCode.INVALID_STATE_TRANSITION,
+            f"Launch request is invalid while run is {record.state.value}",
+        )
+
     def status(self, run_id: str) -> RunSnapshot:
         """Read the latest public projection."""
         return self._require(run_id).snapshot()
@@ -251,6 +302,7 @@ class ExecutionService:
         request = LaunchRequest(
             run_id=record.run_id,
             token=record.launch_token,
+            attempt=record.attempt,
             checkpoint_id=record.launch_checkpoint,
             expected_identity=record.expected_executable_identity,
         )

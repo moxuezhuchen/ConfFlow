@@ -127,6 +127,7 @@ class LaunchRequest:
 
     run_id: str
     token: str
+    attempt: int
     checkpoint_id: str | None
     expected_identity: ExecutableIdentity
 

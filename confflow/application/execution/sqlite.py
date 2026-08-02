@@ -110,7 +110,15 @@ class SQLiteExecutionRepository:
     def read(self, run_id: str) -> ExecutionAggregate | None:
         try:
             with closing(self._connect()) as con:
-                return self._load(con, run_id, missing_ok=True)
+                con.execute("BEGIN")
+                try:
+                    return self._load(con, run_id, missing_ok=True)
+                finally:
+                    # One explicit read transaction keeps the aggregate, events
+                    # and artifacts SELECTs on the same WAL snapshot; without
+                    # it a concurrent CAS commit between statements produces a
+                    # torn projection.
+                    con.execute("COMMIT")
         except ExecutionServiceError:
             raise
         except Exception as error:
@@ -245,8 +253,13 @@ class SQLiteExecutionRepository:
                 continue
             if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
                 raise _unavailable("Repository database files must be regular non-symlink files")
-            os.chmod(path, 0o600, follow_symlinks=False)
-            verified = os.lstat(path)
+            try:
+                os.chmod(path, 0o600, follow_symlinks=False)
+                verified = os.lstat(path)
+            except FileNotFoundError:
+                # SQLite may remove a sidecar as another connection closes it.
+                # A vanished sidecar is safe; a new connection will recreate it.
+                continue
             if stat.S_ISLNK(verified.st_mode) or stat.S_IMODE(verified.st_mode) != 0o600:
                 raise _unavailable("Repository database files must have mode 0600")
 

@@ -354,6 +354,32 @@ def test_sqlite_rejects_precreated_sidecar_symlink(tmp_path: Path, suffix: str):
     assert error.value.code is ErrorCode.REPOSITORY_UNAVAILABLE
 
 
+def test_sqlite_allows_sidecar_to_vanish_during_mode_verification(tmp_path: Path, monkeypatch):
+    """A concurrent SQLite close may remove a sidecar between chmod and lstat."""
+    root_dir = tmp_path / "state"
+    root_dir.mkdir(mode=0o700)
+    root = StateRoot.resolve(root_dir)
+    repository = SQLiteExecutionRepository(root)
+    repository.close()
+    sidecar = Path(f"{root.database_path}-shm")
+    sidecar.write_bytes(b"")
+    original_lstat = os.lstat
+    sidecar_checks = 0
+
+    def lstat_with_sidecar_race(path):
+        nonlocal sidecar_checks
+        if Path(path) == sidecar:
+            sidecar_checks += 1
+            if sidecar_checks == 2:
+                sidecar.unlink()
+                raise FileNotFoundError(path)
+        return original_lstat(path)
+
+    monkeypatch.setattr(os, "lstat", lstat_with_sidecar_race)
+    repository._secure_database_files()  # noqa: SLF001 - security regression surface
+    assert sidecar_checks == 2
+
+
 @pytest.mark.parametrize(
     "corruption",
     [
