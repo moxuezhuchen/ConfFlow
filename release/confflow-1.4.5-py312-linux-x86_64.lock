@@ -1,4 +1,4 @@
-# ConfFlow 1.5.0 runtime lock derived from the verified 1.4.4 production venv.
+# ConfFlow controlled runtime lock derived from the verified 1.4.4 production venv.
 # Target: CPython 3.12 / Linux x86_64. ConfFlow itself is installed separately.
 --only-binary=:all:
 annotated-types==0.8.0 --hash=sha256:f072f4d804ea359e4eaf198b1af7a8b0943881a87f31bb764f8bf219bb9419e0
