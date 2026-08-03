@@ -525,8 +525,6 @@ def _initial_workflow_state(
             name=str(step.get("name", dirname)),
             type=str(step.get("type", "")),
             status="skipped" if not step.get("enabled", True) else "pending",
-
-
         )
         for dirname, step in zip(step_dirnames, steps, strict=True)
     }
