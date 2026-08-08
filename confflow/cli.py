@@ -135,9 +135,7 @@ def _build_capability_payload(executable_override: str | None = None) -> dict[st
             # but advertise the worker only where its fail-closed path
             # contract can actually run.
             "control_worker": (
-                os.name == "posix"
-                and hasattr(os, "O_DIRECTORY")
-                and hasattr(os, "O_NOFOLLOW")
+                os.name == "posix" and hasattr(os, "O_DIRECTORY") and hasattr(os, "O_NOFOLLOW")
             ),
         },
         "artifacts": {

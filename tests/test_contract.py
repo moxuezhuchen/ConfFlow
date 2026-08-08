@@ -105,9 +105,7 @@ def test_cli_capability_payload_uses_contract_constants():
         "resume": True,
         "dag": True,
         "control_worker": (
-            os.name == "posix"
-            and hasattr(os, "O_DIRECTORY")
-            and hasattr(os, "O_NOFOLLOW")
+            os.name == "posix" and hasattr(os, "O_DIRECTORY") and hasattr(os, "O_NOFOLLOW")
         ),
     }
     assert payload["producer"] == {

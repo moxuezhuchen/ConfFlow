@@ -937,9 +937,7 @@ def test_capabilities_subprocess_stdout_is_pure_json():
         "resume": True,
         "dag": True,
         "control_worker": (
-            os.name == "posix"
-            and hasattr(os, "O_DIRECTORY")
-            and hasattr(os, "O_NOFOLLOW")
+            os.name == "posix" and hasattr(os, "O_DIRECTORY") and hasattr(os, "O_NOFOLLOW")
         ),
     }
     assert payload["artifacts"] == {

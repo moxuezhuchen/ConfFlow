@@ -65,7 +65,9 @@ def run_control_worker(
     control_service = open_control_service(root.path)
     aggregate = repository.read(run_id)
     if aggregate is None:
-        raise ExecutionServiceError(ErrorCode.UNKNOWN_RUN, "control worker cannot find the prepared run")
+        raise ExecutionServiceError(
+            ErrorCode.UNKNOWN_RUN, "control worker cannot find the prepared run"
+        )
     handoff_digest = _sha256_bytes(_canonical_json(payload))
     if handoff_digest != aggregate.input_manifest_digest:
         raise ExecutionServiceError(
@@ -120,7 +122,7 @@ def run_control_worker(
         if current.state is not RunState.QUEUED:
             raise ExecutionServiceError(
                 ErrorCode.INVALID_STATE_TRANSITION,
-                f"control worker requires queued state, got {current.state.value}"
+                f"control worker requires queued state, got {current.state.value}",
             )
 
         token = current.launch_token
@@ -247,7 +249,9 @@ def _load_handoff(
             raise ValueError("task.input_xyz must use the .xyz extension")
         work_dir = _safe_absolute_path(item["work_dir"], "task.work_dir")
         _validate_path(input_path, attempt_root, "task.input_xyz", kind="file")
-        _validate_path(work_dir, attempt_root, "task.work_dir", kind="directory", allow_missing=True)
+        _validate_path(
+            work_dir, attempt_root, "task.work_dir", kind="directory", allow_missing=True
+        )
         if _file_digest(input_path) != item["sha256"]:
             raise ValueError(f"input digest does not match task {item['task_id']}")
         tasks.append(
@@ -271,7 +275,9 @@ def _validate_attempt_root(root: StateRoot) -> Path:
         or metadata.st_uid != uid
         or stat.S_IMODE(metadata.st_mode) & (stat.S_IWGRP | stat.S_IWOTH)
     ):
-        raise ValueError("control worker state-root parent must be owner-controlled and non-writable")
+        raise ValueError(
+            "control worker state-root parent must be owner-controlled and non-writable"
+        )
     return attempt_root.resolve(strict=True)
 
 
@@ -409,9 +415,7 @@ def _publish_worker_sidecars(root: StateRoot, *, staged_input: str, work_dir: st
         Path(staged_input).with_name(f"{Path(staged_input).stem}min.xyz"),
     ):
         if not source.is_file():
-            raise FileNotFoundError(
-                f"worker completed without required sidecar: {source.name}"
-            )
+            raise FileNotFoundError(f"worker completed without required sidecar: {source.name}")
         destination = destination_root / source.name
         _validate_path(
             destination,

@@ -27,7 +27,9 @@ from confflow.control_worker import (
 )
 from confflow.core.exceptions import StopRequestedError
 
-pytestmark = pytest.mark.skipif(os.name != "posix", reason="control state-root contract requires POSIX")
+pytestmark = pytest.mark.skipif(
+    os.name != "posix", reason="control state-root contract requires POSIX"
+)
 
 
 def test_worker_module_exposes_the_process_entrypoint() -> None:
@@ -50,17 +52,20 @@ def test_worker_json_entrypoint_keeps_stdout_machine_readable(
         return RunState.COMPLETED
 
     monkeypatch.setattr("confflow.control_worker.run_control_worker", fake_worker)
-    assert main(
-        [
-            "--state-root",
-            "/tmp/state",
-            "--run-id",
-            "worker-json",
-            "--handoff",
-            "/tmp/handoff.json",
-            "--json",
-        ]
-    ) == 0
+    assert (
+        main(
+            [
+                "--state-root",
+                "/tmp/state",
+                "--run-id",
+                "worker-json",
+                "--handoff",
+                "/tmp/handoff.json",
+                "--json",
+            ]
+        )
+        == 0
+    )
     captured = capsys.readouterr()
     assert json.loads(captured.out) == {"run_id": "worker-json", "state": "completed"}
     assert "diagnostic" in captured.err
@@ -140,7 +145,14 @@ def _complete_fake_worker(kwargs: dict[str, object]) -> dict[str, bool]:
 
 
 def test_worker_handoff_digest_profile_matches_golden_fixture() -> None:
-    fixture_path = Path(__file__).parent / "fixtures" / "control_protocol" / "v1" / "golden" / "worker_handoff.json"
+    fixture_path = (
+        Path(__file__).parent
+        / "fixtures"
+        / "control_protocol"
+        / "v1"
+        / "golden"
+        / "worker_handoff.json"
+    )
     payload = json.loads(fixture_path.read_text(encoding="utf-8"))
     payload.pop("_schema")
     assert hashlib.sha256(_canonical_json(payload)).hexdigest() == (
@@ -159,7 +171,10 @@ def test_control_worker_consumes_existing_queued_token_without_prepare(tmp_path:
     handoff = {
         "content_schema": HANDOFF_SCHEMA,
         "run_id": "worker-run",
-        "workflow_config": {"path": str(config), "sha256": hashlib.sha256(config.read_bytes()).hexdigest()},
+        "workflow_config": {
+            "path": str(config),
+            "sha256": hashlib.sha256(config.read_bytes()).hexdigest(),
+        },
         "tasks": [
             {
                 "task_id": "methane",
@@ -205,7 +220,9 @@ def test_control_worker_consumes_existing_queued_token_without_prepare(tmp_path:
     assert state is RunState.COMPLETED
     assert service.status("worker-run").state is RunState.COMPLETED
     assert (tmp_path / "results" / "methane.txt").is_file()
-    assert [event.type for event in service._repository.read("worker-run").events] == [  # noqa: SLF001
+    assert [
+        event.type for event in service._repository.read("worker-run").events
+    ] == [  # noqa: SLF001
         "prepared",
         "queued",
         "running",
@@ -221,7 +238,10 @@ def test_control_worker_rejects_tampered_handoff_digest(tmp_path: Path) -> None:
     handoff = {
         "content_schema": HANDOFF_SCHEMA,
         "run_id": "worker-run",
-        "workflow_config": {"path": str(config), "sha256": hashlib.sha256(config.read_bytes()).hexdigest()},
+        "workflow_config": {
+            "path": str(config),
+            "sha256": hashlib.sha256(config.read_bytes()).hexdigest(),
+        },
         "tasks": [
             {
                 "task_id": "input",
@@ -391,7 +411,10 @@ def test_control_worker_rejects_handoff_paths_outside_private_attempt_root(tmp_p
     handoff = {
         "content_schema": HANDOFF_SCHEMA,
         "run_id": "worker-path-check",
-        "workflow_config": {"path": str(config), "sha256": hashlib.sha256(config.read_bytes()).hexdigest()},
+        "workflow_config": {
+            "path": str(config),
+            "sha256": hashlib.sha256(config.read_bytes()).hexdigest(),
+        },
         "tasks": [
             {
                 "task_id": "input",
@@ -429,7 +452,10 @@ def test_control_worker_rejects_symlinked_handoff_locator(tmp_path: Path) -> Non
     handoff = {
         "content_schema": HANDOFF_SCHEMA,
         "run_id": "worker-symlink-check",
-        "workflow_config": {"path": str(config), "sha256": hashlib.sha256(config.read_bytes()).hexdigest()},
+        "workflow_config": {
+            "path": str(config),
+            "sha256": hashlib.sha256(config.read_bytes()).hexdigest(),
+        },
         "tasks": [
             {
                 "task_id": "input",
@@ -459,7 +485,10 @@ def test_control_worker_recovers_a_running_attempt_after_lease_loss(tmp_path: Pa
     handoff = {
         "content_schema": HANDOFF_SCHEMA,
         "run_id": "worker-recover",
-        "workflow_config": {"path": str(config), "sha256": hashlib.sha256(config.read_bytes()).hexdigest()},
+        "workflow_config": {
+            "path": str(config),
+            "sha256": hashlib.sha256(config.read_bytes()).hexdigest(),
+        },
         "tasks": [
             {
                 "task_id": "input",
@@ -535,7 +564,10 @@ def test_control_worker_keeps_paused_attempt_until_formal_resume(tmp_path: Path)
     handoff = {
         "content_schema": HANDOFF_SCHEMA,
         "run_id": "worker-pause",
-        "workflow_config": {"path": str(config), "sha256": hashlib.sha256(config.read_bytes()).hexdigest()},
+        "workflow_config": {
+            "path": str(config),
+            "sha256": hashlib.sha256(config.read_bytes()).hexdigest(),
+        },
         "tasks": [
             {
                 "task_id": "input",

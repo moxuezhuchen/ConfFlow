@@ -86,9 +86,7 @@ class TokenLaunchLease:
                 # own process session.  A normal shell launch can otherwise
                 # leave the supervisor's process group in the marker and
                 # make a later worker unable to distinguish a live sibling.
-                "isolated_session": bool(
-                    hasattr(os, "getsid") and os.getsid(0) == os.getpid()
-                ),
+                "isolated_session": bool(hasattr(os, "getsid") and os.getsid(0) == os.getpid()),
             },
             sort_keys=True,
             separators=(",", ":"),
