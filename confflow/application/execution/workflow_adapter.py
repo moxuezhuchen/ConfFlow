@@ -210,7 +210,7 @@ class _AgentControlExecutor(WorkflowExecutor):
     """Cross-process control adapter for an agent-owned service repository."""
 
     def __init__(self, state_root: StateRoot) -> None:
-        self._runs_root = state_root.path.parent
+        self._state_root = state_root
 
     def ensure_launched(self, request: LaunchRequest) -> LaunchReceipt:
         """Leave actual launch to the worker; control commands never launch work."""
@@ -218,9 +218,7 @@ class _AgentControlExecutor(WorkflowExecutor):
 
     def ensure_cancelled(self, request: CancelRequest) -> CancelReceipt:
         """Signal the worker, while the service owns the terminal transition."""
-        run_dir = self._runs_root / f"run_{request.run_id}"
-        beacon = run_dir / "PAUSE"
-        beacon.parent.mkdir(parents=True, exist_ok=True)
+        beacon = self._state_root.ensure_run_paths(request.run_id).work / "PAUSE"
         beacon.touch()
         return CancelReceipt(confirmed=True)
 

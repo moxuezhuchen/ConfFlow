@@ -124,6 +124,48 @@ class ExecutionService:
             )
         return self._ensure_launch(record)
 
+    def recover_abandoned_launch(self, run_id: str, *, token: str) -> RunSnapshot:
+        """Requeue a running token after its external worker lease disappeared.
+
+        The control worker owns the kernel lease that proves the prior process
+        is gone before calling this method.  The service still performs the
+        durable compare-and-swap and creates a fresh attempt token, so an old
+        lifecycle callback cannot finish the recovered attempt.
+        """
+        record = self._require(run_id)
+        if record.state is not RunState.RUNNING or record.launch_token != token:
+            return record.snapshot()
+        if record.cancel_pending:
+            raise ExecutionServiceError(
+                ErrorCode.INVALID_STATE_TRANSITION,
+                f"Cannot recover a cancellation-pending run: {run_id}",
+            )
+        attempt = record.attempt + 1
+        next_token = f"{run_id}.launch.{attempt}"
+        checkpoint_id = record.checkpoint.checkpoint_id if record.checkpoint is not None else None
+        try:
+            return self._repository.compare_and_mutate(
+                run_id,
+                record.revision,
+                lambda current: (
+                    replace(
+                        current,
+                        state=RunState.QUEUED,
+                        attempt=attempt,
+                        launch_token=next_token,
+                        launch_checkpoint=checkpoint_id,
+                        cancel_token=None,
+                        cancel_pending=False,
+                    ),
+                    "requeued",
+                ),
+            ).snapshot()
+        except RepositoryConflict:
+            latest = self._require(run_id)
+            return latest.snapshot()
+        except RepositoryMutationError as error:
+            raise ExecutionServiceError(ErrorCode.INTERNAL, str(error), retryable=True) from error
+
     def validate_launch_request(self, request: LaunchRequest) -> RunSnapshot:
         """Validate a formal hand-off against the current durable run facts.
 

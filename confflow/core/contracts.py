@@ -72,7 +72,13 @@ def cli_output_to_txt(input_path: str) -> Iterator[str]:
     """
     output_path = output_txt_path_for_input(input_path)
 
-    with open(output_path, "w", encoding="utf-8") as out_f:
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    output_fd = os.open(
+        output_path,
+        os.O_WRONLY | os.O_CREAT | os.O_TRUNC | nofollow,
+        0o600,
+    )
+    with os.fdopen(output_fd, "w", encoding="utf-8") as out_f:
         stripped = _AnsiStripWriter(out_f)
         try:
             with redirect_stdout(stripped), redirect_stderr(stripped):  # type: ignore[arg-type]

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "confflow"
-version = "1.5.1"
+version = "1.5.2"
 description = "Automated molecular conformation search workflow engine for computational chemistry"
 readme = "README.md"
 license = {text = "MIT"}
@@ -80,6 +80,7 @@ confts = "confflow.confts:main"
 confgen = "confflow.blocks.confgen:main"
 confrefine = "confflow.blocks.refine:main"
 confflow-agent = "confflow.agent.cli:main"
+confflow-control-worker = "confflow.control_worker:main"
 confflow-fixture-agent = "confflow.fixture_agent:main"
 
 [project.urls]

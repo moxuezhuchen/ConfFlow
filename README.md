@@ -57,13 +57,13 @@ Requirements and packaging notes:
 - RDKit is required
 - `numba` is optional and only used for acceleration when installed
 
-## ConfFlow ↔ JobDesk Capability Handshake (v1.4.6)
+## ConfFlow ↔ JobDesk Capability Handshake (v1.5.2 candidate)
 
-ConfFlow 1.4.6 implements a version/capability probe used by JobDesk to
+ConfFlow 1.5.2 candidate implements a version/capability probe used by JobDesk to
 validate compatibility before uploading or submitting workflow tasks:
 
 ```bash
-confflow --version          # prints "1.4.6"
+confflow --version          # prints "1.5.2"
 confflow --capabilities --json
 ```
 
@@ -72,11 +72,12 @@ Capability contract (JSON, schema version **4**):
 ```json
 {
   "schema_version": 4,
-  "version": "1.4.6",
+  "version": "1.5.2",
   "capabilities": {
     "workflow_state": true,
     "resume": true,
-    "dag": true
+    "dag": true,
+    "control_worker": true
   },
   "artifacts": {
     "run_summary": "run_summary.json",
@@ -101,13 +102,13 @@ Capability contract (JSON, schema version **4**):
   },
   "producer": {
     "package": "confflow",
-    "version": "1.4.6",
+    "version": "1.5.2",
     "build": {
       "commit": "<40-char git commit>",
       "dirty": false
     },
     "wheel": {
-      "filename": "confflow-1.4.6-py3-none-any.whl",
+      "filename": "confflow-1.5.2-py3-none-any.whl",
       "sha256": "<external SHA-256SUMS digest>"
     },
     "install_provenance": {
@@ -123,8 +124,30 @@ Capability contract (JSON, schema version **4**):
 }
 ```
 
-JobDesk requires `confflow>=1.4.5,<2.0`, validates the capability contract
-before the first input upload, and repeats the preflight at submit time.
+The candidate's `control_worker` value is `true` only on POSIX hosts with
+`O_DIRECTORY` and `O_NOFOLLOW`; Windows installations report `false` and must
+not accept the worker handoff.
+
+Stable JobDesk remains pinned to ConfFlow v1.5.0; v1.4.6 is rollback-only.
+The v1.5.2 candidate must be paired with a matching candidate consumer that
+validates this capability contract before the first input upload and repeats
+the preflight at submit time.
+
+The unpublished `confflow-control-worker` candidate is a producer-owned
+handoff, not an agent-queue compatibility layer. Its `prepare.input_manifest`
+locator must contain the canonical `worker-handoff.schema.json` envelope and
+the persisted digest must be the envelope digest. The envelope is limited to
+one task; a batch must be split before prepare. The worker stages the validated
+configuration and input bytes under the private StateRoot, preserves the
+original input basename for `{basename}.txt` and `{basename}min.xyz`, and
+publishes those fixed sidecars beside the task work directory (the remote
+result base) while keeping the normal JSON/manifest artifacts in the task
+work directory.
+Every worker that may be recovered after a crash must be launched in its own
+session, for example with `setsid`; a marker from an ordinary shell process
+group is intentionally not auto-recovered. Stable JobDesk has no consumer for
+this unpublished handoff and must not silently send its private
+`.jobdesk-control/input-manifest.json` to it.
 
 ### v4 contract additions
 
@@ -137,6 +160,10 @@ before the first input upload, and repeats the preflight at submit time.
 * **`executable`** block reports the resolved on-disk `confflow` path,
   its own SHA-256 (so a tampered or locally-rebuilt executable is
   detectable), and the `python` interpreter that hosts the venv.
+* **`control_worker`** advertises the unpublished producer-owned worker
+  handoff. It is `true` only on POSIX hosts with secure directory-descriptor
+  primitives; Windows installs report `false` and must not accept worker
+  handoffs.
 * **Six artifacts**, in addition to the v3 set:
   * `output_manifest` — machine-readable multi-terminal output
     index written alongside the run artifacts.

@@ -35,6 +35,7 @@ _OPERATIONS = frozenset(
 _SCHEMA_FILES = frozenset(
     {
         "common.schema.json",
+        "worker-handoff.schema.json",
         "requests.schema.json",
         "responses.schema.json",
         "input-manifest.schema.json",

@@ -6,11 +6,11 @@ on:
       tag:
         description: Annotated tag to release
         required: true
-        default: v1.5.1
+        default: v1.5.2
         type: string
   push:
     tags:
-      - "v1.5.1"
+      - "v1.5.2"
 
 permissions:
   contents: write
@@ -45,7 +45,7 @@ jobs:
           EXPECTED_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
         run: |
           set -euo pipefail
-          test "$EXPECTED_TAG" = "v1.5.1"
+          test "$EXPECTED_TAG" = "v1.5.2"
           test -z "$(git status --porcelain)"
           test "$(git rev-parse HEAD)" = "$(git rev-parse "$EXPECTED_TAG^{commit}")"
 
@@ -78,21 +78,21 @@ jobs:
           from pathlib import Path
 
           dist = Path("dist")
-          wheels = sorted(dist.glob("confflow-1.5.1-*.whl"))
-          sdists = sorted(dist.glob("confflow-1.5.1.tar.gz"))
+          wheels = sorted(dist.glob("confflow-1.5.2-*.whl"))
+          sdists = sorted(dist.glob("confflow-1.5.2.tar.gz"))
           if len(wheels) != 1 or len(sdists) != 1:
               raise SystemExit(
-                  f"expected exactly one 1.5.1 wheel and sdist; got {wheels} / {sdists}"
+                  f"expected exactly one 1.5.2 wheel and sdist; got {wheels} / {sdists}"
               )
           wheel = wheels[0]
           expected_commit = subprocess.check_output(
               ["git", "rev-parse", "HEAD"], text=True
           ).strip()
           with zipfile.ZipFile(wheel) as archive:
-              metadata = archive.read("confflow-1.5.1.dist-info/METADATA").decode()
+              metadata = archive.read("confflow-1.5.2.dist-info/METADATA").decode()
               build_module = ast.parse(archive.read("confflow/__build__.py").decode())
-          if "Version: 1.5.1" not in metadata:
-              raise SystemExit("wheel metadata does not declare version 1.5.1")
+          if "Version: 1.5.2" not in metadata:
+              raise SystemExit("wheel metadata does not declare version 1.5.2")
           values = {}
           for node in build_module.body:
               target = node.target if isinstance(node, ast.AnnAssign) else None
@@ -109,7 +109,7 @@ jobs:
         run: |
           set -euo pipefail
           cyclonedx-py requirements \
-            release/confflow-1.5.1-py312-linux-x86_64.lock \
+            release/confflow-1.5.2-py312-linux-x86_64.lock \
             --output-format JSON \
             --output-file dist/sbom.cdx.json
           test -s dist/sbom.cdx.json
@@ -118,7 +118,7 @@ jobs:
         id: attest
         uses: actions/attest-build-provenance@v2
         with:
-          subject-path: dist/confflow-1.5.1-*.whl
+          subject-path: dist/confflow-1.5.2-*.whl
           show-summary: true
 
       - name: Export attestation bundle and release attestation record
@@ -142,7 +142,7 @@ jobs:
               return hashlib.sha256(path.read_bytes()).hexdigest()
 
           dist = Path("dist")
-          wheel = next(dist.glob("confflow-1.5.1-*.whl"))
+          wheel = next(dist.glob("confflow-1.5.2-*.whl"))
           bundle = dist / "attestation.bundle.json"
           commit = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
           payload = {
@@ -178,18 +178,18 @@ jobs:
               return hashlib.sha256(path.read_bytes()).hexdigest()
 
           dist = Path("dist")
-          wheel = next(dist.glob("confflow-1.5.1-*.whl"))
-          sdist = next(dist.glob("confflow-1.5.1.tar.gz"))
+          wheel = next(dist.glob("confflow-1.5.2-*.whl"))
+          sdist = next(dist.glob("confflow-1.5.2.tar.gz"))
           sbom = dist / "sbom.cdx.json"
           attestation = dist / "attestation.json"
           attestation_bundle = dist / "attestation.bundle.json"
-          lock = Path("release/confflow-1.5.1-py312-linux-x86_64.lock")
-          wheelhouse_manifest = Path("release/confflow-1.5.1-py312-linux-x86_64.SHA256SUMS")
+          lock = Path("release/confflow-1.5.2-py312-linux-x86_64.lock")
+          wheelhouse_manifest = Path("release/confflow-1.5.2-py312-linux-x86_64.SHA256SUMS")
           commit = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
           payload = {
               "schema": "confflow.release-provenance.v1",
               "package": "confflow",
-              "version": "1.5.1",
+              "version": "1.5.2",
               "repository": os.environ["GITHUB_REPOSITORY"],
               "tag": os.environ["EXPECTED_TAG"],
               "commit": commit,

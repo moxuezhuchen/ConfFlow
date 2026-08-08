@@ -12,8 +12,16 @@ from importlib.metadata import PackageNotFoundError, version
 # Keep machine-readable CLI probes free of import-time warning noise while
 # preserving the normal console logging behavior for workflow execution.
 _CLI_ARGS = sys.argv[1:]
-_HANDSHAKE_PROBE = any(flag in _CLI_ARGS for flag in ("--version", "--capabilities")) or (
-    _CLI_ARGS[:1] == ["control"] and "--json" in _CLI_ARGS
+_CONTROL_WORKER_JSON = (
+    "--json" in _CLI_ARGS
+    and "--state-root" in _CLI_ARGS
+    and "--run-id" in _CLI_ARGS
+    and "--handoff" in _CLI_ARGS
+)
+_HANDSHAKE_PROBE = (
+    any(flag in _CLI_ARGS for flag in ("--version", "--capabilities"))
+    or (_CLI_ARGS[:1] == ["control"] and "--json" in _CLI_ARGS)
+    or _CONTROL_WORKER_JSON
 )
 if _HANDSHAKE_PROBE:
     logging.disable(logging.WARNING)
@@ -21,7 +29,7 @@ if _HANDSHAKE_PROBE:
 try:
     __version__ = version("confflow")
 except PackageNotFoundError:
-    __version__ = "1.5.1"
+    __version__ = "1.5.2"
 __author__ = "ConfFlow Team"
 
 # ============================================================================

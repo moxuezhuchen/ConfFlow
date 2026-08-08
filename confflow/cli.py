@@ -126,7 +126,18 @@ def _build_capability_payload(executable_override: str | None = None) -> dict[st
     return {
         "schema_version": _CAPABILITY_SCHEMA_VERSION,
         "version": version,
-        "capabilities": {"workflow_state": True, "resume": True, "dag": True},
+        "capabilities": {
+            "workflow_state": True,
+            "resume": True,
+            "dag": True,
+            # The external worker relies on POSIX O_DIRECTORY/O_NOFOLLOW
+            # state-root primitives. Keep the base package cross-platform,
+            # but advertise the worker only where its fail-closed path
+            # contract can actually run.
+            "control_worker": (
+                os.name == "posix" and hasattr(os, "O_DIRECTORY") and hasattr(os, "O_NOFOLLOW")
+            ),
+        },
         "artifacts": {
             "run_summary": RUN_SUMMARY_FILE,
             "workflow_stats": WORKFLOW_STATS_FILE,
