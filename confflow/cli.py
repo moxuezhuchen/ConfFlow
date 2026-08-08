@@ -126,7 +126,12 @@ def _build_capability_payload(executable_override: str | None = None) -> dict[st
     return {
         "schema_version": _CAPABILITY_SCHEMA_VERSION,
         "version": version,
-        "capabilities": {"workflow_state": True, "resume": True, "dag": True},
+        "capabilities": {
+            "workflow_state": True,
+            "resume": True,
+            "dag": True,
+            "control_worker": True,
+        },
         "artifacts": {
             "run_summary": RUN_SUMMARY_FILE,
             "workflow_stats": WORKFLOW_STATS_FILE,

@@ -1,0 +1,17 @@
+{
+  "_schema": "worker-handoff.schema.json",
+  "content_schema": "confflow.control.worker-handoff.v1",
+  "run_id": "run-20260731-001",
+  "workflow_config": {
+    "path": "/tmp/jobdesk/run-20260731-001/../workflow.yaml",
+    "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  },
+  "tasks": [
+    {
+      "task_id": "methane",
+      "input_xyz": "/tmp/jobdesk/run-20260731-001/methane.xyz",
+      "work_dir": "/tmp/jobdesk/run-20260731-001/methane_confflow_work",
+      "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    }
+  ]
+}

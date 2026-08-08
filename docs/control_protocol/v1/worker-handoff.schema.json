@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.confflow.dev/control/v1/worker-handoff.schema.json",
+  "title": "ConfFlow control v1 external worker handoff",
+  "type": "object",
+  "unevaluatedProperties": false,
+  "required": ["content_schema", "run_id", "workflow_config", "tasks"],
+  "properties": {
+    "content_schema": {"const": "confflow.control.worker-handoff.v1"},
+    "run_id": {"$ref": "common.schema.json#/$defs/run_id"},
+    "workflow_config": {"$ref": "#/$defs/absolute_locator"},
+    "tasks": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 1,
+      "items": {"$ref": "#/$defs/task"}
+    }
+  },
+  "$defs": {
+    "absolute_path": {
+      "type": "string",
+      "pattern": "^/(?!.*\\\\)(?!.*//)(?!.*(?:^|/)\\.(?:/|$))(?!.*(?:^|/)\\.\\.(?:/|$))[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*$"
+    },
+    "absolute_locator": {
+      "type": "object",
+      "unevaluatedProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": {"$ref": "#/$defs/absolute_path"},
+        "sha256": {"$ref": "common.schema.json#/$defs/digest"}
+      }
+    },
+    "task": {
+      "type": "object",
+      "unevaluatedProperties": false,
+      "required": ["task_id", "input_xyz", "work_dir", "sha256"],
+      "properties": {
+        "task_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"},
+        "input_xyz": {"$ref": "#/$defs/absolute_path"},
+        "work_dir": {"$ref": "#/$defs/absolute_path"},
+        "sha256": {"$ref": "common.schema.json#/$defs/digest"}
+      }
+    }
+  }
+}

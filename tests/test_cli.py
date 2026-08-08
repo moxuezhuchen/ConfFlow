@@ -936,6 +936,7 @@ def test_capabilities_subprocess_stdout_is_pure_json():
         "workflow_state": True,
         "resume": True,
         "dag": True,
+        "control_worker": True,
     }
     assert payload["artifacts"] == {
         "run_summary": RUN_SUMMARY_FILE,

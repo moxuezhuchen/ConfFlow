@@ -103,6 +103,7 @@ def test_cli_capability_payload_uses_contract_constants():
         "workflow_state": True,
         "resume": True,
         "dag": True,
+        "control_worker": True,
     }
     assert payload["producer"] == {
         "package": "confflow",
