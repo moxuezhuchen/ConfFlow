@@ -44,6 +44,64 @@ jobs:
           python -m pip install "$wheel"
           python -c 'import confflow; print(confflow.__version__)'
 
+      - name: Verify candidate capability and bundled schema contract
+        env:
+          CANDIDATE_COMMIT: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          wheel="$(find "$RUNNER_TEMP/confflow-dist" -maxdepth 1 -name 'confflow-*.whl' -print -quit)"
+          wheel_sha="$(sha256sum "$wheel" | awk '{print $1}')"
+          JOBDESK_SOURCE="$PWD/jobdesk" CANDIDATE_WHEEL="$wheel" CANDIDATE_WHEEL_SHA="$wheel_sha" python - <<'PY'
+          import hashlib
+          import json
+          import os
+          import subprocess
+          import sys
+          from pathlib import Path
+
+          sys.path.insert(0, os.environ["JOBDESK_SOURCE"] + "/src")
+          from jobdesk_app.core.confflow_preflight import (
+              parse_confflow_capabilities,
+              validate_confflow_capabilities,
+          )
+
+          raw = subprocess.check_output(["confflow", "--capabilities", "--json"], text=True)
+          payload = json.loads(raw)
+          capabilities = parse_confflow_capabilities(raw)
+          validate_confflow_capabilities(capabilities, require_dag=True)
+          expected_commit = os.environ["CANDIDATE_COMMIT"]
+          build = payload.get("build")
+          producer = payload.get("producer")
+          if not isinstance(build, dict) or build.get("commit") != expected_commit or build.get("dirty") is not False:
+              raise AssertionError(f"candidate build provenance mismatch: {build!r}")
+          if not isinstance(producer, dict) or producer.get("package") != "confflow":
+              raise AssertionError(f"candidate producer provenance missing: {producer!r}")
+          producer_build = producer.get("build")
+          if not isinstance(producer_build, dict) or producer_build != build:
+              raise AssertionError(f"producer/build provenance mismatch: {producer_build!r} != {build!r}")
+          wheel = producer.get("wheel")
+          if isinstance(wheel, dict):
+              expected_name = Path(os.environ["CANDIDATE_WHEEL"]).name
+              if wheel.get("filename") not in {expected_name, None}:
+                  raise AssertionError(f"candidate wheel filename mismatch: {wheel!r}")
+              if wheel.get("sha256") not in {os.environ["CANDIDATE_WHEEL_SHA"], None}:
+                  raise AssertionError(f"candidate wheel digest mismatch: {wheel!r}")
+
+          schema_root = Path(sys.prefix) / "share" / "confflow" / "control_protocol" / "v1"
+          required = ("common.schema.json", "requests.schema.json", "responses.schema.json", "input-manifest.schema.json")
+          schemas = {}
+          for name in required:
+              path = schema_root / name
+              if not path.is_file():
+                  raise AssertionError(f"candidate wheel omitted schema bundle member: {path}")
+              schemas[name] = json.loads(path.read_text(encoding="utf-8"))
+          if schemas["requests.schema.json"].get("$id", "").split("/")[-2:] != ["v1", "requests.schema.json"]:
+              raise AssertionError("candidate request schema id is not the v1 producer bundle")
+          if schemas["responses.schema.json"].get("$id", "").split("/")[-2:] != ["v1", "responses.schema.json"]:
+              raise AssertionError("candidate response schema id is not the v1 producer bundle")
+          print(json.dumps({"version": capabilities.version, "commit": expected_commit, "schema_members": list(required)}))
+          PY
+
       - name: Install Qt runtime libraries
         run: |
           sudo apt-get update
