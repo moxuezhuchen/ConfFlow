@@ -37,6 +37,7 @@ from .application.execution.workflow_adapter import (
 from .control import _validator
 from .core.contracts import cli_output_to_txt, output_txt_path_for_input
 from .core.exceptions import StopRequestedError
+from .core.logging import redirect_logging_streams
 from .workflow.engine import run_workflow
 
 HANDOFF_SCHEMA = "confflow.control.worker-handoff.v1"
@@ -198,6 +199,7 @@ def main(args_list: Sequence[str] | None = None) -> int:
     if not args.json:
         parser.error("--json is required")
     json_stream = sys.stdout
+    redirect_logging_streams(sys.stderr, include_root=True)
     try:
         with redirect_stdout(sys.stderr), redirect_stderr(sys.stderr):
             state = run_control_worker(
@@ -208,6 +210,10 @@ def main(args_list: Sequence[str] | None = None) -> int:
     except Exception as error:  # noqa: BLE001 - process boundary maps one failure to stderr
         print(f"control worker failed: {error}", file=sys.stderr)
         return 1
+    finally:
+        # Keep the singleton logger away from pytest/capsys or other temporary
+        # streams that may be closed after this process-boundary call returns.
+        redirect_logging_streams(getattr(sys, "__stdout__", json_stream), include_root=True)
     print(
         json.dumps({"run_id": args.run_id, "state": state.value}, separators=(",", ":")),
         file=json_stream,
