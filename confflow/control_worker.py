@@ -289,12 +289,15 @@ def _token_lease(root: StateRoot, run_id: str, token: str) -> TokenLaunchLease:
 
 def _complete_owner_marker(owner: dict[str, object] | None) -> bool:
     """Require a marker produced by the lease-aware worker implementation."""
-    return bool(
-        isinstance(owner, dict)
-        and isinstance(owner.get("pid"), int)
-        and owner["pid"] > 0
-        and isinstance(owner.get("pgid"), int)
-        and owner["pgid"] > 0
+    if not isinstance(owner, dict):
+        return False
+    pid = owner.get("pid")
+    pgid = owner.get("pgid")
+    return (
+        isinstance(pid, int)
+        and pid > 0
+        and isinstance(pgid, int)
+        and pgid > 0
         and owner.get("isolated_session") is True
     )
 
