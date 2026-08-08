@@ -189,8 +189,5 @@ def test_real_runtime_manifest_preserves_multitag_pillow_filename():
     """The committed wheelhouse manifest must match pip's full wheel name."""
     manifest = parse_wheelhouse_manifest(REAL_MANIFEST)
 
-    assert (
-        "pillow-12.3.0-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl"
-        in manifest
-    )
+    assert "pillow-12.3.0-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl" in manifest
     assert "pillow-12.3.0-cp312-cp312-manylinux_2_27_x86_64.whl" not in manifest
