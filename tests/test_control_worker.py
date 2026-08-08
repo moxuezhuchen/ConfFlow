@@ -15,7 +15,12 @@ import pytest
 from confflow.application.execution.launch_lease import TokenLaunchLease
 from confflow.application.execution.models import ExecutableIdentity, PrepareRequest, RunState
 from confflow.application.execution.workflow_adapter import measure_executable, open_control_service
-from confflow.control_worker import HANDOFF_SCHEMA, _has_live_work_process, run_control_worker
+from confflow.control_worker import (
+    HANDOFF_SCHEMA,
+    _canonical_json,
+    _has_live_work_process,
+    run_control_worker,
+)
 from confflow.core.exceptions import StopRequestedError
 
 pytestmark = pytest.mark.skipif(os.name != "posix", reason="control state-root contract requires POSIX")
@@ -82,6 +87,15 @@ def test_worker_recovery_detects_a_live_calculation_child(tmp_path: Path) -> Non
 
 def _canonical(value: object) -> bytes:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+
+
+def test_worker_handoff_digest_profile_matches_golden_fixture() -> None:
+    fixture_path = Path(__file__).parent / "fixtures" / "control_protocol" / "v1" / "golden" / "worker_handoff.json"
+    payload = json.loads(fixture_path.read_text(encoding="utf-8"))
+    payload.pop("_schema")
+    assert hashlib.sha256(_canonical_json(payload)).hexdigest() == (
+        "9e9ad5740a2cf859f3a4cadaa7be7c1958ccd73f27ba30c72590022a38fc1eb4"
+    )
 
 
 def test_control_worker_consumes_existing_queued_token_without_prepare(tmp_path: Path) -> None:
@@ -195,6 +209,42 @@ def test_control_worker_rejects_tampered_handoff_digest(tmp_path: Path) -> None:
         assert "digest" in str(error)
     else:  # pragma: no cover - defensive assertion
         raise AssertionError("tampered handoff unexpectedly executed")
+
+
+def test_control_worker_rejects_non_xyz_input_locator(tmp_path: Path) -> None:
+    config = tmp_path / "workflow.yaml"
+    input_file = tmp_path / "input.txt"
+    config.write_text("steps: []\n", encoding="utf-8")
+    input_file.write_text("not xyz\n", encoding="utf-8")
+    handoff = {
+        "content_schema": HANDOFF_SCHEMA,
+        "run_id": "worker-extension-check",
+        "workflow_config": {
+            "path": str(config),
+            "sha256": hashlib.sha256(config.read_bytes()).hexdigest(),
+        },
+        "tasks": [
+            {
+                "task_id": "input",
+                "input_xyz": str(input_file),
+                "work_dir": str(tmp_path / "work"),
+                "sha256": hashlib.sha256(input_file.read_bytes()).hexdigest(),
+            }
+        ],
+    }
+    handoff_path = tmp_path / "handoff.json"
+    handoff_path.write_bytes(_canonical(handoff))
+    state_root = tmp_path / "state"
+    state_root.mkdir()
+    os.chmod(state_root, 0o700)
+
+    with pytest.raises(ValueError, match=r"\.xyz"):
+        run_control_worker(
+            state_root=state_root,
+            run_id="worker-extension-check",
+            handoff_path=handoff_path,
+            workflow_runner=lambda **_: {"ok": True},
+        )
 
 
 def test_worker_sidecar_failure_marks_attempt_failed_before_completion(

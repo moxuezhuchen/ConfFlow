@@ -28,6 +28,14 @@ consumer contract is published, JobDesk remains unintegrated with this worker.
 The candidate envelope has `tasks.maxItems: 1`; batched JobDesk input must be
 split into one handoff/run per task or wait for a separately versioned batch
 extension. The worker never truncates a batch to `tasks[0]`.
+The handoff digest is SHA-256 over UTF-8 bytes produced by
+`json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+allow_nan=False)` after removing fixture-only `_schema` metadata. This exact
+profile is locked by the golden-fixture digest test and must be reproduced by
+candidate consumers; it is not the RFC 8785 request-digest profile.
+Each `task.input_xyz` must retain the `.xyz` suffix; other input formats are
+not accepted by this worker boundary because the report sidecar uses the same
+basename.
 After a successful engine return, the worker publishes `{basename}.txt` and
 `{basename}min.xyz` in the parent directory of the task `work_dir` (the remote
 result base used by the JobDesk download contract); the JSON/state/manifest

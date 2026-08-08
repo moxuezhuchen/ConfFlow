@@ -231,6 +231,8 @@ def _load_handoff(
     tasks: list[dict[str, str]] = []
     for item in payload["tasks"]:
         input_path = _safe_absolute_path(item["input_xyz"], "task.input_xyz")
+        if Path(input_path).suffix.lower() != ".xyz":
+            raise ValueError("task.input_xyz must use the .xyz extension")
         work_dir = _safe_absolute_path(item["work_dir"], "task.work_dir")
         _validate_path(input_path, attempt_root, "task.input_xyz", kind="file")
         _validate_path(work_dir, attempt_root, "task.work_dir", kind="directory", allow_missing=True)
@@ -397,7 +399,14 @@ def _publish_worker_sidecars(root: StateRoot, *, staged_input: str, work_dir: st
         if not source.is_file():
             continue
         destination = destination_root / source.name
-        if source.resolve(strict=False) == destination.resolve(strict=False):
+        _validate_path(
+            destination,
+            attempt_root,
+            "worker sidecar",
+            kind="file",
+            allow_missing=True,
+        )
+        if source == destination:
             continue
         _stage_file(source, destination, expected_digest=_file_digest(str(source)))
 

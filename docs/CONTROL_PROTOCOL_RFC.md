@@ -109,6 +109,11 @@ task (`maxItems: 1`), so a consumer must split a batch before prepare. This
 mapping is candidate-only; stable JobDesk must not send its private
 `.jobdesk-control/input-manifest.json` to the candidate worker or claim that
 the two digests are interchangeable.
+The candidate handoff digest is SHA-256 of UTF-8 JSON serialized with sorted
+keys, `ensure_ascii=false`, separators `(',', ':')`, and `allow_nan=false`
+after removing fixture-only `_schema` metadata. This is a candidate-specific
+digest profile, distinct from the RFC 8785 request digest, and is locked by
+the worker golden fixture.
 The candidate preserves the input basename, publishes `{basename}.txt` and
 `{basename}min.xyz` in the parent of the task `work_dir`, and keeps JSON/state/
 manifest files in `work_dir`; these fixed sidecars are verified before the
