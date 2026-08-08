@@ -112,6 +112,10 @@ jobs:
             libxkbcommon0 \
             libxkbcommon-x11-0
 
+      - name: Run producer schema fixture suite
+        working-directory: confflow
+        run: python -m pytest -q tests/test_control_protocol_schema.py
+
       - name: Run consumer contract suite
         working-directory: jobdesk
         run: |
