@@ -97,11 +97,15 @@ def run_control_worker(
                 sleep(1.0)
                 continue
             try:
-                if _has_live_work_process(tasks[0]["work_dir"]):
+                previous_owner = lease.previous_owner
+                if not _complete_owner_marker(previous_owner) or _has_live_work_process(
+                    tasks[0]["work_dir"], owner=previous_owner
+                ):
                     # A crashed worker may leave a Gaussian/ORCA child alive.
-                    # Never requeue while a process still has this attempt's
-                    # work directory as its cwd; an operator/supervisor must
-                    # drain that child before retrying.
+                    # Never requeue unless the prior worker identity is known
+                    # and no process remains in its process group or attempt
+                    # directory; an operator/supervisor must drain unknown or
+                    # detached children before retrying.
                     sleep(1.0)
                     continue
                 recovered = control_service.recover_abandoned_launch(run_id, token=token)
@@ -256,9 +260,30 @@ def _token_lease(root: StateRoot, run_id: str, token: str) -> TokenLaunchLease:
     return TokenLaunchLease(paths.staging.parent.parent, run_id, token)
 
 
-def _has_live_work_process(work_dir: str) -> bool:
-    """Fail closed when another process still owns the attempt work directory."""
+def _complete_owner_marker(owner: dict[str, object] | None) -> bool:
+    """Require a marker produced by the lease-aware worker implementation."""
+    return bool(
+        isinstance(owner, dict)
+        and isinstance(owner.get("pid"), int)
+        and owner["pid"] > 0
+        and isinstance(owner.get("pgid"), int)
+        and owner["pgid"] > 0
+    )
+
+
+def _has_live_work_process(work_dir: str, *, owner: dict[str, object] | None = None) -> bool:
+    """Fail closed when a prior worker group or child owns the attempt directory."""
     target = Path(work_dir).resolve(strict=False)
+    owner_pgid = owner.get("pgid") if isinstance(owner, dict) else None
+    if isinstance(owner_pgid, int) and owner_pgid > 0 and hasattr(os, "killpg"):
+        try:
+            os.killpg(owner_pgid, 0)
+        except ProcessLookupError:
+            pass
+        except PermissionError:
+            return True
+        else:
+            return True
     for process in psutil.process_iter(["pid", "cwd"]):
         if process.info.get("pid") == os.getpid():
             continue

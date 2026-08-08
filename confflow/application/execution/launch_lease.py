@@ -27,11 +27,17 @@ class TokenLaunchLease:
             raise ValueError("worker lease identifiers contain unsafe characters")
         self._path = Path(runs_root) / f"run_{run_id}" / f"control-worker.claim.{token}"
         self._fd: int | None = None
+        self._previous_owner: dict[str, object] | None = None
 
     @property
     def path(self) -> Path:
         """Return the diagnostic lease marker path."""
         return self._path
+
+    @property
+    def previous_owner(self) -> dict[str, object] | None:
+        """Return the last worker identity recorded before this claim."""
+        return None if self._previous_owner is None else dict(self._previous_owner)
 
     def acquire(self) -> bool:
         """Acquire the token lease, returning false for a live competing owner."""
@@ -60,8 +66,23 @@ class TokenLaunchLease:
             except OSError:
                 os.close(fd)
                 return False
+        os.lseek(fd, 0, os.SEEK_SET)
+        existing = os.read(fd, 64 * 1024)
+        if existing:
+            try:
+                marker = json.loads(existing.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                marker = None
+            self._previous_owner = marker if isinstance(marker, dict) else {}
+        else:
+            self._previous_owner = None
         payload = json.dumps(
-            {"run_id": self._path.parent.name[4:], "token": self._path.name.removeprefix("control-worker.claim.")},
+            {
+                "run_id": self._path.parent.name[4:],
+                "token": self._path.name.removeprefix("control-worker.claim."),
+                "pid": os.getpid(),
+                "pgid": os.getpgid(0) if hasattr(os, "getpgid") else None,
+            },
             sort_keys=True,
             separators=(",", ":"),
         ).encode("utf-8")

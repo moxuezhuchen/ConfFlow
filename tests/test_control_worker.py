@@ -309,6 +309,7 @@ def test_control_worker_recovers_a_running_attempt_after_lease_loss(tmp_path: Pa
         capture_output=True,
         text=True,
         timeout=30,
+        start_new_session=True,
     )
     assert crashed.returncode == 42
     abandoned = service._repository.read("worker-recover")  # noqa: SLF001

@@ -125,7 +125,9 @@ producer may atomically move that same attempt from `running` to `queued`,
 increment `attempt`, and issue a fresh launch token. This recovery transition
 is not exposed as a v1 control operation and is not part of the pinned stable
 consumer contract; old-token lifecycle callbacks are rejected by the token
-compare. A consumer may only adopt it together with the versioned worker
+compare. Recovery is fail-closed if the prior lease marker lacks its worker
+PID/process-group identity or if that group/attempt directory still has a
+live process. A consumer may only adopt it together with the versioned worker
 handoff release and its candidate contract tests.
 
 ## Idempotency and recovery

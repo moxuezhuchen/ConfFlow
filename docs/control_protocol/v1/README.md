@@ -22,10 +22,13 @@ The unpublished worker candidate adds one producer-internal recovery event:
 when a worker loses its per-token kernel lease while an attempt is `running`,
 the next worker may atomically move that attempt back to `queued`, increment
 the attempt number, issue a fresh launch token, and emit `requeued`. The old
-token can no longer commit lifecycle callbacks. This is not a new public
-control operation or a stable v1 state transition; it is part of the candidate
-worker release and must be versioned and covered by its candidate contract
-tests before any consumer pin changes.
+token can no longer commit lifecycle callbacks. Recovery is fail-closed when
+the prior lease marker lacks its worker PID/process-group identity or when a
+prior process group or descendant still owns the attempt work directory; an
+operator/supervisor must drain that process before retrying. This is not a new
+public control operation or a stable v1 state transition; it is part of the
+candidate worker release and must be versioned and covered by its candidate
+contract tests before any consumer pin changes.
 
 The `_schema` member in files under `tests/fixtures/control_protocol/v1` is
 fixture-inventory metadata only. It is removed before validation and must not be
