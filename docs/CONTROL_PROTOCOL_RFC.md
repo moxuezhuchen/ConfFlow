@@ -7,12 +7,11 @@ one-shot protocol. Phase C's internal `ExecutionService` core, in-memory
 contract repository, SQLite persistence adapter, normal-CLI adapter, and agent
 adapter are implemented and tested. The workflow engine and calc executor
 remain behind thin adapters. Phase D's control CLI/capability implementation
-and the unpublished POSIX worker extension are separately gated candidate
-work; they do not change the stable v1.5.0 publication boundary recorded here.
+and the released POSIX worker extension are separately gated release work; they
+do not change the stable v1.5.0 publication boundary recorded here.
 
-This v1 revision is still pre-publication. It replaces the earlier locator-free
-draft; the v1 identifiers become immutable only when this design gate is
-accepted and published.
+This v1 revision replaces the earlier locator-free draft. The v1 identifiers
+were accepted and published with the v1.5.3 worker release.
 
 The normative JSON Schema bundle is in `docs/control_protocol/v1/`.  Golden and
 negative examples are in `tests/fixtures/control_protocol/v1/` and are validated
@@ -102,20 +101,20 @@ uniqueness, regular-file type, size, and digest. Config and input contents are
 not embedded in the request, and digest-only filenames are not used: verified
 relative locators retain upload auditability without duplicating large content.
 
-The unpublished external-worker candidate is a separate handoff contract. For
-that candidate, `prepare.input_manifest` points at the canonical
+The released external-worker handoff is a separate contract. For that release,
+`prepare.input_manifest` points at the canonical
 `worker-handoff.schema.json` envelope and its digest binds the complete
 envelope, not the stable input-manifest payload. The handoff is limited to one
 task (`maxItems: 1`), so a consumer must split a batch before prepare. This
-mapping is candidate-only; stable JobDesk must not send its private
-`.jobdesk-control/input-manifest.json` to the candidate worker or claim that
+mapping is release-gated; stable JobDesk must not send its private
+`.jobdesk-control/input-manifest.json` to the worker or claim that
 the two digests are interchangeable.
-The candidate handoff digest is SHA-256 of UTF-8 JSON serialized with sorted
+The released handoff digest is SHA-256 of UTF-8 JSON serialized with sorted
 keys, `ensure_ascii=false`, separators `(',', ':')`, and `allow_nan=false`
-after removing fixture-only `_schema` metadata. This is a candidate-specific
+after removing fixture-only `_schema` metadata. This is a worker-release-specific
 digest profile, distinct from the RFC 8785 request digest, and is locked by
 the worker golden fixture.
-The candidate preserves the input basename, publishes `{basename}.txt` and
+The released worker preserves the input basename, publishes `{basename}.txt` and
 `{basename}min.xyz` in the parent of the task `work_dir`, and keeps JSON/state/
 manifest files in `work_dir`; these fixed sidecars are verified before the
 producer commits `completed`.
@@ -138,7 +137,7 @@ the cursor of the final returned event, or repeats the supplied cursor for an
 empty page; it is `null` only on the initial empty page.  An unknown or expired
 cursor returns a typed error, never an inferred file offset.
 
-The unpublished external-worker candidate has one additional producer-internal
+The released external-worker path has one additional producer-internal
 event, `requeued`. After a worker's per-token lease is proven to be gone, the
 producer may atomically move that same attempt from `running` to `queued`,
 increment `attempt`, and issue a fresh launch token. This recovery transition
@@ -146,8 +145,8 @@ is not exposed as a v1 control operation and is not part of the pinned stable
 consumer contract; old-token lifecycle callbacks are rejected by the token
 compare. Recovery is fail-closed if the prior lease marker lacks its worker
 PID/process-group identity or if that group/attempt directory still has a
-live process. A consumer may only adopt it together with the versioned worker
-handoff release and its candidate contract tests.
+live process. A consumer may only adopt it together with the versioned v1.5.3
+worker release and its contract tests.
 
 ## Idempotency and recovery
 
@@ -204,16 +203,16 @@ Therefore Phase C must normalize every target and reject duplicate
 the stable `artifact_path_invalid` error before an adapter exposes the manifest.
 JobDesk verifies digest and size after SFTP download.
 
-## Capability advertisement (stable boundary and candidate extension)
+## Capability advertisement (stable boundary and released extension)
 
 Stable ConfFlow v1.5.0 keeps the capability-v4 payload frozen; this RFC does
 not change the stable consumer contract or reserve a new stable v4 field. The
-unpublished v1.5.2 worker candidate is documented separately as a
-producer-owned, POSIX-only extension (`control_worker`) and must be negotiated
-with a matching candidate consumer before use. Its worker-handoff digest,
-single-task limit, session-isolated launcher, and sidecar publication rules
-are outside the pinned v1.5.0 protocol. Absence of the candidate capability
-continues to select the legacy shell/file backend.
+v1.5.3 worker release is documented separately as a producer-owned,
+POSIX-only extension (`control_worker`) and must be negotiated with a matching
+consumer before use. Its worker-handoff digest, single-task limit,
+session-isolated launcher, and sidecar publication rules are outside the
+pinned v1.5.0 protocol. Absence of the released capability continues to select
+the legacy shell/file backend.
 
 ## Phase C conformance sequence fixtures
 

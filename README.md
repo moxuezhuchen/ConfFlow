@@ -57,13 +57,13 @@ Requirements and packaging notes:
 - RDKit is required
 - `numba` is optional and only used for acceleration when installed
 
-## ConfFlow ↔ JobDesk Capability Handshake (v1.5.2 candidate)
+## ConfFlow ↔ JobDesk Capability Handshake (v1.5.3 release)
 
-ConfFlow 1.5.2 candidate implements a version/capability probe used by JobDesk to
+ConfFlow 1.5.3 implements a version/capability probe used by JobDesk to
 validate compatibility before uploading or submitting workflow tasks:
 
 ```bash
-confflow --version          # prints "1.5.2"
+confflow --version          # prints "1.5.3"
 confflow --capabilities --json
 ```
 
@@ -72,7 +72,7 @@ Capability contract (JSON, schema version **4**):
 ```json
 {
   "schema_version": 4,
-  "version": "1.5.2",
+  "version": "1.5.3",
   "capabilities": {
     "workflow_state": true,
     "resume": true,
@@ -102,13 +102,13 @@ Capability contract (JSON, schema version **4**):
   },
   "producer": {
     "package": "confflow",
-    "version": "1.5.2",
+    "version": "1.5.3",
     "build": {
       "commit": "<40-char git commit>",
       "dirty": false
     },
     "wheel": {
-      "filename": "confflow-1.5.2-py3-none-any.whl",
+      "filename": "confflow-1.5.3-py3-none-any.whl",
       "sha256": "<external SHA-256SUMS digest>"
     },
     "install_provenance": {
@@ -124,16 +124,17 @@ Capability contract (JSON, schema version **4**):
 }
 ```
 
-The candidate's `control_worker` value is `true` only on POSIX hosts with
+The release's `control_worker` value is `true` only on POSIX hosts with
 `O_DIRECTORY` and `O_NOFOLLOW`; Windows installations report `false` and must
 not accept the worker handoff.
 
-Stable JobDesk remains pinned to ConfFlow v1.5.0; v1.4.6 is rollback-only.
-The v1.5.2 candidate must be paired with a matching candidate consumer that
+The current JobDesk compatibility branch pairs this release with a matching
+consumer; v1.4.6 remains rollback-only. The v1.5.3 release must be paired with
+a consumer that
 validates this capability contract before the first input upload and repeats
 the preflight at submit time.
 
-The unpublished `confflow-control-worker` candidate is a producer-owned
+The released `confflow-control-worker` entrypoint is a producer-owned
 handoff, not an agent-queue compatibility layer. Its `prepare.input_manifest`
 locator must contain the canonical `worker-handoff.schema.json` envelope and
 the persisted digest must be the envelope digest. The envelope is limited to
@@ -145,8 +146,8 @@ result base) while keeping the normal JSON/manifest artifacts in the task
 work directory.
 Every worker that may be recovered after a crash must be launched in its own
 session, for example with `setsid`; a marker from an ordinary shell process
-group is intentionally not auto-recovered. Stable JobDesk has no consumer for
-this unpublished handoff and must not silently send its private
+group is intentionally not auto-recovered. The legacy stable JobDesk path has
+no consumer for this handoff and must not silently send its private
 `.jobdesk-control/input-manifest.json` to it.
 
 ### v4 contract additions
@@ -160,7 +161,7 @@ this unpublished handoff and must not silently send its private
 * **`executable`** block reports the resolved on-disk `confflow` path,
   its own SHA-256 (so a tampered or locally-rebuilt executable is
   detectable), and the `python` interpreter that hosts the venv.
-* **`control_worker`** advertises the unpublished producer-owned worker
+* **`control_worker`** advertises the released producer-owned worker
   handoff. It is `true` only on POSIX hosts with secure directory-descriptor
   primitives; Windows installs report `false` and must not accept worker
   handoffs.
@@ -203,7 +204,7 @@ ConfFlow no longer bakes its own wheel digest into the wheel.
 The capability probe surfaces `producer.wheel.filename` /
 `producer.wheel.sha256` and `producer.install_provenance.status`
 from this record. A `status` other than `"verified"` means the
-candidate is diagnostic-only; JobDesk's production gate rejects
+an install without verified provenance is diagnostic-only; JobDesk's production gate rejects
 it.
 
 ## Quick Start
