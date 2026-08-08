@@ -552,4 +552,8 @@ def _sha256_bytes(value: bytes) -> str:
     return hashlib.sha256(value).hexdigest()
 
 
+if __name__ == "__main__":  # pragma: no cover - exercised at the process boundary
+    raise SystemExit(main())
+
+
 __all__ = ["HANDOFF_SCHEMA", "main", "run_control_worker"]

@@ -29,6 +29,17 @@ from confflow.core.exceptions import StopRequestedError
 pytestmark = pytest.mark.skipif(os.name != "posix", reason="control state-root contract requires POSIX")
 
 
+def test_worker_module_exposes_the_process_entrypoint() -> None:
+    result = subprocess.run(
+        [sys.executable, "-m", "confflow.control_worker", "--help"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0
+    assert "--state-root" in result.stdout
+
+
 def test_worker_token_lease_allows_one_cross_process_owner(tmp_path: Path) -> None:
     first = TokenLaunchLease(tmp_path, "worker-run", "worker-run.launch.1")
     second = TokenLaunchLease(tmp_path, "worker-run", "worker-run.launch.1")
