@@ -8,17 +8,20 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 
 import pytest
 
 from confflow.application.execution.launch_lease import TokenLaunchLease
 from confflow.application.execution.models import ExecutableIdentity, PrepareRequest, RunState
+from confflow.application.execution.state_root import StateRoot
 from confflow.application.execution.workflow_adapter import measure_executable, open_control_service
 from confflow.control_worker import (
     HANDOFF_SCHEMA,
     _canonical_json,
     _has_live_work_process,
+    _publish_worker_sidecars,
     run_control_worker,
 )
 from confflow.core.exceptions import StopRequestedError
@@ -89,6 +92,16 @@ def _canonical(value: object) -> bytes:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
 
 
+def _complete_fake_worker(kwargs: dict[str, object]) -> dict[str, bool]:
+    work_dir = Path(str(kwargs["work_dir"]))
+    work_dir.mkdir(parents=True, exist_ok=True)
+    staged_input = Path(str(kwargs["original_input_files"][0]))
+    staged_input.with_name(f"{staged_input.stem}min.xyz").write_text(
+        "1\nH\nH 0 0 0\n", encoding="utf-8"
+    )
+    return {"ok": True}
+
+
 def test_worker_handoff_digest_profile_matches_golden_fixture() -> None:
     fixture_path = Path(__file__).parent / "fixtures" / "control_protocol" / "v1" / "golden" / "worker_handoff.json"
     payload = json.loads(fixture_path.read_text(encoding="utf-8"))
@@ -139,6 +152,10 @@ def test_control_worker_consumes_existing_queued_token_without_prepare(tmp_path:
     def fake_runner(**kwargs):
         Path(kwargs["work_dir"]).mkdir(parents=True, exist_ok=True)
         assert [Path(item).name for item in kwargs["original_input_files"]] == ["methane.xyz"]
+        staged_input = Path(kwargs["original_input_files"][0])
+        staged_input.with_name(f"{staged_input.stem}min.xyz").write_text(
+            "1\nH\nH 0 0 0\n", encoding="utf-8"
+        )
         return {"ok": True}
 
     state = run_control_worker(
@@ -304,6 +321,21 @@ def test_worker_sidecar_failure_marks_attempt_failed_before_completion(
     assert service.status("worker-sidecar-failure").state is RunState.FAILED
 
 
+def test_worker_requires_both_fixed_sidecars() -> None:
+    with TemporaryDirectory() as directory:
+        attempt_root = Path(directory)
+        input_xyz = attempt_root / "methane.xyz"
+        input_xyz.write_text("1\nH\nH 0 0 0\n", encoding="utf-8")
+        work_dir = attempt_root / "results" / "methane_confflow_work"
+        work_dir.mkdir(parents=True)
+        root = attempt_root / "state"
+        root.mkdir(mode=0o700)
+        with pytest.raises(FileNotFoundError, match="required sidecar"):
+            _publish_worker_sidecars(
+                StateRoot.resolve(root), staged_input=str(input_xyz), work_dir=str(work_dir)
+            )
+
+
 def test_control_worker_rejects_handoff_paths_outside_private_attempt_root(tmp_path: Path) -> None:
     attempt_root = tmp_path / "attempt"
     # A normal owner-controlled home/state parent may be 0755; only
@@ -440,7 +472,7 @@ def test_control_worker_recovers_a_running_attempt_after_lease_loss(tmp_path: Pa
         state_root=root,
         run_id="worker-recover",
         handoff_path=handoff_path,
-        workflow_runner=lambda **kwargs: {"ok": True},
+        workflow_runner=lambda **kwargs: _complete_fake_worker(kwargs),
     )
 
     assert state is RunState.COMPLETED
@@ -504,6 +536,10 @@ def test_control_worker_keeps_paused_attempt_until_formal_resume(tmp_path: Path)
             )
             raise StopRequestedError("pause")
         Path(kwargs["work_dir"]).mkdir(parents=True, exist_ok=True)
+        staged_input = Path(kwargs["original_input_files"][0])
+        staged_input.with_name(f"{staged_input.stem}min.xyz").write_text(
+            "1\nH\nH 0 0 0\n", encoding="utf-8"
+        )
         return {"ok": True}
 
     def resume_after_pause(_seconds: float) -> None:

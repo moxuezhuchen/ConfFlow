@@ -40,7 +40,11 @@ After a successful engine return, the worker publishes `{basename}.txt` and
 `{basename}min.xyz` in the parent directory of the task `work_dir` (the remote
 result base used by the JobDesk download contract); the JSON/state/manifest
 files remain inside `work_dir`. These sidecars are published before the
-producer commits `completed`.
+producer commits `completed`; if either fixed sidecar cannot be produced or
+published, the attempt fails and `completed` is not committed. A JobDesk
+consumer must use the established `<stem>_confflow_work` directory naming so
+its fixed-metadata bridge maps that parent directory; other consumers may
+choose a different result mapping, but must not assume the JobDesk layout.
 
 ## Candidate worker recovery
 

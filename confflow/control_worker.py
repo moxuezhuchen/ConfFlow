@@ -397,7 +397,9 @@ def _publish_worker_sidecars(root: StateRoot, *, staged_input: str, work_dir: st
         Path(staged_input).with_name(f"{Path(staged_input).stem}min.xyz"),
     ):
         if not source.is_file():
-            continue
+            raise FileNotFoundError(
+                f"worker completed without required sidecar: {source.name}"
+            )
         destination = destination_root / source.name
         _validate_path(
             destination,
