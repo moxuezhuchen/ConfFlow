@@ -208,7 +208,7 @@ JobDesk verifies digest and size after SFTP download.
 
 Stable ConfFlow v1.5.0 keeps the capability-v4 payload frozen; this RFC does
 not change the stable consumer contract or reserve a new stable v4 field. The
-unpublished v1.5.1 worker candidate is documented separately as a
+unpublished v1.5.2 worker candidate is documented separately as a
 producer-owned, POSIX-only extension (`control_worker`) and must be negotiated
 with a matching candidate consumer before use. Its worker-handoff digest,
 single-task limit, session-isolated launcher, and sidecar publication rules
