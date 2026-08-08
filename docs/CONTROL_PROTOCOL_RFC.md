@@ -2,12 +2,13 @@
 
 ## Status and scope
 
-This RFC freezes the future `confflow control ... --json` one-shot protocol.
-Phase C's internal `ExecutionService` core, in-memory contract repository,
-SQLite persistence adapter, normal-CLI adapter, and agent adapter are
-implemented and tested.  The workflow engine and calc executor remain behind
-thin adapters; no control CLI or capability-payload change is implemented in
-this phase.  Phase D remains separately gated.
+This RFC is the Phase C design snapshot for the `confflow control ... --json`
+one-shot protocol. Phase C's internal `ExecutionService` core, in-memory
+contract repository, SQLite persistence adapter, normal-CLI adapter, and agent
+adapter are implemented and tested. The workflow engine and calc executor
+remain behind thin adapters. Phase D's control CLI/capability implementation
+and the unpublished POSIX worker extension are separately gated candidate
+work; they do not change the stable v1.5.0 publication boundary recorded here.
 
 This v1 revision is still pre-publication. It replaces the earlier locator-free
 draft; the v1 identifiers become immutable only when this design gate is
