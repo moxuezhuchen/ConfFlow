@@ -109,6 +109,10 @@ task (`maxItems: 1`), so a consumer must split a batch before prepare. This
 mapping is candidate-only; stable JobDesk must not send its private
 `.jobdesk-control/input-manifest.json` to the candidate worker or claim that
 the two digests are interchangeable.
+The candidate preserves the input basename, publishes `{basename}.txt` and
+`{basename}min.xyz` in the parent of the task `work_dir`, and keeps JSON/state/
+manifest files in `work_dir`; these fixed sidecars are verified before the
+producer commits `completed`.
 
 ## State, revision, and events
 
@@ -194,14 +198,16 @@ Therefore Phase C must normalize every target and reject duplicate
 the stable `artifact_path_invalid` error before an adapter exposes the manifest.
 JobDesk verifies digest and size after SFTP download.
 
-## Capability advertisement (future change)
+## Capability advertisement (stable boundary and candidate extension)
 
-Capability v4 is intentionally unchanged here.  The future producer change
-will add a separately versioned, machine-readable control-protocol declaration
-only after this RFC and its fixture review are accepted.  JobDesk must negotiate
-that declaration before selecting the control backend; absence means legacy
-shell/file backend.  This RFC neither reserves a capability v4 field nor changes
-the current payload.
+Stable ConfFlow v1.5.0 keeps the capability-v4 payload frozen; this RFC does
+not change the stable consumer contract or reserve a new stable v4 field. The
+unpublished v1.5.1 worker candidate is documented separately as a
+producer-owned, POSIX-only extension (`control_worker`) and must be negotiated
+with a matching candidate consumer before use. Its worker-handoff digest,
+single-task limit, session-isolated launcher, and sidecar publication rules
+are outside the pinned v1.5.0 protocol. Absence of the candidate capability
+continues to select the legacy shell/file backend.
 
 ## Phase C conformance sequence fixtures
 

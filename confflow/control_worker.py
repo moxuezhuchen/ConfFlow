@@ -135,13 +135,6 @@ def run_control_worker(
             sleep(1.0)
             continue
         try:
-            _validate_path(
-                output_txt_path_for_input(tasks[0]["input_xyz"]),
-                _validate_attempt_root(root),
-                "run_report",
-                kind="file",
-                allow_missing=True,
-            )
             staged_config, staged_tasks = _stage_worker_inputs(
                 root,
                 run_id,
@@ -155,7 +148,7 @@ def run_control_worker(
                 input_xyz=tuple(item["input_xyz"] for item in staged_tasks),
                 config_file=staged_config,
                 work_dir=staged_tasks[0]["work_dir"],
-                original_input_files=tuple(item["input_xyz"] for item in tasks),
+                original_input_files=tuple(item["input_xyz"] for item in staged_tasks),
                 resume=resume,
                 pause_beacon_file=str(run_paths.work / "PAUSE"),
             )
@@ -164,7 +157,9 @@ def run_control_worker(
                 state_root=root.path,
                 workflow_runner=_worker_workflow_runner(
                     workflow_runner,
-                    original_input=tasks[0]["input_xyz"],
+                    original_input=staged_tasks[0]["input_xyz"],
+                    root=root,
+                    work_dir=tasks[0]["work_dir"],
                 ),
             )
             executor_snapshot = service.consume_queued_launch(run_id)
@@ -372,15 +367,39 @@ def _stage_worker_inputs(
         expected_digest=expected_config_digest,
     )
     staged_tasks: list[dict[str, str]] = []
-    for index, task in enumerate(tasks):
+    for task in tasks:
+        input_name = Path(task["input_xyz"]).name
         staged_input = _stage_file(
             task["input_xyz"],
-            paths.staging / f"input-{index}.xyz",
+            paths.staging / "inputs" / input_name,
             expected_digest=task["sha256"],
         )
         staged_tasks.append({**task, "input_xyz": str(staged_input), "work_dir": task["work_dir"]})
     _ensure_directory(Path(tasks[0]["work_dir"]))
     return str(staged_config), staged_tasks
+
+
+def _publish_worker_sidecars(root: StateRoot, *, staged_input: str, work_dir: str) -> None:
+    """Publish CLI-compatible report/minimum files beside the workflow dir."""
+    attempt_root = _validate_attempt_root(root)
+    destination_root = Path(work_dir).parent
+    if destination_root != attempt_root:
+        _validate_path(
+            destination_root,
+            attempt_root,
+            "workflow result root",
+            kind="directory",
+        )
+    for source in (
+        Path(output_txt_path_for_input(staged_input)),
+        Path(staged_input).with_name(f"{Path(staged_input).stem}min.xyz"),
+    ):
+        if not source.is_file():
+            continue
+        destination = destination_root / source.name
+        if source.resolve(strict=False) == destination.resolve(strict=False):
+            continue
+        _stage_file(source, destination, expected_digest=_file_digest(str(source)))
 
 
 def _stage_file(source: str, destination: Path, *, expected_digest: str) -> Path:
@@ -443,7 +462,11 @@ def _safe_absolute_path(value: object, label: str) -> str:
 
 
 def _worker_workflow_runner(
-    runner: Callable[..., dict[str, Any] | None], *, original_input: str
+    runner: Callable[..., dict[str, Any] | None],
+    *,
+    original_input: str,
+    root: StateRoot,
+    work_dir: str,
 ) -> Callable[..., dict[str, Any] | None]:
     """Run the normal engine while preserving the public report sidecar.
 
@@ -454,7 +477,12 @@ def _worker_workflow_runner(
 
     def _run(**kwargs: Any) -> dict[str, Any] | None:
         with cli_output_to_txt(original_input):
-            return runner(**kwargs)
+            result = runner(**kwargs)
+        # Publish fixed legacy sidecars before ExecutionLifecycle.completed()
+        # commits the terminal aggregate. A failed copy must become a failed
+        # attempt, not an irreversible completed run with missing metadata.
+        _publish_worker_sidecars(root, staged_input=original_input, work_dir=work_dir)
+        return result
 
     return _run
 

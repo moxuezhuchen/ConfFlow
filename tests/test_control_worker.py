@@ -54,6 +54,16 @@ def test_worker_token_lease_blocks_a_separate_process(tmp_path: Path) -> None:
         lease.release()
 
 
+def test_worker_lease_marker_records_dedicated_session_state(tmp_path: Path) -> None:
+    lease = TokenLaunchLease(tmp_path, "worker-run", "worker-run.launch.1")
+    assert lease.acquire() is True
+    try:
+        marker = json.loads(lease.path.read_text(encoding="utf-8"))
+        assert marker["isolated_session"] is (os.getsid(0) == os.getpid())
+    finally:
+        lease.release()
+
+
 def test_worker_recovery_detects_a_live_calculation_child(tmp_path: Path) -> None:
     work_dir = tmp_path / "work"
     work_dir.mkdir()
@@ -76,8 +86,10 @@ def _canonical(value: object) -> bytes:
 
 def test_control_worker_consumes_existing_queued_token_without_prepare(tmp_path: Path) -> None:
     config = tmp_path / "workflow.yaml"
-    input_xyz = tmp_path / "methane.xyz"
-    work_dir = tmp_path / "methane_work"
+    input_xyz = tmp_path / "uploads" / "methane.xyz"
+    input_xyz.parent.mkdir()
+    work_dir = tmp_path / "results" / "methane_confflow_work"
+    work_dir.parent.mkdir()
     config.write_text("steps: []\n", encoding="utf-8")
     input_xyz.write_text("1\nH\nH 0 0 0\n", encoding="utf-8")
     handoff = {
@@ -112,7 +124,7 @@ def test_control_worker_consumes_existing_queued_token_without_prepare(tmp_path:
 
     def fake_runner(**kwargs):
         Path(kwargs["work_dir"]).mkdir(parents=True, exist_ok=True)
-        assert kwargs["original_input_files"] == [str(input_xyz)]
+        assert [Path(item).name for item in kwargs["original_input_files"]] == ["methane.xyz"]
         return {"ok": True}
 
     state = run_control_worker(
@@ -124,7 +136,7 @@ def test_control_worker_consumes_existing_queued_token_without_prepare(tmp_path:
 
     assert state is RunState.COMPLETED
     assert service.status("worker-run").state is RunState.COMPLETED
-    assert (tmp_path / "methane.txt").is_file()
+    assert (tmp_path / "results" / "methane.txt").is_file()
     assert [event.type for event in service._repository.read("worker-run").events] == [  # noqa: SLF001
         "prepared",
         "queued",
@@ -183,6 +195,63 @@ def test_control_worker_rejects_tampered_handoff_digest(tmp_path: Path) -> None:
         assert "digest" in str(error)
     else:  # pragma: no cover - defensive assertion
         raise AssertionError("tampered handoff unexpectedly executed")
+
+
+def test_worker_sidecar_failure_marks_attempt_failed_before_completion(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = tmp_path / "workflow.yaml"
+    input_xyz = tmp_path / "input.xyz"
+    work_dir = tmp_path / "results" / "input_confflow_work"
+    work_dir.parent.mkdir()
+    config.write_text("steps: []\n", encoding="utf-8")
+    input_xyz.write_text("1\nH\nH 0 0 0\n", encoding="utf-8")
+    handoff = {
+        "content_schema": HANDOFF_SCHEMA,
+        "run_id": "worker-sidecar-failure",
+        "workflow_config": {
+            "path": str(config),
+            "sha256": hashlib.sha256(config.read_bytes()).hexdigest(),
+        },
+        "tasks": [
+            {
+                "task_id": "input",
+                "input_xyz": str(input_xyz),
+                "work_dir": str(work_dir),
+                "sha256": hashlib.sha256(input_xyz.read_bytes()).hexdigest(),
+            }
+        ],
+    }
+    handoff_path = tmp_path / "handoff.json"
+    handoff_path.write_bytes(_canonical(handoff))
+    root = tmp_path / "state"
+    service = open_control_service(root, identity_executable=sys.executable)
+    identity = measure_executable(sys.executable)
+    service.prepare(
+        PrepareRequest(
+            run_id="worker-sidecar-failure",
+            idempotency_key="worker-sidecar-failure",
+            request_digest="f" * 64,
+            workflow_config_digest=handoff["workflow_config"]["sha256"],
+            input_manifest_digest=hashlib.sha256(handoff_path.read_bytes()).hexdigest(),
+            expected_executable_identity=identity,
+        )
+    )
+    assert service.execute("worker-sidecar-failure").state is RunState.QUEUED
+
+    def fail_publish(*args: object, **kwargs: object) -> None:
+        del args, kwargs
+        raise OSError("sidecar destination unavailable")
+
+    monkeypatch.setattr("confflow.control_worker._publish_worker_sidecars", fail_publish)
+    with pytest.raises(OSError, match="sidecar destination"):
+        run_control_worker(
+            state_root=root,
+            run_id="worker-sidecar-failure",
+            handoff_path=handoff_path,
+            workflow_runner=lambda **_: {"ok": True},
+        )
+    assert service.status("worker-sidecar-failure").state is RunState.FAILED
 
 
 def test_control_worker_rejects_handoff_paths_outside_private_attempt_root(tmp_path: Path) -> None:

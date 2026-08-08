@@ -140,7 +140,9 @@ the persisted digest must be the envelope digest. The envelope is limited to
 one task; a batch must be split before prepare. The worker stages the validated
 configuration and input bytes under the private StateRoot, preserves the
 original input basename for `{basename}.txt` and `{basename}min.xyz`, and
-publishes the normal JSON/manifest artifacts in the task work directory.
+publishes those fixed sidecars beside the task work directory (the remote
+result base) while keeping the normal JSON/manifest artifacts in the task
+work directory.
 Every worker that may be recovered after a crash must be launched in its own
 session, for example with `setsid`; a marker from an ordinary shell process
 group is intentionally not auto-recovered. Stable JobDesk has no consumer for

@@ -28,6 +28,11 @@ consumer contract is published, JobDesk remains unintegrated with this worker.
 The candidate envelope has `tasks.maxItems: 1`; batched JobDesk input must be
 split into one handoff/run per task or wait for a separately versioned batch
 extension. The worker never truncates a batch to `tasks[0]`.
+After a successful engine return, the worker publishes `{basename}.txt` and
+`{basename}min.xyz` in the parent directory of the task `work_dir` (the remote
+result base used by the JobDesk download contract); the JSON/state/manifest
+files remain inside `work_dir`. These sidecars are published before the
+producer commits `completed`.
 
 ## Candidate worker recovery
 

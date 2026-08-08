@@ -95,7 +95,7 @@ jobs:
               raise AssertionError("Ubuntu candidate must advertise the POSIX control worker")
 
           schema_root = Path(sys.prefix) / "share" / "confflow" / "control_protocol" / "v1"
-          required = ("common.schema.json", "requests.schema.json", "responses.schema.json", "input-manifest.schema.json")
+          required = ("common.schema.json", "requests.schema.json", "responses.schema.json", "input-manifest.schema.json", "worker-handoff.schema.json")
           schemas = {}
           for name in required:
               path = schema_root / name
