@@ -12,14 +12,11 @@ from importlib.metadata import PackageNotFoundError, version
 # Keep machine-readable CLI probes free of import-time warning noise while
 # preserving the normal console logging behavior for workflow execution.
 _CLI_ARGS = sys.argv[1:]
-_WORKER_ARGV0 = sys.argv[0].replace("\\", "/") if sys.argv else ""
 _CONTROL_WORKER_JSON = (
-    bool(sys.argv)
-    and (
-        _WORKER_ARGV0.endswith("/control_worker.py")
-        or _WORKER_ARGV0.endswith("/confflow-control-worker")
-    )
-    and "--json" in _CLI_ARGS
+    "--json" in _CLI_ARGS
+    and "--state-root" in _CLI_ARGS
+    and "--run-id" in _CLI_ARGS
+    and "--handoff" in _CLI_ARGS
 )
 _HANDSHAKE_PROBE = (
     any(flag in _CLI_ARGS for flag in ("--version", "--capabilities"))
