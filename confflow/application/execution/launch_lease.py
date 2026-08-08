@@ -82,6 +82,13 @@ class TokenLaunchLease:
                 "token": self._path.name.removeprefix("control-worker.claim."),
                 "pid": os.getpid(),
                 "pgid": os.getpgid(0) if hasattr(os, "getpgid") else None,
+                # Recovery is only safe when the worker was launched in its
+                # own process session.  A normal shell launch can otherwise
+                # leave the supervisor's process group in the marker and
+                # make a later worker unable to distinguish a live sibling.
+                "isolated_session": (
+                    bool(hasattr(os, "getpgrp") and os.getpid() == os.getpgrp())
+                ),
             },
             sort_keys=True,
             separators=(",", ":"),

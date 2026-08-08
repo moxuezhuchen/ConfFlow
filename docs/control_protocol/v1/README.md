@@ -16,6 +16,19 @@ authority. The same bundle is installed by the wheel under
 `share/confflow/control_protocol/v1` and is loaded by the control adapter when
 the source-tree copy is unavailable.
 
+For this unpublished candidate only, the `prepare.input_manifest` content
+locator is the canonical bytes of the worker-handoff envelope itself. Its
+SHA-256 is therefore the digest persisted by `prepare` and checked by the
+worker before it consumes the queued token. This is deliberately *not* the
+stable `confflow.control.input-manifest.v1` payload used by the v1 producer
+contract and is not accepted as a silent interpretation by stable JobDesk.
+A paired consumer must upload the handoff JSON, use its canonical digest in
+`prepare`, and retain the same path under the private attempt root. Until that
+consumer contract is published, JobDesk remains unintegrated with this worker.
+The candidate envelope has `tasks.maxItems: 1`; batched JobDesk input must be
+split into one handoff/run per task or wait for a separately versioned batch
+extension. The worker never truncates a batch to `tasks[0]`.
+
 ## Candidate worker recovery
 
 The unpublished worker candidate adds one producer-internal recovery event:
@@ -29,6 +42,12 @@ operator/supervisor must drain that process before retrying. This is not a new
 public control operation or a stable v1 state transition; it is part of the
 candidate worker release and must be versioned and covered by its candidate
 contract tests before any consumer pin changes.
+
+Crash recovery also requires the worker to be launched in a dedicated process
+session, for example `setsid confflow-control-worker ...`. The lease marker
+records this isolation. A marker from an ordinary shell/scheduler process
+group is intentionally not recoverable automatically; an operator must drain
+and re-submit through the supported isolated launcher.
 
 The `_schema` member in files under `tests/fixtures/control_protocol/v1` is
 fixture-inventory metadata only. It is removed before validation and must not be

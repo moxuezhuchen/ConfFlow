@@ -133,6 +133,20 @@ The v1.5.1 candidate must be paired with a matching candidate consumer that
 validates this capability contract before the first input upload and repeats
 the preflight at submit time.
 
+The unpublished `confflow-control-worker` candidate is a producer-owned
+handoff, not an agent-queue compatibility layer. Its `prepare.input_manifest`
+locator must contain the canonical `worker-handoff.schema.json` envelope and
+the persisted digest must be the envelope digest. The envelope is limited to
+one task; a batch must be split before prepare. The worker stages the validated
+configuration and input bytes under the private StateRoot, preserves the
+original input basename for `{basename}.txt` and `{basename}min.xyz`, and
+publishes the normal JSON/manifest artifacts in the task work directory.
+Every worker that may be recovered after a crash must be launched in its own
+session, for example with `setsid`; a marker from an ordinary shell process
+group is intentionally not auto-recovered. Stable JobDesk has no consumer for
+this unpublished handoff and must not silently send its private
+`.jobdesk-control/input-manifest.json` to it.
+
 ### v4 contract additions
 
 * **`producer`** block reports the *install* provenance: package name,

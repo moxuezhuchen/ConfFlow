@@ -34,6 +34,7 @@ from .application.execution.workflow_adapter import (
     open_control_service,
 )
 from .control import _validator
+from .core.contracts import cli_output_to_txt, output_txt_path_for_input
 from .core.exceptions import StopRequestedError
 from .workflow.engine import run_workflow
 
@@ -134,6 +135,13 @@ def run_control_worker(
             sleep(1.0)
             continue
         try:
+            _validate_path(
+                output_txt_path_for_input(tasks[0]["input_xyz"]),
+                _validate_attempt_root(root),
+                "run_report",
+                kind="file",
+                allow_missing=True,
+            )
             staged_config, staged_tasks = _stage_worker_inputs(
                 root,
                 run_id,
@@ -147,13 +155,17 @@ def run_control_worker(
                 input_xyz=tuple(item["input_xyz"] for item in staged_tasks),
                 config_file=staged_config,
                 work_dir=staged_tasks[0]["work_dir"],
+                original_input_files=tuple(item["input_xyz"] for item in tasks),
                 resume=resume,
                 pause_beacon_file=str(run_paths.work / "PAUSE"),
             )
             service, executor = build_workflow_service(
                 spec,
                 state_root=root.path,
-                workflow_runner=workflow_runner,
+                workflow_runner=_worker_workflow_runner(
+                    workflow_runner,
+                    original_input=tasks[0]["input_xyz"],
+                ),
             )
             executor_snapshot = service.consume_queued_launch(run_id)
             if executor_snapshot.state in _TERMINAL_STATES:
@@ -207,7 +219,7 @@ def _load_handoff(
 ) -> tuple[dict[str, Any], str, list[dict[str, str]]]:
     attempt_root = _validate_attempt_root(root)
     handoff_path = _validate_path(path, attempt_root, "handoff", kind="file")
-    payload = json.loads(handoff_path.read_text(encoding="utf-8"))
+    payload = _read_json_file(handoff_path)
     if not isinstance(payload, dict):
         raise ValueError("control worker handoff must be an object")
     try:
@@ -268,6 +280,7 @@ def _complete_owner_marker(owner: dict[str, object] | None) -> bool:
         and owner["pid"] > 0
         and isinstance(owner.get("pgid"), int)
         and owner["pgid"] > 0
+        and owner.get("isolated_session") is True
     )
 
 
@@ -291,8 +304,13 @@ def _has_live_work_process(work_dir: str, *, owner: dict[str, object] | None = N
             cwd = process.info.get("cwd")
         except (psutil.AccessDenied, psutil.NoSuchProcess, psutil.ZombieProcess):
             continue
-        if cwd and Path(cwd).resolve(strict=False) == target:
-            return True
+        if cwd:
+            try:
+                resolved_cwd = Path(cwd).resolve(strict=False)
+            except OSError:
+                return True
+            if resolved_cwd == target or target in resolved_cwd.parents:
+                return True
     return False
 
 
@@ -324,9 +342,13 @@ def _validate_path(
             raise ValueError(f"{label} does not exist") from None
         if metadata.st_uid != uid or stat.S_ISLNK(metadata.st_mode):
             raise ValueError(f"{label} must contain only owner-owned non-symlink paths")
+        if metadata.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
+            raise ValueError(f"{label} must not contain group/world-writable paths")
         if index < len(parts) - 1 and not stat.S_ISDIR(metadata.st_mode):
             raise ValueError(f"{label} has a non-directory parent")
     metadata = os.lstat(current)
+    if metadata.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
+        raise ValueError(f"{label} must not contain group/world-writable paths")
     if kind == "file" and not stat.S_ISREG(metadata.st_mode):
         raise ValueError(f"{label} must be a regular file")
     if kind == "directory" and not stat.S_ISDIR(metadata.st_mode):
@@ -385,7 +407,12 @@ def _stage_file(source: str, destination: Path, *, expected_digest: str) -> Path
                 if not chunk:
                     break
                 digest.update(chunk)
-                os.write(target_fd, chunk)
+                remaining = memoryview(chunk)
+                while remaining:
+                    written = os.write(target_fd, remaining)
+                    if written <= 0:
+                        raise OSError("worker input staging write made no progress")
+                    remaining = remaining[written:]
             os.fsync(target_fd)
         finally:
             os.close(target_fd)
@@ -413,6 +440,55 @@ def _safe_absolute_path(value: object, label: str) -> str:
     if ".." in path.parts:
         raise ValueError(f"{label} must not contain parent traversal")
     return path.as_posix()
+
+
+def _worker_workflow_runner(
+    runner: Callable[..., dict[str, Any] | None], *, original_input: str
+) -> Callable[..., dict[str, Any] | None]:
+    """Run the normal engine while preserving the public report sidecar.
+
+    The interactive CLI owns this redirect for direct runs.  The external
+    worker crosses the service boundary without invoking that CLI, so it must
+    create the same ``<input-stem>.txt`` artifact itself.
+    """
+
+    def _run(**kwargs: Any) -> dict[str, Any] | None:
+        with cli_output_to_txt(original_input):
+            return runner(**kwargs)
+
+    return _run
+
+
+def _read_json_file(path: Path) -> dict[str, Any]:
+    """Read one owner-owned regular JSON file through a stable descriptor."""
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(path, os.O_RDONLY | nofollow)
+    except OSError as error:
+        raise ValueError(f"cannot securely open worker handoff {path}: {error}") from error
+    try:
+        metadata = os.fstat(fd)
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_uid != os.getuid()
+            or metadata.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
+        ):
+            raise ValueError("worker handoff must be an owner-owned non-writable regular file")
+        chunks: list[bytes] = []
+        while True:
+            chunk = os.read(fd, 1024 * 1024)
+            if not chunk:
+                break
+            chunks.append(chunk)
+    finally:
+        os.close(fd)
+    try:
+        value = json.loads(b"".join(chunks).decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ValueError(f"worker handoff is not valid UTF-8 JSON: {path}") from error
+    if not isinstance(value, dict):
+        raise ValueError("control worker handoff must be an object")
+    return value
 
 
 def _file_digest(path: str) -> str:

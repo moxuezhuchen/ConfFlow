@@ -101,6 +101,15 @@ uniqueness, regular-file type, size, and digest. Config and input contents are
 not embedded in the request, and digest-only filenames are not used: verified
 relative locators retain upload auditability without duplicating large content.
 
+The unpublished external-worker candidate is a separate handoff contract. For
+that candidate, `prepare.input_manifest` points at the canonical
+`worker-handoff.schema.json` envelope and its digest binds the complete
+envelope, not the stable input-manifest payload. The handoff is limited to one
+task (`maxItems: 1`), so a consumer must split a batch before prepare. This
+mapping is candidate-only; stable JobDesk must not send its private
+`.jobdesk-control/input-manifest.json` to the candidate worker or claim that
+the two digests are interchangeable.
+
 ## State, revision, and events
 
 | From | Allowed transitions | Notes |

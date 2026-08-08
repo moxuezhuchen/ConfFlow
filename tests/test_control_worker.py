@@ -112,6 +112,7 @@ def test_control_worker_consumes_existing_queued_token_without_prepare(tmp_path:
 
     def fake_runner(**kwargs):
         Path(kwargs["work_dir"]).mkdir(parents=True, exist_ok=True)
+        assert kwargs["original_input_files"] == [str(input_xyz)]
         return {"ok": True}
 
     state = run_control_worker(
@@ -123,6 +124,7 @@ def test_control_worker_consumes_existing_queued_token_without_prepare(tmp_path:
 
     assert state is RunState.COMPLETED
     assert service.status("worker-run").state is RunState.COMPLETED
+    assert (tmp_path / "methane.txt").is_file()
     assert [event.type for event in service._repository.read("worker-run").events] == [  # noqa: SLF001
         "prepared",
         "queued",
