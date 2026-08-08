@@ -21,8 +21,8 @@ from confflow.release_dependencies import (
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-REAL_LOCK = REPO_ROOT / "release" / "confflow-1.5.2-py312-linux-x86_64.lock"
-REAL_MANIFEST = REPO_ROOT / "release" / "confflow-1.5.2-py312-linux-x86_64.SHA256SUMS"
+REAL_LOCK = REPO_ROOT / "release" / "confflow-1.5.3-py312-linux-x86_64.lock"
+REAL_MANIFEST = REPO_ROOT / "release" / "confflow-1.5.3-py312-linux-x86_64.SHA256SUMS"
 
 RUNTIME_IDENTITY = {
     "python_version": "3.12.3",
@@ -183,3 +183,14 @@ def test_real_runtime_lock_covers_control_dependency_closure():
         "attrs-26.1.0-py3-none-any.whl",
         "rpds_py-2026.6.3-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl",
     } <= set(manifest)
+
+
+def test_real_runtime_manifest_preserves_multitag_pillow_filename():
+    """The committed wheelhouse manifest must match pip's full wheel name."""
+    manifest = parse_wheelhouse_manifest(REAL_MANIFEST)
+
+    assert (
+        "pillow-12.3.0-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl"
+        in manifest
+    )
+    assert "pillow-12.3.0-cp312-cp312-manylinux_2_27_x86_64.whl" not in manifest
