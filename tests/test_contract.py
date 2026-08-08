@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import inspect
 import json
+import os
 from pathlib import Path
 
 import confflow.cli as cli_module
@@ -103,7 +104,11 @@ def test_cli_capability_payload_uses_contract_constants():
         "workflow_state": True,
         "resume": True,
         "dag": True,
-        "control_worker": True,
+        "control_worker": (
+            os.name == "posix"
+            and hasattr(os, "O_DIRECTORY")
+            and hasattr(os, "O_NOFOLLOW")
+        ),
     }
     assert payload["producer"] == {
         "package": "confflow",

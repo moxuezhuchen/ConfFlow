@@ -119,6 +119,15 @@ the cursor of the final returned event, or repeats the supplied cursor for an
 empty page; it is `null` only on the initial empty page.  An unknown or expired
 cursor returns a typed error, never an inferred file offset.
 
+The unpublished external-worker candidate has one additional producer-internal
+event, `requeued`. After a worker's per-token lease is proven to be gone, the
+producer may atomically move that same attempt from `running` to `queued`,
+increment `attempt`, and issue a fresh launch token. This recovery transition
+is not exposed as a v1 control operation and is not part of the pinned stable
+consumer contract; old-token lifecycle callbacks are rejected by the token
+compare. A consumer may only adopt it together with the versioned worker
+handoff release and its candidate contract tests.
+
 ## Idempotency and recovery
 
 `prepare` requires an idempotency key and request digest.  The same key and

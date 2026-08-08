@@ -79,13 +79,20 @@ jobs:
           producer_build = producer.get("build")
           if not isinstance(producer_build, dict) or producer_build != build:
               raise AssertionError(f"producer/build provenance mismatch: {producer_build!r} != {build!r}")
+          provenance = producer.get("install_provenance")
+          if not isinstance(provenance, dict) or provenance.get("status") not in {"verified", "missing", "invalid"}:
+              raise AssertionError(f"candidate install provenance is malformed: {provenance!r}")
           wheel = producer.get("wheel")
-          if isinstance(wheel, dict):
-              expected_name = Path(os.environ["CANDIDATE_WHEEL"]).name
-              if wheel.get("filename") not in {expected_name, None}:
-                  raise AssertionError(f"candidate wheel filename mismatch: {wheel!r}")
-              if wheel.get("sha256") not in {os.environ["CANDIDATE_WHEEL_SHA"], None}:
-                  raise AssertionError(f"candidate wheel digest mismatch: {wheel!r}")
+          expected_name = Path(os.environ["CANDIDATE_WHEEL"]).name
+          if provenance["status"] == "verified":
+              if not isinstance(wheel, dict) or wheel.get("filename") != expected_name:
+                  raise AssertionError(f"verified candidate wheel filename mismatch: {wheel!r}")
+              if wheel.get("sha256") != os.environ["CANDIDATE_WHEEL_SHA"]:
+                  raise AssertionError(f"verified candidate wheel digest mismatch: {wheel!r}")
+          elif wheel != {"filename": None, "sha256": None}:
+              raise AssertionError(f"unverified candidate must expose null wheel provenance: {wheel!r}")
+          if capabilities.raw_payload is None or capabilities.raw_payload.get("capabilities", {}).get("control_worker") is not True:
+              raise AssertionError("Ubuntu candidate must advertise the POSIX control worker")
 
           schema_root = Path(sys.prefix) / "share" / "confflow" / "control_protocol" / "v1"
           required = ("common.schema.json", "requests.schema.json", "responses.schema.json", "input-manifest.schema.json")
@@ -114,7 +121,10 @@ jobs:
 
       - name: Run producer schema fixture suite
         working-directory: confflow
-        run: python -m pytest -q tests/test_control_protocol_schema.py
+        run: |
+          python -m pytest -q \
+            tests/test_control_protocol_schema.py \
+            tests/test_control_worker.py
 
       - name: Run consumer contract suite
         working-directory: jobdesk
