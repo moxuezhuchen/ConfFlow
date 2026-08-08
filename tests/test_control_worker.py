@@ -22,6 +22,7 @@ from confflow.control_worker import (
     _canonical_json,
     _has_live_work_process,
     _publish_worker_sidecars,
+    main,
     run_control_worker,
 )
 from confflow.core.exceptions import StopRequestedError
@@ -38,6 +39,31 @@ def test_worker_module_exposes_the_process_entrypoint() -> None:
     )
     assert result.returncode == 0
     assert "--state-root" in result.stdout
+
+
+def test_worker_json_entrypoint_keeps_stdout_machine_readable(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def fake_worker(**kwargs: object) -> RunState:
+        del kwargs
+        print("diagnostic")
+        return RunState.COMPLETED
+
+    monkeypatch.setattr("confflow.control_worker.run_control_worker", fake_worker)
+    assert main(
+        [
+            "--state-root",
+            "/tmp/state",
+            "--run-id",
+            "worker-json",
+            "--handoff",
+            "/tmp/handoff.json",
+            "--json",
+        ]
+    ) == 0
+    captured = capsys.readouterr()
+    assert json.loads(captured.out) == {"run_id": "worker-json", "state": "completed"}
+    assert "diagnostic" in captured.err
 
 
 def test_worker_token_lease_allows_one_cross_process_owner(tmp_path: Path) -> None:

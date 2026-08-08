@@ -18,6 +18,7 @@ import stat
 import sys
 import time
 from collections.abc import Callable, Sequence
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -196,16 +197,21 @@ def main(args_list: Sequence[str] | None = None) -> int:
     args = parser.parse_args(args_list)
     if not args.json:
         parser.error("--json is required")
+    json_stream = sys.stdout
     try:
-        state = run_control_worker(
-            state_root=args.state_root,
-            run_id=args.run_id,
-            handoff_path=args.handoff,
-        )
+        with redirect_stdout(sys.stderr), redirect_stderr(sys.stderr):
+            state = run_control_worker(
+                state_root=args.state_root,
+                run_id=args.run_id,
+                handoff_path=args.handoff,
+            )
     except Exception as error:  # noqa: BLE001 - process boundary maps one failure to stderr
         print(f"control worker failed: {error}", file=sys.stderr)
         return 1
-    print(json.dumps({"run_id": args.run_id, "state": state.value}, separators=(",", ":")))
+    print(
+        json.dumps({"run_id": args.run_id, "state": state.value}, separators=(",", ":")),
+        file=json_stream,
+    )
     return 0 if state is RunState.COMPLETED else 1
 
 
