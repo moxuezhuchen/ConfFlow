@@ -1,19 +1,20 @@
 # Release Process
 
-ConfFlow currently uses a mostly manual release process with a minimal GitHub Actions artifact workflow.
+ConfFlow v1.5.3 uses a GitHub Actions release workflow that builds, verifies,
+attests, and publishes the tagged release artifacts. PyPI publication and
+full SLSA-style hardening remain separate manual or future-work concerns.
 
 Automated by `.github/workflows/release.yml`:
 
 - Build wheel and source distribution.
 - Generate `SHA256SUMS`.
-- Attempt to generate a CycloneDX SBOM as `sbom.cdx.json`.
-- Upload the `dist/` bundle as a GitHub Actions artifact.
+- Generate a CycloneDX SBOM as `sbom.cdx.json`.
+- Generate GitHub build provenance attestation and an exported attestation bundle.
+- Write release provenance and publish the `dist/` bundle as a GitHub Release.
 
 Still manual or not configured:
 
 - PyPI publishing.
-- GitHub Release creation and release note editing.
-- Artifact provenance / attestation.
 - Full SLSA-style release hardening.
 
 ## 1. Choose The Version
@@ -234,12 +235,14 @@ status. The literal string `"unbound"` is never emitted.
   not back-filled into a Gate A wheel; each gate builds its own wheel
   from its own clean checkout.
 
-### Attestation (status: future work)
+### Attestation (v1.5.3 workflow status)
 
-GitHub Artifact Attestations and SLSA-style provenance are not yet
-wired into the release artifact workflow. Until they are, the deployer
-accepts a manually-prepared `--attestation` JSON file (matching the
-expected `subject_digest`) for `--mode production` Gate B installs.
+GitHub Artifact Attestations are wired into the v1.5.3 release workflow.
+The workflow attests the final wheel, exports the attestation bundle, and
+writes a release attestation/provenance record bound to the tagged commit and
+wheel digest. The deployer still validates the downloaded attestation JSON
+and subject digest for `--mode production` Gate B installs; this is a release
+integrity check, not a claim of full SLSA-style hardening.
 
 
 ## 10. Post-Release Checks
