@@ -57,13 +57,13 @@ Requirements and packaging notes:
 - RDKit is required
 - `numba` is optional and only used for acceleration when installed
 
-## ConfFlow ↔ JobDesk Capability Handshake (v1.5.3 release)
+## ConfFlow ↔ JobDesk Capability Handshake (v2.0.0 release)
 
-ConfFlow 1.5.3 implements a version/capability probe used by JobDesk to
+ConfFlow 2.0.0 implements a version/capability probe used by JobDesk to
 validate compatibility before uploading or submitting workflow tasks:
 
 ```bash
-confflow --version          # prints "1.5.3"
+confflow --version          # prints "2.0.0"
 confflow --capabilities --json
 ```
 
@@ -72,7 +72,7 @@ Capability contract (JSON, schema version **4**):
 ```json
 {
   "schema_version": 4,
-  "version": "1.5.3",
+  "version": "2.0.0",
   "capabilities": {
     "workflow_state": true,
     "resume": true,
@@ -102,13 +102,13 @@ Capability contract (JSON, schema version **4**):
   },
   "producer": {
     "package": "confflow",
-    "version": "1.5.3",
+    "version": "2.0.0",
     "build": {
       "commit": "<40-char git commit>",
       "dirty": false
     },
     "wheel": {
-      "filename": "confflow-1.5.3-py3-none-any.whl",
+      "filename": "confflow-2.0.0-py3-none-any.whl",
       "sha256": "<external SHA-256SUMS digest>"
     },
     "install_provenance": {
@@ -129,7 +129,7 @@ The release's `control_worker` value is `true` only on POSIX hosts with
 not accept the worker handoff.
 
 The current JobDesk compatibility branch pairs this release with a matching
-consumer; v1.4.6 remains rollback-only. The v1.5.3 release must be paired with
+consumer; v1.4.6 remains rollback-only. The v2.0.0 release must be paired with
 a consumer that
 validates this capability contract before the first input upload and repeats
 the preflight at submit time.

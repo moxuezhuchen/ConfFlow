@@ -21,8 +21,8 @@ from confflow.release_dependencies import (
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-REAL_LOCK = REPO_ROOT / "release" / "confflow-1.5.3-py312-linux-x86_64.lock"
-REAL_MANIFEST = REPO_ROOT / "release" / "confflow-1.5.3-py312-linux-x86_64.SHA256SUMS"
+REAL_LOCK = REPO_ROOT / "release" / "confflow-2.0.0-py312-linux-x86_64.lock"
+REAL_MANIFEST = REPO_ROOT / "release" / "confflow-2.0.0-py312-linux-x86_64.SHA256SUMS"
 
 RUNTIME_IDENTITY = {
     "python_version": "3.12.3",

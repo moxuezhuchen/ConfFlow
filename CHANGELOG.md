@@ -5,6 +5,24 @@
 > The archived-snapshot notice below describes the earlier repository state. ConfFlow is active again
 > as JobDesk's external chemistry workflow dependency beginning with v1.4.0.
 
+## v2.0.0 (2026-08-11) - Phase F owner-exception release
+
+### Changed
+
+- Removed the optional `confflow-agent` service and its packaging/deployment
+  surface. The supported production boundary is the direct control protocol
+  worker handoff.
+- Declared the companion JobDesk move to a control-only backend as a breaking
+  compatibility change under the owner exception. Historical compatibility
+  evidence remains archived; this release does not claim a measured
+  compatibility-period closeout.
+
+### Validation
+
+- The release workflow derives and verifies the package version from the
+  annotated release tag, and publishes provenance, attestation, SBOM, and
+  checksums bound to that tag's peeled commit.
+
 ## v1.5.1 (2026-08-02) - fixture agent entry release
 
 ### Added

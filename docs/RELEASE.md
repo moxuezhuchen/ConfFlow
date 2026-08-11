@@ -1,6 +1,6 @@
 # Release Process
 
-ConfFlow v1.5.3 uses a GitHub Actions release workflow that builds, verifies,
+ConfFlow uses a GitHub Actions release workflow that builds, verifies,
 attests, and publishes the tagged release artifacts. PyPI publication and
 full SLSA-style hardening remain separate manual or future-work concerns.
 
@@ -235,9 +235,9 @@ status. The literal string `"unbound"` is never emitted.
   not back-filled into a Gate A wheel; each gate builds its own wheel
   from its own clean checkout.
 
-### Attestation (v1.5.3 workflow status)
+### Attestation workflow status
 
-GitHub Artifact Attestations are wired into the v1.5.3 release workflow.
+GitHub Artifact Attestations are wired into the tagged release workflow.
 The workflow attests the final wheel, exports the attestation bundle, and
 writes a release attestation/provenance record bound to the tagged commit and
 wheel digest. The deployer still validates the downloaded attestation JSON
