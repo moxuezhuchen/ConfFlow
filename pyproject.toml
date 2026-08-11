@@ -71,15 +71,12 @@ speed = [
 all = [
     "numba>=0.55.0",
 ]
-# agent extra: dependencies for the confflow-agent daemon (discoverability marker)
-agent = []
 
 [project.scripts]
 confflow = "confflow.main:main"
 confts = "confflow.confts:main"
 confgen = "confflow.blocks.confgen:main"
 confrefine = "confflow.blocks.refine:main"
-confflow-agent = "confflow.agent.cli:main"
 confflow-control-worker = "confflow.control_worker:main"
 confflow-fixture-agent = "confflow.fixture_agent:main"
 

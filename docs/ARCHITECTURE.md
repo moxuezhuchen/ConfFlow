@@ -124,15 +124,6 @@ confflow/
 │   ├── supervisor.py         # 子进程监督与停止处理
 │   └── step_naming.py        # 步骤命名
 │
-├── agent/                     # 可选的远程队列/进度服务入口
-│   ├── cli.py                # confflow-agent CLI
-│   ├── server.py             # agent 服务循环
-│   ├── runner.py             # workflow runner 适配
-│   ├── queue.py              # 持久队列
-│   ├── slots.py              # 资源槽位
-│   ├── state.py              # agent 状态
-│   └── progress.py           # 进度事件
-│
 ├── cli.py                     # CLI 参数解析
 ├── main.py                    # 工作流主程序入口
 ├── confts.py                  # TS 专用执行器与 keyword 改写工具
@@ -351,12 +342,6 @@ LICENSE                        # MIT 许可证
 - **`main.py`**：工作流主程序入口
 - **`confts.py`**：TS 专用执行器与 keyword 改写工具
 - **`contract.py`**：版本、schema、能力、产物名以及构建身份的 wire contract；`cli.py` 负责发出 capability JSON
-
-### 7. `agent/` - 可选远程服务层
-
-`confflow-agent` 通过 `agent/cli.py` 进入队列、槽位、runner 和进度模块。
-它是 ConfFlow 的可选执行入口，不是 JobDesk 的内嵌模块；JobDesk 默认仍通过
-SSH 调用公开 `confflow` CLI 和 capability/artifact contract。
 
 ## 设计模式与架构原则
 
