@@ -19,13 +19,10 @@ import sys
 import time
 from collections.abc import Callable, Sequence
 from contextlib import redirect_stderr, redirect_stdout
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from typing import Any
 
-import psutil
-
 from .application.execution.errors import ErrorCode, ExecutionServiceError
-from .application.execution.launch_lease import TokenLaunchLease
 from .application.execution.models import RunState
 from .application.execution.sqlite import SQLiteExecutionRepository
 from .application.execution.state_root import StateRoot
@@ -38,6 +35,20 @@ from .control import _validator
 from .core.contracts import cli_output_to_txt, output_txt_path_for_input
 from .core.exceptions import StopRequestedError
 from .core.logging import redirect_logging_streams
+from .worker_lease import (  # noqa: F401 - retain private helper imports for callers
+    TokenLeaseManager,
+    _complete_owner_marker,
+    _has_live_work_process,
+)
+from .worker_security import (
+    _canonical_json,
+    _file_digest,
+    _read_json_file,
+    _safe_absolute_path,
+    _sha256_bytes,
+    _validate_attempt_root,
+    _validate_path,
+)
 from .workflow.engine import run_workflow
 
 HANDOFF_SCHEMA = "confflow.control.worker-handoff.v1"
@@ -102,10 +113,7 @@ def run_control_worker(
                 sleep(1.0)
                 continue
             try:
-                previous_owner = lease.previous_owner
-                if not _complete_owner_marker(previous_owner) or _has_live_work_process(
-                    tasks[0]["work_dir"], owner=previous_owner
-                ):
+                if not lease.can_recover(tasks[0]["work_dir"]):
                     # A crashed worker may leave a Gaussian/ORCA child alive.
                     # Never requeue unless the prior worker identity is known
                     # and no process remains in its process group or attempt
@@ -265,113 +273,10 @@ def _load_handoff(
     return payload, config_path, tasks
 
 
-def _validate_attempt_root(root: StateRoot) -> Path:
-    """Require the state-root parent to be an owner-controlled attempt root."""
-    attempt_root = root.path.parent
-    metadata = os.lstat(attempt_root)
-    uid = os.getuid()
-    if (
-        not stat.S_ISDIR(metadata.st_mode)
-        or metadata.st_uid != uid
-        or stat.S_IMODE(metadata.st_mode) & (stat.S_IWGRP | stat.S_IWOTH)
-    ):
-        raise ValueError(
-            "control worker state-root parent must be owner-controlled and non-writable"
-        )
-    return attempt_root.resolve(strict=True)
-
-
-def _token_lease(root: StateRoot, run_id: str, token: str) -> TokenLaunchLease:
+def _token_lease(root: StateRoot, run_id: str, token: str) -> TokenLeaseManager:
     """Create a lease below StateRoot's validated private runs layout."""
     paths = root.ensure_run_paths(run_id)
-    return TokenLaunchLease(paths.staging.parent.parent, run_id, token)
-
-
-def _complete_owner_marker(owner: dict[str, object] | None) -> bool:
-    """Require a marker produced by the lease-aware worker implementation."""
-    if not isinstance(owner, dict):
-        return False
-    pid = owner.get("pid")
-    pgid = owner.get("pgid")
-    return (
-        isinstance(pid, int)
-        and pid > 0
-        and isinstance(pgid, int)
-        and pgid > 0
-        and owner.get("isolated_session") is True
-    )
-
-
-def _has_live_work_process(work_dir: str, *, owner: dict[str, object] | None = None) -> bool:
-    """Fail closed when a prior worker group or child owns the attempt directory."""
-    target = Path(work_dir).resolve(strict=False)
-    owner_pgid = owner.get("pgid") if isinstance(owner, dict) else None
-    if isinstance(owner_pgid, int) and owner_pgid > 0 and hasattr(os, "killpg"):
-        try:
-            os.killpg(owner_pgid, 0)
-        except ProcessLookupError:
-            pass
-        except PermissionError:
-            return True
-        else:
-            return True
-    for process in psutil.process_iter(["pid", "cwd"]):
-        if process.info.get("pid") == os.getpid():
-            continue
-        try:
-            cwd = process.info.get("cwd")
-        except (psutil.AccessDenied, psutil.NoSuchProcess, psutil.ZombieProcess):
-            continue
-        if cwd:
-            try:
-                resolved_cwd = Path(cwd).resolve(strict=False)
-            except OSError:
-                return True
-            if resolved_cwd == target or target in resolved_cwd.parents:
-                return True
-    return False
-
-
-def _validate_path(
-    value: str | Path,
-    attempt_root: Path,
-    label: str,
-    *,
-    kind: str,
-    allow_missing: bool = False,
-) -> Path:
-    candidate = Path(value)
-    try:
-        relative = candidate.relative_to(attempt_root)
-    except ValueError as error:
-        raise ValueError(f"{label} must remain below the worker attempt root") from error
-    current = attempt_root
-    uid = os.getuid()
-    parts = relative.parts
-    if not parts:
-        raise ValueError(f"{label} must not be the attempt root")
-    for index, part in enumerate(parts):
-        current /= part
-        try:
-            metadata = os.lstat(current)
-        except FileNotFoundError:
-            if allow_missing and index == len(parts) - 1:
-                return current
-            raise ValueError(f"{label} does not exist") from None
-        if metadata.st_uid != uid or stat.S_ISLNK(metadata.st_mode):
-            raise ValueError(f"{label} must contain only owner-owned non-symlink paths")
-        if metadata.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
-            raise ValueError(f"{label} must not contain group/world-writable paths")
-        if index < len(parts) - 1 and not stat.S_ISDIR(metadata.st_mode):
-            raise ValueError(f"{label} has a non-directory parent")
-    metadata = os.lstat(current)
-    if metadata.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
-        raise ValueError(f"{label} must not contain group/world-writable paths")
-    if kind == "file" and not stat.S_ISREG(metadata.st_mode):
-        raise ValueError(f"{label} must be a regular file")
-    if kind == "directory" and not stat.S_ISDIR(metadata.st_mode):
-        raise ValueError(f"{label} must be a directory")
-    return current
+    return TokenLeaseManager(paths.staging.parent.parent, run_id, token)
 
 
 def _stage_worker_inputs(
@@ -482,15 +387,6 @@ def _ensure_directory(path: Path) -> None:
     os.chmod(path, 0o700)
 
 
-def _safe_absolute_path(value: object, label: str) -> str:
-    if not isinstance(value, str) or not value.startswith("/") or "\\" in value:
-        raise ValueError(f"{label} must be an absolute POSIX path")
-    path = PurePosixPath(value)
-    if ".." in path.parts:
-        raise ValueError(f"{label} must not contain parent traversal")
-    return path.as_posix()
-
-
 def _worker_workflow_runner(
     runner: Callable[..., dict[str, Any] | None],
     *,
@@ -515,60 +411,6 @@ def _worker_workflow_runner(
         return result
 
     return _run
-
-
-def _read_json_file(path: Path) -> dict[str, Any]:
-    """Read one owner-owned regular JSON file through a stable descriptor."""
-    nofollow = getattr(os, "O_NOFOLLOW", 0)
-    try:
-        fd = os.open(path, os.O_RDONLY | nofollow)
-    except OSError as error:
-        raise ValueError(f"cannot securely open worker handoff {path}: {error}") from error
-    try:
-        metadata = os.fstat(fd)
-        if (
-            not stat.S_ISREG(metadata.st_mode)
-            or metadata.st_uid != os.getuid()
-            or metadata.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
-        ):
-            raise ValueError("worker handoff must be an owner-owned non-writable regular file")
-        chunks: list[bytes] = []
-        while True:
-            chunk = os.read(fd, 1024 * 1024)
-            if not chunk:
-                break
-            chunks.append(chunk)
-    finally:
-        os.close(fd)
-    try:
-        value = json.loads(b"".join(chunks).decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as error:
-        raise ValueError(f"worker handoff is not valid UTF-8 JSON: {path}") from error
-    if not isinstance(value, dict):
-        raise ValueError("control worker handoff must be an object")
-    return value
-
-
-def _file_digest(path: str) -> str:
-    with Path(path).open("rb") as handle:
-        digest = hashlib.sha256()
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
-def _canonical_json(value: object) -> bytes:
-    return json.dumps(
-        value,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-        allow_nan=False,
-    ).encode("utf-8")
-
-
-def _sha256_bytes(value: bytes) -> str:
-    return hashlib.sha256(value).hexdigest()
 
 
 if __name__ == "__main__":  # pragma: no cover - exercised at the process boundary

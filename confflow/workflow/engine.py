@@ -13,35 +13,31 @@ from typing import Any
 
 from ..calc.artifacts import CalcArtifactManager
 from ..calc.executor import CalcExecutor
-from ..config.models import CalcStepParams, GlobalOptions, load_workflow_model
+from ..config.models import CalcStepParams, GlobalOptions
 from ..core import io as io_xyz
 from ..core.exceptions import StopRequestedError
 from ..core.types import TaskStatus
 from ..core.utils import (
     get_logger,
     index_to_letter_prefix,
-    validate_xyz_file,
 )
-from .dag import build_step_graph, topo_order
+from .finalizer import finalize_workflow
 from .helpers import count_conformers_any, resolve_step_output
+from .planner import prepare_workflow
 from .presenter import (
-    emit_final_report_and_lowest,
     print_step_footer_block,
     print_step_header_block,
     print_workflow_start,
-    write_final_statistics,
 )
 from .runtime_context import initialize_runtime_context
 from .state import StepRecord, WorkflowState, WorkflowStateStore
 from .stats import (
     FailureTracker,
     TaskStatsCollector,
-    Tracer,
 )
 from .step_handlers import StepExecutionResult
 from .step_handlers import run_calc_step as step_run_calc_step
 from .step_handlers import run_confgen_step as step_run_confgen_step
-from .step_naming import build_step_dir_name_map
 from .validation import validate_inputs_compatible
 
 __all__ = [
@@ -148,49 +144,17 @@ def run_workflow(
     if verbose and hasattr(logger, "set_level"):
         logger.set_level(10)
 
-    input_files = [os.path.abspath(x) for x in input_xyz]
-    original_inputs = (
-        [os.path.abspath(x) for x in original_input_files] if original_input_files else input_files
-    )
-    for fp in input_files:
-        if not os.path.exists(fp):
-            raise FileNotFoundError(f"Input file does not exist: {fp}")
-        validate_xyz_file(fp, strict=True)
-
-    cfg = load_workflow_model(config_file).as_legacy_shape()
-    global_config = cfg["global"]
-    steps = cfg["steps"]
-
-    # Explicit DAG mode is selected by the presence of an ``inputs`` field on
-    # any step. In that mode, steps without the field are independent roots;
-    # they do not inherit a predecessor from their list position. This keeps
-    # mixed configurations deterministic and makes the legacy fallback
-    # unambiguous: only a workflow with no ``inputs`` fields is linear.
-    raw_predecessors, by_step_name, declared_inputs = build_step_graph(steps)
-    explicit_inputs = any("inputs" in step for step in steps)
-    if explicit_inputs:
-        predecessors = raw_predecessors
-    else:
-        ordered_names = list(by_step_name)
-        predecessors = {
-            name: ([ordered_names[index - 1]] if index else [])
-            for index, name in enumerate(ordered_names)
-        }
-    del declared_inputs
-    execution_order = [name for wave in topo_order(predecessors) for name in wave]
-    if explicit_inputs:
-        predecessor_names = {
-            predecessor
-            for step_predecessors in predecessors.values()
-            for predecessor in step_predecessors
-        }
-        terminal_steps = [name for name in predecessors if name not in predecessor_names]
-    else:
-        terminal_steps = [execution_order[-1]]
-
-    step_dirnames, _ = build_step_dir_name_map(steps)
-    step_index_by_name = {name: index for index, name in enumerate(by_step_name)}
-    name_to_dirname = {name: step_dirnames[index] for name, index in step_index_by_name.items()}
+    prepared = prepare_workflow(input_xyz, config_file, original_input_files)
+    input_files = prepared.input_files
+    original_inputs = prepared.original_inputs
+    global_config = prepared.global_config
+    steps = prepared.steps
+    predecessors = prepared.predecessors
+    by_step_name = prepared.by_step_name
+    execution_order = prepared.execution_order
+    terminal_steps = prepared.terminal_steps
+    step_dirnames = prepared.step_dirnames
+    name_to_dirname = prepared.name_to_dirname
 
     # Pre-load confgen params for multi-input flexible chain consistency check
     confgen_params = None
@@ -493,21 +457,17 @@ def run_workflow(
     final_outputs = [artifact for artifacts in terminal_outputs.values() for artifact in artifacts]
     final_output = step_outputs[terminal_steps[0]] if len(terminal_steps) == 1 else final_outputs
     final_stats = stats_tracker.finalize(final_output)
-    final_stats["terminal_outputs"] = terminal_outputs
-    state.final_status = "completed"
-    state.wavefront_index = len(execution_order)
-    state_store.save(state)
-
-    # Tracing
-    try:
-        Tracer.trace_low_energy(final_stats)
-    except (OSError, ValueError, TypeError, KeyError, AttributeError) as e:
-        logger.debug(f"Trace failed: {e}")
-
-    emit_final_report_and_lowest(final_output, original_inputs, final_stats, logger)
-    write_final_statistics(root_dir, final_stats)
-
-    return final_stats
+    return finalize_workflow(
+        root_dir=root_dir,
+        final_output=final_output,
+        original_inputs=original_inputs,
+        terminal_outputs=terminal_outputs,
+        final_stats=final_stats,
+        state=state,
+        state_store=state_store,
+        execution_count=len(execution_order),
+        logger=logger,
+    )
 
 
 def _initial_workflow_state(
