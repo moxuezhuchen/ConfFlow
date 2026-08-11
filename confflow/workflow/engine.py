@@ -277,19 +277,19 @@ def run_workflow(
                 input_for_digest = (
                     inputs_for_step if isinstance(inputs_for_step, str) else inputs_for_step[0]
                 )
-                prepared = CalcArtifactManager(
+                artifact_prepared = CalcArtifactManager(
                     step_dir,
                     step_name=step_name,
                     config=calc_config,
                     input_path=input_for_digest,
                 ).prepare(resume=True)
-                if prepared.reusable_output is not None:
-                    current_input = str(prepared.reusable_output)
+                if artifact_prepared.reusable_output is not None:
+                    current_input = str(artifact_prepared.reusable_output)
                     step_outputs[step_name] = current_input
                     _mark_step_completed(state, state_record, current_input, execution_index)
                     state_store.save(state)
                     continue
-                if prepared.cleaned_stale_artifacts:
+                if artifact_prepared.cleaned_stale_artifacts:
                     raise RuntimeError(
                         _resume_failure_message(
                             step_index=execution_index + 1,

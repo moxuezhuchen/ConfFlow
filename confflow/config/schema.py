@@ -14,7 +14,9 @@ WORKFLOW_SCHEMA_VERSION = "v1"
 
 def schema_document() -> dict[str, Any]:
     """Build the structural schema from canonical model field metadata."""
-    global_properties = {field.name: {} for field in fields(GlobalOptions)}
+    global_properties: dict[str, dict[str, object]] = {
+        field.name: {} for field in fields(GlobalOptions)
+    }
     return {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "$id": "https://confflow.dev/schema/workflow-config/v1",
