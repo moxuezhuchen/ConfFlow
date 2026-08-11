@@ -993,14 +993,6 @@ def test_capabilities_does_not_touch_work_dir(monkeypatch, tmp_path):
         assert not work_dir.exists()
 
 
-def test_agent_fast_path_is_preserved(monkeypatch):
-    """Agent commands continue to bypass the workflow parser."""
-    seen = []
-    monkeypatch.setattr("confflow.cli.agent_main", lambda args: seen.append(args) or 7)
-    assert main(["--agent", "status"]) == 7
-    assert seen == [["status"]]
-
-
 @pytest.mark.skipif(
     not os.environ.get("CONFFLOW_TEST_WHEEL"),
     reason="set CONFFLOW_TEST_WHEEL for the clean-worktree wheel provenance gate",
@@ -1041,3 +1033,8 @@ def test_capability_payload_from_wheel_with_real_build(tmp_path):
     assert re.fullmatch(r"[0-9a-f]{7,40}", payload["build"]["commit"])
     if expected_head:
         assert payload["build"]["commit"] == expected_head
+
+
+def test_retired_agent_flag_is_rejected() -> None:
+    with pytest.raises(SystemExit):
+        main(["--agent", "status"])
