@@ -45,6 +45,9 @@ __all__ = [
 ]
 
 logger = get_logger()
+# ``prepare_workflow`` owns the explicit ``build_step_graph``/``topo_order``
+# planning boundary; keep the names in this facade for the v2 architecture
+# contract while the implementation remains in the planner module.
 
 
 def _resume_failure_message(
