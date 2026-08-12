@@ -16,7 +16,7 @@ endpoint promotion has been performed.
 |---|---|---|
 | ConfFlow stable baseline | `6981935` / v2.0.0 | released production baseline |
 | ConfFlow architecture candidate | `0037c04` | isolated, not released |
-| Paired JobDesk candidate | `4593b5f` | isolated consumer candidate |
+| Paired JobDesk candidate | `a63f2e9` | isolated consumer candidate |
 
 The workflow facade now delegates to planner, resume policy, executor, and
 finalizer boundaries. `ExecutionService` retains repository CAS and lifecycle
@@ -154,7 +154,7 @@ The release's `control_worker` value is `true` only on POSIX hosts with
 not accept the worker handoff.
 
 The released JobDesk v0.6.0 pairing uses this release; the current JobDesk
-architecture candidate is tracked separately as `4593b5f`. v1.4.6 remains
+architecture candidate is tracked separately as `a63f2e9`. v1.4.6 remains
 rollback-only. The v2.0.0 release must be paired with a consumer that
 validates this capability contract before the first input upload and repeats
 the preflight at submit time.

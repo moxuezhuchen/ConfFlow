@@ -6,7 +6,7 @@ The current architecture candidate is `0037c04`, based on the released
 `6981935` / v2.0.0. It has passed isolated non-compute regression, static, and
 build checks, but it is not a release artifact and must not be promoted by
 changing `/usr/local/bin/confflow`, JobDesk server entries, or the production
-venv. The paired JobDesk candidate is `4593b5f`.
+venv. The paired JobDesk candidate is `a63f2e9`.
 
 Release publication, side-by-side installation, candidate acceptance, and
 production endpoint promotion are separate approvals. Because this candidate
