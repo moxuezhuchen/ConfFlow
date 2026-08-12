@@ -5,7 +5,7 @@
 Use the isolated candidate ref `907b69e` for the post-Phase-F architecture
 work; compare it with stable `6981935`. Do not use `/opt/ConfFlow` as the
 implementation checkout and do not replace the production venv. The paired
-JobDesk consumer candidate is `cf3fe30`.
+JobDesk consumer candidate is `6122ecc`.
 
 The relevant focused modules are `workflow/planner.py`, `workflow/resume.py`,
 `workflow/executor.py`, `workflow/finalizer.py`,
