@@ -2,7 +2,7 @@
 
 ## Post-Phase-F candidate gates (2026-08-12)
 
-For candidate `0037c04`, the required non-compute checks are independent of
+For candidate `7ef0df3`, the required non-compute checks are independent of
 the production endpoint:
 
 ```bash
