@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import ast
+import inspect
 import os
 from pathlib import Path
 from types import SimpleNamespace
@@ -9,6 +11,13 @@ from types import SimpleNamespace
 import pytest
 
 from confflow import control_worker
+from confflow.worker_handoff import (
+    ensure_directory,
+    load_handoff,
+    stage_file,
+    stage_worker_inputs,
+    verify_prepared_handoff,
+)
 from confflow.worker_security import (
     _canonical_json,
     _file_digest,
@@ -32,6 +41,36 @@ def test_control_worker_keeps_legacy_security_aliases() -> None:
     assert control_worker._sha256_bytes is _sha256_bytes
     assert control_worker._validate_attempt_root is _validate_attempt_root
     assert control_worker._validate_path is _validate_path
+    assert control_worker._load_handoff is load_handoff
+    assert control_worker._stage_worker_inputs is stage_worker_inputs
+    assert control_worker._stage_file is stage_file
+    assert control_worker._ensure_directory is ensure_directory
+    assert control_worker._verify_prepared_handoff is verify_prepared_handoff
+
+
+def test_control_worker_entrypoint_only_orchestrates_security_components() -> None:
+    """The process entrypoint must not grow a second handoff implementation."""
+    source = inspect.getsource(control_worker.run_control_worker)
+    tree = ast.parse(source)
+    called_names = {
+        node.func.id
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+    }
+
+    assert {"_load_handoff", "_verify_prepared_handoff", "_stage_worker_inputs"} <= called_names
+    assert not called_names & {
+        "_canonical_json",
+        "_file_digest",
+        "_read_json_file",
+        "_safe_absolute_path",
+        "_validate_attempt_root",
+        "_validate_path",
+        "_stage_file",
+        "_ensure_directory",
+    }
+    assert "os.open(" not in source
+    assert "hashlib" not in source
 
 
 @pytest.mark.parametrize(

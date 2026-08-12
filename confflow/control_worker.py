@@ -11,10 +11,7 @@ APIs.
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
-import os
-import stat
 import sys
 import time
 from collections.abc import Callable, Sequence
@@ -22,6 +19,8 @@ from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from typing import Any
 
+from . import worker_handoff as _worker_handoff
+from . import worker_security as _worker_security
 from .application.execution.errors import ErrorCode, ExecutionServiceError
 from .application.execution.models import RunState
 from .application.execution.sqlite import SQLiteExecutionRepository
@@ -31,7 +30,6 @@ from .application.execution.workflow_adapter import (
     build_workflow_service,
     open_control_service,
 )
-from .control import _validator
 from .core.exceptions import StopRequestedError
 from .core.logging import redirect_logging_streams
 from .worker_lease import (  # noqa: F401 - retain private helper imports for callers
@@ -45,18 +43,22 @@ from .worker_runner import (
     WorkerWorkflowRunnerAdapter,
     default_workflow_runner,
 )
-from .worker_security import (
-    _canonical_json,
-    _file_digest,
-    _read_json_file,
-    _safe_absolute_path,
-    _sha256_bytes,
-    _validate_attempt_root,
-    _validate_path,
-)
 from .worker_sidecar import WorkerSidecarPublisher
 
-HANDOFF_SCHEMA = "confflow.control.worker-handoff.v1"
+HANDOFF_SCHEMA = _worker_handoff.HANDOFF_SCHEMA
+_ensure_directory = _worker_handoff.ensure_directory
+_load_handoff = _worker_handoff.load_handoff
+_stage_file = _worker_handoff.stage_file
+_stage_worker_inputs = _worker_handoff.stage_worker_inputs
+_verify_prepared_handoff = _worker_handoff.verify_prepared_handoff
+_canonical_json = _worker_security._canonical_json
+_file_digest = _worker_security._file_digest
+_read_json_file = _worker_security._read_json_file
+_safe_absolute_path = _worker_security._safe_absolute_path
+_sha256_bytes = _worker_security._sha256_bytes
+_validate_attempt_root = _worker_security._validate_attempt_root
+_validate_path = _worker_security._validate_path
+
 _TERMINAL_STATES = frozenset({RunState.COMPLETED, RunState.FAILED, RunState.CANCELLED})
 
 
@@ -84,17 +86,12 @@ def run_control_worker(
         raise ExecutionServiceError(
             ErrorCode.UNKNOWN_RUN, "control worker cannot find the prepared run"
         )
-    handoff_digest = _sha256_bytes(_canonical_json(payload))
-    if handoff_digest != aggregate.input_manifest_digest:
-        raise ExecutionServiceError(
-            ErrorCode.INVALID_REQUEST,
-            "control worker handoff digest does not match prepared request",
-        )
-    if _file_digest(config_path) != aggregate.workflow_config_digest:
-        raise ExecutionServiceError(
-            ErrorCode.INVALID_REQUEST,
-            "control worker workflow digest does not match prepared request",
-        )
+    handoff_digest = _verify_prepared_handoff(
+        payload,
+        config_path,
+        expected_input_manifest_digest=aggregate.input_manifest_digest,
+        expected_workflow_config_digest=aggregate.workflow_config_digest,
+    )
     resume = False
     while True:
         current = repository.read(run_id)
@@ -248,80 +245,10 @@ def main(args_list: Sequence[str] | None = None) -> int:
     return 0 if state is RunState.COMPLETED else 1
 
 
-def _load_handoff(
-    path: str | Path, run_id: str, root: StateRoot
-) -> tuple[dict[str, Any], str, list[dict[str, str]]]:
-    attempt_root = _validate_attempt_root(root)
-    handoff_path = _validate_path(path, attempt_root, "handoff", kind="file")
-    payload = _read_json_file(handoff_path)
-    if not isinstance(payload, dict):
-        raise ValueError("control worker handoff must be an object")
-    try:
-        _validator("worker-handoff.schema.json").validate(payload)
-    except Exception as error:  # jsonschema.ValidationError is intentionally optional here
-        raise ValueError(f"control worker handoff schema validation failed: {error}") from error
-    if payload.get("run_id") != run_id or payload.get("content_schema") != HANDOFF_SCHEMA:
-        raise ValueError("control worker handoff identity does not match the requested run")
-    config = payload["workflow_config"]
-    config_path = _safe_absolute_path(config["path"], "workflow_config.path")
-    _validate_path(config_path, attempt_root, "workflow_config.path", kind="file")
-    if _file_digest(config_path) != config["sha256"]:
-        raise ValueError("workflow configuration digest does not match handoff")
-    tasks: list[dict[str, str]] = []
-    for item in payload["tasks"]:
-        input_path = _safe_absolute_path(item["input_xyz"], "task.input_xyz")
-        if Path(input_path).suffix.lower() != ".xyz":
-            raise ValueError("task.input_xyz must use the .xyz extension")
-        work_dir = _safe_absolute_path(item["work_dir"], "task.work_dir")
-        _validate_path(input_path, attempt_root, "task.input_xyz", kind="file")
-        _validate_path(
-            work_dir, attempt_root, "task.work_dir", kind="directory", allow_missing=True
-        )
-        if _file_digest(input_path) != item["sha256"]:
-            raise ValueError(f"input digest does not match task {item['task_id']}")
-        tasks.append(
-            {
-                "task_id": item["task_id"],
-                "input_xyz": input_path,
-                "work_dir": work_dir,
-                "sha256": item["sha256"],
-            }
-        )
-    return payload, config_path, tasks
-
-
 def _token_lease(root: StateRoot, run_id: str, token: str) -> TokenLeaseManager:
     """Create a lease below StateRoot's validated private runs layout."""
     paths = root.ensure_run_paths(run_id)
     return TokenLeaseManager(paths.staging.parent.parent, run_id, token)
-
-
-def _stage_worker_inputs(
-    root: StateRoot,
-    run_id: str,
-    config_path: str,
-    tasks: list[dict[str, str]],
-    *,
-    expected_config_digest: str,
-) -> tuple[str, list[dict[str, str]]]:
-    """Copy validated inputs into the producer-owned immutable staging root."""
-    paths = root.ensure_run_paths(run_id)
-    staged_config = _stage_file(
-        config_path,
-        paths.staging / "workflow.yaml",
-        expected_digest=expected_config_digest,
-    )
-    staged_tasks: list[dict[str, str]] = []
-    for task in tasks:
-        input_name = Path(task["input_xyz"]).name
-        staged_input = _stage_file(
-            task["input_xyz"],
-            paths.staging / "inputs" / input_name,
-            expected_digest=task["sha256"],
-        )
-        staged_tasks.append({**task, "input_xyz": str(staged_input), "work_dir": task["work_dir"]})
-    _ensure_directory(Path(tasks[0]["work_dir"]))
-    return str(staged_config), staged_tasks
 
 
 def _publish_worker_sidecars(
@@ -337,56 +264,6 @@ def _publish_worker_sidecars(
         else WorkerSidecarPublisher(publisher_or_root)
     )
     publisher.publish(staged_input=staged_input, work_dir=work_dir)
-
-
-def _stage_file(source: str, destination: Path, *, expected_digest: str) -> Path:
-    """Copy one owner-owned regular file through a no-follow descriptor."""
-    nofollow = getattr(os, "O_NOFOLLOW", 0)
-    try:
-        source_fd = os.open(source, os.O_RDONLY | nofollow)
-    except OSError as error:
-        raise ValueError(f"cannot securely open worker input {source}: {error}") from error
-    try:
-        metadata = os.fstat(source_fd)
-        if not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != os.getuid():
-            raise ValueError(f"worker input must be an owner-owned regular file: {source}")
-        digest = hashlib.sha256()
-        destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        target_fd = os.open(
-            destination,
-            os.O_WRONLY | os.O_CREAT | os.O_TRUNC | nofollow,
-            0o600,
-        )
-        try:
-            while True:
-                chunk = os.read(source_fd, 1024 * 1024)
-                if not chunk:
-                    break
-                digest.update(chunk)
-                remaining = memoryview(chunk)
-                while remaining:
-                    written = os.write(target_fd, remaining)
-                    if written <= 0:
-                        raise OSError("worker input staging write made no progress")
-                    remaining = remaining[written:]
-            os.fsync(target_fd)
-        finally:
-            os.close(target_fd)
-        if digest.hexdigest() != expected_digest:
-            raise ValueError(f"worker input changed while being staged: {source}")
-        return destination
-    finally:
-        os.close(source_fd)
-
-
-def _ensure_directory(path: Path) -> None:
-    path.mkdir(parents=True, exist_ok=True, mode=0o700)
-    metadata = os.lstat(path)
-    if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(metadata.st_mode):
-        raise ValueError("worker work_dir must be a non-symlink directory")
-    if metadata.st_uid != os.getuid():
-        raise ValueError("worker work_dir must be owner-owned")
-    os.chmod(path, 0o700)
 
 
 def _worker_workflow_runner(
