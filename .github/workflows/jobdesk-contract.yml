@@ -255,13 +255,22 @@ jobs:
       - name: Run consumer contract suite
         working-directory: jobdesk
         run: |
-          python -m pytest -q \
-            tests/test_confflow_preflight.py \
-            tests/test_confflow_results.py \
-            tests/test_confflow_control_backend.py \
+          consumer_tests=(
+            tests/test_confflow_preflight.py
+            tests/test_confflow_results.py
+            tests/test_confflow_control_backend.py
+            tests/test_confflow_launcher_integration.py
+            tests/test_confflow_output_manifest.py
+            tests/test_workflow_spec.py
+          )
+          for optional_test in \
+            tests/test_confflow_config_contract.py \
             tests/test_confflow_control_artifacts_boundary.py \
             tests/test_confflow_control_handoff_boundary.py \
-            tests/test_confflow_control_state_boundary.py \
-            tests/test_confflow_launcher_integration.py \
-            tests/test_confflow_output_manifest.py \
-            tests/test_workflow_spec.py
+            tests/test_confflow_control_launcher_boundary.py \
+            tests/test_confflow_control_state_boundary.py; do
+            if test -f "$optional_test"; then
+              consumer_tests+=("$optional_test")
+            fi
+          done
+          python -m pytest -q "${consumer_tests[@]}"
