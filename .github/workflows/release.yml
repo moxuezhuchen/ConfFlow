@@ -105,6 +105,85 @@ jobs:
           print(f"verified {wheel.name}: commit={expected_commit} dirty=false")
           PY
 
+      - name: Install and verify the final wheel in a clean venv
+        env:
+          EXPECTED_WORKFLOW_SCHEMA_SHA256: 87991f09a0edbd56aed354bdd03b012775a2f2b98504297ab459e524f4542427
+        run: |
+          set -euo pipefail
+          wheel="$(find dist -maxdepth 1 -name 'confflow-2.0.0-*.whl' -print -quit)"
+          test -n "$wheel"
+          venv="${RUNNER_TEMP}/confflow-release-venv"
+          python -m venv "$venv"
+          "$venv/bin/python" -m pip install --upgrade pip pytest
+          "$venv/bin/python" -m pip install "$wheel"
+          "$venv/bin/python" -m pip check
+          "$venv/bin/confflow" --help >/dev/null
+          "$venv/bin/confflow" --capabilities --json > "${RUNNER_TEMP}/release-capabilities.json"
+          "$venv/bin/confflow" config contract --json > "${RUNNER_TEMP}/release-config-contract.json"
+          VENV_PYTHON="$venv/bin/python" \
+          CONFFLOW_BIN="$venv/bin/confflow" \
+          CAPABILITIES_JSON="${RUNNER_TEMP}/release-capabilities.json" \
+          CONFIG_CONTRACT_JSON="${RUNNER_TEMP}/release-config-contract.json" \
+          python - <<'PY'
+          from __future__ import annotations
+
+          import hashlib
+          import json
+          import os
+          import subprocess
+          from pathlib import Path
+
+          venv = Path(os.environ["VENV_PYTHON"]).resolve().parent.parent
+          expected_commit = subprocess.check_output(
+              ["git", "rev-parse", "HEAD"], text=True
+          ).strip()
+          capabilities = json.loads(Path(os.environ["CAPABILITIES_JSON"]).read_text())
+          build = capabilities.get("build")
+          if not isinstance(build, dict) or build.get("commit") != expected_commit or build.get("dirty") is not False:
+              raise SystemExit(f"installed wheel provenance mismatch: {build!r} != {expected_commit}")
+          schema_path = venv / "share" / "confflow" / "workflow_config" / "v1" / "workflow_config_v1.schema.json"
+          if not schema_path.is_file():
+              raise SystemExit(f"installed wheel omitted workflow schema: {schema_path}")
+          schema = json.loads(schema_path.read_text(encoding="utf-8"))
+          canonical = json.dumps(schema, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+          if hashlib.sha256(canonical).hexdigest() != os.environ["EXPECTED_WORKFLOW_SCHEMA_SHA256"]:
+              raise SystemExit("installed workflow schema digest mismatch")
+          control_root = venv / "share" / "confflow" / "control_protocol" / "v1"
+          required_control = (
+              "common.schema.json",
+              "requests.schema.json",
+              "responses.schema.json",
+              "input-manifest.schema.json",
+              "worker-handoff.schema.json",
+          )
+          missing = [name for name in required_control if not (control_root / name).is_file()]
+          if missing:
+              raise SystemExit(f"installed wheel omitted control schema members: {missing}")
+          contract = json.loads(Path(os.environ["CONFIG_CONTRACT_JSON"]).read_text())
+          if contract.get("response_schema") != "confflow.config.contract.v1":
+              raise SystemExit(f"installed config contract schema mismatch: {contract!r}")
+          if contract.get("workflow_schema", {}).get("sha256") != os.environ["EXPECTED_WORKFLOW_SCHEMA_SHA256"]:
+              raise SystemExit(f"installed config contract workflow binding mismatch: {contract!r}")
+          print(json.dumps({
+              "commit": expected_commit,
+              "workflow_schema_sha256": os.environ["EXPECTED_WORKFLOW_SCHEMA_SHA256"],
+              "control_schema_members": list(required_control),
+          }, sort_keys=True))
+          PY
+
+      - name: Run installed-wheel contract and release fixture tests
+        run: |
+          set -euo pipefail
+          venv="${RUNNER_TEMP}/confflow-release-venv"
+          cd "${RUNNER_TEMP}"
+          "$venv/bin/python" -m pytest -q -p no:cacheprovider \
+            "${GITHUB_WORKSPACE}/tests/test_config_contract.py" \
+            "${GITHUB_WORKSPACE}/tests/test_control_protocol_schema.py" \
+            "${GITHUB_WORKSPACE}/tests/test_control_worker.py" \
+            "${GITHUB_WORKSPACE}/tests/test_install_provenance.py" \
+            "${GITHUB_WORKSPACE}/tests/test_release_dependencies.py" \
+            "${GITHUB_WORKSPACE}/tests/test_workflow_schema_generation.py"
+
       - name: Generate CycloneDX SBOM from the controlled runtime lock
         run: |
           set -euo pipefail
