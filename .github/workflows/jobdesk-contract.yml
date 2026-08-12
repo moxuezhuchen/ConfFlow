@@ -120,7 +120,7 @@ jobs:
           if not isinstance(producer_build, dict) or producer_build != build:
               raise AssertionError(f"producer/build provenance mismatch: {producer_build!r} != {build!r}")
           provenance = producer.get("install_provenance")
-          if not isinstance(provenance, dict) or provenance.get("status") not in {"verified", "missing", "invalid"}:
+          if not isinstance(provenance, dict) or provenance.get("status") not in {"verified", "missing"}:
               raise AssertionError(f"candidate install provenance is malformed: {provenance!r}")
           wheel = producer.get("wheel")
           expected_name = Path(os.environ["CANDIDATE_WHEEL"]).name
@@ -143,10 +143,8 @@ jobs:
           jobdesk_wheel = Path(os.environ["JOBDESK_WHEEL"])
           if not jobdesk_wheel.is_file():
               raise AssertionError(f"selected JobDesk wheel is missing: {jobdesk_wheel}")
-          jobdesk_schema_path = Path(
-              __import__("importlib.resources", fromlist=["files"])
-              .files("jobdesk_app")
-              .joinpath("resources/workflow_config/v1/workflow_config_v1.schema.json")
+          jobdesk_schema_path = files("jobdesk_app").joinpath(
+              "resources/workflow_config/v1/workflow_config_v1.schema.json"
           )
           jobdesk_schema = json.loads(jobdesk_schema_path.read_text(encoding="utf-8"))
           expected_schema_sha = "87991f09a0edbd56aed354bdd03b012775a2f2b98504297ab459e524f4542427"
@@ -155,6 +153,18 @@ jobs:
           ).encode("utf-8")
           if hashlib.sha256(canonical_jobdesk_schema).hexdigest() != expected_schema_sha:
               raise AssertionError("installed JobDesk workflow schema digest mismatch")
+
+          producer_schema_path = Path(sys.prefix) / "share" / "confflow" / "workflow_config" / "v1" / "workflow_config_v1.schema.json"
+          if not producer_schema_path.is_file():
+              raise AssertionError("installed candidate ConfFlow wheel omitted workflow schema")
+          producer_schema = json.loads(producer_schema_path.read_text(encoding="utf-8"))
+          canonical_producer_schema = json.dumps(
+              producer_schema, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+          ).encode("utf-8")
+          if hashlib.sha256(canonical_producer_schema).hexdigest() != expected_schema_sha:
+              raise AssertionError("installed candidate workflow schema digest mismatch")
+          if canonical_producer_schema != canonical_jobdesk_schema:
+              raise AssertionError("installed candidate/consumer workflow schema content drift")
 
           contract = json.loads(subprocess.check_output(["confflow", "config", "contract", "--json"], text=True))
           if contract.get("response_schema") != "confflow.config.contract.v1":
@@ -202,7 +212,12 @@ jobs:
             tests/test_control_protocol_schema.py \
             tests/test_control_worker.py \
             tests/test_config_contract.py \
-            tests/test_workflow_schema_generation.py
+            tests/test_install_provenance.py \
+            tests/test_release_dependencies.py \
+            tests/test_workflow_schema_generation.py \
+            tests/test_workflow_entry_facade.py \
+            tests/test_workflow_resume_after_disconnect.py \
+            tests/test_workflow_state.py
 
       - name: Run consumer contract suite
         working-directory: jobdesk
@@ -211,5 +226,9 @@ jobs:
             tests/test_confflow_preflight.py \
             tests/test_confflow_results.py \
             tests/test_confflow_control_backend.py \
+            tests/test_confflow_control_artifacts_boundary.py \
+            tests/test_confflow_control_handoff_boundary.py \
+            tests/test_confflow_control_state_boundary.py \
             tests/test_confflow_launcher_integration.py \
+            tests/test_confflow_output_manifest.py \
             tests/test_workflow_spec.py
