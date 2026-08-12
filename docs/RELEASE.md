@@ -2,7 +2,7 @@
 
 ## Candidate versus production (2026-08-12)
 
-The current architecture candidate is `7ef0df3`, based on the released
+The current architecture candidate is `1a0d760`, based on the released
 `6981935` / v2.0.0. It has passed isolated non-compute regression, static, and
 build checks, but it is not a release artifact and must not be promoted by
 changing `/usr/local/bin/confflow`, JobDesk server entries, or the production

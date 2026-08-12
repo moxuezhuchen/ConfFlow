@@ -7,16 +7,19 @@ other's runtime implementation.
 
 ## Current architecture candidate (2026-08-12)
 
-The isolated candidate is commit `7ef0df3` on
+The isolated candidate is commit `1a0d760` on
 `codex/post-phase-f-architecture-phase0`, based on stable `6981935` / v2.0.0.
 It remains a candidate: no tag, publication, production installation, or
 endpoint promotion has been performed.
 
 | Role | Ref / identity | State |
 |---|---|---|
+| Dirty historical JobDesk checkout | `C:\dft\tool\jobdesk-dev` @ `89d232a` | preserved user-owned worktree and package metadata; not a release source |
+| Dirty historical ConfFlow checkout | `/opt/ConfFlow` @ `10e457d` | preserved historical source; not a release source |
 | ConfFlow stable baseline | `6981935` / v2.0.0 | released production baseline |
-| ConfFlow architecture candidate | `7ef0df3` | isolated, not released |
+| ConfFlow architecture candidate | `1a0d760` | isolated, not released |
 | Paired JobDesk candidate | `908b153` | isolated consumer candidate |
+| Production/promotion endpoint | v0.6.0 + v2.0.0 configured pairing | unchanged; no candidate endpoint authorized |
 
 The workflow facade now delegates to planner, resume policy, executor, and
 finalizer boundaries. `ExecutionService` retains repository CAS and lifecycle

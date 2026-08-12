@@ -2,11 +2,19 @@
 
 ## Current candidate boundary (2026-08-12)
 
-The isolated candidate is `7ef0df3` (base `6981935`, package version still
+The isolated candidate is `1a0d760` (base `6981935`, package version still
 2.0.0). It is not published or installed over the production environment. The
 production source checkout `/opt/ConfFlow` remains the dirty historical tree
 at `10e457d`; it was not used as the implementation base and was not modified.
 The paired JobDesk candidate is `908b153`.
+
+| State boundary | Identity | Treatment |
+|---|---|---|
+| Dirty historical JobDesk worktree | `C:\dft\tool\jobdesk-dev` @ `89d232a` | preserved; package metadata and user changes remain untouched |
+| Dirty historical ConfFlow worktree | `/opt/ConfFlow` @ `10e457d` | preserved; not used as the candidate source |
+| Released baseline | JobDesk `e4d8f74` / v0.6.0 + ConfFlow `6981935` / v2.0.0 | current configured pairing |
+| Implementation candidates | JobDesk `908b153` + ConfFlow `1a0d760` | isolated and unpublished |
+| Promotion endpoint | v0.6.0/v2.0.0 configured identity | unchanged until separately authorized |
 
 The current control/workflow boundary is:
 
