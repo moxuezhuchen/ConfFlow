@@ -299,15 +299,18 @@ jobs:
 
       - name: Verify exact candidate and stable refs
         env:
-          EXPECTED_CANDIDATE_COMMIT: 338b53b3a34593271b926fc9e96010186141a386
+          EXPECTED_RELEASE_COMMIT: 338b53b3a34593271b926fc9e96010186141a386
           EXPECTED_JOBDESK_COMMIT: e4d8f74af0dff80b233f7bd9cb360b43d040069f
         run: |
           set -euo pipefail
-          test "${{ github.event.pull_request.head.sha }}" = "$EXPECTED_CANDIDATE_COMMIT"
           candidate_head="$(git -C confflow-candidate rev-parse HEAD)"
+          test "$candidate_head" = "${{ github.event.pull_request.head.sha }}"
+          candidate_parent="$(git -C confflow-candidate rev-parse "$candidate_head^")"
+          test "$candidate_parent" = "$EXPECTED_RELEASE_COMMIT"
+          changed_files="$(git -C confflow-candidate diff --name-only "$EXPECTED_RELEASE_COMMIT" "$candidate_head")"
+          test "$changed_files" = ".github/workflows/jobdesk-contract.yml"
           stable_tag_commit="$(git -C jobdesk-stable rev-parse 'v0.6.0^{commit}')"
           stable_head="$(git -C jobdesk-stable rev-parse HEAD)"
-          test "$candidate_head" = "$EXPECTED_CANDIDATE_COMMIT"
           test "$stable_tag_commit" = "$EXPECTED_JOBDESK_COMMIT"
           test "$stable_head" = "$EXPECTED_JOBDESK_COMMIT"
 
