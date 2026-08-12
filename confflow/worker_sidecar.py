@@ -57,9 +57,7 @@ class WorkerSidecarPublisher:
                 allow_missing=True,
             )
             if not source.is_file():
-                raise FileNotFoundError(
-                    f"worker completed without required sidecar: {source.name}"
-                )
+                raise FileNotFoundError(f"worker completed without required sidecar: {source.name}")
             destination = destination_root / source.name
             _validate_path(
                 destination,
@@ -81,10 +79,7 @@ class WorkerSidecarPublisher:
         target_fd: int | None = None
         try:
             source_metadata = os.fstat(source_fd)
-            if (
-                not stat.S_ISREG(source_metadata.st_mode)
-                or source_metadata.st_uid != os.getuid()
-            ):
+            if not stat.S_ISREG(source_metadata.st_mode) or source_metadata.st_uid != os.getuid():
                 raise ValueError(
                     f"worker sidecar source must be an owner-owned regular file: {source}"
                 )

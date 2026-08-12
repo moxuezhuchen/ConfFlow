@@ -19,7 +19,9 @@ def test_contract_is_deterministic_and_has_a_separate_schema_identity() -> None:
 
 
 def test_validate_mapping_is_environment_independent() -> None:
-    result = validate_mapping({"global": {}, "steps": [{"type": "calc", "params": {"keyword": "B3LYP"}}]})
+    result = validate_mapping(
+        {"global": {}, "steps": [{"type": "calc", "params": {"keyword": "B3LYP"}}]}
+    )
     assert result["valid"] is True
     assert result["issues"] == []
 

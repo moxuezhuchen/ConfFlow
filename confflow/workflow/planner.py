@@ -42,9 +42,7 @@ def prepare_workflow(
     """Validate workflow inputs and build its deterministic execution plan."""
     input_files = [os.path.abspath(x) for x in input_xyz]
     original_inputs = (
-        [os.path.abspath(x) for x in original_input_files]
-        if original_input_files
-        else input_files
+        [os.path.abspath(x) for x in original_input_files] if original_input_files else input_files
     )
     for fp in input_files:
         if not os.path.exists(fp):

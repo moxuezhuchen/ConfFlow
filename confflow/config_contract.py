@@ -63,7 +63,9 @@ def _issue(code: str, message: str, *, path: str = "", severity: str = "error") 
 def validate_mapping(raw: Any) -> dict[str, Any]:
     issues: list[dict[str, str]] = []
     if not isinstance(raw, dict):
-        issues.append(_issue("root_not_mapping", "workflow configuration root must be a mapping", path="$"))
+        issues.append(
+            _issue("root_not_mapping", "workflow configuration root must be a mapping", path="$")
+        )
     else:
         try:
             WorkflowConfig.from_mapping(raw)
@@ -92,7 +94,11 @@ def main(args_list: list[str] | None = None) -> int:
         raw = yaml.safe_load(sys.stdin.read())
         result = validate_mapping(raw)
     except (OSError, yaml.YAMLError, UnicodeError) as exc:
-        result = {**contract_payload(), "valid": False, "issues": [_issue("input_invalid", str(exc), path="$")]}
+        result = {
+            **contract_payload(),
+            "valid": False,
+            "issues": [_issue("input_invalid", str(exc), path="$")],
+        }
     print(json.dumps(result, sort_keys=True, indent=2))
     return 0 if result["valid"] else 2
 

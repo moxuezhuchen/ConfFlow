@@ -197,9 +197,7 @@ def stage_file(source: str, destination: Path, *, expected_digest: str) -> Path:
             )
 
         _validate_existing_destination(destination, owner)
-        temporary_fd, temporary_path = _open_temporary_destination(
-            destination, nofollow
-        )
+        temporary_fd, temporary_path = _open_temporary_destination(destination, nofollow)
         temporary_metadata = os.fstat(temporary_fd)
         if not stat.S_ISREG(temporary_metadata.st_mode) or temporary_metadata.st_uid != owner:
             raise ValueError("worker staging temporary file must be owner-owned and regular")
@@ -260,9 +258,7 @@ def _open_temporary_destination(destination: Path, nofollow: int) -> tuple[int, 
     """Create a private same-directory temporary file without following links."""
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | nofollow
     for _ in range(10):
-        temporary_path = destination.parent / (
-            f".{destination.name}.tmp-{secrets.token_hex(16)}"
-        )
+        temporary_path = destination.parent / (f".{destination.name}.tmp-{secrets.token_hex(16)}")
         try:
             return (
                 os.open(temporary_path, flags, 0o600),
@@ -282,7 +278,9 @@ def _validate_existing_destination(destination: Path, owner: int) -> None:
     except FileNotFoundError:
         return
     except OSError as error:
-        raise ValueError(f"cannot securely inspect worker staging destination {destination}") from error
+        raise ValueError(
+            f"cannot securely inspect worker staging destination {destination}"
+        ) from error
     if stat.S_ISLNK(metadata.st_mode):
         raise ValueError(f"worker staging destination must be a non-symlink file: {destination}")
     if not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != owner:

@@ -114,7 +114,9 @@ def test_validate_chain_definitions_returns_invalid_messages() -> None:
 
     with (
         patch("confflow.blocks.confgen.validation.ChainValidator", return_value=validator),
-        patch("confflow.blocks.confgen.validation.load_mol_from_xyz", return_value=object()) as load_mol,
+        patch(
+            "confflow.blocks.confgen.validation.load_mol_from_xyz", return_value=object()
+        ) as load_mol,
     ):
         messages = validate_chain_definitions(
             input_file="mol.xyz",

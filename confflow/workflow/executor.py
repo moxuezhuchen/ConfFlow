@@ -144,7 +144,9 @@ class WorkflowExecutor:
         terminal_outputs = {
             name: _as_artifact_list(self.lineage[name]) for name in self.prepared.terminal_steps
         }
-        final_outputs = [artifact for artifacts in terminal_outputs.values() for artifact in artifacts]
+        final_outputs = [
+            artifact for artifacts in terminal_outputs.values() for artifact in artifacts
+        ]
         final_output = (
             self.lineage[self.prepared.terminal_steps[0]]
             if len(self.prepared.terminal_steps) == 1
@@ -282,7 +284,9 @@ class WorkflowExecutor:
             self.state.final_status = "failed"
             self.state_store.save(self.state)
             notify_step_status_change(self.on_step_status_change, state_record)
-            self.runtime.checkpoint.save(execution_index - 1, self.runtime.stats_tracker.get_stats())
+            self.runtime.checkpoint.save(
+                execution_index - 1, self.runtime.stats_tracker.get_stats()
+            )
             raise
         finally:
             step_stats["end_time"] = datetime.now().isoformat()
@@ -304,7 +308,9 @@ class WorkflowExecutor:
                 TaskStatus.SKIPPED,
                 TaskStatus.SKIPPED_MULTI,
             ]:
-                self.runtime.checkpoint.save(execution_index, self.runtime.stats_tracker.get_stats())
+                self.runtime.checkpoint.save(
+                    execution_index, self.runtime.stats_tracker.get_stats()
+                )
                 mark_step_completed(self.state, state_record, current_input, execution_index)
                 self.state_store.save(self.state)
                 notify_step_status_change(self.on_step_status_change, state_record)

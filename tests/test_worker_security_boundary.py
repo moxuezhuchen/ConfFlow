@@ -84,9 +84,7 @@ def test_control_worker_entrypoint_only_orchestrates_security_components() -> No
         (123, "absolute POSIX path"),
     ],
 )
-def test_safe_absolute_path_rejects_non_posix_and_traversal(
-    value: object, message: str
-) -> None:
+def test_safe_absolute_path_rejects_non_posix_and_traversal(value: object, message: str) -> None:
     with pytest.raises(ValueError, match=message):
         _safe_absolute_path(value, "worker.path")
 
@@ -127,9 +125,10 @@ def test_validate_path_rejects_escape_symlink_wrong_kind_and_writable_paths(
         _validate_path(attempt_root, attempt_root, "root", kind="directory")
     with pytest.raises(ValueError, match="does not exist"):
         _validate_path(attempt_root / "missing", attempt_root, "missing", kind="file")
-    assert _validate_path(
-        attempt_root / "new", attempt_root, "new", kind="file", allow_missing=True
-    ) == attempt_root / "new"
+    assert (
+        _validate_path(attempt_root / "new", attempt_root, "new", kind="file", allow_missing=True)
+        == attempt_root / "new"
+    )
     with pytest.raises(ValueError, match="must be a directory"):
         _validate_path(input_path, attempt_root, "input", kind="directory")
 
@@ -205,7 +204,10 @@ def test_stage_file_publishes_atomically_with_private_permissions(tmp_path: Path
     content = b"new worker input\n"
     _private_file(source, content)
 
-    assert stage_file(source.as_posix(), destination, expected_digest=_sha256_bytes(content)) == destination
+    assert (
+        stage_file(source.as_posix(), destination, expected_digest=_sha256_bytes(content))
+        == destination
+    )
     assert destination.read_bytes() == content
     assert stat.S_IMODE(destination.stat().st_mode) == 0o600
     assert not list(destination.parent.glob(f".{destination.name}.tmp-*"))
@@ -291,7 +293,9 @@ def test_stage_file_rejects_broadly_writable_staging_directory(tmp_path: Path) -
     assert not list(destination.parent.glob(f".{destination.name}.tmp-*"))
 
 
-def test_stage_file_keeps_source_owner_boundary(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_stage_file_keeps_source_owner_boundary(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     source = tmp_path / "source.xyz"
     destination = tmp_path / "staging" / "input.xyz"
     content = b"worker input\n"

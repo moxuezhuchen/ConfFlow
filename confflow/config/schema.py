@@ -52,9 +52,9 @@ def schema_document() -> dict[str, Any]:
 
 
 def schema_bytes() -> bytes:
-    return (json.dumps(schema_document(), ensure_ascii=False, sort_keys=True, indent=2) + "\n").encode(
-        "utf-8"
-    )
+    return (
+        json.dumps(schema_document(), ensure_ascii=False, sort_keys=True, indent=2) + "\n"
+    ).encode("utf-8")
 
 
 __all__ = ["SCHEMA_GENERATOR_VERSION", "WORKFLOW_SCHEMA_VERSION", "schema_bytes", "schema_document"]

@@ -18,7 +18,10 @@ def main() -> int:
     parser.add_argument(
         "--output",
         type=Path,
-        default=Path(__file__).parents[1] / "confflow" / "config" / "workflow_config_v1.schema.json",
+        default=Path(__file__).parents[1]
+        / "confflow"
+        / "config"
+        / "workflow_config_v1.schema.json",
     )
     args = parser.parse_args()
     generated = schema_bytes()
