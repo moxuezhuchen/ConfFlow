@@ -86,6 +86,7 @@ jobs:
           import os
           import subprocess
           import sys
+          from importlib.resources import files
           from pathlib import Path
 
           from jobdesk_app.core.confflow_preflight import (
