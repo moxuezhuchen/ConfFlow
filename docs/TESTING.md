@@ -2,19 +2,19 @@
 
 ## Post-Phase-F candidate gates (2026-08-12)
 
-For candidate `907b69e`, the required non-compute checks are independent of
+For candidate `0037c04`, the required non-compute checks are independent of
 the production endpoint:
 
 ```bash
 python -m pytest -q -p no:cacheprovider
 python -m ruff check confflow tests
 python -m mypy confflow
-python -m build --no-isolation
+python -m build
 ```
 
-The Linux/ext4 isolated candidate currently reports `1043 passed, 1 skipped,
+The Linux/ext4 isolated candidate currently reports `1051 passed, 1 skipped,
 1 warning` with the static checks and wheel/sdist build passing. The clean
-installed-wheel fixture subset reports `37 passed`. This evidence does not
+installed-wheel fixture subset reports `43 passed`. This evidence does not
 include a Gaussian, ORCA, g16, or scheduler workload. Such a workload is a
 separate acceptance gate and is not implied by the local test result.
 
