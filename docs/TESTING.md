@@ -9,8 +9,12 @@ the production endpoint:
 python -m pytest -q -p no:cacheprovider
 python -m ruff check confflow tests
 python -m mypy confflow
-python -m build
+python -m build --sdist --outdir dist-candidate
+python -m build --wheel --outdir dist-candidate
 ```
+
+Build the source distribution and wheel separately from the clean checkout;
+the direct wheel build is what embeds the commit and clean-tree provenance.
 
 The Linux/ext4 isolated candidate currently reports `1051 passed, 1 skipped,
 1 warning` with the static checks and wheel/sdist build passing. The clean
