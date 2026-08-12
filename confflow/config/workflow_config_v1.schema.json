@@ -1,0 +1,94 @@
+{
+  "$id": "https://confflow.dev/schema/workflow-config/v1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": true,
+  "properties": {
+    "global": {
+      "additionalProperties": true,
+      "properties": {
+        "allowed_executables": {},
+        "auto_clean": {},
+        "blocks": {},
+        "charge": {},
+        "cores_per_task": {},
+        "delete_work_dir": {},
+        "enable_dynamic_resources": {},
+        "energy_tolerance": {},
+        "energy_window": {},
+        "force_consistency": {},
+        "freeze": {},
+        "gaussian_path": {},
+        "gaussian_write_chk": {},
+        "input_chk_dir": {},
+        "iprog": {},
+        "itask": {},
+        "keyword": {},
+        "max_parallel_jobs": {},
+        "max_wall_time_seconds": {},
+        "multiplicity": {},
+        "noH": {},
+        "orca_maxcore": {},
+        "orca_path": {},
+        "resume_from_backups": {},
+        "rmsd_threshold": {},
+        "sandbox_root": {},
+        "scan_coarse_step": {},
+        "scan_fine_step": {},
+        "scan_uphill_limit": {},
+        "stop_check_interval_seconds": {},
+        "total_memory": {},
+        "ts_bond_atoms": {},
+        "ts_bond_drift_threshold": {},
+        "ts_rescue_scan": {},
+        "ts_rmsd_threshold": {}
+      },
+      "type": "object"
+    },
+    "steps": {
+      "items": {
+        "additionalProperties": true,
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "inputs": {
+            "items": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "name": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "params": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "type": {
+            "enum": [
+              "calc",
+              "confgen",
+              "gen",
+              "task"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "type": "object"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "steps"
+  ],
+  "title": "ConfFlow workflow configuration",
+  "type": "object",
+  "x-confflow-generator": "confflow-schema-generator.v1",
+  "x-confflow-semantic-version": "v1"
+}

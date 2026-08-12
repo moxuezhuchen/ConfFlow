@@ -229,6 +229,19 @@ def test_control_worker_consumes_existing_queued_token_without_prepare(tmp_path:
         "completed",
     ]
 
+    def unexpected_runner(**_: object) -> dict[str, bool]:
+        raise AssertionError("terminal reattachment must not invoke the workflow")
+
+    assert (
+        run_control_worker(
+            state_root=root,
+            run_id="worker-run",
+            handoff_path=handoff_path,
+            workflow_runner=unexpected_runner,
+        )
+        is RunState.COMPLETED
+    )
+
 
 def test_control_worker_rejects_tampered_handoff_digest(tmp_path: Path) -> None:
     config = tmp_path / "workflow.yaml"

@@ -4,6 +4,13 @@ on:
   pull_request:
   push:
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      jobdesk_ref:
+        description: "JobDesk stable tag or consumer-candidate ref to test"
+        required: true
+        default: "v0.6.0"
+        type: string
 
 permissions:
   contents: read
@@ -25,43 +32,67 @@ jobs:
       - name: Build the candidate wheel
         working-directory: confflow
         run: |
+          set -euo pipefail
           python -m pip install --upgrade pip build
           python -m build --wheel --outdir "$RUNNER_TEMP/confflow-dist"
 
-      - name: Check out JobDesk main
+      - name: Check out selected JobDesk consumer
         uses: actions/checkout@v4
         with:
           repository: moxuezhuchen/jobdesk
-          ref: main
+          # Automatic PR/push runs use the currently verified JobDesk main
+          # commit, pinned for reproducibility. Manual dispatch can select an
+          # exact consumer candidate through jobdesk_ref.
+          ref: ${{ inputs.jobdesk_ref || 'e4d8f74af0dff80b233f7bd9cb360b43d040069f' }}
           path: jobdesk
+
+      - name: Build the selected JobDesk consumer wheel
+        working-directory: jobdesk
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade build
+          python -m build --wheel --outdir "$RUNNER_TEMP/jobdesk-dist"
+          wheel="$(find "$RUNNER_TEMP/jobdesk-dist" -maxdepth 1 -name 'jobdesk-*.whl' -print -quit)"
+          test -n "$wheel"
+          printf '%s\n' "$wheel" > "$RUNNER_TEMP/jobdesk-wheel-path"
 
       - name: Install the exact producer candidate and consumer
         run: |
           set -euo pipefail
-          python -m pip install -e "jobdesk[dev]"
+          jobdesk_wheel="$(cat "$RUNNER_TEMP/jobdesk-wheel-path")"
+          # Install the consumer from the built wheel, including its test
+          # dependencies, so reverse CI cannot pass through an editable tree.
+          python -m pip install "${jobdesk_wheel}[dev]"
           wheel="$(find "$RUNNER_TEMP/confflow-dist" -maxdepth 1 -name 'confflow-*.whl' -print -quit)"
           test -n "$wheel"
           python -m pip install "$wheel"
-          python -c 'import confflow; print(confflow.__version__)'
+          (cd "$RUNNER_TEMP" && python -c 'import confflow; print(confflow.__version__)')
+          python -m pip check
 
       - name: Verify candidate capability and bundled schema contract
         env:
           CANDIDATE_COMMIT: ${{ github.sha }}
+          JOBDESK_REF: ${{ inputs.jobdesk_ref || 'e4d8f74af0dff80b233f7bd9cb360b43d040069f' }}
         run: |
           set -euo pipefail
           wheel="$(find "$RUNNER_TEMP/confflow-dist" -maxdepth 1 -name 'confflow-*.whl' -print -quit)"
           wheel_sha="$(sha256sum "$wheel" | awk '{print $1}')"
-          JOBDESK_SOURCE="$PWD/jobdesk" CANDIDATE_WHEEL="$wheel" CANDIDATE_WHEEL_SHA="$wheel_sha" python - <<'PY'
+          cd "$RUNNER_TEMP"
+          JOBDESK_CHECKOUT="$GITHUB_WORKSPACE/jobdesk" \
+          JOBDESK_WHEEL="$(cat "$RUNNER_TEMP/jobdesk-wheel-path")" \
+          CANDIDATE_WHEEL="$wheel" \
+          CANDIDATE_WHEEL_SHA="$wheel_sha" python - <<'PY'
           import hashlib
           import json
           import os
           import subprocess
           import sys
+          from importlib.resources import files
           from pathlib import Path
 
-          sys.path.insert(0, os.environ["JOBDESK_SOURCE"] + "/src")
           from jobdesk_app.core.confflow_preflight import (
               parse_confflow_capabilities,
+              validate_confflow_production_capability,
               validate_confflow_capabilities,
           )
 
@@ -71,19 +102,30 @@ jobs:
           try:
               validate_confflow_capabilities(capabilities, require_dag=True)
           except ValueError as exc:
-              expected_breaking_error = "incompatible ConfFlow version 2.0.0: require >=1.5,<2.0"
-              if capabilities.version != "2.0.0" or str(exc) != expected_breaking_error:
+              expected_breaking_error = "incompatible ConfFlow version 2.1.2: require >=1.5,<2.0"
+              if capabilities.version != "2.1.2" or str(exc) != expected_breaking_error:
                   raise
               print(
                   "accepted the expected pre-switch JobDesk rejection for the "
                   f"breaking ConfFlow candidate: {exc}"
               )
           else:
-              if capabilities.version == "2.0.0":
+              if capabilities.version == "2.1.2":
                   print(
-                      "JobDesk already accepts the 2.0.0 candidate; continuing with "
+                      "JobDesk already accepts the 2.1.2 candidate; continuing with "
                       "the post-switch contract checks."
                   )
+          try:
+              validate_confflow_production_capability(capabilities)
+          except ValueError as exc:
+              if capabilities.version != "2.1.2" or str(exc) != "ConfFlow production version does not match an approved release":
+                  raise
+              print(
+                  "accepted the expected pre-switch production rejection for the "
+                  f"2.1.2 candidate: {exc}"
+              )
+          else:
+              raise AssertionError("stable JobDesk unexpectedly accepted the unapproved 2.1.2 producer")
           expected_commit = os.environ["CANDIDATE_COMMIT"]
           build = payload.get("build")
           producer = payload.get("producer")
@@ -95,7 +137,7 @@ jobs:
           if not isinstance(producer_build, dict) or producer_build != build:
               raise AssertionError(f"producer/build provenance mismatch: {producer_build!r} != {build!r}")
           provenance = producer.get("install_provenance")
-          if not isinstance(provenance, dict) or provenance.get("status") not in {"verified", "missing", "invalid"}:
+          if not isinstance(provenance, dict) or provenance.get("status") not in {"verified", "missing"}:
               raise AssertionError(f"candidate install provenance is malformed: {provenance!r}")
           wheel = producer.get("wheel")
           expected_name = Path(os.environ["CANDIDATE_WHEEL"]).name
@@ -109,6 +151,61 @@ jobs:
           if capabilities.raw_payload is None or capabilities.raw_payload.get("capabilities", {}).get("control_worker") is not True:
               raise AssertionError("Ubuntu candidate must advertise the POSIX control worker")
 
+          jobdesk_module = Path(__import__("jobdesk_app").__file__).resolve()
+          if Path(sys.prefix) not in jobdesk_module.parents:
+              raise AssertionError(f"JobDesk is not imported from the installed wheel: {jobdesk_module}")
+          expected_jobdesk_commit = subprocess.check_output(
+              ["git", "-C", os.environ["JOBDESK_CHECKOUT"], "rev-parse", "HEAD"], text=True
+          ).strip()
+          jobdesk_wheel = Path(os.environ["JOBDESK_WHEEL"])
+          if not jobdesk_wheel.is_file():
+              raise AssertionError(f"selected JobDesk wheel is missing: {jobdesk_wheel}")
+          selected_jobdesk_ref = os.environ["JOBDESK_REF"]
+          jobdesk_schema_path = files("jobdesk_app").joinpath(
+              "resources/workflow_config/v1/workflow_config_v1.schema.json"
+          )
+          expected_schema_sha = "87991f09a0edbd56aed354bdd03b012775a2f2b98504297ab459e524f4542427"
+          canonical_jobdesk_schema = None
+          if jobdesk_schema_path.is_file():
+              jobdesk_schema = json.loads(jobdesk_schema_path.read_text(encoding="utf-8"))
+              canonical_jobdesk_schema = json.dumps(
+                  jobdesk_schema, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+              ).encode("utf-8")
+              if hashlib.sha256(canonical_jobdesk_schema).hexdigest() != expected_schema_sha:
+                  raise AssertionError("installed JobDesk workflow schema digest mismatch")
+          elif selected_jobdesk_ref not in {
+              "v0.6.0",
+              "e4d8f74af0dff80b233f7bd9cb360b43d040069f",
+          }:
+              raise AssertionError(
+                  "selected JobDesk consumer omitted the workflow schema outside the "
+                  f"approved pre-switch refs: {selected_jobdesk_ref}"
+              )
+          else:
+              print(
+                  "accepted the expected pre-switch stable JobDesk consumer without "
+                  "the v1 workflow schema bundle"
+              )
+
+          producer_schema_path = Path(sys.prefix) / "share" / "confflow" / "workflow_config" / "v1" / "workflow_config_v1.schema.json"
+          if not producer_schema_path.is_file():
+              raise AssertionError("installed candidate ConfFlow wheel omitted workflow schema")
+          producer_schema = json.loads(producer_schema_path.read_text(encoding="utf-8"))
+          canonical_producer_schema = json.dumps(
+              producer_schema, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+          ).encode("utf-8")
+          if hashlib.sha256(canonical_producer_schema).hexdigest() != expected_schema_sha:
+              raise AssertionError("installed candidate workflow schema digest mismatch")
+          if canonical_jobdesk_schema is not None and canonical_producer_schema != canonical_jobdesk_schema:
+              raise AssertionError("installed candidate/consumer workflow schema content drift")
+
+          contract = json.loads(subprocess.check_output(["confflow", "config", "contract", "--json"], text=True))
+          if contract.get("response_schema") != "confflow.config.contract.v1":
+              raise AssertionError(f"candidate configuration contract schema drift: {contract!r}")
+          workflow_schema = contract.get("workflow_schema")
+          if not isinstance(workflow_schema, dict) or workflow_schema.get("sha256") != expected_schema_sha:
+              raise AssertionError(f"candidate workflow schema binding drift: {contract!r}")
+
           schema_root = Path(sys.prefix) / "share" / "confflow" / "control_protocol" / "v1"
           required = ("common.schema.json", "requests.schema.json", "responses.schema.json", "input-manifest.schema.json", "worker-handoff.schema.json")
           schemas = {}
@@ -121,7 +218,14 @@ jobs:
               raise AssertionError("candidate request schema id is not the v1 producer bundle")
           if schemas["responses.schema.json"].get("$id", "").split("/")[-2:] != ["v1", "responses.schema.json"]:
               raise AssertionError("candidate response schema id is not the v1 producer bundle")
-          print(json.dumps({"version": capabilities.version, "commit": expected_commit, "schema_members": list(required)}))
+          print(json.dumps({
+              "version": capabilities.version,
+              "commit": expected_commit,
+              "jobdesk_commit": expected_jobdesk_commit,
+              "jobdesk_wheel": jobdesk_wheel.name,
+              "schema_members": list(required),
+              "workflow_schema_sha256": expected_schema_sha,
+          }))
           PY
 
       - name: Install Qt runtime libraries
@@ -139,13 +243,218 @@ jobs:
         run: |
           python -m pytest -q \
             tests/test_control_protocol_schema.py \
-            tests/test_control_worker.py
+            tests/test_control_worker.py \
+            tests/test_config_contract.py \
+            tests/test_install_provenance.py \
+            tests/test_release_dependencies.py \
+            tests/test_workflow_schema_generation.py \
+            tests/test_workflow_entry_facade.py \
+            tests/test_workflow_resume_after_disconnect.py \
+            tests/test_workflow_state.py
 
       - name: Run consumer contract suite
         working-directory: jobdesk
         run: |
-          python -m pytest -q \
-            tests/test_confflow_preflight.py \
-            tests/test_confflow_results.py \
-            tests/test_confflow_control_backend.py \
+          consumer_tests=(
+            tests/test_confflow_preflight.py
+            tests/test_confflow_results.py
+            tests/test_confflow_control_backend.py
             tests/test_confflow_launcher_integration.py
+            tests/test_confflow_output_manifest.py
+            tests/test_workflow_spec.py
+          )
+          for optional_test in \
+            tests/test_confflow_config_contract.py \
+            tests/test_confflow_control_artifacts_boundary.py \
+            tests/test_confflow_control_handoff_boundary.py \
+            tests/test_confflow_control_launcher_boundary.py \
+            tests/test_confflow_control_state_boundary.py; do
+            if test -f "$optional_test"; then
+              consumer_tests+=("$optional_test")
+            fi
+          done
+          python -m pytest -q "${consumer_tests[@]}"
+
+  final-candidate-x-jobdesk-v060:
+    name: ConfFlow final candidate x JobDesk v0.6.0
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    env:
+      QT_QPA_PLATFORM: offscreen
+    steps:
+      - name: Check out exact ConfFlow candidate
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          path: confflow-candidate
+
+      - name: Check out JobDesk v0.6.0 stable consumer
+        uses: actions/checkout@v4
+        with:
+          repository: moxuezhuchen/jobdesk
+          ref: v0.6.0
+          fetch-depth: 0
+          path: jobdesk-stable
+
+      - name: Verify exact candidate and stable refs
+        env:
+          EXPECTED_RELEASE_COMMIT: 338b53b3a34593271b926fc9e96010186141a386
+          EXPECTED_JOBDESK_COMMIT: e4d8f74af0dff80b233f7bd9cb360b43d040069f
+        run: |
+          set -euo pipefail
+          candidate_head="$(git -C confflow-candidate rev-parse HEAD)"
+          test "$candidate_head" = "${{ github.event.pull_request.head.sha }}"
+          git -C confflow-candidate merge-base --is-ancestor "$EXPECTED_RELEASE_COMMIT" "$candidate_head"
+          changed_files="$(git -C confflow-candidate diff --name-only "$EXPECTED_RELEASE_COMMIT" "$candidate_head")"
+          while IFS= read -r changed_file; do
+            case "$changed_file" in
+              .github/workflows/jobdesk-contract.yml|.github/workflows/release.yml|CHANGELOG.md|README.md|confflow/__init__.py|confflow/fixture_agent.py|docs/ARCHITECTURE.md|docs/PUBLIC_ALPHA.md|docs/RELEASE.md|pyproject.toml|release/confflow-2.1.2-py312-linux-x86_64.lock|release/confflow-2.1.2-py312-linux-x86_64.SHA256SUMS|tests/test_core.py|tests/test_fixture_agent.py|tests/test_release_dependencies.py) ;;
+              *) echo "unexpected candidate file: $changed_file"; exit 1 ;;
+            esac
+          done <<< "$changed_files"
+          stable_tag_commit="$(git -C jobdesk-stable rev-parse 'v0.6.0^{commit}')"
+          stable_head="$(git -C jobdesk-stable rev-parse HEAD)"
+          test "$stable_tag_commit" = "$EXPECTED_JOBDESK_COMMIT"
+          test "$stable_head" = "$EXPECTED_JOBDESK_COMMIT"
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Create isolated acceptance environment
+        run: |
+          set -euo pipefail
+          venv="$RUNNER_TEMP/post-phase-f-v060-venv"
+          python -m venv "$venv"
+          echo "$venv/bin" >> "$GITHUB_PATH"
+          echo "VIRTUAL_ENV=$venv" >> "$GITHUB_ENV"
+
+      - name: Download and verify published candidate and stable wheels
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/post-phase-f-wheels"
+          confflow_wheel="$RUNNER_TEMP/post-phase-f-wheels/confflow-2.1.2-py3-none-any.whl"
+          jobdesk_wheel="$RUNNER_TEMP/post-phase-f-wheels/jobdesk-0.6.0-py3-none-any.whl"
+          curl --fail --location --retry 3 --retry-delay 2 --output "$confflow_wheel" \
+            "https://github.com/moxuezhuchen/ConfFlow/releases/download/v2.1.2/confflow-2.1.2-py3-none-any.whl"
+          curl --fail --location --retry 3 --retry-delay 2 --output "$jobdesk_wheel" \
+            "https://github.com/moxuezhuchen/jobdesk/releases/download/v0.6.0/jobdesk-0.6.0-py3-none-any.whl"
+          test "$(sha256sum "$confflow_wheel" | awk '{print $1}')" = \
+            "80abfa69a7f865539eadfba5c628eeb95953164098f0fd462e0a00c7904e4f92"
+          test "$(sha256sum "$jobdesk_wheel" | awk '{print $1}')" = \
+            "a7edf799b8d804a0c494834270e413f7d0a179907de31fcc20aacff025e0a7ed"
+          printf '%s\n' "$confflow_wheel" > "$RUNNER_TEMP/post-phase-f-wheels/confflow-wheel"
+          printf '%s\n' "$jobdesk_wheel" > "$RUNNER_TEMP/post-phase-f-wheels/jobdesk-wheel"
+
+      - name: Install exact wheels and test dependencies
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          jobdesk_wheel="$(cat "$RUNNER_TEMP/post-phase-f-wheels/jobdesk-wheel")"
+          confflow_wheel="$(cat "$RUNNER_TEMP/post-phase-f-wheels/confflow-wheel")"
+          # Install the stable consumer's dev dependencies before its chem
+          # extra so pip cannot substitute a public-index ConfFlow release.
+          python -m pip install "${jobdesk_wheel}[dev]"
+          python -m pip install "$confflow_wheel"
+          python -m pip install "${jobdesk_wheel}[chem]"
+          python -m pip check
+
+      - name: Verify installed provenance and fail-closed production admission
+        env:
+          EXPECTED_CANDIDATE_COMMIT: b13a10f59b5817dbb218f51c7e232f43c9bdc996
+          EXPECTED_SCHEMA_SHA256: 87991f09a0edbd56aed354bdd03b012775a2f2b98504297ab459e524f4542427
+          EXPECTED_CONFFLOW_WHEEL_SHA256: 80abfa69a7f865539eadfba5c628eeb95953164098f0fd462e0a00c7904e4f92
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP"
+          python - <<'PY'
+          from __future__ import annotations
+
+          import hashlib
+          import importlib.metadata
+          import json
+          import os
+          import subprocess
+          import sys
+          from pathlib import Path
+
+          from jobdesk_app.core.confflow_preflight import (
+              parse_confflow_capabilities,
+              validate_confflow_capabilities,
+              validate_confflow_production_capability,
+          )
+
+          prefix = Path(sys.prefix).resolve()
+          jobdesk_module = Path(__import__("jobdesk_app").__file__).resolve()
+          confflow_module = Path(__import__("confflow").__file__).resolve()
+          if prefix not in jobdesk_module.parents or prefix not in confflow_module.parents:
+              raise AssertionError(f"installed-package path escaped the isolated venv: {jobdesk_module}, {confflow_module}")
+          if importlib.metadata.version("jobdesk") != "0.6.0":
+              raise AssertionError("stable JobDesk wheel version drifted")
+          if importlib.metadata.version("confflow") != "2.1.2":
+              raise AssertionError("candidate ConfFlow wheel version drifted")
+
+          confflow_wheel = Path(os.environ["RUNNER_TEMP"]) / "post-phase-f-wheels" / "confflow-2.1.2-py3-none-any.whl"
+          wheel_sha = hashlib.sha256(confflow_wheel.read_bytes()).hexdigest()
+          if wheel_sha != os.environ["EXPECTED_CONFFLOW_WHEEL_SHA256"]:
+              raise AssertionError("candidate wheel bytes changed after download")
+
+          raw = subprocess.check_output(["confflow", "--capabilities", "--json"], text=True)
+          payload = json.loads(raw)
+          build = payload.get("build")
+          if not isinstance(build, dict) or build.get("commit") != os.environ["EXPECTED_CANDIDATE_COMMIT"] or build.get("dirty") is not False:
+              raise AssertionError(f"candidate build provenance mismatch: {build!r}")
+          if payload.get("version") != "2.1.2":
+              raise AssertionError(f"candidate version drift: {payload!r}")
+
+          capabilities = parse_confflow_capabilities(raw)
+          validate_confflow_capabilities(capabilities, require_dag=True)
+          try:
+              validate_confflow_production_capability(capabilities)
+          except ValueError as exc:
+              if str(exc) != "ConfFlow production version does not match an approved release":
+                  raise
+              print(f"expected production admission rejection: {exc}")
+          else:
+              raise AssertionError("stable JobDesk unexpectedly admitted the unapproved 2.1.2 producer")
+
+          contract = json.loads(subprocess.check_output(["confflow", "config", "contract", "--json"], text=True))
+          if contract.get("response_schema") != "confflow.config.contract.v1":
+              raise AssertionError(f"candidate configuration contract schema drift: {contract!r}")
+          if contract.get("semantic_contract_version") != "1.0":
+              raise AssertionError(f"candidate configuration contract version drift: {contract!r}")
+          workflow_schema = contract.get("workflow_schema")
+          if not isinstance(workflow_schema, dict) or workflow_schema.get("sha256") != os.environ["EXPECTED_SCHEMA_SHA256"]:
+              raise AssertionError(f"candidate workflow schema binding drift: {contract!r}")
+
+          print(json.dumps({
+              "jobdesk_version": importlib.metadata.version("jobdesk"),
+              "confflow_version": capabilities.version,
+              "candidate_commit": build["commit"],
+              "candidate_wheel_sha256": wheel_sha,
+              "production_admission": "expected rejection",
+          }))
+          PY
+
+      - name: Install Linux Qt runtime libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libdbus-1-3 \
+            libegl1 \
+            libgl1 \
+            libxkbcommon0 \
+            libxkbcommon-x11-0
+
+      - name: Run JobDesk v0.6.0 installed-wheel API corpus
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP"
+          python -m pytest -q -p no:cacheprovider -o pythonpath= \
+            "$GITHUB_WORKSPACE/jobdesk-stable/tests/test_confflow_preflight.py" \
+            "$GITHUB_WORKSPACE/jobdesk-stable/tests/test_confflow_results.py" \
+            "$GITHUB_WORKSPACE/jobdesk-stable/tests/test_confflow_output_manifest.py" \
+            "$GITHUB_WORKSPACE/jobdesk-stable/tests/test_control_protocol_schemas.py" \
+            "$GITHUB_WORKSPACE/jobdesk-stable/tests/test_workflow_spec.py"

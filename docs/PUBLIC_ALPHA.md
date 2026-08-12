@@ -6,7 +6,7 @@ ConfFlow is suitable to publish as a public alpha preview. It is not production-
 
 - Public level: alpha preview.
 - Installation path: source checkout and local editable install are the recommended paths.
-- Release status: the v2.0.0 GitHub Release workflow builds and publishes wheel/sdist artifacts, checksums, SBOM, release provenance, and build attestation; PyPI publishing remains manual.
+- Release status: v2.0.0 remains the production baseline. The published v2.1.1 release is retained as historical evidence and is superseded by the v2.1.2 fix-forward candidate after side-by-side acceptance found a Windows fixture-entrypoint defect. The v2.1.2 workflow is prepared to build and publish wheel/sdist artifacts, checksums, SBOM, release provenance, and build attestation; PyPI publishing remains manual.
 - Security posture: documented security model, private-reporting guidance, CI, Dependabot, and non-blocking OpenSSF Scorecard are in place.
 
 ## Suitable For
@@ -35,7 +35,7 @@ ConfFlow is suitable to publish as a public alpha preview. It is not production-
 - `--dry-run` can preview planned workflow steps, inputs, output paths, and selected calculation settings without executing workflow steps.
 - `--dry-run` is not a full sandbox; real runs can still write files, clean managed artifacts, and execute configured Gaussian/ORCA programs.
 - Public CI uses fake/mock external-program behavior; real Gaussian/ORCA environments still need local or site-specific validation.
-- PyPI publishing is not automated. The v2.0.0 GitHub Release workflow automates release artifact publication, artifact provenance, and build attestation; full SLSA-style hardening remains a separate limitation.
+- PyPI publishing is not automated. The published v2.0.0 and v2.1.1 release records remain historical; the v2.1.2 GitHub Release workflow automates release artifact publication, artifact provenance, and build attestation once separately authorized. Full SLSA-style hardening remains a separate limitation.
 - OpenSSF Scorecard is informational. Private repositories skip SARIF code-scanning upload by default and keep the result as a workflow artifact.
 - Dependency security updates currently rely on Dependabot and existing GitHub security signals. `pip-audit` and `safety` are not part of the supported local or CI baseline; if added later, they should start as scheduled or non-blocking checks.
 - Branch protection and GitHub About metadata must be configured manually in GitHub Settings.

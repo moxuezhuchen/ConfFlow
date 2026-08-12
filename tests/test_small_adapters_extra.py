@@ -5,15 +5,15 @@ from __future__ import annotations
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-from confflow.blocks.refine.result import RefineResult
-from confflow.calc.components.parser import parse_output
-from confflow.calc.postprocess import run_refine_postprocess
-from confflow.calc.psutil_compat import maybe_import_psutil, psutil_exception_types
-from confflow.core.chem_validation import (
+from confflow.blocks.confgen.validation import (
     ChainValidator,
     load_mol_from_xyz,
     validate_chain_definitions,
 )
+from confflow.blocks.refine.result import RefineResult
+from confflow.calc.components.parser import parse_output
+from confflow.calc.postprocess import run_refine_postprocess
+from confflow.calc.psutil_compat import maybe_import_psutil, psutil_exception_types
 
 
 def test_parse_output_missing_and_invalid_policy(tmp_path) -> None:
@@ -113,8 +113,10 @@ def test_validate_chain_definitions_returns_invalid_messages() -> None:
     ]
 
     with (
-        patch("confflow.core.chem_validation.ChainValidator", return_value=validator),
-        patch("confflow.core.chem_validation.load_mol_from_xyz", return_value=object()) as load_mol,
+        patch("confflow.blocks.confgen.validation.ChainValidator", return_value=validator),
+        patch(
+            "confflow.blocks.confgen.validation.load_mol_from_xyz", return_value=object()
+        ) as load_mol,
     ):
         messages = validate_chain_definitions(
             input_file="mol.xyz",

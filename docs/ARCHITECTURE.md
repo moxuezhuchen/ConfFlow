@@ -1,5 +1,49 @@
 # ConfFlow 项目架构
 
+## Current candidate boundary (2026-08-12)
+
+The isolated candidate is the `codex/post-phase-f-architecture-phase0` release
+branch (base `6981935`, package version target 2.1.2). The published v2.1.1
+release is superseded by this fix-forward after the Windows fixture entrypoint
+gate failed. The superseded v2.1.0 tag was not published as a GitHub Release
+and must not be reused. The current
+candidate is not installed over the production environment. The
+production source checkout `/opt/ConfFlow` remains the dirty historical tree
+at `10e457d`; it was not used as the implementation base and was not modified.
+The paired JobDesk candidate is `c01b082`.
+
+| State boundary | Identity | Treatment |
+|---|---|---|
+| Dirty historical JobDesk worktree | `C:\dft\tool\jobdesk-dev` @ `89d232a` | preserved; package metadata and user changes remain untouched |
+| Dirty historical ConfFlow worktree | `/opt/ConfFlow` @ `10e457d` | preserved; not used as the candidate source |
+| Released baseline | JobDesk `e4d8f74` / v0.6.0 + ConfFlow `6981935` / v2.0.0 | current configured pairing |
+| Implementation candidates | JobDesk `908b153` + ConfFlow `1a0d760` | isolated and unpublished |
+| Promotion endpoint | v0.6.0/v2.0.0 configured identity | unchanged until separately authorized |
+
+The current control/workflow boundary is:
+
+```text
+control CLI / worker
+  -> handoff validation and input staging
+  -> POSIX token lease
+  -> ExecutionService (repository CAS owner)
+  -> workflow runner adapter
+       -> planner -> resume policy -> executor -> finalizer
+       -> atomic sidecar publication before terminal completion
+```
+
+Pure execution policy is isolated in
+`confflow.application.execution.policy`; repository mutation, lifecycle token
+checks, and executor handoff remain in `ExecutionService`. The worker-side
+security components retain path containment, digest, owner-file, lease, and
+sidecar checks. `core` does not own block implementations and `calc` consumes
+the neutral result boundary rather than the refine package's implementation.
+
+`control.v1` request/response schemas, hashes, state names, error registry,
+cursor semantics, and artifact safety rules are frozen. Candidate publication,
+side-by-side non-compute acceptance, separately authorized real-launcher
+acceptance, and promotion are distinct gates.
+
 ## 项目概述
 
 ConfFlow 是一个自动化计算化学工作流引擎，用于分子构象搜索、量子化学计算、构象筛选和结果可视化。核心设计遵循模块化、可扩展原则，支持多种量子化学程序（Gaussian 16、ORCA）。

@@ -1,5 +1,28 @@
 # Release Process
 
+## Candidate versus production (2026-08-12)
+
+The current architecture candidate is the isolated
+`codex/post-phase-f-architecture-phase0` release branch, based on the released
+`6981935` / v2.0.0. The release-preparation target is package version `2.1.2`.
+The first v2.1.0 tag was superseded before GitHub Release publication after a
+release-only Linux venv-path gate failed; that tag must not be reused.
+The published v2.1.1 release was superseded after side-by-side acceptance
+found a Windows fixture console-script identity defect. The v2.1.2 candidate
+contains the fix-forward and must not be promoted by
+changing `/usr/local/bin/confflow`, JobDesk server entries, or the production
+venv. The paired JobDesk candidate is `c01b082`.
+
+Release publication, side-by-side installation, candidate acceptance, and
+production endpoint promotion are separate approvals. Because this candidate
+changes workflow execution and the control worker, promotion additionally
+requires one separately authorized bounded real Gaussian/ORCA launcher
+acceptance. Once formal release and side-by-side acceptance have passed, but
+the real-launcher authorization is not granted, the correct terminal state is
+“RELEASED AND SIDE-BY-SIDE VERIFIED; PRODUCTION PROMOTION NOT AUTHORIZED”.
+
+The current candidate has not reached that state.
+
 ConfFlow uses a GitHub Actions release workflow that builds, verifies,
 attests, and publishes the tagged release artifacts. PyPI publication and
 full SLSA-style hardening remain separate manual or future-work concerns.
@@ -53,7 +76,12 @@ Confirm GitHub Actions CI is green for the release commit.
 
 ## 4. Build Wheel And Source Distribution
 
-The release artifact workflow builds wheel and source distribution on tag pushes matching `v*` and on manual dispatch.
+The checked-in release artifact workflow is pinned to the prepared `v2.1.2`
+package and its matching versioned runtime lock/manifest. Its automatic trigger
+is only the `v2.1.2` tag; manual dispatch accepts a tag input but the workflow
+still fails closed unless the selected tag is exactly `v2.1.2`. The historical
+v2.0.0 and v2.1.1 release records and input files remain unchanged. Before any release tag
+is created, obtain the separate release authorization.
 
 For local verification, install build tooling if needed:
 
@@ -89,13 +117,17 @@ Alternatively, use a platform checksum tool such as `sha256sum dist/*` when avai
 
 ## 6. SBOM Status
 
-The release artifact workflow attempts to generate a CycloneDX SBOM with `cyclonedx-bom` and stores it as `dist/sbom.cdx.json`. This is a first-pass software bill of materials, not a complete supply-chain attestation.
-
-If SBOM generation fails, the workflow continues and still uploads the wheel/sdist/checksum artifacts. Treat SBOM completeness as an alpha preview improvement area until the workflow has been validated across releases.
+The release artifact workflow generates a CycloneDX SBOM with `cyclonedx-bom`
+from the controlled runtime lock and stores it as `dist/sbom.cdx.json`. The
+step is fail-closed (`set -euo pipefail` plus a non-empty-file check), so a
+missing or empty SBOM prevents publication. This is a first-pass software bill
+of materials, not a complete supply-chain attestation.
 
 ## 7. Tag And Publish A GitHub Release
 
-Create an annotated tag from the verified commit. Pushing a `v*` tag triggers the release artifact workflow:
+For a future version, create an annotated tag from the verified commit only
+after the workflow has been updated and the release has been authorized. The
+generic command shape is:
 
 ```bash
 git tag -a vX.Y.Z -m "ConfFlow X.Y.Z"
@@ -154,12 +186,14 @@ Format:
 
 ### Layer 2a - Controlled Python runtime dependencies
 
-The 1.4.5 Linux x86_64 / CPython 3.12 runtime is based on the verified
-1.4.4 production venv. The committed lock is
-release/confflow-1.4.5-py312-linux-x86_64.lock and contains every direct
-and transitive runtime distribution at an exact version with SHA-256 hashes.
-The matching wheelhouse manifest is
-release/confflow-1.4.5-py312-linux-x86_64.SHA256SUMS.
+The v2.1.2 Linux x86_64 / CPython 3.12 runtime input pair is derived from the
+verified v2.0.0 release input set. The committed lock is
+release/confflow-2.1.2-py312-linux-x86_64.lock and contains every direct and
+transitive runtime distribution at an exact version with SHA-256 hashes. The
+matching wheelhouse manifest is
+release/confflow-2.1.2-py312-linux-x86_64.SHA256SUMS. Both files include
+comments naming the v2.0.0 source path and source digest; the dependency
+closure and wheel hashes are intentionally unchanged for this candidate.
 
 The installer requires both --dependency-lock and --wheelhouse. The
 wheelhouse must contain only the manifest and the binary wheels listed by it.

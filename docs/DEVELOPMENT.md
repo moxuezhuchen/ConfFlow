@@ -1,5 +1,26 @@
 # ConfFlow 开发指南
 
+## Candidate development state (2026-08-12)
+
+Use the isolated candidate ref `1a0d760` for the post-Phase-F architecture
+work; compare it with stable `6981935`. Do not use `/opt/ConfFlow` as the
+implementation checkout and do not replace the production venv. The paired
+JobDesk consumer candidate is `908b153`.
+
+The relevant focused modules are `workflow/planner.py`, `workflow/resume.py`,
+`workflow/executor.py`, `workflow/finalizer.py`,
+`application/execution/policy.py`, `worker_runner.py`, and
+`worker_sidecar.py`. Changes to `control.v1` require a separate protocol
+decision and are outside this architecture refactor.
+
+`.github/workflows/jobdesk-contract.yml` checks the producer candidate against
+the verified JobDesk `main` commit `e4d8f74af0dff80b233f7bd9cb360b43d040069f`
+by default. Its manual `jobdesk_ref` input can select the exact JobDesk
+consumer-candidate ref for the reverse-direction gate. The workflow installs
+wheels in isolated environments and runs only contract, workflow, resume, and
+worker fixtures; it never authorizes a real Gaussian/ORCA workload or endpoint
+promotion.
+
 ## 项目结构
 
 ```

@@ -230,7 +230,7 @@ def test_sha256_hex_matches_hashlib(tmp_path):
 
 def test_install_provenance_path_is_canonical():
     """The path always lives at ``share/confflow/install-provenance.json``."""
-    assert str(install_provenance_path()).endswith("share/confflow/install-provenance.json")
+    assert install_provenance_path().as_posix().endswith("share/confflow/install-provenance.json")
 
 
 def test_install_provenance_record_round_trip():

@@ -1,5 +1,27 @@
 # ConfFlow 测试指南
 
+## Post-Phase-F candidate gates (2026-08-12)
+
+For candidate `1a0d760`, the required non-compute checks are independent of
+the production endpoint:
+
+```bash
+python -m pytest -q -p no:cacheprovider
+python -m ruff check confflow tests
+python -m mypy confflow
+python -m build --sdist --outdir dist-candidate
+python -m build --wheel --outdir dist-candidate
+```
+
+Build the source distribution and wheel separately from the clean checkout;
+the direct wheel build is what embeds the commit and clean-tree provenance.
+
+The Linux/ext4 isolated candidate currently reports `1051 passed, 1 skipped,
+1 warning` with the static checks and wheel/sdist build passing. The clean
+installed-wheel fixture subset reports `43 passed`. This evidence does not
+include a Gaussian, ORCA, g16, or scheduler workload. Such a workload is a
+separate acceptance gate and is not implied by the local test result.
+
 ## 快速开始
 
 ### 推荐方式（零产物）

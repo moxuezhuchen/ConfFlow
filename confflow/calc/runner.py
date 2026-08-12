@@ -10,7 +10,6 @@ from concurrent.futures import Executor, ProcessPoolExecutor, ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 
-from ..blocks.refine.result import RefineResult
 from ..config.models import CalcStepParams, load_workflow_model
 from ..core import io as io_xyz
 from ..core import models
@@ -22,6 +21,7 @@ from .components.task_runner import TaskRunner
 from .db.database import ResultsDB
 from .executor import CalcExecutor
 from .postprocess import run_refine_postprocess
+from .result import RefineResult
 from .result_writer import append_result
 from .run_services import ResultAssemblyService, TaskRecoveryService, TaskSourceBuilder
 from .setup import setup_logging

@@ -3,6 +3,13 @@
 
 from __future__ import annotations
 
+from .canonical import (
+    CanonicalCalcStepParams,
+    CanonicalConfgenStepParams,
+    CanonicalGlobalOptions,
+    CanonicalStepConfig,
+    CanonicalWorkflowConfig,
+)
 from .models import (
     CalcStepParams,
     CleanupOptions,
@@ -17,6 +24,11 @@ from .models import (
 
 __all__ = [
     "CalcStepParams",
+    "CanonicalCalcStepParams",
+    "CanonicalConfgenStepParams",
+    "CanonicalGlobalOptions",
+    "CanonicalStepConfig",
+    "CanonicalWorkflowConfig",
     "CleanupOptions",
     "ExecutionOptions",
     "GlobalOptions",

@@ -5,6 +5,44 @@
 > The archived-snapshot notice below describes the earlier repository state. ConfFlow is active again
 > as JobDesk's external chemistry workflow dependency beginning with v1.4.0.
 
+## v2.1.2 (unreleased) - post-Phase-F Windows fixture fix-forward
+
+### Fixed
+
+- Resolve the installed `confflow-fixture-agent` console script on Windows
+  without confusing it with the normal `confflow` executable.
+- Fail closed when the fixture executable identity cannot be resolved, and
+  cover the installed Windows console-script path with regression tests.
+
+## v2.1.1 (2026-08-12) - post-Phase-F architecture release
+
+This release is retained as published historical evidence. Its Windows
+fixture entrypoint was superseded by the v2.1.2 fix-forward after side-by-side
+acceptance found that an installed console script could resolve as `confflow`.
+
+### Changed
+
+- Split workflow execution behind planner, resume, executor, and finalizer
+  boundaries while retaining the existing workflow facade.
+- Isolated control-worker handoff validation, lease, staging, and security
+  boundaries while keeping the versioned `control.v1` wire contract frozen.
+
+### Release preparation
+
+- Pinned the release workflow and its SBOM/provenance inputs to `v2.1.1`.
+- Added explicitly versioned runtime lock and wheelhouse manifest inputs with
+  provenance back to the verified v2.0.0 input set. The historical v2.0.0
+  release record and files remain unchanged.
+- Fixed the release verification path for Linux virtual environments whose
+  `bin/python` entry is a symlink to the system interpreter.
+
+## v2.1.0 (superseded before publication) - post-Phase-F architecture candidate
+
+- The first release attempt reached the clean-wheel installation gate but was
+  stopped before artifact publication when the Linux venv path check resolved
+  the interpreter symlink to the system Python. The tag is retained as
+  historical evidence and must not be reused.
+
 ## v2.0.0 (2026-08-11) - Phase F owner-exception release
 
 ### Changed

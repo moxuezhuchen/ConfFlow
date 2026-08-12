@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import os
 import sys
+import sysconfig
 from pathlib import Path
 from typing import Any
 
@@ -19,15 +20,41 @@ from .application.execution.synthetic_producer import synthetic_agent_entry
 from .control import _snapshot_response, _write_response, run_request
 from .core.contracts import ExitCode
 
+_FIXTURE_ENTRYPOINT_NAMES = frozenset(
+    {"confflow-fixture-agent", "confflow-fixture-agent.exe"}
+)
+
+
+def _resolve_fixture_entrypoint(candidate: Path) -> str | None:
+    """Resolve a regular file only when it is the fixture console script."""
+    if candidate.name.casefold() not in _FIXTURE_ENTRYPOINT_NAMES:
+        return None
+    if os.name == "nt" and candidate.suffix.casefold() != ".exe":
+        return None
+    try:
+        if not candidate.is_file():
+            return None
+        return os.path.realpath(os.path.abspath(os.fspath(candidate)))
+    except (OSError, ValueError):
+        return None
+
 
 def _actual_entrypoint() -> str | None:
     """Resolve the executable that invoked this console entry point."""
-    candidate = Path(sys.argv[0])
-    if not candidate.is_file():
-        candidate = Path(sys.executable).with_name("confflow-fixture-agent")
-    if not candidate.is_file():
+    argv0 = sys.argv[0] if sys.argv else ""
+    if argv0:
+        resolved = _resolve_fixture_entrypoint(Path(argv0))
+        if resolved is not None:
+            return resolved
+
+    scripts_directory = sysconfig.get_path("scripts")
+    if not scripts_directory:
         return None
-    return os.path.realpath(os.path.abspath(os.fspath(candidate)))
+    for name in ("confflow-fixture-agent.exe", "confflow-fixture-agent"):
+        resolved = _resolve_fixture_entrypoint(Path(scripts_directory) / name)
+        if resolved is not None:
+            return resolved
+    return None
 
 
 def _fixture_after_execute(

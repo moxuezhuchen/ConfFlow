@@ -11,8 +11,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
-from ..core.exceptions import ConfigurationError
-from ..core.models import _coerce_freeze_indices, _coerce_two_atom_indices
 from ..shared.defaults import (
     DEFAULT_CHARGE,
     DEFAULT_CORES_PER_TASK,
@@ -34,6 +32,7 @@ from ..shared.defaults import (
     DEFAULT_WORKFLOW_AUTO_CLEAN,
 )
 from ..shared.orca_blocks import format_orca_blocks
+from .canonical_primitives import _coerce_freeze_indices, _coerce_two_atom_indices
 
 ProgramName = Literal["g16", "orca"]
 TaskName = Literal["opt", "sp", "freq", "opt_freq", "ts"]
@@ -697,13 +696,19 @@ def load_workflow_model(config_file: str | Path) -> WorkflowConfig:
     if not path.exists():
         raise FileNotFoundError(f"Configuration file not found: {path}")
     if not path.is_file():
+        from ..core.exceptions import ConfigurationError
+
         raise ConfigurationError(f"Configuration path is not a file: {path}")
     try:
         with path.open(encoding="utf-8") as handle:
             raw = yaml.safe_load(handle) or {}
     except yaml.YAMLError as exc:
+        from ..core.exceptions import ConfigurationError
+
         raise ConfigurationError(f"Invalid YAML configuration: {exc}") from exc
     try:
         return WorkflowConfig.from_mapping(raw)
     except ValueError as exc:
+        from ..core.exceptions import ConfigurationError
+
         raise ConfigurationError(str(exc)) from exc

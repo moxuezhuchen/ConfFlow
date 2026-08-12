@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "confflow"
-version = "2.0.0"
+version = "2.1.2"
 description = "Automated molecular conformation search workflow engine for computational chemistry"
 readme = "README.md"
 license = {text = "MIT"}
@@ -92,10 +92,12 @@ include = ["confflow*"]
 
 [tool.setuptools.package-data]
 confflow = ["*.yaml", "*.md"]
+"confflow.config" = ["*.json"]
 
 [tool.setuptools.data-files]
 "share/confflow" = ["confflow.example.yaml"]
 "share/confflow/control_protocol/v1" = ["docs/control_protocol/v1/*.json"]
+"share/confflow/workflow_config/v1" = ["confflow/config/workflow_config_v1.schema.json"]
 
 [tool.black]
 line-length = 100
