@@ -342,7 +342,7 @@ jobs:
           curl --fail --location --retry 3 --retry-delay 2 --output "$jobdesk_wheel" \
             "https://github.com/moxuezhuchen/jobdesk/releases/download/v0.6.0/jobdesk-0.6.0-py3-none-any.whl"
           test "$(sha256sum "$confflow_wheel" | awk '{print $1}')" = \
-            "3425d97246ee6d37369ecce672dfa154643179cc3ee744eb332aee4b94dbc5f3"
+            "80abfa69a7f865539eadfba5c628eeb95953164098f0fd462e0a00c7904e4f92"
           test "$(sha256sum "$jobdesk_wheel" | awk '{print $1}')" = \
             "a7edf799b8d804a0c494834270e413f7d0a179907de31fcc20aacff025e0a7ed"
           printf '%s\n' "$confflow_wheel" > "$RUNNER_TEMP/post-phase-f-wheels/confflow-wheel"

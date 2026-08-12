@@ -9,6 +9,7 @@ import subprocess
 import sys
 import sysconfig
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import rfc8785
@@ -75,6 +76,17 @@ def _installed_command(name: str) -> Path:
     pytest.skip(f"installed console script is unavailable: {candidates[0]}")
 
 
+def _windows_os_proxy() -> SimpleNamespace:
+    """Patch the fixture module without mutating pytest's process-wide os.name."""
+    return SimpleNamespace(
+        name="nt",
+        path=os.path,
+        fspath=os.fspath,
+        realpath=os.path.realpath,
+        abspath=os.path.abspath,
+    )
+
+
 def test_fixture_entrypoint_windows_fallback_does_not_use_confflow_exe(
     monkeypatch, tmp_path: Path
 ):
@@ -85,7 +97,7 @@ def test_fixture_entrypoint_windows_fallback_does_not_use_confflow_exe(
     normal.write_bytes(b"normal")
     fixture.write_bytes(b"fixture")
 
-    monkeypatch.setattr(fixture_agent.os, "name", "nt")
+    monkeypatch.setattr(fixture_agent, "os", _windows_os_proxy())
     monkeypatch.setattr(sys, "argv", [str(normal)])
     monkeypatch.setattr(
         fixture_agent.sysconfig, "get_path", lambda scheme: str(scripts_directory)
@@ -103,7 +115,7 @@ def test_fixture_entrypoint_windows_fallback_handles_invalid_or_extensionless_ar
     fixture = scripts_directory / "confflow-fixture-agent.exe"
     fixture.write_bytes(b"fixture")
 
-    monkeypatch.setattr(fixture_agent.os, "name", "nt")
+    monkeypatch.setattr(fixture_agent, "os", _windows_os_proxy())
     monkeypatch.setattr(sys, "argv", [str(tmp_path / argv0)])
     monkeypatch.setattr(
         fixture_agent.sysconfig, "get_path", lambda scheme: str(scripts_directory)
@@ -113,7 +125,7 @@ def test_fixture_entrypoint_windows_fallback_handles_invalid_or_extensionless_ar
 
 
 def test_fixture_entrypoint_resolution_fails_closed(monkeypatch, tmp_path: Path):
-    monkeypatch.setattr(fixture_agent.os, "name", "nt")
+    monkeypatch.setattr(fixture_agent, "os", _windows_os_proxy())
     monkeypatch.setattr(sys, "argv", [str(tmp_path / "confflow.exe")])
     monkeypatch.setattr(
         fixture_agent.sysconfig, "get_path", lambda scheme: str(tmp_path / "Scripts")
