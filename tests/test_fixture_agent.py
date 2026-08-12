@@ -87,9 +87,7 @@ def _windows_os_proxy() -> SimpleNamespace:
     )
 
 
-def test_fixture_entrypoint_windows_fallback_does_not_use_confflow_exe(
-    monkeypatch, tmp_path: Path
-):
+def test_fixture_entrypoint_windows_fallback_does_not_use_confflow_exe(monkeypatch, tmp_path: Path):
     scripts_directory = tmp_path / "Scripts"
     scripts_directory.mkdir()
     normal = scripts_directory / "confflow.exe"
@@ -99,9 +97,7 @@ def test_fixture_entrypoint_windows_fallback_does_not_use_confflow_exe(
 
     monkeypatch.setattr(fixture_agent, "os", _windows_os_proxy())
     monkeypatch.setattr(sys, "argv", [str(normal)])
-    monkeypatch.setattr(
-        fixture_agent.sysconfig, "get_path", lambda scheme: str(scripts_directory)
-    )
+    monkeypatch.setattr(fixture_agent.sysconfig, "get_path", lambda scheme: str(scripts_directory))
 
     assert fixture_agent._actual_entrypoint() == str(fixture.resolve())
 
@@ -117,9 +113,7 @@ def test_fixture_entrypoint_windows_fallback_handles_invalid_or_extensionless_ar
 
     monkeypatch.setattr(fixture_agent, "os", _windows_os_proxy())
     monkeypatch.setattr(sys, "argv", [str(tmp_path / argv0)])
-    monkeypatch.setattr(
-        fixture_agent.sysconfig, "get_path", lambda scheme: str(scripts_directory)
-    )
+    monkeypatch.setattr(fixture_agent.sysconfig, "get_path", lambda scheme: str(scripts_directory))
 
     assert fixture_agent._actual_entrypoint() == str(fixture.resolve())
 
