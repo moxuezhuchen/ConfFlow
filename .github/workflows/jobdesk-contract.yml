@@ -40,7 +40,10 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: moxuezhuchen/jobdesk
-          ref: ${{ inputs.jobdesk_ref || 'v0.6.0' }}
+          # Automatic PR/push runs use the currently verified JobDesk main
+          # commit, pinned for reproducibility. Manual dispatch can select an
+          # exact consumer candidate through jobdesk_ref.
+          ref: ${{ inputs.jobdesk_ref || 'e4d8f74af0dff80b233f7bd9cb360b43d040069f' }}
           path: jobdesk
 
       - name: Build the selected JobDesk consumer wheel
