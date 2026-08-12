@@ -72,6 +72,7 @@ jobs:
       - name: Verify candidate capability and bundled schema contract
         env:
           CANDIDATE_COMMIT: ${{ github.sha }}
+          JOBDESK_REF: ${{ inputs.jobdesk_ref || 'e4d8f74af0dff80b233f7bd9cb360b43d040069f' }}
         run: |
           set -euo pipefail
           wheel="$(find "$RUNNER_TEMP/confflow-dist" -maxdepth 1 -name 'confflow-*.whl' -print -quit)"
@@ -91,6 +92,7 @@ jobs:
 
           from jobdesk_app.core.confflow_preflight import (
               parse_confflow_capabilities,
+              validate_confflow_production_capability,
               validate_confflow_capabilities,
           )
 
@@ -113,6 +115,17 @@ jobs:
                       "JobDesk already accepts the 2.1.0 candidate; continuing with "
                       "the post-switch contract checks."
                   )
+          try:
+              validate_confflow_production_capability(capabilities)
+          except ValueError as exc:
+              if capabilities.version != "2.1.0" or str(exc) != "ConfFlow production version does not match an approved release":
+                  raise
+              print(
+                  "accepted the expected pre-switch production rejection for the "
+                  f"2.1.0 candidate: {exc}"
+              )
+          else:
+              raise AssertionError("stable JobDesk unexpectedly accepted the unapproved 2.1.0 producer")
           expected_commit = os.environ["CANDIDATE_COMMIT"]
           build = payload.get("build")
           producer = payload.get("producer")
@@ -147,16 +160,32 @@ jobs:
           jobdesk_wheel = Path(os.environ["JOBDESK_WHEEL"])
           if not jobdesk_wheel.is_file():
               raise AssertionError(f"selected JobDesk wheel is missing: {jobdesk_wheel}")
+          selected_jobdesk_ref = os.environ["JOBDESK_REF"]
           jobdesk_schema_path = files("jobdesk_app").joinpath(
               "resources/workflow_config/v1/workflow_config_v1.schema.json"
           )
-          jobdesk_schema = json.loads(jobdesk_schema_path.read_text(encoding="utf-8"))
           expected_schema_sha = "87991f09a0edbd56aed354bdd03b012775a2f2b98504297ab459e524f4542427"
-          canonical_jobdesk_schema = json.dumps(
-              jobdesk_schema, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-          ).encode("utf-8")
-          if hashlib.sha256(canonical_jobdesk_schema).hexdigest() != expected_schema_sha:
-              raise AssertionError("installed JobDesk workflow schema digest mismatch")
+          canonical_jobdesk_schema = None
+          if jobdesk_schema_path.is_file():
+              jobdesk_schema = json.loads(jobdesk_schema_path.read_text(encoding="utf-8"))
+              canonical_jobdesk_schema = json.dumps(
+                  jobdesk_schema, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+              ).encode("utf-8")
+              if hashlib.sha256(canonical_jobdesk_schema).hexdigest() != expected_schema_sha:
+                  raise AssertionError("installed JobDesk workflow schema digest mismatch")
+          elif selected_jobdesk_ref not in {
+              "v0.6.0",
+              "e4d8f74af0dff80b233f7bd9cb360b43d040069f",
+          }:
+              raise AssertionError(
+                  "selected JobDesk consumer omitted the workflow schema outside the "
+                  f"approved pre-switch refs: {selected_jobdesk_ref}"
+              )
+          else:
+              print(
+                  "accepted the expected pre-switch stable JobDesk consumer without "
+                  "the v1 workflow schema bundle"
+              )
 
           producer_schema_path = Path(sys.prefix) / "share" / "confflow" / "workflow_config" / "v1" / "workflow_config_v1.schema.json"
           if not producer_schema_path.is_file():
@@ -167,7 +196,7 @@ jobs:
           ).encode("utf-8")
           if hashlib.sha256(canonical_producer_schema).hexdigest() != expected_schema_sha:
               raise AssertionError("installed candidate workflow schema digest mismatch")
-          if canonical_producer_schema != canonical_jobdesk_schema:
+          if canonical_jobdesk_schema is not None and canonical_producer_schema != canonical_jobdesk_schema:
               raise AssertionError("installed candidate/consumer workflow schema content drift")
 
           contract = json.loads(subprocess.check_output(["confflow", "config", "contract", "--json"], text=True))
