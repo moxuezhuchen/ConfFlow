@@ -21,8 +21,8 @@ from confflow.release_dependencies import (
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-REAL_LOCK = REPO_ROOT / "release" / "confflow-2.1.1-py312-linux-x86_64.lock"
-REAL_MANIFEST = REPO_ROOT / "release" / "confflow-2.1.1-py312-linux-x86_64.SHA256SUMS"
+REAL_LOCK = REPO_ROOT / "release" / "confflow-2.1.2-py312-linux-x86_64.lock"
+REAL_MANIFEST = REPO_ROOT / "release" / "confflow-2.1.2-py312-linux-x86_64.SHA256SUMS"
 
 RUNTIME_IDENTITY = {
     "python_version": "3.12.3",
@@ -198,9 +198,9 @@ def test_real_runtime_inputs_have_explicit_versioned_provenance():
     manifest_text = REAL_MANIFEST.read_text(encoding="utf-8")
 
     for text in (lock_text, manifest_text):
-        assert "# ConfFlow 2.1.1" in text
-        assert "release/confflow-2.0.0-py312-linux-x86_64" in text
+        assert "# ConfFlow 2.1.2" in text
+        assert "release/confflow-2.1.1-py312-linux-x86_64" in text
         assert "intentionally unchanged" in text
 
-    assert "53BBB0AFDD50C0C03F6DA8F332317879B3B613DFCA0A63D748331C41E419D323" in lock_text
-    assert "F0DF59F7C319355141826BC7EF3F1C27B8569E4DA6E60669471441E2672BDD1A" in manifest_text
+    assert "BD6F46D1A55721957CD66990758270107FB98D2D46323D529518EB8DA8A072B7" in lock_text
+    assert "2A9CF3E7C754C8CB3AE98A44B26ED518636190609FB86A0F43D7D55BDC451444" in manifest_text

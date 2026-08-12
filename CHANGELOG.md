@@ -5,7 +5,20 @@
 > The archived-snapshot notice below describes the earlier repository state. ConfFlow is active again
 > as JobDesk's external chemistry workflow dependency beginning with v1.4.0.
 
-## v2.1.1 (unreleased) - post-Phase-F architecture candidate
+## v2.1.2 (unreleased) - post-Phase-F Windows fixture fix-forward
+
+### Fixed
+
+- Resolve the installed `confflow-fixture-agent` console script on Windows
+  without confusing it with the normal `confflow` executable.
+- Fail closed when the fixture executable identity cannot be resolved, and
+  cover the installed Windows console-script path with regression tests.
+
+## v2.1.1 (2026-08-12) - post-Phase-F architecture release
+
+This release is retained as published historical evidence. Its Windows
+fixture entrypoint was superseded by the v2.1.2 fix-forward after side-by-side
+acceptance found that an installed console script could resolve as `confflow`.
 
 ### Changed
 

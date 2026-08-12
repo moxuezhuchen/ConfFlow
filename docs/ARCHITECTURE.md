@@ -3,8 +3,10 @@
 ## Current candidate boundary (2026-08-12)
 
 The isolated candidate is the `codex/post-phase-f-architecture-phase0` release
-branch (base `6981935`, package version target 2.1.1). The superseded v2.1.0
-tag was not published as a GitHub Release and must not be reused. The current
+branch (base `6981935`, package version target 2.1.2). The published v2.1.1
+release is superseded by this fix-forward after the Windows fixture entrypoint
+gate failed. The superseded v2.1.0 tag was not published as a GitHub Release
+and must not be reused. The current
 candidate is not installed over the production environment. The
 production source checkout `/opt/ConfFlow` remains the dirty historical tree
 at `10e457d`; it was not used as the implementation base and was not modified.

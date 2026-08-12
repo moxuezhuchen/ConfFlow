@@ -102,30 +102,30 @@ jobs:
           try:
               validate_confflow_capabilities(capabilities, require_dag=True)
           except ValueError as exc:
-              expected_breaking_error = "incompatible ConfFlow version 2.1.1: require >=1.5,<2.0"
-              if capabilities.version != "2.1.1" or str(exc) != expected_breaking_error:
+              expected_breaking_error = "incompatible ConfFlow version 2.1.2: require >=1.5,<2.0"
+              if capabilities.version != "2.1.2" or str(exc) != expected_breaking_error:
                   raise
               print(
                   "accepted the expected pre-switch JobDesk rejection for the "
                   f"breaking ConfFlow candidate: {exc}"
               )
           else:
-              if capabilities.version == "2.1.1":
+              if capabilities.version == "2.1.2":
                   print(
-                      "JobDesk already accepts the 2.1.1 candidate; continuing with "
+                      "JobDesk already accepts the 2.1.2 candidate; continuing with "
                       "the post-switch contract checks."
                   )
           try:
               validate_confflow_production_capability(capabilities)
           except ValueError as exc:
-              if capabilities.version != "2.1.1" or str(exc) != "ConfFlow production version does not match an approved release":
+              if capabilities.version != "2.1.2" or str(exc) != "ConfFlow production version does not match an approved release":
                   raise
               print(
                   "accepted the expected pre-switch production rejection for the "
-                  f"2.1.1 candidate: {exc}"
+                  f"2.1.2 candidate: {exc}"
               )
           else:
-              raise AssertionError("stable JobDesk unexpectedly accepted the unapproved 2.1.1 producer")
+              raise AssertionError("stable JobDesk unexpectedly accepted the unapproved 2.1.2 producer")
           expected_commit = os.environ["CANDIDATE_COMMIT"]
           build = payload.get("build")
           producer = payload.get("producer")
@@ -307,7 +307,12 @@ jobs:
           test "$candidate_head" = "${{ github.event.pull_request.head.sha }}"
           git -C confflow-candidate merge-base --is-ancestor "$EXPECTED_RELEASE_COMMIT" "$candidate_head"
           changed_files="$(git -C confflow-candidate diff --name-only "$EXPECTED_RELEASE_COMMIT" "$candidate_head")"
-          test "$changed_files" = ".github/workflows/jobdesk-contract.yml"
+          while IFS= read -r changed_file; do
+            case "$changed_file" in
+              .github/workflows/jobdesk-contract.yml|.github/workflows/release.yml|CHANGELOG.md|README.md|confflow/__init__.py|confflow/fixture_agent.py|docs/ARCHITECTURE.md|docs/PUBLIC_ALPHA.md|docs/RELEASE.md|pyproject.toml|release/confflow-2.1.2-py312-linux-x86_64.lock|release/confflow-2.1.2-py312-linux-x86_64.SHA256SUMS|tests/test_core.py|tests/test_fixture_agent.py|tests/test_release_dependencies.py) ;;
+              *) echo "unexpected candidate file: $changed_file"; exit 1 ;;
+            esac
+          done <<< "$changed_files"
           stable_tag_commit="$(git -C jobdesk-stable rev-parse 'v0.6.0^{commit}')"
           stable_head="$(git -C jobdesk-stable rev-parse HEAD)"
           test "$stable_tag_commit" = "$EXPECTED_JOBDESK_COMMIT"
@@ -330,10 +335,10 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/post-phase-f-wheels"
-          confflow_wheel="$RUNNER_TEMP/post-phase-f-wheels/confflow-2.1.1-py3-none-any.whl"
+          confflow_wheel="$RUNNER_TEMP/post-phase-f-wheels/confflow-2.1.2-py3-none-any.whl"
           jobdesk_wheel="$RUNNER_TEMP/post-phase-f-wheels/jobdesk-0.6.0-py3-none-any.whl"
           curl --fail --location --retry 3 --retry-delay 2 --output "$confflow_wheel" \
-            "https://github.com/moxuezhuchen/ConfFlow/releases/download/v2.1.1/confflow-2.1.1-py3-none-any.whl"
+            "https://github.com/moxuezhuchen/ConfFlow/releases/download/v2.1.2/confflow-2.1.2-py3-none-any.whl"
           curl --fail --location --retry 3 --retry-delay 2 --output "$jobdesk_wheel" \
             "https://github.com/moxuezhuchen/jobdesk/releases/download/v0.6.0/jobdesk-0.6.0-py3-none-any.whl"
           test "$(sha256sum "$confflow_wheel" | awk '{print $1}')" = \
@@ -360,7 +365,7 @@ jobs:
         env:
           EXPECTED_CANDIDATE_COMMIT: 338b53b3a34593271b926fc9e96010186141a386
           EXPECTED_SCHEMA_SHA256: 87991f09a0edbd56aed354bdd03b012775a2f2b98504297ab459e524f4542427
-          EXPECTED_CONFFLOW_WHEEL_SHA256: 3425d97246ee6d37369ecce672dfa154643179cc3ee744eb332aee4b94dbc5f3
+          EXPECTED_CONFFLOW_WHEEL_SHA256: pending-v2.1.2-release
         run: |
           set -euo pipefail
           cd "$RUNNER_TEMP"
@@ -388,10 +393,10 @@ jobs:
               raise AssertionError(f"installed-package path escaped the isolated venv: {jobdesk_module}, {confflow_module}")
           if importlib.metadata.version("jobdesk") != "0.6.0":
               raise AssertionError("stable JobDesk wheel version drifted")
-          if importlib.metadata.version("confflow") != "2.1.1":
+          if importlib.metadata.version("confflow") != "2.1.2":
               raise AssertionError("candidate ConfFlow wheel version drifted")
 
-          confflow_wheel = Path(os.environ["RUNNER_TEMP"]) / "post-phase-f-wheels" / "confflow-2.1.1-py3-none-any.whl"
+          confflow_wheel = Path(os.environ["RUNNER_TEMP"]) / "post-phase-f-wheels" / "confflow-2.1.2-py3-none-any.whl"
           wheel_sha = hashlib.sha256(confflow_wheel.read_bytes()).hexdigest()
           if wheel_sha != os.environ["EXPECTED_CONFFLOW_WHEEL_SHA256"]:
               raise AssertionError("candidate wheel bytes changed after download")
@@ -401,7 +406,7 @@ jobs:
           build = payload.get("build")
           if not isinstance(build, dict) or build.get("commit") != os.environ["EXPECTED_CANDIDATE_COMMIT"] or build.get("dirty") is not False:
               raise AssertionError(f"candidate build provenance mismatch: {build!r}")
-          if payload.get("version") != "2.1.1":
+          if payload.get("version") != "2.1.2":
               raise AssertionError(f"candidate version drift: {payload!r}")
 
           capabilities = parse_confflow_capabilities(raw)
@@ -413,7 +418,7 @@ jobs:
                   raise
               print(f"expected production admission rejection: {exc}")
           else:
-              raise AssertionError("stable JobDesk unexpectedly admitted the unapproved 2.1.1 producer")
+              raise AssertionError("stable JobDesk unexpectedly admitted the unapproved 2.1.2 producer")
 
           contract = json.loads(subprocess.check_output(["confflow", "config", "contract", "--json"], text=True))
           if contract.get("response_schema") != "confflow.config.contract.v1":
