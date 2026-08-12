@@ -176,7 +176,7 @@ jobs:
           set -euo pipefail
           venv="${RUNNER_TEMP}/confflow-release-venv"
           cd "${RUNNER_TEMP}"
-          "$venv/bin/python" -m pytest -q -p no:cacheprovider \
+          "$venv/bin/python" -m pytest --import-mode=importlib -q -p no:cacheprovider \
             "${GITHUB_WORKSPACE}/tests/test_config_contract.py" \
             "${GITHUB_WORKSPACE}/tests/test_control_protocol_schema.py" \
             "${GITHUB_WORKSPACE}/tests/test_control_worker.py" \
