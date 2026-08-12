@@ -2,11 +2,11 @@
 
 ## Current candidate boundary (2026-08-12)
 
-The isolated candidate is `4952031` (base `6981935`, package version still
+The isolated candidate is `cdf0247` (base `6981935`, package version still
 2.0.0). It is not published or installed over the production environment. The
 production source checkout `/opt/ConfFlow` remains the dirty historical tree
 at `10e457d`; it was not used as the implementation base and was not modified.
-The paired JobDesk candidate is `91b8932`.
+The paired JobDesk candidate is `37df815`.
 
 The current control/workflow boundary is:
 

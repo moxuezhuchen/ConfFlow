@@ -2,11 +2,11 @@
 
 ## Candidate versus production (2026-08-12)
 
-The current architecture candidate is `4952031`, based on the released
+The current architecture candidate is `cdf0247`, based on the released
 `6981935` / v2.0.0. It has passed isolated non-compute regression, static, and
 build checks, but it is not a release artifact and must not be promoted by
 changing `/usr/local/bin/confflow`, JobDesk server entries, or the production
-venv. The paired JobDesk candidate is `91b8932`.
+venv. The paired JobDesk candidate is `37df815`.
 
 Release publication, side-by-side installation, candidate acceptance, and
 production endpoint promotion are separate approvals. Because this candidate
