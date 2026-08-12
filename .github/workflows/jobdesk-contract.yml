@@ -102,30 +102,30 @@ jobs:
           try:
               validate_confflow_capabilities(capabilities, require_dag=True)
           except ValueError as exc:
-              expected_breaking_error = "incompatible ConfFlow version 2.1.0: require >=1.5,<2.0"
-              if capabilities.version != "2.1.0" or str(exc) != expected_breaking_error:
+              expected_breaking_error = "incompatible ConfFlow version 2.1.1: require >=1.5,<2.0"
+              if capabilities.version != "2.1.1" or str(exc) != expected_breaking_error:
                   raise
               print(
                   "accepted the expected pre-switch JobDesk rejection for the "
                   f"breaking ConfFlow candidate: {exc}"
               )
           else:
-              if capabilities.version == "2.1.0":
+              if capabilities.version == "2.1.1":
                   print(
-                      "JobDesk already accepts the 2.1.0 candidate; continuing with "
+                      "JobDesk already accepts the 2.1.1 candidate; continuing with "
                       "the post-switch contract checks."
                   )
           try:
               validate_confflow_production_capability(capabilities)
           except ValueError as exc:
-              if capabilities.version != "2.1.0" or str(exc) != "ConfFlow production version does not match an approved release":
+              if capabilities.version != "2.1.1" or str(exc) != "ConfFlow production version does not match an approved release":
                   raise
               print(
                   "accepted the expected pre-switch production rejection for the "
-                  f"2.1.0 candidate: {exc}"
+                  f"2.1.1 candidate: {exc}"
               )
           else:
-              raise AssertionError("stable JobDesk unexpectedly accepted the unapproved 2.1.0 producer")
+              raise AssertionError("stable JobDesk unexpectedly accepted the unapproved 2.1.1 producer")
           expected_commit = os.environ["CANDIDATE_COMMIT"]
           build = payload.get("build")
           producer = payload.get("producer")

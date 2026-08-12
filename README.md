@@ -7,19 +7,19 @@ other's runtime implementation.
 
 ## Current architecture candidate (2026-08-12)
 
-The isolated candidate is commit `1a0d760` on
-`codex/post-phase-f-architecture-phase0`, based on stable `6981935` / v2.0.0.
-The release-preparation target is package version `2.1.0`. It remains a
-candidate: no tag, publication, production installation, or
-endpoint promotion has been performed.
+The isolated candidate is the `codex/post-phase-f-architecture-phase0` release
+branch, based on stable `6981935` / v2.0.0. The release-preparation target is
+package version `2.1.1`, being fix-forwarded from the superseded pre-publication
+v2.1.0 tag after its release-only Linux venv-path gate failed. The v2.1.0 tag
+must not be reused.
 
 | Role | Ref / identity | State |
 |---|---|---|
 | Dirty historical JobDesk checkout | `C:\dft\tool\jobdesk-dev` @ `89d232a` | preserved user-owned worktree and package metadata; not a release source |
 | Dirty historical ConfFlow checkout | `/opt/ConfFlow` @ `10e457d` | preserved historical source; not a release source |
 | ConfFlow stable baseline | `6981935` / v2.0.0 | released production baseline |
-| ConfFlow architecture candidate | `1a0d760` | isolated, not released |
-| Paired JobDesk candidate | `908b153` | isolated consumer candidate |
+| ConfFlow architecture candidate | `codex/post-phase-f-architecture-phase0` @ `c611072` | isolated fix-forward release candidate |
+| Paired JobDesk candidate | `e6003be` | isolated consumer candidate |
 | Production/promotion endpoint | v0.6.0 + v2.0.0 configured pairing | unchanged; no candidate endpoint authorized |
 
 The workflow facade now delegates to planner, resume policy, executor, and
@@ -86,13 +86,13 @@ Requirements and packaging notes:
 - RDKit is required
 - `numba` is optional and only used for acceleration when installed
 
-## ConfFlow ↔ JobDesk Capability Handshake (v2.1.0 candidate)
+## ConfFlow ↔ JobDesk Capability Handshake (v2.1.1 candidate)
 
-ConfFlow 2.1.0 implements a version/capability probe used by JobDesk to
+ConfFlow 2.1.1 implements a version/capability probe used by JobDesk to
 validate compatibility before uploading or submitting workflow tasks:
 
 ```bash
-confflow --version          # prints "2.1.0"
+confflow --version          # prints "2.1.1"
 confflow --capabilities --json
 ```
 
@@ -101,7 +101,7 @@ Capability contract (JSON, schema version **4**):
 ```json
 {
   "schema_version": 4,
-  "version": "2.1.0",
+  "version": "2.1.1",
   "capabilities": {
     "workflow_state": true,
     "resume": true,
@@ -131,13 +131,13 @@ Capability contract (JSON, schema version **4**):
   },
   "producer": {
     "package": "confflow",
-    "version": "2.1.0",
+    "version": "2.1.1",
     "build": {
       "commit": "<40-char git commit>",
       "dirty": false
     },
     "wheel": {
-      "filename": "confflow-2.1.0-py3-none-any.whl",
+      "filename": "confflow-2.1.1-py3-none-any.whl",
       "sha256": "<external SHA-256SUMS digest>"
     },
     "install_provenance": {
@@ -158,8 +158,8 @@ The release's `control_worker` value is `true` only on POSIX hosts with
 not accept the worker handoff.
 
 The released JobDesk v0.6.0 pairing uses the stable v2.0.0 release; the
-current JobDesk architecture candidate is tracked separately as `908b153` and
-targets v0.7.0. v1.4.6 remains rollback-only. The v2.1.0 candidate must be
+current JobDesk architecture candidate is tracked separately as `e6003be` and
+targets v0.7.0. v1.4.6 remains rollback-only. The v2.1.1 candidate must be
 paired with a consumer that
 validates this capability contract before the first input upload and repeats
 the preflight at submit time.

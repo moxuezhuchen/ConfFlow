@@ -2,12 +2,15 @@
 
 ## Candidate versus production (2026-08-12)
 
-The current architecture candidate is `1a0d760`, based on the released
-`6981935` / v2.0.0. The release-preparation target is package version `2.1.0`.
-It has passed isolated non-compute regression, static, and build checks, but it
-is not a release artifact and must not be promoted by
+The current architecture candidate is the isolated
+`codex/post-phase-f-architecture-phase0` release branch, based on the released
+`6981935` / v2.0.0. The release-preparation target is package version `2.1.1`.
+The first v2.1.0 tag was superseded before GitHub Release publication after a
+release-only Linux venv-path gate failed; that tag must not be reused. The
+v2.1.1 candidate has passed isolated non-compute regression, static, and
+remote contract checks, but it must not be promoted by
 changing `/usr/local/bin/confflow`, JobDesk server entries, or the production
-venv. The paired JobDesk candidate is `908b153`.
+venv. The paired JobDesk candidate is `e6003be`.
 
 Release publication, side-by-side installation, candidate acceptance, and
 production endpoint promotion are separate approvals. Because this candidate
@@ -72,10 +75,10 @@ Confirm GitHub Actions CI is green for the release commit.
 
 ## 4. Build Wheel And Source Distribution
 
-The checked-in release artifact workflow is pinned to the prepared `v2.1.0`
+The checked-in release artifact workflow is pinned to the prepared `v2.1.1`
 package and its matching versioned runtime lock/manifest. Its automatic trigger
-is only the `v2.1.0` tag; manual dispatch accepts a tag input but the workflow
-still fails closed unless the selected tag is exactly `v2.1.0`. The historical
+is only the `v2.1.1` tag; manual dispatch accepts a tag input but the workflow
+still fails closed unless the selected tag is exactly `v2.1.1`. The historical
 v2.0.0 release record and input files remain unchanged. Before any release tag
 is created, obtain the separate release authorization.
 
@@ -182,12 +185,12 @@ Format:
 
 ### Layer 2a - Controlled Python runtime dependencies
 
-The v2.1.0 Linux x86_64 / CPython 3.12 runtime input pair is derived from the
+The v2.1.1 Linux x86_64 / CPython 3.12 runtime input pair is derived from the
 verified v2.0.0 release input set. The committed lock is
-release/confflow-2.1.0-py312-linux-x86_64.lock and contains every direct and
+release/confflow-2.1.1-py312-linux-x86_64.lock and contains every direct and
 transitive runtime distribution at an exact version with SHA-256 hashes. The
 matching wheelhouse manifest is
-release/confflow-2.1.0-py312-linux-x86_64.SHA256SUMS. Both files include
+release/confflow-2.1.1-py312-linux-x86_64.SHA256SUMS. Both files include
 comments naming the v2.0.0 source path and source digest; the dependency
 closure and wheel hashes are intentionally unchanged for this candidate.
 
