@@ -7,7 +7,7 @@ other's runtime implementation.
 
 ## Current architecture candidate (2026-08-12)
 
-The isolated candidate is commit `cdf0247` on
+The isolated candidate is commit `907b69e` on
 `codex/post-phase-f-architecture-phase0`, based on stable `6981935` / v2.0.0.
 It remains a candidate: no tag, publication, production installation, or
 endpoint promotion has been performed.
@@ -15,8 +15,8 @@ endpoint promotion has been performed.
 | Role | Ref / identity | State |
 |---|---|---|
 | ConfFlow stable baseline | `6981935` / v2.0.0 | released production baseline |
-| ConfFlow architecture candidate | `cdf0247` | isolated, not released |
-| Paired JobDesk candidate | `37df815` | isolated consumer candidate |
+| ConfFlow architecture candidate | `907b69e` | isolated, not released |
+| Paired JobDesk candidate | `cf3fe30` | isolated consumer candidate |
 
 The workflow facade now delegates to planner, resume policy, executor, and
 finalizer boundaries. `ExecutionService` retains repository CAS and lifecycle
@@ -154,7 +154,7 @@ The release's `control_worker` value is `true` only on POSIX hosts with
 not accept the worker handoff.
 
 The released JobDesk v0.6.0 pairing uses this release; the current JobDesk
-architecture candidate is tracked separately as `37df815`. v1.4.6 remains
+architecture candidate is tracked separately as `cf3fe30`. v1.4.6 remains
 rollback-only. The v2.0.0 release must be paired with a consumer that
 validates this capability contract before the first input upload and repeats
 the preflight at submit time.

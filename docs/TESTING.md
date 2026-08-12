@@ -2,7 +2,7 @@
 
 ## Post-Phase-F candidate gates (2026-08-12)
 
-For candidate `cdf0247`, the required non-compute checks are independent of
+For candidate `907b69e`, the required non-compute checks are independent of
 the production endpoint:
 
 ```bash
@@ -12,8 +12,9 @@ python -m mypy confflow
 python -m build --no-isolation
 ```
 
-The Linux/ext4 isolated candidate currently reports `1042 passed, 1 skipped`
-with the static checks and wheel/sdist build passing. This evidence does not
+The Linux/ext4 isolated candidate currently reports `1043 passed, 1 skipped,
+1 warning` with the static checks and wheel/sdist build passing. The clean
+installed-wheel fixture subset reports `37 passed`. This evidence does not
 include a Gaussian, ORCA, g16, or scheduler workload. Such a workload is a
 separate acceptance gate and is not implied by the local test result.
 
