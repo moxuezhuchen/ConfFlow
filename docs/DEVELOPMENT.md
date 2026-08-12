@@ -13,6 +13,13 @@ The relevant focused modules are `workflow/planner.py`, `workflow/resume.py`,
 `worker_sidecar.py`. Changes to `control.v1` require a separate protocol
 decision and are outside this architecture refactor.
 
+`.github/workflows/jobdesk-contract.yml` checks the producer candidate against
+the released JobDesk `v0.6.0` by default. Its manual `jobdesk_ref` input can
+select the exact JobDesk consumer-candidate ref for the reverse-direction
+gate. The workflow installs wheels in isolated environments and runs only
+contract, workflow, resume, and worker fixtures; it never authorizes a real
+Gaussian/ORCA workload or endpoint promotion.
+
 ## 项目结构
 
 ```
