@@ -1,5 +1,22 @@
 # ConfFlow 测试指南
 
+## Post-Phase-F candidate gates (2026-08-12)
+
+For candidate `4952031`, the required non-compute checks are independent of
+the production endpoint:
+
+```bash
+python -m pytest -q -p no:cacheprovider
+python -m ruff check confflow tests
+python -m mypy confflow
+python -m build --no-isolation
+```
+
+The Linux/ext4 isolated candidate currently reports `1042 passed, 1 skipped`
+with the static checks and wheel/sdist build passing. This evidence does not
+include a Gaussian, ORCA, g16, or scheduler workload. Such a workload is a
+separate acceptance gate and is not implied by the local test result.
+
 ## 快速开始
 
 ### 推荐方式（零产物）

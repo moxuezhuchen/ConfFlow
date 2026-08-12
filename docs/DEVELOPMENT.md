@@ -1,5 +1,18 @@
 # ConfFlow 开发指南
 
+## Candidate development state (2026-08-12)
+
+Use the isolated candidate ref `4952031` for the post-Phase-F architecture
+work; compare it with stable `6981935`. Do not use `/opt/ConfFlow` as the
+implementation checkout and do not replace the production venv. The paired
+JobDesk consumer candidate is `91b8932`.
+
+The relevant focused modules are `workflow/planner.py`, `workflow/resume.py`,
+`workflow/executor.py`, `workflow/finalizer.py`,
+`application/execution/policy.py`, `worker_runner.py`, and
+`worker_sidecar.py`. Changes to `control.v1` require a separate protocol
+decision and are outside this architecture refactor.
+
 ## 项目结构
 
 ```

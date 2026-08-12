@@ -1,5 +1,37 @@
 # ConfFlow 项目架构
 
+## Current candidate boundary (2026-08-12)
+
+The isolated candidate is `4952031` (base `6981935`, package version still
+2.0.0). It is not published or installed over the production environment. The
+production source checkout `/opt/ConfFlow` remains the dirty historical tree
+at `10e457d`; it was not used as the implementation base and was not modified.
+The paired JobDesk candidate is `91b8932`.
+
+The current control/workflow boundary is:
+
+```text
+control CLI / worker
+  -> handoff validation and input staging
+  -> POSIX token lease
+  -> ExecutionService (repository CAS owner)
+  -> workflow runner adapter
+       -> planner -> resume policy -> executor -> finalizer
+       -> atomic sidecar publication before terminal completion
+```
+
+Pure execution policy is isolated in
+`confflow.application.execution.policy`; repository mutation, lifecycle token
+checks, and executor handoff remain in `ExecutionService`. The worker-side
+security components retain path containment, digest, owner-file, lease, and
+sidecar checks. `core` does not own block implementations and `calc` consumes
+the neutral result boundary rather than the refine package's implementation.
+
+`control.v1` request/response schemas, hashes, state names, error registry,
+cursor semantics, and artifact safety rules are frozen. Candidate publication,
+side-by-side non-compute acceptance, separately authorized real-launcher
+acceptance, and promotion are distinct gates.
+
 ## 项目概述
 
 ConfFlow 是一个自动化计算化学工作流引擎，用于分子构象搜索、量子化学计算、构象筛选和结果可视化。核心设计遵循模块化、可扩展原则，支持多种量子化学程序（Gaussian 16、ORCA）。

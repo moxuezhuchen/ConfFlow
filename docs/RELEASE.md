@@ -1,5 +1,20 @@
 # Release Process
 
+## Candidate versus production (2026-08-12)
+
+The current architecture candidate is `4952031`, based on the released
+`6981935` / v2.0.0. It has passed isolated non-compute regression, static, and
+build checks, but it is not a release artifact and must not be promoted by
+changing `/usr/local/bin/confflow`, JobDesk server entries, or the production
+venv. The paired JobDesk candidate is `91b8932`.
+
+Release publication, side-by-side installation, candidate acceptance, and
+production endpoint promotion are separate approvals. Because this candidate
+changes workflow execution and the control worker, promotion additionally
+requires one separately authorized bounded real Gaussian/ORCA launcher
+acceptance. Without that authorization the correct terminal state is
+“RELEASED AND SIDE-BY-SIDE VERIFIED; PRODUCTION PROMOTION NOT AUTHORIZED”.
+
 ConfFlow uses a GitHub Actions release workflow that builds, verifies,
 attests, and publishes the tagged release artifacts. PyPI publication and
 full SLSA-style hardening remain separate manual or future-work concerns.

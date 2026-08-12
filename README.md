@@ -5,6 +5,31 @@ chemistry. JobDesk can act as a GUI/remote-execution consumer through the
 versioned capability and artifact contracts, but neither project embeds the
 other's runtime implementation.
 
+## Current architecture candidate (2026-08-12)
+
+The isolated candidate is commit `4952031` on
+`codex/post-phase-f-architecture-phase0`, based on stable `6981935` / v2.0.0.
+It remains a candidate: no tag, publication, production installation, or
+endpoint promotion has been performed.
+
+| Role | Ref / identity | State |
+|---|---|---|
+| ConfFlow stable baseline | `6981935` / v2.0.0 | released production baseline |
+| ConfFlow architecture candidate | `4952031` | isolated, not released |
+| Paired JobDesk candidate | `91b8932` | isolated consumer candidate |
+
+The workflow facade now delegates to planner, resume policy, executor, and
+finalizer boundaries. `ExecutionService` retains repository CAS and lifecycle
+ownership while pure request/artifact/cursor/identity policy lives in
+`application/execution/policy.py`. The control worker consumes a validated
+queued intent and delegates sidecar publication and workflow invocation through
+focused security-boundary components. `control.v1` schemas, state names,
+cursor semantics, errors, and artifact rules remain frozen.
+
+Non-compute candidate acceptance, real-launcher scientific acceptance, release,
+and production promotion are separate gates. The current candidate has not
+passed or been authorized for the real Gaussian/ORCA launcher gate.
+
 ## Project Status
 
 ConfFlow is currently a **public alpha preview**.
@@ -128,9 +153,9 @@ The release's `control_worker` value is `true` only on POSIX hosts with
 `O_DIRECTORY` and `O_NOFOLLOW`; Windows installations report `false` and must
 not accept the worker handoff.
 
-The current JobDesk compatibility branch pairs this release with a matching
-consumer; v1.4.6 remains rollback-only. The v2.0.0 release must be paired with
-a consumer that
+The released JobDesk v0.6.0 pairing uses this release; the current JobDesk
+architecture candidate is tracked separately as `91b8932`. v1.4.6 remains
+rollback-only. The v2.0.0 release must be paired with a consumer that
 validates this capability contract before the first input upload and repeats
 the preflight at submit time.
 
