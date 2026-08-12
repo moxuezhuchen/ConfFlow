@@ -1,53 +1,50 @@
 #!/usr/bin/env python3
 
-"""Run the workflow without calling ``sys.exit`` directly."""
+"""Orchestrate workflow planning, strict resume, execution, and finalization."""
 
 from __future__ import annotations
 
-import os
-import time
-import uuid
 from collections.abc import Callable
-from datetime import datetime
 from typing import Any
 
-from ..calc.artifacts import CalcArtifactManager
 from ..calc.executor import CalcExecutor
-from ..config.models import CalcStepParams, GlobalOptions
-from ..core import io as io_xyz
-from ..core.exceptions import StopRequestedError
-from ..core.types import TaskStatus
-from ..core.utils import (
-    get_logger,
-    index_to_letter_prefix,
+from ..core.utils import get_logger
+from .executor import (
+    WorkflowExecutor,
+    mark_step_completed,
+    notify_step_status_change,
 )
 from .finalizer import finalize_workflow
-from .helpers import count_conformers_any, resolve_step_output
+from .helpers import count_conformers_any as _count_conformers_any
 from .planner import prepare_workflow
-from .presenter import (
-    print_step_footer_block,
-    print_step_header_block,
-    print_workflow_start,
+from .resume import (
+    ResumePolicy,
+    create_initial_workflow_state,
+    expected_output_reason,
+    format_resume_failure,
+    validate_state_steps,
 )
 from .runtime_context import initialize_runtime_context
 from .state import StepRecord, WorkflowState, WorkflowStateStore
-from .stats import (
-    FailureTracker,
-    TaskStatsCollector,
-)
+from .stats import FailureTracker
 from .step_handlers import StepExecutionResult
 from .step_handlers import run_calc_step as step_run_calc_step
 from .step_handlers import run_confgen_step as step_run_confgen_step
 from .validation import validate_inputs_compatible
 
-__all__ = [
-    "run_workflow",
-]
+__all__ = ["run_workflow", "count_conformers_any", "validate_inputs_compatible"]
 
 logger = get_logger()
-# ``prepare_workflow`` owns the explicit ``build_step_graph``/``topo_order``
-# planning boundary; keep the names in this facade for the v2 architecture
-# contract while the implementation remains in the planner module.
+
+# Compatibility anchor: ``prepare_workflow`` is the sole owner of
+# ``build_step_graph`` and ``topo_order``.  Keep these names visible in the
+# facade so source-level architecture checks and downstream tooling can verify
+# that the engine no longer carries a second legacy graph implementation.
+
+
+def count_conformers_any(value: str | list[str]) -> int:
+    """Compatibility facade for the historical engine-level import."""
+    return _count_conformers_any(value)
 
 
 def _resume_failure_message(
@@ -57,21 +54,18 @@ def _resume_failure_message(
     step_dir: str,
     reason: str,
 ) -> str:
-    return (
-        f"Resume failed: step {step_index} ('{step_name}') cannot be reused: {reason}. "
-        "Strict resume does not automatically re-run stale or incomplete steps. "
-        f"Next action: back up or remove {step_dir}, then run again without --resume "
-        "if recomputing this step is intended."
+    """Compatibility facade for the pre-Phase-5 private helper."""
+    return format_resume_failure(
+        step_index=step_index,
+        step_name=step_name,
+        step_dir=step_dir,
+        reason=reason,
     )
 
 
 def _expected_output_reason(step_type: str | None) -> str:
-    st = (step_type or "").lower()
-    if st in {"calc", "task"}:
-        return "missing expected output file output.xyz or result.xyz"
-    if st in {"confgen", "gen"}:
-        return "missing expected output file search.xyz"
-    return "missing expected step output"
+    """Compatibility facade for the pre-Phase-5 private helper."""
+    return expected_output_reason(step_type)
 
 
 def _run_confgen_step(
@@ -81,7 +75,7 @@ def _run_confgen_step(
     input_files: list[str],
     global_config: dict[str, Any],
 ) -> StepExecutionResult:
-    """Execute a conformer generation step."""
+    """Compatibility facade used by existing tests and integrations."""
     return step_run_confgen_step(step_dir, current_input, params, input_files, global_config)
 
 
@@ -97,29 +91,20 @@ def _run_calc_step(
     *,
     calc_executor: CalcExecutor | None = None,
 ) -> StepExecutionResult:
-    """Execute a calculation task step."""
+    """Compatibility facade used by existing tests and integrations."""
+    kwargs: dict[str, Any] = {
+        "step_dir": step_dir,
+        "current_input": current_input,
+        "params": params,
+        "global_config": global_config,
+        "root_dir": root_dir,
+        "steps": steps,
+        "failure_tracker": failure_tracker,
+        "step_name": step_name,
+    }
     if calc_executor is not None:
-        return step_run_calc_step(
-            step_dir=step_dir,
-            current_input=current_input,
-            params=params,
-            global_config=global_config,
-            root_dir=root_dir,
-            steps=steps,
-            failure_tracker=failure_tracker,
-            step_name=step_name,
-            calc_executor=calc_executor,
-        )
-    return step_run_calc_step(
-        step_dir=step_dir,
-        current_input=current_input,
-        params=params,
-        global_config=global_config,
-        root_dir=root_dir,
-        steps=steps,
-        failure_tracker=failure_tracker,
-        step_name=step_name,
-    )
+        kwargs["calc_executor"] = calc_executor
+    return step_run_calc_step(**kwargs)
 
 
 def run_workflow(
@@ -136,339 +121,82 @@ def run_workflow(
     on_step_status_change: Callable[[StepRecord], None] | None = None,
     poll_interval_seconds: float = 5,
 ) -> dict[str, Any]:
-    """Run a workflow while recording restartable step state.
-
-    Existing callers retain the original positional and keyword parameters.
-    ``calc_executor`` is optional and is forwarded only to calculation steps;
-    omitting it preserves the local execution behaviour.
-    """
+    """Run a workflow through the planner, resume policy, executor, and finalizer."""
     if poll_interval_seconds < 0:
         raise ValueError("poll_interval_seconds must be >= 0")
     if verbose and hasattr(logger, "set_level"):
         logger.set_level(10)
 
     prepared = prepare_workflow(input_xyz, config_file, original_input_files)
-    input_files = prepared.input_files
-    original_inputs = prepared.original_inputs
-    global_config = prepared.global_config
-    steps = prepared.steps
-    predecessors = prepared.predecessors
-    by_step_name = prepared.by_step_name
-    execution_order = prepared.execution_order
-    terminal_steps = prepared.terminal_steps
-    step_dirnames = prepared.step_dirnames
-    name_to_dirname = prepared.name_to_dirname
-
-    # Pre-load confgen params for multi-input flexible chain consistency check
-    confgen_params = None
-    if len(input_files) > 1:
-        for step in steps:
-            if step.get("type", "").lower() == "confgen":
-                confgen_params = step.get("params", {})
-                break
+    if len(prepared.input_files) > 1:
+        confgen_params = next(
+            (
+                step.get("params", {})
+                for step in prepared.steps
+                if step.get("type", "").lower() == "confgen"
+            ),
+            None,
+        )
         validate_inputs_compatible(
-            input_files,
+            prepared.input_files,
             confgen_params,
-            force_consistency=global_config.get("force_consistency", False),
+            force_consistency=prepared.global_config.get("force_consistency", False),
         )
 
     runtime = initialize_runtime_context(
         work_dir=work_dir,
         config_file=config_file,
-        input_files=input_files,
-        original_inputs=original_inputs,
+        input_files=prepared.input_files,
+        original_inputs=prepared.original_inputs,
         resume=resume,
         logger=logger,
-        global_config=global_config,
+        global_config=prepared.global_config,
     )
-    root_dir = runtime.root_dir
-    checkpoint = runtime.checkpoint
-    stats_tracker = runtime.stats_tracker
-    failure_tracker = runtime.failure_tracker
-    resume_from_step = runtime.resume_from_step
-    current_input = runtime.current_input
-    initial_input = list(current_input) if isinstance(current_input, list) else current_input
-    step_outputs: dict[str, str | list[str]] = {}
-    stats_tracker.stats["initial_conformers"] = count_conformers_any(current_input)
-
-    state_store = WorkflowStateStore(root_dir)
+    state_store = WorkflowStateStore(runtime.root_dir)
     state = state_store.load() if resume else None
     if state is None:
         state = _initial_workflow_state(
-            root_dir=root_dir,
-            input_files=input_files,
-            original_inputs=original_inputs,
+            root_dir=runtime.root_dir,
+            input_files=prepared.input_files,
+            original_inputs=prepared.original_inputs,
             config_file=config_file,
-            steps=steps,
-            step_dirnames=step_dirnames,
+            steps=prepared.steps,
+            step_dirnames=prepared.step_dirnames,
         )
         state_store.save(state)
-    else:
-        _validate_state_steps(state, steps, step_dirnames)
 
-    # === Print workflow start header ===
-    print_workflow_start(input_files, current_input)
-
-    def _resolve_inputs_for_step(step_name: str) -> str | list[str]:
-        predecessors_for_step = predecessors[step_name]
-        if not predecessors_for_step:
-            return list(initial_input) if isinstance(initial_input, list) else initial_input
-
-        outputs: list[str] = []
-        for predecessor in predecessors_for_step:
-            output = step_outputs.get(predecessor)
-            if output is None:
-                raise RuntimeError(
-                    f"step {step_name!r} depends on {predecessor!r} but that step produced no output"
-                )
-            if isinstance(output, list):
-                outputs.extend(output)
-            else:
-                outputs.append(output)
-        return outputs[0] if len(outputs) == 1 else outputs
-
-    for execution_index, step_name in enumerate(execution_order):
-        step = by_step_name[step_name]
-        step_dirname = name_to_dirname[step_name]
-        step_dir = os.path.join(root_dir, step_dirname)
-        state_record = state.steps[step_dirname]
-        if resume and state_record.status in {"completed", "skipped"}:
-            if state_record.output_xyz is None:
-                if state_record.status == "skipped" and not step.get("enabled", True):
-                    try:
-                        step_outputs[step_name] = _resolve_inputs_for_step(step_name)
-                    except RuntimeError:
-                        step_outputs[step_name] = current_input
-                    continue
-                raise RuntimeError(
-                    _resume_failure_message(
-                        step_index=execution_index + 1,
-                        step_name=state_record.name,
-                        step_dir=step_dir,
-                        reason="workflow state has no output path",
-                    )
-                )
-            if not os.path.exists(state_record.output_xyz):
-                raise RuntimeError(
-                    _resume_failure_message(
-                        step_index=execution_index + 1,
-                        step_name=state_record.name,
-                        step_dir=step_dir,
-                        reason=f"saved output is missing: {state_record.output_xyz}",
-                    )
-                )
-            step_outputs[step_name] = state_record.output_xyz
-            current_input = state_record.output_xyz
-            continue
-
-        if resume_from_step >= execution_index:
-            if not step.get("enabled", True):
-                try:
-                    step_outputs[step_name] = _resolve_inputs_for_step(step_name)
-                except RuntimeError:
-                    step_outputs[step_name] = current_input
-                continue
-
-            inputs_for_step = _resolve_inputs_for_step(step_name)
-            if step.get("type") in ["calc", "task"]:
-                params = step.get("params", {}) or {}
-                typed_global = GlobalOptions.from_mapping(global_config)
-                calc_config = CalcStepParams.from_params(params, typed_global)
-                input_for_digest = (
-                    inputs_for_step if isinstance(inputs_for_step, str) else inputs_for_step[0]
-                )
-                artifact_prepared = CalcArtifactManager(
-                    step_dir,
-                    step_name=step_name,
-                    config=calc_config,
-                    input_path=input_for_digest,
-                ).prepare(resume=True)
-                if artifact_prepared.reusable_output is not None:
-                    current_input = str(artifact_prepared.reusable_output)
-                    step_outputs[step_name] = current_input
-                    _mark_step_completed(state, state_record, current_input, execution_index)
-                    state_store.save(state)
-                    continue
-                if artifact_prepared.cleaned_stale_artifacts:
-                    raise RuntimeError(
-                        _resume_failure_message(
-                            step_index=execution_index + 1,
-                            step_name=step_name,
-                            step_dir=step_dir,
-                            reason="manifest digest did not match current config/input",
-                        )
-                    )
-
-            expected_output = resolve_step_output(step_dir, step.get("type"))
-            if expected_output is not None and os.path.exists(expected_output):
-                current_input = expected_output
-                step_outputs[step_name] = current_input
-                _mark_step_completed(state, state_record, current_input, execution_index)
-                state_store.save(state)
-                continue
-
-            raise RuntimeError(
-                _resume_failure_message(
-                    step_index=execution_index + 1,
-                    step_name=step_name,
-                    step_dir=step_dir,
-                    reason=_expected_output_reason(step.get("type")),
-                )
-            )
-
-        # Check pause beacon before executing new step
-        if pause_beacon_file and os.path.exists(pause_beacon_file):
-            raise StopRequestedError(f"Pause beacon found at {pause_beacon_file}")
-
-        if not step.get("enabled", True):
-            try:
-                step_outputs[step_name] = _resolve_inputs_for_step(step_name)
-            except RuntimeError:
-                step_outputs[step_name] = current_input
-            state_record.status = "skipped"
-            _notify_step_status_change(on_step_status_change, state_record)
-            state_store.save(state)
-            continue
-
-        step_type = step["type"]
-        os.makedirs(step_dir, exist_ok=True)
-
-        step_start = time.time()
-        inputs_for_step = _resolve_inputs_for_step(step_name)
-        current_input = inputs_for_step
-        in_n = count_conformers_any(inputs_for_step)
-
-        step_stats = {
-            "name": step_name,
-            "type": step_type,
-            "index": execution_index + 1,
-            "input_conformers": in_n,
-            "start_time": datetime.now().isoformat(),
-        }
-
-        params = step.get("params", {}) or {}
-
-        # Notify server of the current step_dir for STOP beacon injection
-        if step_started_callback:
-            step_started_callback(step_name, step_type, step_dir)
-
-        state_record.status = "submitted"
-        state_record.submitted_at = time.time()
-        state_record.error = None
-        state.wavefront_index = execution_index
-        state_store.save(state)
-        _notify_step_status_change(on_step_status_change, state_record)
-
-        # === Step header ===
-        total_steps = len(steps)
-        print_step_header_block(
-            step_index=execution_index + 1,
-            total_steps=total_steps,
-            step_name=step_name,
-            step_type=step_type,
-            global_config=global_config,
-            params=params,
-            in_count=in_n,
-        )
-
-        try:
-            if step_type in ["confgen", "gen"]:
-                step_result = _run_confgen_step(
-                    step_dir,
-                    inputs_for_step,
-                    params,
-                    input_files,
-                    global_config,
-                )
-                current_input = step_result.output_path
-                io_xyz.ensure_xyz_cids(current_input, prefix=index_to_letter_prefix(0))
-                if step_result.copied_multi_frame:
-                    step_stats["status"] = TaskStatus.SKIPPED_MULTI
-                elif step_result.reused_existing:
-                    step_stats["status"] = TaskStatus.SKIPPED
-                else:
-                    step_stats["status"] = TaskStatus.COMPLETED
-
-            elif step_type in ["calc", "task"]:
-                step_result = _run_calc_step(
-                    step_dir,
-                    inputs_for_step,
-                    params,
-                    global_config,
-                    root_dir,
-                    steps,
-                    failure_tracker,
-                    step_name,
-                    **({"calc_executor": calc_executor} if calc_executor is not None else {}),
-                )
-                current_input = step_result.output_path
-                io_xyz.ensure_xyz_cids(current_input, prefix=index_to_letter_prefix(0))
-                if step_result.reused_existing:
-                    step_stats["status"] = TaskStatus.SKIPPED
-                else:
-                    step_stats["status"] = TaskStatus.COMPLETED
-
-            step_outputs[step_name] = current_input
-            step_stats["output_xyz"] = (
-                os.path.abspath(current_input) if isinstance(current_input, str) else current_input
-            )
-
-        except Exception as e:
-            # noqa: BLE001 - dispatcher-level: any step failure must mark FAILED + checkpoint + re-raise for the engine to abort the pipeline
-            step_stats["status"] = TaskStatus.FAILED
-            step_stats["error"] = str(e)
-            state_record.status = "failed"
-            state_record.error = str(e)
-            state_record.fail_count += 1
-            state_record.completed_at = time.time()
-            state.final_status = "failed"
-            state_store.save(state)
-            _notify_step_status_change(on_step_status_change, state_record)
-            checkpoint.save(execution_index - 1, stats_tracker.get_stats())
-            raise
-        finally:
-            step_stats["end_time"] = datetime.now().isoformat()
-            step_stats["duration_seconds"] = round(time.time() - step_start, 2)
-            step_stats["output_conformers"] = count_conformers_any(current_input)
-
-            failed_count = 0
-            if step_type in ["calc", "task"]:
-                db_path = os.path.join(step_dir, "results.db")
-                failed_count = TaskStatsCollector.count_failed(db_path) or 0
-                step_stats["failed_conformers"] = failed_count
-
-            # === Step footer summary ===
-            print_step_footer_block(
-                step_stats=step_stats,
-                in_count=in_n,
-                failed_count=failed_count,
-            )
-
-            stats_tracker.add_step(step_stats)
-            if step_stats["status"] in [
-                TaskStatus.COMPLETED,
-                TaskStatus.SKIPPED,
-                TaskStatus.SKIPPED_MULTI,
-            ]:
-                checkpoint.save(execution_index, stats_tracker.get_stats())
-
-                _mark_step_completed(state, state_record, current_input, execution_index)
-                state_store.save(state)
-                _notify_step_status_change(on_step_status_change, state_record)
-
-    terminal_outputs = {name: _as_artifact_list(step_outputs[name]) for name in terminal_steps}
-    final_outputs = [artifact for artifacts in terminal_outputs.values() for artifact in artifacts]
-    final_output = step_outputs[terminal_steps[0]] if len(terminal_steps) == 1 else final_outputs
-    final_stats = stats_tracker.finalize(final_output)
-    return finalize_workflow(
-        root_dir=root_dir,
-        final_output=final_output,
-        original_inputs=original_inputs,
-        terminal_outputs=terminal_outputs,
-        final_stats=final_stats,
+    resume_policy = ResumePolicy(
+        resume=resume,
+        resume_from_step=runtime.resume_from_step,
+        root_dir=runtime.root_dir,
+        global_config=prepared.global_config,
+        state=state,
+        steps=prepared.steps,
+        step_dirnames=prepared.step_dirnames,
+    )
+    execution = WorkflowExecutor(
+        prepared=prepared,
+        runtime=runtime,
         state=state,
         state_store=state_store,
-        execution_count=len(execution_order),
+        resume_policy=resume_policy,
+        pause_beacon_file=pause_beacon_file,
+        step_started_callback=step_started_callback,
+        on_step_status_change=on_step_status_change,
+        calc_executor=calc_executor,
+        # Keep the old private dispatch seams usable by existing callers/tests.
+        run_confgen_step=_run_confgen_step,
+        run_calc_step=_run_calc_step,
+    ).execute()
+    return finalize_workflow(
+        root_dir=execution.root_dir,
+        final_output=execution.final_output,
+        original_inputs=prepared.original_inputs,
+        terminal_outputs=execution.terminal_outputs,
+        final_stats=execution.final_stats,
+        state=execution.state,
+        state_store=execution.state_store,
+        execution_count=len(prepared.execution_order),
         logger=logger,
     )
 
@@ -482,32 +210,22 @@ def _initial_workflow_state(
     steps: list[dict[str, Any]],
     step_dirnames: list[str],
 ) -> WorkflowState:
-    """Create state records keyed by the deterministic step directory names."""
-    records = {
-        dirname: StepRecord(
-            name=str(step.get("name", dirname)),
-            type=str(step.get("type", "")),
-            status="skipped" if not step.get("enabled", True) else "pending",
-        )
-        for dirname, step in zip(step_dirnames, steps, strict=True)
-    }
-    return WorkflowState(
-        run_id=str(uuid.uuid4()),
-        work_dir=root_dir,
+    """Compatibility facade for the old private state factory."""
+    return create_initial_workflow_state(
+        root_dir=root_dir,
         input_files=input_files,
         original_inputs=original_inputs,
-        config_file=os.path.abspath(config_file),
-        steps=records,
+        config_file=config_file,
+        steps=steps,
+        step_dirnames=step_dirnames,
     )
 
 
 def _as_artifact_list(output: str | list[str]) -> list[str]:
-    """Normalize a terminal step output to absolute artifact paths."""
-    if isinstance(output, str):
-        return [os.path.abspath(output)]
-    if isinstance(output, list):
-        return [os.path.abspath(path) for path in output if isinstance(path, str)]
-    return []
+    """Compatibility facade retained for older private imports."""
+    from .executor import _as_artifact_list as normalize_artifacts
+
+    return normalize_artifacts(output)
 
 
 def _validate_state_steps(
@@ -515,16 +233,8 @@ def _validate_state_steps(
     steps: list[dict[str, Any]],
     step_dirnames: list[str],
 ) -> None:
-    """Reject resume when the saved graph no longer matches the configuration."""
-    expected = set(step_dirnames)
-    if set(state.steps) != expected:
-        raise RuntimeError("Workflow state does not match the configured workflow steps")
-    for dirname, step in zip(step_dirnames, steps, strict=True):
-        record = state.steps[dirname]
-        if record.name != str(step.get("name", dirname)) or record.type != str(
-            step.get("type", "")
-        ):
-            raise RuntimeError("Workflow state does not match the configured workflow steps")
+    """Compatibility facade for the old private state validator."""
+    validate_state_steps(state, steps, step_dirnames)
 
 
 def _mark_step_completed(
@@ -533,16 +243,13 @@ def _mark_step_completed(
     current_input: str | list[str],
     index: int,
 ) -> None:
-    record.status = "completed"
-    record.completed_at = time.time()
-    record.output_xyz = current_input if isinstance(current_input, str) else None
-    record.error = None
-    state.wavefront_index = index + 1
+    """Compatibility facade for the old private completion mutation."""
+    mark_step_completed(state, record, current_input, index)
 
 
 def _notify_step_status_change(
     callback: Callable[[StepRecord], None] | None,
     record: StepRecord,
 ) -> None:
-    if callback:
-        callback(record)
+    """Compatibility facade for the old private callback helper."""
+    notify_step_status_change(callback, record)

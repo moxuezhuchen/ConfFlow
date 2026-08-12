@@ -32,13 +32,18 @@ from .application.execution.workflow_adapter import (
     open_control_service,
 )
 from .control import _validator
-from .core.contracts import cli_output_to_txt, output_txt_path_for_input
 from .core.exceptions import StopRequestedError
 from .core.logging import redirect_logging_streams
 from .worker_lease import (  # noqa: F401 - retain private helper imports for callers
     TokenLeaseManager,
     _complete_owner_marker,
     _has_live_work_process,
+)
+from .worker_runner import (
+    VerifiedWorkerHandoff,
+    VerifiedWorkerLaunch,
+    WorkerWorkflowRunnerAdapter,
+    default_workflow_runner,
 )
 from .worker_security import (
     _canonical_json,
@@ -49,7 +54,7 @@ from .worker_security import (
     _validate_attempt_root,
     _validate_path,
 )
-from .workflow.engine import run_workflow
+from .worker_sidecar import WorkerSidecarPublisher
 
 HANDOFF_SCHEMA = "confflow.control.worker-handoff.v1"
 _TERMINAL_STATES = frozenset({RunState.COMPLETED, RunState.FAILED, RunState.CANCELLED})
@@ -60,7 +65,7 @@ def run_control_worker(
     state_root: str | Path,
     run_id: str,
     handoff_path: str | Path,
-    workflow_runner: Callable[..., dict[str, Any] | None] = run_workflow,
+    workflow_runner: Callable[..., dict[str, Any] | None] = default_workflow_runner,
     sleep: Callable[[float], None] = time.sleep,
 ) -> RunState:
     """Consume one prepared queued token and run the bound workflow.
@@ -164,14 +169,26 @@ def run_control_worker(
                 resume=resume,
                 pause_beacon_file=str(run_paths.work / "PAUSE"),
             )
+            verified_handoff = VerifiedWorkerHandoff(
+                run_id=run_id,
+                digest=handoff_digest,
+            )
+            verified_launch = VerifiedWorkerLaunch(
+                run_id=run_id,
+                token=token,
+                expected_identity=current.expected_executable_identity,
+            )
+            sidecar_publisher = WorkerSidecarPublisher(root)
             service, executor = build_workflow_service(
                 spec,
                 state_root=root.path,
                 workflow_runner=_worker_workflow_runner(
                     workflow_runner,
                     original_input=staged_tasks[0]["input_xyz"],
-                    root=root,
+                    handoff=verified_handoff,
+                    launch=verified_launch,
                     work_dir=tasks[0]["work_dir"],
+                    sidecar_publisher=sidecar_publisher,
                 ),
             )
             executor_snapshot = service.consume_queued_launch(run_id)
@@ -307,34 +324,19 @@ def _stage_worker_inputs(
     return str(staged_config), staged_tasks
 
 
-def _publish_worker_sidecars(root: StateRoot, *, staged_input: str, work_dir: str) -> None:
-    """Publish CLI-compatible report/minimum files beside the workflow dir."""
-    attempt_root = _validate_attempt_root(root)
-    destination_root = Path(work_dir).parent
-    if destination_root != attempt_root:
-        _validate_path(
-            destination_root,
-            attempt_root,
-            "workflow result root",
-            kind="directory",
-        )
-    for source in (
-        Path(output_txt_path_for_input(staged_input)),
-        Path(staged_input).with_name(f"{Path(staged_input).stem}min.xyz"),
-    ):
-        if not source.is_file():
-            raise FileNotFoundError(f"worker completed without required sidecar: {source.name}")
-        destination = destination_root / source.name
-        _validate_path(
-            destination,
-            attempt_root,
-            "worker sidecar",
-            kind="file",
-            allow_missing=True,
-        )
-        if source == destination:
-            continue
-        _stage_file(source, destination, expected_digest=_file_digest(str(source)))
+def _publish_worker_sidecars(
+    publisher_or_root: WorkerSidecarPublisher | StateRoot,
+    *,
+    staged_input: str,
+    work_dir: str,
+) -> None:
+    """Compatibility seam delegating fixed publication to its focused module."""
+    publisher = (
+        publisher_or_root
+        if isinstance(publisher_or_root, WorkerSidecarPublisher)
+        else WorkerSidecarPublisher(publisher_or_root)
+    )
+    publisher.publish(staged_input=staged_input, work_dir=work_dir)
 
 
 def _stage_file(source: str, destination: Path, *, expected_digest: str) -> Path:
@@ -390,27 +392,22 @@ def _ensure_directory(path: Path) -> None:
 def _worker_workflow_runner(
     runner: Callable[..., dict[str, Any] | None],
     *,
+    handoff: VerifiedWorkerHandoff,
+    launch: VerifiedWorkerLaunch,
     original_input: str,
-    root: StateRoot,
     work_dir: str,
+    sidecar_publisher: WorkerSidecarPublisher,
 ) -> Callable[..., dict[str, Any] | None]:
-    """Run the normal engine while preserving the public report sidecar.
-
-    The interactive CLI owns this redirect for direct runs.  The external
-    worker crosses the service boundary without invoking that CLI, so it must
-    create the same ``<input-stem>.txt`` artifact itself.
-    """
-
-    def _run(**kwargs: Any) -> dict[str, Any] | None:
-        with cli_output_to_txt(original_input):
-            result = runner(**kwargs)
-        # Publish fixed legacy sidecars before ExecutionLifecycle.completed()
-        # commits the terminal aggregate. A failed copy must become a failed
-        # attempt, not an irreversible completed run with missing metadata.
-        _publish_worker_sidecars(root, staged_input=original_input, work_dir=work_dir)
-        return result
-
-    return _run
+    """Build the runner only from a validated handoff and service binding."""
+    return WorkerWorkflowRunnerAdapter(
+        runner,
+        handoff=handoff,
+        launch=launch,
+        original_input=original_input,
+        work_dir=work_dir,
+        sidecar_publisher=sidecar_publisher,
+        publish_sidecars=_publish_worker_sidecars,
+    )
 
 
 if __name__ == "__main__":  # pragma: no cover - exercised at the process boundary
