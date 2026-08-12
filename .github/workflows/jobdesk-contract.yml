@@ -363,9 +363,9 @@ jobs:
 
       - name: Verify installed provenance and fail-closed production admission
         env:
-          EXPECTED_CANDIDATE_COMMIT: 338b53b3a34593271b926fc9e96010186141a386
+          EXPECTED_CANDIDATE_COMMIT: b13a10f59b5817dbb218f51c7e232f43c9bdc996
           EXPECTED_SCHEMA_SHA256: 87991f09a0edbd56aed354bdd03b012775a2f2b98504297ab459e524f4542427
-          EXPECTED_CONFFLOW_WHEEL_SHA256: pending-v2.1.2-release
+          EXPECTED_CONFFLOW_WHEEL_SHA256: 4bd9a2a0a20e50aa01c6f3af46b3c662c27eabe8c933e79ab0b52f8fbcb33b7c
         run: |
           set -euo pipefail
           cd "$RUNNER_TEMP"
