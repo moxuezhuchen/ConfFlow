@@ -32,6 +32,7 @@ jobs:
       - name: Build the candidate wheel
         working-directory: confflow
         run: |
+          set -euo pipefail
           python -m pip install --upgrade pip build
           python -m build --wheel --outdir "$RUNNER_TEMP/confflow-dist"
 
@@ -42,14 +43,28 @@ jobs:
           ref: ${{ inputs.jobdesk_ref || 'v0.6.0' }}
           path: jobdesk
 
+      - name: Build the selected JobDesk consumer wheel
+        working-directory: jobdesk
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade build
+          python -m build --wheel --outdir "$RUNNER_TEMP/jobdesk-dist"
+          wheel="$(find "$RUNNER_TEMP/jobdesk-dist" -maxdepth 1 -name 'jobdesk-*.whl' -print -quit)"
+          test -n "$wheel"
+          printf '%s\n' "$wheel" > "$RUNNER_TEMP/jobdesk-wheel-path"
+
       - name: Install the exact producer candidate and consumer
         run: |
           set -euo pipefail
-          python -m pip install -e "jobdesk[dev]"
+          jobdesk_wheel="$(cat "$RUNNER_TEMP/jobdesk-wheel-path")"
+          # Install the consumer from the built wheel, including its test
+          # dependencies, so reverse CI cannot pass through an editable tree.
+          python -m pip install "${jobdesk_wheel}[dev]"
           wheel="$(find "$RUNNER_TEMP/confflow-dist" -maxdepth 1 -name 'confflow-*.whl' -print -quit)"
           test -n "$wheel"
           python -m pip install "$wheel"
-          python -c 'import confflow; print(confflow.__version__)'
+          (cd "$RUNNER_TEMP" && python -c 'import confflow; print(confflow.__version__)')
+          python -m pip check
 
       - name: Verify candidate capability and bundled schema contract
         env:
@@ -58,7 +73,11 @@ jobs:
           set -euo pipefail
           wheel="$(find "$RUNNER_TEMP/confflow-dist" -maxdepth 1 -name 'confflow-*.whl' -print -quit)"
           wheel_sha="$(sha256sum "$wheel" | awk '{print $1}')"
-          JOBDESK_SOURCE="$PWD/jobdesk" CANDIDATE_WHEEL="$wheel" CANDIDATE_WHEEL_SHA="$wheel_sha" python - <<'PY'
+          cd "$RUNNER_TEMP"
+          JOBDESK_CHECKOUT="$GITHUB_WORKSPACE/jobdesk" \
+          JOBDESK_WHEEL="$(cat "$RUNNER_TEMP/jobdesk-wheel-path")" \
+          CANDIDATE_WHEEL="$wheel" \
+          CANDIDATE_WHEEL_SHA="$wheel_sha" python - <<'PY'
           import hashlib
           import json
           import os
@@ -66,7 +85,6 @@ jobs:
           import sys
           from pathlib import Path
 
-          sys.path.insert(0, os.environ["JOBDESK_SOURCE"] + "/src")
           from jobdesk_app.core.confflow_preflight import (
               parse_confflow_capabilities,
               validate_confflow_capabilities,
@@ -116,6 +134,35 @@ jobs:
           if capabilities.raw_payload is None or capabilities.raw_payload.get("capabilities", {}).get("control_worker") is not True:
               raise AssertionError("Ubuntu candidate must advertise the POSIX control worker")
 
+          jobdesk_module = Path(__import__("jobdesk_app").__file__).resolve()
+          if Path(sys.prefix) not in jobdesk_module.parents:
+              raise AssertionError(f"JobDesk is not imported from the installed wheel: {jobdesk_module}")
+          expected_jobdesk_commit = subprocess.check_output(
+              ["git", "-C", os.environ["JOBDESK_CHECKOUT"], "rev-parse", "HEAD"], text=True
+          ).strip()
+          jobdesk_wheel = Path(os.environ["JOBDESK_WHEEL"])
+          if not jobdesk_wheel.is_file():
+              raise AssertionError(f"selected JobDesk wheel is missing: {jobdesk_wheel}")
+          jobdesk_schema_path = Path(
+              __import__("importlib.resources", fromlist=["files"])
+              .files("jobdesk_app")
+              .joinpath("resources/workflow_config/v1/workflow_config_v1.schema.json")
+          )
+          jobdesk_schema = json.loads(jobdesk_schema_path.read_text(encoding="utf-8"))
+          expected_schema_sha = "87991f09a0edbd56aed354bdd03b012775a2f2b98504297ab459e524f4542427"
+          canonical_jobdesk_schema = json.dumps(
+              jobdesk_schema, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+          ).encode("utf-8")
+          if hashlib.sha256(canonical_jobdesk_schema).hexdigest() != expected_schema_sha:
+              raise AssertionError("installed JobDesk workflow schema digest mismatch")
+
+          contract = json.loads(subprocess.check_output(["confflow", "config", "contract", "--json"], text=True))
+          if contract.get("response_schema") != "confflow.config.contract.v1":
+              raise AssertionError(f"candidate configuration contract schema drift: {contract!r}")
+          workflow_schema = contract.get("workflow_schema")
+          if not isinstance(workflow_schema, dict) or workflow_schema.get("sha256") != expected_schema_sha:
+              raise AssertionError(f"candidate workflow schema binding drift: {contract!r}")
+
           schema_root = Path(sys.prefix) / "share" / "confflow" / "control_protocol" / "v1"
           required = ("common.schema.json", "requests.schema.json", "responses.schema.json", "input-manifest.schema.json", "worker-handoff.schema.json")
           schemas = {}
@@ -128,7 +175,14 @@ jobs:
               raise AssertionError("candidate request schema id is not the v1 producer bundle")
           if schemas["responses.schema.json"].get("$id", "").split("/")[-2:] != ["v1", "responses.schema.json"]:
               raise AssertionError("candidate response schema id is not the v1 producer bundle")
-          print(json.dumps({"version": capabilities.version, "commit": expected_commit, "schema_members": list(required)}))
+          print(json.dumps({
+              "version": capabilities.version,
+              "commit": expected_commit,
+              "jobdesk_commit": expected_jobdesk_commit,
+              "jobdesk_wheel": jobdesk_wheel.name,
+              "schema_members": list(required),
+              "workflow_schema_sha256": expected_schema_sha,
+          }))
           PY
 
       - name: Install Qt runtime libraries
