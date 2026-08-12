@@ -10,7 +10,7 @@ and must not be reused. The current
 candidate is not installed over the production environment. The
 production source checkout `/opt/ConfFlow` remains the dirty historical tree
 at `10e457d`; it was not used as the implementation base and was not modified.
-The paired JobDesk candidate is `e6003be`.
+The paired JobDesk candidate is `c01b082`.
 
 | State boundary | Identity | Treatment |
 |---|---|---|

@@ -20,8 +20,8 @@ must not be reused.
 | Dirty historical JobDesk checkout | `C:\dft\tool\jobdesk-dev` @ `89d232a` | preserved user-owned worktree and package metadata; not a release source |
 | Dirty historical ConfFlow checkout | `/opt/ConfFlow` @ `10e457d` | preserved historical source; not a release source |
 | ConfFlow stable baseline | `6981935` / v2.0.0 | released production baseline |
-| ConfFlow architecture candidate | `codex/post-phase-f-architecture-phase0` @ `7a9f1d7` | isolated v2.1.2 fix-forward release candidate |
-| Paired JobDesk candidate | `e6003be` | isolated consumer candidate |
+| ConfFlow architecture candidate | `codex/post-phase-f-architecture-phase0` / v2.1.2 release tag | isolated v2.1.2 fix-forward release candidate |
+| Paired JobDesk candidate | `c01b082` | isolated consumer candidate |
 | Production/promotion endpoint | v0.6.0 + v2.0.0 configured pairing | unchanged; no candidate endpoint authorized |
 
 The workflow facade now delegates to planner, resume policy, executor, and

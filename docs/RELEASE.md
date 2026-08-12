@@ -6,12 +6,12 @@ The current architecture candidate is the isolated
 `codex/post-phase-f-architecture-phase0` release branch, based on the released
 `6981935` / v2.0.0. The release-preparation target is package version `2.1.2`.
 The first v2.1.0 tag was superseded before GitHub Release publication after a
-release-only Linux venv-path gate failed; that tag must not be reused. The
+release-only Linux venv-path gate failed; that tag must not be reused.
 The published v2.1.1 release was superseded after side-by-side acceptance
 found a Windows fixture console-script identity defect. The v2.1.2 candidate
 contains the fix-forward and must not be promoted by
 changing `/usr/local/bin/confflow`, JobDesk server entries, or the production
-venv. The paired JobDesk candidate is `e6003be`.
+venv. The paired JobDesk candidate is `c01b082`.
 
 Release publication, side-by-side installation, candidate acceptance, and
 production endpoint promotion are separate approvals. Because this candidate
