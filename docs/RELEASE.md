@@ -71,7 +71,13 @@ Confirm GitHub Actions CI is green for the release commit.
 
 ## 4. Build Wheel And Source Distribution
 
-The release artifact workflow builds wheel and source distribution on tag pushes matching `v*` and on manual dispatch.
+The checked-in release artifact workflow is currently pinned to the released
+`v2.0.0` package and its matching runtime lock. Its automatic trigger is only
+the `v2.0.0` tag; manual dispatch accepts a tag input but the workflow still
+fails closed unless the selected tag is exactly `v2.0.0`. Before any future
+release tag is created, update the package version, lock, workflow trigger,
+and version-specific verification paths together, then obtain the separate
+release authorization.
 
 For local verification, install build tooling if needed:
 
@@ -107,13 +113,17 @@ Alternatively, use a platform checksum tool such as `sha256sum dist/*` when avai
 
 ## 6. SBOM Status
 
-The release artifact workflow attempts to generate a CycloneDX SBOM with `cyclonedx-bom` and stores it as `dist/sbom.cdx.json`. This is a first-pass software bill of materials, not a complete supply-chain attestation.
-
-If SBOM generation fails, the workflow continues and still uploads the wheel/sdist/checksum artifacts. Treat SBOM completeness as an alpha preview improvement area until the workflow has been validated across releases.
+The release artifact workflow generates a CycloneDX SBOM with `cyclonedx-bom`
+from the controlled runtime lock and stores it as `dist/sbom.cdx.json`. The
+step is fail-closed (`set -euo pipefail` plus a non-empty-file check), so a
+missing or empty SBOM prevents publication. This is a first-pass software bill
+of materials, not a complete supply-chain attestation.
 
 ## 7. Tag And Publish A GitHub Release
 
-Create an annotated tag from the verified commit. Pushing a `v*` tag triggers the release artifact workflow:
+For a future version, create an annotated tag from the verified commit only
+after the workflow has been updated and the release has been authorized. The
+generic command shape is:
 
 ```bash
 git tag -a vX.Y.Z -m "ConfFlow X.Y.Z"
