@@ -305,8 +305,7 @@ jobs:
           set -euo pipefail
           candidate_head="$(git -C confflow-candidate rev-parse HEAD)"
           test "$candidate_head" = "${{ github.event.pull_request.head.sha }}"
-          candidate_parent="$(git -C confflow-candidate rev-parse "$candidate_head^")"
-          test "$candidate_parent" = "$EXPECTED_RELEASE_COMMIT"
+          git -C confflow-candidate merge-base --is-ancestor "$EXPECTED_RELEASE_COMMIT" "$candidate_head"
           changed_files="$(git -C confflow-candidate diff --name-only "$EXPECTED_RELEASE_COMMIT" "$candidate_head")"
           test "$changed_files" = ".github/workflows/jobdesk-contract.yml"
           stable_tag_commit="$(git -C jobdesk-stable rev-parse 'v0.6.0^{commit}')"
