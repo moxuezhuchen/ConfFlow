@@ -10,22 +10,19 @@ from typing import Any
 from ..calc.executor import CalcExecutor
 from ..core.utils import get_logger
 from .executor import (
-    WorkflowExecutor,
     mark_step_completed,
     notify_step_status_change,
 )
-from .finalizer import finalize_workflow
 from .helpers import count_conformers_any as _count_conformers_any
+from .orchestrator import _WorkflowOrchestrator
 from .planner import prepare_workflow
 from .resume import (
-    ResumePolicy,
     create_initial_workflow_state,
     expected_output_reason,
     format_resume_failure,
     validate_state_steps,
 )
-from .runtime_context import initialize_runtime_context
-from .state import StepRecord, WorkflowState, WorkflowStateStore
+from .state import StepRecord, WorkflowState
 from .stats import FailureTracker
 from .step_handlers import StepExecutionResult
 from .step_handlers import run_calc_step as step_run_calc_step
@@ -128,58 +125,12 @@ def run_workflow(
         logger.set_level(10)
 
     prepared = prepare_workflow(input_xyz, config_file, original_input_files)
-    if len(prepared.input_files) > 1:
-        confgen_params = next(
-            (
-                step.get("params", {})
-                for step in prepared.steps
-                if step.get("type", "").lower() == "confgen"
-            ),
-            None,
-        )
-        validate_inputs_compatible(
-            prepared.input_files,
-            confgen_params,
-            force_consistency=prepared.global_config.get("force_consistency", False),
-        )
-
-    runtime = initialize_runtime_context(
-        work_dir=work_dir,
+    return _WorkflowOrchestrator(
+        prepared=prepared,
         config_file=config_file,
-        input_files=prepared.input_files,
-        original_inputs=prepared.original_inputs,
+        work_dir=work_dir,
         resume=resume,
         logger=logger,
-        global_config=prepared.global_config,
-    )
-    state_store = WorkflowStateStore(runtime.root_dir)
-    state = state_store.load() if resume else None
-    if state is None:
-        state = _initial_workflow_state(
-            root_dir=runtime.root_dir,
-            input_files=prepared.input_files,
-            original_inputs=prepared.original_inputs,
-            config_file=config_file,
-            steps=prepared.steps,
-            step_dirnames=prepared.step_dirnames,
-        )
-        state_store.save(state)
-
-    resume_policy = ResumePolicy(
-        resume=resume,
-        resume_from_step=runtime.resume_from_step,
-        root_dir=runtime.root_dir,
-        global_config=prepared.global_config,
-        state=state,
-        steps=prepared.steps,
-        step_dirnames=prepared.step_dirnames,
-    )
-    execution = WorkflowExecutor(
-        prepared=prepared,
-        runtime=runtime,
-        state=state,
-        state_store=state_store,
-        resume_policy=resume_policy,
         pause_beacon_file=pause_beacon_file,
         step_started_callback=step_started_callback,
         on_step_status_change=on_step_status_change,
@@ -187,18 +138,7 @@ def run_workflow(
         # Keep the old private dispatch seams usable by existing callers/tests.
         run_confgen_step=_run_confgen_step,
         run_calc_step=_run_calc_step,
-    ).execute()
-    return finalize_workflow(
-        root_dir=execution.root_dir,
-        final_output=execution.final_output,
-        original_inputs=prepared.original_inputs,
-        terminal_outputs=execution.terminal_outputs,
-        final_stats=execution.final_stats,
-        state=execution.state,
-        state_store=execution.state_store,
-        execution_count=len(prepared.execution_order),
-        logger=logger,
-    )
+    ).run()
 
 
 def _initial_workflow_state(

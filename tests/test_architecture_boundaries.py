@@ -62,3 +62,30 @@ def test_importing_config_does_not_load_core_models() -> None:
         cwd=_ROOT.parent,
         check=True,
     )
+
+
+def test_public_workflow_entry_is_a_thin_runtime_facade() -> None:
+    """The public entry point must not own runtime orchestration details."""
+    engine_path = _ROOT / "workflow" / "engine.py"
+    tree = ast.parse(engine_path.read_text(encoding="utf-8-sig"), filename=str(engine_path))
+    run_workflow = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "run_workflow"
+    )
+    forbidden_names = {
+        "validate_inputs_compatible",
+        "WorkflowStateStore",
+        "ResumePolicy",
+        "WorkflowExecutor",
+        "initialize_runtime_context",
+        "finalize_workflow",
+        "create_initial_workflow_state",
+    }
+    called_names = {
+        node.func.id
+        for node in ast.walk(run_workflow)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+    }
+    assert called_names.isdisjoint(forbidden_names)
+    assert "_WorkflowOrchestrator" in called_names

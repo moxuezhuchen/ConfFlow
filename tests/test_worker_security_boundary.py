@@ -5,11 +5,13 @@ from __future__ import annotations
 import ast
 import inspect
 import os
+import stat
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
+import confflow.worker_handoff as worker_handoff
 from confflow import control_worker
 from confflow.worker_handoff import (
     ensure_directory,
@@ -190,3 +192,114 @@ def test_digest_helpers_detect_changes_and_reject_non_finite_json(tmp_path: Path
         _canonical_json({"value": float("nan")})
     with pytest.raises(TypeError):
         _sha256_bytes("not bytes")  # type: ignore[arg-type]
+
+
+def _private_file(path: Path, content: bytes) -> None:
+    path.write_bytes(content)
+    os.chmod(path, 0o600)
+
+
+def test_stage_file_publishes_atomically_with_private_permissions(tmp_path: Path) -> None:
+    source = tmp_path / "source.xyz"
+    destination = tmp_path / "staging" / "input.xyz"
+    content = b"new worker input\n"
+    _private_file(source, content)
+
+    assert stage_file(source.as_posix(), destination, expected_digest=_sha256_bytes(content)) == destination
+    assert destination.read_bytes() == content
+    assert stat.S_IMODE(destination.stat().st_mode) == 0o600
+    assert not list(destination.parent.glob(f".{destination.name}.tmp-*"))
+
+
+def test_stage_file_write_failure_preserves_existing_destination_and_cleans_temp(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "source.xyz"
+    destination = tmp_path / "staging" / "input.xyz"
+    content = b"new worker input that needs multiple writes\n"
+    _private_file(source, content)
+    destination.parent.mkdir(mode=0o700)
+    _private_file(destination, b"old worker input\n")
+
+    real_write = worker_handoff.os.write
+    writes = 0
+
+    def fail_after_partial_write(fd: int, data: object) -> int:
+        nonlocal writes
+        if writes == 0:
+            writes += 1
+            return real_write(fd, memoryview(data)[:3])  # type: ignore[arg-type]
+        raise OSError("injected staging write failure")
+
+    monkeypatch.setattr(worker_handoff.os, "write", fail_after_partial_write)
+    with pytest.raises(OSError, match="injected staging write failure"):
+        stage_file(source.as_posix(), destination, expected_digest=_sha256_bytes(content))
+
+    assert destination.read_bytes() == b"old worker input\n"
+    assert not list(destination.parent.glob(f".{destination.name}.tmp-*"))
+
+
+def test_stage_file_digest_mismatch_preserves_existing_destination_and_cleans_temp(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source.xyz"
+    destination = tmp_path / "staging" / "input.xyz"
+    content = b"new worker input\n"
+    _private_file(source, content)
+    destination.parent.mkdir(mode=0o700)
+    _private_file(destination, b"old worker input\n")
+
+    with pytest.raises(ValueError, match="changed while being staged"):
+        stage_file(source.as_posix(), destination, expected_digest=_sha256_bytes(b"wrong"))
+
+    assert destination.read_bytes() == b"old worker input\n"
+    assert not list(destination.parent.glob(f".{destination.name}.tmp-*"))
+
+
+def test_stage_file_rejects_destination_symlink_without_touching_link_target(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source.xyz"
+    destination = tmp_path / "staging" / "input.xyz"
+    outside = tmp_path / "outside.xyz"
+    content = b"new worker input\n"
+    _private_file(source, content)
+    destination.parent.mkdir(mode=0o700)
+    _private_file(outside, b"outside content\n")
+    destination.symlink_to(outside)
+
+    with pytest.raises(ValueError, match="non-symlink"):
+        stage_file(source.as_posix(), destination, expected_digest=_sha256_bytes(content))
+
+    assert destination.is_symlink()
+    assert outside.read_bytes() == b"outside content\n"
+    assert not list(destination.parent.glob(f".{destination.name}.tmp-*"))
+
+
+def test_stage_file_rejects_broadly_writable_staging_directory(tmp_path: Path) -> None:
+    source = tmp_path / "source.xyz"
+    destination = tmp_path / "staging" / "input.xyz"
+    content = b"worker input\n"
+    _private_file(source, content)
+    destination.parent.mkdir(mode=0o700)
+    os.chmod(destination.parent, 0o770)
+
+    with pytest.raises(ValueError, match="private directory"):
+        stage_file(source.as_posix(), destination, expected_digest=_sha256_bytes(content))
+
+    assert not destination.exists()
+    assert not list(destination.parent.glob(f".{destination.name}.tmp-*"))
+
+
+def test_stage_file_keeps_source_owner_boundary(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    source = tmp_path / "source.xyz"
+    destination = tmp_path / "staging" / "input.xyz"
+    content = b"worker input\n"
+    _private_file(source, content)
+    actual_owner = os.getuid()
+    monkeypatch.setattr(worker_handoff.os, "getuid", lambda: actual_owner + 1)
+
+    with pytest.raises(ValueError, match="owner-owned regular file"):
+        stage_file(source.as_posix(), destination, expected_digest=_sha256_bytes(content))
+
+    assert not destination.exists()

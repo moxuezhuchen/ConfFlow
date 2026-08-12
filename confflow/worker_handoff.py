@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import secrets
 import stat
 from collections.abc import Mapping
 from pathlib import Path
@@ -158,43 +159,136 @@ def stage_worker_inputs(
 
 
 def stage_file(source: str, destination: Path, *, expected_digest: str) -> Path:
-    """Copy one owner-owned regular file through a no-follow descriptor."""
+    """Atomically stage one owner-owned regular file through no-follow descriptors."""
     nofollow = getattr(os, "O_NOFOLLOW", 0)
+    owner = os.getuid()
     try:
         source_fd = os.open(source, os.O_RDONLY | nofollow)
     except OSError as error:
         raise ValueError(f"cannot securely open worker input {source}: {error}") from error
+
+    parent_fd: int | None = None
+    temporary_fd: int | None = None
+    temporary_path: Path | None = None
     try:
         metadata = os.fstat(source_fd)
-        if not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != os.getuid():
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != owner:
             raise ValueError(f"worker input must be an owner-owned regular file: {source}")
-        digest = hashlib.sha256()
+
         destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        target_fd = os.open(
-            destination,
-            os.O_WRONLY | os.O_CREAT | os.O_TRUNC | nofollow,
-            0o600,
-        )
         try:
-            while True:
-                chunk = os.read(source_fd, 1024 * 1024)
-                if not chunk:
-                    break
-                digest.update(chunk)
-                remaining = memoryview(chunk)
-                while remaining:
-                    written = os.write(target_fd, remaining)
-                    if written <= 0:
-                        raise OSError("worker input staging write made no progress")
-                    remaining = remaining[written:]
-            os.fsync(target_fd)
-        finally:
-            os.close(target_fd)
+            parent_fd = os.open(
+                destination.parent,
+                os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | nofollow,
+            )
+        except OSError as error:
+            raise ValueError(
+                f"cannot securely open worker staging directory {destination.parent}: {error}"
+            ) from error
+        parent_metadata = os.fstat(parent_fd)
+        if (
+            not stat.S_ISDIR(parent_metadata.st_mode)
+            or parent_metadata.st_uid != owner
+            or stat.S_IMODE(parent_metadata.st_mode) != 0o700
+        ):
+            raise ValueError(
+                f"worker staging directory must be an owner-owned private directory: "
+                f"{destination.parent}"
+            )
+
+        _validate_existing_destination(destination, owner)
+        temporary_fd, temporary_path = _open_temporary_destination(
+            destination, nofollow
+        )
+        temporary_metadata = os.fstat(temporary_fd)
+        if not stat.S_ISREG(temporary_metadata.st_mode) or temporary_metadata.st_uid != owner:
+            raise ValueError("worker staging temporary file must be owner-owned and regular")
+        os.fchmod(temporary_fd, 0o600)
+
+        digest = hashlib.sha256()
+        while True:
+            chunk = os.read(source_fd, 1024 * 1024)
+            if not chunk:
+                break
+            digest.update(chunk)
+            remaining = memoryview(chunk)
+            while remaining:
+                written = os.write(temporary_fd, remaining)
+                if written <= 0:
+                    raise OSError("worker input staging write made no progress")
+                remaining = remaining[written:]
+        os.fsync(temporary_fd)
         if digest.hexdigest() != expected_digest:
             raise ValueError(f"worker input changed while being staged: {source}")
+
+        temporary_metadata = os.fstat(temporary_fd)
+        if not stat.S_ISREG(temporary_metadata.st_mode) or temporary_metadata.st_uid != owner:
+            raise ValueError("worker staging temporary file must be owner-owned and regular")
+        path_metadata = os.lstat(temporary_path)
+        if (
+            stat.S_ISLNK(path_metadata.st_mode)
+            or not stat.S_ISREG(path_metadata.st_mode)
+            or path_metadata.st_uid != owner
+            or (path_metadata.st_dev, path_metadata.st_ino)
+            != (temporary_metadata.st_dev, temporary_metadata.st_ino)
+        ):
+            raise ValueError("worker staging temporary file must be a stable regular file")
+
+        # Re-check immediately before publication so a pre-existing destination
+        # cannot be silently replaced after it changes security boundaries.
+        _validate_existing_destination(destination, owner)
+        os.close(temporary_fd)
+        temporary_fd = None
+        os.replace(temporary_path, destination)
+        temporary_path = None
+        os.fsync(parent_fd)
         return destination
     finally:
+        if temporary_fd is not None:
+            os.close(temporary_fd)
+        if temporary_path is not None:
+            try:
+                os.unlink(temporary_path)
+            except FileNotFoundError:
+                pass
+        if parent_fd is not None:
+            os.close(parent_fd)
         os.close(source_fd)
+
+
+def _open_temporary_destination(destination: Path, nofollow: int) -> tuple[int, Path]:
+    """Create a private same-directory temporary file without following links."""
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | nofollow
+    for _ in range(10):
+        temporary_path = destination.parent / (
+            f".{destination.name}.tmp-{secrets.token_hex(16)}"
+        )
+        try:
+            return (
+                os.open(temporary_path, flags, 0o600),
+                temporary_path,
+            )
+        except FileExistsError:
+            continue
+    raise FileExistsError(
+        f"could not allocate a unique worker staging temporary file for {destination}"
+    )
+
+
+def _validate_existing_destination(destination: Path, owner: int) -> None:
+    """Reject an existing staging destination outside the owner regular-file boundary."""
+    try:
+        metadata = os.lstat(destination)
+    except FileNotFoundError:
+        return
+    except OSError as error:
+        raise ValueError(f"cannot securely inspect worker staging destination {destination}") from error
+    if stat.S_ISLNK(metadata.st_mode):
+        raise ValueError(f"worker staging destination must be a non-symlink file: {destination}")
+    if not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != owner:
+        raise ValueError(
+            f"worker staging destination must be an owner-owned regular file: {destination}"
+        )
 
 
 def ensure_directory(path: Path) -> None:
