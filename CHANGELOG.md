@@ -5,6 +5,22 @@
 > The archived-snapshot notice below describes the earlier repository state. ConfFlow is active again
 > as JobDesk's external chemistry workflow dependency beginning with v1.4.0.
 
+## v2.1.0 (unreleased) - post-Phase-F architecture candidate
+
+### Changed
+
+- Split workflow execution behind planner, resume, executor, and finalizer
+  boundaries while retaining the existing workflow facade.
+- Isolated control-worker handoff validation, lease, staging, and security
+  boundaries while keeping the versioned `control.v1` wire contract frozen.
+
+### Release preparation
+
+- Pinned the release workflow and its SBOM/provenance inputs to `v2.1.0`.
+- Added explicitly versioned runtime lock and wheelhouse manifest inputs with
+  provenance back to the verified v2.0.0 input set. The historical v2.0.0
+  release record and files remain unchanged.
+
 ## v2.0.0 (2026-08-11) - Phase F owner-exception release
 
 ### Changed

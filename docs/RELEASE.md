@@ -3,8 +3,9 @@
 ## Candidate versus production (2026-08-12)
 
 The current architecture candidate is `1a0d760`, based on the released
-`6981935` / v2.0.0. It has passed isolated non-compute regression, static, and
-build checks, but it is not a release artifact and must not be promoted by
+`6981935` / v2.0.0. The release-preparation target is package version `2.1.0`.
+It has passed isolated non-compute regression, static, and build checks, but it
+is not a release artifact and must not be promoted by
 changing `/usr/local/bin/confflow`, JobDesk server entries, or the production
 venv. The paired JobDesk candidate is `908b153`.
 
@@ -71,13 +72,12 @@ Confirm GitHub Actions CI is green for the release commit.
 
 ## 4. Build Wheel And Source Distribution
 
-The checked-in release artifact workflow is currently pinned to the released
-`v2.0.0` package and its matching runtime lock. Its automatic trigger is only
-the `v2.0.0` tag; manual dispatch accepts a tag input but the workflow still
-fails closed unless the selected tag is exactly `v2.0.0`. Before any future
-release tag is created, update the package version, lock, workflow trigger,
-and version-specific verification paths together, then obtain the separate
-release authorization.
+The checked-in release artifact workflow is pinned to the prepared `v2.1.0`
+package and its matching versioned runtime lock/manifest. Its automatic trigger
+is only the `v2.1.0` tag; manual dispatch accepts a tag input but the workflow
+still fails closed unless the selected tag is exactly `v2.1.0`. The historical
+v2.0.0 release record and input files remain unchanged. Before any release tag
+is created, obtain the separate release authorization.
 
 For local verification, install build tooling if needed:
 
@@ -182,12 +182,14 @@ Format:
 
 ### Layer 2a - Controlled Python runtime dependencies
 
-The 1.4.5 Linux x86_64 / CPython 3.12 runtime is based on the verified
-1.4.4 production venv. The committed lock is
-release/confflow-1.4.5-py312-linux-x86_64.lock and contains every direct
-and transitive runtime distribution at an exact version with SHA-256 hashes.
-The matching wheelhouse manifest is
-release/confflow-1.4.5-py312-linux-x86_64.SHA256SUMS.
+The v2.1.0 Linux x86_64 / CPython 3.12 runtime input pair is derived from the
+verified v2.0.0 release input set. The committed lock is
+release/confflow-2.1.0-py312-linux-x86_64.lock and contains every direct and
+transitive runtime distribution at an exact version with SHA-256 hashes. The
+matching wheelhouse manifest is
+release/confflow-2.1.0-py312-linux-x86_64.SHA256SUMS. Both files include
+comments naming the v2.0.0 source path and source digest; the dependency
+closure and wheel hashes are intentionally unchanged for this candidate.
 
 The installer requires both --dependency-lock and --wheelhouse. The
 wheelhouse must contain only the manifest and the binary wheels listed by it.

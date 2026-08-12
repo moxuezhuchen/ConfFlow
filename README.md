@@ -9,7 +9,8 @@ other's runtime implementation.
 
 The isolated candidate is commit `1a0d760` on
 `codex/post-phase-f-architecture-phase0`, based on stable `6981935` / v2.0.0.
-It remains a candidate: no tag, publication, production installation, or
+The release-preparation target is package version `2.1.0`. It remains a
+candidate: no tag, publication, production installation, or
 endpoint promotion has been performed.
 
 | Role | Ref / identity | State |
@@ -85,13 +86,13 @@ Requirements and packaging notes:
 - RDKit is required
 - `numba` is optional and only used for acceleration when installed
 
-## ConfFlow ↔ JobDesk Capability Handshake (v2.0.0 release)
+## ConfFlow ↔ JobDesk Capability Handshake (v2.1.0 candidate)
 
-ConfFlow 2.0.0 implements a version/capability probe used by JobDesk to
+ConfFlow 2.1.0 implements a version/capability probe used by JobDesk to
 validate compatibility before uploading or submitting workflow tasks:
 
 ```bash
-confflow --version          # prints "2.0.0"
+confflow --version          # prints "2.1.0"
 confflow --capabilities --json
 ```
 
@@ -100,7 +101,7 @@ Capability contract (JSON, schema version **4**):
 ```json
 {
   "schema_version": 4,
-  "version": "2.0.0",
+  "version": "2.1.0",
   "capabilities": {
     "workflow_state": true,
     "resume": true,
@@ -130,13 +131,13 @@ Capability contract (JSON, schema version **4**):
   },
   "producer": {
     "package": "confflow",
-    "version": "2.0.0",
+    "version": "2.1.0",
     "build": {
       "commit": "<40-char git commit>",
       "dirty": false
     },
     "wheel": {
-      "filename": "confflow-2.0.0-py3-none-any.whl",
+      "filename": "confflow-2.1.0-py3-none-any.whl",
       "sha256": "<external SHA-256SUMS digest>"
     },
     "install_provenance": {
@@ -156,13 +157,14 @@ The release's `control_worker` value is `true` only on POSIX hosts with
 `O_DIRECTORY` and `O_NOFOLLOW`; Windows installations report `false` and must
 not accept the worker handoff.
 
-The released JobDesk v0.6.0 pairing uses this release; the current JobDesk
-architecture candidate is tracked separately as `a63f2e9`. v1.4.6 remains
-rollback-only. The v2.0.0 release must be paired with a consumer that
+The released JobDesk v0.6.0 pairing uses the stable v2.0.0 release; the
+current JobDesk architecture candidate is tracked separately as `908b153` and
+targets v0.7.0. v1.4.6 remains rollback-only. The v2.1.0 candidate must be
+paired with a consumer that
 validates this capability contract before the first input upload and repeats
 the preflight at submit time.
 
-The released `confflow-control-worker` entrypoint is a producer-owned
+The candidate `confflow-control-worker` entrypoint is a producer-owned
 handoff, not an agent-queue compatibility layer. Its `prepare.input_manifest`
 locator must contain the canonical `worker-handoff.schema.json` envelope and
 the persisted digest must be the envelope digest. The envelope is limited to

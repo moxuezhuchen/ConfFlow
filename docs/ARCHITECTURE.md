@@ -2,8 +2,8 @@
 
 ## Current candidate boundary (2026-08-12)
 
-The isolated candidate is `1a0d760` (base `6981935`, package version still
-2.0.0). It is not published or installed over the production environment. The
+The isolated candidate is `1a0d760` (base `6981935`, package version target
+2.1.0). It is not published or installed over the production environment. The
 production source checkout `/opt/ConfFlow` remains the dirty historical tree
 at `10e457d`; it was not used as the implementation base and was not modified.
 The paired JobDesk candidate is `908b153`.
