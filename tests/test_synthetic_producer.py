@@ -1181,6 +1181,50 @@ def test_crash_takeover_after_lease_release_starts_exactly_one_worker(tmp_path: 
         crash.clear()
 
 
+def test_cancel_before_gated_started_terminalizes_the_current_token(tmp_path: Path, monkeypatch):
+    """A queued cancel racing the start CAS must reach CANCELLED, not FAILED."""
+    root = tmp_path / "state"
+    service, executor = _build(root)
+    identity = executor_identity(service)
+    run_id = "run-cancel-before-start-race"
+    service.prepare(_request(run_id, identity))
+
+    gate = threading.Event()
+    entered = threading.Event()
+    original_started = ExecutionLifecycle.started
+
+    def gated_started(self, *args, **kwargs):
+        entered.set()
+        if not gate.wait(timeout=15):
+            raise AssertionError("synthetic worker did not receive the start gate")
+        return original_started(self, *args, **kwargs)
+
+    monkeypatch.setattr(ExecutionLifecycle, "started", gated_started)
+    try:
+        assert service.execute(run_id).state is RunState.QUEUED
+        assert executor.worker_count == 1
+        assert entered.wait(timeout=15)
+
+        pending = service.cancel(run_id)
+        assert pending.state is RunState.QUEUED
+        aggregate = _aggregate(root, run_id)
+        assert aggregate is not None and aggregate.cancel_pending
+
+        gate.set()
+        terminal = _wait_terminal(service, run_id)
+        assert terminal.state is RunState.CANCELLED
+        assert service.status(run_id).state is RunState.CANCELLED
+        assert _event_types(_aggregate(root, run_id)) == [
+            "prepared",
+            "queued",
+            "cancel_requested",
+            "cancelled",
+        ]
+        assert not executor.worker_errors
+    finally:
+        gate.set()
+
+
 # -------------------------------------------------------------------------------------
 # Response-lost attach / reconnect
 # -------------------------------------------------------------------------------------

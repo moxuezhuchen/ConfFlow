@@ -260,9 +260,29 @@ class SyntheticProducerExecutor(WorkflowExecutor):
                 raise RuntimeError("SyntheticProducerExecutor is not bound to an ExecutionService")
             lifecycle = ExecutionLifecycle(service, request.run_id, request.token)
             if self._is_cancelled(request):
-                lifecycle.cancelled()
+                try:
+                    lifecycle.cancelled()
+                except ExecutionServiceError as error:
+                    # A completed/failed terminal callback may have won the
+                    # race before this pre-start cancellation callback.
+                    if error.code is not ErrorCode.INVALID_STATE_TRANSITION:
+                        raise
                 return
-            lifecycle.started()
+            try:
+                lifecycle.started()
+            except ExecutionServiceError as error:
+                if error.code is not ErrorCode.INVALID_STATE_TRANSITION:
+                    raise
+                if not self._is_cancelled(request):
+                    raise
+                try:
+                    lifecycle.cancelled()
+                except ExecutionServiceError as cancel_error:
+                    # A completed/failed terminal callback may have won the
+                    # race before this cancellation callback.
+                    if cancel_error.code is not ErrorCode.INVALID_STATE_TRANSITION:
+                        raise
+                return
             # started() is durably committed (the aggregate is RUNNING), so any
             # later lease acquirer attaches instead of starting another worker.
             self._release_lease(request.token)
@@ -285,11 +305,6 @@ class SyntheticProducerExecutor(WorkflowExecutor):
             lifecycle.completed((artifact,))
             completed = True
         except ExecutionServiceError as error:
-            if error.code is ErrorCode.INVALID_STATE_TRANSITION:
-                # Token-arbitration loser: a confirmed cancellation claimed the
-                # aggregate or a terminal winner already owns the run.  Nothing
-                # further may be written.
-                return
             self._record_error(request, error)
             self._fail(request)
         except BaseException as error:  # noqa: BLE001 - preserve worker failures
