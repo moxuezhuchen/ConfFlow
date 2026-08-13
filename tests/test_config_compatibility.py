@@ -95,9 +95,7 @@ def test_yaml_wire_rejects_the_shared_invalid_global_corpus(tmp_path, global_raw
     import yaml
 
     config_path = tmp_path / "invalid.yaml"
-    config_path.write_text(
-        yaml.safe_dump({"global": global_raw, "steps": []}), encoding="utf-8"
-    )
+    config_path.write_text(yaml.safe_dump({"global": global_raw, "steps": []}), encoding="utf-8")
     with pytest.raises(ConfigurationError):
         load_workflow_model(config_path)
 

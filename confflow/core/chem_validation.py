@@ -134,7 +134,9 @@ def load_mol_from_xyz(filename: str, bond_coeff: float):
     for bond in mol.GetBonds():
         atom_a = bond.GetBeginAtom()
         atom_b = bond.GetEndAtom()
-        bonds.append(f"{atom_a.GetIdx() + 1}({atom_a.GetSymbol()})-{atom_b.GetIdx() + 1}({atom_b.GetSymbol()})")
+        bonds.append(
+            f"{atom_a.GetIdx() + 1}({atom_a.GetSymbol()})-{atom_b.GetIdx() + 1}({atom_b.GetSymbol()})"
+        )
     columns = 4 if (console.width or 80) >= 75 else 3 if (console.width or 80) >= 58 else 2
     column_width = ((console.width or 80) - 14) // columns
     for start in range(0, len(bonds), columns):

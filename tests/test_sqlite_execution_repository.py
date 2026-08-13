@@ -558,9 +558,7 @@ def test_sqlite_inflight_launch_cancel_tombstone_persists_cursor(tmp_path: Path)
         assert second.cancel("run-001").state is RunState.QUEUED
         executor.release.set()
         assert future.result().state is RunState.QUEUED
-        assert second.lifecycle_cancelled(
-            "run-001", "run-001.launch.1"
-        ).state is RunState.CANCELLED
+        assert second.lifecycle_cancelled("run-001", "run-001.launch.1").state is RunState.CANCELLED
     record = second._repository.read("run-001")  # noqa: SLF001
     assert record is not None and record.state is RunState.CANCELLED
     assert record.launch_token not in executor.started

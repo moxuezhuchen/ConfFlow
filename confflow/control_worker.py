@@ -99,9 +99,7 @@ def run_control_worker(
                 continue
             try:
                 previous_owner = lease.previous_owner
-                if not _cancel_owner_is_stopped(
-                    tasks[0]["work_dir"], owner=previous_owner
-                ):
+                if not _cancel_owner_is_stopped(tasks[0]["work_dir"], owner=previous_owner):
                     # A stale or malformed owner marker, or a still-live
                     # process, is not proof that the prior worker stopped.
                     # Keep the durable cancel pending until a later retry can
@@ -330,9 +328,7 @@ def _complete_owner_marker(owner: dict[str, object] | None) -> bool:
     )
 
 
-def _cancel_owner_is_stopped(
-    work_dir: str, *, owner: dict[str, object] | None
-) -> bool:
+def _cancel_owner_is_stopped(work_dir: str, *, owner: dict[str, object] | None) -> bool:
     """Prove that a queued cancellation has no active worker to stop."""
     if owner is not None and not _complete_owner_marker(owner):
         return False

@@ -195,8 +195,7 @@ class ServiceWorkflowExecutor(WorkflowExecutor):
             }
             parameters = inspect.signature(self._workflow_runner).parameters
             accepts_keywords = any(
-                parameter.kind is inspect.Parameter.VAR_KEYWORD
-                for parameter in parameters.values()
+                parameter.kind is inspect.Parameter.VAR_KEYWORD for parameter in parameters.values()
             )
             if "cancel_beacon_file" in parameters or accepts_keywords:
                 runner_kwargs["cancel_beacon_file"] = self._spec.cancel_beacon_file
@@ -214,12 +213,11 @@ class ServiceWorkflowExecutor(WorkflowExecutor):
             if service is not None:
                 try:
                     aggregate = service.status(request.run_id)
-                    if self._spec.cancel_beacon_file and Path(
+                    if (
                         self._spec.cancel_beacon_file
-                    ).exists():
-                        ExecutionLifecycle(
-                            service, request.run_id, request.token
-                        ).cancelled()
+                        and Path(self._spec.cancel_beacon_file).exists()
+                    ):
+                        ExecutionLifecycle(service, request.run_id, request.token).cancelled()
                     elif aggregate.state is RunState.RUNNING:
                         ExecutionLifecycle(service, request.run_id, request.token).paused()
                 except ExecutionServiceError as error:
