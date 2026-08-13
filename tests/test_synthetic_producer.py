@@ -1225,6 +1225,109 @@ def test_cancel_before_gated_started_terminalizes_the_current_token(tmp_path: Pa
         gate.set()
 
 
+def test_direct_drive_confirms_prestart_tombstone(tmp_path: Path, monkeypatch):
+    """A queued cancel is terminalized by the token-bound worker before start."""
+    root = tmp_path / "state"
+    service, executor = _build(root)
+    identity = executor_identity(service)
+    run_id = "run-direct-prestart-cancel"
+    service.prepare(_request(run_id, identity))
+
+    # Consume the formal launch intent without starting a background thread; the
+    # test then drives that exact token synchronously through ``_drive``.
+    monkeypatch.setattr(executor, "_start_worker", lambda _request: None)
+    assert service.execute(run_id).state is RunState.QUEUED
+    aggregate = _aggregate(root, run_id)
+    assert aggregate is not None and aggregate.launch_token is not None
+    assert service.cancel(run_id).state is RunState.QUEUED
+    request = LaunchRequest(
+        run_id=run_id,
+        token=aggregate.launch_token,
+        attempt=aggregate.attempt,
+        checkpoint_id=aggregate.launch_checkpoint,
+        expected_identity=identity,
+    )
+
+    executor._drive(request)  # noqa: SLF001 - deterministic worker-race coverage
+    executor._release_lease(request.token)  # noqa: SLF001 - no worker owns it
+
+    assert service.status(run_id).state is RunState.CANCELLED
+    assert _event_types(_aggregate(root, run_id)) == [
+        "prepared",
+        "queued",
+        "cancel_requested",
+        "cancelled",
+    ]
+    assert not executor.worker_errors
+
+
+def test_direct_drive_does_not_swallow_non_cancelled_started_race(tmp_path: Path, monkeypatch):
+    """An invalid start without a cancel marker remains a worker failure."""
+    root = tmp_path / "state"
+    service, executor = _build(root)
+    identity = executor_identity(service)
+    run_id = "run-direct-start-invalid"
+    service.prepare(_request(run_id, identity))
+    monkeypatch.setattr(executor, "_start_worker", lambda _request: None)
+    assert service.execute(run_id).state is RunState.QUEUED
+    aggregate = _aggregate(root, run_id)
+    assert aggregate is not None and aggregate.launch_token is not None
+
+    # Make the token genuinely running before invoking the worker again.  The
+    # second started() callback must be rejected and must not be treated as a
+    # cancellation race.
+    ExecutionLifecycle(service, run_id, aggregate.launch_token).started()
+    request = LaunchRequest(
+        run_id=run_id,
+        token=aggregate.launch_token,
+        attempt=aggregate.attempt,
+        checkpoint_id=aggregate.launch_checkpoint,
+        expected_identity=identity,
+    )
+    executor._drive(request)  # noqa: SLF001 - deterministic worker-race coverage
+    executor._release_lease(request.token)  # noqa: SLF001 - no worker owns it
+
+    assert service.status(run_id).state is RunState.FAILED
+    assert executor.worker_errors
+
+
+def test_direct_drive_ignores_terminal_winner_during_cancel_start_race(tmp_path: Path, monkeypatch):
+    """A cancellation winner remains terminal when started() loses its CAS race."""
+    root = tmp_path / "state"
+    service, executor = _build(root)
+    identity = executor_identity(service)
+    run_id = "run-direct-cancel-terminal-race"
+    service.prepare(_request(run_id, identity))
+    monkeypatch.setattr(executor, "_start_worker", lambda _request: None)
+    assert service.execute(run_id).state is RunState.QUEUED
+    aggregate = _aggregate(root, run_id)
+    assert aggregate is not None and aggregate.launch_token is not None
+
+    original_cancelled = ExecutionLifecycle.cancelled
+
+    def started_after_cancel(self: ExecutionLifecycle):
+        # Simulate the cancellation owner winning immediately after the start
+        # CAS reports an invalid transition.  The worker's second cancelled()
+        # callback then observes the terminal state and is safely ignored.
+        assert service.cancel(run_id).state is RunState.QUEUED
+        original_cancelled(self)
+        raise ExecutionServiceError(ErrorCode.INVALID_STATE_TRANSITION, "start lost race")
+
+    monkeypatch.setattr(ExecutionLifecycle, "started", started_after_cancel)
+    request = LaunchRequest(
+        run_id=run_id,
+        token=aggregate.launch_token,
+        attempt=aggregate.attempt,
+        checkpoint_id=aggregate.launch_checkpoint,
+        expected_identity=identity,
+    )
+    executor._drive(request)  # noqa: SLF001 - deterministic worker-race coverage
+    executor._release_lease(request.token)  # noqa: SLF001 - no worker owns it
+
+    assert service.status(run_id).state is RunState.CANCELLED
+    assert not executor.worker_errors
+
+
 # -------------------------------------------------------------------------------------
 # Response-lost attach / reconnect
 # -------------------------------------------------------------------------------------
