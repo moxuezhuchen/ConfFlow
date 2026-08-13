@@ -529,9 +529,11 @@ def test_sqlite_cursor_reconnect_and_token_bound_cancel(tmp_path: Path):
     queued = service.execute("run-001")
     first = service.events("run-001")
     assert first.next_cursor == "r00000000000000000002"
-    cancelled = service.cancel("run-001")
-    assert cancelled.state is RunState.CANCELLED
+    pending = service.cancel("run-001")
+    assert pending.state is RunState.QUEUED
     assert executor.cancelled == "run-001.launch.1"
+    cancelled = service.lifecycle_cancelled("run-001", "run-001.launch.1")
+    assert cancelled.state is RunState.CANCELLED
     repository.close()
 
     reopened = SQLiteExecutionRepository(StateRoot.resolve(root_dir))
@@ -553,9 +555,12 @@ def test_sqlite_inflight_launch_cancel_tombstone_persists_cursor(tmp_path: Path)
     with ThreadPoolExecutor(max_workers=1) as pool:
         future = pool.submit(first.execute, "run-001")
         assert executor.entered.wait(timeout=2)
-        assert second.cancel("run-001").state is RunState.CANCELLED
+        assert second.cancel("run-001").state is RunState.QUEUED
         executor.release.set()
-        assert future.result().state is RunState.CANCELLED
+        assert future.result().state is RunState.QUEUED
+        assert second.lifecycle_cancelled(
+            "run-001", "run-001.launch.1"
+        ).state is RunState.CANCELLED
     record = second._repository.read("run-001")  # noqa: SLF001
     assert record is not None and record.state is RunState.CANCELLED
     assert record.launch_token not in executor.started

@@ -585,7 +585,7 @@ def test_cancel_after_artifact_write_cleans_uncommitted_fixture_artifact(
     artifact_file = _run_dir(root, run_id) / SYNTHETIC_ARTIFACT_PATH
 
     def cancel_after_write(_executor: SyntheticProducerExecutor, _request: LaunchRequest) -> None:
-        assert service.cancel(run_id).state is RunState.CANCELLED
+        assert service.cancel(run_id).state is RunState.RUNNING
 
     monkeypatch.setattr(SyntheticProducerExecutor, "_before_completed", cancel_after_write)
     service.prepare(_request(run_id, identity))
@@ -764,7 +764,9 @@ def test_cancel_after_started_is_a_legal_terminal(tmp_path: Path):
     """Cancel during running ends in exactly one legal terminal with no replay."""
     root = tmp_path / "state"
     service, run_id, token = _manually_driven_service(root)
-    cancelled = service.cancel(run_id)
+    pending = service.cancel(run_id)
+    assert pending.state is RunState.RUNNING
+    cancelled = ExecutionLifecycle(service, run_id, token).cancelled()
     assert cancelled.state is RunState.CANCELLED
     aggregate = _aggregate(root, run_id)
     assert aggregate is not None
@@ -1327,12 +1329,12 @@ def test_fixture_consumes_formal_launch_and_cancel_requests(tmp_path: Path):
     service.execute(cancel_run_id)
     try:
         service.cancel(cancel_run_id)
-        assert service.status(cancel_run_id).state is RunState.CANCELLED
         assert len(spy.cancel_calls) == 1
         cancel_request = spy.cancel_calls[0]
         assert cancel_request.run_id == cancel_run_id
         assert cancel_request.launch_token == f"{cancel_run_id}.launch.1"
         assert cancel_request.attempt == 1
+        assert _wait_terminal(service, cancel_run_id).state is RunState.CANCELLED
         assert service.execute(cancel_run_id).state is RunState.CANCELLED
         late_intent = LaunchRequest(
             run_id=cancel_run_id,

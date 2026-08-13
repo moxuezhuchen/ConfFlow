@@ -16,7 +16,7 @@ import shutil
 import sys
 import threading
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -66,6 +66,7 @@ class WorkflowRunSpec:
     resume: bool = False
     verbose: bool = False
     pause_beacon_file: str | None = None
+    cancel_beacon_file: str | None = None
     step_started_callback: Callable[[str, str, str], None] | None = None
 
 
@@ -120,7 +121,7 @@ class ServiceWorkflowExecutor(WorkflowExecutor):
     def ensure_cancelled(self, request: CancelRequest) -> CancelReceipt:
         with self._lock:
             self._cancelled_tokens.add(request.launch_token or "")
-        beacon = self._spec.pause_beacon_file
+        beacon = self._spec.cancel_beacon_file
         if beacon:
             Path(beacon).parent.mkdir(parents=True, exist_ok=True)
             Path(beacon).touch()
@@ -138,11 +139,34 @@ class ServiceWorkflowExecutor(WorkflowExecutor):
             service = self._service
             if service is None:
                 raise RuntimeError("ServiceWorkflowExecutor is not bound to an ExecutionService")
+            lifecycle = ExecutionLifecycle(service, request.run_id, request.token)
             with self._lock:
                 if request.token in self._cancelled_tokens:
+                    try:
+                        lifecycle.cancelled()
+                    except ExecutionServiceError as error:
+                        # A completed/failed terminal callback may have won
+                        # the race before this pre-start cancellation callback.
+                        if error.code is not ErrorCode.INVALID_STATE_TRANSITION:
+                            raise
                     return
-            lifecycle = ExecutionLifecycle(service, request.run_id, request.token)
-            lifecycle.started()
+            try:
+                lifecycle.started()
+            except ExecutionServiceError as error:
+                if error.code is not ErrorCode.INVALID_STATE_TRANSITION:
+                    raise
+                with self._lock:
+                    cancelled_before_start = request.token in self._cancelled_tokens
+                if not cancelled_before_start:
+                    raise
+                try:
+                    lifecycle.cancelled()
+                except ExecutionServiceError as error:
+                    # A completed/failed terminal callback may have won the
+                    # race before this cancellation callback.
+                    if error.code is not ErrorCode.INVALID_STATE_TRANSITION:
+                        raise
+                return
 
             def checkpoint_update(record: Any) -> None:
                 """Project the engine's persisted step boundary into the service."""
@@ -170,6 +194,12 @@ class ServiceWorkflowExecutor(WorkflowExecutor):
                 "step_started_callback": self._spec.step_started_callback,
             }
             parameters = inspect.signature(self._workflow_runner).parameters
+            accepts_keywords = any(
+                parameter.kind is inspect.Parameter.VAR_KEYWORD
+                for parameter in parameters.values()
+            )
+            if "cancel_beacon_file" in parameters or accepts_keywords:
+                runner_kwargs["cancel_beacon_file"] = self._spec.cancel_beacon_file
             if "on_step_status_change" in parameters or any(
                 parameter.kind is inspect.Parameter.VAR_KEYWORD for parameter in parameters.values()
             ):
@@ -184,12 +214,19 @@ class ServiceWorkflowExecutor(WorkflowExecutor):
             if service is not None:
                 try:
                     aggregate = service.status(request.run_id)
-                    if aggregate.state is RunState.RUNNING:
+                    if self._spec.cancel_beacon_file and Path(
+                        self._spec.cancel_beacon_file
+                    ).exists():
+                        ExecutionLifecycle(
+                            service, request.run_id, request.token
+                        ).cancelled()
+                    elif aggregate.state is RunState.RUNNING:
                         ExecutionLifecycle(service, request.run_id, request.token).paused()
-                except ExecutionServiceError:
+                except ExecutionServiceError as error:
                     # A confirmed service cancellation may have already won the
                     # race and moved the aggregate to terminal state.
-                    pass
+                    if error.code is not ErrorCode.INVALID_STATE_TRANSITION:
+                        self._error = error
         except BaseException as error:  # noqa: BLE001 - preserve runner failures
             self._error = error
             service = self._service
@@ -198,10 +235,11 @@ class ServiceWorkflowExecutor(WorkflowExecutor):
                     ExecutionLifecycle(service, request.run_id, request.token).failed(
                         _load_artifacts(self._spec.work_dir)
                     )
-                except ExecutionServiceError:
+                except ExecutionServiceError as lifecycle_error:
                     # A terminal cancellation/other lifecycle winner owns the
                     # aggregate; the original error remains available to wait().
-                    pass
+                    if lifecycle_error.code is not ErrorCode.INVALID_STATE_TRANSITION:
+                        self._error = lifecycle_error
         finally:
             self._finished.set()
 
@@ -217,8 +255,8 @@ class _AgentControlExecutor(WorkflowExecutor):
         return LaunchReceipt(accepted=True)
 
     def ensure_cancelled(self, request: CancelRequest) -> CancelReceipt:
-        """Signal the worker, while the service owns the terminal transition."""
-        beacon = self._state_root.ensure_run_paths(request.run_id).work / "PAUSE"
+        """Signal the worker; its token-bound lifecycle owns the terminal transition."""
+        beacon = self._state_root.ensure_run_paths(request.run_id).work / "CANCEL"
         beacon.touch()
         return CancelReceipt(confirmed=True)
 
@@ -238,6 +276,9 @@ def build_workflow_service(
 ) -> tuple[ExecutionService, ServiceWorkflowExecutor]:
     """Build one durable service and its legacy workflow execution adapter."""
     root = _ensure_state_root(state_root)
+    if spec.cancel_beacon_file is None:
+        run_paths = root.ensure_run_paths(spec.run_id)
+        spec = replace(spec, cancel_beacon_file=str(run_paths.work / "CANCEL"))
     repository = SQLiteExecutionRepository(root)
     verifier = _CurrentProcessIdentity()
     executor = ServiceWorkflowExecutor(spec, workflow_runner)
@@ -272,6 +313,7 @@ def run_workflow_through_service(
     resume: bool = False,
     verbose: bool = False,
     pause_beacon_file: str | None = None,
+    cancel_beacon_file: str | None = None,
     original_input_files: Sequence[str] | None = None,
     step_started_callback: Callable[[str, str, str], None] | None = None,
     workflow_runner: WorkflowRunner = default_workflow_runner,
@@ -286,6 +328,7 @@ def run_workflow_through_service(
         resume=resume,
         verbose=verbose,
         pause_beacon_file=pause_beacon_file,
+        cancel_beacon_file=cancel_beacon_file,
         step_started_callback=step_started_callback,
     )
     service, executor = build_workflow_service(

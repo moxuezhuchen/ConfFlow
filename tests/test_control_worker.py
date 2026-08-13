@@ -7,6 +7,8 @@ import json
 import os
 import subprocess
 import sys
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
@@ -19,6 +21,7 @@ from confflow.application.execution.state_root import StateRoot
 from confflow.application.execution.workflow_adapter import measure_executable, open_control_service
 from confflow.control_worker import (
     HANDOFF_SCHEMA,
+    _cancel_owner_is_stopped,
     _canonical_json,
     _has_live_work_process,
     _publish_worker_sidecars,
@@ -112,6 +115,27 @@ def test_worker_lease_marker_records_dedicated_session_state(tmp_path: Path) -> 
         assert marker["isolated_session"] is (os.getsid(0) == os.getpid())
     finally:
         lease.release()
+
+
+def test_queued_cancel_requires_a_complete_stopped_owner_proof(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Malformed or active prior owners cannot be directly terminalized."""
+    work_dir = tmp_path / "work"
+    owner = {"pid": 42, "pgid": 42, "isolated_session": True}
+    monkeypatch.setattr(
+        "confflow.control_worker._has_live_work_process",
+        lambda _work_dir, *, owner=None: False,
+    )
+    assert _cancel_owner_is_stopped(str(work_dir), owner=None)
+    assert not _cancel_owner_is_stopped(str(work_dir), owner={})
+    assert _cancel_owner_is_stopped(str(work_dir), owner=owner)
+
+    monkeypatch.setattr(
+        "confflow.control_worker._has_live_work_process",
+        lambda _work_dir, *, owner=None: owner is not None,
+    )
+    assert not _cancel_owner_is_stopped(str(work_dir), owner=owner)
 
 
 def test_worker_recovery_detects_a_live_calculation_child(tmp_path: Path) -> None:
@@ -227,6 +251,87 @@ def test_control_worker_consumes_existing_queued_token_without_prepare(tmp_path:
         "queued",
         "running",
         "completed",
+    ]
+
+
+def test_control_cancel_waits_for_token_worker_to_stop_before_terminal_state(
+    tmp_path: Path,
+) -> None:
+    config = tmp_path / "workflow.yaml"
+    input_xyz = tmp_path / "input.xyz"
+    work_dir = tmp_path / "work"
+    config.write_text("steps: []\n", encoding="utf-8")
+    input_xyz.write_text("1\nH\nH 0 0 0\n", encoding="utf-8")
+    handoff = {
+        "content_schema": HANDOFF_SCHEMA,
+        "run_id": "worker-cancel",
+        "workflow_config": {
+            "path": str(config),
+            "sha256": hashlib.sha256(config.read_bytes()).hexdigest(),
+        },
+        "tasks": [
+            {
+                "task_id": "input",
+                "input_xyz": str(input_xyz),
+                "work_dir": str(work_dir),
+                "sha256": hashlib.sha256(input_xyz.read_bytes()).hexdigest(),
+            }
+        ],
+    }
+    handoff_path = tmp_path / "handoff.json"
+    handoff_path.write_bytes(_canonical(handoff))
+    root = tmp_path / "state"
+    service = open_control_service(root, identity_executable=sys.executable)
+    service.prepare(
+        PrepareRequest(
+            run_id="worker-cancel",
+            idempotency_key="worker-cancel",
+            request_digest="f" * 64,
+            workflow_config_digest=handoff["workflow_config"]["sha256"],
+            input_manifest_digest=hashlib.sha256(handoff_path.read_bytes()).hexdigest(),
+            expected_executable_identity=measure_executable(sys.executable),
+        )
+    )
+    assert service.execute("worker-cancel").state is RunState.QUEUED
+
+    running = threading.Event()
+    cancellation_observed = threading.Event()
+    allow_stop = threading.Event()
+
+    def blocking_runner(**kwargs):
+        running.set()
+        cancel_beacon = Path(kwargs["cancel_beacon_file"])
+        while not cancel_beacon.exists():
+            assert not allow_stop.wait(0.01)
+        cancellation_observed.set()
+        assert allow_stop.wait(2)
+        raise StopRequestedError("cancel")
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        worker = pool.submit(
+            run_control_worker,
+            state_root=root,
+            run_id="worker-cancel",
+            handoff_path=handoff_path,
+            workflow_runner=blocking_runner,
+        )
+        assert running.wait(2)
+        pending = service.cancel("worker-cancel")
+        assert pending.state is RunState.RUNNING
+        assert cancellation_observed.wait(2)
+        assert not worker.done()
+        assert service.status("worker-cancel").state is RunState.RUNNING
+        allow_stop.set()
+        assert worker.result(timeout=5) is RunState.CANCELLED
+
+    aggregate = service._repository.read("worker-cancel")  # noqa: SLF001
+    assert aggregate is not None and aggregate.state is RunState.CANCELLED
+    assert [event.type for event in aggregate.events] == [
+        "prepared",
+        "queued",
+        "running",
+        "cancel_requested",
+        "cancelled",
     ]
 
 
@@ -551,6 +656,88 @@ def test_control_worker_recovers_a_running_attempt_after_lease_loss(tmp_path: Pa
         "requeued",
         "running",
         "completed",
+    ]
+
+
+def test_control_worker_confirms_pending_cancel_after_prior_worker_crash(
+    tmp_path: Path,
+) -> None:
+    config = tmp_path / "workflow.yaml"
+    input_xyz = tmp_path / "input.xyz"
+    config.write_text("steps: []\n", encoding="utf-8")
+    input_xyz.write_text("1\nH\nH 0 0 0\n", encoding="utf-8")
+    handoff = {
+        "content_schema": HANDOFF_SCHEMA,
+        "run_id": "worker-cancel-recover",
+        "workflow_config": {
+            "path": str(config),
+            "sha256": hashlib.sha256(config.read_bytes()).hexdigest(),
+        },
+        "tasks": [
+            {
+                "task_id": "input",
+                "input_xyz": str(input_xyz),
+                "work_dir": str(tmp_path / "work"),
+                "sha256": hashlib.sha256(input_xyz.read_bytes()).hexdigest(),
+            }
+        ],
+    }
+    handoff_path = tmp_path / "handoff.json"
+    handoff_path.write_bytes(_canonical(handoff))
+    root = tmp_path / "state"
+    service = open_control_service(root, identity_executable=sys.executable)
+    service.prepare(
+        PrepareRequest(
+            run_id="worker-cancel-recover",
+            idempotency_key="worker-cancel-recover",
+            request_digest="9" * 64,
+            workflow_config_digest=handoff["workflow_config"]["sha256"],
+            input_manifest_digest=hashlib.sha256(handoff_path.read_bytes()).hexdigest(),
+            expected_executable_identity=measure_executable(sys.executable),
+        )
+    )
+    assert service.execute("worker-cancel-recover").state is RunState.QUEUED
+
+    crash_worker = (
+        "import os, sys; "
+        "from confflow.control_worker import run_control_worker; "
+        "run_control_worker(state_root=sys.argv[1], run_id=sys.argv[2], "
+        "handoff_path=sys.argv[3], workflow_runner=lambda **_: os._exit(43))"
+    )
+    crashed = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            crash_worker,
+            str(root),
+            "worker-cancel-recover",
+            str(handoff_path),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        start_new_session=True,
+    )
+    assert crashed.returncode == 43
+    assert service.status("worker-cancel-recover").state is RunState.RUNNING
+    assert service.cancel("worker-cancel-recover").state is RunState.RUNNING
+
+    state = run_control_worker(
+        state_root=root,
+        run_id="worker-cancel-recover",
+        handoff_path=handoff_path,
+        workflow_runner=lambda **_: pytest.fail("cancel recovery must not relaunch work"),
+    )
+
+    assert state is RunState.CANCELLED
+    aggregate = service._repository.read("worker-cancel-recover")  # noqa: SLF001
+    assert aggregate is not None
+    assert [event.type for event in aggregate.events] == [
+        "prepared",
+        "queued",
+        "running",
+        "cancel_requested",
+        "cancelled",
     ]
 
 

@@ -89,7 +89,13 @@ def execute_tasks(
     calc_config = dict(config)
 
     report_every = max(1, len(todo) // 10)
-    stop_file = calc_config.get("stop_beacon_file")
+    stop_files = list(calc_config.get("stop_beacon_files") or ())
+    legacy_stop_file = calc_config.get("stop_beacon_file")
+    if legacy_stop_file and legacy_stop_file not in stop_files:
+        stop_files.append(legacy_stop_file)
+
+    def stop_file_exists() -> bool:
+        return any(path and os.path.exists(path) for path in stop_files)
 
     def _task_payload(task: models.TaskContext) -> dict[str, Any]:
         payload = cast(dict[str, Any], task.model_dump())
@@ -99,7 +105,7 @@ def execute_tasks(
     dynamic_resources = _truthy_flag(calc_config.get("enable_dynamic_resources", False))
 
     if len(todo) == 1:
-        if stop_requested_fn() or (stop_file and os.path.exists(stop_file)):
+        if stop_requested_fn() or stop_file_exists():
             set_stop_requested_fn(True)
             results_db.insert_result(
                 {
@@ -134,7 +140,7 @@ def execute_tasks(
             futures: dict[Any, models.TaskContext] = {}
             with progress_reporter_cls(total=len(todo), report_every=report_every) as reporter:
                 while pending or futures:
-                    if stop_requested_fn() or (stop_file and os.path.exists(stop_file)):
+                    if stop_requested_fn() or stop_file_exists():
                         set_stop_requested_fn(True)
                         exc.shutdown(wait=False, cancel_futures=True)
                         for other_fut, task in futures.items():
@@ -218,7 +224,7 @@ def execute_tasks(
         recorded: set[Any] = set()
         with progress_reporter_cls(total=len(todo), report_every=report_every) as reporter:
             for fut in as_completed_fn(futures):
-                if stop_requested_fn() or (stop_file and os.path.exists(stop_file)):
+                if stop_requested_fn() or stop_file_exists():
                     set_stop_requested_fn(True)
                     exc.shutdown(wait=False, cancel_futures=True)
                     for other_fut, task in futures.items():

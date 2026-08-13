@@ -86,6 +86,31 @@ def run_control_worker(
             raise ExecutionServiceError(ErrorCode.UNKNOWN_RUN, "control worker run disappeared")
         if current.state in _TERMINAL_STATES:
             return current.state
+        if current.cancel_pending and current.state in {RunState.QUEUED, RunState.PAUSED}:
+            token = current.launch_token
+            if not token:
+                raise ExecutionServiceError(
+                    ErrorCode.INVALID_STATE_TRANSITION,
+                    f"Cancellation-pending run has no launch token: {run_id}",
+                )
+            lease = _token_lease(root, run_id, token)
+            if not lease.acquire():
+                sleep(1.0)
+                continue
+            try:
+                previous_owner = lease.previous_owner
+                if not _cancel_owner_is_stopped(
+                    tasks[0]["work_dir"], owner=previous_owner
+                ):
+                    # A stale or malformed owner marker, or a still-live
+                    # process, is not proof that the prior worker stopped.
+                    # Keep the durable cancel pending until a later retry can
+                    # establish the crash-safe boundary.
+                    sleep(1.0)
+                    continue
+                return control_service.lifecycle_cancelled(run_id, token).state
+            finally:
+                lease.release()
         if current.state is RunState.PAUSED:
             resume = True
             sleep(1.0)
@@ -113,6 +138,8 @@ def run_control_worker(
                     # detached children before retrying.
                     sleep(1.0)
                     continue
+                if current.cancel_pending:
+                    return control_service.lifecycle_cancelled(run_id, token).state
                 recovered = control_service.recover_abandoned_launch(run_id, token=token)
                 if recovered.state is RunState.QUEUED:
                     resume = True
@@ -155,6 +182,7 @@ def run_control_worker(
                 original_input_files=tuple(item["input_xyz"] for item in staged_tasks),
                 resume=resume,
                 pause_beacon_file=str(run_paths.work / "PAUSE"),
+                cancel_beacon_file=str(run_paths.work / "CANCEL"),
             )
             service, executor = build_workflow_service(
                 spec,
@@ -300,6 +328,15 @@ def _complete_owner_marker(owner: dict[str, object] | None) -> bool:
         and pgid > 0
         and owner.get("isolated_session") is True
     )
+
+
+def _cancel_owner_is_stopped(
+    work_dir: str, *, owner: dict[str, object] | None
+) -> bool:
+    """Prove that a queued cancellation has no active worker to stop."""
+    if owner is not None and not _complete_owner_marker(owner):
+        return False
+    return not _has_live_work_process(work_dir, owner=owner)
 
 
 def _has_live_work_process(work_dir: str, *, owner: dict[str, object] | None = None) -> bool:

@@ -269,10 +269,13 @@ def _run_calculation_step(
     except (OSError, RuntimeError) as e:
         raise CalculationExecutionError(f"Failed to launch {policy.name}: {e}") from e
 
-    stop_file = config.get("stop_beacon_file")
+    stop_files = list(config.get("stop_beacon_files") or ())
+    legacy_stop_file = config.get("stop_beacon_file")
+    if legacy_stop_file and legacy_stop_file not in stop_files:
+        stop_files.append(legacy_stop_file)
     start_time = time.monotonic() if max_wall_time_seconds is not None else None
     while not active_executor.is_terminal(handle):
-        if stop_file and os.path.exists(stop_file):
+        if any(path and os.path.exists(path) for path in stop_files):
             active_executor.cancel(handle)
             raise StopRequestedError("STOP signal received")
         if (

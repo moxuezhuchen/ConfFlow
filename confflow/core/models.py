@@ -15,6 +15,10 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from ..shared.config_coercion import (
+    coerce_freeze_indices,
+    coerce_two_atom_indices,
+)
 from ..shared.defaults import (
     DEFAULT_CHARGE,
     DEFAULT_CORES_PER_TASK,
@@ -33,7 +37,6 @@ from ..shared.defaults import (
     DEFAULT_TS_RESCUE_SCAN,
     DEFAULT_TS_RMSD_THRESHOLD,
 )
-from .parsers import parse_index_spec
 
 __all__ = [
     "TaskContext",
@@ -43,36 +46,13 @@ __all__ = [
 
 
 def _coerce_freeze_indices(v: Any) -> list[int]:
-    """Coerce freeze indices from list/range string/None into a list of ints."""
-    if v is None:
-        return []
-    if isinstance(v, str):
-        return parse_index_spec(v)
-    if isinstance(v, (list, tuple)):
-        result: list[int] = []
-        for item in v:
-            if isinstance(item, str):
-                result.extend(parse_index_spec(item))
-            else:
-                result.append(int(item))
-        return result
-    return []
+    """Backward-compatible private alias for the shared v2 coercer."""
+    return coerce_freeze_indices(v)
 
 
 def _coerce_two_atom_indices(v: Any) -> list[int] | None:
-    """Coerce two-atom index input from list or string into ``[a, b]``."""
-    if v is None:
-        return None
-    if isinstance(v, str):
-        parts = v.replace(",", " ").split()
-        if len(parts) == 2:
-            return [int(parts[0]), int(parts[1])]
-        return None
-    if isinstance(v, (list, tuple)):
-        if len(v) == 2:
-            return [int(v[0]), int(v[1])]
-        return None
-    return None
+    """Backward-compatible private alias for the shared v2 coercer."""
+    return coerce_two_atom_indices(v)
 
 
 class TaskContext(BaseModel):

@@ -10,7 +10,6 @@ from concurrent.futures import Executor, ProcessPoolExecutor, ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 
-from ..blocks.refine.result import RefineResult
 from ..config.models import CalcStepParams, load_workflow_model
 from ..core import io as io_xyz
 from ..core import models
@@ -22,6 +21,7 @@ from .components.task_runner import TaskRunner
 from .db.database import ResultsDB
 from .executor import CalcExecutor
 from .postprocess import run_refine_postprocess
+from .result import RefineResult
 from .result_writer import append_result
 from .run_services import ResultAssemblyService, TaskRecoveryService, TaskSourceBuilder
 from .setup import setup_logging
@@ -42,6 +42,7 @@ class CalcStepRequest:
     input_xyz: str
     config: CalcStepParams
     resume: bool = False
+    cancel_beacon_file: str | None = None
 
 
 @dataclass(frozen=True)
@@ -134,7 +135,13 @@ class CalcStepRunner:
         runtime_config["backup_dir"] = str(
             validate_managed_path(str(backup_dir), label="backup_dir", sandbox_root=sandbox_root)
         )
-        runtime_config["stop_beacon_file"] = str(step_dir / "STOP")
+        step_stop_beacon = str(step_dir / "STOP")
+        runtime_config["stop_beacon_file"] = step_stop_beacon
+        runtime_config["stop_beacon_files"] = [
+            path
+            for path in (step_stop_beacon, request.cancel_beacon_file)
+            if path is not None
+        ]
         backup_dir.mkdir(parents=True, exist_ok=True)
 
         db = ResultsDB(str(step_dir / "results.db"))

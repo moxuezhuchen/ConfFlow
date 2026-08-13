@@ -283,6 +283,7 @@ def run_calc_step(
     step_name: str,
     *,
     calc_executor: CalcExecutor | None = None,
+    cancel_beacon_file: str | None = None,
 ) -> StepExecutionResult:
     """Execute a calculation step via the typed calc runner."""
     if isinstance(current_input, list):
@@ -313,6 +314,7 @@ def run_calc_step(
                 input_xyz=current_input,
                 config=calc_config,
                 resume=False,
+                cancel_beacon_file=cancel_beacon_file,
             )
         )
     except (RuntimeError, ValueError) as exc:
