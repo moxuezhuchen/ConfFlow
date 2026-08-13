@@ -1345,7 +1345,7 @@ def test_fixture_never_writes_producer_sqlite_and_never_calls_the_engine(
     assert _claim_file(root, run_id, f"{run_id}.launch.1").is_file()
 
 
-def test_fixture_consumes_formal_launch_and_cancel_requests(tmp_path: Path):
+def test_fixture_consumes_formal_launch_and_cancel_requests(tmp_path: Path, monkeypatch):
     """The fixture only ever sees the formal token-bound executor requests."""
     root = tmp_path / "state"
     service, executor = _build(root)
@@ -1369,15 +1369,31 @@ def test_fixture_consumes_formal_launch_and_cancel_requests(tmp_path: Path):
     assert request.expected_identity == identity
 
     cancel_run_id = "run-formal-cancel"
+    entered = threading.Event()
+    release = threading.Event()
+
+    def gate_before_completed(_executor: SyntheticProducerExecutor, request: LaunchRequest) -> None:
+        if request.run_id != cancel_run_id:
+            return
+        entered.set()
+        if not release.wait(timeout=15):
+            raise AssertionError("formal cancel worker did not receive the release gate")
+
+    monkeypatch.setattr(SyntheticProducerExecutor, "_before_completed", gate_before_completed)
     service.prepare(_request(cancel_run_id, identity))
     service.execute(cancel_run_id)
     try:
-        service.cancel(cancel_run_id)
+        assert entered.wait(timeout=15)
+        pending = service.cancel(cancel_run_id)
+        assert pending.state is RunState.RUNNING
         assert len(spy.cancel_calls) == 1
         cancel_request = spy.cancel_calls[0]
         assert cancel_request.run_id == cancel_run_id
         assert cancel_request.launch_token == f"{cancel_run_id}.launch.1"
         assert cancel_request.attempt == 1
+        aggregate = _aggregate(root, cancel_run_id)
+        assert aggregate is not None and aggregate.cancel_pending
+        release.set()
         assert _wait_terminal(service, cancel_run_id).state is RunState.CANCELLED
         assert service.execute(cancel_run_id).state is RunState.CANCELLED
         late_intent = LaunchRequest(
@@ -1390,10 +1406,8 @@ def test_fixture_consumes_formal_launch_and_cancel_requests(tmp_path: Path):
         assert executor.ensure_launched(late_intent) == LaunchReceipt(
             accepted=False, cancelled=True
         )
-    except ExecutionServiceError as error:
-        assert error.code is ErrorCode.TERMINAL_RUN
-        assert service.status(cancel_run_id).state is RunState.COMPLETED
-        assert _aggregate(root, cancel_run_id).artifacts == (SYNTHETIC_ARTIFACT,)
+    finally:
+        release.set()
     assert executor.worker_count == 2
 
 
