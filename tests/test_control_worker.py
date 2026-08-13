@@ -244,9 +244,7 @@ def test_control_worker_consumes_existing_queued_token_without_prepare(tmp_path:
     assert state is RunState.COMPLETED
     assert service.status("worker-run").state is RunState.COMPLETED
     assert (tmp_path / "results" / "methane.txt").is_file()
-    assert [
-        event.type for event in service._repository.read("worker-run").events
-    ] == [  # noqa: SLF001
+    assert [event.type for event in service._repository.read("worker-run").events] == [  # noqa: SLF001
         "prepared",
         "queued",
         "running",

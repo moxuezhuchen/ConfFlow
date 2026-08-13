@@ -140,7 +140,9 @@ def test_direct_adapter_confirms_cancel_before_worker_start(
         def run(self):
             self._target(*self._args)
 
-    monkeypatch.setattr("confflow.application.execution.workflow_adapter.threading.Thread", DelayedThread)
+    monkeypatch.setattr(
+        "confflow.application.execution.workflow_adapter.threading.Thread", DelayedThread
+    )
     spec = WorkflowRunSpec(
         run_id="run-adapter-cancel-before-start",
         input_xyz=(str(input_xyz),),

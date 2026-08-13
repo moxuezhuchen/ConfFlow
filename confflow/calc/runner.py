@@ -138,9 +138,7 @@ class CalcStepRunner:
         step_stop_beacon = str(step_dir / "STOP")
         runtime_config["stop_beacon_file"] = step_stop_beacon
         runtime_config["stop_beacon_files"] = [
-            path
-            for path in (step_stop_beacon, request.cancel_beacon_file)
-            if path is not None
+            path for path in (step_stop_beacon, request.cancel_beacon_file) if path is not None
         ]
         backup_dir.mkdir(parents=True, exist_ok=True)
 
@@ -278,7 +276,6 @@ def main() -> int:
     if result.failed_path:
         print(f"Failed: {result.failed_path}")
     print(
-        "Summary: "
-        f"total={result.total_tasks}, succeeded={result.succeeded}, failed={result.failed}"
+        f"Summary: total={result.total_tasks}, succeeded={result.succeeded}, failed={result.failed}"
     )
     return 0
