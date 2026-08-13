@@ -58,6 +58,10 @@ class ExecutionLifecycle:
             self._run_id, self._token, RunState.FAILED, artifacts
         )
 
+    def cancelled(self) -> RunSnapshot:
+        """Confirm that the matching worker stopped after a durable cancel intent."""
+        return self._service.lifecycle_cancelled(self._run_id, self._token)
+
 
 class ExecutionService:
     """Application service whose repository owns every durable run-domain fact."""
@@ -312,6 +316,46 @@ class ExecutionService:
             allow_cancel_pending=True,
         )
 
+    def lifecycle_cancelled(self, run_id: str, token: str) -> RunSnapshot:
+        """Commit cancellation only from the current token after work has stopped."""
+        while True:
+            record = self._require(run_id)
+            if record.launch_token != token:
+                raise ExecutionServiceError(
+                    ErrorCode.INVALID_STATE_TRANSITION,
+                    "Lifecycle token does not match the active launch attempt",
+                )
+            if record.state not in {RunState.QUEUED, RunState.RUNNING, RunState.PAUSED}:
+                raise ExecutionServiceError(
+                    ErrorCode.INVALID_STATE_TRANSITION,
+                    f"Cannot cancel a run in {record.state.value} state",
+                )
+            if not record.cancel_pending:
+                raise ExecutionServiceError(
+                    ErrorCode.INVALID_STATE_TRANSITION,
+                    "Cancellation lifecycle requires a pending cancel intent",
+                )
+            try:
+                return self._repository.compare_and_mutate(
+                    run_id,
+                    record.revision,
+                    lambda current: (
+                        replace(
+                            current,
+                            state=RunState.CANCELLED,
+                            cancel_pending=False,
+                            artifacts=(),
+                        ),
+                        "cancelled",
+                    ),
+                ).snapshot()
+            except RepositoryConflict:
+                continue
+            except RepositoryMutationError as error:
+                raise ExecutionServiceError(
+                    ErrorCode.INTERNAL, str(error), retryable=True
+                ) from error
+
     def _claim_launch(
         self, record: ExecutionAggregate, *, checkpoint_id: str | None
     ) -> ExecutionAggregate:
@@ -421,7 +465,7 @@ class ExecutionService:
                 ) from error
 
     def _ensure_cancel(self, record: ExecutionAggregate) -> RunSnapshot:
-        """Confirm cancellation outside CAS, then atomically enter the terminal state."""
+        """Deliver cancellation intent; a token-bound worker owns the terminal callback."""
         if record.cancel_token is None:
             return record.snapshot()
         if record.launch_token is None:
@@ -448,7 +492,7 @@ class ExecutionService:
             raise _terminal_error(record.run_id)
         if latest.cancel_token != record.cancel_token or not latest.cancel_pending:
             return latest.snapshot()
-        return self._commit_cancelled(latest)
+        return latest.snapshot()
 
     def _commit_cancelled(self, record: ExecutionAggregate) -> RunSnapshot:
         """Atomically finish a cancellation that has no executor work to stop."""

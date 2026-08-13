@@ -7,7 +7,7 @@ from __future__ import annotations
 import os
 
 from ..blocks import refine
-from ..blocks.refine.result import RefineResult
+from .result import RefineResult
 
 __all__ = ["run_refine_postprocess"]
 

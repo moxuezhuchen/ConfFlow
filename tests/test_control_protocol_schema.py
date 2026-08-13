@@ -160,6 +160,19 @@ def test_golden_protocol_examples_validate(row: dict[str, str]):
     _validator(row["validator"]).validate(fixture)
 
 
+def test_cancel_response_accepts_async_durable_intent_snapshot():
+    """A cancel acknowledgement may remain non-terminal until the worker stops."""
+    response = {
+        "protocol_schema": "confflow.control.v1",
+        "operation": "cancel",
+        "ok": True,
+        "run_id": "run-20260731-001",
+        "revision": 5,
+        "state": "running",
+    }
+    _validator("responses.schema.json").validate(response)
+
+
 @pytest.mark.parametrize("row", _manifest_rows("negative"))
 def test_negative_protocol_examples_are_rejected(row: dict[str, str]):
     """Every negative fixture must fail against its declared schema."""

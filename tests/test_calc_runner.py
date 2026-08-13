@@ -65,6 +65,44 @@ def test_calc_step_runner_writes_result_and_manifest(tmp_path, monkeypatch):
     assert manifest["succeeded"] == 1
 
 
+def test_calc_step_runner_forwards_producer_cancel_beacon_to_active_tasks(tmp_path, monkeypatch):
+    input_xyz = tmp_path / "input.xyz"
+    input_xyz.write_text("1\nCID=seed\nH 0 0 0\n", encoding="utf-8")
+    cancel_beacon = tmp_path / "state" / "CANCEL"
+    captured: dict[str, object] = {}
+
+    def fake_execute_tasks(*, config, todo, results_db, append_result_fn, **kwargs):
+        del kwargs
+        captured["stop_beacon_files"] = config["stop_beacon_files"]
+        for task in todo:
+            data = task.model_dump()
+            result = {
+                **data,
+                "status": "success",
+                "energy": -1.0,
+                "final_coords": data["coords"],
+            }
+            results_db.insert_result(result)
+            append_result_fn(result)
+
+    monkeypatch.setattr("confflow.calc.runner.execute_tasks", fake_execute_tasks)
+
+    CalcStepRunner().run(
+        CalcStepRequest(
+            step_name="calc",
+            step_dir=str(tmp_path / "step"),
+            input_xyz=str(input_xyz),
+            config=_config(),
+            cancel_beacon_file=str(cancel_beacon),
+        )
+    )
+
+    assert captured["stop_beacon_files"] == [
+        str(tmp_path / "step" / "STOP"),
+        str(cancel_beacon),
+    ]
+
+
 def test_calc_step_runner_reuses_completed_manifest(tmp_path, monkeypatch):
     input_xyz = tmp_path / "input.xyz"
     input_xyz.write_text("1\nCID=seed\nH 0 0 0\n", encoding="utf-8")

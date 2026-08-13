@@ -45,13 +45,14 @@ class WorkflowExecutor(Protocol):
     """Idempotent non-blocking executor boundary with token-level arbitration.
 
     An adapter must atomically arbitrate ``ensure_launched`` and
-    ``ensure_cancelled`` for one ``(run_id, launch_token)``.  Confirmation of
-    cancellation installs a durable tombstone: an already in-flight or later
-    launch request for that token must not start work, or must prove it stopped.
+    ``ensure_cancelled`` for one ``(run_id, launch_token)``.  Acknowledgement
+    installs a durable tombstone and delivers a stop signal; it does not imply
+    that work has stopped.  Only the token-bound lifecycle callback may commit
+    the terminal cancellation.
     """
 
     def ensure_launched(self, request: LaunchRequest) -> LaunchReceipt:
         """Ensure exactly this token is launched; return quickly and never join callbacks."""
 
     def ensure_cancelled(self, request: CancelRequest) -> CancelReceipt:
-        """Tombstone the bound launch token and ensure its work is stopped; return quickly."""
+        """Tombstone the bound launch token and deliver its stop signal; return quickly."""

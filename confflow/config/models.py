@@ -12,7 +12,11 @@ from pathlib import Path
 from typing import Any, Literal
 
 from ..core.exceptions import ConfigurationError
-from ..core.models import _coerce_freeze_indices, _coerce_two_atom_indices
+from ..shared.config_coercion import (
+    coerce_freeze_indices,
+    coerce_positive_int,
+    coerce_two_atom_indices,
+)
 from ..shared.defaults import (
     DEFAULT_CHARGE,
     DEFAULT_CORES_PER_TASK,
@@ -147,7 +151,7 @@ def _parse_pair(value: Any) -> tuple[int, int] | None:
     if value is None:
         return None
     try:
-        pair = _coerce_two_atom_indices(value)
+        pair = coerce_two_atom_indices(value)
     except (TypeError, ValueError):
         pair = None
     if pair is None:
@@ -323,6 +327,16 @@ class GlobalOptions:
     blocks: str | dict[str, Any] | None = None
     orca_maxcore: int | str | None = None
 
+    def __post_init__(self) -> None:
+        """Keep direct dataclass construction subject to the wire invariants."""
+        if self.cores_per_task < 1:
+            raise ValueError("cores_per_task must be >= 1")
+        if self.max_parallel_jobs < 1:
+            raise ValueError("max_parallel_jobs must be >= 1")
+        if self.multiplicity < 1:
+            raise ValueError("multiplicity must be >= 1")
+        object.__setattr__(self, "total_memory", _validate_memory(self.total_memory))
+
     @classmethod
     def from_mapping(cls, raw: dict[str, Any] | None) -> GlobalOptions:
         raw = _as_dict(raw)
@@ -337,18 +351,25 @@ class GlobalOptions:
         return cls(
             gaussian_path=str(raw.get("gaussian_path", "g16")),
             orca_path=str(raw.get("orca_path", "orca")),
-            cores_per_task=int(raw.get("cores_per_task", DEFAULT_CORES_PER_TASK)),
+            cores_per_task=coerce_positive_int(
+                raw.get("cores_per_task", DEFAULT_CORES_PER_TASK), field="cores_per_task"
+            ),
             total_memory=_validate_memory(str(raw.get("total_memory", DEFAULT_TOTAL_MEMORY))),
-            max_parallel_jobs=int(raw.get("max_parallel_jobs", DEFAULT_MAX_PARALLEL_JOBS)),
+            max_parallel_jobs=coerce_positive_int(
+                raw.get("max_parallel_jobs", DEFAULT_MAX_PARALLEL_JOBS),
+                field="max_parallel_jobs",
+            ),
             charge=int(raw.get("charge", DEFAULT_CHARGE)),
-            multiplicity=int(raw.get("multiplicity", DEFAULT_MULTIPLICITY)),
+            multiplicity=coerce_positive_int(
+                raw.get("multiplicity", DEFAULT_MULTIPLICITY), field="multiplicity"
+            ),
             rmsd_threshold=float(raw.get("rmsd_threshold", DEFAULT_RMSD_THRESHOLD)),
             energy_window=(
                 None if raw.get("energy_window") is None else float(raw.get("energy_window"))
             ),
             energy_tolerance=float(raw.get("energy_tolerance", 0.05)),
             noH=_coerce_bool_flag(raw.get("noH", False)),
-            freeze=tuple(_coerce_freeze_indices(raw.get("freeze"))),
+            freeze=tuple(coerce_freeze_indices(raw.get("freeze"))),
             ts_bond_atoms=_parse_pair(raw.get("ts_bond_atoms")),
             ts_rescue_scan=_coerce_bool_flag(raw.get("ts_rescue_scan", DEFAULT_TS_RESCUE_SCAN)),
             scan_coarse_step=float(raw.get("scan_coarse_step", DEFAULT_SCAN_COARSE_STEP)),
@@ -417,6 +438,11 @@ class CalcStepParams:
     gaussian_link0: str | list[str] | None = None
     ibkout: int | None = None
 
+    def __post_init__(self) -> None:
+        """Keep direct dataclass construction subject to calc invariants."""
+        if self.multiplicity < 1:
+            raise ValueError("multiplicity must be >= 1")
+
     @classmethod
     def from_params(
         cls,
@@ -438,7 +464,7 @@ class CalcStepParams:
 
         freeze = ()
         if task in {"opt", "opt_freq", "ts"}:
-            freeze = tuple(_coerce_freeze_indices(params.get("freeze", global_options.freeze)))
+            freeze = tuple(coerce_freeze_indices(params.get("freeze", global_options.freeze)))
 
         ts_pair = _parse_pair(params.get("ts_bond_atoms")) or global_options.ts_bond_atoms
         if ts_pair is None and len(freeze) >= 2:
@@ -529,7 +555,10 @@ class CalcStepParams:
             orca_path=str(params.get("orca_path", global_options.orca_path)),
             resources=resources,
             charge=int(params.get("charge", global_options.charge)),
-            multiplicity=int(params.get("multiplicity", global_options.multiplicity)),
+            multiplicity=coerce_positive_int(
+                params.get("multiplicity", global_options.multiplicity),
+                field="multiplicity",
+            ),
             freeze=freeze,
             cleanup=cleanup,
             ts=ts,

@@ -127,19 +127,9 @@ def test_validate_chain_definitions_returns_invalid_messages() -> None:
     assert messages == ["2-3: not bonded"]
 
 
-def test_chem_validation_wrappers_delegate_to_confgen_modules() -> None:
-    fake_mol = object()
-    fake_validator = object()
+def test_chem_validation_legacy_paths_preserve_core_identity() -> None:
+    from confflow.blocks.confgen.generator import load_mol_from_xyz as legacy_loader
+    from confflow.blocks.confgen.validator import ChainValidator as legacy_validator
 
-    with (
-        patch("confflow.blocks.confgen.generator.load_mol_from_xyz", return_value=fake_mol) as load,
-        patch(
-            "confflow.blocks.confgen.validator.ChainValidator",
-            return_value=fake_validator,
-        ) as validator_cls,
-    ):
-        assert load_mol_from_xyz("mol.xyz", 1.1) is fake_mol
-        assert ChainValidator(["1-2"]) is fake_validator
-
-    load.assert_called_once_with("mol.xyz", 1.1)
-    validator_cls.assert_called_once_with(["1-2"])
+    assert legacy_loader is load_mol_from_xyz
+    assert legacy_validator is ChainValidator

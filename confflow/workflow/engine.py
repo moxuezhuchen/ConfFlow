@@ -97,6 +97,7 @@ def _run_calc_step(
     step_name: str,
     *,
     calc_executor: CalcExecutor | None = None,
+    cancel_beacon_file: str | None = None,
 ) -> StepExecutionResult:
     """Execute a calculation task step."""
     if calc_executor is not None:
@@ -110,6 +111,7 @@ def _run_calc_step(
             failure_tracker=failure_tracker,
             step_name=step_name,
             calc_executor=calc_executor,
+            cancel_beacon_file=cancel_beacon_file,
         )
     return step_run_calc_step(
         step_dir=step_dir,
@@ -120,6 +122,7 @@ def _run_calc_step(
         steps=steps,
         failure_tracker=failure_tracker,
         step_name=step_name,
+        cancel_beacon_file=cancel_beacon_file,
     )
 
 
@@ -136,6 +139,7 @@ def run_workflow(
     calc_executor: CalcExecutor | None = None,
     on_step_status_change: Callable[[StepRecord], None] | None = None,
     poll_interval_seconds: float = 5,
+    cancel_beacon_file: str | None = None,
 ) -> dict[str, Any]:
     """Run a workflow while recording restartable step state.
 
@@ -349,6 +353,10 @@ def run_workflow(
                 )
             )
 
+        # Cancellation is distinct from a resumable pause and wins at boundaries.
+        if cancel_beacon_file and os.path.exists(cancel_beacon_file):
+            raise StopRequestedError(f"Cancel beacon found at {cancel_beacon_file}")
+
         # Check pause beacon before executing new step
         if pause_beacon_file and os.path.exists(pause_beacon_file):
             raise StopRequestedError(f"Pause beacon found at {pause_beacon_file}")
@@ -433,6 +441,11 @@ def run_workflow(
                     failure_tracker,
                     step_name,
                     **({"calc_executor": calc_executor} if calc_executor is not None else {}),
+                    **(
+                        {"cancel_beacon_file": cancel_beacon_file}
+                        if cancel_beacon_file is not None
+                        else {}
+                    ),
                 )
                 current_input = step_result.output_path
                 io_xyz.ensure_xyz_cids(current_input, prefix=index_to_letter_prefix(0))

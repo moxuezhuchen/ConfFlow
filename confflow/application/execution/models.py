@@ -153,6 +153,6 @@ class CancelRequest:
 
 @dataclass(frozen=True)
 class CancelReceipt:
-    """Fast acknowledgement that an executor confirmed cancellation."""
+    """Fast acknowledgement that an executor accepted the cancellation intent."""
 
     confirmed: bool

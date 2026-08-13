@@ -316,12 +316,11 @@ def test_cancel_prepared_run_skips_executor_and_commits_terminal_state():
 
 
 def test_cancel_side_effect_failure_retries_the_same_durable_intent():
-    """Cancellation is not claimed complete until the executor confirms its token."""
+    """Cancellation remains pending until the bound worker confirms it stopped."""
     repository = InMemoryExecutionRepository()
     executor = FakeExecutor(fail_cancel_once=True)
     service = _service(repository, executor)
     lifecycle = _running(service, executor)
-    del lifecycle
 
     with pytest.raises(ExecutionServiceError) as error:
         service.cancel("run-001")
@@ -330,11 +329,32 @@ def test_cancel_side_effect_failure_retries_the_same_durable_intent():
     assert pending is not None and pending.state is RunState.RUNNING and pending.cancel_pending
     assert pending.cancel_token is not None
 
-    cancelled = service.cancel("run-001")
-    assert cancelled.state is RunState.CANCELLED
+    pending_snapshot = service.cancel("run-001")
+    assert pending_snapshot.state is RunState.RUNNING
     assert executor.cancel_calls == [pending.cancel_token, pending.cancel_token]
     assert executor.cancel_requests[-1].launch_token == pending.launch_token
     assert executor.cancel_requests[-1].attempt == pending.attempt
+
+    aggregate = repository.read("run-001")
+    assert aggregate is not None and aggregate.cancel_pending
+    assert lifecycle.cancelled().state is RunState.CANCELLED
+
+
+def test_cancelled_lifecycle_requires_current_launch_token_and_pending_intent():
+    repository = InMemoryExecutionRepository()
+    executor = FakeExecutor()
+    service = _service(repository, executor)
+    lifecycle = _running(service, executor)
+
+    with pytest.raises(ExecutionServiceError) as missing_intent:
+        lifecycle.cancelled()
+    assert missing_intent.value.code is ErrorCode.INVALID_STATE_TRANSITION
+
+    assert service.cancel("run-001").state is RunState.RUNNING
+    with pytest.raises(ExecutionServiceError) as stale:
+        service.lifecycle_cancelled("run-001", "run-001.launch.stale")
+    assert stale.value.code is ErrorCode.INVALID_STATE_TRANSITION
+    assert lifecycle.cancelled().state is RunState.CANCELLED
 
 
 def test_cancel_tombstone_wins_against_an_in_flight_launch():
@@ -348,15 +368,19 @@ def test_cancel_tombstone_wins_against_an_in_flight_launch():
     with ThreadPoolExecutor(max_workers=1) as pool:
         in_flight_execute = pool.submit(first.execute, "run-001")
         assert executor.launch_entered.wait(timeout=2)
-        assert second.cancel("run-001").state is RunState.CANCELLED
+        assert second.cancel("run-001").state is RunState.QUEUED
         executor.release_launch.set()
-        assert in_flight_execute.result().state is RunState.CANCELLED
+        assert in_flight_execute.result().state is RunState.QUEUED
 
     aggregate = repository.read("run-001")
     assert aggregate is not None and aggregate.launch_token is not None
-    assert aggregate.state is RunState.CANCELLED
+    assert aggregate.state is RunState.QUEUED
+    assert aggregate.cancel_pending
     assert aggregate.launch_token in executor.tombstoned_launches
     assert aggregate.launch_token not in executor.started_launches
+
+    lifecycle = ExecutionLifecycle(first, "run-001", aggregate.launch_token)
+    assert lifecycle.cancelled().state is RunState.CANCELLED
 
 
 def test_terminal_callback_wins_a_cancel_confirmation_race():
@@ -376,6 +400,20 @@ def test_terminal_callback_wins_a_cancel_confirmation_race():
 
     assert error.value.code is ErrorCode.TERMINAL_RUN
     assert service.status("run-001").state is RunState.COMPLETED
+
+
+def test_failed_callback_wins_without_cancel_overwriting_terminal_state():
+    repository = InMemoryExecutionRepository()
+    executor = FakeExecutor()
+    service = _service(repository, executor)
+    lifecycle = _running(service, executor)
+
+    assert service.cancel("run-001").state is RunState.RUNNING
+    assert lifecycle.failed().state is RunState.FAILED
+    with pytest.raises(ExecutionServiceError) as error:
+        service.cancel("run-001")
+    assert error.value.code is ErrorCode.TERMINAL_RUN
+    assert service.status("run-001").state is RunState.FAILED
 
 
 def test_resume_generates_a_new_token_with_the_current_checkpoint():

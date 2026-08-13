@@ -98,7 +98,8 @@ class SyntheticProducerExecutor(WorkflowExecutor):
     lease attaches without starting a worker.  Repeated or concurrent
     ``ensure_launched`` calls attach to the existing attempt and never start
     another producer.  A confirmed cancellation tombstones the token and
-    signals the worker to back off; the service owns the terminal transition.
+    signals the worker to back off; only that token-bound worker confirms the
+    terminal transition after it has stopped producing artifacts.
     """
 
     def __init__(self, state_root: StateRoot) -> None:
@@ -257,14 +258,16 @@ class SyntheticProducerExecutor(WorkflowExecutor):
             service = self._service
             if service is None:
                 raise RuntimeError("SyntheticProducerExecutor is not bound to an ExecutionService")
-            if self._is_cancelled(request):
-                return
             lifecycle = ExecutionLifecycle(service, request.run_id, request.token)
+            if self._is_cancelled(request):
+                lifecycle.cancelled()
+                return
             lifecycle.started()
             # started() is durably committed (the aggregate is RUNNING), so any
             # later lease acquirer attaches instead of starting another worker.
             self._release_lease(request.token)
             if self._is_cancelled(request):
+                lifecycle.cancelled()
                 return
             run_dir = self._runs_root / f"run_{request.run_id}"
             artifact_dir = run_dir / "synthetic"
@@ -273,9 +276,11 @@ class SyntheticProducerExecutor(WorkflowExecutor):
             lifecycle.checkpoint(SYNTHETIC_CHECKPOINT_ID)
             self._before_completed(request)
             if self._is_cancelled(request):
+                lifecycle.cancelled()
                 return
             artifact = self._verified_artifact(request)
             if self._is_cancelled(request):
+                lifecycle.cancelled()
                 return
             lifecycle.completed((artifact,))
             completed = True
