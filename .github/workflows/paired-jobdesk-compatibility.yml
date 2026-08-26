@@ -1,0 +1,136 @@
+name: Paired JobDesk Compatibility
+
+on:
+  workflow_dispatch:
+    inputs:
+      confflow_ref:
+        description: ConfFlow candidate branch or commit to test
+        required: true
+        type: string
+      jobdesk_ref:
+        description: JobDesk candidate branch or commit to test
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  candidate-pair:
+    name: ConfFlow candidate with JobDesk candidate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out ConfFlow candidate
+        uses: actions/checkout@v6
+        with:
+          repository: moxuezhuchen/ConfFlow
+          ref: ${{ inputs.confflow_ref }}
+          path: confflow
+          fetch-depth: 1
+
+      - name: Check out JobDesk candidate
+        uses: actions/checkout@v4
+        with:
+          repository: moxuezhuchen/jobdesk
+          ref: ${{ inputs.jobdesk_ref }}
+          path: jobdesk
+          fetch-depth: 1
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Build the candidate wheel
+        working-directory: confflow
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build --wheel --outdir "$RUNNER_TEMP/confflow-dist"
+
+      - name: Install the exact producer candidate and consumer
+        run: |
+          set -euo pipefail
+          python -m pip install -e "jobdesk[dev]"
+          wheel="$(find "$RUNNER_TEMP/confflow-dist" -maxdepth 1 -name 'confflow-*.whl' -print -quit)"
+          test -n "$wheel"
+          python -m pip install "$wheel"
+          python -c 'import confflow; print(confflow.__version__)'
+
+      - name: Verify paired refs, provenance, and schema bundle
+        env:
+          JOBDESK_SOURCE: ${{ github.workspace }}/jobdesk
+        run: |
+          set -euo pipefail
+          wheel="$(find "$RUNNER_TEMP/confflow-dist" -maxdepth 1 -name 'confflow-*.whl' -print -quit)"
+          wheel_sha="$(sha256sum "$wheel" | awk '{print $1}')"
+          confflow_commit="$(git -C confflow rev-parse HEAD)"
+          jobdesk_commit="$(git -C jobdesk rev-parse HEAD)"
+          JOBDESK_COMMIT="$jobdesk_commit" CONFLOW_COMMIT="$confflow_commit" CANDIDATE_WHEEL_SHA="$wheel_sha" python - <<'PY'
+          import json
+          import os
+          import subprocess
+          import sys
+          from pathlib import Path
+
+          sys.path.insert(0, os.path.join(os.environ["JOBDESK_SOURCE"], "src"))
+          from jobdesk_app.core.confflow_preflight import (
+              parse_confflow_capabilities,
+              validate_confflow_capabilities,
+          )
+
+          raw = subprocess.check_output(["confflow", "--capabilities", "--json"], text=True)
+          payload = json.loads(raw)
+          capabilities = parse_confflow_capabilities(raw)
+          validate_confflow_capabilities(capabilities, require_dag=True)
+          if capabilities.version != "2.0.0":
+              raise AssertionError(f"unexpected candidate version: {capabilities.version!r}")
+          build = payload.get("build")
+          if not isinstance(build, dict) or build.get("commit") != os.environ["CONFLOW_COMMIT"] or build.get("dirty") is not False:
+              raise AssertionError(f"candidate build provenance mismatch: {build!r}")
+          producer = payload.get("producer")
+          if not isinstance(producer, dict) or producer.get("package") != "confflow" or producer.get("build") != build:
+              raise AssertionError(f"candidate producer provenance mismatch: {producer!r}")
+          install = payload.get("install_provenance") or producer.get("install_provenance")
+          if not isinstance(install, dict) or install.get("status") not in {"verified", "missing"}:
+              raise AssertionError(f"candidate install provenance is malformed: {install!r}")
+          wheel_claim = producer.get("wheel")
+          if install["status"] == "verified":
+              if not isinstance(wheel_claim, dict) or wheel_claim.get("sha256") != os.environ["CANDIDATE_WHEEL_SHA"]:
+                  raise AssertionError(f"verified candidate wheel provenance mismatch: {wheel_claim!r}")
+          elif wheel_claim != {"filename": None, "sha256": None}:
+              raise AssertionError(f"unverified candidate must expose null wheel provenance: {wheel_claim!r}")
+          schema_root = Path(sys.prefix) / "share" / "confflow" / "control_protocol" / "v1"
+          required = (
+              "common.schema.json",
+              "requests.schema.json",
+              "responses.schema.json",
+              "input-manifest.schema.json",
+              "worker-handoff.schema.json",
+          )
+          missing = [name for name in required if not (schema_root / name).is_file()]
+          if missing:
+              raise AssertionError(f"candidate schema bundle is incomplete: {missing!r}")
+          print(json.dumps({"jobdesk_commit": os.environ["JOBDESK_COMMIT"], "confflow_commit": os.environ["CONFLOW_COMMIT"], "wheel_sha256": os.environ["CANDIDATE_WHEEL_SHA"]}))
+          PY
+
+      - name: Install Linux Qt runtime
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libdbus-1-3 libegl1 libgl1 libxkbcommon0 libxkbcommon-x11-0
+
+      - name: Run producer schema fixture suite
+        working-directory: confflow
+        run: |
+          python -m pytest -q \
+            tests/test_control_protocol_schema.py \
+            tests/test_control_worker.py
+
+      - name: Run JobDesk consumer contract suite
+        working-directory: jobdesk
+        run: |
+          python -m pytest -q \
+            tests/test_confflow_preflight.py \
+            tests/test_confflow_results.py \
+            tests/test_control_protocol_schemas.py \
+            tests/test_confflow_control_backend.py \
+            tests/test_confflow_launcher_integration.py
