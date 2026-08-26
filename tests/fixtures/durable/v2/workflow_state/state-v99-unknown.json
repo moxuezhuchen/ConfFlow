@@ -1,0 +1,31 @@
+{
+  "config_file": "/fixture/workflow.yaml",
+  "content_schema": "confflow.workflow_state.v99",
+  "final_status": "completed",
+  "input_files": [
+    "/fixture/input.xyz"
+  ],
+  "last_updated_at": 2.0,
+  "original_inputs": [
+    "/fixture/input.xyz"
+  ],
+  "run_id": "run-v2-fixture",
+  "started_at": 1.0,
+  "steps": {
+    "calc": {
+      "completed_at": 2.0,
+      "error": null,
+      "executor_handle_data": {
+        "remote_job_id": "fixture-42"
+      },
+      "fail_count": 0,
+      "name": "calc",
+      "output_xyz": "/fixture/work/calc/output.xyz",
+      "status": "completed",
+      "submitted_at": 1.0,
+      "type": "calc"
+    }
+  },
+  "wavefront_index": 1,
+  "work_dir": "/fixture/work"
+}

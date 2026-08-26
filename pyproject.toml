@@ -7,7 +7,8 @@ name = "confflow"
 version = "2.0.0"
 description = "Automated molecular conformation search workflow engine for computational chemistry"
 readme = "README.md"
-license = {text = "MIT"}
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [
     {name = "ConfFlow Team"}
 ]
@@ -26,7 +27,6 @@ keywords = [
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Science/Research",
-    "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
@@ -53,6 +53,8 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "build>=1.0.0",
+    "setuptools>=82.0.1",
+    "wheel",
     "pytest>=6.0.0",
     "pytest-cov>=2.12.0",
     "black>=26.5.1",
@@ -125,7 +127,7 @@ indent-style = "space"
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 addopts = "-v --tb=short"
-cache_dir = ".pytest_cache_temp"
+strict_config = true
 markers = [
     "integration: end-to-end tests that exercise the full workflow",
 ]

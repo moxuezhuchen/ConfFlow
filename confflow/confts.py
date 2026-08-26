@@ -8,11 +8,13 @@ import argparse
 import sys
 
 from .calc.runner import CalcStepRequest, CalcStepRunner
-from .config.models import CalcStepParams, load_workflow_model
+from .config.canonical import resolve_calc_step
+from .config.models import load_workflow_model
 from .core.cli_base import require_existing_path
 from .core.contracts import ExitCode, cli_output_to_txt
 from .core.exceptions import ConfFlowError
 from .core.keyword_rewrite import make_scan_keyword_from_ts_keyword
+from .workflow.composition import configure_default_refine
 
 __all__ = [
     "main",
@@ -78,8 +80,9 @@ def _cli(argv: list[str] | None = None) -> int:
                         return ExitCode.USAGE_ERROR
                     selected = matches[0]
 
-            config = CalcStepParams.from_params(selected.params, workflow.global_options)
+            config = resolve_calc_step(selected.params, workflow.global_options)
             step_dir = args.work_dir or f"{args.input_xyz}_ts_{selected.name}"
+            configure_default_refine()
             result = CalcStepRunner().run(
                 CalcStepRequest(
                     step_name=selected.name,

@@ -21,6 +21,7 @@ _CONTROL_WORKER_JSON = (
 _HANDSHAKE_PROBE = (
     any(flag in _CLI_ARGS for flag in ("--version", "--capabilities"))
     or (_CLI_ARGS[:1] == ["control"] and "--json" in _CLI_ARGS)
+    or (_CLI_ARGS[:1] == ["config"] and "--json" in _CLI_ARGS)
     or _CONTROL_WORKER_JSON
 )
 if _HANDSHAKE_PROBE:

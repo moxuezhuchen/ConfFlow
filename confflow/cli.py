@@ -20,7 +20,6 @@ try:
 except ImportError:
     psutil = None
 
-import yaml
 
 from .__build__ import COMMIT, DIRTY
 from .application.execution.workflow_adapter import run_workflow_through_service
@@ -331,12 +330,11 @@ def _write_cli_error(output_path: str, exc: BaseException, hint: str | None = No
 
 def _load_sandbox_root_hint(config_file: str) -> str | None:
     """Best-effort read of ``global.sandbox_root`` without full schema validation."""
+    from .config.canonical import ConfigValidationError, load_raw_mapping
+
     try:
-        with open(config_file, encoding="utf-8") as handle:
-            raw: Any = yaml.safe_load(handle) or {}
-    except (OSError, yaml.YAMLError):
-        return None
-    if not isinstance(raw, dict):
+        raw = load_raw_mapping(config_file)
+    except (OSError, ConfigValidationError):
         return None
     global_cfg = raw.get("global") or {}
     if not isinstance(global_cfg, dict):
@@ -521,6 +519,10 @@ def main(
         from .control import main as control_main
 
         return control_main(effective_args[1:])
+    if effective_args and effective_args[0] == "config":
+        from .config.cli import main as config_main
+
+        return config_main(effective_args[1:])
 
     parser = build_parser()
     args = parser.parse_args(args_list)

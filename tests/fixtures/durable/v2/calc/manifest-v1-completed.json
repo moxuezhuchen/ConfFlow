@@ -1,0 +1,16 @@
+{
+  "completed_at": "2026-01-01T00:00:01+00:00",
+  "config_digest": "sha256:a580e0a9e56efc85af55391d3fb887bd77dedc99746636ac9b873c536529a725",
+  "created_at": "2026-01-01T00:00:00+00:00",
+  "error": null,
+  "failed": null,
+  "failed_count": 0,
+  "input_digest": "sha256:cb2e57ed3a08c73122149d570597f59cf04296b144f52df3d9cb6ab043db1efc",
+  "output": "output.xyz",
+  "schema_version": 1,
+  "status": "completed",
+  "step_name": "calc",
+  "step_type": "calc",
+  "succeeded": 1,
+  "total_tasks": 1
+}

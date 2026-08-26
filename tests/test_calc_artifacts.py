@@ -10,6 +10,7 @@ import pytest
 
 from confflow.calc.artifacts import (
     CalcArtifactManager,
+    CalcManifestCompatibilityError,
     compute_config_digest,
     compute_input_digest,
 )
@@ -104,3 +105,23 @@ def test_manifest_cleanup_respects_sandbox_root(tmp_path):
 
     with pytest.raises(PathSafetyError):
         manager.prepare(resume=False)
+
+
+@pytest.mark.parametrize("manifest_text", ("{not-json", "[]", '{"schema_version": 999}'))
+def test_unknown_or_malformed_manifest_fails_closed_without_cleanup(tmp_path, manifest_text):
+    input_xyz = _xyz(tmp_path / "input.xyz")
+    step_dir = tmp_path / "step_01_calc"
+    step_dir.mkdir()
+    sentinel = step_dir / "result.xyz"
+    sentinel.write_text("preserve", encoding="utf-8")
+    (step_dir / "manifest.json").write_text(manifest_text, encoding="utf-8")
+
+    manager = CalcArtifactManager(
+        step_dir, step_name="calc", config=_calc_config(), input_path=input_xyz
+    )
+
+    with pytest.raises(CalcManifestCompatibilityError):
+        manager.prepare(resume=False)
+
+    assert sentinel.read_text(encoding="utf-8") == "preserve"
+    assert (step_dir / "manifest.json").read_text(encoding="utf-8") == manifest_text

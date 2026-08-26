@@ -35,44 +35,50 @@ def test_parse_output_delegates_to_policy(tmp_path) -> None:
     policy.parse_output.assert_called_once_with(str(log), {"itask": "sp"}, is_sp_task=True)
 
 
-def test_run_refine_postprocess_returns_refine_result(tmp_path) -> None:
+def test_run_refine_postprocess_uses_injected_callable(tmp_path) -> None:
     expected = RefineResult(produced_output=True, output_path="out.xyz", kept_count=2)
+    captured = {}
 
-    with patch("confflow.calc.postprocess.refine.process_xyz", return_value=expected) as process:
-        result = run_refine_postprocess(
-            input_file="in.xyz",
-            output_file="out.xyz",
-            threshold=0.2,
-            ewin=5.0,
-            energy_tolerance=0.1,
-            workers=2,
-            noH=True,
-            dedup_only=True,
-            keep_all_topos=True,
-            imag=0,
-            max_conformers=3,
-        )
+    def fake_refine(request):
+        captured["request"] = request
+        return expected
+
+    result = run_refine_postprocess(
+        input_file="in.xyz",
+        output_file="out.xyz",
+        threshold=0.2,
+        ewin=5.0,
+        energy_tolerance=0.1,
+        workers=2,
+        noH=True,
+        dedup_only=True,
+        keep_all_topos=True,
+        imag=0,
+        max_conformers=3,
+        refine_callable=fake_refine,
+    )
 
     assert result is expected
-    options = process.call_args.args[0]
-    assert options.input_file == "in.xyz"
-    assert options.output == "out.xyz"
-    assert options.max_conformers == 3
+    request = captured["request"]
+    assert request.input_file == "in.xyz"
+    assert request.output_file == "out.xyz"
+    assert request.max_conformers == 3
+    assert request.noH is True
 
 
 def test_run_refine_postprocess_wraps_legacy_return(tmp_path) -> None:
     output = tmp_path / "out.xyz"
     output.write_text("0\n\n", encoding="utf-8")
 
-    with patch("confflow.calc.postprocess.refine.process_xyz", return_value=None):
-        result = run_refine_postprocess(
-            input_file="in.xyz",
-            output_file=str(output),
-            threshold=0.2,
-            ewin=None,
-            energy_tolerance=0.1,
-            workers=1,
-        )
+    result = run_refine_postprocess(
+        input_file="in.xyz",
+        output_file=str(output),
+        threshold=0.2,
+        ewin=None,
+        energy_tolerance=0.1,
+        workers=1,
+        refine_callable=lambda request: None,
+    )
 
     assert result.produced_output is True
     assert result.output_path == str(output)

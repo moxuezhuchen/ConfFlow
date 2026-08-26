@@ -14,11 +14,13 @@ from typing import Any
 from ..blocks import confgen
 from ..calc.executor import CalcExecutor
 from ..calc.runner import CalcStepRequest, CalcStepRunner
-from ..config.models import CalcStepParams, GlobalOptions
+from ..config.canonical import resolve_calc_step, resolve_global_options
+from ..config.models import GlobalOptions
 from ..core.exceptions import ConfFlowError
 from ..core.pairs import normalize_pair_list
 from ..core.utils import get_logger
 from ..shared.defaults import DEFAULT_MAX_PARALLEL_JOBS
+from .composition import configure_default_refine
 from .helpers import as_list, is_multi_frame_any, pushd
 from .stats import FailureTracker
 from .step_naming import build_step_dir_name_map
@@ -33,6 +35,10 @@ __all__ = [
 logger = get_logger()
 _CONFGEN_SIGNATURE_FILE = ".confgen_signature"
 _CONFGEN_SIGNATURE_PREFIX = "sha256:"
+
+
+class ConfgenSignatureCompatibilityError(ConfFlowError):
+    """An existing confgen signature cannot be safely interpreted for cleanup."""
 
 
 @dataclass
@@ -179,7 +185,18 @@ def _load_confgen_step_signature(step_dir: str) -> str | None:
             value = handle.read().strip()
     except OSError:
         return None
-    return value or None
+    if not value:
+        return None
+    digest = value.removeprefix(_CONFGEN_SIGNATURE_PREFIX)
+    if not value.startswith(_CONFGEN_SIGNATURE_PREFIX) or len(digest) != 64:
+        raise ConfgenSignatureCompatibilityError(
+            f"Unsupported confgen signature generation; refusing cleanup: {step_dir}"
+        )
+    if any(char not in "0123456789abcdef" for char in digest.lower()):
+        raise ConfgenSignatureCompatibilityError(
+            f"Malformed confgen signature; refusing cleanup: {step_dir}"
+        )
+    return value
 
 
 def _record_confgen_step_signature(step_dir: str, signature: str) -> None:
@@ -282,6 +299,7 @@ def run_calc_step(
     failure_tracker: FailureTracker,
     step_name: str,
     *,
+    typed_global: GlobalOptions | None = None,
     calc_executor: CalcExecutor | None = None,
     cancel_beacon_file: str | None = None,
 ) -> StepExecutionResult:
@@ -294,13 +312,15 @@ def run_calc_step(
             )
         current_input = current_input[0]
 
-    typed_global = GlobalOptions.from_mapping(global_config)
-    calc_config = CalcStepParams.from_params(
+    if typed_global is None:
+        typed_global = resolve_global_options(global_config)
+    calc_config = resolve_calc_step(
         params,
         typed_global,
         input_chk_dir=_resolve_chk_input_dir(params, root_dir, steps),
     )
 
+    configure_default_refine()
     try:
         runner = (
             CalcStepRunner(calc_executor=calc_executor)

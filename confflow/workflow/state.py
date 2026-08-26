@@ -11,9 +11,23 @@ from dataclasses import asdict, dataclass, field
 from typing import Any
 
 from ..artifact_json import write_atomic_json
+from ..config.canonical.fingerprint import (
+    WorkflowBindingCompatibilityError,
+    WorkflowConfigBinding,
+)
 from ..contract import WORKFLOW_STATE_FILE, WORKFLOW_STATE_SCHEMA
 
-__all__ = ["StepRecord", "WorkflowState", "WorkflowStateStore"]
+__all__ = [
+    "StepRecord",
+    "WorkflowState",
+    "WorkflowConfigBinding",
+    "WorkflowStateCompatibilityError",
+    "WorkflowStateStore",
+]
+
+
+class WorkflowStateCompatibilityError(ValueError):
+    """A durable workflow state file cannot be safely interpreted."""
 
 
 @dataclass
@@ -32,7 +46,9 @@ class StepRecord:
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> StepRecord:
-        """Deserialize a record, tolerating state files from older revisions."""
+        """Deserialize a record, rejecting shapes that would discard data."""
+        if not isinstance(raw, dict):
+            raise WorkflowStateCompatibilityError("workflow state step record must be an object")
         return cls(
             name=str(raw["name"]),
             type=str(raw["type"]),
@@ -60,30 +76,48 @@ class WorkflowState:
     started_at: float = field(default_factory=time.time)
     last_updated_at: float = field(default_factory=time.time)
     final_status: str = ""
+    config_binding: WorkflowConfigBinding | None = None
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> WorkflowState:
         """Deserialize a state file and validate its minimum shape."""
         content_schema = raw.get("content_schema")
         if content_schema is not None and content_schema != WORKFLOW_STATE_SCHEMA:
-            raise ValueError(
+            raise WorkflowStateCompatibilityError(
                 f"unsupported workflow state content_schema {content_schema!r}; "
                 f"expected {WORKFLOW_STATE_SCHEMA!r}"
             )
+        binding_raw = raw.get("config_binding")
+        if "binding" in raw:
+            if binding_raw is not None:
+                raise WorkflowStateCompatibilityError(
+                    "workflow state contains both config_binding and binding"
+                )
+            binding_raw = raw["binding"]
+        try:
+            config_binding = (
+                None if binding_raw is None else WorkflowConfigBinding.from_dict(binding_raw)
+            )
+        except WorkflowBindingCompatibilityError as exc:
+            raise WorkflowStateCompatibilityError(str(exc)) from exc
         steps_raw = raw.get("steps", {})
         if not isinstance(steps_raw, dict):
-            raise ValueError("workflow state 'steps' must be an object")
+            raise WorkflowStateCompatibilityError("workflow state 'steps' must be an object")
+        steps: dict[str, StepRecord] = {}
+        for key, value in steps_raw.items():
+            if not isinstance(value, dict):
+                raise WorkflowStateCompatibilityError(
+                    f"workflow state step {key!r} must be an object"
+                )
+            steps[str(key)] = StepRecord.from_dict(value)
         return cls(
             run_id=str(raw["run_id"]),
             work_dir=str(raw["work_dir"]),
             input_files=_string_list(raw.get("input_files")),
             original_inputs=_string_list(raw.get("original_inputs")),
             config_file=str(raw["config_file"]),
-            steps={
-                str(key): StepRecord.from_dict(value)
-                for key, value in steps_raw.items()
-                if isinstance(value, dict)
-            },
+            config_binding=config_binding,
+            steps=steps,
             wavefront_index=int(raw.get("wavefront_index", 0)),
             started_at=float(raw.get("started_at", time.time())),
             last_updated_at=float(raw.get("last_updated_at", time.time())),
@@ -109,13 +143,21 @@ class WorkflowStateStore:
         except FileNotFoundError:
             return None
         except json.JSONDecodeError as exc:
-            raise ValueError(f"Invalid workflow state file {self.path}: {exc}") from exc
+            raise WorkflowStateCompatibilityError(
+                f"Invalid workflow state file {self.path}: {exc}"
+            ) from exc
         if not isinstance(raw, dict):
-            raise ValueError(f"Invalid workflow state file {self.path}: expected an object")
+            raise WorkflowStateCompatibilityError(
+                f"Invalid workflow state file {self.path}: expected an object"
+            )
         try:
             return WorkflowState.from_dict(raw)
+        except WorkflowStateCompatibilityError:
+            raise
         except (KeyError, TypeError, ValueError) as exc:
-            raise ValueError(f"Invalid workflow state file {self.path}: {exc}") from exc
+            raise WorkflowStateCompatibilityError(
+                f"Invalid workflow state file {self.path}: {exc}"
+            ) from exc
 
     def save(self, state: WorkflowState) -> None:
         """Persist state by replacing the destination only after JSON is complete."""
@@ -134,7 +176,13 @@ def _optional_str(value: Any) -> str | None:
 
 
 def _optional_dict(value: Any) -> dict[str, Any] | None:
-    return value if isinstance(value, dict) else None
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise WorkflowStateCompatibilityError(
+            "workflow state executor_handle_data must be an object"
+        )
+    return value
 
 
 def _string_list(value: Any) -> list[str]:

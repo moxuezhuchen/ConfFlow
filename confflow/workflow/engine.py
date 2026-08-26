@@ -13,17 +13,19 @@ from typing import Any
 
 from ..calc.artifacts import CalcArtifactManager
 from ..calc.executor import CalcExecutor
-from ..config.models import CalcStepParams, GlobalOptions, load_workflow_model
+from ..config.canonical import build_workflow_binding, resolve_calc_step
+from ..config.models import GlobalOptions
 from ..core import io as io_xyz
 from ..core.exceptions import StopRequestedError
+from ..core.path_policy import resolve_sandbox_root, validate_managed_path
 from ..core.types import TaskStatus
 from ..core.utils import (
     get_logger,
     index_to_letter_prefix,
-    validate_xyz_file,
 )
-from .dag import build_step_graph, topo_order
+from .finalize import finalize_workflow as _finalize_workflow_impl
 from .helpers import count_conformers_any, resolve_step_output
+from .plan import build_workflow_plan
 from .presenter import (
     emit_final_report_and_lowest,
     print_step_footer_block,
@@ -41,11 +43,12 @@ from .stats import (
 from .step_handlers import StepExecutionResult
 from .step_handlers import run_calc_step as step_run_calc_step
 from .step_handlers import run_confgen_step as step_run_confgen_step
-from .step_naming import build_step_dir_name_map
 from .validation import validate_inputs_compatible
 
 __all__ = [
     "run_workflow",
+    "finalize_workflow",
+    "validate_inputs_compatible",
 ]
 
 logger = get_logger()
@@ -96,6 +99,7 @@ def _run_calc_step(
     failure_tracker: FailureTracker,
     step_name: str,
     *,
+    typed_global: GlobalOptions | None = None,
     calc_executor: CalcExecutor | None = None,
     cancel_beacon_file: str | None = None,
 ) -> StepExecutionResult:
@@ -110,6 +114,7 @@ def _run_calc_step(
             steps=steps,
             failure_tracker=failure_tracker,
             step_name=step_name,
+            typed_global=typed_global,
             calc_executor=calc_executor,
             cancel_beacon_file=cancel_beacon_file,
         )
@@ -122,6 +127,7 @@ def _run_calc_step(
         steps=steps,
         failure_tracker=failure_tracker,
         step_name=step_name,
+        typed_global=typed_global,
         cancel_beacon_file=cancel_beacon_file,
     )
 
@@ -152,62 +158,34 @@ def run_workflow(
     if verbose and hasattr(logger, "set_level"):
         logger.set_level(10)
 
-    input_files = [os.path.abspath(x) for x in input_xyz]
-    original_inputs = (
-        [os.path.abspath(x) for x in original_input_files] if original_input_files else input_files
+    plan = build_workflow_plan(
+        input_xyz,
+        config_file,
+        original_input_files=original_input_files,
     )
-    for fp in input_files:
-        if not os.path.exists(fp):
-            raise FileNotFoundError(f"Input file does not exist: {fp}")
-        validate_xyz_file(fp, strict=True)
+    input_files = plan.input_files
+    original_inputs = plan.original_inputs
+    global_config = plan.global_config
+    typed_global = plan.typed_global
+    steps = plan.steps
+    by_step_name = plan.by_step_name
+    predecessors = plan.predecessors
+    execution_order = plan.execution_order
+    terminal_steps = plan.terminal_steps
+    step_dirnames = plan.step_dirnames
+    name_to_dirname = plan.name_to_dirname
 
-    cfg = load_workflow_model(config_file).as_legacy_shape()
-    global_config = cfg["global"]
-    steps = cfg["steps"]
-
-    # Explicit DAG mode is selected by the presence of an ``inputs`` field on
-    # any step. In that mode, steps without the field are independent roots;
-    # they do not inherit a predecessor from their list position. This keeps
-    # mixed configurations deterministic and makes the legacy fallback
-    # unambiguous: only a workflow with no ``inputs`` fields is linear.
-    raw_predecessors, by_step_name, declared_inputs = build_step_graph(steps)
-    explicit_inputs = any("inputs" in step for step in steps)
-    if explicit_inputs:
-        predecessors = raw_predecessors
-    else:
-        ordered_names = list(by_step_name)
-        predecessors = {
-            name: ([ordered_names[index - 1]] if index else [])
-            for index, name in enumerate(ordered_names)
-        }
-    del declared_inputs
-    execution_order = [name for wave in topo_order(predecessors) for name in wave]
-    if explicit_inputs:
-        predecessor_names = {
-            predecessor
-            for step_predecessors in predecessors.values()
-            for predecessor in step_predecessors
-        }
-        terminal_steps = [name for name in predecessors if name not in predecessor_names]
-    else:
-        terminal_steps = [execution_order[-1]]
-
-    step_dirnames, _ = build_step_dir_name_map(steps)
-    step_index_by_name = {name: index for index, name in enumerate(by_step_name)}
-    name_to_dirname = {name: step_dirnames[index] for name, index in step_index_by_name.items()}
-
-    # Pre-load confgen params for multi-input flexible chain consistency check
-    confgen_params = None
-    if len(input_files) > 1:
-        for step in steps:
-            if step.get("type", "").lower() == "confgen":
-                confgen_params = step.get("params", {})
-                break
-        validate_inputs_compatible(
-            input_files,
-            confgen_params,
-            force_consistency=global_config.get("force_consistency", False),
-        )
+    config_binding = build_workflow_binding(plan)
+    # Validate durable state before runtime initialization, so resume cannot
+    # inspect, reuse, or clean an artifact under an untrusted configuration.
+    prevalidated_root = validate_managed_path(
+        work_dir,
+        label="work_dir",
+        sandbox_root=resolve_sandbox_root(global_config),
+    )
+    preloaded_state = WorkflowStateStore(prevalidated_root).load() if resume else None
+    if resume and preloaded_state is not None:
+        _validate_state_binding(preloaded_state, config_binding)
 
     runtime = initialize_runtime_context(
         work_dir=work_dir,
@@ -218,6 +196,7 @@ def run_workflow(
         logger=logger,
         global_config=global_config,
     )
+
     root_dir = runtime.root_dir
     checkpoint = runtime.checkpoint
     stats_tracker = runtime.stats_tracker
@@ -229,7 +208,7 @@ def run_workflow(
     stats_tracker.stats["initial_conformers"] = count_conformers_any(current_input)
 
     state_store = WorkflowStateStore(root_dir)
-    state = state_store.load() if resume else None
+    state = preloaded_state if resume else None
     if state is None:
         state = _initial_workflow_state(
             root_dir=root_dir,
@@ -238,6 +217,7 @@ def run_workflow(
             config_file=config_file,
             steps=steps,
             step_dirnames=step_dirnames,
+            config_binding=config_binding,
         )
         state_store.save(state)
     else:
@@ -309,8 +289,7 @@ def run_workflow(
             inputs_for_step = _resolve_inputs_for_step(step_name)
             if step.get("type") in ["calc", "task"]:
                 params = step.get("params", {}) or {}
-                typed_global = GlobalOptions.from_mapping(global_config)
-                calc_config = CalcStepParams.from_params(params, typed_global)
+                calc_config = resolve_calc_step(params, typed_global)
                 input_for_digest = (
                     inputs_for_step if isinstance(inputs_for_step, str) else inputs_for_step[0]
                 )
@@ -440,6 +419,7 @@ def run_workflow(
                     steps,
                     failure_tracker,
                     step_name,
+                    typed_global=typed_global,
                     **({"calc_executor": calc_executor} if calc_executor is not None else {}),
                     **(
                         {"cancel_beacon_file": cancel_beacon_file}
@@ -505,22 +485,46 @@ def run_workflow(
     terminal_outputs = {name: _as_artifact_list(step_outputs[name]) for name in terminal_steps}
     final_outputs = [artifact for artifacts in terminal_outputs.values() for artifact in artifacts]
     final_output = step_outputs[terminal_steps[0]] if len(terminal_steps) == 1 else final_outputs
-    final_stats = stats_tracker.finalize(final_output)
-    final_stats["terminal_outputs"] = terminal_outputs
-    state.final_status = "completed"
-    state.wavefront_index = len(execution_order)
-    state_store.save(state)
+    return finalize_workflow(
+        root_dir=root_dir,
+        original_inputs=original_inputs,
+        final_output=final_output,
+        terminal_outputs=terminal_outputs,
+        execution_count=len(execution_order),
+        state=state,
+        state_store=state_store,
+        stats_tracker=stats_tracker,
+        logger=logger,
+    )
 
-    # Tracing
-    try:
-        Tracer.trace_low_energy(final_stats)
-    except (OSError, ValueError, TypeError, KeyError, AttributeError) as e:
-        logger.debug(f"Trace failed: {e}")
 
-    emit_final_report_and_lowest(final_output, original_inputs, final_stats, logger)
-    write_final_statistics(root_dir, final_stats)
-
-    return final_stats
+def finalize_workflow(
+    *,
+    root_dir: str,
+    original_inputs: list[str],
+    final_output: str | list[str],
+    terminal_outputs: dict[str, list[str]],
+    execution_count: int,
+    state: WorkflowState,
+    state_store: WorkflowStateStore,
+    stats_tracker: Any,
+    logger: Any,
+) -> dict[str, Any]:
+    """Engine compatibility adapter for the extracted finalization boundary."""
+    return _finalize_workflow_impl(
+        root_dir=root_dir,
+        original_inputs=original_inputs,
+        final_output=final_output,
+        terminal_outputs=terminal_outputs,
+        execution_count=execution_count,
+        state=state,
+        state_store=state_store,
+        stats_tracker=stats_tracker,
+        logger=logger,
+        trace_low_energy=Tracer.trace_low_energy,
+        emit_final_report_and_lowest=emit_final_report_and_lowest,
+        write_final_statistics=write_final_statistics,
+    )
 
 
 def _initial_workflow_state(
@@ -531,6 +535,7 @@ def _initial_workflow_state(
     config_file: str,
     steps: list[dict[str, Any]],
     step_dirnames: list[str],
+    config_binding: Any,
 ) -> WorkflowState:
     """Create state records keyed by the deterministic step directory names."""
     records = {
@@ -547,6 +552,7 @@ def _initial_workflow_state(
         input_files=input_files,
         original_inputs=original_inputs,
         config_file=os.path.abspath(config_file),
+        config_binding=config_binding,
         steps=records,
     )
 
@@ -558,6 +564,21 @@ def _as_artifact_list(output: str | list[str]) -> list[str]:
     if isinstance(output, list):
         return [os.path.abspath(path) for path in output if isinstance(path, str)]
     return []
+
+
+def _validate_state_binding(state: WorkflowState, expected: Any) -> None:
+    """Reject legacy, malformed, unknown, or mismatched resume bindings."""
+    saved = state.config_binding
+    if saved is None:
+        raise RuntimeError(
+            "Workflow state has no config binding; legacy/unschematized state "
+            "may be inspected but cannot be resumed."
+        )
+    if saved.to_dict() != expected.to_dict():
+        raise RuntimeError(
+            "Workflow state config binding does not match the configured workflow; "
+            "strict resume refuses artifact reuse or cleanup."
+        )
 
 
 def _validate_state_steps(

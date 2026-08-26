@@ -10,7 +10,12 @@ import pytest
 
 from confflow.calc.runner import CalcStepResult
 from confflow.core.exceptions import ConfFlowError
-from confflow.workflow.step_handlers import StepExecutionResult, run_calc_step, run_confgen_step
+from confflow.workflow.step_handlers import (
+    ConfgenSignatureCompatibilityError,
+    StepExecutionResult,
+    run_calc_step,
+    run_confgen_step,
+)
 
 
 def _xyz(path: Path, multi: bool = False) -> Path:
@@ -141,3 +146,25 @@ def test_calc_step_rejects_multiple_inputs_without_confgen(tmp_path):
             failure_tracker=None,
             step_name="calc",
         )
+
+
+@pytest.mark.parametrize("signature", ("future:v9", "sha256:not-a-digest"))
+def test_unknown_confgen_signature_fails_closed_without_cleanup(tmp_path, signature):
+    step_dir = tmp_path / "step_01_confgen"
+    step_dir.mkdir()
+    source = _xyz(tmp_path / "multi.xyz", multi=True)
+    output = step_dir / "search.xyz"
+    output.write_text("preserve", encoding="utf-8")
+    signature_path = step_dir / ".confgen_signature"
+    signature_path.write_text(signature, encoding="utf-8")
+
+    with pytest.raises(ConfgenSignatureCompatibilityError):
+        run_confgen_step(
+            step_dir=str(step_dir),
+            current_input=str(source),
+            params={},
+            input_files=[str(source)],
+        )
+
+    assert output.read_text(encoding="utf-8") == "preserve"
+    assert signature_path.read_text(encoding="utf-8") == signature
