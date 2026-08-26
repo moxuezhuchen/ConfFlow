@@ -5,8 +5,8 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from .types import CalcStepParams, GlobalOptions
 from .issues import ConfigIssue, ConfigValidationError
+from .types import CalcStepParams, GlobalOptions
 
 
 def resolve_global_options(raw: Mapping[str, Any] | None) -> GlobalOptions:

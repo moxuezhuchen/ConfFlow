@@ -8,8 +8,8 @@ from typing import Any
 
 import yaml
 
-from .types import WorkflowConfig
 from .issues import ConfigIssue, ConfigValidationError
+from .types import WorkflowConfig
 
 
 def _mapping_or_error(raw: Any, *, path: str = "") -> dict[str, Any]:

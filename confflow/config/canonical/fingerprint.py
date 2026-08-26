@@ -8,10 +8,10 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, cast
 
-from .types import GlobalOptions
 from .resolve import resolve_calc_step
 from .schema import WORKFLOW_SCHEMA_VERSION, workflow_schema_sha256
 from .serialization import canonical_json, canonical_sha256
+from .types import GlobalOptions
 
 WORKFLOW_BINDING_SCHEMA = "confflow.workflow_binding.v1"
 _SHA256_PREFIX = "sha256:"
