@@ -102,6 +102,31 @@ the release is not created if the SBOM is missing or invalid.
 
 ## 7. Tag And Publish A GitHub Release
 
+### Owner immutable-release preflight
+
+The workflow's `GITHUB_TOKEN` intentionally has no repository Administration
+permission and therefore cannot read the administration-only
+`immutable-releases` endpoint. Before creating the annotated tag, a repository
+owner must use an authenticated administrative session to confirm immutable
+releases are enabled and bind that result to the exact release commit:
+
+```bash
+REPOSITORY="moxuezhuchen/ConfFlow"
+RELEASE_COMMIT="$(git rev-parse HEAD)"
+test "$(gh api -H "X-GitHub-Api-Version: 2026-03-10" \
+  "repos/${REPOSITORY}/immutable-releases" --jq .enabled)" = "true"
+gh variable set RELEASE_IMMUTABLE_PREFLIGHT_SHA \
+  --repo "$REPOSITORY" --body "$RELEASE_COMMIT"
+test "$(gh variable get RELEASE_IMMUTABLE_PREFLIGHT_SHA \
+  --repo "$REPOSITORY")" = "$RELEASE_COMMIT"
+```
+
+Do not pass a personal or administrative token into the workflow. At job
+startup GitHub snapshots the repository variable; the workflow fails closed
+unless it is non-empty and exactly equals `GITHUB_SHA` and the local annotated
+tag's peeled commit. The workflow still verifies the created release's actual
+`isImmutable=true` state after publication.
+
 Create an annotated tag from the verified commit. Pushing a `v*` tag triggers the release artifact workflow:
 
 ```bash
@@ -115,6 +140,14 @@ bundle and verification record, provenance, release/install dependency lock,
 wheelhouse manifest, release notes, and `SHA256SUMS`. It then downloads those
 assets and verifies exact filenames, byte identity, and checksums. Do not create
 the release manually.
+
+### Failed v2.1.4 attempt
+
+`v2.1.4` is a protected tag-only failed release. Run `33080394812` stopped at
+the administration-only immutable-releases GET with HTTP 403 before creating a
+GitHub Release. Consequently there is no GitHub Release or release assets for
+`v2.1.4`. The protected tag must not be deleted, moved, or reused; `v2.1.5` is
+the fix-forward release line.
 
 ## 8. PyPI Status
 
@@ -161,10 +194,10 @@ Format:
 
 ### Layer 2a - Controlled Python runtime dependencies
 
-The 2.1.4 release/install target is CPython 3.12 / Linux x86_64 and is
+The 2.1.5 release/install target is CPython 3.12 / Linux x86_64 and is
 derived from the verified 1.4.4 production venv. The committed release lock is
-`release/confflow-2.1.4-py312-linux-x86_64.lock`; the matching wheelhouse
-manifest is `release/confflow-2.1.4-py312-linux-x86_64.SHA256SUMS`. Together
+`release/confflow-2.1.5-py312-linux-x86_64.lock`; the matching wheelhouse
+manifest is `release/confflow-2.1.5-py312-linux-x86_64.SHA256SUMS`. Together
 they cover every direct and transitive distribution for that one deployment
 target with exact versions and SHA-256 hashes.
 
@@ -181,7 +214,7 @@ Wheelhouse regeneration from the checked-in selection and hashes:
 python -m pip install --disable-pip-version-check "pip==26.0.1"
 python -m pip download --disable-pip-version-check --only-binary=:all: \
   --require-hashes --dest <wheelhouse> \
-  -r release/confflow-2.1.4-py312-linux-x86_64.lock
+  -r release/confflow-2.1.5-py312-linux-x86_64.lock
 ```
 
 That command reproduces the wheelhouse; it does not claim to re-resolve or
