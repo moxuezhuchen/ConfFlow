@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+from confflow.config.models import GlobalOptions
 from confflow.core.pairs import normalize_pair_list
 from confflow.workflow.engine import count_conformers_any, run_workflow, validate_inputs_compatible
 from confflow.workflow.helpers import as_list, count_conformers_in_xyz, resolve_step_output
@@ -97,8 +98,18 @@ def test_run_workflow_dispatches_to_step_handlers(tmp_path, monkeypatch):
         return StepExecutionResult(output_path=str(path))
 
     def fake_calc(
-        step_dir, current_input, params, global_config, root_dir, steps, failure_tracker, step_name
+        step_dir,
+        current_input,
+        params,
+        global_config,
+        root_dir,
+        steps,
+        failure_tracker,
+        step_name,
+        *,
+        typed_global,
     ):
+        assert isinstance(typed_global, GlobalOptions)
         del current_input, params, global_config, root_dir, steps, failure_tracker, step_name
         path = Path(step_dir) / "result.xyz"
         Path(step_dir).mkdir(parents=True, exist_ok=True)
@@ -148,6 +159,121 @@ def test_run_workflow_skips_disabled_steps(tmp_path, monkeypatch):
     }
 
 
+def test_finalize_workflow_preserves_engine_hooks_and_state_before_sidecars(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+
+    from confflow.workflow import engine as engine_module
+    from confflow.workflow.state import WorkflowState
+
+    events = []
+    final_output = str(tmp_path / "final.xyz")
+    state = WorkflowState(
+        run_id="run-1",
+        work_dir=str(tmp_path),
+        input_files=["input.xyz"],
+        original_inputs=["input.xyz"],
+        config_file="workflow.yaml",
+    )
+
+    class Tracker:
+        def finalize(self, output):
+            events.append(("stats_finalize", output))
+            return {"steps": [], "final_output": output}
+
+    class Store:
+        def save(self, saved_state):
+            events.append(("state_save", saved_state.final_status, saved_state.wavefront_index))
+
+    def trace(stats):
+        events.append(("trace", stats["terminal_outputs"]))
+        raise ValueError("trace is best effort")
+
+    def report(output, originals, stats, logger):
+        del originals, stats, logger
+        events.append(("report", output))
+
+    def write_stats(root_dir, stats):
+        events.append(("sidecars", root_dir, stats["terminal_outputs"]))
+
+    monkeypatch.setattr(engine_module, "Tracer", SimpleNamespace(trace_low_energy=trace))
+    monkeypatch.setattr(engine_module, "emit_final_report_and_lowest", report)
+    monkeypatch.setattr(engine_module, "write_final_statistics", write_stats)
+
+    result = engine_module.finalize_workflow(
+        root_dir=str(tmp_path),
+        original_inputs=["input.xyz"],
+        final_output=final_output,
+        terminal_outputs={"calc": [final_output]},
+        execution_count=2,
+        state=state,
+        state_store=Store(),
+        stats_tracker=Tracker(),
+        logger=Mock(),
+    )
+
+    assert result == {
+        "steps": [],
+        "final_output": final_output,
+        "terminal_outputs": {"calc": [final_output]},
+    }
+    assert state.final_status == "completed"
+    assert state.wavefront_index == 2
+    assert [event[0] for event in events] == [
+        "stats_finalize",
+        "state_save",
+        "trace",
+        "report",
+        "sidecars",
+    ]
+
+
+def test_finalize_workflow_keeps_report_and_sidecar_exception_semantics(tmp_path, monkeypatch):
+    from unittest.mock import Mock
+
+    from confflow.workflow import engine as engine_module
+    from confflow.workflow.state import WorkflowState
+
+    state = WorkflowState(
+        run_id="run-1",
+        work_dir=str(tmp_path),
+        input_files=["input.xyz"],
+        original_inputs=["input.xyz"],
+        config_file="workflow.yaml",
+    )
+
+    class Tracker:
+        def finalize(self, output):
+            return {"final_output": output, "steps": []}
+
+    class Store:
+        def save(self, saved_state):
+            del saved_state
+
+    logger = Mock()
+    monkeypatch.setattr(
+        engine_module,
+        "emit_final_report_and_lowest",
+        Mock(side_effect=RuntimeError("report failed")),
+    )
+    tracer = Mock()
+    monkeypatch.setattr(engine_module, "Tracer", tracer)
+    with pytest.raises(RuntimeError, match="report failed"):
+        engine_module.finalize_workflow(
+            root_dir=str(tmp_path),
+            original_inputs=["input.xyz"],
+            final_output="final.xyz",
+            terminal_outputs={},
+            execution_count=1,
+            state=state,
+            state_store=Store(),
+            stats_tracker=Tracker(),
+            logger=logger,
+        )
+
+    logger.debug.assert_not_called()
+
+
 def test_run_workflow_forwards_custom_calc_executor_and_notifies_status(tmp_path, monkeypatch):
     input_xyz = tmp_path / "input.xyz"
     input_xyz.write_text("1\nseed\nH 0 0 0\n", encoding="utf-8")
@@ -175,7 +301,9 @@ def test_run_workflow_forwards_custom_calc_executor_and_notifies_status(tmp_path
         step_name,
         *,
         calc_executor,
+        typed_global,
     ):
+        assert isinstance(typed_global, GlobalOptions)
         del current_input, params, global_config, root_dir, steps, failure_tracker, step_name
         seen["executor"] = calc_executor
         path = Path(step_dir) / "result.xyz"

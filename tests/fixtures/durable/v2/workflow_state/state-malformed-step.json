@@ -1,0 +1,17 @@
+{
+  "config_file": "/fixture/workflow.yaml",
+  "content_schema": "confflow.workflow_state.v1",
+  "input_files": [
+    "/fixture/input.xyz"
+  ],
+  "original_inputs": [
+    "/fixture/input.xyz"
+  ],
+  "run_id": "run-v2-malformed",
+  "steps": {
+    "calc": [
+      "lost-record"
+    ]
+  },
+  "work_dir": "/fixture/work"
+}

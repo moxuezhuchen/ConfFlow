@@ -9,10 +9,12 @@ from dataclasses import dataclass
 from typing import Any
 
 from ..calc.runner import CalcStepRequest, CalcStepRunner
-from ..config.models import CalcStepParams, load_workflow_model
+from ..config.canonical import resolve_calc_step
+from ..config.models import load_workflow_model
 from ..core.exceptions import ConfigurationError
 from ..core.io import read_xyz_file
 from ..core.path_policy import resolve_sandbox_root, validate_managed_path
+from .composition import configure_default_refine
 
 __all__ = [
     "RerunFailedResult",
@@ -136,7 +138,8 @@ def run_rerun_failed(
     if not isinstance(params, dict):
         raise ConfigurationError(f"Step {step_index + 1} params must be a dict")
 
-    calc_config = CalcStepParams.from_params(params, global_config)
+    calc_config = resolve_calc_step(params, global_config)
+    configure_default_refine()
     result = CalcStepRunner().run(
         CalcStepRequest(
             step_name=str(step.get("name", f"step_{step_index + 1}")),

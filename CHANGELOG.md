@@ -5,6 +5,21 @@
 > The archived-snapshot notice below describes the earlier repository state. ConfFlow is active again
 > as JobDesk's external chemistry workflow dependency beginning with v1.4.0.
 
+## v2.1.3 (2026-08-27) - Full remediation release
+
+### Changed
+
+- Promoted the full remediation candidate to the 2.1.3 release line while
+  preserving the v2.0.0 schema and release inputs as immutable historical
+  records.
+- Added exact candidate-pair and pre-switch JobDesk contract gates for the
+  producer/consumer release boundary.
+
+### Validation
+
+- Release artifacts remain bound to the annotated tag's peeled commit,
+  checksums, SBOM, provenance record, and build attestation.
+
 ## v2.0.0 (2026-08-11) - Phase F owner-exception release
 
 ### Changed

@@ -11,36 +11,43 @@ APIs.
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
-import os
-import stat
 import sys
 import time
 from collections.abc import Callable, Sequence
 from contextlib import redirect_stderr, redirect_stdout
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from typing import Any
 
-import psutil
-
+from . import worker_attempt as _worker_attempt
+from . import worker_sidecars as _worker_sidecars
+from . import worker_staging as _worker_staging
+from . import worker_supervision as _worker_supervision
 from .application.execution.errors import ErrorCode, ExecutionServiceError
 from .application.execution.launch_lease import TokenLaunchLease
 from .application.execution.models import RunState
 from .application.execution.sqlite import SQLiteExecutionRepository
 from .application.execution.state_root import StateRoot
 from .application.execution.workflow_adapter import (
-    WorkflowRunSpec,
     build_workflow_service,
     open_control_service,
 )
-from .control import _validator
-from .core.contracts import cli_output_to_txt, output_txt_path_for_input
+from .core.contracts import cli_output_to_txt
 from .core.exceptions import StopRequestedError
 from .core.logging import redirect_logging_streams
+from .worker_handoff import (
+    HANDOFF_SCHEMA,
+    _canonical_json,
+    _file_digest,
+    _load_handoff,
+    _read_json_file,
+    _safe_absolute_path,
+    _sha256_bytes,
+    _validate_attempt_root,
+    _validate_path,
+)
 from .workflow.engine import run_workflow
 
-HANDOFF_SCHEMA = "confflow.control.worker-handoff.v1"
 _TERMINAL_STATES = frozenset({RunState.COMPLETED, RunState.FAILED, RunState.CANCELLED})
 
 
@@ -171,37 +178,29 @@ def run_control_worker(
                 tasks,
                 expected_config_digest=payload["workflow_config"]["sha256"],
             )
-            run_paths = root.ensure_run_paths(run_id)
-            spec = WorkflowRunSpec(
-                run_id=run_id,
-                input_xyz=tuple(item["input_xyz"] for item in staged_tasks),
-                config_file=staged_config,
-                work_dir=staged_tasks[0]["work_dir"],
-                original_input_files=tuple(item["input_xyz"] for item in staged_tasks),
-                resume=resume,
-                pause_beacon_file=str(run_paths.work / "PAUSE"),
-                cancel_beacon_file=str(run_paths.work / "CANCEL"),
-            )
-            service, executor = build_workflow_service(
-                spec,
-                state_root=root.path,
-                workflow_runner=_worker_workflow_runner(
-                    workflow_runner,
-                    original_input=staged_tasks[0]["input_xyz"],
-                    root=root,
-                    work_dir=tasks[0]["work_dir"],
-                ),
-            )
-            executor_snapshot = service.consume_queued_launch(run_id)
-            if executor_snapshot.state in _TERMINAL_STATES:
-                return executor_snapshot.state
             try:
-                executor.wait()
+                attempt_state = _worker_attempt.run_worker_attempt(
+                    root=root,
+                    run_id=run_id,
+                    staged_config=staged_config,
+                    staged_tasks=staged_tasks,
+                    resume=resume,
+                    workflow_runner=_worker_workflow_runner(
+                        workflow_runner,
+                        original_input=staged_tasks[0]["input_xyz"],
+                        root=root,
+                        work_dir=tasks[0]["work_dir"],
+                    ),
+                    service_builder=build_workflow_service,
+                )
             except StopRequestedError:
                 # A pause beacon is a normal lifecycle boundary. The executor
                 # records PAUSED before re-raising; release the token lease so
                 # a later producer resume can claim the new queued attempt.
                 pass
+            else:
+                if attempt_state in _TERMINAL_STATES:
+                    return attempt_state
         finally:
             lease.release()
         current = repository.read(run_id)
@@ -249,64 +248,6 @@ def main(args_list: Sequence[str] | None = None) -> int:
     return 0 if state is RunState.COMPLETED else 1
 
 
-def _load_handoff(
-    path: str | Path, run_id: str, root: StateRoot
-) -> tuple[dict[str, Any], str, list[dict[str, str]]]:
-    attempt_root = _validate_attempt_root(root)
-    handoff_path = _validate_path(path, attempt_root, "handoff", kind="file")
-    payload = _read_json_file(handoff_path)
-    if not isinstance(payload, dict):
-        raise ValueError("control worker handoff must be an object")
-    try:
-        _validator("worker-handoff.schema.json").validate(payload)
-    except Exception as error:  # jsonschema.ValidationError is intentionally optional here
-        raise ValueError(f"control worker handoff schema validation failed: {error}") from error
-    if payload.get("run_id") != run_id or payload.get("content_schema") != HANDOFF_SCHEMA:
-        raise ValueError("control worker handoff identity does not match the requested run")
-    config = payload["workflow_config"]
-    config_path = _safe_absolute_path(config["path"], "workflow_config.path")
-    _validate_path(config_path, attempt_root, "workflow_config.path", kind="file")
-    if _file_digest(config_path) != config["sha256"]:
-        raise ValueError("workflow configuration digest does not match handoff")
-    tasks: list[dict[str, str]] = []
-    for item in payload["tasks"]:
-        input_path = _safe_absolute_path(item["input_xyz"], "task.input_xyz")
-        if Path(input_path).suffix.lower() != ".xyz":
-            raise ValueError("task.input_xyz must use the .xyz extension")
-        work_dir = _safe_absolute_path(item["work_dir"], "task.work_dir")
-        _validate_path(input_path, attempt_root, "task.input_xyz", kind="file")
-        _validate_path(
-            work_dir, attempt_root, "task.work_dir", kind="directory", allow_missing=True
-        )
-        if _file_digest(input_path) != item["sha256"]:
-            raise ValueError(f"input digest does not match task {item['task_id']}")
-        tasks.append(
-            {
-                "task_id": item["task_id"],
-                "input_xyz": input_path,
-                "work_dir": work_dir,
-                "sha256": item["sha256"],
-            }
-        )
-    return payload, config_path, tasks
-
-
-def _validate_attempt_root(root: StateRoot) -> Path:
-    """Require the state-root parent to be an owner-controlled attempt root."""
-    attempt_root = root.path.parent
-    metadata = os.lstat(attempt_root)
-    uid = os.getuid()
-    if (
-        not stat.S_ISDIR(metadata.st_mode)
-        or metadata.st_uid != uid
-        or stat.S_IMODE(metadata.st_mode) & (stat.S_IWGRP | stat.S_IWOTH)
-    ):
-        raise ValueError(
-            "control worker state-root parent must be owner-controlled and non-writable"
-        )
-    return attempt_root.resolve(strict=True)
-
-
 def _token_lease(root: StateRoot, run_id: str, token: str) -> TokenLaunchLease:
     """Create a lease below StateRoot's validated private runs layout."""
     paths = root.ensure_run_paths(run_id)
@@ -314,97 +255,23 @@ def _token_lease(root: StateRoot, run_id: str, token: str) -> TokenLaunchLease:
 
 
 def _complete_owner_marker(owner: dict[str, object] | None) -> bool:
-    """Require a marker produced by the lease-aware worker implementation."""
-    if not isinstance(owner, dict):
-        return False
-    pid = owner.get("pid")
-    pgid = owner.get("pgid")
-    return (
-        isinstance(pid, int)
-        and pid > 0
-        and isinstance(pgid, int)
-        and pgid > 0
-        and owner.get("isolated_session") is True
-    )
+    """Compatibility wrapper preserving the historical patch seam."""
+    return _worker_supervision._complete_owner_marker(owner)
 
 
 def _cancel_owner_is_stopped(work_dir: str, *, owner: dict[str, object] | None) -> bool:
-    """Prove that a queued cancellation has no active worker to stop."""
-    if owner is not None and not _complete_owner_marker(owner):
-        return False
-    return not _has_live_work_process(work_dir, owner=owner)
+    """Compatibility wrapper preserving historical supervisor patch seams."""
+    return _worker_supervision._cancel_owner_is_stopped(
+        work_dir,
+        owner=owner,
+        complete_owner_marker=_complete_owner_marker,
+        has_live_work_process=_has_live_work_process,
+    )
 
 
 def _has_live_work_process(work_dir: str, *, owner: dict[str, object] | None = None) -> bool:
-    """Fail closed when a prior worker group or child owns the attempt directory."""
-    target = Path(work_dir).resolve(strict=False)
-    owner_pgid = owner.get("pgid") if isinstance(owner, dict) else None
-    if isinstance(owner_pgid, int) and owner_pgid > 0 and hasattr(os, "killpg"):
-        try:
-            os.killpg(owner_pgid, 0)
-        except ProcessLookupError:
-            pass
-        except PermissionError:
-            return True
-        else:
-            return True
-    for process in psutil.process_iter(["pid", "cwd"]):
-        if process.info.get("pid") == os.getpid():
-            continue
-        try:
-            cwd = process.info.get("cwd")
-        except (psutil.AccessDenied, psutil.NoSuchProcess, psutil.ZombieProcess):
-            continue
-        if cwd:
-            try:
-                resolved_cwd = Path(cwd).resolve(strict=False)
-            except OSError:
-                return True
-            if resolved_cwd == target or target in resolved_cwd.parents:
-                return True
-    return False
-
-
-def _validate_path(
-    value: str | Path,
-    attempt_root: Path,
-    label: str,
-    *,
-    kind: str,
-    allow_missing: bool = False,
-) -> Path:
-    candidate = Path(value)
-    try:
-        relative = candidate.relative_to(attempt_root)
-    except ValueError as error:
-        raise ValueError(f"{label} must remain below the worker attempt root") from error
-    current = attempt_root
-    uid = os.getuid()
-    parts = relative.parts
-    if not parts:
-        raise ValueError(f"{label} must not be the attempt root")
-    for index, part in enumerate(parts):
-        current /= part
-        try:
-            metadata = os.lstat(current)
-        except FileNotFoundError:
-            if allow_missing and index == len(parts) - 1:
-                return current
-            raise ValueError(f"{label} does not exist") from None
-        if metadata.st_uid != uid or stat.S_ISLNK(metadata.st_mode):
-            raise ValueError(f"{label} must contain only owner-owned non-symlink paths")
-        if metadata.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
-            raise ValueError(f"{label} must not contain group/world-writable paths")
-        if index < len(parts) - 1 and not stat.S_ISDIR(metadata.st_mode):
-            raise ValueError(f"{label} has a non-directory parent")
-    metadata = os.lstat(current)
-    if metadata.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
-        raise ValueError(f"{label} must not contain group/world-writable paths")
-    if kind == "file" and not stat.S_ISREG(metadata.st_mode):
-        raise ValueError(f"{label} must be a regular file")
-    if kind == "directory" and not stat.S_ISDIR(metadata.st_mode):
-        raise ValueError(f"{label} must be a directory")
-    return current
+    """Compatibility wrapper preserving the historical patch seam."""
+    return _worker_supervision._has_live_work_process(work_dir, owner=owner)
 
 
 def _stage_worker_inputs(
@@ -415,113 +282,41 @@ def _stage_worker_inputs(
     *,
     expected_config_digest: str,
 ) -> tuple[str, list[dict[str, str]]]:
-    """Copy validated inputs into the producer-owned immutable staging root."""
-    paths = root.ensure_run_paths(run_id)
-    staged_config = _stage_file(
+    """Compatibility wrapper preserving the old monkeypatch seam."""
+    return _worker_staging._stage_worker_inputs(
+        root,
+        run_id,
         config_path,
-        paths.staging / "workflow.yaml",
-        expected_digest=expected_config_digest,
+        tasks,
+        expected_config_digest=expected_config_digest,
+        stage_file=_stage_file,
+        ensure_directory=_ensure_directory,
     )
-    staged_tasks: list[dict[str, str]] = []
-    for task in tasks:
-        input_name = Path(task["input_xyz"]).name
-        staged_input = _stage_file(
-            task["input_xyz"],
-            paths.staging / "inputs" / input_name,
-            expected_digest=task["sha256"],
-        )
-        staged_tasks.append({**task, "input_xyz": str(staged_input), "work_dir": task["work_dir"]})
-    _ensure_directory(Path(tasks[0]["work_dir"]))
-    return str(staged_config), staged_tasks
-
-
-def _publish_worker_sidecars(root: StateRoot, *, staged_input: str, work_dir: str) -> None:
-    """Publish CLI-compatible report/minimum files beside the workflow dir."""
-    attempt_root = _validate_attempt_root(root)
-    destination_root = Path(work_dir).parent
-    if destination_root != attempt_root:
-        _validate_path(
-            destination_root,
-            attempt_root,
-            "workflow result root",
-            kind="directory",
-        )
-    for source in (
-        Path(output_txt_path_for_input(staged_input)),
-        Path(staged_input).with_name(f"{Path(staged_input).stem}min.xyz"),
-    ):
-        if not source.is_file():
-            raise FileNotFoundError(f"worker completed without required sidecar: {source.name}")
-        destination = destination_root / source.name
-        _validate_path(
-            destination,
-            attempt_root,
-            "worker sidecar",
-            kind="file",
-            allow_missing=True,
-        )
-        if source == destination:
-            continue
-        _stage_file(source, destination, expected_digest=_file_digest(str(source)))
 
 
 def _stage_file(source: str, destination: Path, *, expected_digest: str) -> Path:
-    """Copy one owner-owned regular file through a no-follow descriptor."""
-    nofollow = getattr(os, "O_NOFOLLOW", 0)
-    try:
-        source_fd = os.open(source, os.O_RDONLY | nofollow)
-    except OSError as error:
-        raise ValueError(f"cannot securely open worker input {source}: {error}") from error
-    try:
-        metadata = os.fstat(source_fd)
-        if not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != os.getuid():
-            raise ValueError(f"worker input must be an owner-owned regular file: {source}")
-        digest = hashlib.sha256()
-        destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        target_fd = os.open(
-            destination,
-            os.O_WRONLY | os.O_CREAT | os.O_TRUNC | nofollow,
-            0o600,
-        )
-        try:
-            while True:
-                chunk = os.read(source_fd, 1024 * 1024)
-                if not chunk:
-                    break
-                digest.update(chunk)
-                remaining = memoryview(chunk)
-                while remaining:
-                    written = os.write(target_fd, remaining)
-                    if written <= 0:
-                        raise OSError("worker input staging write made no progress")
-                    remaining = remaining[written:]
-            os.fsync(target_fd)
-        finally:
-            os.close(target_fd)
-        if digest.hexdigest() != expected_digest:
-            raise ValueError(f"worker input changed while being staged: {source}")
-        return destination
-    finally:
-        os.close(source_fd)
+    """Compatibility wrapper for the extracted secure file stager."""
+    return _worker_staging._stage_file(
+        source,
+        destination,
+        expected_digest=expected_digest,
+    )
 
 
 def _ensure_directory(path: Path) -> None:
-    path.mkdir(parents=True, exist_ok=True, mode=0o700)
-    metadata = os.lstat(path)
-    if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(metadata.st_mode):
-        raise ValueError("worker work_dir must be a non-symlink directory")
-    if metadata.st_uid != os.getuid():
-        raise ValueError("worker work_dir must be owner-owned")
-    os.chmod(path, 0o700)
+    """Compatibility wrapper for the extracted secure directory validator."""
+    _worker_staging._ensure_directory(path)
 
 
-def _safe_absolute_path(value: object, label: str) -> str:
-    if not isinstance(value, str) or not value.startswith("/") or "\\" in value:
-        raise ValueError(f"{label} must be an absolute POSIX path")
-    path = PurePosixPath(value)
-    if ".." in path.parts:
-        raise ValueError(f"{label} must not contain parent traversal")
-    return path.as_posix()
+def _publish_worker_sidecars(root: StateRoot, *, staged_input: str, work_dir: str) -> None:
+    """Compatibility wrapper preserving the historical worker patch seam."""
+    _worker_sidecars._publish_worker_sidecars(
+        root,
+        staged_input=staged_input,
+        work_dir=work_dir,
+        stage_file=_stage_file,
+        file_digest=_file_digest,
+    )
 
 
 def _worker_workflow_runner(
@@ -550,62 +345,20 @@ def _worker_workflow_runner(
     return _run
 
 
-def _read_json_file(path: Path) -> dict[str, Any]:
-    """Read one owner-owned regular JSON file through a stable descriptor."""
-    nofollow = getattr(os, "O_NOFOLLOW", 0)
-    try:
-        fd = os.open(path, os.O_RDONLY | nofollow)
-    except OSError as error:
-        raise ValueError(f"cannot securely open worker handoff {path}: {error}") from error
-    try:
-        metadata = os.fstat(fd)
-        if (
-            not stat.S_ISREG(metadata.st_mode)
-            or metadata.st_uid != os.getuid()
-            or metadata.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
-        ):
-            raise ValueError("worker handoff must be an owner-owned non-writable regular file")
-        chunks: list[bytes] = []
-        while True:
-            chunk = os.read(fd, 1024 * 1024)
-            if not chunk:
-                break
-            chunks.append(chunk)
-    finally:
-        os.close(fd)
-    try:
-        value = json.loads(b"".join(chunks).decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as error:
-        raise ValueError(f"worker handoff is not valid UTF-8 JSON: {path}") from error
-    if not isinstance(value, dict):
-        raise ValueError("control worker handoff must be an object")
-    return value
-
-
-def _file_digest(path: str) -> str:
-    with Path(path).open("rb") as handle:
-        digest = hashlib.sha256()
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
-def _canonical_json(value: object) -> bytes:
-    return json.dumps(
-        value,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-        allow_nan=False,
-    ).encode("utf-8")
-
-
-def _sha256_bytes(value: bytes) -> str:
-    return hashlib.sha256(value).hexdigest()
-
-
 if __name__ == "__main__":  # pragma: no cover - exercised at the process boundary
     raise SystemExit(main())
 
 
-__all__ = ["HANDOFF_SCHEMA", "main", "run_control_worker"]
+__all__ = [
+    "HANDOFF_SCHEMA",
+    "_canonical_json",
+    "_file_digest",
+    "_load_handoff",
+    "_read_json_file",
+    "_safe_absolute_path",
+    "_sha256_bytes",
+    "_validate_attempt_root",
+    "_validate_path",
+    "main",
+    "run_control_worker",
+]

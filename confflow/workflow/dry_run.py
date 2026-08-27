@@ -9,7 +9,8 @@ from math import prod
 from typing import Any
 
 from ..blocks.confgen.rotations import _parse_chain, _resolve_angle_lists
-from ..config.models import CalcStepParams, load_workflow_model
+from ..config.canonical import resolve_calc_step
+from ..config.models import load_workflow_model
 from ..core.io import parse_gaussian_input_text
 from ..core.path_policy import (
     resolve_sandbox_root,
@@ -161,7 +162,7 @@ def run_dry_run(input_files: list[str], config_file: str, work_dir: str) -> None
         if step_type in {"confgen", "gen"}:
             print(f"  confgen combinations: {estimate_confgen_combinations(params)}")
         elif step_type in {"calc", "task"}:
-            typed = CalcStepParams.from_params(params, global_config)
+            typed = resolve_calc_step(params, global_config)
             resolved = typed.to_runtime_dict()
             _validate_path_settings({**global_dict, **resolved}, work_dir)
             _print_calc_preview(resolved)

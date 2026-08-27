@@ -23,6 +23,10 @@ It is not recommended for:
 - Non-isolated real production compute environments
 - Untrusted YAML, XYZ, Gaussian keywords, ORCA blocks, or executable paths
 
+### Identity boundaries
+
+The shared source tree /opt/ConfFlow, this isolated candidate /opt/.worktrees/confflow-full-remediation-c6a4263-20260824, the published v2.0.0 package, and the configured production executable are distinct identities. Candidate wheels are local review artifacts until published; they do not replace a released package or promote a production endpoint.
+
 ## Features
 
 - YAML-driven workflow execution from XYZ inputs

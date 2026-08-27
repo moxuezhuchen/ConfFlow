@@ -89,19 +89,19 @@ def test_unknown_attribute_raises_attribute_error():
         _ = dag_pkg.NonExistentName  # type: ignore[attr-defined]
 
 
-def test_explicit_engine_path_does_not_use_legacy():
-    """``workflow.engine`` must use the explicit DAG API, not the legacy classes."""
+def test_explicit_planning_path_does_not_use_legacy():
+    """The typed planning boundary must use explicit DAG APIs, not legacy classes."""
     import inspect
 
-    from confflow.workflow import engine as engine_module
+    from confflow.workflow import plan as plan_module
 
-    source = inspect.getsource(engine_module)
+    source = inspect.getsource(plan_module)
     assert "build_step_graph" in source
     assert "topo_order" in source
     for name in ("DAGGraph", "DAGStep", "WorkflowDAG"):
         assert (
             f"import {name}" not in source
-        ), f"engine must not import legacy {name!r}; rely on the explicit API"
+        ), f"typed planner must not import legacy {name!r}; rely on the explicit API"
 
 
 def test_legacy_classes_have_correct_behavior_regression():

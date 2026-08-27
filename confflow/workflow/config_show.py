@@ -8,7 +8,8 @@ import json
 from dataclasses import asdict, is_dataclass
 from typing import Any
 
-from ..config.models import CalcStepParams, load_workflow_model
+from ..config.canonical import resolve_calc_step
+from ..config.models import load_workflow_model
 
 __all__ = [
     "show_resolved_config",
@@ -78,7 +79,7 @@ def _resolve_step_config(
     if step_type in {"calc", "task"}:
         del root_dir, all_steps
         try:
-            resolved = CalcStepParams.from_params(params, global_config).to_runtime_dict()
+            resolved = resolve_calc_step(params, global_config).to_runtime_dict()
         except ValueError as exc:
             resolved = _config_as_dict(global_config)
             resolved.update(params)

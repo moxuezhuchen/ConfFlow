@@ -8,7 +8,7 @@ ConfFlow 是一个自动化计算化学工作流引擎，用于分子构象搜�
 
 当前主执行路径已切换到破兼容后的结构：
 
-- 配置入口：`confflow.config.models.WorkflowConfig` / `CalcStepParams`
+- 配置入口：confflow.config.canonical 的 parser/types/schema；confflow.config.models 与 confflow.core.models 仅是兼容 facade。
 - workflow -> calc：`workflow.step_handlers` 直接构造 typed calc config
 - calc step 执行：`confflow.calc.runner.CalcStepRunner`
 - calc step 状态：`manifest.json`，不再以 `.config_hash` 作为新主路径合同
@@ -30,7 +30,7 @@ confflow/
 │   ├── xyz_metadata.py       # XYZ 注释元数据与 CID 处理
 │   ├── gaussian_input.py     # Gaussian 输入与坐标解析
 │   ├── data.py               # 共价半径、元素符号等化学数据
-│   ├── models.py             # Pydantic 数据模型定义
+│   ├── models.py             # canonical Pydantic 模型的 compatibility facade
 │   ├── types.py              # 类型定义与常量
 │   ├── constants.py          # 核心常量
 │   ├── contracts.py          # 输入/输出契约验证
@@ -44,8 +44,8 @@ confflow/
 │   └── cli_base.py           # CLI 基础工具
 │
 ├── config/                    # 配置层（配置加载、解析、验证）
-│   ├── __init__.py
-│   └── models.py             # typed workflow/calc 配置模型
+│   ├── canonical/            # producer-owned parser/types/schema/serialization
+│   └── models.py             # compatibility facade, no independent rules
 │
 ├── shared/                    # 轻量共享层（稳定常量/格式化/结构校验）
 │   ├── __init__.py

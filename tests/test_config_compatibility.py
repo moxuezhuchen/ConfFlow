@@ -170,6 +170,24 @@ def test_v2_canonical_payload_and_digest_are_frozen():
     assert "allowed_executables" not in canonical
 
 
+def test_v2_public_config_and_core_model_exports_are_frozen():
+    import confflow.config as config
+    import confflow.core.models as core_models
+
+    assert config.__all__ == [
+        "CalcStepParams",
+        "CleanupOptions",
+        "ExecutionOptions",
+        "GlobalOptions",
+        "ResourceOptions",
+        "StepConfig",
+        "TSOptions",
+        "WorkflowConfig",
+        "load_workflow_model",
+    ]
+    assert core_models.__all__ == ["TaskContext", "GlobalConfigModel", "CalcConfigModel"]
+
+
 def test_config_layer_does_not_import_legacy_core_model_internals():
     source = Path("confflow/config/models.py").read_text(encoding="utf-8")
     tree = ast.parse(source)
