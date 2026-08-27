@@ -58,28 +58,40 @@ _HANDSHAKE_PROBE = any(flag in sys.argv[1:] for flag in ("--version", "--capabil
 _CAPABILITY_SCHEMA_VERSION: int = CAPABILITY_SCHEMA_VERSION
 
 
-def _resolved_confflow_executable(executable_override: str | None = None) -> str | None:
-    """Return the entry point belonging to the interpreter running this probe.
+def _executable_candidates(candidate: Path) -> tuple[Path, ...]:
+    """Return a launcher path and its Windows ``.exe`` sibling when relevant."""
+    if os.name != "nt" or candidate.suffix or not candidate.name:
+        return (candidate,)
+    return (candidate.with_name(f"{candidate.name}.exe"), candidate)
 
-    A capability probe may be invoked with an absolute path while another
-    ConfFlow shim remains earlier on ``PATH``. Prefer the console script next
-    to ``sys.executable`` so the reported executable cannot silently describe
-    a different venv; retain argv/PATH fallbacks for legacy module launchers.
+
+def _resolve_existing_executable(candidate: Path) -> str | None:
+    """Resolve a console launcher while preserving its on-disk identity."""
+    for path in _executable_candidates(candidate):
+        path_text = os.fspath(path)
+        if path_text and os.path.isfile(path_text):
+            return os.path.realpath(os.path.abspath(path_text))
+    return None
+
+
+def _resolved_confflow_executable(executable_override: str | None = None) -> str | None:
+    """Return the executable that actually invoked this capability probe.
+
+    Windows console launchers can report ``sys.argv[0]`` without the ``.exe``
+    suffix. Resolve that same-name sibling before considering the interpreter
+    directory or ``PATH`` so a side-by-side installation cannot be misbound.
     """
     if executable_override is not None:
-        candidate = Path(executable_override)
-        if candidate.is_file():
-            return os.path.realpath(os.path.abspath(os.fspath(candidate)))
-        return None
+        return _resolve_existing_executable(Path(executable_override))
 
-    candidates = [Path(sys.executable).with_name("confflow"), Path(sys.argv[0])]
+    candidates = [Path(sys.argv[0]), Path(sys.executable).with_name("confflow")]
     path_executable = shutil.which("confflow")
     if path_executable:
         candidates.append(Path(path_executable))
     for candidate in candidates:
-        candidate_text = os.fspath(candidate)
-        if candidate_text and os.path.isfile(candidate_text):
-            return os.path.realpath(os.path.abspath(candidate_text))
+        resolved = _resolve_existing_executable(candidate)
+        if resolved is not None:
+            return resolved
     return None
 
 

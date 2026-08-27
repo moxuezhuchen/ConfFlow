@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 import rfc8785
 
+import confflow.fixture_agent as fixture_module
 from confflow.application.execution.synthetic_producer import (
     SYNTHETIC_ARTIFACT,
     SYNTHETIC_ARTIFACT_PATH,
@@ -102,6 +103,32 @@ def test_fixture_entrypoint_capabilities_bind_to_actual_executable(
     assert payload["executable"]["device_inode"] == f"{metadata.st_dev}:{metadata.st_ino}"
     assert payload["executable"]["sha256"] == hashlib.sha256(executable.read_bytes()).hexdigest()
     assert payload["executable"]["python"] == os.path.abspath(sys.executable)
+
+
+def test_fixture_actual_entrypoint_prefers_windows_exe_sibling(monkeypatch, tmp_path: Path):
+    """Bind a launcher that reports argv[0] without Windows' .exe suffix."""
+    reported = tmp_path / "confflow-fixture-agent"
+    invoked = reported.with_name(f"{reported.name}.exe")
+    reported.write_text("launcher metadata", encoding="utf-8")
+    invoked.write_bytes(b"MZ fixture launcher")
+    monkeypatch.setattr(fixture_module.cli.os, "name", "nt")
+    monkeypatch.setattr(fixture_module.sys, "argv", [str(reported)])
+
+    assert fixture_module._actual_entrypoint() == str(invoked.resolve())
+
+
+def test_fixture_actual_entrypoint_keeps_posix_reported_path_before_exe_sibling(
+    monkeypatch, tmp_path: Path
+):
+    """A POSIX fixture launcher keeps its real no-suffix entrypoint."""
+    reported = tmp_path / "confflow-fixture-agent"
+    sibling = reported.with_name(f"{reported.name}.exe")
+    reported.write_text("POSIX launcher", encoding="utf-8")
+    sibling.write_bytes(b"not the POSIX launcher")
+    monkeypatch.setattr(fixture_module.cli.os, "name", "posix")
+    monkeypatch.setattr(fixture_module.sys, "argv", [str(reported)])
+
+    assert fixture_module._actual_entrypoint() == str(reported.resolve())
 
 
 def test_fixture_console_script_is_declared_as_a_package_entrypoint():

@@ -6,11 +6,11 @@ on:
       tag:
         description: Annotated tag to release
         required: true
-        default: v2.1.3
+        default: v2.1.4
         type: string
   push:
     tags:
-      - "v2.1.3"
+      - "v*"
 
 permissions:
   contents: write
@@ -21,6 +21,8 @@ jobs:
   build:
     name: Build release artifacts
     runs-on: ubuntu-latest
+    env:
+      EXPECTED_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
 
     steps:
       - name: Checkout
@@ -41,13 +43,68 @@ jobs:
           python -m pip install build cyclonedx-bom
 
       - name: Verify tagged clean checkout
-        env:
-          EXPECTED_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
         run: |
           set -euo pipefail
-          test "$EXPECTED_TAG" = "v2.1.3"
+          PROJECT_VERSION="$(python - <<'PY'
+          import tomllib
+          from pathlib import Path
+
+          print(tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))["project"]["version"])
+          PY
+          )"
+          EXPECTED_VERSION="${EXPECTED_TAG#v}"
+          test -n "$PROJECT_VERSION"
+          test "$EXPECTED_VERSION" = "$PROJECT_VERSION"
+          test "$(git cat-file -t "$EXPECTED_TAG")" = "tag"
           test -z "$(git status --porcelain)"
           test "$(git rev-parse HEAD)" = "$(git rev-parse "$EXPECTED_TAG^{commit}")"
+          RELEASE_LOCK="release/confflow-${PROJECT_VERSION}-py312-linux-x86_64.lock"
+          RELEASE_MANIFEST="release/confflow-${PROJECT_VERSION}-py312-linux-x86_64.SHA256SUMS"
+          test -s "$RELEASE_LOCK"
+          test -s "$RELEASE_MANIFEST"
+          {
+            echo "RELEASE_VERSION=$PROJECT_VERSION"
+            echo "RELEASE_LOCK=$RELEASE_LOCK"
+            echo "RELEASE_MANIFEST=$RELEASE_MANIFEST"
+          } >> "$GITHUB_ENV"
+
+      - name: Verify pip runtime wheelhouse against committed manifest
+        run: |
+          set -euo pipefail
+          WHEELHOUSE="${RUNNER_TEMP}/confflow-${RELEASE_VERSION}-wheelhouse"
+          rm -rf "$WHEELHOUSE"
+          mkdir -p "$WHEELHOUSE"
+          python -m pip download \
+            --disable-pip-version-check \
+            --only-binary=:all: \
+            --require-hashes \
+            --dest "$WHEELHOUSE" \
+            -r "$RELEASE_LOCK"
+          cp -- "$RELEASE_MANIFEST" "$WHEELHOUSE/SHA256SUMS"
+          python - "$RELEASE_LOCK" "$WHEELHOUSE" <<'PY'
+          from __future__ import annotations
+
+          import platform
+          import sys
+          import sysconfig
+          from pathlib import Path
+
+          from confflow.release_dependencies import validate_dependency_inputs
+
+          lock = Path(sys.argv[1])
+          wheelhouse = Path(sys.argv[2])
+          evidence = validate_dependency_inputs(
+              lock,
+              wheelhouse,
+              runtime_identity={
+                  "python_version": platform.python_version(),
+                  "python_implementation": platform.python_implementation(),
+                  "platform": sysconfig.get_platform(),
+                  "machine": platform.machine(),
+              },
+          )
+          print("verified pip wheelhouse: " + ", ".join(evidence.wheel_filenames))
+          PY
 
       - name: Clean dedicated dist and build final wheel and sdist once
         run: |
@@ -73,26 +130,28 @@ jobs:
           from __future__ import annotations
 
           import ast
+          import os
           import subprocess
           import zipfile
           from pathlib import Path
 
+          version = os.environ["RELEASE_VERSION"]
           dist = Path("dist")
-          wheels = sorted(dist.glob("confflow-2.1.3-*.whl"))
-          sdists = sorted(dist.glob("confflow-2.1.3.tar.gz"))
+          wheels = sorted(dist.glob(f"confflow-{version}-*.whl"))
+          sdists = sorted(dist.glob(f"confflow-{version}.tar.gz"))
           if len(wheels) != 1 or len(sdists) != 1:
               raise SystemExit(
-                  f"expected exactly one 2.1.3 wheel and sdist; got {wheels} / {sdists}"
+                  f"expected exactly one {version} wheel and sdist; got {wheels} / {sdists}"
               )
           wheel = wheels[0]
           expected_commit = subprocess.check_output(
               ["git", "rev-parse", "HEAD"], text=True
           ).strip()
           with zipfile.ZipFile(wheel) as archive:
-              metadata = archive.read("confflow-2.1.3.dist-info/METADATA").decode()
+              metadata = archive.read(f"confflow-{version}.dist-info/METADATA").decode()
               build_module = ast.parse(archive.read("confflow/__build__.py").decode())
-          if "Version: 2.1.3" not in metadata:
-              raise SystemExit("wheel metadata does not declare version 2.1.3")
+          if f"Version: {version}" not in metadata:
+              raise SystemExit(f"wheel metadata does not declare version {version}")
           values = {}
           for node in build_module.body:
               target = node.target if isinstance(node, ast.AnnAssign) else None
@@ -109,7 +168,7 @@ jobs:
         run: |
           set -euo pipefail
           cyclonedx-py requirements \
-            release/confflow-2.1.3-py312-linux-x86_64.lock \
+            "$RELEASE_LOCK" \
             --output-format JSON \
             --output-file dist/sbom.cdx.json
           test -s dist/sbom.cdx.json
@@ -118,12 +177,11 @@ jobs:
         id: attest
         uses: actions/attest-build-provenance@v2
         with:
-          subject-path: dist/confflow-2.1.3-*.whl
+          subject-path: dist/confflow-*.whl
           show-summary: true
 
       - name: Export attestation bundle and release attestation record
         env:
-          EXPECTED_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
           ATTESTATION_BUNDLE: ${{ steps.attest.outputs.bundle-path }}
         run: |
           set -euo pipefail
@@ -141,8 +199,9 @@ jobs:
           def digest(path: Path) -> str:
               return hashlib.sha256(path.read_bytes()).hexdigest()
 
+          version = os.environ["RELEASE_VERSION"]
           dist = Path("dist")
-          wheel = next(dist.glob("confflow-2.1.3-*.whl"))
+          wheel = next(dist.glob(f"confflow-{version}-*.whl"))
           bundle = dist / "attestation.bundle.json"
           commit = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
           payload = {
@@ -160,9 +219,13 @@ jobs:
           )
           PY
 
+      - name: Add controlled runtime inputs to release assets
+        run: |
+          set -euo pipefail
+          cp -- "$RELEASE_LOCK" "dist/$(basename "$RELEASE_LOCK")"
+          cp -- "$RELEASE_MANIFEST" "dist/$(basename "$RELEASE_MANIFEST")"
+
       - name: Write release provenance
-        env:
-          EXPECTED_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
         run: |
           set -euo pipefail
           python - <<'PY'
@@ -177,19 +240,29 @@ jobs:
           def digest(path: Path) -> str:
               return hashlib.sha256(path.read_bytes()).hexdigest()
 
+          version = os.environ["RELEASE_VERSION"]
           dist = Path("dist")
-          wheel = next(dist.glob("confflow-2.1.3-*.whl"))
-          sdist = next(dist.glob("confflow-2.1.3.tar.gz"))
+          wheel = next(dist.glob(f"confflow-{version}-*.whl"))
+          sdist = next(dist.glob(f"confflow-{version}.tar.gz"))
           sbom = dist / "sbom.cdx.json"
           attestation = dist / "attestation.json"
           attestation_bundle = dist / "attestation.bundle.json"
-          lock = Path("release/confflow-2.1.3-py312-linux-x86_64.lock")
-          wheelhouse_manifest = Path("release/confflow-2.1.3-py312-linux-x86_64.SHA256SUMS")
+          lock = Path(os.environ["RELEASE_LOCK"])
+          wheelhouse_manifest = Path(os.environ["RELEASE_MANIFEST"])
+          lock_asset = dist / lock.name
+          manifest_asset = dist / wheelhouse_manifest.name
+          if not lock_asset.is_file() or lock_asset.read_bytes() != lock.read_bytes():
+              raise SystemExit("release lock asset does not match the checked-in lock")
+          if (
+              not manifest_asset.is_file()
+              or manifest_asset.read_bytes() != wheelhouse_manifest.read_bytes()
+          ):
+              raise SystemExit("release wheelhouse manifest asset does not match the checked-in manifest")
           commit = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
           payload = {
               "schema": "confflow.release-provenance.v1",
               "package": "confflow",
-              "version": "2.1.3",
+              "version": version,
               "repository": os.environ["GITHUB_REPOSITORY"],
               "tag": os.environ["EXPECTED_TAG"],
               "commit": commit,
@@ -204,7 +277,9 @@ jobs:
               "attestation_bundle_filename": attestation_bundle.name,
               "attestation_bundle_sha256": digest(attestation_bundle),
               "attestation_subject_digest": digest(wheel),
+              "dependency_lock_filename": lock.name,
               "dependency_lock_sha256": digest(lock),
+              "wheelhouse_manifest_filename": wheelhouse_manifest.name,
               "wheelhouse_manifest_sha256": digest(wheelhouse_manifest),
           }
           (dist / "provenance.json").write_text(
@@ -213,8 +288,6 @@ jobs:
           PY
 
       - name: Write release notes and SHA256SUMS
-        env:
-          EXPECTED_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
         run: |
           set -euo pipefail
           {
@@ -250,7 +323,6 @@ jobs:
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
-          EXPECTED_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
         run: |
           set -euo pipefail
           gh release create "$EXPECTED_TAG" \

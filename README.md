@@ -25,7 +25,11 @@ It is not recommended for:
 
 ### Identity boundaries
 
-The shared source tree /opt/ConfFlow, this isolated candidate /opt/.worktrees/confflow-full-remediation-c6a4263-20260824, the published v2.0.0 package, and the configured production executable are distinct identities. Candidate wheels are local review artifacts until published; they do not replace a released package or promote a production endpoint.
+The shared source tree, this isolated v2.1.4 fix-forward candidate, the published
+v2.1.3 package, and the configured production executable are distinct identities.
+The v2.1.4 candidate is not published; the current production endpoint remains
+ConfFlow v2.0.0. Candidate wheels are local review artifacts and do not replace
+the published package or promote a production endpoint.
 
 ## Features
 
@@ -61,13 +65,14 @@ Requirements and packaging notes:
 - RDKit is required
 - `numba` is optional and only used for acceleration when installed
 
-## ConfFlow ↔ JobDesk Capability Handshake (v2.0.0 release)
+## ConfFlow ↔ JobDesk Capability Handshake (v2.1.4 candidate)
 
-ConfFlow 2.0.0 implements a version/capability probe used by JobDesk to
-validate compatibility before uploading or submitting workflow tasks:
+The ConfFlow 2.1.4 fix-forward candidate implements a version/capability probe
+used by JobDesk to validate compatibility before uploading or submitting
+workflow tasks:
 
 ```bash
-confflow --version          # prints "2.0.0"
+confflow --version          # prints "2.1.4" in the candidate environment
 confflow --capabilities --json
 ```
 
@@ -76,7 +81,7 @@ Capability contract (JSON, schema version **4**):
 ```json
 {
   "schema_version": 4,
-  "version": "2.0.0",
+  "version": "2.1.4",
   "capabilities": {
     "workflow_state": true,
     "resume": true,
@@ -106,13 +111,13 @@ Capability contract (JSON, schema version **4**):
   },
   "producer": {
     "package": "confflow",
-    "version": "2.0.0",
+    "version": "2.1.4",
     "build": {
       "commit": "<40-char git commit>",
       "dirty": false
     },
     "wheel": {
-      "filename": "confflow-2.0.0-py3-none-any.whl",
+      "filename": "confflow-2.1.4-py3-none-any.whl",
       "sha256": "<external SHA-256SUMS digest>"
     },
     "install_provenance": {
@@ -128,17 +133,17 @@ Capability contract (JSON, schema version **4**):
 }
 ```
 
-The release's `control_worker` value is `true` only on POSIX hosts with
+The candidate's `control_worker` value is `true` only on POSIX hosts with
 `O_DIRECTORY` and `O_NOFOLLOW`; Windows installations report `false` and must
 not accept the worker handoff.
 
-The current JobDesk compatibility branch pairs this release with a matching
-consumer; v1.4.6 remains rollback-only. The v2.0.0 release must be paired with
-a consumer that
-validates this capability contract before the first input upload and repeats
-the preflight at submit time.
+The last published ConfFlow package is v2.1.3; this v2.1.4 fix-forward remains
+an unpublished candidate. The configured production endpoint remains v2.0.0
+and v1.4.6 remains rollback-only. Any consumer pairing must validate this
+capability contract before the first input upload and repeat the preflight at
+submit time.
 
-The released `confflow-control-worker` entrypoint is a producer-owned
+The `confflow-control-worker` entrypoint is a producer-owned
 handoff, not an agent-queue compatibility layer. Its `prepare.input_manifest`
 locator must contain the canonical `worker-handoff.schema.json` envelope and
 the persisted digest must be the envelope digest. The envelope is limited to
