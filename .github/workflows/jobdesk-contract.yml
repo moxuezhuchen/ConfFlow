@@ -71,18 +71,18 @@ jobs:
           try:
               validate_confflow_capabilities(capabilities, require_dag=True)
           except ValueError as exc:
-              expected_breaking_error = "incompatible ConfFlow version 2.0.0: require >=1.5,<2.0"
-              if capabilities.version != "2.0.0" or str(exc) != expected_breaking_error:
+              expected_breaking_error = f"incompatible ConfFlow version {capabilities.version}: require >=1.5,<2.0"
+              if capabilities.version != "2.1.3" or str(exc) != expected_breaking_error:
                   raise
               print(
                   "accepted the expected pre-switch JobDesk rejection for the "
                   f"breaking ConfFlow candidate: {exc}"
               )
           else:
-              if capabilities.version == "2.0.0":
-                  print(
-                      "JobDesk already accepts the 2.0.0 candidate; continuing with "
-                      "the post-switch contract checks."
+              if capabilities.version == "2.1.3":
+                  raise AssertionError(
+                      "JobDesk main unexpectedly accepts the 2.1.3 candidate; "
+                      "the pre-switch incompatibility gate did not run."
                   )
           expected_commit = os.environ["CANDIDATE_COMMIT"]
           build = payload.get("build")

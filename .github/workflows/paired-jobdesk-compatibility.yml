@@ -84,7 +84,7 @@ jobs:
           payload = json.loads(raw)
           capabilities = parse_confflow_capabilities(raw)
           validate_confflow_capabilities(capabilities, require_dag=True)
-          if capabilities.version != "2.0.0":
+          if capabilities.version != "2.1.3":
               raise AssertionError(f"unexpected candidate version: {capabilities.version!r}")
           build = payload.get("build")
           if not isinstance(build, dict) or build.get("commit") != os.environ["CONFLOW_COMMIT"] or build.get("dirty") is not False:
