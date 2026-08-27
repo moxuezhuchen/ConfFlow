@@ -17,6 +17,12 @@ Automated by `.github/workflows/release.yml`:
 - Write release provenance, publish an explicit asset set, require the new
   release to be immutable, and download every asset to recheck bytes and hashes.
 
+The current `gh` CLI treats `--signer-repo` and `--signer-workflow` as mutually
+exclusive actor-identity policies. The workflow uses only the more precise
+`--signer-workflow OWNER/REPOSITORY/.github/workflows/release.yml`; its full
+identity includes the repository and workflow path. `--repo` remains the
+required artifact/attestation lookup scope and is compatible with that policy.
+
 Still manual or not configured:
 
 - PyPI publishing.
@@ -147,7 +153,16 @@ the release manually.
 the administration-only immutable-releases GET with HTTP 403 before creating a
 GitHub Release. Consequently there is no GitHub Release or release assets for
 `v2.1.4`. The protected tag must not be deleted, moved, or reused; `v2.1.5` is
-the fix-forward release line.
+the first fix-forward release line.
+
+### Failed v2.1.5 attempt
+
+`v2.1.5` is also a protected tag-only failed release. Run `33082629930`
+reached cryptographic attestation verification, where `gh` rejected the
+mutually exclusive `--signer-repo` and `--signer-workflow` flags. It stopped
+before release creation, so there is no GitHub Release or release assets for
+`v2.1.5`. The protected tag must not be deleted, moved, or reused; `v2.1.6` is
+the next fix-forward release line.
 
 ## 8. PyPI Status
 
@@ -194,10 +209,10 @@ Format:
 
 ### Layer 2a - Controlled Python runtime dependencies
 
-The 2.1.5 release/install target is CPython 3.12 / Linux x86_64 and is
+The 2.1.6 release/install target is CPython 3.12 / Linux x86_64 and is
 derived from the verified 1.4.4 production venv. The committed release lock is
-`release/confflow-2.1.5-py312-linux-x86_64.lock`; the matching wheelhouse
-manifest is `release/confflow-2.1.5-py312-linux-x86_64.SHA256SUMS`. Together
+`release/confflow-2.1.6-py312-linux-x86_64.lock`; the matching wheelhouse
+manifest is `release/confflow-2.1.6-py312-linux-x86_64.SHA256SUMS`. Together
 they cover every direct and transitive distribution for that one deployment
 target with exact versions and SHA-256 hashes.
 
@@ -214,7 +229,7 @@ Wheelhouse regeneration from the checked-in selection and hashes:
 python -m pip install --disable-pip-version-check "pip==26.0.1"
 python -m pip download --disable-pip-version-check --only-binary=:all: \
   --require-hashes --dest <wheelhouse> \
-  -r release/confflow-2.1.5-py312-linux-x86_64.lock
+  -r release/confflow-2.1.6-py312-linux-x86_64.lock
 ```
 
 That command reproduces the wheelhouse; it does not claim to re-resolve or

@@ -25,11 +25,12 @@ It is not recommended for:
 
 ### Identity boundaries
 
-The shared source tree, this isolated v2.1.5 fix-forward candidate, the
+The shared source tree, this isolated v2.1.6 fix-forward candidate, the
 published v2.1.3 package, and the configured production executable are distinct
-identities. The protected v2.1.4 tag is a failed tag-only release attempt with
-no GitHub Release or assets; it is not reused. The v2.1.5 candidate is not
-published, and the current production endpoint remains ConfFlow v2.0.0.
+identities. The protected v2.1.4 and v2.1.5 tags are failed tag-only release
+attempts with no GitHub Release or assets; neither is reused. The v2.1.6
+candidate is not published, and the current production endpoint remains
+ConfFlow v2.0.0.
 Candidate wheels are local review artifacts and do not replace the published
 package or promote a production endpoint.
 
@@ -67,14 +68,14 @@ Requirements and packaging notes:
 - RDKit is required
 - `numba` is optional and only used for acceleration when installed
 
-## ConfFlow ↔ JobDesk Capability Handshake (v2.1.5 candidate)
+## ConfFlow ↔ JobDesk Capability Handshake (v2.1.6 candidate)
 
-The ConfFlow 2.1.5 fix-forward candidate implements a version/capability probe
+The ConfFlow 2.1.6 fix-forward candidate implements a version/capability probe
 used by JobDesk to validate compatibility before uploading or submitting
 workflow tasks:
 
 ```bash
-confflow --version          # prints "2.1.5" in the candidate environment
+confflow --version          # prints "2.1.6" in the candidate environment
 confflow --capabilities --json
 ```
 
@@ -83,7 +84,7 @@ Capability contract (JSON, schema version **4**):
 ```json
 {
   "schema_version": 4,
-  "version": "2.1.5",
+  "version": "2.1.6",
   "capabilities": {
     "workflow_state": true,
     "resume": true,
@@ -113,13 +114,13 @@ Capability contract (JSON, schema version **4**):
   },
   "producer": {
     "package": "confflow",
-    "version": "2.1.5",
+    "version": "2.1.6",
     "build": {
       "commit": "<40-char git commit>",
       "dirty": false
     },
     "wheel": {
-      "filename": "confflow-2.1.5-py3-none-any.whl",
+      "filename": "confflow-2.1.6-py3-none-any.whl",
       "sha256": "<external SHA-256SUMS digest>"
     },
     "install_provenance": {
@@ -139,10 +140,10 @@ The candidate's `control_worker` value is `true` only on POSIX hosts with
 `O_DIRECTORY` and `O_NOFOLLOW`; Windows installations report `false` and must
 not accept the worker handoff.
 
-The last published ConfFlow package is v2.1.3. The protected v2.1.4 tag has no
-GitHub Release or assets after its failed release workflow; this v2.1.5
-fix-forward remains an unpublished candidate. The configured production
-endpoint remains v2.0.0 and v1.4.6 remains rollback-only. Any consumer pairing
+The last published ConfFlow package is v2.1.3. The protected v2.1.4 and v2.1.5
+tags have no GitHub Release or assets after their failed release workflows;
+this v2.1.6 fix-forward remains an unpublished candidate. The configured
+production endpoint remains v2.0.0 and v1.4.6 remains rollback-only. Any consumer pairing
 must validate this capability contract before the first input upload and repeat
 the preflight at submit time.
 

@@ -18,7 +18,7 @@ JOBDESK_CONTRACT_WORKFLOW = WORKFLOW.with_name("jobdesk-contract.yml")
 PAIRED_COMPATIBILITY_WORKFLOW = WORKFLOW.with_name("paired-jobdesk-compatibility.yml")
 RELEASE_DOC = Path(__file__).parents[1] / "docs" / "RELEASE.md"
 README = Path(__file__).parents[1] / "README.md"
-RELEASE_LOCK = Path(__file__).parents[1] / "release" / "confflow-2.1.5-py312-linux-x86_64.lock"
+RELEASE_LOCK = Path(__file__).parents[1] / "release" / "confflow-2.1.6-py312-linux-x86_64.lock"
 RELEASE_MANIFEST = RELEASE_LOCK.with_suffix(".SHA256SUMS")
 
 
@@ -26,20 +26,20 @@ def _workflow_text() -> str:
     return WORKFLOW.read_text(encoding="utf-8")
 
 
-def test_v215_release_metadata_and_runtime_inputs_are_consistent():
+def test_v216_release_metadata_and_runtime_inputs_are_consistent():
     repository = Path(__file__).parents[1]
     project = tomllib.loads((repository / "pyproject.toml").read_text(encoding="utf-8"))
 
-    assert project["project"]["version"] == "2.1.5"
+    assert project["project"]["version"] == "2.1.6"
     assert RELEASE_LOCK.is_file()
     assert RELEASE_MANIFEST.is_file()
-    assert "confflow-2.1.5-py312-linux-x86_64.lock" in RELEASE_LOCK.read_text(encoding="utf-8")
-    assert not (repository / "release" / "confflow-2.1.4-py312-linux-x86_64.lock").exists()
-    assert not (repository / "release" / "confflow-2.1.4-py312-linux-x86_64.SHA256SUMS").exists()
-    assert 'capabilities.version != "2.1.5"' in JOBDESK_CONTRACT_WORKFLOW.read_text(
+    assert "confflow-2.1.6-py312-linux-x86_64.lock" in RELEASE_LOCK.read_text(encoding="utf-8")
+    assert not (repository / "release" / "confflow-2.1.5-py312-linux-x86_64.lock").exists()
+    assert not (repository / "release" / "confflow-2.1.5-py312-linux-x86_64.SHA256SUMS").exists()
+    assert 'capabilities.version != "2.1.6"' in JOBDESK_CONTRACT_WORKFLOW.read_text(
         encoding="utf-8"
     )
-    assert 'capabilities.version != "2.1.5"' in PAIRED_COMPATIBILITY_WORKFLOW.read_text(
+    assert 'capabilities.version != "2.1.6"' in PAIRED_COMPATIBILITY_WORKFLOW.read_text(
         encoding="utf-8"
     )
 
@@ -115,7 +115,7 @@ def test_release_workflow_cryptographically_verifies_attestation_identity():
     assert "gh attestation verify" in workflow
     assert '--bundle "$ATTESTATION_BUNDLE"' in workflow
     assert '--repo "$GITHUB_REPOSITORY"' in workflow
-    assert '--signer-repo "$GITHUB_REPOSITORY"' in workflow
+    assert "--signer-repo" not in workflow
     assert '--signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml"' in workflow
     assert '--predicate-type "https://slsa.dev/provenance/v1"' in workflow
     assert '--source-ref "refs/tags/$EXPECTED_TAG"' in workflow
@@ -158,7 +158,7 @@ def test_release_workflow_verifies_exact_published_assets_and_downloaded_hashes(
 def test_release_workflow_preserves_failure_evidence_after_immutable_creation():
     workflow = _workflow_text()
 
-    initialized = workflow.index("Initialize post-publication evidence")
+    initialized = workflow.index("Prepare post-publication evidence")
     published = workflow.index("Publish immutable GitHub release")
     verified = workflow.index("Verify immutable release, tag, assets, and downloaded hashes")
     uploaded = workflow.index("Upload post-publication verification evidence")
@@ -170,7 +170,17 @@ def test_release_workflow_preserves_failure_evidence_after_immutable_creation():
     assert 'POST_STAGE="record_release_created"' in workflow
     assert workflow.count("os.replace") >= 4
     assert '"status": "verified"' in workflow
-    assert "if-no-files-found: warn" in workflow
+    assert "if-no-files-found: error" in workflow
+
+
+def test_release_workflow_initializes_failure_evidence_before_checkout():
+    workflow = _workflow_text()
+
+    initialized = workflow.index("Initialize release failure evidence")
+    checkout = workflow.index("Checkout exact tag")
+    assert initialized < checkout
+    assert '"status": "workflow_started"' in workflow
+    assert 'echo "POST_EVIDENCE=$POST_EVIDENCE" >> "$GITHUB_ENV"' in workflow
 
 
 def test_release_lock_scope_resolver_and_regeneration_limits_are_explicit():
@@ -198,13 +208,22 @@ def test_release_docs_record_failed_v214_and_owner_preflight_procedure():
     assert "immutable-releases" in release_doc
 
 
-def test_readme_identifies_v215_candidate_and_v214_failed_tag_only_release():
+def test_release_docs_record_failed_v215_attestation_verification():
+    release_doc = RELEASE_DOC.read_text(encoding="utf-8")
+
+    assert "v2.1.5" in release_doc
+    assert "tag-only failed release" in release_doc
+    assert "cryptographic attestation verification" in release_doc
+    assert "no GitHub Release or release assets" in release_doc
+
+
+def test_readme_identifies_v216_candidate_and_v215_failed_tag_only_release():
     readme = README.read_text(encoding="utf-8")
 
-    assert "v2.1.5 fix-forward candidate" in readme
-    assert 'prints "2.1.5"' in readme
-    assert '"version": "2.1.5"' in readme
-    assert "confflow-2.1.5-py3-none-any.whl" in readme
-    assert "protected v2.1.4 tag" in readme
+    assert "v2.1.6 fix-forward candidate" in readme
+    assert 'prints "2.1.6"' in readme
+    assert '"version": "2.1.6"' in readme
+    assert "confflow-2.1.6-py3-none-any.whl" in readme
+    assert "protected v2.1.4 and v2.1.5 tags are failed tag-only" in readme
     assert "no GitHub Release or assets" in readme
-    assert "v2.1.4 fix-forward candidate" not in readme
+    assert "v2.1.5 fix-forward candidate" not in readme
