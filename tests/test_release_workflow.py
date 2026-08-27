@@ -6,8 +6,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import tomllib
 import yaml
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover - Python 3.10 compatibility
+    import tomli as tomllib
 
 WORKFLOW = Path(__file__).parents[1] / ".github" / "workflows" / "release.yml"
 RELEASE_DOC = Path(__file__).parents[1] / "docs" / "RELEASE.md"
