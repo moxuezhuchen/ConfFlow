@@ -14,6 +14,7 @@ import inspect
 import json
 import os
 from pathlib import Path
+from types import SimpleNamespace
 
 import confflow.cli as cli_module
 import confflow.workflow.export as export_module
@@ -164,12 +165,19 @@ def test_resolved_executable_prefers_reported_windows_exe_over_path(tmp_path, mo
     python = tmp_path / "python.exe"
     python.write_bytes(b"python")
 
-    monkeypatch.setattr(cli_module.os, "name", "nt")
+    host_os_name = os.name
+    monkeypatch.setattr(
+        cli_module,
+        "os",
+        SimpleNamespace(name="nt", fspath=os.fspath, path=os.path),
+    )
     monkeypatch.setattr(cli_module.sys, "argv", [str(reported), "--capabilities", "--json"])
     monkeypatch.setattr(cli_module.sys, "executable", str(python))
     monkeypatch.setattr(cli_module.shutil, "which", lambda name: str(path_copy))
 
     assert cli_module._resolved_confflow_executable() == str(invoked.resolve())
+    assert os.name == host_os_name
+    assert Path(os.fspath(tmp_path)).is_dir()
 
 
 def test_executable_resolution_keeps_posix_reported_path_before_exe_sibling(tmp_path, monkeypatch):
@@ -178,9 +186,16 @@ def test_executable_resolution_keeps_posix_reported_path_before_exe_sibling(tmp_
     sibling = reported.with_name("confflow.exe")
     reported.write_text("POSIX launcher", encoding="utf-8")
     sibling.write_bytes(b"not the POSIX launcher")
-    monkeypatch.setattr(cli_module.os, "name", "posix")
+    host_os_name = os.name
+    monkeypatch.setattr(
+        cli_module,
+        "os",
+        SimpleNamespace(name="posix", fspath=os.fspath, path=os.path),
+    )
 
     assert cli_module._resolve_existing_executable(reported) == str(reported.resolve())
+    assert os.name == host_os_name
+    assert Path(os.fspath(tmp_path)).is_dir()
 
 
 def test_presenter_uses_contract_filenames():

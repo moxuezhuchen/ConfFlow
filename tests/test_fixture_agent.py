@@ -8,6 +8,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import rfc8785
@@ -111,10 +112,17 @@ def test_fixture_actual_entrypoint_prefers_windows_exe_sibling(monkeypatch, tmp_
     invoked = reported.with_name(f"{reported.name}.exe")
     reported.write_text("launcher metadata", encoding="utf-8")
     invoked.write_bytes(b"MZ fixture launcher")
-    monkeypatch.setattr(fixture_module.cli.os, "name", "nt")
+    host_os_name = os.name
+    monkeypatch.setattr(
+        fixture_module.cli,
+        "os",
+        SimpleNamespace(name="nt", fspath=os.fspath, path=os.path),
+    )
     monkeypatch.setattr(fixture_module.sys, "argv", [str(reported)])
 
     assert fixture_module._actual_entrypoint() == str(invoked.resolve())
+    assert os.name == host_os_name
+    assert Path(os.fspath(tmp_path)).is_dir()
 
 
 def test_fixture_actual_entrypoint_keeps_posix_reported_path_before_exe_sibling(
@@ -125,10 +133,17 @@ def test_fixture_actual_entrypoint_keeps_posix_reported_path_before_exe_sibling(
     sibling = reported.with_name(f"{reported.name}.exe")
     reported.write_text("POSIX launcher", encoding="utf-8")
     sibling.write_bytes(b"not the POSIX launcher")
-    monkeypatch.setattr(fixture_module.cli.os, "name", "posix")
+    host_os_name = os.name
+    monkeypatch.setattr(
+        fixture_module.cli,
+        "os",
+        SimpleNamespace(name="posix", fspath=os.fspath, path=os.path),
+    )
     monkeypatch.setattr(fixture_module.sys, "argv", [str(reported)])
 
     assert fixture_module._actual_entrypoint() == str(reported.resolve())
+    assert os.name == host_os_name
+    assert Path(os.fspath(tmp_path)).is_dir()
 
 
 def test_fixture_console_script_is_declared_as_a_package_entrypoint():
