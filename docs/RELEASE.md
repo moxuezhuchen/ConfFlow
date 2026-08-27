@@ -1,21 +1,26 @@
 # Release Process
 
 ConfFlow uses a GitHub Actions release workflow that builds, verifies,
-attests, and publishes the tagged release artifacts. PyPI publication and
-full SLSA-style hardening remain separate manual or future-work concerns.
+attests, and publishes immutable tagged release artifacts. PyPI publication
+remains separate manual or future work.
 
 Automated by `.github/workflows/release.yml`:
 
 - Build wheel and source distribution.
 - Generate `SHA256SUMS`.
 - Generate a CycloneDX SBOM as `sbom.cdx.json`.
-- Generate GitHub build provenance attestation and an exported attestation bundle.
-- Write release provenance and publish the `dist/` bundle as a GitHub Release.
+- Generate GitHub build provenance attestation and cryptographically verify its
+  subject digest, repository, workflow, tag ref, and commit before publishing.
+- Bind the event ref/SHA, local annotated tag, and remote annotated tag before
+  publishing, then re-read the remote tag after publishing.
+- Require immutable releases to be enabled and the target release to be absent.
+- Write release provenance, publish an explicit asset set, require the new
+  release to be immutable, and download every asset to recheck bytes and hashes.
 
 Still manual or not configured:
 
 - PyPI publishing.
-- Full SLSA-style release hardening.
+- PyPI trusted publishing and any additional SLSA policy layers.
 
 ## 1. Choose The Version
 
@@ -53,7 +58,9 @@ Confirm GitHub Actions CI is green for the release commit.
 
 ## 4. Build Wheel And Source Distribution
 
-The release artifact workflow builds wheel and source distribution on tag pushes matching `v*` and on manual dispatch.
+The release artifact workflow builds wheel and source distribution only on tag
+pushes matching `v*`. Manual dispatch is intentionally unavailable because the
+release gate binds `GITHUB_REF` and `GITHUB_SHA` to an annotated remote tag.
 
 For local verification, install build tooling if needed:
 
@@ -89,9 +96,9 @@ Alternatively, use a platform checksum tool such as `sha256sum dist/*` when avai
 
 ## 6. SBOM Status
 
-The release artifact workflow attempts to generate a CycloneDX SBOM with `cyclonedx-bom` and stores it as `dist/sbom.cdx.json`. This is a first-pass software bill of materials, not a complete supply-chain attestation.
-
-If SBOM generation fails, the workflow continues and still uploads the wheel/sdist/checksum artifacts. Treat SBOM completeness as an alpha preview improvement area until the workflow has been validated across releases.
+The release artifact workflow generates a CycloneDX SBOM from the controlled
+runtime lock and stores it as `dist/sbom.cdx.json`. Generation is fail closed:
+the release is not created if the SBOM is missing or invalid.
 
 ## 7. Tag And Publish A GitHub Release
 
@@ -102,12 +109,12 @@ git tag -a vX.Y.Z -m "ConfFlow X.Y.Z"
 git push origin vX.Y.Z
 ```
 
-After the workflow completes, download the `confflow-release-artifacts` bundle and create a GitHub Release from the tag. Attach:
-
-- Wheel and source distribution.
-- SHA256 checksums.
-- Changelog excerpt.
-- Known limitations and compatibility notes.
+The workflow creates the immutable GitHub Release itself. It uploads only its
+explicit standard asset set, including the wheel, sdist, SBOM, attestation
+bundle and verification record, provenance, release/install dependency lock,
+wheelhouse manifest, release notes, and `SHA256SUMS`. It then downloads those
+assets and verifies exact filenames, byte identity, and checksums. Do not create
+the release manually.
 
 ## 8. PyPI Status
 
@@ -154,12 +161,32 @@ Format:
 
 ### Layer 2a - Controlled Python runtime dependencies
 
-The 1.4.5 Linux x86_64 / CPython 3.12 runtime is based on the verified
-1.4.4 production venv. The committed lock is
-release/confflow-1.4.5-py312-linux-x86_64.lock and contains every direct
-and transitive runtime distribution at an exact version with SHA-256 hashes.
-The matching wheelhouse manifest is
-release/confflow-1.4.5-py312-linux-x86_64.SHA256SUMS.
+The 2.1.4 release/install target is CPython 3.12 / Linux x86_64 and is
+derived from the verified 1.4.4 production venv. The committed release lock is
+`release/confflow-2.1.4-py312-linux-x86_64.lock`; the matching wheelhouse
+manifest is `release/confflow-2.1.4-py312-linux-x86_64.SHA256SUMS`. Together
+they cover every direct and transitive distribution for that one deployment
+target with exact versions and SHA-256 hashes.
+
+This release/install lock is deliberately not described as the Python 3.10-3.13
+development-lock matrix. Source CI still resolves `.[dev]` for each supported
+Python version, so its passing matrix is not completion evidence for
+the plan's separate multi-version development-lock work. The original resolver
+version used to select the production-derived dependency set was not recorded.
+Release verification and repeatable wheelhouse download use `pip==26.0.1`.
+
+Wheelhouse regeneration from the checked-in selection and hashes:
+
+```bash
+python -m pip install --disable-pip-version-check "pip==26.0.1"
+python -m pip download --disable-pip-version-check --only-binary=:all: \
+  --require-hashes --dest <wheelhouse> \
+  -r release/confflow-2.1.4-py312-linux-x86_64.lock
+```
+
+That command reproduces the wheelhouse; it does not claim to re-resolve or
+update dependency selections. A future lock update must record the resolver
+tool/version and regeneration inputs when the selections are made.
 
 The installer requires both --dependency-lock and --wheelhouse. The
 wheelhouse must contain only the manifest and the binary wheels listed by it.
