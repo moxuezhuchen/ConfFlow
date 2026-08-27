@@ -5,6 +5,24 @@
 > The archived-snapshot notice below describes the earlier repository state. ConfFlow is active again
 > as JobDesk's external chemistry workflow dependency beginning with v1.4.0.
 
+## v2.1.6 (2026-08-27) - Attestation-verification fix-forward
+
+### Fixed
+
+- Use the single, strongest supported `gh attestation verify` actor-identity
+  constraint, `--signer-workflow`, whose full identity includes the repository
+  and workflow path. The mutually exclusive `--signer-repo` flag is no longer
+  passed alongside it.
+- Initialize structured release failure evidence before checkout so every later
+  fail-closed gate has an artifact for diagnosis.
+
+### Release history
+
+- `v2.1.5` is a protected tag-only failed release attempt. Cryptographic
+  attestation verification rejected the mutually exclusive signer flags before
+  release creation. There is no GitHub Release and there are no release assets
+  for `v2.1.5`; the tag is not reused.
+
 ## v2.1.5 (2026-08-27) - Immutable-release authorization fix-forward
 
 ### Fixed

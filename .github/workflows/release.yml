@@ -19,6 +19,28 @@ jobs:
       IMMUTABLE_PREFLIGHT_SHA: ${{ vars.RELEASE_IMMUTABLE_PREFLIGHT_SHA }}
 
     steps:
+      - name: Initialize release failure evidence
+        run: |
+          set -euo pipefail
+          POST_EVIDENCE="${RUNNER_TEMP}/release-post-verification.json"
+          python3 - "$POST_EVIDENCE" <<'PY'
+          import json, os, sys
+          payload = {
+              "schema": "confflow.release-post-verification.v1",
+              "repository": os.environ["GITHUB_REPOSITORY"],
+              "tag": os.environ["EXPECTED_TAG"],
+              "event_ref": os.environ["GITHUB_REF"],
+              "event_sha": os.environ["GITHUB_SHA"],
+              "status": "workflow_started",
+              "stage": "before_checkout",
+          }
+          temporary = sys.argv[1] + ".tmp"
+          with open(temporary, "w", encoding="utf-8") as stream:
+              json.dump(payload, stream, indent=2, sort_keys=True); stream.write("\n")
+          os.replace(temporary, sys.argv[1])
+          PY
+          echo "POST_EVIDENCE=$POST_EVIDENCE" >> "$GITHUB_ENV"
+
       - name: Checkout exact tag
         uses: actions/checkout@v6
         with:
@@ -208,6 +230,7 @@ jobs:
           ATTESTATION_BUNDLE: ${{ steps.attest.outputs.bundle-path }}
         run: |
           set -euo pipefail
+          trap 'rc=$?; if [[ "$rc" -ne 0 ]]; then POST_EXIT_CODE="$rc" python -c '\''import json,os; p=os.environ["POST_EVIDENCE"]; d=json.load(open(p, encoding="utf-8")); d.update(status="failed", stage="attestation_verification", exit_code=int(os.environ["POST_EXIT_CODE"])); t=p+".tmp"; open(t, "w", encoding="utf-8").write(json.dumps(d, indent=2, sort_keys=True) + "\n"); os.replace(t,p)'\''; fi' EXIT
           test -s "$ATTESTATION_BUNDLE"
           WHEEL="$(printf '%s\n' dist/confflow-*.whl)"
           test -f "$WHEEL"
@@ -221,7 +244,6 @@ jobs:
           gh attestation verify "$WHEEL" \
             --bundle "$ATTESTATION_BUNDLE" \
             --repo "$GITHUB_REPOSITORY" \
-            --signer-repo "$GITHUB_REPOSITORY" \
             --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml" \
             --predicate-type "https://slsa.dev/provenance/v1" \
             --source-ref "refs/tags/$EXPECTED_TAG" \
@@ -229,6 +251,7 @@ jobs:
             --format json >"$ATTESTATION_VERIFICATION"
           test -s "$ATTESTATION_VERIFICATION"
           echo "ATTESTATION_VERIFICATION=$ATTESTATION_VERIFICATION" >> "$GITHUB_ENV"
+          trap - EXIT
 
       - name: Export attestation and controlled release inputs
         env:
@@ -327,26 +350,22 @@ jobs:
           test "${#release_files[@]}" -eq "$(find dist -maxdepth 1 -type f | wc -l)"
           for release_file in "${release_files[@]}"; do test -s "$release_file"; done
 
-      - name: Initialize post-publication evidence
+      - name: Prepare post-publication evidence
         run: |
           set -euo pipefail
-          POST_EVIDENCE="${RUNNER_TEMP}/release-post-verification.json"
           python - "$POST_EVIDENCE" <<'PY'
           import json, os, sys
-          payload = {
-              "schema": "confflow.release-post-verification.v1",
-              "repository": os.environ["GITHUB_REPOSITORY"],
-              "tag": os.environ["EXPECTED_TAG"],
+          payload = json.load(open(sys.argv[1], encoding="utf-8"))
+          payload.update({
               "peeled_commit": os.environ["LOCAL_PEELED_SHA"],
               "status": "publication_not_attempted",
               "stage": "initialized",
-          }
+          })
           temporary = sys.argv[1] + ".tmp"
           with open(temporary, "w", encoding="utf-8") as stream:
               json.dump(payload, stream, indent=2, sort_keys=True); stream.write("\n")
           os.replace(temporary, sys.argv[1])
           PY
-          echo "POST_EVIDENCE=$POST_EVIDENCE" >> "$GITHUB_ENV"
 
       - name: Upload workflow artifact bundle
         uses: actions/upload-artifact@v7
@@ -475,5 +494,5 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: confflow-release-post-verification
-          if-no-files-found: warn
+          if-no-files-found: error
           path: ${{ runner.temp }}/release-post-verification.json
