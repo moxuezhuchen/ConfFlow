@@ -3,7 +3,7 @@
 # Release/install scope only; this is not a Python 3.10-3.13 development lock.
 # The original dependency-selection resolver version was not recorded.
 # Release verification and wheelhouse regeneration use pip==26.0.1.
-# Wheelhouse regeneration command: python -m pip download --disable-pip-version-check --only-binary=:all: --require-hashes --dest <wheelhouse> -r release/confflow-2.1.4-py312-linux-x86_64.lock
+# Wheelhouse regeneration command: python -m pip download --disable-pip-version-check --only-binary=:all: --require-hashes --dest <wheelhouse> -r release/confflow-2.1.5-py312-linux-x86_64.lock
 --only-binary=:all:
 annotated-types==0.8.0 --hash=sha256:f072f4d804ea359e4eaf198b1af7a8b0943881a87f31bb764f8bf219bb9419e0
 attrs==26.1.0 --hash=sha256:c647aa4a12dfbad9333ca4e71fe62ddc36f4e63b2d260a37a8b83d2f043ac309

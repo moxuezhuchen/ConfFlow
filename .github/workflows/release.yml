@@ -16,6 +16,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       EXPECTED_TAG: ${{ github.ref_name }}
+      IMMUTABLE_PREFLIGHT_SHA: ${{ vars.RELEASE_IMMUTABLE_PREFLIGHT_SHA }}
 
     steps:
       - name: Checkout exact tag
@@ -56,6 +57,9 @@ jobs:
           test "$GITHUB_REF" = "refs/tags/$EXPECTED_TAG"
           test "$GITHUB_SHA" = "$LOCAL_PEELED_SHA"
           test "$(git rev-parse HEAD)" = "$LOCAL_PEELED_SHA"
+          test -n "$IMMUTABLE_PREFLIGHT_SHA"
+          test "$IMMUTABLE_PREFLIGHT_SHA" = "$GITHUB_SHA"
+          test "$IMMUTABLE_PREFLIGHT_SHA" = "$LOCAL_PEELED_SHA"
 
           REMOTE_TAG_REF="$(gh api -H "X-GitHub-Api-Version: 2026-03-10" "repos/${GITHUB_REPOSITORY}/git/ref/tags/${EXPECTED_TAG}")"
           REMOTE_TAG_TYPE="$(python -c 'import json,sys; print(json.load(sys.stdin)["object"]["type"])' <<<"$REMOTE_TAG_REF")"
@@ -83,9 +87,6 @@ jobs:
             exit 1
           fi
 
-          IMMUTABLE_DOCUMENT="$(gh api -H "X-GitHub-Api-Version: 2026-03-10" "repos/${GITHUB_REPOSITORY}/immutable-releases")"
-          python -c 'import json,sys; document=json.load(sys.stdin); raise SystemExit("immutable releases are not enabled") if document.get("enabled") is not True else None' <<<"$IMMUTABLE_DOCUMENT"
-
           RELEASE_LOCK="release/confflow-${PROJECT_VERSION}-py312-linux-x86_64.lock"
           RELEASE_MANIFEST="release/confflow-${PROJECT_VERSION}-py312-linux-x86_64.SHA256SUMS"
           test -s "$RELEASE_LOCK"
@@ -104,7 +105,8 @@ jobs:
               "event_sha": os.environ["GITHUB_SHA"],
               "local_peeled_sha": os.environ["LOCAL_PEELED_SHA"],
               "remote_peeled_sha": os.environ["REMOTE_PEELED_SHA"],
-              "immutable_releases_enabled": True,
+              "immutable_owner_preflight_commit": os.environ["IMMUTABLE_PREFLIGHT_SHA"],
+              "immutable_owner_preflight_required": True,
               "release_absent": True,
           }
           with open(sys.argv[1], "w", encoding="utf-8") as stream:
@@ -211,6 +213,9 @@ jobs:
           test -f "$WHEEL"
           test "$GITHUB_REF" = "refs/tags/$EXPECTED_TAG"
           test "$GITHUB_SHA" = "$LOCAL_PEELED_SHA"
+          test -n "$IMMUTABLE_PREFLIGHT_SHA"
+          test "$IMMUTABLE_PREFLIGHT_SHA" = "$GITHUB_SHA"
+          test "$IMMUTABLE_PREFLIGHT_SHA" = "$LOCAL_PEELED_SHA"
           test "$REMOTE_PEELED_SHA" = "$LOCAL_PEELED_SHA"
           ATTESTATION_VERIFICATION="${RUNNER_TEMP}/attestation-verification.json"
           gh attestation verify "$WHEEL" \
@@ -252,6 +257,7 @@ jobs:
               "repository": os.environ["GITHUB_REPOSITORY"],
               "tag": os.environ["EXPECTED_TAG"],
               "peeled_commit": os.environ["LOCAL_PEELED_SHA"],
+              "immutable_owner_preflight_commit": os.environ["IMMUTABLE_PREFLIGHT_SHA"],
               "bundle_filename": bundle.name,
               "bundle_sha256": digest(bundle),
               "verification_filename": "attestation-verification.json",
@@ -283,6 +289,7 @@ jobs:
               "package": "confflow", "version": version,
               "repository": os.environ["GITHUB_REPOSITORY"],
               "tag": os.environ["EXPECTED_TAG"], "commit": os.environ["LOCAL_PEELED_SHA"],
+              "immutable_owner_preflight_commit": os.environ["IMMUTABLE_PREFLIGHT_SHA"],
               "wheel_filename": wheel.name, "wheel_sha256": digest(wheel),
               "sdist_filename": sdist.name, "sdist_sha256": digest(sdist),
               "sbom_filename": "sbom.cdx.json", "sbom_sha256": digest(dist / "sbom.cdx.json"),
@@ -358,13 +365,14 @@ jobs:
           trap 'rc=$?; if [[ "$rc" -ne 0 ]]; then POST_EXIT_CODE="$rc" POST_STAGE="$POST_STAGE" RELEASE_CREATED="$RELEASE_CREATED" python -c '\''import json,os; p=os.environ["POST_EVIDENCE"]; d=json.load(open(p, encoding="utf-8")); created=os.environ["RELEASE_CREATED"] == "true"; d.update(status="release_created_verification_failed" if created else "failed", stage=os.environ["POST_STAGE"], exit_code=int(os.environ["POST_EXIT_CODE"]), release_created=created); t=p+".tmp"; open(t, "w", encoding="utf-8").write(json.dumps(d, indent=2, sort_keys=True) + "\n"); os.replace(t,p)'\''; fi' EXIT
           test "$GITHUB_REF" = "refs/tags/$EXPECTED_TAG"
           test "$GITHUB_SHA" = "$LOCAL_PEELED_SHA"
+          test -n "$IMMUTABLE_PREFLIGHT_SHA"
+          test "$IMMUTABLE_PREFLIGHT_SHA" = "$GITHUB_SHA"
+          test "$IMMUTABLE_PREFLIGHT_SHA" = "$LOCAL_PEELED_SHA"
           CURRENT_REMOTE_TAG_REF="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${EXPECTED_TAG}")"
           CURRENT_REMOTE_TAG_OBJECT_SHA="$(python -c 'import json,sys; document=json.load(sys.stdin); assert document["object"]["type"] == "tag"; print(document["object"]["sha"])' <<<"$CURRENT_REMOTE_TAG_REF")"
           CURRENT_REMOTE_TAG_OBJECT="$(gh api "repos/${GITHUB_REPOSITORY}/git/tags/${CURRENT_REMOTE_TAG_OBJECT_SHA}")"
           CURRENT_REMOTE_PEELED_SHA="$(python -c 'import json,sys,os; document=json.load(sys.stdin); assert document["tag"] == os.environ["EXPECTED_TAG"] and document["object"]["type"] == "commit"; print(document["object"]["sha"])' <<<"$CURRENT_REMOTE_TAG_OBJECT")"
           test "$CURRENT_REMOTE_PEELED_SHA" = "$LOCAL_PEELED_SHA"
-          IMMUTABLE_DOCUMENT="$(gh api -H "X-GitHub-Api-Version: 2026-03-10" "repos/${GITHUB_REPOSITORY}/immutable-releases")"
-          python -c 'import json,sys; document=json.load(sys.stdin); raise SystemExit("immutable releases are not enabled") if document.get("enabled") is not True else None' <<<"$IMMUTABLE_DOCUMENT"
           set +e
           RELEASE_LOOKUP="$(gh api --include --silent "repos/${GITHUB_REPOSITORY}/releases/tags/${EXPECTED_TAG}" 2>&1)"
           RELEASE_LOOKUP_STATUS=$?

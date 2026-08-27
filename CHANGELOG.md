@@ -5,6 +5,23 @@
 > The archived-snapshot notice below describes the earlier repository state. ConfFlow is active again
 > as JobDesk's external chemistry workflow dependency beginning with v1.4.0.
 
+## v2.1.5 (2026-08-27) - Immutable-release authorization fix-forward
+
+### Fixed
+
+- Replaced the release runner's inaccessible repository-administration API
+  precheck with an owner-recorded commit binding in the
+  `RELEASE_IMMUTABLE_PREFLIGHT_SHA` repository variable.
+- Preserved fail-closed post-publication verification of the immutable release,
+  annotated tag identity, exact asset set, downloaded bytes, and checksums.
+
+### Release history
+
+- `v2.1.4` is a protected tag-only failed release attempt. Its workflow stopped
+  before release creation because the Actions token could not read the
+  administration-only immutable-releases endpoint. There is no GitHub Release
+  and there are no release assets for `v2.1.4`; the tag is not reused.
+
 ## v2.1.4 (2026-08-27) - Fix-forward release
 
 ### Fixed
