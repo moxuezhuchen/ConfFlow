@@ -14,6 +14,8 @@ except ModuleNotFoundError:  # pragma: no cover - Python 3.10 compatibility
     import tomli as tomllib
 
 WORKFLOW = Path(__file__).parents[1] / ".github" / "workflows" / "release.yml"
+JOBDESK_CONTRACT_WORKFLOW = WORKFLOW.with_name("jobdesk-contract.yml")
+PAIRED_COMPATIBILITY_WORKFLOW = WORKFLOW.with_name("paired-jobdesk-compatibility.yml")
 RELEASE_DOC = Path(__file__).parents[1] / "docs" / "RELEASE.md"
 README = Path(__file__).parents[1] / "README.md"
 RELEASE_LOCK = Path(__file__).parents[1] / "release" / "confflow-2.1.5-py312-linux-x86_64.lock"
@@ -34,6 +36,12 @@ def test_v215_release_metadata_and_runtime_inputs_are_consistent():
     assert "confflow-2.1.5-py312-linux-x86_64.lock" in RELEASE_LOCK.read_text(encoding="utf-8")
     assert not (repository / "release" / "confflow-2.1.4-py312-linux-x86_64.lock").exists()
     assert not (repository / "release" / "confflow-2.1.4-py312-linux-x86_64.SHA256SUMS").exists()
+    assert 'capabilities.version != "2.1.5"' in JOBDESK_CONTRACT_WORKFLOW.read_text(
+        encoding="utf-8"
+    )
+    assert 'capabilities.version != "2.1.5"' in PAIRED_COMPATIBILITY_WORKFLOW.read_text(
+        encoding="utf-8"
+    )
 
 
 def test_release_workflow_is_valid_yaml_with_tag_only_trigger_and_ordered_gates():
