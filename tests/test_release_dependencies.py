@@ -21,8 +21,8 @@ from confflow.release_dependencies import (
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-REAL_LOCK = REPO_ROOT / "release" / "confflow-2.1.3-py312-linux-x86_64.lock"
-REAL_MANIFEST = REPO_ROOT / "release" / "confflow-2.1.3-py312-linux-x86_64.SHA256SUMS"
+REAL_LOCK = REPO_ROOT / "release" / "confflow-2.1.4-py312-linux-x86_64.lock"
+REAL_MANIFEST = REPO_ROOT / "release" / "confflow-2.1.4-py312-linux-x86_64.SHA256SUMS"
 
 RUNTIME_IDENTITY = {
     "python_version": "3.12.3",
@@ -191,3 +191,38 @@ def test_real_runtime_manifest_preserves_multitag_pillow_filename():
 
     assert "pillow-12.3.0-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl" in manifest
     assert "pillow-12.3.0-cp312-cp312-manylinux_2_27_x86_64.whl" not in manifest
+
+
+def test_real_runtime_manifest_uses_pip_pydantic_core_filename():
+    """The manifest must preserve pip's exact wheel filename and digest."""
+    manifest = parse_wheelhouse_manifest(REAL_MANIFEST)
+    pip_filename = (
+        "pydantic_core-2.46.4-cp312-cp312-" "manylinux_2_17_x86_64.manylinux2014_x86_64.whl"
+    )
+    stale_filename = pip_filename[:-4] + ".manylinux_2_28_x86_64.whl"
+
+    assert (
+        manifest[pip_filename] == "926c9541b14b12b1681dca8a0b75feb510b06c6341b70a8e500c2fdcff837cce"
+    )
+    assert stale_filename not in manifest
+
+
+def test_pip_pydantic_core_filename_is_strictly_bound_to_manifest(tmp_path):
+    """Equal bytes do not make a stale manifest filename acceptable."""
+    filename = "pydantic_core-2.46.4-cp312-cp312-" "manylinux_2_17_x86_64.manylinux2014_x86_64.whl"
+    stale_filename = filename[:-4] + ".manylinux_2_28_x86_64.whl"
+    lock_path = tmp_path / "runtime.lock"
+    wheelhouse = tmp_path / "wheelhouse"
+    wheelhouse.mkdir()
+    wheel = wheelhouse / filename
+    wheel.write_bytes(b"pydantic-core-wheel")
+    digest = sha256_hex(wheel)
+    _lock(lock_path, [("pydantic-core", "2.46.4", digest)])
+    _manifest(wheelhouse / "SHA256SUMS", [(filename, digest)])
+
+    evidence = _validate(lock_path, wheelhouse)
+    assert evidence.wheel_filenames == (filename,)
+
+    _manifest(wheelhouse / "SHA256SUMS", [(stale_filename, digest)])
+    with pytest.raises(DependencyInputError, match="unmanifested wheel"):
+        _validate(lock_path, wheelhouse)

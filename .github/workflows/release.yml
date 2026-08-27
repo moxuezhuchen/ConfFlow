@@ -1,16 +1,9 @@
 name: Release Artifacts
 
 on:
-  workflow_dispatch:
-    inputs:
-      tag:
-        description: Annotated tag to release
-        required: true
-        default: v2.1.3
-        type: string
   push:
     tags:
-      - "v2.1.3"
+      - "v*"
 
 permissions:
   contents: write
@@ -19,226 +12,334 @@ permissions:
 
 jobs:
   build:
-    name: Build release artifacts
+    name: Build and publish release artifacts
     runs-on: ubuntu-latest
+    env:
+      EXPECTED_TAG: ${{ github.ref_name }}
 
     steps:
-      - name: Checkout
+      - name: Checkout exact tag
         uses: actions/checkout@v6
         with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+          ref: ${{ github.ref_name }}
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Setup Python
         uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
-      - name: Install build tools
+      - name: Install pinned release tools
         run: |
           set -euo pipefail
-          python -m pip install --upgrade pip
-          python -m pip install build cyclonedx-bom
+          python -m pip install --disable-pip-version-check "pip==26.0.1"
+          python -m pip install --disable-pip-version-check "build==1.5.0" "cyclonedx-bom==7.3.1"
 
-      - name: Verify tagged clean checkout
+      - name: Verify tag identity and release preconditions
         env:
-          EXPECTED_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          test "$EXPECTED_TAG" = "v2.1.3"
+          PROJECT_VERSION="$(python - <<'PY'
+          import tomllib
+          from pathlib import Path
+          print(tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))["project"]["version"])
+          PY
+          )"
+          EXPECTED_VERSION="${EXPECTED_TAG#v}"
+          test -n "$PROJECT_VERSION"
+          test "$EXPECTED_VERSION" = "$PROJECT_VERSION"
+          test "$(git cat-file -t "$EXPECTED_TAG")" = "tag"
           test -z "$(git status --porcelain)"
-          test "$(git rev-parse HEAD)" = "$(git rev-parse "$EXPECTED_TAG^{commit}")"
+          LOCAL_PEELED_SHA="$(git rev-parse "$EXPECTED_TAG^{commit}")"
+          test "$GITHUB_REF" = "refs/tags/$EXPECTED_TAG"
+          test "$GITHUB_SHA" = "$LOCAL_PEELED_SHA"
+          test "$(git rev-parse HEAD)" = "$LOCAL_PEELED_SHA"
 
-      - name: Clean dedicated dist and build final wheel and sdist once
+          REMOTE_TAG_REF="$(gh api -H "X-GitHub-Api-Version: 2026-03-10" "repos/${GITHUB_REPOSITORY}/git/ref/tags/${EXPECTED_TAG}")"
+          REMOTE_TAG_TYPE="$(python -c 'import json,sys; print(json.load(sys.stdin)["object"]["type"])' <<<"$REMOTE_TAG_REF")"
+          REMOTE_TAG_OBJECT_SHA="$(python -c 'import json,sys; print(json.load(sys.stdin)["object"]["sha"])' <<<"$REMOTE_TAG_REF")"
+          test "$REMOTE_TAG_TYPE" = "tag"
+          REMOTE_TAG_OBJECT="$(gh api -H "X-GitHub-Api-Version: 2026-03-10" "repos/${GITHUB_REPOSITORY}/git/tags/${REMOTE_TAG_OBJECT_SHA}")"
+          REMOTE_TAG_NAME="$(python -c 'import json,sys; print(json.load(sys.stdin)["tag"])' <<<"$REMOTE_TAG_OBJECT")"
+          REMOTE_TARGET_TYPE="$(python -c 'import json,sys; print(json.load(sys.stdin)["object"]["type"])' <<<"$REMOTE_TAG_OBJECT")"
+          REMOTE_PEELED_SHA="$(python -c 'import json,sys; print(json.load(sys.stdin)["object"]["sha"])' <<<"$REMOTE_TAG_OBJECT")"
+          test "$REMOTE_TAG_NAME" = "$EXPECTED_TAG"
+          test "$REMOTE_TARGET_TYPE" = "commit"
+          test "$REMOTE_PEELED_SHA" = "$LOCAL_PEELED_SHA"
+
+          set +e
+          RELEASE_LOOKUP="$(gh api --include --silent -H "X-GitHub-Api-Version: 2026-03-10" "repos/${GITHUB_REPOSITORY}/releases/tags/${EXPECTED_TAG}" 2>&1)"
+          RELEASE_LOOKUP_STATUS=$?
+          set -e
+          if [[ "$RELEASE_LOOKUP_STATUS" -eq 0 ]]; then
+            echo "release already exists for $EXPECTED_TAG" >&2
+            exit 1
+          fi
+          if ! grep -Eq '^HTTP/[0-9.]+ 404( |$)' <<<"$RELEASE_LOOKUP"; then
+            echo "release lookup failed; only an explicit HTTP 404 may continue" >&2
+            printf '%s\n' "$RELEASE_LOOKUP" >&2
+            exit 1
+          fi
+
+          IMMUTABLE_DOCUMENT="$(gh api -H "X-GitHub-Api-Version: 2026-03-10" "repos/${GITHUB_REPOSITORY}/immutable-releases")"
+          python -c 'import json,sys; document=json.load(sys.stdin); raise SystemExit("immutable releases are not enabled") if document.get("enabled") is not True else None' <<<"$IMMUTABLE_DOCUMENT"
+
+          RELEASE_LOCK="release/confflow-${PROJECT_VERSION}-py312-linux-x86_64.lock"
+          RELEASE_MANIFEST="release/confflow-${PROJECT_VERSION}-py312-linux-x86_64.SHA256SUMS"
+          test -s "$RELEASE_LOCK"
+          test -s "$RELEASE_MANIFEST"
+          PREFLIGHT_EVIDENCE="${RUNNER_TEMP}/confflow-release-preflight.json"
+          export LOCAL_PEELED_SHA REMOTE_PEELED_SHA
+          python - "$PREFLIGHT_EVIDENCE" <<'PY'
+          import json
+          import os
+          import sys
+          payload = {
+              "schema": "confflow.release-preflight.v1",
+              "repository": os.environ["GITHUB_REPOSITORY"],
+              "tag": os.environ["EXPECTED_TAG"],
+              "event_ref": os.environ["GITHUB_REF"],
+              "event_sha": os.environ["GITHUB_SHA"],
+              "local_peeled_sha": os.environ["LOCAL_PEELED_SHA"],
+              "remote_peeled_sha": os.environ["REMOTE_PEELED_SHA"],
+              "immutable_releases_enabled": True,
+              "release_absent": True,
+          }
+          with open(sys.argv[1], "w", encoding="utf-8") as stream:
+              json.dump(payload, stream, indent=2, sort_keys=True)
+              stream.write("\n")
+          PY
+          {
+            echo "RELEASE_VERSION=$PROJECT_VERSION"
+            echo "RELEASE_LOCK=$RELEASE_LOCK"
+            echo "RELEASE_MANIFEST=$RELEASE_MANIFEST"
+            echo "LOCAL_PEELED_SHA=$LOCAL_PEELED_SHA"
+            echo "REMOTE_PEELED_SHA=$REMOTE_PEELED_SHA"
+            echo "PREFLIGHT_EVIDENCE=$PREFLIGHT_EVIDENCE"
+          } >> "$GITHUB_ENV"
+
+      - name: Verify pip runtime wheelhouse against committed manifest
+        run: |
+          set -euo pipefail
+          WHEELHOUSE="${RUNNER_TEMP}/confflow-${RELEASE_VERSION}-wheelhouse"
+          rm -rf "$WHEELHOUSE"
+          mkdir -p "$WHEELHOUSE"
+          python -m pip download --disable-pip-version-check --only-binary=:all: --require-hashes --dest "$WHEELHOUSE" -r "$RELEASE_LOCK"
+          cp -- "$RELEASE_MANIFEST" "$WHEELHOUSE/SHA256SUMS"
+          python - "$RELEASE_LOCK" "$WHEELHOUSE" <<'PY'
+          import platform
+          import sys
+          import sysconfig
+          from pathlib import Path
+          from confflow.release_dependencies import validate_dependency_inputs
+          evidence = validate_dependency_inputs(
+              Path(sys.argv[1]), Path(sys.argv[2]),
+              runtime_identity={
+                  "python_version": platform.python_version(),
+                  "python_implementation": platform.python_implementation(),
+                  "platform": sysconfig.get_platform(),
+                  "machine": platform.machine(),
+              },
+          )
+          print("verified pip wheelhouse: " + ", ".join(evidence.wheel_filenames))
+          PY
+
+      - name: Build final wheel and sdist once
         run: |
           set -euo pipefail
           BUILD_DIR="${RUNNER_TEMP}/confflow-release-dist"
-          rm -rf "$BUILD_DIR"
-          mkdir -p "$BUILD_DIR"
-          rm -rf dist
-          # Build the sdist and wheel in separate source-checkout invocations.
-          # `python -m build --wheel --sdist` may rebuild the wheel from the
-          # sdist, where setup.py cannot read the tagged git commit and would
-          # emit null wheel-internal provenance. Keep the output outside the
-          # checkout so it cannot make the source tree appear dirty.
+          rm -rf "$BUILD_DIR" dist
+          mkdir -p "$BUILD_DIR" dist
           python -m build --sdist --outdir "$BUILD_DIR"
           python -m build --wheel --outdir "$BUILD_DIR"
-          mkdir -p dist
           cp -- "$BUILD_DIR"/* dist/
 
       - name: Verify final wheel metadata and build provenance
         run: |
           set -euo pipefail
           python - <<'PY'
-          from __future__ import annotations
-
           import ast
+          import os
           import subprocess
           import zipfile
           from pathlib import Path
-
+          version = os.environ["RELEASE_VERSION"]
           dist = Path("dist")
-          wheels = sorted(dist.glob("confflow-2.1.3-*.whl"))
-          sdists = sorted(dist.glob("confflow-2.1.3.tar.gz"))
+          wheels = sorted(dist.glob(f"confflow-{version}-*.whl"))
+          sdists = sorted(dist.glob(f"confflow-{version}.tar.gz"))
           if len(wheels) != 1 or len(sdists) != 1:
-              raise SystemExit(
-                  f"expected exactly one 2.1.3 wheel and sdist; got {wheels} / {sdists}"
-              )
+              raise SystemExit(f"expected exactly one wheel and sdist; got {wheels} / {sdists}")
           wheel = wheels[0]
-          expected_commit = subprocess.check_output(
-              ["git", "rev-parse", "HEAD"], text=True
-          ).strip()
+          expected_commit = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
           with zipfile.ZipFile(wheel) as archive:
-              metadata = archive.read("confflow-2.1.3.dist-info/METADATA").decode()
+              metadata = archive.read(f"confflow-{version}.dist-info/METADATA").decode()
               build_module = ast.parse(archive.read("confflow/__build__.py").decode())
-          if "Version: 2.1.3" not in metadata:
-              raise SystemExit("wheel metadata does not declare version 2.1.3")
+          if f"Version: {version}" not in metadata:
+              raise SystemExit(f"wheel metadata does not declare version {version}")
           values = {}
           for node in build_module.body:
               target = node.target if isinstance(node, ast.AnnAssign) else None
               if isinstance(target, ast.Name) and target.id in {"COMMIT", "DIRTY"}:
                   values[target.id] = ast.literal_eval(node.value)
           if values.get("COMMIT") != expected_commit or values.get("DIRTY") is not False:
-              raise SystemExit(
-                  f"wheel provenance mismatch: {values!r}, expected {expected_commit}/False"
-              )
-          print(f"verified {wheel.name}: commit={expected_commit} dirty=false")
+              raise SystemExit(f"wheel provenance mismatch: {values!r}")
           PY
 
-      - name: Generate CycloneDX SBOM from the controlled runtime lock
+      - name: Generate fail-closed CycloneDX SBOM
         run: |
           set -euo pipefail
-          cyclonedx-py requirements \
-            release/confflow-2.1.3-py312-linux-x86_64.lock \
-            --output-format JSON \
-            --output-file dist/sbom.cdx.json
+          cyclonedx-py requirements "$RELEASE_LOCK" --output-format JSON --output-file dist/sbom.cdx.json
           test -s dist/sbom.cdx.json
 
       - name: Attest final wheel build provenance
         id: attest
         uses: actions/attest-build-provenance@v2
         with:
-          subject-path: dist/confflow-2.1.3-*.whl
+          subject-path: dist/confflow-*.whl
           show-summary: true
 
-      - name: Export attestation bundle and release attestation record
+      - name: Cryptographically verify attestation identity
         env:
-          EXPECTED_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+          GH_TOKEN: ${{ github.token }}
           ATTESTATION_BUNDLE: ${{ steps.attest.outputs.bundle-path }}
         run: |
           set -euo pipefail
           test -s "$ATTESTATION_BUNDLE"
-          cp -- "$ATTESTATION_BUNDLE" dist/attestation.bundle.json
-          python - <<'PY'
-          from __future__ import annotations
+          WHEEL="$(printf '%s\n' dist/confflow-*.whl)"
+          test -f "$WHEEL"
+          test "$GITHUB_REF" = "refs/tags/$EXPECTED_TAG"
+          test "$GITHUB_SHA" = "$LOCAL_PEELED_SHA"
+          test "$REMOTE_PEELED_SHA" = "$LOCAL_PEELED_SHA"
+          ATTESTATION_VERIFICATION="${RUNNER_TEMP}/attestation-verification.json"
+          gh attestation verify "$WHEEL" \
+            --bundle "$ATTESTATION_BUNDLE" \
+            --repo "$GITHUB_REPOSITORY" \
+            --signer-repo "$GITHUB_REPOSITORY" \
+            --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml" \
+            --predicate-type "https://slsa.dev/provenance/v1" \
+            --source-ref "refs/tags/$EXPECTED_TAG" \
+            --source-digest "$LOCAL_PEELED_SHA" \
+            --format json >"$ATTESTATION_VERIFICATION"
+          test -s "$ATTESTATION_VERIFICATION"
+          echo "ATTESTATION_VERIFICATION=$ATTESTATION_VERIFICATION" >> "$GITHUB_ENV"
 
+      - name: Export attestation and controlled release inputs
+        env:
+          ATTESTATION_BUNDLE: ${{ steps.attest.outputs.bundle-path }}
+        run: |
+          set -euo pipefail
+          cp -- "$ATTESTATION_BUNDLE" dist/attestation.bundle.json
+          cp -- "$ATTESTATION_VERIFICATION" dist/attestation-verification.json
+          cp -- "$PREFLIGHT_EVIDENCE" dist/release-preflight.json
+          cp -- "$RELEASE_LOCK" "dist/$(basename "$RELEASE_LOCK")"
+          cp -- "$RELEASE_MANIFEST" "dist/$(basename "$RELEASE_MANIFEST")"
+          python - <<'PY'
           import hashlib
           import json
           import os
-          import subprocess
           from pathlib import Path
-
-          def digest(path: Path) -> str:
-              return hashlib.sha256(path.read_bytes()).hexdigest()
-
+          def digest(path): return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+          version = os.environ["RELEASE_VERSION"]
           dist = Path("dist")
-          wheel = next(dist.glob("confflow-2.1.3-*.whl"))
+          wheel = next(dist.glob(f"confflow-{version}-*.whl"))
           bundle = dist / "attestation.bundle.json"
-          commit = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
           payload = {
               "schema": "confflow.release-attestation.v1",
               "subject_filename": wheel.name,
               "subject_digest": digest(wheel),
               "repository": os.environ["GITHUB_REPOSITORY"],
               "tag": os.environ["EXPECTED_TAG"],
-              "peeled_commit": commit,
+              "peeled_commit": os.environ["LOCAL_PEELED_SHA"],
               "bundle_filename": bundle.name,
               "bundle_sha256": digest(bundle),
+              "verification_filename": "attestation-verification.json",
           }
-          (dist / "attestation.json").write_text(
-              json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-          )
+          (dist / "attestation.json").write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
           PY
 
       - name: Write release provenance
-        env:
-          EXPECTED_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
         run: |
           set -euo pipefail
           python - <<'PY'
-          from __future__ import annotations
-
           import hashlib
           import json
           import os
-          import subprocess
           from pathlib import Path
-
-          def digest(path: Path) -> str:
-              return hashlib.sha256(path.read_bytes()).hexdigest()
-
+          def digest(path): return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+          version = os.environ["RELEASE_VERSION"]
           dist = Path("dist")
-          wheel = next(dist.glob("confflow-2.1.3-*.whl"))
-          sdist = next(dist.glob("confflow-2.1.3.tar.gz"))
-          sbom = dist / "sbom.cdx.json"
-          attestation = dist / "attestation.json"
-          attestation_bundle = dist / "attestation.bundle.json"
-          lock = Path("release/confflow-2.1.3-py312-linux-x86_64.lock")
-          wheelhouse_manifest = Path("release/confflow-2.1.3-py312-linux-x86_64.SHA256SUMS")
-          commit = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+          wheel = next(dist.glob(f"confflow-{version}-*.whl"))
+          sdist = next(dist.glob(f"confflow-{version}.tar.gz"))
+          lock = Path(os.environ["RELEASE_LOCK"])
+          wheelhouse_manifest = Path(os.environ["RELEASE_MANIFEST"])
+          if (dist / lock.name).read_bytes() != lock.read_bytes():
+              raise SystemExit("release lock asset does not match the checked-in lock")
+          if (dist / wheelhouse_manifest.name).read_bytes() != wheelhouse_manifest.read_bytes():
+              raise SystemExit("release wheelhouse manifest asset does not match the checked-in manifest")
           payload = {
               "schema": "confflow.release-provenance.v1",
-              "package": "confflow",
-              "version": "2.1.3",
+              "package": "confflow", "version": version,
               "repository": os.environ["GITHUB_REPOSITORY"],
-              "tag": os.environ["EXPECTED_TAG"],
-              "commit": commit,
-              "wheel_filename": wheel.name,
-              "wheel_sha256": digest(wheel),
-              "sdist_filename": sdist.name,
-              "sdist_sha256": digest(sdist),
-              "sbom_filename": sbom.name,
-              "sbom_sha256": digest(sbom),
-              "attestation_filename": attestation.name,
-              "attestation_sha256": digest(attestation),
-              "attestation_bundle_filename": attestation_bundle.name,
-              "attestation_bundle_sha256": digest(attestation_bundle),
-              "attestation_subject_digest": digest(wheel),
-              "dependency_lock_sha256": digest(lock),
-              "wheelhouse_manifest_sha256": digest(wheelhouse_manifest),
+              "tag": os.environ["EXPECTED_TAG"], "commit": os.environ["LOCAL_PEELED_SHA"],
+              "wheel_filename": wheel.name, "wheel_sha256": digest(wheel),
+              "sdist_filename": sdist.name, "sdist_sha256": digest(sdist),
+              "sbom_filename": "sbom.cdx.json", "sbom_sha256": digest(dist / "sbom.cdx.json"),
+              "attestation_filename": "attestation.json", "attestation_sha256": digest(dist / "attestation.json"),
+              "attestation_bundle_filename": "attestation.bundle.json", "attestation_bundle_sha256": digest(dist / "attestation.bundle.json"),
+              "attestation_verification_filename": "attestation-verification.json", "attestation_verification_sha256": digest(dist / "attestation-verification.json"),
+              "dependency_lock_filename": lock.name, "dependency_lock_sha256": digest(lock),
+              "wheelhouse_manifest_filename": wheelhouse_manifest.name, "wheelhouse_manifest_sha256": digest(wheelhouse_manifest),
           }
-          (dist / "provenance.json").write_text(
-              json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-          )
+          (dist / "provenance.json").write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
           PY
 
-      - name: Write release notes and SHA256SUMS
-        env:
-          EXPECTED_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+      - name: Write notes, checksum manifest, and exact asset allowlist
         run: |
           set -euo pipefail
-          {
-            echo "ConfFlow ${EXPECTED_TAG} release artifacts"
-            echo
-            echo "The wheel was built once from the peeled tag commit."
-            echo "GitHub build provenance attestation subject: final wheel."
-          } > dist/RELEASE_ARTIFACTS.md
+          printf 'ConfFlow %s release artifacts\n\nBound annotated tag and cryptographically verified attestation.\n' "$EXPECTED_TAG" > dist/RELEASE_ARTIFACTS.md
           python - <<'PY'
-          from __future__ import annotations
-
           import hashlib
           from pathlib import Path
-
-          dist = Path("dist")
-          paths = sorted(path for path in dist.iterdir() if path.is_file())
-          lines = [
-              f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.name}"
-              for path in paths
-              if path.name != "SHA256SUMS"
-          ]
-          (dist / "SHA256SUMS").write_text("\n".join(lines) + "\n", encoding="utf-8")
+          paths = sorted(path for path in Path("dist").iterdir() if path.is_file())
+          lines = [f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.name}" for path in paths if path.name != "SHA256SUMS"]
+          Path("dist/SHA256SUMS").write_text("\n".join(lines) + "\n", encoding="utf-8")
           PY
           (cd dist && sha256sum --check SHA256SUMS)
+          WHEEL="$(printf '%s\n' dist/confflow-*.whl)"
+          SDIST="$(printf '%s\n' dist/confflow-*.tar.gz)"
+          release_files=(
+            "$WHEEL" "$SDIST" "dist/sbom.cdx.json"
+            "dist/attestation.bundle.json" "dist/attestation-verification.json" "dist/attestation.json"
+            "dist/release-preflight.json" "dist/provenance.json"
+            "dist/$(basename "$RELEASE_LOCK")"
+            "dist/$(basename "$RELEASE_MANIFEST")"
+            "dist/RELEASE_ARTIFACTS.md" "dist/SHA256SUMS"
+          )
+          test "${#release_files[@]}" -eq "$(find dist -maxdepth 1 -type f | wc -l)"
+          for release_file in "${release_files[@]}"; do test -s "$release_file"; done
+
+      - name: Initialize post-publication evidence
+        run: |
+          set -euo pipefail
+          POST_EVIDENCE="${RUNNER_TEMP}/release-post-verification.json"
+          python - "$POST_EVIDENCE" <<'PY'
+          import json, os, sys
+          payload = {
+              "schema": "confflow.release-post-verification.v1",
+              "repository": os.environ["GITHUB_REPOSITORY"],
+              "tag": os.environ["EXPECTED_TAG"],
+              "peeled_commit": os.environ["LOCAL_PEELED_SHA"],
+              "status": "publication_not_attempted",
+              "stage": "initialized",
+          }
+          temporary = sys.argv[1] + ".tmp"
+          with open(temporary, "w", encoding="utf-8") as stream:
+              json.dump(payload, stream, indent=2, sort_keys=True); stream.write("\n")
+          os.replace(temporary, sys.argv[1])
+          PY
+          echo "POST_EVIDENCE=$POST_EVIDENCE" >> "$GITHUB_ENV"
 
       - name: Upload workflow artifact bundle
         uses: actions/upload-artifact@v7
@@ -247,14 +348,124 @@ jobs:
           if-no-files-found: error
           path: dist/
 
-      - name: Publish GitHub release
+      - name: Publish immutable GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
-          EXPECTED_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
         run: |
           set -euo pipefail
-          gh release create "$EXPECTED_TAG" \
-            --verify-tag \
-            --title "ConfFlow $EXPECTED_TAG" \
-            --notes-file dist/RELEASE_ARTIFACTS.md \
-            dist/*
+          POST_STAGE="publish_preconditions"
+          RELEASE_CREATED=false
+          trap 'rc=$?; if [[ "$rc" -ne 0 ]]; then POST_EXIT_CODE="$rc" POST_STAGE="$POST_STAGE" RELEASE_CREATED="$RELEASE_CREATED" python -c '\''import json,os; p=os.environ["POST_EVIDENCE"]; d=json.load(open(p, encoding="utf-8")); created=os.environ["RELEASE_CREATED"] == "true"; d.update(status="release_created_verification_failed" if created else "failed", stage=os.environ["POST_STAGE"], exit_code=int(os.environ["POST_EXIT_CODE"]), release_created=created); t=p+".tmp"; open(t, "w", encoding="utf-8").write(json.dumps(d, indent=2, sort_keys=True) + "\n"); os.replace(t,p)'\''; fi' EXIT
+          test "$GITHUB_REF" = "refs/tags/$EXPECTED_TAG"
+          test "$GITHUB_SHA" = "$LOCAL_PEELED_SHA"
+          CURRENT_REMOTE_TAG_REF="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${EXPECTED_TAG}")"
+          CURRENT_REMOTE_TAG_OBJECT_SHA="$(python -c 'import json,sys; document=json.load(sys.stdin); assert document["object"]["type"] == "tag"; print(document["object"]["sha"])' <<<"$CURRENT_REMOTE_TAG_REF")"
+          CURRENT_REMOTE_TAG_OBJECT="$(gh api "repos/${GITHUB_REPOSITORY}/git/tags/${CURRENT_REMOTE_TAG_OBJECT_SHA}")"
+          CURRENT_REMOTE_PEELED_SHA="$(python -c 'import json,sys,os; document=json.load(sys.stdin); assert document["tag"] == os.environ["EXPECTED_TAG"] and document["object"]["type"] == "commit"; print(document["object"]["sha"])' <<<"$CURRENT_REMOTE_TAG_OBJECT")"
+          test "$CURRENT_REMOTE_PEELED_SHA" = "$LOCAL_PEELED_SHA"
+          IMMUTABLE_DOCUMENT="$(gh api -H "X-GitHub-Api-Version: 2026-03-10" "repos/${GITHUB_REPOSITORY}/immutable-releases")"
+          python -c 'import json,sys; document=json.load(sys.stdin); raise SystemExit("immutable releases are not enabled") if document.get("enabled") is not True else None' <<<"$IMMUTABLE_DOCUMENT"
+          set +e
+          RELEASE_LOOKUP="$(gh api --include --silent "repos/${GITHUB_REPOSITORY}/releases/tags/${EXPECTED_TAG}" 2>&1)"
+          RELEASE_LOOKUP_STATUS=$?
+          set -e
+          if [[ "$RELEASE_LOOKUP_STATUS" -eq 0 ]]; then echo "release already exists for $EXPECTED_TAG" >&2; exit 1; fi
+          if ! grep -Eq '^HTTP/[0-9.]+ 404( |$)' <<<"$RELEASE_LOOKUP"; then echo "release lookup failed; only an explicit HTTP 404 may continue" >&2; exit 1; fi
+          WHEEL="$(printf '%s\n' dist/confflow-*.whl)"
+          SDIST="$(printf '%s\n' dist/confflow-*.tar.gz)"
+          release_files=(
+            "$WHEEL" "$SDIST" "dist/sbom.cdx.json"
+            "dist/attestation.bundle.json" "dist/attestation-verification.json" "dist/attestation.json"
+            "dist/release-preflight.json" "dist/provenance.json"
+            "dist/$(basename "$RELEASE_LOCK")"
+            "dist/$(basename "$RELEASE_MANIFEST")"
+            "dist/RELEASE_ARTIFACTS.md" "dist/SHA256SUMS"
+          )
+          POST_STAGE="release_create"
+          gh release create "$EXPECTED_TAG" --repo "$GITHUB_REPOSITORY" --verify-tag \
+            --title "ConfFlow $EXPECTED_TAG" --notes-file dist/RELEASE_ARTIFACTS.md "${release_files[@]}"
+          RELEASE_CREATED=true
+          POST_STAGE="record_release_created"
+          python -c 'import json,os; p=os.environ["POST_EVIDENCE"]; d=json.load(open(p, encoding="utf-8")); d.update(status="release_created_pending_verification", stage="release_created", release_created=True); t=p+".tmp"; open(t, "w", encoding="utf-8").write(json.dumps(d, indent=2, sort_keys=True) + "\n"); os.replace(t,p)'
+
+      - name: Verify immutable release, tag, assets, and downloaded hashes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          POST_STAGE="release_metadata"
+          trap 'rc=$?; if [[ "$rc" -ne 0 ]]; then POST_EXIT_CODE="$rc" POST_STAGE="$POST_STAGE" python -c '\''import json,os; p=os.environ["POST_EVIDENCE"]; d=json.load(open(p, encoding="utf-8")); d.update(status="release_created_verification_failed", stage=os.environ["POST_STAGE"], exit_code=int(os.environ["POST_EXIT_CODE"]), release_created=True); t=p+".tmp"; open(t, "w", encoding="utf-8").write(json.dumps(d, indent=2, sort_keys=True) + "\n"); os.replace(t,p)'\''; fi' EXIT
+          RELEASE_DOCUMENT="${RUNNER_TEMP}/published-release.json"
+          gh api -H "X-GitHub-Api-Version: 2026-03-10" "repos/${GITHUB_REPOSITORY}/releases/tags/${EXPECTED_TAG}" >"$RELEASE_DOCUMENT"
+          IMMUTABLE_CLI="$(gh release view "$EXPECTED_TAG" --repo "$GITHUB_REPOSITORY" --json isImmutable --jq .isImmutable)"
+          test "$IMMUTABLE_CLI" = "true"
+          python - "$RELEASE_DOCUMENT" <<'PY'
+          import json, os, sys
+          document = json.load(open(sys.argv[1], encoding="utf-8"))
+          if document.get("tag_name") != os.environ["EXPECTED_TAG"]: raise SystemExit("published release tag does not match")
+          if document.get("immutable") is not True: raise SystemExit("published release is not immutable")
+          PY
+          POST_STAGE="remote_tag_readback"
+          POST_TAG_REF="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${EXPECTED_TAG}")"
+          POST_TAG_OBJECT_SHA="$(python -c 'import json,sys; document=json.load(sys.stdin); assert document["object"]["type"] == "tag"; print(document["object"]["sha"])' <<<"$POST_TAG_REF")"
+          POST_TAG_OBJECT="$(gh api "repos/${GITHUB_REPOSITORY}/git/tags/${POST_TAG_OBJECT_SHA}")"
+          POST_PEELED_SHA="$(python -c 'import json,sys,os; document=json.load(sys.stdin); assert document["tag"] == os.environ["EXPECTED_TAG"] and document["object"]["type"] == "commit"; print(document["object"]["sha"])' <<<"$POST_TAG_OBJECT")"
+          test "$POST_PEELED_SHA" = "$LOCAL_PEELED_SHA"
+          test "$POST_PEELED_SHA" = "$REMOTE_PEELED_SHA"
+          test "$POST_PEELED_SHA" = "$GITHUB_SHA"
+          WHEEL="$(printf '%s\n' dist/confflow-*.whl)"
+          SDIST="$(printf '%s\n' dist/confflow-*.tar.gz)"
+          release_files=(
+            "$WHEEL" "$SDIST" "dist/sbom.cdx.json"
+            "dist/attestation.bundle.json" "dist/attestation-verification.json" "dist/attestation.json"
+            "dist/release-preflight.json" "dist/provenance.json"
+            "dist/$(basename "$RELEASE_LOCK")"
+            "dist/$(basename "$RELEASE_MANIFEST")"
+            "dist/RELEASE_ARTIFACTS.md" "dist/SHA256SUMS"
+          )
+          POST_STAGE="asset_set"
+          python - "$RELEASE_DOCUMENT" "${release_files[@]}" <<'PY'
+          import json, sys
+          from pathlib import Path
+          document = json.load(open(sys.argv[1], encoding="utf-8"))
+          actual = sorted(asset["name"] for asset in document["assets"])
+          expected = sorted(Path(path).name for path in sys.argv[2:])
+          if actual != expected: raise SystemExit(f"published release asset set does not match: {actual} != {expected}")
+          PY
+          POST_STAGE="asset_download"
+          DOWNLOAD_DIR="${RUNNER_TEMP}/confflow-release-download"
+          rm -rf "$DOWNLOAD_DIR"
+          mkdir -p "$DOWNLOAD_DIR"
+          gh release download "$EXPECTED_TAG" --repo "$GITHUB_REPOSITORY" --dir "$DOWNLOAD_DIR"
+          test "$(find "$DOWNLOAD_DIR" -maxdepth 1 -type f | wc -l)" -eq "${#release_files[@]}"
+          for release_file in "${release_files[@]}"; do
+            asset="$(basename "$release_file")"
+            cmp -- "dist/$asset" "$DOWNLOAD_DIR/$asset"
+          done
+          POST_STAGE="downloaded_hashes"
+          (cd "$DOWNLOAD_DIR" && sha256sum --check SHA256SUMS)
+          POST_STAGE="write_verified_evidence"
+          python - "$RELEASE_DOCUMENT" "$POST_EVIDENCE" <<'PY'
+          import json, os, sys
+          document = json.load(open(sys.argv[1], encoding="utf-8"))
+          payload = {
+              "schema": "confflow.release-post-verification.v1",
+              "release_id": document["id"], "tag": os.environ["EXPECTED_TAG"],
+              "peeled_commit": os.environ["LOCAL_PEELED_SHA"], "immutable": document["immutable"],
+              "assets": sorted(asset["name"] for asset in document["assets"]),
+              "downloaded_hashes_verified": True, "status": "verified", "stage": "complete",
+          }
+          temporary = sys.argv[2] + ".tmp"
+          with open(temporary, "w", encoding="utf-8") as stream:
+              json.dump(payload, stream, indent=2, sort_keys=True); stream.write("\n")
+          os.replace(temporary, sys.argv[2])
+          PY
+          trap - EXIT
+
+      - name: Upload post-publication verification evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: confflow-release-post-verification
+          if-no-files-found: warn
+          path: ${{ runner.temp }}/release-post-verification.json

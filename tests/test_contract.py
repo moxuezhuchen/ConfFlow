@@ -14,6 +14,7 @@ import inspect
 import json
 import os
 from pathlib import Path
+from types import SimpleNamespace
 
 import confflow.cli as cli_module
 import confflow.workflow.export as export_module
@@ -150,6 +151,51 @@ def test_capability_executable_identity_binds_to_invoked_venv(tmp_path, monkeypa
     assert payload["executable"]["python"] == str(python)
     assert Path(payload["executable"]["path"]).is_relative_to(venv)
     assert Path(payload["executable"]["python"]).is_relative_to(venv)
+
+
+def test_resolved_executable_prefers_reported_windows_exe_over_path(tmp_path, monkeypatch):
+    """A launcher-reported path must win over another same-named PATH entry."""
+    reported = tmp_path / "confflow"
+    invoked = reported.with_name("confflow.exe")
+    reported.write_text("launcher metadata", encoding="utf-8")
+    invoked.write_bytes(b"MZ invoked launcher")
+    path_copy = tmp_path / "other" / "confflow.exe"
+    path_copy.parent.mkdir()
+    path_copy.write_bytes(b"MZ PATH copy")
+    python = tmp_path / "python.exe"
+    python.write_bytes(b"python")
+
+    host_os_name = os.name
+    monkeypatch.setattr(
+        cli_module,
+        "os",
+        SimpleNamespace(name="nt", fspath=os.fspath, path=os.path),
+    )
+    monkeypatch.setattr(cli_module.sys, "argv", [str(reported), "--capabilities", "--json"])
+    monkeypatch.setattr(cli_module.sys, "executable", str(python))
+    monkeypatch.setattr(cli_module.shutil, "which", lambda name: str(path_copy))
+
+    assert cli_module._resolved_confflow_executable() == str(invoked.resolve())
+    assert os.name == host_os_name
+    assert Path(os.fspath(tmp_path)).is_dir()
+
+
+def test_executable_resolution_keeps_posix_reported_path_before_exe_sibling(tmp_path, monkeypatch):
+    """POSIX launchers must never reinterpret a real no-suffix path as .exe."""
+    reported = tmp_path / "confflow"
+    sibling = reported.with_name("confflow.exe")
+    reported.write_text("POSIX launcher", encoding="utf-8")
+    sibling.write_bytes(b"not the POSIX launcher")
+    host_os_name = os.name
+    monkeypatch.setattr(
+        cli_module,
+        "os",
+        SimpleNamespace(name="posix", fspath=os.fspath, path=os.path),
+    )
+
+    assert cli_module._resolve_existing_executable(reported) == str(reported.resolve())
+    assert os.name == host_os_name
+    assert Path(os.fspath(tmp_path)).is_dir()
 
 
 def test_presenter_uses_contract_filenames():

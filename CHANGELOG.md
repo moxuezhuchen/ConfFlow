@@ -5,6 +5,22 @@
 > The archived-snapshot notice below describes the earlier repository state. ConfFlow is active again
 > as JobDesk's external chemistry workflow dependency beginning with v1.4.0.
 
+## v2.1.4 (2026-08-27) - Fix-forward release
+
+### Fixed
+
+- Corrected Windows console-launcher executable identity when `sys.argv[0]`
+  omits the `.exe` suffix.
+- Bound the release wheelhouse manifest to the exact filenames emitted by pip,
+  including the pydantic-core runtime wheel.
+- Published the controlled dependency lock and wheelhouse manifest as release
+  assets with provenance and checksums.
+
+### Validation
+
+- Release artifacts remain bound to the annotated tag's peeled commit,
+  checksums, SBOM, provenance record, and build attestation.
+
 ## v2.1.3 (2026-08-27) - Full remediation release
 
 ### Changed

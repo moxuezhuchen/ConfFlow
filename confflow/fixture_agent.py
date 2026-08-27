@@ -9,7 +9,6 @@ or user-payload arguments.
 
 from __future__ import annotations
 
-import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -22,12 +21,12 @@ from .core.contracts import ExitCode
 
 def _actual_entrypoint() -> str | None:
     """Resolve the executable that invoked this console entry point."""
-    candidate = Path(sys.argv[0])
-    if not candidate.is_file():
-        candidate = Path(sys.executable).with_name("confflow-fixture-agent")
-    if not candidate.is_file():
-        return None
-    return os.path.realpath(os.path.abspath(os.fspath(candidate)))
+    resolved = cli._resolve_existing_executable(Path(sys.argv[0]))
+    if resolved is not None:
+        return resolved
+    return cli._resolve_existing_executable(
+        Path(sys.executable).with_name("confflow-fixture-agent")
+    )
 
 
 def _fixture_after_execute(
