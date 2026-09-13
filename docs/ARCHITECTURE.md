@@ -64,8 +64,9 @@ confflow/
 │   │
 │   ├── refine/               # 构象筛选模块
 │   │   ├── __init__.py
-│   │   ├── processor.py      # RMSD 去重、能量筛选、虚频过滤
-│   │   ├── rmsd_engine.py    # RMSD/PMI 计算引擎（Numba JIT 加速、对称性感知 RMSD）
+│   │   ├── processor.py      # RMSD 去重、能量筛选、虚频过滤、JSON 报告
+│   │   ├── rmsd_engine.py    # proper Kabsch、合法图映射几何比较、代表式去重
+│   │   ├── topology.py       # 连接图、颜色细化预筛、有界精确图映射
 │   │   ├── _compat.py        # 兼容层
 │   │   └── result.py         # 结果数据结构
 │   │
@@ -213,13 +214,14 @@ LICENSE                        # MIT 许可证
   - MMFF94s 预优化
 
 - **`refine/`**：
-  - RMSD 去重（支持 Numba JIT 加速）
-  - 对称性感知 RMSD（主轴对齐 + 同元素贪心匹配，解决大分子原子乱序/对称互换问题）
-  - 能量辅助去重（ΔE ≤ tolerance 时放宽 RMSD 阈值）
-  - 双重校验：快路径（Kabsch）+ 慢路径（对称性感知），兼顾速度与准确度
+  - RMSD 去重（支持 Numba JIT 加速；proper Kabsch，禁止反射）
+  - 精确拓扑分组：距离判键图 + 颜色细化预筛 + 有界精确图映射；跨拓扑永不做 RMSD 删除
+  - 合法图映射下的几何比较：identity 不达标时继续搜索其他合法映射，找到 witness 才删除
+  - 搜索预算（节点数）确定性；预算耗尽返回 unresolved 并保留构象，不伪装成 distinct
+  - 能量辅助去重（ΔE ≤ tolerance 时放宽 RMSD 阈值，并在报告中给出 effective cutoff）
   - 能量窗口筛选
   - 虚频校验
-  - 拓扑分类
+  - 机器可读 JSON 报告（拓扑组、直接代表、witness RMSD、mapping/search work）
 
 - **`viz/`**：
   - 生成美化的纯文本总结报告（.txt）

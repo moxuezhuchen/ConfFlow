@@ -34,6 +34,7 @@ class RefineRequest:
     keep_all_topos: bool = False
     imag: int | None = None
     max_conformers: int | None = None
+    max_mapping_nodes: int | None = None
 
 
 RefineCallable = Callable[[RefineRequest], object]
@@ -64,6 +65,7 @@ def run_refine_postprocess(
     keep_all_topos: bool = False,
     imag: int | None = None,
     max_conformers: int | None = None,
+    max_mapping_nodes: int | None = None,
     refine_callable: RefineCallable | None = None,
 ) -> RefineResult:
     """Run post-processing through an injected, neutral refine port."""
@@ -84,6 +86,7 @@ def run_refine_postprocess(
         keep_all_topos=keep_all_topos,
         imag=imag,
         max_conformers=max_conformers,
+        max_mapping_nodes=max_mapping_nodes,
     )
     result = refine_callable(request)
     if isinstance(result, RefineResult):

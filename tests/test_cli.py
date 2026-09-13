@@ -999,6 +999,8 @@ def test_capabilities_does_not_touch_work_dir(monkeypatch, tmp_path):
 )
 def test_capability_payload_from_wheel_with_real_build(tmp_path):
     """Install a prebuilt wheel and verify its embedded git provenance."""
+    from confflow.contract import CAPABILITY_SCHEMA_VERSION
+
     wheel = os.environ["CONFFLOW_TEST_WHEEL"]
     expected_head = os.environ.get("CONFFLOW_TEST_HEAD")
     venv_dir = tmp_path / "venv"
@@ -1028,7 +1030,7 @@ def test_capability_payload_from_wheel_with_real_build(tmp_path):
         text=True,
     )
     payload = json.loads(completed.stdout)
-    assert payload["schema_version"] == 3
+    assert payload["schema_version"] == CAPABILITY_SCHEMA_VERSION
     assert payload["build"]["dirty"] is False
     assert re.fullmatch(r"[0-9a-f]{7,40}", payload["build"]["commit"])
     if expected_head:

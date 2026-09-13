@@ -24,6 +24,7 @@ def run_refine_block(request: RefineRequest) -> object:
             keep_all_topos=request.keep_all_topos,
             energy_tolerance=request.energy_tolerance,
             workers=request.workers,
+            max_mapping_nodes=request.max_mapping_nodes,
         )
     )
 

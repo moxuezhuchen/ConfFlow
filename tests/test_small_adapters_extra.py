@@ -66,6 +66,52 @@ def test_run_refine_postprocess_uses_injected_callable(tmp_path) -> None:
     assert request.noH is True
 
 
+def test_run_refine_postprocess_forwards_mapping_budget() -> None:
+    captured = {}
+
+    def fake_refine(request):
+        captured["request"] = request
+        return RefineResult(produced_output=True, output_path="out.xyz", kept_count=1)
+
+    run_refine_postprocess(
+        input_file="in.xyz",
+        output_file="out.xyz",
+        threshold=0.2,
+        ewin=None,
+        energy_tolerance=0.05,
+        workers=1,
+        max_mapping_nodes=321,
+        refine_callable=fake_refine,
+    )
+    assert captured["request"].max_mapping_nodes == 321
+
+
+def test_composition_root_forwards_mapping_budget(monkeypatch) -> None:
+    import confflow.blocks.refine as refine_pkg
+    from confflow.calc.postprocess import RefineRequest
+    from confflow.workflow import composition
+
+    captured = {}
+
+    def fake_process(options):
+        captured["options"] = options
+        return RefineResult(produced_output=True, output_path="out.xyz", kept_count=1)
+
+    monkeypatch.setattr(refine_pkg, "process_xyz", fake_process)
+    request = RefineRequest(
+        input_file="in.xyz",
+        output_file="out.xyz",
+        threshold=0.2,
+        ewin=None,
+        energy_tolerance=0.05,
+        workers=1,
+        max_mapping_nodes=99,
+    )
+    result = composition.run_refine_block(request)
+    assert result.kept_count == 1
+    assert captured["options"].max_mapping_nodes == 99
+
+
 def test_run_refine_postprocess_wraps_legacy_return(tmp_path) -> None:
     output = tmp_path / "out.xyz"
     output.write_text("0\n\n", encoding="utf-8")
