@@ -99,7 +99,8 @@ CI 也会执行 `pip check`，用于尽早发现声明依赖与解析结果不�
 |------|----------|------|
 | `test_refine.py` | refine/processor, rmsd_engine | RMSD 去重、能量筛选、虚频过滤 |
 | `test_processor_hotspots.py` | refine/processor | 去重、能量窗口、失败路径热点 |
-| `test_rmsd_engine_hotspots.py` | refine/rmsd_engine | 对称 RMSD 与拓扑分组热点路径 |
+| `test_rmsd_engine_hotspots.py` | refine/rmsd_engine | 合法映射去重与拓扑分组热点路径 |
+| `test_refine_graph_rmsd.py` | refine/topology, refine/rmsd_engine | proper Kabsch、精确拓扑分组、跨拓扑隔离、搜索预算与报告 |
 
 ### 回退测试
 
