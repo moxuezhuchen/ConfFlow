@@ -74,6 +74,6 @@ def test_rmsd_kernel_is_jitted_and_matches_numpy_reference() -> None:
     compiled_result = float(fast_rmsd(fixed, moving))
     numpy_result = kabsch_rmsd(fixed, moving)
 
-    assert numpy_result == pytest.approx(0.0983457, abs=1e-8)
+    assert numpy_result == pytest.approx(0.09834571865535, abs=1e-8)
     assert compiled_result == pytest.approx(numpy_result, abs=1e-8)
     assert fast_rmsd.nopython_signatures, "RMSD kernel did not compile in nopython mode"
