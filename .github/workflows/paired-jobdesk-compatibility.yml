@@ -23,7 +23,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out ConfFlow candidate
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           repository: moxuezhuchen/ConfFlow
           ref: ${{ inputs.confflow_ref || github.event.pull_request.head.sha || github.sha }}
@@ -31,7 +31,7 @@ jobs:
           fetch-depth: 1
 
       - name: Check out JobDesk candidate
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: moxuezhuchen/jobdesk
           ref: ${{ inputs.jobdesk_ref || 'codex/full-remediation-20260819-local' }}
@@ -39,7 +39,7 @@ jobs:
           fetch-depth: 1
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
