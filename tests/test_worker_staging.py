@@ -44,7 +44,30 @@ def test_stage_file_replaces_existing_file_only_after_digest_validation(tmp_path
 
     assert destination.read_bytes() == b"new validated input"
     assert stat.S_IMODE(destination.stat().st_mode) == 0o600
-    assert not list(destination.parent.glob(f".{destination.name}.tmp-*"))
+    assert not list(destination.parent.glob(".confflow-stage-*"))
+
+
+def test_stage_file_supports_destination_basename_at_name_max(tmp_path: Path) -> None:
+    parent = tmp_path / "stage"
+    parent.mkdir(mode=0o700)
+    try:
+        name_max = os.pathconf(os.fspath(parent), "PC_NAME_MAX")
+    except (OSError, ValueError):
+        pytest.skip("filesystem does not expose PC_NAME_MAX")
+    if name_max <= 0 or name_max < len(".confflow-stage-") + 2 * 16:
+        pytest.skip("filesystem name limit is too small for the temporary file name")
+
+    source = tmp_path / "source.xyz"
+    source.write_bytes(b"input at the filesystem name limit")
+    destination = parent / ("x" * name_max)
+    expected = hashlib.sha256(source.read_bytes()).hexdigest()
+
+    assert len(os.fsencode(destination.name)) == name_max
+    assert worker_staging._stage_file(str(source), destination, expected_digest=expected) == (
+        destination
+    )
+    assert destination.read_bytes() == source.read_bytes()
+    assert not list(parent.glob(".confflow-stage-*"))
 
 
 def test_stage_file_rejects_digest_mismatch_after_copy(tmp_path: Path) -> None:
@@ -56,7 +79,7 @@ def test_stage_file_rejects_digest_mismatch_after_copy(tmp_path: Path) -> None:
         worker_staging._stage_file(str(source), destination, expected_digest="0" * 64)
 
     assert not destination.exists()
-    assert not list(destination.parent.glob(f".{destination.name}.tmp-*"))
+    assert not list(destination.parent.glob(".confflow-stage-*"))
 
 
 def test_stage_file_rejects_digest_mismatch_without_replacing_existing_file(
@@ -72,7 +95,7 @@ def test_stage_file_rejects_digest_mismatch_without_replacing_existing_file(
         worker_staging._stage_file(str(source), destination, expected_digest="0" * 64)
 
     assert destination.read_bytes() == b"previous valid input"
-    assert not list(destination.parent.glob(f".{destination.name}.tmp-*"))
+    assert not list(destination.parent.glob(".confflow-stage-*"))
 
 
 def test_stage_file_partial_write_failure_preserves_existing_file_and_cleans_temp(
@@ -100,7 +123,7 @@ def test_stage_file_partial_write_failure_preserves_existing_file_and_cleans_tem
         worker_staging._stage_file(str(source), destination, expected_digest=expected)
 
     assert destination.read_bytes() == b"previous valid input"
-    assert not list(destination.parent.glob(f".{destination.name}.tmp-*"))
+    assert not list(destination.parent.glob(".confflow-stage-*"))
 
 
 def test_stage_file_replace_failure_preserves_existing_file_and_cleans_temp(
@@ -122,7 +145,7 @@ def test_stage_file_replace_failure_preserves_existing_file_and_cleans_temp(
         worker_staging._stage_file(str(source), destination, expected_digest=expected)
 
     assert destination.read_bytes() == b"previous valid input"
-    assert not list(destination.parent.glob(f".{destination.name}.tmp-*"))
+    assert not list(destination.parent.glob(".confflow-stage-*"))
 
 
 def test_stage_file_allows_non_writable_sidecar_directory_modes(tmp_path: Path) -> None:
@@ -151,7 +174,7 @@ def test_stage_file_rejects_group_writable_destination_directory(tmp_path: Path)
         worker_staging._stage_file(str(source), destination, expected_digest=expected)
 
     assert not destination.exists()
-    assert not list(destination.parent.glob(f".{destination.name}.tmp-*"))
+    assert not list(destination.parent.glob(".confflow-stage-*"))
 
 
 def test_stage_file_does_not_follow_destination_symlink(tmp_path: Path) -> None:
@@ -170,7 +193,7 @@ def test_stage_file_does_not_follow_destination_symlink(tmp_path: Path) -> None:
         )
     assert link.is_symlink()
     assert sentinel.read_bytes() == b"sentinel"
-    assert not list(destination.glob(f".{link.name}.tmp-*"))
+    assert not list(destination.glob(".confflow-stage-*"))
 
 
 def test_ensure_directory_rejects_symlink_and_normalizes_mode(tmp_path: Path) -> None:

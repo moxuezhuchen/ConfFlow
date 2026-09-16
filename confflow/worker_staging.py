@@ -11,6 +11,9 @@ from pathlib import Path
 
 from .application.execution.state_root import StateRoot
 
+_TEMPORARY_NAME_PREFIX = ".confflow-stage-"
+_TEMPORARY_NAME_TOKEN_BYTES = 16
+
 
 def _stage_worker_inputs(
     root: StateRoot,
@@ -155,7 +158,7 @@ def _open_temporary_destination(
     """Create a private same-directory temporary file without following links."""
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | nofollow
     for _ in range(10):
-        temporary_name = f".{destination_name}.tmp-{secrets.token_hex(16)}"
+        temporary_name = f"{_TEMPORARY_NAME_PREFIX}{secrets.token_hex(_TEMPORARY_NAME_TOKEN_BYTES)}"
         try:
             return os.open(temporary_name, flags, 0o600, dir_fd=parent_fd), temporary_name
         except FileExistsError:
