@@ -14,7 +14,7 @@ from __future__ import annotations
 import os
 from typing import Any
 
-from .data import GV_COVALENT_RADII
+from .bonding import infer_bond_pairs
 from .elements import canonicalize_element_symbol
 
 __all__ = [
@@ -41,15 +41,6 @@ def _parse_chain(chain_str: str) -> list[int]:
     return atoms
 
 
-def _covalent_radius(atomic_number: int) -> float:
-    """Return a usable covalent radius for bond detection."""
-    if 0 <= atomic_number < len(GV_COVALENT_RADII):
-        radius = float(GV_COVALENT_RADII[atomic_number])
-        if radius > 0:
-            return radius
-    return 1.5
-
-
 def load_mol_from_xyz(filename: str, bond_coeff: float):
     """Load an RDKit molecule with 3D coordinates and detected bonds.
 
@@ -59,12 +50,10 @@ def load_mol_from_xyz(filename: str, bond_coeff: float):
     chemistry operation is called.
     """
     try:
-        import numpy as np
         from rdkit import Chem, RDLogger
-        from scipy.spatial import cKDTree
     except ImportError as exc:  # pragma: no cover - environment dependent
         raise ImportError(
-            "Chemistry validation requires RDKit and SciPy; install the chemistry extras"
+            "Chemistry validation requires RDKit; install the chemistry extras"
         ) from exc
 
     RDLogger.DisableLog("rdApp.*")  # type: ignore[attr-defined]
@@ -109,16 +98,9 @@ def load_mol_from_xyz(filename: str, bond_coeff: float):
         conformer.SetAtomPosition(index, position)
     rw_mol.AddConformer(conformer)
 
-    radii = np.array([_covalent_radius(number) for number in atom_numbers])
-    position_array = np.array(positions)
-    max_threshold = 2.0 * float(np.max(radii)) * float(bond_coeff)
-    tree = cKDTree(position_array)
-    pairs = tree.query_pairs(max_threshold, output_type="ndarray")
+    pairs = infer_bond_pairs(atom_numbers, positions, bond_scale=float(bond_coeff))
     for i, j in pairs:
-        threshold = (radii[i] + radii[j]) * float(bond_coeff)
-        distance = float(np.linalg.norm(position_array[i] - position_array[j]))
-        if 0.4 < distance < threshold:
-            rw_mol.AddBond(int(i), int(j), Chem.BondType.SINGLE)
+        rw_mol.AddBond(int(i), int(j), Chem.BondType.SINGLE)
 
     mol = rw_mol.GetMol()
     try:
