@@ -14,13 +14,18 @@ from ...core.exceptions import (
     CalculationParseError,
     StopRequestedError,
 )
-from ...shared.defaults import DEFAULT_DELETE_WORK_DIR, DEFAULT_TS_BOND_DRIFT_THRESHOLD
+from ...shared.defaults import (
+    DEFAULT_DELETE_WORK_DIR,
+    DEFAULT_TS_BOND_DRIFT_THRESHOLD,
+    DEFAULT_TS_RMSD_THRESHOLD,
+)
 from ..analysis import (
     _bond_length_from_xyz_lines,
     _keyword_requests_freq,
     _parse_ts_bond_atoms,
     is_rescue_enabled,
     validate_ts_bond_drift,
+    validate_ts_rmsd,
 )
 from ..executor import CalcExecutor
 from ..policies import get_policy_for_config
@@ -218,6 +223,23 @@ class TaskRunner:
                 if lowest_freq is not None:
                     err_msg += f" (lowest freq: {lowest_freq:.1f} cm⁻¹)"
                 return self._failed_result(task_dict, err_msg, "parse_error")
+
+            # TS geometry acceptance: the optimized structure must not drift too
+            # far (Kabsch-aligned all-atom RMSD) from the structure the
+            # optimization started from, i.e. the user's TS guess.
+            if itask == 4:
+                rmsd_threshold = float(cfg.get("ts_rmsd_threshold", DEFAULT_TS_RMSD_THRESHOLD))
+                rmsd_err = validate_ts_rmsd(
+                    task_dict["coords"], final_coords, rmsd_threshold, context="TS"
+                )
+                if rmsd_err is not None:
+                    rescued = self._try_rescue(cfg, task_dict, rmsd_err)
+                    if rescued is not None:
+                        success = self._rescued_result_successful(rescued)
+                        result_payload = rescued if success else None
+                        return rescued
+                    error_kind = "rescue_failed" if is_rescue_enabled(cfg) else "parse_error"
+                    return self._failed_result(task_dict, rmsd_err, error_kind)
 
             ts_bond_atoms = cfg.get("ts_bond_atoms")
             ts_bond_length = None

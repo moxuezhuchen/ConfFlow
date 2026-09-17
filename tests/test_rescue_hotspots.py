@@ -274,7 +274,6 @@ def test_run_ts_reoptimization_computes_gcorr_and_keeps_dirs_when_requested():
             2,
             1.25,
             ["coords"],
-            ["base"],
             [],
             [],
         )
@@ -316,7 +315,6 @@ def test_run_ts_reoptimization_fails_when_final_structure_is_missing():
             2,
             1.25,
             ["coords"],
-            ["base"],
             [],
             [],
         )
@@ -355,7 +353,6 @@ def test_run_ts_reoptimization_reports_missing_freq_info_and_handles_cleanup_fai
             2,
             1.25,
             ["coords"],
-            ["base"],
             [],
             [],
         )

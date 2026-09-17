@@ -10,12 +10,19 @@ from typing import Any
 import numpy as np
 
 from ..core import io as io_xyz
-from ..shared.defaults import DEFAULT_TS_BOND_DRIFT_THRESHOLD
+from ..shared.defaults import DEFAULT_TS_BOND_DRIFT_THRESHOLD, DEFAULT_TS_RMSD_THRESHOLD
 
 __all__ = [
+    "FREQUENCY_NOISE_FLOOR_CM",
+    "analyze_vibrational_frequencies",
     "validate_ts_bond_drift",
+    "validate_ts_rmsd",
     "is_rescue_enabled",
 ]
+
+#: Modes within this many cm⁻¹ of zero are numerical noise (near-zero translations
+#: / rotations in ORCA, or soft modes) and must not be counted as imaginary.
+FREQUENCY_NOISE_FLOOR_CM = 10.0
 
 
 def _keyword_requests_freq(config: dict) -> bool:
@@ -135,3 +142,81 @@ def _coords_array_from_xyz_lines(coords_lines: list[str]) -> np.ndarray | None:
     except (ValueError, TypeError, AttributeError):
         # Numeric conversion failed or type error
         return None
+
+
+def analyze_vibrational_frequencies(
+    freqs: list[float],
+    *,
+    skip_rigid_modes: int = 0,
+    noise_floor_cm: float = FREQUENCY_NOISE_FLOOR_CM,
+) -> tuple[int, float | None]:
+    """Count imaginary modes and report the lowest true vibrational frequency.
+
+    ``skip_rigid_modes`` drops the leading translations/rotations (ORCA lists
+    them explicitly; Gaussian does not).  Modes within ``noise_floor_cm`` of
+    zero are treated as numerical noise, so both parsers classify modes with
+    the same rule and a near-zero rigid mode is never mistaken for an
+    imaginary frequency.
+    """
+    modes: list[float] = []
+    for value in freqs[skip_rigid_modes:]:
+        try:
+            freq = float(value)
+        except (TypeError, ValueError):
+            continue
+        if not np.isfinite(freq) or abs(freq) <= noise_floor_cm:
+            continue
+        modes.append(freq)
+    num_imag = sum(1 for freq in modes if freq < 0.0)
+    lowest = min(modes) if modes else None
+    return num_imag, lowest
+
+
+def _kabsch_aligned_rmsd(a: np.ndarray, b: np.ndarray) -> float | None:
+    """Proper (reflection-free) Kabsch-aligned RMSD between two (N, 3) arrays."""
+    if a.shape != b.shape or a.shape[0] == 0:
+        return None
+    if not np.all(np.isfinite(a)) or not np.all(np.isfinite(b)):
+        return None
+    a_centered = a - a.mean(axis=0)
+    b_centered = b - b.mean(axis=0)
+    # Rotate the moving set ``a`` onto the fixed set ``b`` (same formulation as
+    # the refine RMSD engine).
+    h = a_centered.T @ b_centered
+    u, _s, vt = np.linalg.svd(h)
+    d = np.eye(3)
+    d[-1, -1] = 1.0 if np.linalg.det(u @ vt) >= 0.0 else -1.0
+    a_aligned = a_centered @ (u @ d @ vt)
+    return float(np.sqrt(np.mean(np.sum((b_centered - a_aligned) ** 2, axis=1))))
+
+
+def validate_ts_rmsd(
+    initial_coords: list[str],
+    final_coords: list[str],
+    threshold: float | None = None,
+    *,
+    context: str = "TS",
+) -> str | None:
+    """Check the Kabsch-aligned all-atom RMSD of a TS optimization.
+
+    The displacement is measured between the optimized structure and the
+    structure the optimization started from (the user TS guess for a normal TS
+    task, the selected scan candidate for rescue reoptimization).  Returns an
+    error message when the RMSD exceeds ``threshold``, or ``None`` when the
+    check passes or cannot be evaluated (unparseable/mismatched coordinates).
+    """
+    if threshold is None:
+        threshold = DEFAULT_TS_RMSD_THRESHOLD
+    initial = _coords_array_from_xyz_lines(initial_coords)
+    final = _coords_array_from_xyz_lines(final_coords)
+    if initial is None or final is None:
+        return None
+    rmsd = _kabsch_aligned_rmsd(initial, final)
+    if rmsd is None:
+        return None
+    if rmsd > threshold:
+        return (
+            f"{context} geometry criterion failed: aligned RMSD {rmsd:.3f} Å "
+            f"exceeds threshold {threshold:.3f} Å"
+        )
+    return None

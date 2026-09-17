@@ -10,6 +10,7 @@ import re
 from typing import Any
 
 from ...core.path_policy import validate_executable_setting
+from ..analysis import analyze_vibrational_frequencies
 from ..components.input_helpers import (
     compute_gaussian_mem,
     gaussian_apply_freeze,
@@ -210,8 +211,9 @@ class GaussianPolicy(CalculationPolicy):
                 g_low = float(gibbs_vals[-1])
 
         if all_freqs:
-            num_imag_freqs = sum(1 for f in all_freqs if f < 0)
-            lowest_freq = min(all_freqs)
+            # Gaussian lists only true vibrational modes, but near-zero values
+            # are still numerical noise and must not be counted as imaginary.
+            num_imag_freqs, lowest_freq = analyze_vibrational_frequencies(all_freqs)
 
         final_coords = parse_last_geometry(log_file, 1)
 
