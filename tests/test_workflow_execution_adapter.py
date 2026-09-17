@@ -857,7 +857,8 @@ def test_direct_adapter_active_cancel_uses_derived_cancel_beacon(tmp_path: Path)
         )
     )
 
-    assert service.execute(run_id).state is RunState.QUEUED
+    # The worker thread may transition to RUNNING before execute() returns.
+    assert service.execute(run_id).state in {RunState.QUEUED, RunState.RUNNING}
     assert started.wait(2)
     assert service.cancel(run_id).state is RunState.RUNNING
     assert beacon_seen.wait(2)
