@@ -11,7 +11,7 @@ from collections.abc import Callable
 from datetime import datetime
 from typing import Any
 
-from ..calc.artifacts import CalcArtifactManager
+from ..calc.artifacts import CalcArtifactManager, CalcResumeCompatibilityError
 from ..calc.executor import CalcExecutor
 from ..config.canonical import build_workflow_binding, resolve_calc_step
 from ..config.models import GlobalOptions
@@ -293,27 +293,29 @@ def run_workflow(
                 input_for_digest = (
                     inputs_for_step if isinstance(inputs_for_step, str) else inputs_for_step[0]
                 )
-                prepared = CalcArtifactManager(
+                manager = CalcArtifactManager(
                     step_dir,
                     step_name=step_name,
                     config=calc_config,
                     input_path=input_for_digest,
-                ).prepare(resume=True)
+                )
+                try:
+                    prepared = manager.prepare(resume=True)
+                except CalcResumeCompatibilityError as exc:
+                    raise RuntimeError(
+                        _resume_failure_message(
+                            step_index=execution_index + 1,
+                            step_name=step_name,
+                            step_dir=step_dir,
+                            reason=str(exc),
+                        )
+                    ) from exc
                 if prepared.reusable_output is not None:
                     current_input = str(prepared.reusable_output)
                     step_outputs[step_name] = current_input
                     _mark_step_completed(state, state_record, current_input, execution_index)
                     state_store.save(state)
                     continue
-                if prepared.cleaned_stale_artifacts:
-                    raise RuntimeError(
-                        _resume_failure_message(
-                            step_index=execution_index + 1,
-                            step_name=step_name,
-                            step_dir=step_dir,
-                            reason="manifest digest did not match current config/input",
-                        )
-                    )
 
             expected_output = resolve_step_output(step_dir, step.get("type"))
             if expected_output is not None and os.path.exists(expected_output):

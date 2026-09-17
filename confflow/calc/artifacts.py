@@ -23,6 +23,14 @@ class CalcManifestCompatibilityError(RuntimeError):
     """A present calc manifest cannot be safely interpreted for cleanup."""
 
 
+class CalcResumeCompatibilityError(RuntimeError):
+    """Strict resume requested an existing calc step that cannot be reused.
+
+    Raised before any artifact is modified so that a failed ``--resume`` never
+    destroys previously computed results.
+    """
+
+
 MANIFEST_NAME = "manifest.json"
 MANIFEST_SCHEMA_VERSION = 1
 
@@ -200,6 +208,23 @@ class CalcArtifactManager:
             else:
                 entry.unlink()
 
+    def _resume_incompatibility_reason(self, manifest: CalcManifest | None) -> str:
+        if manifest is None:
+            return "no calc manifest found for this step"
+        if manifest.step_name != self.step_name:
+            return (
+                f"manifest was written for step '{manifest.step_name}', "
+                f"not '{self.step_name}'"
+            )
+        if manifest.config_digest != self.config_digest:
+            return "manifest config digest did not match current configuration"
+        if manifest.input_digest != self.input_digest:
+            return "manifest input digest did not match current input"
+        reusable = manifest.reusable_output
+        if reusable and not (self.step_dir / reusable).exists():
+            return f"manifest output is missing: {reusable}"
+        return "manifest does not match the current step"
+
     def prepare(self, *, resume: bool) -> PreparedCalcArtifacts:
         manifest = self.load()
         if self._matches_current(manifest):
@@ -218,6 +243,11 @@ class CalcArtifactManager:
                     reusable_output=None,
                     cleaned_stale_artifacts=False,
                 )
+
+        # Strict resume never mutates existing artifacts: fail closed instead of
+        # clearing a step directory that the workflow will refuse to resume.
+        if resume:
+            raise CalcResumeCompatibilityError(self._resume_incompatibility_reason(manifest))
 
         cleaned = False
         if self.step_dir.exists() and any(self.step_dir.iterdir()):

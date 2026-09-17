@@ -21,8 +21,12 @@ from ..core import io as io_xyz
 from ..core.console import SINGLE_LINE, console, print_kv
 from ..core.constants import HARTREE_TO_KCALMOL
 from ..core.exceptions import ConfigurationError
-from ..core.keyword_rewrite import make_scan_keyword_from_ts_keyword
+from ..core.keyword_rewrite import (
+    ensure_gaussian_modredundant_keyword,
+    make_scan_keyword_from_ts_keyword,
+)
 from .components import executor
+from .components.input_helpers import append_gaussian_modredundant
 from .policies import get_policy_for_config as _get_policy
 
 logger = logging.getLogger("confflow.calc.rescue")
@@ -387,9 +391,16 @@ class _ConstrainedScanner:
             r"(?i)(^|\s)freq\b(\s*=\s*\([^)]*\)|\s*\([^)]*\)|\s*=\s*[^\s]+)?", " ", scan_kw_local
         )
         scan_kw_local = re.sub(r"\s+", " ", scan_kw_local).strip()
+        # Gaussian only reads the ModRedundant section when Opt=ModRedundant is
+        # requested; the constrained scan relies on that section for the B line.
+        scan_kw_local = ensure_gaussian_modredundant_keyword(scan_kw_local)
 
         scan_cfg["keyword"] = scan_kw_local
-        scan_cfg["freeze"] = f"{a1},{a2}"
+        # Constrain the a1-a2 bond length; leave every other degree of freedom
+        # free. User-provided freeze/ModRedundant content is preserved.
+        scan_cfg["gaussian_modredundant"] = append_gaussian_modredundant(
+            scan_cfg.get("gaussian_modredundant"), f"B {a1} {a2} F"
+        )
         scan_cfg["ibkout"] = 0
 
         adjusted = _set_bond_length_on_coords(start_coords, a1, a2, target_r)

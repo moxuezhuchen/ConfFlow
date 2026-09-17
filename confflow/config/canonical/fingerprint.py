@@ -8,6 +8,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, cast
 
+from ...shared.confgen_params import confgen_known_keys, resolve_confgen_params
 from .resolve import resolve_calc_step
 from .schema import WORKFLOW_SCHEMA_VERSION, workflow_schema_sha256
 from .serialization import canonical_json, canonical_sha256
@@ -179,39 +180,8 @@ def _known_calc_keys() -> frozenset[str]:
 def _known_confgen_params(
     params: Mapping[str, Any], global_options: GlobalOptions
 ) -> dict[str, Any]:
-    """Mirror the execution adapter's aliases/defaults without importing it."""
-
-    def first(*keys: str, default: Any = None) -> Any:
-        for key in keys:
-            if key in params and params[key] is not None:
-                return params[key]
-        return default
-
-    workers = first(
-        "workers",
-        "max_workers",
-        "max_parallel_jobs",
-        default=global_options.max_parallel_jobs,
-    )
-    try:
-        workers = int(workers)
-    except (TypeError, ValueError):
-        workers = str(workers)
-    return {
-        "angle_step": first("angle_step", default=120),
-        "bond_threshold": first("bond_multiplier", "bond_threshold", default=1.15),
-        "clash_threshold": first("clash_threshold", default=0.65),
-        "add_bond": first("add_bond", default=None),
-        "del_bond": first("del_bond", default=None),
-        "no_rotate": first("no_rotate", default=None),
-        "force_rotate": first("force_rotate", default=None),
-        "optimize": first("optimize", default=False),
-        "chains": first("chains", "chain", default=None),
-        "chain_steps": first("chain_steps", "steps", default=None),
-        "chain_angles": first("chain_angles", "angles", default=None),
-        "rotate_side": first("rotate_side", default="left"),
-        "workers": workers,
-    }
+    """Resolve confgen params through the shared resolver (single source of truth)."""
+    return resolve_confgen_params(params, default_workers=global_options.max_parallel_jobs)
 
 
 def _canonical_step(step: Mapping[str, Any], global_options: GlobalOptions) -> dict[str, Any]:
@@ -232,27 +202,7 @@ def _canonical_step(step: Mapping[str, Any], global_options: GlobalOptions) -> d
             semantic["extra"] = _normalize(extras, path=f"$.steps[{name}].params.extra")
     else:
         semantic = {"resolved": _normalize(_known_confgen_params(params, global_options))}
-        known = {
-            "angle_step",
-            "bond_multiplier",
-            "bond_threshold",
-            "clash_threshold",
-            "add_bond",
-            "del_bond",
-            "no_rotate",
-            "force_rotate",
-            "optimize",
-            "chains",
-            "chain",
-            "chain_steps",
-            "steps",
-            "chain_angles",
-            "angles",
-            "rotate_side",
-            "workers",
-            "max_workers",
-            "max_parallel_jobs",
-        }
+        known = confgen_known_keys()
         extras = {key: value for key, value in params.items() if str(key) not in known}
         if extras:
             semantic["extra"] = _normalize(extras, path=f"$.steps[{name}].params.extra")

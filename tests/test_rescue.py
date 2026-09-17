@@ -307,11 +307,12 @@ def test_ts_failure_triggers_scan_rescue_and_keyword_rewrite(monkeypatch, tmp_pa
             assert "noeigentest" not in kw.lower()
             assert "opt" in kw.lower()
             assert "nomicro" in kw.lower()
+            assert "modredundant" in kw.lower()
 
-            assert config.get("gaussian_modredundant") in (None, "", [])
+            assert config.get("gaussian_modredundant") == ["B 1 2 F"]
             assert config.get("gaussian_oldchk") in (None, "")
             assert config.get("gaussian_oldchk_file") in (None, "")
-            assert str(config.get("freeze", "")) in ("1,2", "2,1")
+            assert not config.get("freeze")
             assert str(config.get("itask")).lower() == "opt"
 
             e = -((float(r) - 1.10) ** 2) + 1.0
