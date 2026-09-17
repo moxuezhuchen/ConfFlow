@@ -93,9 +93,7 @@ def _resolve_step_config(
             resolved.update(
                 resolve_confgen_params(
                     params,
-                    default_workers=resolved.get(
-                        "max_parallel_jobs", DEFAULT_MAX_PARALLEL_JOBS
-                    ),
+                    default_workers=resolved.get("max_parallel_jobs", DEFAULT_MAX_PARALLEL_JOBS),
                 )
             )
 

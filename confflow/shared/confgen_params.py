@@ -9,7 +9,7 @@ This module is the single source of that interpretation.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any
 
 from ..core.exceptions import ConfigurationError
@@ -70,28 +70,30 @@ def _as_list(value: Any) -> Any:
     return [value]
 
 
-def _values_conflict(left: Any, right: Any) -> bool:
-    if left is right:
-        return False
-    if isinstance(left, (int, float)) and isinstance(right, (int, float)):
-        return float(left) != float(right)
-    return left != right
-
-
 def _select_alias(
-    params: Mapping[str, Any], canonical: str, aliases: tuple[str, ...]
+    params: Mapping[str, Any],
+    canonical: str,
+    aliases: tuple[str, ...],
+    normalize: Callable[[Any], Any],
 ) -> Any:
+    """Return the normalized value of the first present alias.
+
+    Equivalence is decided on the normalized (canonical) value, so aliases that
+    differ only in representation (``"1.2"`` vs ``1.2``, ``"1-2-3"`` vs
+    ``["1-2-3"]``) are accepted, while genuinely different values raise
+    ``ConfigurationError``.
+    """
     present = [key for key in aliases if key in params and params[key] is not None]
     if not present:
         return _MISSING
-    first = present[0]
+    selected = normalize(params[present[0]])
     for key in present[1:]:
-        if _values_conflict(params[first], params[key]):
+        if normalize(params[key]) != selected:
             rendered = ", ".join(f"{name}={params[name]!r}" for name in present)
             raise ConfigurationError(
                 f"confgen params specify conflicting values for '{canonical}': {rendered}"
             )
-    return params[first]
+    return selected
 
 
 def _coerce_float(value: Any, name: str) -> float:
@@ -108,6 +110,14 @@ def _coerce_int(value: Any, name: str) -> int:
         raise ConfigurationError(f"confgen {name} must be an integer, got {value!r}") from exc
 
 
+def _normalize_bond_threshold(value: Any) -> float:
+    return _coerce_float(value, "bond_threshold")
+
+
+def _normalize_workers(value: Any) -> int:
+    return _coerce_int(value, "workers")
+
+
 def resolve_confgen_params(
     params: Mapping[str, Any],
     *,
@@ -120,35 +130,33 @@ def resolve_confgen_params(
     """
     params = params or {}
 
-    angle_step = _coerce_int(
-        params.get("angle_step", DEFAULT_CONFGEN_ANGLE_STEP), "angle_step"
-    )
+    angle_step = _coerce_int(params.get("angle_step", DEFAULT_CONFGEN_ANGLE_STEP), "angle_step")
 
-    bond_threshold_raw = _select_alias(
-        params, "bond_threshold", CONFGEN_ALIAS_GROUPS["bond_threshold"]
-    )
-    bond_threshold = _coerce_float(
-        DEFAULT_CONFGEN_BOND_THRESHOLD
-        if bond_threshold_raw is _MISSING
-        else bond_threshold_raw,
+    bond_threshold = _select_alias(
+        params,
         "bond_threshold",
+        CONFGEN_ALIAS_GROUPS["bond_threshold"],
+        _normalize_bond_threshold,
     )
+    if bond_threshold is _MISSING:
+        bond_threshold = DEFAULT_CONFGEN_BOND_THRESHOLD
 
     clash_threshold = _coerce_float(
         params.get("clash_threshold", DEFAULT_CONFGEN_CLASH_THRESHOLD), "clash_threshold"
     )
 
-    workers_raw = _select_alias(params, "workers", CONFGEN_ALIAS_GROUPS["workers"])
-    workers = _coerce_int(default_workers if workers_raw is _MISSING else workers_raw, "workers")
+    workers = _select_alias(params, "workers", CONFGEN_ALIAS_GROUPS["workers"], _normalize_workers)
+    if workers is _MISSING:
+        workers = _coerce_int(default_workers, "workers")
     if workers < 1:
         raise ConfigurationError(f"confgen workers must be an integer >= 1, got {workers!r}")
 
-    chains_raw = _select_alias(params, "chains", CONFGEN_ALIAS_GROUPS["chains"])
-    chain_steps_raw = _select_alias(
-        params, "chain_steps", CONFGEN_ALIAS_GROUPS["chain_steps"]
+    chains = _select_alias(params, "chains", CONFGEN_ALIAS_GROUPS["chains"], _as_list)
+    chain_steps = _select_alias(
+        params, "chain_steps", CONFGEN_ALIAS_GROUPS["chain_steps"], _as_list
     )
-    chain_angles_raw = _select_alias(
-        params, "chain_angles", CONFGEN_ALIAS_GROUPS["chain_angles"]
+    chain_angles = _select_alias(
+        params, "chain_angles", CONFGEN_ALIAS_GROUPS["chain_angles"], _as_list
     )
 
     return {
@@ -160,9 +168,9 @@ def resolve_confgen_params(
         "no_rotate": normalize_pair_list(params.get("no_rotate")),
         "force_rotate": normalize_pair_list(params.get("force_rotate")),
         "optimize": params.get("optimize", False),
-        "chains": _as_list(None if chains_raw is _MISSING else chains_raw),
-        "chain_steps": _as_list(None if chain_steps_raw is _MISSING else chain_steps_raw),
-        "chain_angles": _as_list(None if chain_angles_raw is _MISSING else chain_angles_raw),
+        "chains": None if chains is _MISSING else chains,
+        "chain_steps": None if chain_steps is _MISSING else chain_steps,
+        "chain_angles": None if chain_angles is _MISSING else chain_angles,
         "rotate_side": params.get("rotate_side", DEFAULT_CONFGEN_ROTATE_SIDE),
         "workers": workers,
     }

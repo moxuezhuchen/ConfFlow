@@ -16,7 +16,6 @@ from confflow.calc.policies.gaussian import GaussianPolicy
 from confflow.calc.scan_ops import _ConstrainedScanner
 from confflow.core.keyword_rewrite import ensure_gaussian_modredundant_keyword
 
-
 # --------------------------------------------------------------------------
 # append_gaussian_modredundant
 # --------------------------------------------------------------------------
@@ -92,9 +91,7 @@ def test_scanner_constrains_only_target_bond(monkeypatch, tmp_path, modredundant
         captured["config"] = dict(config)
         return {"e_low": -1.0, "final_coords": coords}
 
-    monkeypatch.setattr(
-        "confflow.calc.scan_ops.executor._run_calculation_step", fake_run
-    )
+    monkeypatch.setattr("confflow.calc.scan_ops.executor._run_calculation_step", fake_run)
 
     cfg = {
         "keyword": "opt=(ts,calcfc)",

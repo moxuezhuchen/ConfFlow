@@ -79,6 +79,18 @@ def test_bond_threshold_aliases_conflict_fails_fast():
         _resolve(bond_threshold=1.20, bond_multiplier=1.15)
 
 
+def test_alias_representation_equivalence_is_accepted():
+    # Same canonical value written differently must not be treated as a conflict.
+    assert _resolve(bond_threshold="1.2", bond_multiplier=1.2)["bond_threshold"] == 1.2
+    assert _resolve(workers="2", max_workers=2)["workers"] == 2
+    assert _resolve(chains="1-2-3", chain=["1-2-3"])["chains"] == ["1-2-3"]
+
+
+def test_alias_representation_equivalence_for_steps_and_angles():
+    assert _resolve(chain_steps="180", steps=["180"])["chain_steps"] == ["180"]
+    assert _resolve(chain_angles="60", angles=["60"])["chain_angles"] == ["60"]
+
+
 def test_chain_aliases_equivalence():
     assert _resolve(chains=["1-2-3"])["chains"] == ["1-2-3"]
     assert _resolve(chain=["1-2-3"])["chains"] == ["1-2-3"]
@@ -125,12 +137,10 @@ def test_execution_receives_clash_threshold():
 
 
 def test_execution_receives_bond_threshold_alias():
-    assert _build_confgen_run_kwargs({"bond_threshold": 1.3}, "in.xyz", {})[
-        "bond_threshold"
-    ] == 1.3
-    assert _build_confgen_run_kwargs({"bond_multiplier": 1.3}, "in.xyz", {})[
-        "bond_threshold"
-    ] == 1.3
+    assert _build_confgen_run_kwargs({"bond_threshold": 1.3}, "in.xyz", {})["bond_threshold"] == 1.3
+    assert (
+        _build_confgen_run_kwargs({"bond_multiplier": 1.3}, "in.xyz", {})["bond_threshold"] == 1.3
+    )
 
 
 def test_run_confgen_step_forwards_resolved_params(tmp_path, monkeypatch):

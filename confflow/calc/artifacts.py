@@ -213,8 +213,7 @@ class CalcArtifactManager:
             return "no calc manifest found for this step"
         if manifest.step_name != self.step_name:
             return (
-                f"manifest was written for step '{manifest.step_name}', "
-                f"not '{self.step_name}'"
+                f"manifest was written for step '{manifest.step_name}', " f"not '{self.step_name}'"
             )
         if manifest.config_digest != self.config_digest:
             return "manifest config digest did not match current configuration"

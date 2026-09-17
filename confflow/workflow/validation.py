@@ -117,7 +117,7 @@ def validate_inputs_compatible(
     # -------------------------------------------------------------------------
     # Flexible chain consistency check (if confgen params are present)
     # -------------------------------------------------------------------------
-    if canonical is not None and chain_values is not None:
+    if confgen_params is not None and canonical is not None and chain_values is not None:
         chains = as_list(chain_values)
         if chains:
             try:
