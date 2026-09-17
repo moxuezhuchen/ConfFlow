@@ -107,3 +107,30 @@ jobs:
         with:
           name: coverage-xml
           path: coverage.xml
+
+  numba-optional-extra:
+    name: Numba optional extra (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dev and optional extras with candidate Numba
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev,speed,all]" "numba==0.66.0"
+          python -m pip check
+          python -c "import numba; assert numba.__version__ == '0.66.0', numba.__version__"
+
+      - name: Exercise compiled Numba kernels
+        run: pytest -q tests/test_optional_numba.py
