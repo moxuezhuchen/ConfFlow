@@ -272,15 +272,15 @@ class TaskRunner:
             inherited_gc = None
             try:
                 meta = task_dict.get("metadata") or {}
-                # Once a step has produced G=... (Gibbs), stop propagating G_corr.
-                # Only G_corr from freq/opt_freq steps is carried forward until it
-                # is combined with a downstream SP energy to form Gibbs energy.
-                if "G" in meta:
-                    inherited_gc = None
-                elif "G_corr" in meta:
-                    inherited_gc = float(meta.get("G_corr"))
-                elif "g_corr" in meta:
-                    inherited_gc = float(meta.get("g_corr"))
+                # Carry the Gibbs correction forward from a prior freq/opt_freq
+                # (or composite SP) step so a downstream SP can form
+                # G = E_sp + G_corr.  A prior G value must NOT suppress this, or
+                # chained composite workflows (freq -> SP -> SP) silently lose
+                # the Gibbs free energy.
+                for key in ("G_corr", "g_corr"):
+                    if meta.get(key) is not None:
+                        inherited_gc = float(meta.get(key))
+                        break
             except (ValueError, TypeError):
                 inherited_gc = None
 
