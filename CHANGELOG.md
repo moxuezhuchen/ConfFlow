@@ -5,7 +5,202 @@
 > The archived-snapshot notice below describes the earlier repository state. ConfFlow is active again
 > as JobDesk's external chemistry workflow dependency beginning with v1.4.0.
 
-## v1.4.1 (2026-07-23)
+## v2.1.6 (2026-08-27) - Attestation-verification fix-forward
+
+### Fixed
+
+- Use the single, strongest supported `gh attestation verify` actor-identity
+  constraint, `--signer-workflow`, whose full identity includes the repository
+  and workflow path. The mutually exclusive `--signer-repo` flag is no longer
+  passed alongside it.
+- Initialize structured release failure evidence before checkout so every later
+  fail-closed gate has an artifact for diagnosis.
+
+### Release history
+
+- `v2.1.5` is a protected tag-only failed release attempt. Cryptographic
+  attestation verification rejected the mutually exclusive signer flags before
+  release creation. There is no GitHub Release and there are no release assets
+  for `v2.1.5`; the tag is not reused.
+
+## v2.1.5 (2026-08-27) - Immutable-release authorization fix-forward
+
+### Fixed
+
+- Replaced the release runner's inaccessible repository-administration API
+  precheck with an owner-recorded commit binding in the
+  `RELEASE_IMMUTABLE_PREFLIGHT_SHA` repository variable.
+- Preserved fail-closed post-publication verification of the immutable release,
+  annotated tag identity, exact asset set, downloaded bytes, and checksums.
+
+### Release history
+
+- `v2.1.4` is a protected tag-only failed release attempt. Its workflow stopped
+  before release creation because the Actions token could not read the
+  administration-only immutable-releases endpoint. There is no GitHub Release
+  and there are no release assets for `v2.1.4`; the tag is not reused.
+
+## v2.1.4 (2026-08-27) - Fix-forward release
+
+### Fixed
+
+- Corrected Windows console-launcher executable identity when `sys.argv[0]`
+  omits the `.exe` suffix.
+- Bound the release wheelhouse manifest to the exact filenames emitted by pip,
+  including the pydantic-core runtime wheel.
+- Published the controlled dependency lock and wheelhouse manifest as release
+  assets with provenance and checksums.
+
+### Validation
+
+- Release artifacts remain bound to the annotated tag's peeled commit,
+  checksums, SBOM, provenance record, and build attestation.
+
+## v2.1.3 (2026-08-27) - Full remediation release
+
+### Changed
+
+- Promoted the full remediation candidate to the 2.1.3 release line while
+  preserving the v2.0.0 schema and release inputs as immutable historical
+  records.
+- Added exact candidate-pair and pre-switch JobDesk contract gates for the
+  producer/consumer release boundary.
+
+### Validation
+
+- Release artifacts remain bound to the annotated tag's peeled commit,
+  checksums, SBOM, provenance record, and build attestation.
+
+## v2.0.0 (2026-08-11) - Phase F owner-exception release
+
+### Changed
+
+- Removed the optional `confflow-agent` service and its packaging/deployment
+  surface. The supported production boundary is the direct control protocol
+  worker handoff.
+- Declared the companion JobDesk move to a control-only backend as a breaking
+  compatibility change under the owner exception. Historical compatibility
+  evidence remains archived; this release does not claim a measured
+  compatibility-period closeout.
+
+### Validation
+
+- The release workflow derives and verifies the package version from the
+  annotated release tag, and publishes provenance, attestation, SBOM, and
+  checksums bound to that tag's peeled commit.
+
+## v1.5.1 (2026-08-02) - fixture agent entry release
+
+### Added
+
+- Added the explicit `confflow-fixture-agent` console entrypoint for the
+  synthetic, non-compute producer lifecycle fixture used by JobDesk
+  launcher-path acceptance.
+- Bound fixture lifecycle execution to the invoked console-script identity
+  and retained the existing fail-closed control protocol behavior.
+
+### Validation
+
+- Merged the fixture agent entry PR through the normal ConfFlow mainline
+  review and CI path before this release preparation.
+
+## v1.4.6 (2026-07-31) — output-manifest path hotfix candidate
+
+### Fixed
+
+- Emit terminal artifact paths in `output_manifest.json` relative to the
+  workflow root, using portable POSIX separators.
+- Reject terminal artifact paths that escape the workflow root, including
+  traversal and symbolic-link escapes.
+
+## v1.4.5 (2026-07-30) — post-M2 acceptance remediation candidate
+
+This candidate closes the post-M2 release/install and producer-consumer
+acceptance gaps. It is not a production release until the independent
+tag, artifact, and remote-verification gates are authorized and complete.
+
+### Fixed
+
+- Unified the current release and install-provenance test contract at 1.4.5.
+- Bound capability executable/python identity to the invoked candidate venv.
+- Rewrote staged console-script shebangs before the atomic venv rename.
+- Consumed Gaussian/ORCA single-point `e_high` energy without weakening
+  missing-energy fail-closed behavior.
+
+
+Pre-tag, Gate A candidate. Do not promote to production; the formal
+`v1.4.4` tag will be cut from a clean tagged checkout as a separate
+Gate B build (not back-filling this candidate's wheel digest).
+
+### Added
+
+- **Capability handshake schema v4**:
+  - Six artifact fields, including `output_manifest: "output_manifest.json"`.
+  - Four stable `content_schema` strings stamped into producer artifacts:
+    `confflow.run_summary.v1`, `confflow.workflow_stats.v1`,
+    `confflow.workflow_state.v1`, `confflow.output_manifest.v1`.
+  - `producer` block reports package/version/build/wheel filename/wheel
+    digest/`install_provenance.status`.
+  - `executable` block reports the resolved on-disk `confflow` path,
+    its own SHA-256, and the `python` interpreter that hosts the venv.
+- **Three-layer release / install provenance**:
+  1. Wheel-internal build provenance (`confflow.__build__.COMMIT` /
+     `DIRTY`) describes only what source built the wheel.
+  2. External `SHA256SUMS` next to the wheel in `dist/` is the
+     authoritative wheel digest.
+  3. The deployer writes `<sys.prefix>/share/confflow/install-provenance.json`
+     after verifying against `SHA256SUMS` (and, in production, against
+     the approved attestation). The capability probe reads this record
+     and never reports a wheel digest derived from the wheel file
+     itself. The literal string `"unbound"` is no longer a trusted
+     provenance output.
+- **Controlled runtime dependency closure**:
+  - locks the verified 1.4.4 production venv runtime baseline for
+    CPython 3.12/Linux x86_64 with exact hashes;
+  - requires an offline binary-only wheelhouse and its SHA256 manifest;
+  - records lock/manifest digests and runtime identity in install provenance.
+- **Tested-isolation deployer** (`scripts/install_release_wheel.py`):
+  - Accepts `--mode candidate` (Gate A, attestation_unverified) and
+    `--mode production` (Gate B, requires approved attestation).
+  - Refuses to overwrite an existing `--target-venv`.
+  - Refuses on checksum mismatch, glob in `SHA256SUMS`, missing
+    basename, or build-commit/version drift between `--expected-*` and
+    the wheel's `__build__.py`.
+  - Pip-installs into a brand-new staging venv under the same parent
+    directory, runs `confflow --capabilities --json` once, atomically
+    renames staging to target, and rolls back only its own staging
+    directory on any failure.
+- **DAG legacy migration**: `DAGStep`, `DAGGraph`, and `WorkflowDAG`
+  moved from `confflow.workflow.dag` to `confflow.workflow.dag.legacy`.
+  Importing the legacy classes through `confflow.workflow.dag` emits
+  `DeprecationWarning` for one release cycle. The workflow engine and
+  all new code use only `build_step_graph` / `topo_order` from the
+  explicit API.
+
+### Changed
+
+- `setup.py` no longer injects `WHEEL_FILENAME` / `WHEEL_SHA256` into
+  `confflow/__build__.py`. The wheel is not its own source of truth.
+- `confflow.cli._build_capability_payload` now reads install
+  provenance from disk; the wheel's `__build__` values appear only in
+  `producer.build` (a build-source reference, not an identity claim).
+- `confflow.contract` exposes the four content schemas and the six
+  artifact filenames as the public wire contract.
+
+### Documentation
+
+- README §ConfFlow↔JobDesk handshake now describes the v4 contract
+  (six artifacts, four content schemas, `producer`/`executable`
+  blocks, three-layer provenance).
+- `docs/RELEASE.md` describes the external `SHA256SUMS` and
+  install-provenance workflow.
+
+### Archived
+
+The archived `2026-07-06` reference snapshot section is unchanged;
+historical entries are not rewritten.
+
+
 
 ### Added
 

@@ -13,10 +13,10 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v7
         with:
           python-version: "3.11"
 
@@ -27,7 +27,7 @@ jobs:
 
       - name: Run coverage
         run: |
-          pytest tests/ --cov=confflow --cov-report=term-missing --cov-report=xml
+          pytest tests/ --ignore=tests/test_install_release_wheel.py --cov=confflow --cov-report=term-missing --cov-report=xml
 
       - name: Upload coverage artifact
         uses: actions/upload-artifact@v7

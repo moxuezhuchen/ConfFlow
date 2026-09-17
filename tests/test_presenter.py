@@ -10,6 +10,7 @@ assertions rather than setup noise.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
@@ -180,3 +181,56 @@ def test_write_final_statistics_outputs_both_json_files(tmp_path):
         "content_schema": "confflow.output_manifest.v1",
         "terminals": {},
     }
+
+
+def test_write_final_statistics_makes_terminal_artifacts_relative(tmp_path):
+    output = tmp_path / "g16_opt" / "output.xyz"
+    output.parent.mkdir()
+    output.write_text("1\n\nH 0 0 0\n", encoding="utf-8")
+
+    presenter.write_final_statistics(
+        str(tmp_path),
+        {"terminal_outputs": {"g16_opt": [str(output)]}},
+    )
+
+    manifest = json.loads((tmp_path / "output_manifest.json").read_text(encoding="utf-8"))
+    assert manifest == {
+        "content_schema": "confflow.output_manifest.v1",
+        "terminals": {"g16_opt": ["g16_opt/output.xyz"]},
+    }
+
+
+@pytest.mark.parametrize("artifact", ["../outside.xyz", "nested/../../outside.xyz"])
+def test_build_output_manifest_rejects_relative_escape(tmp_path, artifact):
+    with pytest.raises(ValueError, match="outside workflow root"):
+        presenter.build_output_manifest(
+            str(tmp_path),
+            {"terminal_outputs": {"terminal": [artifact]}},
+        )
+
+
+def test_build_output_manifest_rejects_absolute_path_outside_root(tmp_path):
+    outside = tmp_path.parent / "outside.xyz"
+
+    with pytest.raises(ValueError, match="outside workflow root"):
+        presenter.build_output_manifest(
+            str(tmp_path),
+            {"terminal_outputs": {"terminal": [str(outside)]}},
+        )
+
+
+def test_build_output_manifest_rejects_symlink_escape(tmp_path):
+    outside_dir = tmp_path.parent / "outside"
+    outside_dir.mkdir(exist_ok=True)
+    (outside_dir / "output.xyz").write_text("1\n\nH 0 0 0\n", encoding="utf-8")
+    link = tmp_path / "linked"
+    try:
+        link.symlink_to(outside_dir, target_is_directory=True)
+    except OSError as exc:
+        pytest.skip(f"symlink creation unavailable: {exc}")
+
+    with pytest.raises(ValueError, match="outside workflow root"):
+        presenter.build_output_manifest(
+            str(tmp_path),
+            {"terminal_outputs": {"terminal": [str(Path(link) / "output.xyz")]}},
+        )

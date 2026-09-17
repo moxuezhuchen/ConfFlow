@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.confflow.dev/control/v1/requests.schema.json",
+  "title": "ConfFlow control protocol v1 requests",
+  "oneOf": [
+    {"$ref": "#/$defs/capabilities"}, {"$ref": "#/$defs/prepare"}, {"$ref": "#/$defs/run"},
+    {"$ref": "#/$defs/events"}, {"$ref": "#/$defs/resume"}
+  ],
+  "$defs": {
+    "base": {"type": "object", "required": ["protocol_schema", "operation"], "properties": {"protocol_schema": {"$ref": "common.schema.json#/$defs/protocol"}, "operation": {"type": "string"}}},
+    "capabilities": {"unevaluatedProperties": false, "allOf": [{"$ref": "#/$defs/base"}, {"properties": {"operation": {"const": "capabilities"}}}]},
+    "prepare": {"unevaluatedProperties": false, "allOf": [{"$ref": "#/$defs/base"}, {"required": ["run_id", "idempotency_key", "request_digest", "workflow_config", "input_manifest", "expected_executable_identity"], "properties": {"operation": {"const": "prepare"}, "run_id": {"$ref": "common.schema.json#/$defs/run_id"}, "idempotency_key": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"}, "request_digest": {"$ref": "common.schema.json#/$defs/digest"}, "workflow_config": {"$ref": "common.schema.json#/$defs/content_locator"}, "input_manifest": {"$ref": "common.schema.json#/$defs/content_locator"}, "expected_executable_identity": {"type": "object", "additionalProperties": false, "required": ["sha256"], "properties": {"sha256": {"$ref": "common.schema.json#/$defs/digest"}, "realpath": {"type": "string"}, "device_inode": {"type": "string"}}}}}]},
+    "run": {"unevaluatedProperties": false, "allOf": [{"$ref": "#/$defs/base"}, {"required": ["run_id"], "properties": {"operation": {"enum": ["execute", "status", "cancel", "artifacts"]}, "run_id": {"$ref": "common.schema.json#/$defs/run_id"}}}]},
+    "events": {"unevaluatedProperties": false, "allOf": [{"$ref": "#/$defs/base"}, {"required": ["run_id"], "properties": {"operation": {"const": "events"}, "run_id": {"$ref": "common.schema.json#/$defs/run_id"}, "after": {"anyOf": [{"$ref": "common.schema.json#/$defs/cursor"}, {"type": "null"}]}}}]},
+    "resume": {"unevaluatedProperties": false, "allOf": [{"$ref": "#/$defs/base"}, {"required": ["run_id"], "properties": {"operation": {"const": "resume"}, "run_id": {"$ref": "common.schema.json#/$defs/run_id"}, "checkpoint": {"type": "string", "minLength": 1}}}]}
+  }
+}

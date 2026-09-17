@@ -263,6 +263,10 @@ class TaskRunner:
                 inherited_gc = None
 
             e, g, gc = res.get("e_low"), res.get("g_low"), res.get("g_corr")
+            # SP policies expose the electronic energy as ``e_high``. Consume it
+            # only for the SP task type; missing energy must still fail closed.
+            if e is None and itask == 1:
+                e = res.get("e_high")
             if itask in [2, 3, 4] and gc is None and e is not None and g is not None:
                 gc = g - e
             if gc is None and inherited_gc is not None:

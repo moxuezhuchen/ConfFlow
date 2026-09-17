@@ -18,6 +18,11 @@ from ..core.path_policy import validate_cleanup_target
 
 CalcStepStatus = Literal["planned", "running", "completed", "failed", "canceled", "stale"]
 
+
+class CalcManifestCompatibilityError(RuntimeError):
+    """A present calc manifest cannot be safely interpreted for cleanup."""
+
+
 MANIFEST_NAME = "manifest.json"
 MANIFEST_SCHEMA_VERSION = 1
 
@@ -141,17 +146,30 @@ class CalcArtifactManager:
         self.input_digest = compute_input_digest(self.input_path)
 
     def load(self) -> CalcManifest | None:
+        if not self.manifest_path.exists():
+            return None
         try:
             with self.manifest_path.open(encoding="utf-8") as handle:
                 data = json.load(handle)
-        except (OSError, json.JSONDecodeError):
-            return None
+        except (OSError, json.JSONDecodeError) as exc:
+            raise CalcManifestCompatibilityError(
+                f"Cannot safely interpret existing calc manifest: {self.manifest_path}"
+            ) from exc
         if not isinstance(data, dict):
-            return None
+            raise CalcManifestCompatibilityError(
+                f"Calc manifest must be a mapping: {self.manifest_path}"
+            )
         try:
-            return CalcManifest.from_dict(data)
-        except (TypeError, ValueError):
-            return None
+            manifest = CalcManifest.from_dict(data)
+        except (TypeError, ValueError) as exc:
+            raise CalcManifestCompatibilityError(
+                f"Cannot safely interpret existing calc manifest: {self.manifest_path}"
+            ) from exc
+        if manifest.schema_version != MANIFEST_SCHEMA_VERSION:
+            raise CalcManifestCompatibilityError(
+                f"Unsupported calc manifest schema version {manifest.schema_version}; refusing cleanup"
+            )
+        return manifest
 
     def _write(self, manifest: CalcManifest) -> None:
         self.step_dir.mkdir(parents=True, exist_ok=True)

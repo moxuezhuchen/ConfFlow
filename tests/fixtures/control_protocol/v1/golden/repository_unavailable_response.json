@@ -1,0 +1,1 @@
+{"_schema":"responses.schema.json","protocol_schema":"confflow.control.v1","operation":"prepare","ok":false,"error":{"code":"repository_unavailable","message":"The state root does not provide verified SQLite locking.","retryable":false}}

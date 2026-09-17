@@ -1,0 +1,14 @@
+global:
+  iprog: gaussian
+  itask: opt
+  maxcore: 4096
+  cores_per_task: '2'
+  total_memory: 4GB
+steps:
+  - name: alias-calc
+    type: task
+    params:
+      iprog: 2
+      itask: 1
+      keyword: HF
+      clean_opts: '-t 0.4 -ewin 5 --energy-tolerance 0.02'

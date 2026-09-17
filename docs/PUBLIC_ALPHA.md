@@ -6,7 +6,11 @@ ConfFlow is suitable to publish as a public alpha preview. It is not production-
 
 - Public level: alpha preview.
 - Installation path: source checkout and local editable install are the recommended paths.
-- Release status: GitHub Actions can build wheel/sdist artifacts and checksums, but PyPI publishing is not automated.
+- Release status: v2.1.3 is the last published ConfFlow package. The protected
+  v2.1.4 and v2.1.5 tags have no GitHub Release or assets after their failed
+  release workflows; v2.1.6 is the fix-forward candidate in this checkout. The
+  configured production endpoint remains ConfFlow v2.0.0. PyPI publishing
+  remains manual.
 - Security posture: documented security model, private-reporting guidance, CI, Dependabot, and non-blocking OpenSSF Scorecard are in place.
 
 ## Suitable For
@@ -35,7 +39,9 @@ ConfFlow is suitable to publish as a public alpha preview. It is not production-
 - `--dry-run` can preview planned workflow steps, inputs, output paths, and selected calculation settings without executing workflow steps.
 - `--dry-run` is not a full sandbox; real runs can still write files, clean managed artifacts, and execute configured Gaussian/ORCA programs.
 - Public CI uses fake/mock external-program behavior; real Gaussian/ORCA environments still need local or site-specific validation.
-- PyPI publishing, GitHub Release publishing, artifact provenance, and attestations are not automated.
+- PyPI publishing is not automated. The release workflow prepares the
+  v2.1.6 candidate's artifacts, provenance, and build attestation; full
+  SLSA-style hardening remains a separate limitation.
 - OpenSSF Scorecard is informational. Private repositories skip SARIF code-scanning upload by default and keep the result as a workflow artifact.
 - Dependency security updates currently rely on Dependabot and existing GitHub security signals. `pip-audit` and `safety` are not part of the supported local or CI baseline; if added later, they should start as scheduled or non-blocking checks.
 - Branch protection and GitHub About metadata must be configured manually in GitHub Settings.
@@ -44,7 +50,8 @@ ConfFlow is suitable to publish as a public alpha preview. It is not production-
 
 - Confirm `CI` is green on `main`.
 - Run or rerun `Scorecard` and confirm it follows the public SARIF upload path only when code scanning is available.
-- Run `Release Artifacts` manually and confirm wheel/sdist, `SHA256SUMS`, and SBOM behavior are still as expected.
+- Follow the owner preflight in `docs/RELEASE.md`, push the annotated release
+  tag, and confirm wheel/sdist, `SHA256SUMS`, and SBOM behavior as expected.
 - Review Dependabot PR volume after the repository becomes public.
 - Configure About description, website, topics, and `main` branch protection in GitHub Settings.
 

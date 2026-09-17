@@ -20,12 +20,12 @@ try:
 except ImportError:
     psutil = None
 
-import yaml
 
-from .__build__ import COMMIT, DIRTY, WHEEL_FILENAME, WHEEL_SHA256
-from .agent.cli import main as agent_main
+from .__build__ import COMMIT, DIRTY
+from .application.execution.workflow_adapter import run_workflow_through_service
 from .contract import (
     CAPABILITY_SCHEMA_VERSION,
+    OUTPUT_MANIFEST_FILE,
     REQUIRED_COMMANDS,
     RUN_MIN_XYZ_TEMPLATE,
     RUN_REPORT_FILE,
@@ -38,6 +38,7 @@ from .core.exceptions import ConfigurationError, InputFileError, PathSafetyError
 from .core.io import parse_gaussian_input_text, write_xyz_file
 from .core.path_policy import resolve_sandbox_root, validate_managed_path
 from .core.utils import get_logger
+from .install_provenance import read_install_provenance
 from .workflow.dry_run import run_dry_run
 from .workflow.engine import run_workflow
 from .workflow.export import NoExportableResultsError, export_results
@@ -55,10 +56,43 @@ _HANDSHAKE_PROBE = any(flag in sys.argv[1:] for flag in ("--version", "--capabil
 # this module must import from there so the CLI payload and the artifacts
 # it advertises can never drift apart.
 _CAPABILITY_SCHEMA_VERSION: int = CAPABILITY_SCHEMA_VERSION
-def _resolved_confflow_executable() -> str | None:
-    """Return the PATH-resolved entry point used for producer provenance."""
-    executable = shutil.which("confflow")
-    return os.path.realpath(executable) if executable else None
+
+
+def _executable_candidates(candidate: Path) -> tuple[Path, ...]:
+    """Return a launcher path and its Windows ``.exe`` sibling when relevant."""
+    if os.name != "nt" or candidate.suffix or not candidate.name:
+        return (candidate,)
+    return (candidate.with_name(f"{candidate.name}.exe"), candidate)
+
+
+def _resolve_existing_executable(candidate: Path) -> str | None:
+    """Resolve a console launcher while preserving its on-disk identity."""
+    for path in _executable_candidates(candidate):
+        path_text = os.fspath(path)
+        if path_text and os.path.isfile(path_text):
+            return os.path.realpath(os.path.abspath(path_text))
+    return None
+
+
+def _resolved_confflow_executable(executable_override: str | None = None) -> str | None:
+    """Return the executable that actually invoked this capability probe.
+
+    Windows console launchers can report ``sys.argv[0]`` without the ``.exe``
+    suffix. Resolve that same-name sibling before considering the interpreter
+    directory or ``PATH`` so a side-by-side installation cannot be misbound.
+    """
+    if executable_override is not None:
+        return _resolve_existing_executable(Path(executable_override))
+
+    candidates = [Path(sys.argv[0]), Path(sys.executable).with_name("confflow")]
+    path_executable = shutil.which("confflow")
+    if path_executable:
+        candidates.append(Path(path_executable))
+    for candidate in candidates:
+        resolved = _resolve_existing_executable(candidate)
+        if resolved is not None:
+            return resolved
+    return None
 
 
 def _file_sha256(path: str | None) -> str | None:
@@ -72,21 +106,55 @@ def _file_sha256(path: str | None) -> str | None:
     return digest.hexdigest()
 
 
-def _build_capability_payload() -> dict[str, Any]:
-    """Build the handshake payload with v3 compatibility and v4 provenance."""
-    executable = _resolved_confflow_executable()
+def _file_device_inode(path: str | None) -> str | None:
+    """Return the device/inode binding for an executable regular file."""
+    if path is None or not os.path.isfile(path):
+        return None
+    try:
+        metadata = os.stat(path)
+    except OSError:
+        return None
+    return f"{metadata.st_dev}:{metadata.st_ino}"
+
+
+def _build_capability_payload(executable_override: str | None = None) -> dict[str, Any]:
+    """Build the handshake payload with v3 compatibility and v4 provenance.
+
+    v4 adds ``producer.install_provenance`` as the source of truth for
+    the wheel filename and final SHA-256. When the file at
+    ``<sys.prefix>/share/confflow/install-provenance.json`` is missing
+    or invalid the payload surfaces the v4 diagnostic shape
+    (``wheel.filename/sha256 = null`` plus ``status`` /
+    ``reason_code``); JobDesk production gates must reject any
+    non-``verified`` status. ConfFlow never emits the literal string
+    ``"unbound"`` for either field.
+    """
+    executable = _resolved_confflow_executable(executable_override)
     build = {"commit": COMMIT, "dirty": DIRTY}
     version = __import__("confflow").__version__
+    provenance, _errors = read_install_provenance()
     return {
         "schema_version": _CAPABILITY_SCHEMA_VERSION,
         "version": version,
-        "capabilities": {"workflow_state": True, "resume": True, "dag": True},
+        "capabilities": {
+            "workflow_state": True,
+            "resume": True,
+            "dag": True,
+            # The external worker relies on POSIX O_DIRECTORY/O_NOFOLLOW
+            # state-root primitives. Keep the base package cross-platform,
+            # but advertise the worker only where its fail-closed path
+            # contract can actually run.
+            "control_worker": (
+                os.name == "posix" and hasattr(os, "O_DIRECTORY") and hasattr(os, "O_NOFOLLOW")
+            ),
+        },
         "artifacts": {
             "run_summary": RUN_SUMMARY_FILE,
             "workflow_stats": WORKFLOW_STATS_FILE,
             "workflow_state": WORKFLOW_STATE_FILE,
             "run_report": RUN_REPORT_FILE,
             "min_xyz": RUN_MIN_XYZ_TEMPLATE,
+            "output_manifest": OUTPUT_MANIFEST_FILE,
         },
         "commands": {name: shutil.which(name) is not None for name in REQUIRED_COMMANDS},
         "build": build,
@@ -94,12 +162,23 @@ def _build_capability_payload() -> dict[str, Any]:
             "package": "confflow",
             "version": version,
             "build": build,
-            "wheel": {"filename": WHEEL_FILENAME, "sha256": WHEEL_SHA256},
+            "wheel": {
+                "filename": provenance.wheel_filename,
+                "sha256": provenance.wheel_sha256,
+            },
+            "install_provenance": {
+                "status": provenance.status,
+                "reason_code": provenance.reason_code,
+            },
         },
         "executable": {
             "path": executable,
+            "realpath": executable,
+            "device_inode": _file_device_inode(executable),
             "sha256": _file_sha256(executable),
-            "python": os.path.realpath(sys.executable),
+            # Keep the venv path spelling; realpath() would collapse a venv's
+            # python symlink to /usr/bin and break executable identity binding.
+            "python": os.path.abspath(sys.executable),
         },
     }
 
@@ -216,11 +295,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="Workflow step name or 1-based index for --rerun-failed or --config-show",
     )
     parser.add_argument(
-        "--agent",
-        action="store_true",
-        help="Forward to the confflow-agent CLI (serve, status, submit, list, pause, resume, cancel, stop, logs)",
-    )
-    parser.add_argument(
         "--version",
         action="store_true",
         help="Print the ConfFlow version and exit",
@@ -268,12 +342,11 @@ def _write_cli_error(output_path: str, exc: BaseException, hint: str | None = No
 
 def _load_sandbox_root_hint(config_file: str) -> str | None:
     """Best-effort read of ``global.sandbox_root`` without full schema validation."""
+    from .config.canonical import ConfigValidationError, load_raw_mapping
+
     try:
-        with open(config_file, encoding="utf-8") as handle:
-            raw: Any = yaml.safe_load(handle) or {}
-    except (OSError, yaml.YAMLError):
-        return None
-    if not isinstance(raw, dict):
+        raw = load_raw_mapping(config_file)
+    except (OSError, ConfigValidationError):
         return None
     global_cfg = raw.get("global") or {}
     if not isinstance(global_cfg, dict):
@@ -357,6 +430,12 @@ def _is_confflow_process_cmdline(cmdline: list[str]) -> bool:
     if not cmdline or "--stop" in cmdline:
         return False
 
+    # NOTE (P2 audit, v1.4.5 Gate A): "confcalc" remains in the
+    # process-recognizer set as a historical entry. Current README,
+    # [project.scripts], and the pyproject CLI entry do not register a
+    # `confcalc` command. Removing this entry requires an independent
+    # code change with its own tests; per the P2 plan this Gate A
+    # stage does not delete or restore a `confcalc` CLI surface.
     entrypoints = {"confflow", "confts", "confgen", "confrefine", "confcalc"}
     first = os.path.basename(cmdline[0])
     if first in entrypoints:
@@ -427,15 +506,35 @@ def stop_all_confflow_processes() -> int:
     return 0
 
 
-def main(args_list: list[str] | None = None):
-    # Fast-path: if --agent is present, strip it and forward directly to
-    # the agent CLI without confflow's argument parser seeing agent flags.
-    # Use sys.argv[1:] when args_list is None (i.e., when called as entry point).
+def _service_run_id(config_file: str, input_files: list[str], work_dir: str) -> str:
+    """Derive a stable service run ID for one CLI work directory."""
+    payload = json.dumps(
+        {
+            "config_file": os.path.abspath(config_file),
+            "input_files": [os.path.abspath(path) for path in input_files],
+            "work_dir": os.path.abspath(work_dir),
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return "run_" + hashlib.sha256(payload).hexdigest()[:48]
+
+
+def main(
+    args_list: list[str] | None = None,
+    *,
+    executable_override: str | None = None,
+):
     effective_args = args_list if args_list is not None else sys.argv[1:]
 
-    if "--agent" in effective_args:
-        stripped = [a for a in effective_args if a != "--agent"]
-        return agent_main(stripped if stripped else None)
+    if effective_args and effective_args[0] == "control":
+        from .control import main as control_main
+
+        return control_main(effective_args[1:])
+    if effective_args and effective_args[0] == "config":
+        from .config.cli import main as config_main
+
+        return config_main(effective_args[1:])
 
     parser = build_parser()
     args = parser.parse_args(args_list)
@@ -450,7 +549,7 @@ def main(args_list: list[str] | None = None):
             logging.disable(logging.NOTSET)
         return ExitCode.SUCCESS
     if args.capabilities:
-        print(json.dumps(_build_capability_payload(), indent=2))
+        print(json.dumps(_build_capability_payload(executable_override), indent=2))
         if _HANDSHAKE_PROBE:
             logging.disable(logging.NOTSET)
         return ExitCode.SUCCESS
@@ -614,15 +713,18 @@ def main(args_list: list[str] | None = None):
                 converted_inputs.append(os.path.abspath(out_xyz))
             input_files = converted_inputs
 
-            run_workflow(
+            run_workflow_through_service(
                 input_xyz=input_files,
                 config_file=config_file,
                 work_dir=work_dir,
+                state_root=os.path.join(work_dir, ".confflow_execution"),
+                run_id=_service_run_id(config_file, input_files, work_dir),
                 original_input_files=original_input_files,
                 resume=bool(args.resume),
                 verbose=bool(args.verbose),
                 pause_beacon_file=None,
                 step_started_callback=None,
+                workflow_runner=run_workflow,
             )
 
         return ExitCode.SUCCESS

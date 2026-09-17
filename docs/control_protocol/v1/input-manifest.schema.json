@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.confflow.dev/control/v1/input-manifest.schema.json",
+  "title": "ConfFlow control protocol v1 input manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["content_schema", "inputs"],
+  "properties": {
+    "content_schema": {"const": "confflow.control.input-manifest.v1"},
+    "inputs": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["ordinal", "path", "sha256", "size"],
+        "properties": {
+          "ordinal": {"type": "integer", "minimum": 0},
+          "path": {"$ref": "common.schema.json#/$defs/relative_file"},
+          "sha256": {"$ref": "common.schema.json#/$defs/digest"},
+          "size": {"type": "integer", "minimum": 0}
+        }
+      }
+    }
+  }
+}

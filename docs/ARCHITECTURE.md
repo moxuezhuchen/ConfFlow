@@ -8,7 +8,7 @@ ConfFlow 是一个自动化计算化学工作流引擎，用于分子构象搜�
 
 当前主执行路径已切换到破兼容后的结构：
 
-- 配置入口：`confflow.config.models.WorkflowConfig` / `CalcStepParams`
+- 配置入口：confflow.config.canonical 的 parser/types/schema；confflow.config.models 与 confflow.core.models 仅是兼容 facade。
 - workflow -> calc：`workflow.step_handlers` 直接构造 typed calc config
 - calc step 执行：`confflow.calc.runner.CalcStepRunner`
 - calc step 状态：`manifest.json`，不再以 `.config_hash` 作为新主路径合同
@@ -30,7 +30,7 @@ confflow/
 │   ├── xyz_metadata.py       # XYZ 注释元数据与 CID 处理
 │   ├── gaussian_input.py     # Gaussian 输入与坐标解析
 │   ├── data.py               # 共价半径、元素符号等化学数据
-│   ├── models.py             # Pydantic 数据模型定义
+│   ├── models.py             # canonical Pydantic 模型的 compatibility facade
 │   ├── types.py              # 类型定义与常量
 │   ├── constants.py          # 核心常量
 │   ├── contracts.py          # 输入/输出契约验证
@@ -44,8 +44,8 @@ confflow/
 │   └── cli_base.py           # CLI 基础工具
 │
 ├── config/                    # 配置层（配置加载、解析、验证）
-│   ├── __init__.py
-│   └── models.py             # typed workflow/calc 配置模型
+│   ├── canonical/            # producer-owned parser/types/schema/serialization
+│   └── models.py             # compatibility facade, no independent rules
 │
 ├── shared/                    # 轻量共享层（稳定常量/格式化/结构校验）
 │   ├── __init__.py
@@ -64,8 +64,9 @@ confflow/
 │   │
 │   ├── refine/               # 构象筛选模块
 │   │   ├── __init__.py
-│   │   ├── processor.py      # RMSD 去重、能量筛选、虚频过滤
-│   │   ├── rmsd_engine.py    # RMSD/PMI 计算引擎（Numba JIT 加速、对称性感知 RMSD）
+│   │   ├── processor.py      # RMSD 去重、能量筛选、虚频过滤、JSON 报告
+│   │   ├── rmsd_engine.py    # proper Kabsch、合法图映射几何比较、代表式去重
+│   │   ├── topology.py       # 连接图、颜色细化预筛、有界精确图映射
 │   │   ├── _compat.py        # 兼容层
 │   │   └── result.py         # 结果数据结构
 │   │
@@ -123,15 +124,6 @@ confflow/
 │   ├── rerun_failed.py       # 失败重跑
 │   ├── supervisor.py         # 子进程监督与停止处理
 │   └── step_naming.py        # 步骤命名
-│
-├── agent/                     # 可选的远程队列/进度服务入口
-│   ├── cli.py                # confflow-agent CLI
-│   ├── server.py             # agent 服务循环
-│   ├── runner.py             # workflow runner 适配
-│   ├── queue.py              # 持久队列
-│   ├── slots.py              # 资源槽位
-│   ├── state.py              # agent 状态
-│   └── progress.py           # 进度事件
 │
 ├── cli.py                     # CLI 参数解析
 ├── main.py                    # 工作流主程序入口
@@ -222,13 +214,14 @@ LICENSE                        # MIT 许可证
   - MMFF94s 预优化
 
 - **`refine/`**：
-  - RMSD 去重（支持 Numba JIT 加速）
-  - 对称性感知 RMSD（主轴对齐 + 同元素贪心匹配，解决大分子原子乱序/对称互换问题）
-  - 能量辅助去重（ΔE ≤ tolerance 时放宽 RMSD 阈值）
-  - 双重校验：快路径（Kabsch）+ 慢路径（对称性感知），兼顾速度与准确度
+  - RMSD 去重（支持 Numba JIT 加速；proper Kabsch，禁止反射）
+  - 精确拓扑分组：距离判键图 + 颜色细化预筛 + 有界精确图映射；跨拓扑永不做 RMSD 删除
+  - 合法图映射下的几何比较：identity 不达标时继续搜索其他合法映射，找到 witness 才删除
+  - 搜索预算（节点数）确定性；预算耗尽返回 unresolved 并保留构象，不伪装成 distinct
+  - 能量辅助去重（ΔE ≤ tolerance 时放宽 RMSD 阈值，并在报告中给出 effective cutoff）
   - 能量窗口筛选
   - 虚频校验
-  - 拓扑分类
+  - 机器可读 JSON 报告（拓扑组、直接代表、witness RMSD、mapping/search work）
 
 - **`viz/`**：
   - 生成美化的纯文本总结报告（.txt）
@@ -351,12 +344,6 @@ LICENSE                        # MIT 许可证
 - **`main.py`**：工作流主程序入口
 - **`confts.py`**：TS 专用执行器与 keyword 改写工具
 - **`contract.py`**：版本、schema、能力、产物名以及构建身份的 wire contract；`cli.py` 负责发出 capability JSON
-
-### 7. `agent/` - 可选远程服务层
-
-`confflow-agent` 通过 `agent/cli.py` 进入队列、槽位、runner 和进度模块。
-它是 ConfFlow 的可选执行入口，不是 JobDesk 的内嵌模块；JobDesk 默认仍通过
-SSH 调用公开 `confflow` CLI 和 capability/artifact contract。
 
 ## 设计模式与架构原则
 

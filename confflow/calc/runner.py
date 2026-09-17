@@ -10,7 +10,7 @@ from concurrent.futures import Executor, ProcessPoolExecutor, ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 
-from ..blocks.refine.result import RefineResult
+from ..config.canonical import resolve_calc_step
 from ..config.models import CalcStepParams, load_workflow_model
 from ..core import io as io_xyz
 from ..core import models
@@ -21,7 +21,12 @@ from .artifacts import CalcArtifactManager
 from .components.task_runner import TaskRunner
 from .db.database import ResultsDB
 from .executor import CalcExecutor
-from .postprocess import run_refine_postprocess
+from .postprocess import (
+    RefineCallable,
+    get_default_refine_callable,
+    run_refine_postprocess,
+)
+from .result import RefineResult
 from .result_writer import append_result
 from .run_services import ResultAssemblyService, TaskRecoveryService, TaskSourceBuilder
 from .setup import setup_logging
@@ -42,6 +47,7 @@ class CalcStepRequest:
     input_xyz: str
     config: CalcStepParams
     resume: bool = False
+    cancel_beacon_file: str | None = None
 
 
 @dataclass(frozen=True)
@@ -58,8 +64,15 @@ class CalcStepResult:
 class CalcStepRunner:
     """Run one calc step using typed config and manifest artifacts."""
 
-    def __init__(self, calc_executor: CalcExecutor | None = None) -> None:
+    def __init__(
+        self,
+        calc_executor: CalcExecutor | None = None,
+        refine_callable: RefineCallable | None = None,
+    ) -> None:
         self._calc_executor = calc_executor
+        self._refine_callable = (
+            refine_callable if refine_callable is not None else get_default_refine_callable()
+        )
         self.stop_requested = False
 
     @staticmethod
@@ -134,7 +147,11 @@ class CalcStepRunner:
         runtime_config["backup_dir"] = str(
             validate_managed_path(str(backup_dir), label="backup_dir", sandbox_root=sandbox_root)
         )
-        runtime_config["stop_beacon_file"] = str(step_dir / "STOP")
+        step_stop_beacon = str(step_dir / "STOP")
+        runtime_config["stop_beacon_file"] = step_stop_beacon
+        runtime_config["stop_beacon_files"] = [
+            path for path in (step_stop_beacon, request.cancel_beacon_file) if path is not None
+        ]
         backup_dir.mkdir(parents=True, exist_ok=True)
 
         db = ResultsDB(str(step_dir / "results.db"))
@@ -186,10 +203,16 @@ class CalcStepRunner:
 
             output_path = Path(result_xyz_path)
             if succeeded > 0 and request.config.cleanup.enabled:
+                if self._refine_callable is None:
+                    raise ConfFlowError(
+                        "Calc cleanup requires a refine implementation from the "
+                        "application composition root"
+                    )
                 clean_output = step_dir / "output.xyz"
                 clean_result = run_refine_postprocess(
                     input_file=str(output_path),
                     output_file=str(clean_output),
+                    refine_callable=self._refine_callable,
                     **request.config.cleanup.to_clean_kwargs(
                         workers=request.config.resources.cores_per_task
                     ),
@@ -258,7 +281,10 @@ def main() -> int:
             selected = matches[0]
 
     step_dir = args.work_dir or f"{Path(args.input_xyz).stem}_{selected.name}"
-    config = CalcStepParams.from_params(selected.params, workflow.global_options)
+    config = resolve_calc_step(selected.params, workflow.global_options)
+    from ..workflow.composition import configure_default_refine
+
+    configure_default_refine()
     result = CalcStepRunner().run(
         CalcStepRequest(
             step_name=selected.name,
@@ -271,7 +297,6 @@ def main() -> int:
     if result.failed_path:
         print(f"Failed: {result.failed_path}")
     print(
-        "Summary: "
-        f"total={result.total_tasks}, succeeded={result.succeeded}, failed={result.failed}"
+        f"Summary: total={result.total_tasks}, succeeded={result.succeeded}, failed={result.failed}"
     )
     return 0

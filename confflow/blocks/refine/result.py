@@ -1,17 +1,9 @@
 #!/usr/bin/env python3
 
-"""Structured refine result objects."""
+"""Compatibility import for the neutral refinement result type."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from ...calc.result import RefineResult
 
 __all__ = ["RefineResult"]
-
-
-@dataclass(frozen=True)
-class RefineResult:
-    produced_output: bool
-    output_path: str
-    kept_count: int
-    reason: str = ""

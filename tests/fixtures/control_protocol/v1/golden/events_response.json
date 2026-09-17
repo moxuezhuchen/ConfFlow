@@ -1,0 +1,1 @@
+{"_schema":"responses.schema.json","protocol_schema":"confflow.control.v1","operation":"events","ok":true,"run_id":"run-20260731-001","revision":4,"state":"running","next_cursor":"event-0002","events":[{"cursor":"event-0002","revision":4,"type":"step_started"}]}

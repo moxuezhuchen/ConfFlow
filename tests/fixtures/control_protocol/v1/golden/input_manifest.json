@@ -1,0 +1,1 @@
+{"_schema":"input-manifest.schema.json","content_schema":"confflow.control.input-manifest.v1","inputs":[{"ordinal":0,"path":"inputs/methane.xyz","sha256":"1111111111111111111111111111111111111111111111111111111111111111","size":42},{"ordinal":1,"path":"inputs/ethane.xyz","sha256":"2222222222222222222222222222222222222222222222222222222222222222","size":76}]}

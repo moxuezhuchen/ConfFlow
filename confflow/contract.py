@@ -51,5 +51,11 @@ WORKFLOW_STATE_FILE: str = ".workflow_state.json"
 RUN_REPORT_FILE: str = "{basename}.txt"
 RUN_MIN_XYZ_TEMPLATE: str = "{basename}min.xyz"
 REQUIRED_COMMANDS: tuple[str, ...] = (
-    "bash", "nohup", "setsid", "xargs", "sha256sum", "mktemp", "base64",
+    "bash",
+    "nohup",
+    "setsid",
+    "xargs",
+    "sha256sum",
+    "mktemp",
+    "base64",
 )

@@ -1291,6 +1291,32 @@ def test_task_runner_missing_energy_is_parse_error(tmp_path):
     assert mock_backups.call_args.args[2] is False
 
 
+def test_task_runner_sp_consumes_policy_e_high_energy(tmp_path):
+    """SP Gaussian/ORCA parsers expose energy as e_high, not a false failure."""
+    from confflow.calc.components.task_runner import TaskRunner
+
+    runner = TaskRunner()
+    task_info = {
+        "job_name": "checkpoint_sp",
+        "work_dir": str(tmp_path / "work"),
+        "config": {"itask": 1, "iprog": 1},
+        "coords": ["C 0 0 0"],
+    }
+    with patch("confflow.calc.components.executor._run_calculation_step") as mock_run:
+        mock_run.return_value = {
+            "e_low": None,
+            "e_high": -39.7265059209,
+            "g_low": None,
+            "final_coords": ["C 0 0 0"],
+        }
+        with patch("confflow.calc.components.executor.handle_backups"):
+            result = runner.run(task_info)
+
+    assert result["status"] == "success"
+    assert result["energy"] == -39.7265059209
+    assert result["final_sp_energy"] is None
+
+
 @pytest.mark.parametrize(
     ("config", "expected_cleanup"),
     [

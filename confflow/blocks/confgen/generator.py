@@ -14,7 +14,6 @@ from math import prod
 from typing import Any
 
 import numpy as np
-from scipy.spatial import cKDTree
 
 try:
     from rdkit import Chem, RDLogger
@@ -25,6 +24,7 @@ try:
 except ImportError as e:
     raise ImportError("RDKit not found. Please install it (e.g. conda install rdkit).") from e
 
+from ...core.chem_validation import load_mol_from_xyz as _core_load_mol_from_xyz
 from ...core.console import create_progress
 from ...core.contracts import ExitCode, cli_output_to_txt
 from ...core.elements import canonicalize_element_symbol
@@ -179,115 +179,9 @@ def process_task(angle_combo):
 # ------------------------------------------------------------------------------
 
 
-def load_mol_from_xyz(filename, bond_coeff):
-    """Load molecular structure from an XYZ file.
-
-    Parameters
-    ----------
-    filename : str
-        Path to the XYZ file.
-    bond_coeff : float
-        Scaling factor for covalent-radii bond detection.
-
-    Returns
-    -------
-    Mol
-        RDKit molecule with 3D coordinates and detected bonds.
-
-    Raises
-    ------
-    FileNotFoundError
-        If the input file does not exist.
-    ValueError
-        If the file is empty or has an invalid format.
-    """
-    # Validate file existence
-    if not os.path.exists(filename):
-        raise FileNotFoundError(f"input file does not exist: {filename}")
-    if not os.path.isfile(filename):
-        raise ValueError(f"path is not a file: {filename}")
-    if os.path.getsize(filename) == 0:
-        raise ValueError(f"file is empty: {filename}")
-
-    # Read XYZ
-    symbols, positions = [], []
-    with open(filename) as f:
-        lines = f.readlines()
-
-    if len(lines) < 3:
-        raise ValueError(f"XYZ file format error, insufficient lines: {filename}")
-
-    try:
-        num_atoms = int(lines[0].strip())
-    except ValueError as e:
-        raise ValueError(f"cannot parse atom count: {lines[0].strip()}") from e
-
-    if len(lines) < num_atoms + 2:
-        raise ValueError(f"file declares {num_atoms} atoms but has insufficient lines")
-
-    for line in lines[2 : 2 + num_atoms]:
-        parts = line.split()
-        if len(parts) < 4:
-            raise ValueError(f"coordinate line format error: {line.strip()}")
-        symbols.append(canonicalize_element_symbol(parts[0]))
-        positions.append((float(parts[1]), float(parts[2]), float(parts[3])))
-
-    # Build RDKit Mol
-    rw_mol = Chem.RWMol()
-    for s in symbols:
-        rw_mol.AddAtom(Chem.Atom(s))
-    atom_nums = [atom.GetAtomicNum() for atom in rw_mol.GetAtoms()]
-
-    conf = Chem.Conformer(num_atoms)
-    for i in range(num_atoms):
-        conf.SetAtomPosition(i, positions[i])
-    rw_mol.AddConformer(conf)
-
-    # Topology detection — use cKDTree instead of O(N²) full matrix
-    # Significantly reduces memory usage and computation time for large molecules (>500 atoms)
-    radii = np.array([GV_RADII_ARRAY[z] if z < 120 else 1.5 for z in atom_nums])
-    pos_array = np.array(positions)
-
-    # Max bond threshold = 2 * max_radius * bond_coeff, used for cKDTree search
-    max_threshold = 2.0 * float(np.max(radii)) * bond_coeff
-    tree = cKDTree(pos_array)
-    pairs = tree.query_pairs(max_threshold, output_type="ndarray")  # shape (M, 2)
-
-    for i, j in pairs:
-        ri, rj = radii[i], radii[j]
-        threshold = (ri + rj) * bond_coeff
-        dist = float(np.linalg.norm(pos_array[i] - pos_array[j]))
-        if 0.4 < dist < threshold:
-            rw_mol.AddBond(int(i), int(j), Chem.BondType.SINGLE)
-
-    mol = rw_mol.GetMol()
-    try:
-        Chem.SanitizeMol(mol)
-    except Exception:
-        mol.UpdatePropertyCache(strict=False)
-
-    from ...core.console import console, print_kv
-
-    # --- Print bond topology summary ---
-    print_kv("Topology", f"{mol.GetNumBonds()} bonds detected (1-based)")
-    bonds_str = []
-    for b in mol.GetBonds():
-        a1 = b.GetBeginAtom()
-        a2 = b.GetEndAtom()
-        bonds_str.append(f"{a1.GetIdx() + 1}({a1.GetSymbol()})-{a2.GetIdx() + 1}({a2.GetSymbol()})")
-
-    # Dynamic columns based on console width
-    cw = console.width or 80
-    # Indent is 14 chars ("  Topology  " label area); subtract it before dividing.
-    num_cols = 4 if cw >= 75 else 3 if cw >= 58 else 2
-    col_w = (cw - 14) // num_cols
-
-    for i in range(0, len(bonds_str), num_cols):
-        chunk = bonds_str[i : i + num_cols]
-        line_str = "".join(f"{s:<{col_w}}" for s in chunk)
-        console.print(f"[muted]{'':14}{line_str}[/muted]")
-
-    return mol
+# Compatibility name retained for callers that imported the historical
+# generator helper.  The implementation is owned by ``core`` now.
+load_mol_from_xyz = _core_load_mol_from_xyz
 
 
 def get_rotatable_bonds(mol, no_rot, force_rot):

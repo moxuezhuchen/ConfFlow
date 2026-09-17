@@ -35,44 +35,96 @@ def test_parse_output_delegates_to_policy(tmp_path) -> None:
     policy.parse_output.assert_called_once_with(str(log), {"itask": "sp"}, is_sp_task=True)
 
 
-def test_run_refine_postprocess_returns_refine_result(tmp_path) -> None:
+def test_run_refine_postprocess_uses_injected_callable(tmp_path) -> None:
     expected = RefineResult(produced_output=True, output_path="out.xyz", kept_count=2)
+    captured = {}
 
-    with patch("confflow.calc.postprocess.refine.process_xyz", return_value=expected) as process:
-        result = run_refine_postprocess(
-            input_file="in.xyz",
-            output_file="out.xyz",
-            threshold=0.2,
-            ewin=5.0,
-            energy_tolerance=0.1,
-            workers=2,
-            noH=True,
-            dedup_only=True,
-            keep_all_topos=True,
-            imag=0,
-            max_conformers=3,
-        )
+    def fake_refine(request):
+        captured["request"] = request
+        return expected
+
+    result = run_refine_postprocess(
+        input_file="in.xyz",
+        output_file="out.xyz",
+        threshold=0.2,
+        ewin=5.0,
+        energy_tolerance=0.1,
+        workers=2,
+        noH=True,
+        dedup_only=True,
+        keep_all_topos=True,
+        imag=0,
+        max_conformers=3,
+        refine_callable=fake_refine,
+    )
 
     assert result is expected
-    options = process.call_args.args[0]
-    assert options.input_file == "in.xyz"
-    assert options.output == "out.xyz"
-    assert options.max_conformers == 3
+    request = captured["request"]
+    assert request.input_file == "in.xyz"
+    assert request.output_file == "out.xyz"
+    assert request.max_conformers == 3
+    assert request.noH is True
+
+
+def test_run_refine_postprocess_forwards_mapping_budget() -> None:
+    captured = {}
+
+    def fake_refine(request):
+        captured["request"] = request
+        return RefineResult(produced_output=True, output_path="out.xyz", kept_count=1)
+
+    run_refine_postprocess(
+        input_file="in.xyz",
+        output_file="out.xyz",
+        threshold=0.2,
+        ewin=None,
+        energy_tolerance=0.05,
+        workers=1,
+        max_mapping_nodes=321,
+        refine_callable=fake_refine,
+    )
+    assert captured["request"].max_mapping_nodes == 321
+
+
+def test_composition_root_forwards_mapping_budget(monkeypatch) -> None:
+    import confflow.blocks.refine as refine_pkg
+    from confflow.calc.postprocess import RefineRequest
+    from confflow.workflow import composition
+
+    captured = {}
+
+    def fake_process(options):
+        captured["options"] = options
+        return RefineResult(produced_output=True, output_path="out.xyz", kept_count=1)
+
+    monkeypatch.setattr(refine_pkg, "process_xyz", fake_process)
+    request = RefineRequest(
+        input_file="in.xyz",
+        output_file="out.xyz",
+        threshold=0.2,
+        ewin=None,
+        energy_tolerance=0.05,
+        workers=1,
+        max_mapping_nodes=99,
+    )
+    result = composition.run_refine_block(request)
+    assert result.kept_count == 1
+    assert captured["options"].max_mapping_nodes == 99
 
 
 def test_run_refine_postprocess_wraps_legacy_return(tmp_path) -> None:
     output = tmp_path / "out.xyz"
     output.write_text("0\n\n", encoding="utf-8")
 
-    with patch("confflow.calc.postprocess.refine.process_xyz", return_value=None):
-        result = run_refine_postprocess(
-            input_file="in.xyz",
-            output_file=str(output),
-            threshold=0.2,
-            ewin=None,
-            energy_tolerance=0.1,
-            workers=1,
-        )
+    result = run_refine_postprocess(
+        input_file="in.xyz",
+        output_file=str(output),
+        threshold=0.2,
+        ewin=None,
+        energy_tolerance=0.1,
+        workers=1,
+        refine_callable=lambda request: None,
+    )
 
     assert result.produced_output is True
     assert result.output_path == str(output)
@@ -127,19 +179,9 @@ def test_validate_chain_definitions_returns_invalid_messages() -> None:
     assert messages == ["2-3: not bonded"]
 
 
-def test_chem_validation_wrappers_delegate_to_confgen_modules() -> None:
-    fake_mol = object()
-    fake_validator = object()
+def test_chem_validation_legacy_paths_preserve_core_identity() -> None:
+    from confflow.blocks.confgen.generator import load_mol_from_xyz as legacy_loader
+    from confflow.blocks.confgen.validator import ChainValidator as legacy_validator
 
-    with (
-        patch("confflow.blocks.confgen.generator.load_mol_from_xyz", return_value=fake_mol) as load,
-        patch(
-            "confflow.blocks.confgen.validator.ChainValidator",
-            return_value=fake_validator,
-        ) as validator_cls,
-    ):
-        assert load_mol_from_xyz("mol.xyz", 1.1) is fake_mol
-        assert ChainValidator(["1-2"]) is fake_validator
-
-    load.assert_called_once_with("mol.xyz", 1.1)
-    validator_cls.assert_called_once_with(["1-2"])
+    assert legacy_loader is load_mol_from_xyz
+    assert legacy_validator is ChainValidator

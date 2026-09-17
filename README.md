@@ -23,6 +23,17 @@ It is not recommended for:
 - Non-isolated real production compute environments
 - Untrusted YAML, XYZ, Gaussian keywords, ORCA blocks, or executable paths
 
+### Identity boundaries
+
+The shared source tree, this isolated v2.1.6 fix-forward candidate, the
+published v2.1.3 package, and the configured production executable are distinct
+identities. The protected v2.1.4 and v2.1.5 tags are failed tag-only release
+attempts with no GitHub Release or assets; neither is reused. The v2.1.6
+candidate is not published, and the current production endpoint remains
+ConfFlow v2.0.0.
+Candidate wheels are local review artifacts and do not replace the published
+package or promote a production endpoint.
+
 ## Features
 
 - YAML-driven workflow execution from XYZ inputs
@@ -57,33 +68,36 @@ Requirements and packaging notes:
 - RDKit is required
 - `numba` is optional and only used for acceleration when installed
 
-## ConfFlow ↔ JobDesk Capability Handshake (v1.4.3)
+## ConfFlow ↔ JobDesk Capability Handshake (v2.1.6 candidate)
 
-ConfFlow 1.4.3 implements a version/capability probe used by JobDesk to
-validate compatibility before uploading or submitting workflow tasks:
+The ConfFlow 2.1.6 fix-forward candidate implements a version/capability probe
+used by JobDesk to validate compatibility before uploading or submitting
+workflow tasks:
 
 ```bash
-confflow --version          # prints "1.4.3"
+confflow --version          # prints "2.1.6" in the candidate environment
 confflow --capabilities --json
 ```
 
-Capability contract (JSON, schema version 3):
+Capability contract (JSON, schema version **4**):
 
 ```json
 {
-  "schema_version": 3,
-  "version": "1.4.3",
+  "schema_version": 4,
+  "version": "2.1.6",
   "capabilities": {
     "workflow_state": true,
     "resume": true,
-    "dag": true
+    "dag": true,
+    "control_worker": true
   },
   "artifacts": {
     "run_summary": "run_summary.json",
     "workflow_stats": "workflow_stats.json",
     "workflow_state": ".workflow_state.json",
     "run_report": "{basename}.txt",
-    "min_xyz": "{basename}min.xyz"
+    "min_xyz": "{basename}min.xyz",
+    "output_manifest": "output_manifest.json"
   },
   "commands": {
     "bash": true,
@@ -95,19 +109,116 @@ Capability contract (JSON, schema version 3):
     "base64": true
   },
   "build": {
-    "commit": "7b37c223d2c07a062ab62965911c3cd8d6641591",
+    "commit": "<40-char git commit>",
     "dirty": false
+  },
+  "producer": {
+    "package": "confflow",
+    "version": "2.1.6",
+    "build": {
+      "commit": "<40-char git commit>",
+      "dirty": false
+    },
+    "wheel": {
+      "filename": "confflow-2.1.6-py3-none-any.whl",
+      "sha256": "<external SHA-256SUMS digest>"
+    },
+    "install_provenance": {
+      "status": "verified",
+      "reason_code": null
+    }
+  },
+  "executable": {
+    "path": "/path/to/confflow",
+    "sha256": "<executable SHA-256>",
+    "python": "/path/to/installer/python"
   }
 }
 ```
 
-JobDesk requires `confflow>=1.4.3,<2.0`, validates the capability contract
-before the first input upload, and repeats the preflight at submit time.
-The `commands` block reports the host-side utilities that ConfFlow relies
-on for shell launching, scratch staging, and integrity checks. The
-`build` block surfaces the exact 40-character git commit that produced
-the running wheel plus a `dirty` flag; a non-zero `dirty` value triggers a
-non-fatal warning at submit time so operators can spot local rebuilds.
+The candidate's `control_worker` value is `true` only on POSIX hosts with
+`O_DIRECTORY` and `O_NOFOLLOW`; Windows installations report `false` and must
+not accept the worker handoff.
+
+The last published ConfFlow package is v2.1.3. The protected v2.1.4 and v2.1.5
+tags have no GitHub Release or assets after their failed release workflows;
+this v2.1.6 fix-forward remains an unpublished candidate. The configured
+production endpoint remains v2.0.0 and v1.4.6 remains rollback-only. Any consumer pairing
+must validate this capability contract before the first input upload and repeat
+the preflight at submit time.
+
+The `confflow-control-worker` entrypoint is a producer-owned
+handoff, not an agent-queue compatibility layer. Its `prepare.input_manifest`
+locator must contain the canonical `worker-handoff.schema.json` envelope and
+the persisted digest must be the envelope digest. The envelope is limited to
+one task; a batch must be split before prepare. The worker stages the validated
+configuration and input bytes under the private StateRoot, preserves the
+original input basename for `{basename}.txt` and `{basename}min.xyz`, and
+publishes those fixed sidecars beside the task work directory (the remote
+result base) while keeping the normal JSON/manifest artifacts in the task
+work directory.
+Every worker that may be recovered after a crash must be launched in its own
+session, for example with `setsid`; a marker from an ordinary shell process
+group is intentionally not auto-recovered. The legacy stable JobDesk path has
+no consumer for this handoff and must not silently send its private
+`.jobdesk-control/input-manifest.json` to it.
+
+### v4 contract additions
+
+* **`producer`** block reports the *install* provenance: package name,
+  version, build commit/dirty, the **wheel filename and SHA-256** that
+  were actually deployed, and an `install_provenance.status` /
+  `reason_code` snapshot. `status` is one of `"verified"`,
+  `"missing"`, `"invalid"`. Only `"verified"` is acceptable as
+  production input.
+* **`executable`** block reports the resolved on-disk `confflow` path,
+  its own SHA-256 (so a tampered or locally-rebuilt executable is
+  detectable), and the `python` interpreter that hosts the venv.
+* **`control_worker`** advertises the released producer-owned worker
+  handoff. It is `true` only on POSIX hosts with secure directory-descriptor
+  primitives; Windows installs report `false` and must not accept worker
+  handoffs.
+* **Six artifacts**, in addition to the v3 set:
+  * `output_manifest` — machine-readable multi-terminal output
+    index written alongside the run artifacts.
+  * `run_summary`, `workflow_stats`, `workflow_state`, `run_report`,
+    `min_xyz` — unchanged.
+
+### Four content schemas stamped into producer artifacts
+
+Each producer artifact carries a stable `content_schema` field. The
+producer contract enumerates them; JobDesk matches the exact string,
+not a prefix.
+
+| Artifact | Filename | content_schema |
+| --- | --- | --- |
+| run_summary | `run_summary.json` | `confflow.run_summary.v1` |
+| workflow_stats | `workflow_stats.json` | `confflow.workflow_stats.v1` |
+| workflow_state | `.workflow_state.json` | `confflow.workflow_state.v1` |
+| output_manifest | `output_manifest.json` | `confflow.output_manifest.v1` |
+
+### Release / install provenance — three layers
+
+ConfFlow no longer bakes its own wheel digest into the wheel.
+
+1. **Wheel-internal build provenance** — `confflow.__build__.COMMIT`
+   and `DIRTY` are set by `setup.py`'s build hook and describe only
+   *what source built this wheel*, never the wheel file itself.
+2. **External release provenance** — the release workflow writes a
+   `SHA256SUMS` file next to the wheel in `dist/`. The deployer
+   refuses to install on checksum mismatch.
+3. **Target venv install provenance** — the deployer creates
+   `<sys.prefix>/share/confflow/install-provenance.json` after
+   verifying the wheel against `SHA256SUMS` (and, in production,
+   against the approved attestation). The capability probe reads
+   this file; the wheel's `__build__.COMMIT` is *not* trusted as
+   the wheel's identity.
+
+The capability probe surfaces `producer.wheel.filename` /
+`producer.wheel.sha256` and `producer.install_provenance.status`
+from this record. A `status` other than `"verified"` means the
+an install without verified provenance is diagnostic-only; JobDesk's production gate rejects
+it.
 
 ## Quick Start
 

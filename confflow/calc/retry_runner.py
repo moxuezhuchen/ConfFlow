@@ -105,8 +105,9 @@ class RetryAwareTaskRunner:
             time.sleep(delay)
 
     def _backoff(self, attempt: int) -> float:
-        delay: float = min(self._config.base_delay * (2 ** attempt), self._config.max_delay)
+        delay: float = min(self._config.base_delay * (2**attempt), self._config.max_delay)
         if self._config.jitter:
             import random
+
             delay = delay * (0.5 + random.random())
         return delay
