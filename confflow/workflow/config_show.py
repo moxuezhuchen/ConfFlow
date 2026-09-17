@@ -10,6 +10,8 @@ from typing import Any
 
 from ..config.canonical import resolve_calc_step
 from ..config.models import load_workflow_model
+from ..shared.confgen_params import resolve_confgen_params
+from ..shared.defaults import DEFAULT_MAX_PARALLEL_JOBS
 
 __all__ = [
     "show_resolved_config",
@@ -87,8 +89,13 @@ def _resolve_step_config(
     else:
         resolved = _config_as_dict(global_config)
         resolved.update(params)
-        if step_type in {"confgen", "gen"} and "bond_threshold" not in resolved:
-            resolved["bond_threshold"] = params.get("bond_multiplier", 1.15)
+        if step_type in {"confgen", "gen"}:
+            resolved.update(
+                resolve_confgen_params(
+                    params,
+                    default_workers=resolved.get("max_parallel_jobs", DEFAULT_MAX_PARALLEL_JOBS),
+                )
+            )
 
     resolved["step_type"] = step.get("type", "calc")
     resolved["step_name"] = step.get("name", "unnamed")

@@ -39,6 +39,7 @@ __all__ = [
     "normalize_blocks",
     "parse_freeze_indices",
     "gaussian_apply_freeze",
+    "append_gaussian_modredundant",
     "orca_constraint_block",
     "format_orca_blocks",
 ]
@@ -152,10 +153,28 @@ def gaussian_apply_freeze(coords_lines: Sequence[str], freeze_indices_1based: Se
     return "\n".join(mod_c)
 
 
+def append_gaussian_modredundant(existing: Any, line: str) -> list[str]:
+    """Append one ModRedundant directive without dropping existing content.
+
+    Accepts the user-facing forms ``None``, a newline-separated string, or a
+    list of strings, and always returns a list of non-empty directives.
+    """
+    if existing is None:
+        lines: list[str] = []
+    elif isinstance(existing, (list, tuple)):
+        lines = [str(item).strip() for item in existing if str(item).strip()]
+    else:
+        lines = [part.strip() for part in str(existing).splitlines() if part.strip()]
+
+    directive = str(line).strip()
+    if directive and directive not in lines:
+        lines.append(directive)
+    return lines
+
+
 def orca_constraint_block(freeze_indices_1based: Sequence[int]) -> str:
     if not freeze_indices_1based:
         return ""
-
     constraint_lines = ["%geom Constraints"]
     for atom_idx in freeze_indices_1based:
         constraint_lines.append(f"  {{ C {int(atom_idx) - 1} C }}")

@@ -307,10 +307,12 @@ steps:
 
         data = json.loads(capsys.readouterr().out)
         resolved = data["resolved_config"]
-        assert resolved["chains"] == "1-2-3"
+        assert resolved["chains"] == ["1-2-3"]
         assert resolved["bond_multiplier"] == 1.3
         assert resolved["bond_threshold"] == 1.3
+        assert resolved["clash_threshold"] == 0.65
         assert resolved["angle_step"] == 60
+        assert resolved["workers"] == 2
 
     def test_config_show_csv_format_treated_as_text(self, tmp_path: Path, capsys):
         """Test that --format csv is treated as text for --config-show."""

@@ -17,11 +17,11 @@ from ..calc.runner import CalcStepRequest, CalcStepRunner
 from ..config.canonical import resolve_calc_step, resolve_global_options
 from ..config.models import GlobalOptions
 from ..core.exceptions import ConfFlowError
-from ..core.pairs import normalize_pair_list
 from ..core.utils import get_logger
+from ..shared.confgen_params import resolve_confgen_params
 from ..shared.defaults import DEFAULT_MAX_PARALLEL_JOBS
 from .composition import configure_default_refine
-from .helpers import as_list, is_multi_frame_any, pushd
+from .helpers import is_multi_frame_any, pushd
 from .stats import FailureTracker
 from .step_naming import build_step_dir_name_map
 
@@ -114,51 +114,21 @@ def _confgen_signature_path(step_dir: str) -> str:
     return os.path.join(step_dir, _CONFGEN_SIGNATURE_FILE)
 
 
-def _resolve_confgen_workers(
-    params: dict[str, Any],
-    global_config: dict[str, Any] | None,
-) -> int:
-    global_config = global_config or {}
-    raw_workers = params.get("workers")
-    if raw_workers is None:
-        raw_workers = params.get("max_workers")
-    if raw_workers is None:
-        raw_workers = params.get("max_parallel_jobs")
-    if raw_workers is None:
-        raw_workers = global_config.get("max_parallel_jobs", DEFAULT_MAX_PARALLEL_JOBS)
-    try:
-        workers = int(raw_workers)
-    except (TypeError, ValueError) as exc:
-        raise ConfFlowError(
-            f"confgen workers must be an integer >= 1, got {raw_workers!r}"
-        ) from exc
-    if workers < 1:
-        raise ConfFlowError(f"confgen workers must be an integer >= 1, got {raw_workers!r}")
-    return workers
-
-
 def _build_confgen_run_kwargs(
     params: dict[str, Any],
     current_input: str | list[str],
     global_config: dict[str, Any] | None = None,
 ) -> dict:
+    global_config = global_config or {}
+    canonical = resolve_confgen_params(
+        params,
+        default_workers=global_config.get("max_parallel_jobs", DEFAULT_MAX_PARALLEL_JOBS),
+    )
     return {
         "input_files": current_input,
-        "angle_step": params.get("angle_step", 120),
-        "bond_threshold": params.get("bond_multiplier", 1.15),
-        "clash_threshold": 0.65,
-        "add_bond": normalize_pair_list(params.get("add_bond")),
-        "del_bond": normalize_pair_list(params.get("del_bond")),
-        "no_rotate": normalize_pair_list(params.get("no_rotate")),
-        "force_rotate": normalize_pair_list(params.get("force_rotate")),
-        "optimize": params.get("optimize", False),
+        **canonical,
         "confirm": False,
-        "chains": as_list(params.get("chains", params.get("chain"))),
-        "chain_steps": as_list(params.get("chain_steps", params.get("steps"))),
-        "chain_angles": as_list(params.get("chain_angles", params.get("angles"))),
-        "rotate_side": params.get("rotate_side", "left"),
         "collect_results": False,
-        "workers": _resolve_confgen_workers(params, global_config),
     }
 
 

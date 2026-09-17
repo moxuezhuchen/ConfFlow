@@ -10,6 +10,8 @@ from typing import Any
 from ..core.chem_validation import ChainValidator, load_mol_from_xyz
 from ..core.exceptions import InputFileError, XYZFormatError
 from ..core.utils import validate_xyz_file
+from ..shared.confgen_params import resolve_confgen_params
+from ..shared.defaults import DEFAULT_MAX_PARALLEL_JOBS
 from .helpers import as_list
 
 __all__ = [
@@ -54,10 +56,12 @@ def validate_inputs_compatible(
     if not input_files:
         raise ValueError("no input files provided")
 
-    chain_values = None
+    canonical = None
     if confgen_params:
-        # Accept both the YAML plural form and the CLI-style singular alias.
-        chain_values = confgen_params.get("chains", confgen_params.get("chain"))
+        canonical = resolve_confgen_params(
+            confgen_params, default_workers=DEFAULT_MAX_PARALLEL_JOBS
+        )
+    chain_values = canonical["chains"] if canonical is not None else None
     allow_chain_mapping = bool(chain_values)
 
     ref_atoms = None
@@ -113,18 +117,13 @@ def validate_inputs_compatible(
     # -------------------------------------------------------------------------
     # Flexible chain consistency check (if confgen params are present)
     # -------------------------------------------------------------------------
-    if confgen_params and chain_values is not None:
+    if confgen_params is not None and canonical is not None and chain_values is not None:
         chains = as_list(chain_values)
         if chains:
             try:
                 if not bool(confgen_params.get("validate_chain_bonds", False)):
                     return
-                bond_threshold = float(
-                    confgen_params.get(
-                        "bond_threshold",
-                        confgen_params.get("bond_multiplier", 1.15),
-                    )
-                )
+                bond_threshold = float(canonical["bond_threshold"])
                 validator = ChainValidator(chains)
                 mol = load_mol_from_xyz(input_files[0], bond_threshold)
                 ref_data = validator.validate_mol(mol, input_files[0])
