@@ -407,7 +407,7 @@ def run_generation(
     no_rotate : list[list[int]] or None
         Bonds to exclude from rotation (1-based).
     force_rotate : list[list[int]] or None
-        Bonds to force-rotate (1-based).
+        Unsupported (kept for config compatibility). A non-empty value raises.
     optimize : bool
         Whether to apply MMFF pre-optimization.
     confirm : bool
@@ -438,6 +438,16 @@ def run_generation(
     del_bond = normalize_pair_list(del_bond)
     no_rotate = normalize_pair_list(no_rotate)
     force_rotate = normalize_pair_list(force_rotate)
+
+    # force_rotate is unsupported in manual-chain mode: automatic
+    # rotatable-bond detection was removed and only bonds listed in --chain are
+    # rotated. Fail loudly instead of silently ignoring the option.
+    if force_rotate:
+        raise ValueError(
+            "force_rotate is not supported: automatic rotatable-bond detection "
+            "was removed and manual chains only rotate the bonds listed in "
+            "--chain. Remove --force_rotate (ring bonds cannot be forced to rotate)."
+        )
 
     # Ensure input is a list
     if isinstance(input_files, str):
@@ -518,7 +528,6 @@ def run_generation(
                 parsed_chains,
                 per_chain_angle_lists,
                 no_rotate,
-                force_rotate,
                 rotate_side,
             )
 
@@ -648,7 +657,13 @@ def main():
     parser.add_argument("--add_bond", nargs=2, type=int, action="append")
     parser.add_argument("--del_bond", nargs=2, type=int, action="append")
     parser.add_argument("--no_rotate", nargs=2, type=int, action="append")
-    parser.add_argument("--force_rotate", nargs=2, type=int, action="append")
+    parser.add_argument(
+        "--force_rotate",
+        nargs=2,
+        type=int,
+        action="append",
+        help="(unsupported) force-rotate a bond; manual chains only rotate --chain bonds",
+    )
 
     # New: manual chain mode (auto flexible-bond detection removed)
     parser.add_argument(

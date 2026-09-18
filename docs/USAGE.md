@@ -208,7 +208,6 @@ confgen mol.xyz --chain 1-2-3-4-5 --angles "0,120,240;0,60,120,180;180;0,120" -y
 - `--add_bond a b`：强制添加键（可重复）
 - `--del_bond a b`：强制删除键（可重复）
 - `--no_rotate a b`：禁止旋转指定键（可重复；仅对链上键生效）
-- `--force_rotate a b`：强制将指定键视为可旋转（可重复；一般不需要）
 
 输出：当前目录生成 `search.xyz`（多帧 XYZ）。
 

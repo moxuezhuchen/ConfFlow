@@ -275,7 +275,6 @@ def _build_chain_rotations(
     parsed_chains: list[list[int]],
     per_chain_angle_lists: list[list[list[float]]],
     no_rotate: list[list[int]] | None,
-    force_rotate: list[list[int]] | None,
     rotate_side: str,
 ) -> tuple[list[tuple[int, int, Any]], list[list[float]]]:
     """Build rotatable bonds and corresponding angle lists from chain definitions.
@@ -290,10 +289,9 @@ def _build_chain_rotations(
         Angle lists for each bond in each chain.
     no_rotate : list[list[int]] or None
         Bond pairs to skip rotation.
-    force_rotate : list[list[int]] or None
-        Bond pairs to force rotation.
     rotate_side : str
-        Which side to rotate ('left' or 'right').
+        Which side to rotate ('left' = the side of the chain bond's first
+        atom, 'right' = the side of its second atom).
 
     Returns
     -------
@@ -316,6 +314,17 @@ def _build_chain_rotations(
             if mol.GetBondBetweenAtoms(a_left, a_right) is None:
                 raise ValueError(
                     f"no bond between adjacent chain atoms: {a_left + 1}-{a_right + 1} (use --add_bond or check chain indices)"
+                )
+
+            # A ring bond cannot be rotated independently: rotating it would
+            # tear the ring instead of scanning a torsion. Fail closed instead
+            # of silently skipping, so the user does not believe the torsion
+            # was scanned.
+            if _edge_in_cycle(adjacency, a_left, a_right):
+                raise ValueError(
+                    f"chain bond {a_left + 1}-{a_right + 1} is a ring bond and "
+                    "cannot be rotated independently; remove ring bonds from "
+                    "the chain or choose an acyclic torsion"
                 )
 
             if no_rotate:
@@ -341,11 +350,6 @@ def _build_chain_rotations(
                 and idx not in right_source_set
                 and dist_left[idx] <= dist_right[idx]
             ]
-
-            if not rotate_atoms and force_rotate:
-                pair = tuple(sorted((a_left, a_right)))
-                if any(tuple(sorted((p[0] - 1, p[1] - 1))) == pair for p in force_rotate):
-                    rotate_atoms = []
 
             rot_bonds.append((int(a_left), int(a_right), np.array(rotate_atoms, dtype=np.int64)))
             angle_lists.append([float(x) for x in bond_angles[bi]])

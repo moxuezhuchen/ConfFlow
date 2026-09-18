@@ -159,6 +159,17 @@ def resolve_confgen_params(
         params, "chain_angles", CONFGEN_ALIAS_GROUPS["chain_angles"], _as_list
     )
 
+    # force_rotate is unsupported: automatic rotatable-bond detection was
+    # removed and manual chains only rotate the bonds listed in `chains`.
+    # An empty/unset value is ignored; a non-empty value fails fast instead of
+    # silently changing the fingerprint for a feature that does nothing.
+    if normalize_pair_list(params.get("force_rotate")):
+        raise ConfigurationError(
+            "confgen force_rotate is not supported: automatic rotatable-bond "
+            "detection was removed and manual chains only rotate bonds listed in "
+            "'chains'. Remove force_rotate."
+        )
+
     return {
         "angle_step": angle_step,
         "bond_threshold": bond_threshold,
@@ -166,7 +177,7 @@ def resolve_confgen_params(
         "add_bond": normalize_pair_list(params.get("add_bond")),
         "del_bond": normalize_pair_list(params.get("del_bond")),
         "no_rotate": normalize_pair_list(params.get("no_rotate")),
-        "force_rotate": normalize_pair_list(params.get("force_rotate")),
+        "force_rotate": None,
         "optimize": params.get("optimize", False),
         "chains": None if chains is _MISSING else chains,
         "chain_steps": None if chain_steps is _MISSING else chain_steps,

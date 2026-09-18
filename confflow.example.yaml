@@ -70,7 +70,6 @@ steps:
       # add_bond: [[1, 2]]        # 强制添加键
       # del_bond: [[3, 4]]        # 强制删除键
       # no_rotate: [[2, 3]]       # 禁止旋转指定键（仅对链上键生效）
-      # force_rotate: [[2, 3]]    # 强制旋转指定键（一般不需要）
 
   # --------------------------------------------------------------------------
   # 步骤 2: 低级优化
@@ -277,6 +276,6 @@ steps:
 # - optimize: false          # MMFF94s 力场预优化
 # - rotate_side: "left"     # 旋转侧: "left" / "right"
 # - validate_chain_bonds: false  # 多文件模式校验链键
-# - add_bond / del_bond / no_rotate / force_rotate  # 拓扑修正
+# - add_bond / del_bond / no_rotate  # 拓扑修正/旋转约束（force_rotate 不再支持）
 #
 # ============================================================================
