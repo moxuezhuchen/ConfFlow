@@ -219,8 +219,6 @@ def _write_refine_output(output_path: str, final_unique: list[dict], global_min:
             extra_items = []
             emit_g = str(frame.get("energy_key") or "").upper() == "G"
             for k, v in frame.get("extra_data", {}).items():
-                if str(k).lower() == "tsatoms":
-                    continue
                 if emit_g and str(k) in {"E_sp", "E_includes_gcorr"}:
                     continue
                 extra_items.append(f"{k}={v}")
