@@ -43,7 +43,7 @@ confrefine <input.xyz> [-o <output.xyz>] [-t <rmsd>] [--ewin <kcal/mol>] [--imag
 - `--noH`：RMSD 计算忽略氢原子
 - `-n/--max-conformers`：最大输出构象数
 - `--dedup-only`：仅去重，不做能量窗口筛选
-- `-w/--workers`：并行 worker 数
+- `-w/--workers`：仅为 CLI/API 兼容而保留；当前 Refine 不使用该值控制构象去重并行度，去重以确定性的串行方式执行（不会改变并发度或输出）
 
 运行日志写入 `<input_basename>.txt`。
 

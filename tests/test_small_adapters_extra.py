@@ -112,6 +112,38 @@ def test_composition_root_forwards_mapping_budget(monkeypatch) -> None:
     assert captured["options"].max_mapping_nodes == 99
 
 
+def test_composition_root_refine_workers_is_silent(tmp_path, capsys) -> None:
+    """Workflow-transported workers (generic cores_per_task) must not warn.
+
+    Only the explicit CLI flag is a user-facing compatibility option; the
+    workflow path forwards generic resource metadata and stays silent.
+    """
+    from confflow.calc.postprocess import RefineRequest
+    from confflow.workflow import composition
+
+    input_xyz = tmp_path / "in.xyz"
+    input_xyz.write_text(
+        "2\nE=-1.0\nC 0 0 0\nH 0 0 1.0\n" "2\nE=-0.5\nC 0 0 0\nH 0 0 2.0\n",
+        encoding="utf-8",
+    )
+    output = tmp_path / "out.xyz"
+    request = RefineRequest(
+        input_file=str(input_xyz),
+        output_file=str(output),
+        threshold=0.25,
+        ewin=None,
+        energy_tolerance=0.05,
+        workers=4,
+    )
+
+    result = composition.run_refine_block(request)
+
+    err = capsys.readouterr().err
+    assert "Warning" not in err
+    assert "--workers" not in err
+    assert result.produced_output is True
+
+
 def test_run_refine_postprocess_wraps_legacy_return(tmp_path) -> None:
     output = tmp_path / "out.xyz"
     output.write_text("0\n\n", encoding="utf-8")

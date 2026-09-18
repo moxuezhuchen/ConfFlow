@@ -73,7 +73,7 @@ confrefine <input.xyz> [选项]
 | `--imag` | - | 筛选 | 保留的虚频数 | 无 | `--imag 0` |
 | `--dedup-only` | - | 模式 | 仅去重,跳过其他分析 | 否 | `--dedup-only` |
 | `--keep-all-topos` | - | 模式 | 保留所有拓扑异构体 | 否 | `--keep-all-topos` |
-| `--workers` | `-w` | 并行 | 并行核心数 | CPU-2 | `-w 8` |
+| `--workers` | `-w` | 兼容 | 兼容参数；当前不用于控制 Refine 去重并行度 | 省略时 CPU-2 | `-w 8` |
 | `--noH` | - | 标志 | RMSD计算忽略氢原子 | 否 | `--noH` |
 
 ### 常用示例
