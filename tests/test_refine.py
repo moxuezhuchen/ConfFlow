@@ -339,7 +339,8 @@ def test_refine_preserves_ts_bond_in_comment(tmp_path: Path) -> None:
     refine.process_xyz(args)
     text = out.read_text(encoding="utf-8")
     assert "TSBond=0.74" in text
-    assert "TSAtoms=1,2" not in text
+    # TSAtoms survives the comment round-trip (comma-containing value kept).
+    assert "TSAtoms=1,2" in text
 
 
 def test_refine_parses_imag_from_calc_output_format(tmp_path: Path) -> None:

@@ -283,6 +283,49 @@ class TaskRunner:
             except (ValueError, TypeError):
                 inherited_gc = None
 
+            # --- Analysis provenance inheritance (semantic layer) ------------
+            # A geometry-preserving single point may inherit analysis fields
+            # that still describe the unchanged geometry, but only when this
+            # step produced no fresher value (a fresh result always wins).
+            # Geometry-changing tasks must never propagate a previous
+            # geometry's Imag/LowestFreq/TSAtoms/TSBond conclusions.
+            meta = task_dict.get("metadata") or {}
+            num_imag = res.get("num_imag_freqs")
+            lowest_freq = res.get("lowest_freq")
+            if itask == 1:
+                if num_imag is None:
+                    # Explicit None checks: Imag=0 is a valid inherited value.
+                    inherited_imag = meta.get("Imag")
+                    if inherited_imag is None:
+                        inherited_imag = meta.get("num_imag_freqs")
+                    if inherited_imag is not None:
+                        try:
+                            num_imag = int(float(inherited_imag))
+                        except (TypeError, ValueError):
+                            pass
+                if lowest_freq is None:
+                    inherited_lowest = meta.get("LowestFreq")
+                    if inherited_lowest is None:
+                        inherited_lowest = meta.get("lowest_freq")
+                    if inherited_lowest is not None:
+                        try:
+                            lowest_freq = float(inherited_lowest)
+                        except (TypeError, ValueError):
+                            pass
+                if ts_bond_atoms is None:
+                    inherited_ts_atoms = meta.get("TSAtoms")
+                    if inherited_ts_atoms is not None and str(inherited_ts_atoms).strip():
+                        parsed_ts = _parse_ts_bond_atoms(inherited_ts_atoms)
+                        if parsed_ts is not None:
+                            ts_bond_atoms = f"{parsed_ts[0]},{parsed_ts[1]}"
+                if ts_bond_length is None:
+                    inherited_ts_len = meta.get("TSBond")
+                    if inherited_ts_len is not None:
+                        try:
+                            ts_bond_length = float(inherited_ts_len)
+                        except (TypeError, ValueError):
+                            pass
+
             e, g, gc = res.get("e_low"), res.get("g_low"), res.get("g_corr")
             # SP policies expose the electronic energy as ``e_high``. Consume it
             # only for the SP task type; missing energy must still fail closed.
@@ -339,8 +382,8 @@ class TaskRunner:
                 key: final_val,
                 "final_sp_energy": final_sp_energy,
                 "final_coords": final_coords,
-                "num_imag_freqs": res.get("num_imag_freqs"),
-                "lowest_freq": res.get("lowest_freq"),
+                "num_imag_freqs": num_imag,
+                "lowest_freq": lowest_freq,
                 "g_corr": gc,
             }
             if ts_bond_atoms is not None:

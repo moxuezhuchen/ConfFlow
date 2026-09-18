@@ -31,7 +31,7 @@ def upsert_comment_kv(comment: str, key: str, value: Any) -> str:
     key = str(key)
     val_str = str(value)
 
-    pattern = re.compile(rf"(?P<prefix>^|[\s|,])(?P<k>{re.escape(key)})\s*=\s*(?P<v>[^\s|,]+)")
+    pattern = re.compile(rf"(?P<prefix>^|[\s|])(?P<k>{re.escape(key)})\s*=\s*(?P<v>[^\s|]+)")
     match = pattern.search(comment)
     if not match:
         if not comment:
@@ -43,9 +43,13 @@ def upsert_comment_kv(comment: str, key: str, value: Any) -> str:
 
 
 def parse_comment_metadata(comment: str) -> dict[str, Any]:
-    """Parse key=value metadata from an XYZ comment line."""
+    """Parse key=value metadata from an XYZ comment line.
+
+    A value may contain commas (e.g. ``TSAtoms=1,2``); pairs are separated by
+    whitespace or the ``|`` delimiter only.
+    """
     meta: dict[str, Any] = {}
-    for match in re.finditer(r"([A-Za-z_][A-Za-z0-9_]*)\s*=\s*([^\s|,]+)", comment or ""):
+    for match in re.finditer(r"([A-Za-z_][A-Za-z0-9_]*)\s*=\s*([^\s|]+)", comment or ""):
         key, value = match.group(1), match.group(2)
         if key in _IDENTIFIER_METADATA_KEYS:
             meta[key] = value
