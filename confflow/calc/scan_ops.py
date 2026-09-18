@@ -25,6 +25,7 @@ from ..core.keyword_rewrite import (
     ensure_gaussian_modredundant_keyword,
     make_scan_keyword_from_ts_keyword,
 )
+from ..shared.defaults import DEFAULT_SCAN_FINE_HALF_WINDOW, DEFAULT_SCAN_MAX_STEPS
 from .components import executor
 from .components.input_helpers import append_gaussian_modredundant
 from .policies import get_policy_for_config as _get_policy
@@ -352,8 +353,10 @@ class _ScanParams:
             raise ConfigurationError("scan_coarse_step must be > 0")
         self.fine_step = float(cfg.get("scan_fine_step", 0.02))
         self.uphill_limit = int(cfg.get("scan_uphill_limit", 10))
-        self.max_steps = int(cfg.get("scan_max_steps", 60))
-        self.fine_half_window = float(cfg.get("scan_fine_half_window", 0.1))
+        self.max_steps = int(cfg.get("scan_max_steps", DEFAULT_SCAN_MAX_STEPS))
+        self.fine_half_window = float(
+            cfg.get("scan_fine_half_window", DEFAULT_SCAN_FINE_HALF_WINDOW)
+        )
 
         try:
             k = int(round(1.0 / self.coarse_step))

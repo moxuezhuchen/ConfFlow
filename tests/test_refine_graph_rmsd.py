@@ -586,6 +586,29 @@ def test_energy_relaxation_reports_effective_cutoff():
     assert sorted(frame["original_index"] for frame in unique_strict) == [0, 1]
 
 
+def test_energy_tolerance_zero_disables_relaxation():
+    # Identical energies with tolerance 0 must use the nominal cutoff, even
+    # though the old <= comparison would have relaxed them.
+    right = {
+        "original_index": 1,
+        "energy": -2.0,
+        "atoms": ["C", "C", "C"],
+        "coords": _triangle(1.2),
+    }
+    left = {
+        "original_index": 0,
+        "energy": -2.0,
+        "atoms": ["C", "C", "C"],
+        "coords": _triangle(1.0),
+    }
+    unique, report = process_topology_group([left, right], 0.1, False, 1, 0.0)
+
+    assert sorted(frame["original_index"] for frame in unique) == [0, 1]
+    kept = report[1]
+    assert kept["Status"] == "Kept"
+    assert kept["Cutoff"] == pytest.approx(0.1)
+
+
 def test_unresolved_topology_skips_majority_filter_and_retains_all(tmp_path):
     # Triangle with a pendant, then the same graph under a non-automorphic
     # relabeling: isomorphic, but identity numbering is not legal.

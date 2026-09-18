@@ -14,7 +14,7 @@ import shutil
 import sys
 import tempfile
 from collections import defaultdict
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ProcessPoolExecutor  # noqa: F401  (patched by tests/conftest)
 
 import numpy as np
 
@@ -41,8 +41,10 @@ warning = _console_bindings["warning"]
 from . import rmsd_engine  # noqa: E402
 from .topology import (  # noqa: E402
     DEFAULT_MAPPING_NODE_BUDGET,
+    apply_bond_overrides,
     build_graph,
     group_frames_by_topology,
+    parse_bond_override,
 )
 
 __all__ = [
@@ -56,10 +58,6 @@ __all__ = [
 
 def fast_rmsd(*args, **kwargs):
     return rmsd_engine.fast_rmsd(*args, **kwargs)
-
-
-def get_topology_hash_worker(*args, **kwargs):
-    return rmsd_engine.get_topology_hash_worker(*args, **kwargs)
 
 
 def process_topology_group(*args, **kwargs):
@@ -217,8 +215,6 @@ def _write_refine_output(output_path: str, final_unique: list[dict], global_min:
             extra_items = []
             emit_g = str(frame.get("energy_key") or "").upper() == "G"
             for k, v in frame.get("extra_data", {}).items():
-                if str(k).lower() == "tsatoms":
-                    continue
                 if emit_g and str(k) in {"E_sp", "E_includes_gcorr"}:
                     continue
                 extra_items.append(f"{k}={v}")
@@ -496,25 +492,17 @@ def process_xyz(args):
     if mapping_budget is None:
         mapping_budget = DEFAULT_MAPPING_NODE_BUDGET
 
-    # 1. Legacy topology fingerprint (cheap pre-filter / compatibility surface)
-    atom_coord_pairs = [(f["atoms"], f["coords"]) for f in all_frames]
-
-    with ProcessPoolExecutor(max_workers=args.workers) as executor:
-        chunk = max(1, len(all_frames) // (args.workers * 4) + 1)
-
-        topo_hashes = []
-        with create_progress() as progress:
-            task_id = progress.add_task("Topology hash", total=len(all_frames))
-            for res in executor.map(get_topology_hash_worker, atom_coord_pairs, chunksize=chunk):
-                topo_hashes.append(res)
-                progress.advance(task_id)
-
-    for i, h in enumerate(topo_hashes):
-        all_frames[i]["topology_hash"] = h
-
-    # 2. Build one bonding graph per frame, then group with exact matching
+    # Build one bonding graph per frame, then group with exact matching.
+    #    Frames carry the topology overrides ConfGen actually applied (mapped
+    #    into each frame's own atom order); re-apply them so refine sees the
+    #    same topology the generator used.
     for frame in all_frames:
+        extra = frame.get("extra_data") or {}
+        override_add = parse_bond_override(extra.get("AddBond"))
+        override_del = parse_bond_override(extra.get("DelBond"))
         build = build_graph(frame["atoms"], frame["coords"])
+        if override_add or override_del:
+            build = apply_bond_overrides(build, add_bond=override_add, del_bond=override_del)
         frame["graph"] = build.graph
         frame["graph_status"] = build.status
         frame["graph_reason"] = build.reason

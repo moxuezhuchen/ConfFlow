@@ -99,6 +99,7 @@ def test_export_json_writes_explicit_output(tmp_path):
             "step_name": "task_step",
             "step_dir": str(step_dir),
             "job_name": "job_1",
+            "cid": None,
             "status": "success",
             "energy": None,
             "final_gibbs_energy": None,

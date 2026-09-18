@@ -71,6 +71,7 @@ class WorkflowState:
     input_files: list[str]
     original_inputs: list[str]
     config_file: str
+    input_digests: list[str] = field(default_factory=list)
     steps: dict[str, StepRecord] = field(default_factory=dict)
     wavefront_index: int = 0
     started_at: float = field(default_factory=time.time)
@@ -116,6 +117,7 @@ class WorkflowState:
             input_files=_string_list(raw.get("input_files")),
             original_inputs=_string_list(raw.get("original_inputs")),
             config_file=str(raw["config_file"]),
+            input_digests=_string_list(raw.get("input_digests", [])),
             config_binding=config_binding,
             steps=steps,
             wavefront_index=int(raw.get("wavefront_index", 0)),

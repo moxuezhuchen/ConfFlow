@@ -66,6 +66,7 @@ class ResultsDB:
                 task_id INTEGER PRIMARY KEY AUTOINCREMENT,
                 job_name TEXT NOT NULL,
                 task_index INTEGER,
+                cid TEXT,
                 status TEXT NOT NULL,
                 energy REAL,
                 final_gibbs_energy REAL,
@@ -90,6 +91,8 @@ class ResultsDB:
         # Add missing columns when opening databases created by older versions.
         try:
             cols = {r[1] for r in self.conn.execute("PRAGMA table_info(task_results)")}
+            if "cid" not in cols:
+                self.conn.execute("ALTER TABLE task_results ADD COLUMN cid TEXT")
             if "ts_bond_atoms" not in cols:
                 self.conn.execute("ALTER TABLE task_results ADD COLUMN ts_bond_atoms TEXT")
             if "ts_bond_length" not in cols:
@@ -134,6 +137,7 @@ class ResultsDB:
             task_info.get("error"),
             task_info.get("error_kind"),
             task_info.get("error_details"),
+            task_info.get("cid") or (task_info.get("metadata") or {}).get("CID"),
         )
         existing = self.conn.execute(
             "SELECT task_id FROM task_results WHERE job_name = ? ORDER BY task_id DESC LIMIT 1",
@@ -146,7 +150,7 @@ class ResultsDB:
                 SET task_index = ?, status = ?, energy = ?, final_gibbs_energy = ?,
                     final_sp_energy = ?, num_imag_freqs = ?, lowest_freq = ?, g_corr = ?,
                     ts_bond_atoms = ?, ts_bond_length = ?, final_coords = ?, error = ?,
-                    error_kind = ?, error_details = ?,
+                    error_kind = ?, error_details = ?, cid = ?,
                     timestamp = CURRENT_TIMESTAMP
                 WHERE task_id = ?
             """,
@@ -160,8 +164,8 @@ class ResultsDB:
                     job_name, task_index, status, energy,
                     final_gibbs_energy, final_sp_energy, num_imag_freqs,
                     lowest_freq, g_corr, ts_bond_atoms, ts_bond_length,
-                    final_coords, error, error_kind, error_details
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    final_coords, error, error_kind, error_details, cid
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
                 payload,
             )
@@ -227,6 +231,7 @@ class ResultsDB:
         return {
             "index": row["task_index"],
             "job_name": row["job_name"],
+            "cid": row["cid"] if "cid" in row.keys() else None,
             "status": row["status"],
             "energy": row["energy"],
             "final_gibbs_energy": row["final_gibbs_energy"],

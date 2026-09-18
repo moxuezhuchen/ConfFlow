@@ -126,6 +126,16 @@ def test_workers_must_be_positive():
         _resolve(workers=0)
 
 
+def test_force_rotate_is_rejected():
+    with pytest.raises(ConfigurationError):
+        _resolve(force_rotate=[[1, 2]])
+
+
+def test_empty_force_rotate_normalized_to_none():
+    assert _resolve()["force_rotate"] is None
+    assert _resolve(force_rotate=[])["force_rotate"] is None
+
+
 # --------------------------------------------------------------------------
 # Execution adapter
 # --------------------------------------------------------------------------

@@ -11,7 +11,12 @@ from collections.abc import Callable
 from datetime import datetime
 from typing import Any
 
-from ..calc.artifacts import CalcArtifactManager, CalcResumeCompatibilityError
+from ..calc.artifacts import (
+    CalcArtifactManager,
+    CalcResumeCompatibilityError,
+    PreparedCalcArtifacts,
+    compute_input_digest,
+)
 from ..calc.executor import CalcExecutor
 from ..config.canonical import build_workflow_binding, resolve_calc_step
 from ..config.models import GlobalOptions
@@ -186,6 +191,7 @@ def run_workflow(
     preloaded_state = WorkflowStateStore(prevalidated_root).load() if resume else None
     if resume and preloaded_state is not None:
         _validate_state_binding(preloaded_state, config_binding)
+        _validate_state_inputs(preloaded_state, input_files)
 
     runtime = initialize_runtime_context(
         work_dir=work_dir,
@@ -218,6 +224,7 @@ def run_workflow(
             steps=steps,
             step_dirnames=step_dirnames,
             config_binding=config_binding,
+            input_digests=_compute_input_digests(input_files),
         )
         state_store.save(state)
     else:
@@ -316,6 +323,15 @@ def run_workflow(
                     _mark_step_completed(state, state_record, current_input, execution_index)
                     state_store.save(state)
                     continue
+                # A manifest that is present but not completed means the previous
+                # run crashed mid-step; a residual output on disk must never be
+                # adopted as a finished result.
+                _reject_incomplete_manifest(
+                    prepared,
+                    step_index=execution_index + 1,
+                    step_name=step_name,
+                    step_dir=step_dir,
+                )
 
             expected_output = resolve_step_output(step_dir, step.get("type"))
             if expected_output is not None and os.path.exists(expected_output):
@@ -484,9 +500,22 @@ def run_workflow(
                 state_store.save(state)
                 _notify_step_status_change(on_step_status_change, state_record)
 
-    terminal_outputs = {name: _as_artifact_list(step_outputs[name]) for name in terminal_steps}
+    # A disabled (skipped) terminal has no artifact of its own: it passes the
+    # workflow's external input through, which must not appear in the output
+    # manifest as if it were produced inside the workflow root.
+    outputting_terminals = [
+        name for name in terminal_steps if state.steps[name_to_dirname[name]].status != "skipped"
+    ]
+    terminal_outputs = {
+        name: _as_artifact_list(step_outputs[name]) for name in outputting_terminals
+    }
     final_outputs = [artifact for artifacts in terminal_outputs.values() for artifact in artifacts]
-    final_output = step_outputs[terminal_steps[0]] if len(terminal_steps) == 1 else final_outputs
+    if len(outputting_terminals) == 1:
+        final_output = step_outputs[outputting_terminals[0]]
+    elif outputting_terminals:
+        final_output = final_outputs
+    else:
+        final_output = initial_input
     return finalize_workflow(
         root_dir=root_dir,
         original_inputs=original_inputs,
@@ -538,6 +567,7 @@ def _initial_workflow_state(
     steps: list[dict[str, Any]],
     step_dirnames: list[str],
     config_binding: Any,
+    input_digests: list[str],
 ) -> WorkflowState:
     """Create state records keyed by the deterministic step directory names."""
     records = {
@@ -555,6 +585,7 @@ def _initial_workflow_state(
         original_inputs=original_inputs,
         config_file=os.path.abspath(config_file),
         config_binding=config_binding,
+        input_digests=input_digests,
         steps=records,
     )
 
@@ -566,6 +597,57 @@ def _as_artifact_list(output: str | list[str]) -> list[str]:
     if isinstance(output, list):
         return [os.path.abspath(path) for path in output if isinstance(path, str)]
     return []
+
+
+def _reject_incomplete_manifest(
+    prepared: PreparedCalcArtifacts,
+    *,
+    step_index: int,
+    step_name: str,
+    step_dir: str,
+) -> None:
+    """Refuse to adopt a residual output when the calc manifest is not completed."""
+    manifest = prepared.manifest
+    if manifest is None or manifest.status == "completed":
+        return
+    raise RuntimeError(
+        _resume_failure_message(
+            step_index=step_index,
+            step_name=step_name,
+            step_dir=step_dir,
+            reason=(
+                f"calc manifest is not complete (status={manifest.status}); "
+                "refusing to reuse a residual output"
+            ),
+        )
+    )
+
+
+def _compute_input_digests(input_files: list[str]) -> list[str]:
+    """Ordered content signatures (absolute path + content digest) for resume."""
+    signatures: list[str] = []
+    for path in input_files:
+        abspath = os.path.abspath(path)
+        signatures.append(f"{abspath}:{compute_input_digest(abspath)}")
+    return signatures
+
+
+def _validate_state_inputs(state: WorkflowState, input_files: list[str]) -> None:
+    """Reject strict resume when the original inputs are missing or changed."""
+    if not state.input_digests:
+        raise RuntimeError(
+            "Workflow state has no input binding; strict resume cannot verify the "
+            "original inputs. Re-run without --resume."
+        )
+    try:
+        current = _compute_input_digests(input_files)
+    except OSError as exc:
+        raise RuntimeError(f"Strict resume cannot read the original inputs: {exc}") from exc
+    if current != state.input_digests:
+        raise RuntimeError(
+            "Workflow state input files do not match the current inputs "
+            "(path or content changed); strict resume refuses artifact reuse or cleanup."
+        )
 
 
 def _validate_state_binding(state: WorkflowState, expected: Any) -> None:

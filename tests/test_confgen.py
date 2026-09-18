@@ -468,6 +468,107 @@ def test_run_generation_edge_cases(cd_tmp):
         run_generation([str(xyz_path)], chains=["1-2"], confirm=True)
 
 
+def test_build_chain_rotations_rejects_ring_bond():
+    from confflow.blocks.confgen.rotations import _build_chain_rotations
+
+    mol = Chem.AddHs(Chem.MolFromSmiles("C1CCCCC1"))
+    AllChem.EmbedMolecule(mol, randomSeed=1)
+
+    with pytest.raises(ValueError, match="ring bond"):
+        _build_chain_rotations(
+            mol,
+            [[0, 1, 2, 3, 4, 5]],
+            [[[0, 60]] * 5],
+            None,
+            "left",
+        )
+
+
+def test_build_chain_rotations_skips_no_rotate_ring_bond():
+    """A ring bond explicitly excluded via no_rotate is skipped, not an error."""
+    from confflow.blocks.confgen.rotations import _build_chain_rotations
+
+    # Methylcyclohexane: ring atoms 0-5, methyl substituent on atom 5.
+    mol = Chem.MolFromSmiles("C1CCCCC1C")
+
+    # Chain methyl C7 -> ring C6 -> ring C1: one acyclic bond, one ring bond.
+    rot_bonds, _ = _build_chain_rotations(
+        mol,
+        [[6, 5, 0]],
+        [[[0.0, 120.0], [0.0, 180.0]]],
+        [[6, 1]],  # 1-based ring closure bond 6-1 excluded
+        "left",
+    )
+
+    # Only the acyclic methyl-ring bond is rotated.
+    assert len(rot_bonds) == 1
+    assert (rot_bonds[0][0], rot_bonds[0][1]) == (6, 5)
+
+
+def test_build_chain_rotations_ring_bond_without_no_rotate_still_rejected():
+    from confflow.blocks.confgen.rotations import _build_chain_rotations
+
+    mol = Chem.MolFromSmiles("C1CCCCC1C")
+
+    with pytest.raises(ValueError, match="ring bond"):
+        _build_chain_rotations(mol, [[6, 5, 0]], [[[0.0, 120.0], [0.0, 180.0]]], None, "left")
+
+
+def test_build_chain_rotations_acyclic_ok():
+    from confflow.blocks.confgen.rotations import _build_chain_rotations
+
+    mol = Chem.AddHs(Chem.MolFromSmiles("CCCC"))
+    AllChem.EmbedMolecule(mol, randomSeed=1)
+
+    rot_bonds, angle_lists = _build_chain_rotations(
+        mol, [[0, 1, 2, 3]], [[[0, 120]] * 3], None, "left"
+    )
+
+    assert len(rot_bonds) == 3
+    assert len(angle_lists) == 3
+
+
+def test_rotate_side_left_moves_first_atom_side():
+    from confflow.blocks.confgen.rotations import _build_adjacency, _build_chain_rotations
+
+    mol = Chem.AddHs(Chem.MolFromSmiles("CCCC"))
+    AllChem.EmbedMolecule(mol, randomSeed=1)
+
+    left_bonds, _ = _build_chain_rotations(mol, [[0, 1, 2, 3]], [[[0, 120]] * 3], None, "left")
+    right_bonds, _ = _build_chain_rotations(mol, [[0, 1, 2, 3]], [[[0, 120]] * 3], None, "right")
+
+    adjacency = _build_adjacency(mol)
+    first_side = set(adjacency[0]) - {1}  # substituents of the bond's first atom
+    left_moved = {int(x) for x in left_bonds[0][2]}
+    right_moved = {int(x) for x in right_bonds[0][2]}
+
+    # 'left' rotates the first-atom side; 'right' rotates the other side.
+    assert left_moved == first_side
+    assert left_moved & right_moved == set()
+
+
+def test_run_generation_rejects_ring_chain(cd_tmp):
+    mol = Chem.AddHs(Chem.MolFromSmiles("C1CCCCC1"))
+    AllChem.EmbedMolecule(mol, randomSeed=1)
+    xyz = cd_tmp / "cyclohexane.xyz"
+    with open(xyz, "w") as f:
+        f.write(f"{mol.GetNumAtoms()}\n\n")
+        for i in range(mol.GetNumAtoms()):
+            pos = mol.GetConformer().GetAtomPosition(i)
+            f.write(f"{mol.GetAtomWithIdx(i).GetSymbol()} {pos.x} {pos.y} {pos.z}\n")
+
+    with pytest.raises(RuntimeError, match="ring bond"):
+        run_generation(str(xyz), chains=["1-2-3-4-5-6"], confirm=False)
+
+
+def test_run_generation_rejects_force_rotate(cd_tmp):
+    xyz = cd_tmp / "test.xyz"
+    xyz.write_text("4\n\nC 0 0 0\nC 1.5 0 0\nC 3.0 0 0\nC 4.5 0 0\n")
+
+    with pytest.raises(ValueError, match="force_rotate is not supported"):
+        run_generation(str(xyz), chains=["1-2"], force_rotate=[[1, 2]])
+
+
 def test_main_cli(tmp_path):
     xyz_path = tmp_path / "test.xyz"
     with open(xyz_path, "w") as f:

@@ -27,6 +27,7 @@ EXPORT_FIELDS = [
     "step_name",
     "step_dir",
     "job_name",
+    "cid",
     "status",
     "energy",
     "final_gibbs_energy",
@@ -42,6 +43,7 @@ EXPORT_FIELDS = [
 
 _RESULT_COLUMNS = [
     "job_name",
+    "cid",
     "status",
     "energy",
     "final_gibbs_energy",

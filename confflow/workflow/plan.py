@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from ..config.models import GlobalOptions, WorkflowConfig, load_workflow_model
+from ..core.exceptions import ConfFlowError
 from ..core.utils import validate_xyz_file
 from .dag import build_step_graph, topo_order
 from .step_naming import build_step_dir_name_map
@@ -59,6 +60,28 @@ def build_workflow_plan(
             for index, name in enumerate(ordered_names)
         }
     execution_order = [name for wave in topo_order(predecessors) for name in wave]
+    # Fail at plan time instead of deep inside step execution: a calc step is
+    # single-input by design. Disabled calc steps never execute, so they are
+    # exempt from the single-input enforcement.
+    for name, step in by_step_name.items():
+        step_type = str(step.get("type", "")).strip().lower()
+        if step_type not in {"calc", "task"}:
+            continue
+        if not step.get("enabled", True):
+            continue
+        step_predecessors = predecessors.get(name, [])
+        if len(step_predecessors) > 1:
+            raise ConfFlowError(
+                f"calc step {name!r} has {len(step_predecessors)} inputs; "
+                "a calc step accepts exactly one input. Add a confgen step to "
+                "merge them first."
+            )
+        if not step_predecessors and len(input_files) > 1:
+            raise ConfFlowError(
+                f"calc step {name!r} has no inputs but the workflow provides "
+                f"{len(input_files)} initial inputs; a calc step accepts exactly "
+                "one input. Add a confgen step to merge them first."
+            )
     if explicit_inputs:
         predecessor_names = {
             predecessor

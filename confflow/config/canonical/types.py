@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 import shlex
 from dataclasses import dataclass, field
@@ -38,6 +39,8 @@ from ...shared.defaults import (
     DEFAULT_WORKFLOW_AUTO_CLEAN,
 )
 from ...shared.orca_blocks import format_orca_blocks
+
+logger = logging.getLogger("confflow.config")
 
 ProgramName = Literal["g16", "orca"]
 TaskName = Literal["opt", "sp", "freq", "opt_freq", "ts"]
@@ -340,6 +343,11 @@ class GlobalOptions:
     @classmethod
     def from_mapping(cls, raw: dict[str, Any] | None) -> GlobalOptions:
         raw = _as_dict(raw)
+        if raw.get("resume_from_backups") is not None:
+            logger.warning(
+                "resume_from_backups is deprecated and has no effect: completed "
+                "database results are always reused and backup recovery is not implemented."
+            )
         allowed = raw.get("allowed_executables")
         if isinstance(allowed, str):
             allowed_tuple = tuple(item.strip() for item in allowed.split(",") if item.strip())
@@ -452,6 +460,11 @@ class CalcStepParams:
         input_chk_dir: str | None = None,
     ) -> CalcStepParams:
         params = _as_dict(params)
+        if params.get("ts_rescue_scan_backup") is not None:
+            logger.warning(
+                "ts_rescue_scan_backup is deprecated and has no effect: the rescue "
+                "cleanup behaviour is fixed and scan-directory backups are not configurable."
+            )
         program = _normalize_iprog_label(params.get("iprog", global_options.iprog))
         if program not in {"g16", "orca"}:
             raise ValueError(f"Unsupported calc program: {program}")
@@ -636,8 +649,6 @@ class CalcStepParams:
                 data["scan_fine_half_window"] = self.ts.scan_fine_half_window
             if self.ts.keep_scan_dirs is not None:
                 data["ts_rescue_keep_scan_dirs"] = self.ts.keep_scan_dirs
-            if self.ts.scan_backup is not None:
-                data["ts_rescue_scan_backup"] = self.ts.scan_backup
         if self.execution.input_chk_dir:
             data["input_chk_dir"] = self.execution.input_chk_dir
         if self.execution.gaussian_write_chk is not None:

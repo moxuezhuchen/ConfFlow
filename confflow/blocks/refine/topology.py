@@ -15,8 +15,10 @@ The graph layer is shared by topology classification and geometry comparison:
 from __future__ import annotations
 
 import hashlib
+import re
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
+from typing import Any
 
 import numpy as np
 
@@ -42,6 +44,8 @@ __all__ = [
     "TopologyCluster",
     "build_graph",
     "build_graph_from_atomic_numbers",
+    "apply_bond_overrides",
+    "parse_bond_override",
     "find_isomorphism",
     "fixed_index_isomorphism",
     "get_element_atomic_number",
@@ -204,6 +208,81 @@ def build_graph(
 
     adjacency = _adjacency_from_coords(numbers, arr, bond_scale)
     return GraphBuild(_graph_from_parts(symbols, numbers, adjacency), "ok", "")
+
+
+def parse_bond_override(value: Any) -> list[tuple[int, int]]:
+    """Parse an ``AddBond``/``DelBond`` metadata value into 1-based pairs.
+
+    Accepts ``"1-2;3-4"`` (ConfGen output), a list of strings, or a list of
+    ``[a, b]`` pairs. Invalid tokens are ignored.
+    """
+    if value is None:
+        return []
+    if isinstance(value, (list, tuple)):
+        tokens: list[str] = []
+        for item in value:
+            if isinstance(item, str):
+                tokens.extend(re.split(r"[;,\s]+", item))
+            elif isinstance(item, (list, tuple)) and len(item) == 2:
+                tokens.append(f"{item[0]}-{item[1]}")
+            else:
+                tokens.append(str(item))
+    else:
+        tokens = re.split(r"[;,\s]+", str(value))
+
+    pairs: list[tuple[int, int]] = []
+    for token in tokens:
+        token = token.strip()
+        if not token:
+            continue
+        parts = token.split("-")
+        if len(parts) != 2:
+            continue
+        try:
+            a, b = int(parts[0]), int(parts[1])
+        except ValueError:
+            continue
+        if a != b:
+            pairs.append((a, b))
+    return pairs
+
+
+def apply_bond_overrides(
+    build: GraphBuild,
+    *,
+    add_bond: Sequence[tuple[int, int]],
+    del_bond: Sequence[tuple[int, int]],
+) -> GraphBuild:
+    """Return *build* with topology overrides applied to its adjacency.
+
+    ``add_bond``/``del_bond`` are 1-based pairs in the frame's own atom order.
+    """
+    graph = build.graph
+    if graph is None or (not add_bond and not del_bond):
+        return build
+    n = graph.n
+    adjacency = [set(row) for row in graph.adjacency]
+    changed = False
+    for a, b in del_bond:
+        i, j = a - 1, b - 1
+        if 0 <= i < n and 0 <= j < n and j in adjacency[i]:
+            adjacency[i].discard(j)
+            adjacency[j].discard(i)
+            changed = True
+    for a, b in add_bond:
+        i, j = a - 1, b - 1
+        if 0 <= i < n and 0 <= j < n and i != j and j not in adjacency[i]:
+            adjacency[i].add(j)
+            adjacency[j].add(i)
+            changed = True
+    if not changed:
+        return build
+    updated = tuple(tuple(sorted(row)) for row in adjacency)
+    return GraphBuild(
+        _graph_from_parts(graph.symbols, graph.atomic_numbers, updated),
+        build.status,
+        build.reason,
+    )
 
 
 def graph_from_adjacency(elements: Sequence[str], adjacency: Sequence[Sequence[int]]) -> Graph:

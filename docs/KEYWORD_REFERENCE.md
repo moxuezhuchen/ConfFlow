@@ -18,7 +18,6 @@ confgen <input.xyz> --chain <a-b-c-...> [--steps <s1,s2,...> | --angles "..."] [
 | `--add_bond` | - | 键 | 添加新键 | `--add_bond 1 2` |
 | `--del_bond` | - | 键 | 删除现有键 | `--del_bond 2 3` |
 | `--no_rotate` | - | 旋转 | 禁止某键旋转 | `--no_rotate 1 2` |
-| `--force_rotate` | - | 旋转 | 强制某键旋转 | `--force_rotate 3 4` |
 | `--chain` | - | 链 | 指定要旋转的 1-based 原子链 | `--chain 1-2-3-4-5` |
 | `--steps` | - | 角度 | 每根链内键的角度步长 | `--steps 120,120,120,120` |
 | `--angles` | - | 角度 | 显式角度列表；`;` 分隔键，`,` 分隔角度 | `--angles "0,120,240;0,180;0,120;0,60,120"` |
@@ -40,7 +39,7 @@ confgen molecule.xyz --chain 1-2-3-4-5 --steps 120,120,120,120 -y --opt
 confgen molecule.xyz --chain 1-2-3-4-5 --steps 120,120,120,120 --add_bond 1 2 --del_bond 3 4
 
 # 控制旋转
-confgen molecule.xyz --chain 1-2-3-4-5 --steps 120,120,120,120 --force_rotate 2 3 --no_rotate 3 4
+confgen molecule.xyz --chain 1-2-3-4-5 --steps 120,120,120,120 --no_rotate 3 4
 
 # 调整参数
 confgen molecule.xyz --chain 1-2-3-4-5 --steps 60,60,60,60 -b 1.1 -c 0.6 -y
@@ -50,7 +49,6 @@ confgen molecule.xyz \
   --chain 1-2-3-4-5 \
   --steps 120,120,120,120 \
   -y --opt \
-  --force_rotate 2 3 \
   --no_rotate 3 4 \
   -b 1.1 -c 0.6
 ```
@@ -225,7 +223,7 @@ confgen molecule.xyz --chain 1-2-3-4-5 --steps 120,120,120,120 -y -opt
 confgen molecule.xyz --chain 1-2-3-4-5 --steps 120,120,120,120 -y --add_bond 1 2
 
 # 控制旋转搜索
-confgen molecule.xyz --chain 1-2-3-4-5 --steps 120,120,120,120 -y --force_rotate 2 3
+confgen molecule.xyz --chain 1-2-3-4-5 --steps 120,120,120,120 -y --no_rotate 2 3
 ```
 
 ### 工作流参数组合
