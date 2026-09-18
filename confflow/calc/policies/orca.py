@@ -143,8 +143,8 @@ class OrcaPolicy(CalculationPolicy):
                 if m := re.search(r"Final Gibbs free energy\s+\.\.\.\s+([\d.-]+)\s+Eh", line):
                     g_low = float(m.group(1))
                 if "VIBRATIONAL FREQUENCIES" in line:
-                    if all_freqs:
-                        last_complete_freqs = all_freqs
+                    # A new candidate starts. A header alone does not prove the
+                    # previous candidate was complete, so it is NOT committed here.
                     all_freqs = []
                     in_freq_section = True
                     continue
@@ -153,12 +153,16 @@ class OrcaPolicy(CalculationPolicy):
                     if found:
                         all_freqs.extend(float(freq) for freq in found)
                     elif "NORMAL MODES" in line or "IR SPECTRUM" in line:
-                        # Leaving the frequency block: stop scraping later text.
+                        # Leaving the frequency block via a normal follow-up
+                        # section: the candidate is complete and is committed.
                         in_freq_section = False
+                        if all_freqs:
+                            last_complete_freqs = all_freqs
+                            all_freqs = []
 
-        # Only the last complete frequency section is authoritative.
-        if not all_freqs and last_complete_freqs:
-            all_freqs = last_complete_freqs
+        # Only the last explicitly completed frequency section is authoritative;
+        # a trailing candidate cut off at EOF was never committed.
+        all_freqs = last_complete_freqs
 
         if is_sp_task:
             e_high = single_point_energy

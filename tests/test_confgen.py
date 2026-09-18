@@ -484,6 +484,36 @@ def test_build_chain_rotations_rejects_ring_bond():
         )
 
 
+def test_build_chain_rotations_skips_no_rotate_ring_bond():
+    """A ring bond explicitly excluded via no_rotate is skipped, not an error."""
+    from confflow.blocks.confgen.rotations import _build_chain_rotations
+
+    # Methylcyclohexane: ring atoms 0-5, methyl substituent on atom 5.
+    mol = Chem.MolFromSmiles("C1CCCCC1C")
+
+    # Chain methyl C7 -> ring C6 -> ring C1: one acyclic bond, one ring bond.
+    rot_bonds, _ = _build_chain_rotations(
+        mol,
+        [[6, 5, 0]],
+        [[[0.0, 120.0], [0.0, 180.0]]],
+        [[6, 1]],  # 1-based ring closure bond 6-1 excluded
+        "left",
+    )
+
+    # Only the acyclic methyl-ring bond is rotated.
+    assert len(rot_bonds) == 1
+    assert (rot_bonds[0][0], rot_bonds[0][1]) == (6, 5)
+
+
+def test_build_chain_rotations_ring_bond_without_no_rotate_still_rejected():
+    from confflow.blocks.confgen.rotations import _build_chain_rotations
+
+    mol = Chem.MolFromSmiles("C1CCCCC1C")
+
+    with pytest.raises(ValueError, match="ring bond"):
+        _build_chain_rotations(mol, [[6, 5, 0]], [[[0.0, 120.0], [0.0, 180.0]]], None, "left")
+
+
 def test_build_chain_rotations_acyclic_ok():
     from confflow.blocks.confgen.rotations import _build_chain_rotations
 

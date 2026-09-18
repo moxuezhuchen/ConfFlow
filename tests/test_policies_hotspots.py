@@ -112,7 +112,8 @@ def test_gaussian_parse_output_ignores_malformed_scf_and_keeps_explicit_gibbs(
         "Sum of electronic and thermal Free Energies=          -9.250000\n"
         "Thermal correction to Gibbs Free Energy=               0.500000\n"
         "\\HF=-8.000\\Gibbs=-7.500\n"
-        "Frequencies -- 100.0 200.0\n",
+        "Frequencies -- 100.0 200.0\n"
+        " Zero-point correction=                                0.020000\n",
         encoding="utf-8",
     )
     monkeypatch.setattr(
@@ -287,7 +288,9 @@ def test_orca_parse_output_uses_sp_energy_fallback_and_filters_near_zero_freqs(
         "4: 0.00 cm-1\n"
         "5: 0.00 cm-1\n"
         "6: 0.05 cm-1\n"
-        "7: 12.50 cm-1\n",
+        "7: 12.50 cm-1\n"
+        "NORMAL MODES\n"
+        "0: -999.00 cm-1\n",
         encoding="utf-8",
     )
     monkeypatch.setattr(

@@ -185,17 +185,22 @@ class GaussianPolicy(CalculationPolicy):
                     g_corr = float(m.group(1))
 
                 # Frequency output can appear in several sections (linked jobs,
-                # restarted/appended logs). Only the last *complete* section is
-                # authoritative; earlier sections must not contaminate it.
-                if "Harmonic frequencies" in raw_line:
+                # restarted/appended logs). A section is only *complete* once a
+                # normal follow-up marker appears (the thermochemistry block
+                # always follows a harmonic-frequency table). A new section
+                # header alone does not prove the previous one was complete, so
+                # candidates are committed on that boundary only. At EOF a
+                # trailing partial section is discarded, never promoted.
+                if "Zero-point correction=" in raw_line:
                     if freq_section:
                         last_complete_freqs = freq_section
+                        freq_section = []
+                    in_freq_section = False
+                if "Harmonic frequencies" in raw_line:
                     freq_section = []
                     in_freq_section = True
                 elif fm := re.search(r"Frequencies --\s+([-\d\.\s]+)", raw_line):
                     if not in_freq_section:
-                        if freq_section:
-                            last_complete_freqs = freq_section
                         freq_section = []
                         in_freq_section = True
                     freq_section.extend(float(freq) for freq in fm.group(1).split())
@@ -226,7 +231,7 @@ class GaussianPolicy(CalculationPolicy):
             if gibbs_vals:
                 g_low = float(gibbs_vals[-1])
 
-        all_freqs = freq_section if freq_section else last_complete_freqs
+        all_freqs = last_complete_freqs
         if all_freqs:
             # Gaussian lists only true vibrational modes, but near-zero values
             # are still numerical noise and must not be counted as imaginary.

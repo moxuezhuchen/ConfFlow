@@ -16,6 +16,21 @@ __all__ = [
     "write_failed_xyz",
 ]
 
+# Topology overrides ConfGen applied to a frame (already mapped into that
+# frame's own atom order). Calc must carry them through to the output XYZ so
+# refine can re-apply them after inferring bonds. This is a strict whitelist:
+# generic metadata passthrough would re-propagate stale fields such as G_corr.
+TOPOLOGY_OVERRIDE_KEYS = ("AddBond", "DelBond")
+
+
+def _format_topology_overrides(orig_meta: dict[str, Any]) -> str:
+    parts = []
+    for key in TOPOLOGY_OVERRIDE_KEYS:
+        value = orig_meta.get(key)
+        if value is not None and str(value).strip():
+            parts.append(f"{key}={value}")
+    return "".join(f" {part}" for part in parts)
+
 
 def write_failed_xyz(
     work_dir: str,
@@ -44,6 +59,9 @@ def write_failed_xyz(
             info = f"Failed=1 Job={job_name}"
             if cid is not None and str(cid).strip() != "":
                 info += f" CID={cid}"
+            # Failed frames may be re-submitted as new calc inputs, so their
+            # topology overrides must survive just like successful results.
+            info += _format_topology_overrides(orig_meta)
             if err_kind:
                 info += f" ErrorKind={err_kind}"
             if err:
@@ -66,6 +84,8 @@ def format_result_comment(res: dict[str, Any], orig_meta: dict[str, Any]) -> str
     cid = orig_meta.get("CID")
     if cid is not None and str(cid).strip() != "":
         info += f" CID={cid}"
+
+    info += _format_topology_overrides(orig_meta)
 
     # The freshly computed correction is authoritative.  A previous geometry's
     # G_corr from the input metadata must not be re-attached to a

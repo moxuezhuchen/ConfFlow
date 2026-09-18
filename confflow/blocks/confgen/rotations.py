@@ -316,6 +316,15 @@ def _build_chain_rotations(
                     f"no bond between adjacent chain atoms: {a_left + 1}-{a_right + 1} (use --add_bond or check chain indices)"
                 )
 
+            # An explicitly excluded bond is skipped first: a ring bond that
+            # the user already placed in no_rotate is a deliberate exclusion,
+            # not an error. The ring check below only fires for ring bonds
+            # that would still be rotated.
+            if no_rotate:
+                pair = tuple(sorted((a_left, a_right)))
+                if any(tuple(sorted((p[0] - 1, p[1] - 1))) == pair for p in no_rotate):
+                    continue
+
             # A ring bond cannot be rotated independently: rotating it would
             # tear the ring instead of scanning a torsion. Fail closed instead
             # of silently skipping, so the user does not believe the torsion
@@ -324,13 +333,8 @@ def _build_chain_rotations(
                 raise ValueError(
                     f"chain bond {a_left + 1}-{a_right + 1} is a ring bond and "
                     "cannot be rotated independently; remove ring bonds from "
-                    "the chain or choose an acyclic torsion"
+                    "the chain or exclude it via no_rotate"
                 )
-
-            if no_rotate:
-                pair = tuple(sorted((a_left, a_right)))
-                if any(tuple(sorted((p[0] - 1, p[1] - 1))) == pair for p in no_rotate):
-                    continue
 
             if rotate_side == "left":
                 left_sources = ch[: bi + 1]

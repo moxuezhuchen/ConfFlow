@@ -25,6 +25,12 @@ _GAUSSIAN_ORIENTATION = (
     " ---------------------------------------------------------------------\n"
 )
 
+#: Thermochemistry follows a harmonic-frequency table and marks it complete.
+_GAUSSIAN_THERMO = (
+    " Zero-point correction=                           0.024000\n"
+    " Sum of electronic and thermal Free Energies=          -1.500000\n"
+)
+
 
 def _orca_log(freqs: list[float]) -> str:
     lines = [
@@ -36,10 +42,9 @@ def _orca_log(freqs: list[float]) -> str:
     lines.extend(f"{i}: {freq:.2f} cm-1" for i, freq in enumerate(freqs))
     lines.extend(
         [
-            "CARTESIAN COORDINATES (ANGSTROEM)",
-            "---------------------------------",
-            "H 0.0 0.0 0.0",
-            "H 0.0 0.0 1.0",
+            "NORMAL MODES",
+            "----------------",
+            "0: -999.00 cm-1",
             "",
             " ",
         ]
@@ -125,7 +130,7 @@ def test_orca_diatomic_real_vibration_is_kept(tmp_path):
 def test_gaussian_ignores_near_zero_negative_noise(tmp_path):
     log = tmp_path / "g.log"
     log.write_text(
-        " Frequencies -- -3.0000   -2.0000   100.0000\n" + _GAUSSIAN_ORIENTATION,
+        " Frequencies -- -3.0000   -2.0000   100.0000\n" + _GAUSSIAN_ORIENTATION + _GAUSSIAN_THERMO,
         encoding="utf-8",
     )
 
@@ -138,7 +143,9 @@ def test_gaussian_ignores_near_zero_negative_noise(tmp_path):
 def test_gaussian_counts_true_imaginary_mode(tmp_path):
     log = tmp_path / "g.log"
     log.write_text(
-        " Frequencies -- -100.0000   200.0000   300.0000\n" + _GAUSSIAN_ORIENTATION,
+        " Frequencies -- -100.0000   200.0000   300.0000\n"
+        + _GAUSSIAN_ORIENTATION
+        + _GAUSSIAN_THERMO,
         encoding="utf-8",
     )
 
@@ -149,13 +156,17 @@ def test_gaussian_counts_true_imaginary_mode(tmp_path):
 
 
 def test_gaussian_uses_last_complete_frequency_section(tmp_path):
+    """Complete A + complete B -> B (each committed at its thermochemistry)."""
     log = tmp_path / "g.log"
     log.write_text(
         " Harmonic frequencies (cm**-1), IR intensities\n"
         " Frequencies -- -350.0000   -100.0000   200.0000\n"
         + _GAUSSIAN_ORIENTATION
+        + _GAUSSIAN_THERMO
         + " Harmonic frequencies (cm**-1), IR intensities\n"
-        " Frequencies -- -120.0000   300.0000   400.0000\n" + _GAUSSIAN_ORIENTATION,
+        " Frequencies -- -120.0000   300.0000   400.0000\n"
+        + _GAUSSIAN_ORIENTATION
+        + _GAUSSIAN_THERMO,
         encoding="utf-8",
     )
 
@@ -171,8 +182,9 @@ def test_gaussian_last_section_without_imaginary_wins(tmp_path):
         " Harmonic frequencies (cm**-1), IR intensities\n"
         " Frequencies -- -350.0000   200.0000\n"
         + _GAUSSIAN_ORIENTATION
+        + _GAUSSIAN_THERMO
         + " Harmonic frequencies (cm**-1), IR intensities\n"
-        " Frequencies -- 100.0000   300.0000\n" + _GAUSSIAN_ORIENTATION,
+        " Frequencies -- 100.0000   300.0000\n" + _GAUSSIAN_ORIENTATION + _GAUSSIAN_THERMO,
         encoding="utf-8",
     )
 
@@ -189,6 +201,7 @@ def test_gaussian_truncated_last_section_keeps_previous(tmp_path):
         " Harmonic frequencies (cm**-1), IR intensities\n"
         " Frequencies -- -120.0000   300.0000\n"
         + _GAUSSIAN_ORIENTATION
+        + _GAUSSIAN_THERMO
         + " Harmonic frequencies (cm**-1), IR intensities\n",
         encoding="utf-8",
     )
@@ -199,7 +212,30 @@ def test_gaussian_truncated_last_section_keeps_previous(tmp_path):
     assert res["lowest_freq"] == -120.0
 
 
+def test_gaussian_partial_trailing_section_not_committed(tmp_path):
+    """A trailing section with one Frequencies line is incomplete at EOF.
+
+    It must not override the last committed section.
+    """
+    log = tmp_path / "g.log"
+    log.write_text(
+        " Harmonic frequencies (cm**-1), IR intensities\n"
+        " Frequencies -- -120.0000   300.0000\n"
+        + _GAUSSIAN_ORIENTATION
+        + _GAUSSIAN_THERMO
+        + " Harmonic frequencies (cm**-1), IR intensities\n"
+        " Frequencies -- -500.0000   900.0000\n",
+        encoding="utf-8",
+    )
+
+    res = GaussianPolicy().parse_output(str(log), {}, is_sp_task=False)
+
+    assert res["num_imag_freqs"] == 1
+    assert res["lowest_freq"] == -120.0
+
+
 def test_orca_uses_last_complete_frequency_section(tmp_path):
+    """Complete A + complete B -> B (each committed at NORMAL MODES)."""
     log = tmp_path / "orca.out"
     log.write_text(
         "VIBRATIONAL FREQUENCIES\n"
@@ -209,7 +245,9 @@ def test_orca_uses_last_complete_frequency_section(tmp_path):
         "0: -999.00 cm-1\n"
         "VIBRATIONAL FREQUENCIES\n"
         "0: -120.00 cm-1\n"
-        "1: 300.00 cm-1\n",
+        "1: 300.00 cm-1\n"
+        "NORMAL MODES\n"
+        "0: -999.00 cm-1\n",
         encoding="utf-8",
     )
 
@@ -217,6 +255,46 @@ def test_orca_uses_last_complete_frequency_section(tmp_path):
 
     assert res["num_imag_freqs"] == 1
     assert res["lowest_freq"] == -120.0
+
+
+def test_orca_partial_trailing_section_not_committed(tmp_path):
+    """A trailing candidate cut off at EOF was never committed.
+
+    The last explicitly completed section stays authoritative.
+    """
+    log = tmp_path / "orca.out"
+    log.write_text(
+        "VIBRATIONAL FREQUENCIES\n"
+        "0: -100.00 cm-1\n"
+        "1: 200.00 cm-1\n"
+        "NORMAL MODES\n"
+        "VIBRATIONAL FREQUENCIES\n"
+        "0: -500.00 cm-1\n"
+        "1: 900.00 cm-1\n",
+        encoding="utf-8",
+    )
+
+    res = OrcaPolicy().parse_output(str(log), {}, is_sp_task=False)
+
+    assert res["num_imag_freqs"] == 1
+    assert res["lowest_freq"] == -100.0
+
+
+def test_orca_header_only_trailing_section_not_committed(tmp_path):
+    log = tmp_path / "orca.out"
+    log.write_text(
+        "VIBRATIONAL FREQUENCIES\n"
+        "0: -100.00 cm-1\n"
+        "1: 200.00 cm-1\n"
+        "NORMAL MODES\n"
+        "VIBRATIONAL FREQUENCIES\n",
+        encoding="utf-8",
+    )
+
+    res = OrcaPolicy().parse_output(str(log), {}, is_sp_task=False)
+
+    assert res["num_imag_freqs"] == 1
+    assert res["lowest_freq"] == -100.0
 
 
 # ---------------------------------------------------------------------------

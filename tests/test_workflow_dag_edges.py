@@ -104,3 +104,94 @@ def test_calc_fan_in_rejected_at_plan_time(tmp_path):
 
     with pytest.raises(ConfFlowError, match="exactly one input"):
         run_workflow([str(input_xyz)], str(config), str(tmp_path / "work"))
+
+
+def test_disabled_calc_with_multiple_inputs_plans_normally(tmp_path):
+    """A disabled calc never executes, so fan-in must not be enforced on it."""
+    input_xyz = _write_input(tmp_path)
+    config = tmp_path / "workflow.yaml"
+    config.write_text(
+        "global: {}\n"
+        "steps:\n"
+        "  - name: left\n"
+        "    type: confgen\n"
+        "  - name: right\n"
+        "    type: confgen\n"
+        "  - name: join\n"
+        "    type: calc\n"
+        "    enabled: false\n"
+        "    inputs: [left, right]\n"
+        "  - name: sink\n"
+        "    type: confgen\n"
+        "    inputs: [left]\n",
+        encoding="utf-8",
+    )
+
+    # Plan construction must not raise the fan-in error for a disabled calc.
+    from confflow.workflow.plan import build_workflow_plan
+
+    plan = build_workflow_plan([str(input_xyz)], str(config))
+
+    assert "join" in plan.by_step_name
+
+
+def test_enabled_root_calc_with_multiple_initial_inputs_rejected(tmp_path):
+    input_a = tmp_path / "a.xyz"
+    input_a.write_text("1\na\nH 0 0 0\n", encoding="utf-8")
+    input_b = tmp_path / "b.xyz"
+    input_b.write_text("1\nb\nH 0 0 0\n", encoding="utf-8")
+    config = tmp_path / "workflow.yaml"
+    config.write_text(
+        "global: {}\n" "steps:\n" "  - name: sp\n" "    type: calc\n",
+        encoding="utf-8",
+    )
+
+    from confflow.workflow.plan import build_workflow_plan
+
+    with pytest.raises(ConfFlowError, match="exactly one input"):
+        build_workflow_plan([str(input_a), str(input_b)], str(config))
+
+
+def test_disabled_root_calc_with_multiple_initial_inputs_plans(tmp_path):
+    input_a = tmp_path / "a.xyz"
+    input_a.write_text("1\na\nH 0 0 0\n", encoding="utf-8")
+    input_b = tmp_path / "b.xyz"
+    input_b.write_text("1\nb\nH 0 0 0\n", encoding="utf-8")
+    config = tmp_path / "workflow.yaml"
+    config.write_text(
+        "global: {}\n"
+        "steps:\n"
+        "  - name: sp\n"
+        "    type: calc\n"
+        "    enabled: false\n"
+        "  - name: sink\n"
+        "    type: confgen\n",
+        encoding="utf-8",
+    )
+
+    from confflow.workflow.plan import build_workflow_plan
+
+    plan = build_workflow_plan([str(input_a), str(input_b)], str(config))
+
+    assert "sp" in plan.by_step_name
+
+
+def test_single_input_calc_unaffected(tmp_path):
+    input_xyz = _write_input(tmp_path)
+    config = tmp_path / "workflow.yaml"
+    config.write_text(
+        "global: {}\n"
+        "steps:\n"
+        "  - name: conf\n"
+        "    type: confgen\n"
+        "  - name: sp\n"
+        "    type: calc\n"
+        "    inputs: [conf]\n",
+        encoding="utf-8",
+    )
+
+    from confflow.workflow.plan import build_workflow_plan
+
+    plan = build_workflow_plan([str(input_xyz)], str(config))
+
+    assert plan.execution_order == ["conf", "sp"]

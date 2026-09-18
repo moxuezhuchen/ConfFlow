@@ -60,17 +60,28 @@ def build_workflow_plan(
             for index, name in enumerate(ordered_names)
         }
     execution_order = [name for wave in topo_order(predecessors) for name in wave]
-    if explicit_inputs:
-        # Fail at plan time instead of deep inside step execution: a calc step
-        # is single-input by design.
-        for name, step in by_step_name.items():
-            step_type = str(step.get("type", "")).strip().lower()
-            if step_type in {"calc", "task"} and len(predecessors.get(name, [])) > 1:
-                raise ConfFlowError(
-                    f"calc step {name!r} has {len(predecessors.get(name, []))} inputs; "
-                    "a calc step accepts exactly one input. Add a confgen step to "
-                    "merge them first."
-                )
+    # Fail at plan time instead of deep inside step execution: a calc step is
+    # single-input by design. Disabled calc steps never execute, so they are
+    # exempt from the single-input enforcement.
+    for name, step in by_step_name.items():
+        step_type = str(step.get("type", "")).strip().lower()
+        if step_type not in {"calc", "task"}:
+            continue
+        if not step.get("enabled", True):
+            continue
+        step_predecessors = predecessors.get(name, [])
+        if len(step_predecessors) > 1:
+            raise ConfFlowError(
+                f"calc step {name!r} has {len(step_predecessors)} inputs; "
+                "a calc step accepts exactly one input. Add a confgen step to "
+                "merge them first."
+            )
+        if not step_predecessors and len(input_files) > 1:
+            raise ConfFlowError(
+                f"calc step {name!r} has no inputs but the workflow provides "
+                f"{len(input_files)} initial inputs; a calc step accepts exactly "
+                "one input. Add a confgen step to merge them first."
+            )
     if explicit_inputs:
         predecessor_names = {
             predecessor
