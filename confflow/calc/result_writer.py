@@ -67,13 +67,10 @@ def format_result_comment(res: dict[str, Any], orig_meta: dict[str, Any]) -> str
     if cid is not None and str(cid).strip() != "":
         info += f" CID={cid}"
 
-    # Always retain the Gibbs correction when it is known, even alongside G=,
-    # so downstream composite/refine steps keep thermochemistry provenance.
+    # The freshly computed correction is authoritative.  A previous geometry's
+    # G_corr from the input metadata must not be re-attached to a
+    # geometry-changing result.
     g_corr = res.get("g_corr")
-    if g_corr is None:
-        g_corr = orig_meta.get("G_corr")
-    if g_corr is None:
-        g_corr = orig_meta.get("g_corr")
     if g_corr is not None:
         info += f" G_corr={g_corr}"
 

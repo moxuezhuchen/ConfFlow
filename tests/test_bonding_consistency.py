@@ -42,6 +42,24 @@ def test_unknown_element_fails_closed():
         infer_bond_pairs([0, 1], [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]], bond_scale=1.2)
 
 
+def test_single_unknown_element_fails_closed():
+    """Validation must happen before the N<=1 early return."""
+    with pytest.raises(UnknownElementError):
+        infer_bond_pairs([0], [[0.0, 0.0, 0.0]], bond_scale=1.2)
+
+
+def test_non_finite_coordinates_fail_closed():
+    with pytest.raises(ValueError):
+        infer_bond_pairs([6, 6], [[0.0, 0.0, 0.0], [float("nan"), 0.0, 0.0]], bond_scale=1.2)
+    with pytest.raises(ValueError):
+        infer_bond_pairs([6], [[float("inf"), 0.0, 0.0]], bond_scale=1.2)
+
+
+def test_single_known_atom_returns_no_bonds():
+    assert infer_bond_pairs([6], [[0.0, 0.0, 0.0]], bond_scale=1.2) == []
+    assert build_adjacency([6], [[0.0, 0.0, 0.0]], bond_scale=1.2) == [[]]
+
+
 def test_same_scale_yields_same_topology_across_consumers(tmp_path):
     scale = 1.2
     adjacency = build_adjacency(_WATER_NUMBERS, _WATER_COORDS, bond_scale=scale)

@@ -272,11 +272,10 @@ class TaskRunner:
             inherited_gc = None
             try:
                 meta = task_dict.get("metadata") or {}
-                # Carry the Gibbs correction forward from a prior freq/opt_freq
-                # (or composite SP) step so a downstream SP can form
-                # G = E_sp + G_corr.  A prior G value must NOT suppress this, or
-                # chained composite workflows (freq -> SP -> SP) silently lose
-                # the Gibbs free energy.
+                # A Gibbs correction from the input is only valid for a
+                # geometry-preserving single point.  It is read here and applied
+                # to SP tasks only (see below); geometry-changing steps must not
+                # inherit a stale correction.
                 for key in ("G_corr", "g_corr"):
                     if meta.get(key) is not None:
                         inherited_gc = float(meta.get(key))
@@ -291,7 +290,10 @@ class TaskRunner:
                 e = res.get("e_high")
             if itask in [2, 3, 4] and gc is None and e is not None and g is not None:
                 gc = g - e
-            if gc is None and inherited_gc is not None:
+            # Only a single point preserves the geometry the correction belongs
+            # to.  opt/TS steps (with or without freq) use res["g_corr"] as the
+            # authority and never fall back to a previous geometry's correction.
+            if itask == 1 and gc is None and inherited_gc is not None:
                 gc = inherited_gc
 
             final_sp_energy = None

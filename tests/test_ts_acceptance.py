@@ -91,6 +91,32 @@ def test_orca_counts_true_imaginary_mode(tmp_path):
     assert res["lowest_freq"] == -100.0
 
 
+def test_orca_linear_molecule_rigid_modes_not_imaginary(tmp_path):
+    """Linear molecules have 5 rigid modes; none may be counted as imaginary."""
+    log = tmp_path / "orca_linear.out"
+    log.write_text(
+        _orca_log([-4.0, -1.0, 0.0, 1.0, 2.0, 15.0, 600.0, 1300.0, 2400.0]),
+        encoding="utf-8",
+    )
+
+    res = OrcaPolicy().parse_output(str(log), {}, is_sp_task=False)
+
+    assert res["num_imag_freqs"] == 0
+    # A genuinely soft but real vibration above the noise floor is kept.
+    assert res["lowest_freq"] == 15.0
+
+
+def test_orca_diatomic_real_vibration_is_kept(tmp_path):
+    """Five rigid modes (one negative) plus one real vibration."""
+    log = tmp_path / "orca_diatomic.out"
+    log.write_text(_orca_log([-4.0, -2.0, -0.5, 0.5, 1.5, 2000.0]), encoding="utf-8")
+
+    res = OrcaPolicy().parse_output(str(log), {}, is_sp_task=False)
+
+    assert res["num_imag_freqs"] == 0
+    assert res["lowest_freq"] == 2000.0
+
+
 # ---------------------------------------------------------------------------
 # Gaussian parser
 # ---------------------------------------------------------------------------
@@ -146,9 +172,18 @@ def test_validate_ts_rmsd_detects_drift():
     assert "exceeds threshold 0.100" in err
 
 
-def test_validate_ts_rmsd_unparseable_returns_none():
-    assert validate_ts_rmsd(["coords"], ["H 0 0 0"], 0.1) is None
-    assert validate_ts_rmsd(["H 0 0 0"], ["H 0 0 0", "H 0 0 1"], 0.1) is None
+def test_validate_ts_rmsd_fails_closed_when_not_computable():
+    """Unparseable or mismatched coordinates must fail, not silently pass."""
+    unparseable = validate_ts_rmsd(["coords"], ["H 0 0 0"], 0.1)
+    assert unparseable is not None
+    assert "could not be parsed" in unparseable
+
+    mismatch = validate_ts_rmsd(["H 0 0 0"], ["H 0 0 0", "H 0 0 1"], 0.1)
+    assert mismatch is not None
+    assert "atom count mismatch" in mismatch
+
+    non_finite = validate_ts_rmsd(["H 0 0 0", "H nan 0 1"], ["H 0 0 0", "H 0 0 1"], 0.1)
+    assert non_finite is not None
 
 
 # ---------------------------------------------------------------------------

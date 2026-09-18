@@ -189,6 +189,15 @@ def test_transfer_chain_indices_requires_full_coverage():
         mapping.transfer_chain_indices(ref, target, [0])
 
 
+def test_transfer_chain_indices_requires_full_topology():
+    """Same atom coverage is not enough: the full bond topology must match."""
+    ref = Chem.MolFromSmiles("CCCC")  # butane: 4 atoms, 3 bonds
+    target = Chem.MolFromSmiles("C1CCC1")  # cyclobutane: 4 atoms, 4 bonds
+
+    with pytest.raises(ValueError, match="full molecular topology"):
+        mapping.transfer_chain_indices(ref, target, [0])
+
+
 def test_transfer_chain_indices_element_consistent():
     ref = _embed("OCCO")
     target = _rigidly_transform(ref)

@@ -201,19 +201,32 @@ def validate_ts_rmsd(
 
     The displacement is measured between the optimized structure and the
     structure the optimization started from (the user TS guess for a normal TS
-    task, the selected scan candidate for rescue reoptimization).  Returns an
-    error message when the RMSD exceeds ``threshold``, or ``None`` when the
-    check passes or cannot be evaluated (unparseable/mismatched coordinates).
+    task, the selected scan candidate for rescue reoptimization).
+
+    Fails closed: returns ``None`` only when the RMSD is computable and within
+    ``threshold``; unparseable coordinates, mismatched atom counts, or
+    non-finite coordinates return an explicit error message.
     """
     if threshold is None:
         threshold = DEFAULT_TS_RMSD_THRESHOLD
     initial = _coords_array_from_xyz_lines(initial_coords)
     final = _coords_array_from_xyz_lines(final_coords)
     if initial is None or final is None:
-        return None
+        return (
+            f"{context} geometry criterion failed: coordinates could not be "
+            "parsed to compute the aligned RMSD"
+        )
+    if initial.shape != final.shape:
+        return (
+            f"{context} geometry criterion failed: atom count mismatch "
+            f"(initial {initial.shape[0]}, final {final.shape[0]})"
+        )
     rmsd = _kabsch_aligned_rmsd(initial, final)
     if rmsd is None:
-        return None
+        return (
+            f"{context} geometry criterion failed: aligned RMSD could not be "
+            "computed (non-finite coordinates)"
+        )
     if rmsd > threshold:
         return (
             f"{context} geometry criterion failed: aligned RMSD {rmsd:.3f} Å "

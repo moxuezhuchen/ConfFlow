@@ -71,12 +71,17 @@ def infer_bond_pairs(
     arr = np.asarray(coords, dtype=np.float64)
     if arr.ndim != 2 or arr.shape[1] != 3 or arr.shape[0] != len(numbers):
         raise ValueError("coordinate shape does not match atoms")
-    if len(numbers) <= 1:
-        return []
+    if not np.all(np.isfinite(arr)):
+        raise ValueError("coordinates contain NaN or infinity")
 
+    # Validate atoms before the small-system early return so a single unknown
+    # atom (or non-finite coordinate) still fails closed.
     radii_list = [covalent_radius(z) for z in numbers]
     if any(radius is None for radius in radii_list):
         raise UnknownElementError("atom without a covalent radius")
+    if len(numbers) <= 1:
+        return []
+
     radii = np.array([float(radius) for radius in radii_list], dtype=np.float64)
 
     from scipy.spatial import cKDTree

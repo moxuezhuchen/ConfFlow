@@ -156,11 +156,11 @@ class OrcaPolicy(CalculationPolicy):
             e_low = single_point_energy
 
         if not is_sp_task and all_freqs:
-            # ORCA lists the 6 translations/rotations first; skip them and treat
-            # near-zero values as noise so they are not counted as imaginary.
-            num_imag_freqs, lowest_freq = analyze_vibrational_frequencies(
-                all_freqs, skip_rigid_modes=6
-            )
+            # ORCA lists the translations/rotations among the frequencies, but
+            # their count depends on the molecule's shape (5 for linear, 6
+            # otherwise). Rely on the near-zero filter instead of slicing a
+            # fixed number of modes.
+            num_imag_freqs, lowest_freq = analyze_vibrational_frequencies(all_freqs)
 
         final_coords = parse_last_geometry(log_file, 2)
 

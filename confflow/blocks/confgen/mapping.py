@@ -22,6 +22,8 @@ def _run_mcs(
     timeout: int,
     min_coverage: float,
     verbose: bool,
+    *,
+    require_full_topology: bool = False,
 ) -> Chem.Mol:
     """Run an element-aware MCS search and return the parsed SMARTS pattern.
 
@@ -30,7 +32,8 @@ def _run_mcs(
     ConfFlow perceives all bonds as single bonds from coordinates.
 
     Raises ValueError on timeout (even with a partial result), no common
-    substructure, or low coverage.  A partial MCS is never silently used.
+    substructure, or low coverage.  When ``require_full_topology`` is set, the
+    MCS must also cover every atom and every bond of both molecules.
     """
     params = rdFMCS.MCSParameters()
     params.AtomTyper = rdFMCS.AtomCompare.CompareElements
@@ -58,6 +61,22 @@ def _run_mcs(
     ratio = res.numAtoms / max(ref_mol.GetNumAtoms(), 1)
     if ratio < min_coverage:
         raise ValueError(f"MCS coverage too low ({ratio:.1%} < {min_coverage:.1%})")
+
+    if require_full_topology:
+        ref_atoms = ref_mol.GetNumAtoms()
+        target_atoms = target_mol.GetNumAtoms()
+        ref_bonds = ref_mol.GetNumBonds()
+        target_bonds = target_mol.GetNumBonds()
+        if not (res.numAtoms == ref_atoms == target_atoms):
+            raise ValueError(
+                "MCS does not cover the full molecular topology "
+                f"(atoms: MCS {res.numAtoms}, ref {ref_atoms}, target {target_atoms})"
+            )
+        if not (res.numBonds == ref_bonds == target_bonds):
+            raise ValueError(
+                "MCS does not cover the full molecular topology "
+                f"(bonds: MCS {res.numBonds}, ref {ref_bonds}, target {target_bonds})"
+            )
 
     patt = Chem.MolFromSmarts(res.smartsString)
     if patt is None:
@@ -191,17 +210,25 @@ def transfer_chain_indices(
 ) -> list[int]:
     """Transfer chain indices from reference to target molecule.
 
-    Requires a **complete** molecule mapping: the MCS must cover every reference
-    atom (``min_coverage=1.0``).  Symmetric matches are disambiguated by
-    Kabsch-aligned RMSD over all mapped atoms.
+    Requires a **complete** molecule mapping: the MCS must cover every atom and
+    every bond of both molecules (``min_coverage=1.0`` plus full topology).
+    Symmetric matches are disambiguated by Kabsch-aligned RMSD over all mapped
+    atoms.
 
     Raises
     ------
     ValueError
-        If MCS times out, does not cover the whole molecule, or any chain atom
-        cannot be mapped.
+        If MCS times out, does not cover the whole molecular topology, or any
+        chain atom cannot be mapped.
     """
-    patt = _run_mcs(ref_mol, target_mol, timeout=30, min_coverage=1.0, verbose=False)
+    patt = _run_mcs(
+        ref_mol,
+        target_mol,
+        timeout=30,
+        min_coverage=1.0,
+        verbose=False,
+        require_full_topology=True,
+    )
     mapping = _best_mapping_for_chain(ref_mol, target_mol, patt, ref_chain)
 
     target_chain = []
