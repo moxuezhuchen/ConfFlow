@@ -32,7 +32,7 @@ from ...core.io import append_xyz_conformer
 from ...core.pairs import normalize_pair_list
 from ...core.utils import get_numba_jit, index_to_letter_prefix
 from .collision import GV_RADII_ARRAY, check_clash_core
-from .mapping import transfer_chain_indices
+from .mapping import get_full_mapping
 from .rotations import (
     _build_chain_rotations,
     _parse_chain,
@@ -84,7 +84,7 @@ class _StreamingConfgenOutput:
         except FileNotFoundError:
             pass
 
-    def append(self, *, coords: Any, atoms: list[str], cid: str) -> None:
+    def append(self, *, coords: Any, atoms: list[str], cid: str, extra_meta: str = "") -> None:
         self.count += 1
         if self.collect_results:
             self._items.append({"coords": coords, "atoms": atoms, "cid": cid})
@@ -92,7 +92,10 @@ class _StreamingConfgenOutput:
             f"{symbol:<4s} {float(x):12.6f} {float(y):12.6f} {float(z):12.6f}"
             for symbol, (x, y, z) in zip(atoms, coords)
         ]
-        append_xyz_conformer(self.temp_path, coord_lines, f"Conformer {self.count} | CID={cid}")
+        comment = f"Conformer {self.count} | CID={cid}"
+        if extra_meta:
+            comment = f"{comment} | {extra_meta}"
+        append_xyz_conformer(self.temp_path, coord_lines, comment)
 
     def finalize(self) -> list[dict[str, Any]]:
         if self.count > 0:
@@ -225,6 +228,30 @@ def write_xyz(mol, conformers, filename):
 # ------------------------------------------------------------------------------
 # run_generation sub-steps
 # ------------------------------------------------------------------------------
+
+
+def _map_indices(indices: list[int], mapping: dict[int, int]) -> list[int]:
+    """Map 0-based atom indices from reference to target order."""
+    return [mapping[idx] for idx in indices]
+
+
+def _map_pairs(pairs: list[list[int]] | None, mapping: dict[int, int]) -> list[list[int]] | None:
+    """Map 1-based bond pairs from reference to target order."""
+    if not pairs:
+        return None
+    return [[mapping[a - 1] + 1, mapping[b - 1] + 1] for a, b in pairs]
+
+
+def _format_bond_override(
+    add_bond: list[list[int]] | None, del_bond: list[list[int]] | None
+) -> str:
+    """Encode the applied (1-based, target-order) overrides as XYZ metadata."""
+    parts: list[str] = []
+    if add_bond:
+        parts.append("AddBond=" + ";".join(f"{a}-{b}" for a, b in add_bond))
+    if del_bond:
+        parts.append("DelBond=" + ";".join(f"{a}-{b}" for a, b in del_bond))
+    return " ".join(parts)
 
 
 def _modify_topology(
@@ -454,7 +481,7 @@ def run_generation(
         input_files = [input_files]
 
     parsed_any = False
-    ref_mol = None
+    ref_raw_mol = None
     ref_parsed_chains = None
     output_sink = _StreamingConfgenOutput(output_file, collect_results=collect_results)
     failed_inputs: list[str] = []
@@ -467,36 +494,43 @@ def run_generation(
         console.print(f"  [muted]·[/muted]  {os.path.basename(xyz_file)}")
 
         try:
-            mol = load_mol_from_xyz(xyz_file, bond_threshold)
+            raw_mol = load_mol_from_xyz(xyz_file, bond_threshold)
             parsed_any = True
 
-            # Pre-parse chains (reference only); mapping performed after topology modification
-            parsed_chains = None
-            if chains and ref_parsed_chains is None:
-                ref_parsed_chains = [_parse_chain(c) for c in chains]
+            # chains / add_bond / del_bond / no_rotate are reference-input
+            # 1-based indices. Build one strict full ref->target mapping on the
+            # *unmodified* inferred topology and translate all of them through
+            # it, so an atom-reordered input never receives reference indices.
+            if file_idx == 0:
+                if ref_raw_mol is None:
+                    ref_raw_mol = Chem.Mol(raw_mol)
+                if chains and ref_parsed_chains is None:
+                    ref_parsed_chains = [_parse_chain(c) for c in chains]
+                active_chains = ref_parsed_chains
+                active_add = add_bond
+                active_del = del_bond
+                active_no_rotate = no_rotate
+            else:
+                if ref_raw_mol is None:
+                    raise ValueError("cannot establish the reference molecule; check input order")
+                full_mapping = get_full_mapping(ref_raw_mol, raw_mol)
+                active_chains = (
+                    [_map_indices(ch, full_mapping) for ch in ref_parsed_chains]
+                    if ref_parsed_chains is not None
+                    else None
+                )
+                active_add = _map_pairs(add_bond, full_mapping)
+                active_del = _map_pairs(del_bond, full_mapping)
+                active_no_rotate = _map_pairs(no_rotate, full_mapping)
 
-            # Topology modification
-            mol, _ = _modify_topology(mol, add_bond, del_bond)
-
-            # Record reference molecule (using modified topology)
-            if file_idx == 0 and ref_mol is None:
-                ref_mol = Chem.Mol(mol)
-
-            # Chain mapping (first input is reference; others mapped via topology)
-            if chains:
-                if file_idx == 0:
-                    parsed_chains = ref_parsed_chains
-                else:
-                    if ref_mol is None or ref_parsed_chains is None:
-                        raise ValueError(
-                            "cannot establish reference chain definition, check input order"
-                        )
-                    parsed_chains = [
-                        transfer_chain_indices(ref_mol, mol, ch) for ch in ref_parsed_chains
-                    ]
+            # Apply the (mapped) topology corrections to this input's molecule.
+            mol, _ = _modify_topology(raw_mol, active_add, active_del)
+            parsed_chains = active_chains
 
             if parsed_chains:
                 _validate_chain_bonds(mol, parsed_chains, xyz_file)
+
+            topology_override = _format_bond_override(active_add, active_del)
 
             # Force-refresh RDKit ring perception
             try:
@@ -527,7 +561,7 @@ def run_generation(
                 mol,
                 parsed_chains,
                 per_chain_angle_lists,
-                no_rotate,
+                active_no_rotate,
                 rotate_side,
             )
 
@@ -562,6 +596,7 @@ def run_generation(
                     coords=mol.GetConformer(0).GetPositions(),
                     atoms=atom_symbols,
                     cid=f"{cid_prefix}{local_count:06d}",
+                    extra_meta=topology_override,
                 )
                 continue
 
@@ -583,6 +618,7 @@ def run_generation(
                     coords=coords,
                     atoms=atom_symbols,
                     cid=f"{cid_prefix}{local_count:06d}",
+                    extra_meta=topology_override,
                 )
 
         except (ValueError, RuntimeError, OSError) as e:

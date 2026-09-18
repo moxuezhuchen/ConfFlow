@@ -41,8 +41,10 @@ warning = _console_bindings["warning"]
 from . import rmsd_engine  # noqa: E402
 from .topology import (  # noqa: E402
     DEFAULT_MAPPING_NODE_BUDGET,
+    apply_bond_overrides,
     build_graph,
     group_frames_by_topology,
+    parse_bond_override,
 )
 
 __all__ = [
@@ -512,9 +514,17 @@ def process_xyz(args):
     for i, h in enumerate(topo_hashes):
         all_frames[i]["topology_hash"] = h
 
-    # 2. Build one bonding graph per frame, then group with exact matching
+    # 2. Build one bonding graph per frame, then group with exact matching.
+    #    Frames carry the topology overrides ConfGen actually applied (mapped
+    #    into each frame's own atom order); re-apply them so refine sees the
+    #    same topology the generator used.
     for frame in all_frames:
+        extra = frame.get("extra_data") or {}
+        override_add = parse_bond_override(extra.get("AddBond"))
+        override_del = parse_bond_override(extra.get("DelBond"))
         build = build_graph(frame["atoms"], frame["coords"])
+        if override_add or override_del:
+            build = apply_bond_overrides(build, add_bond=override_add, del_bond=override_del)
         frame["graph"] = build.graph
         frame["graph_status"] = build.status
         frame["graph_reason"] = build.reason

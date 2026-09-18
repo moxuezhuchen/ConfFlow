@@ -12,6 +12,7 @@ logger = logging.getLogger("confflow.confgen")
 
 __all__ = [
     "get_mcs_mapping",
+    "get_full_mapping",
     "transfer_chain_indices",
 ]
 
@@ -203,6 +204,24 @@ def _best_mapping_for_chain(
         best_score,
     )
     return best_mapping
+
+
+def get_full_mapping(ref_mol: Chem.Mol, target_mol: Chem.Mol, timeout: int = 30) -> dict[int, int]:
+    """Return a strict, complete reference -> target atom mapping.
+
+    The MCS must cover every atom and every bond of both molecules. Used to
+    translate reference-input indices (chains / add_bond / del_bond /
+    no_rotate) onto a target input that may have a different atom order.
+    """
+    patt = _run_mcs(
+        ref_mol,
+        target_mol,
+        timeout=timeout,
+        min_coverage=1.0,
+        verbose=False,
+        require_full_topology=True,
+    )
+    return _best_mapping_for_chain(ref_mol, target_mol, patt, list(range(ref_mol.GetNumAtoms())))
 
 
 def transfer_chain_indices(
