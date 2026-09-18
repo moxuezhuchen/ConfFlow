@@ -197,6 +197,12 @@ def _canonical_step(step: Mapping[str, Any], global_options: GlobalOptions) -> d
     if step_type == "calc":
         resolved = resolve_calc_step(dict(params), global_options)
         semantic = {"resolved": resolved.canonical_dict()}
+        # chk_from_step is consumed by execution but is not part of the resolved
+        # CalcStepParams; bind it explicitly so changing which checkpoint a step
+        # reads changes the workflow fingerprint (resume safety).
+        chk_from_step = str(params.get("chk_from_step") or "").strip()
+        if chk_from_step:
+            semantic["chk_from_step"] = chk_from_step
         extras = {key: value for key, value in params.items() if str(key) not in _known_calc_keys()}
         if extras:
             semantic["extra"] = _normalize(extras, path=f"$.steps[{name}].params.extra")
