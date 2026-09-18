@@ -302,11 +302,13 @@ def test_refine_fallback_imports():
 def test_refine_covalent_radii_fallback():
     import confflow.blocks.refine.processor as processor
     import confflow.blocks.refine.rmsd_engine as engine
+    from confflow.blocks.refine._compat import load_refine_data
 
     with patch.dict(sys.modules, {"confflow.core.utils": None}):
         importlib.reload(engine)
-        assert hasattr(engine, "GV_COVALENT_RADII")
-        assert len(engine.GV_COVALENT_RADII) > 0
+        symbols, radii = load_refine_data()
+        assert len(radii) > 0
+        assert len(symbols) > 0
 
     # Restore outside the patch.dict block so real numba is available
     importlib.reload(engine)

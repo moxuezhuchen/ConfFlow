@@ -12,6 +12,7 @@ from typing import Any
 
 from ...core.path_policy import validate_executable_setting
 from ...shared.orca_blocks import format_orca_blocks
+from ..analysis import analyze_vibrational_frequencies
 from ..components.input_helpers import (
     compute_orca_maxcore,
     parse_freeze_indices,
@@ -155,10 +156,11 @@ class OrcaPolicy(CalculationPolicy):
             e_low = single_point_energy
 
         if not is_sp_task and all_freqs:
-            num_imag_freqs = sum(1 for f in all_freqs if f < 0)
-            real_freqs = [f for f in all_freqs[6:] if abs(f) > 0.1]
-            if real_freqs:
-                lowest_freq = min(real_freqs)
+            # ORCA lists the translations/rotations among the frequencies, but
+            # their count depends on the molecule's shape (5 for linear, 6
+            # otherwise). Rely on the near-zero filter instead of slicing a
+            # fixed number of modes.
+            num_imag_freqs, lowest_freq = analyze_vibrational_frequencies(all_freqs)
 
         final_coords = parse_last_geometry(log_file, 2)
 

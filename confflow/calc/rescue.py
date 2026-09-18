@@ -24,12 +24,13 @@ from ..core.exceptions import (
     StopRequestedError,
 )
 from ..core.keyword_rewrite import make_scan_keyword_from_ts_keyword
-from ..shared.defaults import DEFAULT_TS_BOND_DRIFT_THRESHOLD
+from ..shared.defaults import DEFAULT_TS_BOND_DRIFT_THRESHOLD, DEFAULT_TS_RMSD_THRESHOLD
 from .analysis import (
     _bond_length_from_xyz_lines,
     _keyword_requests_freq,
     _parse_ts_bond_atoms,
     validate_ts_bond_drift,
+    validate_ts_rmsd,
 )
 from .components import executor
 from .policies import get_policy_for_config as _get_policy
@@ -317,7 +318,6 @@ def _run_ts_reoptimization(
     a2: int,
     r_best: float,
     coords_best: list[str],
-    base_coords: list[str],
     points: list[tuple[float, float, list[str]]],
     fine_points: list[tuple[float, float, list[str]]],
 ) -> dict[str, Any] | None:
@@ -344,11 +344,12 @@ def _run_ts_reoptimization(
         if not final_coords:
             raise RuntimeError("TS rescue produced no final structure")
 
-        # Drift check
+        # Drift check: measured against the selected scan candidate (the
+        # structure this reoptimization started from), not the original input.
         if not _keyword_requests_freq(cfg):
             threshold = float(cfg.get("ts_bond_drift_threshold", DEFAULT_TS_BOND_DRIFT_THRESHOLD))
             drift_err = validate_ts_bond_drift(
-                base_coords,
+                coords_best,
                 final_coords,
                 a1,
                 a2,
@@ -357,6 +358,13 @@ def _run_ts_reoptimization(
             )
             if drift_err:
                 raise RuntimeError(drift_err)
+
+        # Geometry acceptance: the reoptimized TS must not drift far from the
+        # selected scan candidate (Kabsch-aligned all-atom RMSD).
+        rmsd_threshold = float(cfg.get("ts_rmsd_threshold", DEFAULT_TS_RMSD_THRESHOLD))
+        rmsd_err = validate_ts_rmsd(coords_best, final_coords, rmsd_threshold, context="TS rescue")
+        if rmsd_err:
+            raise RuntimeError(rmsd_err)
 
         # Imaginary frequency check
         num_imag_raw = res.get("num_imag_freqs")
@@ -469,7 +477,6 @@ def _ts_rescue_scan(task_info: dict[str, Any], fail_reason: str) -> dict[str, An
         a2,
         r_best,
         coords_best,
-        base_coords,
         points,
         fine_points,
     )

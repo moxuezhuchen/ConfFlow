@@ -121,7 +121,7 @@ def test_write_refine_output_emits_g_and_skips_aux_fields(tmp_path: Path):
     text = out.read_text(encoding="utf-8")
     assert "G=-100.00000000" in text
     assert "CID=A000001" in text
-    assert "G_corr" not in text
+    assert "G_corr=1.0" in text
     assert "E_sp" not in text
     assert "TSAtoms" not in text
 

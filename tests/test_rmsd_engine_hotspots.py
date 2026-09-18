@@ -10,6 +10,7 @@ from unittest.mock import patch
 import numpy as np
 
 import confflow.blocks.refine.rmsd_engine as rmsd_engine
+from confflow.blocks.refine._compat import load_refine_data
 
 
 def _reload_with_blocked_imports(module, blocked: set[str]):
@@ -30,7 +31,8 @@ def test_rmsd_engine_fallback_imports_and_python_execution():
     try:
         assert engine.numba.__name__ == "FakeNumba"
         assert engine.HARTREE_TO_KCALMOL > 600
-        assert engine.GV_COVALENT_RADII[6] > 0
+        _symbols, radii = load_refine_data()
+        assert radii[6] > 0
         assert engine.get_element_atomic_number("") == 0
         assert engine.get_element_atomic_number("not-an-element") == 0
 

@@ -14,13 +14,18 @@ from ...core.exceptions import (
     CalculationParseError,
     StopRequestedError,
 )
-from ...shared.defaults import DEFAULT_DELETE_WORK_DIR, DEFAULT_TS_BOND_DRIFT_THRESHOLD
+from ...shared.defaults import (
+    DEFAULT_DELETE_WORK_DIR,
+    DEFAULT_TS_BOND_DRIFT_THRESHOLD,
+    DEFAULT_TS_RMSD_THRESHOLD,
+)
 from ..analysis import (
     _bond_length_from_xyz_lines,
     _keyword_requests_freq,
     _parse_ts_bond_atoms,
     is_rescue_enabled,
     validate_ts_bond_drift,
+    validate_ts_rmsd,
 )
 from ..executor import CalcExecutor
 from ..policies import get_policy_for_config
@@ -219,6 +224,23 @@ class TaskRunner:
                     err_msg += f" (lowest freq: {lowest_freq:.1f} cm⁻¹)"
                 return self._failed_result(task_dict, err_msg, "parse_error")
 
+            # TS geometry acceptance: the optimized structure must not drift too
+            # far (Kabsch-aligned all-atom RMSD) from the structure the
+            # optimization started from, i.e. the user's TS guess.
+            if itask == 4:
+                rmsd_threshold = float(cfg.get("ts_rmsd_threshold", DEFAULT_TS_RMSD_THRESHOLD))
+                rmsd_err = validate_ts_rmsd(
+                    task_dict["coords"], final_coords, rmsd_threshold, context="TS"
+                )
+                if rmsd_err is not None:
+                    rescued = self._try_rescue(cfg, task_dict, rmsd_err)
+                    if rescued is not None:
+                        success = self._rescued_result_successful(rescued)
+                        result_payload = rescued if success else None
+                        return rescued
+                    error_kind = "rescue_failed" if is_rescue_enabled(cfg) else "parse_error"
+                    return self._failed_result(task_dict, rmsd_err, error_kind)
+
             ts_bond_atoms = cfg.get("ts_bond_atoms")
             ts_bond_length = None
             ts_pair = _parse_ts_bond_atoms(ts_bond_atoms)
@@ -250,15 +272,14 @@ class TaskRunner:
             inherited_gc = None
             try:
                 meta = task_dict.get("metadata") or {}
-                # Once a step has produced G=... (Gibbs), stop propagating G_corr.
-                # Only G_corr from freq/opt_freq steps is carried forward until it
-                # is combined with a downstream SP energy to form Gibbs energy.
-                if "G" in meta:
-                    inherited_gc = None
-                elif "G_corr" in meta:
-                    inherited_gc = float(meta.get("G_corr"))
-                elif "g_corr" in meta:
-                    inherited_gc = float(meta.get("g_corr"))
+                # A Gibbs correction from the input is only valid for a
+                # geometry-preserving single point.  It is read here and applied
+                # to SP tasks only (see below); geometry-changing steps must not
+                # inherit a stale correction.
+                for key in ("G_corr", "g_corr"):
+                    if meta.get(key) is not None:
+                        inherited_gc = float(meta.get(key))
+                        break
             except (ValueError, TypeError):
                 inherited_gc = None
 
@@ -269,7 +290,10 @@ class TaskRunner:
                 e = res.get("e_high")
             if itask in [2, 3, 4] and gc is None and e is not None and g is not None:
                 gc = g - e
-            if gc is None and inherited_gc is not None:
+            # Only a single point preserves the geometry the correction belongs
+            # to.  opt/TS steps (with or without freq) use res["g_corr"] as the
+            # authority and never fall back to a previous geometry's correction.
+            if itask == 1 and gc is None and inherited_gc is not None:
                 gc = inherited_gc
 
             final_sp_energy = None

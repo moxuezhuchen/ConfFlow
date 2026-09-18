@@ -20,6 +20,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from ...core.bonding import build_adjacency
 from ._compat import load_refine_data
 
 _periodic_symbols, GV_COVALENT_RADII = load_refine_data()
@@ -132,26 +133,8 @@ def _adjacency_from_coords(
     coords: np.ndarray,
     bond_scale: float,
 ) -> tuple[tuple[int, ...], ...]:
-    radii = np.array([GV_COVALENT_RADII[z] for z in atomic_numbers], dtype=np.float64)
-    n = len(atomic_numbers)
-    if n <= 1:
-        return tuple(() for _ in range(n))
-
-    from scipy.spatial import cKDTree
-
-    max_threshold = float(radii.max() * 2.0 * bond_scale)
-    tree = cKDTree(coords)
-    candidate_pairs = tree.query_pairs(max_threshold, output_type="ndarray")
-    neighbors: list[list[int]] = [[] for _ in range(n)]
-    for i, j in candidate_pairs:
-        i = int(i)
-        j = int(j)
-        threshold = (radii[i] + radii[j]) * bond_scale
-        diff = coords[i] - coords[j]
-        if float(np.dot(diff, diff)) < threshold * threshold:
-            neighbors[i].append(j)
-            neighbors[j].append(i)
-    return tuple(tuple(sorted(row)) for row in neighbors)
+    neighbors = build_adjacency(atomic_numbers, coords, bond_scale=bond_scale)
+    return tuple(tuple(row) for row in neighbors)
 
 
 def _graph_from_parts(

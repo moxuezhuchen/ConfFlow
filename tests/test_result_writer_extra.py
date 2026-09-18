@@ -57,16 +57,19 @@ def test_format_result_comment_combines_sp_and_gibbs_energy() -> None:
         {"CID": "CID1", "G_corr": 9.9},
     )
 
-    assert comment == ("G=-1.2 CID=CID1 Imag=1 LowestFreq=-123.5 TSAtoms=1,2 TSBond=1.234568")
+    assert comment == (
+        "G=-1.2 CID=CID1 G_corr=0.3 Imag=1 LowestFreq=-123.5 TSAtoms=1,2 TSBond=1.234568"
+    )
 
 
-def test_format_result_comment_uses_energy_metadata_fallbacks() -> None:
+def test_format_result_comment_does_not_restore_stale_g_corr() -> None:
+    """A previous geometry's G_corr must not be re-attached to a plain result."""
     comment = format_result_comment(
         {"energy": -2.0, "num_imag_freqs": 0},
         {"CID": "CID2", "G_corr": 0.12},
     )
 
-    assert comment == "Energy=-2.0 CID=CID2 G_corr=0.12 Imag=0"
+    assert comment == "Energy=-2.0 CID=CID2 Imag=0"
 
 
 def test_append_result_filters_unsuccessful_or_incomplete_results(tmp_path) -> None:

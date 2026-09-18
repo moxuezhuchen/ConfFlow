@@ -55,26 +55,24 @@ def write_failed_xyz(
 def format_result_comment(res: dict[str, Any], orig_meta: dict[str, Any]) -> str:
     """Build the XYZ comment line for a single successful result."""
     e_gibbs = res.get("final_gibbs_energy")
-    e_sp = res.get("final_sp_energy")
-    g_corr_res = res.get("g_corr")
-    combined_to_g = (e_gibbs is not None) and (e_sp is not None) and (g_corr_res is not None)
 
-    if combined_to_g:
+    # A Gibbs free energy is always labelled ``G=``; it must never be written as
+    # a plain ``Energy=``.  Anything else is a plain energy.
+    if e_gibbs is not None:
         info = f"G={e_gibbs}"
     else:
-        e_any = e_gibbs if e_gibbs is not None else res.get("energy")
-        info = f"Energy={e_any}"
+        info = f"Energy={res.get('energy')}"
 
     cid = orig_meta.get("CID")
     if cid is not None and str(cid).strip() != "":
         info += f" CID={cid}"
 
-    if not combined_to_g:
-        g_corr = g_corr_res
-        if g_corr is None:
-            g_corr = orig_meta.get("G_corr")
-        if g_corr is not None:
-            info += f" G_corr={g_corr}"
+    # The freshly computed correction is authoritative.  A previous geometry's
+    # G_corr from the input metadata must not be re-attached to a
+    # geometry-changing result.
+    g_corr = res.get("g_corr")
+    if g_corr is not None:
+        info += f" G_corr={g_corr}"
 
     imag = res.get("num_imag_freqs")
     if imag is None:

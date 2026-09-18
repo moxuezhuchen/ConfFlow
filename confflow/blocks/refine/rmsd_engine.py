@@ -20,6 +20,7 @@ from typing import cast
 
 import numpy as np
 
+from ...core.bonding import build_adjacency
 from ._compat import (
     load_console_bindings,
     load_hartree_to_kcal,
@@ -46,7 +47,7 @@ logger = logging.getLogger("confflow.refine")
 # ---------------------------------------------------------------------------
 
 create_progress = load_console_bindings()["create_progress"]
-_periodic_symbols, GV_COVALENT_RADII = load_refine_data()
+_periodic_symbols, _ = load_refine_data()
 PERIODIC_SYMBOLS: Sequence[str] = cast(Sequence[str], _periodic_symbols)
 HARTREE_TO_KCALMOL = load_hartree_to_kcal()
 
@@ -621,30 +622,11 @@ def get_topology_hash_worker(args):
         if len(atoms) == 0:
             return "empty"
 
-        tuple(sorted(atoms))
-
-        radii = np.array([GV_COVALENT_RADII[get_element_atomic_number(a)] for a in atoms])
-
-        # Use cKDTree instead of an O(N^2) full distance matrix.
-        from scipy.spatial import cKDTree  # scipy is a listed dependency
-
-        n = len(atoms)
-        max_threshold = float(np.max(radii) * 2.0 * BOND_SCALE_FACTOR)
-        tree = cKDTree(coords)
-        candidate_pairs = tree.query_pairs(max_threshold, output_type="ndarray")
-
-        adj: list[list[int]] = [[] for _ in range(n)]
-        for i, j in candidate_pairs:
-            ri, rj = radii[i], radii[j]
-            threshold = (ri + rj) * BOND_SCALE_FACTOR
-            diff = coords[i] - coords[j]
-            dist_sq = float(np.dot(diff, diff))
-            if dist_sq < threshold * threshold:
-                adj[i].append(j)
-                adj[j].append(i)
+        numbers = [get_element_atomic_number(atom) for atom in atoms]
+        adj = build_adjacency(numbers, coords, bond_scale=BOND_SCALE_FACTOR)
 
         desc = []
-        for i in range(n):
+        for i in range(len(atoms)):
             neighs = sorted([atoms[k] for k in adj[i]])
             desc.append(f"{atoms[i]}-({''.join(neighs)})")
         return hashlib.sha1("".join(sorted(desc)).encode()).hexdigest()

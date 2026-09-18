@@ -1223,7 +1223,8 @@ def test_task_runner_itask4_no_freq_drift(tmp_path):
             assert "bond drift |ΔR|=0.200 Å exceeds threshold 0.100 Å" in res["error"]
 
 
-def test_task_runner_itask4_no_freq_allows_large_rmsd(tmp_path):
+def test_task_runner_itask4_no_freq_enforces_rmsd_threshold(tmp_path):
+    """A tight ts_rmsd_threshold must reject a geometrically drifted TS."""
     from confflow.calc.components.task_runner import TaskRunner
 
     runner = TaskRunner()
@@ -1231,6 +1232,27 @@ def test_task_runner_itask4_no_freq_allows_large_rmsd(tmp_path):
         "job_name": "test",
         "work_dir": str(tmp_path / "work"),
         "config": {"itask": 4, "iprog": 1, "ts_rmsd_threshold": 0.01},
+        "coords": ["H 0 0 0", "H 0 0 1.0"],
+    }
+
+    with patch("confflow.calc.components.executor._run_calculation_step") as mock_run:
+        mock_run.return_value = {"final_coords": ["H 0 0 0", "H 0 0 1.1"], "e_low": -1.0}
+        with patch("confflow.calc.components.executor.handle_backups"):
+            res = runner.run(task_info)
+            assert res["status"] == "failed"
+            assert res["error_kind"] == "parse_error"
+            assert "aligned RMSD" in res["error"]
+            assert "exceeds threshold 0.010" in res["error"]
+
+
+def test_task_runner_itask4_no_freq_allows_small_rmsd(tmp_path):
+    from confflow.calc.components.task_runner import TaskRunner
+
+    runner = TaskRunner()
+    task_info = {
+        "job_name": "test",
+        "work_dir": str(tmp_path / "work"),
+        "config": {"itask": 4, "iprog": 1, "ts_rmsd_threshold": 1.0},
         "coords": ["H 0 0 0", "H 0 0 1.0"],
     }
 
