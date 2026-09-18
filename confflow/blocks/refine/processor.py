@@ -810,8 +810,11 @@ def main():
         "-w",
         "--workers",
         type=int,
-        default=max(1, multiprocessing.cpu_count() - 2),
-        help="Number of worker processes to use",
+        default=None,
+        help=(
+            "Compatibility option; currently unused by Refine. Deterministic "
+            "conformer deduplication runs serially. (default when omitted: CPU-2)"
+        ),
     )
     parser.add_argument(
         "--energy-tolerance",
@@ -835,6 +838,20 @@ def main():
     )
 
     args = parser.parse_args()
+
+    # ``--workers`` is retained for CLI/API compatibility but has no effect on
+    # Refine: conformer deduplication is a deterministic, serial
+    # representative-selection pass (see ``rmsd_engine.process_topology_group``).
+    # Warn only when the user explicitly supplied the option; the internal
+    # fallback below must keep a default invocation silent.
+    if args.workers is not None:
+        print(
+            "Warning: --workers is retained for compatibility but is currently not used by "
+            "Refine. Refine deduplication runs deterministically in serial.",
+            file=sys.stderr,
+        )
+    else:
+        args.workers = max(1, multiprocessing.cpu_count() - 2)
 
     # If no output file specified, auto-generate one
     if args.output is None:

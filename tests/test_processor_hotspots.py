@@ -452,3 +452,72 @@ def test_processor_main_two_frame_xyz_refine_succeeds(
 
     assert result.returncode == processor.ExitCode.SUCCESS
     assert output.exists()
+
+
+# ---------------------------------------------------------------------------
+# PR-71: --workers is a compatibility option that must be honest about being
+# inert. Explicit use warns once on stderr; the internal default stays silent.
+# ---------------------------------------------------------------------------
+
+
+def _write_workers_probe_input(path: Path) -> None:
+    """Three frames: one duplicate pair plus one distinct frame (2 atoms each)."""
+    path.write_text(
+        "2\nE=-1.0\nC 0 0 0\nH 0 0 1.0\n"
+        "2\nE=-1.0\nC 0 0 0\nH 0 0 1.0\n"
+        "2\nE=-0.5\nC 0 0 0\nH 0 0 2.0\n",
+        encoding="utf-8",
+    )
+
+
+def test_confrefine_explicit_workers_warns_once_and_succeeds(tmp_path: Path):
+    input_xyz = tmp_path / "in.xyz"
+    _write_workers_probe_input(input_xyz)
+    output = tmp_path / "out.xyz"
+
+    result = _run_confrefine_cli(str(input_xyz), "-o", str(output), "-w", "4")
+
+    assert result.returncode == processor.ExitCode.SUCCESS
+    assert output.exists()
+    # exactly one deprecation/inert warning, on stderr, not stdout
+    assert result.stderr.count("--workers") == 1
+    assert "Warning" in result.stderr
+    assert "--workers" not in result.stdout
+
+
+def test_confrefine_default_workers_is_silent(tmp_path: Path):
+    input_xyz = tmp_path / "in.xyz"
+    _write_workers_probe_input(input_xyz)
+    output = tmp_path / "out.xyz"
+
+    result = _run_confrefine_cli(str(input_xyz), "-o", str(output))
+
+    assert result.returncode == processor.ExitCode.SUCCESS
+    # the parser synthesises a default internally; that must not warn
+    assert "Warning" not in result.stderr
+    assert "--workers" not in result.stderr
+
+
+def test_confrefine_worker_value_does_not_change_output(tmp_path: Path):
+    input_xyz = tmp_path / "in.xyz"
+    _write_workers_probe_input(input_xyz)
+    output = tmp_path / "out.xyz"
+    report = tmp_path / "out.xyz.report.json"
+
+    variants = [
+        [],
+        ["-w", "1"],
+        ["-w", "4"],
+        ["-w", "8"],
+    ]
+    seen_xyz = set()
+    seen_report = set()
+    for extra in variants:
+        result = _run_confrefine_cli(str(input_xyz), "-o", str(output), *extra)
+        assert result.returncode == processor.ExitCode.SUCCESS
+        seen_xyz.add(output.read_bytes())
+        seen_report.add(report.read_bytes())
+
+    # output XYZ and report are byte-identical regardless of the workers value
+    assert len(seen_xyz) == 1
+    assert len(seen_report) == 1
