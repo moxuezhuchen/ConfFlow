@@ -120,16 +120,14 @@ class TaskRecoveryService:
 
     def filter_pending(self, tasks: list[models.TaskContext]) -> list[models.TaskContext]:
         todo: list[models.TaskContext] = []
-        resume_from_backups = str(self.config.get("resume_from_backups", "true")).lower() == "true"
         for task in tasks:
             res = self.results_db.get_result_by_job_name(task.job_name)
             if res and res.get("status") == "success":
                 continue
-            if resume_from_backups:
-                recovered = self.recover_result_fn(task)
-                if recovered and recovered.get("status") == "success":
-                    self.results_db.insert_result(recovered)
-                    continue
+            recovered = self.recover_result_fn(task)
+            if recovered and recovered.get("status") == "success":
+                self.results_db.insert_result(recovered)
+                continue
             todo.append(task)
         return todo
 

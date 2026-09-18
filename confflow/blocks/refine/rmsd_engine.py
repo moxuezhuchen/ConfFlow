@@ -321,6 +321,10 @@ def _effective_cutoff(
         return cutoff
     if not np.isfinite(cand_energy) or not np.isfinite(rep_energy):
         return cutoff
+    if energy_tolerance <= 0:
+        # tolerance 0 must genuinely disable the relaxation, including the
+        # exactly-equal-energy case.
+        return cutoff
     energy_diff = abs(cand_energy - rep_energy) * HARTREE_TO_KCALMOL
     if energy_diff <= energy_tolerance:
         return cutoff * ENERGY_RMSD_SCALE_FACTOR
@@ -737,6 +741,7 @@ def process_topology_group(
         unresolved = False
         unresolved_reason = ""
         unresolved_work: MappingSearchStats | None = None
+        last_cutoff: float | None = None
         for representative in unique_frames:
             verdict = compare_frames(
                 candidate,
@@ -746,6 +751,7 @@ def process_topology_group(
                 energy_tolerance=energy_tolerance,
                 node_budget=mapping_budget,
             )
+            last_cutoff = verdict.cutoff
             if verdict.status == "duplicate":
                 report_data.append(
                     _report_entry(
@@ -777,11 +783,14 @@ def process_topology_group(
                     candidate,
                     "Kept (Unresolved)",
                     reason=unresolved_reason,
+                    cutoff=last_cutoff,
                     search_complete=False,
                     search_work=unresolved_work,
                 )
             )
         else:
-            report_data.append(_report_entry(candidate, "Kept", reason="distinct"))
+            report_data.append(
+                _report_entry(candidate, "Kept", reason="distinct", cutoff=last_cutoff)
+            )
 
     return unique_frames, report_data

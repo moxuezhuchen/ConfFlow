@@ -40,7 +40,6 @@ global:
 
   # --- 高级选项 ---
   # enable_dynamic_resources: false      # 动态资源监控
-  # resume_from_backups: true            # 从备份中恢复已完成任务
   # force_consistency: false             # 多文件输入时允许不一致的原子序列
   # stop_check_interval_seconds: 1       # 检查 STOP 信号的间隔 (秒)
 
@@ -260,7 +259,7 @@ steps:
 #
 # 【备份控制】
 # - ibkout: 1             # 0=不备份, 1=全部, 2=仅成功, 3=仅失败
-# - resume_from_backups: true  # 从备份中恢复已完成任务（全局）
+#（resume_from_backups 已废弃：数据库中已完成的任务总是被复用）
 #
 # 【Gibbs 矫正传递】
 # - 当某一步（freq/opt_freq）输出注释含 G_corr=... 时，后续 sp 步骤会继承该矫正并输出

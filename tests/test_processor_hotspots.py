@@ -202,9 +202,6 @@ def test_process_xyz_no_conformers_after_filtering(tmp_path, monkeypatch):
 
     seen = []
     monkeypatch.setattr(processor, "read_xyz_file", lambda path: frames.copy())
-    monkeypatch.setattr(processor, "ProcessPoolExecutor", _Exec)
-    monkeypatch.setattr(processor, "create_progress", lambda: _Prog())
-    monkeypatch.setattr(processor, "get_topology_hash_worker", lambda pair: "topo")
     monkeypatch.setattr(processor, "process_topology_group", lambda *args: ([], []))
     monkeypatch.setattr(processor.console, "print", lambda msg: seen.append(msg))
 
@@ -267,9 +264,6 @@ def test_process_xyz_no_conformers_after_imag_and_ewin(tmp_path, monkeypatch):
 
     seen = []
     monkeypatch.setattr(processor, "read_xyz_file", lambda path: frames.copy())
-    monkeypatch.setattr(processor, "ProcessPoolExecutor", _Exec)
-    monkeypatch.setattr(processor, "create_progress", lambda: _Prog())
-    monkeypatch.setattr(processor, "get_topology_hash_worker", lambda pair: "topo")
     monkeypatch.setattr(processor.console, "print", lambda msg: seen.append(msg))
 
     args = processor.RefineOptions(
@@ -335,9 +329,6 @@ def test_process_xyz_zero_result_preserves_existing_output(tmp_path, monkeypatch
     ]
 
     monkeypatch.setattr(processor, "read_xyz_file", lambda path: frames.copy())
-    monkeypatch.setattr(processor, "ProcessPoolExecutor", _Exec)
-    monkeypatch.setattr(processor, "create_progress", lambda: _Prog())
-    monkeypatch.setattr(processor, "get_topology_hash_worker", lambda pair: "topo")
     monkeypatch.setattr(processor.console, "print", lambda msg: None)
 
     result = processor.process_xyz(

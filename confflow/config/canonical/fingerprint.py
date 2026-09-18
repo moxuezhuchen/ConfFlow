@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from typing import Any, cast
 
 from ...shared.confgen_params import confgen_known_keys, resolve_confgen_params
+from ...shared.defaults import DEFAULT_SCAN_FINE_HALF_WINDOW, DEFAULT_SCAN_MAX_STEPS
 from .resolve import resolve_calc_step
 from .schema import WORKFLOW_SCHEMA_VERSION, workflow_schema_sha256
 from .serialization import canonical_json, canonical_sha256
@@ -197,6 +198,17 @@ def _canonical_step(step: Mapping[str, Any], global_options: GlobalOptions) -> d
     if step_type == "calc":
         resolved = resolve_calc_step(dict(params), global_options)
         semantic = {"resolved": resolved.canonical_dict()}
+        # Deprecated / no-op values must not influence the fingerprint, and an
+        # explicitly-set scan default is equivalent to omitting it.
+        resolved_dict = semantic["resolved"]
+        resolved_dict.pop("resume_from_backups", None)
+        for key, default in (
+            ("scan_max_steps", DEFAULT_SCAN_MAX_STEPS),
+            ("scan_fine_half_window", DEFAULT_SCAN_FINE_HALF_WINDOW),
+        ):
+            value = resolved_dict.get(key)
+            if value is not None and float(value) == float(default):
+                resolved_dict.pop(key)
         # chk_from_step is consumed by execution but is not part of the resolved
         # CalcStepParams; bind it explicitly so changing which checkpoint a step
         # reads changes the workflow fingerprint (resume safety).
@@ -225,10 +237,14 @@ def canonical_workflow_payload(plan: Any) -> dict[str, Any]:
     global_options = plan.typed_global
     steps = [_canonical_step(step, global_options) for step in plan.steps]
     explicit = any("inputs" in step for step in plan.steps)
+    # resume_from_backups is deprecated and has no execution semantics; it must
+    # not participate in the workflow fingerprint.
+    global_payload = dataclasses.asdict(global_options)
+    global_payload.pop("resume_from_backups", None)
     payload = {
         "workflow_schema": WORKFLOW_SCHEMA_VERSION,
         "workflow_schema_sha256": workflow_schema_sha256(),
-        "global": _normalize(dataclasses.asdict(global_options), path="$.global"),
+        "global": _normalize(global_payload, path="$.global"),
         "steps": steps,
         "dag": {
             "mode": "explicit" if explicit else "linear",

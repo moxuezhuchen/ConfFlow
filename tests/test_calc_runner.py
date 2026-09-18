@@ -203,4 +203,5 @@ def test_calc_step_runner_passes_ts_rescue_scan_config_to_task_runner(tmp_path):
     assert rescue_config["scan_max_steps"] == 4
     assert rescue_config["scan_fine_half_window"] == 0.1
     assert rescue_config["ts_rescue_keep_scan_dirs"] is True
-    assert rescue_config["ts_rescue_scan_backup"] is False
+    # ts_rescue_scan_backup is deprecated and no longer reaches the runtime.
+    assert "ts_rescue_scan_backup" not in rescue_config

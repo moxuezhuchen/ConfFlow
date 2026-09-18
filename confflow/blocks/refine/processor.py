@@ -14,7 +14,7 @@ import shutil
 import sys
 import tempfile
 from collections import defaultdict
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ProcessPoolExecutor  # noqa: F401  (patched by tests/conftest)
 
 import numpy as np
 
@@ -58,10 +58,6 @@ __all__ = [
 
 def fast_rmsd(*args, **kwargs):
     return rmsd_engine.fast_rmsd(*args, **kwargs)
-
-
-def get_topology_hash_worker(*args, **kwargs):
-    return rmsd_engine.get_topology_hash_worker(*args, **kwargs)
 
 
 def process_topology_group(*args, **kwargs):
@@ -496,23 +492,7 @@ def process_xyz(args):
     if mapping_budget is None:
         mapping_budget = DEFAULT_MAPPING_NODE_BUDGET
 
-    # 1. Legacy topology fingerprint (cheap pre-filter / compatibility surface)
-    atom_coord_pairs = [(f["atoms"], f["coords"]) for f in all_frames]
-
-    with ProcessPoolExecutor(max_workers=args.workers) as executor:
-        chunk = max(1, len(all_frames) // (args.workers * 4) + 1)
-
-        topo_hashes = []
-        with create_progress() as progress:
-            task_id = progress.add_task("Topology hash", total=len(all_frames))
-            for res in executor.map(get_topology_hash_worker, atom_coord_pairs, chunksize=chunk):
-                topo_hashes.append(res)
-                progress.advance(task_id)
-
-    for i, h in enumerate(topo_hashes):
-        all_frames[i]["topology_hash"] = h
-
-    # 2. Build one bonding graph per frame, then group with exact matching.
+    # Build one bonding graph per frame, then group with exact matching.
     #    Frames carry the topology overrides ConfGen actually applied (mapped
     #    into each frame's own atom order); re-apply them so refine sees the
     #    same topology the generator used.

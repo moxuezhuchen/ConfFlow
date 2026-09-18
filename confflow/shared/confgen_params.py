@@ -118,6 +118,20 @@ def _normalize_workers(value: Any) -> int:
     return _coerce_int(value, "workers")
 
 
+def _coerce_bool_flag(value: Any, name: str) -> bool:
+    """Normalize YAML/string booleans so fingerprint and execution agree."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int) and value in (0, 1):
+        return bool(value)
+    text = str(value).strip().lower()
+    if text in {"true", "1"}:
+        return True
+    if text in {"false", "0"}:
+        return False
+    raise ConfigurationError(f"confgen {name} must be a boolean, got {value!r}")
+
+
 def resolve_confgen_params(
     params: Mapping[str, Any],
     *,
@@ -178,7 +192,7 @@ def resolve_confgen_params(
         "del_bond": normalize_pair_list(params.get("del_bond")),
         "no_rotate": normalize_pair_list(params.get("no_rotate")),
         "force_rotate": None,
-        "optimize": params.get("optimize", False),
+        "optimize": _coerce_bool_flag(params.get("optimize", False), "optimize"),
         "chains": None if chains is _MISSING else chains,
         "chain_steps": None if chain_steps is _MISSING else chain_steps,
         "chain_angles": None if chain_angles is _MISSING else chain_angles,
