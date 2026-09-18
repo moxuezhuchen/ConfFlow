@@ -16,6 +16,12 @@ __all__ = [
 _IDENTIFIER_METADATA_KEYS = {"CID"}
 _LEGACY_NUMERIC_CID_RE = re.compile(r"^\d+(?:\.0+)?$")
 
+# A metadata value ends at ``|``, at whitespace, or at a comma that starts the
+# next ``key=`` pair; a comma inside a value (``TSAtoms=1,2``) belongs to the
+# value. Historical comma separators around a following pair
+# (``E=-100.5, CID=A000001`` / ``E=-100.5,CID=A000001``) therefore still parse.
+_VALUE_PATTERN = r"[^\s|,]+(?:,(?![A-Za-z_][A-Za-z0-9_]*\s*=)[^\s|,]+)*"
+
 
 def _is_supported_cid_value(value: Any) -> bool:
     """Return True only for current-generation CID strings."""
@@ -26,12 +32,20 @@ def _is_supported_cid_value(value: Any) -> bool:
 
 
 def upsert_comment_kv(comment: str, key: str, value: Any) -> str:
-    """Update or insert a key=value pair in a comment line."""
+    """Update or insert a key=value pair in a comment line.
+
+    Uses the same value-boundary rule as :func:`parse_comment_metadata`, so
+    replacing ``TSAtoms=1,2`` does not leave a dangling ``,2`` and replacing a
+    key in a historical comma-separated comment does not swallow the next
+    pair.
+    """
     comment = (comment or "").strip()
     key = str(key)
     val_str = str(value)
 
-    pattern = re.compile(rf"(?P<prefix>^|[\s|,])(?P<k>{re.escape(key)})\s*=\s*(?P<v>[^\s|,]+)")
+    pattern = re.compile(
+        rf"(?P<prefix>^|[\s|,])(?P<k>{re.escape(key)})\s*=\s*(?P<v>{_VALUE_PATTERN})"
+    )
     match = pattern.search(comment)
     if not match:
         if not comment:
@@ -43,9 +57,14 @@ def upsert_comment_kv(comment: str, key: str, value: Any) -> str:
 
 
 def parse_comment_metadata(comment: str) -> dict[str, Any]:
-    """Parse key=value metadata from an XYZ comment line."""
+    """Parse key=value metadata from an XYZ comment line.
+
+    A value ends at ``|``, at whitespace, or at a comma that starts the next
+    ``key=`` pair, so comma-containing values (``TSAtoms=1,2``) and historical
+    comma separators (``E=-1.23, CID=A000001``) both parse correctly.
+    """
     meta: dict[str, Any] = {}
-    for match in re.finditer(r"([A-Za-z_][A-Za-z0-9_]*)\s*=\s*([^\s|,]+)", comment or ""):
+    for match in re.finditer(rf"([A-Za-z_][A-Za-z0-9_]*)\s*=\s*({_VALUE_PATTERN})", comment or ""):
         key, value = match.group(1), match.group(2)
         if key in _IDENTIFIER_METADATA_KEYS:
             meta[key] = value

@@ -22,14 +22,16 @@ __all__ = [
 # generic metadata passthrough would re-propagate stale fields such as G_corr.
 TOPOLOGY_OVERRIDE_KEYS = ("AddBond", "DelBond")
 
-
-def _format_topology_overrides(orig_meta: dict[str, Any]) -> str:
-    parts = []
-    for key in TOPOLOGY_OVERRIDE_KEYS:
-        value = orig_meta.get(key)
-        if value is not None and str(value).strip():
-            parts.append(f"{key}={value}")
-    return "".join(f" {part}" for part in parts)
+# failed.xyz always contains the *original input* coordinates, so every field
+# describing that input structure remains valid there and must survive a
+# re-submission. Fields describing half-finished computation results are never
+# taken from the failed result payload.
+FAILED_FRAME_PROVENANCE_KEYS = TOPOLOGY_OVERRIDE_KEYS + (
+    "TSAtoms",
+    "TSBond",
+    "Imag",
+    "LowestFreq",
+)
 
 
 def write_failed_xyz(
@@ -59,9 +61,14 @@ def write_failed_xyz(
             info = f"Failed=1 Job={job_name}"
             if cid is not None and str(cid).strip() != "":
                 info += f" CID={cid}"
-            # Failed frames may be re-submitted as new calc inputs, so their
-            # topology overrides must survive just like successful results.
-            info += _format_topology_overrides(orig_meta)
+            # failed.xyz holds the original input structure, so the fields that
+            # describe it (topology contract + still-valid analysis provenance)
+            # stay attached for a re-submission. Explicit None checks: Imag=0
+            # is a valid value and must not be dropped by truthiness.
+            for key in FAILED_FRAME_PROVENANCE_KEYS:
+                value = orig_meta.get(key)
+                if value is not None and str(value).strip():
+                    info += f" {key}={value}"
             if err_kind:
                 info += f" ErrorKind={err_kind}"
             if err:
@@ -85,7 +92,12 @@ def format_result_comment(res: dict[str, Any], orig_meta: dict[str, Any]) -> str
     if cid is not None and str(cid).strip() != "":
         info += f" CID={cid}"
 
-    info += _format_topology_overrides(orig_meta)
+    # Topology overrides are an explicit contract tied to this frame's atom
+    # order; they pass through for every task type (see #67).
+    for key in TOPOLOGY_OVERRIDE_KEYS:
+        value = orig_meta.get(key)
+        if value is not None and str(value).strip():
+            info += f" {key}={value}"
 
     # The freshly computed correction is authoritative.  A previous geometry's
     # G_corr from the input metadata must not be re-attached to a
@@ -94,9 +106,11 @@ def format_result_comment(res: dict[str, Any], orig_meta: dict[str, Any]) -> str
     if g_corr is not None:
         info += f" G_corr={g_corr}"
 
+    # Analysis provenance (Imag/LowestFreq/TSAtoms/TSBond) is decided by the
+    # TaskRunner semantic layer: a geometry-preserving SP inherits still-valid
+    # input values into the result payload there; this writer never guesses
+    # provenance from the input metadata itself.
     imag = res.get("num_imag_freqs")
-    if imag is None:
-        imag = orig_meta.get("Imag") or orig_meta.get("num_imag_freqs")
     if imag is not None:
         info += f" Imag={imag}"
 
