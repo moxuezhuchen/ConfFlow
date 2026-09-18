@@ -148,6 +148,77 @@ def test_gaussian_counts_true_imaginary_mode(tmp_path):
     assert res["lowest_freq"] == -100.0
 
 
+def test_gaussian_uses_last_complete_frequency_section(tmp_path):
+    log = tmp_path / "g.log"
+    log.write_text(
+        " Harmonic frequencies (cm**-1), IR intensities\n"
+        " Frequencies -- -350.0000   -100.0000   200.0000\n"
+        + _GAUSSIAN_ORIENTATION
+        + " Harmonic frequencies (cm**-1), IR intensities\n"
+        " Frequencies -- -120.0000   300.0000   400.0000\n" + _GAUSSIAN_ORIENTATION,
+        encoding="utf-8",
+    )
+
+    res = GaussianPolicy().parse_output(str(log), {}, is_sp_task=False)
+
+    assert res["num_imag_freqs"] == 1
+    assert res["lowest_freq"] == -120.0
+
+
+def test_gaussian_last_section_without_imaginary_wins(tmp_path):
+    log = tmp_path / "g.log"
+    log.write_text(
+        " Harmonic frequencies (cm**-1), IR intensities\n"
+        " Frequencies -- -350.0000   200.0000\n"
+        + _GAUSSIAN_ORIENTATION
+        + " Harmonic frequencies (cm**-1), IR intensities\n"
+        " Frequencies -- 100.0000   300.0000\n" + _GAUSSIAN_ORIENTATION,
+        encoding="utf-8",
+    )
+
+    res = GaussianPolicy().parse_output(str(log), {}, is_sp_task=False)
+
+    assert res["num_imag_freqs"] == 0
+    assert res["lowest_freq"] == 100.0
+
+
+def test_gaussian_truncated_last_section_keeps_previous(tmp_path):
+    """A section header with no frequencies must not erase the last full one."""
+    log = tmp_path / "g.log"
+    log.write_text(
+        " Harmonic frequencies (cm**-1), IR intensities\n"
+        " Frequencies -- -120.0000   300.0000\n"
+        + _GAUSSIAN_ORIENTATION
+        + " Harmonic frequencies (cm**-1), IR intensities\n",
+        encoding="utf-8",
+    )
+
+    res = GaussianPolicy().parse_output(str(log), {}, is_sp_task=False)
+
+    assert res["num_imag_freqs"] == 1
+    assert res["lowest_freq"] == -120.0
+
+
+def test_orca_uses_last_complete_frequency_section(tmp_path):
+    log = tmp_path / "orca.out"
+    log.write_text(
+        "VIBRATIONAL FREQUENCIES\n"
+        "0: -100.00 cm-1\n"
+        "1: 200.00 cm-1\n"
+        "NORMAL MODES\n"
+        "0: -999.00 cm-1\n"
+        "VIBRATIONAL FREQUENCIES\n"
+        "0: -120.00 cm-1\n"
+        "1: 300.00 cm-1\n",
+        encoding="utf-8",
+    )
+
+    res = OrcaPolicy().parse_output(str(log), {}, is_sp_task=False)
+
+    assert res["num_imag_freqs"] == 1
+    assert res["lowest_freq"] == -120.0
+
+
 # ---------------------------------------------------------------------------
 # TS RMSD acceptance
 # ---------------------------------------------------------------------------

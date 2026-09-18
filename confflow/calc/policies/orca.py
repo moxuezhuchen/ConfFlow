@@ -129,6 +129,7 @@ class OrcaPolicy(CalculationPolicy):
         lowest_freq = None
         single_point_energy = None
         all_freqs: list[float] = []
+        last_complete_freqs: list[float] = []
         in_freq_section = False
 
         with open(log_file, errors="ignore") as f:
@@ -142,13 +143,22 @@ class OrcaPolicy(CalculationPolicy):
                 if m := re.search(r"Final Gibbs free energy\s+\.\.\.\s+([\d.-]+)\s+Eh", line):
                     g_low = float(m.group(1))
                 if "VIBRATIONAL FREQUENCIES" in line:
+                    if all_freqs:
+                        last_complete_freqs = all_freqs
                     all_freqs = []
                     in_freq_section = True
                     continue
                 if in_freq_section:
-                    all_freqs.extend(
-                        float(freq) for freq in re.findall(r"\d+:\s+([-\d.]+)\s+cm", line)
-                    )
+                    found = re.findall(r"\d+:\s+([-\d.]+)\s+cm", line)
+                    if found:
+                        all_freqs.extend(float(freq) for freq in found)
+                    elif "NORMAL MODES" in line or "IR SPECTRUM" in line:
+                        # Leaving the frequency block: stop scraping later text.
+                        in_freq_section = False
+
+        # Only the last complete frequency section is authoritative.
+        if not all_freqs and last_complete_freqs:
+            all_freqs = last_complete_freqs
 
         if is_sp_task:
             e_high = single_point_energy
