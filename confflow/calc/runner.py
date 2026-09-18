@@ -89,7 +89,9 @@ class CalcStepRunner:
 
     @staticmethod
     def _iter_input_geometries(filepath: str):
-        for conf in io_xyz.iter_xyz_frames(filepath, parse_metadata=True, strict=False):
+        # strict=True: an incomplete/corrupt input frame must fail the step
+        # closed instead of being silently skipped (silent conformer loss).
+        for conf in io_xyz.iter_xyz_frames(filepath, parse_metadata=True, strict=True):
             yield {
                 "title": conf["comment"],
                 "coords": [

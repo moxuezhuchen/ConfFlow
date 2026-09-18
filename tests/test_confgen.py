@@ -18,6 +18,8 @@ from rdkit.Chem import AllChem
 from confflow.blocks import confgen
 from confflow.blocks.confgen.collision import check_clash_core
 from confflow.blocks.confgen.generator import (
+    MAX_POOL_CHUNKSIZE,
+    _resolve_chunksize,
     _resolve_worker_count,
     get_rotatable_bonds,
     init_worker,
@@ -50,6 +52,37 @@ def test_resolve_worker_count_caps_requested_workers():
 
     with pytest.raises(ValueError, match="workers must be an integer"):
         _resolve_worker_count(0, cpu_count=8, total_tasks=20)
+
+
+# ------------------------------------------------------------------------------
+# Resource safety: Pool.imap chunksize must stay bounded (global-OOM incident)
+# ------------------------------------------------------------------------------
+
+
+def test_resolve_chunksize_small_task_space_keeps_reasonable_batching():
+    # 100 tasks / (4 workers * 10) = 2: unchanged behaviour for small spaces.
+    assert _resolve_chunksize(100, 4) == 2
+    assert _resolve_chunksize(1000, 4) == 25
+    assert 0 < _resolve_chunksize(100, 4) <= MAX_POOL_CHUNKSIZE
+
+
+def test_resolve_chunksize_is_capped_for_huge_task_spaces():
+    # 12**9 angle combinations (the global-OOM incident): the parent used to
+    # materialise a ~516M-task chunk (~20 GiB pickled) with workers=1.
+    total = 5_159_780_352
+    for workers in (1, 2, 4, 8):
+        assert _resolve_chunksize(total, workers) <= MAX_POOL_CHUNKSIZE
+
+
+def test_resolve_chunksize_boundaries_stay_positive():
+    assert _resolve_chunksize(1, 1) == 1
+    assert _resolve_chunksize(10, 1) == 1  # total == workers * 10
+    assert _resolve_chunksize(5, 4) == 1  # total < workers * 10
+    assert _resolve_chunksize(0, 4) == 1
+
+
+def test_resolve_chunksize_cap_is_a_resource_safety_ceiling():
+    assert MAX_POOL_CHUNKSIZE == 1000
 
 
 def _run_confgen_cli(cwd, *args: str) -> subprocess.CompletedProcess[str]:

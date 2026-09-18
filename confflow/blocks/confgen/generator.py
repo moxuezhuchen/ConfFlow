@@ -357,7 +357,7 @@ def _iter_parallel_confgen(
     )
 
     with multiprocessing.Pool(worker_count, initializer=init_worker, initargs=init_args) as pool:
-        chunk = max(1, total_tasks // (worker_count * 10))
+        chunk = _resolve_chunksize(total_tasks, worker_count)
         with create_progress() as progress:
             task_id = progress.add_task("ConfGen", total=total_tasks)
             for res in pool.imap(
@@ -368,6 +368,31 @@ def _iter_parallel_confgen(
                 progress.advance(task_id)
                 if res is not None:
                     yield res
+
+
+# Resource-safety ceiling on how many angle-combination tasks are batched
+# into a single pickled Pool job. ``multiprocessing.Pool.imap`` materialises
+# an entire chunk (as a Python list, then as one pickled bytes object) in the
+# parent before handing it to the workers, so an unbounded chunksize lets a
+# huge combinatorial space (e.g. 12**9 angle combinations) exhaust all RAM +
+# swap in the parent process. This cap bounds parent memory regardless of the
+# task-space size; it is a resource-safety ceiling, not a performance-tuning
+# magic number.
+MAX_POOL_CHUNKSIZE = 1000
+
+
+def _resolve_chunksize(total_tasks: int, worker_count: int) -> int:
+    """Resolve a bounded ``Pool.imap`` chunksize for conformer generation.
+
+    Small task spaces keep the familiar ``total_tasks // (workers * 10)``
+    batching; large ones are capped at :data:`MAX_POOL_CHUNKSIZE` so the
+    parent can never materialise a multi-gigabyte batch. Always >= 1.
+    """
+    if worker_count < 1:
+        worker_count = 1
+    if total_tasks < 1:
+        return 1
+    return max(1, min(total_tasks // (worker_count * 10), MAX_POOL_CHUNKSIZE))
 
 
 def _resolve_worker_count(
@@ -586,6 +611,11 @@ def run_generation(
 
             from ...core.console import print_kv as _pkv2
 
+            # Surface the true combinatorial size before the (optional)
+            # confirmation prompt: a mis-specified chain set can explode into
+            # billions of angle combinations, so the user must be able to see
+            # the real scale before committing to it.
+            _pkv2("Total tasks", f"{prod(len(a) for a in angle_lists):,}")
             _pkv2("Clash", f"threshold = {clash_threshold}")
 
             if not rot_bonds:

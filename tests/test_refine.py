@@ -427,3 +427,150 @@ def test_greedy_permutation_rmsd_empty():
     empty = np.empty((0, 3))
     empty_ids = np.array([], dtype=np.int64)
     assert greedy_permutation_rmsd(empty, empty, empty_ids, empty_ids) == 999.9
+
+
+# ------------------------------------------------------------------------------
+# F3: frames without real energy must never emit E=inf / DE=nan
+# ------------------------------------------------------------------------------
+
+
+def _write_energy_xyz(path, entries):
+    """entries: list of (comment, coords) tuples."""
+    with open(path, "w") as f:
+        for comment, coords in entries:
+            f.write(f"{len(coords)}\n{comment}\n")
+            for sym, x, y, z in coords:
+                f.write(f"{sym} {x:10.5f} {y:10.5f} {z:10.5f}\n")
+
+
+_ETHANE = [
+    ("C", 0.0, 0.0, 0.0),
+    ("C", 1.54, 0.0, 0.0),
+    ("H", -0.52, 0.89, 0.0),
+    ("H", -0.52, -0.45, 0.88),
+    ("H", -0.52, -0.45, -0.88),
+    ("H", 2.06, 0.89, 0.0),
+    ("H", 2.06, -0.45, 0.88),
+    ("H", 2.06, -0.45, -0.88),
+]
+
+
+def test_read_xyz_file_missing_energy_is_none_not_inf(tmp_path):
+    xyz = tmp_path / "noenergy.xyz"
+    xyz.write_text("2\nplain comment\nC 0 0 0\nC 1.5 0 0\n")
+    frames = read_xyz_file(str(xyz))
+    assert frames[0]["energy"] is None
+    assert frames[0]["energy_key"] is None
+
+
+def test_read_xyz_file_nonfinite_energy_is_none(tmp_path):
+    xyz = tmp_path / "infenergy.xyz"
+    xyz.write_text("2\nE=inf\nC 0 0 0\nC 1.5 0 0\n")
+    frames = read_xyz_file(str(xyz))
+    assert frames[0]["energy"] is None
+
+
+def test_refine_all_frames_without_energy_writes_no_inf_or_nan(tmp_path):
+    xyz = tmp_path / "in.xyz"
+    out = tmp_path / "out.xyz"
+    _write_energy_xyz(
+        str(xyz),
+        [("frame 0", _ETHANE), ("frame 1", _ETHANE)],
+    )
+    result = process_xyz(RefineOptions(input_file=str(xyz), output=str(out), threshold=0.25))
+    assert result.produced_output
+    comments = [
+        line
+        for line in out.read_text().splitlines()
+        if line and not line[0].isdigit() or (line.strip() and "Rank" in line)
+    ]
+    text = out.read_text()
+    assert "inf" not in text
+    assert "nan" not in text
+    assert "Rank=1" in text
+    assert comments
+
+
+def test_refine_partial_energy_ewin_keeps_no_energy_frames(tmp_path):
+    import numpy as np
+
+    rng = np.random.default_rng(3)
+
+    def variant(i, energy=None):
+        coords = [(s, x, y, z) for s, x, y, z in _ETHANE]
+        ang = np.radians(i * 45)
+        rotated = coords[:5]
+        for s, x, y, z in coords[5:]:
+            x2, y2 = x - 1.54, y
+            rotated.append(
+                (
+                    s,
+                    x2 * np.cos(ang) - y2 * np.sin(ang) + 1.54,
+                    x2 * np.sin(ang) + y2 * np.cos(ang),
+                    z,
+                )
+            )
+        noisy = [
+            (s, x + rng.uniform(-0.02, 0.02), y + rng.uniform(-0.02, 0.02), z)
+            for s, x, y, z in rotated
+        ]
+        comment = f"frame {i}" + (f" E={energy}" if energy is not None else "")
+        return comment, noisy
+
+    xyz = tmp_path / "in.xyz"
+    out = tmp_path / "out.xyz"
+    _write_energy_xyz(
+        str(xyz),
+        [
+            variant(0, -78.0),  # far above the window: legitimately dropped
+            variant(1, -79.0),  # minimum: kept
+            variant(2),  # no energy: must bypass the window, never be dropped
+            variant(3),  # no energy
+        ],
+    )
+    result = process_xyz(
+        RefineOptions(input_file=str(xyz), output=str(out), threshold=0.25, ewin=1.0)
+    )
+    assert result.produced_output
+    text = out.read_text()
+    assert "inf" not in text and "nan" not in text
+    # The minimum-energy frame must keep a real DE line.
+    assert "E=-79.00000000" in text and "DE=0.00 kcal/mol" in text
+
+
+def test_refine_single_frame_without_energy_writes_no_inf_or_nan(tmp_path):
+    xyz = tmp_path / "in.xyz"
+    out = tmp_path / "out.xyz"
+    _write_energy_xyz(str(xyz), [("frame 0", _ETHANE)])
+    result = process_xyz(RefineOptions(input_file=str(xyz), output=str(out), threshold=0.25))
+    assert result.produced_output
+    text = out.read_text()
+    assert "inf" not in text and "nan" not in text
+    assert "Rank=1" in text
+
+
+def test_refine_preserves_cid_provenance_without_energy(tmp_path):
+    xyz = tmp_path / "in.xyz"
+    out = tmp_path / "out.xyz"
+    _write_energy_xyz(str(xyz), [("Conformer 1 | CID=A000001", _ETHANE)])
+    result = process_xyz(RefineOptions(input_file=str(xyz), output=str(out), threshold=0.25))
+    assert result.produced_output
+    text = out.read_text()
+    assert "CID=A000001" in text
+    assert "inf" not in text and "nan" not in text
+
+
+def test_refine_energyless_output_is_a_clean_calc_input(tmp_path):
+    from confflow.calc.runner import CalcStepRunner
+
+    xyz = tmp_path / "in.xyz"
+    out = tmp_path / "out.xyz"
+    _write_energy_xyz(str(xyz), [("frame 0", _ETHANE), ("frame 1", _ETHANE)])
+    result = process_xyz(RefineOptions(input_file=str(xyz), output=str(out), threshold=0.25))
+    assert result.produced_output
+
+    geoms = list(CalcStepRunner()._iter_input_geometries(str(out)))
+    assert geoms
+    for geom in geoms:
+        assert "inf" not in str(geom["metadata"]).lower()
+        assert "nan" not in str(geom["metadata"]).lower()
