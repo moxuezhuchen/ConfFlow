@@ -8,6 +8,8 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 from confflow.calc.runner import CalcStepRequest, CalcStepRunner
 from confflow.config.models import CalcStepParams, GlobalOptions
 
@@ -205,3 +207,42 @@ def test_calc_step_runner_passes_ts_rescue_scan_config_to_task_runner(tmp_path):
     assert rescue_config["ts_rescue_keep_scan_dirs"] is True
     # ts_rescue_scan_backup is deprecated and no longer reaches the runtime.
     assert "ts_rescue_scan_backup" not in rescue_config
+
+
+def test_iter_input_geometries_strict_fails_on_truncated_tail(tmp_path):
+    """An incomplete tail frame must fail closed, never silently drop frames."""
+    runner = CalcStepRunner()
+    xyz = tmp_path / "truncated.xyz"
+    xyz.write_text(
+        "3\nEnergy=-1.0\nC 0.0 0.0 0.0\nC 1.5 0.0 0.0\nH 0.4 0.9 0.0\n"
+        "3\nEnergy=-1.1\nC 0.0 0.0 0.0\nC 1.5"  # cut mid-frame
+    )
+    with pytest.raises(ValueError, match="truncated.xyz"):
+        list(runner._iter_input_geometries(str(xyz)))
+
+
+def test_iter_input_geometries_accepts_complete_frames(tmp_path):
+    runner = CalcStepRunner()
+    xyz = tmp_path / "ok.xyz"
+    xyz.write_text("1\nEnergy=-1.0 CID=A000001\nC 0.0 0.0 0.0\n")
+    geoms = list(runner._iter_input_geometries(str(xyz)))
+    assert len(geoms) == 1
+    assert geoms[0]["metadata"]["CID"] == "A000001"
+
+
+def test_iter_input_geometries_strict_fails_on_short_atom_block(tmp_path):
+    """Declared atom count above the available atom lines must fail closed."""
+    runner = CalcStepRunner()
+    xyz = tmp_path / "short_block.xyz"
+    xyz.write_text("5\nEnergy=-1.0\nC 0.0 0.0 0.0\nC 1.5 0.0 0.0\n")
+    with pytest.raises(ValueError, match="short_block.xyz"):
+        list(runner._iter_input_geometries(str(xyz)))
+
+
+def test_iter_input_geometries_strict_fails_on_missing_comment_line(tmp_path):
+    """A frame header without its comment line must fail closed."""
+    runner = CalcStepRunner()
+    xyz = tmp_path / "no_comment.xyz"
+    xyz.write_text("1\nEnergy=-1.0\nC 0.0 0.0 0.0\n2\n")
+    with pytest.raises(ValueError, match="no_comment.xyz"):
+        list(runner._iter_input_geometries(str(xyz)))
