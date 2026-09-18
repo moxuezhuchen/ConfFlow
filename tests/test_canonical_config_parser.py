@@ -56,3 +56,18 @@ def test_parse_workflow_mapping_rejects_non_mapping_global_and_params():
     with pytest.raises(ConfigValidationError) as params_error:
         parse_workflow_mapping({"global": {}, "steps": [{"type": "calc", "params": []}]})
     assert params_error.value.issue.path == "steps[1].params"
+
+
+def test_parse_workflow_mapping_rejects_boolean_step_name():
+    """YAML turns unquoted on/off/yes/no into booleans; refuse with a hint."""
+    with pytest.raises(ConfigValidationError, match="parsed as a boolean"):
+        parse_workflow_mapping(
+            {"global": {}, "steps": [{"name": False, "type": "confgen", "params": {}}]}
+        )
+
+
+def test_parse_workflow_mapping_accepts_quoted_off_step_name():
+    model = parse_workflow_mapping(
+        {"global": {}, "steps": [{"name": "off", "type": "confgen", "params": {}}]}
+    )
+    assert model.steps[0].name == "off"

@@ -23,6 +23,7 @@ import pytest
 import confflow.workflow.dag as dag_pkg
 import confflow.workflow.dag.explicit as explicit_module
 import confflow.workflow.dag.legacy as legacy_module
+from confflow.core.exceptions import ConfFlowError
 from confflow.workflow.dag import build_step_graph, topo_order
 
 
@@ -127,3 +128,29 @@ def test_legacy_classes_have_correct_behavior_regression():
     assert dag.topological_sort() == ["gen", "opt"]
     decisions = dag.evaluate_conditions({"opt": {"failed_count": 0}})
     assert decisions["opt"] is True
+
+
+def test_build_step_graph_rejects_boolean_step_name():
+    with pytest.raises(ConfFlowError, match="parsed as a boolean"):
+        build_step_graph([{"name": False, "type": "confgen", "params": {}}])
+
+
+def test_build_step_graph_rejects_boolean_inputs_entry():
+    with pytest.raises(ConfFlowError, match="parsed as a boolean"):
+        build_step_graph(
+            [
+                {"name": "gen", "type": "confgen", "params": {}},
+                {"name": "calc", "type": "calc", "inputs": [False], "params": {}},
+            ]
+        )
+
+
+def test_build_step_graph_accepts_quoted_off_name():
+    predecessors, by_name, _ = build_step_graph(
+        [
+            {"name": "off", "type": "confgen", "params": {}},
+            {"name": "downstream", "type": "calc", "inputs": ["off"], "params": {}},
+        ]
+    )
+    assert set(by_name) == {"off", "downstream"}
+    assert predecessors["downstream"] == ["off"]

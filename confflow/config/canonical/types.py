@@ -696,7 +696,14 @@ class WorkflowConfig:
                 step_type = "calc"
             if step_type not in {"confgen", "calc"}:
                 raise ValueError(f"step {index} has unsupported type: {step_type!r}")
-            name = str(step.get("name") or f"{step_type}_{index}")
+            raw_name = step.get("name")
+            if isinstance(raw_name, bool):
+                raise ValueError(
+                    f"step {index}: name {raw_name!r} was parsed as a boolean. "
+                    "YAML interprets unquoted on/off/yes/no/true/false as booleans; "
+                    'quote the step name, e.g. name: "off"'
+                )
+            name = str(raw_name) if raw_name else f"{step_type}_{index}"
             enabled = _coerce_bool_flag(step.get("enabled", True))
             params = _as_dict(step.get("params"))
             steps.append(

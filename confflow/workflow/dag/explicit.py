@@ -15,8 +15,18 @@ __all__ = [
 ]
 
 
+def _bool_step_token_error(value: bool, context: str) -> ConfFlowError:
+    return ConfFlowError(
+        f"workflow {context} {value!r} was parsed as a boolean. "
+        "YAML interprets unquoted on/off/yes/no/true/false as booleans; "
+        f'quote the step name, e.g. "{str(value).lower()}"'
+    )
+
+
 def _canonical_step_name(step: dict[str, Any], index: int) -> str:
     raw_name = step.get("name")
+    if isinstance(raw_name, bool):
+        raise _bool_step_token_error(raw_name, f"step {index} name")
     if raw_name is not None:
         name = str(raw_name).strip()
         if name:
@@ -27,6 +37,8 @@ def _canonical_step_name(step: dict[str, Any], index: int) -> str:
 def _normalize_inputs(raw_inputs: Any) -> list[str]:
     if raw_inputs is None:
         return []
+    if isinstance(raw_inputs, bool):
+        raise _bool_step_token_error(raw_inputs, "inputs entry")
     if isinstance(raw_inputs, str):
         value = raw_inputs.strip()
         return [value] if value else []
@@ -36,6 +48,8 @@ def _normalize_inputs(raw_inputs: Any) -> list[str]:
         for item in raw_inputs:
             if item is None:
                 continue
+            if isinstance(item, bool):
+                raise _bool_step_token_error(item, "inputs entry")
             value = str(item).strip()
             if value and value not in seen:
                 seen.add(value)
