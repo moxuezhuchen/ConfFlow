@@ -228,6 +228,7 @@ def test_failed_xyz_imag_zero_kept(tmp_path):
 
 # ---------------------------------------------------------------------------
 # Comment metadata parsing keeps comma-containing values (TSAtoms round-trip)
+# and still honors the historical comma pair separator
 # ---------------------------------------------------------------------------
 
 
@@ -238,6 +239,64 @@ def test_parse_comment_metadata_keeps_comma_values():
     assert meta["TSAtoms"] == "1,2"
     assert meta["Imag"] == 1.0
     assert meta["TSBond"] == 1.5
+
+
+def test_parse_comment_metadata_value_boundary():
+    """A comma delimits metadata only when it starts the next key= pair."""
+    from confflow.core.xyz_metadata import parse_comment_metadata
+
+    # comma inside a value is preserved (pipe / space / comma separators)
+    assert parse_comment_metadata("TSAtoms=1,2 | TSBond=1.5") == {
+        "TSAtoms": "1,2",
+        "TSBond": 1.5,
+    }
+    assert parse_comment_metadata("TSAtoms=1,2 TSBond=1.5") == {
+        "TSAtoms": "1,2",
+        "TSBond": 1.5,
+    }
+    assert parse_comment_metadata("TSAtoms=1,2,3") == {"TSAtoms": "1,2,3"}
+
+    # historical comma pair separator, with and without a space
+    legacy_space = parse_comment_metadata("E=-1.23, CID=A000001")
+    assert legacy_space["E"] == -1.23
+    assert legacy_space["CID"] == "A000001"
+
+    legacy_tight = parse_comment_metadata("E=-1.23,CID=A000001")
+    assert legacy_tight["E"] == -1.23
+    assert legacy_tight["CID"] == "A000001"
+
+    mixed = parse_comment_metadata("E=-100.5, CID=A000001, Imag=1")
+    assert mixed["E"] == -100.5
+    assert mixed["CID"] == "A000001"
+    assert mixed["Imag"] == 1.0
+
+    # plain-keyword behaviour unchanged
+    assert parse_comment_metadata("Rank=1 | E=-1.234 | G_corr=0.123") == {
+        "Rank": 1.0,
+        "E": -1.234,
+        "G_corr": 0.123,
+    }
+
+
+def test_upsert_comment_kv_value_boundary():
+    from confflow.core.xyz_metadata import upsert_comment_kv
+
+    # replacing a comma-containing value leaves no dangling ",2"
+    assert upsert_comment_kv("TSAtoms=1,2 | E=-1", "TSAtoms", "3,4") == "TSAtoms=3,4 | E=-1"
+    assert upsert_comment_kv("TSAtoms=1,2", "TSAtoms", "3,4") == "TSAtoms=3,4"
+
+    # historical comma separator: the next pair must survive the replace
+    updated = upsert_comment_kv("E=-1.23,CID=A000001", "E", "-2.34")
+    assert updated == "E=-2.34,CID=A000001"
+    assert "CID=A000001" in updated
+
+    updated = upsert_comment_kv("CID=A000001, Imag=1", "Imag", "0")
+    assert "CID=A000001" in updated
+    assert "Imag=0" in updated
+
+    # insert into an existing comment / empty comment unchanged
+    assert upsert_comment_kv("E=-1", "Imag", "0") == "E=-1 | Imag=0"
+    assert upsert_comment_kv("", "Imag", "0") == "Imag=0"
 
 
 # ---------------------------------------------------------------------------
