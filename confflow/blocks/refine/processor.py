@@ -14,7 +14,6 @@ import shutil
 import sys
 import tempfile
 from collections import defaultdict
-from concurrent.futures import ProcessPoolExecutor  # noqa: F401  (patched by tests/conftest)
 
 import numpy as np
 

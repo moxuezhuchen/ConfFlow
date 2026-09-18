@@ -49,27 +49,6 @@ def cd_tmp(tmp_path: Path, monkeypatch):
     return tmp_path
 
 
-@pytest.fixture
-def sync_executor(monkeypatch):
-    """Monkeypatch a synchronous ProcessPoolExecutor for deterministic tests."""
-
-    class SyncExecutor:
-        def __init__(self, *args, **kwargs):
-            pass
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *args):
-            pass
-
-        def map(self, func, *iterables, **kwargs):
-            return map(func, *iterables)
-
-    monkeypatch.setattr("confflow.blocks.refine.processor.ProcessPoolExecutor", SyncExecutor)
-    return SyncExecutor
-
-
 @pytest.fixture(autouse=True, scope="function")
 def guard_repo_root_pollution():
     """Prevent tests from creating chem_tasks_* directories in repo root."""

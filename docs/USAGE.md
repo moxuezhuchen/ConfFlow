@@ -244,7 +244,7 @@ confrefine <input.xyz> [-o <output.xyz>] [-t <rmsd>] [--ewin <kcal/mol>] [--imag
 - **文件命名**：扫描点作业名统一使用格式化后的 **键长数值** (如 `1.746.log`)，方便用户快速定位特定区域的计算。
 - **Scan 表格输出**：会在 `<work_dir>/scan/scan_table.txt` 写入“键长-能量”关系表（标记能量最高点 `MAX`），并同样记录到 `<input>.txt`（终端默认无输出）。
 - **选峰与 TS 重跑**：从 scan 能量曲线中选取局部极大值点作为 TS 初猜，然后用原始 TS 的 `keyword` 重新计算 TS（保持与主流程一致的方法/基组/外部势能等）。
-- **结果汇总**：若 TS rescue 成功，会以 `rescued_by_scan=true` 标记，并按常规流程写入最终 `result.xyz`/结果库。
+- **结果汇总**：若 TS rescue 成功，运行时结果对象会包含内部 provenance 标记 `rescued_by_scan=true` 与 `scan_peak_bond`；当前这些字段仅存在于运行时结果对象，不会写入最终 `result.xyz` 或结果数据库（`ts_bond_atoms`/`ts_bond_length` 则会按常规流程写入）。
 
 备注：`scan/` 目录会随该 TS 任务一并备份（若配置了 `backup_dir`）。备份位置为 `<work_dir>/<step>/backups/<job>_scan/`，其中也会包含 `scan_table.txt`。
 

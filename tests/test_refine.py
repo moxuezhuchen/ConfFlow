@@ -205,7 +205,7 @@ def test_process_xyz_sort_energy(tmp_path):
         assert content.find("E=-2.0") < content.find("E=-1.0")
 
 
-def test_process_xyz_ewin_filter(tmp_path, sync_executor):
+def test_process_xyz_ewin_filter(tmp_path):
 
     xyz_content = """2
 E=-10.000
@@ -233,7 +233,7 @@ H 0.0 0.0 1.2
     assert len(lines) == 8
 
 
-def test_process_xyz_no_energy_extended(tmp_path, sync_executor):
+def test_process_xyz_no_energy_extended(tmp_path):
 
     xyz_content = """2
 No Energy
@@ -254,7 +254,7 @@ H 0.0 0.0 1.1
     assert out_xyz.exists()
 
 
-def test_process_xyz_sort_only(tmp_path, sync_executor):
+def test_process_xyz_sort_only(tmp_path):
 
     xyz_content = """2
 E=-5.0
