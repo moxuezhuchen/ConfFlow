@@ -269,7 +269,13 @@ class ExecutionService:
         )
 
     def lifecycle_checkpoint(self, run_id: str, token: str, checkpoint_id: str) -> RunSnapshot:
-        """Apply a token-bound checkpoint callback."""
+        """Apply a token-bound checkpoint callback.
+
+        Checkpoints are best-effort progress projections, so a callback that
+        arrives after a durable cancellation is idempotently dropped instead of
+        failing the run; the engine already reports the stop through the
+        dedicated cancellation callback.
+        """
         if not checkpoint_id:
             raise ExecutionServiceError(
                 ErrorCode.INVALID_REQUEST, "Checkpoint ID must not be empty"
@@ -280,6 +286,7 @@ class ExecutionService:
             allowed_state=RunState.RUNNING,
             event_type="checkpointed",
             mutate=lambda record: replace(record, checkpoint=Checkpoint(checkpoint_id)),
+            ignore_cancel_pending=True,
         )
 
     def lifecycle_paused(self, run_id: str, token: str) -> RunSnapshot:
@@ -522,8 +529,17 @@ class ExecutionService:
         event_type: str,
         mutate: Callable[[ExecutionAggregate], ExecutionAggregate],
         allow_cancel_pending: bool = False,
+        ignore_cancel_pending: bool = False,
     ) -> RunSnapshot:
-        """CAS a lifecycle callback only while its token remains current and legal."""
+        """CAS a lifecycle callback only while its token remains current and legal.
+
+        ``allow_cancel_pending`` lets a callback keep mutating while a cancel
+        intent is pending (terminal completion/failure).  ``ignore_cancel_pending``
+        instead drops the callback entirely once cancellation owns the run, by
+        returning the current durable snapshot without any mutation.  Both paths
+        still require the current launch token first, so stale writers keep
+        failing closed.
+        """
         while True:
             record = self._require(run_id)
             if record.launch_token != token:
@@ -531,9 +547,20 @@ class ExecutionService:
                     ErrorCode.INVALID_STATE_TRANSITION,
                     "Lifecycle token does not match the active launch attempt",
                 )
-            if record.state is not allowed_state or (
-                record.cancel_pending and not allow_cancel_pending
-            ):
+            if ignore_cancel_pending and record.state is RunState.CANCELLED:
+                # A confirmed cancellation already owns the aggregate; a late
+                # callback must not resurrect it into another state.
+                return record.snapshot()
+            if record.state is not allowed_state:
+                raise ExecutionServiceError(
+                    ErrorCode.INVALID_STATE_TRANSITION,
+                    f"Lifecycle callback is invalid while run is {record.state.value}",
+                )
+            if record.cancel_pending and not allow_cancel_pending:
+                if ignore_cancel_pending:
+                    # Cancellation is durable but not yet confirmed; the mutation
+                    # is stale, so report the current snapshot and change nothing.
+                    return record.snapshot()
                 raise ExecutionServiceError(
                     ErrorCode.INVALID_STATE_TRANSITION,
                     f"Lifecycle callback is invalid while run is {record.state.value}",
