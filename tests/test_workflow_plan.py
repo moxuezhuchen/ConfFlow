@@ -26,7 +26,7 @@ def test_build_workflow_plan_normalizes_inputs_and_explicit_dag(tmp_path: Path) 
         "  force_consistency: true\n"
         "steps:\n"
         "  - name: join output\n"
-        "    type: calc\n"
+        "    type: confgen\n"
         "    inputs: [left, right]\n"
         "    params: {keyword: HF}\n"
         "  - name: right\n"

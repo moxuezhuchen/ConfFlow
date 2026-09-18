@@ -500,9 +500,22 @@ def run_workflow(
                 state_store.save(state)
                 _notify_step_status_change(on_step_status_change, state_record)
 
-    terminal_outputs = {name: _as_artifact_list(step_outputs[name]) for name in terminal_steps}
+    # A disabled (skipped) terminal has no artifact of its own: it passes the
+    # workflow's external input through, which must not appear in the output
+    # manifest as if it were produced inside the workflow root.
+    outputting_terminals = [
+        name for name in terminal_steps if state.steps[name_to_dirname[name]].status != "skipped"
+    ]
+    terminal_outputs = {
+        name: _as_artifact_list(step_outputs[name]) for name in outputting_terminals
+    }
     final_outputs = [artifact for artifacts in terminal_outputs.values() for artifact in artifacts]
-    final_output = step_outputs[terminal_steps[0]] if len(terminal_steps) == 1 else final_outputs
+    if len(outputting_terminals) == 1:
+        final_output = step_outputs[outputting_terminals[0]]
+    elif outputting_terminals:
+        final_output = final_outputs
+    else:
+        final_output = initial_input
     return finalize_workflow(
         root_dir=root_dir,
         original_inputs=original_inputs,

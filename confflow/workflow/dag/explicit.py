@@ -32,11 +32,13 @@ def _normalize_inputs(raw_inputs: Any) -> list[str]:
         return [value] if value else []
     if isinstance(raw_inputs, (list, tuple)):
         result: list[str] = []
+        seen: set[str] = set()
         for item in raw_inputs:
             if item is None:
                 continue
             value = str(item).strip()
-            if value:
+            if value and value not in seen:
+                seen.add(value)
                 result.append(value)
         return result
     value = str(raw_inputs).strip()

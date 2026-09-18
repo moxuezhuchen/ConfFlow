@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from ..config.models import GlobalOptions, WorkflowConfig, load_workflow_model
+from ..core.exceptions import ConfFlowError
 from ..core.utils import validate_xyz_file
 from .dag import build_step_graph, topo_order
 from .step_naming import build_step_dir_name_map
@@ -59,6 +60,17 @@ def build_workflow_plan(
             for index, name in enumerate(ordered_names)
         }
     execution_order = [name for wave in topo_order(predecessors) for name in wave]
+    if explicit_inputs:
+        # Fail at plan time instead of deep inside step execution: a calc step
+        # is single-input by design.
+        for name, step in by_step_name.items():
+            step_type = str(step.get("type", "")).strip().lower()
+            if step_type in {"calc", "task"} and len(predecessors.get(name, [])) > 1:
+                raise ConfFlowError(
+                    f"calc step {name!r} has {len(predecessors.get(name, []))} inputs; "
+                    "a calc step accepts exactly one input. Add a confgen step to "
+                    "merge them first."
+                )
     if explicit_inputs:
         predecessor_names = {
             predecessor
