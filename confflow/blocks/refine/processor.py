@@ -125,7 +125,9 @@ def read_xyz_file(filepath):
     for frame_idx, fr in enumerate(frames):
         meta = fr.get("metadata", {}) or {}
 
-        # Energy: prefer G (Gibbs), then E/Energy; default to inf if missing
+        # Energy: prefer G (Gibbs), then E/Energy; None (not a synthetic
+        # sentinel) when missing or non-finite so it never leaks into output
+        # as ``E=inf`` / ``DE=nan``.
         energy_key = (
             "G"
             if "G" in meta
@@ -135,7 +137,9 @@ def read_xyz_file(filepath):
         try:
             energy = float(energy_val)
         except (TypeError, ValueError):
-            energy = float("inf")
+            energy = None
+        if energy is not None and not np.isfinite(energy):
+            energy = None
 
         # Imaginary frequency count: compatible with Imag=1 / num_imag_freqs=1
         imag_val = meta.get("num_imag_freqs", meta.get("Imag"))
@@ -210,7 +214,6 @@ def _write_refine_output(output_path: str, final_unique: list[dict], global_min:
     """Write deduplicated conformers to the output XYZ file."""
     with open(output_path, "w") as f:
         for i, frame in enumerate(final_unique, 1):
-            de = (frame["energy"] - global_min) * HARTREE_TO_KCALMOL
             imag_val = frame.get("num_imag_freqs")
             extra_items = []
             emit_g = str(frame.get("energy_key") or "").upper() == "G"
@@ -221,7 +224,13 @@ def _write_refine_output(output_path: str, final_unique: list[dict], global_min:
             extra = " | ".join(extra_items)
 
             label = "G" if emit_g else "E"
-            line = f"Rank={i} | {label}={frame['energy']:.8f} | DE={de:.2f} kcal/mol"
+            if frame["energy"] is None or global_min is None:
+                # No real energy: never fabricate E=inf / DE=nan; write only
+                # provenance that actually exists.
+                line = f"Rank={i}"
+            else:
+                de = (frame["energy"] - global_min) * HARTREE_TO_KCALMOL
+                line = f"Rank={i} | {label}={frame['energy']:.8f} | DE={de:.2f} kcal/mol"
             if imag_val is not None:
                 line += f" | Imag={imag_val}"
             if extra:
@@ -570,24 +579,36 @@ def process_xyz(args):
         return RefineResult(False, args.output, 0, "filtered_to_zero")
 
     if args.ewin is not None and not args.dedup_only:
-        min_e = min(frame["energy"] for frame in selected)
-        limit = min_e + args.ewin / HARTREE_TO_KCALMOL
-        before_count = len(selected)
-        filtered = []
-        for frame in selected:
-            if frame["energy"] <= limit:
-                filtered.append(frame)
-            else:
-                record = records.get(int(frame["original_index"]))
-                if record is not None:
-                    _record_removal(
-                        record,
-                        "energy_window",
-                        f"energy {frame['energy']} above window limit {limit}",
-                    )
-        selected = filtered
-        if len(selected) < before_count:
-            console.print(f"  E-window filter: {before_count} → {len(selected)}")
+        energized = [frame for frame in selected if frame["energy"] is not None]
+        if not energized:
+            console.print("  E-window filter skipped: no frame carries a real energy.")
+        else:
+            min_e = min(frame["energy"] for frame in energized)
+            limit = min_e + args.ewin / HARTREE_TO_KCALMOL
+            before_count = len(selected)
+            filtered = []
+            bypassed = 0
+            for frame in selected:
+                if frame["energy"] is None:
+                    # A frame without a real energy must never be dropped
+                    # because a synthetic sentinel fails the comparison.
+                    filtered.append(frame)
+                    bypassed += 1
+                elif frame["energy"] <= limit:
+                    filtered.append(frame)
+                else:
+                    record = records.get(int(frame["original_index"]))
+                    if record is not None:
+                        _record_removal(
+                            record,
+                            "energy_window",
+                            f"energy {frame['energy']} above window limit {limit}",
+                        )
+            selected = filtered
+            if len(selected) < before_count:
+                console.print(f"  E-window filter: {before_count} → {len(selected)}")
+            if bypassed:
+                console.print(f"  {bypassed} frame(s) without energy bypassed the E-window filter.")
 
     # 5. Per-topology-class RMSD deduplication (never across topologies)
     final_unique: list[dict] = []
@@ -641,13 +662,19 @@ def process_xyz(args):
     _apply_dedup_reports(records, report_data)
 
     # 6. Statistics and output
+    # Energized frames sort by energy (stable by input index); frames without
+    # a real energy keep their stable input order after all energized frames.
     final_unique.sort(
         key=lambda frame: (
-            frame["energy"] if np.isfinite(frame["energy"]) else float("inf"),
-            int(frame.get("original_index", 0)),
+            (0, frame["energy"], int(frame.get("original_index", 0)))
+            if frame["energy"] is not None
+            else (1, 0.0, int(frame.get("original_index", 0)))
         )
     )
-    global_min = final_unique[0]["energy"]
+    global_min = min(
+        (frame["energy"] for frame in final_unique if frame["energy"] is not None),
+        default=None,
+    )
 
     _compute_dedup_counts(final_unique, selected, report_data)
 
