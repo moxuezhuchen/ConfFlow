@@ -221,7 +221,7 @@ confgen mol.xyz --chain 1-2-3-4-5 --angles "0,120,240;0,60,120,180;180;0,120" -y
 confrefine <input.xyz> [-o <output.xyz>] [-t <rmsd>] [--ewin <kcal/mol>] [--imag <n>] [--noH] [-n <max>] [--dedup-only] [--keep-all-topos] [-w <workers>]
 ```
 
-> `-w/--workers` 仅为向后兼容而保留：当前 Refine 不读取该值，拓扑/RMSD 去重始终以确定性的串行方式执行，因此它既不会改变并发度，也不会改变输出。显式传入时会在 stderr 给出提示。
+> `-w/--workers` 仅为向后兼容而保留：当前 Refine 不使用该值控制拓扑/RMSD 去重的并行度，去重以确定性的串行方式执行，因此该参数不会改变 Refine 去重的并发度或输出。显式传入时会在 stderr 给出提示。
 
 ### 5.2 输出
 

@@ -812,8 +812,9 @@ def main():
         type=int,
         default=None,
         help=(
-            "Compatibility option; currently unused by Refine. Deterministic "
-            "conformer deduplication runs serially. (default when omitted: CPU-2)"
+            "Compatibility option; currently not used to control Refine "
+            "deduplication concurrency. Deterministic conformer deduplication "
+            "runs serially. (default when omitted: CPU-2)"
         ),
     )
     parser.add_argument(
