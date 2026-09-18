@@ -416,6 +416,115 @@ def test_failed_callback_wins_without_cancel_overwriting_terminal_state():
     assert service.status("run-001").state is RunState.FAILED
 
 
+def test_late_checkpoint_after_cancel_intent_is_an_idempotent_noop():
+    """A same-token checkpoint arriving while cancel is pending changes nothing."""
+    repository = InMemoryExecutionRepository()
+    executor = FakeExecutor()
+    service = _service(repository, executor)
+    lifecycle = _running(service, executor)
+
+    assert service.cancel("run-001").state is RunState.RUNNING
+    pending = repository.read("run-001")
+    assert pending is not None and pending.cancel_pending and pending.checkpoint is None
+
+    snapshot = lifecycle.checkpoint("late-step")
+
+    assert snapshot == service.status("run-001")
+    assert snapshot.state is RunState.RUNNING
+    assert snapshot.revision == pending.revision
+    current = repository.read("run-001")
+    assert current is not None
+    assert current.checkpoint is None and current.cancel_pending
+    assert [event.type for event in current.events] == [
+        "prepared",
+        "queued",
+        "running",
+        "cancel_requested",
+    ]
+
+    assert lifecycle.cancelled().state is RunState.CANCELLED
+
+
+def test_late_checkpoint_after_confirmed_cancel_is_an_idempotent_noop():
+    """A checkpoint arriving after the cancellation is confirmed cannot resurrect it."""
+    repository = InMemoryExecutionRepository()
+    executor = FakeExecutor()
+    service = _service(repository, executor)
+    lifecycle = _running(service, executor)
+
+    assert service.cancel("run-001").state is RunState.RUNNING
+    cancelled = lifecycle.cancelled()
+    assert cancelled.state is RunState.CANCELLED
+    revisions = cancelled.revision, len(repository.read("run-001").events)  # type: ignore[union-attr]
+
+    assert lifecycle.checkpoint("late-step") == cancelled
+    assert service.status("run-001") == cancelled
+    current = repository.read("run-001")
+    assert current is not None
+    assert current.state is RunState.CANCELLED and current.checkpoint is None
+    assert (current.revision, len(current.events)) == revisions
+
+
+def test_late_checkpoint_with_stale_token_is_rejected_while_cancelled():
+    """The ignore path never bypasses launch-token arbitration for stale writers."""
+    repository = InMemoryExecutionRepository()
+    executor = FakeExecutor()
+    service = _service(repository, executor)
+    stale_lifecycle = _running(service, executor)
+    first = repository.read("run-001")
+    assert first is not None and first.launch_token is not None
+    stale_token = first.launch_token
+
+    assert service.recover_abandoned_launch("run-001", token=stale_token).state is RunState.QUEUED
+    recovered = repository.read("run-001")
+    assert recovered is not None and recovered.launch_token is not None
+    assert recovered.launch_token != stale_token
+    current_lifecycle = ExecutionLifecycle(service, "run-001", recovered.launch_token)
+    assert current_lifecycle.started().state is RunState.RUNNING
+    assert service.cancel("run-001").state is RunState.RUNNING
+    assert current_lifecycle.cancelled().state is RunState.CANCELLED
+
+    with pytest.raises(ExecutionServiceError) as error:
+        stale_lifecycle.checkpoint("late-step")
+
+    assert error.value.code is ErrorCode.INVALID_STATE_TRANSITION
+    assert service.status("run-001").state is RunState.CANCELLED
+
+
+def test_late_checkpoint_after_completion_is_rejected():
+    """The ignore path is scoped to cancellation, not to every terminal state."""
+    repository = InMemoryExecutionRepository()
+    executor = FakeExecutor()
+    service = _service(repository, executor)
+    lifecycle = _running(service, executor)
+    assert lifecycle.completed().state is RunState.COMPLETED
+    completed = service.status("run-001")
+
+    with pytest.raises(ExecutionServiceError) as error:
+        lifecycle.checkpoint("late-step")
+
+    assert error.value.code is ErrorCode.INVALID_STATE_TRANSITION
+    assert service.status("run-001") == completed
+
+
+def test_cancel_pending_ignore_is_scoped_to_the_checkpoint_callback():
+    """Only the checkpoint callback drops late cancel-pending reports."""
+    repository = InMemoryExecutionRepository()
+    executor = FakeExecutor()
+    service = _service(repository, executor)
+    lifecycle = _running(service, executor)
+    assert service.cancel("run-001").state is RunState.RUNNING
+
+    assert lifecycle.checkpoint("late-step").state is RunState.RUNNING
+    with pytest.raises(ExecutionServiceError) as paused_error:
+        lifecycle.paused()
+    assert paused_error.value.code is ErrorCode.INVALID_STATE_TRANSITION
+    with pytest.raises(ExecutionServiceError) as started_error:
+        lifecycle.started()
+    assert started_error.value.code is ErrorCode.INVALID_STATE_TRANSITION
+    assert service.status("run-001").state is RunState.RUNNING
+
+
 def test_resume_generates_a_new_token_with_the_current_checkpoint():
     """Resume pre-verifies, queues a new attempt, and forwards its checkpoint."""
     repository = InMemoryExecutionRepository()

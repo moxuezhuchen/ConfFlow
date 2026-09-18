@@ -868,3 +868,133 @@ def test_direct_adapter_active_cancel_uses_derived_cancel_beacon(tmp_path: Path)
 
     assert expected_beacon.exists()
     assert service.status(run_id).state is RunState.CANCELLED
+
+
+def test_direct_adapter_late_checkpoint_after_cancel_keeps_run_cancelled(tmp_path: Path):
+    """A stopped step's late checkpoint callback must not turn cancel into failure."""
+    input_xyz, config, work = _files(tmp_path)
+    run_id = "run-adapter-cancel-checkpoint-race"
+    identity = ExecutableIdentity(sha256="f" * 64)
+    service_holder: dict[str, ExecutionService] = {}
+
+    def runner(**kwargs):
+        service = service_holder["service"]
+        assert service.cancel(run_id).state is RunState.RUNNING
+        kwargs["on_step_status_change"](SimpleNamespace(name="step", status="failed", fail_count=0))
+        raise StopRequestedError("cancelled")
+
+    spec = WorkflowRunSpec(
+        run_id=run_id,
+        input_xyz=(str(input_xyz),),
+        config_file=str(config),
+        work_dir=str(work),
+        cancel_beacon_file=str(tmp_path / "CANCEL"),
+    )
+    executor = ServiceWorkflowExecutor(spec, runner)
+    service = ExecutionService(
+        repository=InMemoryExecutionRepository(),
+        executor=executor,
+        identity_verifier=_StaticIdentityVerifier(identity),
+    )
+    service_holder["service"] = service
+    executor.bind(service)
+    service.prepare(PrepareRequest(run_id, run_id, "a" * 64, "b" * 64, "c" * 64, identity))
+
+    # The worker thread may transition to RUNNING before execute() returns.
+    assert service.execute(run_id).state in {RunState.QUEUED, RunState.RUNNING}
+    with pytest.raises(StopRequestedError):
+        executor.wait(timeout=2)
+
+    aggregate = service._repository.read(run_id)  # noqa: SLF001 - durable state assertion
+    assert aggregate is not None
+    assert aggregate.state is RunState.CANCELLED
+    assert aggregate.cancel_pending is False
+    assert aggregate.checkpoint is None
+    assert [event.type for event in aggregate.events] == [
+        "prepared",
+        "queued",
+        "running",
+        "cancel_requested",
+        "cancelled",
+    ]
+
+
+def test_direct_adapter_ordinary_failure_after_cancel_is_not_relabelled(tmp_path: Path):
+    """A durable cancel intent never rewrites a genuine runner failure into success."""
+    input_xyz, config, work = _files(tmp_path)
+    run_id = "run-adapter-cancel-pending-value-error"
+    identity = ExecutableIdentity(sha256="d" * 64)
+    service_holder: dict[str, ExecutionService] = {}
+
+    def runner(**kwargs):
+        service = service_holder["service"]
+        assert service.cancel(run_id).state is RunState.RUNNING
+        kwargs["on_step_status_change"](SimpleNamespace(name="step", status="failed", fail_count=1))
+        raise ValueError("ordinary runner failure")
+
+    spec = WorkflowRunSpec(run_id, (str(input_xyz),), str(config), str(work))
+    executor = ServiceWorkflowExecutor(spec, runner)
+    service = ExecutionService(
+        repository=InMemoryExecutionRepository(),
+        executor=executor,
+        identity_verifier=_StaticIdentityVerifier(identity),
+    )
+    service_holder["service"] = service
+    executor.bind(service)
+    service.prepare(PrepareRequest(run_id, run_id, "a" * 64, "b" * 64, "c" * 64, identity))
+
+    assert service.execute(run_id).state in {RunState.QUEUED, RunState.RUNNING}
+    with pytest.raises(ValueError, match="ordinary runner failure"):
+        executor.wait(timeout=2)
+
+    aggregate = service._repository.read(run_id)  # noqa: SLF001 - durable state assertion
+    assert aggregate is not None
+    assert aggregate.state is RunState.FAILED
+    assert [event.type for event in aggregate.events] == [
+        "prepared",
+        "queued",
+        "running",
+        "cancel_requested",
+        "failed",
+    ]
+
+
+def test_direct_adapter_late_checkpoint_after_failure_is_still_a_runner_error(tmp_path: Path):
+    """The ignore path must not swallow a non-cancellation invalid transition."""
+    input_xyz, config, work = _files(tmp_path)
+    run_id = "run-adapter-checkpoint-no-cancel"
+    identity = ExecutableIdentity(sha256="e" * 64)
+    service_holder: dict[str, ExecutionService] = {}
+
+    def runner(**kwargs):
+        service = service_holder["service"]
+        aggregate = service._repository.read(run_id)  # noqa: SLF001 - force a stale callback
+        assert aggregate is not None and aggregate.launch_token is not None
+        ExecutionLifecycle(service, run_id, aggregate.launch_token).failed()
+        kwargs["on_step_status_change"](SimpleNamespace(name="step", status="failed", fail_count=1))
+
+    spec = WorkflowRunSpec(run_id, (str(input_xyz),), str(config), str(work))
+    executor = ServiceWorkflowExecutor(spec, runner)
+    service = ExecutionService(
+        repository=InMemoryExecutionRepository(),
+        executor=executor,
+        identity_verifier=_StaticIdentityVerifier(identity),
+    )
+    service_holder["service"] = service
+    executor.bind(service)
+    service.prepare(PrepareRequest(run_id, run_id, "a" * 64, "b" * 64, "c" * 64, identity))
+
+    assert service.execute(run_id).state in {RunState.QUEUED, RunState.RUNNING}
+    with pytest.raises(ExecutionServiceError) as caught:
+        executor.wait(timeout=2)
+
+    assert caught.value.code is ErrorCode.INVALID_STATE_TRANSITION
+    aggregate = service._repository.read(run_id)  # noqa: SLF001 - durable state assertion
+    assert aggregate is not None
+    assert aggregate.state is RunState.FAILED
+    assert [event.type for event in aggregate.events] == [
+        "prepared",
+        "queued",
+        "running",
+        "failed",
+    ]
