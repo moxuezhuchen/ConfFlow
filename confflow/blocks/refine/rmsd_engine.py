@@ -394,16 +394,17 @@ def _build_candidate_priority(
         candidates = positions_b.get(element)
         if not candidates:
             return None
-        scored = sorted(
-            (
-                float(
-                    np.sum((fingerprint_candidate[index] - fingerprint_representative[other]) ** 2)
-                ),
-                other,
-            )
-            for other in candidates
-        )
-        priority[index] = tuple(other for _, other in scored)
+        # Vectorised squared fingerprint distances for this candidate atom
+        # against every same-element representative atom.  ``positions_b`` is
+        # built in ascending index order and ``argsort(kind="stable")`` keeps
+        # that order for equal scores, reproducing the previous
+        # ``sorted((score, other))`` tie-breaking exactly.  The per-row
+        # reduction matches the previous per-pair ``np.sum`` on a 1-D row.
+        candidate_indices = np.asarray(candidates, dtype=np.intp)
+        diff = fingerprint_representative[candidate_indices] - fingerprint_candidate[index]
+        scores = np.sum(diff * diff, axis=1)
+        order = np.argsort(scores, kind="stable")
+        priority[index] = tuple(int(candidate_indices[position]) for position in order)
     return priority
 
 

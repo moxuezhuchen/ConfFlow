@@ -1033,3 +1033,55 @@ def test_f2_final_output_replace_failure_restores_old_output_and_report(tmp_path
     assert out.read_text(encoding="utf-8") == "old output\n"
     assert report.read_text(encoding="utf-8") == '{"old_report": true}\n'
     assert list(tmp_path.glob("*.tmp")) == []
+
+
+def test_build_candidate_priority_matches_reference_ordering():
+    """Pin candidate-priority ordering against the per-pair sorted reference."""
+    from confflow.blocks.refine.rmsd_engine import (
+        _build_candidate_priority,
+        _element_distance_fingerprint,
+    )
+    from confflow.blocks.refine.topology import build_graph
+
+    here = Path(__file__).parent
+    frame = read_xyz_file(str(here / "pentane.xyz"))[0]
+    atoms = list(frame["atoms"])
+    coords = np.asarray(frame["coords"], dtype=np.float64)
+
+    reverse = list(range(len(atoms)))[::-1]
+    cand_atoms = [atoms[i] for i in reverse]
+    cand_coords = coords[reverse]
+
+    graph_candidate = build_graph(cand_atoms, cand_coords).graph
+    graph_representative = build_graph(atoms, coords).graph
+
+    got = _build_candidate_priority(graph_candidate, graph_representative, cand_coords, coords)
+
+    # independent reference: the straightforward per-pair sorted order
+    elements = sorted(
+        set(graph_candidate.atomic_numbers) | set(graph_representative.atomic_numbers)
+    )
+    fp_candidate = _element_distance_fingerprint(
+        graph_candidate.atomic_numbers, cand_coords, elements
+    )
+    fp_representative = _element_distance_fingerprint(
+        graph_representative.atomic_numbers, coords, elements
+    )
+    positions_b: dict[int, list[int]] = {}
+    for index in range(graph_representative.n):
+        positions_b.setdefault(graph_representative.atomic_numbers[index], []).append(index)
+
+    expected = {}
+    for index in range(graph_candidate.n):
+        candidates = positions_b[graph_candidate.atomic_numbers[index]]
+        scored = sorted(
+            (
+                float(np.sum((fp_candidate[index] - fp_representative[other]) ** 2)),
+                other,
+            )
+            for other in candidates
+        )
+        expected[index] = tuple(other for _, other in scored)
+
+    assert got == expected
+    assert got is not None
