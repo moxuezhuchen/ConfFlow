@@ -5,7 +5,7 @@
 **快速指南**
 - **位置与用途**: 所有单元/集成/回归测试位于 `tests/` 目录。
 - **命名**: 测试文件必须以 `test_` 开头，测试函数以 `test_` 开头。
-- **共享资源**: 使用 `tests/conftest.py` 中的 fixtures（如 `cd_tmp`, `input_xyz`, `config_yaml`, `sync_executor`）替代每个文件内重复的 setup/teardown。复用 `tests/_helpers.py` 中的 Fake 对象（`FakeResultsDB`, `FakeExecutor` 等）。
+- **共享资源**: 使用 `tests/conftest.py` 中的 fixtures（如 `cd_tmp`, `input_xyz`, `config_yaml`）替代每个文件内重复的 setup/teardown。复用 `tests/_helpers.py` 中的 Fake 对象（`FakeResultsDB`, `FakeExecutor` 等）。
 - **断言风格**: 偏向具体、可重复的断言，避免对私有实现细节进行断言或 patch；优先使用黑盒接口或小型替身（fakes）来验证行为。
 - **参数化**: 对重复的输入→期望对使用 `@pytest.mark.parametrize` 简化。
 - **隔离**: 使用 `tmp_path` 代替 `tempfile` + 手动清理；`importlib.reload` 必须放在 `try/finally` 中。
