@@ -82,6 +82,14 @@ CI 也会执行 `pip check`，用于尽早发现声明依赖与解析结果不�
 |------|----------|------|
 | `test_config_models.py` | config/models | typed YAML 加载、全局参数合并、calc step runtime dict |
 | `test_validation.py` | workflow/validation | 输入验证与兼容性校验 |
+| `test_editor_manifest.py` | config/canonical/editor_manifest | editor manifest 信封、字段/选择/指针/条件一致性、default provenance |
+| `test_recipe_catalog.py` | config/canonical/recipes | recipe catalog 信封、目录一致性、recipe 意图与最小化 |
+| `test_producer_defaults.py` | shared/defaults, config/canonical/types | `DEFAULT_PROGRAM`/`DEFAULT_TASK` 单一来源与派生一致性 |
+| `test_configuration_contract_v2.py` | config/canonical/contract | v1 回归（键集/摘要冻结）、v2 信封形状、内嵌摘要、版本分派 |
+| `test_config_contract_v2_cli.py` | config/cli | `config contract [--version {1,2}]` 默认/显式行为、确定性、非法版本 |
+| `test_jobdesk_contract_compatibility.py` | 跨仓库 | 真实 CLI 子进程 → JobDesk V2 `parse_contract_bytes` 验收（需 JobDesk checkout，否则跳过） |
+
+> `test_jobdesk_contract_compatibility.py` 是跨仓库验收闸门：它把真实的 `confflow config contract --json --version 2` 输出交给 JobDesk V2 的契约解析器，要求得到 level C、`source=producer` 且零 findings。通过 `JOBDESK_V2_ROOT` 环境变量或 `--jobdesk-root` 定位 JobDesk 检出；找不到时整组测试跳过，因此不影响 ConfFlow 自身的 CI。人工排查可用 `python scripts/check_jobdesk_contract.py`。
 
 ### 构象生成 (`blocks/confgen/`)
 
