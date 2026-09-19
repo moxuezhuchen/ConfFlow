@@ -10,6 +10,8 @@ __all__ = [
     "DEFAULT_MAX_PARALLEL_JOBS",
     "DEFAULT_CHARGE",
     "DEFAULT_MULTIPLICITY",
+    "DEFAULT_PROGRAM",
+    "DEFAULT_TASK",
     "DEFAULT_RMSD_THRESHOLD",
     "DEFAULT_TS_RESCUE_SCAN",
     "DEFAULT_SCAN_COARSE_STEP",
@@ -37,6 +39,12 @@ DEFAULT_MAX_PARALLEL_JOBS = 1
 # Chemistry defaults
 DEFAULT_CHARGE = 0
 DEFAULT_MULTIPLICITY = 1
+
+# Calculation defaults.  ``GlobalOptions.iprog`` / ``.itask`` used to hardcode
+# these literals in the dataclass, which made the producer-owned editor manifest
+# a third copy of the same fact; they are shared constants now.
+DEFAULT_PROGRAM = "orca"
+DEFAULT_TASK = "opt_freq"
 
 # Refine defaults
 DEFAULT_RMSD_THRESHOLD = 0.25

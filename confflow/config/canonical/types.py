@@ -26,12 +26,14 @@ from ...shared.defaults import (
     DEFAULT_FORCE_CONSISTENCY,
     DEFAULT_MAX_PARALLEL_JOBS,
     DEFAULT_MULTIPLICITY,
+    DEFAULT_PROGRAM,
     DEFAULT_RESUME_FROM_BACKUPS,
     DEFAULT_RMSD_THRESHOLD,
     DEFAULT_SCAN_COARSE_STEP,
     DEFAULT_SCAN_FINE_STEP,
     DEFAULT_SCAN_UPHILL_LIMIT,
     DEFAULT_STOP_CHECK_INTERVAL_SECONDS,
+    DEFAULT_TASK,
     DEFAULT_TOTAL_MEMORY,
     DEFAULT_TS_BOND_DRIFT_THRESHOLD,
     DEFAULT_TS_RESCUE_SCAN,
@@ -325,8 +327,8 @@ class GlobalOptions:
     gaussian_write_chk: bool | None = None
     max_wall_time_seconds: float | None = None
     keyword: str | None = None
-    iprog: str = "orca"
-    itask: str = "opt_freq"
+    iprog: str = DEFAULT_PROGRAM
+    itask: str = DEFAULT_TASK
     blocks: str | dict[str, Any] | None = None
     orca_maxcore: int | str | None = None
 
@@ -419,8 +421,8 @@ class GlobalOptions:
                 else float(raw.get("max_wall_time_seconds"))
             ),
             keyword=None if raw.get("keyword") is None else str(raw.get("keyword")),
-            iprog=_normalize_iprog_label(raw.get("iprog", "orca")),
-            itask=_itask_label(raw.get("itask", "opt_freq")),
+            iprog=_normalize_iprog_label(raw.get("iprog", DEFAULT_PROGRAM)),
+            itask=_itask_label(raw.get("itask", DEFAULT_TASK)),
             blocks=raw.get("blocks"),
             orca_maxcore=raw.get("orca_maxcore", raw.get("maxcore")),
         )
