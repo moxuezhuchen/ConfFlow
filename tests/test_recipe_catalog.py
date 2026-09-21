@@ -37,7 +37,12 @@ from confflow.config.canonical.schema import workflow_json_schema
 from confflow.config.canonical.serialization import canonical_json, canonical_sha256
 from confflow.config.canonical.types import TaskName
 
-EXPECTED_RECIPE_IDS = ["optimize", "opt_freq", "single_point"]
+EXPECTED_RECIPE_IDS = ["optimize", "opt_freq", "single_point", "conformer_search"]
+
+#: The recipes whose document is one ``calc`` step.  ``conformer_search`` is
+#: a ``confgen`` step instead, so every calc-specific assertion is scoped to
+#: this subset rather than to the catalog as a whole.
+CALC_RECIPE_IDS = ["optimize", "opt_freq", "single_point"]
 
 #: ``params`` members that are a user's choice or a producer default.  A recipe
 #: that wrote any of these would turn a default into an explicit override the
@@ -52,6 +57,9 @@ MUST_NOT_BE_PINNED = {
     "multiplicity",
     "auto_clean",
     "enable_dynamic_resources",
+    # ``chains`` is the user naming bonds in *their* molecule, so it is a choice
+    # like ``keyword``: a recipe that pinned it would be describing one structure.
+    "chains",
 }
 
 
@@ -164,7 +172,18 @@ class TestRecipeDocuments:
         config = parse_workflow_mapping(_by_id(recipe_id)["document"])
 
         assert config.steps, recipe_id
+        assert all(step.type in {"calc", "confgen"} for step in config.steps), recipe_id
+
+    @pytest.mark.parametrize("recipe_id", CALC_RECIPE_IDS)
+    def test_a_calc_recipe_is_a_single_calc_step(self, recipe_id: str) -> None:
+        config = parse_workflow_mapping(_by_id(recipe_id)["document"])
+
         assert all(step.type == "calc" for step in config.steps), recipe_id
+
+    def test_the_conformer_recipe_is_a_confgen_step(self) -> None:
+        config = parse_workflow_mapping(_by_id("conformer_search")["document"])
+
+        assert [step.type for step in config.steps] == ["confgen"]
 
     def test_every_document_carries_a_global_block_and_steps(self) -> None:
         for item in _recipes():
@@ -190,16 +209,33 @@ class TestRecipeIntent:
                 pinned = set(params) & MUST_NOT_BE_PINNED
                 assert not pinned, f"{item['id']} pins {sorted(pinned)}"
 
-    def test_each_recipe_pins_exactly_its_task(self) -> None:
+    def test_each_calc_recipe_pins_exactly_its_task(self) -> None:
         for item in _recipes():
+            if item["id"] not in CALC_RECIPE_IDS:
+                continue
             params = _step_params(item)
             assert len(params) == 1, item["id"]
             assert set(params[0]) == {"itask"}, item["id"]
+
+    def test_a_confgen_recipe_pins_nothing_at_all(self) -> None:
+        """A confgen step's identity is its ``type``; there is no ``itask`` to pin.
+
+        Pinning anything else here (``chains``, ``angle_step``) would bake either a
+        user's choice or a producer default into the document, which is exactly what
+        rule 2 of the module docstring forbids.
+        """
+        for item in _recipes():
+            if item["id"] in CALC_RECIPE_IDS:
+                continue
+            for params in _step_params(item):
+                assert params == {}, item["id"]
 
     def test_pinned_tasks_are_legal_tasks(self) -> None:
         legal = set(get_args(TaskName))
         for item in _recipes():
             for params in _step_params(item):
+                if "itask" not in params:
+                    continue
                 assert params["itask"] in legal, item["id"]
 
     def test_the_pinned_task_is_the_one_the_label_promises(self) -> None:
@@ -213,7 +249,12 @@ class TestRecipeIntent:
 
     @pytest.mark.parametrize(
         ("recipe_id", "step_name"),
-        [("optimize", "opt"), ("opt_freq", "opt_freq"), ("single_point", "sp")],
+        [
+            ("optimize", "opt"),
+            ("opt_freq", "opt_freq"),
+            ("single_point", "sp"),
+            ("conformer_search", "confgen"),
+        ],
     )
     def test_the_step_name_is_the_expected_one(self, recipe_id: str, step_name: str) -> None:
         assert _by_id(recipe_id)["document"]["steps"][0]["name"] == step_name

@@ -81,6 +81,28 @@ _RECIPES: list[dict[str, Any]] = [
         "required_fields": ["calc.program", "calc.keyword"],
         "exposed_fields": ["calc.program", "calc.task", "calc.keyword"],
     },
+    {
+        "id": "conformer_search",
+        "label": "Conformer Search",
+        "description": (
+            "Build a conformer ensemble by rotating the bonds you name, then "
+            "search the resulting structures."
+        ),
+        "category": "Conformers",
+        "order": 40,
+        "document": {
+            "global": {},
+            "steps": [
+                {"name": "confgen", "type": "confgen", "params": {}},
+            ],
+        },
+        "required_fields": ["confgen.chains"],
+        "exposed_fields": [
+            "confgen.chains",
+            "confgen.angle_step",
+            "confgen.bond_multiplier",
+        ],
+    },
 ]
 
 _RECIPE_CATALOG: dict[str, Any] = {

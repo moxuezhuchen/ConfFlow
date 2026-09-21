@@ -87,7 +87,12 @@ EXPECTED_FIELD_IDS = {
     "confgen.bond_multiplier",
 }
 
-EXPECTED_RECIPE_IDS = {"optimize", "opt_freq", "single_point"}
+EXPECTED_RECIPE_IDS = {"optimize", "opt_freq", "single_point", "conformer_search"}
+
+#: The subset whose document is one ``calc`` step.  ``conformer_search`` is a
+#: ``confgen`` step, so it has no ``keyword`` to fill in and no ``itask`` to
+#: resolve; its round trip is covered by its own test below.
+CALC_RECIPE_IDS = ("optimize", "opt_freq", "single_point")
 
 #: Invokes the real console entry point without depending on the venv's scripts
 #: directory being on PATH.  ``confflow.main:main`` is what the console script
@@ -418,8 +423,8 @@ class TestRecipeRoundTripThroughTheProducer:
         assert "editor_metadata" not in mapping
         assert "editor_metadata" not in parsed.steps[0].params
 
-    @pytest.mark.parametrize("recipe_id", sorted(EXPECTED_RECIPE_IDS))
-    def test_every_published_recipe_survives_the_round_trip(
+    @pytest.mark.parametrize("recipe_id", CALC_RECIPE_IDS)
+    def test_every_published_calc_recipe_survives_the_round_trip(
         self, jobdesk, v2_bytes: bytes, recipe_id: str
     ) -> None:
         contract = jobdesk.parse(v2_bytes)
@@ -436,6 +441,39 @@ class TestRecipeRoundTripThroughTheProducer:
 
         assert resolved.keyword == "B3LYP/6-31G(d)"
         assert resolved.task in {"opt", "opt_freq", "sp"}
+
+    def test_the_published_conformer_recipe_survives_the_round_trip(
+        self, jobdesk, v2_bytes: bytes
+    ) -> None:
+        """Fill the required ``chains``, and ConfFlow still accepts the document."""
+        contract = jobdesk.parse(v2_bytes)
+        service = jobdesk.WorkflowEditorService(contract=contract)
+        draft = service.create_from_recipe("conformer_search")
+        step_id = service.step_views(draft)[0]["step_id"]
+        draft = service.apply(draft, jobdesk.SetStepField(step_id, "confgen.chains", ["1-2-3-4"]))
+
+        mapping = yaml.safe_load(service.serialize_text(draft))
+        config = parse_workflow_mapping(mapping)
+
+        assert config.steps[0].type == "confgen"
+        assert config.steps[0].params["chains"] == ["1-2-3-4"]
+
+    def test_the_conformer_recipe_alone_is_not_yet_runnable(self, jobdesk, v2_bytes: bytes) -> None:
+        """``chains`` is the recipe's declared required field, and ConfFlow agrees.
+
+        The document parses -- a confgen step with no chains is a legal workflow --
+        while the generator refuses to run it, which is the same producer/consumer
+        split the calc recipes rely on for ``keyword``.
+        """
+        contract = jobdesk.parse(v2_bytes)
+        service = jobdesk.WorkflowEditorService(contract=contract)
+        draft = service.create_from_recipe("conformer_search")
+
+        mapping = yaml.safe_load(service.serialize_text(draft))
+        config = parse_workflow_mapping(mapping)
+
+        assert config.steps[0].type == "confgen"
+        assert "chains" not in config.steps[0].params
 
     def test_a_recipe_alone_is_a_legal_document_but_not_yet_runnable(
         self, jobdesk, v2_bytes: bytes
