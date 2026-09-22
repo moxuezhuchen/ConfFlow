@@ -7,6 +7,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shutil
 from dataclasses import dataclass, field
 from typing import Any
@@ -17,11 +18,13 @@ from ..calc.runner import CalcStepRequest, CalcStepRunner
 from ..config.canonical import resolve_calc_step, resolve_global_options
 from ..config.models import GlobalOptions
 from ..core.exceptions import ConfFlowError
-from ..core.utils import get_logger
+from ..core.io import iter_xyz_frames
+from ..core.utils import get_logger, index_to_letter_prefix
+from ..core.xyz_metadata import parse_comment_metadata, upsert_comment_kv
 from ..shared.confgen_params import resolve_confgen_params
 from ..shared.defaults import DEFAULT_MAX_PARALLEL_JOBS
 from .composition import configure_default_refine
-from .helpers import is_multi_frame_any, pushd
+from .helpers import pushd
 from .stats import FailureTracker
 from .step_naming import build_step_dir_name_map
 
@@ -189,6 +192,190 @@ def _discard_confgen_artifacts(step_dir: str, expected_output: str) -> bool:
     return removed
 
 
+def _confgen_input_paths(current_input: str | list[str]) -> list[str]:
+    """Return the concrete XYZ paths represented by a step input."""
+    paths = [current_input] if isinstance(current_input, str) else list(current_input)
+    if not paths:
+        raise ConfFlowError("confgen requires at least one XYZ input file")
+    return [str(path) for path in paths]
+
+
+def _validate_confgen_inputs(current_input: str | list[str]) -> list[int]:
+    """Strictly validate every input and return its frame count.
+
+    ConfGen's chemistry loader intentionally reads one structure because it is
+    used for seed generation.  Workflow fan-in needs a different boundary: all
+    frames in every source must be valid before a merged output can be adopted.
+    Streaming the parser keeps this preflight bounded by one frame of memory.
+    """
+    frame_counts: list[int] = []
+    for path in _confgen_input_paths(current_input):
+        count = 0
+        try:
+            for _frame in iter_xyz_frames(path, parse_metadata=False, strict=True):
+                count += 1
+        except (OSError, ValueError) as exc:
+            raise ConfFlowError(f"invalid confgen XYZ input {path}: {exc}") from exc
+        if count == 0:
+            raise ConfFlowError(f"confgen XYZ input contains no frames: {path}")
+        frame_counts.append(count)
+    return frame_counts
+
+
+def _validate_confgen_output(path: str) -> bool:
+    """Return whether a cached ConfGen output is a non-empty XYZ stream."""
+    count = 0
+    try:
+        for _frame in iter_xyz_frames(path, parse_metadata=False, strict=True):
+            count += 1
+    except (OSError, ValueError):
+        return False
+    return count > 0
+
+
+def _has_confgen_cid_conflict(path: str) -> bool:
+    """Return whether one source repeats a conformer CID."""
+    seen: set[str] = set()
+    try:
+        for frame in iter_xyz_frames(path, parse_metadata=True, strict=True):
+            raw_cid = parse_comment_metadata(str(frame.get("comment", ""))).get("CID")
+            if not isinstance(raw_cid, str) or not raw_cid.strip():
+                continue
+            cid = raw_cid.strip()
+            if cid in seen:
+                return True
+            seen.add(cid)
+    except (OSError, ValueError):
+        # The strict preflight reports the useful input error.  Keep this
+        # predicate conservative if a source changes between the two reads.
+        return True
+    return False
+
+
+def _confgen_multi_frame_mode(current_input: str | list[str]) -> bool:
+    """Return whether the current input contains one or more extra frames.
+
+    This predicate deliberately operates on the current step input rather than
+    the workflow's original input list.  A DAG merge can therefore enter the
+    same pass-through mode as a single multi-frame source.
+    """
+    return any(count >= 2 for count in _validate_confgen_inputs(current_input))
+
+
+def _write_xyz_frame(handle: Any, frame: dict[str, Any], comment: str) -> None:
+    """Write one parsed XYZ frame without loading the complete trajectory."""
+    atoms = frame.get("atoms", [])
+    coords = frame.get("coords", [])
+    if len(atoms) != len(coords):
+        raise ConfFlowError(
+            "confgen input frame has mismatched atom and coordinate counts "
+            f"({len(atoms)} != {len(coords)})"
+        )
+    handle.write(f"{len(atoms)}\n{comment}\n")
+    for atom, coord in zip(atoms, coords):
+        try:
+            x, y, z = (float(value) for value in coord)
+        except (TypeError, ValueError) as exc:
+            raise ConfFlowError("confgen input frame contains invalid coordinates") from exc
+        # 17 significant digits round-trip an IEEE float while preserving the
+        # source coordinate values more faithfully than the generator's display
+        # formatter.  Element order is retained exactly as parsed.
+        handle.write(f"{atom:<2s} {x:.17g} {y:.17g} {z:.17g}\n")
+
+
+_LEGACY_NUMERIC_CID = re.compile(r"^\d+(?:\.0+)?$")
+
+
+def _merged_frame_cid(
+    comment: str,
+    *,
+    source_index: int,
+    frame_index: int,
+    used_cids: set[str],
+) -> str:
+    """Return a deterministic, unique CID while retaining existing IDs."""
+    raw_cid = parse_comment_metadata(comment).get("CID")
+    cid = str(raw_cid).strip() if isinstance(raw_cid, str) else ""
+    if not cid or _LEGACY_NUMERIC_CID.fullmatch(cid) or cid in used_cids:
+        prefix = index_to_letter_prefix(source_index)
+        candidate = f"{prefix}{frame_index + 1:06d}"
+        suffix = frame_index + 1
+        while candidate in used_cids:
+            suffix += 1
+            candidate = f"{prefix}{suffix:06d}"
+        cid = candidate
+    used_cids.add(cid)
+    return cid
+
+
+def _publish_validated_xyz_inputs(
+    current_input: str | list[str],
+    expected_output: str,
+    frame_counts: list[int],
+) -> None:
+    """Publish a validated single source or a streamed multi-source merge."""
+    paths = _confgen_input_paths(current_input)
+    temp_path = f"{expected_output}.tmp"
+    try:
+        try:
+            os.remove(temp_path)
+        except FileNotFoundError:
+            pass
+
+        rewrite_single = len(paths) == 1 and _has_confgen_cid_conflict(paths[0])
+        if len(paths) == 1 and not rewrite_single:
+            # Preserve a single source byte-for-byte, including comments and
+            # coordinate precision.  It was fully validated before this copy.
+            shutil.copy2(paths[0], temp_path)
+        else:
+            used_cids: set[str] = set()
+            written = 0
+            with open(temp_path, "w", encoding="utf-8") as handle:
+                for source_index, path in enumerate(paths):
+                    frame_index = 0
+                    for frame in iter_xyz_frames(path, parse_metadata=True, strict=True):
+                        comment = str(frame.get("comment", ""))
+                        original_cid = parse_comment_metadata(comment).get("CID")
+                        original_cid = (
+                            str(original_cid).strip()
+                            if isinstance(original_cid, str) and original_cid.strip()
+                            else None
+                        )
+                        cid = _merged_frame_cid(
+                            comment,
+                            source_index=source_index,
+                            frame_index=frame_index,
+                            used_cids=used_cids,
+                        )
+                        if original_cid != cid:
+                            comment = upsert_comment_kv(comment, "CID", cid)
+                            # A collision or a missing/legacy CID is remapped
+                            # to a source-scoped ID. Preserve the original
+                            # identifier and source location in comment
+                            # metadata so downstream records remain traceable.
+                            if original_cid is not None:
+                                comment = upsert_comment_kv(comment, "SourceCID", original_cid)
+                            comment = upsert_comment_kv(
+                                comment, "SourceFile", os.path.basename(path)
+                            )
+                            comment = upsert_comment_kv(comment, "SourceFrame", frame_index + 1)
+                        _write_xyz_frame(handle, frame, comment)
+                        frame_index += 1
+                        written += 1
+                    if frame_index != frame_counts[source_index]:
+                        raise ConfFlowError(f"confgen input changed while merging: {path}")
+            if written == 0:
+                raise ConfFlowError("confgen merge produced no XYZ frames")
+
+        os.replace(temp_path, expected_output)
+    except Exception:
+        try:
+            os.remove(temp_path)
+        except FileNotFoundError:
+            pass
+        raise
+
+
 def run_confgen_step(
     step_dir: str,
     current_input: str | list[str],
@@ -198,7 +385,12 @@ def run_confgen_step(
 ) -> StepExecutionResult:
     """Execute a conformer generation step (execution adapter layer)."""
     expected_output = os.path.join(step_dir, "search.xyz")
-    multi_frame = len(input_files) == 1 and is_multi_frame_any(current_input)
+    # Validate the complete current input before touching an existing output.
+    # The old predicate looked at the original workflow input count, so a DAG
+    # fan-in list was sent to the chemistry loader, which only reads frame one
+    # from each file.
+    frame_counts = _validate_confgen_inputs(current_input)
+    multi_frame = any(count >= 2 for count in frame_counts)
     run_kwargs = _build_confgen_run_kwargs(params, current_input, global_config)
     signature = _compute_confgen_step_signature(
         current_input=current_input,
@@ -208,24 +400,32 @@ def run_confgen_step(
     )
     cleaned_stale_artifacts = False
 
+    had_existing_artifact = os.path.exists(expected_output) or os.path.exists(
+        _confgen_signature_path(step_dir)
+    )
     if os.path.exists(expected_output):
         if _load_confgen_step_signature(step_dir) == signature:
-            return StepExecutionResult(
-                output_path=expected_output,
-                reused_existing=True,
-                copied_multi_frame=multi_frame,
-            )
-        cleaned_stale_artifacts = _discard_confgen_artifacts(step_dir, expected_output)
+            if _validate_confgen_output(expected_output):
+                return StepExecutionResult(
+                    output_path=expected_output,
+                    reused_existing=True,
+                    copied_multi_frame=multi_frame,
+                )
 
-    if multi_frame and isinstance(current_input, str):
-        shutil.copy2(current_input, expected_output)
+    if multi_frame:
+        _publish_validated_xyz_inputs(current_input, expected_output, frame_counts)
         _record_confgen_step_signature(step_dir, signature)
         return StepExecutionResult(
             output_path=expected_output,
             copied_multi_frame=True,
-            cleaned_stale_artifacts=cleaned_stale_artifacts,
+            cleaned_stale_artifacts=had_existing_artifact,
         )
     else:
+        # Generation owns its own streaming temporary output.  Remove an
+        # incompatible old artifact only after all input validation above has
+        # succeeded, preserving it when preflight rejects a later frame.
+        if had_existing_artifact:
+            cleaned_stale_artifacts = _discard_confgen_artifacts(step_dir, expected_output)
         with pushd(step_dir):
             confgen.run_generation(**run_kwargs)
         if not os.path.exists(expected_output):

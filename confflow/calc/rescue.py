@@ -33,6 +33,7 @@ from .analysis import (
     validate_ts_rmsd,
 )
 from .components import executor
+from .executor import CalcCancellationError
 from .policies import get_policy_for_config as _get_policy
 from .scan_ops import (
     _ConstrainedScanner,
@@ -327,6 +328,7 @@ def _run_ts_reoptimization(
     ts_job = f"{job}_rescue"
 
     ok = False
+    preserve_work_dir = False
     try:
         ts_cfg = dict(cfg)
         ts_cfg["keyword"] = cfg.get("keyword", "")
@@ -417,6 +419,13 @@ def _run_ts_reoptimization(
         )
         logger.info(f"TS rescue succeeded for {job} | r_peak={r_best:.3f} Å")
         return out
+    except CalcCancellationError as e:
+        # The executor raises this when it cannot prove that the rescue
+        # process boundary stopped.  Do not let the generic execution-error
+        # handler turn that into a recoverable rescue failure: its finally
+        # block would otherwise move artifacts and remove the live task dir.
+        preserve_work_dir = not e.confirmed
+        raise
     except (
         CalculationInputError,
         CalculationExecutionError,
@@ -432,11 +441,18 @@ def _run_ts_reoptimization(
         logger.warning(f"TS rescue failed for {job}: {e}")
         return None
     finally:
-        try:
-            keep = str(cfg.get("ts_rescue_keep_scan_dirs", "false")).lower() == "true"
-            executor.handle_backups(ts_wd, cfg, success=ok, cleanup_work_dir=(not keep))
-        except (OSError, RuntimeError) as _cleanup_err:
-            logger.debug(f"TS rescue cleanup failed (non-fatal): {_cleanup_err}")
+        if preserve_work_dir:
+            logger.error(
+                "Preserving rescue work directory for %s because cancellation was not confirmed: %s",
+                job,
+                ts_wd,
+            )
+        else:
+            try:
+                keep = str(cfg.get("ts_rescue_keep_scan_dirs", "false")).lower() == "true"
+                executor.handle_backups(ts_wd, cfg, success=ok, cleanup_work_dir=(not keep))
+            except (OSError, RuntimeError) as _cleanup_err:
+                logger.debug(f"TS rescue cleanup failed (non-fatal): {_cleanup_err}")
 
 
 def _ts_rescue_scan(task_info: dict[str, Any], fail_reason: str) -> dict[str, Any] | None:

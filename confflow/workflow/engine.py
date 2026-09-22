@@ -38,14 +38,16 @@ from .presenter import (
     print_workflow_start,
     write_final_statistics,
 )
+from .resume_validation import ResumeArtifactCompatibilityError, validate_reusable_artifact
 from .runtime_context import initialize_runtime_context
 from .state import StepRecord, WorkflowState, WorkflowStateStore
 from .stats import (
+    CheckpointManager,
     FailureTracker,
     TaskStatsCollector,
     Tracer,
 )
-from .step_handlers import StepExecutionResult
+from .step_handlers import StepExecutionResult, _resolve_chk_input_dir
 from .step_handlers import run_calc_step as step_run_calc_step
 from .step_handlers import run_confgen_step as step_run_confgen_step
 from .validation import validate_inputs_compatible
@@ -192,6 +194,13 @@ def run_workflow(
     if resume and preloaded_state is not None:
         _validate_state_binding(preloaded_state, config_binding)
         _validate_state_inputs(preloaded_state, input_files)
+    if resume:
+        _validate_resume_artifacts(
+            root_dir=prevalidated_root,
+            plan=plan,
+            state=preloaded_state,
+            checkpoint_index=CheckpointManager(prevalidated_root).load(),
+        )
 
     runtime = initialize_runtime_context(
         work_dir=work_dir,
@@ -272,17 +281,31 @@ def run_workflow(
                         reason="workflow state has no output path",
                     )
                 )
-            if not os.path.exists(state_record.output_xyz):
+            try:
+                reusable_output = validate_reusable_artifact(
+                    output_path=state_record.output_xyz,
+                    root_dir=root_dir,
+                    step_dir=step_dir,
+                    step_name=step_name,
+                    step_type=str(step.get("type", "")),
+                    current_input=_resolve_inputs_for_step(step_name),
+                    input_files=input_files,
+                    params=step.get("params", {}) or {},
+                    global_config=global_config,
+                    typed_global=typed_global,
+                    steps=steps,
+                )
+            except (ResumeArtifactCompatibilityError, OSError, ValueError, TypeError) as exc:
                 raise RuntimeError(
                     _resume_failure_message(
                         step_index=execution_index + 1,
                         step_name=state_record.name,
                         step_dir=step_dir,
-                        reason=f"saved output is missing: {state_record.output_xyz}",
+                        reason=str(exc),
                     )
-                )
-            step_outputs[step_name] = state_record.output_xyz
-            current_input = state_record.output_xyz
+                ) from exc
+            step_outputs[step_name] = reusable_output
+            current_input = reusable_output
             continue
 
         if resume_from_step >= execution_index:
@@ -296,7 +319,11 @@ def run_workflow(
             inputs_for_step = _resolve_inputs_for_step(step_name)
             if step.get("type") in ["calc", "task"]:
                 params = step.get("params", {}) or {}
-                calc_config = resolve_calc_step(params, typed_global)
+                calc_config = resolve_calc_step(
+                    params,
+                    typed_global,
+                    input_chk_dir=_resolve_chk_input_dir(params, root_dir, steps),
+                )
                 input_for_digest = (
                     inputs_for_step if isinstance(inputs_for_step, str) else inputs_for_step[0]
                 )
@@ -318,7 +345,34 @@ def run_workflow(
                         )
                     ) from exc
                 if prepared.reusable_output is not None:
-                    current_input = str(prepared.reusable_output)
+                    try:
+                        current_input = validate_reusable_artifact(
+                            output_path=str(prepared.reusable_output),
+                            root_dir=root_dir,
+                            step_dir=step_dir,
+                            step_name=step_name,
+                            step_type=str(step.get("type", "")),
+                            current_input=inputs_for_step,
+                            input_files=input_files,
+                            params=params,
+                            global_config=global_config,
+                            typed_global=typed_global,
+                            steps=steps,
+                        )
+                    except (
+                        ResumeArtifactCompatibilityError,
+                        OSError,
+                        ValueError,
+                        TypeError,
+                    ) as exc:
+                        raise RuntimeError(
+                            _resume_failure_message(
+                                step_index=execution_index + 1,
+                                step_name=step_name,
+                                step_dir=step_dir,
+                                reason=str(exc),
+                            )
+                        ) from exc
                     step_outputs[step_name] = current_input
                     _mark_step_completed(state, state_record, current_input, execution_index)
                     state_store.save(state)
@@ -335,7 +389,29 @@ def run_workflow(
 
             expected_output = resolve_step_output(step_dir, step.get("type"))
             if expected_output is not None and os.path.exists(expected_output):
-                current_input = expected_output
+                try:
+                    current_input = validate_reusable_artifact(
+                        output_path=expected_output,
+                        root_dir=root_dir,
+                        step_dir=step_dir,
+                        step_name=step_name,
+                        step_type=str(step.get("type", "")),
+                        current_input=inputs_for_step,
+                        input_files=input_files,
+                        params=step.get("params", {}) or {},
+                        global_config=global_config,
+                        typed_global=typed_global,
+                        steps=steps,
+                    )
+                except (ResumeArtifactCompatibilityError, OSError, ValueError, TypeError) as exc:
+                    raise RuntimeError(
+                        _resume_failure_message(
+                            step_index=execution_index + 1,
+                            step_name=step_name,
+                            step_dir=step_dir,
+                            reason=str(exc),
+                        )
+                    ) from exc
                 step_outputs[step_name] = current_input
                 _mark_step_completed(state, state_record, current_input, execution_index)
                 state_store.save(state)
@@ -500,18 +576,29 @@ def run_workflow(
                 state_store.save(state)
                 _notify_step_status_change(on_step_status_change, state_record)
 
-    # A disabled (skipped) terminal has no artifact of its own: it passes the
-    # workflow's external input through, which must not appear in the output
-    # manifest as if it were produced inside the workflow root.
-    outputting_terminals = [
-        name for name in terminal_steps if state.steps[name_to_dirname[name]].status != "skipped"
-    ]
-    terminal_outputs = {
-        name: _as_artifact_list(step_outputs[name]) for name in outputting_terminals
-    }
+    # A disabled node passes its effective input through.  That input can be
+    # an upstream generated artifact (which remains a valid terminal result),
+    # or an original input outside the workflow root (which must stay out of
+    # the output manifest).  Determine this from the paths rather than from
+    # ``status == skipped`` so ``source -> disabled sink`` still returns the
+    # source artifact.
+    terminal_outputs: dict[str, list[str]] = {}
+    for name in terminal_steps:
+        output = step_outputs.get(name)
+        record = state.steps[name_to_dirname[name]]
+        artifacts = (
+            _workflow_artifact_list(output, root_dir, initial_input)
+            if record.status == "skipped"
+            else _as_artifact_list(output or [])
+        )
+        if artifacts:
+            terminal_outputs[name] = artifacts
+    outputting_terminals = [name for name in terminal_steps if name in terminal_outputs]
     final_outputs = [artifact for artifacts in terminal_outputs.values() for artifact in artifacts]
     if len(outputting_terminals) == 1:
-        final_output = step_outputs[outputting_terminals[0]]
+        final_output = terminal_outputs[outputting_terminals[0]]
+        if len(final_output) == 1:
+            final_output = final_output[0]
     elif outputting_terminals:
         final_output = final_outputs
     else:
@@ -558,6 +645,132 @@ def finalize_workflow(
     )
 
 
+def _resolve_resume_inputs(
+    step_name: str,
+    predecessors: dict[str, list[str]],
+    outputs: dict[str, str | list[str]],
+    initial_input: str | list[str],
+) -> str | list[str]:
+    """Resolve a saved step input without consulting mutable runtime state."""
+    predecessor_names = predecessors[step_name]
+    if not predecessor_names:
+        return list(initial_input) if isinstance(initial_input, list) else initial_input
+
+    resolved: list[str] = []
+    for predecessor in predecessor_names:
+        output = outputs.get(predecessor)
+        if output is None:
+            raise RuntimeError(
+                f"workflow state has no reusable output for predecessor {predecessor!r}"
+            )
+        if isinstance(output, list):
+            resolved.extend(output)
+        else:
+            resolved.append(output)
+    return resolved[0] if len(resolved) == 1 else resolved
+
+
+def _validate_resume_artifacts(
+    *,
+    root_dir: str,
+    plan: Any,
+    state: WorkflowState | None,
+    checkpoint_index: int,
+) -> None:
+    """Validate every artifact strict resume may adopt before runtime setup."""
+    initial_input: str | list[str] = (
+        plan.input_files[0] if len(plan.input_files) == 1 else list(plan.input_files)
+    )
+    saved_outputs: dict[str, str | list[str]] = {}
+
+    for execution_index, step_name in enumerate(plan.execution_order):
+        step = plan.by_step_name[step_name]
+        dirname = plan.name_to_dirname[step_name]
+        step_dir = os.path.join(root_dir, dirname)
+        record = state.steps[dirname] if state is not None else None
+
+        try:
+            current_input = _resolve_resume_inputs(
+                step_name,
+                plan.predecessors,
+                saved_outputs,
+                initial_input,
+            )
+        except RuntimeError as exc:
+            # A later checkpoint cannot be trusted if one of its predecessor
+            # outputs is absent from the saved state.
+            if checkpoint_index >= execution_index:
+                raise RuntimeError(
+                    _resume_failure_message(
+                        step_index=execution_index + 1,
+                        step_name=step_name,
+                        step_dir=step_dir,
+                        reason=str(exc),
+                    )
+                ) from exc
+            current_input = initial_input
+
+        output_path: str | None = None
+        if record is not None and record.status == "completed":
+            output_path = record.output_xyz
+            if output_path is None:
+                raise RuntimeError(
+                    _resume_failure_message(
+                        step_index=execution_index + 1,
+                        step_name=record.name,
+                        step_dir=step_dir,
+                        reason="workflow state has no output path",
+                    )
+                )
+        elif record is not None and record.status == "skipped":
+            # A disabled step normally has no own artifact and simply forwards
+            # its input.  If a malformed state claims one, validate it rather
+            # than silently discarding the claim.
+            if record.output_xyz is not None:
+                output_path = record.output_xyz
+            else:
+                saved_outputs[step_name] = current_input
+                continue
+        elif checkpoint_index >= execution_index:
+            output_path = resolve_step_output(step_dir, step.get("type"))
+            if output_path is None:
+                raise RuntimeError(
+                    _resume_failure_message(
+                        step_index=execution_index + 1,
+                        step_name=step_name,
+                        step_dir=step_dir,
+                        reason=_expected_output_reason(step.get("type")),
+                    )
+                )
+        else:
+            continue
+
+        try:
+            validated = validate_reusable_artifact(
+                output_path=output_path,
+                root_dir=root_dir,
+                step_dir=step_dir,
+                step_name=step_name,
+                step_type=str(step.get("type", "")),
+                current_input=current_input,
+                input_files=plan.input_files,
+                params=step.get("params", {}) or {},
+                global_config=plan.global_config,
+                typed_global=plan.typed_global,
+                steps=plan.steps,
+            )
+        except (ResumeArtifactCompatibilityError, OSError, ValueError, TypeError) as exc:
+            raise RuntimeError(
+                _resume_failure_message(
+                    step_index=execution_index + 1,
+                    step_name=step_name,
+                    step_dir=step_dir,
+                    reason=str(exc),
+                )
+            ) from exc
+        saved_outputs[step_name] = validated
+
+
 def _initial_workflow_state(
     *,
     root_dir: str,
@@ -597,6 +810,36 @@ def _as_artifact_list(output: str | list[str]) -> list[str]:
     if isinstance(output, list):
         return [os.path.abspath(path) for path in output if isinstance(path, str)]
     return []
+
+
+def _workflow_artifact_list(
+    output: str | list[str] | None,
+    root_dir: str,
+    external_inputs: str | list[str],
+) -> list[str]:
+    """Return output paths that are files contained by the workflow root.
+
+    Disabled steps may forward an external original input.  Such a path is a
+    valid execution input but is not an artifact produced by this workflow and
+    therefore cannot be advertised by ``output_manifest.json``.
+    """
+    root = os.path.realpath(root_dir)
+    original_paths = {os.path.realpath(path) for path in _as_artifact_list(external_inputs)}
+    artifacts: list[str] = []
+    for path in _as_artifact_list(output or []):
+        resolved = os.path.realpath(path)
+        try:
+            contained = os.path.commonpath((root, resolved)) == root
+        except ValueError:
+            contained = False
+        if (
+            contained
+            and resolved != root
+            and resolved not in original_paths
+            and os.path.isfile(path)
+        ):
+            artifacts.append(os.path.abspath(path))
+    return artifacts
 
 
 def _reject_incomplete_manifest(

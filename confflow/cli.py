@@ -22,7 +22,11 @@ except ImportError:
 
 
 from .__build__ import COMMIT, DIRTY
-from .application.execution.workflow_adapter import run_workflow_through_service
+from .application.execution.errors import ExecutionServiceError
+from .application.execution.workflow_adapter import (
+    acquire_work_directory_lease,
+    run_workflow_through_service,
+)
 from .contract import (
     CAPABILITY_SCHEMA_VERSION,
     OUTPUT_MANIFEST_FILE,
@@ -506,18 +510,50 @@ def stop_all_confflow_processes() -> int:
     return 0
 
 
-def _service_run_id(config_file: str, input_files: list[str], work_dir: str) -> str:
-    """Derive a stable service run ID for one CLI work directory."""
-    payload = json.dumps(
-        {
-            "config_file": os.path.abspath(config_file),
-            "input_files": [os.path.abspath(path) for path in input_files],
-            "work_dir": os.path.abspath(work_dir),
-        },
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode("utf-8")
-    return "run_" + hashlib.sha256(payload).hexdigest()[:48]
+def _file_content_binding(path: str) -> dict[str, str | int]:
+    """Return the ordered file identity used by a CLI execution request.
+
+    A path alone is not an execution identity: callers commonly reuse a work
+    directory after editing either the workflow or an input.  Keep the path,
+    byte length, and digest together so the request remains unambiguous even
+    when several files concatenate to the same byte stream.
+    """
+    absolute = os.path.abspath(path)
+    digest = hashlib.sha256()
+    size = 0
+    with open(absolute, "rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+            size += len(chunk)
+    return {"path": absolute, "size": size, "sha256": digest.hexdigest()}
+
+
+def _service_run_id(
+    config_file: str,
+    input_files: list[str],
+    work_dir: str,
+    *,
+    original_input_files: list[str] | None = None,
+) -> str:
+    """Derive a stable run ID bound to one exact CLI request.
+
+    The ordered descriptor list preserves both input order and file
+    boundaries.  ``original_input_files`` is included for Gaussian inputs so
+    changing source text that happens to convert to the same XYZ cannot reuse
+    a prior successful service record.
+    """
+    payload = {
+        "config": _file_content_binding(config_file),
+        "input_files": [_file_content_binding(path) for path in input_files],
+        "original_input_files": (
+            None
+            if original_input_files is None
+            else [_file_content_binding(path) for path in original_input_files]
+        ),
+        "work_dir": os.path.abspath(work_dir),
+    }
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return "run_" + hashlib.sha256(encoded).hexdigest()[:48]
 
 
 def main(
@@ -691,41 +727,57 @@ def main(
 
     try:
         work_dir = validate_managed_path(work_dir, label="work_dir", sandbox_root=sandbox_root)
-        with cli_output_to_txt(first_input) as output_path:
-            # Support Gaussian input (.gjf/.com): auto-convert to single-frame XYZ then run workflow.
-            # Converted files are placed under work_dir/_converted_inputs/ to avoid polluting CWD.
-            converted_inputs: list[str] = []
-            os.makedirs(work_dir, exist_ok=True)
-            conv_dir = validate_managed_path(
-                os.path.join(work_dir, "_converted_inputs"),
-                label="_converted_inputs",
-                sandbox_root=sandbox_root,
-            )
-            for path in input_files:
-                ext = os.path.splitext(path)[1].lower()
-                if ext not in {".gjf", ".com"}:
-                    converted_inputs.append(path)
-                    continue
-                stem = os.path.splitext(os.path.basename(path))[0]
-                os.makedirs(conv_dir, exist_ok=True)
-                out_xyz = os.path.join(conv_dir, f"{stem}.xyz")
-                _convert_gjf_to_xyz(path, out_xyz)
-                converted_inputs.append(os.path.abspath(out_xyz))
-            input_files = converted_inputs
+        try:
+            work_lease = acquire_work_directory_lease(work_dir)
+        except (ExecutionServiceError, OSError) as error:
+            # No report belongs to this attempt until the work directory is
+            # locked; appending here would alter another active run's report.
+            print(f"Error: {error}", file=sys.stderr)
+            return ExitCode.RUNTIME_ERROR
+        try:
+            with cli_output_to_txt(first_input) as output_path:
+                # Support Gaussian input (.gjf/.com): auto-convert to single-frame XYZ then run workflow.
+                # Converted files are placed under work_dir/_converted_inputs/ to avoid polluting CWD.
+                converted_inputs: list[str] = []
+                os.makedirs(work_dir, exist_ok=True)
+                conv_dir = validate_managed_path(
+                    os.path.join(work_dir, "_converted_inputs"),
+                    label="_converted_inputs",
+                    sandbox_root=sandbox_root,
+                )
+                for path in input_files:
+                    ext = os.path.splitext(path)[1].lower()
+                    if ext not in {".gjf", ".com"}:
+                        converted_inputs.append(path)
+                        continue
+                    stem = os.path.splitext(os.path.basename(path))[0]
+                    os.makedirs(conv_dir, exist_ok=True)
+                    out_xyz = os.path.join(conv_dir, f"{stem}.xyz")
+                    _convert_gjf_to_xyz(path, out_xyz)
+                    converted_inputs.append(os.path.abspath(out_xyz))
+                input_files = converted_inputs
 
-            run_workflow_through_service(
-                input_xyz=input_files,
-                config_file=config_file,
-                work_dir=work_dir,
-                state_root=os.path.join(work_dir, ".confflow_execution"),
-                run_id=_service_run_id(config_file, input_files, work_dir),
-                original_input_files=original_input_files,
-                resume=bool(args.resume),
-                verbose=bool(args.verbose),
-                pause_beacon_file=None,
-                step_started_callback=None,
-                workflow_runner=run_workflow,
-            )
+                run_workflow_through_service(
+                    input_xyz=input_files,
+                    config_file=config_file,
+                    work_dir=work_dir,
+                    state_root=os.path.join(work_dir, ".confflow_execution"),
+                    run_id=_service_run_id(
+                        config_file,
+                        input_files,
+                        work_dir,
+                        original_input_files=original_input_files,
+                    ),
+                    original_input_files=original_input_files,
+                    resume=bool(args.resume),
+                    verbose=bool(args.verbose),
+                    pause_beacon_file=None,
+                    step_started_callback=None,
+                    work_directory_lease=work_lease,
+                    workflow_runner=run_workflow,
+                )
+        finally:
+            work_lease.release()
 
         return ExitCode.SUCCESS
     except ValueError as e:

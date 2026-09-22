@@ -27,7 +27,7 @@ from ..analysis import (
     validate_ts_bond_drift,
     validate_ts_rmsd,
 )
-from ..executor import CalcExecutor
+from ..executor import CalcCancellationError, CalcExecutor
 from ..policies import get_policy_for_config
 from ..rescue import _ts_rescue_scan
 from ..setup import get_itask, logger
@@ -68,6 +68,21 @@ class TaskRunner:
                 return "abnormal_termination"
             return "exec_error"
         return "worker_exception"
+
+    @classmethod
+    def _cancellation_failed_result(
+        cls, task_dict: dict[str, Any], exc: CalcCancellationError
+    ) -> dict[str, Any]:
+        """Return a failure that records an unconfirmed process stop clearly."""
+        detail = str(exc).strip() or "calculation process boundary is still live"
+        prefix = "Calculation cancellation could not be confirmed"
+        message = f"{prefix}: {detail}"
+        return cls._failed_result(
+            task_dict,
+            message,
+            "exec_error",
+            error_details=detail,
+        )
 
     @staticmethod
     def _failed_result(
@@ -123,6 +138,7 @@ class TaskRunner:
         os.makedirs(wd, exist_ok=True)
         success = False
         result_payload: dict[str, Any] | None = None
+        preserve_work_dir = False
 
         policy = self._get_policy(cfg)
 
@@ -146,9 +162,20 @@ class TaskRunner:
                         cfg,
                         calc_executor=self._calc_executor,
                     )
+            except CalcCancellationError as e:
+                # A cancellation exception is deliberately handled before the
+                # generic execution-error branch.  An unconfirmed process
+                # boundary must never enter TS rescue, because rescue could
+                # start another calculation while the original is alive.
+                preserve_work_dir = not e.confirmed
+                return self._cancellation_failed_result(task_dict, e)
             except StopRequestedError as e:
                 return self._failed_result(task_dict, str(e), "stop_requested")
-            except (CalculationInputError, CalculationExecutionError, CalculationParseError) as e:
+            except (
+                CalculationInputError,
+                CalculationExecutionError,
+                CalculationParseError,
+            ) as e:
                 error_kind = self._classify_error(e)
                 if get_itask(cfg) == 4:
                     rescued = self._try_rescue(cfg, task_dict, str(e))
@@ -191,6 +218,13 @@ class TaskRunner:
                     return self._failed_result(task_dict, "No coords", "parse_error")
 
             num_imag_raw = res.get("num_imag_freqs")
+            if itask == 3 and num_imag_raw is None:
+                return self._failed_result(
+                    task_dict,
+                    "opt_freq task requires frequency information; no frequency data was parsed "
+                    "from output",
+                    "parse_error",
+                )
             num_imag = 0 if num_imag_raw is None else int(num_imag_raw)
             lowest_freq = res.get("lowest_freq")
 
@@ -392,15 +426,29 @@ class TaskRunner:
                 result["ts_bond_length"] = ts_bond_length
             result_payload = result
             return result
+        except CalcCancellationError as e:
+            # Rescue is called from the exception handlers above.  If rescue
+            # itself cannot prove that its process stopped, this outer guard
+            # preserves the original task directory as well.
+            preserve_work_dir = not e.confirmed
+            return self._cancellation_failed_result(task_dict, e)
         finally:
-            backup_ok = executor.handle_backups(
-                wd,
-                cfg,
-                success,
-                cleanup_work_dir=self._cleanup_work_dir_enabled(cfg, raw_config),
-            )
-            if success and not backup_ok:
-                if result_payload is not None:
-                    result_payload["backup_ok"] = False
-                    result_payload["error_details"] = "One or more backup operations failed."
-                logger.warning("Backup failed for successful task %s in %s", job, wd)
+            if preserve_work_dir:
+                logger.error(
+                    "Preserving work directory for task %s because calculation cancellation "
+                    "was not confirmed: %s",
+                    job,
+                    wd,
+                )
+            else:
+                backup_ok = executor.handle_backups(
+                    wd,
+                    cfg,
+                    success,
+                    cleanup_work_dir=self._cleanup_work_dir_enabled(cfg, raw_config),
+                )
+                if success and not backup_ok:
+                    if result_payload is not None:
+                        result_payload["backup_ok"] = False
+                        result_payload["error_details"] = "One or more backup operations failed."
+                    logger.warning("Backup failed for successful task %s in %s", job, wd)

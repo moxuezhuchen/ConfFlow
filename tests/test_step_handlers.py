@@ -10,6 +10,7 @@ import pytest
 
 from confflow.calc.runner import CalcStepResult
 from confflow.core.exceptions import ConfFlowError
+from confflow.core.io import read_xyz_file
 from confflow.workflow.step_handlers import (
     ConfgenSignatureCompatibilityError,
     StepExecutionResult,
@@ -48,6 +49,113 @@ def test_confgen_multiframe_input_is_copied_and_reused(tmp_path):
     assert first.copied_multi_frame is True
     assert second.reused_existing is True
     assert (step_dir / ".confgen_signature").exists()
+
+
+def test_confgen_fanin_preserves_every_frame_and_metadata(tmp_path):
+    step_dir = tmp_path / "step_01_confgen"
+    step_dir.mkdir()
+    left = tmp_path / "left.xyz"
+    left.write_text(
+        "1\nEnergy=-1 | CID=A000001 | Source=left\nH 0 0 0\n"
+        "1\nEnergy=-2 | CID=A000002 | Source=left\nH 0 0 1\n",
+        encoding="utf-8",
+    )
+    right = tmp_path / "right.xyz"
+    # Deliberately reuse the left CIDs.  The merge must retain all frames and
+    # assign deterministic source-scoped IDs to the collisions.
+    right.write_text(
+        "1\nEnergy=-3 | CID=A000001 | Source=right\nH 1 0 0\n"
+        "1\nEnergy=-4 | CID=A000002 | Source=right\nH 1 0 1\n",
+        encoding="utf-8",
+    )
+
+    result = run_confgen_step(
+        step_dir=str(step_dir),
+        current_input=[str(left), str(right)],
+        params={},
+        input_files=[str(left), str(right)],
+    )
+
+    frames = read_xyz_file(result.output_path, strict=True)
+    assert result.copied_multi_frame is True
+    assert len(frames) == 4
+    assert [frame["coords"][0][0] for frame in frames] == [0.0, 0.0, 1.0, 1.0]
+    assert [frame["metadata"]["Source"] for frame in frames] == [
+        "left",
+        "left",
+        "right",
+        "right",
+    ]
+    cids = [frame["metadata"]["CID"] for frame in frames]
+    assert len(cids) == len(set(cids))
+    assert cids[:2] == ["A000001", "A000002"]
+    assert cids[2:] == ["B000001", "B000002"]
+    assert [frame["metadata"]["SourceCID"] for frame in frames[2:]] == [
+        "A000001",
+        "A000002",
+    ]
+    assert [frame["metadata"]["SourceFrame"] for frame in frames[2:]] == [1.0, 2.0]
+
+
+def test_confgen_fanin_mixed_single_and_multi_frame_inputs(tmp_path):
+    step_dir = tmp_path / "step_01_confgen"
+    step_dir.mkdir()
+    single = _xyz(tmp_path / "single.xyz")
+    multi = _xyz(tmp_path / "multi.xyz", multi=True)
+
+    result = run_confgen_step(
+        step_dir=str(step_dir),
+        current_input=[str(single), str(multi)],
+        params={},
+        input_files=[str(single), str(multi)],
+    )
+
+    frames = read_xyz_file(result.output_path, strict=True)
+    assert len(frames) == 3
+    assert [frame["coords"][0][2] for frame in frames] == [0.0, 0.0, 1.0]
+
+
+def test_confgen_single_source_cid_conflict_keeps_original_id_trace(tmp_path):
+    step_dir = tmp_path / "step_01_confgen"
+    step_dir.mkdir()
+    source = tmp_path / "duplicate.xyz"
+    source.write_text(
+        "1\nCID=old\nH 0 0 0\n1\nCID=old\nH 0 0 1\n",
+        encoding="utf-8",
+    )
+
+    result = run_confgen_step(
+        step_dir=str(step_dir),
+        current_input=str(source),
+        params={},
+        input_files=[str(source)],
+    )
+
+    frames = read_xyz_file(result.output_path, strict=True)
+    assert [frame["metadata"]["CID"] for frame in frames] == ["old", "A000002"]
+    assert frames[1]["metadata"]["SourceCID"] == "old"
+    assert frames[1]["metadata"]["SourceFrame"] == 2.0
+
+
+def test_confgen_fanin_rejects_invalid_later_frame_without_replacing_output(tmp_path):
+    step_dir = tmp_path / "step_01_confgen"
+    step_dir.mkdir()
+    existing = step_dir / "search.xyz"
+    existing.write_text("1\nold\nH 9 9 9\n", encoding="utf-8")
+    left = _xyz(tmp_path / "left.xyz", multi=True)
+    invalid = tmp_path / "invalid.xyz"
+    invalid.write_text("1\nvalid\nH 1 0 0\n1\ntruncated\n", encoding="utf-8")
+
+    with pytest.raises(ConfFlowError, match="invalid confgen XYZ input"):
+        run_confgen_step(
+            step_dir=str(step_dir),
+            current_input=[str(left), str(invalid)],
+            params={},
+            input_files=[str(left), str(invalid)],
+        )
+
+    assert existing.read_text(encoding="utf-8") == "1\nold\nH 9 9 9\n"
+    assert not (step_dir / "search.xyz.tmp").exists()
 
 
 def test_confgen_recomputes_when_params_change(tmp_path, monkeypatch):

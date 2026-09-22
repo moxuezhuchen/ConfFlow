@@ -199,3 +199,73 @@ def test_export_uses_workflow_step_order_when_available(tmp_path):
         "z_second_alphabetically",
         "a_first_alphabetically",
     ]
+
+
+def test_export_uses_collision_safe_workflow_step_mapping(tmp_path):
+    work_dir = tmp_path / "work"
+    for dirname, job_name in (("A", "job_a"), ("A_3", "job_b"), ("A_2", "job_c")):
+        step_dir = work_dir / dirname
+        step_dir.mkdir(parents=True)
+        _write_result_db(
+            step_dir / "results.db",
+            [{"job_name": job_name, "status": "success"}],
+        )
+    (work_dir / "workflow_stats.json").write_text(
+        json.dumps(
+            {
+                "steps": [
+                    {"index": 1, "name": "A!", "type": "calc"},
+                    {"index": 2, "name": "A?", "type": "calc"},
+                    {"index": 3, "name": "A_2", "type": "calc"},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = export_results(str(work_dir), output_format="json")
+    rows = json.loads((work_dir / "confflow_results.json").read_text(encoding="utf-8"))
+
+    assert result.row_count == 3
+    assert [(row["step_name"], row["job_name"]) for row in rows] == [
+        ("A!", "job_a"),
+        ("A?", "job_b"),
+        ("A_2", "job_c"),
+    ]
+
+
+def test_export_prefers_exact_state_directory_mapping_after_resume(tmp_path):
+    work_dir = tmp_path / "work"
+    for dirname, job_name in (("A", "job_a"), ("A_3", "job_b"), ("A_2", "job_c")):
+        step_dir = work_dir / dirname
+        step_dir.mkdir(parents=True)
+        _write_result_db(
+            step_dir / "results.db",
+            [{"job_name": job_name, "status": "success"}],
+        )
+    (work_dir / ".workflow_state.json").write_text(
+        json.dumps(
+            {
+                "steps": {
+                    "A": {"name": "A!", "type": "calc"},
+                    "A_3": {"name": "A?", "type": "calc"},
+                    "A_2": {"name": "A_2", "type": "calc"},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    # A resumed run may only list the last step in its fresh statistics.
+    (work_dir / "workflow_stats.json").write_text(
+        json.dumps({"steps": [{"index": 3, "name": "A_2", "type": "calc"}]}),
+        encoding="utf-8",
+    )
+
+    export_results(str(work_dir), output_format="json")
+    rows = json.loads((work_dir / "confflow_results.json").read_text(encoding="utf-8"))
+
+    assert {row["job_name"]: row["step_name"] for row in rows} == {
+        "job_a": "A!",
+        "job_b": "A?",
+        "job_c": "A_2",
+    }

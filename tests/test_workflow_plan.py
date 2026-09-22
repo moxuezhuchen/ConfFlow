@@ -9,6 +9,7 @@ import pytest
 
 from confflow.config.models import GlobalOptions
 from confflow.workflow.plan import WorkflowPlan, build_workflow_plan
+from confflow.workflow.step_naming import build_step_dir_name_map
 
 
 def _write_xyz(path: Path, label: str = "seed") -> None:
@@ -105,3 +106,22 @@ def test_build_workflow_plan_keeps_legacy_linear_fallback_and_shape(tmp_path: Pa
         "enabled": True,
         "params": {"keyword": "HF"},
     }
+
+
+@pytest.mark.parametrize(
+    "names, expected",
+    [
+        (["A!", "A?", "A_2"], ["A", "A_3", "A_2"]),
+        (["A!", "A?", "A#", "A_2"], ["A", "A_3", "A_4", "A_2"]),
+        (["A_2", "A!", "A?"], ["A_2", "A", "A_3"]),
+        (["A!", "A_2", "A?"], ["A", "A_2", "A_3"]),
+    ],
+)
+def test_step_directory_names_reserve_all_bases(names: list[str], expected: list[str]) -> None:
+    steps = [{"name": name, "type": "confgen"} for name in names]
+
+    dirnames, by_name = build_step_dir_name_map(steps)
+
+    assert dirnames == expected
+    assert len(dirnames) == len(set(dirnames))
+    assert {name: by_name[name] for name in names} == dict(zip(names, expected, strict=True))

@@ -12,9 +12,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from confflow.contract import RUN_SUMMARY_FILE, WORKFLOW_STATS_FILE
+from confflow.contract import RUN_SUMMARY_FILE, WORKFLOW_STATE_FILE, WORKFLOW_STATS_FILE
 from confflow.core.path_policy import validate_managed_path
-from confflow.workflow.step_naming import sanitize_step_dir_name
+from confflow.workflow.step_naming import build_step_dir_name_map
 
 __all__ = [
     "EXPORT_FIELDS",
@@ -100,6 +100,23 @@ def _load_json_file(path: Path) -> dict[str, Any] | None:
 
 
 def _load_step_meta(work_dir: str) -> _StepMeta:
+    # A workflow state file keys records by the exact directory name chosen by
+    # the planner.  Prefer it when present: a resumed run's stats only contain
+    # steps executed during that attempt and cannot reconstruct omitted steps
+    # or collision-safe names from their partial list.
+    state_data = _load_json_file(Path(work_dir) / WORKFLOW_STATE_FILE)
+    state_steps = state_data.get("steps") if state_data else None
+    state_order: dict[str, int] = {}
+    state_names: dict[str, str] = {}
+    if isinstance(state_steps, dict):
+        for index, (raw_dirname, raw_step) in enumerate(state_steps.items(), start=1):
+            dirname = str(raw_dirname)
+            if Path(dirname).name != dirname or not isinstance(raw_step, dict):
+                continue
+            raw_name = str(raw_step.get("name") or "").strip()
+            state_order[dirname] = index
+            state_names[dirname] = raw_name or dirname
+
     for filename in (WORKFLOW_STATS_FILE, RUN_SUMMARY_FILE):
         data = _load_json_file(Path(work_dir) / filename)
         if not data:
@@ -108,26 +125,47 @@ def _load_step_meta(work_dir: str) -> _StepMeta:
         if not isinstance(steps, list):
             continue
 
-        used: dict[str, int] = {}
         order: dict[str, int] = {}
         names: dict[str, str] = {}
-        for fallback_index, step in enumerate(steps, start=1):
+        normalized_steps: list[dict[str, Any]] = []
+        for step in steps:
             if not isinstance(step, dict):
                 continue
+            normalized_steps.append(step)
+
+        # Use the state mapping when available.  Otherwise use the same global
+        # collision allocator as planning/execution.  A local ``base ->
+        # count`` loop can map ``A!``, ``A?``, ``A_2`` to the same directory.
+        fallback_dirnames, _ = build_step_dir_name_map(normalized_steps)
+        for fallback_index, (step, dirname) in enumerate(
+            zip(normalized_steps, fallback_dirnames, strict=True), start=1
+        ):
             raw_name = str(step.get("name") or "").strip()
-            dirname = sanitize_step_dir_name(raw_name, fallback=f"step_{fallback_index:02d}")
-            duplicate_count = used.get(dirname, 0)
-            used[dirname] = duplicate_count + 1
-            dirname = dirname if duplicate_count == 0 else f"{dirname}_{duplicate_count + 1}"
+
+            if state_names:
+                matching = [
+                    state_dirname
+                    for state_dirname, state_name in state_names.items()
+                    if state_name == (raw_name or state_dirname)
+                ]
+                if len(matching) == 1:
+                    dirname = matching[0]
 
             raw_index = step.get("index", fallback_index)
             index = raw_index if isinstance(raw_index, int) else fallback_index
             order[dirname] = index
             names[dirname] = raw_name or dirname
         if order:
+            if state_names:
+                # Preserve exact directory records for steps omitted from a
+                # resumed stats payload; stats indexes remain authoritative for
+                # ordering whenever they are available.
+                for dirname, name in state_names.items():
+                    names.setdefault(dirname, name)
+                    order.setdefault(dirname, state_order.get(dirname, 1_000_000))
             return _StepMeta(order=order, names=names)
 
-    return _StepMeta(order={}, names={})
+    return _StepMeta(order=state_order, names=state_names)
 
 
 def _table_columns(conn: sqlite3.Connection) -> set[str]:

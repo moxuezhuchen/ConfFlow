@@ -28,6 +28,7 @@ from ..core.keyword_rewrite import (
 from ..shared.defaults import DEFAULT_SCAN_FINE_HALF_WINDOW, DEFAULT_SCAN_MAX_STEPS
 from .components import executor
 from .components.input_helpers import append_gaussian_modredundant
+from .executor import CalcCancellationError
 from .policies import get_policy_for_config as _get_policy
 
 logger = logging.getLogger("confflow.calc.rescue")
@@ -431,6 +432,10 @@ class _ConstrainedScanner:
                 (res.get("final_coords") or adjusted),
                 None,
             )
+        except CalcCancellationError:
+            # A live or unverified calculation boundary must reach the task
+            # runner so it can preserve the entire rescue work tree.
+            raise
         except (OSError, RuntimeError, ValueError, TypeError, KeyError) as exc:
             msg = str(exc)
             _write_scan_marker(scan_dir, job_name, msg)

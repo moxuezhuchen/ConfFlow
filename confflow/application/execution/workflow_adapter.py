@@ -8,11 +8,13 @@ conversion of the producer manifest into service artifacts.
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import inspect
 import json
 import os
 import shutil
+import stat
 import sys
 import threading
 from collections.abc import Callable, Sequence
@@ -20,6 +22,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Protocol
 
+from ...artifact_json import write_atomic_json
 from ...contract import OUTPUT_MANIFEST_SCHEMA
 from ...core.exceptions import StopRequestedError
 from ...workflow.engine import run_workflow as default_workflow_runner
@@ -39,13 +42,21 @@ from .service import ExecutionLifecycle, ExecutionService
 from .sqlite import SQLiteExecutionRepository
 from .state_root import StateRoot
 
+try:
+    import fcntl as _fcntl
+except ImportError:  # pragma: no cover - Windows has no fcntl
+    _fcntl = None  # type: ignore[assignment]
+
 __all__ = [
     "ServiceWorkflowExecutor",
     "WorkflowRunSpec",
+    "acquire_work_directory_lease",
     "build_workflow_service",
     "open_control_service",
     "run_workflow_through_service",
 ]
+
+_EXECUTION_IDENTITY_FILE = ".confflow_execution_identity.json"
 
 
 class WorkflowRunner(Protocol):
@@ -68,6 +79,9 @@ class WorkflowRunSpec:
     pause_beacon_file: str | None = None
     cancel_beacon_file: str | None = None
     step_started_callback: Callable[[str, str, str], None] | None = None
+    # The interactive CLI acquires this before converting any input files so
+    # an active attempt protects the whole work-directory mutation boundary.
+    work_directory_lease: _WorkDirectoryLease | None = None
 
 
 class FileIdentityVerifier(IdentityVerifier):
@@ -135,6 +149,8 @@ class ServiceWorkflowExecutor(WorkflowExecutor):
             raise self._error
 
     def _run(self, request: LaunchRequest) -> None:
+        work_lease: _WorkDirectoryLease | None = None
+        owns_work_lease = False
         try:
             service = self._service
             if service is None:
@@ -150,6 +166,21 @@ class ServiceWorkflowExecutor(WorkflowExecutor):
                         if error.code is not ErrorCode.INVALID_STATE_TRANSITION:
                             raise
                     return
+            work_lease = self._spec.work_directory_lease
+            if work_lease is None:
+                work_lease = _WorkDirectoryLease(self._spec.work_dir)
+                owns_work_lease = True
+                acquired = work_lease.acquire()
+            else:
+                acquired = True
+            if not acquired:
+                # Claim the service token before reporting the conflict so the
+                # rejected attempt cannot remain durably queued forever.
+                lifecycle.started()
+                raise ExecutionServiceError(
+                    ErrorCode.ALREADY_RUNNING,
+                    f"Work directory is already running: {self._spec.work_dir}",
+                )
             try:
                 lifecycle.started()
             except ExecutionServiceError as error:
@@ -206,7 +237,9 @@ class ServiceWorkflowExecutor(WorkflowExecutor):
             self._result = self._workflow_runner(
                 **runner_kwargs,
             )
-            lifecycle.completed(_load_artifacts(self._spec.work_dir))
+            artifacts = _load_artifacts(self._spec.work_dir)
+            _write_execution_identity(self._spec)
+            lifecycle.completed(artifacts)
         except StopRequestedError as error:
             self._error = error
             service = self._service
@@ -239,6 +272,8 @@ class ServiceWorkflowExecutor(WorkflowExecutor):
                     if lifecycle_error.code is not ErrorCode.INVALID_STATE_TRANSITION:
                         self._error = lifecycle_error
         finally:
+            if work_lease is not None and owns_work_lease:
+                work_lease.release()
             self._finished.set()
 
 
@@ -264,6 +299,91 @@ class _CurrentProcessIdentity(FileIdentityVerifier):
 
     def __init__(self, executable: str | None = None) -> None:
         super().__init__(sys.executable if executable is None else executable)
+
+
+_WORK_LOCKS: dict[str, threading.Lock] = {}
+_WORK_LOCKS_GUARD = threading.Lock()
+
+
+class _WorkDirectoryLease:
+    """Hold an advisory lock for the lifetime of one workflow attempt.
+
+    The service run ID is content-bound, so editing an input creates a new
+    durable record.  A work-directory lease keeps that identity change from
+    allowing two live attempts to mutate the same checkpoint and step files.
+    POSIX ``flock`` is process-crash safe; the in-process fallback only applies
+    on platforms without ``fcntl``.
+    """
+
+    def __init__(self, work_dir: str) -> None:
+        self._path = Path(work_dir).resolve(strict=False) / ".confflow-work.lock"
+        self._fd: int | None = None
+        self._local_lock: threading.Lock | None = None
+
+    def acquire(self) -> bool:
+        """Try to acquire the work-directory lease without waiting."""
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        if _fcntl is not None:
+            nofollow = getattr(os, "O_NOFOLLOW", 0)
+            fd = os.open(self._path, os.O_RDWR | os.O_CREAT | nofollow, 0o600)
+            try:
+                metadata = os.fstat(fd)
+                if not stat.S_ISREG(metadata.st_mode):
+                    raise OSError("work-directory lock must be a regular file")
+                getuid = getattr(os, "getuid", None)
+                if getuid is not None and metadata.st_uid != getuid():
+                    raise OSError("work-directory lock owner does not match the active user")
+                if stat.S_IMODE(metadata.st_mode) != 0o600:
+                    os.fchmod(fd, 0o600)
+                try:
+                    _fcntl.flock(fd, _fcntl.LOCK_EX | _fcntl.LOCK_NB)
+                except OSError as error:
+                    if error.errno in {errno.EACCES, errno.EAGAIN}:
+                        return self._close_fd(fd)
+                    raise
+            except BaseException:
+                os.close(fd)
+                raise
+            self._fd = fd
+            return True
+
+        # The durable execution service is POSIX-only today.  Keep direct
+        # adapter calls deterministic on other platforms with a process-local
+        # lock rather than pretending a stale marker proves ownership.
+        key = str(self._path)
+        with _WORK_LOCKS_GUARD:
+            lock = _WORK_LOCKS.setdefault(key, threading.Lock())
+        if not lock.acquire(blocking=False):
+            return False
+        self._local_lock = lock
+        return True
+
+    def _close_fd(self, fd: int) -> bool:
+        os.close(fd)
+        return False
+
+    def release(self) -> None:
+        """Release the lease; repeated release is harmless."""
+        fd, self._fd = self._fd, None
+        if fd is not None:
+            try:
+                _fcntl.flock(fd, _fcntl.LOCK_UN)
+            finally:
+                os.close(fd)
+        lock, self._local_lock = self._local_lock, None
+        if lock is not None:
+            lock.release()
+
+
+def acquire_work_directory_lease(work_dir: str) -> _WorkDirectoryLease:
+    """Acquire the shared work-directory lease before preflight mutations."""
+    lease = _WorkDirectoryLease(work_dir)
+    if not lease.acquire():
+        raise ExecutionServiceError(
+            ErrorCode.ALREADY_RUNNING,
+            f"Work directory is already running: {work_dir}",
+        )
+    return lease
 
 
 def build_workflow_service(
@@ -314,6 +434,7 @@ def run_workflow_through_service(
     cancel_beacon_file: str | None = None,
     original_input_files: Sequence[str] | None = None,
     step_started_callback: Callable[[str, str, str], None] | None = None,
+    work_directory_lease: _WorkDirectoryLease | None = None,
     workflow_runner: WorkflowRunner = default_workflow_runner,
 ) -> dict[str, Any] | None:
     """Run the legacy engine synchronously while all state transitions use the service."""
@@ -328,22 +449,57 @@ def run_workflow_through_service(
         pause_beacon_file=pause_beacon_file,
         cancel_beacon_file=cancel_beacon_file,
         step_started_callback=step_started_callback,
+        work_directory_lease=work_directory_lease,
     )
     service, executor = build_workflow_service(
         spec,
         state_root=state_root,
         workflow_runner=workflow_runner,
     )
-    identity = executor_identity(service)
-    request = PrepareRequest(
-        run_id=run_id,
-        idempotency_key=run_id,
-        request_digest=_request_digest(spec),
-        workflow_config_digest=_file_digest(config_file),
-        input_manifest_digest=_inputs_digest(input_xyz),
-        expected_executable_identity=identity,
-    )
+    request = _prepare_request(spec, executor_identity(service))
     snapshot = service.prepare(request)
+    if snapshot.state is RunState.FAILED and resume:
+        # A successful retry leaves this base record FAILED. Every explicit
+        # resume must revalidate artifacts, including completed retries.
+        spec, service, executor, snapshot = _prepare_failed_retry(
+            spec,
+            state_root=state_root,
+            workflow_runner=workflow_runner,
+            initial_service=service,
+            revalidate_completed=True,
+        )
+        run_id = spec.run_id
+    elif snapshot.state is RunState.COMPLETED and resume:
+        # ``--resume`` is an explicit strict validation request.  Route it
+        # through a fresh controlled record so the engine checks every saved
+        # artifact before reporting success; a plain repeated invocation is
+        # still an attach-only query below.
+        spec, service, executor, snapshot = _prepare_failed_retry(
+            spec,
+            state_root=state_root,
+            workflow_runner=workflow_runner,
+            initial_service=service,
+            revalidate_completed=True,
+        )
+        run_id = spec.run_id
+    elif (
+        work_directory_lease is not None
+        and not resume
+        and snapshot.state in {RunState.COMPLETED, RunState.FAILED, RunState.CANCELLED}
+    ):
+        # Each non-resume interactive CLI invocation is an explicit fresh
+        # request.  A content-bound historical record is retained for audit,
+        # while a new attempt is allowed to rebuild the shared work directory.
+        spec, service, executor, snapshot = _prepare_failed_retry(
+            spec,
+            state_root=state_root,
+            workflow_runner=workflow_runner,
+            initial_service=service,
+            revalidate_completed=True,
+            fresh_execution=True,
+            retry_resume=False,
+        )
+        run_id = spec.run_id
     if snapshot.state is RunState.PAUSED:
         if not resume:
             raise ExecutionServiceError(
@@ -359,7 +515,7 @@ def run_workflow_through_service(
                 ErrorCode.INVALID_STATE_TRANSITION,
                 "Run is already running and cannot be attached by this process",
             )
-        return _load_stats(work_dir)
+        return _load_completed_stats(service, run_id, work_dir, spec)
     elif snapshot.state in {RunState.FAILED, RunState.CANCELLED}:
         raise ExecutionServiceError(ErrorCode.TERMINAL_RUN, f"Run is terminal: {run_id}")
 
@@ -379,6 +535,78 @@ def run_workflow_through_service(
     if final.state is not RunState.COMPLETED:
         raise ExecutionServiceError(ErrorCode.INTERNAL, f"Workflow ended in {final.state.value}")
     return executor._result  # noqa: SLF001 - adapter result is its synchronous facade
+
+
+def _prepare_request(spec: WorkflowRunSpec, identity: ExecutableIdentity) -> PrepareRequest:
+    """Build a prepare request from one immutable workflow specification."""
+    return PrepareRequest(
+        run_id=spec.run_id,
+        idempotency_key=spec.run_id,
+        request_digest=_request_digest(spec),
+        workflow_config_digest=_file_digest(spec.config_file),
+        input_manifest_digest=_inputs_digest(spec.input_xyz),
+        expected_executable_identity=identity,
+    )
+
+
+def _prepare_failed_retry(
+    spec: WorkflowRunSpec,
+    *,
+    state_root: str | Path,
+    workflow_runner: WorkflowRunner,
+    initial_service: ExecutionService,
+    revalidate_completed: bool = False,
+    fresh_execution: bool = False,
+    retry_resume: bool = True,
+) -> tuple[WorkflowRunSpec, ExecutionService, ServiceWorkflowExecutor, Any]:
+    """Create or attach a new durable attempt for a strict local CLI retry.
+
+    The control protocol intentionally keeps terminal states terminal.  The
+    local synchronous CLI can still offer ``--resume`` by creating a distinct
+    service record while passing ``resume=True`` to the existing workflow
+    engine.  Every prior terminal attempt remains queryable in the repository.
+    """
+    del initial_service  # The candidate services share its durable repository root.
+    for retry_number in range(1, 1000):
+        retry_id = _failed_retry_run_id(spec.run_id, retry_number)
+        retry_spec = replace(spec, run_id=retry_id, resume=retry_resume)
+        retry_service, retry_executor = build_workflow_service(
+            retry_spec,
+            state_root=state_root,
+            workflow_runner=workflow_runner,
+        )
+        retry_request = _prepare_request(retry_spec, executor_identity(retry_service))
+        try:
+            retry_snapshot = retry_service.prepare(retry_request)
+        except ExecutionServiceError as error:
+            # A collision with a pre-existing record must not silently become
+            # a different request.  The generated IDs are deterministic and
+            # only a matching prior attempt may be reused.
+            raise error
+        if (
+            retry_snapshot.state is RunState.FAILED
+            or (revalidate_completed and retry_snapshot.state is RunState.COMPLETED)
+            or (fresh_execution and retry_snapshot.state is RunState.CANCELLED)
+        ):
+            continue
+        if retry_snapshot.state is RunState.CANCELLED:
+            raise ExecutionServiceError(
+                ErrorCode.TERMINAL_RUN,
+                f"Run is terminal: {retry_id}",
+            )
+        if retry_snapshot.state is RunState.COMPLETED:
+            return retry_spec, retry_service, retry_executor, retry_snapshot
+        return retry_spec, retry_service, retry_executor, retry_snapshot
+    raise ExecutionServiceError(
+        ErrorCode.INTERNAL,
+        f"Too many failed resume attempts for run: {spec.run_id}",
+    )
+
+
+def _failed_retry_run_id(run_id: str, retry_number: int) -> str:
+    """Return a bounded deterministic ID for a local failed-run retry."""
+    suffix = f".resume.{retry_number}"
+    return f"{run_id[: 128 - len(suffix)]}{suffix}"
 
 
 def executor_identity(service: ExecutionService) -> ExecutableIdentity:
@@ -423,20 +651,39 @@ def _file_digest(path: str) -> str:
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
-def _inputs_digest(paths: Sequence[str]) -> str:
+def _file_content_binding(path: str) -> dict[str, str | int]:
+    """Return a path-and-content descriptor for request identity binding."""
+    absolute = os.path.abspath(path)
     digest = hashlib.sha256()
-    for path in paths:
-        digest.update(Path(path).read_bytes())
-    return digest.hexdigest()
+    size = 0
+    with open(absolute, "rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+            size += len(chunk)
+    return {"path": absolute, "size": size, "sha256": digest.hexdigest()}
+
+
+def _inputs_digest(paths: Sequence[str]) -> str:
+    encoded = json.dumps(
+        [_file_content_binding(path) for path in paths],
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def _request_digest(spec: WorkflowRunSpec) -> str:
     encoded = json.dumps(
         {
             "run_id": spec.run_id,
-            "input_xyz": list(spec.input_xyz),
-            "config_file": spec.config_file,
-            "work_dir": spec.work_dir,
+            "input_xyz": [_file_content_binding(path) for path in spec.input_xyz],
+            "original_input_files": (
+                None
+                if spec.original_input_files is None
+                else [_file_content_binding(path) for path in spec.original_input_files]
+            ),
+            "config": _file_content_binding(spec.config_file),
+            "work_dir": os.path.abspath(spec.work_dir),
         },
         sort_keys=True,
         separators=(",", ":"),
@@ -489,3 +736,97 @@ def _load_stats(work_dir: str) -> dict[str, Any] | None:
     except (OSError, json.JSONDecodeError):
         return None
     return value if isinstance(value, dict) else None
+
+
+def _load_completed_stats(
+    service: ExecutionService,
+    run_id: str,
+    work_dir: str,
+    spec: WorkflowRunSpec,
+) -> dict[str, Any] | None:
+    """Attach to a completed run only while its required files still exist."""
+    stats = _load_stats(work_dir)
+    if stats is None:
+        raise ExecutionServiceError(
+            ErrorCode.ARTIFACT_INTEGRITY_FAILED,
+            f"Completed run is missing workflow stats: {run_id}",
+        )
+
+    declared_outputs = stats.get("final_outputs")
+    if not isinstance(declared_outputs, list):
+        declared_outputs = [stats.get("final_output")]
+    for output in declared_outputs:
+        if not isinstance(output, str):
+            continue
+        candidate = Path(output)
+        if not candidate.is_absolute():
+            candidate = Path(work_dir) / candidate
+        if not candidate.is_file() or candidate.stat().st_size <= 0:
+            raise ExecutionServiceError(
+                ErrorCode.ARTIFACT_INTEGRITY_FAILED,
+                f"Completed run output is missing or empty: {output}",
+            )
+
+    identity_path = Path(work_dir) / _EXECUTION_IDENTITY_FILE
+    if identity_path.exists():
+        try:
+            identity = json.loads(identity_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as error:
+            raise ExecutionServiceError(
+                ErrorCode.ARTIFACT_INTEGRITY_FAILED,
+                f"Completed run identity marker is invalid: {identity_path}",
+            ) from error
+        if not isinstance(identity, dict) or identity.get("request_digest") != _request_digest(
+            spec
+        ):
+            raise ExecutionServiceError(
+                ErrorCode.ARTIFACT_INTEGRITY_FAILED,
+                f"Completed run belongs to a different workflow request: {run_id}",
+            )
+
+    state_path = Path(work_dir) / ".workflow_state.json"
+    if state_path.exists():
+        try:
+            state_payload = json.loads(state_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as error:
+            raise ExecutionServiceError(
+                ErrorCode.ARTIFACT_INTEGRITY_FAILED,
+                f"Completed run workflow state is invalid: {state_path}",
+            ) from error
+        if not isinstance(state_payload, dict) or state_payload.get("final_status") != "completed":
+            raise ExecutionServiceError(
+                ErrorCode.ARTIFACT_INTEGRITY_FAILED,
+                f"Completed run workflow state is not complete: {state_path}",
+            )
+
+    # Test doubles and older adapters may not expose the terminal artifact
+    # projection.  The workflow stats checks above remain useful there; the
+    # durable service projection supplies stronger digest/size checks when it
+    # is available.
+    artifacts_method = getattr(service, "artifacts", None)
+    if artifacts_method is None:
+        return stats
+    manifest = artifacts_method(run_id)
+    for artifact in manifest.artifacts:
+        candidate = Path(work_dir) / artifact.path
+        if (
+            not candidate.is_file()
+            or candidate.stat().st_size != artifact.size
+            or _file_digest(str(candidate)) != artifact.sha256
+        ):
+            raise ExecutionServiceError(
+                ErrorCode.ARTIFACT_INTEGRITY_FAILED,
+                f"Completed run artifact is missing or changed: {artifact.path}",
+            )
+    return stats
+
+
+def _write_execution_identity(spec: WorkflowRunSpec) -> None:
+    """Publish the request identity only after the workflow produced its outputs."""
+    write_atomic_json(
+        Path(spec.work_dir) / _EXECUTION_IDENTITY_FILE,
+        {
+            "run_id": spec.run_id,
+            "request_digest": _request_digest(spec),
+        },
+    )

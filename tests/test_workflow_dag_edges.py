@@ -61,6 +61,56 @@ def test_disabled_terminal_root_does_not_crash_finalize(tmp_path, monkeypatch):
     assert str(input_xyz) not in manifest
 
 
+def test_disabled_terminal_forwards_upstream_artifact(tmp_path, monkeypatch):
+    input_xyz = _write_input(tmp_path)
+    config = tmp_path / "workflow.yaml"
+    config.write_text(
+        "global: {}\n"
+        "steps:\n"
+        "  - name: source\n"
+        "    type: confgen\n"
+        "  - name: sink\n"
+        "    type: confgen\n"
+        "    enabled: false\n"
+        "    inputs: [source]\n",
+        encoding="utf-8",
+    )
+    work_dir = tmp_path / "work"
+    captured = _patch_confgen(monkeypatch)
+
+    stats = run_workflow([str(input_xyz)], str(config), str(work_dir))
+
+    source_output = work_dir / "source" / "search.xyz"
+    assert captured["inputs"] == [str(input_xyz.resolve())]
+    assert stats["final_output"] == str(source_output)
+    assert stats["terminal_outputs"] == {"sink": [str(source_output)]}
+    manifest = (work_dir / "output_manifest.json").read_text(encoding="utf-8")
+    assert '"sink": [' in manifest
+    assert "source/search.xyz" in manifest
+
+
+def test_all_disabled_workflow_does_not_publish_input_inside_work_dir(tmp_path, monkeypatch):
+    work_dir = tmp_path / "work"
+    work_dir.mkdir()
+    input_xyz = work_dir / "input.xyz"
+    input_xyz.write_text("1\nseed\nH 0 0 0\n", encoding="utf-8")
+    config = tmp_path / "workflow.yaml"
+    config.write_text(
+        "global: {}\n"
+        "steps:\n"
+        "  - name: disabled\n"
+        "    type: confgen\n"
+        "    enabled: false\n",
+        encoding="utf-8",
+    )
+
+    stats = run_workflow([str(input_xyz)], str(config), str(work_dir))
+
+    assert stats["final_output"] == str(input_xyz.resolve())
+    assert stats["terminal_outputs"] == {}
+    assert '"terminals": {}' in (work_dir / "output_manifest.json").read_text(encoding="utf-8")
+
+
 def test_duplicate_predecessors_are_deduped(tmp_path, monkeypatch):
     input_xyz = _write_input(tmp_path)
     config = tmp_path / "workflow.yaml"

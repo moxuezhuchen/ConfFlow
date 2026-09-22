@@ -80,15 +80,22 @@ class TaskSourceBuilder:
     ) -> tuple[list[models.TaskContext], dict[str, dict[str, Any]]]:
         tasks: list[models.TaskContext] = []
         job_meta_map: dict[str, dict[str, Any]] = {}
-        used_names: dict[str, int] = {}
+        # Keep the set of *final* names separate from the duplicate counters.
+        # A generated ``A_dup1`` can itself be a later input name, so checking
+        # only the original candidate would let that task overwrite the first
+        # duplicate's directory and database row.
+        used_names: set[str] = set()
+        next_duplicate_index: dict[str, int] = {}
 
         for i, geom in enumerate(self.iter_geometries_fn(input_xyz_file)):
-            job_name = self.job_name_fn(i, geom)
-            if job_name in used_names:
-                used_names[job_name] += 1
-                job_name = f"{job_name}_dup{used_names[job_name]}"
-            else:
-                used_names[job_name] = 0
+            base_job_name = self.job_name_fn(i, geom)
+            job_name = base_job_name
+            duplicate_index = next_duplicate_index.get(base_job_name, 0)
+            while job_name in used_names:
+                duplicate_index += 1
+                job_name = f"{base_job_name}_dup{duplicate_index}"
+            next_duplicate_index[base_job_name] = duplicate_index
+            used_names.add(job_name)
             task = models.TaskContext(
                 job_name=job_name,
                 work_dir=os.path.join(self.work_dir, job_name),

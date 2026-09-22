@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 import threading
+import time
+from types import SimpleNamespace
 from unittest.mock import MagicMock
+
+import pytest
 
 
 def _policy(*, input_ext: str = "inp", log_ext: str = "log", name: str = "Mock"):
@@ -275,3 +280,211 @@ def test_local_executor_thread_safe_handle(tmp_path):
         t.join(timeout=5)
     assert len(results) == 4
     assert all(results)
+
+
+@pytest.mark.skipif(os.name != "posix", reason="process-group contract requires POSIX")
+def test_local_executor_cancel_stops_term_ignoring_child(tmp_path):
+    """Cancellation escalates from TERM to KILL for the whole calc group."""
+    from confflow.calc.executor import LocalCalcExecutor
+
+    work_dir = tmp_path / "calc"
+    work_dir.mkdir()
+    child_pid_file = work_dir / "child.pid"
+    parent_code = (
+        "import pathlib, subprocess, sys, time; "
+        "child = subprocess.Popen([sys.executable, '-c', "
+        "'import signal,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(60)'], "
+        "cwd=sys.argv[1]); "
+        "pathlib.Path(sys.argv[2]).write_text(str(child.pid), encoding='ascii'); "
+        "time.sleep(60)"
+    )
+    executor = LocalCalcExecutor(terminate_timeout=0.25, kill_timeout=1.0)
+    handle = executor.submit(
+        str(work_dir),
+        "tree",
+        _policy(),
+        None,
+        {},
+        [sys.executable, "-c", parent_code, str(work_dir), str(child_pid_file)],
+        None,
+    )
+    process = handle.executor_data["_proc"]
+    child_pid: int | None = None
+    try:
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and not child_pid_file.exists():
+            time.sleep(0.01)
+        assert child_pid_file.exists()
+        child_pid = int(child_pid_file.read_text(encoding="ascii"))
+        assert process.poll() is None
+
+        executor.cancel(handle)
+
+        assert process.poll() is not None
+        assert not _pid_is_running(child_pid)
+        assert handle.executor_data["_cancel_confirmed"] is True
+        assert "_stdout" not in handle.executor_data
+        assert "_stderr" not in handle.executor_data
+    finally:
+        _kill_test_process_group(process, child_pid)
+
+
+@pytest.mark.skipif(os.name != "posix", reason="process-group contract requires POSIX")
+@pytest.mark.parametrize("boundary_lookup_missing", [False, True])
+def test_local_executor_cancel_handles_exited_parent_with_live_child(
+    tmp_path, monkeypatch, boundary_lookup_missing
+):
+    """A child left behind after its parent exits remains in the calc boundary."""
+    from confflow.calc.executor import LocalCalcExecutor
+
+    if boundary_lookup_missing:
+        monkeypatch.setattr("confflow.calc.executor._safe_process_group_id", lambda pid: None)
+        monkeypatch.setattr("confflow.calc.executor._safe_session_id", lambda pid: None)
+
+    work_dir = tmp_path / "calc"
+    work_dir.mkdir()
+    child_pid_file = work_dir / "child.pid"
+    parent_code = (
+        "import pathlib, subprocess, sys; "
+        "child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'], "
+        "cwd=sys.argv[1]); "
+        "pathlib.Path(sys.argv[2]).write_text(str(child.pid), encoding='ascii')"
+    )
+    executor = LocalCalcExecutor(terminate_timeout=0.25, kill_timeout=1.0)
+    handle = executor.submit(
+        str(work_dir),
+        "orphan",
+        _policy(),
+        None,
+        {},
+        [sys.executable, "-c", parent_code, str(work_dir), str(child_pid_file)],
+        None,
+    )
+    process = handle.executor_data["_proc"]
+    child_pid: int | None = None
+    try:
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and not child_pid_file.exists():
+            time.sleep(0.01)
+        assert child_pid_file.exists()
+        child_pid = int(child_pid_file.read_text(encoding="ascii"))
+        assert process.wait(timeout=5) == 0
+        assert _pid_is_running(child_pid)
+        # Process enumeration is a snapshot: one member can disappear before
+        # the following getpgid/getsid calls without aborting cancellation.
+        import psutil
+
+        original_process_iter = psutil.process_iter
+
+        def iter_with_disappeared_process(attrs):
+            yield SimpleNamespace(pid=2**30, info={"status": "running"})
+            yield from original_process_iter(attrs)
+
+        monkeypatch.setattr(psutil, "process_iter", iter_with_disappeared_process)
+        assert executor.is_terminal(handle) is False
+
+        executor.cancel(handle)
+
+        assert not _pid_is_running(child_pid)
+        assert handle.executor_data["_cancel_confirmed"] is True
+    finally:
+        _kill_test_process_group(process, child_pid)
+
+
+@pytest.mark.skipif(os.name != "posix", reason="process-group contract requires POSIX")
+def test_local_executor_cancel_does_not_kill_unrelated_process(tmp_path):
+    """The dedicated calculation group does not include another task."""
+    from confflow.calc.executor import LocalCalcExecutor
+
+    calc_dir = tmp_path / "calc"
+    other_dir = tmp_path / "other"
+    calc_dir.mkdir()
+    other_dir.mkdir()
+    unrelated = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(60)"],
+        cwd=other_dir,
+    )
+    executor = LocalCalcExecutor(terminate_timeout=0.25, kill_timeout=1.0)
+    handle = executor.submit(
+        str(calc_dir),
+        "isolated",
+        _policy(),
+        None,
+        {},
+        [sys.executable, "-c", "import time; time.sleep(60)"],
+        None,
+    )
+    process = handle.executor_data["_proc"]
+    try:
+        executor.cancel(handle)
+        assert process.poll() is not None
+        assert unrelated.poll() is None
+    finally:
+        _kill_test_process_group(process, None)
+        if unrelated.poll() is None:
+            unrelated.kill()
+        unrelated.wait(timeout=5)
+
+
+def _pid_is_running(pid: int) -> bool:
+    import psutil
+
+    try:
+        process = psutil.Process(pid)
+        return process.is_running() and process.status() != psutil.STATUS_ZOMBIE
+    except (psutil.NoSuchProcess, psutil.ZombieProcess):
+        return False
+
+
+def _kill_test_process_group(process: subprocess.Popen, child_pid: int | None) -> None:
+    import os
+    import signal
+
+    if process.poll() is None:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            process.kill()
+    if child_pid is not None and _pid_is_running(child_pid):
+        try:
+            os.kill(child_pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+    try:
+        process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait(timeout=5)
+
+
+@pytest.mark.skipif(os.name != "posix", reason="process-group contract requires POSIX")
+def test_group_signal_error_is_an_unconfirmed_cancellation(monkeypatch, tmp_path):
+    from confflow.calc.executor import CalcCancellationError, CalcHandle, LocalCalcExecutor
+
+    executor = LocalCalcExecutor(terminate_timeout=0, kill_timeout=0)
+    handle = CalcHandle("task", str(tmp_path), 0, {"_proc": MagicMock(), "_pgid": 12345})
+    monkeypatch.setattr(executor, "_refresh_process_boundary", lambda handle: None)
+    monkeypatch.setattr(executor, "_group_is_safe_to_signal", lambda handle: True)
+
+    def fail_signal(pgid, sig):
+        raise OSError("group signal failed")
+
+    monkeypatch.setattr(os, "killpg", fail_signal)
+    with pytest.raises(CalcCancellationError, match="failed to signal") as raised:
+        executor.cancel(handle)
+    assert raised.value.confirmed is False
+    assert handle.executor_data.get("_cancel_confirmed") is not True
+
+
+@pytest.mark.skipif(os.name != "posix", reason="process-group contract requires POSIX")
+def test_missing_psutil_cannot_claim_orphaned_group_stopped(monkeypatch, tmp_path):
+    from confflow.calc.executor import CalcHandle, LocalCalcExecutor
+
+    executor = LocalCalcExecutor()
+    handle = CalcHandle("task", str(tmp_path), 0, {"_pgid": 12345})
+    monkeypatch.setattr("confflow.calc.executor._psutil", None)
+    monkeypatch.setattr(executor, "_group_is_safe_to_signal", lambda handle: False)
+    probes = []
+    monkeypatch.setattr(os, "killpg", lambda pgid, sig: probes.append((pgid, sig)))
+    assert executor._live_boundary_processes(handle, root_reaped=True)
+    assert probes == [(12345, 0)]

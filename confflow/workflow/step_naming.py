@@ -31,17 +31,34 @@ def sanitize_step_dir_name(name: Any, fallback: str) -> str:
 
 def build_step_dir_name_map(steps: list[dict[str, Any]]) -> tuple[list[str], dict[str, str]]:
     """Build deterministic, unique directory names for workflow steps."""
-    used: dict[str, int] = {}
+    # Reserve every sanitized base before allocating any suffixes.  Otherwise
+    # an early duplicate can consume the natural name of a later step, e.g.
+    # ``A!``, ``A?``, ``A_2`` used to become ``A``, ``A_2``, ``A_2``.  Keeping
+    # the later base available makes the allocation deterministic and keeps
+    # names which are already collision-free stable across ordering changes.
+    raw_names = [
+        "" if step.get("name") is None else str(step.get("name")).strip() for step in steps
+    ]
+    bases = [
+        sanitize_step_dir_name(raw_name, fallback=f"step_{idx:02d}")
+        for idx, raw_name in enumerate(raw_names, start=1)
+    ]
+    reserved = set(bases)
+    used: set[str] = set()
     dirnames: list[str] = []
     by_name: dict[str, str] = {}
 
-    for idx, step in enumerate(steps, start=1):
-        step_name = str(step.get("name", "")).strip()
-        base = sanitize_step_dir_name(step_name, fallback=f"step_{idx:02d}")
+    for step_name, base in zip(raw_names, bases, strict=True):
+        dirname = base
+        suffix = 2
+        # A suffix must not steal a base that belongs to a later step.  The
+        # base itself is allowed on its first occurrence, even though it is in
+        # ``reserved`` for that same step.
+        while dirname in used or (dirname in reserved and dirname != base):
+            dirname = f"{base}_{suffix}"
+            suffix += 1
 
-        n = used.get(base, 0)
-        dirname = base if n == 0 else f"{base}_{n + 1}"
-        used[base] = n + 1
+        used.add(dirname)
 
         dirnames.append(dirname)
         if step_name and step_name not in by_name:
