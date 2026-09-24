@@ -1,0 +1,26 @@
+schema: confflow.workflow.v3
+global: {}
+steps:
+  - id: s001
+    label: root
+    type: confgen
+    inputs: []
+    params:
+      chains:
+        - "1-2"
+  - id: s002
+    label: left
+    type: confgen
+    inputs:
+      - s001
+    params:
+      chains:
+        - "1-2"
+  - id: s003
+    label: right
+    type: confgen
+    inputs:
+      - s001
+    params:
+      chains:
+        - "1-2"

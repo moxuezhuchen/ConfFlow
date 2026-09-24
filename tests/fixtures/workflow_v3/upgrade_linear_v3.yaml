@@ -1,0 +1,26 @@
+schema: confflow.workflow.v3
+global:
+  iprog: orca
+  itask: sp
+steps:
+  - id: s001
+    label: A
+    type: confgen
+    inputs: []
+    params:
+      chains:
+        - "1-2"
+  - id: s002
+    label: B
+    type: calc
+    inputs:
+      - s001
+    params:
+      keyword: HF
+  - id: s003
+    label: C
+    type: calc
+    inputs:
+      - s002
+    params:
+      keyword: HF

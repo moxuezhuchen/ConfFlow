@@ -571,6 +571,10 @@ def main(
         from .config.cli import main as config_main
 
         return config_main(effective_args[1:])
+    if effective_args and effective_args[0] == "workflow":
+        from .config.workflow_cli import main as workflow_main
+
+        return workflow_main(effective_args[1:])
 
     parser = build_parser()
     args = parser.parse_args(args_list)

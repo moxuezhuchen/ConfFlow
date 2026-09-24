@@ -1,0 +1,25 @@
+schema: confflow.workflow.v3
+global: {}
+steps:
+  - id: s001
+    label: zeta
+    type: calc
+    inputs: []
+    params:
+      keyword: HF
+  - id: s002
+    label: alpha
+    type: calc
+    inputs:
+      - s001
+    params:
+      keyword: HF
+  - id: s003
+    label: mid
+    type: calc
+    inputs:
+      - s002
+    params:
+      keyword: HF
+    checkpoint:
+      from_step: s001

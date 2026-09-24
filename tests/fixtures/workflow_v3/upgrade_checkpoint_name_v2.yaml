@@ -1,0 +1,11 @@
+global: {}
+steps:
+  - name: opt
+    type: calc
+    params:
+      keyword: HF
+  - name: freq
+    type: calc
+    params:
+      keyword: HF
+      chk_from_step: opt

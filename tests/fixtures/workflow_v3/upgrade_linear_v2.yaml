@@ -1,0 +1,16 @@
+global:
+  iprog: orca
+  itask: sp
+steps:
+  - name: A
+    type: confgen
+    params:
+      chains: ["1-2"]
+  - name: B
+    type: task
+    params:
+      keyword: HF
+  - name: C
+    type: calc
+    params:
+      keyword: HF

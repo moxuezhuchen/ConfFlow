@@ -81,6 +81,15 @@ from .schema import (
     workflow_schema_sha256,
     workflow_schema_sha256_v3,
 )
+from .upgrade import (
+    MIGRATION_NAMESPACE,
+    MigrationRecord,
+    UnknownParamsPolicy,
+    UpgradeError,
+    UpgradeResult,
+    parse_unknown_params_policy,
+    upgrade_v2_to_v3,
+)
 from .v2_adapter import to_canonical_workflow
 from .v3_parser import parse_v3_document
 from .validation import (
@@ -97,6 +106,11 @@ from .workflow import (
     normalize_step_inputs,
     topo_order,
 )
+from .yaml_io import (
+    dump_workflow_yaml,
+    order_workflow_document,
+    write_workflow_yaml_atomic,
+)
 
 __all__ = [
     "CAPABILITIES",
@@ -108,7 +122,12 @@ __all__ = [
     "DEFAULT_EXTENSION_REGISTRY",
     "EDITOR_MANIFEST_SCHEMA",
     "EXTENSION_NAMESPACE_PATTERN",
+    "MIGRATION_NAMESPACE",
+    "MigrationRecord",
     "RECIPE_CATALOG_SCHEMA",
+    "UnknownParamsPolicy",
+    "UpgradeError",
+    "UpgradeResult",
     "WORKFLOW_BINDING_SCHEMA",
     "WORKFLOW_SCHEMA_VERSION_V2",
     "WORKFLOW_SCHEMA_VERSION_V3",
@@ -142,13 +161,16 @@ __all__ = [
     "confgen_keys",
     "confgen_param_fields",
     "detect_schema_version",
+    "dump_workflow_yaml",
     "editor_manifest_sha256",
     "is_valid_namespace",
     "load_raw_mapping",
     "load_workflow_definition",
     "normalize_step_inputs",
+    "order_workflow_document",
     "param_properties",
     "parse_canonical_workflow",
+    "parse_unknown_params_policy",
     "parse_v3_document",
     "parse_workflow_binding",
     "parse_workflow_mapping",
@@ -158,6 +180,7 @@ __all__ = [
     "resolve_global_options",
     "to_canonical_workflow",
     "topo_order",
+    "upgrade_v2_to_v3",
     "v2_calc_keys",
     "v3_calc_keys",
     "validate_workflow_definition",
@@ -167,6 +190,7 @@ __all__ = [
     "workflow_json_schema_v3",
     "workflow_schema_sha256",
     "workflow_schema_sha256_v3",
+    "write_workflow_yaml_atomic",
     "ConfigIssue",
     "ConfigValidationError",
 ]

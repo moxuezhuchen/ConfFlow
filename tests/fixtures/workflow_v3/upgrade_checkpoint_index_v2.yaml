@@ -1,0 +1,18 @@
+# Document order (zeta, alpha, mid) differs from alphabetic name order, so a
+# numeric `chk_from_step: 1` must resolve to zeta (document position 1), not to
+# alpha (the alphabetically first name).
+global: {}
+steps:
+  - name: zeta
+    type: calc
+    params:
+      keyword: HF
+  - name: alpha
+    type: calc
+    params:
+      keyword: HF
+  - name: mid
+    type: calc
+    params:
+      keyword: HF
+      chk_from_step: 1

@@ -1,0 +1,17 @@
+global: {}
+steps:
+  - name: root
+    type: confgen
+    inputs: []
+    params:
+      chains: ["1-2"]
+  - name: left
+    type: confgen
+    inputs: [root]
+    params:
+      chains: ["1-2"]
+  - name: right
+    type: confgen
+    inputs: [root]
+    params:
+      chains: ["1-2"]
