@@ -91,18 +91,31 @@ def test_unknown_attribute_raises_attribute_error():
 
 
 def test_explicit_planning_path_does_not_use_legacy():
-    """The typed planning boundary must use explicit DAG APIs, not legacy classes."""
+    """The typed planning path builds the graph via the explicit DAG API.
+
+    R1 moved the graph construction out of ``workflow.plan`` into the canonical
+    V2 adapter (:mod:`confflow.config.canonical.v2_adapter`), which now owns
+    ``build_step_graph`` / ``topo_order`` for the planning path. ``workflow.plan``
+    delegates to that adapter. The invariant is unchanged: neither module may
+    reach for the legacy ``DAGGraph`` / ``DAGStep`` / ``WorkflowDAG`` classes.
+    """
     import inspect
 
+    from confflow.config.canonical import v2_adapter as adapter_module
     from confflow.workflow import plan as plan_module
 
-    source = inspect.getsource(plan_module)
-    assert "build_step_graph" in source
-    assert "topo_order" in source
-    for name in ("DAGGraph", "DAGStep", "WorkflowDAG"):
-        assert (
-            f"import {name}" not in source
-        ), f"typed planner must not import legacy {name!r}; rely on the explicit API"
+    adapter_source = inspect.getsource(adapter_module)
+    plan_source = inspect.getsource(plan_module)
+
+    assert "build_step_graph" in adapter_source
+    assert "topo_order" in adapter_source
+    assert "to_canonical_workflow" in plan_source
+
+    for source in (plan_source, adapter_source):
+        for name in ("DAGGraph", "DAGStep", "WorkflowDAG"):
+            assert (
+                f"import {name}" not in source
+            ), f"typed planner must not import legacy {name!r}; rely on the explicit API"
 
 
 def test_legacy_classes_have_correct_behavior_regression():

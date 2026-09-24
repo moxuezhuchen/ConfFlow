@@ -6,10 +6,10 @@ import os
 from dataclasses import dataclass
 from typing import Any
 
+from ..config.canonical.v2_adapter import to_canonical_workflow
 from ..config.models import GlobalOptions, WorkflowConfig, load_workflow_model
 from ..core.exceptions import ConfFlowError
 from ..core.utils import validate_xyz_file
-from .dag import build_step_graph, topo_order
 from .step_naming import build_step_dir_name_map
 from .validation import validate_inputs_compatible
 
@@ -33,7 +33,13 @@ class WorkflowPlan:
 def build_workflow_plan(
     input_xyz: list[str], config_file: str, original_input_files: list[str] | None = None
 ) -> WorkflowPlan:
-    """Validate inputs and derive the immutable execution shape."""
+    """Validate inputs and derive the immutable execution shape.
+
+    The workflow semantics (step identity, resolved graph, execution order and
+    terminal topology) come from the canonical workflow IR; the V2 YAML shape is
+    reconstructed at this boundary so the execution stack keeps receiving the
+    exact mapping it always has.
+    """
     input_files = [os.path.abspath(path) for path in input_xyz]
     original_inputs = (
         [os.path.abspath(path) for path in original_input_files]
@@ -46,20 +52,17 @@ def build_workflow_plan(
         validate_xyz_file(path, strict=True)
 
     workflow = load_workflow_model(config_file)
-    legacy = workflow.as_legacy_shape()
-    global_config = legacy["global"]
-    steps = legacy["steps"]
-    raw_predecessors, by_step_name, _declared_inputs = build_step_graph(steps)
-    explicit_inputs = any("inputs" in step for step in steps)
-    if explicit_inputs:
-        predecessors = raw_predecessors
-    else:
-        ordered_names = list(by_step_name)
-        predecessors = {
-            name: ([ordered_names[index - 1]] if index else [])
-            for index, name in enumerate(ordered_names)
-        }
-    execution_order = [name for wave in topo_order(predecessors) for name in wave]
+    definition = to_canonical_workflow(workflow)
+    global_config, steps = definition.to_v2_execution_shape()
+    by_step_name = {
+        step_definition.name: steps[index] for index, step_definition in enumerate(definition.steps)
+    }
+    predecessors = {
+        name: list(step_predecessors) for name, step_predecessors in definition.predecessors.items()
+    }
+    execution_order = list(definition.execution_order)
+    terminal_steps = list(definition.terminal_steps)
+
     # Fail at plan time instead of deep inside step execution: a calc step is
     # single-input by design. Disabled calc steps never execute, so they are
     # exempt from the single-input enforcement.
@@ -82,15 +85,6 @@ def build_workflow_plan(
                 f"{len(input_files)} initial inputs; a calc step accepts exactly "
                 "one input. Add a confgen step to merge them first."
             )
-    if explicit_inputs:
-        predecessor_names = {
-            predecessor
-            for step_predecessors in predecessors.values()
-            for predecessor in step_predecessors
-        }
-        terminal_steps = [name for name in predecessors if name not in predecessor_names]
-    else:
-        terminal_steps = [execution_order[-1]]
 
     step_dirnames, _ = build_step_dir_name_map(steps)
     step_index_by_name = {name: index for index, name in enumerate(by_step_name)}

@@ -43,6 +43,14 @@ from .recipes import (
 )
 from .resolve import resolve_calc_step, resolve_global_options
 from .schema import workflow_schema_sha256
+from .v2_adapter import to_canonical_workflow
+from .workflow import (
+    CanonicalStepDefinition,
+    CanonicalWorkflowDefinition,
+    DependencyMode,
+    build_step_graph,
+    topo_order,
+)
 
 __all__ = [
     "CONFIGURATION_CONTRACT_BUILDERS",
@@ -53,12 +61,18 @@ __all__ = [
     "EDITOR_MANIFEST_SCHEMA",
     "RECIPE_CATALOG_SCHEMA",
     "WORKFLOW_BINDING_SCHEMA",
+    "CanonicalStepDefinition",
+    "CanonicalWorkflowDefinition",
+    "DependencyMode",
     "WorkflowBindingCompatibilityError",
     "WorkflowConfigBinding",
     "WorkflowFingerprintError",
+    "build_step_graph",
     "build_workflow_binding",
     "canonical_workflow_payload",
     "parse_workflow_binding",
+    "to_canonical_workflow",
+    "topo_order",
     "workflow_fingerprint",
     "ConfigIssue",
     "ConfigValidationError",
