@@ -123,59 +123,10 @@ def _normalize(value: Any, *, path: str = "$") -> Any:
 
 
 def _known_calc_keys() -> frozenset[str]:
-    return frozenset(
-        {
-            "iprog",
-            "itask",
-            "keyword",
-            "gaussian_path",
-            "orca_path",
-            "cores_per_task",
-            "total_memory",
-            "max_parallel_jobs",
-            "charge",
-            "multiplicity",
-            "freeze",
-            "auto_clean",
-            "dedup_only",
-            "keep_all_topos",
-            "noH",
-            "rmsd_threshold",
-            "energy_window",
-            "energy_tolerance",
-            "clean_params",
-            "clean_opts",
-            "imag",
-            "max_conformers",
-            "enable_dynamic_resources",
-            "resume_from_backups",
-            "max_wall_time_seconds",
-            "delete_work_dir",
-            "sandbox_root",
-            "input_chk_dir",
-            "allowed_executables",
-            "gaussian_write_chk",
-            "stop_check_interval_seconds",
-            "ts_bond_atoms",
-            "ts_rescue_scan",
-            "ts_bond_drift_threshold",
-            "ts_rmsd_threshold",
-            "scan_coarse_step",
-            "scan_fine_step",
-            "scan_uphill_limit",
-            "scan_max_steps",
-            "scan_fine_half_window",
-            "ts_rescue_keep_scan_dirs",
-            "ts_rescue_scan_backup",
-            "blocks",
-            "orca_maxcore",
-            "maxcore",
-            "gaussian_modredundant",
-            "gaussian_link0",
-            "ibkout",
-            "chk_from_step",
-        }
-    )
+    """Return the V2 calc parameter vocabulary from the single descriptor registry."""
+    from .param_fields import v2_calc_keys
+
+    return v2_calc_keys()
 
 
 def _known_confgen_params(
