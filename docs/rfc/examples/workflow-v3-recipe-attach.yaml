@@ -1,0 +1,76 @@
+# Workflow V3 — recipe instantiation / attachment (RFC §19.3, "add workflow here").
+#
+# This file holds three documents: BEFORE, RECIPE, AFTER. They are illustrative,
+# not one workflow.
+#
+# Operation: a user has a ConfGen step and asks to add the "Opt -> Freq" recipe
+# AFTER it. That is `instantiate_recipe(recipe, attach_roots_to=[<confgen id>])`.
+
+# === BEFORE: the existing workflow =========================================
+schema: confflow.workflow.v3
+global:
+  iprog: orca
+  itask: sp
+steps:
+  - id: s001
+    label: Conformer search
+    type: confgen
+    inputs: []
+    params:
+      chains: ["1-2-3-4"]
+
+---
+# === RECIPE: a self-contained fragment with TEMPLATE-LOCAL ids ==============
+# `r_opt` / `r_freq` are legal id tokens used only INSIDE the recipe. They are
+# not final identities; instantiate rebases them. (A single-step recipe may omit
+# ids entirely and let the instantiate step allocate them.)
+schema: confflow.workflow.v3
+global: {}
+steps:
+  - id: r_opt
+    label: Optimize
+    type: calc
+    inputs: []
+    params:
+      itask: opt
+      keyword: B3LYP/6-31G(d)
+  - id: r_freq
+    label: Frequency
+    type: calc
+    inputs: [r_opt]
+    params:
+      itask: freq
+      keyword: B3LYP/6-31G(d)
+
+---
+# === AFTER: instantiated with attach_roots_to = [s001] ======================
+# - every recipe id is rebased to a fresh opaque id (s_k7m2qvd, s_b3n8xp2r);
+# - the internal edge r_freq <- r_opt becomes s_b3n8xp2r <- s_k7m2qvd;
+# - the recipe ROOT (r_opt) is attached to s001: its inputs become [s001];
+# - the existing s001 is untouched.
+# Result graph: s001 (confgen) -> s_k7m2qvd (opt) -> s_b3n8xp2r (freq).
+schema: confflow.workflow.v3
+global:
+  iprog: orca
+  itask: sp
+steps:
+  - id: s001
+    label: Conformer search
+    type: confgen
+    inputs: []
+    params:
+      chains: ["1-2-3-4"]
+  - id: s_k7m2qvd
+    label: Optimize
+    type: calc
+    inputs: [s001]
+    params:
+      itask: opt
+      keyword: B3LYP/6-31G(d)
+  - id: s_b3n8xp2r
+    label: Frequency
+    type: calc
+    inputs: [s_k7m2qvd]
+    params:
+      itask: freq
+      keyword: B3LYP/6-31G(d)

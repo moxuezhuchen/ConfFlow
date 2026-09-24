@@ -117,47 +117,113 @@ fixes the target.**
 
 ### 5.2 Options considered
 
-| Option | readable | diff-friendly | deterministic | collision-free | resume-safe |
+| Option | readable | diff-friendly | deterministic | collision-safe | history-safe |
 |---|---|---|---|---|---|
 | Random UUID (`550e8400-…`) | ✗ | ✗ | ✗ (upgrade churns) | ✓ globally | ✓ |
-| Deterministic sequence (`s001`) | ✓ | ✓ | ✓ | ✓ workflow-local | ✓ |
-| Slug from label (`opt_freq`) | ✓ | ✓ | ✓ | ✗ (dupes, and renames drift) | ✗ (rename = new id) |
-| Opaque short random (`k7p2q9`) | ~ | ~ | ✗ | ✓ | ✓ |
+| Max-suffix counter (`s001`…`max+1`) as the **only** scheme | ✓ | ✓ | ✓ | ✓ at the moment of allocation | ✗ **delete then add reuses a deleted id** |
+| Persistent high-water mark (`next_step_number`, stored in doc) | ✓ | ✓ | ✓ | ✓ | ✓ *if the metadata survives* — but the allocator state becomes document state |
+| Slug from label (`opt_freq`) | ✓ | ✓ | ✓ | ✗ (dupes; renames drift) | ✗ rename = new id |
+| **Short opaque immutable id** (`s_k7m2qvd`) | ~ | ~ | ✗ | ✓ (with collision check) | ✓ |
 
-### 5.3 Rules
+The previous draft used the max-suffix counter **and** claimed ids are never
+reused; that is contradictory — deleting `s003` from `{s001,s002,s003}` makes
+`max+1 == 3`, so a new step would be `s003` again. This revision fixes it.
 
-1. **Charset / length / case** — `id` must match `^[a-z][a-z0-9_]{0,63}$` (lowercase
-   only, ≤ 64 chars). Lowercase-only is enforced so `s001` and `S001` can never
-   be confused; ids are nonetheless compared case-sensitively.
-2. **Uniqueness** — **workflow-local**, not global. Global uniqueness would defeat
-   copy/paste and template reuse, and nothing (state, dirs, bindings) is global.
-3. **Who assigns** — the workflow author (hand-written YAML) or the tool that
-   mutates the document (GUI *add/duplicate*, V2→V3 upgrade). The **allocator**
-   is spec'd in §5.4 so every producer agrees.
-4. **Generated form** — `s` + counter zero-padded to ≥ 3 digits (`s001`, `s042`,
-   `s1000`). Bare YAML scalars starting with a letter never parse as numbers, so
-   `id: s001` is unambiguously a string.
-5. **Hand-written** — any id matching the charset is accepted; it need not be
-   sequential. Tools never renumber an existing id.
-6. **Renaming an `id`** — **not a document operation.** Changing identity is
-   defined as *delete + create* (§20). There is no "rename id" verb.
-7. **Allocation is once-and-persisted.** An id, once written, is never reassigned
-   and never reused (even after deletion). This is the invariant that makes
-   reorder/copy safe.
+### 5.3 Legal id grammar (schema-level)
 
-### 5.4 The allocator (normative)
+An `id` is a string matching:
 
 ```
-next_id(existing_ids):
-    numeric = [int(i[1:]) for i in existing_ids if re.fullmatch(r"s[0-9]+", i)]
-    n = (max(numeric) + 1) if numeric else 1
-    return "s" + format(n, "03d")
+^[a-z][a-z0-9_]{0,63}$
 ```
 
-- Deterministic given the current document.
-- Monotonic: never reuses a freed number, so a deleted id cannot be
-  resurrected by a later add.
-- Independent of array order, so adding/moving steps does not shuffle ids.
+- **Case**: lowercase only, enforced by the regex and **never normalised**.
+  Uppercase is rejected outright, so `s001`/`S001` cannot both exist.
+- **Length**: 1–64 characters.
+- **Path safety**: the charset excludes `/`, `\`, `.`, `-`, and whitespace, so
+  every id is a legal, unambiguous directory component (RFC §17).
+- **Uniqueness**: workflow-local (not global) — nothing in ConfFlow is global.
+- **Legal ≠ generated.** The schema defines which ids are *legal*; §5.4 defines
+  which ids the *allocator* produces. Hand-written ids need not be allocator-shaped.
+
+This grammar deliberately admits **both** generated families below, plus any
+author-chosen token (`opt_a`, `sp2`, …).
+
+### 5.4 Allocator policy (two generated families)
+
+The allocator produces exactly two shapes, and nothing else:
+
+| Family | Regex | Used by | Shape rationale |
+|---|---|---|---|
+| **sequential** | `^s[0-9]{3,}$` (`s001`, `s042`, `s1000`) | **V2 → V3 upgrade only** | deterministic, diff-friendly migration |
+| **opaque** | `^s_[a-z2-7]{8}$` (`s_k7m2qvd`) | **any application-generated step** — GUI/API *add*, *duplicate*, *recipe instantiate* | needs no document state; safe against delete |
+
+Combined "allocator-generated" regex: `^s(?:[0-9]{3,}|_[a-z2-7]{8})$`.
+
+- **Opaque alphabet** is RFC 4648 base32 lowercase: `[a-z2-7]` (26 letters + the
+  six digits `2`–`7`, i.e. 32 symbols). It contains no digit `0`/`1`/`8`/`9`, no
+  uppercase, and no path-danger characters, so it is copy/paste-friendly and
+  unambiguous next to the `s_` prefix.
+- **Opaque length** is 8 symbols → 32⁸ = 2⁴⁰ ≈ 1.1 × 10¹² values, but the length
+  is a *rendering* choice; safety comes from the collision check below, not from
+  the space size.
+- **Sequential ids are generated once** by the upgrade command, in document order
+  (first step `s001`, second `s002`, …). Sequential ids are **never** produced by
+  any other operation — in particular not by the max-suffix rule, which is
+  rejected (see §5.6 and §26).
+
+### 5.5 Collision handling (normative)
+
+```
+allocate(existing_ids):
+    for attempt in range(MAX_ATTEMPTS):        # e.g. 32; unreachable in practice
+        candidate = "s_" + base32_lowercase(8)
+        if candidate not in existing_ids:
+            return candidate
+    raise AllocationError(...)                 # never silently reuse
+```
+
+- The allocator **must** check the candidate against the document's current id
+  set; "the probability is tiny" is not a substitute for checking.
+- On collision it redraws. The retry is bounded; exhausting the bound is an error,
+  not a silent duplicate.
+- Uniqueness is checked against the whole workflow being edited (so a second
+  recipe instantiation sees the first instantiation's ids — §22 S23).
+
+### 5.6 "Never reused" — precise semantics
+
+A static YAML document cannot prove that an id never existed before. V3 therefore
+states the invariants it **can** hold, and drops the unprovable claim:
+
+1. **Document invariant (verifiable):** the ids in the current document are unique.
+   A duplicated id is a definition error (§10).
+2. **Application invariant (the allocator's responsibility):** the allocator draws
+   only fresh opaque tokens and checks each against the current document, so it
+   will not reissue a token already present; and it never produces the sequential
+   family, so an add can never reproduce a deleted `sNNN`. Mechanism, not
+   probability: opaque-with-collision-check + sequential-only-for-upgrade.
+3. **Cooperative layer (application):** undo/redo and session history must not
+   deliberately resurrect an id the user removed. This is the application's
+   promise, not something a static document can encode.
+4. **Not claimed:** global or historical uniqueness. A user who hand-writes an id
+   that was used in a past, discarded document is undetectable, and V3 does not
+   pretend otherwise. Only current-document uniqueness is enforced.
+
+Consequence: deleting the highest-numbered migrated step and then adding a step
+yields an **opaque** id (`s_…`), never the deleted `sNNN` (S19).
+
+### 5.7 Persistent high-water mark — rejected
+
+Storing `next_step_number` in the document would keep pretty sequential ids, but:
+
+- the allocator's state becomes document state (a new field every tool must
+  maintain, and a new merge-conflict surface);
+- hand-edited YAML can drift the mark or delete it, silently breaking the very
+  guarantee it exists to provide;
+- it does not survive copy/paste of a step into another document.
+
+The opaque family gets the same safety with no document state, so the
+high-water-mark option is rejected (§26).
 
 ---
 
@@ -183,31 +249,77 @@ V3 uses **`id` + `label`**, not `id` + `name`.
 | `type` | yes | `calc` \| `confgen` | step kind |
 | `enabled` | no (default `true`) | boolean | bypass switch |
 | `inputs` | **yes** | array of step ids (may be `[]`) | data-flow predecessors |
-| `params` | no (default `{}`) | object | step-type-specific parameters |
+| `params` | no (default `{}`) | object | step-type-specific **core** parameters (strict, §6.4) |
 | `checkpoint` | no | `{ from_step: <id> }` | checkpoint reuse reference |
-| `extensions` | no | namespaced object | **semantic** producer data |
+| `extensions` | no | namespaced object | **semantic** producer/plugin data (§6.3) |
 | `annotations` | no | free object | **non-semantic** presentation data |
 
 - **No other key is allowed on a step.** An unknown key is a definition error
   (typo detection). Out-of-band data must use `extensions` or `annotations`.
 - `label` is optional; when absent a consumer displays the `id`.
 - `id` is optional to **parse** (so a recipe fragment is legal) but required to
-  **run** — a runnable definition must give every step an id. This mirrors the R2
+  **run** — a runnable definition must give every step an id, and the parser must
+  **not** silently invent one for a runnable document. This mirrors the R2
   parseable/runnable split (§19).
-- `params` stays the typed container for the step type (see §18 for the R5 plan).
+- `params` carries core semantics only and is **strict** (§6.4); `params` stays
+  the typed container for the step type (see §18 for the R5 plan).
 
-### 6.3 `extensions` vs `annotations` (namespace rule)
+### 6.3 `extensions` vs `annotations`
 
-- **`extensions`** keys MUST be namespaced: `^[a-z0-9_]+(\.[a-z0-9_]+)+$`
-  (≥ 2 dot-separated segments, e.g. `vendor.mopac.basis`). A non-namespaced key
-  is an error. Unknown keys are **preserved** and **participate in the
-  definition fingerprint** (an unknown producer extension could change what is
-  computed, so a resume under a different one must be rejected — fail-safe).
-- **`annotations`** keys are free-form and **never** participate in any
-  fingerprint or execution decision. They exist so GUI layout / comments /
-  colours have a legal home instead of being smuggled into `extensions`.
-- Both buckets are preserved by round-trip (parse → serialize → parse is
-  lossless modulo key order).
+Three layers, with one rule each:
+
+| Layer | Meaning | Unknown key | Fingerprinted |
+|---|---|---|---|
+| `params` | core semantic parameters | **definition ERROR** (§6.4) | yes |
+| `extensions` | namespaced semantic extension | **runnable ERROR** unless recognised (§6.3) | yes |
+| `annotations` | non-semantic presentation | preserved | **no** |
+
+**`extensions` namespace rule.** Keys MUST match
+
+```
+^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$        # >= 2 dot-separated segments
+```
+
+each segment starting with a lowercase letter (e.g. `org.example.feature`,
+`vendor.mopac.basis`). A key that is not namespaced is a definition error.
+
+**Unknown extension behaviour (fail closed).**
+
+- **Parse / round-trip:** an unknown namespaced extension is **preserved**
+  (parse → serialize → parse is lossless) so a document from a newer producer
+  survives a round trip through an older one.
+- **Runnable:** an extension namespace the current producer does **not**
+  recognise is a **definition ERROR**. The producer cannot guarantee the
+  execution semantics of a semantic extension it does not understand, so it must
+  refuse to run rather than silently ignore it. Recognised namespaces are
+  validated by their owner.
+- This preserves the R2 principle **parseable ≠ runnable** (§19): the document is
+  never rejected *at parse time*, only at the runnable gate.
+
+**`annotations`** keys are free-form and **never** participate in any fingerprint
+or execution decision. They exist so GUI layout / comments / colours have a legal
+home instead of being smuggled into `extensions` or `params`.
+
+### 6.4 `params` is strict (fail closed)
+
+For the core step types (`calc`, `confgen`), `params` is a **typed, closed** map:
+every member is a parameter ConfFlow knows and validates. An unknown member is a
+**definition ERROR**, not a warning:
+
+```yaml
+params:
+  methd: B3LYP      # ERROR: unknown calc parameter 'methd'
+```
+
+Rationale: a misspelled core parameter would otherwise be silently ignored, and
+the user would believe `methd` took effect. V2's `params`-as-open-bag (unknown
+members preserved as `extra`) is precisely the failure mode V3 removes. The
+*warning* level the first draft proposed for unknown params is rejected (§26).
+
+- Extension parameters go in `extensions` (§6.3), never in `params`.
+- The **production** typed `params` schema per step type is authored in **R3.2**.
+  The `schema.draft.json` in this RFC uses a clearly-marked placeholder for
+  `params` and must not be mistaken for the finished strict schema (§24).
 
 ---
 
@@ -396,14 +508,15 @@ which already exempts a disabled calc from the single-input rule.
 
 Extension/typo policy (normative):
 
-| Location | Unknown key | Treatment |
+| Location | Key | Treatment |
 |---|---|---|
-| root top level | any | **error** (must live in `extensions`/`annotations`) |
-| step top level | any | **error** |
-| `extensions` | non-namespaced | **error** |
-| `extensions` | namespaced | preserved, fingerprinted |
+| root top level | any not in `{schema, global, steps, extensions, annotations}` | **error** |
+| step top level | any not in the §6.2 field set | **error** |
+| `params` | any unknown **core** member | **definition ERROR** (§6.4) |
+| `extensions` | non-namespaced | **definition error** |
+| `extensions` | namespaced, **recognised** | validated by its owner, fingerprinted |
+| `extensions` | namespaced, **unrecognised** | parse-preserved; **runnable ERROR** (§6.3) |
 | `annotations` | any | preserved, never fingerprinted |
-| `params` | unknown member | preserved; **warning** diagnostic, not an error (step params are versioned by type and may gain members) |
 
 ---
 
@@ -416,8 +529,8 @@ pure function of the input bytes: **no UUIDs, no timestamps, no randomness.**
 
 Given a V2 `WorkflowConfig` (or its canonical IR):
 
-1. **ids** — walk steps in document order and assign `s001, s002, …` (the §5.4
-   allocator over an empty document).
+1. **ids** — walk steps in document order and assign the **sequential family**
+   `s001, s002, …` (§5.4). Upgrade is the *only* producer of sequential ids.
 2. **label** — the V2 `name`, or the generated `{type}_{index}` if the V2 step was
    unnamed.
 3. **type** — alias-normalize (`task`→`calc`, `gen`→`confgen`).
@@ -430,12 +543,17 @@ Given a V2 `WorkflowConfig` (or its canonical IR):
    does (name → id; numeric → the id at that 1-based position) and emit
    `checkpoint: { from_step: <id> }`; then **remove** `chk_from_step` from
    `params`. An unresolvable value is a V2 definition error and upgrade fails.
-7. **params** — copied; unknown members preserved (still fingerprinted, matching
-   V2 semantics).
+7. **params** — copied. A V2 param member that is **unknown to the core type** is
+   **not** silently carried (V3 `params` is strict, §6.4): upgrade **fails** with a
+   diagnostic naming the step and key. The author may explicitly route such keys
+   with `--unknown-params=annotations` (demote to the non-semantic bucket) or
+   `--unknown-params=extensions:<ns>` (move to a named extension namespace);
+   the default is to fail, matching the V3 runnable rule. This prevents a V2
+   `methd:` typo from becoming a silently-inert V3 field.
 8. **extensions/annotations** — V2 unknown *step-level* fields were ignored by
-   execution and by the fingerprint, so they become `annotations` (non-semantic).
-   A `--to-extensions` flag may promote them under `annotations`→`extensions` only
-   if the author explicitly asserts they are semantic; default is `annotations`.
+   execution **and** by the V2 fingerprint, so they become `annotations`
+   (non-semantic, accurate) and never affect anything. (They are not routed to
+   `extensions`, which would wrongly make them semantic.)
 9. **schema** — `confflow.workflow.v3`.
 10. **step array order** — preserved.
 
@@ -451,14 +569,16 @@ Given a V2 `WorkflowConfig` (or its canonical IR):
 | disabled step | `enabled: false` preserved |
 | `task`/`gen` alias | normalized to `calc`/`confgen` |
 | unknown step-level fields | moved to `annotations` |
-| unknown params | preserved in `params` |
+| unknown params (core) | **upgrade error** by default; routable via `--unknown-params=…` |
 
 ### Identity stability after upgrade
 
 Ids are written once and never reassigned. **Reordering the file after upgrade
 does not change any id**, so the definition fingerprint and resume identity are
 stable across cosmetic edits. This is the whole reason upgrade must not use
-random ids.
+random ids: it is the one deterministic (sequential) allocation, and every later
+edit uses the opaque family (§5.4). Deleting the highest migrated id and adding a
+new step therefore yields an opaque id, never the deleted `sNNN` (S19).
 
 ---
 
@@ -489,51 +609,113 @@ class CanonicalWorkflowDefinition:
     ...  # existing fields, plus extensions/annotations
 ```
 
-- `source_version` records where the definition came from.
+- `source_version` records where the **document** came from (provenance); it is
+  *not* part of the definition semantics (§16).
 - V2 loader → IR sets `source_version="v2"`, `id=None`, `predecessors` = canonical
   names (unchanged V2 semantics).
 - V3 parser → IR sets `source_version="v3"`, `id` populated, `predecessors` = ids.
 - Downstream planning keys off `id` when present, else the V2 name, so V2 run
   identity is untouched.
+- The **canonical semantics version** is a separate constant,
+  `confflow.workflow-semantics.v3`, owned by the canonical layer (not the
+  document) and used by the definition fingerprint (§16).
 
 ---
 
 ## 16. Fingerprint semantics
 
-Two digests, deliberately distinct.
+Three layers, deliberately distinct. In particular the **definition fingerprint
+does not contain any schema digest** — a schema's `description`/documentation
+metadata can change without the workflow's scientific semantics changing, and a
+definition's identity must not move when only the schema's *representation* moves.
 
-### 16.1 Definition fingerprint (environment-independent)
+### 16.A Workflow definition fingerprint (environment-independent)
 
-Includes, canonicalized by id:
+Answers: *"what is the semantics of this workflow?"*
 
-- `source_version` (`v2` | `v3`) and the schema identifier + digest;
-- resolved `global`;
-- per step: `id`, `type`, `enabled`, resolved `params`, `inputs` (by id),
-  `checkpoint.from_step`, `extensions`.
+```
+payload = {
+    "semantics_version": "confflow.workflow-semantics.v3",   # a constant, not the document version
+    "global":   <resolved scientific global options>,
+    "steps":    [ <per-step semantic record, canonical-sorted by id> ],
+}
+```
 
-Excludes: `label`, `annotations`, **array order**, and (for V2) the legacy `dag.mode`
-tag is retained only in the V2 document's own digest.
+Per-step semantic record: `id`, `type`, `enabled`, resolved `params`, `inputs`
+(by id), `checkpoint.from_step`, and `extensions`.
 
-Rationale for `extensions` inclusion: an unknown producer extension may alter what
-is computed, so resume under a changed extension must fail closed. Rationale for
-excluding `label`/`annotations`/order: they are presentation and cannot change a
-result.
+**Excluded** from the definition fingerprint:
 
-### 16.2 Execution fingerprint (R4)
+- `label`, `annotations` — presentation;
+- the **steps array order** — canonicalised by id (§9);
+- the **schema identity and digest** — schema representation, not semantics;
+- the **source document version** (`v2`/`v3`) and producer/commit metadata;
+- any documentation or canonicalizer metadata.
 
-**definition fingerprint + run context**: external input digests, resolved
-resources, executables/runtime settings, and the resolved sandbox/policy inputs.
+`extensions` is included because a semantic extension can change what is
+computed, so a resume under a changed extension must fail closed. The definition
+fingerprint is computed over the **canonical semantic payload** with keys sorted
+and steps ordered by id; it does not depend on the YAML's byte layout.
 
-### 16.3 Resume
+**Global split (scientific vs execution).** `global` is split by meaning; the
+definition fingerprint takes only the scientific members, and the execution
+fingerprint takes the rest:
 
-**Resume uses the execution fingerprint** (the binding), because resuming must
-reject not only a changed definition but also changed inputs/resources. A rename
-of a `label` or a reorder of the array must **not** invalidate a resume; changing
-an `id` (delete+create) must.
+| Class | Members | Goes into |
+|---|---|---|
+| scientific | `charge`, `multiplicity`, `rmsd_threshold`, `energy_window`, `energy_tolerance`, `noH`, `freeze`, `ts_bond_atoms`, `ts_rescue_scan`, `scan_coarse_step`, `scan_fine_step`, `scan_uphill_limit`, `ts_bond_drift_threshold`, `ts_rmsd_threshold`, `auto_clean`, `force_consistency`, `keyword`, `iprog`, `itask`, `blocks` | definition fingerprint (A) |
+| execution | `gaussian_path`, `orca_path`, `cores_per_task`, `total_memory`, `max_parallel_jobs`, `orca_maxcore`, `enable_dynamic_resources`, `delete_work_dir`, `stop_check_interval_seconds`, `sandbox_root`, `input_chk_dir`, `allowed_executables`, `gaussian_write_chk`, `max_wall_time_seconds`, `resume_from_backups` (deprecated/no-op) | execution fingerprint (C) |
 
-V2's existing binding (`workflow_binding.v1`) is **unchanged** and keeps using the
-V2 algorithm for V2 documents. V3 obtains its own binding schema in **R4**
-(`workflow_binding.v2`).
+Rationale: raising `max_parallel_jobs` or moving `gaussian_path` does not change
+the *science* of the workflow, so it must not move the definition identity; it
+*does* change what is executed, so it moves the execution identity. A theory
+default (`keyword`/`iprog`/`itask`/`blocks`) is scientific, because changing the
+default changes a step's effective theory unless the step overrides it (the
+inherited value is already visible in the resolved step `params`, but binding the
+default too keeps the split robust against resolver changes). R4 finalises the
+exact membership from the live `GlobalOptions`; this table is the agreed baseline.
+
+### 16.B Schema / canonicalization binding (provenance, not identity)
+
+Answers: *"which schema and canonicalizer interpreted this document?"* Recorded
+**separately** from the definition fingerprint:
+
+- workflow schema identifier (`confflow.workflow.v3`);
+- workflow schema digest (the `workflow_schema_sha256` of the V3 schema document);
+- canonicalization version (the canonical-JSON algorithm version);
+- producer identity/version, commit/dirty as appropriate.
+
+This binding travels in the run/provenance record (and, later, the binding
+document), never inside the definition fingerprint. A schema-document-only change
+therefore changes **B** but not **A** (S22).
+
+### 16.C Resolved execution fingerprint (R4)
+
+Answers: *"what exactly will run, and can a prior result be resumed?"*
+
+```
+execution payload = definition semantic payload (A)
+                  + run context (external input digests, input cardinality facts)
+                  + the execution-class global members (see the A table)
+                  + resolved resources / runtime / executable settings
+```
+
+### 16.D Resume
+
+**Resume binds the execution fingerprint (C)**, because resuming must reject not
+only a changed definition but also changed inputs/resources. Concretely:
+
+- renaming a `label`, or reordering the array → **no** change to A or C → resume
+  stays valid;
+- changing a graph edge, a semantic param, a `checkpoint.from_step`, a semantic
+  `extensions` entry, or an `id` (delete+create) → A (and therefore C) changes →
+  resume is rejected;
+- changing inputs/resources → C changes → resume is rejected (A unchanged).
+
+V2's existing binding (`workflow_binding.v1`) and its fingerprint algorithm are
+**unchanged** and continue to describe V2 documents. V3 gets its own binding
+schema in **R4** (`workflow_binding.v2`); the V3 design must never force a change
+to the V2 binding.
 
 ---
 
@@ -581,16 +763,76 @@ the declared `required_fields`. This is exactly the R2 boundary and is preserved
 
 ### 19.2 Ids in recipes
 
-- A recipe **may omit `id`s** (recommended for single-step starters). The
-  instantiate step allocates ids.
-- A multi-step recipe **may carry `id`s**, but those are **template-local**. On
-  instantiation they are **rebased** to the target workflow's fresh ids, and
-  every intra-recipe `inputs` / `checkpoint.from_step` reference is rewritten.
-- A recipe document must be **self-contained**: every `inputs` /
-  `checkpoint.from_step` reference must resolve **within the recipe**. A recipe
-  that references a step outside itself is not instantiable and is invalid as a
-  recipe. (The shipped `conformer_search` recipe is a single root step, so it is
-  trivially self-contained.)
+A recipe's step ids fall into exactly three cases:
+
+- **A. omitted** — recommended for single-step starters. A partial parser may use
+  **template-local generated handles** internally; the instantiate operation
+  allocates real workflow ids.
+- **B. explicit template-local ids** (e.g. `r_opt`, `r_freq`) — used only for
+  references **inside** the recipe. `r_opt`/`r_freq` are legal id tokens but are
+  **not** final workflow identities; instantiate rebases them all.
+- **C. retention is forbidden** — a recipe must not assume its template-local ids
+  survive. Instantiate **always rebases** by default. The only exception is an
+  explicit **clone** operation (§20), which is a distinct verb from instantiate.
+
+A recipe document must be **self-contained**: every `inputs` /
+`checkpoint.from_step` reference must resolve **within the recipe**. A recipe that
+references a step outside itself is not instantiable and is invalid as a recipe.
+(The shipped `conformer_search` recipe is a single root step, so it is trivially
+self-contained.)
+
+### 19.3 Recipe instantiation — attachment semantics (normative)
+
+Instantiation into an existing workflow needs an explicit rule for where the
+recipe's **roots** connect. The operation is:
+
+```
+instantiate_recipe(recipe, attach_roots_to: list[step_id], mode: attach|starter)
+```
+
+1. **Rebase ids.** Allocate a fresh workflow id (§5.4 opaque family) for every
+   recipe-local step; build an `old → new` map.
+2. **Preserve internal edges.** Rewrite every intra-recipe `inputs` and
+   `checkpoint.from_step` reference through the map. Internal topology is never
+   altered.
+3. **Find recipe roots.** A recipe root is a step whose `inputs` is empty *within
+   the recipe*.
+4. **Attach each root.** For **every** root:
+   - `attach_roots_to == []` → `root.inputs = []` (roots stay roots);
+   - otherwise → `root.inputs = attach_roots_to` (the **same** list for every root).
+5. **Descendants unchanged** — non-root steps keep their (rebased) internal edges.
+6. **Validate the resulting graph** — acyclic, references exist. Cardinality of
+   the attached roots is checked by the ordinary run-context rule: if a root
+   cannot accept the attached fan-in (e.g. a `calc` root receiving two inputs),
+   the **result is a validation error**. Instantiation **never** rewrites the
+   recipe's topology to "fix" this.
+7. **Atomic.** The whole instantiation is one operation, so it is a single undo
+   step and cannot leave a half-attached graph.
+
+**Multi-root recipe.** If the recipe has several roots `A`, `B` joining at `C`:
+
+- `attach_roots_to == []` → `A`, `B` remain roots (starter);
+- `attach_roots_to == [X]` → `A.inputs = [X]`, `B.inputs = [X]`, and internal
+  `C.inputs = [A, B]` is preserved: `X → A`, `X → B`, `A + B → C` (S24).
+
+**Multi-source attachment.** `attach_roots_to == [X, Y]` gives **every** recipe
+root `inputs = [X, Y]` (the same attachment set), so a multi-root recipe attaches
+all its roots to all sources (S25). If a root cannot legally take the resulting
+fan-in, validation reports it; the tool does not silently split the sources
+between roots.
+
+**Starter semantics.** From an empty workflow,
+`instantiate_recipe(recipe, attach_roots_to=[])` leaves the recipe's roots as
+roots.
+
+**"Add workflow here".** With an existing `ConfGen` and a recipe `Opt → Freq`,
+the user action *"add this recipe after ConfGen"* is
+`instantiate_recipe(recipe, attach_roots_to=[<confgen id>])`, producing
+`ConfGen → Opt → Freq` — worked through as before/recipe/after in
+`docs/rfc/examples/workflow-v3-recipe-attach.yaml`. Placing the recipe
+**independently alongside** the existing steps is the explicit
+`attach_roots_to=[]` choice, which makes the recipe roots consume the **workflow
+external input** — it is never the default.
 
 `required_fields` (`confgen.chains`, `calc.program`, `calc.keyword`) and
 `exposed_fields` are unchanged, and `build_recipe_catalog()` /
@@ -602,11 +844,23 @@ the declared `required_fields`. This is exactly the R2 boundary and is preserved
 
 | Operation | Copies | Allocates | Notes |
 |---|---|---|---|
-| **Duplicate step** | `type, params, enabled, checkpoint` | a **new id** | `label` gets a ` (copy)` suffix; `inputs` defaults to the original's `inputs` (branch alongside). Never copies the id. |
-| **Insert between** | — | new id | see §21 |
-| **Template instantiate** | template steps | **fresh ids for every template-local id** | intra-template refs rewritten; `annotations` carried; ids that were template-local never survive into the target |
+| **Duplicate step** | `type, params, enabled, checkpoint` | a **new opaque id** (§5.4) | `inputs` defaults to the original's `inputs` (branch alongside); never copies the id |
+| **Instantiate recipe** | recipe steps | **fresh opaque ids** for every template-local id | attachment semantics in §19.3; intra-recipe refs rebased |
+| **Clone workflow** | all steps | retains ids only when the **target is empty** and the user explicitly asks | the single exception to rebasing; not the default |
 
-**Identity is never copied.** This is the invariant that keeps ids meaningful.
+**Identity is never copied** by duplicate/instantiate. The only operation that may
+retain ids is an explicit *clone into an empty document*.
+
+**Duplicate label rule.** A duplicate of a step that has `label: L` gets
+`label: "L (copy)"`. A duplicate of a step that has **no** label also has **no**
+label (the tool does not invent one) — the two are then distinguished by id, and
+the UI shows the id for unlabelled steps.
+
+**Checkpoint on duplicate.** If `checkpoint.from_step` points to a step outside
+the copied set (an external predecessor), the reference is **kept as-is** (the
+ancestor relationship is preserved). A duplicate of the whole set that would make
+`from_step` point **inside** the copied set is rebased in lockstep with the ids;
+any resulting self-reference or cycle is rejected by validation (S12, §10).
 
 **Rekeying (changing an id) = delete + create**: the old id's state, artifacts and
 checkpoint reuse are abandoned, and the new id starts fresh. Tools surface this as
@@ -621,7 +875,8 @@ checkpoint reuse are abandoned, and the new id starts fresh. Tools surface this 
 | **Add here (root)** | append a step with `id=alloc()`, `inputs: []` |
 | **Insert X between A and B** | `X.id=alloc()`, `X.inputs=[A]`; in every step `S` where `B ∈ S.inputs`, replace `B` with `X`; if `B` had `checkpoint.from_step==A`, leave `B.checkpoint` unchanged (still an ancestor) |
 | **Branch from A** | `X.id=alloc()`, `X.inputs=[A]`; `A`'s other consumers untouched |
-| **Duplicate step S** | `X.id=alloc()`, `X.inputs=S.inputs` (same predecessors), `X.params=S.params`, `X.type=S.type`, `X.enabled=S.enabled`, `X.checkpoint=S.checkpoint`, `X.label=S.label+" (copy)"` |
+| **Duplicate step S** | `X.id=alloc()`, `X.inputs=S.inputs` (same predecessors), `X.params=S.params`, `X.type=S.type`, `X.enabled=S.enabled`, `X.checkpoint=S.checkpoint`, `X.label = "S.label (copy)"` if S has a label else omitted |
+| **Instantiate recipe here** | `instantiate_recipe(recipe, attach_roots_to=<selected ids>)` (§19.3): rebase all recipe ids, preserve internal edges, set every recipe root's `inputs` to `attach_roots_to`, validate, commit atomically |
 | **Disable step** | set `S.enabled=false`; **do not** rewrite consumers' `inputs` (bypass is dataflow, §12) |
 | **Delete step S** | remove `S`; for every `T` with `S ∈ T.inputs`, replace `S` with `S.inputs` (reconnect); if `S` had one predecessor, that predecessor takes its place; if `S` was a root, consumers become roots (`inputs` loses that entry) |
 | **Change input source** | set `S.inputs` to the new id list (validated) |
@@ -648,14 +903,21 @@ must be blocked or the checkpoint re-pointed by the tool.
 | S8 | disabled fan-in | A,D → B(off) → C | s001..s004 | bypass widens C's input | C cardinality on effective flow (R6) | — |
 | S9 | checkpoint reuse | A → B(opt) → C(freq, checkpoint.from_step=B) | s001..s003 | chain + checkpoint edge | from_step is calc ancestor | — |
 | S10 | rename label | S2 with `label` changed | unchanged | unchanged | ok | **no** |
-| S11 | reorder serialization | S2 array permuted | unchanged | unchanged | ok | **no** |
-| S12 | duplicate step | S2 + copy of s002 | new s004 | s004.inputs=[s001] | ok | yes |
-| S13 | insert between | A→B becomes A→X→B | new id | rewired | ok | yes |
+| S11 | reorder serialization | S2 (`A→B→C`) array rewritten to `C,A,B` | unchanged | unchanged (graph from `inputs`) | ok | **no** |
+| S12 | duplicate step | S2 + copy of s002 | **new opaque id** (e.g. `s_k7m2qvd`) | `inputs=[s001]` (same predecessors) | ok | yes |
+| S13 | insert between | A→B becomes A→X→B | new opaque id | rewired | ok | yes |
 | S14 | delete + reconnect | remove middle, reconnect | remaining ids | rewired | ok | yes |
 | S15 | partial recipe | conformer_search | (no ids) | none | parseable, **not runnable** | n/a |
 | S16 | V2 unnamed upgrade | V2 `{type: confgen}` steps | s001.. | linear → explicit | ok | new digest |
 | S17 | V2 numeric chk upgrade | `chk_from_step: 2` | s00N | checkpoint ref | resolves to id | new digest |
-| S18 | template twice | two copies of a 2-step template | s00N..s00N+3 | two disjoint subgraphs | ids rebased, no collision | yes |
+| S18 | template twice | two copies of a 2-step recipe | fresh opaque ids per copy | two disjoint subgraphs | rebased, no collision | yes |
+| S19 | delete highest migrated id then add | `s001,s002,s003` → delete `s003` → add | new step = **opaque** (`s_…`), never `s003` | ok | allocator collision-checks | yes |
+| S20 | misspelled core param | `params: {methd: B3LYP}` | — | — | **runnable ERROR** (`params` strict §6.4) | n/a (invalid) |
+| S21 | unknown namespaced semantic extension | `extensions: {org.example.x: …}` | — | — | parse **preserved**; **runnable ERROR** unless recognised (§6.3) | n/a (invalid to run) |
+| S22 | schema-doc-only change | same semantics, schema `description` edited | unchanged | unchanged | ok | **A unchanged; binding B changes** (§16.B) |
+| S23 | instantiate same recipe twice | two copies into one workflow | 2× fresh opaque ids | refs rebased per copy | all final ids unique | yes |
+| S24 | multi-root recipe → one predecessor | recipe `A`,`B` roots join at `C`; attach `[X]` | fresh ids | `X→A`, `X→B`, `A+B→C` | per-root cardinality checked | yes |
+| S25 | recipe → two predecessors | attach `[X,Y]` | fresh ids | every root `inputs=[X,Y]` | cardinality validated, **no** topology guessing | yes |
 
 ---
 
@@ -670,6 +932,7 @@ The five core examples plus a partial recipe and a V2 before/after live in
 - `workflow-v3-checkpoint.yaml` (S9)
 - `workflow-v3-disabled.yaml` (S7)
 - `workflow-v3-recipe-partial.yaml` (S15)
+- `workflow-v3-recipe-attach.yaml` (§19.3 / "add workflow here": before, recipe, after)
 - `workflow-v2-to-v3-before.yaml` / `workflow-v2-to-v3-after.yaml` (S16 + S17)
 
 A non-production JSON Schema draft is at
@@ -692,8 +955,19 @@ A non-production JSON Schema draft is at
 - R3.2 will supersede it with a production schema, at which point the contract
   version bumps under R7.
 
-All example documents under `docs/rfc/examples/` validate against this draft
-(the V2 "before" example does not, by construction).
+The `params` member is a **placeholder** in the draft (`$defs/paramsDraft`): it only
+asserts `params` is an object, because the production typed `params` enum per step
+type is authored in R3.2. The draft is explicit that the **final** policy is
+strict — an unknown core `params` member is a definition error (§6.4) — so the
+placeholder must not be read as "unknown params are allowed".
+
+All **runnable** example documents under `docs/rfc/examples/` validate against this
+draft. Two examples do **not**, by construction, because they are not runnable
+documents: `workflow-v2-to-v3-before.yaml` (V2) and the recipe fragment
+`workflow-v3-recipe-partial.yaml` (fragment profile, `id` optional).
+`workflow-v3-recipe-attach.yaml` is a three-document file (before / recipe /
+after); its fragment document likewise belongs to the fragment profile and its
+other two documents validate.
 
 ---
 
@@ -701,19 +975,26 @@ All example documents under `docs/rfc/examples/` validate against this draft
 
 | Topic | V2 | V3 decision | Why |
 |---|---|---|---|
-| Step identity | `name` (also label) | immutable `id` (`sNNN`) | identity must survive rename/reorder |
+| Step identity | `name` (also label) | immutable workflow-local `id`, grammar `^[a-z][a-z0-9_]{0,63}$` | identity must survive rename/reorder |
+| Step ID allocation | — | **V2 upgrade only** → sequential `sNNN`; **everything else** → collision-checked opaque `s_[a-z2-7]{8}` | deterministic migration + delete-safe edits |
+| ID reuse | n/a | allocator must not intentionally reuse a removed id; only *current-document* uniqueness is enforceable | static docs cannot prove history |
 | Display label | `name` | `label` (optional, may duplicate) | separate presentation from identity |
 | Graph | implicit-linear OR explicit | **explicit only**; `inputs` required | remove hidden mode and order coupling |
 | Root input | implicit or `inputs: []` | `inputs: []` | one reference kind, no magic token |
 | Dependency target | name | step `id` | position/name independent |
 | Checkpoint target | `params.chk_from_step` name/index | `checkpoint.from_step` id | distinct relation, stable target |
-| Step order | sometimes semantic | presentation only | deterministic, order-free execution |
+| Step order | sometimes semantic | presentation only; serializer preserves author order | deterministic, order-free execution |
 | Disabled | runtime bypass | **declared pass-through** semantics | schema-level, cardinality on effective flow |
 | Directory | name-derived | `steps/<id>/` | machine identity = id |
-| Definition fingerprint | v1 (name-based, order-sensitive) | id-based, excludes label/order/annotations | presentation must not affect identity |
-| Execution fingerprint | v1 binding | definition + run context (R4) | resume rejects real changes only |
-| Extensions | unknown params = semantic; unknown step keys dropped | `extensions` (namespaced, semantic) + `annotations` (non-semantic) | typo detection + round-trip + fingerprint clarity |
+| Unknown core params | preserved as `extra` | **definition ERROR** (`params` strict) | a typo must not run silently |
+| Semantic extension | unknown params | explicit namespaced `extensions` (fingerprinted) | fail-safe, namespaced |
+| Unknown semantic extension | n/a | parse-preserved; **runnable ERROR** unless recognised | producer cannot guarantee unknown semantics |
+| Non-semantic metadata | — | `annotations` (never fingerprinted) | legal home for GUI/comments |
+| Schema digest | inside the v1 binding | **binding/provenance only**, not in the definition fingerprint | schema representation ≠ workflow semantics |
+| Definition fingerprint | v1 (name-based, order-sensitive) | `semantics_version` + semantic payload by id; excludes label/order/annotations/schema digest | presentation must not affect identity |
+| Execution fingerprint | v1 binding | definition semantic payload + run context (R4) | resume rejects real changes only |
 | Type tokens | `calc/confgen/task/gen` | `calc/confgen` only | aliases only in V2 adapter |
+| Recipe instantiation | n/a | rebase ids + **explicit `attach_roots_to`** | embedding into an existing DAG must be unambiguous |
 | Recipes | partial V2 fragment | partial V3 fragment, self-contained, ids rebased on instantiate | parseable ≠ runnable preserved |
 
 ---
@@ -723,6 +1004,8 @@ All example documents under `docs/rfc/examples/` validate against this draft
 | Alternative | Verdict | Why |
 |---|---|---|
 | Random UUID step ids | **rejected as default** | non-deterministic upgrade churns diffs; unreadable. Allowed only as a hand-written id if the charset permits. |
+| **`max(existing suffix)+1` with "never reused"** | **rejected** | deletion permits reuse (`{s001,s002,s003}` − `s003` → `max+1 == 3` → `s003` again); the claim is unprovable from a static document. Superseded by two allocation families + collision-checked opaque ids (§5). |
+| **Persistent high-water mark (`next_step_number`)** | rejected | allocator state becomes document state: merge-conflict surface, deletable metadata, no copy/paste safety (§5.7). |
 | List-index step ids | rejected | exactly the V2 problem: reorder changes identity |
 | `name` as id | rejected | rename = identity drift; label cannot be free |
 | Implicit linear fallback in V3 | rejected | hidden order semantics; the root cause of fragile edits |
@@ -732,6 +1015,9 @@ All example documents under `docs/rfc/examples/` validate against this draft
 | Checkpoint merged into `inputs` | rejected | different relation; merging loses the ancestor rule |
 | `label` affecting fingerprint | rejected | rename must be free |
 | List order affecting execution | rejected | order must not be identity |
+| **Unknown `params` member → warning** | **rejected** | a misspelled semantic parameter (`methd:`) would run silently; V3 makes unknown core params a hard error (§6.4). |
+| **Schema digest inside the definition fingerprint** | **rejected** | a schema `description`/representation change would move workflow identity without any semantic change; schema is binding/provenance (§16.B). |
+| **Recipe instantiation without explicit attachment** | **rejected** | embedding a self-contained recipe into an existing DAG is ambiguous (root vs attached); `attach_roots_to` makes it explicit and atomic (§19.3). |
 | Eager migration of old workflow state | rejected | V2 runs must keep V2 resume semantics; migration is opt-in per run |
 | Deleting V2 support | rejected | JobDesk and existing runs depend on V2 |
 | Step-level `spec` alongside `params` | rejected | splits the parameter surface; `params.theory` (R5) is additive |
@@ -807,32 +1093,58 @@ Guarantee: a document is dispatched by its `schema` field. A document lacking
 | CLI user | "I renamed my step and my resume broke." | Cannot happen in V3: dirname/state/fingerprint use `id`; `label` is free. |
 | JobDesk GUI | "I address fields by `/steps/{index}/…`." | R3.2/R3.5 add id-addressed pointers (`/steps/{id}/params/...`); JobDesk adopts at its own pace on V2. |
 | JobDesk GUI | "Two steps with the same label are indistinguishable." | UI disambiguates with the id; labels may duplicate by design. |
-| Execution engine | "Does array order still matter?" | No: waves are sorted by id; order is presentation. |
-| Resume/state | "Copy a step and resume the old results?" | Duplicate always allocates a new id; old id's state is not adopted. |
-| Source control | "Will upgrade churn the file every time?" | No: deterministic ids, preserved order, no UUIDs. |
-| Template/recipe | "Two instances of one template collide." | Ids are template-local and rebased on instantiate; recipes are self-contained. |
+| Execution engine | "Does array order still matter?" | No: waves are sorted by id; order is presentation (§9). |
+| Resume/state | "Copy a step and resume the old results?" | Duplicate always allocates a new id; old id's state is not adopted (§20). |
+| Source control | "Will upgrade churn the file every time?" | No: upgrade is deterministic sequential ids; later edits are opaque but assign-once; order preserved (§14). |
+| **ID lifecycle** | "Delete `s003`, add a step — is `s003` reused?" | No: adds use the opaque family, never the sequential one; deletion never frees a number (§5.5, S19). |
+| **ID lifecycle** | "Paste a step from another workflow — same id?" | Out of scope of the *document*; a paste is an **add** (fresh opaque id), never a raw id copy. |
+| **ID lifecycle** | "Merge conflict on two new steps?" | Two allocators may both pick a token; the merge re-validates current-document uniqueness and the loser is reallocated. |
+| **ID lifecycle** | "Run upgrade twice?" | Idempotent on the same source (S16); a document already in V3 is never re-numbered. |
+| **ID lifecycle** | "Hand-wrote an id that was used before?" | Undetectable and not claimed; only current-document uniqueness is enforced (§5.6). |
+| **Unknown fields** | "Typo in a core param?" | Hard error, not a warning (§6.4, S20). |
+| **Unknown fields** | "Newer producer's semantic extension?" | Parse-preserved; runnable error unless this producer recognises the namespace (§6.3, S21). |
+| **Unknown fields** | "GUI layout data?" | `annotations`, non-semantic, never fingerprinted (§6.3). |
+| **Fingerprint** | "Rename a label?" | No change to definition or execution fingerprint (S10). |
+| **Fingerprint** | "Reorder steps?" | No change (S11). |
+| **Fingerprint** | "Edit only the schema `description`?" | Definition fingerprint (A) unchanged; binding (B) changes (S22). |
+| **Fingerprint** | "Change a graph edge / param / extension / id?" | Definition fingerprint changes → resume rejected (§16.D). |
+| **Fingerprint** | "Change inputs or resources?" | Execution fingerprint changes; definition unchanged (§16.C). |
+| **Recipe** | "Root / multi-root / nested DAG?" | Internal topology preserved; only roots are attached (§19.3, S24). |
+| **Recipe** | "Attach to two predecessors?" | Every root gets the same attachment set; cardinality validated, topology never guessed (S25). |
+| **Recipe** | "Instantiate the same recipe twice?" | Two disjoint fresh id sets; collision check sees the first copy (S23). |
 | Plugin/step type | "I need a step type ConfFlow does not know." | Unknown `type` is rejected; semantics go in namespaced `extensions`. A plugin axis is R6+. |
-| Security/fail-safe | "Unknown extension could change results silently." | `extensions` participates in the fingerprint, so resume fails closed; `annotations` is the only non-semantic bucket. |
+| Security/fail-safe | "Unknown extension could change results silently." | `extensions` participates in the fingerprint **and** an unrecognised namespace is a runnable error, so nothing semantic is silently ignored (§6.3). |
 
 ---
 
 ## 31. Open-question gate (must all be answered; **no TBD remains**)
 
 1. V3 step identity — a workflow-local immutable `id` string (§5).
-2. Who generates it — author or mutating tool via the §5.4 allocator.
-3. V2 upgrade id generation — document-order `s001…` (§14).
-4. Can `label` duplicate — yes (§6).
-5. Does renaming `label` affect execution identity — no (§16, §17).
-6. Does step array order have semantics — no (§9).
-7. Root input — `inputs: []` (§8).
-8. `inputs` references — step ids (§10).
-9. `checkpoint` references — `checkpoint.from_step`, a calc ancestor id (§11).
-10. Disabled semantics — declared pass-through bypass (§12).
-11. Duplicate id allocation — always a new id (§20).
-12. Recipe instantiate collisions — template-local ids rebased to fresh ids (§19, §20).
-13. Unknown extensions — namespaced `extensions` (semantic) + `annotations` (non-semantic) (§13).
-14. Definition fingerprint and label/order — excluded; ids/extensions included (§16).
-15. Old V2 state — stays V2; no eager migration (§17, §27).
+2. Legal id grammar — `^[a-z][a-z0-9_]{0,63}$` (§5.3).
+3. Exact new-step allocator — opaque `^s_[a-z2-7]{8}$`, collision-checked, bounded retry (§5.4–§5.5).
+4. V2 upgrade id allocator — sequential `^s[0-9]{3,}$`, document order, the only sequential producer (§5.4, §14).
+5. Delete-then-add / id reuse contract — adds never reuse a deleted id; only current-document uniqueness is enforceable (§5.6, S19).
+6. Who generates ids / runnable requirement — author or mutating tool; `id` required to run, never auto-generated by the parser for a runnable document (§5.3, §6.2).
+7. Unknown core `params` member — definition ERROR (§6.4).
+8. Semantic-extension mechanism — namespaced `extensions`, fingerprinted (§6.3).
+9. Unknown extension runnable behaviour — parse-preserved; runnable ERROR unless recognised; `annotations` is the non-semantic bucket (§6.3).
+10. Canonical semantics version — `confflow.workflow-semantics.v3`, a canonical-layer constant (§15, §16.A).
+11. Schema digest in the definition fingerprint — **no**; binding/provenance only (§16.B).
+12. Definition fingerprint content — semantics_version + canonical semantic payload by id; excludes label/order/annotations/schema digest/source version (§16.A).
+13. Execution fingerprint — definition payload + run context (R4) (§16.C).
+14. Can `label` duplicate — yes (§6).
+15. Does renaming `label` affect execution identity — no (§16.D, §17).
+16. Does step array order have semantics — no; serializer preserves author order; fingerprint canonical-sorts by id (§9).
+17. Root input — `inputs: []` (§8).
+18. `inputs` references — step ids (§10).
+19. `checkpoint` references — `checkpoint.from_step`, a calc ancestor id (§11).
+20. Disabled semantics — declared pass-through bypass; effective-dataflow cardinality (R6) (§12).
+21. Duplicate id allocation — always a new opaque id; label rule and checkpoint rule defined (§20).
+22. Recipe attachment semantics — `instantiate_recipe(recipe, attach_roots_to)` (§19.3).
+23. Multi-root recipe attachment — every root receives `attach_roots_to` (§19.3, S24).
+24. Multi-source attachment — every root receives the same `[X, Y]` set; cardinality validated, no topology guessing (§19.3, S25).
+25. Recipe ×2 collision — fresh ids per copy; collision check spans the whole document (§19.3, S23).
+26. Old V2 state — stays V2; no eager migration (§17, §27).
 
 ---
 

@@ -1,13 +1,15 @@
-# Workflow V3 — partial recipe document (RFC §19, scenario S15)
+# Workflow V3 — partial recipe FRAGMENT (RFC §19, scenario S15)
 #
-# This is a parseable fragment, NOT a runnable definition. It deliberately omits
-# the user-required parameter `confgen.chains`:
+# This is a parseable FRAGMENT, not a runnable document. It deliberately:
+#   * omits every step `id` (the instantiate step allocates them), and
+#   * omits the user-required parameter `confgen.chains`:
 #
-#   required_fields: [confgen.chains]
+#       required_fields: [confgen.chains]
 #
-# `parse_workflow_mapping` accepts it; `validate_workflow_definition` rejects it
-# until the user supplies chains. Step ids are omitted because a single-step
-# starter has no internal references; the instantiate step allocates them.
+# A fragment is validated by the looser FRAGMENT profile (id optional); the
+# runnable document profile requires every step to have an id (RFC §6.2, §24).
+# `parse_workflow_mapping` accepts this fragment; `validate_workflow_definition`
+# rejects it until the user supplies chains.
 schema: confflow.workflow.v3
 global: {}
 steps:

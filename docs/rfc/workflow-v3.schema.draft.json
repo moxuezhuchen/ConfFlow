@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://confflow.dev/schemas/draft/workflow-v3.json",
   "title": "ConfFlow workflow V3 (DRAFT — design only)",
-  "description": "DRAFT ONLY. Not used by the runtime, not part of any package data, and NOT referenced by workflow_schema_sha256 or the configuration contract. See docs/rfc/WORKFLOW_V3_RFC.md. R3.2 replaces this with a production schema.",
+  "$comment": "DRAFT ONLY. Not used by the runtime, not part of any package data, and NOT referenced by workflow_schema_sha256 or the configuration contract. See docs/rfc/WORKFLOW_V3_RFC.md. This schema describes the DOCUMENT (runnable) profile: a step requires `id`. A recipe FRAGMENT profile (id optional) is a separate, looser profile that R3.2 publishes; a fragment that carries an id must still satisfy `$defs/id`. R3.2 replaces all of this with a production schema.",
   "type": "object",
   "required": ["schema", "steps"],
   "additionalProperties": false,
@@ -22,7 +22,7 @@
     },
     "extensions": {
       "$ref": "#/$defs/namespacedMap",
-      "description": "Semantic, namespaced producer data. Participates in the definition fingerprint."
+      "description": "Semantic, namespaced producer data. Participates in the definition fingerprint. A namespace the producer does not recognise is a runnable ERROR (RFC §6.3)."
     },
     "annotations": {
       "type": "object",
@@ -34,7 +34,7 @@
     "id": {
       "type": "string",
       "pattern": "^[a-z][a-z0-9_]{0,63}$",
-      "description": "Workflow-local, immutable step identity. Lowercase only."
+      "description": "Workflow-local, immutable step identity. Lowercase only. Legal grammar is permissive; the allocator generates only two shapes: sequential `^s[0-9]{3,}$` (V2 upgrade) and opaque `^s_[a-z2-7]{8}$` (application adds), per RFC §5.3/§5.4."
     },
     "stepIdRef": {
       "type": "string",
@@ -43,7 +43,7 @@
     "namespacedMap": {
       "type": "object",
       "propertyNames": {
-        "pattern": "^[a-z0-9_]+(\\.[a-z0-9_]+)+$"
+        "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$"
       },
       "additionalProperties": true
     },
@@ -54,18 +54,22 @@
       "properties": {
         "from_step": {
           "$ref": "#/$defs/stepIdRef",
-          "description": "Id of an upstream calc step whose checkpoint file is reused."
+          "description": "Id of an upstream calc step whose checkpoint file is reused (RFC §11)."
         }
       }
     },
+    "paramsDraft": {
+      "type": "object",
+      "$comment": "DRAFT PLACEHOLDER ONLY — this is NOT the V3 policy. The production V3 schema (R3.2) enumerates the core parameters per step type and sets additionalProperties:false: an unknown core `params` member is a DEFINITION ERROR (RFC §6.4), because a misspelled semantic parameter must never run silently. This placeholder only asserts `params` is an object so the design examples can be checked before R3.2 authors the typed enum.",
+      "additionalProperties": true
+    },
     "step": {
       "type": "object",
-      "required": ["type", "inputs"],
+      "required": ["id", "type", "inputs"],
       "additionalProperties": false,
       "properties": {
         "id": {
-          "$ref": "#/$defs/id",
-          "description": "Required in a runnable definition. Optional in a parseable recipe fragment (allocated on instantiate, RFC §19)."
+          "$ref": "#/$defs/id"
         },
         "label": {
           "type": "string",
@@ -88,9 +92,7 @@
           "description": "Geometry/data-flow predecessors. Empty array = consumes the workflow input (root)."
         },
         "params": {
-          "type": "object",
-          "additionalProperties": true,
-          "description": "Step-type-specific parameters; unknown members are preserved and warned."
+          "$ref": "#/$defs/paramsDraft"
         },
         "checkpoint": {
           "$ref": "#/$defs/checkpoint"
