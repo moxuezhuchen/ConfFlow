@@ -1,0 +1,24 @@
+# Workflow V3 — checkpoint reuse (RFC §23, scenario S9)
+# `inputs` carries the geometry; `checkpoint.from_step` is a separate reference to
+# an upstream calc step's .chk file. They are distinct relations.
+schema: confflow.workflow.v3
+global:
+  iprog: g16
+  itask: sp
+steps:
+  - id: s001
+    label: Optimize
+    type: calc
+    inputs: []
+    params:
+      itask: opt
+      keyword: B3LYP/6-31G(d)
+  - id: s002
+    label: Frequency from optimized checkpoint
+    type: calc
+    inputs: [s001]
+    checkpoint:
+      from_step: s001
+    params:
+      itask: freq
+      keyword: B3LYP/6-31G(d)

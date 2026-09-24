@@ -1,0 +1,32 @@
+# Workflow V3 — AFTER upgrade from workflow-v2-to-v3-before.yaml (RFC §14).
+#
+# Deterministic upgrade result:
+#   * ids assigned in document order (s001, s002);
+#   * implicit linear rewritten to explicit `inputs` (step 1 is a root: `[]`);
+#   * `task` normalized to `calc`;
+#   * numeric `chk_from_step: 1` resolved to `checkpoint.from_step: s001` and
+#     removed from `params`;
+#   * V2 `name` becomes `label`.
+#
+# Re-running the upgrade on the same input yields byte-identical output, and
+# reordering this file later never changes an id.
+schema: confflow.workflow.v3
+global:
+  iprog: g16
+steps:
+  - id: s001
+    label: opt
+    type: calc
+    inputs: []
+    params:
+      itask: opt
+      keyword: B3LYP/6-31G(d)
+  - id: s002
+    label: freq
+    type: calc
+    inputs: [s001]
+    checkpoint:
+      from_step: s001
+    params:
+      itask: freq
+      keyword: B3LYP/6-31G(d)

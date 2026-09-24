@@ -1,0 +1,21 @@
+# Workflow V2 — BEFORE upgrade (RFC §14, scenarios S16 + S17).
+# Exercised by `confflow workflow upgrade` (R3.3, not implemented yet).
+#
+# Facts this file demonstrates:
+#   * implicit linear: no step declares `inputs`, so document order is the graph;
+#   * a legacy type alias (`task` -> calc);
+#   * a numeric `chk_from_step: 1` (1-based document position).
+global:
+  iprog: g16
+steps:
+  - name: opt
+    type: task
+    params:
+      itask: opt
+      keyword: B3LYP/6-31G(d)
+  - name: freq
+    type: calc
+    params:
+      itask: freq
+      keyword: B3LYP/6-31G(d)
+      chk_from_step: 1

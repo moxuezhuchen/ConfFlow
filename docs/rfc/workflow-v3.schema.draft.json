@@ -1,0 +1,108 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://confflow.dev/schemas/draft/workflow-v3.json",
+  "title": "ConfFlow workflow V3 (DRAFT — design only)",
+  "description": "DRAFT ONLY. Not used by the runtime, not part of any package data, and NOT referenced by workflow_schema_sha256 or the configuration contract. See docs/rfc/WORKFLOW_V3_RFC.md. R3.2 replaces this with a production schema.",
+  "type": "object",
+  "required": ["schema", "steps"],
+  "additionalProperties": false,
+  "properties": {
+    "schema": {
+      "const": "confflow.workflow.v3"
+    },
+    "global": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "steps": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/step"
+      }
+    },
+    "extensions": {
+      "$ref": "#/$defs/namespacedMap",
+      "description": "Semantic, namespaced producer data. Participates in the definition fingerprint."
+    },
+    "annotations": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Non-semantic presentation data (GUI layout, comments). Never fingerprinted."
+    }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]{0,63}$",
+      "description": "Workflow-local, immutable step identity. Lowercase only."
+    },
+    "stepIdRef": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]{0,63}$"
+    },
+    "namespacedMap": {
+      "type": "object",
+      "propertyNames": {
+        "pattern": "^[a-z0-9_]+(\\.[a-z0-9_]+)+$"
+      },
+      "additionalProperties": true
+    },
+    "checkpoint": {
+      "type": "object",
+      "required": ["from_step"],
+      "additionalProperties": false,
+      "properties": {
+        "from_step": {
+          "$ref": "#/$defs/stepIdRef",
+          "description": "Id of an upstream calc step whose checkpoint file is reused."
+        }
+      }
+    },
+    "step": {
+      "type": "object",
+      "required": ["type", "inputs"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id",
+          "description": "Required in a runnable definition. Optional in a parseable recipe fragment (allocated on instantiate, RFC §19)."
+        },
+        "label": {
+          "type": "string",
+          "description": "Human-facing title. May duplicate; never an identity."
+        },
+        "type": {
+          "enum": ["calc", "confgen"],
+          "description": "Canonical step type. Legacy aliases task/gen are V2-adapter only."
+        },
+        "enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "When false, the step is a pass-through bypass (RFC §12)."
+        },
+        "inputs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/stepIdRef"
+          },
+          "description": "Geometry/data-flow predecessors. Empty array = consumes the workflow input (root)."
+        },
+        "params": {
+          "type": "object",
+          "additionalProperties": true,
+          "description": "Step-type-specific parameters; unknown members are preserved and warned."
+        },
+        "checkpoint": {
+          "$ref": "#/$defs/checkpoint"
+        },
+        "extensions": {
+          "$ref": "#/$defs/namespacedMap"
+        },
+        "annotations": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,17 @@
+# Workflow V3 — partial recipe document (RFC §19, scenario S15)
+#
+# This is a parseable fragment, NOT a runnable definition. It deliberately omits
+# the user-required parameter `confgen.chains`:
+#
+#   required_fields: [confgen.chains]
+#
+# `parse_workflow_mapping` accepts it; `validate_workflow_definition` rejects it
+# until the user supplies chains. Step ids are omitted because a single-step
+# starter has no internal references; the instantiate step allocates them.
+schema: confflow.workflow.v3
+global: {}
+steps:
+  - label: Conformer search
+    type: confgen
+    inputs: []
+    params: {}

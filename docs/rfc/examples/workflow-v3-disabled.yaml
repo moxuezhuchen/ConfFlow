@@ -1,0 +1,30 @@
+# Workflow V3 — disabled pass-through (RFC §23, scenario S7)
+# s002 is disabled, so it produces no artifact: it forwards s001's output to s003.
+# The params on s002 are kept valid only because this step is temporarily off; V3
+# exempts disabled steps from execution preconditions (RFC §12).
+schema: confflow.workflow.v3
+global:
+  iprog: orca
+  itask: sp
+steps:
+  - id: s001
+    label: Conformer search
+    type: confgen
+    inputs: []
+    params:
+      chains: ["1-2-3-4"]
+      angle_step: 120
+  - id: s002
+    label: Extra conformer search (temporarily disabled)
+    type: confgen
+    enabled: false
+    inputs: [s001]
+    params:
+      chains: ["1-2-3-4"]
+  - id: s003
+    label: Optimize
+    type: calc
+    inputs: [s002]
+    params:
+      itask: opt
+      keyword: BP86/def2-SVP

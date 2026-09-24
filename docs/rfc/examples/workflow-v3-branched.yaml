@@ -1,0 +1,29 @@
+# Workflow V3 — branched DAG (RFC §23, scenario S5)
+# Optimize -> {Single point A, Single point B}. Fan-out is a property of `inputs`,
+# not of array order.
+schema: confflow.workflow.v3
+global:
+  iprog: orca
+  itask: sp
+steps:
+  - id: s001
+    label: Optimize
+    type: calc
+    inputs: []
+    params:
+      itask: opt
+      keyword: B3LYP/6-31G(d)
+  - id: s002
+    label: Single point A
+    type: calc
+    inputs: [s001]
+    params:
+      itask: sp
+      keyword: B3LYP/6-31G(d)
+  - id: s003
+    label: Single point B
+    type: calc
+    inputs: [s001]
+    params:
+      itask: sp
+      keyword: MP2/6-31G(d)

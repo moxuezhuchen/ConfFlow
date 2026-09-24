@@ -1,0 +1,28 @@
+# Workflow V3 — simple linear (RFC §23, scenario S2)
+# Opt -> Freq -> Single point. Every edge is explicit; array order is presentation.
+schema: confflow.workflow.v3
+global:
+  iprog: orca
+  itask: sp
+steps:
+  - id: s001
+    label: Optimize
+    type: calc
+    inputs: []
+    params:
+      itask: opt
+      keyword: B3LYP/6-31G(d)
+  - id: s002
+    label: Frequency
+    type: calc
+    inputs: [s001]
+    params:
+      itask: freq
+      keyword: B3LYP/6-31G(d)
+  - id: s003
+    label: Single point
+    type: calc
+    inputs: [s002]
+    params:
+      itask: sp
+      keyword: B3LYP/6-31G(d)

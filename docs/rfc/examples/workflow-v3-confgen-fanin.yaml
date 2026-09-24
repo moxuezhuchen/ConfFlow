@@ -1,0 +1,35 @@
+# Workflow V3 — confgen fan-in (RFC §23, scenario S6)
+# Two conformer-search branches merged by a confgen step, then optimized.
+# Both s001 and s002 are roots: each consumes the workflow's external input.
+schema: confflow.workflow.v3
+global:
+  iprog: orca
+  itask: sp
+steps:
+  - id: s001
+    label: Conformer search A
+    type: confgen
+    inputs: []
+    params:
+      chains: ["1-2-3-4"]
+      angle_step: 120
+  - id: s002
+    label: Conformer search B
+    type: confgen
+    inputs: []
+    params:
+      chains: ["5-6-7-8"]
+      angle_step: 120
+  - id: s003
+    label: Merge ensembles
+    type: confgen
+    inputs: [s001, s002]
+    params:
+      chains: ["1-2-3-4"]
+  - id: s004
+    label: Optimize merged ensemble
+    type: calc
+    inputs: [s003]
+    params:
+      itask: opt
+      keyword: BP86/def2-SVP
