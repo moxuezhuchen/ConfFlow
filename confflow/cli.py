@@ -27,6 +27,7 @@ from .application.execution.workflow_adapter import (
     acquire_work_directory_lease,
     run_workflow_through_service,
 )
+from .config.canonical import require_executable_workflow_file
 from .contract import (
     CAPABILITY_SCHEMA_VERSION,
     OUTPUT_MANIFEST_FILE,
@@ -38,7 +39,13 @@ from .contract import (
     WORKFLOW_STATS_FILE,
 )
 from .core.contracts import ExitCode, cli_output_to_txt, output_txt_path_for_input
-from .core.exceptions import ConfigurationError, InputFileError, PathSafetyError, XYZFormatError
+from .core.exceptions import (
+    ConfFlowError,
+    ConfigurationError,
+    InputFileError,
+    PathSafetyError,
+    XYZFormatError,
+)
 from .core.io import parse_gaussian_input_text, write_xyz_file
 from .core.path_policy import resolve_sandbox_root, validate_managed_path
 from .core.utils import get_logger
@@ -643,6 +650,7 @@ def main(
             return ExitCode.USAGE_ERROR
         except (
             ConfigurationError,
+            ConfFlowError,
             InputFileError,
             OSError,
             RerunFailedRuntimeError,
@@ -728,6 +736,15 @@ def main(
             print(f"Error: {e}", file=sys.stderr)
             return ExitCode.USAGE_ERROR
         return ExitCode.SUCCESS
+
+    # Execution-capability preflight (R3.5): side-effect free version
+    # detection, before any managed-path validation, lease, mkdir or
+    # service/state preparation. V2 passes straight through.
+    try:
+        require_executable_workflow_file(config_file)
+    except ConfFlowError as error:
+        print(f"Error: {error}", file=sys.stderr)
+        return ExitCode.RUNTIME_ERROR
 
     try:
         work_dir = validate_managed_path(work_dir, label="work_dir", sandbox_root=sandbox_root)

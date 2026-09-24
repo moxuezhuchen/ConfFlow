@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from ...artifact_json import write_atomic_json
+from ...config.canonical import require_executable_workflow_file
 from ...contract import OUTPUT_MANIFEST_SCHEMA
 from ...core.exceptions import StopRequestedError
 from ...workflow.engine import run_workflow as default_workflow_runner
@@ -438,6 +439,11 @@ def run_workflow_through_service(
     workflow_runner: WorkflowRunner = default_workflow_runner,
 ) -> dict[str, Any] | None:
     """Run the legacy engine synchronously while all state transitions use the service."""
+    # Mandatory execution-capability guard (R3.5): a V3 document must be
+    # rejected BEFORE build_workflow_service, because that call creates the
+    # state root, run paths and the SQLite repository. The guard reads the
+    # config file only — zero side effects.
+    require_executable_workflow_file(config_file)
     spec = WorkflowRunSpec(
         run_id=run_id,
         input_xyz=tuple(input_xyz),

@@ -31,6 +31,7 @@ from .execution_versions import (
     can_execute,
     can_parse,
     require_executable,
+    require_executable_workflow_file,
 )
 from .extensions import (
     DEFAULT_EXTENSION_REGISTRY,
@@ -197,6 +198,7 @@ __all__ = [
     "parse_workflow_mapping",
     "recipe_catalog_sha256",
     "require_executable",
+    "require_executable_workflow_file",
     "resolve_calc_step",
     "resolve_global_options",
     "resolve_step_semantic_params",

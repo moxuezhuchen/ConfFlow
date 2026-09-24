@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from ..calc.runner import CalcStepRequest, CalcStepRunner
-from ..config.canonical import resolve_calc_step
+from ..config.canonical import require_executable_workflow_file, resolve_calc_step
 from ..config.models import load_workflow_model
 from ..core.exceptions import ConfigurationError
 from ..core.io import read_xyz_file
@@ -103,6 +103,12 @@ def run_rerun_failed(
         raise RerunFailedUsageError("--config is required with --rerun-failed")
     if not step_ref:
         raise RerunFailedUsageError("--step is required with --rerun-failed")
+
+    # Execution-capability preflight (R3.5): a V3 document is refused before
+    # any state/artifact access — a V3 stable id must never be resolved
+    # against V1 name/dirname state, and no rerun output directory may be
+    # created for it. Side-effect free.
+    require_executable_workflow_file(config_file)
 
     workflow = load_workflow_model(config_file)
     global_config = workflow.global_options

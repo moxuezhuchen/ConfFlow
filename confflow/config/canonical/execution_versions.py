@@ -15,8 +15,11 @@ V3 execution by flipping one flag here; no guard body changes.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 
 from ...core.exceptions import ConfFlowError
+from .issues import ConfigValidationError
+from .parser import detect_workflow_file_version
 from .schema import WORKFLOW_SCHEMA_VERSION_V2, WORKFLOW_SCHEMA_VERSION_V3
 
 __all__ = [
@@ -25,6 +28,7 @@ __all__ = [
     "can_execute",
     "can_parse",
     "require_executable",
+    "require_executable_workflow_file",
 ]
 
 
@@ -62,3 +66,22 @@ def require_executable(schema_version: str) -> None:
             f"Workflow {schema_version!r} execution requires state/binding v2 (R4); "
             "it can be parsed, validated, planned and inspected, but not run."
         )
+
+
+def require_executable_workflow_file(config_file: str | Path) -> str | None:
+    """Preflight one configuration file for execution, side-effect free.
+
+    Reads the file and recognises its schema version through the single
+    ``detect_schema_version`` truth, then applies :func:`require_executable`.
+    Returns the detected version. A file that cannot be read or recognised has
+    no version to gate on, so ``None`` is returned and the caller's existing
+    handling of such files applies unchanged — a preflight must never turn a
+    historically-load-erroring V2 invocation into a different failure, nor
+    create anything.
+    """
+    try:
+        version = detect_workflow_file_version(config_file)
+    except (OSError, ConfigValidationError, ConfFlowError):
+        return None
+    require_executable(version)
+    return version

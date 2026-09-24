@@ -18,10 +18,10 @@ from ..calc.artifacts import (
     compute_input_digest,
 )
 from ..calc.executor import CalcExecutor
-from ..config.canonical import build_workflow_binding, resolve_calc_step
+from ..config.canonical import build_workflow_binding, require_executable, resolve_calc_step
 from ..config.models import GlobalOptions
 from ..core import io as io_xyz
-from ..core.exceptions import StopRequestedError
+from ..core.exceptions import ConfFlowError, StopRequestedError
 from ..core.path_policy import resolve_sandbox_root, validate_managed_path
 from ..core.types import TaskStatus
 from ..core.utils import (
@@ -30,7 +30,7 @@ from ..core.utils import (
 )
 from .finalize import finalize_workflow as _finalize_workflow_impl
 from .helpers import count_conformers_any, resolve_step_output
-from .plan import build_workflow_plan
+from .plan import WorkflowPlan, build_workflow_plan, workflow_plan_source_version
 from .presenter import (
     emit_final_report_and_lowest,
     print_step_footer_block,
@@ -170,6 +170,18 @@ def run_workflow(
         config_file,
         original_input_files=original_input_files,
     )
+    # Mandatory execution-capability guard (R3.5): planning is legal for V3,
+    # nothing after this point is. This must precede the binding, resume
+    # prevalidation, runtime initialization and any state/dirname mutation.
+    require_executable(workflow_plan_source_version(plan))
+    if not isinstance(plan, WorkflowPlan):
+        # Unreachable while CAPABILITIES gates V3 execution off; kept as the
+        # narrowing boundary so V3 runtime concepts cannot leak into this V1
+        # engine even if the table is later edited carelessly.
+        raise ConfFlowError(
+            "Workflow V3 execution requires the R4 state/binding runtime; "
+            f"refused after planning ({plan.source_version})."
+        )
     input_files = plan.input_files
     original_inputs = plan.original_inputs
     global_config = plan.global_config
