@@ -1,6 +1,12 @@
 #!/usr/bin/env python3
 
-"""Show resolved workflow configuration without executing the workflow."""
+"""Show resolved workflow configuration without executing the workflow.
+
+``show_resolved_config`` is version-aware: a V2 document keeps the historical
+name/index identity and output shape; a V3 document is shown under its stable-ID
+identity (the persisted ``id``), with the declared graph, checkpoint references
+and the Definition Fingerprint. Labels are display-only in V3 and never select.
+"""
 
 from __future__ import annotations
 
@@ -8,10 +14,16 @@ import json
 from dataclasses import asdict, is_dataclass
 from typing import Any
 
-from ..config.canonical import resolve_calc_step
+from ..config.canonical import (
+    WORKFLOW_SCHEMA_VERSION_V3,
+    detect_schema_version,
+    load_raw_mapping,
+    resolve_calc_step,
+)
 from ..config.models import load_workflow_model
 from ..shared.confgen_params import resolve_confgen_params
 from ..shared.defaults import DEFAULT_MAX_PARALLEL_JOBS
+from .plan import WorkflowV3Plan, WorkflowV3StepPlan, build_workflow_plan
 
 __all__ = [
     "show_resolved_config",
@@ -63,6 +75,104 @@ def _config_as_dict(config: Any) -> dict[str, Any]:
         return asdict(config)
     raw = getattr(config, "__dict__", None)
     return dict(raw) if isinstance(raw, dict) else {}
+
+
+def _select_v3_step(plan: WorkflowV3Plan, step_ref: str) -> WorkflowV3StepPlan:
+    """Select a V3 step by its exact stable ID — the only V3 identity.
+
+    Labels are optional, duplicateable and non-identifying, and document
+    positions are not identities, so neither may select. The error text says
+    what was refused rather than guessing a step.
+    """
+    ref = step_ref.strip()
+    if not ref:
+        raise ValueError("--step must not be empty")
+    if ref.isdigit():
+        raise ValueError(
+            f"V3 steps are identified by stable id, not by document index: {step_ref!r}. "
+            "Use the step id, e.g. --step s001."
+        )
+    matches = [step for step in plan.steps if step.id == ref]
+    if not matches:
+        label_matches = [step for step in plan.steps if step.label == ref]
+        if label_matches:
+            raise ValueError(
+                f"V3 step labels are not identities: {step_ref!r} matches a label. "
+                "Use the stable step id, e.g. --step s001."
+            )
+        raise ValueError(f"No workflow step with stable id {step_ref!r} was found")
+    return matches[0]
+
+
+def _v3_step_resolved(plan: WorkflowV3Plan, step: WorkflowV3StepPlan) -> dict[str, Any]:
+    return {
+        "step_id": step.id,
+        "label": step.label,
+        "step_type": step.type,
+        "enabled": step.enabled,
+        "inputs": list(step.inputs) if step.inputs else "external-input",
+        "checkpoint_from": step.checkpoint_from,
+        "resolved_config": dict(step.params),
+    }
+
+
+def _show_v3_resolved_config(
+    config_file: str,
+    *,
+    step_ref: str | None,
+    output_format: str,
+) -> None:
+    """Show a V3 workflow under its stable-ID identity (planning-only)."""
+    plan = build_workflow_plan([], config_file)
+    assert isinstance(plan, WorkflowV3Plan)  # V3 dispatch guarantees this shape
+    if step_ref is not None:
+        step = _select_v3_step(plan, step_ref)
+        if output_format == "json":
+            output = {
+                "config_file": config_file,
+                "schema_version": plan.source_version,
+                "definition_fingerprint": plan.definition_fingerprint,
+                "step": _v3_step_resolved(plan, step),
+            }
+            print(json.dumps(output, indent=2, default=str))
+        else:
+            print(f"Config: {config_file}")
+            print(f"Schema: {plan.source_version}")
+            print(f"Definition fingerprint: {plan.definition_fingerprint}")
+            print(f"Step [{step.id}] ({step.type}) enabled={step.enabled}")
+            print()
+            print(_format_text_section("Resolved config", dict(step.params)))
+        return
+
+    if output_format == "json":
+        output = {
+            "config_file": config_file,
+            "schema_version": plan.source_version,
+            "definition_fingerprint": plan.definition_fingerprint,
+            "graph_order": list(plan.topological_order),
+            "steps": [_v3_step_resolved(plan, step) for step in plan.steps],
+        }
+        print(json.dumps(output, indent=2, default=str))
+    else:
+        print(f"Config: {config_file}")
+        print(f"Schema: {plan.source_version}")
+        print(f"Definition fingerprint: {plan.definition_fingerprint}")
+        print(f"Steps: {len(plan.steps)} (identity: stable id)")
+        print(f"Graph order: {' -> '.join(plan.topological_order)}")
+        print()
+        print(
+            _format_text_section("Global config", _config_as_dict(plan.definition.global_options))
+        )
+        for step in plan.steps:
+            print()
+            print(f"[{step.id}] ({step.type}) enabled={step.enabled}")
+            if step.label is not None:
+                print(f"  label: {step.label}")
+            inputs = list(step.inputs) if step.inputs else "external-input"
+            print(f"  inputs: {inputs}")
+            if step.checkpoint_from is not None:
+                print(f"  checkpoint: from_step={step.checkpoint_from}")
+            print(_format_text_section("Resolved config", dict(step.params), indent=2))
 
 
 def _resolve_step_config(
@@ -137,6 +247,11 @@ def show_resolved_config(
     ValueError
         If step_ref is invalid.
     """
+    raw = load_raw_mapping(config_file)
+    if detect_schema_version(raw) == WORKFLOW_SCHEMA_VERSION_V3:
+        _show_v3_resolved_config(config_file, step_ref=step_ref, output_format=output_format)
+        return
+
     workflow = load_workflow_model(config_file)
     global_config = workflow.global_options
     global_output = _config_as_dict(global_config)

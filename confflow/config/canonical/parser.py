@@ -102,6 +102,18 @@ def parse_canonical_workflow(raw: Mapping[str, Any]) -> CanonicalWorkflowDefinit
     return to_canonical_workflow(parse_workflow_mapping(raw))
 
 
+def detect_workflow_file_version(config_file: str | Path) -> str:
+    """Return the schema version of a configuration file, side-effect free.
+
+    Reads and recognises only — no validation, no mutation. This is the helper
+    every pre-execution guard (CLI, service adapter, rerun) uses, so version
+    recognition stays the single :func:`detect_schema_version` truth. Load and
+    recognition errors propagate; guards decide whether a config they cannot
+    read is theirs to reject.
+    """
+    return detect_schema_version(load_raw_mapping(config_file))
+
+
 def load_workflow_definition(config_file: str | Path) -> CanonicalWorkflowDefinition:
     """Load a configuration file and parse it into the canonical workflow IR."""
     return parse_canonical_workflow(load_raw_mapping(config_file))

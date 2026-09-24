@@ -1,6 +1,14 @@
 #!/usr/bin/env python3
 
-"""Dry-run planning for the ``confflow`` CLI."""
+"""Dry-run planning for the ``confflow`` CLI.
+
+Version-aware and strictly side-effect free: a dry run reads configuration and
+inputs, plans, and prints. V2 keeps its historical output (dirnames, output
+path previews, executable probes). V3 prints the stable-ID planning graph from
+:class:`~confflow.workflow.plan.WorkflowV3Plan` and creates nothing — no
+runtime directories, no state, no processes — because V3 execution is
+capability-blocked until R4.
+"""
 
 from __future__ import annotations
 
@@ -9,7 +17,12 @@ from math import prod
 from typing import Any
 
 from ..blocks.confgen.rotations import _parse_chain, _resolve_angle_lists
-from ..config.canonical import resolve_calc_step
+from ..config.canonical import (
+    WORKFLOW_SCHEMA_VERSION_V3,
+    detect_schema_version,
+    load_raw_mapping,
+    resolve_calc_step,
+)
 from ..config.models import load_workflow_model
 from ..core.io import parse_gaussian_input_text
 from ..core.path_policy import (
@@ -19,6 +32,7 @@ from ..core.path_policy import (
 )
 from ..core.utils import validate_xyz_file
 from .helpers import as_list
+from .plan import WorkflowV3Plan, build_workflow_plan
 from .step_naming import build_step_dir_name_map
 
 __all__ = [
@@ -119,9 +133,66 @@ def _print_calc_preview(config: dict[str, Any]) -> None:
     print(f"  orca_path: {_check_executable_setting(config, 'orca_path')}")
 
 
+def _print_v3_step_preview(step: Any, plan_params: dict[str, Any]) -> None:
+    step_type = str(step.type).lower()
+    if step_type == "confgen":
+        print(f"  confgen combinations: {estimate_confgen_combinations(plan_params)}")
+    elif step_type == "calc":
+        print(
+            "  calc: "
+            f"iprog={plan_params.get('iprog')} "
+            f"itask={plan_params.get('itask')} "
+            f"keyword={plan_params.get('keyword')} "
+            f"cores_per_task={plan_params.get('cores_per_task')} "
+            f"total_memory={plan_params.get('total_memory')}"
+        )
+
+
+def _run_v3_dry_run(
+    input_files: list[str],
+    config_file: str,
+    work_dir: str,
+    checked_inputs: list[str],
+) -> None:
+    """Print the V3 planning graph without any runtime side effect."""
+    plan = build_workflow_plan(input_files, config_file)
+    assert isinstance(plan, WorkflowV3Plan)  # V3 dispatch guarantees this shape
+
+    print("ConfFlow dry-run (Workflow V3 — planning only)")
+    print(f"Config: {config_file}")
+    print(f"Work dir: {work_dir} (display only; V3 planning creates no directories)")
+    for path, desc in zip(input_files, checked_inputs, strict=True):
+        print(f"Input: {path} ({desc})")
+    print(f"Schema: {plan.source_version}")
+    print(f"Definition fingerprint: {plan.definition_fingerprint}")
+    print(f"Steps: {len(plan.steps)}")
+    print(f"Roots: {', '.join(plan.roots) if plan.roots else '(none)'}")
+    print(f"Terminals: {', '.join(plan.terminals) if plan.terminals else '(none)'}")
+    print(f"Execution order: {' -> '.join(plan.topological_order)}")
+
+    for step in plan.steps:
+        print("")
+        enabled_text = "enabled" if step.enabled else "disabled"
+        print(f"[{step.id}] ({step.type}) {enabled_text}")
+        if step.label is not None:
+            print(f"  label: {step.label}")
+        if step.inputs:
+            print(f"  inputs: [{', '.join(step.inputs)}]")
+        else:
+            print("  inputs: [] (external input)")
+        if step.checkpoint_from is not None:
+            print(f"  checkpoint: from_step={step.checkpoint_from}")
+        _print_v3_step_preview(step, step.params)
+
+
 def run_dry_run(input_files: list[str], config_file: str, work_dir: str) -> None:
     """Print a workflow dry-run plan without executing workflow steps."""
     checked_inputs = [_check_input_file(path) for path in input_files]
+    raw = load_raw_mapping(config_file)
+    if detect_schema_version(raw) == WORKFLOW_SCHEMA_VERSION_V3:
+        _run_v3_dry_run(input_files, config_file, work_dir, checked_inputs)
+        return
+
     workflow = load_workflow_model(config_file)
     global_config = workflow.global_options
     global_dict = global_config.__dict__

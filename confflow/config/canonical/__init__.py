@@ -63,6 +63,7 @@ from .param_fields import (
 )
 from .parser import (
     detect_schema_version,
+    detect_workflow_file_version,
     load_raw_mapping,
     load_workflow_definition,
     parse_canonical_workflow,
@@ -75,6 +76,7 @@ from .recipes import (
 )
 from .resolve import resolve_calc_step, resolve_global_options
 from .schema import (
+    WORKFLOW_SCHEMA_VERSION,
     WORKFLOW_SCHEMA_VERSION_V2,
     WORKFLOW_SCHEMA_VERSION_V3,
     WORKFLOW_V3_ID_PATTERN,
@@ -144,6 +146,7 @@ __all__ = [
     "ValidationProfile",
     "WORKFLOW_BINDING_SCHEMA",
     "WORKFLOW_SEMANTICS_VERSION",
+    "WORKFLOW_SCHEMA_VERSION",
     "WORKFLOW_SCHEMA_VERSION_V2",
     "WORKFLOW_SCHEMA_VERSION_V3",
     "WORKFLOW_V3_ID_PATTERN",
@@ -178,6 +181,7 @@ __all__ = [
     "confgen_keys",
     "confgen_param_fields",
     "detect_schema_version",
+    "detect_workflow_file_version",
     "dump_workflow_yaml",
     "editor_manifest_sha256",
     "is_valid_namespace",
