@@ -20,6 +20,16 @@ answer both:
     while this function rejects it until those fields are supplied. Parseability
     and runnability are deliberately distinct.
 
+    The function is the canonical **version-aware façade**: the schema version is
+    recognised once via :func:`~confflow.config.canonical.parser.detect_schema_version`
+    (absent ``schema`` is the historical V2 document, an explicit V2/V3 value is
+    honoured, anything else fails closed) and dispatched — V2 documents to the
+    unchanged legacy body (:func:`_validate_workflow_definition_v2`), V3
+    documents to :func:`validate_workflow_v3` with the requested
+    :class:`ValidationProfile` (RUNNABLE pairs with the DOCUMENT schema profile,
+    FRAGMENT with FRAGMENT). No caller re-detects the version, and the V3 path
+    never calls back into this entry, so no dispatch recursion exists.
+
 ``validate_workflow_run_context``
     Validation that additionally needs the **run context**: how many input
     files the caller supplied. A root calc step is fine with exactly one input
@@ -389,15 +399,13 @@ def _semantic_diagnostics(definition: CanonicalWorkflowDefinition) -> list[Diagn
     ]
 
 
-def validate_workflow_definition(raw: Mapping[str, Any]) -> list[Diagnostic]:
-    """Validate everything derivable from the workflow document alone."""
-    if not isinstance(raw, Mapping):
-        return [
-            Diagnostic(
-                "workflow.root_not_mapping", "error", "", "workflow config root must be a mapping"
-            )
-        ]
+def _validate_workflow_definition_v2(raw: Mapping[str, Any]) -> list[Diagnostic]:
+    """Validate a V2 document — the unchanged legacy body, pinned by tests.
 
+    Deliberately not rewritten when the version-aware façade was introduced:
+    same input → same diagnostics → same ordering → same codes/paths/messages/
+    step_refs, and the same run-context boundary.
+    """
     diagnostics = _structural_diagnostics(raw)
     if diagnostics:
         return diagnostics
@@ -767,3 +775,41 @@ def validate_workflow_v3(
     except ConfigValidationError as exc:
         return [Diagnostic("workflow.v3.schema", "error", exc.issue.path, exc.issue.message)]
     return validate_v3_definition(definition, profile=profile, registry=registry)
+
+
+def validate_workflow_definition(
+    raw: Mapping[str, Any],
+    *,
+    profile: ValidationProfile = ValidationProfile.RUNNABLE,
+) -> list[Diagnostic]:
+    """Validate everything derivable from the workflow document alone.
+
+    Single version-aware public entry: the schema version is recognised once via
+    :func:`~confflow.config.canonical.parser.detect_schema_version` and
+    dispatched — never re-detected by callers, never by a second schema check
+    here.
+
+    V2 documents (absent or explicit ``confflow.workflow.v2`` schema) go to the
+    unchanged legacy body; ``profile`` is a V3 concept and is ignored there. V3
+    documents go to :func:`validate_workflow_v3` with the requested profile.
+    An unrecognised schema fails closed as a diagnostic (this function returns
+    diagnostics rather than raising). The V3 implementation never calls back
+    into this entry, so the dispatch cannot recurse.
+    """
+    if not isinstance(raw, Mapping):
+        return [
+            Diagnostic(
+                "workflow.root_not_mapping", "error", "", "workflow config root must be a mapping"
+            )
+        ]
+
+    from .parser import detect_schema_version
+    from .schema import WORKFLOW_SCHEMA_VERSION_V3
+
+    try:
+        version = detect_schema_version(raw)
+    except ConfigValidationError as exc:
+        return [Diagnostic("workflow.schema", "error", exc.issue.path, exc.issue.message)]
+    if version == WORKFLOW_SCHEMA_VERSION_V3:
+        return validate_workflow_v3(raw, profile=profile)
+    return _validate_workflow_definition_v2(raw)

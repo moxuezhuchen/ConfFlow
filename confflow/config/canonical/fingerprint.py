@@ -298,8 +298,11 @@ _EXECUTION_CLASS_GLOBAL_MEMBERS = frozenset(
 
 #: A resolved per-step parameter with one of these names is execution-class (it
 #: changes how a step runs, not the science), so it is excluded from the definition
-#: fingerprint. `workers` is the confgen parallelism knob (the alias of the global
-#: `max_parallel_jobs`); every other per-step-only name stays definition-semantic.
+#: fingerprint. Frozen normatively in RFC §16.A ("Per-step execution-class params"):
+#: the execution-class global members plus the confgen `workers` knob (the step-level
+#: alias of the global `max_parallel_jobs`); every other per-step-only name stays
+#: definition-semantic. This is the single authoritative constant derived from that
+#: table — no second copy exists in production code.
 _EXECUTION_CLASS_STEP_PARAMS = _EXECUTION_CLASS_GLOBAL_MEMBERS | {"workers"}
 
 

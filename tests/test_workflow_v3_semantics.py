@@ -28,6 +28,7 @@ from confflow.config.canonical import (
     workflow_definition_fingerprint_v3,
 )
 from confflow.config.canonical.fingerprint import (
+    _EXECUTION_CLASS_STEP_PARAMS,
     WorkflowFingerprintError,
     build_workflow_definition_payload_v3,
 )
@@ -519,6 +520,42 @@ def test_c10_checkpoint_does_not_add_a_graph_edge() -> None:
     assert graph.predecessors["s003"] == ("s002",)
 
 
+def test_c11_confgen_ancestor_target_is_a_definition_error() -> None:
+    # RFC §11 (frozen): "from_step targets a calc step" is a definition-layer
+    # rule, not an artifact-capability inference. A confgen strict ancestor is
+    # still rejected at the definition layer; whether the target produces a
+    # consumable checkpoint artifact stays R4/R6.
+    raw = _doc(
+        [
+            CONF,
+            {
+                "id": "s002",
+                "type": "calc",
+                "inputs": ["s001"],
+                "params": _HF,
+                "checkpoint": {"from_step": "s001"},
+            },
+        ]
+    )
+    assert "workflow.v3.checkpoint_target_not_calc" in _codes(raw)
+    # The declaring-step rule is unaffected by the §12 exemption: a disabled
+    # confgen declaring a checkpoint is still checkpoint_not_calc (c8).
+    disabled_current = _doc(
+        [
+            {"id": "s001", "type": "calc", "inputs": [], "params": _HF},
+            {
+                "id": "s002",
+                "type": "confgen",
+                "enabled": False,
+                "inputs": ["s001"],
+                "params": {},
+                "checkpoint": {"from_step": "s001"},
+            },
+        ]
+    )
+    assert "workflow.v3.checkpoint_not_calc" in _codes(disabled_current)
+
+
 # ---------------------------------------------------------------------------
 # E1–E7 — extension recognition
 # ---------------------------------------------------------------------------
@@ -911,6 +948,103 @@ def test_fp_execution_class_changes_do_not_move_the_definition_fingerprint() -> 
     first = _fp(_doc(BASE, **{"global": {"max_parallel_jobs": 1}}))
     second = _fp(_doc(BASE, **{"global": {"max_parallel_jobs": 8}}))
     assert first == second
+
+
+# ---------------------------------------------------------------------------
+# X1–X4 — frozen per-step execution-class exclusions (RFC §16.A)
+# ---------------------------------------------------------------------------
+# The authoritative constant itself is the parametrization source: the test
+# follows the frozen set, and any member added without a case here fails loudly.
+# Each case is (step index, value): the V3 schema is a closed vocabulary, so
+# `workers` is settable on the confgen step only, the resource/runtime names on
+# the calc step (where they override the global default).
+_X1_CASES: dict[str, tuple[int, Any]] = {
+    "gaussian_path": (1, "/opt/g16/custom"),
+    "orca_path": (1, "/opt/orca/custom"),
+    "cores_per_task": (1, 4),
+    "total_memory": (1, "16GB"),
+    "max_parallel_jobs": (1, 3),
+    "orca_maxcore": (1, 8000),
+    "enable_dynamic_resources": (1, True),
+    "delete_work_dir": (1, False),
+    "stop_check_interval_seconds": (1, 9.0),
+    "sandbox_root": (1, "/tmp/sandbox"),
+    "input_chk_dir": (1, "/tmp/chk"),
+    "allowed_executables": (1, ["g16"]),
+    "gaussian_write_chk": (1, True),
+    "max_wall_time_seconds": (1, 3600.0),
+    "resume_from_backups": (1, True),
+    "workers": (0, 2),
+}
+
+
+@pytest.mark.parametrize("name", sorted(_EXECUTION_CLASS_STEP_PARAMS))
+def test_x1_execution_class_step_param_never_moves_the_definition_fingerprint(name: str) -> None:
+    assert name in _X1_CASES, f"no X1 case pinned for execution-class param {name!r}"
+    index, value = _X1_CASES[name]
+    baseline = _fp(_doc(BASE))
+    variant = copy.deepcopy(BASE)
+    variant[index]["params"][name] = value
+    assert _fp(_doc(variant)) == baseline
+
+
+@pytest.mark.parametrize("alias", ["workers", "max_workers", "max_parallel_jobs"])
+def test_x1b_confgen_workers_alias_never_moves_the_definition_fingerprint(alias: str) -> None:
+    baseline = _fp(_doc(BASE))
+    variant = copy.deepcopy(BASE)
+    variant[0]["params"][alias] = 5
+    assert _fp(_doc(variant)) == baseline
+
+
+def test_x2_representative_scientific_param_change_moves_the_definition_fingerprint() -> None:
+    baseline = _fp(_doc(BASE))
+    keyword_changed = copy.deepcopy(BASE)
+    keyword_changed[1]["params"]["keyword"] = "B3LYP/6-31G(d)"
+    assert _fp(_doc(keyword_changed)) != baseline
+    chains_changed = copy.deepcopy(BASE)
+    chains_changed[0]["params"]["chains"] = ["3-4"]
+    assert _fp(_doc(chains_changed)) != baseline
+    angle_changed = copy.deepcopy(BASE)
+    angle_changed[0]["params"]["angle_step"] = 60
+    assert _fp(_doc(angle_changed)) != baseline
+
+
+def test_x3_execution_class_default_equals_omitted() -> None:
+    # Omitting an execution-class step param is fingerprint-identical to
+    # supplying the resolved default value (RFC §16.A frozen rule).
+    omitted = _fp(_doc(BASE, **{"global": {"max_parallel_jobs": 4, "cores_per_task": 2}}))
+    explicit = _doc(BASE, **{"global": {"max_parallel_jobs": 4, "cores_per_task": 2}})
+    explicit["steps"][0]["params"]["workers"] = 4
+    explicit["steps"][1]["params"]["cores_per_task"] = 2
+    assert _fp(explicit) == omitted
+
+
+def test_x4_v2_workflow_fingerprint_is_independent_of_the_v3_exclusion_set(
+    tmp_path: Any,
+) -> None:
+    # The exclusion set is a V3-definition-fingerprint concept only: the V2
+    # algorithm never reads it and keeps execution-class settings inside its
+    # digest by design (changing them moves the V2 fingerprint).
+    import yaml
+
+    from confflow.config.canonical import workflow_fingerprint
+    from confflow.workflow.plan import build_workflow_plan
+
+    base = {
+        "global": {"iprog": "orca", "itask": "sp", "total_memory": "4GB"},
+        "steps": [{"name": "calc", "type": "calc", "params": {"keyword": "HF"}}],
+    }
+    fingerprints = []
+    for cores in ("1", "4"):
+        root = tmp_path / cores
+        root.mkdir(parents=True)
+        (root / "input.xyz").write_text("1\nseed\nH 0 0 0\n", encoding="utf-8")
+        config = dict(base)
+        config["global"] = {**base["global"], "cores_per_task": cores}
+        (root / "workflow.yaml").write_text(yaml.safe_dump(config), encoding="utf-8")
+        plan = build_workflow_plan([str(root / "input.xyz")], str(root / "workflow.yaml"))
+        fingerprints.append(workflow_fingerprint(plan))
+    assert fingerprints[0] != fingerprints[1]
 
 
 # ---------------------------------------------------------------------------
