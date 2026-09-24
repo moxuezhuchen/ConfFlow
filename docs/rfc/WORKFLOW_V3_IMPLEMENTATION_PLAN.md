@@ -597,6 +597,7 @@ routing warnings are emitted.
 **Checks:** duplicate id; invalid id grammar; id required (runnable); unknown
 `inputs` ref; duplicate `inputs`; self-loop; cycle; `inputs: []` root; calc fan-in;
 disabled basic semantics; `checkpoint` only on `calc`; `checkpoint.from_step` exists;
+`checkpoint.from_step` targets a `calc` step (definition-layer, RFC §11);
 **strict ancestor** via `inputs`; extension recognition; strict params; fragment
 profile relaxations.
 
@@ -621,8 +622,10 @@ used.
 - Extension recognition applies to **all** steps (disabled included); FRAGMENT
   preserves an unknown-but-valid namespace.
 - `checkpoint` declaration/type legality (`calc` only) applies to **all** steps; the
-  resolution checks (target exists / not self / strict ancestor) apply only to
-  **enabled calc** steps.
+  resolution checks (target exists / not self / **target is a `calc` step** — an
+  RFC §11 definition-layer rule, not an artifact-capability inference / strict
+  ancestor) apply only to **enabled calc** steps. Whether the target actually
+  produces a consumable checkpoint artifact stays R4/R6.
 - Declared calc fan-in applies to **enabled calc** only; effective/transitive
   cardinality after bypass stays R6.
 
@@ -634,6 +637,29 @@ implementing RFC §16.A: `semantics_version` + scientific global + per-step
 `{id,type,enabled,resolved params,inputs,checkpoint_from,extensions}`, steps sorted by
 the V3 order key; excludes label/annotations/order/schema digest/source version. It
 is **not** wired into any binding (that is R4's `workflow_binding.v2`).
+
+**Per-step execution-class exclusions (frozen here, RFC §16.A).** Resolved
+per-step params enter the payload except the execution-class names: the
+execution-class global members plus the confgen `workers` knob. The single
+authoritative implementation constant is `_EXECUTION_CLASS_STEP_PARAMS` in
+`canonical/fingerprint.py`; no second copy exists in production code. Changing an
+execution-class step param (or omitting it versus supplying its resolved default)
+must not move the definition fingerprint; a representative scientific param
+change must.
+
+**Canonical validation entry (version-aware façade, R3.4 review freeze).**
+`validate_workflow_definition(raw, *, profile=...)` is the single version-aware
+public entry: it recognises the schema version once via `detect_schema_version`
+(the R3.2 truth — absent `schema` is V2, unknown fails closed) and dispatches.
+V2 documents go to the unchanged legacy body (`_validate_workflow_definition_v2`;
+same input → same diagnostics → same ordering → same codes/paths/messages/
+step_refs, so `chk_from_step`, disabled semantics, aliases and the run-context
+boundary are untouched). V3 documents go to structural + semantic validation with
+the requested `ValidationProfile` (RUNNABLE pairs with the DOCUMENT schema
+profile, FRAGMENT with FRAGMENT — no cross-combination). No caller re-detects the
+version and no second schema dispatch exists; the façade does not recurse (the
+V3 implementation never calls back into the public entry). The CLI wire contract
+(`configuration-validation.v1`) is untouched in R3.4; R3.5 wires the CLI.
 
 **Slice-order rationale.** The fingerprint enumerates the semantic vocabulary
 (strict params from the descriptor registry + extension recognition + checkpoint

@@ -440,6 +440,17 @@ name-sorted waves both made array order semantic).
 | `from_step` is a **strict ancestor** via `inputs` (transitive) | definition |
 | checkpoint file exists / program compatibility / digest | runtime (R4/R6) |
 
+The first rule constrains the **declaring** step; the remaining rules constrain
+the **target**. All of them are definition-layer rules. In particular
+"`from_step` targets a `calc` step" is deliberately part of this layer: a
+definition that declares checkpoint reuse of a `confgen` step is a definition
+error even when that step is a strict ancestor. Whether the target actually
+produces a consumable checkpoint artifact (file exists, program compatibility,
+digest) is a runtime capability question and stays in R4/R6 — the definition
+layer never infers artifact capability beyond the `calc` requirement above.
+Disabled steps are exempt from the target rules under the §12 resolution
+exemption; the declaring-step rule above still applies to them.
+
 Restricting `from_step` to an *ancestor* means the referenced step is guaranteed
 to execute earlier; siblings/descendants are rejected. Program compatibility is a
 runtime check because the program may be inherited from `global` and because
@@ -769,6 +780,26 @@ default changes a step's effective theory unless the step overrides it (the
 inherited value is already visible in the resolved step `params`, but binding the
 default too keeps the split robust against resolver changes). R4 finalises the
 exact membership from the live `GlobalOptions`; this table is the agreed baseline.
+
+**Per-step execution-class params (frozen).** The resolved per-step `params` are
+included in the definition fingerprint **except** parameters classified as
+execution-class. The frozen per-step execution-class names are the
+execution-class global members above, plus the confgen `workers` knob (the
+step-level alias of the global `max_parallel_jobs`):
+
+| Class | Per-step members | Effect |
+|---|---|---|
+| execution | `gaussian_path`, `orca_path`, `cores_per_task`, `total_memory`, `max_parallel_jobs`, `orca_maxcore`, `enable_dynamic_resources`, `delete_work_dir`, `stop_check_interval_seconds`, `sandbox_root`, `input_chk_dir`, `allowed_executables`, `gaussian_write_chk`, `max_wall_time_seconds`, `resume_from_backups` (deprecated/no-op), `workers` (confgen) | excluded from the definition fingerprint (A); bound into the R4 execution fingerprint (C) |
+| scientific | every other resolved per-step param name | included in the definition fingerprint (A) |
+
+Changing any execution-class step param — or omitting it versus supplying its
+resolved default — therefore never moves the definition fingerprint; it only
+moves the execution identity. A declared `checkpoint.from_step` is **not**
+execution-class: it is definition configuration and stays in the payload (even
+on a disabled calc, whose resolution checks are §12-exempt). This table is
+normative; the implementation keeps exactly one authoritative constant derived
+from it (`_EXECUTION_CLASS_STEP_PARAMS` in `canonical/fingerprint.py`) and no
+second copy.
 
 ### 16.B Schema / canonicalization binding (provenance, not identity)
 
