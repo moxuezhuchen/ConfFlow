@@ -36,6 +36,7 @@ from confflow.config.canonical.recipes import (
 from confflow.config.canonical.schema import workflow_json_schema
 from confflow.config.canonical.serialization import canonical_json, canonical_sha256
 from confflow.config.canonical.types import TaskName
+from confflow.config.canonical.validation import validate_workflow_definition
 
 EXPECTED_RECIPE_IDS = ["optimize", "opt_freq", "single_point", "conformer_search"]
 
@@ -184,6 +185,24 @@ class TestRecipeDocuments:
         config = parse_workflow_mapping(_by_id("conformer_search")["document"])
 
         assert [step.type for step in config.steps] == ["confgen"]
+
+    def test_the_conformer_recipe_is_a_partial_document_not_a_runnable_definition(self) -> None:
+        """A recipe is a parseable starter, not yet a runnable workflow.
+
+        ``conformer_search`` deliberately ships no ``chains`` and declares
+        ``confgen.chains`` as a required field, so parsing must succeed while
+        runnable-definition validation rejects it until the user fills it in.
+        """
+        document = _by_id("conformer_search")["document"]
+
+        # Parseable: the partial fragment is a legal workflow document.
+        config = parse_workflow_mapping(document)
+        assert config.steps[0].type == "confgen"
+
+        # Not runnable: the required field is genuinely required.
+        assert _by_id("conformer_search")["required_fields"] == ["confgen.chains"]
+        diagnostics = validate_workflow_definition(document)
+        assert [d.code for d in diagnostics] == ["confgen.chains.required"]
 
     def test_every_document_carries_a_global_block_and_steps(self) -> None:
         for item in _recipes():

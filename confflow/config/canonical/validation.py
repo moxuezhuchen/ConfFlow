@@ -9,8 +9,16 @@ answer both:
     Validation that depends on the workflow **document alone**: syntax/schema,
     step types, step parameter semantics, duplicate names, unknown
     predecessors, dependency cycles, calc fan-in, calc program/task/keyword,
-    confgen parameters and ``chk_from_step`` references. It never touches the
-    filesystem or the run context.
+    confgen runnable parameters (non-empty ``chains``, positive ``angle_step``)
+    and ``chk_from_step`` references. It never touches the filesystem or the
+    run context.
+
+    This is *runnable-definition* validation. A parsed document is not
+    necessarily runnable: a producer recipe is a legal partial fragment whose
+    user-filled required fields are still missing, so
+    :func:`confflow.config.canonical.parser.parse_workflow_mapping` accepts it
+    while this function rejects it until those fields are supplied. Parseability
+    and runnability are deliberately distinct.
 
 ``validate_workflow_run_context``
     Validation that additionally needs the **run context**: how many input
@@ -251,13 +259,42 @@ def _confgen_semantic_diagnostics(
         if step.type != "confgen":
             continue
         try:
-            resolve_confgen_params(
+            resolved = resolve_confgen_params(
                 step.params, default_workers=definition.global_options.max_parallel_jobs
             )
         except (ConfigurationError, ValueError) as exc:
             diagnostics.append(
                 Diagnostic(
                     "confgen.invalid", "error", f"steps[{index}].params", str(exc), step.name
+                )
+            )
+            continue
+
+        # Runnable-definition invariants, checked on the *resolved* params (so
+        # the `chain` alias counts) rather than on a second copy of the rules.
+        # They mirror the generator's execution preconditions: it refuses to run
+        # without chains and builds ``range(0, 360, int(angle_step))``.
+        chains = resolved.get("chains")
+        if not chains or not any(str(chain).strip() for chain in chains):
+            diagnostics.append(
+                Diagnostic(
+                    "confgen.chains.required",
+                    "error",
+                    f"steps[{index}].params.chains",
+                    "confgen step requires non-empty 'chains' (or its alias 'chain') naming "
+                    "the bonds to rotate",
+                    step.name,
+                )
+            )
+        angle_step = resolved.get("angle_step")
+        if not isinstance(angle_step, int) or angle_step <= 0:
+            diagnostics.append(
+                Diagnostic(
+                    "confgen.angle_step.invalid",
+                    "error",
+                    f"steps[{index}].params.angle_step",
+                    f"confgen angle_step must be a positive integer, got {angle_step!r}",
+                    step.name,
                 )
             )
     return diagnostics

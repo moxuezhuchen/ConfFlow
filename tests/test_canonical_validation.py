@@ -26,6 +26,7 @@ from confflow.config.canonical import (
 from confflow.config.canonical.types import WorkflowConfig
 from confflow.core.contracts import ExitCode
 from confflow.core.exceptions import ConfFlowError
+from confflow.shared.confgen_params import resolve_confgen_params
 from confflow.workflow.plan import build_workflow_plan
 
 
@@ -305,7 +306,137 @@ def test_invalid_confgen_parameters() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 13 / 14 / 15 — chk_from_step
+# Runnable confgen invariants (T1 / T2 / T3 / T4 / T5 / T6)
+# ---------------------------------------------------------------------------
+def test_t1_runnable_confgen_without_chains_is_invalid() -> None:
+    diagnostics = _errors(
+        {"global": {}, "steps": [{"name": "conf", "type": "confgen", "params": {}}]}
+    )
+
+    assert _codes(diagnostics) == {"confgen.chains.required"}
+    assert diagnostics[0].severity == "error"
+    assert diagnostics[0].step_ref == "conf"
+    assert "chains" in diagnostics[0].message
+
+
+def test_t2_legacy_chain_alias_is_valid() -> None:
+    assert (
+        _errors(
+            {
+                "global": {},
+                "steps": [{"name": "conf", "type": "confgen", "params": {"chain": "1-2-3-4"}}],
+            }
+        )
+        == []
+    )
+
+
+def test_t3_canonical_chains_list_is_valid() -> None:
+    assert (
+        _errors(
+            {
+                "global": {},
+                "steps": [{"name": "conf", "type": "confgen", "params": {"chains": ["1-2-3-4"]}}],
+            }
+        )
+        == []
+    )
+
+
+@pytest.mark.parametrize("angle_step", [0, -60])
+def test_t4_t5_non_positive_angle_step_is_invalid(angle_step: int) -> None:
+    diagnostics = _errors(
+        {
+            "global": {},
+            "steps": [
+                {
+                    "name": "conf",
+                    "type": "confgen",
+                    "params": {"chains": ["1-2-3-4"], "angle_step": angle_step},
+                }
+            ],
+        }
+    )
+
+    assert _codes(diagnostics) == {"confgen.angle_step.invalid"}
+    assert diagnostics[0].step_ref == "conf"
+
+
+def test_t6_positive_angle_step_is_valid() -> None:
+    assert (
+        _errors(
+            {
+                "global": {},
+                "steps": [
+                    {
+                        "name": "conf",
+                        "type": "confgen",
+                        "params": {"chains": ["1-2-3-4"], "angle_step": 60},
+                    }
+                ],
+            }
+        )
+        == []
+    )
+
+
+def test_t8_legacy_facade_projects_canonical_confgen_invariants() -> None:
+    # The facade must derive these from the canonical diagnostics, not from a
+    # second copy of the chains / angle_step rules.
+    from confflow.shared.config_validation import validate_step_config
+
+    missing = validate_step_config({"name": "conf", "type": "confgen", "params": {}}, 0)
+    assert any("chains" in error for error in missing)
+
+    angle = validate_step_config(
+        {
+            "name": "conf",
+            "type": "confgen",
+            "params": {"chains": ["1-2-3-4"], "angle_step": 0},
+        },
+        0,
+    )
+    assert any("angle_step" in error for error in angle)
+
+
+def test_t9_cli_rejects_missing_chains_with_exact_wire_shape(monkeypatch, capsys) -> None:
+    payload = {"global": {}, "steps": [{"name": "conf", "type": "confgen", "params": {}}]}
+    monkeypatch.setattr(config_cli.sys, "stdin", io.StringIO(json.dumps(payload)))
+
+    assert config_cli.main(["validate", "--json", "--stdin"]) == ExitCode.USAGE_ERROR
+    document = json.loads(capsys.readouterr().out)
+
+    assert set(document) == {"schema", "valid", "workflow_schema_sha256", "issues"}
+    assert document["valid"] is False
+    assert document["issues"]
+    for issue in document["issues"]:
+        assert set(issue) == {"path", "message"}
+
+
+def test_definition_valid_confgen_satisfies_generator_preconditions() -> None:
+    """A definition-valid confgen step must not fail on chains/angle_step later.
+
+    The generator requires non-empty chains (``generator.py`` "use --chain to
+    specify rotation chains") and builds ``range(0, 360, int(angle_step))``
+    (``rotations.py``), so a runnable definition must guarantee both.
+    """
+    for params in ({"chain": "1-2-3-4"}, {"chains": ["1-2-3-4"], "angle_step": 60}):
+        raw = {"global": {}, "steps": [{"name": "conf", "type": "confgen", "params": params}]}
+        assert _errors(raw) == []
+
+        definition = _definition(raw)
+        resolved = resolve_confgen_params(
+            definition.steps[0].params,
+            default_workers=definition.global_options.max_parallel_jobs,
+        )
+
+        assert resolved["chains"]
+        assert int(resolved["angle_step"]) > 0
+        assert list(range(0, 360, int(resolved["angle_step"])))
+
+
+# ---------------------------------------------------------------------------
+# chk_from_step
 # ---------------------------------------------------------------------------
 def test_invalid_chk_from_step_name() -> None:
     diagnostics = _errors(
