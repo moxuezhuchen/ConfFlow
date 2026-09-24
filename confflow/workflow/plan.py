@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from ..config.canonical.v2_adapter import to_canonical_workflow
+from ..config.canonical.validation import calc_input_diagnostics
 from ..config.models import GlobalOptions, WorkflowConfig, load_workflow_model
 from ..core.exceptions import ConfFlowError
 from ..core.utils import validate_xyz_file
@@ -65,26 +66,11 @@ def build_workflow_plan(
 
     # Fail at plan time instead of deep inside step execution: a calc step is
     # single-input by design. Disabled calc steps never execute, so they are
-    # exempt from the single-input enforcement.
-    for name, step in by_step_name.items():
-        step_type = str(step.get("type", "")).strip().lower()
-        if step_type not in {"calc", "task"}:
-            continue
-        if not step.get("enabled", True):
-            continue
-        step_predecessors = predecessors.get(name, [])
-        if len(step_predecessors) > 1:
-            raise ConfFlowError(
-                f"calc step {name!r} has {len(step_predecessors)} inputs; "
-                "a calc step accepts exactly one input. Add a confgen step to "
-                "merge them first."
-            )
-        if not step_predecessors and len(input_files) > 1:
-            raise ConfFlowError(
-                f"calc step {name!r} has no inputs but the workflow provides "
-                f"{len(input_files)} initial inputs; a calc step accepts exactly "
-                "one input. Add a confgen step to merge them first."
-            )
+    # exempt from the single-input enforcement. The canonical validator owns the
+    # rule; this boundary turns its first finding into the planner's error.
+    cardinality_errors = calc_input_diagnostics(definition, input_file_count=len(input_files))
+    if cardinality_errors:
+        raise ConfFlowError(cardinality_errors[0].message)
 
     step_dirnames, _ = build_step_dir_name_map(steps)
     step_index_by_name = {name: index for index, name in enumerate(by_step_name)}

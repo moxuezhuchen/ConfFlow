@@ -39,6 +39,8 @@ __all__ = [
     "CanonicalWorkflowDefinition",
     "DependencyMode",
     "build_step_graph",
+    "canonical_step_name",
+    "normalize_step_inputs",
     "topo_order",
 ]
 
@@ -56,7 +58,7 @@ def _bool_step_token_error(value: bool, context: str) -> ConfFlowError:
     )
 
 
-def _canonical_step_name(step: dict[str, Any], index: int) -> str:
+def canonical_step_name(step: dict[str, Any], index: int) -> str:
     raw_name = step.get("name")
     if isinstance(raw_name, bool):
         raise _bool_step_token_error(raw_name, f"step {index} name")
@@ -67,7 +69,7 @@ def _canonical_step_name(step: dict[str, Any], index: int) -> str:
     return f"step_{index:02d}"
 
 
-def _normalize_inputs(raw_inputs: Any) -> list[str]:
+def normalize_step_inputs(raw_inputs: Any) -> list[str]:
     if raw_inputs is None:
         return []
     if isinstance(raw_inputs, bool):
@@ -121,10 +123,10 @@ def build_step_graph(
     declared_inputs: dict[str, list[str]] = {}
 
     for index, step in enumerate(steps, start=1):
-        name = _canonical_step_name(step, index)
+        name = canonical_step_name(step, index)
         if name in by_name:
             raise ConfFlowError(f"workflow step names must be unique; duplicate name: {name!r}")
-        inputs = _normalize_inputs(step.get("inputs"))
+        inputs = normalize_step_inputs(step.get("inputs"))
         by_name[name] = step
         predecessors[name] = list(inputs)
         declared_inputs[name] = list(inputs)

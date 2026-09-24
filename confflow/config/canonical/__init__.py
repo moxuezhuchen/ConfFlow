@@ -19,6 +19,7 @@ from .contract import (
     build_configuration_contract_v1,
     build_configuration_contract_v2,
 )
+from .diagnostics import Diagnostic, Severity
 from .editor_manifest import (
     EDITOR_MANIFEST_SCHEMA,
     build_editor_manifest,
@@ -44,11 +45,18 @@ from .recipes import (
 from .resolve import resolve_calc_step, resolve_global_options
 from .schema import workflow_schema_sha256
 from .v2_adapter import to_canonical_workflow
+from .validation import (
+    calc_input_diagnostics,
+    validate_workflow_definition,
+    validate_workflow_run_context,
+)
 from .workflow import (
     CanonicalStepDefinition,
     CanonicalWorkflowDefinition,
     DependencyMode,
     build_step_graph,
+    canonical_step_name,
+    normalize_step_inputs,
     topo_order,
 )
 
@@ -64,15 +72,22 @@ __all__ = [
     "CanonicalStepDefinition",
     "CanonicalWorkflowDefinition",
     "DependencyMode",
+    "Diagnostic",
+    "Severity",
     "WorkflowBindingCompatibilityError",
     "WorkflowConfigBinding",
     "WorkflowFingerprintError",
     "build_step_graph",
     "build_workflow_binding",
+    "calc_input_diagnostics",
+    "canonical_step_name",
     "canonical_workflow_payload",
+    "normalize_step_inputs",
     "parse_workflow_binding",
     "to_canonical_workflow",
     "topo_order",
+    "validate_workflow_definition",
+    "validate_workflow_run_context",
     "workflow_fingerprint",
     "ConfigIssue",
     "ConfigValidationError",

@@ -18,9 +18,8 @@ from ..core.contracts import ExitCode
 from .canonical import (
     CONFIGURATION_CONTRACT_BUILDERS,
     CONFIGURATION_VALIDATION_SCHEMA,
-    ConfigValidationError,
     build_configuration_contract_for_version,
-    parse_workflow_mapping,
+    validate_workflow_definition,
     workflow_schema_sha256,
 )
 
@@ -49,15 +48,19 @@ def _validate_stdin() -> int:
             }
         )
         return ExitCode.USAGE_ERROR
-    try:
-        parse_workflow_mapping(raw)
-    except ConfigValidationError as exc:
+    # Definition validation only: it examines the document, never the run
+    # context (input files, executables on this host), which stdin does not
+    # carry. The internal diagnostics are projected to the frozen
+    # ``configuration-validation.v1`` issue shape (exactly ``path``/``message``),
+    # which is what the JobDesk consumer parses without extra members.
+    errors = [diagnostic for diagnostic in validate_workflow_definition(raw) if diagnostic.is_error]
+    if errors:
         _emit(
             {
                 "schema": CONFIGURATION_VALIDATION_SCHEMA,
                 "valid": False,
                 "workflow_schema_sha256": workflow_schema_sha256(),
-                "issues": [{"path": exc.issue.path, "message": exc.issue.message}],
+                "issues": [diagnostic.to_v1_issue() for diagnostic in errors],
             }
         )
         return ExitCode.USAGE_ERROR

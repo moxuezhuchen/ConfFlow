@@ -65,6 +65,6 @@ def test_config_validate_json_error_is_structured_and_does_not_run_workflow(monk
     assert payload["schema"] == "confflow.configuration-validation.v1"
     assert payload["valid"] is False
     assert len(payload["issues"]) == 1
-    assert payload["issues"][0]["path"] == ""
+    assert payload["issues"][0]["path"] == "steps"
     assert "steps" in payload["issues"][0]["message"]
     run_workflow.assert_not_called()
