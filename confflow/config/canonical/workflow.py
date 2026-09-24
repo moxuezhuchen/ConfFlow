@@ -32,6 +32,7 @@ from graphlib import CycleError, TopologicalSorter
 from typing import Any, Literal
 
 from ...core.exceptions import ConfFlowError
+from .schema import WORKFLOW_SCHEMA_VERSION
 from .types import GlobalOptions
 
 __all__ = [
@@ -184,6 +185,18 @@ class CanonicalStepDefinition:
     the V2 execution projection stays byte-identical. ``params`` is the step
     parameter mapping, ``predecessors`` the resolved, de-duplicated dependency
     names, and ``extensions`` any unknown step-level fields preserved verbatim.
+
+    The remaining fields exist so the IR can also carry a future Workflow V3
+    step; the V2 adapter leaves them at their defaults and never projects them
+    into the V2 execution shape:
+
+    * ``id`` — a stable V3 identity (``None`` for a V2-adapted step, whose
+      identity remains ``name``; see :attr:`identity`);
+    * ``label`` — the human-facing display name (V2 maps its ``name`` here);
+    * ``checkpoint_from`` — a structured ``checkpoint: {from_step: <id>}``
+      reference (V2 keeps its legacy ``params.chk_from_step`` untouched);
+    * ``annotations`` — non-semantic, free-form metadata that never participates
+      in execution or fingerprints.
     """
 
     name: str
@@ -193,8 +206,23 @@ class CanonicalStepDefinition:
     predecessors: tuple[str, ...]
     inputs_declared: bool
     v2_name: str
+    id: str | None = None
+    label: str | None = None
+    checkpoint_from: str | None = None
     raw_inputs: Any = None
     extensions: dict[str, Any] = field(default_factory=dict)
+    annotations: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def identity(self) -> str:
+        """Return the canonical identity: the stable id when present, else the name.
+
+        A V2-adapted step has no ``id``, so its identity is the V2 ``name``; a
+        future V3 step resolves to its stable ``id``. This is a model-layer
+        accessor only — the V2 dirname / fingerprint / state identity stay
+        name-based and do not consult it.
+        """
+        return self.id if self.id is not None else self.name
 
     def to_v2_step(self) -> dict[str, Any]:
         """Project this step back to the V2 execution mapping."""
@@ -211,7 +239,13 @@ class CanonicalStepDefinition:
 
 @dataclass(frozen=True)
 class CanonicalWorkflowDefinition:
-    """The resolved workflow, independent of how its YAML was spelled."""
+    """The resolved workflow, independent of how its YAML was spelled.
+
+    ``source_version`` records where the definition came from (the workflow
+    schema version id); ``annotations`` carries non-semantic, free-form document
+    metadata. Both default to the V2 case so the V2 adapter keeps producing the
+    exact same IR it always has.
+    """
 
     global_config: dict[str, Any]
     global_options: GlobalOptions
@@ -221,6 +255,8 @@ class CanonicalWorkflowDefinition:
     execution_order: tuple[str, ...]
     terminal_steps: tuple[str, ...]
     extensions: dict[str, Any] = field(default_factory=dict)
+    source_version: str = WORKFLOW_SCHEMA_VERSION
+    annotations: dict[str, Any] = field(default_factory=dict)
 
     def to_v2_execution_shape(self) -> tuple[dict[str, Any], list[dict[str, Any]]]:
         """Return ``(global_config, steps)`` in the exact V2 execution shape."""
