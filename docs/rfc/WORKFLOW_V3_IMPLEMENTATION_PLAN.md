@@ -2,20 +2,25 @@
 
 Status: **PLANNING ONLY — not an implementation.** This document plans the R3
 slices so they can be implemented, reviewed and rolled back one at a time. No
-runtime, parser, schema, IR, CLI, state or binding code is changed by this plan.
+runtime, parser, schema, IR, CLI, state, binding or engine code is changed by
+this plan.
 
-- **Base**: `ebea9d949b82cf0cd3512efb365819f006d21c2f` (accepted RFC head on
-  `design/workflow-v3-rfc`), on top of `61e11b4` / `c649f59` / `014e185`.
+- **Base**: `a1329cc` (`docs(workflow): plan Workflow V3 implementation`) on
+  `plan/workflow-v3-implementation`, built on the accepted RFC head `ebea9d9` and
+  the accepted chain `61e11b4` / `c649f59` / `014e185`.
 - **Authoritative design**: `docs/rfc/WORKFLOW_V3_RFC.md` (accepted) +
   `docs/rfc/workflow-v3.schema.draft.json` (draft). This plan **does not change
-  the RFC's semantics**; it only clarifies implementation. Where the RFC leaves
-  an implementation detail open, this plan chooses one and marks it
-  `[clarification]`.
-- **Companion plan branch**: `plan/workflow-v3-implementation`.
+  the RFC's semantics**; it only fixes implementation boundaries and marks
+  clarifications `[clarification]`.
+- **Review round**: this revision resolves four implementation-review findings —
+  (1) execution gate placement, (2) schema profiles, (3) param descriptor
+  authority, (4) V3 validation-response schema hash — plus the fingerprint slice
+  ordering.
 
-> **R3 does not make V3 workflow executable.** V3 becomes parseable, validatable,
-> upgradeable and inspectable; **running** a V3 workflow stays fail-closed until
-> R4 provides state/binding v2 (§7, §24).
+> **R3 makes V3 inspectable, not executable.** V3 can be parsed, schema-validated,
+> semantically validated, canonicalised, **planned**, `config-show`n, `dry-run`,
+> and upgraded from V2. **Running**, **resuming** and **rerun-failed** stay
+> fail-closed until R4 provides state/binding v2 (§3, §14).
 
 ---
 
@@ -30,29 +35,35 @@ added; "Target" is the slice that adds it.
 | **label** | none — `name` doubles as label | IR `label`; parser; `config-show` display | R3.1 / R3.2 / R3.5 |
 | **explicit inputs** | V2 explicit-DAG + implicit-linear fallback; `normalize_step_inputs`, `build_step_graph`, `topo_order` in `canonical/workflow.py` | V3 requires `inputs` always; V2 fallback must remain untouched | R3.1 / R3.2 |
 | **inputs = step-id refs** | refs are V2 canonical names | V3 refs are ids; resolver logic is unchanged (it works on graph keys) | R3.2 / R3.4 |
-| **version dispatch** | none — `parse_workflow_mapping` ignores a `schema` key entirely; the V2 JSON schema has **no** `schema` property and `additionalProperties: true`, so historical V2 files have no version field | `detect_schema_version()` + dispatch + "never treat unknown as V2" | R3.2 |
-| **checkpoint reference** | `params.chk_from_step` (name or 1-based index) in `step_handlers._resolve_chk_input_dir`; R2 validates it inside `params` | promote to `checkpoint.from_step`; migrate; validate ancestry | R3.2 / R3.3 / R3.4 |
-| **strict params** | V2 = open bag; `_known_calc_keys()` (fingerprint.py) and `confgen_known_keys()` (shared/confgen_params.py) already exist | single key registry; V3 schema + validation derive from it; `chk_from_step` leaves `params` | R3.2 / R3.4 |
+| **version dispatch** | none — `parse_workflow_mapping` ignores a `schema` key entirely; the V2 JSON schema has **no** `schema` property and `additionalProperties: true`, so historical V2 files carry no version field | `detect_schema_version()` + dispatch + "never treat unknown as V2" | R3.2 |
+| **schema profiles** | none — one implicit V2 schema; no notion of a partial document | `SchemaProfile.{DOCUMENT,FRAGMENT}` sharing one `$defs` source | R3.2 |
+| **execution capability** | V2-only *de facto*: `WorkflowConfig`/`WorkflowPlan`/`WorkflowStateStore` assume V2 identity; nothing declares which versions may execute | version→capability table + check at the execution side-effect boundary | R3.2 (module) / R3.5 (wiring) |
+| **param descriptor authority** | known keys are scattered: `_known_calc_keys()` in `fingerprint.py` (includes `chk_from_step`), `confgen_known_keys()` in `shared/confgen_params.py`; the V2 JSON schema lists nothing | one structural descriptor registry from which schema/validation derive | R3.2 |
+| **checkpoint reference** | `params.chk_from_step` (name or 1-based index) in `step_handlers._resolve_chk_input_dir` | promote to `checkpoint.from_step`; migrate; validate ancestry | R3.2 / R3.3 / R3.4 |
+| **strict params** | V2 = open bag | V3 core key set from the descriptor registry; unknown = ERROR | R3.2 / R3.4 |
 | **extensions** | V2 unknown *step-level* fields → IR `extensions` (carried, currently unused downstream) | namespaced `ExtensionRegistry` + recognition gate | R3.2 / R3.4 |
 | **annotations** | none | IR `annotations`; parser; serializer; never fingerprinted | R3.1 / R3.2 |
-| **fragment vs runnable** | R2 split exists: `parse_workflow_mapping` (parseable) vs `validate_workflow_definition` (runnable) | explicit profile value object instead of relying on which function you call | R3.2 |
-| **fingerprint boundary** | `canonical_workflow_payload` / `workflow_fingerprint(plan)` (V2, binding v1) | V3 **definition** fingerprint (A) as a pure function; binding v2 stays R4 | R3.1 |
-| **recipe identity/rebase** | `recipes.py` is a catalog only; **no instantiate code exists anywhere** | RFC §19.3 algorithm is specified; implementation is an application-layer verb (first consumer = GUI/JobDesk), **out of R3 scope** | post-R3 (marked) |
-| **CLI step selector** | `_select_step` by name/1-based index in `config_show.py` and `rerun_failed.py` | V3 id selector | R3.5 |
-| **config validate** | R2 `validate_workflow_definition` + `config/cli.py` v1 projection | version-aware dispatch | R3.4 / R3.5 |
-| **config-show** | name/index, no graph, no id/label | V3 id/label/inputs/checkpoint display | R3.5 |
-| **dry-run** | assumes a single linear chain (`current_input = output_path`), no DAG | V3 graph + execution-order + input-relationship display | R3.5 |
-| **export** | keyed by dirname/step_name from `.workflow_state.json`; `OUTPUT_MANIFEST_SCHEMA = output_manifest.v1` | **no V3 change in R3** — step-id export metadata needs state v2 | R4 |
+| **fragment vs runnable** | R2 split exists (`parse_workflow_mapping` vs `validate_workflow_definition`) | structural profiles + validation profiles, paired | R3.2 |
+| **V3 validation response hash** | `config/cli.py` always emits `workflow_schema_sha256()` (the V2 digest) | version-aware digest = the schema that validated *this* document | R3.5 |
+| **definition fingerprint** | `canonical_workflow_payload` / `workflow_fingerprint(plan)` (V2, binding v1) | V3 definition fingerprint as a pure function, frozen only after the semantic registry exists | R3.4 |
+| **recipe identity/rebase** | `recipes.py` is a catalog only; **no instantiate code exists anywhere** | RFC §19.3 algorithm; implementation is an application-layer verb — **out of R3** | post-R3 |
+| **CLI step selector** | `_select_step` by name/1-based index (`config_show.py`, `rerun_failed.py`) | V3 id selector | R3.5 |
+| **config-show** | name/index, no graph | V3 id/label/inputs/checkpoint display | R3.5 |
+| **dry-run** | assumes a single linear chain (`current_input = output_path`), no DAG | V3 graph display via a V3 plan | R3.5 |
+| **export** | keyed by dirname/step_name; `output_manifest.v1` | **no R3 change** (needs state v2) | R4 |
 
-**Two facts that shape the plan**
+**Three facts that shape the plan**
 
-1. `_known_calc_keys()` lives in `fingerprint.py` and includes `chk_from_step`
-   (V2 binds it into the fingerprint). V3 must **exclude** `chk_from_step` from
-   `params`. The registry therefore keeps the V2 set verbatim and derives the V3
-   set from it (§12).
-2. Nothing dispatches on a document version today. A V3 document handed to the
-   current engine would be silently read as V2 (its `schema` key ignored). The
-   gate in R3.2 exists to make that impossible (§7).
+1. `_known_calc_keys()` (`fingerprint.py`) includes `chk_from_step` and V2 binds it;
+   V3 must **exclude** it from `params` and promote it to `checkpoint`. The registry
+   keeps the V2 set verbatim and derives the V3 set (§4).
+2. Nothing dispatches on a document version: a V3 file handed to the engine today
+   has its `schema` key silently ignored and is read as V2. Both the dispatch (R3.2)
+   and the execution capability check (§3) exist to prevent that.
+3. `initialize_runtime_context` (`workflow/runtime_context.py`) already creates the
+   work/failed dirs, copies the config, attaches a log handler and calls
+   `failure_tracker.clear_previous()` — the real first side-effect boundary. The
+   execution check must fire **before** it (§3).
 
 ---
 
@@ -67,166 +78,274 @@ added; "Target" is the slice that adds it.
 | `confflow.workflow.v3` | **V3** |
 | any other non-empty value | **error** (`workflow.schema.unsupported`) — never guessed |
 
-- `detect_schema_version(raw) -> Literal["v2","v3"]` lives in `parser.py`.
+- `detect_schema_version(raw) -> str` lives in `parser.py`.
 - The V2 path (`parse_workflow_mapping`, `WorkflowConfig.from_mapping`,
   `load_workflow_model`) is **unchanged**; V2 tests and fingerprints are the proof.
-- A V3 document must never reach the V2 adapter. The engine boundary raises the
-  execution gate instead (§7).
+- Parse support and execution support are **different sets** (§3); a version may be
+  parseable but not executable.
 
 ---
 
-## 3. R3 / R4 boundary and the V3 execution feature gate
+## 3. Execution capability and the R3/R4 boundary
 
-`[clarification]` — RFC §16.D says V3 resume needs binding v2 / state v2. Today
-state keys are **dirnames** and the binding is `workflow_binding.v1`
-(`workflow/state.py`, `canonical/fingerprint.py`), neither of which can be
-correct for a V3 document. Therefore R3 chooses **option A from the review**:
+### 3.1 Principle
+
+`build_workflow_plan` is a **planning** boundary, not an execution
+side-effect boundary. V3 must be planable (dry-run needs the graph, resolved
+execution order, step inputs and resolved config). The check therefore fires at
+the first **execution** side effect, not in the planner.
 
 ```
-R3:  parse  · validate · upgrade · config-show · dry-run      ← allowed
-R4:  execute · resume · export step-id metadata · binding v2  ← blocked
+V3 document → parse → canonical IR → validation → plan → config-show / dry-run / inspect   ← ALLOWED in R3
+plan → execution-version capability check → binding → runtime init → state/artifact/launch  ← BLOCKED for V3 until R4
 ```
 
-**Gate implementation (R3.2).** A single helper:
+### 3.2 Version capability model (not a bool, not an env var)
+
+`confflow/config/canonical/execution_versions.py` (new, R3.2):
 
 ```python
-# confflow/config/canonical/execution_gate.py
-V3_EXECUTION_SUPPORTED = False   # flipped only when R4 lands
+@dataclass(frozen=True)
+class VersionCapability:
+    parse: bool
+    execute: bool
 
-def ensure_executable(definition) -> None:
-    if definition.source_version == "v3" and not V3_EXECUTION_SUPPORTED:
-        raise ConfFlowError(
-            "Workflow V3 execution requires state/binding v2 (R4). "
-            "V3 documents can be validated, upgraded and inspected, but not run yet."
-        )
+CAPABILITIES: dict[str, VersionCapability] = {
+    "confflow.workflow.v2": VersionCapability(parse=True, execute=True),
+    "confflow.workflow.v3": VersionCapability(parse=True, execute=False),  # R4 flips `execute`
+}
+
+def can_execute(schema_version: str) -> bool: ...
+def require_executable(schema_version: str) -> None:   # raises ConfFlowError with a clear message
 ```
 
-- Called from `build_workflow_plan` (the single planning boundary used by
-  `engine.run_workflow`) and from `rerun_failed` (which would write step state).
-- **Not** a boolean parameter, environment variable, or string-flag on a public
-  API. It is one guarded constant + one call site per execution boundary.
-- `config-show` / `dry-run` / `validate` / `upgrade` never call `ensure_executable`.
-- Stop gate: a V3 document must be **unable** to write `.workflow_state.json`
-  (v1) or reach `CalcArtifactManager`.
+- One table, extensible to a future `v4` by adding an entry;
+  parse-support and execution-support are separate fields.
+- `require_executable` raises `ConfFlowError(
+  "Workflow <version> execution requires state/binding v2 (R4); it can be parsed,
+  validated, planned and inspected, but not run.")`.
+
+### 3.3 Gate locations (real functions)
+
+The **authoritative** check:
+
+1. **`confflow/workflow/engine.py::run_workflow`** — immediately after
+   `plan = build_workflow_plan(...)` and **before** `build_workflow_binding(plan)`,
+   the resume pre-validation (`_validate_state_*`, `_validate_resume_artifacts`),
+   and `initialize_runtime_context`. Everything that creates state, step dirs,
+   cleans artifacts or launches a process happens after this point, so this single
+   call guarantees the acceptance criteria.
+
+**Fail-fast pre-flights** (avoid creating even a work dir / lease / service record
+for a V3 run; they read the raw document version cheaply):
+
+2. **`confflow/cli.py::main`**, execution branch — before
+   `validate_managed_path(work_dir)` / `acquire_work_directory_lease` /
+   `os.makedirs(work_dir)`.
+3. **`confflow/workflow/rerun_failed.py::run_rerun_failed`** — at entry, before any
+   mutation or launch.
+4. *(flagged protected-core)* **`confflow/application/execution/workflow_adapter.py::run_workflow_through_service`**
+   — before `_ensure_state_root` / `SQLiteExecutionRepository`. This file is in the
+   protected execution-service boundary; the change is a minimal additive guard and
+   **requires its own review**. If it is not taken, (1)+(2)+(3) still satisfy the
+   acceptance tests (no `.workflow_state.json`, no step dirs, no cleanup, no launch).
+
+### 3.4 Planner behaviour (V3)
+
+- `build_workflow_plan(...)` becomes **version-dispatching** and returns:
+  - **V2** → today's `WorkflowPlan`, byte-for-byte identical;
+  - **V3** → a new planning-only `WorkflowV3Plan` (`definition: CanonicalWorkflowDefinition`,
+    `input_files`, `original_inputs`, `source_version="v3"`).
+- The V3 plan does **not** compute V2 dirnames (`step_dirnames`/`name_to_dirname`
+  are R4's id-based dirs) and does **not** call the V2 binding.
+- `WorkflowPlan` (V2) is **not** widened to `Optional` fields; the union keeps the
+  V2 type exact.
+- `[clarification]` both dataclasses carry `source_version`; `require_executable(plan.source_version)`
+  is the single guard.
+
+### 3.5 Behaviour summary
+
+| Operation | V2 | V3 in R3 |
+|---|---|---|
+| `build_workflow_plan` | works | **works** (returns `WorkflowV3Plan`) |
+| `config-show` | works | works |
+| `dry-run` | works | **works** (graph, ids, labels, execution order) |
+| `run_workflow` | works | **blocked** before binding/runtime/state/dirs/launch |
+| `resume` | works | **blocked** before any state read/mutation |
+| `rerun-failed` | works | **blocked** before mutation/launch |
 
 ---
 
-## 4. Production schema authority (single source of truth)
+## 4. Production schema authority — param descriptor registry
 
-`[clarification]` — RFC §13 anticipates this; the concrete rule:
+`[clarification]` — the RFC (§13) anticipates this; a key set is **not** enough
+(it cannot express type, enum, shape, required, version membership, aliases).
 
-**Authoritative owner of "which core params exist" = one registry module.**
-`confflow/config/canonical/param_fields.py` (new, R3.2):
+`confflow/config/canonical/param_fields.py` (new, R3.2) owns **structural** field
+descriptors:
 
 ```python
-# moved verbatim from fingerprint._known_calc_keys() — V2 behaviour preserved
-V2_CALC_PARAM_KEYS: frozenset[str]              # includes "chk_from_step"
-# V3 core keys: the V2 set minus chk_from_step (promoted to `checkpoint`)
-V3_CALC_PARAM_KEYS = V2_CALC_PARAM_KEYS - {"chk_from_step"}
-CONFGEN_PARAM_KEYS: frozenset[str]              # == confgen_known_keys()
+@dataclass(frozen=True)
+class ParamFieldDescriptor:
+    key: str
+    value_kind: Literal["string", "integer", "number", "boolean", "array", "object", "any"]
+    enum_source: tuple[str, ...] | None = None   # e.g. ProgramName / TaskName values
+    required: bool = False
+    v2: bool = True          # present in the V2 parameter vocabulary
+    v3: bool = True          # present in the V3 runnable core vocabulary
+    aliases: tuple[str, ...] = ()
+
+CALC_PARAM_FIELDS: tuple[ParamFieldDescriptor, ...]
+CONFGEN_PARAM_FIELDS: tuple[ParamFieldDescriptor, ...]
+
+def v2_calc_keys() -> frozenset[str]      # == the current _known_calc_keys() (includes chk_from_step)
+def v3_calc_keys() -> frozenset[str]      # v2 set minus chk_from_step
+def confgen_keys() -> frozenset[str]      # == confgen_known_keys()
+def schema_properties(kind: str, profile: SchemaProfile) -> dict[str, Any]
 ```
 
-Derived consumers (no second hand-written allow-list anywhere):
+**What the registry owns (structural truth):** field names, basic type, enum,
+structural shape, version membership (`v2`/`v3`), aliases, and `required` within
+a step type.
 
-| Consumer | How it uses the registry |
+**What the resolver owns (semantic truth — unchanged):** coercion, defaults,
+cross-field rules, TS-specific behaviour, confgen runnable invariants
+(non-empty chains, positive `angle_step`), alias-conflict semantics. These stay in
+`CalcStepParams.from_params()` and `resolve_confgen_params()`.
+
+**Layering (no duplicate truth):**
+
+```
+Param descriptor registry ── structural ──▶ JSON Schema (properties + key set)
+                          └─ structural ──▶ validator structural check
+Resolver (typed)          ── semantic   ──▶ validator semantic check
+Validator = structural (registry) + semantic (resolver)
+Schema    = structural (registry)
+Future editor manifest (R7) = registry + presentation metadata
+```
+
+**Derived consumers:** `fingerprint._known_calc_keys()` becomes
+`return v2_calc_keys()` (byte-identical); the V3 schema's `params` is generated with
+`additionalProperties: false` and the V3 key set; the validator's strict-params
+check uses `v3_calc_keys()`/`confgen_keys()`; R7's manifest extends the same
+descriptors.
+
+**V2 compatibility is not tightened.** The descriptors only *describe* V2 keys;
+V2 parsing/execution keep their open-bag tolerance. Only V3 makes unknown core
+params an ERROR.
+
+---
+
+## 5. Schema profiles (DOCUMENT vs FRAGMENT)
+
+`[clarification]` — a single `ValidationProfile` is insufficient: a runnable
+schema requiring `id` would reject a recipe fragment before the validator ever
+sees it. Two **structural** profiles are therefore required.
+
+### 5.1 Profiles
+
+| Profile | Used by | `id` | `inputs` | User-required params (`chains`, `keyword`) |
+|---|---|---|---|---|
+| `SchemaProfile.DOCUMENT` | a complete, runnable Workflow V3 document | **required** | **required** | must be complete (runnable) |
+| `SchemaProfile.FRAGMENT` | recipe / template / partial starter | optional | required | may be absent |
+
+### 5.2 One schema source, two profiles
+
+```python
+def workflow_v3_schema(profile: SchemaProfile = SchemaProfile.DOCUMENT) -> dict[str, Any]
+```
+
+Both profiles are assembled from the **same** `$defs` (`stepBase`, `params`
+from the descriptor registry, `checkpoint`, `extensions`, `annotations`); the
+DOCUMENT profile differs **only** in `required` (`id`, `type`, `inputs`) and
+profile-specific constraints. No second full schema dict is written.
+
+### 5.3 Profile pairing
+
+`SchemaProfile.DOCUMENT` ↔ `ValidationProfile.RUNNABLE`;
+`SchemaProfile.FRAGMENT` ↔ `ValidationProfile.FRAGMENT`. Cross pairings
+(document schema + fragment validator, fragment schema + runnable validator) are
+**not** produced by any code path; a test asserts the pairing.
+
+### 5.4 Digest semantics
+
+- `workflow_schema_sha256_v3()` = the **DOCUMENT** schema digest — the official
+  Workflow V3 document contract digest (used by §6 and, later, R7).
+- The **fragment** schema digest is **internal only**
+  (`workflow_fragment_schema_sha256_v3()`, not published, not exported). R7 decides
+  whether a fragment contract is ever published.
+- The published `confflow.workflow.v2` schema and `workflow_schema_sha256()` are
+  untouched.
+
+---
+
+## 6. V3 validation-response schema hash
+
+`[clarification]` — the field means *"the schema this document was validated
+against"*, and the wire shape does not change.
+
+**Checked contract facts** (`config/cli.py`, `docs/configuration-contract-v2.md`,
+JobDesk `remote_validation.py`): `_validate_stdin` emits exactly
+`{schema, valid, workflow_schema_sha256, issues:[{path,message}]}`; the field's
+documented meaning is "the digest is checked against the contract's, so an answer
+cannot be silently bound to a different schema"; the JobDesk consumer requires
+`payload["workflow_schema_sha256"] == contract.workflow_schema_sha256`.
+
+**Rule (R3.5):** `workflow_schema_sha256` = the digest of the schema that validated
+**this** document:
+
+| Document | `workflow_schema_sha256` |
 |---|---|
-| V2 fingerprint `_known_calc_keys()` | becomes `return V2_CALC_PARAM_KEYS` (byte-identical) |
-| V3 validation strict-params check | `params.keys() ⊆ V3_CALC_PARAM_KEYS` / `CONFGEN_PARAM_KEYS` |
-| V3 JSON Schema `params` | generated: `properties = {k: {} for k in sorted(keys)}`, `additionalProperties: false`; `iprog`/`itask` get enums derived from `ProgramName`/`TaskName` |
-| future editor manifest (R7) | generated from the same registry + typed descriptors |
+| V2 | `workflow_schema_sha256()` (the V2 digest — **unchanged**) |
+| V3 | `workflow_schema_sha256_v3()` (the V3 **DOCUMENT** digest) |
 
-- **Value semantics stay owned by the canonical resolvers**
-  (`CalcStepParams.from_params`, `resolve_confgen_params`). The schema enforces
-  the **key set**; the resolver enforces **values**. A test asserts the schema
-  accepts exactly the documents the validator accepts (`test_v3_schema_agrees_with_validator`).
-- The published `confflow.workflow.v2` schema and `workflow_schema_sha256()`
-  are **untouched**. V3 schema getters are new (`workflow_json_schema_v3()`,
-  `workflow_schema_sha256_v3()`), used only as binding/provenance (RFC §16.B).
-- The draft file `docs/rfc/workflow-v3.schema.draft.json` is **not** wired in; the
-  production V3 schema is a Python-generated dict, like V2.
+`config validate` validates a V3 document against `SchemaProfile.DOCUMENT` +
+`ValidationProfile.RUNNABLE` (a fragment is *not* runnable and is rejected, exactly
+as a recipe is today). The wire shape stays `confflow.configuration-validation.v1`.
+
+**JobDesk boundary:** the current consumer is contract-bound to the V2 digest, so a
+V3 answer fails its `digest != expected` check with
+`ProducerValidationError("…validated against a different schema…")` — a **safe
+refusal**, never a false accept. Since contract v2 advertises V2 only, JobDesk
+sends V2 documents and is unaffected. Publishing V3 support is R7.
 
 ---
 
-## 5. Serialization strategy
+## 7. Error / diagnostic compatibility
 
-`[clarification]` — two serializers, one meaning each:
+- Reuse R2's `Diagnostic(code, severity, path, message, step_ref)`
+  (`canonical/diagnostics.py`). For V3, `step_ref` is the **stable id**.
+- The v1 CLI wire shape is **unchanged** (no `code`/`severity`/`step_ref` on the
+  wire). V3 diagnostics are projected through the same `to_v1_issue()`.
+
+---
+
+## 8. Serialization strategy
 
 | Serializer | Purpose | Order policy |
 |---|---|---|
-| **Human YAML** (`canonical/yaml_io.py`, new) | write documents (upgrade output, future save) | `sort_keys=False`, **author step order preserved**, step key order fixed (`id,label,type,enabled,inputs,params,checkpoint,extensions,annotations`) |
+| **Human YAML** (`canonical/yaml_io.py`, new) | write documents (upgrade output, future save) | `sort_keys=False`, **author step order preserved**, fixed step key order (`id,label,type,enabled,inputs,params,checkpoint,extensions,annotations`) |
 | **Canonical JSON** (`serialization.canonical_json`, existing) | fingerprints and contract digests | `sort_keys=True`; steps sorted by the V3 order key |
 
-- The two are **never** conflated: the fingerprint canonicaliser does not rewrite
-  the user's YAML, and the YAML writer does not sort.
-- Comments are **not** preserved (we do not use a round-trip loader); upgrade
-  output is a fresh, comment-free document. Stated so no one expects otherwise.
-- Determinism test: `dump(load(dump(doc))) == dump(doc)` byte-for-byte, and
-  upgrade twice from the same V2 source byte-for-byte.
+- The fingerprint canonicaliser never rewrites the user's YAML; the YAML writer
+  never sorts.
+- Comments are **not** preserved (no round-trip loader); upgrade output is a fresh,
+  comment-free document.
+- Determinism: `dump(load(dump(doc))) == dump(doc)` byte-for-byte, and upgrade twice
+  from the same V2 source byte-for-byte.
 
 ---
 
-## 6. Error / diagnostic compatibility
+## 9. R3 slices
 
-- Reuse R2's `Diagnostic(code, severity, path, message, step_ref)`
-  (`canonical/diagnostics.py`). For V3, `step_ref` is the **stable id**; `path`
-  still points at the document location (e.g. `steps[2].inputs[0]`).
-- The v1 CLI wire shape is **unchanged**: `{schema, valid, workflow_schema_sha256,
-  issues:[{path,message}]}`. No `code`/`severity`/`step_ref` on the wire (the
-  JobDesk consumer rejects extra members). V3 diagnostics are projected through
-  the same `to_v1_issue()`.
-- `config validate` becomes version-aware *internally*; the response shape does
-  not change (RFC §10.1).
+### R3.1 — V3-ready Canonical IR (pure IR only)
 
----
+**Goal.** The IR can represent a V3 workflow; the V3 parser does not exist yet.
 
-## 7. R3 slices
+**Scope (narrowed this round):** IR fields + the V2 adapter projection only. **No**
+schema, parser, execution gate, or fingerprint freeze.
 
-Each slice: goal · files · data model · compatibility · tests first · acceptance ·
-commit · stop gate. Slices are ordered; each is independently reviewable and
-revertible.
-
-### R3.1 — V3-ready Canonical IR
-
-**Goal.** Let the existing R1 IR represent both a V2-adapted workflow and a future
-V3 workflow, **without** a V3 parser. `R3.1` adds fields; it does not populate
-them for V2.
-
-**Answers to the required questions.**
-
-1. **Current identity** — `CanonicalStepDefinition.name` (canonical graph key)
-   plus `v2_name` (the typed V2 projection name); `predecessors` are canonical
-   names. `CanonicalWorkflowDefinition` has `global_config/global_options/steps/
-   dependency_mode/predecessors/execution_order/terminal_steps/extensions`.
-2. **Add a stable id without breaking V2** — add `id: str | None = None`. For V2
-   the adapter leaves it `None`; `to_v2_step()` ignores it. No V2 code path reads
-   it, so V2 output is unchanged.
-3. **V2 has no native id** — the temporary identity is the existing `name`
-   (canonical graph key). `[clarification]` define
-   `CanonicalStepDefinition.identity -> str` = `id if id is not None else name`,
-   so graph consumers have **one** accessor and never branch on version. For V3,
-   `name = id` (the graph key is the id) and `label` carries the display title.
-4. **`identity_origin` enum?** — **No.** `source_version` on the definition is
-   sufficient and adding an enum would be a third way to describe the same fact.
-   `identity` is derived, not stored.
-5. **label ← V2 name** — for V2, `label` is populated from the typed name
-   (`v2_name`), stripped; empty-after-strip falls back to the generated graph name.
-   `[clarification]` — the RFC (§14) says "the V2 name or the generated name"; the
-   strip rule only removes whitespace-only names.
-6. **V2 generated name survives** — yes: `v2_name` and `name` are untouched; the
-   V2 execution projection still emits exactly `{name,type,enabled,params[,inputs]}`.
-7. **checkpoint in the IR** — a structured optional field
-   `checkpoint_from: str | None`, **not** a legacy raw param. For **V2** the
-   adapter leaves it `None` and keeps `params.chk_from_step` verbatim (V2
-   fingerprint/execution unchanged). V3 population happens in R3.2.
-8. **extensions / annotations in the IR** — `extensions: dict` already exists
-   (V2: unknown step-level fields). Add `annotations: dict` (default `{}`) at both
-   step and root level. Neither is consumed by the V2 pipeline (verified: nothing
-   reads `.extensions` today), so adding them is inert for V2.
-9. **Keep `to_v2_execution_shape()` byte-identical** — it must keep returning
-   `(global_config, [to_v2_step(), …])` with the same keys/values. The new fields
-   are never read by it. A golden test pins V2 fingerprints and plan fields.
-
-**Data model (exact, `[clarification]` on defaults).**
+**Model changes** (`[clarification]` on defaults):
 
 ```python
 @dataclass(frozen=True)
@@ -248,9 +367,7 @@ class CanonicalStepDefinition:
     @property
     def identity(self) -> str:
         return self.id if self.id is not None else self.name
-```
 
-```python
 @dataclass(frozen=True)
 class CanonicalWorkflowDefinition:
     ...                             # existing fields unchanged
@@ -258,428 +375,443 @@ class CanonicalWorkflowDefinition:
     annotations: dict[str, Any] = field(default_factory=dict)  # NEW
 ```
 
-**Plus (pure function, no state):** `workflow_definition_fingerprint_v3(definition)`
-implementing RFC §16.A (semantics_version + scientific global + per-step
-`{id,type,enabled,resolved params,inputs,checkpoint_from,extensions}`, steps
-sorted by the V3 order key; excludes label/annotations/order/schema digest/source
-version). It is **not** wired into any binding.
+- **No `identity_origin` enum**: `source_version` + the derived `identity` accessor
+  is sufficient (one fewer way to describe the same fact).
+- V2: `id`/`checkpoint_from` stay `None`; `params.chk_from_step` stays verbatim;
+  `label` is populated from the typed name (stripped; empty → generated graph name);
+  `to_v2_execution_shape()` unchanged.
+- `extensions`/`annotations` are carried but not consumed by the V2 pipeline
+  (verified: nothing reads `.extensions` today).
 
-**Files.** `canonical/workflow.py` (add fields + `identity` + v3 order key +
-fingerprint fn), `canonical/v2_adapter.py` (populate `label`, leave `id=None`,
-leave `checkpoint_from=None`).
+**Optional (structural, not frozen):** a private `build_semantic_payload(definition)`
+helper that *lists* the semantic fields — a primitive only. **The V3 definition
+fingerprint is not implemented or frozen here** (§12).
 
-**Compatibility.** Every R1/R2 test must stay green; V2 fingerprints, plan
-fields, dirnames, state and binding unchanged.
+**Files:** `canonical/workflow.py`, `canonical/v2_adapter.py`.
 
-**Tests first.**
-- all R1 differential tests (`test_canonical_workflow_ir.py`) unchanged
-- all V2 characterization (`test_workflow_characterization_v2.py`) unchanged
-- new: `test_ir_v3_fields_default_to_none_for_v2`; `test_ir_identity_accessor`
-- new: `test_v3_definition_fingerprint_*` for P1–P6 (built from in-memory V3-shaped IR)
-- new: golden V2 fingerprint unchanged (`test_v2_durable_digest_golden.py` still green)
+**Tests first:** R1 differential + V2 characterization unchanged; IR-default tests;
+`identity` accessor; golden V2 fingerprint.
 
-**Acceptance.** No new field is visible in any V2 projection; V3 fingerprint is
-computable from an in-memory IR.
+**Acceptance:** no new field is visible in any V2 projection.
 
-**Commit.** `feat(config): extend canonical workflow IR for V3 identity`
+**Commit:** `feat(config): extend canonical workflow IR for V3 identity`
 
-**Stop gate.** If any V2 fingerprint / plan field / dirname / binding digest
-changes → STOP and investigate before continuing.
+**Stop gate:** any V2 fingerprint / plan / binding / dirname / state change → STOP.
 
 ---
 
-### R3.2 — `workflow.v3` parser + production schema
+### R3.2 — `workflow.v3` parser + schema profiles + param descriptors
 
-**Goal.** Parse a V3 document into the IR; publish a generated V3 schema; add the
-execution gate. No V3 execution.
+**Goal.** Parse a V3 document into the IR; publish a generated V3 schema with two
+profiles; establish the descriptor registry; define the execution-capability
+module. **No planner gate.**
 
 **Version dispatch.** `detect_schema_version` (§2) + `load_workflow_definition(config_file)`
-(new entry point) that dispatches V2/V3 → `CanonicalWorkflowDefinition`.
-`load_workflow_model` stays V2-only.
+dispatching V2/V3 → `CanonicalWorkflowDefinition`. `load_workflow_model` stays V2-only.
 
-**Profiles** `[clarification]` — an explicit value object, not a bool:
+**Profiles.** `SchemaProfile.{DOCUMENT,FRAGMENT}` (§5) and
+`ValidationProfile.{FRAGMENT,RUNNABLE}`; `parse_v3_document(raw, profile=FRAGMENT)`
+(structural) and `validate_workflow_definition(raw, profile=RUNNABLE)` (semantic;
+backward-compatible default).
 
-```python
-class ValidationProfile(Enum):
-    FRAGMENT = "fragment"   # parseable partial: id optional, user-required params optional
-    RUNNABLE = "runnable"   # document profile: id required, core params complete, extensions recognised
-```
+**Production schema** (`schema.py` additions; V2 untouched):
+- `WORKFLOW_SCHEMA_VERSION_V3 = "confflow.workflow.v3"`, `workflow_v3_schema(profile)`,
+  `workflow_schema_sha256_v3()` (DOCUMENT digest), internal
+  `workflow_fragment_schema_sha256_v3()`.
+- closed root `{schema, global, steps, extensions, annotations}`; closed step
+  `{id,label,type,enabled,inputs,params,checkpoint,extensions,annotations}`;
+  DOCUMENT `required:[id,type,inputs]`; `type∈{calc,confgen}`;
+  `params` generated from the descriptor registry (`additionalProperties:false`);
+  `checkpoint` closed; `extensions` propertyNames = namespaced regex.
 
-`parse_v3_document(raw, profile=FRAGMENT)` (structural) and
-`validate_workflow_definition(raw, profile=RUNNABLE)` (semantic). The existing
-`validate_workflow_definition(raw)` signature gains `profile=RUNNABLE`
-(backward-compatible default).
+**Param descriptors.** `canonical/param_fields.py` (§4); `fingerprint._known_calc_keys()`
+returns `v2_calc_keys()` (byte-identical).
 
-**Production V3 schema** (`schema.py` additions; V2 untouched):
-- `WORKFLOW_SCHEMA_VERSION_V3 = "confflow.workflow.v3"`, `workflow_json_schema_v3()`,
-  `workflow_schema_sha256_v3()`.
-- root closed: `{schema, global, steps, extensions, annotations}`, `additionalProperties:false`.
-- step closed: `{id,label,type,enabled,inputs,params,checkpoint,extensions,annotations}`,
-  `required:[id,type,inputs]` (document profile), `type∈{calc,confgen}`.
-- `params` generated from `param_fields` (key set + `additionalProperties:false`);
-  `iprog`/`itask` enums from `ProgramName`/`TaskName`.
-- `checkpoint` = `{from_step}` closed; `extensions` propertyNames = namespaced regex.
-- Publish **only** as an artifact; the runtime validates via the canonical
-  validator (agreement test in §16).
+**Extension registry.** `canonical/extensions.py`, producer-owned, **empty by
+default** → unrecognised namespace = parse-preserved, runnable ERROR; no namespace
+string-matching in the validator.
 
-**Extension registry** (new `canonical/extensions.py`):
-- `ExtensionSpec(namespace, validate, fingerprint_payload=None)`.
-- `ExtensionRegistry` with `register`, `recognised(ns)`, `validate(ns,payload)`,
-  `fingerprint_payload(entries)`.
-- Producer-owned, **empty by default**: with nothing registered, *every*
-  extension namespace is unrecognised → parse preserved, runnable ERROR (R3.2
-  behaviour, matching RFC §6.3). No `if namespace == "…"` in the validator.
-- Core built-ins may be registered at import in a later phase; R3 registers none.
+**Execution capability.** `canonical/execution_versions.py` (§3.2) — the module
+only. Its call sites are R3.5 (§3.3); R3.2 does **not** guard the planner.
 
-**Strict params.** Unknown core param = definition ERROR using `param_fields`
-(RFC §6.4). `chk_from_step` is **not** a V3 core param (it is `checkpoint`).
+**Files:** new `canonical/v3_parser.py`, `canonical/extensions.py`,
+`canonical/param_fields.py`, `canonical/execution_versions.py`, `canonical/yaml_io.py`;
+modify `canonical/schema.py`, `canonical/parser.py`, `canonical/validation.py`,
+`canonical/fingerprint.py`, `canonical/__init__.py`.
 
-**Execution gate.** Add `canonical/execution_gate.py` and call `ensure_executable`
-from `build_workflow_plan` and `rerun_failed` (§3). This is what prevents "V3 read
-as V2" / "V3 run on v1 state".
+**Tests first:** valid linear/branch/fan-in/checkpoint/disabled; document-vs-fragment
+schema (missing id: document rejects, fragment accepts); duplicate label allowed;
+duplicate id rejected; unknown root/step key rejected; unknown param rejected;
+recognised extension accepted; unknown extension parse-ok + runnable-error; annotation
+accepted; dispatch table; V2 unaffected; descriptor→schema-properties equality.
 
-**Files.** new `canonical/v3_parser.py`, `canonical/extensions.py`,
-`canonical/param_fields.py`, `canonical/execution_gate.py`,
-`canonical/yaml_io.py`; modify `canonical/schema.py`, `canonical/parser.py`,
-`canonical/validation.py`, `canonical/__init__.py`, `canonical/fingerprint.py`
-(import the registry), `workflow/plan.py` + `workflow/rerun_failed.py` (gate call).
+**Acceptance:** V3 parses and validates; V2 unchanged; the schema and the validator
+share the descriptor registry; planner is **not** gated.
 
-**Tests first.** valid linear/branch/fan-in/checkpoint/disabled; duplicate label
-allowed; duplicate id rejected; missing id rejected (runnable) / allowed (fragment);
-unknown root key rejected; unknown step key rejected; unknown param rejected;
-recognised extension accepted; unknown extension parse-ok/runnable-error;
-annotation accepted; version dispatch table; V2 documents unaffected; schema
-agrees with validator.
+**Stop gate:** two structural field allow-lists (document/fragment schema cannot
+share one `$defs`), or a descriptor registry that does not fully drive the schema →
+STOP.
 
-**Acceptance.** V3 parses and validates; V2 unchanged; a V3 document cannot reach
-the engine (gate raises).
-
-**Stop gate.** If the schema's allowed fields and the validator's allowed fields
-are two hand-written lists → STOP (must both derive from `param_fields`/enums).
-
-**Commit.** `feat(config): add Workflow V3 parser and schema`
+**Commit:** `feat(config): add Workflow V3 parser and schema profiles`
 
 ---
 
 ### R3.3 — Deterministic V2 → V3 upgrade
 
 **Goal.** `confflow workflow upgrade` turns a V2 document into a deterministic V3
-document. No execution, no state.
+document.
 
-**CLI** `[clarification]` — a new top-level subcommand dispatched from
-`confflow/cli.py` (`effective_args[0] == "workflow"`), implemented in
-`confflow/config/workflow_cli.py`:
+**CLI** `[clarification]`:
 
 ```
 confflow workflow upgrade <input.yaml> [-o out.yaml]
                           [--check] [--unknown-params={fail|annotations|extensions:<ns>}]
 ```
 
-- default output: stdout; `-o` writes a file.
-- `--check`: report what would change; write nothing.
-- `input is already V3` → **refuse** (error, RFC §14: never re-number).
-- unknown `schema` value → refuse.
+Dispatch from `confflow/cli.py` (`effective_args[0] == "workflow"`), implemented in
+`confflow/config/workflow_cli.py`. Default output stdout; `-o` writes a file;
+`--check` reports without writing; V3 input → **refuse**; unknown `schema` → refuse.
 
-**Algorithm** — exactly RFC §14:
-1. ids: document order → `s001, s002, …` (sequential family only).
-2. label: V2 typed name (stripped; empty → generated graph name) `[clarification]`.
-3. type: `task→calc`, `gen→confgen`.
-4. enabled: copied.
-5. inputs: explicit-DAG → predecessor names → ids; implicit-linear → step *k*
-   `inputs=[id(k-1)]`, first `[]`.
-6. checkpoint: `params.chk_from_step` (name → id; numeric → id at that 1-based
-   position) → `checkpoint.from_step`; remove `chk_from_step` from params.
-7. params: copied; **unknown core key → fail by default**; `--unknown-params=annotations`
-   demotes them to `annotations`; `--unknown-params=extensions:<ns>` moves them to
-   that namespaced extension (then the document is a runnable ERROR unless `<ns>`
-   is registered — reported, not silently ignored).
-8. unknown step-level V2 fields → `annotations` (they were inert in V2).
-9. `schema: confflow.workflow.v3`; array order preserved.
-10. `[clarification]` present alias **values** are canonicalised
-    (`iprog: 2`→`orca`, `itask: 1`→`sp`) via the existing normalisers; **absent**
-    values stay absent (never materialise a default).
+**Algorithm** — exactly RFC §14: ids in document order (`s001…`); label = typed V2
+name (stripped; empty → generated graph name); type alias-normalised; `enabled`
+copied; inputs (explicit-DAG names→ids; implicit-linear chained); `chk_from_step`
+(name/index) → `checkpoint.from_step`; params copied; unknown step-level V2 fields →
+`annotations`; `schema: confflow.workflow.v3`; array order preserved; present
+`iprog`/`itask` alias values canonicalised, absent values stay absent.
 
-**Serializer.** `yaml_io` (§5): author order preserved, fixed key order, no comments.
+**Output profile (explicit).** The default upgrade output **must** pass
+`SchemaProfile.DOCUMENT` + `ValidationProfile.RUNNABLE`; a partial V3 output is
+produced only when the user explicitly asks for a fragment (`--profile fragment`,
+R7 may expose it). The default upgrade never emits a partial document.
 
-**Idempotence.** Same V2 source → byte-identical V3 output. V3 input → refuse.
+**Unknown-params routing is explicitly lossy/routing, not semantic-equivalent:**
 
-**Files.** new `canonical/upgrade.py` (pure `upgrade_v2_mapping(raw) -> dict`),
-`config/workflow_cli.py`; modify `confflow/cli.py` (dispatch), `canonical/__init__.py`.
+- default (`fail`): unknown core param → **error**, naming the step and key.
+- `--unknown-params=annotations`: the key is demoted to non-semantic `annotations`;
+  the CLI **must** emit a clear warning/report that "this field no longer
+  participates in execution semantics" and list each affected step/key.
+- `--unknown-params=extensions:<ns>`: the key moves to the named extension; the
+  namespace must be grammar-valid, and if the target producer does not recognise it
+  the document **parses but fails runnable validation** — stated in the CLI output.
 
-**Tests first.** implicit linear; explicit DAG; unnamed step; disabled; `task`/`gen`
-aliases; numeric + named `chk_from_step`; unknown params (fail / annotations /
-extensions); unknown step-level fields → annotations; deterministic (twice);
-V3-input refusal; `>999` steps (`s1000`); alias value canonicalisation; parse the
-V3 output through `parse_v3_document` (round trip).
+**Serializer.** `yaml_io` (§8): author order, fixed key order, no comments.
 
-**Acceptance.** `upgrade` output parses and validates as V3; two runs are identical.
+**Files:** new `canonical/upgrade.py` (pure `upgrade_v2_mapping(raw) -> dict`),
+`config/workflow_cli.py`; modify `confflow/cli.py`, `canonical/__init__.py`.
 
-**Stop gate.** If upgrade is not byte-deterministic, or its output fails V3
-validation → STOP.
+**Tests first:** implicit linear; explicit DAG; unnamed; disabled; aliases; numeric +
+named `chk_from_step`; unknown-params (fail/annotations/extensions); unknown
+step-level → annotations; deterministic twice; V3-input refusal; `>999` steps; alias
+value canonicalisation; output passes DOCUMENT+RUNNABLE; the `annotations`/`extensions`
+routing warnings are emitted.
 
-**Commit.** `feat(config): add deterministic V2 to V3 upgrade`
+**Stop gate:** non-deterministic output, or default output not runnable → STOP.
+
+**Commit:** `feat(config): add deterministic V2 to V3 upgrade`
 
 ---
 
-### R3.4 — V3 graph / reference validation
+### R3.4 — V3 semantic validation + definition fingerprint freeze
 
-**Goal.** The runnable-definition validator for V3.
+**Goal.** The runnable-definition validator AND the frozen V3 definition fingerprint
+(the semantic authority is complete here, so the fingerprint can be frozen safely).
 
-**Checks.** duplicate id; invalid id grammar; id required (runnable); unknown
-`inputs` ref; duplicate `inputs` entry; self-loop; cycle; `inputs: []` root;
-calc fan-in on the declared graph; disabled basic semantics; `checkpoint` only on
-`calc`; `checkpoint.from_step` exists; **strict ancestor** via `inputs`;
-extension recognition (registry); strict params; fragment profile relaxations.
+**Checks:** duplicate id; invalid id grammar; id required (runnable); unknown
+`inputs` ref; duplicate `inputs`; self-loop; cycle; `inputs: []` root; calc fan-in;
+disabled basic semantics; `checkpoint` only on `calc`; `checkpoint.from_step` exists;
+**strict ancestor** via `inputs`; extension recognition; strict params; fragment
+profile relaxations.
 
-**Checkpoint ancestry algorithm** — lives in the **validation layer**, using an
-IR graph helper (`ancestors(definition, step_id)`); **never** in a step handler
-(RFC §11). Reachability over the `inputs` edges (transitive closure).
+**Checkpoint ancestry** lives in the **validation layer** (IR `ancestors()` helper),
+never in a step handler.
 
-**Execution order** — derived at IR construction (as today) with the V3 sort key:
-`(0,int(suffix))` for `^s[0-9]+$`, else `(1,id)` (RFC §9). Stored on the IR, same
-as V2 (so `plan`/engine code keeps one shape).
+**Execution order** — derived at IR construction with the V3 order key
+(`(0,int(suffix))` for `^s[0-9]+$`, else `(1,id)`), stored on the IR (as V2 does).
 
-**Diagnostics.** Stable codes, e.g. `workflow.v3.duplicate_id`,
-`workflow.v3.invalid_id`, `workflow.v3.unknown_input`,
-`workflow.v3.duplicate_input`, `workflow.v3.self_loop`,
+**Definition fingerprint (frozen here).** `workflow_definition_fingerprint_v3(definition)`
+implementing RFC §16.A: `semantics_version` + scientific global + per-step
+`{id,type,enabled,resolved params,inputs,checkpoint_from,extensions}`, steps sorted by
+the V3 order key; excludes label/annotations/order/schema digest/source version. It
+is **not** wired into any binding (that is R4's `workflow_binding.v2`).
+
+**Slice-order rationale.** The fingerprint enumerates the semantic vocabulary
+(strict params from the descriptor registry + extension recognition + checkpoint
+semantics). Freezing it before R3.2/R3.4 would freeze a payload whose field set is
+not yet authoritative. It could go at the end of R3.2, but the ancestry/disabled
+semantics land in R3.4, so R3.4 is the first point where the payload is complete.
+
+**Diagnostics:** stable codes (`workflow.v3.duplicate_id`, `workflow.v3.invalid_id`,
+`workflow.v3.unknown_input`, `workflow.v3.duplicate_input`, `workflow.v3.self_loop`,
 `workflow.v3.dependency_cycle`, `workflow.v3.checkpoint_target_not_calc`,
 `workflow.v3.checkpoint_not_ancestor`, `workflow.calc_fan_in` (reused),
-`workflow.v3.params_unknown_key`, `workflow.v3.extension_unknown`.
+`workflow.v3.params_unknown_key`, `workflow.v3.extension_unknown`).
 
-**R6 boundary (explicit).** R3.4 validates the **declared** graph. The
-**effective-dataflow** cardinality after disabled bypass (RFC §12) is **R6**.
-R3.4 must not build a typed artifact/dataflow system.
+**R6 boundary.** R3.4 validates the **declared** graph; **effective-dataflow**
+cardinality after disabled bypass is R6. R3.4 must not build a typed artifact system.
 
-**Files.** modify `canonical/validation.py`, `canonical/workflow.py` (graph helper).
+**Files:** `canonical/validation.py`, `canonical/workflow.py` (ancestors + order key),
+`canonical/fingerprint.py` (fingerprint), `canonical/extensions.py`.
 
-**Tests first.** unknown predecessor; cycle; self-loop; checkpoint non-ancestor;
-checkpoint wrong step type; calc fan-in; disabled; root; duplicate inputs;
-extension registry; strict params; runnable id required; fragment allows missing id.
+**Tests first:** unknown predecessor; cycle; self-loop; checkpoint non-ancestor;
+checkpoint wrong type; calc fan-in; disabled; root; duplicate inputs; extension
+recognition; strict params; runnable-id-required; fragment relaxation; schema-profile
+↔ validation-profile pairing; structural-non-contradiction (§11); **P1–P6**.
 
-**Stop gate.** If the V3 validator and the V3 schema can accept/reject the same
-document differently (beyond known profile relaxations) → STOP.
+**Stop gate:** a shared structural rule where schema and validator contradict → STOP.
 
-**Commit.** `feat(config): validate Workflow V3 graph references`
-
----
-
-### R3.5 — CLI-facing integration
-
-**Goal.** Let a user inspect a V3 document. **No execution, no state change.**
-
-- **`config validate`** — version-aware internally; **v1 wire shape unchanged**;
-  V3 diagnostics projected to `{path,message}`. `config contract` untouched.
-- **`config-show`** (`workflow/config_show.py`) — for V3, display `id`, `label`,
-  `type`, `inputs`, `checkpoint`, and the resolved params; keep V2 output as-is.
-  `[clarification]` `--step` for V3 selects by **id only** (labels may duplicate).
-- **`dry-run`** (`workflow/dry_run.py`) — for V3, print the resolved graph,
-  stable ids, labels, execution order and input relationships (the current code
-  assumes a linear chain). V2 output unchanged.
-- **`rerun_failed`** — V3 blocked by the R3.2 gate.
-- **export** — **no change in R3**; step-id export metadata and `output_manifest.v2`
-  are R4 (state v2). Explicitly deferred.
-- **contract** — unchanged; V3 is **not** advertised (R7).
-
-**Files.** modify `workflow/config_show.py`, `workflow/dry_run.py`,
-`config/cli.py`, `confflow/cli.py` (dispatch if needed), plus tests.
-
-**Tests first.** `config validate` V2 exact compatibility; V3 validate; config-show
-V2 unchanged / V3 id+label+graph; dry-run V2 unchanged / V3 graph display;
-`--step <id>` V3; `--step <name|index>` V2 unchanged; `export` unchanged; a V3
-run is blocked with the gate message.
-
-**Stop gate.** If a V3 document can bypass the execution gate and write
-`.workflow_state.json` (v1) or launch a calc → STOP.
-
-**Commit.** `feat(cli): expose Workflow V3 inspection commands`
+**Commit:** `feat(config): validate Workflow V3 semantics`
 
 ---
 
-## 8. Test matrix
+### R3.5 — CLI integration + execution guard wiring
+
+**Goal.** Inspect a V3 document; block V3 execution.
+
+- **`config validate`** — version-aware; schema hash per §6; v1 wire shape unchanged.
+- **`config-show`** — V3 shows `id`, `label`, `type`, `inputs`, `checkpoint`, resolved
+  params; V2 output unchanged. `[clarification]` `--step` for V3 selects by **id only**.
+- **`dry-run`** — V3 builds a `WorkflowV3Plan` and prints the resolved graph, stable
+  ids, labels, execution order and input relationships; V2 output unchanged.
+- **Execution guard wiring** — `require_executable` called at the sites in §3.3
+  (engine after planning; CLI pre-flight; rerun-failed entry; optional service guard).
+- **export** — **no change** (R4).
+- **contract** — unchanged; V3 not advertised (R7).
+
+**Core acceptance tests (the R3/R4 boundary):**
+
+| Call | Expected |
+|---|---|
+| V3 `build_workflow_plan` | **succeeds** (returns `WorkflowV3Plan`) |
+| V3 `dry-run` | **succeeds** |
+| V3 `run_workflow` | fails **before** state creation, step-dir creation, artifact cleanup, external launch |
+| V3 `resume` | fails **before** any state mutation |
+| V3 `rerun-failed` | fails **before** mutation/launch |
+
+and the assertions: **no `.workflow_state.json`, no step dirs, no `failed/` cleanup,
+no process launch**.
+
+**Files:** modify `workflow/config_show.py`, `workflow/dry_run.py`, `config/cli.py`,
+`confflow/cli.py`, `workflow/engine.py`, `workflow/rerun_failed.py`,
+`workflow/plan.py` (add the V3 planning branch + `WorkflowV3Plan`); optional
+`application/execution/workflow_adapter.py` (flagged).
+
+**Stop gate:** `build_workflow_plan` blocked for V3, OR any V3 path that writes state /
+creates step dirs / cleans artifacts / launches before R4, OR the validation schema-hash
+semantics contradict the existing contract → STOP.
+
+**Commit:** `feat(cli): expose Workflow V3 inspection commands`
+
+---
+
+## 10. Test matrix
 
 ### R3.1 — IR
-- unit: new fields default to `None`/`{}` for V2; `identity` accessor; v3 order key
-- characterization: all R1 differential + V2 characterization unchanged
-- property: P1–P6 (in-memory V3 IR)
-- golden: V2 fingerprint/plan (unchanged)
+IR defaults; `identity`; V2 characterization/differential unchanged; golden V2 fingerprint.
 
-### R3.2 — parser / schema
+### R3.2 — parser / schema / descriptors
 - valid linear / branch / fan-in / checkpoint / disabled
-- duplicate label allowed; duplicate id rejected; missing id (runnable) rejected;
-  fragment missing id allowed
-- unknown root key rejected; unknown step key rejected; unknown param rejected
-- recognised extension accepted; unknown extension parse-ok + runnable-error
-- annotation accepted; version dispatch table; V2 unaffected
-- schema-agrees-with-validator corpus
+- **schema profiles**: document missing id → **schema reject**; fragment missing id →
+  **schema accept**; runnable validator on the same fragment → **semantic reject**;
+  fragment validator → accept if otherwise valid; profile pairing asserted
+- duplicate label allowed; duplicate id rejected; unknown root/step key rejected
+- **param descriptors**: descriptor keys ↔ generated schema `properties`; unknown V3
+  core param → schema reject **and** validator reject
+- **extensions**: valid-namespace-but-unknown → schema accept + parse preserve +
+  runnable reject; recognised namespace → schema accept + validator accept
+- annotation accepted; dispatch table; V2 unaffected
+- **structural non-contradiction** (§11), not full equivalence
 
 ### R3.3 — upgrade
-- implicit linear; explicit DAG; unnamed step; disabled; `task`/`gen`; numeric
-  `chk_from_step`; named `chk_from_step`; unknown-params (fail/annotations/extensions);
-  unknown step-level → annotations; deterministic twice; V3-input refusal; `>999`
-  steps; alias value canonicalisation; upgrade→parse round trip
+implicit linear; explicit DAG; unnamed; disabled; aliases; numeric + named
+`chk_from_step`; unknown-params (fail/annotations/extensions) with lossy warnings;
+unknown step-level → annotations; deterministic twice; V3-input refusal; `>999` steps;
+alias canonicalisation; output passes DOCUMENT+RUNNABLE; round trip.
 
-### R3.4 — validation
-- unknown predecessor; cycle; self-loop; checkpoint non-ancestor; checkpoint wrong
-  type; calc fan-in; disabled; root; duplicate inputs; extension registry; strict
-  params; runnable-id-required; fragment relaxation
+### R3.4 — validation + fingerprint
+unknown predecessor; cycle; self-loop; checkpoint non-ancestor; checkpoint wrong type;
+calc fan-in; disabled; root; duplicate inputs; extension registry; strict params;
+runnable-id-required; fragment relaxation; **P1–P6**.
 
-### R3.5 — CLI
-- `config validate` V2 exact; V3 validate; config-show V2/V3; dry-run V2/V3;
-  `--step` V2 (name/index) vs V3 (id); export unchanged; V3 run blocked
+### R3.5 — CLI + guard
+`config validate` V2 exact; V3 validate + digest per §6; config-show V2/V3; dry-run
+V2/V3; `--step` V2 (name/index) vs V3 (id); export unchanged; **V3 plan/dry-run PASS
+and V3 run/resume/rerun-failed BLOCKED with no state/dirs/cleanup/launch**.
 
 ### Property / metamorphic (P1–P8)
 | # | Property | Slice |
 |---|---|---|
-| P1 | reorder V3 steps array → **same** definition fingerprint | R3.1 |
-| P2 | rename label → **same** definition fingerprint | R3.1 |
-| P3 | change id → **different** definition fingerprint | R3.1 |
-| P4 | change an edge → **different** definition fingerprint | R3.1 |
-| P5 | change a semantic extension → **different** definition fingerprint | R3.1 |
-| P6 | change an annotation → **same** definition fingerprint | R3.1 |
+| P1 | reorder V3 steps array → **same** definition fingerprint | R3.4 |
+| P2 | rename label → **same** definition fingerprint | R3.4 |
+| P3 | change id → **different** definition fingerprint | R3.4 |
+| P4 | change an edge → **different** definition fingerprint | R3.4 |
+| P5 | change a semantic extension → **different** definition fingerprint | R3.4 |
+| P6 | change an annotation → **same** definition fingerprint | R3.4 |
 | P7 | upgrade twice from the same V2 source → same V3 document | R3.3 |
 | P8 | instantiate the same recipe twice → unique id sets | **out of R3** (application layer) |
 
-P8 rationale: no instantiate code exists in the repo (§1); the RFC §19.3 algorithm
-is specified, and its first consumer is an application verb. R3 does not
-implement it; the plan marks it for the application layer, tested there.
+### §11 Structural non-contradiction (agreement)
+Not "schema acceptance ≡ validator acceptance". Three assertions:
+
+1. A structurally valid core field shape the schema accepts **must not** be rejected
+   by the validator for a *structural* reason (no duplicate structural rule).
+2. A schema-rejected unknown core param **must** also be validator-rejected.
+3. A syntactically valid extension namespace the schema accepts **may** be rejected by
+   the runnable validator when the producer's `ExtensionRegistry` does not recognise
+   it (semantic knowledge the schema cannot have).
 
 ### Migration golden fixtures
-`tests/fixtures/workflow_v3/` with paired V2 input and expected V3:
-`upgrade-linear`, `upgrade-dag`, `upgrade-numeric-checkpoint`, plus V3-only
-`simple-linear`, `branch`, `checkpoint`, `disabled`, `partial-recipe`.
-Golden compares **parsed structure** (not YAML whitespace), plus one serializer
-determinism test — no over-binding to formatting.
+`tests/fixtures/workflow_v3/`: `simple-linear`, `branch`, `checkpoint`, `disabled`,
+`partial-recipe`, `upgrade-linear`, `upgrade-dag`, `upgrade-numeric-checkpoint`.
+Structural golden (not whitespace) + one serializer determinism test.
 
 ---
 
-## 9. File change matrix
+## 12. File change matrix
 
 | File | R3.1 | R3.2 | R3.3 | R3.4 | R3.5 | Reason |
 |---|---|---|---|---|---|---|
-| `config/canonical/workflow.py` | modify | no-touch | no-touch | modify | no-touch | IR fields, `identity`, v3 order key, `ancestors()` |
-| `config/canonical/v2_adapter.py` | modify | no-touch | no-touch | no-touch | no-touch | populate `label`; keep `id/checkpoint_from=None` |
+| `config/canonical/workflow.py` | modify | no-touch | no-touch | modify | no-touch | IR fields, `identity`, order key, `ancestors()` |
+| `config/canonical/v2_adapter.py` | modify | no-touch | no-touch | no-touch | no-touch | `label`; keep `id`/`checkpoint_from` `None` |
 | `config/canonical/parser.py` | no-touch | modify | no-touch | no-touch | no-touch | `detect_schema_version`, dispatch |
-| `config/canonical/v3_parser.py` | — | **add** | no-touch | no-touch | no-touch | V3 document → IR |
-| `config/canonical/schema.py` | no-touch | modify | no-touch | no-touch | no-touch | V3 schema getters (V2 untouched) |
-| `config/canonical/param_fields.py` | no-touch | **add** | no-touch | no-touch | no-touch | single key registry |
+| `config/canonical/v3_parser.py` | — | **add** | no-touch | no-touch | no-touch | V3 → IR |
+| `config/canonical/schema.py` | no-touch | modify | no-touch | no-touch | no-touch | V3 schema profiles (V2 untouched) |
+| `config/canonical/param_fields.py` | no-touch | **add** | no-touch | no-touch | no-touch | param descriptor registry |
 | `config/canonical/extensions.py` | no-touch | **add** | no-touch | modify | no-touch | registry + recognition |
-| `config/canonical/execution_gate.py` | no-touch | **add** | no-touch | no-touch | no-touch | R3/R4 fail-closed gate |
+| `config/canonical/execution_versions.py` | no-touch | **add** | no-touch | no-touch | no-touch | version capability table + `require_executable` |
 | `config/canonical/yaml_io.py` | no-touch | **add** | modify | no-touch | no-touch | human YAML serializer |
 | `config/canonical/validation.py` | no-touch | modify | no-touch | modify | no-touch | profiles, strict params, graph refs |
-| `config/canonical/fingerprint.py` | modify | modify | no-touch | no-touch | no-touch | v3 definition fingerprint; import registry; V2 keys from registry |
+| `config/canonical/fingerprint.py` | no-touch | modify | no-touch | modify | no-touch | V2 keys from registry; V3 definition fingerprint frozen in R3.4 |
 | `config/canonical/upgrade.py` | — | — | **add** | no-touch | no-touch | pure V2→V3 |
 | `config/canonical/__init__.py` | modify | modify | modify | modify | modify | exports |
 | `config/workflow_cli.py` | — | — | **add** | no-touch | no-touch | `workflow upgrade` |
-| `config/cli.py` | no-touch | no-touch | no-touch | no-touch | modify | version-aware validate |
-| `cli.py` | no-touch | no-touch | modify | no-touch | modify | `workflow` dispatch |
-| `workflow/plan.py` | no-touch | modify | no-touch | no-touch | no-touch | gate call |
-| `workflow/rerun_failed.py` | no-touch | modify | no-touch | no-touch | no-touch | gate call |
+| `config/cli.py` | no-touch | no-touch | no-touch | no-touch | modify | version-aware validate + digest |
+| `cli.py` | no-touch | no-touch | modify | no-touch | modify | `workflow` dispatch; execution pre-flight |
+| `workflow/plan.py` | no-touch | no-touch | no-touch | no-touch | modify | V3 planning branch (`WorkflowV3Plan`) |
+| `workflow/engine.py` | no-touch | no-touch | no-touch | no-touch | modify | `require_executable` after planning |
+| `workflow/rerun_failed.py` | no-touch | no-touch | no-touch | no-touch | modify | execution pre-flight |
 | `workflow/config_show.py` | no-touch | no-touch | no-touch | no-touch | modify | V3 display/select |
-| `workflow/dry_run.py` | no-touch | no-touch | no-touch | no-touch | modify | V3 graph display |
+| `workflow/dry_run.py` | no-touch | no-touch | no-touch | no-touch | modify | V3 plan display |
 | `workflow/export.py` | no-touch | no-touch | no-touch | no-touch | no-touch | deferred to R4 |
 | `workflow/state.py`, `canonical/contract.py` | no-touch | no-touch | no-touch | no-touch | no-touch | v1/v2 unchanged (R4) |
-| `calc/*`, `blocks/*`, `application/*`, `control*` | no-touch | no-touch | no-touch | no-touch | no-touch | protected core |
+| `application/execution/workflow_adapter.py` | no-touch | no-touch | no-touch | no-touch | optional | pre-flight guard (**protected-core, separate review**) |
+| `calc/*`, `blocks/*`, `control*` | no-touch | no-touch | no-touch | no-touch | no-touch | protected core |
 
 ---
 
-## 10. Commit plan
+## 13. Commit plan
 
 | Slice | Commit |
 |---|---|
 | R3.1 | `feat(config): extend canonical workflow IR for V3 identity` |
-| R3.2 | `feat(config): add Workflow V3 parser and schema` |
+| R3.2 | `feat(config): add Workflow V3 parser and schema profiles` |
 | R3.3 | `feat(config): add deterministic V2 to V3 upgrade` |
-| R3.4 | `feat(config): validate Workflow V3 graph references` |
+| R3.4 | `feat(config): validate Workflow V3 semantics` |
 | R3.5 | `feat(cli): expose Workflow V3 inspection commands` |
 
 Each commit: tests green, reviewable, no dependency on later uncommitted code.
-No mega-commit; no push/tag/merge in this plan.
 
 ---
 
-## 11. Risk register
+## 14. Stop gates
+
+| Slice | Stop gate |
+|---|---|
+| R3.1 | any V2 identity/fingerprint/plan/binding/dirname/state change |
+| R3.2 | document/fragment schema cannot share one structural source; param schema and descriptors produce a second field truth |
+| R3.3 | upgrade non-deterministic, or default output not runnable |
+| R3.4 | a shared structural rule where schema and validator contradict |
+| R3.5 | `build_workflow_plan` blocked for V3; any V3 execution path that can write state/artifacts before R4; validation schema-hash semantics contradict the existing contract |
+
+---
+
+## 15. Risk register
 
 | Sev | Risk | Mitigation / test |
 |---|---|---|
-| **P0** | V2 fingerprint / binding / dirname regression | R3.1 stop gate; golden fingerprint tests; V2 characterization must stay green |
-| **P0** | V3 accidentally executed on v1 state identity | R3.2 execution gate at `build_workflow_plan`/`rerun_failed`; R3.5 stop gate; explicit test that V3 cannot write `.workflow_state.json` |
-| **P0** | schema / validator truth drift | single `param_fields` registry; `test_v3_schema_agrees_with_validator`; R3.2 stop gate |
-| **P0** | checkpoint migration corruption | R3.3 migrates via the exact V2 resolution (name/index); golden `upgrade-numeric-checkpoint`; ancestry validation in R3.4 |
-| **P1** | non-deterministic upgrade | byte-determinism test (twice); R3.3 stop gate |
-| **P1** | id collision | opaque + collision check; `test_allocator_collision_retries` (application allocator) |
-| **P1** | extension registry drift | one registry module; unrecognised → runnable ERROR test |
-| **P1** | CLI version ambiguity | dispatch table test; unknown `schema` → error test |
-| **P2** | formatting / order churn | structural golden (not whitespace); serializer determinism test |
-| **P2** | label presentation | label excluded from fingerprint (P2) |
-| **P2** | docs/examples drift | RFC examples validated in CI-adjacent test |
+| **P0** | V2 fingerprint / binding / dirname regression | R3.1 stop gate; golden fingerprints; V2 characterization |
+| **P0** | V3 executed on v1 state identity | capability check at the real side-effect boundary (§3.3); V3 plan/dry-run-pass + run-blocked tests |
+| **P0** | schema / validator truth drift | descriptor registry + structural-non-contradiction tests; R3.2 stop gate |
+| **P0** | checkpoint migration corruption | exact V2 resolution + golden fixture + ancestry validation |
+| **P1** | non-deterministic upgrade | byte-determinism test; R3.3 stop gate |
+| **P1** | fragment rejected by the runnable schema before the fragment profile applies | two schema profiles sharing `$defs` (§5); profile-pairing tests |
+| **P1** | id collision | opaque + collision check; allocator retry test |
+| **P1** | extension registry drift | one registry; unrecognised → runnable ERROR test |
+| **P1** | V3 validation digest misread as V2 by JobDesk | §6 safe-refusal test |
+| **P2** | formatting / order churn | structural golden + serializer determinism |
+| **P2** | lossy unknown-params routing not surfaced | CLI warnings/report test |
 
 ---
 
-## 12. Protected core
+## 16. Protected core
 
-Unchanged during R3 (any change requires a separate review): calc execution,
+Unchanged during R3 (any change requires separate review): calc execution,
 Gaussian/ORCA policy, `CalcArtifactManager`, ConfGen generation algorithm,
 `ExecutionService`, control protocol, worker supervision, cancel/pause, remote
-execution, artifact/path safety, `workflow_state.v1` behaviour,
-`workflow_binding.v1` behaviour, `output_manifest`/`workflow_stats` v1.
+execution, artifact/path safety, `workflow_state.v1`, `workflow_binding.v1`,
+`output_manifest`/`workflow_stats` v1. The only planned protected-core touch is the
+**optional** pre-flight guard in `application/execution/workflow_adapter.py` (§3.3),
+flagged for separate review.
 
 ---
 
-## 13. Configuration-contract-v2 boundary
+## 17. Configuration-contract-v2 boundary
 
 R3 keeps `configuration-contract.v1`/`.v2`, `workflow_schema_sha256` (v2),
 `editor-manifest.v1`, `recipe-catalog.v1` and `configuration-validation.v1`
-**unchanged**. Internal V3 support ≠ published V3 support: V3 is not advertised
-to JobDesk until **R7**.
+**unchanged**. Internal V3 support ≠ published V3 support; V3 is advertised in R7.
+The V3 validation *answer* uses the same v1 wire shape with the V3 DOCUMENT digest
+(§6), which the current JobDesk contract-bound check safely refuses.
 
 ---
 
-## 14. R3 completion definition
+## 18. R3 completion definition
 
-R3 COMPLETE means: the V3 production schema exists; a V3 parser exists; the
-canonical IR represents V3; V3 runnable-definition validation exists;
-deterministic V2→V3 upgrade exists; the CLI can validate / show / dry-run a V3
-document; V2 behaviour is unchanged; and **V3 execution remains fail-closed**.
-R3 COMPLETE ≠ "V3 workflows run calculations" — that is R4.
+**R3 COMPLETE — V3 can:** parse, schema-validate (document profile), semantic-validate,
+canonicalise, **build a plan**, `config-show`, `dry-run`, and upgrade from V2.
+
+**R3 COMPLETE — V3 cannot:** execute, resume, rerun-failed, write `workflow_state`,
+write execution artifacts, use V1 identity for state, or emit a V3 run output
+manifest.
+
+R3 COMPLETE ≠ "V3 runs calculations" — that is R4.
 
 ---
 
-## 15. R4 handoff contract
+## 19. R4 handoff contract
 
-**R3 provides R4:** stable step ids in the IR; the V3 semantic **definition**
+**R3 provides R4:** stable step ids in the IR; the frozen V3 **definition**
 fingerprint; explicit graph semantics + `ancestors()`; structured
-`checkpoint.from_step`; a version-aware parser + validated V3 document; the
-`execution_gate` constant to flip.
+`checkpoint.from_step`; a version-aware parser + validated V3 document; a V3 planning
+branch (`WorkflowV3Plan`); the `CAPABILITIES` table to flip.
 
-**R4 must add (not R3):** `workflow_binding.v2`; `workflow_state.v2`;
-step-id-keyed state records; `steps/<id>/` directories; the **execution**
-fingerprint; V3 engine enablement (flip `V3_EXECUTION_SUPPORTED` with real
-support); V3 resume semantics; `output_manifest.v2` / compatible export metadata.
+**R4 adds (not R3):** `workflow_binding.v2`; `workflow_state.v2`; step-id-keyed state
+records; `steps/<id>/` directories; the **execution** fingerprint; V3 engine
+enablement (flip `v3.execute`); V3 resume semantics; `output_manifest.v2` /
+export metadata.
 
 ---
 
-## 16. Adversarial review of this plan
+## 20. Adversarial review of this plan
 
-| Role | Attack | Resolution |
+| # | Attack | Resolution |
 |---|---|---|
-| Maintainer | hidden R3→R4 dependency? | gate + handoff §15; R3 ships inspection only |
-| Maintainer | circular slice dependency? | R3.1→R3.2→R3.3→R3.4→R3.5 is a DAG; R3.5 depends on R3.2–R3.4; R3.4 depends on R3.1–R3.2 |
-| Maintainer | duplicated source of truth? | `param_fields` registry (§4) + schema-agreement test |
-| V2 user | "did my run change?" | V2 stop gates + golden fingerprints + characterization |
-| CLI user | "can I run V3 by accident?" | explicit gate error; V3 cannot produce v1 state |
-| CLI user | "which `--step` value?" | V2 name/index; V3 id only (labels may duplicate) |
-| JobDesk | wire change? | none — v1 validation shape frozen; contract untouched |
-| Schema author | schema/parser disagreement | single registry + agreement test; R3.2/R3.4 stop gates |
-| Extension author | "my namespace is ignored?" | unrecognised = runnable ERROR (fail closed), never silent |
-| Resume/state | "R3 writes state for V3?" | gate blocks execution; export/state explicitly deferred to R4 |
-| Upgrade user | "did it renumber my file?" | V3 input refused; deterministic; ids assign-once |
+| 1 | Does V3 dry-run trip the execution gate? | No — the gate is after the planner, at the execution side effect (§3.1/§3.3); V3 dry-run builds a `WorkflowV3Plan`. |
+| 2 | Can a fragment be rejected by the document schema before the fragment profile applies? | No — two structural profiles sharing `$defs` (§5); fragment validated with `SchemaProfile.FRAGMENT`. |
+| 3 | Are there still two field allow-lists (schema vs validator)? | No — both derive from `param_fields` (§4); a test asserts descriptor↔schema equality. |
+| 4 | Why does the schema accept an unknown extension the validator rejects? | Explained: namespace *grammar* is structural; *recognition* is producer-semantic (§11, §5). |
+| 5 | Which digest does V3 `config validate` return? | The V3 DOCUMENT schema digest (§6). |
+| 6 | Can current JobDesk mis-consume a V3 validation answer? | No — contract-bound to the V2 digest → safe refusal, never a false accept (§6). |
+| 7 | Can V3 write any `workflow_state` before R4? | No — the check precedes binding/runtime/state (§3.3); asserted by tests. |
+| 8 | Is the V3 fingerprint frozen before the semantic registry exists? | No — frozen in R3.4, after descriptors/extensions/ancestry (§R3.4 rationale). |
+| 9 | Is upgrade output always Document+Runnable? | Yes by default; a fragment only on explicit request (§R3.3). |
+| 10 | Is `--unknown-params=annotations` marked lossy? | Yes — CLI warning/report that the field leaves execution semantics (§R3.3). |
 
 No circular dependency, no R3/R4 leak, no hidden runtime enablement, no duplicated
-truth, no irreversible upgrade (it writes a new document; the V2 source is untouched).
+truth, no irreversible upgrade, and the gate sits at the real side-effect boundary.
 
 ---
 
-## 17. Out of scope for this plan
+## 21. Out of scope for this plan
 
 V3 execution, `workflow_state.v2`, `workflow_binding.v2`, step-id directories,
 structured calculation, recipe *instantiation runtime*, plugin step types, JobDesk
