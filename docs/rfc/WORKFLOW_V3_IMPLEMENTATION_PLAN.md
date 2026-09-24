@@ -545,6 +545,16 @@ copied; inputs (explicit-DAG names→ids; implicit-linear chained); `chk_from_st
 `annotations`; `schema: confflow.workflow.v3`; array order preserved; present
 `iprog`/`itask` alias values canonicalised, absent values stay absent.
 
+**Migration metadata (RFC §14, "Migration metadata mapping").** All migration
+metadata uses the one reserved annotation key `confflow.migration.v2`:
+unknown **root- and step-level** V2 fields → `annotations.confflow.migration.v2.
+unknown_fields`; `--unknown-params=annotations` → `annotations.confflow.migration.
+v2.unknown_params`; the two groups are never mixed and empty groups are omitted.
+Unknown V2 fields are **not** promoted to `extensions` (that would make them
+semantic). Collision-safe: a source field literally named `annotations` or
+`confflow.migration.v2` is preserved inside `unknown_fields`, never merged into the
+V3 container.
+
 **Output profile (explicit).** The default upgrade output **must** pass
 `SchemaProfile.DOCUMENT` + `ValidationProfile.RUNNABLE`; a partial V3 output is
 produced only when the user explicitly asks for a fragment (`--profile fragment`,
@@ -553,12 +563,14 @@ R7 may expose it). The default upgrade never emits a partial document.
 **Unknown-params routing is explicitly lossy/routing, not semantic-equivalent:**
 
 - default (`fail`): unknown core param → **error**, naming the step and key.
-- `--unknown-params=annotations`: the key is demoted to non-semantic `annotations`;
-  the CLI **must** emit a clear warning/report that "this field no longer
-  participates in execution semantics" and list each affected step/key.
-- `--unknown-params=extensions:<ns>`: the key moves to the named extension; the
-  namespace must be grammar-valid, and if the target producer does not recognise it
-  the document **parses but fails runnable validation** — stated in the CLI output.
+- `--unknown-params=annotations`: the key is demoted to
+  `annotations.confflow.migration.v2.unknown_params` (non-semantic); the CLI
+  **must** emit a clear warning/report that "this field no longer participates in
+  execution semantics" and list each affected step/key.
+- `--unknown-params=extensions:<ns>`: the key moves to `extensions[<ns>]` and is
+  **not** copied to `annotations`; the namespace must be grammar-valid, and if the
+  target producer does not recognise it the document **parses but fails runnable
+  validation** — stated in the CLI output.
 
 **Serializer.** `yaml_io` (§8): author order, fixed key order, no comments.
 

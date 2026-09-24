@@ -546,16 +546,59 @@ Given a V2 `WorkflowConfig` (or its canonical IR):
 7. **params** — copied. A V2 param member that is **unknown to the core type** is
    **not** silently carried (V3 `params` is strict, §6.4): upgrade **fails** with a
    diagnostic naming the step and key. The author may explicitly route such keys
-   with `--unknown-params=annotations` (demote to the non-semantic bucket) or
-   `--unknown-params=extensions:<ns>` (move to a named extension namespace);
+   with `--unknown-params=annotations` (demote to the non-semantic bucket, below)
+   or `--unknown-params=extensions:<ns>` (move to a named extension namespace);
    the default is to fail, matching the V3 runnable rule. This prevents a V2
    `methd:` typo from becoming a silently-inert V3 field.
 8. **extensions/annotations** — V2 unknown *step-level* fields were ignored by
-   execution **and** by the V2 fingerprint, so they become `annotations`
-   (non-semantic, accurate) and never affect anything. (They are not routed to
-   `extensions`, which would wrongly make them semantic.)
+   execution **and** by the V2 fingerprint, so they become non-semantic
+   `annotations` and never affect anything. (They are **not** routed to
+   `extensions`, which would wrongly make them semantic.) V2 unknown *root-level*
+   fields are treated the same way, for the same reason. The concrete key path is
+   the reserved migration namespace below.
 9. **schema** — `confflow.workflow.v3`.
 10. **step array order** — preserved.
+
+### Migration metadata mapping (normative)
+
+Upgrade owns one reserved annotation key, **`confflow.migration.v2`**. It carries
+migration metadata only and is never used for anything else.
+
+```yaml
+annotations:
+  confflow.migration.v2:
+    unknown_fields:            # <- V2 field-level data (root and step)
+      <original-key>: <original-value>
+    unknown_params:            # <- only --unknown-params=annotations
+      <original-param-key>: <original-value>
+```
+
+- **`unknown_fields`** — V2 **root-level** and V2 **step-level** unknown fields,
+  preserved verbatim with their exact nested structure. These fields were
+  non-semantic in V2 (ignored by execution and by the V2 fingerprint), so they
+  stay non-semantic in V3. They are **not** routed to `extensions` (which would
+  wrongly promote them to semantic, fingerprinted data).
+- **`unknown_params`** — only ever written under `--unknown-params=annotations`.
+  An unknown **core `params`** member is demoted here; this is an **explicitly
+  lossy** demotion and the CLI must report it as such (below).
+- **`unknown_fields` and `unknown_params` are never mixed.**
+- **Empty groups are omitted.** An empty `unknown_fields` / `unknown_params` is
+  not emitted, an empty `confflow.migration.v2` is not emitted, and an empty
+  `annotations` is not emitted (the ordinary omission rule).
+- **Collision safety.** A V2 source field literally named `annotations` is just a
+  V2 unknown field: it is preserved as
+  `unknown_fields["annotations"]`, never merged into the V3 `annotations`
+  container. Likewise a V2 field named `confflow.migration.v2` is preserved as
+  `unknown_fields["confflow.migration.v2"]` and never collides with the reserved
+  key.
+
+**`--unknown-params=extensions:<ns>` is the opposite (semantic) routing.** The
+unknown params are placed under `extensions[<ns>]` and **not** copied into
+`annotations`, because that choice asserts the data is semantic. The namespace
+must satisfy the §6.3 grammar; the document stays structurally valid even when the
+current producer does not recognise the namespace, and the CLI must say so (future
+runnable validation may reject it). `annotations` and `extensions` therefore keep
+their §6.3 meanings: `annotations` = non-semantic, `extensions` = semantic.
 
 ### Outcomes by input class
 
@@ -568,8 +611,12 @@ Given a V2 `WorkflowConfig` (or its canonical IR):
 | numeric `chk_from_step` | resolved to `checkpoint.from_step` id |
 | disabled step | `enabled: false` preserved |
 | `task`/`gen` alias | normalized to `calc`/`confgen` |
-| unknown step-level fields | moved to `annotations` |
+| unknown step-level fields | `annotations.confflow.migration.v2.unknown_fields` |
+| unknown root-level fields | `annotations.confflow.migration.v2.unknown_fields` |
 | unknown params (core) | **upgrade error** by default; routable via `--unknown-params=…` |
+| `--unknown-params=annotations` | `annotations.confflow.migration.v2.unknown_params` (lossy) |
+| `--unknown-params=extensions:<ns>` | `extensions[<ns>]` (semantic routing) |
+
 
 ### Identity stability after upgrade
 
