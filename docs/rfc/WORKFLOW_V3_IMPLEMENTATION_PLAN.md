@@ -12,10 +12,12 @@ this plan.
   `docs/rfc/workflow-v3.schema.draft.json` (draft). This plan **does not change
   the RFC's semantics**; it only fixes implementation boundaries and marks
   clarifications `[clarification]`.
-- **Review round**: this revision resolves four implementation-review findings —
-  (1) execution gate placement, (2) schema profiles, (3) param descriptor
-  authority, (4) V3 validation-response schema hash — plus the fingerprint slice
-  ordering.
+- **Review round**: this revision resolves the final implementation-review finding —
+  the V3 execution capability guard in `application/execution/workflow_adapter.py`
+  is **mandatory**, not optional (plus acceptance tests). It builds on the earlier
+  revision that resolved (1) execution gate placement, (2) schema profiles,
+  (3) param descriptor authority, (4) V3 validation-response schema hash, and the
+  fingerprint slice ordering.
 
 > **R3 makes V3 inspectable, not executable.** V3 can be parsed, schema-validated,
 > semantically validated, canonicalised, **planned**, `config-show`n, `dry-run`,
@@ -37,7 +39,7 @@ added; "Target" is the slice that adds it.
 | **inputs = step-id refs** | refs are V2 canonical names | V3 refs are ids; resolver logic is unchanged (it works on graph keys) | R3.2 / R3.4 |
 | **version dispatch** | none — `parse_workflow_mapping` ignores a `schema` key entirely; the V2 JSON schema has **no** `schema` property and `additionalProperties: true`, so historical V2 files carry no version field | `detect_schema_version()` + dispatch + "never treat unknown as V2" | R3.2 |
 | **schema profiles** | none — one implicit V2 schema; no notion of a partial document | `SchemaProfile.{DOCUMENT,FRAGMENT}` sharing one `$defs` source | R3.2 |
-| **execution capability** | V2-only *de facto*: `WorkflowConfig`/`WorkflowPlan`/`WorkflowStateStore` assume V2 identity; nothing declares which versions may execute | version→capability table + check at the execution side-effect boundary | R3.2 (module) / R3.5 (wiring) |
+| **execution capability** | V2-only *de facto*: `WorkflowConfig`/`WorkflowPlan`/`WorkflowStateStore` assume V2 identity; nothing declares which versions may execute | version→capability table + **mandatory** check at every execution side-effect boundary, including the service adapter | R3.2 (module) / R3.5 (wiring) |
 | **param descriptor authority** | known keys are scattered: `_known_calc_keys()` in `fingerprint.py` (includes `chk_from_step`), `confgen_known_keys()` in `shared/confgen_params.py`; the V2 JSON schema lists nothing | one structural descriptor registry from which schema/validation derive | R3.2 |
 | **checkpoint reference** | `params.chk_from_step` (name or 1-based index) in `step_handlers._resolve_chk_input_dir` | promote to `checkpoint.from_step`; migrate; validate ancestry | R3.2 / R3.3 / R3.4 |
 | **strict params** | V2 = open bag | V3 core key set from the descriptor registry; unknown = ERROR | R3.2 / R3.4 |
@@ -52,7 +54,7 @@ added; "Target" is the slice that adds it.
 | **dry-run** | assumes a single linear chain (`current_input = output_path`), no DAG | V3 graph display via a V3 plan | R3.5 |
 | **export** | keyed by dirname/step_name; `output_manifest.v1` | **no R3 change** (needs state v2) | R4 |
 
-**Three facts that shape the plan**
+**Four facts that shape the plan**
 
 1. `_known_calc_keys()` (`fingerprint.py`) includes `chk_from_step` and V2 binds it;
    V3 must **exclude** it from `params` and promote it to `checkpoint`. The registry
@@ -62,8 +64,20 @@ added; "Target" is the slice that adds it.
    and the execution capability check (§3) exist to prevent that.
 3. `initialize_runtime_context` (`workflow/runtime_context.py`) already creates the
    work/failed dirs, copies the config, attaches a log handler and calls
-   `failure_tracker.clear_previous()` — the real first side-effect boundary. The
-   execution check must fire **before** it (§3).
+   `failure_tracker.clear_previous()` — the first side effect *inside the engine*.
+   The execution check must fire **before** it (§3).
+4. **The engine is not the first side effect on the application path.**
+   `run_workflow_through_service` (`application/execution/workflow_adapter.py`)
+   calls `build_workflow_service` *before* it ever reaches the engine, and that
+   constructor performs real service-side side effects:
+   `_ensure_state_root` does `root.mkdir(parents=True, exist_ok=True)` and
+   `os.chmod`, `StateRoot.ensure_run_paths` creates `v1/runs/<run_id>/{staging,work}`,
+   and `SQLiteExecutionRepository(root)` opens/creates the durable DB — all before
+   `service.prepare` and long before `engine.run_workflow` (verified: lines
+   396/398/400/454/460 of the adapter). An engine-only guard is therefore
+   **insufficient**: a V3 attempt would already have created a state root, run
+   paths and a SQLite record before the engine could reject it. The adapter needs a
+   **mandatory** guard before `build_workflow_service` (§3.3).
 
 ---
 
@@ -93,12 +107,28 @@ added; "Target" is the slice that adds it.
 `build_workflow_plan` is a **planning** boundary, not an execution
 side-effect boundary. V3 must be planable (dry-run needs the graph, resolved
 execution order, step inputs and resolved config). The check therefore fires at
-the first **execution** side effect, not in the planner.
+every **execution** side effect, never in the planner, and there is more than one
+such boundary — the CLI, the application service adapter and the engine itself.
 
 ```
-V3 document → parse → canonical IR → validation → plan → config-show / dry-run / inspect   ← ALLOWED in R3
-plan → execution-version capability check → binding → runtime init → state/artifact/launch  ← BLOCKED for V3 until R4
+Inspection path (ALLOWED in R3)
+    V3 document → parse → validate → build WorkflowV3Plan → config-show / dry-run
+
+CLI execution path (BLOCKED)
+    V3 args → CLI require_executable ─✗→ [validate_managed_path / lease / makedirs never reached]
+
+Service/API execution path (BLOCKED)
+    V3 config → detect version → require_executable ─✗→ [build_workflow_service never reached]
+                                                          (no state root, no run paths, no SQLite)
+
+Direct engine path (BLOCKED)
+    V3 config → build_workflow_plan (OK) → require_executable ─✗→ [binding / resume validation /
+                                                                  initialize_runtime_context /
+                                                                  state / step dirs / launch never reached]
 ```
+
+The three blocking checks must all call the **same** `require_executable` (§3.2);
+none may hardcode a version decision.
 
 ### 3.2 Version capability model (not a bool, not an env var)
 
@@ -124,33 +154,68 @@ def require_executable(schema_version: str) -> None:   # raises ConfFlowError wi
 - `require_executable` raises `ConfFlowError(
   "Workflow <version> execution requires state/binding v2 (R4); it can be parsed,
   validated, planned and inspected, but not run.")`.
+- **Exactly one source of truth.** All three guard sites — CLI, service adapter,
+  engine — call `require_executable(version)`; none of them inspects `schema`
+  itself or special-cases `v3`. R4 enables V3 execution by flipping the `execute`
+  flag in `CAPABILITIES`; no temporary `if version == "v3"` is ever removed.
 
 ### 3.3 Gate locations (real functions)
 
-The **authoritative** check:
+All three call `require_executable`; the adapter and engine guards are
+**mandatory**, the CLI guard is a fail-fast pre-flight.
 
-1. **`confflow/workflow/engine.py::run_workflow`** — immediately after
-   `plan = build_workflow_plan(...)` and **before** `build_workflow_binding(plan)`,
-   the resume pre-validation (`_validate_state_*`, `_validate_resume_artifacts`),
-   and `initialize_runtime_context`. Everything that creates state, step dirs,
-   cleans artifacts or launches a process happens after this point, so this single
-   call guarantees the acceptance criteria.
+1. **Service adapter — MANDATORY (A).**
+   `confflow/application/execution/workflow_adapter.py::run_workflow_through_service`
+   — the check runs **before** `build_workflow_service(spec, …)` (adapter line 454),
+   i.e. before `_ensure_state_root` (line 396, `root.mkdir`), before
+   `StateRoot.ensure_run_paths` (line 398, creates `v1/runs/<run_id>/{staging,work}`),
+   before `SQLiteExecutionRepository(root)` (line 400), before `service.prepare`
+   (line 460), and before every lifecycle/work/control-beacon mutation. This is the
+   mandatory safety boundary for the application/service execution path: a V3
+   attempt leaves **no** state root, **no** run paths, **no** SQLite DB, **no**
+   service record and never invokes the runner.
+2. **Engine — MANDATORY (B).** `confflow/workflow/engine.py::run_workflow` —
+   immediately after `plan = build_workflow_plan(...)` (line ~169) and **before**
+   `build_workflow_binding(plan)`, the resume pre-validation (`_validate_state_*`,
+   `_validate_resume_artifacts`) and `initialize_runtime_context`. This protects
+   direct engine callers, tests and future integrations that bypass the CLI and the
+   service adapter.
+3. **CLI — fail-fast (C).** `confflow/cli.py::main`, execution branch — before
+   `validate_managed_path(work_dir)` (line 729), `acquire_work_directory_lease`
+   (line 731) and `os.makedirs(work_dir)` (line 742), so no work-dir / lease /
+   managed-path mutation happens for a V3 run. Defense-in-depth / UX, not the
+   authority.
+4. **rerun_failed — fail-fast (D).**
+   `confflow/workflow/rerun_failed.py::run_rerun_failed` — at entry, before
+   `validate_managed_path` (line 115) and the `CalcStepRunner().run(...)` launch
+   (line 143). Fail-fast UX only; the authoritative protection is (A)+(B).
 
-**Fail-fast pre-flights** (avoid creating even a work dir / lease / service record
-for a V3 run; they read the raw document version cheaply):
+**Why (A) is mandatory, not optional.** `build_workflow_service` is a side-effecting
+constructor (§1 fact 4). With only (B), a V3 run through the service would create a
+state root, run paths and a SQLite execution record before the engine rejects it —
+violating "no state before R4". (A) is therefore a required, minimal,
+**protected-core** change whose sole purpose is to fail closed *before* service-side
+state mutation.
 
-2. **`confflow/cli.py::main`**, execution branch — before
-   `validate_managed_path(work_dir)` / `acquire_work_directory_lease` /
-   `os.makedirs(work_dir)`.
-3. **`confflow/workflow/rerun_failed.py::run_rerun_failed`** — at entry, before any
-   mutation or launch.
-4. *(flagged protected-core)* **`confflow/application/execution/workflow_adapter.py::run_workflow_through_service`**
-   — before `_ensure_state_root` / `SQLiteExecutionRepository`. This file is in the
-   protected execution-service boundary; the change is a minimal additive guard and
-   **requires its own review**. If it is not taken, (1)+(2)+(3) still satisfy the
-   acceptance tests (no `.workflow_state.json`, no step dirs, no cleanup, no launch).
+### 3.4 Version discovery (side-effect free)
 
-### 3.4 Planner behaviour (V3)
+The adapter must learn the version **without** building any service/state resource.
+It reads the config document and dispatches on the `schema` key via the single R3.2
+entry point (`detect_schema_version` in `config/canonical/parser.py`, §2) — never a
+second `if config["schema"] == ...`. Order is:
+
+1. read the config file (pure I/O, no state);
+2. `detect_schema_version(raw)`;
+3. an unreadable/invalid/unknown `schema` → error **here**, so a bad document
+   cannot pay the cost of creating a state root / SQLite DB / run directory merely
+   to fail;
+4. `require_executable(version)`;
+5. only then `build_workflow_service`.
+
+The same side-effect-free detection feeds the CLI pre-flight (C) and the engine
+guard (B, via the plan's `source_version`).
+
+### 3.5 Planner behaviour (V3)
 
 - `build_workflow_plan(...)` becomes **version-dispatching** and returns:
   - **V2** → today's `WorkflowPlan`, byte-for-byte identical;
@@ -161,16 +226,17 @@ for a V3 run; they read the raw document version cheaply):
 - `WorkflowPlan` (V2) is **not** widened to `Optional` fields; the union keeps the
   V2 type exact.
 - `[clarification]` both dataclasses carry `source_version`; `require_executable(plan.source_version)`
-  is the single guard.
+  is the single guard used by the engine (B) and the service adapter (A).
 
-### 3.5 Behaviour summary
+### 3.6 Behaviour summary
 
 | Operation | V2 | V3 in R3 |
 |---|---|---|
 | `build_workflow_plan` | works | **works** (returns `WorkflowV3Plan`) |
 | `config-show` | works | works |
 | `dry-run` | works | **works** (graph, ids, labels, execution order) |
-| `run_workflow` | works | **blocked** before binding/runtime/state/dirs/launch |
+| `run_workflow_through_service` | works | **blocked** by (A) before state root / run paths / SQLite / `service.prepare` / runner |
+| `run_workflow` (direct) | works | **blocked** by (B) before binding/runtime/state/dirs/launch |
 | `resume` | works | **blocked** before any state read/mutation |
 | `rerun-failed` | works | **blocked** before mutation/launch |
 
@@ -572,8 +638,11 @@ recognition; strict params; runnable-id-required; fragment relaxation; schema-pr
   params; V2 output unchanged. `[clarification]` `--step` for V3 selects by **id only**.
 - **`dry-run`** — V3 builds a `WorkflowV3Plan` and prints the resolved graph, stable
   ids, labels, execution order and input relationships; V2 output unchanged.
-- **Execution guard wiring** — `require_executable` called at the sites in §3.3
-  (engine after planning; CLI pre-flight; rerun-failed entry; optional service guard).
+- **Execution guard wiring** — `require_executable` called at all four sites in §3.3:
+  - **MANDATORY**: the service adapter (`run_workflow_through_service`, before
+    `build_workflow_service`) and the engine (`run_workflow`, after planning);
+  - **FAIL-FAST**: the CLI execution branch and `rerun_failed`.
+  All four call the one `require_executable`; none inspects `schema` itself.
 - **export** — **no change** (R4).
 - **contract** — unchanged; V3 not advertised (R7).
 
@@ -583,21 +652,39 @@ recognition; strict params; runnable-id-required; fragment relaxation; schema-pr
 |---|---|
 | V3 `build_workflow_plan` | **succeeds** (returns `WorkflowV3Plan`) |
 | V3 `dry-run` | **succeeds** |
-| V3 `run_workflow` | fails **before** state creation, step-dir creation, artifact cleanup, external launch |
+| V3 `run_workflow_through_service` | fails via (A) **before** `build_workflow_service` — no state root, no run paths, no SQLite, no `service.prepare`, runner **not** called |
+| V3 `run_workflow` (direct) | fails via (B) **before** state creation, step-dir creation, artifact cleanup, external launch |
 | V3 `resume` | fails **before** any state mutation |
 | V3 `rerun-failed` | fails **before** mutation/launch |
 
-and the assertions: **no `.workflow_state.json`, no step dirs, no `failed/` cleanup,
-no process launch**.
+Named tests:
+
+- `test_service_adapter_rejects_v3_before_side_effects` — give a valid runnable V3
+  config, a **non-existent** temp `state_root`, a temp `work_dir` and a fake
+  `workflow_runner`; call `run_workflow_through_service(...)`; assert it raises the
+  unsupported-execution-version error **and** that `state_root` still does not exist,
+  no SQLite DB file exists, no `v1/runs/<run_id>` paths exist, `work_dir` gained no
+  execution dirs, `service.prepare` was not reached and the runner was not called.
+- `test_engine_rejects_v3_before_runtime_side_effects` — call `engine.run_workflow`
+  directly with a V3 config; assert planning succeeds, (B) fires, and before the
+  failure there is **no** binding write, **no** runtime-context init, **no**
+  `.workflow_state.json`, **no** step directories, **no** cleanup and **no** launch.
+- `test_cli_rejects_v3_execution_before_managed_paths` — CLI `run` on a V3 config
+  returns the unsupported-execution-version error and acquires/creates no managed
+  runtime resources; `dry-run` on the same config **passes**.
+- `test_v2_execution_unchanged` — the four guards are no-ops for V2 (existing
+  CLI/engine/service execution tests stay green).
 
 **Files:** modify `workflow/config_show.py`, `workflow/dry_run.py`, `config/cli.py`,
 `confflow/cli.py`, `workflow/engine.py`, `workflow/rerun_failed.py`,
-`workflow/plan.py` (add the V3 planning branch + `WorkflowV3Plan`); optional
-`application/execution/workflow_adapter.py` (flagged).
+`workflow/plan.py` (add the V3 planning branch + `WorkflowV3Plan`);
+**`application/execution/workflow_adapter.py` (mandatory minimal protected-core change)**.
 
-**Stop gate:** `build_workflow_plan` blocked for V3, OR any V3 path that writes state /
-creates step dirs / cleans artifacts / launches before R4, OR the validation schema-hash
-semantics contradict the existing contract → STOP.
+**Stop gate:** `build_workflow_plan` blocked for V3, OR V3 dry-run blocked, OR any V3
+path that creates a state root / run paths / SQLite record / service record, reaches
+`service.prepare`, invokes the runner, writes state / creates step dirs / cleans
+artifacts / launches before R4, OR the validation schema-hash semantics contradict
+the existing contract, OR V2 execution behaviour changes → STOP.
 
 **Commit:** `feat(cli): expose Workflow V3 inspection commands`
 
@@ -634,8 +721,20 @@ runnable-id-required; fragment relaxation; **P1–P6**.
 
 ### R3.5 — CLI + guard
 `config validate` V2 exact; V3 validate + digest per §6; config-show V2/V3; dry-run
-V2/V3; `--step` V2 (name/index) vs V3 (id); export unchanged; **V3 plan/dry-run PASS
-and V3 run/resume/rerun-failed BLOCKED with no state/dirs/cleanup/launch**.
+V2/V3; `--step` V2 (name/index) vs V3 (id); export unchanged.
+
+Guard-boundary tests (the R3/R4 boundary):
+
+1. V3 `build_workflow_plan` → **PASS**
+2. V3 `dry-run` → **PASS**
+3. CLI V3 `run` → **BLOCK** before managed paths/lease/makedirs (and V3 dry-run PASS)
+4. `run_workflow_through_service` V3 → **BLOCK** before `build_workflow_service`
+5. service adapter leaves **no state_root** (pre-existent temp path absent)
+6. **no SQLite** DB file
+7. **no run paths** / `service.prepare` not reached
+8. **runner not called**
+9. direct `engine.run_workflow` V3 → **BLOCK** before runtime-context/state/dirs/cleanup/launch
+10. V2 execution unchanged (guards are no-ops for V2)
 
 ### Property / metamorphic (P1–P8)
 | # | Property | Slice |
@@ -687,13 +786,13 @@ Structural golden (not whitespace) + one serializer determinism test.
 | `config/cli.py` | no-touch | no-touch | no-touch | no-touch | modify | version-aware validate + digest |
 | `cli.py` | no-touch | no-touch | modify | no-touch | modify | `workflow` dispatch; execution pre-flight |
 | `workflow/plan.py` | no-touch | no-touch | no-touch | no-touch | modify | V3 planning branch (`WorkflowV3Plan`) |
-| `workflow/engine.py` | no-touch | no-touch | no-touch | no-touch | modify | `require_executable` after planning |
-| `workflow/rerun_failed.py` | no-touch | no-touch | no-touch | no-touch | modify | execution pre-flight |
+| `workflow/engine.py` | no-touch | no-touch | no-touch | no-touch | modify | **REQUIRED** `require_executable` after planning (B) |
+| `workflow/rerun_failed.py` | no-touch | no-touch | no-touch | no-touch | modify | **REQUIRED** fail-fast pre-flight (D) |
 | `workflow/config_show.py` | no-touch | no-touch | no-touch | no-touch | modify | V3 display/select |
 | `workflow/dry_run.py` | no-touch | no-touch | no-touch | no-touch | modify | V3 plan display |
 | `workflow/export.py` | no-touch | no-touch | no-touch | no-touch | no-touch | deferred to R4 |
 | `workflow/state.py`, `canonical/contract.py` | no-touch | no-touch | no-touch | no-touch | no-touch | v1/v2 unchanged (R4) |
-| `application/execution/workflow_adapter.py` | no-touch | no-touch | no-touch | no-touch | optional | pre-flight guard (**protected-core, separate review**) |
+| `application/execution/workflow_adapter.py` | no-touch | no-touch | no-touch | no-touch | **modify** | **REQUIRED minimal protected-core change (A)**: `require_executable` before `build_workflow_service` / `_ensure_state_root` / `SQLiteExecutionRepository`. Separate review. |
 | `calc/*`, `blocks/*`, `control*` | no-touch | no-touch | no-touch | no-touch | no-touch | protected core |
 
 ---
@@ -720,7 +819,7 @@ Each commit: tests green, reviewable, no dependency on later uncommitted code.
 | R3.2 | document/fragment schema cannot share one structural source; param schema and descriptors produce a second field truth |
 | R3.3 | upgrade non-deterministic, or default output not runnable |
 | R3.4 | a shared structural rule where schema and validator contradict |
-| R3.5 | `build_workflow_plan` blocked for V3; any V3 execution path that can write state/artifacts before R4; validation schema-hash semantics contradict the existing contract |
+| R3.5 | `build_workflow_plan` blocked for V3; V3 dry-run blocked; **V3 service execution creates a state root / SQLite record / run paths before rejection**; `service.prepare` reached; runner invoked; engine reaches runtime-context/state init; any V3 execution path that can write state/artifacts before R4; validation schema-hash semantics contradict the existing contract; V2 execution behaviour changes |
 
 ---
 
@@ -729,7 +828,8 @@ Each commit: tests green, reviewable, no dependency on later uncommitted code.
 | Sev | Risk | Mitigation / test |
 |---|---|---|
 | **P0** | V2 fingerprint / binding / dirname regression | R3.1 stop gate; golden fingerprints; V2 characterization |
-| **P0** | V3 executed on v1 state identity | capability check at the real side-effect boundary (§3.3); V3 plan/dry-run-pass + run-blocked tests |
+| **P0** | **V3 service adapter creates state root / run paths / SQLite record before the engine-level rejection** | mandatory adapter guard (A) before `build_workflow_service`; `test_service_adapter_rejects_v3_before_side_effects` asserts absent state root, no SQLite, no run paths, `service.prepare` not reached, runner not called; R3.5 stop gate |
+| **P0** | V3 executed on v1 state identity | capability check at every real side-effect boundary (§3.3); V3 plan/dry-run-pass + run-blocked tests |
 | **P0** | schema / validator truth drift | descriptor registry + structural-non-contradiction tests; R3.2 stop gate |
 | **P0** | checkpoint migration corruption | exact V2 resolution + golden fixture + ancestry validation |
 | **P1** | non-deterministic upgrade | byte-determinism test; R3.3 stop gate |
@@ -748,9 +848,11 @@ Unchanged during R3 (any change requires separate review): calc execution,
 Gaussian/ORCA policy, `CalcArtifactManager`, ConfGen generation algorithm,
 `ExecutionService`, control protocol, worker supervision, cancel/pause, remote
 execution, artifact/path safety, `workflow_state.v1`, `workflow_binding.v1`,
-`output_manifest`/`workflow_stats` v1. The only planned protected-core touch is the
-**optional** pre-flight guard in `application/execution/workflow_adapter.py` (§3.3),
-flagged for separate review.
+`output_manifest`/`workflow_stats` v1. The one planned protected-core touch is the
+**required** minimal pre-flight guard in `application/execution/workflow_adapter.py`
+(§3.3 A), flagged for separate review: it adds only a `require_executable` call
+before `build_workflow_service`, changes no V2 execution semantics, and exists
+solely to fail closed before service-side state mutation.
 
 ---
 
@@ -770,8 +872,10 @@ The V3 validation *answer* uses the same v1 wire shape with the V3 DOCUMENT dige
 canonicalise, **build a plan**, `config-show`, `dry-run`, and upgrade from V2.
 
 **R3 COMPLETE — V3 cannot:** execute, resume, rerun-failed, write `workflow_state`,
-write execution artifacts, use V1 identity for state, or emit a V3 run output
-manifest.
+write execution artifacts, use V1 identity for state, emit a V3 run output manifest,
+or — crucially — **create a state root, run paths or a SQLite execution record for a
+V3 execution attempt** (the service adapter guard (A) rejects before
+`build_workflow_service`).
 
 R3 COMPLETE ≠ "V3 runs calculations" — that is R4.
 
@@ -782,7 +886,9 @@ R3 COMPLETE ≠ "V3 runs calculations" — that is R4.
 **R3 provides R4:** stable step ids in the IR; the frozen V3 **definition**
 fingerprint; explicit graph semantics + `ancestors()`; structured
 `checkpoint.from_step`; a version-aware parser + validated V3 document; a V3 planning
-branch (`WorkflowV3Plan`); the `CAPABILITIES` table to flip.
+branch (`WorkflowV3Plan`); **all four execution guards (A–D) already wired to the
+single `require_executable`**, so R4 enables V3 execution by flipping one
+`CAPABILITIES[v3].execute` flag — no guard body changes.
 
 **R4 adds (not R3):** `workflow_binding.v2`; `workflow_state.v2`; step-id-keyed state
 records; `steps/<id>/` directories; the **execution** fingerprint; V3 engine
@@ -805,9 +911,14 @@ export metadata.
 | 8 | Is the V3 fingerprint frozen before the semantic registry exists? | No — frozen in R3.4, after descriptors/extensions/ancestry (§R3.4 rationale). |
 | 9 | Is upgrade output always Document+Runnable? | Yes by default; a fragment only on explicit request (§R3.3). |
 | 10 | Is `--unknown-params=annotations` marked lossy? | Yes — CLI warning/report that the field leaves execution semantics (§R3.3). |
+| 11 | Can a V3 run create a state root / SQLite record before the engine rejects it? | No — the service adapter guard (A) fires before `build_workflow_service` (before `_ensure_state_root`/`ensure_run_paths`/`SQLiteExecutionRepository`); asserted by `test_service_adapter_rejects_v3_before_side_effects` (§3.3, §R3.5). |
+| 12 | Is the service adapter guard optional? | No — it is **mandatory** (§3.3 A, §12, §16). With only the engine guard, `build_workflow_service` would already have created state before rejection. |
+| 13 | Do the four guards duplicate the version rule? | No — all call the single `require_executable`; none inspects `schema` itself; R4 flips one `CAPABILITIES` entry (§3.2). |
+| 14 | Does the adapter need to build a service to learn the version? | No — it uses the side-effect-free `detect_schema_version` on the raw document before any service/state resource (§3.4). |
 
 No circular dependency, no R3/R4 leak, no hidden runtime enablement, no duplicated
-truth, no irreversible upgrade, and the gate sits at the real side-effect boundary.
+truth, no irreversible upgrade, and every gate sits at a real side-effect boundary
+— the engine **and** the service constructor **and** the CLI/rerun entry points.
 
 ---
 
