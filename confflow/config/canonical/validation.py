@@ -37,6 +37,7 @@ from __future__ import annotations
 
 from collections import Counter
 from collections.abc import Mapping
+from enum import Enum
 from typing import Any
 
 from ...core.exceptions import ConfFlowError, ConfigurationError
@@ -46,6 +47,7 @@ from .issues import ConfigValidationError
 from .resolve import resolve_calc_step, resolve_global_options
 from .types import WorkflowConfig
 from .workflow import (
+    CanonicalStepDefinition,
     CanonicalWorkflowDefinition,
     canonical_step_name,
     normalize_step_inputs,
@@ -53,9 +55,13 @@ from .workflow import (
 )
 
 __all__ = [
+    "ValidationProfile",
     "calc_input_diagnostics",
+    "resolve_step_semantic_params",
+    "validate_v3_definition",
     "validate_workflow_definition",
     "validate_workflow_run_context",
+    "validate_workflow_v3",
 ]
 
 _STEP_TYPE_ALIASES = {"gen": "confgen", "task": "calc"}
@@ -423,3 +429,341 @@ def validate_workflow_run_context(
         for diagnostic in calc_input_diagnostics(definition, input_file_count=input_file_count)
         if diagnostic.code == "workflow.input_cardinality"
     ]
+
+
+# ---------------------------------------------------------------------------
+# V3 semantic validation (R3.4).
+#
+# Schema profiles (R3.2) own structure; this section owns V3 *semantics* on top of
+# the authoritative id graph. It never trusts the parser's tolerant fallback
+# ordering, and it never re-implements the calc/confgen resolvers.
+# ---------------------------------------------------------------------------
+class ValidationProfile(Enum):
+    """Semantic scope for a V3 definition."""
+
+    RUNNABLE = "runnable"
+    FRAGMENT = "fragment"
+
+
+def resolve_step_semantic_params(
+    step: CanonicalStepDefinition,
+    definition: CanonicalWorkflowDefinition,
+    *,
+    profile: ValidationProfile,
+) -> dict[str, Any]:
+    """Canonical semantic params for one step (RFC §12/§16.A).
+
+    Uses the canonical resolvers (never a second copy of the rules). A RUNNABLE
+    *enabled* step is fully resolved (keyword presence enforced); a disabled step
+    is exempt from the RFC §12 presence rules, so an absent keyword is ``None``
+    rather than a placeholder. Invalid supplied values raise.
+    """
+    require_presence = profile is ValidationProfile.RUNNABLE and step.enabled
+    if step.type == "confgen":
+        return resolve_confgen_params(
+            step.params, default_workers=definition.global_options.max_parallel_jobs
+        )
+    typed = resolve_calc_step(
+        step.params, definition.global_options, require_keyword=require_presence
+    )
+    return typed.canonical_dict()
+
+
+def _v3_param_diagnostics(
+    step: CanonicalStepDefinition,
+    index: int,
+    definition: CanonicalWorkflowDefinition,
+    *,
+    profile: ValidationProfile,
+) -> list[Diagnostic]:
+    ref = step.id
+    path = f"steps[{index}]"
+    try:
+        resolved = resolve_step_semantic_params(step, definition, profile=profile)
+    except (ConfigValidationError, ConfigurationError, ValueError) as exc:
+        return [Diagnostic("workflow.v3.params_invalid", "error", f"{path}.params", str(exc), ref)]
+
+    diagnostics: list[Diagnostic] = []
+    require_presence = profile is ValidationProfile.RUNNABLE and step.enabled
+
+    if step.type == "confgen":
+        # 'chains' is the one presence rule RFC §12 exempts; angle_step validity is
+        # a value rule and applies to every step.
+        if require_presence:
+            chains = resolved.get("chains")
+            if not chains or not any(str(chain).strip() for chain in chains):
+                diagnostics.append(
+                    Diagnostic(
+                        "confgen.chains.required",
+                        "error",
+                        f"{path}.params.chains",
+                        "confgen step requires non-empty 'chains' (or its alias 'chain') naming "
+                        "the bonds to rotate",
+                        ref,
+                    )
+                )
+        angle_step = resolved.get("angle_step")
+        if not isinstance(angle_step, int) or angle_step <= 0:
+            diagnostics.append(
+                Diagnostic(
+                    "confgen.angle_step.invalid",
+                    "error",
+                    f"{path}.params.angle_step",
+                    f"confgen angle_step must be a positive integer, got {angle_step!r}",
+                    ref,
+                )
+            )
+    return diagnostics
+
+
+def _v3_checkpoint_diagnostics(
+    step: CanonicalStepDefinition,
+    index: int,
+    graph: Any,
+    by_id: Mapping[str, CanonicalStepDefinition],
+    *,
+    profile: ValidationProfile,
+) -> list[Diagnostic]:
+    ref = step.id
+    path = f"steps[{index}]"
+    diagnostics: list[Diagnostic] = []
+
+    # Declaration legality applies to every step, disabled included.
+    if step.checkpoint_from is not None and step.type != "calc":
+        diagnostics.append(
+            Diagnostic(
+                "workflow.v3.checkpoint_not_calc",
+                "error",
+                f"{path}.checkpoint",
+                f"step {ref!r} is type {step.type!r}; a checkpoint reference is only allowed "
+                "on a calc step",
+                ref,
+            )
+        )
+        return diagnostics
+
+    # Resolution legality applies to enabled steps only (RFC §12 exemption).
+    if (
+        profile is not ValidationProfile.RUNNABLE
+        or not step.enabled
+        or step.checkpoint_from is None
+    ):
+        return diagnostics
+    target = step.checkpoint_from
+    if target == ref:
+        diagnostics.append(
+            Diagnostic(
+                "workflow.v3.checkpoint_self",
+                "error",
+                f"{path}.checkpoint.from_step",
+                f"step {ref!r} cannot reuse its own checkpoint",
+                ref,
+            )
+        )
+        return diagnostics
+    if target not in by_id:
+        diagnostics.append(
+            Diagnostic(
+                "workflow.v3.checkpoint_unknown",
+                "error",
+                f"{path}.checkpoint.from_step",
+                f"step {ref!r} references an unknown checkpoint step: {target!r}",
+                ref,
+            )
+        )
+        return diagnostics
+    if by_id[target].type != "calc":
+        diagnostics.append(
+            Diagnostic(
+                "workflow.v3.checkpoint_target_not_calc",
+                "error",
+                f"{path}.checkpoint.from_step",
+                f"step {ref!r} reuses the checkpoint of {target!r}, which is not a calc step",
+                ref,
+            )
+        )
+        return diagnostics
+    if graph is not None and target not in graph.ancestors(ref):
+        diagnostics.append(
+            Diagnostic(
+                "workflow.v3.checkpoint_not_ancestor",
+                "error",
+                f"{path}.checkpoint.from_step",
+                f"step {ref!r} reuses the checkpoint of {target!r}, which is not a strict "
+                "ancestor (checkpoint is not a data-flow edge)",
+                ref,
+            )
+        )
+    return diagnostics
+
+
+def _v3_fan_in_diagnostics(
+    step: CanonicalStepDefinition,
+    index: int,
+    *,
+    profile: ValidationProfile,
+) -> list[Diagnostic]:
+    # Declared calc fan-in is an execution precondition: enabled calc only.
+    if (
+        profile is not ValidationProfile.RUNNABLE
+        or not step.enabled
+        or step.type != "calc"
+        or len(step.predecessors) <= 1
+    ):
+        return []
+    return [
+        Diagnostic(
+            "workflow.calc_fan_in",
+            "error",
+            f"steps[{index}]",
+            f"calc step {step.id!r} has {len(step.predecessors)} inputs; a calc step accepts "
+            "exactly one input. Add a confgen step to merge them first.",
+            step.id,
+        )
+    ]
+
+
+def _v3_extension_payload_diagnostics(
+    namespace: str,
+    payload: Any,
+    path: str,
+    ref: str | None,
+    registry: Any,
+) -> list[Diagnostic]:
+    schema = registry.schema_for(namespace)
+    if not schema:
+        return []
+    from jsonschema import Draft202012Validator
+
+    validator = Draft202012Validator(schema)
+    errors = sorted(
+        validator.iter_errors(payload), key=lambda error: (list(error.absolute_path), error.message)
+    )
+    return [
+        Diagnostic(
+            "workflow.v3.extension_payload",
+            "error",
+            path,
+            f"extension {namespace!r} payload is invalid: {error.message}",
+            ref,
+        )
+        for error in errors
+    ]
+
+
+def _v3_extension_diagnostics(
+    definition: CanonicalWorkflowDefinition,
+    registry: Any,
+    *,
+    profile: ValidationProfile,
+) -> list[Diagnostic]:
+    # Extension recognition applies to every step (disabled included) and to the
+    # root, but only for the runnable profile; a fragment preserves unknown ones.
+    if profile is not ValidationProfile.RUNNABLE:
+        return []
+    diagnostics: list[Diagnostic] = []
+    for namespace in sorted(definition.extensions):
+        if not registry.is_known(namespace):
+            diagnostics.append(
+                Diagnostic(
+                    "workflow.v3.extension_unknown",
+                    "error",
+                    f"extensions.{namespace}",
+                    f"unknown semantic extension namespace: {namespace!r}",
+                    None,
+                )
+            )
+        else:
+            diagnostics.extend(
+                _v3_extension_payload_diagnostics(
+                    namespace,
+                    definition.extensions[namespace],
+                    f"extensions.{namespace}",
+                    None,
+                    registry,
+                )
+            )
+    for index, step in enumerate(definition.steps, start=1):
+        for namespace in sorted(step.extensions):
+            path = f"steps[{index}].extensions.{namespace}"
+            if not registry.is_known(namespace):
+                diagnostics.append(
+                    Diagnostic(
+                        "workflow.v3.extension_unknown",
+                        "error",
+                        path,
+                        f"unknown semantic extension namespace: {namespace!r}",
+                        step.id,
+                    )
+                )
+            else:
+                diagnostics.extend(
+                    _v3_extension_payload_diagnostics(
+                        namespace, step.extensions[namespace], path, step.id, registry
+                    )
+                )
+    return diagnostics
+
+
+def validate_v3_definition(
+    definition: CanonicalWorkflowDefinition,
+    *,
+    profile: ValidationProfile = ValidationProfile.RUNNABLE,
+    registry: Any = None,
+) -> list[Diagnostic]:
+    """Validate V3 semantics on top of the authoritative id graph."""
+    from .extensions import DEFAULT_EXTENSION_REGISTRY
+    from .v3_graph import build_validated_graph
+
+    effective_registry = registry if registry is not None else DEFAULT_EXTENSION_REGISTRY
+    require_ids = profile is ValidationProfile.RUNNABLE
+
+    graph, diagnostics = build_validated_graph(definition.steps, require_ids=require_ids)
+    if diagnostics:
+        # An invalid graph yields no authoritative graph, so no topology-dependent
+        # check is meaningful.
+        return diagnostics
+
+    by_id = {step.id: step for step in definition.steps if step.id is not None}
+    for index, step in enumerate(definition.steps, start=1):
+        diagnostics.extend(_v3_param_diagnostics(step, index, definition, profile=profile))
+        diagnostics.extend(_v3_fan_in_diagnostics(step, index, profile=profile))
+        diagnostics.extend(_v3_checkpoint_diagnostics(step, index, graph, by_id, profile=profile))
+    diagnostics.extend(_v3_extension_diagnostics(definition, effective_registry, profile=profile))
+    return diagnostics
+
+
+def validate_workflow_v3(
+    raw: Mapping[str, Any],
+    *,
+    profile: ValidationProfile = ValidationProfile.RUNNABLE,
+    registry: Any = None,
+) -> list[Diagnostic]:
+    """Structural (schema profile) + semantic validation of a V3 document."""
+    from jsonschema import Draft202012Validator
+
+    from .schema import SchemaProfile, workflow_json_schema_v3
+    from .v3_parser import parse_v3_document
+
+    schema_profile = (
+        SchemaProfile.DOCUMENT if profile is ValidationProfile.RUNNABLE else SchemaProfile.FRAGMENT
+    )
+    validator = Draft202012Validator(workflow_json_schema_v3(schema_profile))
+    structural = sorted(
+        validator.iter_errors(raw), key=lambda error: (list(error.absolute_path), error.message)
+    )
+    if structural:
+        return [
+            Diagnostic(
+                "workflow.v3.schema",
+                "error",
+                "/".join(str(part) for part in error.absolute_path),
+                error.message,
+            )
+            for error in structural
+        ]
+    try:
+        definition = parse_v3_document(raw, profile=schema_profile)
+    except ConfigValidationError as exc:
+        return [Diagnostic("workflow.v3.schema", "error", exc.issue.path, exc.issue.message)]
+    return validate_v3_definition(definition, profile=profile, registry=registry)

@@ -40,12 +40,15 @@ from .extensions import (
 )
 from .fingerprint import (
     WORKFLOW_BINDING_SCHEMA,
+    WORKFLOW_SEMANTICS_VERSION,
     WorkflowBindingCompatibilityError,
     WorkflowConfigBinding,
     WorkflowFingerprintError,
     build_workflow_binding,
+    build_workflow_definition_payload_v3,
     canonical_workflow_payload,
     parse_workflow_binding,
+    workflow_definition_fingerprint_v3,
     workflow_fingerprint,
 )
 from .issues import ConfigIssue, ConfigValidationError
@@ -91,11 +94,20 @@ from .upgrade import (
     upgrade_v2_to_v3,
 )
 from .v2_adapter import to_canonical_workflow
+from .v3_graph import (
+    ValidatedWorkflowGraph,
+    build_validated_graph,
+    v3_id_order_key,
+)
 from .v3_parser import parse_v3_document
 from .validation import (
+    ValidationProfile,
     calc_input_diagnostics,
+    resolve_step_semantic_params,
+    validate_v3_definition,
     validate_workflow_definition,
     validate_workflow_run_context,
+    validate_workflow_v3,
 )
 from .workflow import (
     CanonicalStepDefinition,
@@ -128,7 +140,10 @@ __all__ = [
     "UnknownParamsPolicy",
     "UpgradeError",
     "UpgradeResult",
+    "ValidatedWorkflowGraph",
+    "ValidationProfile",
     "WORKFLOW_BINDING_SCHEMA",
+    "WORKFLOW_SEMANTICS_VERSION",
     "WORKFLOW_SCHEMA_VERSION_V2",
     "WORKFLOW_SCHEMA_VERSION_V3",
     "WORKFLOW_V3_ID_PATTERN",
@@ -151,7 +166,9 @@ __all__ = [
     "build_editor_manifest",
     "build_recipe_catalog",
     "build_step_graph",
+    "build_validated_graph",
     "build_workflow_binding",
+    "build_workflow_definition_payload_v3",
     "calc_input_diagnostics",
     "calc_param_fields",
     "can_execute",
@@ -178,13 +195,18 @@ __all__ = [
     "require_executable",
     "resolve_calc_step",
     "resolve_global_options",
+    "resolve_step_semantic_params",
     "to_canonical_workflow",
     "topo_order",
     "upgrade_v2_to_v3",
     "v2_calc_keys",
     "v3_calc_keys",
+    "v3_id_order_key",
+    "validate_v3_definition",
     "validate_workflow_definition",
     "validate_workflow_run_context",
+    "validate_workflow_v3",
+    "workflow_definition_fingerprint_v3",
     "workflow_fingerprint",
     "workflow_fragment_schema_sha256_v3",
     "workflow_json_schema_v3",

@@ -23,9 +23,19 @@ def resolve_calc_step(
     global_options: GlobalOptions,
     *,
     input_chk_dir: str | None = None,
+    require_keyword: bool = True,
 ) -> CalcStepParams:
-    """Resolve one calc step through the preserved v2 typed rules."""
+    """Resolve one calc step through the preserved v2 typed rules.
+
+    ``require_keyword=False`` is used only by the V3 profile-aware path for a
+    disabled step, which RFC §12 exempts from the keyword presence rule.
+    """
     try:
-        return CalcStepParams.from_params(dict(params), global_options, input_chk_dir=input_chk_dir)
+        return CalcStepParams.from_params(
+            dict(params),
+            global_options,
+            input_chk_dir=input_chk_dir,
+            require_keyword=require_keyword,
+        )
     except ValueError as exc:
         raise ConfigValidationError(ConfigIssue("steps.calc", str(exc))) from exc
