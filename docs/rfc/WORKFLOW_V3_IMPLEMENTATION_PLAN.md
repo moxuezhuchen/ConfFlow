@@ -603,6 +603,29 @@ profile relaxations.
 **Checkpoint ancestry** lives in the **validation layer** (IR `ancestors()` helper),
 never in a step handler.
 
+**Disabled steps — profile-aware semantic params (RFC §12/§16.A, frozen).**
+Required-presence checks that RFC §12 exempts (`confgen.chains`, `calc.keyword`,
+calc declared fan-in, checkpoint resolution) apply only to **enabled** steps;
+supplied values and non-exempt errors are still validated on disabled steps, and
+graph/extension checks apply to every step. The definition fingerprint's per-step
+`params` are therefore **profile-aware canonical semantic params**: an absent
+exempt field is **omitted** (never synthesised — no sentinel/placeholder), a
+supplied one is validated, canonicalised and included. Invariant: any
+RUNNABLE-valid definition **must** fingerprint successfully. Canonicalisation and
+enabled-only presence checks are separated, so no dummy-keyword work-around is
+used.
+
+**Confirmed freeze points (implement exactly):**
+- `inputs` is a relation → the payload sorts each step's predecessors by the V3 id
+  order key (duplicate entries are still a definition error, not silently deduped).
+- Extension recognition applies to **all** steps (disabled included); FRAGMENT
+  preserves an unknown-but-valid namespace.
+- `checkpoint` declaration/type legality (`calc` only) applies to **all** steps; the
+  resolution checks (target exists / not self / strict ancestor) apply only to
+  **enabled calc** steps.
+- Declared calc fan-in applies to **enabled calc** only; effective/transitive
+  cardinality after bypass stays R6.
+
 **Execution order** — derived at IR construction with the V3 order key
 (`(0,int(suffix))` for `^s[0-9]+$`, else `(1,id)`), stored on the IR (as V2 does).
 

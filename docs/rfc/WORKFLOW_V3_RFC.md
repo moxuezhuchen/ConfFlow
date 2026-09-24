@@ -485,12 +485,42 @@ effective enabled dataflow. Structural/type checks still apply to every step
 disabled step is *parsed and typed* but not *preconditioned*. This matches V2,
 which already exempts a disabled calc from the single-input rule.
 
-> **Known divergence to reconcile (R3.4 / R6).** At the base SHA the canonical
-> validator applies the confgen `chains`/`angle_step` and calc `keyword`
-> preconditions to **disabled** steps too; only calc fan-in is exempted. The V3
-> target above is uniform exemption. Reconciling this is a deliberate behaviour
-> change and is **out of scope for the R3 design phase** (no code changes here);
-> it is listed so R3.4/R6 do it consciously rather than by accident.
+> **Reconciled (was a divergence).** At the base SHA the canonical validator
+> applies the confgen `chains`/`angle_step` and calc `keyword` preconditions to
+> **disabled** steps too; only calc fan-in is exempted. V3's target is the uniform
+> exemption above, and R3.4 implements it for V3 (V2 behaviour is untouched).
+
+**Disabled steps exempt from *required-presence*, not from *validity*.** An exempt
+field (`confgen.chains`, `calc.keyword`) may be **absent** on a disabled step and
+the definition is still runnable-valid. But:
+
+- a **supplied** value is still validated and canonicalised — being disabled never
+  hides an invalid value the author actually wrote;
+- non-exempt semantic errors (bad enum, malformed extension payload, an invalid
+  `total_memory`, …) are still errors on a disabled step;
+- graph/reference checks (unknown ref, duplicate ref, self-ref, cycle) and
+  extension recognition still apply to every step.
+
+**Disabled steps and the definition fingerprint (normative).** A RUNNABLE-valid
+definition **must** be fingerprintable (§16.A): the fingerprint may not fail for a
+document the validator accepts. The per-step `params` in the fingerprint payload
+are therefore **profile-aware canonical semantic params**:
+
+1. supplied params are canonicalised and included;
+2. semantic defaults that are valid independent of enabled-state are applied the
+   same way as for an enabled step;
+3. any RFC §12 **disabled-exempt** required-presence field that is absent is
+   **omitted** from the payload — never synthesised (no `null`, `""`, sentinel,
+   fake default or temporary placeholder);
+4. a disabled-exempt field that *is* supplied is validated, canonicalised and
+   included, so `enabled:false` + `itask: opt` and `enabled:false` +
+   `itask: opt` + `keyword: "B3LYP/6-31G*"` fingerprint **differently** — a
+   disabled step's explicit configuration is still part of the definition.
+
+This keeps a single resolution path: canonicalisation and enabled-only
+required-presence checks are separated, so no `keyword = "__dummy__"`-style
+work-around is needed. An enabled step is fully resolved, and any missing
+required field is a RUNNABLE error before a fingerprint is ever requested.
 
 ---
 
@@ -703,6 +733,24 @@ Per-step semantic record: `id`, `type`, `enabled`, resolved `params`, `inputs`
 computed, so a resume under a changed extension must fail closed. The definition
 fingerprint is computed over the **canonical semantic payload** with keys sorted
 and steps ordered by id; it does not depend on the YAML's byte layout.
+
+**Disabled steps.** Per-step `params` are **profile-aware canonical semantic
+params** (§12): an absent disabled-exempt required field (`confgen.chains`,
+`calc.keyword`) is omitted rather than synthesised, while a supplied value is
+canonicalised and included. A RUNNABLE-valid definition is therefore always
+fingerprintable. `checkpoint.from_step` is part of the per-step record whenever it
+is declared (a disabled calc's declared checkpoint is still definition
+configuration); it is never synthesised.
+
+**`inputs` canonicalisation.** `inputs` is a dependency *relation*, not an ordered
+list (§10 — a duplicate entry is a definition error, so order carries no meaning),
+so the payload stores each step's predecessors **sorted by the canonical V3 id
+order key**. Permuting the `inputs` array in the source therefore cannot move the
+fingerprint.
+
+**Step order key.** Steps and ids are ordered by `(0, int(suffix))` for ids
+matching `^s[0-9]+$`, otherwise `(1, id)`; this is the single ordering used for the
+fingerprint payload.
 
 **Global split (scientific vs execution).** `global` is split by meaning; the
 definition fingerprint takes only the scientific members, and the execution
