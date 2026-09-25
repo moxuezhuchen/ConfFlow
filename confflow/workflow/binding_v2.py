@@ -10,6 +10,10 @@ RFC §16:
   :class:`~confflow.workflow.execution_context.ResolvedExecutionContextV3`;
 - **B** — ``provenance``: the schema/canonicalization/producer binding
   (provenance, not identity), carried for audit and compatibility policy.
+  The provenance carries an explicit ``producer_identity`` — the stable
+  machine-comparable identity of the producer/runtime implementation
+  (``"confflow"``) — alongside version/commit/dirty; it is distinct from
+  ``source_version``, which names the workflow *configuration schema family*.
 
 The model is deeply immutable: frozen dataclasses all the way down, the
 provenance included, and :meth:`WorkflowBindingV2.to_payload` returns a fresh
@@ -48,6 +52,7 @@ from .execution_context import ResolvedExecutionContextV3, workflow_execution_fi
 from .plan import WorkflowV3Plan
 
 __all__ = [
+    "PRODUCER_IDENTITY",
     "BindingCompatibility",
     "BindingDiagnostic",
     "BindingProvenanceV2",
@@ -59,17 +64,34 @@ __all__ = [
 
 BINDING_V2_SCHEMA = "confflow.workflow_binding.v2"
 
+#: The stable, machine-comparable identity of the producer/runtime
+#: implementation that creates and validates bindings. Deliberately not a
+#: display name, package title, repo URL, branch or hostname. This is the
+#: value ``BindingProvenanceV2.producer_identity`` carries; it answers
+#: "which runtime implementation produced this run", while
+#: ``WorkflowBindingV2.source_version`` answers "which workflow
+#: configuration schema family the document belongs to" — two separate axes
+#: that must never be conflated.
+PRODUCER_IDENTITY = "confflow"
+
 
 # ---------------------------------------------------------------------------
 # Typed model
 # ---------------------------------------------------------------------------
 @dataclass(frozen=True)
 class BindingProvenanceV2:
-    """The B layer: schema/canonicalization/producer provenance (RFC §16.B)."""
+    """The B layer: schema/canonicalization/producer provenance (RFC §16.B).
+
+    ``producer_identity`` is a required, closed-schema field: the R4.1
+    structural placeholder is formalized here, and a payload without it is an
+    invalid binding v2 — it is never defaulted, because silently completing
+    an old placeholder would make it look resume-compatible.
+    """
 
     workflow_schema: str
     workflow_schema_sha256: str
     canonicalization_version: str
+    producer_identity: str
     producer_version: str
     producer_commit: str | None
     producer_dirty: bool
@@ -79,6 +101,7 @@ class BindingProvenanceV2:
             "workflow_schema": self.workflow_schema,
             "workflow_schema_sha256": self.workflow_schema_sha256,
             "canonicalization_version": self.canonicalization_version,
+            "producer_identity": self.producer_identity,
             "producer_version": self.producer_version,
             "producer_commit": self.producer_commit,
             "producer_dirty": self.producer_dirty,
@@ -94,6 +117,7 @@ class BindingProvenanceV2:
                 "workflow_schema",
                 "workflow_schema_sha256",
                 "canonicalization_version",
+                "producer_identity",
                 "producer_version",
                 "producer_commit",
                 "producer_dirty",
@@ -103,10 +127,29 @@ class BindingProvenanceV2:
             raise ValueError(
                 f"workflow binding provenance has unknown fields: {', '.join(unknown)}"
             )
+        missing = sorted(
+            {
+                "workflow_schema",
+                "workflow_schema_sha256",
+                "canonicalization_version",
+                "producer_identity",
+                "producer_version",
+                "producer_dirty",
+            }
+            - set(raw)
+        )
+        if missing:
+            raise ValueError(
+                f"workflow binding provenance is missing required fields: {', '.join(missing)}"
+            )
+        identity = str(raw["producer_identity"])
+        if not identity.strip():
+            raise ValueError("workflow binding provenance producer_identity must be non-empty")
         return cls(
             workflow_schema=str(raw["workflow_schema"]),
             workflow_schema_sha256=str(raw["workflow_schema_sha256"]),
             canonicalization_version=str(raw["canonicalization_version"]),
+            producer_identity=identity,
             producer_version=str(raw["producer_version"]),
             producer_commit=(
                 None if raw.get("producer_commit") is None else str(raw["producer_commit"])
@@ -181,6 +224,7 @@ def authoritative_provenance() -> BindingProvenanceV2:
         workflow_schema=WORKFLOW_SCHEMA_VERSION_V3,
         workflow_schema_sha256=workflow_schema_sha256_v3(),
         canonicalization_version=CANONICALIZATION_VERSION,
+        producer_identity=PRODUCER_IDENTITY,
         producer_version=confflow.__version__,
         producer_commit=COMMIT,
         producer_dirty=bool(DIRTY),
@@ -324,6 +368,16 @@ def compare_workflow_binding_v2(
                 f"stored canonicalization version {stored_p.canonicalization_version!r} does "
                 f"not match the current {current_p.canonicalization_version!r}; digests are "
                 "not comparable across canonicalizers",
+            )
+        )
+        b_error = True
+    if stored_p.producer_identity != current_p.producer_identity:
+        errors.append(
+            BindingDiagnostic(
+                "binding.producer_identity",
+                f"stored producer identity {stored_p.producer_identity!r} does not match the "
+                f"current {current_p.producer_identity!r}; a run cannot be resumed under a "
+                "different producer/runtime implementation",
             )
         )
         b_error = True

@@ -84,7 +84,7 @@ neutral).
 | Layer | Purpose | Exact contents | Resume effect |
 |---|---|---|---|
 | **A — Workflow Definition Fingerprint** (`workflow_definition_fingerprint_v3`, RFC §16.A) | *what is the semantics of this workflow* — the semantic identity | `semantics_version: confflow.workflow-semantics.v3` + resolved scientific globals (the §16.A scientific table) + per-step records `{id, type, enabled, params (resolved, execution-class excluded per the frozen §16.A table), inputs (sorted by id order key), checkpoint.from_step, extensions}`; steps sorted by the id order key; canonical JSON, `sha256:` digest | A mismatch ⇒ **reject** (definition changed). Stored in state v2 and binding v2 for layered diagnostics. |
-| **B — Schema / Canonicalization Binding** (RFC §16.B) | *which schema and canonicalizer interpreted this document* — producer/schema provenance, **not identity** | workflow schema identifier (`confflow.workflow.v3`), workflow schema digest (V3 DOCUMENT `workflow_schema_sha256_v3()`), canonicalization version constant, producer identity/version/commit/dirty | **Never inside A.** Persisted in binding v2 for audit. Frozen policy (PD-1): **schema-digest change** ⇒ recorded warning, resume allowed when the document revalidates, A is identical and the canonicalization version is identical; **canonicalization-version change** ⇒ reject (digests are not comparable across canonicalizers); **producer identity/version/commit change** ⇒ reject (a different runtime implementation cannot be stitched into an existing run); **dirty producer** ⇒ fresh runs allowed, resume rejected |
+| **B — Schema / Canonicalization Binding** (RFC §16.B) | *which schema and canonicalizer interpreted this document* — producer/schema provenance, **not identity** | workflow schema identifier (`confflow.workflow.v3`), workflow schema digest (V3 DOCUMENT `workflow_schema_sha256_v3()`), canonicalization version constant, **producer identity** (frozen R4.2 review fix: the stable machine-comparable `producer_identity = "confflow"` — distinct from `source_version`, which names the configuration schema family), producer version/commit/dirty | **Never inside A.** Persisted in binding v2 for audit. Frozen policy (PD-1): **schema-digest change** ⇒ recorded warning, resume allowed when the document revalidates, A is identical and the canonicalization version is identical; **canonicalization-version change** ⇒ reject (digests are not comparable across canonicalizers); **producer identity/version/commit change** ⇒ reject (a different runtime implementation cannot be stitched into an existing run); **dirty producer** ⇒ fresh runs allowed, resume rejected |
 | **C — Resolved Execution Fingerprint** (RFC §16.C) | *what exactly will run; can a prior result be resumed* | `execution payload = definition semantic payload (A) + run context (ordered external-input content digests + input cardinality fact) + the execution-class global members (§16.A table) + resolved resources / runtime / executable settings (per-step execution-class params from the same frozen constant + execution-site executable identities: program + resolved realpath + entrypoint SHA-256)` [PD-2 frozen, PD-5 frozen] | **Resume binds C (RFC §16.D normative).** C mismatch ⇒ reject, with the layer named (A-part vs inputs vs resources) via the state-stored A and input/settings sections. C is **finalized at the execution site** — see §9. |
 
 Where this plan makes a decision the RFC does not state verbatim, the decision
@@ -341,8 +341,11 @@ Payload:
   3. B canonicalization-version difference ⇒ `binding mismatch
      (B: canonicalization)` ⇒ **reject**.
   4. B producer identity/version/commit difference ⇒ `binding mismatch
-     (B: producer)` ⇒ **reject**; an unknown/missing producer field on either
-     side is also a reject (`unknown == unknown` is never safe).
+     (B: producer_identity` / `B: producer_version` / `B: producer_commit`)
+     ⇒ **reject**; an unknown/missing producer field on either side is also
+     a reject (`unknown == unknown` is never safe), and a payload without the
+     required `producer_identity` is an invalid binding v2 — the R4.1
+     structural placeholder is formalized, never silently defaulted.
   5. B producer **dirty** flag ⇒ `binding mismatch (B: dirty)` ⇒ resume
      **reject** (fresh runs with dirty provenance are allowed and recorded).
   6. B schema-digest difference with the same schema ID, A and C equal and
@@ -434,6 +437,20 @@ layer. Resume consistency: the ref lives inside A, so any checkpoint change is
 already a resume-rejecting change.
 
 ### Disabled runtime semantics (No-TBD 20)
+
+**Enabled-only execution context (frozen, R4.2 review).** RFC §12 is the
+authority: *"a bypassed step never executes, so runnable preconditions …
+apply only to enabled steps"* — and executable resolution is exactly such a
+precondition. The Execution Fingerprint C therefore describes the **actual**
+execution context: `step_execution_params` and `step_executables` contain
+**enabled steps only** (driven by `WorkflowV3Plan.step.enabled` + stable ID,
+never raw YAML/state status/dirname/label). Consequences: a disabled calc
+whose dormant program does not exist on this machine still finalizes C;
+changing a disabled step's dormant resource/worker/executable config moves
+neither C (its semantic config stays bound by A, where the `enabled` flag
+itself lives — so a later enable is a resume-rejecting A change regardless
+of C); an enabled calc with a missing/unhashable executable still fails
+closed.
 
 Runtime behavior is defined now (R6 static capability system later):
 

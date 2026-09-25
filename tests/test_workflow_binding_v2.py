@@ -24,6 +24,7 @@ from confflow.config.canonical import (
     workflow_schema_sha256_v3,
 )
 from confflow.workflow.binding_v2 import (
+    PRODUCER_IDENTITY,
     BindingProvenanceV2,
     WorkflowBindingV2,
     build_workflow_binding_v2,
@@ -106,6 +107,7 @@ def _clean_provenance() -> BindingProvenanceV2:
         workflow_schema=V3,
         workflow_schema_sha256=workflow_schema_sha256_v3(),
         canonicalization_version=CANONICALIZATION_VERSION,
+        producer_identity=PRODUCER_IDENTITY,
         producer_version="1.0.0",
         producer_commit="abc123",
         producer_dirty=False,
@@ -576,3 +578,76 @@ class TestComparatorLayers:
             ],
         )
         _rejects(_binding(checkpoint_ref), "binding.definition_fingerprint")
+
+
+# ---------------------------------------------------------------------------
+# Producer identity (PI1–PI6, R4.2 review fix)
+# ---------------------------------------------------------------------------
+class TestProducerIdentity:
+    def test_pi1_authoritative_provenance_carries_stable_identity(self) -> None:
+        from confflow.workflow.binding_v2 import authoritative_provenance
+
+        provenance = authoritative_provenance()
+        assert provenance.producer_identity == "confflow"
+
+    def test_pi2_exact_same_identity_compatible(self, tmp_path: Path) -> None:
+        plan = _v3_plan(tmp_path)
+        stored = _binding(plan)
+        current = build_workflow_binding_v2(plan, _context(plan), provenance=_clean_provenance())
+        result = compare_workflow_binding_v2(stored, current)
+        assert result.compatible
+        assert "binding.producer_identity" not in result.error_codes
+
+    def test_pi3_identity_mismatch_rejected(self, tmp_path: Path) -> None:
+        plan = _v3_plan(tmp_path)
+        stored = _binding(plan)
+        current = build_workflow_binding_v2(
+            plan,
+            _context(plan),
+            provenance=_variant_provenance(producer_identity="not-confflow"),
+        )
+        result = compare_workflow_binding_v2(stored, current)
+        assert not result.compatible
+        assert "binding.producer_identity" in result.error_codes
+
+    def test_pi4_missing_identity_rejected_on_parse(self, tmp_path: Path) -> None:
+        plan = _v3_plan(tmp_path)
+        payload = _binding(plan).to_payload()
+        del payload["provenance"]["producer_identity"]
+        with pytest.raises(ValueError):
+            WorkflowBindingV2.from_payload(payload)
+        # The state layer fails closed with its stable error type, too.
+        from confflow.workflow.state import WorkflowStateCompatibilityError
+
+        with pytest.raises(WorkflowStateCompatibilityError):
+            build_initial_state_v2(
+                plan,
+                run_id="r",
+                work_dir=str(tmp_path),
+                config_file="wf.yaml",
+                binding=payload,
+            )
+
+    def test_pi5_empty_identity_rejected(self) -> None:
+        payload = _clean_provenance().to_payload()
+        payload["producer_identity"] = "   "
+        with pytest.raises(ValueError):
+            BindingProvenanceV2.from_payload(payload)
+
+    def test_pi6_source_version_cannot_substitute_identity(self, tmp_path: Path) -> None:
+        """Reject an identity change even with the same source_version.
+
+        Same workflow schema family (source_version), different producer
+        implementation identity ⇒ reject: the two axes are independent.
+        """
+        plan = _v3_plan(tmp_path)
+        stored = _binding(plan)
+        current = build_workflow_binding_v2(
+            plan,
+            _context(plan),
+            provenance=_variant_provenance(producer_identity="other-producer"),
+        )
+        assert stored.source_version == current.source_version
+        result = compare_workflow_binding_v2(stored, current)
+        assert not result.compatible
+        assert "binding.producer_identity" in result.error_codes

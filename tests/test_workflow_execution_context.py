@@ -333,3 +333,171 @@ class TestExecutionFingerprintProperties:
             [str(other_dir / "different-input-name.xyz")], str(other_dir / "other-name.yaml")
         )
         assert binding_one == _c(other_plan)
+
+
+# ---------------------------------------------------------------------------
+# Disabled-step execution context (D1–D7, frozen enabled-only policy)
+# ---------------------------------------------------------------------------
+def _mixed_orca_plan(tmp_path: Path, exe: Path, *, subdir: str = "") -> WorkflowV3Plan:
+    """Confgen + enabled calc + disabled calc (dormant ORCA config)."""
+    base = tmp_path / subdir if subdir else tmp_path
+    base.mkdir(parents=True, exist_ok=True)
+    _write_xyz(base / "input.xyz")
+    document = {
+        "schema": V3,
+        "global": {"iprog": "orca", "itask": "sp", "orca_path": str(exe)},
+        "steps": [
+            {"id": "s001", "type": "confgen", "inputs": [], "params": {"chains": ["1-2"]}},
+            {"id": "s002", "type": "calc", "inputs": ["s001"], "params": {"keyword": "HF"}},
+            {
+                "id": "s003",
+                "type": "calc",
+                "enabled": False,
+                "inputs": ["s002"],
+                "params": {"keyword": "HF", "iprog": "orca", "orca_path": "/nonexistent/orca"},
+            },
+        ],
+    }
+    (base / "wf.yaml").write_text(json.dumps(document), encoding="utf-8")
+    plan = build_workflow_plan([str(base / "input.xyz")], str(base / "wf.yaml"))
+    assert isinstance(plan, WorkflowV3Plan)
+    return plan
+
+
+class TestDisabledExecutionContext:
+    def test_d1_disabled_calc_with_missing_program_still_finalizes_c(self, tmp_path: Path) -> None:
+        # s003 is disabled and names a nonexistent ORCA; only s002 executes.
+        plan = _mixed_orca_plan(tmp_path, _executable(tmp_path / "orca"))
+        context = resolve_execution_context_v3(plan, input_files=plan.input_files)
+        assert "s002" in dict(context.step_executables)
+        assert "s003" not in dict(context.step_executables)
+        assert workflow_execution_fingerprint_v3(plan, context).startswith("sha256:")
+
+    def test_d2_disabled_executable_config_change_c_unchanged(self, tmp_path: Path) -> None:
+        exe = _executable(tmp_path / "orca")
+        plan = _mixed_orca_plan(tmp_path, exe)
+        before = workflow_execution_fingerprint_v3(plan, _context(plan))
+        document = json.loads((tmp_path / "wf.yaml").read_text(encoding="utf-8"))
+        document["steps"][2]["params"]["orca_path"] = "/some/other/orca"
+        (tmp_path / "changed").mkdir()
+        _write_xyz(tmp_path / "changed" / "input.xyz")
+        (tmp_path / "changed" / "wf.yaml").write_text(json.dumps(document), encoding="utf-8")
+        changed_plan = build_workflow_plan(
+            [str(tmp_path / "changed" / "input.xyz")], str(tmp_path / "changed" / "wf.yaml")
+        )
+        assert isinstance(changed_plan, WorkflowV3Plan)
+        assert workflow_execution_fingerprint_v3(changed_plan, _context(changed_plan)) == before
+
+    def test_d3_d7_disabled_resource_and_workers_changes_c_unchanged(self, tmp_path: Path) -> None:
+        exe = _executable(tmp_path / "orca")
+        plan = _mixed_orca_plan(tmp_path, exe)
+        before = workflow_execution_fingerprint_v3(plan, _context(plan))
+        document = json.loads((tmp_path / "wf.yaml").read_text(encoding="utf-8"))
+        document["steps"][2]["params"]["cores_per_task"] = 8
+        (tmp_path / "res").mkdir()
+        _write_xyz(tmp_path / "res" / "input.xyz")
+        (tmp_path / "res" / "wf.yaml").write_text(json.dumps(document), encoding="utf-8")
+        changed_plan = build_workflow_plan(
+            [str(tmp_path / "res" / "input.xyz")], str(tmp_path / "res" / "wf.yaml")
+        )
+        assert isinstance(changed_plan, WorkflowV3Plan)
+        assert workflow_execution_fingerprint_v3(changed_plan, _context(changed_plan)) == before
+        # D7: a disabled confgen's dormant workers are equally inert.
+        confgen_doc = {
+            "schema": V3,
+            "steps": [
+                {"id": "s001", "type": "confgen", "inputs": [], "params": {"chains": ["1-2"]}},
+                {
+                    "id": "s002",
+                    "type": "confgen",
+                    "enabled": False,
+                    "inputs": [],
+                    "params": {"chains": ["3-4"], "workers": 7},
+                },
+            ],
+        }
+        (tmp_path / "d7").mkdir()
+        _write_xyz(tmp_path / "d7" / "input.xyz")
+        (tmp_path / "d7" / "wf.yaml").write_text(json.dumps(confgen_doc), encoding="utf-8")
+        d7_plan = build_workflow_plan(
+            [str(tmp_path / "d7" / "input.xyz")], str(tmp_path / "d7" / "wf.yaml")
+        )
+        assert isinstance(d7_plan, WorkflowV3Plan)
+        baseline_doc = {
+            "schema": V3,
+            "steps": [
+                {"id": "s001", "type": "confgen", "inputs": [], "params": {"chains": ["1-2"]}},
+                {
+                    "id": "s002",
+                    "type": "confgen",
+                    "enabled": False,
+                    "inputs": [],
+                    "params": {"chains": ["3-4"], "workers": 99},
+                },
+            ],
+        }
+        (tmp_path / "d7b").mkdir()
+        _write_xyz(tmp_path / "d7b" / "input.xyz")
+        (tmp_path / "d7b" / "wf.yaml").write_text(json.dumps(baseline_doc), encoding="utf-8")
+        d7b_plan = build_workflow_plan(
+            [str(tmp_path / "d7b" / "input.xyz")], str(tmp_path / "d7b" / "wf.yaml")
+        )
+        assert isinstance(d7b_plan, WorkflowV3Plan)
+        assert workflow_execution_fingerprint_v3(
+            d7_plan, _context(d7_plan)
+        ) == workflow_execution_fingerprint_v3(d7b_plan, _context(d7b_plan))
+
+    def test_d4_enabled_calc_missing_executable_fails_closed(self, tmp_path: Path) -> None:
+        # Same machine, but the calc step is ENABLED and ORCA does not exist.
+        document = _orca_config(tmp_path, Path("/nonexistent/orca"))
+        (tmp_path / "enabled").mkdir()
+        _write_xyz(tmp_path / "enabled" / "input.xyz")
+        (tmp_path / "enabled" / "wf.yaml").write_text(json.dumps(document), encoding="utf-8")
+        plan = build_workflow_plan(
+            [str(tmp_path / "enabled" / "input.xyz")], str(tmp_path / "enabled" / "wf.yaml")
+        )
+        assert isinstance(plan, WorkflowV3Plan)
+        with pytest.raises(ConfFlowError):
+            resolve_execution_context_v3(plan, input_files=plan.input_files)
+
+    def test_d5_enabled_executable_bytes_change_c_changes(self, tmp_path: Path) -> None:
+        exe = _executable(tmp_path / "orca")
+        plan = _orca_plan(tmp_path, exe)
+        before = workflow_execution_fingerprint_v3(plan, _context(plan))
+        _executable(exe, "#!/bin/sh\n# rebuilt\nexit 0\n")
+        assert workflow_execution_fingerprint_v3(plan, _context(plan)) != before
+
+    def test_d6_disabled_to_enabled_flips_a(self, tmp_path: Path) -> None:
+        exe = _executable(tmp_path / "orca")
+        disabled_plan = _mixed_orca_plan(tmp_path, exe)
+        document = json.loads((tmp_path / "wf.yaml").read_text(encoding="utf-8"))
+        document["steps"][2]["enabled"] = True
+        document["steps"][2]["params"]["orca_path"] = str(exe)
+        (tmp_path / "enabled").mkdir()
+        _write_xyz(tmp_path / "enabled" / "input.xyz")
+        (tmp_path / "enabled" / "wf.yaml").write_text(json.dumps(document), encoding="utf-8")
+        enabled_plan = build_workflow_plan(
+            [str(tmp_path / "enabled" / "input.xyz")], str(tmp_path / "enabled" / "wf.yaml")
+        )
+        assert isinstance(enabled_plan, WorkflowV3Plan)
+        assert enabled_plan.definition_fingerprint != disabled_plan.definition_fingerprint
+        # and the newly-enabled step's executable is now required and resolved
+        context = resolve_execution_context_v3(enabled_plan, input_files=enabled_plan.input_files)
+        assert "s003" in dict(context.step_executables)
+
+    def test_dormant_executable_is_never_inspected(self, tmp_path: Path, monkeypatch) -> None:
+        import confflow.workflow.execution_context as context_module
+
+        calls: list[str] = []
+        original = context_module.resolve_executable_identity
+
+        def _spy(program: str, configured: str, **kwargs: Any):
+            calls.append(f"{program}:{configured}")
+            return original(program, configured, **kwargs)
+
+        monkeypatch.setattr(context_module, "resolve_executable_identity", _spy)
+        plan = _mixed_orca_plan(tmp_path, _executable(tmp_path / "orca"))
+        resolve_execution_context_v3(plan, input_files=plan.input_files)
+        # Only the enabled calc's executable was inspected; the dormant
+        # /nonexistent/orca was never touched.
+        assert calls == ["orca:" + str(tmp_path / "orca")]

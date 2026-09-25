@@ -166,16 +166,23 @@ def resolve_executable_identity(
 def _step_execution_params(
     plan: WorkflowV3Plan,
 ) -> tuple[tuple[str, dict[str, Any]], ...]:
-    """Per-step execution-class resolved params, keyed by stable step ID.
+    """Execution-class resolved params of the *enabled* steps, by stable ID.
 
-    Uses the single R3.4 execution-class classification; scientific params are
-    already inside the embedded A payload and are never duplicated here.
+    Frozen policy (RFC §12: a bypassed step never executes, so runnable
+    preconditions apply only to enabled steps): C describes the actual
+    execution context of this run, not the dormant configuration bag. A
+    disabled step's semantic config is already bound by A — including its
+    ``enabled`` flag — so flipping it later is a resume-rejecting A change
+    regardless of C. The filter is driven by ``WorkflowV3Plan.step.enabled``
+    (stable-ID keyed), never by raw YAML, state status, dirname or label.
     """
     definition = plan.definition
     pairs: list[tuple[str, dict[str, Any]]] = []
     for step in definition.steps:
         if step.id is None:
             raise ConfFlowError("V3 execution context requires persisted step ids")
+        if not step.enabled:
+            continue
         resolved = resolve_step_semantic_params(
             step, definition, profile=ValidationProfile.RUNNABLE
         )
@@ -202,11 +209,17 @@ def _execution_globals(plan: WorkflowV3Plan) -> dict[str, Any]:
 def _step_executables(
     plan: WorkflowV3Plan,
 ) -> tuple[tuple[str, ExecutableIdentity], ...]:
-    """Execution-site identities for every calc step (confgen has none)."""
+    """Execution-site identities for the *enabled* calc steps.
+
+    Same frozen policy: a disabled calc never runs, so its dormant program
+    must not be required to exist on this machine for C to finalize (and its
+    executable bytes can change without moving C — the enabled flag is bound
+    by A). Confgen steps have no external executable.
+    """
     definition = plan.definition
     pairs: list[tuple[str, ExecutableIdentity]] = []
     for step in definition.steps:
-        if step.id is None or step.type != "calc":
+        if step.id is None or step.type != "calc" or not step.enabled:
             continue
         resolved = resolve_step_semantic_params(
             step, definition, profile=ValidationProfile.RUNNABLE

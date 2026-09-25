@@ -79,6 +79,7 @@ def _valid_binding() -> dict[str, Any]:
             "workflow_schema": V3,
             "workflow_schema_sha256": "c" * 64,
             "canonicalization_version": "v1",
+            "producer_identity": "confflow",
             "producer_version": "0.0.0",
             "producer_commit": "test",
             "producer_dirty": False,
