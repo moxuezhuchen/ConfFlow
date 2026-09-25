@@ -1,5 +1,12 @@
 # ConfFlow 项目架构
 
+## Workflow V4（greenfield）
+
+V4 是独立的新 workflow engine，代码位于 `confflow/domain`、`confflow/execution`、
+`confflow/workflow/v4`。它不依赖本文档描述的 V2/V3 workflow runtime，也不经过
+`input_xyz → CalcStepRunner → output_path` 链。V4 架构事实见
+`docs/architecture/WORKFLOW_V4.md`。
+
 ## 项目概述
 
 ConfFlow 是一个自动化计算化学工作流引擎，用于分子构象搜索、量子化学计算、构象筛选和结果可视化。核心设计遵循模块化、可扩展原则，支持多种量子化学程序（Gaussian 16、ORCA）。
