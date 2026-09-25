@@ -394,6 +394,13 @@ def build_workflow_service(
     workflow_runner: WorkflowRunner = default_workflow_runner,
 ) -> tuple[ExecutionService, ServiceWorkflowExecutor]:
     """Build one durable service and its legacy workflow execution adapter."""
+    # Mandatory execution-capability guard (R4 review fix): this is the lowest
+    # shared service boundary, so EVERY caller — run_workflow_through_service,
+    # _prepare_failed_retry, the control worker via run_worker_attempt, and any
+    # direct API user — passes through it. The gate reads the config file only
+    # and must precede every persistent side effect below: _ensure_state_root
+    # (mkdir/chmod), ensure_run_paths, and the SQLite repository.
+    require_executable_workflow_file(spec.config_file)
     root = _ensure_state_root(state_root)
     if spec.cancel_beacon_file is None:
         run_paths = root.ensure_run_paths(spec.run_id)

@@ -15,6 +15,7 @@ from typing import Protocol
 from .application.execution.models import TERMINAL_STATES, RunSnapshot, RunState
 from .application.execution.state_root import StateRoot
 from .application.execution.workflow_adapter import WorkflowRunner, WorkflowRunSpec
+from .config.canonical import require_executable_workflow_file
 
 
 class AttemptService(Protocol):
@@ -52,6 +53,11 @@ def run_worker_attempt(
     Builder, consumer, and executor errors deliberately escape unchanged so
     the surrounding lifecycle boundary retains its existing failure handling.
     """
+    # Execution-capability preflight (R4 review fix): refuse a non-executable
+    # workflow version BEFORE ensure_run_paths creates the run layout. The
+    # builder guard below remains the mandatory lowest boundary; this is the
+    # worker-path fast-fail so a refused attempt leaves no run directories.
+    require_executable_workflow_file(staged_config)
     run_paths = root.ensure_run_paths(run_id)
     spec = WorkflowRunSpec(
         run_id=run_id,
