@@ -1,14 +1,16 @@
 # Workflow V3 Runtime Implementation Plan (R4)
 
-Status: **plan — awaiting runtime review** (this document has not been
-implementation-reviewed yet; nothing in it is normative until that review
-accepts it).
+Status: **FINAL ACCEPTED — READY FOR R4.1** (review-fix round 2026-09-25 froze
+PD-1, PD-2, PD-5 and PD-9; the remaining PDs are implementation-scoped
+decisions that R4.1–R4.5 reviews confirm as they land). Nothing here changes
+R3 behaviour except the P0 guard closure described in §10.
 
 Scope: the durable V3 runtime — `workflow_state.v2`, `workflow_binding.v2`,
 stable-ID runtime identity, `steps/<id>/` layout, Execution Fingerprint C,
 V3 resume / rerun / pause / cancel, checkpoint runtime resolution, output
-artifact identity, and the final capability flip. This plan is **docs only**;
-no runtime code changes are made in this round.
+artifact identity, and the final capability flip. The plan round itself was
+docs only; the review-fix round additionally landed exactly one production
+change: the mandatory `build_workflow_service` guard (commit `64cf07a`).
 
 Out of scope (later rounds, unchanged from the R3 plan): structured calc
 `params.theory` (R5), effective-dataflow capability validation (R6), JobDesk
@@ -61,8 +63,8 @@ impact, and the slice that resolves it.
 | 19 | `application/execution/workflow_adapter.py` `checkpoint_update` | `checkpoint.<record.name>.<fail_count>.<status>` — durable service checkpoint id from **record.name** | V3 must use the stable id; label must never enter it | R4.5 [PD-8] |
 | 20 | `application/execution/workflow_adapter.py` `_load_artifacts` | hard-accepts `confflow.output_manifest.v1` only | needs version-aware loader (v1 + v2); v1 behavior unchanged | R4.5 |
 | 21 | `application/execution/workflow_adapter.py` `_load_completed_stats` | checks `workflow_stats.json` v1 shape | must accept v2 stats for V3 runs | R4.5 |
-| 22 | `application/execution/workflow_adapter.py` `run_workflow_through_service` | preflight guard before `build_workflow_service` | **worker path bypasses this function** (see #23) | R4.5 |
-| 23 | `control_worker.py` → `worker_attempt.run_worker_attempt` → `build_workflow_service` | worker builds the service **directly**; today only the engine guard (Guard C) stops V3 — after state root/SQLite already exist | guard must move into `build_workflow_service` itself so both entry points are covered [PD-9] | R4.5 |
+| 22 | `application/execution/workflow_adapter.py` `run_workflow_through_service` | preflight guard before `build_workflow_service` | **worker path bypassed this function** (see #23) — CLOSED by the R4 review fix | done (review fix) |
+| 23 | `control_worker.py` → `worker_attempt.run_worker_attempt` → `build_workflow_service` | worker builds the service **directly**; only the engine guard stopped V3 — after state root/SQLite already exist | CLOSED by the R4 review fix: `build_workflow_service` gates on `spec.config_file` as its first action (before `_ensure_state_root`, `ensure_run_paths`, SQLite) and `run_worker_attempt` preflights the staged config before `ensure_run_paths` | done (review fix, commit `64cf07a`) |
 | 24 | `worker_handoff.py` / `worker_staging.py` | serialize/deserialize config digest + `input_xyz` tasks | config is content-digested YAML — V3 flows through unchanged; verified by W1/W3 tests | R4.5 |
 | 25 | `contract.py` | `workflow_state.v1` / `workflow_stats.v1` / `output_manifest.v1` ids; `.workflow_state.json` name | adds v2 ids; **same filenames**, schema-dispatched content [PD-3] | R4.1 |
 | 26 | `config/canonical/fingerprint.py` | `_EXECUTION_CLASS_STEP_PARAMS` + global split (single authoritative sets) | C reuses the same constants; no second classification [PD-4] | R4.2 |
@@ -82,47 +84,110 @@ neutral).
 | Layer | Purpose | Exact contents | Resume effect |
 |---|---|---|---|
 | **A — Workflow Definition Fingerprint** (`workflow_definition_fingerprint_v3`, RFC §16.A) | *what is the semantics of this workflow* — the semantic identity | `semantics_version: confflow.workflow-semantics.v3` + resolved scientific globals (the §16.A scientific table) + per-step records `{id, type, enabled, params (resolved, execution-class excluded per the frozen §16.A table), inputs (sorted by id order key), checkpoint.from_step, extensions}`; steps sorted by the id order key; canonical JSON, `sha256:` digest | A mismatch ⇒ **reject** (definition changed). Stored in state v2 and binding v2 for layered diagnostics. |
-| **B — Schema / Canonicalization Binding** (RFC §16.B) | *which schema and canonicalizer interpreted this document* — producer/schema provenance, **not identity** | workflow schema identifier (`confflow.workflow.v3`), workflow schema digest (V3 DOCUMENT `workflow_schema_sha256_v3()`), canonicalization version constant, producer identity/version/commit/dirty | **Never inside A.** Persisted in binding v2 for audit. Schema-digest/producer change ⇒ recorded warning, resume allowed (§16.D: resume binds C). **Canonicalization-version change ⇒ reject** — digests are not comparable across canonicalizers, so a mismatch is fail-closed rather than a false pass [PD-1]. |
-| **C — Resolved Execution Fingerprint** (RFC §16.C) | *what exactly will run; can a prior result be resumed* | `execution payload = definition semantic payload (A) + run context (ordered external-input content digests + input cardinality fact) + the execution-class global members (§16.A table) + resolved resources / runtime / executable settings (per-step execution-class params from the same frozen constant + resolved program settings: `iprog` + executable path per step)` [PD-2, PD-5] | **Resume binds C (RFC §16.D normative).** C mismatch ⇒ reject, with the layer named (A-part vs inputs vs resources) via the state-stored A and input/settings sections. |
+| **B — Schema / Canonicalization Binding** (RFC §16.B) | *which schema and canonicalizer interpreted this document* — producer/schema provenance, **not identity** | workflow schema identifier (`confflow.workflow.v3`), workflow schema digest (V3 DOCUMENT `workflow_schema_sha256_v3()`), canonicalization version constant, producer identity/version/commit/dirty | **Never inside A.** Persisted in binding v2 for audit. Frozen policy (PD-1): **schema-digest change** ⇒ recorded warning, resume allowed when the document revalidates, A is identical and the canonicalization version is identical; **canonicalization-version change** ⇒ reject (digests are not comparable across canonicalizers); **producer identity/version/commit change** ⇒ reject (a different runtime implementation cannot be stitched into an existing run); **dirty producer** ⇒ fresh runs allowed, resume rejected |
+| **C — Resolved Execution Fingerprint** (RFC §16.C) | *what exactly will run; can a prior result be resumed* | `execution payload = definition semantic payload (A) + run context (ordered external-input content digests + input cardinality fact) + the execution-class global members (§16.A table) + resolved resources / runtime / executable settings (per-step execution-class params from the same frozen constant + execution-site executable identities: program + resolved realpath + entrypoint SHA-256)` [PD-2 frozen, PD-5 frozen] | **Resume binds C (RFC §16.D normative).** C mismatch ⇒ reject, with the layer named (A-part vs inputs vs resources) via the state-stored A and input/settings sections. C is **finalized at the execution site** — see §9. |
+
+Where this plan makes a decision the RFC does not state verbatim, the decision
+is marked **[PD-n]**. **PD-1, PD-2, PD-5 and PD-9 are FROZEN** (accepted by the
+2026-09-25 runtime plan review); the remaining PDs are implementation-scoped
+and confirmed by their slice reviews.
 
 Dependency: `C = H(A-payload ‖ run-context ‖ execution-class data)`; A is
 embedded (the payload itself, not the digest) so one digest covers everything,
 while the separately stored A digest gives mismatch layering.
 
-### Input identity (No-TBD 12/13) [PD-2]
+### Input identity — FROZEN (PD-2, No-TBD 12/13)
 
 RFC §16.C: run context = *"external input digests, input cardinality facts"*.
-Derived decision:
+Frozen decision, backed by the basename audit below:
 
-- **bound in C**: the **ordered list of external-input content digests**
-  (sha256 of file bytes, in `input_files` order) and the **count**
+- **bound in C**: the **ordered list of external-input content SHA-256
+  digests** (file bytes, in `input_files` order) and the **count**
   (cardinality). Order is bound because multi-input workflows consume inputs
   positionally (`workflow/validation.py::validate_inputs_compatible`,
   `force_consistency` semantics) — reordering changes what runs. Count is the
   RFC's "cardinality fact".
-- **not bound in C**: absolute paths and basenames. V1 binds `abspath:digest`
-  (engine `_compute_input_digests`), but RFC's wording is *digests*; a renamed
-  input with identical bytes is the same execution for V3. Paths/basenames are
-  recorded in state v2 (`input_files`) for provenance and artifact bookkeeping.
+- **not bound in C**: absolute paths, relative paths, directories and
+  basenames. They are recorded in state v2 (`input_files`,
+  `original_inputs`) for provenance/diagnostics/UI only and must never decide
+  runtime step identity, checkpoint identity, durable artifact identity,
+  manifest keys, state keys, resume keys or scientific settings.
 - **original vs converted**: C binds the inputs the engine actually consumes —
   the post-conversion list (CLI `.gjf/.com` conversion happens before
   planning; `original_input_files` is recorded in state, not bound).
+- **Runtime normalization requirement** (R4.3): the V3 runtime projection
+  stages external inputs under deterministic internal names derived only from
+  the input slot/index and the parsed format's canonical extension (concept:
+  `external_inputs/input_0001.xyz`) — never from the source basename. This
+  makes rename-only changes inert at the runtime layer, not just at the
+  fingerprint layer. (XYZ is the only external input format today; `.gjf`/
+  `.com` are converted before planning, and the converted file's canonical
+  name is slot-derived in V3.)
 
-**Review flag:** this is the one place V3 C is deliberately narrower than the
-V1 binding. Acceptance of PD-2 is a review prerequisite.
+### Source basename influence audit (PD-2 evidence)
 
-### Executable identity (No-TBD 14) [PD-5]
+| Stage | Does source basename affect behavior/path? | Binding consequence | R4 action |
+|---|---|---|---|
+| parse / planning | no — planning reads config, inputs only probed (`validate_xyz_file`) | — | — |
+| CLI `.gjf/.com` conversion | yes — converted file named `{source stem}.xyz` (`cli.py::_convert_gjf_to_xyz`) | runtime filename only, not chemistry | R4.3 slot-based staging replaces it for V3 |
+| multi-input consistency check | no — atom counts + element sequences per position (`workflow/validation.py`) | content/positional only | — |
+| confgen merge | **provenance only** — `SourceFile: basename` written into XYZ comment metadata **only when a CID is remapped** (`step_handlers.py:359`); CIDs come from `_merged_frame_cid` = source_index/frame_index or existing in-file metadata | artifact comment bytes may differ under rename; geometry/CID/job_name identical | accepted as provenance; V3 staging keeps runtime identity slot-based |
+| calc job identity | no — `job_name` from conformer CID (`calc/runner.py::_job_name_for_geom`); input/log/chk files named `{job_name}.*`; Gaussian/ORCA invoked with `basename(inp_file)` inside the task work_dir | — | — |
+| checkpoint artifacts | no — `{job_name}.chk` / `{job_name}.old.chk` (CID-derived) | — | — |
+| terminal artifacts / manifest | no — `search.xyz`/`result.xyz` under `steps/<id>/` | — | — |
+| CLI report / sidecars | yes — `{basename}.txt`, `{stem}min.xyz` (`core/contracts.py`, `worker_sidecars.py`) | CLI display bookkeeping, not execution identity | out of V3 execution identity; unchanged for V2 |
+| presenter/stats display | yes — basename in headers/summary | display only | — |
 
-- **chemistry executables**: C binds the **resolved settings** — `iprog` and
-  the resolved executable path (realpath of `gaussian_path`/`orca_path` after
-  the same resolution the engine uses). RFC §16.C says *"resolved resources /
-  runtime / executable settings"* — settings, not binary content. Binary-digest
-  binding is **out of R4 scope** (documented limitation; candidate R6+
-  hardening). The existing launch-identity verifier (ConfFlow interpreter
-  realpath/dev-inode/sha256) is a **service security control**, not chemistry
-  identity — the two are not conflated.
-- **service executable identity**: unchanged, version-neutral, stays in the
-  service request as today.
+**Conclusion: source basename is NOT execution-semantic.** No stop-gate C
+condition. PD-2 frozen as stated.
+
+### Executable identity — FROZEN (PD-5, No-TBD 14)
+
+- **Current representation** (audited): `gaussian_path`/`orca_path` are a
+  **single executable** — an absolute path or a bare PATH name; free-form
+  command prefixes are rejected (`core/path_policy.py::_parse_single_executable`).
+  The launch command is `[executable, basename(inp_file)]`
+  (`calc/policies/gaussian.py:252-264`, orca equivalent). The adapter already
+  has the resolution precedent: `shutil.which` for non-absolute values →
+  `resolve(strict=True)` → SHA-256 (`workflow_adapter.py::measure_executable`).
+- **Frozen contract**: `ExecutableIdentity = (program, resolved_path,
+  entrypoint_sha256)` — the canonical program identity (`g16`/`orca` from
+  `iprog`), the **execution-site** resolved absolute/real path, and the
+  **SHA-256 of the resolved entrypoint file** (binary or shell wrapper — the
+  wrapper is the minimum identity; recursive tree hashing is explicitly out of
+  scope). Not bound: configured string, PATH lookup string, basename alone.
+- **Fail closed**: if the resolved executable does not exist, is not a regular
+  file, or cannot be read at the execution site, C cannot be finalized and
+  execution is refused — never a null digest with execution continuing. (The
+  single-executable representation makes this rule feasible; stop-gate D does
+  not fire.)
+- **Version strings**: may be recorded as provenance when a safe discovery
+  exists; they never replace the file digest in R4.
+- **Remote/worker rule (hard)**: the controller must not hand a
+  controller-computed executable digest to a worker as final. C is finalized
+  where execution happens: the worker resolves the executable, hashes it, and
+  finalizes the execution context before binding/state initialization. Same
+  workflow + same inputs but different execution-site executable bytes ⇒
+  different C ⇒ resume rejected (EX2/EX6).
+
+### Binding initialization order and immutability (frozen)
+
+```
+prepare canonical WorkflowV3Plan            (R3 planning, unchanged)
+  ↓ resolve execution-site context          (inputs digests, resources, executable identity)
+  ↓ compute A                               (definition fingerprint)
+  ↓ compute B                               (schema/canonicalization/producer provenance)
+  ↓ compute final C                         (only after the execution-site context is resolved)
+  ↓ create/validate the immutable binding v2
+  ↓ initialize/mutate runtime step state
+  ↓ execute
+```
+
+- A controller/config phase may build a **partial** run identity, but a
+  placeholder C must never enter a durable binding (No-TBD 13).
+- The `workflow_binding.v2` section is **immutable** once fresh-run
+  initialization completes: ordinary step progress never touches it, and
+  resume must validate the binding before any state mutation is allowed.
 
 ---
 
@@ -146,14 +211,15 @@ resume semantics are untouched (v1 binding algorithm frozen).
 | execution-class global change (e.g. `max_parallel_jobs`, paths) | – | – | ✓ | **reject** — "execution mismatch (C: resources)" |
 | execution-class step param change (e.g. `cores_per_task`) | – | – | ✓ | **reject** (C: resources) |
 | input file **contents** change | – | – | ✓ | **reject** (C: inputs) |
-| input **filename only** (same bytes) | – | – | – | **allowed** [PD-2] |
+| input **filename/path only** (same bytes) | – | – | – | **allowed** (PD-2 frozen) |
 | input **order** change (multi-input) | – | – | ✓ | **reject** (C: inputs) |
 | input count change | – | – | ✓ | **reject** (C: inputs cardinality) |
-| executable **path setting** change | – | – | ✓ | **reject** (C: resources) |
-| executable **binary digest** change | – | – | – | **not bound in R4** [PD-5, documented limitation] |
-| producer version/commit change | – | ✓(audit) | – | **allowed + recorded warning** [PD-1] |
-| schema digest change (doc-only, S22) | – | ✓(audit) | – | **allowed + recorded warning** |
-| canonicalization version change | – | ✓ | – | **reject** (digest comparability broken) [PD-1] |
+| executable **resolved path** change | – | – | ✓ | **reject** (C: resources) |
+| executable **entrypoint bytes** change (same path) | – | – | ✓ | **reject** (C: resources; PD-5 frozen) |
+| producer version/commit change | – | ✓ | – | **reject** (PD-1 frozen: different runtime implementation cannot join an existing run) |
+| producer provenance **dirty** | – | ✓ | – | fresh run **allowed** (recorded); **resume rejected** (PD-1 frozen) |
+| schema digest change (doc-only, S22) | – | ✓(audit) | – | **warn + conditional allow** — document revalidates, A identical, canonicalization identical (PD-1 frozen) |
+| canonicalization version change | – | ✓ | – | **reject** (digest comparability broken) |
 | state written by v1 schema / state v2 found by V1 reader | — | — | — | **reject — incompatible state schema** (both loaders strict) |
 
 ---
@@ -263,14 +329,21 @@ Payload:
 
 - Relationship to A/B/C: binding v2 carries the **digests of A and C** plus
   the **B section**. It is *not* `binding_v2 = fingerprint_c`; C is one member.
-- Mismatch diagnostics (No-TBD 15): resume recomputes A, then C, then audits B:
+- Mismatch diagnostics (No-TBD 15, frozen PD-1): resume recomputes A, then C,
+  then evaluates B:
   1. A mismatch ⇒ `definition fingerprint mismatch (A)`.
   2. C mismatch with A equal ⇒ compare the state-stored `input_digests` and
      execution-settings section ⇒ `execution fingerprint mismatch (C: inputs)`
      or `(C: resources)`.
-  3. B producer/schema-digest difference with A and C equal ⇒ proceed with a
-     recorded warning (binding provenance audit).
-  4. B canonicalization-version difference ⇒ reject (PD-1).
+  3. B canonicalization-version difference ⇒ `binding mismatch
+     (B: canonicalization)` ⇒ **reject**.
+  4. B producer identity/version/commit difference ⇒ `binding mismatch
+     (B: producer)` ⇒ **reject**.
+  5. B producer **dirty** flag ⇒ `binding mismatch (B: dirty)` ⇒ resume
+     **reject** (fresh runs with dirty provenance are allowed and recorded).
+  6. B schema-digest difference with A and C equal and the document
+     revalidating under the current producer ⇒ `binding provenance changed
+     (B: schema)` ⇒ **proceed with a recorded warning**.
 - V2 (`workflow_binding.v1`) goldens, parse/build/validate paths: untouched
   (B10 tests).
 
@@ -421,20 +494,26 @@ carries the id). V1 loader behavior byte-identical (A7).
 
 ## 10. Worker / remote path (No-TBD 21)
 
-- `worker_attempt` builds `WorkflowRunSpec` from the staged config and calls
-  `build_workflow_service` **directly** — the only execution entry that
-  bypasses `run_workflow_through_service`. Today a V3 attempt via the worker
-  would create state root/SQLite before the engine Guard C fires.
-- **R4.5 moves the preflight into `build_workflow_service` itself** [PD-9]:
-  one gate, both entry points (`run_workflow_through_service` keeps its own
-  earlier preflight for UX earliness; the builder gate is the durable-side
-  backstop). Zero-side-effect worker test (50B extension) added before the
-  flip.
+- **CLOSED by the R4 review fix (commit `64cf07a`)**: the worker path
+  (`control_worker` → `worker_attempt.run_worker_attempt` →
+  `build_workflow_service`) used to bypass `run_workflow_through_service`, so
+  a V3 attempt could create the run layout and the durable service before the
+  engine guard refused it. `build_workflow_service` now requires
+  executability as its first action — before `_ensure_state_root`,
+  `ensure_run_paths` and the SQLite repository — making the builder the
+  mandatory lowest shared boundary for every caller; `run_worker_attempt`
+  additionally preflights the staged config before `ensure_run_paths`, so a
+  refused attempt leaves no run directories. Direct-builder and
+  worker-direct zero-side-effect tests pin this
+  (`tests/test_workflow_v3_service_builder_guard.py`). PD-9 is therefore done
+  and **removed from the R4.5 scope**.
 - Handoff/staging carry the config as content-digested YAML and tasks as
   `input_xyz` paths — version-neutral; V3 config survives handoff (W1/W3).
 - Worker execution uses the same engine ⇒ same state v2 / binding v2 /
-  manifest v2; no V1 state leakage (W6). If any supported path cannot satisfy
-  this, the capability flip does not happen (global stop gate G).
+  manifest v2; the worker **resolves and hashes the executables itself** at
+  its execution site before C is finalized (PD-5, EX6). No V1 state leakage
+  (W6). If any supported path cannot satisfy this, the capability flip does
+  not happen (global stop gate G).
 
 ---
 
@@ -494,16 +573,18 @@ exist.)
 
 ### R4.2 — Execution Fingerprint C + Binding V2
 
-- **Scope**: `build_execution_fingerprint_v3(plan_or_definition, inputs,
-  runtime_settings)` — A payload + ordered input content digests + cardinality
-  + execution-class globals (same frozen constants, PD-4) + per-step resolved
-  execution settings (`iprog`, resolved executable paths, resource fields via
-  `_EXECUTION_CLASS_STEP_PARAMS`) + executable-settings digest section;
-  binding v2 assembly/parse; resume comparison helper returning layered
-  diagnostics (A / C:inputs / C:resources / B-audit / B-reject).
+- **Scope**: `build_execution_fingerprint_v3(...)` — A payload + ordered input
+  content digests + cardinality + execution-class globals (same frozen
+  constants, PD-4) + per-step resolved execution settings + **execution-site
+  executable identities** (`program`, resolved realpath, entrypoint SHA-256;
+  fail-closed when unresolvable — PD-5 frozen); binding v2 assembly/parse;
+  resume comparison helper with the six layered diagnostics of §5 (frozen
+  PD-1 policy). **C is finalized at the execution site** — the controller may
+  carry only partial identity; no placeholder C enters a durable binding.
 - **Files**: `config/canonical/fingerprint.py` (ADD v3 execution fingerprint;
   NO-TOUCH v1), `workflow/state.py` (binding v2 wiring), tests.
-- **Tests**: B1–B10; matrix rows of §3 as parametrized cases.
+- **Tests**: B1–B10 + matrix rows of §3 parametrized + input metamorphic
+  cases **I1–I7** + executable identity cases **EX1–EX7**.
 - **Commit**: `feat(workflow): bind V3 resolved execution context`
 - **Acceptance**: C changes exactly per the matrix; A goldens unchanged;
   `CAPABILITIES[V3].execute` still False.
@@ -517,10 +598,13 @@ exist.)
   internal runner is directly callable for tests, plus a scoped autouse
   fixture that patches `CAPABILITIES` and **always restores** for end-to-end
   engine tests; the user-facing guard layers stay untouched); ID-based step
-  dirs; disabled bypass (V1 semantics); checkpoint runtime resolution +
-  `run_calc_step` `input_chk_dir` override (PD-7); state v2 writes at v1
-  boundaries; stats/manifest v2 writers (version-dispatched);
-  `step_started_callback` id-as-name (PD-6).
+  dirs; **deterministic external-input staging** — internal names derived only
+  from the input slot/index and the parsed format's canonical extension, never
+  the source basename (frozen PD-2 invariant; I7); disabled bypass (V1
+  semantics); checkpoint runtime resolution + `run_calc_step`
+  `input_chk_dir` override (PD-7); state v2 writes at v1 boundaries;
+  stats/manifest v2 writers (version-dispatched); `step_started_callback`
+  id-as-name (PD-6).
 - **Files**: `workflow/engine.py` (MODIFY — V3 branch; PROTECTED-MINIMAL),
   `workflow/v3_runtime.py` (ADD runtime plan + adapters), `workflow/
   step_handlers.py` (MODIFY — optional param, PROTECTED-MINIMAL),
@@ -553,15 +637,16 @@ exist.)
 ### R4.5 — Artifacts / Service / Worker Integration + Capability Flip
 
 - **Scope**: `_load_artifacts` v1/v2 dispatch; `_load_completed_stats` v2;
-  checkpoint callback identity accessor (PD-8); worker-path guard move into
-  `build_workflow_service` (PD-9); W1–W6; A1–A7; release-facing assertions;
-  **final commit**: `feat(workflow): enable Workflow V3 execution` — flips
-  `CAPABILITIES[V3].execute=True` and nothing else. Rollback = flip back to
-  False (kill switch); parse/validate/upgrade/show/dry-run unaffected.
-- **Files**: `application/execution/workflow_adapter.py` (MODIFY),
-  `application/execution/workflow_adapter.py::build_workflow_service`
-  (MODIFY — preflight), `config/canonical/execution_versions.py` (flip, last
-  commit), `worker_attempt.py` (NO-TOUCH), tests.
+  checkpoint callback identity accessor (PD-8); W1–W6; A1–A7; release-facing
+  assertions; **final commit**: `feat(workflow): enable Workflow V3
+  execution` — flips `CAPABILITIES[V3].execute=True` and nothing else.
+  Rollback = flip back to False (kill switch); parse/validate/upgrade/show/
+  dry-run unaffected. (The worker/service guard closure is **done** in the
+  R4 review fix and is no longer part of this slice.)
+- **Files**: `application/execution/workflow_adapter.py` (MODIFY — loader v2,
+  callback identity), `config/canonical/execution_versions.py` (flip, last
+  commit), tests. (The builder guard and worker preflight already landed in
+  the R4 review fix `64cf07a`.)
 - **Commit(s)**: `feat(workflow): integrate V3 runtime with execution service`
   then `feat(workflow): enable Workflow V3 execution`.
 - **Acceptance / flip precondition**: every R4 suite green on every supported
@@ -589,7 +674,8 @@ exist.)
 | `confflow/workflow/plan.py` | – | – | NO-TOUCH (planning boundary) | – | – | stays planning-only |
 | `confflow/workflow/dry_run.py` / `config_show.py` | – | – | NO-TOUCH | – | – | R3 surface done |
 | `confflow/workflow/step_naming.py` | – | – | NO-TOUCH | – | – | V2 allocator preserved |
-| `confflow/application/execution/workflow_adapter.py` | – | – | – | – | MODIFY (loader v2, callback id, builder preflight) | integration |
+| `confflow/application/execution/workflow_adapter.py` | – | – | – | – | MODIFY (loader v2, callback id) | builder guard landed in review fix `64cf07a` |
+| `confflow/worker_attempt.py` | – | – | – | – | NO-TOUCH | worker preflight landed in review fix `64cf07a` |
 | `confflow/application/execution/service.py` / `sqlite.py` / `state_root.py` | – | – | – | – | NO-TOUCH | version-neutral |
 | `confflow/worker_attempt.py` / `worker_handoff.py` / `worker_staging.py` | – | – | – | – | NO-TOUCH | version-neutral |
 | `confflow/control_worker.py` | – | – | – | – | NO-TOUCH | guard moved into builder |
@@ -602,7 +688,16 @@ exist.)
 ## 14. Test matrix (consolidated)
 
 - **State**: S1–S12 (§52 of prompt, mapped to the schema above).
-- **Binding/Fingerprint**: B1–B10 + §3 matrix rows parametrized.
+- **Binding/Fingerprint**: B1–B10 + §3 matrix rows parametrized; input
+  metamorphic **I1–I7** (same contents/same order/different directory ⇒ same
+  C; renamed basename ⇒ same C; one-byte change ⇒ different C; reorder ⇒
+  different C; count change ⇒ different C; duplicate-content slots ⇒
+  deterministic ordered digest list; rename-only source change leaves V3
+  internal staging paths unchanged); executable identity **EX1–EX7** (same
+  path+bytes ⇒ same identity; changed bytes ⇒ different C; different resolved
+  path ⇒ different C; deterministic symlink resolution; unreadable/missing
+  executable ⇒ C cannot finalize / execution blocked; remote worker identity
+  from the worker site; A unchanged by executable changes).
 - **Paths**: P1–P8.
 - **Runtime execution**: E1–E10 (fake calc/confgen handlers; deterministic
   order; failure by ID; partial-completion retry).
@@ -650,16 +745,37 @@ exist.)
 
 | Risk | Impact | Mitigation |
 |---|---|---|
-| PD-2 (input identity narrower than V1) accepted too casually | resume false-positive on renamed inputs | explicit review flag; recorded `input_files` paths keep provenance; conservative fallback is a one-line PD revision (bind paths) before flip |
-| Worker path guard gap (PD-9) missed | remote V3 creates service state before failing | guard moved into `build_workflow_service` with its own zero-side-effect test before flip |
+| PD-2 (input identity narrower than V1) | resume false-positive on renamed inputs | **frozen after basename audit** — basename proven to be non-execution-semantic (provenance comments/display only); R4.3 slot-based staging removes the runtime filename dependency; conservative fallback remains a one-line PD revision before flip |
+| Worker path guard gap | remote V3 creates service state before failing | **closed** — builder-level guard + worker preflight landed in the R4 review fix (`64cf07a`) with direct-builder and worker-direct zero-side-effect tests |
+| Entrypoint-only executable hashing misses dependency drift | same wrapper, changed backing binary resumes | documented minimum identity contract (PD-5); recursion into install trees is explicitly out of scope; `runtime_compatibility_version` is the future relaxation lever |
 | Engine branch grows beyond minimal | V2 regression | engine changes kept to dispatch + resume branch; E10/V2 suites gate every slice |
 | Manifest v2 consumer assumptions (JobDesk `Artifact.terminal`) | artifact identity drift | `Artifact.terminal` carries the id for v2; v1 unchanged; A-tests pin |
 | Windows reserved-name IDs | path collision on nt hosts | helper rejects on `os.name == "nt"` (PD-11); POSIX-only service today |
 | Canonicalization version churn | spurious mass resume rejection | version constant is code-frozen; B reject only on actual change |
+| Dirty-tree runs | untrustworthy resume | fresh runs allowed + recorded; resume rejected under the initial binding policy (PD-1) |
 
 ---
 
 ## 18. Adversarial review checklist (roles → probes the plan must survive)
+
+Fixed-case probes (review round 2026-09-25):
+
+- **Case A** — same content, `a.xyz` → `b.xyz`: C identical; V3 internal
+  staging slot-based ⇒ resume safe. ✔
+- **Case B** — same two files reversed: ordered digests differ ⇒ C differs ⇒
+  reject. ✔
+- **Case C** — same path, contents edited: content digest differs ⇒ C differs
+  ⇒ reject. ✔
+- **Case D** — same ORCA path, binary replaced: entrypoint SHA-256 differs ⇒
+  C differs ⇒ reject (PD-5). ✔
+- **Case E** — same config/inputs/executable, producer commit changed:
+  B:producer ⇒ reject (PD-1). ✔
+- **Case F** — schema digest only changed (semantics + canonicalization same,
+  document revalidates): B:schema ⇒ warn + allow. ✔
+- **Case G** — dirty producer resume: B:dirty ⇒ reject (fresh runs allowed).
+  ✔
+
+Role probes:
 
 - **V2 existing user**: v1 state/binding/layout untouched; only the PD-10
   refuse-if-v2 save guard touches v1 code, and it cannot change any outcome
@@ -696,13 +812,19 @@ exist.)
    sections for layered reasons), then B audit
 10. label rename resume — **succeeds** (no A/B/C change)
 11. step reorder resume — **succeeds** (no A/B/C change)
-12. input identity — ordered content digests + count; paths/basenames recorded
-    but not bound (PD-2)
-13. input ordering — **ordered** (positional multi-input consumption) [PD-2]
-14. executable identity — resolved program setting (`iprog` + realpath);
-    binary digest not bound in R4 (PD-5)
-15. producer/schema/canonicalization change — producer/schema: allowed +
-    audit warning; canonicalization: reject (PD-1)
+12. input identity — **FROZEN (PD-2)**: ordered content SHA-256 digests +
+    cardinality; paths/basenames recorded as provenance only
+13. input ordering — **ordered** (positional multi-input consumption);
+    slot-based internal staging in R4.3 normalizes naming (PD-2)
+14. executable identity — **FROZEN (PD-5)**: `(program, execution-site
+    resolved realpath, entrypoint SHA-256)`; unresolvable ⇒ fail closed; C
+    finalized at the execution site
+15. producer/schema/canonicalization change — **FROZEN (PD-1)**: schema
+    digest ⇒ warn + conditional allow (revalidates + A same +
+    canonicalization same); canonicalization ⇒ reject; producer
+    version/commit ⇒ reject; dirty provenance ⇒ fresh run allowed, resume
+    reject; future `runtime_compatibility_version` relaxation explicitly NOT
+    in R4
 16. output manifest — v2 schema id `confflow.output_manifest.v2`, same
     filename, terminals = `[{id, label, artifacts}]`; v1 unchanged
 17. workflow stats — v2 `confflow.workflow_stats.v2`, same filename, id+label
