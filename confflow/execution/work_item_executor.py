@@ -76,6 +76,10 @@ DRIVING_STRUCTURE_PORT = "structure"
 
 _POLL_INTERVAL_SECONDS = 0.2
 
+#: Maximum recovery executions per work item.  V4-2 runs a single recovery
+#: round: policies may decline earlier, but the executor never runs more.
+_MAX_RECOVERY_ROUNDS = 1
+
 
 def sanitize_job_name(logical_key: str) -> str:
     """Return a filesystem-safe job name derived from a logical key."""
@@ -524,6 +528,7 @@ class WorkItemExecutor:
                 tuple(diagnostics),
                 launch_info,
                 cancellation_confirmed=True,
+                recovery_attempt=0,
             )
         return self._profile_check_recover(
             work_item,
@@ -538,6 +543,7 @@ class WorkItemExecutor:
             tuple(diagnostics),
             launch_info,
             cancellation_confirmed=True,
+            recovery_attempt=0,
         )
 
     # ------------------------------------------------------------------
@@ -738,8 +744,22 @@ class WorkItemExecutor:
                 if should_cancel is not None and should_cancel():
                     try:
                         cancel_outcome = supervisor.cancel(handle)
-                    except Exception:
-                        return None
+                    except Exception as exc:
+                        # The stop was requested but the supervisor failed to
+                        # act: the process may still run, so report an
+                        # unconfirmed cancellation instead of a clean cancel.
+                        return (
+                            NativeExecutionResult(
+                                exit_code=None,
+                                wall_time_seconds=time.monotonic() - monotonic_start,
+                                stdout_file=request.stdout_file,
+                                stderr_file=request.stderr_file,
+                            ),
+                            CancelOutcome(
+                                confirmed=False,
+                                detail=f"cancel request failed: {exc}",
+                            ),
+                        )
                     break
                 if walltime is not None and time.monotonic() - monotonic_start > walltime:
                     try:
@@ -809,6 +829,7 @@ class WorkItemExecutor:
         launch_info: dict[str, Any],
         *,
         cancellation_confirmed: bool,
+        recovery_attempt: int = 0,
     ) -> WorkItemResult:
         discovered = context.adapter.discover_artifacts(
             work_dir=context.item_directory(work_item.logical_key),
@@ -840,17 +861,32 @@ class WorkItemExecutor:
             params = context.scientific.check_params_for(check.name)
             merged = dict(CHECK_DEFAULTS.get(check.name, {}))
             merged.update(dict(params))
-            outcome = check.run(
-                CheckContext(
-                    check_name=check.name,
-                    work_item_id=work_item.id,
-                    step_id=context.step_id,
-                    logical_key=work_item.logical_key,
-                    profile_output=profile_output,
-                    inputs=self._resolved_inputs(work_item, context),
-                    params=FrozenDict(merged),
+            try:
+                outcome = check.run(
+                    CheckContext(
+                        check_name=check.name,
+                        work_item_id=work_item.id,
+                        step_id=context.step_id,
+                        logical_key=work_item.logical_key,
+                        profile_output=profile_output,
+                        inputs=self._resolved_inputs(work_item, context),
+                        params=FrozenDict(merged),
+                    )
                 )
-            )
+            except Exception as exc:
+                # A check that cannot even be evaluated fails closed; it must
+                # never propagate and kill the batch.
+                failures.append(
+                    _diagnostic(
+                        NativeErrorCode.SCIENTIFIC_CHECK_ERROR,
+                        f"check {check.name!r} raised during evaluation: {exc}",
+                        step_id=context.step_id,
+                        work_item_id=work_item.id,
+                        logical_key=work_item.logical_key,
+                        details={"check": check.name, "reason": "check_raised"},
+                    )
+                )
+                continue
             if not outcome.passed and outcome.diagnostic is not None:
                 failures.append(self._recode_check_failure(outcome.diagnostic, context, work_item))
         if not failures:
@@ -887,6 +923,7 @@ class WorkItemExecutor:
             tuple(diagnostics),
             launch_info,
             cancellation_confirmed=cancellation_confirmed,
+            recovery_attempt=recovery_attempt,
         )
 
     def _assemble_failed(
@@ -956,10 +993,23 @@ class WorkItemExecutor:
         launch_info: dict[str, Any],
         *,
         cancellation_confirmed: bool,
+        recovery_attempt: int = 0,
     ) -> WorkItemResult:
         recovery = context.recovery
         if recovery is None or getattr(recovery, "name", "none") == "none":
             return failed
+        if recovery_attempt >= _MAX_RECOVERY_ROUNDS:
+            # Single-round semantics: a previous recovery execution already
+            # ran and the item still fails.  Stop even if the policy would
+            # attempt again; policies own stricter caps for their own callers.
+            from .recovery import RecoveryDecision
+
+            return self._with_recovery_note(
+                failed,
+                RecoveryDecision(attempt=False, reason="max_attempts_reached"),
+                attempted=True,
+                succeeded=False,
+            )
         check_params = context.scientific.check_params
         bond_params = check_params.get("bond_drift")
         merged_params: dict[str, Any] = dict(context.scientific.recovery_params)
@@ -973,7 +1023,13 @@ class WorkItemExecutor:
         for key in ("executable", "env", "walltime_seconds", "work_dir"):
             merged_params.setdefault(key, launch_info[key])
         recovery_context = self._recovery_context(
-            context, work_item, native_result, failed, merged_params, cancellation_confirmed
+            context,
+            work_item,
+            native_result,
+            failed,
+            merged_params,
+            cancellation_confirmed,
+            recovery_attempt,
         )
         decision = recovery.evaluate(recovery_context)
         if not decision.attempt:
@@ -1010,13 +1066,21 @@ class WorkItemExecutor:
             base_diagnostics + tuple(execution.diagnostics),
             launch_info,
             cancellation_confirmed=True,
+            recovery_attempt=recovery_attempt + 1,
         )
         if recovered.is_completed:
             return self._mark_recovered(recovered, decision)
         return self._with_recovery_note(recovered, decision, attempted=True, succeeded=False)
 
     def _recovery_context(
-        self, context, work_item, native_result, failed, merged_params, cancellation_confirmed
+        self,
+        context,
+        work_item,
+        native_result,
+        failed,
+        merged_params,
+        cancellation_confirmed,
+        recovery_attempt: int = 0,
     ):
         from .recovery import RecoveryContext
 
@@ -1028,7 +1092,7 @@ class WorkItemExecutor:
             inputs=self._resolved_inputs(work_item, context),
             failed_native_result=native_result,
             failure_diagnostics=tuple(failed.diagnostics),
-            attempt=0,
+            attempt=recovery_attempt,
             params=FrozenDict(merged_params),
             cancellation_confirmed=cancellation_confirmed,
         )

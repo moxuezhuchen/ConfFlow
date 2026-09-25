@@ -168,20 +168,20 @@ class ExecutorContract:
             raise DomainError("capability must be an ExecutorCapability")
         _require_text(self.contract_version, "contract_version")
         inputs = tuple(self.input_ports)
-        input_names = [port.name for port in inputs]
-        if len(set(input_names)) != len(input_names):
-            raise DomainError(f"duplicate input port names in {self.capability.value!r}")
         for port in inputs:
             if not isinstance(port, PortSpec):
                 raise DomainError("input_ports members must be PortSpec")
+        input_names = [port.name for port in inputs]
+        if len(set(input_names)) != len(input_names):
+            raise DomainError(f"duplicate input port names in {self.capability.value!r}")
         object.__setattr__(self, "input_ports", inputs)
         ports = tuple(self.output_ports)
-        names = [port.name for port in ports]
-        if len(set(names)) != len(names):
-            raise DomainError(f"duplicate output port names in {self.capability.value!r}")
         for port in ports:
             if not isinstance(port, PortSpec):
                 raise DomainError("output_ports members must be PortSpec")
+        names = [port.name for port in ports]
+        if len(set(names)) != len(names):
+            raise DomainError(f"duplicate output port names in {self.capability.value!r}")
         object.__setattr__(self, "output_ports", ports)
         passthrough = dict(self.passthrough_ports or {})
         for out_port, in_port in passthrough.items():
@@ -251,12 +251,12 @@ class ExecutionAdapterSpec:
         if not isinstance(self.capability, ExecutorCapability):
             raise DomainError("adapter capability must be an ExecutorCapability")
         ports = tuple(self.input_ports)
-        names = [port.name for port in ports]
-        if len(set(names)) != len(names):
-            raise DomainError(f"duplicate input port names in adapter {self.name!r}")
         for port in ports:
             if not isinstance(port, PortSpec):
                 raise DomainError("input_ports members must be PortSpec")
+        names = [port.name for port in ports]
+        if len(set(names)) != len(names):
+            raise DomainError(f"duplicate input port names in adapter {self.name!r}")
         object.__setattr__(self, "input_ports", ports)
         if not isinstance(self.description, str):
             raise DomainError("adapter description must be a string")
