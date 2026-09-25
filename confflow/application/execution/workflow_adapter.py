@@ -27,6 +27,7 @@ from ...config.canonical import require_executable_workflow_file
 from ...contract import (
     OUTPUT_MANIFEST_SCHEMA,
     OUTPUT_MANIFEST_SCHEMA_V2,
+    WORKFLOW_STATE_SCHEMA_V2,
     WORKFLOW_STATS_SCHEMA,
     WORKFLOW_STATS_SCHEMA_V2,
 )
@@ -259,7 +260,15 @@ class ServiceWorkflowExecutor(WorkflowExecutor):
             self._result = self._workflow_runner(
                 **runner_kwargs,
             )
-            artifacts = _load_artifacts(self._spec.work_dir)
+            if _is_v3_config(self._spec.config_file):
+                # Version-aware strict path for V3: after a successful runner
+                # return the manifest must exist, parse, carry
+                # output_manifest.v2, pass strict field/path/existence checks
+                # and project a non-empty artifact set — else
+                # ARTIFACT_INTEGRITY_FAILED, never COMPLETED-with-empty.
+                artifacts = _load_artifacts_v3_required(self._spec.work_dir)
+            else:
+                artifacts = _load_artifacts(self._spec.work_dir)
             _write_execution_identity(self._spec)
             lifecycle.completed(artifacts)
         except StopRequestedError as error:
@@ -285,8 +294,15 @@ class ServiceWorkflowExecutor(WorkflowExecutor):
             service = self._service
             if service is not None:
                 try:
+                    try:
+                        failed_artifacts = _load_artifacts(self._spec.work_dir)
+                    except ExecutionServiceError:
+                        # A corrupt manifest must not leave the run without a
+                        # terminal state: record the failure with no artifacts
+                        # and preserve the original error for wait().
+                        failed_artifacts = ()
                     ExecutionLifecycle(service, request.run_id, request.token).failed(
-                        _load_artifacts(self._spec.work_dir)
+                        failed_artifacts
                     )
                 except ExecutionServiceError as lifecycle_error:
                     # A terminal cancellation/other lifecycle winner owns the
@@ -408,19 +424,39 @@ def acquire_work_directory_lease(work_dir: str) -> _WorkDirectoryLease:
     return lease
 
 
+def _is_v3_config(config_file: str) -> bool:
+    """Return whether ``config_file`` is recognisably a V3 document.
+
+    Side-effect free: reads and recognises only. Any file that cannot be
+    read or recognised answers False so the legacy tolerant path handles it
+    unchanged — only a positive V3 identification selects the strict path.
+    """
+    try:
+        from ...config.canonical.parser import detect_workflow_file_version
+        from ...config.canonical.schema import WORKFLOW_SCHEMA_VERSION_V3
+
+        return detect_workflow_file_version(config_file) == WORKFLOW_SCHEMA_VERSION_V3
+    except Exception:
+        return False
+
+
 def _preflight_v3_effective_dataflow(spec: WorkflowRunSpec) -> None:
-    """Reject known-invalid V3 effective dataflow before any durable side effect.
+    """Reject known-invalid V3 workflows before any durable side effect.
 
-    Pure preflight for the mandatory builder boundary: builds the V3 plan and
-    runs the same execution-critical effective-dataflow validation that
-    ``run_v3_workflow`` repeats before creating directories, staging inputs,
-    mutating state or invoking handlers. Reads the config and input files
-    only — creates no directories, state, or repository files.
+    Pure preflight for the mandatory builder boundary: once the config is
+    positively identified as V3 (``schema == confflow.workflow.v3``), the
+    same ``build_workflow_plan`` + ``validate_effective_dataflow_v3`` pair
+    the runner consumes is executed here — before ``_ensure_state_root``
+    (mkdir/chmod), ``ensure_run_paths`` and the SQLite repository create
+    anything. Reads the config and input files only.
 
-    Non-V3 documents, unreadable files, and specs that fail planning for any
-    other reason are ignored here; the normal execution path reports those
-    errors unchanged after the durable service exists. Only a positive
-    invalid-dataflow finding raises, with the runner's message verbatim.
+    Fail-closed ordering: after a positive V3 identification, EVERY
+    ``build_workflow_plan`` failure (schema/params/graph/checkpoint) and
+    every effective-dataflow finding propagates with the runner's message
+    verbatim. Only specs that cannot be identified as V3 (unreadable files,
+    unrecognised versions, non-V3 documents) fall through to the legacy
+    path, which reports those errors unchanged after the durable service
+    exists. No second validator copy exists here.
     """
     try:
         from ...config.canonical.parser import detect_workflow_file_version
@@ -430,22 +466,23 @@ def _preflight_v3_effective_dataflow(spec: WorkflowRunSpec) -> None:
             return
     except Exception:
         return
-    try:
-        from ...workflow.plan import WorkflowV3Plan, build_workflow_plan
-        from ...workflow.v3_dataflow import validate_effective_dataflow_v3
+    from ...workflow.plan import WorkflowV3Plan, build_workflow_plan
+    from ...workflow.v3_dataflow import validate_effective_dataflow_v3
 
-        plan = build_workflow_plan(
-            list(spec.input_xyz),
-            spec.config_file,
-            original_input_files=(
-                None if spec.original_input_files is None else list(spec.original_input_files)
-            ),
+    plan = build_workflow_plan(
+        list(spec.input_xyz),
+        spec.config_file,
+        original_input_files=(
+            None if spec.original_input_files is None else list(spec.original_input_files)
+        ),
+    )
+    if not isinstance(plan, WorkflowV3Plan):
+        from ...core.exceptions import ConfFlowError
+
+        raise ConfFlowError(
+            "V3 preflight produced a non-V3 plan; refusing to fall through to legacy"
         )
-        if not isinstance(plan, WorkflowV3Plan):
-            return
-        issues = validate_effective_dataflow_v3(plan, external_input_count=len(plan.input_files))
-    except Exception:
-        return
+    issues = validate_effective_dataflow_v3(plan, external_input_count=len(plan.input_files))
     if issues:
         from ...core.exceptions import ConfFlowError
 
@@ -906,6 +943,87 @@ def _load_artifacts(work_dir: str) -> tuple[Artifact, ...]:
     )
 
 
+def _load_artifacts_v3_required(work_dir: str) -> tuple[Artifact, ...]:
+    """Strict V3 artifact projection — fail closed, never empty.
+
+    The V1 tolerant loader above stays byte-identical for legacy runs. For
+    V3, after a successful runner return the manifest must exist, parse,
+    carry ``output_manifest.v2``, pass the strict field/path/existence
+    checks and project a non-empty artifact set — anything else raises
+    ``ARTIFACT_INTEGRITY_FAILED`` instead of completing with empty
+    artifacts.
+    """
+    path = Path(work_dir) / "output_manifest.json"
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except OSError as error:
+        raise ExecutionServiceError(
+            ErrorCode.ARTIFACT_INTEGRITY_FAILED,
+            f"V3 run is missing its output manifest: {path}",
+        ) from error
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError as error:
+        raise ExecutionServiceError(
+            ErrorCode.ARTIFACT_INTEGRITY_FAILED,
+            f"V3 output manifest is not valid JSON: {path}",
+        ) from error
+    if not isinstance(payload, dict):
+        raise ExecutionServiceError(
+            ErrorCode.ARTIFACT_INTEGRITY_FAILED,
+            f"V3 output manifest must be an object: {path}",
+        )
+    schema = payload.get("content_schema")
+    if schema != OUTPUT_MANIFEST_SCHEMA_V2:
+        raise ExecutionServiceError(
+            ErrorCode.ARTIFACT_INTEGRITY_FAILED,
+            f"V3 output manifest must carry {OUTPUT_MANIFEST_SCHEMA_V2!r}; " f"got {schema!r}",
+        )
+    artifacts = _load_artifacts_v2(payload, work_dir)
+    if not artifacts:
+        raise ExecutionServiceError(
+            ErrorCode.ARTIFACT_INTEGRITY_FAILED,
+            f"V3 run produced no artifacts: {path}",
+        )
+    return artifacts
+
+
+def _load_stats_v3_required(work_dir: str) -> dict[str, Any]:
+    """Strict V3 stats projection — ``workflow_stats.v2`` only.
+
+    The legacy :func:`_load_stats` tolerates a missing ``content_schema``
+    for pre-schema-era V1 files. V3 has no such tolerance: the file must
+    exist, parse and carry ``confflow.workflow_stats.v2``.
+    """
+    path = Path(work_dir) / "workflow_stats.json"
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except OSError as error:
+        raise ExecutionServiceError(
+            ErrorCode.ARTIFACT_INTEGRITY_FAILED,
+            f"V3 run is missing its workflow stats: {path}",
+        ) from error
+    try:
+        value = json.loads(raw)
+    except json.JSONDecodeError as error:
+        raise ExecutionServiceError(
+            ErrorCode.ARTIFACT_INTEGRITY_FAILED,
+            f"V3 workflow stats are not valid JSON: {path}",
+        ) from error
+    if not isinstance(value, dict):
+        raise ExecutionServiceError(
+            ErrorCode.ARTIFACT_INTEGRITY_FAILED,
+            f"V3 workflow stats must be an object: {path}",
+        )
+    schema = value.get("content_schema")
+    if schema != WORKFLOW_STATS_SCHEMA_V2:
+        raise ExecutionServiceError(
+            ErrorCode.ARTIFACT_INTEGRITY_FAILED,
+            f"V3 workflow stats must carry {WORKFLOW_STATS_SCHEMA_V2!r}; " f"got {schema!r}",
+        )
+    return value
+
+
 def _load_stats(work_dir: str) -> dict[str, Any] | None:
     path = Path(work_dir) / "workflow_stats.json"
     try:
@@ -930,6 +1048,8 @@ def _load_completed_stats(
     spec: WorkflowRunSpec,
 ) -> dict[str, Any] | None:
     """Attach to a completed run only while its required files still exist."""
+    if _is_v3_config(spec.config_file):
+        return _load_completed_stats_v3(service, run_id, work_dir, spec)
     stats = _load_stats(work_dir)
     if stats is None:
         raise ExecutionServiceError(
@@ -992,6 +1112,148 @@ def _load_completed_stats(
     if artifacts_method is None:
         return stats
     manifest = artifacts_method(run_id)
+    for artifact in manifest.artifacts:
+        candidate = Path(work_dir) / artifact.path
+        if (
+            not candidate.is_file()
+            or candidate.stat().st_size != artifact.size
+            or _file_digest(str(candidate)) != artifact.sha256
+        ):
+            raise ExecutionServiceError(
+                ErrorCode.ARTIFACT_INTEGRITY_FAILED,
+                f"Completed run artifact is missing or changed: {artifact.path}",
+            )
+    return stats
+
+
+def _load_completed_stats_v3(
+    service: ExecutionService,
+    run_id: str,
+    work_dir: str,
+    spec: WorkflowRunSpec,
+) -> dict[str, Any] | None:
+    """Strict V3 completed attach — every durable V3 fact is required.
+
+    Requires: ``.workflow_state.json`` present with ``workflow_state.v2``
+    schema + ``final_status`` completed + present valid ``binding``,
+    ``workflow_stats.v2`` present + valid, ``output_manifest.v2`` present +
+    valid via the strict loader, the execution-identity marker written by
+    :func:`_write_execution_identity` (``request_digest`` bound to ``spec``)
+    and size/hash reverification of every durable artifact. Anything
+    missing or mismatched fails closed with ``ARTIFACT_INTEGRITY_FAILED``.
+    The V1/V2 legacy path above is untouched.
+    """
+    stats = _load_stats_v3_required(work_dir)
+
+    declared_outputs = stats.get("final_outputs")
+    if not isinstance(declared_outputs, list):
+        declared_outputs = [stats.get("final_output")]
+    for output in declared_outputs:
+        if not isinstance(output, str):
+            continue
+        candidate = Path(output)
+        if not candidate.is_absolute():
+            candidate = Path(work_dir) / candidate
+        if not candidate.is_file() or candidate.stat().st_size <= 0:
+            raise ExecutionServiceError(
+                ErrorCode.ARTIFACT_INTEGRITY_FAILED,
+                f"Completed run output is missing or empty: {output}",
+            )
+
+    # Execution-identity marker: the actual policy is that
+    # _write_execution_identity publishes {run_id, request_digest} after the
+    # workflow produced its outputs, and attach verifies the digest binds
+    # this spec. For V3 the marker is required (not optional as in V1).
+    identity_path = Path(work_dir) / _EXECUTION_IDENTITY_FILE
+    try:
+        identity_raw = identity_path.read_text(encoding="utf-8")
+    except OSError as error:
+        raise ExecutionServiceError(
+            ErrorCode.ARTIFACT_INTEGRITY_FAILED,
+            f"Completed V3 run is missing its execution identity: {identity_path}",
+        ) from error
+    try:
+        identity = json.loads(identity_raw)
+    except json.JSONDecodeError as error:
+        raise ExecutionServiceError(
+            ErrorCode.ARTIFACT_INTEGRITY_FAILED,
+            f"Completed run identity marker is invalid: {identity_path}",
+        ) from error
+    if not isinstance(identity, dict) or identity.get("request_digest") != _request_digest(spec):
+        raise ExecutionServiceError(
+            ErrorCode.ARTIFACT_INTEGRITY_FAILED,
+            f"Completed run belongs to a different workflow request: {run_id}",
+        )
+
+    # Durable V3 state: present, v2 schema, completed, binding present+valid.
+    state_path = Path(work_dir) / ".workflow_state.json"
+    try:
+        state_raw = state_path.read_text(encoding="utf-8")
+    except OSError as error:
+        raise ExecutionServiceError(
+            ErrorCode.ARTIFACT_INTEGRITY_FAILED,
+            f"Completed V3 run is missing its workflow state: {state_path}",
+        ) from error
+    try:
+        state_payload = json.loads(state_raw)
+    except json.JSONDecodeError as error:
+        raise ExecutionServiceError(
+            ErrorCode.ARTIFACT_INTEGRITY_FAILED,
+            f"Completed run workflow state is invalid: {state_path}",
+        ) from error
+    if not isinstance(state_payload, dict):
+        raise ExecutionServiceError(
+            ErrorCode.ARTIFACT_INTEGRITY_FAILED,
+            f"Completed run workflow state is invalid: {state_path}",
+        )
+    if state_payload.get("content_schema") != WORKFLOW_STATE_SCHEMA_V2:
+        raise ExecutionServiceError(
+            ErrorCode.ARTIFACT_INTEGRITY_FAILED,
+            f"Completed V3 run state must carry {WORKFLOW_STATE_SCHEMA_V2!r}; "
+            f"got {state_payload.get('content_schema')!r}",
+        )
+    if state_payload.get("final_status") != "completed":
+        raise ExecutionServiceError(
+            ErrorCode.ARTIFACT_INTEGRITY_FAILED,
+            f"Completed run workflow state is not complete: {state_path}",
+        )
+    binding_raw = state_payload.get("binding")
+    if not isinstance(binding_raw, dict):
+        raise ExecutionServiceError(
+            ErrorCode.ARTIFACT_INTEGRITY_FAILED,
+            f"Completed V3 run state is missing its binding: {state_path}",
+        )
+    try:
+        from confflow.workflow.binding_v2 import WorkflowBindingV2
+    except Exception as error:  # pragma: no cover - import path guard
+        raise ExecutionServiceError(
+            ErrorCode.ARTIFACT_INTEGRITY_FAILED,
+            f"Completed V3 run state binding cannot be verified: {error}",
+        ) from error
+    try:
+        WorkflowBindingV2.from_payload(binding_raw)
+    except ValueError as error:
+        raise ExecutionServiceError(
+            ErrorCode.ARTIFACT_INTEGRITY_FAILED,
+            f"Completed V3 run state binding is invalid: {error}",
+        ) from error
+
+    # Work-root manifest: present, v2, strict paths, existing artifacts,
+    # non-empty (never attach to a manifest-less completed record).
+    _load_artifacts_v3_required(work_dir)
+
+    artifacts_method = getattr(service, "artifacts", None)
+    if artifacts_method is None:
+        raise ExecutionServiceError(
+            ErrorCode.ARTIFACT_INTEGRITY_FAILED,
+            f"Completed V3 run artifacts cannot be verified: {run_id}",
+        )
+    manifest = artifacts_method(run_id)
+    if not manifest.artifacts:
+        raise ExecutionServiceError(
+            ErrorCode.ARTIFACT_INTEGRITY_FAILED,
+            f"Completed V3 run has no durable artifacts: {run_id}",
+        )
     for artifact in manifest.artifacts:
         candidate = Path(work_dir) / artifact.path
         if (
