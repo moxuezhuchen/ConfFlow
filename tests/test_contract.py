@@ -32,6 +32,7 @@ def test_contract_public_api_is_exactly_what_we_expect():
         "RUN_SUMMARY_SCHEMA",
         "WORKFLOW_STATS_SCHEMA",
         "WORKFLOW_STATE_SCHEMA",
+        "WORKFLOW_STATE_SCHEMA_V2",
         "RUN_SUMMARY_FILE",
         "WORKFLOW_STATS_FILE",
         "WORKFLOW_STATE_FILE",
@@ -39,6 +40,12 @@ def test_contract_public_api_is_exactly_what_we_expect():
         "RUN_MIN_XYZ_TEMPLATE",
         "REQUIRED_COMMANDS",
     ]
+
+
+def test_workflow_state_schema_versions_are_frozen():
+    """The two state schema families share one filename, dispatched by id."""
+    assert contract.WORKFLOW_STATE_SCHEMA == "confflow.workflow_state.v1"
+    assert contract.WORKFLOW_STATE_SCHEMA_V2 == "confflow.workflow_state.v2"
 
 
 def test_capability_schema_version_is_v4():

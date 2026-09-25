@@ -30,6 +30,7 @@ __all__ = [
     "RUN_SUMMARY_SCHEMA",
     "WORKFLOW_STATS_SCHEMA",
     "WORKFLOW_STATE_SCHEMA",
+    "WORKFLOW_STATE_SCHEMA_V2",
     "RUN_SUMMARY_FILE",
     "WORKFLOW_STATS_FILE",
     "WORKFLOW_STATE_FILE",
@@ -43,6 +44,7 @@ CAPABILITY_SCHEMA_VERSION: int = 4
 RUN_SUMMARY_SCHEMA: str = "confflow.run_summary.v1"
 WORKFLOW_STATS_SCHEMA: str = "confflow.workflow_stats.v1"
 WORKFLOW_STATE_SCHEMA: str = "confflow.workflow_state.v1"
+WORKFLOW_STATE_SCHEMA_V2: str = "confflow.workflow_state.v2"
 RUN_SUMMARY_FILE: str = "run_summary.json"
 WORKFLOW_STATS_FILE: str = "workflow_stats.json"
 OUTPUT_MANIFEST_SCHEMA: str = "confflow.output_manifest.v1"
