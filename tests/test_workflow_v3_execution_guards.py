@@ -23,6 +23,9 @@ from confflow.core.exceptions import ConfFlowError
 from confflow.workflow.engine import run_workflow
 from confflow.workflow.rerun_failed import RerunFailedUsageError, run_rerun_failed
 
+# Hermetic CI: fake orca/g16 entrypoints on PATH (real files, real identity).
+pytestmark = pytest.mark.usefixtures("fake_qc_executables_on_path")
+
 V3 = "confflow.workflow.v3"
 
 

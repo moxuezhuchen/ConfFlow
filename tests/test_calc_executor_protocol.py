@@ -315,7 +315,14 @@ def test_local_executor_cancel_stops_term_ignoring_child(tmp_path):
         while time.monotonic() < deadline and not child_pid_file.exists():
             time.sleep(0.01)
         assert child_pid_file.exists()
-        child_pid = int(child_pid_file.read_text(encoding="ascii"))
+        # The parent creates the file before writing the pid: poll for
+        # non-empty numeric content instead of trusting first existence,
+        # otherwise a loaded machine can observe the empty file.
+        pid_text = ""
+        while time.monotonic() < deadline and not pid_text.strip().isdigit():
+            time.sleep(0.01)
+            pid_text = child_pid_file.read_text(encoding="ascii")
+        child_pid = int(pid_text.strip())
         assert process.poll() is None
 
         executor.cancel(handle)
@@ -367,7 +374,12 @@ def test_local_executor_cancel_handles_exited_parent_with_live_child(
         while time.monotonic() < deadline and not child_pid_file.exists():
             time.sleep(0.01)
         assert child_pid_file.exists()
-        child_pid = int(child_pid_file.read_text(encoding="ascii"))
+        # Same empty-file race as above: wait for numeric content.
+        pid_text = ""
+        while time.monotonic() < deadline and not pid_text.strip().isdigit():
+            time.sleep(0.01)
+            pid_text = child_pid_file.read_text(encoding="ascii")
+        child_pid = int(pid_text.strip())
         assert process.wait(timeout=5) == 0
         assert _pid_is_running(child_pid)
         # Process enumeration is a snapshot: one member can disappear before

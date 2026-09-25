@@ -23,6 +23,9 @@ from confflow.workflow.v3_dataflow import (
 from confflow.workflow.v3_runtime import run_v3_workflow
 from tests.test_workflow_v3_runtime import _FakeHandlers, _run_steps, _write_xyz
 
+# Hermetic CI: fake orca/g16 entrypoints on PATH (real files, real identity).
+pytestmark = pytest.mark.usefixtures("fake_qc_executables_on_path")
+
 V3 = "confflow.workflow.v3"
 
 
