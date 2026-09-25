@@ -565,7 +565,12 @@ class TsRescueScanPolicy:
         native_map = dict(inputs.native)
         native_map["keyword"] = native_keyword
         if extra_directives:
-            existing = native_map.get("gaussian_modredundant", [])
+            # The Gaussian adapter's strict vocabulary key is
+            # ``modredundant``; legacy ``gaussian_modredundant`` content is
+            # folded into it so user directives survive rescue rendering.
+            existing: Any = native_map.get(
+                "modredundant", native_map.get("gaussian_modredundant", [])
+            )
             if isinstance(existing, (list, tuple)):
                 directives = [str(item).strip() for item in existing if str(item).strip()]
             elif existing is None:
@@ -575,7 +580,8 @@ class TsRescueScanPolicy:
             for directive in extra_directives:
                 if directive not in directives:
                     directives.append(directive)
-            native_map["gaussian_modredundant"] = directives
+            native_map["modredundant"] = directives
+            native_map.pop("gaussian_modredundant", None)
         try:
             return ResolvedCalculationInputs(
                 structure=transient,

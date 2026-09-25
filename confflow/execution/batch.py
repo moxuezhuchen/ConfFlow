@@ -231,7 +231,10 @@ class BatchStepExecutor:
 
         def run_one(item: WorkItem) -> WorkItemResult:
             if cancelled():
-                return self._cancelled_without_launch(request, item, "fail_fast stop")
+                result = self._cancelled_without_launch(request, item, "fail_fast stop")
+                with results_lock:
+                    results[item.id] = result
+                return result
             if self._repository is not None:
                 self._repository.record_started(item.id, step.step_id, item.logical_key)
             reused = self._reuse_lookup(item)
