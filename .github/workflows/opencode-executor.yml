@@ -1,0 +1,136 @@
+# OpenCode self-hosted executor — v1.
+#
+# Design: a human (or ChatGPT operator) dispatches ONE bounded phase via
+# "Run workflow". GitHub routes the job to the WSL self-hosted runner,
+# which executes OpenCode non-interactively, runs the requested test
+# profile, and pushes the result branch. A reviewer then decides done/review.
+#
+# Security model (v1):
+#   * workflow_dispatch ONLY. No pull_request / pull_request_target /
+#     issue_comment / push triggers, so untrusted PR code can never
+#     auto-execute on the self-hosted host.
+#   * All inputs travel via `env:` into scripts and are re-validated there.
+#     No `${{ github.event.inputs.* }}` expression is ever interpolated
+#     into a `run:` shell script.
+#   * Single-flight per repository via `concurrency`, plus flock(1) on host.
+name: OpenCode Executor
+
+on:
+  workflow_dispatch:
+    inputs:
+      task_issue:
+        description: "GitHub Issue number holding the phase task (source of truth)"
+        required: true
+        type: string
+      phase:
+        description: "Phase label, e.g. P1, P2, P3, P5.2"
+        required: true
+        type: string
+      model:
+        description: "OpenCode model ref provider/model[#variant]"
+        required: false
+        type: string
+        default: "opencode-go/muse-spark-1.3-contributor"
+      test_profile:
+        description: "Test set to run"
+        required: false
+        type: choice
+        default: fast
+        options:
+          - none
+          - fast
+          - full
+          - gui
+          - integration
+      target_branch:
+        description: "Executor branch (must start with automation/); empty = automation/jobdesk-v3-<phase>"
+        required: false
+        type: string
+        default: ""
+
+# One executor at a time per repository: a second dispatch waits instead of
+# sharing the runner checkout with a running job.
+concurrency:
+  group: opencode-executor-${{ github.repository }}
+  cancel-in-progress: false
+
+# Minimal scopes: push result branches, read Issues, publish run artifacts.
+permissions:
+  contents: write
+  issues: read
+  actions: write
+
+jobs:
+  execute:
+    # Self-hosted WSL runner. If your host reports a different architecture,
+    # adjust the labels here and in scripts/opencode_executor/README.md.
+    # Registration itself is a manual one-time step (see README); this file
+    # never registers runners or handles registration tokens.
+    runs-on: [self-hosted, linux, X64, opencode-executor]
+    timeout-minutes: 360
+    env:
+      TASK_ISSUE: ${{ github.event.inputs.task_issue }}
+      PHASE: ${{ github.event.inputs.phase }}
+      MODEL: ${{ github.event.inputs.model }}
+      TEST_PROFILE: ${{ github.event.inputs.test_profile }}
+      TARGET_BRANCH: ${{ github.event.inputs.target_branch }}
+    steps:
+      - name: Checkout (runner-isolated work dir)
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Harden runner checkout
+        # The checkout above lands in the runner's own _work directory, never
+        # in a developer's manual working tree. Fail closed if that ever
+        # looks wrong (e.g. someone re-pointed the runner work folder).
+        run: |
+          set -euo pipefail
+          echo "workspace=$GITHUB_WORKSPACE"
+          case "$GITHUB_WORKSPACE" in
+            *"/_work/"*) echo "checkout is inside runner _work: OK" ;;
+            *) echo "refusing: workspace is not inside a runner _work directory" >&2; exit 1 ;;
+          esac
+          git rev-parse --show-toplevel
+          git status --short --branch
+
+      - name: Validate inputs (fail fast)
+        run: |
+          set -euo pipefail
+          python3 scripts/opencode_executor/validate_input.py \
+            --task-issue "$TASK_ISSUE" \
+            --phase "$PHASE" \
+            --model "$MODEL" \
+            --test-profile "$TEST_PROFILE" \
+            --target-branch "${TARGET_BRANCH:-automation/jobdesk-v3-$PHASE}"
+          python3 scripts/opencode_executor/select_tests.py "$TEST_PROFILE" || {
+            rc=$?
+            if [ "$rc" -eq 3 ]; then
+              echo "test profile '$TEST_PROFILE' is unavailable; continuing so the run reports NOT RUN explicitly"
+              exit 0
+            fi
+            exit "$rc"
+          }
+
+      - name: Run OpenCode executor
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          chmod +x scripts/opencode_executor/run_task.sh
+          scripts/opencode_executor/run_task.sh \
+            --task-issue "$TASK_ISSUE" \
+            --phase "$PHASE" \
+            --model "$MODEL" \
+            --test-profile "$TEST_PROFILE" \
+            ${TARGET_BRANCH:+--target-branch "$TARGET_BRANCH"}
+
+      - name: Upload executor logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: opencode-executor-${{ github.event.inputs.phase }}-issue-${{ github.event.inputs.task_issue }}-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/opencode-executor-logs/
+            /tmp/opencode-executor-logs/
+          if-no-files-found: warn

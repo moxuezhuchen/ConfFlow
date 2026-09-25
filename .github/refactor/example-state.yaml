@@ -1,0 +1,35 @@
+# Example only — not a claim about real project progress.
+#
+# Copy this file to `.github/refactor/state.yaml` (git-tracked) when a real
+# refactor program starts, then update ONE phase entry per executor round.
+# The state file, the linked Issues/PRs/branches, and commit history are the
+# persistent context. OpenCode sessions are disposable: every round starts a
+# fresh session and re-reads this file plus the linked Issue.
+project: example-refactor
+status: ready
+current_phase: P1
+
+phases:
+  P1:
+    status: ready
+    issue: 123
+    pr: null
+    branch: automation/jobdesk-v3-P1
+    model: opencode-go/muse-spark-1.3-contributor
+    last_commit: null
+    rounds: 0
+    notes: "Awaiting first executor round. Acceptance: <paste criteria>."
+  P2:
+    status: pending
+    issue: null
+    pr: null
+    branch: null
+    model: null
+    last_commit: null
+    rounds: 0
+    notes: ""
+
+final_gate:
+  integration_tests: pending
+  architecture_review: pending
+  regression_review: pending

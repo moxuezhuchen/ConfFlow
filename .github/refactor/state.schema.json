@@ -1,0 +1,88 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/moxuezhuchen/ConfFlow/blob/main/.github/refactor/state.schema.json",
+  "title": "RefactorPhaseState",
+  "description": "Persistent refactor state. GitHub (state file + Issues + PRs + branches) is the source of truth; OpenCode sessions are disposable.",
+  "type": "object",
+  "required": ["project", "status", "current_phase", "phases", "final_gate"],
+  "additionalProperties": false,
+  "properties": {
+    "project": {
+      "type": "string",
+      "description": "Refactor project name, e.g. jobdesk-v3"
+    },
+    "status": {
+      "$ref": "#/$defs/lifecycle"
+    },
+    "current_phase": {
+      "type": "string",
+      "description": "Phase label currently being worked, e.g. P3"
+    },
+    "phases": {
+      "type": "object",
+      "patternProperties": {
+        "^P[0-9]+(\\.[0-9]+)?$": {
+          "$ref": "#/$defs/phase"
+        }
+      },
+      "additionalProperties": false
+    },
+    "final_gate": {
+      "type": "object",
+      "required": ["integration_tests", "architecture_review", "regression_review"],
+      "additionalProperties": false,
+      "properties": {
+        "integration_tests": { "$ref": "#/$defs/lifecycle" },
+        "architecture_review": { "$ref": "#/$defs/lifecycle" },
+        "regression_review": { "$ref": "#/$defs/lifecycle" }
+      }
+    }
+  },
+  "$defs": {
+    "lifecycle": {
+      "type": "string",
+      "enum": ["pending", "ready", "running", "review", "blocked", "done", "failed"]
+    },
+    "phase": {
+      "type": "object",
+      "required": ["status"],
+      "additionalProperties": false,
+      "properties": {
+        "status": { "$ref": "#/$defs/lifecycle" },
+        "issue": {
+          "type": ["integer", "null"],
+          "minimum": 1,
+          "description": "GitHub Issue number holding the task (source of truth)"
+        },
+        "pr": {
+          "type": ["integer", "null"],
+          "minimum": 1,
+          "description": "Review PR number, if one exists"
+        },
+        "branch": {
+          "type": ["string", "null"],
+          "pattern": "^automation/",
+          "description": "Executor branch; always under automation/"
+        },
+        "model": {
+          "type": ["string", "null"],
+          "description": "OpenCode model ref provider/model[#variant] used for the latest round"
+        },
+        "last_commit": {
+          "type": ["string", "null"],
+          "pattern": "^([0-9a-f]{40})?$",
+          "description": "Latest executor commit SHA (empty/null when none yet)"
+        },
+        "rounds": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "How many executor rounds have run for this phase"
+        },
+        "notes": {
+          "type": "string",
+          "description": "Reviewer notes, blockers, acceptance verdict"
+        }
+      }
+    }
+  }
+}
