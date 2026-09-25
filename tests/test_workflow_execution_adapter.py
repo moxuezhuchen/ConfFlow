@@ -53,7 +53,10 @@ def test_adapter_loaders_reject_malformed_manifests_and_stats(tmp_path: Path):
     manifest.write_text("not-json", encoding="utf-8")
     assert _load_artifacts(str(work)) == ()
     manifest.write_text(json.dumps({"content_schema": "wrong", "terminals": {}}), encoding="utf-8")
-    assert _load_artifacts(str(work)) == ()
+    # unknown content_schema fails closed under strict version dispatch
+    with pytest.raises(ExecutionServiceError) as caught:
+        _load_artifacts(str(work))
+    assert caught.value.code is ErrorCode.ARTIFACT_INTEGRITY_FAILED
     manifest.write_text(
         json.dumps({"content_schema": OUTPUT_MANIFEST_SCHEMA, "terminals": []}), encoding="utf-8"
     )

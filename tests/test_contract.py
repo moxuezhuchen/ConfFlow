@@ -27,10 +27,12 @@ def test_contract_public_api_is_exactly_what_we_expect():
     """The public contract surface must include all versioned artifact schemas."""
     assert contract.__all__ == [
         "OUTPUT_MANIFEST_SCHEMA",
+        "OUTPUT_MANIFEST_SCHEMA_V2",
         "OUTPUT_MANIFEST_FILE",
         "CAPABILITY_SCHEMA_VERSION",
         "RUN_SUMMARY_SCHEMA",
         "WORKFLOW_STATS_SCHEMA",
+        "WORKFLOW_STATS_SCHEMA_V2",
         "WORKFLOW_STATE_SCHEMA",
         "WORKFLOW_STATE_SCHEMA_V2",
         "RUN_SUMMARY_FILE",

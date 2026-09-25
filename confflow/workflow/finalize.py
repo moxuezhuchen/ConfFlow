@@ -26,7 +26,11 @@ from ..contract import (
     WORKFLOW_STATS_SCHEMA_V2,
 )
 from .helpers import count_conformers_any
-from .presenter import _relative_manifest_artifact, emit_v3_final_report
+from .presenter import (
+    _relative_manifest_artifact,
+    emit_final_report_and_lowest,
+    emit_v3_final_report,
+)
 from .state import WorkflowState, WorkflowStateStore
 from .stats import TaskStatsCollector, WorkflowStatsTracker
 
@@ -157,7 +161,7 @@ def build_workflow_stats_v3(
             staged_inputs=staged_inputs,
             step_outputs=outputs,
         )
-        duration = None
+        duration = 0.0
         if record.submitted_at is not None and record.completed_at is not None:
             duration = round(record.completed_at - record.submitted_at, 2)
         failed_conformers = 0
@@ -256,6 +260,8 @@ def finalize_workflow_v3(
     the execution-progress authority, the manifest is the completed-output
     publication). Stats are written before the manifest so a crash mid-write
     can never publish a manifest without its stats; both writes are atomic.
+    The public report sidecars (text report + lowest-energy XYZ beside the
+    original input) reuse the V1 presenter verbatim — presentation only.
     """
     final_stats = build_workflow_stats_v3(
         work_dir=work_dir,
@@ -265,6 +271,12 @@ def finalize_workflow_v3(
         staged_inputs=staged_inputs,
         binding=binding,
     )
+
+    final_output = final_stats["final_output"] or (
+        staged_inputs[0] if len(staged_inputs) == 1 else list(staged_inputs)
+    )
+    emit_final_report_and_lowest(final_output, list(state.original_inputs), final_stats, logger)
+
     write_atomic_json(os.path.join(work_dir, WORKFLOW_STATS_FILE), final_stats)
 
     terminal_outputs: dict[str, list[str]] = {

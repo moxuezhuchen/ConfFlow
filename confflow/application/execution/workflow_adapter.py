@@ -20,11 +20,16 @@ import threading
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, NoReturn, Protocol
 
 from ...artifact_json import write_atomic_json
 from ...config.canonical import require_executable_workflow_file
-from ...contract import OUTPUT_MANIFEST_SCHEMA
+from ...contract import (
+    OUTPUT_MANIFEST_SCHEMA,
+    OUTPUT_MANIFEST_SCHEMA_V2,
+    WORKFLOW_STATS_SCHEMA,
+    WORKFLOW_STATS_SCHEMA_V2,
+)
 from ...core.exceptions import StopRequestedError
 from ...workflow.engine import run_workflow as default_workflow_runner
 from .errors import ErrorCode, ExecutionServiceError
@@ -55,9 +60,25 @@ __all__ = [
     "build_workflow_service",
     "open_control_service",
     "run_workflow_through_service",
+    "step_record_identity",
 ]
 
 _EXECUTION_IDENTITY_FILE = ".confflow_execution_identity.json"
+
+
+def step_record_identity(record: Any) -> str:
+    """Return the durable step identity of a v1 or v2 state record (PD-8).
+
+    V1 records answer ``name`` (the V2-workflow dirname-bound identity), V2
+    records answer ``id`` (the stable step ID). The label never enters a
+    durable service checkpoint id.
+    """
+    identity = getattr(record, "name", None) or getattr(record, "id", None)
+    if not identity:
+        raise ExecutionServiceError(
+            ErrorCode.INTERNAL, "workflow step record carries no durable identity"
+        )
+    return str(identity)
 
 
 class WorkflowRunner(Protocol):
@@ -206,7 +227,7 @@ class ServiceWorkflowExecutor(WorkflowExecutor):
                 if status in {"pending", "running"}:
                     return
                 checkpoint_id = (
-                    f"checkpoint.{getattr(record, 'name', 'step')}."
+                    f"checkpoint.{step_record_identity(record)}."
                     f"{getattr(record, 'fail_count', 0)}.{status}"
                 )
                 lifecycle.checkpoint(checkpoint_id)
@@ -704,14 +725,8 @@ def _request_digest(spec: WorkflowRunSpec) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
-def _load_artifacts(work_dir: str) -> tuple[Artifact, ...]:
-    path = Path(work_dir) / "output_manifest.json"
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return ()
-    if not isinstance(payload, dict) or payload.get("content_schema") != OUTPUT_MANIFEST_SCHEMA:
-        return ()
+def _load_artifacts_v1(payload: dict[str, Any], work_dir: str) -> tuple[Artifact, ...]:
+    """Legacy v1 projection — behavior byte-identical to the historical loader."""
     terminals = payload.get("terminals")
     if not isinstance(terminals, dict):
         return ()
@@ -742,13 +757,119 @@ def _load_artifacts(work_dir: str) -> tuple[Artifact, ...]:
     return tuple(artifacts)
 
 
+_V2_TERMINAL_FIELDS = {"id", "label", "artifacts"}
+
+
+def _reject_manifest(message: str) -> NoReturn:
+    raise ExecutionServiceError(ErrorCode.ARTIFACT_INTEGRITY_FAILED, message)
+
+
+def _load_artifacts_v2(payload: dict[str, Any], work_dir: str) -> tuple[Artifact, ...]:
+    """Strict v2 projection — RFC §17 terminals ``[{id, label, artifacts}]``.
+
+    The manifest is never trusted: the closed field set is enforced, artifact
+    paths must be relative and stay inside the work root, and every declared
+    artifact must exist. Any violation fails closed instead of silently
+    dropping outputs.
+    """
+    unknown = sorted(set(payload) - {"content_schema", "terminals"})
+    if unknown:
+        _reject_manifest(f"output manifest v2 has unknown fields: {', '.join(unknown)}")
+    terminals = payload.get("terminals")
+    if not isinstance(terminals, list):
+        _reject_manifest("output manifest v2 'terminals' must be a list")
+    root = Path(work_dir).resolve()
+    artifacts: list[Artifact] = []
+    for terminal in terminals:
+        if not isinstance(terminal, dict):
+            _reject_manifest("output manifest v2 terminal must be an object")
+        unknown = sorted(set(terminal) - _V2_TERMINAL_FIELDS)
+        if unknown:
+            _reject_manifest(
+                f"output manifest v2 terminal has unknown fields: {', '.join(unknown)}"
+            )
+        step_id = terminal.get("id")
+        if not isinstance(step_id, str) or not step_id:
+            _reject_manifest("output manifest v2 terminal 'id' must be a non-empty string")
+        label = terminal.get("label")
+        if label is not None and not isinstance(label, str):
+            _reject_manifest(f"output manifest v2 terminal {step_id!r} label must be a string")
+        values = terminal.get("artifacts")
+        if not isinstance(values, list) or any(not isinstance(value, str) for value in values):
+            _reject_manifest(
+                f"output manifest v2 terminal {step_id!r} artifacts must be a list of strings"
+            )
+        for value in values:
+            if Path(value).is_absolute() or ".." in Path(value).parts:
+                _reject_manifest(
+                    f"output manifest v2 artifact path for terminal {step_id!r} "
+                    f"is not work-root relative: {value!r}"
+                )
+            candidate = (root / value).resolve()
+            try:
+                relative = candidate.relative_to(root).as_posix()
+            except ValueError:
+                _reject_manifest(
+                    f"output manifest v2 artifact path escapes the work root: {value!r}"
+                )
+            if not candidate.is_file():
+                _reject_manifest(
+                    f"output manifest v2 artifact for terminal {step_id!r} "
+                    f"is missing: {value!r}"
+                )
+            artifacts.append(
+                Artifact(
+                    terminal=step_id,
+                    path=relative,
+                    sha256=_file_digest(str(candidate)),
+                    size=candidate.stat().st_size,
+                    content_schema=OUTPUT_MANIFEST_SCHEMA_V2,
+                )
+            )
+    return tuple(artifacts)
+
+
+def _load_artifacts(work_dir: str) -> tuple[Artifact, ...]:
+    """Load run artifacts through strict schema/version dispatch (R4.5).
+
+    v1 manifests project through the untouched legacy reader, v2 manifests
+    through the strict stable-ID reader. Unknown or malformed schema
+    identifiers fail closed — a v2 parse failure is never silently re-read
+    as v1.
+    """
+    path = Path(work_dir) / "output_manifest.json"
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return ()
+    if not isinstance(payload, dict):
+        return ()
+    schema = payload.get("content_schema")
+    if schema == OUTPUT_MANIFEST_SCHEMA:
+        return _load_artifacts_v1(payload, work_dir)
+    if schema == OUTPUT_MANIFEST_SCHEMA_V2:
+        return _load_artifacts_v2(payload, work_dir)
+    _reject_manifest(
+        f"unsupported output manifest content_schema: {schema!r}; expected "
+        f"{OUTPUT_MANIFEST_SCHEMA!r} or {OUTPUT_MANIFEST_SCHEMA_V2!r}"
+    )
+
+
 def _load_stats(work_dir: str) -> dict[str, Any] | None:
     path = Path(work_dir) / "workflow_stats.json"
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return None
-    return value if isinstance(value, dict) else None
+    if not isinstance(value, dict):
+        return None
+    schema = value.get("content_schema")
+    if schema is not None and schema not in {WORKFLOW_STATS_SCHEMA, WORKFLOW_STATS_SCHEMA_V2}:
+        raise ExecutionServiceError(
+            ErrorCode.ARTIFACT_INTEGRITY_FAILED,
+            f"unsupported workflow stats content_schema: {schema!r}",
+        )
+    return value
 
 
 def _load_completed_stats(

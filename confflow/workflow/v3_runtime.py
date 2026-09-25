@@ -313,6 +313,7 @@ def run_v3_workflow(
     input_xyz: list[str],
     config_file: str,
     work_dir: str,
+    original_input_files: list[str] | None = None,
     resume: bool = False,
     verbose: bool = False,
     pause_beacon_file: str | None = None,
@@ -335,7 +336,7 @@ def run_v3_workflow(
     after compatibility may anything be staged or mutated.
     """
     del verbose  # the internal seam keeps output quiet; presenters are R4.5
-    plan = build_workflow_plan(input_xyz, config_file)
+    plan = build_workflow_plan(input_xyz, config_file, original_input_files=original_input_files)
     if not isinstance(plan, WorkflowV3Plan):
         raise ConfFlowError(
             "the V3 runtime seam executes Workflow V3 documents only; use the "

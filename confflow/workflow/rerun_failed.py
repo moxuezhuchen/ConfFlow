@@ -6,10 +6,22 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from ..calc.runner import CalcStepRequest, CalcStepRunner
-from ..config.canonical import require_executable_workflow_file, resolve_calc_step
+from ..config.canonical import (
+    WORKFLOW_SCHEMA_VERSION_V3,
+    detect_schema_version,
+    load_raw_mapping,
+    parse_v3_document,
+    require_executable_workflow_file,
+    resolve_calc_step,
+    resolve_step_semantic_params,
+    validate_workflow_definition,
+)
+from ..config.canonical.schema import SchemaProfile
+from ..config.canonical.validation import ValidationProfile
 from ..config.models import load_workflow_model
 from ..core.exceptions import ConfigurationError
 from ..core.io import read_xyz_file
@@ -64,6 +76,115 @@ def _select_step(steps: list[dict[str, Any]], step_ref: str) -> tuple[int, dict[
     return matches[0]
 
 
+def _select_step_v3(steps: list[dict[str, Any]], step_ref: str) -> tuple[int, dict[str, Any]]:
+    """V3 selector — the stable step ID is the only durable selector.
+
+    Labels and 1-based indexes are presentation/legacy concepts and never
+    select a V3 step (duplicate labels would be ambiguous by construction).
+    """
+    ref = step_ref.strip()
+    if not ref:
+        raise RerunFailedUsageError("--step must not be empty")
+    for index, step in enumerate(steps):
+        if str(step.get("id", "")) == ref:
+            return index, step
+    raise RerunFailedUsageError(
+        f"No workflow step with stable id '{ref}' was found; V3 rerun-failed "
+        "selects by stable step id only"
+    )
+
+
+def _run_rerun_failed_v3(
+    *,
+    config_file: str,
+    step_dir: str,
+    step_ref: str,
+    output_dir: str | None,
+) -> RerunFailedResult:
+    """Rerun failed conformers for one Workflow-V3 calc step (stable-ID identity)."""
+    raw = load_raw_mapping(config_file)
+    errors = [diagnostic for diagnostic in validate_workflow_definition(raw) if diagnostic.is_error]
+    if errors:
+        raise RerunFailedUsageError("; ".join(f"{d.code}: {d}" for d in errors))
+    definition = parse_v3_document(raw, profile=SchemaProfile.DOCUMENT)
+    steps = [
+        {
+            "id": step.id,
+            "name": step.label or step.id,
+            "type": step.type,
+            "enabled": step.enabled,
+            "params": resolve_step_semantic_params(
+                step, definition, profile=ValidationProfile.RUNNABLE
+            ),
+        }
+        for step in definition.steps
+        if step.id is not None
+    ]
+    global_options = definition.global_options
+    sandbox_root = resolve_sandbox_root(global_options.__dict__)
+
+    resolved_step_dir = validate_managed_path(
+        step_dir,
+        label="step_dir",
+        sandbox_root=sandbox_root,
+    )
+    if not os.path.isdir(resolved_step_dir):
+        raise RerunFailedUsageError(f"Step directory does not exist: {resolved_step_dir}")
+
+    failed_path = os.path.join(resolved_step_dir, "failed.xyz")
+    if not os.path.exists(failed_path):
+        raise RerunFailedRuntimeError(f"failed.xyz was not found in step directory: {failed_path}")
+    input_count = _read_conformer_count(failed_path, label="failed.xyz")
+
+    step_index, step = _select_step_v3(steps, step_ref)
+    step_type = str(step.get("type", "")).lower()
+    if step_type not in {"calc", "task"}:
+        raise RerunFailedUsageError(
+            f"Step '{step['id']}' is type '{step_type}', not calc/task; "
+            "V3 rerun-failed applies to calc steps only"
+        )
+    if Path(resolved_step_dir).name != str(step.get("id")):
+        raise RerunFailedUsageError(
+            f"Step directory {resolved_step_dir} does not match the selected V3 step "
+            f"steps/{step['id']}; V3 step directories are keyed by stable id"
+        )
+
+    rerun_dir = _resolve_output_dir(resolved_step_dir, output_dir, sandbox_root=sandbox_root)
+    params = step.get("params", {}) or {}
+    if not isinstance(params, dict):
+        raise ConfigurationError(f"Step '{step['id']}' params must be a dict")
+
+    calc_config = resolve_calc_step(params, global_options)
+    configure_default_refine()
+    result = CalcStepRunner().run(
+        CalcStepRequest(
+            step_name=str(step.get("id")),
+            step_dir=rerun_dir,
+            input_xyz=failed_path,
+            config=calc_config,
+        )
+    )
+
+    output_count = 0
+    if os.path.exists(result.output_path):
+        output_count = len(read_xyz_file(result.output_path, parse_metadata=True, strict=False))
+
+    failed_count = 0
+    rerun_failed_path = os.path.join(rerun_dir, "failed.xyz")
+    if os.path.exists(rerun_failed_path):
+        failed_count = len(read_xyz_file(rerun_failed_path, parse_metadata=True, strict=False))
+
+    return RerunFailedResult(
+        failed_path=failed_path,
+        config_file=os.path.abspath(config_file),
+        step_label=str(step.get("id")),
+        output_dir=rerun_dir,
+        input_count=input_count,
+        output_count=output_count,
+        failed_count=failed_count,
+    )
+
+
 def _read_conformer_count(path: str, *, label: str) -> int:
     try:
         conformers = read_xyz_file(path, parse_metadata=True, strict=True)
@@ -105,10 +226,19 @@ def run_rerun_failed(
         raise RerunFailedUsageError("--step is required with --rerun-failed")
 
     # Execution-capability preflight (R3.5): a V3 document is refused before
-    # any state/artifact access — a V3 stable id must never be resolved
-    # against V1 name/dirname state, and no rerun output directory may be
-    # created for it. Side-effect free.
+    # any state/artifact access while V3 execution is capability-blocked, and
+    # a V3 document is never resolved against V1 name/dirname state. Side
+    # effect free.
     require_executable_workflow_file(config_file)
+
+    raw = load_raw_mapping(config_file)
+    if detect_schema_version(raw) == WORKFLOW_SCHEMA_VERSION_V3:
+        return _run_rerun_failed_v3(
+            config_file=config_file,
+            step_dir=step_dir,
+            step_ref=step_ref,
+            output_dir=output_dir,
+        )
 
     workflow = load_workflow_model(config_file)
     global_config = workflow.global_options

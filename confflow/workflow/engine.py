@@ -21,7 +21,7 @@ from ..calc.executor import CalcExecutor
 from ..config.canonical import build_workflow_binding, require_executable, resolve_calc_step
 from ..config.models import GlobalOptions
 from ..core import io as io_xyz
-from ..core.exceptions import ConfFlowError, StopRequestedError
+from ..core.exceptions import StopRequestedError
 from ..core.path_policy import resolve_sandbox_root, validate_managed_path
 from ..core.types import TaskStatus
 from ..core.utils import (
@@ -50,6 +50,7 @@ from .stats import (
 from .step_handlers import StepExecutionResult, _resolve_chk_input_dir
 from .step_handlers import run_calc_step as step_run_calc_step
 from .step_handlers import run_confgen_step as step_run_confgen_step
+from .v3_runtime import run_v3_workflow
 from .validation import validate_inputs_compatible
 
 __all__ = [
@@ -175,12 +176,22 @@ def run_workflow(
     # prevalidation, runtime initialization and any state/dirname mutation.
     require_executable(workflow_plan_source_version(plan))
     if not isinstance(plan, WorkflowPlan):
-        # Unreachable while CAPABILITIES gates V3 execution off; kept as the
-        # narrowing boundary so V3 runtime concepts cannot leak into this V1
-        # engine even if the table is later edited carelessly.
-        raise ConfFlowError(
-            "Workflow V3 execution requires the R4 state/binding runtime; "
-            f"refused after planning ({plan.source_version})."
+        # Public Workflow V3 dispatch (R4.5): the accepted internal runtime
+        # seam is the single V3 execution core — the public path, the service
+        # and the worker all share it, and the V1 engine body below is never
+        # reached by a V3 document.
+        return run_v3_workflow(
+            input_xyz=input_xyz,
+            config_file=config_file,
+            work_dir=work_dir,
+            original_input_files=original_input_files,
+            resume=resume,
+            verbose=verbose,
+            pause_beacon_file=pause_beacon_file,
+            cancel_beacon_file=cancel_beacon_file,
+            step_started_callback=step_started_callback,
+            on_step_status_change=on_step_status_change,
+            calc_executor=calc_executor,
         )
     input_files = plan.input_files
     original_inputs = plan.original_inputs
