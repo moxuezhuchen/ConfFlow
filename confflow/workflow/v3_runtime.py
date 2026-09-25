@@ -51,6 +51,7 @@ from .state import (
     build_initial_state_v2,
 )
 from .stats import CheckpointManager, FailureTracker
+from .v3_dataflow import resolve_effective_sources_v3, validate_effective_dataflow_v3
 
 __all__ = [
     "RuntimeStepV3",
@@ -336,6 +337,17 @@ def run_v3_workflow(
             "V2 engine for legacy configurations"
         )
 
+    # Execution-critical effective-dataflow preflight (minimal R6): a
+    # known-invalid workflow is rejected here — before any context
+    # resolution, directory creation, state mutation or handler invocation.
+    # Pure function; zero side effects.
+    dataflow_issues = validate_effective_dataflow_v3(
+        plan, external_input_count=len(plan.input_files)
+    )
+    if dataflow_issues:
+        details = "; ".join(str(issue) for issue in dataflow_issues)
+        raise ConfFlowError(f"effective dataflow validation failed: {details}")
+
     context = resolve_execution_context_v3(plan, input_files=plan.input_files)
     from .binding_v2 import build_workflow_binding_v2
 
@@ -407,17 +419,24 @@ def run_v3_workflow(
     initial_input: str | list[str] = (
         runtime.staged_inputs[0] if len(runtime.staged_inputs) == 1 else list(runtime.staged_inputs)
     )
+    # Single bypass authority (minimal R6): runtime input resolution consumes
+    # the same effective-source resolver the preflight validated — never a
+    # second bypass algorithm.
+    effective_sources = resolve_effective_sources_v3(
+        plan, external_input_count=len(runtime.staged_inputs)
+    )
     outputs: dict[str, str | list[str]] = {}
 
     def _resolve_inputs(step: RuntimeStepV3) -> str | list[str]:
-        if not step.inputs:
-            return initial_input
         resolved: list[str] = []
-        for predecessor in step.inputs:
-            output = outputs.get(predecessor)
+        for kind, value in effective_sources[step.id]:
+            if kind == "external":
+                resolved.append(runtime.staged_inputs[int(value) - 1])
+                continue
+            output = outputs.get(value)
             if output is None:
                 raise ConfFlowError(
-                    f"step {step.id!r} depends on {predecessor!r}, which produced no output"
+                    f"step {step.id!r} depends on {value!r}, which produced no output"
                 )
             if isinstance(output, list):
                 resolved.extend(output)

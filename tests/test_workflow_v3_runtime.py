@@ -294,7 +294,7 @@ class TestFreshRuns:
         assert state.steps["s002"].status == "skipped"
         assert result["step_outputs"]["s003"].endswith("steps/s003/result.xyz")
 
-    def test_e8_unsupported_effective_cardinality_fails_closed(
+    def test_e8_unsupported_effective_cardinality_rejected_before_side_effects(
         self, tmp_path: Path, monkeypatch
     ) -> None:
         handlers = _FakeHandlers(monkeypatch)
@@ -310,14 +310,45 @@ class TestFreshRuns:
             },
             {"id": "s004", "type": "calc", "inputs": ["s003"], "params": {"keyword": "HF"}},
         ]
+        # Minimal R6: the known structural error is a preflight rejection —
+        # no executor invocation, no state file, no staging, no directories.
+        with pytest.raises(ConfFlowError, match="effective cardinality"):
+            _run_steps(tmp_path, steps)
+        assert handlers.calc_calls == []
+        assert handlers.confgen_calls == []
+        assert not (tmp_path / "work" / ".workflow_state.json").exists()
+        assert not (tmp_path / "work" / "external_inputs").exists()
+        assert not (tmp_path / "work" / "steps").exists()
+
+    def test_e8b_runtime_cardinality_guard_survives_preflight_drift(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """Defensive fail-closed (item 70).
+
+        A caller that bypasses the R6 preflight still hits the runtime guard
+        before any handler runs.
+        """
+        handlers = _FakeHandlers(monkeypatch)
+        import confflow.workflow.v3_runtime as v3_runtime
+
+        monkeypatch.setattr(v3_runtime, "validate_effective_dataflow_v3", lambda *a, **kw: ())
+        steps = [
+            {"id": "s001", "type": "confgen", "inputs": [], "params": {"chains": ["1-2"]}},
+            {"id": "s002", "type": "confgen", "inputs": [], "params": {"chains": ["1-2"]}},
+            {
+                "id": "s003",
+                "type": "calc",
+                "enabled": False,
+                "inputs": ["s001", "s002"],
+                "params": {"itask": "opt"},
+            },
+            {"id": "s004", "type": "calc", "inputs": ["s003"], "params": {"keyword": "HF"}},
+        ]
         with pytest.raises(ConfFlowError, match="effective inputs"):
-            self._run(tmp_path, steps, handlers)
-        # The failing step is recorded failed by ID; nothing else is corrupted.
-        state = WorkflowStateV2Store(str(tmp_path / "work")).load()
-        assert state is not None
-        assert state.steps["s004"].status == "failed"
-        assert "effective inputs" in (state.steps["s004"].error or "")
-        assert state.final_status == "failed"
+            _run_steps(tmp_path, steps)
+        # The defensive guard fires at the consuming step, before s004's
+        # executor is invoked; upstream steps already ran.
+        assert [call["step_name"] for call in handlers.calc_calls] == []
 
     def test_e9_deterministic_stable_id_schedule(self, tmp_path: Path, monkeypatch) -> None:
         handlers = _FakeHandlers(monkeypatch)
