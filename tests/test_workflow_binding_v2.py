@@ -21,6 +21,7 @@ from confflow.config.canonical import (
     CANONICALIZATION_VERSION,
     CAPABILITIES,
     WORKFLOW_SCHEMA_VERSION_V3,
+    can_execute,
     workflow_schema_sha256_v3,
 )
 from confflow.workflow.binding_v2 import (
@@ -124,10 +125,12 @@ def _binding(plan: WorkflowV3Plan, **kwargs: Any) -> WorkflowBindingV2:
 
 
 # ---------------------------------------------------------------------------
-# Capability freeze
+# Capability: V3 execution enabled post-flip, future schemas fail closed
 # ---------------------------------------------------------------------------
-def test_v3_execution_capability_stays_false() -> None:
-    assert CAPABILITIES[WORKFLOW_SCHEMA_VERSION_V3].execute is False
+def test_v3_execution_capability_allows_execution() -> None:
+    assert CAPABILITIES[WORKFLOW_SCHEMA_VERSION_V3].execute is True
+    assert not can_execute("confflow.workflow.v4")
+    assert not can_execute("confflow.workflow.v99")
 
 
 # ---------------------------------------------------------------------------

@@ -513,6 +513,41 @@ class TestService:
 # WK — worker path
 # ---------------------------------------------------------------------------
 class TestWorker:
+    def test_wk1_worker_direct_path_preflight_refuses_before_run_paths(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """Worker direct path fast-fails before ensure_run_paths creates the run layout."""
+        from confflow.application.execution.state_root import StateRoot
+        from confflow.config.canonical.execution_versions import CAPABILITIES, VersionCapability
+        from confflow.core.exceptions import ConfFlowError
+        from confflow.worker_attempt import run_worker_attempt
+
+        monkeypatch.setitem(
+            CAPABILITIES,
+            WORKFLOW_SCHEMA_VERSION_V3,
+            VersionCapability(parse=True, execute=False),
+        )
+        input_xyz = _write_xyz(tmp_path / "input.xyz")
+        config = _v3_config(tmp_path / "wf.yaml")
+        state_root = tmp_path / "state"
+        state_root.mkdir(mode=0o700)
+        root = StateRoot.resolve(state_root)
+
+        with pytest.raises(ConfFlowError, match="requires state/binding v2"):
+            run_worker_attempt(
+                root=root,
+                run_id="wk1-refused-run",
+                staged_config=str(config),
+                staged_tasks=[{"input_xyz": str(input_xyz), "work_dir": str(tmp_path / "work")}],
+                resume=False,
+                workflow_runner=run_workflow,
+                service_builder=build_workflow_service,
+            )
+
+        assert not (state_root / "v1" / "runs" / "wk1-refused-run").exists()
+        assert not (state_root / "v1" / "repository.sqlite3").exists()
+        assert not (tmp_path / "work").exists()
+
     def test_wk2_wk6_worker_computes_site_c_and_manifest_v2(
         self, tmp_path: Path, monkeypatch
     ) -> None:
@@ -710,6 +745,100 @@ class TestRemote:
         assert state["final_status"] == "completed"
         manifest = json.loads((work / "output_manifest.json").read_text(encoding="utf-8"))
         assert manifest["content_schema"] == "confflow.output_manifest.v2"
+
+    def test_rm2_remote_worker_local_c(self, tmp_path: Path, monkeypatch) -> None:
+        """Prove durable BindingV2 in work_dir has C computed from worker executable Y, NOT controller X.
+
+        Simulates controller host having chemistry executable X, while worker
+        execution host has chemistry executable Y (different path and hash).
+        The durable binding in work_dir records execution_fingerprint C finalized
+        at the worker execution site from Y, completely independent of controller's X.
+        """
+        # 1. Controller execution environment: has executable X
+        controller_bin = tmp_path / "controller_bin"
+        controller_bin.mkdir(parents=True, exist_ok=True)
+        exe_x = controller_bin / "orca"
+        exe_x.write_text("#!/bin/sh\n# Controller ORCA X\nexit 0\n", encoding="utf-8")
+        exe_x.chmod(0o755)
+
+        # 2. Worker execution environment: has executable Y (different hash and path)
+        worker_bin = tmp_path / "worker_bin"
+        worker_bin.mkdir(parents=True, exist_ok=True)
+        exe_y = worker_bin / "orca"
+        exe_y.write_text("#!/bin/sh\n# Worker ORCA Y (distinct binary)\nexit 0\n", encoding="utf-8")
+        exe_y.chmod(0o755)
+
+        assert exe_x.read_bytes() != exe_y.read_bytes()
+        assert exe_x.resolve() != exe_y.resolve()
+
+        # Config references configured executable 'orca' (resolved via PATH on each host)
+        config = _v3_config(tmp_path / "wf.yaml", orca_path="orca")
+        input_xyz = _write_xyz(tmp_path / "input.xyz")
+        work = tmp_path / "results" / "task0_confflow_work"
+        work.parent.mkdir(parents=True, exist_ok=True)
+
+        # Controller resolves its site C based on executable X
+        from confflow.workflow.execution_context import (
+            resolve_execution_context_v3,
+            workflow_execution_fingerprint_v3,
+        )
+        from confflow.workflow.plan import WorkflowV3Plan, build_workflow_plan
+
+        orig_path = os.environ.get("PATH", "")
+        monkeypatch.setenv("PATH", f"{controller_bin}:{orig_path}")
+
+        plan_controller = build_workflow_plan([str(input_xyz)], str(config))
+        assert isinstance(plan_controller, WorkflowV3Plan)
+        context_controller = resolve_execution_context_v3(
+            plan_controller, input_files=plan_controller.input_files
+        )
+        controller_c = workflow_execution_fingerprint_v3(plan_controller, context_controller)
+
+        # Controller queues the remote run
+        service, handoff_path = _queue_remote(
+            tmp_path, run_id="rm2-run", config=config, input_xyz=input_xyz, work=work
+        )
+
+        # 3. Worker executes the attempt in its own execution environment (PATH pointing to worker_bin)
+        monkeypatch.setenv("PATH", f"{worker_bin}:{orig_path}")
+
+        # Compute worker site C from executable Y
+        plan_worker = build_workflow_plan([str(input_xyz)], str(config))
+        context_worker = resolve_execution_context_v3(
+            plan_worker, input_files=plan_worker.input_files
+        )
+        worker_c = workflow_execution_fingerprint_v3(plan_worker, context_worker)
+
+        # Prove the two site fingerprints are strictly different
+        assert controller_c != worker_c
+
+        # Worker attempts and completes the execution
+        assert (
+            _worker_attempt(
+                tmp_path,
+                monkeypatch,
+                run_id="rm2-run",
+                handoff_path=handoff_path,
+                config=config,
+                input_xyz=input_xyz,
+                work=work,
+            )
+            is RunState.COMPLETED
+        )
+        assert service.status("rm2-run").state is RunState.COMPLETED
+
+        # 4. Verify durable BindingV2 in work_dir
+        binding = _binding(work)
+        assert binding["schema"] == "confflow.workflow_binding.v2"
+
+        # C in durable binding MUST match worker_c (computed from Y), and NOT controller_c (from X)
+        assert binding["execution_fingerprint"] == worker_c
+        assert binding["execution_fingerprint"] != controller_c
+
+        # Controller executable identity (path or hash) is nowhere in the durable binding
+        exe_x_sha = hashlib.sha256(exe_x.read_bytes()).hexdigest()
+        assert exe_x_sha not in json.dumps(binding)
+        assert str(exe_x) not in json.dumps(binding)
 
     def test_rm3_input_basename_transfer_does_not_move_c(self, tmp_path: Path, monkeypatch) -> None:
         """Prove renamed input bytes during 'transfer' do not move C.

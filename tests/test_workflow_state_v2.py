@@ -19,6 +19,7 @@ import pytest
 from confflow.config.canonical import (
     CAPABILITIES,
     WORKFLOW_SCHEMA_VERSION_V3,
+    can_execute,
     workflow_definition_fingerprint_v3,
 )
 from confflow.workflow.plan import WorkflowV3Plan, build_workflow_plan
@@ -604,10 +605,12 @@ def test_payload_is_deterministic_across_instances(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Boundaries that must not move this round
+# Capability: V3 execution enabled post-flip, future schemas fail closed
 # ---------------------------------------------------------------------------
-def test_v3_execution_capability_stays_false() -> None:
-    assert CAPABILITIES[WORKFLOW_SCHEMA_VERSION_V3].execute is False
+def test_v3_execution_capability_allows_execution() -> None:
+    assert CAPABILITIES[WORKFLOW_SCHEMA_VERSION_V3].execute is True
+    assert not can_execute("confflow.workflow.v4")
+    assert not can_execute("confflow.workflow.v99")
 
 
 def test_v1_state_payload_has_no_source_version_leakage(tmp_path: Path) -> None:

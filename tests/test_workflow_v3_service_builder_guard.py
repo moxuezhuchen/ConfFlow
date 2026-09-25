@@ -22,10 +22,13 @@ import yaml
 
 from confflow.application.execution.workflow_adapter import build_workflow_service
 from confflow.config.canonical import CAPABILITIES, WORKFLOW_SCHEMA_VERSION_V3
-from confflow.core.exceptions import ConfFlowError
 from confflow.worker_attempt import run_worker_attempt
 
 V3 = "confflow.workflow.v3"
+
+
+class ZeroSideEffectProbe(RuntimeError):
+    pass
 
 
 def _write_xyz(path: Path) -> Path:
@@ -66,12 +69,19 @@ def _assert_no_persistent_traces(state_root: Path) -> None:
     assert not list(state_root.rglob("steps"))
 
 
-def test_capability_table_stays_execute_false() -> None:
-    assert CAPABILITIES[WORKFLOW_SCHEMA_VERSION_V3].execute is False
+def test_capability_table_allows_v3_execution() -> None:
+    """Post-flip: the builder guard admits V3 and still blocks unknown versions."""
+    assert CAPABILITIES[WORKFLOW_SCHEMA_VERSION_V3].execute is True
 
 
 class TestBuilderDirectGuard:
-    def test_v3_spec_refused_before_any_persistent_side_effect(self, tmp_path: Path) -> None:
+    def test_v3_spec_reaches_the_service_builder(self, tmp_path: Path) -> None:
+        """Post-flip: the builder guard admits V3 to the durable service.
+
+        The builder is the mandatory lowest shared boundary; it now creates
+        the state root for V3 (execution is legal) while the runner is still
+        never invoked by construction alone.
+        """
         xyz = _write_xyz(tmp_path / "input.xyz")
         config = _v3_config(tmp_path / "wf.yaml")
         state_root = tmp_path / "state_root"  # does not exist yet
@@ -85,22 +95,23 @@ class TestBuilderDirectGuard:
             config_file=str(config),
             work_dir=str(work_dir),
         )
-        with pytest.raises(ConfFlowError) as caught:
-            build_workflow_service(spec, state_root=state_root, workflow_runner=_NeverRunner())
-
-        assert "execution requires state/binding v2" in str(caught.value)
-        assert not state_root.exists()  # _ensure_state_root never ran (no mkdir)
-        _assert_no_persistent_traces(state_root)
-        assert not work_dir.exists()
+        service, executor = build_workflow_service(
+            spec, state_root=state_root, workflow_runner=_NeverRunner()
+        )
+        assert service is not None and executor is not None
+        # the builder itself created the durable state root for a legal version
+        assert state_root.exists()
+        # no attempt side effects: the runner was never built into a launch
+        assert not list(state_root.rglob(".workflow_state.json"))
+        assert not list(state_root.rglob("steps"))
 
 
 class TestWorkerDirectPathGuard:
-    def test_v3_worker_attempt_refused_before_run_paths(self, tmp_path: Path) -> None:
-        """Refuse the worker direct path before it creates run paths.
+    def test_v3_worker_attempt_reaches_the_service_builder(self, tmp_path: Path) -> None:
+        """Post-flip: the worker direct path passes the preflight.
 
-        The worker path (control_worker → run_worker_attempt →
-        build_workflow_service) used to bypass run_workflow_through_service;
-        the gate must now fire before run_worker_attempt creates run paths.
+        The preflight is a fast-fail for non-executable versions; a legal V3
+        config now proceeds to ensure_run_paths and the service builder.
         """
         from confflow.application.execution.state_root import StateRoot
 
@@ -112,11 +123,19 @@ class TestWorkerDirectPathGuard:
 
         launched: list[Any] = []
 
+        class _ProbeService:
+            def consume_queued_launch(self, run_id: str) -> Any:
+                raise ZeroSideEffectProbe(f"queued intent consumed for {run_id}")
+
+        class _ProbeExecutor:
+            def wait(self) -> None:  # pragma: no cover - never reached
+                raise AssertionError("executor must not wait for a probe")
+
         def _builder(spec: Any, **kwargs: Any) -> Any:
             launched.append(spec)
-            raise AssertionError("service builder must not be reached for a refused version")
+            return _ProbeService(), _ProbeExecutor()
 
-        with pytest.raises(ConfFlowError) as caught:
+        with pytest.raises(ZeroSideEffectProbe):
             run_worker_attempt(
                 root=root,
                 run_id="v3-worker-run",
@@ -127,11 +146,9 @@ class TestWorkerDirectPathGuard:
                 service_builder=_builder,
             )
 
-        assert "execution requires state/binding v2" in str(caught.value)
-        assert launched == []  # service never built, prepare never called
-        # ensure_run_paths must not have created the run layout either.
-        assert not (state_root / "v1" / "runs" / "v3-worker-run").exists()
-        assert not (state_root / "v1" / "repository.sqlite3").exists()
+        assert launched, "V3 worker attempt must now reach the service builder"
+        # ensure_run_paths created the run layout for the legal version.
+        assert (state_root / "v1" / "runs" / "v3-worker-run").exists()
         assert not list(state_root.rglob(".workflow_state.json"))
         assert not list(state_root.rglob("steps"))
 

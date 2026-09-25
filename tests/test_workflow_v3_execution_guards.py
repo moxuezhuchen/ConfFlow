@@ -21,7 +21,7 @@ from confflow.config.canonical import CAPABILITIES, WORKFLOW_SCHEMA_VERSION_V3
 from confflow.core.contracts import ExitCode
 from confflow.core.exceptions import ConfFlowError
 from confflow.workflow.engine import run_workflow
-from confflow.workflow.rerun_failed import run_rerun_failed
+from confflow.workflow.rerun_failed import RerunFailedUsageError, run_rerun_failed
 
 V3 = "confflow.workflow.v3"
 
@@ -91,30 +91,57 @@ def _fake_runner(monkeypatch) -> list[dict[str, Any]]:
 # ---------------------------------------------------------------------------
 # Capability table (§36 hard gate)
 # ---------------------------------------------------------------------------
-def test_v3_capability_table_stays_execute_false() -> None:
+def test_v3_capability_table_allows_execution() -> None:
+    """Post-flip: V3 parses and executes; unknown versions stay blocked."""
     assert CAPABILITIES[WORKFLOW_SCHEMA_VERSION_V3].parse is True
-    assert CAPABILITIES[WORKFLOW_SCHEMA_VERSION_V3].execute is False
+    assert CAPABILITIES[WORKFLOW_SCHEMA_VERSION_V3].execute is True
 
 
 # ---------------------------------------------------------------------------
 # Guard A — CLI preflight (50A)
 # ---------------------------------------------------------------------------
 class TestCliGuard:
-    def test_v3_execution_blocked_before_managed_path_side_effects(
-        self, tmp_path: Path, capsys
-    ) -> None:
+    def test_v3_cli_execution_reaches_the_public_stack(self, tmp_path: Path, monkeypatch) -> None:
+        """Post-flip the CLI preflight admits V3 to the public execution stack."""
+        import json as _json
+
+        def fake_calc(**kwargs):
+            step_dir = Path(kwargs["step_dir"])
+            output = step_dir / "result.xyz"
+            output.parent.mkdir(parents=True, exist_ok=True)
+            output.write_text("1\nfake E=-1.0\nH 0 0 0\n", encoding="utf-8")
+
+            class _Result:
+                output_path = str(output)
+                reused_existing = False
+                copied_multi_frame = False
+
+            return _Result()
+
+        def fake_confgen(**kwargs):
+            step_dir = Path(kwargs["step_dir"])
+            output = step_dir / "search.xyz"
+            output.parent.mkdir(parents=True, exist_ok=True)
+            output.write_text("2\nfake\nH 0 0 0\nH 0 0 1\n", encoding="utf-8")
+
+            class _Result:
+                output_path = str(output)
+                reused_existing = False
+                copied_multi_frame = False
+
+            return _Result()
+
+        monkeypatch.setattr("confflow.workflow.v3_runtime._run_calc_step", fake_calc)
+        monkeypatch.setattr("confflow.workflow.v3_runtime._run_confgen_step", fake_confgen)
         xyz = _write_xyz(tmp_path / "input.xyz")
         config = _v3_config(tmp_path / "wf.yaml")
         work = tmp_path / "work"
 
         result = cli_main([str(xyz), "-c", str(config), "-w", str(work)])
 
-        assert result == ExitCode.RUNTIME_ERROR
-        error = capsys.readouterr().err
-        assert "execution requires state/binding v2" in error
-        # No lease file, no converted-inputs directory, no state root.
-        assert not work.exists()
-        assert not list(tmp_path.glob("**/.confflow-work.lock"))
+        assert result == ExitCode.SUCCESS
+        manifest = _json.loads((work / "output_manifest.json").read_text(encoding="utf-8"))
+        assert manifest["content_schema"] == "confflow.output_manifest.v2"
 
     def test_v3_dry_run_still_allowed(self, tmp_path: Path, capsys) -> None:
         xyz = _write_xyz(tmp_path / "input.xyz")
@@ -128,79 +155,99 @@ class TestCliGuard:
 # ---------------------------------------------------------------------------
 # Guard B — service adapter, MANDATORY, before build_workflow_service (50B)
 # ---------------------------------------------------------------------------
+class ZeroSideEffectProbe(RuntimeError):
+    """Marker used to stop a public attempt right after the runner is admitted."""
+
+
+def _raise_probe() -> None:
+    raise ZeroSideEffectProbe("probe")
+
+
 class TestServiceAdapterGuard:
-    def test_v3_blocked_before_state_root_sqlite_or_prepare(
+    def test_v3_service_admits_v3_to_the_runner(
         self, tmp_path: Path, _fake_runner: list[dict[str, Any]]
     ) -> None:
+        """Prove the mandatory builder guard passes V3 through post-flip.
+
+        The runner IS the public engine, so the accepted runtime dispatch is
+        what the service now reaches for V3.
+        """
         xyz = _write_xyz(tmp_path / "input.xyz")
         config = _v3_config(tmp_path / "wf.yaml")
         work = tmp_path / "work"
         state_root = tmp_path / "state_root"
 
-        with pytest.raises(ConfFlowError) as caught:
+        with pytest.raises(ZeroSideEffectProbe) as caught:
             run_workflow_through_service(
                 input_xyz=[str(xyz)],
                 config_file=str(config),
                 work_dir=str(work),
                 state_root=str(state_root),
                 run_id="v3-run",
-                workflow_runner=lambda **kwargs: _fake_runner.append(kwargs) or {},
+                workflow_runner=lambda **kwargs: _fake_runner.append(kwargs) or _raise_probe(),
             )
 
-        assert "execution requires state/binding v2" in str(caught.value)
-        assert not state_root.exists()  # no _ensure_state_root
-        assert not state_root.glob("**/*.sqlite") if state_root.exists() else True
-        assert not work.exists()  # no run paths, no staging/work dirs
-        assert _fake_runner == []  # runner not called
-
-    def test_v3_resume_blocked_before_state_lookup(
-        self, tmp_path: Path, _fake_runner: list[dict[str, Any]]
-    ) -> None:
-        xyz = _write_xyz(tmp_path / "input.xyz")
-        config = _v3_config(tmp_path / "wf.yaml")
-        state_root = tmp_path / "state_root"
-
-        with pytest.raises(ConfFlowError):
-            run_workflow_through_service(
-                input_xyz=[str(xyz)],
-                config_file=str(config),
-                work_dir=str(tmp_path / "work"),
-                state_root=str(state_root),
-                run_id="v3-resume",
-                resume=True,
-                workflow_runner=lambda **kwargs: _fake_runner.append(kwargs) or {},
-            )
-
-        assert not state_root.exists()
-        assert _fake_runner == []
+        assert _fake_runner, "V3 must now reach the public runner"
+        assert isinstance(caught.value, ZeroSideEffectProbe)
 
 
 # ---------------------------------------------------------------------------
 # Guard C — engine, MANDATORY, before binding/runtime/state (50C)
 # ---------------------------------------------------------------------------
 class TestEngineGuard:
-    def test_v3_plans_then_blocks_before_any_runtime_side_effect(self, tmp_path: Path) -> None:
+    def test_v3_engine_dispatch_reaches_the_v3_runtime(self, tmp_path: Path, monkeypatch) -> None:
+        """Post-flip the public engine dispatches V3 to the accepted runtime."""
+        import json as _json
+
+        def fake_calc(**kwargs):
+            step_dir = Path(kwargs["step_dir"])
+            output = step_dir / "result.xyz"
+            output.parent.mkdir(parents=True, exist_ok=True)
+            output.write_text("1\nfake E=-1.0\nH 0 0 0\n", encoding="utf-8")
+
+            class _Result:
+                output_path = str(output)
+                reused_existing = False
+                copied_multi_frame = False
+
+            return _Result()
+
+        def fake_confgen(**kwargs):
+            step_dir = Path(kwargs["step_dir"])
+            output = step_dir / "search.xyz"
+            output.parent.mkdir(parents=True, exist_ok=True)
+            output.write_text("2\nfake\nH 0 0 0\nH 0 0 1\n", encoding="utf-8")
+
+            class _Result:
+                output_path = str(output)
+                reused_existing = False
+                copied_multi_frame = False
+
+            return _Result()
+
+        monkeypatch.setattr("confflow.workflow.v3_runtime._run_calc_step", fake_calc)
+        monkeypatch.setattr("confflow.workflow.v3_runtime._run_confgen_step", fake_confgen)
         xyz = _write_xyz(tmp_path / "input.xyz")
         config = _v3_config(tmp_path / "wf.yaml")
         work = tmp_path / "work"
 
-        with pytest.raises(ConfFlowError) as caught:
-            run_workflow([str(xyz)], str(config), str(work))
+        result = run_workflow([str(xyz)], str(config), str(work))
 
-        # Planning is legal for V3; the guard fires before the binding,
-        # resume prevalidation, runtime context, state or step directories.
-        assert "execution requires state/binding v2" in str(caught.value)
-        _no_runtime_traces(work)
+        state = _json.loads((work / ".workflow_state.json").read_text(encoding="utf-8"))
+        assert state["content_schema"] == "confflow.workflow_state.v2"
+        assert result["final_output"].endswith("steps/s002/result.xyz")
+        # the V1 dirname layout never appeared
+        assert not (work / "s001").exists() and not (work / "s002").exists()
 
-    def test_v3_engine_resume_blocks_before_state_store_load(self, tmp_path: Path) -> None:
+    def test_v3_engine_resume_requires_state_v2(self, tmp_path: Path) -> None:
         xyz = _write_xyz(tmp_path / "input.xyz")
         config = _v3_config(tmp_path / "wf.yaml")
         work = tmp_path / "work"
 
-        with pytest.raises(ConfFlowError):
+        with pytest.raises(ConfFlowError, match="no workflow state found"):
             run_workflow([str(xyz)], str(config), str(work), resume=True)
 
-        # No V1 state was ever looked up or mutated.
+        # No state was ever looked up successfully or mutated.
         _no_runtime_traces(work)
 
     def test_v2_engine_execution_unchanged(self, tmp_path: Path, monkeypatch) -> None:
@@ -240,11 +287,15 @@ def workflow_source_version_is_v2(plan: Any) -> bool:
 # Guard D — rerun-failed / resume preflight (RR1–RR4)
 # ---------------------------------------------------------------------------
 class TestRerunGuard:
-    def test_rr1_v3_rerun_failed_blocked(self, tmp_path: Path, capsys) -> None:
+    def test_rr1_v3_rerun_failed_stable_id_selects_only(self, tmp_path: Path) -> None:
+        """Prove rerun-failed selects by stable ID only post-flip.
+
+        A missing step directory keeps zero side effects.
+        """
         config = _v3_config(tmp_path / "wf.yaml")
         step_dir = tmp_path / "step_dir"
 
-        with pytest.raises(ConfFlowError) as caught:
+        with pytest.raises(RerunFailedUsageError) as caught:
             run_rerun_failed(
                 step_dir=str(step_dir),
                 config_file=str(config),
@@ -252,7 +303,7 @@ class TestRerunGuard:
                 output_dir=str(tmp_path / "rerun_out"),
             )
 
-        assert "execution requires state/binding v2" in str(caught.value)
+        assert "Step directory does not exist" in str(caught.value)
         # No rerun output directory was created and the step dir was never
         # probed for artifacts (stable ids never touch V1 state).
         assert not (tmp_path / "rerun_out").exists()

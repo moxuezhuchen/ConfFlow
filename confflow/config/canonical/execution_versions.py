@@ -43,7 +43,9 @@ class VersionCapability:
 #: The one capability table. Extensible to a future version by adding an entry.
 CAPABILITIES: dict[str, VersionCapability] = {
     WORKFLOW_SCHEMA_VERSION_V2: VersionCapability(parse=True, execute=True),
-    WORKFLOW_SCHEMA_VERSION_V3: VersionCapability(parse=True, execute=False),  # R4 flips `execute`
+    WORKFLOW_SCHEMA_VERSION_V3: VersionCapability(
+        parse=True, execute=True
+    ),  # R4 enables V3 execution
 }
 
 

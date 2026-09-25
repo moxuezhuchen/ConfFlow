@@ -12,9 +12,15 @@ import json
 from pathlib import Path
 from typing import Any
 
+import pytest
+
+from confflow.application.execution.errors import ErrorCode, ExecutionServiceError
+from confflow.application.execution.workflow_adapter import _load_artifacts, _load_stats
 from confflow.contract import (
     OUTPUT_MANIFEST_SCHEMA,
+    OUTPUT_MANIFEST_SCHEMA_V2,
     WORKFLOW_STATS_SCHEMA,
+    WORKFLOW_STATS_SCHEMA_V2,
 )
 from confflow.workflow.v3_runtime import run_v3_workflow
 from tests.test_workflow_v3_runtime import _FakeHandlers, _write_xyz
@@ -252,6 +258,179 @@ class TestStatsWriter:
         assert stats["final_conformers"] >= 1
         assert stats["definition_fingerprint"].startswith("sha256:")
         assert stats["execution_fingerprint"].startswith("sha256:")
+
+
+# ---------------------------------------------------------------------------
+# Manifest loader (M7–M11, STATS5-loader-side)
+# ---------------------------------------------------------------------------
+class TestManifestLoader:
+    def test_m7_v2_manifest_loaded_into_service_artifacts(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        _run(tmp_path, _STEPS, monkeypatch)
+        work = tmp_path / "work"
+        artifacts = _load_artifacts(str(work))
+        assert len(artifacts) == 1
+        artifact = artifacts[0]
+        assert artifact.terminal == "s002"
+        assert artifact.path == "steps/s002/result.xyz"
+        assert artifact.content_schema == OUTPUT_MANIFEST_SCHEMA_V2
+        assert artifact.size > 0
+        assert len(artifact.sha256) == 64
+
+    def test_m8_unknown_schema_fails_closed(self, tmp_path: Path) -> None:
+        work = tmp_path / "work"
+        work.mkdir()
+        manifest = work / "output_manifest.json"
+        manifest.write_text(
+            json.dumps({"content_schema": "confflow.output_manifest.v999", "terminals": []}),
+            encoding="utf-8",
+        )
+        with pytest.raises(ExecutionServiceError) as exc_info:
+            _load_artifacts(str(work))
+        assert exc_info.value.code is ErrorCode.ARTIFACT_INTEGRITY_FAILED
+
+    def test_m9_manifest_rejects_escaping_and_absolute_paths(self, tmp_path: Path) -> None:
+        work = tmp_path / "work"
+        work.mkdir()
+        manifest = work / "output_manifest.json"
+        outside = tmp_path / "outside.xyz"
+        outside.write_text("outside", encoding="utf-8")
+
+        for bad_path in ["/etc/passwd", str(outside), "../outside.xyz", "foo/../../outside.xyz"]:
+            manifest.write_text(
+                json.dumps(
+                    {
+                        "content_schema": OUTPUT_MANIFEST_SCHEMA_V2,
+                        "terminals": [{"id": "s001", "artifacts": [bad_path]}],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with pytest.raises(ExecutionServiceError) as exc_info:
+                _load_artifacts(str(work))
+            assert exc_info.value.code is ErrorCode.ARTIFACT_INTEGRITY_FAILED
+
+    def test_m10_manifest_rejects_missing_artifact(self, tmp_path: Path) -> None:
+        work = tmp_path / "work"
+        work.mkdir()
+        manifest = work / "output_manifest.json"
+        manifest.write_text(
+            json.dumps(
+                {
+                    "content_schema": OUTPUT_MANIFEST_SCHEMA_V2,
+                    "terminals": [{"id": "s001", "artifacts": ["steps/s001/missing.xyz"]}],
+                }
+            ),
+            encoding="utf-8",
+        )
+        with pytest.raises(ExecutionServiceError) as exc_info:
+            _load_artifacts(str(work))
+        assert exc_info.value.code is ErrorCode.ARTIFACT_INTEGRITY_FAILED
+
+    def test_m11_manifest_rejects_malformed_shape(self, tmp_path: Path) -> None:
+        work = tmp_path / "work"
+        work.mkdir()
+        manifest = work / "output_manifest.json"
+
+        # 1. Unknown field in top-level payload
+        manifest.write_text(
+            json.dumps({"content_schema": OUTPUT_MANIFEST_SCHEMA_V2, "terminals": [], "extra": 1}),
+            encoding="utf-8",
+        )
+        with pytest.raises(ExecutionServiceError) as exc_info:
+            _load_artifacts(str(work))
+        assert exc_info.value.code is ErrorCode.ARTIFACT_INTEGRITY_FAILED
+
+        # 2. Terminals is not a list
+        manifest.write_text(
+            json.dumps({"content_schema": OUTPUT_MANIFEST_SCHEMA_V2, "terminals": {}}),
+            encoding="utf-8",
+        )
+        with pytest.raises(ExecutionServiceError) as exc_info:
+            _load_artifacts(str(work))
+        assert exc_info.value.code is ErrorCode.ARTIFACT_INTEGRITY_FAILED
+
+        # 3. Terminal entry is not a dict
+        manifest.write_text(
+            json.dumps({"content_schema": OUTPUT_MANIFEST_SCHEMA_V2, "terminals": ["bad"]}),
+            encoding="utf-8",
+        )
+        with pytest.raises(ExecutionServiceError) as exc_info:
+            _load_artifacts(str(work))
+        assert exc_info.value.code is ErrorCode.ARTIFACT_INTEGRITY_FAILED
+
+        # 4. Unknown field in terminal entry
+        manifest.write_text(
+            json.dumps(
+                {
+                    "content_schema": OUTPUT_MANIFEST_SCHEMA_V2,
+                    "terminals": [{"id": "s001", "artifacts": [], "unknown_field": True}],
+                }
+            ),
+            encoding="utf-8",
+        )
+        with pytest.raises(ExecutionServiceError) as exc_info:
+            _load_artifacts(str(work))
+        assert exc_info.value.code is ErrorCode.ARTIFACT_INTEGRITY_FAILED
+
+        # 5. Missing or invalid id
+        manifest.write_text(
+            json.dumps(
+                {
+                    "content_schema": OUTPUT_MANIFEST_SCHEMA_V2,
+                    "terminals": [{"artifacts": []}],
+                }
+            ),
+            encoding="utf-8",
+        )
+        with pytest.raises(ExecutionServiceError) as exc_info:
+            _load_artifacts(str(work))
+        assert exc_info.value.code is ErrorCode.ARTIFACT_INTEGRITY_FAILED
+
+        # 6. Invalid label type
+        manifest.write_text(
+            json.dumps(
+                {
+                    "content_schema": OUTPUT_MANIFEST_SCHEMA_V2,
+                    "terminals": [{"id": "s001", "label": 123, "artifacts": []}],
+                }
+            ),
+            encoding="utf-8",
+        )
+        with pytest.raises(ExecutionServiceError) as exc_info:
+            _load_artifacts(str(work))
+        assert exc_info.value.code is ErrorCode.ARTIFACT_INTEGRITY_FAILED
+
+        # 7. Artifacts is not a list of strings
+        manifest.write_text(
+            json.dumps(
+                {
+                    "content_schema": OUTPUT_MANIFEST_SCHEMA_V2,
+                    "terminals": [{"id": "s001", "artifacts": [123]}],
+                }
+            ),
+            encoding="utf-8",
+        )
+        with pytest.raises(ExecutionServiceError) as exc_info:
+            _load_artifacts(str(work))
+        assert exc_info.value.code is ErrorCode.ARTIFACT_INTEGRITY_FAILED
+
+    def test_stats5_loader_validates_v2_stats(self, tmp_path: Path, monkeypatch) -> None:
+        _run(tmp_path, _STEPS, monkeypatch)
+        work = tmp_path / "work"
+        stats = _load_stats(str(work))
+        assert stats is not None
+        assert stats["content_schema"] == WORKFLOW_STATS_SCHEMA_V2
+
+        # Corrupt stats content_schema
+        (work / "workflow_stats.json").write_text(
+            json.dumps({"content_schema": "confflow.workflow_stats.unknown"}),
+            encoding="utf-8",
+        )
+        with pytest.raises(ExecutionServiceError) as exc_info:
+            _load_stats(str(work))
+        assert exc_info.value.code is ErrorCode.ARTIFACT_INTEGRITY_FAILED
 
 
 # ---------------------------------------------------------------------------

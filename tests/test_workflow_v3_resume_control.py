@@ -15,9 +15,9 @@ from typing import Any
 
 import pytest
 
-from confflow.config.canonical import CAPABILITIES, WORKFLOW_SCHEMA_VERSION_V3
+from confflow.config.canonical import CAPABILITIES, WORKFLOW_SCHEMA_VERSION_V3, can_execute
 from confflow.core.exceptions import ConfFlowError, StopRequestedError
-from confflow.workflow.state import WorkflowStateV2Store
+from confflow.workflow.state import WorkflowStateCompatibilityError, WorkflowStateV2Store
 from confflow.workflow.v3_runtime import run_v3_workflow
 
 V3 = "confflow.workflow.v3"
@@ -253,7 +253,7 @@ class TestResumeMismatches:
 
     def test_r12_input_content_reject_c(self, tmp_path: Path, monkeypatch) -> None:
         work = tmp_path / "work"
-        handlers = _FakeHandlers(monkeypatch, fail_ids={"s002"})
+        _FakeHandlers(monkeypatch, fail_ids={"s002"})
         inputs, config = _setup(tmp_path)
         with pytest.raises(RuntimeError, match="calc failed: s002"):
             run_v3_workflow(input_xyz=inputs, config_file=config, work_dir=str(work), resume=False)
@@ -273,7 +273,7 @@ class TestResumeMismatches:
 
     def test_r13_input_order_reject_c(self, tmp_path: Path, monkeypatch) -> None:
         work = tmp_path / "work"
-        handlers = _FakeHandlers(monkeypatch)
+        _FakeHandlers(monkeypatch)
         inputs, config = _setup(
             tmp_path,
             [
@@ -301,7 +301,7 @@ class TestResumeMismatches:
         exe.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
         exe.chmod(0o755)
         work = tmp_path / "work"
-        handlers = _FakeHandlers(monkeypatch)
+        _FakeHandlers(monkeypatch)
         inputs, config = _setup(
             tmp_path,
             [
@@ -325,7 +325,7 @@ class TestResumeMismatches:
 
     def test_r15_producer_reject_b(self, tmp_path: Path, monkeypatch) -> None:
         work = tmp_path / "work"
-        handlers = _FakeHandlers(monkeypatch)
+        _FakeHandlers(monkeypatch)
         inputs, config = _setup(tmp_path)
         run_v3_workflow(input_xyz=inputs, config_file=config, work_dir=str(work), resume=False)
         before = _state_bytes(work)
@@ -341,7 +341,7 @@ class TestResumeMismatches:
 
     def test_r16_dirty_reject(self, tmp_path: Path, monkeypatch) -> None:
         work = tmp_path / "work"
-        handlers = _FakeHandlers(monkeypatch)
+        _FakeHandlers(monkeypatch)
         inputs, config = _setup(tmp_path)
         run_v3_workflow(input_xyz=inputs, config_file=config, work_dir=str(work), resume=False)
         state = json.loads(_state_bytes(work).decode("utf-8"))
@@ -356,7 +356,7 @@ class TestResumeMismatches:
 
     def test_r17_canonicalization_reject(self, tmp_path: Path, monkeypatch) -> None:
         work = tmp_path / "work"
-        handlers = _FakeHandlers(monkeypatch)
+        _FakeHandlers(monkeypatch)
         inputs, config = _setup(tmp_path)
         run_v3_workflow(input_xyz=inputs, config_file=config, work_dir=str(work), resume=False)
         state = json.loads(_state_bytes(work).decode("utf-8"))
@@ -371,7 +371,7 @@ class TestResumeMismatches:
 
     def test_r18_schema_digest_only_warn_and_allow(self, tmp_path: Path, monkeypatch) -> None:
         work = tmp_path / "work"
-        handlers = _FakeHandlers(monkeypatch, fail_ids={"s002"})
+        _FakeHandlers(monkeypatch, fail_ids={"s002"})
         inputs, config = _setup(tmp_path)
         with pytest.raises(RuntimeError, match="calc failed: s002"):
             run_v3_workflow(input_xyz=inputs, config_file=config, work_dir=str(work), resume=False)
@@ -386,7 +386,7 @@ class TestResumeMismatches:
 
     def test_r19_completed_output_missing_fails_closed(self, tmp_path: Path, monkeypatch) -> None:
         work = tmp_path / "work"
-        handlers = _FakeHandlers(monkeypatch, fail_ids={"s002"})
+        _FakeHandlers(monkeypatch, fail_ids={"s002"})
         inputs, config = _setup(tmp_path)
         with pytest.raises(RuntimeError, match="calc failed: s002"):
             run_v3_workflow(input_xyz=inputs, config_file=config, work_dir=str(work), resume=False)
@@ -440,7 +440,7 @@ class TestResumeMismatches:
 class TestRerunFailed:
     def _failed_run(self, tmp_path: Path, monkeypatch) -> tuple[list[str], str, Path]:
         work = tmp_path / "work"
-        handlers = _FakeHandlers(monkeypatch, fail_ids={"s002"})
+        _FakeHandlers(monkeypatch, fail_ids={"s002"})
         inputs, config = _setup(tmp_path)
         with pytest.raises(RuntimeError, match="calc failed: s002"):
             run_v3_workflow(input_xyz=inputs, config_file=config, work_dir=str(work), resume=False)
@@ -470,7 +470,7 @@ class TestRerunFailed:
         # s002 fails; everything not completed is re-executed on resume, while
         # completed s001 is reused and its artifact bytes are preserved.
         work = tmp_path / "work"
-        handlers = _FakeHandlers(monkeypatch, fail_ids={"s002"})
+        _FakeHandlers(monkeypatch, fail_ids={"s002"})
         steps = [
             {"id": "s001", "type": "confgen", "inputs": [], "params": {"chains": ["1-2"]}},
             {"id": "s002", "type": "calc", "inputs": ["s001"], "params": {"keyword": "HF"}},
@@ -520,6 +520,7 @@ class TestRerunFailed:
 
     def test_rf8_v1_rerun_unchanged(self, tmp_path: Path, monkeypatch) -> None:
         """The V1 rerun-failed path still works through its own config/state."""
+        from confflow.config.canonical import require_executable
         from confflow.workflow.rerun_failed import RerunFailedUsageError, run_rerun_failed
 
         _write_xyz(tmp_path / "input.xyz")
@@ -530,17 +531,20 @@ class TestRerunFailed:
             ),
             encoding="utf-8",
         )
-        # a V3 config is still refused by the capability preflight
+        # post-flip: V3 passes capability preflight to the rerun-failed handler
         v3_config = _write_config(
             tmp_path / "v3.yaml",
             [{"id": "s001", "type": "confgen", "inputs": [], "params": {"chains": ["1-2"]}}],
         )
-        with pytest.raises(ConfFlowError, match="execution requires state/binding v2"):
+        with pytest.raises(RerunFailedUsageError, match="Step directory does not exist"):
             run_rerun_failed(
                 step_dir=str(tmp_path / "steps"),
                 config_file=str(v3_config),
                 step_ref="s001",
             )
+        # future schema versions remain blocked by the execution requirement
+        with pytest.raises(ConfFlowError, match="execution requires state/binding v2"):
+            require_executable("confflow.workflow.v4")
         del run_rerun_failed, RerunFailedUsageError
 
 
@@ -553,15 +557,7 @@ class TestPauseCancel:
 
     def test_pc1_pc2_pc3_pause_resume_with_stable_ids(self, tmp_path: Path, monkeypatch) -> None:
         work = tmp_path / "work"
-        calls: list[str] = []
-
-        def _spy(**kwargs: Any):
-            calls.append(
-                kwargs["step_name"] if "step_name" in kwargs else Path(kwargs["step_dir"]).name
-            )
-            return _FakeHandlers.__dict__  # never reached; replaced below
-
-        handlers = _FakeHandlers(monkeypatch)
+        _FakeHandlers(monkeypatch)
         inputs, config = _setup(tmp_path, self._steps())
         pause = work / "PAUSE"
 
@@ -587,7 +583,6 @@ class TestPauseCancel:
         run_v3_workflow(input_xyz=inputs, config_file=config, work_dir=str(work), resume=True)
         # s002 completed before the pause boundary and is reused, not re-run
         assert resume_handlers.calls == ["s003"]
-        del calls, _spy
 
     def test_pc4_pc5_cancel_stops_later_steps(self, tmp_path: Path, monkeypatch) -> None:
         work = tmp_path / "work"
@@ -685,8 +680,9 @@ class TestPauseCancel:
         assert resume_handlers.calls == ["s001", "s002"]
 
     def test_pc8_v1_control_tests_unchanged(self) -> None:
-        """The V1 lifecycle machinery is untouched — capability stays False."""
-        assert CAPABILITIES[WORKFLOW_SCHEMA_VERSION_V3].execute is False
+        """The V1 lifecycle machinery is untouched — capability permits V3 and fails closed for future versions."""
+        assert CAPABILITIES[WORKFLOW_SCHEMA_VERSION_V3].execute is True
+        assert not can_execute("confflow.workflow.v4")
 
 
 # ---------------------------------------------------------------------------
@@ -697,7 +693,7 @@ class TestStateDurability:
         self, tmp_path: Path, monkeypatch
     ) -> None:
         work = tmp_path / "work"
-        handlers = _FakeHandlers(monkeypatch)
+        _FakeHandlers(monkeypatch)
         inputs, config = _setup(tmp_path)
         bindings: list[str] = []
         original_save = WorkflowStateV2Store.save
@@ -719,12 +715,12 @@ class TestStateDurability:
         run_v3_workflow(input_xyz=inputs, config_file=config, work_dir=str(work), resume=False)
         state = WorkflowStateV2Store(work).load()
         assert state is not None
-        with pytest.raises(Exception):
+        with pytest.raises(WorkflowStateCompatibilityError):
             state.update_step("s999", status="completed")
 
     def test_sd4_failed_state_roundtrip(self, tmp_path: Path, monkeypatch) -> None:
         work = tmp_path / "work"
-        handlers = _FakeHandlers(monkeypatch, fail_ids={"s002"})
+        _FakeHandlers(monkeypatch, fail_ids={"s002"})
         inputs, config = _setup(tmp_path)
         with pytest.raises(RuntimeError, match="calc failed: s002"):
             run_v3_workflow(input_xyz=inputs, config_file=config, work_dir=str(work), resume=False)
@@ -735,7 +731,7 @@ class TestStateDurability:
 
     def test_sd5_submitted_interrupted_is_retried(self, tmp_path: Path, monkeypatch) -> None:
         work = tmp_path / "work"
-        handlers = _FakeHandlers(monkeypatch)
+        _FakeHandlers(monkeypatch)
         inputs, config = _setup(tmp_path)
         run_v3_workflow(input_xyz=inputs, config_file=config, work_dir=str(work), resume=False)
         # simulate a crash between submit and complete
@@ -783,31 +779,45 @@ class TestStateDurability:
 
 
 # ---------------------------------------------------------------------------
-# Public-surface boundaries that must not move
+# Public-surface boundaries: V3 permitted post-flip, future schemas fail closed
 # ---------------------------------------------------------------------------
-def test_public_engine_still_blocks_v3(tmp_path: Path, monkeypatch) -> None:
-    """The public engine refuses V3 with zero side effects even though the
-    internal seam can run it.
-    """
+def test_public_engine_admits_v3_and_blocks_future_schemas(tmp_path: Path, monkeypatch) -> None:
+    """The public engine admits V3 post-flip, while future/unknown schemas fail closed."""
+    from confflow.config.canonical import require_executable
     from confflow.workflow.engine import run_workflow
 
-    handlers_called: list[str] = []
-    monkeypatch.setattr(
-        "confflow.workflow.v3_runtime._run_calc_step",
-        lambda **kwargs: handlers_called.append(kwargs["step_name"]),
-    )
+    handlers = _FakeHandlers(monkeypatch)
     _write_xyz(tmp_path / "input.xyz")
     config = tmp_path / "wf.yaml"
     config.write_text(
         json.dumps({"schema": V3, "steps": _linear()}),
         encoding="utf-8",
     )
+    # Post-flip: V3 executes through the public engine
+    run_workflow([str(tmp_path / "input.xyz")], str(config), str(tmp_path / "work"))
+    assert handlers.calls == ["s001", "s002", "s003"]
+    assert (tmp_path / "work" / ".workflow_state.json").exists()
+
+    # Future / unknown schemas fail closed with zero side effects
+    work_future = tmp_path / "work_future"
+    future_config = tmp_path / "wf_future.yaml"
+    future_config.write_text(
+        json.dumps({"schema": "confflow.workflow.v4", "steps": _linear()}),
+        encoding="utf-8",
+    )
+    from confflow.config.canonical.issues import ConfigValidationError
+
+    with pytest.raises((ConfFlowError, ConfigValidationError), match="unsupported workflow schema"):
+        run_workflow([str(tmp_path / "input.xyz")], str(future_config), str(work_future))
+    assert not work_future.exists()
+
+    # The capability gate explicitly fails closed for future schemas
     with pytest.raises(ConfFlowError, match="execution requires state/binding v2"):
-        run_workflow([str(tmp_path / "input.xyz")], str(config), str(tmp_path / "work"))
-    assert handlers_called == []
-    assert not (tmp_path / "work").exists()
+        require_executable("confflow.workflow.v4")
 
 
-def test_capability_table_untouched() -> None:
-    assert CAPABILITIES[WORKFLOW_SCHEMA_VERSION_V3].execute is False
+def test_capability_table_allows_v3_execution() -> None:
+    assert CAPABILITIES[WORKFLOW_SCHEMA_VERSION_V3].execute is True
     assert CAPABILITIES[WORKFLOW_SCHEMA_VERSION_V3].parse is True
+    assert not can_execute("confflow.workflow.v4")
+    assert not can_execute("confflow.workflow.v99")

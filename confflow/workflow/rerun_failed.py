@@ -131,11 +131,6 @@ def _run_rerun_failed_v3(
     if not os.path.isdir(resolved_step_dir):
         raise RerunFailedUsageError(f"Step directory does not exist: {resolved_step_dir}")
 
-    failed_path = os.path.join(resolved_step_dir, "failed.xyz")
-    if not os.path.exists(failed_path):
-        raise RerunFailedRuntimeError(f"failed.xyz was not found in step directory: {failed_path}")
-    input_count = _read_conformer_count(failed_path, label="failed.xyz")
-
     step_index, step = _select_step_v3(steps, step_ref)
     step_type = str(step.get("type", "")).lower()
     if step_type not in {"calc", "task"}:
@@ -148,6 +143,11 @@ def _run_rerun_failed_v3(
             f"Step directory {resolved_step_dir} does not match the selected V3 step "
             f"steps/{step['id']}; V3 step directories are keyed by stable id"
         )
+
+    failed_path = os.path.join(resolved_step_dir, "failed.xyz")
+    if not os.path.exists(failed_path):
+        raise RerunFailedRuntimeError(f"failed.xyz was not found in step directory: {failed_path}")
+    input_count = _read_conformer_count(failed_path, label="failed.xyz")
 
     rerun_dir = _resolve_output_dir(resolved_step_dir, output_dir, sandbox_root=sandbox_root)
     params = step.get("params", {}) or {}

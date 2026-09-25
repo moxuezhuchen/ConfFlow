@@ -20,6 +20,7 @@ import pytest
 from confflow.config.canonical import (
     CAPABILITIES,
     WORKFLOW_SCHEMA_VERSION_V3,
+    can_execute,
 )
 from confflow.core.exceptions import ConfFlowError, StopRequestedError
 from confflow.workflow.binding_v2 import BindingProvenanceV2
@@ -141,10 +142,12 @@ def _steps_linear():
 
 
 # ---------------------------------------------------------------------------
-# Capability freeze
+# Capability: V3 execution enabled post-flip, future schemas fail closed
 # ---------------------------------------------------------------------------
-def test_v3_execution_capability_stays_false() -> None:
-    assert CAPABILITIES[WORKFLOW_SCHEMA_VERSION_V3].execute is False
+def test_v3_execution_capability_allows_execution() -> None:
+    assert CAPABILITIES[WORKFLOW_SCHEMA_VERSION_V3].execute is True
+    assert not can_execute("confflow.workflow.v4")
+    assert not can_execute("confflow.workflow.v99")
 
 
 def test_seam_refuses_v2_documents(tmp_path: Path) -> None:
@@ -706,7 +709,7 @@ class TestCheckpointRuntime:
             )
 
     def test_chk5_wrong_program_fails_closed(self, tmp_path: Path, monkeypatch) -> None:
-        handlers = _FakeHandlers(monkeypatch)
+        _FakeHandlers(monkeypatch)
         _write_xyz(tmp_path / "input.xyz")
         config = _write_config(
             tmp_path / "wf.yaml",
@@ -781,7 +784,7 @@ class TestCheckpointRuntime:
         assert chk_call["input_chk_dir"].endswith("steps/s001/backups")
 
     def test_disabled_calc_checkpoint_is_not_required(self, tmp_path: Path, monkeypatch) -> None:
-        handlers = _FakeHandlers(monkeypatch)
+        _FakeHandlers(monkeypatch)
         _write_xyz(tmp_path / "input.xyz")
         config = _write_config(
             tmp_path / "wf.yaml",
@@ -855,7 +858,7 @@ def test_i7_strong_rename_invariance(tmp_path: Path, monkeypatch) -> None:
 # Binding / identity invariants that must hold through a run
 # ---------------------------------------------------------------------------
 def test_run_state_snapshot_is_diagnostic_only(tmp_path: Path, monkeypatch) -> None:
-    handlers = _FakeHandlers(monkeypatch)
+    _FakeHandlers(monkeypatch)
     _write_xyz(tmp_path / "input.xyz")
     config = _write_config(tmp_path / "wf.yaml", _steps_linear())
     run_v3_workflow(
