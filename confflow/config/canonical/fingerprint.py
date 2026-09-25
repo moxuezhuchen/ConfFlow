@@ -276,7 +276,7 @@ _SCIENTIFIC_GLOBAL_MEMBERS = (
 
 #: RFC §16.A — resolved globals that describe *how* the workflow runs, not what it
 #: computes. Bound into the R4 execution fingerprint, never the definition one.
-_EXECUTION_CLASS_GLOBAL_MEMBERS = frozenset(
+EXECUTION_CLASS_GLOBAL_MEMBERS = frozenset(
     {
         "gaussian_path",
         "orca_path",
@@ -303,7 +303,9 @@ _EXECUTION_CLASS_GLOBAL_MEMBERS = frozenset(
 #: alias of the global `max_parallel_jobs`); every other per-step-only name stays
 #: definition-semantic. This is the single authoritative constant derived from that
 #: table — no second copy exists in production code.
-_EXECUTION_CLASS_STEP_PARAMS = _EXECUTION_CLASS_GLOBAL_MEMBERS | {"workers"}
+EXECUTION_CLASS_STEP_PARAMS = EXECUTION_CLASS_GLOBAL_MEMBERS | {"workers"}
+_EXECUTION_CLASS_STEP_PARAMS = EXECUTION_CLASS_STEP_PARAMS  # R3.4-era private alias
+_EXECUTION_CLASS_GLOBAL_MEMBERS = EXECUTION_CLASS_GLOBAL_MEMBERS  # R3.4-era private alias
 
 
 def build_workflow_definition_payload_v3(

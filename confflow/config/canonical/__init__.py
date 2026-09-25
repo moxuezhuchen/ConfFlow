@@ -40,6 +40,8 @@ from .extensions import (
     is_valid_namespace,
 )
 from .fingerprint import (
+    EXECUTION_CLASS_GLOBAL_MEMBERS,
+    EXECUTION_CLASS_STEP_PARAMS,
     WORKFLOW_BINDING_SCHEMA,
     WORKFLOW_SEMANTICS_VERSION,
     WorkflowBindingCompatibilityError,
@@ -87,6 +89,7 @@ from .schema import (
     workflow_schema_sha256,
     workflow_schema_sha256_v3,
 )
+from .serialization import CANONICALIZATION_VERSION
 from .upgrade import (
     MIGRATION_NAMESPACE,
     MigrationRecord,
@@ -147,6 +150,7 @@ __all__ = [
     "ValidationProfile",
     "WORKFLOW_BINDING_SCHEMA",
     "WORKFLOW_SEMANTICS_VERSION",
+    "CANONICALIZATION_VERSION",
     "WORKFLOW_SCHEMA_VERSION",
     "WORKFLOW_SCHEMA_VERSION_V2",
     "WORKFLOW_SCHEMA_VERSION_V3",
@@ -154,6 +158,7 @@ __all__ = [
     "CanonicalStepDefinition",
     "CanonicalWorkflowDefinition",
     "DependencyMode",
+    "CANONICALIZATION_VERSION",
     "Diagnostic",
     "ExtensionRegistry",
     "ParamFieldDescriptor",
@@ -161,6 +166,8 @@ __all__ = [
     "Severity",
     "VersionCapability",
     "WorkflowBindingCompatibilityError",
+    "EXECUTION_CLASS_GLOBAL_MEMBERS",
+    "EXECUTION_CLASS_STEP_PARAMS",
     "WorkflowConfigBinding",
     "WorkflowFingerprintError",
     "build_configuration_contract",
