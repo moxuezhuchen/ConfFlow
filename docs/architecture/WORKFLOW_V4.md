@@ -189,15 +189,15 @@ WorkflowDocument (YAML)
 
 ## 8. 明确非目标（V4-1）
 
-- 不执行 Gaussian/ORCA（无进程、无 native 输入渲染落地）。
+- V4-1 不执行 Gaussian/ORCA（无进程、无 native 输入渲染落地）。
 - 不实现 WorkItem SQLite 持久化、remote worker v2、JobDesk 集成、V2/V3 migration 命令。
 - 不支持自由 GUI、streaming DAG、distributed scheduler、插件生态、arbitrary native template 执行。
 - 不把 V4 接入 V2/V3 runtime dispatch / CLI 执行路径；V3 对这些 schema 仍然 fail-closed。
-- 原子序数到 QST/NEB 的 atom mapping（`permutation|mapped`）推迟到 V4-2；V4-1 要求配对结构 atom 顺序一致。
+- 原子序数到 QST/NEB 的 atom mapping（`permutation|mapped`）推迟；V4-1 要求配对结构 atom 顺序一致。
 
 ## 9. 测试与门禁
 
-- `tests/v4/`：domain/structure/artifact/identity、binding/resource/scientific、schema/parser、failure policy/publication、digest 四轴、compiler（determinism/disabled/policy/registry）、assembly（§23 四场景）、architecture debt gate。
+- `tests/v4/`：domain/structure/identity、binding/resource/scientific、schema/parser、failure policy/publication、digest 四轴、compiler（determinism/disabled/policy/registry）、assembly（§23 四场景）、architecture debt gate。
 - Architecture gate：AST 静态 import/symbol 扫描 + 子进程 runtime 导入隔离 + `setuptools.find_packages` 打包检查 + schema 无 hidden cleanup 词汇。
 - 本地命令：
 
@@ -208,4 +208,116 @@ WorkflowDocument (YAML)
 .venv/bin/mypy confflow
 ```
 
-V4-2 readiness：新的 `ProgramAdapter` 可以只实现 execution 层契约（native rendering / output parsing / environment measurement），通过 `assemble_work_items` 消费确定性 WorkItem，无需经过 `input_xyz → CalcStepRunner → output_path`。
+---
+
+# V4-2：New Standard Calculation Engine（已完成）
+
+里程碑状态：**V4-2 已完成**。建立了真正的 standard-calculation vertical slice，
+全程不经过 `input_xyz → CalcStepRunner → output_path`。
+
+```
+StructureSet → Binding/WorkItem → BatchStepExecutor → WorkItemExecutor
+  → ExecutionAdapter → ProgramAdapter → native process boundary
+  → NativeResult → ResultProfile → ScientificChecks → RecoveryPolicy
+  → WorkItemResult → StepResult
+```
+
+Opt / SP / Freq / Opt+Freq / TS 只作为 human role、native input 内容和
+recipe/test fixture 存在；V4 runtime 没有 task dispatch enum。
+
+## 10. V4-2 包与依赖规则
+
+新增：
+
+```
+confflow/
+  execution/
+    native.py             # NativeExecutionRequest/Result、ProgramAdapter 协议、process 接口
+    profiles.py           # ResultProfile 协议 + passthrough 规则
+    checks.py             # ScientificCheck 协议 + CHECK_DEFAULTS 单一来源
+    recovery.py           # RecoveryPolicy 协议 + RescueDriver
+    process.py            # V4 自有进程边界（抽取的 launch/poll/cancel 机制，无 policy 知识）
+    work_item_executor.py # 单 item 全流水线
+    batch.py              # BatchStepExecutor + repository/reuse 端口（内存实现）
+    environment.py        # 可执行文件测量 + environment digest
+    profile_standard.py   # standard profile 实现
+    checks_standard.py    # 6 个 check 实现
+    recovery_standard.py  # none + ts_rescue_scan（含 scan 引擎）
+  programs/
+    registry.py           # program 名 → adapter（g16/gaussian/orca 等别名）
+    gaussian/             # GaussianProgramAdapter（渲染/解析/artifact 发现）
+    orca/                 # OrcaProgramAdapter（同上）
+```
+
+规则（debt gate 已扩展覆盖 `confflow.programs`）：
+
+- `confflow.programs` 只允许 import `confflow.domain`、`confflow.execution`、
+  `confflow.workflow.v4`（类型）、`confflow.programs` 自身。
+- `confflow.execution` 不在模块加载期 import `confflow.workflow.v4`
+ （只用 `TYPE_CHECKING` + 调用期延迟 import），因此不存在 import cycle；
+  子进程导入隔离测试保持通过。
+- 新 execution/program 代码零 legacy 语义 import（gate 列表见 §27 扩展）。
+
+## 11. V4-2 核心语义（事实）
+
+- **NativeResult 是 parser 事实层**：termination、final geometry（有/无）、
+  Hartree 能量（electronic/gibbs/gibbs_correction）、cm⁻¹ 频率、文件清单、
+  parser diagnostics。`geometry_output` 只有 `produced/none`；passthrough
+  与否由 profile 按 declared checks 决定，不从 task 名推断。
+- **standard profile**：Gibbs 优先的能量选择（`g ?? e+gc ?? e`，缺失 gc 时
+  `gc = g - e` 显式推导）；无几何 + 未声明 `geometry_required` 时发射
+  passthrough `StructureRecord`（新 id、parent=input、lineage 保持、
+  geometry_digest 不变）；显式拒绝静默 metadata 继承（旧 SP 的
+  `G_corr/Imag/LowestFreq/TSAtoms/TSBond` 继承在本轮被有意打破）。
+- **Checks**（全部显式声明才执行）：`normal_termination`（executor 对未正常
+  结束 fail-closed，与声明无关）、`geometry_required`、`frequencies_required`、
+  `imaginary_frequency_count{expected}`（无频率数据时仅 `expected==0` 通过）、
+  `max_rmsd_from_input{threshold_angstrom=1.0}`（Kabsch 对齐，fail-closed）、
+  `bond_drift{atoms, threshold_angstrom=0.4}`（fail-closed；V4 相对旧 fail-open
+  收紧）。阈值默认值与旧科学策略一致，唯一来源 `CHECK_DEFAULTS`。
+- **Recovery**：`none` 直接拒绝；`ts_rescue_scan` 仅 Gaussian、仅首次、
+  仅 cancellation 已确认、仅 bond atoms 可解析、仅 TS 类失败原因；
+  scan 引擎做 coarse+fine 峰搜索后用原 keyword 重优化并复验
+  drift/RMSD/imag；成功标记 `rescued_by_scan` provenance，失败记
+  `recovery_failed`。未确认的 cancellation 永不进入 rescue。
+- **WorkItemExecutor**：驱动结构必须是 `structure` 端口唯一结构（命名多结构
+  执行留给后续里程碑，显式报错不猜测）；checkpoint artifact 按 locator 从
+  run root 暂存并校验 checksum；charge/multiplicity/freeze 由 V4-1 唯一权威
+  预先 resolve，adapter 缺值直接 `native_input_error`。
+- **BatchStepExecutor**：`ThreadPoolExecutor(max_parallel_items)`；
+  fail_fast 置位后未启动 item 直接记 cancelled（已修复预启动取消 KeyError）；
+  结果按 logical key 规范序收集；`require_all/allow_partial` 复用 V4-1
+  `evaluate_step_status`；StepResult 只聚合 completed subset。
+- **资源渲染**：`%nprocshared=cores_per_item`、`%mem=⌊bytes/ GiB⌋（≥1GB）`；
+  ORCA `PAL nprocs` + `%maxcore`（显式 override 原样通过，否则按核均分
+  向下取整到百、保底 100）；渲染输入与 `max_parallel_items` 无关（已测试）。
+- **Environment**：resolved path、dev/inode、流式 sha256、adapter/parser
+  版本进 digest；绝对路径只做 provenance；同 binary 重定位 digest 不变，
+  binary 内容变化 digest 变化（已测试）；version probe 无安全手段时为空。
+- **SP passthrough 规则（§18 选型 B）**：输出新语义 StructureRecord，
+  parent=input，geometry_digest 相同。所有 StepResult 内结构都有 producer
+  provenance，内容身份不受影响。
+
+## 12. V4-2 复用结论
+
+- EXTRACT（算法自有化，零 legacy import）：进程 session/pgid/identity/cancel
+  证明；Gaussian/ORCA 渲染与解析（含 freq commit 规则、noise floor 10.0、
+  archive 回退、termination tail）；`format_orca_blocks`、`gaussian_apply_freeze`、
+  keyword 改写；Kabsch RMSD 与键长数学；scan 峰搜索与重优化验收。
+- REWRITE：全部 config-dict 管线、itask/iprog 分发、policy 单例、
+  `cleanup_lingering_processes`（按名杀进程，不复用）、backup/`ibkout` 语义、
+  checkpoint 文件名约定（改为 binding + staged artifact）、`G_corr` 静默继承、
+  bond-drift fail-open。
+- 复用安全性：新包 import 边界 + 扩展 debt gate 保证无旧抽象渗入。
+
+## 13. V4-2 非目标状态
+
+IRC/path_endpoints、QST2/QST3、NEB、GOAT、ensemble、PES、SQLite
+WorkItemStore、per-item resume、worker-handoff.v2、JobDesk、migration、
+streaming DAG 均未做。Batch/Executor 通过 `WorkItemRepository` /
+`ReuseStore` 协议与内存实现为 V4-3 留好 seam，无需改动核心 contracts
+即可接入持久化与按 digest 复用。
+
+V4-3 readiness：YES — WorkItem / ProgramAdapter / StepResult 契约无需改动，
+即可接入 WorkItemStore、per-item durable resume、resource persistence、
+fingerprint reuse（reuse 端口已存在并有内存实现与测试）。
