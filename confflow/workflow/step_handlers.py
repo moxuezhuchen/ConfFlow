@@ -472,8 +472,16 @@ def run_calc_step(
     typed_global: GlobalOptions | None = None,
     calc_executor: CalcExecutor | None = None,
     cancel_beacon_file: str | None = None,
+    input_chk_dir: str | None = None,
 ) -> StepExecutionResult:
-    """Execute a calculation step via the typed calc runner."""
+    """Execute a calculation step via the typed calc runner.
+
+    ``input_chk_dir`` (R4.3) lets a version-neutral caller supply the resolved
+    checkpoint directory directly — the V3 runtime passes
+    ``steps/<from_step>/backups`` derived from the validated stable-ID
+    checkpoint reference. When omitted, the historical V2
+    ``chk_from_step`` name/index resolution applies unchanged.
+    """
     if isinstance(current_input, list):
         if len(current_input) != 1:
             raise ConfFlowError(
@@ -484,10 +492,15 @@ def run_calc_step(
 
     if typed_global is None:
         typed_global = resolve_global_options(global_config)
+    resolved_chk_dir = (
+        input_chk_dir
+        if input_chk_dir is not None
+        else _resolve_chk_input_dir(params, root_dir, steps)
+    )
     calc_config = resolve_calc_step(
         params,
         typed_global,
-        input_chk_dir=_resolve_chk_input_dir(params, root_dir, steps),
+        input_chk_dir=resolved_chk_dir,
     )
 
     configure_default_refine()
