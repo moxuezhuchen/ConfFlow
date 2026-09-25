@@ -96,10 +96,13 @@ FORBIDDEN_SYMBOLS = (
     "CalcStepRunner",
     "TaskRunner",
     "StepExecutionResult",
+    "ResultsDB",
     "GlobalOptions",
     "TaskContext",
     "input_xyz",
     "output_path",
+    "total_memory",
+    "max_parallel_jobs",
     "chk_from_step",
     "checkpoint_from",
     "auto_clean",
@@ -185,6 +188,7 @@ class TestStaticImports:
             "confflow.domain",
             "confflow.execution",
             "confflow.workflow.v4",
+            "confflow.programs",
         )
         offenders: list[tuple[str, str, int]] = []
         for root in (V4_ROOT, EXECUTION_ROOT):
