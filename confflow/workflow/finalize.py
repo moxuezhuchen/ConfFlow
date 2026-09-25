@@ -110,7 +110,9 @@ def _v3_artifact_list(
         except ValueError:
             contained = False
         if contained and resolved != root and resolved not in staged and os.path.isfile(path):
-            artifacts.append(os.path.abspath(path))
+            abs_path = os.path.abspath(path)
+            if abs_path not in artifacts:
+                artifacts.append(abs_path)
     return artifacts
 
 
@@ -143,11 +145,12 @@ def build_workflow_stats_v3(
         if len(final_output) == 1:
             final_output = final_output[0]
     elif outputting_terminals:
-        final_output = [
-            artifact
-            for terminal in outputting_terminals
-            for artifact in _v3_artifact_list(outputs[terminal], work_dir, staged_inputs)
-        ]
+        collected: list[str] = []
+        for terminal in outputting_terminals:
+            for artifact in _v3_artifact_list(outputs[terminal], work_dir, staged_inputs):
+                if artifact not in collected:
+                    collected.append(artifact)
+        final_output = collected
     else:
         final_output = staged_inputs[0] if len(staged_inputs) == 1 else list(staged_inputs)
 

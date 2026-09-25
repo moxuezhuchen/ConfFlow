@@ -63,9 +63,9 @@ def resolve_effective_sources_v3(
     The frozen semantics: a disabled step forwards its own effective inputs
     unchanged, so each declared input of a step contributes either the
     enabled predecessor itself or — recursively — the disabled predecessor's
-    effective sources. Roots consume the external input slots. Multiplicity
-    is preserved exactly (a source referenced through two bypass paths is
-    consumed twice, byte-identical to the runtime's forwarding behavior).
+    effective sources. Roots consume the external input slots. Identical
+    effective sources arising from branching or bypass convergence are
+    deduplicated while preserving the order of first occurrence.
 
     Pure function over the validated plan; stable IDs only.
     """
@@ -83,7 +83,14 @@ def resolve_effective_sources_v3(
                 resolved.append(("step", predecessor))
             else:
                 resolved.extend(sources[predecessor])
-        sources[step.id] = tuple(resolved)
+        # Deduplicate identical effective sources while preserving order of first occurrence
+        deduped: list[EffectiveSource] = []
+        seen: set[EffectiveSource] = set()
+        for src in resolved:
+            if src not in seen:
+                seen.add(src)
+                deduped.append(src)
+        sources[step.id] = tuple(deduped)
     return sources
 
 
@@ -114,26 +121,35 @@ def materialize_effective_inputs(
             resolved.extend(output)
         else:
             resolved.append(output)
-    return resolved[0] if len(resolved) == 1 else resolved
+    # Deduplicate concrete paths if multiple paths resolved to the same file
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for path in resolved:
+        if path not in seen:
+            seen.add(path)
+            deduped.append(path)
+    return deduped[0] if len(deduped) == 1 else deduped
 
 
 def validate_effective_dataflow_v3(
     plan: WorkflowV3Plan, *, external_input_count: int
 ) -> tuple[EffectiveDataflowIssue, ...]:
-    """Report the execution-critical effective-dataflow errors.
+    """Report execution-critical effective-dataflow and artifact capability errors.
 
-    Checks exactly the limitations the current step handlers enforce at
-    runtime — nothing more:
-
-    - an enabled ``calc`` step consuming more than one effective input
-      (single-input by design);
-    - any step whose effective source set is empty (a handler always requires
-      input; an empty bypass result would poison every successor).
+    Checks:
+    - any step whose effective source set is empty (handler requires input);
+    - enabled calc steps consuming more than one effective input (calc consumes
+      exactly 1 effective geometry; confgen consumes 1 or more);
+    - root step external input cardinality against step type capabilities;
+    - checkpoint artifact capabilities statically before execution: ancestor step
+      must be capable of producing the required checkpoint type (calc step,
+      enabled, compatible program).
 
     Pure and side-effect free; runs before any runtime directory, state
     mutation or handler invocation.
     """
     sources = resolve_effective_sources_v3(plan, external_input_count=external_input_count)
+    by_id = {step.id: step for step in plan.steps}
     issues: list[EffectiveDataflowIssue] = []
     for step in plan.steps:
         effective = sources[step.id]
@@ -162,15 +178,77 @@ def validate_effective_dataflow_v3(
                 )
             continue
         if step.enabled and step.type == "calc" and len(effective) > 1:
-            issues.append(
-                EffectiveDataflowIssue(
-                    code="effective_cardinality_unsupported",
-                    step_id=step.id,
-                    message=(
-                        f"calc step receives {len(effective)} effective inputs after "
-                        "disabled-step bypass; unsupported effective cardinality — "
-                        "add a confgen step to merge them"
-                    ),
+            if not step.inputs:
+                issues.append(
+                    EffectiveDataflowIssue(
+                        code="effective_cardinality_unsupported",
+                        step_id=step.id,
+                        message=(
+                            f"calc root step receives {len(effective)} external inputs; "
+                            "calc steps consume exactly 1 geometry — add a confgen step to merge them"
+                        ),
+                    )
                 )
-            )
+            else:
+                issues.append(
+                    EffectiveDataflowIssue(
+                        code="effective_cardinality_unsupported",
+                        step_id=step.id,
+                        message=(
+                            f"calc step receives {len(effective)} effective inputs after "
+                            "disabled-step bypass; unsupported effective cardinality — "
+                            "add a confgen step to merge them"
+                        ),
+                    )
+                )
+
+        if step.enabled and step.checkpoint_from is not None:
+            target_id = step.checkpoint_from
+            ancestor = by_id.get(target_id)
+            if ancestor is None:
+                issues.append(
+                    EffectiveDataflowIssue(
+                        code="checkpoint_capability_unsupported",
+                        step_id=step.id,
+                        message=f"step {step.id!r} declares a checkpoint from unknown step {target_id!r}",
+                    )
+                )
+            elif not ancestor.enabled:
+                issues.append(
+                    EffectiveDataflowIssue(
+                        code="checkpoint_capability_unsupported",
+                        step_id=step.id,
+                        message=(
+                            f"step {step.id!r} declares a checkpoint from {target_id!r}, "
+                            "which is disabled and produces no checkpoint artifact"
+                        ),
+                    )
+                )
+            elif ancestor.type != "calc":
+                issues.append(
+                    EffectiveDataflowIssue(
+                        code="checkpoint_capability_unsupported",
+                        step_id=step.id,
+                        message=(
+                            f"step {step.id!r} declares a checkpoint from {target_id!r}, "
+                            f"which is a {ancestor.type} step; only calc steps produce "
+                            "checkpoint artifacts"
+                        ),
+                    )
+                )
+            else:
+                step_prog = step.params.get("iprog")
+                anc_prog = ancestor.params.get("iprog")
+                if step_prog and anc_prog and step_prog != anc_prog:
+                    issues.append(
+                        EffectiveDataflowIssue(
+                            code="checkpoint_capability_unsupported",
+                            step_id=step.id,
+                            message=(
+                                f"step {step.id!r} (program {step_prog!r}) cannot reuse "
+                                f"checkpoints produced by {target_id!r} (program {anc_prog!r}); "
+                                "checkpoint files are program-specific"
+                            ),
+                        )
+                    )
     return tuple(issues)
