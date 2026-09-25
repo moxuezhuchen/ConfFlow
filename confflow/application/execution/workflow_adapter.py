@@ -408,6 +408,51 @@ def acquire_work_directory_lease(work_dir: str) -> _WorkDirectoryLease:
     return lease
 
 
+def _preflight_v3_effective_dataflow(spec: WorkflowRunSpec) -> None:
+    """Reject known-invalid V3 effective dataflow before any durable side effect.
+
+    Pure preflight for the mandatory builder boundary: builds the V3 plan and
+    runs the same execution-critical effective-dataflow validation that
+    ``run_v3_workflow`` repeats before creating directories, staging inputs,
+    mutating state or invoking handlers. Reads the config and input files
+    only — creates no directories, state, or repository files.
+
+    Non-V3 documents, unreadable files, and specs that fail planning for any
+    other reason are ignored here; the normal execution path reports those
+    errors unchanged after the durable service exists. Only a positive
+    invalid-dataflow finding raises, with the runner's message verbatim.
+    """
+    try:
+        from ...config.canonical.parser import detect_workflow_file_version
+        from ...config.canonical.schema import WORKFLOW_SCHEMA_VERSION_V3
+
+        if detect_workflow_file_version(spec.config_file) != WORKFLOW_SCHEMA_VERSION_V3:
+            return
+    except Exception:
+        return
+    try:
+        from ...workflow.plan import WorkflowV3Plan, build_workflow_plan
+        from ...workflow.v3_dataflow import validate_effective_dataflow_v3
+
+        plan = build_workflow_plan(
+            list(spec.input_xyz),
+            spec.config_file,
+            original_input_files=(
+                None if spec.original_input_files is None else list(spec.original_input_files)
+            ),
+        )
+        if not isinstance(plan, WorkflowV3Plan):
+            return
+        issues = validate_effective_dataflow_v3(plan, external_input_count=len(plan.input_files))
+    except Exception:
+        return
+    if issues:
+        from ...core.exceptions import ConfFlowError
+
+        details = "; ".join(str(issue) for issue in issues)
+        raise ConfFlowError(f"effective dataflow validation failed: {details}")
+
+
 def build_workflow_service(
     spec: WorkflowRunSpec,
     *,
@@ -422,6 +467,12 @@ def build_workflow_service(
     # and must precede every persistent side effect below: _ensure_state_root
     # (mkdir/chmod), ensure_run_paths, and the SQLite repository.
     require_executable_workflow_file(spec.config_file)
+    # Execution-critical effective-dataflow preflight (P1-A): a known-invalid
+    # V3 workflow is rejected here — before _ensure_state_root (mkdir/chmod),
+    # ensure_run_paths, and the SQLite repository create anything. Pure and
+    # side-effect free; run_workflow_through_service inherits this through its
+    # build_workflow_service call below.
+    _preflight_v3_effective_dataflow(spec)
     root = _ensure_state_root(state_root)
     if spec.cancel_beacon_file is None:
         run_paths = root.ensure_run_paths(spec.run_id)
