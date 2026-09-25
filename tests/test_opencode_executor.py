@@ -370,6 +370,11 @@ def test_run_task_single_flight_and_branch_guards(run_task_text):
     assert "main|master" in run_task_text
 
 
+def test_run_task_never_mutates_tree_before_guard(run_task_text):
+    code = _code_lines(run_task_text)
+    assert "chmod" not in code  # mode changes trip the dirty-tree guard
+
+
 def test_run_task_validates_before_use(run_task_text):
     assert "validate_input.py" in run_task_text
     assert "select_tests.py" in run_task_text

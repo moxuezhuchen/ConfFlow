@@ -73,7 +73,9 @@ fi
 step "acquired host lock: $LOCK_FILE"
 
 # ----------------------------------------------------------- validation ----
-[[ -x "$VALIDATE_PY" ]] || chmod +x "$VALIDATE_PY" 2>/dev/null || true
+# NOTE: never chmod anything inside the repo here — the working tree must
+# stay exactly as checked out until the dirty-tree guard below has passed.
+# The helpers are always invoked via "$PYBIN" explicitly, so +x is irrelevant.
 PYBIN="${PYTHON:-python3}"
 if ! "$PYBIN" "$VALIDATE_PY" \
         --task-issue "$TASK_ISSUE" \
