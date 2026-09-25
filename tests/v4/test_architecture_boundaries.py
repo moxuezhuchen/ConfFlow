@@ -346,6 +346,7 @@ class TestSchemaHasNoHiddenCleanup:
             "result_profile",
             "native",
             "checks",
+            "check_params",
             "recovery",
             "seed",
             "overrides",

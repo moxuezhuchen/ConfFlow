@@ -338,11 +338,11 @@ class TestGoldenDigests:
     def test_definition_digest_golden(self) -> None:
         plan = _compiled(_linear_doc())
         assert plan.definition_digest == (
-            "sha256:63f1cb743c312015cfe4efb9e9ff051867c7d43cd21e8b3366c084cd622a598d"
+            "sha256:8d2472317155722e3457b6568deb3345c427fdf06cb8e5a5b6146517050cc8ed"
         )
 
     def test_work_item_digest_golden(self) -> None:
         plan = _compiled(_linear_doc())
         assert _item(plan).semantic_digest == (
-            "sha256:135b5ecebbe4a6969c784ecd0e7078b5976a872e77e73cbfb0afb813ac5663fc"
+            "sha256:686e3a95398e32e1146d5fb4111724c5c18270fb7aa324d5ea8c35179da98e4c"
         )

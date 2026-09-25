@@ -176,7 +176,9 @@ class ScientificDefinition:
     result_profile: str | None = None
     native: FrozenDict = field(default_factory=FrozenDict)
     checks: tuple[str, ...] = ()
+    check_params: FrozenDict = field(default_factory=FrozenDict)
     recovery: str = "none"
+    recovery_params: FrozenDict = field(default_factory=FrozenDict)
     seed: int | None = None
     overrides: FrozenDict = field(default_factory=FrozenDict)
     transform: str | None = None
@@ -198,6 +200,18 @@ class ScientificDefinition:
             object.__setattr__(self, "native", FrozenDict(self.native))
         if not isinstance(self.overrides, FrozenDict):
             object.__setattr__(self, "overrides", FrozenDict(self.overrides))
+        if not isinstance(self.check_params, FrozenDict):
+            object.__setattr__(self, "check_params", FrozenDict(self.check_params))
+        for check_name, params in self.check_params.items():
+            if check_name not in checks:
+                raise DomainError(
+                    f"check_params for undeclared check {check_name!r}; "
+                    "declare it in checks first"
+                )
+            if not isinstance(params, FrozenDict):
+                raise DomainError(f"check_params[{check_name!r}] must be a mapping of parameters")
+        if not isinstance(self.recovery_params, FrozenDict):
+            object.__setattr__(self, "recovery_params", FrozenDict(self.recovery_params))
         # Charge, multiplicity, and freeze overrides are the only scientific
         # overrides with defined precedence semantics in V4-1; reject unknown
         # override keys early so a typo cannot silently do nothing.
@@ -229,6 +243,15 @@ class ScientificDefinition:
         """Return the declared recovery profile name."""
         return self.recovery
 
+    def check_params_for(self, check_name: str) -> FrozenDict:
+        """Return the declared parameters for *check_name*, possibly empty."""
+        params = self.check_params.get(check_name)
+        if params is None:
+            return FrozenDict()
+        if not isinstance(params, FrozenDict):
+            return FrozenDict(params)
+        return params
+
     def to_payload(self) -> dict[str, Any]:
         """Return the science payload used by step semantic digests."""
         return {
@@ -238,7 +261,9 @@ class ScientificDefinition:
             "result_profile": self.result_profile,
             "native": dict(self.native),
             "checks": list(self.checks),
+            "check_params": {name: dict(params) for name, params in self.check_params.items()},
             "recovery": self.recovery,
+            "recovery_params": dict(self.recovery_params),
             "seed": self.seed,
             "overrides": dict(self.overrides),
             "transform": self.transform,

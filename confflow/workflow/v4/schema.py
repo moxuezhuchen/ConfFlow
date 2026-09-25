@@ -140,6 +140,7 @@ class RecoveryModel(BaseModel):
     model_config = _STRICT
 
     profile: str = "none"
+    params: dict[str, Any] = Field(default_factory=dict)
 
 
 class CalculationModel(BaseModel):
@@ -153,6 +154,7 @@ class CalculationModel(BaseModel):
     result_profile: str = "standard"
     native: dict[str, Any] = Field(default_factory=dict)
     checks: list[str] = Field(default_factory=list)
+    check_params: dict[str, dict[str, Any]] = Field(default_factory=dict)
     recovery: RecoveryModel = Field(default_factory=RecoveryModel)
     seed: StrictInt | None = None
     overrides: dict[str, Any] = Field(default_factory=dict)
@@ -184,6 +186,7 @@ class AnalysisModel(BaseModel):
 
     native: dict[str, Any] = Field(default_factory=dict)
     checks: list[str] = Field(default_factory=list)
+    check_params: dict[str, dict[str, Any]] = Field(default_factory=dict)
 
 
 class ExecutionModel(BaseModel):

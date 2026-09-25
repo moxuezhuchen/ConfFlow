@@ -397,7 +397,11 @@ def _build_scientific(
                 result_profile=calculation.result_profile,
                 native=FrozenDict(calculation.native),
                 checks=tuple(calculation.checks),
+                check_params=FrozenDict(
+                    {name: dict(params) for name, params in calculation.check_params.items()}
+                ),
                 recovery=calculation.recovery.profile,
+                recovery_params=FrozenDict(dict(calculation.recovery.params)),
                 seed=calculation.seed,
                 overrides=FrozenDict(calculation.overrides),
             )
@@ -481,6 +485,14 @@ def _build_scientific(
             result_profile="standard",
             native=FrozenDict(analysis.native if analysis is not None else {}),
             checks=tuple(analysis.checks if analysis is not None else ()),
+            check_params=FrozenDict(
+                {
+                    name: dict(params)
+                    for name, params in (
+                        analysis.check_params if analysis is not None else {}
+                    ).items()
+                }
+            ),
         )
     except DomainError as exc:
         diagnostics.append(
