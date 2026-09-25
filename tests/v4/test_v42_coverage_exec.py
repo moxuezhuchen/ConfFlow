@@ -1408,6 +1408,14 @@ class TestScopedAndAssemble:
         item = _item(plan)
         assert _E._subject_of(item) == "s0"
 
+    def test_timing_clamps_backward_wall_clock(self) -> None:
+        import time as _time
+
+        executor = WorkItemExecutor()
+        timing = executor._timing(_time.time() + 3600.0, _time.monotonic())
+        assert timing.finished_at == timing.started_at
+        assert timing.duration_seconds >= 0.0
+
 
 class TestBatchBindRecovery:
     """Recovery binding substitutes step-bound rescue policies."""

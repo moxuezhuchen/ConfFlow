@@ -570,7 +570,10 @@ class WorkItemExecutor:
         wall_end = time.time()
         return Timing(
             started_at=wall_start,
-            finished_at=wall_end,
+            # Wall clocks may step backward (container clock sync); clamp so
+            # the finished/started invariant always holds.  The authoritative
+            # interval remains the monotonic duration.
+            finished_at=max(wall_end, wall_start),
             duration_seconds=max(0.0, time.monotonic() - monotonic_start),
         )
 
