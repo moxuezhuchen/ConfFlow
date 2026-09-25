@@ -50,7 +50,7 @@ from ...shared.defaults import (
     DEFAULT_TS_BOND_DRIFT_THRESHOLD,
     DEFAULT_TS_RESCUE_SCAN,
 )
-from .schema import WORKFLOW_SCHEMA_VERSION
+from .schema import WORKFLOW_SCHEMA_VERSION, WORKFLOW_SCHEMA_VERSION_V3
 from .serialization import canonical_sha256
 from .types import ProgramName, TaskName
 
@@ -499,8 +499,56 @@ def editor_manifest_sha256() -> str:
     return canonical_sha256(_EDITOR_MANIFEST)
 
 
+def _build_v3_fields() -> list[dict[str, Any]]:
+    fields: list[dict[str, Any]] = []
+    for item in _EDITOR_FIELDS:
+        field_copy = copy.deepcopy(item)
+        if field_copy["field_id"] in {"calc.program", "calc.task", "calc.keyword"}:
+            field_copy["group"] = "theory"
+        fields.append(field_copy)
+    fields.append(
+        {
+            "field_id": "calc.checkpoint_from",
+            "context": "calc",
+            "json_pointer": "/steps/{index}/checkpoint/from_step",
+            "label": "Checkpoint step",
+            "description": (
+                "Reference to an ancestor calc step whose checkpoint directory will be reused."
+            ),
+            "value_type": "string",
+            "editor": "text",
+            "group": "checkpoint",
+            "level": "advanced",
+            "order": 120,
+        }
+    )
+    return fields
+
+
+_EDITOR_FIELDS_V3: list[dict[str, Any]] = _build_v3_fields()
+
+_EDITOR_MANIFEST_V3: dict[str, Any] = {
+    "schema": EDITOR_MANIFEST_SCHEMA,
+    "workflow_schema_version": WORKFLOW_SCHEMA_VERSION_V3,
+    "step_contexts": {"calc": "calc", "confgen": "confgen"},
+    "fields": _EDITOR_FIELDS_V3,
+}
+
+
+def build_editor_manifest_v3() -> dict[str, Any]:
+    """Return a new, isolated editor-manifest document for Workflow V3."""
+    return copy.deepcopy(_EDITOR_MANIFEST_V3)
+
+
+def editor_manifest_sha256_v3() -> str:
+    """Return the canonical SHA-256 of the V3 editor manifest document."""
+    return canonical_sha256(_EDITOR_MANIFEST_V3)
+
+
 __all__ = [
     "EDITOR_MANIFEST_SCHEMA",
     "build_editor_manifest",
+    "build_editor_manifest_v3",
     "editor_manifest_sha256",
+    "editor_manifest_sha256_v3",
 ]

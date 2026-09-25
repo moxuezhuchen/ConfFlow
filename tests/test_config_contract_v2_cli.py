@@ -149,7 +149,7 @@ class TestExplicitV2:
 
 
 class TestVersionIsRestricted:
-    @pytest.mark.parametrize("value", ["3", "0", "-1", "two", "", "2.0"])
+    @pytest.mark.parametrize("value", ["0", "-1", "two", "", "2.0"])
     def test_an_unacceptable_version_exits_before_printing(self, capsys, value: str) -> None:
         with pytest.raises(SystemExit) as caught:
             config_cli.main(["contract", "--json", "--version", value])
@@ -160,7 +160,8 @@ class TestVersionIsRestricted:
         assert "--version" in captured.err
 
     def test_the_accepted_choices_are_the_supported_versions(self) -> None:
-        assert sorted(CONFIGURATION_CONTRACT_BUILDERS) == [1, 2]
+        # R7 adds the additive v3 producer contract; the CLI accepts it.
+        assert sorted(CONFIGURATION_CONTRACT_BUILDERS) == [1, 2, 3]
 
 
 class TestExistingSurfacesAreUntouched:

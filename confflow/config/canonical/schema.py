@@ -13,8 +13,9 @@ Two schema families live here:
   recipe/template where a step's ``id`` is still unset). The two share one
   ``$defs`` block and differ only in the step ``required`` list.
 
-The V3 schema is an internal production artefact: it is not advertised by the
-configuration contract (R7 does that) and does not change any published digest.
+The V3 schema is a production artefact advertised by configuration
+contract ``v3`` (R7); its digest moved exactly once for the R5-chartered
+``params.theory`` vocabulary addition (RFC §18) and is pinned since.
 """
 
 from __future__ import annotations

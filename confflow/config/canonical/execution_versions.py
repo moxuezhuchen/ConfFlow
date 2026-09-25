@@ -2,14 +2,12 @@
 
 """Version capability model: which workflow versions may be parsed / executed.
 
-Parsing a document and *running* it are different capabilities. R3 makes V3
-parseable, validatable, plannable and inspectable, but not executable: V3
-execution needs ``workflow_state.v2`` / ``workflow_binding.v2`` (R4) because the
-current engine keys state, directories and resume off the V2 name identity.
+Parsing a document and *running* it are different capabilities. V3 is fully
+enabled (parse + execute) since R4 flipped the flag below; V3 execution runs
+through ``workflow_state.v2`` / ``workflow_binding.v2`` because the engine
+keys state, directories and resume off the stable step identity.
 
-This module is the single capability source for every guard. R3.2 only *defines*
-it — the call sites (CLI, service adapter, engine) are wired in R3.5. R4 enables
-V3 execution by flipping one flag here; no guard body changes.
+This module is the single capability source for every guard.
 """
 
 from __future__ import annotations

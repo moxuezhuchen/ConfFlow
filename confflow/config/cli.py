@@ -29,6 +29,7 @@ from .canonical import (
 
 #: The contract version emitted when ``--version`` is not given. Kept as a named
 #: constant so the default and its rationale are not buried in the argparse call.
+#: v1 stays the default for old-consumer compatibility; v3 is opt-in.
 DEFAULT_CONTRACT_VERSION = 1
 
 

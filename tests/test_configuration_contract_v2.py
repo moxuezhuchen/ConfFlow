@@ -245,7 +245,8 @@ class TestDeterminism:
 
 class TestVersionDispatch:
     def test_the_builder_map_defines_the_supported_versions(self) -> None:
-        assert sorted(CONFIGURATION_CONTRACT_BUILDERS) == [1, 2]
+        # R7 publishes the additive v3 producer contract alongside v1/v2.
+        assert sorted(CONFIGURATION_CONTRACT_BUILDERS) == [1, 2, 3]
 
     @pytest.mark.parametrize("version", [1, 2])
     def test_each_version_dispatches_to_its_builder(self, version: int) -> None:
@@ -261,7 +262,7 @@ class TestVersionDispatch:
     def test_the_dispatched_v2_matches_the_v2_builder(self) -> None:
         assert build_configuration_contract_for_version(2, producer_version="2.1.6") == _v2()
 
-    @pytest.mark.parametrize("version", [0, 3, 99, -1])
+    @pytest.mark.parametrize("version", [0, 99, -1])
     def test_an_unsupported_version_raises_with_the_supported_set(self, version: int) -> None:
         with pytest.raises(ValueError, match="unsupported configuration contract version"):
             build_configuration_contract_for_version(version, producer_version="2.1.6")

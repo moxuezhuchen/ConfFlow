@@ -28,6 +28,7 @@ from __future__ import annotations
 import copy
 from typing import Any
 
+from .schema import WORKFLOW_SCHEMA_VERSION_V3
 from .serialization import canonical_sha256
 
 RECIPE_CATALOG_SCHEMA = "confflow.recipe-catalog.v1"
@@ -126,8 +127,128 @@ def recipe_catalog_sha256() -> str:
     return canonical_sha256(_RECIPE_CATALOG)
 
 
+_RECIPES_V3: list[dict[str, Any]] = [
+    {
+        "id": "optimize",
+        "label": "Optimize",
+        "description": "Relax the structure to a minimum.",
+        "category": "Optimization",
+        "order": 10,
+        "document": {
+            "schema": WORKFLOW_SCHEMA_VERSION_V3,
+            "global": {},
+            "steps": [
+                {
+                    "id": "s001",
+                    "label": "Optimize",
+                    "type": "calc",
+                    "inputs": [],
+                    "params": {"itask": "opt"},
+                },
+            ],
+        },
+        "required_fields": ["calc.program", "calc.keyword"],
+        "exposed_fields": ["calc.program", "calc.task", "calc.keyword"],
+    },
+    {
+        "id": "opt_freq",
+        "label": "Optimize + Frequency",
+        "description": (
+            "Relax the structure, then confirm the stationary point with a "
+            "frequency calculation."
+        ),
+        "category": "Optimization",
+        "order": 20,
+        "document": {
+            "schema": WORKFLOW_SCHEMA_VERSION_V3,
+            "global": {},
+            "steps": [
+                {
+                    "id": "s001",
+                    "label": "Optimize + Frequency",
+                    "type": "calc",
+                    "inputs": [],
+                    "params": {"itask": "opt_freq"},
+                },
+            ],
+        },
+        "required_fields": ["calc.program", "calc.keyword"],
+        "exposed_fields": ["calc.program", "calc.task", "calc.keyword"],
+    },
+    {
+        "id": "single_point",
+        "label": "Single Point",
+        "description": "One energy evaluation on the geometry as provided.",
+        "category": "Energy",
+        "order": 30,
+        "document": {
+            "schema": WORKFLOW_SCHEMA_VERSION_V3,
+            "global": {},
+            "steps": [
+                {
+                    "id": "s001",
+                    "label": "Single Point",
+                    "type": "calc",
+                    "inputs": [],
+                    "params": {"itask": "sp"},
+                },
+            ],
+        },
+        "required_fields": ["calc.program", "calc.keyword"],
+        "exposed_fields": ["calc.program", "calc.task", "calc.keyword"],
+    },
+    {
+        "id": "conformer_search",
+        "label": "Conformer Search",
+        "description": (
+            "Build a conformer ensemble by rotating the bonds you name, then "
+            "search the resulting structures."
+        ),
+        "category": "Conformers",
+        "order": 40,
+        "document": {
+            "schema": WORKFLOW_SCHEMA_VERSION_V3,
+            "global": {},
+            "steps": [
+                {
+                    "id": "s001",
+                    "label": "Conformer Search",
+                    "type": "confgen",
+                    "inputs": [],
+                    "params": {},
+                },
+            ],
+        },
+        "required_fields": ["confgen.chains"],
+        "exposed_fields": [
+            "confgen.chains",
+            "confgen.angle_step",
+            "confgen.bond_multiplier",
+        ],
+    },
+]
+
+_RECIPE_CATALOG_V3: dict[str, Any] = {
+    "schema": RECIPE_CATALOG_SCHEMA,
+    "label": "Calculation recipes",
+    "recipes": _RECIPES_V3,
+}
+
+
+def build_recipe_catalog_v3() -> dict[str, Any]:
+    """Return a new, isolated recipe-catalog document for Workflow V3."""
+    return copy.deepcopy(_RECIPE_CATALOG_V3)
+
+
+def recipe_catalog_sha256_v3() -> str:
+    """Return the canonical SHA-256 of the V3 recipe catalog document."""
+    return canonical_sha256(_RECIPE_CATALOG_V3)
+
+
 __all__ = [
     "RECIPE_CATALOG_SCHEMA",
     "build_recipe_catalog",
+    "build_recipe_catalog_v3",
     "recipe_catalog_sha256",
+    "recipe_catalog_sha256_v3",
 ]

@@ -5,25 +5,30 @@ entry points remain the compatibility surface while callers migrate.
 
 It also owns the producer-side *editing* contract: the workflow schema, the
 editor manifest and the recipe catalog, and the contract documents that publish
-them (``confflow.configuration-contract.v1`` and ``.v2``).
+them (``confflow.configuration-contract.v1``, ``.v2`` and ``.v3``).
 """
 
 from .contract import (
+    _BUILDERS,
     CONFIGURATION_CONTRACT_BUILDERS,
     CONFIGURATION_CONTRACT_SCHEMA,
     CONFIGURATION_CONTRACT_V1_SCHEMA,
     CONFIGURATION_CONTRACT_V2_SCHEMA,
+    CONFIGURATION_CONTRACT_V3_SCHEMA,
     CONFIGURATION_VALIDATION_SCHEMA,
     build_configuration_contract,
     build_configuration_contract_for_version,
     build_configuration_contract_v1,
     build_configuration_contract_v2,
+    build_configuration_contract_v3,
 )
 from .diagnostics import Diagnostic, Severity
 from .editor_manifest import (
     EDITOR_MANIFEST_SCHEMA,
     build_editor_manifest,
+    build_editor_manifest_v3,
     editor_manifest_sha256,
+    editor_manifest_sha256_v3,
 )
 from .execution_versions import (
     CAPABILITIES,
@@ -75,7 +80,9 @@ from .parser import (
 from .recipes import (
     RECIPE_CATALOG_SCHEMA,
     build_recipe_catalog,
+    build_recipe_catalog_v3,
     recipe_catalog_sha256,
+    recipe_catalog_sha256_v3,
 )
 from .resolve import resolve_calc_step, resolve_global_options
 from .schema import (
@@ -136,6 +143,7 @@ __all__ = [
     "CONFIGURATION_CONTRACT_SCHEMA",
     "CONFIGURATION_CONTRACT_V1_SCHEMA",
     "CONFIGURATION_CONTRACT_V2_SCHEMA",
+    "CONFIGURATION_CONTRACT_V3_SCHEMA",
     "CONFIGURATION_VALIDATION_SCHEMA",
     "DEFAULT_EXTENSION_REGISTRY",
     "EDITOR_MANIFEST_SCHEMA",
@@ -170,12 +178,16 @@ __all__ = [
     "EXECUTION_CLASS_STEP_PARAMS",
     "WorkflowConfigBinding",
     "WorkflowFingerprintError",
+    "_BUILDERS",
     "build_configuration_contract",
     "build_configuration_contract_for_version",
     "build_configuration_contract_v1",
     "build_configuration_contract_v2",
+    "build_configuration_contract_v3",
     "build_editor_manifest",
+    "build_editor_manifest_v3",
     "build_recipe_catalog",
+    "build_recipe_catalog_v3",
     "build_step_graph",
     "build_validated_graph",
     "build_workflow_binding",
@@ -192,6 +204,7 @@ __all__ = [
     "detect_workflow_file_version",
     "dump_workflow_yaml",
     "editor_manifest_sha256",
+    "editor_manifest_sha256_v3",
     "is_valid_namespace",
     "load_raw_mapping",
     "load_workflow_definition",
@@ -204,6 +217,7 @@ __all__ = [
     "parse_workflow_binding",
     "parse_workflow_mapping",
     "recipe_catalog_sha256",
+    "recipe_catalog_sha256_v3",
     "require_executable",
     "require_executable_workflow_file",
     "resolve_calc_step",
