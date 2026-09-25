@@ -102,6 +102,15 @@ command -v opencode >/dev/null 2>&1 || fail "opencode CLI not found on PATH"
 command -v gh >/dev/null 2>&1 || fail "gh CLI not found on PATH (needed for task_issue fetch)"
 command -v git >/dev/null 2>&1 || fail "git not found on PATH"
 
+# Fail fast when the test interpreter is missing. scripts/test.sh uses
+# .venv/bin/python when present, else `python`; a fresh checkout with
+# neither fails every profile with exit 127. The workflow's Install step
+# provides .venv — this guard turns a missing setup into a clear blocker
+# instead of a confusing test failure after a long OpenCode run.
+if [[ ! -x .venv/bin/python ]] && ! command -v python >/dev/null 2>&1; then
+    fail "no test interpreter (.venv/bin/python or python on PATH); run the workflow Install step first"
+fi
+
 RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)-${PHASE}-issue${TASK_ISSUE}"
 RUN_LOG_DIR="$LOG_DIR/$RUN_ID"
 mkdir -p "$RUN_LOG_DIR"

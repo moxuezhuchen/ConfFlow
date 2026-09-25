@@ -303,6 +303,12 @@ def test_workflow_inputs_constrained(workflow_doc):
     }
 
 
+def test_workflow_installs_dependencies(workflow_text):
+    """Fresh runner checkouts need .venv; without it tests die with 127."""
+    assert "python3 -m venv .venv" in workflow_text
+    assert 'pip install -e ".[dev]"' in workflow_text
+
+
 # ----------------------------------------------------------------- state ----
 
 
@@ -373,6 +379,11 @@ def test_run_task_single_flight_and_branch_guards(run_task_text):
 def test_run_task_never_mutates_tree_before_guard(run_task_text):
     code = _code_lines(run_task_text)
     assert "chmod" not in code  # mode changes trip the dirty-tree guard
+
+
+def test_run_task_guards_test_interpreter(run_task_text):
+    assert ".venv/bin/python" in run_task_text
+    assert "Install step" in run_task_text
 
 
 def test_run_task_validates_before_use(run_task_text):

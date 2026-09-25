@@ -94,6 +94,20 @@ jobs:
           git rev-parse --show-toplevel
           git status --short --branch
 
+      - name: Install dependencies (runner checkout)
+        # A fresh runner checkout has no .venv and no `python` on PATH;
+        # without this step every test profile fails with exit 127.
+        # Mirrors the CI "Install dependencies" step; .venv/ is gitignored
+        # so the executor's `git add -A` can never scoop it up.
+        run: |
+          set -euo pipefail
+          if [ ! -x .venv/bin/python ]; then
+            python3 -m venv .venv
+          fi
+          .venv/bin/pip install --upgrade pip
+          .venv/bin/pip install -e ".[dev]"
+          .venv/bin/pip check
+
       - name: Validate inputs (fail fast)
         run: |
           set -euo pipefail
