@@ -35,9 +35,13 @@ from confflow.control_worker import HANDOFF_SCHEMA, _canonical_json, run_control
 from confflow.core.exceptions import StopRequestedError
 from confflow.workflow.engine import run_workflow
 
-pytestmark = pytest.mark.skipif(
-    os.name != "posix", reason="durable service contract requires POSIX"
-)
+pytestmark = [
+    pytest.mark.skipif(os.name != "posix", reason="durable service contract requires POSIX"),
+    # Hermetic CI: resolve bare "orca"/"g16" defaults against fake executables
+    # on PATH (no system QC programs required). Explicit fail-closed spellings
+    # never touch PATH and stay fail-closed.
+    pytest.mark.usefixtures("fake_qc_executables_on_path"),
+]
 
 V3 = "confflow.workflow.v3"
 

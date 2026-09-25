@@ -27,6 +27,12 @@ from confflow.workflow.v3_runtime import run_v3_workflow
 V3 = "confflow.workflow.v3"
 
 
+# Hermetic CI: resolve bare "orca"/"g16" defaults against fake executables on
+# PATH (no system QC programs required). Explicit fail-closed spellings never
+# touch PATH and stay fail-closed.
+pytestmark = pytest.mark.usefixtures("fake_qc_executables_on_path")
+
+
 # ---------------------------------------------------------------------------
 # Harness
 # ---------------------------------------------------------------------------

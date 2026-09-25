@@ -27,6 +27,10 @@ from tests.test_workflow_v3_runtime import _FakeHandlers, _write_xyz
 
 V3 = "confflow.workflow.v3"
 
+# Hermetic CI (via tests.test_workflow_v3_runtime fixtures): bare "orca"/"g16"
+# defaults resolve against fake executables on PATH; no system QC needed.
+pytestmark = pytest.mark.usefixtures("fake_qc_executables_on_path")
+
 _STEPS = [
     {"id": "s001", "type": "confgen", "inputs": [], "params": {"chains": ["1-2"]}},
     {"id": "s002", "type": "calc", "inputs": ["s001"], "params": {"keyword": "HF"}},

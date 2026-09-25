@@ -23,6 +23,11 @@ from confflow.workflow.v3_runtime import run_v3_workflow
 V3 = "confflow.workflow.v3"
 STATE_FILE = ".workflow_state.json"
 
+# Hermetic CI: resolve bare "orca"/"g16" defaults against fake executables on
+# PATH (no system QC programs required). Explicit fail-closed spellings never
+# touch PATH and stay fail-closed.
+pytestmark = pytest.mark.usefixtures("fake_qc_executables_on_path")
+
 
 def _write_xyz(path: Path, note: str = "seed") -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
