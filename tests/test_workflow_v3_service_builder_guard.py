@@ -96,7 +96,9 @@ class TestBuilderDirectGuard:
 
 class TestWorkerDirectPathGuard:
     def test_v3_worker_attempt_refused_before_run_paths(self, tmp_path: Path) -> None:
-        """The worker path (control_worker → run_worker_attempt →
+        """Refuse the worker direct path before it creates run paths.
+
+        The worker path (control_worker → run_worker_attempt →
         build_workflow_service) used to bypass run_workflow_through_service;
         the gate must now fire before run_worker_attempt creates run paths.
         """
@@ -134,8 +136,10 @@ class TestWorkerDirectPathGuard:
         assert not list(state_root.rglob("steps"))
 
     def test_v2_worker_attempt_reaches_the_service_builder(self, tmp_path: Path) -> None:
-        """V2 behaviour is unchanged: the guard is a no-op and the builder is
-        still invoked (it is a fake here, so no real side effects occur).
+        """V2 worker attempt still reaches the service builder.
+
+        The guard is a no-op for V2, and the builder here is a fake, so no
+        real side effects occur.
         """
         from types import SimpleNamespace
 
