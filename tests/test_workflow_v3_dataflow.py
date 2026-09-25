@@ -274,9 +274,9 @@ class TestPreflight:
                 {"id": "s004", "type": "calc", "inputs": ["s003"], "params": {"keyword": "HF"}},
             ],
         )
-        # preflight and runtime both resolved through the one helper
-        assert len(calls) == 2
-        assert calls[0] == calls[1]
+        # preflight, runtime and finalize all resolved through the one helper
+        assert len(calls) == 3
+        assert calls[0] == calls[1] == calls[2]
         # the disabled s003 forwarded s002's output to s004
         assert handlers.calc_calls[-1]["current_input"].endswith("steps/s002/result.xyz")
 

@@ -43,6 +43,7 @@ from .execution_context import (
     ResolvedExecutionContextV3,
     resolve_execution_context_v3,
 )
+from .finalize import finalize_workflow_v3
 from .plan import WorkflowV3Plan, build_workflow_plan
 from .state import (
     StepRecordV2,
@@ -51,7 +52,11 @@ from .state import (
     build_initial_state_v2,
 )
 from .stats import CheckpointManager, FailureTracker
-from .v3_dataflow import resolve_effective_sources_v3, validate_effective_dataflow_v3
+from .v3_dataflow import (
+    materialize_effective_inputs,
+    resolve_effective_sources_v3,
+    validate_effective_dataflow_v3,
+)
 
 __all__ = [
     "RuntimeStepV3",
@@ -416,9 +421,6 @@ def run_v3_workflow(
         failure_tracker.clear_previous()
     checkpoint = CheckpointManager(work_dir)
 
-    initial_input: str | list[str] = (
-        runtime.staged_inputs[0] if len(runtime.staged_inputs) == 1 else list(runtime.staged_inputs)
-    )
     # Single bypass authority (minimal R6): runtime input resolution consumes
     # the same effective-source resolver the preflight validated — never a
     # second bypass algorithm.
@@ -428,21 +430,12 @@ def run_v3_workflow(
     outputs: dict[str, str | list[str]] = {}
 
     def _resolve_inputs(step: RuntimeStepV3) -> str | list[str]:
-        resolved: list[str] = []
-        for kind, value in effective_sources[step.id]:
-            if kind == "external":
-                resolved.append(runtime.staged_inputs[int(value) - 1])
-                continue
-            output = outputs.get(value)
-            if output is None:
-                raise ConfFlowError(
-                    f"step {step.id!r} depends on {value!r}, which produced no output"
-                )
-            if isinstance(output, list):
-                resolved.extend(output)
-            else:
-                resolved.append(output)
-        return resolved[0] if len(resolved) == 1 else resolved
+        return materialize_effective_inputs(
+            step.id,
+            effective_sources,
+            staged_inputs=runtime.staged_inputs,
+            step_outputs=outputs,
+        )
 
     def _notify(record: StepRecordV2) -> None:
         if on_step_status_change is not None:
@@ -568,10 +561,18 @@ def run_v3_workflow(
 
     state.final_status = "completed"
     store.save(state)
+    result = finalize_workflow_v3(
+        work_dir=work_dir,
+        plan=plan,
+        state=state,
+        outputs=dict(outputs),
+        staged_inputs=runtime.staged_inputs,
+        binding=binding,
+        logger=logger,
+    )
     return {
         "run_id": state.run_id,
-        "final_output": outputs.get(runtime.steps[-1].id) if runtime.steps else initial_input,
-        "step_outputs": dict(outputs),
+        **result,
         "definition_fingerprint": binding.definition_fingerprint,
         "execution_fingerprint": binding.execution_fingerprint,
     }

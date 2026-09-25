@@ -20,8 +20,11 @@ actually refuses at runtime, moved earlier.
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
+
+from ..core.exceptions import ConfFlowError
 
 if TYPE_CHECKING:
     from .plan import WorkflowV3Plan
@@ -29,6 +32,7 @@ if TYPE_CHECKING:
 __all__ = [
     "EffectiveDataflowIssue",
     "EffectiveSource",
+    "materialize_effective_inputs",
     "resolve_effective_sources_v3",
     "validate_effective_dataflow_v3",
 ]
@@ -81,6 +85,36 @@ def resolve_effective_sources_v3(
                 resolved.extend(sources[predecessor])
         sources[step.id] = tuple(resolved)
     return sources
+
+
+def materialize_effective_inputs(
+    step_id: str,
+    sources: Mapping[str, tuple[EffectiveSource, ...]],
+    *,
+    staged_inputs: Sequence[str],
+    step_outputs: Mapping[str, str | list[str] | None],
+) -> str | list[str]:
+    """Map one step's effective sources onto concrete input paths.
+
+    The single mapping layer over :func:`resolve_effective_sources_v3`: an
+    external slot resolves to its staged slot path, a step source to that
+    step's recorded output (forwarded lists are flattened). Shared by the
+    runtime input resolution and finalization so the bypass algorithm and its
+    mapping can never drift apart.
+    """
+    resolved: list[str] = []
+    for kind, value in sources[step_id]:
+        if kind == "external":
+            resolved.append(staged_inputs[int(value) - 1])
+            continue
+        output = step_outputs.get(value)
+        if output is None:
+            raise ConfFlowError(f"step {step_id!r} depends on {value!r}, which produced no output")
+        if isinstance(output, list):
+            resolved.extend(output)
+        else:
+            resolved.append(output)
+    return resolved[0] if len(resolved) == 1 else resolved
 
 
 def validate_effective_dataflow_v3(

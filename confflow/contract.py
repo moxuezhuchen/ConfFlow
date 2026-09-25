@@ -25,10 +25,12 @@ from __future__ import annotations
 
 __all__ = [
     "OUTPUT_MANIFEST_SCHEMA",
+    "OUTPUT_MANIFEST_SCHEMA_V2",
     "OUTPUT_MANIFEST_FILE",
     "CAPABILITY_SCHEMA_VERSION",
     "RUN_SUMMARY_SCHEMA",
     "WORKFLOW_STATS_SCHEMA",
+    "WORKFLOW_STATS_SCHEMA_V2",
     "WORKFLOW_STATE_SCHEMA",
     "WORKFLOW_STATE_SCHEMA_V2",
     "RUN_SUMMARY_FILE",
@@ -43,11 +45,13 @@ __all__ = [
 CAPABILITY_SCHEMA_VERSION: int = 4
 RUN_SUMMARY_SCHEMA: str = "confflow.run_summary.v1"
 WORKFLOW_STATS_SCHEMA: str = "confflow.workflow_stats.v1"
+WORKFLOW_STATS_SCHEMA_V2: str = "confflow.workflow_stats.v2"
 WORKFLOW_STATE_SCHEMA: str = "confflow.workflow_state.v1"
 WORKFLOW_STATE_SCHEMA_V2: str = "confflow.workflow_state.v2"
 RUN_SUMMARY_FILE: str = "run_summary.json"
 WORKFLOW_STATS_FILE: str = "workflow_stats.json"
 OUTPUT_MANIFEST_SCHEMA: str = "confflow.output_manifest.v1"
+OUTPUT_MANIFEST_SCHEMA_V2: str = "confflow.output_manifest.v2"
 OUTPUT_MANIFEST_FILE: str = "output_manifest.json"
 WORKFLOW_STATE_FILE: str = ".workflow_state.json"
 RUN_REPORT_FILE: str = "{basename}.txt"

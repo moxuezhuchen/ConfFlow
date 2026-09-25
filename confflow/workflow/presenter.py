@@ -310,3 +310,30 @@ def write_final_statistics(root_dir: str, final_stats: dict[str, Any]) -> None:
 
     run_summary_file = os.path.join(root_dir, RUN_SUMMARY_FILE)
     write_atomic_json(run_summary_file, build_run_summary(final_stats))
+
+
+def emit_v3_final_report(final_stats: dict[str, Any]) -> None:
+    """Presentation-only Workflow V3 run summary.
+
+    Labels are displayed first, but the stable step ID is always retained so
+    duplicate labels stay unambiguous. Nothing here normalizes back into the
+    state, the manifest or any path — presentation never touches durable
+    identity.
+    """
+    steps = final_stats.get("steps", []) or []
+    print_workflow_start(final_stats.get("input_files", []), final_stats.get("final_output"))
+    console.print(f"[bold]Workflow V3 completed: {len(steps)} steps[/bold]")
+    for step in steps:
+        label = step.get("label")
+        display = f"{label} (id={step['id']})" if label else f"id={step['id']}"
+        print_kv(f"{step.get('index')}. {display}", str(step.get("status", "unknown")))
+    terminals = final_stats.get("terminal_outputs", {}) or {}
+    if terminals:
+        console.print("[bold]Terminal outputs[/bold]")
+        for terminal, artifacts in terminals.items():
+            record: dict[str, Any] = next((s for s in steps if s.get("id") == terminal), {})
+            label = record.get("label")
+            display = f"{label} (id={terminal})" if label else f"id={terminal}"
+            for artifact in artifacts:
+                print_kv(display, str(artifact))
+    print_kv("Duration", format_duration_hms(final_stats.get("total_duration_seconds", 0)))
