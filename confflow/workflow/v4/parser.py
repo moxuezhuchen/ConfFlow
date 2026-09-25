@@ -196,7 +196,17 @@ def _build_selector(
                 )
             ]
         return PortSelector.by_role(role), []
-    if ids:
+    if ids is not None:
+        if not ids:
+            return None, [
+                error(
+                    DiagnosticCode.BINDING_ERROR,
+                    DiagnosticReason.INVALID_VALUE,
+                    "an ids selector must declare at least one id",
+                    step_id=step_id,
+                    field_path=field_path,
+                )
+            ]
         return PortSelector.by_ids(*ids), []
     return PortSelector.all(), []
 
@@ -673,27 +683,38 @@ def convert_document(model: DocumentModel) -> DocumentParseResult:
                 field_path="steps",
             )
         )
-    definition = WorkflowDefinition(
-        steps=tuple(steps),
-        inputs=inputs,
-        scientific_defaults=ScientificDefaults(
-            charge=model.global_.scientific_defaults.charge,
-            multiplicity=model.global_.scientific_defaults.multiplicity,
-            freeze=(
-                tuple(model.global_.scientific_defaults.freeze)
-                if model.global_.scientific_defaults.freeze is not None
-                else None
+    try:
+        definition = WorkflowDefinition(
+            steps=tuple(steps),
+            inputs=inputs,
+            scientific_defaults=ScientificDefaults(
+                charge=model.global_.scientific_defaults.charge,
+                multiplicity=model.global_.scientific_defaults.multiplicity,
+                freeze=(
+                    tuple(model.global_.scientific_defaults.freeze)
+                    if model.global_.scientific_defaults.freeze is not None
+                    else None
+                ),
             ),
-        ),
-        resources=ResourceRequest.from_values(
-            cores_per_item=model.global_.resources.cores_per_item,
-            memory_per_item=model.global_.resources.memory_per_item,
-        ),
-        scheduler=SchedulerPolicy(
-            max_parallel_items=model.global_.scheduler.max_parallel_items,
-            on_failure=model.global_.scheduler.on_failure,
-        ),
-    )
+            resources=ResourceRequest.from_values(
+                cores_per_item=model.global_.resources.cores_per_item,
+                memory_per_item=model.global_.resources.memory_per_item,
+            ),
+            scheduler=SchedulerPolicy(
+                max_parallel_items=model.global_.scheduler.max_parallel_items,
+                on_failure=model.global_.scheduler.on_failure,
+            ),
+        )
+    except DomainError as exc:
+        diagnostics.append(
+            error(
+                DiagnosticCode.SCHEMA_ERROR,
+                DiagnosticReason.INVALID_VALUE,
+                str(exc),
+                field_path="global",
+            )
+        )
+        return DocumentParseResult(None, tuple(diagnostics))
     if any(item.is_error for item in diagnostics):
         return DocumentParseResult(None, tuple(diagnostics))
     return DocumentParseResult(definition, tuple(diagnostics))

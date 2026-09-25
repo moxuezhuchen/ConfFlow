@@ -104,7 +104,13 @@ def parse_memory_bytes(value: str | int | float) -> int:
             f"invalid memory amount {value!r}; expected forms such as '16GB' or '512MiB'"
         )
     unit = (match.group("unit") or "").upper()
-    amount = float(match.group("value")) * _MEMORY_MULTIPLIERS[unit]
+    multiplier = _MEMORY_MULTIPLIERS.get(unit)
+    if multiplier is None:
+        raise InvalidResourceError(
+            f"unknown memory unit {match.group('unit')!r} in {value!r}; "
+            "use B, KB/KiB, MB/MiB, GB/GiB, TB/TiB, PB/PiB, or EB/EiB"
+        )
+    amount = float(match.group("value")) * multiplier
     return int(amount)
 
 

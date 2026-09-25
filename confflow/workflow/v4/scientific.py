@@ -59,18 +59,19 @@ def _resolve_field(
     override: int | None,
     default: int | None,
 ) -> tuple[int | None, str | None]:
+    """Resolve one scientific field.
+
+    An explicit step override outranks an inherent structure property so that
+    an operator declaration is never silently ignored; callers emit a
+    diagnostic when the two explicitly disagree.
+    """
+    if override is not None:
+        return override, "step_override"
     if inherent is not None:
-        source = "structure"
-        value = inherent
-    elif override is not None:
-        source = "step_override"
-        value = override
-    elif default is not None:
-        source = "run_default"
-        value = default
-    else:
-        return None, None
-    return value, source
+        return inherent, "structure"
+    if default is not None:
+        return default, "run_default"
+    return None, None
 
 
 def resolve_scientific_parameters(

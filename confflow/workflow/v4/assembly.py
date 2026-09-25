@@ -476,7 +476,9 @@ def _determine_domain(
         entries = tuple(
             _ItemDomainEntry(
                 subject_structure_id=structure.id,
-                group_key=structure.group_key or structure.id,
+                # Per-structure items are keyed by entity identity; a
+                # producer-set group key must not collapse distinct items.
+                group_key=structure.id,
                 lineage_root_id=structure.lineage_root_id,
                 driver_structure=structure,
             )
