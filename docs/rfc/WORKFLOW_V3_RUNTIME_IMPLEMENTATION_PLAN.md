@@ -330,7 +330,10 @@ Payload:
 - Relationship to A/B/C: binding v2 carries the **digests of A and C** plus
   the **B section**. It is *not* `binding_v2 = fingerprint_c`; C is one member.
 - Mismatch diagnostics (No-TBD 15, frozen PD-1): resume recomputes A, then C,
-  then evaluates B:
+  then evaluates B. **Schema-ID rule (frozen in the R4.2 round): a workflow
+  schema *identity* change is a reject, never a conditional allow** — only a
+  digest change under the *same* schema identity can take the
+  warn-and-allow path:
   1. A mismatch ⇒ `definition fingerprint mismatch (A)`.
   2. C mismatch with A equal ⇒ compare the state-stored `input_digests` and
      execution-settings section ⇒ `execution fingerprint mismatch (C: inputs)`
@@ -338,11 +341,12 @@ Payload:
   3. B canonicalization-version difference ⇒ `binding mismatch
      (B: canonicalization)` ⇒ **reject**.
   4. B producer identity/version/commit difference ⇒ `binding mismatch
-     (B: producer)` ⇒ **reject**.
+     (B: producer)` ⇒ **reject**; an unknown/missing producer field on either
+     side is also a reject (`unknown == unknown` is never safe).
   5. B producer **dirty** flag ⇒ `binding mismatch (B: dirty)` ⇒ resume
      **reject** (fresh runs with dirty provenance are allowed and recorded).
-  6. B schema-digest difference with A and C equal and the document
-     revalidating under the current producer ⇒ `binding provenance changed
+  6. B schema-digest difference with the same schema ID, A and C equal and
+     the canonicalization version equal ⇒ `binding provenance changed
      (B: schema)` ⇒ **proceed with a recorded warning**.
 - V2 (`workflow_binding.v1`) goldens, parse/build/validate paths: untouched
   (B10 tests).

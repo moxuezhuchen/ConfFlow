@@ -20,7 +20,6 @@ run is initialized (binding semantics are R4.2).
 
 from __future__ import annotations
 
-import copy
 import json
 import os
 import time
@@ -38,6 +37,7 @@ from ..contract import (
     WORKFLOW_STATE_SCHEMA,
     WORKFLOW_STATE_SCHEMA_V2,
 )
+from .binding_v2 import WorkflowBindingV2
 
 if TYPE_CHECKING:
     from .plan import WorkflowV3Plan
@@ -318,22 +318,6 @@ _V2_ROOT_FIELDS = (
     "last_updated_at",
     "final_status",
 )
-_BINDING_V2_SCHEMA = "confflow.workflow_binding.v2"
-_BINDING_V2_FIELDS = (
-    "schema",
-    "source_version",
-    "definition_fingerprint",
-    "execution_fingerprint",
-    "provenance",
-)
-_BINDING_V2_PROVENANCE_FIELDS = (
-    "workflow_schema",
-    "workflow_schema_sha256",
-    "canonicalization_version",
-    "producer_version",
-    "producer_commit",
-    "producer_dirty",
-)
 
 
 def _require_digest(value: Any, what: str) -> str:
@@ -446,18 +430,18 @@ class StepRecordV2:
 class WorkflowStateV2:
     """Durable V3 run state keyed by stable step ID.
 
-    ``binding`` holds the (R4.2-defined) ``workflow_binding.v2`` object. It is
-    copied at construction and is never rebuilt by step-progress updates; the
-    API offers no way to replace it on a live state. ``execution_order`` is
-    the frozen topological order this run uses — verified for internal
-    consistency on every load/save.
+    ``binding`` is the typed, deeply immutable :class:`WorkflowBindingV2`;
+    the wire payload is derived from it on every serialization and no API can
+    replace the binding on a live state (step progress never touches it).
+    ``execution_order`` is the frozen topological order this run uses —
+    verified for internal consistency on every load/save.
     """
 
     run_id: str
     work_dir: str
     config_file: str
     definition_fingerprint: str
-    binding: dict[str, Any]
+    binding: WorkflowBindingV2
     steps: dict[str, StepRecordV2]
     execution_order: list[str]
     input_files: list[str] = field(default_factory=list)
@@ -514,7 +498,10 @@ class WorkflowStateV2:
         work_dir = _require_non_empty_str(raw.get("work_dir"), "work_dir")
         config_file = _require_non_empty_str(raw.get("config_file"), "config_file")
         fingerprint = _require_digest(raw.get("definition_fingerprint"), "definition_fingerprint")
-        binding = _validate_binding_v2_shape(raw.get("binding"))
+        try:
+            binding = WorkflowBindingV2.from_payload(raw.get("binding"))
+        except ValueError as exc:
+            raise WorkflowStateCompatibilityError(f"workflow state 'binding': {exc}") from exc
 
         steps_raw = raw.get("steps")
         if not isinstance(steps_raw, dict) or not steps_raw:
@@ -582,41 +569,26 @@ class WorkflowStateV2:
         )
 
 
-def _validate_binding_v2_shape(raw: Any) -> dict[str, Any]:
-    """Structurally validate the embedded ``workflow_binding.v2`` object.
+def _normalize_binding(binding: WorkflowBindingV2 | dict[str, Any]) -> WorkflowBindingV2:
+    """Normalize a binding argument into the typed, immutable model.
 
-    R4.1 boundary: this checks the frozen payload *shape* only — schema id,
-    field set, digest spellings. Building, comparing and interpreting binding
-    values (A/B/C roles) is R4.2.
+    The typed model is the single validation authority for the binding wire
+    shape (R4.2); this wrapper only adapts mapping-shaped callers and
+    translates its errors into the stable state error type.
     """
-    if not isinstance(raw, dict):
-        raise WorkflowStateCompatibilityError("workflow state 'binding' must be an object")
-    unknown = sorted(set(raw) - set(_BINDING_V2_FIELDS))
-    if unknown:
-        raise WorkflowStateCompatibilityError(
-            f"workflow binding has unknown fields: {', '.join(unknown)}"
-        )
-    if raw.get("schema") != _BINDING_V2_SCHEMA:
-        raise WorkflowStateCompatibilityError(
-            f"workflow binding schema must be {_BINDING_V2_SCHEMA!r}, got {raw.get('schema')!r}"
-        )
-    _require_non_empty_str(raw.get("source_version"), "binding source_version")
-    _require_digest(raw.get("definition_fingerprint"), "binding definition_fingerprint")
-    _require_digest(raw.get("execution_fingerprint"), "binding execution_fingerprint")
-    provenance = raw.get("provenance")
-    if not isinstance(provenance, dict):
-        raise WorkflowStateCompatibilityError("workflow binding 'provenance' must be an object")
-    unknown = sorted(set(provenance) - set(_BINDING_V2_PROVENANCE_FIELDS))
-    if unknown:
-        raise WorkflowStateCompatibilityError(
-            f"workflow binding provenance has unknown fields: {', '.join(unknown)}"
-        )
-    return copy.deepcopy(raw)
+    if isinstance(binding, WorkflowBindingV2):
+        return binding
+    try:
+        return WorkflowBindingV2.from_payload(binding)
+    except ValueError as exc:
+        raise WorkflowStateCompatibilityError(f"workflow state 'binding': {exc}") from exc
 
 
 def state_v2_payload(state: WorkflowStateV2) -> dict[str, Any]:
     """Return the durable v2 payload (deterministic under sorted-key JSON)."""
-    return {"content_schema": WORKFLOW_STATE_SCHEMA_V2, **asdict(state)}
+    payload = asdict(state)
+    payload["binding"] = state.binding.to_payload()
+    return {"content_schema": WORKFLOW_STATE_SCHEMA_V2, **payload}
 
 
 class WorkflowStateV2Store:
@@ -674,7 +646,7 @@ def build_initial_state_v2(
     run_id: str,
     work_dir: str,
     config_file: str,
-    binding: dict[str, Any],
+    binding: WorkflowBindingV2 | dict[str, Any],
     input_files: list[str] | None = None,
     original_inputs: list[str] | None = None,
     input_digests: list[str] | None = None,
@@ -685,7 +657,9 @@ def build_initial_state_v2(
     display snapshot, the step type, and the initial status (V1 vocabulary —
     a disabled step starts ``skipped``). No dirname, runtime path, artifact
     path or execution fingerprint is materialised here. ``binding`` must be
-    supplied by the caller (R4.2 owns its construction) and is copied.
+    supplied by the caller as a typed :class:`WorkflowBindingV2` (R4.2 owns
+    its construction) or an equivalent validated payload mapping; it is
+    normalized into the typed, immutable model.
     """
     steps: dict[str, StepRecordV2] = {}
     for planned in plan.steps:
@@ -704,7 +678,7 @@ def build_initial_state_v2(
         work_dir=_require_non_empty_str(work_dir, "work_dir"),
         config_file=_require_non_empty_str(config_file, "config_file"),
         definition_fingerprint=plan.definition_fingerprint,
-        binding=_validate_binding_v2_shape(binding),
+        binding=_normalize_binding(binding),
         steps=steps,
         execution_order=list(plan.topological_order),
         input_files=list(input_files or []),
