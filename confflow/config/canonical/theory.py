@@ -16,10 +16,9 @@ from __future__ import annotations
 import copy
 import re
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any
 
-ProgramName = Literal["g16", "orca"]
-TaskName = Literal["opt", "sp", "freq", "opt_freq", "ts"]
+from .types import ProgramName, TaskName
 
 __all__ = [
     "PROGRAM_CAPABILITIES",
@@ -31,6 +30,7 @@ __all__ = [
     "normalize_task_name",
     "program_supports_task",
     "theory_to_editor_metadata",
+    "validate_theory_capabilities",
     "validate_theory_keyword_consistency",
 ]
 
@@ -121,6 +121,73 @@ def program_supports_task(program: str, task: str) -> bool:
     return caps is not None and norm_task in caps["tasks"]
 
 
+def _normalize_dispersion_token(value: str) -> str:
+    """Normalize a dispersion model spelling for capability comparison."""
+    return re.sub(r"[-_\s]", "", value.strip().lower())
+
+
+def _dispersion_allowed_tokens(models: Any) -> set[str]:
+    """Expand capability model names to the spellings the compiler accepts."""
+    allowed: set[str] = set()
+    for model in models or ():
+        key = _normalize_dispersion_token(str(model))
+        allowed.add(key)
+        if key in ("d3", "d30", "d3zero", "gd3"):
+            allowed.update({"d3", "gd3", "d30", "d3zero"})
+        elif key in ("d3bj", "gd3bj"):
+            allowed.update({"d3bj", "gd3bj"})
+        elif key in ("d4", "gd4"):
+            allowed.update({"d4", "gd4"})
+    return allowed
+
+
+def validate_theory_capabilities(theory: TheorySpec, program: str = "g16") -> None:
+    """Validate structured dispersion/solvent models against capabilities.
+
+    The effective program is ``theory.program`` when pinned, else ``program``
+    (the step's resolved ``iprog``). An unknown dispersion or solvent *model*
+    raises ``ValueError``. The raw ``keyword`` escape hatch stays unlimited:
+    this check only constrains the structured ``params.theory`` fields.
+    """
+    eff_prog = normalize_program_name(theory.program or program)
+    caps = PROGRAM_CAPABILITIES.get(eff_prog)
+    if caps is None:
+        raise ValueError(f"Unsupported calc program: {theory.program or program!r}")
+
+    if theory.dispersion is not None and str(theory.dispersion).strip():
+        raw_disp = str(theory.dispersion).strip()
+        token = raw_disp
+        if "empiricaldispersion=" in raw_disp.lower():
+            match = re.search(
+                r"empiricaldispersion\s*=\s*\(?\s*([A-Za-z0-9_\-]+)",
+                raw_disp,
+                re.IGNORECASE,
+            )
+            token = match.group(1) if match else raw_disp
+        d_clean = _normalize_dispersion_token(token)
+        allowed = _dispersion_allowed_tokens(caps.get("dispersion_models"))
+        if d_clean not in allowed:
+            supported = ", ".join(sorted(caps.get("dispersion_models") or ()))
+            raise ValueError(
+                f"theory dispersion {theory.dispersion!r} is not supported "
+                f"by program {eff_prog!r} (supported: {supported})"
+            )
+
+    if theory.solvent is not None and (
+        (isinstance(theory.solvent, str) and theory.solvent.strip())
+        or isinstance(theory.solvent, dict)
+    ):
+        solv_model, _solv_name = normalize_solvent(theory.solvent)
+        if solv_model:
+            supported_models = tuple(str(m) for m in (caps.get("solvent_models") or ()))
+            if solv_model.lower() not in {m.lower() for m in supported_models}:
+                supported = ", ".join(sorted(supported_models))
+                raise ValueError(
+                    f"theory solvent model {solv_model!r} is not supported "
+                    f"by program {eff_prog!r} (supported: {supported})"
+                )
+
+
 def normalize_solvent(
     solvent: str | dict[str, Any] | None,
 ) -> tuple[str | None, str | None]:
@@ -131,6 +198,13 @@ def normalize_solvent(
     * 'SMD(water)' -> ('smd', 'water')
     * 'CPCM(water)' -> ('cpcm', 'water')
     * {'model': 'smd', 'solvent': 'water'} -> ('smd', 'water')
+    * {'model': 'smd', 'name': 'water'} -> ('smd', 'water')
+
+    Mapping keys are exactly {model, solvent, name} (additionalProperties
+    false at the JSON-schema level): ``model`` names the continuum model,
+    the solvent itself is read from ``solvent`` with ``name`` as the accepted
+    alias. Unknown mapping keys are rejected by the V3 schema; this parser
+    reads only the three known keys.
     """
     if solvent is None:
         return None, None

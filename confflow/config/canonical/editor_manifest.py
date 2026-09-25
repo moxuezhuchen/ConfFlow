@@ -27,6 +27,29 @@ Two shapes are deliberately *not* published:
   (``atom_pair`` means "two atom indices"), never a control.
 * No provenance. The ``producer`` block and commit/dirty information belong on the
   contract envelope, so an artifact's digest stays a function of its own content.
+
+V3 addressing (``build_editor_manifest_v3``): V1/V2 address a step-scoped field
+by array position (``/steps/{index}/params/...``) and that spelling is frozen.
+V3 steps are identified by stable id, so every V3 step-scoped field carries the
+``/steps/{id}/params/...`` (or ``/steps/{id}/checkpoint/...``) template *plus*
+an explicit ``step_selector: "id"`` member and the ``relative_pointer`` within
+the selected step (``/params/...``). The template alone would be dishonest --
+``steps`` is an array, so ``{id}`` is not traversable; the selector says how to
+resolve it (look the step up by id). The envelope schema id stays shared
+(``confflow.editor-manifest.v1``): the envelope shape is unchanged, the
+selector members are additive, and ``workflow_schema_version`` tells a consumer
+which addressing family a manifest uses.
+
+V3 structured theory: ``calc.theory.method`` / ``calc.theory.basis`` /
+``calc.theory.dispersion`` / ``calc.theory.solvent`` expose the structured
+``params.theory`` members with id-addressed pointers. ``calc.program`` and
+``calc.task`` stay the single program/task editors -- there are deliberately no
+``calc.theory.program`` / ``calc.theory.task`` fields. The producer compiler
+(:mod:`confflow.config.canonical.structured`) writes the edited value to both
+``iprog``/``itask`` and ``theory.program``/``theory.task``, so the pair can
+never disagree. Choice lists are never duplicated: program/task come from the
+``ProgramName`` / ``TaskName`` literals, dispersion/solvent models from
+``PROGRAM_CAPABILITIES``.
 """
 
 from __future__ import annotations
@@ -52,6 +75,7 @@ from ...shared.defaults import (
 )
 from .schema import WORKFLOW_SCHEMA_VERSION, WORKFLOW_SCHEMA_VERSION_V3
 from .serialization import canonical_sha256
+from .theory import PROGRAM_CAPABILITIES
 from .types import ProgramName, TaskName
 
 EDITOR_MANIFEST_SCHEMA = "confflow.editor-manifest.v1"
@@ -91,6 +115,52 @@ def _choices(values: tuple[str, ...], labels: dict[str, str]) -> list[dict[str, 
 
 _PROGRAM_CHOICES = _choices(get_args(ProgramName), _PROGRAM_LABELS)
 _TASK_CHOICES = _choices(get_args(TaskName), _TASK_LABELS)
+
+
+def program_choices() -> list[dict[str, str]]:
+    """Return a fresh copy of the program choice list (derived from ProgramName)."""
+    return [dict(item) for item in _PROGRAM_CHOICES]
+
+
+def task_choices() -> list[dict[str, str]]:
+    """Return a fresh copy of the task choice list (derived from TaskName)."""
+    return [dict(item) for item in _TASK_CHOICES]
+
+
+def theory_dispersion_choices() -> list[dict[str, str]]:
+    """Return the dispersion choice list.
+
+    Derived -- never duplicated -- from the union of ``dispersion_models``
+    across :data:`PROGRAM_CAPABILITIES`. Labels are the mechanical uppercase
+    rendering of the registry tokens, not a second hand-written list.
+    """
+    models = sorted(
+        {
+            str(model).strip().lower()
+            for capabilities in PROGRAM_CAPABILITIES.values()
+            for model in capabilities.get("dispersion_models", ())
+            if str(model).strip()
+        }
+    )
+    return [_choice(value, value.upper()) for value in models]
+
+
+def theory_solvent_models() -> list[str]:
+    """Return the solvent models the structured compiler understands.
+
+    Derived from the union of ``solvent_models`` across
+    :data:`PROGRAM_CAPABILITIES`. The ``calc.theory.solvent`` field stays free
+    text (a bare name, ``MODEL(name)`` or a mapping), and its description names
+    these models from this function rather than from a copied list.
+    """
+    return sorted(
+        {
+            str(model).strip().lower()
+            for capabilities in PROGRAM_CAPABILITIES.values()
+            for model in capabilities.get("solvent_models", ())
+            if str(model).strip()
+        }
+    )
 
 
 def _step_pointer(member: str) -> str:
@@ -499,27 +569,149 @@ def editor_manifest_sha256() -> str:
     return canonical_sha256(_EDITOR_MANIFEST)
 
 
+def _v3_step_field(field: dict[str, Any]) -> dict[str, Any]:
+    """Re-address one step-scoped V1 field at a stable V3 step id.
+
+    The ``{index}`` template becomes ``{id}`` and the field gains the explicit
+    selector pair: ``step_selector: "id"`` says *how* to resolve the template
+    (look the step up by its stable id -- ``steps`` is an array, so the ``{id}``
+    template is not itself traversable) and ``relative_pointer`` is the pointer
+    within the selected step.
+    """
+    pointer = str(field["json_pointer"]).replace("/steps/{index}", "/steps/{id}", 1)
+    reframed = copy.deepcopy(field)
+    reframed["json_pointer"] = pointer
+    reframed["step_selector"] = "id"
+    reframed["relative_pointer"] = pointer.replace("/steps/{id}", "", 1)
+    return reframed
+
+
+def _theory_detail_fields() -> list[dict[str, Any]]:
+    """Return the V3-only structured-theory detail fields (method/basis/...)."""
+    solvent_models = theory_solvent_models()
+    return [
+        {
+            "field_id": "calc.theory.method",
+            "context": "calc",
+            "json_pointer": "/steps/{id}/params/theory/method",
+            "step_selector": "id",
+            "relative_pointer": "/params/theory/method",
+            "label": "Method",
+            "description": (
+                "Electronic-structure method, for example 'B3LYP'. Compiled with "
+                "the basis into the program keyword; required to compile a "
+                "keyword from structured fields."
+            ),
+            "value_type": "string",
+            "editor": "text",
+            "group": "theory",
+            "level": "basic",
+            "order": 21,
+        },
+        {
+            "field_id": "calc.theory.basis",
+            "context": "calc",
+            "json_pointer": "/steps/{id}/params/theory/basis",
+            "step_selector": "id",
+            "relative_pointer": "/params/theory/basis",
+            "label": "Basis set",
+            "description": (
+                "Basis set, for example 'def2-SVP'. Compiled with the method "
+                "into the program keyword."
+            ),
+            "value_type": "string",
+            "editor": "text",
+            "group": "theory",
+            "level": "basic",
+            "order": 22,
+        },
+        {
+            "field_id": "calc.theory.dispersion",
+            "context": "calc",
+            "json_pointer": "/steps/{id}/params/theory/dispersion",
+            "step_selector": "id",
+            "relative_pointer": "/params/theory/dispersion",
+            "label": "Dispersion correction",
+            "description": (
+                "Dispersion correction model. Support is capability-gated by "
+                "program: a model the active program does not list is rejected."
+            ),
+            "value_type": "string",
+            "editor": "select",
+            "group": "theory",
+            "level": "advanced",
+            "order": 23,
+            "choices": theory_dispersion_choices(),
+        },
+        {
+            "field_id": "calc.theory.solvent",
+            "context": "calc",
+            "json_pointer": "/steps/{id}/params/theory/solvent",
+            "step_selector": "id",
+            "relative_pointer": "/params/theory/solvent",
+            "label": "Solvent",
+            "description": (
+                "Solvent specification: a bare name ('water'), 'MODEL(name)', "
+                "or a mapping. Supported solvent models: "
+                f"{', '.join(solvent_models)}."
+            ),
+            "value_type": "string",
+            "editor": "text",
+            "group": "theory",
+            "level": "advanced",
+            "order": 24,
+        },
+    ]
+
+
 def _build_v3_fields() -> list[dict[str, Any]]:
     fields: list[dict[str, Any]] = []
     for item in _EDITOR_FIELDS:
-        field_copy = copy.deepcopy(item)
-        if field_copy["field_id"] in {"calc.program", "calc.task", "calc.keyword"}:
-            field_copy["group"] = "theory"
-        fields.append(field_copy)
+        if item["context"] == "global":
+            fields.append(copy.deepcopy(item))
+            continue
+        field = _v3_step_field(item)
+        if field["field_id"] in {"calc.program", "calc.task", "calc.keyword"}:
+            field["group"] = "theory"
+            if field["field_id"] == "calc.program":
+                field["description"] = (
+                    "Quantum chemistry program. The single program editor: the "
+                    "producer compiler writes the value to both the wire key "
+                    "'iprog' and 'theory.program', so the two can never disagree."
+                )
+            elif field["field_id"] == "calc.task":
+                field["description"] = (
+                    "Calculation task. The single task editor: the producer "
+                    "compiler writes the value to both the wire key 'itask' and "
+                    "'theory.task', so the two can never disagree."
+                )
+            else:
+                field["description"] = (
+                    "Program keyword line, for example 'B3LYP/6-31G(d)'. "
+                    "Passed to the program verbatim; ConfFlow requires it to be "
+                    "non-empty. The raw escape hatch: when structured theory "
+                    "fields are also set, the two must agree."
+                )
+        fields.append(field)
+        if item["field_id"] == "calc.task":
+            fields.extend(_theory_detail_fields())
     fields.append(
         {
             "field_id": "calc.checkpoint_from",
             "context": "calc",
-            "json_pointer": "/steps/{index}/checkpoint/from_step",
+            "json_pointer": "/steps/{id}/checkpoint/from_step",
+            "step_selector": "id",
+            "relative_pointer": "/checkpoint/from_step",
             "label": "Checkpoint step",
             "description": (
-                "Reference to an ancestor calc step whose checkpoint directory will be reused."
+                "Reference to an ancestor calc step, by stable step id, whose "
+                "checkpoint directory will be reused."
             ),
             "value_type": "string",
             "editor": "text",
             "group": "checkpoint",
             "level": "advanced",
-            "order": 120,
+            "order": 130,
         }
     )
     return fields
@@ -551,4 +743,8 @@ __all__ = [
     "build_editor_manifest_v3",
     "editor_manifest_sha256",
     "editor_manifest_sha256_v3",
+    "program_choices",
+    "task_choices",
+    "theory_dispersion_choices",
+    "theory_solvent_models",
 ]

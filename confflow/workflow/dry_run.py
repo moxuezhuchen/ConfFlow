@@ -6,8 +6,8 @@ Version-aware and strictly side-effect free: a dry run reads configuration and
 inputs, plans, and prints. V2 keeps its historical output (dirnames, output
 path previews, executable probes). V3 prints the stable-ID planning graph from
 :class:`~confflow.workflow.plan.WorkflowV3Plan` and creates nothing — no
-runtime directories, no state, no processes — because V3 execution is
-capability-blocked until R4.
+runtime directories, no state, no processes — by design: dry-run is planning
+only and never executes, before or after R4 enabled V3 execution.
 """
 
 from __future__ import annotations

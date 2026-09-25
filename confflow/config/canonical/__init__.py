@@ -9,7 +9,6 @@ them (``confflow.configuration-contract.v1``, ``.v2`` and ``.v3``).
 """
 
 from .contract import (
-    _BUILDERS,
     CONFIGURATION_CONTRACT_BUILDERS,
     CONFIGURATION_CONTRACT_SCHEMA,
     CONFIGURATION_CONTRACT_V1_SCHEMA,
@@ -29,6 +28,10 @@ from .editor_manifest import (
     build_editor_manifest_v3,
     editor_manifest_sha256,
     editor_manifest_sha256_v3,
+    program_choices,
+    task_choices,
+    theory_dispersion_choices,
+    theory_solvent_models,
 )
 from .execution_versions import (
     CAPABILITIES,
@@ -79,8 +82,15 @@ from .parser import (
 )
 from .recipes import (
     RECIPE_CATALOG_SCHEMA,
+    RECIPE_STEP_ID_PATTERN,
+    STEP_ID_ALPHABET,
+    STEP_ID_MAX_ATTEMPTS,
+    STEP_ID_SUFFIX_LENGTH,
+    StepIdExhaustionError,
+    allocate_step_id,
     build_recipe_catalog,
     build_recipe_catalog_v3,
+    instantiate_recipe_v3,
     recipe_catalog_sha256,
     recipe_catalog_sha256_v3,
 )
@@ -97,6 +107,7 @@ from .schema import (
     workflow_schema_sha256_v3,
 )
 from .serialization import CANONICALIZATION_VERSION
+from .structured import STRUCTURED_THEORY_FIELDS, compile_structured_calc
 from .upgrade import (
     MIGRATION_NAMESPACE,
     MigrationRecord,
@@ -151,6 +162,11 @@ __all__ = [
     "MIGRATION_NAMESPACE",
     "MigrationRecord",
     "RECIPE_CATALOG_SCHEMA",
+    "STEP_ID_ALPHABET",
+    "STEP_ID_MAX_ATTEMPTS",
+    "STEP_ID_SUFFIX_LENGTH",
+    "STRUCTURED_THEORY_FIELDS",
+    "StepIdExhaustionError",
     "UnknownParamsPolicy",
     "UpgradeError",
     "UpgradeResult",
@@ -176,9 +192,10 @@ __all__ = [
     "WorkflowBindingCompatibilityError",
     "EXECUTION_CLASS_GLOBAL_MEMBERS",
     "EXECUTION_CLASS_STEP_PARAMS",
+    "RECIPE_STEP_ID_PATTERN",
     "WorkflowConfigBinding",
     "WorkflowFingerprintError",
-    "_BUILDERS",
+    "allocate_step_id",
     "build_configuration_contract",
     "build_configuration_contract_for_version",
     "build_configuration_contract_v1",
@@ -198,6 +215,7 @@ __all__ = [
     "can_parse",
     "canonical_step_name",
     "canonical_workflow_payload",
+    "compile_structured_calc",
     "confgen_keys",
     "confgen_param_fields",
     "detect_schema_version",
@@ -205,6 +223,7 @@ __all__ = [
     "dump_workflow_yaml",
     "editor_manifest_sha256",
     "editor_manifest_sha256_v3",
+    "instantiate_recipe_v3",
     "is_valid_namespace",
     "load_raw_mapping",
     "load_workflow_definition",
@@ -216,6 +235,7 @@ __all__ = [
     "parse_v3_document",
     "parse_workflow_binding",
     "parse_workflow_mapping",
+    "program_choices",
     "recipe_catalog_sha256",
     "recipe_catalog_sha256_v3",
     "require_executable",
@@ -223,6 +243,9 @@ __all__ = [
     "resolve_calc_step",
     "resolve_global_options",
     "resolve_step_semantic_params",
+    "task_choices",
+    "theory_dispersion_choices",
+    "theory_solvent_models",
     "to_canonical_workflow",
     "topo_order",
     "upgrade_v2_to_v3",

@@ -441,8 +441,10 @@ class TestV3ConfigValidate:
 # schema digest sanity (§58 freeze)
 # ---------------------------------------------------------------------------
 # R5 (RFC §18) chartered exactly one additive V3 vocabulary key
-# (``params.theory``); the V2 digest is untouched, both V3 digests moved once
-# by that single property. These pins guard against any FURTHER drift.
+# (``params.theory``); the review pass then tightened it to a strict nested
+# schema (exact keys, authoritative program/task enums, solvent mapping
+# shape). The V2 digest is untouched; both V3 digests moved by those two
+# pre-consumer corrections. These pins guard against any FURTHER drift.
 def test_v3_fragment_digest_remains_frozen() -> None:
-    assert workflow_fragment_schema_sha256_v3().startswith("6c9e0759")
-    assert V3_DOCUMENT_DIGEST.startswith("dd57c472")
+    assert workflow_fragment_schema_sha256_v3().startswith("dfcf1ec3")
+    assert V3_DOCUMENT_DIGEST.startswith("d5058e3b")

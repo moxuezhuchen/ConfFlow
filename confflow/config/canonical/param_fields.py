@@ -228,6 +228,45 @@ def confgen_keys() -> frozenset[str]:
 
 
 def _render(descriptor: ParamFieldDescriptor) -> dict[str, Any]:
+    if descriptor.key == "theory":
+        # Authoritative nested schema for params.theory (RFC §18): the object
+        # form allows EXACTLY {program,task,method,basis,dispersion,solvent}
+        # (additionalProperties false) so `methd:`/`basiss:` typos fail at the
+        # JSON-schema level; the string shorthand stays allowed. Program/task
+        # enums come from the single registry (types.ProgramName/TaskName via
+        # _PROGRAM_VALUES/_TASK_VALUES). Solvent allows a string or a mapping
+        # with exactly {model, solvent, name} (`name` is the alias of
+        # `solvent`; see theory.normalize_solvent).
+        return {
+            "anyOf": [
+                {"type": "string"},
+                {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "program": {"type": "string", "enum": list(_PROGRAM_VALUES)},
+                        "task": {"type": "string", "enum": list(_TASK_VALUES)},
+                        "method": {"type": "string"},
+                        "basis": {"type": "string"},
+                        "dispersion": {"type": "string"},
+                        "solvent": {
+                            "anyOf": [
+                                {"type": "string"},
+                                {
+                                    "type": "object",
+                                    "additionalProperties": False,
+                                    "properties": {
+                                        "model": {"type": "string"},
+                                        "solvent": {"type": "string"},
+                                        "name": {"type": "string"},
+                                    },
+                                },
+                            ]
+                        },
+                    },
+                },
+            ]
+        }
     if descriptor.enum_values is not None:
         return {"enum": list(descriptor.enum_values)}
     kinds = descriptor.value_kind

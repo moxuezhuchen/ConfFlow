@@ -2,8 +2,8 @@
 
 X1: R5 structured metadata produces a valid, executable V3 calc config, and
     ``params.theory``/``keyword`` disagreement is a runnable validation error.
-X2: A V3 recipe with its required fields pinned parses, validates runnable,
-    passes effective-dataflow preflight, and dry-runs without side effects.
+X2: A V3 recipe fragment instantiates to opaque IDs and runs the full
+    authoring chain (parse, runnable validation, dataflow, dry-run).
 X5: Duplicate labels with an explicit ID DAG and disabled bypass remain legal
     and executable; labels stay display-only snapshots.
 """
@@ -15,12 +15,16 @@ import json
 from pathlib import Path
 from typing import Any
 
-from confflow.config.canonical.recipes import build_recipe_catalog_v3
+import pytest
+
 from confflow.config.canonical.validation import ValidationProfile, validate_workflow_v3
 from confflow.workflow.plan import WorkflowV3Plan, build_workflow_plan
 from confflow.workflow.v3_dataflow import validate_effective_dataflow_v3
 from confflow.workflow.v3_runtime import run_v3_workflow
 from tests.test_workflow_v3_runtime import _FakeHandlers, _write_config, _write_xyz
+
+# Hermetic CI: fake orca/g16 entrypoints on PATH (real files, real identity).
+pytestmark = pytest.mark.usefixtures("fake_qc_executables_on_path")
 
 
 def _runnable_errors(doc: dict[str, Any]) -> list[str]:
@@ -119,20 +123,41 @@ def test_x1_theory_without_keyword_defers_to_presence_rules(tmp_path: Path) -> N
 def test_x2_recipe_with_pinned_fields_runs_the_full_authoring_chain(
     tmp_path: Path, capsys: Any
 ) -> None:
-    """The Optimize recipe becomes runnable once its required fields are pinned."""
+    """The Optimize recipe becomes runnable through the producer-owned chain."""
+    import random
+    import re
+
+    from confflow.config.canonical.recipes import (
+        RECIPE_STEP_ID_PATTERN,
+        build_recipe_catalog_v3,
+        instantiate_recipe_v3,
+    )
+    from confflow.config.canonical.structured import compile_structured_calc
     from confflow.config.canonical.v3_parser import parse_v3_document
     from confflow.workflow.dry_run import run_dry_run
 
     catalog = build_recipe_catalog_v3()
     recipe = next(item for item in catalog["recipes"] if item["id"] == "optimize")
     assert recipe["required_fields"] == ["calc.program", "calc.keyword"]
+    # Recipes are FRAGMENT-profile partials: no final step identity retained.
+    assert "id" not in recipe["document"]["steps"][0]
 
-    document = copy.deepcopy(recipe["document"])
-    document["steps"][0]["params"]["keyword"] = "B3LYP/def2-SVP opt"
-    document["steps"][0]["params"]["iprog"] = "g16"
+    params = compile_structured_calc(
+        {"method": "B3LYP", "basis": "def2-SVP"}, program="g16", task="opt"
+    )
+    assert params["iprog"] == "g16"
+    assert params["itask"] == "opt"
+    assert "theory" in params
+
+    template = copy.deepcopy(recipe["document"])
+    template["steps"][0]["params"].update(params)
+    steps = instantiate_recipe_v3(template, existing_ids=(), rng=random.Random(42))
+    assert len(steps) == 1
+    assert re.fullmatch(RECIPE_STEP_ID_PATTERN, steps[0]["id"])
+    document = {"schema": "confflow.workflow.v3", "global": {}, "steps": steps}
 
     definition = parse_v3_document(document)
-    assert [step.id for step in definition.steps] == ["s001"]
+    assert [step.id for step in definition.steps] == [steps[0]["id"]]
     assert _runnable_errors(document) == []
 
     _write_xyz(tmp_path / "input.xyz")
@@ -145,7 +170,7 @@ def test_x2_recipe_with_pinned_fields_runs_the_full_authoring_chain(
     work = tmp_path / "work"
     run_dry_run([str(tmp_path / "input.xyz")], str(config), str(work))
     out = capsys.readouterr().out
-    assert "s001" in out
+    assert steps[0]["id"] in out
     assert not (work / ".workflow_state.json").exists()
     assert not (work / "steps").exists()
 
