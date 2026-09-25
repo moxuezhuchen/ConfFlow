@@ -55,6 +55,7 @@ from ...shared.confgen_params import resolve_confgen_params
 from .diagnostics import Diagnostic
 from .issues import ConfigValidationError
 from .resolve import resolve_calc_step, resolve_global_options
+from .theory import TheorySpec, validate_theory_keyword_consistency
 from .types import WorkflowConfig
 from .workflow import (
     CanonicalStepDefinition,
@@ -521,6 +522,47 @@ def _v3_param_diagnostics(
                     ref,
                 )
             )
+    if step.type == "calc":
+        # R5 (RFC §18): a structured ``params.theory`` object and the raw
+        # ``keyword`` escape hatch must agree; disagreement is a hard error so
+        # a silent ignore is impossible. Old documents carry no ``theory`` key
+        # and skip this block entirely. A missing keyword (fragment template
+        # or RFC §12-exempt disabled step) defers the check until runnable
+        # presence rules pin the keyword.
+        theory_raw = step.params.get("theory")
+        if isinstance(theory_raw, dict):
+            try:
+                spec = TheorySpec.from_dict(theory_raw)
+            except ValueError as exc:
+                diagnostics.append(
+                    Diagnostic(
+                        "workflow.v3.params_invalid",
+                        "error",
+                        f"{path}.params.theory",
+                        str(exc),
+                        ref,
+                    )
+                )
+                return diagnostics
+            keyword = resolved.get("keyword")
+            if keyword is not None and str(keyword).strip():
+                try:
+                    validate_theory_keyword_consistency(
+                        spec,
+                        str(keyword),
+                        program=str(resolved.get("iprog") or "g16"),
+                        task=str(resolved.get("itask") or "opt"),
+                    )
+                except ValueError as exc:
+                    diagnostics.append(
+                        Diagnostic(
+                            "workflow.v3.params_invalid",
+                            "error",
+                            f"{path}.params.theory",
+                            str(exc),
+                            ref,
+                        )
+                    )
     return diagnostics
 
 

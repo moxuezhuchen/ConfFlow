@@ -140,6 +140,7 @@ _CALC_FIELDS: tuple[ParamFieldDescriptor, ...] = (
     _calc("gaussian_link0", ("string", "array"), item="string"),
     _calc("ibkout", "integer"),
     _calc("chk_from_step", "string", v3=False),
+    _calc("theory", ("object", "string")),
 )
 
 #: Confgen kind per canonical key. Aliases share their canonical key's kind.

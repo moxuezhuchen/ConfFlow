@@ -53,7 +53,10 @@ from confflow.config.canonical.v3_parser import parse_v3_document
 
 V3 = WORKFLOW_SCHEMA_VERSION_V3
 
-#: The historical V2 calc parameter key set, pinned verbatim (49 keys).
+#: The historical V2 calc parameter key set, pinned verbatim (50 keys).
+#: R5 (RFC §18) adds the reserved ``theory`` sub-namespace to the single
+#: descriptor registry; V2 keeps its open-bag tolerance so V2 validation
+#: behaviour is unchanged — only the known-key set grows by one.
 V2_CALC_KEYS_GOLDEN = frozenset(
     {
         "allowed_executables",
@@ -98,6 +101,7 @@ V2_CALC_KEYS_GOLDEN = frozenset(
         "scan_max_steps",
         "scan_uphill_limit",
         "stop_check_interval_seconds",
+        "theory",
         "total_memory",
         "ts_bond_atoms",
         "ts_bond_drift_threshold",
