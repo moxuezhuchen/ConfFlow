@@ -220,16 +220,82 @@ from this record. A `status` other than `"verified"` means the
 an install without verified provenance is diagnostic-only; JobDesk's production gate rejects
 it.
 
-## Quick Start
+## Quick Start (V4 production runtime)
 
-Run a workflow with an XYZ input and a YAML config:
+The formal runtime is Workflow V4. Legacy V2/V3 workflows are no longer
+executable: they fail closed with `legacy_workflow_not_executable` and a
+migration-required message.
 
 ```bash
-# Run a workflow
+# Print the V4 producer contract (consumed by JobDesk)
+confflow v4 contract --json
+# Validate exact workflow bytes through the producer validator
+confflow v4 validate --workflow flow.json --json
+# Run a whole V4 workflow from an XYZ input
+confflow v4 run --workflow flow.json --inputs structures=mol.xyz \
+  --run-root ./run --executable orca=/opt/orca/orca --json
+# Resume: re-run the same command; published steps load from disk,
+# incomplete steps resume per work item, nothing restarts from scratch
+confflow v4 run --workflow flow.json --inputs structures=mol.xyz \
+  --run-root ./run --executable orca=/opt/orca/orca --json
+```
+
+A minimal V4 workflow document (`flow.json`):
+
+```json
+{
+  "schema": "confflow.workflow.v4",
+  "inputs": {"structures": {"kind": "structure", "cardinality": "many"}},
+  "global": {"scientific_defaults": {"charge": 0, "multiplicity": 1}},
+  "steps": [
+    {
+      "id": "s_opt",
+      "executor": "calculation",
+      "bindings": {"structure": {"source": {"run": "structures"}}},
+      "calculation": {
+        "program": "orca",
+        "native": {"keyword": "B3LYP D3BJ Opt"},
+        "checks": ["normal_termination"]
+      }
+    }
+  ]
+}
+```
+
+V4 capabilities at a glance:
+
+- **Producer Contract** (`confflow.configuration-contract.v4`): workflow
+  schema, editor manifest, recipe catalog (optimize/single_point/
+  frequency/opt_freq/transition_state/irc/qst2/qst3/neb/goat/tspes),
+  registry capabilities, ports, resources, analysis + result schemas —
+  all generated from the real registries, all digest-pinned. JobDesk
+  edits, validates, and submits through this contract.
+- **Results**: each step publishes a typed `StepResult`
+  (structures/results/artifacts); whole runs publish a
+  `confflow.run_result_manifest.v1` manifest. Reaction-path analysis
+  yields structured `ReactionGroup` results (TS, forward/reverse
+  endpoints, Gibbs energies, two side-relative barriers). JobDesk
+  displays these results; it never recomputes them.
+- **Resume**: per-work-item durable store plus published step results.
+- **Remote**: the same `WorkItem` runs locally or through the
+  `worker-handoff.v2` boundary with identical scientific semantics.
+- **Legacy workflows** (`iprog`/`itask`, `input_xyz` envelopes, V2/V3
+  documents): rejected with `legacy_workflow_not_executable`.
+
+Current limitations: real Gaussian/ORCA programs must be installed and
+licensed by the user; multi-output restart checkpoints stay work-item
+scoped; cross-definition re-runs and cancelled-retry primitives remain
+explicit future work (see `docs/architecture/WORKFLOW_V4.md`).
+
+## Legacy Quick Start (retired runtime, kept for reference)
+
+The commands below describe the retired V2/V3 runtime. They are no
+longer the production path; on the V4 branch they fail closed.
+
+```bash
+# Retired: V2/V3 workflow execution
 confflow mol.xyz -c confflow.example.yaml
-# Resume from a previous checkpoint
 confflow mol.xyz -c confflow.example.yaml --resume
-# Enable more detailed logging
 confflow mol.xyz -c confflow.example.yaml --verbose
 ```
 
@@ -239,7 +305,8 @@ By default, CLI output is written to `<input_basename>.txt` in the input directo
 tail -f mol.txt
 ```
 
-A minimal workflow example:
+A minimal legacy workflow example (retired vocabulary — `iprog`/`itask`
+no longer execute):
 
 ```yaml
 global:
