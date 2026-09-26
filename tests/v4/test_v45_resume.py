@@ -542,9 +542,7 @@ def _qst_result(item: Any, *, step_id: str = "s_qst") -> WorkItemResult:
     candidate_id = multi_output_structure_id(item.logical_key, "ts_candidate", 0)
     coordinates = tuple(
         tuple((ra + pa) / 2.0 for ra, pa in zip(r_point, p_point))
-        for r_point, p_point in zip(
-            resolved.reactant.coordinates, resolved.product.coordinates
-        )
+        for r_point, p_point in zip(resolved.reactant.coordinates, resolved.product.coordinates)
     )
     record = StructureRecord(
         id=candidate_id,
@@ -587,9 +585,7 @@ def _qst_result(item: Any, *, step_id: str = "s_qst") -> WorkItemResult:
 def _reuse_hits(result: Any) -> int:
     """Count item results carrying a reuse diagnostic."""
     return sum(
-        1
-        for item in result.item_results
-        if any(d.code == "reuse_hit" for d in item.diagnostics)
+        1 for item in result.item_results if any(d.code == "reuse_hit" for d in item.diagnostics)
     )
 
 
@@ -613,15 +609,21 @@ class TestIrcResume:
                 for i in range(20)
             )
         )
-        items = assemble(plan, run_inputs(structures={"structures": structures})).for_step(
-            "s_irc"
-        )
+        items = assemble(plan, run_inputs(structures={"structures": structures})).for_step("s_irc")
         assert len(items) == 20
         adapter = _IrcTestAdapter()
         profile = PathEndpointsProfile()
         checks = (CHECKS["normal_termination"], CHECKS["geometry_required"])
-        request = _request(plan, "s_irc", tuple(items), run_root, wrapper,
-                           adapter=adapter, profile=profile, checks=checks)
+        request = _request(
+            plan,
+            "s_irc",
+            tuple(items),
+            run_root,
+            wrapper,
+            adapter=adapter,
+            profile=profile,
+            checks=checks,
+        )
         planned = next(step for step in plan.steps if step.step_id == "s_irc")
         provenance = _provenance_for(request)
         seeded_ids: list[str] = []
@@ -648,14 +650,20 @@ class TestIrcResume:
         structures = StructureSet.of(
             *(structure(f"ts{i:02d}", group_key=f"rxn-{i:02d}") for i in range(20))
         )
-        items = assemble(plan, run_inputs(structures={"structures": structures})).for_step(
-            "s_irc"
-        )
+        items = assemble(plan, run_inputs(structures={"structures": structures})).for_step("s_irc")
         adapter = _IrcTestAdapter()
         profile = PathEndpointsProfile()
         checks = (CHECKS["normal_termination"], CHECKS["geometry_required"])
-        request = _request(plan, "s_irc", tuple(items), run_root, wrapper,
-                           adapter=adapter, profile=profile, checks=checks)
+        request = _request(
+            plan,
+            "s_irc",
+            tuple(items),
+            run_root,
+            wrapper,
+            adapter=adapter,
+            profile=profile,
+            checks=checks,
+        )
         planned = next(step for step in plan.steps if step.step_id == "s_irc")
         provenance = _provenance_for(request)
         failed_item = next(item for item in items if item.logical_key == "s_irc:ts13")
@@ -663,12 +671,18 @@ class TestIrcResume:
             for item in items:
                 if item.id == failed_item.id:
                     _seed_failed(
-                        store, item, planned.step_semantic_digest, provenance,
+                        store,
+                        item,
+                        planned.step_semantic_digest,
+                        provenance,
                         _failed_result(item),
                     )
                 else:
                     _seed_completed(
-                        store, item, planned.step_semantic_digest, provenance,
+                        store,
+                        item,
+                        planned.step_semantic_digest,
+                        provenance,
                         _irc_result(item),
                     )
             resumed = _batch().execute_step_resumable(
@@ -698,22 +712,29 @@ class TestIrcResume:
         structures = StructureSet.of(
             *(structure(f"ts{i:02d}", group_key=f"rxn-{i:02d}") for i in range(4))
         )
-        items = assemble(plan, run_inputs(structures={"structures": structures})).for_step(
-            "s_irc"
-        )
+        items = assemble(plan, run_inputs(structures={"structures": structures})).for_step("s_irc")
         adapter = _IrcTestAdapter()
         profile = PathEndpointsProfile()
         checks = (CHECKS["normal_termination"], CHECKS["geometry_required"])
         planned = next(step for step in plan.steps if step.step_id == "s_irc")
         with SqliteWorkItemStore.open(store_path(run_root, "s_irc")) as store:
             first_request = _request(
-                plan, "s_irc", tuple(items), run_root, wrapper,
-                adapter=adapter, profile=profile, checks=checks,
+                plan,
+                "s_irc",
+                tuple(items),
+                run_root,
+                wrapper,
+                adapter=adapter,
+                profile=profile,
+                checks=checks,
             )
             provenance = _provenance_for(first_request)
             for item in items:
                 _seed_completed(
-                    store, item, planned.step_semantic_digest, provenance,
+                    store,
+                    item,
+                    planned.step_semantic_digest,
+                    provenance,
                     _irc_result(item),
                 )
             first_transport = RemoteTransport(
@@ -735,8 +756,14 @@ class TestIrcResume:
             )
             second = _batch().execute_step_resumable(
                 _request(
-                    plan, "s_irc", tuple(items), run_root, wrapper,
-                    adapter=adapter, profile=profile, checks=checks,
+                    plan,
+                    "s_irc",
+                    tuple(items),
+                    run_root,
+                    wrapper,
+                    adapter=adapter,
+                    profile=profile,
+                    checks=checks,
                 ),
                 store=store,
                 run_root=run_root,
@@ -766,21 +793,30 @@ class TestGoatResume:
                 for i in range(4)
             )
         )
-        items = assemble(plan, run_inputs(structures={"structures": structures})).for_step(
-            "s_goat"
-        )
+        items = assemble(plan, run_inputs(structures={"structures": structures})).for_step("s_goat")
         assert len(items) == 4
         adapter = _IrcTestAdapter()
         profile = EnsembleProfile()
         checks = (CHECKS["normal_termination"], CHECKS["geometry_required"])
-        request = _request(plan, "s_goat", tuple(items), run_root, wrapper,
-                           adapter=adapter, profile=profile, checks=checks)
+        request = _request(
+            plan,
+            "s_goat",
+            tuple(items),
+            run_root,
+            wrapper,
+            adapter=adapter,
+            profile=profile,
+            checks=checks,
+        )
         planned = next(step for step in plan.steps if step.step_id == "s_goat")
         provenance = _provenance_for(request)
         with SqliteWorkItemStore.open(store_path(run_root, "s_goat")) as store:
             for item in items:
                 _seed_completed(
-                    store, item, planned.step_semantic_digest, provenance,
+                    store,
+                    item,
+                    planned.step_semantic_digest,
+                    provenance,
                     _goat_result(item),
                 )
             resumed = _batch().execute_step_resumable(
@@ -801,9 +837,7 @@ class TestGoatResume:
 class TestQstMappingResume:
     """QST mapping stability controls reuse: same mapping reuses, moved digest invalidates."""
 
-    def _mapping(
-        self, plan: Any, *, swapped: bool
-    ) -> tuple[Any, StructureSet, StructureSet]:
+    def _mapping(self, plan: Any, *, swapped: bool) -> tuple[Any, StructureSet, StructureSet]:
         """Assemble QST items; *swapped* exchanges products across groups."""
         reactants = StructureSet.of(
             *(
@@ -839,14 +873,25 @@ class TestQstMappingResume:
         adapter = _IrcTestAdapter()
         profile = PathEndpointsProfile()
         checks = (CHECKS["normal_termination"],)
-        request = _request(plan, "s_qst", tuple(items), run_root, wrapper,
-                           adapter=adapter, profile=profile, checks=checks)
+        request = _request(
+            plan,
+            "s_qst",
+            tuple(items),
+            run_root,
+            wrapper,
+            adapter=adapter,
+            profile=profile,
+            checks=checks,
+        )
         planned = next(step for step in plan.steps if step.step_id == "s_qst")
         provenance = _provenance_for(request)
         with SqliteWorkItemStore.open(store_path(run_root, "s_qst")) as store:
             for item in items:
                 _seed_completed(
-                    store, item, planned.step_semantic_digest, provenance,
+                    store,
+                    item,
+                    planned.step_semantic_digest,
+                    provenance,
                     _qst_result(item),
                 )
             resumed = _batch().execute_step_resumable(
@@ -867,9 +912,7 @@ class TestQstMappingResume:
         plan = _compile(_qst_doc())
         original, _, _ = self._mapping(plan, swapped=False)
         moved, _, _ = self._mapping(plan, swapped=True)
-        assert {item.logical_key for item in moved} == {
-            item.logical_key for item in original
-        }
+        assert {item.logical_key for item in moved} == {item.logical_key for item in original}
         original_digests = {item.logical_key: item.semantic_digest for item in original}
         moved_digests = {item.logical_key: item.semantic_digest for item in moved}
         assert original_digests != moved_digests, "swapped mapping must move the digest"
@@ -879,19 +922,34 @@ class TestQstMappingResume:
         planned = next(step for step in plan.steps if step.step_id == "s_qst")
         with SqliteWorkItemStore.open(store_path(run_root, "s_qst")) as store:
             seed_request = _request(
-                plan, "s_qst", tuple(original), run_root, wrapper,
-                adapter=adapter, profile=profile, checks=checks,
+                plan,
+                "s_qst",
+                tuple(original),
+                run_root,
+                wrapper,
+                adapter=adapter,
+                profile=profile,
+                checks=checks,
             )
             provenance = _provenance_for(seed_request)
             for item in original:
                 _seed_completed(
-                    store, item, planned.step_semantic_digest, provenance,
+                    store,
+                    item,
+                    planned.step_semantic_digest,
+                    provenance,
                     _qst_result(item),
                 )
             resumed = _batch().execute_step_resumable(
                 _request(
-                    plan, "s_qst", tuple(moved), run_root, wrapper,
-                    adapter=adapter, profile=profile, checks=checks,
+                    plan,
+                    "s_qst",
+                    tuple(moved),
+                    run_root,
+                    wrapper,
+                    adapter=adapter,
+                    profile=profile,
+                    checks=checks,
                 ),
                 store=store,
                 run_root=run_root,
@@ -900,9 +958,7 @@ class TestQstMappingResume:
         assert resumed.summary["completed"] == 0
         assert resumed.summary["failed"] == 2
         assert _native_count(count_file) == 0
-        codes = {
-            result.error.code for result in resumed.item_results if result.error is not None
-        }
+        codes = {result.error.code for result in resumed.item_results if result.error is not None}
         assert codes == {"invalidate_input"}
 
 
@@ -918,14 +974,20 @@ class TestEndpointIdStability:
         structures = StructureSet.of(
             *(structure(f"ts{i:02d}", group_key=f"rxn-{i:02d}") for i in range(3))
         )
-        items = assemble(plan, run_inputs(structures={"structures": structures})).for_step(
-            "s_irc"
-        )
+        items = assemble(plan, run_inputs(structures={"structures": structures})).for_step("s_irc")
         adapter = _IrcTestAdapter()
         profile = PathEndpointsProfile()
         checks = (CHECKS["normal_termination"], CHECKS["geometry_required"])
-        request = _request(plan, "s_irc", tuple(items), run_root, wrapper,
-                           adapter=adapter, profile=profile, checks=checks)
+        request = _request(
+            plan,
+            "s_irc",
+            tuple(items),
+            run_root,
+            wrapper,
+            adapter=adapter,
+            profile=profile,
+            checks=checks,
+        )
         planned = next(step for step in plan.steps if step.step_id == "s_irc")
         provenance = _provenance_for(request)
         expected = [
@@ -936,7 +998,10 @@ class TestEndpointIdStability:
         with SqliteWorkItemStore.open(store_path(run_root, "s_irc")) as store:
             for item in items:
                 _seed_completed(
-                    store, item, planned.step_semantic_digest, provenance,
+                    store,
+                    item,
+                    planned.step_semantic_digest,
+                    provenance,
                     _irc_result(item),
                 )
             first = _batch().execute_step_resumable(

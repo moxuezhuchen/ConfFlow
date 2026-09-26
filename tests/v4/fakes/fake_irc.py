@@ -194,12 +194,8 @@ def main(argv: list[str]) -> int:
     stem = input_path.rsplit(".", 1)[0] if "." in input_path else input_path
     forward_coords = shift_coordinates(coordinates, FORWARD_SHIFT)
     reverse_coords = shift_coordinates(coordinates, REVERSE_SHIFT)
-    forward = render_section(
-        FORWARD_BANNER, FORWARD_ENERGY, FORWARD_POINT, atoms, forward_coords
-    )
-    reverse = render_section(
-        REVERSE_BANNER, REVERSE_ENERGY, REVERSE_POINT, atoms, reverse_coords
-    )
+    forward = render_section(FORWARD_BANNER, FORWARD_ENERGY, FORWARD_POINT, atoms, forward_coords)
+    reverse = render_section(REVERSE_BANNER, REVERSE_ENERGY, REVERSE_POINT, atoms, reverse_coords)
     missing_reverse = mode == "missing_reverse" or os.path.basename(input_path) in victims
     if missing_reverse:
         sections = [forward]

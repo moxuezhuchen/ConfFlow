@@ -542,7 +542,14 @@ V45_MODULES = (
     "confflow.programs.gaussian.named",
 )
 
-_V45_SCAN_ROOTS = (DOMAIN_ROOT, EXECUTION_ROOT, V4_ROOT, PERSISTENCE_ROOT, PROGRAMS_ROOT, REMOTE_ROOT)
+_V45_SCAN_ROOTS = (
+    DOMAIN_ROOT,
+    EXECUTION_ROOT,
+    V4_ROOT,
+    PERSISTENCE_ROOT,
+    PROGRAMS_ROOT,
+    REMOTE_ROOT,
+)
 
 
 class TestV45ModuleCoverage:
@@ -556,9 +563,7 @@ class TestV45ModuleCoverage:
     def test_v45_modules_are_covered_by_scan_roots(self) -> None:
         for module in V45_MODULES:
             path = REPO_ROOT / Path(module.replace(".", "/")).with_suffix(".py")
-            assert any(
-                path == root or root in path.parents for root in _V45_SCAN_ROOTS
-            ), module
+            assert any(path == root or root in path.parents for root in _V45_SCAN_ROOTS), module
 
     def test_v45_modules_face_no_legacy_imports(self) -> None:
         offenders: list[tuple[str, str, int]] = []
@@ -689,9 +694,7 @@ class TestNoTaskDispatch:
         offenders: list[tuple[str, int, str]] = []
         for root in (EXECUTION_ROOT, PROGRAMS_ROOT):
             for path in _iter_python_files(root):
-                for lineno, member in _task_dispatch_offenders(
-                    path.read_text(encoding="utf-8")
-                ):
+                for lineno, member in _task_dispatch_offenders(path.read_text(encoding="utf-8")):
                     offenders.append((str(path.relative_to(REPO_ROOT)), lineno, member))
         assert offenders == []
 
@@ -738,10 +741,7 @@ def _range_ordinal_pairing_offenders(source: str) -> list[tuple[str, int, str]]:
             continue
         for loop in [child for child in ast.walk(node) if isinstance(child, ast.For)]:
             iterator = loop.iter
-            if not (
-                isinstance(iterator, ast.Call)
-                and getattr(iterator.func, "id", "") == "range"
-            ):
+            if not (isinstance(iterator, ast.Call) and getattr(iterator.func, "id", "") == "range"):
                 continue
             ordinals = {
                 child.id
@@ -798,20 +798,16 @@ class TestNoFilenameOrdinalPairing:
     """No filename/ordinal cross-set pairing in workflow/v4 + execution."""
 
     def test_scanners_flag_pairing_idioms(self) -> None:
-        assert _filename_pairing_offenders(_FIXTURE_FILENAME_PAIRING), (
-            "basename scanner must trip"
-        )
-        assert _range_ordinal_pairing_offenders(_FIXTURE_ORDINAL_PAIRING), (
-            "ordinal scanner must trip"
-        )
+        assert _filename_pairing_offenders(_FIXTURE_FILENAME_PAIRING), "basename scanner must trip"
+        assert _range_ordinal_pairing_offenders(
+            _FIXTURE_ORDINAL_PAIRING
+        ), "ordinal scanner must trip"
 
     def test_no_filename_idioms_in_tree(self) -> None:
         offenders: list[tuple[str, int, str]] = []
         for root in (V4_ROOT, EXECUTION_ROOT):
             for path in _iter_python_files(root):
-                for lineno, token in _filename_pairing_offenders(
-                    path.read_text(encoding="utf-8")
-                ):
+                for lineno, token in _filename_pairing_offenders(path.read_text(encoding="utf-8")):
                     offenders.append((str(path.relative_to(REPO_ROOT)), lineno, token))
         assert offenders == []
 

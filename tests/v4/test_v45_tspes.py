@@ -237,9 +237,7 @@ def _install_wrapper(
     return wrapper, count_file
 
 
-def _install_irc_stack(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> tuple[Path, Path, Path]:
+def _install_irc_stack(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Path, Path]:
     """Install IRC + ORCA wrappers; return ``(irc, irc_count, orca_count)``."""
     irc_fail = tmp_path / "irc.fail"
     irc_fail.write_text("")
@@ -443,9 +441,7 @@ class TestIrcAssembly:
         for plan, count in zip(plans, (1, 20, 100)):
             assert len(plan.steps) == 3
             assert [step.step_id for step in plan.steps] == ["s_eopt", "s_irc", "s_sp"]
-            assembly = assemble(
-                plan, run_inputs(structures={"structures": _ts_structures(count)})
-            )
+            assembly = assemble(plan, run_inputs(structures={"structures": _ts_structures(count)}))
             assert assembly.ok
             assert len(assembly.for_step("s_irc")) == count
             assert len(assembly.for_step("s_eopt")) == count
@@ -455,16 +451,12 @@ class TestIrcAssembly:
 class TestIrcExecutionChain:
     """The full 20 → 20 → 40 → 40 → 40 count chain, executed locally."""
 
-    def test_full_count_chain(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_full_count_chain(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         irc, irc_count, orca_count = _install_irc_stack(tmp_path, monkeypatch)
         run_root = str(tmp_path / "run")
         plan = _compile(_chain_doc())
         structures = _ts_structures(20)
-        items = assemble(plan, run_inputs(structures={"structures": structures})).for_step(
-            "s_irc"
-        )
+        items = assemble(plan, run_inputs(structures={"structures": structures})).for_step("s_irc")
         assert len(items) == 20
         with SqliteWorkItemStore.open(store_path(run_root, "s_irc")) as store:
             irc_result = _batch().execute_step_resumable(
@@ -490,38 +482,28 @@ class TestIrcExecutionChain:
                 assert record.parent_ids == (driving.id,)
                 assert record.lineage_root_id == driving.lineage_root_id
                 assert record.group_key == driving.group_key
-                expected = (
-                    f"{item.logical_key}:structure:{record.role}:0"
-                )
+                expected = f"{item.logical_key}:structure:{record.role}:0"
                 assert record.id == expected
-            points = {
-                record.metadata.get("point_ordinal") for record in result.structures
-            }
+            points = {record.metadata.get("point_ordinal") for record in result.structures}
             assert points == {FORWARD_POINT, REVERSE_POINT}
-            forward = next(
-                record for record in result.structures if record.role == FORWARD_ROLE
-            )
-            reverse = next(
-                record for record in result.structures if record.role == REVERSE_ROLE
-            )
+            forward = next(record for record in result.structures if record.role == FORWARD_ROLE)
+            reverse = next(record for record in result.structures if record.role == REVERSE_ROLE)
             assert forward.metadata.get("point_ordinal") == FORWARD_POINT
             assert reverse.metadata.get("point_ordinal") == REVERSE_POINT
-            energies = {
-                record.subject_structure_id: record.value for record in result.results
-            }
+            energies = {record.subject_structure_id: record.value for record in result.results}
             assert energies[forward.id] == pytest.approx(FORWARD_ENERGY, abs=1e-9)
             assert energies[reverse.id] == pytest.approx(REVERSE_ENERGY, abs=1e-9)
 
         assert len(tuple(irc_result.structures)) == 40
         endpoints = StructureSet.of(*tuple(irc_result.structures))
 
-        eopt_items = assemble(
-            plan, run_inputs(structures={"structures": endpoints})
-        ).for_step("s_eopt")
+        eopt_items = assemble(plan, run_inputs(structures={"structures": endpoints})).for_step(
+            "s_eopt"
+        )
         assert len(eopt_items) == 40
-        assert {
-            item.named_inputs.structures["structure"][0].id for item in eopt_items
-        } == {record.id for record in endpoints}
+        assert {item.named_inputs.structures["structure"][0].id for item in eopt_items} == {
+            record.id for record in endpoints
+        }
         eopt_result = _batch().execute_step(
             _std_request(
                 plan,
@@ -536,9 +518,7 @@ class TestIrcExecutionChain:
         assert len(tuple(eopt_result.structures)) == 40
 
         optimized = StructureSet.of(*tuple(eopt_result.structures))
-        sp_items = assemble(plan, run_inputs(structures={"structures": optimized})).for_step(
-            "s_sp"
-        )
+        sp_items = assemble(plan, run_inputs(structures={"structures": optimized})).for_step("s_sp")
         assert len(sp_items) == 40
         sp_result = _batch().execute_step(
             _std_request(
@@ -571,9 +551,9 @@ class TestIrcExecutionChain:
         """Forward-first vs reverse-first banners give identical endpoint ids."""
         irc, irc_count, _ = _install_irc_stack(tmp_path, monkeypatch)
         plan = _compile(_chain_doc())
-        (item,) = assemble(
-            plan, run_inputs(structures={"structures": _ts_structures(1)})
-        ).for_step("s_irc")
+        (item,) = assemble(plan, run_inputs(structures={"structures": _ts_structures(1)})).for_step(
+            "s_irc"
+        )
 
         def _run(order: str, tag: str) -> Any:
             monkeypatch.setenv("FAKE_IRC_ORDER", order)
@@ -603,9 +583,9 @@ class TestIrcExecutionChain:
         irc, irc_count, _ = _install_irc_stack(tmp_path, monkeypatch)
         run_root = str(tmp_path / "run")
         plan = _compile(_chain_doc())
-        items = assemble(
-            plan, run_inputs(structures={"structures": _ts_structures(20)})
-        ).for_step("s_irc")
+        items = assemble(plan, run_inputs(structures={"structures": _ts_structures(20)})).for_step(
+            "s_irc"
+        )
         victim = next(item for item in items if item.logical_key == "s_irc:ts07")
         victim_base = orca_job_name(victim.logical_key, fallback=victim.id) + ".inp"
         (tmp_path / "irc.fail").write_text(victim_base + "\n")
@@ -677,9 +657,9 @@ class TestIrcExecutionChain:
                 }
             )
         )
-        items = assemble(
-            plan, run_inputs(structures={"structures": _ts_structures(20)})
-        ).for_step("s_irc")
+        items = assemble(plan, run_inputs(structures={"structures": _ts_structures(20)})).for_step(
+            "s_irc"
+        )
         victim = next(item for item in items if item.logical_key == "s_irc:ts07")
         (tmp_path / "irc.fail").write_text(
             orca_job_name(victim.logical_key, fallback=victim.id) + ".inp\n"

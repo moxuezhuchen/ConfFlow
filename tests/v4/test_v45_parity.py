@@ -344,9 +344,7 @@ def _artifact_axes(result: WorkItemResult) -> list[tuple[Any, ...]]:
     """Return sorted ``(role, checksum, subject)`` axes, sans locators."""
     for ref in result.artifacts:
         assert ref.checksum is not None and ref.checksum.startswith("sha256:"), ref.id
-    return sorted(
-        (ref.role, ref.checksum, ref.subject_structure_id) for ref in result.artifacts
-    )
+    return sorted((ref.role, ref.checksum, ref.subject_structure_id) for ref in result.artifacts)
 
 
 def _check_axes(result: WorkItemResult) -> list[tuple[str, str]]:
@@ -492,9 +490,7 @@ class TestIrcTransportParity:
         remote_root = str(tmp_path / "run-remote")
         worker_root = str(tmp_path / "worker")
         with SqliteWorkItemStore.open(store_path(remote_root, "s_irc")) as store:
-            transport = RemoteTransport(
-                run_root=remote_root, store=store, worker_root=worker_root
-            )
+            transport = RemoteTransport(run_root=remote_root, store=store, worker_root=worker_root)
             remote_result = _batch().execute_step_resumable(
                 _irc_request(plan, tuple(items), remote_root, adapter, "orca"),
                 store=store,
@@ -596,9 +592,7 @@ class TestQstNamedParity:
         atoms = tuple(resolved.reactant.atoms)
         coordinates = tuple(
             tuple((ra + pa) / 2.0 for ra, pa in zip(r_point, p_point))
-            for r_point, p_point in zip(
-                resolved.reactant.coordinates, resolved.product.coordinates
-            )
+            for r_point, p_point in zip(resolved.reactant.coordinates, resolved.product.coordinates)
         )
         candidate_id = multi_output_structure_id(item.logical_key, "ts_candidate", 0)
         record = StructureRecord(
@@ -653,16 +647,10 @@ class TestQstNamedParity:
 
         plan = _compile(self._qst_doc())
         reactants = StructureSet.of(
-            *(
-                structure(f"R{i}", kind="methane", group_key=f"g{i}", offset=0.0)
-                for i in range(2)
-            )
+            *(structure(f"R{i}", kind="methane", group_key=f"g{i}", offset=0.0) for i in range(2))
         )
         products = StructureSet.of(
-            *(
-                structure(f"P{i}", kind="methane", group_key=f"g{i}", offset=0.05)
-                for i in range(2)
-            )
+            *(structure(f"P{i}", kind="methane", group_key=f"g{i}", offset=0.05) for i in range(2))
         )
         assembly = assemble(
             plan, run_inputs(structures={"reactants": reactants, "products": products})
@@ -715,9 +703,11 @@ class TestEnsembleParity:
         geoms = [
             ((0.0, 0.0, 0.0), (0.757, 0.586, 0.0), (-0.757, 0.586, 0.0)),
             ((0.0, 0.0, 0.1), (0.800, 0.500, 0.0), (-0.800, 0.500, 0.0)),
-            ((0.0, 0.0, 0.1), (0.800, 0.500, 0.0), (-0.800, 0.500, 0.0))
-            if duplicate_geometry
-            else ((0.1, 0.0, 0.0), (0.757, 0.586, 0.1), (-0.757, 0.586, 0.1)),
+            (
+                ((0.0, 0.0, 0.1), (0.800, 0.500, 0.0), (-0.800, 0.500, 0.0))
+                if duplicate_geometry
+                else ((0.1, 0.0, 0.0), (0.757, 0.586, 0.1), (-0.757, 0.586, 0.1))
+            ),
         ]
         blocks = []
         for index, points in enumerate(geoms):
