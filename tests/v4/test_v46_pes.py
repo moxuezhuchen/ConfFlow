@@ -19,6 +19,7 @@ from confflow.analysis.pes import (
     PROFILE_DIGEST_KIND,
     assemble_pes_profile,
     pes_digest,
+    pes_from_analysis_results,
     reaction_profile_digest,
 )
 from confflow.analysis.reaction import (
@@ -201,3 +202,64 @@ class TestDisplayProjections:
         with pytest.raises(AnalysisMathError) as excinfo:
             from_hartree(float("inf"), Unit.KILOJOULE_PER_MOLE)
         assert excinfo.value.code == "non_numeric_value"
+
+
+class TestPesFromAnalysisResults:
+    """PES derives only from actual analysis results, never hand-forged maps."""
+
+    def test_derives_from_real_analysis_results(self) -> None:
+        profile_a, profile_b = _two_profiles()
+        results = ResultSet.of(
+            ScientificResult(
+                kind="reaction_profile",
+                value=profile_a,
+                subject_structure_id="a-ts",
+                source_step_id="a-pes",
+            ),
+            ScientificResult(
+                kind="reaction_profile",
+                value=profile_b,
+                subject_structure_id="b-ts",
+                source_step_id="a-pes",
+            ),
+            ScientificResult(
+                kind="energy",
+                value=-76.0,
+                unit=Unit.HARTREE,
+                subject_structure_id="a-ts",
+                source_step_id="s-high",
+            ),
+        )
+        combined = pes_from_analysis_results(results)
+        assert combined["group_keys"] == ["rxn-a", "rxn-b"]
+        assert combined["count"] == 2
+
+    def test_ignores_non_profile_kinds(self) -> None:
+        profile_a, _ = _two_profiles()
+        results = ResultSet.of(
+            ScientificResult(
+                kind="reaction_profile",
+                value=profile_a,
+                subject_structure_id="a-ts",
+                source_step_id="a-pes",
+            ),
+        )
+        assert pes_from_analysis_results(results)["count"] == 1
+
+    def test_empty_fails_closed(self) -> None:
+        with pytest.raises(AnalysisMathError) as excinfo:
+            pes_from_analysis_results(ResultSet.of())
+        assert excinfo.value.code == "no_analysis_profiles"
+
+    def test_non_mapping_value_fails_closed(self) -> None:
+        bad = ResultSet.of(
+            ScientificResult(
+                kind="reaction_profile",
+                value=1.5,
+                subject_structure_id="a-ts",
+                source_step_id="a-pes",
+            ),
+        )
+        with pytest.raises(AnalysisMathError) as excinfo:
+            pes_from_analysis_results(bad)
+        assert excinfo.value.code == "invalid_profile_value"

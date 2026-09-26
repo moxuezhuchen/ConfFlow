@@ -6,9 +6,10 @@ Covers :mod:`confflow.analysis.thermochemistry` and
 :mod:`confflow.analysis.reaction` against exact-arithmetic fixtures with
 ``pytest.approx(abs=1e-9)`` tolerance: composite ``G_high = E_high + corr``,
 direct Gibbs, the opt-in low-level fallback, missing-energy fail-closed
-semantics, unit-mismatch typing, exact-kind selectors, and the
-no-chemistry-assignment invariant (``forward``/``reverse`` are native path
-directions only; ``assignment`` is always ``None``).
+semantics, unit-mismatch typing, exact-kind selectors, unique-or-ambiguous-fail
+selection (pool order never decides), and the formal endpoint-assignment
+contract (``forward``/``reverse`` stay pure path direction by default;
+an explicit mapping flows into result, provenance, and manifest).
 """
 
 from __future__ import annotations
@@ -100,9 +101,7 @@ def _result(
     """Build one source result bound to *subject* (producer-scoped id)."""
     from confflow.domain.result import make_result_id
 
-    producer_digest = "sha256:" + hashlib.sha256(
-        f"{step}:{subject}:{kind}".encode()
-    ).hexdigest()
+    producer_digest = "sha256:" + hashlib.sha256(f"{step}:{subject}:{kind}".encode()).hexdigest()
     return ScientificResult(
         kind=kind,
         value=value,
@@ -367,7 +366,8 @@ class TestCompositeAssembly:
         assert payload["barriers"]["reverse_endpoint"]["value"] == pytest.approx(
             EXPECTED_BARRIER_REVERSE, abs=1e-9
         )
-        assert payload["assignment"] is None
+        assert payload["assignment"] == "unassigned"
+        assert payload["endpoint_assignment"] == {"forward": "unassigned", "reverse": "unassigned"}
         assert list(payload["source_result_ids"]) == sorted(payload["source_result_ids"])
         assert len(payload["source_result_ids"]) == 6
         assert payload["fallback_used"] == {"ts": False, "forward": False, "reverse": False}
@@ -529,7 +529,7 @@ class TestUnitSafetyAtGroupLevel:
 
 
 class TestRolePreservation:
-    """Endpoints are never relabelled: no reactant/product chemistry assignment."""
+    """Default stays pure path direction; explicit assignment flows formally."""
 
     def test_nodes_and_kinds_use_endpoint_vocabulary(self) -> None:
         analysis = assemble_reaction_result(
@@ -547,7 +547,7 @@ class TestRolePreservation:
         assert KIND_BARRIER_FORWARD_ENDPOINT in kinds
         assert KIND_BARRIER_REVERSE_ENDPOINT in kinds
 
-    def test_assignment_is_always_none(self) -> None:
+    def test_default_assignment_is_unassigned(self) -> None:
         for lookup, model in (
             (_composite_lookup(), COMPOSITE_MODEL),
             (_direct_lookup(), DIRECT_MODEL),
@@ -556,7 +556,41 @@ class TestRolePreservation:
                 _group(), model, lookup, analysis_step_id=ANALYSIS_STEP
             )
             payload = dict(_results_by_kind(analysis)[KIND_REACTION_PROFILE].value)
-            assert payload["assignment"] is None
+            assert payload["assignment"] == "unassigned"
+            assert payload["endpoint_assignment"] == {
+                "forward": "unassigned",
+                "reverse": "unassigned",
+            }
+            for result in analysis.results:
+                assert result.provenance is not None
+                assert dict(result.provenance.metadata)["assignment"] == "unassigned"
+                assert dict(result.provenance.metadata)["endpoint_assignment"] == {
+                    "forward": "unassigned",
+                    "reverse": "unassigned",
+                }
+
+    def test_explicit_assignment_flows_to_result_provenance_manifest(self) -> None:
+        mapping = {"forward": "reactant", "reverse": "product"}
+        analysis = assemble_reaction_result(
+            _group(),
+            COMPOSITE_MODEL,
+            _composite_lookup(),
+            analysis_step_id=ANALYSIS_STEP,
+            endpoint_assignment=mapping,
+        )
+        assert analysis.ok
+        by_kind = _results_by_kind(analysis)
+        payload = dict(by_kind[KIND_REACTION_PROFILE].value)
+        assert payload["assignment"] == "explicit"
+        assert payload["endpoint_assignment"] == mapping
+        for result in analysis.results:
+            assert result.provenance is not None
+            metadata = dict(result.provenance.metadata)
+            assert metadata["assignment"] == "explicit"
+            assert metadata["endpoint_assignment"] == mapping
+        kinds = {result.kind for result in analysis.results}
+        assert KIND_BARRIER_FORWARD_ENDPOINT in kinds
+        assert KIND_BARRIER_REVERSE_ENDPOINT in kinds
 
 
 class TestEnergyModelPolicy:
@@ -595,3 +629,101 @@ class TestEnergyModelPolicy:
             "correction_selector": "gibbs_correction",
             "fallback": "low_level",
         }
+
+
+class TestNoFirstMatchSelection:
+    """Pool order never decides: every leg is unique-or-ambiguous-fail."""
+
+    def _pools(self) -> dict[str, ResultSet]:
+        return _composite_lookup()
+
+    def test_shuffled_pool_order_gives_identical_values(self) -> None:
+        for reverse in (False, True):
+            lookup: dict[str, ResultSet] = {}
+            for subject, pool in self._pools().items():
+                records = tuple(pool)
+                if reverse:
+                    records = tuple(reversed(records))
+                lookup[subject] = ResultSet(records)
+            analysis = assemble_reaction_result(
+                _group(), COMPOSITE_MODEL, lookup, analysis_step_id=ANALYSIS_STEP
+            )
+            assert analysis.ok
+            by_kind = _results_by_kind(analysis)
+            assert by_kind[KIND_BARRIER_FORWARD_ENDPOINT].value == pytest.approx(
+                EXPECTED_BARRIER_FORWARD, abs=1e-9
+            )
+            assert by_kind[KIND_BARRIER_REVERSE_ENDPOINT].value == pytest.approx(
+                EXPECTED_BARRIER_REVERSE, abs=1e-9
+            )
+
+    def test_shuffled_ambiguous_pool_fails_identically(self) -> None:
+        dup_forward = ResultSet.of(
+            _result("gibbs_energy", -76.43, TS_ID, step="s-first"),
+            _result("gibbs_energy", -76.44, TS_ID, step="s-second"),
+        )
+        dup_backward = ResultSet.of(*reversed(tuple(dup_forward)))
+        for pool in (dup_forward, dup_backward):
+            with pytest.raises(AnalysisMathError) as excinfo:
+                select_result(pool, TS_ID, "gibbs_energy", "gibbs_energy")
+            assert excinfo.value.code == "ambiguous_selection"
+
+    def test_direct_gibbs_duplicates_fail_closed(self) -> None:
+        pool = ResultSet.of(
+            _result("gibbs_energy", -76.43, TS_ID, step="s-a"),
+            _result("gibbs_energy", -76.44, TS_ID, step="s-b"),
+        )
+        with pytest.raises(AnalysisMathError) as excinfo:
+            resolve_node_gibbs(pool, TS_ID, DIRECT_MODEL)
+        assert excinfo.value.code == "ambiguous_selection"
+
+    def test_low_level_correction_duplicates_fail_closed(self) -> None:
+        pool = ResultSet.of(
+            _result("energy", -76.45, TS_ID, step="s-high"),
+            _result("gibbs_correction", 0.02, TS_ID, step="s-c1"),
+            _result("gibbs_correction", 0.03, TS_ID, step="s-c2"),
+        )
+        with pytest.raises(AnalysisMathError) as excinfo:
+            resolve_node_gibbs(pool, TS_ID, COMPOSITE_MODEL)
+        assert excinfo.value.code == "ambiguous_selection"
+
+    def test_high_level_sp_duplicates_fail_closed(self) -> None:
+        pool = ResultSet.of(
+            _result("energy", -76.45, TS_ID, step="s-e1"),
+            _result("energy", -76.46, TS_ID, step="s-e2"),
+            _result("gibbs_correction", 0.02, TS_ID, step="s-c"),
+        )
+        with pytest.raises(AnalysisMathError) as excinfo:
+            resolve_node_gibbs(pool, TS_ID, COMPOSITE_MODEL)
+        assert excinfo.value.code == "ambiguous_selection"
+
+    def test_group_assembly_surfaces_ambiguous_selection(self) -> None:
+        lookup = _composite_lookup()
+        lookup[TS_ID] = ResultSet.of(
+            _result("energy", -76.45, TS_ID, step="s-e1"),
+            _result("energy", -76.46, TS_ID, step="s-e2"),
+            _result("gibbs_correction", 0.02, TS_ID, step="s-c"),
+        )
+        analysis = assemble_reaction_result(
+            _group(), COMPOSITE_MODEL, lookup, analysis_step_id=ANALYSIS_STEP
+        )
+        assert not analysis.ok
+        assert analysis.results == ()
+        assert "analysis_ambiguous_selection" in [item.code for item in analysis.diagnostics]
+
+    def test_sources_are_resultref_identities_not_value_digests(self) -> None:
+        analysis = assemble_reaction_result(
+            _group(), COMPOSITE_MODEL, _composite_lookup(), analysis_step_id=ANALYSIS_STEP
+        )
+        assert analysis.ok
+        payload = dict(_results_by_kind(analysis)[KIND_REACTION_PROFILE].value)
+        sources = list(payload["source_result_ids"])
+        assert sources and all(isinstance(item, str) for item in sources)
+        assert all(item.startswith("sha256:") for item in sources)
+        known = {
+            result.result_id
+            for pool in _composite_lookup().values()
+            for result in pool
+            if result.result_id is not None
+        }
+        assert set(sources) <= known

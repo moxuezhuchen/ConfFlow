@@ -167,15 +167,47 @@ def _merge_structures(inputs: AnalysisInputs) -> StructureSet:
     Returns
     -------
     StructureSet
-        Combined structures; a repeated id keeps its first occurrence
-        in ``(port, position)`` order.
+        Combined structures; a repeated id with identical content keeps
+        its first occurrence in ``(port, position)`` order.  A repeated
+        id with differing content fails closed: pool order never decides
+        which definition wins.
+
+    Raises
+    ------
+    AnalysisError
+        With code ``analysis_invalid_definition`` when one structure id
+        names conflicting records.
     """
+    from .models import AnalysisError as _AnalysisError
+
     merged: dict[str, StructureRecord] = {}
+    payloads: dict[str, str] = {}
     ports = inputs.structures
     for port in sorted(ports):
         for record in ports[port]:
-            if record.id not in merged:
+            seen = merged.get(record.id)
+            if seen is None:
                 merged[record.id] = record
+                try:
+                    payloads[record.id] = record.to_dict().__repr__()
+                except Exception:
+                    payloads[record.id] = repr(
+                        (record.geometry_digest, record.role, record.group_key, record.parent_ids)
+                    )
+                continue
+            try:
+                current = record.to_dict().__repr__()
+            except Exception:
+                current = repr(
+                    (record.geometry_digest, record.role, record.group_key, record.parent_ids)
+                )
+            if current != payloads[record.id]:
+                raise _AnalysisError(
+                    "analysis_invalid_definition",
+                    f"structure id {record.id!r} names conflicting records; "
+                    "refusing first-match resolution",
+                    details={"reason": "conflicting_structure", "structure_id": record.id},
+                )
     return StructureSet(tuple(merged.values()))
 
 
@@ -216,7 +248,12 @@ def _merge_results(inputs: AnalysisInputs) -> ResultSet:
     return ResultSet(tuple(merged))
 
 
-def _lookup_for_group(group: ReactionGroup, pools: Mapping[str, ResultSet]) -> dict[str, ResultSet]:
+def _lookup_for_group(
+    group: ReactionGroup,
+    pools: Mapping[str, ResultSet],
+    structures_by_id: Mapping[str, StructureRecord] | None = None,
+    merged_results: ResultSet | None = None,
+) -> dict[str, ResultSet]:
     """Return the per-node source pools for one group's triple.
 
     Parameters
@@ -224,17 +261,71 @@ def _lookup_for_group(group: ReactionGroup, pools: Mapping[str, ResultSet]) -> d
     group : ReactionGroup
         Reaction triple (must be structurally complete).
     pools : Mapping[str, ResultSet]
-        Pools keyed by every known structure id.
+        Pools keyed by every known structure id (direct subjects only).
+    structures_by_id : Mapping or None
+        Structure index for lineage expansion; when given with
+        *merged_results*, descendant results (optimized/frequency/SP
+        outputs) join the pool of their nearest triple-subject ancestor
+        with the ancestor subject rewritten in, preserving the original
+        ``result_id``/provenance for traceability.  Selection downstream
+        stays unique-or-ambiguous-fail over the expanded pool.
+    merged_results : ResultSet or None
+        Full merged results for lineage expansion (required with
+        *structures_by_id*).
 
     Returns
     -------
     dict[str, ResultSet]
         Pools keyed by triple subject id only.
     """
+    from dataclasses import replace as _replace
+
+    triple = set(group.subject_ids())
     lookup: dict[str, ResultSet] = {}
     for subject in group.subject_ids():
-        lookup[subject] = pools[subject]
+        lookup[subject] = pools.get(subject, ResultSet())
+    if structures_by_id is None or merged_results is None:
+        return lookup
+    for result in merged_results:
+        subject = result.subject_structure_id
+        if subject is None or subject in triple:
+            continue
+        owner = _nearest_triple_ancestor(subject, triple, structures_by_id)
+        if owner is None:
+            continue
+        rewritten = _replace(result, subject_structure_id=owner)
+        lookup[owner] = ResultSet(tuple(lookup[owner]) + (rewritten,))
     return lookup
+
+
+def _nearest_triple_ancestor(
+    subject: str,
+    triple: set[str],
+    structures_by_id: Mapping[str, StructureRecord],
+) -> str | None:
+    """Return the nearest triple-subject ancestor of *subject*, if any.
+
+    Walks ``parent_ids`` transitively from *subject*; the first triple
+    member met walking up owns the descendant.  A descendant reached
+    through another triple member belongs to that nearer member, never
+    to a farther one.  Cycles fail closed to ``None``.
+    """
+    seen: set[str] = set()
+    frontier = [subject]
+    while frontier:
+        current = frontier.pop()
+        if current in seen:
+            continue
+        seen.add(current)
+        record = structures_by_id.get(current)
+        if record is None:
+            continue
+        for parent in record.parent_ids:
+            if parent in triple:
+                return parent
+            if parent not in seen:
+                frontier.append(parent)
+    return None
 
 
 class AnalysisExecutor:
@@ -253,6 +344,8 @@ class AnalysisExecutor:
         self,
         inputs: AnalysisInputs,
         definition: AnalysisDefinition | None = None,
+        *,
+        analysis_step_id: str | None = None,
     ) -> AnalysisStepResult:
         """Execute one analysis step over typed inputs.
 
@@ -263,6 +356,12 @@ class AnalysisExecutor:
         definition : AnalysisDefinition or None
             Explicit definition overriding ``inputs.definition`` when
             given; otherwise the inputs' definition applies.
+        analysis_step_id : str or None
+            Real analysis step id carried as the source of computed
+            results (provenance ``step_id``/``source_step_id``).  When
+            ``None`` the compute seam receives ``None`` and downstream
+            stamping must supply the real id; production work-item
+            execution always passes the real id.
 
         Returns
         -------
@@ -301,6 +400,7 @@ class AnalysisExecutor:
             )
         structures = _merge_structures(inputs)
         source_results = _merge_results(inputs)
+        structures_by_id = {record.id: record for record in structures}
         pools: dict[str, ResultSet] = {
             record.id: source_results.by_subject(record.id) for record in structures
         }
@@ -318,8 +418,8 @@ class AnalysisExecutor:
                 try:
                     candidate = model.compute(
                         resolved,
-                        _lookup_for_group(resolved, pools),
-                        analysis_step_id=None,
+                        _lookup_for_group(resolved, pools, structures_by_id, source_results),
+                        analysis_step_id=analysis_step_id,
                         endpoint_assignment=dict(assignment_map),
                     )
                 except Exception as exc:  # fail the group closed, never propagate

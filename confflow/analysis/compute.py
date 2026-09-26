@@ -40,7 +40,6 @@ class ReactionEnergyModel:
         endpoint_assignment: Mapping[str, str] | None = None,
     ) -> ComputedGroup:
         """Aggregate one reaction group into computed results."""
-        del endpoint_assignment
         node = ReactionNodeGroup(
             group_key=group.group_key,
             ts_structure_id=group.ts_structure_id or "",
@@ -48,7 +47,11 @@ class ReactionEnergyModel:
             reverse_structure_id=group.reverse_endpoint_id or "",
         )
         analysis = assemble_reaction_result(
-            node, self._policy, lookup, analysis_step_id=analysis_step_id
+            node,
+            self._policy,
+            lookup,
+            analysis_step_id=analysis_step_id,
+            endpoint_assignment=endpoint_assignment,
         )
         return ComputedGroup(results=analysis.results, diagnostics=analysis.diagnostics)
 

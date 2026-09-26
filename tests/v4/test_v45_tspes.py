@@ -590,3 +590,353 @@ class TestIrcExecutionChain:
             assert table[(group, FORWARD_ROLE)].parent_ids == (f"ts{index:02d}",)
             assert table[(group, REVERSE_ROLE)].parent_ids == (f"ts{index:02d}",)
         assert CompletionPolicy(mode=CompletionMode.ALLOW_PARTIAL).accepts_partial
+
+
+class TestFormalChainAnalysisPes:
+    """Full formal chain with every value from a real preceding step.
+
+    ``TS -> Freq -> high-level SP -> IRC -> endpoint Opt -> endpoint
+    Freq -> endpoint high-level SP -> Analysis -> PES``: no hand-forged
+    endpoint Gibbs values or subjects.  Electronic ``E_high`` legs are
+    pinned to the real single-point step results, Gibbs-correction legs
+    to the real frequency step results (explicit ``ResultRef``
+    traceability via ``result_id``/``source_step_id``); optimized /
+    frequency / SP descendants resolve to their reaction node through
+    parent-id lineage.  The PES derives strictly from emitted
+    ``reaction_profile`` analysis results.
+    """
+
+    def _chain_doc(self) -> dict[str, Any]:
+        ts_freq = calc_step(
+            "s_ts_freq",
+            program="orca",
+            adapter="standard",
+            profile="standard",
+            bindings={"structure": {"source": {"run": "structures"}}},
+            native={"keyword": "B3LYP Freq"},
+            checks=["normal_termination", "frequencies_required"],
+            scheduler={"max_parallel_items": 2},
+            resources={"cores_per_item": 1, "memory_per_item": "1GB"},
+            execution={"binding_id": "test", "executable": "orca"},
+        )
+        ts_sp = calc_step(
+            "s_ts_sp",
+            program="orca",
+            adapter="standard",
+            profile="standard",
+            bindings={"structure": {"source": {"run": "structures"}}},
+            native={"keyword": "B3LYP SP"},
+            checks=["normal_termination"],
+            scheduler={"max_parallel_items": 2},
+            resources={"cores_per_item": 1, "memory_per_item": "1GB"},
+            execution={"binding_id": "test", "executable": "orca"},
+        )
+        irc = calc_step(
+            "s_irc",
+            program="orca",
+            adapter="standard",
+            profile="path_endpoints",
+            bindings={"structure": {"source": {"run": "structures"}}},
+            native={"keyword": "IRC B3LYP D3BJ", "irc": {"direction": "both"}},
+            checks=["normal_termination", "geometry_required"],
+            scheduler={"max_parallel_items": 2},
+            resources={"cores_per_item": 1, "memory_per_item": "1GB"},
+            execution={"binding_id": "test", "executable": "orca"},
+        )
+        eopt = calc_step(
+            "s_eopt",
+            program="orca",
+            adapter="standard",
+            profile="standard",
+            bindings={"structure": {"source": {"step": "s_irc", "port": "structures"}}},
+            native={"keyword": "B3LYP Opt"},
+            checks=["normal_termination"],
+            scheduler={"max_parallel_items": 4},
+            resources={"cores_per_item": 1, "memory_per_item": "1GB"},
+            execution={"binding_id": "test", "executable": "orca"},
+        )
+        efreq = calc_step(
+            "s_efreq",
+            program="orca",
+            adapter="standard",
+            profile="standard",
+            bindings={"structure": {"source": {"step": "s_eopt", "port": "structures"}}},
+            native={"keyword": "B3LYP Freq"},
+            checks=["normal_termination", "frequencies_required"],
+            scheduler={"max_parallel_items": 4},
+            resources={"cores_per_item": 1, "memory_per_item": "1GB"},
+            execution={"binding_id": "test", "executable": "orca"},
+        )
+        esp = calc_step(
+            "s_esp",
+            program="orca",
+            adapter="standard",
+            profile="standard",
+            bindings={"structure": {"source": {"step": "s_efreq", "port": "structures"}}},
+            native={"keyword": "B3LYP SP"},
+            checks=["normal_termination"],
+            scheduler={"max_parallel_items": 4},
+            resources={"cores_per_item": 1, "memory_per_item": "1GB"},
+            execution={"binding_id": "test", "executable": "orca"},
+        )
+        return v4_doc([ts_freq, ts_sp, irc, eopt, efreq, esp], inputs=STRUCTURE_INPUTS)
+
+    def _run_chain(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
+        irc_exe, _, _ = _install_irc_stack(tmp_path, monkeypatch)
+        orca_exe = tmp_path / "bin-orcafake" / "orcafake"
+        run_root = str(tmp_path / "run")
+        plan = _compile(self._chain_doc())
+        structures = _ts_structures(1)
+        (ts_record,) = tuple(structures)
+        group_key = ts_record.group_key
+        assert group_key is not None
+
+        from confflow.workflow.v4.assembly import MaterializedOutputs, StepOutputs
+
+        materialized = MaterializedOutputs(steps=FrozenDict({}))
+        collected_structures: list[Any] = [ts_record]
+        collected_results: list[Any] = []
+
+        def _exec_calc(
+            step_id: str,
+            fake_mode: str | None,
+            executable: Path,
+            profile_name: str = "standard",
+            tag: str = "",
+        ) -> Any:
+            if fake_mode is not None:
+                monkeypatch.setenv("FAKE_MODE", fake_mode)
+            assembly = assemble(
+                plan,
+                run_inputs(structures={"structures": _ts_structures(1)}),
+                materialized=materialized,
+            )
+            assert assembly.ok, [item.message for item in assembly.errors]
+            items = assembly.for_step(step_id)
+            assert len(items) >= 1, (step_id, tag)
+            request = _std_request(
+                plan,
+                step_id,
+                tuple(items),
+                run_root,
+                executable,
+                f"{run_root}/work-{step_id}",
+            )
+            if profile_name == "path_endpoints":
+                request = _irc_request(plan, tuple(items), run_root, executable)
+            result = _batch().execute_step(request)
+            assert result.summary.get("completed", 0) >= 1, (step_id, result.summary)
+            return result
+
+        ts_freq_result = _exec_calc("s_ts_freq", "success_freq", orca_exe)
+        materialized = MaterializedOutputs(
+            steps=FrozenDict(
+                {
+                    **dict(materialized.steps),
+                    "s_ts_freq": StepOutputs(
+                        step_id="s_ts_freq",
+                        structures=ts_freq_result.structures,
+                        artifacts=ts_freq_result.artifacts,
+                        status=StepStatus.COMPLETED,
+                    ),
+                }
+            )
+        )
+        collected_structures.extend(tuple(ts_freq_result.structures))
+        collected_results.extend(tuple(ts_freq_result.results))
+
+        ts_sp_result = _exec_calc("s_ts_sp", "success_sp", orca_exe)
+        collected_results.extend(tuple(ts_sp_result.results))
+        collected_structures.extend(tuple(ts_sp_result.structures))
+
+        monkeypatch.setenv("FAKE_IRC_ORDER", "reverse_first")
+        irc_assembly = assemble(
+            plan,
+            run_inputs(structures={"structures": _ts_structures(1)}),
+            materialized=materialized,
+        )
+        assert irc_assembly.ok
+        irc_items = irc_assembly.for_step("s_irc")
+        assert len(irc_items) == 1
+        from confflow.persistence.work_items import SqliteWorkItemStore as _Store
+
+        with _Store.open(store_path(run_root, "s_irc")) as store:
+            irc_result = _batch().execute_step_resumable(
+                _irc_request(plan, tuple(irc_items), run_root, irc_exe),
+                store=store,
+                run_root=run_root,
+                owner_token="ctl-formal",
+            )
+        assert irc_result.status is StepStatus.COMPLETED
+        assert len(tuple(irc_result.structures)) == 2
+        materialized = MaterializedOutputs(
+            steps=FrozenDict(
+                {
+                    **dict(materialized.steps),
+                    "s_irc": StepOutputs(
+                        step_id="s_irc",
+                        structures=irc_result.structures,
+                        artifacts=irc_result.artifacts,
+                        status=StepStatus.COMPLETED,
+                    ),
+                }
+            )
+        )
+        collected_structures.extend(tuple(irc_result.structures))
+        collected_results.extend(tuple(irc_result.results))
+
+        def _exec_downstream(step_id: str, fake_mode: str, upstream: str) -> Any:
+            monkeypatch.setenv("FAKE_MODE", fake_mode)
+            assembly = assemble(
+                plan,
+                run_inputs(structures={"structures": _ts_structures(1)}),
+                materialized=materialized,
+            )
+            assert assembly.ok, [item.message for item in assembly.errors]
+            items = assembly.for_step(step_id)
+            assert len(items) >= 1, step_id
+            request = _std_request(
+                plan,
+                step_id,
+                tuple(items),
+                run_root,
+                orca_exe,
+                f"{run_root}/work-{step_id}",
+            )
+            result = _batch().execute_step(request)
+            assert result.summary.get("completed", 0) >= 1, (step_id, result.summary)
+            return result, items
+
+        eopt_result, _ = _exec_downstream("s_eopt", "success_opt", "s_irc")
+        materialized = MaterializedOutputs(
+            steps=FrozenDict(
+                {
+                    **dict(materialized.steps),
+                    "s_eopt": StepOutputs(
+                        step_id="s_eopt",
+                        structures=eopt_result.structures,
+                        artifacts=eopt_result.artifacts,
+                        status=StepStatus.COMPLETED,
+                    ),
+                }
+            )
+        )
+        collected_structures.extend(tuple(eopt_result.structures))
+        collected_results.extend(tuple(eopt_result.results))
+
+        efreq_result, _ = _exec_downstream("s_efreq", "success_freq", "s_eopt")
+        materialized = MaterializedOutputs(
+            steps=FrozenDict(
+                {
+                    **dict(materialized.steps),
+                    "s_efreq": StepOutputs(
+                        step_id="s_efreq",
+                        structures=efreq_result.structures,
+                        artifacts=efreq_result.artifacts,
+                        status=StepStatus.COMPLETED,
+                    ),
+                }
+            )
+        )
+        collected_structures.extend(tuple(efreq_result.structures))
+        collected_results.extend(tuple(efreq_result.results))
+
+        esp_result, _ = _exec_downstream("s_esp", "success_sp", "s_efreq")
+        collected_structures.extend(tuple(esp_result.structures))
+        collected_results.extend(tuple(esp_result.results))
+
+        return {
+            "group_key": group_key,
+            "ts_id": ts_record.id,
+            "structures": collected_structures,
+            "results": collected_results,
+        }
+
+    def _pinned_analysis(self, bundle: dict[str, Any], endpoint_assignment: dict[str, str]) -> Any:
+        from confflow.analysis.compute import ReactionEnergyModel, policy_from_native
+        from confflow.analysis.executor import AnalysisExecutor
+        from confflow.analysis.models import AnalysisDefinition, AnalysisInputs
+        from confflow.domain import ResultSet as _ResultSet
+        from confflow.domain import StructureSet as _StructureSet
+
+        structures = _StructureSet.of(*bundle["structures"])
+        pinned: list[Any] = []
+        for record in bundle["results"]:
+            step = record.source_step_id
+            kind = record.kind
+            if kind == "energy" and step in ("s_ts_sp", "s_esp"):
+                pinned.append(record)
+            elif kind == "gibbs_correction" and step in ("s_ts_freq", "s_efreq"):
+                pinned.append(record)
+        assert pinned, "no pinned real results"
+        for record in pinned:
+            assert record.result_id is not None
+            assert record.source_step_id in ("s_ts_sp", "s_esp", "s_ts_freq", "s_efreq")
+        policy = policy_from_native(
+            {
+                "energy_mode": "composite",
+                "electronic_result_kind": "energy",
+                "correction_result_kind": "gibbs_correction",
+                "energy_fallback": "none",
+            }
+        )
+        definition = AnalysisDefinition(
+            kind="reaction_profile",
+            energy_model=ReactionEnergyModel(policy),
+            params=FrozenDict({}),
+            endpoint_assignment=FrozenDict(endpoint_assignment),
+        )
+        inputs = AnalysisInputs(
+            structures=FrozenDict({"structures": structures}),
+            results=FrozenDict({"results": _ResultSet(tuple(pinned))}),
+            definition=definition,
+        )
+        return AnalysisExecutor().execute(inputs, analysis_step_id="s_analysis")
+
+    def test_formal_chain_unassigned(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        bundle = self._run_chain(tmp_path, monkeypatch)
+        step = self._pinned_analysis(bundle, {"forward": "unassigned", "reverse": "unassigned"})
+        assert step.ok, [(item.code, item.message) for item in step.diagnostics]
+        by_kind = {result.kind: result for result in step.results}
+        assert set(by_kind) == {
+            "barrier_forward_endpoint",
+            "barrier_reverse_endpoint",
+            "endpoint_gibbs_delta",
+            "endpoint_energy_delta",
+            "reaction_profile",
+        }
+        for result in step.results:
+            assert result.source_step_id == "s_analysis"
+            assert result.subject_structure_id == bundle["ts_id"]
+        profile = dict(by_kind["reaction_profile"].value)
+        assert profile["group_key"] == bundle["group_key"]
+        assert set(profile["nodes"]) == {"ts", "forward", "reverse"}
+        assert profile["assignment"] == "unassigned"
+        assert profile["endpoint_assignment"] == {
+            "forward": "unassigned",
+            "reverse": "unassigned",
+        }
+        assert by_kind["barrier_forward_endpoint"].value == pytest.approx(0.0, abs=1e-9)
+        assert by_kind["barrier_reverse_endpoint"].value == pytest.approx(0.0, abs=1e-9)
+        sources = list(profile["source_result_ids"])
+        assert sources == sorted(sources) and len(sources) == 6
+        from confflow.analysis.pes import pes_from_analysis_results
+
+        combined = pes_from_analysis_results(step.results)
+        assert combined["group_keys"] == [bundle["group_key"]]
+        assert combined["count"] == 1
+
+    def test_formal_chain_explicit(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        bundle = self._run_chain(tmp_path, monkeypatch)
+        step = self._pinned_analysis(bundle, {"forward": "reactant", "reverse": "product"})
+        assert step.ok, [(item.code, item.message) for item in step.diagnostics]
+        by_kind = {result.kind: result for result in step.results}
+        profile = dict(by_kind["reaction_profile"].value)
+        assert profile["assignment"] == "explicit"
+        assert profile["endpoint_assignment"] == {"forward": "reactant", "reverse": "product"}
+        for result in step.results:
+            assert result.provenance is not None
+            assert dict(result.provenance.metadata)["endpoint_assignment"] == {
+                "forward": "reactant",
+                "reverse": "product",
+            }
