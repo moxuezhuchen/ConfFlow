@@ -30,6 +30,21 @@ from .recipes import (
     get_recipe_v4,
     recipe_catalog_sha256_v4,
 )
+from .run_result import (
+    RUN_RESULT_FILENAME as PRODUCER_RUN_RESULT_FILENAME,
+)
+from .run_result import (
+    artifact_entry,
+    build_runtime_manifest,
+    check_manifest_against_contract,
+    manifest_digest,
+    publish_manifest_atomically,
+    reaction_group_entry,
+    result_ref_entry,
+    step_entry,
+    verify_artifact_bytes,
+    verify_manifest_on_disk,
+)
 from .validation import ValidationReport, validate_workflow_bytes
 
 __all__ = [
@@ -38,18 +53,29 @@ __all__ = [
     "CONFIGURATION_CONTRACT_V4_SCHEMA",
     "RESULT_MANIFEST_SCHEMA",
     "RECIPE_IDS_V4",
+    "PRODUCER_RUN_RESULT_FILENAME",
     "ValidationReport",
+    "artifact_entry",
     "build_configuration_contract_v4",
     "build_editor_manifest_v4",
     "build_recipe_catalog_v4",
     "build_run_result_manifest",
+    "build_runtime_manifest",
+    "check_manifest_against_contract",
     "contract_canonical_json",
     "contract_digest_of",
     "editor_manifest_sha256_v4",
     "generate_contract_bytes",
     "get_recipe_v4",
+    "manifest_digest",
+    "publish_manifest_atomically",
+    "reaction_group_entry",
     "recipe_catalog_sha256_v4",
+    "result_ref_entry",
     "run_result_json_schema",
     "run_result_schema_sha256",
+    "step_entry",
     "validate_workflow_bytes",
+    "verify_artifact_bytes",
+    "verify_manifest_on_disk",
 ]

@@ -369,7 +369,15 @@ def run_result_json_schema() -> dict[str, Any]:
     digests, analysis references, and durable artifacts addressed by portable
     run-relative locators plus checksums. Absolute paths, owner tokens, and
     sqlite internals are not part of the shape.
+
+    Richer optional members (top-level ``results`` with ResultRef identity,
+    per-step ``semantic_digest``/``result_digest``, artifact ``subject``/
+    ``fetch`` handles, and reaction-profile group entries inside
+    ``analyses``) are accepted so the manifest can carry the full runtime
+    truth while staying readable by consumers that only require the
+    minimal wire shape.
     """
+    digest_pattern = "^sha256:[0-9a-f]{64}$"
     step_schema: dict[str, Any] = {
         "type": "object",
         "required": ["id", "status", "digest", "counts", "diagnostics"],
@@ -377,7 +385,9 @@ def run_result_json_schema() -> dict[str, Any]:
         "properties": {
             "id": {"type": "string", "minLength": 1},
             "status": {"enum": ["completed", "partial", "failed", "cancelled"]},
-            "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+            "digest": {"type": "string", "pattern": digest_pattern},
+            "semantic_digest": {"type": "string", "pattern": digest_pattern},
+            "result_digest": {"type": "string", "pattern": digest_pattern},
             "counts": {
                 "type": "object",
                 "required": ["completed", "failed", "cancelled"],
@@ -403,6 +413,21 @@ def run_result_json_schema() -> dict[str, Any]:
                     },
                 },
             },
+        },
+    }
+    result_ref_schema: dict[str, Any] = {
+        "type": "object",
+        "required": ["result_id", "kind"],
+        "additionalProperties": False,
+        "properties": {
+            "result_id": {"type": "string", "minLength": 1},
+            "kind": {"type": "string", "minLength": 1},
+            "subject_structure_id": {"type": ["string", "null"]},
+            "source_step_id": {"type": ["string", "null"]},
+            "source_work_item_id": {"type": ["string", "null"]},
+            "producer_digest": {"type": ["string", "null"], "pattern": f"({digest_pattern})?"},
+            "value_digest": {"type": ["string", "null"]},
+            "identity_digest": {"type": ["string", "null"]},
         },
     }
     return {
@@ -437,16 +462,42 @@ def run_result_json_schema() -> dict[str, Any]:
                 },
             },
             "steps": {"type": "array", "items": step_schema},
+            "results": {"type": "array", "items": result_ref_schema},
             "analyses": {
                 "type": "array",
                 "items": {
-                    "type": "object",
-                    "required": ["capability", "step_id"],
-                    "additionalProperties": False,
-                    "properties": {
-                        "capability": {"type": "string", "minLength": 1},
-                        "step_id": {"type": "string", "minLength": 1},
-                    },
+                    "anyOf": [
+                        {
+                            "type": "object",
+                            "required": ["capability", "step_id"],
+                            "additionalProperties": False,
+                            "properties": {
+                                "capability": {"type": "string", "minLength": 1},
+                                "step_id": {"type": "string", "minLength": 1},
+                            },
+                        },
+                        {
+                            "type": "object",
+                            "required": ["group_key"],
+                            "additionalProperties": True,
+                            "properties": {
+                                "group_key": {"type": "string", "minLength": 1},
+                                "capability": {"type": "string", "minLength": 1},
+                                "step_id": {"type": "string", "minLength": 1},
+                                "ts_structure_id": {"type": ["string", "null"]},
+                                "forward_endpoint_id": {"type": ["string", "null"]},
+                                "reverse_endpoint_id": {"type": ["string", "null"]},
+                                "source_result_ids": {
+                                    "type": "array",
+                                    "items": {"type": "string", "minLength": 1},
+                                },
+                                "assignment": {},
+                                "barriers": {"type": "object"},
+                                "energies": {"type": "object"},
+                                "provenance": {"type": "object"},
+                            },
+                        },
+                    ]
                 },
             },
             "artifacts": {
@@ -457,8 +508,10 @@ def run_result_json_schema() -> dict[str, Any]:
                     "additionalProperties": False,
                     "properties": {
                         "role": {"type": "string", "minLength": 1},
-                        "checksum": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+                        "checksum": {"type": "string", "pattern": digest_pattern},
                         "locator": {"type": "string", "minLength": 1},
+                        "subject": {"type": ["string", "null"]},
+                        "fetch": {"type": ["string", "null"]},
                     },
                 },
             },
@@ -482,6 +535,7 @@ def build_run_result_manifest(
     steps: list[dict[str, Any]] | None = None,
     analyses: list[dict[str, Any]] | None = None,
     artifacts: list[dict[str, Any]] | None = None,
+    results: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Build one run-result manifest instance.
 
@@ -496,7 +550,7 @@ def build_run_result_manifest(
         raise ValueError(f"unknown run status {status!r}")
     if not definition_digest.startswith("sha256:"):
         raise ValueError("definition_digest must be a sha256: digest")
-    return {
+    manifest: dict[str, Any] = {
         "content_schema": RESULT_MANIFEST_SCHEMA,
         "run_id": run_id,
         "status": status,
@@ -511,6 +565,9 @@ def build_run_result_manifest(
         "analyses": copy.deepcopy(analyses or []),
         "artifacts": copy.deepcopy(artifacts or []),
     }
+    if results is not None:
+        manifest["results"] = copy.deepcopy(results)
+    return manifest
 
 
 def build_configuration_contract_v4(
