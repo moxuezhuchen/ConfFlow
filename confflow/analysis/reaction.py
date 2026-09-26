@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-"""Per-reaction Gibbs/PES aggregation for V4-6 (no chemistry assignment).
+"""Per-reaction Gibbs/PES aggregation for V4-6 (formal endpoint assignment).
 
 For one reaction group — a transition state plus its two native path
 endpoints — this module resolves Gibbs energies under an explicit
@@ -15,11 +15,16 @@ endpoints — this module resolves Gibbs energies under an explicit
 - a structured ``reaction_profile`` payload bundling every value,
   source, formula, and policy input.
 
-Barrier semantics deliberately avoid chemistry assignment: ``forward``
-and ``reverse`` are native path directions only.  The profile carries
-``assignment: None`` and never relabels an endpoint as reactant or
-product.  Any missing piece fails the group closed (no results, typed
-error diagnostics); nothing is ever defaulted or substituted silently.
+Endpoint semantics: ``forward``/``reverse`` are native path directions
+by default (``endpoint_assignment`` ``{"forward": "unassigned",
+"reverse": "unassigned"}``).  An explicit assignment (for example
+``{"forward": "reactant", "reverse": "product"}``) never relabels the
+barrier/delta kinds — it flows into the profile payload
+(``assignment`` marker plus ``endpoint_assignment`` mapping) and into
+every computed result's provenance metadata, so result, provenance,
+and manifest agree.  Any missing piece fails the group closed (no
+results, typed error diagnostics); nothing is ever defaulted or
+substituted silently.
 """
 
 from __future__ import annotations
@@ -191,6 +196,29 @@ def _diagnostic_for_error(
     )
 
 
+def _normalize_assignment(
+    endpoint_assignment: Mapping[str, str] | None,
+) -> dict[str, str]:
+    """Return the normalized ``{forward, reverse}`` chemistry mapping."""
+    allowed_slots = ("forward", "reverse")
+    allowed_roles = ("reactant", "product", "unassigned")
+    resolved = {"forward": "unassigned", "reverse": "unassigned"}
+    if endpoint_assignment is None:
+        return resolved
+    for slot, role in dict(endpoint_assignment).items():
+        if slot not in allowed_slots or role not in allowed_roles:
+            continue
+        resolved[slot] = role
+    return resolved
+
+
+def _assignment_marker(mapping: Mapping[str, str]) -> str:
+    """Return ``"explicit"`` when a chemistry claim was made."""
+    if any(role != "unassigned" for role in mapping.values()):
+        return "explicit"
+    return "unassigned"
+
+
 def _provenance(
     *,
     analysis_step_id: str | None,
@@ -200,8 +228,10 @@ def _provenance(
     source_ids: dict[str, str | None],
     energy_model: EnergyModel,
     extra: dict[str, Any] | None = None,
+    endpoint_assignment: Mapping[str, str] | None = None,
 ) -> Provenance:
     """Build provenance for one computed group result."""
+    assignment_map = _normalize_assignment(endpoint_assignment)
     metadata: dict[str, Any] = {
         "formula": formula,
         "group_key": group_key,
@@ -212,6 +242,8 @@ def _provenance(
         "fallback_used": source_ids.get("fallback_used", False),
         "energy_model": energy_model.to_dict(),
         "implementation_version": IMPLEMENTATION_VERSION,
+        "assignment": _assignment_marker(assignment_map),
+        "endpoint_assignment": dict(assignment_map),
     }
     if extra:
         metadata.update(extra)
@@ -257,6 +289,7 @@ def assemble_reaction_result(
     lookup: Mapping[str, ResultSet],
     *,
     analysis_step_id: str | None = None,
+    endpoint_assignment: Mapping[str, str] | None = None,
 ) -> ReactionAnalysis:
     """Aggregate one reaction group into barriers, deltas, and a profile.
 
@@ -271,9 +304,17 @@ def assemble_reaction_result(
         Source lookup mapping each canonical node subject id to its
         merged per-node result pool (across theory levels).  Kind
         selection never guesses subjects: a subject absent from the
-        lookup fails the group closed.
+        lookup fails the group closed.  Same-``(subject, kind)``
+        duplicates fail closed with ``analysis_ambiguous_selection``;
+        pool order never decides.
     analysis_step_id : str or None
         Analysis step id carried as the source of computed results.
+    endpoint_assignment : Mapping or None
+        Explicit chemistry mapping ``{"forward": ..., "reverse": ...}``;
+        ``None`` (default) means pure path direction (both
+        ``"unassigned"``).  The mapping flows into the profile payload
+        and every result's provenance; barrier/delta kinds stay
+        path-direction vocabulary either way.
 
     Returns
     -------
@@ -418,6 +459,8 @@ def assemble_reaction_result(
     fallback_used = {node: gibbs[node].fallback_used for node in ("ts", "forward", "reverse")}
 
     ts_subject = node_ids["ts"]
+    assignment_map = _normalize_assignment(endpoint_assignment)
+    assignment_marker = _assignment_marker(assignment_map)
     base_sources = {
         "electronic_source_id": gibbs["ts"].electronic_source_id,
         "correction_source_id": gibbs["ts"].correction_source_id,
@@ -437,6 +480,7 @@ def assemble_reaction_result(
                 node_ids=node_ids,
                 source_ids=base_sources,
                 energy_model=energy_model,
+                endpoint_assignment=assignment_map,
             ),
         ),
         _computed_energy_result(
@@ -451,6 +495,7 @@ def assemble_reaction_result(
                 node_ids=node_ids,
                 source_ids=base_sources,
                 energy_model=energy_model,
+                endpoint_assignment=assignment_map,
             ),
         ),
         _computed_energy_result(
@@ -466,6 +511,7 @@ def assemble_reaction_result(
                 source_ids=base_sources,
                 energy_model=energy_model,
                 extra={"reference": REFERENCE_REVERSE_MINUS_FORWARD},
+                endpoint_assignment=assignment_map,
             ),
         ),
         _computed_energy_result(
@@ -481,6 +527,7 @@ def assemble_reaction_result(
                 source_ids=base_sources,
                 energy_model=energy_model,
                 extra={"reference": REFERENCE_REVERSE_MINUS_FORWARD},
+                endpoint_assignment=assignment_map,
             ),
         ),
     )
@@ -505,7 +552,8 @@ def assemble_reaction_result(
         "source_result_ids": list(source_ids),
         "energy_model": energy_model.to_dict(),
         "fallback_used": dict(fallback_used),
-        "assignment": None,
+        "assignment": assignment_marker,
+        "endpoint_assignment": dict(assignment_map),
     }
     profile = ScientificResult(
         kind=KIND_REACTION_PROFILE,
@@ -519,6 +567,7 @@ def assemble_reaction_result(
             node_ids=node_ids,
             source_ids=base_sources,
             energy_model=energy_model,
+            endpoint_assignment=assignment_map,
         ),
     )
     return ReactionAnalysis(results=(*results, profile), diagnostics=())

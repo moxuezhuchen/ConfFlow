@@ -112,9 +112,7 @@ def _energy(value: float, subject: str | None) -> ScientificResult:
 
     from confflow.domain.result import make_result_id as _make_result_id
 
-    producer_digest = "sha256:" + _hashlib.sha256(
-        f"s-test:{subject}:energy".encode()
-    ).hexdigest()
+    producer_digest = "sha256:" + _hashlib.sha256(f"s-test:{subject}:energy".encode()).hexdigest()
     return ScientificResult(
         kind="energy",
         value=value,
@@ -242,6 +240,7 @@ class StubEnergyModel:
                 value=barrier_forward,
                 unit=Unit.HARTREE,
                 subject_structure_id=group.ts_structure_id,
+                source_step_id=analysis_step_id,
                 provenance=provenance,
             ),
             ScientificResult(
@@ -249,6 +248,7 @@ class StubEnergyModel:
                 value=barrier_reverse,
                 unit=Unit.HARTREE,
                 subject_structure_id=group.ts_structure_id,
+                source_step_id=analysis_step_id,
                 provenance=provenance,
             ),
             ScientificResult(
@@ -265,6 +265,7 @@ class StubEnergyModel:
                     "energy_model": self.to_dict(),
                 },
                 subject_structure_id=group.ts_structure_id,
+                source_step_id=analysis_step_id,
                 provenance=provenance,
             ),
         )
@@ -993,3 +994,169 @@ class TestNoSubprocessNoAdapter:
 
     def test_capability_spec_shape(self) -> None:
         assert isinstance(ANALYSIS_CAPABILITIES[0], AnalysisCapabilitySpec)
+
+
+class TestNoFirstMatchStructures:
+    """One id naming conflicting records fails closed, never first-wins."""
+
+    def test_conflicting_structure_id_rejected(self) -> None:
+        model = StubEnergyModel()
+        definition = _definition(model)
+        first = _structure("dup-0", group_key="rxn-0", offset=0.0)
+        second = _structure("dup-0", group_key="rxn-0", offset=5.0)
+        inputs = AnalysisInputs(
+            structures=FrozenDict(
+                {
+                    "a": StructureSet((first,)),
+                    "b": StructureSet((second,)),
+                }
+            ),
+            results=FrozenDict({}),
+            definition=definition,
+        )
+        with pytest.raises(AnalysisError) as excinfo:
+            AnalysisExecutor().execute(inputs)
+        assert excinfo.value.code == "analysis_invalid_definition"
+
+    def test_identical_structure_id_dedups(self) -> None:
+        model = StubEnergyModel()
+        definition = _definition(model)
+        transition, forward, reverse = _triple("t", "rxn-0")
+        inputs = AnalysisInputs(
+            structures=FrozenDict(
+                {
+                    "a": StructureSet((transition, forward, reverse)),
+                    "b": StructureSet((transition, forward, reverse)),
+                }
+            ),
+            results=FrozenDict(
+                {
+                    "results": ResultSet(
+                        (
+                            _energy(-100.0, transition.id),
+                            _energy(-100.5, forward.id),
+                            _energy(-100.2, reverse.id),
+                        )
+                    )
+                }
+            ),
+            definition=definition,
+        )
+        step = AnalysisExecutor().execute(inputs)
+        assert step.ok
+
+
+class TestRealStepIdThreading:
+    """The real analysis step id reaches computed results and provenance."""
+
+    def test_execute_carries_step_id(self) -> None:
+        model = StubEnergyModel()
+        definition = _definition(model)
+        transition, forward, reverse = _triple("t", "rxn-0")
+        inputs = _inputs(
+            (transition, forward, reverse),
+            (
+                _energy(-100.0, transition.id),
+                _energy(-100.5, forward.id),
+                _energy(-100.2, reverse.id),
+            ),
+            definition,
+        )
+        step = AnalysisExecutor().execute(inputs, analysis_step_id="a-real")
+        assert step.ok
+        for result in step.results:
+            assert result.source_step_id == "a-real"
+
+    def test_lineage_descendants_join_owner_pool(self) -> None:
+        from confflow.analysis.executor import _lookup_for_group
+
+        transition, forward, reverse = _triple("t", "rxn-0")
+        child = _structure(
+            "t-child",
+            group_key="rxn-0",
+            parent_ids=(forward.id,),
+            offset=9.0,
+        )
+        structures = StructureSet((transition, forward, reverse, child))
+        groups, _ = build_reaction_groups(StructureSet((transition, forward, reverse)), ResultSet())
+        group = groups[0]
+        pools = {record.id: ResultSet() for record in structures}
+        merged = ResultSet((_energy(-99.0, child.id),))
+        lookup = _lookup_for_group(
+            group, pools, {record.id: record for record in structures}, merged
+        )
+        assert [item.subject_structure_id for item in lookup[forward.id]] == [forward.id]
+
+
+class TestAssignmentPartialEndToEnd:
+    """Explicit/unassigned plus partial policies end to end with step ids."""
+
+    def _run(
+        self,
+        definition: AnalysisDefinition,
+        structures: tuple[StructureRecord, ...],
+        results: tuple[ScientificResult, ...],
+        *,
+        step_id: str = "a-e2e",
+    ) -> AnalysisStepResult:
+        return AnalysisExecutor().execute(
+            _inputs(structures, results, definition), analysis_step_id=step_id
+        )
+
+    def test_unassigned_explicit_and_policies(self) -> None:
+        for assignment, marker in (
+            ({"forward": "unassigned", "reverse": "unassigned"}, "unassigned"),
+            ({"forward": "reactant", "reverse": "product"}, "explicit"),
+        ):
+            model = StubEnergyModel()
+            definition = _definition(model, endpoint_assignment=assignment)
+            transition, forward, reverse = _triple("t", "rxn-0")
+            step = self._run(
+                definition,
+                (transition, forward, reverse),
+                (
+                    _energy(-100.0, transition.id),
+                    _energy(-100.5, forward.id),
+                    _energy(-100.2, reverse.id),
+                ),
+            )
+            assert step.ok
+            assert [seen["assignment"] for seen in model.seen] == [marker]
+            for result in step.results:
+                assert result.source_step_id == "a-e2e"
+                assert result.result_id is None or isinstance(result.result_id, str)
+            profile = step.results.by_kind("reaction_profile")[0]
+            assert (
+                profile.value["assignment"] == dict(assignment)
+                or profile.value["assignment"] == assignment
+                or isinstance(profile.value["assignment"], dict)
+            )
+        model = StubEnergyModel()
+        good = _triple("g", "rxn-good", base_offset=0.0)
+        bad = _triple("b", "rxn-bad", base_offset=10.0)[:2]
+        require = _definition(model, partial_policy="require_complete")
+        step = self._run(
+            require,
+            (*good, *bad),
+            (
+                _energy(-100.0, good[0].id),
+                _energy(-100.5, good[1].id),
+                _energy(-100.2, good[2].id),
+                _energy(-99.0, bad[0].id),
+                _energy(-99.5, bad[1].id),
+            ),
+        )
+        assert not step.ok and step.results.is_empty
+        accept = _definition(StubEnergyModel(), partial_policy="accept_subset")
+        step = self._run(
+            accept,
+            (*good, *bad),
+            (
+                _energy(-100.0, good[0].id),
+                _energy(-100.5, good[1].id),
+                _energy(-100.2, good[2].id),
+                _energy(-99.0, bad[0].id),
+                _energy(-99.5, bad[1].id),
+            ),
+        )
+        assert {result.subject_structure_id for result in step.results} == {"g-ts"}

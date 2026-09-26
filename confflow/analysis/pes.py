@@ -23,6 +23,7 @@ __all__ = [
     "PROFILE_DIGEST_KIND",
     "assemble_pes_profile",
     "pes_digest",
+    "pes_from_analysis_results",
     "reaction_profile_digest",
 ]
 
@@ -115,3 +116,50 @@ def assemble_pes_profile(profiles: Iterable[Mapping[str, Any]]) -> dict[str, Any
         "group_keys": [key for key, _ in ranked],
         "count": len(ordered),
     }
+
+
+def pes_from_analysis_results(results: Iterable[Any]) -> dict[str, Any]:
+    """Assemble a PES view strictly from actual analysis results.
+
+    Parameters
+    ----------
+    results : iterable of ScientificResult
+        Computed analysis results; only ``kind == "reaction_profile"``
+        entries with mapping values participate.  Hand-forged endpoint
+        Gibbs values or bare mappings never enter: every profile must
+        be a real ``reaction_profile`` result emitted by
+        :func:`confflow.analysis.reaction.assemble_reaction_result`
+        (or the executor seam wrapping it).
+
+    Returns
+    -------
+    dict
+        Output of :func:`assemble_pes_profile` over the extracted
+        profile payloads.
+
+    Raises
+    ------
+    AnalysisMathError
+        With code ``missing_group_key``/``duplicate_group_key`` from
+        the assembly, or ``no_analysis_profiles`` when no
+        ``reaction_profile`` result is present.  Non-mapping profile
+        values fail closed with ``invalid_profile_value``.
+    """
+    profiles: list[dict[str, Any]] = []
+    for result in results:
+        if getattr(result, "kind", None) != "reaction_profile":
+            continue
+        value = getattr(result, "value", None)
+        if not isinstance(value, Mapping):
+            raise AnalysisMathError(
+                "invalid_profile_value",
+                "reaction_profile result value must be a mapping",
+                details={"kind": getattr(result, "kind", None)},
+            )
+        profiles.append(dict(value))
+    if not profiles:
+        raise AnalysisMathError(
+            "no_analysis_profiles",
+            "no reaction_profile results to assemble a PES from",
+        )
+    return assemble_pes_profile(profiles)

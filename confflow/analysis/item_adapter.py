@@ -14,8 +14,7 @@ via existing SINGLE bindings.  The core may compute groups inside that
 WorkItem.  No application merge/copy loop, no per-group work items, no
 native launches.
 
-Definition mapping (fixes drift 11 partially; full assignment/PES pedigree
-lands with the complete F deliverable):
+Definition mapping:
 - ``kind`` comes from ``native["method"]`` (or ``analysis_kind``),
   default ``"reaction_profile"``.
 - Energy keys (``energy_mode``, ``electronic_result_kind``,
@@ -23,11 +22,15 @@ lands with the complete F deliverable):
   ``policy_from_native``; ``endpoint_assignment`` and ``partial_policy``
   are parsed separately and never passed through the energy policy.
 - ``analysis_step_id`` is always the real ``work_item.step_id`` (never
-  ``None``): core-emitted results are re-stamped with the real step id
+  ``None``): it threads through the core ``execute`` into the compute
+  seam, and core-emitted results are re-stamped with the real step id
   plus producer-scoped ``result_id`` via ``make_result_id`` with
   ``producer_digest=work_item.semantic_digest``.
 - ``partial_policy`` maps to ``PartialConsumption`` (``accept_subset`` or
   ``require_complete``).
+- Explicit ``endpoint_assignment`` flows through the core into every
+  computed result value, provenance metadata, and manifest; the default
+  stays pure path direction (``unassigned``).
 
 The adapter never raises into batch: every failure is a typed FAILED
 WorkItemResult.
@@ -256,7 +259,7 @@ class AnalysisItemAdapter:
             {name: ResultSet(tuple(records)) for name, records in named.results.items()}
         )
         inputs = AnalysisInputs(structures=structures, results=results, definition=definition)
-        outcome = self._core.execute(inputs)
+        outcome = self._core.execute(inputs, analysis_step_id=work_item.step_id)
         stamped = _stamp_results(
             tuple(outcome.results),
             step_id=work_item.step_id,
