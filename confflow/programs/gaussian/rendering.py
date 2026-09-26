@@ -44,6 +44,7 @@ ALLOWED_NATIVE_KEYS: frozenset[str] = frozenset(
         "link0",
         "modredundant",
         "write_chk",
+        "atom_mapping",
     }
 )
 

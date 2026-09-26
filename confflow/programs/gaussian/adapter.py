@@ -219,23 +219,38 @@ class GaussianProgramAdapter:
             oldchk_name=oldchk_name,
             user_link0=native.get("link0"),
         )
-        coord_lines = _rendering.apply_freeze(
-            tuple(inputs.structure.atoms),
-            tuple(tuple(point) for point in inputs.structure.coordinates),
-            inputs.freeze,
-        )
+        mode = self._execution_mode(inputs, keyword_line)
         extra_section = _rendering.resolve_extra_section(native)
-        content = _rendering.render_gaussian_input(
-            link0_lines=link0_lines,
-            cores=cores,
-            memory=memory,
-            keyword_line=keyword_line,
-            job=job,
-            charge=charge,
-            multiplicity=multiplicity,
-            coord_lines=coord_lines,
-            extra_section=extra_section,
-        )
+        if mode in ("qst2", "qst3"):
+            content = self._render_qst_input(
+                inputs,
+                mode,
+                link0_lines=link0_lines,
+                cores=cores,
+                memory=memory,
+                keyword_line=keyword_line,
+                job=job,
+                charge=charge,
+                multiplicity=multiplicity,
+                extra_section=extra_section,
+            )
+        else:
+            coord_lines = _rendering.apply_freeze(
+                tuple(inputs.structure.atoms),
+                tuple(tuple(point) for point in inputs.structure.coordinates),
+                inputs.freeze,
+            )
+            content = _rendering.render_gaussian_input(
+                link0_lines=link0_lines,
+                cores=cores,
+                memory=memory,
+                keyword_line=keyword_line,
+                job=job,
+                charge=charge,
+                multiplicity=multiplicity,
+                coord_lines=coord_lines,
+                extra_section=extra_section,
+            )
         main_input_name = f"{job}.gjf"
         metadata = FrozenDict(
             {
@@ -246,6 +261,8 @@ class GaussianProgramAdapter:
                 "multiplicity": multiplicity,
                 "cores": cores,
                 "mem": memory,
+                "mode": mode,
+                "input_atoms": list(inputs.structure.atoms),
             }
         )
         return MaterializedNativeInput(
@@ -253,6 +270,116 @@ class GaussianProgramAdapter:
             main_input_name=main_input_name,
             files=(InputFile(name=main_input_name, content=content),),
             metadata=metadata,
+        )
+
+    @staticmethod
+    def _execution_mode(inputs: ResolvedCalculationInputs, keyword_line: str) -> str:
+        """Return the execution mode for these inputs: qst2/qst3/irc/standard.
+
+        Named reactant/product slots select QST rendering (the route must
+        carry the matching QST flavor); otherwise an IRC route selects
+        single-structure IRC validation, and anything else is standard.
+        No task enum exists — the mode is a rendering decision derived
+        from input shape plus native route vocabulary.
+        """
+        from .named import parse_qst_route
+        from .path import parse_irc_route
+
+        slots = inputs.extra_structures
+        reactant = slots.get("reactant")
+        product = slots.get("product")
+        has_named = (
+            reactant is not None and len(reactant) > 0 and product is not None and len(product) > 0
+        )
+        if has_named:
+            guess = slots.get("guess")
+            has_guess = guess is not None and len(guess) > 0
+            return parse_qst_route(keyword_line, has_guess=has_guess)
+        try:
+            parse_irc_route(keyword_line)
+        except ValueError:
+            return "standard"
+        return "irc"
+
+    @staticmethod
+    def _render_qst_input(
+        inputs: ResolvedCalculationInputs,
+        mode: str,
+        *,
+        link0_lines: Any,
+        cores: int,
+        memory: str,
+        keyword_line: str,
+        job: str,
+        charge: int,
+        multiplicity: int,
+        extra_section: str,
+    ) -> str:
+        """Render a QST2/QST3 input with reactant/product/guess specs."""
+        from ...execution.atom_mapping import parse_atom_mapping, reorder_slot_to_reference
+        from .named import render_qst_molecule_specs, validate_qst_slots
+
+        slots = inputs.extra_structures
+        reactant_set = slots.get("reactant")
+        product_set = slots.get("product")
+        guess_set = slots.get("guess")
+        if reactant_set is None or len(reactant_set) == 0:
+            raise ValueError("native_input_error: QST rendering requires a reactant structure")
+        if product_set is None or len(product_set) == 0:
+            raise ValueError("native_input_error: QST rendering requires a product structure")
+        reactant = reactant_set[0]
+        product = product_set[0]
+        guess = guess_set[0] if guess_set is not None and len(guess_set) > 0 else None
+        if mode == "qst2" and guess is not None:
+            raise ValueError("native_input_error: QST2 route with a guess structure; use QST3")
+        if mode == "qst3" and guess is None:
+            raise ValueError("native_input_error: QST3 route without a guess structure")
+        validate_qst_slots(
+            reactant=reactant,
+            product=product,
+            guess=guess,
+            charge=charge,
+            multiplicity=multiplicity,
+        )
+        mapping = parse_atom_mapping(inputs.native.get("atom_mapping"))
+        reference_atoms = tuple(reactant.atoms)
+        product_atoms, product_coords = reorder_slot_to_reference(
+            reference_atoms=reference_atoms,
+            slot_atoms=tuple(product.atoms),
+            slot_coords=tuple(tuple(point) for point in product.coordinates),
+            mapping=mapping,
+        )
+        guess_atoms: Any = None
+        guess_coords: Any = None
+        if guess is not None:
+            guess_atoms, guess_coords = reorder_slot_to_reference(
+                reference_atoms=reference_atoms,
+                slot_atoms=tuple(guess.atoms),
+                slot_coords=tuple(tuple(point) for point in guess.coordinates),
+                mapping=mapping,
+            )
+        specs = render_qst_molecule_specs(
+            reactant_atoms=tuple(reactant.atoms),
+            reactant_coords=tuple(tuple(point) for point in reactant.coordinates),
+            product_atoms=product_atoms,
+            product_coords=product_coords,
+            guess_atoms=guess_atoms,
+            guess_coords=guess_coords,
+            charge=charge,
+            multiplicity=multiplicity,
+        )
+        link0 = "".join(f"{line.rstrip()}\n" for line in link0_lines)
+        return (
+            f"{link0}%nprocshared={cores}\n"
+            f"%mem={memory}\n"
+            f"{keyword_line}\n"
+            f"\n"
+            f"{job}\n"
+            f"\n"
+            f"{specs}"
+            f"\n"
+            f"{extra_section}\n"
+            f"\n"
         )
 
     def build_execution_request(
@@ -371,6 +498,15 @@ class GaussianProgramAdapter:
         energies, sources = _parsing.parse_energies(text)
         committed = _parsing.parse_frequencies(text)
         frequencies = _parsing.true_vibrational_modes(committed)
+        mode = materialized.metadata.get("mode", "standard")
+        if mode == "irc":
+            return self._parse_irc_result(
+                text,
+                log_file_name=log_file_name,
+                log_path=log_path,
+                materialized=materialized,
+                job=_job_from_materialized(materialized),
+            )
         geometry = _parsing.parse_final_geometry(text)
         final_geometry: ParsedGeometry | None = None
         geometry_output = GeometryOutput.NONE
@@ -416,6 +552,63 @@ class GaussianProgramAdapter:
             produced_files=tuple(produced),
             parser_diagnostics=(),
             log_file_name=log_file_name,
+        )
+
+    def _parse_irc_result(
+        self,
+        text: str,
+        *,
+        log_file_name: str,
+        log_path: str,
+        materialized: MaterializedNativeInput,
+        job: str,
+    ) -> NativeResult:
+        """Parse a Gaussian IRC log into path-endpoint facts.
+
+        Endpoints come exclusively from the explicit direction banners in
+        the log dialect; a missing direction is a parse error, never an
+        inference.  The executor's path profile turns these facts into
+        endpoint structures and fails the item when the set is partial.
+        """
+        from .path import irc_trajectory_facts, parse_irc_endpoints
+
+        raw_atoms = materialized.metadata.get("input_atoms", [])
+        atoms = tuple(str(symbol) for symbol in raw_atoms)
+        endpoints = parse_irc_endpoints(text, atoms=atoms)
+        facts = irc_trajectory_facts(text)
+        input_name = os.path.basename(materialized.main_input_name)
+        produced = [
+            ProducedFile(name=log_file_name, role="native_output"),
+            ProducedFile(name=input_name, role="native_input"),
+            ProducedFile(name=f"{job}.chk", role="checkpoint"),
+            ProducedFile(name=f"{job}.err", role="stderr"),
+        ]
+        metadata: dict[str, Any] = {
+            "program": ProgramName.GAUSSIAN.value,
+            "parser_version": PARSER_VERSION,
+            "log_file": log_file_name,
+            "mode": "irc",
+            "trajectory_points": facts.get("points", {}),
+            "trajectory_truncated": facts.get("truncated", False),
+        }
+        return NativeResult(
+            program=ProgramName.GAUSSIAN,
+            terminated_normally=_parsing.check_termination(log_path),
+            geometry_output=GeometryOutput.NONE,
+            final_geometry=None,
+            energies_hartree=FrozenDict(
+                {
+                    f"endpoint_{endpoint.direction}": endpoint.energy_hartree
+                    for endpoint in endpoints
+                    if endpoint.energy_hartree is not None
+                }
+            ),
+            frequencies_cm=(),
+            native_metadata=FrozenDict(metadata),
+            produced_files=tuple(produced),
+            parser_diagnostics=(),
+            log_file_name=log_file_name,
+            path_endpoints=endpoints,
         )
 
     def discover_artifacts(

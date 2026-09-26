@@ -30,7 +30,9 @@ __all__ = [
 ]
 
 #: Strict native vocabulary accepted in ``ResolvedCalculationInputs.native``.
-ALLOWED_NATIVE_KEYS: frozenset[str] = frozenset({"keyword", "blocks", "maxcore"})
+ALLOWED_NATIVE_KEYS: frozenset[str] = frozenset(
+    {"keyword", "blocks", "maxcore", "atom_mapping", "neb", "goat", "irc"}
+)
 
 #: Bytes per megabyte used when deriving ``%maxcore`` from byte resources.
 BYTES_PER_MB: int = 1024 * 1024
