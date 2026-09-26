@@ -72,6 +72,22 @@ _SCHEMA_KIND_ROW: str = "schema_version"
 
 _BUSY_TIMEOUT_MS: int = 5000
 
+_CONTENTION_MARKERS: tuple[str, ...] = ("locked", "busy")
+
+
+def _is_lock_contention(error: sqlite3.Error) -> bool:
+    """Return whether *error* signals lock contention rather than I/O failure.
+
+    ``SQLITE_BUSY`` (``database is locked``) means another claimant holds
+    the write lock past our bounded ``busy_timeout``: a clean claim
+    conflict.  Every other operational failure (disk I/O, corrupt file,
+    bad parameter) fails closed as a persistence error instead of
+    masquerading as contention.
+    """
+    text = str(error).lower()
+    return any(marker in text for marker in _CONTENTION_MARKERS)
+
+
 _REQUIRED_TABLES: tuple[str, ...] = ("meta", "items", "attempts", "artifact_rows")
 
 _DDL_META: str = "CREATE TABLE meta (kind TEXT PRIMARY KEY, value TEXT NOT NULL)"
@@ -807,12 +823,31 @@ class SqliteWorkItemStore:
             except (CorruptStateError, PersistenceError):
                 connection.execute("ROLLBACK")
                 raise
-            except sqlite3.Error:
+            except sqlite3.OperationalError as exc:
                 try:
                     connection.execute("ROLLBACK")
                 except sqlite3.Error:
                     pass
-                return False
+                if _is_lock_contention(exc):
+                    # Genuine contention (another claimant holds the write
+                    # lock past our bounded busy timeout): a clean conflict,
+                    # never an error.
+                    return False
+                raise PersistenceError(f"work-item store I/O failure during claim: {exc}") from exc
+            except sqlite3.IntegrityError as exc:
+                try:
+                    connection.execute("ROLLBACK")
+                except sqlite3.Error:
+                    pass
+                raise CorruptStateError(
+                    f"work-item store integrity failure during claim: {exc}"
+                ) from exc
+            except sqlite3.Error as exc:
+                try:
+                    connection.execute("ROLLBACK")
+                except sqlite3.Error:
+                    pass
+                raise PersistenceError(f"work-item store failure during claim: {exc}") from exc
 
     # ------------------------------------------------------------------
     # Terminal transitions

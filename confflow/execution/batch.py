@@ -64,6 +64,7 @@ from .work_item_executor import ItemExecutionContext, WorkItemExecutor, _diagnos
 
 if TYPE_CHECKING:
     from ..persistence.work_items import SqliteWorkItemStore
+    from ..remote.transport import ExecutionTransport
     from ..workflow.v4.document import ScientificDefaults, ScientificDefinition
     from ..workflow.v4.plan import PlannedStep
 
@@ -291,6 +292,7 @@ class BatchStepExecutor:
         store: SqliteWorkItemStore,
         run_root: str,
         owner_token: str | None = None,
+        transport: ExecutionTransport | None = None,
     ) -> StepResult:
         """Execute one step with durable per-item resume and reuse.
 
@@ -324,6 +326,12 @@ class BatchStepExecutor:
         owner_token : str | None
             Claim token binding this controller's claims; defaults to a
             step-scoped token.
+        transport : ExecutionTransport | None
+            Delivery seam for executed items.  ``None`` (default) executes
+            in-process through the configured :class:`WorkItemExecutor`;
+            a remote transport moves attempts through worker-handoff V2
+            with identical scientific semantics.  Reused, blocked, and
+            invalidated items never reach the transport.
 
         Returns
         -------
@@ -392,6 +400,7 @@ class BatchStepExecutor:
                     owner=owner,
                     environment_digest=environment_digest,
                     provenance=provenance,
+                    transport=transport,
                     should_cancel=cancelled,
                 )
             except (PersistenceError, CorruptStateError) as exc:
@@ -481,6 +490,26 @@ class BatchStepExecutor:
     # ------------------------------------------------------------------
     # Durable helpers
     # ------------------------------------------------------------------
+
+    def _launch(
+        self,
+        item: WorkItem,
+        context: ItemExecutionContext,
+        *,
+        store: SqliteWorkItemStore,
+        transport: ExecutionTransport | None,
+        should_cancel: Callable[[], bool],
+    ) -> WorkItemResult:
+        """Launch one claimed item through the selected transport.
+
+        ``None`` executes in-process; a transport receives the current
+        attempt number so remote launch identity aligns with the durable
+        attempt the store just opened.
+        """
+        if transport is None:
+            return self._executor.execute(item, context, should_cancel=should_cancel)
+        attempt = store.get_registered(item.id)["current_attempt"]
+        return transport.execute(item, context, attempt=int(attempt), should_cancel=should_cancel)
 
     @staticmethod
     def _current_provenance(request: StepExecutionRequest) -> FrozenDict:
@@ -588,6 +617,7 @@ class BatchStepExecutor:
         owner: OwnerIdentity,
         environment_digest: str | None,
         provenance: FrozenDict,
+        transport: ExecutionTransport | None,
         should_cancel: Callable[[], bool],
         _claim_retried: bool = False,
     ) -> tuple[WorkItemResult, bool]:
@@ -681,7 +711,9 @@ class BatchStepExecutor:
             if code is ReuseCode.RECOVER_ABANDONED:
                 store.mark_interrupted(item.id, reason=decision.reason)
             if store.claim(item.id, owner=owner):
-                result = self._executor.execute(item, context, should_cancel=should_cancel)
+                result = self._launch(
+                    item, context, store=store, transport=transport, should_cancel=should_cancel
+                )
                 store.record_finished(result)
                 return result, True
             return self._contested_claim(
@@ -693,6 +725,7 @@ class BatchStepExecutor:
                 environment_digest=environment_digest,
                 provenance=provenance,
                 run_root=run_root,
+                transport=transport,
                 should_cancel=should_cancel,
                 _claim_retried=_claim_retried,
             )
@@ -737,6 +770,7 @@ class BatchStepExecutor:
         environment_digest: str | None,
         provenance: FrozenDict,
         run_root: str,
+        transport: ExecutionTransport | None,
         should_cancel: Callable[[], bool],
         _claim_retried: bool = False,
     ) -> tuple[WorkItemResult, bool]:
@@ -754,7 +788,13 @@ class BatchStepExecutor:
             if verdict is OwnerVerdict.DEFINITELY_DEAD:
                 store.mark_interrupted(item.id, reason="rival owner is definitely dead")
                 if store.claim(item.id, owner=owner):
-                    result = self._executor.execute(item, context, should_cancel=should_cancel)
+                    result = self._launch(
+                        item,
+                        context,
+                        store=store,
+                        transport=transport,
+                        should_cancel=should_cancel,
+                    )
                     store.record_finished(result)
                     return result, True
         elif not _claim_retried and state in (
@@ -772,6 +812,7 @@ class BatchStepExecutor:
                 owner=owner,
                 environment_digest=environment_digest,
                 provenance=provenance,
+                transport=transport,
                 should_cancel=should_cancel,
                 _claim_retried=True,
             )
