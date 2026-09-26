@@ -222,6 +222,12 @@ class TestGaussianRender:
         with pytest.raises(ValueError, match="native_input_error"):
             GaussianProgramAdapter().materialize_native_input(inputs)
 
+    def test_nonpositive_multiplicity_rejected(self) -> None:
+        for bad in (0, -1, -3):
+            inputs = gaussian_inputs(multiplicity=bad)
+            with pytest.raises(ValueError, match="native_input_error"):
+                GaussianProgramAdapter().materialize_native_input(inputs)
+
     def test_missing_cores_rejected(self) -> None:
         inputs = gaussian_inputs(resources=ResourceRequest(memory_per_item_bytes=2**34))
         with pytest.raises(ValueError, match="native_input_error"):

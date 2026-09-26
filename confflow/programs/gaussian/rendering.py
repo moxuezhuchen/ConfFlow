@@ -425,6 +425,11 @@ def resolve_multiplicity(multiplicity: int | None) -> int:
             "native_input_error: Gaussian 'multiplicity' must be an integer, "
             f"got {multiplicity!r}"
         )
+    if multiplicity < 1:
+        raise ValueError(
+            "native_input_error: Gaussian 'multiplicity' must be >= 1, "
+            f"got {multiplicity!r}"
+        )
     return multiplicity
 
 
