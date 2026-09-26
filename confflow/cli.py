@@ -570,6 +570,10 @@ def main(
 ):
     effective_args = args_list if args_list is not None else sys.argv[1:]
 
+    if effective_args and effective_args[0] == "v4":
+        from .v4cli import main as v4_main
+
+        return v4_main(effective_args[1:])
     if effective_args and effective_args[0] == "control":
         from .control import main as control_main
 
