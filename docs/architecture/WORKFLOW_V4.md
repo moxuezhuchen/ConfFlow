@@ -321,3 +321,136 @@ streaming DAG 均未做。Batch/Executor 通过 `WorkItemRepository` /
 V4-3 readiness：YES — WorkItem / ProgramAdapter / StepResult 契约无需改动，
 即可接入 WorkItemStore、per-item durable resume、resource persistence、
 fingerprint reuse（reuse 端口已存在并有内存实现与测试）。
+
+---
+
+# V4-3：Durable Persistence + Per-WorkItem Resume + Reuse（已完成）
+
+里程碑状态：**V4-3 已完成**。V4 具备 durable execution semantics：
+
+```
+ExecutionPlan → WorkItems → WorkItemStore
+  ├─ valid completed  → REUSE (native invocation 0)
+  ├─ pending/new      → EXECUTE
+  ├─ retryable failed → RETRY (new attempt, history preserved)
+  ├─ abandoned running → RECONCILE (proof-gated, never blind duplicate)
+  └─ stale/incompatible → INVALIDATE (fail closed, history preserved)
+  → WorkItemExecutor → durable WorkItemResult → atomic StepResult
+  → RunState transition → downstream eligibility
+```
+
+100-item 验收：95 COMPLETED + 3 FAILED + 2 PENDING 经进程重启 resume 后，
+reused=95、native invocation=5、duplicate=0（在 submit 边界计数证明，
+非结果数量推断），最终 100 COMPLETED。
+
+## 14. V4-3 包与依赖规则
+
+```
+confflow/persistence/       # 只 import confflow.domain + stdlib (sqlite3)
+  contracts.py              # 冻结共享权威（main owned）：schema v1、状态机、
+                            # ReuseDecision、OwnerIdentity/Verdict、RunState、
+                            # GCPlan、run layout
+  work_items.py             # SqliteWorkItemStore + StoredAttempt
+  reuse.py                  # ReuseInputs + evaluate_reuse（纯函数）
+  publication.py            # 原子发布 + rebuild + durability gate
+  run_state.py              # RunState load/save/transition/repair
+  recovery.py               # reconcile_owner + owner_identity_current（只读）
+  artifacts.py              # verify_artifact + plan_gc/apply_gc
+confflow/execution/batch.py # BatchStepExecutor.execute_step_resumable（编排）
+```
+
+- `confflow.persistence` 只允许 import `confflow.domain` / 自身（debt gate
+  新增 `test_persistence_imports_only_domain_and_self` 锁定；相对 import
+  按层级解析后判定）。
+- `confflow.execution` 允许 import `confflow.persistence`（单向；persistence
+  永不反向依赖，无 import cycle；子进程隔离测试保持通过）。
+- `ProgramAdapter` / `ResultProfile` 零 SQLite：orchestration 只存在于
+  `BatchStepExecutor`；scientific execution 保持纯净（gate 覆盖）。
+- Debt gate 新增：`ResultsDB/task_results/WorkflowStateV1-V3/
+  CheckpointManager/WorkflowStatsTracker/FailureTracker/TaskStatsCollector/
+  output_xyz/delete_work_dir/binding_v2` symbols，以及
+  `result.xyz/failed.xyz/output_xyz/delete_work_dir/input_xyz/output_path`
+  的 code-text 扫描（带点文件名 AST 扫不到）；`confflow.programs` 与
+  `confflow.persistence` 纳入全部扫描根；packaging 要求两个新包可发现。
+
+## 15. V4-3 核心语义（事实）
+
+- **Truth hierarchy**：WorkItemStore（per-item 真值）> StepResult（语义输出
+  真值）> RunState（生命周期真值）> Artifacts（文件对象）。`result.xyz` /
+  `failed.xyz` / `output.xyz` / `workflow_stats` / log 存在性 / 目录名 /
+  文件名永不作为语义真值。
+- **Run layout**（§4 微调：item 目录直接位于 step 目录下，不再套 `work/`
+  层；authority 不变）：
+  `run/run_state.json` + `run/steps/<step>/work_items.sqlite` +
+  `step_result.json` + `steps/<step>/<job>/`（native 工作目录，artifact
+  locator 经 relpath 与之严格一致；V4-2 默认布局下 relpath 恰好还原旧
+  `items/...` 前缀，行为零变化）。
+- **State machine**：`PENDING→RUNNING→COMPLETED|FAILED|CANCELLED|
+  INTERRUPTED`；`FAILED|INTERRUPTED→RUNNING`（新 attempt）；`COMPLETED|
+  CANCELLED` 无出边，历史永不覆盖。非法 transition 报
+  `StateTransitionError`。
+- **Claim**：`BEGIN IMMEDIATE` 单事务 `PENDING→RUNNING + attempt 行`；
+  8 线程抢同一 item 恰好 1 胜；不同 item 可并行（WAL + 5s busy_timeout；
+  事务永不横跨 native execution）。
+- **ReuseDecision**：`REUSE/EXECUTE_NEW/RETRY_FAILED/RECOVER_ABANDONED/
+  INVALIDATE_DEFINITION|INPUT|ENVIRONMENT|PROVENANCE|ARTIFACT/
+  BLOCKED_UNCERTAIN_OWNER`，带 reason + mismatch 轴 + work_item 身份。
+  规则顺序冻结：无记录→PENDING→RUNNING（dead 才 recover，alive/uncertain
+  一律 block）→CANCELLED（`requires_explicit_retry`，永不 auto-retry）→
+  provenance→environment→definition→artifact→input→verification→REUSE/
+  RETRY。label/GUI/`max_parallel_items`/binary 路径不是字段，构造上无法
+  invalidate；memory/cores 进 `work_item_digest`→`INVALIDATE_INPUT`；
+  keyword/checks/recovery/seed 进 step digest→`INVALIDATE_DEFINITION`。
+- **INVALIDATE  fail-closed**：`execute_step_resumable` 对 INVALIDATE_* 不
+  执行、不碰历史，合成 FAILED 报告参与 completion（`require_all`→failed，
+  `allow_partial`→partial 且失败项保留）；同 store 上新 definition 代重跑
+  是显式未来工作（run generation），本轮拒绝静默覆盖。`CANCELLED` 行只
+  携带（stored result durable），永不重跑。
+- **Provenance**：`build_producer_provenance` 单一形状（adapter/profile/
+  check versions/recovery/canonicalization id）；无 git-SHA 粗粒度门槛，
+  无法证明兼容即 invalidate。
+- **Abandoned RUNNING**：`reconcile_owner` 只读判定（pid+create_time
+  1e-6s 容差 + pgid/sid OR 组扫描；zombie 不算存活；self 排除；不可读
+  成员按存活计）。`DEFINITELY_DEAD→mark_interrupted→re-claim→执行`；
+  `ALIVE/UNCERTAIN→BLOCKED`（合成 FAILED `blocked_uncertain_owner`，
+  retryable=True，不持久化，store 保持 RUNNING 供下次 reconcile）。
+  未确认的 cancellation 永不 rescue（V4-2 规则延续）。
+- **Crash order**：native 结束→artifact 落盘→checksum 验证→DB commit→
+  assemble→temp+fsync+`os.replace` 发布→RunState→downstream。`COMPLETED`
+  无结果行、`COMPLETED` 损坏结果行一律 fail-closed 合成失败，不 invent。
+- **Rebuild**：全部 COMPLETED 但未 publish 时，从 store 结果重建（不跑
+  native），幂等同 digest；`detect_published` 区分 absent（None）与
+  corrupt（raise）。
+- **Artifacts**：`verify_artifact`（containment + realpath + sha256 流式 +
+  可选 size；`EXTERNAL_URI` 只验形）；retention 映射（TEMPORARY→
+  `TEMPORARY`，NATIVE_SUPPORTING→`INTERMEDIATE`，RESUME_REQUIRED/
+  PUBLISHED/DOWNSTREAM_REQUIRED 为保护 id 集而非新 enum）；`plan_gc` 纯
+  dry-run + `apply_gc`（TOCTOU 重验、只删文件、幂等、失败进 failed_ids）；
+  无 `delete_work_dir` 语义。
+- **Determinism**：全部 DB/发布 JSON 经 JCS canonical；`list_items` 按
+  logical_key；assemble 按 work_item_id；duration 只用 monotonic 上报，
+  wall 只做 provenance（含 V4-2 wall 回退 clamp）。
+- **Security**：run-root containment（store path/locator/GC 三处独立校验），
+  symlink-outside 拒绝，atomic writes，owner token 绑定 claim（token
+  mismatch 属调用方比对，reconcile 只判 triple 存活）。
+
+## 16. V4-3 复用结论与遗留
+
+- REUSE：JCS canonical 层、`typed_digest`、`may_garbage_collect`、
+  process session/pgid/identity 证明机制（只读移植）。
+- REWRITE：ResultsDB 化学列、`WorkflowState` V1/V2/V3、`ibkout`/`backup`/
+  `delete_work_dir`、`chk_from_step` 文件名约定、静默 metadata 继承
+  （V4-2 已破）、`G_corr` 跨步继承。
+- 遗留风险：`claim()` 内 sqlite I/O 错误返回 False（按 contention 处理；
+  安全方向——永不 duplicate，但可能掩盖磁盘故障为 block；需要磁盘故障
+  注入测试，V4-4 补）；Windows 分支未覆盖；`resolve_multiplicity(0)`
+  已修复（Gaussian 与 ORCA 一致 `>=1`）。
+- V4-3 非目标（未做）：IRC/path_endpoints/QST2/QST3/NEB/GOAT/ensemble/
+  PES/worker-handoff.v2/remote/JobDesk/migration/streaming DAG/分布式调度/
+  cloud artifact/cancelled 显式重跑原语/跨 definition 代重跑。
+
+V4-4 readiness：YES — 无需改动 WorkItem / ProgramAdapter /
+WorkItemResult / StepResult / WorkItemStore / reuse-resume 核心契约，
+可直接增加 typed cross-step artifact flow、checkpoint binding、
+worker-handoff.v2、remote staging（store 的 artifact_rows + 保护 id 集
++ locator 体系即为接入口）。
