@@ -718,3 +718,146 @@ WorkItem / WorkItemResult / StepResult / WorkItemExecutor / ProgramAdapter /
 WorkItemStore / remote handoff-result / multi-output / named-input 契约，
 可直接实现 Analysis executor、Gibbs/PES aggregation、Producer contract、
 JobDesk 集成、legacy V2/V3 retirement。
+
+
+---
+
+# V4-6：Analysis + Producer Contract + JobDesk Integration（已完成）
+
+里程碑状态：**V4-6 已完成**。V4-1~V4-5 核心契约冻结（本轮仅因明确
+correctness/integration 需要做加法扩展，未重设计任何 frozen contract）。
+ConfFlow 成为正式 production runtime，
+JobDesk 成为由 V4 Producer Contract 驱动的 GUI。
+之后不再有主体 architecture milestone，只剩 Final Closure。
+
+```
+XYZ / typed input
+  → V4 importer → WorkflowDocument V4 → Compiler → ExecutionPlan
+  → V4RunApplication → WorkItem assembly
+  → Calculation | Analysis → StepResult → Persistence
+  → RunResultManifest → JobDesk
+```
+
+## 30. Analysis（事实）
+
+- **AnalysisExecutor**（`confflow/analysis/`）：正式 step executor，
+  capability `analysis`。纯函数：typed ports + explicit definition →
+  ResultSet/diagnostics；绝不调用 ProgramAdapter、不启动 subprocess、
+  不读文件名（AST 门钉死）。
+- **ReactionGroup**：typed 内部模型（group_key/ts/forward/reverse/source
+  ids/assignment/diagnostics），非 domain 图节点。分组按 group_key +
+  subject id + role，TS = 同时 parent 双 endpoint 的非端成员；重复
+  TS/端点 → ambiguous fail-closed（never lowest-energy-wins）；
+  缺失 → typed missing 诊断；result 按 subject 挂接，未知 subject →
+  mismatch 诊断。
+- **方向铁律**：forward/reverse 只是 path direction；无显式
+  `endpoint_assignment` 时输出 forward/reverse endpoint，绝不输出
+  reactant/product；显式指派冲突 → `analysis_assignment_conflict`。
+- **能量选择**：只用权威 kinds（`energy`/`gibbs_energy`/
+  `gibbs_correction`），无别名。复合公式唯一显式形式
+  `G_high = E_high + (G_low − E_low)`，policy
+  （direct/composite/fallback）进 digest + provenance；无 fallback
+  声明时缺 high-level 不得退化到 low-level（fail-closed）。
+- **单位安全**：所有四则运算前验证 QuantityKind.ENERGY + 兼容单位，
+  内部 hartree，mismatch → typed error，绝无裸 float。
+- **输出 kinds**：`barrier_forward_endpoint`/`barrier_reverse_endpoint`
+  （`G_TS − G_endpoint`，未指派时绝不叫 reaction barrier）、
+  `endpoint_energy_delta`/`endpoint_gibbs_delta`（显式 reference
+  `reverse_minus_forward`/`min_zero`）、`reaction_profile`（结构化
+  PES payload：nodes/energies/relative/barriers/source ids/
+  assignment/model）。
+- **失败/部分语义**：TS/端点/能量缺失、unit mismatch、group 歧义、
+  subject 错配、指派冲突全部 typed fail-closed；partial 策略显式
+  （require_complete 默认整步失败零结果 / accept_subset 缺组省略），
+  永不用别组数据填充。
+- **Digest/resume**：policy/指派/公式进 analysis digest（变更则
+  invalidate）；上游不变则 reuse。输入乱序 → 同一语义 digest（已钉死）。
+- **Analysis 端口**：registry analysis 合约新增 `structures` /
+  `ts_structures` / `ts_results`（MANY/SINGLE）——端点与 TS 记录、
+  端点与 TS 结果分属不同生产步骤，单端口无法诚实表达（V4-1 单源
+  规则不妥协）。TSPES recipe 同步绑定四端口。
+
+## 31. Producer Contract V4（事实）
+
+- Schema：`confflow.configuration-contract.v4`（v1/v2 被 JobDesk 解析
+  中，v3 = V3 workflow，v4 是自然下一版）；validation response 沿用
+  `confflow.configuration-validation.v1`（V4 诊断字段天然兼容）。
+- 内容全部由真实源生成（零复制）：V4 workflow schema bytes、
+  editor manifest（pointer 逐个验证存在于 schema，否则 build 失败）、
+  recipe catalog（11 个全部真实编译，TSPES = 8 步真链）、registry
+  capabilities、ports/pairing/cardinality、resources、
+  completion/scheduler、native escape-hatch、analysis capabilities、
+  result schema、remote（handoff/result v2）。
+- 每个 artifact 独立 digest + envelope `contract_digest`；JobDesk 重算
+  验证，不匹配 reject。
+- Legacy truth（result.xyz/failed.xyz/workflow_stats/output_path/
+  min_xyz）零发布。
+- CLI：`confflow v4 contract --json`（machine JSON）、
+  `confflow v4 validate --workflow/--stdin --json`（结构化诊断）、
+  `confflow v4 run ...`（见 §32）。
+- Drift 门：schema 变而 manifest 不变 → fail；registry 变而 contract
+  不变 → fail；recipe 不可编译 → fail。
+
+## 32. Application Runtime（事实）
+
+- **V4RunApplication**（`confflow/application/v4_run.py`）：compile →
+  拓扑步序 → 单步 `BatchStepExecutor`（calculation/confgen）或
+  `AnalysisExecutor`（analysis，跨 item 合并 ports 后单次执行）→
+  StepResult → publication → `RunResultManifest`（analyses 条目从
+  `reaction_profile` 结果提取）。Resume：published 整步直接 load，
+  未完成计算步按 work item resume，已完成 analysis 复用，从未启动
+  的步继续——永不全重跑。
+- **XYZ importer**：`import_xyz`（多 block，`xyz:<index>` 稳定 id，
+  路径仅 provenance）。
+- **CLI 切面**：`confflow/v4cli.py`（`cli.py` 仅加 3 行 dispatch）。
+  Legacy V2/V3 文档 → `legacy_workflow_not_executable` + migration
+  提示，无自动迁移、无 fallback。
+- **Legacy 退役**（E 审计结论执行）：仅删除被证无 production 引用的
+  `calc/retry_runner.py` 及其形状锁定测试；其余（engine/TaskRunner/
+  ResultsDB/state/stats 等）全部 MIGRATION-ONLY——仍被现行 CLI 入口
+  可达，删除将破坏生产 CLI 与 JobDesk 兼容，留待 Final Closure 的
+  migration CLI 之后。
+
+## 33. JobDesk 集成（事实，V4-A 基线 `32f50a2`）
+
+- V4-A 冻结架构（CalculationCard/CardSnapshot/CardLibrary/composer/
+  WorkflowDraftStore/dual contexts/resources）零改动；V4-6 只做
+  `ProducerAuthoringProvider` 真实实现 + contract/result adapters。
+- JobDesk 解析 v4 envelope 并验证全部 5 个 digest；v1/v2 仅 legacy
+  路径；正式 V4 run 必须 v4-capable contract（结构化拒绝，无静默
+  回退）。Epoch-safe refresh 保留（兼容刷新不碰 draft bytes）。
+- Recipe → 原生 `confflow.workflow.v4` document（new-run 路径无
+  V2→V4 converter；legacy 加载 → migration-needed）；提交门：
+  validated-bytes == submitted-bytes（digest 相等，否则硬错）。
+- ResultManifest → 展示 view models（状态/诊断/每组 TS/双端能量与
+  barrier/指派状态/可下载 artifacts）；JobDesk 零科学计算（AST 断言）。
+- 跨仓库只走 wire（contract bytes/validation response/submission/
+  manifest），JobDesk 永不 `import confflow`（AST 门）。
+
+## 34. Cross-repo E2E（事实）
+
+- 至少一个门使用真实 producer bytes（`generate_contract_bytes` →
+  JobDesk 解析 → recipe 建 workflow → 同字节 ConfFlow 验证 →
+  fake 执行 → 20→40 管线 → 真实 `assemble_reaction_result`×20 →
+  manifest → JobDesk 解析/展示）。
+- TSPES fake 全链：20 TS → 20 IRC items → 40 endpoints → opt/freq/
+  SP → 20 ReactionGroups（每组 5 结果）→ manifest 自洽（引用可解、
+  checksum 对字节、provenance 一致）。
+- 失败矩阵 13 项全结构化失败、无静默回退。
+
+## 35. V4-6 遗留与风险
+
+- Recipe TSPES 的 analysis 在端点缺 freq 级 Gibbs 时 fail-closed
+  （`analysis_energy_missing`）——接线诚实，数值通过需每节点 Gibbs
+  源（recipe 内容精修，非新 milestone）。
+- `test_library_modules_import_without_qt`（JobDesk）：V4-A 基线前置
+  环境失败（子进程 import 未安装的 src 布局包），与 V4-6 无关。
+- Windows/psutil-absent、跨 definition 代重跑、cancelled 显式重跑：
+  与 V4-5 一致，deferred 到 Final Closure。
+- V1 handoff：ARCHIVE-NOT-IMPORTED（fixtures 保留，无 live consumer，
+  本轮未动——迁移 oracle 保留）。
+
+FINAL CLOSURE READINESS：YES — 在不再改变核心架构的前提下，可直接
+执行最终验收（JobDesk → 真实 producer contract → 真实 V4 workflow →
+真实 Gaussian/ORCA → 中断/resume → local/remote → IRC fan-out →
+端点 Opt/Freq/SP → Analysis/PES → manifest → JobDesk）。
