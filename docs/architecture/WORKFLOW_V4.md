@@ -583,3 +583,138 @@ handoff-result 契约，可直接实现 IRC/path_endpoints、multi-output、
 QST2/QST3、NEB、GOAT、ensemble、named structures（artifact 端口与
 `named_structures` adapter 契约已就位；多输出结构时的 restart subject
 规则需随 multi-output 明确，当前单输出路径已封闭）。
+
+---
+
+# V4-5：Multi-Output + Reaction Path + Named Structures + Ensemble（已完成）
+
+里程碑状态：**V4-5 已完成**。一个 WorkItem 可输出 0/1/N 个 StructureRecord；
+IRC/QST/NEB/GOAT 是 adapter + profile + native-definition 的科学能力，
+不是核心 runtime dispatch 类型（无 IRC/QST/NEB/GOAT executor，无 task 枚举）。
+
+```
+20 TS → 20 IRC WorkItems → 20 WorkItemResults → 40 endpoints (1 StepResult)
+  → 40 Opt WorkItems → 40 optimized → 40 SP WorkItems → 40 results
+```
+
+Topology 只表示科学步骤；batch/fan-out/multi-output 由 WorkItem /
+StructureSet 表达（1/20/100 输入下 ExecutionPlan step 数不变，已钉死）。
+
+## 23. Multi-output 模型（事实）
+
+- **Entity id**：`<logical_key>:structure:<role>:<ordinal>`
+  （`output_identity.py` 冻结）。单 slot role ordinal 恒 0；ensemble/image
+  用 native member/image ordinal（never parser 顺序）。Retry/resume/
+  local/remote 同一 slot 同一 id；geometry_digest 独立表示内容。
+- **Roles**：`path_endpoint_forward` / `path_endpoint_reverse`（仅 native
+  path direction，绝不声称 reactant/product）、`neb_image`、
+  `neb_ts_candidate`（仅 native 明确报告优化 TS 时）、`conformer`。
+- **Lineage**：endpoint 双端共享 `(TS.id, TS.root, TS.group or TS.id)`；
+  多亲输出按 slot 语义顺序（reactant, product, guess）取 parent_ids，
+  lineage_root 仅全体一致才 propagate 否则 None（never 任意挑），
+  group_key 仅全体一致才 propagate。
+- **Ordering**：item 内 forward→reverse→ts-candidate→images→conformers；
+  跨 item 按 WorkItem 确定顺序。Correctness 永不依赖顺序（pairing 按
+  identity/group/subject）。
+- **Profiles**：`path_endpoints`（恰好 {forward, reverse} 否则
+  `incomplete_path` ERROR；executor 转为 WorkItem scientific failure，
+  native 已跑一次，不伪造第二端）、`ensemble`（member_index 定 id，
+  重复 index/空集 fail-closed，永不 dedup 相同几何）。
+- **Trajectory**：默认 ArtifactRef（role=`trajectory`）+ native_metadata
+  facts + 可选 Result payload；不拆成 workflow Structures。
+
+## 24. Multi-output restart subject（V4-4 遗留扩展点，已关闭）
+
+- 已绑定某输出 subject 的 artifact 保持；input-bound checkpoint 在多输出
+  时保持 input/TS 归属，**绝不复制到所有 endpoint**；单输出时沿用 V4-4
+  重定向规则；其余透传。下游 ONE binding 缺失时 fail-closed（由 binding
+  层报错，不猜测）。
+- Executor staging 同步收紧：artifact subject 必须属于本 item 输入结构
+  id 集（standard 仅 driving，named 允许多 slot）。
+
+## 25. Named structures + atom mapping（事实）
+
+- `named_structures` adapter：reactant/product（ONE + BY_GROUP_KEY）/
+  guess（OPTIONAL）。逻辑 key = `step_id:group_key`（与 assembly
+  BY_GROUP_KEY 规则一致）。QST2 要求恰好 1+1；QST3 再加恰好 1 guess；
+  缺少 → `named_structure_missing`，重复 → `ambiguous`，group 不一致
+  （含缺失）→ `named_group_mismatch`。全部 native launch 前 fail-closed。
+- **Atom mapping**：`identity`（元素序列严格一致，不 reorder）/
+  `explicit_permutation`（长度/bijective/范围/元素保持全验；内部
+  deterministic reorder，原始 StructureRecord immutable）。自动猜映射
+  禁止。Mapping 写入 step native `atom_mapping` 参数 → 自动进入
+  step/work-item semantic digest（不同 mapping 不同 digest，等价拼写
+  同 digest，已钉死）；geometry_digest 不受 execution-local reorder 影响。
+- **Executor**：named adapter 时以 reactant 为 reference 解 charge/mult
+ （单一 precedence 权威不变），slot 一致性值必须与 effective 值相等；
+  mapping 在 launch 前验证（失败 0 native 调用）。标准路径零行为变化。
+- QST2/QST3 渲染：Gaussian 多 molecule-spec section（title + charge/mult
+  + 坐标，`%.8f`），slot 间 charge/mult 必须一致；route QST2/QST3 与
+  guess 有无必须一致，否则 `native_input_error`。
+- NEB 输入：ORCA `%neb`（allowlist：`n_images>=3` 必需，
+  `neb_ts` bool，`NEB_End_XYZFile` 仅由 product XYZ 文件名决定）；
+  未知键 fail-closed。Product 端点 XYZ 作为第二输入文件由 adapter 渲染。
+
+## 26. Program capabilities（事实）
+
+- **审计结论**：repo 内零 legacy IRC/QST/NEB/GOAT native 语法（仅
+  registry 端口描述），故按公开程序语义实现 + fail-closed 边界，
+  解析器定义严格方言（crafted fixtures 钉死），未知语法拒绝而非猜测。
+- **Gaussian**：IRC route 校验（RCFC/both、Forward、Reverse；未知 bare
+  token 拒绝）+ 双向 endpoint 解析（banner 定方向，缺失/重复 banner
+  拒绝，乱序不变）；QST2/QST3 渲染 + 标准 TS 解析（NImag==1 仍由显式
+  check 判定，renderer 内无检查）。
+- **ORCA**：IRC（`%geom` 修饰块 allowlist + 双向解析）；NEB（path
+  images 为 `neb_image` members + `neb_ts_candidate` 仅 banner 存在时，
+  无 banner 的 path 极大值永不冒充，`neb_ts` 请求而无 banner → parse
+  error）；GOAT（`%goat` allowlist：MaxIter/MaxConformers/EnergyWindow/
+  Seed；conformer 按 banner number 定 id，能量缺失为 None，重复几何保留）。
+- **分层**：program adapter 管语法/parser；execution adapter 管输入形状；
+  profile 管输出语义；checks 管 acceptance。Parser 越层检查（如 Gaussian
+  内写 NImag 判定）禁止。
+
+## 27. Remote（事实，无 handoff v3）
+
+- V4-4 Handoff V2 足够：仅做向后兼容扩展 —
+  `StructureBundleEntry.port`（默认 `structure`，旧 envelope 仍合法；
+  嵌套 FrozenDict 深度 thaw + `_jsonable` Mapping 分支，保证嵌套
+  native 参数可序列化）。
+- Worker 按 `port` 重建 named slots（standard 单 driving 行为不变）；
+  执行端 profile 解析自动继承（同一 PROFILES 注册表）。
+- Parity：IRC / named-QST / ensemble 三组 local-vs-remote E2E，
+  ids/digests/roles/parents/lineage/group/results/units/artifact
+  role+checksum 一致；允许差 locator/host/env-digest/timestamps/
+  transport diagnostics。注意：worker 按 program 经 PATH 解析可执行
+  文件（handoff 永不带 producer 绝对路径），parity 测试据此注入 fake。
+- Resume：IRC complete → 0 native；GOAT complete → 0 native；
+  19/20 → 恰好 1 native；remote 重启 → full reuse；mapping 变更 →
+  digest 移动 + `invalidate_input`（0 native）；endpoint ids 跨 resume
+  bit-identical。
+
+## 28. TSPES mini gate（事实）
+
+- 20 TS（group rxn-00..19）→ 20 IRC items → 40 endpoints →
+  40 opt items → 40 optimized → 40 SP items → 40 results，全经 production
+  adapter/profile/executor（IRC 解析 shim 已被真实布线取代，F 的 shim
+  测试继续通过）。
+- 按 `(group_key, role)` dict 重组回答每 TS 双向结果，无 list 索引。
+- 19/20：require_all 下 FAILED，38 endpoints durable，retry 恰好 1
+  native → 最终 40；allow_partial 发布 38-subset 且失败组明确缺席。
+- Partial consumption 规则延续 V4-1（multi-output 不绕过）。
+
+## 29. V4-5 非目标与遗留风险
+
+- 未做：PES/Gibbs 最终 analysis、reactant/product 自动指派、Producer
+  合约定稿、JobDesk 集成、V2/V3 退役、migration CLI、streaming DAG、
+  分布式调度、cloud backend。
+- 遗留：① Gaussian IRC 方言 markers 为 crafted（真实 Gaussian log 的
+  endpoint 几何提取需对接真实输出时扩展方言，当前全部测试基于严格方言）；② ORCA `%geom` IRC 触发键仅验证 MaxIter
+  子集（job-type keyword 走正常 keyword 路径）；③ `%goat` 键名拼写
+  （如 NConformers）以 allowlist 为准，未知键 loud-fail；
+  ④ Windows/psutil-absent 分支未覆盖；⑤ 跨 definition 代重跑仍 deferred。
+
+V4-6 readiness：YES — 无需改动 StructureRecord / ArtifactRef / Binding /
+WorkItem / WorkItemResult / StepResult / WorkItemExecutor / ProgramAdapter /
+WorkItemStore / remote handoff-result / multi-output / named-input 契约，
+可直接实现 Analysis executor、Gibbs/PES aggregation、Producer contract、
+JobDesk 集成、legacy V2/V3 retirement。
