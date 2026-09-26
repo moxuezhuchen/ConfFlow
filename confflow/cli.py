@@ -27,7 +27,8 @@ from .application.execution.workflow_adapter import (
     acquire_work_directory_lease,
     run_workflow_through_service,
 )
-from .config.canonical import require_executable_workflow_file
+from .application.v4_entry import formal_v4_runner as run_workflow
+from .application.v4_entry import require_v4_document_file
 from .contract import (
     CAPABILITY_SCHEMA_VERSION,
     OUTPUT_MANIFEST_FILE,
@@ -51,13 +52,7 @@ from .core.path_policy import resolve_sandbox_root, validate_managed_path
 from .core.utils import get_logger
 from .install_provenance import read_install_provenance
 from .workflow.dry_run import run_dry_run
-from .workflow.engine import run_workflow
 from .workflow.export import NoExportableResultsError, export_results
-from .workflow.rerun_failed import (
-    RerunFailedRuntimeError,
-    RerunFailedUsageError,
-    run_rerun_failed,
-)
 
 # Package initialization suppresses import-time warnings for the real probes.
 _HANDSHAKE_PROBE = any(flag in sys.argv[1:] for flag in ("--version", "--capabilities"))
@@ -636,46 +631,15 @@ def main(
         return ExitCode.SUCCESS
 
     if args.rerun_failed_step_dir:
-        if not args.config:
-            print("Error: --config is required with --rerun-failed", file=sys.stderr)
-            return ExitCode.USAGE_ERROR
-        if not args.step:
-            print("Error: --step is required with --rerun-failed", file=sys.stderr)
-            return ExitCode.USAGE_ERROR
-        try:
-            rerun_result = run_rerun_failed(
-                step_dir=args.rerun_failed_step_dir,
-                config_file=args.config,
-                step_ref=args.step,
-                output_dir=args.output,
-            )
-        except (FileNotFoundError, PathSafetyError, RerunFailedUsageError) as e:
-            print(f"Error: {e}", file=sys.stderr)
-            return ExitCode.USAGE_ERROR
-        except (
-            ConfigurationError,
-            ConfFlowError,
-            InputFileError,
-            OSError,
-            RerunFailedRuntimeError,
-            ValueError,
-            XYZFormatError,
-        ) as e:
-            print(f"Error: {e}", file=sys.stderr)
-            return ExitCode.RUNTIME_ERROR
-
-        print(f"Rerun failed conformers from: {rerun_result.failed_path}")
-        print(f"Workflow config: {rerun_result.config_file}")
-        print(f"Workflow step: {rerun_result.step_label}")
-        print(f"Rerun output directory: {rerun_result.output_dir}")
+        # Formal runtime cutover (worker I): the legacy rerun-failed glue is
+        # execution, not migration diagnostics. Every formal entry runs the
+        # single V4 application; a legacy step-directory rerun fails closed.
         print(
-            "Rerun summary: "
-            f"input={rerun_result.input_count}, "
-            f"output={rerun_result.output_count}, "
-            f"failed={rerun_result.failed_count}"
+            "Error: legacy_workflow_not_executable: "
+            "--rerun-failed is legacy execution glue; migration required",
+            file=sys.stderr,
         )
-        print("Use --export on the rerun output directory to export rerun results.")
-        return ExitCode.SUCCESS
+        return ExitCode.RUNTIME_ERROR
 
     if args.config_show:
         if not args.config:
@@ -741,11 +705,15 @@ def main(
             return ExitCode.USAGE_ERROR
         return ExitCode.SUCCESS
 
-    # Execution-capability preflight (R3.5): side-effect free version
-    # detection, before any managed-path validation, lease, mkdir or
-    # service/state preparation. V2 passes straight through.
+    # Formal execution-capability preflight (worker I): the single V4
+    # application is the only formal runtime. A V2/V3 (or unreadable)
+    # workflow fails closed here with legacy_workflow_not_executable
+    # before any managed-path validation, lease, mkdir, or service/state
+    # preparation. Parser / historical reader / migration diagnostics
+    # (--dry-run, --config-show, --export) stay available above; they
+    # never execute.
     try:
-        require_executable_workflow_file(config_file)
+        require_v4_document_file(config_file)
     except ConfFlowError as error:
         print(f"Error: {error}", file=sys.stderr)
         return ExitCode.RUNTIME_ERROR

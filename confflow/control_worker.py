@@ -3,8 +3,8 @@
 ``confflow control execute`` deliberately stops at a durable ``queued``
 state.  This entrypoint is the supported process boundary that consumes that
 existing token, validates the producer-bound handoff envelope, and runs the
-normal workflow engine through :class:`ExecutionService`.  It never calls
-``prepare`` and never writes the repository outside the service/lifecycle
+single formal V4 application through :class:`ExecutionService`.  It never
+calls ``prepare`` and never writes the repository outside the service/lifecycle
 APIs.
 """
 
@@ -32,6 +32,7 @@ from .application.execution.workflow_adapter import (
     build_workflow_service,
     open_control_service,
 )
+from .application.v4_entry import formal_v4_runner as _formal_v4_runner
 from .core.contracts import cli_output_to_txt
 from .core.exceptions import StopRequestedError
 from .core.logging import redirect_logging_streams
@@ -46,7 +47,11 @@ from .worker_handoff import (
     _validate_attempt_root,
     _validate_path,
 )
-from .workflow.engine import run_workflow
+
+# Formal runtime cutover (worker I): the default worker runner is the single
+# V4 application authority. The parameter seam stays so tests and callers can
+# inject doubles, but production never reaches the legacy engine.
+run_workflow = _formal_v4_runner
 
 _TERMINAL_STATES = frozenset({RunState.COMPLETED, RunState.FAILED, RunState.CANCELLED})
 
@@ -56,7 +61,7 @@ def run_control_worker(
     state_root: str | Path,
     run_id: str,
     handoff_path: str | Path,
-    workflow_runner: Callable[..., dict[str, Any] | None] = run_workflow,
+    workflow_runner: Callable[..., dict[str, Any] | None] = _formal_v4_runner,
     sleep: Callable[[float], None] = time.sleep,
 ) -> RunState:
     """Consume one prepared queued token and run the bound workflow.
@@ -326,7 +331,7 @@ def _worker_workflow_runner(
     root: StateRoot,
     work_dir: str,
 ) -> Callable[..., dict[str, Any] | None]:
-    """Run the normal engine while preserving the public report sidecar.
+    """Run the single V4 application while preserving the public report sidecar.
 
     The interactive CLI owns this redirect for direct runs.  The external
     worker crosses the service boundary without invoking that CLI, so it must
@@ -339,7 +344,17 @@ def _worker_workflow_runner(
         # Publish fixed legacy sidecars before ExecutionLifecycle.completed()
         # commits the terminal aggregate. A failed copy must become a failed
         # attempt, not an irreversible completed run with missing metadata.
-        _publish_worker_sidecars(root, staged_input=original_input, work_dir=work_dir)
+        try:
+            _publish_worker_sidecars(root, staged_input=original_input, work_dir=work_dir)
+        except FileNotFoundError:
+            # Formal V4 runtime: the V4 application publishes run_result.json,
+            # not the legacy min.xyz. The .txt report above still exists; when
+            # the V4 manifest is present the missing legacy sidecar is not a
+            # failure. Without a V4 manifest the legacy requirement stands.
+            from pathlib import Path as _Path
+
+            if not (_Path(work_dir) / "run_result.json").is_file():
+                raise
         return result
 
     return _run

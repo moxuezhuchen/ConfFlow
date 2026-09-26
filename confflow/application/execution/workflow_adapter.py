@@ -1,9 +1,10 @@
-"""Adapters that run the existing workflow engine through ``ExecutionService``.
+"""Adapters that run the V4 application through ``ExecutionService``.
 
-The workflow engine remains responsible for step ordering, calc execution and
-its existing output files.  This module owns only the application boundary:
-durable prepare/launch, lifecycle callbacks, cancellation signalling and
-conversion of the producer manifest into service artifacts.
+The single formal V4 application owns step ordering, execution, and output
+publication.  This module owns only the application boundary: durable
+prepare/launch, lifecycle callbacks, cancellation signalling, and conversion
+of the V4 manifest into service artifacts.  No formal path reaches the
+legacy engine.
 """
 
 from __future__ import annotations
@@ -23,7 +24,6 @@ from pathlib import Path
 from typing import Any, NoReturn, Protocol
 
 from ...artifact_json import write_atomic_json
-from ...config.canonical import require_executable_workflow_file
 from ...contract import (
     OUTPUT_MANIFEST_SCHEMA,
     OUTPUT_MANIFEST_SCHEMA_V2,
@@ -32,7 +32,8 @@ from ...contract import (
     WORKFLOW_STATS_SCHEMA_V2,
 )
 from ...core.exceptions import StopRequestedError
-from ...workflow.engine import run_workflow as default_workflow_runner
+from ..v4_entry import formal_v4_runner as default_workflow_runner
+from ..v4_entry import require_v4_document_file
 from .errors import ErrorCode, ExecutionServiceError
 from .models import (
     Artifact,
@@ -83,7 +84,7 @@ def step_record_identity(record: Any) -> str:
 
 
 class WorkflowRunner(Protocol):
-    """Subset of the legacy engine used by the adapter."""
+    """Subset of the formal V4 runner used by the adapter."""
 
     def __call__(self, **kwargs: Any) -> dict[str, Any] | None: ...
 
@@ -122,7 +123,7 @@ class FileIdentityVerifier(IdentityVerifier):
 
 
 class ServiceWorkflowExecutor(WorkflowExecutor):
-    """Launch the unchanged workflow engine behind service lifecycle tokens."""
+    """Launch the formal V4 application behind service lifecycle tokens."""
 
     def __init__(self, spec: WorkflowRunSpec, workflow_runner: WorkflowRunner) -> None:
         self._spec = spec
@@ -260,15 +261,11 @@ class ServiceWorkflowExecutor(WorkflowExecutor):
             self._result = self._workflow_runner(
                 **runner_kwargs,
             )
-            if _is_v3_config(self._spec.config_file):
-                # Version-aware strict path for V3: after a successful runner
-                # return the manifest must exist, parse, carry
-                # output_manifest.v2, pass strict field/path/existence checks
-                # and project a non-empty artifact set — else
-                # ARTIFACT_INTEGRITY_FAILED, never COMPLETED-with-empty.
-                artifacts = _load_artifacts_v3_required(self._spec.work_dir)
-            else:
-                artifacts = _load_artifacts(self._spec.work_dir)
+            # Formal V4 runtime: the V4 application publishes run_result.json,
+            # not the legacy output_manifest.json. Project legacy manifests
+            # only as a tolerant historical read; a missing manifest is an
+            # empty artifact set, never a failure of a V4 run.
+            artifacts = _load_artifacts(self._spec.work_dir)
             _write_execution_identity(self._spec)
             lifecycle.completed(artifacts)
         except StopRequestedError as error:
@@ -496,20 +493,13 @@ def build_workflow_service(
     state_root: str | Path,
     workflow_runner: WorkflowRunner = default_workflow_runner,
 ) -> tuple[ExecutionService, ServiceWorkflowExecutor]:
-    """Build one durable service and its legacy workflow execution adapter."""
-    # Mandatory execution-capability guard (R4 review fix): this is the lowest
-    # shared service boundary, so EVERY caller — run_workflow_through_service,
-    # _prepare_failed_retry, the control worker via run_worker_attempt, and any
-    # direct API user — passes through it. The gate reads the config file only
-    # and must precede every persistent side effect below: _ensure_state_root
-    # (mkdir/chmod), ensure_run_paths, and the SQLite repository.
-    require_executable_workflow_file(spec.config_file)
-    # Execution-critical effective-dataflow preflight (P1-A): a known-invalid
-    # V3 workflow is rejected here — before _ensure_state_root (mkdir/chmod),
-    # ensure_run_paths, and the SQLite repository create anything. Pure and
-    # side-effect free; run_workflow_through_service inherits this through its
-    # build_workflow_service call below.
-    _preflight_v3_effective_dataflow(spec)
+    """Build one durable service and its formal V4 execution adapter."""
+    # Mandatory formal-runtime guard (worker I): the single V4 application is
+    # the only formal runtime. A V2/V3 document fails closed with
+    # legacy_workflow_not_executable BEFORE every persistent side effect
+    # below: _ensure_state_root (mkdir/chmod), ensure_run_paths, and the
+    # SQLite repository. The guard reads the config file only.
+    require_v4_document_file(spec.config_file)
     root = _ensure_state_root(state_root)
     if spec.cancel_beacon_file is None:
         run_paths = root.ensure_run_paths(spec.run_id)
@@ -554,12 +544,12 @@ def run_workflow_through_service(
     work_directory_lease: _WorkDirectoryLease | None = None,
     workflow_runner: WorkflowRunner = default_workflow_runner,
 ) -> dict[str, Any] | None:
-    """Run the legacy engine synchronously while all state transitions use the service."""
-    # Mandatory execution-capability guard (R3.5): a V3 document must be
-    # rejected BEFORE build_workflow_service, because that call creates the
-    # state root, run paths and the SQLite repository. The guard reads the
-    # config file only — zero side effects.
-    require_executable_workflow_file(config_file)
+    """Run the formal V4 application synchronously while all state transitions use the service."""
+    # Mandatory formal-runtime guard (worker I): a V2/V3 document fails
+    # closed with legacy_workflow_not_executable BEFORE build_workflow_service,
+    # because that call creates the state root, run paths and the SQLite
+    # repository. The guard reads the config file only — zero side effects.
+    require_v4_document_file(config_file)
     spec = WorkflowRunSpec(
         run_id=run_id,
         input_xyz=tuple(input_xyz),
@@ -1047,9 +1037,26 @@ def _load_completed_stats(
     work_dir: str,
     spec: WorkflowRunSpec,
 ) -> dict[str, Any] | None:
-    """Attach to a completed run only while its required files still exist."""
-    if _is_v3_config(spec.config_file):
-        return _load_completed_stats_v3(service, run_id, work_dir, spec)
+    """Attach to a completed formal V4 run via its durable manifest."""
+    # Formal V4 runtime: the durable truth of a completed run is
+    # run_result.json published by the single V4 application. Legacy
+    # stats/state files are historical reads only and never gate a V4
+    # attach.
+    v4_manifest = Path(work_dir) / "run_result.json"
+    if v4_manifest.is_file():
+        try:
+            payload = json.loads(v4_manifest.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as error:
+            raise ExecutionServiceError(
+                ErrorCode.ARTIFACT_INTEGRITY_FAILED,
+                f"Completed V4 run manifest is invalid: {v4_manifest}",
+            ) from error
+        if not isinstance(payload, dict):
+            raise ExecutionServiceError(
+                ErrorCode.ARTIFACT_INTEGRITY_FAILED,
+                f"Completed V4 run manifest must be an object: {v4_manifest}",
+            )
+        return payload
     stats = _load_stats(work_dir)
     if stats is None:
         raise ExecutionServiceError(
