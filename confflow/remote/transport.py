@@ -372,7 +372,9 @@ class RemoteTransport:
                 run_root=self._run_root,
                 store=self._store,
             )
-        except (OSError, ResultBundleError):
+        except (OSError, ResultBundleError, StagingError):
+            # Unreadable or corrupt prior: packaging is atomic, so only
+            # disk faults land here; fresh delivery re-validates everything.
             return None
         if not isinstance(imported, WorkItemResult):
             raise StagingError("prior result import must return a WorkItemResult")

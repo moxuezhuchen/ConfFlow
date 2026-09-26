@@ -2600,3 +2600,323 @@ class TestLeaseAcquireBranches:
         )
         assert lease.acquire() is True
         lease.release()
+
+
+# ---------------------------------------------------------------------------
+# Round 5: mock-driven fault branches and validation closure
+# ---------------------------------------------------------------------------
+
+
+class TestRecoverPriorBranches:
+    """Prior-result recovery: corrupt, mismatched, and non-result imports."""
+
+    def _transport(self, tmp_path: Path, store: Any) -> Any:
+        from confflow.remote.transport import RemoteTransport
+
+        return RemoteTransport(
+            run_root=str(tmp_path / "run"), store=store, worker_root=str(tmp_path / "worker")
+        )
+
+    def _handoff_inbox(self, tmp_path: Path, handoff: WorkerHandoffV2, token: str) -> str:
+        path, _root = _write_handoff(tmp_path, handoff, token=token)
+        return path
+
+    def test_mismatched_token_returns_none(self, tmp_path: Path) -> None:
+        handoff = _handoff([_struct_entry()])
+        self._handoff_inbox(tmp_path, handoff, token="tok1")
+        with SqliteWorkItemStore.open(store_path(str(tmp_path / "run"), STEP_ID)) as store:
+            transport = self._transport(tmp_path, store)
+            from tests.v4.test_v43_coverage import _compile as _compile_doc
+            from tests.v4.test_v43_coverage import _document as _make_doc
+            from tests.v4.test_v43_coverage import _items as _assemble_items
+
+            compiled = _compile_doc(_make_doc())
+            (item,) = _assemble_items(compiled, 1)
+            assert transport._recover_prior_result(item, "other-token") is None
+
+    def test_corrupt_prior_returns_none(self, tmp_path: Path) -> None:
+        from tests.v4.test_v43_coverage import _compile as _compile_doc
+        from tests.v4.test_v43_coverage import _document as _make_doc
+        from tests.v4.test_v43_coverage import _items as _assemble_items
+
+        compiled = _compile_doc(_make_doc())
+        (item,) = _assemble_items(compiled, 1)
+        handoff = _handoff(
+            [_struct_entry()],
+            work_item_id=item.id,
+            logical_key=item.logical_key,
+            work_item_digest=item.semantic_digest,
+        )
+        self._handoff_inbox(tmp_path, handoff, token="tok1")
+        worker_root = str(tmp_path / "worker")
+        result_dir = Path(worker_root) / "results" / "tok1"
+        result_dir.mkdir(parents=True, exist_ok=True)
+        (result_dir / "result.json").write_bytes(b"\x00 corrupt")
+        os.chmod(result_dir / "result.json", 0o600)
+        with SqliteWorkItemStore.open(store_path(str(tmp_path / "run"), STEP_ID)) as store:
+            transport = self._transport(tmp_path, store)
+            # No handoff match problem here: the corrupt bundle fails closed
+            # to fresh delivery.
+            assert transport._recover_prior_result(item, "tok1") is None
+
+    def test_non_result_import_raises(self, tmp_path: Path) -> None:
+        import unittest.mock as _mock
+
+        from tests.v4.test_v43_coverage import _compile as _compile_doc
+        from tests.v4.test_v43_coverage import _document as _make_doc
+        from tests.v4.test_v43_coverage import _items as _assemble_items
+
+        compiled = _compile_doc(_make_doc())
+        (item,) = _assemble_items(compiled, 1)
+        handoff = _handoff(
+            [_struct_entry()],
+            work_item_id=item.id,
+            logical_key=item.logical_key,
+            work_item_digest=item.semantic_digest,
+        )
+        self._handoff_inbox(tmp_path, handoff, token="tok1")
+        worker_root = str(tmp_path / "worker")
+        result_dir = Path(worker_root) / "results" / "tok1"
+        result_dir.mkdir(parents=True, exist_ok=True)
+        (result_dir / "result.json").write_bytes(b"{}")
+        os.chmod(result_dir / "result.json", 0o600)
+        with SqliteWorkItemStore.open(store_path(str(tmp_path / "run"), STEP_ID)) as store:
+            store.register_item(
+                work_item_id=item.id,
+                logical_key=item.logical_key,
+                step_id=item.step_id,
+                work_item_digest=item.semantic_digest,
+                step_semantic_digest="sha256:" + "b" * 64,
+            )
+            store.claim(item.id, owner=OwnerIdentity(owner_token="t"))
+            transport = self._transport(tmp_path, store)
+            with _mock.patch(
+                "confflow.remote.staging.import_result_artifacts", return_value="nope"
+            ):
+                with pytest.raises(StagingError):
+                    transport._recover_prior_result(item, "tok1")
+
+    def test_launch_token_format(self, tmp_path: Path) -> None:
+        with SqliteWorkItemStore.open(store_path(str(tmp_path / "run"), STEP_ID)) as store:
+            transport = self._transport(tmp_path, store)
+            from tests.v4.test_v43_coverage import _compile as _compile_doc
+            from tests.v4.test_v43_coverage import _document as _make_doc
+            from tests.v4.test_v43_coverage import _items as _assemble_items
+
+            compiled = _compile_doc(_make_doc())
+            (item,) = _assemble_items(compiled, 1)
+            token = transport.launch_token_for(item, 3)
+            assert ":" not in token
+            assert token.endswith("+attempt-3")
+            assert RemoteTransport._result_path_for(str(tmp_path / "w"), token).endswith(
+                os.path.join("results", token, "result.json")
+            )
+            transport.forget(item, 3)
+
+
+class TestWorkerReaderShapes:
+    """Alternate handoff-reader shapes behind the worker entry point."""
+
+    def test_path_only_reader(self, tmp_path: Path) -> None:
+        import unittest.mock as _mock
+
+        handoff = _handoff([_struct_entry()])
+        path, worker_root = _write_handoff(tmp_path, handoff)
+
+        def _path_only(handoff_path: str) -> Any:
+            from confflow.remote.handoff import read_handoff_envelope
+
+            return read_handoff_envelope(path=handoff_path)
+
+        with _mock.patch("confflow.remote.handoff.read_handoff_envelope", side_effect=_path_only):
+            with pytest.raises(WorkerError):
+                run_worker_envelope(
+                    handoff_path=path,
+                    staged_bundle={},
+                    worker_root=worker_root,
+                    launch_token="wrong-token",
+                )
+
+    def test_required_run_id_reader_rejected(self, tmp_path: Path) -> None:
+        import unittest.mock as _mock
+
+        from confflow.remote import worker as _worker
+
+        handoff = _handoff([_struct_entry()])
+        path, worker_root = _write_handoff(tmp_path, handoff)
+
+        def _demanding_reader(path: str, *, expected_run_id: str) -> Any:
+            raise AssertionError("must not be called")
+
+        with _mock.patch("confflow.remote.handoff.read_handoff_envelope", new=_demanding_reader):
+            with pytest.raises(WorkerError, match="expected run id"):
+                _worker._load_handoff_envelope(path, "tok1")
+
+    def test_non_handoff_result_rejected(self, tmp_path: Path) -> None:
+        import unittest.mock as _mock
+
+        from confflow.remote import worker as _worker
+
+        handoff = _handoff([_struct_entry()])
+        path, _root = _write_handoff(tmp_path, handoff)
+        with _mock.patch(
+            "confflow.remote.handoff.read_handoff_envelope", return_value={"not": "a-model"}
+        ):
+            with pytest.raises(WorkerError):
+                _worker._load_handoff_envelope(path, "tok1")
+
+
+class TestHandoffIoBranches:
+    """Handoff makedirs/inspect/write fault branches."""
+
+    def test_lstat_failure(self, tmp_path: Path) -> None:
+        import unittest.mock as _mock
+
+        from confflow.remote import handoff as _handoff_module
+
+        with _mock.patch("os.lstat", side_effect=PermissionError("denied")):
+            with pytest.raises(HandoffError):
+                _handoff_module._checked_worker_root(str(tmp_path))
+
+    def test_write_stream_failure(self, tmp_path: Path) -> None:
+        import unittest.mock as _mock
+
+        handoff = _handoff([_struct_entry()])
+        worker_root = str(tmp_path / "worker")
+        real_write = os.write
+
+        def _fail_after_first(fd: int, data: Any) -> Any:
+            _fail_after_first.calls += 1
+            if _fail_after_first.calls >= 1:
+                raise OSError("stream reset")
+            return real_write(fd, data)
+
+        _fail_after_first.calls = 0
+        with _mock.patch("os.write", side_effect=_fail_after_first):
+            with pytest.raises(HandoffError):
+                write_handoff_envelope(
+                    handoff=handoff, worker_root=worker_root, launch_token="tok1"
+                )
+
+    def test_fstat_failure_on_read(self, tmp_path: Path) -> None:
+        import unittest.mock as _mock
+
+        from confflow.remote.handoff import read_handoff_envelope
+
+        path, _root = _write_handoff(tmp_path, _handoff([_struct_entry()]))
+        with _mock.patch("os.fstat", side_effect=OSError("bad fd")):
+            with pytest.raises(HandoffError):
+                read_handoff_envelope(path=path)
+
+
+class TestSupervisionKillBranches:
+    """SIGKILL escalation tails with scripted races."""
+
+    def test_kill_gone_then_dead(self, tmp_path: Path) -> None:
+        import subprocess as _subprocess
+        import time as _time
+        import unittest.mock as _mock
+
+        from confflow.remote import supervision as _supervision
+
+        helper = _subprocess.Popen(["/bin/sleep", "30"], start_new_session=True)
+        try:
+            _time.sleep(0.3)
+            owner = TestSupervisionEdges._sleep_owner(helper)
+            with _mock.patch.object(
+                _supervision,
+                "_reconcile_now",
+                side_effect=[
+                    OwnerVerdict.DEFINITELY_ALIVE,
+                    OwnerVerdict.DEFINITELY_DEAD,
+                ],
+            ):
+                with _mock.patch("os.killpg", side_effect=ProcessLookupError("gone")):
+                    proof = cancel_attempt(owner=owner, work_dir=None, grace_seconds=1.0)
+            assert proof.confirmed is True
+            assert proof.verdict is OwnerVerdict.DEFINITELY_DEAD
+        finally:
+            helper.terminate()
+            helper.wait(timeout=10)
+
+    def test_kill_refused_after_term(self, tmp_path: Path) -> None:
+        import subprocess as _subprocess
+        import time as _time
+        import unittest.mock as _mock
+
+        from confflow.remote import supervision as _supervision
+
+        helper = _subprocess.Popen(
+            ["sh", "-c", "trap '' TERM; while true; do sleep 1; done"],
+            start_new_session=True,
+            stdout=_subprocess.DEVNULL,
+            stderr=_subprocess.DEVNULL,
+        )
+        try:
+            _time.sleep(0.5)
+            owner = TestSupervisionEdges._sleep_owner(helper)
+            real_killpg = os.killpg
+
+            def _refuse_kill(pgid: int, sig: int) -> None:
+                import signal as _signal
+
+                if sig == _signal.SIGKILL:
+                    raise OSError("audited kill refusal")
+                return real_killpg(pgid, sig)
+
+            with _mock.patch.object(
+                _supervision, "_reconcile_now", return_value=OwnerVerdict.DEFINITELY_ALIVE
+            ):
+                with _mock.patch("os.killpg", side_effect=_refuse_kill):
+                    proof = cancel_attempt(owner=owner, work_dir=None, grace_seconds=0.3)
+            assert proof.confirmed is False
+            assert helper.poll() is None
+        finally:
+            try:
+                helper.kill()
+            except OSError:
+                pass
+            helper.wait(timeout=10)
+
+
+class TestResultBundleChecksumBranches:
+    """Packaging checksum and copy branches."""
+
+    def test_checksum_and_size_mismatch(self, tmp_path: Path) -> None:
+        import dataclasses as _dc
+
+        from confflow.domain.artifact import ArtifactSet as _DomainArtifacts
+        from confflow.domain.completion import WorkItemStatus as _Status
+        from confflow.remote.result_bundle import ResultBundleError, package_result_bundle
+        from tests.v4.test_v43_coverage import _compile as _compile_doc
+        from tests.v4.test_v43_coverage import _document as _make_doc
+        from tests.v4.test_v43_coverage import _items as _assemble_items
+        from tests.v4.test_v43_coverage import _result as _make_result
+
+        compiled = _compile_doc(_make_doc())
+        (item,) = _assemble_items(compiled, 1)
+        transfer = tmp_path / "workdir"
+        transfer.mkdir()
+        (transfer / "real.log").write_bytes(b"real-bytes")
+        handoff = _handoff([_struct_entry()])
+
+        def _with_checksum(checksum: str) -> Any:
+            ref = ArtifactRef(
+                id="g1",
+                role="native_output",
+                locator=ArtifactLocator.run_relative("steps/s_opt/real.log"),
+                checksum=checksum,
+            )
+            return _dc.replace(
+                _make_result(item, status=_Status.COMPLETED),
+                artifacts=_DomainArtifacts.of(ref),
+            )
+
+        with pytest.raises(ResultBundleError):
+            package_result_bundle(
+                work_item_result=_with_checksum(DIGEST_A),
+                handoff=handoff,
+                result_dir=str(tmp_path / "r1"),
+                environment={},
+                transfer_files_from=str(transfer),
+            )
