@@ -177,10 +177,18 @@ class TestTspesChain:
         assert analysis["bindings"] == {
             "structures": {"source": {"step": "irc", "port": "structures"}},
             "ts_structures": {"source": {"step": "ts", "port": "structures"}},
-            "results": {"source": {"step": "endpoint_sp", "port": "results"}},
+            "results": {"source": {"step": "endpoint_freq", "port": "results"}},
             "ts_results": {"source": {"step": "ts_freq", "port": "results"}},
         }
-        assert analysis["analysis"]["native"] == {"method": "reaction_profile"}
+        assert analysis["analysis"]["native"] == {
+            "method": "reaction_profile",
+            "energy_mode": "composite",
+            "electronic_result_kind": "energy",
+            "correction_result_kind": "gibbs_correction",
+            "energy_fallback": "none",
+            "endpoint_assignment": {"forward": "unassigned", "reverse": "unassigned"},
+            "partial_policy": "require_complete",
+        }
 
     def test_tspes_compiles_to_eight_planned_steps(self) -> None:
         document = _by_id("tspes")["document"]

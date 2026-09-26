@@ -20,10 +20,10 @@ Rules (frozen):
 - ``target`` / ``walltime_seconds`` / ``sandbox`` / ``allowed_executables``:
   planned values are preserved, never dropped; defaults fill only ``None``.
 - Seed propagation: the step ``seed`` is the single stochastic authority.
-  Helpers here validate/inject the native GOAT ``Seed`` so adapters render
-  exactly one seed.  Digest folding stays with fingerprint (B owns); remote
-  handoff threading is D/E work — this module only exposes the effective
-  native mapping.
+  It travels as a typed resolved input; the native ``RANDOMSEED`` vocabulary
+  (verified against the installed ORCA 6.1.1 binary) is rendered exclusively
+  by the program adapter.  This module never reads or writes native seed
+  keys; it only exposes the effective native mapping.
 """
 
 from __future__ import annotations
@@ -227,16 +227,16 @@ def validate_step_seed(seed: Any) -> int | None:
     """Validate the typed step seed without touching native mappings.
 
     The step seed is the single stochastic authority and travels as a
-    typed resolved input (``ResolvedCalculationInputs.seed``).  Native seed
-    vocabulary, if any verifies against the installed binary in wave 2, is
-    rendered exclusively by the program adapter; this module never reads or
-    writes ``goat``/``Seed``/``RANDOMSEED`` keys.
+    typed resolved input (``ResolvedCalculationInputs.seed``).  The native
+    ``RANDOMSEED`` seed vocabulary (verified against the installed ORCA
+    6.1.1 binary) is rendered exclusively by the program adapter; this
+    module never reads or writes ``goat``/``RANDOMSEED`` keys.
 
-    Wave-1 status: ORCA 6.1 documents no integer GOAT ``Seed`` (older
-    manuals document a ``RANDOMSEED`` boolean whose 6.1 semantics are
-    unverified), so no adapter renders a seed yet — see the wave-2
-    dependency in the C report.  Nothing here claims deterministic native
-    sampling.
+    Seed vocabulary (verified): the native ``%goat`` key is ``RANDOMSEED``
+    (verified against the installed ORCA 6.1.1 binary); the program adapter
+    renders the integer step seed as ``RANDOMSEED`` and rejects any
+    user-supplied ``RANDOMSEED`` as a second authority.  The invented
+    ``Seed`` key never existed natively.
     """
     if seed is None:
         return None

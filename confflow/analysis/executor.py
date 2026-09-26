@@ -205,7 +205,7 @@ def _merge_structures(inputs: AnalysisInputs) -> StructureSet:
                 raise _AnalysisError(
                     "analysis_invalid_definition",
                     f"structure id {record.id!r} names conflicting records; "
-                    "refusing first-match resolution",
+                    "refusing order-dependent resolution",
                     details={"reason": "conflicting_structure", "structure_id": record.id},
                 )
     return StructureSet(tuple(merged.values()))

@@ -365,9 +365,10 @@ class ResolvedCalculationInputs:
     are already resolved by the single precedence authority before the
     adapter sees them.  An adapter that finds a required value missing must
     raise a native input error; it must never fall back to defaults of its
-    own.  Native seed vocabulary (if any verifies in wave 2) is rendered
-    exclusively by the program adapter from :attr:`seed`; no native mapping
-    carries a second seed authority.
+    own.  The native ``RANDOMSEED`` seed vocabulary (verified against the
+    installed ORCA 6.1.1 binary) is rendered exclusively by the program
+    adapter from :attr:`seed`; no native mapping carries a second seed
+    authority.
     """
 
     structure: StructureRecord
