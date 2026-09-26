@@ -38,19 +38,13 @@ from confflow.domain import FrozenDict, StructureSet
 from confflow.domain.artifact import ArtifactSet
 from confflow.domain.completion import StepStatus, WorkItemStatus
 from confflow.domain.diagnostics import Diagnostic, DiagnosticSeverity
-from confflow.domain.result import ResultSet, ScientificResult
+from confflow.domain.result import ResultSet
 from confflow.domain.structure import StructureRecord
 from confflow.domain.units import Unit
 from confflow.domain.work_item import RecoveryInfo, ResultError, Timing, WorkItemResult
 from confflow.execution import ExecutionBinding
 from confflow.execution.batch import BatchStepExecutor, StepExecutionRequest
 from confflow.execution.checks_standard import CHECKS
-from confflow.execution.native import (
-    GeometryOutput,
-    NativeResult,
-    ProducedFile,
-    ProgramName,
-)
 from confflow.execution.output_identity import (
     CONFORMER_ROLE,
     PATH_ENDPOINT_FORWARD_ROLE,
@@ -61,7 +55,6 @@ from confflow.execution.output_identity import (
     multi_output_structure_id,
 )
 from confflow.execution.process import NativeProcessSupervisor
-from confflow.programs.registry import get_program_adapter
 from confflow.execution.profile_ensemble import EnsembleProfile
 from confflow.execution.profile_path_endpoints import PathEndpointsProfile
 from confflow.execution.recovery_standard import RECOVERIES
@@ -70,7 +63,7 @@ from confflow.persistence import OwnerIdentity
 from confflow.persistence.contracts import PersistenceError, store_path
 from confflow.persistence.reuse import build_producer_provenance
 from confflow.persistence.work_items import SqliteWorkItemStore
-from confflow.programs.orca.path import parse_path_endpoints
+from confflow.programs.registry import get_program_adapter
 from confflow.remote.transport import RemoteTransport
 from tests.v4._builders import (
     assemble,
@@ -83,7 +76,6 @@ from tests.v4._builders import (
 from tests.v4.fakes.fake_irc import (
     FORWARD_ENERGY,
     REVERSE_ENERGY,
-    parse_inp_coordinates,
 )
 
 FAKES_DIR = Path(__file__).resolve().parent / "fakes"
@@ -376,7 +368,10 @@ def _irc_result(item: Any, *, step_id: str = "s_irc") -> WorkItemResult:
             )
         )
     results = _stamped_results(
-        records, item, step_id, (FORWARD_ENERGY, REVERSE_ENERGY),
+        records,
+        item,
+        step_id,
+        (FORWARD_ENERGY, REVERSE_ENERGY),
         discriminator=lambda record: f"direction:{record.metadata.get('direction')}",
     )
     return WorkItemResult(
@@ -416,7 +411,10 @@ def _goat_result(item: Any, *, step_id: str = "s_goat", members: int = 3) -> Wor
         for index in range(members)
     ]
     results = _stamped_results(
-        records, item, step_id, [-76.0 - index for index in range(len(records))],
+        records,
+        item,
+        step_id,
+        [-76.0 - index for index in range(len(records))],
         discriminator=lambda record: f"member:{record.ordinal}",
     )
     return WorkItemResult(
@@ -503,7 +501,10 @@ def _qst_result(item: Any, *, step_id: str = "s_qst") -> WorkItemResult:
         status=WorkItemStatus.COMPLETED,
         structures=StructureSet.of(record),
         results=_stamped_results(
-            [_FakeSubject(candidate_id)], item, step_id, [-76.400001],
+            [_FakeSubject(candidate_id)],
+            item,
+            step_id,
+            [-76.400001],
             discriminator="ts_candidate",
         ),
         artifacts=ArtifactSet(),
@@ -564,9 +565,14 @@ class TestIrcResume:
             for item in items:
                 result = _irc_result(item)
                 seeded_ids.extend(record.id for record in result.structures)
-                _seed_completed(store, item, planned.step_semantic_digest, provenance, result,
-        request.environment.digest(),
-    )
+                _seed_completed(
+                    store,
+                    item,
+                    planned.step_semantic_digest,
+                    provenance,
+                    result,
+                    request.environment.digest(),
+                )
             resumed = _batch().execute_step_resumable(
                 request, store=store, run_root=run_root, owner_token="ctl-resume"
             )
@@ -611,8 +617,8 @@ class TestIrcResume:
                         planned.step_semantic_digest,
                         provenance,
                         _failed_result(item),
-        request.environment.digest(),
-    )
+                        request.environment.digest(),
+                    )
                 else:
                     _seed_completed(
                         store,
@@ -620,8 +626,8 @@ class TestIrcResume:
                         planned.step_semantic_digest,
                         provenance,
                         _irc_result(item),
-        request.environment.digest(),
-    )
+                        request.environment.digest(),
+                    )
             resumed = _batch().execute_step_resumable(
                 request, store=store, run_root=run_root, owner_token="ctl-resume"
             )
@@ -673,8 +679,8 @@ class TestIrcResume:
                     planned.step_semantic_digest,
                     provenance,
                     _irc_result(item),
-        first_request.environment.digest(),
-    )
+                    first_request.environment.digest(),
+                )
             first_transport = RemoteTransport(
                 run_root=run_root, store=store, worker_root=str(tmp_path / "worker-a")
             )
@@ -756,8 +762,8 @@ class TestGoatResume:
                     planned.step_semantic_digest,
                     provenance,
                     _goat_result(item),
-        request.environment.digest(),
-    )
+                    request.environment.digest(),
+                )
             resumed = _batch().execute_step_resumable(
                 request, store=store, run_root=run_root, owner_token="ctl-resume"
             )
@@ -832,8 +838,8 @@ class TestQstMappingResume:
                     planned.step_semantic_digest,
                     provenance,
                     _qst_result(item),
-        request.environment.digest(),
-    )
+                    request.environment.digest(),
+                )
             resumed = _batch().execute_step_resumable(
                 request, store=store, run_root=run_root, owner_token="ctl-resume"
             )
@@ -879,8 +885,8 @@ class TestQstMappingResume:
                     planned.step_semantic_digest,
                     provenance,
                     _qst_result(item),
-        seed_request.environment.digest(),
-    )
+                    seed_request.environment.digest(),
+                )
             resumed = None
             with pytest.raises(PersistenceError, match="invalidate_input"):
                 resumed = _batch().execute_step_resumable(
@@ -948,8 +954,8 @@ class TestEndpointIdStability:
                     planned.step_semantic_digest,
                     provenance,
                     _irc_result(item),
-        request.environment.digest(),
-    )
+                    request.environment.digest(),
+                )
             first = _batch().execute_step_resumable(
                 request, store=store, run_root=run_root, owner_token="ctl-1"
             )

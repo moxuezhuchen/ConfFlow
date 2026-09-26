@@ -750,7 +750,7 @@ def main(
                     converted_inputs.append(os.path.abspath(out_xyz))
                 input_files = converted_inputs
 
-                run_workflow_through_service(
+                result = run_workflow_through_service(
                     input_xyz=input_files,
                     config_file=config_file,
                     work_dir=work_dir,
@@ -770,6 +770,21 @@ def main(
                     work_directory_lease=work_lease,
                     workflow_runner=run_workflow,
                 )
+                # Terminal V4 status owns the process exit code: a published
+                # run_result.json with status failed/partial/cancelled is a
+                # real scientific/lifecycle outcome that Unix callers must
+                # detect via nonzero exit. Service COMPLETED only means the
+                # synchronous facade finished; V4 status is the truth.
+                if isinstance(result, dict) and result.get("status") not in (
+                    None,
+                    "completed",
+                ):
+                    _append_to_output(
+                        output_path,
+                        f"[ERROR] Workflow ended with status {result.get('status')!r}; "
+                        "see run_result.json for the durable manifest.",
+                    )
+                    return ExitCode.RUNTIME_ERROR
         finally:
             work_lease.release()
 

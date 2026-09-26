@@ -599,21 +599,36 @@ class V4RunApplication:
         """Publish the producer-facing run-result manifest.
 
         Every step entry carries the real published digest re-discovered
-        from durable storage (never a status string), schema-exact counts
-        and diagnostics, and only artifacts with verified sha256 checksums
-        and portable run-relative locators.  The manifest is validated
-        against the actual producer schema and atomically written to
-        ``run_root/run_result.json`` (directory fsynced); the in-memory
-        report mirrors the durable bytes.
+        from durable storage (never a status string) plus the planned-step
+        semantic digest from the validated plan fingerprint, schema-exact
+        counts and diagnostics, and only artifacts with verified sha256
+        checksums and portable run-relative locators.  Top-level ``results``
+        carries one ResultRef per real emitted scientific result.  The
+        manifest is validated against the actual producer schema and
+        atomically written to ``run_root/run_result.json`` (directory
+        fsynced); the in-memory report mirrors the durable bytes.
+
+        Projection delegates to the producer-owned helpers
+        (:mod:`confflow.producer.run_result`) so there is exactly one
+        manifest shape.  The planned-step semantic map is read from the
+        validated plan only (no second capability table); per-step
+        provenance already carries the same fingerprint value as fallback.
         """
         import jsonschema
 
         import confflow
 
         from ..producer.contract import build_run_result_manifest, run_result_json_schema
+        from ..producer.run_result import artifact_entry, result_ref_entry, step_entry
 
+        semantic = {
+            planned.step_id: planned.step_semantic_digest
+            for planned in plan.steps
+            if getattr(planned, "step_semantic_digest", None) is not None
+        }
         steps: list[dict[str, Any]] = []
         artifacts: list[dict[str, Any]] = []
+        results: list[dict[str, Any]] = []
         for result in step_results:
             digest = detect_published(run_root=run_root, step_id=result.step_id)
             if digest is None:
@@ -621,45 +636,17 @@ class V4RunApplication:
                     f"step {result.step_id!r} has no durable publication; "
                     "manifest publication requires every step result to be published"
                 )
-            summary = result.summary.thaw()
             steps.append(
-                {
-                    "id": result.step_id,
-                    "status": result.status.value,
-                    "digest": digest,
-                    "counts": {
-                        "completed": int(summary.get("completed", 0)),
-                        "failed": int(summary.get("failed", 0)),
-                        "cancelled": int(summary.get("cancelled", 0)),
-                    },
-                    "diagnostics": [
-                        {
-                            "code": item.code,
-                            "severity": item.severity.value,
-                            "message": item.message,
-                            "step_id": item.step_id,
-                            "field_path": item.field_path,
-                        }
-                        for item in result.diagnostics
-                    ],
-                }
+                step_entry(
+                    result,
+                    published_digest=digest,
+                    semantic_digest=semantic.get(result.step_id),
+                )
             )
+            for record in result.results:
+                results.append(result_ref_entry(record))
             for artifact in result.artifacts:
-                locator = artifact.locator.path if artifact.locator is not None else None
-                checksum = artifact.checksum
-                if (
-                    locator
-                    and checksum
-                    and checksum.startswith("sha256:")
-                    and len(checksum) == len("sha256:") + 64
-                ):
-                    artifacts.append(
-                        {
-                            "role": artifact.role,
-                            "checksum": checksum.lower(),
-                            "locator": locator,
-                        }
-                    )
+                artifacts.append(artifact_entry(artifact))
         analyses: list[dict[str, Any]] = []
         for planned in plan.steps:
             if planned.executor.value == "analysis":
@@ -672,6 +659,7 @@ class V4RunApplication:
             steps=steps,
             analyses=analyses,
             artifacts=artifacts,
+            results=results,
         )
         try:
             jsonschema.validate(instance=manifest, schema=run_result_json_schema())

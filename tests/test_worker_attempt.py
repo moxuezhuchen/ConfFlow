@@ -24,8 +24,13 @@ class _FakeRoot:
 
 
 def _inputs(tmp_path: Path) -> tuple[str, list[dict[str, str]]]:
+    # Formal cutover: the attempt boundary preflights the staged config, so
+    # it must exist and carry the V4 schema (content never compiles here: the
+    # service builder is always a fake in these tests).
     config = tmp_path / "workflow.yaml"
+    config.write_text("schema: confflow.workflow.v4\nsteps: []\n", encoding="utf-8")
     input_xyz = tmp_path / "input.xyz"
+    input_xyz.write_text("1\nH\nH 0 0 0\n", encoding="utf-8")
     work_dir = tmp_path / "results" / "input_confflow_work"
     return str(config), [{"input_xyz": str(input_xyz), "work_dir": str(work_dir)}]
 

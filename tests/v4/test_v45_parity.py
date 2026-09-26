@@ -40,42 +40,26 @@ from typing import Any
 
 import pytest
 
-from confflow.domain import ArtifactLocator, ArtifactRef, ArtifactSet, FrozenDict, StructureSet
+from confflow.domain import FrozenDict, StructureSet
 from confflow.domain.artifact import LocatorKind
-from confflow.domain.completion import StepStatus, WorkItemStatus
-from confflow.domain.diagnostics import Diagnostic, DiagnosticSeverity
+from confflow.domain.completion import StepStatus
 from confflow.domain.result import ResultSet, ScientificResult
-from confflow.domain.structure import StructureRecord
-from confflow.domain.units import Unit
-from confflow.domain.work_item import RecoveryInfo, Timing, WorkItemResult
+from confflow.domain.work_item import WorkItemResult
 from confflow.execution import ExecutionBinding
 from confflow.execution.batch import BatchStepExecutor, StepExecutionRequest
 from confflow.execution.checks_standard import CHECKS
-from confflow.execution.native import (
-    GeometryOutput,
-    NativeEnsembleMember,
-    NativeResult,
-    ParsedGeometry,
-    ProducedFile,
-    ProgramName,
-    ResolvedCalculationInputs,
-)
 from confflow.execution.output_identity import (
     CONFORMER_ROLE,
     conformer_output_id,
-    multi_output_structure_id,
 )
 from confflow.execution.process import NativeProcessSupervisor
-from confflow.programs.registry import get_program_adapter
-from confflow.execution.profile_ensemble import EnsembleProfile
 from confflow.execution.profile_path_endpoints import PathEndpointsProfile
 from confflow.execution.profile_standard import PROFILES as STANDARD_PROFILES
-from confflow.execution.profiles import ProfileContext
 from confflow.execution.recovery_standard import RECOVERIES
 from confflow.execution.work_item_executor import WorkItemExecutor
 from confflow.persistence.contracts import store_path
 from confflow.persistence.work_items import SqliteWorkItemStore
-from confflow.programs.orca.path import parse_path_endpoints
+from confflow.programs.registry import get_program_adapter
 from confflow.remote.transport import LocalTransport, RemoteTransport
 from tests.v4._builders import (
     assemble,
@@ -85,7 +69,6 @@ from tests.v4._builders import (
     structure,
     v4_doc,
 )
-from tests.v4.fakes.fake_irc import parse_inp_coordinates
 
 FAKES_DIR = Path(__file__).resolve().parent / "fakes"
 FAKE_IRC = FAKES_DIR / "fake_irc.py"
@@ -590,7 +573,6 @@ class TestQstNamedParity:
         assert tuple(resolved["product"])[0].id == "P0"
 
 
-
 class TestEnsembleParity:
     """Ensemble items through local and remote delivery (genuine).
 
@@ -713,7 +695,6 @@ class TestEnsembleParity:
         assert len({record.id for record in local.structures}) == 3
 
 
-
 class TestParityComparator:
     """The comparator is strict: any science drift fails loudly.
 
@@ -747,9 +728,7 @@ class TestParityComparator:
         assert "remote_execution_environment" in dict(remote.metadata.thaw())
         _assert_science_parity(local, remote)
 
-    def test_geometry_drift_rejected(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_geometry_drift_rejected(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         import dataclasses as _dc
 
         local, remote = self._baseline(tmp_path, monkeypatch)
@@ -823,7 +802,9 @@ class TestParityComparator:
         with pytest.raises(AssertionError):
             _assert_science_parity(local, tampered)
 
-    def test_parent_mispairing_rejected(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_parent_mispairing_rejected(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         import dataclasses as _dc
 
         local, remote = self._baseline(tmp_path, monkeypatch)

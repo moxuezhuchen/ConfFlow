@@ -1,10 +1,11 @@
-"""R4.5 — Public Workflow V3 execution end-to-end (PE1–PE8, PE-R, PE-F, PE-C).
+"""R4.5 — Public Workflow V3 execution end-to-end, SEALED inventory (PE1–PE8, PE-R, PE-F, PE-C).
 
-Every test drives the real public stack: the public CLI (``confflow.cli.main``)
-or the public engine entry → ExecutionService → the accepted V3 runtime core →
-state v2 → output manifest v2 → artifact loader. Step handlers are faked at
-the runtime's indirection points (no Gaussian/ORCA). The real capability table
-is in effect: these tests are the flip's acceptance suite.
+The V4-only runtime cutover retired the V3 execution path: the formal CLI
+entry (``confflow.cli.main``) refuses every V2/V3 config with
+``legacy_workflow_not_executable`` before the public stack runs. Each test
+below preserves its scenario's config construction and proves the refusal
+with zero side effects — no manifests, no state files, no handler calls.
+Direct-engine follow-up legs were dropped (formal-entry scope).
 """
 
 from __future__ import annotations
@@ -20,9 +21,6 @@ from confflow.cli import main as cli_main
 from confflow.config.canonical import CAPABILITIES, WORKFLOW_SCHEMA_VERSION_V3
 from confflow.contract import OUTPUT_MANIFEST_SCHEMA_V2, WORKFLOW_STATS_SCHEMA_V2
 from confflow.core.contracts import ExitCode
-from confflow.core.exceptions import ConfFlowError
-from confflow.workflow.rerun_failed import RerunFailedUsageError, run_rerun_failed
-from confflow.workflow.v3_runtime import run_v3_workflow
 
 V3 = "confflow.workflow.v3"
 
@@ -142,34 +140,44 @@ def _assert_public_v2_artifacts(work: Path) -> None:
     assert all(artifact.terminal in state["steps"] for artifact in artifacts)
 
 
+def _assert_sealed_cli(work: Path, capsys, handlers: _Handlers | None = None) -> None:
+    """Assert a sealed CLI refusal: guard code, machine error, zero traces."""
+    assert "legacy_workflow_not_executable" in capsys.readouterr().err
+    if handlers is not None:
+        assert handlers.calls == []
+    assert not (work / "output_manifest.json").exists()
+    assert not (work / ".workflow_state.json").exists()
+    assert not (work / "steps").exists()
+
+
 # ---------------------------------------------------------------------------
 # PE1–PE8 — public CLI runs
 # ---------------------------------------------------------------------------
 class TestPublicRuns:
-    def test_pe1_simple_calc_full_public_chain(self, tmp_path: Path, monkeypatch) -> None:
-        _Handlers(monkeypatch)
+    def test_pe1_simple_calc_full_public_chain_sealed(
+        self, tmp_path: Path, monkeypatch, capsys
+    ) -> None:
+        """V3 sealed: the V4 guard refuses the run (scenario: single calc, full chain)."""
+        handlers = _Handlers(monkeypatch)
         config = _config(tmp_path / "wf.yaml", [_step("s001", "calc", [])])
         code, work = _cli(tmp_path, monkeypatch, config)
-        assert code is ExitCode.SUCCESS
-        _assert_public_v2_artifacts(work)
-        assert (work / "steps" / "s001" / "result.xyz").is_file()
-        assert _manifest(work)["terminals"] == [
-            {"id": "s001", "label": None, "artifacts": ["steps/s001/result.xyz"]}
-        ]
+        assert code is ExitCode.RUNTIME_ERROR
+        _assert_sealed_cli(work, capsys, handlers)
 
-    def test_pe2_confgen_then_calc(self, tmp_path: Path, monkeypatch) -> None:
-        _Handlers(monkeypatch)
+    def test_pe2_confgen_then_calc_sealed(self, tmp_path: Path, monkeypatch, capsys) -> None:
+        """V3 sealed: the V4 guard refuses the run (scenario: confgen then calc)."""
+        handlers = _Handlers(monkeypatch)
         config = _config(
             tmp_path / "wf.yaml",
             [_step("s001", "confgen", []), _step("s002", "calc", ["s001"])],
         )
         code, work = _cli(tmp_path, monkeypatch, config)
-        assert code is ExitCode.SUCCESS
-        _assert_public_v2_artifacts(work)
-        assert _manifest(work)["terminals"][0]["id"] == "s002"
+        assert code is ExitCode.RUNTIME_ERROR
+        _assert_sealed_cli(work, capsys, handlers)
 
-    def test_pe3_branching_dag(self, tmp_path: Path, monkeypatch) -> None:
-        _Handlers(monkeypatch)
+    def test_pe3_branching_dag_sealed(self, tmp_path: Path, monkeypatch, capsys) -> None:
+        """V3 sealed: the V4 guard refuses the run (scenario: branching DAG)."""
+        handlers = _Handlers(monkeypatch)
         config = _config(
             tmp_path / "wf.yaml",
             [
@@ -179,24 +187,23 @@ class TestPublicRuns:
             ],
         )
         code, work = _cli(tmp_path, monkeypatch, config)
-        assert code is ExitCode.SUCCESS
-        assert [entry["id"] for entry in _manifest(work)["terminals"]] == ["s002", "s003"]
+        assert code is ExitCode.RUNTIME_ERROR
+        _assert_sealed_cli(work, capsys, handlers)
 
-    def test_pe4_duplicate_labels(self, tmp_path: Path, monkeypatch) -> None:
-        _Handlers(monkeypatch)
+    def test_pe4_duplicate_labels_sealed(self, tmp_path: Path, monkeypatch, capsys) -> None:
+        """V3 sealed: the V4 guard refuses the run (scenario: duplicate labels)."""
+        handlers = _Handlers(monkeypatch)
         steps = [
             _step("s001", "confgen", [], label="Optimize"),
             _step("s002", "calc", ["s001"], label="Optimize"),
         ]
         config = _config(tmp_path / "wf.yaml", steps)
         code, work = _cli(tmp_path, monkeypatch, config)
-        assert code is ExitCode.SUCCESS
-        # the artifact key is the stable ID; the label stays display-only
-        assert _manifest(work)["terminals"] == [
-            {"id": "s002", "label": "Optimize", "artifacts": ["steps/s002/result.xyz"]}
-        ]
+        assert code is ExitCode.RUNTIME_ERROR
+        _assert_sealed_cli(work, capsys, handlers)
 
-    def test_pe5_disabled_bypass(self, tmp_path: Path, monkeypatch) -> None:
+    def test_pe5_disabled_bypass_sealed(self, tmp_path: Path, monkeypatch, capsys) -> None:
+        """V3 sealed: the V4 guard refuses the run (scenario: disabled-step bypass)."""
         handlers = _Handlers(monkeypatch)
         steps = [
             _step("s001", "confgen", []),
@@ -205,13 +212,11 @@ class TestPublicRuns:
         ]
         config = _config(tmp_path / "wf.yaml", steps)
         code, work = _cli(tmp_path, monkeypatch, config)
-        assert code is ExitCode.SUCCESS
-        # s002 never executed; s003 consumed s001's output through the bypass
-        assert handlers.calls == ["s001", "s003"]
-        assert _state(work)["steps"]["s002"]["status"] == "skipped"
-        assert _manifest(work)["terminals"][0]["artifacts"] == ["steps/s003/result.xyz"]
+        assert code is ExitCode.RUNTIME_ERROR
+        _assert_sealed_cli(work, capsys, handlers)
 
-    def test_pe6_checkpoint_by_id(self, tmp_path: Path, monkeypatch) -> None:
+    def test_pe6_checkpoint_by_id_sealed(self, tmp_path: Path, monkeypatch, capsys) -> None:
+        """V3 sealed: the V4 guard refuses the run (scenario: checkpoint by ID)."""
         handlers = _Handlers(monkeypatch)
         steps = [
             _step("s001", "confgen", []),
@@ -220,22 +225,23 @@ class TestPublicRuns:
         ]
         config = _config(tmp_path / "wf.yaml", steps)
         code, work = _cli(tmp_path, monkeypatch, config)
-        assert code is ExitCode.SUCCESS
-        _assert_public_v2_artifacts(work)
-        # the calc handler produced per-ID checkpoint backups consumed by s003
-        assert (work / "steps" / "s002" / "backups").is_dir()
-        assert handlers.calls == ["s001", "s002", "s003"]
+        assert code is ExitCode.RUNTIME_ERROR
+        _assert_sealed_cli(work, capsys, handlers)
 
-    def test_pe7_multiple_roots(self, tmp_path: Path, monkeypatch) -> None:
-        _Handlers(monkeypatch)
+    def test_pe7_multiple_roots_sealed(self, tmp_path: Path, monkeypatch, capsys) -> None:
+        """V3 sealed: the V4 guard refuses the run (scenario: multiple roots)."""
+        handlers = _Handlers(monkeypatch)
         steps = [_step("s001", "confgen", []), _step("s002", "confgen", [])]
         config = _config(tmp_path / "wf.yaml", steps)
         code, work = _cli(tmp_path, monkeypatch, config)
-        assert code is ExitCode.SUCCESS
-        assert [entry["id"] for entry in _manifest(work)["terminals"]] == ["s001", "s002"]
+        assert code is ExitCode.RUNTIME_ERROR
+        _assert_sealed_cli(work, capsys, handlers)
 
-    def test_pe8_multiple_terminals_no_collapse(self, tmp_path: Path, monkeypatch) -> None:
-        _Handlers(monkeypatch)
+    def test_pe8_multiple_terminals_no_collapse_sealed(
+        self, tmp_path: Path, monkeypatch, capsys
+    ) -> None:
+        """V3 sealed: the V4 guard refuses the run (scenario: multiple terminals)."""
+        handlers = _Handlers(monkeypatch)
         steps = [
             _step("s001", "confgen", []),
             _step("s002", "calc", ["s001"]),
@@ -244,67 +250,60 @@ class TestPublicRuns:
         ]
         config = _config(tmp_path / "wf.yaml", steps)
         code, work = _cli(tmp_path, monkeypatch, config)
-        assert code is ExitCode.SUCCESS
-        terminals = _manifest(work)["terminals"]
-        assert [entry["id"] for entry in terminals] == ["s002", "s003", "s004"]
-        # every terminal artifact survives; nothing is silently collapsed
-        stats = _stats(work)
-        assert set(stats["terminal_outputs"]) == {"s002", "s003", "s004"}
+        assert code is ExitCode.RUNTIME_ERROR
+        _assert_sealed_cli(work, capsys, handlers)
 
 
 # ---------------------------------------------------------------------------
 # PE-R1–PE-R7 — public resume
 # ---------------------------------------------------------------------------
 class TestPublicResume:
-    def _completed_prefix(
-        self, tmp_path: Path, monkeypatch, *, keyword: str = "HF"
-    ) -> tuple[Path, Path, _Handlers]:
-        """Run until s002 fails; s001 is completed."""
-        steps = [
+    def _prefix_steps(self, *, keyword: str = "HF") -> list[dict[str, Any]]:
+        """Scenario construction shared by the resume tests: s002 fails."""
+        return [
             _step("s001", "confgen", []),
             _step("s002", "calc", ["s001"], params={"keyword": keyword}),
             _step("s003", "calc", ["s002"]),
         ]
-        config = _config(tmp_path / "wf.yaml", steps)
+
+    def test_pe_r1_public_resume_after_failure_sealed(
+        self, tmp_path: Path, monkeypatch, capsys
+    ) -> None:
+        """V3 sealed: the V4 guard refuses the resume (scenario: resume after failure)."""
         handlers = _Handlers(monkeypatch, fail_ids={"s002"})
-        code, work = _cli(tmp_path, monkeypatch, config)
+        config = _config(tmp_path / "wf.yaml", self._prefix_steps())
+        # the prefix run is refused, so the resume leg is the only leg
+        code, work = _cli(tmp_path, monkeypatch, config, resume=True)
         assert code is ExitCode.RUNTIME_ERROR
-        assert handlers.calls == ["s001", "s002"]
-        return config, work, handlers
+        _assert_sealed_cli(work, capsys, handlers)
 
-    def test_pe_r1_public_resume_after_failure(self, tmp_path: Path, monkeypatch) -> None:
-        config, work, handlers = self._completed_prefix(tmp_path, monkeypatch)
-        fresh = _Handlers(monkeypatch)
-        code, _work = _cli(tmp_path, monkeypatch, config, resume=True)
-        assert code is ExitCode.SUCCESS
-        # the failed step and its pending successor re-executed; s001 reused
-        assert fresh.calls == ["s002", "s003"]
-        _assert_public_v2_artifacts(work)
-
-    def test_pe_r2_label_rename_resume(self, tmp_path: Path, monkeypatch) -> None:
-        config, work, _handlers = self._completed_prefix(tmp_path, monkeypatch)
+    def test_pe_r2_label_rename_resume_sealed(self, tmp_path: Path, monkeypatch, capsys) -> None:
+        """V3 sealed: the V4 guard refuses the resume (scenario: label rename)."""
+        handlers = _Handlers(monkeypatch, fail_ids={"s002"})
+        config = _config(tmp_path / "wf.yaml", self._prefix_steps())
         document = yaml.safe_load(config.read_text(encoding="utf-8"))
         document["steps"][0]["label"] = "Renamed"
         config.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
-        fresh = _Handlers(monkeypatch)
-        code, _work = _cli(tmp_path, monkeypatch, config, resume=True)
-        assert code is ExitCode.SUCCESS
-        assert fresh.calls == ["s002", "s003"]
-        # the label snapshot drifted; identity did not
-        assert _state(work)["steps"]["s001"]["label"] == "Renamed"
+        code, work = _cli(tmp_path, monkeypatch, config, resume=True)
+        assert code is ExitCode.RUNTIME_ERROR
+        _assert_sealed_cli(work, capsys, handlers)
 
-    def test_pe_r3_yaml_reorder_resume(self, tmp_path: Path, monkeypatch) -> None:
-        config, work, _handlers = self._completed_prefix(tmp_path, monkeypatch)
+    def test_pe_r3_yaml_reorder_resume_sealed(self, tmp_path: Path, monkeypatch, capsys) -> None:
+        """V3 sealed: the V4 guard refuses the resume (scenario: YAML reorder)."""
+        handlers = _Handlers(monkeypatch, fail_ids={"s002"})
+        config = _config(tmp_path / "wf.yaml", self._prefix_steps())
         document = yaml.safe_load(config.read_text(encoding="utf-8"))
         document["steps"] = [document["steps"][2], document["steps"][1], document["steps"][0]]
         config.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
-        fresh = _Handlers(monkeypatch)
-        code, _work = _cli(tmp_path, monkeypatch, config, resume=True)
-        assert code is ExitCode.SUCCESS
-        assert fresh.calls == ["s002", "s003"]
+        code, work = _cli(tmp_path, monkeypatch, config, resume=True)
+        assert code is ExitCode.RUNTIME_ERROR
+        _assert_sealed_cli(work, capsys, handlers)
 
-    def test_pe_r4_input_rename_only_resume(self, tmp_path: Path, monkeypatch) -> None:
-        _Handlers(monkeypatch)
+    def test_pe_r4_input_rename_only_resume_sealed(
+        self, tmp_path: Path, monkeypatch, capsys
+    ) -> None:
+        """V3 sealed: the V4 guard refuses the resume (scenario: input rename only)."""
+        handlers = _Handlers(monkeypatch)
         config = _config(
             tmp_path / "wf.yaml",
             [_step("s001", "confgen", []), _step("s002", "calc", ["s001"])],
@@ -312,64 +311,48 @@ class TestPublicResume:
         xyz = tmp_path / "in_a.xyz"
         _write_xyz(xyz, note="stable bytes")
         work = tmp_path / "work"
-        assert cli_main([str(xyz), "-c", str(config), "-w", str(work)]) is ExitCode.SUCCESS
-        before = _state(work)["binding"]["execution_fingerprint"]
-
         renamed = tmp_path / "in_b.xyz"
         xyz.rename(renamed)
         code = cli_main([str(renamed), "-c", str(config), "-w", str(work), "--resume"])
-        assert code is ExitCode.SUCCESS
-        assert _state(work)["binding"]["execution_fingerprint"] == before
+        assert code is ExitCode.RUNTIME_ERROR
+        _assert_sealed_cli(work, capsys, handlers)
 
-    def test_pe_r5_a_mismatch_rejects_zero_side_effects(self, tmp_path: Path, monkeypatch) -> None:
-        config, work, _handlers = self._completed_prefix(tmp_path, monkeypatch)
-        before = (work / ".workflow_state.json").read_bytes()
+    def test_pe_r5_a_mismatch_rejects_zero_side_effects_sealed(
+        self, tmp_path: Path, monkeypatch, capsys
+    ) -> None:
+        """V3 sealed: the V4 guard refuses the resume (scenario: A param mismatch)."""
+        handlers = _Handlers(monkeypatch, fail_ids={"s002"})
+        config = _config(tmp_path / "wf.yaml", self._prefix_steps())
         document = yaml.safe_load(config.read_text(encoding="utf-8"))
         document["steps"][1]["params"]["keyword"] = "B3LYP"  # semantic change ⇒ A
         config.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
-        fresh = _Handlers(monkeypatch)
-        code, _work = _cli(tmp_path, monkeypatch, config, resume=True)
+        code, work = _cli(tmp_path, monkeypatch, config, resume=True)
         assert code is ExitCode.RUNTIME_ERROR
-        assert fresh.calls == []  # no handler ran
-        assert (work / ".workflow_state.json").read_bytes() == before
+        _assert_sealed_cli(work, capsys, handlers)
 
-    def test_pe_r6_b_producer_mismatch_rejects(self, tmp_path: Path, monkeypatch) -> None:
-        """A different producer cannot join an existing run (B audit, PD-1)."""
-        _Handlers(monkeypatch)
+    def test_pe_r6_b_producer_mismatch_rejects_sealed(
+        self, tmp_path: Path, monkeypatch, capsys
+    ) -> None:
+        """V3 sealed: the V4 guard refuses the run (scenario: producer mismatch).
+
+        The direct-engine ``run_v3_workflow`` provenance leg is dropped:
+        it is not a formal entry, so it is out of the sealed scope.
+        """
+        handlers = _Handlers(monkeypatch)
         config = _config(
             tmp_path / "wf.yaml",
             [_step("s001", "confgen", []), _step("s002", "calc", ["s001"])],
         )
         _write_xyz(tmp_path / "input.xyz")
         work = tmp_path / "work"
-        assert (
-            cli_main([str(tmp_path / "input.xyz"), "-c", str(config), "-w", str(work)])
-            is ExitCode.SUCCESS
-        )
-        before = (work / ".workflow_state.json").read_bytes()
+        code = cli_main([str(tmp_path / "input.xyz"), "-c", str(config), "-w", str(work)])
+        assert code is ExitCode.RUNTIME_ERROR
+        _assert_sealed_cli(work, capsys, handlers)
 
-        from confflow.workflow.binding_v2 import PRODUCER_IDENTITY, BindingProvenanceV2
-
-        provenance = BindingProvenanceV2(
-            workflow_schema="confflow.workflow.v3",
-            workflow_schema_sha256="sha256:" + "0" * 64,
-            canonicalization_version="confflow-canonicalization-1",
-            producer_identity=PRODUCER_IDENTITY,
-            producer_version="9.9.9",
-            producer_commit="different",
-            producer_dirty=False,
-        )
-        with pytest.raises(ConfFlowError, match="binding mismatch"):
-            run_v3_workflow(
-                input_xyz=[str(tmp_path / "input.xyz")],
-                config_file=str(config),
-                work_dir=str(work),
-                resume=True,
-                provenance=provenance,
-            )
-        assert (work / ".workflow_state.json").read_bytes() == before
-
-    def test_pe_r7_c_mismatch_rejects_zero_side_effects(self, tmp_path: Path, monkeypatch) -> None:
+    def test_pe_r7_c_mismatch_rejects_zero_side_effects_sealed(
+        self, tmp_path: Path, monkeypatch, capsys
+    ) -> None:
+        """V3 sealed: the V4 guard refuses the resume (scenario: C exe mismatch)."""
         exe = tmp_path / "fake_orca"
         exe.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
         exe.chmod(0o755)
@@ -378,102 +361,79 @@ class TestPublicResume:
             [_step("s001", "calc", [])],
             **{"global": {"orca_path": str(exe)}},
         )
-        _Handlers(monkeypatch)
-        code, work = _cli(tmp_path, monkeypatch, config)
-        assert code is ExitCode.SUCCESS
-        before = (work / ".workflow_state.json").read_bytes()
-
-        # the executable bytes changed at the (same) execution site ⇒ C differs
+        handlers = _Handlers(monkeypatch)
+        # the executable bytes changed at the (same) execution site ⇒ C differs,
+        # but the resume is refused before any binding comparison runs
         exe.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
-        fresh = _Handlers(monkeypatch)
-        code, _work = _cli(tmp_path, monkeypatch, config, resume=True)
+        code, work = _cli(tmp_path, monkeypatch, config, resume=True)
         assert code is ExitCode.RUNTIME_ERROR
-        assert fresh.calls == []
-        assert (work / ".workflow_state.json").read_bytes() == before
+        _assert_sealed_cli(work, capsys, handlers)
 
 
 # ---------------------------------------------------------------------------
 # PE-F1–PE-F5 — public rerun semantics
 # ---------------------------------------------------------------------------
 class TestPublicRerun:
-    def _failed_run(self, tmp_path: Path, monkeypatch) -> tuple[Path, Path]:
-        """Build a failed run with an unrelated completed branch.
-
-        s001 completes, s003 completes, s004 (with its pending structure)
-        fails after them in topological order.
-        """
-        steps = [
+    def _failed_steps(self) -> list[dict[str, Any]]:
+        """Scenario construction: s004 fails after an unrelated completed branch."""
+        return [
             _step("s001", "confgen", []),
             _step("s002", "calc", ["s001"]),
             _step("s003", "calc", ["s001"]),
             _step("s004", "calc", ["s002"], params={"keyword": "MP2"}),
         ]
-        config = _config(tmp_path / "wf.yaml", steps)
-        handlers = _Handlers(monkeypatch, fail_ids={"s004"})
-        code, work = _cli(tmp_path, monkeypatch, config)
-        assert code is ExitCode.RUNTIME_ERROR
-        assert handlers.calls == ["s001", "s002", "s003", "s004"]
-        return config, work
 
-    def test_pe_f1_f2_failed_step_and_successor_rerun_by_id(
-        self, tmp_path: Path, monkeypatch
+    def test_pe_f1_f2_failed_step_and_successor_rerun_by_id_sealed(
+        self, tmp_path: Path, monkeypatch, capsys
     ) -> None:
-        config, work = self._failed_run(tmp_path, monkeypatch)
-        fresh = _Handlers(monkeypatch)
-        code, _work = _cli(tmp_path, monkeypatch, config, resume=True)
-        assert code is ExitCode.SUCCESS
-        # the failed step is re-identified by stable ID and its pending
-        # successor is reset/re-executed
-        assert fresh.calls == ["s004"]
-        assert _state(work)["steps"]["s004"]["status"] == "completed"
+        """V3 sealed: the V4 guard refuses the rerun (scenario: failed step rerun)."""
+        handlers = _Handlers(monkeypatch, fail_ids={"s004"})
+        config = _config(tmp_path / "wf.yaml", self._failed_steps())
+        code, work = _cli(tmp_path, monkeypatch, config, resume=True)
+        assert code is ExitCode.RUNTIME_ERROR
+        _assert_sealed_cli(work, capsys, handlers)
 
-    def test_pe_f3_unrelated_completed_branch_preserved(self, tmp_path: Path, monkeypatch) -> None:
-        config, work = self._failed_run(tmp_path, monkeypatch)
-        sibling = work / "steps" / "s003" / "result.xyz"
-        sibling_bytes = sibling.read_bytes()
-        s001_bytes = (work / "steps" / "s001" / "search.xyz").read_bytes()
-        _Handlers(monkeypatch)
-        code, _work = _cli(tmp_path, monkeypatch, config, resume=True)
-        assert code is ExitCode.SUCCESS
-        assert sibling.read_bytes() == sibling_bytes
-        assert (work / "steps" / "s001" / "search.xyz").read_bytes() == s001_bytes
+    def test_pe_f3_unrelated_completed_branch_preserved_sealed(
+        self, tmp_path: Path, monkeypatch, capsys
+    ) -> None:
+        """V3 sealed: the V4 guard refuses the rerun (scenario: completed branch)."""
+        handlers = _Handlers(monkeypatch, fail_ids={"s004"})
+        config = _config(tmp_path / "wf.yaml", self._failed_steps())
+        code, work = _cli(tmp_path, monkeypatch, config, resume=True)
+        assert code is ExitCode.RUNTIME_ERROR
+        _assert_sealed_cli(work, capsys, handlers)
 
-    def test_pe_f4_duplicate_labels_safe_on_rerun(self, tmp_path: Path, monkeypatch) -> None:
+    def test_pe_f4_duplicate_labels_safe_on_rerun_sealed(
+        self, tmp_path: Path, monkeypatch, capsys
+    ) -> None:
+        """V3 sealed: the V4 guard refuses the rerun (scenario: duplicate labels)."""
+        handlers = _Handlers(monkeypatch, fail_ids={"s002"})
         steps = [
             _step("s001", "confgen", [], label="Same"),
             _step("s002", "calc", ["s001"], label="Same", params={"keyword": "MP2"}),
         ]
         config = _config(tmp_path / "wf.yaml", steps)
-        _Handlers(monkeypatch, fail_ids={"s002"})
-        code, work = _cli(tmp_path, monkeypatch, config)
+        code, work = _cli(tmp_path, monkeypatch, config, resume=True)
         assert code is ExitCode.RUNTIME_ERROR
-        _Handlers(monkeypatch)
-        code, _work = _cli(tmp_path, monkeypatch, config, resume=True)
-        assert code is ExitCode.SUCCESS
-        assert _state(work)["steps"]["s002"]["status"] == "completed"
+        _assert_sealed_cli(work, capsys, handlers)
 
-    def test_pe_f5_label_or_index_selector_rejected(self, tmp_path: Path, monkeypatch) -> None:
-        _Handlers(monkeypatch)
+    def test_pe_f5_label_or_index_selector_rejected_sealed(
+        self, tmp_path: Path, monkeypatch, capsys
+    ) -> None:
+        """V3 sealed: the V4 guard refuses the run (scenario: label/index selectors).
+
+        The ``run_rerun_failed`` selector legs are dropped: no work layout
+        ever exists for a selector to address.
+        """
+        handlers = _Handlers(monkeypatch)
         steps = [
             _step("s001", "confgen", [], label="Optimize"),
             _step("s002", "calc", ["s001"]),
         ]
         config = _config(tmp_path / "wf.yaml", steps)
         code, work = _cli(tmp_path, monkeypatch, config)
-        assert code is ExitCode.SUCCESS
-
-        with pytest.raises(RerunFailedUsageError, match="stable step id only"):
-            run_rerun_failed(
-                step_dir=str(work / "steps" / "s002"),
-                config_file=str(config),
-                step_ref="Optimize",  # label — never a V3 selector
-            )
-        with pytest.raises(RerunFailedUsageError, match="stable step id only"):
-            run_rerun_failed(
-                step_dir=str(work / "steps" / "s002"),
-                config_file=str(config),
-                step_ref="1",  # 1-based index — never a V3 selector
-            )
+        assert code is ExitCode.RUNTIME_ERROR
+        _assert_sealed_cli(work, capsys, handlers)
 
 
 # ---------------------------------------------------------------------------
@@ -495,10 +455,11 @@ class TestPublicControl:
         assert handlers.calls == []  # no later steps after cancel
         assert not (work / "output_manifest.json").exists()
 
-    def test_pe_c5_binding_state_coherent_after_midrun_cancel(
-        self, tmp_path: Path, monkeypatch
+    def test_pe_c5_binding_state_coherent_after_midrun_cancel_sealed(
+        self, tmp_path: Path, monkeypatch, capsys
     ) -> None:
-        _Handlers(monkeypatch)
+        """V3 sealed: the V4 guard refuses the run (scenario: cancel arriving mid-run)."""
+        handlers = _Handlers(monkeypatch)
         config = _config(
             tmp_path / "wf.yaml",
             [_step("s001", "confgen", []), _step("s002", "calc", ["s001"])],
@@ -506,26 +467,12 @@ class TestPublicControl:
         _write_xyz(tmp_path / "input.xyz")
         work = tmp_path / "work"
         work.mkdir()
-
-        import confflow.workflow.v3_runtime as v3_runtime
-
-        real_confgen = v3_runtime._run_confgen_step
-
-        def spy_confgen(**kwargs: Any):
-            (work / "CANCEL").touch()  # cancel arrives while s001 executes
-            return real_confgen(**kwargs)
-
-        monkeypatch.setattr(v3_runtime, "_run_confgen_step", spy_confgen)
+        (work / "CANCEL").touch()  # cancel arrives before any step executes
+        # the mid-run cancel spy and binding/state coherence legs can never
+        # exist: the guard refuses before the runtime starts.
         code = cli_main([str(tmp_path / "input.xyz"), "-c", str(config), "-w", str(work)])
         assert code is ExitCode.RUNTIME_ERROR
-        # cancel wins over pause; s001 completed coherently, s002 never ran,
-        # and no success manifest was published for an incomplete run
-        persisted = _state(work)
-        assert persisted["binding"]["schema"] == "confflow.workflow_binding.v2"
-        assert persisted["steps"]["s001"]["status"] == "completed"
-        assert persisted["steps"]["s002"]["status"] == "pending"
-        assert persisted["final_status"] == ""  # not forged as completed
-        assert not (work / "output_manifest.json").exists()
+        _assert_sealed_cli(work, capsys, handlers)
 
     def test_pe_c1_c2_pause_and_resume_via_service_protocol(
         self, tmp_path: Path, monkeypatch
@@ -543,8 +490,9 @@ class TestPublicControl:
 # ---------------------------------------------------------------------------
 # Guard regression — unknown future schema still zero-side-effect blocked
 # ---------------------------------------------------------------------------
-def test_future_schema_still_blocked_publicly(tmp_path: Path, monkeypatch) -> None:
-    _Handlers(monkeypatch)
+def test_future_schema_still_blocked_publicly_sealed(tmp_path: Path, monkeypatch, capsys) -> None:
+    """V3 sealed: unknown future schemas stay blocked (scenario: v9 config, public CLI)."""
+    handlers = _Handlers(monkeypatch)
     config = _config(tmp_path / "wf.yaml", [_step("s001", "calc", [])])
     document = yaml.safe_load(config.read_text(encoding="utf-8"))
     document["schema"] = "confflow.workflow.v9"
@@ -552,11 +500,9 @@ def test_future_schema_still_blocked_publicly(tmp_path: Path, monkeypatch) -> No
     _write_xyz(tmp_path / "input.xyz")
     work = tmp_path / "work"
     code = cli_main([str(tmp_path / "input.xyz"), "-c", str(config), "-w", str(work)])
-    assert code is ExitCode.USAGE_ERROR
-    # no V3 runtime artifacts of any kind
-    assert not list(work.glob("**/.workflow_state.json")) if work.exists() else True
-    assert not (work / "steps").exists() if work.exists() else True
-    assert not (work / "external_inputs").exists() if work.exists() else True
+    assert code is ExitCode.RUNTIME_ERROR
+    _assert_sealed_cli(work, capsys, handlers)
+    assert not (work / "external_inputs").exists()
     # and the flipped table only ever enables the V3 entry
     assert CAPABILITIES[WORKFLOW_SCHEMA_VERSION_V3].parse is True
     assert CAPABILITIES[WORKFLOW_SCHEMA_VERSION_V3].execute is True

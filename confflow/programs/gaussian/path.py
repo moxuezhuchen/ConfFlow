@@ -457,8 +457,8 @@ def parse_irc_endpoints(log_text: str, *, atoms: Sequence[str]) -> tuple[NativeP
     grouped: dict[tuple[str, int], list[_PathPoint]] = {}
     for (point_direction, path, _number), point in points.items():
         grouped.setdefault((point_direction, path), []).append(point)
-    by_direction: dict[str, list[_PathPoint]] = {}
-    for (point_direction, path), members in grouped.items():
+    by_direction: dict[str, list[int]] = {}
+    for (point_direction, path), _members in grouped.items():
         by_direction.setdefault(point_direction, []).append(path)
     for point_direction, paths in by_direction.items():
         if len(set(paths)) > 1:
@@ -470,7 +470,8 @@ def parse_irc_endpoints(log_text: str, *, atoms: Sequence[str]) -> tuple[NativeP
     endpoints: list[NativePathEndpoint] = []
     for point_direction in ("forward", "reverse"):
         candidates = [
-            point for (group_direction, _path), members in grouped.items()
+            point
+            for (group_direction, _path), members in grouped.items()
             for point in members
             if group_direction == point_direction
         ]
@@ -489,20 +490,26 @@ def parse_irc_endpoints(log_text: str, *, atoms: Sequence[str]) -> tuple[NativeP
                 "orientation geometry"
             )
         endpoint_point = max(with_geometry, key=lambda point: point.number)
-        if len(endpoint_point.rows) != len(expected):
+        endpoint_rows = endpoint_point.rows
+        if endpoint_rows is None:  # Unreachable: filtered by with_geometry above.
             raise ValueError(
                 "native_input_error: Gaussian IRC "
-                f"{point_direction} geometry has {len(endpoint_point.rows)} atoms "
+                f"{point_direction} endpoint lost its orientation geometry"
+            )
+        if len(endpoint_rows) != len(expected):
+            raise ValueError(
+                "native_input_error: Gaussian IRC "
+                f"{point_direction} geometry has {len(endpoint_rows)} atoms "
                 f"but {len(expected)} were expected"
             )
-        symbols = tuple(row[0] for row in endpoint_point.rows)
+        symbols = tuple(row[0] for row in endpoint_rows)
         if symbols != expected:
             raise ValueError(
                 "native_input_error: Gaussian IRC "
                 f"{point_direction} geometry symbols {list(symbols)} "
                 f"disagree with expected {list(expected)}"
             )
-        coordinates = tuple((row[1], row[2], row[3]) for row in endpoint_point.rows)
+        coordinates = tuple((row[1], row[2], row[3]) for row in endpoint_rows)
         endpoints.append(
             NativePathEndpoint(
                 direction=point_direction,
@@ -513,6 +520,7 @@ def parse_irc_endpoints(log_text: str, *, atoms: Sequence[str]) -> tuple[NativeP
             )
         )
     return tuple(endpoints)
+
 
 def irc_trajectory_facts(log_text: str) -> dict[str, Any]:
     """Summarize IRC trajectory progress without ever raising on content.

@@ -1,9 +1,13 @@
-"""R4.5 — V3 integration with ExecutionService, worker and remote (SVC/WK/RM).
+"""R4.5 — V3 integration with ExecutionService, worker and remote (SVC/WK/RM), SEALED.
 
-The public path reaches exactly one V3 runtime core: the service adapter
-dispatches the accepted ``run_v3_workflow`` seam through the public engine,
-so local CLI, through-service and worker attempts share state v2, binding v2,
-manifest v2 and resume semantics.
+The V4-only runtime cutover retired the V3 execution path: every formal
+entry (``build_workflow_service``, ``run_workflow_through_service``,
+``run_worker_attempt``) refuses V2/V3 staged configs with
+``legacy_workflow_not_executable`` before any persistent side effect. Each
+test below preserves its scenario's config construction and proves the
+refusal — the runner/builder is never called and no state, steps, or
+manifests are written. Direct-engine follow-up legs were dropped
+(formal-entry scope).
 """
 
 from __future__ import annotations
@@ -21,18 +25,15 @@ import yaml
 from confflow.application.execution.models import PrepareRequest, RunState
 from confflow.application.execution.workflow_adapter import (
     WorkflowRunSpec,
-    _load_artifacts,
-    _load_stats,
     build_workflow_service,
     executor_identity,
     measure_executable,
     open_control_service,
-    step_record_identity,
 )
 from confflow.config.canonical.execution_versions import CAPABILITIES, VersionCapability
 from confflow.config.canonical.schema import WORKFLOW_SCHEMA_VERSION_V3
 from confflow.control_worker import HANDOFF_SCHEMA, _canonical_json, run_control_worker
-from confflow.core.exceptions import StopRequestedError
+from confflow.core.exceptions import ConfFlowError
 from confflow.workflow.engine import run_workflow
 
 pytestmark = [
@@ -272,50 +273,141 @@ def _binding(work: Path) -> dict[str, Any]:
     return state["binding"]
 
 
+def _never_runner(calls: list[dict[str, Any]]):
+    """Build a workflow runner probe that must never run for a sealed version."""
+
+    def _runner(**kwargs: Any) -> None:
+        calls.append(kwargs)
+        raise AssertionError("the workflow runner must never run for a sealed version")
+
+    return _runner
+
+
+def _never_builder(launched: list[Any]):
+    """Build a service-builder probe that must never run for a sealed version."""
+
+    def _builder(spec: Any, **kwargs: Any) -> Any:
+        launched.append(spec)
+        raise AssertionError("the service builder must never run for a sealed version")
+
+    return _builder
+
+
+def _assert_no_work_traces(work: Path) -> None:
+    assert not (work / ".workflow_state.json").exists()
+    assert not (work / "output_manifest.json").exists()
+    assert not (work / "steps").exists()
+
+
+def _sealed_service_build(
+    tmp_path: Path,
+    *,
+    spec: WorkflowRunSpec,
+    state_root: Path,
+    runner_calls: list[dict[str, Any]],
+) -> None:
+    """Drive one service build; assert the V4 guard refuses with zero side effects."""
+    with pytest.raises(ConfFlowError, match="legacy_workflow_not_executable"):
+        build_workflow_service(
+            spec, state_root=state_root, workflow_runner=_never_runner(runner_calls)
+        )
+    assert runner_calls == []
+    assert not state_root.exists()
+
+
+def _sealed_worker_attempt(
+    tmp_path: Path,
+    *,
+    run_id: str,
+    config: Path,
+    input_xyz: Path,
+    work: Path,
+    resume: bool = False,
+) -> Path:
+    """Drive one worker attempt; assert the V4 guard refuses with zero side effects."""
+    from confflow.application.execution.state_root import StateRoot
+    from confflow.worker_attempt import run_worker_attempt
+
+    state_root = tmp_path / "state"
+    state_root.mkdir(mode=0o700, exist_ok=True)
+    ran: list[dict[str, Any]] = []
+    launched: list[Any] = []
+    with pytest.raises(ConfFlowError, match="legacy_workflow_not_executable"):
+        run_worker_attempt(
+            root=StateRoot.resolve(state_root),
+            run_id=run_id,
+            staged_config=str(config),
+            staged_tasks=[{"input_xyz": str(input_xyz), "work_dir": str(work)}],
+            resume=resume,
+            workflow_runner=_never_runner(ran),
+            service_builder=_never_builder(launched),
+        )
+    assert ran == []
+    assert launched == []
+    return state_root
+
+
 # ---------------------------------------------------------------------------
 # SVC — local ExecutionService
 # ---------------------------------------------------------------------------
 class TestService:
-    def test_svc1_local_v3_service_run(self, tmp_path: Path, monkeypatch) -> None:
-        service, executor, handlers, work, _spec = _service_run(tmp_path, monkeypatch)
-        executor.wait()
-        assert service.status("v3-svc-run").state is RunState.COMPLETED
-        state = json.loads((work / ".workflow_state.json").read_text(encoding="utf-8"))
-        assert state["content_schema"] == "confflow.workflow_state.v2"
-        assert state["final_status"] == "completed"
-        assert {step_id for step_id in state["steps"]} == {"s001", "s002"}
-        manifest = json.loads((work / "output_manifest.json").read_text(encoding="utf-8"))
-        assert manifest["content_schema"] == "confflow.output_manifest.v2"
-        assert [call["step_name"] for call in handlers.calc_calls] == ["s002"]
+    def test_svc1_local_v3_service_run_sealed(self, tmp_path: Path, monkeypatch) -> None:
+        """V4 guard seals the run (scenario: local V3 service run, confgen+calc)."""
+        handlers = _FakeHandlers(monkeypatch)
+        input_xyz = _write_xyz(tmp_path / "input.xyz")
+        config = _v3_config(tmp_path / "wf.yaml")
+        work = tmp_path / "work"
+        spec = WorkflowRunSpec(
+            run_id="v3-svc-run",
+            input_xyz=(str(input_xyz),),
+            config_file=str(config),
+            work_dir=str(work),
+        )
+        calls: list[dict[str, Any]] = []
+        _sealed_service_build(
+            tmp_path, spec=spec, state_root=tmp_path / "state", runner_calls=calls
+        )
+        assert handlers.calc_calls == []
+        assert handlers.confgen_calls == []
+        _assert_no_work_traces(work)
 
-    def test_svc2_artifact_load_manifest_v2(self, tmp_path: Path, monkeypatch) -> None:
-        service, executor, _handlers, work, _spec = _service_run(tmp_path, monkeypatch)
-        executor.wait()
-        manifest = service.artifacts("v3-svc-run")
-        assert manifest.artifacts
-        # terminal identity is the stable ID; paths stay relative and safe
-        assert {artifact.terminal for artifact in manifest.artifacts} == {"s002"}
-        assert all(not artifact.path.startswith("/") for artifact in manifest.artifacts)
-        # the strict loader projects the same v2 artifacts
-        loaded = _load_artifacts(str(work))
-        assert {artifact.terminal for artifact in loaded} == {"s002"}
-        assert all(a.content_schema == "confflow.output_manifest.v2" for a in loaded)
+    def test_svc2_artifact_load_manifest_v2_sealed(self, tmp_path: Path) -> None:
+        """V4 guard seals the run (scenario: artifact load off manifest v2)."""
+        input_xyz = _write_xyz(tmp_path / "input.xyz")
+        config = _v3_config(tmp_path / "wf.yaml")
+        work = tmp_path / "work"
+        spec = WorkflowRunSpec(
+            run_id="v3-svc-run",
+            input_xyz=(str(input_xyz),),
+            config_file=str(config),
+            work_dir=str(work),
+        )
+        calls: list[dict[str, Any]] = []
+        _sealed_service_build(
+            tmp_path, spec=spec, state_root=tmp_path / "state", runner_calls=calls
+        )
+        # no manifest is ever published for the loader to project
+        _assert_no_work_traces(work)
 
-    def test_svc3_stats_load_v2(self, tmp_path: Path, monkeypatch) -> None:
-        service, executor, _handlers, work, spec = _service_run(tmp_path, monkeypatch)
-        executor.wait()
-        stats = _load_stats(str(work))
-        assert stats is not None
-        assert stats["content_schema"] == "confflow.workflow_stats.v2"
-        assert [step["id"] for step in stats["steps"]] == ["s001", "s002"]
-        # the completed-run attach path validates the v2 stats outputs
-        from confflow.application.execution.workflow_adapter import _load_completed_stats
+    def test_svc3_stats_load_v2_sealed(self, tmp_path: Path) -> None:
+        """V4 guard seals the run (scenario: stats load off workflow_stats v2)."""
+        input_xyz = _write_xyz(tmp_path / "input.xyz")
+        config = _v3_config(tmp_path / "wf.yaml")
+        work = tmp_path / "work"
+        spec = WorkflowRunSpec(
+            run_id="v3-svc-run",
+            input_xyz=(str(input_xyz),),
+            config_file=str(config),
+            work_dir=str(work),
+        )
+        calls: list[dict[str, Any]] = []
+        _sealed_service_build(
+            tmp_path, spec=spec, state_root=tmp_path / "state", runner_calls=calls
+        )
+        _assert_no_work_traces(work)
 
-        loaded = _load_completed_stats(service, "v3-svc-run", str(work), spec)
-        assert loaded["content_schema"] == "confflow.workflow_stats.v2"
-
-    def test_svc4_callbacks_carry_stable_step_ids(self, tmp_path: Path, monkeypatch) -> None:
-        _handlers = _FakeHandlers(monkeypatch)
+    def test_svc4_callbacks_carry_stable_step_ids_sealed(self, tmp_path: Path) -> None:
+        """V4 guard seals the run (scenario: start callbacks with stable step IDs)."""
         input_xyz = _write_xyz(tmp_path / "input.xyz")
         config = _v3_config(tmp_path / "wf.yaml")
         work = tmp_path / "work"
@@ -327,63 +419,42 @@ class TestService:
             work_dir=str(work),
             step_started_callback=lambda name, _type, _dir: started.append(name),
         )
-        from types import SimpleNamespace
-
-        from confflow.application.execution.workflow_adapter import _prepare_request
-
-        service, executor = build_workflow_service(
-            spec, state_root=tmp_path / "state", workflow_runner=run_workflow
+        calls: list[dict[str, Any]] = []
+        _sealed_service_build(
+            tmp_path, spec=spec, state_root=tmp_path / "state", runner_calls=calls
         )
-        service.prepare(_prepare_request(spec, executor_identity(service)))
-        service.execute("v3-cb-run")
-        executor.wait()
-        # start events and durable checkpoint ids both carry the stable ID
-        assert started == ["s001", "s002"]
-        assert service._repository.read("v3-cb-run").checkpoint.checkpoint_id == (
-            "checkpoint.s002.0.completed"
-        )
-        # the identity accessor: v1 records answer name, v2 records answer id
-        assert step_record_identity(SimpleNamespace(name="gen")) == "gen"
-        assert step_record_identity(SimpleNamespace(id="s002", name=None)) == "s002"
+        # no step ever started, so no callback fired
+        assert started == []
+        _assert_no_work_traces(work)
 
-    def test_svc5_resume_after_failure(self, tmp_path: Path, monkeypatch) -> None:
-        service, executor, handlers, work, _spec = _service_run(
-            tmp_path, monkeypatch, fail_calc_ids={"s002"}
-        )
-        with pytest.raises(RuntimeError, match="injected failure"):
-            executor.wait()
-        assert service.status("v3-svc-run").state is RunState.FAILED
-        state_path = work / ".workflow_state.json"
-
-        # a resumed attempt reuses the completed s001 and reruns s002
-        _service, executor, _handlers, _work, _spec = _service_run(
-            tmp_path,
-            monkeypatch,
-            run_id="v3-svc-run.resume.1",
-            resume=True,
-        )
-        executor.wait()
-        state = json.loads(state_path.read_text(encoding="utf-8"))
-        assert state["final_status"] == "completed"
-        assert state["steps"]["s001"]["status"] == "completed"
-        assert state["steps"]["s002"]["status"] == "completed"
-
-    def test_svc6_rerun_failed_stable_id(self, tmp_path: Path, monkeypatch) -> None:
-        """V3 rerun-failed selects by stable id and writes beside steps/<id>."""
-        _handlers = _FakeHandlers(monkeypatch, write_failed={"s002"})
+    def test_svc5_resume_after_failure_sealed(self, tmp_path: Path, monkeypatch) -> None:
+        """V4 guard seals the run (scenario: resume reusing completed s001)."""
+        handlers = _FakeHandlers(monkeypatch, fail_calc_ids={"s002"})
         input_xyz = _write_xyz(tmp_path / "input.xyz")
         config = _v3_config(tmp_path / "wf.yaml")
-        # the rerun-failed boundary drives the real calc runner; fake it
-        from types import SimpleNamespace as _NS
+        work = tmp_path / "work"
+        spec = WorkflowRunSpec(
+            run_id="v3-svc-run.resume.1",
+            input_xyz=(str(input_xyz),),
+            config_file=str(config),
+            work_dir=str(work),
+            resume=True,
+        )
+        calls: list[dict[str, Any]] = []
+        _sealed_service_build(
+            tmp_path, spec=spec, state_root=tmp_path / "state", runner_calls=calls
+        )
+        assert handlers.calc_calls == []
+        _assert_no_work_traces(work)
 
-        class _FakeCalcRunner:
-            def run(self, request):
-                output = Path(request.step_dir) / "result.xyz"
-                output.parent.mkdir(parents=True, exist_ok=True)
-                output.write_text("1\nrerun E=-2.0\nH 0 0 0\n", encoding="utf-8")
-                return _NS(output_path=str(output))
+    def test_svc6_rerun_failed_stable_id_sealed(self, tmp_path: Path) -> None:
+        """V4 guard seals the run (scenario: rerun-failed by stable ID).
 
-        monkeypatch.setattr("confflow.workflow.rerun_failed.CalcStepRunner", _FakeCalcRunner)
+        The ``run_rerun_failed`` leg is dropped: no work layout ever exists
+        for a rerun to address.
+        """
+        input_xyz = _write_xyz(tmp_path / "input.xyz")
+        config = _v3_config(tmp_path / "wf.yaml")
         work = tmp_path / "work"
         spec = WorkflowRunSpec(
             run_id="v3-rerun-run",
@@ -391,39 +462,24 @@ class TestService:
             config_file=str(config),
             work_dir=str(work),
         )
-        from confflow.application.execution.workflow_adapter import _prepare_request
-
-        service, executor = build_workflow_service(
-            spec, state_root=tmp_path / "state", workflow_runner=run_workflow
+        calls: list[dict[str, Any]] = []
+        _sealed_service_build(
+            tmp_path, spec=spec, state_root=tmp_path / "state", runner_calls=calls
         )
-        service.prepare(_prepare_request(spec, executor_identity(service)))
-        service.execute("v3-rerun-run")
-        executor.wait()
-        from confflow.workflow.rerun_failed import run_rerun_failed
+        _assert_no_work_traces(work)
 
-        result = run_rerun_failed(
-            step_dir=str(tmp_path / "work" / "steps" / "s002"),
-            config_file=str(tmp_path / "wf.yaml"),
-            step_ref="s002",
-        )
-        assert result.step_label == "s002"
-        assert Path(result.output_dir).name == "s002_rerun"
+    def test_svc7_pause_then_resume_sealed(self, tmp_path: Path) -> None:
+        """V4 guard seals the run (scenario: pause after s001, then resume).
 
-    def test_svc7_pause_then_resume(self, tmp_path: Path, monkeypatch) -> None:
-        _handlers = _FakeHandlers(monkeypatch)
+        The resume follow-up leg is dropped: nothing is ever queued, paused,
+        or persisted, so there is no paused run to resume.
+        """
         input_xyz = _write_xyz(tmp_path / "input.xyz")
         config = _v3_config(tmp_path / "wf.yaml")
         work = tmp_path / "work"
         work.mkdir(parents=True)
+        (work / "PAUSE").touch()  # pause beacon present before the attempt
         started: list[str] = []
-
-        def on_start(name: str, _type: str, _dir: str) -> None:
-            started.append(name)
-            if name == "s001":
-                (work / "PAUSE").touch()  # pause after s001's checkpoint exists
-
-        from confflow.application.execution.workflow_adapter import _prepare_request
-
         spec = WorkflowRunSpec(
             run_id="v3-svc-run",
             input_xyz=(str(input_xyz),),
@@ -431,56 +487,27 @@ class TestService:
             work_dir=str(work),
             pause_beacon_file=str(work / "PAUSE"),
             cancel_beacon_file=str(work / "CANCEL"),
-            step_started_callback=on_start,
+            step_started_callback=lambda name, _type, _dir: started.append(name),
         )
-        service, executor = build_workflow_service(
-            spec, state_root=tmp_path / "state", workflow_runner=run_workflow
+        calls: list[dict[str, Any]] = []
+        _sealed_service_build(
+            tmp_path, spec=spec, state_root=tmp_path / "state", runner_calls=calls
         )
-        service.prepare(_prepare_request(spec, executor_identity(service)))
-        service.execute("v3-svc-run")
-        with pytest.raises(StopRequestedError):
-            executor.wait()
-        assert service.status("v3-svc-run").state is RunState.PAUSED
+        assert started == []
+        _assert_no_work_traces(work)
 
-        (work / "PAUSE").unlink()
-        # resuming the paused run completes it through the same service
-        resume_spec = WorkflowRunSpec(
-            run_id="v3-svc-run",
-            input_xyz=(str(input_xyz),),
-            config_file=str(config),
-            work_dir=str(work),
-            resume=True,
-            cancel_beacon_file=str(work / "CANCEL"),
-            step_started_callback=on_start,
-        )
-        service2, executor2 = build_workflow_service(
-            resume_spec, state_root=tmp_path / "state", workflow_runner=run_workflow
-        )
-        service2.prepare(_prepare_request(resume_spec, executor_identity(service2)))
-        snapshot = service2.resume("v3-svc-run")
-        assert snapshot.state is RunState.QUEUED
-        service2.execute("v3-svc-run")
-        executor2.wait()
-        state = json.loads((work / ".workflow_state.json").read_text(encoding="utf-8"))
-        assert state["final_status"] == "completed"
-        # s001 was never re-executed after the resume
-        assert started == ["s001", "s002"]
+    # Cross-file reference: TestPublicControl.test_pe_c1_c2 points at the
+    # pre-seal svc7 name; keep the sealed body visible under that name so the
+    # sealed inventory stays the single source of truth.
+    test_svc7_pause_then_resume = test_svc7_pause_then_resume_sealed
 
-    def test_svc8_v2_service_unchanged(self, tmp_path: Path, monkeypatch) -> None:
-        """The V2 config path keeps manifest v1, state v1 and name identity."""
-        from confflow.contract import OUTPUT_MANIFEST_SCHEMA, WORKFLOW_STATE_SCHEMA
+    def test_svc8_v2_service_unchanged_sealed(self, tmp_path: Path, monkeypatch) -> None:
+        """V4 guard seals the run (scenario: V2 config path, manifest v1/state v1)."""
+        calls: list[dict[str, Any]] = []
 
         def fake_confgen(step_dir, *args, **kwargs):
-            output = Path(step_dir) / "search.xyz"
-            output.parent.mkdir(parents=True, exist_ok=True)
-            output.write_text("1\nfake\nH 0 0 0\n", encoding="utf-8")
-
-            class _Result:
-                output_path = str(output)
-                reused_existing = False
-                copied_multi_frame = False
-
-            return _Result()
+            calls.append(step_dir)
+            raise AssertionError("the legacy confgen handler must never run")
 
         monkeypatch.setattr("confflow.workflow.engine._run_confgen_step", fake_confgen)
         input_xyz = _write_xyz(tmp_path / "input.xyz")
@@ -498,67 +525,42 @@ class TestService:
             config_file=str(config),
             work_dir=str(work),
         )
-        from confflow.application.execution.workflow_adapter import _prepare_request
-
-        service, executor = build_workflow_service(
-            spec, state_root=tmp_path / "state", workflow_runner=run_workflow
+        runner_calls: list[dict[str, Any]] = []
+        _sealed_service_build(
+            tmp_path, spec=spec, state_root=tmp_path / "state", runner_calls=runner_calls
         )
-        service.prepare(_prepare_request(spec, executor_identity(service)))
-        service.execute("v2-svc-run")
-        executor.wait()
-        state = json.loads((work / ".workflow_state.json").read_text(encoding="utf-8"))
-        assert state["content_schema"] == WORKFLOW_STATE_SCHEMA
-        manifest = json.loads((work / "output_manifest.json").read_text(encoding="utf-8"))
-        assert manifest["content_schema"] == OUTPUT_MANIFEST_SCHEMA
-        assert isinstance(manifest["terminals"], dict)
+        assert calls == []
+        _assert_no_work_traces(work)
 
 
 # ---------------------------------------------------------------------------
 # WK — worker path
 # ---------------------------------------------------------------------------
 class TestWorker:
-    def test_wk1_worker_direct_path_preflight_refuses_before_run_paths(
-        self, tmp_path: Path, monkeypatch
+    def test_wk1_worker_direct_path_preflight_refuses_before_run_paths_sealed(
+        self, tmp_path: Path
     ) -> None:
-        """Worker direct path fast-fails before ensure_run_paths creates the run layout."""
-        from confflow.application.execution.state_root import StateRoot
-        from confflow.config.canonical.execution_versions import CAPABILITIES, VersionCapability
-        from confflow.core.exceptions import ConfFlowError
-        from confflow.worker_attempt import run_worker_attempt
-
-        monkeypatch.setitem(
-            CAPABILITIES,
-            WORKFLOW_SCHEMA_VERSION_V3,
-            VersionCapability(parse=True, execute=False),
-        )
+        """V4 guard seals the attempt (scenario: worker direct path, V3 staged config)."""
         input_xyz = _write_xyz(tmp_path / "input.xyz")
         config = _v3_config(tmp_path / "wf.yaml")
-        state_root = tmp_path / "state"
-        state_root.mkdir(mode=0o700)
-        root = StateRoot.resolve(state_root)
-
-        with pytest.raises(ConfFlowError, match="requires state/binding v2"):
-            run_worker_attempt(
-                root=root,
-                run_id="wk1-refused-run",
-                staged_config=str(config),
-                staged_tasks=[{"input_xyz": str(input_xyz), "work_dir": str(tmp_path / "work")}],
-                resume=False,
-                workflow_runner=run_workflow,
-                service_builder=build_workflow_service,
-            )
+        work = tmp_path / "work"
+        state_root = _sealed_worker_attempt(
+            tmp_path, run_id="wk1-refused-run", config=config, input_xyz=input_xyz, work=work
+        )
 
         assert not (state_root / "v1" / "runs" / "wk1-refused-run").exists()
         assert not (state_root / "v1" / "repository.sqlite3").exists()
-        assert not (tmp_path / "work").exists()
+        assert not work.exists()
 
-    def test_wk2_wk6_worker_computes_site_c_and_manifest_v2(
+    def test_wk2_wk6_worker_computes_site_c_and_manifest_v2_sealed(
         self, tmp_path: Path, monkeypatch
     ) -> None:
-        """Prove the durable C is the worker-site resolved fingerprint.
+        """V4 guard seals the attempt (scenario: worker-site C and manifest v2).
 
-        The controller never provides a value; the worker emits manifest v2.
+        The site-C computation and manifest legs are dropped: the worker
+        preflight refuses the staged config before any site resolution.
         """
+        _FakeHandlers(monkeypatch)
         exe = tmp_path / "fake_orca"
         exe.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
         exe.chmod(0o755)
@@ -566,47 +568,21 @@ class TestWorker:
         input_xyz = _write_xyz(tmp_path / "input.xyz")
         work = tmp_path / "results" / "task0_confflow_work"
         work.parent.mkdir(parents=True, exist_ok=True)
-        service, handoff_path = _queue_remote(
+        state_root = _sealed_worker_attempt(
             tmp_path, run_id="wk-run", config=config, input_xyz=input_xyz, work=work
         )
-        state = _worker_attempt(
-            tmp_path,
-            monkeypatch,
-            run_id="wk-run",
-            handoff_path=handoff_path,
-            config=config,
-            input_xyz=input_xyz,
-            work=work,
-        )
-        assert state is RunState.COMPLETED
-        binding = _binding(work)
-        assert binding["schema"] == "confflow.workflow_binding.v2"
+        assert not (state_root / "v1" / "runs" / "wk-run").exists()
+        _assert_no_work_traces(work)
 
-        # recompute C at the worker site from the staged inputs
-        from confflow.workflow.execution_context import (
-            resolve_execution_context_v3,
-            workflow_execution_fingerprint_v3,
-        )
-        from confflow.workflow.plan import WorkflowV3Plan, build_workflow_plan
-
-        plan = build_workflow_plan([str(input_xyz)], str(config))
-        assert isinstance(plan, WorkflowV3Plan)
-        context = resolve_execution_context_v3(plan, input_files=plan.input_files)
-        assert binding["execution_fingerprint"] == workflow_execution_fingerprint_v3(plan, context)
-        # the controller identity (this python interpreter) is nowhere in the binding
-        controller_sha = measure_executable(sys.executable).sha256
-        assert controller_sha not in json.dumps(binding)
-        assert service.status("wk-run").state is RunState.COMPLETED
-        manifest = json.loads((work / "output_manifest.json").read_text(encoding="utf-8"))
-        assert manifest["content_schema"] == "confflow.output_manifest.v2"
-
-    def test_wk3_controller_identity_cannot_override_worker_c(
+    def test_wk3_controller_identity_cannot_override_worker_c_sealed(
         self, tmp_path: Path, monkeypatch
     ) -> None:
-        """Prove controller-side executable metadata cannot change the binding.
+        """V4 guard seals the attempt (scenario: controller identity vs worker C).
 
-        The worker always resolves its own execution site.
+        The decoy-binary comparison legs are dropped: no binding is ever
+        written, so no executable identity can leak into one.
         """
+        _FakeHandlers(monkeypatch)
         exe = tmp_path / "fake_orca"
         exe.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
         exe.chmod(0o755)
@@ -614,58 +590,23 @@ class TestWorker:
         other.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
         other.chmod(0o755)
         config = _v3_config(tmp_path / "wf.yaml", orca_path=str(exe))
+        decoy_config = _v3_config(tmp_path / "decoy.yaml", orca_path=str(other))
+        assert decoy_config.read_bytes() != config.read_bytes()
         input_xyz = _write_xyz(tmp_path / "input.xyz")
         work = tmp_path / "results" / "task0_confflow_work"
         work.parent.mkdir(parents=True, exist_ok=True)
-        _queue_remote(tmp_path, run_id="wk3-run", config=config, input_xyz=input_xyz, work=work)
-        assert (
-            _worker_attempt(
-                tmp_path,
-                monkeypatch,
-                run_id="wk3-run",
-                handoff_path=tmp_path / "wk3-run.handoff.json",
-                config=config,
-                input_xyz=input_xyz,
-                work=work,
-            )
-            is RunState.COMPLETED
+        state_root = _sealed_worker_attempt(
+            tmp_path, run_id="wk3-run", config=config, input_xyz=input_xyz, work=work
         )
-        binding_c = _binding(work)["execution_fingerprint"]
+        assert not (state_root / "v1" / "runs" / "wk3-run").exists()
+        _assert_no_work_traces(work)
 
-        # a decoy binary would produce a different site fingerprint; the
-        # durable binding cannot contain it
-        from confflow.workflow.execution_context import (
-            resolve_execution_context_v3,
-            workflow_execution_fingerprint_v3,
-        )
-        from confflow.workflow.plan import WorkflowV3Plan, build_workflow_plan
+    def test_wk4_binding_written_before_handler_execution_sealed(self, tmp_path: Path) -> None:
+        """V4 guard seals the run (scenario: binding persisted before handlers).
 
-        decoy_config = _v3_config(tmp_path / "decoy.yaml", orca_path=str(other))
-        decoy_plan = build_workflow_plan([str(input_xyz)], str(decoy_config))
-        assert isinstance(decoy_plan, WorkflowV3Plan)
-        decoy_c = workflow_execution_fingerprint_v3(
-            decoy_plan,
-            resolve_execution_context_v3(decoy_plan, input_files=decoy_plan.input_files),
-        )
-        assert decoy_c != binding_c
-        assert _binding(work)["execution_fingerprint"] == binding_c
-
-    def test_wk4_binding_written_before_handler_execution(
-        self, tmp_path: Path, monkeypatch
-    ) -> None:
-        state_seen_at_execution: list[dict[str, Any]] = []
-
-        class _SpyHandlers(_FakeHandlers):
-            def _calc(self, **kwargs: Any):
-                state_file = Path(kwargs["step_dir"]).parents[1] / ".workflow_state.json"
-                state_seen_at_execution.append(json.loads(state_file.read_text(encoding="utf-8")))
-                return super()._calc(**kwargs)
-
-        monkeypatch.setattr(
-            "confflow.workflow.v3_runtime._run_confgen_step", _FakeHandlers._confgen
-        )
-        spy = _SpyHandlers(monkeypatch)
-        del spy
+        The handler-observed snapshot legs are dropped: the builder refuses
+        before any binding is written, so no handler can observe one.
+        """
         input_xyz = _write_xyz(tmp_path / "input.xyz")
         config = _v3_config(tmp_path / "wf.yaml")
         work = tmp_path / "work"
@@ -675,41 +616,37 @@ class TestWorker:
             config_file=str(config),
             work_dir=str(work),
         )
-        from confflow.application.execution.workflow_adapter import _prepare_request
-
-        service, executor = build_workflow_service(
-            spec, state_root=tmp_path / "state", workflow_runner=run_workflow
+        calls: list[dict[str, Any]] = []
+        _sealed_service_build(
+            tmp_path, spec=spec, state_root=tmp_path / "state", runner_calls=calls
         )
-        service.prepare(_prepare_request(spec, executor_identity(service)))
-        service.execute("wk4-run")
-        executor.wait()
-        assert state_seen_at_execution, "calc handler must observe the persisted state"
-        for snapshot in state_seen_at_execution:
-            assert snapshot["binding"]["schema"] == "confflow.workflow_binding.v2"
-            assert snapshot["binding"]["execution_fingerprint"].startswith("sha256:")
+        _assert_no_work_traces(work)
 
-    def test_wk5_binding_mismatch_before_mutation(self, tmp_path: Path, monkeypatch) -> None:
-        _service, executor, _handlers, _work, _spec = _service_run(tmp_path, monkeypatch)
-        executor.wait()
-        state_path = tmp_path / "work" / ".workflow_state.json"
-        before = state_path.read_bytes()
+    def test_wk5_binding_mismatch_before_mutation_sealed(self, tmp_path: Path) -> None:
+        """V4 guard seals the run (scenario: resume with changed executable bytes).
 
-        from confflow.core.exceptions import ConfFlowError
-
-        # resume with changed executable bytes: C mismatch, zero side effects
+        The direct-engine ``run_workflow`` resume leg is dropped: it is not
+        a formal entry, so it is out of the sealed scope.
+        """
         exe = tmp_path / "fake_orca"
         exe.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
         exe.chmod(0o755)
         config = _v3_config(tmp_path / "wf2.yaml", orca_path=str(exe))
         exe.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
-        with pytest.raises(ConfFlowError, match="binding mismatch"):
-            run_workflow(
-                [str(tmp_path / "input.xyz")],
-                str(config),
-                str(tmp_path / "work"),
-                resume=True,
-            )
-        assert state_path.read_bytes() == before
+        input_xyz = _write_xyz(tmp_path / "input.xyz")
+        work = tmp_path / "work"
+        spec = WorkflowRunSpec(
+            run_id="wk5-run",
+            input_xyz=(str(input_xyz),),
+            config_file=str(config),
+            work_dir=str(work),
+            resume=True,
+        )
+        calls: list[dict[str, Any]] = []
+        _sealed_service_build(
+            tmp_path, spec=spec, state_root=tmp_path / "state", runner_calls=calls
+        )
+        _assert_no_work_traces(work)
 
 
 # ---------------------------------------------------------------------------
@@ -730,33 +667,27 @@ class TestRemote:
         )
         return service, handoff_path, config, input_xyz, work, exe
 
-    def test_rm1_remote_v3_basic_run(self, tmp_path: Path, monkeypatch) -> None:
-        service, handoff_path, config, input_xyz, work, _exe = self._remote_setup(tmp_path)
-        assert (
-            _worker_attempt(
-                tmp_path,
-                monkeypatch,
-                run_id="rm-run",
-                handoff_path=handoff_path,
-                config=config,
-                input_xyz=input_xyz,
-                work=work,
-            )
-            is RunState.COMPLETED
+    def test_rm1_remote_v3_basic_run_sealed(self, tmp_path: Path, monkeypatch) -> None:
+        """V4 guard seals the attempt (scenario: basic remote V3 run).
+
+        The controller queue leg still runs; the worker preflight refuses
+        the staged config, so the queued intent stays QUEUED and the work
+        dir is never touched.
+        """
+        _FakeHandlers(monkeypatch)
+        service, _handoff_path, config, input_xyz, work, _exe = self._remote_setup(tmp_path)
+        _sealed_worker_attempt(
+            tmp_path, run_id="rm-run", config=config, input_xyz=input_xyz, work=work
         )
-        assert service.status("rm-run").state is RunState.COMPLETED
-        state = json.loads((work / ".workflow_state.json").read_text(encoding="utf-8"))
-        assert state["final_status"] == "completed"
-        manifest = json.loads((work / "output_manifest.json").read_text(encoding="utf-8"))
-        assert manifest["content_schema"] == "confflow.output_manifest.v2"
+        assert service.status("rm-run").state is RunState.QUEUED
+        _assert_no_work_traces(work)
 
-    def test_rm2_remote_worker_local_c(self, tmp_path: Path, monkeypatch) -> None:
-        """Prove durable BindingV2 in work_dir has C computed from worker executable Y, NOT controller X.
+    def test_rm2_remote_worker_local_c_sealed(self, tmp_path: Path, monkeypatch) -> None:
+        """V4 guard seals the attempt (scenario: controller X vs worker Y).
 
-        Simulates controller host having chemistry executable X, while worker
-        execution host has chemistry executable Y (different path and hash).
-        The durable binding in work_dir records execution_fingerprint C finalized
-        at the worker execution site from Y, completely independent of controller's X.
+        The two execution sites still resolve distinct fingerprints, but the
+        worker preflight refuses before any durable binding is written, so
+        neither fingerprint lands anywhere.
         """
         # 1. Controller execution environment: has executable X
         controller_bin = tmp_path / "controller_bin"
@@ -799,14 +730,12 @@ class TestRemote:
         controller_c = workflow_execution_fingerprint_v3(plan_controller, context_controller)
 
         # Controller queues the remote run
-        service, handoff_path = _queue_remote(
+        service, _handoff_path = _queue_remote(
             tmp_path, run_id="rm2-run", config=config, input_xyz=input_xyz, work=work
         )
 
-        # 3. Worker executes the attempt in its own execution environment (PATH pointing to worker_bin)
+        # 3. Worker site resolves its own C from executable Y
         monkeypatch.setenv("PATH", f"{worker_bin}:{orig_path}")
-
-        # Compute worker site C from executable Y
         plan_worker = build_workflow_plan([str(input_xyz)], str(config))
         context_worker = resolve_execution_context_v3(
             plan_worker, input_files=plan_worker.input_files
@@ -816,109 +745,55 @@ class TestRemote:
         # Prove the two site fingerprints are strictly different
         assert controller_c != worker_c
 
-        # Worker attempts and completes the execution
-        assert (
-            _worker_attempt(
-                tmp_path,
-                monkeypatch,
-                run_id="rm2-run",
-                handoff_path=handoff_path,
-                config=config,
-                input_xyz=input_xyz,
-                work=work,
-            )
-            is RunState.COMPLETED
+        # 4. The worker attempt is refused before either C is persisted
+        _FakeHandlers(monkeypatch)
+        _sealed_worker_attempt(
+            tmp_path, run_id="rm2-run", config=config, input_xyz=input_xyz, work=work
         )
-        assert service.status("rm2-run").state is RunState.COMPLETED
+        assert service.status("rm2-run").state is RunState.QUEUED
+        _assert_no_work_traces(work)
 
-        # 4. Verify durable BindingV2 in work_dir
-        binding = _binding(work)
-        assert binding["schema"] == "confflow.workflow_binding.v2"
+    def test_rm3_input_basename_transfer_does_not_move_c_sealed(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """V4 guard seals the attempts (scenario: renamed input bytes in transfer).
 
-        # C in durable binding MUST match worker_c (computed from Y), and NOT controller_c (from X)
-        assert binding["execution_fingerprint"] == worker_c
-        assert binding["execution_fingerprint"] != controller_c
-
-        # Controller executable identity (path or hash) is nowhere in the durable binding
-        exe_x_sha = hashlib.sha256(exe_x.read_bytes()).hexdigest()
-        assert exe_x_sha not in json.dumps(binding)
-        assert str(exe_x) not in json.dumps(binding)
-
-    def test_rm3_input_basename_transfer_does_not_move_c(self, tmp_path: Path, monkeypatch) -> None:
-        """Prove renamed input bytes during 'transfer' do not move C.
-
-        C is bound to ordered content digests, so identity is unchanged.
+        Both transfer legs are queued and both worker attempts are refused;
+        no content-bound fingerprint is ever persisted under either name.
         """
+        _FakeHandlers(monkeypatch)
         exe = tmp_path / "fake_orca"
         exe.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
         exe.chmod(0o755)
 
-        binding_cs: list[str] = []
         for run_id, name in (("rm3-a", "original.xyz"), ("rm3-b", "renamed.xyz")):
             config = _v3_config(tmp_path / f"{run_id}.yaml", orca_path=str(exe))
             input_xyz = _write_xyz(tmp_path / run_id / name, note="same bytes")
             work = tmp_path / "results" / f"{run_id}_confflow_work"
             work.parent.mkdir(parents=True, exist_ok=True)
-            _queue_remote(tmp_path, run_id=run_id, config=config, input_xyz=input_xyz, work=work)
-            assert (
-                _worker_attempt(
-                    tmp_path,
-                    monkeypatch,
-                    run_id=run_id,
-                    handoff_path=tmp_path / f"{run_id}.handoff.json",
-                    config=config,
-                    input_xyz=input_xyz,
-                    work=work,
-                )
-                is RunState.COMPLETED
+            service, _handoff_path = _queue_remote(
+                tmp_path, run_id=run_id, config=config, input_xyz=input_xyz, work=work
             )
-            binding_cs.append(_binding(work)["execution_fingerprint"])
-
-        assert binding_cs[0] == binding_cs[1]
-
-    def test_rm4_remote_resume_after_failed_step(self, tmp_path: Path, monkeypatch) -> None:
-        service, handoff_path, config, input_xyz, work, _exe = self._remote_setup(tmp_path)
-        assert (
-            _worker_attempt(
-                tmp_path,
-                monkeypatch,
-                run_id="rm-run",
-                handoff_path=handoff_path,
-                config=config,
-                input_xyz=input_xyz,
-                work=work,
-                fail_calc_ids={"s002"},
+            _sealed_worker_attempt(
+                tmp_path, run_id=run_id, config=config, input_xyz=input_xyz, work=work
             )
-            is RunState.FAILED
-        )
-        assert service.status("rm-run").state is RunState.FAILED
-        state_path = work / ".workflow_state.json"
-        s001_completed_at = json.loads(state_path.read_text(encoding="utf-8"))["steps"]["s001"][
-            "completed_at"
-        ]
+            assert service.status(run_id).state is RunState.QUEUED
+            _assert_no_work_traces(work)
 
-        # the producer re-queues a resumed attempt over the same work dir
-        retry_service, retry_handoff = _queue_remote(
-            tmp_path, run_id="rm-run.resume.1", config=config, input_xyz=input_xyz, work=work
+    def test_rm4_remote_resume_after_failed_step_sealed(self, tmp_path: Path, monkeypatch) -> None:
+        """V4 guard seals the attempt (scenario: remote resume after a failed step).
+
+        The retry follow-up leg is dropped: the first attempt is refused, so
+        no failed run exists to resume.
+        """
+        handlers = _FakeHandlers(monkeypatch, fail_calc_ids={"s002"})
+        service, _handoff_path, config, input_xyz, work, _exe = self._remote_setup(tmp_path)
+        _sealed_worker_attempt(
+            tmp_path, run_id="rm-run", config=config, input_xyz=input_xyz, work=work, resume=True
         )
-        assert (
-            _worker_attempt(
-                tmp_path,
-                monkeypatch,
-                run_id="rm-run.resume.1",
-                handoff_path=retry_handoff,
-                config=config,
-                input_xyz=input_xyz,
-                work=work,
-                resume=True,
-            )
-            is RunState.COMPLETED
-        )
-        assert retry_service.status("rm-run.resume.1").state is RunState.COMPLETED
-        state = json.loads(state_path.read_text(encoding="utf-8"))
-        assert state["final_status"] == "completed"
-        # the completed upstream step was reused, not recomputed
-        assert state["steps"]["s001"]["completed_at"] == s001_completed_at
+        assert handlers.calc_calls == []
+        assert service.status("rm-run").state is RunState.QUEUED
+        _assert_no_work_traces(work)
 
     def test_rm5_remote_cancel_before_worker_starts(self, tmp_path: Path, monkeypatch) -> None:
         service, handoff_path, config, input_xyz, work, _exe = self._remote_setup(tmp_path)
@@ -937,24 +812,18 @@ class TestRemote:
         assert not (work / "steps").exists()
         assert not (work / "output_manifest.json").exists()
 
-    def test_rm6_result_manifest_and_artifacts_roundtrip(self, tmp_path: Path, monkeypatch) -> None:
-        service, handoff_path, config, input_xyz, work, _exe = self._remote_setup(tmp_path)
-        assert (
-            _worker_attempt(
-                tmp_path,
-                monkeypatch,
-                run_id="rm-run",
-                handoff_path=handoff_path,
-                config=config,
-                input_xyz=input_xyz,
-                work=work,
-            )
-            is RunState.COMPLETED
+    def test_rm6_result_manifest_and_artifacts_roundtrip_sealed(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """V4 guard seals the attempt (scenario: result manifest/artifacts roundtrip).
+
+        The roundtrip legs are dropped: no manifest or artifact is ever
+        written for the controller to fetch.
+        """
+        _FakeHandlers(monkeypatch)
+        service, _handoff_path, config, input_xyz, work, _exe = self._remote_setup(tmp_path)
+        _sealed_worker_attempt(
+            tmp_path, run_id="rm-run", config=config, input_xyz=input_xyz, work=work
         )
-        manifest = service.artifacts("rm-run")
-        assert {artifact.terminal for artifact in manifest.artifacts} == {"s002"}
-        for artifact in manifest.artifacts:
-            candidate = work / artifact.path
-            assert candidate.is_file()
-            assert hashlib.sha256(candidate.read_bytes()).hexdigest() == artifact.sha256
-            assert candidate.stat().st_size == artifact.size
+        assert service.status("rm-run").state is RunState.QUEUED
+        _assert_no_work_traces(work)

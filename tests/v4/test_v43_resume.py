@@ -24,11 +24,8 @@ from confflow.domain import FrozenDict, StructureSet
 from confflow.domain.completion import StepStatus
 from confflow.execution import ExecutionBinding
 from confflow.execution.batch import BatchStepExecutor, StepExecutionRequest
-from confflow.execution.checks_standard import CHECKS
 from confflow.execution.native import NativeExecutionRequest, NativeHandle
 from confflow.execution.process import NativeProcessError, NativeProcessSupervisor
-from confflow.execution.profile_standard import PROFILES
-from confflow.execution.recovery_standard import RECOVERIES
 from confflow.execution.work_item_executor import WorkItemExecutor, sanitize_job_name
 from confflow.persistence.contracts import (
     RunState,
@@ -43,7 +40,6 @@ from confflow.persistence.run_state import (
     transition_step,
 )
 from confflow.persistence.work_items import SqliteWorkItemStore
-from confflow.programs.registry import get_program_adapter
 from tests.v4._builders import (
     assemble,
     calc_step,

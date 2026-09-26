@@ -75,13 +75,15 @@ def test_capability_table_allows_v3_execution() -> None:
 
 
 class TestBuilderDirectGuard:
-    def test_v3_spec_reaches_the_service_builder(self, tmp_path: Path) -> None:
-        """Post-flip: the builder guard admits V3 to the durable service.
+    def test_v3_spec_refused_before_the_service_builder(self, tmp_path: Path) -> None:
+        """Cutover: the builder guard refuses V3 before any persistent side effect.
 
-        The builder is the mandatory lowest shared boundary; it now creates
-        the state root for V3 (execution is legal) while the runner is still
-        never invoked by construction alone.
+        The builder is the mandatory lowest shared boundary; for a
+        non-V4 document it raises before creating the state root, run
+        paths, SQLite, or service preparation. The runner is never invoked.
         """
+        from confflow.core.exceptions import ConfFlowError
+
         xyz = _write_xyz(tmp_path / "input.xyz")
         config = _v3_config(tmp_path / "wf.yaml")
         state_root = tmp_path / "state_root"  # does not exist yet
@@ -95,25 +97,23 @@ class TestBuilderDirectGuard:
             config_file=str(config),
             work_dir=str(work_dir),
         )
-        service, executor = build_workflow_service(
-            spec, state_root=state_root, workflow_runner=_NeverRunner()
-        )
-        assert service is not None and executor is not None
-        # the builder itself created the durable state root for a legal version
-        assert state_root.exists()
-        # no attempt side effects: the runner was never built into a launch
-        assert not list(state_root.rglob(".workflow_state.json"))
-        assert not list(state_root.rglob("steps"))
+        with pytest.raises(ConfFlowError, match="legacy_workflow_not_executable"):
+            build_workflow_service(spec, state_root=state_root, workflow_runner=_NeverRunner())
+        _assert_no_persistent_traces(state_root)
+        assert not work_dir.exists()
 
 
 class TestWorkerDirectPathGuard:
-    def test_v3_worker_attempt_reaches_the_service_builder(self, tmp_path: Path) -> None:
-        """Post-flip: the worker direct path passes the preflight.
+    def test_v3_worker_attempt_refused_before_the_service_builder(self, tmp_path: Path) -> None:
+        """Cutover: the worker preflight refuses V3 before ensure_run_paths.
 
-        The preflight is a fast-fail for non-executable versions; a legal V3
-        config now proceeds to ensure_run_paths and the service builder.
+        The preflight fails closed for non-V4 staged configs; the service
+        builder is never reached and no run layout is created.
         """
+        import pytest
+
         from confflow.application.execution.state_root import StateRoot
+        from confflow.core.exceptions import ConfFlowError
 
         xyz = _write_xyz(tmp_path / "input.xyz")
         config = _v3_config(tmp_path / "wf.yaml")
@@ -135,7 +135,7 @@ class TestWorkerDirectPathGuard:
             launched.append(spec)
             return _ProbeService(), _ProbeExecutor()
 
-        with pytest.raises(ZeroSideEffectProbe):
+        with pytest.raises(ConfFlowError, match="legacy_workflow_not_executable"):
             run_worker_attempt(
                 root=root,
                 run_id="v3-worker-run",
@@ -146,22 +146,24 @@ class TestWorkerDirectPathGuard:
                 service_builder=_builder,
             )
 
-        assert launched, "V3 worker attempt must now reach the service builder"
-        # ensure_run_paths created the run layout for the legal version.
-        assert (state_root / "v1" / "runs" / "v3-worker-run").exists()
+        assert not launched, "V3 worker attempt must never reach the service builder"
+        assert not (state_root / "v1" / "runs" / "v3-worker-run").exists()
         assert not list(state_root.rglob(".workflow_state.json"))
         assert not list(state_root.rglob("steps"))
 
-    def test_v2_worker_attempt_reaches_the_service_builder(self, tmp_path: Path) -> None:
-        """V2 worker attempt still reaches the service builder.
+    def test_v2_worker_attempt_refused_before_the_service_builder(self, tmp_path: Path) -> None:
+        """Cutover: the single V4 authority refuses V2 staged configs too.
 
-        The guard is a no-op for V2, and the builder here is a fake, so no
-        real side effects occur.
+        The guard is no longer a no-op for V2: only V4 documents proceed to
+        the service builder.
         """
         from types import SimpleNamespace
 
+        import pytest
+
         from confflow.application.execution.models import RunState
         from confflow.application.execution.state_root import StateRoot
+        from confflow.core.exceptions import ConfFlowError
 
         xyz = _write_xyz(tmp_path / "input.xyz")
         config = tmp_path / "wf.yaml"
@@ -185,21 +187,21 @@ class TestWorkerDirectPathGuard:
                 return SimpleNamespace(state=RunState.COMPLETED)
 
         class Executor:
-            def wait(self) -> None:  # pragma: no cover - terminal snapshot short-circuits
-                raise AssertionError("terminal consumption must not wait")
+            def wait(self) -> None:  # pragma: no cover - never reached
+                raise AssertionError("refused attempt must not wait")
 
         def _builder(spec: Any, **kwargs: Any) -> tuple[Service, Executor]:
             built.append(spec)
             return Service(), Executor()
 
-        state = run_worker_attempt(
-            root=root,
-            run_id="v2-worker-run",
-            staged_config=str(config),
-            staged_tasks=[{"input_xyz": str(xyz), "work_dir": str(tmp_path / "work")}],
-            resume=False,
-            workflow_runner=_NeverRunner(),
-            service_builder=_builder,
-        )
-        assert built, "V2 worker attempt must still reach the service builder"
-        assert state is RunState.COMPLETED
+        with pytest.raises(ConfFlowError, match="legacy_workflow_not_executable"):
+            run_worker_attempt(
+                root=root,
+                run_id="v2-worker-run",
+                staged_config=str(config),
+                staged_tasks=[{"input_xyz": str(xyz), "work_dir": str(tmp_path / "work")}],
+                resume=False,
+                workflow_runner=_NeverRunner(),
+                service_builder=_builder,
+            )
+        assert not built, "V2 worker attempt must never reach the service builder"

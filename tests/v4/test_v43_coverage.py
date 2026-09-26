@@ -845,14 +845,13 @@ class TestDurableRunnerSeams:
         # preserved and nothing re-executes.
         from confflow.execution.environment import EnvironmentMeasurer
         from confflow.persistence.reuse import build_producer_provenance
-        from confflow.programs.registry import get_program_adapter
 
         plan = _compile(_document())
         (item,) = _items(plan, 1)
         adapter = get_program_adapter("orca")
-        environment_digest = EnvironmentMeasurer().build_environment(
-            str(FAKE_ORCA), adapter=adapter
-        ).digest()
+        environment_digest = (
+            EnvironmentMeasurer().build_environment(str(FAKE_ORCA), adapter=adapter).digest()
+        )
         provenance = build_producer_provenance(
             adapter_version=adapter.adapter_version,
             profile_version=PROFILES["standard"].contract_version,
@@ -896,7 +895,6 @@ class TestDurableRunnerSeams:
         # environment (never None) so the adapter-missing preflight — not
         # the env prohibition — is what fires; the store stays empty.
         from confflow.execution.environment import EnvironmentMeasurer
-        from confflow.programs.registry import get_program_adapter
 
         monkeypatch.setenv("FAKE_MODE", "success_opt")
         plan = _compile(_document())
@@ -912,9 +910,7 @@ class TestDurableRunnerSeams:
             checks=(),
             recovery=RECOVERIES["none"],
             run_root=str(tmp_path / "run"),
-            environment=EnvironmentMeasurer().build_environment(
-                str(FAKE_ORCA), adapter=adapter
-            ),
+            environment=EnvironmentMeasurer().build_environment(str(FAKE_ORCA), adapter=adapter),
         )
         with SqliteWorkItemStore.open(store_path(str(tmp_path / "run"), STEP_ID)) as store:
             batch = BatchStepExecutor(WorkItemExecutor()).with_supervisor(NativeProcessSupervisor())

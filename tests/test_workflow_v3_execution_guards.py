@@ -104,35 +104,22 @@ def test_v3_capability_table_allows_execution() -> None:
 # Guard A — CLI preflight (50A)
 # ---------------------------------------------------------------------------
 class TestCliGuard:
-    def test_v3_cli_execution_reaches_the_public_stack(self, tmp_path: Path, monkeypatch) -> None:
-        """Post-flip the CLI preflight admits V3 to the public execution stack."""
-        import json as _json
+    def test_v3_cli_execution_refused_before_public_stack(
+        self, tmp_path: Path, monkeypatch, capsys
+    ) -> None:
+        """Cutover: the CLI preflight refuses V3 before the public execution stack.
+
+        The legacy handlers below are never reached; refusal carries the
+        machine code and leaves zero side effects (no work dir at all: the
+        preflight runs before lease/mkdir/service).
+        """
+        import json as _json  # noqa: F401 - kept for scenario parity
 
         def fake_calc(**kwargs):
-            step_dir = Path(kwargs["step_dir"])
-            output = step_dir / "result.xyz"
-            output.parent.mkdir(parents=True, exist_ok=True)
-            output.write_text("1\nfake E=-1.0\nH 0 0 0\n", encoding="utf-8")
-
-            class _Result:
-                output_path = str(output)
-                reused_existing = False
-                copied_multi_frame = False
-
-            return _Result()
+            raise AssertionError("the legacy calc handler must never run for V3")
 
         def fake_confgen(**kwargs):
-            step_dir = Path(kwargs["step_dir"])
-            output = step_dir / "search.xyz"
-            output.parent.mkdir(parents=True, exist_ok=True)
-            output.write_text("2\nfake\nH 0 0 0\nH 0 0 1\n", encoding="utf-8")
-
-            class _Result:
-                output_path = str(output)
-                reused_existing = False
-                copied_multi_frame = False
-
-            return _Result()
+            raise AssertionError("the legacy confgen handler must never run for V3")
 
         monkeypatch.setattr("confflow.workflow.v3_runtime._run_calc_step", fake_calc)
         monkeypatch.setattr("confflow.workflow.v3_runtime._run_confgen_step", fake_confgen)
@@ -142,9 +129,9 @@ class TestCliGuard:
 
         result = cli_main([str(xyz), "-c", str(config), "-w", str(work)])
 
-        assert result == ExitCode.SUCCESS
-        manifest = _json.loads((work / "output_manifest.json").read_text(encoding="utf-8"))
-        assert manifest["content_schema"] == "confflow.output_manifest.v2"
+        assert result == ExitCode.RUNTIME_ERROR
+        assert "legacy_workflow_not_executable" in capsys.readouterr().err
+        assert not work.exists()
 
     def test_v3_dry_run_still_allowed(self, tmp_path: Path, capsys) -> None:
         xyz = _write_xyz(tmp_path / "input.xyz")
@@ -167,20 +154,22 @@ def _raise_probe() -> None:
 
 
 class TestServiceAdapterGuard:
-    def test_v3_service_admits_v3_to_the_runner(
+    def test_v3_service_refuses_v3_before_the_runner(
         self, tmp_path: Path, _fake_runner: list[dict[str, Any]]
     ) -> None:
-        """Prove the mandatory builder guard passes V3 through post-flip.
+        """Prove the mandatory builder guard refuses V3 with zero side effects.
 
-        The runner IS the public engine, so the accepted runtime dispatch is
-        what the service now reaches for V3.
+        The runner is never admitted: the V4 guard fails closed before
+        build_workflow_service creates the state root, run paths, or SQLite.
         """
+        from confflow.core.exceptions import ConfFlowError
+
         xyz = _write_xyz(tmp_path / "input.xyz")
         config = _v3_config(tmp_path / "wf.yaml")
         work = tmp_path / "work"
         state_root = tmp_path / "state_root"
 
-        with pytest.raises(ZeroSideEffectProbe) as caught:
+        with pytest.raises(ConfFlowError, match="legacy_workflow_not_executable"):
             run_workflow_through_service(
                 input_xyz=[str(xyz)],
                 config_file=str(config),
@@ -190,8 +179,9 @@ class TestServiceAdapterGuard:
                 workflow_runner=lambda **kwargs: _fake_runner.append(kwargs) or _raise_probe(),
             )
 
-        assert _fake_runner, "V3 must now reach the public runner"
-        assert isinstance(caught.value, ZeroSideEffectProbe)
+        assert not _fake_runner, "V3 must never reach the runner"
+        _no_runtime_traces(work)
+        assert not state_root.exists()
 
 
 # ---------------------------------------------------------------------------

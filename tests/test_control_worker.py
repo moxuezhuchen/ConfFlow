@@ -190,7 +190,11 @@ def test_control_worker_consumes_existing_queued_token_without_prepare(tmp_path:
     input_xyz.parent.mkdir()
     work_dir = tmp_path / "results" / "methane_confflow_work"
     work_dir.parent.mkdir()
-    config.write_text("steps: []\n", encoding="utf-8")
+    config.write_text(
+        # Formal cutover: staged configs must carry the V4 schema
+        "schema: confflow.workflow.v4\nsteps: []\n",
+        encoding="utf-8",
+    )
     input_xyz.write_text("1\nH\nH 0 0 0\n", encoding="utf-8")
     handoff = {
         "content_schema": HANDOFF_SCHEMA,
@@ -260,7 +264,11 @@ def test_control_cancel_waits_for_token_worker_to_stop_before_terminal_state(
     config = tmp_path / "workflow.yaml"
     input_xyz = tmp_path / "input.xyz"
     work_dir = tmp_path / "work"
-    config.write_text("steps: []\n", encoding="utf-8")
+    config.write_text(
+        # Formal cutover: staged configs must carry the V4 schema
+        "schema: confflow.workflow.v4\nsteps: []\n",
+        encoding="utf-8",
+    )
     input_xyz.write_text("1\nH\nH 0 0 0\n", encoding="utf-8")
     handoff = {
         "content_schema": HANDOFF_SCHEMA,
@@ -433,7 +441,11 @@ def test_worker_sidecar_failure_marks_attempt_failed_before_completion(
     input_xyz = tmp_path / "input.xyz"
     work_dir = tmp_path / "results" / "input_confflow_work"
     work_dir.parent.mkdir()
-    config.write_text("steps: []\n", encoding="utf-8")
+    config.write_text(
+        # Formal cutover: staged configs must carry the V4 schema
+        "schema: confflow.workflow.v4\nsteps: []\n",
+        encoding="utf-8",
+    )
     input_xyz.write_text("1\nH\nH 0 0 0\n", encoding="utf-8")
     handoff = {
         "content_schema": HANDOFF_SCHEMA,
@@ -585,7 +597,11 @@ def test_control_worker_rejects_symlinked_handoff_locator(tmp_path: Path) -> Non
 def test_control_worker_recovers_a_running_attempt_after_lease_loss(tmp_path: Path) -> None:
     config = tmp_path / "workflow.yaml"
     input_xyz = tmp_path / "input.xyz"
-    config.write_text("steps: []\n", encoding="utf-8")
+    config.write_text(
+        # Formal cutover: staged configs must carry the V4 schema
+        "schema: confflow.workflow.v4\nsteps: []\n",
+        encoding="utf-8",
+    )
     input_xyz.write_text("1\nH\nH 0 0 0\n", encoding="utf-8")
     handoff = {
         "content_schema": HANDOFF_SCHEMA,
@@ -664,7 +680,11 @@ def test_control_worker_confirms_pending_cancel_after_prior_worker_crash(
 ) -> None:
     config = tmp_path / "workflow.yaml"
     input_xyz = tmp_path / "input.xyz"
-    config.write_text("steps: []\n", encoding="utf-8")
+    config.write_text(
+        # Formal cutover: staged configs must carry the V4 schema
+        "schema: confflow.workflow.v4\nsteps: []\n",
+        encoding="utf-8",
+    )
     input_xyz.write_text("1\nH\nH 0 0 0\n", encoding="utf-8")
     handoff = {
         "content_schema": HANDOFF_SCHEMA,
@@ -746,7 +766,11 @@ def test_control_worker_keeps_paused_attempt_until_formal_resume(tmp_path: Path)
     config = tmp_path / "workflow.yaml"
     input_xyz = tmp_path / "input.xyz"
     work_dir = tmp_path / "work"
-    config.write_text("steps: []\n", encoding="utf-8")
+    config.write_text(
+        # Formal cutover: staged configs must carry the V4 schema
+        "schema: confflow.workflow.v4\nsteps: []\n",
+        encoding="utf-8",
+    )
     input_xyz.write_text("1\nH\nH 0 0 0\n", encoding="utf-8")
     handoff = {
         "content_schema": HANDOFF_SCHEMA,

@@ -50,6 +50,7 @@ from ..persistence.contracts import (
     validate_run_root,
 )
 from ..persistence.publication import (
+    load_published_step_result,
     publish_step_result,
     verify_for_publication,
 )
@@ -377,6 +378,13 @@ class BatchStepExecutor:
             )
             return self._assemble(request, failed, (validation_error,))
         run_root_abs = validate_run_root(run_root)
+        # Durability pre-check: a corrupt published step_result.json fails
+        # closed here, before any re-execution or republication. Corruption
+        # is never healed by overwrite; load_published_step_result raises
+        # CorruptStateError for unreadable/invalid payloads and returns None
+        # when absent (fresh run). The error propagates without touching
+        # the corrupt bytes.
+        load_published_step_result(run_root=run_root_abs, step_id=step.step_id)
         durable_base = os.path.join(step_dir(run_root_abs, step.step_id))
         owner = owner_identity_current(owner_token=owner_token or f"v4-batch:{step.step_id}")
         environment = request.environment
@@ -515,11 +523,13 @@ class BatchStepExecutor:
                 details=FrozenDict({"non_durable_item_ids": sorted(gap_ids)}),
             )
             by_id = {item.work_item_id: item for item in collected}
-            reasons = sorted(
-                f"{item_id}={by_id[item_id].status.value}:"
-                f"{(by_id[item_id].error.code if by_id[item_id].error is not None else 'no-error')}"
-                for item_id in gap_ids
-            )
+
+            def _gap_reason(item_id: str) -> str:
+                item = by_id[item_id]
+                code = item.error.code if item.error is not None else "no-error"
+                return f"{item_id}={item.status.value}:{code}"
+
+            reasons = sorted(_gap_reason(item_id) for item_id in gap_ids)
             raise PersistenceError(
                 f"refusing to publish step {step.step_id!r}: "
                 f"{len(gap_ids)} items lack durable results "
@@ -905,9 +915,9 @@ class BatchStepExecutor:
                         attempt=attempt,
                     )
                     store.record_finished(
-                    result,
-                    environment_digest=self._commit_environment_digest(result),
-                )
+                        result,
+                        environment_digest=self._commit_environment_digest(result),
+                    )
                     return result, True
         elif not _claim_retried and state in (
             StoredWorkItemStatus.PENDING,

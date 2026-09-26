@@ -176,7 +176,7 @@ class TestP1AInvalidDataflowSideEffects:
         handlers = _FakeHandlers(monkeypatch)
         input_xyz = _write_xyz(tmp_path / "input.xyz")
         config = _write_config(tmp_path / "wf.yaml", _invalid_df_steps())
-        with pytest.raises(ConfFlowError, match="effective dataflow validation failed"):
+        with pytest.raises(ConfFlowError, match="legacy_workflow_not_executable"):
             run_workflow_through_service(
                 input_xyz=[str(input_xyz)],
                 config_file=str(config),
@@ -213,7 +213,7 @@ class TestP1AInvalidDataflowSideEffects:
             def __call__(self, **kwargs: Any) -> dict[str, Any]:
                 raise AssertionError("runner must never run for invalid dataflow")
 
-        with pytest.raises(ConfFlowError, match="effective dataflow validation failed"):
+        with pytest.raises(ConfFlowError, match="legacy_workflow_not_executable"):
             build_workflow_service(
                 spec, state_root=tmp_path / "state", workflow_runner=_NeverRunner()
             )
@@ -221,7 +221,7 @@ class TestP1AInvalidDataflowSideEffects:
         assert not (tmp_path / "work-direct").exists()
 
         # Full through-service call: no SQLite, no run layout, no work files.
-        with pytest.raises(ConfFlowError, match="effective dataflow validation failed"):
+        with pytest.raises(ConfFlowError, match="legacy_workflow_not_executable"):
             run_workflow_through_service(
                 input_xyz=[str(input_xyz)],
                 config_file=str(config),
@@ -239,7 +239,7 @@ class TestP1AInvalidDataflowSideEffects:
         handlers = _FakeHandlers(monkeypatch)
         input_xyz = _write_xyz(tmp_path / "input.xyz")
         config = _write_config(tmp_path / "wf.yaml", _invalid_df_steps())
-        with pytest.raises(ConfFlowError, match="effective dataflow validation failed"):
+        with pytest.raises(ConfFlowError, match="legacy_workflow_not_executable"):
             run_workflow_through_service(
                 input_xyz=[str(input_xyz)],
                 config_file=str(config),
@@ -250,43 +250,34 @@ class TestP1AInvalidDataflowSideEffects:
         assert handlers.calc_calls == []
         assert handlers.confgen_calls == []
 
-    def test_p1a4_valid_workflow_still_executes(self, tmp_path: Path, monkeypatch) -> None:
-        """The preflight admits valid V3: the public path still executes."""
+    def test_p1a4_valid_workflow_sealed(self, tmp_path: Path, monkeypatch) -> None:
+        """Cutover: even a valid V3 workflow is sealed by the V4 guard.
+
+        The formal runtime is V4-only; a valid V3 document is refused with
+        zero side effects and silent handlers.
+        """
         handlers = _FakeHandlers(monkeypatch)
         input_xyz = _write_xyz(tmp_path / "input.xyz")
         config = _write_config(tmp_path / "wf.yaml", _valid_steps())
-        result = run_workflow_through_service(
-            input_xyz=[str(input_xyz)],
-            config_file=str(config),
-            work_dir=str(tmp_path / "work"),
-            state_root=tmp_path / "state",
-            run_id="p1a4-run",
-        )
-        assert result is not None
-        assert [call["step_name"] for call in handlers.calc_calls] == ["s002"]
-        assert handlers.confgen_calls
-        manifest = json.loads((tmp_path / "work" / "output_manifest.json").read_text())
-        assert manifest["content_schema"] == "confflow.output_manifest.v2"
-        stats = json.loads((tmp_path / "work" / "workflow_stats.json").read_text())
-        assert stats["content_schema"] == "confflow.workflow_stats.v2"
+        with pytest.raises(ConfFlowError, match="legacy_workflow_not_executable"):
+            run_workflow_through_service(
+                input_xyz=[str(input_xyz)],
+                config_file=str(config),
+                work_dir=str(tmp_path / "work"),
+                state_root=tmp_path / "state",
+                run_id="p1a4-run",
+            )
+        assert not (tmp_path / "state").exists()
+        _assert_no_workflow_files(tmp_path / "work")
+        assert handlers.calc_calls == []
+        assert handlers.confgen_calls == []
 
-    def test_p1a5_v2_unchanged(self, tmp_path: Path, monkeypatch) -> None:
-        """The V2 config path is untouched by the V3 DF preflight."""
-        from confflow.contract import OUTPUT_MANIFEST_SCHEMA, WORKFLOW_STATE_SCHEMA
+    def test_p1a5_v2_sealed(self, tmp_path: Path, monkeypatch) -> None:
+        """Cutover: the V2 config path is sealed by the single V4 authority.
 
-        def fake_confgen(step_dir, *args: Any, **kwargs: Any):
-            output = Path(step_dir) / "search.xyz"
-            output.parent.mkdir(parents=True, exist_ok=True)
-            output.write_text("1\nfake\nH 0 0 0\n", encoding="utf-8")
-
-            class _Result:
-                output_path = str(output)
-                reused_existing = False
-                copied_multi_frame = False
-
-            return _Result()
-
-        monkeypatch.setattr("confflow.workflow.engine._run_confgen_step", fake_confgen)
+        Only V4 documents proceed; the legacy engine seam is never reached.
+        """
+        handlers = _FakeHandlers(monkeypatch)
         input_xyz = _write_xyz(tmp_path / "input.xyz")
         config = tmp_path / "v2.yaml"
         config.write_text(
@@ -295,18 +286,18 @@ class TestP1AInvalidDataflowSideEffects:
             ),
             encoding="utf-8",
         )
-        result = run_workflow_through_service(
-            input_xyz=[str(input_xyz)],
-            config_file=str(config),
-            work_dir=str(tmp_path / "work"),
-            state_root=tmp_path / "state",
-            run_id="p1a5-run",
-        )
-        assert result is not None
-        state = json.loads((tmp_path / "work" / ".workflow_state.json").read_text())
-        assert state["content_schema"] == WORKFLOW_STATE_SCHEMA
-        manifest = json.loads((tmp_path / "work" / "output_manifest.json").read_text())
-        assert manifest["content_schema"] == OUTPUT_MANIFEST_SCHEMA
+        with pytest.raises(ConfFlowError, match="legacy_workflow_not_executable"):
+            run_workflow_through_service(
+                input_xyz=[str(input_xyz)],
+                config_file=str(config),
+                work_dir=str(tmp_path / "work"),
+                state_root=tmp_path / "state",
+                run_id="p1a5-run",
+            )
+        assert not (tmp_path / "state").exists()
+        _assert_no_workflow_files(tmp_path / "work")
+        assert handlers.calc_calls == []
+        assert handlers.confgen_calls == []
 
 
 # ---------------------------------------------------------------------------
@@ -567,11 +558,11 @@ class TestPFPreflightFailClosed:
             config_file=str(config),
             work_dir=str(tmp_path / "work-direct"),
         )
-        with pytest.raises(ConfFlowError, match="effective dataflow validation failed"):
+        with pytest.raises(ConfFlowError, match="legacy_workflow_not_executable"):
             build_workflow_service(
                 spec, state_root=tmp_path / "state", workflow_runner=_NeverRunner()
             )
-        with pytest.raises(ConfFlowError, match="effective dataflow validation failed"):
+        with pytest.raises(ConfFlowError, match="legacy_workflow_not_executable"):
             run_workflow_through_service(
                 input_xyz=[str(input_xyz)],
                 config_file=str(config),
@@ -742,43 +733,30 @@ class TestPFPreflightFailClosed:
         assert handlers.confgen_calls == []
 
     @pytest.mark.usefixtures("fake_qc_executables_on_path")
-    def test_pf7_valid_executes(self, tmp_path: Path, monkeypatch) -> None:
+    def test_pf7_valid_sealed(self, tmp_path: Path, monkeypatch) -> None:
+        """Cutover: even a valid V3 workflow is sealed with zero effects."""
         handlers = _FakeHandlers(monkeypatch)
         input_xyz = _write_xyz(tmp_path / "input.xyz")
         config = _write_config(tmp_path / "wf.yaml", _valid_steps())
-        result = run_workflow_through_service(
-            input_xyz=[str(input_xyz)],
-            config_file=str(config),
-            work_dir=str(tmp_path / "work"),
-            state_root=tmp_path / "state",
-            run_id="pf7-run",
+        with pytest.raises(ConfFlowError, match="legacy_workflow_not_executable"):
+            run_workflow_through_service(
+                input_xyz=[str(input_xyz)],
+                config_file=str(config),
+                work_dir=str(tmp_path / "work"),
+                state_root=tmp_path / "state",
+                run_id="pf7-run",
+            )
+        assert not (tmp_path / "state").exists()
+        _assert_zero_preflight_effects(
+            tmp_path, tmp_path / "state", [tmp_path / "work", tmp_path / "work-direct"]
         )
-        assert result is not None
-        assert [call["step_name"] for call in handlers.calc_calls] == ["s002"]
-        assert handlers.confgen_calls
-        manifest = json.loads((tmp_path / "work" / "output_manifest.json").read_text())
-        assert manifest["content_schema"] == "confflow.output_manifest.v2"
-        stats = json.loads((tmp_path / "work" / "workflow_stats.json").read_text())
-        assert stats["content_schema"] == "confflow.workflow_stats.v2"
+        assert handlers.calc_calls == []
+        assert handlers.confgen_calls == []
 
     @pytest.mark.usefixtures("fake_qc_executables_on_path")
-    def test_pf8_v2_unchanged(self, tmp_path: Path, monkeypatch) -> None:
-        from confflow.contract import OUTPUT_MANIFEST_SCHEMA, WORKFLOW_STATE_SCHEMA
-
-        def fake_confgen(step_dir: Any, *args: Any, **kwargs: Any) -> Any:
-            output = Path(step_dir) / "search.xyz"
-            output.parent.mkdir(parents=True, exist_ok=True)
-            output.write_text("1\nfake\nH 0 0 0\n", encoding="utf-8")
-
-            class _Result:
-                output_path = str(output)
-                reused_existing = False
-                copied_multi_frame = False
-
-            return _Result()
-
-        monkeypatch.setattr("confflow.workflow.engine._run_confgen_step", fake_confgen)
-        assert not _is_v3_config(str(tmp_path / "v2.yaml")) or True
+    def test_pf8_v2_sealed(self, tmp_path: Path, monkeypatch) -> None:
+        """Cutover: the V2 path is sealed by the single V4 authority."""
+        handlers = _FakeHandlers(monkeypatch)
         input_xyz = _write_xyz(tmp_path / "input.xyz")
         config = tmp_path / "v2.yaml"
         config.write_text(
@@ -788,18 +766,20 @@ class TestPFPreflightFailClosed:
             encoding="utf-8",
         )
         assert not _is_v3_config(str(config))
-        result = run_workflow_through_service(
-            input_xyz=[str(input_xyz)],
-            config_file=str(config),
-            work_dir=str(tmp_path / "work"),
-            state_root=tmp_path / "state",
-            run_id="pf8-run",
+        with pytest.raises(ConfFlowError, match="legacy_workflow_not_executable"):
+            run_workflow_through_service(
+                input_xyz=[str(input_xyz)],
+                config_file=str(config),
+                work_dir=str(tmp_path / "work"),
+                state_root=tmp_path / "state",
+                run_id="pf8-run",
+            )
+        assert not (tmp_path / "state").exists()
+        _assert_zero_preflight_effects(
+            tmp_path, tmp_path / "state", [tmp_path / "work", tmp_path / "work-direct"]
         )
-        assert result is not None
-        state = json.loads((tmp_path / "work" / ".workflow_state.json").read_text())
-        assert state["content_schema"] == WORKFLOW_STATE_SCHEMA
-        manifest = json.loads((tmp_path / "work" / "output_manifest.json").read_text())
-        assert manifest["content_schema"] == OUTPUT_MANIFEST_SCHEMA
+        assert handlers.calc_calls == []
+        assert handlers.confgen_calls == []
 
 
 # ---------------------------------------------------------------------------
@@ -886,47 +866,35 @@ def _v1_service_completed(
 
 class TestV3ArtifactIntegrity:
     @pytest.mark.usefixtures("fake_qc_executables_on_path")
-    def test_s1_missing_manifest_fails_closed(self, tmp_path: Path, monkeypatch) -> None:
-        from confflow.application.execution.models import RunState
+    def test_s1_v3_service_build_sealed(self, tmp_path: Path, monkeypatch) -> None:
+        """Cutover: no V3 service is ever built, so strict V3 loading is moot.
 
+        The V4 application publishes run_result.json (covered in tests/v4);
+        the retired V3 sidecar loaders below are unreachable from formal
+        entries. This test seals the construction boundary.
+        """
         handlers = _FakeHandlers(monkeypatch)
-        _input_xyz, config, work_dir = _completed_run(tmp_path, handlers)
-        work = Path(work_dir)
-        (work / "output_manifest.json").unlink()
-        assert _load_artifacts(work_dir) == ()
-        with pytest.raises(ExecutionServiceError) as excinfo:
-            _load_artifacts_v3_required(work_dir)
-        assert excinfo.value.code is ErrorCode.ARTIFACT_INTEGRITY_FAILED
-
-        work2 = tmp_path / "work2"
-
-        def _empty_runner(**kwargs: Any) -> dict[str, Any]:
-            Path(kwargs["work_dir"]).mkdir(parents=True, exist_ok=True)
-            return {"ok": True}
-
         input_xyz = _write_xyz(tmp_path / "input2.xyz")
         config2 = _write_config(tmp_path / "wf2.yaml", _valid_steps())
         spec2 = WorkflowRunSpec(
             run_id="s1-run",
             input_xyz=(str(input_xyz),),
             config_file=str(config2),
-            work_dir=str(work2),
-        )
-        service2, executor2 = build_workflow_service(
-            spec2, state_root=tmp_path / "state2", workflow_runner=_empty_runner
-        )
-        from confflow.application.execution.workflow_adapter import (
-            _prepare_request,
-            executor_identity,
+            work_dir=str(tmp_path / "work2"),
         )
 
-        service2.prepare(_prepare_request(spec2, executor_identity(service2)))
-        service2.execute("s1-run")
-        with pytest.raises(ExecutionServiceError) as excinfo2:
-            executor2.wait()
-        assert excinfo2.value.code is ErrorCode.ARTIFACT_INTEGRITY_FAILED
-        assert service2.status("s1-run").state is RunState.FAILED
-        assert service2.artifacts("s1-run").artifacts == ()
+        class _NeverRunner:
+            def __call__(self, **kwargs: Any) -> dict[str, Any]:
+                raise AssertionError("runner must never run for a sealed version")
+
+        with pytest.raises(ConfFlowError, match="legacy_workflow_not_executable"):
+            build_workflow_service(
+                spec2, state_root=tmp_path / "state2", workflow_runner=_NeverRunner()
+            )
+        assert not (tmp_path / "state2").exists()
+        assert not (tmp_path / "work2").exists()
+        assert handlers.calc_calls == []
+        assert handlers.confgen_calls == []
 
     @pytest.mark.usefixtures("fake_qc_executables_on_path")
     def test_s2_corrupt_manifest_fails_closed(self, tmp_path: Path, monkeypatch) -> None:
@@ -1043,16 +1011,30 @@ class TestV3ArtifactIntegrity:
         assert excinfo3.value.code is ErrorCode.ARTIFACT_INTEGRITY_FAILED
 
     @pytest.mark.usefixtures("fake_qc_executables_on_path")
-    def test_s10_valid_v3_passes_strict(self, tmp_path: Path, monkeypatch) -> None:
-        service, spec, handlers, _input_xyz, _config, work, _state_root = _v3_service_completed(
-            tmp_path, monkeypatch, run_id="s10-run"
+    def test_s10_valid_v3_sealed(self, tmp_path: Path, monkeypatch) -> None:
+        """Cutover: a valid V3 document never reaches strict V3 loading."""
+        handlers = _FakeHandlers(monkeypatch)
+        input_xyz = _write_xyz(tmp_path / "input.xyz")
+        config = _write_config(tmp_path / "wf.yaml", _valid_steps())
+        spec = WorkflowRunSpec(
+            run_id="s10-run",
+            input_xyz=(str(input_xyz),),
+            config_file=str(config),
+            work_dir=str(tmp_path / "work"),
         )
-        loaded = _load_artifacts_v3_required(str(work))
-        assert loaded
-        assert all(a.content_schema == "confflow.output_manifest.v2" for a in loaded)
-        stats = _load_stats_v3_required(str(work))
-        assert stats["content_schema"] == "confflow.workflow_stats.v2"
-        assert service.artifacts("s10-run").artifacts
+
+        class _NeverRunner:
+            def __call__(self, **kwargs: Any) -> dict[str, Any]:
+                raise AssertionError("runner must never run for a sealed version")
+
+        with pytest.raises(ConfFlowError, match="legacy_workflow_not_executable"):
+            build_workflow_service(
+                spec, state_root=tmp_path / "state", workflow_runner=_NeverRunner()
+            )
+        assert not (tmp_path / "state").exists()
+        assert not (tmp_path / "work").exists()
+        assert handlers.calc_calls == []
+        assert handlers.confgen_calls == []
 
 
 # ---------------------------------------------------------------------------
@@ -1060,100 +1042,101 @@ class TestV3ArtifactIntegrity:
 # ---------------------------------------------------------------------------
 class TestV3CompletedAttach:
     @pytest.mark.usefixtures("fake_qc_executables_on_path")
-    def test_s4_v3_attach_missing_state_fails_closed(self, tmp_path: Path, monkeypatch) -> None:
-        service, spec, _handlers, _input_xyz, _config, work, _state_root = _v3_service_completed(
-            tmp_path, monkeypatch, run_id="s4-run"
+    def test_s4_v3_attach_sealed(self, tmp_path: Path, monkeypatch) -> None:
+        """Cutover: no V3 service exists to attach to; construction is sealed."""
+        handlers = _FakeHandlers(monkeypatch)
+        input_xyz = _write_xyz(tmp_path / "input.xyz")
+        config = _write_config(tmp_path / "wf.yaml", _valid_steps())
+        spec = WorkflowRunSpec(
+            run_id="s4-run",
+            input_xyz=(str(input_xyz),),
+            config_file=str(config),
+            work_dir=str(tmp_path / "work"),
         )
-        (work / ".workflow_state.json").unlink()
-        with pytest.raises(ExecutionServiceError) as excinfo:
-            _load_completed_stats(service, "s4-run", str(work), spec)
-        assert excinfo.value.code is ErrorCode.ARTIFACT_INTEGRITY_FAILED
 
-        v1_base = tmp_path / "v1"
-        v1_base.mkdir()
-        service1, spec1, _in1, _cfg1, work1, _root1 = _v1_service_completed(
-            v1_base, monkeypatch, run_id="s4-v1-run"
-        )
-        (work1 / ".workflow_state.json").unlink()
-        assert _load_completed_stats(service1, "s4-v1-run", str(work1), spec1) is not None
+        class _NeverRunner:
+            def __call__(self, **kwargs: Any) -> dict[str, Any]:
+                raise AssertionError("runner must never run for a sealed version")
 
-    @pytest.mark.usefixtures("fake_qc_executables_on_path")
-    def test_s5_v3_attach_missing_or_v1_stats_fails_closed(
-        self, tmp_path: Path, monkeypatch
-    ) -> None:
-        from confflow.contract import WORKFLOW_STATS_SCHEMA
-
-        service, spec, _handlers, _input_xyz, _config, work, _state_root = _v3_service_completed(
-            tmp_path, monkeypatch, run_id="s5-run"
-        )
-        (work / "workflow_stats.json").unlink()
-        with pytest.raises(ExecutionServiceError) as excinfo:
-            _load_completed_stats(service, "s5-run", str(work), spec)
-        assert excinfo.value.code is ErrorCode.ARTIFACT_INTEGRITY_FAILED
-
-        second = tmp_path / "second"
-        second.mkdir()
-        service2, spec2, _h2, _in2, _cfg2, work2, _root2 = _v3_service_completed(
-            second, monkeypatch, run_id="s5b-run"
-        )
-        work2 = Path(work2)
-        (work2 / "workflow_stats.json").write_text(
-            json.dumps({"content_schema": WORKFLOW_STATS_SCHEMA, "final_output": "x"}),
-            encoding="utf-8",
-        )
-        with pytest.raises(ExecutionServiceError) as excinfo2:
-            _load_completed_stats(service2, "s5b-run", str(work2), spec2)
-        assert excinfo2.value.code is ErrorCode.ARTIFACT_INTEGRITY_FAILED
+        with pytest.raises(ConfFlowError, match="legacy_workflow_not_executable"):
+            build_workflow_service(
+                spec, state_root=tmp_path / "state", workflow_runner=_NeverRunner()
+            )
+        assert not (tmp_path / "state").exists()
+        assert handlers.calc_calls == []
+        assert handlers.confgen_calls == []
 
     @pytest.mark.usefixtures("fake_qc_executables_on_path")
-    def test_s8_v3_attach_manifest_and_hash_fails_closed(self, tmp_path: Path, monkeypatch) -> None:
-        service, spec, _handlers, _input_xyz, _config, work, _state_root = _v3_service_completed(
-            tmp_path, monkeypatch, run_id="s8-run"
+    def test_s5_v3_attach_sealed(self, tmp_path: Path, monkeypatch) -> None:
+        """Cutover: no V3 service exists to attach to; construction is sealed."""
+        handlers = _FakeHandlers(monkeypatch)
+        input_xyz = _write_xyz(tmp_path / "input.xyz")
+        config = _write_config(tmp_path / "wf.yaml", _valid_steps())
+        spec = WorkflowRunSpec(
+            run_id="s5-run",
+            input_xyz=(str(input_xyz),),
+            config_file=str(config),
+            work_dir=str(tmp_path / "work"),
         )
-        work = Path(work)
-        manifest_bytes = (work / "output_manifest.json").read_bytes()
-        (work / "output_manifest.json").unlink()
-        with pytest.raises(ExecutionServiceError) as excinfo:
-            _load_completed_stats(service, "s8-run", str(work), spec)
-        assert excinfo.value.code is ErrorCode.ARTIFACT_INTEGRITY_FAILED
-        (work / "output_manifest.json").write_bytes(manifest_bytes)
-        manifest = service.artifacts("s8-run")
-        assert manifest.artifacts
-        victim = work / manifest.artifacts[0].path
-        victim.write_bytes(victim.read_bytes() + b"\ncorrupt\n")
-        with pytest.raises(ExecutionServiceError) as excinfo2:
-            _load_completed_stats(service, "s8-run", str(work), spec)
-        assert excinfo2.value.code is ErrorCode.ARTIFACT_INTEGRITY_FAILED
+
+        class _NeverRunner:
+            def __call__(self, **kwargs: Any) -> dict[str, Any]:
+                raise AssertionError("runner must never run for a sealed version")
+
+        with pytest.raises(ConfFlowError, match="legacy_workflow_not_executable"):
+            build_workflow_service(
+                spec, state_root=tmp_path / "state", workflow_runner=_NeverRunner()
+            )
+        assert not (tmp_path / "state").exists()
+        assert handlers.calc_calls == []
+        assert handlers.confgen_calls == []
 
     @pytest.mark.usefixtures("fake_qc_executables_on_path")
-    def test_s9_identity_marker_policy(self, tmp_path: Path, monkeypatch) -> None:
-        service, spec, _handlers, _input_xyz, _config, work, _state_root = _v3_service_completed(
-            tmp_path, monkeypatch, run_id="s9-run"
+    def test_s8_v3_attach_sealed(self, tmp_path: Path, monkeypatch) -> None:
+        """Cutover: no V3 service exists to attach to; construction is sealed."""
+        handlers = _FakeHandlers(monkeypatch)
+        input_xyz = _write_xyz(tmp_path / "input.xyz")
+        config = _write_config(tmp_path / "wf.yaml", _valid_steps())
+        spec = WorkflowRunSpec(
+            run_id="s8-run",
+            input_xyz=(str(input_xyz),),
+            config_file=str(config),
+            work_dir=str(tmp_path / "work"),
         )
-        work = Path(work)
-        identity_path = work / ".confflow_execution_identity.json"
-        assert identity_path.exists()
-        identity = json.loads(identity_path.read_text(encoding="utf-8"))
-        assert set(identity) == {"run_id", "request_digest"}
-        saved = identity_path.read_bytes()
-        identity_path.unlink()
-        with pytest.raises(ExecutionServiceError) as excinfo:
-            _load_completed_stats(service, "s9-run", str(work), spec)
-        assert excinfo.value.code is ErrorCode.ARTIFACT_INTEGRITY_FAILED
-        identity_path.write_bytes(saved)
-        tampered = dict(identity)
-        tampered["request_digest"] = "0" * 64
-        identity_path.write_text(json.dumps(tampered), encoding="utf-8")
-        with pytest.raises(ExecutionServiceError) as excinfo2:
-            _load_completed_stats(service, "s9-run", str(work), spec)
-        assert excinfo2.value.code is ErrorCode.ARTIFACT_INTEGRITY_FAILED
-        identity_path.write_bytes(saved)
-        assert _load_completed_stats(service, "s9-run", str(work), spec) is not None
 
-        v1_base = tmp_path / "v1s9"
-        v1_base.mkdir()
-        service1, spec1, _in1, _cfg1, work1, _root1 = _v1_service_completed(
-            v1_base, monkeypatch, run_id="s9-v1-run"
+        class _NeverRunner:
+            def __call__(self, **kwargs: Any) -> dict[str, Any]:
+                raise AssertionError("runner must never run for a sealed version")
+
+        with pytest.raises(ConfFlowError, match="legacy_workflow_not_executable"):
+            build_workflow_service(
+                spec, state_root=tmp_path / "state", workflow_runner=_NeverRunner()
+            )
+        assert not (tmp_path / "state").exists()
+        assert handlers.calc_calls == []
+        assert handlers.confgen_calls == []
+
+    @pytest.mark.usefixtures("fake_qc_executables_on_path")
+    def test_s9_identity_marker_sealed(self, tmp_path: Path, monkeypatch) -> None:
+        """Cutover: no V3 service exists to attach to; construction is sealed."""
+        handlers = _FakeHandlers(monkeypatch)
+        input_xyz = _write_xyz(tmp_path / "input.xyz")
+        config = _write_config(tmp_path / "wf.yaml", _valid_steps())
+        spec = WorkflowRunSpec(
+            run_id="s9-run",
+            input_xyz=(str(input_xyz),),
+            config_file=str(config),
+            work_dir=str(tmp_path / "work"),
         )
-        (Path(work1) / ".confflow_execution_identity.json").unlink(missing_ok=True)
-        assert _load_completed_stats(service1, "s9-v1-run", str(work1), spec1) is not None
+
+        class _NeverRunner:
+            def __call__(self, **kwargs: Any) -> dict[str, Any]:
+                raise AssertionError("runner must never run for a sealed version")
+
+        with pytest.raises(ConfFlowError, match="legacy_workflow_not_executable"):
+            build_workflow_service(
+                spec, state_root=tmp_path / "state", workflow_runner=_NeverRunner()
+            )
+        assert not (tmp_path / "state").exists()
+        assert handlers.calc_calls == []
+        assert handlers.confgen_calls == []

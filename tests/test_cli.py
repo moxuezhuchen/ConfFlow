@@ -28,6 +28,32 @@ from confflow.cli import (
 from confflow.workflow.dry_run import estimate_confgen_combinations
 
 
+def _v4_config(path):
+    """Write a minimal V4 document (formal runtime; runner is mocked in these tests)."""
+    path.write_text(
+        "schema: confflow.workflow.v4\n"
+        "inputs:\n"
+        "  structures: {kind: structure, cardinality: many}\n"
+        "global:\n"
+        "  scientific_defaults: {charge: 0, multiplicity: 1}\n"
+        "steps:\n"
+        "  - id: s_opt\n"
+        "    executor: calculation\n"
+        "    bindings:\n"
+        "      structure: {source: {run: structures}}\n"
+        "    calculation:\n"
+        "      program: orca\n"
+        "      role: opt\n"
+        "      execution_adapter: standard\n"
+        "      result_profile: standard\n"
+        "      native: {keyword: B3LYP Opt}\n"
+        "      checks: [normal_termination]\n"
+        "      recovery: {profile: none}\n",
+        encoding="utf-8",
+    )
+    return path
+
+
 def test_parse_gaussian_input_geometry_basic():
     text = """%mem=4GB
 # opt b3lyp/6-31g(d)
@@ -240,8 +266,8 @@ def test_main_export_text_format_returns_usage_error(tmp_path, capsys):
 def test_main_normal_path_still_calls_run_workflow(tmp_path):
     input_xyz = tmp_path / "input.xyz"
     input_xyz.write_text("2\ntest\nC 0 0 0\nH 0 0 1\n", encoding="utf-8")
-    config_yaml = tmp_path / "config.yaml"
-    config_yaml.write_text("global: {}\nsteps: []\n", encoding="utf-8")
+    # Formal V4 runtime: the normal path dispatches V4 documents to the runner.
+    config_yaml = _v4_config(tmp_path / "config.yaml")
 
     with patch("confflow.cli.run_workflow") as mock_run:
         result = main([str(input_xyz), "-c", str(config_yaml), "-w", str(tmp_path / "work")])
@@ -383,8 +409,7 @@ def test_main_dry_run_missing_executable_path_is_reported(tmp_path, capsys):
 def test_main_full_run(mock_run, tmp_path):
     input_xyz = tmp_path / "input.xyz"
     input_xyz.write_text("2\ntest\nC 0 0 0\nH 0 0 1\n")
-    config_yaml = tmp_path / "config.yaml"
-    config_yaml.write_text("global: {}\nsteps: []")
+    config_yaml = _v4_config(tmp_path / "config.yaml")
 
     work_dir = tmp_path / "work"
     with patch("os.makedirs"):
@@ -397,8 +422,7 @@ def test_main_full_run(mock_run, tmp_path):
 def test_main_gjf_conversion(tmp_path):
     gjf_file = tmp_path / "test.gjf"
     gjf_file.write_text("title\n\n0 1\nC 0 0 0\nH 0 0 1\n\n")
-    config_yaml = tmp_path / "config.yaml"
-    config_yaml.write_text("global: {}\nsteps: []")
+    config_yaml = _v4_config(tmp_path / "config.yaml")
 
     with patch("confflow.cli.run_workflow") as mock_run:
         main([str(gjf_file), "-c", str(config_yaml), "-w", str(tmp_path / "work")])
@@ -412,8 +436,7 @@ def test_cli_accepts_gjf_and_converts_to_xyz(monkeypatch, tmp_path):
     from confflow.core.io import read_xyz_file
 
     gjf = tmp_path / "input.gjf"
-    yaml_cfg = tmp_path / "confflow.yaml"
-    yaml_cfg.write_text("steps: []\n", encoding="utf-8")
+    yaml_cfg = _v4_config(tmp_path / "confflow.yaml")
 
     gjf.write_text(
         """%nproc=1
@@ -543,8 +566,9 @@ def test_stop_all_confflow_processes_access_denied():
         "柔性链在不同输入间不一致",
     ],
 )
-def test_main_value_error_messages(error_msg, input_xyz, config_yaml, tmp_path):
+def test_main_value_error_messages(error_msg, input_xyz, tmp_path):
     """Main returns 1 when run_workflow raises ValueError for different messages."""
+    config_yaml = _v4_config(tmp_path / "config.yaml")
     with patch("confflow.cli.run_workflow", side_effect=ValueError(error_msg)):
         with (
             patch("sys.stdin.isatty", return_value=False),
@@ -558,8 +582,7 @@ def test_main_generic_exception(tmp_path):
     """Test main handles generic exceptions."""
     input_xyz = tmp_path / "input.xyz"
     input_xyz.write_text("2\ntest\nC 0 0 0\nH 0 0 1\n")
-    config_yaml = tmp_path / "config.yaml"
-    config_yaml.write_text("global: {}\nsteps: []")
+    config_yaml = _v4_config(tmp_path / "config.yaml")
 
     with patch("confflow.cli.run_workflow", side_effect=RuntimeError("Unexpected error")):
         result = main([str(input_xyz), "-c", str(config_yaml), "-w", str(tmp_path / "work")])
@@ -570,8 +593,7 @@ def test_main_handles_cli_output_setup_failure(tmp_path):
     """Failure entering cli_output_to_txt should still return runtime error cleanly."""
     input_xyz = tmp_path / "input.xyz"
     input_xyz.write_text("2\ntest\nC 0 0 0\nH 0 0 1\n", encoding="utf-8")
-    config_yaml = tmp_path / "config.yaml"
-    config_yaml.write_text("global: {}\nsteps: []\n", encoding="utf-8")
+    config_yaml = _v4_config(tmp_path / "config.yaml")
 
     with (
         patch("confflow.cli.cli_output_to_txt", side_effect=OSError("cannot open output")),
@@ -596,8 +618,9 @@ def test_main_missing_config(tmp_path):
 @pytest.mark.parametrize(
     "flag,key,expected", [("--resume", "resume", True), ("--verbose", "verbose", True)]
 )
-def test_main_flags(flag, key, expected, input_xyz, config_yaml, tmp_path):
+def test_main_flags(flag, key, expected, input_xyz, tmp_path):
     """Main forwards simple boolean flags to run_workflow as kwargs."""
+    config_yaml = _v4_config(tmp_path / "config.yaml")
     with patch("confflow.cli.run_workflow") as mock_run:
         main([str(input_xyz), "-c", str(config_yaml), "-w", str(tmp_path / "work"), flag])
         assert mock_run.called
@@ -611,8 +634,7 @@ def test_main_multiple_inputs(tmp_path):
     input1.write_text("2\ntest\nC 0 0 0\nH 0 0 1\n")
     input2 = tmp_path / "input2.xyz"
     input2.write_text("2\ntest\nC 0 0 0\nH 0 0 1\n")
-    config_yaml = tmp_path / "config.yaml"
-    config_yaml.write_text("global: {}\nsteps: []")
+    config_yaml = _v4_config(tmp_path / "config.yaml")
 
     with patch("confflow.cli.run_workflow") as mock_run:
         main([str(input1), str(input2), "-c", str(config_yaml), "-w", str(tmp_path / "work")])
@@ -624,8 +646,7 @@ def test_main_work_dir_default(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     input_xyz = tmp_path / "input.xyz"
     input_xyz.write_text("2\ntest\nC 0 0 0\nH 0 0 1\n")
-    config_yaml = tmp_path / "config.yaml"
-    config_yaml.write_text("global: {}\nsteps: []")
+    config_yaml = _v4_config(tmp_path / "config.yaml")
 
     with patch("confflow.cli.run_workflow") as mock_run:
         main([str(input_xyz), "-c", str(config_yaml)])
@@ -647,9 +668,28 @@ def test_resolve_default_work_dir_uses_sandbox_root(tmp_path):
 def test_main_default_work_dir_inside_sandbox_root(tmp_path):
     input_xyz = tmp_path / "input.xyz"
     input_xyz.write_text("2\ntest\nC 0 0 0\nH 0 0 1\n", encoding="utf-8")
-    config_yaml = tmp_path / "config.yaml"
+    config_yaml = _v4_config(tmp_path / "config.yaml")
     config_yaml.write_text(
-        "global:\n  sandbox_root: " + str(tmp_path / "sandbox") + "\nsteps: []\n"
+        "schema: confflow.workflow.v4\n"
+        "inputs:\n"
+        "  structures: {kind: structure, cardinality: many}\n"
+        "global:\n"
+        "  scientific_defaults: {charge: 0, multiplicity: 1}\n"
+        "  sandbox_root: " + str(tmp_path / "sandbox") + "\n"
+        "steps:\n"
+        "  - id: s_opt\n"
+        "    executor: calculation\n"
+        "    bindings:\n"
+        "      structure: {source: {run: structures}}\n"
+        "    calculation:\n"
+        "      program: orca\n"
+        "      role: opt\n"
+        "      execution_adapter: standard\n"
+        "      result_profile: standard\n"
+        "      native: {keyword: B3LYP Opt}\n"
+        "      checks: [normal_termination]\n"
+        "      recovery: {profile: none}\n",
+        encoding="utf-8",
     )
 
     with patch("confflow.cli.run_workflow") as mock_run:
@@ -661,9 +701,28 @@ def test_main_default_work_dir_inside_sandbox_root(tmp_path):
 def test_main_invalid_work_dir_returns_usage_error(tmp_path):
     input_xyz = tmp_path / "input.xyz"
     input_xyz.write_text("2\ntest\nC 0 0 0\nH 0 0 1\n", encoding="utf-8")
-    config_yaml = tmp_path / "config.yaml"
+    config_yaml = _v4_config(tmp_path / "config.yaml")
     config_yaml.write_text(
-        "global:\n  sandbox_root: " + str(tmp_path / "sandbox") + "\nsteps: []\n"
+        "schema: confflow.workflow.v4\n"
+        "inputs:\n"
+        "  structures: {kind: structure, cardinality: many}\n"
+        "global:\n"
+        "  scientific_defaults: {charge: 0, multiplicity: 1}\n"
+        "  sandbox_root: " + str(tmp_path / "sandbox") + "\n"
+        "steps:\n"
+        "  - id: s_opt\n"
+        "    executor: calculation\n"
+        "    bindings:\n"
+        "      structure: {source: {run: structures}}\n"
+        "    calculation:\n"
+        "      program: orca\n"
+        "      role: opt\n"
+        "      execution_adapter: standard\n"
+        "      result_profile: standard\n"
+        "      native: {keyword: B3LYP Opt}\n"
+        "      checks: [normal_termination]\n"
+        "      recovery: {profile: none}\n",
+        encoding="utf-8",
     )
 
     result = main([str(input_xyz), "-c", str(config_yaml), "-w", str(tmp_path / "outside")])
@@ -677,8 +736,7 @@ def test_main_consistency_error_no_interactive_prompt_on_tty(tmp_path):
     """Consistency errors should be written to txt without interactive prompt, even on TTY."""
     input_xyz = tmp_path / "input.xyz"
     input_xyz.write_text("2\ntest\nC 0 0 0\nH 0 0 1\n")
-    config_yaml = tmp_path / "config.yaml"
-    config_yaml.write_text("global: {}\nsteps: []")
+    config_yaml = _v4_config(tmp_path / "config.yaml")
 
     error_msg = "all inputs must have the same atom count and element order.\nelement order mismatch (multi-input mode requires full match):"
 

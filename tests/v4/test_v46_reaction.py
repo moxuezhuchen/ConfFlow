@@ -15,7 +15,6 @@ an explicit mapping flows into result, provenance, and manifest).
 from __future__ import annotations
 
 import hashlib
-
 import json
 
 import pytest

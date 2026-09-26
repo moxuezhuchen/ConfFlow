@@ -65,17 +65,19 @@ def test_rerun_failed_missing_inputs_report_clear_errors(tmp_path):
 
 
 def test_cli_rerun_failed_requires_config_and_step(tmp_path, capsys):
+    # Formal cutover: --rerun-failed is legacy execution glue and fails
+    # closed before any --config/--step validation.
     step_dir = tmp_path / "work" / "step_02_calc1"
     _write_failed_xyz(step_dir)
 
     result = main(["--rerun-failed", str(step_dir), "--step", "calc1"])
-    assert result == ExitCode.USAGE_ERROR
-    assert "--config is required with --rerun-failed" in capsys.readouterr().err
+    assert result == ExitCode.RUNTIME_ERROR
+    assert "legacy_workflow_not_executable" in capsys.readouterr().err
 
     config = _write_config(tmp_path / "confflow.yaml")
     result = main(["--rerun-failed", str(step_dir), "-c", str(config)])
-    assert result == ExitCode.USAGE_ERROR
-    assert "--step is required with --rerun-failed" in capsys.readouterr().err
+    assert result == ExitCode.RUNTIME_ERROR
+    assert "legacy_workflow_not_executable" in capsys.readouterr().err
 
 
 def test_rerun_failed_selects_calc_step_by_name(tmp_path, monkeypatch):
@@ -156,7 +158,9 @@ def test_rerun_failed_rejects_non_calc_step_and_existing_output(tmp_path):
         )
 
 
-def test_cli_rerun_failed_does_not_call_run_workflow(tmp_path):
+def test_cli_rerun_failed_does_not_call_run_workflow(tmp_path, capsys):
+    # Formal cutover: --rerun-failed fails closed without dispatching to
+    # either the legacy rerun helper or the formal runner.
     from confflow.workflow.rerun_failed import RerunFailedResult
 
     config = _write_config(tmp_path / "confflow.yaml")
@@ -166,7 +170,7 @@ def test_cli_rerun_failed_does_not_call_run_workflow(tmp_path):
 
     with (
         patch("confflow.cli.run_workflow") as mock_workflow,
-        patch("confflow.cli.run_rerun_failed") as mock_rerun,
+        patch("confflow.workflow.rerun_failed.run_rerun_failed") as mock_rerun,
     ):
         mock_rerun.return_value = RerunFailedResult(
             failed_path=str(failed),
@@ -190,11 +194,7 @@ def test_cli_rerun_failed_does_not_call_run_workflow(tmp_path):
             ]
         )
 
-    assert result == ExitCode.SUCCESS
-    mock_rerun.assert_called_once_with(
-        step_dir=str(step_dir),
-        config_file=str(config),
-        step_ref="calc1",
-        output_dir=str(output_dir),
-    )
+    assert result == ExitCode.RUNTIME_ERROR
+    assert "legacy_workflow_not_executable" in capsys.readouterr().err
+    mock_rerun.assert_not_called()
     mock_workflow.assert_not_called()

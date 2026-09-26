@@ -63,10 +63,8 @@ from confflow.remote.envelope import (
     ExecutionDefinition,
     InputBundleManifest,
     ResultBundle,
-    ResultEntry,
     StructureBundleEntry,
     WorkerHandoffV2,
-    bundle_entry_digest,
     canonical_envelope_bytes,
 )
 from confflow.remote.result_bundle import (
@@ -74,9 +72,7 @@ from confflow.remote.result_bundle import (
     package_result_bundle,
     read_result_bundle,
 )
-from confflow.remote.transport import build_execution_definition
 from confflow.remote.worker import WorkerError, run_worker_envelope
-from confflow.workflow.v4.scientific import resolve_scientific_parameters
 from tests.v4._builders import (
     assemble,
     calc_step,
@@ -362,7 +358,9 @@ def local_context(
     )
 
 
-def make_handoff(*, plan: Any, item: Any, context: ItemExecutionContext, attempt: int, token: str) -> Any:
+def make_handoff(
+    *, plan: Any, item: Any, context: ItemExecutionContext, attempt: int, token: str
+) -> Any:
     """Build a V3 handoff envelope through the frozen production builder.
 
     The envelope is assembled by ``RemoteTransport._build_handoff`` against
@@ -915,7 +913,9 @@ class TestResultPackaging:
         )
         local = WorkItemExecutor().execute(item, context)
         assert local.is_completed
-        handoff = make_handoff(plan=plan, item=item, context=context, attempt=1, token="remote:x:attempt-1")
+        handoff = make_handoff(
+            plan=plan, item=item, context=context, attempt=1, token="remote:x:attempt-1"
+        )
         with pytest.raises(ResultBundleError):
             package_result_bundle(
                 work_item_result=local,
@@ -931,14 +931,13 @@ class TestReadResultBundle:
 
     @staticmethod
     def _measured_bundle_env() -> dict[str, Any]:
-        """Verified worker-measured environment over fixed test bytes."""
+        """Verify worker-measured environment over fixed test bytes."""
         from confflow.execution.contracts import ExecutionEnvironment
 
         return ExecutionEnvironment(
             program="orca",
             program_version="test",
-            executable_digest="sha256:"
-            + hashlib.sha256(b"worker-valid-bundle-env").hexdigest(),
+            executable_digest="sha256:" + hashlib.sha256(b"worker-valid-bundle-env").hexdigest(),
         ).to_dict()
 
     def _write_valid_bundle(self, path: Path) -> ResultBundle:
@@ -1056,7 +1055,9 @@ class TestWorkerErrors:
         )
         worker_root = tmp_path / "worker"
         worker_root.mkdir(parents=True, exist_ok=True)
-        handoff = make_handoff(plan=plan, item=item, context=context, attempt=1, token="remote:real:attempt-1")
+        handoff = make_handoff(
+            plan=plan, item=item, context=context, attempt=1, token="remote:real:attempt-1"
+        )
         handoff_path = write_handoff_file(handoff, worker_root / "handoff.json")
         with pytest.raises(WorkerError, match="launch token"):
             run_worker_envelope(
@@ -1091,7 +1092,9 @@ class TestWorkerErrors:
             NativeProcessSupervisor(),
             ["normal_termination"],
         )
-        handoff = make_handoff(plan=plan, item=item, context=context, attempt=1, token="remote:x:attempt-1")
+        handoff = make_handoff(
+            plan=plan, item=item, context=context, attempt=1, token="remote:x:attempt-1"
+        )
         edited = ExecutionDefinition(
             **{**handoff.execution.model_dump(mode="json"), "program": "bogus"}
         )

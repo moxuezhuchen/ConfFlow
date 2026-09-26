@@ -46,12 +46,6 @@ from confflow.domain.completion import CompletionMode, CompletionPolicy, StepSta
 from confflow.execution import ExecutionBinding
 from confflow.execution.batch import BatchStepExecutor, StepExecutionRequest
 from confflow.execution.checks_standard import CHECKS
-from confflow.execution.native import (
-    GeometryOutput,
-    NativeResult,
-    ProducedFile,
-    ProgramName,
-)
 from confflow.execution.process import NativeProcessSupervisor
 from confflow.execution.profile_path_endpoints import PathEndpointsProfile
 from confflow.execution.profile_standard import PROFILES as STANDARD_PROFILES
@@ -59,7 +53,6 @@ from confflow.execution.recovery_standard import RECOVERIES
 from confflow.execution.work_item_executor import WorkItemExecutor
 from confflow.persistence.contracts import StoredWorkItemStatus, store_path
 from confflow.persistence.work_items import SqliteWorkItemStore
-from confflow.programs.orca.path import parse_path_endpoints
 from confflow.programs.orca.rendering import sanitize_job_name as orca_job_name
 from confflow.programs.registry import get_program_adapter
 from tests.v4._builders import (
@@ -75,7 +68,6 @@ from tests.v4.fakes.fake_irc import (
     FORWARD_POINT,
     REVERSE_ENERGY,
     REVERSE_POINT,
-    parse_inp_coordinates,
 )
 
 FAKES_DIR = Path(__file__).resolve().parent / "fakes"

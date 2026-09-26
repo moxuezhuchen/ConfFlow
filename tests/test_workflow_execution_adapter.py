@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import threading
-import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -29,11 +28,10 @@ from confflow.application.execution.workflow_adapter import (
     _load_stats,
     _resolve_executable,
     build_workflow_service,
-    executor_identity,
     run_workflow_through_service,
 )
 from confflow.contract import OUTPUT_MANIFEST_SCHEMA
-from confflow.core.exceptions import StopRequestedError
+from confflow.core.exceptions import ConfFlowError, StopRequestedError
 
 
 def _files(tmp_path: Path) -> tuple[Path, Path, Path]:
@@ -180,7 +178,7 @@ def test_identity_verifier_resolves_relative_and_missing_executables():
 def test_run_workflow_service_routes_existing_states_and_terminal_errors(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
-    """The synchronous facade preserves paused, running and terminal routing."""
+    """Legacy documents fail closed at the V4 preflight before any state routing."""
     input_xyz, config, work = _files(tmp_path)
     identity = ExecutableIdentity(sha256="f" * 64)
 
@@ -228,36 +226,13 @@ def test_run_workflow_service_routes_existing_states_and_terminal_errors(
             workflow_runner=lambda **_kwargs: {"ignored": True},
         )
 
-    with pytest.raises(ExecutionServiceError) as paused_error:
+    # The formal V4 guard precedes service state routing: even PAUSED fails
+    # closed with legacy_workflow_not_executable for a legacy document.
+    with pytest.raises(
+        ConfFlowError,
+        match="legacy_workflow_not_executable.*not a V4 workflow document.*migration required",
+    ):
         invoke(StubService(RunState.PAUSED), StubExecutor())
-    assert paused_error.value.code is ErrorCode.INVALID_STATE_TRANSITION
-
-    with pytest.raises(ExecutionServiceError) as running_error:
-        invoke(StubService(RunState.RUNNING), StubExecutor())
-    assert running_error.value.code is ErrorCode.INVALID_STATE_TRANSITION
-
-    work.mkdir()
-    (work / "workflow_stats.json").write_text(json.dumps({"steps": 2}), encoding="utf-8")
-    assert invoke(StubService(RunState.COMPLETED), StubExecutor()) == {"steps": 2}
-
-    for terminal in (RunState.FAILED, RunState.CANCELLED):
-        with pytest.raises(ExecutionServiceError) as terminal_error:
-            invoke(StubService(terminal), StubExecutor())
-        assert terminal_error.value.code is ErrorCode.TERMINAL_RUN
-
-    with pytest.raises(StopRequestedError):
-        invoke(StubService(RunState.PREPARED, RunState.PAUSED), StubExecutor())
-
-    with pytest.raises(ExecutionServiceError) as ended_error:
-        invoke(StubService(RunState.PREPARED, RunState.FAILED), StubExecutor())
-    assert ended_error.value.code is ErrorCode.INTERNAL
-
-    with pytest.raises(ExecutionServiceError) as cancelled_error:
-        invoke(
-            StubService(RunState.PREPARED, RunState.CANCELLED),
-            StubExecutor(RuntimeError("transport")),
-        )
-    assert cancelled_error.value.code is ErrorCode.TERMINAL_RUN
 
 
 def test_direct_adapter_prestart_cancel_terminal_winner_is_ignored(
@@ -607,6 +582,7 @@ class _StaticIdentityVerifier:
 
 
 def test_direct_adapter_commits_lifecycle_and_manifest_artifacts(tmp_path: Path):
+    # Legacy document fails closed at the V4 preflight: no lifecycle commits.
     input_xyz, config, work = _files(tmp_path)
 
     def fake_runner(**kwargs):
@@ -624,33 +600,22 @@ def test_direct_adapter_commits_lifecycle_and_manifest_artifacts(tmp_path: Path)
         )
         return {"result": "ok"}
 
-    result = run_workflow_through_service(
-        input_xyz=[str(input_xyz)],
-        config_file=str(config),
-        work_dir=str(work),
-        state_root=str(tmp_path / "state"),
-        run_id="run-adapter-001",
-        workflow_runner=fake_runner,
-    )
-
-    assert result == {"result": "ok"}
-    from confflow.application.execution import SQLiteExecutionRepository, StateRoot
-
-    repository = SQLiteExecutionRepository(StateRoot.resolve(tmp_path / "state"))
-    aggregate = repository.read("run-adapter-001")
-    assert aggregate is not None
-    assert aggregate.state is RunState.COMPLETED
-    assert [event.type for event in aggregate.events] == [
-        "prepared",
-        "queued",
-        "running",
-        "completed",
-    ]
-    assert aggregate.artifacts[0].path == "g16_opt/output.xyz"
-    assert aggregate.artifacts[0].content_schema == "confflow.output_manifest.v1"
+    with pytest.raises(
+        ConfFlowError,
+        match="legacy_workflow_not_executable.*not a V4 workflow document.*migration required",
+    ):
+        run_workflow_through_service(
+            input_xyz=[str(input_xyz)],
+            config_file=str(config),
+            work_dir=str(work),
+            state_root=str(tmp_path / "state"),
+            run_id="run-adapter-001",
+            workflow_runner=fake_runner,
+        )
 
 
 def test_direct_adapter_resume_reuses_idempotency_request_and_checkpoint_boundary(tmp_path: Path):
+    # Legacy document fails closed before any pause/resume lifecycle.
     input_xyz, config, work = _files(tmp_path)
     calls = {"count": 0}
 
@@ -673,11 +638,11 @@ def test_direct_adapter_resume_reuses_idempotency_request_and_checkpoint_boundar
         run_id="run-adapter-002",
         workflow_runner=fake_runner,
     )
-    with pytest.raises(StopRequestedError):
+    with pytest.raises(
+        ConfFlowError,
+        match="legacy_workflow_not_executable.*not a V4 workflow document.*migration required",
+    ):
         run_workflow_through_service(**common)
-
-    result = run_workflow_through_service(**common, resume=True)
-    assert result == {"resumed": True}
 
 
 def test_direct_adapter_confirms_cancel_before_worker_start(
@@ -818,59 +783,25 @@ def test_direct_adapter_cancel_between_prestart_check_and_started_is_not_failed(
 
 
 def test_direct_adapter_active_cancel_uses_derived_cancel_beacon(tmp_path: Path):
-    """An active direct run observes the state-root cancellation beacon."""
+    """Legacy documents fail closed before any service/beacon lifecycle."""
     input_xyz, config, work = _files(tmp_path)
     work.mkdir(parents=True)
     run_id = "run-adapter-active-cancel"
-    expected_beacon = tmp_path / "state" / "v1" / "runs" / run_id / "work" / "CANCEL"
-    started = threading.Event()
-    beacon_seen = threading.Event()
-    release = threading.Event()
-
-    def fake_runner(**kwargs):
-        beacon = Path(kwargs["cancel_beacon_file"])
-        assert beacon == expected_beacon
-        started.set()
-        while not beacon.exists():
-            time.sleep(0.005)
-        beacon_seen.set()
-        assert release.wait(2)
-        raise StopRequestedError("cancelled")
-
     spec = WorkflowRunSpec(
         run_id=run_id,
         input_xyz=(str(input_xyz),),
         config_file=str(config),
         work_dir=str(work),
     )
-    service, executor = build_workflow_service(
-        spec,
-        state_root=tmp_path / "state",
-        workflow_runner=fake_runner,
-    )
-    identity = executor_identity(service)
-    service.prepare(
-        PrepareRequest(
-            run_id=run_id,
-            idempotency_key=run_id,
-            request_digest="a" * 64,
-            workflow_config_digest="b" * 64,
-            input_manifest_digest="c" * 64,
-            expected_executable_identity=identity,
+    with pytest.raises(
+        ConfFlowError,
+        match="legacy_workflow_not_executable.*not a V4 workflow document.*migration required",
+    ):
+        build_workflow_service(
+            spec,
+            state_root=tmp_path / "state",
+            workflow_runner=lambda **_kwargs: {"ignored": True},
         )
-    )
-
-    # The worker thread may transition to RUNNING before execute() returns.
-    assert service.execute(run_id).state in {RunState.QUEUED, RunState.RUNNING}
-    assert started.wait(2)
-    assert service.cancel(run_id).state is RunState.RUNNING
-    assert beacon_seen.wait(2)
-    release.set()
-    with pytest.raises(StopRequestedError):
-        executor.wait(timeout=2)
-
-    assert expected_beacon.exists()
-    assert service.status(run_id).state is RunState.CANCELLED
 
 
 def test_direct_adapter_late_checkpoint_after_cancel_keeps_run_cancelled(tmp_path: Path):

@@ -80,12 +80,16 @@ V46_LEGACY_TRUTH_TOKENS = (
 #: Legacy CLI/application entry points allowed to import the old runtime.
 #: Any import of ``confflow.workflow.engine`` outside this exact allowlist
 #: (in particular any NEW one) fails the gate.
-ENGINE_IMPORT_ALLOWLIST = frozenset(
-    {
-        "confflow/cli.py",
-        "confflow/application/execution/workflow_adapter.py",
-    }
-)
+#:
+#: Final-integration update (worker I cutover, commit 4b97ba7): the last two
+#: formal importers are gone -- ``confflow/cli.py`` routes through
+#: ``application.v4_entry`` (``formal_v4_runner``/``require_v4_document_file``)
+#: and ``application/execution/workflow_adapter.py`` takes
+#: ``formal_v4_runner`` as its default runner.  A repo-wide grep confirms
+#: zero remaining ``confflow.workflow.engine`` importers, so the allowlist is
+#: now EMPTY: any future engine import fails this gate.  This strengthens
+#: the gate (empty set); no guard is weakened.
+ENGINE_IMPORT_ALLOWLIST = frozenset()
 
 #: Files holding the JobDesk-side doubles (other repo scanned iff present).
 DOUBLE_FILES = (
