@@ -30,6 +30,7 @@ load; resolvers run inside functions on the worker side.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any, Final, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -94,7 +95,7 @@ def _jsonable(value: Any) -> Any:
         return [_jsonable(item) for item in value]
     if isinstance(value, list):
         return [_jsonable(item) for item in value]
-    if isinstance(value, dict):
+    if isinstance(value, Mapping):
         return {key: _jsonable(item) for key, item in value.items()}
     return value
 
@@ -108,6 +109,12 @@ class StructureBundleEntry(BaseModel):
     structure_id: str = Field(min_length=1)
     payload: dict[str, Any]
     digest: str = Field(pattern=_DIGEST_PATTERN)
+    port: str = Field(default="structure", min_length=1)
+    """Named input slot this structure fills (``structure`` for the
+    standard driving port; ``reactant``/``product``/``guess`` for named
+    inputs).  The worker rebuilds slots from this field, never from
+    entry order.  Defaulted so V4-4 envelopes without the field still
+    validate (backward-compatible V2 extension for V4-5 named inputs)."""
 
 
 class ArtifactBundleEntry(BaseModel):

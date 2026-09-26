@@ -22,7 +22,7 @@ from __future__ import annotations
 import os
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from ..domain._immutable import FrozenDict
@@ -104,6 +104,7 @@ def build_input_bundle_manifest(
                     structure_id=record.id,
                     payload=payload,
                     digest=bundle_entry_digest("structure", payload),
+                    port=port,
                 )
             )
     staged = artifact_bundle_files or {}
@@ -157,6 +158,19 @@ def build_input_bundle_manifest(
     return InputBundleManifest(entries=tuple(entries))
 
 
+def _thaw_jsonable(value: Any) -> Any:
+    """Deep-convert FrozenDict/Mapping nests to plain JSON containers."""
+    if isinstance(value, FrozenDict):
+        return {key: _thaw_jsonable(item) for key, item in value.items()}
+    if isinstance(value, Mapping):
+        return {key: _thaw_jsonable(item) for key, item in value.items()}
+    if isinstance(value, tuple):
+        return [_thaw_jsonable(item) for item in value]
+    if isinstance(value, list):
+        return [_thaw_jsonable(item) for item in value]
+    return value
+
+
 def build_execution_definition(
     *,
     program: str,
@@ -175,13 +189,15 @@ def build_execution_definition(
     contract_versions: dict[str, str],
 ) -> ExecutionDefinition:
     """Build the compiled execution definition from resolved values."""
-    native_map = dict(native) if isinstance(native, FrozenDict) else dict(native or {})
-    params_map = (
+    native_map = _thaw_jsonable(
+        dict(native) if isinstance(native, FrozenDict) else dict(native or {})
+    )
+    params_map = _thaw_jsonable(
         {name: dict(params) for name, params in check_params.items()}
         if isinstance(check_params, FrozenDict)
         else dict(check_params or {})
     )
-    recovery_map = (
+    recovery_map = _thaw_jsonable(
         dict(recovery_params)
         if isinstance(recovery_params, FrozenDict)
         else dict(recovery_params or {})

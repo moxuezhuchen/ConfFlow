@@ -335,12 +335,12 @@ def _rebuild_work_item(handoff: WorkerHandoffV2, staged_bundle: Any, worker_root
     """
     from ..execution.work_item_executor import DRIVING_STRUCTURE_PORT
 
-    structures: list[StructureRecord] = []
+    structures_by_port: dict[str, list[StructureRecord]] = {}
     artifact_entries: list[ArtifactBundleEntry] = []
     result_entries: list[ResultEntry] = []
     for entry in handoff.inputs.entries:
         if isinstance(entry, StructureBundleEntry):
-            structures.append(_structure_from_entry(entry))
+            structures_by_port.setdefault(entry.port, []).append(_structure_from_entry(entry))
         elif isinstance(entry, ArtifactBundleEntry):
             artifact_entries.append(entry)
         elif isinstance(entry, ResultEntry):
@@ -350,17 +350,30 @@ def _rebuild_work_item(handoff: WorkerHandoffV2, staged_bundle: Any, worker_root
                 "remote worker failed at stage 'rebuild work item inputs': "
                 f"unknown bundle entry {type(entry).__name__}"
             )
-    if len(structures) != 1:
+    driving = structures_by_port.get(DRIVING_STRUCTURE_PORT, [])
+    if len(driving) == 1 and len(structures_by_port) == 1:
+        structures = driving
+        structure_inputs = FrozenDict({DRIVING_STRUCTURE_PORT: StructureSet.of(structures[0])})
+    elif DRIVING_STRUCTURE_PORT not in structures_by_port and structures_by_port:
+        # Named-structure items carry slots (reactant/product/guess) and no
+        # driving port; slots rebuild by explicit port name, never by order.
+        structure_inputs = FrozenDict(
+            {
+                port: StructureSet.of(*records)
+                for port, records in sorted(structures_by_port.items())
+            }
+        )
+    else:
         raise WorkerError(
             "remote worker failed at stage 'rebuild work item inputs': "
-            f"expected exactly one driving structure entry, found {len(structures)}"
+            "expected exactly one driving structure entry or named slots, "
+            f"found ports {sorted(structures_by_port)}"
         )
     artifacts = _artifacts_from_entries(
         artifact_entries, staged_bundle=staged_bundle, worker_root=worker_root
     )
     results = ResultSet(tuple(_result_from_entry(entry) for entry in result_entries))
     resources = _resources_from_definition(handoff.execution)
-    structure_inputs = FrozenDict({DRIVING_STRUCTURE_PORT: StructureSet.of(structures[0])})
     artifact_inputs = FrozenDict(
         {role: ArtifactSet(tuple(references)) for role, references in sorted(artifacts.items())}
     )

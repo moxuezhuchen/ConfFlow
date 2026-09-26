@@ -42,6 +42,11 @@ from ..domain.work_item import (
 )
 from .checks import CHECK_DEFAULTS, CheckContext, ScientificCheck
 from .contracts import ExecutionBinding
+from .execution_adapters import (
+    DRIVING_STRUCTURE_PORT,
+    NAMED_STRUCTURES_ADAPTER,
+    resolve_named_slot_sets,
+)
 from .native import (
     CancelOutcome,
     MaterializedNativeInput,
@@ -69,10 +74,9 @@ __all__ = [
     "select_driving_structure",
 ]
 
-#: The only structure port the V4-2 executor drives natively.  Named
-#: multi-structure execution (reactant/product/guess) is representable in the
-#: compiler but executes in a later milestone with its own executor path.
-DRIVING_STRUCTURE_PORT = "structure"
+#: The driving structure port, re-exported from the execution-adapter
+#: authority so every seam agrees on the port name.
+#: (Defined in :mod:`confflow.execution.execution_adapters`.)
 
 _POLL_INTERVAL_SECONDS = 0.2
 
@@ -114,6 +118,22 @@ def select_driving_structure(work_item: WorkItem) -> StructureRecord:
     if not isinstance(record, StructureRecord):  # pragma: no cover - guarded by model
         raise DomainError(f"port {DRIVING_STRUCTURE_PORT!r} holds a non-structure value")
     return record
+
+
+def _is_named_execution(context: ItemExecutionContext) -> bool:
+    """Return whether *context* runs through the named-structures adapter."""
+    scientific = context.scientific
+    return scientific is not None and scientific.execution_adapter == NAMED_STRUCTURES_ADAPTER
+
+
+@dataclass(frozen=True, slots=True)
+class _NamedExecution:
+    """Validated named-slot execution inputs for one work item."""
+
+    reference: StructureRecord
+    slots: FrozenDict
+    mapping: Any
+    named: Any
 
 
 def error_result(
@@ -322,17 +342,32 @@ class WorkItemExecutor:
                 ),
                 timing=Timing(finished_at=wall_start, duration_seconds=0.0),
             )
-        try:
-            driving = select_driving_structure(work_item)
-        except DomainError as exc:
-            return self._finish_error(
-                work_item,
-                context,
-                NativeErrorCode.NATIVE_INPUT_ERROR,
-                str(exc),
-                wall_start,
-                monotonic_start,
-            )
+        named_execution: _NamedExecution | None = None
+        if _is_named_execution(context):
+            try:
+                named_execution = self._resolve_named_execution(work_item, context)
+                driving = named_execution.reference
+            except DomainError as exc:
+                return self._finish_error(
+                    work_item,
+                    context,
+                    NativeErrorCode.NATIVE_INPUT_ERROR,
+                    str(exc),
+                    wall_start,
+                    monotonic_start,
+                )
+        else:
+            try:
+                driving = select_driving_structure(work_item)
+            except DomainError as exc:
+                return self._finish_error(
+                    work_item,
+                    context,
+                    NativeErrorCode.NATIVE_INPUT_ERROR,
+                    str(exc),
+                    wall_start,
+                    monotonic_start,
+                )
         from ..workflow.v4.scientific import resolve_scientific_parameters
 
         effective, scientific_diagnostics = resolve_scientific_parameters(
@@ -363,6 +398,22 @@ class WorkItemExecutor:
                 monotonic_start,
                 diagnostics=tuple(diagnostics),
             )
+        if named_execution is not None:
+            # Named slots already agreed on (charge, multiplicity) inside
+            # _resolve_named_execution; the agreement must match the
+            # single-precedence effective values, never override them.
+            try:
+                self._check_named_effective(named_execution, effective)
+            except DomainError as exc:
+                return self._finish_error(
+                    work_item,
+                    context,
+                    NativeErrorCode.NATIVE_INPUT_ERROR,
+                    str(exc),
+                    wall_start,
+                    monotonic_start,
+                    diagnostics=tuple(diagnostics),
+                )
         item_dir = context.item_directory(work_item.logical_key)
         try:
             os.makedirs(item_dir, exist_ok=True)
@@ -377,6 +428,16 @@ class WorkItemExecutor:
                 monotonic_start,
                 diagnostics=tuple(diagnostics),
             )
+        if named_execution is not None:
+            extra_structures = named_execution.slots
+        else:
+            extra_structures = FrozenDict(
+                {
+                    port: value
+                    for port, value in work_item.named_inputs.structures.items()
+                    if port != DRIVING_STRUCTURE_PORT
+                }
+            )
         resolved = ResolvedCalculationInputs(
             structure=driving,
             charge=effective.charge,
@@ -385,13 +446,7 @@ class WorkItemExecutor:
             resources=work_item.resources,
             native=context.scientific.native,
             checkpoints=tuple(staged),
-            extra_structures=FrozenDict(
-                {
-                    port: value
-                    for port, value in work_item.named_inputs.structures.items()
-                    if port != DRIVING_STRUCTURE_PORT
-                }
-            ),
+            extra_structures=extra_structures,
             step_id=context.step_id,
             work_item_id=work_item.id,
             logical_key=work_item.logical_key,
@@ -573,45 +628,29 @@ class WorkItemExecutor:
     # Internal pipeline stages
     # ------------------------------------------------------------------
 
-    @staticmethod
-    def _resubject_restart_artifacts(profile_output: ProfileOutput) -> ProfileOutput:
-        """Re-subject restart artifacts to the profile's output structure.
+    def _resubject_restart_artifacts(
+        self, profile_output: ProfileOutput, work_item: WorkItem
+    ) -> ProfileOutput:
+        """Re-subject restart artifacts to the profile's output structures.
 
-        Adapters discover artifacts against the *input* structure, but the
-        restart contract binds a checkpoint to the structure it restarts
-        *from* — the profile's output record (new identity for both
-        produced and passthrough geometry per the frozen subject rule).
-        With exactly one output structure the mapping is unambiguous;
-        otherwise artifacts pass through untouched.
+        Single-output items keep the V4-4 rule (restart artifacts redirect
+        to the sole output id).  Multi-output items follow the V4-5 rule:
+        artifacts already bound to one output keep it; input-bound
+        checkpoints stay work-item scoped and are never fanned out to all
+        outputs.  Anything else passes through untouched.
         """
-        from ..workflow.v4.artifact_flow import RESTART_ROLES, resolve_restart_subject
+        from .multi_output import resolve_multi_output_restart_subjects
 
-        output_ids = [record.id for record in profile_output.structures]
-        if len(output_ids) != 1:
-            return profile_output
-        import dataclasses as _dataclasses
-
-        semantics = profile_output.geometry_semantics
-        semantics_name = semantics.value if hasattr(semantics, "value") else str(semantics)
-        fixed = []
-        for ref in profile_output.artifacts:
-            if ref.role in RESTART_ROLES:
-                fixed.append(
-                    _dataclasses.replace(
-                        ref,
-                        subject_structure_id=resolve_restart_subject(
-                            native_subject=ref.subject_structure_id,
-                            output_structure_id=output_ids[0],
-                            geometry_semantics=semantics_name,
-                        ),
-                    )
-                )
-            else:
-                fixed.append(ref)
+        output_ids = tuple(record.id for record in profile_output.structures)
+        fixed = resolve_multi_output_restart_subjects(
+            artifacts=profile_output.artifacts,
+            output_ids=output_ids,
+            input_subject=self._subject_of(work_item),
+        )
         return ProfileOutput(
             structures=profile_output.structures,
             results=profile_output.results,
-            artifacts=ArtifactSet.of(*fixed) if fixed else ArtifactSet(),
+            artifacts=fixed,
             geometry_semantics=profile_output.geometry_semantics,
             diagnostics=profile_output.diagnostics,
         )
@@ -737,7 +776,7 @@ class WorkItemExecutor:
         staged_dir = os.path.join(item_dir, "staged")
         os.makedirs(staged_dir, exist_ok=True)
         run_root = os.path.realpath(context.run_root) if context.run_root else ""
-        driving_id = select_driving_structure(work_item).id
+        allowed_subjects = self._allowed_artifact_subjects(work_item, context)
         for port in sorted(work_item.named_inputs.artifacts):
             for index, artifact in enumerate(work_item.named_inputs.artifacts[port]):
                 locator = artifact.locator
@@ -745,12 +784,13 @@ class WorkItemExecutor:
                     continue
                 if (
                     artifact.subject_structure_id is not None
-                    and artifact.subject_structure_id != driving_id
+                    and artifact.subject_structure_id not in allowed_subjects
                 ):
                     raise DomainError(
                         f"artifact {artifact.id!r} is bound to subject "
-                        f"{artifact.subject_structure_id!r}, not the driving "
-                        f"structure {driving_id!r}; refusing to stage"
+                        f"{artifact.subject_structure_id!r}, not one of the "
+                        f"item input structures {sorted(allowed_subjects)!r}; "
+                        "refusing to stage"
                     )
                 if not run_root:
                     raise DomainError(
@@ -931,7 +971,26 @@ class WorkItemExecutor:
                 discovered_artifacts=discovered,
             )
         )
-        profile_output = self._resubject_restart_artifacts(profile_output)
+        profile_output = self._resubject_restart_artifacts(profile_output, work_item)
+        if context.profile.name == "path_endpoints" and len(profile_output.structures) != 2:
+            return self._finish_error(
+                work_item,
+                context,
+                "incomplete_path",
+                "reaction-path profile did not yield exactly two endpoints; "
+                "refusing to emit a partial path",
+                wall_start,
+                monotonic_start,
+                diagnostics=tuple(
+                    list(base_diagnostics)
+                    + list(native_result.parser_diagnostics)
+                    + list(profile_output.diagnostics)
+                ),
+                details={
+                    "emitted_structures": len(profile_output.structures),
+                    "profile": context.profile.name,
+                },
+            )
         diagnostics = (
             list(base_diagnostics)
             + list(native_result.parser_diagnostics)
@@ -1252,12 +1311,66 @@ class WorkItemExecutor:
             metadata=recovered.metadata,
         )
 
+    def _resolve_named_execution(
+        self, work_item: WorkItem, context: ItemExecutionContext
+    ) -> _NamedExecution:
+        """Validate named-slot inputs plus atom mapping before any launch.
+
+        Structural slots resolve first; semantic cardinality/group rules
+        come from :mod:`confflow.execution.named_structures`; atom
+        correspondence comes from :mod:`confflow.execution.atom_mapping`.
+        Every failure raises a :class:`DomainError` so callers report a
+        typed ``native_input_error`` with zero native invocations.  The
+        executor never understands QST2/QST3/NEB — only slots, mapping,
+        and compatibility.
+        """
+        from .atom_mapping import parse_atom_mapping, validate_atom_mapping
+        from .execution_adapters import GUESS_SLOT
+        from .named_structures import resolve_named_inputs, validate_named_compatibility
+
+        slots = resolve_named_slot_sets(work_item)
+        guess_sets = slots.get(GUESS_SLOT)
+        require_guess = guess_sets is not None and len(guess_sets) > 0
+        named = resolve_named_inputs(work_item, require_guess=require_guess)
+        validate_named_compatibility(named)
+        mapping = parse_atom_mapping(context.scientific.native.get("atom_mapping"))
+        slot_atoms = {
+            port: tuple(value[0].atoms) for port, value in slots.items() if len(value) > 0
+        }
+        validate_atom_mapping(mapping, slot_atoms)
+        return _NamedExecution(reference=named.reactant, slots=slots, mapping=mapping, named=named)
+
+    @staticmethod
+    def _check_named_effective(named_execution: _NamedExecution, effective: Any) -> None:
+        """Require slot-agreed charge/mult to match the effective values."""
+        from .named_structures import validate_named_compatibility
+
+        charge, multiplicity = validate_named_compatibility(named_execution.named)
+        if charge != effective.charge or multiplicity != effective.multiplicity:
+            raise DomainError(
+                "named-slot charge/multiplicity "
+                f"({charge!r}, {multiplicity!r}) disagree with the resolved "
+                f"effective values ({effective.charge!r}, {effective.multiplicity!r})"
+            )
+
     def _resolved_inputs(
         self, work_item: WorkItem, context: ItemExecutionContext
     ) -> ResolvedCalculationInputs:
         from ..workflow.v4.scientific import resolve_scientific_parameters
 
-        driving = select_driving_structure(work_item)
+        if _is_named_execution(context):
+            named_execution = self._resolve_named_execution(work_item, context)
+            driving = named_execution.reference
+            extra = named_execution.slots
+        else:
+            driving = select_driving_structure(work_item)
+            extra = FrozenDict(
+                {
+                    port: value
+                    for port, value in work_item.named_inputs.structures.items()
+                    if port != DRIVING_STRUCTURE_PORT
+                }
+            )
         effective, _ = resolve_scientific_parameters(
             structure=driving,
             overrides=context.scientific.overrides,
@@ -1271,21 +1384,34 @@ class WorkItemExecutor:
             resources=work_item.resources,
             native=context.scientific.native,
             checkpoints=(),
-            extra_structures=FrozenDict(
-                {
-                    port: value
-                    for port, value in work_item.named_inputs.structures.items()
-                    if port != DRIVING_STRUCTURE_PORT
-                }
-            ),
+            extra_structures=extra,
             step_id=context.step_id,
             work_item_id=work_item.id,
             logical_key=work_item.logical_key,
         )
 
     @staticmethod
+    def _allowed_artifact_subjects(work_item: WorkItem, context: ItemExecutionContext) -> set[str]:
+        """Return the input structure ids artifacts may be bound to.
+
+        Standard items allow exactly the driving structure; named items
+        allow every named slot structure.  Anything else fails closed at
+        staging, before any native launch.
+        """
+        if _is_named_execution(context):
+            return {
+                record.id for sets in work_item.named_inputs.structures.values() for record in sets
+            }
+        return {select_driving_structure(work_item).id}
+
+    @staticmethod
     def _subject_of(work_item: WorkItem) -> str | None:
         try:
             return select_driving_structure(work_item).id
         except DomainError:
-            return None
+            pass
+        reactant = work_item.named_inputs.structures.get("reactant")
+        if reactant is not None and len(reactant) == 1:
+            record = reactant[0]
+            return str(record.id) if isinstance(record, StructureRecord) else None
+        return None

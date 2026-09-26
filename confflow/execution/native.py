@@ -31,11 +31,13 @@ __all__ = [
     "GeometryOutput",
     "InputFile",
     "MaterializedNativeInput",
+    "NativeEnsembleMember",
     "NativeError",
     "NativeErrorCode",
     "NativeExecutionRequest",
     "NativeExecutionResult",
     "NativeHandle",
+    "NativePathEndpoint",
     "NativeResult",
     "NativeStatus",
     "ParsedGeometry",
@@ -107,6 +109,85 @@ class ProducedFile:
 
 
 @dataclass(frozen=True, slots=True)
+class NativePathEndpoint:
+    """One parsed reaction-path endpoint (IRC/NEB direction).
+
+    A parser fact, not a workflow judgment: ``direction`` is the native
+    path direction marker (``"forward"`` or ``"reverse"``), never a
+    reactant/product claim.  Only endpoints with an explicit native
+    direction marker may be reported; silently inferring a direction from
+    parser order is forbidden.
+    """
+
+    direction: str
+    geometry: ParsedGeometry
+    point_ordinal: int | None = None
+    energy_hartree: float | None = None
+    converged: bool = True
+
+    def __post_init__(self) -> None:
+        if self.direction not in ("forward", "reverse"):
+            raise ValueError(
+                f"path direction must be 'forward' or 'reverse', got {self.direction!r}"
+            )
+        if not isinstance(self.geometry, ParsedGeometry):
+            raise TypeError("geometry must be a ParsedGeometry")
+        if self.point_ordinal is not None and (
+            isinstance(self.point_ordinal, bool)
+            or not isinstance(self.point_ordinal, int)
+            or self.point_ordinal < 0
+        ):
+            raise ValueError("point_ordinal must be an integer >= 0 or None")
+        if self.energy_hartree is not None and (
+            isinstance(self.energy_hartree, bool)
+            or not isinstance(self.energy_hartree, (int, float))
+        ):
+            raise TypeError("energy_hartree must be a number or None")
+        if not isinstance(self.converged, bool):
+            raise TypeError("converged must be a boolean")
+
+
+@dataclass(frozen=True, slots=True)
+class NativeEnsembleMember:
+    """One parsed ensemble/conformer member (GOAT/NEB images).
+
+    ``member_index`` is the native member identity (conformer number,
+    image number) as reported by the program, never the parser's encounter
+    order.  When the native output carries no stable member identity the
+    parser must use the documented deterministic fallback order and say so
+    in ``native_metadata``, never silently.
+    """
+
+    member_index: int
+    geometry: ParsedGeometry
+    energy_hartree: float | None = None
+    metadata: FrozenDict = field(default_factory=FrozenDict)
+    role: str = "conformer"
+
+    def __post_init__(self) -> None:
+        if (
+            isinstance(self.member_index, bool)
+            or not isinstance(self.member_index, int)
+            or self.member_index < 0
+        ):
+            raise ValueError("member_index must be an integer >= 0")
+        if not isinstance(self.geometry, ParsedGeometry):
+            raise TypeError("geometry must be a ParsedGeometry")
+        if self.energy_hartree is not None and (
+            isinstance(self.energy_hartree, bool)
+            or not isinstance(self.energy_hartree, (int, float))
+        ):
+            raise TypeError("energy_hartree must be a number or None")
+        if not isinstance(self.metadata, FrozenDict):
+            object.__setattr__(self, "metadata", FrozenDict(self.metadata))
+        if self.role not in ("conformer", "neb_image", "neb_ts_candidate"):
+            raise ValueError(
+                "member role must be 'conformer', 'neb_image', or "
+                f"'neb_ts_candidate', got {self.role!r}"
+            )
+
+
+@dataclass(frozen=True, slots=True)
 class NativeResult:
     """Parser facts about one native execution.
 
@@ -125,6 +206,8 @@ class NativeResult:
     produced_files: tuple[ProducedFile, ...] = ()
     parser_diagnostics: tuple[Diagnostic, ...] = ()
     log_file_name: str = ""
+    path_endpoints: tuple[NativePathEndpoint, ...] = ()
+    ensemble_members: tuple[NativeEnsembleMember, ...] = ()
 
     def __post_init__(self) -> None:
         if not isinstance(self.program, ProgramName):
@@ -144,6 +227,8 @@ class NativeResult:
         object.__setattr__(self, "frequencies_cm", tuple(self.frequencies_cm))
         object.__setattr__(self, "produced_files", tuple(self.produced_files))
         object.__setattr__(self, "parser_diagnostics", tuple(self.parser_diagnostics))
+        object.__setattr__(self, "path_endpoints", tuple(self.path_endpoints))
+        object.__setattr__(self, "ensemble_members", tuple(self.ensemble_members))
 
     @property
     def energy(self) -> float | None:
