@@ -36,7 +36,7 @@ from confflow.execution.work_item_executor import (
 from confflow.persistence.contracts import StoredWorkItemStatus, store_path
 from confflow.persistence.work_items import SqliteWorkItemStore
 from confflow.programs.registry import get_program_adapter
-from confflow.remote.transport import LocalTransport, RemoteTransport
+from confflow.remote.transport import RemoteTransport
 from confflow.workflow.v4.assembly import MaterializedOutputs, StepOutputs
 from tests.v4._builders import (
     assemble,
