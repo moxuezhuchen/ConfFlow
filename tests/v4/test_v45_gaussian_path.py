@@ -694,3 +694,200 @@ class TestParseQstRoute:
         with pytest.raises(ValueError) as excinfo:
             gaussian_named.parse_qst_route("B3LYP QST2 Opt", has_guess="yes")  # type: ignore[arg-type]
         _assert_native_input_error(excinfo)
+
+
+QST_SUCCESS_ENERGY = -76.0580000000
+
+
+def _qst_orientation_block(
+    rows: tuple[tuple[str, float, float, float], ...],
+) -> list[str]:
+    """Format a real ``Standard orientation`` table for fixture rows."""
+    lines = [
+        "                         Standard orientation:",
+        " ---------------------------------------------------------------------",
+        " Center     Atomic      Atomic             Coordinates (Angstroms)",
+        " Number     Number       Type             X           Y           Z",
+        " ---------------------------------------------------------------------",
+    ]
+    for center, (symbol, x, y, z) in enumerate(rows, start=1):
+        lines.append(
+            f"      {center}          {_Z_BY_SYMBOL[symbol]}           0"
+            f"        {x:.6f}    {y:.6f}   {z:.6f}"
+        )
+    lines.append(" ---------------------------------------------------------------------")
+    return lines
+
+
+def _qst_log(*, converged: bool = True) -> str:
+    """Assemble a minimal vendor-credible QST2 output log.
+
+    Grammar-faithful to real Gaussian 16 QST2 output (vendor
+    ``test1048.log``: ``Standard orientation`` tables with atomic
+    numbers, ``SCF Done`` energies, ``-- Stationary point found.``,
+    ``Normal termination``); content is synthetic, never copied vendor
+    text.  The error shape mirrors a live adapter-rendered QST2 run
+    (real g16 enters ``Berny optimization ... Search for a saddle
+    point ... LST/QST climbing`` then ``Error termination via Lnk1e``).
+    """
+    lines = [
+        " Entering Gaussian System, Link 0=g16",
+        " Gaussian Test Job: synthetic QST2 opt",
+        *_qst_orientation_block(FORWARD_ROWS),
+        f" SCF Done:  E(RHF) =  {QST_SUCCESS_ENERGY!r}     A.U. after   12 cycles",
+    ]
+    if converged:
+        lines.append("    -- Stationary point found.")
+        lines.append(" Normal termination of Gaussian 16")
+    else:
+        lines.append(" LST/QST climbing along tangent vector")
+        lines.append(" Error termination via Lnk1e")
+    return "\n".join(lines) + "\n"
+
+
+class TestQstOutputParsing:
+    """QST OUTPUT parsing against real Gaussian 16 log grammar.
+
+    Rendering acceptance (real g16 consumes the adapter QST2 input and
+    drives the QST optimizer) is necessary but not sufficient: the
+    output facts must come from the same native grammar the vendor
+    emits.  These tests parse vendor-credible logs through the
+    production parser (never a fake dialect).
+    """
+
+    def test_successful_qst2_output_parses(self) -> None:
+        from confflow.programs.gaussian import parsing as gaussian_parsing
+
+        text = _qst_log(converged=True)
+        assert gaussian_parsing.termination_reached(text) is True
+        energies, sources = gaussian_parsing.parse_energies(text)
+        assert energies["electronic"] == QST_SUCCESS_ENERGY
+        assert sources["electronic"] == "scf_done"
+        geometry = gaussian_parsing.parse_final_geometry(text)
+        assert geometry is not None
+        atoms, coords = geometry
+        assert atoms == WATER_ATOMS
+        assert coords == _expected_coords(FORWARD_ROWS)
+
+    def test_error_terminated_qst2_output_is_not_terminated(self) -> None:
+        from confflow.programs.gaussian import parsing as gaussian_parsing
+
+        text = _qst_log(converged=False)
+        assert gaussian_parsing.termination_reached(text) is False
+        energies, _ = gaussian_parsing.parse_energies(text)
+        assert energies["electronic"] == QST_SUCCESS_ENERGY
+
+    def test_adapter_qst2_result_end_to_end(self, tmp_path) -> None:
+        from confflow.domain._immutable import FrozenDict
+        from confflow.domain.resources import ResourceRequest
+        from confflow.execution.native import (
+            GeometryOutput,
+            ResolvedCalculationInputs,
+        )
+        from confflow.programs.gaussian.adapter import GaussianProgramAdapter
+
+        reactant = _slot("r")
+        product = _slot(
+            "p",
+            coords=(
+                (0.1, 0.0, 0.0),
+                (0.86, 0.59, 0.0),
+                (-0.66, 0.59, 0.0),
+            ),
+        )
+        inputs = ResolvedCalculationInputs(
+            structure=reactant,
+            charge=0,
+            multiplicity=1,
+            freeze=(),
+            resources=ResourceRequest(
+                cores_per_item=1, memory_per_item_bytes=2 * 1024**3
+            ),
+            native=FrozenDict({"keyword": "HF/STO-3G Opt(QST2)"}),
+            checkpoints=(),
+            extra_structures=FrozenDict(
+                {"reactant": (reactant,), "product": (product,)}
+            ),
+            step_id="s",
+            work_item_id="w",
+            logical_key="qstjob",
+            seed=None,
+        )
+        adapter = GaussianProgramAdapter()
+        materialized = adapter.materialize_native_input(inputs)
+        assert materialized.metadata["mode"] == "qst2"
+        log_name = "qstjob.log"
+        (tmp_path / log_name).write_text(_qst_log(converged=True))
+        result = adapter.parse_native_result(
+            work_dir=str(tmp_path),
+            log_file_name=log_name,
+            materialized=materialized,
+        )
+        assert result.terminated_normally is True
+        assert result.geometry_output == GeometryOutput.PRODUCED
+        assert result.final_geometry is not None
+        assert result.final_geometry.atoms == WATER_ATOMS
+        assert result.energies_hartree["electronic"] == QST_SUCCESS_ENERGY
+        assert result.native_metadata["electronic_source"] == "scf_done"
+
+    def test_adapter_qst3_mode_renders_and_parses(self, tmp_path) -> None:
+        from confflow.domain._immutable import FrozenDict
+        from confflow.domain.resources import ResourceRequest
+        from confflow.execution.native import (
+            GeometryOutput,
+            ResolvedCalculationInputs,
+        )
+        from confflow.programs.gaussian.adapter import GaussianProgramAdapter
+
+        reactant = _slot("r")
+        product = _slot(
+            "p",
+            coords=(
+                (0.1, 0.0, 0.0),
+                (0.86, 0.59, 0.0),
+                (-0.66, 0.59, 0.0),
+            ),
+        )
+        guess = _slot(
+            "g",
+            coords=(
+                (0.05, 0.0, 0.0),
+                (0.8, 0.6, 0.1),
+                (-0.7, 0.55, -0.05),
+            ),
+        )
+        inputs = ResolvedCalculationInputs(
+            structure=reactant,
+            charge=0,
+            multiplicity=1,
+            freeze=(),
+            resources=ResourceRequest(
+                cores_per_item=1, memory_per_item_bytes=2 * 1024**3
+            ),
+            native=FrozenDict({"keyword": "HF/STO-3G Opt(QST3)"}),
+            checkpoints=(),
+            extra_structures=FrozenDict(
+                {
+                    "reactant": (reactant,),
+                    "product": (product,),
+                    "guess": (guess,),
+                }
+            ),
+            step_id="s",
+            work_item_id="w",
+            logical_key="qstjob",
+            seed=None,
+        )
+        adapter = GaussianProgramAdapter()
+        materialized = adapter.materialize_native_input(inputs)
+        assert materialized.metadata["mode"] == "qst3"
+        log_name = "qstjob.log"
+        (tmp_path / log_name).write_text(_qst_log(converged=True))
+        result = adapter.parse_native_result(
+            work_dir=str(tmp_path),
+            log_file_name=log_name,
+            materialized=materialized,
+        )
+        assert result.terminated_normally is True
+        assert result.geometry_output == GeometryOutput.PRODUCED
+        assert result.energies_hartree["electronic"] == QST_SUCCESS_ENERGY

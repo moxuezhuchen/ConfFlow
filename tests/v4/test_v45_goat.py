@@ -2,10 +2,15 @@
 
 """V4-5 GOAT/ensemble capability: block rendering and member parsing.
 
-All multi-line log fixtures below are crafted fixtures for the strict
-``confflow-goat-v1`` dialect defined in
-``confflow.programs.orca.ensemble_parse``; they are not native ORCA output
-and make no claim to reproduce any ORCA release's GOAT report format.
+All multi-line log fixtures below speak real ORCA 6.1 GOAT grammar — the
+``# Final ensemble info #`` table, the ``Lowest energy conformer ... Eh``
+line, and multi-structure ``.finalensemble.xyz`` files whose comments read
+``<energy> converged=<bool>`` — verified line-for-line against an
+installed-binary butane/HF-3c GOAT run.  Fixtures are synthetic in content
+but grammatical in form; no test shells out to ORCA.  The seed tests prove
+the single-authority chain end to end: the typed step seed is the only
+seed, rendered by the program adapter as the verified native
+``RANDOMSEED`` key.
 """
 
 from __future__ import annotations
@@ -79,15 +84,11 @@ class TestRenderGoatBlocks:
                 "goat": {
                     "RANDOMSEED": 7,
                     "MaxIter": 50,
-                    "MaxConformers": 10,
-                    "EnergyWindow": 5.0,
                 }
             }
         )
         assert text == (
             "%goat\n"
-            "  EnergyWindow 5.0\n"
-            "  MaxConformers 10\n"
             "  MaxIter 50\n"
             "  RANDOMSEED 7\n"
             "end\n"
@@ -130,29 +131,36 @@ class TestRenderGoatBlocks:
         for bad in ("7", 7.5, True, None):
             with pytest.raises(ValueError, match="native_input_error"):
                 goat.render_goat_blocks({"goat": {"RANDOMSEED": bad}})
-        for bad in ("5.0", True, None):
-            with pytest.raises(ValueError, match="native_input_error"):
-                goat.render_goat_blocks({"goat": {"EnergyWindow": bad}})
 
     def test_out_of_range_rejected(self) -> None:
-        for key in ("MaxIter", "MaxConformers"):
-            with pytest.raises(ValueError, match="native_input_error"):
-                goat.render_goat_blocks({"goat": {key: 0}})
-            with pytest.raises(ValueError, match="native_input_error"):
-                goat.render_goat_blocks({"goat": {key: -2}})
-        # Seeds carry no positivity bound (the binary parses them).
-        for bad in (0, -1.5, float("nan"), float("inf")):
-            with pytest.raises(ValueError, match="native_input_error"):
-                goat.render_goat_blocks({"goat": {"EnergyWindow": bad}})
+        with pytest.raises(ValueError, match="native_input_error"):
+            goat.render_goat_blocks({"goat": {"MaxIter": 0}})
+        with pytest.raises(ValueError, match="native_input_error"):
+            goat.render_goat_blocks({"goat": {"MaxIter": -2}})
+        # Seeds carry no positivity bound (the binary parses zero and
+        # negative integers).
+        assert goat.render_goat_blocks({"goat": {"RANDOMSEED": 0}}) == (
+            "%goat\n  RANDOMSEED 0\nend\n"
+        )
+        assert goat.render_goat_blocks({"goat": {"RANDOMSEED": -3}}) == (
+            "%goat\n  RANDOMSEED -3\nend\n"
+        )
 
     def test_allowlist_contents(self) -> None:
-        assert goat.GOAT_BLOCK_KEYS == frozenset(
-            {"MaxIter", "MaxConformers", "EnergyWindow", "RANDOMSEED"}
-        )
+        assert goat.GOAT_BLOCK_KEYS == frozenset({"MaxIter", "RANDOMSEED"})
 
     def test_invented_seed_key_rejected(self) -> None:
         with pytest.raises(ValueError, match="native_input_error"):
             goat.render_goat_blocks({"goat": {"Seed": 7}})
+
+    def test_invented_conformer_keys_rejected(self) -> None:
+        # ``MaxConformers`` and ``EnergyWindow`` are not native ORCA 6.1
+        # vocabulary: the installed binary rejects both with
+        # "Unknown identifier", so rendering refuses them here.
+        with pytest.raises(ValueError, match="native_input_error"):
+            goat.render_goat_blocks({"goat": {"MaxConformers": 5}})
+        with pytest.raises(ValueError, match="native_input_error"):
+            goat.render_goat_blocks({"goat": {"EnergyWindow": 5.0}})
 
 
 class TestValidateGoatInputs:
@@ -324,3 +332,157 @@ class TestGoatTrajectoryFacts:
         assert facts["truncated"] is True
         garbage = eparse.goat_trajectory_facts("total garbage ((( \n")
         assert garbage["member_count"] == 0
+
+
+class TestGoatSeedSingleAuthority:
+    """One seed end to end: step seed -> digest -> RANDOMSEED -> envelope.
+
+    The typed step seed is the single stochastic authority.  It folds
+    into the scientific digest (so retry/resume and remote reuse never
+    mix seeds), the program adapter renders it as the verified native
+    ``RANDOMSEED`` key, recovery preserves it across attempts, and the
+    remote handoff carries it with the work-item digest.  Any
+    user-supplied native ``RANDOMSEED`` (even matching) is a second
+    authority and fails closed; the invented ``Seed`` key never existed
+    natively and is rejected as unknown vocabulary.
+    """
+
+    def _goat_inputs(self, seed: int | None, native_goat: dict | None = None):
+        from confflow.domain._immutable import FrozenDict
+        from confflow.domain.resources import ResourceRequest
+        from confflow.domain.structure import StructureRecord
+        from confflow.execution.native import ResolvedCalculationInputs
+
+        structure = StructureRecord(
+            id="s",
+            atoms=ATOMS,
+            coordinates=((0.0, 0.0, 0.0), (0.757, 0.586, 0.0), (-0.757, 0.586, 0.0)),
+            charge=0,
+            multiplicity=1,
+        )
+        user_goat = {"MaxIter": 5} if native_goat is None else dict(native_goat)
+        return ResolvedCalculationInputs(
+            structure=structure,
+            charge=0,
+            multiplicity=1,
+            freeze=(),
+            resources=ResourceRequest(
+                cores_per_item=1, memory_per_item_bytes=2 * 1024**3
+            ),
+            native=FrozenDict({"keyword": "HF-3c GOAT", "goat": user_goat}),
+            checkpoints=(),
+            extra_structures=FrozenDict({}),
+            step_id="s",
+            work_item_id="w",
+            logical_key="job",
+            seed=seed,
+        )
+
+    def test_step_seed_renders_native_randomseed(self) -> None:
+        from confflow.programs.orca.adapter import OrcaProgramAdapter
+
+        materialized = OrcaProgramAdapter().materialize_native_input(
+            self._goat_inputs(7)
+        )
+        content = next(
+            entry.content
+            for entry in materialized.files
+            if entry.name == "job.inp"
+        )
+        assert "\n  RANDOMSEED 7\n" in content
+
+    def test_same_seed_renders_byte_identical_input(self) -> None:
+        from confflow.programs.orca.adapter import OrcaProgramAdapter
+
+        first = OrcaProgramAdapter().materialize_native_input(self._goat_inputs(7))
+        second = OrcaProgramAdapter().materialize_native_input(self._goat_inputs(7))
+        assert [entry.content for entry in first.files] == [
+            entry.content for entry in second.files
+        ]
+
+    def test_distinct_seeds_render_distinct_inputs(self) -> None:
+        from confflow.programs.orca.adapter import OrcaProgramAdapter
+
+        first = OrcaProgramAdapter().materialize_native_input(self._goat_inputs(7))
+        second = OrcaProgramAdapter().materialize_native_input(self._goat_inputs(8))
+        assert [entry.content for entry in first.files] != [
+            entry.content for entry in second.files
+        ]
+
+    def test_missing_seed_fails_closed(self) -> None:
+        from confflow.programs.orca.adapter import OrcaProgramAdapter
+
+        with pytest.raises(ValueError, match="native_input_error.*seed"):
+            OrcaProgramAdapter().materialize_native_input(self._goat_inputs(None))
+
+    def test_native_randomseed_second_authority_rejected(self) -> None:
+        from confflow.programs.orca.adapter import OrcaProgramAdapter
+
+        with pytest.raises(ValueError, match="native_input_error.*second seed"):
+            OrcaProgramAdapter().materialize_native_input(
+                self._goat_inputs(7, native_goat={"MaxIter": 5, "RANDOMSEED": 7})
+            )
+
+    def test_seed_folds_into_scientific_payload(self) -> None:
+        from confflow.workflow.v4.document import ScientificDefinition
+
+        assert ScientificDefinition(seed=7).to_payload()["seed"] == 7
+        assert ScientificDefinition(seed=7).to_payload() != ScientificDefinition(
+            seed=8
+        ).to_payload()
+
+    def test_retry_preserves_seed(self) -> None:
+        from confflow.execution.recovery import RecoveryContext
+        from confflow.execution.recovery_standard import TsRescueScanPolicy
+
+        context = RecoveryContext(
+            profile_name="standard",
+            work_item_id="w",
+            step_id="s",
+            logical_key="job",
+            inputs=self._goat_inputs(7),
+            failed_native_result=None,
+        )
+        rebuilt = TsRescueScanPolicy()._modified_inputs(
+            context,
+            ((0.0, 0.0, 0.0), (0.757, 0.586, 0.0), (-0.757, 0.586, 0.0)),
+            "HF-3c GOAT",
+        )
+        assert rebuilt is not None
+        assert rebuilt.seed == 7
+
+    def test_remote_envelope_carries_seed_and_digest(self) -> None:
+        import hashlib
+
+        from confflow.domain.resources import ResourceRequest
+        from confflow.remote.transport import build_execution_definition
+
+        digest = "sha256:" + hashlib.sha256(b"goat-seed-7").hexdigest()
+
+        definition = build_execution_definition(
+            executor="native",
+            program="orca",
+            native={"keyword": "HF-3c GOAT", "goat": {"MaxIter": 5}},
+            seed=7,
+            transform=None,
+            execution_adapter="standard",
+            result_profile="ensemble",
+            checks=(),
+            check_params={},
+            recovery="none",
+            recovery_params={},
+            resources=ResourceRequest(
+                cores_per_item=1, memory_per_item_bytes=2 * 1024**3
+            ),
+            handoff_executable=None,
+            handoff_env={},
+            handoff_walltime_seconds=None,
+            charge=0,
+            multiplicity=1,
+            freeze=None,
+            step_semantic_digest=digest,
+            contract_versions={},
+        )
+        assert definition.seed == 7
+        assert "goat" in definition.native
+        assert "RANDOMSEED" not in definition.native["goat"]
