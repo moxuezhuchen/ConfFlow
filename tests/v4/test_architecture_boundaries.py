@@ -28,6 +28,8 @@ PACKAGE_ROOT = REPO_ROOT / "confflow"
 DOMAIN_ROOT = PACKAGE_ROOT / "domain"
 EXECUTION_ROOT = PACKAGE_ROOT / "execution"
 V4_ROOT = PACKAGE_ROOT / "workflow" / "v4"
+PERSISTENCE_ROOT = PACKAGE_ROOT / "persistence"
+PROGRAMS_ROOT = PACKAGE_ROOT / "programs"
 
 FORBIDDEN_IMPORT_PREFIXES = (
     "confflow.blocks",
@@ -107,6 +109,16 @@ FORBIDDEN_SYMBOLS = (
     "checkpoint_from",
     "auto_clean",
     "output_xyz",
+    "task_results",
+    "WorkflowStateV1",
+    "WorkflowStateV2",
+    "WorkflowStateV3",
+    "CheckpointManager",
+    "WorkflowStatsTracker",
+    "FailureTracker",
+    "TaskStatsCollector",
+    "delete_work_dir",
+    "binding_v2",
 )
 
 
@@ -189,9 +201,10 @@ class TestStaticImports:
             "confflow.execution",
             "confflow.workflow.v4",
             "confflow.programs",
+            "confflow.persistence",
         )
         offenders: list[tuple[str, str, int]] = []
-        for root in (V4_ROOT, EXECUTION_ROOT):
+        for root in (V4_ROOT, EXECUTION_ROOT, PERSISTENCE_ROOT, PROGRAMS_ROOT):
             for path in _iter_python_files(root):
                 for module, lineno in _imports(path):
                     if not module.startswith("confflow"):
@@ -201,9 +214,34 @@ class TestStaticImports:
                     offenders.append((str(path.relative_to(REPO_ROOT)), module, lineno))
         assert offenders == []
 
+    def test_persistence_imports_only_domain_and_self(self) -> None:
+        allowed_prefixes = ("confflow.domain", "confflow.persistence")
+        offenders: list[tuple[str, str, int]] = []
+        for path in _iter_python_files(PERSISTENCE_ROOT):
+            module = _module_name(path)
+            package_parts = module.split(".")
+            if path.name != "__init__.py":
+                package_parts = package_parts[:-1]
+            for raw, lineno in _imports(path):
+                relative = str(path.relative_to(REPO_ROOT))
+                if not raw.startswith("."):
+                    if raw.startswith("confflow") and not raw.startswith(allowed_prefixes):
+                        offenders.append((relative, raw, lineno))
+                    continue
+                level = len(raw) - len(raw.lstrip("."))
+                remainder = raw.lstrip(".")
+                if level - 1 > len(package_parts):
+                    offenders.append((relative, raw, lineno))
+                    continue
+                base = package_parts[: len(package_parts) - (level - 1)]
+                absolute = ".".join(base + ([remainder] if remainder else []))
+                if absolute.startswith("confflow") and not absolute.startswith(allowed_prefixes):
+                    offenders.append((relative, absolute, lineno))
+        assert offenders == []
+
     def test_forbidden_import_prefixes_absent_everywhere_in_v4_core(self) -> None:
         offenders: list[tuple[str, str, int]] = []
-        for root in (DOMAIN_ROOT, EXECUTION_ROOT, V4_ROOT):
+        for root in (DOMAIN_ROOT, EXECUTION_ROOT, V4_ROOT, PERSISTENCE_ROOT, PROGRAMS_ROOT):
             for path in _iter_python_files(root):
                 for module, lineno in _imports(path):
                     if module.startswith(FORBIDDEN_IMPORT_PREFIXES):
@@ -212,7 +250,7 @@ class TestStaticImports:
 
     def test_no_legacy_runtime_import_in_v4_core(self) -> None:
         offenders: list[tuple[str, str, int]] = []
-        for root in (DOMAIN_ROOT, EXECUTION_ROOT, V4_ROOT):
+        for root in (DOMAIN_ROOT, EXECUTION_ROOT, V4_ROOT, PERSISTENCE_ROOT, PROGRAMS_ROOT):
             for path in _iter_python_files(root):
                 for module, lineno in _imports(path):
                     if module in FORBIDDEN_LEGACY_MODULES:
@@ -221,7 +259,7 @@ class TestStaticImports:
 
     def test_no_forbidden_legacy_symbols_as_code(self) -> None:
         offenders: list[tuple[str, str, str]] = []
-        for root in (DOMAIN_ROOT, EXECUTION_ROOT, V4_ROOT):
+        for root in (DOMAIN_ROOT, EXECUTION_ROOT, V4_ROOT, PERSISTENCE_ROOT, PROGRAMS_ROOT):
             for path in _iter_python_files(root):
                 if path.name == "test_architecture_boundaries.py":
                     continue
@@ -259,11 +297,45 @@ class TestStaticCodeVocabulary:
 
     def test_v4_core_has_no_legacy_path_contracts(self) -> None:
         offenders: list[str] = []
-        for root in (EXECUTION_ROOT, V4_ROOT):
+        for root in (EXECUTION_ROOT, V4_ROOT, PERSISTENCE_ROOT, PROGRAMS_ROOT):
             for path in _iter_python_files(root):
                 text = _code_text_only(path.read_text(encoding="utf-8"))
                 if "output_path" in text:
                     offenders.append(str(path.relative_to(REPO_ROOT)))
+        assert offenders == []
+
+
+class TestStaticLegacyFilenameContracts:
+    """Legacy result-file contracts must not appear as code tokens.
+
+    ``result.xyz``/``failed.xyz`` contain dots, so the AST symbol scanner in
+    :class:`TestStaticImports` cannot catch them; this scan inspects the
+    docstring- and comment-stripped code text instead.
+    """
+
+    LEGACY_FILENAME_TOKENS = (
+        "result.xyz",
+        "failed.xyz",
+        "output_xyz",
+        "delete_work_dir",
+        "input_xyz",
+        "output_path",
+    )
+
+    def test_no_legacy_filename_contracts_as_code(self) -> None:
+        offenders: list[tuple[str, str]] = []
+        for root in (
+            DOMAIN_ROOT,
+            EXECUTION_ROOT,
+            V4_ROOT,
+            PERSISTENCE_ROOT,
+            PROGRAMS_ROOT,
+        ):
+            for path in _iter_python_files(root):
+                text = _code_text_only(path.read_text(encoding="utf-8"))
+                for token in self.LEGACY_FILENAME_TOKENS:
+                    if token in text:
+                        offenders.append((str(path.relative_to(REPO_ROOT)), token))
         assert offenders == []
 
 
@@ -322,7 +394,13 @@ class TestPackaging:
         import setuptools
 
         packages = set(setuptools.find_packages(where=str(REPO_ROOT)))
-        for expected in ("confflow.domain", "confflow.execution", "confflow.workflow.v4"):
+        for expected in (
+            "confflow.domain",
+            "confflow.execution",
+            "confflow.workflow.v4",
+            "confflow.persistence",
+            "confflow.programs",
+        ):
             assert expected in packages, expected
 
     def test_no_namespace_package_gaps(self) -> None:
