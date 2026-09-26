@@ -268,6 +268,29 @@ class WorkItemExecutor:
     def __init__(self) -> None:
         self._lock = threading.Lock()
 
+    @staticmethod
+    def _run_relative_prefix(context: ItemExecutionContext, work_item: WorkItem) -> str:
+        """Return the run-relative locator prefix for one item directory.
+
+        The prefix is the item directory's path relative to the run root,
+        so artifact locators stay portable under any work-base layout.  When
+        the item directory escapes the run root (or no run root is set),
+        fail closed: a locator that cannot be resolved durably must never
+        be emitted.
+        """
+        item_dir = context.item_directory(work_item.logical_key)
+        legacy = f"items/{context.step_id}/{sanitize_job_name(work_item.logical_key)}"
+        if not context.run_root:
+            return legacy
+        run_root = os.path.realpath(context.run_root)
+        relative = os.path.relpath(os.path.abspath(item_dir), run_root)
+        if relative == ".." or relative.startswith(f"..{os.sep}"):
+            raise DomainError(
+                f"item work directory {item_dir!r} escapes run root {run_root!r};"
+                " durable artifact locators require containment"
+            )
+        return relative.replace(os.sep, "/")
+
     # ------------------------------------------------------------------
     # Public entry point
     # ------------------------------------------------------------------
@@ -834,9 +857,10 @@ class WorkItemExecutor:
         cancellation_confirmed: bool,
         recovery_attempt: int = 0,
     ) -> WorkItemResult:
+        item_dir = context.item_directory(work_item.logical_key)
         discovered = context.adapter.discover_artifacts(
-            work_dir=context.item_directory(work_item.logical_key),
-            run_relative_prefix=f"items/{context.step_id}/{sanitize_job_name(work_item.logical_key)}",
+            work_dir=item_dir,
+            run_relative_prefix=self._run_relative_prefix(context, work_item),
             native_result=native_result,
             step_id=context.step_id,
             work_item_id=work_item.id,
