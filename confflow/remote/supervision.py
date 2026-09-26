@@ -168,11 +168,11 @@ def _workdir_holds_live_process(work_dir: str, *, owner: OwnerIdentity) -> bool:
             continue
         except Exception:
             return True
-        if not cwd:
+        if not cwd or not isinstance(cwd, str):
             continue
         try:
             resolved = Path(cwd).resolve(strict=False)
-        except OSError:
+        except Exception:
             return True
         if resolved == target or target in resolved.parents:
             return True
