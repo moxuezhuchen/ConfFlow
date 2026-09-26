@@ -108,16 +108,9 @@ def select_driving_structure(work_item: WorkItem) -> StructureRecord:
         structure on it.  Multi-structure execution is explicit future work,
         never positional guessing.
     """
-    structures = work_item.named_inputs.structures.get(DRIVING_STRUCTURE_PORT)
-    if structures is None or len(structures) != 1:
-        raise DomainError(
-            f"work item {work_item.logical_key!r} must carry exactly one structure "
-            f"on port {DRIVING_STRUCTURE_PORT!r} for standard execution"
-        )
-    record = structures[0]
-    if not isinstance(record, StructureRecord):  # pragma: no cover - guarded by model
-        raise DomainError(f"port {DRIVING_STRUCTURE_PORT!r} holds a non-structure value")
-    return record
+    from .execution_adapters import resolve_standard_structure
+
+    return resolve_standard_structure(work_item)
 
 
 def _is_named_execution(context: ItemExecutionContext) -> bool:

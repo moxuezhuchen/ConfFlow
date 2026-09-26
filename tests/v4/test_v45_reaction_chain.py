@@ -429,6 +429,65 @@ class TestRealQst2:
             }
             assert record.group_key is not None and record.group_key.startswith("rxn-")
 
+    def test_qst3_guess_slot(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """QST3 with reactant/product/guess through the same named path."""
+        import copy as _copy
+
+        monkeypatch.setenv("FAKE_MODE", "ts_candidate")
+        wrapper, count_file = _install_fake(tmp_path, monkeypatch, FAKE_G16, "g16")
+        run_root = str(tmp_path / "run")
+        document = self._qst_doc()
+        qst3 = _copy.deepcopy(document)
+        qst3_step = next(step for step in qst3["steps"] if step["id"] == "s_qst")
+        qst3_step["bindings"]["guess"] = {
+            "source": {"run": "guesses"},
+            "pairing": "by_group_key",
+            "cardinality": "one",
+        }
+        qst3_step["calculation"]["native"] = {
+            "keyword": "QST3 B3LYP/6-31G",
+            "atom_mapping": {"kind": "identity"},
+        }
+        qst3["inputs"]["guesses"] = {"kind": "structure", "cardinality": "many"}
+        plan = _compile(qst3)
+        group = "rxn-00"
+        assembly = assemble(
+            plan,
+            run_inputs(
+                structures={
+                    "reactants": StructureSet.of(structure("r00", group_key=group)),
+                    "products": StructureSet.of(structure("p00", group_key=group, offset=0.05)),
+                    "guesses": StructureSet.of(structure("g00", group_key=group, offset=0.02)),
+                }
+            ),
+        )
+        assert assembly.ok, [item.message for item in assembly.errors]
+        items = assembly.for_step("s_qst")
+        assert len(items) == 1
+        assert sorted(items[0].named_inputs.structures) == ["guess", "product", "reactant"]
+        with SqliteWorkItemStore.open(store_path(run_root, "s_qst")) as store:
+            result = _batch().execute_step_resumable(
+                _request(
+                    plan,
+                    "s_qst",
+                    tuple(items),
+                    run_root,
+                    str(wrapper),
+                    program="gaussian",
+                    checks=("normal_termination", "imaginary_frequency_count"),
+                ),
+                store=store,
+                run_root=run_root,
+                owner_token="ctl",
+            )
+        assert result.status is StepStatus.COMPLETED
+        assert result.summary["completed"] == 1
+        assert _native_count(count_file) == 1
+        (record,) = tuple(result.structures)
+        assert set(record.parent_ids) == {"r00", "p00", "g00"}
+        assert list(record.parent_ids) == ["r00", "p00", "g00"]
+        assert record.group_key == group
+
 
 class TestRealGoat:
     """GOAT ensemble through the real ORCA adapter."""
