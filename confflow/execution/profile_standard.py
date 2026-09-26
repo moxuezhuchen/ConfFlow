@@ -55,10 +55,13 @@ from ..domain.result import Provenance, ResultSet, ScientificResult
 from ..domain.structure import StructureRecord, StructureSet
 from ..domain.units import Unit
 from .native import GeometryOutput, NativeResult, ResolvedCalculationInputs
+from .profile_ensemble import EnsembleProfile
+from .profile_path_endpoints import PathEndpointsProfile
 from .profiles import (
     GeometrySemantics,
     ProfileContext,
     ProfileOutput,
+    ResultProfile,
     passthrough_structure_id,
     produced_structure_id,
 )
@@ -166,6 +169,29 @@ def _build_provenance(context: ProfileContext) -> Provenance:
     )
 
 
+def _named_parent_records(
+    inputs: ResolvedCalculationInputs,
+) -> tuple[StructureRecord, ...] | None:
+    """Return named-slot parents in slot order, or ``None`` for standard items.
+
+    When the inputs carry reactant/product slots (QST/NEB shapes), the
+    output structure descends from every present slot in semantic order
+    (reactant, product, guess) — never dict or random order.
+    """
+    slots = inputs.extra_structures
+    if not hasattr(slots, "get"):
+        return None
+    reactant = slots.get("reactant")
+    product = slots.get("product")
+    if reactant is None or product is None or not len(reactant) or not len(product):
+        return None
+    parents: list[StructureRecord] = [reactant[0], product[0]]
+    guess = slots.get("guess")
+    if guess is not None and len(guess):
+        parents.append(guess[0])
+    return tuple(parents)
+
+
 def _output_structure(context: ProfileContext) -> tuple[StructureRecord, GeometrySemantics]:
     """Build the single output structure for *context*.
 
@@ -179,6 +205,14 @@ def _output_structure(context: ProfileContext) -> tuple[StructureRecord, Geometr
     source = inputs.structure
     charge = inputs.charge if inputs.charge is not None else source.charge
     multiplicity = inputs.multiplicity if inputs.multiplicity is not None else source.multiplicity
+    parent_ids: tuple[str, ...] = (source.id,)
+    lineage_root_id = source.lineage_root_id
+    group_key = source.group_key
+    named_parents = _named_parent_records(inputs)
+    if named_parents is not None:
+        from .output_identity import multi_parent_lineage
+
+        parent_ids, lineage_root_id, group_key = multi_parent_lineage(named_parents)
     if native_result.geometry_output is GeometryOutput.PRODUCED and (
         native_result.final_geometry is not None
     ):
@@ -189,13 +223,13 @@ def _output_structure(context: ProfileContext) -> tuple[StructureRecord, Geometr
             coordinates=tuple(geometry.coordinates),
             charge=charge,
             multiplicity=multiplicity,
-            parent_ids=(source.id,),
-            lineage_root_id=source.lineage_root_id,
+            parent_ids=parent_ids,
+            lineage_root_id=lineage_root_id,
             source_step_id=context.step_id,
             source_work_item_id=context.work_item_id,
             role=None,
             ordinal=0,
-            group_key=source.group_key,
+            group_key=group_key,
             metadata=FrozenDict({}),
         )
         return record, GeometrySemantics.PRODUCED
@@ -205,13 +239,13 @@ def _output_structure(context: ProfileContext) -> tuple[StructureRecord, Geometr
         coordinates=tuple(source.coordinates),
         charge=charge,
         multiplicity=multiplicity,
-        parent_ids=(source.id,),
-        lineage_root_id=source.lineage_root_id,
+        parent_ids=parent_ids,
+        lineage_root_id=lineage_root_id,
         source_step_id=context.step_id,
         source_work_item_id=context.work_item_id,
         role=None,
         ordinal=0,
-        group_key=source.group_key,
+        group_key=group_key,
         metadata=FrozenDict({}),
     )
     return record, GeometrySemantics.PASSTHROUGH
@@ -344,5 +378,12 @@ class StandardResultProfile:
 
 
 #: Profile instances keyed by name, for the executor to consume and wire
-#: into the capability registry.
-PROFILES: dict[str, StandardResultProfile] = {"standard": StandardResultProfile()}
+#: into the capability registry.  ``path_endpoints`` normalizes bidirectional
+#: reaction-path output (IRC/NEB) into forward/reverse endpoint structures;
+#: ``ensemble`` normalizes conformer-ensemble output (GOAT) into member
+#: structures.  Both are full runtime implementations, not registry names.
+PROFILES: dict[str, ResultProfile] = {
+    "standard": StandardResultProfile(),
+    "path_endpoints": PathEndpointsProfile(),
+    "ensemble": EnsembleProfile(),
+}
