@@ -70,6 +70,7 @@ __all__ = [
     "WorkItemExecutor",
     "check_code",
     "error_result",
+    "hashed_item_slug",
     "sanitize_job_name",
     "select_driving_structure",
 ]
@@ -86,11 +87,29 @@ _MAX_RECOVERY_ROUNDS = 1
 
 
 def sanitize_job_name(logical_key: str) -> str:
-    """Return a filesystem-safe job name derived from a logical key."""
+    """Return a filesystem-safe job name derived from a logical key.
+
+    Presentation only (native file basenames).  Never a durable directory
+    locator: ``s:A:B`` and ``s:A_B`` both sanitize to ``s_A_B``.  Use
+    :func:`hashed_item_slug` for directories.
+    """
     cleaned = "".join(
         char if char.isalnum() or char in ("_", "-", ".") else "_" for char in logical_key
     )
     return cleaned.strip("._") or "job"
+
+
+def hashed_item_slug(work_item_id: str) -> str:
+    """Return a bounded collision-resistant directory slug for one item.
+
+    ``blake2b-120`` hex (30 chars) over the full ``wi:<logical_key>``
+    identity: injective for practical purposes, bounded length, never the
+    raw logical key.  Attempt isolation comes from the ``attempt_NNNN``
+    child, never from reusing one directory across retries.
+    """
+    if not isinstance(work_item_id, str) or not work_item_id:
+        raise DomainError("work_item_id must be a non-empty string for directory hashing")
+    return hashlib.blake2b(work_item_id.encode("utf-8"), digest_size=15).hexdigest()
 
 
 def check_code(code: NativeErrorCode | str) -> str:
@@ -201,11 +220,44 @@ class ItemExecutionContext:
     supervisor: ProcessSupervisor | None = None
     environment: Any = None
     poll_interval_seconds: float = _POLL_INTERVAL_SECONDS
+    attempt: int = 0
 
     def item_directory(self, logical_key: str) -> str:
-        """Return the deterministic work directory for a logical key."""
+        """Return the deterministic work directory for a logical key.
+
+        Legacy non-injective layout (``sanitize_job_name``); kept for
+        read-only migration inspection.  New production code must use
+        :meth:`durable_item_dir` / :meth:`attempt_dir`, which are
+        collision-resistant and attempt-isolated.
+        """
         base = self.work_base or os.path.join(self.run_root, "items")
         return os.path.join(base, self.step_id, sanitize_job_name(logical_key))
+
+    def durable_item_dir(self, work_item_id: str) -> str:
+        """Return the collision-resistant durable directory for one item."""
+        base = self.work_base or os.path.join(self.run_root, "items")
+        return os.path.join(base, self.step_id, hashed_item_slug(work_item_id))
+
+    def attempt_dir(self, work_item: Any) -> str:
+        """Return the attempt-isolated directory for one work item."""
+        logical = getattr(work_item, "logical_key", str(work_item))
+        work_id = getattr(work_item, "id", f"wi:{logical}")
+        attempt = int(self.attempt) if int(self.attempt) >= 0 else 0
+        return os.path.join(self.durable_item_dir(str(work_id)), f"attempt_{attempt:04d}")
+
+    def run_relative_prefix(self, work_item: Any) -> str:
+        """Return the run-relative locator prefix for one attempt directory."""
+        directory = self.attempt_dir(work_item)
+        if not self.run_root:
+            return os.path.relpath(directory, os.path.abspath(os.sep)).replace(os.sep, "/")
+        run_root = os.path.realpath(self.run_root)
+        relative = os.path.relpath(os.path.abspath(directory), run_root)
+        if relative == ".." or relative.startswith(f"..{os.sep}"):
+            raise DomainError(
+                f"item work directory {directory!r} escapes run root {run_root!r};"
+                " durable artifact locators require containment"
+            )
+        return relative.replace(os.sep, "/")
 
 
 class _RescueDriver:
@@ -283,15 +335,18 @@ class WorkItemExecutor:
 
     @staticmethod
     def _run_relative_prefix(context: ItemExecutionContext, work_item: WorkItem) -> str:
-        """Return the run-relative locator prefix for one item directory.
+        """Return the run-relative locator prefix for one attempt directory.
 
-        The prefix is the item directory's path relative to the run root,
+        The prefix is the attempt directory's path relative to the run root,
         so artifact locators stay portable under any work-base layout.  When
-        the item directory escapes the run root (or no run root is set),
+        the directory escapes the run root (or no run root is set),
         fail closed: a locator that cannot be resolved durably must never
         be emitted.
         """
-        item_dir = context.item_directory(work_item.logical_key)
+        try:
+            item_dir = context.attempt_dir(work_item)
+        except Exception:
+            item_dir = context.item_directory(work_item.logical_key)
         legacy = f"items/{context.step_id}/{sanitize_job_name(work_item.logical_key)}"
         if not context.run_root:
             return legacy
@@ -303,6 +358,31 @@ class WorkItemExecutor:
                 " durable artifact locators require containment"
             )
         return relative.replace(os.sep, "/")
+
+    @staticmethod
+    def _require_checkpoint_consumption(
+        context: ItemExecutionContext, staged: tuple[StagedArtifact, ...]
+    ) -> None:
+        """Fail closed when staged checkpoints cannot be consumed natively.
+
+        Staged means cryptographically verified; used means the adapter's
+        rendered input references the staged file.  Adapters that declare no
+        checkpoint vocabulary must reject checkpoints explicitly
+        (``artifact_unsupported``) instead of reporting staged-but-unused
+        success.  ORCA carries no checkpoint input vocabulary; Gaussian
+        consumes via ``%OldChk`` (standard/IRC) and rejects QST+checkpoint
+        at render time.
+        """
+        if not staged:
+            return
+        program = getattr(getattr(context, "adapter", None), "program_name", None)
+        name = getattr(program, "value", str(program)) if program is not None else ""
+        if name == "orca":
+            raise DomainError(
+                "artifact_unsupported: ORCA declares no checkpoint input vocabulary; "
+                f"{len(staged)} checkpoint artifact(s) bound but unconsumable — "
+                "refusing staged-but-unused success"
+            )
 
     # ------------------------------------------------------------------
     # Public entry point
@@ -407,7 +487,10 @@ class WorkItemExecutor:
                     monotonic_start,
                     diagnostics=tuple(diagnostics),
                 )
-        item_dir = context.item_directory(work_item.logical_key)
+        try:
+            item_dir = context.attempt_dir(work_item)
+        except Exception:
+            item_dir = context.item_directory(work_item.logical_key)
         try:
             os.makedirs(item_dir, exist_ok=True)
             staged = self._stage_checkpoints(work_item, context, item_dir)
@@ -431,6 +514,32 @@ class WorkItemExecutor:
                     if port != DRIVING_STRUCTURE_PORT
                 }
             )
+        try:
+            from .binding_resolution import validate_step_seed
+
+            typed_seed = validate_step_seed(context.scientific.seed)
+        except DomainError as exc:
+            return self._finish_error(
+                work_item,
+                context,
+                NativeErrorCode.NATIVE_INPUT_ERROR,
+                str(exc),
+                wall_start,
+                monotonic_start,
+                diagnostics=tuple(diagnostics),
+            )
+        try:
+            self._require_checkpoint_consumption(context, tuple(staged))
+        except DomainError as exc:
+            return self._finish_error(
+                work_item,
+                context,
+                NativeErrorCode.ARTIFACT_ERROR,
+                str(exc),
+                wall_start,
+                monotonic_start,
+                diagnostics=tuple(diagnostics),
+            )
         resolved = ResolvedCalculationInputs(
             structure=driving,
             charge=effective.charge,
@@ -443,6 +552,7 @@ class WorkItemExecutor:
             step_id=context.step_id,
             work_item_id=work_item.id,
             logical_key=work_item.logical_key,
+            seed=typed_seed,
         )
         try:
             materialized = context.adapter.materialize_native_input(resolved)
@@ -774,7 +884,31 @@ class WorkItemExecutor:
             for index, artifact in enumerate(work_item.named_inputs.artifacts[port]):
                 locator = artifact.locator
                 if locator.path is None:
-                    continue
+                    raise DomainError(
+                        f"required input artifact {artifact.id!r} on port {port!r} "
+                        "has no run-relative locator path; refusing to stage"
+                    )
+                if not artifact.role or artifact.role != "checkpoint":
+                    raise DomainError(
+                        f"artifact {artifact.id!r} on checkpoint port {port!r} "
+                        f"carries role {artifact.role!r}; expected 'checkpoint'"
+                    )
+                if not artifact.checksum:
+                    raise DomainError(
+                        f"artifact {artifact.id!r} is missing its checksum; "
+                        "staged content without identity is refused"
+                    )
+                algorithm, _, expected = artifact.checksum.partition(":")
+                if algorithm.lower() != "sha256" or not expected:
+                    raise DomainError(
+                        f"artifact {artifact.id!r} carries unsupported checksum "
+                        f"{artifact.checksum!r}; only 'sha256:<hex>' stages"
+                    )
+                if artifact.subject_structure_id is None:
+                    raise DomainError(
+                        f"artifact {artifact.id!r} is missing its subject structure; "
+                        "refusing to stage"
+                    )
                 if (
                     artifact.subject_structure_id is not None
                     and artifact.subject_structure_id not in allowed_subjects
@@ -943,7 +1077,10 @@ class WorkItemExecutor:
         cancellation_confirmed: bool,
         recovery_attempt: int = 0,
     ) -> WorkItemResult:
-        item_dir = context.item_directory(work_item.logical_key)
+        try:
+            item_dir = context.attempt_dir(work_item)
+        except Exception:
+            item_dir = context.item_directory(work_item.logical_key)
         discovered = context.adapter.discover_artifacts(
             work_dir=item_dir,
             run_relative_prefix=self._run_relative_prefix(context, work_item),
@@ -962,6 +1099,7 @@ class WorkItemExecutor:
                 native_result=native_result,
                 inputs=self._resolved_inputs(work_item, context),
                 discovered_artifacts=discovered,
+                producer_digest=work_item.semantic_digest,
             )
         )
         profile_output = self._resubject_restart_artifacts(profile_output, work_item)
@@ -1150,11 +1288,24 @@ class WorkItemExecutor:
             atoms = bond_params.get("atoms")
             if atoms is not None:
                 merged_params["bond_atoms"] = list(atoms)
-        # The driver owns the stage filesystem layout; the policy still needs
-        # launch facts to build its requests, so they ride along as params.
-        # Work-item recovery params win over launch facts on conflict.
-        for key in ("executable", "env", "walltime_seconds", "work_dir"):
-            merged_params.setdefault(key, launch_info[key])
+        # Binding owns the machine: scientific recovery params can never set
+        # executable/env/workdir/walltime.  User-supplied binding keys are
+        # stripped (with a diagnostic) and the driver-owned binding facts
+        # ride under reserved `_binding_*` keys the policy reads instead.
+        stripped = sorted(
+            key for key in ("executable", "env", "walltime_seconds", "work_dir")
+            if key in merged_params
+        )
+        for key in stripped:
+            merged_params.pop(key, None)
+        for key in list(merged_params):
+            if key.startswith("_binding_"):
+                merged_params.pop(key, None)
+        merged_params["_binding_executable"] = launch_info["executable"]
+        merged_params["_binding_env"] = dict(launch_info["env"])
+        merged_params["_binding_walltime_seconds"] = launch_info["walltime_seconds"]
+        merged_params["_binding_work_dir"] = launch_info["work_dir"]
+        merged_params["_stripped_binding_overrides"] = stripped
         recovery_context = self._recovery_context(
             context,
             work_item,
@@ -1167,11 +1318,15 @@ class WorkItemExecutor:
         decision = recovery.evaluate(recovery_context)
         if not decision.attempt:
             return self._with_recovery_note(failed, decision, attempted=False)
+        try:
+            driver_dir = context.attempt_dir(work_item)
+        except Exception:
+            driver_dir = context.item_directory(work_item.logical_key)
         driver = _RescueDriver(
             self,
             context,
             supervisor,
-            context.item_directory(work_item.logical_key),
+            driver_dir,
             should_cancel,
         )
         try:
@@ -1369,6 +1524,8 @@ class WorkItemExecutor:
             overrides=context.scientific.overrides,
             defaults=context.scientific_defaults,
         )
+        from .binding_resolution import validate_step_seed
+
         return ResolvedCalculationInputs(
             structure=driving,
             charge=effective.charge,
@@ -1381,6 +1538,7 @@ class WorkItemExecutor:
             step_id=context.step_id,
             work_item_id=work_item.id,
             logical_key=work_item.logical_key,
+            seed=validate_step_seed(context.scientific.seed),
         )
 
     @staticmethod

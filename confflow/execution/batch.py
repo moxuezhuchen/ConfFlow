@@ -26,7 +26,7 @@ import os
 import threading
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from ..domain._immutable import FrozenDict
@@ -179,6 +179,7 @@ class StepExecutionRequest:
     environment: ExecutionEnvironment | None = None
     definition_digest: str | None = None
     should_cancel: Callable[[], bool] | None = None
+    producer_provenance: FrozenDict | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "items", tuple(self.items))
@@ -187,10 +188,23 @@ class StepExecutionRequest:
             from ..workflow.v4.document import ScientificDefaults
 
             object.__setattr__(self, "scientific_defaults", ScientificDefaults())
+        if self.producer_provenance is not None and not isinstance(
+            self.producer_provenance, FrozenDict
+        ):
+            object.__setattr__(self, "producer_provenance", FrozenDict(self.producer_provenance))
 
 
 class BatchStepExecutor:
-    """Schedule one step's work items and assemble its step result."""
+    """Schedule one step's work items and assemble its step result.
+
+    One generic item lifecycle for every executor capability: the
+    configured *executor* (resolved by the caller through the execution
+    registry's ``executor_implementation``) runs each item through
+    the single ``execute(work_item, context, *, should_cancel=None)``
+    seam under the shared register→reuse→claim→commit→publish protocol.
+    Batch never branches on scientific capability; capability selection
+    lives in the registry (owner A).
+    """
 
     def __init__(
         self,
@@ -342,6 +356,16 @@ class BatchStepExecutor:
         """
         step = request.step
         ordered = tuple(sorted(request.items, key=lambda item: item.logical_key))
+        if request.environment is None:
+            # Unknown never stands in for verified equivalence: durable
+            # execution requires a measured environment on every path,
+            # including pure executors (which record their implementation
+            # environment, never a native binary).  Checked before request
+            # validation so the prohibition cannot hide behind preflight.
+            raise PersistenceError(
+                f"durable execution of step {step.step_id!r} requires a measured "
+                "environment; environment=None is prohibited"
+            )
         validation_error = self._validate_request(request)
         if validation_error is not None:
             failed = tuple(
@@ -352,7 +376,7 @@ class BatchStepExecutor:
         durable_base = os.path.join(step_dir(run_root_abs, step.step_id))
         owner = owner_identity_current(owner_token=owner_token or f"v4-batch:{step.step_id}")
         environment = request.environment
-        environment_digest = environment.digest() if environment is not None else None
+        environment_digest = environment.digest()
         provenance = self._current_provenance(request)
         context = ItemExecutionContext(
             step_id=step.step_id,
@@ -436,26 +460,26 @@ class BatchStepExecutor:
         step_result = self._assemble(request, collected, ())
         gap_ids = sorted({item.work_item_id for item in collected} - set(durable_ids))
         if gap_ids:
+            # Strict durable publication (D-owned): a step result covering
+            # items without durable results is never published.  The gap
+            # diagnostic is reported through the raised error, not through
+            # a published-but-unbacked step file.  Status-only blocked
+            # reports stay lifecycle/report data; they never counterfeit
+            # durable publication.
             gap = Diagnostic(
                 code="publication_durability_gap",
                 message=(
                     "step result covers items without durable results "
-                    f"({len(gap_ids)}); they were reported, never re-executed"
+                    f"({len(gap_ids)}); refusing to publish"
                 ),
                 severity=DiagnosticSeverity.ERROR,
                 step_id=step.step_id,
                 details=FrozenDict({"non_durable_item_ids": sorted(gap_ids)}),
             )
-            step_result = StepResult(
-                step_id=step_result.step_id,
-                status=step_result.status,
-                structures=step_result.structures,
-                results=step_result.results,
-                artifacts=step_result.artifacts,
-                item_results=step_result.item_results,
-                diagnostics=tuple(step_result.diagnostics) + (gap,),
-                summary=step_result.summary,
-                provenance=step_result.provenance,
+            raise PersistenceError(
+                f"refusing to publish step {step.step_id!r}: "
+                f"{len(gap_ids)} items lack durable results "
+                f"({', '.join(sorted(gap_ids))}); gap code={gap.code}"
             )
         verified_checksums = {
             artifact.checksum.lower()
@@ -471,19 +495,7 @@ class BatchStepExecutor:
                 verified_artifact_checksums=sorted(verified_checksums),
             )
         except PublicationError as exc:
-            gap_checksums = {
-                artifact.checksum.lower()
-                for item in collected
-                if item.work_item_id in gap_ids
-                for artifact in item.artifacts
-                if artifact.checksum is not None
-            }
-            if not gap_ids or gap_checksums:
-                # Either nothing explains the gap, or gap items smuggle
-                # checksummed artifacts past verification: fail closed.
-                raise PersistenceError(f"refusing to publish step {step.step_id!r}: {exc}") from exc
-            # Otherwise the only defect is the known non-durable set, which
-            # already carries the durability-gap diagnostic: publish proceeds.
+            raise PersistenceError(f"refusing to publish step {step.step_id!r}: {exc}") from exc
         publish_step_result(run_root=run_root_abs, step_id=step.step_id, step_result=step_result)
         return step_result
 
@@ -499,21 +511,34 @@ class BatchStepExecutor:
         store: SqliteWorkItemStore,
         transport: ExecutionTransport | None,
         should_cancel: Callable[[], bool],
+        attempt: int | None = None,
     ) -> WorkItemResult:
         """Launch one claimed item through the selected transport.
 
-        ``None`` executes in-process; a transport receives the current
-        attempt number so remote launch identity aligns with the durable
-        attempt the store just opened.
+        ``None`` executes in-process through the configured executor; a
+        transport receives the real current attempt number so remote
+        launch identity aligns with the durable attempt the store just
+        opened.  The attempt is always read from the durable store, never
+        invented.
         """
+        if attempt is None:
+            attempt = store.get_registered(item.id)["current_attempt"]
         if transport is None:
             return self._executor.execute(item, context, should_cancel=should_cancel)
-        attempt = store.get_registered(item.id)["current_attempt"]
         return transport.execute(item, context, attempt=int(attempt), should_cancel=should_cancel)
 
     @staticmethod
     def _current_provenance(request: StepExecutionRequest) -> FrozenDict:
-        """Build the producer-provenance record for *request*."""
+        """Build the producer-provenance record for *request*.
+
+        An explicit ``request.producer_provenance`` (pure executors whose
+        reuse axis is the registry executor contract, not an adapter /
+        profile pair) is used verbatim.  Otherwise the provenance derives
+        from the resolved adapter, profile, checks, and recovery, which
+        are then required.
+        """
+        if request.producer_provenance is not None:
+            return request.producer_provenance
         adapter = request.adapter
         profile = request.profile
         if adapter is None or profile is None:  # guarded by _validate_request
@@ -711,8 +736,17 @@ class BatchStepExecutor:
             if code is ReuseCode.RECOVER_ABANDONED:
                 store.mark_interrupted(item.id, reason=decision.reason)
             if store.claim(item.id, owner=owner):
+                # The real durable attempt just opened drives both the
+                # attempt-isolated execution directory (via the context)
+                # and the remote launch identity (via the transport).
+                attempt = int(store.get_registered(item.id)["current_attempt"])
                 result = self._launch(
-                    item, context, store=store, transport=transport, should_cancel=should_cancel
+                    item,
+                    replace(context, attempt=attempt),
+                    store=store,
+                    transport=transport,
+                    should_cancel=should_cancel,
+                    attempt=attempt,
                 )
                 store.record_finished(result)
                 return result, True
@@ -788,12 +822,14 @@ class BatchStepExecutor:
             if verdict is OwnerVerdict.DEFINITELY_DEAD:
                 store.mark_interrupted(item.id, reason="rival owner is definitely dead")
                 if store.claim(item.id, owner=owner):
+                    attempt = int(store.get_registered(item.id)["current_attempt"])
                     result = self._launch(
                         item,
-                        context,
+                        replace(context, attempt=attempt),
                         store=store,
                         transport=transport,
                         should_cancel=should_cancel,
+                        attempt=attempt,
                     )
                     store.record_finished(result)
                     return result, True
@@ -897,10 +933,12 @@ class BatchStepExecutor:
     ) -> RecoveryPolicy | None:
         """Substitute a step-bound rescue policy for an unbound instance.
 
-        The shared ``RECOVERIES`` registry holds an unbound
-        ``ts_rescue_scan`` instance (no adapter, execute declines); batch
-        execution binds the step's program adapter here so rescue work
-        renders through the same file-format authority as primary work.
+        Single-authority compatibility for direct-batch callers that still
+        hand an unbound policy object: the bound replacement comes from
+        the execution registry with the step's program adapter, so rescue
+        work renders through the same file-format authority as primary
+        work.  Registry-resolved callers already pass bound policies and
+        are returned untouched.
         """
         if recovery is None or adapter is None:
             return recovery
@@ -908,9 +946,13 @@ class BatchStepExecutor:
             return recovery
         if getattr(recovery, "_adapter", None) is not None:
             return recovery
-        from .recovery_standard import TsRescueScanPolicy
+        from .registry import default_registry
 
-        return TsRescueScanPolicy(adapter=adapter)
+        name = str(getattr(recovery, "name", "ts_rescue_scan"))
+        bound: RecoveryPolicy | None = default_registry().recovery_implementation(
+            name, adapter=adapter
+        )
+        return bound
 
     def _validate_request(self, request: StepExecutionRequest) -> Diagnostic | None:
         step = request.step
@@ -920,19 +962,23 @@ class BatchStepExecutor:
                 f"step {step.step_id!r} has no scientific definition",
                 step_id=step.step_id,
             )
-        if request.adapter is None:
-            return _diagnostic(
-                "environment_error",
-                f"step {step.step_id!r} program {request.scientific.program!r} "
-                "has no registered program adapter",
-                step_id=step.step_id,
-            )
-        if request.profile is None:
-            return _diagnostic(
-                "capability_error",
-                f"step {step.step_id!r} result profile is not resolved",
-                step_id=step.step_id,
-            )
+        if request.producer_provenance is None:
+            # Native-backed steps derive reuse provenance from the resolved
+            # adapter/profile pair, which must then be present.  Pure
+            # executors carry explicit provenance instead (no adapter).
+            if request.adapter is None:
+                return _diagnostic(
+                    "environment_error",
+                    f"step {step.step_id!r} program {request.scientific.program!r} "
+                    "has no registered program adapter",
+                    step_id=step.step_id,
+                )
+            if request.profile is None:
+                return _diagnostic(
+                    "capability_error",
+                    f"step {step.step_id!r} result profile is not resolved",
+                    step_id=step.step_id,
+                )
         if self._supervisor is None:
             return _diagnostic(
                 "environment_error",

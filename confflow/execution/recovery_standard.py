@@ -189,13 +189,18 @@ def keyword_requests_freq(keyword: str) -> bool:
 def make_scan_keyword_from_ts_keyword(keyword: str) -> str:
     """Rewrite a TS keyword line into one suitable for a scan job.
 
-    TS-only optimizer items are dropped from ``opt(...)`` groups and any
-    frequency request is removed; the result still names the optimization so
-    the caller can add the ModRedundant directive separately.
-
-    (Ported from the legacy keyword rewrite; ``confflow.core`` is a gated
-    reference and must never be imported from execution code.)
+    Deprecated thin wrapper: adapter-owned syntax lives in
+    ``programs.gaussian.rendering`` and is exposed via
+    ``GaussianProgramAdapter.scan_keyword_from_ts``.  Kept for the unbound
+    policy instance (no adapter) and existing unit callers.
     """
+    try:
+        from ..programs.gaussian import rendering as _gaussian_rendering
+
+        rewritten = _gaussian_rendering.scan_keyword_from_ts(keyword)
+        return rewritten or ""
+    except Exception:
+        pass
     text = (keyword or "").strip()
     if not text:
         return ""
@@ -220,10 +225,15 @@ def make_scan_keyword_from_ts_keyword(keyword: str) -> str:
 def ensure_gaussian_modredundant_keyword(keyword: str) -> str:
     """Return a Gaussian keyword line that enables ``ModRedundant``.
 
-    Preserves existing ``opt`` items and never duplicates the directive.
-
-    (Ported from the legacy keyword rewrite.)
+    Deprecated thin wrapper over the adapter-owned
+    ``rendering.ensure_modredundant_keyword``.
     """
+    try:
+        from ..programs.gaussian import rendering as _gaussian_rendering
+
+        return _gaussian_rendering.ensure_modredundant_keyword(keyword)
+    except Exception:
+        pass
     text = (keyword or "").strip()
     if not text or _MODREDUNDANT_RE.search(text):
         return text
@@ -497,24 +507,39 @@ class TsRescueScanPolicy:
         )
 
     def _request_kwargs(self, context: RecoveryContext) -> dict[str, Any] | None:
-        """Build launch-request fields from merged binding params."""
+        """Build launch-request fields from driver-owned binding facts.
+
+        The execution binding owns ``executable``/``env``/``walltime``/
+        ``work_dir``; scientific recovery params can never supply them (the
+        executor strips user ``executable/env/walltime_seconds/work_dir``
+        keys and re-supplies them under reserved ``_binding_*`` keys).
+        """
         adapter = self._adapter
         if adapter is None:
             return None
-        executable = context.params.get("executable", adapter.default_executable)
+        binding_exe = context.params.get("_binding_executable", None)
+        executable = binding_exe if isinstance(binding_exe, str) and binding_exe.strip() else None
+        if executable is None:
+            executable = context.params.get("executable", adapter.default_executable)
         if not isinstance(executable, str) or not executable.strip():
             executable = adapter.default_executable
-        staged = context.params.get("work_dir", "rescue")
+        staged = context.params.get("_binding_work_dir", context.params.get("work_dir", "rescue"))
         if not isinstance(staged, str) or not staged.strip():
             return None
-        env_raw = context.params.get("env", {})
-        if isinstance(env_raw, Mapping):
-            env = {str(key): str(value) for key, value in dict(env_raw).items()}
-        elif isinstance(env_raw, dict):
-            env = {str(key): str(value) for key, value in env_raw.items()}
+        binding_env = context.params.get("_binding_env", None)
+        if isinstance(binding_env, Mapping):
+            env = {str(key): str(value) for key, value in dict(binding_env).items()}
         else:
-            env = {}
-        walltime = context.params.get("walltime_seconds", None)
+            env_raw = context.params.get("env", {})
+            if isinstance(env_raw, Mapping):
+                env = {str(key): str(value) for key, value in dict(env_raw).items()}
+            elif isinstance(env_raw, dict):
+                env = {str(key): str(value) for key, value in env_raw.items()}
+            else:
+                env = {}
+        walltime = context.params.get("_binding_walltime_seconds", None)
+        if walltime is None:
+            walltime = context.params.get("walltime_seconds", None)
         if walltime is not None:
             try:
                 walltime_value = float(walltime)  # type: ignore[arg-type]
@@ -595,6 +620,7 @@ class TsRescueScanPolicy:
                 step_id=inputs.step_id,
                 work_item_id=inputs.work_item_id,
                 logical_key=inputs.logical_key,
+                seed=inputs.seed,
             )
         except Exception:
             return None
@@ -646,7 +672,14 @@ class TsRescueScanPolicy:
         inputs = context.inputs
         base_coordinates: Coordinates = tuple(inputs.structure.coordinates)
         original_keyword = str(inputs.native.get("keyword") or "")
-        scan_keyword = scan_keyword_for_rescue(original_keyword)
+        rescue_scan = getattr(self._adapter, "rescue_scan_keyword", None)
+        if callable(rescue_scan):
+            try:
+                scan_keyword = rescue_scan(original_keyword)
+            except Exception:
+                return None
+        else:
+            scan_keyword = scan_keyword_for_rescue(original_keyword)
         if not scan_keyword:
             return None
         radius_initial = _bond_length_of(base_coordinates, atom_a, atom_b)
@@ -680,7 +713,14 @@ class TsRescueScanPolicy:
         request_kwargs = self._request_kwargs(context)
         if request_kwargs is None:
             return None
-        freeze_directive = f"B {atom_a} {atom_b} F"
+        freeze_method = getattr(self._adapter, "rescue_freeze_directive", None)
+        if callable(freeze_method):
+            try:
+                freeze_directive = freeze_method(atom_a, atom_b)
+            except Exception:
+                return None
+        else:
+            freeze_directive = f"B {atom_a} {atom_b} F"
 
         def _scan_point(target: float) -> tuple[float, Coordinates] | None:
             adjusted = _set_bond_length(base_coordinates, atom_a, atom_b, target)

@@ -28,7 +28,7 @@ from __future__ import annotations
 from ..domain._immutable import FrozenDict
 from ..domain.artifact import ArtifactSet
 from ..domain.diagnostics import Diagnostic, DiagnosticSeverity
-from ..domain.result import Provenance, ResultSet, ScientificResult
+from ..domain.result import Provenance, ResultSet, ScientificResult, make_result_id
 from ..domain.structure import StructureRecord, StructureSet
 from ..domain.units import Unit
 from .native import NativeEnsembleMember
@@ -274,17 +274,28 @@ class EnsembleProfile:
         for _, record, member in ranked:
             if member.energy_hartree is None:
                 continue
-            results.append(
-                ScientificResult(
+            kwargs: dict[str, object] = {
+                "kind": "energy",
+                "value": float(member.energy_hartree),
+                "unit": Unit.HARTREE,
+                "subject_structure_id": record.id,
+                "source_step_id": context.step_id,
+                "source_work_item_id": context.work_item_id,
+                "provenance": provenance,
+            }
+            if context.producer_digest is not None:
+                kwargs["result_id"] = make_result_id(
+                    step_id=context.step_id,
+                    work_item_id=context.work_item_id,
                     kind="energy",
-                    value=float(member.energy_hartree),
-                    unit=Unit.HARTREE,
                     subject_structure_id=record.id,
-                    source_step_id=context.step_id,
-                    source_work_item_id=context.work_item_id,
-                    provenance=provenance,
+                    discriminator=f"member:{member.member_index}",
+                    program=provenance.program,
+                    method=provenance.method,
+                    basis=provenance.basis,
+                    producer_digest=context.producer_digest,
                 )
-            )
+            results.append(ScientificResult(**kwargs))  # type: ignore[arg-type]
         return ProfileOutput(
             structures=StructureSet(tuple(record for _, record, _ in ranked)),
             results=ResultSet(tuple(results)),

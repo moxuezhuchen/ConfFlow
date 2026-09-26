@@ -292,9 +292,13 @@ class TestEnergySelection:
         assert output.results.is_empty
 
     def test_result_subjects_and_provenance(self) -> None:
+        # Final contract (freeze §2/B + C): output results bind the output
+        # geometry entity (passthrough record here, since no native geometry
+        # was parsed), never the input id by assumption.
         output = apply_profile(native_result(energies={"electronic": ELECTRONIC, "gibbs": GIBBS}))
+        (emitted,) = tuple(output.structures)
         for item in output.results:
-            assert item.subject_structure_id == "s0"
+            assert item.subject_structure_id == emitted.id
             assert item.source_step_id == STEP_ID
             assert item.source_work_item_id == WORK_ITEM_ID
             assert item.provenance is not None

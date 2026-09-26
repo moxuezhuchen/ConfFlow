@@ -337,7 +337,16 @@ class NativeError:
 
 @dataclass(frozen=True, slots=True)
 class StagedArtifact:
-    """A bound input artifact staged into the item work directory."""
+    """A bound input artifact staged into the item work directory.
+
+    Staged means cryptographically verified (``sha256:<hex>``) and bound to
+    an item input subject with ``role == "checkpoint"`` and a run-relative
+    locator.  Staging alone never implies native consumption: the program
+    adapter must reference the staged file in its rendered input or raise
+    ``artifact_unsupported`` (surfaced as ``artifact_error``).  ORCA
+    declares no checkpoint vocabulary and always raises; Gaussian consumes
+    via ``%OldChk`` for standard/IRC and raises for QST.
+    """
 
     local_name: str
     role: str
@@ -349,10 +358,13 @@ class StagedArtifact:
 class ResolvedCalculationInputs:
     """Fully resolved inputs for one native calculation.
 
-    Charge, multiplicity, freeze indices, and resources are already resolved
-    by the single precedence authority before the adapter sees them.  An
-    adapter that finds a required value missing must raise a native input
-    error; it must never fall back to defaults of its own.
+    Charge, multiplicity, freeze indices, resources, and the stochastic seed
+    are already resolved by the single precedence authority before the
+    adapter sees them.  An adapter that finds a required value missing must
+    raise a native input error; it must never fall back to defaults of its
+    own.  Native seed vocabulary (if any verifies in wave 2) is rendered
+    exclusively by the program adapter from :attr:`seed`; no native mapping
+    carries a second seed authority.
     """
 
     structure: StructureRecord
@@ -366,6 +378,7 @@ class ResolvedCalculationInputs:
     step_id: str = ""
     work_item_id: str = ""
     logical_key: str = ""
+    seed: int | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.structure, StructureRecord):
@@ -379,6 +392,10 @@ class ResolvedCalculationInputs:
         object.__setattr__(self, "checkpoints", tuple(self.checkpoints))
         if self.freeze is not None:
             object.__setattr__(self, "freeze", tuple(self.freeze))
+        if self.seed is not None and (
+            isinstance(self.seed, bool) or not isinstance(self.seed, int)
+        ):
+            raise TypeError("seed must be an integer or None")
 
 
 @dataclass(frozen=True, slots=True)

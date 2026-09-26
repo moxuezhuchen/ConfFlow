@@ -253,8 +253,7 @@ def _resolve_edge(
             error(
                 DiagnosticCode.BINDING_ERROR,
                 DiagnosticReason.KIND_MISMATCH,
-                f"binding kind mismatch: {source_port.kind.value!r} -> "
-                f"{target_port.kind.value!r}",
+                f"binding kind mismatch: {source_port.kind.value!r} -> {target_port.kind.value!r}",
                 step_id=target.step_id,
                 field_path=field_path,
                 details={
@@ -272,7 +271,7 @@ def _resolve_edge(
             error(
                 DiagnosticCode.BINDING_ERROR,
                 DiagnosticReason.PAIRING_NOT_ALLOWED,
-                f"pairing {pairing.value!r} is not valid for a " f"{target_port.kind.value} port",
+                f"pairing {pairing.value!r} is not valid for a {target_port.kind.value} port",
                 step_id=target.step_id,
                 field_path=field_path,
                 details={"allowed": sorted(item.value for item in allowed)},
@@ -322,8 +321,7 @@ def _resolve_edge(
                     error(
                         DiagnosticCode.COMPILE_ERROR,
                         DiagnosticReason.PARTIAL_CONSUMPTION_UNDEFINED,
-                        "a binding from an allow_partial producer must declare "
-                        "partial_consumption",
+                        "a binding from an allow_partial producer must declare partial_consumption",
                         step_id=target.step_id,
                         field_path=field_path,
                         details={
@@ -381,17 +379,11 @@ def _validate_selector(
             ]
         return []
     if selector.kind is SelectorKind.IDS:
-        if source_port.kind is PortKind.RESULT:
-            return [
-                error(
-                    DiagnosticCode.BINDING_ERROR,
-                    DiagnosticReason.SELECTOR_NOT_APPLICABLE,
-                    "id selector is not valid on a result port",
-                    step_id=target.step_id,
-                    field_path=field_path,
-                    details={"port_kind": source_port.kind.value},
-                )
-            ]
+        # IDS selects stable entity ids on any port kind: structures and
+        # artifacts by record id, results by independent ResultRef result_id
+        # (see ResultSet.select_ids: per-requested-id missing/ambiguous
+        # enforcement at assembly; MANY ports may select several distinct
+        # ids with no global exactly-one rule).
         return []
     if (
         source_port.kind is PortKind.ARTIFACT

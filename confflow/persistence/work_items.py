@@ -39,8 +39,15 @@ from ..domain.artifact import ArtifactLocator, ArtifactRef, LocatorKind
 from ..domain.canonical import canonical_json_bytes
 from ..domain.completion import WorkItemStatus
 from ..domain.diagnostics import Diagnostic, DiagnosticSeverity
-from ..domain.errors import CanonicalizationError, DomainError
-from ..domain.result import Provenance, QuantityKind, ResultSet, ScientificResult
+from ..domain.errors import CanonicalizationError, DomainError, InvalidResultError
+from ..domain.result import (
+    Provenance,
+    QuantityKind,
+    ResultSet,
+    ScientificResult,
+    find_duplicate_result_ids,
+    require_production_ids,
+)
 from ..domain.retention import RetentionClass
 from ..domain.structure import StructureRecord, StructureSet
 from ..domain.units import Unit
@@ -313,7 +320,14 @@ def _build_provenance(payload: Any) -> Provenance | None:
 
 
 def _build_scientific_result(payload: Any) -> ScientificResult:
-    """Rebuild one scientific result from a ``to_dict`` payload."""
+    """Rebuild one scientific result from a ``to_dict`` payload.
+
+    The producer-scoped ``result_id`` round-trips strictly: a present id
+    must be a valid identifier and is preserved verbatim (durable resume
+    never drops B identity); a corrupted id (wrong type, blank) fails
+    closed.  Absence (``None``) rebuilds as legacy and is rejected later
+    by the production identity gates, never silently promoted.
+    """
     if not isinstance(payload, dict):
         raise CorruptStateError("scientific result payload must be a mapping")
     try:
@@ -323,6 +337,14 @@ def _build_scientific_result(payload: Any) -> ScientificResult:
         quantity = QuantityKind(quantity_raw) if quantity_raw is not None else None
     except ValueError as exc:
         raise CorruptStateError(f"scientific result unit/quantity is invalid: {exc}") from exc
+    result_id = payload.get("result_id")
+    if result_id is not None and (
+        not isinstance(result_id, str) or not result_id or result_id != result_id.strip()
+    ):
+        raise CorruptStateError(
+            f"scientific result result_id is corrupted: {result_id!r}; "
+            "identity corruption fails closed, never heals to None"
+        )
     try:
         metadata = payload.get("metadata", {})
         return ScientificResult(
@@ -334,6 +356,7 @@ def _build_scientific_result(payload: Any) -> ScientificResult:
             source_step_id=payload.get("source_step_id"),
             source_work_item_id=payload.get("source_work_item_id"),
             provenance=_build_provenance(payload.get("provenance")),
+            result_id=result_id,
             metadata=metadata if isinstance(metadata, dict) else {},
         )
     except (KeyError, TypeError, DomainError, ValueError) as exc:
@@ -375,6 +398,28 @@ def _build_artifact(payload: Any) -> ArtifactRef:
         )
     except (KeyError, TypeError, DomainError, ValueError) as exc:
         raise CorruptStateError(f"artifact payload is invalid: {exc}") from exc
+
+
+def _require_stored_result_identity(result: WorkItemResult, *, error: Any) -> None:
+    """Reject missing or duplicate production result ids at the store boundary.
+
+    Stamping is the emitters' job (C profiles, F analysis); this gate runs
+    on commit and on read so identity-less results can neither be durably
+    recorded nor replayed as production truth.  Empty sets pass vacuously
+    (failed and structure-only results carry none).
+    """
+    try:
+        require_production_ids(result.results)
+    except InvalidResultError as exc:
+        raise error(
+            f"work item {result.work_item_id!r} carries identity-less results: {exc}"
+        ) from exc
+    duplicates = find_duplicate_result_ids(result.results)
+    if duplicates:
+        raise error(
+            f"work item {result.work_item_id!r} carries duplicate result ids: "
+            + ", ".join(duplicates)
+        )
 
 
 def _result_from_dict(payload: Any) -> WorkItemResult:
@@ -482,7 +527,7 @@ def _result_from_dict(payload: Any) -> WorkItemResult:
     if not isinstance(metadata, dict):
         raise CorruptStateError("result metadata must be a mapping")
     try:
-        return WorkItemResult(
+        rebuilt = WorkItemResult(
             work_item_id=work_item_id,
             status=status,
             structures=structures,
@@ -497,6 +542,8 @@ def _result_from_dict(payload: Any) -> WorkItemResult:
         )
     except (TypeError, DomainError, ValueError) as exc:
         raise CorruptStateError(f"result payload violates domain invariants: {exc}") from exc
+    _require_stored_result_identity(rebuilt, error=CorruptStateError)
+    return rebuilt
 
 
 def _validate_store_path(path: str | Path) -> str:
@@ -873,6 +920,7 @@ class SqliteWorkItemStore:
             raise PersistenceError("result work_item_id does not match the stored item")
         if result.status is not WorkItemStatus.COMPLETED:
             raise PersistenceError("complete() requires a COMPLETED result")
+        _require_stored_result_identity(result, error=PersistenceError)
         environment: str | None = None
         if environment_digest is not None:
             environment = _require_digest_text(environment_digest, "environment_digest")
@@ -914,7 +962,7 @@ class SqliteWorkItemStore:
                     )
                 else:
                     connection.execute(
-                        "UPDATE items SET status = ?, updated_wall = ?" " WHERE work_item_id = ?",
+                        "UPDATE items SET status = ?, updated_wall = ? WHERE work_item_id = ?",
                         (StoredWorkItemStatus.COMPLETED.value, now, item_id),
                     )
                 self._rewrite_artifact_rows(connection, item_id, result)
@@ -935,6 +983,7 @@ class SqliteWorkItemStore:
             raise PersistenceError("result work_item_id does not match the stored item")
         if result.status is not WorkItemStatus.FAILED:
             raise PersistenceError("fail() requires a FAILED result")
+        _require_stored_result_identity(result, error=PersistenceError)
         payload = result.to_dict()
         result_text = _canonical_text(payload)
         diagnostics_text = _canonical_text(payload["diagnostics"])
@@ -1121,8 +1170,7 @@ class SqliteWorkItemStore:
             try:
                 if status is None:
                     rows = connection.execute(
-                        "SELECT work_item_id FROM items"
-                        " ORDER BY logical_key ASC, work_item_id ASC"
+                        "SELECT work_item_id FROM items ORDER BY logical_key ASC, work_item_id ASC"
                     ).fetchall()
                 else:
                     rows = connection.execute(
@@ -1472,6 +1520,7 @@ class SqliteWorkItemStore:
     def _record_cancelled(self, result: WorkItemResult) -> None:
         """Persist a ``CANCELLED`` result through the cancel transition."""
         item_id = _require_text(result.work_item_id, "work_item_id")
+        _require_stored_result_identity(result, error=PersistenceError)
         payload = result.to_dict()
         result_text = _canonical_text(payload)
         diagnostics_text = _canonical_text(payload["diagnostics"])

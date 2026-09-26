@@ -178,9 +178,18 @@ class TestScientificSensitivity:
         assert first.steps[0].step_semantic_digest != second.steps[0].step_semantic_digest
 
     def test_adapter_change_moves_step_digest(self) -> None:
-        standard = _compiled(_linear_doc(adapter="standard"))
-        template = _compiled(_linear_doc(adapter="native_template"))
-        assert standard.steps[0].step_semantic_digest != template.steps[0].step_semantic_digest
+        # Final contract (freeze §8/A): `native_template` is omitted (no
+        # runtime implementation) and fails closed; the adapter axis stays
+        # enforced via the real `standard` vs unknown-adapter gate.
+        from tests.v4._builders import compile_doc as _compile
+
+        standard = _compile(_linear_doc(adapter="standard"))
+        assert standard.ok
+        template = _compile(_linear_doc(adapter="native_template"))
+        assert not template.ok
+        assert any(
+            d.details.get("reason") == "unknown_execution_adapter" for d in template.errors
+        )
 
     def test_result_profile_change_moves_step_digest(self) -> None:
         standard = _compiled(_linear_doc(profile="standard"))
@@ -301,6 +310,8 @@ class TestDigestAxisSeparation:
         assert environment_digest != _item(plan).semantic_digest
 
     def test_environment_digest_ignores_absolute_paths(self) -> None:
+        # Final contract (identity rule v2): target locators are operational
+        # provenance and never enter the digest.
         first = ExecutionEnvironment(
             program="gaussian",
             program_version="16.C.01",
@@ -312,7 +323,7 @@ class TestDigestAxisSeparation:
             executable_digest="sha256:" + "b" * 64,
             target="elsewhere",
         )
-        assert first.digest() != second.digest()
+        assert first.digest() == second.digest()
         assert (
             ExecutionEnvironment(program="gaussian", program_version="16.C.01").digest()
             == ExecutionEnvironment(program="gaussian", program_version="16.C.01").digest()
@@ -342,7 +353,9 @@ class TestGoldenDigests:
         )
 
     def test_work_item_digest_golden(self) -> None:
+        # Final contract (freeze §6/B): WORK_ITEM_DIGEST_KIND v2.  v1 goldens
+        # never equal v2; old generations fail closed at reuse comparison.
         plan = _compiled(_linear_doc())
         assert _item(plan).semantic_digest == (
-            "sha256:686e3a95398e32e1146d5fb4111724c5c18270fb7aa324d5ea8c35179da98e4c"
+            "sha256:6f8f3cd562262672a1782619651c74e6223791cd563d95e94f12c6f58581a4e0"
         )

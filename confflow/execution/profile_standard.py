@@ -47,14 +47,15 @@ parsed frequencies therefore yields no frequency results (and the
 from __future__ import annotations
 
 import math
+from typing import Any
 
 from ..domain._immutable import FrozenDict
 from ..domain.artifact import ArtifactSet
 from ..domain.diagnostics import Diagnostic, DiagnosticSeverity
-from ..domain.result import Provenance, ResultSet, ScientificResult
+from ..domain.result import Provenance, ResultSet, ScientificResult, make_result_id
 from ..domain.structure import StructureRecord, StructureSet
 from ..domain.units import Unit
-from .native import GeometryOutput, NativeResult, ResolvedCalculationInputs
+from .native import GeometryOutput, NativeResult, ParsedGeometry, ResolvedCalculationInputs
 from .profile_ensemble import EnsembleProfile
 from .profile_path_endpoints import PathEndpointsProfile
 from .profiles import (
@@ -158,15 +159,67 @@ def _select_energies(
 def _build_provenance(context: ProfileContext) -> Provenance:
     """Build producer provenance for every result of this profile."""
     native_map = context.inputs.native
+    program_version = None
+    environment = getattr(context, "inputs", None)
+    # ProfileContext carries no environment; the executor stamps measured
+    # program versions via adapter probe metadata when available.  Keep None
+    # here rather than inventing a version.
+    del environment
     return Provenance(
         program=context.native_result.program.value,
-        program_version=None,
+        program_version=program_version,
         method=_text_or_none(native_map.get("keyword")),
         basis=_text_or_none(native_map.get("basis")),
         adapter=STANDARD_PROFILE_CONTRACT,
         step_id=context.step_id,
         work_item_id=context.work_item_id,
     )
+
+
+def _result_kwargs(
+    *,
+    kind: str,
+    value: Any,
+    unit: Any,
+    subject_id: str,
+    context: ProfileContext,
+    provenance: Provenance,
+) -> dict[str, Any]:
+    """Return ScientificResult kwargs stamped with B's deterministic identity.
+
+    ``result_id`` comes from :func:`make_result_id` over complete
+    producer/subject/kind data with ``producer_digest`` passed verbatim
+    from the producing work item's ``semantic_digest`` (coordinated keyword
+    ``producer_digest``; B owns the helper).  Retries or reordering of the
+    same semantic item retain refs; changed science moves the producer
+    digest and mints new refs.  Value digests, paths, and ordinals never
+    substitute.
+
+    When the context carries no producer digest (pre-contract unit
+    fixtures), results are emitted without ``result_id``; production
+    execution always supplies it via the executor.
+    """
+    kwargs: dict[str, Any] = {
+        "kind": kind,
+        "value": value,
+        "unit": unit,
+        "subject_structure_id": subject_id,
+        "source_step_id": context.step_id,
+        "source_work_item_id": context.work_item_id,
+        "provenance": provenance,
+    }
+    if context.producer_digest is not None:
+        kwargs["result_id"] = make_result_id(
+            step_id=context.step_id,
+            work_item_id=context.work_item_id,
+            kind=kind,
+            subject_structure_id=subject_id,
+            program=provenance.program,
+            method=provenance.method,
+            basis=provenance.basis,
+            producer_digest=context.producer_digest,
+        )
+    return kwargs
 
 
 def _named_parent_records(
@@ -195,10 +248,16 @@ def _named_parent_records(
 def _output_structure(context: ProfileContext) -> tuple[StructureRecord, GeometrySemantics]:
     """Build the single output structure for *context*.
 
-    A produced native geometry becomes a new ``PRODUCED`` record; a missing
-    geometry always becomes a ``PASSTHROUGH`` record with geometry content
-    identical to the input (the executor, not the profile, decides whether
-    passthrough is acceptable from the declared checks).
+    Native facts decide, never task names or roles:
+
+    - ``PRODUCED`` with content differing from the input is a
+      transformation: a new entity with parent linkage, results bound to it.
+    - ``PRODUCED`` whose content is identical to the input (single-point
+      measurement parsed back verbatim) retains the input entity: the
+      input record itself is returned, results bind the input id.
+    - ``NONE`` (no geometry parsed) is the passthrough record with
+      identical content and a parent link; the executor, not the profile,
+      decides whether passthrough is acceptable from declared checks.
     """
     native_result = context.native_result
     inputs: ResolvedCalculationInputs = context.inputs
@@ -217,6 +276,13 @@ def _output_structure(context: ProfileContext) -> tuple[StructureRecord, Geometr
         native_result.final_geometry is not None
     ):
         geometry = native_result.final_geometry
+        if (
+            tuple(geometry.atoms) == tuple(source.atoms)
+            and _geometry_digest_of(geometry) == source.geometry_digest
+            and named_parents is None
+        ):
+            # Measurement of unchanged geometry: retain input identity.
+            return source, GeometrySemantics.PASSTHROUGH
         record = StructureRecord(
             id=produced_structure_id(context.logical_key, 0),
             atoms=tuple(geometry.atoms),
@@ -251,6 +317,19 @@ def _output_structure(context: ProfileContext) -> tuple[StructureRecord, Geometr
     return record, GeometrySemantics.PASSTHROUGH
 
 
+def _geometry_digest_of(geometry: ParsedGeometry) -> str | None:
+    """Return the content digest of parsed geometry, or ``None``."""
+    try:
+        transient = StructureRecord(
+            id="transient:digest-probe",
+            atoms=tuple(geometry.atoms),
+            coordinates=tuple(geometry.coordinates),
+        )
+    except Exception:
+        return None
+    return transient.geometry_digest
+
+
 class StandardResultProfile:
     """The standard V4 result profile (geometries, results, artifacts)."""
 
@@ -265,48 +344,45 @@ class StandardResultProfile:
         return STANDARD_PROFILE_CONTRACT
 
     def apply(self, context: ProfileContext) -> ProfileOutput:
-        """Normalize parser facts into domain collections."""
+        """Normalize parser facts into domain collections.
+
+        Transformation/measurement rule (frozen): output results bind the
+        output geometry entity.  A produced native geometry mints a new
+        entity and results bind it; a missing geometry (measurement /
+        passthrough) retains the input entity as the subject.
+        """
         native_result = context.native_result
         structure, semantics = _output_structure(context)
         provenance = _build_provenance(context)
-        subject_id = context.inputs.structure.id
+        subject_id = structure.id
 
         chosen, gibbs, correction = _select_energies(native_result)
         results: list[ScientificResult] = []
         if chosen is not None:
             results.append(
                 ScientificResult(
-                    kind="energy",
-                    value=chosen,
-                    unit=Unit.HARTREE,
-                    subject_structure_id=subject_id,
-                    source_step_id=context.step_id,
-                    source_work_item_id=context.work_item_id,
-                    provenance=provenance,
+                    **_result_kwargs(
+                        kind="energy", value=chosen, unit=Unit.HARTREE,
+                        subject_id=subject_id, context=context, provenance=provenance,
+                    )
                 )
             )
         if gibbs is not None:
             results.append(
                 ScientificResult(
-                    kind="gibbs_energy",
-                    value=gibbs,
-                    unit=Unit.HARTREE,
-                    subject_structure_id=subject_id,
-                    source_step_id=context.step_id,
-                    source_work_item_id=context.work_item_id,
-                    provenance=provenance,
+                    **_result_kwargs(
+                        kind="gibbs_energy", value=gibbs, unit=Unit.HARTREE,
+                        subject_id=subject_id, context=context, provenance=provenance,
+                    )
                 )
             )
         if correction is not None:
             results.append(
                 ScientificResult(
-                    kind="gibbs_correction",
-                    value=correction,
-                    unit=Unit.HARTREE,
-                    subject_structure_id=subject_id,
-                    source_step_id=context.step_id,
-                    source_work_item_id=context.work_item_id,
-                    provenance=provenance,
+                    **_result_kwargs(
+                        kind="gibbs_correction", value=correction, unit=Unit.HARTREE,
+                        subject_id=subject_id, context=context, provenance=provenance,
+                    )
                 )
             )
 
@@ -314,36 +390,28 @@ class StandardResultProfile:
         if frequencies:
             results.append(
                 ScientificResult(
-                    kind="frequencies",
-                    value=list(frequencies),
-                    unit=Unit.CM_INVERSE,
-                    subject_structure_id=subject_id,
-                    source_step_id=context.step_id,
-                    source_work_item_id=context.work_item_id,
-                    provenance=provenance,
+                    **_result_kwargs(
+                        kind="frequencies", value=list(frequencies), unit=Unit.CM_INVERSE,
+                        subject_id=subject_id, context=context, provenance=provenance,
+                    )
                 )
             )
             num_imaginary, lowest = count_imaginary_frequencies(frequencies)
             results.append(
                 ScientificResult(
-                    kind="num_imaginary_frequencies",
-                    value=num_imaginary,
-                    subject_structure_id=subject_id,
-                    source_step_id=context.step_id,
-                    source_work_item_id=context.work_item_id,
-                    provenance=provenance,
+                    **_result_kwargs(
+                        kind="num_imaginary_frequencies", value=num_imaginary, unit=None,
+                        subject_id=subject_id, context=context, provenance=provenance,
+                    )
                 )
             )
             if lowest is not None:
                 results.append(
                     ScientificResult(
-                        kind="lowest_frequency",
-                        value=lowest,
-                        unit=Unit.CM_INVERSE,
-                        subject_structure_id=subject_id,
-                        source_step_id=context.step_id,
-                        source_work_item_id=context.work_item_id,
-                        provenance=provenance,
+                        **_result_kwargs(
+                            kind="lowest_frequency", value=lowest, unit=Unit.CM_INVERSE,
+                            subject_id=subject_id, context=context, provenance=provenance,
+                        )
                     )
                 )
 

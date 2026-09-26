@@ -47,7 +47,13 @@ from ..domain.completion import (
 from ..domain.diagnostics import Diagnostic, DiagnosticSeverity
 from ..domain.errors import DomainError
 from ..domain.publication import verify_step_publication as _domain_verify_step_publication
-from ..domain.result import Provenance, ResultSet, ScientificResult
+from ..domain.result import (
+    Provenance,
+    ResultSet,
+    ScientificResult,
+    find_duplicate_result_ids,
+    require_production_ids,
+)
 from ..domain.retention import RetentionClass
 from ..domain.step_result import StepProvenance, StepResult
 from ..domain.structure import StructureRecord, StructureSet
@@ -147,18 +153,42 @@ def publish_step_result(*, run_root: str, step_id: str, step_result: StepResult)
     Raises
     ------
     PersistenceError
-        Raised when *step_result* is not a ``StepResult`` or its step id
-        does not match *step_id*.
+        Raised when *step_result* is not a ``StepResult``, its step id
+        does not match *step_id*, or any published result lacks a
+        producer-scoped identity or collides on one.
     """
     root = validate_run_root(run_root)
     if not isinstance(step_result, StepResult):
         raise PersistenceError("step_result must be a StepResult")
     if step_result.step_id != step_id:
         raise PersistenceError(f"step result belongs to {step_result.step_id!r}, not {step_id!r}")
+    _require_persisted_result_identity(step_result, error=PersistenceError)
     target = step_result_path(root, step_id)
     payload = step_result.to_dict()
     _atomic_write_bytes(target, canonical_json_bytes(payload))
     return typed_digest(STEP_RESULT_DIGEST_KIND, payload)
+
+
+def _require_persisted_result_identity(step_result: StepResult, *, error: Any) -> None:
+    """Reject missing or duplicate production result ids at the boundary.
+
+    Stamping is the emitters' job; this runtime gate runs on both publish
+    and load so identity-less results can neither be written nor read back
+    as production truth.
+    """
+    from ..domain.errors import InvalidResultError
+
+    try:
+        require_production_ids(step_result.results)
+        for item in step_result.item_results:
+            require_production_ids(item.results)
+    except InvalidResultError as exc:
+        raise error(f"step {step_result.step_id!r} carries identity-less results: {exc}") from exc
+    duplicates = find_duplicate_result_ids(step_result.results)
+    if duplicates:
+        raise error(
+            f"step {step_result.step_id!r} carries duplicate result ids: " + ", ".join(duplicates)
+        )
 
 
 def _mapping(payload: Any, what: str) -> dict[str, Any]:
@@ -230,8 +260,21 @@ def _result_provenance(entry: Any) -> Provenance | None:
 
 
 def _scientific_result(entry: Any) -> ScientificResult:
-    """Rebuild one scientific result, failing closed on any defect."""
+    """Rebuild one scientific result, failing closed on any defect.
+
+    ``result_id`` round-trips strictly (see the store rebuild): present
+    ids are preserved verbatim, corrupted ids fail closed, absence stays
+    legacy for the production gates to reject.
+    """
     data = _mapping(entry, "scientific result")
+    result_id = data.get("result_id")
+    if result_id is not None and (
+        not isinstance(result_id, str) or not result_id or result_id != result_id.strip()
+    ):
+        raise CorruptStateError(
+            f"scientific result result_id is corrupted: {result_id!r}; "
+            "identity corruption fails closed, never heals to None"
+        )
     try:
         unit_value = data.get("unit")
         quantity_value = data.get("quantity")
@@ -244,6 +287,7 @@ def _scientific_result(entry: Any) -> ScientificResult:
             source_step_id=data.get("source_step_id"),
             source_work_item_id=data.get("source_work_item_id"),
             provenance=_result_provenance(data.get("provenance")),
+            result_id=result_id,
             metadata=_mapping_or_empty(data.get("metadata"), "scientific result metadata"),
         )
     except CorruptStateError:
@@ -451,8 +495,10 @@ def load_published_step_result(*, run_root: str, step_id: str) -> StepResult | N
     ------
     CorruptStateError
         Raised when the file exists but is unreadable, is not valid JSON,
-        has the wrong shape, carries a mismatched step id, or violates any
-        domain invariant.  Corrupt data is never returned partially.
+        has the wrong shape, carries a mismatched step id, violates any
+        domain invariant, or carries results without producer-scoped
+        identity (legacy identity-less publications never load as
+        production truth).  Corrupt data is never returned partially.
     """
     target = step_result_path(validate_run_root(run_root), step_id)
     directory = os.path.dirname(target)
@@ -492,7 +538,7 @@ def load_published_step_result(*, run_root: str, step_id: str) -> StepResult | N
         )
         summary = FrozenDict(_mapping_or_empty(data.get("summary"), "step summary"))
         provenance = _step_provenance(data.get("provenance"))
-        return StepResult(
+        rebuilt = StepResult(
             step_id=data["step_id"],
             status=status,
             structures=structures,
@@ -503,6 +549,8 @@ def load_published_step_result(*, run_root: str, step_id: str) -> StepResult | N
             summary=summary,
             provenance=provenance,
         )
+        _require_persisted_result_identity(rebuilt, error=CorruptStateError)
+        return rebuilt
     except CorruptStateError:
         raise
     except (KeyError, TypeError, ValueError, DomainError) as exc:

@@ -11,7 +11,9 @@ validated separately in :mod:`confflow.workflow.v4.graph`.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
+from typing import Any
 
 from ...domain.diagnostics import Diagnostic, diagnostic_sort_key
 from ...domain.errors import DomainError
@@ -23,7 +25,7 @@ from ...execution.contracts import (
     PortSpec,
     ResultProfileSpec,
 )
-from ...execution.registry import ExecutionRegistry, default_registry
+from ...execution.registry import ExecutionRegistry, RegistryLookupError, default_registry
 from .diagnostics import DiagnosticCode, DiagnosticReason, error
 from .document import RunInputDeclaration, StepDefinition, WorkflowDefinition
 from .fingerprint import step_semantic_digest
@@ -140,6 +142,90 @@ def _resolve_run_policy(
     return resources, scheduler
 
 
+def _native_option(native: Any, key: str) -> Any:
+    """Return ``native[key]``, or ``None`` when absent or unmapped."""
+    try:
+        get = native.get
+    except AttributeError:
+        return None
+    try:
+        return get(key)
+    except Exception:
+        return None
+
+
+#: Native sub-mappings that select a path/ensemble execution mode.
+_NATIVE_MODES = ("irc", "neb", "goat")
+
+
+def _active_native_modes(native: Any) -> list[str]:
+    """Return the native path/ensemble modes declared by *native*.
+
+    Mirrors the program-adapter rule: a mode is active exactly when its
+    sub-mapping is present (not ``None``).
+    """
+    return [mode for mode in _NATIVE_MODES if _native_option(native, mode) is not None]
+
+
+def _is_goat_native(native: Any) -> bool:
+    """Return whether *native* declares stochastic GOAT sampling."""
+    return "goat" in _active_native_modes(native)
+
+
+def _goat_seed_conflict(native: Any, seed: int | None) -> str | None:
+    """Describe a native ``Seed`` vs step-seed conflict, or ``None``.
+
+    The step-level seed is the single effective seed: a ``native["goat"]``
+    ``Seed`` that disagrees with it is a dual-authority error, never a
+    silent override.
+    """
+    goat = _native_option(native, "goat")
+    if not isinstance(goat, Mapping):
+        return None
+    native_seed = goat.get("Seed")
+    if native_seed is None or seed is None:
+        return None
+    if native_seed == seed and isinstance(native_seed, int) and isinstance(seed, int):
+        return None
+    return (
+        f"native goat Seed {native_seed!r} conflicts with the step seed {seed!r}; "
+        "the step-level seed is the single effective seed"
+    )
+
+
+#: Result profiles each native path/ensemble mode can actually execute.
+_MODE_PROFILES: dict[str, tuple[str, ...]] = {
+    "goat": ("ensemble",),
+    "irc": ("path_endpoints",),
+    "neb": ("ensemble", "path_endpoints"),
+}
+
+
+def _native_mode_profile_mismatch(native: Any, profile_name: str) -> str | None:
+    """Describe a native-mode/result-profile mismatch, or ``None``.
+
+    A GOAT ensemble rendered into a non-ensemble profile (or an IRC into a
+    non-endpoint profile) would silently drop computed structures, so the
+    combination fails closed at compile time.
+    """
+    modes = _active_native_modes(native)
+    if len(modes) > 1:
+        return f"native modes {modes} are mutually exclusive; one work item carries one native mode"
+    if not modes:
+        return None
+    mode = modes[0]
+    if not isinstance(_native_option(native, mode), Mapping):
+        return f"native {mode!r} options must be a mapping"
+    allowed = _MODE_PROFILES[mode]
+    if profile_name not in allowed:
+        return (
+            f"native mode {mode!r} requires result profile "
+            f"{' or '.join(repr(item) for item in allowed)}, "
+            f"got {profile_name!r}"
+        )
+    return None
+
+
 def _validate_step(
     step: StepDefinition,
     run_resources: ResourceRequest,
@@ -162,13 +248,14 @@ def _validate_step(
             )
         )
         return None, diagnostics
-    contract = registry.find_executor(capability)
-    if contract is None:
+    try:
+        contract = registry.resolve_executor(capability)
+    except RegistryLookupError as exc:
         diagnostics.append(
             error(
                 DiagnosticCode.CAPABILITY_ERROR,
                 DiagnosticReason.UNKNOWN_EXECUTOR_CAPABILITY,
-                f"executor capability {capability.value!r} is not registered",
+                str(exc),
                 step_id=step.id,
                 field_path=f"{field_path}.executor",
                 details={"allowed": list(registry.capability_names)},
@@ -197,6 +284,23 @@ def _validate_step(
                 field_path=f"{field_path}.calculation.program",
             )
         )
+    if capability is ExecutorCapability.CALCULATION and scientific.program:
+        # Program names are scientific vocabulary resolved through the real
+        # program registry: unknown programs fail closed at compile time.
+        # Role/task names never participate in dispatch.
+        try:
+            registry.resolve_program(scientific.program)
+        except RegistryLookupError as exc:
+            diagnostics.append(
+                error(
+                    DiagnosticCode.CAPABILITY_ERROR,
+                    DiagnosticReason.UNKNOWN_PROGRAM,
+                    str(exc),
+                    step_id=step.id,
+                    field_path=f"{field_path}.calculation.program",
+                    details={"program": scientific.program},
+                )
+            )
 
     adapter: ExecutionAdapterSpec | None = None
     input_ports: tuple[PortSpec, ...]
@@ -223,6 +327,20 @@ def _validate_step(
                     step_id=step.id,
                     field_path=f"{field_path}.calculation.execution_adapter",
                     details={"allowed": list(registry.adapter_names)},
+                )
+            )
+            return None, diagnostics
+        try:
+            adapter = registry.resolve_adapter(adapter_name)
+        except RegistryLookupError as exc:
+            diagnostics.append(
+                error(
+                    DiagnosticCode.CAPABILITY_ERROR,
+                    DiagnosticReason.MISSING_CAPABILITY_IMPLEMENTATION,
+                    str(exc),
+                    step_id=step.id,
+                    field_path=f"{field_path}.calculation.execution_adapter",
+                    details={"adapter": adapter_name},
                 )
             )
             return None, diagnostics
@@ -259,9 +377,22 @@ def _validate_step(
             )
         )
         return None, diagnostics
+    try:
+        profile = registry.resolve_profile(profile_name)
+    except RegistryLookupError as exc:
+        diagnostics.append(
+            error(
+                DiagnosticCode.CAPABILITY_ERROR,
+                DiagnosticReason.MISSING_CAPABILITY_IMPLEMENTATION,
+                str(exc),
+                step_id=step.id,
+                field_path=f"{field_path}.calculation.result_profile",
+                details={"profile": profile_name},
+            )
+        )
+        return None, diagnostics
     for check_name in scientific.checks:
-        check = registry.find_check(check_name)
-        if check is None:
+        if registry.find_check(check_name) is None:
             diagnostics.append(
                 error(
                     DiagnosticCode.CAPABILITY_ERROR,
@@ -272,7 +403,22 @@ def _validate_step(
                     details={"allowed": list(registry.check_names)},
                 )
             )
-        elif check_name not in profile.supported_checks:
+            continue
+        try:
+            registry.resolve_check(check_name)
+        except RegistryLookupError as exc:
+            diagnostics.append(
+                error(
+                    DiagnosticCode.CAPABILITY_ERROR,
+                    DiagnosticReason.MISSING_CAPABILITY_IMPLEMENTATION,
+                    str(exc),
+                    step_id=step.id,
+                    field_path=f"{field_path}.checks",
+                    details={"check": check_name},
+                )
+            )
+            continue
+        if check_name not in profile.supported_checks:
             diagnostics.append(
                 error(
                     DiagnosticCode.CAPABILITY_ERROR,
@@ -298,31 +444,82 @@ def _validate_step(
                 details={"allowed": list(registry.recovery_names)},
             )
         )
-    elif capability not in recovery.supported_capabilities:
-        diagnostics.append(
-            error(
-                DiagnosticCode.CAPABILITY_ERROR,
-                DiagnosticReason.RECOVERY_UNSUPPORTED,
-                f"recovery {recovery.name!r} does not support {capability.value!r}",
-                step_id=step.id,
-                field_path=f"{field_path}.calculation.recovery.profile",
-                details={
-                    "recovery": recovery.name,
-                    "supported": [item.value for item in recovery.supported_capabilities],
-                },
+    else:
+        try:
+            recovery = registry.resolve_recovery(scientific.recovery)
+        except RegistryLookupError as exc:
+            diagnostics.append(
+                error(
+                    DiagnosticCode.CAPABILITY_ERROR,
+                    DiagnosticReason.MISSING_CAPABILITY_IMPLEMENTATION,
+                    str(exc),
+                    step_id=step.id,
+                    field_path=f"{field_path}.calculation.recovery.profile",
+                    details={"recovery": scientific.recovery},
+                )
             )
-        )
-    if contract.stochastic and scientific.seed is None:
+            recovery = None
+        if recovery is not None and capability not in recovery.supported_capabilities:
+            diagnostics.append(
+                error(
+                    DiagnosticCode.CAPABILITY_ERROR,
+                    DiagnosticReason.RECOVERY_UNSUPPORTED,
+                    f"recovery {recovery.name!r} does not support {capability.value!r}",
+                    step_id=step.id,
+                    field_path=f"{field_path}.calculation.recovery.profile",
+                    details={
+                        "recovery": recovery.name,
+                        "supported": [item.value for item in recovery.supported_capabilities],
+                    },
+                )
+            )
+    goat_stochastic = capability is ExecutorCapability.CALCULATION and _is_goat_native(
+        scientific.native
+    )
+    if (contract.stochastic or goat_stochastic) and scientific.seed is None:
         diagnostics.append(
             error(
                 DiagnosticCode.CAPABILITY_ERROR,
                 DiagnosticReason.SEED_REQUIRED,
-                f"stochastic executor {capability.value!r} requires an explicit seed",
+                (
+                    "stochastic GOAT sampling requires an explicit seed"
+                    if goat_stochastic
+                    else f"stochastic executor {capability.value!r} requires an explicit seed"
+                ),
                 step_id=step.id,
                 field_path=f"{field_path}.seed",
-                details={"executor": capability.value},
+                details={"executor": capability.value, "goat": goat_stochastic},
             )
         )
+    if capability is ExecutorCapability.CALCULATION and scientific.seed is not None:
+        conflict = _goat_seed_conflict(scientific.native, scientific.seed)
+        if conflict is not None:
+            diagnostics.append(
+                error(
+                    DiagnosticCode.CAPABILITY_ERROR,
+                    DiagnosticReason.SEED_CONFLICT,
+                    conflict,
+                    step_id=step.id,
+                    field_path=f"{field_path}.calculation.native",
+                    details={"seed": scientific.seed},
+                )
+            )
+    if capability is ExecutorCapability.CALCULATION:
+        mismatch = _native_mode_profile_mismatch(scientific.native, profile.name)
+        if mismatch is not None:
+            diagnostics.append(
+                error(
+                    DiagnosticCode.CAPABILITY_ERROR,
+                    DiagnosticReason.INCOMPATIBLE_CAPABILITY_COMBINATION,
+                    mismatch,
+                    step_id=step.id,
+                    field_path=f"{field_path}.calculation.result_profile",
+                    details={
+                        "profile": profile.name,
+                        "modes": _active_native_modes(scientific.native),
+                    },
+                )
+            )
     if scientific.transform is not None and scientific.transform not in TRANSFORM_KINDS:
         diagnostics.append(
             error(

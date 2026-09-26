@@ -923,6 +923,11 @@ def _require_contract_version(versions: dict[str, str], key: str, actual: str, w
 def _resolve_profile(result_profile: str, versions: dict[str, str]) -> Any:
     """Resolve the result profile named by the execution definition.
 
+    Single-authority resolution goes through the execution registry:
+    the descriptor and the runtime implementation are one entry, so a
+    published-but-unimplemented profile fails closed here instead of
+    compiling and crashing at runtime.
+
     Parameters
     ----------
     result_profile : str
@@ -940,11 +945,11 @@ def _resolve_profile(result_profile: str, versions: dict[str, str]) -> Any:
     WorkerError
         Raised when the profile is unknown or its contract drifts.
     """
-    from confflow.execution.profile_standard import PROFILES
+    from confflow.execution.registry import RegistryLookupError, default_registry
 
     try:
-        profile = PROFILES[result_profile]
-    except KeyError as exc:
+        profile = default_registry().profile_implementation(result_profile)
+    except RegistryLookupError as exc:
         raise WorkerError(
             "remote worker failed at stage 'resolve execution contracts': "
             f"unknown result profile {result_profile!r}"
@@ -955,6 +960,8 @@ def _resolve_profile(result_profile: str, versions: dict[str, str]) -> Any:
 
 def _resolve_checks(checks: tuple[str, ...], versions: dict[str, str]) -> tuple[Any, ...]:
     """Resolve the scientific checks named by the execution definition.
+
+    Single-authority resolution goes through the execution registry.
 
     Parameters
     ----------
@@ -973,13 +980,14 @@ def _resolve_checks(checks: tuple[str, ...], versions: dict[str, str]) -> tuple[
     WorkerError
         Raised when a check is unknown or its contract drifts.
     """
-    from confflow.execution.checks_standard import CHECKS
+    from confflow.execution.registry import RegistryLookupError, default_registry
 
+    registry = default_registry()
     resolved: list[Any] = []
     for name in checks:
         try:
-            check = CHECKS[name]
-        except KeyError as exc:
+            check = registry.check_implementation(name)
+        except RegistryLookupError as exc:
             raise WorkerError(
                 "remote worker failed at stage 'resolve execution contracts': "
                 f"unknown scientific check {name!r}"
@@ -993,6 +1001,10 @@ def _resolve_checks(checks: tuple[str, ...], versions: dict[str, str]) -> tuple[
 
 def _resolve_recovery(recovery: str, versions: dict[str, str], adapter: Any) -> Any:
     """Resolve the recovery policy, binding rescue scans like batch does.
+
+    Single-authority resolution goes through the execution registry with
+    the step's program adapter, so rescue work renders through the same
+    file-format authority as primary work.
 
     Parameters
     ----------
@@ -1013,21 +1025,16 @@ def _resolve_recovery(recovery: str, versions: dict[str, str], adapter: Any) -> 
     WorkerError
         Raised when the profile is unknown or its contract drifts.
     """
-    from confflow.execution.recovery_standard import RECOVERIES, TsRescueScanPolicy
+    from confflow.execution.registry import RegistryLookupError, default_registry
 
     try:
-        policy = RECOVERIES[recovery]
-    except KeyError as exc:
+        policy = default_registry().recovery_implementation(recovery, adapter=adapter)
+    except RegistryLookupError as exc:
         raise WorkerError(
             "remote worker failed at stage 'resolve execution contracts': "
             f"unknown recovery profile {recovery!r}"
         ) from exc
     _require_contract_version(versions, "recovery", policy.contract_version, "recovery policy")
-    if (
-        getattr(policy, "name", "") == "ts_rescue_scan"
-        and getattr(policy, "_adapter", None) is None
-    ):
-        policy = TsRescueScanPolicy(adapter=adapter)
     return policy
 
 

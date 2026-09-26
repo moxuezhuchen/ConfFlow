@@ -29,6 +29,7 @@ from typing import Final
 from ..domain.errors import DomainError
 from ..domain.structure import StructureRecord
 from ..domain.work_item import WorkItem
+from .atom_mapping import AtomMapping, validate_mapping_for_slots
 from .execution_adapters import GUESS_SLOT, NAMED_SLOT_ORDER, PRODUCT_SLOT, REACTANT_SLOT
 from .output_identity import multi_parent_lineage
 
@@ -37,6 +38,7 @@ __all__ = [
     "NAMED_GROUP_MISMATCH",
     "NAMED_STRUCTURE_AMBIGUOUS",
     "NAMED_STRUCTURE_MISSING",
+    "validate_slots_with_mapping",
     "NamedReactionInputs",
     "NamedStructureError",
     "qst_logical_key",
@@ -309,3 +311,25 @@ def ts_output_lineage(
     }
     parents = tuple(by_slot[slot] for slot in NAMED_SLOT_ORDER if by_slot[slot] is not None)
     return multi_parent_lineage(parents)
+
+
+def validate_slots_with_mapping(
+    resolved: NamedReactionInputs, mapping: AtomMapping
+) -> dict[str, tuple[int, ...]]:
+    """Validate *mapping* before compatibility for one resolved triple.
+
+    Shared ordering contract: both assembly and the executor call this
+    helper (which delegates to
+    :func:`confflow.execution.atom_mapping.validate_mapping_for_slots`)
+    *before* :func:`validate_named_compatibility`.  Atom order is related
+    by the explicit mapping first; charge/multiplicity compatibility is
+    checked afterwards.  Returns the normalized per-slot permutation dict
+    (``{}`` for identity) for execution-local reordering.
+    """
+    slot_atoms: dict[str, tuple[str, ...]] = {
+        REACTANT_SLOT: tuple(resolved.reactant.atoms),
+        PRODUCT_SLOT: tuple(resolved.product.atoms),
+    }
+    if resolved.guess is not None:
+        slot_atoms[GUESS_SLOT] = tuple(resolved.guess.atoms)
+    return validate_mapping_for_slots(mapping, slot_atoms)

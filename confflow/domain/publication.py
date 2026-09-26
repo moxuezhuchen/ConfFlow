@@ -25,7 +25,8 @@ from collections.abc import Iterable
 from enum import IntEnum
 
 from .completion import StepStatus
-from .errors import PublicationError
+from .errors import InvalidResultError, PublicationError
+from .result import find_duplicate_result_ids, require_production_ids
 from .step_result import StepResult
 
 __all__ = [
@@ -34,6 +35,29 @@ __all__ = [
     "PublicationTracker",
     "verify_step_publication",
 ]
+
+
+def _require_result_identity(step_result: StepResult) -> None:
+    """Reject missing or duplicate production result ids before publication.
+
+    Stamping is the emitters' job (profiles, analysis); gating is here, at
+    the runtime boundary, so no caller can publish identity-less results
+    by merely carrying the optional field.
+    """
+    try:
+        require_production_ids(step_result.results)
+        for item in step_result.item_results:
+            require_production_ids(item.results)
+    except InvalidResultError as exc:
+        raise PublicationError(
+            f"cannot publish step {step_result.step_id!r} with identity-less results: {exc}"
+        ) from exc
+    duplicates = find_duplicate_result_ids(step_result.results)
+    if duplicates:
+        raise PublicationError(
+            f"cannot publish step {step_result.step_id!r} with duplicate result ids: "
+            + ", ".join(duplicates)
+        )
 
 
 class PublicationStage(IntEnum):
@@ -125,8 +149,12 @@ def verify_step_publication(
     Raises
     ------
     PublicationError
-        Raised when any durability requirement is unmet.
+        Raised when any durability requirement is unmet, or when any
+        published result lacks a producer-scoped identity or collides on
+        one (legacy ``result_id=None`` records never become production
+        refs silently).
     """
+    _require_result_identity(step_result)
     durable = set(durable_item_ids)
     missing_items = [item_id for item_id in step_result.work_item_ids if item_id not in durable]
     if missing_items:

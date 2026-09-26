@@ -23,6 +23,7 @@ from typing import Any, Final
 from ..domain.structure import StructureRecord
 
 __all__ = [
+    "CONFORMER_MEMBER_METADATA_KEY",
     "CONFORMER_ROLE",
     "NEB_IMAGE_ROLE",
     "NEB_TS_CANDIDATE_ROLE",
@@ -55,6 +56,11 @@ NEB_TS_CANDIDATE_ROLE: Final[str] = "neb_ts_candidate"
 
 #: Semantic role of one GOAT/ensemble conformer member.
 CONFORMER_ROLE: Final[str] = "conformer"
+
+#: Single-authority metadata key carrying the native conformer member index
+#: on conformer StructureRecords.  Ensemble and confgen producers share this
+#: key so the member ordinal is one typed contract, not two string literals.
+CONFORMER_MEMBER_METADATA_KEY: Final[str] = "member_index"
 
 _PATH_ROLES: Final = frozenset(
     {

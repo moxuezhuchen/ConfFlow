@@ -9,9 +9,11 @@ the digests of steps that actually use it.
 
 from __future__ import annotations
 
+import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any
+from typing import Any, Final
 
 from ..domain._immutable import FrozenDict
 from ..domain.binding import Cardinality, Pairing, PortKind
@@ -20,11 +22,14 @@ from ..domain.errors import DomainError
 
 __all__ = [
     "CheckSpec",
+    "ENVIRONMENT_DIGEST_KIND",
+    "ENVIRONMENT_DIGEST_KIND_V1",
     "ExecutionAdapterSpec",
     "ExecutionBinding",
     "ExecutionEnvironment",
     "ExecutorCapability",
     "ExecutorContract",
+    "MEASUREMENT_STATES",
     "PortSpec",
     "RecoverySpec",
     "ResultProfileSpec",
@@ -407,20 +412,55 @@ class ExecutionBinding:
         }
 
 
+#: Digest domain marker for :meth:`ExecutionEnvironment.digest` (identity v2).
+#:
+#: v2 is the versioned environment-identity rule: full executable content
+#: identity plus the declared scientifically relevant explicit environment.
+#: Endpoint target locators, absolute paths, file stat (size/mtime), and
+#: scheduler width are operational provenance and never enter the digest.
+#: v1 digests (which folded the target locator and stat-tainted hashes)
+#: never equal v2 digests: old generations fail closed at reuse comparison.
+ENVIRONMENT_DIGEST_KIND: Final[str] = "confflow.execution_environment.v2"
+
+#: Superseded v1 marker, retained so old digests are recognizable (and unequal).
+ENVIRONMENT_DIGEST_KIND_V1: Final[str] = "confflow.execution_environment.v1"
+
+#: Allowed measurement states for :attr:`ExecutionEnvironment.measurement_status`.
+MEASUREMENT_STATES: Final[frozenset[str]] = frozenset({"verified", "unknown"})
+
+
 @dataclass(frozen=True, slots=True)
 class ExecutionEnvironment:
     """Measured identity of the runtime environment.
 
     This is a separate digest axis from workflow, step, and work-item
     identity: it describes *where* a computation ran, not what was computed.
-    Absolute executable paths are provenance and are excluded from the
-    digest; the executable content digest carries identity.
+
+    Identity rule v2 (see ``ENVIRONMENT_DIGEST_KIND``):
+
+    - IN: ``program``, ``program_version``, ``executable_digest`` (full
+      content hash for native launches; ``None`` for pure executors), and
+      ``relevant_env`` — the caller-declared, scientifically relevant
+      explicit environment subset. Relevance is declared by the caller
+      (binding resolution), never inferred by scanning the process
+      environment: operational variables stay out of the scientific axis.
+    - OUT: ``target`` (endpoint locator), absolute executable paths,
+      file stat, scheduler width, GUI/presentation. They travel in
+      ``metadata``/fields for audit, never in the digest.
+    - ``unknown`` measurements (``measurement_status="unknown"``) carry a
+      fresh ``unknown_nonce`` folded into the digest, so an unmeasured
+      identity NEVER equals a verified one — or another unknown one.
+      Unknown cannot silently stand in for verified equivalence; reuse
+      comparison fails closed on inequality with no consumer changes.
     """
 
     program: str
     program_version: str | None = None
     executable_digest: str | None = None
+    relevant_env: FrozenDict = field(default_factory=FrozenDict)
     target: str | None = None
+    measurement_status: str = "verified"
+    unknown_nonce: str | None = None
     metadata: FrozenDict = field(default_factory=FrozenDict)
 
     def __post_init__(self) -> None:
@@ -429,18 +469,73 @@ class ExecutionEnvironment:
             value = getattr(self, name)
             if value is not None:
                 _require_text(value, name)
+        relevant = self.relevant_env
+        if not isinstance(relevant, FrozenDict):
+            if isinstance(relevant, Mapping):
+                object.__setattr__(self, "relevant_env", FrozenDict(relevant))
+                relevant = self.relevant_env
+            else:
+                raise DomainError("relevant_env must be a mapping")
+        for key, value in relevant.items():
+            if not isinstance(key, str) or not key or key != key.strip():
+                raise DomainError("relevant_env keys must be non-empty, trimmed strings")
+            if not isinstance(value, str):
+                raise DomainError("relevant_env values must be strings")
+        if self.measurement_status not in MEASUREMENT_STATES:
+            raise DomainError(f"measurement_status must be one of {sorted(MEASUREMENT_STATES)}")
+        if self.measurement_status == "unknown":
+            if self.unknown_nonce is None:
+                object.__setattr__(self, "unknown_nonce", uuid.uuid4().hex)
+            elif (
+                not isinstance(self.unknown_nonce, str)
+                or not self.unknown_nonce
+                or self.unknown_nonce != self.unknown_nonce.strip()
+            ):
+                raise DomainError("unknown_nonce must be a non-empty, trimmed string")
+        elif self.unknown_nonce is not None:
+            raise DomainError("a verified environment must not carry an unknown_nonce")
         if not isinstance(self.metadata, FrozenDict):
             object.__setattr__(self, "metadata", FrozenDict(self.metadata))
 
+    @classmethod
+    def unknown(cls, program: str, *, reason: str) -> ExecutionEnvironment:
+        """Build a fail-closed unmeasured environment for *program*.
+
+        The returned digest is unique per construction (fresh nonce), so it
+        can never satisfy a reuse equality check. *reason* is recorded in
+        metadata for audit.
+        """
+        _require_text(program, "program")
+        _require_text(reason, "reason")
+        return cls(
+            program=program,
+            measurement_status="unknown",
+            metadata=FrozenDict({"unknown_reason": reason}),
+        )
+
+    @property
+    def is_verified(self) -> bool:
+        """Return whether this environment was actually measured."""
+        return self.measurement_status == "verified"
+
     def digest(self) -> str:
-        """Return the execution-environment digest."""
+        """Return the execution-environment digest (identity rule v2)."""
+        if self.measurement_status == "unknown":
+            return typed_digest(
+                ENVIRONMENT_DIGEST_KIND,
+                {
+                    "unknown": True,
+                    "program": self.program,
+                    "nonce": self.unknown_nonce,
+                },
+            )
         return typed_digest(
-            "confflow.execution_environment.v1",
+            ENVIRONMENT_DIGEST_KIND,
             {
                 "program": self.program,
                 "program_version": self.program_version,
                 "executable_digest": self.executable_digest,
-                "target": self.target,
+                "relevant_env": self.relevant_env.thaw(),
             },
         )
 
@@ -450,7 +545,10 @@ class ExecutionEnvironment:
             "program": self.program,
             "program_version": self.program_version,
             "executable_digest": self.executable_digest,
+            "relevant_env": self.relevant_env.thaw(),
             "target": self.target,
+            "measurement_status": self.measurement_status,
+            "unknown_nonce": self.unknown_nonce,
             "metadata": self.metadata.thaw(),
             "digest": self.digest(),
         }

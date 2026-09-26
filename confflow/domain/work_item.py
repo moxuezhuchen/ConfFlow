@@ -48,7 +48,10 @@ __all__ = [
 _DIGEST_PATTERN = re.compile(r"^sha256:[0-9a-f]{64}$")
 
 #: Digest domain marker for :attr:`WorkItem.semantic_digest` construction.
-WORK_ITEM_DIGEST_KIND = "confflow.work_item.v1"
+#: v2 pins the provenance-aware payload (entity/group/role/lineage and
+#: ResultRef/provenance); v1 digests must fail closed and never be reused.
+WORK_ITEM_DIGEST_KIND = "confflow.work_item.v2"
+WORK_ITEM_DIGEST_KIND_V1 = "confflow.work_item.v1"
 
 
 def _require_identifier(value: Any, field_name: str) -> str:
@@ -468,10 +471,11 @@ def work_item_semantic_digest(
     """Compute the content digest that controls work-item reuse.
 
     The logical key is deliberately excluded: reuse validity is a function of
-    the step science, the resolved input content, and resources.  Two items
-    with identical content are interchangeable for reuse even when they carry
-    different logical addresses (for example after re-importing the same
-    geometry under new entity ids).
+    the step science, the resolved input content, and resources.  Input
+    payloads are provenance-aware (entity/group/role/lineage and
+    ResultRef/provenance participate); locator, scheduler, and presentation
+    addresses never enter.  v2 digests never match v1 digests: old
+    generations fail closed rather than being silently reused.
     """
     return typed_digest(
         WORK_ITEM_DIGEST_KIND,

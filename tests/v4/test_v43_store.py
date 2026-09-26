@@ -97,13 +97,33 @@ def _completed_result(
     work_item_id: str, digest: str, *, tag: str = "a", energy: float = -40.5
 ) -> WorkItemResult:
     """Build a rich completed result for round-trip tests."""
+    from confflow.domain.result import make_result_id
     from tests.v4._builders import checkpoint, energy_result, structure
 
+    # Final contract (freeze §2/B): production results carry producer-scoped
+    # result_ids bound to the producing work item's semantic digest.
+    base = energy_result(energy, subject_structure_id=f"struct-{tag}")
+    stamped = type(base)(
+        kind=base.kind,
+        value=base.value,
+        unit=base.unit,
+        subject_structure_id=base.subject_structure_id,
+        source_step_id="s_opt",
+        source_work_item_id=work_item_id,
+        provenance=base.provenance,
+        result_id=make_result_id(
+            step_id="s_opt",
+            work_item_id=work_item_id,
+            kind=base.kind,
+            subject_structure_id=base.subject_structure_id,
+            producer_digest=digest,
+        ),
+    )
     return WorkItemResult(
         work_item_id=work_item_id,
         status=WorkItemStatus.COMPLETED,
         structures=StructureSet.of(structure(f"struct-{tag}")),
-        results=ResultSet.of(energy_result(energy, subject_structure_id=f"struct-{tag}")),
+        results=ResultSet.of(stamped),
         artifacts=ArtifactSet.of(
             ArtifactRef(
                 id=f"chk-{tag}",

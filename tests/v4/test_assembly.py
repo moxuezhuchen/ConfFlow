@@ -25,6 +25,7 @@ from confflow.domain import (
     StructureSet,
 )
 from confflow.domain.artifact import ArtifactLocator
+from confflow.domain.completion import StepStatus
 from confflow.execution import (
     ExecutorCapability,
     PortSpec,
@@ -323,6 +324,11 @@ class TestNamedInputPairing:
         assert "element_mismatch" in assembly_reasons(assembly)
 
     def test_two_per_structure_drivers_rejected(self) -> None:
+        # Final contract (freeze §8/A): test-only adapters must register a
+        # real runtime implementation atomically; the two-driver shape is
+        # then rejected at assembly with pairing_undefined.
+        from confflow.execution import execution_adapters as _adapters
+
         registry = build_default_registry()
         base = registry.adapter("named_structures")
         registry.register_adapter(
@@ -344,7 +350,8 @@ class TestNamedInputPairing:
                         Pairing.PER_STRUCTURE,
                     ),
                 ),
-            )
+            ),
+            _adapters.resolve_named_slot_sets,
         )
         doc = self._doc()
         doc["steps"][0]["calculation"]["execution_adapter"] = "two_drivers"
@@ -425,6 +432,7 @@ class TestMaterializedChains:
                             step_id="s_opt",
                             structures=structures,
                             artifacts=checkpoints,
+                            status=StepStatus.COMPLETED,
                         )
                     }
                 )
@@ -529,6 +537,9 @@ class TestScientificResolution:
         assert "electron_parity_mismatch" in assembly_reasons(assembly)
 
     def test_identical_content_keeps_reuse_digest_across_entity_ids(self) -> None:
+        # Final contract (freeze §6/B): entity id participates in reuse
+        # identity; identical geometry under distinct entities must NOT
+        # reuse.  Geometry equality alone never merges distinct entities.
         plan = _compile(_calc_doc())
         first = assemble_work_items(
             plan, run_inputs(structures={"structures": structure_set("a0")})
@@ -538,7 +549,7 @@ class TestScientificResolution:
         )
         assert first.ok and second.ok
         assert first.items[0].logical_key != second.items[0].logical_key
-        assert first.items[0].semantic_digest == second.items[0].semantic_digest
+        assert first.items[0].semantic_digest != second.items[0].semantic_digest
 
 
 class TestDigestInputs:
@@ -668,6 +679,7 @@ class TestDigestInputs:
                             step_id="s_opt",
                             structures=structures,
                             results=first_results,
+                            status=StepStatus.COMPLETED,
                         )
                     }
                 )
@@ -683,6 +695,7 @@ class TestDigestInputs:
                             step_id="s_opt",
                             structures=structures,
                             results=second_results,
+                            status=StepStatus.COMPLETED,
                         )
                     }
                 )

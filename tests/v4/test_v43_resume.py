@@ -98,21 +98,28 @@ def _items(plan: Any, structures: StructureSet) -> tuple[Any, ...]:
 
 def _request(plan: Any, items: tuple[Any, ...], run_root: str) -> StepExecutionRequest:
     """Build a durable step request wired to the fake ORCA executable."""
+    from confflow.execution.environment import EnvironmentMeasurer
+    from confflow.execution.registry import default_registry
+
     planned = plan.steps[0]
+    registry = default_registry()
+    adapter = registry.resolve_program("orca")
+    # Final contract (freeze §1/A + §7/D-11): resolve via the single
+    # registry authority and record a measured environment (never None).
     return StepExecutionRequest(
         step=planned,
         items=tuple(items),
         scientific=planned.scientific,
         scientific_defaults=plan.scientific_defaults,
-        adapter=get_program_adapter("orca"),
-        profile=PROFILES["standard"],
-        checks=(CHECKS["normal_termination"],),
-        recovery=RECOVERIES["none"],
+        adapter=adapter,
+        profile=registry.profile_implementation("standard"),
+        checks=(registry.check_implementation("normal_termination"),),
+        recovery=registry.recovery_implementation("none", adapter=adapter),
         execution_binding=ExecutionBinding(
             binding_id="test", executable=str(FAKE_ORCA), env=FrozenDict({})
         ),
         run_root=run_root,
-        environment=None,
+        environment=EnvironmentMeasurer().build_environment(str(FAKE_ORCA), adapter=adapter),
         definition_digest=plan.definition_digest,
     )
 

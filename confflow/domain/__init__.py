@@ -72,11 +72,26 @@ from .publication import (
     verify_step_publication,
 )
 from .resources import OnFailure, ResourceRequest, SchedulerPolicy, parse_memory_bytes
-from .result import Provenance, ResultSet, ScientificResult
+from .result import (
+    Provenance,
+    ResultRef,
+    ResultSet,
+    ScientificResult,
+    find_duplicate_result_ids,
+    make_result_id,
+    require_production_ids,
+)
 from .retention import RetentionClass, may_garbage_collect
 from .step_result import StepProvenance, StepResult
 from .stochastic import SeedPolicy, seed_payload, seed_required, validate_seed
-from .structure import GEOMETRY_DIGEST_KIND, Coordinates, StructureRecord, StructureSet
+from .structure import (
+    GEOMETRY_DIGEST_KIND,
+    Coordinates,
+    StructureRecord,
+    StructureSet,
+    check_structure_id_conflicts,
+    structure_reuse_payload,
+)
 from .units import (
     CANONICAL_UNITS,
     UNIT_QUANTITIES,
@@ -134,6 +149,8 @@ __all__ = [
     "Coordinates",
     "StructureRecord",
     "StructureSet",
+    "check_structure_id_conflicts",
+    "structure_reuse_payload",
     # Artifact
     "ArtifactLocator",
     "ArtifactRef",
@@ -143,8 +160,12 @@ __all__ = [
     "may_garbage_collect",
     # Results
     "Provenance",
+    "ResultRef",
     "ResultSet",
     "ScientificResult",
+    "find_duplicate_result_ids",
+    "make_result_id",
+    "require_production_ids",
     # Bindings
     "Binding",
     "BindingSet",

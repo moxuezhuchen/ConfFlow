@@ -32,6 +32,8 @@ __all__ = [
     "Coordinates",
     "StructureRecord",
     "StructureSet",
+    "check_structure_id_conflicts",
+    "structure_reuse_payload",
 ]
 
 #: Digest domain marker for :attr:`StructureRecord.geometry_digest`.
@@ -222,6 +224,40 @@ class StructureRecord:
             "multiplicity": self.multiplicity,
         }
 
+    def reuse_payload(self, effective: Any | None = None) -> dict[str, Any]:
+        """Return the provenance-aware reuse payload for work-item digests.
+
+        Unlike :meth:`scientific_payload` (pure content equality), the reuse
+        payload pins the entity-relevant semantic axes required by the V4
+        repair freeze: entity id, geometry content, effective
+        charge/multiplicity/freeze, group key, role, parent ids, and lineage
+        root.  Locators, scheduler placement, and GUI metadata stay excluded.
+        *effective* may be an
+        :class:`~confflow.workflow.v4.scientific.EffectiveScientificParameters`
+        record; when omitted the record's inherent charge/multiplicity and no
+        freeze are used.
+        """
+        if effective is None:
+            charge = self.charge
+            multiplicity = self.multiplicity
+            freeze: list[int] | None = None
+        else:
+            charge = getattr(effective, "charge", self.charge)
+            multiplicity = getattr(effective, "multiplicity", self.multiplicity)
+            raw_freeze = getattr(effective, "freeze", None)
+            freeze = list(raw_freeze) if raw_freeze is not None else None
+        return {
+            "entity_id": self.id,
+            "geometry_digest": self.geometry_digest,
+            "charge": charge,
+            "multiplicity": multiplicity,
+            "freeze": freeze,
+            "group_key": self.group_key,
+            "role": self.role,
+            "parent_ids": list(self.parent_ids),
+            "lineage_root_id": self.lineage_root_id,
+        }
+
     def has_same_content(self, other: StructureRecord) -> bool:
         """Return whether *other* has identical scientific content.
 
@@ -353,3 +389,41 @@ class StructureSet:
         if not isinstance(other, StructureSet):
             raise TypeError(f"cannot add {type(other).__name__} to StructureSet")
         return StructureSet(self.structures + other.structures)
+
+
+def structure_reuse_payload(
+    structure: StructureRecord, effective: Any | None = None
+) -> dict[str, Any]:
+    """Return the provenance-aware reuse payload of *structure*."""
+    if not isinstance(structure, StructureRecord):
+        raise InvalidStructureError(
+            f"structure_reuse_payload requires StructureRecord, got {type(structure).__name__}"
+        )
+    return structure.reuse_payload(effective)
+
+
+def check_structure_id_conflicts(
+    records: Iterable[StructureRecord],
+) -> list[tuple[str, StructureRecord, StructureRecord]]:
+    """Return ``(id, first, second)`` triples for conflicting entity payloads.
+
+    The same entity id may legitimately appear on multiple ports only when
+    every occurrence carries an identical reuse payload; differing payloads
+    for one id fail closed and must be reported by the caller.
+    """
+    seen: dict[str, StructureRecord] = {}
+    conflicts: list[tuple[str, StructureRecord, StructureRecord]] = []
+    reported: set[str] = set()
+    for record in records:
+        if not isinstance(record, StructureRecord):
+            raise InvalidStructureError(
+                f"members must be StructureRecord, got {type(record).__name__}"
+            )
+        prior = seen.get(record.id)
+        if prior is None:
+            seen[record.id] = record
+            continue
+        if prior.reuse_payload() != record.reuse_payload() and record.id not in reported:
+            conflicts.append((record.id, prior, record))
+            reported.add(record.id)
+    return conflicts

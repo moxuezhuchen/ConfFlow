@@ -63,6 +63,7 @@ def _calc_step(
     profile: str = "standard",
     check_params: dict[str, dict[str, Any]] | None = None,
     label: str | None = None,
+    seed: int | None = None,
 ) -> dict[str, Any]:
     """Build one calculation step mapping for a recipe document."""
     calculation: dict[str, Any] = {
@@ -74,6 +75,8 @@ def _calc_step(
         "checks": list(checks),
         "recovery": {"profile": "none"},
     }
+    if seed is not None:
+        calculation["seed"] = seed
     if check_params:
         calculation["check_params"] = {name: dict(params) for name, params in check_params.items()}
     step: dict[str, Any] = {
@@ -119,6 +122,7 @@ def _single_calc_recipe(
     profile: str = "standard",
     inputs: dict[str, Any] | None = None,
     bindings: dict[str, Any] | None = None,
+    seed: int | None = None,
 ) -> dict[str, Any]:
     """Build a single-calculation recipe entry."""
     step = _calc_step(
@@ -132,6 +136,7 @@ def _single_calc_recipe(
         profile=profile,
         check_params=check_params,
         label=label,
+        seed=seed,
     )
     return {
         "id": recipe_id,
@@ -419,6 +424,8 @@ def _recipes() -> list[dict[str, Any]]:
             profile="ensemble",
             native={"keyword": "B3LYP D3BJ Opt", "goat": {"MaxIter": 50}},
             checks=["normal_termination"],
+            # Single stochastic authority for GOAT sampling (freeze §8/A).
+            seed=42,
         ),
         _tspes_recipe(),
     ]

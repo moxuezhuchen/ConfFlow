@@ -103,9 +103,17 @@ def _item(plan: Any, structure_id: str = "s0") -> WorkItem:
 
 
 def _geometry(structure_id: str = "s0") -> ParsedGeometry:
-    """Return the parsed geometry of a builder structure."""
+    """Return the parsed geometry of a builder structure.
+
+    Final contract (freeze §2/B + C measurement rule): a PRODUCED native
+    geometry with content identical to the input retains input identity
+    (measurement/passthrough).  Opt fixtures must simulate real
+    optimization with moved coordinates so the profile mints a new
+    entity and ``geometry_required`` passes.
+    """
     record = structure(structure_id)
-    return ParsedGeometry(atoms=tuple(record.atoms), coordinates=tuple(record.coordinates))
+    moved = tuple((x + 0.05, y, z) for x, y, z in record.coordinates)
+    return ParsedGeometry(atoms=tuple(record.atoms), coordinates=moved)
 
 
 # ---------------------------------------------------------------------------
@@ -503,10 +511,13 @@ class TestExecutorPrelaunch:
         os.symlink(str(outside), tmp_path / "run" / "link.chk")
         plan = _compiled()
         item = _item(plan)
+        # Final contract (freeze §3/C): checkpoints require checksum +
+        # subject + role + locator; the escape check runs after identity.
         artifact = ArtifactRef(
             id="chk",
             role="checkpoint",
             locator=ArtifactLocator.run_relative("link.chk"),
+            checksum="sha256:2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881",
             subject_structure_id="s0",
         )
         bad = WorkItem(
@@ -1346,6 +1357,8 @@ class TestScopedAndAssemble:
         assert recovery.evaluations == 1
 
     def test_external_uri_artifact_skipped(self, tmp_path: Path) -> None:
+        # Final contract (freeze §3/C): bound checkpoints require a
+        # run-relative locator; external URIs fail closed with ARTIFACT_ERROR.
         from confflow.domain.artifact import ArtifactLocator as Locator
 
         plan = _compiled()
@@ -1373,15 +1386,20 @@ class TestScopedAndAssemble:
             plan, item, str(tmp_path), StubSupervisor(), adapter, executable="/bin/true"
         )
         result = WorkItemExecutor().execute(manual, context)
-        assert result.status is WorkItemStatus.COMPLETED
+        assert result.status is WorkItemStatus.FAILED
+        assert result.error is not None
+        assert result.error.code == "artifact_error"
 
     def test_staging_without_run_root(self, tmp_path: Path) -> None:
         plan = _compiled()
         item = _item(plan)
+        # Final contract: checksum present so the run-root containment check
+        # is reached (identity first, then staging).
         artifact = ArtifactRef(
             id="chk",
             role="checkpoint",
             locator=ArtifactLocator.run_relative("a.chk"),
+            checksum="sha256:" + "ab" * 32,
             subject_structure_id="s0",
         )
         manual = WorkItem(
@@ -1615,6 +1633,8 @@ class TestLaunchWaitEdges:
         assert staged[0].local_name == os.path.join("staged", "input-checkpoint-0.chk")
 
     def test_staging_success_without_checksum(self, tmp_path: Path) -> None:
+        # Final contract (freeze §3/C): staged content without checksum
+        # identity is refused with ARTIFACT_ERROR.
         (tmp_path / "steps" / "prev").mkdir(parents=True)
         (tmp_path / "steps" / "prev" / "f.chk").write_bytes(b"bytes")
         plan = _compiled()
@@ -1642,7 +1662,9 @@ class TestLaunchWaitEdges:
             plan, item, str(tmp_path), StubSupervisor(), adapter, executable="/bin/true"
         )
         result = WorkItemExecutor().execute(manual, context)
-        assert result.status is WorkItemStatus.COMPLETED
+        assert result.status is WorkItemStatus.FAILED
+        assert result.error is not None
+        assert result.error.code == "artifact_error"
 
     def test_recovery_recheck_still_fails(self, tmp_path: Path) -> None:
         from confflow.execution.recovery import RecoveryExecution

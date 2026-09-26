@@ -3,9 +3,31 @@
 """V4 execution-environment measurement.
 
 The environment digest is the independent axis that says *where* a
-computation ran: program identity, executable file identity, adapter and
-parser versions.  Absolute machine paths are provenance only and never enter
-the digest — a relocated identical binary measures the same environment.
+computation ran: program identity, full executable content identity, and
+the declared scientifically relevant explicit environment. It never folds
+endpoint locators, absolute paths, file stat, scheduler width, or
+presentation facts — those are operational provenance, recorded for audit
+but digest-inert.
+
+Identity rule v2 (see ``confflow.execution.contracts``):
+
+- Executable identity is the FULL content hash. No prefix truncation: a
+  changed tail byte always moves the digest, even past any historical
+  prefix cap. Stat (size/mtime/dev/ino) is provenance plus cache
+  invalidation only — a relocated byte-identical binary touched to a new
+  mtime measures the same environment.
+- The measurer cache is stat-gated: a cached identity is re-validated
+  against fresh stat on every read, so mid-run binary replacement is
+  re-measured instead of aliased. An in-place rewrite that preserves
+  every stat field is undetectable without rehashing and is out of scope;
+  call :func:`measure_executable` directly to bypass the cache.
+- Only the caller-declared ``relevant_env`` subset enters the digest
+  (see :func:`select_relevant_env`). Operational variables are never
+  hashed into the scientific axis; relevance declarations are an explicit
+  caller/binding contract, never inferred by scanning the environment.
+- Pure (non-native) executors record their implementation identity via
+  :func:`build_pure_environment` — no Gaussian/ORCA executable required.
+  Unknown measurements never equal verified ones (fail-closed nonce).
 
 Measurement is cached per resolved executable so repeated items in one step
 do not re-hash binaries.
@@ -17,7 +39,9 @@ import hashlib
 import os
 import shutil
 import threading
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
+from typing import Any
 
 from ..domain._immutable import FrozenDict
 from ..domain.errors import DomainError
@@ -27,7 +51,9 @@ from .native import ProgramAdapter
 __all__ = [
     "ExecutableIdentity",
     "EnvironmentMeasurer",
+    "build_pure_environment",
     "measure_executable",
+    "select_relevant_env",
 ]
 
 _HASH_CHUNK_BYTES = 1024 * 1024
@@ -35,7 +61,13 @@ _HASH_CHUNK_BYTES = 1024 * 1024
 
 @dataclass(frozen=True, slots=True)
 class ExecutableIdentity:
-    """Measured file identity of one executable."""
+    """Measured file identity of one executable.
+
+    ``sha256`` is the FULL content hash: every byte participates, so no
+    truncated-prefix alias class exists. ``size_bytes``/``mtime_ns``/
+    ``device``/``inode`` are provenance plus cache-invalidation keys only
+    and never enter any digest.
+    """
 
     requested: str
     resolved_path: str
@@ -50,8 +82,18 @@ class ExecutableIdentity:
 
     @property
     def digest(self) -> str:
-        """Return the content digest in ``sha256:<hex>`` form."""
+        """Return the full-content digest in ``sha256:<hex>`` form."""
         return f"sha256:{self.sha256}"
+
+    def stat_key(self) -> tuple[str, int, int, int, int]:
+        """Return the cache-invalidation key for this measurement."""
+        return (
+            self.real_path,
+            self.device,
+            self.inode,
+            self.size_bytes,
+            self.mtime_ns,
+        )
 
 
 def _validate_executable_candidate(candidate: str) -> str:
@@ -66,13 +108,28 @@ def _validate_executable_candidate(candidate: str) -> str:
     return text
 
 
+def _stat_key_of(real_path: str) -> tuple[str, int, int, int, int]:
+    """Return the current stat key of *real_path*, failing closed."""
+    try:
+        stat = os.stat(real_path)
+    except OSError as exc:
+        raise DomainError(f"cannot stat executable {real_path!r}: {exc}") from exc
+    return (real_path, stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns)
+
+
 def measure_executable(
     candidate: str,
     *,
     adapter: ProgramAdapter | None = None,
-    max_hash_bytes: int = 512 * 1024 * 1024,
+    max_hash_bytes: int | None = None,
 ) -> ExecutableIdentity:
-    """Measure the file identity of *candidate*.
+    """Measure the full file identity of *candidate*.
+
+    Every byte of the file is hashed: there is no prefix cap and no
+    stat contribution to the content digest. ``max_hash_bytes`` is
+    retained for call compatibility only and is IGNORED (prefix
+    truncation was removed as an alias hazard); passing it changes
+    nothing.
 
     Parameters
     ----------
@@ -80,9 +137,8 @@ def measure_executable(
         Absolute path or bare executable name resolved via ``PATH``.
     adapter : ProgramAdapter | None
         Adapter consulted for a safe program-version probe.
-    max_hash_bytes : int
-        Upper bound on hashed prefix bytes; larger files hash their leading
-        prefix plus their size, which still distinguishes builds.
+    max_hash_bytes : int | None
+        Deprecated, ignored. Full content is always hashed.
 
     Raises
     ------
@@ -102,18 +158,15 @@ def measure_executable(
     except OSError as exc:
         raise DomainError(f"cannot stat executable {candidate!r}: {exc}") from exc
     digest = hashlib.sha256()
-    hashed = 0
     try:
         with open(real_path, "rb") as handle:
-            while hashed < max_hash_bytes:
-                chunk = handle.read(min(_HASH_CHUNK_BYTES, max_hash_bytes - hashed))
+            while True:
+                chunk = handle.read(_HASH_CHUNK_BYTES)
                 if not chunk:
                     break
                 digest.update(chunk)
-                hashed += len(chunk)
     except OSError as exc:
         raise DomainError(f"cannot hash executable {candidate!r}: {exc}") from exc
-    digest.update(f":{stat.st_size}:{stat.st_mtime_ns}".encode())
     program_version: str | None = None
     probe_metadata: dict[str, object] | None = None
     if adapter is not None:
@@ -139,8 +192,81 @@ def measure_executable(
     )
 
 
+def select_relevant_env(full_env: Mapping[str, Any], *, declared: Iterable[str]) -> dict[str, str]:
+    """Select the declared scientifically relevant subset of *full_env*.
+
+    Only names in *declared* that are present in *full_env* are returned.
+    Relevance is an explicit caller contract (binding resolution): nothing
+    is inferred, and undeclared operational variables can never leak into
+    the digest axis through this helper.
+    """
+    if not isinstance(full_env, Mapping):
+        raise DomainError("full_env must be a mapping")
+    names = tuple(declared)
+    for name in names:
+        if not isinstance(name, str) or not name or name != name.strip():
+            raise DomainError("declared relevance names must be non-empty, trimmed strings")
+    selected: dict[str, str] = {}
+    for name in names:
+        if name not in full_env:
+            continue
+        value = full_env[name]
+        if not isinstance(value, str):
+            raise DomainError(
+                f"relevant env var {name!r} must be a string, got {type(value).__name__}"
+            )
+        selected[name] = value
+    return selected
+
+
+def build_pure_environment(
+    *,
+    implementation: str,
+    implementation_version: str,
+    relevant_env: Mapping[str, str] | None = None,
+    metadata: Mapping[str, object] | None = None,
+) -> ExecutionEnvironment:
+    """Build the environment identity of a pure (non-native) executor.
+
+    No native executable is measured or required: identity is the real
+    implementation plus its version plus the declared relevant subset.
+    Callers (application, remote worker) MUST pass the actual registered
+    implementation versions (executor contract versions), never literals:
+    an implementation change must move the digest so stale pure results
+    can never reuse.
+
+    Parameters
+    ----------
+    implementation : str
+        Executor implementation identity (e.g. ``"confflow.confgen"``).
+    implementation_version : str
+        Real implementation/contract version of the executor.
+    relevant_env : Mapping[str, str] | None
+        Declared scientifically relevant explicit environment, or ``None``.
+    metadata : Mapping[str, object] | None
+        Operational provenance (never digested).
+    """
+    if not isinstance(implementation, str) or not implementation.strip():
+        raise DomainError("implementation must be a non-empty string")
+    if not isinstance(implementation_version, str) or not implementation_version.strip():
+        raise DomainError("implementation_version must be a non-empty string")
+    relevant = dict(relevant_env) if relevant_env is not None else {}
+    for key, value in relevant.items():
+        if not isinstance(key, str) or not key.strip():
+            raise DomainError("relevant_env keys must be non-empty strings")
+        if not isinstance(value, str):
+            raise DomainError("relevant_env values must be strings")
+    return ExecutionEnvironment(
+        program=implementation.strip(),
+        program_version=implementation_version.strip(),
+        executable_digest=None,
+        relevant_env=FrozenDict(relevant),
+        metadata=FrozenDict(dict(metadata) if metadata is not None else {}),
+    )
+
+
 class EnvironmentMeasurer:
-    """Cached executable measurement for one batch execution."""
+    """Stat-gated cached executable measurement for one batch execution."""
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
@@ -149,13 +275,26 @@ class EnvironmentMeasurer:
     def measure(
         self, candidate: str, *, adapter: ProgramAdapter | None = None
     ) -> ExecutableIdentity:
-        """Return the cached identity of *candidate* for *adapter*."""
+        """Return the cached identity of *candidate* for *adapter*.
+
+        A cached entry is re-validated against fresh stat on every read:
+        binary replacement (changed dev/ino/size/mtime or a vanished file)
+        is re-measured or fails closed instead of aliasing the stale
+        identity. In-place rewrites preserving every stat field are
+        undetectable without rehashing and are out of scope; call
+        :func:`measure_executable` to bypass the cache.
+        """
         adapter_name = adapter.program_name.value if adapter is not None else None
         key = (candidate, adapter_name)
         with self._lock:
             cached = self._cache.get(key)
         if cached is not None:
-            return cached
+            try:
+                fresh = _stat_key_of(cached.real_path)
+            except DomainError:
+                fresh = None
+            if fresh is not None and fresh == cached.stat_key():
+                return cached
         identity = measure_executable(candidate, adapter=adapter)
         with self._lock:
             self._cache[key] = identity
@@ -167,8 +306,16 @@ class EnvironmentMeasurer:
         *,
         adapter: ProgramAdapter,
         target: str | None = None,
+        relevant_env: Mapping[str, str] | None = None,
     ) -> ExecutionEnvironment:
-        """Measure *candidate* and build its execution environment."""
+        """Measure *candidate* and build its execution environment.
+
+        ``target`` is preserved as operational provenance and is
+        digest-inert under identity rule v2. ``relevant_env`` is the
+        caller-declared scientifically relevant subset (see
+        :func:`select_relevant_env`); undeclared binding variables never
+        enter the digest.
+        """
         identity = self.measure(candidate, adapter=adapter)
         metadata: dict[str, object] = {
             "adapter_version": adapter.adapter_version,
@@ -183,10 +330,12 @@ class EnvironmentMeasurer:
                 metadata["probe_unusable"] = True
             else:
                 metadata["probe"] = identity.probe_metadata
+        relevant = dict(relevant_env) if relevant_env is not None else {}
         return ExecutionEnvironment(
             program=adapter.program_name.value,
             program_version=identity.program_version,
             executable_digest=identity.digest,
+            relevant_env=FrozenDict(relevant),
             target=target,
             metadata=FrozenDict(metadata),
         )

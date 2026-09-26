@@ -82,6 +82,30 @@ def _input_error(message: str) -> ValueError:
     return ValueError(f"{NativeErrorCode.NATIVE_INPUT_ERROR.value}: {message}")
 
 
+def _require_goat_seed(seed: object) -> None:
+    """Gate GOAT sampling on verified seed semantics (wave-1: always refuse).
+
+    The typed step seed is required (single authority), but wave-1 cannot
+    verifiably render deterministic GOAT sampling: ORCA 6.1 documents no
+    integer ``Seed`` key and the older ``RANDOMSEED`` boolean is unverified
+    against the installed binary.  Both branches fail closed with an
+    explicit reason instead of claiming false deterministic support; wave-2
+    G verifies actual binary semantics.  See
+    ``/tmp/confflow-v4-native-evidence-notes.md`` and the C report.
+    """
+    if seed is None or isinstance(seed, bool) or not isinstance(seed, int):
+        raise _input_error(
+            "GOAT sampling requires the explicit typed step seed (single authority); "
+            f"got {seed!r}"
+        )
+    raise _input_error(
+        "native_seed_unresolved: GOAT deterministic seed semantics are unverified "
+        "in wave-1 (ORCA 6.1 documents no integer Seed; RANDOMSEED boolean pending "
+        "wave-2 verification against the installed binary); refusing stochastic "
+        "sampling without verified seed rendering"
+    )
+
+
 class OrcaProgramAdapter(ProgramAdapter):
     """File-format authority for ORCA native execution."""
 
@@ -141,6 +165,11 @@ class OrcaProgramAdapter(ProgramAdapter):
             raise _input_error("ORCA 'charge' must be resolved; got None")
         if inputs.multiplicity is None:
             raise _input_error("ORCA 'multiplicity' must be resolved; got None")
+        if inputs.checkpoints:
+            raise _input_error(
+                "artifact_unsupported: ORCA declares no checkpoint input vocabulary; "
+                f"{len(inputs.checkpoints)} checkpoint artifact(s) bound but unconsumable"
+            )
         charge = int(inputs.charge)
         multiplicity = int(inputs.multiplicity)
         if multiplicity < 1:
@@ -242,7 +271,9 @@ class OrcaProgramAdapter(ProgramAdapter):
         if mode == "irc":
             return "irc", render_irc_blocks(section), ()
         if mode == "goat":
-            return "goat", render_goat_blocks(native), ()
+            blocks = render_goat_blocks(native)
+            _require_goat_seed(inputs.seed)
+            return "goat", blocks, ()
         slots = inputs.extra_structures
         product_set = slots.get("product") if hasattr(slots, "get") else None
         if product_set is None or len(product_set) == 0:

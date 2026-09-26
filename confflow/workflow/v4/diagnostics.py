@@ -94,6 +94,7 @@ class DiagnosticReason(str, Enum):
     UNKNOWN_RESULT_PROFILE = "unknown_result_profile"
     UNKNOWN_SCIENTIFIC_CHECK = "unknown_scientific_check"
     UNKNOWN_RECOVERY = "unknown_recovery"
+    UNKNOWN_PROGRAM = "unknown_program"
     DISABLED_CAPABILITY_LOST = "disabled_capability_lost"
     ADAPTER_REQUIRED_PORT_MISSING = "adapter_required_port_missing"
     ADAPTER_CAPABILITY_MISMATCH = "adapter_capability_mismatch"
@@ -104,6 +105,9 @@ class DiagnosticReason(str, Enum):
     UNKNOWN_TRANSFORM_KIND = "unknown_transform_kind"
     EXECUTOR_BLOCK_CONFLICT = "executor_block_conflict"
     SEED_REQUIRED = "seed_required"
+    SEED_CONFLICT = "seed_conflict"
+    MISSING_CAPABILITY_IMPLEMENTATION = "missing_capability_implementation"
+    INCOMPATIBLE_CAPABILITY_COMBINATION = "incompatible_capability_combination"
 
     # identity
     DUPLICATE_STEP_ID = "duplicate_step_id"

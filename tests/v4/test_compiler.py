@@ -17,6 +17,7 @@ import pytest
 
 from confflow.domain import Cardinality, FrozenDict, Pairing, PortKind
 from confflow.domain.canonical import canonical_json_bytes
+from confflow.domain.completion import StepStatus
 from confflow.execution import (
     ExecutorCapability,
     ExecutorContract,
@@ -432,13 +433,22 @@ class TestCapabilityVocabulary:
         assert "unknown_scientific_check" in _error_reasons(result)
 
     def test_check_not_supported_by_profile(self) -> None:
-        doc = _linear_structure_doc(profile="opaque", checks=["frequencies_required"])
+        # Final contract (freeze §8/A): `opaque` is omitted (no runtime);
+        # the unsupported-check gate is proven with a real profile (`ensemble`
+        # supports no frequency checks).
+        doc = _linear_structure_doc(profile="ensemble", checks=["frequencies_required"])
         result = compile_doc(doc)
         assert not result.ok
         assert "check_not_supported" in _error_reasons(result)
 
     def test_opaque_profile_without_checks_compiles(self) -> None:
-        _compile_ok(_linear_structure_doc(profile="opaque"))
+        # Final contract (freeze §8/A): `opaque` has no runtime
+        # implementation and fails closed with unknown_result_profile.
+        # Opaque may only be re-published with an atomic implementation.
+        doc = _linear_structure_doc(profile="opaque")
+        result = compile_doc(doc)
+        assert not result.ok
+        assert "unknown_result_profile" in _error_reasons(result)
 
     def test_unknown_recovery(self) -> None:
         doc = _linear_structure_doc(recovery="magic_recovery")
@@ -632,7 +642,9 @@ class TestDisabledStepSemantics:
         assert result.plan is not None
         seed = structure_set("s0", "s1")
         materialized = MaterializedOutputs(
-            steps=FrozenDict({"s_a": StepOutputs(step_id="s_a", structures=seed)})
+            steps=FrozenDict(
+                {"s_a": StepOutputs(step_id="s_a", structures=seed, status=StepStatus.COMPLETED)}
+            )
         )
         assembly = assemble_work_items(
             result.plan,

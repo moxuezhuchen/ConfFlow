@@ -55,6 +55,7 @@ class ProfileContext:
     native_result: NativeResult
     inputs: ResolvedCalculationInputs
     discovered_artifacts: ArtifactSet = field(default_factory=ArtifactSet)
+    producer_digest: str | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.native_result, NativeResult):
@@ -63,6 +64,8 @@ class ProfileContext:
             raise TypeError("inputs must be ResolvedCalculationInputs")
         if not isinstance(self.discovered_artifacts, ArtifactSet):
             raise TypeError("discovered_artifacts must be an ArtifactSet")
+        if self.producer_digest is not None and not isinstance(self.producer_digest, str):
+            raise TypeError("producer_digest must be a sha256 digest string or None")
 
 
 @dataclass(frozen=True, slots=True)

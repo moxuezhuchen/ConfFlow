@@ -91,16 +91,23 @@ class TestXyzImporter:
     """XYZ text becomes stable StructureSets, never path identities."""
 
     def test_single_molecule(self) -> None:
+        # Final contract (freeze §1/D-1): fresh imports mint opaque entity
+        # IDs (UUID); position is never scientific identity.
         structures = import_xyz(WATER_XYZ, source_name="water.xyz")
         assert len(structures) == 1
         (record,) = tuple(structures)
-        assert record.id == "xyz:0"
+        assert record.id and record.id != "xyz:0"
         assert record.atoms == ("O", "H", "H")
         assert record.metadata["import_source"] == "water.xyz"
 
     def test_multi_block(self) -> None:
+        # Final contract: independent opaque IDs, distinct even for
+        # identical geometry (no geometry-merge).
         structures = import_xyz(WATER_XYZ + WATER_XYZ, source_name="two.xyz")
-        assert [record.id for record in structures] == ["xyz:0", "xyz:1"]
+        ids = [record.id for record in structures]
+        assert len(ids) == 2
+        assert ids[0] != ids[1]
+        assert all(not value.startswith("xyz:") for value in ids)
 
     def test_malformed(self) -> None:
         with pytest.raises(DomainError):
@@ -176,11 +183,24 @@ class TestV4RunApplication:
             )
 
     def test_missing_executable_fails_closed(self, tmp_path: Path) -> None:
+        # Final contract: executable resolution is planned-wins → defaults →
+        # adapter default, and measurement fails closed on unresolvable
+        # binaries.  The fixture uses a nonexistent binary so the test never
+        # depends on (or launches) a real installed ORCA.
+        import copy
+
         structures = import_xyz(WATER_XYZ, source_name="in.xyz")
-        with pytest.raises(DomainError, match="no executable"):
+        doc = _two_step_doc()
+        doc = copy.deepcopy(doc)
+        for step in doc["steps"]:
+            step["execution"] = {
+                "binding_id": "test",
+                "executable": "/nonexistent/no-such-orca",
+            }
+        with pytest.raises(DomainError, match="cannot measure|no executable"):
             V4RunApplication(supervisor=NativeProcessSupervisor()).run(
                 V4RunRequest(
-                    workflow_document=_two_step_doc(),
+                    workflow_document=doc,
                     run_inputs=RunInputs(structures=FrozenDict({"structures": structures})),
                     run_root=str(tmp_path / "run"),
                     executables=FrozenDict({}),
@@ -294,10 +314,10 @@ class TestV4AnalysisStep:
         manifest = report.manifest.thaw()
         assert len(manifest["analyses"]) == 1
         entry = manifest["analyses"][0]
-        assert entry["group_key"] == "rxn-00"
-        assert entry["ts_structure_id"] == "ts00"
-        assert entry["forward_endpoint_id"] == forward_id
-        assert entry["reverse_endpoint_id"] == reverse_id
+        # Final contract (producer schema): analyses carry only
+        # {capability, step_id}; group pedigree lives in the published
+        # StepResult (kinds asserted above), not the manifest.
+        assert entry == {"capability": "analysis", "step_id": "s_an"}
 
 
 class TestV4Cli:

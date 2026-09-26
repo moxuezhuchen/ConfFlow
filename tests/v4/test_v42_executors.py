@@ -828,6 +828,9 @@ class TestEnvironmentMeasurement:
         )
 
     def test_target_moves_environment_digest(self) -> None:
+        # Final contract (identity rule v2): target locators are operational
+        # provenance and never enter the digest; reuse is driven by measured
+        # binary + declared relevant env only.
         measurer = EnvironmentMeasurer()
         first = measurer.build_environment(
             str(FAKE_ORCA), adapter=get_program_adapter("orca"), target="node-1"
@@ -835,7 +838,7 @@ class TestEnvironmentMeasurement:
         second = measurer.build_environment(
             str(FAKE_ORCA), adapter=get_program_adapter("orca"), target="node-2"
         )
-        assert first.digest() != second.digest()
+        assert first.digest() == second.digest()
 
     def test_unknown_executable_rejected(self) -> None:
         from confflow.domain.errors import DomainError

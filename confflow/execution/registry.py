@@ -13,7 +13,9 @@ runtime state exists; callers may build and extend their own registry.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from functools import lru_cache
+from typing import Any, Generic, TypeVar
 
 from ..domain.binding import Cardinality, Pairing, PortKind
 from ..domain.errors import DomainError
@@ -27,6 +29,8 @@ from .contracts import (
     ResultProfileSpec,
 )
 
+_SpecT = TypeVar("_SpecT")
+
 __all__ = [
     "ExecutionRegistry",
     "RegistryLookupError",
@@ -39,51 +43,105 @@ class RegistryLookupError(LookupError):
     """Raised when a capability name is not registered."""
 
 
-class ExecutionRegistry:
-    """A registry of V4 execution capability descriptors."""
+@dataclass(frozen=True, slots=True)
+class _RegisteredCapability(Generic[_SpecT]):
+    """One authoritative registry entry: descriptor plus implementation.
 
-    __slots__ = ("_executors", "_adapters", "_profiles", "_checks", "_recoveries")
+    The descriptor serves compilers, planners, and contract generation;
+    the implementation serves runtime dispatch.  Both are registered in a
+    single call, so the two can never diverge into dual authorities.
+    Entries without an implementation fail closed at implementation
+    resolution; production registries register real implementations for
+    every published capability.
+    """
+
+    spec: _SpecT
+    implementation: Any
+
+
+class ExecutionRegistry:
+    """A registry of V4 execution capability descriptors.
+
+    The registry is the single authority for capability *descriptors* and
+    for verifying that each published capability is backed by a real runtime
+    *implementation*.  Descriptor tables (executors, adapters, profiles,
+    checks, recoveries) live here; the implementations live in their owning
+    modules (``profile_standard`` / ``checks_standard`` /
+    ``recovery_standard`` / ``execution_adapters`` / ``programs.registry``)
+    and are consulted only through the ``resolve_*`` methods below, never by
+    direct imports scattered across application, batch, or remote code.
+    """
+
+    __slots__ = (
+        "_executors",
+        "_adapters",
+        "_profiles",
+        "_checks",
+        "_recoveries",
+    )
 
     def __init__(self) -> None:
-        self._executors: dict[ExecutorCapability, ExecutorContract] = {}
-        self._adapters: dict[str, ExecutionAdapterSpec] = {}
-        self._profiles: dict[str, ResultProfileSpec] = {}
-        self._checks: dict[str, CheckSpec] = {}
-        self._recoveries: dict[str, RecoverySpec] = {}
+        self._executors: dict[ExecutorCapability, _RegisteredCapability[ExecutorContract]] = {}
+        self._adapters: dict[str, _RegisteredCapability[ExecutionAdapterSpec]] = {}
+        self._profiles: dict[str, _RegisteredCapability[ResultProfileSpec]] = {}
+        self._checks: dict[str, _RegisteredCapability[CheckSpec]] = {}
+        self._recoveries: dict[str, _RegisteredCapability[RecoverySpec]] = {}
 
     # ------------------------------------------------------------------
-    # Registration
+    # Registration: descriptor plus implementation in one atomic entry
     # ------------------------------------------------------------------
 
-    def register_executor(self, contract: ExecutorContract) -> None:
-        """Register (or replace) an executor contract by capability."""
+    def register_executor(self, contract: ExecutorContract, implementation: Any = None) -> None:
+        """Register (or replace) the atomic executor entry for a capability.
+
+        *implementation* is the runtime executor (a class implementing the
+        ``execute(work_item, context, *, should_cancel=None)`` seam, or a
+        factory producing one).  Production registries always pass the real
+        implementation; implementation resolution fails closed on entries
+        registered without one.
+        """
         if not isinstance(contract, ExecutorContract):
             raise DomainError("contract must be an ExecutorContract")
-        self._executors[contract.capability] = contract
+        self._executors[contract.capability] = _RegisteredCapability(contract, implementation)
 
-    def register_adapter(self, adapter: ExecutionAdapterSpec) -> None:
-        """Register (or replace) an execution adapter by name."""
+    def register_adapter(self, adapter: ExecutionAdapterSpec, implementation: Any = None) -> None:
+        """Register (or replace) the atomic execution-adapter entry.
+
+        *implementation* is the runtime input-shape resolver callable.
+        """
         if not isinstance(adapter, ExecutionAdapterSpec):
             raise DomainError("adapter must be an ExecutionAdapterSpec")
-        self._adapters[adapter.name] = adapter
+        self._adapters[adapter.name] = _RegisteredCapability(adapter, implementation)
 
-    def register_profile(self, profile: ResultProfileSpec) -> None:
-        """Register (or replace) a result profile by name."""
+    def register_profile(self, profile: ResultProfileSpec, implementation: Any = None) -> None:
+        """Register (or replace) the atomic result-profile entry.
+
+        *implementation* is the runtime profile object.
+        """
         if not isinstance(profile, ResultProfileSpec):
             raise DomainError("profile must be a ResultProfileSpec")
-        self._profiles[profile.name] = profile
+        self._profiles[profile.name] = _RegisteredCapability(profile, implementation)
 
-    def register_check(self, check: CheckSpec) -> None:
-        """Register (or replace) a scientific check by name."""
+    def register_check(self, check: CheckSpec, implementation: Any = None) -> None:
+        """Register (or replace) the atomic scientific-check entry.
+
+        *implementation* is the runtime check object.
+        """
         if not isinstance(check, CheckSpec):
             raise DomainError("check must be a CheckSpec")
-        self._checks[check.name] = check
+        self._checks[check.name] = _RegisteredCapability(check, implementation)
 
-    def register_recovery(self, recovery: RecoverySpec) -> None:
-        """Register (or replace) a recovery profile by name."""
+    def register_recovery(self, recovery: RecoverySpec, implementation: Any = None) -> None:
+        """Register (or replace) the atomic recovery-profile entry.
+
+        *implementation* is a factory taking the step's program adapter (or
+        ``None``) and returning the runtime policy, so adapter-scoped
+        policies are always bound through this entry, never constructed
+        ad hoc by executors.
+        """
         if not isinstance(recovery, RecoverySpec):
             raise DomainError("recovery must be a RecoverySpec")
-        self._recoveries[recovery.name] = recovery
+        self._recoveries[recovery.name] = _RegisteredCapability(recovery, implementation)
 
     # ------------------------------------------------------------------
     # Lookup
@@ -98,13 +156,14 @@ class ExecutionRegistry:
             Raised when the capability is not registered.
         """
         try:
-            return self._executors[capability]
+            return self._executors[capability].spec
         except KeyError as exc:
             raise RegistryLookupError(f"unknown executor capability: {capability!r}") from exc
 
     def find_executor(self, capability: ExecutorCapability) -> ExecutorContract | None:
         """Return the contract for *capability*, or ``None``."""
-        return self._executors.get(capability)
+        entry = self._executors.get(capability)
+        return entry.spec if entry is not None else None
 
     def adapter(self, name: str) -> ExecutionAdapterSpec:
         """Return the adapter named *name*.
@@ -115,13 +174,14 @@ class ExecutionRegistry:
             Raised when the adapter is not registered.
         """
         try:
-            return self._adapters[name]
+            return self._adapters[name].spec
         except KeyError as exc:
             raise RegistryLookupError(f"unknown execution adapter: {name!r}") from exc
 
     def find_adapter(self, name: str) -> ExecutionAdapterSpec | None:
         """Return the adapter named *name*, or ``None``."""
-        return self._adapters.get(name)
+        entry = self._adapters.get(name)
+        return entry.spec if entry is not None else None
 
     def profile(self, name: str) -> ResultProfileSpec:
         """Return the result profile named *name*.
@@ -132,13 +192,14 @@ class ExecutionRegistry:
             Raised when the profile is not registered.
         """
         try:
-            return self._profiles[name]
+            return self._profiles[name].spec
         except KeyError as exc:
             raise RegistryLookupError(f"unknown result profile: {name!r}") from exc
 
     def find_profile(self, name: str) -> ResultProfileSpec | None:
         """Return the result profile named *name*, or ``None``."""
-        return self._profiles.get(name)
+        entry = self._profiles.get(name)
+        return entry.spec if entry is not None else None
 
     def check(self, name: str) -> CheckSpec:
         """Return the scientific check named *name*.
@@ -149,13 +210,14 @@ class ExecutionRegistry:
             Raised when the check is not registered.
         """
         try:
-            return self._checks[name]
+            return self._checks[name].spec
         except KeyError as exc:
             raise RegistryLookupError(f"unknown scientific check: {name!r}") from exc
 
     def find_check(self, name: str) -> CheckSpec | None:
         """Return the scientific check named *name*, or ``None``."""
-        return self._checks.get(name)
+        entry = self._checks.get(name)
+        return entry.spec if entry is not None else None
 
     def recovery(self, name: str) -> RecoverySpec:
         """Return the recovery profile named *name*.
@@ -166,13 +228,208 @@ class ExecutionRegistry:
             Raised when the recovery profile is not registered.
         """
         try:
-            return self._recoveries[name]
+            return self._recoveries[name].spec
         except KeyError as exc:
             raise RegistryLookupError(f"unknown recovery profile: {name!r}") from exc
 
     def find_recovery(self, name: str) -> RecoverySpec | None:
         """Return the recovery profile named *name*, or ``None``."""
-        return self._recoveries.get(name)
+        entry = self._recoveries.get(name)
+        return entry.spec if entry is not None else None
+
+    # ------------------------------------------------------------------
+    # Unified resolution: one entry, descriptor access for compilers,
+    # concrete implementation resolution for runtime dispatch
+    # ------------------------------------------------------------------
+
+    def executor_implementation(self, capability: ExecutorCapability | str) -> Any:
+        """Return the runtime executor registered for *capability*.
+
+        The returned object is the executor class recorded in the same
+        atomic entry as the compiler's contract: ``calculation`` resolves
+        to the native work-item executor, ``confgen`` to the deterministic
+        conformer-generation executor, ``structure_transform`` to the pure
+        structure-set transform executor, and ``analysis`` to the pure
+        analysis core (whose per-item adapter is owned by the analysis
+        package).  All four implement the shared
+        ``execute(work_item, context, *, should_cancel=None)`` seam,
+        except the analysis core, which executes whole-set analysis inputs
+        (see the wave-1 integration report for the exact dispatch
+        signatures owned by batch/application).
+
+        Raises
+        ------
+        RegistryLookupError
+            Raised when the capability is unknown or its entry carries no
+            runtime executor.
+        """
+        resolved = _coerce_capability(capability)
+        try:
+            entry = self._executors[resolved]
+        except KeyError as exc:
+            raise RegistryLookupError(
+                f"unknown executor capability: {resolved.value!r}; "
+                f"expected one of {sorted(item.value for item in self._executors)}"
+            ) from exc
+        if entry.implementation is None:
+            raise RegistryLookupError(
+                f"executor capability {resolved.value!r} is published but has "
+                "no runtime executor registered; it must not be dispatched"
+            )
+        return entry.implementation
+
+    def resolve_executor(self, capability: ExecutorCapability | str) -> ExecutorContract:
+        """Resolve *capability* to its executor contract.
+
+        Accepts an :class:`ExecutorCapability` or its string value; unknown
+        capabilities fail closed with the registered vocabulary in the
+        message.  This is the single authority compilers, planners, and
+        dispatchers consult -- never a parallel enum copy.
+        """
+        resolved = _coerce_capability(capability)
+        try:
+            return self._executors[resolved].spec
+        except KeyError as exc:
+            raise RegistryLookupError(
+                f"unknown executor capability: {resolved.value!r}; "
+                f"expected one of {sorted(item.value for item in self._executors)}"
+            ) from exc
+
+    def resolve_adapter(self, name: str) -> ExecutionAdapterSpec:
+        """Resolve execution adapter *name* to its contract.
+
+        The contract comes from the same atomic entry that carries the
+        runtime input-shape resolver; entries without an implementation
+        fail closed here instead of compiling and then crashing at runtime.
+        """
+        try:
+            entry = self._adapters[name]
+        except KeyError as exc:
+            raise RegistryLookupError(
+                f"unknown execution adapter: {name!r}; expected one of {sorted(self._adapters)}"
+            ) from exc
+        if entry.implementation is None:
+            raise RegistryLookupError(
+                f"execution adapter {name!r} is published but has no runtime "
+                "implementation; it must not be used by production workflows"
+            )
+        return entry.spec
+
+    def resolve_profile(self, name: str) -> ResultProfileSpec:
+        """Resolve result profile *name* to its contract.
+
+        The contract comes from the same atomic entry that carries the
+        runtime profile; entries without an implementation fail closed
+        here instead of compiling and then failing at runtime lookup.
+        """
+        try:
+            entry = self._profiles[name]
+        except KeyError as exc:
+            raise RegistryLookupError(
+                f"unknown result profile: {name!r}; expected one of {sorted(self._profiles)}"
+            ) from exc
+        if entry.implementation is None:
+            raise RegistryLookupError(
+                f"result profile {name!r} is published but has no runtime "
+                "implementation; it must not be used by production workflows"
+            )
+        return entry.spec
+
+    def resolve_check(self, name: str) -> CheckSpec:
+        """Resolve scientific check *name* to its contract.
+
+        The contract comes from the same atomic entry that carries the
+        runtime check.
+        """
+        try:
+            entry = self._checks[name]
+        except KeyError as exc:
+            raise RegistryLookupError(
+                f"unknown scientific check: {name!r}; expected one of {sorted(self._checks)}"
+            ) from exc
+        if entry.implementation is None:
+            raise RegistryLookupError(
+                f"scientific check {name!r} is published but has no runtime "
+                "implementation; it must not be used by production workflows"
+            )
+        return entry.spec
+
+    def resolve_recovery(self, name: str, *, adapter: Any = None) -> RecoverySpec:
+        """Resolve recovery profile *name* to its contract.
+
+        The contract comes from the same atomic entry that carries the
+        recovery factory.  The optional *adapter* is documented for the
+        implementation accessor (:meth:`recovery_implementation`); contract
+        resolution itself needs no adapter.
+        """
+        try:
+            entry = self._recoveries[name]
+        except KeyError as exc:
+            raise RegistryLookupError(
+                f"unknown recovery profile: {name!r}; expected one of {sorted(self._recoveries)}"
+            ) from exc
+        if entry.implementation is None:
+            raise RegistryLookupError(
+                f"recovery profile {name!r} is published but has no runtime "
+                "implementation; it must not be used by production workflows"
+            )
+        return entry.spec
+
+    def resolve_program(self, name: str) -> Any:
+        """Resolve program *name* (or alias) to its program adapter.
+
+        Program names are scientific vocabulary resolved through the real
+        program registry (``programs.registry``): unknown programs fail
+        closed here.  There is no separate program descriptor table to drift;
+        the returned adapter carries the adapter/parser versions the
+        producer contract advertises.
+        """
+        from ..programs.registry import get_program_adapter
+
+        try:
+            return get_program_adapter(name)
+        except DomainError as exc:
+            raise RegistryLookupError(str(exc)) from exc
+
+    # ------------------------------------------------------------------
+    # Runtime implementation access (single authority for dispatch)
+    # ------------------------------------------------------------------
+
+    def profile_implementation(self, name: str) -> Any:
+        """Return the runtime result-profile object from the same entry."""
+        self.resolve_profile(name)
+        return self._profiles[name].implementation
+
+    def check_implementation(self, name: str) -> Any:
+        """Return the runtime scientific-check object from the same entry."""
+        self.resolve_check(name)
+        return self._checks[name].implementation
+
+    def recovery_implementation(self, name: str, *, adapter: Any = None) -> Any:
+        """Return the runtime recovery policy from the same entry.
+
+        The entry's factory is called with the step's program adapter, so
+        adapter-scoped policies (the bond-scan rescue, which renders native
+        input through the program adapter) are genuinely bound to it.
+        Policies with no adapter scope ignore *adapter*.  An unbound
+        (``adapter=None``) scan policy declines execution, per the policy's
+        own contract.
+        """
+        self.resolve_recovery(name, adapter=adapter)
+        factory = self._recoveries[name].implementation
+        return factory(adapter)
+
+    def program_adapter(self, name: str) -> Any:
+        """Return the program adapter for program *name* (or alias).
+
+        Documented equivalent of :meth:`resolve_program`.
+        """
+        return self.resolve_program(name)
+
+    def adapter_implementation(self, name: str) -> Any:
+        """Return the runtime input-shape resolver from the same entry."""
+        self.resolve_adapter(name)
+        return self._adapters[name].implementation
 
     # ------------------------------------------------------------------
     # Vocabulary
@@ -207,6 +464,20 @@ class ExecutionRegistry:
 # ----------------------------------------------------------------------
 # Built-in V4-1 vocabulary
 # ----------------------------------------------------------------------
+
+
+def _coerce_capability(capability: ExecutorCapability | str) -> ExecutorCapability:
+    """Coerce a capability value to its enum member, failing closed."""
+    if isinstance(capability, ExecutorCapability):
+        return capability
+    try:
+        return ExecutorCapability(str(capability))
+    except ValueError as exc:
+        raise RegistryLookupError(
+            f"unknown executor capability: {capability!r}; "
+            f"expected one of {sorted(item.value for item in ExecutorCapability)}"
+        ) from exc
+
 
 _ALL_CAPABILITIES = tuple(ExecutorCapability)
 
@@ -301,6 +572,11 @@ def _standard_profile(checks: tuple[str, ...]) -> ResultProfileSpec:
 
 
 def _default_profiles(checks: tuple[str, ...]) -> tuple[ResultProfileSpec, ...]:
+    # NOTE (V4 repair, worker A): only profiles backed by a real runtime
+    # implementation are published.  The former ``opaque`` descriptor had no
+    # implementation and is omitted: it must not be declared-but-unexecutable.
+    # When an opaque runtime exists, its descriptor and implementation are
+    # registered atomically in ``build_default_registry`` below.
     return (
         _standard_profile(checks),
         ResultProfileSpec(
@@ -325,15 +601,6 @@ def _default_profiles(checks: tuple[str, ...]) -> tuple[ResultProfileSpec, ...]:
             provides_results=True,
             provides_artifacts=True,
             description="Conformer ensemble: many structures, energy results.",
-        ),
-        ResultProfileSpec(
-            name="opaque",
-            contract_version="confflow.contract.result_profile.opaque.v1",
-            supported_checks=(),
-            provides_structures=False,
-            provides_results=False,
-            provides_artifacts=True,
-            description="Opaque native output: artifacts only, no parsed values.",
         ),
     )
 
@@ -387,28 +654,14 @@ def _default_adapters() -> tuple[ExecutionAdapterSpec, ...]:
             ),
             description="Named-structure calculations paired by explicit group key.",
         ),
-        ExecutionAdapterSpec(
-            name="native_template",
-            contract_version="confflow.contract.adapter.native_template.v1",
-            capability=ExecutorCapability.CALCULATION,
-            input_ports=(
-                _structure_port(
-                    "structure",
-                    Cardinality.ONE,
-                    Pairing.PER_STRUCTURE,
-                    "The single structure this calculation is run for.",
-                ),
-                _artifact_port(
-                    "checkpoint",
-                    Cardinality.OPTIONAL,
-                    Pairing.BY_SUBJECT,
-                    ("checkpoint",),
-                    "Optional checkpoint bound to the same subject structure.",
-                ),
-            ),
-            description="Native template input rendering (V4-2); ports mirror standard.",
-        ),
     )
+
+
+# NOTE (V4 repair, worker A): the former ``native_template`` adapter
+# descriptor is omitted for the same reason as ``opaque`` above: it had no
+# input-shape resolver implementation and must not be
+# declared-but-unexecutable.  Its descriptor and resolver are registered
+# atomically in ``build_default_registry`` once the resolver exists.
 
 
 def _default_executors() -> tuple[ExecutorContract, ...]:
@@ -555,19 +808,48 @@ def _default_recoveries() -> tuple[RecoverySpec, ...]:
 
 
 def build_default_registry() -> ExecutionRegistry:
-    """Build a fresh registry populated with the built-in V4-1 vocabulary."""
+    """Build a fresh registry with atomic descriptor+implementation entries.
+
+    Every published capability is registered together with its real runtime
+    implementation in a single entry: executor classes, adapter input-shape
+    resolvers, profile/check objects, and recovery factories bound to the
+    step's program adapter at resolve time.  A missing implementation is a
+    loud :exc:`KeyError` here -- never a published-but-unexecutable
+    capability downstream.
+    """
+    from ..analysis.item_adapter import AnalysisItemAdapter
+    from . import execution_adapters as adapter_resolvers
+    from .checks_standard import CHECKS
+    from .confgen_executor import ConfgenExecutor
+    from .profile_standard import PROFILES
+    from .recovery_standard import NoneRecoveryPolicy, TsRescueScanPolicy
+    from .transform_executor import TransformExecutor
+    from .work_item_executor import WorkItemExecutor
+
     registry = ExecutionRegistry()
+    executor_implementations = {
+        ExecutorCapability.CALCULATION: WorkItemExecutor,
+        ExecutorCapability.CONFGEN: ConfgenExecutor,
+        ExecutorCapability.STRUCTURE_TRANSFORM: TransformExecutor,
+        ExecutorCapability.ANALYSIS: AnalysisItemAdapter,
+    }
     for contract in _default_executors():
-        registry.register_executor(contract)
+        registry.register_executor(contract, executor_implementations[contract.capability])
+    adapter_implementations = {
+        "standard": adapter_resolvers.resolve_standard_structure,
+        "named_structures": adapter_resolvers.resolve_named_slot_sets,
+    }
     for adapter in _default_adapters():
-        registry.register_adapter(adapter)
-    checks = tuple(check.name for check in _default_checks())
-    for check in _default_checks():
-        registry.register_check(check)
+        registry.register_adapter(adapter, adapter_implementations[adapter.name])
+    check_specs = _default_checks()
+    checks = tuple(check.name for check in check_specs)
+    for check in check_specs:
+        registry.register_check(check, CHECKS[check.name])
     for profile in _default_profiles(checks):
-        registry.register_profile(profile)
-    for recovery in _default_recoveries():
-        registry.register_recovery(recovery)
+        registry.register_profile(profile, PROFILES[profile.name])
+    recovery_specs = {recovery.name: recovery for recovery in _default_recoveries()}
+    registry.register_recovery(recovery_specs["none"], lambda adapter: NoneRecoveryPolicy())
+    registry.register_recovery(recovery_specs["ts_rescue_scan"], TsRescueScanPolicy)
     return registry
 
 

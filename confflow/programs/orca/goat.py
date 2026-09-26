@@ -13,14 +13,21 @@ documented below; anything else fails closed with ``native_input_error``.
 Key semantics are stated as this module's contract (units, types, ranges),
 not as claims about any particular ORCA release's defaults.
 
+Seed evidence (wave-1, unresolved): the installed ORCA 6.1 manual documents
+no integer ``Seed`` key for ``%goat`` (older manuals document a
+``RANDOMSEED`` boolean whose 6.1 semantics are unverified against the
+installed binary).  An earlier integer ``Seed`` key was invented dialect
+and is removed here: ``Seed`` is rejected as an unknown key, and seeded
+GOAT sampling fails closed in the adapter until wave-2 G verifies actual
+binary seed/reproducibility semantics.  See
+``/tmp/confflow-v4-native-evidence-notes.md`` and the C report.
+
 Allowlisted ``%goat`` keys (one line each):
 
 - ``MaxIter``: maximum GOAT global-optimization iterations (int >= 1).
 - ``MaxConformers``: maximum conformers retained in the ensemble (int >= 1).
 - ``EnergyWindow``: keep conformers within this window above the minimum,
   in kcal/mol (finite float > 0; ints are accepted as exact values).
-- ``Seed``: explicit RNG seed for GOAT sampling (int >= 0), so a resume can
-  never silently re-randomize a run (see ``confflow.domain.stochastic``).
 
 Rendering contract: ``render_goat_blocks`` emits ``%goat ... end`` text with
 keys sorted alphabetically, two-space indents, and a trailing newline, which
@@ -41,9 +48,9 @@ __all__ = [
 ]
 
 #: Strict native vocabulary accepted in ``native["goat"]``.
-GOAT_BLOCK_KEYS: frozenset[str] = frozenset({"MaxIter", "MaxConformers", "EnergyWindow", "Seed"})
+GOAT_BLOCK_KEYS: frozenset[str] = frozenset({"MaxIter", "MaxConformers", "EnergyWindow"})
 
-_INT_KEYS: frozenset[str] = frozenset({"MaxIter", "MaxConformers", "Seed"})
+_INT_KEYS: frozenset[str] = frozenset({"MaxIter", "MaxConformers"})
 
 
 def _check_int_key(key: str, value: Any) -> int:
@@ -70,10 +77,9 @@ def _check_int_key(key: str, value: Any) -> int:
         raise ValueError(
             f"native_input_error: ORCA '%goat' key {key!r} must be an integer, " f"got {value!r}"
         )
-    minimum = 0 if key == "Seed" else 1
-    if value < minimum:
+    if value < 1:
         raise ValueError(
-            f"native_input_error: ORCA '%goat' key {key!r} must be >= {minimum}, " f"got {value!r}"
+            f"native_input_error: ORCA '%goat' key {key!r} must be >= 1, " f"got {value!r}"
         )
     return value
 

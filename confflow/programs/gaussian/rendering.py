@@ -19,11 +19,14 @@ __all__ = [
     "apply_freeze",
     "check_native_keys",
     "coerce_section_lines",
+    "ensure_modredundant_keyword",
     "format_coordinates",
     "format_keyword_line",
     "format_memory_gb",
     "normalize_gaussian_keyword",
     "render_gaussian_input",
+    "rescue_freeze_directive",
+    "rescue_scan_keyword",
     "resolve_charge",
     "resolve_core_count",
     "resolve_extra_section",
@@ -57,6 +60,10 @@ _HASH_PREFIX_PATTERN = re.compile(r"^\s*#+\s*")
 _P_REQUEST_PATTERN = re.compile(r"^[pP](?:\s|$)")
 _KEYWORD_NORMALIZE_PATTERN = re.compile(r"^\s*(?:#\s*[pPnNtT]?\s*)+")
 _OPT_GROUP_PATTERN = re.compile(r"(?i)\bopt\s*(?:=\s*)?\(([^)]*)\)")
+_OPT_PAREN_RE = re.compile(r"(?i)\bopt\s*(=)?\s*\(([^)]*)\)")
+_OPT_ASSIGN_RE = re.compile(r"(?i)\bopt\s*=\s*([^\s()]+)")
+_OPT_BARE_RE = re.compile(r"(?i)\bopt\b")
+_MODREDUNDANT_RE = re.compile(r"(?i)\bmodredundant\b")
 _FREQ_TOKEN_PATTERN = re.compile(r"(?i)(^|\s)freq\b(\s*=\s*\([^)]*\)|\s*\([^)]*\)|\s*=\s*[^\s]+)?")
 _WHITESPACE_PATTERN = re.compile(r"\s+")
 
@@ -697,3 +704,67 @@ def scan_keyword_from_ts(keyword: str | None) -> str | None:
     rewritten = _FREQ_TOKEN_PATTERN.sub(" ", rewritten)
     rewritten = _WHITESPACE_PATTERN.sub(" ", rewritten).strip()
     return rewritten or None
+
+
+def ensure_modredundant_keyword(keyword: str) -> str:
+    """Return a Gaussian keyword line that enables ``ModRedundant``.
+
+    Adapter-owned syntax: preserves existing ``opt`` items and never
+    duplicates the directive.  Recovery policies must call this (via the
+    program adapter), never reimplement route rewriting.
+    """
+    text = (keyword or "").strip()
+    if not text or _MODREDUNDANT_RE.search(text):
+        return text
+
+    def _paren_repl(match: re.Match[str]) -> str:
+        has_equal = match.group(1) == "="
+        items = [item.strip() for item in match.group(2).split(",") if item.strip()]
+        if not any(item.split("=")[0].strip().lower() == "modredundant" for item in items):
+            items.append("modredundant")
+        return f"opt{'=' if has_equal else ''}({','.join(items)})"
+
+    updated, count = _OPT_PAREN_RE.subn(_paren_repl, text, count=1)
+    if count:
+        return updated
+
+    def _assign_repl(match: re.Match[str]) -> str:
+        return f"opt=({match.group(1).strip()},modredundant)"
+
+    updated, count = _OPT_ASSIGN_RE.subn(_assign_repl, text, count=1)
+    if count:
+        return updated
+    if _OPT_BARE_RE.search(text):
+        return _OPT_BARE_RE.sub("opt=modredundant", text, count=1)
+    return f"opt=modredundant {text}".strip()
+
+
+def rescue_freeze_directive(atom_a: int, atom_b: int) -> str:
+    """Return the ModRedundant freeze directive for one rescue bond."""
+    if (
+        isinstance(atom_a, bool) or isinstance(atom_b, bool)
+        or not isinstance(atom_a, int) or not isinstance(atom_b, int)
+        or atom_a < 1 or atom_b < 1 or atom_a == atom_b
+    ):
+        raise ValueError(
+            f"native_input_error: rescue bond atoms must be two distinct positive ints, "
+            f"got {(atom_a, atom_b)!r}"
+        )
+    return f"B {atom_a} {atom_b} F"
+
+
+def rescue_scan_keyword(original_keyword: str) -> str:
+    """Derive the constrained-scan keyword for a rescue, or ``""``.
+
+    Adapter-owned syntax: TS-only items removed, frequency dropped,
+    optimization ensured, ``ModRedundant`` enabled.
+    """
+    base = scan_keyword_from_ts(original_keyword) or ""
+    base = _MODREDUNDANT_RE.sub(" ", base)
+    base = _FREQ_TOKEN_PATTERN.sub(" ", base)
+    base = _WHITESPACE_PATTERN.sub(" ", base).strip()
+    if base and not _OPT_BARE_RE.search(base):
+        base = f"opt {base}".strip()
+    if not base:
+        return ""
+    return ensure_modredundant_keyword(base)

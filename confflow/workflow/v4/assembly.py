@@ -22,16 +22,35 @@ from typing import Any
 
 from ...domain._immutable import FrozenDict
 from ...domain.artifact import ArtifactRef, ArtifactSet
-from ...domain.binding import Cardinality, Pairing, PortKind, SelectorKind, SourceKind
+from ...domain.binding import (
+    Cardinality,
+    Pairing,
+    PartialConsumption,
+    PortKind,
+    SelectorKind,
+    SourceKind,
+)
+from ...domain.completion import StepStatus, WorkItemStatus
 from ...domain.diagnostics import Diagnostic, diagnostic_sort_key
 from ...domain.errors import DomainError
 from ...domain.result import ResultSet
-from ...domain.structure import StructureRecord, StructureSet
+from ...domain.structure import (
+    StructureRecord,
+    StructureSet,
+    check_structure_id_conflicts,
+)
 from ...domain.work_item import (
     WorkItem,
     WorkItemInputs,
     make_work_item_id,
     work_item_semantic_digest,
+)
+from ...execution.atom_mapping import (
+    ATOM_MAPPING_REQUIRED,
+    AtomMapping,
+    AtomMappingError,
+    parse_atom_mapping,
+    validate_mapping_for_slots,
 )
 from .diagnostics import DiagnosticCode, DiagnosticReason, error, warning
 from .graph import ResolvedEdge
@@ -96,12 +115,47 @@ class RunInputs:
 
 @dataclass(frozen=True, slots=True)
 class StepOutputs:
-    """Materialized outputs of one producer step."""
+    """Materialized outputs of one producer step.
+
+    Carries the actual producer :class:`~confflow.domain.completion.StepStatus`
+    and enough completion provenance for downstream gating: consumers check
+    the real failed/partial/cancelled state instead of blindly consuming the
+    successful subset.  ``status`` is required for production binding: an
+    unknown (``None``) status is a legacy deserialization marker only and
+    assembly rejects consuming it fail-closed — it is never treated as
+    completed.  Run inputs are unaffected: they are not producer outputs
+    and need no status.
+    """
 
     step_id: str
     structures: StructureSet = field(default_factory=StructureSet)
     artifacts: ArtifactSet = field(default_factory=ArtifactSet)
     results: ResultSet = field(default_factory=ResultSet)
+    status: StepStatus | None = None
+    producer_step_digest: str | None = None
+    item_statuses: tuple[WorkItemStatus, ...] = ()
+
+    def __post_init__(self) -> None:
+        if self.status is not None and not isinstance(self.status, StepStatus):
+            raise DomainError("StepOutputs status must be a StepStatus or None")
+        object.__setattr__(self, "item_statuses", tuple(self.item_statuses))
+        for item_status in self.item_statuses:
+            if not isinstance(item_status, WorkItemStatus):
+                raise DomainError("StepOutputs item_statuses must be WorkItemStatus members")
+        if self.producer_step_digest is not None and (
+            not isinstance(self.producer_step_digest, str) or not self.producer_step_digest.strip()
+        ):
+            raise DomainError("StepOutputs producer_step_digest must be a non-empty string or None")
+
+    @property
+    def has_known_status(self) -> bool:
+        """Return whether this record carries an explicit producer status.
+
+        ``None`` is a read-only legacy marker: such records deserialize but
+        must never participate in production binding silently (assembly
+        rejects them fail-closed).
+        """
+        return self.status is not None
 
 
 @dataclass(frozen=True, slots=True)
@@ -116,8 +170,7 @@ class MaterializedOutputs:
         for key, value in self.steps.items():
             if not isinstance(value, StepOutputs):
                 raise DomainError(
-                    f"materialized output {key!r} must be a StepOutputs, "
-                    f"got {type(value).__name__}"
+                    f"materialized output {key!r} must be a StepOutputs, got {type(value).__name__}"
                 )
 
     @classmethod
@@ -210,10 +263,95 @@ def _apply_selector(
                 ResultSet(),
                 tuple(missing),
             )
-        return structures, artifacts, results, ()
+        # Result ports filter by independent ResultRef identity: each
+        # requested id resolves on its own; only a missing id or duplicate
+        # candidates for the SAME requested id fail.  Distinct ids may each
+        # resolve once, so MANY ports can legitimately select several ids
+        # with no global exactly-one requirement.
+        selected_results, missing_ids, ambiguous_ids = results.select_ids(selector.ids)
+        missing.extend(missing_ids)
+        missing.extend(f"ambiguous:{result_id}" for result_id in ambiguous_ids)
+        return structures.__class__(), artifacts.__class__(), selected_results, tuple(missing)
     if selector.kind is SelectorKind.ROLE:
         return StructureSet(), artifacts.by_role(selector.role or ""), ResultSet(), ()
     return structures, artifacts, results, ()
+
+
+def _producer_state_diagnostic(
+    *,
+    consumer_step_id: str,
+    edge: ResolvedEdge,
+    outputs: StepOutputs | None,
+    producer_completion: Any | None,
+) -> Diagnostic | None:
+    """Check actual producer failed/partial/cancelled state for one edge."""
+    if outputs is None:
+        return None  # waiting: caller emits NOT_ASSEMBLABLE, never an error
+    field_path = f"steps.{consumer_step_id}.bindings.{edge.target_port.name}"
+    if outputs.status is None:
+        return error(
+            DiagnosticCode.CARDINALITY_ERROR,
+            DiagnosticReason.CARDINALITY_MISMATCH,
+            f"producer {edge.source.step_id!r} has no recorded status; "
+            f"step {consumer_step_id!r} cannot consume outputs with unknown "
+            "completion state",
+            step_id=consumer_step_id,
+            logical_key=f"{consumer_step_id}:*",
+            field_path=field_path,
+            details={
+                "port": edge.target_port.name,
+                "producer_step_id": edge.source.step_id,
+                "producer_status": "unknown",
+            },
+        )
+    status = outputs.status
+    if status is StepStatus.COMPLETED:
+        return None
+    field_path = f"steps.{consumer_step_id}.bindings.{edge.target_port.name}"
+    base_details: dict[str, Any] = {
+        "port": edge.target_port.name,
+        "producer_step_id": edge.source.step_id,
+        "producer_status": status.value,
+    }
+    if status is StepStatus.FAILED:
+        return error(
+            DiagnosticCode.CARDINALITY_ERROR,
+            DiagnosticReason.CARDINALITY_MISMATCH,
+            f"producer {edge.source.step_id!r} failed; "
+            f"step {consumer_step_id!r} cannot consume its outputs",
+            step_id=consumer_step_id,
+            logical_key=f"{consumer_step_id}:*",
+            field_path=field_path,
+            details=base_details,
+        )
+    if status is StepStatus.CANCELLED:
+        return error(
+            DiagnosticCode.CARDINALITY_ERROR,
+            DiagnosticReason.CARDINALITY_MISMATCH,
+            f"producer {edge.source.step_id!r} was cancelled; "
+            f"step {consumer_step_id!r} cannot consume its outputs",
+            step_id=consumer_step_id,
+            logical_key=f"{consumer_step_id}:*",
+            field_path=field_path,
+            details=base_details,
+        )
+    # PARTIAL: only an explicit accept_subset consumer of an allow-partial
+    # producer may proceed; compile-time checks cover the declaration, but
+    # the run-time actual state must be re-checked here.
+    if status is StepStatus.PARTIAL:
+        if edge.partial_consumption is not PartialConsumption.ACCEPT_SUBSET:
+            return error(
+                DiagnosticCode.COMPILE_ERROR,
+                DiagnosticReason.PARTIAL_CONSUMPTION_UNDEFINED,
+                f"producer {edge.source.step_id!r} is partial; "
+                f"step {consumer_step_id!r} must declare accept_subset to consume it",
+                step_id=consumer_step_id,
+                logical_key=f"{consumer_step_id}:*",
+                field_path=field_path,
+                details=base_details,
+            )
+        return None
+    return None
 
 
 def _resolve_source(
@@ -336,12 +474,35 @@ def _cardinality_diagnostic(
 def _structure_payload(
     structure: StructureRecord, effective: EffectiveScientificParameters
 ) -> dict[str, Any]:
-    return {
-        "geometry_digest": structure.geometry_digest,
-        "charge": effective.charge,
-        "multiplicity": effective.multiplicity,
-        "freeze": list(effective.freeze) if effective.freeze is not None else None,
-    }
+    """Return the provenance-aware digest payload of one structure input.
+
+    Pins entity id, geometry content, effective charge/multiplicity/freeze,
+    group key, role, parent ids, and lineage root.  Locator, scheduler, and
+    presentation metadata stay excluded.
+    """
+    return structure.reuse_payload(effective)
+
+
+def _parse_step_atom_mapping(step: PlannedStep) -> tuple[AtomMapping, Diagnostic | None]:
+    """Parse the step's native atom mapping, defaulting to identity."""
+    raw: Any = None
+    try:
+        native = step.scientific.native
+        raw = native.get("atom_mapping") if native is not None else None
+    except Exception:
+        raw = None
+    try:
+        return parse_atom_mapping(raw), None
+    except AtomMappingError as exc:
+        return AtomMapping(kind="identity"), error(
+            DiagnosticCode.SCIENTIFIC_PARAMETER_CONFLICT,
+            DiagnosticReason.SCIENTIFIC_VALUE_MISMATCH,
+            f"step {step.step_id!r} declares an invalid atom mapping: {exc}",
+            step_id=step.step_id,
+            logical_key=f"{step.step_id}:*",
+            field_path=f"steps.{step.step_id}.scientific.native.atom_mapping",
+            details={"code": exc.code, "message": str(exc)},
+        )
 
 
 def _check_paired_structures(
@@ -349,10 +510,64 @@ def _check_paired_structures(
     logical_key: str,
     by_port: tuple[tuple[str, StructureRecord], ...],
     effective_by_id: dict[str, EffectiveScientificParameters],
+    mapping: AtomMapping | None = None,
 ) -> list[Diagnostic]:
+    """Validate paired named structures after applying the atom mapping.
+
+    The explicit mapping is validated *first* via the shared
+    :func:`validate_mapping_for_slots` helper (the same helper the executor
+    uses); only element compatibility that survives the mapping is checked
+    afterwards.  Per-slot permutations let QST3 product and guess use
+    independent reorderings; a uniform ``permutation`` is the shorthand for
+    every non-reference slot.
+    """
     diagnostics: list[Diagnostic] = []
     if len(by_port) < 2:
         return diagnostics
+    slot_atoms = {port: tuple(struct.atoms) for port, struct in by_port}
+    active = mapping if mapping is not None else AtomMapping(kind="identity")
+    try:
+        validate_mapping_for_slots(active, slot_atoms)
+    except AtomMappingError as exc:
+        if exc.code == ATOM_MAPPING_REQUIRED:
+            # Distinguish atom-count mismatch (unfixable) from order
+            # disagreement (needs an explicit mapping) for stable reasons.
+            counts = {len(atoms) for atoms in slot_atoms.values()}
+            reason = (
+                DiagnosticReason.ATOM_COUNT_MISMATCH
+                if len(counts) != 1
+                else DiagnosticReason.ELEMENT_MISMATCH
+            )
+            ordered = sorted(slot_atoms)
+            diagnostics.append(
+                error(
+                    DiagnosticCode.SCIENTIFIC_PARAMETER_CONFLICT,
+                    reason,
+                    f"paired structures on ports {ordered[0]!r} and {ordered[1]!r} "
+                    f"need an explicit atom mapping: {exc}",
+                    step_id=step_id,
+                    logical_key=logical_key,
+                    details={
+                        "ports": ordered,
+                        "mapping_code": exc.code,
+                        "message": str(exc),
+                    },
+                )
+            )
+        else:
+            diagnostics.append(
+                error(
+                    DiagnosticCode.SCIENTIFIC_PARAMETER_CONFLICT,
+                    DiagnosticReason.ELEMENT_MISMATCH,
+                    f"paired structures on step {step_id!r} carry an invalid atom mapping: {exc}",
+                    step_id=step_id,
+                    logical_key=logical_key,
+                    details={"mapping_code": exc.code, "message": str(exc)},
+                )
+            )
+        return diagnostics
+    # Mapping is valid: element order is already proven compatible slot by
+    # slot, so only atom counts (unfixable) and charge/multiplicity remain.
     reference_port, reference = by_port[0]
     reference_effective = effective_by_id[reference.id]
     for port_name, structure in by_port[1:]:
@@ -380,23 +595,6 @@ def _check_paired_structures(
                 )
             )
             continue
-        if structure.atoms != reference.atoms:
-            diagnostics.append(
-                error(
-                    DiagnosticCode.SCIENTIFIC_PARAMETER_CONFLICT,
-                    DiagnosticReason.ELEMENT_MISMATCH,
-                    f"paired structures on ports {reference_port!r} and {port_name!r} "
-                    "have different element order",
-                    step_id=step_id,
-                    logical_key=logical_key,
-                    details={
-                        "left": {"port": reference_port, "id": reference.id},
-                        "right": {"port": port_name, "id": structure.id},
-                        "requirement": "identical",
-                    },
-                )
-            )
-            continue
         current_effective = effective_by_id[structure.id]
         if (
             reference_effective.charge != current_effective.charge
@@ -413,7 +611,7 @@ def _check_paired_structures(
                     details={
                         "left": {
                             "port": reference_port,
-                            "id": reference.id,
+                            "id": structure.id,
                             "charge": reference_effective.charge,
                             "multiplicity": reference_effective.multiplicity,
                         },
@@ -498,8 +696,7 @@ def _determine_domain(
                             step_id=step.step_id,
                             logical_key=f"{step.step_id}:pending",
                             field_path=(
-                                f"steps.{step.step_id}.bindings."
-                                f"{resolved.edge.target_port.name}"
+                                f"steps.{step.step_id}.bindings.{resolved.edge.target_port.name}"
                             ),
                             details={"structure_id": structure.id},
                         )
@@ -541,11 +738,14 @@ def assemble_work_items(
     *,
     materialized: MaterializedOutputs | None = None,
 ) -> AssemblyResult:
-    """Assemble deterministic synthetic work items for *plan*.
+    """Assemble deterministic work items for *plan*.
 
-    Steps whose producer outputs are not materialized are skipped with an
-    informational diagnostic; missing required values for steps that *are*
-    assemblable are errors.
+    Per-step scoping: healthy steps retain their items even when another
+    step fails; an errored step yields no items for itself (callers must
+    never execute an errored current step) but never wipes unrelated
+    steps.  Waiting (unmaterialized producers) stays a warning skip, never
+    an error.  Legal-empty MANY sets complete; missing/failed/cancelled
+    producers and cardinality violations are scoped errors.
     """
     inputs = run_inputs if run_inputs is not None else RunInputs.empty()
     outputs = materialized if materialized is not None else MaterializedOutputs.empty()
@@ -565,6 +765,7 @@ def assemble_work_items(
             )
 
     for step in plan.steps:
+        step_diagnostics: list[Diagnostic] = []
         edges = plan.graph.incoming(step.step_id)
         missing_producers = sorted(
             {
@@ -576,22 +777,44 @@ def assemble_work_items(
             }
         )
         if missing_producers:
-            diagnostics.append(
-                warning(
-                    DiagnosticCode.COMPILE_ERROR,
-                    DiagnosticReason.NOT_ASSEMBLABLE,
-                    f"step {step.step_id!r} waits for unmaterialized producer outputs",
-                    step_id=step.step_id,
-                    details={"producers": missing_producers},
-                )
+            # Waiting, not an error: downstream simply cannot run yet.
+            waiting = warning(
+                DiagnosticCode.COMPILE_ERROR,
+                DiagnosticReason.NOT_ASSEMBLABLE,
+                f"step {step.step_id!r} waits for unmaterialized producer outputs",
+                step_id=step.step_id,
+                details={"producers": missing_producers},
             )
+            diagnostics.append(waiting)
             skipped.append(step.step_id)
             continue
+        # Actual producer failed/partial/cancelled gating (run-time check;
+        # compile-time declarations cannot substitute for observed state).
+        producer_gating_failed = False
+        for edge in edges:
+            if edge.source.kind is not SourceKind.STEP_OUTPUT:
+                continue
+            producer_outputs = outputs.step(edge.source.step_id or "")
+            producer_step = plan.step(edge.source.step_id or "")
+            producer_completion = producer_step.completion if producer_step is not None else None
+            gating = _producer_state_diagnostic(
+                consumer_step_id=step.step_id,
+                edge=edge,
+                outputs=producer_outputs,
+                producer_completion=producer_completion,
+            )
+            if gating is not None:
+                step_diagnostics.append(gating)
+                producer_gating_failed = True
+        if producer_gating_failed:
+            diagnostics.extend(step_diagnostics)
+            continue
         resolved_sources: list[_ResolvedSource] = []
+        step_selector_failed = False
         for edge in edges:
             resolved = _resolve_source(plan, edge, inputs, outputs)
             if resolved.missing_ids:
-                diagnostics.append(
+                step_diagnostics.append(
                     error(
                         DiagnosticCode.CARDINALITY_ERROR,
                         DiagnosticReason.CARDINALITY_MISMATCH,
@@ -601,8 +824,10 @@ def assemble_work_items(
                         details={"missing_ids": list(resolved.missing_ids)},
                     )
                 )
+                step_selector_failed = True
             resolved_sources.append(resolved)
-        if any(item.is_error for item in diagnostics):
+        if step_selector_failed:
+            diagnostics.extend(step_diagnostics)
             continue
         provisioning_errors: list[Diagnostic] = []
         for resolved in resolved_sources:
@@ -646,12 +871,18 @@ def assemble_work_items(
             diagnostics.extend(provisioning_errors)
             continue
         domain, domain_diagnostics = _determine_domain(plan, step, tuple(resolved_sources))
-        diagnostics.extend(domain_diagnostics)
         if any(item.is_error for item in domain_diagnostics):
+            diagnostics.extend(domain_diagnostics)
+            continue
+        mapping, mapping_error = _parse_step_atom_mapping(step)
+        if mapping_error is not None:
+            diagnostics.append(mapping_error)
             continue
 
         effective_cache: dict[str, EffectiveScientificParameters] = {}
+        effective_failed = False
         step_items: list[WorkItem] = []
+        step_item_errors: list[Diagnostic] = []
         for ordinal, entry in enumerate(domain):
             logical_key = f"{step.step_id}:{entry.group_key}"
             inputs_payload: dict[str, Any] = {}
@@ -694,7 +925,7 @@ def assemble_work_items(
                             )
                             effective_cache[structure.id] = effective
                             for diagnostic in effective_diagnostics:
-                                diagnostics.append(
+                                scoped = (
                                     diagnostic
                                     if diagnostic.step_id is not None
                                     else Diagnostic(
@@ -707,6 +938,9 @@ def assemble_work_items(
                                         details=diagnostic.details,
                                     )
                                 )
+                                if scoped.is_error:
+                                    effective_failed = True
+                                step_diagnostics.append(scoped)
                         effective = effective_cache[structure.id]
                         payload_structures.append(_structure_payload(structure, effective))
                     if edge.pairing is Pairing.BY_GROUP_KEY and len(structure_value) == 1:
@@ -780,13 +1014,37 @@ def assemble_work_items(
                 )
                 if cardinality_diagnostic is not None:
                     item_errors.append(cardinality_diagnostic)
+            # Same entity on multiple ports must carry identical payloads.
+            if not item_errors:
+                all_records = [record for value in structures_inputs.values() for record in value]
+                conflicts = check_structure_id_conflicts(all_records)
+                for conflict_id, first_record, second_record in conflicts:
+                    item_errors.append(
+                        error(
+                            DiagnosticCode.IDENTITY_ERROR,
+                            DiagnosticReason.DUPLICATE_STRUCTURE_IDENTITY,
+                            f"structure id {conflict_id!r} carries conflicting payloads "
+                            "on one work item",
+                            step_id=step.step_id,
+                            logical_key=logical_key,
+                            details={
+                                "structure_id": conflict_id,
+                                "first": first_record.reuse_payload(),
+                                "second": second_record.reuse_payload(),
+                            },
+                        )
+                    )
             if item_errors:
-                diagnostics.extend(item_errors)
+                step_item_errors.extend(item_errors)
                 continue
             paired_sorted = tuple(sorted(paired_representatives, key=lambda item: item[0]))
-            diagnostics.extend(
-                _check_paired_structures(step.step_id, logical_key, paired_sorted, effective_cache)
+            paired_diagnostics = _check_paired_structures(
+                step.step_id, logical_key, paired_sorted, effective_cache, mapping
             )
+            if any(item.is_error for item in paired_diagnostics):
+                step_item_errors.extend(paired_diagnostics)
+                continue
+            step_diagnostics.extend([d for d in paired_diagnostics if not d.is_error])
             structure_sets = FrozenDict(structures_inputs)
             artifact_sets = FrozenDict(artifacts_inputs)
             result_sets = FrozenDict(results_inputs)
@@ -814,6 +1072,14 @@ def assemble_work_items(
                 ),
             )
             step_items.append(item)
+        diagnostics.extend(step_diagnostics)
+        if effective_failed:
+            continue
+        if step_item_errors:
+            # An errored step yields no items for itself, but healthy steps
+            # already collected in `items` are retained with scoped errors.
+            diagnostics.extend(step_item_errors)
+            continue
         keys = [item.logical_key for item in step_items]
         if len(set(keys)) != len(keys):
             for key in sorted({key for key in keys if keys.count(key) > 1}):
@@ -829,12 +1095,6 @@ def assemble_work_items(
             continue
         items.extend(step_items)
 
-    if any(item.is_error for item in diagnostics):
-        return AssemblyResult(
-            (),
-            tuple(sorted(diagnostics, key=diagnostic_sort_key)),
-            tuple(skipped),
-        )
     order_index = {step.step_id: index for index, step in enumerate(plan.steps)}
     items.sort(key=lambda item: (order_index[item.step_id], item.logical_key))
     return AssemblyResult(

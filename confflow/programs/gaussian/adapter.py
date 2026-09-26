@@ -164,6 +164,9 @@ class GaussianProgramAdapter:
     def scan_keyword_from_ts(keyword: str | None) -> str | None:
         """Rewrite a TS keyword line into one suitable for a scan job.
 
+        Adapter-owned syntax (delegates to ``rendering``).  Recovery
+        policies must call this method, never reimplement route rewriting.
+
         Parameters
         ----------
         keyword : str | None
@@ -175,6 +178,21 @@ class GaussianProgramAdapter:
             Rewritten keyword, or ``None`` when nothing usable remains.
         """
         return _rendering.scan_keyword_from_ts(keyword)
+
+    @staticmethod
+    def rescue_scan_keyword(original_keyword: str) -> str:
+        """Return the adapter-owned constrained-scan keyword for a rescue."""
+        return _rendering.rescue_scan_keyword(original_keyword or "")
+
+    @staticmethod
+    def rescue_freeze_directive(atom_a: int, atom_b: int) -> str:
+        """Return the adapter-owned ModRedundant freeze directive."""
+        return _rendering.rescue_freeze_directive(atom_a, atom_b)
+
+    @staticmethod
+    def ensure_modredundant_keyword(keyword: str) -> str:
+        """Return *keyword* with the adapter-owned ``ModRedundant`` flag."""
+        return _rendering.ensure_modredundant_keyword(keyword)
 
     def materialize_native_input(
         self, inputs: ResolvedCalculationInputs
@@ -221,6 +239,11 @@ class GaussianProgramAdapter:
         )
         mode = self._execution_mode(inputs, keyword_line)
         extra_section = _rendering.resolve_extra_section(native)
+        if inputs.checkpoints and mode in ("qst2", "qst3"):
+            raise ValueError(
+                "native_input_error: artifact_unsupported: Gaussian QST rendering "
+                "declares no checkpoint input vocabulary; refusing staged-but-unused success"
+            )
         if mode in ("qst2", "qst3"):
             content = self._render_qst_input(
                 inputs,

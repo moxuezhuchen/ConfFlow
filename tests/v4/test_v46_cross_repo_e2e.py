@@ -487,9 +487,9 @@ class TestRealRecipeToValidation:
     def test_real_validator_accepts_unknown_program_name(self) -> None:
         """Pin REAL behavior for the known dispute.
 
-        V4 compile does NOT check program names against ``ProgramName``.
-        An unknown program still validates ``ok`` -- rejection tests MUST
-        use unknown executors.
+        Final contract (freeze §8/A): unknown programs fail closed with
+        unknown_program.  The old accept-unknown behavior is superseded;
+        rejection tests use unknown programs (and unknown executors).
         """
         document = {
             "schema": "confflow.workflow.v4",
@@ -508,8 +508,9 @@ class TestRealRecipeToValidation:
             ],
         }
         report = validate_workflow_bytes(_jcs_bytes(document))
-        assert report.ok is True, (
-            "real V4 validator accepts unknown program names; " f"diagnostics: {report.diagnostics}"
+        assert report.ok is False, (
+            "real V4 validator must reject unknown program names; "
+            f"diagnostics: {report.diagnostics}"
         )
 
 

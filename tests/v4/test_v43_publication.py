@@ -79,21 +79,46 @@ STEP_RESULT_FILENAME_TMP = "step_result.json.tmp.999.0"
 
 def completed_item(index: int) -> WorkItemResult:
     """Build a completed work-item result with distinct payloads per index."""
+    import hashlib
+
+    from confflow.domain.result import make_result_id
+
     tag = f"i{index:02d}"
+    work_item_id = f"wi:{STEP_ID}:{tag}"
+    # Final contract (freeze §2/B): production results carry producer-scoped
+    # ids bound to the producing work item's semantic digest (deterministic
+    # per-item test digest here).
+    producer_digest = "sha256:" + hashlib.sha256(work_item_id.encode()).hexdigest()
+    base = energy_result(
+        -76.0 - 0.01 * index,
+        subject_structure_id=f"struct_{tag}",
+        source_step_id=STEP_ID,
+    )
+    stamped = type(base)(
+        kind=base.kind,
+        value=base.value,
+        unit=base.unit,
+        subject_structure_id=base.subject_structure_id,
+        source_step_id=STEP_ID,
+        source_work_item_id=work_item_id,
+        provenance=base.provenance,
+        result_id=make_result_id(
+            step_id=STEP_ID,
+            work_item_id=work_item_id,
+            kind=base.kind,
+            subject_structure_id=base.subject_structure_id,
+            producer_digest=producer_digest,
+        ),
+    )
     return WorkItemResult(
-        work_item_id=f"wi:{STEP_ID}:{tag}",
+        work_item_id=work_item_id,
         status=WorkItemStatus.COMPLETED,
         structures=StructureSet.of(structure(f"struct_{tag}")),
-        results=ResultSet.of(
-            energy_result(
-                -76.0 - 0.01 * index,
-                subject_structure_id=f"struct_{tag}",
-                source_step_id=STEP_ID,
-            )
-        ),
+        results=ResultSet.of(stamped),
         artifacts=ArtifactSet.of(
             checkpoint(f"struct_{tag}", artifact_id=f"chk_{tag}", producer_step_id=STEP_ID)
         ),
+        semantic_digest=producer_digest,
     )
 
 
@@ -547,13 +572,34 @@ class TestDomainShapeMirroring:
     """Loaded rows mirror domain to_dict shapes, including nested records."""
 
     def test_nested_records_survive_round_trip(self, tmp_path: Path) -> None:
+        import hashlib
+
+        from confflow.domain.result import make_result_id
+
+        _wid = f"wi:{STEP_ID}:rich"
+        _pd = "sha256:" + hashlib.sha256(_wid.encode()).hexdigest()
+        _base = energy_result(-76.1, subject_structure_id="rich_struct", source_step_id=STEP_ID)
+        _stamped = type(_base)(
+            kind=_base.kind,
+            value=_base.value,
+            unit=_base.unit,
+            subject_structure_id=_base.subject_structure_id,
+            source_step_id=STEP_ID,
+            source_work_item_id=_wid,
+            provenance=_base.provenance,
+            result_id=make_result_id(
+                step_id=STEP_ID,
+                work_item_id=_wid,
+                kind=_base.kind,
+                subject_structure_id=_base.subject_structure_id,
+                producer_digest=_pd,
+            ),
+        )
         item = WorkItemResult(
-            work_item_id=f"wi:{STEP_ID}:rich",
+            work_item_id=_wid,
             status=WorkItemStatus.COMPLETED,
             structures=StructureSet.of(structure("rich_struct")),
-            results=ResultSet.of(
-                energy_result(-76.1, subject_structure_id="rich_struct", source_step_id=STEP_ID)
-            ),
+            results=ResultSet.of(_stamped),
             artifacts=ArtifactSet.of(
                 checkpoint("rich_struct", artifact_id="chk_rich", producer_step_id=STEP_ID)
             ),
