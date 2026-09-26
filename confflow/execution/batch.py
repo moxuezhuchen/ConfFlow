@@ -462,7 +462,19 @@ class BatchStepExecutor:
                 verified_artifact_checksums=sorted(verified_checksums),
             )
         except PublicationError as exc:
-            raise PersistenceError(f"refusing to publish step {step.step_id!r}: {exc}") from exc
+            gap_checksums = {
+                artifact.checksum.lower()
+                for item in collected
+                if item.work_item_id in gap_ids
+                for artifact in item.artifacts
+                if artifact.checksum is not None
+            }
+            if not gap_ids or gap_checksums:
+                # Either nothing explains the gap, or gap items smuggle
+                # checksummed artifacts past verification: fail closed.
+                raise PersistenceError(f"refusing to publish step {step.step_id!r}: {exc}") from exc
+            # Otherwise the only defect is the known non-durable set, which
+            # already carries the durability-gap diagnostic: publish proceeds.
         publish_step_result(run_root=run_root_abs, step_id=step.step_id, step_result=step_result)
         return step_result
 
