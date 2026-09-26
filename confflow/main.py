@@ -3,8 +3,8 @@
 """Script entry point module.
 
 Provides the stable ``confflow.main:main`` console_scripts entry point.
-CLI argument parsing is in ``confflow.cli``; workflow execution logic
-is in ``confflow.workflow.engine``.
+CLI argument parsing is in ``confflow.cli``; formal execution enters the
+single V4 application (``confflow.application.v4_entry``).
 """
 
 from __future__ import annotations
