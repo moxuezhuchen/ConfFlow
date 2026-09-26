@@ -507,7 +507,20 @@ def _default_executors() -> tuple[ExecutorContract, ...]:
                     Pairing.SINGLE,
                     "Optional subject structure for the analysis.",
                 ),
+                _structure_port(
+                    "structures",
+                    Cardinality.MANY,
+                    Pairing.SINGLE,
+                    "Subject structures for the analysis (for example path endpoints).",
+                ),
+                _structure_port(
+                    "ts_structures",
+                    Cardinality.MANY,
+                    Pairing.SINGLE,
+                    "Transition-state structures referenced by endpoint parent links.",
+                ),
                 _result_port("results", Cardinality.MANY, Pairing.SINGLE),
+                _result_port("ts_results", Cardinality.MANY, Pairing.SINGLE),
             ),
             output_ports=(
                 _result_port("results", Cardinality.MANY, Pairing.BY_SUBJECT),
