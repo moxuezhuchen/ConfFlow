@@ -54,7 +54,7 @@ from .native import (
     ResolvedCalculationInputs,
     StagedArtifact,
 )
-from .profiles import ProfileContext, ResultProfile
+from .profiles import ProfileContext, ProfileOutput, ResultProfile
 
 if TYPE_CHECKING:
     from ..workflow.v4.document import ScientificDefaults, ScientificDefinition
@@ -573,6 +573,49 @@ class WorkItemExecutor:
     # Internal pipeline stages
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _resubject_restart_artifacts(profile_output: ProfileOutput) -> ProfileOutput:
+        """Re-subject restart artifacts to the profile's output structure.
+
+        Adapters discover artifacts against the *input* structure, but the
+        restart contract binds a checkpoint to the structure it restarts
+        *from* — the profile's output record (new identity for both
+        produced and passthrough geometry per the frozen subject rule).
+        With exactly one output structure the mapping is unambiguous;
+        otherwise artifacts pass through untouched.
+        """
+        from ..workflow.v4.artifact_flow import RESTART_ROLES, resolve_restart_subject
+
+        output_ids = [record.id for record in profile_output.structures]
+        if len(output_ids) != 1:
+            return profile_output
+        import dataclasses as _dataclasses
+
+        semantics = profile_output.geometry_semantics
+        semantics_name = semantics.value if hasattr(semantics, "value") else str(semantics)
+        fixed = []
+        for ref in profile_output.artifacts:
+            if ref.role in RESTART_ROLES:
+                fixed.append(
+                    _dataclasses.replace(
+                        ref,
+                        subject_structure_id=resolve_restart_subject(
+                            native_subject=ref.subject_structure_id,
+                            output_structure_id=output_ids[0],
+                            geometry_semantics=semantics_name,
+                        ),
+                    )
+                )
+            else:
+                fixed.append(ref)
+        return ProfileOutput(
+            structures=profile_output.structures,
+            results=profile_output.results,
+            artifacts=ArtifactSet.of(*fixed) if fixed else ArtifactSet(),
+            geometry_semantics=profile_output.geometry_semantics,
+            diagnostics=profile_output.diagnostics,
+        )
+
     def _scoped(
         self, diagnostic: Diagnostic, context: ItemExecutionContext, work_item: WorkItem
     ) -> Diagnostic:
@@ -694,11 +737,21 @@ class WorkItemExecutor:
         staged_dir = os.path.join(item_dir, "staged")
         os.makedirs(staged_dir, exist_ok=True)
         run_root = os.path.realpath(context.run_root) if context.run_root else ""
+        driving_id = select_driving_structure(work_item).id
         for port in sorted(work_item.named_inputs.artifacts):
             for index, artifact in enumerate(work_item.named_inputs.artifacts[port]):
                 locator = artifact.locator
                 if locator.path is None:
                     continue
+                if (
+                    artifact.subject_structure_id is not None
+                    and artifact.subject_structure_id != driving_id
+                ):
+                    raise DomainError(
+                        f"artifact {artifact.id!r} is bound to subject "
+                        f"{artifact.subject_structure_id!r}, not the driving "
+                        f"structure {driving_id!r}; refusing to stage"
+                    )
                 if not run_root:
                     raise DomainError(
                         "run-relative artifact locators require a run root for staging"
@@ -878,6 +931,7 @@ class WorkItemExecutor:
                 discovered_artifacts=discovered,
             )
         )
+        profile_output = self._resubject_restart_artifacts(profile_output)
         diagnostics = (
             list(base_diagnostics)
             + list(native_result.parser_diagnostics)

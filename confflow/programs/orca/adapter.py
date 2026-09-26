@@ -414,16 +414,25 @@ class OrcaProgramAdapter(ProgramAdapter):
                 artifact_id = f"{step_id}:{produced.name}"
             else:
                 artifact_id = produced.name
+            # The wave-function file carries restart semantics, so it is a
+            # ``checkpoint``; the native format rides in metadata, never in
+            # the role (roles are semantic, not extension aliases).
+            role = produced.role
+            metadata: dict[str, Any] = {}
+            if role == "checkpoint_wavefunction":
+                role = "checkpoint"
+                metadata["program_format"] = "orca_gbw"
             refs.append(
                 ArtifactRef(
                     id=artifact_id,
-                    role=produced.role,
+                    role=role,
                     locator=ArtifactLocator.run_relative(locator_path),
                     checksum=f"sha256:{digest}",
                     program=ProgramName.ORCA.value,
                     producer_step_id=step_id or None,
                     producer_work_item_id=work_item_id or None,
                     subject_structure_id=subject_structure_id,
+                    metadata=FrozenDict(metadata),
                 )
             )
         return ArtifactSet(tuple(refs))

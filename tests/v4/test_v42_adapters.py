@@ -697,7 +697,8 @@ class TestArtifactDiscovery:
             subject_structure_id="s0",
         )
         by_name = {ref.id.rsplit(":", 1)[-1]: ref for ref in found}
-        assert by_name["s_opt_item0.gbw"].role == "checkpoint_wavefunction"
+        assert by_name["s_opt_item0.gbw"].role == "checkpoint"
+        assert by_name["s_opt_item0.gbw"].metadata["program_format"] == "orca_gbw"
         assert (
             by_name["s_opt_item0.gbw"].checksum
             == "sha256:" + hashlib.sha256(b"FAKE-ORCA-GBW\n").hexdigest()
