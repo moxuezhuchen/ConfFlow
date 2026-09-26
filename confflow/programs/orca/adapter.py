@@ -88,10 +88,12 @@ def _require_goat_seed(seed: object) -> int:
 
     The typed step seed is required; the adapter renders it as the
     verified native ``RANDOMSEED`` key.  Verified against the installed
-    ORCA 6.1.1 binary (butane/HF-3c, wave-2 G): ``RANDOMSEED`` parses
-    (unknown keys fail fast with "Unknown identifier", non-integers with
-    "Invalid assignment"); equal integers reproduce bit-identical
-    ensembles across runs, and seeded runs differ from unseeded ones.
+    ORCA 6.1.1 binary: ``RANDOMSEED`` parses (unknown keys fail fast
+    with "Unknown identifier", non-numeric values with "Invalid
+    assignment"); integers, booleans, and even floats enter the GOAT
+    driver (ethanol/HF-3c probes; prior wave-2 butane/HF-3c evidence
+    additionally reports that equal integers reproduce bit-identical
+    ensembles and seeded runs differ from unseeded ones).
     Whether distinct integers select distinct streams on larger search
     spaces is NOT demonstrated by this evidence and is recorded as an
     open question — ConfFlow claims same-input reproducibility only.
@@ -521,7 +523,7 @@ class OrcaProgramAdapter(ProgramAdapter):
         """
         from ...execution.native import NativeEnsembleMember, NativePathEndpoint
         from .ensemble_parse import parse_goat_ensemble
-        from .neb import parse_neb_images, parse_neb_ts_candidate
+        from .neb import parse_neb_images
         from .path import parse_path_endpoints
 
         raw_atoms = materialized.metadata.get("input_atoms", [])
@@ -569,7 +571,7 @@ class OrcaProgramAdapter(ProgramAdapter):
             elif mode == "neb_ts":
                 raise ValueError(
                     "native_parse_error: NEB-TS requested but the output reports "
-                    "no highest-energy image"
+                    "no highest-energy image / saddle point"
                 )
         else:
             ensemble_path = os.path.join(work_dir, f"{log_base}.finalensemble.xyz")

@@ -13,25 +13,42 @@ documented below; anything else fails closed with ``native_input_error``.
 Key semantics are stated as this module's contract (units, types, ranges),
 not as claims about any particular ORCA release's defaults.
 
-Seed evidence (wave-1, unresolved): the installed ORCA 6.1 manual documents
-no integer ``Seed`` key for ``%goat`` (older manuals document a
-``RANDOMSEED`` boolean whose 6.1 semantics are unverified against the
-installed binary).  An earlier integer ``Seed`` key was invented dialect
-and is removed here: ``Seed`` is rejected as an unknown key, and seeded
-GOAT sampling fails closed in the adapter until wave-2 G verifies actual
-binary seed/reproducibility semantics.  See
-``/tmp/confflow-v4-native-evidence-notes.md`` and the C report.
+Seed authority (verified against the installed ORCA 6.1.1 binary): the
+native ``%goat`` key is ``RANDOMSEED``.  Unknown keys fail fast with
+"Unknown identifier"; integers (including 0 and negatives), booleans,
+and even floats parse and enter the GOAT driver, while non-numeric
+values fail with "Invalid assignment".  The single stochastic
+authority is the typed step seed: the program adapter renders it as
+an integer ``RANDOMSEED`` and rejects any user-supplied
+``RANDOMSEED`` as a second authority (compile-time validation rejects
+the key before rendering).  The invented ``Seed`` key never existed
+natively and is rejected as an unknown key.  Only same-input
+reproducibility is claimed: prior wave-2 butane/HF-3c evidence reports
+that equal integers reproduce bit-identical ensembles and seeded runs
+differ from unseeded ones; distinct-integer stream independence on
+larger search spaces is not demonstrated.
 
 Allowlisted ``%goat`` keys (one line each):
 
-- ``MaxIter``: maximum GOAT global-optimization iterations (int >= 1).
-- ``MaxConformers``: maximum conformers retained in the ensemble (int >= 1).
-- ``EnergyWindow``: keep conformers within this window above the minimum,
-  in kcal/mol (finite float > 0; ints are accepted as exact values).
+- ``MaxIter``: maximum GOAT geometry-optimization iterations per worker
+  (int >= 1; verified against the installed ORCA 6.1.1 binary and the
+  official 6.1 manual).
+- ``RANDOMSEED``: the single-authority stochastic seed, rendered
+  exclusively by the program adapter from the typed step seed (int;
+  zero and negatives parse natively).  The binary also accepts
+  booleans for this key, but ConfFlow never renders them: the integer
+  step seed is the only seed vocabulary.
 
 Rendering contract: ``render_goat_blocks`` emits ``%goat ... end`` text with
 keys sorted alphabetically, two-space indents, and a trailing newline, which
 matches the house ``%block`` style used by ``rendering.format_orca_blocks``.
+
+Non-goals (fail closed, never rendered): ``MaxConformers`` and
+``EnergyWindow`` are NOT native ORCA 6.1 vocabulary — the installed
+binary rejects both with "Unknown identifier" — so they are rejected
+as unknown keys.  (The native energy-window control is ``MAXEN``; it
+is not allowlisted: allowlist growth is forbidden, so ensemble
+energy-window control is an explicit capability gap.)
 """
 
 from __future__ import annotations
@@ -49,14 +66,21 @@ __all__ = [
 
 #: Strict native vocabulary accepted in ``native["goat"]``.
 #:
+#: ``MaxIter`` matches the official ``MAXITER`` key (block keywords are
+#: case-insensitive; verified against the installed ORCA 6.1.1 binary).
 #: ``RANDOMSEED`` is verified against the installed ORCA 6.1.1 binary:
 #: the key parses (unknown keys fail fast with "Unknown identifier in
-#: GOAT block"), non-integer values fail with "Invalid assignment in
-#: GOAT block", and integer values (including 0 and negatives) parse.
-#: The invented ``Seed`` key never existed natively and is rejected.
-GOAT_BLOCK_KEYS: frozenset[str] = frozenset({"MaxIter", "MaxConformers", "EnergyWindow", "RANDOMSEED"})
+#: GOAT block"); integers (including 0 and negatives), booleans, and
+#: even floats parse and enter the GOAT driver, while non-numeric
+#: values (e.g. ``foo``) fail with "Invalid assignment in GOAT block".
+#: ConfFlow renders only the integer step seed and rejects all other
+#: shapes fail-closed (stricter than native, never looser).  The
+#: invented ``Seed`` key never existed natively and is rejected, as
+#: are the invented ``MaxConformers`` and ``EnergyWindow`` keys (both
+#: fail with "Unknown identifier" on the installed binary).
+GOAT_BLOCK_KEYS: frozenset[str] = frozenset({"MaxIter", "RANDOMSEED"})
 
-_INT_KEYS: frozenset[str] = frozenset({"MaxIter", "MaxConformers"})
+_INT_KEYS: frozenset[str] = frozenset({"MaxIter"})
 
 #: Integer-valued ``%goat`` keys accepting any integer (seed semantics).
 _SEED_KEYS: frozenset[str] = frozenset({"RANDOMSEED"})
@@ -103,38 +127,6 @@ def _check_int_key(key: str, value: Any) -> int:
     if value < 1:
         raise ValueError(
             f"native_input_error: ORCA '%goat' key {key!r} must be >= 1, " f"got {value!r}"
-        )
-    return value
-
-
-def _check_energy_window(value: Any) -> int | float:
-    """Validate the ``EnergyWindow`` value in kcal/mol.
-
-    Parameters
-    ----------
-    value : Any
-        Candidate value from the ``goat`` mapping.
-
-    Returns
-    -------
-    int | float
-        The validated value, unchanged.
-
-    Raises
-    ------
-    ValueError
-        Raised when the value is not a finite number greater than zero
-        (bools rejected).
-    """
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise ValueError(
-            "native_input_error: ORCA '%goat' key 'EnergyWindow' must be a "
-            f"number of kcal/mol, got {value!r}"
-        )
-    if not math.isfinite(float(value)) or float(value) <= 0.0:
-        raise ValueError(
-            "native_input_error: ORCA '%goat' key 'EnergyWindow' must be a "
-            f"finite number > 0, got {value!r}"
         )
     return value
 
@@ -198,8 +190,6 @@ def render_goat_blocks(native: Mapping[str, Any]) -> str:
             rendered[key] = _format_value(_check_int_key(key, goat[key]))
         elif key in _SEED_KEYS:
             rendered[key] = _format_value(_check_seed_key(key, goat[key]))
-        elif key == "EnergyWindow":
-            rendered[key] = _format_value(_check_energy_window(goat[key]))
     lines = ["%goat"]
     for key in sorted(rendered):
         lines.append(f"  {key} {rendered[key]}")

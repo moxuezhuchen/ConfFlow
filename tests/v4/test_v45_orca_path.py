@@ -3,8 +3,8 @@
 """V4-5 ORCA reaction-path and NEB helpers: rendering goldens and parsing.
 
 Covers :mod:`confflow.programs.orca.path` and
-:mod:`confflow.programs.orca.neb` with crafted fixtures only (no subprocess,
-no adapter, no legacy imports):
+:mod:`confflow.programs.orca.neb` plus adapter-level NEB materialization,
+with real-grammar fixtures only (no subprocess, no legacy imports):
 
 - block-rendering goldens plus unknown-key, bad-count, and unsupported
   direction rejections (all ``native_input_error``);
@@ -12,8 +12,15 @@ no adapter, no legacy imports):
   and strict section rejections;
 - NEB image parsing including out-of-order images, missing energy, count
   mismatch, duplicate images, and banner-total mismatches;
-- TS-candidate banner gating (a path-maximum image without the banner yields
-  ``None``);
+- TS-candidate gating on the explicit native report, in both official
+  ORCA 6.1 vocabularies — the plain-NEB ``HIGHEST ENERGY IMAGE`` report
+  and the NEB-TS ``SADDLE POINT`` report (``Climbing image``), both
+  verified byte-for-byte against the installed ORCA 6.1.1 binary; a
+  path-maximum image without a report yields ``None``;
+- adapter-level NEB/NEB-TS materialization goldens: the exact ``%neb``
+  block bytes fed to the real binary (which accepts ``NImages`` plus
+  ``NEB_End_XYZFile`` and converges), keyword/mode consistency gates,
+  and the product-endpoint XYZ companion;
 - trajectory facts including truncation detection and best-effort skips.
 """
 
@@ -31,7 +38,6 @@ from confflow.programs.orca.neb import (
     render_neb_blocks,
 )
 from confflow.programs.orca.path import (
-    IRC_TRUNCATED_MARKER,
     SUPPORTED_IRC_KEYS,
     parse_path_endpoints,
     path_trajectory_facts,
@@ -51,29 +57,6 @@ REVERSE_COORDS = (
 )
 FORWARD_ENERGY = -76.123456
 REVERSE_ENERGY = -76.111111
-
-
-def _coord_lines(coords: tuple[tuple[float, float, float], ...]) -> str:
-    """Format water coordinates as ``<symbol> <x> <y> <z>`` lines."""
-    return "\n".join(
-        f"{symbol} {x:.6f} {y:.6f} {z:.6f}" for symbol, (x, y, z) in zip(WATER_ATOMS, coords)
-    )
-
-
-def _endpoint_section(
-    banner: str,
-    *,
-    energy: float,
-    converged: str = "true",
-    coords: tuple[tuple[float, float, float], ...] = FORWARD_COORDS,
-    point: int | None = None,
-) -> str:
-    """Build one IRC endpoint section in the minimal dialect."""
-    lines = [banner, f"ENERGY {energy}", f"CONVERGED {converged}"]
-    if point is not None:
-        lines.append(f"POINT {point}")
-    lines += ["GEOMETRY", _coord_lines(coords), "END GEOMETRY"]
-    return "\n".join(lines) + "\n"
 
 
 class TestAllowlistContracts:
@@ -207,7 +190,7 @@ class TestParsePathEndpoints:
                         "         *************************************************************",
                         "",
                         "Iteration    E(Eh)      dE(kcal/mol)  max(|G|)   RMS(G)",
-                        f"    0       -76.000000   -1.000000    0.010000  0.005000",
+                        "    0       -76.000000   -1.000000    0.010000  0.005000",
                         f"    {forward_point}       {forward_energy:.6f}   -5.000000    0.030000  0.020000",
                         "",
                     ]
@@ -240,7 +223,7 @@ class TestParsePathEndpoints:
                         "         *************************************************************",
                         "",
                         "Iteration    E(Eh)      dE(kcal/mol)  max(|G|)   RMS(G)",
-                        f"    0       -76.000000   -1.000000    0.010000  0.005000",
+                        "    0       -76.000000   -1.000000    0.010000  0.005000",
                         f"    {reverse_point}       {reverse_energy:.6f}   -4.000000    0.040000  0.025000",
                         "",
                     ]
@@ -440,6 +423,196 @@ class TestParseNebTsCandidate:
     def test_atom_mismatch_rejected(self) -> None:
         with pytest.raises(ValueError, match="symbols|atoms"):
             parse_neb_ts_candidate(self._hei_log(), atoms=("O", "H"))
+
+
+class TestParseNebSaddlePointCandidate:
+    """TS-candidate parsing for the real NEB-TS saddle-point vocabulary.
+
+    Minimal real-grammar fixtures shaped byte-for-byte like installed
+    ORCA 6.1.1 NEB-TS output (``INFORMATION ABOUT SADDLE POINT`` /
+    ``Climbing image .... <int>`` / ``Energy .... <float> Eh`` /
+    ``SADDLE POINT (ANGSTROEM)``): the live binary prints this report
+    (not the HEI vocabulary) whenever the NEB-TS keyword drives the run,
+    including no-barrier runs that skip the TS stage and exit nonzero.
+    """
+
+    def _saddle_log(self, *, number: int = 4, energy: float = -92.23456204) -> str:
+        rows = "\n".join(
+            f"{symbol}     {x:.6f}     {y:.6f}     {z:.6f}"
+            for symbol, (x, y, z) in zip(WATER_ATOMS, FORWARD_COORDS)
+        )
+        return "\n".join(
+            [
+                "---------------------------------------------------------------",
+                "               INFORMATION ABOUT SADDLE POINT",
+                "---------------------------------------------------------------",
+                "",
+                f"Climbing image                            ....  {number}",
+                f"Energy                                    ....  {energy:.8f} Eh",
+                "Max. abs. force                           ....  3.2670e-01 Eh/Bohr",
+                "",
+                "-----------------------------------------",
+                "  SADDLE POINT (ANGSTROEM)",
+                "-----------------------------------------",
+                rows,
+                "",
+            ]
+        )
+
+    def test_saddle_report_returns_candidate(self) -> None:
+        member = parse_neb_ts_candidate(self._saddle_log(), atoms=WATER_ATOMS)
+        assert member is not None
+        assert member.member_index == 4
+        assert member.energy_hartree == pytest.approx(-92.23456204)
+        assert member.geometry.atoms == WATER_ATOMS
+        assert member.metadata["neb_ts_candidate"] is True
+
+    def test_climbing_image_zero_parses(self) -> None:
+        # Real NEB-TS runs report image 0 when the saddle sits at the
+        # first image; zero is a valid native identity, never "absent".
+        member = parse_neb_ts_candidate(
+            self._saddle_log(number=0), atoms=WATER_ATOMS
+        )
+        assert member is not None
+        assert member.member_index == 0
+
+    def test_mixed_hei_and_saddle_reports_rejected(self) -> None:
+        hei_rows = "\n".join(
+            f"{symbol}     {x:.6f}     {y:.6f}     {z:.6f}"
+            for symbol, (x, y, z) in zip(WATER_ATOMS, FORWARD_COORDS)
+        )
+        hei = "\n".join(
+            [
+                "           INFORMATION ABOUT HIGHEST ENERGY IMAGE",
+                "",
+                "Highest energy image                      ....  3",
+                "Energy                                    ....  -76.455000 Eh",
+                "",
+                "-----------------------------------------",
+                "  HIGHEST ENERGY IMAGE (ANGSTROEM)",
+                "-----------------------------------------",
+                hei_rows,
+                "",
+            ]
+        )
+        with pytest.raises(ValueError, match="duplicate"):
+            parse_neb_ts_candidate(hei + self._saddle_log(), atoms=WATER_ATOMS)
+
+    def test_saddle_without_energy_rejected(self) -> None:
+        log = "\n".join(
+            line
+            for line in self._saddle_log().splitlines()
+            if not line.strip().startswith("Energy")
+        )
+        with pytest.raises(ValueError, match="no energy"):
+            parse_neb_ts_candidate(log, atoms=WATER_ATOMS)
+
+    def test_saddle_without_geometry_block_rejected(self) -> None:
+        log = self._saddle_log().split("SADDLE POINT (ANGSTROEM)")[0]
+        with pytest.raises(ValueError, match="no geometry block"):
+            parse_neb_ts_candidate(log, atoms=WATER_ATOMS)
+
+    def test_saddle_atom_mismatch_rejected(self) -> None:
+        with pytest.raises(ValueError, match="symbols|atoms"):
+            parse_neb_ts_candidate(self._saddle_log(), atoms=("O", "H"))
+
+
+class TestNebAdapterMaterialization:
+    """ProgramAdapter NEB rendering: the exact bytes fed to ORCA 6.1.1.
+
+    The ``%neb`` block below is byte-identical to input accepted and
+    converged by the installed binary (HCN/HF-3c, 3 images); the
+    keyword/mode gates refuse the silently-wrong combination (a ``%neb``
+    block under a plain keyword runs a plain optimization).
+    """
+
+    def _inputs(self, keyword: str, neb: dict, *, seed: int | None = None):
+        from confflow.domain._immutable import FrozenDict
+        from confflow.domain.resources import ResourceRequest
+        from confflow.domain.structure import StructureRecord
+        from confflow.execution.native import ResolvedCalculationInputs
+
+        reactant = StructureRecord(
+            id="r",
+            atoms=WATER_ATOMS,
+            coordinates=FORWARD_COORDS,
+            charge=0,
+            multiplicity=1,
+        )
+        product = StructureRecord(
+            id="p",
+            atoms=WATER_ATOMS,
+            coordinates=REVERSE_COORDS,
+            charge=0,
+            multiplicity=1,
+        )
+        return ResolvedCalculationInputs(
+            structure=reactant,
+            charge=0,
+            multiplicity=1,
+            freeze=(),
+            resources=ResourceRequest(
+                cores_per_item=1, memory_per_item_bytes=2 * 1024**3
+            ),
+            native=FrozenDict({"keyword": keyword, "neb": neb}),
+            checkpoints=(),
+            extra_structures=FrozenDict({"product": (product,)}),
+            step_id="s",
+            work_item_id="w",
+            logical_key="job",
+            seed=seed,
+        )
+
+    def test_neb_materialization_golden(self) -> None:
+        from confflow.programs.orca.adapter import OrcaProgramAdapter
+
+        materialized = OrcaProgramAdapter().materialize_native_input(
+            self._inputs("HF-3c NEB", {"n_images": 3})
+        )
+        by_name = {entry.name: entry.content for entry in materialized.files}
+        assert by_name["job.inp"] == (
+            "! HF-3c NEB\n"
+            "%pal nprocs 1 end\n"
+            "%maxcore 2000\n"
+            "%neb\n"
+            '  NImages 3\n'
+            '  NEB_End_XYZFile "job_neb_end.xyz"\n'
+            "end\n"
+            "* xyz 0 1\n"
+            "O 0.000000 0.000000 0.100000\n"
+            "H 0.760000 0.590000 0.000000\n"
+            "H 0.760000 -0.590000 0.000000\n"
+            "*\n"
+        )
+        assert by_name["job_neb_end.xyz"].splitlines()[0] == "3"
+        assert materialized.metadata["mode"] == "neb"
+        assert materialized.metadata["n_images"] == 3
+
+    def test_neb_ts_materialization_requires_neb_ts_keyword(self) -> None:
+        from confflow.programs.orca.adapter import OrcaProgramAdapter
+
+        materialized = OrcaProgramAdapter().materialize_native_input(
+            self._inputs("HF-3c NEB-TS", {"n_images": 5, "neb_ts": True})
+        )
+        by_name = {entry.name: entry.content for entry in materialized.files}
+        assert 'NImages 5' in by_name["job.inp"]
+        assert materialized.metadata["mode"] == "neb_ts"
+
+    def test_neb_block_under_plain_keyword_refused(self) -> None:
+        from confflow.programs.orca.adapter import OrcaProgramAdapter
+
+        with pytest.raises(ValueError, match="native_input_error.*NEB"):
+            OrcaProgramAdapter().materialize_native_input(
+                self._inputs("HF-3c Opt", {"n_images": 3})
+            )
+
+    def test_neb_ts_block_under_plain_neb_keyword_refused(self) -> None:
+        from confflow.programs.orca.adapter import OrcaProgramAdapter
+
+        with pytest.raises(ValueError, match="native_input_error.*NEB-TS"):
+            OrcaProgramAdapter().materialize_native_input(
+                self._inputs("HF-3c NEB", {"n_images": 3, "neb_ts": True})
+            )
 
 
 

@@ -40,12 +40,24 @@ included); the adapter assigns the ``neb_image`` role.
 
 Real output grammar for :func:`parse_neb_ts_candidate`
 -------------------------------------------------------
-The candidate comes ONLY from an explicit native report: a
-``Highest energy image .... <int>`` line plus an ``Energy .... <float>
-Eh`` line plus a ``HIGHEST ENERGY IMAGE (ANGSTROEM)`` coordinate block
-(bare ``SYM x y z`` rows).  The reported image number is the candidate
-identity.  Text without the report yields ``None`` — in particular, a
-path-maximum image without the report is never returned here.
+The candidate comes ONLY from an explicit native report, in one of two
+official ORCA 6.1 vocabularies (both verified against the installed
+6.1.1 binary, HCN/HF-3c NEB plus NH3/HF-3c NEB and NEB-TS probes):
+
+- plain NEB convergence prints ``INFORMATION ABOUT HIGHEST ENERGY IMAGE``
+  with a ``Highest energy image .... <int>`` line, an ``Energy ....
+  <float> Eh`` line, and a ``HIGHEST ENERGY IMAGE (ANGSTROEM)`` coordinate
+  block (bare ``SYM x y z`` rows);
+- an NEB-TS (or NEB-CI stage) run prints ``INFORMATION ABOUT SADDLE
+  POINT`` with a ``Climbing image .... <int>`` line, an ``Energy ....
+  <float> Eh`` line, and a ``SADDLE POINT (ANGSTROEM)`` coordinate block.
+
+Exactly one report may be present; two reports (in either vocabulary)
+are ambiguous and fail closed.  The reported image number is the
+candidate identity.  Text without a report yields ``None`` — in
+particular, a path-maximum image without a report is never returned
+here.  No invented markers are accepted: the energy line shape
+``Energy .... <float> Eh`` is shared by both native reports.
 """
 from __future__ import annotations
 
@@ -71,10 +83,16 @@ SUPPORTED_NEB_KEYS: frozenset[str] = frozenset({"n_images", "neb_ts"})
 #: Minimum image count accepted for an NEB path (reactant, TS region, product).
 MIN_NEB_IMAGES: int = 3
 
-#: Real highest-energy-image report markers.
+#: Real highest-energy-image report markers (plain NEB convergence).
 _HEI_NUMBER_RE = re.compile(r"^Highest energy image\s+\.+\s+(\d+)\s*$", re.MULTILINE)
 _HEI_ENERGY_RE = re.compile(r"^Energy\s+\.+\s+(\S+)\s*Eh\s*$")
 _HEI_BLOCK_HEADER = "HIGHEST ENERGY IMAGE (ANGSTROEM)"
+
+#: Real saddle-point report markers (NEB-TS / NEB-CI stage).  The energy
+#: line shape is shared with the HEI report; only the number line and the
+#: geometry-block header differ.
+_SADDLE_NUMBER_RE = re.compile(r"^Climbing image\s+\.+\s+(\d+)\s*$", re.MULTILINE)
+_SADDLE_BLOCK_HEADER = "SADDLE POINT (ANGSTROEM)"
 
 #: Real XYZ energy comment: ``Coordinates from ORCA-job <base> E <float>``.
 _XYZ_ENERGY_RE = re.compile(r"^Coordinates from ORCA-job\s+\S+\s+E\s+(\S+)\s*$")
@@ -391,15 +409,17 @@ def parse_neb_images(
 def parse_neb_ts_candidate(
     text: str, *, atoms: Sequence[str]
 ) -> NativeEnsembleMember | None:
-    """Parse the explicitly reported NEB highest-energy image.
+    """Parse the explicitly reported NEB highest-energy image / saddle point.
 
-    The candidate comes ONLY from the native
-    ``INFORMATION ABOUT HIGHEST ENERGY IMAGE`` report: the reported
-    image number is the candidate identity, ``Energy ... Eh`` is its
-    energy, and the ``HIGHEST ENERGY IMAGE (ANGSTROEM)`` coordinate
-    block is its geometry.  Text without the report yields ``None`` —
-    in particular, a path-maximum image without the report is never
-    returned here.
+    The candidate comes ONLY from a native ``INFORMATION ABOUT HIGHEST
+    ENERGY IMAGE`` report (``Highest energy image .... <int>``) or a
+    native ``INFORMATION ABOUT SADDLE POINT`` report (``Climbing image
+    .... <int>``); both carry ``Energy ... Eh`` and a native coordinate
+    block (``HIGHEST ENERGY IMAGE (ANGSTROEM)`` / ``SADDLE POINT
+    (ANGSTROEM)`` respectively).  The reported image number is the
+    candidate identity.  Text without a report yields ``None`` — in
+    particular, a path-maximum image without a report is never returned
+    here.
 
     Parameters
     ----------
@@ -421,25 +441,36 @@ def parse_neb_ts_candidate(
         geometry disagreeing with ``atoms``.
     """
     number_hits = _HEI_NUMBER_RE.findall(text)
-    if not number_hits:
+    saddle_hits = _SADDLE_NUMBER_RE.findall(text)
+    if not number_hits and not saddle_hits:
         return None
-    if len(number_hits) > 1:
-        raise _input_error("duplicate highest-energy-image reports: candidate ambiguous")
+    if len(number_hits) + len(saddle_hits) > 1:
+        raise _input_error("duplicate highest-energy-image/saddle-point reports: candidate ambiguous")
+    if saddle_hits:
+        number_re = _SADDLE_NUMBER_RE
+        block_header = _SADDLE_BLOCK_HEADER
+        what = "saddle-point"
+        number_token = saddle_hits[0]
+    else:
+        number_re = _HEI_NUMBER_RE
+        block_header = _HEI_BLOCK_HEADER
+        what = "highest-energy-image"
+        number_token = number_hits[0]
     lines = text.splitlines()
     number_line = next(
-        index for index, line in enumerate(lines) if _HEI_NUMBER_RE.match(line.strip())
+        index for index, line in enumerate(lines) if number_re.match(line.strip())
     )
     try:
-        number = int(number_hits[0])
+        number = int(number_token)
     except (TypeError, ValueError) as exc:
-        raise _input_error("highest-energy-image number is malformed") from exc
+        raise _input_error(f"{what} number is malformed") from exc
     if number < 0:
-        raise _input_error("highest-energy-image number must be >= 0")
+        raise _input_error(f"{what} number must be >= 0")
     energy: float | None = None
     block_start: int | None = None
     for index in range(number_line, len(lines)):
         stripped = lines[index].strip()
-        if block_start is None and stripped == _HEI_BLOCK_HEADER:
+        if block_start is None and stripped == block_header:
             block_start = index + 1
             continue
         if energy is None:
@@ -449,15 +480,15 @@ def parse_neb_ts_candidate(
                     candidate = float(energy_match.group(1))
                 except (TypeError, ValueError) as exc:
                     raise _input_error(
-                        "highest-energy-image energy is malformed"
+                        f"{what} energy is malformed"
                     ) from exc
                 if not math.isfinite(candidate):
-                    raise _input_error("highest-energy-image energy is non-finite")
+                    raise _input_error(f"{what} energy is non-finite")
                 energy = candidate
     if energy is None:
-        raise _input_error("highest-energy-image report carries no energy")
+        raise _input_error(f"{what} report carries no energy")
     if block_start is None:
-        raise _input_error("highest-energy-image report carries no geometry block")
+        raise _input_error(f"{what} report carries no geometry block")
     symbols: list[str] = []
     coordinates: list[tuple[float, float, float]] = []
     for raw in lines[block_start:]:
@@ -473,7 +504,7 @@ def parse_neb_ts_candidate(
         symbols.append(symbol)
         coordinates.append((x, y, z))
     if not symbols:
-        raise _input_error("highest-energy-image geometry block is empty")
+        raise _input_error(f"{what} geometry block is empty")
     expected = _canonical_atoms(atoms, what="NEB-TS candidate")
     _check_geometry_atoms(symbols, expected, what="NEB-TS candidate")
     return NativeEnsembleMember(

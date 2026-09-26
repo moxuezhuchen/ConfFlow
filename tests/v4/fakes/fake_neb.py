@@ -4,13 +4,17 @@
 
 Reads the ``.inp`` reactant geometry, emits ``FAKE_NEB_IMAGES``
 intermediate images (default 5) plus both endpoints in real ORCA 6.1
-grammar (verified against an installed-binary HCN isomerization NEB):
-a ``<base>_MEP_trj.xyz`` trajectory file (standard XYZ blocks with
-``Coordinates from ORCA-job ... E <float>`` comments) and a log
+grammar (verified against installed-binary HCN/HF-3c and NH3/HF-3c NEB
+runs): a ``<base>_MEP_trj.xyz`` trajectory file (standard XYZ blocks
+with ``Coordinates from ORCA-job ... E <float>`` comments) and a log
 carrying the trajectory announcement.  When ``FAKE_NEB_TS=1``, a real
-``INFORMATION ABOUT HIGHEST ENERGY IMAGE`` report block is appended;
-without it no TS candidate exists (a path maximum is never promoted).
-Only ``main`` touches the filesystem or the process environment.
+plain-NEB ``INFORMATION ABOUT HIGHEST ENERGY IMAGE`` report block is
+appended; when ``FAKE_NEB_TS=saddle``, a real NEB-TS
+``INFORMATION ABOUT SADDLE POINT`` report block (``Climbing image`` /
+``SADDLE POINT (ANGSTROEM)``, as the live binary prints under the
+NEB-TS keyword) is appended instead.  Without either, no TS candidate
+exists (a path maximum is never promoted).  Only ``main`` touches the
+filesystem or the process environment.
 """
 
 from __future__ import annotations
@@ -98,6 +102,28 @@ def main(argv: list[str]) -> int:
                 "",
                 "-----------------------------------------",
                 "  HIGHEST ENERGY IMAGE (ANGSTROEM)",
+                "-----------------------------------------",
+                ts_rows,
+                "",
+            ]
+        )
+    elif os.environ.get("FAKE_NEB_TS") == "saddle":
+        ts_rows = "\n".join(
+            f"{symbol}     {x + 0.05:.6f}     {y:.6f}     {z:.6f}"
+            for symbol, x, y, z in atoms
+        )
+        log_lines.extend(
+            [
+                "---------------------------------------------------------------",
+                "               INFORMATION ABOUT SADDLE POINT",
+                "---------------------------------------------------------------",
+                "",
+                "Climbing image                            ....  3",
+                "Energy                                    ....  -76.455000 Eh",
+                "Max. abs. force                           ....  1.5798e-01 Eh/Bohr",
+                "",
+                "-----------------------------------------",
+                "  SADDLE POINT (ANGSTROEM)",
                 "-----------------------------------------",
                 ts_rows,
                 "",
