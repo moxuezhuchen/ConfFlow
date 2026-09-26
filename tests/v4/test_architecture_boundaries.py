@@ -94,6 +94,7 @@ FORBIDDEN_SYMBOLS = (
     "v3_runtime",
     "v3_dataflow",
     "TaskName",
+    "itask",
     "get_itask",
     "CalcStepRequest",
     "CalcStepRunner",
@@ -519,3 +520,347 @@ def test_forbidden_module_is_not_importable_from_v4_root(module: str) -> None:
     """Sanity: the forbidden list refers to modules that actually exist today."""
     base = REPO_ROOT / Path(module.replace(".", "/"))
     assert base.with_suffix(".py").exists() or (base / "__init__.py").exists(), module
+
+
+#: New V4-5 production modules.  Every entry must live under one of the
+#: scanned production-core roots above (so the import, symbol, and filename
+#: gates cover it automatically) and must import without pulling legacy
+#: runtimes (checked in a subprocess below).
+V45_MODULES = (
+    "confflow.execution.output_identity",
+    "confflow.execution.execution_adapters",
+    "confflow.execution.multi_output",
+    "confflow.execution.named_structures",
+    "confflow.execution.profile_ensemble",
+    "confflow.execution.profile_path_endpoints",
+    "confflow.execution.atom_mapping",
+    "confflow.programs.orca.path",
+    "confflow.programs.orca.goat",
+    "confflow.programs.orca.ensemble_parse",
+    "confflow.programs.orca.neb",
+    "confflow.programs.gaussian.path",
+    "confflow.programs.gaussian.named",
+)
+
+_V45_SCAN_ROOTS = (DOMAIN_ROOT, EXECUTION_ROOT, V4_ROOT, PERSISTENCE_ROOT, PROGRAMS_ROOT, REMOTE_ROOT)
+
+
+class TestV45ModuleCoverage:
+    """All new V4-5 production modules sit inside the debt-gate scan roots."""
+
+    def test_v45_modules_exist(self) -> None:
+        for module in V45_MODULES:
+            base = REPO_ROOT / Path(module.replace(".", "/"))
+            assert base.with_suffix(".py").is_file(), module
+
+    def test_v45_modules_are_covered_by_scan_roots(self) -> None:
+        for module in V45_MODULES:
+            path = REPO_ROOT / Path(module.replace(".", "/")).with_suffix(".py")
+            assert any(
+                path == root or root in path.parents for root in _V45_SCAN_ROOTS
+            ), module
+
+    def test_v45_modules_face_no_legacy_imports(self) -> None:
+        offenders: list[tuple[str, str, int]] = []
+        for module in V45_MODULES:
+            path = REPO_ROOT / Path(module.replace(".", "/")).with_suffix(".py")
+            for imported, lineno in _imports(path):
+                absolute = _resolve_import(path, imported)
+                if absolute.startswith(FORBIDDEN_IMPORT_PREFIXES):
+                    offenders.append((module, absolute, lineno))
+        assert offenders == []
+
+
+def _resolve_import(path: Path, raw: str) -> str:
+    """Resolve a possibly relative import of *path* to an absolute module."""
+    if not raw.startswith("."):
+        return raw
+    module = _module_name(path)
+    package_parts = module.split(".")
+    if path.name != "__init__.py":
+        package_parts = package_parts[:-1]
+    level = len(raw) - len(raw.lstrip("."))
+    remainder = raw.lstrip(".")
+    if level - 1 > len(package_parts):
+        return raw
+    base = package_parts[: len(package_parts) - (level - 1)]
+    return ".".join(base + ([remainder] if remainder else []))
+
+
+_TASK_DISPATCH_MARKERS = ("IRC", "QST", "NEB", "GOAT")
+
+
+def _task_enum_members(tree: ast.AST) -> set[str]:
+    """Return Enum member names carrying task-type markers (e.g. ``IRC``)."""
+    members: set[str] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ClassDef):
+            continue
+        if not any(
+            getattr(base, "attr", "") == "Enum" or getattr(base, "id", "") == "Enum"
+            for base in node.bases
+        ):
+            continue
+        for statement in node.body:
+            targets: list[ast.AST] = []
+            if isinstance(statement, ast.Assign):
+                targets = list(statement.targets)
+            elif isinstance(statement, ast.AnnAssign):
+                targets = [statement.target]
+            for target in targets:
+                for child in ast.walk(target):
+                    if (
+                        isinstance(child, ast.Name)
+                        and isinstance(child.ctx, ast.Store)
+                        and any(marker in child.id for marker in _TASK_DISPATCH_MARKERS)
+                    ):
+                        members.add(child.id)
+    return members
+
+
+def _task_dispatch_offenders(source: str) -> list[tuple[int, str]]:
+    """Flag ``if``/``while``/``assert``/``match`` tests on task-enum members.
+
+    Only references to Enum member attributes/names count.  Scientific
+    keyword *strings* (``"IRC=RCFC"``) and role strings
+    (``"path_endpoint_forward"``) are constants and never trip this scan.
+    """
+    tree = ast.parse(source)
+    members = _task_enum_members(tree)
+    if not members:
+        return []
+    offenders: list[tuple[int, str]] = []
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.If, ast.While, ast.Assert)):
+            test: ast.AST | None = node.test
+        elif isinstance(node, ast.Match):
+            test = node.subject
+        else:
+            continue
+        for child in ast.walk(test):
+            if isinstance(child, ast.Attribute) and child.attr in members:
+                offenders.append((node.lineno, child.attr))
+            elif (
+                isinstance(child, ast.Name)
+                and child.id in members
+                and not isinstance(child.ctx, ast.Store)
+            ):
+                offenders.append((node.lineno, child.id))
+    return offenders
+
+
+_FIXTURE_TASK_DISPATCH = """from enum import Enum
+
+
+class TaskName(str, Enum):
+    IRC = "irc"
+    QST2 = "qst2"
+
+
+def run(task: TaskName) -> int:
+    if task == TaskName.IRC:
+        return 1
+    return 0
+"""
+
+_FIXTURE_SCIENTIFIC_STRINGS = """KEYWORD = "IRC=RCFC"
+ROLE = "path_endpoint_forward"
+
+
+def is_irc(keyword: str) -> bool:
+    if keyword == "IRC=RCFC":
+        return True
+    return False
+"""
+
+
+class TestNoTaskDispatch:
+    """No ``if`` dispatch on task-type enums in execution + programs."""
+
+    def test_scanner_flags_task_enum_dispatch(self) -> None:
+        offenders = _task_dispatch_offenders(_FIXTURE_TASK_DISPATCH)
+        assert offenders, "scanner must flag `if task == TaskName.IRC`"
+        assert offenders[0][1] == "IRC"
+
+    def test_scanner_ignores_scientific_strings(self) -> None:
+        assert _task_dispatch_offenders(_FIXTURE_SCIENTIFIC_STRINGS) == []
+
+    def test_no_task_enum_dispatch_in_tree(self) -> None:
+        offenders: list[tuple[str, int, str]] = []
+        for root in (EXECUTION_ROOT, PROGRAMS_ROOT):
+            for path in _iter_python_files(root):
+                for lineno, member in _task_dispatch_offenders(
+                    path.read_text(encoding="utf-8")
+                ):
+                    offenders.append((str(path.relative_to(REPO_ROOT)), lineno, member))
+        assert offenders == []
+
+
+_FILENAME_ATTRIBUTE_TOKENS = ("basename", "splitext", "stem", "suffix")
+_FILENAME_NAME_TOKENS = ("basename", "splitext")
+
+
+def _filename_pairing_offenders(source: str) -> list[tuple[int, str]]:
+    """Flag filename-idiom tokens (cross-set pairing by file name).
+
+    ``os.path.basename`` / ``splitext`` / pathlib ``.stem`` / ``.suffix``
+    must never appear as code in the pairing-sensitive roots: downstream
+    pairing uses identity, group, and subject, never file names.
+    """
+    tree = ast.parse(source)
+    offenders: list[tuple[int, str]] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Attribute) and node.attr in _FILENAME_ATTRIBUTE_TOKENS:
+            offenders.append((node.lineno, node.attr))
+        elif (
+            isinstance(node, ast.Name)
+            and node.id in _FILENAME_NAME_TOKENS
+            and not isinstance(node.ctx, ast.Store)
+        ):
+            offenders.append((node.lineno, node.id))
+    return offenders
+
+
+def _range_ordinal_pairing_offenders(source: str) -> list[tuple[str, int, str]]:
+    """Flag ``range``-ordinal subscripts shared across distinct collections.
+
+    The banned idiom is positional cross-set pairing (``a[i]`` matched with
+    ``b[i]`` for a ``range`` ordinal ``i``).  Dict/keyed access and the
+    documented explicit-permutation application in
+    ``confflow/execution/atom_mapping.py`` are not flagged by construction
+    (the former never shares a ``range`` ordinal; the latter is allowlisted
+    at the call site).
+    """
+    tree = ast.parse(source)
+    offenders: list[tuple[str, int, str]] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        for loop in [child for child in ast.walk(node) if isinstance(child, ast.For)]:
+            iterator = loop.iter
+            if not (
+                isinstance(iterator, ast.Call)
+                and getattr(iterator.func, "id", "") == "range"
+            ):
+                continue
+            ordinals = {
+                child.id
+                for child in ast.walk(loop.target)
+                if isinstance(child, ast.Name) and isinstance(child.ctx, ast.Store)
+            }
+            if not ordinals:
+                continue
+            by_index: dict[str, set[str]] = {}
+            for child in ast.walk(loop):
+                if isinstance(child, ast.Subscript):
+                    by_index.setdefault(ast.unparse(child.slice), set()).add(
+                        ast.unparse(child.value)
+                    )
+            for index, bases in by_index.items():
+                if len(bases) >= 2 and index in ordinals:
+                    offenders.append((node.name, loop.lineno, index))
+    return offenders
+
+
+_FIXTURE_FILENAME_PAIRING = """import os
+
+
+def pair(left: str, right: str) -> bool:
+    return os.path.basename(left) == os.path.basename(right)
+"""
+
+_FIXTURE_ORDINAL_PAIRING = """def pair(left: list, right: list) -> list:
+    paired = []
+    for i in range(len(left)):
+        paired.append((left[i], right[i]))
+    return paired
+"""
+
+#: Modules where ordinal-within-item usage is documented and allowed:
+#: ``member_index``/``point_ordinal`` are native member identities folded
+#: into deterministic entity ids, never cross-set pairing keys.
+_ORDINAL_WITHIN_ITEM_FILES = frozenset(
+    {
+        "confflow/execution/native.py",
+        "confflow/execution/output_identity.py",
+        "confflow/execution/profile_ensemble.py",
+        "confflow/execution/profile_path_endpoints.py",
+    }
+)
+
+#: The single sanctioned ``range``-ordinal application: an explicitly
+#: declared bijective atom permutation applied element-wise (the opposite
+#: of guessed cross-set pairing).
+_RANGE_ORDINAL_ALLOWLIST = frozenset({"confflow/execution/atom_mapping.py"})
+
+
+class TestNoFilenameOrdinalPairing:
+    """No filename/ordinal cross-set pairing in workflow/v4 + execution."""
+
+    def test_scanners_flag_pairing_idioms(self) -> None:
+        assert _filename_pairing_offenders(_FIXTURE_FILENAME_PAIRING), (
+            "basename scanner must trip"
+        )
+        assert _range_ordinal_pairing_offenders(_FIXTURE_ORDINAL_PAIRING), (
+            "ordinal scanner must trip"
+        )
+
+    def test_no_filename_idioms_in_tree(self) -> None:
+        offenders: list[tuple[str, int, str]] = []
+        for root in (V4_ROOT, EXECUTION_ROOT):
+            for path in _iter_python_files(root):
+                for lineno, token in _filename_pairing_offenders(
+                    path.read_text(encoding="utf-8")
+                ):
+                    offenders.append((str(path.relative_to(REPO_ROOT)), lineno, token))
+        assert offenders == []
+
+    def test_no_range_ordinal_pairing_in_tree(self) -> None:
+        offenders: list[tuple[str, str, int, str]] = []
+        for root in (V4_ROOT, EXECUTION_ROOT):
+            for path in _iter_python_files(root):
+                relative = str(path.relative_to(REPO_ROOT))
+                if relative in _RANGE_ORDINAL_ALLOWLIST:
+                    continue
+                for function, lineno, index in _range_ordinal_pairing_offenders(
+                    path.read_text(encoding="utf-8")
+                ):
+                    offenders.append((relative, function, lineno, index))
+        assert offenders == []
+
+    def test_ordinal_within_item_usage_is_confined(self) -> None:
+        offenders: list[str] = []
+        for root in (V4_ROOT, EXECUTION_ROOT):
+            for path in _iter_python_files(root):
+                relative = str(path.relative_to(REPO_ROOT))
+                text = _code_text_only(path.read_text(encoding="utf-8"))
+                if "member_index" in text or "point_ordinal" in text:
+                    if relative not in _ORDINAL_WITHIN_ITEM_FILES:
+                        offenders.append(relative)
+        assert offenders == []
+
+
+class TestV45Packaging:
+    """All new V4-5 modules import without pulling legacy runtimes."""
+
+    def _run(self, script: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [sys.executable, "-c", script],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    @pytest.mark.parametrize("module", sorted(V45_MODULES))
+    def test_module_imports_without_legacy(self, module: str) -> None:
+        script = (
+            f"import sys; import {module}; "
+            "forbidden = [m for m in sys.modules if m == 'confflow.core' "
+            "or m.startswith('confflow.config') or m.startswith('confflow.calc') "
+            "or (m.startswith('confflow.workflow.') "
+            "and not m.startswith('confflow.workflow.v4'))]; "
+            "assert not forbidden, forbidden"
+        )
+        result = self._run(script)
+        assert result.returncode == 0, result.stderr
