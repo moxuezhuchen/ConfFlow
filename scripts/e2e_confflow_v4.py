@@ -70,8 +70,15 @@ def main(argv: list[str]) -> int:
         print(f"    bytes={len(payload)} schema={envelope['content_schema']}")
         print(f"    contract_digest={envelope['contract_digest']}")
 
-        out = Path(args.contract_out) if args.contract_out else Path(
-            os.environ.get("CONFFLOW_CONTRACT_JSON", str(Path(tempfile.gettempdir()) / "confflow-v46-contract.json"))
+        out = (
+            Path(args.contract_out)
+            if args.contract_out
+            else Path(
+                os.environ.get(
+                    "CONFFLOW_CONTRACT_JSON",
+                    str(Path(tempfile.gettempdir()) / "confflow-v46-contract.json"),
+                )
+            )
         )
         try:
             out.write_bytes(payload)
@@ -106,54 +113,87 @@ def main(argv: list[str]) -> int:
             raise E2EFailure(
                 "validation_rejects", f"validator rejected the recipe: {report.diagnostics}"
             )
-        print(f"    ok schema={report.to_dict()['schema']} definition_digest={report.definition_digest}")
+        print(
+            f"    ok schema={report.to_dict()['schema']} definition_digest={report.definition_digest}"
+        )
 
         stage("5/8 validated==submitted gate + tamper probe")
         receipt = "sha256:" + hashlib.sha256(workflow_bytes).hexdigest()
         if "sha256:" + hashlib.sha256(workflow_bytes).hexdigest() != receipt:
             raise E2EFailure("validated_not_submitted", "gate miscomputed")
-        if "sha256:" + hashlib.sha256(workflow_bytes.replace(b"OptTS", b"Evil")).hexdigest() == receipt:
+        if (
+            "sha256:" + hashlib.sha256(workflow_bytes.replace(b"OptTS", b"Evil")).hexdigest()
+            == receipt
+        ):
             raise E2EFailure("validated_not_submitted", "tamper not detected by gate")
         print("    gate holds; tampered bytes rejected")
 
         stage("6/8 fake native chain (20 TS -> IRC -> 40 endpoints) + REAL analysis x20")
         model = EnergyModel(
-            mode="direct", electronic_selector="energy",
-            correction_selector="gibbs_correction", fallback="none",
+            mode="direct",
+            electronic_selector="energy",
+            correction_selector="gibbs_correction",
+            fallback="none",
         )
         analyses = []
         produced_structures: set[str] = set()
         produced_results: set[str] = set()
         for i in range(N_TS):
-            ts, fwd, rev = f"t{i:02d}", f"t{i:02d}:endpoint:forward:0", f"t{i:02d}:endpoint:reverse:0"
+            ts, fwd, rev = (
+                f"t{i:02d}",
+                f"t{i:02d}:endpoint:forward:0",
+                f"t{i:02d}:endpoint:reverse:0",
+            )
             group = ReactionNodeGroup(
-                group_key=f"rxn-{i:02d}", ts_structure_id=ts,
-                forward_structure_id=fwd, reverse_structure_id=rev,
+                group_key=f"rxn-{i:02d}",
+                ts_structure_id=ts,
+                forward_structure_id=fwd,
+                reverse_structure_id=rev,
             )
             base = -76.0 - i * 0.001
             lookup = {}
-            for node, subject, shift in (("ts", ts, 0.0), ("forward", fwd, -0.05), ("reverse", rev, -0.03)):
+            for _node, subject, shift in (
+                ("ts", ts, 0.0),
+                ("forward", fwd, -0.05),
+                ("reverse", rev, -0.03),
+            ):
                 e_val, g_val = base + shift, base + shift + 0.1
                 lookup[subject] = ResultSet.of(
-                    ScientificResult(kind="energy", value=e_val, unit=Unit.HARTREE,
-                                     subject_structure_id=subject, source_step_id="endpoint_sp"),
-                    ScientificResult(kind="gibbs_energy", value=g_val, unit=Unit.HARTREE,
-                                     subject_structure_id=subject, source_step_id="endpoint_sp"),
+                    ScientificResult(
+                        kind="energy",
+                        value=e_val,
+                        unit=Unit.HARTREE,
+                        subject_structure_id=subject,
+                        source_step_id="endpoint_sp",
+                    ),
+                    ScientificResult(
+                        kind="gibbs_energy",
+                        value=g_val,
+                        unit=Unit.HARTREE,
+                        subject_structure_id=subject,
+                        source_step_id="endpoint_sp",
+                    ),
                 )
-            outcome = assemble_reaction_result(group, model, lookup, analysis_step_id="reaction_profile")
+            outcome = assemble_reaction_result(
+                group, model, lookup, analysis_step_id="reaction_profile"
+            )
             if not outcome.ok:
                 raise E2EFailure("missing_analysis_result", f"group rxn-{i:02d} failed closed")
             entry = {
-                "group_key": f"rxn-{i:02d}", "ts_structure_id": ts,
-                "forward_structure_id": fwd, "reverse_structure_id": rev,
+                "group_key": f"rxn-{i:02d}",
+                "ts_structure_id": ts,
+                "forward_structure_id": fwd,
+                "reverse_structure_id": rev,
                 "results": [r.to_dict() for r in outcome.results],
                 "source_result_ids": [r.value_digest for r in outcome.results],
             }
             analyses.append(entry)
             produced_structures.update([ts, fwd, rev])
             produced_results.update(entry["source_result_ids"])
-        print(f"    groups={len(analyses)} endpoints={len(produced_structures) - N_TS} "
-              f"results_per_group={len(analyses[0]['results'])}")
+        print(
+            f"    groups={len(analyses)} endpoints={len(produced_structures) - N_TS} "
+            f"results_per_group={len(analyses[0]['results'])}"
+        )
 
         stage("7/8 REAL manifest build")
         assert report.definition_digest is not None
@@ -163,24 +203,38 @@ def main(argv: list[str]) -> int:
             blob = canonical_json_bytes({"group_key": entry["group_key"]})
             locator = f"artifacts/{entry['group_key']}/reaction_profile.json"
             store[locator] = blob
-            artifacts.append({"role": "reaction_profile",
-                              "checksum": "sha256:" + hashlib.sha256(blob).hexdigest(),
-                              "locator": locator})
+            artifacts.append(
+                {
+                    "role": "reaction_profile",
+                    "checksum": "sha256:" + hashlib.sha256(blob).hexdigest(),
+                    "locator": locator,
+                }
+            )
         manifest = build_run_result_manifest(
-            run_id="run-v46-e2e-script", status="completed",
+            run_id="run-v46-e2e-script",
+            status="completed",
             definition_digest=report.definition_digest,
             producer_version=args.producer_version,
-            steps=[{"id": "reaction_profile", "status": "completed",
-                    "counts": {"completed": N_TS, "failed": 0}}],
-            analyses=analyses, artifacts=artifacts,
+            steps=[
+                {
+                    "id": "reaction_profile",
+                    "status": "completed",
+                    "counts": {"completed": N_TS, "failed": 0},
+                }
+            ],
+            analyses=analyses,
+            artifacts=artifacts,
         )
         assert manifest["content_schema"] == RESULT_MANIFEST_SCHEMA
         print(f"    manifest run_id={manifest['run_id']} analyses={len(manifest['analyses'])}")
 
         stage("8/8 manifest self-consistency")
         for entry in manifest["analyses"]:
-            for ref in (entry["ts_structure_id"], entry["forward_structure_id"],
-                        entry["reverse_structure_id"]):
+            for ref in (
+                entry["ts_structure_id"],
+                entry["forward_structure_id"],
+                entry["reverse_structure_id"],
+            ):
                 if ref not in produced_structures:
                     raise E2EFailure("manifest_mismatch", f"ref {ref!r} never produced")
             for source in entry["source_result_ids"]:

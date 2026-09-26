@@ -188,11 +188,15 @@ class JobdeskV4ConsumerDouble:
         try:
             text = contract_bytes.decode("utf-8")
         except UnicodeDecodeError as exc:
-            raise E2EContractError("schema_mismatch", f"contract bytes are not UTF-8: {exc}") from exc
+            raise E2EContractError(
+                "schema_mismatch", f"contract bytes are not UTF-8: {exc}"
+            ) from exc
         try:
             raw = json.loads(text)
         except json.JSONDecodeError as exc:
-            raise E2EContractError("schema_mismatch", f"contract bytes are not JSON: {exc}") from exc
+            raise E2EContractError(
+                "schema_mismatch", f"contract bytes are not JSON: {exc}"
+            ) from exc
         return JobdeskV4ConsumerDouble.verify(raw)
 
     @staticmethod
@@ -206,12 +210,16 @@ class JobdeskV4ConsumerDouble:
                 f"producer contract {schema!r} predates V4: no V4 descriptors to edit against",
             )
         if schema != CONTRACT_SCHEMA_V4:
-            raise E2EContractError("schema_mismatch", f"unsupported contract content_schema {schema!r}")
+            raise E2EContractError(
+                "schema_mismatch", f"unsupported contract content_schema {schema!r}"
+            )
         for name in ("workflow_schema", "editor_manifest", "recipe_catalog", "result_schema"):
             artifact = raw.get(name)
             claimed = raw.get(f"{name}_sha256")
             if not isinstance(artifact, dict):
-                raise E2EContractError("schema_mismatch", f"contract member {name!r} must be an object")
+                raise E2EContractError(
+                    "schema_mismatch", f"contract member {name!r} must be an object"
+                )
             if not isinstance(claimed, str) or not claimed:
                 raise E2EContractError("bad_digest", f"contract publishes no digest for {name!r}")
             if _jcs_sha256(artifact) != claimed.strip().lower():
@@ -223,7 +231,9 @@ class JobdeskV4ConsumerDouble:
             raise E2EContractError("bad_digest", "contract publishes no contract_digest")
         unsigned = {key: value for key, value in raw.items() if key != "contract_digest"}
         if _jcs_sha256(unsigned) != claimed_envelope.strip().lower():
-            raise E2EContractError("bad_digest", "contract envelope does not match its contract_digest")
+            raise E2EContractError(
+                "bad_digest", "contract envelope does not match its contract_digest"
+            )
         return raw
 
     @staticmethod
@@ -247,7 +257,9 @@ class JobdeskV4ConsumerDouble:
                         "recipe_mismatch", f"recipe {recipe_id!r} carries no workflow document"
                     )
                 return recipe
-        raise E2EContractError("recipe_mismatch", f"recipe {recipe_id!r} is not in the producer catalog")
+        raise E2EContractError(
+            "recipe_mismatch", f"recipe {recipe_id!r} is not in the producer catalog"
+        )
 
     @staticmethod
     def recipe_document(contract: dict[str, Any], recipe_id: str) -> dict[str, Any]:
@@ -350,7 +362,10 @@ class TestRealContractRoundtrip:
     def test_double_parses_real_bytes(self, real_contract_bytes: bytes) -> None:
         """The JobDesk DOUBLE verifies the REAL bytes (digest re-verification)."""
         parsed = JobdeskV4ConsumerDouble.parse(real_contract_bytes)
-        assert parsed["contract_digest"] == json.loads(real_contract_bytes.decode("utf-8"))["contract_digest"]
+        assert (
+            parsed["contract_digest"]
+            == json.loads(real_contract_bytes.decode("utf-8"))["contract_digest"]
+        )
 
     def test_tampered_artifact_rejected(self, real_contract_bytes: bytes) -> None:
         envelope = json.loads(real_contract_bytes.decode("utf-8"))
@@ -398,14 +413,16 @@ class TestRealRecipeToValidation:
         payload = _raise_for_report(report)
         assert payload["schema"] == VALIDATION_SCHEMA_V1
         assert report.definition_digest is not None
-        assert tuple(sorted(report.step_ids)) == tuple(sorted(step["id"] for step in document["steps"]))
+        assert tuple(sorted(report.step_ids)) == tuple(
+            sorted(step["id"] for step in document["steps"])
+        )
 
-    def test_edit_representative_field_then_revalidate(
-        self, real_contract_bytes: bytes
-    ) -> None:
+    def test_edit_representative_field_then_revalidate(self, real_contract_bytes: bytes) -> None:
         contract = JobdeskV4ConsumerDouble.parse(real_contract_bytes)
         document = JobdeskV4ConsumerDouble.recipe_document(contract, "tspes")
-        edited = JobdeskV4ConsumerDouble.edit_native_keyword(document, "ts", "B3LYP D3BJ OptTS Tight")
+        edited = JobdeskV4ConsumerDouble.edit_native_keyword(
+            document, "ts", "B3LYP D3BJ OptTS Tight"
+        )
         assert edited["steps"][0]["calculation"]["native"]["keyword"] == "B3LYP D3BJ OptTS Tight"
         before = validate_workflow_bytes(JobdeskV4ConsumerDouble.serialize_workflow(document))
         after = validate_workflow_bytes(JobdeskV4ConsumerDouble.serialize_workflow(edited))
@@ -468,9 +485,12 @@ class TestRealRecipeToValidation:
         assert excinfo.value.code == "validation_rejects"
 
     def test_real_validator_accepts_unknown_program_name(self) -> None:
-        """Pin REAL behavior for the known dispute: V4 compile does NOT check
-        program names against ``ProgramName``.  An unknown program still
-        validates ``ok`` -- rejection tests MUST use unknown executors."""
+        """Pin REAL behavior for the known dispute.
+
+        V4 compile does NOT check program names against ``ProgramName``.
+        An unknown program still validates ``ok`` -- rejection tests MUST
+        use unknown executors.
+        """
         document = {
             "schema": "confflow.workflow.v4",
             "inputs": {"structures": {"kind": "structure", "cardinality": "many"}},
@@ -489,8 +509,7 @@ class TestRealRecipeToValidation:
         }
         report = validate_workflow_bytes(_jcs_bytes(document))
         assert report.ok is True, (
-            "real V4 validator accepts unknown program names; "
-            f"diagnostics: {report.diagnostics}"
+            "real V4 validator accepts unknown program names; " f"diagnostics: {report.diagnostics}"
         )
 
 
@@ -500,8 +519,12 @@ class TestRealRecipeToValidation:
 # ---------------------------------------------------------------------------
 def _fake_ts_subjects(count: int = N_TS) -> list[dict[str, str]]:
     return [
-        {"ts": f"ts{i:02d}", "forward": f"ts{i:02d}:endpoint:forward:0",
-         "reverse": f"ts{i:02d}:endpoint:reverse:0", "group_key": f"rxn-{i:02d}"}
+        {
+            "ts": f"ts{i:02d}",
+            "forward": f"ts{i:02d}:endpoint:forward:0",
+            "reverse": f"ts{i:02d}:endpoint:reverse:0",
+            "group_key": f"rxn-{i:02d}",
+        }
         for i in range(count)
     ]
 
@@ -535,12 +558,18 @@ def _lookup_for_group(
         electronic, gibbs = energies[subject]
         lookup[subject] = ResultSet.of(
             ScientificResult(
-                kind="energy", value=electronic, unit=Unit.HARTREE,
-                subject_structure_id=subject, source_step_id="endpoint_sp",
+                kind="energy",
+                value=electronic,
+                unit=Unit.HARTREE,
+                subject_structure_id=subject,
+                source_step_id="endpoint_sp",
             ),
             ScientificResult(
-                kind="gibbs_energy", value=gibbs, unit=Unit.HARTREE,
-                subject_structure_id=subject, source_step_id="endpoint_sp",
+                kind="gibbs_energy",
+                value=gibbs,
+                unit=Unit.HARTREE,
+                subject_structure_id=subject,
+                source_step_id="endpoint_sp",
             ),
         )
     return lookup
@@ -557,8 +586,10 @@ def _run_real_analysis_for_group(
         reverse_structure_id=entry["reverse"],
     )
     model = EnergyModel(
-        mode="direct", electronic_selector="energy",
-        correction_selector="gibbs_correction", fallback="none",
+        mode="direct",
+        electronic_selector="energy",
+        correction_selector="gibbs_correction",
+        fallback="none",
     )
     try:
         lookup = _lookup_for_group(entry, energies)
@@ -567,9 +598,7 @@ def _run_real_analysis_for_group(
             "missing_analysis_result",
             f"group {entry['group_key']!r} has no source results for {exc}",
         ) from exc
-    analysis = assemble_reaction_result(
-        group, model, lookup, analysis_step_id="reaction_profile"
-    )
+    analysis = assemble_reaction_result(group, model, lookup, analysis_step_id="reaction_profile")
     if not analysis.ok:
         raise E2EContractError(
             "missing_analysis_result",
@@ -580,8 +609,11 @@ def _run_real_analysis_for_group(
     for result in analysis.results:
         by_kind.setdefault(result.kind, []).append(result)
     assert set(by_kind) == {
-        "barrier_forward_endpoint", "barrier_reverse_endpoint",
-        "endpoint_gibbs_delta", "endpoint_energy_delta", "reaction_profile",
+        "barrier_forward_endpoint",
+        "barrier_reverse_endpoint",
+        "endpoint_gibbs_delta",
+        "endpoint_energy_delta",
+        "reaction_profile",
     }, set(by_kind)
     return {
         "group_key": entry["group_key"],
@@ -621,7 +653,9 @@ def _build_manifest_from_chain(
         analyses.append(_run_real_analysis_for_group(entry, energies))
     assert len(analyses) == N_GROUPS
 
-    produced_structure_ids = {entry[node] for entry in subjects for node in ("ts", "forward", "reverse")}
+    produced_structure_ids = {
+        entry[node] for entry in subjects for node in ("ts", "forward", "reverse")
+    }
     produced_result_ids = {rid for analysis in analyses for rid in analysis["source_result_ids"]}
 
     artifact_store: dict[str, bytes] = {}
@@ -651,10 +685,26 @@ def _build_manifest_from_chain(
         {"id": "ts_freq", "status": "completed", "counts": {"completed": N_TS, "failed": 0}},
         {"id": "ts_sp", "status": "completed", "counts": {"completed": N_TS, "failed": 0}},
         {"id": "irc", "status": "completed", "counts": {"completed": N_TS, "failed": 0}},
-        {"id": "endpoint_opt", "status": "completed", "counts": {"completed": N_ENDPOINTS, "failed": 0}},
-        {"id": "endpoint_freq", "status": "completed", "counts": {"completed": N_ENDPOINTS, "failed": 0}},
-        {"id": "endpoint_sp", "status": "completed", "counts": {"completed": N_ENDPOINTS, "failed": 0}},
-        {"id": "reaction_profile", "status": "completed", "counts": {"completed": N_GROUPS, "failed": 0}},
+        {
+            "id": "endpoint_opt",
+            "status": "completed",
+            "counts": {"completed": N_ENDPOINTS, "failed": 0},
+        },
+        {
+            "id": "endpoint_freq",
+            "status": "completed",
+            "counts": {"completed": N_ENDPOINTS, "failed": 0},
+        },
+        {
+            "id": "endpoint_sp",
+            "status": "completed",
+            "counts": {"completed": N_ENDPOINTS, "failed": 0},
+        },
+        {
+            "id": "reaction_profile",
+            "status": "completed",
+            "counts": {"completed": N_GROUPS, "failed": 0},
+        },
     ]
     manifest = build_run_result_manifest(
         run_id=run_id,
@@ -680,31 +730,52 @@ def _verify_manifest_self_consistency(
 ) -> dict[str, Any]:
     if manifest.get("content_schema") != RESULT_MANIFEST_SCHEMA_V1:
         raise E2EContractError("schema_mismatch", "manifest has the wrong content_schema")
-    for key in ("run_id", "status", "definition_digest", "provenance", "steps", "analyses", "artifacts"):
+    for key in (
+        "run_id",
+        "status",
+        "definition_digest",
+        "provenance",
+        "steps",
+        "analyses",
+        "artifacts",
+    ):
         if key not in manifest:
             raise E2EContractError("malformed_manifest", f"manifest is missing {key!r}")
     if contract_envelope is not None:
         expected = contract_envelope.get("producer", {})
         actual = manifest.get("provenance", {})
-        if actual.get("package") != expected.get("package") or actual.get("version") != expected.get("version"):
+        if actual.get("package") != expected.get("package") or actual.get(
+            "version"
+        ) != expected.get("version"):
             raise E2EContractError(
                 "result_producer_mismatch",
                 "manifest provenance does not match the contract producer",
             )
     seen_groups: set[str] = set()
     for analysis in manifest["analyses"]:
-        for key in ("group_key", "ts_structure_id", "forward_structure_id",
-                    "reverse_structure_id", "results", "source_result_ids"):
+        for key in (
+            "group_key",
+            "ts_structure_id",
+            "forward_structure_id",
+            "reverse_structure_id",
+            "results",
+            "source_result_ids",
+        ):
             if key not in analysis:
                 raise E2EContractError("malformed_manifest", f"analysis entry is missing {key!r}")
         group = analysis["group_key"]
         if group in seen_groups:
             raise E2EContractError("ambiguous_group", f"group {group!r} is claimed by two analyses")
         seen_groups.add(group)
-        for ref in (analysis["ts_structure_id"], analysis["forward_structure_id"],
-                    analysis["reverse_structure_id"]):
+        for ref in (
+            analysis["ts_structure_id"],
+            analysis["forward_structure_id"],
+            analysis["reverse_structure_id"],
+        ):
             if ref not in produced_structure_ids:
-                raise E2EContractError("manifest_mismatch", f"analysis ref {ref!r} was never produced")
+                raise E2EContractError(
+                    "manifest_mismatch", f"analysis ref {ref!r} was never produced"
+                )
         if not analysis["source_result_ids"]:
             raise E2EContractError(
                 "missing_analysis_result", f"group {group!r} cites no source result ids"
@@ -721,7 +792,9 @@ def _verify_manifest_self_consistency(
                 raise E2EContractError("malformed_manifest", f"artifact entry is missing {key!r}")
         payload = artifact_store.get(artifact["locator"])
         if payload is None:
-            raise E2EContractError("manifest_mismatch", f"artifact {artifact['locator']!r} has no bytes")
+            raise E2EContractError(
+                "manifest_mismatch", f"artifact {artifact['locator']!r} has no bytes"
+            )
         if "sha256:" + hashlib.sha256(payload).hexdigest() != artifact["checksum"]:
             raise E2EContractError(
                 "manifest_mismatch",
@@ -751,8 +824,13 @@ class TestFakeTspesChainToManifest:
         assert len(manifest["artifacts"]) == N_GROUPS
         counts = {step["id"]: step["counts"]["completed"] for step in manifest["steps"]}
         assert counts == {
-            "ts": 20, "ts_freq": 20, "ts_sp": 20, "irc": 20,
-            "endpoint_opt": 40, "endpoint_freq": 40, "endpoint_sp": 40,
+            "ts": 20,
+            "ts_freq": 20,
+            "ts_sp": 20,
+            "irc": 20,
+            "endpoint_opt": 40,
+            "endpoint_freq": 40,
+            "endpoint_sp": 40,
             "reaction_profile": 20,
         }
 
@@ -816,8 +894,9 @@ class TestRealVsDoubleInventoryE2E:
 class TestFailureMatrixE2E:
     def test_producer_unavailable_seam(self) -> None:
         try:
-            getattr(__import__("confflow.producer", fromlist=["nonexistent_entrypoint_xyz"]),
-                    "nonexistent_entrypoint_xyz")
+            import confflow.producer as _producer
+
+            _producer.nonexistent_entrypoint_xyz  # noqa: B018 - presence probe
         except (ImportError, AttributeError):
             pass
         else:  # pragma: no cover - the seam must stay missing
@@ -957,8 +1036,10 @@ class TestFailureMatrixE2E:
             reverse_structure_id=entry["reverse"],
         )
         model = EnergyModel(
-            mode="direct", electronic_selector="energy",
-            correction_selector="gibbs_correction", fallback="none",
+            mode="direct",
+            electronic_selector="energy",
+            correction_selector="gibbs_correction",
+            fallback="none",
         )
         analysis = assemble_reaction_result(group, model, {}, analysis_step_id="reaction_profile")
         assert analysis.ok is False
@@ -971,7 +1052,7 @@ class TestFailureMatrixE2E:
     def test_ambiguous_group(self) -> None:
         seen: set[str] = set()
         with pytest.raises(E2EContractError) as excinfo:
-            for entry in [*( _fake_ts_subjects(count=1)), *(_fake_ts_subjects(count=1))]:
+            for entry in [*(_fake_ts_subjects(count=1)), *(_fake_ts_subjects(count=1))]:
                 if entry["group_key"] in seen:
                     raise E2EContractError(
                         "ambiguous_group", f"group {entry['group_key']!r} claimed twice"

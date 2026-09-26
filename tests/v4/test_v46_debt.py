@@ -29,10 +29,10 @@ from pathlib import Path
 
 # Existing boundaries FIRST: reuse, do not redefine (no dup).
 from tests.v4.test_architecture_boundaries import (
-    FORBIDDEN_LEGACY_MODULES,
-    FORBIDDEN_SYMBOLS,
     _ORDINAL_WITHIN_ITEM_FILES,
     _RANGE_ORDINAL_ALLOWLIST,
+    FORBIDDEN_LEGACY_MODULES,
+    FORBIDDEN_SYMBOLS,
     _filename_pairing_offenders,
     _range_ordinal_pairing_offenders,
 )
@@ -239,9 +239,7 @@ class TestV46NewSymbols:
         offenders: list[tuple[str, int, str]] = []
         for root in _v46_strict_roots():
             for path in _iter_python_files(root):
-                for lineno, expr in _numeric_dispatch_offenders(
-                    path.read_text(encoding="utf-8")
-                ):
+                for lineno, expr in _numeric_dispatch_offenders(path.read_text(encoding="utf-8")):
                     offenders.append((str(path.relative_to(REPO_ROOT)), lineno, expr))
         assert offenders == []
 
@@ -289,19 +287,13 @@ class TestV46NoFilenameOrdinalPairing:
 
     def _scan_roots(self) -> list[Path]:
         names = ["workflow/v4", "execution", "analysis", "producer"]
-        return [
-            PACKAGE_ROOT / Path(name)
-            for name in names
-            if (PACKAGE_ROOT / Path(name)).is_dir()
-        ]
+        return [PACKAGE_ROOT / Path(name) for name in names if (PACKAGE_ROOT / Path(name)).is_dir()]
 
     def test_no_filename_idioms(self) -> None:
         offenders: list[tuple[str, int, str]] = []
         for root in self._scan_roots():
             for path in _iter_python_files(root):
-                for lineno, token in _filename_pairing_offenders(
-                    path.read_text(encoding="utf-8")
-                ):
+                for lineno, token in _filename_pairing_offenders(path.read_text(encoding="utf-8")):
                     offenders.append((str(path.relative_to(REPO_ROOT)), lineno, token))
         assert offenders == []
 
@@ -384,9 +376,7 @@ class TestV46JobdeskDoublesHaveNoConfflowImports:
 #: The workstream-E cross-repo E2E file also hosts JobDesk-side consumer
 #: doubles (``JobdeskV4ConsumerDouble``); they simulate the other repo and
 #: must stay ``confflow``-free exactly like ``DOUBLE_FILES``.
-V46_E2E_DOUBLE_FILES = (
-    REPO_ROOT / "tests" / "v4" / "test_v46_cross_repo_e2e.py",
-)
+V46_E2E_DOUBLE_FILES = (REPO_ROOT / "tests" / "v4" / "test_v46_cross_repo_e2e.py",)
 
 #: Landed V4-6 production modules (producer + analysis).  Every entry must
 #: live under the scan roots above and must not import exact forbidden
