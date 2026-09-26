@@ -603,10 +603,17 @@ class V4RunApplication:
         semantic digest from the validated plan fingerprint, schema-exact
         counts and diagnostics, and only artifacts with verified sha256
         checksums and portable run-relative locators.  Top-level ``results``
-        carries one ResultRef per real emitted scientific result.  The
-        manifest is validated against the actual producer schema and
-        atomically written to ``run_root/run_result.json`` (directory
-        fsynced); the in-memory report mirrors the durable bytes.
+        carries one ResultRef per real emitted scientific result.  Analysis
+        steps keep their minimal ``{capability, step_id}`` ref AND project
+        rich reaction-group entries from the actual analysis
+        ``StepResult``/``ScientificResult`` objects (group_key, TS,
+        forward/reverse endpoints, E/G entries, barriers, verbatim
+        assignment, source ``ResultRef`` ids) via the producer-owned
+        projector, so the durable manifest is readable as reaction groups
+        by the JobDesk consumer.  The manifest is validated against the
+        actual producer schema and atomically written to
+        ``run_root/run_result.json`` (directory fsynced); the in-memory
+        report mirrors the durable bytes.
 
         Projection delegates to the producer-owned helpers
         (:mod:`confflow.producer.run_result`) so there is exactly one
@@ -619,7 +626,12 @@ class V4RunApplication:
         import confflow
 
         from ..producer.contract import build_run_result_manifest, run_result_json_schema
-        from ..producer.run_result import artifact_entry, result_ref_entry, step_entry
+        from ..producer.run_result import (
+            artifact_entry,
+            project_analysis_groups,
+            result_ref_entry,
+            step_entry,
+        )
 
         semantic = {
             planned.step_id: planned.step_semantic_digest
@@ -651,6 +663,10 @@ class V4RunApplication:
         for planned in plan.steps:
             if planned.executor.value == "analysis":
                 analyses.append({"capability": planned.executor.value, "step_id": planned.step_id})
+        try:
+            analyses.extend(project_analysis_groups(tuple(step_results)))
+        except ValueError as exc:
+            raise DomainError(f"run-result manifest cannot project analysis groups: {exc}") from exc
         manifest = build_run_result_manifest(
             run_id=run_id,
             status=status,

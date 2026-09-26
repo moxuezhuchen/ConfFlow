@@ -177,6 +177,7 @@ class TestTspesChain:
         assert analysis["bindings"] == {
             "structures": {"source": {"step": "irc", "port": "structures"}},
             "ts_structures": {"source": {"step": "ts", "port": "structures"}},
+            "lineage_structures": {"source": {"step": "endpoint_opt", "port": "structures"}},
             "results": {"source": {"step": "endpoint_freq", "port": "results"}},
             "ts_results": {"source": {"step": "ts_freq", "port": "results"}},
         }

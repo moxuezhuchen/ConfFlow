@@ -30,10 +30,12 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+from collections.abc import Mapping
 from typing import Any
 
 from ..domain.canonical import canonical_json_bytes, canonical_sha256
 from .contract import (
+    ANALYSIS_REACTION_PROFILE_CONTRACT,
     RESULT_MANIFEST_SCHEMA,
     build_run_result_manifest,
     run_result_json_schema,
@@ -145,6 +147,45 @@ def step_entry(
     return entry
 
 
+def reaction_group_dict(
+    *,
+    group_key: str,
+    ts_structure_id: str | None,
+    forward_endpoint_id: str | None,
+    reverse_endpoint_id: str | None,
+    source_result_ids: list[str],
+    energies: dict[str, Any],
+    barriers: dict[str, Any],
+    assignment: Any,
+    step_id: str,
+    capability: str = "reaction_profile",
+    provenance: dict[str, Any] | None = None,
+    endpoint_assignment: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build one reaction-profile group entry from validated analysis data."""
+    if not group_key or not group_key.strip():
+        raise ValueError("reaction group entry requires a group_key")
+    cited = [str(item) for item in source_result_ids]
+    if not cited or any(not item.strip() for item in cited):
+        raise ValueError(f"group {group_key!r} cites no source result ids")
+    entry: dict[str, Any] = {
+        "capability": capability,
+        "step_id": step_id,
+        "group_key": group_key,
+        "ts_structure_id": ts_structure_id,
+        "forward_endpoint_id": forward_endpoint_id,
+        "reverse_endpoint_id": reverse_endpoint_id,
+        "source_result_ids": sorted(cited),
+        "energies": dict(energies),
+        "barriers": dict(barriers),
+        "assignment": assignment,
+        "provenance": dict(provenance or {}),
+    }
+    if endpoint_assignment is not None:
+        entry["endpoint_assignment"] = dict(endpoint_assignment)
+    return entry
+
+
 def reaction_group_entry(
     *,
     group_key: str,
@@ -158,32 +199,151 @@ def reaction_group_entry(
     step_id: str,
     capability: str = "reaction_profile",
     provenance: dict[str, Any] | None = None,
+    endpoint_assignment: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Build one reaction-profile group entry from real analysis outputs."""
-    if not group_key or not group_key.strip():
-        raise ValueError("reaction group entry requires a group_key")
+    """Build one reaction-profile group entry from real analysis outputs.
+
+    Source identity is the producer-scoped ``ResultRef`` id (``result_id``),
+    never a value digest: two sources with equal values stay
+    distinguishable.  ``assignment`` carries the producer's marker verbatim;
+    when the analysis ran under an explicit endpoint assignment,
+    *endpoint_assignment* repeats that mapping verbatim (the default stays
+    pure path direction).
+    """
     source_ids = []
     for record in source_results:
-        digest = getattr(record, "identity_digest", None) or getattr(record, "value_digest", None)
-        if digest is None:
-            raise ValueError(f"group {group_key!r} cites a result without any digest")
-        source_ids.append(digest)
-    if not source_ids:
-        raise ValueError(f"group {group_key!r} cites no source result ids")
-    entry: dict[str, Any] = {
-        "capability": capability,
-        "step_id": step_id,
-        "group_key": group_key,
-        "ts_structure_id": ts_structure_id,
-        "forward_endpoint_id": forward_endpoint_id,
-        "reverse_endpoint_id": reverse_endpoint_id,
-        "source_result_ids": sorted(source_ids),
-        "energies": dict(energies),
-        "barriers": dict(barriers),
-        "assignment": assignment,
-        "provenance": dict(provenance or {}),
-    }
-    return entry
+        rid = getattr(record, "result_id", None)
+        if not rid:
+            raise ValueError(
+                f"group {group_key!r} cites a result without ResultRef identity "
+                "(result_id); refusing to project unstamped analysis output"
+            )
+        source_ids.append(rid)
+    return reaction_group_dict(
+        group_key=group_key,
+        ts_structure_id=ts_structure_id,
+        forward_endpoint_id=forward_endpoint_id,
+        reverse_endpoint_id=reverse_endpoint_id,
+        source_result_ids=source_ids,
+        energies=energies,
+        barriers=barriers,
+        assignment=assignment,
+        step_id=step_id,
+        capability=capability,
+        provenance=provenance,
+        endpoint_assignment=endpoint_assignment,
+    )
+
+
+#: Analysis result kind carrying the per-group PES payload.  The literal
+#: mirrors ``confflow.analysis.reaction.KIND_REACTION_PROFILE`` without
+#: importing the analysis package (producer never depends on it).
+KIND_REACTION_PROFILE: str = "reaction_profile"
+
+
+def project_analysis_groups(step_results: tuple[Any, ...]) -> list[dict[str, Any]]:
+    """Project rich reaction-group entries from real analysis StepResults.
+
+    Scans every ``StepResult`` for ``reaction_profile`` scientific results
+    and projects one manifest group entry per payload, solely from the
+    actual ``Analysis`` outputs: ``group_key``, the TS/forward/reverse
+    subject ids from the payload ``nodes`` (TS falling back to the
+    result's own subject), the verbatim ``electronic_energy``/``gibbs_energy``
+    entries plus ``barriers``, the assignment marker with the explicit
+    endpoint mapping repeated verbatim when present, and the analysis's own
+    ``source_result_ids`` carried through verbatim.  No science is
+    recomputed here: energies, barriers, assignments, and citations are
+    copied verbatim from the profile payload, and a profile without usable
+    citations fails closed instead of inventing identity.  In full
+    step-sourced flows the cited ids coincide with published manifest
+    results; analyses over run-input reference results cite those inputs'
+    ``ResultRef`` ids.
+    """
+    groups: list[dict[str, Any]] = []
+    for step_result in step_results:
+        for record in step_result.results:
+            if getattr(record, "kind", None) != KIND_REACTION_PROFILE:
+                continue
+            value = getattr(record, "value", None)
+            if not isinstance(value, Mapping):
+                raise ValueError(
+                    f"step {step_result.step_id!r} carries a non-mapping "
+                    "reaction_profile value; refusing to project"
+                )
+            payload = dict(value)
+            group_key = payload.get("group_key")
+            if not isinstance(group_key, str) or not group_key.strip():
+                raise ValueError(
+                    f"step {step_result.step_id!r} carries a reaction_profile "
+                    "value without a group_key; refusing to project"
+                )
+            nodes = payload.get("nodes")
+            nodes = dict(nodes) if isinstance(nodes, Mapping) else {}
+            ts_id = nodes.get("ts") or getattr(record, "subject_structure_id", None)
+            forward_id = nodes.get("forward")
+            reverse_id = nodes.get("reverse")
+            energies: dict[str, Any] = {}
+            for key in ("electronic_energy", "gibbs_energy", "relative"):
+                section = payload.get(key)
+                if isinstance(section, Mapping):
+                    energies[key] = dict(section)
+            if "electronic_energy" not in energies or "gibbs_energy" not in energies:
+                raise ValueError(
+                    f"group {group_key!r} carries no electronic/Gibbs entries; "
+                    "refusing to project an energy-less profile"
+                )
+            barriers = payload.get("barriers")
+            barriers = dict(barriers) if isinstance(barriers, Mapping) else {}
+            if not barriers:
+                raise ValueError(f"group {group_key!r} carries no barriers; refusing to project")
+            raw_sources = payload.get("source_result_ids") or []
+            if not isinstance(raw_sources, list) or not raw_sources:
+                raise ValueError(f"group {group_key!r} cites no source result ids")
+            cited = [str(item) for item in raw_sources]
+            if any(not item.strip() for item in cited):
+                raise ValueError(
+                    f"group {group_key!r} cites an unusable source result id; "
+                    "refusing to project"
+                )
+            endpoint_assignment = payload.get("endpoint_assignment")
+            provenance = {
+                "contract": ANALYSIS_REACTION_PROFILE_CONTRACT,
+                "step_id": step_result.step_id,
+                "group_key": group_key,
+                "subject_structure_id": ts_id,
+                "energy_model": (
+                    dict(payload["energy_model"])
+                    if isinstance(payload.get("energy_model"), Mapping)
+                    else payload.get("energy_model")
+                ),
+                "fallback_used": (
+                    dict(payload["fallback_used"])
+                    if isinstance(payload.get("fallback_used"), Mapping)
+                    else payload.get("fallback_used", {})
+                ),
+                "source_step_id": getattr(record, "source_step_id", None),
+            }
+            groups.append(
+                reaction_group_dict(
+                    group_key=group_key,
+                    ts_structure_id=ts_id,
+                    forward_endpoint_id=forward_id,
+                    reverse_endpoint_id=reverse_id,
+                    source_result_ids=cited,
+                    energies=energies,
+                    barriers=barriers,
+                    assignment=payload.get("assignment", "unassigned"),
+                    step_id=step_result.step_id,
+                    provenance=provenance,
+                    endpoint_assignment=(
+                        dict(endpoint_assignment)
+                        if isinstance(endpoint_assignment, Mapping)
+                        else None
+                    ),
+                )
+            )
+    groups.sort(key=lambda entry: str(entry["group_key"]))
+    return groups
 
 
 def build_runtime_manifest(
@@ -393,12 +553,15 @@ def check_manifest_against_contract(
 
 
 __all__ = [
+    "KIND_REACTION_PROFILE",
     "RUN_RESULT_FILENAME",
     "artifact_entry",
     "build_runtime_manifest",
     "check_manifest_against_contract",
     "manifest_digest",
+    "project_analysis_groups",
     "publish_manifest_atomically",
+    "reaction_group_dict",
     "reaction_group_entry",
     "result_ref_entry",
     "step_entry",

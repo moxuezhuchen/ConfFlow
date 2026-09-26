@@ -772,6 +772,15 @@ def _default_executors() -> tuple[ExecutorContract, ...]:
                     Pairing.SINGLE,
                     "Transition-state structures referenced by endpoint parent links.",
                 ),
+                _structure_port(
+                    "lineage_structures",
+                    Cardinality.MANY,
+                    Pairing.SINGLE,
+                    "Intermediate optimized structures (for example endpoint "
+                    "optimization outputs) carried so frequency-measurement "
+                    "results resolve to their reaction node through parent-id "
+                    "lineage. Optional; absent bindings change nothing.",
+                ),
                 _result_port("results", Cardinality.MANY, Pairing.SINGLE),
                 _result_port("ts_results", Cardinality.MANY, Pairing.SINGLE),
             ),

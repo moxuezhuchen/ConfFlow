@@ -248,8 +248,30 @@ class TestV4AnalysisStep:
         )
 
     def test_irc_analysis_chain(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        from confflow.domain.result import ResultSet, ScientificResult
+        from confflow.domain.result import ResultSet, ScientificResult, make_result_id
         from confflow.domain.units import Unit
+
+        def _seeded(
+            kind: str, value: float, subject: str, unit: Any = Unit.HARTREE
+        ) -> ScientificResult:
+            # Production calc results always carry producer-scoped ResultRef
+            # identity; the run-input seeds mirror that stamping so the
+            # analysis profile can cite real ResultRef ids.
+            return ScientificResult(
+                kind=kind,
+                value=value,
+                unit=unit,
+                subject_structure_id=subject,
+                source_step_id="seed",
+                source_work_item_id="seed-0",
+                result_id=make_result_id(
+                    step_id="seed",
+                    work_item_id="seed-0",
+                    kind=kind,
+                    subject_structure_id=subject,
+                    producer_digest="sha256:" + "0" * 64,
+                ),
+            )
 
         monkeypatch.setenv("FAKE_MODE", "success_opt")
         wrapper = _wrapper(tmp_path, monkeypatch, "an", fake=FAKE_IRC)
@@ -258,42 +280,12 @@ class TestV4AnalysisStep:
         reverse_id = "s_irc:ts00:structure:path_endpoint_reverse:0"
         structures = StructureSet.of(structure("ts00", group_key="rxn-00"))
         gibbs = ResultSet.of(
-            ScientificResult(
-                kind="gibbs_energy",
-                value=-76.0,
-                unit=Unit.HARTREE,
-                subject_structure_id="ts00",
-            ),
-            ScientificResult(
-                kind="gibbs_energy",
-                value=-76.40,
-                unit=Unit.HARTREE,
-                subject_structure_id=forward_id,
-            ),
-            ScientificResult(
-                kind="gibbs_energy",
-                value=-76.38,
-                unit=Unit.HARTREE,
-                subject_structure_id=reverse_id,
-            ),
-            ScientificResult(
-                kind="energy",
-                value=-76.02,
-                unit=Unit.HARTREE,
-                subject_structure_id="ts00",
-            ),
-            ScientificResult(
-                kind="energy",
-                value=-76.42,
-                unit=Unit.HARTREE,
-                subject_structure_id=forward_id,
-            ),
-            ScientificResult(
-                kind="energy",
-                value=-76.40,
-                unit=Unit.HARTREE,
-                subject_structure_id=reverse_id,
-            ),
+            _seeded("gibbs_energy", -76.0, "ts00"),
+            _seeded("gibbs_energy", -76.40, forward_id),
+            _seeded("gibbs_energy", -76.38, reverse_id),
+            _seeded("energy", -76.02, "ts00"),
+            _seeded("energy", -76.42, forward_id),
+            _seeded("energy", -76.40, reverse_id),
         )
         report = V4RunApplication(supervisor=NativeProcessSupervisor()).run(
             V4RunRequest(
@@ -312,12 +304,71 @@ class TestV4AnalysisStep:
         kinds = {record.kind for record in by_id["s_an"].results}
         assert {"barrier_forward_endpoint", "barrier_reverse_endpoint", "reaction_profile"} <= kinds
         manifest = report.manifest.thaw()
-        assert len(manifest["analyses"]) == 1
-        entry = manifest["analyses"][0]
-        # Final contract (producer schema): analyses carry only
-        # {capability, step_id}; group pedigree lives in the published
-        # StepResult (kinds asserted above), not the manifest.
-        assert entry == {"capability": "analysis", "step_id": "s_an"}
+        # GAP1: the analysis step keeps its minimal ref AND projects one
+        # rich reaction-group entry from the actual analysis StepResult.
+        assert len(manifest["analyses"]) == 2
+        refs = [entry for entry in manifest["analyses"] if "group_key" not in entry]
+        groups = [entry for entry in manifest["analyses"] if "group_key" in entry]
+        assert refs == [{"capability": "analysis", "step_id": "s_an"}]
+        assert len(groups) == 1
+        group = groups[0]
+        assert group["capability"] == "reaction_profile"
+        assert group["step_id"] == "s_an"
+        assert group["group_key"] == "rxn-00"
+        assert group["ts_structure_id"] == "ts00"
+        assert group["forward_endpoint_id"] == forward_id
+        assert group["reverse_endpoint_id"] == reverse_id
+        assert set(group["barriers"]) == {"forward_endpoint", "reverse_endpoint"}
+        assert set(group["energies"]) >= {"electronic_energy", "gibbs_energy"}
+        assert group["assignment"] == "unassigned"
+        assert group["endpoint_assignment"] == {"forward": "unassigned", "reverse": "unassigned"}
+        assert group["source_result_ids"] == sorted(group["source_result_ids"])
+        assert group["source_result_ids"]
+        # The citations are the analysis's actual source ResultRef ids: the
+        # run-input seeds this analysis consumed (a fully step-sourced flow
+        # cites published step results instead; the 20-group TSPES E2E pins
+        # that case).
+        assert set(group["source_result_ids"]) == {
+            record.result_id for record in gibbs if record.result_id is not None
+        }
+        # The durable bytes validate against the actual producer schema
+        # and the REAL JobDesk consumer reads exactly one group with the
+        # TS/endpoints/barriers/assignment/source ids above.
+        import json as _json
+        import sys as _sys
+        from pathlib import Path as _Path
+
+        import jsonschema as _jsonschema
+
+        from confflow.domain.canonical import canonical_json_bytes as _canonical
+        from confflow.producer.contract import run_result_json_schema as _schema
+
+        manifest_path = _Path(run_root) / "run_result.json"
+        durable_bytes = manifest_path.read_bytes()
+        assert _canonical(_json.loads(durable_bytes.decode("utf-8"))) == durable_bytes
+        _jsonschema.validate(instance=_json.loads(durable_bytes.decode("utf-8")), schema=_schema())
+        _jobdesk_src = _Path("/opt/jobdesk-v2-v4/src")
+        if str(_jobdesk_src) not in _sys.path:
+            _sys.path.insert(0, str(_jobdesk_src))
+        from jobdesk_v2.application.runs.v4_results import parse_result_bytes as _parse
+
+        view = _parse(durable_bytes)
+        assert len(view.groups) == 1
+        seen = view.groups[0]
+        assert seen.group_key == "rxn-00"
+        assert seen.ts_structure_id == "ts00"
+        assert seen.forward_endpoint_id == forward_id
+        assert seen.reverse_endpoint_id == reverse_id
+        assert dict(seen.barriers)
+        assert dict(seen.energy_entries)
+        assert seen.assignment_display == "unassigned"
+        assert set(seen.source_result_ids) == set(group["source_result_ids"])
+        assert len(view.analyses) == 2
+        assert (view.analyses[0].capability, view.analyses[0].step_id) == ("analysis", "s_an")
+        assert (view.analyses[1].capability, view.analyses[1].step_id) == (
+            "reaction_profile",
+            "s_an",
+        )
 
 
 class TestV4Cli:
