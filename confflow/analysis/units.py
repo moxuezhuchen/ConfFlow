@@ -36,6 +36,7 @@ from ..domain.result import ScientificResult
 from ..domain.units import UNIT_QUANTITIES, QuantityKind, Unit
 
 __all__ = [
+    "CODE_AMBIGUOUS_SELECTION",
     "CODE_ENERGY_MISSING",
     "CODE_CORRECTION_MISSING",
     "CODE_NON_NUMERIC_VALUE",
@@ -45,6 +46,9 @@ __all__ = [
     "to_hartree",
     "value_in_hartree",
 ]
+
+#: Error code when several candidate results match one selection.
+CODE_AMBIGUOUS_SELECTION: Final[str] = "ambiguous_selection"
 
 #: Error code when a required energy result is absent.
 CODE_ENERGY_MISSING: Final[str] = "energy_missing"

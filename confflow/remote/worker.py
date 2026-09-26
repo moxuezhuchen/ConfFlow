@@ -90,6 +90,7 @@ _RESULT_FIELDS: frozenset[str] = frozenset(
         "source_step_id",
         "source_work_item_id",
         "provenance",
+        "result_id",
         "metadata",
     }
 )
@@ -111,9 +112,6 @@ _PROVENANCE_FIELDS: frozenset[str] = frozenset(
 #: Exact resource keys carried by the compiled execution definition.
 _RESOURCE_FIELDS: frozenset[str] = frozenset({"cores_per_item", "memory_per_item_bytes"})
 
-#: Port receiving rebuilt result inputs; the standard executor never reads
-#: result inputs, so this port is a stable carrier, never a semantic claim.
-_RESULTS_PORT: str = "results"
 
 #: Mapping-style attributes probed on opaque staged-bundle objects.
 _STAGED_MAPPING_ATTRS: tuple[str, ...] = (
@@ -150,13 +148,15 @@ def run_worker_envelope(
     launch_token: str,
     should_cancel: Callable[[], bool] | None = None,
     supervisor: ProcessSupervisor | None = None,
+    target_default_executable: str | None = None,
+    target_env: Mapping[str, str] | None = None,
 ) -> str:
     """Run one worker-handoff envelope through the shared executor.
 
     Parameters
     ----------
     handoff_path : str
-        Path of the worker-handoff V2 envelope file.
+        Path of the worker-handoff V3 envelope file.
     staged_bundle : Any
         Staged input bundle: a mapping of artifact id to staged file path,
         a directory holding the staged ``bundle_locator`` files, or an
@@ -170,6 +170,13 @@ def run_worker_envelope(
     supervisor : ProcessSupervisor | None
         Process boundary for native execution, or ``None`` for a fresh
         native supervisor.
+    target_default_executable : str | None
+        Target-host default binary for the handoff program; the program
+        adapter default applies when absent.  The handoff's explicit
+        executable request is never replaced silently: it is carried
+        verbatim and fails closed when unmeasurable on the target.
+    target_env : Mapping[str, str] | None
+        Target-host environment entries under the handoff env.
 
     Returns
     -------
@@ -208,6 +215,8 @@ def run_worker_envelope(
         worker_root_abs,
         launch_token,
         supervisor,
+        target_default_executable=target_default_executable,
+        target_env=target_env,
     )
     result = _run_stage(
         "execute work item",
@@ -372,12 +381,17 @@ def _rebuild_work_item(handoff: WorkerHandoffV2, staged_bundle: Any, worker_root
     artifacts = _artifacts_from_entries(
         artifact_entries, staged_bundle=staged_bundle, worker_root=worker_root
     )
-    results = ResultSet(tuple(_result_from_entry(entry) for entry in result_entries))
+    results_by_port: dict[str, list[ScientificResult]] = {}
+    for entry in sorted(result_entries, key=lambda item: (item.port, item.result_id)):
+        results_by_port.setdefault(entry.port, []).append(_result_from_entry(entry))
+    results = FrozenDict(
+        {port: ResultSet(tuple(records)) for port, records in sorted(results_by_port.items())}
+    )
     resources = _resources_from_definition(handoff.execution)
     artifact_inputs = FrozenDict(
-        {role: ArtifactSet(tuple(references)) for role, references in sorted(artifacts.items())}
+        {port: ArtifactSet(tuple(references)) for port, references in sorted(artifacts.items())}
     )
-    result_inputs = FrozenDict({_RESULTS_PORT: results}) if len(results) else FrozenDict()
+    result_inputs = results
     try:
         return WorkItem(
             id=handoff.work_item_id,
@@ -463,6 +477,19 @@ def _result_from_entry(entry: ResultEntry) -> ScientificResult:
             "remote worker failed at stage 'rebuild work item inputs': "
             f"result entry {entry.result_id!r} fails its content digest"
         )
+    payload_id = payload.get("result_id")
+    if payload_id is not None and entry.result_id != payload_id:
+        raise WorkerError(
+            "remote worker failed at stage 'rebuild work item inputs': "
+            f"result entry {entry.result_id!r} mismatches payload result_id "
+            f"{payload_id!r}; bundle identity must be the producer-scoped id"
+        )
+    if payload_id is None and not entry.result_id.startswith("legacy:"):
+        raise WorkerError(
+            "remote worker failed at stage 'rebuild work item inputs': "
+            f"result entry {entry.result_id!r} carries no result_id but is not "
+            "marked legacy; producer outputs must travel under their true id"
+        )
     payload.pop("value_digest", None)
     unknown = sorted(set(payload) - _RESULT_FIELDS)
     if unknown:
@@ -520,7 +547,11 @@ def _result_from_entry(entry: ResultEntry) -> ScientificResult:
 def _artifacts_from_entries(
     entries: list[ArtifactBundleEntry], *, staged_bundle: Any, worker_root: str
 ) -> dict[str, list[ArtifactRef]]:
-    """Rebuild artifact references grouped by role from staged bytes.
+    """Rebuild artifact references grouped by port from staged bytes.
+
+    Port structure is preserved exactly: the rebuilt item carries the same
+    named artifact ports the producer assembled.  Grouping is by the
+    bundle ``port`` (never by role or order).
 
     Parameters
     ----------
@@ -534,7 +565,7 @@ def _artifacts_from_entries(
     Returns
     -------
     dict[str, list[ArtifactRef]]
-        Artifact references keyed by role.
+        Artifact references keyed by port.
 
     Raises
     ------
@@ -543,7 +574,7 @@ def _artifacts_from_entries(
         reference is not rebuildable.
     """
     grouped: dict[str, list[ArtifactRef]] = {}
-    for entry in sorted(entries, key=lambda item: item.artifact_id):
+    for entry in sorted(entries, key=lambda item: (item.port, item.artifact_id)):
         staged_path = _resolve_staged_file(
             staged_bundle=staged_bundle,
             artifact_id=entry.artifact_id,
@@ -575,7 +606,7 @@ def _artifacts_from_entries(
                 "remote worker failed at stage 'rebuild work item inputs': "
                 f"artifact entry {entry.artifact_id!r} is not rebuildable: {exc}"
             ) from exc
-        grouped.setdefault(entry.role, []).append(reference)
+        grouped.setdefault(entry.port, []).append(reference)
     return grouped
 
 
@@ -801,13 +832,174 @@ def _resources_from_definition(execution: ExecutionDefinition) -> ResourceReques
         ) from exc
 
 
+def _resolve_program(program: str | None, versions: dict[str, str]) -> Any:
+    """Resolve the handoff program through the program registry.
+
+    Calculation handoffs name a real program; anything else fails closed
+    here, never at native launch.
+    """
+    from confflow.programs.registry import get_program_adapter
+
+    if not isinstance(program, str) or not program.strip():
+        raise WorkerError(
+            "remote worker failed at stage 'resolve execution contracts': "
+            "calculation handoff names no program"
+        )
+    try:
+        adapter = get_program_adapter(program)
+    except Exception as exc:
+        raise WorkerError(
+            "remote worker failed at stage 'resolve execution contracts': "
+            f"unknown program {program!r}: {exc}"
+        ) from exc
+    _require_contract_version(versions, "adapter", adapter.adapter_version, "program adapter")
+    return adapter
+
+
+def _measure_worker_environment(*, capability: str, adapter: Any, binding: Any) -> Any:
+    """Measure the worker-side native execution environment.
+
+    Unknown/unmeasurable never stands in for verified equivalence: a
+    binary that cannot be measured fails the handoff closed before any
+    native launch.
+    """
+    from confflow.execution.environment import EnvironmentMeasurer
+
+    candidate = binding.executable
+    if not isinstance(candidate, str) or not candidate.strip():
+        raise WorkerError(
+            "remote worker failed at stage 'resolve execution contracts': "
+            "target execution binding carries no executable"
+        )
+    try:
+        return EnvironmentMeasurer().build_environment(
+            candidate, adapter=adapter, target=binding.target
+        )
+    except Exception as exc:
+        raise WorkerError(
+            "remote worker failed at stage 'resolve execution contracts': "
+            f"cannot measure worker execution environment for {candidate!r}: {exc}"
+        ) from exc
+
+
+def _measure_pure_worker_environment(*, capability: str) -> Any:
+    """Build the worker-side pure-implementation environment identity."""
+    from confflow.execution.environment import build_pure_environment
+    from confflow.execution.registry import default_registry
+
+    try:
+        contract = default_registry().resolve_executor(capability)
+    except Exception as exc:
+        raise WorkerError(
+            "remote worker failed at stage 'resolve execution contracts': "
+            f"unknown executor capability {capability!r}: {exc}"
+        ) from exc
+    return build_pure_environment(
+        implementation=f"confflow.{capability}",
+        implementation_version=contract.contract_version,
+        metadata={"worker": "remote"},
+    )
+
+
+def _build_calculation_scientific(execution: ExecutionDefinition) -> tuple[Any, Any]:
+    """Map the execution definition onto calculation scientific values."""
+    from confflow.workflow.v4.document import ScientificDefaults, ScientificDefinition
+
+    overrides: dict[str, Any] = {}
+    if execution.charge is not None:
+        overrides["charge"] = execution.charge
+    if execution.multiplicity is not None:
+        overrides["multiplicity"] = execution.multiplicity
+    if execution.freeze is not None:
+        overrides["freeze"] = tuple(execution.freeze)
+    try:
+        scientific = ScientificDefinition(
+            program=execution.program,
+            role=None,
+            execution_adapter=execution.execution_adapter,
+            result_profile=execution.result_profile,
+            native=FrozenDict(dict(execution.native)),
+            checks=tuple(execution.checks),
+            check_params=FrozenDict(
+                {name: dict(params) for name, params in execution.check_params.items()}
+            ),
+            recovery=execution.recovery,
+            recovery_params=FrozenDict(dict(execution.recovery_params)),
+            seed=execution.seed,
+            overrides=FrozenDict(overrides),
+            transform=None,
+        )
+        return scientific, ScientificDefaults()
+    except Exception as exc:
+        raise WorkerError(
+            "remote worker failed at stage 'resolve execution contracts': "
+            f"scientific definition is not constructible: {exc}"
+        ) from exc
+
+
+def _build_pure_scientific(execution: ExecutionDefinition) -> tuple[Any, Any]:
+    """Map the execution definition onto pure-executor scientific values.
+
+    The worker rebuilds the same typed scientific state the producer
+    compiled: native vocabulary plus the single-authority seed for
+    stochastic capabilities, the transform kind for structure transforms,
+    and no program-backed fields.
+    """
+    from confflow.workflow.v4.document import ScientificDefaults, ScientificDefinition
+
+    capability = execution.executor
+    try:
+        if capability == "confgen":
+            scientific = ScientificDefinition(
+                result_profile="ensemble",
+                native=FrozenDict(dict(execution.native)),
+                seed=execution.seed,
+                overrides=FrozenDict({}),
+            )
+        elif capability == "structure_transform":
+            if not isinstance(execution.transform, str) or not execution.transform.strip():
+                raise ValueError("structure_transform handoff names no transform kind")
+            scientific = ScientificDefinition(
+                result_profile="standard",
+                native=FrozenDict(dict(execution.native)),
+                transform=execution.transform.strip(),
+            )
+        elif capability == "analysis":
+            scientific = ScientificDefinition(
+                result_profile="standard",
+                native=FrozenDict(dict(execution.native)),
+                checks=tuple(execution.checks),
+                check_params=FrozenDict(
+                    {name: dict(params) for name, params in execution.check_params.items()}
+                ),
+            )
+        else:
+            raise ValueError(f"unsupported pure executor {capability!r}")
+        return scientific, ScientificDefaults()
+    except Exception as exc:
+        raise WorkerError(
+            "remote worker failed at stage 'resolve execution contracts': "
+            f"pure scientific definition is not constructible: {exc}"
+        ) from exc
+
+
 def _resolve_execution_context(
     handoff: WorkerHandoffV2,
     worker_root: str,
     launch_token: str,
     supervisor: ProcessSupervisor | None,
+    *,
+    target_default_executable: str | None = None,
+    target_env: Mapping[str, str] | None = None,
 ) -> Any:
     """Resolve the executor context from the compiled execution definition.
+
+    The worker dispatches through the execution registry on the handoff
+    executor capability (never a hardcoded calculation executor), resolves
+    the target-side binding through the shared binding authority, measures
+    its own execution environment, and threads the handoff attempt number
+    into the context so attempt-isolated directories align with the
+    producer's durable attempt.
 
     Parameters
     ----------
@@ -820,6 +1012,11 @@ def _resolve_execution_context(
     supervisor : ProcessSupervisor | None
         Caller-provided process boundary, or ``None`` for a fresh native
         supervisor.
+    target_default_executable : str | None
+        Target-host default binary for the handoff program; falls back to
+        the program adapter default when absent.
+    target_env : Mapping[str, str] | None
+        Target-host environment entries under the handoff env.
 
     Returns
     -------
@@ -833,38 +1030,67 @@ def _resolve_execution_context(
         Raised when any named implementation is unknown, contract versions
         drift, or the context is not constructible.
     """
-    from confflow.execution.contracts import ExecutionBinding
+    from confflow.execution.binding_resolution import resolve_remote_target_binding
     from confflow.execution.work_item_executor import ItemExecutionContext
-    from confflow.programs.registry import get_program_adapter
 
     execution = handoff.execution
     versions = dict(execution.contract_versions)
+    capability = execution.executor
+    from confflow.execution.registry import RegistryLookupError, default_registry
+
     try:
-        adapter = get_program_adapter(execution.program)
-    except Exception as exc:
+        registry = default_registry()
+        executor_contract = registry.resolve_executor(capability)
+    except RegistryLookupError as exc:
         raise WorkerError(
             "remote worker failed at stage 'resolve execution contracts': "
-            f"unknown program {execution.program!r}: {exc}"
+            f"unknown executor capability {capability!r}: {exc}"
         ) from exc
-    _require_contract_version(versions, "adapter", adapter.adapter_version, "program adapter")
-    profile = _resolve_profile(execution.result_profile, versions)
-    checks = _resolve_checks(execution.checks, versions)
-    recovery = _resolve_recovery(execution.recovery, versions, adapter)
-    scientific, defaults = _build_scientific(execution)
-    walltime = handoff.environment_request.walltime_seconds
-    try:
-        binding = ExecutionBinding(
-            binding_id=launch_token,
-            executable=None,
-            env=FrozenDict({}),
-            walltime_seconds=walltime,
-            target=handoff.environment_request.target,
+    _require_contract_version(
+        versions, "executor", executor_contract.contract_version, "executor"
+    )
+    if capability == "calculation":
+        adapter = _resolve_program(execution.program, versions)
+        profile = _resolve_profile(execution.result_profile, versions)
+        checks = _resolve_checks(execution.checks, versions)
+        recovery = _resolve_recovery(execution.recovery, versions, adapter)
+        default_executable = target_default_executable or adapter.default_executable
+        try:
+            binding = resolve_remote_target_binding(
+                program=adapter.program_name.value,
+                handoff_execution={
+                    "executable": execution.handoff_executable,
+                    "env": dict(execution.handoff_env),
+                    "walltime_seconds": execution.handoff_walltime_seconds,
+                    "target": handoff.environment_request.target,
+                },
+                target_default_executable=default_executable,
+                target_env=target_env,
+            )
+        except Exception as exc:
+            raise WorkerError(
+                "remote worker failed at stage 'resolve execution contracts': "
+                f"target execution binding is not resolvable: {exc}"
+            ) from exc
+        environment = _measure_worker_environment(
+            capability=capability,
+            adapter=adapter,
+            binding=binding,
         )
-    except Exception as exc:
+        scientific, defaults = _build_calculation_scientific(execution)
+    elif capability in ("confgen", "structure_transform", "analysis"):
+        adapter = None
+        profile = None
+        checks = ()
+        recovery = None
+        binding = None
+        environment = _measure_pure_worker_environment(capability=capability)
+        scientific, defaults = _build_pure_scientific(execution)
+    else:
         raise WorkerError(
             "remote worker failed at stage 'resolve execution contracts': "
-            f"execution binding is not constructible: {exc}"
-        ) from exc
+            f"unknown executor capability {capability!r}"
+        )
     if supervisor is None:
         from confflow.execution.process import NativeProcessSupervisor
 
@@ -882,7 +1108,9 @@ def _resolve_execution_context(
             run_root=worker_root,
             work_base=os.path.join(worker_root, "work", _safe_token_component(launch_token)),
             supervisor=supervisor,
-            environment=None,
+            environment=environment,
+            attempt=int(handoff.attempt_number),
+            executor_capability=capability,
         )
     except Exception as exc:
         raise WorkerError(
@@ -1096,7 +1324,11 @@ def _build_scientific(execution: ExecutionDefinition) -> tuple[Any, Any]:
 
 
 def _execute_work_item(item: WorkItem, context: Any, should_cancel: Any) -> Any:
-    """Run one rebuilt work item through the shared executor.
+    """Run one rebuilt work item through the registry-dispatched executor.
+
+    The executor is resolved from the handoff capability carried on the
+    context (never a hardcoded calculation executor): the worker runs the
+    same executor family the producer dispatched.
 
     Parameters
     ----------
@@ -1115,12 +1347,27 @@ def _execute_work_item(item: WorkItem, context: Any, should_cancel: Any) -> Any:
     Raises
     ------
     WorkerError
-        Raised when the executor itself cannot run.
+        Raised when no executor is registered for the capability or the
+        executor itself cannot run.  Executor *results* (including FAILED
+        and CANCELLED) are data and are returned, never raised.
     """
-    from confflow.execution.work_item_executor import WorkItemExecutor
+    from confflow.execution.registry import RegistryLookupError, default_registry
 
+    capability = getattr(context, "executor_capability", None)
+    if not isinstance(capability, str) or not capability.strip():
+        raise WorkerError(
+            "remote worker failed at stage 'execute work item': "
+            "execution context carries no executor capability"
+        )
     try:
-        return WorkItemExecutor().execute(item, context, should_cancel=should_cancel)
+        executor = default_registry().executor_implementation(capability)()
+    except RegistryLookupError as exc:
+        raise WorkerError(
+            "remote worker failed at stage 'execute work item': "
+            f"no executor registered for capability {capability!r}: {exc}"
+        ) from exc
+    try:
+        return executor.execute(item, context, should_cancel=should_cancel)
     except Exception as exc:
         raise WorkerError(f"remote worker failed at stage 'execute work item': {exc}") from exc
 
@@ -1162,13 +1409,22 @@ def _package_work_item_result(
     """
     from .result_bundle import package_result_bundle
 
-    environment: dict[str, Any] = {"program": execution.program}
-    target = handoff.environment_request.target
-    if target is not None:
-        environment["target"] = target
+    environment = context.environment
+    if environment is None or not hasattr(environment, "to_dict"):
+        raise WorkerError(
+            "remote worker failed at stage 'package result bundle': "
+            "execution context carries no measured environment"
+        )
+    try:
+        environment_map = dict(environment.to_dict())
+    except Exception as exc:
+        raise WorkerError(
+            "remote worker failed at stage 'package result bundle': "
+            f"measured environment is not serializable: {exc}"
+        ) from exc
     result_dir = os.path.join(worker_root, "results", _safe_token_component(handoff.launch_token))
     try:
-        transfer_files_from = context.item_directory(item.logical_key)
+        transfer_files_from = context.attempt_dir(item)
     except Exception as exc:
         raise WorkerError(f"remote worker failed at stage 'package result bundle': {exc}") from exc
     try:
@@ -1176,7 +1432,7 @@ def _package_work_item_result(
             work_item_result=result,
             handoff=handoff,
             result_dir=result_dir,
-            environment=environment,
+            environment=environment_map,
             transfer_files_from=transfer_files_from,
         )
     except Exception as exc:

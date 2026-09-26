@@ -61,12 +61,13 @@ from confflow.execution.output_identity import (
     multi_output_structure_id,
 )
 from confflow.execution.process import NativeProcessSupervisor
+from confflow.programs.registry import get_program_adapter
 from confflow.execution.profile_ensemble import EnsembleProfile
 from confflow.execution.profile_path_endpoints import PathEndpointsProfile
 from confflow.execution.recovery_standard import RECOVERIES
 from confflow.execution.work_item_executor import WorkItemExecutor
 from confflow.persistence import OwnerIdentity
-from confflow.persistence.contracts import store_path
+from confflow.persistence.contracts import PersistenceError, store_path
 from confflow.persistence.reuse import build_producer_provenance
 from confflow.persistence.work_items import SqliteWorkItemStore
 from confflow.programs.orca.path import parse_path_endpoints
@@ -95,109 +96,6 @@ base=$(basename "$1")
 printf '%s\\n' "$base" >> "$IRC_COUNT_FILE"
 exec python3 "$IRC_FAKE_REAL" "$@"
 """
-
-
-class _IrcTestAdapter:
-    """Test seam: real ORCA adapter with IRC-dialect parsing (see tspes file)."""
-
-    def __init__(self) -> None:
-        from confflow.programs.registry import get_program_adapter
-
-        self._real = get_program_adapter("orca")
-
-    @property
-    def program_name(self) -> ProgramName:
-        return ProgramName.ORCA
-
-    @property
-    def adapter_version(self) -> str:
-        return "test.adapter.irc.v1"
-
-    @property
-    def parser_version(self) -> str:
-        return "test.parser.irc.v1"
-
-    @property
-    def input_extension(self) -> str:
-        return self._real.input_extension
-
-    @property
-    def log_extension(self) -> str:
-        return self._real.log_extension
-
-    @property
-    def default_executable(self) -> str:
-        return self._real.default_executable
-
-    def materialize_native_input(self, inputs: Any) -> Any:
-        return self._real.materialize_native_input(inputs)
-
-    def build_execution_request(
-        self,
-        materialized: Any,
-        *,
-        executable: str,
-        work_dir: str,
-        env: dict[str, str],
-        walltime_seconds: float | None,
-    ) -> Any:
-        return self._real.build_execution_request(
-            materialized,
-            executable=executable,
-            work_dir=work_dir,
-            env=env,
-            walltime_seconds=walltime_seconds,
-        )
-
-    def parse_native_result(
-        self, *, work_dir: str, log_file_name: str, materialized: Any
-    ) -> NativeResult:
-        log_path = os.path.join(work_dir, log_file_name)
-        try:
-            with open(log_path, encoding="utf-8") as handle:
-                text = handle.read()
-        except OSError as exc:
-            raise ValueError(f"native_parse_error: missing IRC log: {exc}") from exc
-        atoms, _ = parse_inp_coordinates(os.path.join(work_dir, materialized.main_input_name))
-        endpoints = parse_path_endpoints(text, atoms=atoms)
-        produced: list[ProducedFile] = []
-        stem, _ = os.path.splitext(log_file_name)
-        for suffix, role in (
-            ("out", "native_output"),
-            ("inp", "native_input"),
-            ("xyz", "native_geometry"),
-            ("gbw", "checkpoint_wavefunction"),
-            ("err", "stderr"),
-        ):
-            name = log_file_name if suffix == "out" else f"{stem}.{suffix}"
-            candidate = os.path.join(work_dir, name)
-            if not os.path.isfile(candidate):
-                continue
-            try:
-                size = os.path.getsize(candidate)
-            except OSError:
-                continue
-            produced.append(ProducedFile(name=name, role=role, size_bytes=int(size)))
-        return NativeResult(
-            program=ProgramName.ORCA,
-            terminated_normally=True,
-            geometry_output=GeometryOutput.NONE,
-            final_geometry=None,
-            energies_hartree=FrozenDict({}),
-            frequencies_cm=(),
-            native_metadata=FrozenDict({"irc_dialect": "confflow-irc-v1"}),
-            produced_files=tuple(produced),
-            parser_diagnostics=(),
-            log_file_name=log_file_name,
-            path_endpoints=endpoints,
-            ensemble_members=(),
-        )
-
-    def discover_artifacts(self, **kwargs: Any) -> Any:
-        return self._real.discover_artifacts(**kwargs)
-
-    def environment_probe(self, executable: str) -> dict[str, Any]:
-        return self._real.environment_probe(executable)
 
 
 def _install_irc(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Path]:
@@ -234,7 +132,7 @@ def _irc_doc(*, step_id: str = "s_irc", profile: str = "path_endpoints") -> dict
         adapter="standard",
         profile=profile,
         bindings={"structure": {"source": {"run": "structures"}}},
-        native={"keyword": "IRC B3LYP D3BJ"},
+        native={"keyword": "IRC B3LYP D3BJ", "irc": {"direction": "both"}},
         checks=["normal_termination", "geometry_required"],
         scheduler={"max_parallel_items": 8},
         resources={"cores_per_item": 1, "memory_per_item": "1GB"},
@@ -251,11 +149,12 @@ def _goat_doc() -> dict[str, Any]:
         adapter="standard",
         profile="ensemble",
         bindings={"structure": {"source": {"run": "structures"}}},
-        native={"keyword": "GOAT B3LYP"},
+        native={"keyword": "GOAT B3LYP", "goat": {"MaxIter": 50}},
         checks=["normal_termination", "geometry_required"],
         scheduler={"max_parallel_items": 4},
         resources={"cores_per_item": 1, "memory_per_item": "1GB"},
         execution={"binding_id": "test", "executable": "orca"},
+        seed=7,
     )
     return v4_doc([step], inputs=STRUCTURE_INPUTS)
 
@@ -325,9 +224,17 @@ def _request(
             binding_id="test", executable=str(executable), env=FrozenDict({})
         ),
         run_root=run_root,
-        environment=None,
+        environment=_measured_env(adapter, executable),
         definition_digest=plan.definition_digest,
+        executor_capability=getattr(planned.executor, "value", str(planned.executor)),
     )
+
+
+def _measured_env(adapter: Any, executable: Any) -> Any:
+    """Measure the fake executable for the durable env axis."""
+    from confflow.execution.environment import EnvironmentMeasurer
+
+    return EnvironmentMeasurer().build_environment(str(executable), adapter=adapter)
 
 
 def _provenance_for(request: StepExecutionRequest) -> FrozenDict:
@@ -348,15 +255,21 @@ def _seed_completed(
     step_semantic_digest: str,
     provenance: FrozenDict,
     result: WorkItemResult,
+    environment_digest: str,
 ) -> None:
-    """Seed one COMPLETED result: register → claim → record."""
+    """Seed one COMPLETED result: register → claim → record.
+
+    The registration environment must equal the resume request's
+    measured digest: seeded rows stand in for previously committed
+    production results, which always record their execution truth.
+    """
     store.register_item(
         work_item_id=item.id,
         logical_key=item.logical_key,
         step_id=item.step_id,
         work_item_digest=item.semantic_digest,
         step_semantic_digest=step_semantic_digest,
-        environment_digest=None,
+        environment_digest=environment_digest,
         producer_provenance=dict(provenance.thaw()),
     )
     assert store.claim(item.id, owner=OwnerIdentity(owner_token="seed")) is True
@@ -369,6 +282,7 @@ def _seed_failed(
     step_semantic_digest: str,
     provenance: FrozenDict,
     result: WorkItemResult,
+    environment_digest: str,
 ) -> None:
     """Seed one FAILED result: register → claim → record."""
     store.register_item(
@@ -377,7 +291,7 @@ def _seed_failed(
         step_id=item.step_id,
         work_item_digest=item.semantic_digest,
         step_semantic_digest=step_semantic_digest,
-        environment_digest=None,
+        environment_digest=environment_digest,
         producer_provenance=dict(provenance.thaw()),
     )
     assert store.claim(item.id, owner=OwnerIdentity(owner_token="seed")) is True
@@ -389,6 +303,49 @@ def _shifted(
 ) -> tuple[tuple[float, float, float], ...]:
     """Shift coordinates deterministically along x."""
     return tuple((x + delta, y, z) for x, y, z in coordinates)
+
+
+class _FakeSubject:
+    """Minimal subject carrier for stamping seeded singleton results."""
+
+    def __init__(self, subject_id: str) -> None:
+        self.id = subject_id
+
+
+def _stamped_results(
+    records: Any, item: Any, step_id: str, energies: Any, *, discriminator: Any = None
+) -> Any:
+    """Stamp seeded fake results with producer-scoped ids (test-only).
+
+    Seeded store rows stand in for previously committed production
+    results, which always carry ``result_id``; the stamp binds the
+    producing item's semantic digest as the producer digest.
+    """
+    from confflow.domain.result import ResultSet as _ResultSet
+    from confflow.domain.result import ScientificResult as _ScientificResult
+    from confflow.domain.result import make_result_id as _make_result_id
+
+    stamped = []
+    for record, energy in zip(records, energies):
+        base_kwargs: dict[str, Any] = {
+            "kind": "energy",
+            "value": energy,
+            "unit": Unit.HARTREE,
+            "subject_structure_id": record.id,
+            "source_step_id": step_id,
+            "source_work_item_id": item.id,
+        }
+        disc = discriminator(record) if callable(discriminator) else discriminator
+        base_kwargs["result_id"] = _make_result_id(
+            step_id=step_id,
+            work_item_id=item.id,
+            kind="energy",
+            subject_structure_id=record.id,
+            **({"discriminator": disc} if disc else {}),
+            producer_digest=item.semantic_digest,
+        )
+        stamped.append(_ScientificResult(**base_kwargs))
+    return _ResultSet.of(*stamped)
 
 
 def _irc_result(item: Any, *, step_id: str = "s_irc") -> WorkItemResult:
@@ -418,18 +375,9 @@ def _irc_result(item: Any, *, step_id: str = "s_irc") -> WorkItemResult:
                 metadata=FrozenDict({"direction": direction}),
             )
         )
-    results = ResultSet.of(
-        *(
-            ScientificResult(
-                kind="energy",
-                value=energy,
-                unit=Unit.HARTREE,
-                subject_structure_id=record.id,
-                source_step_id=step_id,
-                source_work_item_id=item.id,
-            )
-            for record, energy in zip(records, (FORWARD_ENERGY, REVERSE_ENERGY))
-        )
+    results = _stamped_results(
+        records, item, step_id, (FORWARD_ENERGY, REVERSE_ENERGY),
+        discriminator=lambda record: f"direction:{record.metadata.get('direction')}",
     )
     return WorkItemResult(
         work_item_id=item.id,
@@ -467,18 +415,9 @@ def _goat_result(item: Any, *, step_id: str = "s_goat", members: int = 3) -> Wor
         )
         for index in range(members)
     ]
-    results = ResultSet.of(
-        *(
-            ScientificResult(
-                kind="energy",
-                value=-76.0 - index,
-                unit=Unit.HARTREE,
-                subject_structure_id=record.id,
-                source_step_id=step_id,
-                source_work_item_id=item.id,
-            )
-            for index, record in enumerate(records)
-        )
+    results = _stamped_results(
+        records, item, step_id, [-76.0 - index for index in range(len(records))],
+        discriminator=lambda record: f"member:{record.ordinal}",
     )
     return WorkItemResult(
         work_item_id=item.id,
@@ -563,15 +502,9 @@ def _qst_result(item: Any, *, step_id: str = "s_qst") -> WorkItemResult:
         work_item_id=item.id,
         status=WorkItemStatus.COMPLETED,
         structures=StructureSet.of(record),
-        results=ResultSet.of(
-            ScientificResult(
-                kind="energy",
-                value=-76.400001,
-                unit=Unit.HARTREE,
-                subject_structure_id=candidate_id,
-                source_step_id=step_id,
-                source_work_item_id=item.id,
-            )
+        results=_stamped_results(
+            [_FakeSubject(candidate_id)], item, step_id, [-76.400001],
+            discriminator="ts_candidate",
         ),
         artifacts=ArtifactSet(),
         diagnostics=(),
@@ -611,7 +544,7 @@ class TestIrcResume:
         )
         items = assemble(plan, run_inputs(structures={"structures": structures})).for_step("s_irc")
         assert len(items) == 20
-        adapter = _IrcTestAdapter()
+        adapter = get_program_adapter("orca")  # real adapter: fakes speak real grammar
         profile = PathEndpointsProfile()
         checks = (CHECKS["normal_termination"], CHECKS["geometry_required"])
         request = _request(
@@ -631,7 +564,9 @@ class TestIrcResume:
             for item in items:
                 result = _irc_result(item)
                 seeded_ids.extend(record.id for record in result.structures)
-                _seed_completed(store, item, planned.step_semantic_digest, provenance, result)
+                _seed_completed(store, item, planned.step_semantic_digest, provenance, result,
+        request.environment.digest(),
+    )
             resumed = _batch().execute_step_resumable(
                 request, store=store, run_root=run_root, owner_token="ctl-resume"
             )
@@ -651,7 +586,7 @@ class TestIrcResume:
             *(structure(f"ts{i:02d}", group_key=f"rxn-{i:02d}") for i in range(20))
         )
         items = assemble(plan, run_inputs(structures={"structures": structures})).for_step("s_irc")
-        adapter = _IrcTestAdapter()
+        adapter = get_program_adapter("orca")  # real adapter: fakes speak real grammar
         profile = PathEndpointsProfile()
         checks = (CHECKS["normal_termination"], CHECKS["geometry_required"])
         request = _request(
@@ -676,7 +611,8 @@ class TestIrcResume:
                         planned.step_semantic_digest,
                         provenance,
                         _failed_result(item),
-                    )
+        request.environment.digest(),
+    )
                 else:
                     _seed_completed(
                         store,
@@ -684,7 +620,8 @@ class TestIrcResume:
                         planned.step_semantic_digest,
                         provenance,
                         _irc_result(item),
-                    )
+        request.environment.digest(),
+    )
             resumed = _batch().execute_step_resumable(
                 request, store=store, run_root=run_root, owner_token="ctl-resume"
             )
@@ -713,7 +650,7 @@ class TestIrcResume:
             *(structure(f"ts{i:02d}", group_key=f"rxn-{i:02d}") for i in range(4))
         )
         items = assemble(plan, run_inputs(structures={"structures": structures})).for_step("s_irc")
-        adapter = _IrcTestAdapter()
+        adapter = get_program_adapter("orca")  # real adapter: fakes speak real grammar
         profile = PathEndpointsProfile()
         checks = (CHECKS["normal_termination"], CHECKS["geometry_required"])
         planned = next(step for step in plan.steps if step.step_id == "s_irc")
@@ -736,7 +673,8 @@ class TestIrcResume:
                     planned.step_semantic_digest,
                     provenance,
                     _irc_result(item),
-                )
+        first_request.environment.digest(),
+    )
             first_transport = RemoteTransport(
                 run_root=run_root, store=store, worker_root=str(tmp_path / "worker-a")
             )
@@ -795,7 +733,7 @@ class TestGoatResume:
         )
         items = assemble(plan, run_inputs(structures={"structures": structures})).for_step("s_goat")
         assert len(items) == 4
-        adapter = _IrcTestAdapter()
+        adapter = get_program_adapter("orca")  # real adapter: fakes speak real grammar
         profile = EnsembleProfile()
         checks = (CHECKS["normal_termination"], CHECKS["geometry_required"])
         request = _request(
@@ -818,7 +756,8 @@ class TestGoatResume:
                     planned.step_semantic_digest,
                     provenance,
                     _goat_result(item),
-                )
+        request.environment.digest(),
+    )
             resumed = _batch().execute_step_resumable(
                 request, store=store, run_root=run_root, owner_token="ctl-resume"
             )
@@ -870,7 +809,7 @@ class TestQstMappingResume:
         plan = _compile(_qst_doc())
         items, _, _ = self._mapping(plan, swapped=False)
         assert len(items) == 2
-        adapter = _IrcTestAdapter()
+        adapter = get_program_adapter("orca")  # real adapter: fakes speak real grammar
         profile = PathEndpointsProfile()
         checks = (CHECKS["normal_termination"],)
         request = _request(
@@ -893,7 +832,8 @@ class TestQstMappingResume:
                     planned.step_semantic_digest,
                     provenance,
                     _qst_result(item),
-                )
+        request.environment.digest(),
+    )
             resumed = _batch().execute_step_resumable(
                 request, store=store, run_root=run_root, owner_token="ctl-resume"
             )
@@ -916,7 +856,7 @@ class TestQstMappingResume:
         original_digests = {item.logical_key: item.semantic_digest for item in original}
         moved_digests = {item.logical_key: item.semantic_digest for item in moved}
         assert original_digests != moved_digests, "swapped mapping must move the digest"
-        adapter = _IrcTestAdapter()
+        adapter = get_program_adapter("orca")  # real adapter: fakes speak real grammar
         profile = PathEndpointsProfile()
         checks = (CHECKS["normal_termination"],)
         planned = next(step for step in plan.steps if step.step_id == "s_qst")
@@ -939,27 +879,32 @@ class TestQstMappingResume:
                     planned.step_semantic_digest,
                     provenance,
                     _qst_result(item),
+        seed_request.environment.digest(),
+    )
+            resumed = None
+            with pytest.raises(PersistenceError, match="invalidate_input"):
+                resumed = _batch().execute_step_resumable(
+                    _request(
+                        plan,
+                        "s_qst",
+                        tuple(moved),
+                        run_root,
+                        wrapper,
+                        adapter=adapter,
+                        profile=profile,
+                        checks=checks,
+                    ),
+                    store=store,
+                    run_root=run_root,
+                    owner_token="ctl-resume",
                 )
-            resumed = _batch().execute_step_resumable(
-                _request(
-                    plan,
-                    "s_qst",
-                    tuple(moved),
-                    run_root,
-                    wrapper,
-                    adapter=adapter,
-                    profile=profile,
-                    checks=checks,
-                ),
-                store=store,
-                run_root=run_root,
-                owner_token="ctl-resume",
-            )
-        assert resumed.summary["completed"] == 0
-        assert resumed.summary["failed"] == 2
-        assert _native_count(count_file) == 0
-        codes = {result.error.code for result in resumed.item_results if result.error is not None}
-        assert codes == {"invalidate_input"}
+            assert resumed is None
+            # Invalidation is terminal for this generation: nothing
+            # re-executes natively and the stored generation is preserved.
+            assert _native_count(count_file) == 0
+            from confflow.persistence.contracts import StoredWorkItemStatus
+
+            assert len(store.list_items(StoredWorkItemStatus.COMPLETED)) == 2
 
 
 class TestEndpointIdStability:
@@ -975,7 +920,7 @@ class TestEndpointIdStability:
             *(structure(f"ts{i:02d}", group_key=f"rxn-{i:02d}") for i in range(3))
         )
         items = assemble(plan, run_inputs(structures={"structures": structures})).for_step("s_irc")
-        adapter = _IrcTestAdapter()
+        adapter = get_program_adapter("orca")  # real adapter: fakes speak real grammar
         profile = PathEndpointsProfile()
         checks = (CHECKS["normal_termination"], CHECKS["geometry_required"])
         request = _request(
@@ -1003,7 +948,8 @@ class TestEndpointIdStability:
                     planned.step_semantic_digest,
                     provenance,
                     _irc_result(item),
-                )
+        request.environment.digest(),
+    )
             first = _batch().execute_step_resumable(
                 request, store=store, run_root=run_root, owner_token="ctl-1"
             )

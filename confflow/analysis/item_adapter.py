@@ -151,21 +151,27 @@ def _stamp_results(
     work_item_id: str,
     producer_digest: str,
 ) -> tuple[ScientificResult, ...]:
-    """Re-stamp core results with real step id + producer-scoped result ids."""
+    """Re-stamp core results with real step id + producer-scoped result ids.
+
+    Loud on contract violation: ``dataclasses.replace``/``make_result_id``
+    failures raise (the caller converts them to an explicit FAILED item
+    with a diagnostic).  Results are never emitted half-stamped.
+    """
+    from dataclasses import replace as _replace
+
     stamped: list[ScientificResult] = []
     for result in results:
         provenance = result.provenance
-        assert provenance is not None, "analysis results carry provenance"
-        try:
-            from dataclasses import replace as _replace
-
-            provenance = _replace(
-                provenance,
-                step_id=step_id,
-                work_item_id=work_item_id,
+        if provenance is None:
+            raise DomainError(
+                f"analysis result kind={result.kind!r} carries no provenance; "
+                "refusing to publish unstamped analysis output"
             )
-        except Exception:
-            pass
+        provenance = _replace(
+            provenance,
+            step_id=step_id,
+            work_item_id=work_item_id,
+        )
         result_id = make_result_id(
             step_id=step_id,
             work_item_id=work_item_id,
@@ -176,20 +182,15 @@ def _stamp_results(
             basis=provenance.basis,
             producer_digest=producer_digest,
         )
-        try:
-            from dataclasses import replace as _replace2
-
-            stamped.append(
-                _replace2(
-                    result,
-                    source_step_id=step_id,
-                    source_work_item_id=work_item_id,
-                    provenance=provenance,
-                    result_id=result_id,
-                )
+        stamped.append(
+            _replace(
+                result,
+                source_step_id=step_id,
+                source_work_item_id=work_item_id,
+                provenance=provenance,
+                result_id=result_id,
             )
-        except Exception:
-            stamped.append(result)
+        )
     return tuple(stamped)
 
 
@@ -210,28 +211,26 @@ class AnalysisItemAdapter:
         *,
         should_cancel: Callable[[], bool] | None = None,
     ) -> WorkItemResult:
-        """Execute one whole-set aggregation analysis work item."""
+        """Execute one whole-set aggregation analysis work item.
+
+        Only expected domain failures (bad definition, bad inputs, failed
+        stamping) become typed FAILED results.  Unexpected exceptions
+        (programmer error, corruption the contracts do not model) propagate
+        — batch performs no executor catch, so they fail stop loudly
+        instead of masquerading as scientific failure.
+        """
         wall_start = time.time()
         monotonic_start = time.monotonic()
         try:
             return self._run(work_item, context, wall_start, monotonic_start, should_cancel)
-        except AnalysisError as exc:
+        except (AnalysisError, DomainError, ValueError) as exc:
+            code = getattr(exc, "code", type(exc).__name__)
             return self._fail(
                 work_item,
                 context,
                 wall_start,
                 monotonic_start,
-                f"{exc.code}: {exc}",
-            )
-        except DomainError as exc:
-            return self._fail(work_item, context, wall_start, monotonic_start, str(exc))
-        except Exception as exc:  # fail closed; executors never raise into batch
-            return self._fail(
-                work_item,
-                context,
-                wall_start,
-                monotonic_start,
-                f"analysis internal failure: {exc}",
+                f"{code}: {exc}",
             )
 
     def _run(

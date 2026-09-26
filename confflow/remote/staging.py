@@ -293,6 +293,7 @@ def import_result_artifacts(
     bundle = _read_result_bundle(result_abs, owner=owner)
     _check_bundle_identity(bundle, handoff)
     _check_attempt_current(store, handoff.work_item_id, bundle.attempt_number)
+    verified_environment = _verified_bundle_environment(bundle)
     result_dir = os.path.dirname(result_abs)
 
     refs: list[ArtifactRef] = []
@@ -357,7 +358,12 @@ def import_result_artifacts(
         raise StagingError(f"invalid imported artifact set: {exc}") from exc
     if not isinstance(bundle.result, dict):
         raise StagingError("result payload must be a mapping")
-    return _rebuild_work_item_result(bundle.result, handoff=handoff, artifacts=artifact_set)
+    return _rebuild_work_item_result(
+        bundle.result,
+        handoff=handoff,
+        artifacts=artifact_set,
+        execution_environment=verified_environment,
+    )
 
 
 def _safe_component(value: str, field_name: str) -> str:
@@ -838,6 +844,31 @@ def _check_bundle_identity(bundle: ResultBundle, handoff: WorkerHandoffV2) -> No
             raise StagingError(f"result bundle {field_name} does not match the handoff")
 
 
+#: Metadata key carrying the verified worker-measured execution environment
+#: on an imported remote result, for the batch commit path.
+EXECUTION_ENVIRONMENT_METADATA_KEY: Final[str] = "remote_execution_environment"
+
+
+def _verified_bundle_environment(bundle: ResultBundle) -> dict[str, Any]:
+    """Verify the bundle environment as worker-measured execution truth.
+
+    The environment must be a verified measurement whose digest
+    recomputes; anything else fails the import closed.  The verified
+    mapping is returned for the commit path (the reuse axis records
+    where the computation actually ran).
+    """
+    from ..execution.contracts import ExecutionEnvironment
+
+    environment = bundle.environment
+    if not isinstance(environment, dict):
+        raise StagingError("result bundle environment must be a mapping")
+    try:
+        verified = ExecutionEnvironment.from_dict(environment)
+    except Exception as exc:
+        raise StagingError(f"result bundle environment is not trusted: {exc}") from exc
+    return verified.to_dict()
+
+
 def _check_attempt_current(store: Any, work_item_id: str, attempt_number: int) -> None:
     """Require *attempt_number* to equal the store's current attempt."""
     get_attempts = getattr(store, "get_attempts", None)
@@ -972,6 +1003,9 @@ def _build_result_set(items: Any, *, what: str) -> ResultSet:
                     source_step_id=item.get("source_step_id"),
                     source_work_item_id=item.get("source_work_item_id"),
                     provenance=provenance,
+                    # Producer-scoped identity round-trips strictly: dropping
+                    # it here would sever the ResultRef chain at import.
+                    result_id=item.get("result_id"),
                     metadata=FrozenDict(_require_mapping(item.get("metadata", {}), "metadata")),
                 )
             )
@@ -1071,7 +1105,11 @@ def _build_recovery(value: Any) -> RecoveryInfo | None:
 
 
 def _rebuild_work_item_result(
-    payload: dict[str, Any], *, handoff: WorkerHandoffV2, artifacts: ArtifactSet
+    payload: dict[str, Any],
+    *,
+    handoff: WorkerHandoffV2,
+    artifacts: ArtifactSet,
+    execution_environment: dict[str, Any],
 ) -> WorkItemResult:
     """Rebuild a result from its payload, replacing artifacts with imports."""
     if payload.get("work_item_id") != handoff.work_item_id:
@@ -1090,6 +1128,10 @@ def _rebuild_work_item_result(
     if semantic_digest is not None and semantic_digest != handoff.work_item_digest:
         raise StagingError("result semantic digest does not match the handoff")
     metadata = FrozenDict(_require_mapping(payload.get("metadata", {}), "metadata"))
+    merged_metadata = dict(metadata.thaw())
+    # The verified worker-measured environment rides in metadata for the
+    # batch commit path: execution truth, never producer-side assumption.
+    merged_metadata[EXECUTION_ENVIRONMENT_METADATA_KEY] = dict(execution_environment)
     try:
         return WorkItemResult(
             work_item_id=handoff.work_item_id,
@@ -1102,7 +1144,7 @@ def _rebuild_work_item_result(
             error=error,
             recovery=recovery,
             semantic_digest=semantic_digest,
-            metadata=metadata,
+            metadata=FrozenDict(merged_metadata),
         )
     except Exception as exc:
         raise StagingError(f"result payload is invalid: {exc}") from exc

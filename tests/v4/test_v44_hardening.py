@@ -65,27 +65,28 @@ def _request(compiled: Any, items: Any, run_root: str) -> Any:
     """Build a local durable step request wired to the fake ORCA executable."""
     from confflow.execution import ExecutionBinding
     from confflow.execution.batch import StepExecutionRequest
-    from confflow.execution.checks_standard import CHECKS
-    from confflow.execution.profile_standard import PROFILES
-    from confflow.execution.recovery_standard import RECOVERIES
-    from confflow.programs.registry import get_program_adapter
+    from confflow.execution.environment import EnvironmentMeasurer
+    from confflow.execution.registry import default_registry
 
     planned = compiled.steps[0]
+    registry = default_registry()
+    adapter = registry.resolve_program("orca")
     return StepExecutionRequest(
         step=planned,
         items=tuple(items),
         scientific=planned.scientific,
         scientific_defaults=compiled.scientific_defaults,
-        adapter=get_program_adapter("orca"),
-        profile=PROFILES["standard"],
-        checks=(CHECKS["normal_termination"],),
-        recovery=RECOVERIES["none"],
+        adapter=adapter,
+        profile=registry.profile_implementation("standard"),
+        checks=(registry.check_implementation("normal_termination"),),
+        recovery=registry.recovery_implementation("none", adapter=adapter),
         execution_binding=ExecutionBinding(
             binding_id="test", executable=str(FAKE_ORCA), env=FrozenDict({})
         ),
         run_root=run_root,
-        environment=None,
+        environment=EnvironmentMeasurer().build_environment(str(FAKE_ORCA), adapter=adapter),
         definition_digest=compiled.definition_digest,
+        executor_capability="calculation",
     )
 
 
@@ -98,6 +99,7 @@ DIGEST_C = "sha256:" + "c" * 64
 def _exec_def(**overrides: Any) -> ExecutionDefinition:
     """Build a minimal valid execution definition."""
     fields: dict[str, Any] = {
+        "executor": "calculation",
         "program": "orca",
         "resources": {"cores_per_item": 1, "memory_per_item_bytes": 2**30},
         "step_semantic_digest": DIGEST_B,
@@ -186,9 +188,10 @@ class TestWorkerDirectUnits:
         from confflow.remote import worker as _worker
         from confflow.remote.envelope import ResultEntry
 
-        def _entry(payload: Any, digest: Any = None) -> ResultEntry:
+        def _entry(payload: Any, digest: Any = None, entry_id: str = "legacy:energy:cov0") -> ResultEntry:
             return ResultEntry(
-                result_id="energy:cov0",
+                result_id=entry_id,
+                port="results",
                 payload=payload,
                 digest=digest or bundle_entry_digest("result", payload),
             )
@@ -211,6 +214,14 @@ class TestWorkerDirectUnits:
             )
         with pytest.raises(WorkerError):
             _worker._result_from_entry(_entry({"value": 1.0}))
+        # Bundle identity must be the producer-scoped id: a stamped payload
+        # under a foreign entry id, or an unstamped payload under a
+        # non-legacy id, both fail closed.
+        stamped = {"kind": "energy", "value": 1.0, "result_id": "sha256:" + "ab" * 64}
+        with pytest.raises(WorkerError):
+            _worker._result_from_entry(_entry(dict(stamped), entry_id="other-id"))
+        with pytest.raises(WorkerError):
+            _worker._result_from_entry(_entry({"kind": "energy", "value": 1.0}, entry_id="energy:cov0"))
 
     def test_artifact_rebuild_branches(self, tmp_path: Path) -> None:
         from confflow.remote import worker as _worker
@@ -221,6 +232,7 @@ class TestWorkerDirectUnits:
         staged = {"chk1": str(blob)}
         entry = _ArtifactEntry(
             artifact_id="chk1",
+            port="checkpoint",
             role="checkpoint",
             checksum="sha256:" + __import__("hashlib").sha256(b"restart-bytes").hexdigest(),
             subject_structure_id="cov0",
@@ -264,6 +276,19 @@ class TestWorkerDirectUnits:
 # ---------------------------------------------------------------------------
 
 
+def _verified_bundle_env() -> dict[str, Any]:
+    """Verified worker-measured environment over fixed test bytes."""
+    import hashlib as _hashlib
+
+    from confflow.execution.contracts import ExecutionEnvironment
+
+    return ExecutionEnvironment(
+        program="orca",
+        program_version="test",
+        executable_digest="sha256:" + _hashlib.sha256(b"hardening-bundle-env").hexdigest(),
+    ).to_dict()
+
+
 def _bundle_file(tmp_path: Path, handoff: WorkerHandoffV2, **overrides: Any) -> str:
     """Write a minimal worker result bundle, returning its path."""
     import hashlib as _hashlib
@@ -282,7 +307,7 @@ def _bundle_file(tmp_path: Path, handoff: WorkerHandoffV2, **overrides: Any) -> 
         "attempt_number": 1,
         "launch_token": handoff.launch_token,
         "work_item_digest": handoff.work_item_digest,
-        "environment": {},
+        "environment": _verified_bundle_env(),
         "result": {
             "work_item_id": handoff.work_item_id,
             "status": "completed",
@@ -1846,7 +1871,7 @@ class TestResultBundleMoreBranches:
         with pytest.raises(ResultBundleError):
             read_result_bundle(path=str(target))
         truncated = tmp_path / "truncated.json"
-        truncated.write_bytes(b'{"schema": "confflow.control.worker-result.v2"')
+        truncated.write_bytes(b'{"schema": "confflow.control.worker-result.v3"')
         os.chmod(truncated, 0o600)
         with pytest.raises(ResultBundleError):
             read_result_bundle(path=str(truncated))
@@ -1869,7 +1894,10 @@ class TestWorkerMoreBranches:
             "provenance": {"program": "orca", "step_id": "s"},
         }
         entry = ResultEntry(
-            result_id="energy:cov0", payload=payload, digest=_digest("result", payload)
+            result_id="legacy:energy:cov0",
+            port="results",
+            payload=payload,
+            digest=_digest("result", payload),
         )
         record = _worker._result_from_entry(entry)
         assert record.provenance is not None
@@ -1885,6 +1913,7 @@ class TestWorkerMoreBranches:
         second.write_bytes(b"two")
         entries = [
             _ArtifactEntry(
+                port="checkpoint",
                 artifact_id="chk",
                 role="checkpoint",
                 checksum="sha256:" + "0" * 64,
@@ -1892,6 +1921,7 @@ class TestWorkerMoreBranches:
                 bundle_locator="files/0001-chk",
             ),
             _ArtifactEntry(
+                port="native_output",
                 artifact_id="log",
                 role="native_output",
                 checksum="sha256:" + "0" * 64,
@@ -1912,6 +1942,7 @@ class TestWorkerMoreBranches:
 
         entry = _ArtifactEntry(
             artifact_id="evil",
+            port="checkpoint",
             role="checkpoint",
             checksum="sha256:" + "0" * 64,
             subject_structure_id="cov0",
@@ -1933,6 +1964,7 @@ class TestWorkerMoreBranches:
         (files_dir / "0001-chk").write_bytes(b"bytes")
         entry = _ArtifactEntry(
             artifact_id="chk",
+            port="checkpoint",
             role="checkpoint",
             checksum="sha256:" + "0" * 64,
             subject_structure_id="cov0",

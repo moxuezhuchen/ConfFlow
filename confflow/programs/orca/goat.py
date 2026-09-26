@@ -48,9 +48,32 @@ __all__ = [
 ]
 
 #: Strict native vocabulary accepted in ``native["goat"]``.
-GOAT_BLOCK_KEYS: frozenset[str] = frozenset({"MaxIter", "MaxConformers", "EnergyWindow"})
+#:
+#: ``RANDOMSEED`` is verified against the installed ORCA 6.1.1 binary:
+#: the key parses (unknown keys fail fast with "Unknown identifier in
+#: GOAT block"), non-integer values fail with "Invalid assignment in
+#: GOAT block", and integer values (including 0 and negatives) parse.
+#: The invented ``Seed`` key never existed natively and is rejected.
+GOAT_BLOCK_KEYS: frozenset[str] = frozenset({"MaxIter", "MaxConformers", "EnergyWindow", "RANDOMSEED"})
 
 _INT_KEYS: frozenset[str] = frozenset({"MaxIter", "MaxConformers"})
+
+#: Integer-valued ``%goat`` keys accepting any integer (seed semantics).
+_SEED_KEYS: frozenset[str] = frozenset({"RANDOMSEED"})
+
+
+def _check_seed_key(key: str, value: Any) -> int:
+    """Validate an integer seed ``%goat`` key (bools rejected).
+
+    Unlike count keys, seeds carry no positivity bound: the installed
+    binary parses zero and negative integers.
+    """
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(
+            f"native_input_error: ORCA '%goat' key {key!r} must be an integer, "
+            f"got {value!r}"
+        )
+    return value
 
 
 def _check_int_key(key: str, value: Any) -> int:
@@ -173,6 +196,8 @@ def render_goat_blocks(native: Mapping[str, Any]) -> str:
     for key in goat:
         if key in _INT_KEYS:
             rendered[key] = _format_value(_check_int_key(key, goat[key]))
+        elif key in _SEED_KEYS:
+            rendered[key] = _format_value(_check_seed_key(key, goat[key]))
         elif key == "EnergyWindow":
             rendered[key] = _format_value(_check_energy_window(goat[key]))
     lines = ["%goat"]

@@ -61,6 +61,7 @@ _OUTPUT_CANDIDATES: tuple[tuple[str, str], ...] = (
     ("out", "native_output"),
     ("inp", "native_input"),
     ("xyz", "native_geometry"),
+    ("finalensemble.xyz", "ensemble_geometries"),
     ("gbw", "checkpoint_wavefunction"),
     ("err", "stderr"),
 )
@@ -82,28 +83,53 @@ def _input_error(message: str) -> ValueError:
     return ValueError(f"{NativeErrorCode.NATIVE_INPUT_ERROR.value}: {message}")
 
 
-def _require_goat_seed(seed: object) -> None:
-    """Gate GOAT sampling on verified seed semantics (wave-1: always refuse).
+def _require_goat_seed(seed: object) -> int:
+    """Validate the single-authority GOAT seed for native rendering.
 
-    The typed step seed is required (single authority), but wave-1 cannot
-    verifiably render deterministic GOAT sampling: ORCA 6.1 documents no
-    integer ``Seed`` key and the older ``RANDOMSEED`` boolean is unverified
-    against the installed binary.  Both branches fail closed with an
-    explicit reason instead of claiming false deterministic support; wave-2
-    G verifies actual binary semantics.  See
-    ``/tmp/confflow-v4-native-evidence-notes.md`` and the C report.
+    The typed step seed is required; the adapter renders it as the
+    verified native ``RANDOMSEED`` key.  Verified against the installed
+    ORCA 6.1.1 binary (butane/HF-3c, wave-2 G): ``RANDOMSEED`` parses
+    (unknown keys fail fast with "Unknown identifier", non-integers with
+    "Invalid assignment"); equal integers reproduce bit-identical
+    ensembles across runs, and seeded runs differ from unseeded ones.
+    Whether distinct integers select distinct streams on larger search
+    spaces is NOT demonstrated by this evidence and is recorded as an
+    open question — ConfFlow claims same-input reproducibility only.
     """
     if seed is None or isinstance(seed, bool) or not isinstance(seed, int):
         raise _input_error(
             "GOAT sampling requires the explicit typed step seed (single authority); "
             f"got {seed!r}"
         )
-    raise _input_error(
-        "native_seed_unresolved: GOAT deterministic seed semantics are unverified "
-        "in wave-1 (ORCA 6.1 documents no integer Seed; RANDOMSEED boolean pending "
-        "wave-2 verification against the installed binary); refusing stochastic "
-        "sampling without verified seed rendering"
-    )
+    return seed
+
+
+def _require_keyword_for_mode(keyword: str, mode: str) -> None:
+    """Require the job-type keyword matching a path/ensemble mode.
+
+    Verified against the installed ORCA 6.1.1 binary: a ``%irc`` /
+    ``%neb`` / ``%goat`` block under a plain ``Opt`` keyword runs a
+    plain optimization and silently ignores the block.  The keyword
+    must therefore name the job (``IRC`` / ``NEB`` / ``NEB-TS`` /
+    ``GOAT``); otherwise rendering refuses instead of launching a
+    silently wrong job.
+    """
+    tokens = keyword.split()
+    upper = [token.upper() for token in tokens]
+    required = {
+        "irc": ("IRC",),
+        "neb": ("NEB",),
+        "neb_ts": ("NEB-TS",),
+        "goat": ("GOAT",),
+    }.get(mode)
+    if required is None:
+        return
+    if not any(token in upper for token in required):
+        raise _input_error(
+            f"ORCA {mode} mode requires keyword {'/'.join(required)} "
+            f"(got {keyword!r}); a mode block under a plain keyword "
+            "runs a different job silently"
+        )
 
 
 class OrcaProgramAdapter(ProgramAdapter):
@@ -186,6 +212,7 @@ class OrcaProgramAdapter(ProgramAdapter):
         fallback = inputs.work_item_id or inputs.step_id or "job"
         job = sanitize_job_name(inputs.logical_key, fallback=fallback)
         mode, extra_blocks, extra_files = self._resolve_path_mode(inputs, job=job)
+        _require_keyword_for_mode(keyword, mode)
         if extra_blocks:
             blocks_text = f"{blocks_text}{extra_blocks}" if blocks_text else extra_blocks
 
@@ -271,8 +298,16 @@ class OrcaProgramAdapter(ProgramAdapter):
         if mode == "irc":
             return "irc", render_irc_blocks(section), ()
         if mode == "goat":
-            blocks = render_goat_blocks(native)
-            _require_goat_seed(inputs.seed)
+            seed = _require_goat_seed(inputs.seed)
+            user_goat = dict(section)
+            if "RANDOMSEED" in user_goat:
+                raise _input_error(
+                    "native goat RANDOMSEED is a second seed authority; "
+                    "set the step seed instead (compile-time validation "
+                    "rejects this key before rendering)"
+                )
+            user_goat["RANDOMSEED"] = seed
+            blocks = render_goat_blocks({"goat": user_goat})
             return "goat", blocks, ()
         slots = inputs.extra_structures
         product_set = slots.get("product") if hasattr(slots, "get") else None
@@ -485,7 +520,7 @@ class OrcaProgramAdapter(ProgramAdapter):
         when the output explicitly reports an optimized TS.
         """
         from ...execution.native import NativeEnsembleMember, NativePathEndpoint
-        from .ensemble_parse import parse_goat_members
+        from .ensemble_parse import parse_goat_ensemble
         from .neb import parse_neb_images, parse_neb_ts_candidate
         from .path import parse_path_endpoints
 
@@ -495,28 +530,60 @@ class OrcaProgramAdapter(ProgramAdapter):
         members: tuple[NativeEnsembleMember, ...] = ()
         extra_metadata: dict[str, Any] = {"mode": mode}
         if mode == "irc":
-            endpoints = parse_path_endpoints(text, atoms=atoms)
+            endpoints = parse_path_endpoints(
+                text, atoms=atoms, work_dir=work_dir, log_base=log_base
+            )
         elif mode in ("neb", "neb_ts"):
             import dataclasses as _dataclasses
 
+            from .neb import parse_neb_ts_candidate as _parse_neb_ts_candidate
+
+            mep_path = os.path.join(work_dir, f"{log_base}_MEP_trj.xyz")
+            try:
+                with open(mep_path, encoding="utf-8") as handle:
+                    mep_xyz_text = handle.read()
+            except OSError as exc:
+                raise ValueError(
+                    "native_parse_error: NEB run produced no MEP trajectory "
+                    f"file {mep_path!r}: {exc}"
+                ) from exc
             raw_members = parse_neb_images(
-                text,
+                mep_xyz_text,
                 atoms=atoms,
                 n_images=self._materialized_neb_images(materialized),
             )
             members = tuple(
                 _dataclasses.replace(member, role="neb_image") for member in raw_members
             )
-            ts_candidate = parse_neb_ts_candidate(text)
+            ts_candidate = _parse_neb_ts_candidate(text, atoms=atoms)
             if ts_candidate is not None:
+                if mode == "neb_ts" and "NEB-TS" not in str(
+                    materialized.metadata.get("keyword", "")
+                ).upper().split():
+                    raise ValueError(
+                        "native_parse_error: NEB-TS candidate refused: the job "
+                        "keyword carries no NEB-TS token, so the highest-energy "
+                        "image is a path maximum, never an optimized TS"
+                    )
                 members = (*members, _dataclasses.replace(ts_candidate, role="neb_ts_candidate"))
             elif mode == "neb_ts":
                 raise ValueError(
                     "native_parse_error: NEB-TS requested but the output reports "
-                    "no optimized transition-state candidate"
+                    "no highest-energy image"
                 )
         else:
-            members = parse_goat_members(text, atoms=atoms)
+            ensemble_path = os.path.join(work_dir, f"{log_base}.finalensemble.xyz")
+            try:
+                with open(ensemble_path, encoding="utf-8") as handle:
+                    ensemble_xyz_text = handle.read()
+            except OSError as exc:
+                raise ValueError(
+                    "native_parse_error: GOAT run produced no "
+                    f"final-ensemble file {ensemble_path!r}: {exc}"
+                ) from exc
+            members = parse_goat_ensemble(
+                text, ensemble_xyz_text=ensemble_xyz_text, atoms=atoms
+            )
         produced: list[ProducedFile] = []
         for suffix, role in _OUTPUT_CANDIDATES:
             name = log_file_name if suffix == "out" else f"{log_base}.{suffix}"

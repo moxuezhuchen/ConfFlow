@@ -518,6 +518,42 @@ class ExecutionEnvironment:
         """Return whether this environment was actually measured."""
         return self.measurement_status == "verified"
 
+    @classmethod
+    def from_dict(cls, payload: Mapping[str, Any]) -> ExecutionEnvironment:
+        """Rebuild a verified environment from its serialized form.
+
+        The embedded digest must recompute exactly and the measurement
+        must be verified: an unmeasured or tampered environment fails
+        closed here, never at reuse comparison.
+        """
+        if not isinstance(payload, Mapping):
+            raise DomainError("execution environment payload must be a mapping")
+        data = dict(payload)
+        claimed = data.pop("digest", None)
+        try:
+            rebuilt = cls(
+                program=data.get("program"),
+                program_version=data.get("program_version"),
+                executable_digest=data.get("executable_digest"),
+                relevant_env=data.get("relevant_env") or {},
+                target=data.get("target"),
+                measurement_status=data.get("measurement_status", "verified"),
+                unknown_nonce=data.get("unknown_nonce"),
+                metadata=data.get("metadata") or {},
+            )
+        except (TypeError, DomainError) as exc:
+            raise DomainError(f"execution environment payload is invalid: {exc}") from exc
+        if not rebuilt.is_verified:
+            raise DomainError(
+                "execution environment payload is not a verified measurement; "
+                "unmeasured identity never stands in for execution truth"
+            )
+        if claimed is not None and claimed != rebuilt.digest():
+            raise DomainError(
+                "execution environment digest does not recompute; refusing tampered identity"
+            )
+        return rebuilt
+
     def digest(self) -> str:
         """Return the execution-environment digest (identity rule v2)."""
         if self.measurement_status == "unknown":

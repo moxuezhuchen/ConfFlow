@@ -89,6 +89,7 @@ _ERROR_TO_DIAGNOSTIC: Final[dict[str, str]] = {
     "correction_missing": "analysis_correction_missing",
     "unit_mismatch": "analysis_unit_mismatch",
     "non_numeric_value": "analysis_unit_mismatch",
+    "ambiguous_selection": "analysis_ambiguous_selection",
 }
 
 _FORMULA_BARRIER_FORWARD: Final[str] = "barrier_forward_endpoint=G_TS-G_forward"
@@ -344,12 +345,20 @@ def assemble_reaction_result(
         pool = lookup.get(subject)
         if pool is None or len(pool) == 0:
             continue  # Already reported above; the group fails closed below.
-        selected = select_result(
-            pool,
-            subject,
-            energy_model.electronic_selector,
-            energy_model.electronic_selector,
-        )
+        try:
+            selected = select_result(
+                pool,
+                subject,
+                energy_model.electronic_selector,
+                energy_model.electronic_selector,
+            )
+        except AnalysisMathError as exc:
+            diagnostics.append(
+                _diagnostic_for_error(
+                    exc, analysis_step_id=analysis_step_id, group_key=group.group_key
+                )
+            )
+            continue
         if selected is None:
             diagnostics.append(
                 _diagnostic(
@@ -365,7 +374,9 @@ def assemble_reaction_result(
             continue
         try:
             electronic[node] = value_in_hartree(selected)
-            electronic_sources[node] = selected.value_digest
+            source_ref = selected.result_id
+            if source_ref is not None:
+                electronic_sources[node] = source_ref
         except AnalysisMathError as exc:
             diagnostics.append(
                 _diagnostic_for_error(

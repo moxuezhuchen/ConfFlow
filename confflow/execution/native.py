@@ -124,6 +124,7 @@ class NativePathEndpoint:
     point_ordinal: int | None = None
     energy_hartree: float | None = None
     converged: bool = True
+    metadata: FrozenDict = field(default_factory=FrozenDict)
 
     def __post_init__(self) -> None:
         if self.direction not in ("forward", "reverse"):
@@ -145,6 +146,8 @@ class NativePathEndpoint:
             raise TypeError("energy_hartree must be a number or None")
         if not isinstance(self.converged, bool):
             raise TypeError("converged must be a boolean")
+        if not isinstance(self.metadata, FrozenDict):
+            object.__setattr__(self, "metadata", FrozenDict(self.metadata))
 
 
 @dataclass(frozen=True, slots=True)

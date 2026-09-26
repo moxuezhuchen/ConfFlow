@@ -60,7 +60,7 @@ from confflow.persistence.contracts import (
     store_path,
 )
 from confflow.programs.registry import get_program_adapter
-from confflow.remote.envelope import HANDOFF_SCHEMA_V2
+from confflow.remote.envelope import HANDOFF_SCHEMA_V3
 from confflow.remote.lease import AttemptLease, LeaseError
 from tests.v4._builders import (
     assemble,
@@ -137,6 +137,7 @@ def item_context(
         supervisor=supervisor,
         environment=None,
         poll_interval_seconds=0.05,
+        executor_capability="calculation",
     )
 
 
@@ -147,88 +148,67 @@ def _open_store(run_root: str, step_id: str) -> Any:
     return SqliteWorkItemStore.open(store_path(run_root, step_id))
 
 
-def _prepare_attempt(store: Any, item: Any) -> None:
-    """Register *item* and claim attempt 1 so result import has a current attempt."""
+def _prepare_attempt(store: Any, item: Any, plan: Any = None) -> None:
+    """Register *item* and claim attempt 1 so result import has a current attempt.
+
+    The step digest comes from the compiled plan (never the item digest).
+    """
+    step_digest = plan.steps[0].step_semantic_digest if plan is not None else item.semantic_digest
     store.register_item(
         work_item_id=item.id,
         logical_key=item.logical_key,
         step_id=item.step_id,
         work_item_digest=item.semantic_digest,
-        step_semantic_digest=item.semantic_digest,
+        step_semantic_digest=step_digest,
         producer_provenance={},
     )
     assert store.claim(item.id, owner=OwnerIdentity(owner_token="fault-probe")) is True
 
 
-def _test_handoff(item: Any, context: ItemExecutionContext, run_id: str, token: str) -> Any:
-    """Build a V2 envelope for *item* without the frozen transport builder.
+def _test_handoff(plan: Any, item: Any, context: ItemExecutionContext, run_id: str, token: str) -> Any:
+    """Build a V3 envelope for *item* through the frozen production builder.
 
-    Structure entries are lifted directly from the work item (no sorting
-    shim), the execution definition comes from the real transport builder,
-    and nested contracts travel as ``mode="python"`` dumps with the explicit
-    schema and protocol version, exactly as the sibling handoff suite does.
+    Assembly runs inside ``RemoteTransport._build_handoff`` against a
+    scratch durable registration carrying the plan's true step digest, so
+    fault tests exercise the exact producer-side bytes the real transport
+    emits — never a mirrored copy.  The scratch run root is named for
+    ``run_id`` so the envelope run identity matches without relabeling
+    digest-covered fields.
     """
-    from confflow.remote.envelope import (
-        InputBundleManifest,
-        StructureBundleEntry,
-        WorkerHandoffV2,
-        bundle_entry_digest,
-    )
-    from confflow.remote.transport import build_execution_definition
+    import tempfile
 
-    entries: list[StructureBundleEntry] = []
-    for port in sorted(item.named_inputs.structures):
-        for record in item.named_inputs.structures[port]:
-            payload = record.to_dict()
-            entries.append(
-                StructureBundleEntry(
-                    structure_id=record.id,
-                    payload=payload,
-                    digest=bundle_entry_digest("structure", payload),
-                )
-            )
-    manifest = InputBundleManifest(entries=tuple(entries))
-    scientific = context.scientific
-    binding = context.execution_binding
-    target = getattr(binding, "target", None)
-    environment_request: dict[str, Any] = {"program": context.adapter.program_name.value}
-    if target:
-        environment_request["target"] = target
-    definition = build_execution_definition(
-        program=context.adapter.program_name.value,
-        native=dict(scientific.native),
-        execution_adapter=scientific.execution_adapter,
-        result_profile=scientific.result_profile,
-        checks=tuple(check.name for check in context.checks),
-        check_params=dict(scientific.check_params),
-        recovery=getattr(context.recovery, "name", "none") or "none",
-        recovery_params=dict(scientific.recovery_params),
-        resources=item.resources,
-        charge=0,
-        multiplicity=1,
-        freeze=None,
-        step_semantic_digest=item.semantic_digest,
-        contract_versions={
-            "adapter": context.adapter.adapter_version,
-            "profile": context.profile.contract_version,
-        },
+    from confflow.persistence.reuse import build_producer_provenance
+    from confflow.persistence.work_items import SqliteWorkItemStore
+    from confflow.remote.transport import RemoteTransport
+
+    adapter = context.adapter
+    profile = context.profile
+    check_versions = {check.name: check.contract_version for check in context.checks}
+    recovery = context.recovery
+    provenance = build_producer_provenance(
+        adapter_version=adapter.adapter_version,
+        profile_version=profile.contract_version,
+        check_versions=check_versions,
+        recovery_version=getattr(recovery, "contract_version", "none") or "none",
     )
-    return WorkerHandoffV2.new(
-        schema=HANDOFF_SCHEMA_V2,
-        protocol_version="v2",
-        run_id=run_id,
-        step_id=context.step_id,
-        work_item_id=item.id,
-        logical_key=item.logical_key,
-        attempt_number=1,
-        launch_token=token,
-        work_item_digest=item.semantic_digest,
-        step_semantic_digest=item.semantic_digest,
-        producer_provenance={},
-        environment_request=environment_request,
-        execution=definition.model_dump(mode="python"),
-        inputs=manifest.model_dump(mode="python"),
-    )
+    base = tempfile.mkdtemp(prefix="confflow-fault-test-")
+    run_root = os.path.join(base, run_id)
+    os.makedirs(run_root, exist_ok=True)
+    store = SqliteWorkItemStore.open(os.path.join(run_root, "step.db"))
+    try:
+        store.register_item(
+            work_item_id=item.id,
+            logical_key=item.logical_key,
+            step_id=item.step_id,
+            work_item_digest=item.semantic_digest,
+            step_semantic_digest=plan.steps[0].step_semantic_digest,
+            environment_digest="sha256:" + "0" * 64,
+            producer_provenance=dict(provenance.thaw()),
+        )
+        transport = RemoteTransport(run_root=run_root, store=store, worker_root=run_root)
+        return transport._build_handoff(item, context, attempt=1, token=token)
+    finally:
+        store.close()
 
 
 def _counting_wrapper(tmp_path: Path, counter: Path) -> Path:
@@ -442,7 +422,7 @@ class TestFaultADispatchBeforeClaim:
         context = item_context(
             plan, str(FAKE_ORCA), run_root, str(tmp_path / "items"), NativeProcessSupervisor()
         )
-        handoff = _test_handoff(items[0], context, "run", token)
+        handoff = _test_handoff(plan, items[0], context, "run", token)
         # Crash before claim: dispatch happened, nothing was claimed.
         first_path = write_handoff_envelope(
             handoff=handoff, worker_root=worker_root, launch_token=token
@@ -482,16 +462,20 @@ class TestFaultBLostResponse:
         run_root = str(tmp_path / "run")
         counter = tmp_path / "native-count.txt"
         _install_orca_shim(tmp_path, monkeypatch, counter)
-        plan = compile_plan(calculation_doc("orca", str(FAKE_ORCA)))
+        # Wave-2 E: the worker launches the handoff's explicit executable
+        # verbatim (never PATH-fallback substitution), so launch counting
+        # wraps the requested binary itself.
+        wrapper = _counting_wrapper(tmp_path, counter)
+        plan = compile_plan(calculation_doc("orca", str(wrapper)))
         items = assemble_items(plan, "s0")
         with _open_store(run_root, "s_opt") as store:
-            _prepare_attempt(store, items[0])
+            _prepare_attempt(store, items[0], plan)
             transport = RemoteTransport(
                 run_root=run_root, store=store, worker_root=str(tmp_path / "worker")
             )
             context = item_context(
                 plan,
-                str(FAKE_ORCA),
+                str(wrapper),
                 run_root,
                 str(tmp_path / "items"),
                 NativeProcessSupervisor(),
@@ -663,7 +647,7 @@ class TestFaultCProducerCrash:
         context = item_context(
             plan, str(FAKE_ORCA), run_root, str(tmp_path / "items"), NativeProcessSupervisor()
         )
-        handoff = _test_handoff(items[0], context, "run", token)
+        handoff = _test_handoff(plan, items[0], context, "run", token)
         handoff_path = write_handoff_envelope(
             handoff=handoff, worker_root=worker_root, launch_token=token
         )
@@ -681,7 +665,7 @@ class TestFaultCProducerCrash:
             launch_token=token,
         )
         with _open_store(run_root, "s_opt") as store:
-            _prepare_attempt(store, items[0])
+            _prepare_attempt(store, items[0], plan)
             # Crash before the producer observes the import; reopen and import.
             store.close()
             reopened = _open_store(run_root, "s_opt")
@@ -714,12 +698,16 @@ class TestFaultDTransferRetry:
         token = "tok-fault-d1"
         counter = tmp_path / "native-count.txt"
         _install_orca_shim(tmp_path, monkeypatch, counter)
-        plan = compile_plan(calculation_doc("orca", str(FAKE_ORCA)))
+        # Wave-2 E: the worker launches the handoff's explicit executable
+        # verbatim (never PATH-fallback substitution), so launch counting
+        # wraps the requested binary itself.
+        wrapper = _counting_wrapper(tmp_path, counter)
+        plan = compile_plan(calculation_doc("orca", str(wrapper)))
         items = assemble_items(plan, "s0")
         context = item_context(
-            plan, str(FAKE_ORCA), run_root, str(tmp_path / "items"), NativeProcessSupervisor()
+            plan, str(wrapper), run_root, str(tmp_path / "items"), NativeProcessSupervisor()
         )
-        handoff = _test_handoff(items[0], context, "run", token)
+        handoff = _test_handoff(plan, items[0], context, "run", token)
         handoff_path = write_handoff_envelope(
             handoff=handoff, worker_root=worker_root, launch_token=token
         )
@@ -770,7 +758,7 @@ class TestFaultEPreCommitCrash:
         context = item_context(
             plan, str(FAKE_ORCA), run_root, str(tmp_path / "items"), NativeProcessSupervisor()
         )
-        handoff = _test_handoff(items[0], context, "run", token)
+        handoff = _test_handoff(plan, items[0], context, "run", token)
         handoff_path = write_handoff_envelope(
             handoff=handoff, worker_root=worker_root, launch_token=token
         )
@@ -788,7 +776,7 @@ class TestFaultEPreCommitCrash:
             launch_token=token,
         )
         with _open_store(run_root, "s_opt") as store:
-            _prepare_attempt(store, items[0])
+            _prepare_attempt(store, items[0], plan)
             # Crash after compute, before commit: the import proceeds twice.
             # Import is pure (the batch layer commits), so the store holds no
             # result either way; both imports return the identical result.
@@ -824,7 +812,7 @@ class TestFaultFAckLoss:
         context = item_context(
             plan, str(FAKE_ORCA), run_root, str(tmp_path / "items"), NativeProcessSupervisor()
         )
-        handoff = _test_handoff(items[0], context, "run", token)
+        handoff = _test_handoff(plan, items[0], context, "run", token)
         handoff_path = write_handoff_envelope(
             handoff=handoff, worker_root=worker_root, launch_token=token
         )
@@ -842,7 +830,7 @@ class TestFaultFAckLoss:
             launch_token=token,
         )
         with _open_store(run_root, "s_opt") as store:
-            _prepare_attempt(store, items[0])
+            _prepare_attempt(store, items[0], plan)
             committed = import_result_artifacts(
                 result_path=result_path, handoff=handoff, run_root=run_root, store=store
             )
@@ -872,7 +860,7 @@ class TestFaultGCorruptTransfer:
         context = item_context(
             plan, str(FAKE_ORCA), run_root, str(tmp_path / "items"), NativeProcessSupervisor()
         )
-        handoff = _test_handoff(items[0], context, "run", token)
+        handoff = _test_handoff(plan, items[0], context, "run", token)
         handoff_path = write_handoff_envelope(
             handoff=handoff, worker_root=worker_root, launch_token=token
         )
@@ -914,7 +902,7 @@ class TestFaultGCorruptTransfer:
         context = item_context(
             plan, str(FAKE_ORCA), run_root, str(tmp_path / "items"), NativeProcessSupervisor()
         )
-        handoff = _test_handoff(items[0], context, "run", "tok-fault-g2")
+        handoff = _test_handoff(plan, items[0], context, "run", "tok-fault-g2")
         fields: dict[str, Any] = {
             "run_id": handoff.run_id,
             "step_id": handoff.step_id,
@@ -949,7 +937,7 @@ class TestFaultGCorruptTransfer:
             handle.seek(0)
             handle.write(content)
         with _open_store(run_root, "s_opt") as store:
-            _prepare_attempt(store, items[0])
+            _prepare_attempt(store, items[0], plan)
             with pytest.raises(TYPED_ERRORS):
                 import_result_artifacts(
                     result_path=str(corrupted), handoff=handoff, run_root=run_root, store=store
@@ -969,16 +957,20 @@ class TestDuplicateDispatch:
         run_root = str(tmp_path / "run")
         counter = tmp_path / "native-count.txt"
         _install_orca_shim(tmp_path, monkeypatch, counter)
-        plan = compile_plan(calculation_doc("orca", str(FAKE_ORCA)))
+        # Wave-2 E: the worker launches the handoff's explicit executable
+        # verbatim (never PATH-fallback substitution), so launch counting
+        # wraps the requested binary itself.
+        wrapper = _counting_wrapper(tmp_path, counter)
+        plan = compile_plan(calculation_doc("orca", str(wrapper)))
         items = assemble_items(plan, "s0")
         with _open_store(run_root, "s_opt") as store:
-            _prepare_attempt(store, items[0])
+            _prepare_attempt(store, items[0], plan)
             transport = RemoteTransport(
                 run_root=run_root, store=store, worker_root=str(tmp_path / "worker")
             )
             context = item_context(
                 plan,
-                str(FAKE_ORCA),
+                str(wrapper),
                 run_root,
                 str(tmp_path / "items"),
                 NativeProcessSupervisor(),
@@ -1076,7 +1068,7 @@ class TestCancellationUncertainty:
         plan = compile_plan(calculation_doc("orca", str(FAKE_ORCA)))
         items = assemble_items(plan, "s0")
         with _open_store(run_root, "s_opt") as store:
-            _prepare_attempt(store, items[0])
+            _prepare_attempt(store, items[0], plan)
             transport = RemoteTransport(
                 run_root=run_root, store=store, worker_root=str(tmp_path / "worker")
             )

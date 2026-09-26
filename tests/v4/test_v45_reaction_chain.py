@@ -108,12 +108,13 @@ def _request(
 ) -> StepExecutionRequest:
     """Build a durable step request wired to *executable*."""
     planned = next(step for step in plan.steps if step.step_id == step_id)
+    adapter = get_program_adapter(program)
     return StepExecutionRequest(
         step=planned,
         items=tuple(items),
         scientific=planned.scientific,
         scientific_defaults=plan.scientific_defaults,
-        adapter=get_program_adapter(program),
+        adapter=adapter,
         profile=PROFILES[profile_name],
         checks=tuple(CHECKS[name] for name in checks),
         recovery=RECOVERIES["none"],
@@ -121,9 +122,17 @@ def _request(
             binding_id="test", executable=executable, env=FrozenDict({})
         ),
         run_root=run_root,
-        environment=None,
+        environment=_measured_env(adapter, executable),
         definition_digest=plan.definition_digest,
+        executor_capability=getattr(planned.executor, "value", str(planned.executor)),
     )
+
+
+def _measured_env(adapter: Any, executable: Any) -> Any:
+    """Measure the fake executable for the durable env axis."""
+    from confflow.execution.environment import EnvironmentMeasurer
+
+    return EnvironmentMeasurer().build_environment(str(executable), adapter=adapter)
 
 
 def _batch() -> BatchStepExecutor:
@@ -151,7 +160,7 @@ def _irc_doc(width: int = 4) -> dict[str, Any]:
         "s_irc",
         program="orca",
         bindings={"structure": {"source": {"run": "structures"}}},
-        native={"keyword": "B3LYP Opt", "irc": {"direction": "both"}},
+        native={"keyword": "B3LYP IRC", "irc": {"direction": "both"}},
         profile="path_endpoints",
         checks=["normal_termination"],
         scheduler={"max_parallel_items": width},
@@ -232,7 +241,7 @@ class TestRealIrcTwentyToForty:
                 "s_irc",
                 program="orca",
                 bindings={"structure": {"source": {"run": "structures"}}},
-                native={"keyword": "B3LYP Opt", "irc": {"direction": "both"}},
+                native={"keyword": "B3LYP IRC", "irc": {"direction": "both"}},
                 profile="path_endpoints",
                 checks=["normal_termination"],
                 scheduler={"max_parallel_items": 8},
@@ -290,6 +299,7 @@ class TestRealIrcTwentyToForty:
                         step_id="s_irc",
                         structures=irc_result.structures,
                         artifacts=irc_result.artifacts,
+                        status=StepStatus.COMPLETED,
                     )
                 }
             )
@@ -313,6 +323,7 @@ class TestRealIrcTwentyToForty:
                         step_id="s_opt",
                         structures=opt_result.structures,
                         artifacts=opt_result.artifacts,
+                        status=StepStatus.COMPLETED,
                     )
                 }
             )
@@ -500,12 +511,13 @@ class TestRealGoat:
             "s_goat",
             program="orca",
             bindings={"structure": {"source": {"run": "structures"}}},
-            native={"keyword": "B3LYP D3BJ Opt", "goat": {"MaxIter": 50}},
+            native={"keyword": "B3LYP D3BJ GOAT", "goat": {"MaxIter": 50}},
             profile="ensemble",
             checks=["normal_termination"],
             scheduler={"max_parallel_items": 2},
             resources={"cores_per_item": 1, "memory_per_item": "1GB"},
             execution={"binding_id": "test", "executable": "orca"},
+            seed=7,
         )
         plan = _compile(v4_doc([step], inputs=STRUCTURE_INPUTS))
         structures = StructureSet.of(
@@ -563,7 +575,7 @@ class TestRealNeb:
                 },
             },
             native={
-                "keyword": "B3LYP D3BJ Opt",
+                "keyword": "B3LYP D3BJ NEB-TS",
                 "neb": {"n_images": 5, "neb_ts": True},
                 "atom_mapping": {"kind": "identity"},
             },
@@ -602,7 +614,9 @@ class TestRealNeb:
             )
         assert result.status is StepStatus.COMPLETED
         roles = sorted(record.role for record in result.structures)
-        assert roles == ["neb_image"] * 5 + ["neb_ts_candidate"]
+        # Real MEP trajectory: 5 intermediate images plus both endpoints,
+        # plus the native-reported highest-energy-image TS candidate.
+        assert roles == ["neb_image"] * 7 + ["neb_ts_candidate"]
         assert _native_count(count_file) == 1
 
 
@@ -611,9 +625,9 @@ class TestRealIrcRemoteParity:
 
     def test_local_remote_identical(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("FAKE_MODE", "success_opt")
-        # The worker resolves the executable by program name on PATH
-        # (handoffs never carry producer absolute paths), so the fake
-        # must be visible as `orca`.
+        # The handoff carries the explicit wrapper path verbatim; the
+        # worker measures and launches it (shared filesystem), so the
+        # fake must exist at that absolute path.
         wrapper, _count = _install_fake(tmp_path, monkeypatch, FAKE_IRC, "orca")
         run_root = str(tmp_path / "run")
         worker_root = str(tmp_path / "worker")
@@ -640,6 +654,7 @@ class TestRealIrcRemoteParity:
             supervisor=NativeProcessSupervisor(),
             environment=None,
             poll_interval_seconds=0.05,
+            executor_capability="calculation",
         )
         with SqliteWorkItemStore.open(store_path(run_root, "s_irc")) as store:
             from confflow.persistence import OwnerIdentity
@@ -687,12 +702,14 @@ class TestRealIrcIncomplete:
             )
         assert result.status is StepStatus.FAILED
         assert result.summary["failed"] == 2
-        # The strict dialect rejects the missing banner at parse time:
+        # A grammatical log missing the reverse direction parses to a
+        # forward-only endpoint set; the path-endpoints profile then
+        # fails closed on the incomplete pair (never a parse error):
         # one native execution per item, no faked endpoint, no structures.
         assert _native_count(count_file) == 2
         for item_result in result.item_results:
             assert item_result.error is not None
-            assert item_result.error.code == "native_parse_error"
+            assert item_result.error.code == "incomplete_path"
             assert len(item_result.structures) == 0
 
     def test_partial_profile_output_fails_incomplete_path(
@@ -743,12 +760,13 @@ class TestRealIrcIncomplete:
                 )
 
         planned = plan.steps[0]
+        partial_adapter = _PartialAdapter()
         request = StepExecutionRequest(
             step=planned,
             items=(item,),
             scientific=planned.scientific,
             scientific_defaults=plan.scientific_defaults,
-            adapter=_PartialAdapter(),  # type: ignore[arg-type]
+            adapter=partial_adapter,  # type: ignore[arg-type]
             profile=PROFILES["path_endpoints"],
             checks=(CHECKS["normal_termination"],),
             recovery=RECOVERIES["none"],
@@ -756,8 +774,9 @@ class TestRealIrcIncomplete:
                 binding_id="test", executable=str(wrapper), env=FrozenDict({})
             ),
             run_root=run_root,
-            environment=None,
+            environment=_measured_env(partial_adapter, str(wrapper)),
             definition_digest=plan.definition_digest,
+            executor_capability=getattr(planned.executor, "value", str(planned.executor)),
         )
         with SqliteWorkItemStore.open(store_path(run_root, "s_irc")) as store:
             result = _batch().execute_step_resumable(

@@ -78,6 +78,7 @@ from typing import Any, ClassVar, Protocol, runtime_checkable
 
 from ..domain.artifact import ArtifactSet
 from ..domain.binding import PartialConsumption
+from ..domain.canonical import canonical_json_bytes
 from ..domain.diagnostics import Diagnostic, DiagnosticSeverity, diagnostic_sort_key
 from ..domain.result import ResultSet, ScientificResult
 from ..domain.structure import StructureRecord, StructureSet
@@ -189,12 +190,29 @@ def _merge_results(inputs: AnalysisInputs) -> ResultSet:
     Returns
     -------
     ResultSet
-        Combined results in deterministic port order.
+        Combined results in deterministic port order, with exact-duplicate
+        records collapsed: binding one source collection to several ports
+        must not multiply its entries.  Only fully equal payloads
+        (identical kind, value, subject, provenance, and identity)
+        collapse — distinct records, however similar, are all kept, and
+        same-``(subject, kind)`` collisions still fail closed downstream
+        as ambiguous selections.
     """
     merged: list[ScientificResult] = []
+    seen: set[str] = set()
     ports = inputs.results
     for port in sorted(ports):
-        merged.extend(ports[port])
+        for record in ports[port]:
+            try:
+                fingerprint = record.to_dict()
+                key = canonical_json_bytes(fingerprint)
+            except Exception:
+                key = None
+            if key is not None:
+                if key in seen:
+                    continue
+                seen.add(key)
+            merged.append(record)
     return ResultSet(tuple(merged))
 
 

@@ -22,7 +22,7 @@ into ``parse_path_endpoints`` (blocked seam:
 :func:`confflow.programs.orca.path.parse_path_endpoints` when the native
 request is an IRC job; the remote worker then inherits the wiring).  Until
 that lands, these tests drive the executor with the test-local
-:class:`_IrcTestAdapter` below, which delegates every method to the real ORCA
+the real ORCA adapter (retired test shim: fakes now speak real grammar)
 adapter except ``parse_native_result`` (real dialect) and the contract
 versions.  Parsing, profiling, identity, assembly, completion, and durable
 resume are all production code.
@@ -99,114 +99,6 @@ base=$(basename "$1")
 printf '%s\\n' "$base" >> "$ORCA_COUNT_FILE"
 exec python3 "$ORCA_FAKE_REAL" "$@"
 """
-
-
-class _IrcTestAdapter:
-    """Test seam: real ORCA adapter with IRC-dialect parsing.
-
-    Every method delegates to the production ORCA adapter except
-    :meth:`parse_native_result`, which parses the real minimal IRC dialect
-    via :func:`confflow.programs.orca.path.parse_path_endpoints`, and the
-    contract versions, which are test-scoped so provenance never claims to
-    be production output.
-    """
-
-    def __init__(self) -> None:
-        self._real = get_program_adapter("orca")
-
-    @property
-    def program_name(self) -> ProgramName:
-        return ProgramName.ORCA
-
-    @property
-    def adapter_version(self) -> str:
-        return "test.adapter.irc.v1"
-
-    @property
-    def parser_version(self) -> str:
-        return "test.parser.irc.v1"
-
-    @property
-    def input_extension(self) -> str:
-        return self._real.input_extension
-
-    @property
-    def log_extension(self) -> str:
-        return self._real.log_extension
-
-    @property
-    def default_executable(self) -> str:
-        return self._real.default_executable
-
-    def materialize_native_input(self, inputs: Any) -> Any:
-        return self._real.materialize_native_input(inputs)
-
-    def build_execution_request(
-        self,
-        materialized: Any,
-        *,
-        executable: str,
-        work_dir: str,
-        env: dict[str, str],
-        walltime_seconds: float | None,
-    ) -> Any:
-        return self._real.build_execution_request(
-            materialized,
-            executable=executable,
-            work_dir=work_dir,
-            env=env,
-            walltime_seconds=walltime_seconds,
-        )
-
-    def parse_native_result(
-        self, *, work_dir: str, log_file_name: str, materialized: Any
-    ) -> NativeResult:
-        log_path = os.path.join(work_dir, log_file_name)
-        try:
-            with open(log_path, encoding="utf-8") as handle:
-                text = handle.read()
-        except OSError as exc:
-            raise ValueError(f"native_parse_error: missing IRC log: {exc}") from exc
-        atoms, _ = parse_inp_coordinates(os.path.join(work_dir, materialized.main_input_name))
-        endpoints = parse_path_endpoints(text, atoms=atoms)
-        produced: list[ProducedFile] = []
-        stem, _ = os.path.splitext(log_file_name)
-        for suffix, role in (
-            ("out", "native_output"),
-            ("inp", "native_input"),
-            ("xyz", "native_geometry"),
-            ("gbw", "checkpoint_wavefunction"),
-            ("err", "stderr"),
-        ):
-            name = log_file_name if suffix == "out" else f"{stem}.{suffix}"
-            candidate = os.path.join(work_dir, name)
-            if not os.path.isfile(candidate):
-                continue
-            try:
-                size = os.path.getsize(candidate)
-            except OSError:
-                continue
-            produced.append(ProducedFile(name=name, role=role, size_bytes=int(size)))
-        return NativeResult(
-            program=ProgramName.ORCA,
-            terminated_normally=True,
-            geometry_output=GeometryOutput.NONE,
-            final_geometry=None,
-            energies_hartree=FrozenDict({}),
-            frequencies_cm=(),
-            native_metadata=FrozenDict({"irc_dialect": "confflow-irc-v1"}),
-            produced_files=tuple(produced),
-            parser_diagnostics=(),
-            log_file_name=log_file_name,
-            path_endpoints=endpoints,
-            ensemble_members=(),
-        )
-
-    def discover_artifacts(self, **kwargs: Any) -> Any:
-        return self._real.discover_artifacts(**kwargs)
-
-    def environment_probe(self, executable: str) -> dict[str, Any]:
-        return self._real.environment_probe(executable)
 
 
 def _install_wrapper(
@@ -303,7 +195,7 @@ def _chain_doc(
         adapter="standard",
         profile="path_endpoints",
         bindings={"structure": {"source": {"run": "structures"}}},
-        native={"keyword": "IRC B3LYP D3BJ"},
+        native={"keyword": "IRC B3LYP D3BJ", "irc": {"direction": "both"}},
         checks=["normal_termination", "geometry_required"],
         scheduler={"max_parallel_items": width},
         resources={"cores_per_item": 1, "memory_per_item": "1GB"},
@@ -356,12 +248,13 @@ def _irc_request(
 ) -> StepExecutionRequest:
     """Build a durable IRC step request wired to the test adapter."""
     planned = next(step for step in plan.steps if step.step_id == "s_irc")
+    irc_adapter = get_program_adapter("orca")  # real adapter: fakes speak real grammar
     return StepExecutionRequest(
         step=planned,
         items=tuple(items),
         scientific=planned.scientific,
         scientific_defaults=plan.scientific_defaults,
-        adapter=_IrcTestAdapter(),
+        adapter=irc_adapter,
         profile=PathEndpointsProfile(),
         checks=(CHECKS["normal_termination"], CHECKS["geometry_required"]),
         recovery=RECOVERIES["none"],
@@ -369,8 +262,9 @@ def _irc_request(
             binding_id="test", executable=str(executable), env=FrozenDict({})
         ),
         run_root=run_root,
-        environment=None,
+        environment=_measured_env(irc_adapter, executable),
         definition_digest=plan.definition_digest,
+        executor_capability=getattr(planned.executor, "value", str(planned.executor)),
     )
 
 
@@ -384,12 +278,13 @@ def _std_request(
 ) -> StepExecutionRequest:
     """Build an in-memory standard-profile request for opt/SP steps."""
     planned = next(step for step in plan.steps if step.step_id == step_id)
+    std_adapter = get_program_adapter("orca")
     return StepExecutionRequest(
         step=planned,
         items=tuple(items),
         scientific=planned.scientific,
         scientific_defaults=plan.scientific_defaults,
-        adapter=get_program_adapter("orca"),
+        adapter=std_adapter,
         profile=STANDARD_PROFILES["standard"],
         checks=(CHECKS["normal_termination"],),
         recovery=RECOVERIES["none"],
@@ -398,9 +293,17 @@ def _std_request(
         ),
         run_root=run_root,
         work_base=work_base,
-        environment=None,
+        environment=_measured_env(std_adapter, executable),
         definition_digest=plan.definition_digest,
+        executor_capability=getattr(planned.executor, "value", str(planned.executor)),
     )
+
+
+def _measured_env(adapter: Any, executable: Any) -> Any:
+    """Measure the fake executable for the durable env axis."""
+    from confflow.execution.environment import EnvironmentMeasurer
+
+    return EnvironmentMeasurer().build_environment(str(executable), adapter=adapter)
 
 
 def _regroup_by_group_role(structures: Any) -> dict[tuple[str, str], Any]:
@@ -609,7 +512,10 @@ class TestIrcExecutionChain:
             result for result in failed.item_results if result.work_item_id == victim.id
         )
         assert victim_result.error is not None
-        assert victim_result.error.code == "native_parse_error"
+        # The victim fake omits its reverse section: the profile fails
+        # closed on the incomplete pair (never a parse error — the log
+        # that exists is grammatical).
+        assert victim_result.error.code == "incomplete_path"
 
         with SqliteWorkItemStore.open(store_path(run_root, "s_irc")) as store:
             assert len(store.list_items(StoredWorkItemStatus.COMPLETED)) == 19

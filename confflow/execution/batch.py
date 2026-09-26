@@ -25,7 +25,7 @@ import concurrent.futures
 import os
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
@@ -125,8 +125,11 @@ class InMemoryWorkItemRepository:
         with self._lock:
             self._started[work_item_id] = {"step_id": step_id, "logical_key": logical_key}
 
-    def record_finished(self, result: WorkItemResult) -> None:
+    def record_finished(
+        self, result: WorkItemResult, *, environment_digest: str | None = None
+    ) -> None:
         """Record the terminal result of a work item."""
+        del environment_digest
         with self._lock:
             self._results[result.work_item_id] = result
 
@@ -180,6 +183,7 @@ class StepExecutionRequest:
     definition_digest: str | None = None
     should_cancel: Callable[[], bool] | None = None
     producer_provenance: FrozenDict | None = None
+    executor_capability: str | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "items", tuple(self.items))
@@ -377,6 +381,22 @@ class BatchStepExecutor:
         owner = owner_identity_current(owner_token=owner_token or f"v4-batch:{step.step_id}")
         environment = request.environment
         environment_digest = environment.digest()
+        if transport is not None:
+            # Remote steps reuse against the TARGET environment, never the
+            # producer's local measurement: the probe asks the target host
+            # for its current execution identity (a file measurement, never
+            # a native launch).  An unprobable target fails closed rather
+            # than silently substituting the producer environment.
+            probe = getattr(transport, "probe_environment_digest", None)
+            if callable(probe):
+                binding = request.execution_binding
+                probed_digest = probe(
+                    program=getattr(request.scientific, "program", None),
+                    capability=request.executor_capability,
+                    requested_executable=getattr(binding, "executable", None),
+                )
+                if probed_digest is not None:
+                    environment_digest = probed_digest
         provenance = self._current_provenance(request)
         context = ItemExecutionContext(
             step_id=step.step_id,
@@ -391,6 +411,7 @@ class BatchStepExecutor:
             work_base=durable_base,
             supervisor=self._supervisor,
             environment=request.environment,
+            executor_capability=request.executor_capability,
         )
         stop_event = threading.Event()
         stop_event_proxy = request.should_cancel
@@ -458,14 +479,31 @@ class BatchStepExecutor:
                     future.result()
         collected = tuple(results[item.id] for item in ordered)
         step_result = self._assemble(request, collected, ())
-        gap_ids = sorted({item.work_item_id for item in collected} - set(durable_ids))
+        # Strict durable publication (D-owned): a step result covering
+        # items without durable results is never published.  Carried
+        # CANCELLED items are exempt: they contribute no scientific
+        # payload (accepted sets only merge completed items) and are
+        # explicit terminal lifecycle states, so a cancelled step still
+        # publishes its lifecycle truth instead of crashing the run.
+        # Every other non-durable item (blocked/invalidated/uncommitted)
+        # refuses publication loudly; the gap diagnostic is reported
+        # through the raised error, never through a published-but-unbacked
+        # step file.
+        cancelled_ids = {
+            item.work_item_id for item in collected if item.status is WorkItemStatus.CANCELLED
+        }
+        gap_ids = sorted(
+            {item.work_item_id for item in collected} - set(durable_ids) - cancelled_ids
+        )
         if gap_ids:
-            # Strict durable publication (D-owned): a step result covering
-            # items without durable results is never published.  The gap
+            # Strict durable publication: a step result covering items
+            # without durable results is never published.  The gap
             # diagnostic is reported through the raised error, not through
             # a published-but-unbacked step file.  Status-only blocked
             # reports stay lifecycle/report data; they never counterfeit
-            # durable publication.
+            # durable publication.  Per-item reasons ride in the message so
+            # controllers can distinguish invalidation (stale generation)
+            # from transport or blocking failures without a payload.
             gap = Diagnostic(
                 code="publication_durability_gap",
                 message=(
@@ -476,10 +514,17 @@ class BatchStepExecutor:
                 step_id=step.step_id,
                 details=FrozenDict({"non_durable_item_ids": sorted(gap_ids)}),
             )
+            by_id = {item.work_item_id: item for item in collected}
+            reasons = sorted(
+                f"{item_id}={by_id[item_id].status.value}:"
+                f"{(by_id[item_id].error.code if by_id[item_id].error is not None else 'no-error')}"
+                for item_id in gap_ids
+            )
             raise PersistenceError(
                 f"refusing to publish step {step.step_id!r}: "
                 f"{len(gap_ids)} items lack durable results "
-                f"({', '.join(sorted(gap_ids))}); gap code={gap.code}"
+                f"({', '.join(sorted(gap_ids))}); gap code={gap.code}; "
+                f"reasons={', '.join(reasons)}"
             )
         verified_checksums = {
             artifact.checksum.lower()
@@ -526,6 +571,31 @@ class BatchStepExecutor:
         if transport is None:
             return self._executor.execute(item, context, should_cancel=should_cancel)
         return transport.execute(item, context, attempt=int(attempt), should_cancel=should_cancel)
+
+    @staticmethod
+    def _commit_environment_digest(result: WorkItemResult) -> str | None:
+        """Return the execution-environment override for committing *result*.
+
+        Remote delivery attaches the verified worker-measured environment
+        to the imported result metadata; the commit records where the
+        computation actually ran.  Local results carry no override and
+        keep the registration-time digest.
+        """
+        try:
+            metadata = result.metadata
+        except AttributeError:
+            return None
+        if not isinstance(metadata, Mapping):
+            return None
+        from ..remote.staging import EXECUTION_ENVIRONMENT_METADATA_KEY
+
+        carried = metadata.get(EXECUTION_ENVIRONMENT_METADATA_KEY)
+        if not isinstance(carried, Mapping):
+            return None
+        digest = carried.get("digest")
+        if not isinstance(digest, str) or not digest.strip():
+            return None
+        return digest
 
     @staticmethod
     def _current_provenance(request: StepExecutionRequest) -> FrozenDict:
@@ -748,7 +818,10 @@ class BatchStepExecutor:
                     should_cancel=should_cancel,
                     attempt=attempt,
                 )
-                store.record_finished(result)
+                store.record_finished(
+                    result,
+                    environment_digest=self._commit_environment_digest(result),
+                )
                 return result, True
             return self._contested_claim(
                 request,
@@ -831,7 +904,10 @@ class BatchStepExecutor:
                         should_cancel=should_cancel,
                         attempt=attempt,
                     )
-                    store.record_finished(result)
+                    store.record_finished(
+                    result,
+                    environment_digest=self._commit_environment_digest(result),
+                )
                     return result, True
         elif not _claim_retried and state in (
             StoredWorkItemStatus.PENDING,

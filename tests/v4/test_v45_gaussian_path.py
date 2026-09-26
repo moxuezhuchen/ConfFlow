@@ -2,11 +2,14 @@
 
 """V4-5 Gaussian reaction-path (IRC) + QST helper tests.
 
-Every log fixture below is a handcrafted string in the minimal dialect
-owned by :mod:`confflow.programs.gaussian.path` (banner lines, endpoint
-geometry blocks, energy/convergence lines). Nothing here is real
-Gaussian output and no test shells out to Gaussian; route/QST coverage
-is pure string-to-facts testing. Error assertions always require the
+Every IRC log fixture below speaks real Gaussian 16 grammar — direction
+announcements (``Point Number N in FORWARD/REVERSE path direction.``),
+point headers (``Point Number: N  Path Number: M``), ``Input orientation``
+tables with atomic numbers, ``SCF Done`` energies, and the
+``Reaction path calculation complete.`` marker — verified line-for-line
+against vendor IRC logs (``/opt/g16/tests/amd64/test0313.log`` and
+siblings).  Fixtures are synthetic in content but grammatical in form;
+no test shells out to Gaussian.  Error assertions always require the
 ``native_input_error:`` prefix, mirroring
 :mod:`confflow.programs.gaussian.rendering`.
 """
@@ -37,49 +40,75 @@ FORWARD_ENERGY = -76.123456789
 REVERSE_ENERGY = -76.111111111
 
 
-def _coordinate_lines(
+_Z_BY_SYMBOL = {"H": 1, "He": 2, "C": 6, "N": 7, "O": 8, "F": 9}
+
+
+def _orientation_block(
     rows: tuple[tuple[str, float, float, float], ...],
 ) -> list[str]:
-    """Format dialect geometry rows for a fixture block."""
-    return [f"{symbol} {x!r} {y!r} {z!r}" for symbol, x, y, z in rows]
+    """Format a real ``Input orientation`` table for fixture rows."""
+    lines = [
+        "Input orientation:",
+        " ---------------------------------------------------------------------",
+        " Center     Atomic      Atomic             Coordinates (Angstroms)",
+        " Number     Number       Type             X           Y           Z",
+        " ---------------------------------------------------------------------",
+    ]
+    for center, (symbol, x, y, z) in enumerate(rows, start=1):
+        lines.append(
+            f"      {center}          {_Z_BY_SYMBOL[symbol]}           0"
+            f"        {x:.6f}    {y:.6f}   {z:.6f}"
+        )
+    lines.append(" ---------------------------------------------------------------------")
+    return lines
 
 
-def _forward_section() -> list[str]:
-    """Build the handcrafted forward endpoint section lines."""
-    return (
-        [gaussian_path.FORWARD_BANNER, gaussian_path.GEOMETRY_HEADER]
-        + _coordinate_lines(FORWARD_ROWS)
-        + [
-            f"{gaussian_path.POINT_PREFIX} 12",
-            f"{gaussian_path.ENERGY_PREFIX} {FORWARD_ENERGY!r}",
-            f"{gaussian_path.CONVERGED_PREFIX} YES",
-        ]
-    )
+def _point_block(
+    direction: str, number: int, rows: tuple[tuple[str, float, float, float], ...], energy: float | None
+) -> list[str]:
+    """Format one real IRC point: announcement, header, table, energy."""
+    lines = [
+        f" Point Number  {number} in {direction.upper()} path direction.",
+        f" Point Number:   {number}          Path Number:   1",
+    ]
+    lines.extend(_orientation_block(rows))
+    if energy is not None:
+        lines.append(f" SCF Done:  E(RHF) =  {energy!r}     A.U. after   13 cycles")
+    return lines
 
 
-def _reverse_section() -> list[str]:
-    """Build the handcrafted reverse endpoint section lines."""
-    return (
-        [gaussian_path.REVERSE_BANNER, gaussian_path.GEOMETRY_HEADER]
-        + _coordinate_lines(REVERSE_ROWS)
-        + [
-            f"{gaussian_path.ENERGY_PREFIX} {REVERSE_ENERGY!r}",
-            f"{gaussian_path.CONVERGED_PREFIX} NO",
-        ]
-    )
+def _irc_log(
+    points: dict[str, list[tuple[int, tuple, float | None]]],
+    *,
+    complete: bool = True,
+) -> str:
+    """Assemble a real-grammar IRC log from per-direction point lists."""
+    lines = [
+        " Preamble SCF of the transition-state guess (not endpoint data).",
+        " SCF Done:  E(RHF) =  -75.0000000000     A.U. after   13 cycles",
+    ]
+    for direction in ("forward", "reverse"):
+        for number, rows, energy in points.get(direction, []):
+            lines.extend(_point_block(direction, number, rows, energy))
+        if direction == "forward" and "forward" in points:
+            lines.append(" Calculation of FORWARD path complete.")
+            if "reverse" in points:
+                lines.append(" Beginning calculation of the REVERSE path.")
+    if complete:
+        if "reverse" in points:
+            lines.append(" Calculation of REVERSE path complete.")
+        lines.append(" Reaction path calculation complete.")
+    lines.append(" Normal termination of Gaussian 16.")
+    return "\n".join(lines)
 
 
-def _wrap_log(body: list[str]) -> str:
-    """Wrap fixture sections with neutral preamble/trailer lines."""
-    return "\n".join(
-        ["DIALECT FIXTURE PREAMBLE (not real Gaussian output)"]
-        + body
-        + ["DIALECT FIXTURE TRAILER (not real Gaussian output)"]
-    )
-
-
-LOG_BOTH = _wrap_log(_forward_section() + _reverse_section())
-LOG_REVERSED = _wrap_log(_reverse_section() + _forward_section())
+LOG_BOTH = _irc_log(
+    {
+        "forward": [(1, FORWARD_ROWS, -76.2), (12, FORWARD_ROWS, FORWARD_ENERGY)],
+        "reverse": [(3, REVERSE_ROWS, REVERSE_ENERGY)],
+    }
+)
+LOG_FORWARD_ONLY = _irc_log({"forward": [(12, FORWARD_ROWS, FORWARD_ENERGY)]})
 
 
 def _expected_coords(
@@ -120,15 +149,18 @@ REACTANT_COORDS = ((0.0, 0.0, 0.0), (0.76, 0.59, 0.0), (-0.76, 0.59, 0.0))
 PRODUCT_COORDS = ((0.1, 0.0, -0.0), (0.86, 0.59, 0.0), (-0.66, 0.59, 0.0))
 GUESS_COORDS = ((0.05, 0.0, 0.0), (0.8, 0.6, 0.1), (-0.7, 0.55, -0.05))
 
+# Verified against real Gaussian 16: the first (reactant) spec is untitled
+# (the job title card serves as its title) and every later spec requires
+# its own title line PLUS a trailing blank line before charge/multiplicity.
 EXPECTED_QST2 = "\n".join(
     [
-        "reactant",
         "0 1",
         "O 0.00000000 0.00000000 0.00000000",
         "H 0.76000000 0.59000000 0.00000000",
         "H -0.76000000 0.59000000 0.00000000",
         "",
         "product",
+        "",
         "0 1",
         "O 0.10000000 0.00000000 0.00000000",
         "H 0.86000000 0.59000000 0.00000000",
@@ -139,19 +171,20 @@ EXPECTED_QST2 = "\n".join(
 
 EXPECTED_QST3 = "\n".join(
     [
-        "reactant",
         "0 1",
         "O 0.00000000 0.00000000 0.00000000",
         "H 0.76000000 0.59000000 0.00000000",
         "H -0.76000000 0.59000000 0.00000000",
         "",
         "product",
+        "",
         "0 1",
         "O 0.10000000 0.00000000 0.00000000",
         "H 0.86000000 0.59000000 0.00000000",
         "H -0.66000000 0.59000000 0.00000000",
         "",
         "guess",
+        "",
         "0 1",
         "O 0.05000000 0.00000000 0.00000000",
         "H 0.80000000 0.60000000 0.10000000",
@@ -255,9 +288,8 @@ class TestParseIrcRoute:
             gaussian_path.parse_irc_route("B3LYP IRC=")
         _assert_native_input_error(excinfo)
 
-
 class TestParseIrcEndpoints:
-    """Endpoint parsing over handcrafted dialect fixtures."""
+    """Endpoint parsing over real-grammar fixtures."""
 
     def test_both_endpoints(self) -> None:
         endpoints = gaussian_path.parse_irc_endpoints(LOG_BOTH, atoms=WATER_ATOMS)
@@ -271,155 +303,124 @@ class TestParseIrcEndpoints:
         assert reverse.geometry.atoms == WATER_ATOMS
         assert reverse.geometry.coordinates == _expected_coords(REVERSE_ROWS)
         assert reverse.energy_hartree == REVERSE_ENERGY
-        assert reverse.converged is False
-        assert reverse.point_ordinal is None
+        assert reverse.converged is True
+        assert reverse.point_ordinal == 3
 
-    def test_shuffled_section_order_invariance(self) -> None:
-        first = gaussian_path.parse_irc_endpoints(LOG_BOTH, atoms=WATER_ATOMS)
-        second = gaussian_path.parse_irc_endpoints(LOG_REVERSED, atoms=WATER_ATOMS)
-        assert [endpoint.direction for endpoint in second] == ["reverse", "forward"]
-        by_direction_first = {endpoint.direction: endpoint for endpoint in first}
-        by_direction_second = {endpoint.direction: endpoint for endpoint in second}
-        assert set(by_direction_first) == {"forward", "reverse"}
-        for direction in ("forward", "reverse"):
-            assert (
-                by_direction_first[direction].geometry.coordinates
-                == by_direction_second[direction].geometry.coordinates
-            )
-            assert (
-                by_direction_first[direction].energy_hartree
-                == by_direction_second[direction].energy_hartree
-            )
-            assert (
-                by_direction_first[direction].converged == by_direction_second[direction].converged
-            )
+    def test_endpoint_is_max_point_with_geometry(self) -> None:
+        # Forward spans points 1 and 12: the endpoint is point 12 with
+        # its own table and energy, never an earlier point.
+        (forward,) = [
+            endpoint
+            for endpoint in gaussian_path.parse_irc_endpoints(LOG_BOTH, atoms=WATER_ATOMS)
+            if endpoint.direction == "forward"
+        ]
+        assert forward.point_ordinal == 12
+        assert forward.energy_hartree == FORWARD_ENERGY
 
-    def test_missing_banner_raises(self) -> None:
-        log = _wrap_log(
-            [gaussian_path.GEOMETRY_HEADER]
-            + _coordinate_lines(FORWARD_ROWS)
-            + [f"{gaussian_path.ENERGY_PREFIX} -76.0"]
-        )
-        with pytest.raises(ValueError) as excinfo:
-            gaussian_path.parse_irc_endpoints(log, atoms=WATER_ATOMS)
-        _assert_native_input_error(excinfo)
+    def test_forward_only_direction_parses_singleton(self) -> None:
+        # A forward-only path parses one endpoint; the missing reverse
+        # direction is the result profile's fail-closed concern, not the
+        # parser's (no direction is ever inferred).
+        (endpoint,) = gaussian_path.parse_irc_endpoints(LOG_FORWARD_ONLY, atoms=WATER_ATOMS)
+        assert endpoint.direction == "forward"
+        assert endpoint.point_ordinal == 12
 
-    def test_duplicate_direction_raises(self) -> None:
-        log = _wrap_log(_forward_section() + _forward_section())
-        with pytest.raises(ValueError) as excinfo:
-            gaussian_path.parse_irc_endpoints(log, atoms=WATER_ATOMS)
-        _assert_native_input_error(excinfo)
+    def test_opt_freq_spillover_never_leaks_in(self) -> None:
+        # The preamble SCF (-75.0, transition-state guess section) is
+        # outside the IRC scope and must not become an endpoint energy.
+        (endpoint,) = gaussian_path.parse_irc_endpoints(LOG_FORWARD_ONLY, atoms=WATER_ATOMS)
+        assert endpoint.energy_hartree == FORWARD_ENERGY
 
     def test_malformed_energy_is_none(self) -> None:
-        log = _wrap_log(
-            [gaussian_path.FORWARD_BANNER, gaussian_path.GEOMETRY_HEADER]
-            + _coordinate_lines(FORWARD_ROWS)
-            + [
-                f"{gaussian_path.ENERGY_PREFIX} not-a-number",
-                f"{gaussian_path.CONVERGED_PREFIX} YES",
-            ]
+        log = _irc_log({"forward": [(4, FORWARD_ROWS, None)]})
+        log = log.replace(
+            f" SCF Done:  E(RHF) =  {None!r}     A.U. after   13 cycles", ""
         )
         (endpoint,) = gaussian_path.parse_irc_endpoints(log, atoms=WATER_ATOMS)
         assert endpoint.energy_hartree is None
         assert endpoint.converged is True
 
     def test_absent_energy_is_none(self) -> None:
-        log = _wrap_log(
-            [gaussian_path.FORWARD_BANNER, gaussian_path.GEOMETRY_HEADER]
-            + _coordinate_lines(FORWARD_ROWS)
-            + [f"{gaussian_path.CONVERGED_PREFIX} YES"]
+        (endpoint,) = gaussian_path.parse_irc_endpoints(
+            _irc_log({"forward": [(4, FORWARD_ROWS, None)]}), atoms=WATER_ATOMS
         )
-        (endpoint,) = gaussian_path.parse_irc_endpoints(log, atoms=WATER_ATOMS)
         assert endpoint.energy_hartree is None
 
-    def test_converged_defaults_true(self) -> None:
-        log = _wrap_log(
-            [gaussian_path.FORWARD_BANNER, gaussian_path.GEOMETRY_HEADER]
-            + _coordinate_lines(FORWARD_ROWS)
+    def test_incomplete_path_endpoints_unconverged(self) -> None:
+        log = _irc_log(
+            {"forward": [(4, FORWARD_ROWS, FORWARD_ENERGY)]}, complete=False
         )
         (endpoint,) = gaussian_path.parse_irc_endpoints(log, atoms=WATER_ATOMS)
-        assert endpoint.converged is True
+        assert endpoint.converged is False
+        assert endpoint.energy_hartree == FORWARD_ENERGY
 
     def test_empty_log_returns_empty(self) -> None:
         assert gaussian_path.parse_irc_endpoints("", atoms=WATER_ATOMS) == ()
         assert (
-            gaussian_path.parse_irc_endpoints("no dialect markers here\n", atoms=WATER_ATOMS) == ()
+            gaussian_path.parse_irc_endpoints("no markers here\n", atoms=WATER_ATOMS) == ()
         )
 
     def test_atom_count_mismatch_raises(self) -> None:
-        log = _wrap_log(
-            [gaussian_path.FORWARD_BANNER, gaussian_path.GEOMETRY_HEADER]
-            + _coordinate_lines(FORWARD_ROWS[:2])
-        )
+        log = _irc_log({"forward": [(4, FORWARD_ROWS[:2], FORWARD_ENERGY)]})
         with pytest.raises(ValueError) as excinfo:
             gaussian_path.parse_irc_endpoints(log, atoms=WATER_ATOMS)
         _assert_native_input_error(excinfo)
 
     def test_symbol_mismatch_raises(self) -> None:
         rows = (("O", 0.0, 0.0, 0.0), ("H", 0.76, 0.59, 0.0), ("He", 0.76, -0.59, 0.0))
-        log = _wrap_log(
-            [gaussian_path.FORWARD_BANNER, gaussian_path.GEOMETRY_HEADER] + _coordinate_lines(rows)
-        )
+        log = _irc_log({"forward": [(4, rows, FORWARD_ENERGY)]})
         with pytest.raises(ValueError) as excinfo:
             gaussian_path.parse_irc_endpoints(log, atoms=WATER_ATOMS)
         _assert_native_input_error(excinfo)
 
-    def test_unknown_symbol_raises(self) -> None:
-        log = _wrap_log(
-            [gaussian_path.FORWARD_BANNER, gaussian_path.GEOMETRY_HEADER, "Xx 0.0 0.0 0.0"]
-        )
-        with pytest.raises(ValueError) as excinfo:
-            gaussian_path.parse_irc_endpoints(log, atoms=WATER_ATOMS)
-        _assert_native_input_error(excinfo)
-
-    def test_section_without_geometry_raises(self) -> None:
-        log = _wrap_log([gaussian_path.FORWARD_BANNER, f"{gaussian_path.ENERGY_PREFIX} -76.0"])
-        with pytest.raises(ValueError) as excinfo:
-            gaussian_path.parse_irc_endpoints(log, atoms=WATER_ATOMS)
-        _assert_native_input_error(excinfo)
-
-    def test_second_geometry_block_raises(self) -> None:
-        log = _wrap_log(
-            [gaussian_path.FORWARD_BANNER, gaussian_path.GEOMETRY_HEADER]
-            + _coordinate_lines(FORWARD_ROWS)
-            + [gaussian_path.GEOMETRY_HEADER]
-            + _coordinate_lines(FORWARD_ROWS)
-        )
-        with pytest.raises(ValueError) as excinfo:
-            gaussian_path.parse_irc_endpoints(log, atoms=WATER_ATOMS)
-        _assert_native_input_error(excinfo)
-
-    def test_bad_convergence_flag_raises(self) -> None:
-        log = _wrap_log(
-            [gaussian_path.FORWARD_BANNER, gaussian_path.GEOMETRY_HEADER]
-            + _coordinate_lines(FORWARD_ROWS)
-            + [f"{gaussian_path.CONVERGED_PREFIX} MAYBE"]
-        )
-        with pytest.raises(ValueError) as excinfo:
-            gaussian_path.parse_irc_endpoints(log, atoms=WATER_ATOMS)
-        _assert_native_input_error(excinfo)
-
-    def test_bad_point_ordinal_raises(self) -> None:
-        for token in ("-1", "1.5", "twelve"):
-            log = _wrap_log(
-                [gaussian_path.FORWARD_BANNER, gaussian_path.GEOMETRY_HEADER]
-                + _coordinate_lines(FORWARD_ROWS)
-                + [f"{gaussian_path.POINT_PREFIX} {token}"]
-            )
-            with pytest.raises(ValueError) as excinfo:
-                gaussian_path.parse_irc_endpoints(log, atoms=WATER_ATOMS)
-            _assert_native_input_error(excinfo)
-
-    def test_ambiguous_banner_raises(self) -> None:
-        log = _wrap_log(
+    def test_unknown_atomic_number_raises(self) -> None:
+        lines = _orientation_block(FORWARD_ROWS)
+        lines[5] = "      1          0           0        0.000000    0.000000    0.000000"
+        log = "\n".join(
             [
-                f"{gaussian_path.FORWARD_BANNER} {gaussian_path.REVERSE_BANNER}",
-                gaussian_path.GEOMETRY_HEADER,
+                " Point Number  4 in FORWARD path direction.",
+                " Point Number:   4          Path Number:   1",
+                *lines,
+                f" SCF Done:  E(RHF) =  {FORWARD_ENERGY!r}     A.U. after   13 cycles",
+                " Reaction path calculation complete.",
             ]
-            + _coordinate_lines(FORWARD_ROWS)
         )
         with pytest.raises(ValueError) as excinfo:
             gaussian_path.parse_irc_endpoints(log, atoms=WATER_ATOMS)
+        _assert_native_input_error(excinfo)
+
+    def test_second_path_number_raises(self) -> None:
+        base = _irc_log({"forward": [(4, FORWARD_ROWS, FORWARD_ENERGY)]})
+        base = base.replace(
+            " Point Number:   4          Path Number:   1",
+            " Point Number:   4          Path Number:   2",
+        )
+        extra = "\n".join(
+            [
+                " Point Number  5 in FORWARD path direction.",
+                " Point Number:   5          Path Number:   1",
+                *_orientation_block(FORWARD_ROWS),
+                f" SCF Done:  E(RHF) =  {FORWARD_ENERGY!r}     A.U. after   13 cycles",
+            ]
+        )
+        marker = " Reaction path calculation complete."
+        assert marker in base
+        log = base.replace(marker, extra + "\n" + marker)
+        with pytest.raises(ValueError) as excinfo:
+            gaussian_path.parse_irc_endpoints(log, atoms=WATER_ATOMS)
+        _assert_native_input_error(excinfo)
+
+    def test_unannounced_point_header_raises(self) -> None:
+        log = "\n".join(
+            [
+                " Point Number:   7          Path Number:   1",
+                *_orientation_block(FORWARD_ROWS),
+            ]
+        )
+        with pytest.raises(ValueError) as excinfo:
+            gaussian_path.parse_irc_endpoints(
+                " Point Number  1 in FORWARD path direction.\n" + log, atoms=WATER_ATOMS
+            )
         _assert_native_input_error(excinfo)
 
     def test_non_string_log_raises(self) -> None:
@@ -428,47 +429,26 @@ class TestParseIrcEndpoints:
 
 
 class TestIrcTrajectoryFacts:
-    """Best-effort trajectory summaries over dialect fixtures."""
+    """Best-effort trajectory summaries over real-grammar fixtures."""
 
     def test_full_log_facts(self) -> None:
-        assert gaussian_path.irc_trajectory_facts(LOG_BOTH) == {
-            "forward_points": 1,
-            "reverse_points": 1,
-            "energies_hartree": [FORWARD_ENERGY, REVERSE_ENERGY],
-            "units": "angstrom",
-            "truncated": False,
-            "directions": ["forward", "reverse"],
-        }
-
-    def test_reversed_log_facts_follow_encounter_order(self) -> None:
-        facts = gaussian_path.irc_trajectory_facts(LOG_REVERSED)
-        assert facts["forward_points"] == 1
+        facts = gaussian_path.irc_trajectory_facts(LOG_BOTH)
+        assert facts["forward_points"] == 2
         assert facts["reverse_points"] == 1
-        assert facts["energies_hartree"] == [REVERSE_ENERGY, FORWARD_ENERGY]
+        assert facts["energies_hartree"][0] == -75.0
+        assert facts["energies_hartree"][-2:] == [FORWARD_ENERGY, REVERSE_ENERGY]
+        assert facts["units"] == "angstrom"
         assert facts["truncated"] is False
-        assert facts["directions"] == ["reverse", "forward"]
+        assert facts["path_complete"] is True
+        assert facts["directions"] == ["forward", "reverse"]
 
-    def test_log_cut_mid_block_is_truncated(self) -> None:
-        log = "\n".join(
-            [gaussian_path.FORWARD_BANNER, gaussian_path.GEOMETRY_HEADER]
-            + _coordinate_lines(FORWARD_ROWS[:1])
+    def test_incomplete_log_is_truncated(self) -> None:
+        facts = gaussian_path.irc_trajectory_facts(
+            _irc_log({"forward": [(4, FORWARD_ROWS, FORWARD_ENERGY)]}, complete=False)
         )
-        facts = gaussian_path.irc_trajectory_facts(log)
-        assert facts["forward_points"] == 0
-        assert facts["reverse_points"] == 0
-        assert facts["energies_hartree"] == []
-        assert facts["truncated"] is True
-
-    def test_malformed_energy_skipped_without_raise(self) -> None:
-        log = _wrap_log(
-            [gaussian_path.FORWARD_BANNER, gaussian_path.GEOMETRY_HEADER]
-            + _coordinate_lines(FORWARD_ROWS)
-            + [f"{gaussian_path.ENERGY_PREFIX} garbage"]
-        )
-        facts = gaussian_path.irc_trajectory_facts(log)
         assert facts["forward_points"] == 1
-        assert facts["energies_hartree"] == []
         assert facts["truncated"] is True
+        assert facts["path_complete"] is False
 
     def test_empty_log_facts(self) -> None:
         assert gaussian_path.irc_trajectory_facts("") == {
@@ -476,30 +456,15 @@ class TestIrcTrajectoryFacts:
             "reverse_points": 0,
             "energies_hartree": [],
             "units": "angstrom",
-            "truncated": False,
+            "truncated": True,
             "directions": [],
+            "path_complete": False,
         }
 
     def test_unrelated_text_never_raises(self) -> None:
         facts = gaussian_path.irc_trajectory_facts("SCF Done: garbage\n###\n")
-        assert facts["truncated"] is False
-        assert facts["forward_points"] == 0
-
-    def test_duplicate_banner_marks_truncated(self) -> None:
-        facts = gaussian_path.irc_trajectory_facts(_wrap_log(_forward_section() * 2))
-        assert facts["truncated"] is True
-        assert facts["forward_points"] == 2
-
-    def test_markers_without_banner_mark_truncated(self) -> None:
-        log = _wrap_log(
-            [gaussian_path.GEOMETRY_HEADER]
-            + _coordinate_lines(FORWARD_ROWS)
-            + [f"{gaussian_path.ENERGY_PREFIX} -76.0"]
-        )
-        facts = gaussian_path.irc_trajectory_facts(log)
         assert facts["truncated"] is True
         assert facts["forward_points"] == 0
-        assert facts["energies_hartree"] == []
 
     def test_non_string_facts_raise(self) -> None:
         with pytest.raises(TypeError):

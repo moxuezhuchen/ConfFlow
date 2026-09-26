@@ -167,6 +167,7 @@ def item_context(
         supervisor=supervisor,
         environment=None,
         poll_interval_seconds=0.05,
+        executor_capability="calculation",
     )
 
 
@@ -177,17 +178,27 @@ def _open_store(run_root: str, step_id: str) -> Any:
     return SqliteWorkItemStore.open(store_path(run_root, step_id))
 
 
-def _prepare_attempt(store: Any, item: Any) -> None:
-    """Register *item* and claim attempt 1 so result import has a current attempt."""
+def _prepare_attempt(store: Any, item: Any, plan: Any = None, *, claim: bool = True) -> None:
+    """Register *item* and claim attempt 1 so result import has a current attempt.
+
+    The step digest comes from the compiled plan (never the item digest);
+    provenance is empty for these synthetic single-step plans.  Pass
+    ``claim=False`` for handoff-construction-only registration (the later
+    import-time preparation performs the claim).
+    """
+    step_digest = (
+        plan.steps[0].step_semantic_digest if plan is not None else item.semantic_digest
+    )
     store.register_item(
         work_item_id=item.id,
         logical_key=item.logical_key,
         step_id=item.step_id,
         work_item_digest=item.semantic_digest,
-        step_semantic_digest=item.semantic_digest,
+        step_semantic_digest=step_digest,
         producer_provenance={},
     )
-    assert store.claim(item.id, owner=OwnerIdentity(owner_token="parity-probe")) is True
+    if claim:
+        assert store.claim(item.id, owner=OwnerIdentity(owner_token="parity-probe")) is True
 
 
 def _install_program_shims(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, counter: Path) -> None:
@@ -265,6 +276,12 @@ def _normalized_payload(result: WorkItemResult) -> dict[str, Any]:
     payload["diagnostics"] = [
         entry for entry in payload["diagnostics"] if not _is_transport_diagnostic(entry["code"])
     ]  # allowed: transport diagnostics
+    metadata = dict(payload.get("metadata") or {})
+    # allowed: the remote result carries its worker-measured execution
+    # environment as delivery provenance; local results carry none.
+    # Scientific identity (result_ids, digests) must still match exactly.
+    metadata.pop("remote_execution_environment", None)
+    payload["metadata"] = metadata
     return payload
 
 
@@ -499,8 +516,11 @@ class TestManifestAndDefinitionDeterminism:
         plan = compile_plan(calculation_doc("orca", ORCA_NATIVE, str(FAKE_ORCA)))
         items = assemble_items(plan, structure_set("s0"))
         kwargs: dict[str, Any] = {
+            "executor": "calculation",
             "program": "orca",
             "native": {"keyword": "B3LYP D3BJ def2-SVP Opt"},
+            "seed": None,
+            "transform": None,
             "execution_adapter": "standard",
             "result_profile": "standard",
             "checks": ("normal_termination",),
@@ -508,6 +528,9 @@ class TestManifestAndDefinitionDeterminism:
             "recovery": "none",
             "recovery_params": {},
             "resources": items[0].resources,
+            "handoff_executable": None,
+            "handoff_env": {},
+            "handoff_walltime_seconds": None,
             "charge": 0,
             "multiplicity": 1,
             "freeze": None,
@@ -556,7 +579,7 @@ class TestLocalRemoteParity:
             NativeProcessSupervisor(),
         )
         with _open_store(run_root, "s_opt") as store:
-            _prepare_attempt(store, items[0])
+            _prepare_attempt(store, items[0], plan)
             local = LocalTransport(WorkItemExecutor()).execute(items[0], local_ctx, attempt=1)
             remote = RemoteTransport(
                 run_root=run_root, store=store, worker_root=worker_root
@@ -617,7 +640,7 @@ class TestLocalRemoteParity:
             )
             local_results, remote_results = [], []
             for item in items:
-                _prepare_attempt(store, item)
+                _prepare_attempt(store, item, plan)
                 local_results.append(
                     local_transport.execute(
                         item,
@@ -729,6 +752,11 @@ class TestCheckpointHandoff:
         producer_bytes = Path(os.path.join(run_root, checkpoint.locator.path)).read_bytes()
         plan = compile_plan(calculation_doc("gaussian", GAUSSIAN_NATIVE, str(FAKE_G16)))
         consumer = self._consumer_for_checkpoint(plan, _produced, checkpoint)
+        # Production handoff path only: manifest, definition, digests, and
+        # provenance come from the frozen transport builder against the
+        # durable registration (never hand-rolled here).
+        from confflow.remote.transport import RemoteTransport, build_input_bundle_manifest
+
         manifest = build_input_bundle_manifest(
             consumer,
             artifact_bundle_files={checkpoint.id: os.path.basename(checkpoint.locator.path)},
@@ -739,42 +767,22 @@ class TestCheckpointHandoff:
         assert entries[0].role == checkpoint.role
         assert entries[0].checksum == checkpoint.checksum
         assert entries[0].subject_structure_id == checkpoint.subject_structure_id
-
-        from confflow.remote.envelope import HANDOFF_SCHEMA_V2, WorkerHandoffV2
-        from confflow.remote.transport import build_execution_definition
-
-        definition = build_execution_definition(
-            program="gaussian",
-            native=dict(GAUSSIAN_NATIVE),
-            execution_adapter="standard",
-            result_profile="standard",
-            checks=("normal_termination",),
-            check_params={},
-            recovery="none",
-            recovery_params={},
-            resources=consumer.resources,
-            charge=0,
-            multiplicity=1,
-            freeze=None,
-            step_semantic_digest=consumer.semantic_digest,
-            contract_versions={},
+        consumer_ctx = item_context(
+            plan,
+            "gaussian",
+            str(FAKE_G16),
+            run_root,
+            os.path.join(run_root, "items-consumer"),
+            NativeProcessSupervisor(),
         )
-        handoff = WorkerHandoffV2.new(
-            schema=HANDOFF_SCHEMA_V2,
-            protocol_version="v2",
-            run_id=os.path.basename(run_root),
-            step_id="s_opt",
-            work_item_id=consumer.id,
-            logical_key=consumer.logical_key,
-            attempt_number=1,
-            launch_token=token,
-            work_item_digest=consumer.semantic_digest,
-            step_semantic_digest=consumer.semantic_digest,
-            producer_provenance={},
-            environment_request={"program": "gaussian"},
-            execution=definition.model_dump(mode="python"),
-            inputs=manifest.model_dump(mode="python"),
-        )
+        store = _open_store(run_root, "s_opt")
+        try:
+            _prepare_attempt(store, consumer, plan, claim=False)
+            handoff = RemoteTransport(
+                run_root=run_root, store=store, worker_root=worker_root
+            )._build_handoff(consumer, consumer_ctx, attempt=1, token=token)
+        finally:
+            store.close()
         handoff_path = write_handoff_envelope(
             handoff=handoff, worker_root=worker_root, launch_token=token
         )
@@ -797,7 +805,7 @@ class TestCheckpointHandoff:
             launch_token=token,
         )
         with _open_store(run_root, "s_opt") as store:
-            _prepare_attempt(store, consumer)
+            _prepare_attempt(store, consumer, plan)
             remote = import_result_artifacts(
                 result_path=result_path, handoff=handoff, run_root=run_root, store=store
             )
@@ -819,58 +827,25 @@ class TestCheckpointHandoff:
         token = "tok-ckpt-rl"
         plan = compile_plan(calculation_doc("gaussian", GAUSSIAN_NATIVE, str(FAKE_G16)))
         producer = assemble_items(plan, structure_set("s0"))[0]
+        # Production handoff path only (see local-to-remote above).
+        from confflow.remote.transport import RemoteTransport
 
-        from confflow.remote.envelope import (
-            HANDOFF_SCHEMA_V2,
-            InputBundleManifest,
-            StructureBundleEntry,
-            WorkerHandoffV2,
-            bundle_entry_digest,
+        producer_ctx = item_context(
+            plan,
+            "gaussian",
+            str(FAKE_G16),
+            run_root,
+            os.path.join(run_root, "items-producer"),
+            NativeProcessSupervisor(),
         )
-        from confflow.remote.transport import build_execution_definition
-
-        payload = next(iter(producer.named_inputs.structures.values()))[0].to_dict()
-        manifest = InputBundleManifest(
-            entries=(
-                StructureBundleEntry(
-                    structure_id="s0",
-                    payload=payload,
-                    digest=bundle_entry_digest("structure", payload),
-                ),
-            )
-        )
-        definition = build_execution_definition(
-            program="gaussian",
-            native=dict(GAUSSIAN_NATIVE),
-            execution_adapter="standard",
-            result_profile="standard",
-            checks=("normal_termination",),
-            check_params={},
-            recovery="none",
-            recovery_params={},
-            resources=producer.resources,
-            charge=0,
-            multiplicity=1,
-            freeze=None,
-            step_semantic_digest=producer.semantic_digest,
-            contract_versions={},
-        )
-        handoff = WorkerHandoffV2.new(
-            schema=HANDOFF_SCHEMA_V2,
-            protocol_version="v2",
-            run_id=os.path.basename(run_root),
-            step_id="s_opt",
-            work_item_id=producer.id,
-            logical_key=producer.logical_key,
-            attempt_number=1,
-            launch_token=token,
-            work_item_digest=producer.semantic_digest,
-            step_semantic_digest=producer.semantic_digest,
-            producer_provenance={},
-            environment_request={"program": "gaussian"},
-            execution=definition.model_dump(mode="python"),
-            inputs=manifest.model_dump(mode="python"),
-        )
+        store = _open_store(run_root, "s_opt")
+        try:
+            _prepare_attempt(store, producer, plan, claim=False)
+            handoff = RemoteTransport(
+                run_root=run_root, store=store, worker_root=worker_root
+            )._build_handoff(producer, producer_ctx, attempt=1, token=token)
+        finally:
+            store.close()
         handoff_path = write_handoff_envelope(
             handoff=handoff, worker_root=worker_root, launch_token=token
         )
@@ -888,7 +863,7 @@ class TestCheckpointHandoff:
             launch_token=token,
         )
         with _open_store(run_root, "s_opt") as store:
-            _prepare_attempt(store, producer)
+            _prepare_attempt(store, producer, plan)
             produced = import_result_artifacts(
                 result_path=result_path, handoff=handoff, run_root=run_root, store=store
             )
@@ -927,8 +902,11 @@ class TestSchedulerEndpointChange:
         plan = compile_plan(calculation_doc("orca", ORCA_NATIVE, str(FAKE_ORCA)))
         items = assemble_items(plan, structure_set("s0"))
         base: dict[str, Any] = {
+            "executor": "calculation",
             "program": "orca",
             "native": dict(ORCA_NATIVE),
+            "seed": None,
+            "transform": None,
             "execution_adapter": "standard",
             "result_profile": "standard",
             "checks": ("normal_termination",),
@@ -936,6 +914,9 @@ class TestSchedulerEndpointChange:
             "recovery": "none",
             "recovery_params": {},
             "resources": items[0].resources,
+            "handoff_executable": None,
+            "handoff_env": {},
+            "handoff_walltime_seconds": None,
             "charge": 0,
             "multiplicity": 1,
             "freeze": None,

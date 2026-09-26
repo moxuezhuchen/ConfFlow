@@ -217,7 +217,7 @@ class TestV4AnalysisStep:
             "s_irc",
             program="orca",
             bindings={"structure": {"source": {"run": "structures"}}},
-            native={"keyword": "B3LYP Opt", "irc": {"direction": "both"}},
+            native={"keyword": "B3LYP IRC", "irc": {"direction": "both"}},
             profile="path_endpoints",
             checks=["normal_termination"],
             scheduler={"max_parallel_items": 1},

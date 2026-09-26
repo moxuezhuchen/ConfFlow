@@ -73,6 +73,7 @@ def _struct_entry(
 def _exec_def(**overrides: Any) -> ExecutionDefinition:
     """Build a minimal valid execution definition."""
     fields: dict[str, Any] = {
+        "executor": "calculation",
         "program": "orca",
         "resources": {"cores_per_item": 1, "memory_per_item_bytes": 2**30},
         "step_semantic_digest": DIGEST_B,
@@ -285,6 +286,7 @@ class TestWorkerEntryValidation:
         digest = overrides.pop("digest", None)
         return ResultEntry(
             result_id="energy:cov0",
+            port="results",
             payload=payload,
             digest=digest or bundle_entry_digest("result", payload),
         )
@@ -318,6 +320,7 @@ class TestWorkerEntryValidation:
 
         entry = ArtifactBundleEntry(
             artifact_id="chk1",
+            port="checkpoint",
             role="checkpoint",
             checksum="sha256:" + "1" * 64,
             subject_structure_id="cov0",
@@ -336,6 +339,7 @@ class TestWorkerEntryValidation:
 
         entry = ArtifactBundleEntry(
             artifact_id="chk1",
+            port="checkpoint",
             role="checkpoint",
             checksum="sha256:" + "1" * 64,
             subject_structure_id="cov0",
@@ -414,7 +418,7 @@ class TestWorkerUnitHelpers:
         from confflow.remote import worker as _worker
         from confflow.remote.envelope import ExecutionDefinition as _ExecDef
 
-        scientific, defaults = _worker._build_scientific(_exec_def())
+        scientific, defaults = _worker._build_calculation_scientific(_exec_def())
         assert scientific is not None
         assert defaults is not None
         unvalidated = _ExecDef.model_construct(
@@ -423,7 +427,7 @@ class TestWorkerUnitHelpers:
             step_semantic_digest=DIGEST_B,
         )
         with pytest.raises(WorkerError):
-            _worker._build_scientific(unvalidated)
+            _worker._build_calculation_scientific(unvalidated)
 
 
 # ---------------------------------------------------------------------------
@@ -470,6 +474,7 @@ class TestStagingValidation:
         checksum = "sha256:" + _hashlib.sha256(b"checkpoint-bytes").hexdigest()
         first = _ArtifactEntry(
             artifact_id="dup",
+            port="checkpoint",
             role="checkpoint",
             checksum=checksum,
             subject_structure_id="cov0",
@@ -477,6 +482,7 @@ class TestStagingValidation:
         )
         second = _ArtifactEntry(
             artifact_id="dup",
+            port="checkpoint",
             role="checkpoint",
             checksum=checksum,
             subject_structure_id="cov0",
@@ -494,6 +500,7 @@ class TestStagingValidation:
             )
         other = _ArtifactEntry(
             artifact_id="other",
+            port="checkpoint",
             role="checkpoint",
             checksum=checksum,
             subject_structure_id="cov0",
@@ -519,6 +526,19 @@ class TestStagingValidation:
                 worker_root=str(blocker),
                 launch_token="t",
             )
+
+
+def _bundle_environment_for_coverage() -> dict[str, Any]:
+    """Verified worker-measured environment over fixed test bytes (module scope)."""
+    import hashlib as _hashlib
+
+    from confflow.execution.contracts import ExecutionEnvironment
+
+    return ExecutionEnvironment(
+        program="orca",
+        program_version="test",
+        executable_digest="sha256:" + _hashlib.sha256(b"bundle-env-bytes").hexdigest(),
+    ).to_dict()
 
 
 class TestImportValidation:
@@ -548,6 +568,19 @@ class TestImportValidation:
                 store=None,
             )
 
+    @staticmethod
+    def _bundle_environment() -> dict[str, Any]:
+        """Verified worker-measured environment over fixed test bytes."""
+        import hashlib as _hashlib
+
+        from confflow.execution.contracts import ExecutionEnvironment
+
+        return ExecutionEnvironment(
+            program="orca",
+            program_version="test",
+            executable_digest="sha256:" + _hashlib.sha256(b"bundle-env-bytes").hexdigest(),
+        ).to_dict()
+
     def _result_bundle_file(
         self, tmp_path: Path, handoff: WorkerHandoffV2, attempt: int = 1
     ) -> str:
@@ -566,7 +599,7 @@ class TestImportValidation:
             attempt_number=attempt,
             launch_token=handoff.launch_token,
             work_item_digest=handoff.work_item_digest,
-            environment={},
+            environment=self._bundle_environment(),
             result={
                 "work_item_id": handoff.work_item_id,
                 "status": "completed",
@@ -696,7 +729,7 @@ class TestImportValidation:
             attempt_number=1,
             launch_token=handoff.launch_token,
             work_item_digest=handoff.work_item_digest,
-            environment={},
+            environment=_bundle_environment_for_coverage(),
             result={
                 "work_item_id": handoff.work_item_id,
                 "status": "completed",
@@ -1128,8 +1161,11 @@ class TestTransportMapping:
         from confflow.domain.resources import ResourceRequest
 
         definition = build_execution_definition(
+            executor="calculation",
             program="orca",
             native={"keyword": "x"},
+            seed=None,
+            transform=None,
             execution_adapter=None,
             result_profile=None,
             checks=("normal_termination",),
@@ -1137,6 +1173,9 @@ class TestTransportMapping:
             recovery="none",
             recovery_params=FrozenDict({}),
             resources=ResourceRequest(cores_per_item=1, memory_per_item_bytes=2**30),
+            handoff_executable=None,
+            handoff_env={},
+            handoff_walltime_seconds=None,
             charge=0,
             multiplicity=1,
             freeze=None,
@@ -1146,8 +1185,11 @@ class TestTransportMapping:
         assert definition.execution_adapter == "standard"
         assert definition.checks == ("normal_termination",)
         native_definition = build_execution_definition(
+            executor="calculation",
             program="orca",
             native=FrozenDict({"keyword": "x"}),
+            seed=7,
+            transform=None,
             execution_adapter="custom",
             result_profile="custom",
             checks=[],
@@ -1155,6 +1197,9 @@ class TestTransportMapping:
             recovery="none",
             recovery_params={},
             resources={"cores_per_item": 1},
+            handoff_executable="/opt/orca",
+            handoff_env={"OMP": "1"},
+            handoff_walltime_seconds=60,
             charge=None,
             multiplicity=None,
             freeze=[1, 2],

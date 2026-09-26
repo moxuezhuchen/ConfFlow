@@ -34,10 +34,11 @@ __all__ = [
     "validate_qst_slots",
 ]
 
-#: Title card of the first molecule specification.
-REACTANT_TITLE: Final[str] = "reactant"
-
-#: Title card of the second molecule specification.
+#: Title card of the second molecule specification.  The first
+#: (reactant) spec is untitled: the job title card serves as its title.
+#: Verified against real Gaussian 16, which consumes a bare second
+#: charge line as end of file — every spec after the first requires
+#: its own title line (single-word titles parse).
 PRODUCT_TITLE: Final[str] = "product"
 
 #: Title card of the QST3 transition-state guess specification.
@@ -252,7 +253,7 @@ def _format_coordinate(value: float, title: str, position: int) -> str:
 
 
 def _format_spec(
-    title: str,
+    title: str | None,
     atoms: Sequence[str],
     coords: Sequence[Sequence[float]],
     charge: int,
@@ -262,8 +263,9 @@ def _format_spec(
 
     Parameters
     ----------
-    title : str
-        Slot title card (``reactant``, ``product``, or ``guess``).
+    title : str | None
+        Slot title card (``product`` or ``guess``); ``None`` for the
+        first (reactant) spec, whose title is the job title card.
     atoms : Sequence[str]
         Element symbols in atom order.
     coords : Sequence[Sequence[float]]
@@ -276,8 +278,8 @@ def _format_spec(
     Returns
     -------
     str
-        Title line, charge/multiplicity line, then one coordinate line
-        per atom.
+        Optional title line, charge/multiplicity line, then one
+        coordinate line per atom.
 
     Raises
     ------
@@ -312,7 +314,8 @@ def _format_spec(
             f"native_input_error: Gaussian QST {title!r} slot has "
             f"{len(symbols)} atoms but {len(points)} coordinate triples"
         )
-    lines = [title, f"{charge} {multiplicity}"]
+    lines = [] if title is None else [title, ""]
+    lines.append(f"{charge} {multiplicity}")
     for position, (symbol, point) in enumerate(zip(symbols, points), start=1):
         if isinstance(point, (str, bytes)):
             raise ValueError(
@@ -375,8 +378,13 @@ def render_qst_molecule_specs(
     Returns
     -------
     str
-        Spec blocks joined by single blank lines with a trailing
-        newline; deterministic ``%.8f`` coordinates, no filenames.
+        The first (reactant) spec as charge/multiplicity plus coordinates
+        only — the job title card serves as its title — followed by
+        blank-line-separated titled product (and guess) specs.  Verified
+        against real Gaussian 16: every spec after the first requires its
+        own title line (a bare charge line is consumed as file end), and
+        single-word titles parse.  Deterministic ``%.8f`` coordinates, no
+        filenames.
 
     Raises
     ------
@@ -394,7 +402,7 @@ def render_qst_molecule_specs(
         )
     blocks = [
         _format_spec(
-            REACTANT_TITLE,
+            None,
             reactant_atoms,
             reactant_coords,
             charge_value,

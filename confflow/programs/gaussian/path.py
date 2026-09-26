@@ -2,36 +2,48 @@
 
 """Gaussian reaction-path (IRC) route and endpoint helpers for V4-5.
 
-Pure helpers over documented Gaussian IRC semantics. This module never
-touches real Gaussian output: the endpoint parser reads only the minimal
-log dialect defined below, and every fixture exercising it is a
-handcrafted dialect string (see ``tests/v4/test_v45_gaussian_path.py``).
+Pure helpers over real Gaussian 16 IRC semantics, verified against vendor
+IRC logs (``/opt/g16/tests/amd64/test0313.log`` and siblings, Gaussian 16
+Revision C.02).  Direction comes only from explicit native direction
+announcements; endpoint geometries come only from ``Input orientation``
+tables; endpoint energies come only from ``SCF Done`` lines.  Anything
+else is ignored or fails closed — never inferred.
 
-Minimal IRC log dialect (owned by this module)
-----------------------------------------------
-- ``IRC FORWARD PATH`` / ``IRC REVERSE PATH`` banner lines select the
-  section direction. Matching is a case-sensitive substring test applied
-  to a single line; direction never comes from section order, and a line
-  containing both banners is rejected as ambiguous.
-- ``Endpoint geometry (Angstrom):`` opens one coordinate block. The
-  following consecutive ``<symbol> <x> <y> <z>`` lines are the endpoint
-  geometry in Angstrom. The block ends at the first blank or
-  non-coordinate line. Non-marker lines elsewhere are ignored.
-- ``Endpoint SCF energy: <float>`` records the endpoint Hartree energy
-  (last occurrence in the section wins; an unparsable or absent value
-  means ``None``, never zero).
-- ``Endpoint converged: YES`` / ``Endpoint converged: NO`` records
-  convergence (last wins; defaults to ``True``; anything else is
-  rejected). An unconverged endpoint is still reported with
-  ``converged=False``; the result profile decides what that means.
-- ``Endpoint point: <int>`` optionally records the native point ordinal
-  (last wins; absent means ``None``).
+Real Gaussian 16 IRC grammar (evidence: vendor logs above)
+----------------------------------------------------------
+- ``Point Number  N in FORWARD path direction.`` /
+  ``Point Number  N in REVERSE path direction.`` announces the direction
+  of the following points.  Points before the first announcement (the
+  transition-state origin, ``Point Number: 0``) carry no direction and
+  are never endpoints.
+- ``Point Number:   N          Path Number:   M`` opens point ``N`` of
+  path ``M``.  Only points inside the IRC scope (first announcement
+  through ``Reaction path calculation complete.`` or end of file) are
+  considered, so Opt/Freq sections of multi-step logs never leak in.
+- ``Input orientation:`` tables carry ``Center / Atomic Number / Type /
+  X Y Z`` rows in Angstrom; the last table of a point's span wins.
+- ``SCF Done:  E(<method>) =  <float>     A.U.`` carries the point
+  Hartree energy; the last one of a point's span wins (absent or
+  unparsable means ``None``, never zero).
+- ``Calculation of FORWARD path complete.`` /
+  ``Calculation of REVERSE path complete.`` /
+  ``Beginning calculation of the REVERSE path.`` /
+  ``Reaction path calculation complete.`` delimit direction sections.
+- Endpoints are the maximum point number per ``(direction, path)`` group.
+  Each direction present must span exactly one path number, else the log
+  is ambiguous and parsing fails closed.  A direction with no points is
+  simply absent (the result profile demands exactly one forward plus one
+  reverse endpoint and fails closed on anything else).
+- Convergence is the literal ``Reaction path calculation complete.``
+  marker: present means converged endpoints, absent means the path
+  stopped early (endpoints still parse with ``converged=False``).
 
-Fail-closed boundaries: a dialect marker outside a bannered section, a
-section without exactly one geometry block, a duplicate direction, a
-geometry whose atom count or symbols disagree with the expected atoms,
-and an ambiguous banner all raise ``ValueError``. Return order is
-encounter order; the profile re-sorts by direction for identity.
+Fail-closed boundaries: a second path number inside one direction, an
+endpoint geometry whose atom count or symbols disagree with the expected
+atoms, an unknown atomic number, and a point header outside any direction
+(other than the unattributed origin) all raise ``ValueError``.  Return
+order is forward-then-reverse; the profile re-sorts by direction for
+identity.
 """
 
 from __future__ import annotations
@@ -47,34 +59,28 @@ from ...domain.errors import ElementSymbolError
 from ...execution.native import NativePathEndpoint, ParsedGeometry
 
 __all__ = [
-    "CONVERGED_PREFIX",
-    "ENERGY_PREFIX",
-    "FORWARD_BANNER",
-    "GEOMETRY_HEADER",
-    "POINT_PREFIX",
-    "REVERSE_BANNER",
     "irc_trajectory_facts",
     "parse_irc_endpoints",
     "parse_irc_route",
 ]
 
-#: Banner marking a forward-direction endpoint section (substring match).
-FORWARD_BANNER: Final[str] = "IRC FORWARD PATH"
+#: Real Gaussian 16 IRC direction announcement, e.g.
+#: ``Point Number  1 in FORWARD path direction.``
+_DIRECTION_ANNOUNCE_RE: Final = re.compile(
+    r"Point Number\s+(\d+)\s+in\s+(FORWARD|REVERSE)\s+path direction\."
+)
 
-#: Banner marking a reverse-direction endpoint section (substring match).
-REVERSE_BANNER: Final[str] = "IRC REVERSE PATH"
+#: Real point header, e.g. ``Point Number:   3          Path Number:   1``.
+_POINT_HEADER_RE: Final = re.compile(r"Point Number:\s*(\d+)\s+Path Number:\s*(\d+)")
 
-#: Header opening an endpoint coordinate block.
-GEOMETRY_HEADER: Final[str] = "Endpoint geometry (Angstrom):"
+#: Real SCF energy line, e.g. ``SCF Done:  E(RHF) =  -91.57     A.U.``.
+_SCF_DONE_RE: Final = re.compile(r"SCF Done:\s+E\(\S+\)\s*=\s*(\S+)\s+A\.U\.")
 
-#: Prefix of the endpoint Hartree-energy line.
-ENERGY_PREFIX: Final[str] = "Endpoint SCF energy:"
+#: Real overall path-completion marker (convergence fact).
+_PATH_COMPLETE_MARKER: Final[str] = "Reaction path calculation complete."
 
-#: Prefix of the endpoint convergence line.
-CONVERGED_PREFIX: Final[str] = "Endpoint converged:"
-
-#: Prefix of the optional native point-ordinal line.
-POINT_PREFIX: Final[str] = "Endpoint point:"
+#: Real orientation-table header.
+_ORIENTATION_HEADER: Final[str] = "Input orientation:"
 
 #: Direction votes recognized inside ``IRC(...)``, case-insensitively.
 _DIRECTION_TOKENS: Final[dict[str, str]] = {
@@ -112,77 +118,65 @@ def _finite_float(token: str) -> float | None:
     return value if math.isfinite(value) else None
 
 
-def _parse_atom_row(line: str) -> tuple[str, float, float, float] | None:
-    """Parse one dialect coordinate row, or return ``None``.
+def _orientation_row(line: str) -> tuple[str, float, float, float] | None:
+    """Parse one orientation-table coordinate row, or return ``None``.
 
-    Parameters
-    ----------
-    line : str
-        Candidate ``<symbol> <x> <y> <z>`` line.
-
-    Returns
-    -------
-    tuple | None
-        ``(canonical_symbol, x, y, z)`` for a well-formed row with a
-        known element symbol and finite coordinates, else ``None``.
+    Real Gaussian 16 prints two flavors: the ``Input orientation`` form
+    ``<center> <Z> <type> <x> <y> <z>`` and the compact ``Center / Atomic
+    / Coordinates`` form ``<center> <Z> <x> <y> <z>``.  Atomic numbers map
+    through the element table (out-of-range numbers fail closed); the
+    center index and atom type never participate in identity.  Fortran
+    ``D`` exponents are accepted alongside ``E``.
     """
+    from ...domain.elements import ELEMENT_SYMBOLS
+
     parts = line.split()
-    if len(parts) != 4:
+    if len(parts) == 6:
+        number_token, coord_tokens = parts[1], parts[3:6]
+    elif len(parts) == 5:
+        number_token, coord_tokens = parts[1], parts[2:5]
+    else:
         return None
     try:
-        symbol = canonical_element_symbol(parts[0])
-    except (ElementSymbolError, TypeError, ValueError):
+        atomic_number = int(number_token)
+    except (TypeError, ValueError):
         return None
-    x = _finite_float(parts[1])
-    y = _finite_float(parts[2])
-    z = _finite_float(parts[3])
-    if x is None or y is None or z is None:
+    if atomic_number < 1 or atomic_number >= len(ELEMENT_SYMBOLS):
         return None
-    return (symbol, x, y, z)
+    symbol = ELEMENT_SYMBOLS[atomic_number]
+    if not symbol:
+        return None
+    try:
+        point = tuple(float(token.replace("D", "E").replace("d", "E")) for token in coord_tokens)
+    except (TypeError, ValueError):
+        return None
+    if len(point) != 3 or not all(math.isfinite(value) for value in point):
+        return None
+    return (symbol, point[0], point[1], point[2])
 
 
-def _banner_direction(line: str) -> str | None:
-    """Return the section direction selected by a banner line.
+def _announced_direction(line: str) -> str | None:
+    """Return the direction announced by a real IRC log line, if any.
 
-    Parameters
-    ----------
-    line : str
-        Single stripped log line.
-
-    Returns
-    -------
-    str | None
-        ``"forward"``, ``"reverse"``, or ``None`` when the line carries
-        no banner.
-
-    Raises
-    ------
-    ValueError
-        Raised when the line contains both banners.
+    Matches ``Point Number  N in FORWARD path direction.`` (and the
+    REVERSE form) exactly; a line announcing both directions is
+    impossible by construction of the alternation and needs no guard.
     """
-    forward = FORWARD_BANNER in line
-    reverse = REVERSE_BANNER in line
-    if forward and reverse:
-        raise ValueError(
-            "native_input_error: Gaussian IRC log line carries both "
-            "direction banners; direction must be unambiguous"
-        )
-    if forward:
-        return "forward"
-    if reverse:
-        return "reverse"
-    return None
+    match = _DIRECTION_ANNOUNCE_RE.search(line)
+    if match is None:
+        return None
+    return "forward" if match.group(2) == "FORWARD" else "reverse"
 
 
 @dataclass
-class _EndpointSection:
-    """Mutable accumulator for one bannered endpoint section."""
+class _PathPoint:
+    """Mutable accumulator for one real IRC point."""
 
     direction: str
+    number: int
+    path: int
     rows: list[tuple[str, float, float, float]] | None = None
     energy: float | None = None
-    converged: bool = True
-    point: int | None = None
 
 
 def parse_irc_route(keyword: str) -> dict[str, Any]:
@@ -314,18 +308,19 @@ def _require_expected_atoms(atoms: Sequence[str]) -> tuple[str, ...]:
 
 
 def parse_irc_endpoints(log_text: str, *, atoms: Sequence[str]) -> tuple[NativePathEndpoint, ...]:
-    """Parse reaction-path endpoints from the owned log dialect.
+    """Parse reaction-path endpoints from real Gaussian 16 IRC output.
 
-    Direction comes from section banners only, never from section order.
-    Sections before the first banner are impossible by construction: any
-    dialect marker outside a bannered section raises instead of being
-    silently attributed.
+    Direction comes from explicit direction announcements only, never
+    from section order.  Points before the first announcement (the
+    transition-state origin) carry no direction and are never endpoints.
+    Parsing is scoped to the IRC section (first announcement through
+    ``Reaction path calculation complete.`` or end of file) so Opt/Freq
+    sections of multi-step logs never leak in.
 
     Parameters
     ----------
     log_text : str
-        Log content in the module dialect (handcrafted fixtures only;
-        never real Gaussian output).
+        Full Gaussian log text containing an IRC section.
     atoms : Sequence[str]
         Expected element symbols in atom order. Every endpoint geometry
         must carry exactly these symbols in this order.
@@ -333,8 +328,8 @@ def parse_irc_endpoints(log_text: str, *, atoms: Sequence[str]) -> tuple[NativeP
     Returns
     -------
     tuple[NativePathEndpoint, ...]
-        Parsed endpoints in encounter order (the profile re-sorts by
-        direction for identity; see
+        Parsed endpoints in forward-then-reverse order (the profile
+        re-sorts by direction for identity; see
         :mod:`confflow.execution.output_identity`).
 
     Raises
@@ -342,172 +337,206 @@ def parse_irc_endpoints(log_text: str, *, atoms: Sequence[str]) -> tuple[NativeP
     TypeError
         Raised when *log_text* is not a string.
     ValueError
-        Raised as ``native_input_error`` when a marker appears outside a
-        bannered section, a banner is ambiguous, a direction repeats, a
-        section lacks exactly one geometry block, a geometry block is
-        empty, atom counts or symbols disagree, or a convergence or point
-        flag is malformed. An unparsable energy is ``None``, not an
-        error.
+        Raised as ``native_input_error`` when one direction spans more
+        than one path number, an endpoint geometry is missing, atom
+        counts or symbols disagree, or an atomic number is unknown.  An
+        absent energy is ``None``, not an error.  A direction with no
+        points is simply absent (the result profile demands exactly one
+        forward plus one reverse endpoint and fails closed otherwise).
     """
     if not isinstance(log_text, str):
         raise TypeError("log_text must be a string")
     expected = _require_expected_atoms(atoms)
     lines = log_text.splitlines()
-    sections: list[_EndpointSection] = []
-    seen: set[str] = set()
-    current: _EndpointSection | None = None
+    # Scope to the IRC section: first direction announcement through the
+    # path-completion marker (or end of file when the path stopped early).
+    start = next(
+        (index for index, line in enumerate(lines) if _DIRECTION_ANNOUNCE_RE.search(line)),
+        None,
+    )
+    if start is None:
+        return ()
+    end = next(
+        (
+            index
+            for index, line in enumerate(lines)
+            if _PATH_COMPLETE_MARKER in line and index >= start
+        ),
+        len(lines),
+    )
+    converged = end < len(lines)
+    scoped = lines[start:end]
+    points: dict[tuple[str, int, int], _PathPoint] = {}
+    direction: str | None = None
+    announced: dict[str, set[int]] = {"forward": set(), "reverse": set()}
+    current: _PathPoint | None = None
     index = 0
-    while index < len(lines):
-        stripped = lines[index].strip()
-        direction = _banner_direction(stripped)
-        if direction is not None:
-            if direction in seen:
-                raise ValueError(
-                    "native_input_error: Gaussian IRC log repeats the "
-                    f"{direction} direction section"
-                )
-            seen.add(direction)
-            current = _EndpointSection(direction=direction)
-            sections.append(current)
+    while index < len(scoped):
+        stripped = scoped[index].strip()
+        announced_now = _announced_direction(stripped)
+        if announced_now is not None:
+            # Announcements select the direction for subsequent point
+            # headers; they never close the previous point's span (that
+            # point's geometry and energy print after the announcement
+            # of the next step).
+            direction = announced_now
+            match = _DIRECTION_ANNOUNCE_RE.search(stripped)
+            if match is not None:
+                announced[direction].add(int(match.group(1)))
             index += 1
             continue
-        if stripped == GEOMETRY_HEADER:
-            if current is None:
+        header = _POINT_HEADER_RE.search(stripped)
+        if header is not None:
+            if direction is None:
+                # Unattributed origin point (the transition state): not an
+                # endpoint and never attributed by guessing.
+                current = None
+                index += 1
+                continue
+            number, path = int(header.group(1)), int(header.group(2))
+            if number not in announced[direction]:
                 raise ValueError(
-                    "native_input_error: Gaussian IRC geometry block "
-                    "appears before any direction banner"
+                    "native_input_error: Gaussian IRC point "
+                    f"{number} in {direction} direction was never announced; "
+                    "points without announcements are not endpoints"
                 )
-            if current.rows is not None:
-                raise ValueError(
-                    "native_input_error: Gaussian IRC "
-                    f"{current.direction} section carries more than one "
-                    "geometry block"
-                )
+            key = (direction, path, number)
+            point = points.get(key)
+            if point is None:
+                point = _PathPoint(direction=direction, number=number, path=path)
+                points[key] = point
+            current = point
+            index += 1
+            continue
+        if stripped == _ORIENTATION_HEADER:
+            if current is None or current.direction != direction:
+                # Orientation tables of unattributed points (the
+                # transition-state origin), of Opt/Freq spillover, or of a
+                # direction whose point header has not been seen yet belong
+                # to no open point and are never attributed by guessing.
+                index += 1
+                continue
+            # Collect the coordinate rows following the LAST orientation
+            # header of this table: header chrome (column titles, dash
+            # rules, distance-matrix tails) never matches the strict row
+            # pattern, so rows are gathered until the first other content
+            # line and the last run wins.  A header with no following rows
+            # leaves any previously collected table untouched.
             rows: list[tuple[str, float, float, float]] = []
             index += 1
-            while index < len(lines):
-                row = _parse_atom_row(lines[index])
-                if row is None:
-                    break
-                rows.append(row)
-                index += 1
-            if not rows:
-                raise ValueError(
-                    "native_input_error: Gaussian IRC "
-                    f"{current.direction} geometry block has no coordinates"
-                )
-            current.rows = rows
+            while index < len(scoped):
+                candidate = scoped[index].strip()
+                row = _orientation_row(candidate)
+                if row is not None:
+                    rows.append(row)
+                    index += 1
+                    continue
+                if (
+                    not candidate
+                    or set(candidate) <= {"-", " "}
+                    or "Center" in candidate
+                    or "Atomic" in candidate
+                    or "Number" in candidate
+                    or "Type" in candidate
+                    or "Distance matrix" in candidate
+                    or "orientation:" in candidate
+                ):
+                    index += 1
+                    continue
+                break
+            if rows:
+                current.rows = rows
             continue
-        if stripped.startswith(ENERGY_PREFIX):
-            if current is None:
-                raise ValueError(
-                    "native_input_error: Gaussian IRC energy line "
-                    "appears before any direction banner"
-                )
-            current.energy = _finite_float(stripped[len(ENERGY_PREFIX) :].strip())
-            index += 1
-            continue
-        if stripped.startswith(CONVERGED_PREFIX):
-            if current is None:
-                raise ValueError(
-                    "native_input_error: Gaussian IRC convergence line "
-                    "appears before any direction banner"
-                )
-            flag = stripped[len(CONVERGED_PREFIX) :].strip().upper()
-            if flag == "YES":
-                current.converged = True
-            elif flag == "NO":
-                current.converged = False
-            else:
-                raise ValueError(
-                    "native_input_error: Gaussian IRC convergence flag "
-                    f"must be YES or NO, got {flag!r}"
-                )
-            index += 1
-            continue
-        if stripped.startswith(POINT_PREFIX):
-            if current is None:
-                raise ValueError(
-                    "native_input_error: Gaussian IRC point line "
-                    "appears before any direction banner"
-                )
-            token = stripped[len(POINT_PREFIX) :].strip()
-            try:
-                ordinal = int(token)
-            except (TypeError, ValueError):
-                raise ValueError(
-                    "native_input_error: Gaussian IRC point ordinal "
-                    f"must be an integer >= 0, got {token!r}"
-                ) from None
-            if ordinal < 0:
-                raise ValueError(
-                    "native_input_error: Gaussian IRC point ordinal "
-                    f"must be an integer >= 0, got {token!r}"
-                )
-            current.point = ordinal
+        energy = _SCF_DONE_RE.search(stripped)
+        if energy is not None:
+            if current is not None and current.direction == direction:
+                current.energy = _finite_float(energy.group(1))
             index += 1
             continue
         index += 1
-    if not sections:
-        return ()
-    endpoints: list[NativePathEndpoint] = []
-    for section in sections:
-        if section.rows is None:
+    grouped: dict[tuple[str, int], list[_PathPoint]] = {}
+    for (point_direction, path, _number), point in points.items():
+        grouped.setdefault((point_direction, path), []).append(point)
+    by_direction: dict[str, list[_PathPoint]] = {}
+    for (point_direction, path), members in grouped.items():
+        by_direction.setdefault(point_direction, []).append(path)
+    for point_direction, paths in by_direction.items():
+        if len(set(paths)) > 1:
             raise ValueError(
-                "native_input_error: Gaussian IRC "
-                f"{section.direction} section has no geometry block"
+                "native_input_error: Gaussian IRC direction "
+                f"{point_direction!r} spans path numbers {sorted(set(paths))}; "
+                "endpoints are ambiguous"
             )
-        if len(section.rows) != len(expected):
+    endpoints: list[NativePathEndpoint] = []
+    for point_direction in ("forward", "reverse"):
+        candidates = [
+            point for (group_direction, _path), members in grouped.items()
+            for point in members
+            if group_direction == point_direction
+        ]
+        if not candidates:
+            continue
+        # The endpoint is the highest-numbered point carrying an
+        # orientation geometry.  A trailing announced-but-uncomputed
+        # point (reaction-path step limit reached before its gradient
+        # evaluation) carries no geometry and can never bind a subject;
+        # skipping it is a geometry requirement, not order guessing.
+        with_geometry = [point for point in candidates if point.rows is not None]
+        if not with_geometry:
             raise ValueError(
                 "native_input_error: Gaussian IRC "
-                f"{section.direction} geometry has {len(section.rows)} atoms "
+                f"{point_direction} direction has no point with an "
+                "orientation geometry"
+            )
+        endpoint_point = max(with_geometry, key=lambda point: point.number)
+        if len(endpoint_point.rows) != len(expected):
+            raise ValueError(
+                "native_input_error: Gaussian IRC "
+                f"{point_direction} geometry has {len(endpoint_point.rows)} atoms "
                 f"but {len(expected)} were expected"
             )
-        symbols = tuple(row[0] for row in section.rows)
+        symbols = tuple(row[0] for row in endpoint_point.rows)
         if symbols != expected:
             raise ValueError(
                 "native_input_error: Gaussian IRC "
-                f"{section.direction} geometry symbols {list(symbols)} "
+                f"{point_direction} geometry symbols {list(symbols)} "
                 f"disagree with expected {list(expected)}"
             )
-        coordinates = tuple((row[1], row[2], row[3]) for row in section.rows)
+        coordinates = tuple((row[1], row[2], row[3]) for row in endpoint_point.rows)
         endpoints.append(
             NativePathEndpoint(
-                direction=section.direction,
+                direction=point_direction,
                 geometry=ParsedGeometry(atoms=symbols, coordinates=coordinates),
-                point_ordinal=section.point,
-                energy_hartree=section.energy,
-                converged=section.converged,
+                point_ordinal=endpoint_point.number,
+                energy_hartree=endpoint_point.energy,
+                converged=converged,
             )
         )
     return tuple(endpoints)
 
-
 def irc_trajectory_facts(log_text: str) -> dict[str, Any]:
     """Summarize IRC trajectory progress without ever raising on content.
 
-    A lenient scan over the module dialect: closed geometry blocks are
-    counted per direction, finite endpoint energies are collected in
-    encounter order, and any imperfection (a marker outside a section, a
-    duplicate banner, an unparsable energy, a malformed convergence or
-    point flag, an empty or section-less banner, a second block in one
-    section, or a block left unclosed at end of file) sets
-    ``"truncated": True`` instead of raising. A point is counted only
-    when its block is closed by a subsequent line, so counts never
-    include a possibly-partial trailing block.
+    A lenient scan over real Gaussian 16 IRC output: direction
+    announcements and point headers are counted per direction, finite
+    ``SCF Done`` energies are collected in encounter order, and the
+    path-completion marker sets convergence.  Anything unparseable is
+    skipped (never inferred); ``"truncated": True`` marks a log that
+    ends without the completion marker.
 
     Parameters
     ----------
     log_text : str
-        Log content in the module dialect (handcrafted fixtures only).
+        Full Gaussian log text.
 
     Returns
     -------
     dict[str, Any]
         ``{"forward_points": int, "reverse_points": int,
         "energies_hartree": [...], "units": "angstrom",
-        "truncated": bool, "directions": [...]}`` with ``directions`` in
-        first-appearance order.
+        "truncated": bool, "directions": [...],
+        "path_complete": bool}`` with ``directions`` in first-appearance
+        order.
 
     Raises
     ------
@@ -519,94 +548,33 @@ def irc_trajectory_facts(log_text: str) -> dict[str, Any]:
     points = {"forward": 0, "reverse": 0}
     energies: list[float] = []
     directions: list[str] = []
-    truncated = False
-    banners = {"forward": 0, "reverse": 0}
-    blocks = {"forward": 0, "reverse": 0}
-    current: str | None = None
-    current_blocks = 0
-    lines = log_text.splitlines()
-    index = 0
-    while index < len(lines):
-        stripped = lines[index].strip()
-        try:
-            direction = _banner_direction(stripped)
-        except ValueError:
-            truncated = True
-            current = None
-            index += 1
-            continue
+    announced: str | None = None
+    for line in log_text.splitlines():
+        stripped = line.strip()
+        direction = _announced_direction(stripped)
         if direction is not None:
-            banners[direction] += 1
-            if banners[direction] > 1:
-                truncated = True
+            announced = direction
             if direction not in directions:
                 directions.append(direction)
-            current = direction
-            current_blocks = 0
-            index += 1
             continue
-        if stripped == GEOMETRY_HEADER:
-            if current is None:
-                truncated = True
-                index += 1
-                continue
-            rows = 0
-            index += 1
-            while index < len(lines) and _parse_atom_row(lines[index]) is not None:
-                rows += 1
-                index += 1
-            closed = index < len(lines)
-            current_blocks += 1
-            if current_blocks > 1:
-                truncated = True
-            if rows == 0:
-                truncated = True
-            elif not closed:
-                truncated = True
-            else:
-                points[current] += 1
-                blocks[current] += 1
+        header = _POINT_HEADER_RE.search(stripped)
+        if header is not None:
+            if announced is not None:
+                points[announced] += 1
             continue
-        if stripped.startswith(ENERGY_PREFIX):
-            if current is None:
-                truncated = True
-            else:
-                value = _finite_float(stripped[len(ENERGY_PREFIX) :].strip())
-                if value is None:
-                    truncated = True
-                else:
-                    energies.append(value)
-            index += 1
+        energy = _SCF_DONE_RE.search(stripped)
+        if energy is not None:
+            value = _finite_float(energy.group(1))
+            if value is not None:
+                energies.append(value)
             continue
-        if stripped.startswith(CONVERGED_PREFIX):
-            if current is None:
-                truncated = True
-            elif stripped[len(CONVERGED_PREFIX) :].strip().upper() not in ("YES", "NO"):
-                truncated = True
-            index += 1
-            continue
-        if stripped.startswith(POINT_PREFIX):
-            if current is None:
-                truncated = True
-            else:
-                token = stripped[len(POINT_PREFIX) :].strip()
-                try:
-                    ordinal = int(token)
-                except (TypeError, ValueError):
-                    ordinal = -1
-                if ordinal < 0:
-                    truncated = True
-            index += 1
-            continue
-        index += 1
-    for direction_name in ("forward", "reverse"):
-        if banners[direction_name] > blocks[direction_name]:
-            truncated = True
+    path_complete = _PATH_COMPLETE_MARKER in log_text
     return {
         "forward_points": points["forward"],
         "reverse_points": points["reverse"],
         "energies_hartree": energies,
         "units": "angstrom",
-        "truncated": truncated,
+        "truncated": not path_complete,
         "directions": directions,
+        "path_complete": path_complete,
     }

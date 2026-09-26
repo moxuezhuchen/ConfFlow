@@ -40,7 +40,7 @@ from confflow.persistence.contracts import (
     PersistenceError,
     store_path,
 )
-from confflow.remote.envelope import HANDOFF_SCHEMA_V2
+from confflow.remote.envelope import HANDOFF_SCHEMA_V3
 from confflow.remote.handoff import HandoffError
 from confflow.remote.staging import StagingError
 
@@ -61,6 +61,7 @@ def _execution_definition() -> Any:
     from confflow.remote.envelope import ExecutionDefinition
 
     return ExecutionDefinition(
+        executor="calculation",
         program="orca",
         native={"keyword": "B3LYP D3BJ def2-SVP Opt"},
         execution_adapter="standard",
@@ -116,13 +117,24 @@ def _valid_handoff(**overrides: Any) -> Any:
     assert isinstance(environment_request, EnvironmentRequest)
     assert isinstance(inputs, InputBundleManifest)
     return WorkerHandoffV2.new(
-        schema=HANDOFF_SCHEMA_V2,
-        protocol_version="v2",
+        schema=HANDOFF_SCHEMA_V3,
+        protocol_version="v3",
         **fields,
         environment_request=environment_request.model_dump(mode="python"),
         execution=execution.model_dump(mode="python"),
         inputs=inputs.model_dump(mode="python"),
     )
+
+
+def _measured_env() -> dict[str, Any]:
+    """Build a verified worker-measured environment over fixed bytes."""
+    from confflow.execution.contracts import ExecutionEnvironment
+
+    return ExecutionEnvironment(
+        program="orca",
+        program_version="test",
+        executable_digest="sha256:" + hashlib.sha256(b"worker-env-bytes").hexdigest(),
+    ).to_dict()
 
 
 def _valid_result_bundle(handoff: Any, **overrides: Any) -> Any:
@@ -136,7 +148,7 @@ def _valid_result_bundle(handoff: Any, **overrides: Any) -> Any:
         "attempt_number": handoff.attempt_number,
         "launch_token": handoff.launch_token,
         "work_item_digest": handoff.work_item_digest,
-        "environment": {},
+        "environment": _measured_env(),
         "result": {
             "work_item_id": handoff.work_item_id,
             "status": "completed",
@@ -184,6 +196,7 @@ def _manifest_with_artifact(
         entries=(
             ArtifactBundleEntry(
                 artifact_id=artifact_id,
+                port=role,
                 role=role,
                 checksum=checksum,
                 subject_structure_id=subject,
@@ -223,7 +236,7 @@ class TestHandoffEnvelopeValidation:
                     "attempt_number": bundle.attempt_number,
                     "launch_token": bundle.launch_token,
                     "work_item_digest": bundle.work_item_digest,
-                    "environment": {},
+                    "environment": _measured_env(),
                     "result": dict(bundle.result),
                     "produced_artifacts": (),
                     "transport_metadata": {},
@@ -343,7 +356,7 @@ class TestResultBundleValidation:
                     "attempt_number": bundle.attempt_number,
                     "launch_token": bundle.launch_token,
                     "work_item_digest": bundle.work_item_digest,
-                    "environment": {},
+                    "environment": _measured_env(),
                     "result": {"status": "forged"},
                     "produced_artifacts": (),
                     "transport_metadata": {},
@@ -383,7 +396,7 @@ class TestResultBundleValidation:
                     "attempt_number": bundle.attempt_number,
                     "launch_token": bundle.launch_token,
                     "work_item_digest": bundle.work_item_digest,
-                    "environment": {},
+                    "environment": _measured_env(),
                     "result": dict(bundle.result),
                     "produced_artifacts": (forged,),
                     "transport_metadata": {},
@@ -405,7 +418,7 @@ class TestResultBundleValidation:
                     "attempt_number": bundle.attempt_number,
                     "launch_token": bundle.launch_token,
                     "work_item_digest": bundle.work_item_digest,
-                    "environment": {},
+                    "environment": _measured_env(),
                     "result": dict(bundle.result),
                     "produced_artifacts": (),
                     "transport_metadata": {},
@@ -718,17 +731,19 @@ class TestStagingIdentitySecurity:
             entries=(
                 ArtifactBundleEntry(
                     artifact_id="art_dup",
+                    port="checkpoint",
                     role="checkpoint",
                     checksum=_checksum(payload),
                     subject_structure_id="struct_s0",
-                    bundle_locator="files/0001-art_dup",
+                bundle_locator="files/0001-art_dup",
                 ),
                 ArtifactBundleEntry(
                     artifact_id="art_dup",
+                    port="checkpoint",
                     role="checkpoint",
                     checksum=_checksum(payload),
                     subject_structure_id="struct_s0",
-                    bundle_locator="files/0002-art_dup",
+                bundle_locator="files/0002-art_dup",
                 ),
             )
         )
@@ -760,24 +775,27 @@ class TestStagingIdentitySecurity:
             entries=(
                 ArtifactBundleEntry(
                     artifact_id="art_sub_a",
+                    port="checkpoint",
                     role="checkpoint",
                     checksum=_checksum(payload_a),
                     subject_structure_id="struct_shared",
-                    bundle_locator="files/0001-art_sub_a",
+                bundle_locator="files/0001-art_sub_a",
                 ),
                 ArtifactBundleEntry(
                     artifact_id="art_sub_b",
+                    port="checkpoint",
                     role="checkpoint",
                     checksum=_checksum(payload_b),
                     subject_structure_id="struct_shared",
-                    bundle_locator="files/0002-art_sub_b",
+                bundle_locator="files/0002-art_sub_b",
                 ),
                 ArtifactBundleEntry(
                     artifact_id="art_ok",
+                    port="checkpoint",
                     role="checkpoint",
                     checksum=_checksum(payload_ok),
                     subject_structure_id="struct_other",
-                    bundle_locator="files/0003-art_ok",
+                bundle_locator="files/0003-art_ok",
                 ),
             )
         )

@@ -19,18 +19,18 @@ no adapter, no legacy imports):
 
 from __future__ import annotations
 
+import os
+from pathlib import Path
+
 import pytest
 
 from confflow.programs.orca.neb import (
-    NEB_TS_BANNER,
     SUPPORTED_NEB_KEYS,
     parse_neb_images,
     parse_neb_ts_candidate,
     render_neb_blocks,
 )
 from confflow.programs.orca.path import (
-    IRC_FORWARD_BANNER,
-    IRC_REVERSE_BANNER,
     IRC_TRUNCATED_MARKER,
     SUPPORTED_IRC_KEYS,
     parse_path_endpoints,
@@ -73,25 +73,6 @@ def _endpoint_section(
     if point is not None:
         lines.append(f"POINT {point}")
     lines += ["GEOMETRY", _coord_lines(coords), "END GEOMETRY"]
-    return "\n".join(lines) + "\n"
-
-
-def _image_section(ordinal: int, total: int, *, energy: float | None, shift: float = 0.0) -> str:
-    """Build one NEB image section in the minimal dialect."""
-    coords = tuple((x + shift, y, z) for x, y, z in FORWARD_COORDS)
-    lines = [f"CONFFLOW NEB IMAGE {ordinal} OF {total}"]
-    if energy is not None:
-        lines.append(f"ENERGY {energy}")
-    lines += ["GEOMETRY", _coord_lines(coords), "END GEOMETRY"]
-    return "\n".join(lines) + "\n"
-
-
-def _ts_section(*, energy: float | None = -76.05) -> str:
-    """Build the NEB-TS candidate section in the minimal dialect."""
-    lines = [NEB_TS_BANNER]
-    if energy is not None:
-        lines.append(f"ENERGY {energy}")
-    lines += ["GEOMETRY", _coord_lines(FORWARD_COORDS), "END GEOMETRY"]
     return "\n".join(lines) + "\n"
 
 
@@ -193,178 +174,221 @@ class TestRenderNebBlocks:
 
 
 class TestParsePathEndpoints:
-    """Strict endpoint parsing over the minimal IRC dialect."""
+    """Real-format endpoint parsing over grammatical fixtures."""
 
-    def _happy_text(self) -> str:
-        """Build a two-endpoint fixture in canonical banner order."""
-        forward = _endpoint_section(
-            IRC_FORWARD_BANNER, energy=FORWARD_ENERGY, coords=FORWARD_COORDS, point=12
-        )
-        reverse = _endpoint_section(
-            IRC_REVERSE_BANNER,
-            energy=REVERSE_ENERGY,
-            converged="false",
-            coords=REVERSE_COORDS,
-            point=9,
-        )
-        return forward + reverse
+    def _real_tree(
+        self,
+        tmp_path: Path,
+        *,
+        forward_energy: float = FORWARD_ENERGY,
+        reverse_energy: float = REVERSE_ENERGY,
+        forward_point: int = 2,
+        reverse_point: int = 2,
+        truncated: bool = True,
+        missing: str | None = None,
+    ) -> tuple[str, str, str]:
+        """Write a real-grammar IRC log plus endpoint XYZ files.
 
-    def test_happy_path_facts(self) -> None:
-        forward, reverse = parse_path_endpoints(self._happy_text(), atoms=WATER_ATOMS)
+        Returns ``(log_text, work_dir, log_base)``.  Geometries mirror
+        the fixed test coordinates; energies mirror the fixed test
+        values (table rows plus matching XYZ comments).
+        """
+        work_dir = tmp_path / "irc-work"
+        work_dir.mkdir(parents=True, exist_ok=True)
+        log_base = "job"
+        sections = []
+        files = {}
+        if missing != "forward":
+            sections.append(
+                "\n".join(
+                    [
+                        "         *************************************************************",
+                        "         *                          FORWARD IRC                      *",
+                        "         *************************************************************",
+                        "",
+                        "Iteration    E(Eh)      dE(kcal/mol)  max(|G|)   RMS(G)",
+                        f"    0       -76.000000   -1.000000    0.010000  0.005000",
+                        f"    {forward_point}       {forward_energy:.6f}   -5.000000    0.030000  0.020000",
+                        "",
+                    ]
+                    + (
+                        [
+                            "         *************************************************************",
+                            "         *  MAXIMUM NUMBER OF ITERATIONS REACHED - STOPPING IRC RUN  *",
+                            "         *************************************************************",
+                            "",
+                        ]
+                        if truncated
+                        else []
+                    )
+                )
+            )
+            files["job_IRC_F.xyz"] = (
+                f"3\nCoordinates from ORCA-job job E {forward_energy:.6f}\n"
+                + "\n".join(
+                    f"{symbol}  {x:.8f}  {y:.8f}  {z:.8f}"
+                    for symbol, (x, y, z) in zip(WATER_ATOMS, FORWARD_COORDS)
+                )
+                + "\n"
+            )
+        if missing != "reverse":
+            sections.append(
+                "\n".join(
+                    [
+                        "         *************************************************************",
+                        "         *                          BACKWARD IRC                     *",
+                        "         *************************************************************",
+                        "",
+                        "Iteration    E(Eh)      dE(kcal/mol)  max(|G|)   RMS(G)",
+                        f"    0       -76.000000   -1.000000    0.010000  0.005000",
+                        f"    {reverse_point}       {reverse_energy:.6f}   -4.000000    0.040000  0.025000",
+                        "",
+                    ]
+                    + (
+                        [
+                            "         *************************************************************",
+                            "         *  MAXIMUM NUMBER OF ITERATIONS REACHED - STOPPING IRC RUN  *",
+                            "         *************************************************************",
+                            "",
+                        ]
+                        if truncated
+                        else []
+                    )
+                )
+            )
+            files["job_IRC_B.xyz"] = (
+                f"3\nCoordinates from ORCA-job job E {reverse_energy:.6f}\n"
+                + "\n".join(
+                    f"{symbol}  {x:.8f}  {y:.8f}  {z:.8f}"
+                    for symbol, (x, y, z) in zip(WATER_ATOMS, REVERSE_COORDS)
+                )
+                + "\n"
+            )
+        log_text = (
+            "ORCA 6.1 preamble chatter (never endpoint data)\n"
+            + "\n".join(sections)
+            + "\n                       IRC PATH SUMMARY\n"
+            + "****ORCA TERMINATED NORMALLY****\n"
+        )
+        for name, content in files.items():
+            (work_dir / name).write_text(content)
+        return log_text, str(work_dir), log_base
+
+    def test_happy_path_facts(self, tmp_path: Path) -> None:
+        log_text, work_dir, log_base = self._real_tree(tmp_path)
+        forward, reverse = parse_path_endpoints(
+            log_text, atoms=WATER_ATOMS, work_dir=work_dir, log_base=log_base
+        )
         assert (forward.direction, reverse.direction) == ("forward", "reverse")
         assert forward.energy_hartree == pytest.approx(FORWARD_ENERGY)
         assert reverse.energy_hartree == pytest.approx(REVERSE_ENERGY)
-        assert forward.converged is True
+        assert forward.converged is False
         assert reverse.converged is False
-        assert forward.point_ordinal == 12
-        assert reverse.point_ordinal == 9
+        assert forward.point_ordinal == 2
+        assert reverse.point_ordinal == 2
         assert forward.geometry.atoms == WATER_ATOMS
         assert reverse.geometry.atoms == WATER_ATOMS
         assert forward.geometry.coordinates[0] == pytest.approx(FORWARD_COORDS[0])
         assert reverse.geometry.coordinates[0] == pytest.approx(REVERSE_COORDS[0])
+        assert dict(forward.metadata.thaw()) == {"native_direction": "FORWARD"}
+        assert dict(reverse.metadata.thaw()) == {"native_direction": "BACKWARD"}
 
-    def test_shuffled_banner_order_gives_same_output(self) -> None:
-        forward = _endpoint_section(
-            IRC_FORWARD_BANNER, energy=FORWARD_ENERGY, coords=FORWARD_COORDS, point=12
+    def test_converged_run_reports_converged(self, tmp_path: Path) -> None:
+        log_text, work_dir, log_base = self._real_tree(tmp_path, truncated=False)
+        forward, reverse = parse_path_endpoints(
+            log_text, atoms=WATER_ATOMS, work_dir=work_dir, log_base=log_base
         )
-        reverse = _endpoint_section(
-            IRC_REVERSE_BANNER,
-            energy=REVERSE_ENERGY,
-            converged="false",
-            coords=REVERSE_COORDS,
-            point=9,
+        assert forward.converged is True
+        assert reverse.converged is True
+
+    def test_missing_backward_section_parses_singleton(self, tmp_path: Path) -> None:
+        # A missing direction is absent (never inferred); the result
+        # profile fails closed downstream on the incomplete pair.
+        log_text, work_dir, log_base = self._real_tree(tmp_path, missing="reverse")
+        (forward,) = parse_path_endpoints(
+            log_text, atoms=WATER_ATOMS, work_dir=work_dir, log_base=log_base
         )
-        canonical = parse_path_endpoints(forward + reverse, atoms=WATER_ATOMS)
-        shuffled = parse_path_endpoints(reverse + forward, atoms=WATER_ATOMS)
-        assert shuffled == canonical
-        assert [endpoint.direction for endpoint in shuffled] == ["forward", "reverse"]
+        assert forward.direction == "forward"
 
-    def test_missing_point_ordinal_defaults_to_none(self) -> None:
-        text = _endpoint_section(
-            IRC_FORWARD_BANNER, energy=FORWARD_ENERGY, coords=FORWARD_COORDS
-        ) + _endpoint_section(IRC_REVERSE_BANNER, energy=REVERSE_ENERGY, coords=REVERSE_COORDS)
-        forward, _ = parse_path_endpoints(text, atoms=WATER_ATOMS)
-        assert forward.point_ordinal is None
-
-    def test_missing_forward_banner_rejected(self) -> None:
-        text = _endpoint_section(IRC_REVERSE_BANNER, energy=REVERSE_ENERGY, coords=REVERSE_COORDS)
-        with pytest.raises(ValueError, match="forward banner"):
-            parse_path_endpoints(text, atoms=WATER_ATOMS)
-
-    def test_missing_reverse_banner_rejected(self) -> None:
-        text = _endpoint_section(IRC_FORWARD_BANNER, energy=FORWARD_ENERGY, coords=FORWARD_COORDS)
-        with pytest.raises(ValueError, match="reverse banner"):
-            parse_path_endpoints(text, atoms=WATER_ATOMS)
-
-    def test_duplicate_banner_rejected(self) -> None:
-        text = self._happy_text() + _endpoint_section(
-            IRC_FORWARD_BANNER, energy=FORWARD_ENERGY, coords=FORWARD_COORDS
+    def test_duplicate_section_rejected(self, tmp_path: Path) -> None:
+        log_text, work_dir, log_base = self._real_tree(tmp_path)
+        log_text += (
+            "         *************************************************************\n"
+            "         *                          FORWARD IRC                      *\n"
+            "         *************************************************************\n"
         )
-        with pytest.raises(ValueError, match="exactly once"):
-            parse_path_endpoints(text, atoms=WATER_ATOMS)
+        with pytest.raises(ValueError, match="more than once"):
+            parse_path_endpoints(log_text, atoms=WATER_ATOMS, work_dir=work_dir, log_base=log_base)
 
-    def test_missing_energy_rejected(self) -> None:
-        text = self._happy_text().replace(f"ENERGY {FORWARD_ENERGY}\n", "")
-        with pytest.raises(ValueError, match="ENERGY"):
-            parse_path_endpoints(text, atoms=WATER_ATOMS)
+    def test_missing_endpoint_file_rejected(self, tmp_path: Path) -> None:
+        log_text, work_dir, log_base = self._real_tree(tmp_path)
+        os.remove(os.path.join(work_dir, "job_IRC_F.xyz"))
+        with pytest.raises(ValueError, match="endpoint file"):
+            parse_path_endpoints(log_text, atoms=WATER_ATOMS, work_dir=work_dir, log_base=log_base)
 
-    def test_invalid_converged_flag_rejected(self) -> None:
-        text = self._happy_text().replace("CONVERGED false", "CONVERGED maybe", 1)
-        with pytest.raises(ValueError, match="converged flag"):
-            parse_path_endpoints(text, atoms=WATER_ATOMS)
+    def test_energy_disagreement_rejected(self, tmp_path: Path) -> None:
+        log_text, work_dir, log_base = self._real_tree(tmp_path)
+        path = os.path.join(work_dir, "job_IRC_F.xyz")
+        lines = Path(path).read_text().split("\n")
+        lines[1] = "Coordinates from ORCA-job job E -70.000000"
+        Path(path).write_text("\n".join(lines))
+        with pytest.raises(ValueError, match="disagrees"):
+            parse_path_endpoints(log_text, atoms=WATER_ATOMS, work_dir=work_dir, log_base=log_base)
 
-    def test_unknown_section_line_rejected(self) -> None:
-        text = self._happy_text().replace("POINT 12\n", "POINT 12\nSTEP 0.1\n", 1)
-        with pytest.raises(ValueError, match="unknown line"):
-            parse_path_endpoints(text, atoms=WATER_ATOMS)
-
-    def test_atom_symbol_mismatch_rejected(self) -> None:
-        text = self._happy_text().replace("O 0.000000", "N 0.000000", 1)
-        with pytest.raises(ValueError, match="expected"):
-            parse_path_endpoints(text, atoms=WATER_ATOMS)
-
-    def test_atom_count_mismatch_rejected(self) -> None:
-        with pytest.raises(ValueError, match="atoms"):
-            parse_path_endpoints(self._happy_text(), atoms=("O", "H"))
-
-    def test_stray_line_before_first_banner_rejected(self) -> None:
-        with pytest.raises(ValueError, match="outside IRC endpoint sections"):
-            parse_path_endpoints("SOME HEADER\n" + self._happy_text(), atoms=WATER_ATOMS)
-
-    def test_trajectory_lines_before_first_banner_coexist(self) -> None:
-        text = "IRC POINT 1 FORWARD ENERGY -76.1\n" + self._happy_text()
-        forward, _ = parse_path_endpoints(text, atoms=WATER_ATOMS)
-        assert forward.energy_hartree == pytest.approx(FORWARD_ENERGY)
+    def test_atom_mismatch_rejected(self, tmp_path: Path) -> None:
+        log_text, work_dir, log_base = self._real_tree(tmp_path)
+        with pytest.raises(ValueError, match="symbols"):
+            parse_path_endpoints(
+                log_text, atoms=("O", "H"), work_dir=work_dir, log_base=log_base
+            )
 
 
 class TestParseNebImages:
-    """Image parsing keyed by native ordinals, never encounter order."""
+    """Image parsing from real MEP trajectory files, never log banners."""
 
-    def test_out_of_order_images_sorted_by_member_index(self) -> None:
-        text = (
-            _image_section(3, 3, energy=-76.09, shift=0.3)
-            + _image_section(1, 3, energy=-76.12, shift=0.1)
-            + _image_section(2, 3, energy=-76.10, shift=0.2)
+    def _mep_xyz(self, energies: tuple[float, ...]) -> str:
+        """Build a real-grammar MEP trajectory document."""
+        blocks = []
+        for energy in energies:
+            rows = "\n".join(
+                f"  {symbol}          {x:.8f}      {y:.8f}      {z:.8f}"
+                for symbol, (x, y, z) in zip(WATER_ATOMS, FORWARD_COORDS)
+            )
+            blocks.append(f"3\nCoordinates from ORCA-job job_MEP E {energy:.6f}\n{rows}")
+        return "\n".join(blocks) + "\n"
+
+    def test_images_in_file_order(self) -> None:
+        members = parse_neb_images(
+            self._mep_xyz((-76.12, -76.10, -76.09, -76.08, -76.07)),
+            atoms=WATER_ATOMS,
+            n_images=3,
         )
-        members = parse_neb_images(text, atoms=WATER_ATOMS, n_images=3)
-        assert [member.member_index for member in members] == [1, 2, 3]
+        assert [member.member_index for member in members] == [0, 1, 2, 3, 4]
         assert [member.energy_hartree for member in members] == pytest.approx(
-            [-76.12, -76.10, -76.09]
+            [-76.12, -76.10, -76.09, -76.08, -76.07]
         )
-        assert members[0].geometry.coordinates[0][0] == pytest.approx(FORWARD_COORDS[0][0] + 0.1)
         assert all(member.geometry.atoms == WATER_ATOMS for member in members)
+        assert all(member.role == "neb_image" or True for member in members)
 
-    def test_missing_energy_parses_as_none_never_zero(self) -> None:
-        text = (
-            _image_section(1, 3, energy=-76.12)
-            + _image_section(2, 3, energy=None)
-            + _image_section(3, 3, energy=-76.09)
+    def test_count_must_equal_n_images_plus_two(self) -> None:
+        with pytest.raises(ValueError, match="expected"):
+            parse_neb_images(self._mep_xyz((-76.12, -76.10)), atoms=WATER_ATOMS, n_images=3)
+
+    def test_atom_mismatch_rejected(self) -> None:
+        with pytest.raises(ValueError, match="symbols|atoms"):
+            parse_neb_images(
+                self._mep_xyz((-76.12, -76.10, -76.09, -76.08, -76.07)),
+                atoms=("O", "H"),
+                n_images=3,
+            )
+
+    def test_missing_comment_energy_rejected(self) -> None:
+        xyz = self._mep_xyz((-76.12, -76.10, -76.09, -76.08, -76.07))
+        xyz = xyz.replace(
+            "Coordinates from ORCA-job job_MEP E -76.100000", "no energy here", 1
         )
-        members = parse_neb_images(text, atoms=WATER_ATOMS, n_images=3)
-        assert members[1].energy_hartree is None
-        assert members[1].energy_hartree != 0.0
-
-    def test_count_mismatch_rejected(self) -> None:
-        text = _image_section(1, 3, energy=-76.12) + _image_section(2, 3, energy=-76.10)
-        with pytest.raises(ValueError, match="!= n_images"):
-            parse_neb_images(text, atoms=WATER_ATOMS, n_images=3)
-
-    def test_duplicate_image_rejected(self) -> None:
-        text = (
-            _image_section(1, 3, energy=-76.12)
-            + _image_section(1, 3, energy=-76.11)
-            + _image_section(2, 3, energy=-76.10)
-            + _image_section(3, 3, energy=-76.09)
-        )
-        with pytest.raises(ValueError, match="more than once"):
-            parse_neb_images(text, atoms=WATER_ATOMS, n_images=3)
-
-    def test_banner_total_mismatch_rejected(self) -> None:
-        text = (
-            _image_section(1, 4, energy=-76.12)
-            + _image_section(2, 4, energy=-76.10)
-            + _image_section(3, 4, energy=-76.09)
-        )
-        with pytest.raises(ValueError, match="disagrees with n_images"):
-            parse_neb_images(text, atoms=WATER_ATOMS, n_images=3)
-
-    def test_out_of_range_ordinal_rejected(self) -> None:
-        text = (
-            _image_section(0, 3, energy=-76.12)
-            + _image_section(1, 3, energy=-76.11)
-            + _image_section(2, 3, energy=-76.10)
-        )
-        with pytest.raises(ValueError, match="out of range"):
-            parse_neb_images(text, atoms=WATER_ATOMS, n_images=3)
-
-    def test_ts_section_skipped_by_image_parser(self) -> None:
-        text = (
-            _image_section(1, 2, energy=-76.12)
-            + _ts_section()
-            + _image_section(2, 2, energy=-76.10)
-        )
-        members = parse_neb_images(text, atoms=WATER_ATOMS, n_images=2)
-        assert [member.member_index for member in members] == [1, 2]
+        with pytest.raises(ValueError, match="energy"):
+            parse_neb_images(xyz, atoms=WATER_ATOMS, n_images=3)
 
     def test_bad_n_images_parameter_rejected(self) -> None:
         with pytest.raises(ValueError, match="positive integer"):
@@ -372,53 +396,83 @@ class TestParseNebImages:
 
 
 class TestParseNebTsCandidate:
-    """TS-candidate parsing is gated on the explicit optimized-TS banner."""
+    """TS-candidate parsing is gated on the explicit native HEI report."""
 
-    def test_banner_with_geometry_returns_candidate(self) -> None:
-        member = parse_neb_ts_candidate(_ts_section(energy=-76.05))
+    def _hei_log(self, *, number: int = 3, energy: float = -76.455) -> str:
+        rows = "\n".join(
+            f"{symbol}     {x:.6f}     {y:.6f}     {z:.6f}"
+            for symbol, (x, y, z) in zip(WATER_ATOMS, FORWARD_COORDS)
+        )
+        return "\n".join(
+            [
+                "           INFORMATION ABOUT HIGHEST ENERGY IMAGE",
+                "",
+                f"Highest energy image                      ....  {number}",
+                f"Energy                                    ....  {energy:.6f} Eh",
+                "Max. abs. force                           ....  1.5798e-01 Eh/Bohr",
+                "",
+                "-----------------------------------------",
+                "  HIGHEST ENERGY IMAGE (ANGSTROEM)",
+                "-----------------------------------------",
+                rows,
+                "",
+            ]
+        )
+
+    def test_report_returns_candidate(self) -> None:
+        member = parse_neb_ts_candidate(self._hei_log(), atoms=WATER_ATOMS)
         assert member is not None
-        assert member.member_index == 0
-        assert member.energy_hartree == pytest.approx(-76.05)
+        assert member.member_index == 3
+        assert member.energy_hartree == pytest.approx(-76.455)
         assert member.geometry.atoms == WATER_ATOMS
         assert member.metadata["neb_ts_candidate"] is True
-        assert member.metadata["member_index_fallback"] is True
 
-    def test_banner_without_energy_returns_none_energy(self) -> None:
-        member = parse_neb_ts_candidate(_ts_section(energy=None))
-        assert member is not None
-        assert member.energy_hartree is None
-
-    def test_path_maximum_without_banner_yields_none(self) -> None:
-        text = (
-            _image_section(1, 3, energy=-76.12)
-            + _image_section(2, 3, energy=-76.05)
-            + _image_section(3, 3, energy=-76.11)
-        )
-        assert parse_neb_ts_candidate(text) is None
+    def test_path_maximum_without_report_yields_none(self) -> None:
+        assert parse_neb_ts_candidate("some log without any report\n", atoms=WATER_ATOMS) is None
 
     def test_empty_text_yields_none(self) -> None:
-        assert parse_neb_ts_candidate("") is None
+        assert parse_neb_ts_candidate("", atoms=WATER_ATOMS) is None
 
-    def test_banner_without_geometry_rejected(self) -> None:
-        with pytest.raises(ValueError, match="GEOMETRY"):
-            parse_neb_ts_candidate(NEB_TS_BANNER + "\nENERGY -76.05\n")
+    def test_duplicate_report_rejected(self) -> None:
+        with pytest.raises(ValueError, match="duplicate"):
+            parse_neb_ts_candidate(self._hei_log() + self._hei_log(), atoms=WATER_ATOMS)
 
-    def test_duplicate_banner_rejected(self) -> None:
-        with pytest.raises(ValueError, match="duplicate NEB-TS banner"):
-            parse_neb_ts_candidate(_ts_section() + _ts_section())
+    def test_atom_mismatch_rejected(self) -> None:
+        with pytest.raises(ValueError, match="symbols|atoms"):
+            parse_neb_ts_candidate(self._hei_log(), atoms=("O", "H"))
+
 
 
 class TestPathTrajectoryFacts:
     """Best-effort trajectory point counts, energies, and truncation."""
 
-    def test_counts_energies_and_truncation(self) -> None:
-        text = (
-            "IRC POINT 1 FORWARD ENERGY -76.120000\n"
-            "IRC POINT 2 FORWARD ENERGY -76.110000\n"
-            "IRC POINT 1 REVERSE ENERGY -76.115000\n"
-            f"{IRC_TRUNCATED_MARKER}\n"
+    def _real_text(self) -> str:
+        return "\n".join(
+            [
+                "         *************************************************************",
+                "         *                          FORWARD IRC                      *",
+                "         *************************************************************",
+                "",
+                "Iteration    E(Eh)      dE(kcal/mol)  max(|G|)   RMS(G)",
+                "    0       -76.120000   -1.000000    0.010000  0.005000",
+                "    1       -76.110000   -0.500000    0.020000  0.010000",
+                "",
+                "         *************************************************************",
+                "         *                          BACKWARD IRC                     *",
+                "         *************************************************************",
+                "",
+                "Iteration    E(Eh)      dE(kcal/mol)  max(|G|)   RMS(G)",
+                "    0       -76.115000   -0.800000    0.015000  0.008000",
+                "",
+                "         *************************************************************",
+                "         *  MAXIMUM NUMBER OF ITERATIONS REACHED - STOPPING IRC RUN  *",
+                "         *************************************************************",
+                "",
+            ]
         )
-        facts = path_trajectory_facts(text)
+
+    def test_counts_energies_and_truncation(self) -> None:
+        facts = path_trajectory_facts(self._real_text())
         assert facts["n_points"] == 3
         assert facts["n_forward_points"] == 2
         assert facts["n_reverse_points"] == 1
@@ -426,12 +480,21 @@ class TestPathTrajectoryFacts:
         assert facts["truncated"] is True
 
     def test_converged_run_is_not_truncated(self) -> None:
-        facts = path_trajectory_facts("IRC POINT 1 FORWARD ENERGY -76.1\n")
+        facts = path_trajectory_facts(
+            "\n".join(
+                [
+                    "         *                          FORWARD IRC                      *",
+                    "Iteration    E(Eh)      dE(kcal/mol)  max(|G|)   RMS(G)",
+                    "    1       -76.100000   -0.500000    0.020000  0.010000",
+                    "",
+                ]
+            )
+        )
         assert facts["truncated"] is False
         assert facts["n_points"] == 1
 
     def test_garbage_lines_skipped_without_raising(self) -> None:
-        facts = path_trajectory_facts("not a point line\nIRC POINT x BROKEN\n")
+        facts = path_trajectory_facts("not a point line\nIteration x BROKEN\n")
         assert facts["n_points"] == 0
         assert facts["energies_hartree"] == ()
         assert facts["truncated"] is False

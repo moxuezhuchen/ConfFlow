@@ -39,7 +39,7 @@ from confflow.producer import (
 from confflow.producer.contract import SCIENTIFIC_OVERRIDE_KEYS
 from confflow.producer.manifest import build_editor_manifest_v4
 from confflow.producer.recipes import build_recipe_catalog_v4
-from confflow.remote.envelope import HANDOFF_SCHEMA_V2, RESULT_SCHEMA_V2
+from confflow.remote.envelope import HANDOFF_SCHEMA_V3, RESULT_SCHEMA_V3
 from confflow.workflow.v4.compiler import compile_workflow
 from confflow.workflow.v4.document import SCHEMA_ID, ScientificDefinition
 from confflow.workflow.v4.schema import TRANSFORM_KINDS, build_workflow_json_schema
@@ -241,11 +241,13 @@ class TestGeneratedFromRegistries:
             raise AssertionError("ScientificDefinition accepted an unknown override")
 
     def test_remote_capability_ids(self) -> None:
-        assert HANDOFF_SCHEMA_V2 == "confflow.control.worker-handoff.v2"
-        assert RESULT_SCHEMA_V2 == "confflow.control.worker-result.v2"
+        # Wave-2 E: the wire is V3 (executor capability, seed, execution
+        # request, true result identity); V2 bytes fail closed.
+        assert HANDOFF_SCHEMA_V3 == "confflow.control.worker-handoff.v3"
+        assert RESULT_SCHEMA_V3 == "confflow.control.worker-result.v3"
         assert _envelope()["remote_capability"] == {
-            "handoff": HANDOFF_SCHEMA_V2,
-            "result": RESULT_SCHEMA_V2,
+            "handoff": HANDOFF_SCHEMA_V3,
+            "result": RESULT_SCHEMA_V3,
         }
 
 

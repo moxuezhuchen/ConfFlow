@@ -1308,18 +1308,25 @@ class SqliteWorkItemStore:
         if not claimed:
             raise PersistenceError(f"work item {item_id!r} could not be claimed")
 
-    def record_finished(self, result: WorkItemResult) -> None:
+    def record_finished(
+        self, result: WorkItemResult, *, environment_digest: str | None = None
+    ) -> None:
         """Record the terminal result of a ``RUNNING`` item.
 
         ``COMPLETED``/``FAILED`` results persist through the matching
         terminal transition; ``CANCELLED`` results move the item to
         ``CANCELLED`` while still persisting the result payload so
         :meth:`get_result` can return it.
+
+        ``environment_digest`` optionally overrides the execution
+        environment recorded at commit (remote delivery commits the
+        worker-measured environment, never the producer-side assumption).
+        ``None`` keeps the registration-time digest.
         """
         if not isinstance(result, WorkItemResult):
             raise PersistenceError("result must be a WorkItemResult")
         if result.status is WorkItemStatus.COMPLETED:
-            self.complete(result.work_item_id, result=result)
+            self.complete(result.work_item_id, result=result, environment_digest=environment_digest)
         elif result.status is WorkItemStatus.FAILED:
             self.fail(result.work_item_id, result=result)
         else:

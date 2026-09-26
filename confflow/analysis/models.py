@@ -72,6 +72,7 @@ from ..domain.structure import StructureSet
 __all__ = [
     "ANALYSIS_DEFINITION_CODES",
     "ANALYSIS_DEFINITION_DIGEST_KIND",
+    "ANALYSIS_DEFINITION_DIGEST_KIND_V1",
     "ANALYSIS_FAILURE_CODES",
     "ASSIGNMENT_EXPLICIT",
     "ASSIGNMENT_UNASSIGNED",
@@ -89,7 +90,14 @@ __all__ = [
 ]
 
 #: Digest domain marker for :meth:`AnalysisDefinition.semantic_digest`.
-ANALYSIS_DEFINITION_DIGEST_KIND: Final[str] = "confflow.analysis.definition.v1"
+#:
+#: v2: source identity is producer-scoped ``ResultRef`` ids (never value
+#: digests) and selection is unique-or-ambiguous-fail (never first-match).
+#: v1 digests never equal v2: old generations fail closed at reuse.
+ANALYSIS_DEFINITION_DIGEST_KIND: Final[str] = "confflow.analysis.definition.v2"
+
+#: Superseded v1 marker, retained so old digests are recognizable (and unequal).
+ANALYSIS_DEFINITION_DIGEST_KIND_V1: Final[str] = "confflow.analysis.definition.v1"
 
 #: Default group assignment: no chemistry claim was provided.
 ASSIGNMENT_UNASSIGNED: Final[str] = "unassigned"

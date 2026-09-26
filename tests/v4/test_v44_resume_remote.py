@@ -33,7 +33,7 @@ from confflow.execution.work_item_executor import (
     WorkItemExecutor,
     sanitize_job_name,
 )
-from confflow.persistence.contracts import StoredWorkItemStatus, store_path
+from confflow.persistence.contracts import PersistenceError, StoredWorkItemStatus, store_path
 from confflow.persistence.work_items import SqliteWorkItemStore
 from confflow.programs.registry import get_program_adapter
 from confflow.remote.transport import RemoteTransport
@@ -49,6 +49,7 @@ from tests.v4._builders import (
 
 FAKES_DIR = Path(__file__).resolve().parent / "fakes"
 FAKE_ORCA = FAKES_DIR / "fake_orca.py"
+FAKE_G16 = FAKES_DIR / "fake_g16.py"
 STRUCTURE_INPUTS = {"structures": {"kind": "structure", "cardinality": "many"}}
 
 WRAPPER_SCRIPT = """#!/bin/sh
@@ -88,6 +89,32 @@ def _install_wrapper(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[P
     return wrapper, count_file, fail_file
 
 
+def _install_gaussian_wrapper(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> tuple[Path, Path, Path]:
+    """Install the counting wrapper as ``g16`` on PATH (checkpoint chains).
+
+    ORCA declares no checkpoint input vocabulary and fails closed on bound
+    checkpoints by design; checkpoint chains therefore run Gaussian, whose
+    adapter consumes checkpoints via ``%OldChk``.
+    """
+    bin_dir = tmp_path / "bin-g16"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    wrapper = bin_dir / "g16"
+    wrapper.write_text(WRAPPER_SCRIPT)
+    wrapper.chmod(0o755)
+    count_file = tmp_path / "native-g16.count"
+    count_file.write_text("")
+    fail_file = tmp_path / "native-g16.fail"
+    fail_file.write_text("")
+    monkeypatch.setenv("PATH", str(bin_dir) + os.pathsep + os.environ["PATH"])
+    monkeypatch.setenv("FAKE_MODE", "success_opt")
+    monkeypatch.setenv("FAKE_REAL", str(FAKE_G16))
+    monkeypatch.setenv("COUNT_FILE", str(count_file))
+    monkeypatch.setenv("FAIL_FILE", str(fail_file))
+    return wrapper, count_file, fail_file
+
+
 def _native_count(count_file: Path) -> int:
     """Return the number of logged native invocations."""
     return len([line for line in count_file.read_text().splitlines() if line.strip()])
@@ -113,17 +140,17 @@ def _chain_doc() -> dict[str, Any]:
     """Build the two-step freq→ts-style checkpoint chain document."""
     step_a = calc_step(
         "s_a",
-        program="orca",
+        program="gaussian",
         bindings={"structure": {"source": {"run": "structures"}}},
-        native={"keyword": "B3LYP Opt"},
+        native={"keyword": "B3LYP/6-31G* Opt"},
         checks=["normal_termination"],
         scheduler={"max_parallel_items": 4},
         resources={"cores_per_item": 1, "memory_per_item": "1GB"},
-        execution={"binding_id": "test", "executable": "orca"},
+        execution={"binding_id": "test", "executable": "g16"},
     )
     step_b = calc_step(
         "s_b",
-        program="orca",
+        program="gaussian",
         bindings={
             "structure": {"source": {"step": "s_a", "port": "structures"}},
             "checkpoint": {
@@ -132,11 +159,11 @@ def _chain_doc() -> dict[str, Any]:
                 "cardinality": "one",
             },
         },
-        native={"keyword": "B3LYP Opt"},
+        native={"keyword": "B3LYP/6-31G* Opt"},
         checks=["normal_termination"],
         scheduler={"max_parallel_items": 4},
         resources={"cores_per_item": 1, "memory_per_item": "1GB"},
-        execution={"binding_id": "test", "executable": "orca"},
+        execution={"binding_id": "test", "executable": "g16"},
     )
     return v4_doc([step_a, step_b], inputs=STRUCTURE_INPUTS)
 
@@ -167,22 +194,28 @@ def _request(
     plan: Any, step_id: str, items: tuple[Any, ...], run_root: str, wrapper: Path
 ) -> StepExecutionRequest:
     """Build a durable step request wired to the counting wrapper."""
+    from confflow.execution.environment import EnvironmentMeasurer
+    from confflow.execution.registry import default_registry
+
     planned = next(step for step in plan.steps if step.step_id == step_id)
+    registry = default_registry()
+    adapter = registry.resolve_program(planned.scientific.program or "orca")
     return StepExecutionRequest(
         step=planned,
         items=tuple(items),
         scientific=planned.scientific,
         scientific_defaults=plan.scientific_defaults,
-        adapter=get_program_adapter("orca"),
-        profile=PROFILES["standard"],
-        checks=(CHECKS["normal_termination"],),
-        recovery=RECOVERIES["none"],
+        adapter=adapter,
+        profile=registry.profile_implementation("standard"),
+        checks=(registry.check_implementation("normal_termination"),),
+        recovery=registry.recovery_implementation("none", adapter=adapter),
         execution_binding=ExecutionBinding(
             binding_id="test", executable=str(wrapper), env=FrozenDict({})
         ),
         run_root=run_root,
-        environment=None,
+        environment=EnvironmentMeasurer().build_environment(str(wrapper), adapter=adapter),
         definition_digest=plan.definition_digest,
+        executor_capability="calculation",
     )
 
 
@@ -208,8 +241,9 @@ def _context_for(plan: Any, step_id: str, run_root: str, wrapper: Path) -> ItemE
         run_root=run_root,
         work_base=os.path.join(run_root, "work"),
         supervisor=NativeProcessSupervisor(),
-        environment=None,
+        environment=None,  # direct-transport calls bypass the batch env gate
         poll_interval_seconds=0.05,
+        executor_capability="calculation",
     )
 
 
@@ -234,7 +268,7 @@ class TestRemoteResumeLite:
             )
         )
         with SqliteWorkItemStore.open(store_path(run_root, "s_opt")) as store:
-            transport = RemoteTransport(run_root=run_root, store=store, worker_root=worker_root)
+            transport = RemoteTransport(run_root=run_root, store=store, worker_root=worker_root, target_default_executable=str(wrapper))
             result1 = _batch().execute_step_resumable(
                 _request(plan, "s_opt", tuple(run1_items), run_root, wrapper),
                 store=store,
@@ -252,7 +286,7 @@ class TestRemoteResumeLite:
             assert len(store.list_items(StoredWorkItemStatus.FAILED)) == 2
             fail_file.write_text("")
             all_items = _assemble_step(plan, "s_opt", structures).for_step("s_opt")
-            transport = RemoteTransport(run_root=run_root, store=store, worker_root=worker_root)
+            transport = RemoteTransport(run_root=run_root, store=store, worker_root=worker_root, target_default_executable=str(wrapper))
             result2 = _batch().execute_step_resumable(
                 _request(plan, "s_opt", tuple(all_items), run_root, wrapper),
                 store=store,
@@ -288,6 +322,7 @@ def _run_step_a_local(
 def _materialized(step_result: Any, step_id: str) -> MaterializedOutputs:
     """Wrap a step result as materialized producer outputs."""
     from confflow.domain import FrozenDict as _Frozen
+    from confflow.domain.completion import StepStatus as _StepStatus
 
     return MaterializedOutputs(
         steps=_Frozen(
@@ -296,6 +331,7 @@ def _materialized(step_result: Any, step_id: str) -> MaterializedOutputs:
                     step_id=step_id,
                     structures=step_result.structures,
                     artifacts=step_result.artifacts,
+                    status=_StepStatus.COMPLETED,
                 )
             }
         )
@@ -317,7 +353,7 @@ class TestScenarioALocalChain:
     def test_subject_matching_survives_shuffle(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        wrapper, count_file, _fail = _install_wrapper(tmp_path, monkeypatch)
+        wrapper, count_file, _fail = _install_gaussian_wrapper(tmp_path, monkeypatch)
         run_root = str(tmp_path / "run")
         plan = _compile(_chain_doc())
         structures = _structures("a", 3)
@@ -349,6 +385,7 @@ class TestScenarioALocalChain:
                         step_id="s_a",
                         structures=result_a.structures,
                         artifacts=ArtifactSet(tuple(reversed(tuple(result_a.artifacts)))),
+                        status=result_a.status,
                     )
                 }
             )
@@ -379,7 +416,7 @@ class TestScenarioALocalChain:
 
         from confflow.domain.work_item import WorkItem, WorkItemInputs
 
-        wrapper, count_file, _fail = _install_wrapper(tmp_path, monkeypatch)
+        wrapper, count_file, _fail = _install_gaussian_wrapper(tmp_path, monkeypatch)
         run_root = str(tmp_path / "run")
         plan = _compile(_chain_doc())
         structures = _structures("w", 3)
@@ -429,7 +466,7 @@ class TestScenarioLocalRemote:
     """Local step A → remote step B with identical checkpoint semantics."""
 
     def test_local_to_remote(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        wrapper, count_file, _fail = _install_wrapper(tmp_path, monkeypatch)
+        wrapper, count_file, _fail = _install_gaussian_wrapper(tmp_path, monkeypatch)
         run_root = str(tmp_path / "run")
         worker_root = str(tmp_path / "worker")
         plan = _compile(_chain_doc())
@@ -438,7 +475,7 @@ class TestScenarioLocalRemote:
         materialized = _materialized(result_a, "s_a")
         items_b = _assemble_step(plan, "s_b", structures, materialized=materialized).for_step("s_b")
         with SqliteWorkItemStore.open(store_path(run_root, "s_b")) as store:
-            transport = RemoteTransport(run_root=run_root, store=store, worker_root=worker_root)
+            transport = RemoteTransport(run_root=run_root, store=store, worker_root=worker_root, target_default_executable=str(wrapper))
             result_b = _batch().execute_step_resumable(
                 _request(plan, "s_b", tuple(items_b), run_root, wrapper),
                 store=store,
@@ -456,14 +493,14 @@ class TestScenarioRemoteLocal:
     """Remote step A → imported artifacts → local step B."""
 
     def test_remote_to_local(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        wrapper, count_file, _fail = _install_wrapper(tmp_path, monkeypatch)
+        wrapper, count_file, _fail = _install_gaussian_wrapper(tmp_path, monkeypatch)
         run_root = str(tmp_path / "run")
         worker_root = str(tmp_path / "worker")
         plan = _compile(_chain_doc())
         structures = _structures("c", 3)
         items_a = _assemble_step(plan, "s_a", structures).for_step("s_a")
         with SqliteWorkItemStore.open(store_path(run_root, "s_a")) as store:
-            transport = RemoteTransport(run_root=run_root, store=store, worker_root=worker_root)
+            transport = RemoteTransport(run_root=run_root, store=store, worker_root=worker_root, target_default_executable=str(wrapper))
             result_a = _batch().execute_step_resumable(
                 _request(plan, "s_a", tuple(items_a), run_root, wrapper),
                 store=store,
@@ -511,7 +548,7 @@ class TestScenarioDuplicateDispatch:
                 step_semantic_digest=plan.steps[0].step_semantic_digest,
             )
             assert store.claim(item.id, owner=OwnerIdentity(owner_token="ctl"))
-            transport = RemoteTransport(run_root=run_root, store=store, worker_root=worker_root)
+            transport = RemoteTransport(run_root=run_root, store=store, worker_root=worker_root, target_default_executable=str(tmp_path / "bin" / "orca"))
             barrier = threading.Barrier(2)
             outcomes: list[Any] = []
 
@@ -553,14 +590,14 @@ class TestScenarioResponseLoss:
                 step_semantic_digest=plan.steps[0].step_semantic_digest,
             )
             assert store.claim(item.id, owner=OwnerIdentity(owner_token="ctl"))
-            transport = RemoteTransport(run_root=run_root, store=store, worker_root=worker_root)
+            transport = RemoteTransport(run_root=run_root, store=store, worker_root=worker_root, target_default_executable=str(tmp_path / "bin" / "orca"))
             first = transport.execute(item, context, attempt=1)
             assert first.status is WorkItemStatus.COMPLETED
             count_file = tmp_path / "native.count"
             assert _native_count(count_file) == 1
             # Producer loses the response object; a restarted transport with
             # the same roots recovers the prior bundle instead of relaunching.
-            transport2 = RemoteTransport(run_root=run_root, store=store, worker_root=worker_root)
+            transport2 = RemoteTransport(run_root=run_root, store=store, worker_root=worker_root, target_default_executable=str(tmp_path / "bin" / "orca"))
             second = transport2.execute(item, context, attempt=1)
             assert second.status is WorkItemStatus.COMPLETED
             assert _native_count(count_file) == 1
@@ -582,6 +619,8 @@ class TestScenarioEndpointInertness:
         with SqliteWorkItemStore.open(store_path(run_root, "s_opt")) as store:
             transport1 = RemoteTransport(
                 run_root=run_root, store=store, worker_root=str(tmp_path / "w1")
+            ,
+                target_default_executable=str(wrapper)
             )
             first = _batch().execute_step_resumable(
                 _request(
@@ -600,6 +639,8 @@ class TestScenarioEndpointInertness:
             assert _native_count(count_file) == 4
             transport2 = RemoteTransport(
                 run_root=run_root, store=store, worker_root=str(tmp_path / "w2")
+            ,
+                target_default_executable=str(wrapper)
             )
             second = _batch().execute_step_resumable(
                 _request(
@@ -630,8 +671,10 @@ class TestScenarioEnvironmentInvalidation:
     def test_binary_change_invalidates(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        from confflow.execution.contracts import ExecutionEnvironment
-
+        # Wave-2 E: remote reuse keys on the TARGET-measured environment
+        # (transport probe), never the producer request environment.  The
+        # invalidation is therefore proven by changing the actual remote
+        # binary bytes between runs — not by swapping request fixtures.
         wrapper, count_file, _fail = _install_wrapper(tmp_path, monkeypatch)
         run_root = str(tmp_path / "run")
         worker_root = str(tmp_path / "worker")
@@ -639,18 +682,9 @@ class TestScenarioEnvironmentInvalidation:
         structures = _structures("h", 2)
         items = _assemble_step(plan, "s_opt", structures).for_step("s_opt")
         with SqliteWorkItemStore.open(store_path(run_root, "s_opt")) as store:
-            transport = RemoteTransport(run_root=run_root, store=store, worker_root=worker_root)
-            first_request = _request(plan, "s_opt", tuple(items), run_root, wrapper)
-            import dataclasses as _dc
-
-            first_request = _dc.replace(
-                first_request,
-                environment=ExecutionEnvironment(
-                    program="orca", executable_digest="sha256:" + "1" * 64
-                ),
-            )
+            transport = RemoteTransport(run_root=run_root, store=store, worker_root=worker_root, target_default_executable=str(wrapper))
             first = _batch().execute_step_resumable(
-                first_request,
+                _request(plan, "s_opt", tuple(items), run_root, wrapper),
                 store=store,
                 run_root=run_root,
                 owner_token="ctl-1",
@@ -658,20 +692,23 @@ class TestScenarioEnvironmentInvalidation:
             )
             assert first.status is StepStatus.COMPLETED
             assert _native_count(count_file) == 2
-            second_request = _dc.replace(
-                first_request,
-                environment=ExecutionEnvironment(
-                    program="orca", executable_digest="sha256:" + "2" * 64
-                ),
-            )
-            second = _batch().execute_step_resumable(
-                second_request,
-                store=store,
-                run_root=run_root,
-                owner_token="ctl-2",
-                transport=transport,
-            )
+            # The remote binary changes out from under the run: same bytes
+            # no longer measure identically, so resume must invalidate
+            # without launching anything native.  Invalidation refuses
+            # publication loudly (strict durable publication carries
+            # per-item reasons); the stored COMPLETED generation is
+            # preserved untouched.
+            with open(wrapper, "a", encoding="utf-8") as handle:
+                handle.write("\n# remote binary updated\n")
+            with pytest.raises(PersistenceError, match="invalidate_environment"):
+                _batch().execute_step_resumable(
+                    _request(plan, "s_opt", tuple(items), run_root, wrapper),
+                    store=store,
+                    run_root=run_root,
+                    owner_token="ctl-2",
+                    transport=transport,
+                )
             assert _native_count(count_file) == 2
-            assert second.status is StepStatus.FAILED
-            codes = {entry.error.code for entry in second.item_results if entry.error is not None}
-            assert codes == {"invalidate_environment"}
+            from confflow.persistence.contracts import StoredWorkItemStatus
+
+            assert len(store.list_items(StoredWorkItemStatus.COMPLETED)) == 2

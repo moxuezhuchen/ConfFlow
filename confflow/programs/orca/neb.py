@@ -3,11 +3,19 @@
 """ORCA nudged-elastic-band (NEB) helpers for ConfFlow Workflow V4.
 
 This module renders ``%neb`` blocks and parses NEB images plus the NEB-TS
-candidate from a documented minimal output dialect.  It owns V4-native copies
-of small parsing idioms (it never imports the legacy calc runtime, the
-program adapter, or the sibling rendering/parsing helpers) and imports only
-:mod:`confflow.execution.native`, :mod:`confflow.domain`, and the standard
-library.
+candidate from real ORCA 6.1 output, verified against an installed-binary
+HCN isomerization NEB run (HF-3c, 5 images): the log announces trajectory
+files (``Current trajectory will be written to <base>_MEP_trj.xyz``) and
+reports an ``INFORMATION ABOUT HIGHEST ENERGY IMAGE`` block (image number,
+``Energy ... Eh``, ``HIGHEST ENERGY IMAGE (ANGSTROEM)`` coordinates); member
+geometries and energies live in the ``<base>_MEP_trj.xyz`` multi-structure
+file (standard XYZ with ``Coordinates from ORCA-job ... E <float>``
+comments, endpoints included).  Member identity is file order (0-based);
+the highest-energy image number is the native TS-candidate identity.  It
+owns V4-native copies of small parsing idioms (it never imports the legacy
+calc runtime, the program adapter, or the sibling rendering/parsing
+helpers) and imports only :mod:`confflow.execution.native`,
+:mod:`confflow.domain`, and the standard library.
 
 Supported native keys for :func:`render_neb_blocks`
 ----------------------------------------------------
@@ -15,67 +23,30 @@ Supported native keys for :func:`render_neb_blocks`
 (optional ``bool``, default ``False``) are the only accepted keys.  Any other
 key raises ``ValueError`` with a ``native_input_error: ... unsupported ...``
 message and is never passed through.  ``NEB_End_XYZFile`` is set from the
-``product_xyz_name`` argument, never from native keys.
+``product_xyz_name`` argument, never from native keys.  The caller (program
+adapter) selects the ``NEB`` / ``NEB-TS`` job keyword: the block alone
+under a plain keyword runs a different job silently (verified), so
+keyword/mode consistency is enforced at render and compile time.
 
-``neb_ts`` records NEB-TS intent: when true, a ``#`` comment notes that the
-job must run under the NEB-TS keyword.  The comment is not a native
-directive.  The TS-candidate role applies ONLY when the output explicitly
-reports an optimized transition state (see :func:`parse_neb_ts_candidate`):
-the highest-energy image of a plain NEB path is never a TS candidate.
+Real output grammar for :func:`parse_neb_images`
+-------------------------------------------------
+Images come from the ``<base>_MEP_trj.xyz`` trajectory file: standard XYZ
+blocks (count, energy comment, coordinate rows) in path order, endpoints
+included, so exactly ``n_images + 2`` blocks are required.  Energies come
+from the comments (required, never zero); atom count and symbols must
+match the expected ``atoms`` exactly.  Members are returned in file order
+with 0-based ``member_index`` (the native image number, endpoints
+included); the adapter assigns the ``neb_image`` role.
 
-Capability boundary
--------------------
-Only ``NImages`` and ``NEB_End_XYZFile`` are emitted because those are the
-``%neb`` keys established for this implementation (``%neb`` blocks drive NEB
-jobs; NEB-TS jobs optimize the highest image toward a transition state).
-Every other ``%neb`` tuning key (pre-optimization switches, climbing-image
-options, reparameterization controls, iteration caps, and so on) is rejected
-as unsupported rather than guessed, because zero legacy ORCA NEB syntax
-exists in this repository to port and exact key spellings vary across ORCA
-versions.
-
-Minimal output dialect for :func:`parse_neb_images`
-----------------------------------------------------
-Image identity comes from explicit native ordinals only and is never taken
-from encounter order::
-
-    CONFFLOW NEB IMAGE 2 OF 3
-    ENERGY -76.100000
-    GEOMETRY
-    O 0.000000 0.000000 0.000000
-    END GEOMETRY
-
-Ordinals are 1-based (``1`` .. ``n_images``); the ``OF <total>`` count must
-equal the requested ``n_images``.  Each image section requires exactly one
-``GEOMETRY`` ... ``END GEOMETRY`` block whose atom count and symbols must
-match the expected ``atoms``; ``ENERGY <float>`` is optional and at most one
-per image (absent energy parses as ``None``, never zero).  Blank lines are
-ignored; any other line inside a section raises ``ValueError``, as does any
-non-blank line outside image sections (other than the skipped NEB-TS
-section).  A missing
-image, a duplicated image number, or an out-of-range ordinal raises
-``ValueError``.  Members are returned sorted by ``member_index``.  The NEB-TS
-section, when present in the same text, is skipped here and parsed only by
-:func:`parse_neb_ts_candidate`.
-
-Minimal output dialect for :func:`parse_neb_ts_candidate`
-----------------------------------------------------------
-A member is returned ONLY when the text carries the explicit banner::
-
-    CONFFLOW NEB-TS OPTIMIZED TRANSITION STATE
-    ENERGY -76.050000
-    GEOMETRY
-    O 0.000000 0.000000 0.100000
-    END GEOMETRY
-
-``ENERGY`` is optional; the ``GEOMETRY`` block is required (a banner without
-a parseable geometry raises ``ValueError``).  A duplicated banner raises
-``ValueError``.  Text without the banner yields ``None`` -- in particular, a
-path-maximum image without the banner is never returned here.  The candidate
-carries the deterministic fallback ``member_index`` 0, flagged in metadata,
-because the dialect assigns no native ordinal to the optimized TS.
+Real output grammar for :func:`parse_neb_ts_candidate`
+-------------------------------------------------------
+The candidate comes ONLY from an explicit native report: a
+``Highest energy image .... <int>`` line plus an ``Energy .... <float>
+Eh`` line plus a ``HIGHEST ENERGY IMAGE (ANGSTROEM)`` coordinate block
+(bare ``SYM x y z`` rows).  The reported image number is the candidate
+identity.  Text without the report yields ``None`` — in particular, a
+path-maximum image without the report is never returned here.
 """
-
 from __future__ import annotations
 
 import math
@@ -88,19 +59,11 @@ from ...domain.elements import canonical_element_symbol
 from ...execution.native import NativeEnsembleMember, ParsedGeometry
 
 __all__ = [
-    "NEB_IMAGE_BANNER_FORMAT",
-    "NEB_TS_BANNER",
     "SUPPORTED_NEB_KEYS",
     "parse_neb_images",
     "parse_neb_ts_candidate",
     "render_neb_blocks",
 ]
-
-#: Format template for per-image banners; filled as ``FORMAT.format(i, n)``.
-NEB_IMAGE_BANNER_FORMAT: str = "CONFFLOW NEB IMAGE {0} OF {1}"
-
-#: Banner reporting an explicitly optimized NEB-TS transition state.
-NEB_TS_BANNER: str = "CONFFLOW NEB-TS OPTIMIZED TRANSITION STATE"
 
 #: Exhaustive allowlist of native keys accepted by :func:`render_neb_blocks`.
 SUPPORTED_NEB_KEYS: frozenset[str] = frozenset({"n_images", "neb_ts"})
@@ -108,13 +71,16 @@ SUPPORTED_NEB_KEYS: frozenset[str] = frozenset({"n_images", "neb_ts"})
 #: Minimum image count accepted for an NEB path (reactant, TS region, product).
 MIN_NEB_IMAGES: int = 3
 
-_GEOMETRY_BEGIN: str = "GEOMETRY"
-_GEOMETRY_END: str = "END GEOMETRY"
+#: Real highest-energy-image report markers.
+_HEI_NUMBER_RE = re.compile(r"^Highest energy image\s+\.+\s+(\d+)\s*$", re.MULTILINE)
+_HEI_ENERGY_RE = re.compile(r"^Energy\s+\.+\s+(\S+)\s*Eh\s*$")
+_HEI_BLOCK_HEADER = "HIGHEST ENERGY IMAGE (ANGSTROEM)"
 
-_NEB_IMAGE_PATTERN = re.compile(r"^CONFFLOW NEB IMAGE\s+(\d+)\s+OF\s+(\d+)\s*$")
+#: Real XYZ energy comment: ``Coordinates from ORCA-job <base> E <float>``.
+_XYZ_ENERGY_RE = re.compile(r"^Coordinates from ORCA-job\s+\S+\s+E\s+(\S+)\s*$")
 
-#: Parsed section facts: ``((atoms, coordinates), energy_or_None)``.
-_GeometryEnergy = tuple[tuple[tuple[str, ...], tuple[tuple[float, ...], ...]], float | None]
+#: Parsed image facts: ``((atoms, coordinates), energy)``.
+_GeometryEnergy = tuple[tuple[tuple[str, ...], tuple[tuple[float, ...], ...]], float]
 
 
 def _input_error(message: str) -> ValueError:
@@ -280,88 +246,6 @@ def _canonical_atoms(atoms: Sequence[str], *, what: str) -> list[str]:
     return canonical
 
 
-def _parse_geometry_section(
-    lines: Sequence[str], *, what: str, allow_energy: bool = True
-) -> _GeometryEnergy:
-    """Parse section lines into a geometry plus an optional energy.
-
-    Parameters
-    ----------
-    lines : Sequence[str]
-        Raw section lines between banners.
-    what : str
-        Description used in error messages.
-    allow_energy : bool, optional
-        Whether an ``ENERGY`` line is accepted (at most one).
-
-    Returns
-    -------
-    tuple
-        ``((atoms, coordinates), energy_or_None)`` parsed facts.
-
-    Raises
-    ------
-    ValueError
-        Raised on missing, duplicated, or malformed lines.
-    """
-    energy: float | None = None
-    energy_hits = 0
-    geometry: tuple[tuple[str, ...], tuple[tuple[float, ...], ...]] | None = None
-    geometry_hits = 0
-    in_geometry = False
-    geometry_atoms: list[str] = []
-    geometry_coords: list[tuple[float, ...]] = []
-
-    for raw in lines:
-        line = raw.strip()
-        if not line:
-            continue
-        if line == "****ORCA TERMINATED NORMALLY****":
-            # Trailing program termination marker: the termination fact is
-            # read separately, never as section data.
-            continue
-        if in_geometry:
-            if line == _GEOMETRY_END:
-                in_geometry = False
-                geometry_hits += 1
-                geometry = (tuple(geometry_atoms), tuple(geometry_coords))
-                geometry_atoms = []
-                geometry_coords = []
-                continue
-            symbol, x, y, z = _parse_coord_line(line)
-            geometry_atoms.append(symbol)
-            geometry_coords.append((x, y, z))
-            continue
-        if line == _GEOMETRY_BEGIN:
-            if geometry_hits:
-                raise ValueError(f"{what} has a duplicate GEOMETRY block")
-            in_geometry = True
-            continue
-        if line == _GEOMETRY_END:
-            raise ValueError(f"{what} has END GEOMETRY without GEOMETRY")
-        parts = line.split(None, 1)
-        keyword = parts[0].upper()
-        rest = parts[1].strip() if len(parts) == 2 else ""
-        if keyword == "ENERGY" and allow_energy:
-            energy_hits += 1
-            if energy_hits > 1:
-                raise ValueError(f"{what} has a duplicate ENERGY line")
-            try:
-                energy = float(rest)
-            except (TypeError, ValueError) as exc:
-                raise ValueError(f"{what} has invalid energy {rest!r}") from exc
-            if not math.isfinite(energy):
-                raise ValueError(f"{what} has non-finite energy {rest!r}")
-            continue
-        raise ValueError(f"{what} has unknown line {raw!r}")
-
-    if in_geometry:
-        raise ValueError(f"{what} has an unterminated GEOMETRY block")
-    if geometry_hits != 1 or geometry is None:
-        raise ValueError(f"{what} requires exactly one GEOMETRY block")
-    return geometry, energy
-
-
 def _check_geometry_atoms(
     parsed_atoms: Sequence[str], expected: Sequence[str], *, what: str
 ) -> None:
@@ -388,146 +272,217 @@ def _check_geometry_atoms(
             raise ValueError(f"{what} atom {index} is {found!r}, expected {wanted!r}")
 
 
+def _parse_mep_xyz(
+    xyz_text: str, *, expected_blocks: int
+) -> list[tuple[list[str], list[tuple[float, float, float]], float]]:
+    """Parse a real MEP trajectory XYZ document into image blocks.
+
+    Returns ``[(symbols, coordinates, comment_energy)]`` in file order.
+    Block count must equal ``expected_blocks``; every comment must carry
+    a finite energy (never zero-by-default); chrome lines never occur
+    inside real XYZ blocks, so any structural deviation fails closed.
+    """
+    lines = xyz_text.splitlines()
+    blocks: list[tuple[list[str], list[tuple[float, float, float]], float]] = []
+    index = 0
+    while index < len(lines):
+        while index < len(lines) and not lines[index].strip():
+            index += 1
+        if index >= len(lines):
+            break
+        try:
+            count = int(lines[index].strip())
+        except (TypeError, ValueError) as exc:
+            raise _input_error(
+                f"NEB trajectory XYZ block has no atom count: {lines[index]!r}"
+            ) from exc
+        if count < 1:
+            raise _input_error("NEB trajectory XYZ block is empty")
+        if index + 1 >= len(lines):
+            raise _input_error("NEB trajectory XYZ block lacks a comment line")
+        comment = lines[index + 1].strip()
+        comment_match = _XYZ_ENERGY_RE.match(comment)
+        if comment_match is None:
+            raise _input_error(
+                f"NEB trajectory XYZ comment carries no energy: {comment!r}"
+            )
+        try:
+            energy = float(comment_match.group(1))
+        except (TypeError, ValueError) as exc:
+            raise _input_error(
+                f"NEB trajectory XYZ comment energy is malformed: {comment!r}"
+            ) from exc
+        if not math.isfinite(energy):
+            raise _input_error("NEB trajectory XYZ comment energy is non-finite")
+        rows = lines[index + 2 : index + 2 + count]
+        if len(rows) != count:
+            raise _input_error(
+                f"NEB trajectory XYZ block holds {len(rows)} rows for {count} atoms"
+            )
+        symbols: list[str] = []
+        coordinates: list[tuple[float, float, float]] = []
+        for row in rows:
+            symbol, x, y, z = _parse_coord_line(row)
+            symbols.append(symbol)
+            coordinates.append((x, y, z))
+        blocks.append((symbols, coordinates, energy))
+        index += 2 + count
+    if len(blocks) != expected_blocks:
+        raise _input_error(
+            f"NEB trajectory holds {len(blocks)} images for {expected_blocks} expected"
+        )
+    return blocks
+
+
 def parse_neb_images(
-    text: str, *, atoms: Sequence[str], n_images: int
+    mep_xyz_text: str, *, atoms: Sequence[str], n_images: int
 ) -> tuple[NativeEnsembleMember, ...]:
-    """Parse NEB image members keyed by explicit native image ordinals.
+    """Parse NEB image members from a real MEP trajectory XYZ document.
+
+    Identity is file order (0-based, endpoints included); exactly
+    ``n_images + 2`` blocks are required.  Energies come from the XYZ
+    comments (required).  Atom count and symbols must match the expected
+    ``atoms`` exactly.  Members are returned in file order with the
+    ``neb_image`` role.
 
     Parameters
     ----------
-    text : str
-        Full log file content in the minimal NEB dialect.
+    mep_xyz_text : str
+        Content of the ``<job>_MEP_trj.xyz`` trajectory file.
     atoms : Sequence[str]
-        Expected element symbols in atom order; every image geometry must
-        match both the count and the symbols.
+        Expected element symbols in atom order.
     n_images : int
-        Expected image count; the parsed member count must equal it.
+        Requested intermediate image count; the file must hold exactly
+        ``n_images + 2`` blocks (both endpoints included).
 
     Returns
     -------
     tuple[NativeEnsembleMember, ...]
-        Members sorted by ``member_index`` (the native image number, never
-        the parser encounter order).  Images without an ``ENERGY`` line
-        carry ``None`` energy, never zero.
+        Members in file order.
 
     Raises
     ------
     ValueError
-        Raised when ``n_images`` is not a positive integer, a banner total
-        disagrees with ``n_images``, an ordinal is out of range or
-        duplicated, the member count differs from ``n_images``, or a section
-        is malformed or disagrees with ``atoms``.
+        Raised when ``n_images`` is not a positive integer, the block
+        count disagrees, or a block is malformed or disagrees with
+        ``atoms``.
     """
     if isinstance(n_images, bool) or not isinstance(n_images, int) or n_images < 1:
-        raise ValueError(f"n_images must be a positive integer, got {n_images!r}")
+        raise _input_error(f"n_images must be a positive integer, got {n_images!r}")
     expected = _canonical_atoms(atoms, what="NEB images")
-
-    sections: dict[int, list[str]] = {}
-    current: int | None = None
-    in_ts_section = False
-    for raw in text.splitlines():
-        line = raw.strip()
-        if line == NEB_TS_BANNER:
-            in_ts_section = True
-            current = None
-            continue
-        match = _NEB_IMAGE_PATTERN.match(line)
-        if match is not None:
-            in_ts_section = False
-            ordinal = int(match.group(1))
-            total = int(match.group(2))
-            if total != n_images:
-                raise ValueError(
-                    f"NEB image banner total {total} disagrees with n_images {n_images}"
-                )
-            if ordinal < 1 or ordinal > n_images:
-                raise ValueError(f"NEB image ordinal {ordinal} out of range 1..{n_images}")
-            if ordinal in sections:
-                raise ValueError(f"NEB image {ordinal} appears more than once")
-            sections[ordinal] = []
-            current = ordinal
-            continue
-        if in_ts_section or current is None:
-            if not line:
-                continue
-            if current is None and not in_ts_section:
-                raise ValueError(f"line outside NEB image sections: {raw!r}")
-            continue
-        sections[current].append(raw)
-
-    if len(sections) != n_images:
-        missing = sorted(set(range(1, n_images + 1)) - set(sections))
-        raise ValueError(f"NEB image count {len(sections)} != n_images {n_images}; {missing}")
-
+    blocks = _parse_mep_xyz(mep_xyz_text, expected_blocks=n_images + 2)
     members: list[NativeEnsembleMember] = []
-    for ordinal in sorted(sections):
-        what = f"NEB image {ordinal}"
-        (parsed_atoms, parsed_coords), energy = _parse_geometry_section(
-            sections[ordinal], what=what
-        )
-        _check_geometry_atoms(parsed_atoms, expected, what=what)
+    for ordinal, (symbols, coordinates, energy) in enumerate(blocks):
+        _check_geometry_atoms(symbols, expected, what=f"NEB image {ordinal}")
         members.append(
             NativeEnsembleMember(
                 member_index=ordinal,
                 geometry=ParsedGeometry(
-                    atoms=tuple(parsed_atoms),
-                    coordinates=tuple(tuple(point) for point in parsed_coords),
+                    atoms=tuple(symbols),
+                    coordinates=tuple(tuple(point) for point in coordinates),
                 ),
                 energy_hartree=energy,
-                metadata=FrozenDict({"neb_total": n_images}),
+                metadata=FrozenDict({"parser": "confflow.program.orca.neb.v1"}),
             )
         )
     return tuple(members)
 
 
-def parse_neb_ts_candidate(text: str) -> NativeEnsembleMember | None:
-    """Parse the explicitly reported NEB-TS optimized transition state.
+def parse_neb_ts_candidate(
+    text: str, *, atoms: Sequence[str]
+) -> NativeEnsembleMember | None:
+    """Parse the explicitly reported NEB highest-energy image.
+
+    The candidate comes ONLY from the native
+    ``INFORMATION ABOUT HIGHEST ENERGY IMAGE`` report: the reported
+    image number is the candidate identity, ``Energy ... Eh`` is its
+    energy, and the ``HIGHEST ENERGY IMAGE (ANGSTROEM)`` coordinate
+    block is its geometry.  Text without the report yields ``None`` —
+    in particular, a path-maximum image without the report is never
+    returned here.
 
     Parameters
     ----------
     text : str
-        Full log file content in the minimal NEB dialect.
+        Full log file content.
+    atoms : Sequence[str]
+        Expected element symbols in atom order.
 
     Returns
     -------
     NativeEnsembleMember | None
-        The TS-candidate member, or ``None`` when the text carries no
-        ``CONFFLOW NEB-TS OPTIMIZED TRANSITION STATE`` banner.  A
-        path-maximum image without the banner never yields a member here.
+        The TS-candidate member with the reported image number, or
+        ``None`` when the log carries no highest-energy-image report.
 
     Raises
     ------
     ValueError
-        Raised when the banner is duplicated or its section is malformed.
+        Raised on a duplicated report, a malformed number/energy, or a
+        geometry disagreeing with ``atoms``.
     """
-    hits = [line for line in text.splitlines() if line.strip() == NEB_TS_BANNER]
-    if not hits:
+    number_hits = _HEI_NUMBER_RE.findall(text)
+    if not number_hits:
         return None
-    if len(hits) != 1:
-        raise ValueError("duplicate NEB-TS banner: the candidate section must be unique")
-    section: list[str] = []
-    in_section = False
-    for raw in text.splitlines():
-        line = raw.strip()
-        if line == NEB_TS_BANNER:
-            in_section = True
-            continue
-        if not in_section:
-            continue
-        if _NEB_IMAGE_PATTERN.match(line) is not None:
-            break
-        section.append(raw)
-    (parsed_atoms, parsed_coords), energy = _parse_geometry_section(
-        section, what="NEB-TS candidate"
+    if len(number_hits) > 1:
+        raise _input_error("duplicate highest-energy-image reports: candidate ambiguous")
+    lines = text.splitlines()
+    number_line = next(
+        index for index, line in enumerate(lines) if _HEI_NUMBER_RE.match(line.strip())
     )
-    if not parsed_atoms:
-        raise ValueError("NEB-TS candidate geometry must not be empty")
+    try:
+        number = int(number_hits[0])
+    except (TypeError, ValueError) as exc:
+        raise _input_error("highest-energy-image number is malformed") from exc
+    if number < 0:
+        raise _input_error("highest-energy-image number must be >= 0")
+    energy: float | None = None
+    block_start: int | None = None
+    for index in range(number_line, len(lines)):
+        stripped = lines[index].strip()
+        if block_start is None and stripped == _HEI_BLOCK_HEADER:
+            block_start = index + 1
+            continue
+        if energy is None:
+            energy_match = _HEI_ENERGY_RE.match(stripped)
+            if energy_match is not None:
+                try:
+                    candidate = float(energy_match.group(1))
+                except (TypeError, ValueError) as exc:
+                    raise _input_error(
+                        "highest-energy-image energy is malformed"
+                    ) from exc
+                if not math.isfinite(candidate):
+                    raise _input_error("highest-energy-image energy is non-finite")
+                energy = candidate
+    if energy is None:
+        raise _input_error("highest-energy-image report carries no energy")
+    if block_start is None:
+        raise _input_error("highest-energy-image report carries no geometry block")
+    symbols: list[str] = []
+    coordinates: list[tuple[float, float, float]] = []
+    for raw in lines[block_start:]:
+        stripped = raw.strip()
+        if not stripped or set(stripped) <= {"-"}:
+            if coordinates:
+                break
+            continue
+        try:
+            symbol, x, y, z = _parse_coord_line(stripped)
+        except ValueError:
+            break
+        symbols.append(symbol)
+        coordinates.append((x, y, z))
+    if not symbols:
+        raise _input_error("highest-energy-image geometry block is empty")
+    expected = _canonical_atoms(atoms, what="NEB-TS candidate")
+    _check_geometry_atoms(symbols, expected, what="NEB-TS candidate")
     return NativeEnsembleMember(
-        member_index=0,
+        member_index=number,
         geometry=ParsedGeometry(
-            atoms=tuple(parsed_atoms),
-            coordinates=tuple(tuple(point) for point in parsed_coords),
+            atoms=tuple(symbols), coordinates=tuple(coordinates)
         ),
         energy_hartree=energy,
-        metadata=FrozenDict({"neb_ts_candidate": True, "member_index_fallback": True}),
+        metadata=FrozenDict(
+            {"parser": "confflow.program.orca.neb.v1", "neb_ts_candidate": True}
+        ),
     )

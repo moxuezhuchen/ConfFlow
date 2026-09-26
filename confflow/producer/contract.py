@@ -357,9 +357,9 @@ def _native_section() -> dict[str, Any]:
 
 def _remote_section() -> dict[str, Any]:
     """Return the remote capability ids imported from the frozen envelope."""
-    from ..remote.envelope import HANDOFF_SCHEMA_V2, RESULT_SCHEMA_V2
+    from ..remote.envelope import HANDOFF_SCHEMA_V3, RESULT_SCHEMA_V3
 
-    return {"handoff": HANDOFF_SCHEMA_V2, "result": RESULT_SCHEMA_V2}
+    return {"handoff": HANDOFF_SCHEMA_V3, "result": RESULT_SCHEMA_V3}
 
 
 def run_result_json_schema() -> dict[str, Any]:

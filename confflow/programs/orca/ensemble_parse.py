@@ -2,70 +2,48 @@
 
 """ORCA GOAT ensemble-member parsing for the V4 program adapter.
 
-Pure parser for the crafted strict dialect ``confflow-goat-v1``.  The
-dialect is defined here, used by crafted fixtures and the V4-5 fake-E2E
-path only; it is NOT native ORCA output and makes no claim to reproduce
-any ORCA release's GOAT report format.
-
-Dialect ``confflow-goat-v1`` (blank lines are ignored everywhere):
-
-- Each member opens with exactly one banner line::
-
-    GOAT CONFORMER <member_index>
-
-  where ``member_index`` is a non-negative integer.  The banner number is
-  the member identity (``NativeEnsembleMember.member_index``); parser
-  encounter order is never used as an identity.
-- The banner is followed by one or more coordinate lines::
-
-    <symbol> <x> <y> <z>
-
-- At most one energy line may appear anywhere inside the member section::
-
-    Conformer energy: <float> Hartree
-
-  A missing energy line means "unknown" and parses to ``None``, never
-  ``0.0``.
-- Any other non-blank line (text before the first banner, prose inside a
-  member section, a second energy line, a banner with no coordinates)
-  fails closed with ``ValueError``.
-- Member sections run to the next banner or end of text.  Identical
-  geometries are never deduplicated: two banners with the same coordinates
-  yield two members with distinct indices.
-- Empty or whitespace-only text parses to an empty tuple; the ensemble
-  result profile fails closed downstream on the empty set, not this parser.
-
-Deterministic ordering rule: :func:`parse_goat_members` preserves text
-encounter order; :func:`member_ordering` reports sorted member indices for
-callers that need a canonical order.
+Pure parser over real ORCA 6.1 GOAT output, verified against an
+installed-binary butane/HF-3c GOAT run: the log carries a
+``# Final ensemble info #`` table (conformer index, relative kcal/mol
+energy, degeneracy, populations) plus a ``Lowest energy conformer:
+<E> Eh`` line, and member geometries live in the
+``<job>.finalensemble.xyz`` file (standard multi-structure XYZ whose
+comment lines read ``<energy> converged=<bool>``).  Member identity is
+the table/file ordinal (both must agree 0..n-1); parser encounter order
+is never an identity beyond that.  Anything else is ignored or fails
+closed — never inferred.
 """
-
 from __future__ import annotations
 
 import math
 import re
 from collections.abc import Sequence
-from typing import Any
+from typing import Any, Final
 
 from ...domain.elements import canonical_element_symbol
 from ...execution.native import NativeEnsembleMember, ParsedGeometry
 
 __all__ = [
-    "GOAT_DIALECT_VERSION",
     "ensemble_energy_table",
     "goat_trajectory_facts",
     "member_ordering",
-    "parse_goat_members",
+    "parse_goat_ensemble",
 ]
 
-#: Version tag of the crafted strict dialect parsed here.
-GOAT_DIALECT_VERSION: str = "confflow-goat-v1"
+#: kcal/mol per Hartree (CODATA 2018) for table-relative energies.
+_KCAL_PER_HARTREE: Final[float] = 627.5094740631
 
-_BANNER_RE = re.compile(r"GOAT CONFORMER (\d+)")
-_ENERGY_RE = re.compile(
-    r"Conformer energy:\s*" r"([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)" r"\s*Hartree"
+#: Real ``# Final ensemble info #`` table rows:
+#: ``<index> <rel_kcal> <degen> <%total> <%cumul>``.
+_TABLE_ROW_RE = re.compile(
+    r"^\s*(\d+)\s+(\S+)\s+(\d+)\s+(\S+)\s+(\S+)\s*$"
 )
-_TRUNCATION_RE = re.compile(r"truncat", re.IGNORECASE)
+
+#: Real lowest-energy line: ``Lowest energy conformer    : <float> Eh``.
+_LOWEST_ENERGY_RE = re.compile(r"Lowest energy conformer\s*:\s*(\S+)\s*Eh")
+
+#: Tolerance (Hartree) between table-derived and XYZ-comment energies.
+_ENERGY_AGREEMENT_TOLERANCE: Final[float] = 1e-3
 
 
 def _parse_coord_line(line: str) -> tuple[str, float, float, float] | None:
@@ -126,114 +104,199 @@ def _parse_energy_token(token: str, *, line: str) -> float:
     return value
 
 
-def parse_goat_members(text: str, *, atoms: Sequence[str]) -> tuple[NativeEnsembleMember, ...]:
-    """Parse crafted-dialect GOAT conformer members from log text.
+def _parse_table_rows(log_text: str) -> tuple[list[tuple[int, float, int]], float]:
+    """Parse the real final-ensemble table plus the lowest-energy line.
+
+    Returns ``([(index, rel_kcal, degeneracy)], lowest_hartree)``.
+    Indices must run ``0..n-1`` in order; anything else fails closed.
+    """
+    rows: list[tuple[int, float, int]] = []
+    in_table = False
+    for raw_line in log_text.splitlines():
+        line = raw_line.strip()
+        if line == "# Final ensemble info #":
+            in_table = True
+            continue
+        if not in_table:
+            continue
+        if not line or line.startswith("Conformer") or line.startswith("(kcal/mol)") or set(line) <= {"-", " "}:
+            continue
+        match = _TABLE_ROW_RE.match(line)
+        if match is None:
+            break
+        try:
+            index, rel_kcal, degeneracy = (
+                int(match.group(1)),
+                float(match.group(2)),
+                int(match.group(3)),
+            )
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"native_parse_error: malformed GOAT ensemble table row: {line!r}"
+            ) from exc
+        if not math.isfinite(rel_kcal):
+            raise ValueError(
+                f"native_parse_error: non-finite GOAT ensemble energy: {line!r}"
+            )
+        rows.append((index, rel_kcal, degeneracy))
+    if [index for index, _rel, _degen in rows] != list(range(len(rows))):
+        raise ValueError(
+            "native_parse_error: GOAT ensemble table indices must run 0..n-1 in order"
+        )
+    lowest_match = _LOWEST_ENERGY_RE.search(log_text)
+    if lowest_match is None:
+        raise ValueError("native_parse_error: GOAT log carries no lowest-energy conformer line")
+    try:
+        lowest = float(lowest_match.group(1))
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            "native_parse_error: malformed GOAT lowest-energy line: "
+            f"{lowest_match.group(0)!r}"
+        ) from exc
+    if not math.isfinite(lowest):
+        raise ValueError("native_parse_error: non-finite GOAT lowest energy")
+    return rows, lowest
+
+
+def _parse_ensemble_xyz(
+    xyz_text: str, *, expected_count: int
+) -> list[tuple[list[str], list[tuple[float, float, float]], float | None]]:
+    """Parse real multi-structure GOAT ensemble XYZ text.
+
+    Returns per-block ``(symbols, coordinates, comment_energy)`` in file
+    order.  The block count must equal ``expected_count``; each block
+    must carry exactly ``len(atoms)`` rows checked by the caller.
+    """
+    lines = xyz_text.splitlines()
+    blocks: list[tuple[list[str], list[tuple[float, float, float]], float | None]] = []
+    index = 0
+    while index < len(lines):
+        while index < len(lines) and not lines[index].strip():
+            index += 1
+        if index >= len(lines):
+            break
+        try:
+            count = int(lines[index].strip())
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"native_parse_error: GOAT ensemble XYZ block has no atom count: "
+                f"{lines[index]!r}"
+            ) from exc
+        if count < 1:
+            raise ValueError("native_parse_error: GOAT ensemble XYZ block is empty")
+        if index + 1 >= len(lines):
+            raise ValueError("native_parse_error: GOAT ensemble XYZ block lacks a comment line")
+        comment = lines[index + 1].strip()
+        comment_energy: float | None = None
+        if comment:
+            try:
+                candidate = float(comment.split()[0])
+            except (TypeError, ValueError, IndexError):
+                candidate = math.nan
+            if math.isfinite(candidate):
+                comment_energy = candidate
+        rows = lines[index + 2 : index + 2 + count]
+        if len(rows) != count:
+            raise ValueError(
+                "native_parse_error: GOAT ensemble XYZ block holds "
+                f"{len(rows)} rows for {count} atoms"
+            )
+        symbols: list[str] = []
+        coordinates: list[tuple[float, float, float]] = []
+        for row in rows:
+            parsed = _parse_coord_line(row)
+            if parsed is None:
+                raise ValueError(
+                    f"native_parse_error: malformed GOAT ensemble coordinate: {row!r}"
+                )
+            symbols.append(parsed[0])
+            coordinates.append((parsed[1], parsed[2], parsed[3]))
+        blocks.append((symbols, coordinates, comment_energy))
+        index += 2 + count
+    if len(blocks) != expected_count:
+        raise ValueError(
+            "native_parse_error: GOAT ensemble XYZ holds "
+            f"{len(blocks)} members for {expected_count} table rows"
+        )
+    return blocks
+
+
+def parse_goat_ensemble(
+    log_text: str, *, ensemble_xyz_text: str, atoms: Sequence[str]
+) -> tuple[NativeEnsembleMember, ...]:
+    """Parse GOAT conformer members from real ORCA 6.1 output.
+
+    Member identity is the table/file ordinal (both must agree);
+    energies are the XYZ comment absolutes cross-checked against the
+    table (lowest plus relative kcal/mol) within 1e-3 Hartree.  Table
+    degeneracy/population facts ride in native metadata; identical
+    geometries are never deduplicated.
 
     Parameters
     ----------
-    text : str
-        Full log content in the ``confflow-goat-v1`` dialect.
+    log_text : str
+        Full ORCA log content carrying the final-ensemble table.
+    ensemble_xyz_text : str
+        Content of the ``<job>.finalensemble.xyz`` file.
     atoms : Sequence[str]
-        Expected atoms; each member geometry must carry exactly
-        ``len(atoms)`` coordinates (symbols are validated as elements but
-        are not required to match ``atoms`` entry-wise).
+        Expected element symbols in atom order; every member geometry
+        must carry exactly these symbols in this order.
 
     Returns
     -------
     tuple[NativeEnsembleMember, ...]
-        Parsed members in text encounter order with ``member_index`` taken
-        from each banner number and missing energies as ``None``.
+        Parsed members in ordinal order.
 
     Raises
     ------
     TypeError
-        Raised when ``text`` is not a string.
+        Raised when inputs are not strings.
     ValueError
-        Raised on duplicate banner numbers, geometry atom-count mismatch,
-        banners without coordinates, repeated energy lines, or any other
-        non-blank line outside the dialect grammar.
+        Raised on any missing/mismatched real-output fact.
     """
-    if not isinstance(text, str):
-        raise TypeError("GOAT member text must be a string")
-    if not text.strip():
+    if not isinstance(log_text, str):
+        raise TypeError("GOAT log text must be a string")
+    if not isinstance(ensemble_xyz_text, str):
+        raise TypeError("GOAT ensemble XYZ text must be a string")
+    expected = tuple(atoms)
+    if not expected:
+        raise ValueError("native_parse_error: GOAT expected atoms must not be empty")
+    rows, lowest = _parse_table_rows(log_text)
+    if not rows:
         return ()
-    expected_count = len(tuple(atoms))
-
+    blocks = _parse_ensemble_xyz(ensemble_xyz_text, expected_count=len(rows))
     members: list[NativeEnsembleMember] = []
-    seen: set[int] = set()
-    current_index: int | None = None
-    current_atoms: list[str] = []
-    current_coords: list[tuple[float, float, float]] = []
-    current_energy: float | None = None
-    energy_seen = False
-
-    def _flush() -> None:
-        if current_index is None:
-            return
-        if not current_coords:
+    for ordinal, ((index, rel_kcal, degeneracy), (symbols, coordinates, comment_energy)) in enumerate(
+        zip(rows, blocks)
+    ):
+        assert index == ordinal
+        if tuple(symbols) != expected:
             raise ValueError(
-                "native_parse_error: " f"GOAT CONFORMER {current_index} carries no coordinates"
+                "native_parse_error: GOAT member "
+                f"{ordinal} symbols {symbols} disagree with expected {list(expected)}"
             )
-        if len(current_coords) != expected_count:
+        table_energy = lowest + rel_kcal / _KCAL_PER_HARTREE
+        if comment_energy is None:
             raise ValueError(
-                "native_parse_error: GOAT CONFORMER "
-                f"{current_index} atom count ({len(current_coords)}) "
-                f"!= expected ({expected_count})"
+                f"native_parse_error: GOAT member {ordinal} XYZ comment carries no energy"
             )
-        geometry = ParsedGeometry(
-            atoms=tuple(current_atoms),
-            coordinates=tuple(current_coords),
-        )
+        if abs(comment_energy - table_energy) > _ENERGY_AGREEMENT_TOLERANCE:
+            raise ValueError(
+                f"native_parse_error: GOAT member {ordinal} file energy "
+                f"{comment_energy!r} disagrees with table energy {table_energy!r}"
+            )
         members.append(
             NativeEnsembleMember(
-                member_index=current_index,
-                geometry=geometry,
-                energy_hartree=current_energy,
-                metadata={"dialect": GOAT_DIALECT_VERSION},
+                member_index=ordinal,
+                geometry=ParsedGeometry(atoms=tuple(symbols), coordinates=tuple(coordinates)),
+                energy_hartree=comment_energy,
+                metadata={
+                    "parser": "confflow.program.orca.goat_ensemble.v1",
+                    "degeneracy": degeneracy,
+                    "relative_kcal_per_mol": rel_kcal,
+                },
             )
         )
-
-    for raw_line in text.splitlines():
-        line = raw_line.strip()
-        if not line:
-            continue
-        if line == "****ORCA TERMINATED NORMALLY****":
-            # Trailing program termination marker: the termination fact is
-            # read separately, never as member data.
-            continue
-        banner = _BANNER_RE.fullmatch(line)
-        if banner is not None:
-            _flush()
-            current_index = int(banner.group(1))
-            if current_index in seen:
-                raise ValueError("native_parse_error: " f"duplicate GOAT CONFORMER {current_index}")
-            seen.add(current_index)
-            current_atoms = []
-            current_coords = []
-            current_energy = None
-            energy_seen = False
-            continue
-        if current_index is None:
-            raise ValueError(f"native_parse_error: GOAT text before first banner: {line!r}")
-        energy = _ENERGY_RE.fullmatch(line)
-        if energy is not None:
-            if energy_seen:
-                raise ValueError(
-                    "native_parse_error: " f"repeated energy line in GOAT CONFORMER {current_index}"
-                )
-            current_energy = _parse_energy_token(energy.group(1), line=line)
-            energy_seen = True
-            continue
-        parsed = _parse_coord_line(line)
-        if parsed is None:
-            raise ValueError(
-                "native_parse_error: "
-                f"unexpected line in GOAT CONFORMER {current_index}: {line!r}"
-            )
-        symbol, x, y, z = parsed
-        current_atoms.append(symbol)
-        current_coords.append((x, y, z))
-    _flush()
     return tuple(members)
 
 
@@ -288,21 +351,23 @@ def member_ordering(
 def goat_trajectory_facts(text: str) -> dict[str, Any]:
     """Scan log text for coarse GOAT trajectory facts (best-effort).
 
+    A coarse scan over real ORCA 6.1 markers: the final-ensemble table
+    rows plus the lowest-energy line; never raises on content (this is
+    a coarse scan, not a substitute for :func:`parse_goat_ensemble`).
+
     Parameters
     ----------
     text : str
-        Full log content, possibly truncated or off-dialect; never raises
-        on content (this is a coarse regex scan, not a substitute for
-        :func:`parse_goat_members`).
+        Full log content, possibly truncated; never raises on content.
 
     Returns
     -------
     dict[str, Any]
-        ``dialect`` (this module's dialect tag), ``member_count`` (banner
-        occurrences), ``member_indices`` (sorted unique banner numbers),
-        ``energy_min_hartree`` / ``energy_max_hartree`` (``None`` when no
-        finite energy line scanned), and ``truncated`` (whether the text
-        mentions truncation, case-insensitive).
+        ``parser`` (this module's format tag), ``member_count`` (table
+        rows), ``member_indices`` (0..n-1 when a table parsed),
+        ``energy_min_hartree`` / ``energy_max_hartree`` (table-derived
+        absolutes, ``None`` when unparseable), and ``truncated``
+        (whether the lowest-energy line is absent).
 
     Raises
     ------
@@ -311,20 +376,20 @@ def goat_trajectory_facts(text: str) -> dict[str, Any]:
     """
     if not isinstance(text, str):
         raise TypeError("GOAT trajectory text must be a string")
-    indices = [int(token) for token in _BANNER_RE.findall(text)]
-    energies: list[float] = []
-    for token in _ENERGY_RE.findall(text):
-        try:
-            value = float(token)
-        except (TypeError, ValueError):
-            continue
-        if math.isfinite(value):
-            energies.append(value)
+    try:
+        rows, lowest = _parse_table_rows(text)
+    except ValueError:
+        rows, lowest = [], None
+    energies = (
+        [lowest + rel / _KCAL_PER_HARTREE for _index, rel, _degen in rows]
+        if lowest is not None
+        else []
+    )
     return {
-        "dialect": GOAT_DIALECT_VERSION,
-        "member_count": len(indices),
-        "member_indices": sorted(set(indices)),
+        "parser": "confflow.program.orca.goat_ensemble.v1",
+        "member_count": len(rows),
+        "member_indices": list(range(len(rows))),
         "energy_min_hartree": min(energies) if energies else None,
         "energy_max_hartree": max(energies) if energies else None,
-        "truncated": _TRUNCATION_RE.search(text) is not None,
+        "truncated": lowest is None,
     }

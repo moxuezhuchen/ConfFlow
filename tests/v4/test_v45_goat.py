@@ -18,40 +18,56 @@ from confflow.programs.orca import goat
 ATOMS = ("O", "H", "H")
 
 
-def _member_block(
-    index: int,
-    points: tuple[tuple[float, float, float], ...],
-    energy: float | None = ...,
-) -> str:
-    """Build one crafted-dialect member fixture block.
-
-    Parameters
-    ----------
-    index : int
-        Banner member number.
-    points : tuple[tuple[float, float, float], ...]
-        Coordinates zipped with ``ATOMS``.
-    energy : float | None
-        Energy line value; ``...`` (default) writes a derived placeholder,
-        ``None`` omits the energy line (unknown energy).
-
-    Returns
-    -------
-    str
-        Crafted-dialect fixture text for one member.
-    """
-    lines = [f"GOAT CONFORMER {index}"]
-    for symbol, (x, y, z) in zip(ATOMS, points):
-        lines.append(f"{symbol} {x:.6f} {y:.6f} {z:.6f}")
-    if energy is ...:
-        lines.append(f"Conformer energy: {-76.0 - index:.6f} Hartree")
-    elif energy is not None:
-        lines.append(f"Conformer energy: {energy} Hartree")
+def _real_log(lowest: float, rel_kcals: tuple[float, ...]) -> str:
+    """Build a real-grammar final-ensemble table plus lowest-energy line."""
+    lines = [
+        "         # Final ensemble info #",
+        "         Conformer     Energy     Degen.   % total   % cumul.",
+        "                       (kcal/mol)",
+        "         ------------------------------------------------------",
+    ]
+    for index, rel in enumerate(rel_kcals):
+        lines.append(f"                 {index}     {rel:.3f}         1      50.00      50.00")
+    lines.append("")
+    lines.append(f"         Lowest energy conformer    : {lowest:.6f} Eh")
+    lines.append("         Writing final ensemble to job.finalensemble.xyz")
+    lines.append("****ORCA TERMINATED NORMALLY****")
     return "\n".join(lines) + "\n"
 
 
-GEOM_A = ((0.0, 0.0, 0.0), (0.757, 0.586, 0.0), (-0.757, 0.586, 0.0))
-GEOM_B = ((0.0, 0.0, 0.1), (0.8, 0.5, 0.0), (-0.8, 0.5, 0.0))
+def _real_xyz(members: tuple[tuple[float, tuple], ...]) -> str:
+    """Build a real-grammar multi-structure ensemble XYZ document.
+
+    Each member is ``(comment_energy_or_None, ((symbol, x, y, z), ...))``.
+    """
+    blocks = []
+    for energy, rows in members:
+        comment = f"{energy:.6f} converged=true" if energy is not None else "no energy here"
+        body = "\n".join(f"{symbol}  {x:.6f}  {y:.6f}  {z:.6f}" for symbol, x, y, z in rows)
+        blocks.append(f"{len(rows)}\n{comment}\n{body}")
+    return "\n".join(blocks) + "\n"
+
+
+def _water_rows(shift: float = 0.0) -> tuple[tuple[str, float, float, float], ...]:
+    """Water coordinates with a deterministic x-shift."""
+    return tuple(
+        (symbol, x + shift, y, z)
+        for symbol, x, y, z in (
+            ("O", 0.0, 0.0, 0.0),
+            ("H", 0.757, 0.586, 0.0),
+            ("H", -0.757, 0.586, 0.0),
+        )
+    )
+
+
+def _two_member_pair() -> tuple[str, str]:
+    """Real-grammar log plus XYZ for two conformers."""
+    lowest = -76.41
+    rel = (0.0, ( -76.40 - lowest) * 627.5094740631)
+    return (
+        _real_log(lowest, rel),
+        _real_xyz(((-76.41, _water_rows(0.0)), (-76.40, _water_rows(0.03)))),
+    )
 
 
 class TestRenderGoatBlocks:
@@ -61,7 +77,7 @@ class TestRenderGoatBlocks:
         text = goat.render_goat_blocks(
             {
                 "goat": {
-                    "Seed": 7,
+                    "RANDOMSEED": 7,
                     "MaxIter": 50,
                     "MaxConformers": 10,
                     "EnergyWindow": 5.0,
@@ -73,7 +89,7 @@ class TestRenderGoatBlocks:
             "  EnergyWindow 5.0\n"
             "  MaxConformers 10\n"
             "  MaxIter 50\n"
-            "  Seed 7\n"
+            "  RANDOMSEED 7\n"
             "end\n"
         )
 
@@ -84,8 +100,8 @@ class TestRenderGoatBlocks:
         assert goat.render_goat_blocks({"goat": {}}) == "%goat\nend\n"
 
     def test_key_order_deterministic(self) -> None:
-        first = goat.render_goat_blocks({"goat": {"Seed": 1, "MaxIter": 2}})
-        second = goat.render_goat_blocks({"goat": {"MaxIter": 2, "Seed": 1}})
+        first = goat.render_goat_blocks({"goat": {"RANDOMSEED": 1, "MaxIter": 2}})
+        second = goat.render_goat_blocks({"goat": {"MaxIter": 2, "RANDOMSEED": 1}})
         assert first == second
 
     def test_missing_mapping_rejected(self) -> None:
@@ -111,9 +127,9 @@ class TestRenderGoatBlocks:
         for bad in ("50", 5.5, True, None):
             with pytest.raises(ValueError, match="native_input_error"):
                 goat.render_goat_blocks({"goat": {"MaxIter": bad}})
-        for bad in ("7", 7.5, True):
+        for bad in ("7", 7.5, True, None):
             with pytest.raises(ValueError, match="native_input_error"):
-                goat.render_goat_blocks({"goat": {"Seed": bad}})
+                goat.render_goat_blocks({"goat": {"RANDOMSEED": bad}})
         for bad in ("5.0", True, None):
             with pytest.raises(ValueError, match="native_input_error"):
                 goat.render_goat_blocks({"goat": {"EnergyWindow": bad}})
@@ -124,16 +140,19 @@ class TestRenderGoatBlocks:
                 goat.render_goat_blocks({"goat": {key: 0}})
             with pytest.raises(ValueError, match="native_input_error"):
                 goat.render_goat_blocks({"goat": {key: -2}})
-        with pytest.raises(ValueError, match="native_input_error"):
-            goat.render_goat_blocks({"goat": {"Seed": -1}})
+        # Seeds carry no positivity bound (the binary parses them).
         for bad in (0, -1.5, float("nan"), float("inf")):
             with pytest.raises(ValueError, match="native_input_error"):
                 goat.render_goat_blocks({"goat": {"EnergyWindow": bad}})
 
     def test_allowlist_contents(self) -> None:
         assert goat.GOAT_BLOCK_KEYS == frozenset(
-            {"MaxIter", "MaxConformers", "EnergyWindow", "Seed"}
+            {"MaxIter", "MaxConformers", "EnergyWindow", "RANDOMSEED"}
         )
+
+    def test_invented_seed_key_rejected(self) -> None:
+        with pytest.raises(ValueError, match="native_input_error"):
+            goat.render_goat_blocks({"goat": {"Seed": 7}})
 
 
 class TestValidateGoatInputs:
@@ -187,167 +206,121 @@ class TestGoatArtifactNames:
         with pytest.raises(ValueError, match="no directories"):
             goat.goat_artifact_names("..")
 
-
 class TestParseGoatMembers:
-    """Strict-dialect member parsing over crafted fixtures."""
+    """Real-format member parsing over grammatical fixtures."""
 
     def test_multi_member(self) -> None:
-        text = _member_block(0, GEOM_A) + _member_block(1, GEOM_B)
-        members = eparse.parse_goat_members(text, atoms=ATOMS)
+        log, xyz = _two_member_pair()
+        members = eparse.parse_goat_ensemble(log, ensemble_xyz_text=xyz, atoms=ATOMS)
         assert len(members) == 2
         assert members[0].member_index == 0
         assert members[1].member_index == 1
-        assert members[0].energy_hartree == pytest.approx(-76.0)
-        assert members[1].energy_hartree == pytest.approx(-77.0)
+        assert members[0].energy_hartree == pytest.approx(-76.41)
+        assert members[1].energy_hartree == pytest.approx(-76.40)
         assert members[0].geometry.atoms == ATOMS
         assert members[0].geometry.coordinates[0] == pytest.approx((0.0, 0.0, 0.0))
 
-    def test_shuffled_order_invariance(self) -> None:
-        forward = _member_block(0, GEOM_A) + _member_block(1, GEOM_B)
-        backward = _member_block(1, GEOM_B) + _member_block(0, GEOM_A)
-        first = eparse.parse_goat_members(forward, atoms=ATOMS)
-        second = eparse.parse_goat_members(backward, atoms=ATOMS)
-        assert {m.member_index for m in first} == {m.member_index for m in second}
-        assert eparse.ensemble_energy_table(first) == eparse.ensemble_energy_table(second)
-        assert eparse.member_ordering(first) == eparse.member_ordering(second) == (0, 1)
+    def test_count_mismatch_rejected(self) -> None:
+        log, xyz = _two_member_pair()
+        lines = xyz.split("\n")
+        single = "\n".join(lines[:5]) + "\n"
+        with pytest.raises(ValueError, match="XYZ holds"):
+            eparse.parse_goat_ensemble(log, ensemble_xyz_text=single, atoms=ATOMS)
 
-    def test_missing_energy_is_none(self) -> None:
-        text = _member_block(2, GEOM_A, energy=None)
-        (member,) = eparse.parse_goat_members(text, atoms=ATOMS)
-        assert member.member_index == 2
-        assert member.energy_hartree is None
-        assert member.energy_hartree != 0.0
+    def test_broken_index_sequence_rejected(self) -> None:
+        log = _real_log(-76.41, (0.0, 0.627)).replace("                 1     ", "                 5     ", 1)
+        _, xyz = _two_member_pair()
+        with pytest.raises(ValueError, match="0..n-1"):
+            eparse.parse_goat_ensemble(log, ensemble_xyz_text=xyz, atoms=ATOMS)
 
-    def test_scientific_energy(self) -> None:
-        text = (
-            "GOAT CONFORMER 4\n"
-            "O 0.000000 0.000000 0.000000\n"
-            "H 0.757000 0.586000 0.000000\n"
-            "H -0.757000 0.586000 0.000000\n"
-            "Conformer energy: -7.641000E+01 Hartree\n"
-        )
-        (member,) = eparse.parse_goat_members(text, atoms=ATOMS)
-        assert member.energy_hartree == pytest.approx(-76.41)
+    def test_missing_lowest_line_rejected(self) -> None:
+        log, xyz = _two_member_pair()
+        log = "\n".join(line for line in log.split("\n") if "Lowest energy" not in line)
+        with pytest.raises(ValueError, match="lowest-energy"):
+            eparse.parse_goat_ensemble(log, ensemble_xyz_text=xyz, atoms=ATOMS)
 
-    def test_duplicate_number_rejected(self) -> None:
-        text = _member_block(1, GEOM_A) + _member_block(1, GEOM_B)
-        with pytest.raises(ValueError, match="duplicate"):
-            eparse.parse_goat_members(text, atoms=ATOMS)
+    def test_energy_disagreement_rejected(self) -> None:
+        log, xyz = _two_member_pair()
+        xyz = xyz.replace("-76.400000 converged=true", "-75.000000 converged=true", 1)
+        with pytest.raises(ValueError, match="disagrees"):
+            eparse.parse_goat_ensemble(log, ensemble_xyz_text=xyz, atoms=ATOMS)
 
-    def test_atom_count_mismatch_rejected(self) -> None:
-        text = _member_block(0, GEOM_A) + (
-            "GOAT CONFORMER 1\n"
-            "O 0.000000 0.000000 0.000000\n"
-            "Conformer energy: -76.0 Hartree\n"
-        )
-        with pytest.raises(ValueError, match="atom count"):
-            eparse.parse_goat_members(text, atoms=ATOMS)
+    def test_missing_comment_energy_rejected(self) -> None:
+        xyz = _real_xyz(((None, _water_rows(0.0)),))
+        log = _real_log(-76.41, (0.0,))
+        with pytest.raises(ValueError, match="no energy"):
+            eparse.parse_goat_ensemble(log, ensemble_xyz_text=xyz, atoms=ATOMS)
+
+    def test_atom_mismatch_rejected(self) -> None:
+        log, xyz = _two_member_pair()
+        with pytest.raises(ValueError, match="symbols"):
+            eparse.parse_goat_ensemble(log, ensemble_xyz_text=xyz, atoms=("O", "H"))
 
     def test_identical_geometries_preserved(self) -> None:
-        text = _member_block(5, GEOM_A) + _member_block(9, GEOM_A)
-        members = eparse.parse_goat_members(text, atoms=ATOMS)
+        log = _real_log(-76.41, (0.0, 0.0))
+        xyz = _real_xyz(((-76.41, _water_rows(0.0)), (-76.41, _water_rows(0.0))))
+        members = eparse.parse_goat_ensemble(log, ensemble_xyz_text=xyz, atoms=ATOMS)
         assert len(members) == 2
-        assert [m.member_index for m in members] == [5, 9]
+        assert [m.member_index for m in members] == [0, 1]
         assert members[0].geometry.coordinates == members[1].geometry.coordinates
-
-    def test_empty_text(self) -> None:
-        assert eparse.parse_goat_members("", atoms=ATOMS) == ()
-        assert eparse.parse_goat_members("  \n\n", atoms=ATOMS) == ()
-
-    def test_banner_without_coordinates_rejected(self) -> None:
-        with pytest.raises(ValueError, match="no coordinates"):
-            eparse.parse_goat_members("GOAT CONFORMER 0\n", atoms=ATOMS)
-
-    def test_text_before_banner_rejected(self) -> None:
-        with pytest.raises(ValueError, match="before first banner"):
-            eparse.parse_goat_members("chatter\n" + _member_block(0, GEOM_A), atoms=ATOMS)
-
-    def test_garbage_line_rejected(self) -> None:
-        with pytest.raises(ValueError, match="unexpected line"):
-            eparse.parse_goat_members(
-                "GOAT CONFORMER 0\n"
-                "O 0.000000 0.000000 0.000000\n"
-                "H 0.757000 0.586000 0.000000\n"
-                "H -0.757000 0.586000 0.000000\n"
-                "something prose-like\n",
-                atoms=ATOMS,
-            )
-
-    def test_repeated_energy_rejected(self) -> None:
-        with pytest.raises(ValueError, match="repeated energy"):
-            eparse.parse_goat_members(
-                "GOAT CONFORMER 0\n"
-                "O 0.000000 0.000000 0.000000\n"
-                "H 0.757000 0.586000 0.000000\n"
-                "H -0.757000 0.586000 0.000000\n"
-                "Conformer energy: -76.0 Hartree\n"
-                "Conformer energy: -76.1 Hartree\n",
-                atoms=ATOMS,
-            )
 
     def test_non_string_rejected(self) -> None:
         with pytest.raises(TypeError):
-            eparse.parse_goat_members(None, atoms=ATOMS)  # type: ignore[arg-type]
+            eparse.parse_goat_ensemble(None, ensemble_xyz_text="x", atoms=ATOMS)  # type: ignore[arg-type]
+        with pytest.raises(TypeError):
+            eparse.parse_goat_ensemble("x", ensemble_xyz_text=None, atoms=ATOMS)  # type: ignore[arg-type]
 
-    def test_member_index_is_banner_number(self) -> None:
-        text = _member_block(42, GEOM_A)
-        (member,) = eparse.parse_goat_members(text, atoms=ATOMS)
-        assert member.member_index == 42
+    def test_empty_table_parses_empty(self) -> None:
+        log = (
+            "         # Final ensemble info #\n"
+            "         Conformer     Energy     Degen.   % total   % cumul.\n"
+            "                       (kcal/mol)\n"
+            "         ------------------------------------------------------\n"
+            "         Lowest energy conformer    : -76.410000 Eh\n"
+        )
+        assert eparse.parse_goat_ensemble(log, ensemble_xyz_text="", atoms=ATOMS) == ()
 
 
 class TestOrderingHelpers:
     """Energy-table and canonical-ordering conveniences."""
 
     def test_energy_table(self) -> None:
-        members = eparse.parse_goat_members(
-            _member_block(3, GEOM_A) + _member_block(7, GEOM_B, energy=None),
-            atoms=ATOMS,
-        )
+        _, xyz = _two_member_pair()
+        log, _ = _two_member_pair()
+        members = eparse.parse_goat_ensemble(log, ensemble_xyz_text=xyz, atoms=ATOMS)
         table = eparse.ensemble_energy_table(members)
-        assert table[3] == pytest.approx(-79.0)
-        assert table[7] is None
+        assert table[0] == pytest.approx(-76.41)
+        assert table[1] == pytest.approx(-76.40)
 
     def test_energy_table_duplicate_rejected(self) -> None:
-        members = eparse.parse_goat_members(_member_block(1, GEOM_A), atoms=ATOMS)
+        log, xyz = _two_member_pair()
+        members = eparse.parse_goat_ensemble(log, ensemble_xyz_text=xyz, atoms=ATOMS)
         with pytest.raises(ValueError, match="duplicate"):
             eparse.ensemble_energy_table(tuple(members) + tuple(members))
 
     def test_member_ordering_sorted(self) -> None:
-        members = eparse.parse_goat_members(
-            _member_block(9, GEOM_A) + _member_block(2, GEOM_B), atoms=ATOMS
-        )
-        assert eparse.member_ordering(members) == (2, 9)
+        log, xyz = _two_member_pair()
+        members = eparse.parse_goat_ensemble(log, ensemble_xyz_text=xyz, atoms=ATOMS)
+        assert eparse.member_ordering(members) == (0, 1)
         assert eparse.member_ordering(()) == ()
 
 
 class TestGoatTrajectoryFacts:
-    """Best-effort trajectory facts over crafted fixtures."""
+    """Best-effort trajectory facts over real-grammar fixtures."""
 
     def test_facts(self) -> None:
-        text = _member_block(0, GEOM_A) + _member_block(1, GEOM_B)
-        facts = eparse.goat_trajectory_facts(text)
+        log, _ = _two_member_pair()
+        facts = eparse.goat_trajectory_facts(log)
         assert facts["member_count"] == 2
         assert facts["member_indices"] == [0, 1]
-        assert facts["energy_min_hartree"] == pytest.approx(-77.0)
-        assert facts["energy_max_hartree"] == pytest.approx(-76.0)
+        assert facts["energy_min_hartree"] == pytest.approx(-76.41)
+        assert facts["energy_max_hartree"] == pytest.approx(-76.40)
         assert facts["truncated"] is False
 
-    def test_no_energies(self) -> None:
-        text = _member_block(0, GEOM_A, energy=None)
-        facts = eparse.goat_trajectory_facts(text)
-        assert facts["member_count"] == 1
-        assert facts["energy_min_hartree"] is None
-        assert facts["energy_max_hartree"] is None
-
-    def test_truncated_flag(self) -> None:
-        facts = eparse.goat_trajectory_facts("GOAT CONFORMER 0\n... truncated ...\n")
-        assert facts["truncated"] is True
-        assert facts["member_count"] == 1
-
-    def test_empty_and_garbage_tolerant(self) -> None:
+    def test_no_table_tolerant(self) -> None:
         facts = eparse.goat_trajectory_facts("")
         assert facts["member_count"] == 0
         assert facts["member_indices"] == []
-        assert facts["truncated"] is False
+        assert facts["truncated"] is True
         garbage = eparse.goat_trajectory_facts("total garbage ((( \n")
         assert garbage["member_count"] == 0

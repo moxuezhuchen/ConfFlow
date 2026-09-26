@@ -83,11 +83,13 @@ def _manifest(
         entries=(
             StructureBundleEntry(
                 structure_id=_STRUCTURE_ID,
+                port="structure",
                 payload=structure_payload,
                 digest=bundle_entry_digest("structure", structure_payload),
             ),
             ArtifactBundleEntry(
                 artifact_id=artifact_id,
+                port="checkpoint",
                 role="checkpoint",
                 checksum=checksum or _sha256(data),
                 bundle_locator=locator,
@@ -95,6 +97,7 @@ def _manifest(
             ),
             ResultEntry(
                 result_id=_RESULT_ID,
+                port="results",
                 payload=result_payload,
                 digest=bundle_entry_digest("result", result_payload),
             ),
@@ -105,6 +108,7 @@ def _manifest(
 def _execution() -> ExecutionDefinition:
     """Build a minimal execution definition for handoff tests."""
     return ExecutionDefinition(
+        executor="calculation",
         program="g16",
         native={},
         execution_adapter="standard",
@@ -135,8 +139,8 @@ def _handoff(
     inputs = manifest.model_dump(mode="json")
     inputs["entries"] = tuple(inputs["entries"])
     return WorkerHandoffV2.new(
-        schema="confflow.control.worker-handoff.v2",
-        protocol_version="v2",
+        schema="confflow.control.worker-handoff.v3",
+        protocol_version="v3",
         run_id="run-1",
         step_id=_STEP_ID,
         work_item_id=_WORK_ITEM_ID,
@@ -236,6 +240,21 @@ def _write_result_tree(
     return result_path
 
 
+def _measured_env(data: bytes) -> dict[str, Any]:
+    """Build a verified worker-measured environment over test bytes.
+
+    The digest recomputes exactly, so result-bundle import accepts it as
+    execution truth (wave-2 E: bundles carry measured environments).
+    """
+    from confflow.execution.contracts import ExecutionEnvironment
+
+    return ExecutionEnvironment(
+        program="g16",
+        program_version="test",
+        executable_digest=_sha256(data),
+    ).to_dict()
+
+
 def _result_bundle(
     payload: dict[str, Any],
     data: bytes,
@@ -257,15 +276,15 @@ def _result_bundle(
         bundle_locator=locator,
     )
     return ResultBundle.new(
-        schema="confflow.control.worker-result.v2",
-        protocol_version="v2",
+        schema="confflow.control.worker-result.v3",
+        protocol_version="v3",
         run_id="run-1",
         step_id=_STEP_ID,
         work_item_id=_WORK_ITEM_ID,
         attempt_number=attempt,
         launch_token=token,
         work_item_digest=digest,
-        environment={"program": "g16"},
+        environment=_measured_env(data),
         result=payload,
         produced_artifacts=(announced.model_dump(mode="json"),),
     )
@@ -327,6 +346,7 @@ def test_stage_size_mismatch_leaves_no_files(tmp_path: Path) -> None:
     entries = tuple(manifest.entries)
     altered = ArtifactBundleEntry(
         artifact_id=_ARTIFACT_ID,
+        port="checkpoint",
         role="checkpoint",
         checksum=_sha256(_DATA),
         bundle_locator=_LOCATOR,
@@ -629,15 +649,15 @@ def test_import_traversal_worker_locator_is_rejected(tmp_path: Path) -> None:
         bundle_locator="../evil.chk",
     )
     bundle = ResultBundle.new(
-        schema="confflow.control.worker-result.v2",
-        protocol_version="v2",
+        schema="confflow.control.worker-result.v3",
+        protocol_version="v3",
         run_id="run-1",
         step_id=_STEP_ID,
         work_item_id=_WORK_ITEM_ID,
         attempt_number=1,
         launch_token="tok-h1",
         work_item_digest=_DIGEST_A,
-        environment={"program": "g16"},
+        environment=_measured_env(data),
         result=payload,
         produced_artifacts=(announced.model_dump(mode="json"),),
     )

@@ -773,7 +773,7 @@ class TestBatchSeams:
                 context,
                 store=store,
                 owner=OwnerIdentity(owner_token="me"),
-                environment_digest=None,
+                environment_digest=rival_request.environment.digest(),
                 provenance=BatchStepExecutor._current_provenance(context_request),
                 run_root=run_root,
                 transport=None,
@@ -862,7 +862,14 @@ class TestRoundThree:
                     "metadata": [],
                 }
             ),
-            lambda p: p["results"].append({"kind": "e", "value": 1.0, "metadata": []}),
+            lambda p: p["results"].append(
+                {
+                    "kind": "e",
+                    "value": 1.0,
+                    "result_id": "sha256:" + "ab" * 64,
+                    "metadata": [],
+                }
+            ),
             lambda p: p["artifacts"].append(
                 {
                     "id": "a",
@@ -959,7 +966,14 @@ class TestRoundThree:
                     "metadata": [],
                 }
             ),
-            lambda p: p["results"].append({"kind": "e", "value": 1.0, "metadata": []}),
+            lambda p: p["results"].append(
+                {
+                    "kind": "e",
+                    "value": 1.0,
+                    "result_id": "sha256:" + "ab" * 64,
+                    "metadata": [],
+                }
+            ),
             lambda p: p["diagnostics"].append(
                 {"code": "x", "message": "y", "severity": "info", "details": []}
             ),

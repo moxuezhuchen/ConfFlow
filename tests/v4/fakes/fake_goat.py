@@ -2,12 +2,13 @@
 
 """Fake ORCA GOAT executable for ConfFlow Workflow V4-5 chain tests.
 
-Reads the ``.inp`` input geometry, emits three deterministic conformers
-in the crafted ``confflow-goat-v1`` dialect parsed by
-:mod:`confflow.programs.orca.ensemble_parse` (explicit ``GOAT CONFORMER``
-banners — identity from banner numbers, never encounter order), plus the
-normal-termination marker and an ``.xyz`` companion.  Only ``main``
-touches the filesystem or the process environment.
+Reads the ``.inp`` input geometry and emits REAL-FORMAT GOAT output as
+produced by ORCA 6.1 (verified against an installed-binary butane/HF-3c
+run): a ``# Final ensemble info #`` table plus ``Lowest energy
+conformer`` line in the ``.out`` log, and a ``<base>.finalensemble.xyz``
+multi-structure XYZ file whose comment lines read
+``<energy> converged=true``.  Three deterministic conformers; only
+``main`` touches the filesystem or the process environment.
 """
 
 from __future__ import annotations
@@ -53,13 +54,31 @@ def main(argv: list[str]) -> int:
     _ = argv
     atoms = _read_atoms(inp)
     base = os.path.splitext(os.path.basename(inp))[0]
-    sections = []
+    lowest = min(ENERGIES)
+    table_rows = []
+    xyz_blocks = []
     for index, (energy, shift) in enumerate(zip(ENERGIES, SHIFTS)):
-        rows = "\n".join(f"{symbol} {x + shift:.6f} {y:.6f} {z:.6f}" for symbol, x, y, z in atoms)
-        sections.append(f"GOAT CONFORMER {index}\n{rows}\nConformer energy: {energy} Hartree")
-    log = "\n".join(sections) + "\n****ORCA TERMINATED NORMALLY****\n"
+        rel_kcal = (energy - lowest) * 627.5094740631
+        table_rows.append(f"        {index}     {rel_kcal:.3f}\t     1      50.00      50.00")
+        rows = "\n".join(
+            f"{symbol}  {x + shift:.6f}  {y:.6f}  {z:.6f}" for symbol, x, y, z in atoms
+        )
+        xyz_blocks.append(f"{len(atoms)}\n{energy:.6f} converged=true\n{rows}")
+    log_lines = [
+        "         # Final ensemble info #",
+        "         Conformer     Energy     Degen.   % total   % cumul.",
+        "                       (kcal/mol)",
+        "         ------------------------------------------------------",
+        *table_rows,
+        "",
+        f"         Lowest energy conformer    : {lowest:.6f} Eh",
+        f"         Writing final ensemble to {base}.finalensemble.xyz",
+        "****ORCA TERMINATED NORMALLY****",
+    ]
     with open(base + ".out", "w", encoding="utf-8") as handle:
-        handle.write(log)
+        handle.write("\n".join(log_lines) + "\n")
+    with open(base + ".finalensemble.xyz", "w", encoding="utf-8") as handle:
+        handle.write("\n".join(xyz_blocks) + "\n")
     first = atoms[0]
     with open(base + ".xyz", "w", encoding="utf-8") as handle:
         handle.write(f"{len(atoms)}\nfirst conformer\n")
@@ -67,7 +86,5 @@ def main(argv: list[str]) -> int:
             handle.write(f"{symbol} {x:.6f} {y:.6f} {z:.6f}\n")
     _ = first
     return 0
-
-
 if __name__ == "__main__":
     raise SystemExit(main(sys.argv))

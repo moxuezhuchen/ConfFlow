@@ -83,8 +83,8 @@ WORKFLOW_SCHEMA_V4 = "confflow.workflow.v4"
 VALIDATION_SCHEMA_V1 = "confflow.configuration-validation.v1"
 RESULT_MANIFEST_SCHEMA_V1 = "confflow.run_result_manifest.v1"
 REACTION_PROFILE_CAPABILITY = "confflow.contract.analysis.reaction_profile.v1"
-HANDOFF_CAPABILITY = "confflow.control.worker-handoff.v2"
-RESULT_CAPABILITY = "confflow.control.worker-result.v2"
+HANDOFF_CAPABILITY = "confflow.control.worker-handoff.v3"
+RESULT_CAPABILITY = "confflow.control.worker-result.v3"
 
 # Every artifact digest below is "sha256:" + hex(sha256(canonical JSON)).
 

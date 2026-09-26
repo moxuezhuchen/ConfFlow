@@ -91,6 +91,8 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 STRUCTURE_INPUTS = {"structures": {"kind": "structure", "cardinality": "many"}}
 ORCA_NATIVE = {"keyword": "B3LYP D3BJ def2-SVP Opt"}
+GAUSSIAN_NATIVE = {"keyword": "B3LYP/6-31G* Opt"}
+FAKE_G16 = FAKES_DIR / "fake_g16.py"
 
 FORBIDDEN_IMPORT_PARTS = (
     "compiler",
@@ -215,6 +217,40 @@ def install_orca_shim(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
     return bin_dir
 
 
+def install_g16_shim(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
+    """Expose the fake Gaussian as ``g16`` on ``PATH`` for worker PATH lookup."""
+    bin_dir = tmp_path / "bin-g16"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    link = bin_dir / "g16"
+    if not link.exists():
+        link.symlink_to(FAKE_G16)
+    monkeypatch.setenv("PATH", os.pathsep.join([str(bin_dir), os.environ.get("PATH", "")]))
+    return bin_dir
+
+
+def compile_g16_plan(*, native: dict[str, Any], checks: list[str], **kwargs: Any) -> Any:
+    """Compile a single-calculation Gaussian document for tests."""
+    step = calc_step(
+        "s_opt",
+        program="gaussian",
+        bindings={"structure": {"source": {"run": "structures"}}},
+        native=native,
+        checks=checks,
+        resources={"cores_per_item": 1, "memory_per_item": "1GB"},
+        execution={"binding_id": "test", "executable": str(FAKE_G16)},
+        **kwargs,
+    )
+    document = {
+        "schema": "confflow.workflow.v4",
+        "steps": [step],
+        "inputs": STRUCTURE_INPUTS,
+    }
+    compiled = compile_doc(document)
+    assert compiled.ok, [(item.code, item.message) for item in compiled.errors]
+    assert compiled.plan is not None
+    return compiled.plan
+
+
 def compile_orca_plan(*, native: dict[str, Any], checks: list[str], **kwargs: Any) -> Any:
     """Compile a single-calculation ORCA document for tests.
 
@@ -305,11 +341,12 @@ def local_context(
         The local execution context.
     """
     planned = plan.steps[0]
+    program = planned.scientific.program or "orca"
     return ItemExecutionContext(
         step_id=planned.step_id,
         scientific=planned.scientific,
         scientific_defaults=plan.scientific_defaults,
-        adapter=get_program_adapter("orca"),
+        adapter=get_program_adapter(program),
         profile=PROFILES["standard"],
         checks=tuple(CHECKS[name] for name in checks),
         recovery=RECOVERIES["none"],
@@ -321,14 +358,22 @@ def local_context(
         supervisor=supervisor,
         environment=None,
         poll_interval_seconds=0.05,
+        executor_capability="calculation",
     )
 
 
-def make_handoff(*, item: Any, context: ItemExecutionContext, attempt: int, token: str) -> Any:
-    """Build a V2 handoff envelope from resolved execution inputs.
+def make_handoff(*, plan: Any, item: Any, context: ItemExecutionContext, attempt: int, token: str) -> Any:
+    """Build a V3 handoff envelope through the frozen production builder.
+
+    The envelope is assembled by ``RemoteTransport._build_handoff`` against
+    a scratch durable store holding this item's registration (step digest
+    plus producer provenance), so worker tests exercise the exact
+    producer-side bytes the real transport emits — never a mirrored copy.
 
     Parameters
     ----------
+    plan : Any
+        Compiled execution plan carrying the step semantic digest.
     item : Any
         The work item to transport.
     context : ItemExecutionContext
@@ -341,118 +386,43 @@ def make_handoff(*, item: Any, context: ItemExecutionContext, attempt: int, toke
     Returns
     -------
     Any
-        The validated handoff envelope (mirrors the frozen transport).
+        The validated handoff envelope.
     """
-    driving = select_driving_structure(item)
-    effective, _ = resolve_scientific_parameters(
-        structure=driving,
-        overrides=context.scientific.overrides,
-        defaults=context.scientific_defaults,
-    )
-    manifest = build_manifest(item)
+    import tempfile
+
+    from confflow.persistence.reuse import build_producer_provenance
+    from confflow.persistence.work_items import SqliteWorkItemStore
+    from confflow.remote.transport import RemoteTransport
+
+    adapter = context.adapter
+    profile = context.profile
     check_versions = {check.name: check.contract_version for check in context.checks}
-    definition = build_execution_definition(
-        program=context.adapter.program_name.value,
-        native=context.scientific.native,
-        execution_adapter=context.scientific.execution_adapter,
-        result_profile=context.scientific.result_profile,
-        checks=tuple(check.name for check in context.checks),
-        check_params=context.scientific.check_params,
-        recovery=getattr(context.recovery, "name", "none") or "none",
-        recovery_params=context.scientific.recovery_params,
-        resources=item.resources,
-        charge=effective.charge,
-        multiplicity=effective.multiplicity,
-        freeze=effective.freeze,
-        step_semantic_digest=item.semantic_digest,
-        contract_versions={
-            "adapter": context.adapter.adapter_version,
-            "profile": context.profile.contract_version,
-            **{f"check:{name}": version for name, version in check_versions.items()},
-            "recovery": getattr(context.recovery, "contract_version", "none") or "none",
-        },
+    recovery = context.recovery
+    provenance = build_producer_provenance(
+        adapter_version=adapter.adapter_version,
+        profile_version=profile.contract_version,
+        check_versions=check_versions,
+        recovery_version=getattr(recovery, "contract_version", "none") or "none",
     )
-    return WorkerHandoffV2.new(
-        run_id="run-test",
-        step_id=context.step_id,
-        work_item_id=item.id,
-        logical_key=item.logical_key,
-        attempt_number=int(attempt),
-        launch_token=token,
-        work_item_digest=item.semantic_digest,
-        step_semantic_digest=item.semantic_digest,
-        producer_provenance={},
-        environment_request={"program": context.adapter.program_name.value},
-        execution=definition,
-        inputs=manifest,
-    )
+    scratch = tempfile.mkdtemp(prefix="confflow-handoff-test-")
+    store = SqliteWorkItemStore.open(os.path.join(scratch, "step.db"))
+    try:
+        store.register_item(
+            work_item_id=item.id,
+            logical_key=item.logical_key,
+            step_id=item.step_id,
+            work_item_digest=item.semantic_digest,
+            step_semantic_digest=plan.steps[0].step_semantic_digest,
+            environment_digest="sha256:" + "0" * 64,
+            producer_provenance=dict(provenance.thaw()),
+        )
+        transport = RemoteTransport(run_root=scratch, store=store, worker_root=scratch)
+        return transport._build_handoff(item, context, attempt=int(attempt), token=token)
+    finally:
+        store.close()
 
 
-def build_manifest(item: Any) -> InputBundleManifest:
-    """Build the deterministic input bundle manifest for *item*.
-
-    This mirrors the evident intent of the frozen transport helper (which
-    currently raises ``AttributeError`` on its eager sort-key default and
-    is owned read-only by another workstream): structures ride as
-    canonical payloads, artifacts ride as identity plus checksum with
-    deterministic locators, and results ride as typed payloads.
-
-    Parameters
-    ----------
-    item : Any
-        The work item to transport.
-
-    Returns
-    -------
-    InputBundleManifest
-        The sorted input bundle manifest.
-    """
-    entries: list[Any] = []
-    for port in sorted(item.named_inputs.structures):
-        for record in item.named_inputs.structures[port]:
-            payload = record.to_dict()
-            entries.append(
-                StructureBundleEntry(
-                    structure_id=record.id,
-                    payload=payload,
-                    digest=bundle_entry_digest("structure", payload),
-                )
-            )
-    index = 0
-    for port in sorted(item.named_inputs.artifacts):
-        for record in sorted(item.named_inputs.artifacts[port], key=lambda ref: ref.id):
-            safe = (
-                "".join(
-                    char if char.isalnum() or char in ("_", "-", ".") else "_" for char in record.id
-                ).strip("._")
-                or f"artifact-{index}"
-            )
-            index += 1
-            entries.append(
-                ArtifactBundleEntry(
-                    artifact_id=record.id,
-                    role=record.role,
-                    checksum=record.checksum or "sha256:" + "0" * 64,
-                    subject_structure_id=record.subject_structure_id,
-                    media_type=record.media_type,
-                    bundle_locator=f"files/{index:04d}-{safe}",
-                )
-            )
-    for port in sorted(item.named_inputs.results):
-        for record in item.named_inputs.results[port]:
-            payload = record.to_dict()
-            entries.append(
-                ResultEntry(
-                    result_id=f"{record.kind}:{record.subject_structure_id or 'unbound'}",
-                    payload=payload,
-                    digest=bundle_entry_digest("result", payload),
-                )
-            )
-    entries.sort(key=entry_sort_key)
-    return InputBundleManifest(entries=tuple(entries))
-
-
-def entry_sort_key(entry: Any) -> tuple[str, str]:
+def entry_sort_key(entry: Any) -> tuple[str, str, str]:
     """Return the deterministic sort key of one bundle entry.
 
     Parameters
@@ -466,10 +436,10 @@ def entry_sort_key(entry: Any) -> tuple[str, str]:
         The ``(entry_kind, stable identity)`` ordering key.
     """
     if isinstance(entry, StructureBundleEntry):
-        return (entry.entry_kind, entry.structure_id)
+        return (entry.entry_kind, getattr(entry, "port", ""), entry.structure_id)
     if isinstance(entry, ArtifactBundleEntry):
-        return (entry.entry_kind, entry.artifact_id)
-    return (entry.entry_kind, entry.result_id)
+        return (entry.entry_kind, entry.port, entry.artifact_id)
+    return (entry.entry_kind, entry.port, entry.result_id)
 
 
 def write_handoff_file(handoff: Any, path: Path) -> str:
@@ -595,10 +565,10 @@ class TestSuccessParity:
 
         worker_root = tmp_path / "worker"
         token = f"remote:{item.id}:attempt-1"
-        handoff = make_handoff(item=item, context=context, attempt=1, token=token)
+        handoff = make_handoff(plan=plan, item=item, context=context, attempt=1, token=token)
         bundle = run_worker(handoff=handoff, worker_root=worker_root, token=token)
 
-        assert bundle.run_id == "run-test"
+        assert bundle.run_id == handoff.run_id
         assert bundle.step_id == handoff.step_id
         assert bundle.work_item_id == item.id
         assert bundle.attempt_number == 1
@@ -659,14 +629,16 @@ class TestSuccessParity:
         tuple[Any, Path, str, bytes]
             The result bundle, worker root, launch token, and staged bytes.
         """
+        # Gaussian carries checkpoint vocabulary (%OldChk); ORCA declares
+        # none and fails closed on bound checkpoints by design.
         monkeypatch.setenv("FAKE_MODE", "success_opt")
-        install_orca_shim(monkeypatch, tmp_path)
-        plan = compile_orca_plan(native=dict(ORCA_NATIVE), checks=["normal_termination"])
+        install_g16_shim(monkeypatch, tmp_path)
+        plan = compile_g16_plan(native=dict(GAUSSIAN_NATIVE), checks=["normal_termination"])
         item = assemble_one(plan)
         run_root = tmp_path / "local-run"
         context = local_context(
             plan,
-            str(FAKE_ORCA),
+            str(FAKE_G16),
             str(run_root),
             str(run_root / "items"),
             NativeProcessSupervisor(),
@@ -674,7 +646,7 @@ class TestSuccessParity:
         )
         worker_root = tmp_path / "worker"
         token = f"remote:{item.id}:attempt-1"
-        handoff = make_handoff(item=item, context=context, attempt=1, token=token)
+        handoff = make_handoff(plan=plan, item=item, context=context, attempt=1, token=token)
 
         staged_bytes = b"fake-checkpoint-bytes-for-worker\n" * 64
         staged_dir = worker_root / "staging" / token.replace(":", "_")
@@ -686,6 +658,7 @@ class TestSuccessParity:
         driving = select_driving_structure(item)
         entry = ArtifactBundleEntry(
             artifact_id="chk_extra",
+            port="checkpoint",
             role="checkpoint",
             checksum=checksum,
             subject_structure_id=driving.id,
@@ -746,7 +719,7 @@ class TestFailurePropagation:
         worker_root = tmp_path / "worker"
         token = f"remote:{item.id}:attempt-1"
         bundle = run_worker(
-            handoff=make_handoff(item=item, context=context, attempt=1, token=token),
+            handoff=make_handoff(plan=plan, item=item, context=context, attempt=1, token=token),
             worker_root=worker_root,
             token=token,
         )
@@ -780,7 +753,7 @@ class TestFailurePropagation:
         worker_root = tmp_path / "worker"
         token = f"remote:{item.id}:attempt-1"
         bundle = run_worker(
-            handoff=make_handoff(item=item, context=context, attempt=1, token=token),
+            handoff=make_handoff(plan=plan, item=item, context=context, attempt=1, token=token),
             worker_root=worker_root,
             token=token,
         )
@@ -809,7 +782,7 @@ class TestFailurePropagation:
         worker_root = tmp_path / "worker"
         token = f"remote:{item.id}:attempt-1"
         bundle = run_worker(
-            handoff=make_handoff(item=item, context=context, attempt=1, token=token),
+            handoff=make_handoff(plan=plan, item=item, context=context, attempt=1, token=token),
             worker_root=worker_root,
             token=token,
         )
@@ -845,7 +818,7 @@ class TestCancellation:
         )
         worker_root = tmp_path / "worker"
         token = f"remote:{item.id}:attempt-1"
-        handoff = make_handoff(item=item, context=context, attempt=1, token=token)
+        handoff = make_handoff(plan=plan, item=item, context=context, attempt=1, token=token)
 
         stop = threading.Event()
         timer = threading.Timer(0.5, stop.set)
@@ -890,7 +863,7 @@ class TestResultPackaging:
         )
         worker_root = tmp_path / "worker"
         token = f"remote:{item.id}:attempt-1"
-        handoff = make_handoff(item=item, context=context, attempt=1, token=token)
+        handoff = make_handoff(plan=plan, item=item, context=context, attempt=1, token=token)
         worker_root.mkdir(parents=True, exist_ok=True)
         handoff_path = write_handoff_file(handoff, worker_root / "handoff.json")
         result_path = run_worker_envelope(
@@ -902,7 +875,7 @@ class TestResultPackaging:
         bundle = read_result_bundle(path=result_path)
 
         assert bundle.result["status"] == WorkItemStatus.COMPLETED.value
-        assert bundle.run_id == "run-test"
+        assert bundle.run_id == handoff.run_id
         assert bundle.step_id == handoff.step_id
         assert bundle.work_item_id == item.id
         assert bundle.launch_token == token
@@ -942,7 +915,7 @@ class TestResultPackaging:
         )
         local = WorkItemExecutor().execute(item, context)
         assert local.is_completed
-        handoff = make_handoff(item=item, context=context, attempt=1, token="remote:x:attempt-1")
+        handoff = make_handoff(plan=plan, item=item, context=context, attempt=1, token="remote:x:attempt-1")
         with pytest.raises(ResultBundleError):
             package_result_bundle(
                 work_item_result=local,
@@ -955,6 +928,18 @@ class TestResultPackaging:
 
 class TestReadResultBundle:
     """Secure bundle reads reject tampering, corruption, and oversize."""
+
+    @staticmethod
+    def _measured_bundle_env() -> dict[str, Any]:
+        """Verified worker-measured environment over fixed test bytes."""
+        from confflow.execution.contracts import ExecutionEnvironment
+
+        return ExecutionEnvironment(
+            program="orca",
+            program_version="test",
+            executable_digest="sha256:"
+            + hashlib.sha256(b"worker-valid-bundle-env").hexdigest(),
+        ).to_dict()
 
     def _write_valid_bundle(self, path: Path) -> ResultBundle:
         """Write a minimal valid bundle envelope for rejection tests.
@@ -976,7 +961,7 @@ class TestReadResultBundle:
             attempt_number=1,
             launch_token="remote:wi:s_opt:g0:attempt-1",
             work_item_digest="sha256:" + "ab" * 32,
-            environment={"program": "orca"},
+            environment=TestReadResultBundle._measured_bundle_env(),
             result={"work_item_id": "wi:s_opt:g0", "status": "completed"},
             produced_artifacts=(),
             transport_metadata={"worker_pid": os.getpid(), "finished_wall": time.time()},
@@ -1071,7 +1056,7 @@ class TestWorkerErrors:
         )
         worker_root = tmp_path / "worker"
         worker_root.mkdir(parents=True, exist_ok=True)
-        handoff = make_handoff(item=item, context=context, attempt=1, token="remote:real:attempt-1")
+        handoff = make_handoff(plan=plan, item=item, context=context, attempt=1, token="remote:real:attempt-1")
         handoff_path = write_handoff_file(handoff, worker_root / "handoff.json")
         with pytest.raises(WorkerError, match="launch token"):
             run_worker_envelope(
@@ -1106,7 +1091,7 @@ class TestWorkerErrors:
             NativeProcessSupervisor(),
             ["normal_termination"],
         )
-        handoff = make_handoff(item=item, context=context, attempt=1, token="remote:x:attempt-1")
+        handoff = make_handoff(plan=plan, item=item, context=context, attempt=1, token="remote:x:attempt-1")
         edited = ExecutionDefinition(
             **{**handoff.execution.model_dump(mode="json"), "program": "bogus"}
         )
@@ -1201,7 +1186,7 @@ class TestNoCompilerHygiene:
         worker_root = tmp_path / "probe-worker"
         worker_root.mkdir(parents=True, exist_ok=True)
         token = f"remote:{item.id}:attempt-1"
-        handoff = make_handoff(item=item, context=context, attempt=1, token=token)
+        handoff = make_handoff(plan=plan, item=item, context=context, attempt=1, token=token)
         handoff_path = write_handoff_file(handoff, worker_root / "handoff.json")
 
         script = _probe_script()

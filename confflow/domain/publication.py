@@ -24,7 +24,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from enum import IntEnum
 
-from .completion import StepStatus
+from .completion import StepStatus, WorkItemStatus
 from .errors import InvalidResultError, PublicationError
 from .result import find_duplicate_result_ids, require_production_ids
 from .step_result import StepResult
@@ -156,7 +156,15 @@ def verify_step_publication(
     """
     _require_result_identity(step_result)
     durable = set(durable_item_ids)
-    missing_items = [item_id for item_id in step_result.work_item_ids if item_id not in durable]
+    # Carried CANCELLED items are terminal lifecycle reports without a
+    # scientific payload; they never counterfeit coverage and are exempt
+    # from the durability requirement (mirrors the batch gap gate).
+    cancelled_ids = {
+        item.work_item_id for item in step_result.item_results if item.status is WorkItemStatus.CANCELLED
+    }
+    missing_items = [
+        item_id for item_id in step_result.work_item_ids if item_id not in durable and item_id not in cancelled_ids
+    ]
     if missing_items:
         raise PublicationError(
             "cannot publish step result before work item results are durable: "

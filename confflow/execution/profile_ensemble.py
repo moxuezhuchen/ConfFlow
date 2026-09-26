@@ -218,23 +218,25 @@ class EnsembleProfile:
                 geometry_semantics=GeometrySemantics.PRODUCED,
                 diagnostics=tuple(diagnostics),
             )
-        indexes = tuple(member.member_index for member in members)
-        if len(set(indexes)) != len(indexes):
-            # Colliding native member indexes would share one deterministic
+        keys = tuple((member.role, member.member_index) for member in members)
+        if len(set(keys)) != len(keys):
+            # Colliding (role, index) pairs would share one deterministic
             # id, so fail closed with no structures rather than deduping or
-            # renumbering silently.
+            # renumbering silently.  Identity is role-scoped: an NEB image
+            # and the TS candidate may share a native image number because
+            # their roles (hence entity ids) differ.
             diagnostics.append(
                 Diagnostic(
                     code=DUPLICATE_ENSEMBLE_MEMBER_CODE,
                     message=(
-                        "Ensemble members carry duplicated member indexes; "
-                        f"observed {sorted(indexes)}."
+                        "Ensemble members carry duplicated (role, index) pairs; "
+                        f"observed {sorted(keys)}."
                     ),
                     severity=DiagnosticSeverity.ERROR,
                     step_id=context.step_id,
                     work_item_id=context.work_item_id,
                     logical_key=context.logical_key,
-                    details=FrozenDict({"observed": tuple(sorted(indexes))}),
+                    details=FrozenDict({"observed": tuple(sorted(keys))}),
                 )
             )
             return ProfileOutput(
@@ -289,7 +291,7 @@ class EnsembleProfile:
                     work_item_id=context.work_item_id,
                     kind="energy",
                     subject_structure_id=record.id,
-                    discriminator=f"member:{member.member_index}",
+                    discriminator=f"{member.role}:{member.member_index}",
                     program=provenance.program,
                     method=provenance.method,
                     basis=provenance.basis,

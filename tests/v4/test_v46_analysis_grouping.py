@@ -11,6 +11,8 @@ determinism via digest comparison.
 
 from __future__ import annotations
 
+import hashlib
+
 from confflow.analysis.grouping import build_reaction_groups, reaction_groups_digest
 from confflow.analysis.models import AnalysisError
 from confflow.domain.diagnostics import Diagnostic
@@ -73,12 +75,23 @@ def _triple(
 
 
 def _energy(value: float, subject: str | None) -> ScientificResult:
-    """Build one Hartree energy result bound to *subject*."""
+    """Build one Hartree energy result bound to *subject* (scoped id)."""
+    from confflow.domain.result import make_result_id
+
+    producer_digest = "sha256:" + hashlib.sha256(
+        f"s-test:{subject}:energy".encode()
+    ).hexdigest()
     return ScientificResult(
         kind="energy",
         value=value,
         unit=Unit.HARTREE,
         subject_structure_id=subject,
+        result_id=make_result_id(
+            step_id="s-test",
+            kind="energy",
+            subject_structure_id=subject,
+            producer_digest=producer_digest,
+        ),
     )
 
 
@@ -134,7 +147,13 @@ class TestCompleteGroup:
         assert group.ok
         assert group.assignment == "unassigned"
         assert group.subject_ids() == tuple(sorted((transition.id, forward.id, reverse.id)))
-        assert group.source_result_ids == tuple(sorted(result.value_digest for result in results))
+        assert group.source_result_ids == tuple(
+            sorted(
+                result.result_id
+                for result in results
+                if result.result_id is not None
+            )
+        )
 
     def test_groups_sort_by_group_key(self) -> None:
         first = _triple("b", "rxn-b", base_offset=10.0)
@@ -407,7 +426,9 @@ class TestSubjectMismatch:
         assert groups[0].ok
         assert groups[0].source_result_ids == tuple(
             sorted(
-                result.value_digest for result in results if result.subject_structure_id != extra.id
+                result.result_id
+                for result in results
+                if result.subject_structure_id != extra.id and result.result_id is not None
             )
         )
 

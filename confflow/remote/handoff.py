@@ -30,7 +30,7 @@ import stat
 from typing import Final, NoReturn
 
 from ..domain.canonical import canonical_json_bytes
-from .envelope import HANDOFF_SCHEMA_V2, MAX_HANDOFF_BYTES, WorkerHandoffV2
+from .envelope import HANDOFF_SCHEMA_V3, MAX_HANDOFF_BYTES, WorkerHandoffV2
 
 __all__ = ["HandoffError", "read_handoff_envelope", "write_handoff_envelope"]
 
@@ -364,8 +364,11 @@ def read_handoff_envelope(*, path: str, expected_run_id: str | None = None) -> W
     except Exception as exc:
         raise HandoffError(f"handoff envelope failed strict validation: {exc}") from exc
     validated: WorkerHandoffV2 = handoff
-    if validated.schema != HANDOFF_SCHEMA_V2:
-        raise HandoffError("handoff envelope schema identity mismatch")
+    if validated.schema != HANDOFF_SCHEMA_V3:
+        raise HandoffError(
+            "handoff envelope schema identity mismatch: "
+            f"expected {HANDOFF_SCHEMA_V3}, refusing {validated.schema!r}"
+        )
     if expected_run_id is not None and validated.run_id != expected_run_id:
         raise HandoffError("handoff envelope run identity does not match")
     return validated

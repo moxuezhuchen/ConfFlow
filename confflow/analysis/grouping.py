@@ -335,7 +335,11 @@ def build_reaction_groups(
                     )
                 )
         sources = sorted(
-            {result.value_digest for result in results if result.subject_structure_id in triple}
+            {
+                result.result_id
+                for result in results
+                if result.subject_structure_id in triple and result.result_id is not None
+            }
         )
         groups.append(
             ReactionGroup(

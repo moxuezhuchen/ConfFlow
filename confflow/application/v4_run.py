@@ -450,15 +450,13 @@ class V4RunApplication:
         published-but-unimplemented capabilities fail closed here, never
         through a default program).  Steps whose executor contract
         requires a native adapter resolve program/profile/checks/recovery
-        plus the C-owned execution binding and measured environment.
-        Pure steps additionally require the lead-owned pure-implementation
-        environment helper (pending: D-ENV-1) and fail closed until it
-        lands; environment=None is never recorded.
-        Every step then shares the same durable batch lifecycle, so
-        analysis reuse, resume, and publication are identical to every
-        other capability (wave-2 F provides the analysis execute-item
-        adapter behind the same seam; until it is registered, analysis
-        steps fail closed with the registry error).
+        plus the shared binding authority and measured environment.
+        Pure steps record their implementation environment with the real
+        registered contract version.  Every step then shares the same
+        durable batch lifecycle, so analysis reuse, resume, and
+        publication are identical to every other capability.
+        Remote delivery always binds the step-specific store: a
+        multi-step transport is rebound per step before dispatch.
         """
         registry = self._active_registry
         contract = registry.resolve_executor(planned.executor)
@@ -494,13 +492,12 @@ class V4RunApplication:
             )
             provenance = None
         else:
-            # Pure executors (confgen/transform): no native program, hence
-            # no C binding and no binary measurement.  The measured
+            # Pure executors (confgen/transform/analysis): no native program,
+            # hence no binding and no binary measurement.  The measured
             # implementation environment uses the shared helper with the
             # real registered executor contract version, so implementation
-            # changes invalidate reuse.  Analysis routes through the same
-            # path once wave-2 F registers its item adapter; until then it
-            # fails closed with the registry error above.
+            # changes invalidate reuse.  Analysis dispatches through its
+            # in-package work-item adapter on the same lifecycle.
             from ..domain._immutable import FrozenDict
             from ..execution.environment import build_pure_environment
             from ..persistence.reuse import build_producer_provenance
@@ -540,6 +537,7 @@ class V4RunApplication:
             environment=environment,
             definition_digest=plan.definition_digest,
             producer_provenance=provenance,
+            executor_capability=contract.capability.value,
         )
         with SqliteWorkItemStore.open(store_path(run_root, planned.step_id)) as store:
             return batch.execute_step_resumable(
@@ -547,8 +545,21 @@ class V4RunApplication:
                 store=store,
                 run_root=run_root,
                 owner_token=request.owner_token,
-                transport=request.transport,
+                transport=self._step_transport(request.transport, store),
             )
+
+    @staticmethod
+    def _step_transport(transport: Any, store: Any) -> Any:
+        """Bind *transport* to the current step's store.
+
+        A remote transport that spans steps must import each step's
+        bundles into that step's store; siblings share delivery records
+        so duplicate delivery still converges without relaunch.
+        """
+        rebind = getattr(transport, "with_store", None)
+        if callable(rebind):
+            return rebind(store)
+        return transport
 
     @staticmethod
     def _measure_environment(*, planned: Any, binding: Any, adapter: Any) -> Any:

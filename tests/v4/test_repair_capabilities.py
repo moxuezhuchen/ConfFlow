@@ -31,7 +31,7 @@ STRUCTURE_INPUTS = {"structures": {"kind": "structure", "cardinality": "many"}}
 
 
 def _goat_doc(**overrides: Any) -> dict[str, Any]:
-    native: dict[str, Any] = {"keyword": "B3LYP D3BJ Opt", "goat": {"MaxIter": 50}}
+    native: dict[str, Any] = {"keyword": "B3LYP D3BJ GOAT", "goat": {"MaxIter": 50}}
     params: dict[str, Any] = {
         "program": "orca",
         "bindings": {"structure": {"source": {"run": "structures"}}},
@@ -248,16 +248,21 @@ class TestGoatSeedValidation:
         assert compile_doc(_goat_doc(seed=11)).ok
 
     def test_goat_native_seed_conflict_rejected(self) -> None:
+        # Wave-2 G (verified against installed ORCA 6.1.1): any
+        # user-supplied native RANDOMSEED is a second seed authority and
+        # fails closed — set the step seed instead.
         doc = _goat_doc(seed=11)
-        doc["steps"][0]["calculation"]["native"]["goat"]["Seed"] = 99
+        doc["steps"][0]["calculation"]["native"]["goat"]["RANDOMSEED"] = 99
         result = compile_doc(doc)
         assert not result.ok
         assert "seed_conflict" in reasons(result.errors)
 
     def test_goat_matching_native_seed_compiles(self) -> None:
+        # Even a matching native RANDOMSEED is a second authority: the
+        # adapter renders the step seed, never user native keys.
         doc = _goat_doc(seed=11)
-        doc["steps"][0]["calculation"]["native"]["goat"]["Seed"] = 11
-        assert compile_doc(doc).ok
+        doc["steps"][0]["calculation"]["native"]["goat"]["RANDOMSEED"] = 11
+        assert not compile_doc(doc).ok
 
     def test_plain_calculation_seed_allowed(self) -> None:
         doc = v4_doc(
@@ -310,7 +315,7 @@ class TestNativeModeProfileCombinations:
                     "s_irc",
                     program="orca",
                     bindings={"structure": {"source": {"run": "structures"}}},
-                    native={"keyword": "B3LYP Opt", "irc": {"direction": "both"}},
+                    native={"keyword": "B3LYP IRC", "irc": {"direction": "both"}},
                     profile="standard",
                     checks=["normal_termination"],
                 )
@@ -328,7 +333,7 @@ class TestNativeModeProfileCombinations:
                     "s_irc",
                     program="orca",
                     bindings={"structure": {"source": {"run": "structures"}}},
-                    native={"keyword": "B3LYP Opt", "irc": {"direction": "both"}},
+                    native={"keyword": "B3LYP IRC", "irc": {"direction": "both"}},
                     profile="path_endpoints",
                     checks=["normal_termination"],
                 )
@@ -349,7 +354,7 @@ class TestNativeModeProfileCombinations:
                         "product": {"source": {"run": "products"}, "pairing": "by_group_key"},
                     },
                     native={
-                        "keyword": "B3LYP D3BJ Opt",
+                        "keyword": "B3LYP D3BJ NEB",
                         "neb": {"n_images": 5},
                         "atom_mapping": {"kind": "identity"},
                     },
@@ -372,7 +377,7 @@ class TestNativeModeProfileCombinations:
                     program="orca",
                     bindings={"structure": {"source": {"run": "structures"}}},
                     native={
-                        "keyword": "B3LYP Opt",
+                        "keyword": "B3LYP Opt IRC",
                         "irc": {"direction": "both"},
                         "goat": {"MaxIter": 5},
                     },

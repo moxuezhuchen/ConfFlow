@@ -189,11 +189,12 @@ def resolve_remote_target_binding(
 ) -> ExecutionBinding:
     """Resolve the target-side binding for a remote handoff.
 
-    The target never needs the producer's local filesystem path: a bare
-    executable name (no directory separators) is carried verbatim as the
-    planned request, while any producer-local path falls back to the
-    target's own configured default.  The requested value always rides as
-    audit provenance in metadata; no filename parsing ever decides the
+    The handoff's requested executable is carried verbatim: an explicitly
+    requested path stays explicit and fails closed at measurement/launch
+    when it does not exist on the target — it is never silently rewritten
+    to another binary.  Only an absent request falls back to the target's
+    own configured default.  The requested value additionally rides as
+    audit provenance in metadata.  No filename parsing ever decides the
     launch path.
     """
     if not isinstance(target_default_executable, str) or not target_default_executable.strip():
@@ -201,10 +202,7 @@ def resolve_remote_target_binding(
     base: dict[str, Any] = dict(handoff_execution) if handoff_execution else {}
     requested = _planned_text(base.get("executable"))
     target_default = target_default_executable.strip()
-    if requested and "/" not in requested and "\\" not in requested:
-        executable = requested
-    else:
-        executable = target_default
+    executable = requested if requested else target_default
     env: dict[str, str] = {}
     if target_env:
         env.update({str(k): str(v) for k, v in dict(target_env).items()})

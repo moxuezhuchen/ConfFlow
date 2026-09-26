@@ -804,6 +804,10 @@ class TestDurableRunnerSeams:
     def test_live_owner_blocks_without_execution(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        # Strict durable publication: a blocked item has no durable
+        # payload, so the step refuses publication loudly instead of
+        # returning a FAILED result with a gap diagnostic.  The rival
+        # launch never happens and the RUNNING row is preserved.
         plan = _compile(_document())
         (item,) = _items(plan, 1)
         with SqliteWorkItemStore.open(store_path(str(tmp_path / "run"), STEP_ID)) as store:
@@ -818,72 +822,86 @@ class TestDurableRunnerSeams:
             )
             assert store.claim(item.id, owner=owner_identity_current(owner_token="rival-live"))
             spy = _SpyExecutor()
-            result = self._run(
-                monkeypatch,
-                tmp_path,
-                (item,),
-                store,
-                NativeProcessSupervisor(),
-                "ctl-2",
-                executor=spy,
-            )
+            with pytest.raises(PersistenceError, match="blocked_uncertain_owner"):
+                self._run(
+                    monkeypatch,
+                    tmp_path,
+                    (item,),
+                    store,
+                    NativeProcessSupervisor(),
+                    "ctl-2",
+                    executor=spy,
+                )
             assert spy.calls == []
-            assert result.status is StepStatus.FAILED
-            assert result.item_results[0].error is not None
-            assert result.item_results[0].error.code == "blocked_uncertain_owner"
             assert store.get_state(item.id) is StoredWorkItemStatus.RUNNING
 
     def test_definition_change_fails_closed(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        # Strict durable publication: an invalidated item has no durable
+        # payload for the new generation, so the step refuses publication
+        # loudly (the per-item reason rides in the error) instead of
+        # returning a FAILED result with a gap diagnostic.  History is
+        # preserved and nothing re-executes.
+        from confflow.execution.environment import EnvironmentMeasurer
         from confflow.persistence.reuse import build_producer_provenance
+        from confflow.programs.registry import get_program_adapter
 
         plan = _compile(_document())
         (item,) = _items(plan, 1)
+        adapter = get_program_adapter("orca")
+        environment_digest = EnvironmentMeasurer().build_environment(
+            str(FAKE_ORCA), adapter=adapter
+        ).digest()
         provenance = build_producer_provenance(
-            adapter_version=get_program_adapter("orca").adapter_version,
+            adapter_version=adapter.adapter_version,
             profile_version=PROFILES["standard"].contract_version,
             check_versions={"normal_termination": CHECKS["normal_termination"].contract_version},
             recovery_version=RECOVERIES["none"].contract_version,
         )
         with SqliteWorkItemStore.open(store_path(str(tmp_path / "run"), STEP_ID)) as store:
-            # Same provenance, different input digest: the input axis fires.
+            # Same provenance and environment, different input digest: the
+            # input axis fires.
             store.register_item(
                 work_item_id=item.id,
                 logical_key=item.logical_key,
                 step_id=item.step_id,
                 work_item_digest="sha256:" + "f" * 64,
                 step_semantic_digest=plan.steps[0].step_semantic_digest,
-                environment_digest=None,
+                environment_digest=environment_digest,
                 producer_provenance=dict(provenance.thaw()),
             )
             store.claim(item.id, owner=OwnerIdentity(owner_token="old"))
             store.complete(item.id, result=_result(item, status=WorkItemStatus.COMPLETED))
             spy = _SpyExecutor()
-            result = self._run(
-                monkeypatch,
-                tmp_path,
-                (item,),
-                store,
-                NativeProcessSupervisor(),
-                "ctl-2",
-                executor=spy,
-            )
+            with pytest.raises(PersistenceError, match="invalidate_input"):
+                self._run(
+                    monkeypatch,
+                    tmp_path,
+                    (item,),
+                    store,
+                    NativeProcessSupervisor(),
+                    "ctl-2",
+                    executor=spy,
+                )
             assert spy.calls == []
-            assert result.status is StepStatus.FAILED
-            assert result.item_results[0].error is not None
-            assert result.item_results[0].error.code == "invalidate_input"
-            assert any(
-                diagnostic.code == "publication_durability_gap" for diagnostic in result.diagnostics
-            )
             assert store.get_state(item.id) is StoredWorkItemStatus.COMPLETED
 
     def test_preflight_reports_without_store_writes(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        # Strict durable publication: a preflight failure leaves no
+        # durable payload, so the step refuses publication loudly instead
+        # of returning a FAILED result.  The fixture carries a measured
+        # environment (never None) so the adapter-missing preflight — not
+        # the env prohibition — is what fires; the store stays empty.
+        from confflow.execution.environment import EnvironmentMeasurer
+        from confflow.programs.registry import get_program_adapter
+
         monkeypatch.setenv("FAKE_MODE", "success_opt")
         plan = _compile(_document())
         (item,) = _items(plan, 1)
+        adapter = get_program_adapter("orca")
         bad = StepExecutionRequest(
             step=plan.steps[0],
             items=(item,),
@@ -894,9 +912,15 @@ class TestDurableRunnerSeams:
             checks=(),
             recovery=RECOVERIES["none"],
             run_root=str(tmp_path / "run"),
+            environment=EnvironmentMeasurer().build_environment(
+                str(FAKE_ORCA), adapter=adapter
+            ),
         )
         with SqliteWorkItemStore.open(store_path(str(tmp_path / "run"), STEP_ID)) as store:
             batch = BatchStepExecutor(WorkItemExecutor()).with_supervisor(NativeProcessSupervisor())
+            # Preflight failures return before any publication attempt: the
+            # FAILED report is returned directly (never published), so no
+            # gap refusal applies and the store stays empty.
             result = batch.execute_step_resumable(bad, store=store, run_root=str(tmp_path / "run"))
             assert result.status is StepStatus.FAILED
             assert store.list_items() == ()

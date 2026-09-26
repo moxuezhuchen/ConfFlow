@@ -40,8 +40,10 @@ from ..domain.canonical import canonical_json_bytes, typed_digest
 __all__ = [
     "BUNDLE_DIGEST_KIND",
     "HANDOFF_SCHEMA_V2",
+    "HANDOFF_SCHEMA_V3",
     "MAX_HANDOFF_BYTES",
     "RESULT_SCHEMA_V2",
+    "RESULT_SCHEMA_V3",
     "ArtifactBundleEntry",
     "ExecutionDefinition",
     "InputBundleManifest",
@@ -55,11 +57,23 @@ __all__ = [
     "compute_result_digest",
 ]
 
-#: Protocol identity of the worker-handoff V2 envelope.  Never V1.
+#: Protocol identity of the worker-handoff V2 envelope.  Superseded by V3;
+#: retained so V2 bytes fail closed with an explicit schema mismatch.
 HANDOFF_SCHEMA_V2: Final[str] = "confflow.control.worker-handoff.v2"
 
-#: Protocol identity of the worker result bundle.  Never V1.
+#: Protocol identity of the worker result bundle.  Superseded by V3.
 RESULT_SCHEMA_V2: Final[str] = "confflow.control.worker-result.v2"
+
+#: Protocol identity of the worker-handoff V3 envelope (wave-2 stream E).
+#:
+#: V3 carries the executor capability, the typed step seed, the
+#: producer-resolved execution request (executable/env/walltime), and
+#: true producer-scoped result-entry identity.  V2 envelopes are rejected.
+HANDOFF_SCHEMA_V3: Final[str] = "confflow.control.worker-handoff.v3"
+
+#: Protocol identity of the V3 worker result bundle.  The bundle
+#: environment is the worker-measured execution environment.
+RESULT_SCHEMA_V3: Final[str] = "confflow.control.worker-result.v3"
 
 #: Digest domain marker for bundle/handoff/result identity.
 BUNDLE_DIGEST_KIND: Final[str] = "confflow.remote.bundle.v1"
@@ -124,6 +138,7 @@ class ArtifactBundleEntry(BaseModel):
 
     entry_kind: Literal["artifact"] = "artifact"
     artifact_id: str = Field(min_length=1)
+    port: str = Field(min_length=1)
     role: str = Field(min_length=1)
     checksum: str = Field(pattern=_DIGEST_PATTERN)
     subject_structure_id: str | None = None
@@ -139,6 +154,7 @@ class ResultEntry(BaseModel):
 
     entry_kind: Literal["result"] = "result"
     result_id: str = Field(min_length=1)
+    port: str = Field(min_length=1)
     payload: dict[str, Any]
     digest: str = Field(pattern=_DIGEST_PATTERN)
 
@@ -162,15 +178,19 @@ class ExecutionDefinition(BaseModel):
 
     Everything the worker needs to construct the *same*
     :class:`WorkItemExecutor` request the producer would build locally:
-    program vocabulary, native definition, adapter/profile/check/recovery
-    contracts with versions, resources, and resolved scientific parameters.
+    executor capability, program vocabulary, native definition, typed seed,
+    adapter/profile/check/recovery contracts with versions, resources, the
+    producer-resolved execution request, and resolved scientific parameters.
     No graph, no YAML, no bindings, no scheduler width.
     """
 
     model_config = _STRICT_FROZEN
 
-    program: str = Field(min_length=1)
+    executor: str = Field(min_length=1)
+    program: str | None = None
     native: dict[str, Any] = Field(default_factory=dict)
+    seed: int | None = None
+    transform: str | None = None
     execution_adapter: str = "standard"
     result_profile: str = "standard"
     checks: tuple[str, ...] = ()
@@ -178,6 +198,9 @@ class ExecutionDefinition(BaseModel):
     recovery: str = "none"
     recovery_params: dict[str, Any] = Field(default_factory=dict)
     resources: dict[str, Any] = Field(default_factory=dict)
+    handoff_executable: str | None = None
+    handoff_env: dict[str, str] = Field(default_factory=dict)
+    handoff_walltime_seconds: int | None = Field(default=None, gt=0)
     charge: int | None = None
     multiplicity: int | None = None
     freeze: tuple[int, ...] | None = None
@@ -202,12 +225,16 @@ class EnvironmentRequest(BaseModel):
 
 
 class WorkerHandoffV2(BaseModel):
-    """Typed V2 handoff envelope: one work-item attempt, fully specified."""
+    """Typed V3 handoff envelope: one work-item attempt, fully specified.
+
+    The class name is historical; the wire identity is ``schema`` V3.
+    V2 bytes are rejected by the file protocol.
+    """
 
     model_config = _STRICT_FROZEN
 
-    schema: Literal["confflow.control.worker-handoff.v2"] = "confflow.control.worker-handoff.v2"
-    protocol_version: str = "v2"
+    schema: Literal["confflow.control.worker-handoff.v3"] = "confflow.control.worker-handoff.v3"
+    protocol_version: str = "v3"
     run_id: str = Field(min_length=1)
     step_id: str = Field(min_length=1)
     work_item_id: str = Field(min_length=1)
@@ -300,12 +327,17 @@ class ResultProducedArtifact(BaseModel):
 
 
 class ResultBundle(BaseModel):
-    """Typed V2 result bundle returned by the remote worker."""
+    """Typed V3 result bundle returned by the remote worker.
+
+    ``environment`` is the worker-measured execution environment
+    (``ExecutionEnvironment.to_dict()`` including its digest): the
+    producer commits it as the execution truth for the reuse axis.
+    """
 
     model_config = _STRICT_FROZEN
 
-    schema: Literal["confflow.control.worker-result.v2"] = "confflow.control.worker-result.v2"
-    protocol_version: str = "v2"
+    schema: Literal["confflow.control.worker-result.v3"] = "confflow.control.worker-result.v3"
+    protocol_version: str = "v3"
     run_id: str = Field(min_length=1)
     step_id: str = Field(min_length=1)
     work_item_id: str = Field(min_length=1)

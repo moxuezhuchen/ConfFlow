@@ -13,6 +13,8 @@ directions only; ``assignment`` is always ``None``).
 
 from __future__ import annotations
 
+import hashlib
+
 import json
 
 import pytest
@@ -95,13 +97,24 @@ def _result(
     unit: Unit = Unit.HARTREE,
     step: str = "s-low",
 ) -> ScientificResult:
-    """Build one source result bound to *subject*."""
+    """Build one source result bound to *subject* (producer-scoped id)."""
+    from confflow.domain.result import make_result_id
+
+    producer_digest = "sha256:" + hashlib.sha256(
+        f"{step}:{subject}:{kind}".encode()
+    ).hexdigest()
     return ScientificResult(
         kind=kind,
         value=value,
         unit=unit,
         subject_structure_id=subject,
         source_step_id=step,
+        result_id=make_result_id(
+            step_id=step,
+            kind=kind,
+            subject_structure_id=subject,
+            producer_digest=producer_digest,
+        ),
     )
 
 
@@ -257,14 +270,25 @@ class TestExactSelectors:
         pool = ResultSet.of(_result("gibbs_energy", -76.43, TS_ID))
         assert select_result(pool, FORWARD_ID, "gibbs_energy", "gibbs_energy") is None
 
-    def test_first_pool_order_wins(self) -> None:
-        pool = ResultSet.of(
+    def test_ambiguous_pool_order_fails_closed(self) -> None:
+        # Wave-2 F (drift 7): pool order never decides.  Two candidates
+        # for one (subject, kind) fail with ambiguous_selection in
+        # either encounter order.
+        forward = ResultSet.of(
             _result("gibbs_energy", -76.43, TS_ID, step="s-first"),
             _result("gibbs_energy", -76.44, TS_ID, step="s-second"),
         )
+        backward = ResultSet.of(*reversed(tuple(forward)))
+        for pool in (forward, backward):
+            with pytest.raises(AnalysisMathError) as excinfo:
+                select_result(pool, TS_ID, "gibbs_energy", "gibbs_energy")
+            assert excinfo.value.code == "ambiguous_selection"
+
+    def test_unique_selection_holds(self) -> None:
+        pool = ResultSet.of(_result("gibbs_energy", -76.43, TS_ID, step="s-only"))
         selected = select_result(pool, TS_ID, "gibbs_energy", "gibbs_energy")
         assert selected is not None
-        assert selected.source_step_id == "s-first"
+        assert selected.source_step_id == "s-only"
 
 
 class TestCompositeAssembly:

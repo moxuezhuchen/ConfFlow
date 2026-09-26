@@ -107,12 +107,25 @@ def _triple(
 
 
 def _energy(value: float, subject: str | None) -> ScientificResult:
-    """Build one Hartree energy result bound to *subject*."""
+    """Build one Hartree energy result bound to *subject* (scoped id)."""
+    import hashlib as _hashlib
+
+    from confflow.domain.result import make_result_id as _make_result_id
+
+    producer_digest = "sha256:" + _hashlib.sha256(
+        f"s-test:{subject}:energy".encode()
+    ).hexdigest()
     return ScientificResult(
         kind="energy",
         value=value,
         unit=Unit.HARTREE,
         subject_structure_id=subject,
+        result_id=_make_result_id(
+            step_id="s-test",
+            kind="energy",
+            subject_structure_id=subject,
+            producer_digest=producer_digest,
+        ),
     )
 
 
@@ -158,17 +171,32 @@ class StubEnergyModel:
             ("forward", group.forward_endpoint_id),
             ("reverse", group.reverse_endpoint_id),
         )
+        from confflow.analysis.thermochemistry import select_result as _select
+        from confflow.analysis.units import AnalysisMathError as _MathError
+
         for slot, subject in slots:
             pool = lookup.get(subject) if subject is not None else None
             match: ScientificResult | None = None
             if pool is not None:
-                for candidate in pool:
-                    if (
-                        candidate.kind == self.electronic_kind
-                        and candidate.subject_structure_id == subject
-                    ):
-                        match = candidate
-                        break
+                try:
+                    match = _select(pool, subject, self.electronic_kind, self.electronic_kind)
+                except _MathError as exc:
+                    diagnostics.append(
+                        Diagnostic(
+                            code="analysis_ambiguous_selection",
+                            message=str(exc),
+                            severity=DiagnosticSeverity.ERROR,
+                            details=FrozenDict(
+                                {
+                                    "reason": "ambiguous_selection",
+                                    "node": slot,
+                                    "subject_structure_id": subject,
+                                    "group_key": group.group_key,
+                                }
+                            ),
+                        )
+                    )
+                    continue
             if match is None:
                 diagnostics.append(
                     Diagnostic(

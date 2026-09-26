@@ -6,28 +6,22 @@ The script simulates a native program behind the V4 process boundary for
 reaction-path (IRC) calculations.  It reads the ``.inp`` input geometry from
 the current work directory, shifts the coordinates deterministically in
 opposite directions for the two path directions, and writes a ``.out`` file
-speaking the real minimal IRC dialect parsed by
-:mod:`confflow.programs.orca.path`::
-
-    CONFFLOW IRC FORWARD ENDPOINT
-    ENERGY -76.401234
-    CONVERGED true
-    POINT 12
-    GEOMETRY
-    O 0.020000 0.000000 0.000000
-    ...
-    END GEOMETRY
+plus ``<stem>_IRC_F.xyz`` / ``<stem>_IRC_B.xyz`` endpoint files speaking
+real ORCA 6.1 IRC grammar (verified against an installed-binary HCN
+isomerization IRC): asterisk-framed ``FORWARD IRC`` / ``BACKWARD IRC``
+sections with ``Iteration / E(Eh)`` tables, and standard XYZ endpoint
+files whose comments read
+``Coordinates from ORCA-job <stem> E <energy>``.  Direction always comes
+from the banners, never from order.
 
 Banner order follows ``FAKE_IRC_ORDER`` (``forward_first`` by default,
-``reverse_first`` for order-independence probes); direction always comes from
-the banners, never from order.  Items listed in ``IRC_FAIL_FILE`` (basenames,
-one per line) — or every item under ``FAKE_IRC_MODE=missing_reverse`` — emit
-only the forward section, so the parser fails closed on the missing reverse
-banner exactly as the production parser does.
-
-It also writes the ``.xyz`` companion geometry file and a ``.gbw``
-wavefunction file, mirroring what the real ORCA adapter discovers.  Only
-``main`` touches the filesystem or the process environment.
+``reverse_first`` as a parser-robustness probe: grammar-valid sections in
+an order real binaries never emit, proving banner-driven mapping).
+Items listed in ``IRC_FAIL_FILE`` (basenames, one per line) — or every
+item under ``FAKE_IRC_MODE=missing_reverse`` — emit only the forward
+section plus files, so the parser reports a missing reverse direction
+exactly as production does.  Only ``main`` touches the filesystem or the
+process environment.
 """
 
 from __future__ import annotations
@@ -36,11 +30,11 @@ import glob
 import os
 import sys
 
-#: Banner marking the forward endpoint section (matches the production dialect).
-FORWARD_BANNER = "CONFFLOW IRC FORWARD ENDPOINT"
+#: Native point ordinals reported per direction (distinct on purpose).
+FORWARD_POINT = 12
 
-#: Banner marking the reverse endpoint section (matches the production dialect).
-REVERSE_BANNER = "CONFFLOW IRC REVERSE ENDPOINT"
+#: Native point ordinals reported per direction (distinct on purpose).
+REVERSE_POINT = 3
 
 #: Fixed forward endpoint energy in Hartree.
 FORWARD_ENERGY = -76.401234
@@ -51,10 +45,6 @@ REVERSE_ENERGY = -76.398765
 #: Deterministic geometry shift (Angstrom, applied to x) per direction.
 FORWARD_SHIFT = 0.02
 REVERSE_SHIFT = -0.02
-
-#: Native point ordinals reported per direction (distinct on purpose).
-FORWARD_POINT = 12
-REVERSE_POINT = 3
 
 #: Element symbols accepted in coordinate lines.
 KNOWN_ELEMENTS = frozenset(
@@ -138,24 +128,39 @@ def shift_coordinates(
 
 
 def render_section(
-    banner: str,
+    native_direction: str,
     energy: float,
     point: int,
     atoms: tuple[str, ...],
     coordinates: tuple[tuple[float, float, float], ...],
 ) -> str:
-    """Render one endpoint section in the minimal IRC dialect."""
-    lines = [
-        banner,
-        f"ENERGY {energy:.6f}",
-        "CONVERGED true",
-        f"POINT {point}",
-        "GEOMETRY",
-    ]
+    """Render one real-grammar IRC direction section (table only)."""
+    return "\n".join(
+        [
+            "         *************************************************************",
+            f"         *                          {native_direction} IRC                      *",
+            "         *************************************************************",
+            "",
+            "Iteration    E(Eh)      dE(kcal/mol)  max(|G|)   RMS(G)",
+            "Convergence thresholds                0.002000  0.000500",
+            f"    0       {energy + 0.002:.6f}   -1.000000    0.010000  0.005000",
+            f"    {point}       {energy:.6f}   -5.000000    0.030000  0.020000",
+            "",
+        ]
+    )
+
+
+def render_endpoint_xyz(
+    stem: str,
+    energy: float,
+    atoms: tuple[str, ...],
+    coordinates: tuple[tuple[float, float, float], ...],
+) -> str:
+    """Render one real-grammar ORCA endpoint XYZ file."""
+    lines = [str(len(atoms)), f"Coordinates from ORCA-job {stem} E {energy:.6f}"]
     for symbol, (x, y, z) in zip(atoms, coordinates):
-        lines.append(f"{symbol} {x:.6f} {y:.6f} {z:.6f}")
-    lines.append("END GEOMETRY")
-    return "\n".join(lines)
+        lines.append(f"  {symbol}          {x:.8f}      {y:.8f}      {z:.8f}")
+    return "\n".join(lines) + "\n"
 
 
 def render_xyz_text(
@@ -194,8 +199,8 @@ def main(argv: list[str]) -> int:
     stem = input_path.rsplit(".", 1)[0] if "." in input_path else input_path
     forward_coords = shift_coordinates(coordinates, FORWARD_SHIFT)
     reverse_coords = shift_coordinates(coordinates, REVERSE_SHIFT)
-    forward = render_section(FORWARD_BANNER, FORWARD_ENERGY, FORWARD_POINT, atoms, forward_coords)
-    reverse = render_section(REVERSE_BANNER, REVERSE_ENERGY, REVERSE_POINT, atoms, reverse_coords)
+    forward = render_section("FORWARD", FORWARD_ENERGY, FORWARD_POINT, atoms, forward_coords)
+    reverse = render_section("BACKWARD", REVERSE_ENERGY, REVERSE_POINT, atoms, reverse_coords)
     missing_reverse = mode == "missing_reverse" or os.path.basename(input_path) in victims
     if missing_reverse:
         sections = [forward]
@@ -207,16 +212,20 @@ def main(argv: list[str]) -> int:
         print(f"fake_irc: unknown FAKE_IRC_ORDER {order!r}", file=sys.stderr)
         return 3
     parts = [
-        "",
-        f"IRC POINT 3 FORWARD ENERGY {FORWARD_ENERGY:.6f}",
-        f"IRC POINT 5 REVERSE ENERGY {REVERSE_ENERGY:.6f}",
+        "ORCA 6.1 fake preamble (never endpoint data)",
         "",
         *sections,
         "",
+        "                       IRC PATH SUMMARY",
         "****ORCA TERMINATED NORMALLY****",
     ]
     with open(f"{stem}.out", "w", encoding="utf-8") as handle:
         handle.write("\n".join(parts) + "\n")
+    with open(f"{stem}_IRC_F.xyz", "w", encoding="utf-8") as handle:
+        handle.write(render_endpoint_xyz(stem, FORWARD_ENERGY, atoms, forward_coords))
+    if not missing_reverse:
+        with open(f"{stem}_IRC_B.xyz", "w", encoding="utf-8") as handle:
+            handle.write(render_endpoint_xyz(stem, REVERSE_ENERGY, atoms, reverse_coords))
     with open(f"{stem}.xyz", "w", encoding="utf-8") as handle:
         handle.write(render_xyz_text(atoms, forward_coords))
     with open(f"{stem}.gbw", "wb") as handle:

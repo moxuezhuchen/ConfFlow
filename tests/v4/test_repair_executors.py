@@ -399,11 +399,23 @@ def test_binding_resolution_planned_wins_and_remote():
                            "walltime_seconds": 100, "target": "cluster"},
         target_default_executable="/opt/orca611/orca",
     )
-    # Local absolute paths never cross the wire: the target always launches
-    # its own configured default.  The requested value rides as audit
-    # provenance only (never parsed via filename idioms).
-    assert remote.executable == "/opt/orca611/orca"
+    # Explicit requests are carried verbatim and fail closed remotely when
+    # absent on the target; only a missing request uses the target default.
+    # (No basename extraction: filename parsing must never decide launches.)
+    assert remote.executable == "/local/abs/orca"
     assert remote.target == "cluster"
+    bare = resolve_remote_target_binding(
+        program="orca",
+        handoff_execution={"executable": "orca"},
+        target_default_executable="/opt/orca611/orca",
+    )
+    assert bare.executable == "orca"
+    fallback = resolve_remote_target_binding(
+        program="orca",
+        handoff_execution={"env": {"X": "1"}},
+        target_default_executable="/opt/orca611/orca",
+    )
+    assert fallback.executable == "/opt/orca611/orca"
 
 
 def test_validate_step_seed_typed():
@@ -437,10 +449,16 @@ def test_goat_seed_boundary_explicit():
     with pytest.raises(ValueError, match="[Ss]eed"):
         OrcaProgramAdapter().materialize_native_input(
             _resolve({"keyword": "GOAT", "goat": {"MaxIter": 5}}, None))
-    # GOAT with a typed seed fails closed: 6.1 verifies no seed semantics.
-    with pytest.raises(ValueError, match="native_seed_unresolved"):
+    # GOAT with a typed seed renders the verified native RANDOMSEED key
+    # (installed ORCA 6.1.1: equal integers reproduce bit-identical
+    # ensembles; the step seed is the single authority).
+    materialized = OrcaProgramAdapter().materialize_native_input(
+        _resolve({"keyword": "GOAT", "goat": {"MaxIter": 5}}, 7))
+    assert any("RANDOMSEED 7" in item.content for item in materialized.files)
+    # A user-supplied native RANDOMSEED is a second authority and refused.
+    with pytest.raises(ValueError, match="[Ss]eed"):
         OrcaProgramAdapter().materialize_native_input(
-            _resolve({"keyword": "GOAT", "goat": {"MaxIter": 5}}, 7))
+            _resolve({"keyword": "GOAT", "goat": {"MaxIter": 5, "RANDOMSEED": 7}}, 7))
 
 
 def test_strict_staging_rejects_weak_artifacts(tmp_path):

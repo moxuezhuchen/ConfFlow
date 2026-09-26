@@ -30,6 +30,7 @@ from ..domain._immutable import FrozenDict
 from ..domain.result import Provenance, ResultSet, ScientificResult
 from ..domain.units import Unit
 from .units import (
+    CODE_AMBIGUOUS_SELECTION,
     CODE_CORRECTION_MISSING,
     CODE_ENERGY_MISSING,
     AnalysisMathError,
@@ -137,13 +138,25 @@ class EnergyModel:
         }
 
 
+def _source_ref(result: ScientificResult | None) -> str | None:
+    """Return the producer-scoped ``result_id`` of one source result.
+
+    Identity is the typed ``ResultRef`` id, never the value digest: two
+    sources with equal values stay distinguishable.  Unidentified
+    (legacy) sources yield ``None`` rather than an invented identity.
+    """
+    if result is None:
+        return None
+    return result.result_id
+
+
 @dataclass(frozen=True, slots=True)
 class ResolvedGibbs:
     """One subject's Gibbs energy resolved under an :class:`EnergyModel`.
 
-    Source ids are result ``value_digest`` strings (results carry no
-    entity ids); absent legs are ``None`` (direct resolutions have no
-    electronic/correction legs, fallbacks have no electronic leg).
+    Source ids are producer-scoped ``ResultRef`` id strings; absent legs
+    are ``None`` (direct resolutions have no electronic/correction legs,
+    fallbacks have no electronic leg).
     """
 
     subject_structure_id: str
@@ -162,7 +175,15 @@ def select_result(
     kind: str,
     selector: str,
 ) -> ScientificResult | None:
-    """Return the first result of exactly *selector* kind for *subject*.
+    """Return the unique result of exactly *selector* kind for *subject*.
+
+    Selection is explicit and unique: zero candidates return ``None``
+    (the caller fails the group with a missing-leg diagnostic); more
+    than one candidate for the same ``(subject, kind)`` raises
+    :class:`AnalysisMathError` with code ``ambiguous_selection``.  Pool
+    order never decides — swapping result order must not change
+    analysis.  Disambiguation belongs to explicit ``ResultRef``/IDS
+    selectors upstream, never to position.
 
     Parameters
     ----------
@@ -179,19 +200,38 @@ def select_result(
     Returns
     -------
     ScientificResult or None
-        The first matching result in pool order, or ``None``.
+        The unique matching result, or ``None`` when absent.
+
+    Raises
+    ------
+    AnalysisMathError
+        With code ``ambiguous_selection`` when several candidates match.
     """
     if not selector or selector != kind:
         return None
-    for result in results:
-        if result.kind != selector:
-            continue
-        if subject_structure_id is not None and (
-            result.subject_structure_id != subject_structure_id
-        ):
-            continue
-        return result
-    return None
+    matches = [
+        result
+        for result in results
+        if result.kind == selector
+        and (
+            subject_structure_id is None
+            or result.subject_structure_id == subject_structure_id
+        )
+    ]
+    if not matches:
+        return None
+    if len(matches) > 1:
+        identities = sorted(
+            (result.result_id or f"unidentified:{result.value_digest}") for result in matches
+        )
+        raise AnalysisMathError(
+            CODE_AMBIGUOUS_SELECTION,
+            f"{len(matches)} results match kind {selector!r} for subject "
+            f"{subject_structure_id!r}; disambiguate with an explicit ResultRef selector",
+            subject_structure_id=subject_structure_id,
+            details={"selector": selector, "candidates": identities},
+        )
+    return matches[0]
 
 
 def gibbs_correction_value(
@@ -371,7 +411,7 @@ def resolve_node_gibbs(
             formula=FORMULA_DIRECT,
             electronic_source_id=None,
             correction_source_id=None,
-            gibbs_source_id=gibbs.value_digest,
+            gibbs_source_id=_source_ref(gibbs),
             fallback_used=False,
             energy_model=energy_model,
         )
@@ -395,7 +435,7 @@ def resolve_node_gibbs(
                 formula=FORMULA_FALLBACK_LOW_LEVEL,
                 electronic_source_id=None,
                 correction_source_id=None,
-                gibbs_source_id=gibbs_low.value_digest,
+                gibbs_source_id=_source_ref(gibbs_low),
                 fallback_used=True,
                 energy_model=energy_model,
             )
@@ -420,8 +460,8 @@ def resolve_node_gibbs(
         subject_structure_id=subject,
         value_hartree=composite_gibbs(electronic, correction, subject_structure_id=subject),
         formula=FORMULA_COMPOSITE,
-        electronic_source_id=electronic.value_digest,
-        correction_source_id=correction_result.value_digest,
+        electronic_source_id=_source_ref(electronic),
+        correction_source_id=_source_ref(correction_result),
         gibbs_source_id=None,
         fallback_used=False,
         energy_model=energy_model,

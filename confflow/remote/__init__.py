@@ -15,8 +15,10 @@ from __future__ import annotations
 from .envelope import (
     BUNDLE_DIGEST_KIND,
     HANDOFF_SCHEMA_V2,
+    HANDOFF_SCHEMA_V3,
     MAX_HANDOFF_BYTES,
     RESULT_SCHEMA_V2,
+    RESULT_SCHEMA_V3,
     ArtifactBundleEntry,
     ExecutionDefinition,
     InputBundleManifest,
@@ -35,8 +37,10 @@ from .envelope import (
 __all__ = [
     "BUNDLE_DIGEST_KIND",
     "HANDOFF_SCHEMA_V2",
+    "HANDOFF_SCHEMA_V3",
     "MAX_HANDOFF_BYTES",
     "RESULT_SCHEMA_V2",
+    "RESULT_SCHEMA_V3",
     "ArtifactBundleEntry",
     "ExecutionDefinition",
     "InputBundleManifest",

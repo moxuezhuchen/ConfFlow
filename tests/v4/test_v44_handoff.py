@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-"""Worker-handoff V2 file-protocol tests (V4-4).
+"""Worker-handoff V3 file-protocol tests (V4-4, wave-2 E).
 
 Covers ``confflow.remote.handoff`` (atomic write/read round-trip, digest
 tamper detection, schema and run identity, size bounds, strict JSON and
@@ -9,7 +9,7 @@ fail-closed behavior) and ``confflow.remote.schema`` (thin JSON Schema
 wrappers with no duplicated field definitions).
 
 Legacy V1 envelope keys appear below only as string literals inside
-negative-case payload dicts; the V2 implementation itself never defines or
+negative-case payload dicts; the V3 implementation itself never defines or
 accepts them.
 """
 
@@ -26,9 +26,9 @@ import pytest
 
 from confflow.domain.canonical import canonical_json_bytes
 from confflow.remote.envelope import (
-    HANDOFF_SCHEMA_V2,
+    HANDOFF_SCHEMA_V3,
     MAX_HANDOFF_BYTES,
-    RESULT_SCHEMA_V2,
+    RESULT_SCHEMA_V3,
     EnvironmentRequest,
     ExecutionDefinition,
     InputBundleManifest,
@@ -45,7 +45,7 @@ DIGEST_B = "sha256:" + "bb" * 32
 
 
 def sample_handoff(*, token: str = TOKEN, run_id: str = RUN_ID) -> WorkerHandoffV2:
-    """Build a minimal valid V2 envelope with a computed manifest digest.
+    """Build a minimal valid V3 envelope with a computed manifest digest.
 
     The frozen ``.new()`` constructor only agrees with the model validator
     when digest-covered fields are fully populated, so nested contracts are
@@ -54,6 +54,7 @@ def sample_handoff(*, token: str = TOKEN, run_id: str = RUN_ID) -> WorkerHandoff
     explicit schema and protocol version.
     """
     execution = ExecutionDefinition(
+        executor="calculation",
         program="xtb",
         execution_adapter="standard",
         result_profile="standard",
@@ -61,8 +62,8 @@ def sample_handoff(*, token: str = TOKEN, run_id: str = RUN_ID) -> WorkerHandoff
         step_semantic_digest=DIGEST_B,
     )
     return WorkerHandoffV2.new(
-        schema=HANDOFF_SCHEMA_V2,
-        protocol_version="v2",
+        schema=HANDOFF_SCHEMA_V3,
+        protocol_version="v3",
         run_id=run_id,
         step_id=STEP_ID,
         work_item_id=f"wi:{STEP_ID}:0001",
@@ -207,7 +208,7 @@ class TestMalformedAndOversized:
     @pytest.mark.parametrize(
         "raw",
         [
-            b'{"schema": "confflow.control.worker-handoff.v2", ',
+            b'{"schema": "confflow.control.worker-handoff.v3", ',
             b"not json at all",
             b"",
             b"\xff\xfe\x00bad-utf8",
@@ -353,12 +354,12 @@ class TestSchemaModule:
     """JSON Schema views are thin wrappers over the frozen models."""
 
     def test_schema_ids(self) -> None:
-        assert SCHEMA_IDS == (HANDOFF_SCHEMA_V2, RESULT_SCHEMA_V2)
+        assert SCHEMA_IDS == (HANDOFF_SCHEMA_V3, RESULT_SCHEMA_V3)
         assert SCHEMA_IDS == (
-            "confflow.control.worker-handoff.v2",
-            "confflow.control.worker-result.v2",
+            "confflow.control.worker-handoff.v3",
+            "confflow.control.worker-result.v3",
         )
-        assert RESULT_SCHEMA_V2 == "confflow.control.worker-result.v2"
+        assert RESULT_SCHEMA_V3 == "confflow.control.worker-result.v3"
 
     def test_handoff_json_schema(self) -> None:
         schema = handoff_json_schema()

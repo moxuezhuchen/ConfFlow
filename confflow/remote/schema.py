@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-"""JSON Schema views of the frozen V2 envelope contracts (V4-4).
+"""JSON Schema views of the frozen V3 envelope contracts (V4-4, wave-2 E).
 
 The pydantic models in :mod:`confflow.remote.envelope` are the single source
 of truth; this module only exposes thin wrappers that generate JSON Schema
@@ -11,12 +11,12 @@ from __future__ import annotations
 
 from typing import Any, Final
 
-from .envelope import HANDOFF_SCHEMA_V2, RESULT_SCHEMA_V2, ResultBundle, WorkerHandoffV2
+from .envelope import HANDOFF_SCHEMA_V3, RESULT_SCHEMA_V3, ResultBundle, WorkerHandoffV2
 
 __all__ = ["SCHEMA_IDS", "handoff_json_schema", "result_json_schema"]
 
-#: Protocol identities of the V2 envelope schemas, in (handoff, result) order.
-SCHEMA_IDS: Final[tuple[str, str]] = (HANDOFF_SCHEMA_V2, RESULT_SCHEMA_V2)
+#: Protocol identities of the V3 envelope schemas, in (handoff, result) order.
+SCHEMA_IDS: Final[tuple[str, str]] = (HANDOFF_SCHEMA_V3, RESULT_SCHEMA_V3)
 
 
 def handoff_json_schema() -> dict[str, Any]:
