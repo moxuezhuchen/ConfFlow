@@ -188,7 +188,9 @@ class TestWorkerDirectUnits:
         from confflow.remote import worker as _worker
         from confflow.remote.envelope import ResultEntry
 
-        def _entry(payload: Any, digest: Any = None, entry_id: str = "legacy:energy:cov0") -> ResultEntry:
+        def _entry(
+            payload: Any, digest: Any = None, entry_id: str = "legacy:energy:cov0"
+        ) -> ResultEntry:
             return ResultEntry(
                 result_id=entry_id,
                 port="results",
@@ -221,7 +223,9 @@ class TestWorkerDirectUnits:
         with pytest.raises(WorkerError):
             _worker._result_from_entry(_entry(dict(stamped), entry_id="other-id"))
         with pytest.raises(WorkerError):
-            _worker._result_from_entry(_entry({"kind": "energy", "value": 1.0}, entry_id="energy:cov0"))
+            _worker._result_from_entry(
+                _entry({"kind": "energy", "value": 1.0}, entry_id="energy:cov0")
+            )
 
     def test_artifact_rebuild_branches(self, tmp_path: Path) -> None:
         from confflow.remote import worker as _worker
@@ -277,7 +281,7 @@ class TestWorkerDirectUnits:
 
 
 def _verified_bundle_env() -> dict[str, Any]:
-    """Verified worker-measured environment over fixed test bytes."""
+    """Return a verified worker-measured environment over fixed test bytes."""
     import hashlib as _hashlib
 
     from confflow.execution.contracts import ExecutionEnvironment
@@ -2769,20 +2773,28 @@ class TestWorkerReaderShapes:
                     launch_token="wrong-token",
                 )
 
-    def test_required_run_id_reader_rejected(self, tmp_path: Path) -> None:
+    def test_reader_called_without_run_binding(self, tmp_path: Path) -> None:
         import unittest.mock as _mock
 
         from confflow.remote import worker as _worker
+        from confflow.remote.envelope import WorkerHandoffV2 as _Envelope
 
         handoff = _handoff([_struct_entry()])
         path, worker_root = _write_handoff(tmp_path, handoff)
+        seen: dict[str, Any] = {}
 
-        def _demanding_reader(path: str, *, expected_run_id: str) -> Any:
-            raise AssertionError("must not be called")
+        def _recording_reader(path: str, *, expected_run_id: Any = None) -> Any:
+            seen["path"] = path
+            seen["expected_run_id"] = expected_run_id
+            return handoff
 
-        with _mock.patch("confflow.remote.handoff.read_handoff_envelope", new=_demanding_reader):
-            with pytest.raises(WorkerError, match="expected run id"):
-                _worker._load_handoff_envelope(path, "tok1")
+        with _mock.patch("confflow.remote.handoff.read_handoff_envelope", new=_recording_reader):
+            loaded = _worker._load_handoff_envelope(path, "tok1")
+        # The worker never invents a run identity: it reads with no run
+        # binding and enforces the launch token instead.
+        assert seen == {"path": path, "expected_run_id": None}
+        assert isinstance(loaded, _Envelope)
+        assert loaded.launch_token == "tok1"
 
     def test_non_handoff_result_rejected(self, tmp_path: Path) -> None:
         import unittest.mock as _mock

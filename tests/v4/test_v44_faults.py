@@ -60,7 +60,6 @@ from confflow.persistence.contracts import (
     store_path,
 )
 from confflow.programs.registry import get_program_adapter
-from confflow.remote.envelope import HANDOFF_SCHEMA_V3
 from confflow.remote.lease import AttemptLease, LeaseError
 from tests.v4._builders import (
     assemble,
@@ -165,7 +164,9 @@ def _prepare_attempt(store: Any, item: Any, plan: Any = None) -> None:
     assert store.claim(item.id, owner=OwnerIdentity(owner_token="fault-probe")) is True
 
 
-def _test_handoff(plan: Any, item: Any, context: ItemExecutionContext, run_id: str, token: str) -> Any:
+def _test_handoff(
+    plan: Any, item: Any, context: ItemExecutionContext, run_id: str, token: str
+) -> Any:
     """Build a V3 envelope for *item* through the frozen production builder.
 
     Assembly runs inside ``RemoteTransport._build_handoff`` against a
@@ -1139,3 +1140,62 @@ class TestEnvironmentBinaryChange:
             work_item_id="wi:s_opt:env",
         )
         assert decision.decision is ReuseCode.INVALIDATE_ENVIRONMENT
+
+
+class TestLateResult:
+    """A superseded attempt is refused before any native launch.
+
+    When the store already moved to attempt N+1, a late delivery for
+    attempt N must fail closed as a typed transport result — never
+    relaunch native execution for an attempt whose result is already
+    moot — while the current attempt still delivers exactly once.
+    """
+
+    def test_stale_attempt_execute_refuses_without_launch(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from confflow.remote.transport import RemoteTransport
+
+        monkeypatch.setenv("FAKE_MODE", "success_opt")
+        run_root = str(tmp_path / "run")
+        counter = tmp_path / "native-count.txt"
+        _install_orca_shim(tmp_path, monkeypatch, counter)
+        # The handoff carries this wrapper verbatim, so launch counting
+        # wraps the requested binary itself.
+        wrapper = _counting_wrapper(tmp_path, counter)
+        plan = compile_plan(calculation_doc("orca", str(wrapper)))
+        items = assemble_items(plan, "s0")
+        with _open_store(run_root, "s_opt") as store:
+            _prepare_attempt(store, items[0], plan)
+            context = item_context(
+                plan,
+                str(wrapper),
+                run_root,
+                str(tmp_path / "items"),
+                NativeProcessSupervisor(),
+            )
+            transport = RemoteTransport(
+                run_root=run_root, store=store, worker_root=str(tmp_path / "worker")
+            )
+            first = transport.execute(items[0], context, attempt=1)
+            assert first.status is WorkItemStatus.COMPLETED
+            assert _native_launches(counter) == 1
+            # Attempt 1 is superseded: interrupt, then reclaim as attempt 2.
+            store.mark_interrupted(items[0].id, reason="late-result-probe")
+            assert store.claim(items[0].id, owner=OwnerIdentity(owner_token="ctl-2")) is True
+            # A restarted producer redelivers the stale attempt with no
+            # memory of the first delivery: fresh transport, same roots.
+            transport2 = RemoteTransport(
+                run_root=run_root, store=store, worker_root=str(tmp_path / "worker")
+            )
+            stale = transport2.execute(items[0], context, attempt=1)
+            assert stale.status is WorkItemStatus.FAILED
+            assert stale.error is not None
+            assert stale.error.code == "remote_staging_error"
+            assert "late result" in stale.error.message
+            assert stale.error.retryable is True
+            assert _native_launches(counter) == 1
+            # The current attempt is unaffected: exactly one native launch.
+            second = transport2.execute(items[0], context, attempt=2)
+            assert second.status is WorkItemStatus.COMPLETED
+            assert _native_launches(counter) == 2

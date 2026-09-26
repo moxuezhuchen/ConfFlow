@@ -25,7 +25,6 @@ importing this module never pulls a runtime stack.
 
 from __future__ import annotations
 
-import inspect
 import os
 from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Any, TypeVar
@@ -293,19 +292,7 @@ def _load_handoff_envelope(handoff_path: str, launch_token: str) -> WorkerHandof
     """
     from .handoff import read_handoff_envelope
 
-    reader_params = inspect.signature(read_handoff_envelope).parameters
-    if "path" in reader_params:
-        if "expected_run_id" in reader_params:
-            if reader_params["expected_run_id"].default is inspect.Parameter.empty:
-                raise WorkerError(
-                    "remote worker failed at stage 'read handoff envelope': "
-                    "reader requires an expected run id the worker cannot know"
-                )
-            handoff = read_handoff_envelope(path=handoff_path, expected_run_id=None)
-        else:
-            handoff = read_handoff_envelope(path=handoff_path)
-    else:
-        handoff = read_handoff_envelope(handoff_path)
+    handoff = read_handoff_envelope(path=handoff_path, expected_run_id=None)
     if not isinstance(handoff, WorkerHandoffV2):
         raise WorkerError(
             "remote worker failed at stage 'read handoff envelope': "
@@ -1046,9 +1033,7 @@ def _resolve_execution_context(
             "remote worker failed at stage 'resolve execution contracts': "
             f"unknown executor capability {capability!r}: {exc}"
         ) from exc
-    _require_contract_version(
-        versions, "executor", executor_contract.contract_version, "executor"
-    )
+    _require_contract_version(versions, "executor", executor_contract.contract_version, "executor")
     if capability == "calculation":
         adapter = _resolve_program(execution.program, versions)
         profile = _resolve_profile(execution.result_profile, versions)
@@ -1264,63 +1249,6 @@ def _resolve_recovery(recovery: str, versions: dict[str, str], adapter: Any) -> 
         ) from exc
     _require_contract_version(versions, "recovery", policy.contract_version, "recovery policy")
     return policy
-
-
-def _build_scientific(execution: ExecutionDefinition) -> tuple[Any, Any]:
-    """Map the execution definition onto scientific values for the executor.
-
-    The effective charge, multiplicity, and freeze arrive already resolved
-    by the producer, so they ride as step overrides: overrides outrank
-    structure properties, which reproduces the resolved values without ever
-    re-deriving or defaulting them.
-
-    Parameters
-    ----------
-    execution : ExecutionDefinition
-        Compiled execution semantics of the work item.
-
-    Returns
-    -------
-    tuple[Any, Any]
-        The scientific definition and the (empty) scientific defaults.
-
-    Raises
-    ------
-    WorkerError
-        Raised when the scientific values are not constructible.
-    """
-    from confflow.workflow.v4.document import ScientificDefaults, ScientificDefinition
-
-    overrides: dict[str, Any] = {}
-    if execution.charge is not None:
-        overrides["charge"] = execution.charge
-    if execution.multiplicity is not None:
-        overrides["multiplicity"] = execution.multiplicity
-    if execution.freeze is not None:
-        overrides["freeze"] = tuple(execution.freeze)
-    try:
-        scientific = ScientificDefinition(
-            program=execution.program,
-            role=None,
-            execution_adapter=execution.execution_adapter,
-            result_profile=execution.result_profile,
-            native=FrozenDict(dict(execution.native)),
-            checks=tuple(execution.checks),
-            check_params=FrozenDict(
-                {name: dict(params) for name, params in execution.check_params.items()}
-            ),
-            recovery=execution.recovery,
-            recovery_params=FrozenDict(dict(execution.recovery_params)),
-            seed=None,
-            overrides=FrozenDict(overrides),
-            transform=None,
-        )
-        return scientific, ScientificDefaults()
-    except Exception as exc:
-        raise WorkerError(
-            "remote worker failed at stage 'resolve execution contracts': "
-            f"scientific definition is not constructible: {exc}"
-        ) from exc
 
 
 def _execute_work_item(item: WorkItem, context: Any, should_cancel: Any) -> Any:

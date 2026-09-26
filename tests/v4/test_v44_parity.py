@@ -38,6 +38,9 @@ from __future__ import annotations
 import dataclasses
 import hashlib
 import os
+import subprocess
+import sys
+import textwrap
 from pathlib import Path
 from typing import Any
 
@@ -63,6 +66,7 @@ from tests.v4._builders import (
     compile_doc,
     energy_result,
     run_inputs,
+    structure,
     structure_set,
     v4_doc,
 )
@@ -186,9 +190,7 @@ def _prepare_attempt(store: Any, item: Any, plan: Any = None, *, claim: bool = T
     ``claim=False`` for handoff-construction-only registration (the later
     import-time preparation performs the claim).
     """
-    step_digest = (
-        plan.steps[0].step_semantic_digest if plan is not None else item.semantic_digest
-    )
+    step_digest = plan.steps[0].step_semantic_digest if plan is not None else item.semantic_digest
     store.register_item(
         work_item_id=item.id,
         logical_key=item.logical_key,
@@ -755,7 +757,7 @@ class TestCheckpointHandoff:
         # Production handoff path only: manifest, definition, digests, and
         # provenance come from the frozen transport builder against the
         # durable registration (never hand-rolled here).
-        from confflow.remote.transport import RemoteTransport, build_input_bundle_manifest
+        from confflow.remote.transport import RemoteTransport
 
         manifest = build_input_bundle_manifest(
             consumer,
@@ -1079,3 +1081,682 @@ class TestEnvironmentDigests:
         with _open_store(run_root, "s_opt") as store:
             assert store.get_state("wi:s_opt:missing") is None
             assert store.list_items(status=StoredWorkItemStatus.COMPLETED) == ()
+
+
+# ---------------------------------------------------------------------------
+# Isolated-process delivery closure (worker E)
+# ---------------------------------------------------------------------------
+
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+
+#: Worker entry script: the isolated worker process runs exactly this —
+#: read the handoff, run the shared executor, package the result bundle.
+#: No producer state crosses the boundary except the handoff file, the
+#: staged directory, and the explicit environment below.
+ISOLATED_WORKER_RUNNER = textwrap.dedent("""\
+    import sys
+
+    from confflow.remote.worker import run_worker_envelope
+
+    handoff_path, staged_dir, worker_root, launch_token = sys.argv[1:5]
+    result_path = run_worker_envelope(
+        handoff_path=handoff_path,
+        staged_bundle=staged_dir,
+        worker_root=worker_root,
+        launch_token=launch_token,
+    )
+    print(result_path)
+    """)
+
+
+def _install_absolute_shim(
+    tmp_path: Path, name: str, fake: Path, counter: Path
+) -> tuple[Path, Path]:
+    """Install ``bin-iso/<name>`` execing *fake* via an absolute interpreter.
+
+    The shim uses shell builtins plus absolute paths only, so the isolated
+    worker needs nothing on ``PATH`` except this directory.
+    """
+    bin_dir = tmp_path / "bin-iso"
+    bin_dir.mkdir(exist_ok=True)
+    shim = bin_dir / name
+    shim.write_text(
+        "#!/bin/sh\n"
+        f'printf \'%s\\n\' "$1" >> "{counter}"\n'
+        f'exec "{sys.executable}" "{fake}" "$@"\n',
+        encoding="utf-8",
+    )
+    shim.chmod(0o755)
+    if not counter.exists():
+        counter.write_text("", encoding="utf-8")
+    return shim, bin_dir
+
+
+def _isolated_worker_env(bin_dir: Path, extra: dict[str, str] | None = None) -> dict[str, str]:
+    """Build the scrubbed worker environment: no producer process state.
+
+    Only the shim directory, the repo root (so the worker imports the same
+    ``confflow`` package), and explicitly passed fake-control variables
+    cross the boundary.  The producer's cwd, environment, and file
+    descriptors never do.
+    """
+    env = {"PATH": str(bin_dir), "PYTHONPATH": str(REPO_ROOT)}
+    if extra:
+        env.update(extra)
+    return env
+
+
+def _remote_context_with_env(plan: Any, program: str, executable: str, run_root: str) -> Any:
+    """Build a remote item context with a measured execution environment."""
+    from confflow.execution.environment import EnvironmentMeasurer
+
+    context = item_context(
+        plan,
+        program,
+        executable,
+        run_root,
+        os.path.join(run_root, "items-remote"),
+        NativeProcessSupervisor(),
+    )
+    environment = EnvironmentMeasurer().build_environment(executable, adapter=context.adapter)
+    return dataclasses.replace(context, environment=environment, attempt=1)
+
+
+def _register_producer_attempt(
+    store: Any, item: Any, plan: Any, provenance: dict[str, Any]
+) -> None:
+    """Register *item* with provenance and claim attempt 1 (producer side)."""
+    store.register_item(
+        work_item_id=item.id,
+        logical_key=item.logical_key,
+        step_id=item.step_id,
+        work_item_digest=item.semantic_digest,
+        step_semantic_digest=plan.steps[0].step_semantic_digest,
+        producer_provenance=provenance,
+    )
+    assert store.claim(item.id, owner=OwnerIdentity(owner_token="isolated-producer")) is True
+
+
+def _produce_handoff_and_stage(
+    plan: Any, item: Any, context: Any, *, run_root: str, worker_root: str, store: Any
+) -> tuple[Any, Any, str, Any]:
+    """Run the producer halves: handoff write, secure re-read, input staging."""
+    from confflow.remote.handoff import read_handoff_envelope, write_handoff_envelope
+    from confflow.remote.staging import stage_input_bundle
+    from confflow.remote.transport import RemoteTransport
+
+    transport = RemoteTransport(run_root=run_root, store=store, worker_root=worker_root)
+    token = transport.launch_token_for(item, 1)
+    handoff = transport._build_handoff(item, context, attempt=1, token=token)  # noqa: SLF001
+    handoff_path = write_handoff_envelope(
+        handoff=handoff, worker_root=worker_root, launch_token=token
+    )
+    handoff = read_handoff_envelope(path=handoff_path, expected_run_id=handoff.run_id)
+    source_files, _checksums = transport._artifact_sources(item)  # noqa: SLF001
+    staged = stage_input_bundle(
+        manifest=handoff.inputs,
+        run_root=run_root,
+        worker_root=worker_root,
+        launch_token=token,
+        source_files=source_files,
+    )
+    return transport, handoff, handoff_path, staged
+
+
+def _run_isolated_worker(
+    tmp_path: Path,
+    *,
+    handoff_path: str,
+    staged: Any,
+    worker_root: str,
+    token: str,
+    env: dict[str, str],
+) -> str:
+    """Run the worker in a separate OS process; return the result path.
+
+    The child runs with an independent working directory and the scrubbed
+    environment: parity evidence below can never be a rehomed local result.
+    """
+    script = tmp_path / "isolated_worker.py"
+    script.write_text(ISOLATED_WORKER_RUNNER, encoding="utf-8")
+    worker_cwd = tmp_path / "worker-cwd"
+    worker_cwd.mkdir(exist_ok=True)
+    proc = subprocess.run(
+        [sys.executable, str(script), handoff_path, staged.work_dir, worker_root, token],
+        cwd=str(worker_cwd),
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
+    assert proc.returncode == 0, proc.stderr[-3000:]
+    return proc.stdout.strip().splitlines()[-1]
+
+
+def _import_after_producer_restart(
+    *, result_path: str, handoff: Any, run_root: str, step_id: str
+) -> Any:
+    """Import the worker bundle through a freshly opened store handle.
+
+    The original producer handle is gone (restart): only durable bytes —
+    the bundle, the handoff, and the step store — back this import.
+    """
+    from confflow.remote.staging import import_result_artifacts
+
+    with _open_store(run_root, step_id) as store:
+        return import_result_artifacts(
+            result_path=result_path, handoff=handoff, run_root=run_root, store=store
+        )
+
+
+def _assert_bundle_identity(bundle: Any, handoff: Any) -> None:
+    """Assert the bundle answers exactly to the handoff on every axis."""
+    assert bundle.run_id == handoff.run_id
+    assert bundle.step_id == handoff.step_id
+    assert bundle.work_item_id == handoff.work_item_id
+    assert bundle.attempt_number == handoff.attempt_number == 1
+    assert bundle.launch_token == handoff.launch_token
+    assert bundle.work_item_digest == handoff.work_item_digest
+    assert bundle.transport_metadata["worker_pid"] != os.getpid()
+
+
+def _assert_handoff_identity(
+    handoff: Any, item: Any, plan: Any, provenance: dict[str, Any]
+) -> None:
+    """Assert definition/item/provenance/attempt identity on the handoff."""
+    assert handoff.work_item_digest == item.semantic_digest
+    assert handoff.step_semantic_digest == plan.steps[0].step_semantic_digest
+    assert handoff.producer_provenance == provenance
+    assert handoff.attempt_number == 1
+    assert handoff.work_item_id == item.id
+    assert handoff.logical_key == item.logical_key
+
+
+def _assert_science_axes(local: Any, remote: Any) -> None:
+    """Assert transport-independent scientific parity (no locators/timing)."""
+    assert remote.status is local.status
+    assert remote.semantic_digest == local.semantic_digest
+    assert sorted(
+        (
+            record.id,
+            record.geometry_digest,
+            record.role,
+            record.ordinal,
+            record.parent_ids,
+            record.lineage_root_id,
+            record.group_key,
+            record.charge,
+            record.multiplicity,
+        )
+        for record in remote.structures
+    ) == sorted(
+        (
+            record.id,
+            record.geometry_digest,
+            record.role,
+            record.ordinal,
+            record.parent_ids,
+            record.lineage_root_id,
+            record.group_key,
+            record.charge,
+            record.multiplicity,
+        )
+        for record in local.structures
+    )
+    assert sorted(
+        (record.kind, record.value, record.subject_structure_id) for record in remote.results
+    ) == sorted(
+        (record.kind, record.value, record.subject_structure_id) for record in local.results
+    )
+    assert _artifact_identity(remote) == _artifact_identity(local)
+    assert _check_outcomes(remote) == _check_outcomes(local)
+
+
+class TestIsolatedProcessDelivery:
+    """Handoff -> isolated worker process -> bundle -> restarted-producer import.
+
+    The worker runs in a separate OS process with an independent working
+    directory and a scrubbed environment; the producer imports through a
+    freshly opened store handle.  Nothing but typed files crosses the
+    transport boundary, and parity is measured against a genuine local
+    execution of the same item — never a rehomed local result.
+    """
+
+    def test_cross_process_worker_parity_orca(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """ORCA opt across the process boundary: same science, own env."""
+        from confflow.execution.environment import ExecutionEnvironment
+        from confflow.remote.result_bundle import read_result_bundle
+        from confflow.remote.staging import StagingError
+        from confflow.remote.transport import LocalTransport
+
+        monkeypatch.setenv("FAKE_MODE", "success_opt")
+        counter = tmp_path / "native.count"
+        wrapper, bin_dir = _install_absolute_shim(tmp_path, "orca", FAKE_ORCA, counter)
+        plan = compile_plan(calculation_doc("orca", ORCA_NATIVE, str(wrapper)))
+        (item,) = assemble_items(plan, structure_set("s0"))
+        run_root = str(tmp_path / "run")
+        worker_root = str(tmp_path / "worker")
+        provenance = {"closure": "E-isolated", "origin": "test_v44_parity"}
+        with _open_store(run_root, "s_opt") as store:
+            _register_producer_attempt(store, item, plan, provenance)
+            remote_ctx = _remote_context_with_env(plan, "orca", str(wrapper), run_root)
+            _transport, handoff, handoff_path, staged = _produce_handoff_and_stage(
+                plan, item, remote_ctx, run_root=run_root, worker_root=worker_root, store=store
+            )
+            token = handoff.launch_token
+        _assert_handoff_identity(handoff, item, plan, provenance)
+        result_path = _run_isolated_worker(
+            tmp_path,
+            handoff_path=handoff_path,
+            staged=staged,
+            worker_root=worker_root,
+            token=token,
+            env=_isolated_worker_env(bin_dir, {"FAKE_MODE": "success_opt"}),
+        )
+        bundle = read_result_bundle(path=result_path)
+        _assert_bundle_identity(bundle, handoff)
+        verified = ExecutionEnvironment.from_dict(dict(bundle.environment))
+        assert verified.digest() == bundle.environment.get("digest")
+        remote = _import_after_producer_restart(
+            result_path=result_path, handoff=handoff, run_root=run_root, step_id="s_opt"
+        )
+        assert remote.status is WorkItemStatus.COMPLETED
+        local_ctx = item_context(
+            plan,
+            "orca",
+            str(wrapper),
+            run_root,
+            os.path.join(run_root, "items-local"),
+            NativeProcessSupervisor(),
+        )
+        local = LocalTransport(WorkItemExecutor()).execute(item, local_ctx, attempt=1)
+        assert local.status is WorkItemStatus.COMPLETED
+        _assert_parity(local, remote)
+        assert _artifact_bytes(run_root, remote) == _artifact_bytes(run_root, local)
+        assert _native_launches(counter) == 2
+        # Per-step store binding: a sibling step's store has no attempt
+        # history, so the same bundle bytes fail closed there.
+        with _open_store(run_root, "s_other") as other_store:
+            from confflow.remote.staging import import_result_artifacts
+
+            with pytest.raises(StagingError):
+                import_result_artifacts(
+                    result_path=result_path,
+                    handoff=handoff,
+                    run_root=run_root,
+                    store=other_store,
+                )
+
+    def test_cross_process_ensemble_delivery_goat(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """GOAT ensemble across the process boundary: members intact."""
+        from confflow.execution.output_identity import CONFORMER_ROLE, conformer_output_id
+        from confflow.remote.result_bundle import read_result_bundle
+        from confflow.remote.transport import LocalTransport
+
+        monkeypatch.setenv("FAKE_MODE", "success")
+        counter = tmp_path / "goat.count"
+        fake_goat = FAKES_DIR / "fake_goat.py"
+        wrapper, bin_dir = _install_absolute_shim(tmp_path, "goat", fake_goat, counter)
+        step = calc_step(
+            "s_goat",
+            program="orca",
+            adapter="standard",
+            profile="ensemble",
+            bindings={"structure": {"source": {"run": "structures"}}},
+            native={"keyword": "B3LYP D3BJ GOAT", "goat": {"MaxIter": 50}},
+            checks=["normal_termination"],
+            scheduler={"max_parallel_items": 4},
+            resources={"cores_per_item": 1, "memory_per_item": "1GB"},
+            execution={"binding_id": "test", "executable": str(wrapper)},
+            seed=7,
+        )
+        plan = compile_plan(v4_doc([step], inputs=STRUCTURE_INPUTS))
+        seed_record = structure("seed-0", group_key="ens-0", lineage_root_id="root-ens-0")
+        assembly = assemble(
+            plan, run_inputs(structures={"structures": StructureSet.of(seed_record)})
+        )
+        assert assembly.ok, [item.message for item in assembly.errors]
+        (item,) = assembly.for_step("s_goat")
+        run_root = str(tmp_path / "run")
+        worker_root = str(tmp_path / "worker")
+        provenance = {"closure": "E-isolated-goat"}
+        with _open_store(run_root, "s_goat") as store:
+            _register_producer_attempt(store, item, plan, provenance)
+            remote_ctx = dataclasses.replace(
+                _remote_context_with_env(plan, "orca", str(wrapper), run_root),
+                profile=PROFILES["ensemble"],
+            )
+            _transport, handoff, handoff_path, staged = _produce_handoff_and_stage(
+                plan, item, remote_ctx, run_root=run_root, worker_root=worker_root, store=store
+            )
+            token = handoff.launch_token
+        _assert_handoff_identity(handoff, item, plan, provenance)
+        assert handoff.execution.seed == 7
+        result_path = _run_isolated_worker(
+            tmp_path,
+            handoff_path=handoff_path,
+            staged=staged,
+            worker_root=worker_root,
+            token=token,
+            env=_isolated_worker_env(bin_dir, {"FAKE_MODE": "success"}),
+        )
+        bundle = read_result_bundle(path=result_path)
+        _assert_bundle_identity(bundle, handoff)
+        remote = _import_after_producer_restart(
+            result_path=result_path, handoff=handoff, run_root=run_root, step_id="s_goat"
+        )
+        assert remote.status is WorkItemStatus.COMPLETED
+        by_id = {record.id: record for record in remote.structures}
+        assert set(by_id) == {conformer_output_id(item.logical_key, index) for index in range(3)}
+        assert sorted(record.ordinal for record in remote.structures) == [0, 1, 2]
+        assert all(record.role == CONFORMER_ROLE for record in remote.structures)
+        assert all(record.parent_ids == ("seed-0",) for record in remote.structures)
+        local_ctx = dataclasses.replace(
+            item_context(
+                plan,
+                "orca",
+                str(wrapper),
+                run_root,
+                os.path.join(run_root, "items-local"),
+                NativeProcessSupervisor(),
+            ),
+            profile=PROFILES["ensemble"],
+        )
+        local = LocalTransport(WorkItemExecutor()).execute(item, local_ctx, attempt=1)
+        assert local.status is WorkItemStatus.COMPLETED
+        _assert_science_axes(local, remote)
+        assert _artifact_bytes(run_root, remote) == _artifact_bytes(run_root, local)
+        assert _native_launches(counter) == 2
+
+    def test_cross_process_irc_delivery_multi_output(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """IRC path endpoints across the process boundary: both directions."""
+        from confflow.execution.profile_path_endpoints import PathEndpointsProfile
+        from confflow.remote.result_bundle import read_result_bundle
+        from confflow.remote.transport import LocalTransport
+        from tests.v4.fakes.fake_irc import FORWARD_ENERGY, REVERSE_ENERGY
+
+        monkeypatch.setenv("FAKE_IRC_MODE", "success")
+        monkeypatch.setenv("FAKE_IRC_ORDER", "reverse_first")
+        counter = tmp_path / "irc.count"
+        fake_irc = FAKES_DIR / "fake_irc.py"
+        wrapper, bin_dir = _install_absolute_shim(tmp_path, "orca", fake_irc, counter)
+        step = calc_step(
+            "s_irc",
+            program="orca",
+            adapter="standard",
+            profile="path_endpoints",
+            bindings={"structure": {"source": {"run": "structures"}}},
+            native={"keyword": "IRC B3LYP D3BJ", "irc": {"direction": "both"}},
+            checks=["normal_termination", "geometry_required"],
+            scheduler={"max_parallel_items": 4},
+            resources={"cores_per_item": 1, "memory_per_item": "1GB"},
+            execution={"binding_id": "test", "executable": str(wrapper)},
+        )
+        plan = compile_plan(v4_doc([step], inputs=STRUCTURE_INPUTS))
+        structures = StructureSet.of(
+            *(
+                structure(
+                    f"ts{i:02d}",
+                    group_key=f"rxn-{i:02d}",
+                    lineage_root_id=f"root-{i:02d}",
+                    offset=float(i) * 0.017,
+                )
+                for i in range(2)
+            )
+        )
+        assembly = assemble(plan, run_inputs(structures={"structures": structures}))
+        assert assembly.ok, [item.message for item in assembly.errors]
+        items = tuple(assembly.for_step("s_irc"))
+        assert len(items) == 2
+        run_root = str(tmp_path / "run")
+        worker_root = str(tmp_path / "worker")
+        worker_env = _isolated_worker_env(
+            bin_dir, {"FAKE_IRC_MODE": "success", "FAKE_IRC_ORDER": "reverse_first"}
+        )
+        remote_results: dict[str, Any] = {}
+        for item in items:
+            with _open_store(run_root, "s_irc") as store:
+                _register_producer_attempt(store, item, plan, {"closure": "E-isolated-irc"})
+                remote_ctx = dataclasses.replace(
+                    _remote_context_with_env(plan, "orca", str(wrapper), run_root),
+                    profile=PathEndpointsProfile(),
+                    checks=(CHECKS["normal_termination"], CHECKS["geometry_required"]),
+                )
+                _transport, handoff, handoff_path, staged = _produce_handoff_and_stage(
+                    plan,
+                    item,
+                    remote_ctx,
+                    run_root=run_root,
+                    worker_root=worker_root,
+                    store=store,
+                )
+                token = handoff.launch_token
+            result_path = _run_isolated_worker(
+                tmp_path,
+                handoff_path=handoff_path,
+                staged=staged,
+                worker_root=worker_root,
+                token=token,
+                env=worker_env,
+            )
+            bundle = read_result_bundle(path=result_path)
+            _assert_bundle_identity(bundle, handoff)
+            remote = _import_after_producer_restart(
+                result_path=result_path, handoff=handoff, run_root=run_root, step_id="s_irc"
+            )
+            assert remote.status is WorkItemStatus.COMPLETED
+            remote_results[item.id] = (remote, handoff)
+        assert _native_launches(counter) == 2
+        assert (
+            len(
+                {record.id for result, _ in remote_results.values() for record in result.structures}
+            )
+            == 4
+        )
+        energies = sorted(
+            record.value
+            for result, _ in remote_results.values()
+            for record in result.results
+            if record.kind == "energy"
+        )
+        assert len(energies) == 4
+        assert min(abs(value - FORWARD_ENERGY) for value in energies) < 1e-9
+        assert min(abs(value - REVERSE_ENERGY) for value in energies) < 1e-9
+        for item in items:
+            remote, _handoff = remote_results[item.id]
+            local_ctx = dataclasses.replace(
+                item_context(
+                    plan,
+                    "orca",
+                    str(wrapper),
+                    run_root,
+                    os.path.join(run_root, "items-local"),
+                    NativeProcessSupervisor(),
+                ),
+                profile=PathEndpointsProfile(),
+                checks=(CHECKS["normal_termination"], CHECKS["geometry_required"]),
+            )
+            local = LocalTransport(WorkItemExecutor()).execute(item, local_ctx, attempt=1)
+            assert local.status is WorkItemStatus.COMPLETED
+            _assert_science_axes(local, remote)
+            assert _artifact_bytes(run_root, remote) == _artifact_bytes(run_root, local)
+        assert _native_launches(counter) == 4
+
+
+class TestQst3RemoteDelivery:
+    """QST3 (reactant/product/guess) through genuine remote delivery.
+
+    The worker rebuilds every named slot by port name — never by order —
+    and the TS-candidate lineage (ordered reactant/product/guess parents)
+    plus the explicit atom-mapping permutation survive the boundary.
+    """
+
+    def _qst3_doc(self) -> dict[str, Any]:
+        """Build the Gaussian QST3 document with a mapped product slot."""
+        step = calc_step(
+            "s_qst",
+            program="gaussian",
+            adapter="named_structures",
+            profile="standard",
+            bindings={
+                "reactant": {
+                    "source": {"run": "reactants"},
+                    "pairing": "by_group_key",
+                    "cardinality": "one",
+                },
+                "product": {
+                    "source": {"run": "products"},
+                    "pairing": "by_group_key",
+                    "cardinality": "one",
+                },
+                "guess": {
+                    "source": {"run": "guesses"},
+                    "pairing": "by_group_key",
+                    "cardinality": "one",
+                },
+            },
+            native={
+                "keyword": "QST3 B3LYP/6-31G",
+                "atom_mapping": {"kind": "explicit_permutation", "permutation": [2, 0, 1]},
+            },
+            checks=["normal_termination"],
+            scheduler={"max_parallel_items": 4},
+            resources={"cores_per_item": 1, "memory_per_item": "1GB"},
+            execution={"binding_id": "test", "executable": "g16"},
+        )
+        return v4_doc(
+            [step],
+            inputs={
+                "reactants": {"kind": "structure", "cardinality": "many"},
+                "products": {"kind": "structure", "cardinality": "many"},
+                "guesses": {"kind": "structure", "cardinality": "many"},
+            },
+        )
+
+    def _run_both(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Any, Any]:
+        """Run one mapped QST3 step locally and remotely; return step results."""
+        import dataclasses as _dc
+
+        from confflow.remote.transport import LocalTransport, RemoteTransport
+
+        monkeypatch.setenv("FAKE_MODE", "ts_candidate")
+        counter = tmp_path / "native.count"
+        _install_program_shims(tmp_path, monkeypatch, counter)
+        plan = compile_plan(self._qst3_doc())
+        group = "rxn-00"
+        reactants = StructureSet.of(structure("r00", kind="water", group_key=group))
+        products = StructureSet.of(
+            _dc.replace(
+                structure("p00", kind="water", group_key=group, offset=0.05),
+                atoms=("H", "H", "O"),
+                coordinates=tuple(reversed(structure("p00").coordinates)),
+            )
+        )
+        # The uniform permutation must hold for every slot, guess included.
+        guesses = StructureSet.of(
+            _dc.replace(
+                structure("g00", kind="water", group_key=group, offset=0.02),
+                atoms=("H", "H", "O"),
+                coordinates=tuple(reversed(structure("g00").coordinates)),
+            )
+        )
+        assembly = assemble(
+            plan,
+            run_inputs(
+                structures={
+                    "reactants": reactants,
+                    "products": products,
+                    "guesses": guesses,
+                }
+            ),
+        )
+        assert assembly.ok, [item.message for item in assembly.errors]
+        items = tuple(assembly.for_step("s_qst"))
+        assert len(items) == 1
+        assert sorted(items[0].named_inputs.structures) == ["guess", "product", "reactant"]
+
+        def _request(items: Any, run_root: str) -> Any:
+            from confflow.execution.batch import StepExecutionRequest
+            from confflow.execution.environment import EnvironmentMeasurer
+            from confflow.execution.recovery_standard import RECOVERIES as _RECOVERIES
+
+            planned = plan.steps[0]
+            adapter = get_program_adapter("gaussian")
+            wrapper = str(tmp_path / "bin" / "g16")
+            return StepExecutionRequest(
+                step=planned,
+                items=tuple(items),
+                scientific=planned.scientific,
+                scientific_defaults=plan.scientific_defaults,
+                adapter=adapter,
+                profile=PROFILES["standard"],
+                checks=(CHECKS["normal_termination"],),
+                recovery=_RECOVERIES["none"],
+                execution_binding=ExecutionBinding(
+                    binding_id="test", executable=wrapper, env=FrozenDict({})
+                ),
+                run_root=run_root,
+                environment=EnvironmentMeasurer().build_environment(wrapper, adapter=adapter),
+                definition_digest=plan.definition_digest,
+                executor_capability="calculation",
+            )
+
+        local_root = str(tmp_path / "run-local")
+        with _open_store(local_root, "s_qst") as store:
+            local_result = (
+                BatchStepExecutor(WorkItemExecutor())
+                .with_supervisor(NativeProcessSupervisor())
+                .execute_step_resumable(
+                    _request(tuple(items), local_root),
+                    store=store,
+                    run_root=local_root,
+                    owner_token="ctl-local",
+                    transport=LocalTransport(WorkItemExecutor()),
+                )
+            )
+        from confflow.domain.completion import StepStatus
+
+        assert local_result.status is StepStatus.COMPLETED
+        remote_root = str(tmp_path / "run-remote")
+        worker_root = str(tmp_path / "worker")
+        with _open_store(remote_root, "s_qst") as store:
+            transport = RemoteTransport(
+                run_root=remote_root,
+                store=store,
+                worker_root=worker_root,
+                target_default_executable=str(tmp_path / "bin" / "g16"),
+            )
+            remote_result = (
+                BatchStepExecutor(WorkItemExecutor())
+                .with_supervisor(NativeProcessSupervisor())
+                .execute_step_resumable(
+                    _request(tuple(items), remote_root),
+                    store=store,
+                    run_root=remote_root,
+                    owner_token="ctl-remote",
+                    transport=transport,
+                )
+            )
+        return local_result, remote_result
+
+    def test_mapped_qst3_slots_survive_remote(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Mapped QST3 agrees across transports; guess lineage ordered."""
+        local_result, remote_result = self._run_both(tmp_path, monkeypatch)
+        assert local_result.summary["completed"] == 1
+        assert remote_result.summary["completed"] == 1
+        local = local_result.item_results[0]
+        remote = remote_result.item_results[0]
+        _assert_science_axes(local, remote)
+        for result in (local, remote):
+            (record,) = tuple(result.structures)
+            assert list(record.parent_ids) == ["r00", "p00", "g00"]
+            assert record.group_key == "rxn-00"
+            assert record.lineage_root_id is not None

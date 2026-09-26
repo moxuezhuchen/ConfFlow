@@ -529,7 +529,7 @@ class TestStagingValidation:
 
 
 def _bundle_environment_for_coverage() -> dict[str, Any]:
-    """Verified worker-measured environment over fixed test bytes (module scope)."""
+    """Return a verified worker-measured environment over fixed test bytes."""
     import hashlib as _hashlib
 
     from confflow.execution.contracts import ExecutionEnvironment
@@ -570,7 +570,7 @@ class TestImportValidation:
 
     @staticmethod
     def _bundle_environment() -> dict[str, Any]:
-        """Verified worker-measured environment over fixed test bytes."""
+        """Return a verified worker-measured environment over fixed test bytes."""
         import hashlib as _hashlib
 
         from confflow.execution.contracts import ExecutionEnvironment
@@ -1320,3 +1320,262 @@ class TestArtifactFlowEdges:
         )
         assert subject_for_output(input_structure_id="a", output_structure_id="b") == "b"
         assert subject_for_output(input_structure_id="a", output_structure_id=None) == "a"
+
+
+class TestTargetBindingTakesEffect:
+    """Walltime/target/environment ride the handoff and bind the worker.
+
+    The producer-resolved execution request travels verbatim: the worker
+    resolves the target binding from the handoff (never by silent
+    substitution), measures the requested binary, and fails closed when
+    it is unmeasurable.  Binding resolution runs in a scrubbed subprocess
+    so "takes effect" is proven across the process boundary.
+    """
+
+    _BINDING_RUNNER = (
+        "import json\n"
+        "import sys\n"
+        "from confflow.remote.handoff import read_handoff_envelope\n"
+        "from confflow.remote.worker import _resolve_execution_context\n"
+        "handoff_path, worker_root, token, target_default, target_env_json, out = sys.argv[1:7]\n"
+        "handoff = read_handoff_envelope(path=handoff_path)\n"
+        "context, _execution = _resolve_execution_context(\n"
+        "    handoff, worker_root, token, None,\n"
+        "    target_default_executable=target_default,\n"
+        "    target_env=json.loads(target_env_json),\n"
+        ")\n"
+        "binding = context.execution_binding\n"
+        "payload = {\n"
+        "    'executable': binding.executable,\n"
+        "    'walltime_seconds': binding.walltime_seconds,\n"
+        "    'target': binding.target,\n"
+        "    'env': dict(binding.env),\n"
+        "}\n"
+        "open(out, 'w').write(json.dumps(payload, sort_keys=True))\n"
+    )
+
+    def _handoff_with_binding(
+        self,
+        tmp_path: Path,
+        *,
+        executable: str,
+        env: dict[str, str],
+        walltime_seconds: int | None,
+        target: str | None,
+    ) -> tuple[Any, Any, str, str]:
+        """Build a production handoff carrying the requested binding."""
+        import sys as _sys
+
+        _sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
+        from confflow.domain import FrozenDict as _FrozenDict
+        from confflow.execution import ExecutionBinding as _Binding
+        from confflow.execution.checks_standard import CHECKS as _CHECKS
+        from confflow.execution.process import NativeProcessSupervisor as _Supervisor
+        from confflow.execution.profile_standard import PROFILES as _PROFILES
+        from confflow.execution.recovery_standard import RECOVERIES as _RECOVERIES
+        from confflow.execution.work_item_executor import ItemExecutionContext as _Context
+        from confflow.persistence import OwnerIdentity as _Owner
+        from confflow.programs.registry import get_program_adapter as _adapter
+        from confflow.remote.handoff import write_handoff_envelope as _write
+        from confflow.remote.transport import RemoteTransport as _Transport
+        from tests.v4._builders import assemble as _assemble
+        from tests.v4._builders import calc_step as _calc
+        from tests.v4._builders import compile_doc as _compile
+        from tests.v4._builders import run_inputs as _inputs
+        from tests.v4._builders import structure_set as _structures
+        from tests.v4._builders import v4_doc as _doc
+
+        fake_orca = Path(__file__).resolve().parent / "fakes" / "fake_orca.py"
+        document = _doc(
+            [
+                _calc(
+                    "s_opt",
+                    program="orca",
+                    bindings={"structure": {"source": {"run": "structures"}}},
+                    native={"keyword": "B3LYP Opt"},
+                    checks=["normal_termination"],
+                    resources={"cores_per_item": 1, "memory_per_item": "1GB"},
+                    execution={"binding_id": "test", "executable": str(fake_orca)},
+                )
+            ],
+            inputs={"structures": {"kind": "structure", "cardinality": "many"}},
+        )
+        compiled = _compile(document)
+        assert compiled.ok
+        plan = compiled.plan
+        assert plan is not None
+        assembly = _assemble(plan, _inputs(structures={"structures": _structures("s0")}))
+        assert assembly.ok
+        (item,) = assembly.for_step("s_opt")
+        run_root = str(tmp_path / "run")
+        worker_root = str(tmp_path / "worker")
+        store = SqliteWorkItemStore.open(store_path(run_root, "s_opt"))
+        try:
+            store.register_item(
+                work_item_id=item.id,
+                logical_key=item.logical_key,
+                step_id=item.step_id,
+                work_item_digest=item.semantic_digest,
+                step_semantic_digest=plan.steps[0].step_semantic_digest,
+                producer_provenance={},
+            )
+            assert store.claim(item.id, owner=_Owner(owner_token="target-probe")) is True
+            planned = plan.steps[0]
+            context = _Context(
+                step_id="s_opt",
+                scientific=planned.scientific,
+                scientific_defaults=plan.scientific_defaults,
+                adapter=_adapter("orca"),
+                profile=_PROFILES["standard"],
+                checks=(_CHECKS["normal_termination"],),
+                recovery=_RECOVERIES["none"],
+                execution_binding=_Binding(
+                    binding_id="test",
+                    executable=executable,
+                    env=_FrozenDict(dict(env)),
+                    walltime_seconds=walltime_seconds,
+                    target=target,
+                ),
+                run_root=run_root,
+                work_base=str(tmp_path / "items"),
+                supervisor=_Supervisor(),
+                environment=None,
+                attempt=1,
+                executor_capability="calculation",
+            )
+            transport = _Transport(run_root=run_root, store=store, worker_root=worker_root)
+            token = transport.launch_token_for(item, 1)
+            handoff = transport._build_handoff(
+                item, context, attempt=1, token=token
+            )  # noqa: SLF001
+            handoff_path = _write(handoff=handoff, worker_root=worker_root, launch_token=token)
+            return handoff, plan, handoff_path, worker_root
+        finally:
+            store.close()
+
+    def _resolve_in_subprocess(
+        self,
+        tmp_path: Path,
+        *,
+        handoff_path: str,
+        worker_root: str,
+        token: str,
+        target_default: str,
+        target_env: dict[str, str],
+    ) -> tuple[int, str, dict[str, Any]]:
+        """Resolve the worker binding in a scrubbed subprocess."""
+        import json as _json
+        import subprocess as _subprocess
+        import sys as _sys
+
+        script = tmp_path / "binding_runner.py"
+        script.write_text(self._BINDING_RUNNER, encoding="utf-8")
+        out = tmp_path / "binding.json"
+        repo_root = Path(__file__).resolve().parent.parent.parent
+        proc = _subprocess.run(
+            [
+                _sys.executable,
+                str(script),
+                handoff_path,
+                worker_root,
+                token,
+                target_default,
+                _json.dumps(target_env),
+                str(out),
+            ],
+            cwd=str(tmp_path / "binding-cwd"),
+            env={"PATH": "/usr/bin:/bin", "PYTHONPATH": str(repo_root)},
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        payload = {}
+        if out.exists():
+            payload = _json.loads(out.read_text(encoding="utf-8"))
+        return proc.returncode, proc.stderr[-2000:], payload
+
+    def test_worker_binding_matches_handoff_verbatim(self, tmp_path: Path) -> None:
+        """Explicit executable/walltime/target/env survive to the worker."""
+        fake_orca = str(Path(__file__).resolve().parent / "fakes" / "fake_orca.py")
+        fake_g16 = str(Path(__file__).resolve().parent / "fakes" / "fake_g16.py")
+        (tmp_path / "binding-cwd").mkdir(exist_ok=True)
+        handoff, _plan, handoff_path, worker_root = self._handoff_with_binding(
+            tmp_path,
+            executable=fake_orca,
+            env={"HANDOFF_VAR": "from-handoff", "SHARED": "handoff-wins"},
+            walltime_seconds=600,
+            target="node-7",
+        )
+        assert handoff.execution.handoff_walltime_seconds == 600
+        assert handoff.execution.handoff_env == {
+            "HANDOFF_VAR": "from-handoff",
+            "SHARED": "handoff-wins",
+        }
+        assert handoff.environment_request.target == "node-7"
+        returncode, stderr, payload = self._resolve_in_subprocess(
+            tmp_path,
+            handoff_path=handoff_path,
+            worker_root=worker_root,
+            token=handoff.launch_token,
+            target_default=fake_g16,
+            target_env={"SHARED": "target-default", "TARGET_ONLY": "yes"},
+        )
+        assert returncode == 0, stderr
+        # The explicit request is carried verbatim: never rewritten to the
+        # target default, even though the default is a different binary.
+        assert payload["executable"] == fake_orca
+        assert payload["walltime_seconds"] == 600
+        assert payload["target"] == "node-7"
+        # Target env applies under the handoff env: handoff wins conflicts.
+        assert payload["env"] == {
+            "SHARED": "handoff-wins",
+            "HANDOFF_VAR": "from-handoff",
+            "TARGET_ONLY": "yes",
+        }
+
+    def test_unmeasurable_executable_fails_closed(self, tmp_path: Path) -> None:
+        """A missing requested binary fails; the default never substitutes."""
+        fake_g16 = str(Path(__file__).resolve().parent / "fakes" / "fake_g16.py")
+        (tmp_path / "binding-cwd").mkdir(exist_ok=True)
+        handoff, _plan, handoff_path, worker_root = self._handoff_with_binding(
+            tmp_path,
+            executable="/nonexistent/orca-missing",
+            env={},
+            walltime_seconds=60,
+            target="node-7",
+        )
+        returncode, stderr, _payload = self._resolve_in_subprocess(
+            tmp_path,
+            handoff_path=handoff_path,
+            worker_root=worker_root,
+            token=handoff.launch_token,
+            target_default=fake_g16,
+            target_env={},
+        )
+        assert returncode != 0
+        assert "cannot measure" in stderr
+
+    def test_reuse_probe_refuses_unknown_target(self, tmp_path: Path) -> None:
+        """The reuse probe raises instead of substituting an environment."""
+        run_root = str(tmp_path / "run")
+        store = SqliteWorkItemStore.open(store_path(run_root, "s_opt"))
+        try:
+            transport = RemoteTransport(
+                run_root=run_root, store=store, worker_root=str(tmp_path / "w")
+            )
+            with pytest.raises(DomainError):
+                transport.probe_environment_digest(
+                    program="orca", capability="calculation", requested_executable=None
+                )
+            with pytest.raises(DomainError):
+                transport.probe_environment_digest(
+                    program="orca",
+                    capability="calculation",
+                    requested_executable="/nonexistent/orca-missing",
+                )
+            with pytest.raises(DomainError):
+                transport.probe_environment_digest(program="orca", capability=None)
+            digest = transport.probe_environment_digest(capability="confgen")
+            assert isinstance(digest, str) and digest.startswith("sha256:")
+        finally:
+            store.close()
