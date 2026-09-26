@@ -30,6 +30,7 @@ EXECUTION_ROOT = PACKAGE_ROOT / "execution"
 V4_ROOT = PACKAGE_ROOT / "workflow" / "v4"
 PERSISTENCE_ROOT = PACKAGE_ROOT / "persistence"
 PROGRAMS_ROOT = PACKAGE_ROOT / "programs"
+REMOTE_ROOT = PACKAGE_ROOT / "remote"
 
 FORBIDDEN_IMPORT_PREFIXES = (
     "confflow.blocks",
@@ -119,6 +120,10 @@ FORBIDDEN_SYMBOLS = (
     "TaskStatsCollector",
     "delete_work_dir",
     "binding_v2",
+    "workflow_config",
+    "worker_config",
+    "backup_dir",
+    "ibkout",
 )
 
 
@@ -202,9 +207,10 @@ class TestStaticImports:
             "confflow.workflow.v4",
             "confflow.programs",
             "confflow.persistence",
+            "confflow.remote",
         )
         offenders: list[tuple[str, str, int]] = []
-        for root in (V4_ROOT, EXECUTION_ROOT, PERSISTENCE_ROOT, PROGRAMS_ROOT):
+        for root in (V4_ROOT, EXECUTION_ROOT, PERSISTENCE_ROOT, PROGRAMS_ROOT, REMOTE_ROOT):
             for path in _iter_python_files(root):
                 for module, lineno in _imports(path):
                     if not module.startswith("confflow"):
@@ -241,7 +247,14 @@ class TestStaticImports:
 
     def test_forbidden_import_prefixes_absent_everywhere_in_v4_core(self) -> None:
         offenders: list[tuple[str, str, int]] = []
-        for root in (DOMAIN_ROOT, EXECUTION_ROOT, V4_ROOT, PERSISTENCE_ROOT, PROGRAMS_ROOT):
+        for root in (
+            DOMAIN_ROOT,
+            EXECUTION_ROOT,
+            V4_ROOT,
+            PERSISTENCE_ROOT,
+            PROGRAMS_ROOT,
+            REMOTE_ROOT,
+        ):
             for path in _iter_python_files(root):
                 for module, lineno in _imports(path):
                     if module.startswith(FORBIDDEN_IMPORT_PREFIXES):
@@ -250,7 +263,14 @@ class TestStaticImports:
 
     def test_no_legacy_runtime_import_in_v4_core(self) -> None:
         offenders: list[tuple[str, str, int]] = []
-        for root in (DOMAIN_ROOT, EXECUTION_ROOT, V4_ROOT, PERSISTENCE_ROOT, PROGRAMS_ROOT):
+        for root in (
+            DOMAIN_ROOT,
+            EXECUTION_ROOT,
+            V4_ROOT,
+            PERSISTENCE_ROOT,
+            PROGRAMS_ROOT,
+            REMOTE_ROOT,
+        ):
             for path in _iter_python_files(root):
                 for module, lineno in _imports(path):
                     if module in FORBIDDEN_LEGACY_MODULES:
@@ -259,7 +279,14 @@ class TestStaticImports:
 
     def test_no_forbidden_legacy_symbols_as_code(self) -> None:
         offenders: list[tuple[str, str, str]] = []
-        for root in (DOMAIN_ROOT, EXECUTION_ROOT, V4_ROOT, PERSISTENCE_ROOT, PROGRAMS_ROOT):
+        for root in (
+            DOMAIN_ROOT,
+            EXECUTION_ROOT,
+            V4_ROOT,
+            PERSISTENCE_ROOT,
+            PROGRAMS_ROOT,
+            REMOTE_ROOT,
+        ):
             for path in _iter_python_files(root):
                 if path.name == "test_architecture_boundaries.py":
                     continue
@@ -297,7 +324,7 @@ class TestStaticCodeVocabulary:
 
     def test_v4_core_has_no_legacy_path_contracts(self) -> None:
         offenders: list[str] = []
-        for root in (EXECUTION_ROOT, V4_ROOT, PERSISTENCE_ROOT, PROGRAMS_ROOT):
+        for root in (EXECUTION_ROOT, V4_ROOT, PERSISTENCE_ROOT, PROGRAMS_ROOT, REMOTE_ROOT):
             for path in _iter_python_files(root):
                 text = _code_text_only(path.read_text(encoding="utf-8"))
                 if "output_path" in text:
@@ -330,12 +357,63 @@ class TestStaticLegacyFilenameContracts:
             V4_ROOT,
             PERSISTENCE_ROOT,
             PROGRAMS_ROOT,
+            REMOTE_ROOT,
         ):
             for path in _iter_python_files(root):
                 text = _code_text_only(path.read_text(encoding="utf-8"))
                 for token in self.LEGACY_FILENAME_TOKENS:
                     if token in text:
                         offenders.append((str(path.relative_to(REPO_ROOT)), token))
+        assert offenders == []
+
+
+class TestRemoteBoundary:
+    """The remote worker consumes compiled semantics, never legacy contracts."""
+
+    LEGACY_REMOTE_TOKENS = (
+        "input_xyz",
+        "workflow_config",
+        "TaskRunner",
+        "CalcStepRunner",
+        "TaskName",
+        "get_itask",
+        "GlobalOptions",
+        "ResultsDB",
+        "chk_from_step",
+        "backup_dir",
+        "ibkout",
+        "result.xyz",
+        "failed.xyz",
+        "output_path",
+    )
+
+    def test_remote_has_zero_legacy_code_tokens(self) -> None:
+        offenders: list[tuple[str, str]] = []
+        for path in _iter_python_files(REMOTE_ROOT):
+            text = _code_text_only(path.read_text(encoding="utf-8"))
+            for token in self.LEGACY_REMOTE_TOKENS:
+                if token in text:
+                    offenders.append((str(path.relative_to(REPO_ROOT)), token))
+        assert offenders == []
+
+    def test_remote_has_no_compiler_or_yaml_imports(self) -> None:
+        offenders: list[tuple[str, str, int]] = []
+        for path in _iter_python_files(REMOTE_ROOT):
+            module = _module_name(path)
+            package_parts = module.split(".")
+            if path.name != "__init__.py":
+                package_parts = package_parts[:-1]
+            for raw, lineno in _imports(path):
+                candidates = [raw]
+                if raw.startswith("."):
+                    level = len(raw) - len(raw.lstrip("."))
+                    remainder = raw.lstrip(".")
+                    base = package_parts[: len(package_parts) - (level - 1)]
+                    candidates.append(".".join(base + ([remainder] if remainder else [])))
+                for candidate in candidates:
+                    segments = candidate.split(".")
+                    if "compiler" in candidate or "yaml" in segments:
+                        offenders.append((str(path.relative_to(REPO_ROOT)), candidate, lineno))
         assert offenders == []
 
 
@@ -400,11 +478,12 @@ class TestPackaging:
             "confflow.workflow.v4",
             "confflow.persistence",
             "confflow.programs",
+            "confflow.remote",
         ):
             assert expected in packages, expected
 
     def test_no_namespace_package_gaps(self) -> None:
-        for path in (DOMAIN_ROOT, EXECUTION_ROOT, V4_ROOT):
+        for path in (DOMAIN_ROOT, EXECUTION_ROOT, V4_ROOT, REMOTE_ROOT):
             assert (path / "__init__.py").is_file(), path
 
 

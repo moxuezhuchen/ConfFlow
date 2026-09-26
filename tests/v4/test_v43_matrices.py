@@ -776,6 +776,7 @@ class TestBatchSeams:
                 environment_digest=None,
                 provenance=BatchStepExecutor._current_provenance(context_request),
                 run_root=run_root,
+                transport=None,
                 should_cancel=lambda: False,
             )
             assert durable is True
@@ -819,6 +820,7 @@ class TestBatchSeams:
                 environment_digest=None,
                 provenance=FrozenDict({}),
                 run_root=run_root,
+                transport=None,
                 should_cancel=lambda: False,
                 _claim_retried=True,
             )
@@ -1259,6 +1261,7 @@ class TestRoundThree:
                 environment_digest=None,
                 provenance=FrozenDict({}),
                 run_root=run_root,
+                transport=None,
                 should_cancel=lambda: False,
             )
             assert durable is True
