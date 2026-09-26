@@ -83,9 +83,10 @@ def gibbs_energy() -> float:
 def shift_coordinates(
     atoms: tuple[str, ...],
     coordinates: tuple[tuple[float, float, float], ...],
+    delta: float = SHIFT_ANGSTROM,
 ) -> tuple[tuple[str, ...], tuple[tuple[float, float, float], ...]]:
-    """Shift coordinates by the fixed x delta."""
-    shifted = tuple((x + SHIFT_ANGSTROM, y, z) for x, y, z in coordinates)
+    """Shift coordinates by the fixed x delta (0.0 keeps input geometry)."""
+    shifted = tuple((x + delta, y, z) for x, y, z in coordinates)
     return atoms, shifted
 
 
@@ -139,8 +140,16 @@ def render_log_text(
     atoms: tuple[str, ...],
     coordinates: tuple[tuple[float, float, float], ...],
 ) -> str:
-    """Render the full fake ORCA log for *mode* and *geometry*."""
-    shifted_atoms, shifted = shift_coordinates(atoms, coordinates)
+    """Render the full fake ORCA log for *mode* and *geometry*.
+
+    ``success_freq_noshift`` reports the same real-grammar frequency plus
+    thermochemistry sections as ``success_freq`` but echoes the input
+    geometry unchanged, so the production profile records a measurement
+    (passthrough) instead of a transformation: results bind the input
+    entity.  Every other mode shifts the geometry by the fixed delta.
+    """
+    delta = 0.0 if mode == "success_freq_noshift" else SHIFT_ANGSTROM
+    shifted_atoms, shifted = shift_coordinates(atoms, coordinates, delta)
     parts = [
         "Fake ORCA V4-2 fixture log",
         "***************************",
@@ -154,6 +163,7 @@ def render_log_text(
         "success_opt",
         "success_sp",
         "success_freq",
+        "success_freq_noshift",
         "missing_geometry",
         "missing_freq",
         "ts_candidate",
@@ -162,7 +172,7 @@ def render_log_text(
     parts.append(f"FINAL SINGLE POINT ENERGY     {ENERGY_HARTREE:.10f}")
     if mode != "success_sp" and mode != "missing_geometry":
         parts.append(render_cartesian_block(shifted_atoms, shifted))
-    if mode in ("success_freq", "ts_candidate"):
+    if mode in ("success_freq", "success_freq_noshift", "ts_candidate"):
         frequencies = (
             REAL_FREQUENCIES
             if mode == "success_freq"
@@ -235,10 +245,11 @@ def write_outputs(
     log_text: str,
 ) -> None:
     """Write the fake log, xyz companion, and wavefunction files."""
+    delta = 0.0 if mode == "success_freq_noshift" else SHIFT_ANGSTROM
     with open(f"{stem}.out", "w", encoding="utf-8") as handle:
         handle.write(log_text)
     if mode != "success_sp" and mode != "missing_geometry":
-        shifted_atoms, shifted = shift_coordinates(atoms, coordinates)
+        shifted_atoms, shifted = shift_coordinates(atoms, coordinates, delta)
         with open(f"{stem}.xyz", "w", encoding="utf-8") as handle:
             handle.write(render_xyz_text(shifted_atoms, shifted))
     if mode != "abnormal":

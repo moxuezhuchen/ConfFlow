@@ -157,14 +157,17 @@ def _tspes_recipe() -> dict[str, Any]:
     IRC into forward/reverse endpoints, endpoint optimization, endpoint
     frequency, endpoint single point, and a reaction-profile analysis over
     the endpoint results.  The analysis binds the IRC endpoints plus the TS
-    (grouping triple with frozen roles and parent links) and the
-    frequency results (electronic energy plus Gibbs correction per node
-    for composite ``G_high = E_high + correction``); the single-point
-    branch outputs remain in the run for explicit ResultRef pinning of
-    the high-level ``E_high`` leg.  Optimized/frequency/SP descendants
-    resolve to their reaction node via parent-id lineage in the analysis
-    executor.  The PES is derived strictly from emitted
-    ``reaction_profile`` analysis results.
+    (grouping triple with frozen roles and parent links), the frequency
+    results (electronic energy plus Gibbs correction per node for composite
+    ``G_high = E_high + correction``), and the endpoint-optimization
+    structures on the optional ``lineage_structures`` port: frequency legs
+    run as measurements binding their input entities, so the optimized
+    structures are the lineage records that resolve every frequency result
+    to its reaction node via parent-id lineage in the analysis executor.
+    The single-point branch outputs remain in the run
+    for explicit ResultRef pinning of the high-level ``E_high`` leg.  The
+    PES is derived strictly from emitted ``reaction_profile`` analysis
+    results.
     """
     ts = _calc_step(
         "ts",
@@ -238,6 +241,7 @@ def _tspes_recipe() -> dict[str, Any]:
         "bindings": {
             "structures": {"source": {"step": "irc", "port": "structures"}},
             "ts_structures": {"source": {"step": "ts", "port": "structures"}},
+            "lineage_structures": {"source": {"step": "endpoint_opt", "port": "structures"}},
             "results": {"source": {"step": "endpoint_freq", "port": "results"}},
             "ts_results": {"source": {"step": "ts_freq", "port": "results"}},
         },
