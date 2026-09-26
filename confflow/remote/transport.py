@@ -30,6 +30,7 @@ from ..domain.artifact import ArtifactSet
 from ..domain.completion import WorkItemStatus
 from ..domain.diagnostics import Diagnostic, DiagnosticSeverity
 from ..domain.errors import DomainError
+from ..domain.resources import ResourceRequest
 from ..domain.result import ResultSet
 from ..domain.structure import StructureSet
 from ..domain.work_item import RecoveryInfo, ResultError, Timing, WorkItem, WorkItemResult
@@ -249,7 +250,9 @@ def build_execution_definition(
         check_params=params_map,
         recovery=recovery or "none",
         recovery_params=recovery_map,
-        resources=resources.to_dict() if hasattr(resources, "to_dict") else dict(resources or {}),
+        resources=(
+            resources.to_dict() if isinstance(resources, ResourceRequest) else dict(resources or {})
+        ),
         handoff_executable=handoff_executable,
         handoff_env=dict(handoff_env),
         handoff_walltime_seconds=handoff_walltime_seconds,
@@ -323,7 +326,9 @@ class RemoteTransport:
         self._store = store
         self._prefix = launch_token_prefix
         self._target_default_executable = (
-            target_default_executable.strip() if isinstance(target_default_executable, str) and target_default_executable.strip() else None
+            target_default_executable.strip()
+            if isinstance(target_default_executable, str) and target_default_executable.strip()
+            else None
         )
         self._target_env = (
             {str(k): str(v) for k, v in dict(target_env).items()} if target_env else {}
@@ -482,6 +487,20 @@ class RemoteTransport:
                 recorded = self._delivered.get(token)
             if recorded is not None:
                 return recorded
+            current = self._current_attempt_number(item.id)
+            if current is not None and int(attempt) != current:
+                from .staging import StagingError
+
+                return self._stage_failure(
+                    item,
+                    context,
+                    token,
+                    StagingError(
+                        f"late result for attempt {int(attempt)} refused: "
+                        f"store current attempt is {current}; "
+                        "no native launch for a superseded attempt"
+                    ),
+                )
             try:
                 recovered = self._recover_prior_result(item, token)
             except (StagingError, PersistenceError, CorruptStateError, DomainError) as exc:
@@ -496,6 +515,26 @@ class RemoteTransport:
                 )
             except (HandoffError, StagingError, WorkerError, ResultBundleError) as exc:
                 return self._stage_failure(item, context, token, exc)
+
+    def _current_attempt_number(self, work_item_id: str) -> int | None:
+        """Return the store's current attempt number, or ``None`` when unknown.
+
+        Unknown covers an unregistered item, an unreadable history, and a
+        store without attempt tracking: the caller proceeds to normal
+        delivery (whose import still fails closed) instead of inventing a
+        verdict.  Only a positively known superseded attempt is refused.
+        """
+        try:
+            attempts = self._store.get_attempts(work_item_id)
+        except Exception:
+            return None
+        try:
+            numbers = [int(entry.attempt_number) for entry in attempts]
+        except (AttributeError, TypeError, ValueError):
+            return None
+        if not numbers:
+            return None
+        return max(numbers)
 
     def _recover_prior_result(self, item: WorkItem, token: str) -> WorkItemResult | None:
         """Import a prior result bundle for *token* without relaunching.
@@ -712,7 +751,6 @@ class RemoteTransport:
             from ..execution.execution_adapters import (
                 GUESS_SLOT,
                 NAMED_STRUCTURES_ADAPTER,
-                resolve_standard_structure,
             )
 
             if scientific.execution_adapter == NAMED_STRUCTURES_ADAPTER:
