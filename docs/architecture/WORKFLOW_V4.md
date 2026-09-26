@@ -454,3 +454,132 @@ WorkItemResult / StepResult / WorkItemStore / reuse-resume 核心契约，
 可直接增加 typed cross-step artifact flow、checkpoint binding、
 worker-handoff.v2、remote staging（store 的 artifact_rows + 保护 id 集
 + locator 体系即为接入口）。
+
+---
+
+# V4-4：Typed Cross-Step Artifact Flow + Worker Handoff V2（已完成）
+
+里程碑状态：**V4-4 已完成**。跨步骤数据流统一为 typed ArtifactRef 流，
+remote worker 消费编译后的 V4 语义并运行同一执行核心。
+
+```
+StepResult {StructureSet, ResultSet, ArtifactSet}
+  → Binding (role/subject/checksum, never filename)
+  → WorkItem assembly (BY_SUBJECT + cardinality fail-closed)
+  → LocalTransport | RemoteTransport (handoff V2)
+  → WorkItemExecutor (同一套) → ProgramAdapter → ResultProfile → Checks
+  → WorkItemResult → ResultBundle → producer import → StepResult
+```
+
+## 17. Artifact flow（事实）
+
+- **Identity 轴**：`artifact.id` 身份；`checksum` 内容身份；`role` +
+  `subject_structure_id` + producer ids 语义关系；`locator` 位置。
+  locator/filename 永远不是身份（digest 已排除 locator）。
+- **Subject 规则（§5）**：adapter 按 input structure 发现 artifact；
+  executor 经 `resolve_restart_subject` 重定向 restart-role artifact 到
+  profile 输出结构 id（produced 与 passthrough 统一：两者都 mint 新
+  StructureRecord）。多输出时不猜测、原样透传。
+- **Restart role 唯一**：`checkpoint`。ORCA `.gbw` 归一化为
+  `role=checkpoint + metadata program_format=orca_gbw`（role 是语义，
+  不是扩展名别名）；`checkpoint_wavefunction` 不再作为 ArtifactRef
+  role 出现。
+- **Cardinality**：ONE 要求恰好 1（0 → `artifact_subject_missing`，
+  >1 → `artifact_subject_ambiguous`）；MANY/OPTIONAL 透传；未知名
+  fail-closed。绝不 pick-first/newest/alpha。
+- **Executor preflight（§9）**：staging 校验 containment + checksum +
+  subject==driving（错 subject 直接 `artifact_error`，native 调用 0 次；
+  测试钉死）。
+- **Gaussian 防御收紧**：`resolve_multiplicity` 拒绝 `<1`（ORCA 早已拒绝）。
+
+## 18. Worker handoff V2（事实）
+
+- **Schema**：`confflow.control.worker-handoff.v2`（envelope）/
+  `confflow.control.worker-result.v2`（result），Pydantic strict +
+  `extra=forbid` + frozen 单一来源，JSON Schema 由模型生成。
+  V1（`worker_handoff.py`，`input_xyz` envelope）frozen 不动。
+- **Envelope 内容**：run/step/work-item/logical-key/attempt/launch-token
+  身份 + digests + provenance + environment request（transport 提示，
+  不进 digest）+ `ExecutionDefinition`（program/native/contracts/
+  resources/resolved charge-mult-freeze，**无 graph/YAML/bindings/
+  scheduler**）+ `InputBundleManifest`（structure canonical payload /
+  artifact id+role+checksum+subject+bundle_locator / typed result）。
+- **Digest**：`confflow.remote.bundle.v1` 域；transport 路径、暂存名、
+  时间戳、hostname、并发度不进 digest。tuple 字段经 before-validator
+  接受 JSON 数组（frozen tuple 类型不变）；`.new()` 在 default 补齐后
+  的 dump 上计算 digest，读写一致。
+- **Launch token**：`{prefix}+{work_item_id(:→+)}+attempt-{N}`，
+  单路径段安全；同 token 重复投递返回已记录结果（内存 + worker
+  `results/<token>/result.json` 双层：后者覆盖 producer crash 场景）。
+- **Result bundle**：identity 回声 + environment 身份 + result payload +
+  produced artifact（checksum/size/subject）+ transport metadata（不进
+  digest）。Producer import 验证 identity/attempt/digest → 校验字节 →
+  安全拷贝到 run-relative → 重建 ArtifactRef → 按 attempt 匹配 store
+  后返回（**不直接 commit**，batch 照常 commit）。
+
+## 19. Remote 执行架构（事实）
+
+- **同一核心**：`RemoteTransport → handoff → staging →
+  run_worker_envelope → 同一 WorkItemExecutor/ProgramAdapter/Profile/
+  Checks/Recovery → package → import`。无 RemoteWorkItemExecutor；
+  worker 禁止 import compiler/YAML/DAG/V3/calc（AST + 运行时双重门；
+  executor 传递性拉起的 V4 包 `__init__` 在文档中明确声明为例外，
+  worker 自身闭包经 stub 隔离探针验证）。
+- **Executable 解析**：handoff 永不携带 producer 绝对路径；worker 侧
+  按 program 经 PATH/default 解析（测试用 PATH symlink 注入 fake）。
+- **Transport 契约**：stage 失败一律转为 failure *result*（`remote_
+  {handoff,staging,worker,result_bundle}_error`，retryable），只有编程
+  错误才抛；同 token 并发投递经 per-token 锁串行化；`forget()` 仅测试。
+- **Batch 集成**：`execute_step_resumable(..., transport=None)`；
+  transport 只接收 claim 后的执行（attempt 对齐 store 新开 attempt）；
+  reuse/blocked/invalidate 永不到达 transport。
+- **Producer 真值不变**：store 仍是唯一 durable truth；worker 无 DB；
+  远端结果经 import 验证后走与本地完全相同的 commit/assemble/publish。
+- **Claim 缺陷修复（V4-3 遗留）**：`SQLITE_BUSY/locked` → `False`
+ （bounded busy_timeout 内 contention）；其余 OperationalError →
+  `PersistenceError`；IntegrityError → `CorruptStateError`；各有故障
+  注入回归测试。
+
+## 20. Lifecycle / 安全（事实）
+
+- **AttemptLease**：`(run, step, item, attempt, token)` 绑定 flock；
+  同 attempt 不同 token 也互斥（per-attempt mutex 补 marker 路径差）；
+  crash 释放由内核保证，audit 文件保留。
+- **Supervision**：`reconcile_owner` 主判定 + workdir cwd/killpg 扫描组合
+  （DEAD+dir-live → UNCERTAIN）；`cancel_attempt` 仅在 ALIVE 且非自身
+  进程组时发信号，事后重证死亡，否则 unconfirmed（调用方映射 BLOCKED，
+  永不误标 CANCELLED）。
+- **Staging 安全**：O_NOFOLLOW + fstat owner/regular + 0o700 dir-fd pin +
+  temp + 流式 sha256 + fsync + dev/ino 重验 + 发布前重验 + dir fsync；
+  traversal/absolute/symlink/world-writable/checksum/TOCTOU 全 fail-closed。
+- **Handoff 文件安全**：owner regular + 无组写 + 有界读取 + 严格 UTF-8 +
+  digest 重验 + schema/run-id 匹配。
+
+## 21. Parity 与复用（事实）
+
+- 同一 synthetic item：local vs remote 的 structure 内容、energy 值/单位、
+  check 结论、artifact 语义 role/checksum 一致；允许差 timestamps/
+  locator/env-digest/transport diagnostics。
+- Checkpoint 双向：local→remote 与 remote→local 使用同一 ArtifactRef/
+  subject/checksum/binding 语义（E2E 钉死）。
+- Remote resume：95/5-lite（16/2/2 → 16 reuse + 4 native，submit 边界计数，
+  0 duplicate）；endpoint/width 变更全 reuse；binary 变更
+  `INVALIDATE_ENVIRONMENT`。
+- V4-3 语义延续：CANCELLED 永不 auto-retry（transport 不绕过）；
+  unconfirmed cancel 永不 rescue；run generation 仍 deferred。
+
+## 22. V4-4 非目标与遗留风险
+
+- 未做：IRC/path_endpoints/QST2/QST3/NEB/GOAT/ensemble/PES/JobDesk/
+  migration/streaming DAG/分布式调度/cloud backend/cancelled 显式重跑。
+- 遗留：① packaging-crash-after-native-completion 的 resume 可能重跑一次
+  （原子写下仅磁盘故障可达，已文档化）；② 跨 definition 代重跑仍
+  fail-closed（run generation deferred）；③ Windows 分支未覆盖；
+  ④ pydantic `schema` 字段名遮蔽警告（benign，已知）。
+
+V4-5 readiness：YES — 无需改动 StructureRecord / ArtifactRef / Binding /
+WorkItem / WorkItemExecutor / ProgramAdapter / WorkItemStore / remote
+handoff-result 契约，可直接实现 IRC/path_endpoints、multi-output、
+QST2/QST3、NEB、GOAT、ensemble、named structures（artifact 端口与
+`named_structures` adapter 契约已就位；多输出结构时的 restart subject
+规则需随 multi-output 明确，当前单输出路径已封闭）。
