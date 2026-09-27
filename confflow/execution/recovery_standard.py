@@ -22,11 +22,18 @@ Executor wiring contract
   ``walltime_seconds``) into ``RecoveryContext.params``; binding keys fall
   back to the adapter default executable, ``"rescue"``, an empty env, and no
   walltime.
-- Modified scan inputs reuse the resolved calculation inputs with only the
-  native keyword replaced (TS keyword rewritten to a constrained-scan
-  keyword) and a Gaussian ``B a b F`` ModRedundant freeze directive
-  appended; every other degree of freedom stays free and user freeze content
-  is preserved.
+
+Native ownership
+----------------
+Recovery expresses semantic intent only (scan this bond, freeze this
+distance, refresh the Hessian strategy via a reoptimization).  All Gaussian
+route-section vocabulary — TS-to-scan keyword rewriting, ``ModRedundant``
+handling, frequency-request detection, the ``B a b F`` freeze directive,
+and the ``keyword``/``modredundant`` native-map entries — is owned by the
+program adapter behind the :class:`RescueRendering` protocol (implemented
+by ``GaussianProgramAdapter``).  The policy declines (returns ``None``)
+when the bound adapter does not render rescue intent; recovery never
+reimplements native syntax as a fallback.
 
 Scan engine (compact port of the legacy rescue)
 -----------------------------------------------
@@ -61,13 +68,13 @@ from __future__ import annotations
 import math
 import re
 from collections.abc import Mapping
-from typing import Any
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 import numpy as np
 
 from ..domain._immutable import FrozenDict
 from ..domain.diagnostics import Diagnostic, DiagnosticSeverity
-from ..domain.structure import Coordinates, StructureRecord
+from ..domain.structure import Coordinates
 from .checks import CHECK_DEFAULTS
 from .native import (
     GeometryOutput,
@@ -80,6 +87,9 @@ from .native import (
 )
 from .recovery import RecoveryContext, RecoveryDecision, RecoveryExecution, RescueDriver
 
+if TYPE_CHECKING:
+    from ..programs.gaussian.adapter import GaussianProgramAdapter
+
 __all__ = [
     "NONE_RECOVERY_CONTRACT",
     "RECOVERIES",
@@ -90,6 +100,7 @@ __all__ = [
     "SCAN_UPHILL_LIMIT",
     "TS_RESCUE_SCAN_CONTRACT",
     "NoneRecoveryPolicy",
+    "RescueRendering",
     "TsRescueScanPolicy",
     "ensure_gaussian_modredundant_keyword",
     "make_scan_keyword_from_ts_keyword",
@@ -134,15 +145,40 @@ RECOVERABLE_NATIVE_CODES = frozenset(
 #: Cancellation signals that always veto rescue.
 CANCELLATION_SIGNALS = frozenset({"cancellation_error", "cancellation_unconfirmed"})
 
-#: Option items stripped from an ``opt(...)`` group when rewriting a TS
-#: keyword into a scan keyword (ported from the legacy keyword rewrite).
-_REMOVE_OPT_ITEMS = frozenset({"calcfc", "tight", "ts", "noeigentest", "rcfc", "readfc"})
 
-_OPT_PAREN_RE = re.compile(r"(?i)\bopt\s*(=)?\s*\(([^)]*)\)")
-_OPT_ASSIGN_RE = re.compile(r"(?i)\bopt\s*=\s*([^\s()]+)")
-_OPT_BARE_RE = re.compile(r"(?i)\bopt\b")
-_FREQ_RE = re.compile(r"(?i)(^|\s)freq\b(\s*=\s*\([^)]*\)|\s*\([^)]*\)|\s*=\s*[^\s]+)?")
-_MODREDUNDANT_RE = re.compile(r"(?i)\bmodredundant\b")
+@runtime_checkable
+class RescueRendering(Protocol):
+    """Adapter-owned rendering of rescue intent into native input.
+
+    Recovery policies express semantic intent only (scan this bond, freeze
+    this distance, detect a frequency job); the bound program adapter owns
+    every native-syntax decision behind this protocol.  ``GaussianProgram-
+    Adapter`` implements it; adapters without rescue vocabulary (ORCA, test
+    stubs without rescue support) simply do not satisfy it, and the policy
+    declines instead of reimplementing native syntax.
+    """
+
+    def rescue_scan_keyword(self, original_keyword: str) -> str:
+        """Render the constrained-scan keyword for a rescue, or ``""``."""
+        ...
+
+    def rescue_freeze_directive(self, atom_a: int, atom_b: int) -> str:
+        """Render the freeze directive pinning one bond for the scan."""
+        ...
+
+    def keyword_requests_freq(self, keyword: str) -> bool:
+        """Report whether *keyword* requests a frequency calculation."""
+        ...
+
+    def build_rescue_inputs(
+        self,
+        inputs: ResolvedCalculationInputs,
+        coordinates: Coordinates,
+        native_keyword: str,
+        extra_directives: tuple[str, ...] = ...,
+    ) -> ResolvedCalculationInputs | None:
+        """Render rescue intent into resolved inputs for materialization."""
+        ...
 
 
 def parse_ts_bond_atoms(value: Any) -> tuple[int, int] | None:
@@ -179,105 +215,53 @@ def parse_ts_bond_atoms(value: Any) -> tuple[int, int] | None:
     return first, second
 
 
+def _gaussian_adapter() -> type[GaussianProgramAdapter]:
+    """Return the Gaussian adapter class behind adapter-owned rendering."""
+    from ..programs.gaussian.adapter import GaussianProgramAdapter
+
+    return GaussianProgramAdapter
+
+
 def keyword_requests_freq(keyword: str) -> bool:
-    """Return whether *keyword* explicitly requests a frequency calculation."""
-    if not keyword.strip():
-        return False
-    return _FREQ_RE.search(keyword) is not None
+    """Return whether *keyword* explicitly requests a frequency calculation.
+
+    Deprecated thin wrapper over the adapter-owned
+    ``GaussianProgramAdapter.keyword_requests_freq``; recovery engine code
+    must call the bound adapter instead.
+    """
+    return bool(_gaussian_adapter().keyword_requests_freq(keyword))
 
 
 def make_scan_keyword_from_ts_keyword(keyword: str) -> str:
     """Rewrite a TS keyword line into one suitable for a scan job.
 
-    Deprecated thin wrapper: adapter-owned syntax lives in
-    ``programs.gaussian.rendering`` and is exposed via
-    ``GaussianProgramAdapter.scan_keyword_from_ts``.  Kept for the unbound
-    policy instance (no adapter) and existing unit callers.
+    Deprecated thin wrapper over the adapter-owned
+    ``GaussianProgramAdapter.scan_keyword_from_ts``; recovery engine code
+    must call the bound adapter instead.  Kept for the unbound policy
+    instance (no adapter) and existing unit callers.
     """
-    try:
-        from ..programs.gaussian import rendering as _gaussian_rendering
-
-        rewritten = _gaussian_rendering.scan_keyword_from_ts(keyword)
-        return rewritten or ""
-    except Exception:
-        pass
-    text = (keyword or "").strip()
-    if not text:
-        return ""
-
-    def _rewrite_opt_group(match: re.Match[str]) -> str:
-        inner = match.group(1) or ""
-        has_equal = "=" in match.group(0)
-        kept: list[str] = []
-        for item in (part.strip() for part in inner.split(",") if part.strip()):
-            if item.split("=")[0].strip().lower() in _REMOVE_OPT_ITEMS:
-                continue
-            kept.append(item)
-        if not kept:
-            return "opt"
-        return f"opt{'=' if has_equal else ''}({','.join(kept)})"
-
-    text = re.sub(r"(?i)\bopt\s*(?:=\s*)?\(([^)]*)\)", _rewrite_opt_group, text)
-    text = _FREQ_RE.sub(" ", text)
-    return re.sub(r"\s+", " ", text).strip()
+    rewritten = _gaussian_adapter().scan_keyword_from_ts(keyword)
+    return rewritten or ""
 
 
 def ensure_gaussian_modredundant_keyword(keyword: str) -> str:
     """Return a Gaussian keyword line that enables ``ModRedundant``.
 
     Deprecated thin wrapper over the adapter-owned
-    ``rendering.ensure_modredundant_keyword``.
+    ``GaussianProgramAdapter.ensure_modredundant_keyword``; recovery engine
+    code must call the bound adapter instead.
     """
-    try:
-        from ..programs.gaussian import rendering as _gaussian_rendering
-
-        return _gaussian_rendering.ensure_modredundant_keyword(keyword)
-    except Exception:
-        pass
-    text = (keyword or "").strip()
-    if not text or _MODREDUNDANT_RE.search(text):
-        return text
-
-    def _paren_repl(match: re.Match[str]) -> str:
-        has_equal = match.group(1) == "="
-        items = [item.strip() for item in match.group(2).split(",") if item.strip()]
-        if not any(item.split("=")[0].strip().lower() == "modredundant" for item in items):
-            items.append("modredundant")
-        return f"opt{'=' if has_equal else ''}({','.join(items)})"
-
-    updated, count = _OPT_PAREN_RE.subn(_paren_repl, text, count=1)
-    if count:
-        return updated
-
-    def _assign_repl(match: re.Match[str]) -> str:
-        return f"opt=({match.group(1).strip()},modredundant)"
-
-    updated, count = _OPT_ASSIGN_RE.subn(_assign_repl, text, count=1)
-    if count:
-        return updated
-    if _OPT_BARE_RE.search(text):
-        return _OPT_BARE_RE.sub("opt=modredundant", text, count=1)
-    return f"opt=modredundant {text}".strip()
-
-
-def _ensure_has_opt(keyword: str) -> str:
-    """Ensure *keyword* names an optimization."""
-    text = (keyword or "").strip()
-    if not text or _OPT_BARE_RE.search(text):
-        return text
-    return f"opt {text}".strip()
+    return _gaussian_adapter().ensure_modredundant_keyword(keyword)
 
 
 def scan_keyword_for_rescue(original_keyword: str) -> str:
-    """Derive the constrained-scan keyword for a rescue, or ``""``."""
-    base = make_scan_keyword_from_ts_keyword(original_keyword)
-    base = _MODREDUNDANT_RE.sub(" ", base)
-    base = _FREQ_RE.sub(" ", base)
-    base = re.sub(r"\s+", " ", base).strip()
-    base = _ensure_has_opt(base)
-    if not base:
-        return ""
-    return ensure_gaussian_modredundant_keyword(base)
+    """Derive the constrained-scan keyword for a rescue, or ``""``.
+
+    Deprecated thin wrapper over the adapter-owned
+    ``GaussianProgramAdapter.rescue_scan_keyword``; recovery engine code
+    must call the bound adapter instead.
+    """
+    return _gaussian_adapter().rescue_scan_keyword(original_keyword or "")
 
 
 def _coords_to_array(coordinates: Coordinates) -> np.ndarray | None:
@@ -567,63 +551,23 @@ class TsRescueScanPolicy:
         native_keyword: str,
         extra_directives: tuple[str, ...] = (),
     ) -> ResolvedCalculationInputs | None:
-        """Render-ready inputs with replaced geometry and native keyword."""
-        inputs = context.inputs
+        """Render-ready inputs for one recovery geometry via the adapter.
+
+        Semantic intent (target geometry, scan keyword, freeze directives)
+        flows into ``RescueRendering.build_rescue_inputs``; every
+        native-vocabulary decision stays in the adapter.  Returns ``None``
+        when no bound adapter renders rescue intent.
+        """
+        builder = getattr(self._adapter, "build_rescue_inputs", None)
+        if not callable(builder):
+            return None
         try:
-            transient = StructureRecord(
-                id=inputs.structure.id,
-                atoms=tuple(inputs.structure.atoms),
-                coordinates=tuple(coordinates),
-                charge=inputs.charge if inputs.charge is not None else (inputs.structure.charge),
-                multiplicity=(
-                    inputs.multiplicity
-                    if inputs.multiplicity is not None
-                    else (inputs.structure.multiplicity)
-                ),
-                parent_ids=tuple(inputs.structure.parent_ids),
-                lineage_root_id=inputs.structure.lineage_root_id,
-                group_key=inputs.structure.group_key,
-                metadata=FrozenDict({}),
+            rebuilt: ResolvedCalculationInputs | None = builder(
+                context.inputs, coordinates, native_keyword, extra_directives
             )
         except Exception:
             return None
-        native_map = dict(inputs.native)
-        native_map["keyword"] = native_keyword
-        if extra_directives:
-            # The Gaussian adapter's strict vocabulary key is
-            # ``modredundant``; legacy ``gaussian_modredundant`` content is
-            # folded into it so user directives survive rescue rendering.
-            existing: Any = native_map.get(
-                "modredundant", native_map.get("gaussian_modredundant", [])
-            )
-            if isinstance(existing, (list, tuple)):
-                directives = [str(item).strip() for item in existing if str(item).strip()]
-            elif existing is None:
-                directives = []
-            else:
-                directives = [part.strip() for part in str(existing).splitlines() if part.strip()]
-            for directive in extra_directives:
-                if directive not in directives:
-                    directives.append(directive)
-            native_map["modredundant"] = directives
-            native_map.pop("gaussian_modredundant", None)
-        try:
-            return ResolvedCalculationInputs(
-                structure=transient,
-                charge=inputs.charge,
-                multiplicity=inputs.multiplicity,
-                freeze=inputs.freeze,
-                resources=inputs.resources,
-                native=FrozenDict(native_map),
-                checkpoints=tuple(inputs.checkpoints),
-                extra_structures=inputs.extra_structures,
-                step_id=inputs.step_id,
-                work_item_id=inputs.work_item_id,
-                logical_key=inputs.logical_key,
-                seed=inputs.seed,
-            )
-        except Exception:
-            return None
+        return rebuilt
 
     def _run_point(
         self,
@@ -673,13 +617,14 @@ class TsRescueScanPolicy:
         base_coordinates: Coordinates = tuple(inputs.structure.coordinates)
         original_keyword = str(inputs.native.get("keyword") or "")
         rescue_scan = getattr(self._adapter, "rescue_scan_keyword", None)
-        if callable(rescue_scan):
-            try:
-                scan_keyword = rescue_scan(original_keyword)
-            except Exception:
-                return None
-        else:
-            scan_keyword = scan_keyword_for_rescue(original_keyword)
+        if not callable(rescue_scan):
+            # No adapter-owned scan rendering: recovery never reimplements
+            # native syntax, so the rescue declines.
+            return None
+        try:
+            scan_keyword = rescue_scan(original_keyword)
+        except Exception:
+            return None
         if not scan_keyword:
             return None
         radius_initial = _bond_length_of(base_coordinates, atom_a, atom_b)
@@ -714,13 +659,14 @@ class TsRescueScanPolicy:
         if request_kwargs is None:
             return None
         freeze_method = getattr(self._adapter, "rescue_freeze_directive", None)
-        if callable(freeze_method):
-            try:
-                freeze_directive = freeze_method(atom_a, atom_b)
-            except Exception:
-                return None
-        else:
-            freeze_directive = f"B {atom_a} {atom_b} F"
+        if not callable(freeze_method):
+            # The freeze directive is adapter-owned native syntax; without
+            # it the rescue declines rather than guessing ModRedundant text.
+            return None
+        try:
+            freeze_directive = freeze_method(atom_a, atom_b)
+        except Exception:
+            return None
 
         def _scan_point(target: float) -> tuple[float, Coordinates] | None:
             adjusted = _set_bond_length(base_coordinates, atom_a, atom_b, target)
@@ -882,7 +828,16 @@ class TsRescueScanPolicy:
         rmsd = _kabsch_aligned_rmsd(final_array, peak_array)
         if rmsd is None or rmsd > rmsd_threshold:
             return None
-        if not keyword_requests_freq(original_keyword):
+        freq_check = getattr(self._adapter, "keyword_requests_freq", None)
+        if not callable(freq_check):
+            # Frequency detection is adapter-owned route syntax; without
+            # it the rescue declines rather than matching keywords itself.
+            return None
+        try:
+            wants_freq = bool(freq_check(original_keyword))
+        except Exception:
+            return None
+        if not wants_freq:
             radius_peak_len = _bond_length_of(coords_best, atom_a, atom_b)
             radius_final = _bond_length_of(final_coordinates, atom_a, atom_b)
             if radius_peak_len is None or radius_final is None:

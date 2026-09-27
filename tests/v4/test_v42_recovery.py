@@ -183,6 +183,41 @@ class FakeGaussianAdapter(ProgramAdapter):
             metadata=FrozenDict({}),
         )
 
+    @staticmethod
+    def rescue_scan_keyword(original_keyword: str) -> str:
+        """Render scan intent through the real Gaussian adapter."""
+        from confflow.programs.gaussian.adapter import GaussianProgramAdapter
+
+        return GaussianProgramAdapter.rescue_scan_keyword(original_keyword)
+
+    @staticmethod
+    def rescue_freeze_directive(atom_a: int, atom_b: int) -> str:
+        """Render freeze intent through the real Gaussian adapter."""
+        from confflow.programs.gaussian.adapter import GaussianProgramAdapter
+
+        return GaussianProgramAdapter.rescue_freeze_directive(atom_a, atom_b)
+
+    @staticmethod
+    def keyword_requests_freq(keyword: str) -> bool:
+        """Detect frequency jobs through the real Gaussian adapter."""
+        from confflow.programs.gaussian.adapter import GaussianProgramAdapter
+
+        return GaussianProgramAdapter.keyword_requests_freq(keyword)
+
+    def build_rescue_inputs(
+        self,
+        inputs: ResolvedCalculationInputs,
+        coordinates: Any,
+        native_keyword: str,
+        extra_directives: tuple[str, ...] = (),
+    ) -> ResolvedCalculationInputs | None:
+        """Render rescue inputs through the real Gaussian adapter."""
+        from confflow.programs.gaussian.adapter import GaussianProgramAdapter
+
+        return GaussianProgramAdapter().build_rescue_inputs(
+            inputs, coordinates, native_keyword, extra_directives
+        )
+
     def build_execution_request(
         self,
         materialized: MaterializedNativeInput,

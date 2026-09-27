@@ -97,6 +97,41 @@ class StubRescueAdapter:
             metadata=FrozenDict({"keyword": str(inputs.native.get("keyword"))}),
         )
 
+    @staticmethod
+    def rescue_scan_keyword(original_keyword: str) -> str:
+        """Render scan intent through the real Gaussian adapter."""
+        from confflow.programs.gaussian.adapter import GaussianProgramAdapter
+
+        return GaussianProgramAdapter.rescue_scan_keyword(original_keyword)
+
+    @staticmethod
+    def rescue_freeze_directive(atom_a: int, atom_b: int) -> str:
+        """Render freeze intent through the real Gaussian adapter."""
+        from confflow.programs.gaussian.adapter import GaussianProgramAdapter
+
+        return GaussianProgramAdapter.rescue_freeze_directive(atom_a, atom_b)
+
+    @staticmethod
+    def keyword_requests_freq(keyword: str) -> bool:
+        """Detect frequency jobs through the real Gaussian adapter."""
+        from confflow.programs.gaussian.adapter import GaussianProgramAdapter
+
+        return GaussianProgramAdapter.keyword_requests_freq(keyword)
+
+    def build_rescue_inputs(
+        self,
+        inputs: ResolvedCalculationInputs,
+        coordinates: Any,
+        native_keyword: str,
+        extra_directives: tuple[str, ...] = (),
+    ) -> ResolvedCalculationInputs | None:
+        """Render rescue inputs through the real Gaussian adapter."""
+        from confflow.programs.gaussian.adapter import GaussianProgramAdapter
+
+        return GaussianProgramAdapter().build_rescue_inputs(
+            inputs, coordinates, native_keyword, extra_directives
+        )
+
     def build_execution_request(
         self,
         materialized: MaterializedNativeInput,
@@ -619,3 +654,46 @@ class TestRescueModifiedInputs:
     def test_scan_constants(self) -> None:
         assert SCAN_COARSE_STEP == pytest.approx(0.1)
         assert len({SCAN_COARSE_STEP}) == 1
+
+
+class TestAdapterOwnedRendering:
+    """Semantic intent flows through adapter rendering, never recovery syntax."""
+
+    def test_stub_satisfies_rescue_rendering(self) -> None:
+        from confflow.execution.recovery_standard import RescueRendering
+        from confflow.programs.gaussian.adapter import GaussianProgramAdapter
+
+        stub = StubRescueAdapter()
+        assert isinstance(stub, RescueRendering)
+        reference = GaussianProgramAdapter()
+        keyword = "opt=(ts,calcfc) freq"
+        assert stub.rescue_scan_keyword(keyword) == reference.rescue_scan_keyword(keyword)
+        assert stub.rescue_freeze_directive(1, 2) == reference.rescue_freeze_directive(1, 2)
+        assert stub.rescue_freeze_directive(1, 2) == "B 1 2 F"
+        assert stub.keyword_requests_freq(keyword) is True
+        assert stub.keyword_requests_freq("opt") is False
+
+    def test_modified_inputs_require_adapter_rendering(self) -> None:
+        unbound = TsRescueScanPolicy()
+        assert unbound._modified_inputs(_context(), _coords(), "opt", ("B 1 2 F",)) is None
+        bound = TsRescueScanPolicy(adapter=StubRescueAdapter())
+        rebuilt = bound._modified_inputs(_context(), _coords(), "opt=modredundant", ("B 1 2 F",))
+        assert rebuilt is not None
+        assert "B 1 2 F" in rebuilt.native["modredundant"]
+
+    def test_execute_declines_without_rescue_rendering(self) -> None:
+        class NativeOnlyAdapter:
+            """Program adapter without rescue vocabulary."""
+
+            @property
+            def program_name(self) -> ProgramName:
+                return ProgramName.GAUSSIAN
+
+            @property
+            def default_executable(self) -> str:
+                return "stub"
+
+        policy = TsRescueScanPolicy(adapter=StubRescueAdapter())
+        assert policy.execute(_context(), ParabolicDriver()) is not None
+        bare = TsRescueScanPolicy(adapter=NativeOnlyAdapter())  # type: ignore[arg-type]
+        assert bare.execute(_context(), ParabolicDriver()) is None

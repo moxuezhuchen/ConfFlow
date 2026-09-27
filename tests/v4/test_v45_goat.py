@@ -434,6 +434,7 @@ class TestGoatSeedSingleAuthority:
     def test_retry_preserves_seed(self) -> None:
         from confflow.execution.recovery import RecoveryContext
         from confflow.execution.recovery_standard import TsRescueScanPolicy
+        from confflow.programs.gaussian.adapter import GaussianProgramAdapter
 
         context = RecoveryContext(
             profile_name="standard",
@@ -443,7 +444,17 @@ class TestGoatSeedSingleAuthority:
             inputs=self._goat_inputs(7),
             failed_native_result=None,
         )
-        rebuilt = TsRescueScanPolicy()._modified_inputs(
+        # Rescue input rendering is adapter-owned: seed preservation flows
+        # through the bound program adapter, and an unbound policy declines.
+        assert (
+            TsRescueScanPolicy()._modified_inputs(
+                context,
+                ((0.0, 0.0, 0.0), (0.757, 0.586, 0.0), (-0.757, 0.586, 0.0)),
+                "HF-3c GOAT",
+            )
+            is None
+        )
+        rebuilt = TsRescueScanPolicy(adapter=GaussianProgramAdapter())._modified_inputs(
             context,
             ((0.0, 0.0, 0.0), (0.757, 0.586, 0.0), (-0.757, 0.586, 0.0)),
             "HF-3c GOAT",
