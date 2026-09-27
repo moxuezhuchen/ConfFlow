@@ -1088,6 +1088,227 @@ class TestRealStepIdThreading:
         assert [item.subject_structure_id for item in lookup[forward.id]] == [forward.id]
 
 
+class TestLineageAttributionOrderIndependent:
+    """Parent-tuple order never swaps forward/reverse attribution."""
+
+    def _run_stub(
+        self,
+        structures: tuple[StructureRecord, ...],
+        results: tuple[ScientificResult, ...],
+    ) -> AnalysisStepResult:
+        return AnalysisExecutor().execute(_inputs(structures, results, _definition(StubEnergyModel())))
+
+    def _barriers(self, step: AnalysisStepResult) -> tuple[Any, ...]:
+        return tuple(
+            (item.kind, float(item.value)) for item in step.results if "barrier" in item.kind
+        )
+
+    def test_swapped_parent_tuples_never_swap(self) -> None:
+        from dataclasses import replace
+
+        transition, forward, reverse = _triple("a", "g")
+        first_a = _structure("A", group_key="g", parent_ids=(forward.id, reverse.id), offset=5.0)
+        first_b = _structure("B", group_key="g", parent_ids=(reverse.id, forward.id), offset=6.0)
+        results = (
+            _energy(-5.0, transition.id),
+            _energy(-10.0, first_a.id),
+            _energy(-20.0, first_b.id),
+        )
+        first = self._run_stub((transition, forward, reverse, first_a, first_b), results)
+        second_a = replace(first_a, parent_ids=tuple(reversed(first_a.parent_ids)))
+        second_b = replace(first_b, parent_ids=tuple(reversed(first_b.parent_ids)))
+        second = self._run_stub((transition, forward, reverse, second_a, second_b), results)
+        assert self._barriers(first) == self._barriers(second)
+        # Both descendants tie at distance one, so both runs fail closed
+        # with lineage ambiguity instead of emitting swapped barriers.
+        assert self._barriers(first) == ()
+        assert not first.ok and not second.ok
+        reasons = [
+            item.details.get("reason") for item in first.diagnostics if item.is_error
+        ]
+        assert "ambiguous_lineage" in reasons
+        assert _codes(first.diagnostics) == _codes(second.diagnostics)
+
+    def test_equal_distance_tie_is_ambiguous(self) -> None:
+        from confflow.analysis.executor import _nearest_triple_ancestor
+
+        transition, forward, reverse = _triple("e", "rxn-e")
+        descendant = _structure(
+            "e-child", group_key="rxn-e", parent_ids=(forward.id, reverse.id), offset=9.0
+        )
+        by_id = {record.id: record for record in (transition, forward, reverse, descendant)}
+        groups, _ = build_reaction_groups(
+            StructureSet((transition, forward, reverse)), ResultSet()
+        )
+        triple = set(groups[0].subject_ids())
+        assert (
+            _nearest_triple_ancestor(descendant.id, triple, by_id, group=groups[0]) is None
+        )
+        swapped = _structure(
+            "e-child",
+            group_key="rxn-e",
+            parent_ids=(reverse.id, forward.id),
+            offset=9.0,
+        )
+        by_id_swapped = {
+            record.id: record for record in (transition, forward, reverse, swapped)
+        }
+        assert (
+            _nearest_triple_ancestor(swapped.id, triple, by_id_swapped, group=groups[0])
+            is None
+        )
+
+    def test_nearer_beats_farther_regardless_of_order(self) -> None:
+        from dataclasses import replace
+
+        from confflow.analysis.executor import _nearest_triple_ancestor
+
+        transition, forward, reverse = _triple("n", "rxn-n")
+        bridge = _structure("n-bridge", group_key="rxn-n", parent_ids=(reverse.id,), offset=5.0)
+        descendant = _structure(
+            "n-child", group_key="rxn-n", parent_ids=(forward.id, bridge.id), offset=6.0
+        )
+        groups, _ = build_reaction_groups(
+            StructureSet((transition, forward, reverse)), ResultSet()
+        )
+        triple = set(groups[0].subject_ids())
+        by_id = {
+            record.id: record for record in (transition, forward, reverse, bridge, descendant)
+        }
+        assert _nearest_triple_ancestor(descendant.id, triple, by_id, group=groups[0]) == forward.id
+        reordered = replace(descendant, parent_ids=tuple(reversed(descendant.parent_ids)))
+        by_id_reordered = {
+            record.id: record for record in (transition, forward, reverse, bridge, reordered)
+        }
+        assert (
+            _nearest_triple_ancestor(reordered.id, triple, by_id_reordered, group=groups[0])
+            == forward.id
+        )
+
+    def test_wrong_group_ancestor_rejected(self) -> None:
+        from confflow.analysis.executor import _lookup_for_group
+
+        transition, forward, reverse = _triple("w", "rxn-w")
+        intruder = _structure(
+            "w-child", group_key="rxn-other", parent_ids=(forward.id,), offset=9.0
+        )
+        structures = StructureSet((transition, forward, reverse, intruder))
+        groups, _ = build_reaction_groups(StructureSet((transition, forward, reverse)), ResultSet())
+        pools = {record.id: ResultSet() for record in structures}
+        merged = ResultSet((_energy(-99.0, intruder.id),))
+        lookup = _lookup_for_group(
+            groups[0], pools, {record.id: record for record in structures}, merged
+        )
+        assert lookup[forward.id].is_empty
+        assert lookup[reverse.id].is_empty
+
+    def test_endpoint_role_pins_slot(self) -> None:
+        from dataclasses import replace
+
+        from confflow.analysis.executor import _nearest_triple_ancestor
+
+        transition, forward, reverse = _triple("p", "rxn-p")
+        groups, _ = build_reaction_groups(
+            StructureSet((transition, forward, reverse)), ResultSet()
+        )
+        triple = set(groups[0].subject_ids())
+        fwd_child = _structure(
+            "p-fwd-child",
+            group_key="rxn-p",
+            role=PATH_ENDPOINT_FORWARD_ROLE,
+            parent_ids=(forward.id, reverse.id),
+            offset=9.0,
+        )
+        rev_child = _structure(
+            "p-rev-child",
+            group_key="rxn-p",
+            role=PATH_ENDPOINT_REVERSE_ROLE,
+            parent_ids=(forward.id, reverse.id),
+            offset=10.0,
+        )
+        by_id: dict[str, StructureRecord] = {
+            record.id: record for record in (transition, forward, reverse, fwd_child, rev_child)
+        }
+        assert _nearest_triple_ancestor(fwd_child.id, triple, by_id, group=groups[0]) == forward.id
+        assert _nearest_triple_ancestor(rev_child.id, triple, by_id, group=groups[0]) == reverse.id
+        fwd_swapped = replace(fwd_child, parent_ids=tuple(reversed(fwd_child.parent_ids)))
+        rev_swapped = replace(rev_child, parent_ids=tuple(reversed(rev_child.parent_ids)))
+        by_id_swapped = {
+            record.id: record
+            for record in (transition, forward, reverse, fwd_swapped, rev_swapped)
+        }
+        assert (
+            _nearest_triple_ancestor(fwd_swapped.id, triple, by_id_swapped, group=groups[0])
+            == forward.id
+        )
+        assert (
+            _nearest_triple_ancestor(rev_swapped.id, triple, by_id_swapped, group=groups[0])
+            == reverse.id
+        )
+
+    def test_diamond_graph_converges(self) -> None:
+        from dataclasses import replace
+
+        from confflow.analysis.executor import _nearest_triple_ancestor
+
+        transition, forward, reverse = _triple("d", "rxn-d")
+        left = _structure("d-left", group_key="rxn-d", parent_ids=(forward.id,), offset=5.0)
+        right = _structure("d-right", group_key="rxn-d", parent_ids=(forward.id,), offset=6.0)
+        descendant = _structure(
+            "d-child", group_key="rxn-d", parent_ids=(left.id, right.id), offset=7.0
+        )
+        groups, _ = build_reaction_groups(
+            StructureSet((transition, forward, reverse)), ResultSet()
+        )
+        triple = set(groups[0].subject_ids())
+        by_id = {
+            record.id: record for record in (transition, forward, reverse, left, right, descendant)
+        }
+        assert _nearest_triple_ancestor(descendant.id, triple, by_id, group=groups[0]) == forward.id
+        reordered = replace(descendant, parent_ids=tuple(reversed(descendant.parent_ids)))
+        by_id_reordered = {
+            record.id: record
+            for record in (transition, forward, reverse, left, right, reordered)
+        }
+        assert (
+            _nearest_triple_ancestor(reordered.id, triple, by_id_reordered, group=groups[0])
+            == forward.id
+        )
+
+    def test_parent_tuple_randomized_invariant(self) -> None:
+        import random
+        from dataclasses import replace
+
+        transition, forward, reverse = _triple("r", "rxn-r")
+        template_a = _structure(
+            "R-A", group_key="rxn-r", parent_ids=(forward.id, reverse.id), offset=5.0
+        )
+        template_b = _structure(
+            "R-B", group_key="rxn-r", parent_ids=(reverse.id, forward.id), offset=6.0
+        )
+        energies = (
+            _energy(-5.0, transition.id),
+            _energy(-10.0, template_a.id),
+            _energy(-20.0, template_b.id),
+        )
+        seen: set[tuple[tuple[Any, ...], tuple[str, ...]]] = set()
+        for trial in range(20):
+            rng = random.Random(10_000 + trial)
+            parent_a = tuple(rng.sample(list(template_a.parent_ids), k=2))
+            parent_b = tuple(rng.sample(list(template_b.parent_ids), k=2))
+            struct_a = replace(template_a, parent_ids=parent_a)
+            struct_b = replace(template_b, parent_ids=parent_b)
+            structures = [transition, forward, reverse, struct_a, struct_b]
+            rng.shuffle(structures)
+            ordered_results = list(energies)
+            rng.shuffle(ordered_results)
+            step = self._run_stub(tuple(structures), tuple(ordered_results))
+            seen.add((self._barriers(step), tuple(_codes(step.diagnostics))))
+        assert len(seen) == 1
+        barriers, _ = next(iter(seen))
+        assert barriers == ()
+
+
 class TestAssignmentPartialEndToEnd:
     """Explicit/unassigned plus partial policies end to end with step ids."""
 
