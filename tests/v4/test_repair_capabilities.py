@@ -248,9 +248,9 @@ class TestGoatSeedValidation:
         assert compile_doc(_goat_doc(seed=11)).ok
 
     def test_goat_native_seed_conflict_rejected(self) -> None:
-        # Wave-2 G (verified against installed ORCA 6.1.1): any
-        # user-supplied native RANDOMSEED is a second seed authority and
-        # fails closed — set the step seed instead.
+        # Any user-supplied native RANDOMSEED is a second seed authority
+        # and fails closed — set the step seed instead (the adapter
+        # renders the deterministic boolean flag itself).
         doc = _goat_doc(seed=11)
         doc["steps"][0]["calculation"]["native"]["goat"]["RANDOMSEED"] = 99
         result = compile_doc(doc)

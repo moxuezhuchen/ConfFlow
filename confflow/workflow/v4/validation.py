@@ -175,8 +175,10 @@ def _is_goat_native(native: Any) -> bool:
 def _goat_seed_conflict(native: Any, seed: int | None) -> str | None:
     """Describe a native ``RANDOMSEED`` vs step-seed conflict, or ``None``.
 
-    The step-level seed is the single effective seed, rendered by the
-    program adapter as the verified native ``RANDOMSEED`` key.  A
+    The step-level seed is the single effective seed: the program
+    adapter requires it and always renders the native boolean switch
+    deterministically as ``RANDOMSEED false`` (ORCA 6.1 defines no
+    numeric stream-selection semantics for this key).  A
     user-supplied ``native["goat"]["RANDOMSEED"]`` is a second seed
     authority and always fails closed — set the step seed instead.
     (The invented ``Seed`` key never existed natively and is rejected

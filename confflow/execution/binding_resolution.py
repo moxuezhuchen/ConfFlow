@@ -20,10 +20,12 @@ Rules (frozen):
 - ``target`` / ``walltime_seconds`` / ``sandbox`` / ``allowed_executables``:
   planned values are preserved, never dropped; defaults fill only ``None``.
 - Seed propagation: the step ``seed`` is the single stochastic authority.
-  It travels as a typed resolved input; the native ``RANDOMSEED`` vocabulary
-  (verified against the installed ORCA 6.1.1 binary) is rendered exclusively
-  by the program adapter.  This module never reads or writes native seed
-  keys; it only exposes the effective native mapping.
+  It travels as a typed resolved input; the native ``RANDOMSEED``
+  boolean switch (official ORCA 6.1 manual ``%goat`` Table 4.9: "set
+  it to false to have a deterministic GOAT run"; no numeric stream
+  semantics exist) is rendered exclusively by the program adapter as
+  ``false``.  This module never reads or writes native seed keys; it
+  only exposes the effective native mapping.
 """
 
 from __future__ import annotations
@@ -325,16 +327,18 @@ def validate_step_seed(seed: Any) -> int | None:
     """Validate the typed step seed without touching native mappings.
 
     The step seed is the single stochastic authority and travels as a
-    typed resolved input (``ResolvedCalculationInputs.seed``).  The native
-    ``RANDOMSEED`` seed vocabulary (verified against the installed ORCA
-    6.1.1 binary) is rendered exclusively by the program adapter; this
+    typed resolved input (``ResolvedCalculationInputs.seed``).  The
+    native ``RANDOMSEED`` switch (official ORCA 6.1 manual ``%goat``
+    Table 4.9: a boolean randomization flag, deterministic when
+    ``false``; ORCA 6.1 exposes no numeric stream selection) is
+    rendered exclusively by the program adapter as ``false``; this
     module never reads or writes ``goat``/``RANDOMSEED`` keys.
 
-    Seed vocabulary (verified): the native ``%goat`` key is ``RANDOMSEED``
-    (verified against the installed ORCA 6.1.1 binary); the program adapter
-    renders the integer step seed as ``RANDOMSEED`` and rejects any
-    user-supplied ``RANDOMSEED`` as a second authority.  The invented
-    ``Seed`` key never existed natively.
+    Seed rendering (honest contract): the program adapter requires
+    the integer step seed and renders the deterministic boolean
+    flag.  Distinct step seeds share native bytes by design and
+    differ only in digest/envelope identity.  The invented ``Seed``
+    key never existed natively.
     """
     if seed is None:
         return None

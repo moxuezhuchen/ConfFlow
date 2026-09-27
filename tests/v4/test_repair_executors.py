@@ -449,12 +449,14 @@ def test_goat_seed_boundary_explicit():
     with pytest.raises(ValueError, match="[Ss]eed"):
         OrcaProgramAdapter().materialize_native_input(
             _resolve({"keyword": "GOAT", "goat": {"MaxIter": 5}}, None))
-    # GOAT with a typed seed renders the verified native RANDOMSEED key
-    # (installed ORCA 6.1.1: equal integers reproduce bit-identical
-    # ensembles; the step seed is the single authority).
+    # GOAT with a typed seed renders the deterministic native RANDOMSEED
+    # flag (official ORCA 6.1 manual: boolean switch, false requests a
+    # deterministic run; the integer step seed is workflow identity and
+    # is never rendered as a native stream selector).
     materialized = OrcaProgramAdapter().materialize_native_input(
         _resolve({"keyword": "GOAT", "goat": {"MaxIter": 5}}, 7))
-    assert any("RANDOMSEED 7" in item.content for item in materialized.files)
+    assert any("RANDOMSEED false" in item.content for item in materialized.files)
+    assert not any("RANDOMSEED 7" in item.content for item in materialized.files)
     # A user-supplied native RANDOMSEED is a second authority and refused.
     with pytest.raises(ValueError, match="[Ss]eed"):
         OrcaProgramAdapter().materialize_native_input(
