@@ -15,7 +15,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from ..config.canonical.contract import CONFIGURATION_VALIDATION_SCHEMA
+from ..config.contract_schemas import CONFIGURATION_VALIDATION_SCHEMA
 from ..domain.canonical import canonical_json_bytes
 from ..domain.diagnostics import Diagnostic
 from ..execution.registry import ExecutionRegistry

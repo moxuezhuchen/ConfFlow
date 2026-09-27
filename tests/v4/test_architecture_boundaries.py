@@ -173,19 +173,11 @@ EXTENDED_FORBIDDEN_LEGACY_MODULES = tuple(
     module for module in FORBIDDEN_LEGACY_MODULES if module != "confflow.core.exceptions"
 )
 
-#: The producer's known V1/V2/V3 configuration-contract debt.
-#:
-#: These are the ONLY configuration modules the extended import gate allows,
-#: and only from the ``confflow/producer`` package.  This is the PR-0
-#: guardrail for the coupling measured by
-#: :class:`TestProducerImportIsolation`; removing it is the PR-2 goal.
-EXTENDED_PRODUCER_CONFIG_DEBT = frozenset(
-    {
-        "confflow.config.canonical.contract",
-        "confflow.config.canonical.editor_manifest",
-        "confflow.config.canonical.recipes",
-    }
-)
+#: The only configuration module the producer may import: the dependency-free
+#: schema authority (Architecture Diet PR-2).  Before PR-2 the producer
+#: imported three constants from ``confflow.config.canonical``; that debt is
+#: removed and must not come back.
+PRODUCER_CONFIG_AUTHORITY_IMPORTS = frozenset({"confflow.config.contract_schemas"})
 
 #: The single file-scoped legacy-token exemption:
 #: ``formal_v4_runner`` accepts the historical keyword surface
@@ -196,59 +188,31 @@ EXTENDED_LEGACY_TOKEN_EXEMPTIONS: dict[str, frozenset[str]] = {
     "confflow/application/v4_entry.py": frozenset({"input_xyz"}),
 }
 
-#: Exact transitive legacy-dependency set pulled by ``import confflow.producer``
-#: at the v4-core-closure baseline (commit 44b478d), measured in a subprocess.
-#: The set may only change by editing this constant: additions are forbidden
-#: (PR-0 guardrail), removals must be recorded here deliberately (PR-2 will
-#: drive it to empty).
+#: Exact transitive legacy-dependency set pulled by ``import confflow.producer``.
 #:
-#: TODO(diet PR-2): decouple the three configuration schema constants
-#: (``confflow.config.canonical.{contract,editor_manifest,recipes}``) so this
-#: set becomes empty and this baseline can be deleted.
-KNOWN_PRODUCER_LEGACY_IMPORTS = frozenset(
-    {
-        "confflow.config",
-        "confflow.config.canonical",
-        "confflow.config.canonical.contract",
-        "confflow.config.canonical.diagnostics",
-        "confflow.config.canonical.editor_manifest",
-        "confflow.config.canonical.execution_versions",
-        "confflow.config.canonical.extensions",
-        "confflow.config.canonical.fingerprint",
-        "confflow.config.canonical.issues",
-        "confflow.config.canonical.param_fields",
-        "confflow.config.canonical.parser",
-        "confflow.config.canonical.pydantic",
-        "confflow.config.canonical.recipes",
-        "confflow.config.canonical.resolve",
-        "confflow.config.canonical.schema",
-        "confflow.config.canonical.serialization",
-        "confflow.config.canonical.structured",
-        "confflow.config.canonical.theory",
-        "confflow.config.canonical.types",
-        "confflow.config.canonical.upgrade",
-        "confflow.config.canonical.v2_adapter",
-        "confflow.config.canonical.v3_graph",
-        "confflow.config.canonical.v3_parser",
-        "confflow.config.canonical.validation",
-        "confflow.config.canonical.workflow",
-        "confflow.config.canonical.yaml_io",
-        "confflow.config.models",
-        "confflow.core.models",
-        "confflow.core.types",
-        "confflow.core.validation",
-        "confflow.workflow",
-    }
-)
+#: Architecture Diet PR-2 drove this baseline to EMPTY: the producer now reads
+#: the three schema identifiers from the dependency-free
+#: :mod:`confflow.config.contract_schemas` authority instead of importing
+#: ``confflow.config.canonical``.  The equality guard stays so any future
+#: legacy dependency fails immediately; ``confflow.config`` (thin shell),
+#: ``confflow.config.contract_schemas`` (the authority), and the bare
+#: ``confflow.workflow`` parent package (required to import
+#: ``confflow.workflow.v4``) are intentionally not debt.
+KNOWN_PRODUCER_LEGACY_IMPORTS: frozenset[str] = frozenset()
 
 
 def _is_legacy_producer_dependency(module: str) -> bool:
-    """Return whether *module* is a legacy dependency of ``confflow.producer``."""
-    if module == "confflow.config" or module.startswith("confflow.config."):
+    """Return whether *module* is a legacy dependency of ``confflow.producer``.
+
+    The dependency-free schema authority (``confflow.config`` shell +
+    ``confflow.config.contract_schemas``) and the ``confflow.workflow``
+    parent shell of ``confflow.workflow.v4`` are not legacy dependencies.
+    """
+    if module == "confflow.config.canonical" or module.startswith("confflow.config.canonical."):
+        return True
+    if module == "confflow.config.models":
         return True
     if module in {"confflow.core.models", "confflow.core.types", "confflow.core.validation"}:
-        return True
-    if module == "confflow.workflow":
         return True
     if module.startswith("confflow.workflow.") and not module.startswith(
         _ALLOWED_WORKFLOW_V4_PREFIX
@@ -532,11 +496,11 @@ def _iter_extended_production_files() -> list[Path]:
 def _is_forbidden_legacy_runtime_import(path: Path, absolute: str) -> bool:
     """Return whether *absolute* is a forbidden legacy import for *path*.
 
-    The producer's three known configuration-contract imports are recorded
-    debt (see :data:`EXTENDED_PRODUCER_CONFIG_DEBT` and
-    :class:`TestProducerImportIsolation`); every other configuration import
-    from any extended root fails.  ``confflow.workflow.v4`` is always
-    allowed.
+    The producer's dependency-free schema authority
+    (``confflow.config.contract_schemas``) is the single configuration import
+    the extended gate allows, and only from the ``confflow/producer``
+    package; every other configuration import from any extended root fails.
+    ``confflow.workflow.v4`` is always allowed.
     """
     if not absolute.startswith("confflow"):
         return False
@@ -547,7 +511,7 @@ def _is_forbidden_legacy_runtime_import(path: Path, absolute: str) -> bool:
     if absolute.startswith("confflow.config"):
         relative = path.relative_to(PACKAGE_ROOT)
         if relative.parts and relative.parts[0] == "producer":
-            return absolute not in EXTENDED_PRODUCER_CONFIG_DEBT
+            return absolute not in PRODUCER_CONFIG_AUTHORITY_IMPORTS
         return True
     if absolute in EXTENDED_FORBIDDEN_LEGACY_MODULES:
         return True
@@ -693,19 +657,16 @@ class TestRuntimeIsolation:
 
 
 class TestProducerImportIsolation:
-    """Producer import-isolation debt baseline (Architecture Diet PR-0).
+    """Producer import isolation (Architecture Diet PR-0 baseline → PR-2 hard).
 
-    ``import confflow.producer`` currently pulls the V1/V2/V3 configuration
-    tree because three published schema constants are imported from
-    ``confflow.config.canonical``.  PR-0 does not fix that coupling; it pins
-    the exact transitive legacy-dependency set so it can never grow
-    silently.  Any new module fails this test immediately; removing a module
-    requires updating :data:`KNOWN_PRODUCER_LEGACY_IMPORTS` in the same
-    change, so the debt can only shrink deliberately.
-
-    TODO(diet PR-2): extract the three schema constants into a dependency-free
-    module, drive :data:`KNOWN_PRODUCER_LEGACY_IMPORTS` to empty, and replace
-    this baseline test with an absolute ``no legacy config import`` assertion.
+    PR-0 pinned the transitive legacy set pulled by ``import
+    confflow.producer`` (31 modules of the V1/V2/V3 configuration tree).  PR-2
+    decoupled the producer from that tree: the three published schema
+    identifiers now live in the dependency-free
+    :mod:`confflow.config.contract_schemas` authority, and
+    :data:`KNOWN_PRODUCER_LEGACY_IMPORTS` is empty.  The equality guard stays:
+    any new legacy dependency fails immediately, and the canonical
+    implementation tree must not be loaded at all.
     """
 
     def _run(self, script: str) -> subprocess.CompletedProcess[str]:
@@ -717,7 +678,7 @@ class TestProducerImportIsolation:
             check=False,
         )
 
-    def test_producer_legacy_import_debt_does_not_grow(self) -> None:
+    def test_producer_legacy_import_debt_is_empty(self) -> None:
         script = (
             "import sys; import confflow.producer; "
             "print(chr(10).join(sorted(m for m in sys.modules if m.startswith('confflow'))))"
@@ -735,9 +696,30 @@ class TestProducerImportIsolation:
             "producer legacy import debt changed;\n"
             f"  added: {added}\n"
             f"  removed: {removed}\n"
-            "new legacy dependencies are forbidden; removals update the "
-            "KNOWN_PRODUCER_LEGACY_IMPORTS baseline deliberately (PR-2)."
+            "the producer must read schema identifiers from the "
+            "dependency-free authority only."
         )
+
+    def test_producer_does_not_load_canonical_config_tree(self) -> None:
+        """The canonical implementation tree never enters ``sys.modules``.
+
+        Both formal producer entry styles are checked: the package import and
+        the direct contract-module import used by JobDesk-side tooling.
+        """
+        for entry in (
+            "import confflow.producer",
+            "from confflow.producer.contract import generate_contract_bytes",
+        ):
+            script = (
+                f"import sys; {entry}; "
+                "banned = sorted(m for m in sys.modules if ("
+                "m == 'confflow.config.canonical' "
+                "or m.startswith('confflow.config.canonical.') "
+                "or m == 'confflow.config.models')); "
+                "assert not banned, banned"
+            )
+            result = self._run(script)
+            assert result.returncode == 0, f"{entry}: {result.stderr}"
 
     def test_producer_does_not_pull_legacy_runtime_packages(self) -> None:
         """Hard ban: the producer must never import calc/blocks/engine at all."""
@@ -746,11 +728,36 @@ class TestProducerImportIsolation:
             "banned = sorted(m for m in sys.modules if m.startswith(("
             "'confflow.calc', 'confflow.blocks', 'confflow.confts', "
             "'confflow.workflow.engine', 'confflow.workflow.v3_runtime', "
-            "'confflow.workflow.v3_dataflow', 'confflow.workflow.binding_v2'))); "
+            "'confflow.workflow.v3_dataflow', 'confflow.workflow.binding_v2', "
+            "'confflow.config.canonical'))); "
             "assert not banned, banned"
         )
         result = self._run(script)
         assert result.returncode == 0, result.stderr
+
+    def test_schema_authority_is_single_source_for_legacy_paths(self) -> None:
+        """The legacy import paths re-export the same objects (no second copy)."""
+        from confflow.config import contract_schemas
+        from confflow.config.canonical.contract import CONFIGURATION_VALIDATION_SCHEMA
+        from confflow.config.canonical.editor_manifest import EDITOR_MANIFEST_SCHEMA
+        from confflow.config.canonical.recipes import RECIPE_CATALOG_SCHEMA
+
+        assert CONFIGURATION_VALIDATION_SCHEMA is contract_schemas.CONFIGURATION_VALIDATION_SCHEMA
+        assert EDITOR_MANIFEST_SCHEMA is contract_schemas.EDITOR_MANIFEST_SCHEMA
+        assert RECIPE_CATALOG_SCHEMA is contract_schemas.RECIPE_CATALOG_SCHEMA
+        assert contract_schemas.CONFIGURATION_VALIDATION_SCHEMA == (
+            "confflow.configuration-validation.v1"
+        )
+        assert contract_schemas.EDITOR_MANIFEST_SCHEMA == "confflow.editor-manifest.v1"
+        assert contract_schemas.RECIPE_CATALOG_SCHEMA == "confflow.recipe-catalog.v1"
+
+    def test_config_package_lazy_exports_still_work(self) -> None:
+        """The historical ``from confflow.config import X`` surface is intact."""
+        from confflow.config import GlobalOptions, WorkflowConfig, load_workflow_model
+
+        assert WorkflowConfig.__name__ == "WorkflowConfig"
+        assert GlobalOptions.__name__ == "GlobalOptions"
+        assert callable(load_workflow_model)
 
 
 class TestPackaging:

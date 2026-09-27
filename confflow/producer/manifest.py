@@ -25,7 +25,7 @@ from __future__ import annotations
 import copy
 from typing import Any
 
-from ..config.canonical.editor_manifest import EDITOR_MANIFEST_SCHEMA
+from ..config.contract_schemas import EDITOR_MANIFEST_SCHEMA
 from ..domain.binding import Cardinality, Pairing
 from ..domain.canonical import canonical_sha256
 from ..domain.completion import CompletionMode, PartialOutputPolicy

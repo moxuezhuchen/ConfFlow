@@ -45,10 +45,9 @@ import string
 from collections.abc import Iterable, Mapping
 from typing import Any
 
+from ..contract_schemas import RECIPE_CATALOG_SCHEMA
 from .schema import WORKFLOW_SCHEMA_VERSION_V3
 from .serialization import canonical_sha256
-
-RECIPE_CATALOG_SCHEMA = "confflow.recipe-catalog.v1"
 
 _RECIPES: list[dict[str, Any]] = [
     {
