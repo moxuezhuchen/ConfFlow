@@ -19,7 +19,15 @@ the single durable arbitration authority:
 - ``record_cancel_intent`` records a durable cancellation claim.  A cancel
   intent recorded before a completion claim makes cancellation the winner;
   a completion claim recorded first makes a later cancel lose (the service
-  projects the winner instead of rewriting it).
+  projects the winner instead of rewriting it).  A terminal claim already
+  recorded by a publication in progress is authoritative for refusal, so a
+  cancel arriving while that publication still holds the lock is refused
+  promptly instead of being reported accepted.
+- ``generation_publication_scope`` is the only way a generation-owned
+  artifact (step result, step lifecycle state) may be written: the
+  expected-owner check and the caller's durable write happen inside one
+  lock region, so a superseded writer can never overwrite the current
+  generation's truth.
 - ``finalize_generation`` terminalizes a generation without a manifest
   (crash recovery / confirmed cancellation).
 - ``compare_and_set_generation`` is the only generation-record mutation API
@@ -82,6 +90,7 @@ __all__ = [
     "finalize_current_generation",
     "finalize_generation",
     "generation_is_current",
+    "generation_publication_scope",
     "load_ledger",
     "record_cancel_intent",
     "terminal_publication",
@@ -278,18 +287,36 @@ class PublicationScope:
 
 
 @contextmanager
-def _generation_lock(run_root: str) -> Iterator[None]:
-    """Hold the run root's generation arbitration lock for one operation."""
+def _generation_lock(run_root: str, *, nonblocking: bool = False) -> Iterator[bool]:
+    """Hold the run root's generation arbitration lock for one operation.
+
+    Yields ``True`` when the lock is held and ``False`` only for a
+    non-blocking request that found the lock busy (the caller decides the
+    fallback); the lock is released when the context exits.
+    """
     root = validate_run_root(run_root)
     if _fcntl is not None:
         os.makedirs(root, exist_ok=True)
         path = os.path.join(root, GENERATION_LOCK_FILENAME)
         fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
+        acquired = False
         try:
+            if nonblocking:
+                try:
+                    _fcntl.flock(fd, _fcntl.LOCK_EX | _fcntl.LOCK_NB)
+                    acquired = True
+                except OSError as exc:
+                    if exc.errno not in (errno.EACCES, errno.EAGAIN):
+                        raise CorruptStateError(
+                            f"cannot acquire generation arbitration lock at {path!r}: {exc}"
+                        ) from exc
+                yield acquired
+                return
             deadline = time.monotonic() + _LOCK_TIMEOUT_SECONDS
             while True:
                 try:
                     _fcntl.flock(fd, _fcntl.LOCK_EX | _fcntl.LOCK_NB)
+                    acquired = True
                     break
                 except OSError as exc:
                     if exc.errno not in (errno.EACCES, errno.EAGAIN):
@@ -301,21 +328,24 @@ def _generation_lock(run_root: str) -> Iterator[None]:
                             f"generation arbitration lock timeout at {path!r}"
                         ) from exc
                     time.sleep(_LOCK_POLL_SECONDS)
-            try:
-                yield
-            finally:
-                _fcntl.flock(fd, _fcntl.LOCK_UN)
+            yield True
         finally:
+            if acquired:
+                _fcntl.flock(fd, _fcntl.LOCK_UN)
             os.close(fd)
         return
     # Non-POSIX fallback: process-local only.  The durable execution service
     # itself is POSIX-only, so production never relies on this branch.
     with _FALLBACK_GUARD:  # pragma: no cover - non-POSIX fallback
         lock = _FALLBACK_LOCKS.setdefault(root, threading.Lock())
-    if not lock.acquire(timeout=_LOCK_TIMEOUT_SECONDS):  # pragma: no cover
+    if nonblocking:  # pragma: no cover - non-POSIX fallback
+        if not lock.acquire(blocking=False):
+            yield False
+            return
+    elif not lock.acquire(timeout=_LOCK_TIMEOUT_SECONDS):  # pragma: no cover
         raise CorruptStateError(f"generation arbitration lock timeout at {root!r}")
     try:  # pragma: no cover - non-POSIX fallback
-        yield
+        yield True
     finally:
         lock.release()
 
@@ -610,31 +640,62 @@ def record_cancel_intent(
     Returns the terminal winner when the generation already terminated
     (``None`` means the cancel claim was recorded and cancellation wins the
     ordering unless a completion claim was recorded first).
+
+    While a terminal publication holds the lock across its manifest write, a
+    non-blocking probe finds the lock busy and the terminal status already
+    visible in the ledger is returned immediately: the cancel is refused
+    promptly (fail closed) instead of being reported accepted.  A stale
+    unconfirmed claim with no live publication is repaired under the lock
+    first, so it is revoked and the cancellation can still win.
     """
     if not isinstance(source, str) or not source.strip():
         raise CorruptStateError("cancel intent source must be a non-empty string")
     root = validate_run_root(run_root)
+    with _generation_lock(root, nonblocking=True) as held:
+        if held:
+            return _cancel_intent_locked(root, source, token)
+        visible = _visible_terminal_status(root)
+        if visible is not None:
+            return visible
+        # The lock holder is a short non-terminal operation (begin/cancel/
+        # finalize); wait for it and re-decide under the lock below.
     with _generation_lock(root):
-        ledger = _load_or_init_locked(root)
-        ledger = _repair_locked(root, ledger)
-        if ledger.current_generation_id is None:
-            return None
-        if ledger.terminal_status is not None:
-            return ledger.terminal_status
-        if ledger.cancel_intent is None:
-            ledger = replace(
-                ledger,
-                cancel_intent=FrozenDict(
-                    {
-                        "source": source,
-                        "token": token,
-                        "requested_wall": wall_now(),
-                    }
-                ),
-                updated_wall=wall_now(),
-            )
-            _save_ledger_locked(root, ledger)
+        return _cancel_intent_locked(root, source, token)
+
+
+def _cancel_intent_locked(root: str, source: str, token: str | None) -> str | None:
+    ledger = _load_or_init_locked(root)
+    ledger = _repair_locked(root, ledger)
+    if ledger.current_generation_id is None:
         return None
+    if ledger.terminal_status is not None:
+        return ledger.terminal_status
+    if ledger.cancel_intent is None:
+        ledger = replace(
+            ledger,
+            cancel_intent=FrozenDict(
+                {
+                    "source": source,
+                    "token": token,
+                    "requested_wall": wall_now(),
+                }
+            ),
+            updated_wall=wall_now(),
+        )
+        _save_ledger_locked(root, ledger)
+    return None
+
+
+def _visible_terminal_status(root: str) -> str | None:
+    """Return a terminal status visible without acquiring the lock.
+
+    Only used as a fail-closed refusal fast path for cancellation
+    admission; the authoritative decision still happens under the lock.
+    """
+    ledger = _load_ledger_file(root)
+    if ledger is None or ledger.current_generation_id is None:
+        return None
+    return ledger.terminal_status
 
 
 def current_terminal_status(run_root: str) -> str | None:
@@ -701,6 +762,39 @@ def compare_and_set_generation(
                 f"({ledger.terminal_status!r})"
             )
         _write_public_generation_locked(root, record)
+
+
+@contextmanager
+def generation_publication_scope(
+    run_root: str,
+    *,
+    expected_generation_id: str,
+    action: str = "publication",
+) -> Iterator[None]:
+    """Hold the generation lock while one generation-owned artifact is written.
+
+    The expected-owner check and the caller's durable write happen inside the
+    same cross-process mutual-exclusion region: once a newer generation is
+    current, any older writer's publication raises
+    :class:`StaleGenerationError` before a single byte is replaced.  Callers
+    must perform the write inside the ``with`` body; a passed earlier
+    ownership check never grants authority.
+    """
+    if not isinstance(expected_generation_id, str) or not expected_generation_id.strip():
+        raise CorruptStateError("generation_publication_scope requires a generation id")
+    if not isinstance(action, str) or not action.strip():
+        raise CorruptStateError("generation_publication_scope requires an action label")
+    root = validate_run_root(run_root)
+    with _generation_lock(root):
+        ledger = _load_or_init_locked(root)
+        ledger = _repair_locked(root, ledger)
+        if ledger.current_generation_id != expected_generation_id:
+            raise StaleGenerationError(
+                f"generation {expected_generation_id!r} lost publication authority over "
+                f"{root!r} (current: {ledger.current_generation_id!r}); "
+                f"stale {action} refused"
+            )
+        yield
 
 
 @contextmanager

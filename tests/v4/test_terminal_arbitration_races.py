@@ -306,10 +306,16 @@ def test_race_x_cancel_before_claim_wins(tmp_path: Path, monkeypatch: pytest.Mon
     _GATE.active = False
 
 
-def test_race_x_cancel_during_manifest_blocks_then_completion_wins(
+def test_race_x_cancel_during_manifest_is_refused(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The cancel cannot interleave inside the claim+manifest lock region."""
+    """The cancel cannot interleave inside the claim+manifest lock region.
+
+    The producer's durable terminal claim is already recorded while the
+    manifest write is in flight, so cancellation admission is refused
+    promptly (fail closed) instead of blocking on or entering the region,
+    and no misleading cancel_requested is recorded.
+    """
     script = _native(tmp_path)
     service, executor, spec = _service(tmp_path, _single_step_doc(script), run_id="race-x2")
     entered = threading.Event()
@@ -336,14 +342,15 @@ def test_race_x_cancel_during_manifest_blocks_then_completion_wins(
 
     cancel_thread = threading.Thread(target=do_cancel)
     cancel_thread.start()
-    time.sleep(0.3)
-    assert cancel_thread.is_alive(), "the cancel must block on the publication lock"
-    release.set()
     cancel_thread.join(TIMEOUT)
+    assert not cancel_thread.is_alive(), "the refusal must not block on the publication lock"
+    assert outcome and outcome[0] == "invalid_state_transition", outcome
+    release.set()
     executor.wait(TIMEOUT)
     assert service.status(spec.run_id).state is RunState.COMPLETED
     _assert_one_winner(Path(spec.work_dir), RunState.COMPLETED)
-    assert outcome and outcome[0] in {"invalid_state_transition", "terminal_run"}, outcome
+    events = [event.type for event in service._repository.read(spec.run_id).events]
+    assert "cancel_requested" not in events
 
 
 def test_race_x_cancel_after_confirm_loses(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

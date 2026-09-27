@@ -49,7 +49,69 @@ from .models import (
 from .ports import IdentityVerifier, WorkflowExecutor
 from .service import ExecutionLifecycle, ExecutionService
 from .sqlite import SQLiteExecutionRepository
-from .state_root import StateRoot
+from .state_root import RunPaths, StateRoot
+
+#: Control-channel pointer (under ``RunPaths.work``) naming the actual V4
+#: run root of a durable run.  It lets a cross-process ``control cancel``
+#: reach the same generation arbitration ledger the producer writes.
+CONTROL_RUN_ROOT_FILENAME = "run_root"
+
+
+def _publish_control_run_root(run_paths: RunPaths, work_dir: str) -> None:
+    """Durably name the V4 run root for cross-process control commands."""
+    target = Path(run_paths.work) / CONTROL_RUN_ROOT_FILENAME
+    payload = os.path.abspath(work_dir)
+    tmp_path = f"{target}.tmp.{os.getpid()}"
+    try:
+        with open(tmp_path, "w", encoding="utf-8") as handle:
+            os.fchmod(handle.fileno(), 0o600)
+            handle.write(payload + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp_path, target)
+    finally:
+        try:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+        except OSError:
+            pass
+    try:
+        dir_fd = os.open(str(target.parent), os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        os.fsync(dir_fd)
+    except OSError:
+        pass
+    finally:
+        os.close(dir_fd)
+
+
+def _control_run_root_path(state_root: StateRoot, run_id: str) -> Path:
+    return state_root.path / "v1" / "runs" / run_id / "work" / CONTROL_RUN_ROOT_FILENAME
+
+
+def resolve_control_run_root(state_root: StateRoot, run_id: str) -> str | None:
+    """Return the run's V4 run root from the control-channel pointer.
+
+    ``None`` means no generation has begun yet (the pointer is absent), so
+    there is nothing to arbitrate and the durable service cancel intent plus
+    the worker stop beacon own the pre-generation window.  A present but
+    unreadable/empty pointer fails closed.
+    """
+    path = _control_run_root_path(state_root, run_id)
+    try:
+        text = path.read_text(encoding="utf-8").strip()
+    except FileNotFoundError:
+        return None
+    except OSError as error:
+        raise ExecutionServiceError(
+            ErrorCode.INTERNAL, f"cannot read control run-root pointer: {error}"
+        ) from error
+    if not text:
+        raise ExecutionServiceError(ErrorCode.INTERNAL, "control run-root pointer is empty")
+    return text
+
 
 try:
     import fcntl as _fcntl
@@ -500,7 +562,24 @@ class _AgentControlExecutor(WorkflowExecutor):
         return LaunchReceipt(accepted=True)
 
     def ensure_cancelled(self, request: CancelRequest) -> CancelReceipt:
-        """Signal the worker; its token-bound lifecycle owns the terminal transition."""
+        """Durably claim cancellation, then signal the worker to stop.
+
+        The run root's arbitration ledger owns the terminal winner: when the
+        producer already recorded a non-cancelled terminal, this cancel
+        loses and raises without touching the beacon.  The beacon itself is
+        only the live stop signal for the worker, never a winner authority.
+        """
+        run_root = resolve_control_run_root(self._state_root, request.run_id)
+        if run_root is not None:
+            winner = arbitration.record_cancel_intent(
+                run_root, source="control", token=request.token
+            )
+            if winner is not None and winner != "cancelled":
+                raise ExecutionServiceError(
+                    ErrorCode.INVALID_STATE_TRANSITION,
+                    f"terminal ownership of {request.run_id} belongs to {winner!r}; "
+                    "the cancellation did not claim the terminal transition",
+                )
         beacon = self._state_root.ensure_run_paths(request.run_id).work / "CANCEL"
         beacon.touch()
         return CancelReceipt(confirmed=True)
@@ -678,8 +757,12 @@ def build_workflow_service(
     # SQLite repository. The guard reads the config file only.
     require_v4_document_file(spec.config_file)
     root = _ensure_state_root(state_root)
+    run_paths = root.ensure_run_paths(spec.run_id)
+    # Publish the control-channel pointer before anything else so a
+    # cross-process ``control cancel`` can reach this run's generation
+    # arbitration ledger from the state root alone.
+    _publish_control_run_root(run_paths, spec.work_dir)
     if spec.cancel_beacon_file is None:
-        run_paths = root.ensure_run_paths(spec.run_id)
         spec = replace(spec, cancel_beacon_file=str(run_paths.work / "CANCEL"))
     repository = SQLiteExecutionRepository(root)
     verifier = _CurrentProcessIdentity()
@@ -690,11 +773,16 @@ def build_workflow_service(
         """Project the run root's durable terminal winner (single authority)."""
         return arbitration.current_terminal_status(work_dir)
 
+    def _cancel_arbiter(_run_id: str) -> str | None:
+        """Claim the run root's cancellation ordering before any DB mutation."""
+        return arbitration.record_cancel_intent(work_dir, source="service")
+
     service = ExecutionService(
         repository=repository,
         executor=executor,
         identity_verifier=verifier,
         terminal_arbiter=_terminal_arbiter,
+        cancel_arbiter=_cancel_arbiter,
     )
     executor.bind(service)
     return service, executor
@@ -705,20 +793,44 @@ def open_control_service(
     *,
     identity_executable: str | None = None,
     terminal_arbiter: Callable[[str], str | None] | None = None,
+    cancel_arbiter: Callable[[str], str | None] | None = None,
 ) -> ExecutionService:
     """Open the same service for a separate agent control command.
 
-    ``terminal_arbiter`` lets a control caller that knows the run's work
-    directory project the producer's durable terminal winner; without it the
-    service keeps its legacy behavior (the caller owns the arbitration
-    decision).
+    Without explicit arbiters, both resolve the run's control-channel
+    run-root pointer (published by :func:`build_workflow_service`), so a
+    cross-process ``control cancel`` participates in the same durable
+    generation arbitration authority as the producer: the cancel claim is
+    recorded before any service-state mutation, and a terminal winner
+    already recorded by the producer refuses the cancel.  An absent pointer
+    means no generation has begun yet; the cancel then relies on the
+    durable service cancel intent plus the worker stop beacon.
     """
     root = _ensure_state_root(state_root)
+    resolved_terminal = terminal_arbiter
+    if resolved_terminal is None:
+
+        def resolved_terminal(_run_id: str) -> str | None:
+            run_root = resolve_control_run_root(root, _run_id)
+            if run_root is None:
+                return None
+            return arbitration.current_terminal_status(run_root)
+
+    resolved_cancel = cancel_arbiter
+    if resolved_cancel is None:
+
+        def resolved_cancel(_run_id: str) -> str | None:
+            run_root = resolve_control_run_root(root, _run_id)
+            if run_root is None:
+                return None
+            return arbitration.record_cancel_intent(run_root, source="control")
+
     return ExecutionService(
         repository=SQLiteExecutionRepository(root),
         executor=_AgentControlExecutor(root),
         identity_verifier=_CurrentProcessIdentity(identity_executable),
-        terminal_arbiter=terminal_arbiter,
+        terminal_arbiter=resolved_terminal,
+        cancel_arbiter=resolved_cancel,
     )
 
 

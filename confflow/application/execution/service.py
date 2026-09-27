@@ -74,6 +74,7 @@ class ExecutionService:
         identity_verifier: IdentityVerifier,
         event_page_size: int = 100,
         terminal_arbiter: Callable[[str], str | None] | None = None,
+        cancel_arbiter: Callable[[str], str | None] | None = None,
     ) -> None:
         if event_page_size < 1:
             raise ValueError("event_page_size must be positive")
@@ -86,12 +87,30 @@ class ExecutionService:
         #: projection must agree with the producer's durable arbitration
         #: ledger for that run.
         self._terminal_arbiter = terminal_arbiter
+        #: Optional run-root cancellation admission.  When configured, a
+        #: cancel durably claims the run root's generation ordering BEFORE
+        #: any service-state mutation: the callback returns the terminal
+        #: winner when the cancel cannot win, and ``None`` once the cancel
+        #: claim is durable (or when no generation exists yet).
+        self._cancel_arbiter = cancel_arbiter
 
     def _arbitration_winner(self, run_id: str) -> str | None:
         """Return the run root's terminal winner, when arbitration is wired."""
         if self._terminal_arbiter is None:
             return None
         return self._terminal_arbiter(run_id)
+
+    def _admit_cancellation(self, run_id: str) -> str | None:
+        """Durably claim cancellation admission; return a losing winner.
+
+        ``None`` means the cancel claim is durable (or there is no
+        generation to arbitrate yet).  A non-``None`` value is the terminal
+        status that already owns the generation: the caller must refuse the
+        cancel without touching any service state.
+        """
+        if self._cancel_arbiter is None:
+            return None
+        return self._cancel_arbiter(run_id)
 
     def prepare(self, request: PrepareRequest) -> RunSnapshot:
         """Durably create a non-executing prepared aggregate idempotently."""
@@ -231,10 +250,23 @@ class ExecutionService:
         return EventPage(snapshot=record.snapshot(), events=page, next_cursor=next_cursor)
 
     def cancel(self, run_id: str) -> RunSnapshot:
-        """Persist cancellation intent before asking an executor to confirm it."""
+        """Persist cancellation intent before asking an executor to confirm it.
+
+        Admission is arbitrated first: when the run root's generation
+        already has a terminal winner, the cancel is refused before any
+        service-state mutation, so ``cancel_requested`` is never recorded
+        for a cancellation that lost the ordering.
+        """
         record = self._require(run_id)
         if record.state in TERMINAL_STATES:
             raise _terminal_error(run_id)
+        winner = self._admit_cancellation(run_id)
+        if winner is not None and winner != "cancelled":
+            raise ExecutionServiceError(
+                ErrorCode.INVALID_STATE_TRANSITION,
+                f"terminal ownership of {run_id} belongs to {winner!r}; "
+                "the cancellation did not claim the terminal transition",
+            )
         if not record.cancel_pending:
             record = self._claim_cancel(record)
         return self._ensure_cancel(record)
@@ -530,6 +562,11 @@ class ExecutionService:
                     attempt=record.attempt,
                 )
             )
+        except ExecutionServiceError:
+            # A typed executor refusal (the run root's terminal ownership
+            # belongs to another status) is never masked as an unknown
+            # acknowledgement.
+            raise
         except Exception as error:
             raise ExecutionServiceError(
                 ErrorCode.INTERNAL, f"Cancel acknowledgement unknown: {error}", retryable=True

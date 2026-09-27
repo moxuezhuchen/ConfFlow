@@ -38,6 +38,9 @@ import textwrap
 from pathlib import Path
 from typing import Any
 
+import pytest
+
+from confflow.application.execution.errors import ErrorCode, ExecutionServiceError
 from confflow.application.execution.models import PrepareRequest, RunState
 from confflow.application.execution.workflow_adapter import (
     measure_executable,
@@ -315,7 +318,14 @@ class TestCancellationTerminalTruth:
             generation = load_run_generation(str(work_dir))
             assert generation is not None and generation.status == "running"
             service = open_control_service(state_root, identity_executable=sys.executable)
-            service.cancel(RUN_ID)
+            # Completion linearized before the cancel: the cancel is refused
+            # explicitly (no misleading cancel_requested event) and the
+            # crashed worker's recovery projects the manifest winner.
+            with pytest.raises(ExecutionServiceError) as rejected:
+                service.cancel(RUN_ID)
+            assert rejected.value.code is ErrorCode.INVALID_STATE_TRANSITION
+            events = [event.type for event in service._repository.read(RUN_ID).events]
+            assert "cancel_requested" not in events
 
             state = run_control_worker(
                 state_root=state_root,

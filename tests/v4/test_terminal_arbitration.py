@@ -488,7 +488,14 @@ class TestMatrixBCompletionCrashWindows:
                 fromlist=["open_control_service"],
             ).open_control_service(fixture["state_root"], identity_executable=sys.executable)
             assert service.status(CONTROL_RUN_ID).state is RunState.RUNNING
-            service.cancel(CONTROL_RUN_ID)
+            # The durable terminal generation already owns the winner: the
+            # cancel is refused explicitly and no misleading cancel_requested
+            # is ever recorded.
+            with pytest.raises(ExecutionServiceError) as rejected:
+                service.cancel(CONTROL_RUN_ID)
+            assert rejected.value.code is ErrorCode.INVALID_STATE_TRANSITION
+            events = [event.type for event in service._repository.read(CONTROL_RUN_ID).events]
+            assert "cancel_requested" not in events
 
             state = run_control_worker(
                 state_root=fixture["state_root"],

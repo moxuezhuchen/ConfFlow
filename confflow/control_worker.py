@@ -97,6 +97,9 @@ def run_control_worker(
     control_service = open_control_service(
         root.path,
         terminal_arbiter=lambda _run_id: arbitration.current_terminal_status(work_dir),
+        cancel_arbiter=lambda _run_id: arbitration.record_cancel_intent(
+            work_dir, source="control-worker"
+        ),
     )
     aggregate = repository.read(run_id)
     if aggregate is None:
@@ -177,6 +180,17 @@ def run_control_worker(
                     sleep(1.0)
                     continue
                 if current.cancel_pending:
+                    return _commit_cancel_or_manifest_winner(
+                        control_service,
+                        run_id,
+                        token,
+                        work_dir=tasks[0]["work_dir"],
+                    )
+                # A crashed attempt whose run root already proves a terminal
+                # outcome (a manifest-backed completion or a durable cancel)
+                # must be projected, not rerun: the run root's arbitration
+                # ledger is the terminal winner authority.
+                if arbitration.current_terminal_status(tasks[0]["work_dir"]) is not None:
                     return _commit_cancel_or_manifest_winner(
                         control_service,
                         run_id,
