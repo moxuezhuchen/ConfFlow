@@ -210,6 +210,7 @@ class V4RunRequest:
     supervisor: Any = None
     transport: Any = None
     import_sources: FrozenDict = field(default_factory=FrozenDict)
+    should_cancel: Any = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.workflow_document, dict):
@@ -218,6 +219,8 @@ class V4RunRequest:
             raise DomainError("run_inputs must be RunInputs")
         if not self.run_root or not isinstance(self.run_root, str):
             raise DomainError("run_root must be a non-empty string")
+        if self.should_cancel is not None and not callable(self.should_cancel):
+            raise DomainError("should_cancel must be a callable probe or None")
         if not isinstance(self.executables, FrozenDict):
             object.__setattr__(self, "executables", FrozenDict(self.executables))
         if not isinstance(self.import_sources, FrozenDict):
@@ -288,8 +291,24 @@ class V4RunApplication:
         self._preflight_targets(plan, request)
         materialized = MaterializedOutputs.empty()
         step_results: list[Any] = []
+        cancelled_steps: list[str] = []
         supervisor = request.supervisor if request.supervisor is not None else self._supervisor
+        should_cancel = request.should_cancel
         for planned in plan.steps:
+            if should_cancel is not None and should_cancel():
+                # Live cancellation between steps: the remaining steps are
+                # durable lifecycle truth (cancelled), never executed.  A
+                # cancelled producer would block its consumer at assembly;
+                # stopping at the boundary keeps the run publishable as a
+                # cancelled manifest instead of an assembly error.
+                cancelled_steps.append(planned.step_id)
+                state = transition_step(
+                    ensure_step(state, planned.step_id),
+                    planned.step_id,
+                    RunStepStatus.CANCELLED,
+                )
+                save_run_state(run_root, state)
+                continue
             state = transition_step(
                 ensure_step(state, planned.step_id), planned.step_id, RunStepStatus.RUNNING
             )
@@ -337,6 +356,12 @@ class V4RunApplication:
             )
             save_run_state(run_root, state)
         status = _evaluate_run_status(tuple(result.status for result in step_results))
+        if cancelled_steps or (should_cancel is not None and should_cancel()):
+            # A cancellation requested before terminal publication is the
+            # run's terminal truth: the manifest status is cancelled even
+            # when every executed step had already committed (durable
+            # completed work items are never rolled back).
+            status = "cancelled"
         manifest = self._publish_manifest(
             run_id=run_id,
             status=status,
@@ -606,6 +631,7 @@ class V4RunApplication:
             definition_digest=plan.definition_digest,
             producer_provenance=provenance,
             executor_capability=contract.capability.value,
+            should_cancel=request.should_cancel,
         )
         with SqliteWorkItemStore.open(store_path(run_root, planned.step_id)) as store:
             return batch.execute_step_resumable(

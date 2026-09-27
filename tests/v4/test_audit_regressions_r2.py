@@ -32,6 +32,7 @@ from typing import Any
 import pytest
 
 from confflow.application.v4_run import (
+    RUN_RESULT_FILENAME,
     V4RunApplication,
     V4RunRequest,
     import_xyz,
@@ -597,3 +598,206 @@ class TestR7RemoteReconciliation:
                 "completed",
             ]
         assert _launches(tmp_path) == 2
+
+
+def _sleeping_native(root: Path, *, sleep_seconds: float) -> Path:
+    """Fake native that proves live cancellation: started/slept/finished."""
+    root.mkdir(parents=True, exist_ok=True)
+    script = root / "sleep_orca"
+    script.write_text(textwrap.dedent(f"""\
+            #!{sys.executable}
+            import os, sys, time
+            from pathlib import Path
+            sys.path.insert(0, {str(REPO_ROOT)!r})
+            from tests.v4.fakes import fake_orca as f
+            (Path({str(root / "started")!r})).write_text("started")
+            time.sleep({sleep_seconds!r})
+            (Path({str(root / "finished")!r})).write_text("finished")
+            os.environ["FAKE_MODE"] = "ts_candidate"
+            sys.exit(f.main(sys.argv))
+            """))
+    script.chmod(0o755)
+    return script
+
+
+class TestR3LiveCancellation:
+    """R3: cancellation reaches and terminates the running native process."""
+
+    def test_service_cancel_terminates_running_native(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import time
+
+        from confflow.application.execution.models import RunState
+        from confflow.application.execution.workflow_adapter import (
+            WorkflowRunSpec,
+            _prepare_request,
+            build_workflow_service,
+            executor_identity,
+        )
+
+        monkeypatch.delenv("SCIENCE_ENV", raising=False)
+        script = _sleeping_native(tmp_path, sleep_seconds=5.0)
+        work = tmp_path / "work"
+        doc = _single_step_doc(script, env={"SLEEP_SENTINEL": "1"})
+        config = tmp_path / "config.json"
+        config.write_text(json.dumps(doc))
+        xyz = tmp_path / "a.xyz"
+        xyz.write_text(WATER_XYZ)
+        spec = WorkflowRunSpec(
+            run_id="cancel-live",
+            input_xyz=(str(xyz),),
+            config_file=str(config),
+            work_dir=str(work),
+        )
+        service, executor = build_workflow_service(spec, state_root=tmp_path / "state")
+        service.prepare(_prepare_request(spec, executor_identity(service)))
+        service.execute(spec.run_id)
+        started = tmp_path / "started"
+        deadline = time.monotonic() + 30
+        while not started.exists() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert started.exists()
+
+        cancel_started = time.monotonic()
+        service.cancel(spec.run_id)
+        executor.wait(30)
+        elapsed = time.monotonic() - cancel_started
+
+        assert service.status(spec.run_id).state is RunState.CANCELLED
+        assert not (tmp_path / "finished").exists()
+        assert elapsed < 4.0, f"cancel waited for the native sleep ({elapsed:.2f}s)"
+        manifest = json.loads((work / RUN_RESULT_FILENAME).read_text())
+        assert manifest["status"] == "cancelled"
+
+    def test_cli_beacon_terminates_running_native(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import subprocess
+        import time
+
+        monkeypatch.delenv("SCIENCE_ENV", raising=False)
+        script = _sleeping_native(tmp_path, sleep_seconds=5.0)
+        work = tmp_path / "work"
+        doc = _single_step_doc(script)
+        config = tmp_path / "config.json"
+        config.write_text(json.dumps(doc))
+        xyz = tmp_path / "a.xyz"
+        xyz.write_text(WATER_XYZ)
+        executable = Path(sys.executable).parent / "confflow"
+        if not executable.exists():  # pragma: no cover - environment guard
+            pytest.skip("confflow console script is not installed")
+        process = subprocess.Popen(
+            [str(executable), str(xyz), "-c", str(config), "-w", str(work)],
+            env={**os.environ, "PATH": f"{Path(sys.executable).parent}:/usr/bin:/bin"},
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        started = tmp_path / "started"
+        deadline = time.monotonic() + 30
+        while not started.exists() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert started.exists()
+        cancel_started = time.monotonic()
+        (work / "CANCEL").touch()
+        exit_code = process.wait(timeout=30)
+        elapsed = time.monotonic() - cancel_started
+
+        assert exit_code != 0
+        assert not (tmp_path / "finished").exists()
+        assert elapsed < 4.0, f"CLI cancel waited for the native sleep ({elapsed:.2f}s)"
+        manifest = json.loads((work / RUN_RESULT_FILENAME).read_text())
+        assert manifest["status"] == "cancelled"
+
+    def test_cancel_before_first_launch_never_launches(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        script = _science_native(tmp_path)
+        monkeypatch.setenv("SCIENCE_ENV", "-31")
+        doc = _single_step_doc(script, env={"SCIENCE_ENV": "-31"})
+        run_root = tmp_path / "run"
+        report = V4RunApplication(supervisor=NativeProcessSupervisor()).run(
+            V4RunRequest(
+                workflow_document=doc,
+                run_inputs=_water_inputs(),
+                run_root=str(run_root),
+                should_cancel=lambda: True,
+            )
+        )
+        assert report.status == "cancelled"
+        assert _launches(tmp_path) == 0
+        manifest = json.loads((run_root / RUN_RESULT_FILENAME).read_text())
+        assert manifest["status"] == "cancelled"
+        with SqliteWorkItemStore.open(store_path(str(run_root), "ts")) as store:
+            assert store.list_items() == ()
+
+    def test_cancel_between_items_keeps_durable_completed_item(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Cancel after item 1 commits: item 1 stays durable, item 2 cancelled."""
+        from confflow.domain.completion import WorkItemStatus
+
+        script = _science_native(tmp_path)
+        monkeypatch.setenv("SCIENCE_ENV", "-32")
+        two_blocks = WATER_XYZ + WATER_XYZ
+        run_root = tmp_path / "run"
+        stop_file = tmp_path / "stop-now"
+        doc = _single_step_doc(script, env={"SCIENCE_ENV": "-32"})
+        # The native writes the stop marker after its first launch; the probe
+        # then cancels the second item before it launches.
+        script.write_text(
+            script.read_text().replace(
+                'count.write_text("\\n".join(lines + ["launch"]) + "\\n")',
+                'count.write_text("\\n".join(lines + ["launch"]) + "\\n")\n'
+                f'(Path({str(stop_file)!r})).write_text("stop")',
+            )
+        )
+        report = V4RunApplication(supervisor=NativeProcessSupervisor()).run(
+            V4RunRequest(
+                workflow_document=doc,
+                run_inputs=RunInputs(structures=FrozenDict({"structures": import_xyz(two_blocks)})),
+                run_root=str(run_root),
+                import_sources=FrozenDict({"structures": two_blocks}),
+                should_cancel=lambda: stop_file.exists(),
+            )
+        )
+        assert report.status == "cancelled"
+        assert _launches(tmp_path) == 1
+        (step_result,) = report.step_results
+        statuses = {item.status for item in step_result.item_results}
+        assert WorkItemStatus.COMPLETED in statuses
+        assert WorkItemStatus.CANCELLED in statuses
+        with SqliteWorkItemStore.open(store_path(str(run_root), "ts")) as store:
+            completed = [
+                item_id
+                for item_id in store.list_items()
+                if store.get_state(item_id).value == "completed"
+            ]
+        assert len(completed) == 1
+
+    def test_cancel_after_step_result_before_manifest_is_cancelled(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A durable step result is never rolled back; the run is cancelled."""
+        script = _science_native(tmp_path)
+        monkeypatch.setenv("SCIENCE_ENV", "-33")
+        run_root = tmp_path / "run"
+        doc = _single_step_doc(script, env={"SCIENCE_ENV": "-33"})
+        report = V4RunApplication(supervisor=NativeProcessSupervisor()).run(
+            V4RunRequest(
+                workflow_document=doc,
+                run_inputs=_water_inputs(),
+                run_root=str(run_root),
+                import_sources=FrozenDict({"structures": WATER_XYZ}),
+                should_cancel=lambda: (run_root / "steps" / "ts" / "step_result.json").exists(),
+            )
+        )
+        assert report.status == "cancelled"
+        assert _launches(tmp_path) == 1
+        assert report.step_results[0].status.value == "completed"
+        manifest = json.loads((run_root / RUN_RESULT_FILENAME).read_text())
+        assert manifest["status"] == "cancelled"
+        with SqliteWorkItemStore.open(store_path(str(run_root), "ts")) as store:
+            (item_id,) = store.list_items()
+            assert store.get_state(item_id).value == "completed"

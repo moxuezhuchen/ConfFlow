@@ -89,6 +89,7 @@ def run_v4_document(
     supervisor: Any = None,
     transport: Any = None,
     import_sources: Any = None,
+    should_cancel: Any = None,
 ) -> Any:
     """Run one V4 document through the single V4 application object."""
     from ..domain._immutable import FrozenDict
@@ -106,6 +107,7 @@ def run_v4_document(
         supervisor=resolved_supervisor,
         transport=transport,
         import_sources=FrozenDict(dict(import_sources or {})),
+        should_cancel=should_cancel,
     )
     # One V4 application authority: compile_workflow lives inside run().
     return V4RunApplication(supervisor=resolved_supervisor).run(request)
@@ -190,10 +192,17 @@ def formal_v4_runner(**kwargs: Any) -> dict[str, Any] | None:
     import os as _os
 
     from ..core.exceptions import StopRequestedError as _Stop
+    from ..execution.cancellation import beacon_probe
 
-    for _beacon in (kwargs.get("cancel_beacon_file"), kwargs.get("pause_beacon_file")):
+    cancel_beacon = kwargs.get("cancel_beacon_file")
+    for _beacon in (cancel_beacon, kwargs.get("pause_beacon_file")):
         if _beacon and _os.path.exists(_beacon):
             raise _Stop(f"workflow stopped by beacon: {_beacon}")
+    # Live cancellation: the SAME beacon the service/control cancel paths
+    # touch is polled by every layer for the whole run, so a cancel during
+    # a native execution terminates the process boundary instead of
+    # waiting for the run to complete.
+    should_cancel = beacon_probe(cancel_beacon) if cancel_beacon else None
     xyz_texts: dict[str, str] = {}
     for path in list(input_xyz):
         try:
@@ -234,6 +243,7 @@ def formal_v4_runner(**kwargs: Any) -> dict[str, Any] | None:
         supervisor=resolved_supervisor,
         transport=transport,
         import_sources=FrozenDict(sources),
+        should_cancel=should_cancel,
     )
     # One V4 application authority: compile_workflow lives inside run().
     report = V4RunApplication(supervisor=resolved_supervisor).run(request)
