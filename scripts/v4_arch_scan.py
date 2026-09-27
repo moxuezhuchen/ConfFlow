@@ -11,15 +11,15 @@ Post-cutover scope (V4 Core Closure, ``44b478d``):
 
 - SCANNED formal V4 production: ``confflow/v4cli.py``,
   ``confflow/application/v4_run.py``, ``confflow/application/v4_entry.py``,
+  ``confflow/application/execution`` (durable control-service adapter),
   ``confflow/producer`` (contract, manifest, recipes, validation, run
   result), ``confflow/analysis``, and the control-protocol entries
   ``confflow/control.py`` / ``confflow/remote``.
 - NOT YET SCANNED (known legacy-helper debt, tracked for the architecture
   diet follow-ups; these are formal entries now, not legacy shims):
   ``confflow/cli.py`` (dry-run/config-show/export diagnostics and path
-  helpers still come from the legacy line), ``confflow/control_worker.py``
-  (worker-side legacy helpers), and ``confflow/application/execution/*``
-  (service adapter; scans clean once the PR-1 V3 dead branches are gone).
+  helpers still come from the legacy line) and ``confflow/control_worker.py``
+  (worker-side legacy helpers).
 - RETIRED READ-ONLY / separate tools (out of scope by design):
   ``confflow/calc`` and ``confflow/workflow`` (V2/V3 runtime, fail-closed),
   ``confflow.confts`` / ``confflow.blocks`` (standalone legacy CLIs), and
@@ -50,6 +50,7 @@ SCOPE: tuple[str, ...] = (
     "confflow/application/__init__.py",
     "confflow/application/v4_entry.py",
     "confflow/application/v4_run.py",
+    "confflow/application/execution",
     "confflow/control.py",
     "confflow/producer",
     "confflow/remote",

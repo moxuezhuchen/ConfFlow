@@ -440,7 +440,7 @@ class TestResumeMismatches:
 
 
 # ---------------------------------------------------------------------------
-# RF1–RF8 — rerun-failed by stable ID
+# RF1–RF7 — failed-step resume by stable ID
 # ---------------------------------------------------------------------------
 class TestRerunFailed:
     def _failed_run(self, tmp_path: Path, monkeypatch) -> tuple[list[str], str, Path]:
@@ -522,35 +522,6 @@ class TestRerunFailed:
         if artifact_bytes is not None:
             assert artifact.read_bytes() == artifact_bytes
         assert bad_handlers.calls == []
-
-    def test_rf8_v1_rerun_unchanged(self, tmp_path: Path, monkeypatch) -> None:
-        """The V1 rerun-failed path still works through its own config/state."""
-        from confflow.config.canonical import require_executable
-        from confflow.workflow.rerun_failed import RerunFailedUsageError, run_rerun_failed
-
-        _write_xyz(tmp_path / "input.xyz")
-        config = tmp_path / "v2.yaml"
-        config.write_text(
-            json.dumps(
-                {"steps": [{"name": "gen", "type": "confgen", "params": {"chains": "1-2"}}]}
-            ),
-            encoding="utf-8",
-        )
-        # post-flip: V3 passes capability preflight to the rerun-failed handler
-        v3_config = _write_config(
-            tmp_path / "v3.yaml",
-            [{"id": "s001", "type": "confgen", "inputs": [], "params": {"chains": ["1-2"]}}],
-        )
-        with pytest.raises(RerunFailedUsageError, match="Step directory does not exist"):
-            run_rerun_failed(
-                step_dir=str(tmp_path / "steps"),
-                config_file=str(v3_config),
-                step_ref="s001",
-            )
-        # future schema versions remain blocked by the execution requirement
-        with pytest.raises(ConfFlowError, match="execution requires state/binding v2"):
-            require_executable("confflow.workflow.v4")
-        del run_rerun_failed, RerunFailedUsageError
 
 
 # ---------------------------------------------------------------------------

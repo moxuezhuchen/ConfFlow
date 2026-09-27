@@ -261,7 +261,13 @@ def _is_legacy_producer_dependency(module: str) -> bool:
 #: They must stay absent: recreating one would silently revive a forbidden
 #: import path.  Additions here happen in the same commit that deletes the
 #: file, never speculatively.
-REMOVED_LEGACY_MODULES: frozenset[str] = frozenset()
+REMOVED_LEGACY_MODULES: frozenset[str] = frozenset(
+    {
+        "confflow.workflow.supervisor",
+        "confflow.workflow.rerun_failed",
+        "confflow.calc.async_exec",
+    }
+)
 
 #: Retained-by-design compatibility modules that are explicitly allowed to
 #: be absent from the source tree.  Empty today; a module moves here only

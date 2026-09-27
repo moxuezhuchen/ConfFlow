@@ -25,7 +25,6 @@ _LAZY_EXPORTS: dict[str, tuple[str, str]] = {
     "StepRecord": (".state", "StepRecord"),
     "WorkflowState": (".state", "WorkflowState"),
     "WorkflowStateStore": (".state", "WorkflowStateStore"),
-    "WorkflowSupervisor": (".supervisor", "WorkflowSupervisor"),
     "pushd": (".helpers", "pushd"),
     "as_list": (".helpers", "as_list"),
     "count_conformers_any": (".helpers", "count_conformers_any"),

@@ -10,9 +10,12 @@ migration), ``state/v1/runs/<id>/{staging,work}`` — and the through-service
 attempt additionally left a FAILED aggregate plus ``work/.confflow-work.lock``
 (the work lease mkdirs its parent). The workflow ``work_dir`` itself never
 gained ``.workflow_state.json``/``steps``/``external_inputs``, and no handler
-was invoked. The minimal fix (``_preflight_v3_effective_dataflow`` in
-``workflow_adapter.build_workflow_service``, inherited by
-``run_workflow_through_service``) rejects the same error before any of that.
+was invoked. The historical V3 preflight helper that fixed this
+(``workflow_adapter._preflight_v3_effective_dataflow``) was removed by the
+post-closure architecture diet: after the formal-runtime cutover every
+V2/V3 document fails closed in ``require_v4_document_file`` before any
+durable side effect, so the tests below now pin that formal boundary
+instead of the retired adapter internals.
 
 P1-B policy (verified against real behavior, not redesigned): the runtime
 resume path deterministically RE-FINALIZES when valid completed artifacts
@@ -37,16 +40,17 @@ import yaml
 from confflow.application.execution.errors import ErrorCode, ExecutionServiceError
 from confflow.application.execution.workflow_adapter import (
     WorkflowRunSpec,
-    _is_v3_config,
     _load_artifacts,
-    _load_artifacts_v3_required,
     _load_completed_stats,
     _load_stats,
-    _load_stats_v3_required,
     build_workflow_service,
     run_workflow_through_service,
 )
-from confflow.config.canonical import CAPABILITIES, VersionCapability
+from confflow.config.canonical import (
+    CAPABILITIES,
+    VersionCapability,
+    detect_workflow_file_version,
+)
 from confflow.config.canonical.schema import WORKFLOW_SCHEMA_VERSION_V3
 from confflow.core.exceptions import ConfFlowError
 from confflow.workflow.v3_runtime import run_v3_workflow
@@ -59,6 +63,16 @@ pytestmark = [
 ]
 
 V3 = "confflow.workflow.v3"
+
+
+def _is_v3_document(config_file: str) -> bool:
+    """Return whether *config_file* is a recognisable V3 document.
+
+    The adapter's private ``_is_v3_config`` helper was removed with the
+    retired V3 preflight; schema recognition itself stays the canonical
+    ``detect_workflow_file_version`` authority.
+    """
+    return detect_workflow_file_version(config_file) == WORKFLOW_SCHEMA_VERSION_V3
 
 
 @pytest.fixture(autouse=True)
@@ -551,7 +565,7 @@ class TestPFPreflightFailClosed:
         handlers = _FakeHandlers(monkeypatch)
         input_xyz = _write_xyz(tmp_path / "input.xyz")
         config = _write_config(tmp_path / "wf.yaml", _invalid_df_steps())
-        assert _is_v3_config(str(config))
+        assert _is_v3_document(str(config))
         spec = WorkflowRunSpec(
             run_id="pf1-direct",
             input_xyz=(str(input_xyz),),
@@ -582,7 +596,7 @@ class TestPFPreflightFailClosed:
         handlers = _FakeHandlers(monkeypatch)
         input_xyz = _write_xyz(tmp_path / "input.xyz")
         config = _write_config(tmp_path / "wf.yaml", _pf_schema_steps())
-        assert _is_v3_config(str(config))
+        assert _is_v3_document(str(config))
         spec = WorkflowRunSpec(
             run_id="pf2-direct",
             input_xyz=(str(input_xyz),),
@@ -613,7 +627,7 @@ class TestPFPreflightFailClosed:
         handlers = _FakeHandlers(monkeypatch)
         input_xyz = _write_xyz(tmp_path / "input.xyz")
         config = _write_config(tmp_path / "wf.yaml", _pf_params_steps())
-        assert _is_v3_config(str(config))
+        assert _is_v3_document(str(config))
         spec = WorkflowRunSpec(
             run_id="pf3-direct",
             input_xyz=(str(input_xyz),),
@@ -644,7 +658,7 @@ class TestPFPreflightFailClosed:
         handlers = _FakeHandlers(monkeypatch)
         input_xyz = _write_xyz(tmp_path / "input.xyz")
         config = _write_config(tmp_path / "wf.yaml", _pf_graph_steps())
-        assert _is_v3_config(str(config))
+        assert _is_v3_document(str(config))
         spec = WorkflowRunSpec(
             run_id="pf4-direct",
             input_xyz=(str(input_xyz),),
@@ -675,7 +689,7 @@ class TestPFPreflightFailClosed:
         handlers = _FakeHandlers(monkeypatch)
         input_xyz = _write_xyz(tmp_path / "input.xyz")
         config = _write_config(tmp_path / "wf.yaml", _pf_checkpoint_steps())
-        assert _is_v3_config(str(config))
+        assert _is_v3_document(str(config))
         spec = WorkflowRunSpec(
             run_id="pf5-direct",
             input_xyz=(str(input_xyz),),
@@ -706,7 +720,7 @@ class TestPFPreflightFailClosed:
         handlers = _FakeHandlers(monkeypatch)
         input_xyz = _write_xyz(tmp_path / "input.xyz")
         config = _write_config(tmp_path / "wf.yaml", _pf_fragment_steps())
-        assert _is_v3_config(str(config))
+        assert _is_v3_document(str(config))
         spec = WorkflowRunSpec(
             run_id="pf6-direct",
             input_xyz=(str(input_xyz),),
@@ -765,7 +779,7 @@ class TestPFPreflightFailClosed:
             ),
             encoding="utf-8",
         )
-        assert not _is_v3_config(str(config))
+        assert not _is_v3_document(str(config))
         with pytest.raises(ConfFlowError, match="legacy_workflow_not_executable"):
             run_workflow_through_service(
                 input_xyz=[str(input_xyz)],
@@ -897,119 +911,9 @@ class TestV3ArtifactIntegrity:
         assert handlers.confgen_calls == []
 
     @pytest.mark.usefixtures("fake_qc_executables_on_path")
-    def test_s2_corrupt_manifest_fails_closed(self, tmp_path: Path, monkeypatch) -> None:
-        handlers = _FakeHandlers(monkeypatch)
-        _input_xyz, config, work_dir = _completed_run(tmp_path, handlers)
-        work = Path(work_dir)
-        (work / "output_manifest.json").write_text("{not valid json", encoding="utf-8")
-        assert _load_artifacts(work_dir) == ()
-        with pytest.raises(ExecutionServiceError) as excinfo:
-            _load_artifacts_v3_required(work_dir)
-        assert excinfo.value.code is ErrorCode.ARTIFACT_INTEGRITY_FAILED
-
     @pytest.mark.usefixtures("fake_qc_executables_on_path")
-    def test_s3_wrong_schema_fails_closed(self, tmp_path: Path, monkeypatch) -> None:
-        from confflow.contract import OUTPUT_MANIFEST_SCHEMA
-
-        handlers = _FakeHandlers(monkeypatch)
-        _input_xyz, config, work_dir = _completed_run(tmp_path, handlers)
-        work = Path(work_dir)
-        valid = json.loads((work / "output_manifest.json").read_text(encoding="utf-8"))
-        assert valid["content_schema"] == "confflow.output_manifest.v2"
-        v1_payload = {
-            "content_schema": OUTPUT_MANIFEST_SCHEMA,
-            "terminals": {
-                t["id"]: [a.split("/")[-1] for a in t["artifacts"]] for t in valid["terminals"]
-            },
-        }
-        (work / "output_manifest.json").write_text(json.dumps(v1_payload), encoding="utf-8")
-        with pytest.raises(ExecutionServiceError) as excinfo:
-            _load_artifacts_v3_required(work_dir)
-        assert excinfo.value.code is ErrorCode.ARTIFACT_INTEGRITY_FAILED
-        (work / "output_manifest.json").write_text(
-            json.dumps({"content_schema": "confflow.output_manifest.v9", "terminals": []}),
-            encoding="utf-8",
-        )
-        with pytest.raises(ExecutionServiceError) as excinfo2:
-            _load_artifacts_v3_required(work_dir)
-        assert excinfo2.value.code is ErrorCode.ARTIFACT_INTEGRITY_FAILED
-        (work / "output_manifest.json").write_text(json.dumps({"terminals": []}), encoding="utf-8")
-        with pytest.raises(ExecutionServiceError) as excinfo3:
-            _load_artifacts_v3_required(work_dir)
-        assert excinfo3.value.code is ErrorCode.ARTIFACT_INTEGRITY_FAILED
-
     @pytest.mark.usefixtures("fake_qc_executables_on_path")
-    def test_s6_unsafe_or_missing_artifact_fails_closed(self, tmp_path: Path, monkeypatch) -> None:
-        handlers = _FakeHandlers(monkeypatch)
-        _input_xyz, config, work_dir = _completed_run(tmp_path, handlers)
-        work = Path(work_dir)
-        (work / "output_manifest.json").write_text(
-            json.dumps(
-                {
-                    "content_schema": "confflow.output_manifest.v2",
-                    "terminals": [{"id": "s002", "label": None, "artifacts": ["/etc/passwd"]}],
-                }
-            ),
-            encoding="utf-8",
-        )
-        with pytest.raises(ExecutionServiceError) as excinfo:
-            _load_artifacts_v3_required(work_dir)
-        assert excinfo.value.code is ErrorCode.ARTIFACT_INTEGRITY_FAILED
-        (work / "output_manifest.json").write_text(
-            json.dumps(
-                {
-                    "content_schema": "confflow.output_manifest.v2",
-                    "terminals": [{"id": "s002", "label": None, "artifacts": ["../escape.xyz"]}],
-                }
-            ),
-            encoding="utf-8",
-        )
-        with pytest.raises(ExecutionServiceError) as excinfo2:
-            _load_artifacts_v3_required(work_dir)
-        assert excinfo2.value.code is ErrorCode.ARTIFACT_INTEGRITY_FAILED
-        (work / "output_manifest.json").write_text(
-            json.dumps(
-                {
-                    "content_schema": "confflow.output_manifest.v2",
-                    "terminals": [{"id": "s002", "label": None, "artifacts": ["gone.xyz"]}],
-                }
-            ),
-            encoding="utf-8",
-        )
-        with pytest.raises(ExecutionServiceError) as excinfo3:
-            _load_artifacts_v3_required(work_dir)
-        assert excinfo3.value.code is ErrorCode.ARTIFACT_INTEGRITY_FAILED
-
     @pytest.mark.usefixtures("fake_qc_executables_on_path")
-    def test_s7_stats_strict_v2_only(self, tmp_path: Path, monkeypatch) -> None:
-        from confflow.contract import WORKFLOW_STATS_SCHEMA
-
-        handlers = _FakeHandlers(monkeypatch)
-        _input_xyz, config, work_dir = _completed_run(tmp_path, handlers)
-        work = Path(work_dir)
-        stats = _load_stats_v3_required(work_dir)
-        assert stats["content_schema"] == "confflow.workflow_stats.v2"
-        (work / "workflow_stats.json").unlink()
-        assert _load_stats(work_dir) is None
-        with pytest.raises(ExecutionServiceError) as excinfo:
-            _load_stats_v3_required(work_dir)
-        assert excinfo.value.code is ErrorCode.ARTIFACT_INTEGRITY_FAILED
-        (work / "workflow_stats.json").write_text(
-            json.dumps({"final_output": "x"}), encoding="utf-8"
-        )
-        assert _load_stats(work_dir) is not None
-        with pytest.raises(ExecutionServiceError) as excinfo2:
-            _load_stats_v3_required(work_dir)
-        assert excinfo2.value.code is ErrorCode.ARTIFACT_INTEGRITY_FAILED
-        (work / "workflow_stats.json").write_text(
-            json.dumps({"content_schema": WORKFLOW_STATS_SCHEMA, "final_output": "x"}),
-            encoding="utf-8",
-        )
-        assert _load_stats(work_dir) is not None
-        with pytest.raises(ExecutionServiceError) as excinfo3:
-            _load_stats_v3_required(work_dir)
-        assert excinfo3.value.code is ErrorCode.ARTIFACT_INTEGRITY_FAILED
-
     @pytest.mark.usefixtures("fake_qc_executables_on_path")
     def test_s10_valid_v3_sealed(self, tmp_path: Path, monkeypatch) -> None:
         """Cutover: a valid V3 document never reaches strict V3 loading."""
