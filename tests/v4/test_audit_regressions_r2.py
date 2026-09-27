@@ -93,6 +93,14 @@ def _launches(root: Path) -> int:
     return len(count.read_text().splitlines())
 
 
+def _chain_launches(root: Path) -> int:
+    """Launch count of the full TSPES-chain fake native."""
+    count = root / "chain-count"
+    if not count.exists():
+        return 0
+    return len(count.read_text().splitlines())
+
+
 def _last_record(root: Path) -> dict[str, Any]:
     return json.loads((root / "science-record").read_text())
 
@@ -938,9 +946,13 @@ class TestR6GenerationLifecycle:
         doc = self._tspes_doc(script, sp="-70", freq="-60")
         first = self._run_tspes(doc, run_root)
         assert first.status == "completed"
+        first_launches = _chain_launches(tmp_path)
+        assert first_launches > 0
         first_generation = load_run_generation(str(run_root))
         second = self._run_tspes(doc, run_root)
         assert second.status == "completed"
+        # A same-environment resume reuses every durable item: 0 relaunch.
+        assert _chain_launches(tmp_path) == first_launches
         second_generation = load_run_generation(str(run_root))
         assert second_generation is not None and second_generation.status == "completed"
         assert second_generation.generation_id != first_generation.generation_id
