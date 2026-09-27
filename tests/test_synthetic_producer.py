@@ -399,7 +399,7 @@ def test_terminal_manifest_rejects_duplicate_terminal_path_pairs(tmp_path: Path)
 # -------------------------------------------------------------------------------------
 
 
-def test_service_execute_produces_full_terminal_lifecycle(tmp_path: Path):
+def test_service_execute_produces_full_terminal_lifecycle(tmp_path: Path, monkeypatch):
     """Prepared -> queued -> running -> terminal with events, cursors and manifest."""
     root = tmp_path / "state"
     service, executor = _build(root)
@@ -407,8 +407,13 @@ def test_service_execute_produces_full_terminal_lifecycle(tmp_path: Path):
     run_id = "synthetic-run-001"
     service.prepare(_request(run_id, identity))
     assert service.status(run_id).state is RunState.PREPARED
+    # Gate the worker before the queued->running CAS so the execute() snapshot
+    # is deterministically the queued launch: on fast interpreters the worker
+    # could otherwise advance the aggregate before execute() re-reads it.
+    gate, _crash = _blocked_before_started(monkeypatch)
     queued = service.execute(run_id)
     assert queued.state is RunState.QUEUED
+    gate.set()
     terminal = _wait_terminal(service, run_id)
     assert terminal.state is RunState.COMPLETED
     assert terminal.revision == 5
