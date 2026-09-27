@@ -357,7 +357,7 @@ class TestRedTeamRemoteCrashPoint:
                     """))
             crashed = subprocess.run(
                 [sys.executable, str(runner)],
-                env={**os.environ, "PATH": "/opt/ConfFlow/.venv/bin:/usr/bin:/bin"},
+                env=dict(os.environ),  # identical env for the crashed attempt and the retry
                 capture_output=True,
                 text=True,
                 timeout=300,

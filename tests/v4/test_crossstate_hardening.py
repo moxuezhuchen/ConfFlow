@@ -242,7 +242,7 @@ def _crash_worker(tmp_path: Path, fixture: dict[str, Any], *, crash: str) -> Non
     )
     crashed = subprocess.run(
         [sys.executable, str(runner)],
-        env={**os.environ, "PATH": "/opt/ConfFlow/.venv/bin:/usr/bin:/bin"},
+        env=dict(os.environ),  # identical env for the crashed attempt and the retry
         capture_output=True,
         text=True,
         timeout=300,
@@ -390,7 +390,7 @@ def _crash_after_bundle(tmp_path: Path, variable: str, env_value: str) -> None:
     try:
         crashed = subprocess.run(
             [sys.executable, str(runner)],
-            env={**os.environ, "PATH": "/opt/ConfFlow/.venv/bin:/usr/bin:/bin"},
+            env=dict(os.environ),  # identical env for the crashed attempt and the retry
             capture_output=True,
             text=True,
             timeout=300,

@@ -470,9 +470,18 @@ class TestPackaging:
     """The V4 packages must ship in wheels."""
 
     def test_packages_are_discoverable(self) -> None:
-        import setuptools
+        """Every shipped package is discoverable by its ``__init__.py``.
 
-        packages = set(setuptools.find_packages(where=str(REPO_ROOT)))
+        Discovery is a pure path walk (the same rule setuptools uses for a
+        regular package): importing ``setuptools`` here would couple the
+        gate to the host's distutils shim state, which is not a property of
+        this repository.
+        """
+        packages = {
+            ".".join(init.parent.relative_to(REPO_ROOT).parts)
+            for init in PACKAGE_ROOT.rglob("__init__.py")
+            if "__pycache__" not in init.parts
+        }
         for expected in (
             "confflow.domain",
             "confflow.execution",

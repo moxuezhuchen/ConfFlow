@@ -16,6 +16,7 @@ from __future__ import annotations
 import dataclasses
 import hashlib
 import os
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
@@ -706,6 +707,9 @@ def test_science_package_has_no_legacy_transitives():
         " print('LEGACY:' + ','.join(sorted(mods)) if mods else 'CLEAN')"
     )
     out = subprocess.run(
-        [sys.executable, "-c", probe], capture_output=True, text=True, cwd="/opt/ConfFlow"
+        [sys.executable, "-c", probe],
+        capture_output=True,
+        text=True,
+        cwd=str(Path(__file__).resolve().parents[2]),
     )
     assert out.stdout.strip() == "CLEAN", out.stdout.strip() + out.stderr[-500:]
