@@ -32,6 +32,7 @@ from ...contract import (
     WORKFLOW_STATS_SCHEMA_V2,
 )
 from ...core.exceptions import StopRequestedError
+from ...persistence import arbitration
 from ..v4_entry import formal_v4_runner as default_workflow_runner
 from ..v4_entry import require_v4_document_file
 from .errors import ErrorCode, ExecutionServiceError
@@ -122,6 +123,7 @@ def _commit_v4_terminal(
     token: str,
     v4_status: str,
     artifacts: Sequence[Artifact],
+    work_dir: str,
 ) -> None:
     """Commit one resolved V4 status to the token-bound service lifecycle.
 
@@ -137,7 +139,18 @@ def _commit_v4_terminal(
       ``status=partial`` is preserved verbatim in ``run_result.json`` and
       ``ServiceWorkflowExecutor._result``; the service aggregate is FAILED
       so partial work never masquerades as completed.
+
+    The projection must agree with the run root's durable terminal
+    arbitration winner: a mismatch fails closed instead of letting the
+    service aggregate become an independent winner.
     """
+    winner = arbitration.current_terminal_status(work_dir)
+    if winner is not None and winner != v4_status:
+        raise ExecutionServiceError(
+            ErrorCode.INTERNAL,
+            f"terminal arbitration mismatch for {run_id}: durable winner is "
+            f"{winner!r} but the published status is {v4_status!r}",
+        )
     if v4_status == "completed":
         lifecycle.completed(artifacts)
         return
@@ -266,6 +279,11 @@ class ServiceWorkflowExecutor(WorkflowExecutor):
         return LaunchReceipt(accepted=True)
 
     def ensure_cancelled(self, request: CancelRequest) -> CancelReceipt:
+        # The durable cancellation claim is recorded in the run root's
+        # arbitration ledger BEFORE the receipt: a completion claim that
+        # follows it loses, and a completion claim that already won makes
+        # this cancel lose.  The beacon stays the live stop signal.
+        arbitration.record_cancel_intent(self._spec.work_dir, source="service", token=request.token)
         with self._lock:
             self._cancelled_tokens.add(request.launch_token or "")
         beacon = self._spec.cancel_beacon_file
@@ -280,6 +298,31 @@ class ServiceWorkflowExecutor(WorkflowExecutor):
             raise TimeoutError("ConfFlow workflow did not finish before the timeout")
         if self._error is not None:
             raise self._error
+
+    def _project_arbitrated_winner(self, winner: str, request: LaunchRequest) -> None:
+        """Project the run root's terminal winner onto the service aggregate.
+
+        The exception paths use this when the arbitration decision is already
+        durable (a cancellation or completion linearized before the runner
+        failed/stopped): the service commits the winner instead of inventing
+        a competing terminal state of its own.
+        """
+        service = self._service
+        if service is None:  # pragma: no cover - callers guard this
+            return
+        try:
+            artifacts = _load_artifacts(self._spec.work_dir)
+        except ExecutionServiceError:
+            artifacts = ()
+        _commit_v4_terminal(
+            lifecycle=ExecutionLifecycle(service, request.run_id, request.token),
+            service=service,
+            run_id=request.run_id,
+            token=request.token,
+            v4_status=winner,
+            artifacts=artifacts,
+            work_dir=self._spec.work_dir,
+        )
 
     def _run(self, request: LaunchRequest) -> None:
         work_lease: _WorkDirectoryLease | None = None
@@ -389,6 +432,7 @@ class ServiceWorkflowExecutor(WorkflowExecutor):
                 token=request.token,
                 v4_status=v4_status,
                 artifacts=artifacts,
+                work_dir=self._spec.work_dir,
             )
         except StopRequestedError as error:
             self._error = error
@@ -396,7 +440,14 @@ class ServiceWorkflowExecutor(WorkflowExecutor):
             if service is not None:
                 try:
                     aggregate = service.status(request.run_id)
-                    if (
+                    winner = arbitration.current_terminal_status(self._spec.work_dir)
+                    if winner is not None:
+                        # The run root's arbitration already owns a terminal
+                        # outcome (e.g. cancellation or completion linearized
+                        # before the stop): project the winner, never invent
+                        # a competing one.
+                        self._project_arbitrated_winner(winner, request)
+                    elif (
                         self._spec.cancel_beacon_file
                         and Path(self._spec.cancel_beacon_file).exists()
                     ):
@@ -420,9 +471,13 @@ class ServiceWorkflowExecutor(WorkflowExecutor):
                         # terminal state: record the failure with no artifacts
                         # and preserve the original error for wait().
                         failed_artifacts = ()
-                    ExecutionLifecycle(service, request.run_id, request.token).failed(
-                        failed_artifacts
-                    )
+                    winner = arbitration.current_terminal_status(self._spec.work_dir)
+                    if winner is not None and winner != "failed":
+                        self._project_arbitrated_winner(winner, request)
+                    else:
+                        ExecutionLifecycle(service, request.run_id, request.token).failed(
+                            failed_artifacts
+                        )
                 except ExecutionServiceError as lifecycle_error:
                     # A terminal cancellation/other lifecycle winner owns the
                     # aggregate; the original error remains available to wait().
@@ -629,24 +684,41 @@ def build_workflow_service(
     repository = SQLiteExecutionRepository(root)
     verifier = _CurrentProcessIdentity()
     executor = ServiceWorkflowExecutor(spec, workflow_runner)
+    work_dir = spec.work_dir
+
+    def _terminal_arbiter(_run_id: str) -> str | None:
+        """Project the run root's durable terminal winner (single authority)."""
+        return arbitration.current_terminal_status(work_dir)
+
     service = ExecutionService(
         repository=repository,
         executor=executor,
         identity_verifier=verifier,
+        terminal_arbiter=_terminal_arbiter,
     )
     executor.bind(service)
     return service, executor
 
 
 def open_control_service(
-    state_root: str | Path, *, identity_executable: str | None = None
+    state_root: str | Path,
+    *,
+    identity_executable: str | None = None,
+    terminal_arbiter: Callable[[str], str | None] | None = None,
 ) -> ExecutionService:
-    """Open the same service for a separate agent control command."""
+    """Open the same service for a separate agent control command.
+
+    ``terminal_arbiter`` lets a control caller that knows the run's work
+    directory project the producer's durable terminal winner; without it the
+    service keeps its legacy behavior (the caller owns the arbitration
+    decision).
+    """
     root = _ensure_state_root(state_root)
     return ExecutionService(
         repository=SQLiteExecutionRepository(root),
         executor=_AgentControlExecutor(root),
         identity_verifier=_CurrentProcessIdentity(identity_executable),
+        terminal_arbiter=terminal_arbiter,
     )
 
 

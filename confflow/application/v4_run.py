@@ -54,6 +54,7 @@ from ..execution.binding_resolution import (
     resolve_execution_binding,
 )
 from ..execution.registry import default_registry
+from ..persistence import arbitration
 from ..persistence.contracts import (
     PersistenceError,
     RunState,
@@ -66,8 +67,6 @@ from ..persistence.generation import (
     RunGeneration,
     new_generation_id,
     running_record,
-    save_run_generation,
-    terminal_record,
 )
 from ..persistence.imports import resolve_imported_structures
 from ..persistence.run_state import (
@@ -409,16 +408,17 @@ class V4RunApplication:
         )
         for planned in plan.steps:
             state = ensure_step(state, planned.step_id)
+        # Install this generation as the run root's current owner BEFORE any
+        # step state or publication is written.  A superseded writer loses
+        # publication authority permanently at this point (CONTRACT 7).
+        arbitration.begin_generation(
+            run_root,
+            generation_id=generation_id,
+            run_id=run_id,
+            definition_digest=plan.definition_digest,
+        )
         save_run_state(run_root, state)
         context.state = state
-        save_run_generation(
-            run_root,
-            running_record(
-                run_id=run_id,
-                generation_id=generation_id,
-                definition_digest=plan.definition_digest,
-            ),
-        )
         context.generation_started = True
         run_inputs = self._resolve_run_inputs(run_root=run_root, request=request)
         self._preflight_targets(plan, request)
@@ -429,6 +429,13 @@ class V4RunApplication:
         supervisor = request.supervisor if request.supervisor is not None else self._supervisor
         should_cancel = request.should_cancel
         for planned in plan.steps:
+            if not arbitration.generation_is_current(run_root, generation_id):
+                # CONTRACT 7: once a newer generation owns the run root, this
+                # writer must not execute or publish anything else.
+                raise arbitration.StaleGenerationError(
+                    f"generation {generation_id!r} was superseded before step "
+                    f"{planned.step_id!r}; refusing further execution and publication"
+                )
             if should_cancel is not None and should_cancel():
                 # Live cancellation between steps: the remaining steps are
                 # durable lifecycle truth (cancelled), never executed.  A
@@ -477,6 +484,7 @@ class V4RunApplication:
                 request,
                 supervisor,
                 run_root=run_root,
+                generation_id=generation_id,
             )
             if result.step_id != planned.step_id:
                 raise DomainError(
@@ -499,13 +507,14 @@ class V4RunApplication:
             context.state = state
             context.active_step_id = None
         status = _evaluate_run_status(tuple(result.status for result in step_results))
-        if cancelled_steps or (should_cancel is not None and should_cancel()):
-            # A cancellation requested before terminal publication is the
-            # run's terminal truth: the manifest status is cancelled even
-            # when every executed step had already committed (durable
-            # completed work items are never rolled back).
+        if cancelled_steps:
             status = "cancelled"
-        manifest = self._publish_manifest(
+        # Terminal arbitration is the single winner authority: a durable
+        # cancel claim (recorded before this claim) or a live cancellation
+        # signal observed inside the lock wins over the requested status.
+        # The last ``should_cancel`` probe is part of the arbitration, never
+        # a separate pre-publication check.
+        manifest, effective_status = self._publish_manifest(
             run_id=run_id,
             status=status,
             definition_digest=plan.definition_digest,
@@ -514,23 +523,13 @@ class V4RunApplication:
             run_root=run_root,
             generation_id=generation_id,
             run_inputs=run_inputs,
+            cancel_probe=should_cancel,
         )
         context.terminal_published = True
-        context.terminal_status = status
-        save_run_generation(
-            run_root,
-            terminal_record(
-                context.record,
-                status=status,
-                manifest_generation_id=generation_id,
-                completed_step_ids=tuple(
-                    item.step_id for item in step_results if item.status.value == "completed"
-                ),
-            ),
-        )
+        context.terminal_status = effective_status
         return V4RunReport(
             run_id=run_id,
-            status=status,
+            status=effective_status,
             definition_digest=plan.definition_digest,
             step_results=tuple(step_results),
             manifest=manifest,
@@ -568,29 +567,31 @@ class V4RunApplication:
             # rejected digest.
             return
         if context.terminal_published:
-            # The generation's manifest is already durable truth; only the
-            # lifecycle-record write failed.  Never downgrade a published
-            # terminal manifest into a failure.
+            # The generation's terminal truth is already durable; re-confirm
+            # it idempotently so a lifecycle-record write failure can never
+            # leave a published terminal manifest without its generation
+            # pointer.  A published terminal manifest is never downgraded.
             try:
-                save_run_generation(
+                arbitration.finalize_generation(
                     context.run_root,
-                    terminal_record(
-                        context.record,
-                        status=context.terminal_status or "failed",
-                        manifest_generation_id=context.generation_id,
-                        completed_step_ids=tuple(
-                            item.step_id
-                            for item in context.step_results
-                            if item.status.value == "completed"
-                        ),
-                    ),
+                    generation_id=context.generation_id,
+                    requested_status=context.terminal_status or "failed",
+                    cancel_probe=request.should_cancel,
+                    failure=dict(failure),
+                    active_step_id=context.active_step_id,
                 )
             except Exception:
                 pass
             return
         # The failing/blocked step is durable lifecycle truth, not RUNNING.
+        # The write is fenced on generation ownership so a superseded writer
+        # can never overwrite the newer generation's step state.
         try:
-            if context.state is not None and context.active_step_id is not None:
+            if (
+                context.state is not None
+                and context.active_step_id is not None
+                and arbitration.generation_is_current(context.run_root, context.generation_id)
+            ):
                 current = context.state.step(context.active_step_id)
                 if current is not None and current.status is RunStepStatus.RUNNING:
                     context.state = transition_step(
@@ -599,10 +600,10 @@ class V4RunApplication:
                     save_run_state(context.run_root, context.state)
         except Exception:
             pass
-        manifest_published = False
+        effective_status = "failed"
         if context.plan is not None and context.definition_digest is not None:
             try:
-                self._publish_manifest(
+                _manifest, effective_status = self._publish_manifest(
                     run_id=context.run_id,
                     status="failed",
                     definition_digest=context.definition_digest,
@@ -612,28 +613,25 @@ class V4RunApplication:
                     generation_id=context.generation_id,
                     include_planned_analyses=False,
                     run_inputs=request.run_inputs,
+                    cancel_probe=request.should_cancel,
+                    terminal_failure=dict(failure),
+                    terminal_active_step_id=context.active_step_id,
                 )
-                manifest_published = True
             except Exception:
-                pass
+                effective_status = "failed"
         try:
-            save_run_generation(
+            effective_status = arbitration.finalize_generation(
                 context.run_root,
-                terminal_record(
-                    context.record,
-                    status="failed",
-                    manifest_generation_id=(context.generation_id if manifest_published else None),
-                    completed_step_ids=tuple(
-                        item.step_id
-                        for item in context.step_results
-                        if item.status.value == "completed"
-                    ),
-                    active_step_id=context.active_step_id,
-                    failure=failure,
-                ),
+                generation_id=context.generation_id,
+                requested_status=effective_status,
+                cancel_probe=request.should_cancel,
+                failure=dict(failure),
+                active_step_id=context.active_step_id,
             )
         except Exception:
             pass
+        context.terminal_published = True
+        context.terminal_status = effective_status
 
     # ------------------------------------------------------------------
     # Run-state and import persistence
@@ -809,6 +807,7 @@ class V4RunApplication:
         supervisor: Any,
         *,
         run_root: str,
+        generation_id: str,
     ) -> Any:
         """Execute one step's items through the registry-resolved executor.
 
@@ -923,6 +922,15 @@ class V4RunApplication:
         batch = BatchStepExecutor(executor)
         if supervisor is not None:
             batch = batch.with_supervisor(supervisor)
+
+        def _ownership_guard() -> None:
+            """Refuse step publication once a newer generation owns the root."""
+            if not arbitration.generation_is_current(run_root, generation_id):
+                raise arbitration.StaleGenerationError(
+                    f"generation {generation_id!r} was superseded before publishing "
+                    f"step {planned.step_id!r}; stale step publication refused"
+                )
+
         step_request = StepExecutionRequest(
             step=planned,
             items=items,
@@ -940,6 +948,7 @@ class V4RunApplication:
             producer_provenance=provenance,
             executor_capability=contract.capability.value,
             should_cancel=request.should_cancel,
+            ownership_guard=_ownership_guard,
         )
         with SqliteWorkItemStore.open(store_path(run_root, planned.step_id)) as store:
             return batch.execute_step_resumable(
@@ -1043,11 +1052,69 @@ class V4RunApplication:
         step_results: tuple[Any, ...],
         plan: Any,
         run_root: str,
-        generation_id: str | None = None,
+        generation_id: str,
+        include_planned_analyses: bool = True,
+        run_inputs: Any = None,
+        cancel_probe: Any = None,
+        terminal_failure: dict[str, Any] | None = None,
+        terminal_active_step_id: str | None = None,
+    ) -> tuple[FrozenDict, str]:
+        """Claim terminal ownership, publish the manifest, confirm the winner.
+
+        The terminal claim, the manifest's atomic replace, and the terminal
+        generation confirmation all happen inside ONE arbitration region
+        (CONTRACT 4/6): a durable cancel claim recorded before the claim
+        makes cancellation the winner and no completed manifest is ever
+        written; a newer current generation raises
+        :class:`StaleGenerationError` before any byte is replaced.
+
+        Returns ``(manifest, effective_status)`` where ``effective_status``
+        is the arbitration winner (``completed``/``partial``/``failed``/
+        ``cancelled``), which may differ from the requested *status*.
+        """
+        completed_step_ids = tuple(
+            item.step_id for item in step_results if item.status.value == "completed"
+        )
+        with arbitration.terminal_publication(
+            run_root,
+            generation_id=generation_id,
+            requested_status=status,
+            cancel_probe=cancel_probe,
+        ) as scope:
+            effective_status = scope.claim.status
+            manifest = self._build_and_write_manifest(
+                run_id=run_id,
+                status=effective_status,
+                definition_digest=definition_digest,
+                step_results=step_results,
+                plan=plan,
+                run_root=run_root,
+                generation_id=generation_id,
+                include_planned_analyses=include_planned_analyses,
+                run_inputs=run_inputs,
+            )
+            scope.confirm(
+                manifest_generation_id=generation_id,
+                completed_step_ids=completed_step_ids,
+                active_step_id=terminal_active_step_id,
+                failure=terminal_failure,
+            )
+        return manifest, effective_status
+
+    def _build_and_write_manifest(
+        self,
+        *,
+        run_id: str,
+        status: str,
+        definition_digest: str,
+        step_results: tuple[Any, ...],
+        plan: Any,
+        run_root: str,
+        generation_id: str,
         include_planned_analyses: bool = True,
         run_inputs: Any = None,
     ) -> FrozenDict:
-        """Publish the producer-facing run-result manifest.
+        """Build, validate, and atomically write one run-result manifest.
 
         Every step entry carries the real published digest re-discovered
         from durable storage (never a status string) plus the planned-step
@@ -1068,6 +1135,10 @@ class V4RunApplication:
         the actual producer schema and atomically written to
         ``run_root/run_result.json`` (directory fsynced); the in-memory
         report mirrors the durable bytes.
+
+        This is a pure writer: callers MUST already hold the terminal
+        publication scope (see :meth:`_publish_manifest`), so the replace
+        can never race a competing generation's publication.
 
         Projection delegates to the producer-owned helpers
         (:mod:`confflow.producer.run_result`) so there is exactly one

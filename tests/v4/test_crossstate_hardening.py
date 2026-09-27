@@ -256,13 +256,13 @@ CRASH_BEFORE_MANIFEST = (
     "v4run.V4RunApplication._publish_manifest = lambda self, **kw: os._exit(17)"
 )
 CRASH_AFTER_MANIFEST = (
-    "import confflow.application.v4_run as v4run\n"
-    "_orig_save = v4run.save_run_generation\n"
-    "def _save(root, record):\n"
+    "import confflow.persistence.arbitration as arbitration\n"
+    "_orig_write = arbitration._write_public_generation_locked\n"
+    "def _write(root, record):\n"
     "    if record.status != 'running':\n"
     "        os._exit(17)\n"
-    "    return _orig_save(root, record)\n"
-    "v4run.save_run_generation = _save\n"
+    "    return _orig_write(root, record)\n"
+    "arbitration._write_public_generation_locked = _write\n"
 )
 
 

@@ -36,6 +36,7 @@ from .application.v4_entry import formal_v4_runner as _formal_v4_runner
 from .core.contracts import cli_output_to_txt
 from .core.exceptions import StopRequestedError
 from .core.logging import redirect_logging_streams
+from .persistence import arbitration
 from .worker_handoff import (
     HANDOFF_SCHEMA,
     _canonical_json,
@@ -90,7 +91,13 @@ def run_control_worker(
     root = StateRoot.resolve(state_root)
     payload, config_path, tasks = _load_handoff(handoff_path, run_id, root)
     repository = SQLiteExecutionRepository(root)
-    control_service = open_control_service(root.path)
+    work_dir = tasks[0]["work_dir"]
+    # The run root's arbitration ledger is the terminal winner authority;
+    # the control service projects it instead of deciding independently.
+    control_service = open_control_service(
+        root.path,
+        terminal_arbiter=lambda _run_id: arbitration.current_terminal_status(work_dir),
+    )
     aggregate = repository.read(run_id)
     if aggregate is None:
         raise ExecutionServiceError(

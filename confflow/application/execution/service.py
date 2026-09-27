@@ -73,6 +73,7 @@ class ExecutionService:
         executor: WorkflowExecutor,
         identity_verifier: IdentityVerifier,
         event_page_size: int = 100,
+        terminal_arbiter: Callable[[str], str | None] | None = None,
     ) -> None:
         if event_page_size < 1:
             raise ValueError("event_page_size must be positive")
@@ -80,6 +81,17 @@ class ExecutionService:
         self._executor = executor
         self._identity_verifier = identity_verifier
         self._event_page_size = event_page_size
+        #: Optional run-root terminal-arbitration reader.  When configured,
+        #: the service never decides a terminal winner itself: every terminal
+        #: projection must agree with the producer's durable arbitration
+        #: ledger for that run.
+        self._terminal_arbiter = terminal_arbiter
+
+    def _arbitration_winner(self, run_id: str) -> str | None:
+        """Return the run root's terminal winner, when arbitration is wired."""
+        if self._terminal_arbiter is None:
+            return None
+        return self._terminal_arbiter(run_id)
 
     def prepare(self, request: PrepareRequest) -> RunSnapshot:
         """Durably create a non-executing prepared aggregate idempotently."""
@@ -302,9 +314,28 @@ class ExecutionService:
     def lifecycle_terminal(
         self, run_id: str, token: str, state: RunState, artifacts: Sequence[Artifact]
     ) -> RunSnapshot:
-        """Commit terminal state and path-validated manifest in one CAS mutation."""
+        """Commit terminal state and path-validated manifest in one CAS mutation.
+
+        When the run root's terminal arbiter is wired, the callback must
+        project the arbitration winner: a competing terminal transition
+        (e.g. a completed callback after cancellation claimed the run) is
+        rejected instead of overwriting the winner.
+        """
         if state not in {RunState.COMPLETED, RunState.FAILED}:
             raise ValueError("Executor callbacks may only complete or fail a run")
+        winner = self._arbitration_winner(run_id)
+        if winner is not None:
+            expected = {
+                "completed": RunState.COMPLETED,
+                "failed": RunState.FAILED,
+                "partial": RunState.FAILED,
+            }.get(winner)
+            if expected is None or expected is not state:
+                raise ExecutionServiceError(
+                    ErrorCode.INVALID_STATE_TRANSITION,
+                    f"terminal ownership of {run_id} belongs to {winner!r}, "
+                    f"not {state.value!r}; refusing to overwrite the winner",
+                )
 
         def terminal(record: ExecutionAggregate) -> ExecutionAggregate:
             return replace(
@@ -324,7 +355,20 @@ class ExecutionService:
         )
 
     def lifecycle_cancelled(self, run_id: str, token: str) -> RunSnapshot:
-        """Commit cancellation only from the current token after work has stopped."""
+        """Commit cancellation only from the current token after work has stopped.
+
+        When the run root's terminal arbiter is wired, a cancellation
+        callback that contradicts the arbitration winner (completion or a
+        scientific failure claimed first) is rejected; the winner is never
+        reverted.
+        """
+        winner = self._arbitration_winner(run_id)
+        if winner is not None and winner != "cancelled":
+            raise ExecutionServiceError(
+                ErrorCode.INVALID_STATE_TRANSITION,
+                f"terminal ownership of {run_id} belongs to {winner!r}, not 'cancelled'; "
+                "refusing to overwrite the winner",
+            )
         while True:
             record = self._require(run_id)
             if record.launch_token != token:
@@ -497,6 +541,15 @@ class ExecutionService:
         latest = self._require(record.run_id)
         if latest.state in TERMINAL_STATES:
             raise _terminal_error(record.run_id)
+        winner = self._arbitration_winner(record.run_id)
+        if winner is not None and winner != "cancelled":
+            # A completion/failure claim linearized before this cancel: the
+            # cancel is not the winner and must not pretend otherwise.
+            raise ExecutionServiceError(
+                ErrorCode.INVALID_STATE_TRANSITION,
+                f"terminal ownership of {record.run_id} belongs to {winner!r}; "
+                "the cancellation did not claim the terminal transition",
+            )
         if latest.cancel_token != record.cancel_token or not latest.cancel_pending:
             return latest.snapshot()
         return latest.snapshot()

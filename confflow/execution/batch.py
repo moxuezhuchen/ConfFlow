@@ -186,6 +186,10 @@ class StepExecutionRequest:
     should_cancel: Callable[[], bool] | None = None
     producer_provenance: FrozenDict | None = None
     executor_capability: str | None = None
+    #: Optional generation-ownership guard, called immediately before step
+    #: publication.  A superseded writer's guard raises and its step result
+    #: is never published over the current generation's truth.
+    ownership_guard: Callable[[], None] | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "items", tuple(self.items))
@@ -590,6 +594,10 @@ class BatchStepExecutor:
                 f"({', '.join(sorted(gap_ids))}); gap code={gap.code}; "
                 f"reasons={', '.join(reasons)}"
             )
+        if request.ownership_guard is not None:
+            # CONTRACT 7: once a newer generation owns the run root, a
+            # superseded writer must not publish step-level truth either.
+            request.ownership_guard()
         verified_checksums = {
             artifact.checksum.lower()
             for item in collected

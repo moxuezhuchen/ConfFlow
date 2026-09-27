@@ -155,7 +155,16 @@ class RunGeneration:
 
 
 def save_run_generation(run_root: str, record: RunGeneration) -> None:
-    """Atomically publish *record* at ``<run_root>/run_generation.json``."""
+    """Atomically publish *record* at ``<run_root>/run_generation.json``.
+
+    Low-level atomic replace only: it guarantees file integrity, never
+    generation ownership.  Production callers MUST publish through
+    :mod:`confflow.persistence.arbitration` (``begin_generation`` /
+    ``terminal_publication`` / ``compare_and_set_generation`` /
+    ``finalize_generation``), which verify the expected current generation
+    inside the same mutual-exclusion region as the replace.  A direct call
+    here can overwrite a newer generation's record.
+    """
     root = validate_run_root(run_root)
     if not isinstance(record, RunGeneration):
         raise CorruptStateError("record must be a RunGeneration")
