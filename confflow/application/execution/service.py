@@ -529,6 +529,12 @@ class ExecutionService:
             if record.cancel_pending:
                 return record
             if record.state in TERMINAL_STATES:
+                if record.state is RunState.CANCELLED:
+                    # The run terminalized as cancelled while this admitted
+                    # cancellation was being recorded (its own intent won the
+                    # ordering): an idempotent success, not a lost cancel.
+                    # A terminal state observed on entry still raises.
+                    return record
                 raise _terminal_error(record.run_id)
             token = f"{record.run_id}.cancel.{record.revision + 1}"
             try:
@@ -577,6 +583,11 @@ class ExecutionService:
             )
         latest = self._require(record.run_id)
         if latest.state in TERMINAL_STATES:
+            if latest.state is RunState.CANCELLED:
+                # A cancelled terminal that appeared while this admitted
+                # cancellation was confirming is its own winner: report the
+                # idempotent success instead of a false terminal-run failure.
+                return latest.snapshot()
             raise _terminal_error(record.run_id)
         winner = self._arbitration_winner(record.run_id)
         if winner is not None and winner != "cancelled":
@@ -605,6 +616,10 @@ class ExecutionService:
         except RepositoryConflict:
             latest = self._require(record.run_id)
             if latest.state in TERMINAL_STATES:
+                if latest.state is RunState.CANCELLED:
+                    # Another cancel confirmation already terminalized this
+                    # cancellation; the request is idempotently satisfied.
+                    return latest.snapshot()
                 raise _terminal_error(record.run_id) from None
             return latest.snapshot()
         except RepositoryMutationError as error:

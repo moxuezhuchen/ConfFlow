@@ -360,6 +360,70 @@ class TestRealControlCancel:
             run_root=str(run_root), step_id="ts"
         )
 
+    def test_won_cancellation_reports_success_after_self_terminalization(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A cancel that wins must not report terminal_run for its own winner.
+
+        The admitted intent makes the producer terminalize the run as
+        cancelled while the cancel call is still doing its service
+        bookkeeping; the call must report the idempotent success (the CI
+        3.10/3.11 A5 race).
+        """
+        from confflow.application.execution.service import ExecutionService
+
+        script = _science_native(tmp_path)
+        barrier = _Barrier(monkeypatch, position="before-claim")
+        service, executor, spec = _service(tmp_path, _doc(script, -31), run_id="ctl-won-race")
+        assert barrier.reached.wait(TIMEOUT)
+
+        original_claim = ExecutionService._claim_cancel
+        cancel_thread_id: list[int] = []
+        outcome: dict[str, Any] = {}
+
+        def delayed_claim(self_: Any, record: Any) -> Any:
+            if threading.get_ident() == cancel_thread_id[0]:
+                deadline = time.monotonic() + TIMEOUT
+                while time.monotonic() < deadline:
+                    if service.status(spec.run_id).state is RunState.CANCELLED:
+                        break
+                    time.sleep(0.001)
+            return original_claim(self_, record)
+
+        monkeypatch.setattr(ExecutionService, "_claim_cancel", delayed_claim)
+
+        def do_cancel() -> None:
+            cancel_thread_id.append(threading.get_ident())
+            try:
+                outcome["snapshot"] = service.cancel(spec.run_id)
+            except BaseException as exc:  # noqa: BLE001 - the CI regression
+                outcome["error"] = exc
+
+        cancel_thread = threading.Thread(target=do_cancel)
+        cancel_thread.start()
+        # Wait for the durable cancel intent, then let the completion publish
+        # its cancelled winner while the cancel call is still in bookkeeping.
+        deadline = time.monotonic() + TIMEOUT
+        while time.monotonic() < deadline:
+            ledger = arbitration.load_ledger(str(Path(spec.work_dir)))
+            if ledger is not None and ledger.cancel_intent is not None:
+                break
+            time.sleep(0.001)
+        barrier.release.set()
+        cancel_thread.join(TIMEOUT)
+        executor.wait(TIMEOUT)
+
+        assert "error" not in outcome, outcome.get("error")
+        snapshot = outcome["snapshot"]
+        assert snapshot.state is RunState.CANCELLED
+        assert service.status(spec.run_id).state is RunState.CANCELLED
+        run_root = Path(spec.work_dir)
+        ledger = arbitration.load_ledger(str(run_root))
+        assert ledger is not None and ledger.terminal_status == "cancelled"
+        events = _events(service, spec.run_id)
+        assert events[-1] == "cancelled"
+        assert "completed" not in events
+
     def test_cancel_revokes_crashed_unconfirmed_claim(self, tmp_path: Path) -> None:
         """A crashed claim with no manifest never linearized: cancel wins.
 
