@@ -83,6 +83,10 @@ from ..domain.diagnostics import Diagnostic, DiagnosticSeverity, diagnostic_sort
 from ..domain.result import ResultSet, ScientificResult
 from ..domain.structure import StructureRecord, StructureSet
 from ..execution.contracts import ExecutorCapability
+from ..execution.output_identity import (
+    PATH_ENDPOINT_FORWARD_ROLE,
+    PATH_ENDPOINT_REVERSE_ROLE,
+)
 from .grouping import build_reaction_groups
 from .models import (
     ASSIGNMENT_EXPLICIT,
@@ -248,6 +252,108 @@ def _merge_results(inputs: AnalysisInputs) -> ResultSet:
     return ResultSet(tuple(merged))
 
 
+def _eligible_owners(
+    descendant: StructureRecord | None,
+    group: ReactionGroup | None,
+    triple: set[str],
+) -> set[str]:
+    """Return the triple members a descendant may attribute to.
+
+    A descendant carrying an endpoint role is slot-pinned: a
+    ``path_endpoint_forward`` record may only track to the forward
+    endpoint and a ``path_endpoint_reverse`` record only to the reverse
+    endpoint.  Any other role (including ``None``) may track to any
+    triple member.  Without group context every triple member is
+    eligible.  No ordering is consulted.
+    """
+    if group is None or descendant is None:
+        return set(triple)
+    role = descendant.role
+    if role == PATH_ENDPOINT_FORWARD_ROLE:
+        forward = group.forward_endpoint_id
+        return {forward} if forward is not None and forward in triple else set()
+    if role == PATH_ENDPOINT_REVERSE_ROLE:
+        reverse = group.reverse_endpoint_id
+        return {reverse} if reverse is not None and reverse in triple else set()
+    return set(triple)
+
+
+def _resolve_attribution(
+    subject: str,
+    triple: set[str],
+    structures_by_id: Mapping[str, StructureRecord],
+    group: ReactionGroup | None = None,
+) -> tuple[str | None, str, tuple[str, ...]]:
+    """Resolve *subject* to its unique nearest triple ancestor, if any.
+
+    The parent graph is searched exhaustively, layer by layer (one
+    layer per parent hop), over deduplicated id sets: every parent path
+    is explored and the shortest graph distance carrying an eligible
+    triple member wins.  Zero candidates at every distance is
+    ``missing``; exactly one unique candidate at the shortest distance
+    is attributed; more than one candidate tied at the shortest
+    distance is ``ambiguous`` and fails closed to ``None``.  A nearer
+    unique candidate always beats farther ones; a tie never resolves
+    by parent-tuple order, lexical order, or first-parent-wins.
+
+    Explicit identity gates apply before any graph walk when *group*
+    is given: a descendant whose ``group_key`` differs from the
+    group's key is ``rejected_group_key`` (wrong-group ancestors never
+    attribute across groups), and endpoint-role pinning restricts the
+    eligible set (a forward descendant only tracks to the forward
+    node, reverse likewise).  Branches traversing a known record with
+    a mismatched ``group_key`` are dead and neither count nor expand.
+    Cycles fail closed to ``missing``/``None``.
+    """
+    triple_set = set(triple)
+    if subject in triple_set:
+        return (subject, "direct", (subject,))
+    descendant = structures_by_id.get(subject)
+    if descendant is None:
+        return (None, "unknown_structure", ())
+    if group is not None and descendant.group_key != group.group_key:
+        return (None, "rejected_group_key", ())
+    eligible = _eligible_owners(descendant, group, triple_set)
+    if group is not None and not eligible:
+        return (None, "rejected_role", ())
+    if not eligible:
+        return (None, "missing", ())
+    seen: set[str] = {subject}
+    frontier: set[str] = {subject}
+    while frontier:
+        next_layer: set[str] = set()
+        hits: set[str] = set()
+        for node_id in frontier:
+            record = structures_by_id.get(node_id)
+            if record is None:
+                continue
+            for parent_id in set(record.parent_ids):
+                if parent_id in seen:
+                    continue
+                seen.add(parent_id)
+                parent_record = structures_by_id.get(parent_id)
+                if (
+                    group is not None
+                    and parent_record is not None
+                    and parent_record.group_key != group.group_key
+                ):
+                    continue
+                if parent_id in triple_set:
+                    if parent_id in eligible:
+                        hits.add(parent_id)
+                    continue
+                next_layer.add(parent_id)
+        if len(hits) == 1:
+            owner = next(iter(hits))
+            return (owner, "attributed", (owner,))
+        if len(hits) > 1:
+            return (None, "ambiguous", tuple(sorted(hits)))
+        if not next_layer:
+            return (None, "missing", ())
+        frontier = next_layer
+    return (None, "missing", ())
+
+
 def _lookup_for_group(
     group: ReactionGroup,
     pools: Mapping[str, ResultSet],
@@ -265,10 +371,16 @@ def _lookup_for_group(
     structures_by_id : Mapping or None
         Structure index for lineage expansion; when given with
         *merged_results*, descendant results (optimized/frequency/SP
-        outputs) join the pool of their nearest triple-subject ancestor
-        with the ancestor subject rewritten in, preserving the original
-        ``result_id``/provenance for traceability.  Selection downstream
-        stays unique-or-ambiguous-fail over the expanded pool.
+        outputs) join the pool of their unique nearest triple-subject
+        ancestor with the ancestor subject rewritten in, preserving the
+        original ``result_id``/provenance for traceability.  Attribution
+        is order independent: all parent paths are searched, only a
+        unique nearest eligible ancestor attributes, and ties at the
+        shortest distance attribute nowhere (fail closed, never
+        first-parent-wins).  Group-key mismatches never attribute and
+        endpoint-role descendants only track to their own slot.
+        Selection downstream stays unique-or-ambiguous-fail over the
+        expanded pool.
     merged_results : ResultSet or None
         Full merged results for lineage expansion (required with
         *structures_by_id*).
@@ -278,6 +390,27 @@ def _lookup_for_group(
     dict[str, ResultSet]
         Pools keyed by triple subject id only.
     """
+    lookup, _ = _lookup_for_group_with_diagnostics(group, pools, structures_by_id, merged_results)
+    return lookup
+
+
+def _lookup_for_group_with_diagnostics(
+    group: ReactionGroup,
+    pools: Mapping[str, ResultSet],
+    structures_by_id: Mapping[str, StructureRecord] | None = None,
+    merged_results: ResultSet | None = None,
+) -> tuple[dict[str, ResultSet], tuple[Diagnostic, ...]]:
+    """Return per-node pools plus lineage-ambiguity diagnostics.
+
+    Attribution follows :func:`_resolve_attribution`: unique nearest
+    descendants join their owner's pool (subject rewritten); ambiguous
+    descendants (tied at the shortest distance) join no pool and yield
+    one ``analysis_group_ambiguous`` error each so the group fails
+    closed instead of swapping on parent-tuple order.  Wrong-group,
+    wrong-slot, unknown, and missing lineages attribute nowhere and
+    stay silent (the group fails via the usual missing-leg path when
+    it needs that energy).
+    """
     from dataclasses import replace as _replace
 
     triple = set(group.subject_ids())
@@ -285,47 +418,57 @@ def _lookup_for_group(
     for subject in group.subject_ids():
         lookup[subject] = pools.get(subject, ResultSet())
     if structures_by_id is None or merged_results is None:
-        return lookup
+        return (lookup, ())
+    diagnostics: list[Diagnostic] = []
+    reported: set[str] = set()
     for result in merged_results:
         subject = result.subject_structure_id
         if subject is None or subject in triple:
             continue
-        owner = _nearest_triple_ancestor(subject, triple, structures_by_id)
-        if owner is None:
-            continue
-        rewritten = _replace(result, subject_structure_id=owner)
-        lookup[owner] = ResultSet(tuple(lookup[owner]) + (rewritten,))
-    return lookup
+        owner, status, candidates = _resolve_attribution(subject, triple, structures_by_id, group)
+        if owner is not None:
+            rewritten = _replace(result, subject_structure_id=owner)
+            lookup[owner] = ResultSet(tuple(lookup[owner]) + (rewritten,))
+        elif status == "ambiguous" and subject not in reported:
+            reported.add(subject)
+            diagnostics.append(
+                Diagnostic(
+                    code="analysis_group_ambiguous",
+                    message=(
+                        f"reaction group {group.group_key!r} has ambiguous lineage "
+                        f"for descendant {subject!r}; refusing order-dependent attribution"
+                    ),
+                    severity=DiagnosticSeverity.ERROR,
+                    details={
+                        "reason": "ambiguous_lineage",
+                        "group_key": group.group_key,
+                        "subject_structure_id": subject,
+                        "candidate_ids": list(candidates),
+                    },
+                )
+            )
+    ordered = tuple(sorted(diagnostics, key=lambda item: str(item.details.get("subject_structure_id", ""))))
+    return (lookup, ordered)
 
 
 def _nearest_triple_ancestor(
     subject: str,
     triple: set[str],
     structures_by_id: Mapping[str, StructureRecord],
+    *,
+    group: ReactionGroup | None = None,
 ) -> str | None:
-    """Return the nearest triple-subject ancestor of *subject*, if any.
+    """Return the unique nearest triple-subject ancestor of *subject*.
 
-    Walks ``parent_ids`` transitively from *subject*; the first triple
-    member met walking up owns the descendant.  A descendant reached
-    through another triple member belongs to that nearer member, never
-    to a farther one.  Cycles fail closed to ``None``.
+    Exhaustive layer-by-layer search over all parent paths with
+    group-key and endpoint-role gating (see
+    :func:`_resolve_attribution`): one unique candidate at the
+    shortest distance attributes, zero is missing, and a tie at the
+    shortest distance fails closed to ``None``.  Never first-parent-,
+    lexical-, or tuple-order-wins.  Cycles fail closed to ``None``.
     """
-    seen: set[str] = set()
-    frontier = [subject]
-    while frontier:
-        current = frontier.pop()
-        if current in seen:
-            continue
-        seen.add(current)
-        record = structures_by_id.get(current)
-        if record is None:
-            continue
-        for parent in record.parent_ids:
-            if parent in triple:
-                return parent
-            if parent not in seen:
-                frontier.append(parent)
-    return None
+    owner, _status, _candidates = _resolve_attribution(subject, set(triple), structures_by_id, group)
+    return owner
 
 
 class AnalysisExecutor:
@@ -413,12 +556,16 @@ class AnalysisExecutor:
         for group in groups:
             resolved = replace(group, assignment=ASSIGNMENT_EXPLICIT) if explicit else group
             group_diagnostics = list(resolved.diagnostics)
+            lookup, lineage_diagnostics = _lookup_for_group_with_diagnostics(
+                resolved, pools, structures_by_id, source_results
+            )
+            group_diagnostics.extend(lineage_diagnostics)
             outcome: ComputedGroup | None = None
             if not [item for item in group_diagnostics if item.is_error] and resolved.is_complete:
                 try:
                     candidate = model.compute(
                         resolved,
-                        _lookup_for_group(resolved, pools, structures_by_id, source_results),
+                        lookup,
                         analysis_step_id=analysis_step_id,
                         endpoint_assignment=dict(assignment_map),
                     )
