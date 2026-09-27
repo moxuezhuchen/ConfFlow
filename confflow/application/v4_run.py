@@ -450,6 +450,7 @@ class V4RunApplication:
             plan=plan,
             run_root=run_root,
             generation_id=generation_id,
+            run_inputs=run_inputs,
         )
         context.terminal_published = True
         context.terminal_status = status
@@ -540,6 +541,7 @@ class V4RunApplication:
                     run_root=context.run_root,
                     generation_id=context.generation_id,
                     include_planned_analyses=False,
+                    run_inputs=request.run_inputs,
                 )
                 manifest_published = True
             except Exception:
@@ -922,6 +924,7 @@ class V4RunApplication:
         run_root: str,
         generation_id: str | None = None,
         include_planned_analyses: bool = True,
+        run_inputs: Any = None,
     ) -> FrozenDict:
         """Publish the producer-facing run-result manifest.
 
@@ -930,15 +933,18 @@ class V4RunApplication:
         semantic digest from the validated plan fingerprint, schema-exact
         counts and diagnostics, and only artifacts with verified sha256
         checksums and portable run-relative locators.  Top-level ``results``
-        carries one ResultRef per real emitted scientific result.  Analysis
-        steps keep their minimal ``{capability, step_id}`` ref AND project
-        rich reaction-group entries from the actual analysis
+        carries the authoritative ResultRef universe: one entry per real
+        emitted scientific result of the current generation plus one entry
+        per run-input reference an analysis may cite.  Analysis steps keep
+        their minimal ``{capability, step_id}`` ref AND project rich
+        reaction-group entries from the actual analysis
         ``StepResult``/``ScientificResult`` objects (group_key, TS,
         forward/reverse endpoints, E/G entries, barriers, verbatim
-        assignment, source ``ResultRef`` ids) via the producer-owned
-        projector, so the durable manifest is readable as reaction groups
-        by the JobDesk consumer.  The manifest is validated against the
-        actual producer schema and atomically written to
+        assignment, validated source ``ResultRef`` ids) via the
+        producer-owned projector, so the durable manifest is readable as
+        reaction groups by the JobDesk consumer and every citation resolves
+        against the published universe.  The manifest is validated against
+        the actual producer schema and atomically written to
         ``run_root/run_result.json`` (directory fsynced); the in-memory
         report mirrors the durable bytes.
 
@@ -955,9 +961,16 @@ class V4RunApplication:
         from ..producer.contract import build_run_result_manifest, run_result_json_schema
         from ..producer.run_result import (
             artifact_entry,
+            build_lineage_roots,
+            build_result_reference_index,
             project_analysis_groups,
-            result_ref_entry,
+            result_ref_entries,
             step_entry,
+        )
+
+        run_input_results = getattr(run_inputs, "results", ()) if run_inputs is not None else ()
+        run_input_structures = (
+            getattr(run_inputs, "structures", ()) if run_inputs is not None else ()
         )
 
         semantic = {
@@ -967,7 +980,6 @@ class V4RunApplication:
         }
         steps: list[dict[str, Any]] = []
         artifacts: list[dict[str, Any]] = []
-        results: list[dict[str, Any]] = []
         for result in step_results:
             digest = detect_published(run_root=run_root, step_id=result.step_id)
             if digest is None:
@@ -982,10 +994,24 @@ class V4RunApplication:
                     semantic_digest=semantic.get(result.step_id),
                 )
             )
-            for record in result.results:
-                results.append(result_ref_entry(record))
             for artifact in result.artifacts:
                 artifacts.append(artifact_entry(artifact))
+        # Authoritative ResultRef universe: the current generation's actually
+        # published results plus legitimate run-input references.  Analysis
+        # citations are validated against exactly this index, and the run-input
+        # refs are published so a consumer can resolve every citation.
+        try:
+            references = build_result_reference_index(
+                tuple(step_results), run_input_results=run_input_results
+            )
+            results = result_ref_entries(tuple(step_results), run_input_results=run_input_results)
+            lineage_roots = build_lineage_roots(
+                tuple(step_results), extra_structures=run_input_structures
+            )
+        except ValueError as exc:
+            raise DomainError(
+                f"run-result manifest cannot build its reference index: {exc}"
+            ) from exc
         analyses: list[dict[str, Any]] = []
         if include_planned_analyses:
             for planned in plan.steps:
@@ -994,7 +1020,13 @@ class V4RunApplication:
                         {"capability": planned.executor.value, "step_id": planned.step_id}
                     )
         try:
-            analyses.extend(project_analysis_groups(tuple(step_results)))
+            analyses.extend(
+                project_analysis_groups(
+                    tuple(step_results),
+                    references=references,
+                    lineage_roots=lineage_roots,
+                )
+            )
         except ValueError as exc:
             raise DomainError(f"run-result manifest cannot project analysis groups: {exc}") from exc
         manifest = build_run_result_manifest(

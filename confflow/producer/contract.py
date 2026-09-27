@@ -422,6 +422,7 @@ def run_result_json_schema() -> dict[str, Any]:
         "properties": {
             "result_id": {"type": "string", "minLength": 1},
             "kind": {"type": "string", "minLength": 1},
+            "origin": {"enum": ["produced", "run_input"]},
             "subject_structure_id": {"type": ["string", "null"]},
             "source_step_id": {"type": ["string", "null"]},
             "source_work_item_id": {"type": ["string", "null"]},

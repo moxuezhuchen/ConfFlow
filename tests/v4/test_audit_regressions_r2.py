@@ -620,6 +620,110 @@ def _sleeping_native(root: Path, *, sleep_seconds: float) -> Path:
     return script
 
 
+class TestR4ResultReferenceIntegrity:
+    """R4: analysis citations resolve against the published universe."""
+
+    @staticmethod
+    def _run_analysis(tmp_path: Path) -> tuple[Any, dict[str, Any]]:
+        doc, inputs = _analysis_doc("local")
+        run_root = tmp_path / "run"
+        report = V4RunApplication(supervisor=NativeProcessSupervisor()).run(
+            V4RunRequest(workflow_document=doc, run_inputs=inputs, run_root=str(run_root))
+        )
+        manifest = json.loads((run_root / RUN_RESULT_FILENAME).read_text())
+        return report, manifest
+
+    def test_formal_manifest_publishes_and_resolves_every_citation(self, tmp_path: Path) -> None:
+        report, manifest = self._run_analysis(tmp_path)
+        assert report.status == "completed"
+        published = {entry["result_id"]: entry for entry in manifest["results"]}
+        run_input_ids = {
+            entry["result_id"]
+            for entry in manifest["results"]
+            if entry.get("origin") == "run_input"
+        }
+        assert run_input_ids == {
+            "Tenergy",
+            "Tgibbs_correction",
+            "Fenergy",
+            "Fgibbs_correction",
+            "Renergy",
+            "Rgibbs_correction",
+        }
+        groups = [entry for entry in manifest["analyses"] if "group_key" in entry]
+        assert groups, "the formal run must project its reaction group"
+        for group in groups:
+            for cited in group["source_result_ids"]:
+                assert cited in published, cited
+        assert set(groups[0]["source_result_ids"]) <= run_input_ids
+
+    def test_projector_rejects_dangling_duplicate_typed_and_stale(self, tmp_path: Path) -> None:
+        from dataclasses import replace
+
+        from confflow.domain import ResultSet
+        from confflow.producer.run_result import project_analysis_groups
+
+        report, _manifest = self._run_analysis(tmp_path)
+        (step,) = report.step_results
+        profile = next(item for item in step.results if item.kind == "reaction_profile")
+        for sources, expected in (
+            (["NONEXISTENT"], "unresolved"),
+            (["NONEXISTENT", "NONEXISTENT"], "duplicate"),
+            ([123], "non-empty strings"),
+            (["old-attempt-id"], "unresolved"),
+        ):
+            value = dict(profile.value)
+            value["source_result_ids"] = sources
+            changed = replace(profile, value=FrozenDict(value))
+            changed_step = replace(step, results=ResultSet((changed,)))
+            with pytest.raises(ValueError) as error:
+                project_analysis_groups((changed_step,))
+            assert expected in str(error.value), (sources, error.value)
+
+    def test_projector_rejects_wrong_subject_citation(self, tmp_path: Path) -> None:
+        from dataclasses import replace
+
+        from confflow.domain import ResultSet, ScientificResult
+        from confflow.domain.units import Unit
+        from confflow.producer.run_result import project_analysis_groups
+
+        report, _manifest = self._run_analysis(tmp_path)
+        (step,) = report.step_results
+        profile = next(item for item in step.results if item.kind == "reaction_profile")
+        foreign = ScientificResult(
+            kind="energy",
+            value=-99.0,
+            unit=Unit.HARTREE,
+            subject_structure_id="not-in-group",
+            result_id="foreign-energy",
+        )
+        value = dict(profile.value)
+        value["source_result_ids"] = ["foreign-energy"]
+        changed = replace(profile, value=FrozenDict(value))
+        changed_step = replace(step, results=ResultSet((changed, foreign)))
+        with pytest.raises(ValueError) as error:
+            project_analysis_groups((changed_step,))
+        assert "wrong-subject" in str(error.value)
+
+    def test_reference_index_rejects_duplicate_produced_ids(self) -> None:
+        from dataclasses import replace
+
+        from confflow.domain import ResultSet, ScientificResult
+        from confflow.domain.units import Unit
+        from confflow.producer.run_result import build_result_reference_index
+
+        first = ScientificResult(kind="energy", value=-1.0, unit=Unit.HARTREE, result_id="dup")
+        second = ScientificResult(kind="energy", value=-2.0, unit=Unit.HARTREE, result_id="dup")
+        step = type(
+            "StepStub",
+            (),
+            {"step_id": "s", "results": ResultSet((first, replace(second)))},
+        )()
+        with pytest.raises(ValueError) as error:
+            build_result_reference_index((step,))
+        assert "duplicate" in str(error.value)
+
+
 class TestR6GenerationLifecycle:
     """R6: a new generation can never leave an old manifest current."""
 

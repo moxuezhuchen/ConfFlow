@@ -53,8 +53,16 @@ def _next_tmp_suffix() -> str:
     return f"{os.getpid()}.{_TMP_COUNTER}"
 
 
-def result_ref_entry(record: Any) -> dict[str, Any]:
-    """Project one real ``ScientificResult`` onto its ResultRef wire entry."""
+def result_ref_entry(record: Any, *, origin: str | None = None) -> dict[str, Any]:
+    """Project one real ``ScientificResult`` onto its ResultRef wire entry.
+
+    ``origin`` distinguishes the current generation's produced results
+    (``"produced"``) from run-input references the analysis consumed
+    (``"run_input"``), so the manifest's reference universe is explicit and
+    every analysis citation can be resolved by a consumer.
+    """
+    if origin is not None and origin not in ("produced", "run_input"):
+        raise ValueError(f"unknown result-ref origin {origin!r}")
     entry: dict[str, Any] = {
         "result_id": record.result_id,
         "kind": record.kind,
@@ -67,7 +75,94 @@ def result_ref_entry(record: Any) -> dict[str, Any]:
     }
     if not entry["result_id"]:
         raise ValueError("refusing to project a result without result_id (legacy record)")
+    if origin is not None:
+        entry["origin"] = origin
     return entry
+
+
+def build_result_reference_index(
+    step_results: tuple[Any, ...],
+    *,
+    run_input_results: Any = (),
+) -> dict[str, dict[str, Any]]:
+    """Build the authoritative ResultRef universe for manifest publication.
+
+    The universe contains exactly two populations:
+
+    - the current generation's actually published ``ScientificResults``
+      (``origin="produced"``), so a stale or superseded attempt's id can
+      never resolve; and
+    - legitimate run-input ``ResultRefs`` (``origin="run_input"``) that an
+      analysis may cite.
+
+    Every entry carries the identity a consumer needs (kind, subject,
+    source step/work item, digests).  Duplicate or identity-less ids fail
+    closed: a reference index with an ambiguous identity must never be
+    published.
+    """
+    index: dict[str, dict[str, Any]] = {}
+    for step_result in step_results:
+        for record in step_result.results:
+            entry = result_ref_entry(record, origin="produced")
+            result_id = entry["result_id"]
+            if result_id in index:
+                raise ValueError(
+                    f"duplicate result_id {result_id!r} in the reference universe "
+                    f"(step {step_result.step_id!r})"
+                )
+            index[result_id] = entry
+    for record in _iter_run_input_results(run_input_results):
+        entry = result_ref_entry(record, origin="run_input")
+        result_id = entry["result_id"]
+        if result_id in index:
+            raise ValueError(
+                f"run-input result_id {result_id!r} collides with an already "
+                "indexed result; refusing an ambiguous reference"
+            )
+        index[result_id] = entry
+    return index
+
+
+def result_ref_entries(
+    step_results: tuple[Any, ...],
+    *,
+    run_input_results: Any = (),
+) -> list[dict[str, Any]]:
+    """Ordered ResultRef wire entries: produced results, then run-input refs.
+
+    The ordering is deterministic (step order, then result order, then the
+    named run-input collections' own order), so manifest bytes never depend
+    on dict iteration order.
+    """
+    entries = [
+        result_ref_entry(record, origin="produced")
+        for step_result in step_results
+        for record in step_result.results
+    ]
+    entries.extend(
+        result_ref_entry(record, origin="run_input")
+        for record in _iter_run_input_results(run_input_results)
+    )
+    return entries
+
+
+def _iter_run_input_results(run_input_results: Any) -> tuple[Any, ...]:
+    """Flatten named run-input result collections into one tuple."""
+    if run_input_results is None:
+        return ()
+    records: list[Any] = []
+    if isinstance(run_input_results, Mapping):
+        collections = run_input_results.values()
+    else:
+        collections = (run_input_results,)
+    for collection in collections:
+        if collection is None:
+            continue
+        try:
+            records.extend(tuple(collection))
+        except TypeError as exc:
+            raise ValueError(f"run-input results are not iterable: {exc}") from exc
+    return tuple(records)
 
 
 def artifact_entry(record: Any) -> dict[str, Any]:
@@ -241,7 +336,105 @@ def reaction_group_entry(
 KIND_REACTION_PROFILE: str = "reaction_profile"
 
 
-def project_analysis_groups(step_results: tuple[Any, ...]) -> list[dict[str, Any]]:
+def _validate_citations(
+    *,
+    group_key: str,
+    raw_sources: list[Any],
+    references: Mapping[str, Mapping[str, Any]],
+    subjects: set[str],
+    lineage_roots: Mapping[str, str],
+) -> list[str]:
+    """Validate one group's citations against the reference universe.
+
+    A cited produced result may carry a *descendant* structure subject (the
+    TSPES chain computes node energies on downstream copies of the TS and
+    endpoints); such a subject is accepted when its lineage root is the
+    lineage root of one of the group's own structures.  A subject with no
+    known lineage is refused.
+    """
+    cited: list[str] = []
+    for item in raw_sources:
+        if not isinstance(item, str) or not item.strip():
+            raise ValueError(
+                f"group {group_key!r} cites {item!r}; source result ids must be "
+                "non-empty strings"
+            )
+        if item in cited:
+            raise ValueError(f"group {group_key!r} cites duplicate result id {item!r}")
+        cited.append(item)
+    subject_roots = {lineage_roots.get(subject, subject) for subject in subjects}
+    for item in cited:
+        reference = references.get(item)
+        if reference is None:
+            raise ValueError(
+                f"group {group_key!r} cites unresolved result id {item!r}; "
+                "refusing to publish a dangling reference"
+            )
+        subject = reference.get("subject_structure_id")
+        if subjects and subject is not None and subject not in subjects:
+            if lineage_roots.get(subject) not in subject_roots:
+                raise ValueError(
+                    f"group {group_key!r} cites result {item!r} for subject "
+                    f"{subject!r}, which is neither one of its own structures "
+                    f"{sorted(subjects)!r} nor in their lineage; refusing a "
+                    "wrong-subject reference"
+                )
+    return cited
+
+
+def build_lineage_roots(
+    step_results: tuple[Any, ...],
+    *,
+    extra_structures: Any = (),
+) -> dict[str, str]:
+    """Map every known structure id to its lineage root.
+
+    Built from the current generation's produced structures plus any extra
+    structure collections (run inputs); unknown subjects stay unknown and
+    fail the citation check closed.
+    """
+    roots: dict[str, str] = {}
+
+    def _add(record: Any) -> None:
+        structure_id = getattr(record, "id", None)
+        if isinstance(structure_id, str) and structure_id:
+            root = getattr(record, "lineage_root_id", None) or structure_id
+            roots.setdefault(structure_id, root)
+
+    for step_result in step_results:
+        for record in getattr(step_result, "structures", ()) or ():
+            _add(record)
+    for record in _iter_structure_collections(extra_structures):
+        _add(record)
+    return roots
+
+
+def _iter_structure_collections(collections: Any) -> tuple[Any, ...]:
+    """Flatten named or bare structure collections into one tuple."""
+    if collections is None:
+        return ()
+    records: list[Any] = []
+    if isinstance(collections, Mapping):
+        values = collections.values()
+    else:
+        values = (collections,)
+    for collection in values:
+        if collection is None:
+            continue
+        try:
+            records.extend(tuple(collection))
+        except TypeError as exc:
+            raise ValueError(f"structures are not iterable: {exc}") from exc
+    return tuple(records)
+
+
+def project_analysis_groups(
+    step_results: tuple[Any, ...],
+    *,
+    references: Mapping[str, Mapping[str, Any]] | None = None,
+    run_input_results: Any = (),
+    lineage_roots: Mapping[str, str] | None = None,
+) -> list[dict[str, Any]]:
     """Project rich reaction-group entries from real analysis StepResults.
 
     Scans every ``StepResult`` for ``reaction_profile`` scientific results
@@ -251,14 +444,23 @@ def project_analysis_groups(step_results: tuple[Any, ...]) -> list[dict[str, Any
     result's own subject), the verbatim ``electronic_energy``/``gibbs_energy``
     entries plus ``barriers``, the assignment marker with the explicit
     endpoint mapping repeated verbatim when present, and the analysis's own
-    ``source_result_ids`` carried through verbatim.  No science is
-    recomputed here: energies, barriers, assignments, and citations are
-    copied verbatim from the profile payload, and a profile without usable
-    citations fails closed instead of inventing identity.  In full
-    step-sourced flows the cited ids coincide with published manifest
-    results; analyses over run-input reference results cite those inputs'
-    ``ResultRef`` ids.
+    ``source_result_ids`` validated against the authoritative reference
+    universe.  No science is recomputed here: energies, barriers,
+    assignments, and citations are copied verbatim from the profile payload.
+
+    Citation referential integrity is fail-closed.  *references* is the
+    ResultRef universe (see :func:`build_result_reference_index`); when not
+    supplied it is built from *step_results* plus *run_input_results*.
+    Every cited id must be a non-empty string, unique within the group,
+    resolvable in the universe, and — when the group declares its
+    TS/forward/reverse subjects — carry one of those subjects.  A dangling,
+    duplicated, mistyped, stale, or wrong-subject citation is refused
+    instead of published.
     """
+    if references is None:
+        references = build_result_reference_index(step_results, run_input_results=run_input_results)
+    if lineage_roots is None:
+        lineage_roots = build_lineage_roots(step_results)
     groups: list[dict[str, Any]] = []
     for step_result in step_results:
         for record in step_result.results:
@@ -299,12 +501,13 @@ def project_analysis_groups(step_results: tuple[Any, ...]) -> list[dict[str, Any
             raw_sources = payload.get("source_result_ids") or []
             if not isinstance(raw_sources, list) or not raw_sources:
                 raise ValueError(f"group {group_key!r} cites no source result ids")
-            cited = [str(item) for item in raw_sources]
-            if any(not item.strip() for item in cited):
-                raise ValueError(
-                    f"group {group_key!r} cites an unusable source result id; "
-                    "refusing to project"
-                )
+            cited = _validate_citations(
+                group_key=group_key,
+                raw_sources=raw_sources,
+                references=references,
+                subjects={subject for subject in (ts_id, forward_id, reverse_id) if subject},
+                lineage_roots=lineage_roots,
+            )
             endpoint_assignment = payload.get("endpoint_assignment")
             provenance = {
                 "contract": ANALYSIS_REACTION_PROFILE_CONTRACT,
@@ -556,6 +759,8 @@ __all__ = [
     "KIND_REACTION_PROFILE",
     "RUN_RESULT_FILENAME",
     "artifact_entry",
+    "build_lineage_roots",
+    "build_result_reference_index",
     "build_runtime_manifest",
     "check_manifest_against_contract",
     "manifest_digest",
@@ -563,6 +768,7 @@ __all__ = [
     "publish_manifest_atomically",
     "reaction_group_dict",
     "reaction_group_entry",
+    "result_ref_entries",
     "result_ref_entry",
     "step_entry",
     "verify_artifact_bytes",
