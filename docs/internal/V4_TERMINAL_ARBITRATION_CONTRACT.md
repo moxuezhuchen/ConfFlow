@@ -10,6 +10,16 @@ Closes the two final-review P1 races:
   after G2 became current and overwrite `run_result.json` /
   `run_generation.json`, regressing the current generation to G1.
 
+And the two final-recheck blockers:
+
+- **P1 real control cancel** — `confflow control cancel` recorded
+  `cancel_requested` and returned `ok` without claiming the run root's
+  arbitration ordering; a completion that already owned the claim still won.
+- **P0 stale step publication** — the step-result ownership check and the
+  durable write were separate operations (TOCTOU), so a superseded
+  generation could overwrite the current generation's StepResult and leave
+  the manifest digest inconsistent with disk bytes.
+
 The fix is one authority, not two patches: every terminal transition and
 every generation mutation goes through
 `confflow/persistence/arbitration.py`.
@@ -47,6 +57,26 @@ database can no longer become an independent winner.
   durable marker observed inside the same claim region; the controller
   re-reads the arbitration winner after touching it and rejects a lost
   cancel.
+- **Control cancellation admission** (Astra P1): the real
+  `confflow control cancel` runs `ExecutionService.cancel` with a
+  `cancel_arbiter` resolved from the run's control-channel run-root pointer
+  (`<state_root>/v1/runs/<run_id>/work/run_root`, published by
+  `build_workflow_service`).  Admission durably claims the run root's
+  ordering BEFORE any service-state mutation, so `cancel_requested` is
+  never recorded for a cancel that lost.  While a terminal publication holds
+  the lock across its manifest write, the non-blocking probe returns the
+  already-visible terminal claim and the control response is an explicit
+  `invalid_state_transition` failure; a stale unconfirmed claim with no live
+  publication is revoked under the lock first, so it cannot block a
+  legitimate cancel.  The CANCEL beacon remains only the worker stop signal.
+- **Generation-owned publication** (Astra P0):
+  `generation_publication_scope(run_root, expected_generation_id)` holds the
+  lock while the caller writes.  `publish_step_result(expected_generation_id=…)`
+  performs the expected-owner check and the atomic StepResult replace inside
+  that one region, and every `run_state.json` write in the V4 application
+  goes through the same fence.  A superseded generation raises
+  `StaleGenerationError` before replacing a byte, so a manifest's step
+  digest can never disagree with the durable StepResult bytes.
 - **Generation current**: `begin_generation` installs the owner under the
   lock.  A newer generation immediately and permanently invalidates the
   older writer: `terminal_publication`, `finalize_generation`,
@@ -79,6 +109,12 @@ projection.  On the next lock acquisition:
   so a later cancel or a newer generation wins deterministically;
 - a confirmed claim whose public record is missing/stale is rewritten from
   the ledger.
+
+The control worker applies the same authority during crash recovery: a
+crashed running attempt whose run root already proves a terminal outcome
+(manifest-backed completion, durable cancel, confirmed failure) is projected
+onto the service aggregate instead of being rerun; only a run root with no
+terminal winner is requeued for a fresh generation.
 
 ## Residuals (not P1)
 
