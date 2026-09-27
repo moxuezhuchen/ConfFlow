@@ -64,6 +64,7 @@ from ..domain.work_item import (
     Timing,
     WorkItemResult,
 )
+from .arbitration import generation_publication_scope
 from .contracts import (
     STEP_RESULT_FILENAME,
     CorruptStateError,
@@ -133,7 +134,13 @@ def _tmp_prefix() -> str:
     return STEP_RESULT_FILENAME + ".tmp."
 
 
-def publish_step_result(*, run_root: str, step_id: str, step_result: StepResult) -> str:
+def publish_step_result(
+    *,
+    run_root: str,
+    step_id: str,
+    step_result: StepResult,
+    expected_generation_id: str | None = None,
+) -> str:
     """Atomically publish *step_result* for *step_id* under *run_root*.
 
     Parameters
@@ -144,6 +151,14 @@ def publish_step_result(*, run_root: str, step_id: str, step_result: StepResult)
         Step this result belongs to; must equal ``step_result.step_id``.
     step_result : StepResult
         Assembled step result to publish.
+    expected_generation_id : str | None
+        When given, the result is a generation-owned publication: the
+        expected-owner check and the atomic write happen inside the same
+        cross-process generation arbitration region, and a superseded
+        generation raises
+        :class:`~confflow.persistence.arbitration.StaleGenerationError`
+        without replacing a byte.  ``None`` keeps the low-level behavior for
+        non-generation callers (tests, standalone persistence probes).
 
     Returns
     -------
@@ -165,8 +180,19 @@ def publish_step_result(*, run_root: str, step_id: str, step_result: StepResult)
     _require_persisted_result_identity(step_result, error=PersistenceError)
     target = step_result_path(root, step_id)
     payload = step_result.to_dict()
-    _atomic_write_bytes(target, canonical_json_bytes(payload))
-    return typed_digest(STEP_RESULT_DIGEST_KIND, payload)
+
+    def _write() -> str:
+        _atomic_write_bytes(target, canonical_json_bytes(payload))
+        return typed_digest(STEP_RESULT_DIGEST_KIND, payload)
+
+    if expected_generation_id is None:
+        return _write()
+    with generation_publication_scope(
+        root,
+        expected_generation_id=expected_generation_id,
+        action=f"step {step_id!r} result publication",
+    ):
+        return _write()
 
 
 def _require_persisted_result_identity(step_result: StepResult, *, error: Any) -> None:

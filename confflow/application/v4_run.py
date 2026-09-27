@@ -337,6 +337,21 @@ def _is_reaction_grouping_step(planned: Any) -> bool:
     return (method or "reaction_profile") == "reaction_profile"
 
 
+def _save_run_state_fenced(run_root: str, state: RunState, generation_id: str) -> None:
+    """Write the step lifecycle state under the generation publication fence.
+
+    The expected-owner check and the durable write share one cross-process
+    arbitration region, so a superseded generation can never overwrite the
+    current generation's step lifecycle truth.
+    """
+    with arbitration.generation_publication_scope(
+        run_root,
+        expected_generation_id=generation_id,
+        action="run-state publication",
+    ):
+        save_run_state(run_root, state)
+
+
 class V4RunApplication:
     """Run a compiled V4 workflow step by step with durable resume."""
 
@@ -417,7 +432,7 @@ class V4RunApplication:
             run_id=run_id,
             definition_digest=plan.definition_digest,
         )
-        save_run_state(run_root, state)
+        _save_run_state_fenced(run_root, state, generation_id)
         context.state = state
         context.generation_started = True
         run_inputs = self._resolve_run_inputs(run_root=run_root, request=request)
@@ -448,13 +463,13 @@ class V4RunApplication:
                     planned.step_id,
                     RunStepStatus.CANCELLED,
                 )
-                save_run_state(run_root, state)
+                _save_run_state_fenced(run_root, state, generation_id)
                 context.state = state
                 continue
             state = transition_step(
                 ensure_step(state, planned.step_id), planned.step_id, RunStepStatus.RUNNING
             )
-            save_run_state(run_root, state)
+            _save_run_state_fenced(run_root, state, generation_id)
             context.state = state
             context.active_step_id = planned.step_id
             # Producer-state gating lives in assembly materialization
@@ -503,7 +518,7 @@ class V4RunApplication:
                 _map_step_status(result.status),
                 published_step_result_digest=digest,
             )
-            save_run_state(run_root, state)
+            _save_run_state_fenced(run_root, state, generation_id)
             context.state = state
             context.active_step_id = None
         status = _evaluate_run_status(tuple(result.status for result in step_results))
@@ -587,17 +602,14 @@ class V4RunApplication:
         # The write is fenced on generation ownership so a superseded writer
         # can never overwrite the newer generation's step state.
         try:
-            if (
-                context.state is not None
-                and context.active_step_id is not None
-                and arbitration.generation_is_current(context.run_root, context.generation_id)
-            ):
+            if context.state is not None and context.active_step_id is not None:
                 current = context.state.step(context.active_step_id)
                 if current is not None and current.status is RunStepStatus.RUNNING:
-                    context.state = transition_step(
+                    failed_state = transition_step(
                         context.state, context.active_step_id, RunStepStatus.FAILED
                     )
-                    save_run_state(context.run_root, context.state)
+                    _save_run_state_fenced(context.run_root, failed_state, context.generation_id)
+                    context.state = failed_state
         except Exception:
             pass
         effective_status = "failed"
@@ -949,6 +961,7 @@ class V4RunApplication:
             executor_capability=contract.capability.value,
             should_cancel=request.should_cancel,
             ownership_guard=_ownership_guard,
+            generation_id=generation_id,
         )
         with SqliteWorkItemStore.open(store_path(run_root, planned.step_id)) as store:
             return batch.execute_step_resumable(

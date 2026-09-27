@@ -187,9 +187,16 @@ class StepExecutionRequest:
     producer_provenance: FrozenDict | None = None
     executor_capability: str | None = None
     #: Optional generation-ownership guard, called immediately before step
-    #: publication.  A superseded writer's guard raises and its step result
-    #: is never published over the current generation's truth.
+    #: publication as an advisory fast-fail.  It is NOT the authority: the
+    #: authoritative expected-owner check happens inside
+    #: ``publish_step_result``'s generation arbitration region together with
+    #: the write itself (``generation_id`` below).
     ownership_guard: Callable[[], None] | None = None
+    #: Generation that owns this step's publication.  When set, the step
+    #: result write is fenced by the run root's generation arbitration lock:
+    #: a superseded generation raises ``StaleGenerationError`` and never
+    #: replaces the current generation's durable step truth.
+    generation_id: str | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "items", tuple(self.items))
@@ -597,6 +604,9 @@ class BatchStepExecutor:
         if request.ownership_guard is not None:
             # CONTRACT 7: once a newer generation owns the run root, a
             # superseded writer must not publish step-level truth either.
+            # This guard is an advisory fast-fail; the authoritative
+            # expected-owner check and the write happen atomically inside
+            # ``publish_step_result`` (see ``request.generation_id``).
             request.ownership_guard()
         verified_checksums = {
             artifact.checksum.lower()
@@ -613,7 +623,12 @@ class BatchStepExecutor:
             )
         except PublicationError as exc:
             raise PersistenceError(f"refusing to publish step {step.step_id!r}: {exc}") from exc
-        publish_step_result(run_root=run_root_abs, step_id=step.step_id, step_result=step_result)
+        publish_step_result(
+            run_root=run_root_abs,
+            step_id=step.step_id,
+            step_result=step_result,
+            expected_generation_id=request.generation_id,
+        )
         return step_result
 
     # ------------------------------------------------------------------
