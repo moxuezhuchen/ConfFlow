@@ -13,31 +13,47 @@ documented below; anything else fails closed with ``native_input_error``.
 Key semantics are stated as this module's contract (units, types, ranges),
 not as claims about any particular ORCA release's defaults.
 
-Seed authority (verified against the installed ORCA 6.1.1 binary): the
-native ``%goat`` key is ``RANDOMSEED``.  Unknown keys fail fast with
-"Unknown identifier"; integers (including 0 and negatives), booleans,
-and even floats parse and enter the GOAT driver, while non-numeric
-values fail with "Invalid assignment".  The single stochastic
-authority is the typed step seed: the program adapter renders it as
-an integer ``RANDOMSEED`` and rejects any user-supplied
-``RANDOMSEED`` as a second authority (compile-time validation rejects
-the key before rendering).  The invented ``Seed`` key never existed
-natively and is rejected as an unknown key.  Only same-input
-reproducibility is claimed: prior wave-2 butane/HF-3c evidence reports
-that equal integers reproduce bit-identical ensembles and seeded runs
-differ from unseeded ones; distinct-integer stream independence on
-larger search spaces is not demonstrated.
+Seed authority (verified against the official ORCA 6.1 manual and the
+installed ORCA 6.1.1 binary): the native ``%goat`` key ``RANDOMSEED``
+is a boolean randomization switch, NOT an integer RNG seed.  The
+manual's ``%goat`` keyword table (Table 4.9) documents
+``RANDOMSEED`` with default ``true`` as "set it to false to have a
+deterministic GOAT run. since the geometry optimization can change due
+to numerical differences it might not be fully deterministic in some
+cases."  No numeric stream-selection mechanism exists in ORCA 6.1.
+The binary's input parser also accepts integers, booleans, and even
+floats for this key (unknown keys fail fast with "Unknown
+identifier"; non-numeric values fail with "Invalid assignment"), but
+parser acceptance is not proof of RNG-seed semantics: live
+butane/hexane/decane XTB probes show no stream-selection behavior:
+identical ensembles across ``RANDOMSEED false/true/7/42`` on converged
+searches, and bit-identical repeat runs (including per-global-iteration
+files) under ``RANDOMSEED false`` on a 2-global-iteration decane search.
+Nothing demonstrates that distinct integers select distinct streams.
+The single stochastic authority is the typed step seed: the program
+adapter requires it (fail-closed when missing), folds it into the
+step semantic digest and the remote envelope so distinct seeds never
+share identity, and renders the native flag deterministically as
+``RANDOMSEED false``.  Any user-supplied ``RANDOMSEED`` is a second
+authority (compile-time validation rejects the key before rendering).
+The invented ``Seed`` key never existed natively and is rejected as
+an unknown key.  Only same-input reproducibility in deterministic
+mode is claimed, best-effort per the manual's numerical caveat;
+distinct step seeds share native ``.inp`` bytes by design (ORCA
+exposes no per-stream selection) and differ only in digest/envelope
+identity.
 
 Allowlisted ``%goat`` keys (one line each):
 
 - ``MaxIter``: maximum GOAT geometry-optimization iterations per worker
   (int >= 1; verified against the installed ORCA 6.1.1 binary and the
   official 6.1 manual).
-- ``RANDOMSEED``: the single-authority stochastic seed, rendered
-  exclusively by the program adapter from the typed step seed (int;
-  zero and negatives parse natively).  The binary also accepts
-  booleans for this key, but ConfFlow never renders them: the integer
-  step seed is the only seed vocabulary.
+- ``RANDOMSEED``: the native boolean randomization switch, rendered
+  exclusively by the program adapter as ``false`` (deterministic mode
+  per the official manual) whenever a GOAT step carries its required
+  typed step seed.  ConfFlow accepts only booleans here — stricter
+  than the native parser, which also tolerates numbers — because the
+  manual defines no numeric seed semantics.
 
 Rendering contract: ``render_goat_blocks`` emits ``%goat ... end`` text with
 keys sorted alphabetically, two-space indents, and a trailing newline, which
@@ -68,34 +84,38 @@ __all__ = [
 #:
 #: ``MaxIter`` matches the official ``MAXITER`` key (block keywords are
 #: case-insensitive; verified against the installed ORCA 6.1.1 binary).
-#: ``RANDOMSEED`` is verified against the installed ORCA 6.1.1 binary:
-#: the key parses (unknown keys fail fast with "Unknown identifier in
-#: GOAT block"); integers (including 0 and negatives), booleans, and
-#: even floats parse and enter the GOAT driver, while non-numeric
-#: values (e.g. ``foo``) fail with "Invalid assignment in GOAT block".
-#: ConfFlow renders only the integer step seed and rejects all other
-#: shapes fail-closed (stricter than native, never looser).  The
-#: invented ``Seed`` key never existed natively and is rejected, as
-#: are the invented ``MaxConformers`` and ``EnergyWindow`` keys (both
-#: fail with "Unknown identifier" on the installed binary).
+#: ``RANDOMSEED`` is the native boolean randomization switch per the
+#: official ORCA 6.1 manual (``%goat`` Table 4.9: default ``true``,
+#: "set it to false to have a deterministic GOAT run").  The
+#: installed binary's parser additionally tolerates integers
+#: (including 0 and negatives) and floats for this key — unknown
+#: keys fail fast with "Unknown identifier in GOAT block" and
+#: non-numeric values with "Invalid assignment in GOAT block" — but
+#: parser tolerance is not RNG-seed semantics, and ConfFlow never
+#: renders numbers: only booleans are accepted (stricter than native,
+#: never looser).  The invented ``Seed`` key never existed natively
+#: and is rejected, as are the invented ``MaxConformers`` and
+#: ``EnergyWindow`` keys (both fail with "Unknown identifier" on the
+#: installed binary).
 GOAT_BLOCK_KEYS: frozenset[str] = frozenset({"MaxIter", "RANDOMSEED"})
 
 _INT_KEYS: frozenset[str] = frozenset({"MaxIter"})
 
-#: Integer-valued ``%goat`` keys accepting any integer (seed semantics).
-_SEED_KEYS: frozenset[str] = frozenset({"RANDOMSEED"})
+#: Boolean-valued ``%goat`` keys (native randomization switches).
+_BOOL_KEYS: frozenset[str] = frozenset({"RANDOMSEED"})
 
 
-def _check_seed_key(key: str, value: Any) -> int:
-    """Validate an integer seed ``%goat`` key (bools rejected).
+def _check_bool_key(key: str, value: Any) -> bool:
+    """Validate a boolean ``%goat`` switch (strict: only ``bool``).
 
-    Unlike count keys, seeds carry no positivity bound: the installed
-    binary parses zero and negative integers.
+    Unlike count keys, switches carry no numeric range: only actual
+    booleans are accepted.  Integers such as ``7`` or ``0`` parse on
+    the installed binary but carry no documented seed semantics, so
+    they are rejected fail-closed here.
     """
-    if isinstance(value, bool) or not isinstance(value, int):
+    if not isinstance(value, bool):
         raise ValueError(
-            f"native_input_error: ORCA '%goat' key {key!r} must be an integer, "
-            f"got {value!r}"
+            f"native_input_error: ORCA '%goat' key {key!r} must be a boolean, " f"got {value!r}"
         )
     return value
 
@@ -131,19 +151,22 @@ def _check_int_key(key: str, value: Any) -> int:
     return value
 
 
-def _format_value(value: int | float) -> str:
+def _format_value(value: int | float | bool) -> str:
     """Format a validated ``%goat`` value deterministically.
 
     Parameters
     ----------
-    value : int | float
+    value : int | float | bool
         Validated key value.
 
     Returns
     -------
     str
-        Plain ``str`` for ints, ``repr`` for floats (full precision).
+        Lowercase ``true``/``false`` for booleans (ORCA canonical),
+        plain ``str`` for ints, ``repr`` for floats (full precision).
     """
+    if isinstance(value, bool):
+        return "true" if value else "false"
     if isinstance(value, float):
         return repr(value)
     return str(value)
@@ -188,8 +211,8 @@ def render_goat_blocks(native: Mapping[str, Any]) -> str:
     for key in goat:
         if key in _INT_KEYS:
             rendered[key] = _format_value(_check_int_key(key, goat[key]))
-        elif key in _SEED_KEYS:
-            rendered[key] = _format_value(_check_seed_key(key, goat[key]))
+        elif key in _BOOL_KEYS:
+            rendered[key] = _format_value(_check_bool_key(key, goat[key]))
     lines = ["%goat"]
     for key in sorted(rendered):
         lines.append(f"  {key} {rendered[key]}")

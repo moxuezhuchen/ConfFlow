@@ -365,10 +365,12 @@ class ResolvedCalculationInputs:
     are already resolved by the single precedence authority before the
     adapter sees them.  An adapter that finds a required value missing must
     raise a native input error; it must never fall back to defaults of its
-    own.  The native ``RANDOMSEED`` seed vocabulary (verified against the
-    installed ORCA 6.1.1 binary) is rendered exclusively by the program
-    adapter from :attr:`seed`; no native mapping carries a second seed
-    authority.
+    own.  The native ``RANDOMSEED`` boolean switch (official ORCA 6.1
+    manual: deterministic when ``false``; no numeric stream semantics)
+    is rendered exclusively by the program adapter as ``false`` from
+    :attr:`seed`; no native mapping carries a second seed authority.
+    Distinct step seeds share native bytes by design and differ only
+    in digest/envelope identity.
     """
 
     structure: StructureRecord

@@ -86,17 +86,24 @@ def _input_error(message: str) -> ValueError:
 def _require_goat_seed(seed: object) -> int:
     """Validate the single-authority GOAT seed for native rendering.
 
-    The typed step seed is required; the adapter renders it as the
-    verified native ``RANDOMSEED`` key.  Verified against the installed
-    ORCA 6.1.1 binary: ``RANDOMSEED`` parses (unknown keys fail fast
-    with "Unknown identifier", non-numeric values with "Invalid
-    assignment"); integers, booleans, and even floats enter the GOAT
-    driver (ethanol/HF-3c probes; prior wave-2 butane/HF-3c evidence
-    additionally reports that equal integers reproduce bit-identical
-    ensembles and seeded runs differ from unseeded ones).
-    Whether distinct integers select distinct streams on larger search
-    spaces is NOT demonstrated by this evidence and is recorded as an
-    open question — ConfFlow claims same-input reproducibility only.
+    The typed step seed is required; the adapter renders the native
+    boolean switch deterministically as ``RANDOMSEED false``.  Per the
+    official ORCA 6.1 manual (``%goat`` Table 4.9), ``RANDOMSEED`` is
+    a boolean randomization switch (default ``true``): "set it to
+    false to have a deterministic GOAT run", with the caveat that
+    geometry optimization can change due to numerical differences so
+    it might not be fully deterministic in some cases.  ORCA 6.1
+    exposes no numeric stream-selection mechanism: the installed
+    6.1.1 binary's parser tolerates integers for this key, but live
+    probes show no stream-selection behavior, so the integer step
+    seed is never rendered as a native value.  It remains the
+    workflow-level stochastic authority — required here, folded into
+    the step semantic digest, carried in the remote envelope, and
+    preserved across recovery — so distinct seeds never share
+    identity even though they share native ``.inp`` bytes by design.
+    Whether the deterministic flag yields bit-identical ensembles on
+    larger search spaces is an open question — ConfFlow claims
+    best-effort same-input reproducibility only.
     """
     if seed is None or isinstance(seed, bool) or not isinstance(seed, int):
         raise _input_error(
@@ -300,7 +307,7 @@ class OrcaProgramAdapter(ProgramAdapter):
         if mode == "irc":
             return "irc", render_irc_blocks(section), ()
         if mode == "goat":
-            seed = _require_goat_seed(inputs.seed)
+            _require_goat_seed(inputs.seed)
             user_goat = dict(section)
             if "RANDOMSEED" in user_goat:
                 raise _input_error(
@@ -308,7 +315,11 @@ class OrcaProgramAdapter(ProgramAdapter):
                     "set the step seed instead (compile-time validation "
                     "rejects this key before rendering)"
                 )
-            user_goat["RANDOMSEED"] = seed
+            # The step seed is workflow identity (digest/envelope), never
+            # a native stream selector: ORCA 6.1 defines RANDOMSEED as a
+            # boolean switch with no numeric stream semantics, so the
+            # adapter always renders the deterministic ``false`` flag.
+            user_goat["RANDOMSEED"] = False
             blocks = render_goat_blocks({"goat": user_goat})
             return "goat", blocks, ()
         slots = inputs.extra_structures

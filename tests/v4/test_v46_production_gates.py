@@ -861,11 +861,14 @@ class TestGoatSeed:
         for bad in (True, False, "7", 7.0):
             with pytest.raises(DomainError):
                 validate_step_seed(bad)
-        first = goat.render_goat_blocks({"goat": {"RANDOMSEED": 1, "MaxIter": 2}})
-        second = goat.render_goat_blocks({"goat": {"MaxIter": 2, "RANDOMSEED": 1}})
+        first = goat.render_goat_blocks({"goat": {"RANDOMSEED": False, "MaxIter": 2}})
+        second = goat.render_goat_blocks({"goat": {"MaxIter": 2, "RANDOMSEED": False}})
         assert first == second
         with pytest.raises(ValueError):
             goat.render_goat_blocks({"goat": {"Seed": 7}})
+        # Integers carry no documented seed semantics: only booleans render.
+        with pytest.raises(ValueError):
+            goat.render_goat_blocks({"goat": {"RANDOMSEED": 1}})
 
 
 class TestManifestSchema:

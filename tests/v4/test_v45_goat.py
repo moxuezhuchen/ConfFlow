@@ -8,9 +8,12 @@ line, and multi-structure ``.finalensemble.xyz`` files whose comments read
 ``<energy> converged=<bool>`` — verified line-for-line against an
 installed-binary butane/HF-3c GOAT run.  Fixtures are synthetic in content
 but grammatical in form; no test shells out to ORCA.  The seed tests prove
-the single-authority chain end to end: the typed step seed is the only
-seed, rendered by the program adapter as the verified native
-``RANDOMSEED`` key.
+the single-authority chain end to end: the typed step seed is required
+workflow identity (digest/envelope), and the program adapter renders the
+native boolean ``RANDOMSEED`` switch deterministically as ``false`` —
+ORCA 6.1 defines no numeric stream-selection semantics for this key, so
+distinct step seeds share native bytes by design and differ only in
+digest/envelope identity.
 """
 
 from __future__ import annotations
@@ -82,7 +85,7 @@ class TestRenderGoatBlocks:
         text = goat.render_goat_blocks(
             {
                 "goat": {
-                    "RANDOMSEED": 7,
+                    "RANDOMSEED": False,
                     "MaxIter": 50,
                 }
             }
@@ -90,8 +93,11 @@ class TestRenderGoatBlocks:
         assert text == (
             "%goat\n"
             "  MaxIter 50\n"
-            "  RANDOMSEED 7\n"
+            "  RANDOMSEED false\n"
             "end\n"
+        )
+        assert goat.render_goat_blocks({"goat": {"RANDOMSEED": True}}) == (
+            "%goat\n  RANDOMSEED true\nend\n"
         )
 
     def test_golden_single_key(self) -> None:
@@ -101,8 +107,8 @@ class TestRenderGoatBlocks:
         assert goat.render_goat_blocks({"goat": {}}) == "%goat\nend\n"
 
     def test_key_order_deterministic(self) -> None:
-        first = goat.render_goat_blocks({"goat": {"RANDOMSEED": 1, "MaxIter": 2}})
-        second = goat.render_goat_blocks({"goat": {"MaxIter": 2, "RANDOMSEED": 1}})
+        first = goat.render_goat_blocks({"goat": {"RANDOMSEED": False, "MaxIter": 2}})
+        second = goat.render_goat_blocks({"goat": {"MaxIter": 2, "RANDOMSEED": False}})
         assert first == second
 
     def test_missing_mapping_rejected(self) -> None:
@@ -128,7 +134,10 @@ class TestRenderGoatBlocks:
         for bad in ("50", 5.5, True, None):
             with pytest.raises(ValueError, match="native_input_error"):
                 goat.render_goat_blocks({"goat": {"MaxIter": bad}})
-        for bad in ("7", 7.5, True, None):
+        # RANDOMSEED is a boolean switch: numbers parse on the native
+        # binary but carry no documented seed semantics, so only actual
+        # booleans are accepted (stricter than native, never looser).
+        for bad in ("false", 7.5, 7, 0, -3, None):
             with pytest.raises(ValueError, match="native_input_error"):
                 goat.render_goat_blocks({"goat": {"RANDOMSEED": bad}})
 
@@ -137,14 +146,6 @@ class TestRenderGoatBlocks:
             goat.render_goat_blocks({"goat": {"MaxIter": 0}})
         with pytest.raises(ValueError, match="native_input_error"):
             goat.render_goat_blocks({"goat": {"MaxIter": -2}})
-        # Seeds carry no positivity bound (the binary parses zero and
-        # negative integers).
-        assert goat.render_goat_blocks({"goat": {"RANDOMSEED": 0}}) == (
-            "%goat\n  RANDOMSEED 0\nend\n"
-        )
-        assert goat.render_goat_blocks({"goat": {"RANDOMSEED": -3}}) == (
-            "%goat\n  RANDOMSEED -3\nend\n"
-        )
 
     def test_allowlist_contents(self) -> None:
         assert goat.GOAT_BLOCK_KEYS == frozenset({"MaxIter", "RANDOMSEED"})
@@ -335,16 +336,20 @@ class TestGoatTrajectoryFacts:
 
 
 class TestGoatSeedSingleAuthority:
-    """One seed end to end: step seed -> digest -> RANDOMSEED -> envelope.
+    """One seed end to end: step seed -> digest -> RANDOMSEED false -> envelope.
 
     The typed step seed is the single stochastic authority.  It folds
     into the scientific digest (so retry/resume and remote reuse never
-    mix seeds), the program adapter renders it as the verified native
-    ``RANDOMSEED`` key, recovery preserves it across attempts, and the
-    remote handoff carries it with the work-item digest.  Any
-    user-supplied native ``RANDOMSEED`` (even matching) is a second
-    authority and fails closed; the invented ``Seed`` key never existed
-    natively and is rejected as unknown vocabulary.
+    mix seeds), the program adapter requires it and renders the native
+    boolean ``RANDOMSEED`` switch deterministically as ``false`` —
+    ORCA 6.1 defines no numeric stream selection, so distinct step
+    seeds share native bytes by design and differ only in
+    digest/envelope identity.  Recovery preserves the seed across
+    attempts, and the remote handoff carries it with the work-item
+    digest.  Any user-supplied native ``RANDOMSEED`` (even matching,
+    even boolean) is a second authority and fails closed; the
+    invented ``Seed`` key never existed natively and is rejected as
+    unknown vocabulary.
     """
 
     def _goat_inputs(self, seed: int | None, native_goat: dict | None = None):
@@ -378,7 +383,7 @@ class TestGoatSeedSingleAuthority:
             seed=seed,
         )
 
-    def test_step_seed_renders_native_randomseed(self) -> None:
+    def test_step_seed_renders_deterministic_randomseed(self) -> None:
         from confflow.programs.orca.adapter import OrcaProgramAdapter
 
         materialized = OrcaProgramAdapter().materialize_native_input(
@@ -389,7 +394,11 @@ class TestGoatSeedSingleAuthority:
             for entry in materialized.files
             if entry.name == "job.inp"
         )
-        assert "\n  RANDOMSEED 7\n" in content
+        # The integer step seed is workflow identity, never a native
+        # stream selector: the adapter always renders the deterministic
+        # boolean flag.
+        assert "\n  RANDOMSEED false\n" in content
+        assert "RANDOMSEED 7" not in content
 
     def test_same_seed_renders_byte_identical_input(self) -> None:
         from confflow.programs.orca.adapter import OrcaProgramAdapter
@@ -400,14 +409,21 @@ class TestGoatSeedSingleAuthority:
             entry.content for entry in second.files
         ]
 
-    def test_distinct_seeds_render_distinct_inputs(self) -> None:
+    def test_distinct_seeds_share_deterministic_native_input(self) -> None:
         from confflow.programs.orca.adapter import OrcaProgramAdapter
+        from confflow.workflow.v4.document import ScientificDefinition
 
+        # ORCA 6.1 exposes no per-stream selection, so distinct step
+        # seeds share native bytes by design; identity separation lives
+        # in the digest, never in the .inp text.
         first = OrcaProgramAdapter().materialize_native_input(self._goat_inputs(7))
         second = OrcaProgramAdapter().materialize_native_input(self._goat_inputs(8))
-        assert [entry.content for entry in first.files] != [
+        assert [entry.content for entry in first.files] == [
             entry.content for entry in second.files
         ]
+        assert ScientificDefinition(seed=7).to_payload() != ScientificDefinition(
+            seed=8
+        ).to_payload()
 
     def test_missing_seed_fails_closed(self) -> None:
         from confflow.programs.orca.adapter import OrcaProgramAdapter
@@ -421,6 +437,12 @@ class TestGoatSeedSingleAuthority:
         with pytest.raises(ValueError, match="native_input_error.*second seed"):
             OrcaProgramAdapter().materialize_native_input(
                 self._goat_inputs(7, native_goat={"MaxIter": 5, "RANDOMSEED": 7})
+            )
+        # Even a boolean matching the rendered flag is a second
+        # authority: only the step seed may drive the switch.
+        with pytest.raises(ValueError, match="native_input_error.*second seed"):
+            OrcaProgramAdapter().materialize_native_input(
+                self._goat_inputs(7, native_goat={"MaxIter": 5, "RANDOMSEED": False})
             )
 
     def test_seed_folds_into_scientific_payload(self) -> None:
