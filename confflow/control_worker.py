@@ -70,6 +70,13 @@ def run_control_worker(
     producer ``resume`` changes it back to ``queued``.  Rebuilding the local
     adapter for each attempt is intentional: every attempt gets the producer's
     current token, identity check, and lifecycle callbacks.
+
+    Terminal branching (D2) follows the durable service aggregate, which the
+    adapter commits from the formal V4 status: only V4 ``completed`` yields
+    service COMPLETED; V4 ``failed`` and V4 ``partial`` (as FAILED with a
+    ``v4.status.partial`` marker) yield service FAILED; V4 ``cancelled``
+    yields service CANCELLED. The worker never treats "runner returned
+    without exception" as success — the V4 status-owned aggregate decides.
     """
     root = StateRoot.resolve(state_root)
     payload, config_path, tasks = _load_handoff(handoff_path, run_id, root)
@@ -250,6 +257,12 @@ def main(args_list: Sequence[str] | None = None) -> int:
         json.dumps({"run_id": args.run_id, "state": state.value}, separators=(",", ":")),
         file=json_stream,
     )
+    # Worker exit semantics (D2): completed is the only success exit (0).
+    # Failed, cancelled, and partial (service FAILED with a v4.status.partial
+    # marker; scientific status=partial stays in run_result.json) are all
+    # documented non-success exits (1), agreeing with the synchronous
+    # service facade (TERMINAL_RUN) and the CLI's nonzero mapping. No
+    # contract allows partial success, so partial never exits 0.
     return 0 if state is RunState.COMPLETED else 1
 
 
