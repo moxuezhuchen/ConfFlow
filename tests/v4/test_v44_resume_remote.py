@@ -33,7 +33,7 @@ from confflow.execution.work_item_executor import (
     WorkItemExecutor,
     sanitize_job_name,
 )
-from confflow.persistence.contracts import PersistenceError, StoredWorkItemStatus, store_path
+from confflow.persistence.contracts import StoredWorkItemStatus, store_path
 from confflow.persistence.work_items import SqliteWorkItemStore
 from confflow.programs.registry import get_program_adapter
 from confflow.remote.transport import RemoteTransport
@@ -692,23 +692,30 @@ class TestScenarioEnvironmentInvalidation:
             )
             assert first.status is StepStatus.COMPLETED
             assert _native_count(count_file) == 2
-            # The remote binary changes out from under the run: same bytes
-            # no longer measure identically, so resume must invalidate
-            # without launching anything native.  Invalidation refuses
-            # publication loudly (strict durable publication carries
-            # per-item reasons); the stored COMPLETED generation is
-            # preserved untouched.
+            # Worker-C contract: environment-only generation advance
+            # re-executes as a fresh attempt (registration advances, prior
+            # attempts preserved), unlike definition/input invalidation
+            # which is terminal.  The remote binary changes out from under
+            # the run: same bytes no longer measure identically, so resume
+            # relaunches both items with the new environment instead of
+            # reusing stale science or refusing terminally.
             with open(wrapper, "a", encoding="utf-8") as handle:
                 handle.write("\n# remote binary updated\n")
-            with pytest.raises(PersistenceError, match="invalidate_environment"):
-                _batch().execute_step_resumable(
-                    _request(plan, "s_opt", tuple(items), run_root, wrapper),
-                    store=store,
-                    run_root=run_root,
-                    owner_token="ctl-2",
-                    transport=transport,
-                )
-            assert _native_count(count_file) == 2
+            second = _batch().execute_step_resumable(
+                _request(plan, "s_opt", tuple(items), run_root, wrapper),
+                store=store,
+                run_root=run_root,
+                owner_token="ctl-2",
+                transport=transport,
+            )
+            assert second.status is StepStatus.COMPLETED
+            assert _native_count(count_file) == 4
+            reused = sum(
+                1
+                for entry in second.item_results
+                if any(d.code == "reuse_hit" for d in entry.diagnostics)
+            )
+            assert reused == 0
             from confflow.persistence.contracts import StoredWorkItemStatus
 
             assert len(store.list_items(StoredWorkItemStatus.COMPLETED)) == 2
