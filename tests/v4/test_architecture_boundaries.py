@@ -31,6 +31,9 @@ V4_ROOT = PACKAGE_ROOT / "workflow" / "v4"
 PERSISTENCE_ROOT = PACKAGE_ROOT / "persistence"
 PROGRAMS_ROOT = PACKAGE_ROOT / "programs"
 REMOTE_ROOT = PACKAGE_ROOT / "remote"
+PRODUCER_ROOT = PACKAGE_ROOT / "producer"
+ANALYSIS_ROOT = PACKAGE_ROOT / "analysis"
+APPLICATION_ROOT = PACKAGE_ROOT / "application"
 
 FORBIDDEN_IMPORT_PREFIXES = (
     "confflow.blocks",
@@ -126,6 +129,155 @@ FORBIDDEN_SYMBOLS = (
     "backup_dir",
     "ibkout",
 )
+
+#: Extended formal V4 production roots (Architecture Diet PR-0).
+#:
+#: The original gate only scanned domain/execution/workflow.v4/persistence/
+#: programs/remote.  The producer contract, the analysis engine, and the
+#: formal application/V4 CLI entrypoints are equally part of the V4
+#: production closure and must not regrow legacy-runtime imports.
+EXTENDED_V4_PRODUCTION_ROOTS = (
+    PRODUCER_ROOT,
+    ANALYSIS_ROOT,
+)
+
+#: Individual formal V4 production files outside the package roots above.
+EXTENDED_V4_PRODUCTION_FILES = (
+    PACKAGE_ROOT / "v4cli.py",
+    APPLICATION_ROOT / "v4_entry.py",
+    APPLICATION_ROOT / "v4_run.py",
+)
+
+#: Import prefixes that must never (re)appear in a formal V4 production
+#: file.  ``confflow.core.exceptions`` is intentionally NOT in the exact
+#: forbidden-module tuple below: the formal entry module needs the shared
+#: ``ConfFlowError`` type.  Every other legacy ``confflow.core`` facade is
+#: forbidden.
+FORBIDDEN_LEGACY_RUNTIME_PREFIXES = (
+    "confflow.calc",
+    "confflow.blocks",
+    "confflow.confts",
+    "confflow.cli",
+    "confflow.main",
+    "confflow.shared.config_validation",
+    "confflow.workflow",
+)
+
+#: ``confflow.workflow.v4`` is the V4 engine and stays allowed, so the bare
+#: ``confflow.workflow`` prefix above needs exactly one exemption.
+_ALLOWED_WORKFLOW_V4_PREFIX = "confflow.workflow.v4"
+
+#: Exact legacy modules that must never be imported by an extended root.
+#: ``confflow.core.exceptions`` is excluded (shared error type, see above).
+EXTENDED_FORBIDDEN_LEGACY_MODULES = tuple(
+    module for module in FORBIDDEN_LEGACY_MODULES if module != "confflow.core.exceptions"
+)
+
+#: The producer's known V1/V2/V3 configuration-contract debt.
+#:
+#: These are the ONLY configuration modules the extended import gate allows,
+#: and only from the ``confflow/producer`` package.  This is the PR-0
+#: guardrail for the coupling measured by
+#: :class:`TestProducerImportIsolation`; removing it is the PR-2 goal.
+EXTENDED_PRODUCER_CONFIG_DEBT = frozenset(
+    {
+        "confflow.config.canonical.contract",
+        "confflow.config.canonical.editor_manifest",
+        "confflow.config.canonical.recipes",
+    }
+)
+
+#: The single file-scoped legacy-token exemption:
+#: ``formal_v4_runner`` accepts the historical keyword surface
+#: (``input_xyz``) at the formal boundary by design.  The name is a
+#: compatibility parameter of the one documented drop-in runner, not a
+#: legacy execution path.
+EXTENDED_LEGACY_TOKEN_EXEMPTIONS: dict[str, frozenset[str]] = {
+    "confflow/application/v4_entry.py": frozenset({"input_xyz"}),
+}
+
+#: Exact transitive legacy-dependency set pulled by ``import confflow.producer``
+#: at the v4-core-closure baseline (commit 44b478d), measured in a subprocess.
+#: The set may only change by editing this constant: additions are forbidden
+#: (PR-0 guardrail), removals must be recorded here deliberately (PR-2 will
+#: drive it to empty).
+#:
+#: TODO(diet PR-2): decouple the three configuration schema constants
+#: (``confflow.config.canonical.{contract,editor_manifest,recipes}``) so this
+#: set becomes empty and this baseline can be deleted.
+KNOWN_PRODUCER_LEGACY_IMPORTS = frozenset(
+    {
+        "confflow.config",
+        "confflow.config.canonical",
+        "confflow.config.canonical.contract",
+        "confflow.config.canonical.diagnostics",
+        "confflow.config.canonical.editor_manifest",
+        "confflow.config.canonical.execution_versions",
+        "confflow.config.canonical.extensions",
+        "confflow.config.canonical.fingerprint",
+        "confflow.config.canonical.issues",
+        "confflow.config.canonical.param_fields",
+        "confflow.config.canonical.parser",
+        "confflow.config.canonical.pydantic",
+        "confflow.config.canonical.recipes",
+        "confflow.config.canonical.resolve",
+        "confflow.config.canonical.schema",
+        "confflow.config.canonical.serialization",
+        "confflow.config.canonical.structured",
+        "confflow.config.canonical.theory",
+        "confflow.config.canonical.types",
+        "confflow.config.canonical.upgrade",
+        "confflow.config.canonical.v2_adapter",
+        "confflow.config.canonical.v3_graph",
+        "confflow.config.canonical.v3_parser",
+        "confflow.config.canonical.validation",
+        "confflow.config.canonical.workflow",
+        "confflow.config.canonical.yaml_io",
+        "confflow.config.models",
+        "confflow.core.models",
+        "confflow.core.types",
+        "confflow.core.validation",
+        "confflow.workflow",
+    }
+)
+
+
+def _is_legacy_producer_dependency(module: str) -> bool:
+    """Return whether *module* is a legacy dependency of ``confflow.producer``."""
+    if module == "confflow.config" or module.startswith("confflow.config."):
+        return True
+    if module in {"confflow.core.models", "confflow.core.types", "confflow.core.validation"}:
+        return True
+    if module == "confflow.workflow":
+        return True
+    if module.startswith("confflow.workflow.") and not module.startswith(
+        _ALLOWED_WORKFLOW_V4_PREFIX
+    ):
+        return True
+    return module.startswith(("confflow.calc", "confflow.blocks", "confflow.confts"))
+
+
+#: Legacy modules deleted by the architecture diet (PR-1 dead-code removal).
+#: They must stay absent: recreating one would silently revive a forbidden
+#: import path.  Additions here happen in the same commit that deletes the
+#: file, never speculatively.
+REMOVED_LEGACY_MODULES: frozenset[str] = frozenset(
+    {
+        "confflow.workflow.supervisor",
+        "confflow.workflow.rerun_failed",
+        "confflow.calc.async_exec",
+    }
+)
+
+#: Retained-by-design compatibility modules that are explicitly allowed to
+#: be absent from the source tree.  Empty today; a module moves here only
+#: with a written compatibility decision.
+RETAINED_COMPAT_ALLOWLIST: frozenset[str] = frozenset()
+
+
+def _legacy_module_exists(module: str) -> bool:
+    base = REPO_ROOT / Path(module.replace(".", "/"))
+    return base.with_suffix(".py").exists() or (base / "__init__.py").exists()
 
 
 def _iter_python_files(root: Path) -> list[Path]:
@@ -368,6 +520,80 @@ class TestStaticLegacyFilenameContracts:
         assert offenders == []
 
 
+def _iter_extended_production_files() -> list[Path]:
+    """Return the extended formal V4 production files to scan."""
+    files: list[Path] = []
+    for root in EXTENDED_V4_PRODUCTION_ROOTS:
+        files.extend(_iter_python_files(root))
+    files.extend(EXTENDED_V4_PRODUCTION_FILES)
+    return sorted(files)
+
+
+def _is_forbidden_legacy_runtime_import(path: Path, absolute: str) -> bool:
+    """Return whether *absolute* is a forbidden legacy import for *path*.
+
+    The producer's three known configuration-contract imports are recorded
+    debt (see :data:`EXTENDED_PRODUCER_CONFIG_DEBT` and
+    :class:`TestProducerImportIsolation`); every other configuration import
+    from any extended root fails.  ``confflow.workflow.v4`` is always
+    allowed.
+    """
+    if not absolute.startswith("confflow"):
+        return False
+    if absolute == _ALLOWED_WORKFLOW_V4_PREFIX or absolute.startswith(
+        _ALLOWED_WORKFLOW_V4_PREFIX + "."
+    ):
+        return False
+    if absolute.startswith("confflow.config"):
+        relative = path.relative_to(PACKAGE_ROOT)
+        if relative.parts and relative.parts[0] == "producer":
+            return absolute not in EXTENDED_PRODUCER_CONFIG_DEBT
+        return True
+    if absolute in EXTENDED_FORBIDDEN_LEGACY_MODULES:
+        return True
+    return absolute.startswith(FORBIDDEN_LEGACY_RUNTIME_PREFIXES)
+
+
+class TestExtendedV4ProductionRoots:
+    """The formal V4 production closure beyond the original six scan roots.
+
+    Architecture Diet PR-0: producer, analysis, and the formal application/V4
+    CLI entrypoints are covered by the same import, symbol, and filename
+    guardrails as the original V4 core roots.
+    """
+
+    def test_extended_roots_have_no_legacy_runtime_imports(self) -> None:
+        offenders: list[tuple[str, str, int]] = []
+        for path in _iter_extended_production_files():
+            for raw, lineno in _imports(path):
+                absolute = _resolve_import(path, raw)
+                if _is_forbidden_legacy_runtime_import(path, absolute):
+                    offenders.append((str(path.relative_to(REPO_ROOT)), absolute, lineno))
+        assert offenders == []
+
+    def test_extended_roots_have_no_forbidden_symbols(self) -> None:
+        offenders: list[tuple[str, str]] = []
+        for path in _iter_extended_production_files():
+            relative = str(path.relative_to(REPO_ROOT))
+            exempt = EXTENDED_LEGACY_TOKEN_EXEMPTIONS.get(relative, frozenset())
+            symbols = _code_symbols(path)
+            for forbidden in FORBIDDEN_SYMBOLS:
+                if forbidden in symbols and forbidden not in exempt:
+                    offenders.append((relative, forbidden))
+        assert offenders == []
+
+    def test_extended_roots_have_no_legacy_filename_contracts(self) -> None:
+        offenders: list[tuple[str, str]] = []
+        for path in _iter_extended_production_files():
+            relative = str(path.relative_to(REPO_ROOT))
+            exempt = EXTENDED_LEGACY_TOKEN_EXEMPTIONS.get(relative, frozenset())
+            text = _code_text_only(path.read_text(encoding="utf-8"))
+            for token in TestStaticLegacyFilenameContracts.LEGACY_FILENAME_TOKENS:
+                if token in text and token not in exempt:
+                    offenders.append((relative, token))
+        assert offenders == []
+
+
 class TestRemoteBoundary:
     """The remote worker consumes compiled semantics, never legacy contracts."""
 
@@ -466,6 +692,67 @@ class TestRuntimeIsolation:
         assert result.returncode == 0, result.stderr
 
 
+class TestProducerImportIsolation:
+    """Producer import-isolation debt baseline (Architecture Diet PR-0).
+
+    ``import confflow.producer`` currently pulls the V1/V2/V3 configuration
+    tree because three published schema constants are imported from
+    ``confflow.config.canonical``.  PR-0 does not fix that coupling; it pins
+    the exact transitive legacy-dependency set so it can never grow
+    silently.  Any new module fails this test immediately; removing a module
+    requires updating :data:`KNOWN_PRODUCER_LEGACY_IMPORTS` in the same
+    change, so the debt can only shrink deliberately.
+
+    TODO(diet PR-2): extract the three schema constants into a dependency-free
+    module, drive :data:`KNOWN_PRODUCER_LEGACY_IMPORTS` to empty, and replace
+    this baseline test with an absolute ``no legacy config import`` assertion.
+    """
+
+    def _run(self, script: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [sys.executable, "-c", script],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    def test_producer_legacy_import_debt_does_not_grow(self) -> None:
+        script = (
+            "import sys; import confflow.producer; "
+            "print(chr(10).join(sorted(m for m in sys.modules if m.startswith('confflow'))))"
+        )
+        result = self._run(script)
+        assert result.returncode == 0, result.stderr
+        observed = frozenset(
+            module
+            for module in result.stdout.splitlines()
+            if _is_legacy_producer_dependency(module)
+        )
+        added = sorted(observed - KNOWN_PRODUCER_LEGACY_IMPORTS)
+        removed = sorted(KNOWN_PRODUCER_LEGACY_IMPORTS - observed)
+        assert observed == KNOWN_PRODUCER_LEGACY_IMPORTS, (
+            "producer legacy import debt changed;\n"
+            f"  added: {added}\n"
+            f"  removed: {removed}\n"
+            "new legacy dependencies are forbidden; removals update the "
+            "KNOWN_PRODUCER_LEGACY_IMPORTS baseline deliberately (PR-2)."
+        )
+
+    def test_producer_does_not_pull_legacy_runtime_packages(self) -> None:
+        """Hard ban: the producer must never import calc/blocks/engine at all."""
+        script = (
+            "import sys; import confflow.producer; "
+            "banned = sorted(m for m in sys.modules if m.startswith(("
+            "'confflow.calc', 'confflow.blocks', 'confflow.confts', "
+            "'confflow.workflow.engine', 'confflow.workflow.v3_runtime', "
+            "'confflow.workflow.v3_dataflow', 'confflow.workflow.binding_v2'))); "
+            "assert not banned, banned"
+        )
+        result = self._run(script)
+        assert result.returncode == 0, result.stderr
+
+
 class TestPackaging:
     """The V4 packages must ship in wheels."""
 
@@ -524,11 +811,23 @@ class TestSchemaHasNoHiddenCleanup:
         }
 
 
-@pytest.mark.parametrize("module", sorted(FORBIDDEN_LEGACY_MODULES))
-def test_forbidden_module_is_not_importable_from_v4_root(module: str) -> None:
-    """Sanity: the forbidden list refers to modules that actually exist today."""
-    base = REPO_ROOT / Path(module.replace(".", "/"))
-    assert base.with_suffix(".py").exists() or (base / "__init__.py").exists(), module
+@pytest.mark.parametrize(
+    "module",
+    sorted(set(FORBIDDEN_LEGACY_MODULES) | REMOVED_LEGACY_MODULES),
+)
+def test_legacy_module_inventory_is_intentional(module: str) -> None:
+    """Forbidden legacy modules exist unless the diet explicitly removed them.
+
+    Deleted modules must stay deleted (absence, not merely "must not be
+    imported"); retained compatibility modules must still exist unless a
+    written decision places them in :data:`RETAINED_COMPAT_ALLOWLIST`.
+    """
+    if module in REMOVED_LEGACY_MODULES:
+        assert not _legacy_module_exists(module), f"{module} was removed and must stay absent"
+        return
+    if module in RETAINED_COMPAT_ALLOWLIST:
+        return
+    assert _legacy_module_exists(module), module
 
 
 #: New V4-5 production modules.  Every entry must live under one of the

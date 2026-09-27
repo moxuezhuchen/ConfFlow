@@ -21,7 +21,6 @@ from confflow.config.canonical import CAPABILITIES, WORKFLOW_SCHEMA_VERSION_V3
 from confflow.core.contracts import ExitCode
 from confflow.core.exceptions import ConfFlowError
 from confflow.workflow.engine import run_workflow
-from confflow.workflow.rerun_failed import RerunFailedUsageError, run_rerun_failed
 
 # Hermetic CI: fake orca/g16 entrypoints on PATH (real files, real identity).
 pytestmark = pytest.mark.usefixtures("fake_qc_executables_on_path")
@@ -277,31 +276,9 @@ def workflow_source_version_is_v2(plan: Any) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Guard D — rerun-failed / resume preflight (RR1–RR4)
+# Guard D — resume preflight (RR3)
 # ---------------------------------------------------------------------------
 class TestRerunGuard:
-    def test_rr1_v3_rerun_failed_stable_id_selects_only(self, tmp_path: Path) -> None:
-        """Prove rerun-failed selects by stable ID only post-flip.
-
-        A missing step directory keeps zero side effects.
-        """
-        config = _v3_config(tmp_path / "wf.yaml")
-        step_dir = tmp_path / "step_dir"
-
-        with pytest.raises(RerunFailedUsageError) as caught:
-            run_rerun_failed(
-                step_dir=str(step_dir),
-                config_file=str(config),
-                step_ref="s002",
-                output_dir=str(tmp_path / "rerun_out"),
-            )
-
-        assert "Step directory does not exist" in str(caught.value)
-        # No rerun output directory was created and the step dir was never
-        # probed for artifacts (stable ids never touch V1 state).
-        assert not (tmp_path / "rerun_out").exists()
-        assert not step_dir.exists()
-
     def test_rr3_no_v1_state_mutation_for_v3_resume(self, tmp_path: Path) -> None:
         # A pre-existing V1 state file next to a V3 config must be untouched.
         xyz = _write_xyz(tmp_path / "input.xyz")

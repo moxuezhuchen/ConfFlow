@@ -2,21 +2,35 @@
 
 """V4 production architecture scanner (worker H).
 
-Scans the six formal entry paths (cli, application, control, producer,
-remote, analysis) for legacy execution paths. Exits 1 with a hit list
-when any legacy pattern is found in live code; comments and docstrings
-are ignored so defensive "never X" documentation never counts as a hit.
+Scans the formal V4 production paths for legacy execution paths.  Exits 1
+with a hit list when any legacy pattern is found in live code; comments and
+docstrings are ignored so defensive "never X" documentation never counts as
+a hit.
 
-Scope note: only the formal V4 entry files are scanned. Known-legacy
-shims are OUT of scope and recorded for the integrator (not allowlisted):
-``confflow/cli.py`` (legacy CLI), ``confflow/calc`` and ``confflow/workflow``
-(legacy engine), ``confflow/application/execution/*`` (control-service
-compat adapter over the legacy config/workflow engine), and
-``confflow/control_worker.py`` (legacy worker entry). Contract-source
-imports (``confflow.config.canonical.contract`` / editor manifest /
-recipes) and ``confflow.core.contracts`` (exit codes) are contract and
-error plumbing, not execution paths, and are not flagged: only
-execution-path modules are forbidden below. ``input_xyz`` control-service
+Post-cutover scope (V4 Core Closure, ``44b478d``):
+
+- SCANNED formal V4 production: ``confflow/v4cli.py``,
+  ``confflow/application/v4_run.py``, ``confflow/application/v4_entry.py``,
+  ``confflow/application/execution`` (durable control-service adapter),
+  ``confflow/producer`` (contract, manifest, recipes, validation, run
+  result), ``confflow/analysis``, and the control-protocol entries
+  ``confflow/control.py`` / ``confflow/remote``.
+- NOT YET SCANNED (known legacy-helper debt, tracked for the architecture
+  diet follow-ups; these are formal entries now, not legacy shims):
+  ``confflow/cli.py`` (dry-run/config-show/export diagnostics and path
+  helpers still come from the legacy line) and ``confflow/control_worker.py``
+  (worker-side legacy helpers).
+- RETIRED READ-ONLY / separate tools (out of scope by design):
+  ``confflow/calc`` and ``confflow/workflow`` (V2/V3 runtime, fail-closed),
+  ``confflow.confts`` / ``confflow.blocks`` (standalone legacy CLIs), and
+  the V1/V2/V3 configuration-contract emission (JobDesk wire
+  compatibility).
+
+Contract-source imports (``confflow.config.canonical.contract`` / editor
+manifest / recipes) are the producer's recorded PR-2 decoupling debt and are
+pinned by the test-level guardrail
+(``tests/v4/test_architecture_boundaries.py::TestProducerImportIsolation``);
+execution-path modules are forbidden below.  ``input_xyz`` control-service
 fields are protocol data, not legacy truth, and are not flagged.
 """
 
@@ -33,8 +47,10 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 
 SCOPE: tuple[str, ...] = (
     "confflow/v4cli.py",
-    "confflow/application/v4_run.py",
     "confflow/application/__init__.py",
+    "confflow/application/v4_entry.py",
+    "confflow/application/v4_run.py",
+    "confflow/application/execution",
     "confflow/control.py",
     "confflow/producer",
     "confflow/remote",
