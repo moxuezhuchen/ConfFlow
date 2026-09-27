@@ -158,14 +158,17 @@ def _canonical(value: object) -> bytes:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
 
 
-def _complete_fake_worker(kwargs: dict[str, object]) -> dict[str, bool]:
+def _complete_fake_worker(kwargs: dict[str, object]) -> dict[str, str]:
     work_dir = Path(str(kwargs["work_dir"]))
     work_dir.mkdir(parents=True, exist_ok=True)
     staged_input = Path(str(kwargs["original_input_files"][0]))
     staged_input.with_name(f"{staged_input.stem}min.xyz").write_text(
         "1\nH\nH 0 0 0\n", encoding="utf-8"
     )
-    return {"ok": True}
+    # Worker-D contract: V4 status owns the service aggregate; the adapter
+    # only commits completed on an explicit ``status == "completed"`` (a
+    # legacy ``{"ok": True}``/undeterminable outcome fails closed to FAILED).
+    return {"status": "completed"}
 
 
 def test_worker_handoff_digest_profile_matches_golden_fixture() -> None:
@@ -236,7 +239,9 @@ def test_control_worker_consumes_existing_queued_token_without_prepare(tmp_path:
         staged_input.with_name(f"{staged_input.stem}min.xyz").write_text(
             "1\nH\nH 0 0 0\n", encoding="utf-8"
         )
-        return {"ok": True}
+        # Worker-D contract: V4 status owns the aggregate — only an
+        # explicit ``status == "completed"`` commits COMPLETED.
+        return {"status": "completed"}
 
     state = run_control_worker(
         state_root=root,
@@ -820,7 +825,9 @@ def test_control_worker_keeps_paused_attempt_until_formal_resume(tmp_path: Path)
         staged_input.with_name(f"{staged_input.stem}min.xyz").write_text(
             "1\nH\nH 0 0 0\n", encoding="utf-8"
         )
-        return {"ok": True}
+        # Worker-D contract: V4 status owns the aggregate — only an
+        # explicit ``status == "completed"`` commits COMPLETED.
+        return {"status": "completed"}
 
     def resume_after_pause(_seconds: float) -> None:
         open_control_service(root, identity_executable=sys.executable).resume(

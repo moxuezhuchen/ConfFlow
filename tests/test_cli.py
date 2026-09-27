@@ -270,6 +270,10 @@ def test_main_normal_path_still_calls_run_workflow(tmp_path):
     config_yaml = _v4_config(tmp_path / "config.yaml")
 
     with patch("confflow.cli.run_workflow") as mock_run:
+        # Worker-D contract: V4 status owns the aggregate — a MagicMock
+        # default (undeterminable) fails closed to FAILED, so the mock
+        # must report an explicit completed V4 status for the rc==0 path.
+        mock_run.return_value = {"status": "completed"}
         result = main([str(input_xyz), "-c", str(config_yaml), "-w", str(tmp_path / "work")])
 
     assert result == 0
@@ -469,7 +473,9 @@ H  -1   0.0 0.0 0.0
         seen["input_xyz"] = input_xyz
         seen["config_file"] = config_file
         seen["work_dir"] = work_dir
-        return None
+        # Worker-D contract: V4 status owns the aggregate — only an
+        # explicit completed status yields rc 0 (None is undeterminable).
+        return {"status": "completed"}
 
     monkeypatch.setattr(cli, "run_workflow", fake_run_workflow)
 

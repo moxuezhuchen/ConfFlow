@@ -29,7 +29,13 @@ FAKE_IRC = FAKES_DIR / "fake_irc.py"
 
 
 def _install_irc_wrapper(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, tag: str) -> Path:
-    """Install a counting fake-IRC executable; return its path."""
+    """Install a counting fake-IRC executable; return its path.
+
+    The planned document binds the bare ``orca`` name (planned-wins over
+    the request executables map), so the wrapper directory is prepended
+    to ``PATH``: bare-name resolution must land on this counting fake,
+    never on a system ORCA/Gaussian install (or fail under minimal PATH).
+    """
     bin_dir = tmp_path / f"bin-{tag}"
     bin_dir.mkdir(parents=True, exist_ok=True)
     wrapper = bin_dir / "orca"
@@ -43,6 +49,7 @@ def _install_irc_wrapper(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, tag: s
     )
     wrapper.chmod(0o755)
     (tmp_path / f"{tag}.fails").write_text("")
+    monkeypatch.setenv("PATH", str(bin_dir) + os.pathsep + os.environ["PATH"])
     monkeypatch.setenv("FAKE_IRC_MODE", "success")
     monkeypatch.setenv("FAKE_IRC_ORDER", "reverse_first")
     monkeypatch.setenv("IRC_FAIL_FILE", str(tmp_path / f"{tag}.fails"))
