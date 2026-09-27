@@ -16,12 +16,14 @@ Every test below consumes REAL bytes/objects:
   runtime objects via ``confflow.producer.run_result`` (never hand-built
   shapes), validated against the real schema, published atomically, and
   re-read from disk;
-* the JobDesk side uses the REAL parsers in the live checkout
-  (``/opt/jobdesk-v2-v4``): ``parse_v4_contract_bytes`` (contract),
+* the JobDesk side (classes marked ``cross_repo``) uses the REAL parsers in
+  the optional checkout: ``parse_v4_contract_bytes`` (contract),
   ``author_v4_document`` (recipe -> WorkflowDocument),
-  ``parse_result_bytes`` (manifest -> view model). No doubles anywhere in
-  this file: JobDesk never recomputes science, it only displays producer
-  values.
+  ``parse_result_bytes`` (manifest -> view model).  The dependency is
+  resolved lazily through the ``jobdesk`` fixture, so this module imports
+  cleanly on hosts without the private checkout; only the cross-repo tests
+  skip there.  No doubles anywhere in this file: JobDesk never recomputes
+  science, it only displays producer values.
 """
 
 from __future__ import annotations
@@ -30,25 +32,10 @@ import copy
 import hashlib
 import json
 import os
-import sys
 from pathlib import Path
 from typing import Any
 
 import pytest
-
-_JOBDESK_SRC = Path("/opt/jobdesk-v2-v4/src")
-if str(_JOBDESK_SRC) not in sys.path:
-    sys.path.insert(0, str(_JOBDESK_SRC))
-
-from jobdesk_v2.application.cards.v4_provider import (  # noqa: E402
-    author_v4_document,
-)
-from jobdesk_v2.application.editor.contract.v4 import (  # noqa: E402
-    parse_v4_contract_bytes,
-)
-from jobdesk_v2.application.runs.v4_results import (  # noqa: E402
-    parse_result_bytes,
-)
 
 from confflow.analysis.reaction import (  # noqa: E402
     ReactionNodeGroup,
@@ -444,14 +431,21 @@ class TestRealJobdeskConsumerTenSteps:
     E-G/barriers/assignment/artifacts.
     """
 
-    def test_ten_steps(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    pytestmark = pytest.mark.cross_repo
+
+    def test_ten_steps(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        jobdesk: Any,
+    ) -> None:
         # (1) ConfFlow generates actual producer bytes.
         contract_bytes = generate_contract_bytes(producer_version=PRODUCER_VERSION)
         assert isinstance(contract_bytes, bytes) and contract_bytes
         assert canonical_json_bytes(json.loads(contract_bytes.decode("utf-8"))) == contract_bytes
 
         # (2) JobDesk real parser parses (V4 line: VerifiedV4Contract).
-        contract = parse_v4_contract_bytes(contract_bytes)
+        contract = jobdesk.parse_v4_contract_bytes(contract_bytes)
         assert contract.content_schema == CONFIGURATION_CONTRACT_V4_SCHEMA
         assert contract.workflow_schema_id == "confflow.workflow.v4"
 
@@ -468,7 +462,7 @@ class TestRealJobdeskConsumerTenSteps:
         assert contract.contract_key
 
         # (4) JobDesk generates a V4 WorkflowDocument from an actual recipe.
-        document = author_v4_document(contract, "opt_freq")
+        document = jobdesk.author_v4_document(contract, "opt_freq")
         payload = document.to_mapping()
         assert payload["schema"] == "confflow.workflow.v4"
         # Representative editor edit through the producer manifest vocabulary:
@@ -518,9 +512,9 @@ class TestRealJobdeskConsumerTenSteps:
         enriched_bytes = canonical_json_bytes(enriched)
 
         # (9) JobDesk real result parser consumes both manifests.
-        view_plain = parse_result_bytes(durable_bytes)
+        view_plain = jobdesk.parse_result_bytes(durable_bytes)
         assert view_plain.run_id == durable["run_id"]
-        view = parse_result_bytes(enriched_bytes)
+        view = jobdesk.parse_result_bytes(enriched_bytes)
         assert view.run_id == enriched["run_id"]
 
         # (10) JobDesk view model shows run/step status, diagnostics, TS,
@@ -642,29 +636,29 @@ class TestRealJobdeskConsumerTenSteps:
 # 5. JobDesk parser accepts the actual contract AND the actual manifest.
 # ---------------------------------------------------------------------------
 class TestJobdeskAcceptsActualWire:
-    def test_parser_accepts_actual_contract(self) -> None:
+    pytestmark = pytest.mark.cross_repo
+
+    def test_parser_accepts_actual_contract(self, jobdesk: Any) -> None:
         raw = generate_contract_bytes(producer_version=PRODUCER_VERSION)
-        contract = parse_v4_contract_bytes(raw)
+        contract = jobdesk.parse_v4_contract_bytes(raw)
         assert contract.is_v4_capable
         assert set(contract.recipe_ids) == set(RECIPE_IDS_V4)
 
     def test_result_parser_accepts_actual_manifest(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, jobdesk: Any
     ) -> None:
         result, run_root, definition_digest = _run_recipe(
             tmp_path, monkeypatch, "optimize", 1, "success_opt"
         )
         manifest = _runtime_manifest_from_run(result, run_root, definition_digest)
-        view = parse_result_bytes(canonical_json_bytes(manifest))
+        view = jobdesk.parse_result_bytes(canonical_json_bytes(manifest))
         assert view.run_id == manifest["run_id"]
         assert view.status == manifest["status"]
         assert [step.id for step in view.steps] == [step["id"] for step in manifest["steps"]]
 
-    def test_tampered_contract_rejected(self) -> None:
+    def test_tampered_contract_rejected(self, jobdesk: Any) -> None:
         raw = generate_contract_bytes(producer_version=PRODUCER_VERSION)
         envelope = json.loads(raw.decode("utf-8"))
         envelope["workflow_schema"]["title"] = "evil"
-        from jobdesk_v2.application.editor.contract.parse import ContractParseError
-
-        with pytest.raises(ContractParseError):
-            parse_v4_contract_bytes(canonical_json_bytes(envelope))
+        with pytest.raises(jobdesk.ContractParseError):
+            jobdesk.parse_v4_contract_bytes(canonical_json_bytes(envelope))

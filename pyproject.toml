@@ -130,6 +130,7 @@ addopts = "-v --tb=short"
 strict_config = true
 markers = [
     "integration: end-to-end tests that exercise the full workflow",
+    "cross_repo: tests that consume the optional private JobDesk v2 checkout; skipped when the checkout is absent",
 ]
 
 [tool.coverage.run]

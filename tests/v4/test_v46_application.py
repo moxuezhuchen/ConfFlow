@@ -247,7 +247,9 @@ class TestV4AnalysisStep:
             global_config={"scientific_defaults": {"charge": 0, "multiplicity": 1}},
         )
 
-    def test_irc_analysis_chain(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def _run_chain(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> tuple[Any, str, str, str, Any]:
         from confflow.domain.result import ResultSet, ScientificResult, make_result_id
         from confflow.domain.units import Unit
 
@@ -298,6 +300,10 @@ class TestV4AnalysisStep:
                 executables=FrozenDict({"orca": str(wrapper)}),
             )
         )
+        return report, run_root, forward_id, reverse_id, gibbs
+
+    def test_irc_analysis_chain(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        report, run_root, forward_id, reverse_id, gibbs = self._run_chain(tmp_path, monkeypatch)
         assert report.status == "completed"
         by_id = {result.step_id: result for result in report.step_results}
         assert by_id["s_an"].status.value == "completed"
@@ -331,28 +337,35 @@ class TestV4AnalysisStep:
         assert set(group["source_result_ids"]) == {
             record.result_id for record in gibbs if record.result_id is not None
         }
-        # The durable bytes validate against the actual producer schema
-        # and the REAL JobDesk consumer reads exactly one group with the
-        # TS/endpoints/barriers/assignment/source ids above.
+        # The durable bytes validate against the actual producer schema.
         import json as _json
-        import sys as _sys
-        from pathlib import Path as _Path
 
         import jsonschema as _jsonschema
 
         from confflow.domain.canonical import canonical_json_bytes as _canonical
         from confflow.producer.contract import run_result_json_schema as _schema
 
-        manifest_path = _Path(run_root) / "run_result.json"
+        manifest_path = Path(run_root) / "run_result.json"
         durable_bytes = manifest_path.read_bytes()
         assert _canonical(_json.loads(durable_bytes.decode("utf-8"))) == durable_bytes
         _jsonschema.validate(instance=_json.loads(durable_bytes.decode("utf-8")), schema=_schema())
-        _jobdesk_src = _Path("/opt/jobdesk-v2-v4/src")
-        if str(_jobdesk_src) not in _sys.path:
-            _sys.path.insert(0, str(_jobdesk_src))
-        from jobdesk_v2.application.runs.v4_results import parse_result_bytes as _parse
 
-        view = _parse(durable_bytes)
+
+class TestV4AnalysisCrossRepo:
+    """Cross-repo: the same durable analysis bytes, read by REAL JobDesk."""
+
+    pytestmark = pytest.mark.cross_repo
+
+    def test_jobdesk_reads_irc_analysis_view(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, jobdesk: Any
+    ) -> None:
+        report, run_root, forward_id, reverse_id, _gibbs = TestV4AnalysisStep()._run_chain(
+            tmp_path, monkeypatch
+        )
+        assert report.status == "completed"
+        group = next(entry for entry in report.manifest.thaw()["analyses"] if "group_key" in entry)
+        durable_bytes = (Path(run_root) / "run_result.json").read_bytes()
+        view = jobdesk.parse_result_bytes(durable_bytes)
         assert len(view.groups) == 1
         seen = view.groups[0]
         assert seen.group_key == "rxn-00"

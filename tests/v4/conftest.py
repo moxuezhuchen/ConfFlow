@@ -20,6 +20,8 @@ import os
 
 import pytest
 
+from . import jobdesk_integration
+
 #: Vendor install roots that the fake suite must never resolve via ``PATH``.
 BLOCKED_NATIVE_PREFIXES = ("/opt/orca611", "/opt/orca", "/opt/g16", "/opt/gauopen")
 
@@ -77,3 +79,22 @@ def _scrub_real_qc_from_path(monkeypatch: pytest.MonkeyPatch) -> None:
     if _ALLOW_REAL_QC:
         return
     monkeypatch.setenv("PATH", _scrubbed_path(os.environ.get("PATH", "")))
+
+
+@pytest.fixture
+def jobdesk() -> jobdesk_integration.JobDeskIntegration:
+    """Return the optional JobDesk consumer surfaces.
+
+    Cross-repo tests request this fixture.  When the private checkout is
+    absent (GitHub-hosted CI), only those tests skip; ConfFlow-local tests
+    never request it and always run.  A checkout at the wrong revision
+    fails closed instead of producing false cross-repo evidence.
+    """
+    try:
+        return jobdesk_integration.load_jobdesk()
+    except jobdesk_integration.JobDeskUnavailable as exc:
+        pytest.skip(str(exc))
+    except jobdesk_integration.JobDeskMisconfigured as exc:
+        pytest.fail(str(exc), pytrace=False)
+    except jobdesk_integration.JobDeskShaMismatch as exc:
+        pytest.fail(str(exc), pytrace=False)

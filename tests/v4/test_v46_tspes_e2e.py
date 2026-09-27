@@ -17,6 +17,10 @@ inspects the real ``.inp`` keyword and selects the real-format fake behind
 it (TS candidate, unshifted frequency measurement, single point, IRC),
 so every leg still passes through the formal ``ProgramAdapter`` /
 parser / runtime only.
+
+The formal chain itself is ConfFlow-local and always runs.  Only the
+JobDesk consumer assertions (marked ``cross_repo``) require the optional
+private checkout, resolved lazily through the ``jobdesk`` fixture.
 """
 
 from __future__ import annotations
@@ -25,20 +29,11 @@ import copy
 import json
 import os
 import stat
-import sys
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
 import pytest
-
-_JOBDESK_SRC = Path("/opt/jobdesk-v2-v4/src")
-if str(_JOBDESK_SRC) not in sys.path:
-    sys.path.insert(0, str(_JOBDESK_SRC))
-
-from jobdesk_v2.application.cards.v4_provider import author_v4_document  # noqa: E402
-from jobdesk_v2.application.editor.contract.v4 import parse_v4_contract_bytes  # noqa: E402
-from jobdesk_v2.application.runs.v4_results import parse_result_bytes  # noqa: E402
 
 from confflow.analysis.pes import pes_from_analysis_results  # noqa: E402
 from confflow.application.v4_run import (  # noqa: E402
@@ -258,9 +253,9 @@ def _assert_durable_manifest(
     return durable, durable_bytes
 
 
-def _assert_jobdesk_view(durable: dict[str, Any], durable_bytes: bytes) -> Any:
+def _assert_jobdesk_view(jobdesk: Any, durable: dict[str, Any], durable_bytes: bytes) -> Any:
     """Assert the REAL JobDesk consumer reads all twenty groups verbatim."""
-    view = parse_result_bytes(durable_bytes)
+    view = jobdesk.parse_result_bytes(durable_bytes)
     assert view.run_id == durable["run_id"]
     assert view.status == "completed"
     assert len(view.steps) == len(durable["steps"])
@@ -306,7 +301,6 @@ class TestFormalTspesE2E:
         durable, durable_bytes = _assert_durable_manifest(
             report, run_root, validated.definition_digest
         )
-        _assert_jobdesk_view(durable, durable_bytes)
         # Real WorkItemStore evidence: every step ran through the durable
         # claim -> execute -> commit lifecycle.
         for step_id in TSPES_IDS:
@@ -332,11 +326,37 @@ class TestFormalTspesE2E:
         assert _native_count(count_file) == 200
 
 
+class TestJobdeskConsumerView:
+    """Cross-repo: the same durable bytes, read by the REAL JobDesk parser."""
+
+    pytestmark = pytest.mark.cross_repo
+
+    def test_jobdesk_reads_twenty_groups_from_durable_bytes(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, jobdesk: Any
+    ) -> None:
+        _, count_file = _install_dispatch_orca(tmp_path, monkeypatch)
+        document = _tspes_document()
+        validated = validate_workflow_bytes(canonical_json_bytes(document))
+        assert validated.ok, validated.diagnostics
+        assert validated.definition_digest is not None
+        structures = _ts_inputs(N_TS)
+        run_root = str(tmp_path / "run")
+        report = _run_tspes(document, structures, run_root)
+        assert _native_count(count_file) == 200
+        durable, durable_bytes = _assert_durable_manifest(
+            report, run_root, validated.definition_digest
+        )
+        view = _assert_jobdesk_view(jobdesk, durable, durable_bytes)
+        assert len(view.groups) == 20
+
+
 class TestCrossRepoChain:
     """GAP6: producer contract -> JobDesk recipe -> same bytes -> run -> view."""
 
+    pytestmark = pytest.mark.cross_repo
+
     def test_jobdesk_tspes_bytes_yield_twenty_groups(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, jobdesk: Any
     ) -> None:
         import confflow
 
@@ -346,9 +366,9 @@ class TestCrossRepoChain:
         contract_bytes = generate_contract_bytes(producer_version=producer_version)
         envelope = json.loads(contract_bytes.decode("utf-8"))
         assert envelope["contract_digest"] == contract_digest_of(envelope)
-        contract = parse_v4_contract_bytes(contract_bytes)
+        contract = jobdesk.parse_v4_contract_bytes(contract_bytes)
         # (3) JobDesk authors the TSPES document from its recipe catalog.
-        authored = author_v4_document(contract, "tspes")
+        authored = jobdesk.author_v4_document(contract, "tspes")
         payload = authored.to_mapping()
         assert payload["schema"] == "confflow.workflow.v4"
         assert [step["id"] for step in payload["steps"]] == list(TSPES_IDS)
@@ -371,7 +391,7 @@ class TestCrossRepoChain:
         durable, durable_bytes = _assert_durable_manifest(
             report, run_root, validated.definition_digest
         )
-        view = _assert_jobdesk_view(durable, durable_bytes)
+        view = _assert_jobdesk_view(jobdesk, durable, durable_bytes)
         # Checksums/locators verify against the run bytes; the manifest
         # provenance matches the submitting contract producer.
         assert verify_artifact_bytes(durable, run_root)
