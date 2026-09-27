@@ -175,10 +175,12 @@ def require_target_transport(target: str | None, transport: Any) -> Any:
 
     Local targets (see :func:`is_local_target`) always return ``None``
     (in-process delivery, never a remote transport). Nonlocal targets
-    require a configured *transport*: ``None`` (or a transport whose
-    ``supports_target`` hook rejects the target) raises
-    :class:`DomainError` BEFORE any native launch, so an explicit
-    ``target=nonexistent-cluster`` can never silently execute locally.
+    require a configured *transport* that explicitly claims the target
+    through the formal ``supports_target`` interface. A transport without
+    that interface, or one whose claim is false, raises
+    :class:`DomainError` BEFORE any native launch: an explicit
+    ``target=nonexistent-cluster`` can never silently execute locally, and
+    an unnamed transport can never claim arbitrary targets.
     """
     if target is None or is_local_target(target):
         return None
@@ -189,16 +191,22 @@ def require_target_transport(target: str | None, transport: Any) -> Any:
             "refusing silent local fallback (0 native launches)"
         )
     supports = getattr(transport, "supports_target", None)
-    if callable(supports):
-        try:
-            ok = supports(label)
-        except Exception as exc:
-            raise DomainError(f"target {label!r} cannot be resolved to a transport: {exc}") from exc
-        if not ok:
-            raise DomainError(
-                f"step targets {label!r} but no matching transport claims it; "
-                "refusing silent local fallback (0 native launches)"
-            )
+    if not callable(supports):
+        raise DomainError(
+            f"step targets {label!r} but transport "
+            f"{type(transport).__name__!r} does not implement the formal "
+            "supports_target interface; refusing silent local fallback "
+            "(0 native launches)"
+        )
+    try:
+        ok = supports(label)
+    except Exception as exc:
+        raise DomainError(f"target {label!r} cannot be resolved to a transport: {exc}") from exc
+    if not ok:
+        raise DomainError(
+            f"step targets {label!r} but no matching transport claims it; "
+            "refusing silent local fallback (0 native launches)"
+        )
     return transport
 
 

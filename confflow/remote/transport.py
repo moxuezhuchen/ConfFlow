@@ -267,7 +267,14 @@ def build_execution_definition(
 
 
 class LocalTransport:
-    """In-process transport: direct delegation to a :class:`WorkItemExecutor`."""
+    """In-process transport: direct delegation to a :class:`WorkItemExecutor`.
+
+    Target semantics are executable constraints: this transport claims only
+    local delivery (``None``/``"local"``/``"localhost"``, which never reach
+    a transport at all). Every nonlocal target is rejected here as a second
+    gate behind the application's preflight, so a LocalTransport can never
+    absorb ``cluster-a``/``gpu01``/``nonexistent-cluster``.
+    """
 
     def __init__(self, executor: WorkItemExecutor) -> None:
         self._executor = executor
@@ -276,6 +283,19 @@ class LocalTransport:
     def executor(self) -> WorkItemExecutor:
         """Return the wrapped executor."""
         return self._executor
+
+    def supports_target(self, target: str | None) -> bool:
+        """Return whether this transport claims *target* (never nonlocal)."""
+        from ..execution.binding_resolution import is_local_target
+
+        if target is None:
+            return True
+        if not isinstance(target, str) or not target.strip():
+            return False
+        try:
+            return is_local_target(target)
+        except Exception:
+            return False
 
     def execute(
         self,
@@ -287,6 +307,16 @@ class LocalTransport:
     ) -> WorkItemResult:
         """Execute *item* locally; *attempt* is recorded for parity only."""
         del attempt
+        binding = getattr(context, "execution_binding", None)
+        target = getattr(binding, "target", None) if binding is not None else None
+        if target is not None:
+            from ..execution.binding_resolution import is_local_target
+
+            if not is_local_target(target):
+                raise DomainError(
+                    f"local transport cannot deliver target {target!r}; "
+                    "refusing silent local fallback (0 native launches)"
+                )
         return self._executor.execute(item, context, should_cancel=should_cancel)
 
     def probe_environment_digest(
@@ -383,13 +413,13 @@ class RemoteTransport:
         return self._target_name
 
     def supports_target(self, target: str | None) -> bool:
-        """Return whether this transport claims *target*.
+        """Return whether this transport explicitly claims *target*.
 
-        An unnamed transport (``target_name=None``, the historical
-        file-based test seam) claims any nonlocal target so explicit
-        per-test delivery keeps working; a named transport claims only
-        its own name (case-sensitive, trimmed). Local targets are never
-        claimed here — they always run in-process.
+        A transport is bound to exactly one endpoint identity
+        (``target_name``). An unnamed transport claims NOTHING: it must
+        never absorb arbitrary targets by absence of a name, so a target
+        typo or unknown cluster fails closed before any launch. Local
+        targets are never claimed here — they always run in-process.
         """
         if target is None:
             return False
@@ -403,7 +433,7 @@ class RemoteTransport:
         except Exception:
             return False
         if self._target_name is None:
-            return True
+            return False
         return target.strip() == self._target_name
 
     def probe_environment_digest(

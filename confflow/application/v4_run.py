@@ -285,6 +285,7 @@ class V4RunApplication:
             state = ensure_step(state, planned.step_id)
         save_run_state(run_root, state)
         run_inputs = self._resolve_run_inputs(run_root=run_root, request=request)
+        self._preflight_targets(plan, request)
         materialized = MaterializedOutputs.empty()
         step_results: list[Any] = []
         supervisor = request.supervisor if request.supervisor is not None else self._supervisor
@@ -355,6 +356,39 @@ class V4RunApplication:
     # ------------------------------------------------------------------
     # Run-state and import persistence
     # ------------------------------------------------------------------
+
+    def _preflight_targets(self, plan: Any, request: V4RunRequest) -> None:
+        """Validate every planned step's target before any step executes.
+
+        Target is an executable constraint, never an annotation. A
+        nonlocal target on a native step requires a configured transport
+        that explicitly claims it; a pure executor has no remote delivery
+        at all, so a nonlocal target on it fails closed. Running this
+        before the step loop guarantees 0 native launches for a bad
+        target anywhere in the plan (a typo on step 7 cannot let steps
+        1-6 run first).
+        """
+        from ..execution.binding_resolution import (
+            is_local_target,
+            require_target_transport,
+        )
+
+        registry = self._active_registry
+        for planned in plan.steps:
+            execution = getattr(planned, "execution", None)
+            target = getattr(execution, "target", None) if execution is not None else None
+            if target is None or is_local_target(target):
+                continue
+            contract = registry.resolve_executor(planned.executor)
+            if contract.requires_adapter:
+                require_target_transport(target, request.transport)
+                continue
+            capability = getattr(planned.executor, "value", str(planned.executor))
+            raise DomainError(
+                f"step {planned.step_id!r} targets {target!r} but pure executor "
+                f"{capability!r} has no remote delivery; refusing silent local "
+                "fallback (0 native launches)"
+            )
 
     @staticmethod
     def _load_or_init_run_state(*, run_root: str, run_id: str, definition_digest: str) -> RunState:
@@ -517,6 +551,20 @@ class V4RunApplication:
             # real registered executor contract version, so implementation
             # changes invalidate reuse.  Analysis dispatches through its
             # in-package work-item adapter on the same lifecycle.
+            # Target is an executable constraint: a pure executor has no
+            # remote delivery, so a nonlocal target fails closed here too
+            # (defense in depth behind the application preflight).
+            planned_target = getattr(getattr(planned, "execution", None), "target", None)
+            if planned_target is not None:
+                from ..execution.binding_resolution import is_local_target
+
+                if not is_local_target(planned_target):
+                    capability = getattr(planned.executor, "value", str(planned.executor))
+                    raise DomainError(
+                        f"step {planned.step_id!r} targets {planned_target!r} but pure "
+                        f"executor {capability!r} has no remote delivery; refusing "
+                        "silent local fallback (0 native launches)"
+                    )
             from ..execution.environment import build_pure_environment
             from ..persistence.reuse import build_producer_provenance
 

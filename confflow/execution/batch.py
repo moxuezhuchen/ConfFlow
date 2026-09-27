@@ -33,7 +33,7 @@ from ..domain._immutable import FrozenDict
 from ..domain.artifact import ArtifactSet
 from ..domain.completion import WorkItemStatus, evaluate_step_status
 from ..domain.diagnostics import Diagnostic, DiagnosticSeverity
-from ..domain.errors import PublicationError
+from ..domain.errors import DomainError, PublicationError
 from ..domain.result import ResultSet
 from ..domain.step_result import StepProvenance, StepResult
 from ..domain.structure import StructureSet
@@ -233,6 +233,13 @@ class BatchStepExecutor:
     def execute_step(self, request: StepExecutionRequest) -> StepResult:
         """Execute every work item of one step and assemble the step result."""
         step = request.step
+        # Target is an executable constraint: this in-memory path has no
+        # transport, so any nonlocal target fails closed before launch.
+        _binding_target = getattr(request.execution_binding, "target", None)
+        if _binding_target is not None:
+            from .binding_resolution import require_target_transport
+
+            require_target_transport(_binding_target, None)
         ordered = tuple(sorted(request.items, key=lambda item: item.logical_key))
         validation_error = self._validate_request(request)
         if validation_error is not None:
@@ -377,22 +384,17 @@ class BatchStepExecutor:
             )
         # Explicit target gate (defense in depth; the application resolves
         # per-step delivery before reaching batch). A nonlocal binding
-        # without a transport must never execute locally: fail closed with
-        # 0 native launches instead of silently falling back.
+        # without a transport that formally claims it must never execute
+        # locally: fail closed with 0 native launches instead of silently
+        # falling back.
         _binding_target = getattr(request.execution_binding, "target", None)
         if _binding_target is not None:
-            try:
-                from .binding_resolution import is_local_target
+            from .binding_resolution import require_target_transport
 
-                _is_local = is_local_target(_binding_target)
-            except Exception:
-                _is_local = False
-            if not _is_local and transport is None:
-                raise PersistenceError(
-                    f"durable execution of step {step.step_id!r} targets "
-                    f"{_binding_target!r} but no transport is configured; "
-                    "refusing silent local fallback (0 native launches)"
-                )
+            try:
+                require_target_transport(_binding_target, transport)
+            except DomainError as exc:
+                raise PersistenceError(str(exc)) from exc
         validation_error = self._validate_request(request)
         if validation_error is not None:
             failed = tuple(

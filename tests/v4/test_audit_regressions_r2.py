@@ -36,6 +36,7 @@ from confflow.application.v4_run import (
     import_xyz,
 )
 from confflow.domain import FrozenDict
+from confflow.domain.errors import DomainError
 from confflow.execution.environment import ExecutionEnvironment, measure_executable
 from confflow.execution.process import NativeProcessSupervisor
 from confflow.persistence.contracts import store_path
@@ -290,3 +291,150 @@ def _clean_audit_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """Keep ambient audit variables from leaking between tests."""
     monkeypatch.delenv("SCIENCE_ENV", raising=False)
     monkeypatch.delenv("AUDIT_R2_SENTINEL", raising=False)
+
+
+def _analysis_doc(target: str) -> tuple[dict[str, Any], RunInputs]:
+    """Build the frozen R2 pure-executor attack document.
+
+    One formal reaction-profile analysis step bound to run-input
+    structures/results, carrying a nonlocal execution target.  The target
+    must be an executable constraint even though the executor is pure.
+    """
+    from confflow.domain import ResultSet, ScientificResult, StructureSet
+    from confflow.domain.units import Unit
+    from tests.v4._builders import structure
+
+    step = copy.deepcopy(get_recipe_v4("tspes")["document"]["steps"][-1])
+    step["bindings"] = {
+        "structures": {"source": {"run": "structures"}},
+        "results": {"source": {"run": "results"}},
+    }
+    native = step["analysis"]["native"]
+    native.pop("electronic_source_steps", None)
+    native.pop("correction_source_steps", None)
+    step["execution"] = {"target": target}
+    doc = {
+        "schema": "confflow.workflow.v4",
+        "global": {"scientific_defaults": {"charge": 0, "multiplicity": 1}},
+        "inputs": {
+            "structures": {"kind": "structure", "cardinality": "many"},
+            "results": {"kind": "result", "cardinality": "many"},
+        },
+        "steps": [step],
+    }
+    t = structure("T", group_key="g")
+    f = structure("F", parent_ids=("T",), role="path_endpoint_forward", group_key="g")
+    r = structure("R", parent_ids=("T",), role="path_endpoint_reverse", group_key="g")
+    results = [
+        ScientificResult(
+            kind=kind,
+            value=value,
+            unit=Unit.HARTREE,
+            subject_structure_id=subject,
+            result_id=f"{subject}{kind}",
+        )
+        for subject, energy in (("T", -5.0), ("F", -10.0), ("R", -20.0))
+        for kind, value in (("energy", energy), ("gibbs_correction", 0.1))
+    ]
+    inputs = RunInputs(
+        structures=FrozenDict({"structures": StructureSet((t, f, r))}),
+        results=FrozenDict({"results": ResultSet(tuple(results))}),
+    )
+    return doc, inputs
+
+
+class TestR2TargetSemantics:
+    """R2: target is an executable constraint, never an annotation."""
+
+    def test_unknown_target_without_transport_fails_closed(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        script = _science_native(tmp_path)
+        monkeypatch.setenv("SCIENCE_ENV", "-11")
+        doc = _single_step_doc(script, env={"SCIENCE_ENV": "-11"})
+        doc["steps"][0]["execution"]["target"] = "nonexistent-cluster"
+        with pytest.raises(DomainError):
+            _run(doc, tmp_path / "run")
+        assert _launches(tmp_path) == 0
+
+    def test_local_transport_rejects_nonlocal_target(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from confflow.execution.work_item_executor import WorkItemExecutor
+        from confflow.remote.transport import LocalTransport
+
+        script = _science_native(tmp_path)
+        monkeypatch.setenv("SCIENCE_ENV", "-11")
+        doc = _single_step_doc(script, env={"SCIENCE_ENV": "-11"})
+        doc["steps"][0]["execution"]["target"] = "nonexistent-cluster"
+        with pytest.raises(DomainError):
+            _run(
+                doc,
+                tmp_path / "run",
+                transport=LocalTransport(WorkItemExecutor()),
+            )
+        assert _launches(tmp_path) == 0
+
+    def test_unnamed_remote_transport_rejects_nonlocal_target(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from confflow.remote.transport import RemoteTransport
+
+        script = _science_native(tmp_path)
+        monkeypatch.setenv("SCIENCE_ENV", "-11")
+        doc = _single_step_doc(script, env={"SCIENCE_ENV": "-11"})
+        doc["steps"][0]["execution"]["target"] = "nonexistent-cluster"
+        run_root = tmp_path / "run"
+        with SqliteWorkItemStore.open(store_path(str(run_root), "ts")) as store:
+            transport = RemoteTransport(
+                run_root=str(run_root),
+                store=store,
+                worker_root=str(tmp_path / "worker"),
+                target_name=None,
+            )
+            with pytest.raises(DomainError):
+                _run(doc, run_root, transport=transport)
+        assert _launches(tmp_path) == 0
+
+    def test_named_remote_transport_rejects_target_mismatch(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from confflow.remote.transport import RemoteTransport
+
+        script = _science_native(tmp_path)
+        monkeypatch.setenv("SCIENCE_ENV", "-11")
+        doc = _single_step_doc(script, env={"SCIENCE_ENV": "-11"})
+        doc["steps"][0]["execution"]["target"] = "cluster-typo"
+        run_root = tmp_path / "run"
+        with SqliteWorkItemStore.open(store_path(str(run_root), "ts")) as store:
+            transport = RemoteTransport(
+                run_root=str(run_root),
+                store=store,
+                worker_root=str(tmp_path / "worker"),
+                target_name="cluster-real",
+            )
+            with pytest.raises(DomainError):
+                _run(doc, run_root, transport=transport)
+        assert _launches(tmp_path) == 0
+
+    def test_pure_executor_nonlocal_target_fails_closed(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        doc, inputs = _analysis_doc("gpu01")
+        with pytest.raises(DomainError):
+            V4RunApplication(supervisor=NativeProcessSupervisor()).run(
+                V4RunRequest(workflow_document=doc, run_inputs=inputs, run_root=str(tmp_path))
+            )
+
+    def test_local_aliases_still_run_locally(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        script = _science_native(tmp_path)
+        monkeypatch.setenv("SCIENCE_ENV", "-12")
+        for index, alias in enumerate(("local", "localhost", "LOCAL")):
+            run_root = tmp_path / f"run-alias-{index}"
+            doc = _single_step_doc(script, env={"SCIENCE_ENV": "-12"})
+            doc["steps"][0]["execution"]["target"] = alias
+            report = _run(doc, run_root)
+            assert report.status == "completed"
+        assert _launches(tmp_path) == 3

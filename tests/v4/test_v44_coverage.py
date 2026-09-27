@@ -1507,10 +1507,11 @@ class TestTargetBindingTakesEffect:
             target="node-7",
         )
         assert handoff.execution.handoff_walltime_seconds == 600
-        assert handoff.execution.handoff_env == {
-            "HANDOFF_VAR": "from-handoff",
-            "SHARED": "handoff-wins",
-        }
+        # The envelope carries the COMPLETE producer snapshot (R1): the
+        # declared entries verbatim plus the ambient inheritance policy.
+        assert handoff.execution.handoff_env["HANDOFF_VAR"] == "from-handoff"
+        assert handoff.execution.handoff_env["SHARED"] == "handoff-wins"
+        assert "PATH" in handoff.execution.handoff_env
         assert handoff.environment_request.target == "node-7"
         returncode, stderr, payload = self._resolve_in_subprocess(
             tmp_path,
@@ -1526,12 +1527,14 @@ class TestTargetBindingTakesEffect:
         assert payload["executable"] == fake_orca
         assert payload["walltime_seconds"] == 600
         assert payload["target"] == "node-7"
-        # Target env applies under the handoff env: handoff wins conflicts.
-        assert payload["env"] == {
-            "SHARED": "handoff-wins",
-            "HANDOFF_VAR": "from-handoff",
-            "TARGET_ONLY": "yes",
-        }
+        # Target env applies under the handoff env: handoff wins conflicts,
+        # and the worker never merges its own unrelated ambient env — the
+        # effective env is exactly target defaults over the producer
+        # snapshot.
+        assert payload["env"]["SHARED"] == "handoff-wins"
+        assert payload["env"]["HANDOFF_VAR"] == "from-handoff"
+        assert payload["env"]["TARGET_ONLY"] == "yes"
+        assert set(payload["env"]) == set(handoff.execution.handoff_env) | {"TARGET_ONLY"}
 
     def test_unmeasurable_executable_fails_closed(self, tmp_path: Path) -> None:
         """A missing requested binary fails; the default never substitutes."""
