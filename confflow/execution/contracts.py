@@ -24,6 +24,7 @@ __all__ = [
     "CheckSpec",
     "ENVIRONMENT_DIGEST_KIND",
     "ENVIRONMENT_DIGEST_KIND_V1",
+    "ENVIRONMENT_DIGEST_KIND_V2",
     "ExecutionAdapterSpec",
     "ExecutionBinding",
     "ExecutionEnvironment",
@@ -412,15 +413,26 @@ class ExecutionBinding:
         }
 
 
-#: Digest domain marker for :meth:`ExecutionEnvironment.digest` (identity v2).
+#: Digest domain marker for :meth:`ExecutionEnvironment.digest` (identity v3).
 #:
-#: v2 is the versioned environment-identity rule: full executable content
-#: identity plus the declared scientifically relevant explicit environment.
+#: v3 is the versioned environment-identity rule: full executable content
+#: identity plus the COMPLETE effective native environment the subprocess
+#: receives — the producer's explicit inheritance policy (``os.environ``
+#: ambient inheritance) overlaid with the declared binding env, or the
+#: target-side equivalent (target defaults under the producer handoff
+#: snapshot). There is exactly one mapping, used for both the subprocess
+#: launch and the digest: an inherited variable the executable can read is
+#: always part of identity, so changing or deleting it invalidates reuse.
 #: Endpoint target locators, absolute paths, file stat (size/mtime), and
-#: scheduler width are operational provenance and never enter the digest.
-#: v1 digests (which folded the target locator and stat-tainted hashes)
-#: never equal v2 digests: old generations fail closed at reuse comparison.
-ENVIRONMENT_DIGEST_KIND: Final[str] = "confflow.execution_environment.v2"
+#: scheduler width remain operational provenance and never enter the digest.
+#: v2 digests (declared-subset env with uninventoried ambient inheritance)
+#: never equal v3 digests, so pre-fix generations fail closed at reuse
+#: comparison instead of aliasing stale science.
+ENVIRONMENT_DIGEST_KIND: Final[str] = "confflow.execution_environment.v3"
+
+#: Superseded v2 marker (declared-subset env), retained so old digests are
+#: recognizable (and unequal).
+ENVIRONMENT_DIGEST_KIND_V2: Final[str] = "confflow.execution_environment.v2"
 
 #: Superseded v1 marker, retained so old digests are recognizable (and unequal).
 ENVIRONMENT_DIGEST_KIND_V1: Final[str] = "confflow.execution_environment.v1"
@@ -436,14 +448,16 @@ class ExecutionEnvironment:
     This is a separate digest axis from workflow, step, and work-item
     identity: it describes *where* a computation ran, not what was computed.
 
-    Identity rule v2 (see ``ENVIRONMENT_DIGEST_KIND``):
+    Identity rule v3 (see ``ENVIRONMENT_DIGEST_KIND``):
 
     - IN: ``program``, ``program_version``, ``executable_digest`` (full
       content hash for native launches; ``None`` for pure executors), and
-      ``relevant_env`` — the caller-declared, scientifically relevant
-      explicit environment subset. Relevance is declared by the caller
-      (binding resolution), never inferred by scanning the process
-      environment: operational variables stay out of the scientific axis.
+      ``relevant_env`` — the COMPLETE effective native environment the
+      subprocess receives (producer ambient inheritance policy + declared
+      binding env, or the target-side equivalent). There is one mapping:
+      the launched environment and the digested environment are identical
+      by construction, so no readable variable can change results without
+      moving identity.
     - OUT: ``target`` (endpoint locator), absolute executable paths,
       file stat, scheduler width, GUI/presentation. They travel in
       ``metadata``/fields for audit, never in the digest.

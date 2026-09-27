@@ -491,11 +491,23 @@ class V4RunApplication:
             # targets require a configured transport; otherwise fail closed
             # with 0 native launches (no silent local fallback). Local
             # targets (omitted/"local"/"localhost") always run in-process.
-            from ..execution.binding_resolution import require_target_transport
+            from ..execution.binding_resolution import (
+                effective_native_env,
+                require_target_transport,
+            )
 
             require_target_transport(binding.target, request.transport)
+            # ONE immutable native-environment snapshot per step.  Ambient
+            # inheritance is explicit producer-side policy (os.environ) and
+            # is fully digested; binding env wins on collision.  The SAME
+            # snapshot feeds measurement, the remote handoff envelope, the
+            # worker launch, and provenance — never two constructions.
+            native_env = FrozenDict(effective_native_env(binding, inherit=os.environ))
             environment = self._measure_environment(
-                planned=planned, binding=binding, adapter=adapter
+                planned=planned,
+                binding=binding,
+                adapter=adapter,
+                relevant_env=native_env,
             )
             provenance = None
         else:
@@ -505,7 +517,6 @@ class V4RunApplication:
             # real registered executor contract version, so implementation
             # changes invalidate reuse.  Analysis dispatches through its
             # in-package work-item adapter on the same lifecycle.
-            from ..domain._immutable import FrozenDict
             from ..execution.environment import build_pure_environment
             from ..persistence.reuse import build_producer_provenance
 
@@ -515,6 +526,7 @@ class V4RunApplication:
                 implementation_version=contract.contract_version,
                 metadata={"step_id": planned.step_id},
             )
+            native_env = None
             provenance = build_producer_provenance(
                 adapter_version=implementation,
                 profile_version=contract.contract_version,
@@ -542,6 +554,7 @@ class V4RunApplication:
             execution_binding=binding,
             run_root=run_root,
             environment=environment,
+            native_env=native_env,
             definition_digest=plan.definition_digest,
             producer_provenance=provenance,
             executor_capability=contract.capability.value,
@@ -603,13 +616,19 @@ class V4RunApplication:
         return transport
 
     @staticmethod
-    def _measure_environment(*, planned: Any, binding: Any, adapter: Any) -> Any:
+    def _measure_environment(
+        *, planned: Any, binding: Any, adapter: Any, relevant_env: Any = None
+    ) -> Any:
         """Measure the real execution environment for the reuse axis.
 
-        The measured ``relevant_env`` is the effective native env: every
-        explicit ``ExecutionBinding.env`` key/value verbatim (see
-        ``effective_native_env``). The values hashed are always the values
-        launched (binding wins over ambient). Unknown never stands in for
+        The measured ``relevant_env`` is the COMPLETE effective native
+        environment the executor will launch with (``relevant_env``, the
+        single immutable snapshot built by ``_run_step`` from the ambient
+        inheritance policy plus the explicit ``ExecutionBinding.env``).
+        The environment digest therefore covers every variable the native
+        subprocess can read: launch env and hashed env are the same
+        mapping by construction, so an inherited-variable change can never
+        reuse a stale scientific result. Unknown never stands in for
         verified equivalence: when the executable cannot be measured the
         run fails closed instead of recording ``None``.
         """
@@ -617,10 +636,11 @@ class V4RunApplication:
         from ..execution.environment import EnvironmentMeasurer
 
         candidate = binding.executable or adapter.default_executable
-        relevant = effective_native_env(binding)
+        if relevant_env is None:
+            relevant_env = effective_native_env(binding, inherit=os.environ)
         try:
             return EnvironmentMeasurer().build_environment(
-                candidate, adapter=adapter, target=binding.target, relevant_env=relevant
+                candidate, adapter=adapter, target=binding.target, relevant_env=relevant_env
             )
         except DomainError as exc:
             raise DomainError(

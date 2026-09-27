@@ -22,6 +22,7 @@ from confflow.domain._immutable import FrozenDict
 from confflow.domain.errors import DomainError
 from confflow.execution.contracts import (
     ENVIRONMENT_DIGEST_KIND,
+    ENVIRONMENT_DIGEST_KIND_V2,
     ExecutionEnvironment,
 )
 from confflow.execution.environment import (
@@ -282,8 +283,9 @@ def test_unknown_validation() -> None:
 
 
 def test_identity_rule_version() -> None:
-    """v2 rule marker is explicit; v1 payloads can never equal v2 digests."""
-    assert ENVIRONMENT_DIGEST_KIND == "confflow.execution_environment.v2"
+    """v3 rule marker is explicit; v1/v2 payloads can never equal v3 digests."""
+    assert ENVIRONMENT_DIGEST_KIND == "confflow.execution_environment.v3"
+    assert ENVIRONMENT_DIGEST_KIND_V2 == "confflow.execution_environment.v2"
     assert ExecutionEnvironment(program="orca").digest().startswith("sha256:")
     assert (
         ExecutionEnvironment(program="orca", target="node-1").digest()
@@ -292,7 +294,7 @@ def test_identity_rule_version() -> None:
 
 
 def test_verified_digest_golden() -> None:
-    """Pinned v2 digest guards against canonicalization churn."""
+    """Pinned v3 digest guards against canonicalization churn."""
     env = ExecutionEnvironment(
         program="gaussian",
         program_version="16.C.01",
@@ -301,5 +303,5 @@ def test_verified_digest_golden() -> None:
         target="node-1",
     )
     assert env.digest() == (
-        "sha256:49b77439d0af7fb187b7a537282356e34f8894e7625467d0678bc51734e8ad07"
+        "sha256:fe11dd0b8ffbb4af0a8844a69d9e3abd736cf907b4b3c625841211543495b586"
     )

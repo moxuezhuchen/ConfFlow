@@ -843,14 +843,17 @@ def _resolve_program(program: str | None, versions: dict[str, str]) -> Any:
     return adapter
 
 
-def _measure_worker_environment(*, capability: str, adapter: Any, binding: Any) -> Any:
+def _measure_worker_environment(
+    *, capability: str, adapter: Any, binding: Any, relevant_env: Any = None
+) -> Any:
     """Measure the worker-side native execution environment.
 
-    The measured ``relevant_env`` is the effective target binding env
-    verbatim (``target_env`` under handoff env, handoff wins — see
-    ``resolve_remote_target_binding``). The values hashed are always the
-    values the worker launches with. Unknown/unmeasurable never stands in
-    for verified equivalence: a binary that cannot be measured fails the
+    The measured ``relevant_env`` is the complete target-side effective env
+    (``target_env`` under the producer handoff snapshot, handoff wins — see
+    ``resolve_remote_target_binding``).  The caller passes the same
+    immutable snapshot the worker launches with; the worker never merges
+    its own ambient environment. Unknown/unmeasurable never stands in for
+    verified equivalence: a binary that cannot be measured fails the
     handoff closed before any native launch.
     """
     from confflow.execution.environment import EnvironmentMeasurer
@@ -864,7 +867,7 @@ def _measure_worker_environment(*, capability: str, adapter: Any, binding: Any) 
     try:
         from confflow.execution.binding_resolution import effective_native_env
 
-        relevant = effective_native_env(binding)
+        relevant = dict(relevant_env) if relevant_env is not None else effective_native_env(binding)
     except Exception as exc:
         raise WorkerError(
             "remote worker failed at stage 'resolve execution contracts': "
@@ -1069,10 +1072,18 @@ def _resolve_execution_context(
                 "remote worker failed at stage 'resolve execution contracts': "
                 f"target execution binding is not resolvable: {exc}"
             ) from exc
+        # ONE immutable target-side snapshot: target defaults with the
+        # producer's complete handoff snapshot overlaid (handoff wins).
+        # The worker MUST NOT merge its own unrelated ambient environment.
+        # The same mapping is measured and launched.
+        from confflow.execution.binding_resolution import effective_native_env
+
+        native_env = FrozenDict(effective_native_env(binding))
         environment = _measure_worker_environment(
             capability=capability,
             adapter=adapter,
             binding=binding,
+            relevant_env=native_env,
         )
         scientific, defaults = _build_calculation_scientific(execution)
     elif capability in ("confgen", "structure_transform", "analysis"):
@@ -1081,6 +1092,7 @@ def _resolve_execution_context(
         checks = ()
         recovery = None
         binding = None
+        native_env = None
         environment = _measure_pure_worker_environment(capability=capability)
         scientific, defaults = _build_pure_scientific(execution)
     else:
@@ -1106,6 +1118,7 @@ def _resolve_execution_context(
             work_base=os.path.join(worker_root, "work", _safe_token_component(launch_token)),
             supervisor=supervisor,
             environment=environment,
+            native_env=native_env,
             attempt=int(handoff.attempt_number),
             executor_capability=capability,
         )

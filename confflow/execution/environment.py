@@ -4,12 +4,12 @@
 
 The environment digest is the independent axis that says *where* a
 computation ran: program identity, full executable content identity, and
-the declared scientifically relevant explicit environment. It never folds
-endpoint locators, absolute paths, file stat, scheduler width, or
+the COMPLETE effective native environment the subprocess receives. It never
+folds endpoint locators, absolute paths, file stat, scheduler width, or
 presentation facts — those are operational provenance, recorded for audit
 but digest-inert.
 
-Identity rule v2 (see ``confflow.execution.contracts``):
+Identity rule v3 (see ``confflow.execution.contracts``):
 
 - Executable identity is the FULL content hash. No prefix truncation: a
   changed tail byte always moves the digest, even past any historical
@@ -21,10 +21,17 @@ Identity rule v2 (see ``confflow.execution.contracts``):
   re-measured instead of aliased. An in-place rewrite that preserves
   every stat field is undetectable without rehashing and is out of scope;
   call :func:`measure_executable` directly to bypass the cache.
-- Only the caller-declared ``relevant_env`` subset enters the digest
-  (see :func:`select_relevant_env`). Operational variables are never
-  hashed into the scientific axis; relevance declarations are an explicit
-  caller/binding contract, never inferred by scanning the environment.
+- ``relevant_env`` is the complete effective environment the native
+  subprocess actually receives, built by the single authority
+  :func:`confflow.execution.binding_resolution.effective_native_env`:
+  the producer inheritance policy (ambient ``os.environ``) overlaid with
+  the declared binding env, or the target-side equivalent
+  (``target_env`` under the producer handoff snapshot). Launch env and
+  hashed env are the SAME immutable mapping by construction: any
+  inherited variable an executable can read is part of identity, so
+  changing or deleting it can never reuse a stale scientific result.
+  (:func:`select_relevant_env` remains a validation helper for callers
+  that already hold a complete mapping.)
 - Pure (non-native) executors record their implementation identity via
   :func:`build_pure_environment` — no Gaussian/ORCA executable required.
   Unknown measurements never equal verified ones (fail-closed nonce).
@@ -311,10 +318,10 @@ class EnvironmentMeasurer:
         """Measure *candidate* and build its execution environment.
 
         ``target`` is preserved as operational provenance and is
-        digest-inert under identity rule v2. ``relevant_env`` is the
-        caller-declared scientifically relevant subset (see
-        :func:`select_relevant_env`); undeclared binding variables never
-        enter the digest.
+        digest-inert under identity rule v3. ``relevant_env`` is the
+        COMPLETE effective environment the executor will launch with
+        (see :func:`confflow.execution.binding_resolution.effective_native_env`);
+        the digest and the launch mapping are the same construction.
         """
         identity = self.measure(candidate, adapter=adapter)
         metadata: dict[str, object] = {

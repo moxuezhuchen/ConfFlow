@@ -201,8 +201,18 @@ def _request(
     profile: Any,
     checks: tuple[Any, ...],
 ) -> StepExecutionRequest:
-    """Build a durable step request."""
+    """Build a durable step request under the complete-environment rule.
+
+    The measured environment and the threaded ``native_env`` snapshot are
+    the same mapping (ambient inheritance + declared binding env), exactly
+    as the formal application builds them, so seeded rows and resume
+    requests agree on execution identity.
+    """
     planned = next(step for step in plan.steps if step.step_id == step_id)
+    from confflow.execution.binding_resolution import effective_native_env
+
+    binding = ExecutionBinding(binding_id="test", executable=str(executable), env=FrozenDict({}))
+    native_env = FrozenDict(effective_native_env(binding, inherit=os.environ))
     return StepExecutionRequest(
         step=planned,
         items=tuple(items),
@@ -212,21 +222,22 @@ def _request(
         profile=profile,
         checks=checks,
         recovery=RECOVERIES["none"],
-        execution_binding=ExecutionBinding(
-            binding_id="test", executable=str(executable), env=FrozenDict({})
-        ),
+        execution_binding=binding,
         run_root=run_root,
-        environment=_measured_env(adapter, executable),
+        environment=_measured_env(adapter, executable, relevant_env=native_env),
+        native_env=native_env,
         definition_digest=plan.definition_digest,
         executor_capability=getattr(planned.executor, "value", str(planned.executor)),
     )
 
 
-def _measured_env(adapter: Any, executable: Any) -> Any:
+def _measured_env(adapter: Any, executable: Any, *, relevant_env: Any = None) -> Any:
     """Measure the fake executable for the durable env axis."""
     from confflow.execution.environment import EnvironmentMeasurer
 
-    return EnvironmentMeasurer().build_environment(str(executable), adapter=adapter)
+    return EnvironmentMeasurer().build_environment(
+        str(executable), adapter=adapter, relevant_env=relevant_env
+    )
 
 
 def _provenance_for(request: StepExecutionRequest) -> FrozenDict:

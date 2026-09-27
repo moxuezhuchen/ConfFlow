@@ -14,8 +14,11 @@ Rules (frozen):
   program default map; else the adapter default.  Resolution never requires a
   local absolute path to exist on a remote target: target-side callers pass
   their own resolved executable and this function only carries the string.
-- ``env``: planned entries win over default entries; the merged mapping is
-  recorded verbatim for audit.  Scientific recovery params can never inject
+- ``env``: planned entries win over default entries.  The declared mapping
+  is one layer of the effective native environment: producer-side callers
+  explicitly add the ambient inheritance policy, and the complete
+  resulting snapshot is digested and launched (see
+  ``effective_native_env``).  Scientific recovery params can never inject
   or override binding environment (see ``work_item_executor``).
 - ``target`` / ``walltime_seconds`` / ``sandbox`` / ``allowed_executables``:
   planned values are preserved, never dropped; defaults fill only ``None``.
@@ -98,29 +101,61 @@ def is_local_target(target: str | None) -> bool:
     return text.lower() in _LOCAL_TARGET_ALIASES
 
 
-def effective_native_env(binding_or_env: Any) -> dict[str, str]:
-    """Return the effective native environment for measurement and launch.
+def effective_native_env(
+    binding_or_env: Any,
+    *,
+    inherit: Mapping[str, Any] | None = None,
+) -> dict[str, str]:
+    """Return the complete effective native environment.
 
-    The effective environment is the COMPLETE scientifically relevant set:
-    every explicit ``ExecutionBinding.env`` key/value, verbatim. Callers
-    MUST use this single helper for (1) the native subprocess overlay,
-    (2) ``ExecutionEnvironmentDigest`` ``relevant_env``, (3) reuse identity
-    (via that digest), (4) remote ``target_env`` merging, and (5)
-    worker-side re-measurement. Ambient ``os.environ`` entries outside
-    this set are operational-only (PATH/HOME/TMPDIR and the like) and are
-    digest-inert by explicit contract — relevance is declared by the
-    binding, never inferred by scanning the process environment. The
-    values hashed are always the values launched (binding wins over
-    ambient on collision).
+    This is the SINGLE construction point for the environment a native
+    subprocess receives: callers MUST use the returned mapping for the
+    subprocess launch, the ``ExecutionEnvironment`` ``relevant_env``
+    digest axis, reuse identity, the remote handoff envelope, and worker
+    re-measurement. Because there is one mapping, ``launch_env`` and
+    ``hashed_env`` are identical by construction — an inherited variable
+    that the executable can read can never be absent from the digest.
+
+    ``inherit`` is the explicit inheritance policy:
+
+    - Producer-side callers pass the ambient process environment
+      (``os.environ``). Every inherited entry the subprocess can observe
+      is then part of the digest, so changing or deleting an inherited
+      variable moves execution identity and can never reuse a stale
+      scientific result. Explicit binding entries win over inherited
+      values (the hashed values are the launched values on collision).
+    - Target-side (worker) callers pass no ``inherit``: the handoff
+      envelope already carries the producer's complete snapshot, and the
+      worker must not merge its own unrelated ambient environment.
+    - Probe/reuse callers pass no ``inherit`` for the same reason: the
+      snapshot is complete, and the digest must match the worker launch
+      exactly.
+
+    The result is fully string-typed and validated; unknown/non-string
+    values fail closed.
     """
     if binding_or_env is None:
-        return {}
-    if isinstance(binding_or_env, ExecutionBinding):
-        raw: Mapping[str, Any] = dict(binding_or_env.env)
+        declared: dict[str, str] = {}
+    elif isinstance(binding_or_env, ExecutionBinding):
+        declared = _validate_native_env_mapping(dict(binding_or_env.env))
     elif isinstance(binding_or_env, Mapping):
-        raw = binding_or_env
+        declared = _validate_native_env_mapping(binding_or_env)
     else:
         raise DomainError("binding_or_env must be an ExecutionBinding, a mapping, or None")
+    if inherit is None:
+        return declared
+    if not isinstance(inherit, Mapping):
+        raise DomainError("inherit must be a mapping or None")
+    inherited = _validate_native_env_mapping(inherit)
+    effective = dict(inherited)
+    effective.update(declared)
+    return effective
+
+
+def _validate_native_env_mapping(raw: Mapping[str, Any]) -> dict[str, str]:
+    """Validate one env mapping into a fully string-typed copy (fail closed)."""
+    if not isinstance(raw, Mapping):
+        raise DomainError("env must be a mapping")
     effective: dict[str, str] = {}
     for key, value in raw.items():
         if not isinstance(key, str) or not key.strip():

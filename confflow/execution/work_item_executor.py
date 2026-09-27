@@ -219,6 +219,7 @@ class ItemExecutionContext:
     work_base: str | None = None
     supervisor: ProcessSupervisor | None = None
     environment: Any = None
+    native_env: FrozenDict | None = None
     poll_interval_seconds: float = _POLL_INTERVAL_SECONDS
     attempt: int = 0
     executor_capability: str | None = None
@@ -587,18 +588,20 @@ class WorkItemExecutor:
             )
         binding = context.execution_binding
         walltime = float(binding.walltime_seconds) if binding and binding.walltime_seconds else None
-        # Effective native env: the complete scientifically relevant set is
-        # the explicit binding env verbatim (see effective_native_env).
-        # The subprocess inherits the ambient operational base (PATH, HOME,
-        # TMPDIR, ...) with the effective set overlaid so the hashed values
-        # are always the launched values (binding wins). Ambient entries
-        # outside the effective set are operational-only and digest-inert
-        # by explicit contract — never hashed, never inferred.
+        # Effective native env: ONE construction point.  The application
+        # hands down the exact immutable snapshot that was hashed into the
+        # environment digest (``context.native_env``); the executor never
+        # rebuilds a second mapping and never merges ambient os.environ on
+        # top of it.  Direct executor callers without a threaded snapshot
+        # get the same producer-side rule (ambient + declared), used for
+        # both launch and any later identity check.
         from .binding_resolution import effective_native_env
 
-        effective_env_map = effective_native_env(binding)
-        env = dict(os.environ)
-        env.update(effective_env_map)
+        if context.native_env is not None:
+            effective_env_map = dict(context.native_env)
+        else:
+            effective_env_map = effective_native_env(binding, inherit=os.environ)
+        env = dict(effective_env_map)
         launch_info: dict[str, Any] = {
             "executable": executable,
             "env": dict(env),

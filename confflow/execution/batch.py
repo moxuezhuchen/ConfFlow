@@ -181,6 +181,7 @@ class StepExecutionRequest:
     run_root: str = ""
     work_base: str | None = None
     environment: ExecutionEnvironment | None = None
+    native_env: FrozenDict | None = None
     definition_digest: str | None = None
     should_cancel: Callable[[], bool] | None = None
     producer_provenance: FrozenDict | None = None
@@ -197,6 +198,8 @@ class StepExecutionRequest:
             self.producer_provenance, FrozenDict
         ):
             object.__setattr__(self, "producer_provenance", FrozenDict(self.producer_provenance))
+        if self.native_env is not None and not isinstance(self.native_env, FrozenDict):
+            object.__setattr__(self, "native_env", FrozenDict(self.native_env))
 
 
 class BatchStepExecutor:
@@ -262,6 +265,7 @@ class BatchStepExecutor:
             work_base=request.work_base,
             supervisor=self._supervisor,
             environment=request.environment,
+            native_env=request.native_env,
         )
         fail_fast = (
             step.scheduler.on_failure is not None and step.scheduler.on_failure.value == "fail_fast"
@@ -407,25 +411,35 @@ class BatchStepExecutor:
         owner = owner_identity_current(owner_token=owner_token or f"v4-batch:{step.step_id}")
         environment = request.environment
         environment_digest = environment.digest()
+        # ONE immutable native-environment snapshot per step.  The
+        # application measures the environment over exactly this mapping;
+        # the transport handoff carries exactly this mapping; the worker
+        # launches exactly this mapping.  Direct batch callers without a
+        # threaded snapshot get the producer-side rule (ambient + declared)
+        # built once here, so probe and launch can never diverge.
+        native_env = request.native_env
+        if native_env is None and request.execution_binding is not None:
+            from .binding_resolution import effective_native_env
+
+            native_env = FrozenDict(
+                effective_native_env(request.execution_binding, inherit=os.environ)
+            )
         if transport is not None:
             # Remote steps reuse against the TARGET environment, never the
             # producer's local measurement: the probe asks the target host
             # for its current execution identity (a file measurement, never
             # a native launch) over the SAME effective env the worker will
-            # launch with (binding env over target defaults). An unprobable
-            # target fails closed rather than silently substituting the
-            # producer environment.
+            # launch with (the producer snapshot plus target defaults). An
+            # unprobable target fails closed rather than silently
+            # substituting the producer environment.
             probe = getattr(transport, "probe_environment_digest", None)
             if callable(probe):
                 binding = request.execution_binding
                 handoff_env: dict[str, str] | None = None
-                if binding is not None:
-                    try:
-                        from .binding_resolution import effective_native_env
-
-                        handoff_env = effective_native_env(binding)
-                    except Exception:
-                        handoff_env = dict(getattr(binding, "env", {}) or {})
+                if native_env is not None:
+                    handoff_env = {str(k): str(v) for k, v in native_env.items()}
+                elif binding is not None:
+                    handoff_env = dict(getattr(binding, "env", {}) or {})
                 try:
                     probed_digest = probe(
                         program=getattr(request.scientific, "program", None),
@@ -456,6 +470,7 @@ class BatchStepExecutor:
             work_base=durable_base,
             supervisor=self._supervisor,
             environment=request.environment,
+            native_env=native_env,
             executor_capability=request.executor_capability,
         )
         stop_event = threading.Event()

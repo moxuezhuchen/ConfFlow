@@ -464,22 +464,32 @@ class RemoteTransport:
                 "handoff requests none; reuse cannot be evaluated against an "
                 "unknown target environment"
             )
-        # Effective probe env: target defaults under the handoff (binding)
-        # env, exactly as resolve_remote_target_binding merges them
-        # worker-side. Handoff wins so the hashed values are the launched
-        # values.
-        effective: dict[str, str] = dict(self._target_env)
-        if handoff_env:
-            try:
-                items = dict(handoff_env).items()
-            except Exception as exc:
-                raise DomainError(f"probe handoff_env is not a mapping: {exc}") from exc
-            for key, value in items:
-                if not isinstance(key, str) or not key.strip():
-                    raise DomainError("probe handoff_env keys must be non-empty strings")
-                if not isinstance(value, str):
-                    raise DomainError(f"probe handoff_env var {key!r} must be a string")
-                effective[str(key)] = str(value)
+        # Effective probe env: target defaults under the complete producer
+        # handoff snapshot (handoff wins), built through the SAME
+        # binding-resolution authority the worker uses
+        # (``resolve_remote_target_binding`` + ``effective_native_env``), so
+        # the probed digest and the worker-measured digest cover exactly the
+        # same mapping — no independent merge logic can drift.
+        from ..execution.binding_resolution import (
+            effective_native_env,
+            resolve_remote_target_binding,
+        )
+
+        try:
+            target_binding = resolve_remote_target_binding(
+                program=adapter.program_name.value,
+                handoff_execution={
+                    "executable": requested,
+                    "env": dict(handoff_env) if handoff_env else {},
+                },
+                target_default_executable=candidate,
+                target_env=self._target_env,
+            )
+            effective = effective_native_env(target_binding)
+        except DomainError:
+            raise
+        except Exception as exc:
+            raise DomainError(f"probe environment is not resolvable: {exc}") from exc
         try:
             return (
                 EnvironmentMeasurer()
@@ -853,7 +863,17 @@ class RemoteTransport:
         if target:
             environment_request["target"] = target
         handoff_executable = getattr(binding, "executable", None)
-        handoff_env = dict(getattr(binding, "env", {}) or {})
+        # The envelope carries the producer's COMPLETE effective environment
+        # snapshot (the immutable mapping that was hashed into the
+        # environment digest), never a second construction.  The worker
+        # overlays only its declared target defaults and must not merge its
+        # own ambient environment.
+        from ..execution.binding_resolution import effective_native_env
+
+        if context.native_env is not None:
+            handoff_env = {str(key): str(value) for key, value in dict(context.native_env).items()}
+        else:
+            handoff_env = dict(effective_native_env(binding, inherit=os.environ))
         handoff_walltime = getattr(binding, "walltime_seconds", None)
         check_versions = {check.name: check.contract_version for check in context.checks}
         recovery = context.recovery
