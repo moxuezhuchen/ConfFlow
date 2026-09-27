@@ -369,8 +369,12 @@ class StandardResultProfile:
             results.append(
                 ScientificResult(
                     **_result_kwargs(
-                        kind="energy", value=chosen, unit=Unit.HARTREE,
-                        subject_id=subject_id, context=context, provenance=provenance,
+                        kind="energy",
+                        value=chosen,
+                        unit=Unit.HARTREE,
+                        subject_id=subject_id,
+                        context=context,
+                        provenance=provenance,
                     )
                 )
             )
@@ -378,8 +382,12 @@ class StandardResultProfile:
             results.append(
                 ScientificResult(
                     **_result_kwargs(
-                        kind="gibbs_energy", value=gibbs, unit=Unit.HARTREE,
-                        subject_id=subject_id, context=context, provenance=provenance,
+                        kind="gibbs_energy",
+                        value=gibbs,
+                        unit=Unit.HARTREE,
+                        subject_id=subject_id,
+                        context=context,
+                        provenance=provenance,
                     )
                 )
             )
@@ -387,8 +395,12 @@ class StandardResultProfile:
             results.append(
                 ScientificResult(
                     **_result_kwargs(
-                        kind="gibbs_correction", value=correction, unit=Unit.HARTREE,
-                        subject_id=subject_id, context=context, provenance=provenance,
+                        kind="gibbs_correction",
+                        value=correction,
+                        unit=Unit.HARTREE,
+                        subject_id=subject_id,
+                        context=context,
+                        provenance=provenance,
                     )
                 )
             )
@@ -398,8 +410,12 @@ class StandardResultProfile:
             results.append(
                 ScientificResult(
                     **_result_kwargs(
-                        kind="frequencies", value=list(frequencies), unit=Unit.CM_INVERSE,
-                        subject_id=subject_id, context=context, provenance=provenance,
+                        kind="frequencies",
+                        value=list(frequencies),
+                        unit=Unit.CM_INVERSE,
+                        subject_id=subject_id,
+                        context=context,
+                        provenance=provenance,
                     )
                 )
             )
@@ -407,8 +423,12 @@ class StandardResultProfile:
             results.append(
                 ScientificResult(
                     **_result_kwargs(
-                        kind="num_imaginary_frequencies", value=num_imaginary, unit=None,
-                        subject_id=subject_id, context=context, provenance=provenance,
+                        kind="num_imaginary_frequencies",
+                        value=num_imaginary,
+                        unit=None,
+                        subject_id=subject_id,
+                        context=context,
+                        provenance=provenance,
                     )
                 )
             )
@@ -416,8 +436,12 @@ class StandardResultProfile:
                 results.append(
                     ScientificResult(
                         **_result_kwargs(
-                            kind="lowest_frequency", value=lowest, unit=Unit.CM_INVERSE,
-                            subject_id=subject_id, context=context, provenance=provenance,
+                            kind="lowest_frequency",
+                            value=lowest,
+                            unit=Unit.CM_INVERSE,
+                            subject_id=subject_id,
+                            context=context,
+                            provenance=provenance,
                         )
                     )
                 )

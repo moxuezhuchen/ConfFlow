@@ -65,9 +65,9 @@ class TestFakeNativeIsolation:
         shim = tmp_path / "shim"
         shim.mkdir()
         (shim / "orca").symlink_to("/opt/orca611/orca")
-        cleaned = _scrubbed_path(
-            os.pathsep.join([str(shim), "/opt/g16", "/usr/bin", ""])
-        ).split(os.pathsep)
+        cleaned = _scrubbed_path(os.pathsep.join([str(shim), "/opt/g16", "/usr/bin", ""])).split(
+            os.pathsep
+        )
         assert str(shim) not in cleaned
         assert "/opt/g16" not in cleaned
         assert "/usr/bin" in cleaned

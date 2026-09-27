@@ -447,7 +447,9 @@ def _lookup_for_group_with_diagnostics(
                     },
                 )
             )
-    ordered = tuple(sorted(diagnostics, key=lambda item: str(item.details.get("subject_structure_id", ""))))
+    ordered = tuple(
+        sorted(diagnostics, key=lambda item: str(item.details.get("subject_structure_id", "")))
+    )
     return (lookup, ordered)
 
 
@@ -467,7 +469,9 @@ def _nearest_triple_ancestor(
     shortest distance fails closed to ``None``.  Never first-parent-,
     lexical-, or tuple-order-wins.  Cycles fail closed to ``None``.
     """
-    owner, _status, _candidates = _resolve_attribution(subject, set(triple), structures_by_id, group)
+    owner, _status, _candidates = _resolve_attribution(
+        subject, set(triple), structures_by_id, group
+    )
     return owner
 
 

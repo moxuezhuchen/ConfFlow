@@ -13,6 +13,7 @@ the table/file ordinal (both must agree 0..n-1); parser encounter order
 is never an identity beyond that.  Anything else is ignored or fails
 closed — never inferred.
 """
+
 from __future__ import annotations
 
 import math
@@ -35,9 +36,7 @@ _KCAL_PER_HARTREE: Final[float] = 627.5094740631
 
 #: Real ``# Final ensemble info #`` table rows:
 #: ``<index> <rel_kcal> <degen> <%total> <%cumul>``.
-_TABLE_ROW_RE = re.compile(
-    r"^\s*(\d+)\s+(\S+)\s+(\d+)\s+(\S+)\s+(\S+)\s*$"
-)
+_TABLE_ROW_RE = re.compile(r"^\s*(\d+)\s+(\S+)\s+(\d+)\s+(\S+)\s+(\S+)\s*$")
 
 #: Real lowest-energy line: ``Lowest energy conformer    : <float> Eh``.
 _LOWEST_ENERGY_RE = re.compile(r"Lowest energy conformer\s*:\s*(\S+)\s*Eh")
@@ -119,7 +118,12 @@ def _parse_table_rows(log_text: str) -> tuple[list[tuple[int, float, int]], floa
             continue
         if not in_table:
             continue
-        if not line or line.startswith("Conformer") or line.startswith("(kcal/mol)") or set(line) <= {"-", " "}:
+        if (
+            not line
+            or line.startswith("Conformer")
+            or line.startswith("(kcal/mol)")
+            or set(line) <= {"-", " "}
+        ):
             continue
         match = _TABLE_ROW_RE.match(line)
         if match is None:
@@ -135,14 +139,10 @@ def _parse_table_rows(log_text: str) -> tuple[list[tuple[int, float, int]], floa
                 f"native_parse_error: malformed GOAT ensemble table row: {line!r}"
             ) from exc
         if not math.isfinite(rel_kcal):
-            raise ValueError(
-                f"native_parse_error: non-finite GOAT ensemble energy: {line!r}"
-            )
+            raise ValueError(f"native_parse_error: non-finite GOAT ensemble energy: {line!r}")
         rows.append((index, rel_kcal, degeneracy))
     if [index for index, _rel, _degen in rows] != list(range(len(rows))):
-        raise ValueError(
-            "native_parse_error: GOAT ensemble table indices must run 0..n-1 in order"
-        )
+        raise ValueError("native_parse_error: GOAT ensemble table indices must run 0..n-1 in order")
     lowest_match = _LOWEST_ENERGY_RE.search(log_text)
     if lowest_match is None:
         raise ValueError("native_parse_error: GOAT log carries no lowest-energy conformer line")
@@ -150,8 +150,7 @@ def _parse_table_rows(log_text: str) -> tuple[list[tuple[int, float, int]], floa
         lowest = float(lowest_match.group(1))
     except (TypeError, ValueError) as exc:
         raise ValueError(
-            "native_parse_error: malformed GOAT lowest-energy line: "
-            f"{lowest_match.group(0)!r}"
+            "native_parse_error: malformed GOAT lowest-energy line: " f"{lowest_match.group(0)!r}"
         ) from exc
     if not math.isfinite(lowest):
         raise ValueError("native_parse_error: non-finite GOAT lowest energy")
@@ -206,9 +205,7 @@ def _parse_ensemble_xyz(
         for row in rows:
             parsed = _parse_coord_line(row)
             if parsed is None:
-                raise ValueError(
-                    f"native_parse_error: malformed GOAT ensemble coordinate: {row!r}"
-                )
+                raise ValueError(f"native_parse_error: malformed GOAT ensemble coordinate: {row!r}")
             symbols.append(parsed[0])
             coordinates.append((parsed[1], parsed[2], parsed[3]))
         blocks.append((symbols, coordinates, comment_energy))
@@ -266,9 +263,10 @@ def parse_goat_ensemble(
         return ()
     blocks = _parse_ensemble_xyz(ensemble_xyz_text, expected_count=len(rows))
     members: list[NativeEnsembleMember] = []
-    for ordinal, ((index, rel_kcal, degeneracy), (symbols, coordinates, comment_energy)) in enumerate(
-        zip(rows, blocks)
-    ):
+    for ordinal, (
+        (index, rel_kcal, degeneracy),
+        (symbols, coordinates, comment_energy),
+    ) in enumerate(zip(rows, blocks)):
         assert index == ordinal
         if tuple(symbols) != expected:
             raise ValueError(

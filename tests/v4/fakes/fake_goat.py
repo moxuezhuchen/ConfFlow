@@ -86,5 +86,7 @@ def main(argv: list[str]) -> int:
             handle.write(f"{symbol} {x:.6f} {y:.6f} {z:.6f}\n")
     _ = first
     return 0
+
+
 if __name__ == "__main__":
     raise SystemExit(main(sys.argv))

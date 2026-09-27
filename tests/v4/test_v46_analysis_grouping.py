@@ -78,9 +78,7 @@ def _energy(value: float, subject: str | None) -> ScientificResult:
     """Build one Hartree energy result bound to *subject* (scoped id)."""
     from confflow.domain.result import make_result_id
 
-    producer_digest = "sha256:" + hashlib.sha256(
-        f"s-test:{subject}:energy".encode()
-    ).hexdigest()
+    producer_digest = "sha256:" + hashlib.sha256(f"s-test:{subject}:energy".encode()).hexdigest()
     return ScientificResult(
         kind="energy",
         value=value,
@@ -148,11 +146,7 @@ class TestCompleteGroup:
         assert group.assignment == "unassigned"
         assert group.subject_ids() == tuple(sorted((transition.id, forward.id, reverse.id)))
         assert group.source_result_ids == tuple(
-            sorted(
-                result.result_id
-                for result in results
-                if result.result_id is not None
-            )
+            sorted(result.result_id for result in results if result.result_id is not None)
         )
 
     def test_groups_sort_by_group_key(self) -> None:

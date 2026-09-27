@@ -87,8 +87,7 @@ def main(argv: list[str]) -> int:
     ]
     if os.environ.get("FAKE_NEB_TS") == "1":
         ts_rows = "\n".join(
-            f"{symbol}     {x + 0.05:.6f}     {y:.6f}     {z:.6f}"
-            for symbol, x, y, z in atoms
+            f"{symbol}     {x + 0.05:.6f}     {y:.6f}     {z:.6f}" for symbol, x, y, z in atoms
         )
         log_lines.extend(
             [
@@ -109,8 +108,7 @@ def main(argv: list[str]) -> int:
         )
     elif os.environ.get("FAKE_NEB_TS") == "saddle":
         ts_rows = "\n".join(
-            f"{symbol}     {x + 0.05:.6f}     {y:.6f}     {z:.6f}"
-            for symbol, x, y, z in atoms
+            f"{symbol}     {x + 0.05:.6f}     {y:.6f}     {z:.6f}" for symbol, x, y, z in atoms
         )
         log_lines.extend(
             [
@@ -137,5 +135,7 @@ def main(argv: list[str]) -> int:
         for symbol, x, y, z in atoms:
             handle.write(f"{symbol} {x:.6f} {y:.6f} {z:.6f}\n")
     return 0
+
+
 if __name__ == "__main__":
     raise SystemExit(main(sys.argv))

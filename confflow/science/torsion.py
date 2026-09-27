@@ -225,7 +225,10 @@ def rotate_atoms_around_bond(
     )
     dot = (vectors[:, 0] * ux + vectors[:, 1] * uy + vectors[:, 2] * uz).reshape(-1, 1)
     coords[selected] = (
-        coords[pivot] + vectors * cosine + cross * sine + (unit.reshape(1, 3) * dot) * (1.0 - cosine)
+        coords[pivot]
+        + vectors * cosine
+        + cross * sine
+        + (unit.reshape(1, 3) * dot) * (1.0 - cosine)
     )
 
 

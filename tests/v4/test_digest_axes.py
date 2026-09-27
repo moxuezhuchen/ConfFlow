@@ -187,9 +187,7 @@ class TestScientificSensitivity:
         assert standard.ok
         template = _compile(_linear_doc(adapter="native_template"))
         assert not template.ok
-        assert any(
-            d.details.get("reason") == "unknown_execution_adapter" for d in template.errors
-        )
+        assert any(d.details.get("reason") == "unknown_execution_adapter" for d in template.errors)
 
     def test_result_profile_change_moves_step_digest(self) -> None:
         standard = _compiled(_linear_doc(profile="standard"))

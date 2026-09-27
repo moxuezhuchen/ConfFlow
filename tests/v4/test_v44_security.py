@@ -735,7 +735,7 @@ class TestStagingIdentitySecurity:
                     role="checkpoint",
                     checksum=_checksum(payload),
                     subject_structure_id="struct_s0",
-                bundle_locator="files/0001-art_dup",
+                    bundle_locator="files/0001-art_dup",
                 ),
                 ArtifactBundleEntry(
                     artifact_id="art_dup",
@@ -743,7 +743,7 @@ class TestStagingIdentitySecurity:
                     role="checkpoint",
                     checksum=_checksum(payload),
                     subject_structure_id="struct_s0",
-                bundle_locator="files/0002-art_dup",
+                    bundle_locator="files/0002-art_dup",
                 ),
             )
         )
@@ -779,7 +779,7 @@ class TestStagingIdentitySecurity:
                     role="checkpoint",
                     checksum=_checksum(payload_a),
                     subject_structure_id="struct_shared",
-                bundle_locator="files/0001-art_sub_a",
+                    bundle_locator="files/0001-art_sub_a",
                 ),
                 ArtifactBundleEntry(
                     artifact_id="art_sub_b",
@@ -787,7 +787,7 @@ class TestStagingIdentitySecurity:
                     role="checkpoint",
                     checksum=_checksum(payload_b),
                     subject_structure_id="struct_shared",
-                bundle_locator="files/0002-art_sub_b",
+                    bundle_locator="files/0002-art_sub_b",
                 ),
                 ArtifactBundleEntry(
                     artifact_id="art_ok",
@@ -795,7 +795,7 @@ class TestStagingIdentitySecurity:
                     role="checkpoint",
                     checksum=_checksum(payload_ok),
                     subject_structure_id="struct_other",
-                bundle_locator="files/0003-art_ok",
+                    bundle_locator="files/0003-art_ok",
                 ),
             )
         )

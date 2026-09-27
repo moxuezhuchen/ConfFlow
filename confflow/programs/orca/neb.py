@@ -59,6 +59,7 @@ particular, a path-maximum image without a report is never returned
 here.  No invented markers are accepted: the energy line shape
 ``Energy .... <float> Eh`` is shared by both native reports.
 """
+
 from __future__ import annotations
 
 import math
@@ -321,9 +322,7 @@ def _parse_mep_xyz(
         comment = lines[index + 1].strip()
         comment_match = _XYZ_ENERGY_RE.match(comment)
         if comment_match is None:
-            raise _input_error(
-                f"NEB trajectory XYZ comment carries no energy: {comment!r}"
-            )
+            raise _input_error(f"NEB trajectory XYZ comment carries no energy: {comment!r}")
         try:
             energy = float(comment_match.group(1))
         except (TypeError, ValueError) as exc:
@@ -334,9 +333,7 @@ def _parse_mep_xyz(
             raise _input_error("NEB trajectory XYZ comment energy is non-finite")
         rows = lines[index + 2 : index + 2 + count]
         if len(rows) != count:
-            raise _input_error(
-                f"NEB trajectory XYZ block holds {len(rows)} rows for {count} atoms"
-            )
+            raise _input_error(f"NEB trajectory XYZ block holds {len(rows)} rows for {count} atoms")
         symbols: list[str] = []
         coordinates: list[tuple[float, float, float]] = []
         for row in rows:
@@ -406,9 +403,7 @@ def parse_neb_images(
     return tuple(members)
 
 
-def parse_neb_ts_candidate(
-    text: str, *, atoms: Sequence[str]
-) -> NativeEnsembleMember | None:
+def parse_neb_ts_candidate(text: str, *, atoms: Sequence[str]) -> NativeEnsembleMember | None:
     """Parse the explicitly reported NEB highest-energy image / saddle point.
 
     The candidate comes ONLY from a native ``INFORMATION ABOUT HIGHEST
@@ -445,7 +440,9 @@ def parse_neb_ts_candidate(
     if not number_hits and not saddle_hits:
         return None
     if len(number_hits) + len(saddle_hits) > 1:
-        raise _input_error("duplicate highest-energy-image/saddle-point reports: candidate ambiguous")
+        raise _input_error(
+            "duplicate highest-energy-image/saddle-point reports: candidate ambiguous"
+        )
     if saddle_hits:
         number_re = _SADDLE_NUMBER_RE
         block_header = _SADDLE_BLOCK_HEADER
@@ -457,9 +454,7 @@ def parse_neb_ts_candidate(
         what = "highest-energy-image"
         number_token = number_hits[0]
     lines = text.splitlines()
-    number_line = next(
-        index for index, line in enumerate(lines) if number_re.match(line.strip())
-    )
+    number_line = next(index for index, line in enumerate(lines) if number_re.match(line.strip()))
     try:
         number = int(number_token)
     except (TypeError, ValueError) as exc:
@@ -479,9 +474,7 @@ def parse_neb_ts_candidate(
                 try:
                     candidate = float(energy_match.group(1))
                 except (TypeError, ValueError) as exc:
-                    raise _input_error(
-                        f"{what} energy is malformed"
-                    ) from exc
+                    raise _input_error(f"{what} energy is malformed") from exc
                 if not math.isfinite(candidate):
                     raise _input_error(f"{what} energy is non-finite")
                 energy = candidate
@@ -509,11 +502,7 @@ def parse_neb_ts_candidate(
     _check_geometry_atoms(symbols, expected, what="NEB-TS candidate")
     return NativeEnsembleMember(
         member_index=number,
-        geometry=ParsedGeometry(
-            atoms=tuple(symbols), coordinates=tuple(coordinates)
-        ),
+        geometry=ParsedGeometry(atoms=tuple(symbols), coordinates=tuple(coordinates)),
         energy_hartree=energy,
-        metadata=FrozenDict(
-            {"parser": "confflow.program.orca.neb.v1", "neb_ts_candidate": True}
-        ),
+        metadata=FrozenDict({"parser": "confflow.program.orca.neb.v1", "neb_ts_candidate": True}),
     )

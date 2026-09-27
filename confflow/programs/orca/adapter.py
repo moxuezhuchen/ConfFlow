@@ -570,9 +570,11 @@ class OrcaProgramAdapter(ProgramAdapter):
             )
             ts_candidate = _parse_neb_ts_candidate(text, atoms=atoms)
             if ts_candidate is not None:
-                if mode == "neb_ts" and "NEB-TS" not in str(
-                    materialized.metadata.get("keyword", "")
-                ).upper().split():
+                if (
+                    mode == "neb_ts"
+                    and "NEB-TS"
+                    not in str(materialized.metadata.get("keyword", "")).upper().split()
+                ):
                     raise ValueError(
                         "native_parse_error: NEB-TS candidate refused: the job "
                         "keyword carries no NEB-TS token, so the highest-energy "
@@ -594,9 +596,7 @@ class OrcaProgramAdapter(ProgramAdapter):
                     "native_parse_error: GOAT run produced no "
                     f"final-ensemble file {ensemble_path!r}: {exc}"
                 ) from exc
-            members = parse_goat_ensemble(
-                text, ensemble_xyz_text=ensemble_xyz_text, atoms=atoms
-            )
+            members = parse_goat_ensemble(text, ensemble_xyz_text=ensemble_xyz_text, atoms=atoms)
         produced: list[ProducedFile] = []
         for suffix, role in _OUTPUT_CANDIDATES:
             name = log_file_name if suffix == "out" else f"{log_base}.{suffix}"

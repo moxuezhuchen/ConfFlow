@@ -1096,7 +1096,9 @@ class TestLineageAttributionOrderIndependent:
         structures: tuple[StructureRecord, ...],
         results: tuple[ScientificResult, ...],
     ) -> AnalysisStepResult:
-        return AnalysisExecutor().execute(_inputs(structures, results, _definition(StubEnergyModel())))
+        return AnalysisExecutor().execute(
+            _inputs(structures, results, _definition(StubEnergyModel()))
+        )
 
     def _barriers(self, step: AnalysisStepResult) -> tuple[Any, ...]:
         return tuple(
@@ -1123,9 +1125,7 @@ class TestLineageAttributionOrderIndependent:
         # with lineage ambiguity instead of emitting swapped barriers.
         assert self._barriers(first) == ()
         assert not first.ok and not second.ok
-        reasons = [
-            item.details.get("reason") for item in first.diagnostics if item.is_error
-        ]
+        reasons = [item.details.get("reason") for item in first.diagnostics if item.is_error]
         assert "ambiguous_lineage" in reasons
         assert _codes(first.diagnostics) == _codes(second.diagnostics)
 
@@ -1137,26 +1137,17 @@ class TestLineageAttributionOrderIndependent:
             "e-child", group_key="rxn-e", parent_ids=(forward.id, reverse.id), offset=9.0
         )
         by_id = {record.id: record for record in (transition, forward, reverse, descendant)}
-        groups, _ = build_reaction_groups(
-            StructureSet((transition, forward, reverse)), ResultSet()
-        )
+        groups, _ = build_reaction_groups(StructureSet((transition, forward, reverse)), ResultSet())
         triple = set(groups[0].subject_ids())
-        assert (
-            _nearest_triple_ancestor(descendant.id, triple, by_id, group=groups[0]) is None
-        )
+        assert _nearest_triple_ancestor(descendant.id, triple, by_id, group=groups[0]) is None
         swapped = _structure(
             "e-child",
             group_key="rxn-e",
             parent_ids=(reverse.id, forward.id),
             offset=9.0,
         )
-        by_id_swapped = {
-            record.id: record for record in (transition, forward, reverse, swapped)
-        }
-        assert (
-            _nearest_triple_ancestor(swapped.id, triple, by_id_swapped, group=groups[0])
-            is None
-        )
+        by_id_swapped = {record.id: record for record in (transition, forward, reverse, swapped)}
+        assert _nearest_triple_ancestor(swapped.id, triple, by_id_swapped, group=groups[0]) is None
 
     def test_nearer_beats_farther_regardless_of_order(self) -> None:
         from dataclasses import replace
@@ -1168,13 +1159,9 @@ class TestLineageAttributionOrderIndependent:
         descendant = _structure(
             "n-child", group_key="rxn-n", parent_ids=(forward.id, bridge.id), offset=6.0
         )
-        groups, _ = build_reaction_groups(
-            StructureSet((transition, forward, reverse)), ResultSet()
-        )
+        groups, _ = build_reaction_groups(StructureSet((transition, forward, reverse)), ResultSet())
         triple = set(groups[0].subject_ids())
-        by_id = {
-            record.id: record for record in (transition, forward, reverse, bridge, descendant)
-        }
+        by_id = {record.id: record for record in (transition, forward, reverse, bridge, descendant)}
         assert _nearest_triple_ancestor(descendant.id, triple, by_id, group=groups[0]) == forward.id
         reordered = replace(descendant, parent_ids=tuple(reversed(descendant.parent_ids)))
         by_id_reordered = {
@@ -1208,9 +1195,7 @@ class TestLineageAttributionOrderIndependent:
         from confflow.analysis.executor import _nearest_triple_ancestor
 
         transition, forward, reverse = _triple("p", "rxn-p")
-        groups, _ = build_reaction_groups(
-            StructureSet((transition, forward, reverse)), ResultSet()
-        )
+        groups, _ = build_reaction_groups(StructureSet((transition, forward, reverse)), ResultSet())
         triple = set(groups[0].subject_ids())
         fwd_child = _structure(
             "p-fwd-child",
@@ -1234,8 +1219,7 @@ class TestLineageAttributionOrderIndependent:
         fwd_swapped = replace(fwd_child, parent_ids=tuple(reversed(fwd_child.parent_ids)))
         rev_swapped = replace(rev_child, parent_ids=tuple(reversed(rev_child.parent_ids)))
         by_id_swapped = {
-            record.id: record
-            for record in (transition, forward, reverse, fwd_swapped, rev_swapped)
+            record.id: record for record in (transition, forward, reverse, fwd_swapped, rev_swapped)
         }
         assert (
             _nearest_triple_ancestor(fwd_swapped.id, triple, by_id_swapped, group=groups[0])
@@ -1257,9 +1241,7 @@ class TestLineageAttributionOrderIndependent:
         descendant = _structure(
             "d-child", group_key="rxn-d", parent_ids=(left.id, right.id), offset=7.0
         )
-        groups, _ = build_reaction_groups(
-            StructureSet((transition, forward, reverse)), ResultSet()
-        )
+        groups, _ = build_reaction_groups(StructureSet((transition, forward, reverse)), ResultSet())
         triple = set(groups[0].subject_ids())
         by_id = {
             record.id: record for record in (transition, forward, reverse, left, right, descendant)
@@ -1267,8 +1249,7 @@ class TestLineageAttributionOrderIndependent:
         assert _nearest_triple_ancestor(descendant.id, triple, by_id, group=groups[0]) == forward.id
         reordered = replace(descendant, parent_ids=tuple(reversed(descendant.parent_ids)))
         by_id_reordered = {
-            record.id: record
-            for record in (transition, forward, reverse, left, right, reordered)
+            record.id: record for record in (transition, forward, reverse, left, right, reordered)
         }
         assert (
             _nearest_triple_ancestor(reordered.id, triple, by_id_reordered, group=groups[0])

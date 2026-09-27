@@ -160,10 +160,14 @@ def verify_step_publication(
     # scientific payload; they never counterfeit coverage and are exempt
     # from the durability requirement (mirrors the batch gap gate).
     cancelled_ids = {
-        item.work_item_id for item in step_result.item_results if item.status is WorkItemStatus.CANCELLED
+        item.work_item_id
+        for item in step_result.item_results
+        if item.status is WorkItemStatus.CANCELLED
     }
     missing_items = [
-        item_id for item_id in step_result.work_item_ids if item_id not in durable and item_id not in cancelled_ids
+        item_id
+        for item_id in step_result.work_item_ids
+        if item_id not in durable and item_id not in cancelled_ids
     ]
     if missing_items:
         raise PublicationError(

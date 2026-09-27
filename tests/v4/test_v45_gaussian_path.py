@@ -64,7 +64,10 @@ def _orientation_block(
 
 
 def _point_block(
-    direction: str, number: int, rows: tuple[tuple[str, float, float, float], ...], energy: float | None
+    direction: str,
+    number: int,
+    rows: tuple[tuple[str, float, float, float], ...],
+    energy: float | None,
 ) -> list[str]:
     """Format one real IRC point: announcement, header, table, energy."""
     lines = [
@@ -288,6 +291,7 @@ class TestParseIrcRoute:
             gaussian_path.parse_irc_route("B3LYP IRC=")
         _assert_native_input_error(excinfo)
 
+
 class TestParseIrcEndpoints:
     """Endpoint parsing over real-grammar fixtures."""
 
@@ -333,9 +337,7 @@ class TestParseIrcEndpoints:
 
     def test_malformed_energy_is_none(self) -> None:
         log = _irc_log({"forward": [(4, FORWARD_ROWS, None)]})
-        log = log.replace(
-            f" SCF Done:  E(RHF) =  {None!r}     A.U. after   13 cycles", ""
-        )
+        log = log.replace(f" SCF Done:  E(RHF) =  {None!r}     A.U. after   13 cycles", "")
         (endpoint,) = gaussian_path.parse_irc_endpoints(log, atoms=WATER_ATOMS)
         assert endpoint.energy_hartree is None
         assert endpoint.converged is True
@@ -347,18 +349,14 @@ class TestParseIrcEndpoints:
         assert endpoint.energy_hartree is None
 
     def test_incomplete_path_endpoints_unconverged(self) -> None:
-        log = _irc_log(
-            {"forward": [(4, FORWARD_ROWS, FORWARD_ENERGY)]}, complete=False
-        )
+        log = _irc_log({"forward": [(4, FORWARD_ROWS, FORWARD_ENERGY)]}, complete=False)
         (endpoint,) = gaussian_path.parse_irc_endpoints(log, atoms=WATER_ATOMS)
         assert endpoint.converged is False
         assert endpoint.energy_hartree == FORWARD_ENERGY
 
     def test_empty_log_returns_empty(self) -> None:
         assert gaussian_path.parse_irc_endpoints("", atoms=WATER_ATOMS) == ()
-        assert (
-            gaussian_path.parse_irc_endpoints("no markers here\n", atoms=WATER_ATOMS) == ()
-        )
+        assert gaussian_path.parse_irc_endpoints("no markers here\n", atoms=WATER_ATOMS) == ()
 
     def test_atom_count_mismatch_raises(self) -> None:
         log = _irc_log({"forward": [(4, FORWARD_ROWS[:2], FORWARD_ENERGY)]})
@@ -800,14 +798,10 @@ class TestQstOutputParsing:
             charge=0,
             multiplicity=1,
             freeze=(),
-            resources=ResourceRequest(
-                cores_per_item=1, memory_per_item_bytes=2 * 1024**3
-            ),
+            resources=ResourceRequest(cores_per_item=1, memory_per_item_bytes=2 * 1024**3),
             native=FrozenDict({"keyword": "HF/STO-3G Opt(QST2)"}),
             checkpoints=(),
-            extra_structures=FrozenDict(
-                {"reactant": (reactant,), "product": (product,)}
-            ),
+            extra_structures=FrozenDict({"reactant": (reactant,), "product": (product,)}),
             step_id="s",
             work_item_id="w",
             logical_key="qstjob",
@@ -861,9 +855,7 @@ class TestQstOutputParsing:
             charge=0,
             multiplicity=1,
             freeze=(),
-            resources=ResourceRequest(
-                cores_per_item=1, memory_per_item_bytes=2 * 1024**3
-            ),
+            resources=ResourceRequest(cores_per_item=1, memory_per_item_bytes=2 * 1024**3),
             native=FrozenDict({"keyword": "HF/STO-3G Opt(QST3)"}),
             checkpoints=(),
             extra_structures=FrozenDict(

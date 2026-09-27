@@ -754,9 +754,13 @@ def ensure_modredundant_keyword(keyword: str) -> str:
 def rescue_freeze_directive(atom_a: int, atom_b: int) -> str:
     """Return the ModRedundant freeze directive for one rescue bond."""
     if (
-        isinstance(atom_a, bool) or isinstance(atom_b, bool)
-        or not isinstance(atom_a, int) or not isinstance(atom_b, int)
-        or atom_a < 1 or atom_b < 1 or atom_a == atom_b
+        isinstance(atom_a, bool)
+        or isinstance(atom_b, bool)
+        or not isinstance(atom_a, int)
+        or not isinstance(atom_b, int)
+        or atom_a < 1
+        or atom_b < 1
+        or atom_a == atom_b
     ):
         raise ValueError(
             f"native_input_error: rescue bond atoms must be two distinct positive ints, "

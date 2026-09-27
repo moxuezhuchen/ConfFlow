@@ -268,7 +268,12 @@ class TestRemoteResumeLite:
             )
         )
         with SqliteWorkItemStore.open(store_path(run_root, "s_opt")) as store:
-            transport = RemoteTransport(run_root=run_root, store=store, worker_root=worker_root, target_default_executable=str(wrapper))
+            transport = RemoteTransport(
+                run_root=run_root,
+                store=store,
+                worker_root=worker_root,
+                target_default_executable=str(wrapper),
+            )
             result1 = _batch().execute_step_resumable(
                 _request(plan, "s_opt", tuple(run1_items), run_root, wrapper),
                 store=store,
@@ -286,7 +291,12 @@ class TestRemoteResumeLite:
             assert len(store.list_items(StoredWorkItemStatus.FAILED)) == 2
             fail_file.write_text("")
             all_items = _assemble_step(plan, "s_opt", structures).for_step("s_opt")
-            transport = RemoteTransport(run_root=run_root, store=store, worker_root=worker_root, target_default_executable=str(wrapper))
+            transport = RemoteTransport(
+                run_root=run_root,
+                store=store,
+                worker_root=worker_root,
+                target_default_executable=str(wrapper),
+            )
             result2 = _batch().execute_step_resumable(
                 _request(plan, "s_opt", tuple(all_items), run_root, wrapper),
                 store=store,
@@ -475,7 +485,12 @@ class TestScenarioLocalRemote:
         materialized = _materialized(result_a, "s_a")
         items_b = _assemble_step(plan, "s_b", structures, materialized=materialized).for_step("s_b")
         with SqliteWorkItemStore.open(store_path(run_root, "s_b")) as store:
-            transport = RemoteTransport(run_root=run_root, store=store, worker_root=worker_root, target_default_executable=str(wrapper))
+            transport = RemoteTransport(
+                run_root=run_root,
+                store=store,
+                worker_root=worker_root,
+                target_default_executable=str(wrapper),
+            )
             result_b = _batch().execute_step_resumable(
                 _request(plan, "s_b", tuple(items_b), run_root, wrapper),
                 store=store,
@@ -500,7 +515,12 @@ class TestScenarioRemoteLocal:
         structures = _structures("c", 3)
         items_a = _assemble_step(plan, "s_a", structures).for_step("s_a")
         with SqliteWorkItemStore.open(store_path(run_root, "s_a")) as store:
-            transport = RemoteTransport(run_root=run_root, store=store, worker_root=worker_root, target_default_executable=str(wrapper))
+            transport = RemoteTransport(
+                run_root=run_root,
+                store=store,
+                worker_root=worker_root,
+                target_default_executable=str(wrapper),
+            )
             result_a = _batch().execute_step_resumable(
                 _request(plan, "s_a", tuple(items_a), run_root, wrapper),
                 store=store,
@@ -548,7 +568,12 @@ class TestScenarioDuplicateDispatch:
                 step_semantic_digest=plan.steps[0].step_semantic_digest,
             )
             assert store.claim(item.id, owner=OwnerIdentity(owner_token="ctl"))
-            transport = RemoteTransport(run_root=run_root, store=store, worker_root=worker_root, target_default_executable=str(tmp_path / "bin" / "orca"))
+            transport = RemoteTransport(
+                run_root=run_root,
+                store=store,
+                worker_root=worker_root,
+                target_default_executable=str(tmp_path / "bin" / "orca"),
+            )
             barrier = threading.Barrier(2)
             outcomes: list[Any] = []
 
@@ -590,14 +615,24 @@ class TestScenarioResponseLoss:
                 step_semantic_digest=plan.steps[0].step_semantic_digest,
             )
             assert store.claim(item.id, owner=OwnerIdentity(owner_token="ctl"))
-            transport = RemoteTransport(run_root=run_root, store=store, worker_root=worker_root, target_default_executable=str(tmp_path / "bin" / "orca"))
+            transport = RemoteTransport(
+                run_root=run_root,
+                store=store,
+                worker_root=worker_root,
+                target_default_executable=str(tmp_path / "bin" / "orca"),
+            )
             first = transport.execute(item, context, attempt=1)
             assert first.status is WorkItemStatus.COMPLETED
             count_file = tmp_path / "native.count"
             assert _native_count(count_file) == 1
             # Producer loses the response object; a restarted transport with
             # the same roots recovers the prior bundle instead of relaunching.
-            transport2 = RemoteTransport(run_root=run_root, store=store, worker_root=worker_root, target_default_executable=str(tmp_path / "bin" / "orca"))
+            transport2 = RemoteTransport(
+                run_root=run_root,
+                store=store,
+                worker_root=worker_root,
+                target_default_executable=str(tmp_path / "bin" / "orca"),
+            )
             second = transport2.execute(item, context, attempt=1)
             assert second.status is WorkItemStatus.COMPLETED
             assert _native_count(count_file) == 1
@@ -618,9 +653,10 @@ class TestScenarioEndpointInertness:
         structures = _structures("g", 4)
         with SqliteWorkItemStore.open(store_path(run_root, "s_opt")) as store:
             transport1 = RemoteTransport(
-                run_root=run_root, store=store, worker_root=str(tmp_path / "w1")
-            ,
-                target_default_executable=str(wrapper)
+                run_root=run_root,
+                store=store,
+                worker_root=str(tmp_path / "w1"),
+                target_default_executable=str(wrapper),
             )
             first = _batch().execute_step_resumable(
                 _request(
@@ -638,9 +674,10 @@ class TestScenarioEndpointInertness:
             assert first.status is StepStatus.COMPLETED
             assert _native_count(count_file) == 4
             transport2 = RemoteTransport(
-                run_root=run_root, store=store, worker_root=str(tmp_path / "w2")
-            ,
-                target_default_executable=str(wrapper)
+                run_root=run_root,
+                store=store,
+                worker_root=str(tmp_path / "w2"),
+                target_default_executable=str(wrapper),
             )
             second = _batch().execute_step_resumable(
                 _request(
@@ -682,7 +719,12 @@ class TestScenarioEnvironmentInvalidation:
         structures = _structures("h", 2)
         items = _assemble_step(plan, "s_opt", structures).for_step("s_opt")
         with SqliteWorkItemStore.open(store_path(run_root, "s_opt")) as store:
-            transport = RemoteTransport(run_root=run_root, store=store, worker_root=worker_root, target_default_executable=str(wrapper))
+            transport = RemoteTransport(
+                run_root=run_root,
+                store=store,
+                worker_root=worker_root,
+                target_default_executable=str(wrapper),
+            )
             first = _batch().execute_step_resumable(
                 _request(plan, "s_opt", tuple(items), run_root, wrapper),
                 store=store,

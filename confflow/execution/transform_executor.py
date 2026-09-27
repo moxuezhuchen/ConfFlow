@@ -125,7 +125,10 @@ class TransformExecutor:
             return self._fail(work_item, context, wall_start, monotonic_start, str(exc))
         except Exception as exc:  # fail closed; executors never raise into batch
             return self._fail(
-                work_item, context, wall_start, monotonic_start,
+                work_item,
+                context,
+                wall_start,
+                monotonic_start,
                 f"transform internal failure: {exc}",
             )
 
@@ -177,8 +180,12 @@ class TransformExecutor:
                     work_item_id=work_item.id,
                     logical_key=work_item.logical_key,
                     details=FrozenDict(
-                        {"kind": kind, "kept": len(out),
-                         "dropped": len(members) - len(out), "notes": list(notes)}
+                        {
+                            "kind": kind,
+                            "kept": len(out),
+                            "dropped": len(members) - len(out),
+                            "notes": list(notes),
+                        }
                     ),
                 ),
             ),
@@ -226,7 +233,9 @@ class TransformExecutor:
     # -- refine ---------------------------------------------------------------
 
     def _refine(
-        self, members: list[StructureRecord], native: Mapping[str, Any],
+        self,
+        members: list[StructureRecord],
+        native: Mapping[str, Any],
     ) -> tuple[list[StructureRecord], list[str]]:
         """Topology-grouped RMSD dedup with an explicit threshold.
 
@@ -240,8 +249,9 @@ class TransformExecutor:
                 f"transform refine got unknown native keys {unknown}; "
                 f"allowed {sorted(REFINE_NATIVE_KEYS)}"
             )
-        threshold = float(native.get(
-            "rmsd_threshold_angstrom", REFINE_DEFAULT_RMSD_THRESHOLD_ANGSTROM))
+        threshold = float(
+            native.get("rmsd_threshold_angstrom", REFINE_DEFAULT_RMSD_THRESHOLD_ANGSTROM)
+        )
         bond_scale = float(native.get("bond_scale", REFINE_DEFAULT_BOND_SCALE))
         heavy_only = native.get("heavy_only", False)
         max_structures = native.get("max_structures")
@@ -250,13 +260,12 @@ class TransformExecutor:
                 f"refine rmsd_threshold_angstrom must be finite and >= 0, got {threshold!r}"
             )
         if not math.isfinite(bond_scale) or bond_scale <= 0:
-            raise DomainError(
-                f"refine bond_scale must be a positive number, got {bond_scale!r}"
-            )
+            raise DomainError(f"refine bond_scale must be a positive number, got {bond_scale!r}")
         if not isinstance(heavy_only, bool):
             raise DomainError(f"refine heavy_only must be a boolean, got {heavy_only!r}")
         if max_structures is not None and (
-            isinstance(max_structures, bool) or not isinstance(max_structures, int)
+            isinstance(max_structures, bool)
+            or not isinstance(max_structures, int)
             or max_structures < 0
         ):
             raise DomainError(
@@ -273,8 +282,12 @@ class TransformExecutor:
             retained: list[StructureRecord] = []
             for record in ordered:
                 witness = self._duplicate_of(
-                    record, adjacency[record.id], retained, adjacency,
-                    threshold, bool(heavy_only),
+                    record,
+                    adjacency[record.id],
+                    retained,
+                    adjacency,
+                    threshold,
+                    bool(heavy_only),
                 )
                 if witness is not None:
                     other, rmsd = witness
@@ -326,14 +339,13 @@ class TransformExecutor:
                 continue
             if tuple(other.atoms) != tuple(record.atoms):
                 continue
-            if [list(row) for row in adjacency_by_id[other.id]] != [
-                list(row) for row in adjacency
-            ]:
+            if [list(row) for row in adjacency_by_id[other.id]] != [list(row) for row in adjacency]:
                 continue
             theirs = np.asarray(other.coordinates, dtype=np.float64)
             if heavy_only:
-                kept_idx = [i for i, symbol in enumerate(record.atoms)
-                            if atomic_number(symbol) != 1]
+                kept_idx = [
+                    i for i, symbol in enumerate(record.atoms) if atomic_number(symbol) != 1
+                ]
                 if not kept_idx:
                     continue
                 mine_sub = mine[np.asarray(kept_idx)]
@@ -349,7 +361,8 @@ class TransformExecutor:
 
     @staticmethod
     def _filter(
-        members: list[StructureRecord], native: Mapping[str, Any],
+        members: list[StructureRecord],
+        native: Mapping[str, Any],
     ) -> tuple[list[StructureRecord], list[str]]:
         unknown = sorted(set(native) - FILTER_NATIVE_KEYS)
         if unknown:
@@ -377,7 +390,8 @@ class TransformExecutor:
         max_structures = native.get("max_structures")
         if max_structures is not None:
             if (
-                isinstance(max_structures, bool) or not isinstance(max_structures, int)
+                isinstance(max_structures, bool)
+                or not isinstance(max_structures, int)
                 or max_structures < 0
             ):
                 raise DomainError(
@@ -407,9 +421,11 @@ class TransformExecutor:
             status=WorkItemStatus.FAILED,
             diagnostics=(
                 _diagnostic(
-                    NativeErrorCode.NATIVE_INPUT_ERROR, message,
+                    NativeErrorCode.NATIVE_INPUT_ERROR,
+                    message,
                     step_id=context.step_id,
-                    work_item_id=work_item.id, logical_key=work_item.logical_key,
+                    work_item_id=work_item.id,
+                    logical_key=work_item.logical_key,
                 ),
             ),
             timing=timing,
@@ -435,9 +451,11 @@ class TransformExecutor:
             status=WorkItemStatus.CANCELLED,
             diagnostics=(
                 _diagnostic(
-                    NativeErrorCode.CANCELLATION_ERROR, "work item cancelled",
+                    NativeErrorCode.CANCELLATION_ERROR,
+                    "work item cancelled",
                     step_id=context.step_id,
-                    work_item_id=work_item.id, logical_key=work_item.logical_key,
+                    work_item_id=work_item.id,
+                    logical_key=work_item.logical_key,
                     details={"confirmed": True},
                 ),
             ),

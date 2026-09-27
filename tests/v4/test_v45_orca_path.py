@@ -321,9 +321,7 @@ class TestParsePathEndpoints:
     def test_atom_mismatch_rejected(self, tmp_path: Path) -> None:
         log_text, work_dir, log_base = self._real_tree(tmp_path)
         with pytest.raises(ValueError, match="symbols"):
-            parse_path_endpoints(
-                log_text, atoms=("O", "H"), work_dir=work_dir, log_base=log_base
-            )
+            parse_path_endpoints(log_text, atoms=("O", "H"), work_dir=work_dir, log_base=log_base)
 
 
 class TestParseNebImages:
@@ -367,9 +365,7 @@ class TestParseNebImages:
 
     def test_missing_comment_energy_rejected(self) -> None:
         xyz = self._mep_xyz((-76.12, -76.10, -76.09, -76.08, -76.07))
-        xyz = xyz.replace(
-            "Coordinates from ORCA-job job_MEP E -76.100000", "no energy here", 1
-        )
+        xyz = xyz.replace("Coordinates from ORCA-job job_MEP E -76.100000", "no energy here", 1)
         with pytest.raises(ValueError, match="energy"):
             parse_neb_images(xyz, atoms=WATER_ATOMS, n_images=3)
 
@@ -470,9 +466,7 @@ class TestParseNebSaddlePointCandidate:
     def test_climbing_image_zero_parses(self) -> None:
         # Real NEB-TS runs report image 0 when the saddle sits at the
         # first image; zero is a valid native identity, never "absent".
-        member = parse_neb_ts_candidate(
-            self._saddle_log(number=0), atoms=WATER_ATOMS
-        )
+        member = parse_neb_ts_candidate(self._saddle_log(number=0), atoms=WATER_ATOMS)
         assert member is not None
         assert member.member_index == 0
 
@@ -551,9 +545,7 @@ class TestNebAdapterMaterialization:
             charge=0,
             multiplicity=1,
             freeze=(),
-            resources=ResourceRequest(
-                cores_per_item=1, memory_per_item_bytes=2 * 1024**3
-            ),
+            resources=ResourceRequest(cores_per_item=1, memory_per_item_bytes=2 * 1024**3),
             native=FrozenDict({"keyword": keyword, "neb": neb}),
             checkpoints=(),
             extra_structures=FrozenDict({"product": (product,)}),
@@ -575,7 +567,7 @@ class TestNebAdapterMaterialization:
             "%pal nprocs 1 end\n"
             "%maxcore 2000\n"
             "%neb\n"
-            '  NImages 3\n'
+            "  NImages 3\n"
             '  NEB_End_XYZFile "job_neb_end.xyz"\n'
             "end\n"
             "* xyz 0 1\n"
@@ -595,7 +587,7 @@ class TestNebAdapterMaterialization:
             self._inputs("HF-3c NEB-TS", {"n_images": 5, "neb_ts": True})
         )
         by_name = {entry.name: entry.content for entry in materialized.files}
-        assert 'NImages 5' in by_name["job.inp"]
+        assert "NImages 5" in by_name["job.inp"]
         assert materialized.metadata["mode"] == "neb_ts"
 
     def test_neb_block_under_plain_keyword_refused(self) -> None:
@@ -613,7 +605,6 @@ class TestNebAdapterMaterialization:
             OrcaProgramAdapter().materialize_native_input(
                 self._inputs("HF-3c NEB", {"n_images": 3, "neb_ts": True})
             )
-
 
 
 class TestPathTrajectoryFacts:

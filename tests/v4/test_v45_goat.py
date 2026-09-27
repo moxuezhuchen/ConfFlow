@@ -71,7 +71,7 @@ def _water_rows(shift: float = 0.0) -> tuple[tuple[str, float, float, float], ..
 def _two_member_pair() -> tuple[str, str]:
     """Real-grammar log plus XYZ for two conformers."""
     lowest = -76.41
-    rel = (0.0, ( -76.40 - lowest) * 627.5094740631)
+    rel = (0.0, (-76.40 - lowest) * 627.5094740631)
     return (
         _real_log(lowest, rel),
         _real_xyz(((-76.41, _water_rows(0.0)), (-76.40, _water_rows(0.03)))),
@@ -90,12 +90,7 @@ class TestRenderGoatBlocks:
                 }
             }
         )
-        assert text == (
-            "%goat\n"
-            "  MaxIter 50\n"
-            "  RANDOMSEED false\n"
-            "end\n"
-        )
+        assert text == ("%goat\n" "  MaxIter 50\n" "  RANDOMSEED false\n" "end\n")
         assert goat.render_goat_blocks({"goat": {"RANDOMSEED": True}}) == (
             "%goat\n  RANDOMSEED true\nend\n"
         )
@@ -215,6 +210,7 @@ class TestGoatArtifactNames:
         with pytest.raises(ValueError, match="no directories"):
             goat.goat_artifact_names("..")
 
+
 class TestParseGoatMembers:
     """Real-format member parsing over grammatical fixtures."""
 
@@ -237,7 +233,9 @@ class TestParseGoatMembers:
             eparse.parse_goat_ensemble(log, ensemble_xyz_text=single, atoms=ATOMS)
 
     def test_broken_index_sequence_rejected(self) -> None:
-        log = _real_log(-76.41, (0.0, 0.627)).replace("                 1     ", "                 5     ", 1)
+        log = _real_log(-76.41, (0.0, 0.627)).replace(
+            "                 1     ", "                 5     ", 1
+        )
         _, xyz = _two_member_pair()
         with pytest.raises(ValueError, match="0..n-1"):
             eparse.parse_goat_ensemble(log, ensemble_xyz_text=xyz, atoms=ATOMS)
@@ -371,9 +369,7 @@ class TestGoatSeedSingleAuthority:
             charge=0,
             multiplicity=1,
             freeze=(),
-            resources=ResourceRequest(
-                cores_per_item=1, memory_per_item_bytes=2 * 1024**3
-            ),
+            resources=ResourceRequest(cores_per_item=1, memory_per_item_bytes=2 * 1024**3),
             native=FrozenDict({"keyword": "HF-3c GOAT", "goat": user_goat}),
             checkpoints=(),
             extra_structures=FrozenDict({}),
@@ -386,14 +382,8 @@ class TestGoatSeedSingleAuthority:
     def test_step_seed_renders_deterministic_randomseed(self) -> None:
         from confflow.programs.orca.adapter import OrcaProgramAdapter
 
-        materialized = OrcaProgramAdapter().materialize_native_input(
-            self._goat_inputs(7)
-        )
-        content = next(
-            entry.content
-            for entry in materialized.files
-            if entry.name == "job.inp"
-        )
+        materialized = OrcaProgramAdapter().materialize_native_input(self._goat_inputs(7))
+        content = next(entry.content for entry in materialized.files if entry.name == "job.inp")
         # The integer step seed is workflow identity, never a native
         # stream selector: the adapter always renders the deterministic
         # boolean flag.
@@ -405,9 +395,7 @@ class TestGoatSeedSingleAuthority:
 
         first = OrcaProgramAdapter().materialize_native_input(self._goat_inputs(7))
         second = OrcaProgramAdapter().materialize_native_input(self._goat_inputs(7))
-        assert [entry.content for entry in first.files] == [
-            entry.content for entry in second.files
-        ]
+        assert [entry.content for entry in first.files] == [entry.content for entry in second.files]
 
     def test_distinct_seeds_share_deterministic_native_input(self) -> None:
         from confflow.programs.orca.adapter import OrcaProgramAdapter
@@ -418,12 +406,10 @@ class TestGoatSeedSingleAuthority:
         # in the digest, never in the .inp text.
         first = OrcaProgramAdapter().materialize_native_input(self._goat_inputs(7))
         second = OrcaProgramAdapter().materialize_native_input(self._goat_inputs(8))
-        assert [entry.content for entry in first.files] == [
-            entry.content for entry in second.files
-        ]
-        assert ScientificDefinition(seed=7).to_payload() != ScientificDefinition(
-            seed=8
-        ).to_payload()
+        assert [entry.content for entry in first.files] == [entry.content for entry in second.files]
+        assert (
+            ScientificDefinition(seed=7).to_payload() != ScientificDefinition(seed=8).to_payload()
+        )
 
     def test_missing_seed_fails_closed(self) -> None:
         from confflow.programs.orca.adapter import OrcaProgramAdapter
@@ -449,9 +435,9 @@ class TestGoatSeedSingleAuthority:
         from confflow.workflow.v4.document import ScientificDefinition
 
         assert ScientificDefinition(seed=7).to_payload()["seed"] == 7
-        assert ScientificDefinition(seed=7).to_payload() != ScientificDefinition(
-            seed=8
-        ).to_payload()
+        assert (
+            ScientificDefinition(seed=7).to_payload() != ScientificDefinition(seed=8).to_payload()
+        )
 
     def test_retry_preserves_seed(self) -> None:
         from confflow.execution.recovery import RecoveryContext
@@ -504,9 +490,7 @@ class TestGoatSeedSingleAuthority:
             check_params={},
             recovery="none",
             recovery_params={},
-            resources=ResourceRequest(
-                cores_per_item=1, memory_per_item_bytes=2 * 1024**3
-            ),
+            resources=ResourceRequest(cores_per_item=1, memory_per_item_bytes=2 * 1024**3),
             handoff_executable=None,
             handoff_env={},
             handoff_walltime_seconds=None,

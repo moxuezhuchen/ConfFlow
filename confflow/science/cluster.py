@@ -37,8 +37,6 @@ def kabsch_rmsd(first: np.ndarray, second: np.ndarray) -> float:
     y_centered = y - y.mean(axis=0)
     left, _singular, right_transposed = np.linalg.svd(y_centered.T @ x_centered)
     correction = np.eye(3)
-    correction[-1, -1] = (
-        1.0 if float(np.linalg.det(left @ right_transposed)) >= 0.0 else -1.0
-    )
+    correction[-1, -1] = 1.0 if float(np.linalg.det(left @ right_transposed)) >= 0.0 else -1.0
     aligned = y_centered @ (left @ correction @ right_transposed)
     return float(np.sqrt(np.mean(np.sum((x_centered - aligned) ** 2, axis=1))))

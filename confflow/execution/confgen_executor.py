@@ -133,7 +133,10 @@ class ConfgenExecutor:
             return self._fail(work_item, context, wall_start, monotonic_start, str(exc))
         except Exception as exc:  # fail closed; executors never raise into batch
             return self._fail(
-                work_item, context, wall_start, monotonic_start,
+                work_item,
+                context,
+                wall_start,
+                monotonic_start,
                 f"confgen internal failure: {exc}",
             )
 
@@ -148,9 +151,7 @@ class ConfgenExecutor:
         scientific = context.scientific
         seed = scientific.seed
         if seed is None or isinstance(seed, bool) or not isinstance(seed, int):
-            raise DomainError(
-                "confgen requires the explicit integer step seed (single authority)"
-            )
+            raise DomainError("confgen requires the explicit integer step seed (single authority)")
         driving = self._driving(work_item)
         native = dict(scientific.native)
         unknown = sorted(set(native) - ALLOWED_NATIVE_KEYS)
@@ -204,7 +205,8 @@ class ConfgenExecutor:
             )
         max_conformers = native.get("max_conformers")
         if max_conformers is not None and (
-            isinstance(max_conformers, bool) or not isinstance(max_conformers, int)
+            isinstance(max_conformers, bool)
+            or not isinstance(max_conformers, int)
             or max_conformers < 1
         ):
             raise DomainError(
@@ -325,12 +327,20 @@ class ConfgenExecutor:
                     role="conformer",
                     ordinal=ordinal,
                     group_key=group_key,
-                    metadata=FrozenDict({CONFORMER_MEMBER_METADATA_KEY: ordinal, "seed": int(seed)}),
+                    metadata=FrozenDict(
+                        {CONFORMER_MEMBER_METADATA_KEY: ordinal, "seed": int(seed)}
+                    ),
                 )
             )
         artifacts = self._write_report(
-            work_item, context, driving, members, int(seed), native,
-            grid=len(grid), clash_dropped=clash_dropped,
+            work_item,
+            context,
+            driving,
+            members,
+            int(seed),
+            native,
+            grid=len(grid),
+            clash_dropped=clash_dropped,
         )
         timing = Timing(
             started_at=wall_start,
@@ -354,12 +364,14 @@ class ConfgenExecutor:
                     step_id=work_item.step_id,
                     work_item_id=work_item.id,
                     logical_key=work_item.logical_key,
-                    details=FrozenDict({
-                        "members": len(members),
-                        "seed": int(seed),
-                        "grid_points": len(grid),
-                        "clash_dropped": clash_dropped,
-                    }),
+                    details=FrozenDict(
+                        {
+                            "members": len(members),
+                            "seed": int(seed),
+                            "grid_points": len(grid),
+                            "clash_dropped": clash_dropped,
+                        }
+                    ),
                 ),
             ),
             timing=timing,
@@ -396,9 +408,7 @@ class ConfgenExecutor:
 
     @staticmethod
     def _bond_set(raw: Any, key: str) -> set[tuple[int, int]]:
-        if not isinstance(raw, (list, tuple)) or not all(
-            isinstance(item, str) for item in raw
-        ):
+        if not isinstance(raw, (list, tuple)) or not all(isinstance(item, str) for item in raw):
             raise DomainError(f"confgen {key} must be a list of 'a-b' strings")
         try:
             return {tuple(sorted(parse_bond_pair(item))) for item in raw}  # type: ignore[misc]
@@ -440,8 +450,11 @@ class ConfgenExecutor:
             "grid_points": grid,
             "clash_dropped": clash_dropped,
             "members": [
-                {"id": record.id, "ordinal": record.ordinal,
-                 "geometry_digest": record.geometry_digest}
+                {
+                    "id": record.id,
+                    "ordinal": record.ordinal,
+                    "geometry_digest": record.geometry_digest,
+                }
                 for record in members
             ],
         }
@@ -486,8 +499,10 @@ class ConfgenExecutor:
             status=WorkItemStatus.FAILED,
             diagnostics=(
                 _diagnostic(
-                    NativeErrorCode.NATIVE_INPUT_ERROR, message,
-                    step_id=context.step_id, work_item_id=work_item.id,
+                    NativeErrorCode.NATIVE_INPUT_ERROR,
+                    message,
+                    step_id=context.step_id,
+                    work_item_id=work_item.id,
                     logical_key=work_item.logical_key,
                 ),
             ),
@@ -514,9 +529,11 @@ class ConfgenExecutor:
             status=WorkItemStatus.CANCELLED,
             diagnostics=(
                 _diagnostic(
-                    NativeErrorCode.CANCELLATION_ERROR, "work item cancelled",
+                    NativeErrorCode.CANCELLATION_ERROR,
+                    "work item cancelled",
                     step_id=context.step_id,
-                    work_item_id=work_item.id, logical_key=work_item.logical_key,
+                    work_item_id=work_item.id,
+                    logical_key=work_item.logical_key,
                     details={"confirmed": True},
                 ),
             ),

@@ -57,6 +57,7 @@ Trajectory facts for :func:`path_trajectory_facts`
 Best-effort iteration rows with the truncation marker above; unparseable
 lines are skipped, never fatal.
 """
+
 from __future__ import annotations
 
 import dataclasses
@@ -86,9 +87,7 @@ SUPPORTED_IRC_KEYS: frozenset[str] = frozenset({"direction", "max_iter"})
 _SUPPORTED_DIRECTIONS: frozenset[str] = frozenset({"both"})
 
 #: Real ORCA 6.1 IRC iteration row: ``<iter> <E_h> <dE> <maxG> <rmsG>``.
-_ITERATION_ROW_RE = re.compile(
-    r"^\s*(\d+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s*$"
-)
+_ITERATION_ROW_RE = re.compile(r"^\s*(\d+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s*$")
 
 #: Real asterisk-framed direction section banners.
 _SECTION_BANNER_RE = re.compile(r"^\*+\s+(FORWARD|BACKWARD) IRC\s+\*+\s*$")
@@ -262,9 +261,7 @@ def _parse_xyz_file(path: str, *, expected: Sequence[str]) -> tuple[ParsedGeomet
     try:
         count = int(lines[0].strip())
     except (TypeError, ValueError) as exc:
-        raise _input_error(
-            f"ORCA IRC endpoint file {path!r} carries no atom count: {exc}"
-        ) from exc
+        raise _input_error(f"ORCA IRC endpoint file {path!r} carries no atom count: {exc}") from exc
     comment_energy: float | None = None
     comment_match = _XYZ_ENERGY_RE.match(lines[1].strip())
     if comment_match is not None:
@@ -342,9 +339,7 @@ def parse_path_endpoints(
         if section is None:
             continue
         if not section.iterations:
-            raise _input_error(
-                f"ORCA IRC {native_direction} section carries no iteration rows"
-            )
+            raise _input_error(f"ORCA IRC {native_direction} section carries no iteration rows")
         ordinal, table_energy = section.iterations[-1]
         candidate = _os.path.join(work_dir, f"{log_base}{suffix}")
         geometry, file_energy = _parse_xyz_file(candidate, expected=expected)
