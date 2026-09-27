@@ -38,6 +38,9 @@ from .contracts import ExecutionBinding
 
 __all__ = [
     "BindingRequestDefaults",
+    "effective_native_env",
+    "is_local_target",
+    "require_target_transport",
     "resolve_execution_binding",
     "resolve_remote_target_binding",
     "validate_step_seed",
@@ -65,6 +68,101 @@ def _planned_text(value: Any) -> str | None:
         return None
     text = str(value).strip()
     return text or None
+
+
+#: Canonical local-target aliases. ``None`` (omitted) and these names all
+#: mean in-process local delivery with identical semantics. Every other
+#: non-empty target string names a nonlocal endpoint and MUST resolve
+#: through a configured transport; otherwise execution fails closed before
+#: any native launch (no silent local fallback).
+_LOCAL_TARGET_ALIASES: frozenset[str] = frozenset({"local", "localhost"})
+
+
+def is_local_target(target: str | None) -> bool:
+    """Return whether *target* selects in-process local delivery.
+
+    Omitted (``None``) and explicit local aliases (``"local"``,
+    ``"localhost"``, case-insensitive, surrounding whitespace ignored)
+    are local with identical semantics. Any other non-empty string is a
+    nonlocal endpoint identifier requiring a configured transport.
+    """
+    if target is None:
+        return True
+    if not isinstance(target, str):
+        raise DomainError("target must be a string or None")
+    text = target.strip()
+    if not text:
+        return True
+    return text.lower() in _LOCAL_TARGET_ALIASES
+
+
+def effective_native_env(binding_or_env: Any) -> dict[str, str]:
+    """Return the effective native environment for measurement and launch.
+
+    The effective environment is the COMPLETE scientifically relevant set:
+    every explicit ``ExecutionBinding.env`` key/value, verbatim. Callers
+    MUST use this single helper for (1) the native subprocess overlay,
+    (2) ``ExecutionEnvironmentDigest`` ``relevant_env``, (3) reuse identity
+    (via that digest), (4) remote ``target_env`` merging, and (5)
+    worker-side re-measurement. Ambient ``os.environ`` entries outside
+    this set are operational-only (PATH/HOME/TMPDIR and the like) and are
+    digest-inert by explicit contract — relevance is declared by the
+    binding, never inferred by scanning the process environment. The
+    values hashed are always the values launched (binding wins over
+    ambient on collision).
+    """
+    if binding_or_env is None:
+        return {}
+    if isinstance(binding_or_env, ExecutionBinding):
+        raw: Mapping[str, Any] = dict(binding_or_env.env)
+    elif isinstance(binding_or_env, Mapping):
+        raw = binding_or_env
+    else:
+        raise DomainError("binding_or_env must be an ExecutionBinding, a mapping, or None")
+    effective: dict[str, str] = {}
+    for key, value in raw.items():
+        if not isinstance(key, str) or not key.strip():
+            raise DomainError("effective env keys must be non-empty, trimmed strings")
+        if key != key.strip():
+            raise DomainError("effective env keys must be trimmed")
+        if not isinstance(value, str):
+            raise DomainError(
+                f"effective env var {key!r} must be a string, got {type(value).__name__}"
+            )
+        effective[key] = value
+    return effective
+
+
+def require_target_transport(target: str | None, transport: Any) -> Any:
+    """Resolve the delivery transport for *target*, failing closed.
+
+    Local targets (see :func:`is_local_target`) always return ``None``
+    (in-process delivery, never a remote transport). Nonlocal targets
+    require a configured *transport*: ``None`` (or a transport whose
+    ``supports_target`` hook rejects the target) raises
+    :class:`DomainError` BEFORE any native launch, so an explicit
+    ``target=nonexistent-cluster`` can never silently execute locally.
+    """
+    if target is None or is_local_target(target):
+        return None
+    label = target.strip() if isinstance(target, str) else str(target)
+    if transport is None:
+        raise DomainError(
+            f"step targets {label!r} but no transport is configured; "
+            "refusing silent local fallback (0 native launches)"
+        )
+    supports = getattr(transport, "supports_target", None)
+    if callable(supports):
+        try:
+            ok = supports(label)
+        except Exception as exc:
+            raise DomainError(f"target {label!r} cannot be resolved to a transport: {exc}") from exc
+        if not ok:
+            raise DomainError(
+                f"step targets {label!r} but no matching transport claims it; "
+                "refusing silent local fallback (0 native launches)"
+            )
+    return transport
 
 
 def resolve_execution_binding(

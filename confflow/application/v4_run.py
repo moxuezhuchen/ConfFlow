@@ -487,6 +487,13 @@ class V4RunApplication:
                 ),
                 adapter_default_executable=adapter.default_executable,
             )
+            # Explicit target gate BEFORE measurement/launch: nonlocal
+            # targets require a configured transport; otherwise fail closed
+            # with 0 native launches (no silent local fallback). Local
+            # targets (omitted/"local"/"localhost") always run in-process.
+            from ..execution.binding_resolution import require_target_transport
+
+            require_target_transport(binding.target, request.transport)
             environment = self._measure_environment(
                 planned=planned, binding=binding, adapter=adapter
             )
@@ -545,8 +552,42 @@ class V4RunApplication:
                 store=store,
                 run_root=run_root,
                 owner_token=request.owner_token,
-                transport=self._step_transport(request.transport, store),
+                transport=self._resolve_step_transport(
+                    binding, request.transport, store, step_id=planned.step_id
+                ),
             )
+
+    @staticmethod
+    def _resolve_step_transport(binding: Any, transport: Any, store: Any, *, step_id: str) -> Any:
+        """Resolve per-step delivery, failing closed on nonlocal targets.
+
+        Local bindings (``None``/``"local"``/``"localhost"``) always
+        return ``None`` (in-process delivery) so a configured remote
+        transport never hijacks local steps. Nonlocal bindings require
+        the configured *transport* (rebound to *store* via ``with_store``
+        when available); with no configured or no matching transport this
+        raises BEFORE any native launch.
+        """
+        from ..execution.binding_resolution import (
+            is_local_target,
+            require_target_transport,
+        )
+
+        target = getattr(binding, "target", None) if binding is not None else None
+        if target is None or is_local_target(target):
+            return None
+        resolved = require_target_transport(target, transport)
+        # ``require`` returned the configured transport (or raised); rebind
+        # it to this step's store so imports commit into the right DB.
+        rebind = getattr(resolved, "with_store", None)
+        if callable(rebind):
+            try:
+                return rebind(store)
+            except Exception as exc:
+                raise DomainError(
+                    f"step {step_id!r} targets {target!r}: cannot bind transport: {exc}"
+                ) from exc
+        return resolved
 
     @staticmethod
     def _step_transport(transport: Any, store: Any) -> Any:
@@ -565,16 +606,21 @@ class V4RunApplication:
     def _measure_environment(*, planned: Any, binding: Any, adapter: Any) -> Any:
         """Measure the real execution environment for the reuse axis.
 
-        Unknown never stands in for verified equivalence: when the
-        executable cannot be measured the run fails closed instead of
-        recording ``None``.
+        The measured ``relevant_env`` is the effective native env: every
+        explicit ``ExecutionBinding.env`` key/value verbatim (see
+        ``effective_native_env``). The values hashed are always the values
+        launched (binding wins over ambient). Unknown never stands in for
+        verified equivalence: when the executable cannot be measured the
+        run fails closed instead of recording ``None``.
         """
+        from ..execution.binding_resolution import effective_native_env
         from ..execution.environment import EnvironmentMeasurer
 
         candidate = binding.executable or adapter.default_executable
+        relevant = effective_native_env(binding)
         try:
             return EnvironmentMeasurer().build_environment(
-                candidate, adapter=adapter, target=binding.target
+                candidate, adapter=adapter, target=binding.target, relevant_env=relevant
             )
         except DomainError as exc:
             raise DomainError(

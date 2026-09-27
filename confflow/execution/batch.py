@@ -371,6 +371,24 @@ class BatchStepExecutor:
                 f"durable execution of step {step.step_id!r} requires a measured "
                 "environment; environment=None is prohibited"
             )
+        # Explicit target gate (defense in depth; the application resolves
+        # per-step delivery before reaching batch). A nonlocal binding
+        # without a transport must never execute locally: fail closed with
+        # 0 native launches instead of silently falling back.
+        _binding_target = getattr(request.execution_binding, "target", None)
+        if _binding_target is not None:
+            try:
+                from .binding_resolution import is_local_target
+
+                _is_local = is_local_target(_binding_target)
+            except Exception:
+                _is_local = False
+            if not _is_local and transport is None:
+                raise PersistenceError(
+                    f"durable execution of step {step.step_id!r} targets "
+                    f"{_binding_target!r} but no transport is configured; "
+                    "refusing silent local fallback (0 native launches)"
+                )
         validation_error = self._validate_request(request)
         if validation_error is not None:
             failed = tuple(
@@ -393,16 +411,35 @@ class BatchStepExecutor:
             # Remote steps reuse against the TARGET environment, never the
             # producer's local measurement: the probe asks the target host
             # for its current execution identity (a file measurement, never
-            # a native launch).  An unprobable target fails closed rather
-            # than silently substituting the producer environment.
+            # a native launch) over the SAME effective env the worker will
+            # launch with (binding env over target defaults). An unprobable
+            # target fails closed rather than silently substituting the
+            # producer environment.
             probe = getattr(transport, "probe_environment_digest", None)
             if callable(probe):
                 binding = request.execution_binding
-                probed_digest = probe(
-                    program=getattr(request.scientific, "program", None),
-                    capability=request.executor_capability,
-                    requested_executable=getattr(binding, "executable", None),
-                )
+                handoff_env: dict[str, str] | None = None
+                if binding is not None:
+                    try:
+                        from .binding_resolution import effective_native_env
+
+                        handoff_env = effective_native_env(binding)
+                    except Exception:
+                        handoff_env = dict(getattr(binding, "env", {}) or {})
+                try:
+                    probed_digest = probe(
+                        program=getattr(request.scientific, "program", None),
+                        capability=request.executor_capability,
+                        requested_executable=getattr(binding, "executable", None),
+                        handoff_env=handoff_env,
+                    )
+                except TypeError:
+                    # Back-compat for transports without the handoff_env seam.
+                    probed_digest = probe(
+                        program=getattr(request.scientific, "program", None),
+                        capability=request.executor_capability,
+                        requested_executable=getattr(binding, "executable", None),
+                    )
                 if probed_digest is not None:
                     environment_digest = probed_digest
         provenance = self._current_provenance(request)
@@ -860,6 +897,76 @@ class BatchStepExecutor:
                     details=dict(decision.details.thaw()),
                 ),
                 False,
+            )
+        if code is ReuseCode.INVALIDATE_ENVIRONMENT and stored_status in (
+            StoredWorkItemStatus.COMPLETED,
+            StoredWorkItemStatus.FAILED,
+            StoredWorkItemStatus.INTERRUPTED,
+        ):
+            # Environment-only generation advance: the binding (executable
+            # content + effective env) moved while definition/inputs stayed
+            # put. Unlike definition/input/provenance/artifact invalidation
+            # (terminal, history preserved, nothing re-executes), a new
+            # environment generation re-executes as a fresh attempt: the
+            # registration advances to the new axes (prior attempts
+            # preserved), then the normal claim → launch → commit path runs.
+            # This is what makes ENV -5 → -10 on the same root relaunch
+            # (+1) with the new result instead of reusing stale science.
+            try:
+                refresh = getattr(store, "refresh_for_new_environment", None)
+                if not callable(refresh):
+                    raise PersistenceError("store cannot advance environment generation")
+                refresh(
+                    item.id,
+                    work_item_digest=item.semantic_digest,
+                    step_semantic_digest=step.step_semantic_digest,
+                    environment_digest=environment_digest,
+                    producer_provenance=dict(provenance.thaw()),
+                    reason=decision.reason,
+                )
+            except (PersistenceError, CorruptStateError) as exc:
+                return (
+                    self._durable_synthetic_failure(
+                        request,
+                        item,
+                        code=code.value,
+                        message=(
+                            f"work item {item.logical_key!r} environment changed but "
+                            f"generation refresh failed ({exc}); history preserved"
+                        ),
+                        retryable=False,
+                        details=dict(decision.details.thaw()),
+                    ),
+                    False,
+                )
+            if store.claim(item.id, owner=owner):
+                attempt = int(store.get_registered(item.id)["current_attempt"])
+                result = self._launch(
+                    item,
+                    replace(context, attempt=attempt),
+                    store=store,
+                    transport=transport,
+                    should_cancel=should_cancel,
+                    attempt=attempt,
+                )
+                # Local commits keep the refreshed registration digest;
+                # remote commits override with the worker-measured digest
+                # (same effective env, measured target-side).
+                override = self._commit_environment_digest(result)
+                store.record_finished(result, environment_digest=override)
+                return result, True
+            return self._contested_claim(
+                request,
+                item,
+                context,
+                store=store,
+                owner=owner,
+                environment_digest=environment_digest,
+                provenance=provenance,
+                run_root=run_root,
+                transport=transport,
+                should_cancel=should_cancel,
+                _claim_retried=_claim_retried,
             )
         return (
             self._durable_synthetic_failure(
