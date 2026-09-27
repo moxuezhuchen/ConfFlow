@@ -449,6 +449,7 @@ def run_result_json_schema() -> dict[str, Any]:
             "content_schema": {"const": RESULT_MANIFEST_SCHEMA},
             "run_id": {"type": "string", "minLength": 1},
             "status": {"enum": ["completed", "partial", "failed", "cancelled"]},
+            "generation_id": {"type": ["string", "null"], "minLength": 1},
             "definition_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
             "provenance": {
                 "type": "object",
@@ -536,8 +537,14 @@ def build_run_result_manifest(
     analyses: list[dict[str, Any]] | None = None,
     artifacts: list[dict[str, Any]] | None = None,
     results: list[dict[str, Any]] | None = None,
+    generation_id: str | None = None,
 ) -> dict[str, Any]:
     """Build one run-result manifest instance.
+
+    ``generation_id`` names the formal run/resume generation this manifest
+    belongs to (see :mod:`confflow.persistence.generation`); consumers
+    compare it with the durable ``run_generation.json`` current pointer so
+    a superseded manifest can never masquerade as current truth.
 
     Raises
     ------
@@ -550,6 +557,10 @@ def build_run_result_manifest(
         raise ValueError(f"unknown run status {status!r}")
     if not definition_digest.startswith("sha256:"):
         raise ValueError("definition_digest must be a sha256: digest")
+    if generation_id is not None and (
+        not isinstance(generation_id, str) or not generation_id.strip()
+    ):
+        raise ValueError("generation_id must be a non-empty string or None")
     manifest: dict[str, Any] = {
         "content_schema": RESULT_MANIFEST_SCHEMA,
         "run_id": run_id,
@@ -565,6 +576,8 @@ def build_run_result_manifest(
         "analyses": copy.deepcopy(analyses or []),
         "artifacts": copy.deepcopy(artifacts or []),
     }
+    if generation_id is not None:
+        manifest["generation_id"] = generation_id
     if results is not None:
         manifest["results"] = copy.deepcopy(results)
     return manifest

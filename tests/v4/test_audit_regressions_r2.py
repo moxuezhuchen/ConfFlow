@@ -620,6 +620,148 @@ def _sleeping_native(root: Path, *, sleep_seconds: float) -> Path:
     return script
 
 
+class TestR6GenerationLifecycle:
+    """R6: a new generation can never leave an old manifest current."""
+
+    @staticmethod
+    def _science_chain_native(root: Path) -> Path:
+        """Fake native for the full TSPES chain (freq failure switchable)."""
+        root.mkdir(parents=True, exist_ok=True)
+        script = root / "chain_orca"
+        script.write_text(textwrap.dedent(f"""\
+                #!{sys.executable}
+                import os, sys
+                sys.path.insert(0, {str(REPO_ROOT)!r})
+                from tests.v4.fakes import fake_orca as f
+                text = open(sys.argv[1]).read()
+                cwd = os.getcwd()
+                if "IRC" in text:
+                    os.execv(sys.executable, [sys.executable, {str(REPO_ROOT / "tests/v4/fakes/fake_irc.py")!r}, *sys.argv[1:]])
+                if "Freq" in text:
+                    os.environ["FAKE_MODE"] = "success_freq_noshift"
+                    ts = "/ts_freq/" in cwd
+                    f.ENERGY_HARTREE = float(os.environ["TS_FREQ_E"]) if ts else -65.0
+                    f.GIBBS_CORRECTION = 0.10 if ts else 0.20
+                elif " SP" in text:
+                    os.environ["FAKE_MODE"] = "success_sp"
+                    f.ENERGY_HARTREE = float(os.environ["TS_SP_E"]) if "/ts_sp/" in cwd else -80.0
+                elif "OptTS" in text:
+                    os.environ["FAKE_MODE"] = "ts_candidate"
+                else:
+                    os.environ["FAKE_MODE"] = "success_opt"
+                sys.exit(f.main(sys.argv))
+                """))
+        script.chmod(0o755)
+        return script
+
+    @staticmethod
+    def _tspes_doc(script: Path, *, sp: str, freq: str) -> dict[str, Any]:
+
+        doc = copy.deepcopy(get_recipe_v4("tspes")["document"])
+        doc["global"] = {"scientific_defaults": {"charge": 0, "multiplicity": 1}}
+        for step in doc["steps"]:
+            if step["executor"] == "calculation":
+                step["execution"] = {
+                    "executable": str(script),
+                    "env": {"TS_SP_E": sp, "TS_FREQ_E": freq},
+                }
+        return doc
+
+    @staticmethod
+    def _tspes_inputs() -> RunInputs:
+        from dataclasses import replace as _replace
+
+        from confflow.domain import StructureSet
+
+        (record,) = tuple(import_xyz(WATER_XYZ))
+        # Stable group identity for this pre-R5 helper: a constant group key
+        # survives import-map reconciliation; lineage re-roots to the
+        # persisted entity id on both the fresh and resumed paths.
+        record = _replace(record, group_key="rxn")
+        return RunInputs(structures=FrozenDict({"structures": StructureSet.of(record)}))
+
+    def _run_tspes(self, doc: dict[str, Any], run_root: Path) -> Any:
+        return V4RunApplication(supervisor=NativeProcessSupervisor()).run(
+            V4RunRequest(
+                workflow_document=doc,
+                run_inputs=self._tspes_inputs(),
+                run_root=str(run_root),
+                import_sources=FrozenDict({"structures": WATER_XYZ}),
+            )
+        )
+
+    def test_old_completed_generation_never_remains_current(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Case A: gen1 completed, gen2 fails downstream -> gen2 truth wins."""
+        from confflow.persistence.generation import load_run_generation
+
+        script = self._science_chain_native(tmp_path)
+        run_root = tmp_path / "run"
+        first = self._run_tspes(self._tspes_doc(script, sp="-70", freq="-60"), run_root)
+        assert first.status == "completed"
+        first_manifest = json.loads((run_root / RUN_RESULT_FILENAME).read_text())
+        first_generation = load_run_generation(str(run_root))
+        assert first_generation is not None
+        assert first_generation.status == "completed"
+        assert first_manifest["generation_id"] == first_generation.generation_id
+
+        failing = self._tspes_doc(script, sp="-70", freq="invalid-number")
+        with pytest.raises(DomainError):
+            self._run_tspes(failing, run_root)
+
+        second_manifest = json.loads((run_root / RUN_RESULT_FILENAME).read_text())
+        second_generation = load_run_generation(str(run_root))
+        assert second_generation is not None
+        assert second_generation.status == "failed"
+        assert second_generation.generation_id != first_generation.generation_id
+        assert second_manifest["status"] == "failed"
+        assert second_manifest["generation_id"] == second_generation.generation_id
+        assert second_generation.manifest_generation_id == second_generation.generation_id
+        assert second_generation.failure["step_id"] == "reaction_profile"
+        assert second_generation.failure["blocked_downstream"] is True
+        step_statuses = {step["id"]: step["status"] for step in second_manifest["steps"]}
+        assert step_statuses["ts_freq"] == "failed"
+        assert "reaction_profile" not in step_statuses
+
+    def test_fresh_upstream_failure_publishes_terminal_failed_generation(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Case B: upstream failed -> blocked downstream -> explicit terminal."""
+        from confflow.persistence.generation import load_run_generation
+
+        script = self._science_chain_native(tmp_path)
+        run_root = tmp_path / "run"
+        doc = self._tspes_doc(script, sp="-70", freq="invalid-number")
+        with pytest.raises(DomainError):
+            self._run_tspes(doc, run_root)
+        generation = load_run_generation(str(run_root))
+        assert generation is not None and generation.status == "failed"
+        manifest = json.loads((run_root / RUN_RESULT_FILENAME).read_text())
+        assert manifest["status"] == "failed"
+        assert manifest["generation_id"] == generation.generation_id
+        assert manifest["steps"], "the failed upstream step must be durable in the manifest"
+
+    def test_successful_resume_is_a_new_completed_generation(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from confflow.persistence.generation import load_run_generation
+
+        script = self._science_chain_native(tmp_path)
+        run_root = tmp_path / "run"
+        doc = self._tspes_doc(script, sp="-70", freq="-60")
+        first = self._run_tspes(doc, run_root)
+        assert first.status == "completed"
+        first_generation = load_run_generation(str(run_root))
+        second = self._run_tspes(doc, run_root)
+        assert second.status == "completed"
+        second_generation = load_run_generation(str(run_root))
+        assert second_generation is not None and second_generation.status == "completed"
+        assert second_generation.generation_id != first_generation.generation_id
+        manifest = json.loads((run_root / RUN_RESULT_FILENAME).read_text())
+        assert manifest["generation_id"] == second_generation.generation_id
+
+
 class TestR3LiveCancellation:
     """R3: cancellation reaches and terminates the running native process."""
 

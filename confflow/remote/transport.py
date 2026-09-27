@@ -315,7 +315,7 @@ class LocalTransport:
             if not is_local_target(target):
                 raise DomainError(
                     f"local transport cannot deliver target {target!r}; "
-                    "refusing silent local fallback (0 native launches)"
+                    "refusing to run it locally (0 native launches)"
                 )
         return self._executor.execute(item, context, should_cancel=should_cancel)
 

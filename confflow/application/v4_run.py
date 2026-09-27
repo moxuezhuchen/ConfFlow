@@ -62,6 +62,13 @@ from ..persistence.contracts import (
     validate_run_root,
     wall_now,
 )
+from ..persistence.generation import (
+    RunGeneration,
+    new_generation_id,
+    running_record,
+    save_run_generation,
+    terminal_record,
+)
 from ..persistence.imports import resolve_imported_structures
 from ..persistence.run_state import (
     detect_published,
@@ -239,11 +246,30 @@ class V4RunReport:
     definition_digest: str
     step_results: tuple[Any, ...] = ()
     manifest: FrozenDict = field(default_factory=FrozenDict)
+    generation_id: str = ""
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "step_results", tuple(self.step_results))
         if not isinstance(self.manifest, FrozenDict):
             object.__setattr__(self, "manifest", FrozenDict(self.manifest))
+
+
+@dataclass(slots=True)
+class _GenerationContext:
+    """Mutable per-generation bookkeeping for failure publication."""
+
+    run_id: str
+    run_root: str
+    generation_id: str
+    record: RunGeneration
+    definition_digest: str | None = None
+    plan: Any = None
+    state: RunState | None = None
+    step_results: list[Any] = field(default_factory=list)
+    completed_step_ids: tuple[str, ...] = ()
+    active_step_id: str | None = None
+    terminal_published: bool = False
+    terminal_status: str | None = None
 
 
 def _map_step_status(status: StepStatus) -> RunStepStatus:
@@ -269,7 +295,44 @@ class V4RunApplication:
         return self._registry if self._registry is not None else default_registry()
 
     def run(self, request: V4RunRequest) -> V4RunReport:
-        """Compile, execute, publish, and summarize one V4 workflow."""
+        """Compile, execute, publish, and summarize one V4 workflow.
+
+        Every formal invocation is a new durable generation.  A ``running``
+        generation record is published before compile, and every terminal
+        path — success, partial, cancelled, runtime failure, blocked
+        downstream step, assembly error — publishes the current
+        generation's terminal truth (manifest when possible, generation
+        record always) before returning or re-raising.  A superseded
+        completed manifest can therefore never masquerade as current.
+        """
+        run_root = validate_run_root(request.run_root)
+        os.makedirs(run_root, exist_ok=True)
+        run_id = os.path.basename(request.run_root.rstrip(os.sep)) or "run"
+        generation_id = new_generation_id()
+        record = running_record(run_id=run_id, generation_id=generation_id)
+        save_run_generation(run_root, record)
+        context = _GenerationContext(
+            run_id=run_id,
+            run_root=run_root,
+            generation_id=generation_id,
+            record=record,
+        )
+        try:
+            return self._run_generation(request, context)
+        except BaseException as error:
+            # Current-generation terminal truth must exist before the
+            # exception reaches the caller: status, generation, failure
+            # location, and the completed partial steps.  Programmer
+            # corruption is never swallowed — the original exception is
+            # re-raised unchanged.
+            self._publish_generation_failure(request, context, error)
+            raise
+
+    def _run_generation(self, request: V4RunRequest, context: _GenerationContext) -> V4RunReport:
+        """Execute one generation; see :meth:`run` for the lifecycle."""
+        run_id = context.run_id
+        run_root = context.run_root
+        generation_id = context.generation_id
         compiled = compile_workflow(request.workflow_document)
         if not compiled.ok:
             raise DomainError(
@@ -278,15 +341,23 @@ class V4RunApplication:
             )
         assert compiled.plan is not None
         plan = compiled.plan
-        run_id = os.path.basename(request.run_root.rstrip(os.sep)) or "run"
-        run_root = validate_run_root(request.run_root)
-        os.makedirs(run_root, exist_ok=True)
+        context.plan = plan
+        context.definition_digest = plan.definition_digest
         state = self._load_or_init_run_state(
             run_root=run_root, run_id=run_id, definition_digest=plan.definition_digest
         )
         for planned in plan.steps:
             state = ensure_step(state, planned.step_id)
         save_run_state(run_root, state)
+        context.state = state
+        save_run_generation(
+            run_root,
+            running_record(
+                run_id=run_id,
+                generation_id=generation_id,
+                definition_digest=plan.definition_digest,
+            ),
+        )
         run_inputs = self._resolve_run_inputs(run_root=run_root, request=request)
         self._preflight_targets(plan, request)
         materialized = MaterializedOutputs.empty()
@@ -308,11 +379,14 @@ class V4RunApplication:
                     RunStepStatus.CANCELLED,
                 )
                 save_run_state(run_root, state)
+                context.state = state
                 continue
             state = transition_step(
                 ensure_step(state, planned.step_id), planned.step_id, RunStepStatus.RUNNING
             )
             save_run_state(run_root, state)
+            context.state = state
+            context.active_step_id = planned.step_id
             # Producer-state gating lives in assembly materialization
             # (owner B): failed/partial/cancelled producers surface here as
             # errors scoped to this step.  The caller only propagates them —
@@ -346,6 +420,10 @@ class V4RunApplication:
                     f"step executor returned {result.step_id!r} for {planned.step_id!r}"
                 )
             step_results.append(result)
+            context.step_results = step_results
+            context.completed_step_ids = tuple(
+                item.step_id for item in step_results if item.status.value == "completed"
+            )
             materialized = _extend_materialized(plan, planned, materialized, result)
             digest = detect_published(run_root=run_root, step_id=planned.step_id)
             state = transition_step(
@@ -355,6 +433,8 @@ class V4RunApplication:
                 published_step_result_digest=digest,
             )
             save_run_state(run_root, state)
+            context.state = state
+            context.active_step_id = None
         status = _evaluate_run_status(tuple(result.status for result in step_results))
         if cancelled_steps or (should_cancel is not None and should_cancel()):
             # A cancellation requested before terminal publication is the
@@ -369,6 +449,20 @@ class V4RunApplication:
             step_results=tuple(step_results),
             plan=plan,
             run_root=run_root,
+            generation_id=generation_id,
+        )
+        context.terminal_published = True
+        context.terminal_status = status
+        save_run_generation(
+            run_root,
+            terminal_record(
+                context.record,
+                status=status,
+                manifest_generation_id=generation_id,
+                completed_step_ids=tuple(
+                    item.step_id for item in step_results if item.status.value == "completed"
+                ),
+            ),
         )
         return V4RunReport(
             run_id=run_id,
@@ -376,7 +470,98 @@ class V4RunApplication:
             definition_digest=plan.definition_digest,
             step_results=tuple(step_results),
             manifest=manifest,
+            generation_id=generation_id,
         )
+
+    def _publish_generation_failure(
+        self,
+        request: V4RunRequest,
+        context: _GenerationContext,
+        error: BaseException,
+    ) -> None:
+        """Best-effort current-generation terminal truth for a failed run.
+
+        Publishes the failure manifest for the completed partial steps
+        (when the plan is known) and always publishes the terminal
+        generation record with the failure location.  Publication problems
+        are suppressed here: the original exception is the authority and
+        must never be masked by a secondary reporting failure.
+        """
+        failure = FrozenDict(
+            {
+                "type": type(error).__name__,
+                "message": str(error)[:2000],
+                "step_id": context.active_step_id,
+                "blocked_downstream": "not assemblable" in str(error)
+                or "unmaterialized producer" in str(error),
+            }
+        )
+        if context.terminal_published:
+            # The generation's manifest is already durable truth; only the
+            # lifecycle-record write failed.  Never downgrade a published
+            # terminal manifest into a failure.
+            try:
+                save_run_generation(
+                    context.run_root,
+                    terminal_record(
+                        context.record,
+                        status=context.terminal_status or "failed",
+                        manifest_generation_id=context.generation_id,
+                        completed_step_ids=tuple(
+                            item.step_id
+                            for item in context.step_results
+                            if item.status.value == "completed"
+                        ),
+                    ),
+                )
+            except Exception:
+                pass
+            return
+        # The failing/blocked step is durable lifecycle truth, not RUNNING.
+        try:
+            if context.state is not None and context.active_step_id is not None:
+                current = context.state.step(context.active_step_id)
+                if current is not None and current.status is RunStepStatus.RUNNING:
+                    context.state = transition_step(
+                        context.state, context.active_step_id, RunStepStatus.FAILED
+                    )
+                    save_run_state(context.run_root, context.state)
+        except Exception:
+            pass
+        manifest_published = False
+        if context.plan is not None and context.definition_digest is not None:
+            try:
+                self._publish_manifest(
+                    run_id=context.run_id,
+                    status="failed",
+                    definition_digest=context.definition_digest,
+                    step_results=tuple(context.step_results),
+                    plan=context.plan,
+                    run_root=context.run_root,
+                    generation_id=context.generation_id,
+                    include_planned_analyses=False,
+                )
+                manifest_published = True
+            except Exception:
+                pass
+        try:
+            save_run_generation(
+                context.run_root,
+                terminal_record(
+                    context.record,
+                    status="failed",
+                    manifest_generation_id=(context.generation_id if manifest_published else None),
+                    completed_step_ids=tuple(
+                        item.step_id
+                        for item in context.step_results
+                        if item.status.value == "completed"
+                    ),
+                    active_step_id=context.active_step_id,
+                    failure=failure,
+                ),
+            )
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------
     # Run-state and import persistence
@@ -411,8 +596,8 @@ class V4RunApplication:
             capability = getattr(planned.executor, "value", str(planned.executor))
             raise DomainError(
                 f"step {planned.step_id!r} targets {target!r} but pure executor "
-                f"{capability!r} has no remote delivery; refusing silent local "
-                "fallback (0 native launches)"
+                f"{capability!r} has no remote delivery; refusing to run it "
+                "locally (0 native launches)"
             )
 
     @staticmethod
@@ -587,8 +772,8 @@ class V4RunApplication:
                     capability = getattr(planned.executor, "value", str(planned.executor))
                     raise DomainError(
                         f"step {planned.step_id!r} targets {planned_target!r} but pure "
-                        f"executor {capability!r} has no remote delivery; refusing "
-                        "silent local fallback (0 native launches)"
+                        f"executor {capability!r} has no remote delivery; refusing to "
+                        "run it locally (0 native launches)"
                     )
             from ..execution.environment import build_pure_environment
             from ..persistence.reuse import build_producer_provenance
@@ -735,6 +920,8 @@ class V4RunApplication:
         step_results: tuple[Any, ...],
         plan: Any,
         run_root: str,
+        generation_id: str | None = None,
+        include_planned_analyses: bool = True,
     ) -> FrozenDict:
         """Publish the producer-facing run-result manifest.
 
@@ -800,9 +987,12 @@ class V4RunApplication:
             for artifact in result.artifacts:
                 artifacts.append(artifact_entry(artifact))
         analyses: list[dict[str, Any]] = []
-        for planned in plan.steps:
-            if planned.executor.value == "analysis":
-                analyses.append({"capability": planned.executor.value, "step_id": planned.step_id})
+        if include_planned_analyses:
+            for planned in plan.steps:
+                if planned.executor.value == "analysis":
+                    analyses.append(
+                        {"capability": planned.executor.value, "step_id": planned.step_id}
+                    )
         try:
             analyses.extend(project_analysis_groups(tuple(step_results)))
         except ValueError as exc:
@@ -816,6 +1006,7 @@ class V4RunApplication:
             analyses=analyses,
             artifacts=artifacts,
             results=results,
+            generation_id=generation_id,
         )
         try:
             jsonschema.validate(instance=manifest, schema=run_result_json_schema())
