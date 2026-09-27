@@ -23,6 +23,7 @@ __all__ = [
     "format_coordinates",
     "format_keyword_line",
     "format_memory_gb",
+    "keyword_requests_freq",
     "normalize_gaussian_keyword",
     "render_gaussian_input",
     "rescue_freeze_directive",
@@ -664,6 +665,17 @@ def render_gaussian_input(
         f"{extra_section}\n"
         f"\n"
     )
+
+
+def keyword_requests_freq(keyword: str) -> bool:
+    """Return whether *keyword* explicitly requests a frequency calculation.
+
+    Adapter-owned syntax: recovery policies must call this (via the program
+    adapter), never reimplement route matching.
+    """
+    if not isinstance(keyword, str) or not keyword.strip():
+        return False
+    return _FREQ_TOKEN_PATTERN.search(keyword) is not None
 
 
 def scan_keyword_from_ts(keyword: str | None) -> str | None:

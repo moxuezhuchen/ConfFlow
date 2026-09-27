@@ -17,6 +17,7 @@ from typing import Any
 from ...domain._immutable import FrozenDict
 from ...domain.artifact import ArtifactLocator, ArtifactRef, ArtifactSet
 from ...domain.diagnostics import Diagnostic, DiagnosticSeverity
+from ...domain.structure import Coordinates, StructureRecord
 from ...execution.native import (
     GeometryOutput,
     InputFile,
@@ -193,6 +194,89 @@ class GaussianProgramAdapter:
     def ensure_modredundant_keyword(keyword: str) -> str:
         """Return *keyword* with the adapter-owned ``ModRedundant`` flag."""
         return _rendering.ensure_modredundant_keyword(keyword)
+
+    @staticmethod
+    def keyword_requests_freq(keyword: str) -> bool:
+        """Return whether *keyword* requests a frequency calculation.
+
+        Adapter-owned syntax (delegates to ``rendering``).  Recovery
+        policies must call this method, never reimplement route matching.
+        """
+        return _rendering.keyword_requests_freq(keyword)
+
+    def build_rescue_inputs(
+        self,
+        inputs: ResolvedCalculationInputs,
+        coordinates: Coordinates,
+        native_keyword: str,
+        extra_directives: tuple[str, ...] = (),
+    ) -> ResolvedCalculationInputs | None:
+        """Build render-ready rescue inputs for one recovery geometry.
+
+        Adapter-owned native vocabulary: the ``keyword`` replacement and
+        the ``modredundant`` directive merge (including the legacy
+        ``gaussian_modredundant`` fold) live here, never in recovery
+        policies.  Recovery supplies semantic intent — target geometry,
+        scan keyword, freeze directives — and this method renders that
+        intent into resolved inputs for :meth:`materialize_native_input`.
+
+        Returns ``None`` when the transient structure cannot be built.
+        """
+        try:
+            transient = StructureRecord(
+                id=inputs.structure.id,
+                atoms=tuple(inputs.structure.atoms),
+                coordinates=tuple(coordinates),
+                charge=inputs.charge if inputs.charge is not None else (inputs.structure.charge),
+                multiplicity=(
+                    inputs.multiplicity
+                    if inputs.multiplicity is not None
+                    else (inputs.structure.multiplicity)
+                ),
+                parent_ids=tuple(inputs.structure.parent_ids),
+                lineage_root_id=inputs.structure.lineage_root_id,
+                group_key=inputs.structure.group_key,
+                metadata=FrozenDict({}),
+            )
+        except Exception:
+            return None
+        native_map = dict(inputs.native)
+        native_map["keyword"] = native_keyword
+        if extra_directives:
+            # The strict vocabulary key is ``modredundant``; legacy
+            # ``gaussian_modredundant`` content is folded into it so user
+            # directives survive rescue rendering.
+            existing: Any = native_map.get(
+                "modredundant", native_map.get("gaussian_modredundant", [])
+            )
+            if isinstance(existing, (list, tuple)):
+                directives = [str(item).strip() for item in existing if str(item).strip()]
+            elif existing is None:
+                directives = []
+            else:
+                directives = [part.strip() for part in str(existing).splitlines() if part.strip()]
+            for directive in extra_directives:
+                if directive not in directives:
+                    directives.append(directive)
+            native_map["modredundant"] = directives
+            native_map.pop("gaussian_modredundant", None)
+        try:
+            return ResolvedCalculationInputs(
+                structure=transient,
+                charge=inputs.charge,
+                multiplicity=inputs.multiplicity,
+                freeze=inputs.freeze,
+                resources=inputs.resources,
+                native=FrozenDict(native_map),
+                checkpoints=tuple(inputs.checkpoints),
+                extra_structures=inputs.extra_structures,
+                step_id=inputs.step_id,
+                work_item_id=inputs.work_item_id,
+                logical_key=inputs.logical_key,
+                seed=inputs.seed,
+            )
+        except Exception:
+            return None
 
     def materialize_native_input(
         self, inputs: ResolvedCalculationInputs
