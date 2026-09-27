@@ -73,12 +73,11 @@ from ...shared.defaults import (
     DEFAULT_TS_BOND_DRIFT_THRESHOLD,
     DEFAULT_TS_RESCUE_SCAN,
 )
+from ..contract_schemas import EDITOR_MANIFEST_SCHEMA
 from .schema import WORKFLOW_SCHEMA_VERSION, WORKFLOW_SCHEMA_VERSION_V3
 from .serialization import canonical_sha256
 from .theory import PROGRAM_CAPABILITIES
 from .types import ProgramName, TaskName
-
-EDITOR_MANIFEST_SCHEMA = "confflow.editor-manifest.v1"
 
 #: Human labels for the values of :data:`ProgramName`.  A value added to the
 #: literal without a label here fails loudly at import rather than silently

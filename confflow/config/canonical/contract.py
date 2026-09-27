@@ -38,6 +38,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
+from ..contract_schemas import CONFIGURATION_VALIDATION_SCHEMA
 from .editor_manifest import (
     build_editor_manifest,
     build_editor_manifest_v3,
@@ -81,8 +82,6 @@ CONFIGURATION_CONTRACT_V3_SCHEMA = "confflow.configuration-contract.v3"
 #: It deliberately keeps meaning **v1**: that is what the name has always
 #: described, and the default CLI output is still v1.
 CONFIGURATION_CONTRACT_SCHEMA = CONFIGURATION_CONTRACT_V1_SCHEMA
-
-CONFIGURATION_VALIDATION_SCHEMA = "confflow.configuration-validation.v1"
 
 ContractBuilder = Callable[..., dict[str, Any]]
 

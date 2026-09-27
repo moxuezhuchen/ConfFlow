@@ -21,7 +21,7 @@ import copy
 import importlib
 from typing import Any
 
-from ..config.canonical.contract import CONFIGURATION_VALIDATION_SCHEMA
+from ..config.contract_schemas import CONFIGURATION_VALIDATION_SCHEMA
 from ..domain.binding import (
     Cardinality,
     Pairing,

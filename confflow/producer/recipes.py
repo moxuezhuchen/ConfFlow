@@ -27,7 +27,7 @@ from __future__ import annotations
 import copy
 from typing import Any
 
-from ..config.canonical.recipes import RECIPE_CATALOG_SCHEMA
+from ..config.contract_schemas import RECIPE_CATALOG_SCHEMA
 from ..domain.canonical import canonical_sha256
 from ..workflow.v4.document import SCHEMA_ID
 
