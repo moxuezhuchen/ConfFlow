@@ -7,8 +7,10 @@ six built-in checks from ``CHECKS`` using only ``tmp_path``-free in-memory
 fixtures:
 
 - produced versus passthrough geometry (id rule, parentage, lineage),
-- energy selection (Gibbs preferred, electronic-plus-correction fallback,
-  correction derivation) with units, subjects, and provenance,
+- energy selection (canonical scientific-energy contract: ``energy`` is
+  electronic only, ``gibbs_energy`` full Gibbs only, ``gibbs_correction``
+  thermal correction only, correction derivation) with units, subjects,
+  and provenance,
 - the native-termination transport diagnostic,
 - every check with its stable failure reasons, default thresholds from
   :data:`CHECK_DEFAULTS`, imaginary expected/observed accounting, Kabsch RMSD
@@ -252,13 +254,16 @@ class TestProducedVsPassthrough:
 
 
 class TestEnergySelection:
-    """Gibbs preferred, electronic-plus-correction fallback, derivation."""
+    """Canonical scientific-energy contract: kinds never change meaning."""
 
-    def test_gibbs_preferred(self) -> None:
+    def test_electronic_energy_is_electronic_only(self) -> None:
+        # kind "energy" is the parsed electronic energy even when the
+        # parser also yields Gibbs content; it never carries G and never
+        # a composite sum (F2: Gibbs must not hide inside "energy").
         output = apply_profile(native_result(energies={"electronic": ELECTRONIC, "gibbs": GIBBS}))
         energy = output.results.first("energy")
         assert energy is not None
-        assert energy.value == pytest.approx(GIBBS)
+        assert energy.value == pytest.approx(ELECTRONIC)
         assert energy.unit is Unit.HARTREE
         gibbs = output.results.first("gibbs_energy")
         assert gibbs is not None and gibbs.value == pytest.approx(GIBBS)
@@ -266,13 +271,13 @@ class TestEnergySelection:
         assert correction is not None
         assert correction.value == pytest.approx(GIBBS - ELECTRONIC)
 
-    def test_electronic_plus_correction(self) -> None:
+    def test_explicit_correction_is_thermal_only(self) -> None:
         output = apply_profile(
             native_result(energies={"electronic": ELECTRONIC, "gibbs_correction": GIBBS_CORRECTION})
         )
         energy = output.results.first("energy")
         assert energy is not None
-        assert energy.value == pytest.approx(ELECTRONIC + GIBBS_CORRECTION)
+        assert energy.value == pytest.approx(ELECTRONIC)
         assert output.results.first("gibbs_energy") is None
         correction = output.results.first("gibbs_correction")
         assert correction is not None

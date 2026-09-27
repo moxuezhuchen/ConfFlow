@@ -25,6 +25,25 @@ __all__ = [
 ]
 
 
+def _source_steps(value: Any) -> tuple[str, ...]:
+    """Validate one producer-step scope from native params.
+
+    Accepts a list/tuple of non-empty step ids (or ``None``/missing,
+    meaning an empty scope that admits any source step).  Anything else
+    fails closed so a misspelled step reference can never silently
+    admit the wrong theory level.
+    """
+    if value is None:
+        return ()
+    if isinstance(value, str) or not isinstance(value, (list, tuple)):
+        raise ValueError("source-step scopes must be a list of producer step ids")
+    steps = tuple(value)
+    for step in steps:
+        if not isinstance(step, str) or not step.strip():
+            raise ValueError("source-step scopes must list non-empty producer step ids")
+    return tuple(sorted(set(steps)))
+
+
 class ReactionEnergyModel:
     """Compute seam backed by explicit Gibbs policy math."""
 
@@ -66,14 +85,24 @@ def policy_from_native(native: Mapping[str, Any]) -> EnergyPolicy:
     Expected keys: ``energy_mode`` (``"direct"`` default), selectors
     ``electronic_result_kind`` (default ``"energy"``) and
     ``correction_result_kind`` (default ``"gibbs_correction"``),
-    ``energy_fallback`` (``"none"`` default).  Step-level keys
+    ``energy_fallback`` (``"none"`` default), and explicit
+    producer-step scopes ``electronic_source_steps`` /
+    ``correction_source_steps`` (each a list of step ids, default
+    empty meaning any source step).  Step-level keys
     (``method``, ``analysis_kind``) are accepted and ignored here.
     Anything else fails closed so a misspelled policy key can never
     silently mean something else.
     """
     step_level = frozenset({"method", "analysis_kind"})
     allowed = frozenset(
-        {"energy_mode", "electronic_result_kind", "correction_result_kind", "energy_fallback"}
+        {
+            "energy_mode",
+            "electronic_result_kind",
+            "correction_result_kind",
+            "energy_fallback",
+            "electronic_source_steps",
+            "correction_source_steps",
+        }
     )
     unknown = sorted(set(native) - allowed - step_level)
     if unknown:
@@ -83,4 +112,6 @@ def policy_from_native(native: Mapping[str, Any]) -> EnergyPolicy:
         electronic_selector=str(native.get("electronic_result_kind", "energy")),
         correction_selector=str(native.get("correction_result_kind", "gibbs_correction")),
         fallback=str(native.get("energy_fallback", "none")),
+        electronic_source_steps=_source_steps(native.get("electronic_source_steps", ())),
+        correction_source_steps=_source_steps(native.get("correction_source_steps", ())),
     )

@@ -158,16 +158,32 @@ def _tspes_recipe() -> dict[str, Any]:
     frequency, endpoint single point, and a reaction-profile analysis over
     the endpoint results.  The analysis binds the IRC endpoints plus the TS
     (grouping triple with frozen roles and parent links), the frequency
-    results (electronic energy plus Gibbs correction per node for composite
-    ``G_high = E_high + correction``), and the endpoint-optimization
+    results (Gibbs correction per node) plus the single-point results
+    (high-level electronic energy per node) for composite
+    ``G_high = E_high + correction``, and the endpoint-optimization
     structures on the optional ``lineage_structures`` port: frequency legs
     run as measurements binding their input entities, so the optimized
     structures are the lineage records that resolve every frequency result
     to its reaction node via parent-id lineage in the analysis executor.
     The single-point branch outputs remain in the run
     for explicit ResultRef pinning of the high-level ``E_high`` leg.  The
-    PES is derived strictly from emitted ``reaction_profile`` analysis
-    results.
+    analysis consumes four result legs on four ports: low-level
+    frequency results (``results`` from ``endpoint_freq``,
+    ``ts_results`` from ``ts_freq``) carrying the Gibbs correction, and
+    high-level single-point results (``sp_results`` from
+    ``endpoint_sp``, ``ts_sp_results`` from ``ts_sp``) carrying the
+    high-level electronic energy.  The composite policy
+    (``G_high = E_high + correction``) admits the electronic leg only
+    from the single-point steps and the correction leg only from the
+    frequency steps via explicit source-step scopes, so same-kind
+    energies from different theory levels never collapse by
+    subject/kind first-match.  Single-point outputs mint passthrough
+    subjects (no geometry is parsed), so their structures ride the
+    ``sp_structures``/``ts_sp_structures`` ports beside the
+    ``lineage_structures`` optimization outputs: parent-id lineage then
+    resolves every high-level leg to its reaction node in the analysis
+    executor.  The PES is derived strictly from emitted
+    ``reaction_profile`` analysis results.
     """
     ts = _calc_step(
         "ts",
@@ -242,8 +258,12 @@ def _tspes_recipe() -> dict[str, Any]:
             "structures": {"source": {"step": "irc", "port": "structures"}},
             "ts_structures": {"source": {"step": "ts", "port": "structures"}},
             "lineage_structures": {"source": {"step": "endpoint_opt", "port": "structures"}},
+            "sp_structures": {"source": {"step": "endpoint_sp", "port": "structures"}},
+            "ts_sp_structures": {"source": {"step": "ts_sp", "port": "structures"}},
             "results": {"source": {"step": "endpoint_freq", "port": "results"}},
             "ts_results": {"source": {"step": "ts_freq", "port": "results"}},
+            "sp_results": {"source": {"step": "endpoint_sp", "port": "results"}},
+            "ts_sp_results": {"source": {"step": "ts_sp", "port": "results"}},
         },
         "analysis": {
             "native": {
@@ -251,6 +271,8 @@ def _tspes_recipe() -> dict[str, Any]:
                 "energy_mode": "composite",
                 "electronic_result_kind": "energy",
                 "correction_result_kind": "gibbs_correction",
+                "electronic_source_steps": ["endpoint_sp", "ts_sp"],
+                "correction_source_steps": ["endpoint_freq", "ts_freq"],
                 "energy_fallback": "none",
                 "endpoint_assignment": {"forward": "unassigned", "reverse": "unassigned"},
                 "partial_policy": "require_complete",

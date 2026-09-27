@@ -18,7 +18,8 @@ Definition mapping:
 - ``kind`` comes from ``native["method"]`` (or ``analysis_kind``),
   default ``"reaction_profile"``.
 - Energy keys (``energy_mode``, ``electronic_result_kind``,
-  ``correction_result_kind``, ``energy_fallback``) go to
+  ``correction_result_kind``, ``energy_fallback``,
+  ``electronic_source_steps``, ``correction_source_steps``) go to
   ``policy_from_native``; ``endpoint_assignment`` and ``partial_policy``
   are parsed separately and never passed through the energy policy.
 - ``analysis_step_id`` is always the real ``work_item.step_id`` (never

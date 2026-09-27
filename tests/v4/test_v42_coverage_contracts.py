@@ -622,12 +622,12 @@ class TestStandardProfileResults:
         assert energies[0].source_work_item_id == "wi:s:a"
         assert isinstance(energies[0].provenance, Provenance)
 
-    def test_gibbs_preferred_and_correction_derived(self) -> None:
+    def test_gibbs_energy_and_correction_derived(self) -> None:
         output = self._output(native={"energies_hartree": {"electronic": -76.4, "gibbs": -76.3}})
         kinds = {item.kind: item.value for item in output.results}
+        assert kinds["energy"] == pytest.approx(-76.4)
         assert kinds["gibbs_energy"] == pytest.approx(-76.3)
         assert kinds["gibbs_correction"] == pytest.approx(0.1)
-        assert kinds["energy"] == pytest.approx(-76.3)
 
     def test_explicit_correction_wins(self) -> None:
         output = self._output(
