@@ -587,12 +587,22 @@ class WorkItemExecutor:
             )
         binding = context.execution_binding
         walltime = float(binding.walltime_seconds) if binding and binding.walltime_seconds else None
+        # Effective native env: the complete scientifically relevant set is
+        # the explicit binding env verbatim (see effective_native_env).
+        # The subprocess inherits the ambient operational base (PATH, HOME,
+        # TMPDIR, ...) with the effective set overlaid so the hashed values
+        # are always the launched values (binding wins). Ambient entries
+        # outside the effective set are operational-only and digest-inert
+        # by explicit contract — never hashed, never inferred.
+        from .binding_resolution import effective_native_env
+
+        effective_env_map = effective_native_env(binding)
         env = dict(os.environ)
-        if binding is not None:
-            env.update(dict(binding.env))
+        env.update(effective_env_map)
         launch_info: dict[str, Any] = {
             "executable": executable,
             "env": dict(env),
+            "effective_env": dict(effective_env_map),
             "walltime_seconds": walltime,
             "work_dir": item_dir,
         }
@@ -944,7 +954,7 @@ class WorkItemExecutor:
                         observed = hashlib.sha256(content).hexdigest()
                         if observed != expected.lower():
                             raise DomainError(
-                                f"artifact {artifact.id!r} checksum mismatch; " "refusing to stage"
+                                f"artifact {artifact.id!r} checksum mismatch; refusing to stage"
                             )
                 with open(destination, "wb") as handle_out:
                     handle_out.write(content)
@@ -1294,7 +1304,8 @@ class WorkItemExecutor:
         # stripped (with a diagnostic) and the driver-owned binding facts
         # ride under reserved `_binding_*` keys the policy reads instead.
         stripped = sorted(
-            key for key in ("executable", "env", "walltime_seconds", "work_dir")
+            key
+            for key in ("executable", "env", "walltime_seconds", "work_dir")
             if key in merged_params
         )
         for key in stripped:

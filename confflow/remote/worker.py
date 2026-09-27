@@ -846,9 +846,12 @@ def _resolve_program(program: str | None, versions: dict[str, str]) -> Any:
 def _measure_worker_environment(*, capability: str, adapter: Any, binding: Any) -> Any:
     """Measure the worker-side native execution environment.
 
-    Unknown/unmeasurable never stands in for verified equivalence: a
-    binary that cannot be measured fails the handoff closed before any
-    native launch.
+    The measured ``relevant_env`` is the effective target binding env
+    verbatim (``target_env`` under handoff env, handoff wins — see
+    ``resolve_remote_target_binding``). The values hashed are always the
+    values the worker launches with. Unknown/unmeasurable never stands in
+    for verified equivalence: a binary that cannot be measured fails the
+    handoff closed before any native launch.
     """
     from confflow.execution.environment import EnvironmentMeasurer
 
@@ -859,8 +862,17 @@ def _measure_worker_environment(*, capability: str, adapter: Any, binding: Any) 
             "target execution binding carries no executable"
         )
     try:
+        from confflow.execution.binding_resolution import effective_native_env
+
+        relevant = effective_native_env(binding)
+    except Exception as exc:
+        raise WorkerError(
+            "remote worker failed at stage 'resolve execution contracts': "
+            f"target execution binding carries an invalid env: {exc}"
+        ) from exc
+    try:
         return EnvironmentMeasurer().build_environment(
-            candidate, adapter=adapter, target=binding.target
+            candidate, adapter=adapter, target=binding.target, relevant_env=relevant
         )
     except Exception as exc:
         raise WorkerError(

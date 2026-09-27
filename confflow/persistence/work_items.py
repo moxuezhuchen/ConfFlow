@@ -1083,6 +1083,95 @@ class SqliteWorkItemStore:
                 connection.execute("ROLLBACK")
                 raise PersistenceError(f"cannot interrupt work item: {exc}") from exc
 
+    def refresh_for_new_environment(
+        self,
+        work_item_id: str,
+        *,
+        work_item_digest: str,
+        step_semantic_digest: str,
+        environment_digest: str | None,
+        producer_provenance: dict | None,
+        reason: str = "",
+    ) -> None:
+        """Advance one terminal item to a new environment generation.
+
+        Execution bindings (executable content + effective env) are a
+        distinct axis from scientific definition: when only the
+        environment generation moves (``INVALIDATE_ENVIRONMENT`` on a
+        terminal row), the stored registration advances to the new axes
+        and the item returns to ``INTERRUPTED`` so the next claim opens a
+        fresh attempt. All prior attempts (and their result payloads) are
+        preserved in the attempts table; only the current generation
+        pointer moves. Definition/input/provenance/artifact invalidations
+        stay terminal and never call this method — history is preserved
+        and nothing re-executes.
+
+        Only terminal ``COMPLETED``/``FAILED``/``INTERRUPTED`` rows may
+        advance; ``PENDING``/``RUNNING``/``CANCELLED`` raise.
+        """
+        import sqlite3 as _sqlite3
+
+        item_id = _require_text(work_item_id, "work_item_id")
+        item_digest = _require_digest_text(work_item_digest, "work_item_digest")
+        step_digest = _require_digest_text(step_semantic_digest, "step_semantic_digest")
+        environment: str | None = None
+        if environment_digest is not None:
+            environment = _require_digest_text(environment_digest, "environment_digest")
+        if not isinstance(reason, str):
+            raise PersistenceError("reason must be a string")
+        provenance_text = _canonical_text(dict(producer_provenance or {}))
+        with self._lock:
+            connection = self._guard_open()
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+                row = connection.execute(
+                    "SELECT status FROM items WHERE work_item_id = ?", (item_id,)
+                ).fetchone()
+                if row is None:
+                    raise PersistenceError(f"work item is not registered: {item_id!r}")
+                try:
+                    status = StoredWorkItemStatus(row[0])
+                except ValueError as exc:
+                    raise CorruptStateError(f"stored status is invalid: {row[0]!r}") from exc
+                if status not in (
+                    StoredWorkItemStatus.COMPLETED,
+                    StoredWorkItemStatus.FAILED,
+                    StoredWorkItemStatus.INTERRUPTED,
+                ):
+                    raise PersistenceError(
+                        f"work item {item_id!r} status {status.value!r} cannot advance "
+                        "environment generation; only terminal "
+                        "COMPLETED/FAILED/INTERRUPTED rows may refresh"
+                    )
+                now = wall_now()
+                connection.execute(
+                    "UPDATE items SET work_item_digest = ?, step_semantic_digest = ?,"
+                    " environment_digest = ?, producer_provenance = ?, status = ?,"
+                    " updated_wall = ? WHERE work_item_id = ?",
+                    (
+                        item_digest,
+                        step_digest,
+                        environment,
+                        provenance_text,
+                        StoredWorkItemStatus.INTERRUPTED.value,
+                        now,
+                        item_id,
+                    ),
+                )
+                connection.execute("COMMIT")
+            except (CorruptStateError, PersistenceError):
+                try:
+                    connection.execute("ROLLBACK")
+                except _sqlite3.Error:
+                    pass
+                raise
+            except _sqlite3.Error as exc:
+                try:
+                    connection.execute("ROLLBACK")
+                except _sqlite3.Error:
+                    pass
+                raise PersistenceError(f"cannot refresh environment generation: {exc}") from exc
+
     # ------------------------------------------------------------------
     # Readers
     # ------------------------------------------------------------------

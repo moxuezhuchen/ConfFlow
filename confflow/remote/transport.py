@@ -83,15 +83,17 @@ class ExecutionTransport(Protocol):
         program: str | None = None,
         capability: str | None = None,
         requested_executable: str | None = None,
+        handoff_env: Mapping[str, str] | None = None,
     ) -> str | None:
         """Return the target execution-environment digest for reuse checks.
 
         ``None`` means "use the request environment" (in-process delivery).
         A remote transport MUST return the target host's current measured
-        digest (a file measurement, never a native launch) so resume
-        reuses against where the computation will actually run; an
-        unprobable target raises instead of silently substituting the
-        producer environment.
+        digest (a file measurement, never a native launch) over the SAME
+        effective env the worker will launch with (``target_env`` under
+        ``handoff_env``) so resume reuses against where the computation
+        will actually run; an unprobable target raises instead of silently
+        substituting the producer environment.
         """
         ...
 
@@ -293,9 +295,10 @@ class LocalTransport:
         program: str | None = None,
         capability: str | None = None,
         requested_executable: str | None = None,
+        handoff_env: Mapping[str, str] | None = None,
     ) -> str | None:
         """In-process delivery reuses against the request environment."""
-        del program, capability, requested_executable
+        del program, capability, requested_executable, handoff_env
         return None
 
 
@@ -318,6 +321,7 @@ class RemoteTransport:
         launch_token_prefix: str = "remote",
         target_default_executable: str | None = None,
         target_env: Mapping[str, str] | None = None,
+        target_name: str | None = None,
     ) -> None:
         if not run_root or not worker_root:
             raise DomainError("run_root and worker_root must be non-empty strings")
@@ -332,6 +336,9 @@ class RemoteTransport:
         )
         self._target_env = (
             {str(k): str(v) for k, v in dict(target_env).items()} if target_env else {}
+        )
+        self._target_name = (
+            target_name.strip() if isinstance(target_name, str) and target_name.strip() else None
         )
         self._lock = threading.Lock()
         self._token_locks: dict[str, threading.Lock] = {}
@@ -363,11 +370,41 @@ class RemoteTransport:
             launch_token_prefix=self._prefix,
             target_default_executable=self._target_default_executable,
             target_env=dict(self._target_env),
+            target_name=self._target_name,
         )
         sibling._delivered = self._delivered
         sibling._token_locks = self._token_locks
         sibling._lock = self._lock
         return sibling
+
+    @property
+    def target_name(self) -> str | None:
+        """Return this transport's claimed target name, if any."""
+        return self._target_name
+
+    def supports_target(self, target: str | None) -> bool:
+        """Return whether this transport claims *target*.
+
+        An unnamed transport (``target_name=None``, the historical
+        file-based test seam) claims any nonlocal target so explicit
+        per-test delivery keeps working; a named transport claims only
+        its own name (case-sensitive, trimmed). Local targets are never
+        claimed here — they always run in-process.
+        """
+        if target is None:
+            return False
+        if not isinstance(target, str) or not target.strip():
+            return False
+        try:
+            from ..execution.binding_resolution import is_local_target
+
+            if is_local_target(target):
+                return False
+        except Exception:
+            return False
+        if self._target_name is None:
+            return True
+        return target.strip() == self._target_name
 
     def probe_environment_digest(
         self,
@@ -375,13 +412,17 @@ class RemoteTransport:
         program: str | None = None,
         capability: str | None = None,
         requested_executable: str | None = None,
+        handoff_env: Mapping[str, str] | None = None,
     ) -> str | None:
         """Return the target host's current measured environment digest.
 
         The probed binary is resolved with the same rule the worker
         applies (explicit request carried verbatim, else the target
-        default); the file is hashed, never launched.  Pure capabilities
-        resolve to their implementation identity without any binary.  An
+        default); the file is hashed, never launched. The probed
+        ``relevant_env`` is the SAME effective env the worker will launch
+        with: ``target_env`` under ``handoff_env`` (handoff wins), so the
+        reuse axis and the launched subprocess agree. Pure capabilities
+        resolve to their implementation identity without any binary. An
         unconfigured or unmeasurable target raises instead of returning
         a digest the reuse check could mistake for truth.
         """
@@ -423,8 +464,28 @@ class RemoteTransport:
                 "handoff requests none; reuse cannot be evaluated against an "
                 "unknown target environment"
             )
+        # Effective probe env: target defaults under the handoff (binding)
+        # env, exactly as resolve_remote_target_binding merges them
+        # worker-side. Handoff wins so the hashed values are the launched
+        # values.
+        effective: dict[str, str] = dict(self._target_env)
+        if handoff_env:
+            try:
+                items = dict(handoff_env).items()
+            except Exception as exc:
+                raise DomainError(f"probe handoff_env is not a mapping: {exc}") from exc
+            for key, value in items:
+                if not isinstance(key, str) or not key.strip():
+                    raise DomainError("probe handoff_env keys must be non-empty strings")
+                if not isinstance(value, str):
+                    raise DomainError(f"probe handoff_env var {key!r} must be a string")
+                effective[str(key)] = str(value)
         try:
-            return EnvironmentMeasurer().build_environment(candidate, adapter=adapter).digest()
+            return (
+                EnvironmentMeasurer()
+                .build_environment(candidate, adapter=adapter, relevant_env=effective)
+                .digest()
+            )
         except Exception as exc:
             raise DomainError(
                 f"remote target executable {candidate!r} is not measurable: {exc}"
@@ -616,6 +677,12 @@ class RemoteTransport:
             worker_root=self._worker_root,
             launch_token=token,
             should_cancel=should_cancel,
+            # Target-side config MUST reach the worker: the default binary
+            # and every target_env entry ride into the target binding, the
+            # native subprocess, and the worker-side measurement. Dropping
+            # them here silently ran the producer env instead (F5).
+            target_default_executable=self._target_default_executable,
+            target_env=dict(self._target_env) if self._target_env else None,
         )
         imported = import_result_artifacts(
             result_path=result_path,
