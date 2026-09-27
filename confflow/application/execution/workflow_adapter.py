@@ -67,6 +67,115 @@ __all__ = [
 
 _EXECUTION_IDENTITY_FILE = ".confflow_execution_identity.json"
 
+#: Formal V4 terminal statuses published in run_result.json (producer contract).
+_V4_TERMINAL_STATUSES = frozenset({"completed", "partial", "failed", "cancelled"})
+
+#: Service-event marker recording a scientific partial outcome. The service
+#: aggregate has no PARTIAL state; a V4 ``partial`` is committed as service
+#: FAILED with this checkpoint event so the partial truth stays visible in
+#: the durable event stream while run_result.json keeps ``status=partial``.
+_V4_PARTIAL_CHECKPOINT = "v4.status.partial"
+
+
+def _v4_status_from_value(value: Any) -> str | None:
+    """Normalize one status value to a formal V4 terminal status, if known."""
+    if value is None:
+        return None
+    text = str(getattr(value, "value", value)).strip().lower()
+    return text if text in _V4_TERMINAL_STATUSES else None
+
+
+def _resolve_v4_terminal_status(result: Any, work_dir: str) -> str:
+    """Resolve the formal V4 terminal status for one finished runner call.
+
+    The durable ``run_result.json`` manifest is the scientific truth when it
+    exists; otherwise the runner's ``result["status"]`` is used. An absent
+    or unrecognized status fails closed to ``"failed"`` — it is never
+    treated as ``"completed"``.
+    """
+    try:
+        raw = (Path(work_dir) / "run_result.json").read_text(encoding="utf-8")
+        payload = json.loads(raw)
+        if isinstance(payload, dict):
+            manifest_status = _v4_status_from_value(payload.get("status"))
+            if manifest_status is not None:
+                return manifest_status
+            if "status" in payload:
+                # A manifest that names an unknown status is corrupt science;
+                # fail closed instead of guessing completion.
+                return "failed"
+    except (OSError, ValueError):
+        pass
+    if isinstance(result, dict):
+        result_status = _v4_status_from_value(result.get("status"))
+        if result_status is not None:
+            return result_status
+    # No silent fallback to success: an undeterminable outcome is a failure.
+    return "failed"
+
+
+def _commit_v4_terminal(
+    *,
+    lifecycle: ExecutionLifecycle,
+    service: ExecutionService,
+    run_id: str,
+    token: str,
+    v4_status: str,
+    artifacts: Sequence[Artifact],
+) -> None:
+    """Commit one resolved V4 status to the token-bound service lifecycle.
+
+    Mapping (Definition != Binding != Policy — scientific status is never
+    rewritten, only projected onto the service control state):
+
+    - ``completed`` -> ``lifecycle.completed()`` (the only success path);
+    - ``failed`` -> ``lifecycle.failed()``;
+    - ``cancelled`` -> ``lifecycle.cancelled()``, creating the durable
+      cancel intent first when the runner reports cancellation without one;
+    - ``partial`` -> ``lifecycle.failed()`` with a ``v4.status.partial``
+      checkpoint marker (failure-with-partial-metadata). The scientific
+      ``status=partial`` is preserved verbatim in ``run_result.json`` and
+      ``ServiceWorkflowExecutor._result``; the service aggregate is FAILED
+      so partial work never masquerades as completed.
+    """
+    if v4_status == "completed":
+        lifecycle.completed(artifacts)
+        return
+    if v4_status == "failed":
+        lifecycle.failed(artifacts)
+        return
+    if v4_status == "cancelled":
+        try:
+            lifecycle.cancelled()
+            return
+        except ExecutionServiceError as error:
+            if error.code is not ErrorCode.INVALID_STATE_TRANSITION:
+                raise
+            # The runner reports scientific cancellation but no durable
+            # cancel intent exists yet. Persist the intent, then confirm
+            # the stop the runner already observed.
+            try:
+                service.cancel(run_id)
+            except ExecutionServiceError as cancel_error:
+                if cancel_error.code is ErrorCode.TERMINAL_RUN:
+                    # A terminal completed/failed winner already owns the
+                    # aggregate; leave it untouched.
+                    return
+                raise
+            lifecycle.cancelled()
+            return
+    if v4_status == "partial":
+        try:
+            lifecycle.checkpoint(_V4_PARTIAL_CHECKPOINT)
+        except ExecutionServiceError as error:
+            if error.code is not ErrorCode.INVALID_STATE_TRANSITION:
+                raise
+            # A terminal/cancel winner owns the aggregate; the failed()
+            # commit below respects that winner unchanged.
+        lifecycle.failed(artifacts)
+        return
+    lifecycle.failed(artifacts)
+
 
 def step_record_identity(record: Any) -> str:
     """Return the durable step identity of a v1 or v2 state record (PD-8).
@@ -267,7 +376,20 @@ class ServiceWorkflowExecutor(WorkflowExecutor):
             # empty artifact set, never a failure of a V4 run.
             artifacts = _load_artifacts(self._spec.work_dir)
             _write_execution_identity(self._spec)
-            lifecycle.completed(artifacts)
+            # F6: the V4 terminal status owns the service lifecycle. Only
+            # status==completed may commit lifecycle.completed(); failed,
+            # cancelled and partial each take their explicit branch in
+            # _commit_v4_terminal so scientific failure never masquerades
+            # as a completed service aggregate.
+            v4_status = _resolve_v4_terminal_status(self._result, self._spec.work_dir)
+            _commit_v4_terminal(
+                lifecycle=lifecycle,
+                service=service,
+                run_id=request.run_id,
+                token=request.token,
+                v4_status=v4_status,
+                artifacts=artifacts,
+            )
         except StopRequestedError as error:
             self._error = error
             service = self._service
@@ -644,6 +766,30 @@ def run_workflow_through_service(
     final = service.status(run_id)
     if final.state is RunState.PAUSED:
         raise StopRequestedError("Workflow paused by service lifecycle")
+    if final.state is RunState.CANCELLED:
+        # Worker exit semantics (D2): completed is the only success exit.
+        # Cancelled — whether from a beacon exception or a V4
+        # status=cancelled manifest — is a documented non-success terminal
+        # (TERMINAL_RUN), agreeing with the control worker's nonzero exit
+        # and the CLI's nonzero mapping.
+        raise ExecutionServiceError(
+            ErrorCode.TERMINAL_RUN,
+            f"Workflow was cancelled: {run_id}",
+        )
+    if final.state is RunState.FAILED:
+        # D1/D2: a scientific failed — and a scientific partial, which the
+        # service commits as FAILED with a v4.status.partial marker — is a
+        # documented non-success terminal. The V4 status is preserved in
+        # run_result.json and the error message; it is never reported as
+        # completed. Partial callers must read the manifest status.
+        v4_status = _resolve_v4_terminal_status(
+            executor._result,  # noqa: SLF001 - adapter result is its synchronous facade
+            work_dir,
+        )
+        raise ExecutionServiceError(
+            ErrorCode.TERMINAL_RUN,
+            f"Workflow ended as {v4_status} (service failed): {run_id}",
+        )
     if final.state is not RunState.COMPLETED:
         raise ExecutionServiceError(ErrorCode.INTERNAL, f"Workflow ended in {final.state.value}")
     return executor._result  # noqa: SLF001 - adapter result is its synchronous facade
@@ -1055,6 +1201,17 @@ def _load_completed_stats(
             raise ExecutionServiceError(
                 ErrorCode.ARTIFACT_INTEGRITY_FAILED,
                 f"Completed V4 run manifest must be an object: {v4_manifest}",
+            )
+        # F6 persistence: a service COMPLETED aggregate must agree with a
+        # completed V4 manifest. A failed/partial/cancelled manifest behind
+        # a completed aggregate is corrupt (pre-fix masquerade) and fails
+        # closed instead of attaching as success; restart/refresh therefore
+        # preserves the scientific failure instead of re-reporting success.
+        manifest_status = _v4_status_from_value(payload.get("status"))
+        if manifest_status is not None and manifest_status != "completed":
+            raise ExecutionServiceError(
+                ErrorCode.ARTIFACT_INTEGRITY_FAILED,
+                f"Completed run manifest reports {manifest_status!r}: {v4_manifest}",
             )
         return payload
     stats = _load_stats(work_dir)
