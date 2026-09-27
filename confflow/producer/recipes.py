@@ -31,7 +31,19 @@ from ..config.canonical.recipes import RECIPE_CATALOG_SCHEMA
 from ..domain.canonical import canonical_sha256
 from ..workflow.v4.document import SCHEMA_ID
 
-_STRUCTURES_INPUT = {"structures": {"kind": "structure", "cardinality": "many"}}
+#: The single named structure input shared by recipes whose entities are
+#: independent reaction roots (each TS/seed is its own group).  ``grouping:
+#: each_entity`` is the typed input contract: the application derives
+#: group_key/lineage_root_id from the opaque entity id, never from list
+#: position or filename, so plain XYZ input carries reaction-group identity
+#: without the user filling internal keys.
+_STRUCTURES_INPUT = {
+    "structures": {
+        "kind": "structure",
+        "cardinality": "many",
+        "grouping": "each_entity",
+    }
+}
 
 _CALC_EXPOSED = [
     "calc.program",

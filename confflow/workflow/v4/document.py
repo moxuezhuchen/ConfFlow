@@ -73,6 +73,7 @@ class RunInputDeclaration:
     pairing: Pairing | None = None
     role: str | None = None
     description: str | None = None
+    grouping: str | None = None
 
     def __post_init__(self) -> None:
         require_identifier(self.name, "run input name")
@@ -85,6 +86,10 @@ class RunInputDeclaration:
         if self.role is not None:
             _require_optional_text(self.role, "run input role")
         _require_optional_text(self.description, "run input description")
+        if self.grouping is not None and self.grouping != "each_entity":
+            raise DomainError(
+                f"run input grouping must be 'each_entity' or None, got {self.grouping!r}"
+            )
 
     @property
     def effective_pairing(self) -> Pairing:
@@ -104,6 +109,7 @@ class RunInputDeclaration:
             "pairing": self.pairing.value if self.pairing is not None else None,
             "role": self.role,
             "description": self.description,
+            "grouping": self.grouping,
         }
 
 

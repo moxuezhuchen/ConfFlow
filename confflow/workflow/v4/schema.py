@@ -14,7 +14,7 @@ fails closed instead of being ignored.
 
 from __future__ import annotations
 
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 from pydantic import (
     BaseModel,
@@ -234,6 +234,12 @@ class InputModel(BaseModel):
     pairing: Pairing | None = None
     role: str | None = None
     description: str | None = None
+    #: Typed grouping semantics of this input.  ``each_entity`` declares
+    #: that every imported entity is the root of its own reaction-group
+    #: lineage: group_key and lineage_root_id derive from the opaque entity
+    #: id (never from list position or filename).  ``None`` declares no
+    #: grouping semantics.
+    grouping: Literal["each_entity"] | None = None
 
 
 class ScientificDefaultsModel(BaseModel):

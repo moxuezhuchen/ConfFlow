@@ -623,6 +623,7 @@ def _build_inputs(
                     pairing=model.pairing,
                     role=model.role,
                     description=model.description,
+                    grouping=model.grouping,
                 )
             )
         except DomainError as exc:

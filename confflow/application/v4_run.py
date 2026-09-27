@@ -282,6 +282,61 @@ def _map_step_status(status: StepStatus) -> RunStepStatus:
     }[status]
 
 
+def _declared_input_grouping(document: Any) -> dict[str, str]:
+    """Return ``{input_name: grouping}`` for declared typed groupings."""
+    from collections.abc import Mapping
+
+    if not isinstance(document, Mapping):
+        return {}
+    raw_inputs = document.get("inputs")
+    if not isinstance(raw_inputs, Mapping):
+        return {}
+    grouping: dict[str, str] = {}
+    for name, declaration in raw_inputs.items():
+        if isinstance(declaration, Mapping) and declaration.get("grouping") == "each_entity":
+            grouping[str(name)] = "each_entity"
+    return grouping
+
+
+def _stamp_each_entity_grouping(name: str, structures: Any) -> StructureSet:
+    """Derive group identity for an ``each_entity`` input.
+
+    Every entity becomes the root of its own reaction-group lineage:
+    ``group_key = entity id`` when the record carries no explicit group key
+    (an explicit producer/user group key is never overwritten).  The entity
+    id is the opaque import identity — never a list position or filename.
+    """
+    from dataclasses import replace as _replace
+
+    stamped: list[StructureRecord] = []
+    for record in structures:
+        if not isinstance(record, StructureRecord):
+            raise DomainError(
+                f"run input {name!r} carries a non-structure member; "
+                "grouping identity requires typed structure records"
+            )
+        if record.group_key is None:
+            record = _replace(record, group_key=record.id)
+        stamped.append(record)
+    return StructureSet.of(*stamped)
+
+
+def _is_reaction_grouping_step(planned: Any) -> bool:
+    """Return whether *planned* is a reaction-grouping analysis step."""
+    from collections.abc import Mapping
+
+    executor = getattr(planned, "executor", None)
+    capability = getattr(executor, "value", str(executor)) if executor is not None else ""
+    if capability != "analysis":
+        return False
+    scientific = getattr(planned, "scientific", None)
+    native = getattr(scientific, "native", None)
+    method = None
+    if isinstance(native, Mapping):
+        method = native.get("method") or native.get("analysis_kind")
+    return (method or "reaction_profile") == "reaction_profile"
+
+
 class V4RunApplication:
     """Run a compiled V4 workflow step by step with durable resume."""
 
@@ -360,6 +415,7 @@ class V4RunApplication:
         )
         run_inputs = self._resolve_run_inputs(run_root=run_root, request=request)
         self._preflight_targets(plan, request)
+        self._preflight_grouping(plan, run_inputs)
         materialized = MaterializedOutputs.empty()
         step_results: list[Any] = []
         cancelled_steps: list[str] = []
@@ -603,6 +659,53 @@ class V4RunApplication:
             )
 
     @staticmethod
+    def _preflight_grouping(plan: Any, run_inputs: RunInputs) -> None:
+        """Fail closed before any launch when grouping identity is missing.
+
+        A reaction-profile analysis needs reaction-group identity on the
+        structures it consumes, and that identity must originate on the run
+        inputs (or explicit user group keys) — never from a filename or list
+        position.  Walking the binding graph backwards from every
+        grouping-based analysis step finds the run-input structure ports it
+        (transitively) depends on; any structure without ``group_key`` on
+        those ports fails the run before the first native launch, instead of
+        running the whole chain and failing at analysis assembly.
+        """
+        from ..domain.binding import PortKind
+
+        frontier = [
+            planned.step_id for planned in plan.steps if _is_reaction_grouping_step(planned)
+        ]
+        if not frontier:
+            return
+        visited: set[str] = set()
+        input_names: set[str] = set()
+        while frontier:
+            step_id = frontier.pop()
+            if step_id in visited:
+                continue
+            visited.add(step_id)
+            for edge in plan.graph.incoming(step_id):
+                if edge.target_port.kind is not PortKind.STRUCTURE:
+                    continue
+                if edge.is_run_input:
+                    input_names.add(str(edge.source.port))
+                elif edge.source_step_id is not None:
+                    frontier.append(edge.source_step_id)
+        for name in sorted(input_names):
+            collection = run_inputs.structures.get(name) if run_inputs.structures else None
+            if collection is None:
+                continue
+            for record in collection:
+                if getattr(record, "group_key", None) is None:
+                    raise DomainError(
+                        f"workflow requires reaction grouping but input {name!r} "
+                        f"structure {record.id!r} has no group identity; declare "
+                        "grouping 'each_entity' on the input or supply explicit "
+                        "group keys — refusing to launch native work (0 native launches)"
+                    )
+
+    @staticmethod
     def _load_or_init_run_state(*, run_root: str, run_id: str, definition_digest: str) -> RunState:
         """Load the durable run state or initialize it for this definition.
 
@@ -669,6 +772,10 @@ class V4RunApplication:
                 structures[name] = _validate_unresolved_input(
                     run_root=run_root, input_name=name, current=current
                 )
+        grouping = _declared_input_grouping(request.workflow_document)
+        for name, current in list(structures.items()):
+            if grouping.get(name) == "each_entity":
+                structures[name] = _stamp_each_entity_grouping(name, current)
         return RunInputs(
             structures=FrozenDict(structures),
             artifacts=request.run_inputs.artifacts,

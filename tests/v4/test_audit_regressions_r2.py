@@ -724,6 +724,84 @@ class TestR4ResultReferenceIntegrity:
         assert "duplicate" in str(error.value)
 
 
+class TestR5TypedGrouping:
+    """R5: plain XYZ carries typed reaction-group identity end to end."""
+
+    @staticmethod
+    def _plain_inputs(text: str) -> RunInputs:
+        return RunInputs(structures=FrozenDict({"structures": import_xyz(text)}))
+
+    @staticmethod
+    def _run_plain(doc: dict[str, Any], text: str, run_root: Path) -> Any:
+        return V4RunApplication(supervisor=NativeProcessSupervisor()).run(
+            V4RunRequest(
+                workflow_document=doc,
+                run_inputs=TestR5TypedGrouping._plain_inputs(text),
+                run_root=str(run_root),
+                import_sources=FrozenDict({"structures": text}),
+            )
+        )
+
+    def test_plain_xyz_derives_entity_group_identity(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        script = TestR6GenerationLifecycle._science_chain_native(tmp_path)
+        doc = TestR6GenerationLifecycle._tspes_doc(script, sp="-70", freq="-60")
+        run_root = tmp_path / "run"
+        report = self._run_plain(doc, WATER_XYZ, run_root)
+        assert report.status == "completed"
+        manifest = json.loads((run_root / RUN_RESULT_FILENAME).read_text())
+        groups = [entry for entry in manifest["analyses"] if "group_key" in entry]
+        assert len(groups) == 1
+        group = groups[0]
+        # The group key is the opaque imported entity id, not a position or
+        # filename; derived TS structures carry that root in their lineage.
+        assert len(group["group_key"]) == 32
+        assert all(char in "0123456789abcdef" for char in group["group_key"])
+        assert group["group_key"] in group["ts_structure_id"]
+        assert group["forward_endpoint_id"]
+        assert group["reverse_endpoint_id"]
+
+    def test_twenty_plain_ts_blocks_yield_twenty_groups(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        script = TestR6GenerationLifecycle._science_chain_native(tmp_path)
+        doc = TestR6GenerationLifecycle._tspes_doc(script, sp="-70", freq="-60")
+        blocks = []
+        for index in range(20):
+            shift = index * 0.013
+            blocks.append(
+                f"3\nts{index:02d}\n"
+                f"O {shift:.6f} 0.000000 0.000000\n"
+                f"H {0.76 + shift:.6f} 0.590000 0.000000\n"
+                f"H {0.76 + shift:.6f} -0.590000 0.000000\n"
+            )
+        text = "\n".join(blocks)
+        run_root = tmp_path / "run"
+        report = self._run_plain(doc, text, run_root)
+        assert report.status == "completed"
+        manifest = json.loads((run_root / RUN_RESULT_FILENAME).read_text())
+        groups = [entry for entry in manifest["analyses"] if "group_key" in entry]
+        assert len(groups) == 20
+        keys = {group["group_key"] for group in groups}
+        assert len(keys) == 20
+        assert all(group["group_key"] in group["ts_structure_id"] for group in groups)
+
+    def test_grouping_requirement_fails_closed_before_native(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        script = TestR6GenerationLifecycle._science_chain_native(tmp_path)
+        doc = TestR6GenerationLifecycle._tspes_doc(script, sp="-70", freq="-60")
+        # Remove the typed grouping contract: the workflow still needs
+        # reaction grouping, but the input cannot establish identity.
+        del doc["inputs"]["structures"]["grouping"]
+        run_root = tmp_path / "run"
+        with pytest.raises(DomainError) as error:
+            self._run_plain(doc, WATER_XYZ, run_root)
+        assert "reaction grouping" in str(error.value)
+        assert not (tmp_path / "chain-count").exists(), "native work must not start"
+
+
 class TestR6GenerationLifecycle:
     """R6: a new generation can never leave an old manifest current."""
 
@@ -735,8 +813,12 @@ class TestR6GenerationLifecycle:
         script.write_text(textwrap.dedent(f"""\
                 #!{sys.executable}
                 import os, sys
+                from pathlib import Path
                 sys.path.insert(0, {str(REPO_ROOT)!r})
                 from tests.v4.fakes import fake_orca as f
+                counter = Path({str(root / "chain-count")!r})
+                lines = counter.read_text().splitlines() if counter.exists() else []
+                counter.write_text("\\n".join(lines + ["launch"]) + "\\n")
                 text = open(sys.argv[1]).read()
                 cwd = os.getcwd()
                 if "IRC" in text:
