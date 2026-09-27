@@ -627,6 +627,8 @@ class TestEnergyModelPolicy:
             "electronic_selector": "energy",
             "correction_selector": "gibbs_correction",
             "fallback": "low_level",
+            "electronic_source_steps": [],
+            "correction_source_steps": [],
         }
 
 

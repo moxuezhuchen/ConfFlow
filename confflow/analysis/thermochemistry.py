@@ -11,17 +11,27 @@ Two explicit policies, never auto-selected:
 
 Selectors match exact result kinds only (``"energy"``,
 ``"gibbs_energy"``, ``"gibbs_correction"``, ...); cross-kind guessing
-never happens.  A missing high-level electronic energy fails closed
-unless the model opts into ``fallback="low_level"``, in which case the
-low-level Gibbs energy is used and explicitly marked with formula
-``"fallback_low_level"`` in both provenance and the reaction-profile
-digest payload.
+never happens.  Each composite leg additionally carries an explicit
+source-step scope (``electronic_source_steps`` /
+``correction_source_steps``): a non-empty scope admits only results
+whose ``source_step_id`` names a listed producer step, so the
+high-level single-point leg can never be satisfied by a low-level
+frequency ``energy`` (and vice versa) even though both share the
+``"energy"`` kind.  An empty scope admits any source step (legacy
+pools with one candidate per kind).  Scoped selection stays
+unique-or-ambiguous-fail: zero admitted candidates fail closed with a
+missing-leg diagnostic, several fail closed with
+``ambiguous_selection`` — pool order never decides.  A missing
+high-level electronic energy fails closed unless the model opts into
+``fallback="low_level"``, in which case the low-level Gibbs energy is
+used and explicitly marked with formula ``"fallback_low_level"`` in
+both provenance and the reaction-profile digest payload.
 """
 
 from __future__ import annotations
 
 import math
-from collections.abc import Iterable, Mapping
+from collections.abc import Collection, Iterable, Mapping
 from dataclasses import dataclass
 from numbers import Real
 from typing import Any, Final
@@ -94,19 +104,32 @@ class EnergyModel:
         ``"none"`` (default: missing high-level energy fails closed) or
         ``"low_level"`` (opt-in: use the low-level Gibbs energy,
         explicitly marked).
+    electronic_source_steps : tuple[str, ...]
+        Producer step ids admitted for the composite electronic leg
+        (e.g. high-level single-point steps).  Empty (default) admits
+        any source step; non-empty admits only results whose
+        ``source_step_id`` is listed, so a same-kind low-level energy
+        can never satisfy the high-level leg by position or order.
+    correction_source_steps : tuple[str, ...]
+        Producer step ids admitted for the composite correction leg
+        (e.g. frequency steps carrying the thermal correction).  Empty
+        (default) admits any source step.
 
     Raises
     ------
     AnalysisMathError
         With code ``invalid_energy_model`` when any field is invalid.
         Selectors must name actually emitted result kinds; invented
-        aliases are never resolved.
+        aliases are never resolved.  Source scopes must list
+        non-empty producer step ids.
     """
 
     mode: str
     electronic_selector: str
     correction_selector: str
     fallback: str = "none"
+    electronic_source_steps: tuple[str, ...] = ()
+    correction_source_steps: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         """Validate every policy field explicitly."""
@@ -127,6 +150,21 @@ class EnergyModel:
                 "invalid_energy_model",
                 f"fallback must be one of {sorted(_FALLBACK_MODES)}, got {self.fallback!r}",
             )
+        for name in ("electronic_source_steps", "correction_source_steps"):
+            steps = getattr(self, name)
+            if isinstance(steps, str) or not isinstance(steps, Iterable):
+                raise AnalysisMathError(
+                    "invalid_energy_model",
+                    f"{name} must be a collection of producer step ids",
+                )
+            normalized = tuple(steps)
+            for step in normalized:
+                if not isinstance(step, str) or not step.strip():
+                    raise AnalysisMathError(
+                        "invalid_energy_model",
+                        f"{name} must list non-empty producer step ids",
+                    )
+            object.__setattr__(self, name, tuple(sorted(set(normalized))))
 
     def to_dict(self) -> dict[str, Any]:
         """Return the policy payload folded into profile digests."""
@@ -135,6 +173,8 @@ class EnergyModel:
             "electronic_selector": self.electronic_selector,
             "correction_selector": self.correction_selector,
             "fallback": self.fallback,
+            "electronic_source_steps": list(self.electronic_source_steps),
+            "correction_source_steps": list(self.correction_source_steps),
         }
 
 
@@ -174,6 +214,8 @@ def select_result(
     subject_structure_id: str | None,
     kind: str,
     selector: str,
+    *,
+    source_step_ids: Collection[str] | None = None,
 ) -> ScientificResult | None:
     """Return the unique result of exactly *selector* kind for *subject*.
 
@@ -196,6 +238,12 @@ def select_result(
     selector : str
         Exact kind to match.  When ``selector != kind`` no result is
         returned: selection never guesses across kinds.
+    source_step_ids : collection of str or None
+        Explicit producer-step scope: when non-empty, only results
+        whose ``source_step_id`` is listed are admitted, so same-kind
+        legs from different theory levels (high-level single point vs
+        low-level frequency) never collapse by subject/kind
+        first-match.  ``None`` (default) admits any source step.
 
     Returns
     -------
@@ -209,14 +257,13 @@ def select_result(
     """
     if not selector or selector != kind:
         return None
+    scope = set(source_step_ids) if source_step_ids else None
     matches = [
         result
         for result in results
         if result.kind == selector
-        and (
-            subject_structure_id is None
-            or result.subject_structure_id == subject_structure_id
-        )
+        and (subject_structure_id is None or result.subject_structure_id == subject_structure_id)
+        and (scope is None or result.source_step_id in scope)
     ]
     if not matches:
         return None
@@ -416,7 +463,11 @@ def resolve_node_gibbs(
             energy_model=energy_model,
         )
     electronic = select_result(
-        pool, subject, energy_model.electronic_selector, energy_model.electronic_selector
+        pool,
+        subject,
+        energy_model.electronic_selector,
+        energy_model.electronic_selector,
+        source_step_ids=energy_model.electronic_source_steps or None,
     )
     if electronic is None:
         if energy_model.fallback == "low_level":
@@ -443,17 +494,27 @@ def resolve_node_gibbs(
             CODE_ENERGY_MISSING,
             "high-level electronic energy is missing and fallback is disabled",
             subject_structure_id=subject,
-            details={"selector": energy_model.electronic_selector},
+            details={
+                "selector": energy_model.electronic_selector,
+                "source_steps": list(energy_model.electronic_source_steps),
+            },
         )
     correction_result = select_result(
-        pool, subject, energy_model.correction_selector, energy_model.correction_selector
+        pool,
+        subject,
+        energy_model.correction_selector,
+        energy_model.correction_selector,
+        source_step_ids=energy_model.correction_source_steps or None,
     )
     if correction_result is None:
         raise AnalysisMathError(
             CODE_CORRECTION_MISSING,
             "Gibbs correction is missing; cannot form the composite energy",
             subject_structure_id=subject,
-            details={"selector": energy_model.correction_selector},
+            details={
+                "selector": energy_model.correction_selector,
+                "source_steps": list(energy_model.correction_source_steps),
+            },
         )
     correction = value_in_hartree(correction_result)
     return ResolvedGibbs(

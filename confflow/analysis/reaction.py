@@ -392,6 +392,7 @@ def assemble_reaction_result(
                 subject,
                 energy_model.electronic_selector,
                 energy_model.electronic_selector,
+                source_step_ids=energy_model.electronic_source_steps or None,
             )
         except AnalysisMathError as exc:
             diagnostics.append(
@@ -409,7 +410,11 @@ def assemble_reaction_result(
                     group_key=group.group_key,
                     subject_structure_id=subject,
                     reason="energy_missing",
-                    details={"node": node, "selector": energy_model.electronic_selector},
+                    details={
+                        "node": node,
+                        "selector": energy_model.electronic_selector,
+                        "source_steps": list(energy_model.electronic_source_steps),
+                    },
                 )
             )
             continue

@@ -6,16 +6,20 @@ The standard profile normalizes parser facts (:class:`NativeResult`) plus the
 original work-item inputs into domain collections: one output structure, an
 energy/frequency result set, and the executor-discovered artifacts.
 
-Energy selection (ported from the legacy task runner)
------------------------------------------------------
-Gibbs free energy ``g`` is preferred; when only the electronic energy ``e``
-and a Gibbs correction ``gc`` are present the chosen value is ``e + gc``;
-otherwise the electronic energy stands alone.  A missing correction is
-derived as ``gc = g - e`` when both are parsed.  Result kinds emitted:
+Energy selection (canonical scientific-energy contract, frozen)
+---------------------------------------------------------------
+Result kinds name disjoint physical quantities; a kind never changes
+meaning with context:
 
-- ``"energy"`` (Hartree): the chosen value, always when any energy parsed.
-- ``"gibbs_energy"`` (Hartree): when ``g`` was parsed.
-- ``"gibbs_correction"`` (Hartree): when ``gc`` was parsed or derived.
+- ``"energy"`` (Hartree): the parsed electronic energy ``e`` only,
+  always when parsed.  It is never the Gibbs free energy and never a
+  sum: composite Gibbs formation (``E_high + correction``) belongs to
+  the analysis layer, never to this profile.
+- ``"gibbs_energy"`` (Hartree): the parsed full Gibbs free energy
+  ``g`` only, when parsed.
+- ``"gibbs_correction"`` (Hartree): the parsed thermal Gibbs
+  correction ``gc`` only; when the parser yields ``e`` and ``g`` but
+  no explicit correction, it is derived once as ``gc = g - e``.
 - ``"frequencies"`` (cm^-1): the parsed frequency list, when non-empty.
 - ``"num_imaginary_frequencies"`` (dimensionless count): derived from the
   parsed list with the legacy 10 cm^-1 noise floor.
@@ -134,11 +138,15 @@ def _text_or_none(value: object) -> str | None:
 def _select_energies(
     native_result: NativeResult,
 ) -> tuple[float | None, float | None, float | None]:
-    """Return ``(chosen, gibbs, correction)`` energies in Hartree.
+    """Return ``(electronic, gibbs, correction)`` energies in Hartree.
 
-    Gibbs free energy is preferred; otherwise the electronic energy plus the
-    correction; otherwise the electronic energy alone.  A missing correction
-    is derived as ``g - e`` when both are parsed.
+    Canonical scientific-energy contract (frozen): ``energy`` is the
+    parsed electronic energy only, ``gibbs_energy`` the parsed full
+    Gibbs energy only, ``gibbs_correction`` the parsed thermal
+    correction only.  A missing correction is derived once as
+    ``g - e`` when both are parsed; sums are never formed here, so a
+    downstream composite (``E_high + correction``) can never double
+    count Gibbs content already folded into ``energy``.
     """
     raw = native_result.energies_hartree
     electronic = raw.get("electronic")
@@ -147,13 +155,9 @@ def _select_energies(
     energy = float(electronic) if electronic is not None else None
     free = float(gibbs) if gibbs is not None else None
     corr = float(correction) if correction is not None else None
-    if free is not None:
-        if corr is None and energy is not None:
-            corr = free - energy
-        return free, free, corr
-    if energy is not None and corr is not None:
-        return energy + corr, None, corr
-    return energy, None, corr
+    if corr is None and energy is not None and free is not None:
+        corr = free - energy
+    return energy, free, corr
 
 
 def _build_provenance(context: ProfileContext) -> Provenance:
@@ -359,6 +363,9 @@ class StandardResultProfile:
         chosen, gibbs, correction = _select_energies(native_result)
         results: list[ScientificResult] = []
         if chosen is not None:
+            # Canonical contract: kind "energy" is electronic only; the
+            # full Gibbs energy travels only as "gibbs_energy" and the
+            # thermal part only as "gibbs_correction".
             results.append(
                 ScientificResult(
                     **_result_kwargs(

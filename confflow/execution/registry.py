@@ -781,8 +781,30 @@ def _default_executors() -> tuple[ExecutorContract, ...]:
                     "results resolve to their reaction node through parent-id "
                     "lineage. Optional; absent bindings change nothing.",
                 ),
+                _structure_port(
+                    "sp_structures",
+                    Cardinality.MANY,
+                    Pairing.SINGLE,
+                    "Endpoint single-point output structures carried so "
+                    "high-level electronic results (which mint passthrough "
+                    "subjects) resolve to their reaction node through "
+                    "parent-id lineage. Optional; absent bindings change "
+                    "nothing.",
+                ),
+                _structure_port(
+                    "ts_sp_structures",
+                    Cardinality.MANY,
+                    Pairing.SINGLE,
+                    "Transition-state single-point output structures carried "
+                    "so high-level electronic results (which mint passthrough "
+                    "subjects) resolve to their reaction node through "
+                    "parent-id lineage. Optional; absent bindings change "
+                    "nothing.",
+                ),
                 _result_port("results", Cardinality.MANY, Pairing.SINGLE),
                 _result_port("ts_results", Cardinality.MANY, Pairing.SINGLE),
+                _result_port("sp_results", Cardinality.MANY, Pairing.SINGLE),
+                _result_port("ts_sp_results", Cardinality.MANY, Pairing.SINGLE),
             ),
             output_ports=(
                 _result_port("results", Cardinality.MANY, Pairing.BY_SUBJECT),
