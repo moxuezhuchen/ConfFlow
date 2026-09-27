@@ -854,8 +854,17 @@ def _verified_bundle_environment(bundle: ResultBundle) -> dict[str, Any]:
 
     The environment must be a verified measurement whose digest
     recomputes; anything else fails the import closed.  The verified
-    mapping is returned for the commit path (the reuse axis records
+    identity is returned for the commit path (the reuse axis records
     where the computation actually ran).
+
+    The complete effective environment mapping is transport data: it had
+    to reach the worker to launch the native process with exactly the
+    hashed environment, but it may carry host credentials.  Only the
+    non-secret identity (including the recomputed digest) may become
+    durable producer provenance — never the ``relevant_env`` plaintext,
+    which would otherwise land in the work-item store and the published
+    ``step_result.json``.  Reuse decisions compare digests, never
+    plaintext.
     """
     from ..execution.contracts import ExecutionEnvironment
 
@@ -866,7 +875,9 @@ def _verified_bundle_environment(bundle: ResultBundle) -> dict[str, Any]:
         verified = ExecutionEnvironment.from_dict(environment)
     except Exception as exc:
         raise StagingError(f"result bundle environment is not trusted: {exc}") from exc
-    return verified.to_dict()
+    payload = verified.to_dict()
+    payload.pop("relevant_env", None)
+    return payload
 
 
 def _check_attempt_current(store: Any, work_item_id: str, attempt_number: int) -> None:

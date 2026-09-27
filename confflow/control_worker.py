@@ -77,6 +77,15 @@ def run_control_worker(
     ``v4.status.partial`` marker) yield service FAILED; V4 ``cancelled``
     yields service CANCELLED. The worker never treats "runner returned
     without exception" as success — the V4 status-owned aggregate decides.
+
+    Cancellation recovery is manifest-aware: a confirmed durable cancel for
+    a crashed attempt terminalizes the run root's generation record and
+    commits the service aggregate to the SAME terminal status the run root
+    already proves (a same-generation terminal manifest is the completion
+    linearization point and is never downgraded to cancelled).  Without
+    this, a crash between native work and terminal publication left the
+    JobDesk-visible generation ``running`` forever while the service said
+    cancelled.
     """
     root = StateRoot.resolve(state_root)
     payload, config_path, tasks = _load_handoff(handoff_path, run_id, root)
@@ -125,7 +134,12 @@ def run_control_worker(
                     # establish the crash-safe boundary.
                     sleep(1.0)
                     continue
-                return control_service.lifecycle_cancelled(run_id, token).state
+                return _commit_cancel_or_manifest_winner(
+                    control_service,
+                    run_id,
+                    token,
+                    work_dir=tasks[0]["work_dir"],
+                )
             finally:
                 lease.release()
         if current.state is RunState.PAUSED:
@@ -156,7 +170,12 @@ def run_control_worker(
                     sleep(1.0)
                     continue
                 if current.cancel_pending:
-                    return control_service.lifecycle_cancelled(run_id, token).state
+                    return _commit_cancel_or_manifest_winner(
+                        control_service,
+                        run_id,
+                        token,
+                        work_dir=tasks[0]["work_dir"],
+                    )
                 recovered = control_service.recover_abandoned_launch(run_id, token=token)
                 if recovered.state is RunState.QUEUED:
                     resume = True
@@ -270,6 +289,52 @@ def _token_lease(root: StateRoot, run_id: str, token: str) -> TokenLaunchLease:
     """Create a lease below StateRoot's validated private runs layout."""
     paths = root.ensure_run_paths(run_id)
     return TokenLaunchLease(paths.staging.parent.parent, run_id, token)
+
+
+def _commit_cancel_or_manifest_winner(
+    control_service: Any,
+    run_id: str,
+    token: str,
+    *,
+    work_dir: str,
+) -> RunState:
+    """Terminalize the run root and commit the matching service aggregate.
+
+    The producer-side completion linearization point is the durable
+    same-generation ``run_result.json``.  When it exists, the run already
+    terminated (scientifically) before the cancel and the service commits
+    that status; otherwise the durable cancel wins and the generation
+    record is terminalized as cancelled.  Either way the JobDesk-visible
+    generation record and the durable service aggregate end consistent.
+    """
+    from .application.execution.workflow_adapter import (
+        ExecutionLifecycle,
+        _load_artifacts,
+    )
+    from .application.v4_entry import terminalize_generation_for_durable_cancel
+
+    status = terminalize_generation_for_durable_cancel(
+        run_root=work_dir,
+        reason=(
+            "durable cancellation confirmed after the producer stopped; "
+            "no matching result manifest was published"
+        ),
+    )
+    lifecycle = ExecutionLifecycle(control_service, run_id, token)
+    if status == "cancelled":
+        return lifecycle.cancelled().state
+    try:
+        artifacts = _load_artifacts(work_dir)
+    except Exception:  # noqa: BLE001 - a legacy manifest defect must not block the terminal commit
+        artifacts = ()
+    if control_service.status(run_id).state is RunState.QUEUED:
+        # A requeued (recovered) attempt whose producer already published a
+        # terminal manifest still needs the running transition the crashed
+        # worker never committed.
+        lifecycle.started()
+    if status == "completed":
+        return lifecycle.completed(artifacts).state
+    return lifecycle.failed(artifacts).state
 
 
 def _complete_owner_marker(owner: dict[str, object] | None) -> bool:

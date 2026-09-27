@@ -934,13 +934,26 @@ class BatchStepExecutor:
                 # verified bundle must be imported, committed, and returned —
                 # advancing first would make the bundle stale and duplicate
                 # native execution.
-                reconciled = self._reconcile_before_retry(
-                    item,
-                    context,
-                    store=store,
-                    transport=transport,
-                    environment_digest=environment_digest,
-                )
+                #
+                # Reconciliation is only legal for the SAME registered
+                # execution generation: the abandoned attempt's digest axes
+                # (work item, step semantics, environment, provenance) must
+                # equal the axes of the invocation asking for recovery.  When
+                # they differ (e.g. the execution environment changed after
+                # the crash), adopting the bundle would publish the abandoned
+                # generation's result as the new generation's result without
+                # any diagnostic.  Fall through to the normal
+                # interrupted -> next-attempt -> relaunch protocol instead;
+                # the abandoned bundle stays on disk as history.
+                reconciled = None
+                if stored_inputs is not None and stored_inputs == current_inputs:
+                    reconciled = self._reconcile_before_retry(
+                        item,
+                        context,
+                        store=store,
+                        transport=transport,
+                        environment_digest=environment_digest,
+                    )
                 if reconciled is not None:
                     return reconciled, True
                 store.mark_interrupted(item.id, reason=decision.reason)

@@ -36,8 +36,12 @@ __all__ = [
     "require_v4_document",
     "require_v4_document_file",
     "run_v4_document",
+    "terminalize_generation_for_durable_cancel",
     "v4_status_payload",
 ]
+
+#: Terminal run-result statuses the durable-cancel terminalizer understands.
+_TERMINAL_RUN_STATUSES: tuple[str, ...] = ("completed", "partial", "failed", "cancelled")
 
 
 def _legacy_error(detail: str) -> ConfFlowError:
@@ -111,6 +115,94 @@ def run_v4_document(
     )
     # One V4 application authority: compile_workflow lives inside run().
     return V4RunApplication(supervisor=resolved_supervisor).run(request)
+
+
+def terminalize_generation_for_durable_cancel(*, run_root: str, reason: str) -> str:
+    """Publish the run root's terminal generation truth for a confirmed cancel.
+
+    A restarting controller that proved the prior producer process is gone
+    and holds a durable cancellation intent must bring the JobDesk-visible
+    generation record to its terminal truth instead of leaving a crashed
+    attempt's ``running`` record current forever.
+
+    The completion linearization point is the durable ``run_result.json``
+    of the SAME generation:
+
+    - a terminal manifest for the current generation already exists ->
+      completion (or the scientific failure) linearized before the cancel;
+      the generation record is terminalized with that manifest's status and
+      is never rewritten as cancelled;
+    - otherwise the durable cancel wins: the running generation record is
+      terminalized as ``cancelled`` with no manifest pointer and an explicit
+      failure note, so consumers report the cancel instead of a phantom
+      running invocation.
+
+    A missing generation record is never invented (the invocation never
+    became a generation), and an already-terminal record is never rewritten
+    — both return their existing effective status.  Returns the effective
+    terminal status (``completed``/``partial``/``failed``/``cancelled``).
+    """
+    from ..persistence.generation import (
+        load_run_generation,
+        save_run_generation,
+        terminal_record,
+    )
+
+    if not isinstance(reason, str) or not reason.strip():
+        raise ValueError("reason must be a non-empty string")
+    record = load_run_generation(run_root)
+    if record is None:
+        return "cancelled"
+    if record.is_terminal:
+        return record.status
+    manifest_status = _same_generation_manifest_status(run_root, record.generation_id)
+    if manifest_status is not None:
+        save_run_generation(
+            run_root,
+            terminal_record(
+                record,
+                status=manifest_status,
+                manifest_generation_id=record.generation_id,
+            ),
+        )
+        return manifest_status
+    save_run_generation(
+        run_root,
+        terminal_record(
+            record,
+            status="cancelled",
+            manifest_generation_id=None,
+            active_step_id=record.active_step_id,
+            failure={
+                "type": "Cancelled",
+                "message": reason,
+                "step_id": record.active_step_id,
+                "blocked_downstream": False,
+            },
+        ),
+    )
+    return "cancelled"
+
+
+def _same_generation_manifest_status(run_root: str, generation_id: str) -> str | None:
+    """Return the terminal status of the same-generation manifest, if any."""
+    import json
+    import os
+
+    from .v4_run import RUN_RESULT_FILENAME
+
+    path = os.path.join(run_root, RUN_RESULT_FILENAME)
+    try:
+        with open(path, encoding="utf-8") as handle:
+            payload = json.load(handle)
+    except (OSError, ValueError):
+        return None
+    if not isinstance(payload, dict) or payload.get("generation_id") != generation_id:
+        return None
+    status = payload.get("status")
+    if status in _TERMINAL_RUN_STATUSES:
+        return str(status)
+    return None
 
 
 def _declared_input_names(document: dict[str, Any]) -> list[str]:
