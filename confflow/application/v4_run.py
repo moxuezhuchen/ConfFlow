@@ -270,6 +270,7 @@ class _GenerationContext:
     active_step_id: str | None = None
     terminal_published: bool = False
     terminal_status: str | None = None
+    generation_started: bool = False
 
 
 def _map_step_status(status: StepStatus) -> RunStepStatus:
@@ -352,20 +353,25 @@ class V4RunApplication:
     def run(self, request: V4RunRequest) -> V4RunReport:
         """Compile, execute, publish, and summarize one V4 workflow.
 
-        Every formal invocation is a new durable generation.  A ``running``
-        generation record is published before compile, and every terminal
+        A generation begins once the run root accepts this definition
+        (compile + run-state definition reconciliation), and from that point
+        on the invocation is durable current-generation truth: a ``running``
+        record is published before any step executes, and every terminal
         path — success, partial, cancelled, runtime failure, blocked
-        downstream step, assembly error — publishes the current
-        generation's terminal truth (manifest when possible, generation
-        record always) before returning or re-raising.  A superseded
-        completed manifest can therefore never masquerade as current.
+        downstream step, assembly error — publishes the generation's
+        terminal truth (manifest when possible, generation record always)
+        before returning or re-raising.  A superseded completed manifest can
+        therefore never masquerade as current.  Validation failures that
+        never became a generation (uncompilable document, a different
+        definition aimed at an occupied run root) leave the run root's last
+        valid terminal truth untouched: history is never reinterpreted
+        under a rejected digest.
         """
         run_root = validate_run_root(request.run_root)
         os.makedirs(run_root, exist_ok=True)
         run_id = os.path.basename(request.run_root.rstrip(os.sep)) or "run"
         generation_id = new_generation_id()
         record = running_record(run_id=run_id, generation_id=generation_id)
-        save_run_generation(run_root, record)
         context = _GenerationContext(
             run_id=run_id,
             run_root=run_root,
@@ -413,6 +419,7 @@ class V4RunApplication:
                 definition_digest=plan.definition_digest,
             ),
         )
+        context.generation_started = True
         run_inputs = self._resolve_run_inputs(run_root=run_root, request=request)
         self._preflight_targets(plan, request)
         self._preflight_grouping(plan, run_inputs)
@@ -553,6 +560,13 @@ class V4RunApplication:
                 or "unmaterialized producer" in str(error),
             }
         )
+        if not context.generation_started:
+            # The invocation never became a generation of this run root
+            # (uncompilable document, or a different definition aimed at an
+            # occupied run root).  The run root's last valid terminal truth
+            # stays current; history is never reinterpreted under a
+            # rejected digest.
+            return
         if context.terminal_published:
             # The generation's manifest is already durable truth; only the
             # lifecycle-record write failed.  Never downgrade a published

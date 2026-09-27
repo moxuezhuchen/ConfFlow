@@ -135,12 +135,19 @@ def test_cli_fresh_run_recomputes_after_same_path_input_change(tmp_path: Path) -
     assert first["status"] == "completed"
     assert first["steps"][0]["counts"] == {"completed": 1, "failed": 0, "cancelled": 0}
 
-    # Same run root, changed inputs: fail closed (no stale attach), and the
-    # published manifest is untouched.
+    # Same run root, changed inputs: fail closed (no stale attach).  Under
+    # the generation contract the invocation becomes a NEW generation whose
+    # failure is current truth -- the old completed manifest must never
+    # remain current -- while the previous generation's durable step result
+    # is retained as history.
     _write_h2(seed, 5)
     changed = _invoke(seed, config, run1)
     assert changed.returncode != 0
-    assert _manifest(run1) == first
+    after = _manifest(run1)
+    assert after["status"] == "failed"
+    assert after["generation_id"] != first["generation_id"]
+    assert after["definition_digest"] == first["definition_digest"]
+    assert (run1 / "steps" / "s_sp" / "step_result.json").exists()
 
     # Fresh run root recomputes: same definition digest, new publication.
     run2 = tmp_path / "run2"
