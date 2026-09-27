@@ -679,6 +679,67 @@ class RemoteTransport:
             raise StagingError("prior result import must return a WorkItemResult")
         return imported
 
+    def reconcile_prior_attempts(
+        self,
+        item: WorkItem,
+        context: ItemExecutionContext,
+        *,
+        attempts: tuple[int, ...],
+        current_attempt: int,
+    ) -> WorkItemResult | None:
+        """Import the newest recoverable prior-attempt bundle, if any.
+
+        Startup/resume protocol (R7): a nonterminal attempt whose worker
+        already produced a complete, identity-matching bundle must be
+        reconciled with that attempt's own launch token BEFORE the attempt
+        is marked interrupted and advanced.  Returns the imported (not yet
+        committed) result when a complete bundle verifies, else ``None``.
+        Never launches native execution.
+
+        Newest-first ordering plus the staging attempt-current check make
+        this idempotent and winner-safe: an older attempt's bundle is
+        refused once a newer attempt exists, and a committed row
+        short-circuits at reuse before this seam is reached again.
+        """
+        from .handoff import HandoffError, read_handoff_envelope
+        from .result_bundle import ResultBundleError
+        from .staging import StagingError, import_result_artifacts
+
+        ordered = sorted({int(number) for number in attempts}, reverse=True)
+        for attempt_number in ordered:
+            if attempt_number > int(current_attempt):
+                continue
+            token = self.launch_token_for(item, attempt_number)
+            prior = self._result_path_for(self._worker_root, token)
+            if not os.path.isfile(prior):
+                continue
+            try:
+                handoff = read_handoff_envelope(
+                    path=os.path.join(self._worker_root, "inbox", token, "handoff.json"),
+                    expected_run_id=None,
+                )
+            except (OSError, HandoffError):
+                continue
+            if handoff.launch_token != token or handoff.work_item_id != item.id:
+                continue
+            try:
+                imported = import_result_artifacts(
+                    result_path=prior,
+                    handoff=handoff,
+                    run_root=self._run_root,
+                    store=self._store,
+                )
+            except (OSError, ResultBundleError, StagingError):
+                # Incomplete/corrupt prior: fall through to the normal
+                # retry protocol instead of relaunching over live work.
+                continue
+            if not isinstance(imported, WorkItemResult):
+                continue
+            with self._lock:
+                self._delivered[token] = imported
+            return imported
+        return None
+
     def _run_remote(
         self,
         item: WorkItem,

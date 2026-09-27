@@ -636,6 +636,67 @@ class BatchStepExecutor:
             return self._executor.execute(item, context, should_cancel=should_cancel)
         return transport.execute(item, context, attempt=int(attempt), should_cancel=should_cancel)
 
+    def _reconcile_before_retry(
+        self,
+        item: WorkItem,
+        context: ItemExecutionContext,
+        *,
+        store: SqliteWorkItemStore,
+        transport: ExecutionTransport | None,
+        environment_digest: str | None,
+    ) -> WorkItemResult | None:
+        """Import an abandoned attempt's durable result before any retry.
+
+        Returns a durably committed COMPLETED result when the transport can
+        prove that the abandoned attempt already produced a complete,
+        identity-matching bundle (worker crash after durable packaging but
+        before producer import).  In that case the attempt is NOT advanced
+        and no native process is launched: the reconciliation imports once,
+        commits once, and every later resume reuses the committed row.
+
+        Returns ``None`` when there is no recoverable result, no transport,
+        or the transport cannot reconcile; the caller then follows the
+        normal mark-interrupted → claim-next-attempt → relaunch protocol.
+        A late bundle for a superseded attempt can never override a newer
+        valid completion: import verification rejects stale attempt
+        numbers, and a committed row short-circuits before this seam.
+        """
+        if transport is None:
+            return None
+        reconcile = getattr(transport, "reconcile_prior_attempts", None)
+        if not callable(reconcile):
+            return None
+        try:
+            attempts = store.get_attempts(item.id)
+            registered = store.get_registered(item.id)
+        except (PersistenceError, CorruptStateError):
+            return None
+        numbers = tuple(
+            int(entry.attempt_number)
+            for entry in attempts
+            if getattr(entry, "attempt_number", None) is not None
+        )
+        current = int(registered.get("current_attempt") or 0)
+        try:
+            result = reconcile(item, context, attempts=numbers, current_attempt=current)
+        except (PersistenceError, CorruptStateError):
+            return None
+        except Exception:
+            # Reconciliation is an optimization over the retry protocol:
+            # an unexpected transport fault must fall through to the
+            # normal (mark-interrupted, claim, relaunch) path, never kill
+            # the step.
+            return None
+        if not isinstance(result, WorkItemResult) or not result.is_completed:
+            return None
+        try:
+            store.record_finished(
+                result, environment_digest=self._commit_environment_digest(result)
+            )
+        except (PersistenceError, CorruptStateError):
+            return None
+        return result
+
     @staticmethod
     def _commit_environment_digest(result: WorkItemResult) -> str | None:
         """Return the execution-environment override for committing *result*.
@@ -868,6 +929,20 @@ class BatchStepExecutor:
             ReuseCode.RECOVER_ABANDONED,
         ):
             if code is ReuseCode.RECOVER_ABANDONED:
+                # R7: reconcile the abandoned attempt's durable result BEFORE
+                # advancing the attempt.  A worker that completed and wrote a
+                # verified bundle must be imported, committed, and returned —
+                # advancing first would make the bundle stale and duplicate
+                # native execution.
+                reconciled = self._reconcile_before_retry(
+                    item,
+                    context,
+                    store=store,
+                    transport=transport,
+                    environment_digest=environment_digest,
+                )
+                if reconciled is not None:
+                    return reconciled, True
                 store.mark_interrupted(item.id, reason=decision.reason)
             if store.claim(item.id, owner=owner):
                 # The real durable attempt just opened drives both the
