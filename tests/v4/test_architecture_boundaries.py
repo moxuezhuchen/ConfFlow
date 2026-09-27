@@ -208,9 +208,7 @@ def _is_legacy_producer_dependency(module: str) -> bool:
     ``confflow.config.contract_schemas``) and the ``confflow.workflow``
     parent shell of ``confflow.workflow.v4`` are not legacy dependencies.
     """
-    if module == "confflow.config.canonical" or module.startswith(
-        "confflow.config.canonical."
-    ):
+    if module == "confflow.config.canonical" or module.startswith("confflow.config.canonical."):
         return True
     if module == "confflow.config.models":
         return True
@@ -659,19 +657,16 @@ class TestRuntimeIsolation:
 
 
 class TestProducerImportIsolation:
-    """Producer import-isolation debt baseline (Architecture Diet PR-0).
+    """Producer import isolation (Architecture Diet PR-0 baseline → PR-2 hard).
 
-    ``import confflow.producer`` currently pulls the V1/V2/V3 configuration
-    tree because three published schema constants are imported from
-    ``confflow.config.canonical``.  PR-0 does not fix that coupling; it pins
-    the exact transitive legacy-dependency set so it can never grow
-    silently.  Any new module fails this test immediately; removing a module
-    requires updating :data:`KNOWN_PRODUCER_LEGACY_IMPORTS` in the same
-    change, so the debt can only shrink deliberately.
-
-    TODO(diet PR-2): extract the three schema constants into a dependency-free
-    module, drive :data:`KNOWN_PRODUCER_LEGACY_IMPORTS` to empty, and replace
-    this baseline test with an absolute ``no legacy config import`` assertion.
+    PR-0 pinned the transitive legacy set pulled by ``import
+    confflow.producer`` (31 modules of the V1/V2/V3 configuration tree).  PR-2
+    decoupled the producer from that tree: the three published schema
+    identifiers now live in the dependency-free
+    :mod:`confflow.config.contract_schemas` authority, and
+    :data:`KNOWN_PRODUCER_LEGACY_IMPORTS` is empty.  The equality guard stays:
+    any new legacy dependency fails immediately, and the canonical
+    implementation tree must not be loaded at all.
     """
 
     def _run(self, script: str) -> subprocess.CompletedProcess[str]:
@@ -683,7 +678,7 @@ class TestProducerImportIsolation:
             check=False,
         )
 
-    def test_producer_legacy_import_debt_does_not_grow(self) -> None:
+    def test_producer_legacy_import_debt_is_empty(self) -> None:
         script = (
             "import sys; import confflow.producer; "
             "print(chr(10).join(sorted(m for m in sys.modules if m.startswith('confflow'))))"
@@ -701,9 +696,30 @@ class TestProducerImportIsolation:
             "producer legacy import debt changed;\n"
             f"  added: {added}\n"
             f"  removed: {removed}\n"
-            "new legacy dependencies are forbidden; removals update the "
-            "KNOWN_PRODUCER_LEGACY_IMPORTS baseline deliberately (PR-2)."
+            "the producer must read schema identifiers from the "
+            "dependency-free authority only."
         )
+
+    def test_producer_does_not_load_canonical_config_tree(self) -> None:
+        """The canonical implementation tree never enters ``sys.modules``.
+
+        Both formal producer entry styles are checked: the package import and
+        the direct contract-module import used by JobDesk-side tooling.
+        """
+        for entry in (
+            "import confflow.producer",
+            "from confflow.producer.contract import generate_contract_bytes",
+        ):
+            script = (
+                f"import sys; {entry}; "
+                "banned = sorted(m for m in sys.modules if ("
+                "m == 'confflow.config.canonical' "
+                "or m.startswith('confflow.config.canonical.') "
+                "or m == 'confflow.config.models')); "
+                "assert not banned, banned"
+            )
+            result = self._run(script)
+            assert result.returncode == 0, f"{entry}: {result.stderr}"
 
     def test_producer_does_not_pull_legacy_runtime_packages(self) -> None:
         """Hard ban: the producer must never import calc/blocks/engine at all."""
@@ -712,11 +728,36 @@ class TestProducerImportIsolation:
             "banned = sorted(m for m in sys.modules if m.startswith(("
             "'confflow.calc', 'confflow.blocks', 'confflow.confts', "
             "'confflow.workflow.engine', 'confflow.workflow.v3_runtime', "
-            "'confflow.workflow.v3_dataflow', 'confflow.workflow.binding_v2'))); "
+            "'confflow.workflow.v3_dataflow', 'confflow.workflow.binding_v2', "
+            "'confflow.config.canonical'))); "
             "assert not banned, banned"
         )
         result = self._run(script)
         assert result.returncode == 0, result.stderr
+
+    def test_schema_authority_is_single_source_for_legacy_paths(self) -> None:
+        """The legacy import paths re-export the same objects (no second copy)."""
+        from confflow.config import contract_schemas
+        from confflow.config.canonical.contract import CONFIGURATION_VALIDATION_SCHEMA
+        from confflow.config.canonical.editor_manifest import EDITOR_MANIFEST_SCHEMA
+        from confflow.config.canonical.recipes import RECIPE_CATALOG_SCHEMA
+
+        assert CONFIGURATION_VALIDATION_SCHEMA is contract_schemas.CONFIGURATION_VALIDATION_SCHEMA
+        assert EDITOR_MANIFEST_SCHEMA is contract_schemas.EDITOR_MANIFEST_SCHEMA
+        assert RECIPE_CATALOG_SCHEMA is contract_schemas.RECIPE_CATALOG_SCHEMA
+        assert contract_schemas.CONFIGURATION_VALIDATION_SCHEMA == (
+            "confflow.configuration-validation.v1"
+        )
+        assert contract_schemas.EDITOR_MANIFEST_SCHEMA == "confflow.editor-manifest.v1"
+        assert contract_schemas.RECIPE_CATALOG_SCHEMA == "confflow.recipe-catalog.v1"
+
+    def test_config_package_lazy_exports_still_work(self) -> None:
+        """The historical ``from confflow.config import X`` surface is intact."""
+        from confflow.config import GlobalOptions, WorkflowConfig, load_workflow_model
+
+        assert WorkflowConfig.__name__ == "WorkflowConfig"
+        assert GlobalOptions.__name__ == "GlobalOptions"
+        assert callable(load_workflow_model)
 
 
 class TestPackaging:
