@@ -101,16 +101,22 @@ class RunInputDeclaration:
         return Pairing.BY_SUBJECT
 
     def to_dict(self) -> dict[str, Any]:
-        """Return a canonical, JSON-compatible representation."""
-        return {
+        """Return a canonical, JSON-compatible representation.
+
+        ``grouping`` is omitted when undeclared so adding the field never
+        moves the definition digest of documents that do not use it.
+        """
+        payload: dict[str, Any] = {
             "name": self.name,
             "kind": self.kind.value,
             "cardinality": self.cardinality.value,
             "pairing": self.pairing.value if self.pairing is not None else None,
             "role": self.role,
             "description": self.description,
-            "grouping": self.grouping,
         }
+        if self.grouping is not None:
+            payload["grouping"] = self.grouping
+        return payload
 
 
 def _validate_freeze(value: Any) -> tuple[int, ...] | None:
