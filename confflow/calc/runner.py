@@ -10,8 +10,7 @@ from concurrent.futures import Executor, ProcessPoolExecutor, ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 
-from ..config.canonical import resolve_calc_step
-from ..config.models import CalcStepParams, load_workflow_model
+from ..config.models import CalcStepParams
 from ..core import io as io_xyz
 from ..core import models
 from ..core.console import CalcProgressReporter
@@ -247,58 +246,3 @@ class CalcStepRunner:
             raise
         finally:
             db.close()
-
-
-def main() -> int:
-    """Standalone calc step CLI using workflow YAML calc step definitions."""
-    import argparse
-
-    parser = argparse.ArgumentParser(description="Run one ConfFlow calc step")
-    parser.add_argument("input_xyz", help="Path to the input XYZ trajectory")
-    parser.add_argument("-c", "--config", required=True, help="Workflow YAML configuration")
-    parser.add_argument(
-        "--step",
-        help="Calc step name or 1-based index among calc steps (default: first calc step)",
-    )
-    parser.add_argument("-w", "--work-dir", help="Output step directory")
-    args = parser.parse_args()
-
-    workflow = load_workflow_model(args.config)
-    calc_steps = [step for step in workflow.steps if step.type == "calc"]
-    if not calc_steps:
-        raise SystemExit("No calc step found in workflow config")
-
-    selected = calc_steps[0]
-    if args.step:
-        raw = str(args.step).strip()
-        if raw.isdigit():
-            idx = int(raw)
-            if idx < 1 or idx > len(calc_steps):
-                raise SystemExit(f"Calc step index out of range: {idx}")
-            selected = calc_steps[idx - 1]
-        else:
-            matches = [step for step in calc_steps if step.name == raw]
-            if not matches:
-                raise SystemExit(f"Calc step not found: {raw}")
-            selected = matches[0]
-
-    step_dir = args.work_dir or f"{Path(args.input_xyz).stem}_{selected.name}"
-    config = resolve_calc_step(selected.params, workflow.global_options)
-    from ..workflow.composition import configure_default_refine
-
-    configure_default_refine()
-    result = CalcStepRunner().run(
-        CalcStepRequest(
-            step_name=selected.name,
-            step_dir=step_dir,
-            input_xyz=args.input_xyz,
-            config=config,
-        )
-    )
-    print(f"Output: {result.output_path}")
-    if result.failed_path:
-        print(f"Failed: {result.failed_path}")
-    print(
-        f"Summary: total={result.total_tasks}, succeeded={result.succeeded}, failed={result.failed}"
-    )
-    return 0

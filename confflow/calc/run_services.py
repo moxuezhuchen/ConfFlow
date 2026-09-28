@@ -9,53 +9,13 @@ from collections.abc import Callable, Iterable
 from typing import Any
 
 from ..core import models
-from ..core.path_policy import resolve_sandbox_root, validate_managed_path
 from .result_writer import write_failed_xyz
-from .setup import setup_logging
 
 __all__ = [
-    "WorkDirService",
     "TaskSourceBuilder",
     "TaskRecoveryService",
     "ResultAssemblyService",
 ]
-
-
-class WorkDirService:
-    """Prepare and validate the calc working directory."""
-
-    def __init__(self, manager: Any) -> None:
-        self.manager = manager
-
-    def ensure_ready(self) -> None:
-        if self.manager._work_dir_initialized:
-            return
-        sandbox_root = resolve_sandbox_root(self.manager.config)
-        self.manager.work_dir = validate_managed_path(
-            self.manager.work_dir,
-            label="work_dir",
-            sandbox_root=sandbox_root,
-        )
-        os.makedirs(self.manager.work_dir, exist_ok=True)
-        setup_logging(self.manager.work_dir)
-
-        backup_dir_cfg = self.manager.config.get("backup_dir")
-        if backup_dir_cfg and str(backup_dir_cfg).strip():
-            self.manager.backup_dir = validate_managed_path(
-                str(backup_dir_cfg).strip(),
-                label="backup_dir",
-                sandbox_root=sandbox_root,
-            )
-        else:
-            self.manager.backup_dir = os.path.join(self.manager.work_dir, "backups")
-            self.manager.config["backup_dir"] = self.manager.backup_dir
-        os.makedirs(self.manager.backup_dir, exist_ok=True)
-
-        self.manager.config["stop_beacon_file"] = os.path.join(self.manager.work_dir, "STOP")
-        self.manager.results_db = self.manager._results_db_factory(
-            os.path.join(self.manager.work_dir, "results.db")
-        )
-        self.manager._work_dir_initialized = True
 
 
 class TaskSourceBuilder:
