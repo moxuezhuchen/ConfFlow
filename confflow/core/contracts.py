@@ -13,7 +13,7 @@ from enum import IntEnum
 from typing import TextIO
 
 from .console import redirect_console
-from .utils import get_logger, redirect_logging_streams
+from .logging import get_logger, redirect_logging_streams
 
 __all__ = [
     "ExitCode",
