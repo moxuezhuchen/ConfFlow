@@ -15,11 +15,13 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
+from confflow.domain.resources import parse_memory_bytes
 from confflow.execution import default_registry
 from confflow.workflow.v4 import (
     parse_workflow_document,
     parse_workflow_text,
     parse_workflow_text_document,
+    validate_definition,
 )
 from confflow.workflow.v4.parser import WorkflowYamlError
 from confflow.workflow.v4.schema import (
@@ -120,11 +122,17 @@ def test_schema_alias_is_the_document_identity() -> None:
 
 
 def test_document_defaults_are_single_source() -> None:
-    """Omitting resources yields the declared defaults with an equal dump."""
+    """Presence parses as absent; the declared defaults resolve in validation.
+
+    The shape model never injects a concrete default: an omitted resource or
+    scheduler field stays ``None`` ("inherit").  Effective values resolve
+    exactly once through the validation authority's ``with_defaults`` call.
+    """
     omitted = DocumentModel.model_validate(base_document())
-    assert omitted.global_.resources.cores_per_item == DEFAULT_CORES_PER_ITEM
-    assert omitted.global_.resources.memory_per_item == DEFAULT_MEMORY_PER_ITEM
-    assert omitted.global_.scheduler.max_parallel_items == DEFAULT_MAX_PARALLEL_ITEMS
+    assert omitted.global_.resources.cores_per_item is None
+    assert omitted.global_.resources.memory_per_item is None
+    assert omitted.global_.scheduler.max_parallel_items is None
+    assert omitted.global_.scheduler.on_failure is None
     explicit = DocumentModel.model_validate(
         v4_doc(
             [analysis_step("s1")],
@@ -137,7 +145,54 @@ def test_document_defaults_are_single_source() -> None:
             },
         )
     )
-    assert explicit.model_dump() == omitted.model_dump()
+    assert explicit.global_.resources.cores_per_item == DEFAULT_CORES_PER_ITEM
+    assert explicit.global_.scheduler.on_failure is None
+    parsed = parse_workflow_document(base_document())
+    assert parsed.ok is True
+    assert parsed.definition is not None
+    validated = validate_definition(parsed.definition)
+    assert validated.ok is True
+    assert validated.validated is not None
+    assert validated.validated.resources.cores_per_item == DEFAULT_CORES_PER_ITEM
+    assert validated.validated.resources.memory_per_item_bytes == parse_memory_bytes(
+        DEFAULT_MEMORY_PER_ITEM
+    )
+    assert validated.validated.scheduler.max_parallel_items == DEFAULT_MAX_PARALLEL_ITEMS
+
+
+def test_step_resource_override_keeps_absent_fields_absent() -> None:
+    """A memory-only step override never gains an injected core count."""
+    document = v4_doc(
+        [
+            analysis_step("s1"),
+            calc_step(
+                "s2",
+                bindings={"structure": {"source": {"run": "structures"}}},
+                resources={"memory_per_item": "32GiB"},
+            ),
+        ],
+        inputs={"structures": {"kind": "structure", "cardinality": "many"}},
+        global_config={
+            "resources": {"cores_per_item": 8, "memory_per_item": "16GiB"},
+            "scheduler": {"max_parallel_items": 2},
+        },
+    )
+    parsed = parse_workflow_document(document)
+    assert parsed.ok is True
+    assert parsed.definition is not None
+    step = parsed.definition.step("s2")
+    assert step is not None
+    assert step.resources.cores_per_item is None
+    assert step.resources.memory_per_item_bytes == 32 * 1024**3
+    assert step.scheduler.max_parallel_items is None
+    validated = validate_definition(parsed.definition)
+    assert validated.ok is True
+    assert validated.validated is not None
+    effective = validated.validated.step("s2")
+    assert effective is not None
+    assert effective.resources.cores_per_item == 8
+    assert effective.resources.memory_per_item_bytes == 32 * 1024**3
+    assert effective.scheduler.max_parallel_items == 2
 
 
 def test_json_schema_injects_registry_vocabularies() -> None:
