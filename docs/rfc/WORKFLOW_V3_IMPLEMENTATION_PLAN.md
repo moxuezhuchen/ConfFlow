@@ -350,7 +350,9 @@ profile-specific constraints. No second full schema dict is written.
 `[clarification]` — the field means *"the schema this document was validated
 against"*, and the wire shape does not change.
 
-**Checked contract facts** (`config/cli.py`, `docs/configuration-contract-v2.md`,
+**Checked contract facts** (`config/cli.py`; the historical
+`docs/configuration-contract-v2.md` was removed with the released V1/V2
+configuration wire by Architecture Diet PR-9,
 JobDesk `remote_validation.py`): `_validate_stdin` emits exactly
 `{schema, valid, workflow_schema_sha256, issues:[{path,message}]}`; the field's
 documented meaning is "the digest is checked against the contract's, so an answer
