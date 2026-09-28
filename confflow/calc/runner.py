@@ -10,7 +10,7 @@ from concurrent.futures import Executor, ProcessPoolExecutor, ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 
-from ..config.models import CalcStepParams
+from .config_model import CalcStepParams
 from ..core import io as io_xyz
 from ..core import models
 from ..core.console import CalcProgressReporter

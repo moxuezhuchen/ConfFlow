@@ -12,8 +12,8 @@ This module contains two categories:
    - ``core.logging``: ConfFlowLogger + get_logger
    - ``core.parsers``: parse_iprog / itask / memory, parse_index_spec, format_*
 
-2. **Input validation utilities** — ``validate_xyz_file``, ``validate_yaml_config``,
-   etc., used for CLI pre-flight checks.  They live here rather than in
+2. **Input validation utilities** — ``validate_xyz_file`` and the XYZ/geometry
+   checks used for CLI pre-flight checks.  They live here rather than in
    ``validation.py`` to avoid circular imports.
 """
 
@@ -74,7 +74,6 @@ __all__ = [
     "get_numba_jit",
     "index_to_letter_prefix",
     "validate_xyz_file",
-    "validate_yaml_config",
 ]
 
 # ==============================================================================
@@ -210,22 +209,3 @@ def validate_xyz_file(filepath: str, strict: bool = False) -> tuple[bool, list[d
 
     is_valid = len(geometries) > 0 and len(errors) == 0
     return is_valid, geometries
-
-
-# ---------------------------------------------------------------------------
-# Backward compat: validate_yaml_config / _validate_step_config moved to config.schema
-# ---------------------------------------------------------------------------
-
-
-def validate_yaml_config(
-    config: dict[str, Any], required_sections: list[str] | None = None
-) -> list[str]:
-    from ..shared.config_validation import validate_yaml_config as _impl
-
-    return _impl(config, required_sections)
-
-
-def _validate_step_config(step: dict[str, Any], index: int) -> list[str]:
-    from ..shared.config_validation import validate_step_config as _impl
-
-    return _impl(step, index)

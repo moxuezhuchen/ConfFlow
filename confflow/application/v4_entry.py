@@ -13,8 +13,13 @@ the control worker — enters the ONE V4 application through this module::
 
 No formal path reaches the legacy engine (the historical workflow engine,
 its calculation runners and result stores, legacy workflow-state execution,
-legacy rerun glue, or program/task dispatch).  Legacy V2/V3 documents fail
-closed with ``legacy_workflow_not_executable`` plus ``migration required``.
+legacy rerun glue, or program/task dispatch).  Legacy V1/V2/V3 documents fail
+closed with ``legacy_workflow_not_executable`` plus ``migration required``;
+when the document's outermost version discriminator is a schema id that was
+published once and then retired, the message also carries the stable
+``unsupported_workflow_version`` code so a caller can classify it without
+parsing prose.  Rejection happens before any filesystem or durable side
+effect.
 """
 
 from __future__ import annotations
@@ -27,8 +32,12 @@ from ..core.exceptions import ConfFlowError
 V4_SCHEMA_ID = "confflow.workflow.v4"
 LEGACY_CODE = "legacy_workflow_not_executable"
 
+#: Stable fail-closed code for a retired or unknown workflow schema version.
+UNSUPPORTED_VERSION_CODE = "unsupported_workflow_version"
+
 __all__ = [
     "LEGACY_CODE",
+    "UNSUPPORTED_VERSION_CODE",
     "V4_SCHEMA_ID",
     "formal_v4_runner",
     "is_v4_document",
@@ -51,10 +60,24 @@ def is_v4_document(document: Any) -> bool:
 
 
 def require_v4_document(document: Any) -> dict[str, Any]:
-    """Return *document* when it is a V4 document, else fail closed."""
+    """Return *document* when it is a V4 document, else fail closed.
+
+    The outermost version discriminator is examined exactly once.  A document
+    that *declares* a schema and is not V4 fails closed with the stable
+    ``unsupported_workflow_version`` code; nothing further is read, parsed,
+    migrated or executed.  No retired schema id is written down here: the
+    declared value is echoed as data, so this authority cannot become a second
+    registry of retired wire formats.
+    """
     if not isinstance(document, dict):
         raise _legacy_error("workflow document must be a mapping")
-    if document.get("schema", "") != V4_SCHEMA_ID:
+    declared = document.get("schema", "")
+    if declared != V4_SCHEMA_ID:
+        normalized = declared.strip() if isinstance(declared, str) else ""
+        if normalized:
+            raise _legacy_error(
+                f"{UNSUPPORTED_VERSION_CODE} ({normalized!r}): not a V4 workflow document"
+            )
         raise _legacy_error("not a V4 workflow document")
     return document
 

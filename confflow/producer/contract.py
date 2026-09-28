@@ -2,13 +2,16 @@
 
 """Producer-owned V4 configuration contract envelope.
 
-The V4 contract (``confflow.configuration-contract.v4``) is the next wire
-version after v1/v2 (parsed by JobDesk today) and v3 (the V3 workflow line).
-It keeps the v1 validation response schema
-(``confflow.configuration-validation.v1``) and advertises the V4 workflow
-line: the real V4 JSON schema, the V4 editor manifest, the V4 recipe catalog,
-and capability descriptors generated from the real execution and program
-registries -- imported, never copied.
+The V4 contract (``confflow.configuration-contract.v4``) is the only
+configuration wire: it advertises the V4 workflow line -- the real V4 JSON
+schema, the V4 editor manifest, the V4 recipe catalog, and capability
+descriptors generated from the real execution and program registries,
+imported, never copied.  It keeps the frozen validation response schema
+(``confflow.configuration-validation.v1``), which JobDesk's V4 path consumes.
+
+The released V1/V2 contract documents and the never-released V3 line were
+retired by the Architecture Diet (PR-9 / PR-7): asking for any of them fails
+closed with ``unsupported_workflow_version`` and never falls back.
 
 No legacy truth is published: ``result.xyz``, ``failed.xyz``,
 ``workflow_stats.json``, ``.workflow_state.json``, ``output_path``, and

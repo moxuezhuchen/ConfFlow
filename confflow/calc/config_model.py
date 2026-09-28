@@ -1,6 +1,29 @@
 #!/usr/bin/env python3
 
-"""Typed configuration models for the non-legacy ConfFlow runtime."""
+"""Typed configuration model of the legacy standalone calc tooling.
+
+Architecture Diet PR-9 retired the released V1/V2 configuration *wire*: the
+``confflow.configuration-contract.v1`` / ``.v2`` documents, the
+``confflow.workflow.v2`` JSON schema, the public parser/validator entrypoints,
+the V2 editor manifest and recipe catalog, the V2->canonical adapter and the
+``confflow.config`` model facade are all gone, and V1/V2/V3 documents now fail
+closed with ``unsupported_workflow_version``.
+
+What survives here is deliberately **not** a wire surface.  It is the private
+typed read path of the legacy standalone tools (``confflow.calc`` and the
+``confts`` CLI, plus the ``confrefine`` helper they compose), which
+``scripts/v4_arch_scan.py`` declares "RETIRED READ-ONLY / separate tools (out
+of scope by design)".  Nothing in the V4 production closure imports this
+module, no schema is published from it, and it emits no contract document: it
+only turns one local legacy YAML file into the typed objects those tools
+consume.
+
+The single ``schema`` discriminator is still enforced: an absent ``schema`` is
+the historical V2 document, an explicit ``confflow.workflow.v2`` value is
+honoured, and every other value fails closed with the stable
+``unsupported_workflow_version`` code.  ``confflow.workflow.v1`` and
+``confflow.workflow.v3`` are never accepted.
+"""
 
 from __future__ import annotations
 
@@ -8,17 +31,18 @@ import json
 import logging
 import re
 import shlex
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
-from ...core.exceptions import ConfigurationError
-from ...shared.config_coercion import (
+from ..core.exceptions import ConfigurationError
+from ..shared.config_coercion import (
     coerce_freeze_indices,
     coerce_positive_int,
     coerce_two_atom_indices,
 )
-from ...shared.defaults import (
+from ..shared.defaults import (
     DEFAULT_CHARGE,
     DEFAULT_CORES_PER_TASK,
     DEFAULT_DELETE_WORK_DIR,
@@ -40,9 +64,151 @@ from ...shared.defaults import (
     DEFAULT_TS_RMSD_THRESHOLD,
     DEFAULT_WORKFLOW_AUTO_CLEAN,
 )
-from ...shared.orca_blocks import format_orca_blocks
+from ..shared.orca_blocks import format_orca_blocks
 
 logger = logging.getLogger("confflow.config")
+
+#: Stable fail-closed code for a retired or unknown workflow schema version.
+UNSUPPORTED_WORKFLOW_VERSION = "unsupported_workflow_version"
+
+#: The one workflow schema this legacy tool understands.
+WORKFLOW_SCHEMA_VERSION_V2 = "confflow.workflow.v2"
+
+#: Schema ids that were published once and are now retired.  Naming them
+#: explicitly keeps the rejection message honest (``unsupported`` rather than
+#: ``unrecognised``) without reintroducing a parser for any of them.
+RETIRED_WORKFLOW_SCHEMA_VERSIONS: tuple[str, ...] = (
+    "confflow.workflow.v1",
+    "confflow.workflow.v3",
+)
+
+
+@dataclass(frozen=True)
+class ConfigIssue:
+    """One user-facing configuration problem at a stable logical path."""
+
+    path: str
+    message: str
+
+    def __str__(self) -> str:
+        return f"{self.path}: {self.message}" if self.path else self.message
+
+
+class ConfigValidationError(ValueError):
+    """Raised when raw configuration cannot become a typed workflow model."""
+
+    def __init__(self, issue: ConfigIssue) -> None:
+        self.issue = issue
+        super().__init__(str(issue))
+
+
+def _mapping_or_error(raw: Any, *, path: str = "") -> dict[str, Any]:
+    if not isinstance(raw, Mapping):
+        raise ConfigValidationError(ConfigIssue(path, "workflow config root must be a mapping"))
+    return dict(raw)
+
+
+def load_raw_mapping(config_file: str | Path) -> dict[str, Any]:
+    """Load YAML into an owned root mapping without applying workflow rules."""
+    import yaml
+
+    path = Path(config_file)
+    if not path.exists():
+        raise FileNotFoundError(f"Configuration file not found: {path}")
+    if not path.is_file():
+        raise ConfigValidationError(ConfigIssue("", f"Configuration path is not a file: {path}"))
+    try:
+        with path.open(encoding="utf-8") as handle:
+            raw = yaml.safe_load(handle)
+    except yaml.YAMLError as exc:
+        raise ConfigValidationError(ConfigIssue("", f"Invalid YAML configuration: {exc}")) from exc
+    return {} if raw is None else _mapping_or_error(raw)
+
+
+def parse_workflow_mapping(raw: Mapping[str, Any]) -> WorkflowConfig:
+    """Apply typed workflow rules while presenting stable configuration errors.
+
+    The outermost ``schema`` discriminator is recognised first and exactly
+    once (:func:`detect_schema_version`), so a retired V1/V3 wire -- or any
+    other unrecognised version -- fails closed before a single field is read.
+    """
+    detect_schema_version(raw)
+    owned = _mapping_or_error(raw)
+    if "global" in owned and not isinstance(owned["global"], Mapping):
+        raise ConfigValidationError(ConfigIssue("global", "global config must be a mapping"))
+    steps = owned.get("steps")
+    if isinstance(steps, list):
+        for index, step in enumerate(steps, start=1):
+            if (
+                isinstance(step, Mapping)
+                and "params" in step
+                and not isinstance(step["params"], Mapping)
+            ):
+                raise ConfigValidationError(
+                    ConfigIssue(f"steps[{index}].params", "step params must be a mapping")
+                )
+    try:
+        return WorkflowConfig.from_mapping(owned)
+    except ValueError as exc:
+        raise ConfigValidationError(ConfigIssue("", str(exc))) from exc
+
+
+def resolve_global_options(raw: Mapping[str, Any] | None) -> GlobalOptions:
+    """Resolve a legacy global mapping through the typed boundary."""
+    try:
+        mapping = None if raw is None else dict(raw)
+        return GlobalOptions.from_mapping(mapping)
+    except (TypeError, ValueError) as exc:
+        raise ConfigValidationError(ConfigIssue("global", str(exc))) from exc
+
+
+def resolve_calc_step(
+    params: Mapping[str, Any],
+    global_options: GlobalOptions,
+    *,
+    input_chk_dir: str | None = None,
+) -> CalcStepParams:
+    """Resolve one calc step through the preserved legacy typed rules."""
+    try:
+        return CalcStepParams.from_params(
+            dict(params),
+            global_options,
+            input_chk_dir=input_chk_dir,
+        )
+    except ValueError as exc:
+        raise ConfigValidationError(ConfigIssue("steps.calc", str(exc))) from exc
+
+
+def detect_schema_version(raw: Mapping[str, Any]) -> str:
+    """Return the workflow schema version of ``raw``.
+
+    The single version-recognition truth for the legacy tooling: absent
+    ``schema`` is the historical V2 document, an explicit V2 value is honoured,
+    and everything else fails closed with the stable
+    ``unsupported_workflow_version`` code.  The retired
+    ``confflow.workflow.v1`` / ``confflow.workflow.v3`` wires are never parsed,
+    migrated or executed.
+    """
+    if not isinstance(raw, Mapping):
+        raise ConfigValidationError(ConfigIssue("", "workflow config root must be a mapping"))
+    if "schema" not in raw:
+        return WORKFLOW_SCHEMA_VERSION_V2
+    value = raw["schema"]
+    if not isinstance(value, str) or not value.strip():
+        raise ConfigValidationError(
+            ConfigIssue("schema", "workflow 'schema' must be a non-empty string")
+        )
+    normalized = value.strip()
+    if normalized == WORKFLOW_SCHEMA_VERSION_V2:
+        return normalized
+    raise ConfigValidationError(
+        ConfigIssue(
+            "schema",
+            f"{UNSUPPORTED_WORKFLOW_VERSION}: unsupported workflow schema {value!r}; "
+            "the only supported workflow format is 'confflow.workflow.v4'",
+        )
+    )
+
 
 ProgramName = Literal["g16", "orca"]
 TaskName = Literal["opt", "sp", "freq", "opt_freq", "ts"]
@@ -746,10 +912,36 @@ class WorkflowConfig:
 
 
 def load_workflow_model(config_file: str | Path) -> WorkflowConfig:
-    from .issues import ConfigValidationError
-    from .parser import load_raw_mapping, parse_workflow_mapping
+    """Load one legacy workflow YAML file into the typed model.
 
+    The outermost version discriminator is enforced first, so a retired
+    V1/V3 document -- and any V4 document, which this legacy tool does not
+    read -- fails closed before any field is interpreted.
+    """
     try:
         return parse_workflow_mapping(load_raw_mapping(config_file))
     except ConfigValidationError as exc:
         raise ConfigurationError(str(exc)) from exc
+
+
+__all__ = [
+    "RETIRED_WORKFLOW_SCHEMA_VERSIONS",
+    "UNSUPPORTED_WORKFLOW_VERSION",
+    "WORKFLOW_SCHEMA_VERSION_V2",
+    "CalcStepParams",
+    "CleanupOptions",
+    "ConfigIssue",
+    "ConfigValidationError",
+    "ExecutionOptions",
+    "GlobalOptions",
+    "ResourceOptions",
+    "StepConfig",
+    "TSOptions",
+    "WorkflowConfig",
+    "detect_schema_version",
+    "load_raw_mapping",
+    "load_workflow_model",
+    "parse_workflow_mapping",
+    "resolve_calc_step",
+    "resolve_global_options",
+]

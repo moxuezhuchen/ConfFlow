@@ -2,11 +2,11 @@
 
 """Producer-owned V4 recipe catalog: named runnable starting points.
 
-The catalog follows the structural pattern of
-:mod:`confflow.config.canonical.recipes` (entries with ``id``/``label``/
-``description``/``category``/``order``/``document``/``required_fields``/
-``exposed_fields``), but every ``document`` is a complete V4 workflow document
-that compiles through :mod:`confflow.workflow.v4.parser` and
+The catalog follows the historical structural pattern (entries with
+``id``/``label``/``description``/``category``/``order``/``document``/
+``required_fields``/``exposed_fields``), but every ``document`` is a complete
+V4 workflow document that compiles through
+:mod:`confflow.workflow.v4.parser` and
 :mod:`confflow.workflow.v4.compiler` as shipped.
 
 V4 recipes are runnable documents, not fragments: compilation requires a
