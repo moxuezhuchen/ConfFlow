@@ -14,6 +14,8 @@ import re
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from .._naming import sanitize_job_name
+
 __all__ = [
     "ALLOWED_NATIVE_KEYS",
     "apply_freeze",
@@ -54,9 +56,6 @@ ALLOWED_NATIVE_KEYS: frozenset[str] = frozenset(
 
 _BYTES_PER_GB: int = 1024**3
 
-_MAX_JOB_LENGTH: int = 128
-
-_JOB_SANITIZE_PATTERN = re.compile(r"[^A-Za-z0-9_.\-]+")
 _HASH_PREFIX_PATTERN = re.compile(r"^\s*#+\s*")
 _P_REQUEST_PATTERN = re.compile(r"^[pP](?:\s|$)")
 _KEYWORD_NORMALIZE_PATTERN = re.compile(r"^\s*(?:#\s*[pPnNtT]?\s*)+")
@@ -75,29 +74,6 @@ _REMOVE_OPT_ITEMS: frozenset[str] = frozenset(
 
 #: String values that disable checkpoint writing, mirroring the legacy rule.
 _NEGATIVE_WRITE_CHK: frozenset[str] = frozenset({"0", "false", "no", "off"})
-
-
-def sanitize_job_name(value: str, *, fallback: str = "job") -> str:
-    """Sanitize a logical key into a filesystem-safe Gaussian job name.
-
-    Parameters
-    ----------
-    value : str
-        Candidate job name, usually the work-item logical key.
-    fallback : str, optional
-        Name used when nothing sanitizable remains.
-
-    Returns
-    -------
-    str
-        Deterministic job name containing only ``[A-Za-z0-9_.-]``.
-    """
-    cleaned = _JOB_SANITIZE_PATTERN.sub("_", str(value).strip()).strip("._")
-    if not cleaned:
-        cleaned = _JOB_SANITIZE_PATTERN.sub("_", str(fallback).strip()).strip("._")
-    if not cleaned:
-        cleaned = "job"
-    return cleaned[:_MAX_JOB_LENGTH]
 
 
 def check_native_keys(native: Mapping[str, Any]) -> None:
