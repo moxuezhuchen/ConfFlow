@@ -578,9 +578,16 @@ def main(
 
         return config_main(effective_args[1:])
     if effective_args and effective_args[0] == "workflow":
-        from .config.workflow_cli import main as workflow_main
-
-        return workflow_main(effective_args[1:])
+        # Architecture Diet PR-7: the only command ever exposed here,
+        # ``workflow upgrade``, emitted the never-released Workflow V3 wire
+        # format. The command is retired, not re-pointed: it fails closed with
+        # no output and no side effects.
+        print(
+            "Error: retired command 'workflow': it emitted the never-released "
+            "Workflow V3 wire format, which is no longer supported.",
+            file=sys.stderr,
+        )
+        return ExitCode.USAGE_ERROR
 
     parser = build_parser()
     args = parser.parse_args(args_list)

@@ -1,11 +1,18 @@
 """Canonical configuration parsing primitives.
 
-This package is an additive boundary. Existing v2 dataclass and Pydantic
-entry points remain the compatibility surface while callers migrate.
+This package is the V1/V2 compatibility boundary. Existing V2 dataclass and
+Pydantic entry points remain the released configuration surface while callers
+migrate.
 
 It also owns the producer-side *editing* contract: the workflow schema, the
 editor manifest and the recipe catalog, and the contract documents that publish
-them (``confflow.configuration-contract.v1``, ``.v2`` and ``.v3``).
+them (``confflow.configuration-contract.v1`` and ``.v2``).
+
+The never-released Workflow V3 line (V3 parser/graph, the V3 semantic
+validation profile, the ``configuration-contract.v3`` document, the V2->V3
+upgrade emitter and the V3 editor/recipe catalogs) was retired by the
+Architecture Diet PR-7: V3 was never a published public wire, so nothing here
+imports, exports or advertises it.
 """
 
 from .contract import (
@@ -13,53 +20,26 @@ from .contract import (
     CONFIGURATION_CONTRACT_SCHEMA,
     CONFIGURATION_CONTRACT_V1_SCHEMA,
     CONFIGURATION_CONTRACT_V2_SCHEMA,
-    CONFIGURATION_CONTRACT_V3_SCHEMA,
     CONFIGURATION_VALIDATION_SCHEMA,
     build_configuration_contract,
     build_configuration_contract_for_version,
     build_configuration_contract_v1,
     build_configuration_contract_v2,
-    build_configuration_contract_v3,
 )
 from .diagnostics import Diagnostic, Severity
 from .editor_manifest import (
     EDITOR_MANIFEST_SCHEMA,
     build_editor_manifest,
-    build_editor_manifest_v3,
     editor_manifest_sha256,
-    editor_manifest_sha256_v3,
-    program_choices,
-    task_choices,
-    theory_dispersion_choices,
-    theory_solvent_models,
-)
-from .execution_versions import (
-    CAPABILITIES,
-    VersionCapability,
-    can_execute,
-    can_parse,
-    require_executable,
-    require_executable_workflow_file,
-)
-from .extensions import (
-    DEFAULT_EXTENSION_REGISTRY,
-    EXTENSION_NAMESPACE_PATTERN,
-    ExtensionRegistry,
-    is_valid_namespace,
 )
 from .fingerprint import (
-    EXECUTION_CLASS_GLOBAL_MEMBERS,
-    EXECUTION_CLASS_STEP_PARAMS,
     WORKFLOW_BINDING_SCHEMA,
-    WORKFLOW_SEMANTICS_VERSION,
     WorkflowBindingCompatibilityError,
     WorkflowConfigBinding,
     WorkflowFingerprintError,
     build_workflow_binding,
-    build_workflow_definition_payload_v3,
     canonical_workflow_payload,
     parse_workflow_binding,
-    workflow_definition_fingerprint_v3,
     workflow_fingerprint,
 )
 from .issues import ConfigIssue, ConfigValidationError
@@ -68,9 +48,7 @@ from .param_fields import (
     calc_param_fields,
     confgen_keys,
     confgen_param_fields,
-    param_properties,
     v2_calc_keys,
-    v3_calc_keys,
 )
 from .parser import (
     detect_schema_version,
@@ -82,56 +60,22 @@ from .parser import (
 )
 from .recipes import (
     RECIPE_CATALOG_SCHEMA,
-    RECIPE_STEP_ID_PATTERN,
-    STEP_ID_ALPHABET,
-    STEP_ID_MAX_ATTEMPTS,
-    STEP_ID_SUFFIX_LENGTH,
-    StepIdExhaustionError,
-    allocate_step_id,
     build_recipe_catalog,
-    build_recipe_catalog_v3,
-    instantiate_recipe_v3,
     recipe_catalog_sha256,
-    recipe_catalog_sha256_v3,
 )
 from .resolve import resolve_calc_step, resolve_global_options
 from .schema import (
     WORKFLOW_SCHEMA_VERSION,
     WORKFLOW_SCHEMA_VERSION_V2,
-    WORKFLOW_SCHEMA_VERSION_V3,
-    WORKFLOW_V3_ID_PATTERN,
-    SchemaProfile,
-    workflow_fragment_schema_sha256_v3,
-    workflow_json_schema_v3,
+    workflow_json_schema,
     workflow_schema_sha256,
-    workflow_schema_sha256_v3,
 )
 from .serialization import CANONICALIZATION_VERSION
-from .structured import STRUCTURED_THEORY_FIELDS, compile_structured_calc
-from .upgrade import (
-    MIGRATION_NAMESPACE,
-    MigrationRecord,
-    UnknownParamsPolicy,
-    UpgradeError,
-    UpgradeResult,
-    parse_unknown_params_policy,
-    upgrade_v2_to_v3,
-)
 from .v2_adapter import to_canonical_workflow
-from .v3_graph import (
-    ValidatedWorkflowGraph,
-    build_validated_graph,
-    v3_id_order_key,
-)
-from .v3_parser import parse_v3_document
 from .validation import (
-    ValidationProfile,
     calc_input_diagnostics,
-    resolve_step_semantic_params,
-    validate_v3_definition,
     validate_workflow_definition,
     validate_workflow_run_context,
-    validate_workflow_v3,
 )
 from .workflow import (
     CanonicalStepDefinition,
@@ -142,127 +86,62 @@ from .workflow import (
     normalize_step_inputs,
     topo_order,
 )
-from .yaml_io import (
-    dump_workflow_yaml,
-    order_workflow_document,
-    write_workflow_yaml_atomic,
-)
 
 __all__ = [
-    "CAPABILITIES",
+    "CANONICALIZATION_VERSION",
     "CONFIGURATION_CONTRACT_BUILDERS",
     "CONFIGURATION_CONTRACT_SCHEMA",
     "CONFIGURATION_CONTRACT_V1_SCHEMA",
     "CONFIGURATION_CONTRACT_V2_SCHEMA",
-    "CONFIGURATION_CONTRACT_V3_SCHEMA",
     "CONFIGURATION_VALIDATION_SCHEMA",
-    "DEFAULT_EXTENSION_REGISTRY",
     "EDITOR_MANIFEST_SCHEMA",
-    "EXTENSION_NAMESPACE_PATTERN",
-    "MIGRATION_NAMESPACE",
-    "MigrationRecord",
     "RECIPE_CATALOG_SCHEMA",
-    "STEP_ID_ALPHABET",
-    "STEP_ID_MAX_ATTEMPTS",
-    "STEP_ID_SUFFIX_LENGTH",
-    "STRUCTURED_THEORY_FIELDS",
-    "StepIdExhaustionError",
-    "UnknownParamsPolicy",
-    "UpgradeError",
-    "UpgradeResult",
-    "ValidatedWorkflowGraph",
-    "ValidationProfile",
     "WORKFLOW_BINDING_SCHEMA",
-    "WORKFLOW_SEMANTICS_VERSION",
-    "CANONICALIZATION_VERSION",
     "WORKFLOW_SCHEMA_VERSION",
     "WORKFLOW_SCHEMA_VERSION_V2",
-    "WORKFLOW_SCHEMA_VERSION_V3",
-    "WORKFLOW_V3_ID_PATTERN",
     "CanonicalStepDefinition",
     "CanonicalWorkflowDefinition",
+    "ConfigIssue",
+    "ConfigValidationError",
     "DependencyMode",
-    "CANONICALIZATION_VERSION",
     "Diagnostic",
-    "ExtensionRegistry",
     "ParamFieldDescriptor",
-    "SchemaProfile",
     "Severity",
-    "VersionCapability",
     "WorkflowBindingCompatibilityError",
-    "EXECUTION_CLASS_GLOBAL_MEMBERS",
-    "EXECUTION_CLASS_STEP_PARAMS",
-    "RECIPE_STEP_ID_PATTERN",
     "WorkflowConfigBinding",
     "WorkflowFingerprintError",
-    "allocate_step_id",
     "build_configuration_contract",
     "build_configuration_contract_for_version",
     "build_configuration_contract_v1",
     "build_configuration_contract_v2",
-    "build_configuration_contract_v3",
     "build_editor_manifest",
-    "build_editor_manifest_v3",
     "build_recipe_catalog",
-    "build_recipe_catalog_v3",
     "build_step_graph",
-    "build_validated_graph",
     "build_workflow_binding",
-    "build_workflow_definition_payload_v3",
     "calc_input_diagnostics",
     "calc_param_fields",
-    "can_execute",
-    "can_parse",
     "canonical_step_name",
     "canonical_workflow_payload",
-    "compile_structured_calc",
     "confgen_keys",
     "confgen_param_fields",
     "detect_schema_version",
     "detect_workflow_file_version",
-    "dump_workflow_yaml",
     "editor_manifest_sha256",
-    "editor_manifest_sha256_v3",
-    "instantiate_recipe_v3",
-    "is_valid_namespace",
     "load_raw_mapping",
     "load_workflow_definition",
     "normalize_step_inputs",
-    "order_workflow_document",
-    "param_properties",
     "parse_canonical_workflow",
-    "parse_unknown_params_policy",
-    "parse_v3_document",
     "parse_workflow_binding",
     "parse_workflow_mapping",
-    "program_choices",
     "recipe_catalog_sha256",
-    "recipe_catalog_sha256_v3",
-    "require_executable",
-    "require_executable_workflow_file",
     "resolve_calc_step",
     "resolve_global_options",
-    "resolve_step_semantic_params",
-    "task_choices",
-    "theory_dispersion_choices",
-    "theory_solvent_models",
     "to_canonical_workflow",
     "topo_order",
-    "upgrade_v2_to_v3",
     "v2_calc_keys",
-    "v3_calc_keys",
-    "v3_id_order_key",
-    "validate_v3_definition",
     "validate_workflow_definition",
     "validate_workflow_run_context",
-    "validate_workflow_v3",
-    "workflow_definition_fingerprint_v3",
     "workflow_fingerprint",
-    "workflow_fragment_schema_sha256_v3",
-    "workflow_json_schema_v3",
+    "workflow_json_schema",
     "workflow_schema_sha256",
-    "workflow_schema_sha256_v3",
-    "write_workflow_yaml_atomic",
-    "ConfigIssue",
-    "ConfigValidationError",
 ]
