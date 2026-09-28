@@ -39,26 +39,38 @@ import pytest
 from confflow.domain.units import Unit
 
 # ---------------------------------------------------------------------------
-# Prefer-real seam: ConfFlow producer modules (NOT LANDED as of V4-6).
+# Prefer-real seam: ConfFlow producer modules (LANDED).
+#
+# Architecture Diet PR-9 retired the released V1/V2 contract writer, so the
+# only current producer builder is ``build_configuration_contract_v4`` (the
+# former ``build_configuration_contract`` name emitted the v1 document and is
+# gone).  This file still programs against its own *frozen V4-6 envelope
+# double* for the literal wire-shape assertions below -- the real envelope is a
+# superset with registry-generated descriptors -- while
+# ``tests/v4/test_v46_cross_repo_e2e.py`` exercises the real bytes end to end.
+# The availability flags are therefore truthful again: the real producer and
+# the real validator are importable, and ``TestRealVsDoubleInventory`` pins
+# that plus the real bytes round trip.
 # ---------------------------------------------------------------------------
-try:  # pragma: no cover - real side has not landed; exercised when it does
-    from confflow.producer.contract import (  # type: ignore[import-not-found]
-        build_configuration_contract as _real_build_contract,
-    )
-    from confflow.producer.validation import (  # type: ignore[import-not-found]
-        validate_workflow_bytes as _real_validate_workflow_bytes,
-    )
+from confflow.producer.contract import (  # noqa: E402
+    build_configuration_contract_v4 as build_real_contract,
+)
+from confflow.producer.contract import (  # noqa: E402
+    contract_digest_of,
+)
+from confflow.producer.contract import (  # noqa: E402
+    generate_contract_bytes as generate_real_contract_bytes,
+)
+from confflow.producer.validation import (  # noqa: E402
+    validate_workflow_bytes as _real_validate_workflow_bytes,
+)
 
-    _REAL_PRODUCER_AVAILABLE = True
-except ImportError:
-    _real_build_contract = None
-    _real_validate_workflow_bytes = None
-    _REAL_PRODUCER_AVAILABLE = False
+_REAL_PRODUCER_AVAILABLE = True
 
 # ---------------------------------------------------------------------------
-# Prefer-real seam: ConfFlow analysis modules (NOT LANDED as of V4-6).
+# Prefer-real seam: ConfFlow analysis modules (LANDED).
 # ---------------------------------------------------------------------------
-try:  # pragma: no cover - real side has not landed; exercised when it does
+try:
     from confflow.analysis import (  # type: ignore[import-not-found]
         compute_reaction_profile as _real_compute_reaction_profile,
     )
@@ -69,9 +81,12 @@ except ImportError:
     _REAL_ANALYSIS_AVAILABLE = False
 
 # Real V4 compiler: LANDED, always preferred for workflow validation.
-from confflow.workflow.v4 import compile_workflow
+from confflow.workflow.v4 import compile_workflow  # noqa: E402
 
-USING_PRODUCER_CONTRACT_DOUBLE = _real_build_contract is None
+#: The envelope builder below is the frozen V4-6 double by construction; the
+#: real producer is exercised through ``build_real_contract`` /
+#: ``generate_real_contract_bytes`` and ``test_v46_cross_repo_e2e.py``.
+USING_PRODUCER_CONTRACT_DOUBLE = True
 USING_PRODUCER_VALIDATION_DOUBLE = _real_validate_workflow_bytes is None
 USING_ANALYSIS_STUB = _real_compute_reaction_profile is None
 
@@ -235,9 +250,14 @@ def build_contract_envelope_double(
 
 
 def build_contract_envelope(**kwargs: Any) -> dict[str, Any]:
-    """Prefer the real producer builder; fall back to the loud double."""
-    if _real_build_contract is not None:  # pragma: no cover - not landed
-        return _real_build_contract(**kwargs)
+    """Return the frozen V4-6 envelope double.
+
+    This file's literal wire-shape assertions program against the frozen
+    envelope it was written with; the *real* producer envelope is a superset
+    (registry-generated descriptors) and is exercised through
+    ``build_real_contract`` / ``generate_real_contract_bytes`` and
+    ``tests/v4/test_v46_cross_repo_e2e.py``.
+    """
     return build_contract_envelope_double(**kwargs)
 
 
@@ -474,9 +494,31 @@ def _double_validate_workflow_bytes(workflow_bytes: bytes) -> dict[str, Any]:
 
 
 def validate_workflow_bytes(workflow_bytes: bytes) -> dict[str, Any]:
-    """Prefer the real producer validator; fall back to the strict double."""
-    if _real_validate_workflow_bytes is not None:  # pragma: no cover - not landed
-        return _real_validate_workflow_bytes(workflow_bytes)
+    """Run the producer validator and project it to the frozen response envelope.
+
+    The real ``confflow.producer.validation.validate_workflow_bytes`` returns a
+    typed :class:`~confflow.producer.validation.ValidationReport`; this file's
+    failure matrix programs against the frozen response envelope (``schema`` /
+    ``valid`` / ``diagnostics``), so the report is projected here rather than
+    duplicated.  The projection keeps every diagnostic field, including the
+    producer's stable ``code``.
+    """
+    if _real_validate_workflow_bytes is not None:
+        payload = _real_validate_workflow_bytes(workflow_bytes).to_dict()
+        return {
+            "schema": payload["schema"],
+            "valid": payload["ok"],
+            "diagnostics": [
+                {
+                    "code": item["code"],
+                    "severity": item["severity"],
+                    "step_id": item.get("step_id"),
+                    "field_path": item.get("field_path"),
+                    "message": item["message"],
+                }
+                for item in payload["diagnostics"]
+            ],
+        }
     return _double_validate_workflow_bytes(workflow_bytes)
 
 
@@ -517,7 +559,7 @@ def check_contract_fresh(submitted_against_digest: str, current_contract: dict[s
 
 
 def _require_real_producer() -> None:
-    if _real_build_contract is None or _real_validate_workflow_bytes is None:
+    if not _REAL_PRODUCER_AVAILABLE or _real_validate_workflow_bytes is None:
         raise V46ContractError(
             "producer_unavailable",
             "real confflow.producer modules are not importable; double path in use",
@@ -1026,11 +1068,44 @@ class TestRealVsDoubleInventory:
     """Machine-readable record of which seams are real and which are doubled."""
 
     def test_inventory(self) -> None:
-        assert USING_PRODUCER_CONTRACT_DOUBLE == (_real_build_contract is None)
-        assert USING_PRODUCER_VALIDATION_DOUBLE == (_real_validate_workflow_bytes is None)
+        # The real producer and validator are landed and importable; this file
+        # additionally keeps a frozen V4-6 envelope double for literal
+        # wire-shape assertions (see the seam comment above).
+        assert _REAL_PRODUCER_AVAILABLE is True
+        assert USING_PRODUCER_CONTRACT_DOUBLE is True
+        assert USING_PRODUCER_VALIDATION_DOUBLE is False
         assert USING_ANALYSIS_STUB == (_real_compute_reaction_profile is None)
         # The validation double is strict: it runs the REAL V4 compiler.
         assert compile_workflow is not None
+
+    def test_real_producer_bytes_are_self_consistent(self) -> None:
+        """Real producer bytes re-verify under the producer's own authority.
+
+        The real envelope is *not* the frozen V4-6 shape this file pins
+        literally (it adds registry-generated descriptors and names the
+        workflow line), and it publishes bare-hex canonical digests rather
+        than the frozen ``sha256:``-prefixed ones -- so it is verified with
+        :func:`confflow.producer.contract.contract_digest_of` instead of the
+        frozen helper.  The full end-to-end real-bytes round trip lives in
+        ``tests/v4/test_v46_cross_repo_e2e.py``.
+        """
+        envelope = build_real_contract(producer_version="4.6.0-inventory")
+        wire = generate_real_contract_bytes(producer_version="4.6.0-inventory")
+        parsed = json.loads(wire.decode("utf-8"))
+
+        assert parsed["content_schema"] == CONTRACT_SCHEMA_V4
+        assert parsed["workflow_schema_id"] == WORKFLOW_SCHEMA_V4
+        assert parsed["contract_digest"] == envelope["contract_digest"]
+        assert contract_digest_of(parsed) == parsed["contract_digest"]
+
+    def test_real_producer_validation_is_the_producer_authority(self) -> None:
+        workflow = JobdeskContractDouble.build_tspes_workflow(
+            JobdeskContractDouble.parse(serialize_contract(build_contract_envelope()))
+        )
+        response = _real_validate_workflow_bytes(JobdeskContractDouble.serialize_workflow(workflow))
+        payload = response.to_dict()
+        assert payload["schema"] == VALIDATION_SCHEMA_V1
+        assert payload["ok"] is True, payload["diagnostics"]
 
 
 # ---------------------------------------------------------------------------
@@ -1038,8 +1113,8 @@ class TestRealVsDoubleInventory:
 # ---------------------------------------------------------------------------
 class TestFailureMatrix:
     def test_producer_unavailable(self) -> None:
-        if _real_build_contract is not None and _real_validate_workflow_bytes is not None:
-            pytest.skip("real producer landed: double path retired")
+        if _REAL_PRODUCER_AVAILABLE and _real_validate_workflow_bytes is not None:
+            pytest.skip("real producer landed: the unavailable path is gone")
         with pytest.raises(V46ContractError) as excinfo:
             _require_real_producer()
         assert excinfo.value.code == "producer_unavailable"

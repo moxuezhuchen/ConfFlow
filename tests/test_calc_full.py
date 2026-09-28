@@ -7,7 +7,7 @@ from __future__ import annotations
 from confflow import calc
 from confflow.calc.policies.gaussian import GaussianPolicy
 from confflow.calc.policies.orca import OrcaPolicy
-from confflow.config.models import CalcStepParams, GlobalOptions
+from confflow.calc.config_model import CalcStepParams, GlobalOptions
 
 
 def test_memory_calculation_gaussian(tmp_path):

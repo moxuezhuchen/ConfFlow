@@ -160,11 +160,10 @@ class TestAnalysisHelpers:
         assert np.allclose(arr[1], [1.0, 2.0, 3.0])
 
 
-class TestCoreTypes:
-    """Tests for core.types module."""
+class TestCoreTypesRetired:
+    """``core.types`` (V1/V2 TypedDicts) was retired by Architecture Diet PR-9."""
 
-    def test_core_types_imported(self):
-        from confflow.core import types as t
+    def test_core_types_module_is_gone(self):
+        import importlib.util
 
-        assert t.CoordLine is str
-        assert hasattr(t, "CoordLines")
+        assert importlib.util.find_spec("confflow.core.types") is None

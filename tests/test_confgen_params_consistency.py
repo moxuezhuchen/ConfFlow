@@ -2,20 +2,17 @@
 
 """Consistency tests for the shared ConfGen parameter resolver (P0-C).
 
-These lock the invariant that ``config-show``, workflow fingerprinting, and
-validation interpret confgen parameters identically.  The execution-adapter
-half of this file was removed with the V2/V3 workflow runtime in the
-post-closure Architecture Diet.
+These lock the invariant that the confgen resolver and the workflow input
+validation adapter interpret confgen parameters identically.  The
+execution-adapter half of this file was removed with the V2/V3 workflow
+runtime, and the V2 workflow-fingerprint half with the released V1/V2
+configuration wire (Architecture Diet PR-9).
 """
 
 from __future__ import annotations
 
-from types import SimpleNamespace
-
 import pytest
 
-from confflow.config.canonical.fingerprint import workflow_fingerprint
-from confflow.config.canonical.types import GlobalOptions
 from confflow.core.exceptions import ConfigurationError
 from confflow.shared.confgen_params import resolve_confgen_params
 from confflow.workflow.validation import validate_inputs_compatible
@@ -23,18 +20,6 @@ from confflow.workflow.validation import validate_inputs_compatible
 
 def _resolve(**params):
     return resolve_confgen_params(params, default_workers=4)
-
-
-def _fingerprint(confgen_params):
-    plan = SimpleNamespace(
-        typed_global=GlobalOptions.from_mapping({}),
-        steps=[{"name": "gen", "type": "confgen", "params": confgen_params}],
-        predecessors={},
-        execution_order=["gen"],
-        terminal_steps=["gen"],
-        step_dirnames=["step_01_gen"],
-    )
-    return workflow_fingerprint(plan)
 
 
 def _write_xyz(path):
@@ -153,27 +138,3 @@ def test_validation_accepts_chain_alias(tmp_path):
     first = _write_xyz(tmp_path / "a.xyz")
     second = _write_xyz(tmp_path / "b.xyz")
     validate_inputs_compatible([str(first), str(second)], {"chain": ["1"]})
-
-
-# --------------------------------------------------------------------------
-# Fingerprint adapter
-# --------------------------------------------------------------------------
-
-
-def test_fingerprint_changes_when_clash_threshold_changes():
-    baseline = _fingerprint({})
-    changed = _fingerprint({"clash_threshold": 0.50})
-    assert baseline != changed
-
-
-def test_fingerprint_ignores_alias_spelling():
-    assert _fingerprint({"bond_multiplier": 1.2}) == _fingerprint({"bond_threshold": 1.2})
-    assert _fingerprint({"chain": ["1-2-3"]}) == _fingerprint({"chains": ["1-2-3"]})
-    assert _fingerprint({"steps": ["180"]}) == _fingerprint({"chain_steps": ["180"]})
-    assert _fingerprint({"angles": ["60"]}) == _fingerprint({"chain_angles": ["60"]})
-    assert _fingerprint({"max_workers": 2}) == _fingerprint({"workers": 2})
-
-
-def test_fingerprint_rejects_conflicting_aliases():
-    with pytest.raises(ConfigurationError):
-        _fingerprint({"bond_threshold": 1.20, "bond_multiplier": 1.15})

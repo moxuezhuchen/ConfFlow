@@ -287,16 +287,30 @@ licensed by the user; multi-output restart checkpoints stay work-item
 scoped; cross-definition re-runs and cancelled-retry primitives remain
 explicit future work (see `docs/architecture/WORKFLOW_V4.md`).
 
-## Legacy Quick Start (retired runtime, kept for reference)
+## Legacy Quick Start (retired wire, removed)
 
-The commands below describe the retired V2/V3 runtime. They are no
-longer the production path; on the V4 branch they fail closed.
+The released V1/V2 configuration/execution line is gone, not merely
+deprecated. Architecture Diet PR-9 retired the V1/V2 configuration wire:
+the `configuration-contract.v1` / `.v2` documents, the `confflow.workflow.v2`
+JSON schema, the public V2 parser/validator entrypoints, the V2 editor
+manifest and recipe catalog, the V2 -> canonical adapter, the V2 diagnostic
+planners (`--dry-run`, `--config-show`) and the `confflow config validate`
+handler. The never-released V3 line was already retired by PR-7.
+
+A V1/V2/V3 document now fails closed at the outermost version
+discriminator — `unsupported_workflow_version` for a retired schema id,
+`legacy_workflow_not_executable` for the formal execution entry — before any
+managed-path validation, lease, directory creation or execution:
 
 ```bash
-# Retired: V2/V3 workflow execution
-confflow mol.xyz -c confflow.example.yaml
-confflow mol.xyz -c confflow.example.yaml --resume
-confflow mol.xyz -c confflow.example.yaml --verbose
+# Rejected, no side effects: retired V1/V2/V3 workflow execution
+confflow mol.xyz -c legacy.yaml
+
+# The only supported workflow format:
+confflow v4 validate --workflow confflow.example.yaml --json
+confflow v4 run --workflow confflow.example.yaml \
+  --inputs structures=mol.xyz --run-root ./run \
+  --executable orca=/opt/orca601/orca --json
 ```
 
 By default, CLI output is written to `<input_basename>.txt` in the input directory rather than streamed to the terminal. A common way to inspect progress is:
@@ -305,34 +319,9 @@ By default, CLI output is written to `<input_basename>.txt` in the input directo
 tail -f mol.txt
 ```
 
-A minimal legacy workflow example (retired vocabulary — `iprog`/`itask`
-no longer execute):
-
-```yaml
-global:
-  gaussian_path: "/opt/g16/g16"
-  cores_per_task: 4
-  total_memory: "16GB"
-  sandbox_root: "/scratch/confjobs"
-  allowed_executables: ["g16", "/opt/orca/orca"]
-  charge: 0
-  multiplicity: 1
-
-steps:
-  - name: confgen
-    type: confgen
-    params:
-      chains: ["1-2-3-4"]
-
-  - name: opt_b3lyp
-    type: calc
-    params:
-      iprog: g16
-      itask: opt_freq
-      keyword: "B3LYP/6-31G* opt freq"
-```
-
-For a fuller configuration example, see [`confflow.example.yaml`](confflow.example.yaml).
+[`confflow.example.yaml`](confflow.example.yaml) is a V4 document and
+compiles as shipped; `share/confflow/confflow.example.yaml` in an installed
+wheel is the same file.
 
 ## Safe Evaluation / Operational Boundaries
 
@@ -345,8 +334,8 @@ ConfFlow should be evaluated carefully and in isolation.
 
 Important limitations:
 
-- Use `--dry-run` to validate inputs/configuration and preview planned steps before launching external programs
-- `--dry-run` is a planning aid, not a full sandbox or guarantee that a later real run cannot write files
+- Use `confflow v4 validate --workflow FILE --json` to validate a workflow document before launching external programs; the legacy `--dry-run` planning aid was retired with the V1/V2 wire
+- Validating a document is not a full sandbox or guarantee that a later real run cannot write files
 - Running a workflow can write files, overwrite managed artifacts, clean stale outputs, and launch configured external executables
 - ConfFlow is not a sandbox for untrusted workloads
 
@@ -364,21 +353,20 @@ ConfFlow is not recommended for unattended use or for non-isolated production co
 
 | Command | Purpose |
 | --- | --- |
-| `confflow` | Run a YAML-defined workflow |
-| `confgen` | Generate conformers in chain mode |
-| `confrefine` | Deduplicate and filter conformers |
-| `confts` | TS-focused tooling, including scan rescue support |
+| `confflow` | Run the formal V4 runtime (`confflow v4 run` / `confflow v4 validate` / `confflow v4 contract --json`) |
+| `confgen` | Generate conformers in chain mode (standalone structure tool) |
+| `confrefine` | Deduplicate and filter conformers (standalone structure tool) |
+| `confts` | TS-focused tooling: scan-keyword rewrite, and legacy single-step calc from a local V2 YAML |
 
-Calc-step execution ships only as a workflow step (`type: calc`) driven by
-the YAML config; no standalone calc CLI is exposed in 1.4.3. Examples:
+Examples:
 
 ```bash
 # Chain-based conformer generation
 confgen mol.xyz --chain 1-2-3-4-5 --steps 180,180,180,180 -y
 # Explicit angle sets
 confgen mol.xyz --chain 1-2-3-4-5 --angles "0,120,240;0,60,120,180;180;0,120" -y
-# Run a calc step (B3LYP optimization + frequency) from the workflow YAML
-confflow search.xyz -c confflow.example.yaml
+# Validate and run a V4 workflow from the shipped example
+confflow v4 validate --workflow confflow.example.yaml --json
 ```
 
 See the [Command Reference](docs/COMMAND_REFERENCE.md) for the full CLI reference.

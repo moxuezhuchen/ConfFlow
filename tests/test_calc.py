@@ -667,7 +667,7 @@ class TestExecutorAdvanced:
         import json
 
         from confflow.calc.artifacts import CalcArtifactManager
-        from confflow.config.models import CalcStepParams, GlobalOptions
+        from confflow.calc.config_model import CalcStepParams, GlobalOptions
 
         input_xyz = tmp_path / "input.xyz"
         input_xyz.write_text("1\nx\nH 0 0 0\n", encoding="utf-8")

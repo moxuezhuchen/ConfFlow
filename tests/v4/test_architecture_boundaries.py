@@ -257,6 +257,27 @@ REMOVED_LEGACY_MODULES: frozenset[str] = frozenset(
         "confflow.workflow.dag",
         "confflow.workflow.dag.explicit",
         "confflow.workflow.dag.legacy",
+        # PR-9: retired V1/V2 configuration wire (see PUBLIC_V1_V2_WIRE_MODULES).
+        "confflow.config.canonical",
+        "confflow.config.canonical.contract",
+        "confflow.config.canonical.schema",
+        "confflow.config.canonical.parser",
+        "confflow.config.canonical.validation",
+        "confflow.config.canonical.v2_adapter",
+        "confflow.config.canonical.workflow",
+        "confflow.config.canonical.editor_manifest",
+        "confflow.config.canonical.recipes",
+        "confflow.config.canonical.fingerprint",
+        "confflow.config.canonical.param_fields",
+        "confflow.config.canonical.pydantic",
+        "confflow.config.canonical.diagnostics",
+        "confflow.config.canonical.serialization",
+        "confflow.config.models",
+        "confflow.shared.config_validation",
+        "confflow.core.types",
+        "confflow.workflow.plan",
+        "confflow.workflow.config_show",
+        "confflow.workflow.dry_run",
     }
 )
 
@@ -341,6 +362,82 @@ RETIRED_V3_SYMBOLS = frozenset(
         "v3_parser",
         "v3_graph",
     }
+)
+
+#: The released V1/V2 configuration wire retired by Architecture Diet PR-9.
+#: The V1 contract document, the one workflow-schema generator that document
+#: digested, the V2 document parser/validator, the V2->canonical adapter and
+#: IR, the V2 editor manifest and recipe catalog, the V2 fingerprint/param
+#: registry, the V2 typed-model and pydantic facades, the V2 diagnostics and
+#: serialization helpers, the V2 diagnostic planners (dry-run / config-show /
+#: plan) and the legacy YAML validation wrapper.  None may reappear.
+PUBLIC_V1_V2_WIRE_MODULES: tuple[str, ...] = (
+    "confflow.config.canonical",
+    "confflow.config.canonical.contract",
+    "confflow.config.canonical.schema",
+    "confflow.config.canonical.parser",
+    "confflow.config.canonical.validation",
+    "confflow.config.canonical.v2_adapter",
+    "confflow.config.canonical.workflow",
+    "confflow.config.canonical.editor_manifest",
+    "confflow.config.canonical.recipes",
+    "confflow.config.canonical.fingerprint",
+    "confflow.config.canonical.param_fields",
+    "confflow.config.canonical.pydantic",
+    "confflow.config.canonical.diagnostics",
+    "confflow.config.canonical.serialization",
+    "confflow.config.models",
+    "confflow.shared.config_validation",
+    "confflow.core.types",
+    "confflow.workflow.plan",
+    "confflow.workflow.config_show",
+    "confflow.workflow.dry_run",
+)
+
+#: PR-9 decision: no V1 migration kernel exists to allow.  The v1 contract
+#: document embedded the same workflow schema the v2 document did, so no
+#: ``V1 -> V2`` / ``V1 -> canonical`` upgrade was ever published.  An entry here
+#: would need its own written compatibility decision.
+V1_MIGRATION_MODULES: tuple[str, ...] = ()
+
+#: The single V2 migration kernel PR-9 retired: the ``WorkflowConfig`` ->
+#: canonical-IR adapter.  It must stay absent.
+V2_MIGRATION_MODULES: tuple[str, ...] = ("confflow.config.canonical.v2_adapter",)
+
+#: Source tokens that identify the retired V1/V2 configuration wire.  This is
+#: deliberately *not* a ban on the strings "v1"/"v2": read the metric docstring
+#: in ``scripts/architecture_metrics.py`` for the current protocol ids that keep
+#: those majors.
+RETIRED_V1_V2_WIRE_TOKENS: tuple[str, ...] = (
+    "confflow.workflow.v1",
+    "confflow.workflow.v2",
+    "confflow.configuration-contract.v1",
+    "confflow.configuration-contract.v2",
+    "confflow.config.canonical",
+    "confflow.config.models",
+    "confflow.shared.config_validation",
+    "confflow.core.types",
+    "confflow.workflow.plan",
+    "confflow.workflow.config_show",
+    "confflow.workflow.dry_run",
+    "to_canonical_workflow",
+    "parse_canonical_workflow",
+    "parse_workflow_mapping",
+    "load_raw_mapping",
+    "load_workflow_definition",
+    "load_workflow_model",
+    "detect_schema_version",
+    "detect_workflow_file_version",
+    "validate_workflow_definition",
+    "calc_input_diagnostics",
+    "resolve_calc_step",
+    "resolve_global_options",
+    "workflow_fingerprint",
+    "build_configuration_contract_v1",
+    "build_configuration_contract_v2",
+    "CONFIGURATION_CONTRACT_BUILDERS",
+    "build_editor_manifest(",
+    "build_recipe_catalog(",
 )
 
 #: Architecture Diet PR-8 consolidated helper authorities.  Six byte-identical
@@ -999,6 +1096,115 @@ class TestV3PublicWireRetired:
         assert offenders == []
 
 
+class TestV1V2PublicWireRetired:
+    """The released V1/V2 configuration wire must stay physically absent.
+
+    Architecture Diet PR-9 retired the V1/V2 contract documents, the V2
+    workflow schema, the public V2 parser/validator entrypoints, the V2 editor
+    manifest and recipe catalog, the V2->canonical adapter, the V2 typed-model
+    and pydantic facades, and the V2 diagnostic planners.  The only supported
+    configuration wire is V4.  This gate makes sure no source file, import
+    edge, V4-root reference or internal migration kernel can resurrect them,
+    and it refuses a blanket "v1"/"v2" string ban by pinning the *current*
+    protocol ids that legitimately keep those majors.
+    """
+
+    def test_public_v1_v2_wire_modules_are_absent_from_disk(self) -> None:
+        present = [module for module in PUBLIC_V1_V2_WIRE_MODULES if _legacy_module_exists(module)]
+        assert present == []
+
+    def test_public_v1_v2_wire_package_directory_is_gone(self) -> None:
+        # The retired wire lived in a package; an empty directory left behind
+        # would let ``confflow.config.canonical`` resolve as a namespace
+        # package again.
+        assert not (PACKAGE_ROOT / "config" / "canonical").exists()
+
+    def test_public_v1_v2_wire_modules_are_not_importable(self) -> None:
+        still_present: list[str] = []
+        for module in PUBLIC_V1_V2_WIRE_MODULES:
+            try:
+                importlib.import_module(module)
+            except ModuleNotFoundError:
+                continue
+            except Exception as exc:  # pragma: no cover - import error is enough
+                still_present.append(f"{module}: {type(exc).__name__}")
+                continue
+            still_present.append(module)
+        assert still_present == []
+
+    def test_no_production_module_imports_a_retired_v1_v2_module(self) -> None:
+        offenders: list[tuple[str, str, int]] = []
+        for path in _iter_python_files(PACKAGE_ROOT):
+            for raw, lineno in _imports(path):
+                absolute = _resolve_import(path, raw)
+                if any(
+                    absolute == module or absolute.startswith(module + ".")
+                    for module in PUBLIC_V1_V2_WIRE_MODULES
+                ):
+                    offenders.append((str(path.relative_to(REPO_ROOT)), absolute, lineno))
+        assert offenders == []
+
+    def test_no_v1_migration_kernel_is_retained(self) -> None:
+        assert V1_MIGRATION_MODULES == ()
+        assert V2_MIGRATION_MODULES == ("confflow.config.canonical.v2_adapter",)
+        present = [
+            module
+            for module in (*V1_MIGRATION_MODULES, *V2_MIGRATION_MODULES)
+            if _legacy_module_exists(module)
+        ]
+        assert present == []
+
+    def test_v4_roots_reference_no_retired_v1_v2_token(self) -> None:
+        offenders: list[tuple[str, str]] = []
+        roots = (
+            DOMAIN_ROOT,
+            EXECUTION_ROOT,
+            V4_ROOT,
+            PERSISTENCE_ROOT,
+            PROGRAMS_ROOT,
+            REMOTE_ROOT,
+            PRODUCER_ROOT,
+            ANALYSIS_ROOT,
+            APPLICATION_ROOT,
+        )
+        for root in roots:
+            for path in _iter_python_files(root):
+                text = path.read_text(encoding="utf-8")
+                found = sorted(token for token in RETIRED_V1_V2_WIRE_TOKENS if token in text)
+                if found:
+                    offenders.append((str(path.relative_to(REPO_ROOT)), found))
+        assert offenders == []
+
+    def test_current_protocol_majors_are_not_swept_up(self) -> None:
+        """The V1/V2 tokens must not accidentally ban current protocol ids.
+
+        The producer protocol JobDesk's V4 path consumes keeps the ``.v1``
+        validation-response / editor-manifest / recipe-catalog ids, the
+        ``confflow.contract.*.v1`` capability ids and the ``.v3`` remote
+        capability ids.  If a future edit adds one of those to
+        ``RETIRED_V1_V2_WIRE_TOKENS`` this test fails loudly instead of
+        silently retiring current truth.
+        """
+        from confflow.config.contract_schemas import (
+            CONFIGURATION_VALIDATION_SCHEMA,
+            EDITOR_MANIFEST_SCHEMA,
+            RECIPE_CATALOG_SCHEMA,
+        )
+        from confflow.producer.contract import ANALYSIS_REACTION_PROFILE_CONTRACT
+        from confflow.remote.envelope import HANDOFF_SCHEMA_V3, RESULT_SCHEMA_V3
+
+        current = (
+            CONFIGURATION_VALIDATION_SCHEMA,
+            EDITOR_MANIFEST_SCHEMA,
+            RECIPE_CATALOG_SCHEMA,
+            ANALYSIS_REACTION_PROFILE_CONTRACT,
+            HANDOFF_SCHEMA_V3,
+            RESULT_SCHEMA_V3,
+        )
+        banned = sorted(item for item in current if item in RETIRED_V1_V2_WIRE_TOKENS)
+        assert banned == []
+
+
 class TestConsolidatedHelperAuthorities:
     """PR-8 consolidated helpers stay single-source (no local copies regrow).
 
@@ -1262,29 +1468,59 @@ class TestProducerImportIsolation:
         result = self._run(script)
         assert result.returncode == 0, result.stderr
 
-    def test_schema_authority_is_single_source_for_legacy_paths(self) -> None:
-        """The legacy import paths re-export the same objects (no second copy)."""
+    def test_schema_authority_is_single_source_for_every_consumer(self) -> None:
+        """Every published schema id has exactly one definition."""
         from confflow.config import contract_schemas
-        from confflow.config.canonical.contract import CONFIGURATION_VALIDATION_SCHEMA
-        from confflow.config.canonical.editor_manifest import EDITOR_MANIFEST_SCHEMA
-        from confflow.config.canonical.recipes import RECIPE_CATALOG_SCHEMA
+        from confflow.producer import contract as producer_contract
+        from confflow.producer import manifest as producer_manifest
+        from confflow.producer import recipes as producer_recipes
+        from confflow.producer import validation as producer_validation
 
-        assert CONFIGURATION_VALIDATION_SCHEMA is contract_schemas.CONFIGURATION_VALIDATION_SCHEMA
-        assert EDITOR_MANIFEST_SCHEMA is contract_schemas.EDITOR_MANIFEST_SCHEMA
-        assert RECIPE_CATALOG_SCHEMA is contract_schemas.RECIPE_CATALOG_SCHEMA
         assert contract_schemas.CONFIGURATION_VALIDATION_SCHEMA == (
             "confflow.configuration-validation.v1"
         )
         assert contract_schemas.EDITOR_MANIFEST_SCHEMA == "confflow.editor-manifest.v1"
         assert contract_schemas.RECIPE_CATALOG_SCHEMA == "confflow.recipe-catalog.v1"
+        # Consumers read the authority object itself, never a copy.
+        assert (
+            producer_contract.CONFIGURATION_VALIDATION_SCHEMA
+            is contract_schemas.CONFIGURATION_VALIDATION_SCHEMA
+        )
+        assert (
+            producer_validation.VALIDATION_RESPONSE_SCHEMA
+            is contract_schemas.CONFIGURATION_VALIDATION_SCHEMA
+        )
+        assert (
+            producer_manifest.EDITOR_MANIFEST_SCHEMA
+            is contract_schemas.EDITOR_MANIFEST_SCHEMA
+        )
+        assert producer_recipes.RECIPE_CATALOG_SCHEMA is contract_schemas.RECIPE_CATALOG_SCHEMA
 
-    def test_config_package_lazy_exports_still_work(self) -> None:
-        """The historical ``from confflow.config import X`` surface is intact."""
-        from confflow.config import GlobalOptions, WorkflowConfig, load_workflow_model
+    def test_config_package_has_no_v1_v2_wire_surface(self) -> None:
+        """``confflow.config`` no longer re-exports the retired V2 models.
 
-        assert WorkflowConfig.__name__ == "WorkflowConfig"
-        assert GlobalOptions.__name__ == "GlobalOptions"
-        assert callable(load_workflow_model)
+        The historical ``from confflow.config import WorkflowConfig`` facade was
+        retired by PR-9: the package is now the dependency-free schema-id
+        authority plus the V4 command surface, and every retired name raises
+        ``AttributeError`` instead of lazily importing a legacy runtime.
+        """
+        import confflow.config as config
+
+        for name in (
+            "WorkflowConfig",
+            "GlobalOptions",
+            "StepConfig",
+            "CalcStepParams",
+            "load_workflow_model",
+        ):
+            with pytest.raises(AttributeError):
+                getattr(config, name)
+        # The one current authority is still importable and dependency-free.
+        from confflow.config import contract_schemas
+
+        assert contract_schemas.CONFIGURATION_VALIDATION_SCHEMA == (
+            "confflow.configuration-validation.v1"
+        )
 
 
 class TestFacadeLazyIsolation:
