@@ -1490,10 +1490,7 @@ class TestProducerImportIsolation:
             producer_validation.VALIDATION_RESPONSE_SCHEMA
             is contract_schemas.CONFIGURATION_VALIDATION_SCHEMA
         )
-        assert (
-            producer_manifest.EDITOR_MANIFEST_SCHEMA
-            is contract_schemas.EDITOR_MANIFEST_SCHEMA
-        )
+        assert producer_manifest.EDITOR_MANIFEST_SCHEMA is contract_schemas.EDITOR_MANIFEST_SCHEMA
         assert producer_recipes.RECIPE_CATALOG_SCHEMA is contract_schemas.RECIPE_CATALOG_SCHEMA
 
     def test_config_package_has_no_v1_v2_wire_surface(self) -> None:

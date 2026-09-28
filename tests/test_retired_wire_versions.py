@@ -228,22 +228,25 @@ class TestV4SurfaceStillWorks:
         ):
             assert retired not in keys
         # The frozen validation-response id is still the current V4 value.
-        assert json.loads(
-            subprocess.run(
-                [
-                    sys.executable,
-                    "-c",
-                    "import json;"
-                    "from confflow.producer.contract import generate_contract_bytes;"
-                    "print(json.dumps(json.loads(generate_contract_bytes("
-                    "producer_version='probe'))['validation_response_schema']))",
-                ],
-                cwd=REPO_ROOT,
-                capture_output=True,
-                text=True,
-                check=True,
-            ).stdout
-        ) == "confflow.configuration-validation.v1"
+        assert (
+            json.loads(
+                subprocess.run(
+                    [
+                        sys.executable,
+                        "-c",
+                        "import json;"
+                        "from confflow.producer.contract import generate_contract_bytes;"
+                        "print(json.dumps(json.loads(generate_contract_bytes("
+                        "producer_version='probe'))['validation_response_schema']))",
+                    ],
+                    cwd=REPO_ROOT,
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                ).stdout
+            )
+            == "confflow.configuration-validation.v1"
+        )
 
 
 class TestRetiredPublicSurface:

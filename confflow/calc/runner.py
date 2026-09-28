@@ -10,7 +10,6 @@ from concurrent.futures import Executor, ProcessPoolExecutor, ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 
-from .config_model import CalcStepParams
 from ..core import io as io_xyz
 from ..core import models
 from ..core.console import CalcProgressReporter
@@ -18,6 +17,7 @@ from ..core.exceptions import ConfFlowError
 from ..core.path_policy import resolve_sandbox_root, validate_managed_path
 from .artifacts import CalcArtifactManager
 from .components.task_runner import TaskRunner
+from .config_model import CalcStepParams
 from .db.database import ResultsDB
 from .executor import CalcExecutor
 from .postprocess import (

@@ -141,7 +141,9 @@ def parse_with_jobdesk_v4(root: pathlib.Path, payload: bytes) -> Any:
     if contract.content_schema != V4_CONTRACT_SCHEMA:  # pragma: no cover - defensive
         raise CheckFailure(f"jobdesk parsed a non-V4 envelope: {contract.content_schema!r}")
     if contract.workflow_schema_id != V4_WORKFLOW_SCHEMA_ID:  # pragma: no cover - defensive
-        raise CheckFailure(f"jobdesk parsed the wrong workflow line: {contract.workflow_schema_id!r}")
+        raise CheckFailure(
+            f"jobdesk parsed the wrong workflow line: {contract.workflow_schema_id!r}"
+        )
     return contract
 
 
@@ -191,7 +193,11 @@ def assert_interchange(report: dict[str, Any]) -> None:
     if not current["consumer_v4_capable"]:
         raise CheckFailure("the consumer did not report V4 capability")
     for version, section in report["retired_contract_versions"].items():
-        if section["returncode"] == 0 or section["stdout_bytes"] or not section["stable_code_present"]:
+        if (
+            section["returncode"] == 0
+            or section["stdout_bytes"]
+            or not section["stable_code_present"]
+        ):
             raise CheckFailure(f"contract version {version} is not retired cleanly: {section!r}")
 
 
@@ -220,7 +226,9 @@ def render(report: dict[str, Any]) -> str:
     lines.append(f"  producer     {change['producer_argv']} (retired)")
     lines.append(f"  replacement  {change['replacement']}")
     lines.append("")
-    lines.append("The consumer accepted the current producer contract; the retired wire failed closed.")
+    lines.append(
+        "The consumer accepted the current producer contract; the retired wire failed closed."
+    )
     return "\n".join(lines)
 
 

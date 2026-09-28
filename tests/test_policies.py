@@ -337,8 +337,8 @@ def test_orca_policy_freeze_constraint(tmp_path):
 def test_calc_step_runner_smoke_without_external_program(tmp_path, monkeypatch):
     from pathlib import Path
 
-    from confflow.calc.runner import CalcStepRequest, CalcStepRunner
     from confflow.calc.config_model import CalcStepParams, GlobalOptions
+    from confflow.calc.runner import CalcStepRequest, CalcStepRunner
 
     xyz = tmp_path / "search.xyz"
     xyz.write_text("""2\nTest\nH 0 0 0\nH 0 0 0.74\n""", encoding="utf-8")

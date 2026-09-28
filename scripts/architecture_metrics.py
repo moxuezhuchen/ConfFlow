@@ -242,9 +242,7 @@ V1_V2_SHARED_WIRE_TOKENS: tuple[str, ...] = (
 )
 
 #: The full retired-wire vocabulary (V1-only, V2-only and shared).
-V1_V2_WIRE_TOKENS: tuple[str, ...] = (
-    V1_WIRE_TOKENS + V2_WIRE_TOKENS + V1_V2_SHARED_WIRE_TOKENS
-)
+V1_V2_WIRE_TOKENS: tuple[str, ...] = V1_WIRE_TOKENS + V2_WIRE_TOKENS + V1_V2_SHARED_WIRE_TOKENS
 
 
 def _module_name(root: str, path: str) -> str:
@@ -423,9 +421,7 @@ def _wire_reachable(
     mentions,
 ) -> list[str]:
     """Return V4-closure modules whose source references a retired wire token."""
-    return sorted(
-        module for module in reachable if module in modules and mentions(modules[module])
-    )
+    return sorted(module for module in reachable if module in modules and mentions(modules[module]))
 
 
 def collect(root: str) -> dict[str, object]:
