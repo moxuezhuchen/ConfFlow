@@ -17,6 +17,7 @@ carries zero legacy semantics:
 from __future__ import annotations
 
 import ast
+import importlib
 import subprocess
 import sys
 from pathlib import Path
@@ -260,6 +261,24 @@ REMOVED_LEGACY_MODULES: frozenset[str] = frozenset(
 #: must stay physically absent, unimportable, and unreferenced by the V4
 #: production sources.  The historically public names resolve to fail-closed
 #: retirement stubs (``confflow.workflow._retired_runtime``), never to code.
+RETIRED_RUNTIME_MODULES: tuple[str, ...] = (
+    "confflow.workflow.engine",
+    "confflow.workflow.state",
+    "confflow.workflow.v3_runtime",
+    "confflow.workflow.step_handlers",
+    "confflow.workflow.binding_v2",
+    "confflow.workflow.stats",
+    "confflow.workflow.presenter",
+    "confflow.workflow.execution_context",
+    "confflow.workflow.finalize",
+    "confflow.workflow.v3_dataflow",
+    "confflow.workflow.resume_validation",
+    "confflow.workflow.runtime_context",
+    "confflow.workflow.dag",
+    "confflow.workflow.dag.explicit",
+    "confflow.workflow.dag.legacy",
+)
+
 #: Retained-by-design compatibility modules that are explicitly allowed to
 #: be absent from the source tree.  Empty today; a module moves here only
 #: with a written compatibility decision.
@@ -713,6 +732,62 @@ class TestRuntimeIsolation:
         )
         result = self._run(script)
         assert result.returncode == 0, result.stderr
+
+
+class TestRetiredRuntimeBoundary:
+    """The retired V2/V3 execution runtime must stay physically absent.
+
+    Architecture Diet PR-4 removed the runtime; this gate makes sure neither a
+    source file nor an import edge nor a lazy export can resurrect it.
+    """
+
+    def test_retired_modules_are_not_importable(self) -> None:
+        still_present: list[str] = []
+        for module in RETIRED_RUNTIME_MODULES:
+            try:
+                importlib.import_module(module)
+            except ModuleNotFoundError:
+                continue
+            except Exception as exc:  # pragma: no cover - import error is enough
+                still_present.append(f"{module}: {type(exc).__name__}")
+                continue
+            still_present.append(module)
+        assert still_present == []
+
+    def test_retired_modules_are_absent_from_disk(self) -> None:
+        present = [module for module in RETIRED_RUNTIME_MODULES if _legacy_module_exists(module)]
+        assert present == []
+
+    def test_retired_modules_are_not_imported_by_v4_sources(self) -> None:
+        offenders: list[tuple[str, str, int]] = []
+        for root in (
+            DOMAIN_ROOT,
+            EXECUTION_ROOT,
+            V4_ROOT,
+            PERSISTENCE_ROOT,
+            PROGRAMS_ROOT,
+            REMOTE_ROOT,
+            PRODUCER_ROOT,
+            ANALYSIS_ROOT,
+        ):
+            for path in _iter_python_files(root):
+                for raw, lineno in _imports(path):
+                    absolute = _resolve_import(path, raw)
+                    if any(
+                        absolute == module or absolute.startswith(module + ".")
+                        for module in RETIRED_RUNTIME_MODULES
+                    ):
+                        offenders.append((str(path.relative_to(REPO_ROOT)), absolute, lineno))
+        assert offenders == []
+
+    def test_retirement_stubs_fail_closed(self) -> None:
+        from confflow.workflow import _retired_runtime
+
+        assert _retired_runtime.RETIRED_NAMES
+        for name in _retired_runtime.RETIRED_NAMES:
+            stub = getattr(_retired_runtime, name)
+            with pytest.raises(_retired_runtime.RetiredRuntimeError):
+                stub()
 
 
 class TestProducerImportIsolation:
