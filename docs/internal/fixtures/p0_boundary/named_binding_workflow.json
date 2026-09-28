@@ -1,0 +1,25 @@
+{
+  "content_schema": "confflow.p0.named_binding_workflow.v1",
+  "producer_version": "2.1.6",
+  "resource_presence": {
+    "global": {
+      "cores_per_item": 8,
+      "memory_per_item": "16GiB"
+    },
+    "note": "field presence is the frozen wire rule; effective values are resolved by the producer through ResourceRequest.with_defaults()",
+    "opt_1": "no step resources block (inherits everything)",
+    "sp_1": "memory_per_item only; cores_per_item stays absent in the wire"
+  },
+  "validation": {
+    "definition_digest": "sha256:b29e54064592d6117f13baf8910dd2ce7e42537b6ab19894267299525211902e",
+    "diagnostics": [],
+    "ok": true,
+    "schema": "confflow.configuration-validation.v1",
+    "step_ids": [
+      "opt_1",
+      "sp_1"
+    ],
+    "workflow_schema_id": "confflow.workflow.v4"
+  },
+  "workflow_yaml": "schema: confflow.workflow.v4\ninputs:\n  structures:\n    kind: structure\n    cardinality: many\n    pairing: per_structure\nglobal:\n  resources:\n    cores_per_item: 8\n    memory_per_item: 16GiB\n  scheduler:\n    max_parallel_items: 2\nsteps:\n  - id: opt_1\n    label: Optimize\n    executor: calculation\n    calculation:\n      program: orca\n      role: opt\n      native:\n        calculation:\n          task: optimize\n    bindings:\n      structure:\n        source:\n          run: structures\n  - id: sp_1\n    label: Single point\n    executor: calculation\n    calculation:\n      program: orca\n      role: sp\n    resources:\n      memory_per_item: 32GiB\n    bindings:\n      structure:\n        source:\n          step: opt_1\n          port: structures\n"
+}
