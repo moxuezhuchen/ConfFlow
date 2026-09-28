@@ -27,7 +27,9 @@ Post-cutover scope (V4 Core Closure, ``44b478d``):
   V2/V3 workflow *execution* runtime was physically removed by Architecture
   Diet PR-4; the diagnostic planners (dry-run / config-show / export) and the
   canonical V1/V2/V3 readers remain.  Any retired runtime module reappearing
-  on disk is flagged by ``RETIRED_RUNTIME_MODULES`` below.
+  on disk is flagged by ``RETIRED_RUNTIME_MODULES`` below, which PR-6 extends
+  with the dead remote duplicates (``remote.lease`` / ``remote.supervision`` /
+  ``remote.schema``).
 
 Contract-source imports (``confflow.config.canonical.contract`` / editor
 manifest / recipes) are the producer's recorded PR-2 decoupling debt and are
@@ -90,9 +92,13 @@ FORBIDDEN_IMPORT_PREFIXES: tuple[str, ...] = (
     "confflow.core.io",
 )
 
-#: V2/V3 execution-runtime modules retired by Architecture Diet PR-4.  They
-#: must not exist as source files and must not be importable from scoped
-#: files; the historically public names resolve to fail-closed stubs.
+#: V2/V3 execution-runtime modules retired by Architecture Diet PR-4, plus
+#: the dead remote duplicates retired by PR-6 (``remote.lease`` /
+#: ``remote.supervision`` / ``remote.schema``; their live authorities are
+#: ``launch_lease.TokenLaunchLease``, ``persistence.recovery.reconcile_owner``
+#: and ``worker_supervision``).  They must not exist as source files and must
+#: not be importable from scoped files; the historically public V2/V3 names
+#: resolve to fail-closed stubs.
 RETIRED_RUNTIME_MODULES: tuple[str, ...] = (
     "confflow.workflow.engine",
     "confflow.workflow.state",
@@ -109,6 +115,9 @@ RETIRED_RUNTIME_MODULES: tuple[str, ...] = (
     "confflow.workflow.dag",
     "confflow.workflow.dag.explicit",
     "confflow.workflow.dag.legacy",
+    "confflow.remote.lease",
+    "confflow.remote.supervision",
+    "confflow.remote.schema",
 )
 
 PATTERNS: tuple[tuple[str, str], ...] = (
