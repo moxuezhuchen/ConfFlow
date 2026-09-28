@@ -101,27 +101,42 @@ class BindingModel(BaseModel):
 
 
 class ResourcesModel(BaseModel):
-    """Per-item resource request; defaults are the run-level defaults."""
+    """Per-item resource request; every field is presence-preserving.
+
+    ``None`` means *absent*: the field was not declared at this level and the
+    value inherits from the run global (or, at the run global itself, from the
+    schema fallback).  Parsing never injects a concrete default, so a
+    memory-only step override stays memory-only in the wire; effective values
+    resolve through ``ResourceRequest.with_defaults()`` in the validation
+    authority, exactly once.
+    """
 
     model_config = _STRICT
 
-    cores_per_item: StrictInt = Field(default=DEFAULT_CORES_PER_ITEM, ge=1)
-    memory_per_item: str | StrictInt = DEFAULT_MEMORY_PER_ITEM
+    cores_per_item: StrictInt | None = Field(default=None, ge=1)
+    memory_per_item: str | StrictInt | None = None
 
     @field_validator("memory_per_item")
     @classmethod
-    def _validate_memory(cls, value: str | int) -> str | int:
+    def _validate_memory(cls, value: str | int | None) -> str | int | None:
+        if value is None:
+            return None
         parse_memory_bytes(value)
         return value
 
 
 class SchedulerModel(BaseModel):
-    """Scheduler-only policy."""
+    """Scheduler-only policy; every field is presence-preserving.
+
+    ``None`` means *absent* and inherits from the run global (``on_failure``
+    from ``OnFailure.CONTINUE``).  Scheduling is operational and never
+    participates in scientific identity.
+    """
 
     model_config = _STRICT
 
-    max_parallel_items: StrictInt = Field(default=DEFAULT_MAX_PARALLEL_ITEMS, ge=1)
-    on_failure: OnFailure = OnFailure.CONTINUE
+    max_parallel_items: StrictInt | None = Field(default=None, ge=1)
+    on_failure: OnFailure | None = None
 
 
 class CompletionModel(BaseModel):
@@ -274,7 +289,12 @@ class DocumentModel(BaseModel):
 
 
 def defaults_summary() -> dict[str, Any]:
-    """Return the single-source default values for editors and tests."""
+    """Return the single-source run defaults for editors and tests.
+
+    These are the values the contract advertises and the validation authority
+    applies when neither the step nor the run global declares a field; parsing
+    never injects them into the document.
+    """
     return {
         "resources": {
             "cores_per_item": DEFAULT_CORES_PER_ITEM,

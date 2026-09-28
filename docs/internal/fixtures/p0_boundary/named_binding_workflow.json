@@ -11,7 +11,7 @@
     "sp_1": "memory_per_item only; cores_per_item stays absent in the wire"
   },
   "validation": {
-    "definition_digest": "sha256:b29e54064592d6117f13baf8910dd2ce7e42537b6ab19894267299525211902e",
+    "definition_digest": "sha256:4ee7d9b85c864305da440f369bb096bb2490230d6dab28db44b9a8a1ec0d41cb",
     "diagnostics": [],
     "ok": true,
     "schema": "confflow.configuration-validation.v1",

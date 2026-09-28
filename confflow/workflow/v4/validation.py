@@ -40,6 +40,8 @@ __all__ = [
     "ValidatedDefinition",
     "ValidatedStep",
     "ValidationResult",
+    "resolve_executor_contract",
+    "resolve_step_input_ports",
     "run_input_port_spec",
     "validate_definition",
 ]
@@ -123,6 +125,128 @@ def run_input_port_spec(declaration: RunInputDeclaration) -> PortSpec:
         roles=roles,
         description=declaration.description or "",
     )
+
+
+def resolve_executor_contract(
+    step: StepDefinition, registry: ExecutionRegistry
+) -> tuple[ExecutorCapability | None, ExecutorContract | None, list[Diagnostic]]:
+    """Resolve one step's executor capability and registry contract.
+
+    This is the single authority for "which executor contract does this step
+    have": the capability vocabulary and the registry lookup live exactly here,
+    shared by semantic validation and the producer authoring seam.  Returns
+    ``(None, None, diagnostics)`` when the step names an unsupported
+    capability (or ``(capability, None, diagnostics)`` when the registry
+    cannot resolve it); callers decide how to surface the diagnostics.
+    """
+    diagnostics: list[Diagnostic] = []
+    field_path = f"steps.{step.id}"
+    try:
+        capability = ExecutorCapability(step.executor)
+    except ValueError:
+        diagnostics.append(
+            error(
+                DiagnosticCode.CAPABILITY_ERROR,
+                DiagnosticReason.UNKNOWN_EXECUTOR_CAPABILITY,
+                f"unknown executor capability {step.executor!r}",
+                step_id=step.id,
+                field_path=f"{field_path}.executor",
+                details={"allowed": list(registry.capability_names)},
+            )
+        )
+        return None, None, diagnostics
+    try:
+        contract = registry.resolve_executor(capability)
+    except RegistryLookupError as exc:
+        diagnostics.append(
+            error(
+                DiagnosticCode.CAPABILITY_ERROR,
+                DiagnosticReason.UNKNOWN_EXECUTOR_CAPABILITY,
+                str(exc),
+                step_id=step.id,
+                field_path=f"{field_path}.executor",
+                details={"allowed": list(registry.capability_names)},
+            )
+        )
+        return capability, None, diagnostics
+    return capability, contract, diagnostics
+
+
+def resolve_step_input_ports(
+    step: StepDefinition,
+    capability: ExecutorCapability,
+    contract: ExecutorContract,
+    registry: ExecutionRegistry,
+) -> tuple[ExecutionAdapterSpec | None, tuple[PortSpec, ...] | None, list[Diagnostic]]:
+    """Resolve the effective input ports of one step.
+
+    An adapter supplies the input contract exactly when the executor contract
+    declares ``requires_adapter``; otherwise the executor contract's own input
+    ports are the authority.  Returns ``(adapter, input_ports, diagnostics)``
+    with ``input_ports=None`` when the adapter cannot be resolved.  Shared by
+    semantic validation and the producer authoring seam so neither can drift
+    into a private port selection rule.
+    """
+    diagnostics: list[Diagnostic] = []
+    field_path = f"steps.{step.id}"
+    if not contract.requires_adapter:
+        return None, contract.input_ports, diagnostics
+    scientific = step.scientific
+    adapter_name = scientific.execution_adapter if scientific is not None else None
+    if not adapter_name:
+        diagnostics.append(
+            error(
+                DiagnosticCode.CAPABILITY_ERROR,
+                DiagnosticReason.MISSING_REQUIRED_MEMBER,
+                "execution_adapter is required for this executor",
+                step_id=step.id,
+                field_path=f"{field_path}.calculation.execution_adapter",
+            )
+        )
+        return None, None, diagnostics
+    adapter = registry.find_adapter(adapter_name)
+    if adapter is None:
+        diagnostics.append(
+            error(
+                DiagnosticCode.CAPABILITY_ERROR,
+                DiagnosticReason.UNKNOWN_EXECUTION_ADAPTER,
+                f"unknown execution adapter {adapter_name!r}",
+                step_id=step.id,
+                field_path=f"{field_path}.calculation.execution_adapter",
+                details={"allowed": list(registry.adapter_names)},
+            )
+        )
+        return None, None, diagnostics
+    try:
+        adapter = registry.resolve_adapter(adapter_name)
+    except RegistryLookupError as exc:
+        diagnostics.append(
+            error(
+                DiagnosticCode.CAPABILITY_ERROR,
+                DiagnosticReason.MISSING_CAPABILITY_IMPLEMENTATION,
+                str(exc),
+                step_id=step.id,
+                field_path=f"{field_path}.calculation.execution_adapter",
+                details={"adapter": adapter_name},
+            )
+        )
+        return None, None, diagnostics
+    if adapter.capability is not capability:
+        diagnostics.append(
+            error(
+                DiagnosticCode.CAPABILITY_ERROR,
+                DiagnosticReason.ADAPTER_CAPABILITY_MISMATCH,
+                f"adapter {adapter.name!r} does not support {capability.value!r}",
+                step_id=step.id,
+                field_path=f"{field_path}.calculation.execution_adapter",
+                details={
+                    "adapter_capability": adapter.capability.value,
+                    "step_capability": capability.value,
+                },
+            )
+        )
+        return None, None, diagnostics
+    return adapter, adapter.input_ports, diagnostics
 
 
 def _resolve_run_policy(
@@ -273,33 +397,9 @@ def _validate_step(
 ) -> tuple[ValidatedStep | None, list[Diagnostic]]:
     diagnostics: list[Diagnostic] = []
     field_path = f"steps.{step.id}"
-    try:
-        capability = ExecutorCapability(step.executor)
-    except ValueError:
-        diagnostics.append(
-            error(
-                DiagnosticCode.CAPABILITY_ERROR,
-                DiagnosticReason.UNKNOWN_EXECUTOR_CAPABILITY,
-                f"unknown executor capability {step.executor!r}",
-                step_id=step.id,
-                field_path=f"{field_path}.executor",
-                details={"allowed": list(registry.capability_names)},
-            )
-        )
-        return None, diagnostics
-    try:
-        contract = registry.resolve_executor(capability)
-    except RegistryLookupError as exc:
-        diagnostics.append(
-            error(
-                DiagnosticCode.CAPABILITY_ERROR,
-                DiagnosticReason.UNKNOWN_EXECUTOR_CAPABILITY,
-                str(exc),
-                step_id=step.id,
-                field_path=f"{field_path}.executor",
-                details={"allowed": list(registry.capability_names)},
-            )
-        )
+    capability, contract, resolution_diagnostics = resolve_executor_contract(step, registry)
+    diagnostics.extend(resolution_diagnostics)
+    if capability is None or contract is None:
         return None, diagnostics
     scientific = step.scientific
     if scientific is None:
@@ -341,66 +441,15 @@ def _validate_step(
                 )
             )
 
-    adapter: ExecutionAdapterSpec | None = None
+    adapter: ExecutionAdapterSpec | None
     input_ports: tuple[PortSpec, ...]
-    if contract.requires_adapter:
-        adapter_name = scientific.execution_adapter
-        if not adapter_name:
-            diagnostics.append(
-                error(
-                    DiagnosticCode.CAPABILITY_ERROR,
-                    DiagnosticReason.MISSING_REQUIRED_MEMBER,
-                    "execution_adapter is required for this executor",
-                    step_id=step.id,
-                    field_path=f"{field_path}.calculation.execution_adapter",
-                )
-            )
-            return None, diagnostics
-        adapter = registry.find_adapter(adapter_name)
-        if adapter is None:
-            diagnostics.append(
-                error(
-                    DiagnosticCode.CAPABILITY_ERROR,
-                    DiagnosticReason.UNKNOWN_EXECUTION_ADAPTER,
-                    f"unknown execution adapter {adapter_name!r}",
-                    step_id=step.id,
-                    field_path=f"{field_path}.calculation.execution_adapter",
-                    details={"allowed": list(registry.adapter_names)},
-                )
-            )
-            return None, diagnostics
-        try:
-            adapter = registry.resolve_adapter(adapter_name)
-        except RegistryLookupError as exc:
-            diagnostics.append(
-                error(
-                    DiagnosticCode.CAPABILITY_ERROR,
-                    DiagnosticReason.MISSING_CAPABILITY_IMPLEMENTATION,
-                    str(exc),
-                    step_id=step.id,
-                    field_path=f"{field_path}.calculation.execution_adapter",
-                    details={"adapter": adapter_name},
-                )
-            )
-            return None, diagnostics
-        if adapter.capability is not capability:
-            diagnostics.append(
-                error(
-                    DiagnosticCode.CAPABILITY_ERROR,
-                    DiagnosticReason.ADAPTER_CAPABILITY_MISMATCH,
-                    f"adapter {adapter.name!r} does not support {capability.value!r}",
-                    step_id=step.id,
-                    field_path=f"{field_path}.calculation.execution_adapter",
-                    details={
-                        "adapter_capability": adapter.capability.value,
-                        "step_capability": capability.value,
-                    },
-                )
-            )
-            return None, diagnostics
-        input_ports = adapter.input_ports
-    else:
-        input_ports = contract.input_ports
+    adapter, resolved_ports, port_diagnostics = resolve_step_input_ports(
+        step, capability, contract, registry
+    )
+    diagnostics.extend(port_diagnostics)
+    if resolved_ports is None:
+        return None, diagnostics
+    input_ports = resolved_ports
 
     profile_name = scientific.result_profile or "standard"
     profile = registry.find_profile(profile_name)

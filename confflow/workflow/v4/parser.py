@@ -547,6 +547,9 @@ def _build_step(step: StepModel) -> tuple[StepDefinition | None, list[Diagnostic
         )
         binding_set = BindingSet()
     try:
+        # Presence is the wire rule: absent resource/scheduler fields stay
+        # None here and inherit the run-level value through the validation
+        # authority's ``with_defaults()``; the parser never fills defaults.
         resources = (
             ResourceRequest.from_values(
                 cores_per_item=step.resources.cores_per_item,
@@ -697,6 +700,9 @@ def convert_document(model: DocumentModel) -> DocumentParseResult:
             )
         )
     try:
+        # Run-level resources/scheduler are presence-preserving too: an absent
+        # field stays None and resolves to the schema fallback in
+        # ``validation._resolve_run_policy`` (1 core / 1GiB / 1 parallel).
         definition = WorkflowDefinition(
             steps=tuple(steps),
             inputs=inputs,

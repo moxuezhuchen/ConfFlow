@@ -15,6 +15,9 @@ Commands
   (JCS); duplicate keys and non-finite numbers are rejected structurally.
 - ``v4 validate (--workflow FILE | --stdin) --json`` — validate exact
   workflow bytes through the producer validator.
+- ``v4 authoring --stdin --json`` — dispatch one ``confflow.authoring.v4``
+  request (describe_step, binding_candidates, instantiate_card,
+  validate_document) and print the structured response envelope.
 - ``v4 run --workflow FILE --inputs NAME=FILE ... --run-root DIR
   --executable PROG=PATH ...`` — run a whole V4 workflow.
 
@@ -48,6 +51,8 @@ def main(argv: list[str] | None = None) -> int:
             return _canonical(args)
         if args.command == "validate":
             return _validate(args)
+        if args.command == "authoring":
+            return _authoring(args)
         if args.command == "run":
             return _run(args)
     except (OSError, ValueError) as exc:
@@ -75,6 +80,11 @@ def _build_parser() -> argparse.ArgumentParser:
     source = validate.add_mutually_exclusive_group(required=True)
     source.add_argument("--workflow", help="Workflow document file")
     source.add_argument("--stdin", action="store_true", help="Read workflow bytes from stdin")
+    authoring = subparsers.add_parser("authoring", help="Dispatch a confflow.authoring.v4 request")
+    authoring.add_argument("--json", action="store_true", required=True)
+    authoring.add_argument(
+        "--stdin", action="store_true", required=True, help="Read request JSON from stdin"
+    )
     run = subparsers.add_parser("run", help="Run a whole V4 workflow")
     run.add_argument("--workflow", required=True, help="Workflow document file")
     run.add_argument(
@@ -180,6 +190,17 @@ def _validate(args: argparse.Namespace) -> int:
     sys.stdout.write(json.dumps(payload, indent=2, sort_keys=True))
     sys.stdout.write("\n")
     return 0 if report.ok else 1
+
+
+def _authoring(args: argparse.Namespace) -> int:
+    """Dispatch one authoring request and print the response envelope."""
+    from .producer.authoring import dispatch_request
+
+    data = sys.stdin.buffer.read()
+    envelope = dispatch_request(data)
+    sys.stdout.write(json.dumps(envelope, indent=2, ensure_ascii=False, sort_keys=True))
+    sys.stdout.write("\n")
+    return 0 if envelope.get("ok") else 1
 
 
 def _run(args: argparse.Namespace) -> int:
