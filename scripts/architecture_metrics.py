@@ -116,6 +116,136 @@ V3_WIRE_TOKENS: tuple[str, ...] = (
     "execution_versions",
 )
 
+#: The released **V1** configuration wire retired by Architecture Diet PR-9.
+#: ``contract`` published the v1 contract document (and its digest of the one
+#: workflow schema the v1 envelope embedded); ``schema`` was that schema's only
+#: generator.  Both must stay absent: the V1 wire was replaced by V4 (and, for
+#: the validation response that JobDesk's V4 path consumes, by the frozen
+#: ``confflow.configuration-validation.v1`` identifier in
+#: :mod:`confflow.config.contract_schemas`).
+V1_PUBLIC_WIRE_MODULES: tuple[str, ...] = (
+    "confflow.config.canonical.contract",
+    "confflow.config.canonical.schema",
+)
+
+#: The released **V2** configuration wire retired by Architecture Diet PR-9:
+#: the V2 document parser/validator, the V2->canonical adapter and IR, the V2
+#: editor manifest and recipe catalog, the V2 fingerprint/param registry, the
+#: V2 typed-model and pydantic facades, the V2 diagnostics/serialization
+#: helpers, the V2 diagnostic planners (dry-run / config-show / plan) and the
+#: legacy YAML validation wrapper.  All must stay absent.
+V2_PUBLIC_WIRE_MODULES: tuple[str, ...] = (
+    "confflow.config.canonical",
+    "confflow.config.canonical.parser",
+    "confflow.config.canonical.validation",
+    "confflow.config.canonical.v2_adapter",
+    "confflow.config.canonical.workflow",
+    "confflow.config.canonical.editor_manifest",
+    "confflow.config.canonical.recipes",
+    "confflow.config.canonical.fingerprint",
+    "confflow.config.canonical.param_fields",
+    "confflow.config.canonical.pydantic",
+    "confflow.config.canonical.diagnostics",
+    "confflow.config.canonical.serialization",
+    "confflow.config.models",
+    "confflow.shared.config_validation",
+    "confflow.core.types",
+    "confflow.workflow.plan",
+    "confflow.workflow.config_show",
+    "confflow.workflow.dry_run",
+)
+
+#: PR-9 decision: there is no V1 migration kernel to allow.  No ``V1 -> V2``
+#: (or ``V1 -> canonical``) upgrade emitter was ever published -- the v1
+#: contract document embedded the same workflow schema the v2 document did, so
+#: there was nothing to convert.  A future entry here needs a written decision,
+#: exactly like :data:`V3_INTERNAL_MIGRATION_KERNEL`.
+V1_MIGRATION_MODULES: tuple[str, ...] = ()
+
+#: The single V2 migration kernel the diet retired: the ``WorkflowConfig`` ->
+#: canonical-IR adapter that let a released V2 document be planned and
+#: validated.  It must stay absent.  ``confflow.config.canonical.upgrade`` (the
+#: V2->V3 emitter) was already retired by PR-7 and is counted there.
+V2_MIGRATION_MODULES: tuple[str, ...] = ("confflow.config.canonical.v2_adapter",)
+
+#: Source tokens that identify the retired **V1** configuration wire and can
+#: belong to no other line.  These are deliberately *not* a blanket ban on the
+#: strings "v1"/"v2": the current producer protocol keeps
+#: ``confflow.configuration-validation.v1``, ``confflow.editor-manifest.v1``,
+#: ``confflow.recipe-catalog.v1``, the ``confflow.contract.*.v1`` capability
+#: ids and the ``.v3`` remote capability ids, and the ``v1``/``v2`` protocol
+#: majors of unrelated lines (control protocol, remote envelope) are current
+#: truth.  Only a token that could only belong to the retired wire is listed.
+V1_WIRE_TOKENS: tuple[str, ...] = (
+    "confflow.workflow.v1",
+    "confflow.configuration-contract.v1",
+    "build_configuration_contract_v1",
+    "CONFIGURATION_CONTRACT_V1_SCHEMA",
+)
+
+#: Source tokens that identify the retired **V2** configuration wire and can
+#: belong to no other line.  The V2->canonical adapter and its binding surface
+#: were V2-only; the shared ``confflow.config.canonical`` package path is in
+#: :data:`V1_V2_SHARED_WIRE_TOKENS`.
+V2_WIRE_TOKENS: tuple[str, ...] = (
+    "confflow.workflow.v2",
+    "confflow.configuration-contract.v2",
+    "build_configuration_contract_v2",
+    "CONFIGURATION_CONTRACT_V2_SCHEMA",
+    "confflow.config.canonical.v2_adapter",
+    "to_canonical_workflow",
+    "canonical_workflow_payload",
+    "parse_workflow_binding",
+    "build_workflow_binding",
+    "WorkflowConfigBinding",
+    "WorkflowBindingCompatibilityError",
+    "WORKFLOW_BINDING_SCHEMA",
+    "v2_calc_keys",
+)
+
+#: Source tokens shared by the retired V1 and V2 configuration wires (the
+#: canonical package that published both contract documents, the V2 document
+#: parser/validator entrypoints and their typed facades, the diagnostic
+#: planners and the legacy YAML validation wrapper).
+V1_V2_SHARED_WIRE_TOKENS: tuple[str, ...] = (
+    # retired module paths
+    "confflow.config.canonical",
+    "confflow.config.models",
+    "confflow.workflow.plan",
+    "confflow.workflow.config_show",
+    "confflow.workflow.dry_run",
+    "confflow.shared.config_validation",
+    "confflow.core.types",
+    # retired public parser / validator / resolver entrypoints
+    "parse_canonical_workflow",
+    "parse_workflow_mapping",
+    "load_raw_mapping",
+    "load_workflow_definition",
+    "load_workflow_model",
+    "detect_schema_version",
+    "detect_workflow_file_version",
+    "validate_workflow_definition",
+    "calc_input_diagnostics",
+    "resolve_calc_step",
+    "resolve_global_options",
+    # retired V2 fingerprint surface shared through the canonical package
+    "WorkflowFingerprintError",
+    "workflow_fingerprint",
+    # retired V1/V2 contract and catalog generation
+    "CONFIGURATION_CONTRACT_BUILDERS",
+    "build_editor_manifest(",
+    "build_recipe_catalog(",
+    "calc_param_fields",
+    "confgen_param_fields",
+    "canonical_step_name",
+    "CANONICALIZATION_VERSION",
+)
+
+#: The full retired-wire vocabulary (V1-only, V2-only and shared).
+V1_V2_WIRE_TOKENS: tuple[str, ...] = (
+    V1_WIRE_TOKENS + V2_WIRE_TOKENS + V1_V2_SHARED_WIRE_TOKENS
+)
+
 
 def _module_name(root: str, path: str) -> str:
     relative = os.path.relpath(path, root)
@@ -252,11 +382,50 @@ def _v3_wire_loc(modules: dict[str, str], names: list[str]) -> int:
     return sum(_loc(modules[name]) for name in names)
 
 
-def _module_mentions_v3_wire(path: str) -> bool:
-    """Return whether *path* references a retired V3 public-wire token."""
+def _module_mentions_tokens(path: str, tokens: tuple[str, ...]) -> bool:
+    """Return whether *path* references any source token in *tokens*."""
     with open(path, encoding="utf-8") as handle:
         text = handle.read()
-    return any(token in text for token in V3_WIRE_TOKENS)
+    return any(token in text for token in tokens)
+
+
+def _module_mentions_v3_wire(path: str) -> bool:
+    """Return whether *path* references a retired V3 public-wire token."""
+    return _module_mentions_tokens(path, V3_WIRE_TOKENS)
+
+
+def _module_mentions_v1_wire(path: str) -> bool:
+    """Return whether *path* references a retired V1 configuration token.
+
+    A shared V1/V2 token counts for both versions on purpose: it is a token of
+    the retired wire the V4 closure must not reach through either line.
+    """
+    return _module_mentions_tokens(path, V1_WIRE_TOKENS + V1_V2_SHARED_WIRE_TOKENS)
+
+
+def _module_mentions_v2_wire(path: str) -> bool:
+    """Return whether *path* references a retired V2 configuration token."""
+    return _module_mentions_tokens(path, V2_WIRE_TOKENS + V1_V2_SHARED_WIRE_TOKENS)
+
+
+def _retired_wire_counts(
+    modules: dict[str, str],
+    names: tuple[str, ...],
+) -> tuple[list[str], int]:
+    """Return the retired-wire modules still on disk and their total LOC."""
+    present = _v3_wire_modules(modules, names)
+    return present, _v3_wire_loc(modules, present)
+
+
+def _wire_reachable(
+    modules: dict[str, str],
+    reachable: set[str],
+    mentions,
+) -> list[str]:
+    """Return V4-closure modules whose source references a retired wire token."""
+    return sorted(
+        module for module in reachable if module in modules and mentions(modules[module])
+    )
 
 
 def collect(root: str) -> dict[str, object]:
@@ -287,11 +456,14 @@ def collect(root: str) -> dict[str, object]:
 
     v3_public = _v3_wire_modules(modules, V3_PUBLIC_WIRE_MODULES)
     v3_internal = _v3_wire_modules(modules, V3_INTERNAL_MIGRATION_KERNEL)
-    v3_v4 = sorted(
-        module
-        for module in reachable
-        if module in modules and _module_mentions_v3_wire(modules[module])
-    )
+    v3_v4 = _wire_reachable(modules, reachable, _module_mentions_v3_wire)
+
+    v1_public, v1_public_loc = _retired_wire_counts(modules, V1_PUBLIC_WIRE_MODULES)
+    v2_public, v2_public_loc = _retired_wire_counts(modules, V2_PUBLIC_WIRE_MODULES)
+    v1_migration, v1_migration_loc = _retired_wire_counts(modules, V1_MIGRATION_MODULES)
+    v2_migration, v2_migration_loc = _retired_wire_counts(modules, V2_MIGRATION_MODULES)
+    v1_v4 = _wire_reachable(modules, reachable, _module_mentions_v1_wire)
+    v2_v4 = _wire_reachable(modules, reachable, _module_mentions_v2_wire)
 
     return {
         "root": os.path.abspath(root),
@@ -311,12 +483,28 @@ def collect(root: str) -> dict[str, object]:
         "V3_INTERNAL_MIGRATION_MODULES": len(v3_internal),
         "V3_INTERNAL_MIGRATION_LOC": _v3_wire_loc(modules, v3_internal),
         "V3_V4_REACHABLE_MODULES": len(v3_v4),
+        "V1_PUBLIC_MODULES": len(v1_public),
+        "V1_PUBLIC_LOC": v1_public_loc,
+        "V2_PUBLIC_MODULES": len(v2_public),
+        "V2_PUBLIC_LOC": v2_public_loc,
+        "V1_MIGRATION_MODULES": len(v1_migration),
+        "V1_MIGRATION_LOC": v1_migration_loc,
+        "V2_MIGRATION_MODULES": len(v2_migration),
+        "V2_MIGRATION_LOC": v2_migration_loc,
+        "V1_V4_REACHABLE_MODULES": len(v1_v4),
+        "V2_V4_REACHABLE_MODULES": len(v2_v4),
         "v4_reachable": sorted(reachable),
         "calc_public_tooling": calc_public,
         "calc_dead": calc_dead,
         "v3_public": v3_public,
         "v3_internal_migration": v3_internal,
         "v3_v4_reachable": v3_v4,
+        "v1_v4_reachable": v1_v4,
+        "v2_v4_reachable": v2_v4,
+        "v1_public": v1_public,
+        "v2_public": v2_public,
+        "v1_migration": v1_migration,
+        "v2_migration": v2_migration,
     }
 
 
@@ -349,6 +537,16 @@ def main(argv: list[str] | None = None) -> int:
     print(f"V3_INTERNAL_MIGRATION_MODULES={metrics['V3_INTERNAL_MIGRATION_MODULES']}")
     print(f"V3_INTERNAL_MIGRATION_LOC={metrics['V3_INTERNAL_MIGRATION_LOC']}")
     print(f"V3_V4_REACHABLE_MODULES={metrics['V3_V4_REACHABLE_MODULES']}")
+    print(f"V1_PUBLIC_MODULES={metrics['V1_PUBLIC_MODULES']}")
+    print(f"V1_PUBLIC_LOC={metrics['V1_PUBLIC_LOC']}")
+    print(f"V2_PUBLIC_MODULES={metrics['V2_PUBLIC_MODULES']}")
+    print(f"V2_PUBLIC_LOC={metrics['V2_PUBLIC_LOC']}")
+    print(f"V1_MIGRATION_MODULES={metrics['V1_MIGRATION_MODULES']}")
+    print(f"V1_MIGRATION_LOC={metrics['V1_MIGRATION_LOC']}")
+    print(f"V2_MIGRATION_MODULES={metrics['V2_MIGRATION_MODULES']}")
+    print(f"V2_MIGRATION_LOC={metrics['V2_MIGRATION_LOC']}")
+    print(f"V1_V4_REACHABLE_MODULES={metrics['V1_V4_REACHABLE_MODULES']}")
+    print(f"V2_V4_REACHABLE_MODULES={metrics['V2_V4_REACHABLE_MODULES']}")
     return 0
 
 
