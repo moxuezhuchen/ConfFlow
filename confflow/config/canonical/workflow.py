@@ -187,15 +187,14 @@ class CanonicalStepDefinition:
     parameter mapping, ``predecessors`` the resolved, de-duplicated dependency
     names, and ``extensions`` any unknown step-level fields preserved verbatim.
 
-    The remaining fields exist so the IR can also carry a future Workflow V3
-    step; the V2 adapter leaves them at their defaults and never projects them
-    into the V2 execution shape:
+    The remaining fields are IR vocabulary the V2 adapter may carry but never
+    projects into the V2 execution shape:
 
-    * ``id`` — a stable V3 identity (``None`` for a V2-adapted step, whose
-      identity remains ``name``; see :attr:`identity`);
+    * ``id`` — an optional stable step identity (``None`` for a V2-adapted step,
+      whose identity remains ``name``; see :attr:`identity`);
     * ``label`` — the human-facing display name (V2 maps its ``name`` here);
-    * ``checkpoint_from`` — a structured ``checkpoint: {from_step: <id>}``
-      reference (V2 keeps its legacy ``params.chk_from_step`` untouched);
+    * ``checkpoint_from`` — an optional structured checkpoint reference (V2
+      keeps its legacy ``params.chk_from_step`` untouched);
     * ``annotations`` — non-semantic, free-form metadata that never participates
       in execution or fingerprints.
     """
@@ -218,10 +217,9 @@ class CanonicalStepDefinition:
     def identity(self) -> str:
         """Return the canonical identity: the stable id when present, else the name.
 
-        A V2-adapted step has no ``id``, so its identity is the V2 ``name``; a
-        future V3 step resolves to its stable ``id``. This is a model-layer
-        accessor only — the V2 dirname / fingerprint / state identity stay
-        name-based and do not consult it.
+        A V2-adapted step has no ``id``, so its identity is the V2 ``name``. This
+        is a model-layer accessor only — the V2 dirname / fingerprint / state
+        identity stay name-based and do not consult it.
         """
         return self.id if self.id is not None else self.name
 

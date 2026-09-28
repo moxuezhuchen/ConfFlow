@@ -2,7 +2,7 @@
 
 Formal V4 ports: every test drives the real CLI in a subprocess against a
 V4 document and real-format fake QC programs. Legacy V2/V3 configs are
-sealed by the V4 guard (covered in tests/test_workflow_v3_*_guard files);
+sealed by the V4 guard (covered in tests/test_legacy_execution_guard.py);
 here the CLI-level durable behaviors (fresh-run recompute, definition
 change, failed-run resume, corrupt-durable refusal, locked workdir,
 multi-frame fan-in) are proven on the single V4 application.

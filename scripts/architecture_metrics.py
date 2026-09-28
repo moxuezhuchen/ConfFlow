@@ -35,6 +35,19 @@ Fixed definitions (PR-2.6):
 - ``CALC_DEAD_MODULES``: calc modules that are neither in the V4 closure nor
   reachable from any public tooling root or declared lazy export.  Must stay
   ``0``.
+- ``V3_PUBLIC_MODULES`` / ``V3_PUBLIC_LOC``: modules of the never-released
+  Workflow V3 public wire (V3 parser/graph/validation, V3 catalogs, the
+  ``configuration-contract.v3`` document, the V2->V3 upgrade emitter, the V3
+  capability advertisement, the V3 CLI route).  Retired by PR-7; must stay
+  ``0`` / ``0``.  The fixed list is ``V3_PUBLIC_WIRE_MODULES``.
+- ``V3_INTERNAL_MIGRATION_MODULES`` / ``V3_INTERNAL_MIGRATION_LOC``: the
+  minimal internal V3 migration kernel PR-7 may keep when released V1/V2
+  compatibility needs a ``V1/V2 -> internal V3 IR -> canonical`` chain.  PR-7
+  proved none is necessary, so the list is empty and the counts must stay
+  ``0`` / ``0``.
+- ``V3_V4_REACHABLE_MODULES``: V4-closure modules whose source references a
+  retired V3 public-wire token (schema id or retired symbol).  Must stay ``0``:
+  the formal V4 runtime must never consume or advertise V3.
 
 Usage::
 
@@ -70,6 +83,37 @@ CALC_PUBLIC_TOOLING_ROOTS: tuple[str, ...] = (
 _LAZY_EXPORT_FILES: tuple[tuple[str, str], ...] = (
     ("confflow/__init__.py", "confflow"),
     ("confflow/calc/__init__.py", "confflow.calc"),
+)
+
+#: The retired never-released Workflow V3 public wire (Architecture Diet PR-7).
+#: The metric counts any of these reappearing on disk; it must stay empty.
+V3_PUBLIC_WIRE_MODULES: tuple[str, ...] = (
+    "confflow.config.canonical.v3_parser",
+    "confflow.config.canonical.v3_graph",
+    "confflow.config.canonical.upgrade",
+    "confflow.config.canonical.structured",
+    "confflow.config.canonical.theory",
+    "confflow.config.canonical.extensions",
+    "confflow.config.canonical.yaml_io",
+    "confflow.config.canonical.execution_versions",
+    "confflow.config.workflow_cli",
+)
+
+#: Internal-only V3 migration kernel allowed to survive for released V1/V2
+#: compatibility.  PR-7 proved none is necessary, so this is empty by decision.
+V3_INTERNAL_MIGRATION_KERNEL: tuple[str, ...] = ()
+
+#: Source tokens that identify the retired V3 public wire.
+V3_WIRE_TOKENS: tuple[str, ...] = (
+    "confflow.workflow.v3",
+    "v3_parser",
+    "v3_graph",
+    "workflow_json_schema_v3",
+    "validate_workflow_v3",
+    "build_configuration_contract_v3",
+    "instantiate_recipe_v3",
+    "upgrade_v2_to_v3",
+    "execution_versions",
 )
 
 
@@ -199,6 +243,22 @@ def _loc(path: str) -> int:
         return sum(1 for _ in handle)
 
 
+def _v3_wire_modules(modules: dict[str, str], names: tuple[str, ...]) -> list[str]:
+    """Return the retired V3 modules from *names* that exist on disk."""
+    return sorted(name for name in names if name in modules)
+
+
+def _v3_wire_loc(modules: dict[str, str], names: list[str]) -> int:
+    return sum(_loc(modules[name]) for name in names)
+
+
+def _module_mentions_v3_wire(path: str) -> bool:
+    """Return whether *path* references a retired V3 public-wire token."""
+    with open(path, encoding="utf-8") as handle:
+        text = handle.read()
+    return any(token in text for token in V3_WIRE_TOKENS)
+
+
 def collect(root: str) -> dict[str, object]:
     modules = _discover_modules(root)
     imports: dict[str, set[str]] = defaultdict(set)
@@ -225,6 +285,14 @@ def collect(root: str) -> dict[str, object]:
     calc_v4 = sorted(calc_set & reachable)
     calc_dead = sorted(calc_set - tooling_reach - reachable)
 
+    v3_public = _v3_wire_modules(modules, V3_PUBLIC_WIRE_MODULES)
+    v3_internal = _v3_wire_modules(modules, V3_INTERNAL_MIGRATION_KERNEL)
+    v3_v4 = sorted(
+        module
+        for module in reachable
+        if module in modules and _module_mentions_v3_wire(modules[module])
+    )
+
     return {
         "root": os.path.abspath(root),
         "V4_ROOTS": list(V4_ROOTS),
@@ -238,9 +306,17 @@ def collect(root: str) -> dict[str, object]:
         "CALC_V4_REACHABLE_MODULES": len(calc_v4),
         "CALC_PUBLIC_TOOLING_MODULES": len(calc_public),
         "CALC_DEAD_MODULES": len(calc_dead),
+        "V3_PUBLIC_MODULES": len(v3_public),
+        "V3_PUBLIC_LOC": _v3_wire_loc(modules, v3_public),
+        "V3_INTERNAL_MIGRATION_MODULES": len(v3_internal),
+        "V3_INTERNAL_MIGRATION_LOC": _v3_wire_loc(modules, v3_internal),
+        "V3_V4_REACHABLE_MODULES": len(v3_v4),
         "v4_reachable": sorted(reachable),
         "calc_public_tooling": calc_public,
         "calc_dead": calc_dead,
+        "v3_public": v3_public,
+        "v3_internal_migration": v3_internal,
+        "v3_v4_reachable": v3_v4,
     }
 
 
@@ -268,6 +344,11 @@ def main(argv: list[str] | None = None) -> int:
     print(f"CALC_V4_REACHABLE_MODULES={metrics['CALC_V4_REACHABLE_MODULES']}")
     print(f"CALC_PUBLIC_TOOLING_MODULES={metrics['CALC_PUBLIC_TOOLING_MODULES']}")
     print(f"CALC_DEAD_MODULES={metrics['CALC_DEAD_MODULES']}")
+    print(f"V3_PUBLIC_MODULES={metrics['V3_PUBLIC_MODULES']}")
+    print(f"V3_PUBLIC_LOC={metrics['V3_PUBLIC_LOC']}")
+    print(f"V3_INTERNAL_MIGRATION_MODULES={metrics['V3_INTERNAL_MIGRATION_MODULES']}")
+    print(f"V3_INTERNAL_MIGRATION_LOC={metrics['V3_INTERNAL_MIGRATION_LOC']}")
+    print(f"V3_V4_REACHABLE_MODULES={metrics['V3_V4_REACHABLE_MODULES']}")
     return 0
 
 

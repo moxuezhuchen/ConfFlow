@@ -7,11 +7,13 @@ The important assertions here are about *not* changing things:
 * ``confflow config contract --json`` must stay byte-for-byte what it was;
 * ``--version 1`` must be the same bytes as the default;
 * ``--version 2`` must be the only thing that adds members;
-* an unknown version must be refused by the argument parser, not accepted and
-  silently treated as v1.
+* an unknown or retired version must be refused, not accepted and silently
+  treated as v1.
 
 The v2 test deliberately goes through the real ``confflow.cli`` dispatch rather
-than calling the builder, so the wiring is exercised too.
+than calling the builder, so the wiring is exercised too. The
+``configuration-validation.v1`` response checks below moved here from the
+retired V3 CLI-inspection tests: they pin the released V1/V2 wire.
 """
 
 from __future__ import annotations
@@ -149,8 +151,8 @@ class TestExplicitV2:
 
 
 class TestVersionIsRestricted:
-    @pytest.mark.parametrize("value", ["0", "-1", "two", "", "2.0"])
-    def test_an_unacceptable_version_exits_before_printing(self, capsys, value: str) -> None:
+    @pytest.mark.parametrize("value", ["two", "", "2.0"])
+    def test_a_non_integer_version_exits_before_printing(self, capsys, value: str) -> None:
         with pytest.raises(SystemExit) as caught:
             config_cli.main(["contract", "--json", "--version", value])
 
@@ -159,9 +161,19 @@ class TestVersionIsRestricted:
         assert captured.out == ""
         assert "--version" in captured.err
 
+    @pytest.mark.parametrize("value", ["0", "-1", "3", "4"])
+    def test_an_unsupported_version_fails_closed_before_printing(self, capsys, value: str) -> None:
+        assert config_cli.main(["contract", "--json", "--version", value]) == (ExitCode.USAGE_ERROR)
+
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        assert "unsupported configuration contract version" in captured.err
+        assert "supported: 1, 2" in captured.err
+
     def test_the_accepted_choices_are_the_supported_versions(self) -> None:
-        # R7 adds the additive v3 producer contract; the CLI accepts it.
-        assert sorted(CONFIGURATION_CONTRACT_BUILDERS) == [1, 2, 3]
+        # PR-7 retires the additive v3 producer contract along with the rest of
+        # the never-released Workflow V3 public wire.
+        assert sorted(CONFIGURATION_CONTRACT_BUILDERS) == [1, 2]
 
 
 class TestExistingSurfacesAreUntouched:
@@ -172,3 +184,41 @@ class TestExistingSurfacesAreUntouched:
         payload = _document(capsys)
         assert payload["schema"] == "confflow.configuration-validation.v1"
         assert payload["valid"] is True
+
+    def _run_validate(self, monkeypatch, capsys, document: dict) -> tuple[int, dict]:
+        monkeypatch.setattr(config_cli.sys, "stdin", io.StringIO(json.dumps(document)))
+        code = config_cli.main(["validate", "--json", "--stdin"])
+        return code, json.loads(capsys.readouterr().out)
+
+    def test_v2_response_is_unchanged(self, monkeypatch, capsys) -> None:
+        from confflow.config.canonical import workflow_schema_sha256
+
+        code, payload = self._run_validate(
+            monkeypatch,
+            capsys,
+            {
+                "global": {},
+                "steps": [{"name": "gen", "type": "confgen", "params": {"chains": ["1-2"]}}],
+            },
+        )
+        assert code == ExitCode.SUCCESS
+        assert payload["valid"] is True
+        assert payload["workflow_schema_sha256"] == workflow_schema_sha256()
+        assert set(payload) == {"schema", "valid", "workflow_schema_sha256", "issues"}
+
+        code, payload = self._run_validate(
+            monkeypatch,
+            capsys,
+            {"steps": [{"name": "gen", "type": "confgen", "params": {}}]},
+        )
+        assert code == ExitCode.USAGE_ERROR
+        assert payload["valid"] is False
+        assert payload["workflow_schema_sha256"] == workflow_schema_sha256()
+
+    def test_unknown_schema_fails_closed(self, monkeypatch, capsys) -> None:
+        code, payload = self._run_validate(
+            monkeypatch, capsys, {"schema": "confflow.workflow.v4", "steps": []}
+        )
+        assert code == ExitCode.USAGE_ERROR
+        assert payload["valid"] is False
+        assert any("unsupported workflow schema" in issue["message"] for issue in payload["issues"])

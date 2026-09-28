@@ -91,7 +91,7 @@ def to_canonical_workflow(workflow: WorkflowConfig) -> CanonicalWorkflowDefiniti
                 predecessors=predecessors.get(name, ()),
                 inputs_declared="inputs" in legacy_step,
                 v2_name=str(legacy_step.get("name")),
-                # V3-ready fields: a V2 step has no stable id and no structured
+                # IR extras: a V2 step has no stable id and no structured
                 # checkpoint; its canonical name is its human label, and the
                 # legacy ``params.chk_from_step`` stays verbatim in ``params``.
                 label=name,

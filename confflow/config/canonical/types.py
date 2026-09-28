@@ -460,14 +460,11 @@ class CalcStepParams:
         global_options: GlobalOptions,
         *,
         input_chk_dir: str | None = None,
-        require_keyword: bool = True,
     ) -> CalcStepParams:
         """Canonicalise one calc step.
 
-        ``require_keyword`` is the only presence rule that a *disabled* V3 step may
-        be exempt from (RFC §12); when it is false and no effective keyword exists,
-        ``keyword`` is ``None`` — the honest "absent" state, never a placeholder.
-        The V2 path always uses the default, so its behaviour is unchanged.
+        A calc step requires a non-empty effective keyword; a missing keyword is
+        a hard error here, as it always was on the V2 path.
         """
         params = _as_dict(params)
         if params.get("ts_rescue_scan_backup") is not None:
@@ -483,11 +480,8 @@ class CalcStepParams:
             raise ValueError(f"Unsupported calc task: {task}")
         keyword = params.get("keyword", global_options.keyword)
         if keyword is None or not str(keyword).strip():
-            if require_keyword:
-                raise ValueError("calc step requires a non-empty keyword")
-            canonical_keyword: str | None = None
-        else:
-            canonical_keyword = str(keyword)
+            raise ValueError("calc step requires a non-empty keyword")
+        canonical_keyword: str | None = str(keyword)
 
         freeze = ()
         if task in {"opt", "opt_freq", "ts"}:

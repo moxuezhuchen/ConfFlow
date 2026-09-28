@@ -1,15 +1,20 @@
-"""P0 review fix — the mandatory service-construction execution guard.
+"""Legacy execution guard — the mandatory service-construction fail-closed path.
 
 ``build_workflow_service`` is the lowest shared service boundary: every caller
 (``run_workflow_through_service``, ``_prepare_failed_retry``, the control
 worker via ``run_worker_attempt``, any direct API user) must be refused for a
-non-executable workflow version BEFORE any persistent side effect — state-root
+non-V4 workflow document BEFORE any persistent side effect — state-root
 creation, run paths, SQLite repository, service preparation, runner launch.
 
-The worker attempt boundary is covered too: ``run_worker_attempt`` gates on
-the staged config before ``ensure_run_paths`` creates anything.
+The V3 document used below was a Workflow V3 wire document; after the
+Architecture Diet PR-7 retired that never-released wire, a V3 document is an
+unknown schema and is refused by the same V4 authority. The worker attempt
+boundary is covered too: ``run_worker_attempt`` gates on the staged config
+before ``ensure_run_paths`` creates anything.
 
-All guards read the single ``CAPABILITIES``/``require_executable`` truth.
+All guards read the single V4 document authority
+(``confflow.application.v4_entry.require_v4_document_file``); the retired
+``execution_versions`` capability table no longer exists.
 """
 
 from __future__ import annotations
@@ -21,7 +26,6 @@ import pytest
 import yaml
 
 from confflow.application.execution.workflow_adapter import build_workflow_service
-from confflow.config.canonical import CAPABILITIES, WORKFLOW_SCHEMA_VERSION_V3
 from confflow.worker_attempt import run_worker_attempt
 
 V3 = "confflow.workflow.v3"
@@ -69,14 +73,9 @@ def _assert_no_persistent_traces(state_root: Path) -> None:
     assert not list(state_root.rglob("steps"))
 
 
-def test_capability_table_allows_v3_execution() -> None:
-    """Post-flip: the builder guard admits V3 and still blocks unknown versions."""
-    assert CAPABILITIES[WORKFLOW_SCHEMA_VERSION_V3].execute is True
-
-
 class TestBuilderDirectGuard:
     def test_v3_spec_refused_before_the_service_builder(self, tmp_path: Path) -> None:
-        """Cutover: the builder guard refuses V3 before any persistent side effect.
+        """The builder guard refuses a V3 document before any persistent side effect.
 
         The builder is the mandatory lowest shared boundary; for a
         non-V4 document it raises before creating the state root, run
@@ -105,13 +104,11 @@ class TestBuilderDirectGuard:
 
 class TestWorkerDirectPathGuard:
     def test_v3_worker_attempt_refused_before_the_service_builder(self, tmp_path: Path) -> None:
-        """Cutover: the worker preflight refuses V3 before ensure_run_paths.
+        """The worker preflight refuses a V3 document before ensure_run_paths.
 
         The preflight fails closed for non-V4 staged configs; the service
         builder is never reached and no run layout is created.
         """
-        import pytest
-
         from confflow.application.execution.state_root import StateRoot
         from confflow.core.exceptions import ConfFlowError
 
@@ -152,14 +149,12 @@ class TestWorkerDirectPathGuard:
         assert not list(state_root.rglob("steps"))
 
     def test_v2_worker_attempt_refused_before_the_service_builder(self, tmp_path: Path) -> None:
-        """Cutover: the single V4 authority refuses V2 staged configs too.
+        """The single V4 authority refuses V2 staged configs too.
 
-        The guard is no longer a no-op for V2: only V4 documents proceed to
+        The guard is not a no-op for V2 either: only V4 documents proceed to
         the service builder.
         """
         from types import SimpleNamespace
-
-        import pytest
 
         from confflow.application.execution.models import RunState
         from confflow.application.execution.state_root import StateRoot

@@ -3,28 +3,28 @@
 """Param descriptor registry: the structural truth for core step parameters.
 
 This module owns **structure**: which parameter keys exist for each step type,
-their basic JSON shape, enum membership and which workflow versions accept them.
-It does *not* own semantics — coercion, defaults, cross-field rules and runnable
-invariants stay with the typed resolvers (the ``CalcStepParams`` factory and
-``resolve_confgen_params``). The split is deliberate:
+their basic JSON shape and enum membership. It does *not* own semantics —
+coercion, defaults, cross-field rules and runnable invariants stay with the
+typed resolvers (the ``CalcStepParams`` factory and ``resolve_confgen_params``).
+The split is deliberate:
 
-* descriptor registry -> the key set + structural JSON Schema,
+* descriptor registry -> the key set,
 * resolver            -> semantic meaning,
 * validator           -> combines both.
 
-Deriving the V3 parameter schema and the V2 "known key" sets from one registry
-means the JSON Schema and the validator can never keep two drifting allow-lists.
 The confgen vocabulary is derived from :mod:`confflow.shared.confgen_params`
 (the resolver's own alias groups and simple keys) so there is still one source.
 
 V2 keeps its open-bag tolerance: this registry only *defines* the known keys; it
-does not make V2 reject unknown parameters. Only the V3 schema is strict.
+does not make V2 reject unknown parameters. The strict, never-released V3
+JSON-Schema projection (``param_properties``) was retired by the Architecture
+Diet PR-7 with the rest of the V3 public wire.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Literal, get_args
+from typing import Literal, get_args
 
 from ...shared.confgen_params import CONFGEN_ALIAS_GROUPS, CONFGEN_SIMPLE_KEYS
 from .types import ProgramName, TaskName
@@ -34,9 +34,7 @@ __all__ = [
     "calc_param_fields",
     "confgen_keys",
     "confgen_param_fields",
-    "param_properties",
     "v2_calc_keys",
-    "v3_calc_keys",
 ]
 
 JsonValueKind = Literal["string", "integer", "number", "boolean", "array", "object", "any"]
@@ -57,10 +55,7 @@ class ParamFieldDescriptor:
 
     ``value_kind`` is the accepted JSON shape (a single kind or a union). It is
     intentionally permissive where the resolvers accept several wire forms
-    (e.g. ``"0.5"`` and ``0.5``); the point of the V3 schema is to make the *key*
-    set strict, not to reject every alternate spelling. ``v3`` marks membership in
-    the V3 runnable vocabulary — ``chk_from_step`` is V2-only because V3 promotes
-    it to ``checkpoint.from_step``. ``required`` documents runnable-required
+    (e.g. ``"0.5"`` and ``0.5``). ``required`` documents runnable-required
     fields (e.g. confgen ``chains``); no core parameter is *structurally*
     required, so it is ``False`` here and the runnable rule stays semantic.
     """
@@ -70,7 +65,6 @@ class ParamFieldDescriptor:
     item_kind: JsonValueKind | None = None
     enum_values: tuple[str, ...] | None = None
     aliases: tuple[str, ...] = ()
-    v3: bool = True
     required: bool = False
 
 
@@ -80,16 +74,14 @@ def _calc(
     *,
     item: JsonValueKind | None = None,
     enum: tuple[str, ...] | None = None,
-    v3: bool = True,
 ) -> ParamFieldDescriptor:
-    return ParamFieldDescriptor(key=key, value_kind=kind, item_kind=item, enum_values=enum, v3=v3)
+    return ParamFieldDescriptor(key=key, value_kind=kind, item_kind=item, enum_values=enum)
 
 
 _FLAG = ("boolean", "integer", "string")
 _NUMBER = ("number", "string")
 
-#: The V2 calc parameter vocabulary, in the historical order. ``chk_from_step`` is
-#: V2-only (V3 migrates it to ``checkpoint.from_step``).
+#: The V2 calc parameter vocabulary, in the historical order.
 _CALC_FIELDS: tuple[ParamFieldDescriptor, ...] = (
     _calc("iprog", "string", enum=_PROGRAM_VALUES),
     _calc("itask", "string", enum=_TASK_VALUES),
@@ -139,7 +131,7 @@ _CALC_FIELDS: tuple[ParamFieldDescriptor, ...] = (
     _calc("gaussian_modredundant", ("string", "array"), item="string"),
     _calc("gaussian_link0", ("string", "array"), item="string"),
     _calc("ibkout", "integer"),
-    _calc("chk_from_step", "string", v3=False),
+    _calc("chk_from_step", "string"),
     _calc("theory", ("object", "string")),
 )
 
@@ -203,7 +195,7 @@ _assert_vocabulary_is_complete()
 
 
 def calc_param_fields() -> tuple[ParamFieldDescriptor, ...]:
-    """Return every calc parameter descriptor (V2 vocabulary, ``v3`` marks V3 membership)."""
+    """Return every calc parameter descriptor (the V2 vocabulary)."""
     return _CALC_FIELDS
 
 
@@ -217,81 +209,6 @@ def v2_calc_keys() -> frozenset[str]:
     return frozenset(descriptor.key for descriptor in _CALC_FIELDS)
 
 
-def v3_calc_keys() -> frozenset[str]:
-    """Return the V3 calc parameter key set (``chk_from_step`` promoted to checkpoint)."""
-    return frozenset(descriptor.key for descriptor in _CALC_FIELDS if descriptor.v3)
-
-
 def confgen_keys() -> frozenset[str]:
     """Return every confgen parameter key recognized by the resolver."""
     return frozenset(descriptor.key for descriptor in _CONFGEN_FIELDS)
-
-
-def _render(descriptor: ParamFieldDescriptor) -> dict[str, Any]:
-    if descriptor.key == "theory":
-        # Authoritative nested schema for params.theory (RFC §18): the object
-        # form allows EXACTLY {program,task,method,basis,dispersion,solvent}
-        # (additionalProperties false) so `methd:`/`basiss:` typos fail at the
-        # JSON-schema level; the string shorthand stays allowed. Program/task
-        # enums come from the single registry (types.ProgramName/TaskName via
-        # _PROGRAM_VALUES/_TASK_VALUES). Solvent allows a string or a mapping
-        # with exactly {model, solvent, name} (`name` is the alias of
-        # `solvent`; see theory.normalize_solvent).
-        return {
-            "anyOf": [
-                {"type": "string"},
-                {
-                    "type": "object",
-                    "additionalProperties": False,
-                    "properties": {
-                        "program": {"type": "string", "enum": list(_PROGRAM_VALUES)},
-                        "task": {"type": "string", "enum": list(_TASK_VALUES)},
-                        "method": {"type": "string"},
-                        "basis": {"type": "string"},
-                        "dispersion": {"type": "string"},
-                        "solvent": {
-                            "anyOf": [
-                                {"type": "string"},
-                                {
-                                    "type": "object",
-                                    "additionalProperties": False,
-                                    "properties": {
-                                        "model": {"type": "string"},
-                                        "solvent": {"type": "string"},
-                                        "name": {"type": "string"},
-                                    },
-                                },
-                            ]
-                        },
-                    },
-                },
-            ]
-        }
-    if descriptor.enum_values is not None:
-        return {"enum": list(descriptor.enum_values)}
-    kinds = descriptor.value_kind
-    if kinds == "any":
-        return {}
-    schema: dict[str, Any] = {"type": list(kinds) if isinstance(kinds, tuple) else kinds}
-    if kinds == "array" or (isinstance(kinds, tuple) and "array" in kinds):
-        if descriptor.item_kind is not None:
-            schema["items"] = (
-                {} if descriptor.item_kind == "any" else {"type": descriptor.item_kind}
-            )
-    return schema
-
-
-def param_properties(step_type: str) -> dict[str, Any]:
-    """Return the strict V3 ``params`` properties for one step type.
-
-    The result is the JSON Schema ``properties`` mapping (not the full object
-    schema); :mod:`confflow.config.canonical.schema` wraps it with
-    ``additionalProperties: false``. Every key is a concrete accepted name, so
-    legacy aliases (``chain``, ``max_workers`` …) remain legal while an unknown
-    or misspelled key is rejected.
-    """
-    if step_type == _CALC:
-        return {descriptor.key: _render(descriptor) for descriptor in _CALC_FIELDS if descriptor.v3}
-    if step_type == _CONFGEN:
-        return {descriptor.key: _render(descriptor) for descriptor in _CONFGEN_FIELDS}
-    raise ValueError(f"unknown step type for param properties: {step_type!r}")

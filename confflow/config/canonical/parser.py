@@ -9,11 +9,7 @@ from typing import TYPE_CHECKING, Any
 import yaml
 
 from .issues import ConfigIssue, ConfigValidationError
-from .schema import (
-    WORKFLOW_SCHEMA_VERSION_V2,
-    WORKFLOW_SCHEMA_VERSION_V3,
-    SchemaProfile,
-)
+from .schema import WORKFLOW_SCHEMA_VERSION_V2
 from .types import WorkflowConfig
 
 if TYPE_CHECKING:
@@ -30,8 +26,11 @@ def detect_schema_version(raw: Mapping[str, Any]) -> str:
     """Return the workflow schema version of ``raw``.
 
     The single version-recognition truth: absent ``schema`` is the historical V2
-    document, an explicit V2/V3 value is honoured, and anything else fails closed
-    (an unknown version is never silently treated as V2).
+    document, an explicit V2 value is honoured, and anything else fails closed
+    (an unknown or retired version is never silently treated as V2). The
+    never-released ``confflow.workflow.v3`` wire was retired by PR-7, so it now
+    fails closed with the same stable unsupported-version error as any other
+    unrecognised value.
     """
     if not isinstance(raw, Mapping):
         raise ConfigValidationError(ConfigIssue("", "workflow config root must be a mapping"))
@@ -43,7 +42,7 @@ def detect_schema_version(raw: Mapping[str, Any]) -> str:
             ConfigIssue("schema", "workflow 'schema' must be a non-empty string")
         )
     normalized = value.strip()
-    if normalized in {WORKFLOW_SCHEMA_VERSION_V2, WORKFLOW_SCHEMA_VERSION_V3}:
+    if normalized == WORKFLOW_SCHEMA_VERSION_V2:
         return normalized
     raise ConfigValidationError(ConfigIssue("schema", f"unsupported workflow schema: {value!r}"))
 
@@ -88,15 +87,11 @@ def parse_workflow_mapping(raw: Mapping[str, Any]) -> WorkflowConfig:
 def parse_canonical_workflow(raw: Mapping[str, Any]) -> CanonicalWorkflowDefinition:
     """Dispatch ``raw`` by schema version onto the canonical workflow IR.
 
-    V2 documents go through the unchanged V2 parser + adapter; V3 documents go
-    through the V3 structural parser. This is parse-only: nothing here builds an
-    execution plan (that is R3.5), and an unknown version fails closed.
+    V2 documents go through the unchanged V2 parser + adapter. This is
+    parse-only: nothing here builds an execution plan (that is R3.5), and an
+    unknown or retired version fails closed.
     """
-    version = detect_schema_version(raw)
-    if version == WORKFLOW_SCHEMA_VERSION_V3:
-        from .v3_parser import parse_v3_document
-
-        return parse_v3_document(raw, profile=SchemaProfile.DOCUMENT)
+    detect_schema_version(raw)
     from .v2_adapter import to_canonical_workflow
 
     return to_canonical_workflow(parse_workflow_mapping(raw))

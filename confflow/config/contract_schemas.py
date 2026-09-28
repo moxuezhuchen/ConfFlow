@@ -5,7 +5,7 @@ This module is the single authority for the schema-id strings shared by the
 producer contract envelope, the editor manifest, the recipe catalog, and the
 configuration-validation response.  It deliberately imports nothing beyond
 ``__future__`` so that ``confflow.producer`` can read the identifiers without
-loading the V1/V2/V3 configuration runtime
+loading the V1/V2 configuration runtime
 (:mod:`confflow.config.canonical`).
 
 The historical import paths stay valid and re-export these same objects
