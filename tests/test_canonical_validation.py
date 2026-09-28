@@ -19,7 +19,6 @@ import pytest
 from confflow.config import cli as config_cli
 from confflow.config.canonical import (
     Diagnostic,
-    ValidationProfile,
     to_canonical_workflow,
     validate_workflow_definition,
     validate_workflow_run_context,
@@ -661,7 +660,7 @@ def test_run_context_error_matches_the_planner(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Version-aware façade (R3.4 review) — one public entry, exact V2 compatibility
+# Version-aware façade — one public entry, exact V2 compatibility
 # ---------------------------------------------------------------------------
 V2_SCHEMA = "confflow.workflow.v2"
 V3_SCHEMA = "confflow.workflow.v3"
@@ -670,17 +669,6 @@ V3_SCHEMA = "confflow.workflow.v3"
 def _tuples(diagnostics: list[Diagnostic]) -> list[tuple[str, str, str, str, str | None]]:
     return [(d.code, d.severity, d.path, d.message, d.step_ref) for d in diagnostics]
 
-
-def _v3_doc(steps: list[dict[str, Any]], **root: Any) -> dict[str, Any]:
-    document: dict[str, Any] = {"schema": V3_SCHEMA, "steps": steps}
-    document.update(root)
-    return document
-
-
-_V3_LINEAR = [
-    {"id": "s001", "type": "confgen", "inputs": [], "params": {"chains": ["1-2"]}},
-    {"id": "s002", "type": "calc", "inputs": ["s001"], "params": {"keyword": "HF"}},
-]
 
 # A frozen regression corpus: same V2 input → exactly these diagnostics. This is
 # the pre/post-façade pin — the legacy body was moved verbatim, and any drift in
@@ -823,61 +811,30 @@ def test_v2_explicit_v2_schema_takes_the_same_v2_path() -> None:
     assert _tuples(validate_workflow_definition(raw)) == _V2_CORPUS["calc_fan_in"][1]
 
 
-def test_v3_valid_document_has_no_diagnostics() -> None:
-    assert validate_workflow_definition(_v3_doc(_V3_LINEAR)) == []
-
-
-def test_v3_semantic_invalid_document_reports_v3_diagnostics() -> None:
-    raw = _v3_doc(
-        [
-            {"id": "s001", "type": "confgen", "inputs": [], "params": {}},
-            {"id": "s002", "type": "calc", "inputs": ["s001"], "params": {"keyword": "HF"}},
-        ]
-    )
-    codes = [diagnostic.code for diagnostic in validate_workflow_definition(raw)]
-    assert codes == ["confgen.chains.required"]
-
-
 def test_v5_unknown_schema_fails_closed() -> None:
     diagnostics = validate_workflow_definition({"schema": "confflow.workflow.v4", "steps": []})
     assert [
         (diagnostic.code, diagnostic.path, diagnostic.message) for diagnostic in diagnostics
     ] == [("workflow.schema", "schema", "unsupported workflow schema: 'confflow.workflow.v4'")]
+    # The retired never-released V3 wire fails closed identically: unknown now
+    # means unknown, with no V3 dispatch left to honour it.
+    diagnostics = validate_workflow_definition({"schema": V3_SCHEMA, "steps": []})
+    assert _tuples(diagnostics) == [
+        (
+            "workflow.schema",
+            "error",
+            "schema",
+            "unsupported workflow schema: 'confflow.workflow.v3'",
+            None,
+        )
+    ]
     # Non-string schema values fail closed the same way.
     diagnostics = validate_workflow_definition({"schema": 123, "steps": []})
     assert diagnostics[0].code == "workflow.schema"
     assert diagnostics[0].path == "schema"
 
 
-def test_v6_v3_fragment_with_fragment_profile_passes() -> None:
-    raw = _v3_doc([{"type": "confgen", "inputs": [], "params": {}}])
-    diagnostics = validate_workflow_definition(raw, profile=ValidationProfile.FRAGMENT)
-    assert diagnostics == []
-
-
-def test_v7_same_fragment_under_runnable_profile_errors() -> None:
-    raw = _v3_doc([{"type": "confgen", "inputs": [], "params": {}}])
-    diagnostics = validate_workflow_definition(raw)
-    assert diagnostics
-    assert all(diagnostic.is_error for diagnostic in diagnostics)
-
-
 def test_facade_non_mapping_input_keeps_the_legacy_diagnostic() -> None:
     assert _tuples(validate_workflow_definition("nope")) == [
         ("workflow.root_not_mapping", "error", "", "workflow config root must be a mapping", None)
     ]
-
-
-def test_unreadable_config_preflight_is_pass_through(tmp_path: Path) -> None:
-    """Unreadable/unrecognised configs stay pass-through for the migration gate.
-
-    Moved from the retired V3 execution-guard tests: the behavior belongs to
-    the canonical migration reader, not to any execution runtime.
-    """
-    from confflow.config.canonical import require_executable_workflow_file
-
-    missing = tmp_path / "missing.yaml"
-    assert require_executable_workflow_file(str(missing)) is None
-    broken = tmp_path / "broken.yaml"
-    broken.write_text("::: not yaml: [", encoding="utf-8")
-    assert require_executable_workflow_file(str(broken)) is None

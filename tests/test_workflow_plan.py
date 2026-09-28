@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from confflow.config.models import GlobalOptions
-from confflow.workflow.plan import WorkflowPlan, build_workflow_plan
+from confflow.workflow.plan import WorkflowPlan, build_workflow_plan, workflow_plan_source_version
 from confflow.workflow.step_naming import build_step_dir_name_map
 
 
@@ -125,3 +125,73 @@ def test_step_directory_names_reserve_all_bases(names: list[str], expected: list
     assert dirnames == expected
     assert len(dirnames) == len(set(dirnames))
     assert {name: by_name[name] for name in names} == dict(zip(names, expected, strict=True))
+
+
+# ---------------------------------------------------------------------------
+# V2 planning regression — moved from the retired V3 planning tests (PR-7).
+# The version dispatch these pinned no longer exists, but the V2 semantics it
+# guarded are released behaviour and stay pinned here.
+# ---------------------------------------------------------------------------
+def test_v2_plan_regression_through_version_dispatch(tmp_path: Path) -> None:
+    input_xyz = tmp_path / "input.xyz"
+    original_xyz = tmp_path / "original.xyz"
+    _write_xyz(input_xyz)
+    _write_xyz(original_xyz, "original")
+    config = tmp_path / "workflow.yaml"
+    config.write_text(
+        "global:\n"
+        "  force_consistency: true\n"
+        "steps:\n"
+        "  - name: join output\n"
+        "    type: confgen\n"
+        "    inputs: [left, right]\n"
+        "    params: {keyword: HF}\n"
+        "  - name: right\n"
+        "    type: confgen\n"
+        "    inputs: [root]\n"
+        "  - name: left\n"
+        "    type: confgen\n"
+        "    inputs: [root]\n"
+        "  - name: root\n"
+        "    type: confgen\n",
+        encoding="utf-8",
+    )
+
+    plan = build_workflow_plan(
+        [str(input_xyz)], str(config), original_input_files=[str(original_xyz)]
+    )
+
+    assert isinstance(plan, WorkflowPlan)
+    assert workflow_plan_source_version(plan) == "confflow.workflow.v2"
+    assert plan.input_files == [str(input_xyz.resolve())]
+    assert plan.original_inputs == [str(original_xyz.resolve())]
+    assert [step["name"] for step in plan.steps] == ["join output", "right", "left", "root"]
+    assert plan.execution_order == ["root", "left", "right", "join output"]
+    assert plan.terminal_steps == ["join output"]
+    assert plan.step_dirnames == ["join_output", "right", "left", "root"]
+    assert plan.name_to_dirname == {
+        "join output": "join_output",
+        "right": "right",
+        "left": "left",
+        "root": "root",
+    }
+
+
+def test_v2_plan_with_chk_from_step_keeps_legacy_shape(tmp_path: Path) -> None:
+    input_xyz = tmp_path / "input.xyz"
+    _write_xyz(input_xyz)
+    config = tmp_path / "workflow.yaml"
+    config.write_text(
+        "steps:\n"
+        "  - name: gen\n"
+        "    type: confgen\n"
+        "  - name: opt\n"
+        "    type: calc\n"
+        "    inputs: [gen]\n"
+        "    params: {keyword: HF, chk_from_step: gen}\n",
+        encoding="utf-8",
+    )
+    plan = build_workflow_plan([str(input_xyz)], str(config))
+    assert isinstance(plan, WorkflowPlan)
+    assert plan.steps[1]["params"]["chk_from_step"] == "gen"
+    assert plan.step_dirnames == ["gen", "opt"]

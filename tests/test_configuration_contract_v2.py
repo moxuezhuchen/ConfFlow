@@ -245,8 +245,9 @@ class TestDeterminism:
 
 class TestVersionDispatch:
     def test_the_builder_map_defines_the_supported_versions(self) -> None:
-        # R7 publishes the additive v3 producer contract alongside v1/v2.
-        assert sorted(CONFIGURATION_CONTRACT_BUILDERS) == [1, 2, 3]
+        # PR-7 retires the never-released v3 producer contract; only the
+        # released v1 default and the additive v2 remain.
+        assert sorted(CONFIGURATION_CONTRACT_BUILDERS) == [1, 2]
 
     @pytest.mark.parametrize("version", [1, 2])
     def test_each_version_dispatches_to_its_builder(self, version: int) -> None:
