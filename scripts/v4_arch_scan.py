@@ -21,10 +21,12 @@ Post-cutover scope (V4 Core Closure, ``44b478d``):
   helpers still come from the legacy line) and ``confflow/control_worker.py``
   (worker-side legacy helpers).
 - RETIRED READ-ONLY / separate tools (out of scope by design):
-  ``confflow/calc`` and ``confflow/workflow`` (V2/V3 runtime, fail-closed),
-  ``confflow.confts`` / ``confflow.blocks`` (standalone legacy CLIs), and
-  the V1/V2/V3 configuration-contract emission (JobDesk wire
-  compatibility).
+  ``confflow/calc`` (legacy calculation tooling), ``confflow.confts`` /
+  ``confflow.blocks`` (standalone legacy CLIs), and the V1/V2/V3
+  configuration-contract emission (JobDesk wire compatibility).  The
+  V2/V3 workflow *execution* runtime was physically removed by Architecture
+  Diet PR-4; the diagnostic planners (dry-run / config-show / export) and the
+  canonical V1/V2/V3 readers remain.  Any retired runtime module reappearing
 
 Contract-source imports (``confflow.config.canonical.contract`` / editor
 manifest / recipes) are the producer's recorded PR-2 decoupling debt and are
@@ -65,15 +67,21 @@ FORBIDDEN_IMPORT_PREFIXES: tuple[str, ...] = (
     "confflow.main",
     "confflow.confts",
     "confflow.workflow.engine",
+    "confflow.workflow.state",
     "confflow.workflow.v3_runtime",
     "confflow.workflow.v3_dataflow",
-    "confflow.workflow.plan",
-    "confflow.workflow.binding_v2",
     "confflow.workflow.step_handlers",
-    "confflow.workflow.state",
-    "confflow.workflow.supervisor",
+    "confflow.workflow.binding_v2",
+    "confflow.workflow.execution_context",
     "confflow.workflow.finalize",
+    "confflow.workflow.resume_validation",
+    "confflow.workflow.runtime_context",
+    "confflow.workflow.stats",
+    "confflow.workflow.presenter",
+    "confflow.workflow.dag",
+    "confflow.workflow.plan",
     "confflow.workflow.rerun_failed",
+    "confflow.workflow.supervisor",
     "confflow.core.models",
     "confflow.core.types",
     "confflow.core.parsers",
@@ -81,6 +89,9 @@ FORBIDDEN_IMPORT_PREFIXES: tuple[str, ...] = (
     "confflow.core.io",
 )
 
+#: V2/V3 execution-runtime modules retired by Architecture Diet PR-4.  They
+#: must not exist as source files and must not be importable from scoped
+#: files; the historically public names resolve to fail-closed stubs.
 PATTERNS: tuple[tuple[str, str], ...] = (
     ("legacy-TaskRunner", r"\bTaskRunner\b"),
     ("legacy-CalcStepRunner", r"\bCalcStepRunner\b"),

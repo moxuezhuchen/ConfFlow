@@ -419,10 +419,16 @@ class TestProductionCallGraph:
 
     FORBIDDEN_IMPORTS = (
         "confflow.workflow.engine",
+        "confflow.workflow.state",
+        "confflow.workflow.v3_runtime",
+        "confflow.workflow.v3_dataflow",
+        "confflow.workflow.step_handlers",
+        "confflow.workflow.binding_v2",
+        "confflow.workflow.finalize",
+        "confflow.workflow.execution_context",
+        "confflow.workflow.resume_validation",
         "confflow.calc",
         "confflow.workflow.rerun_failed",
-        "confflow.workflow.state",
-        "confflow.workflow.step_handlers",
         "confflow.workflow.supervisor",
     )
 

@@ -11,9 +11,10 @@ boundary. It provides:
 * the pure graph primitives (``build_step_graph`` / ``topo_order``) that resolve
   it.
 
-The historical ``confflow.workflow.dag.explicit`` import path re-exports the two
-primitives, so existing callers keep working unchanged. The V2 compatibility
-adapter that turns a parsed :class:`~confflow.config.canonical.types.WorkflowConfig`
+The retired ``confflow.workflow.dag`` compatibility package used to re-export
+the two primitives; callers import them from this module now. The V2
+compatibility adapter that turns a parsed
+:class:`~confflow.config.canonical.types.WorkflowConfig`
 into this IR lives in :mod:`confflow.config.canonical.v2_adapter`; no module below
 this boundary reads raw YAML to learn workflow semantics.
 
@@ -49,7 +50,7 @@ DependencyMode = Literal["implicit_linear", "explicit"]
 
 
 # ---------------------------------------------------------------------------
-# Pure graph primitives (the historical workflow.dag.explicit implementation).
+# Pure graph primitives (extracted from the retired legacy DAG).
 # ---------------------------------------------------------------------------
 def _bool_step_token_error(value: bool, context: str) -> ConfFlowError:
     return ConfFlowError(

@@ -237,9 +237,29 @@ REMOVED_LEGACY_MODULES: frozenset[str] = frozenset(
         "confflow.workflow.supervisor",
         "confflow.workflow.rerun_failed",
         "confflow.calc.async_exec",
+        # PR-4: retired V2/V3 execution runtime.
+        "confflow.workflow.engine",
+        "confflow.workflow.state",
+        "confflow.workflow.v3_runtime",
+        "confflow.workflow.step_handlers",
+        "confflow.workflow.binding_v2",
+        "confflow.workflow.stats",
+        "confflow.workflow.presenter",
+        "confflow.workflow.execution_context",
+        "confflow.workflow.finalize",
+        "confflow.workflow.v3_dataflow",
+        "confflow.workflow.resume_validation",
+        "confflow.workflow.runtime_context",
+        "confflow.workflow.dag",
+        "confflow.workflow.dag.explicit",
+        "confflow.workflow.dag.legacy",
     }
 )
 
+#: V2/V3 execution-runtime modules retired by Architecture Diet PR-4.  They
+#: must stay physically absent, unimportable, and unreferenced by the V4
+#: production sources.  The historically public names resolve to fail-closed
+#: retirement stubs (``confflow.workflow._retired_runtime``), never to code.
 #: Retained-by-design compatibility modules that are explicitly allowed to
 #: be absent from the source tree.  Empty today; a module moves here only
 #: with a written compatibility decision.
@@ -678,11 +698,18 @@ class TestRuntimeIsolation:
 
     def test_importing_workflow_package_stays_lazy(self) -> None:
         script = (
-            "import sys; import confflow.workflow; "
-            "assert 'confflow.workflow.engine' not in sys.modules, 'eager engine import'; "
-            "from confflow.workflow import run_workflow; "
-            "assert callable(run_workflow); "
-            "assert 'confflow.workflow.engine' in sys.modules"
+            "import sys\n"
+            "import confflow.workflow\n"
+            "assert 'confflow.workflow.engine' not in sys.modules, 'eager engine import'\n"
+            "from confflow.workflow import run_workflow\n"
+            "assert callable(run_workflow)\n"
+            "assert 'confflow.workflow.engine' not in sys.modules, 'retired engine loaded'\n"
+            "try:\n"
+            "    run_workflow()\n"
+            "except RuntimeError as exc:\n"
+            "    assert 'retired' in str(exc), exc\n"
+            "else:\n"
+            "    raise AssertionError('retired run_workflow must fail closed')\n"
         )
         result = self._run(script)
         assert result.returncode == 0, result.stderr

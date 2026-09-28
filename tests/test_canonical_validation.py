@@ -866,3 +866,18 @@ def test_facade_non_mapping_input_keeps_the_legacy_diagnostic() -> None:
     assert _tuples(validate_workflow_definition("nope")) == [
         ("workflow.root_not_mapping", "error", "", "workflow config root must be a mapping", None)
     ]
+
+
+def test_unreadable_config_preflight_is_pass_through(tmp_path: Path) -> None:
+    """Unreadable/unrecognised configs stay pass-through for the migration gate.
+
+    Moved from the retired V3 execution-guard tests: the behavior belongs to
+    the canonical migration reader, not to any execution runtime.
+    """
+    from confflow.config.canonical import require_executable_workflow_file
+
+    missing = tmp_path / "missing.yaml"
+    assert require_executable_workflow_file(str(missing)) is None
+    broken = tmp_path / "broken.yaml"
+    broken.write_text("::: not yaml: [", encoding="utf-8")
+    assert require_executable_workflow_file(str(broken)) is None

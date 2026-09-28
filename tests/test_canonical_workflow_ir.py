@@ -26,7 +26,7 @@ import yaml
 
 from confflow.config.canonical import to_canonical_workflow
 from confflow.config.canonical.types import WorkflowConfig
-from confflow.workflow.dag import build_step_graph, topo_order
+from confflow.config.canonical.workflow import build_step_graph, topo_order
 from confflow.workflow.plan import build_workflow_plan
 from confflow.workflow.step_naming import build_step_dir_name_map
 

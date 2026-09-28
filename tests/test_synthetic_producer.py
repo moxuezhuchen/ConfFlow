@@ -1406,7 +1406,6 @@ def test_fixture_never_writes_producer_sqlite_and_never_calls_the_engine(
     def engine_bomb(*args, **kwargs):
         raise AssertionError("workflow engine must not run for the synthetic fixture")
 
-    monkeypatch.setattr("confflow.workflow.engine.run_workflow", engine_bomb)
     monkeypatch.setattr(
         "confflow.application.execution.workflow_adapter.run_workflow_through_service",
         engine_bomb,

@@ -18,8 +18,6 @@ from types import SimpleNamespace
 
 import confflow.cli as cli_module
 import confflow.workflow.export as export_module
-import confflow.workflow.presenter as presenter_module
-import confflow.workflow.state as state_module
 from confflow import contract
 
 
@@ -205,46 +203,6 @@ def test_executable_resolution_keeps_posix_reported_path_before_exe_sibling(tmp_
     assert cli_module._resolve_existing_executable(reported) == str(reported.resolve())
     assert os.name == host_os_name
     assert Path(os.fspath(tmp_path)).is_dir()
-
-
-def test_presenter_uses_contract_filenames():
-    """The presenter writes the filenames declared in the contract.
-
-    The actual literal bytes are not allowed in module source — the
-    contract must be referenced symbolically — so this test pins that
-    behaviour by importing the presenter and pointing it at a temp dir,
-    then asserting the on-disk filenames are exactly the contract.
-    """
-    import tempfile
-
-    with tempfile.TemporaryDirectory() as tmp:
-        presenter_module.write_final_statistics(tmp, {"steps": [], "input_files": []})
-        from pathlib import Path
-
-        assert (Path(tmp) / contract.RUN_SUMMARY_FILE).exists()
-        assert (Path(tmp) / contract.WORKFLOW_STATS_FILE).exists()
-
-    # The presenter module must import the contract names (no string literals).
-    src = inspect.getsource(presenter_module)
-    assert "from ..contract import" in src
-    assert "RUN_SUMMARY_FILE" in src
-    assert "WORKFLOW_STATS_FILE" in src
-
-
-def test_state_uses_contract_filename():
-    """The workflow state file path is declared in the contract."""
-    import tempfile
-
-    with tempfile.TemporaryDirectory() as tmp:
-        store = state_module.WorkflowStateStore(tmp)
-        assert store.path.endswith(contract.WORKFLOW_STATE_FILE), (
-            f"WorkflowStateStore.path must end with {contract.WORKFLOW_STATE_FILE}, "
-            f"got {store.path}"
-        )
-
-    src = inspect.getsource(state_module)
-    assert "from ..contract import" in src
-    assert "WORKFLOW_STATE_FILE" in src
 
 
 def test_export_uses_contract_filenames():

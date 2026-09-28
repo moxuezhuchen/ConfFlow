@@ -621,14 +621,7 @@ def test_direct_adapter_resume_reuses_idempotency_request_and_checkpoint_boundar
 
     def fake_runner(**kwargs):
         calls["count"] += 1
-        if calls["count"] == 1:
-            from confflow.workflow.state import StepRecord
-
-            kwargs["on_step_status_change"](
-                StepRecord(name="step", type="confgen", status="completed")
-            )
-            raise StopRequestedError("pause")
-        return {"resumed": kwargs["resume"]}
+        raise StopRequestedError("pause")
 
     common = dict(
         input_xyz=[str(input_xyz)],
