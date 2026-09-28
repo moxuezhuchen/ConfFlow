@@ -27,7 +27,6 @@ import argparse
 import sys
 from typing import Any
 
-from ..__build__ import COMMIT, DIRTY
 from ..core.contracts import ExitCode
 
 #: The configuration-contract version emitted when ``--version`` is not given.
@@ -63,7 +62,15 @@ def _unsupported_version_error(version: Any) -> ValueError:
 
 
 def build_contract_document(version: int) -> dict[str, Any]:
-    """Build the canonical contract envelope for *version*, or fail closed."""
+    """Build the canonical contract envelope for *version*, or fail closed.
+
+    The envelope is built with no build-time provenance: the V4 wire has a
+    single published reference envelope (``confflow v4 contract --json``, whose
+    ``producer.commit`` / ``producer.dirty`` are unknown in a source checkout),
+    and ``config contract`` must emit exactly those bytes on every route and in
+    every install.  ``build_configuration_contract_v4`` still accepts provenance
+    for callers that own a released build.
+    """
     if version not in SUPPORTED_CONTRACT_VERSIONS:
         raise _unsupported_version_error(version)
     import warnings
@@ -77,11 +84,7 @@ def build_contract_document(version: int) -> dict[str, Any]:
     # not part of the contract.
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        return build_configuration_contract_v4(
-            producer_version=producer_version,
-            producer_commit=COMMIT,
-            producer_dirty=DIRTY,
-        )
+        return build_configuration_contract_v4(producer_version=producer_version)
 
 
 def main(args_list: list[str]) -> int:

@@ -113,6 +113,28 @@ class TestContractVersionRetired:
         assert config_cli.main(["contract", "--json", "--version", "4"]) == ExitCode.SUCCESS
         assert capsys.readouterr().out == default_bytes
 
+    def test_both_current_routes_emit_the_same_bytes(self, capsys) -> None:
+        """``config contract`` and ``v4 contract`` are one wire, one envelope.
+
+        Both routes must be byte-identical in every install, not only in a
+        source checkout: neither may attach build-time provenance, because the
+        V4 wire has exactly one published reference envelope.
+        """
+        from confflow.producer.contract import contract_canonical_json, contract_digest_of
+        from confflow.v4cli import main as v4_main
+
+        assert config_cli.main(["contract", "--json"]) == ExitCode.SUCCESS
+        config_bytes = capsys.readouterr().out
+        assert v4_main(["contract", "--json"]) == 0
+        v4_bytes = capsys.readouterr().out
+
+        assert v4_bytes == config_bytes
+        payload = json.loads(config_bytes)
+        assert payload["producer"]["commit"] is None
+        assert payload["producer"]["dirty"] is None
+        assert payload["contract_digest"] == contract_digest_of(payload)
+        assert contract_canonical_json(payload) == config_bytes.rstrip("\n")
+
     @pytest.mark.parametrize("version", ["1", "2", "3", "9"])
     def test_every_other_version_fails_closed(self, version: str, capsys) -> None:
         code = config_cli.main(["contract", "--json", "--version", version])
