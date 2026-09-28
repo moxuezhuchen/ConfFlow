@@ -30,7 +30,6 @@ published atomically with file and directory fsync.
 
 from __future__ import annotations
 
-import itertools
 import os
 import uuid
 from dataclasses import dataclass
@@ -39,6 +38,7 @@ from typing import Any
 from ..domain._immutable import FrozenDict
 from ..domain.canonical import canonical_json_bytes
 from .contracts import CorruptStateError, validate_run_root, wall_now
+from .fsatomic import publish_bytes
 
 __all__ = [
     "GENERATION_STATUSES",
@@ -60,8 +60,6 @@ RUN_GENERATION_SCHEMA = "confflow.run_generation.v1"
 GENERATION_STATUSES: frozenset[str] = frozenset(
     {"running", "completed", "partial", "failed", "cancelled"}
 )
-
-_TMP_COUNTER = itertools.count()
 
 
 def new_generation_id() -> str:
@@ -169,30 +167,7 @@ def save_run_generation(run_root: str, record: RunGeneration) -> None:
     if not isinstance(record, RunGeneration):
         raise CorruptStateError("record must be a RunGeneration")
     target = os.path.join(root, RUN_GENERATION_FILENAME)
-    payload = canonical_json_bytes(record.to_dict())
-    tmp_path = f"{target}.tmp.{os.getpid()}.{next(_TMP_COUNTER)}"
-    try:
-        with open(tmp_path, "wb") as handle:
-            handle.write(payload)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(tmp_path, target)
-    finally:
-        try:
-            if os.path.exists(tmp_path):
-                os.remove(tmp_path)
-        except OSError:
-            pass
-    try:
-        dir_fd = os.open(root, os.O_RDONLY)
-    except OSError:
-        return
-    try:
-        os.fsync(dir_fd)
-    except OSError:
-        pass
-    finally:
-        os.close(dir_fd)
+    publish_bytes(target, canonical_json_bytes(record.to_dict()))
 
 
 def load_run_generation(run_root: str) -> RunGeneration | None:

@@ -34,6 +34,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from ..domain.canonical import canonical_json_bytes, canonical_sha256
+from ..persistence.fsatomic import publish_bytes
 from .contract import (
     ANALYSIS_REACTION_PROFILE_CONTRACT,
     RESULT_MANIFEST_SCHEMA,
@@ -43,14 +44,6 @@ from .contract import (
 
 #: Durable manifest filename at the run root (mirrors the application).
 RUN_RESULT_FILENAME = "run_result.json"
-
-_TMP_COUNTER = 0
-
-
-def _next_tmp_suffix() -> str:
-    global _TMP_COUNTER
-    _TMP_COUNTER += 1
-    return f"{os.getpid()}.{_TMP_COUNTER}"
 
 
 def result_ref_entry(record: Any, *, origin: str | None = None) -> dict[str, Any]:
@@ -657,32 +650,8 @@ def publish_manifest_atomically(manifest: dict[str, Any], run_root: str) -> dict
         jsonschema.validate(instance=manifest, schema=run_result_json_schema())
     except Exception as exc:
         raise ValueError(f"run-result manifest fails its schema: {exc}") from exc
-    os.makedirs(run_root, exist_ok=True)
     target = os.path.join(run_root, RUN_RESULT_FILENAME)
-    tmp_path = f"{target}.tmp.{_next_tmp_suffix()}"
-    try:
-        with open(tmp_path, "wb") as handle:
-            handle.write(canonical_json_bytes(manifest))
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(tmp_path, target)
-    finally:
-        try:
-            if os.path.exists(tmp_path):
-                os.remove(tmp_path)
-        except OSError:
-            pass
-    try:
-        dir_fd = os.open(run_root, os.O_RDONLY)
-    except OSError:
-        dir_fd = None
-    if dir_fd is not None:
-        try:
-            os.fsync(dir_fd)
-        except OSError:
-            pass
-        finally:
-            os.close(dir_fd)
+    publish_bytes(target, canonical_json_bytes(manifest))
     return verify_manifest_on_disk(manifest, run_root)
 
 

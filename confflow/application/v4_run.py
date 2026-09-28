@@ -37,7 +37,6 @@ closed).  Completed items are never re-executed.
 
 from __future__ import annotations
 
-import itertools
 import os
 import uuid
 from dataclasses import dataclass, field
@@ -63,6 +62,7 @@ from ..persistence.contracts import (
     validate_run_root,
     wall_now,
 )
+from ..persistence.fsatomic import publish_bytes
 from ..persistence.generation import (
     RunGeneration,
     new_generation_id,
@@ -96,8 +96,6 @@ __all__ = [
 #: Durable run-result manifest filename at the run root. The final name is
 #: lead-owned; recorded here so publisher and consumers agree meanwhile.
 RUN_RESULT_FILENAME = "run_result.json"
-
-_TMP_COUNTER = itertools.count()
 
 
 def import_xyz(
@@ -1250,36 +1248,8 @@ class V4RunApplication:
         except Exception as exc:
             raise DomainError(f"run-result manifest fails its schema: {exc}") from exc
         target = os.path.join(validate_run_root(run_root), RUN_RESULT_FILENAME)
-        os.makedirs(os.path.dirname(target), exist_ok=True)
-        tmp_path = f"{target}.tmp.{os.getpid()}.{next(_TMP_COUNTER)}"
-        try:
-            with open(tmp_path, "wb") as handle:
-                handle.write(canonical_json_bytes(manifest))
-                handle.flush()
-                os.fsync(handle.fileno())
-            os.replace(tmp_path, target)
-        finally:
-            try:
-                if os.path.exists(tmp_path):
-                    os.remove(tmp_path)
-            except OSError:
-                pass
-        _fsync_directory(os.path.dirname(target))
+        publish_bytes(target, canonical_json_bytes(manifest))
         return FrozenDict(manifest)
-
-
-def _fsync_directory(directory: str) -> None:
-    """Fsync *directory* so a new publication survives a crash."""
-    try:
-        dir_fd = os.open(directory, os.O_RDONLY)
-    except OSError:
-        return
-    try:
-        os.fsync(dir_fd)
-    except OSError:
-        pass
-    finally:
-        os.close(dir_fd)
 
 
 def _evaluate_run_status(statuses: tuple[StepStatus, ...]) -> str:
@@ -1343,26 +1313,12 @@ def _save_input_snapshot(
     *, run_root: str, input_name: str, entity_ids: list[str], geometry_digests: list[str]
 ) -> None:
     target = _snapshot_path(run_root, input_name)
-    os.makedirs(os.path.dirname(target), exist_ok=True)
-    tmp_path = f"{target}.tmp.{os.getpid()}.{next(_TMP_COUNTER)}"
     payload = {
         "input_name": input_name,
         "entity_ids": list(entity_ids),
         "geometry_digests": list(geometry_digests),
     }
-    try:
-        with open(tmp_path, "wb") as handle:
-            handle.write(canonical_json_bytes(payload))
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(tmp_path, target)
-    finally:
-        try:
-            if os.path.exists(tmp_path):
-                os.remove(tmp_path)
-        except OSError:
-            pass
-    _fsync_directory(os.path.dirname(target))
+    publish_bytes(target, canonical_json_bytes(payload))
 
 
 def _load_input_snapshot(*, run_root: str, input_name: str) -> dict[str, Any] | None:

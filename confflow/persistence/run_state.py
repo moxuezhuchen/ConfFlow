@@ -16,10 +16,8 @@ Like the rest of the persistence layer, this module imports only
 
 from __future__ import annotations
 
-import itertools
 import json
 import os
-from typing import Final
 
 from ..domain.canonical import canonical_json_bytes, typed_digest
 from .contracts import (
@@ -33,6 +31,7 @@ from .contracts import (
     validate_run_root,
     wall_now,
 )
+from .fsatomic import publish_bytes
 from .publication import STEP_RESULT_DIGEST_KIND, load_published_step_result
 
 __all__ = [
@@ -43,50 +42,6 @@ __all__ = [
     "save_run_state",
     "transition_step",
 ]
-
-_TMP_COUNTER: Final = itertools.count()
-
-
-def _tmp_suffix() -> str:
-    """Return a unique temp-file suffix for this process."""
-    return f".tmp.{os.getpid()}.{next(_TMP_COUNTER)}"
-
-
-def _atomic_write_bytes(target_path: str, payload: bytes) -> None:
-    """Write *payload* to *target_path* atomically via temp file + rename.
-
-    Parameters
-    ----------
-    target_path : str
-        Final destination path; the temp file lives in the same directory.
-    payload : bytes
-        Exact bytes to durably persist.
-    """
-    directory = os.path.dirname(target_path)
-    os.makedirs(directory, exist_ok=True)
-    tmp_path = target_path + _tmp_suffix()
-    try:
-        with open(tmp_path, "wb") as handle:
-            handle.write(payload)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(tmp_path, target_path)
-    finally:
-        try:
-            if os.path.exists(tmp_path):
-                os.remove(tmp_path)
-        except OSError:
-            pass
-    try:
-        dir_fd = os.open(directory, os.O_RDONLY)
-    except OSError:
-        return
-    try:
-        os.fsync(dir_fd)
-    except OSError:
-        pass
-    finally:
-        os.close(dir_fd)
 
 
 def _tmp_prefix() -> str:
@@ -155,7 +110,7 @@ def save_run_state(run_root: str, state: RunState) -> None:
     if not isinstance(state, RunState):
         raise PersistenceError("state must be a RunState")
     target = run_state_path(validate_run_root(run_root))
-    _atomic_write_bytes(target, canonical_json_bytes(state.to_dict()))
+    publish_bytes(target, canonical_json_bytes(state.to_dict()))
 
 
 def ensure_step(state: RunState, step_id: str) -> RunState:
