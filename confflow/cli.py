@@ -42,16 +42,12 @@ from .contract import (
 from .core.contracts import ExitCode, cli_output_to_txt, output_txt_path_for_input
 from .core.exceptions import (
     ConfFlowError,
-    ConfigurationError,
-    InputFileError,
     PathSafetyError,
-    XYZFormatError,
 )
 from .core.io import parse_gaussian_input_text, write_xyz_file
-from .core.path_policy import resolve_sandbox_root, validate_managed_path
+from .core.path_policy import validate_managed_path
 from .core.utils import get_logger
 from .install_provenance import read_install_provenance
-from .workflow.dry_run import run_dry_run
 from .workflow.export import NoExportableResultsError, export_results
 
 # Package initialization suppresses import-time warnings for the real probes.
@@ -202,16 +198,17 @@ __all__ = [
 logger = get_logger()
 
 
-def _resolve_default_work_dir(
-    input_files: list[str],
-    *,
-    sandbox_root: str | None,
-) -> str:
-    """Resolve the implicit CLI work_dir, preferring sandbox_root when present."""
+def _resolve_default_work_dir(input_files: list[str]) -> str:
+    """Resolve the implicit CLI work_dir for the given inputs.
+
+    There is no sandbox-root preference any more: ``global.sandbox_root`` was a
+    member of the released V2 configuration wire, and a V4 workflow document
+    has no such member (its managed-path policy is ``global.sandbox``, which the
+    V4 application owns).  The historical hint read raw YAML without schema
+    validation, so it could never have honoured a V4 document anyway.
+    """
     input_basename = os.path.splitext(os.path.basename(input_files[0]))[0]
     dirname = f"{input_basename}_work" if len(input_files) == 1 else f"{input_basename}_multi_work"
-    if sandbox_root:
-        return os.path.join(sandbox_root, dirname)
     return dirname
 
 
@@ -257,16 +254,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--resume", action="store_true", help="Resume from an existing checkpoint")
     parser.add_argument("--verbose", action="store_true", help="Enable debug logging")
     parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Validate inputs and configuration, then print the planned workflow without running it",
-    )
-    parser.add_argument(
-        "--config-show",
-        action="store_true",
-        help="Show the resolved configuration for a workflow YAML without running it",
-    )
-    parser.add_argument(
         "--stop",
         action="store_true",
         help="Stop all running ConfFlow tasks, including child processes",
@@ -280,7 +267,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--format",
         choices=("csv", "json", "text"),
         default="csv",
-        help="Output format for --export (csv/json) or --config-show (text/json, default: csv for --export, text for --config-show)",
+        help="Output format for --export (csv/json, default: csv)",
     )
     parser.add_argument(
         "-o",
@@ -298,7 +285,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--step",
         dest="step",
-        help="Workflow step name or 1-based index for --rerun-failed or --config-show",
+        help="Workflow step name or 1-based index for --rerun-failed",
     )
     parser.add_argument(
         "--version",
@@ -344,20 +331,6 @@ def _write_cli_error(output_path: str, exc: BaseException, hint: str | None = No
     _append_to_output(output_path, f"[ERROR] {type(exc).__name__}: {exc}")
     if hint:
         _append_to_output(output_path, hint)
-
-
-def _load_sandbox_root_hint(config_file: str) -> str | None:
-    """Best-effort read of ``global.sandbox_root`` without full schema validation."""
-    from .config.canonical import ConfigValidationError, load_raw_mapping
-
-    try:
-        raw = load_raw_mapping(config_file)
-    except (OSError, ConfigValidationError):
-        return None
-    global_cfg = raw.get("global") or {}
-    if not isinstance(global_cfg, dict):
-        return None
-    return resolve_sandbox_root(global_cfg)
 
 
 def kill_proc_tree(
@@ -648,28 +621,6 @@ def main(
         )
         return ExitCode.RUNTIME_ERROR
 
-    if args.config_show:
-        if not args.config:
-            print("Error: --config is required with --config-show", file=sys.stderr)
-            return ExitCode.USAGE_ERROR
-        # Determine effective format: for --config-show, treat "csv" as "text"
-        show_format = args.format if args.format in ("json", "text") else "text"
-        try:
-            from .workflow.config_show import show_resolved_config
-
-            show_resolved_config(
-                config_file=os.path.abspath(args.config),
-                step_ref=args.step,
-                output_format=show_format,
-            )
-        except (ConfigurationError, FileNotFoundError, PathSafetyError) as e:
-            print(f"Error: {e}", file=sys.stderr)
-            return ExitCode.USAGE_ERROR
-        except ValueError as e:
-            print(f"Error: {e}", file=sys.stderr)
-            return ExitCode.USAGE_ERROR
-        return ExitCode.SUCCESS
-
     # Manual validation for required arguments when not stopping
     if not args.input_xyz:
         parser.error("At least one input XYZ file is required.")
@@ -690,35 +641,17 @@ def main(
 
     first_input = os.path.abspath(args.input_xyz[0])
     output_path = output_txt_path_for_input(first_input)
-    sandbox_root = _load_sandbox_root_hint(config_file)
     if args.work_dir is None:
-        work_dir = _resolve_default_work_dir(input_files, sandbox_root=sandbox_root)
+        work_dir = _resolve_default_work_dir(input_files)
     else:
         work_dir = args.work_dir
 
-    if args.dry_run:
-        try:
-            run_dry_run(input_files, config_file, work_dir)
-        except (
-            ConfigurationError,
-            FileNotFoundError,
-            InputFileError,
-            OSError,
-            PathSafetyError,
-            ValueError,
-            XYZFormatError,
-        ) as e:
-            print(f"Error: {e}", file=sys.stderr)
-            return ExitCode.USAGE_ERROR
-        return ExitCode.SUCCESS
-
     # Formal execution-capability preflight (worker I): the single V4
-    # application is the only formal runtime. A V2/V3 (or unreadable)
-    # workflow fails closed here with legacy_workflow_not_executable
-    # before any managed-path validation, lease, mkdir, or service/state
-    # preparation. Parser / historical reader / migration diagnostics
-    # (--dry-run, --config-show, --export) stay available above; they
-    # never execute.
+    # application is the only formal runtime and a V4 document carries the
+    # only managed-path policy, so the run root is always explicit or derived.
+    # A V1/V2/V3 (or unreadable) workflow fails closed at the outermost
+    # version discriminator with a stable error, before any managed-path
+    # validation, lease, mkdir, or service/state preparation.
     try:
         require_v4_document_file(config_file)
     except ConfFlowError as error:
@@ -726,7 +659,7 @@ def main(
         return ExitCode.RUNTIME_ERROR
 
     try:
-        work_dir = validate_managed_path(work_dir, label="work_dir", sandbox_root=sandbox_root)
+        work_dir = validate_managed_path(work_dir, label="work_dir", sandbox_root=None)
         try:
             work_lease = acquire_work_directory_lease(work_dir)
         except (ExecutionServiceError, OSError) as error:
@@ -743,7 +676,7 @@ def main(
                 conv_dir = validate_managed_path(
                     os.path.join(work_dir, "_converted_inputs"),
                     label="_converted_inputs",
-                    sandbox_root=sandbox_root,
+                    sandbox_root=None,
                 )
                 for path in input_files:
                     ext = os.path.splitext(path)[1].lower()

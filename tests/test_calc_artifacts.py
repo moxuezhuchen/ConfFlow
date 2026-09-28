@@ -15,7 +15,7 @@ from confflow.calc.artifacts import (
     compute_config_digest,
     compute_input_digest,
 )
-from confflow.config.models import CalcStepParams, GlobalOptions
+from confflow.calc.config_model import CalcStepParams, GlobalOptions
 from confflow.core.exceptions import PathSafetyError
 
 

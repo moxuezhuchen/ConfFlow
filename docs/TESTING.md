@@ -80,16 +80,13 @@ CI 也会执行 `pip check`，用于尽早发现声明依赖与解析结果不�
 
 | 文件 | 覆盖模块 | 说明 |
 |------|----------|------|
-| `test_config_models.py` | config/models | typed YAML 加载、全局参数合并、calc step runtime dict |
 | `test_validation.py` | workflow/validation | 输入验证与兼容性校验 |
-| `test_editor_manifest.py` | config/canonical/editor_manifest | editor manifest 信封、字段/选择/指针/条件一致性、default provenance |
-| `test_recipe_catalog.py` | config/canonical/recipes | recipe catalog 信封、目录一致性、recipe 意图与最小化 |
-| `test_producer_defaults.py` | shared/defaults, config/canonical/types | `DEFAULT_PROGRAM`/`DEFAULT_TASK` 单一来源与派生一致性 |
-| `test_configuration_contract_v2.py` | config/canonical/contract | v1 回归（键集/摘要冻结）、v2 信封形状、内嵌摘要、版本分派 |
-| `test_config_contract_v2_cli.py` | config/cli | `config contract [--version {1,2}]` 默认/显式行为、确定性、非法/退役版本 fail closed（V3 退役由 `test_pr7_v3_retirement.py` 覆盖） |
-| `test_jobdesk_contract_compatibility.py` | 跨仓库 | 真实 CLI 子进程 → JobDesk V2 `parse_contract_bytes` 验收（需 JobDesk checkout，否则跳过） |
+| `test_producer_defaults.py` | shared/defaults, calc/config_model | `DEFAULT_PROGRAM`/`DEFAULT_TASK` 单一来源与派生一致性 |
+| `test_retired_wire_versions.py` | 配置 wire | V1/V2/V3 文档与版本全部 fail closed（`unsupported_workflow_version`）、`config validate` 退役、`--dry-run`/`--config-show` 开关退役、V4 validate/compile 正常、producer contract 无 V1/V2 面 |
+| `test_example_workflow.py` | confflow.example.yaml | 随包示例是当前 V4 文档且能编译/校验 |
+| `test_v46_cross_repo.py` / `test_v46_cross_repo_e2e.py` | 跨仓库（V4） | 真实 producer contract 字节 → JobDesk V4 解析路径（`JOBDESK_V2_SRC` 可指向 JobDesk 检出；可选依赖） |
 
-> `test_jobdesk_contract_compatibility.py` 是跨仓库验收闸门：它把真实的 `confflow config contract --json --version 2` 输出交给 JobDesk V2 的契约解析器，要求得到 level C、`source=producer` 且零 findings。通过 `JOBDESK_V2_ROOT` 环境变量或 `--jobdesk-root` 定位 JobDesk 检出；找不到时整组测试跳过，因此不影响 ConfFlow 自身的 CI。人工排查可用 `python scripts/check_jobdesk_contract.py`。
+> Architecture Diet PR-9 退役了已发布的 V1/V2 配置 wire（`configuration-contract.v1/.v2`、`confflow.workflow.v2` schema、公开 parser/validator、V2 editor manifest/recipe catalog、V2→canonical migration、V2 diagnostic planners）。唯一受支持的配置 wire 是 V4；V1/V2/V3 文档在入口处失败关闭。因此 `test_config_models.py`、`test_editor_manifest.py`、`test_recipe_catalog.py`、`test_configuration_contract_v2.py`、`test_config_contract_v2_cli.py`、`test_jobdesk_contract_compatibility.py`（V2 契约跨仓库闸门）与 `test_pr7_v3_retirement.py` 已删除，由上面的短闸门替代。
 
 ### 构象生成 (`blocks/confgen/`)
 

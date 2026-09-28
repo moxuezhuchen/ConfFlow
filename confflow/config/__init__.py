@@ -1,44 +1,26 @@
 #!/usr/bin/env python3
-"""ConfFlow typed configuration models (lazy compatibility exports).
+"""ConfFlow configuration package.
 
-The concrete V2 typed models live in :mod:`confflow.config.canonical.types`,
-exposed through the :mod:`confflow.config.models` compatibility facade.
-Importing this package must not eager-load the canonical configuration
-runtime: the V4 producer contract only needs the dependency-free identifiers
-from :mod:`confflow.config.contract_schemas`.  Every historical
-``from confflow.config import X`` name is resolved lazily (PEP 562) and keeps
-working unchanged.
+This package owns exactly one current public wire surface: the
+dependency-free schema-identifier authority in
+:mod:`confflow.config.contract_schemas`, which the V4 producer contract, the
+V4 editor manifest, the V4 recipe catalog and the V4 validation response all
+read so that a schema id can never be written down twice.
+
+There is no V1/V2 configuration wire here any more.  The released V1 and V2
+configuration-contract documents, the V2 workflow JSON schema, the public V2
+parser/validator entrypoints, the V2 editor manifest and recipe catalog, the
+V2->canonical adapter and the historical ``from confflow.config import X``
+model facade were retired by the Architecture Diet PR-9.  The only supported
+configuration wire is V4 (``confflow.configuration-contract.v4``,
+``confflow.workflow.v4``); a V1/V2/V3 document fails closed with
+``unsupported_workflow_version`` at the outermost version discriminator.
+
+The command surface lives in :mod:`confflow.config.cli`; importing this
+package must stay dependency-free so the producer never loads a configuration
+runtime.
 """
 
 from __future__ import annotations
 
-import importlib
-from typing import Any
-
-_LAZY_EXPORTS: dict[str, tuple[str, str]] = {
-    "CalcStepParams": (".models", "CalcStepParams"),
-    "CleanupOptions": (".models", "CleanupOptions"),
-    "ExecutionOptions": (".models", "ExecutionOptions"),
-    "GlobalOptions": (".models", "GlobalOptions"),
-    "ResourceOptions": (".models", "ResourceOptions"),
-    "StepConfig": (".models", "StepConfig"),
-    "TSOptions": (".models", "TSOptions"),
-    "WorkflowConfig": (".models", "WorkflowConfig"),
-    "load_workflow_model": (".models", "load_workflow_model"),
-}
-
-__all__ = [*sorted(_LAZY_EXPORTS)]
-
-
-def __getattr__(name: str) -> Any:
-    export = _LAZY_EXPORTS.get(name)
-    if export is None:
-        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-    module = importlib.import_module(export[0], package=__name__)
-    value = getattr(module, export[1])
-    globals()[name] = value
-    return value
-
-
-def __dir__() -> list[str]:
-    return sorted(set(globals()) | set(__all__))
+__all__: list[str] = []

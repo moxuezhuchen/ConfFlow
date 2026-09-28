@@ -141,6 +141,71 @@ RETIRED_V3_WIRE_MODULES: tuple[str, ...] = (
     "confflow.config.workflow_cli",
 )
 
+#: The released V1/V2 configuration wire retired by Architecture Diet PR-9:
+#: the v1/v2 contract documents and their workflow-schema generator, the V2
+#: document parser/validator, the V2->canonical adapter and IR, the V2 editor
+#: manifest and recipe catalog, the V2 fingerprint/param registry, the V2
+#: typed-model and pydantic facades, the V2 diagnostic planners and the legacy
+#: YAML validation wrapper.  Any of these reappearing on disk is a regression.
+RETIRED_V1_V2_WIRE_MODULES: tuple[str, ...] = (
+    "confflow.config.canonical",
+    "confflow.config.canonical.contract",
+    "confflow.config.canonical.schema",
+    "confflow.config.canonical.parser",
+    "confflow.config.canonical.validation",
+    "confflow.config.canonical.v2_adapter",
+    "confflow.config.canonical.workflow",
+    "confflow.config.canonical.editor_manifest",
+    "confflow.config.canonical.recipes",
+    "confflow.config.canonical.fingerprint",
+    "confflow.config.canonical.param_fields",
+    "confflow.config.canonical.pydantic",
+    "confflow.config.canonical.diagnostics",
+    "confflow.config.canonical.serialization",
+    "confflow.config.models",
+    "confflow.shared.config_validation",
+    "confflow.core.types",
+    "confflow.workflow.plan",
+    "confflow.workflow.config_show",
+    "confflow.workflow.dry_run",
+)
+
+#: Semantic source tokens of the retired V1/V2 configuration wire.  A scoped
+#: V4 production file referencing one of these has grown a new V1/V2 consumer.
+#: This is deliberately *not* a ban on the strings "v1"/"v2": the current
+#: producer protocol keeps ``confflow.configuration-validation.v1``, the
+#: ``confflow.contract.*.v1`` capability ids and the ``.v3`` remote capability
+#: ids, and unrelated lines have their own current protocol majors.
+RETIRED_V1_V2_WIRE_TOKENS: tuple[str, ...] = (
+    "confflow.workflow.v1",
+    "confflow.workflow.v2",
+    "confflow.configuration-contract.v1",
+    "confflow.configuration-contract.v2",
+    "confflow.config.canonical",
+    "confflow.config.models",
+    "confflow.shared.config_validation",
+    "confflow.workflow.dry_run",
+    "confflow.workflow.config_show",
+    "to_canonical_workflow",
+    "parse_canonical_workflow",
+    "parse_workflow_mapping",
+    "load_raw_mapping",
+    "load_workflow_definition",
+    "load_workflow_model",
+    "detect_schema_version",
+    "detect_workflow_file_version",
+    "validate_workflow_definition",
+    "calc_input_diagnostics",
+    "resolve_calc_step",
+    "resolve_global_options",
+    "workflow_fingerprint",
+    "build_configuration_contract_v1",
+    "build_configuration_contract_v2",
+    "CONFIGURATION_CONTRACT_BUILDERS",
+    "build_editor_manifest(",
+    "build_recipe_catalog(",
+)
+
 PATTERNS: tuple[tuple[str, str], ...] = (
     ("legacy-TaskRunner", r"\bTaskRunner\b"),
     ("legacy-CalcStepRunner", r"\bCalcStepRunner\b"),
@@ -294,7 +359,7 @@ def _pattern_hits(path: Path, lines: list[str]) -> list[ArchHit]:
 def _retired_module_hits() -> list[ArchHit]:
     """Flag any retired V2/V3 execution-runtime module that reappears."""
     hits: list[ArchHit] = []
-    for module in (*RETIRED_RUNTIME_MODULES, *RETIRED_V3_WIRE_MODULES):
+    for module in (*RETIRED_RUNTIME_MODULES, *RETIRED_V3_WIRE_MODULES, *RETIRED_V1_V2_WIRE_MODULES):
         candidate = REPO_ROOT / Path(module.replace(".", "/"))
         for path in (candidate.with_suffix(".py"), candidate / "__init__.py"):
             if path.exists():
@@ -310,6 +375,17 @@ def _retired_module_hits() -> list[ArchHit]:
     return hits
 
 
+def _retired_v1_v2_token_hits(path: Path, source: str, tree: ast.AST) -> list[ArchHit]:
+    """Flag scoped code referencing a retired V1/V2 configuration token."""
+    rel = str(path.relative_to(REPO_ROOT))
+    hits: list[ArchHit] = []
+    for number, line in enumerate(_strip_comments_and_docstrings(source, tree), start=1):
+        for token in RETIRED_V1_V2_WIRE_TOKENS:
+            if token in line:
+                hits.append(ArchHit(rel, number, "retired-v1v2-token", token))
+    return hits
+
+
 def scan() -> list[ArchHit]:
     """Scan all scoped entry paths; return sorted hits."""
     hits: list[ArchHit] = list(_retired_module_hits())
@@ -320,6 +396,7 @@ def scan() -> list[ArchHit]:
         except (OSError, SyntaxError):
             continue
         hits.extend(_import_hits(path, tree))
+        hits.extend(_retired_v1_v2_token_hits(path, source, tree))
         hits.extend(_pattern_hits(path, _strip_comments_and_docstrings(source, tree)))
     return sorted(hits, key=lambda hit: (hit.path, hit.line, hit.check))
 

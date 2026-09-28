@@ -7,9 +7,8 @@ from __future__ import annotations
 import argparse
 import sys
 
+from .calc.config_model import load_workflow_model, resolve_calc_step
 from .calc.runner import CalcStepRequest, CalcStepRunner
-from .config.canonical import resolve_calc_step
-from .config.models import load_workflow_model
 from .core.cli_base import require_existing_path
 from .core.contracts import ExitCode, cli_output_to_txt
 from .core.exceptions import ConfFlowError

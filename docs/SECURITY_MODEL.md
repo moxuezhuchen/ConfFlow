@@ -73,11 +73,13 @@ Logs, `.out`, `.err`, `.chk`, reports, database rows, and backup files may conta
 
 Do not post raw logs or artifacts publicly until they have been reviewed and redacted. Security-sensitive reports should follow `SECURITY.md`.
 
-## Dry-Run Status
+## Pre-Execution Validation Status
 
-ConfFlow provides a CLI `--dry-run` mode that validates inputs/configuration and previews planned workflow steps, input files, output paths, selected calculation settings, and configured executable paths without running workflow steps.
+ConfFlow's formal V4 runtime validates a workflow document before executing it: `confflow v4 validate --workflow FILE --json` parses and compiles the exact bytes and returns structured diagnostics without running any step, and `confflow v4 contract --json` publishes the schema/capabilities an editor checks a document against.
 
-Dry-run is a planning and validation aid, not a full sandbox or complete read-only execution environment. A real workflow run can still write files, overwrite managed artifacts, clean stale outputs, and execute configured external programs.
+The legacy `--dry-run` / `--config-show` planners were retired with the released V1/V2 configuration wire (Architecture Diet PR-9): V1/V2/V3 documents now fail closed with `unsupported_workflow_version` at the outermost version discriminator, before any managed-path validation, lease, directory creation or execution.
+
+Validation is a planning and safety aid, not a full sandbox or complete read-only execution environment. A real workflow run can still write files, overwrite managed artifacts, clean stale outputs, and execute configured external programs.
 
 ## Network Behavior
 

@@ -9,7 +9,7 @@ from typing import Any
 
 import yaml
 
-from confflow.config.canonical.recipes import RECIPE_CATALOG_SCHEMA
+from confflow.config.contract_schemas import RECIPE_CATALOG_SCHEMA
 from confflow.domain.canonical import canonical_sha256
 from confflow.producer.recipes import (
     RECIPE_IDS_V4,

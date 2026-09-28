@@ -2,15 +2,31 @@
 
 """Check this ConfFlow checkout against a JobDesk V2 working copy.
 
-The test suite already contains this gate
-(``tests/test_jobdesk_contract_compatibility.py``), but a test run only tells you
-"pass" or "fail".  This script exists for the moment a reviewer wants to *see*
-the interchange: it publishes both contract versions, feeds the bytes to JobDesk's
-own strict parser, and prints what the consumer concluded.
+Architecture Diet PR-9 retired the released V1/V2 configuration wire, so this
+interchange is now a **V4-only** check: it publishes the one current producer
+contract (``confflow v4 contract --json`` / ``confflow config contract --json``,
+both emitting ``confflow.configuration-contract.v4``), feeds the bytes to
+JobDesk's own strict V4 parser, and prints what the consumer concluded.
+
+Two boundaries are checked, and both are reported honestly:
+
+``producer -> JobDesk V4``
+    the current boundary.  JobDesk's V4 parser
+    (``jobdesk_v2.application.editor.contract.v4.parse_v4_contract_bytes``)
+    must accept the producer bytes, re-verify every published digest and
+    report ``is_v4_capable``.
+
+``retired producer argv``
+    ``confflow config contract --json --version 1|2|3`` must fail closed with
+    the stable ``unsupported_workflow_version`` code and emit nothing.  A
+    consumer that still asks for one of those (JobDesk's legacy V2 editor
+    contract fetch does) therefore degrades to its own fallback until the
+    consumer moves to the V4 parser.  This script reports that as
+    ``consumer_change_required`` instead of pretending compatibility.
 
 JobDesk is never a dependency.  It is located at run time from
-``--jobdesk-root`` or the ``JOBDESK_V2_ROOT`` environment variable, falling back
-to the checkout path this repository is developed against.
+``--jobdesk-root`` or the ``JOBDESK_V2_ROOT`` environment variable, falling
+back to the checkout path this repository is developed against.
 
 Usage::
 
@@ -34,6 +50,9 @@ DEFAULT_JOBDESK_ROOT = pathlib.Path("/mnt/c/dft/tool/jobdesk-v2")
 JOBDESK_ENV_VAR = "JOBDESK_V2_ROOT"
 
 _CLI_ENTRY = "import sys; from confflow.main import main; sys.exit(main())"
+
+#: The retired contract versions a consumer might still ask for.
+RETIRED_CONTRACT_VERSIONS = (1, 2, 3)
 
 
 class CheckFailure(RuntimeError):
@@ -59,107 +78,157 @@ def locate_jobdesk(explicit: str | None) -> pathlib.Path:
     )
 
 
-def run_contract_cli(version: int | None) -> bytes:
-    """Publish a contract through the real CLI and return the stdout bytes."""
-    args = ["config", "contract", "--json"]
-    if version is not None:
-        args += ["--version", str(version)]
+def run_cli(*args: str, expect_success: bool = True) -> subprocess.CompletedProcess[bytes]:
+    """Run the machine CLI and return the completed process."""
     result = subprocess.run(
         [sys.executable, "-c", _CLI_ENTRY, *args],
         capture_output=True,
         cwd=str(REPO_ROOT),
     )
-    if result.returncode != 0:
+    if expect_success and result.returncode != 0:
         raise CheckFailure(result.stderr.decode("utf-8", "replace"))
-    if result.stderr:
-        raise CheckFailure(f"the machine-readable CLI was not quiet: {result.stderr!r}")
-    return result.stdout
+    return result
 
 
-def parse_with_jobdesk(root: pathlib.Path, payload: bytes) -> Any:
-    """Feed bytes to the consumer's parser, from the located checkout."""
+def publish_current_contract() -> tuple[bytes, bytes]:
+    """Return ``(v4_cli_bytes, config_cli_bytes)`` for the current wire."""
+    v4 = run_cli("v4", "contract", "--json")
+    config = run_cli("config", "contract", "--json")
+    if v4.stderr or config.stderr:
+        raise CheckFailure(
+            f"the machine-readable CLI was not quiet: {sorted({v4.stderr, config.stderr})!r}"
+        )
+    if v4.stdout != config.stdout:
+        raise CheckFailure(
+            "the two current contract routes disagree; "
+            "'confflow config contract --json' must emit the V4 envelope"
+        )
+    return v4.stdout, config.stdout
+
+
+def check_retired_versions() -> dict[str, Any]:
+    """Every retired contract version fails closed with the stable code."""
+    report: dict[str, Any] = {}
+    for version in RETIRED_CONTRACT_VERSIONS:
+        result = run_cli(
+            "config", "contract", "--json", "--version", str(version), expect_success=False
+        )
+        stderr = result.stderr.decode("utf-8", "replace")
+        report[str(version)] = {
+            "returncode": result.returncode,
+            "stdout_bytes": len(result.stdout),
+            "stable_code_present": "unsupported_workflow_version" in stderr,
+        }
+        if result.returncode == 0 or result.stdout:
+            raise CheckFailure(f"contract version {version} must fail closed and emit nothing")
+        if "unsupported_workflow_version" not in stderr:
+            raise CheckFailure(f"contract version {version} lost its stable rejection code")
+    return report
+
+
+def parse_with_jobdesk_v4(root: pathlib.Path, payload: bytes) -> Any:
+    """Feed bytes to the consumer's V4 parser, from the located checkout."""
     src = str(root / "src")
     if src not in sys.path:
         sys.path.insert(0, src)
-    from jobdesk_v2.application.editor.contract import (  # noqa: PLC0415
-        FallbackArtifacts,
-        parse_contract_bytes,
+    from jobdesk_v2.application.editor.contract.v4 import (  # noqa: PLC0415
+        V4_CONTRACT_SCHEMA,
+        V4_WORKFLOW_SCHEMA_ID,
+        parse_v4_contract_bytes,
     )
 
-    return parse_contract_bytes(payload, fallback=FallbackArtifacts.shipped())
+    contract = parse_v4_contract_bytes(payload)
+    if contract.content_schema != V4_CONTRACT_SCHEMA:  # pragma: no cover - defensive
+        raise CheckFailure(f"jobdesk parsed a non-V4 envelope: {contract.content_schema!r}")
+    if contract.workflow_schema_id != V4_WORKFLOW_SCHEMA_ID:  # pragma: no cover - defensive
+        raise CheckFailure(
+            f"jobdesk parsed the wrong workflow line: {contract.workflow_schema_id!r}"
+        )
+    return contract
 
 
 def inspect(root: pathlib.Path) -> dict[str, Any]:
     """Run the whole interchange and return a report."""
-    v1_bytes = run_contract_cli(None)
-    v2_bytes = run_contract_cli(2)
-
-    v1_document = json.loads(v1_bytes.decode("utf-8"))
-    v2_document = json.loads(v2_bytes.decode("utf-8"))
-
-    v1 = parse_with_jobdesk(root, v1_bytes)
-    v2 = parse_with_jobdesk(root, v2_bytes)
+    contract_bytes, config_bytes = publish_current_contract()
+    document = json.loads(contract_bytes.decode("utf-8"))
+    contract = parse_with_jobdesk_v4(root, contract_bytes)
 
     return {
         "jobdesk_root": str(root),
-        "v1": {
-            "schema": v1_document["schema"],
-            "bytes": len(v1_bytes),
-            "consumer_level": v1.level.value,
-            "consumer_source": v1.source,
-            "consumer_diagnostics": [item.code for item in v1.diagnostics],
+        "current_contract": {
+            "schema": document["content_schema"],
+            "workflow_schema_id": document["workflow_schema_id"],
+            "bytes": len(contract_bytes),
+            "config_route_bytes": len(config_bytes),
+            "consumer_schema": contract.content_schema,
+            "consumer_workflow_schema_id": contract.workflow_schema_id,
+            "consumer_v4_capable": contract.is_v4_capable,
+            "consumer_contract_digest": contract.contract_digest,
+            "same_bytes_on_both_routes": True,
         },
-        "v2": {
-            "schema": v2_document["schema"],
-            "bytes": len(v2_bytes),
-            "consumer_level": v2.level.value,
-            "consumer_source": v2.source,
-            "consumer_diagnostics": [item.code for item in v2.diagnostics],
-            "contract_key": v2.contract_key,
-            "field_count": len(v2.editor_manifest.field_ids()),
-            "recipe_ids": sorted(v2.recipe_catalog.ids()),
-            "can_edit_fields": v2.capabilities.can_edit_fields,
-            "can_use_recipes": v2.capabilities.can_use_recipes,
+        "retired_contract_versions": check_retired_versions(),
+        "consumer_change_required": {
+            "required": True,
+            "surface": "jobdesk_v2.application.editor.contract (legacy V2 editor contract fetch)",
+            "producer_argv": "config contract --json --version 2",
+            "replacement": "v4 contract --json (parsed by jobdesk_v2.application.editor.contract.v4)",
+            "note": (
+                "the retired argv now fails closed with unsupported_workflow_version, so the "
+                "legacy V2 editor fetch degrades to its stable fallback until the consumer "
+                "reads the V4 envelope"
+            ),
         },
     }
 
 
 def assert_interchange(report: dict[str, Any]) -> None:
-    """Fail if the consumer did not accept the published contracts."""
-    v1, v2 = report["v1"], report["v2"]
-
-    if v1["consumer_level"] != "A":
-        raise CheckFailure(f"v1 should grade level A, got {v1['consumer_level']!r}")
-    if v2["consumer_level"] != "C":
-        raise CheckFailure(f"v2 should grade level C, got {v2['consumer_level']!r}")
-    if v2["consumer_source"] != "producer":
-        raise CheckFailure(f"v2 should be producer-owned, got {v2['consumer_source']!r}")
-    if v2["consumer_diagnostics"]:
-        raise CheckFailure(f"v2 produced diagnostics: {v2['consumer_diagnostics']}")
-    if not v2["can_edit_fields"] or not v2["can_use_recipes"]:
-        raise CheckFailure("v2 must leave the consumer unrestricted")
+    """Fail if the current wire did not hold or a retired one did not fail."""
+    current = report["current_contract"]
+    if current["schema"] != "confflow.configuration-contract.v4":
+        raise CheckFailure(f"unexpected contract schema: {current['schema']!r}")
+    if current["workflow_schema_id"] != "confflow.workflow.v4":
+        raise CheckFailure(f"unexpected workflow schema id: {current['workflow_schema_id']!r}")
+    if current["consumer_schema"] != current["schema"]:
+        raise CheckFailure("the consumer did not accept the producer's V4 envelope")
+    if not current["consumer_v4_capable"]:
+        raise CheckFailure("the consumer did not report V4 capability")
+    for version, section in report["retired_contract_versions"].items():
+        if (
+            section["returncode"] == 0
+            or section["stdout_bytes"]
+            or not section["stable_code_present"]
+        ):
+            raise CheckFailure(f"contract version {version} is not retired cleanly: {section!r}")
 
 
 def render(report: dict[str, Any]) -> str:
     """Render the report for a human."""
+    current = report["current_contract"]
     lines = [f"JobDesk V2 checkout: {report['jobdesk_root']}", ""]
-    for label, key in (("v1 (default)", "v1"), ("v2 (--version 2)", "v2")):
-        section = report[key]
-        lines.append(f"{label}")
-        lines.append(f"  schema              {section['schema']}")
-        lines.append(f"  stdout bytes        {section['bytes']}")
-        lines.append(f"  consumer level      {section['consumer_level']}")
-        lines.append(f"  consumer source     {section['consumer_source']}")
-        found = section["consumer_diagnostics"] or "none"
-        lines.append(f"  consumer findings   {found}")
-        if key == "v2":
-            lines.append(f"  contract key        {section['contract_key']}")
-            lines.append(f"  fields published    {section['field_count']}")
-            lines.append(f"  recipes published   {', '.join(section['recipe_ids'])}")
-            lines.append(f"  can edit fields     {section['can_edit_fields']}")
-            lines.append(f"  can use recipes     {section['can_use_recipes']}")
-        lines.append("")
-    lines.append("The consumer accepted the producer contract.")
+    lines.append("current producer -> JobDesk V4")
+    lines.append(f"  schema                 {current['schema']}")
+    lines.append(f"  workflow schema id     {current['workflow_schema_id']}")
+    lines.append(f"  stdout bytes           {current['bytes']}")
+    lines.append(f"  config route bytes     {current['config_route_bytes']}")
+    lines.append(f"  consumer schema        {current['consumer_schema']}")
+    lines.append(f"  consumer v4 capable    {current['consumer_v4_capable']}")
+    lines.append("")
+    lines.append("retired producer argv")
+    for version, section in sorted(report["retired_contract_versions"].items()):
+        lines.append(
+            f"  --version {version}        rc={section['returncode']} "
+            f"stdout={section['stdout_bytes']}B stable_code={section['stable_code_present']}"
+        )
+    lines.append("")
+    change = report["consumer_change_required"]
+    lines.append(f"consumer change required: {change['required']}")
+    lines.append(f"  surface      {change['surface']}")
+    lines.append(f"  producer     {change['producer_argv']} (retired)")
+    lines.append(f"  replacement  {change['replacement']}")
+    lines.append("")
+    lines.append(
+        "The consumer accepted the current producer contract; the retired wire failed closed."
+    )
     return "\n".join(lines)
 
 

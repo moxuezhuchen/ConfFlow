@@ -36,8 +36,8 @@ ConfFlow is suitable to publish as a public alpha preview. It is not production-
 
 ## Known Limitations
 
-- `--dry-run` can preview planned workflow steps, inputs, output paths, and selected calculation settings without executing workflow steps.
-- `--dry-run` is not a full sandbox; real runs can still write files, clean managed artifacts, and execute configured Gaussian/ORCA programs.
+- `confflow v4 validate --workflow FILE --json` compiles a workflow document without executing it; the legacy `--dry-run` planning aid was retired with the V1/V2 configuration wire (Architecture Diet PR-9).
+- Validation is not a full sandbox; real runs can still write files, clean managed artifacts, and execute configured Gaussian/ORCA programs.
 - Public CI uses fake/mock external-program behavior; real Gaussian/ORCA environments still need local or site-specific validation.
 - PyPI publishing is not automated. The release workflow prepares the
   v2.1.6 candidate's artifacts, provenance, and build attestation; full

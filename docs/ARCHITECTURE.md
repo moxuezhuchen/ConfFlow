@@ -13,15 +13,24 @@ ConfFlow 是一个自动化计算化学工作流引擎，用于分子构象搜�
 
 ## 当前重构主线
 
-当前主执行路径已切换到破兼容后的结构：
+当前主执行路径是破兼容后的 V4-only 结构：
 
-- 配置入口：confflow.config.canonical 的 parser/types/schema；confflow.config.models 与 confflow.core.models 仅是兼容 facade。
-- workflow -> calc：`workflow.step_handlers` 直接构造 typed calc config
-- calc step 执行：`confflow.calc.runner.CalcStepRunner`
-- calc step 状态：`manifest.json`，不再以 `.config_hash` 作为新主路径合同
-- calc step：通过 `confflow input.xyz -c workflow.yaml` 执行 `type: calc` workflow step
+- 配置/工作流格式：唯一受支持的是 V4（`confflow.workflow.v4` /
+  `confflow.configuration-contract.v4`）；`confflow.config.contract_schemas`
+  是 schema id 的唯一权威。
+- 正式执行入口：`confflow.application.v4_entry.formal_v4_runner`
+  （`confflow` CLI、application service 与 control worker 全部经此进入）。
+- V4 编译/执行：`confflow.workflow.v4.compile_workflow` ->
+  `confflow.application.v4_run.V4RunApplication` -> `WorkItem` -> executor ->
+  `StepResult` 发布 -> run result manifest。
+- 发布契约：`confflow v4 contract --json`
+  （`confflow.producer.contract.generate_contract_bytes`）。
+- legacy 独立工具（V4 运行时闭包之外）：`confflow.calc`（`confts` CLI、
+  `CalcStepRunner`/`TaskRunner`）与 `confflow.blocks`（`confgen`/`confrefine`）。
 
-旧的 `ChemTaskManager`、INI settings、legacy flat calc config、MD5 `.config_hash` 兼容路径已从主执行路径和公共导出中移除。
+已退役：V2/V3 workflow 执行运行时（PR-4）、无发布的 V3 public wire（PR-7）、
+已发布的 V1/V2 配置 wire（PR-9）。旧的 `ChemTaskManager`、INI settings、
+legacy flat calc config、MD5 `.config_hash` 兼容路径已从主执行路径和公共导出中移除。
 
 ## 目录结构
 
@@ -126,7 +135,6 @@ confflow/
 │   ├── helpers.py            # 辅助工具（pushd、构象计数、列表转换）
 │   ├── validation.py         # 输入验证与标签标准化
 │   ├── stats.py              # 检查点、统计追踪、构象溯源
-│   ├── dry_run.py            # 干运行支持
 │   ├── export.py             # 导出功能
 │   ├── rerun_failed.py       # 失败重跑
 │   ├── supervisor.py         # 子进程监督与停止处理
@@ -152,8 +160,8 @@ tests/                         # 测试套件（以 pytest --collect-only -q 和
 ├── test_core.py              # 包导出与核心公共入口
 ├── test_io.py                # XYZ 读写、元数据解析
 ├── test_data.py              # 共价半径、元素符号
-├── test_models.py            # Pydantic 数据模型
-├── test_config_models.py     # typed YAML 配置模型
+├── test_models.py            # Pydantic 数据模型（legacy calc 工具）
+├── test_retired_wire_versions.py  # V1/V2/V3 配置 wire 失败关闭闸门
 ├── test_confgen.py           # 构象生成
 ├── test_refine.py            # 构象筛选
 ├── test_calc.py              # 计算任务基础
@@ -425,38 +433,57 @@ confflow <input.xyz> -c <config.yaml>
 
 ## 配置系统
 
-### YAML 工作流配置 (`confflow.example.yaml`)
+### V4 工作流配置 (`confflow.example.yaml`)
+
+当前唯一受支持的 workflow/config 格式是 V4（`schema: confflow.workflow.v4`）。
+随包分发的示例文件是一个可编译的 V4 文档：
 
 ```yaml
+schema: confflow.workflow.v4
+
+inputs:
+  structures: {kind: structure, cardinality: many, grouping: each_entity}
+
 global:
-  gaussian_path: "/opt/g16/g16"
-  orca_path: "/opt/orca/orca"
-  cores_per_task: 4
-  total_memory: "16GB"
-  max_parallel_jobs: 2
-  charge: 0
-  multiplicity: 1
-  freeze: [1, 5]  # 冻结原子坐标（也支持 "1,5" / "1-5" / "1,2,5-7"）
+  scientific_defaults: {charge: 0, multiplicity: 1}
+  resources: {cores_per_item: 8, memory_per_item: 32GiB}
+  scheduler: {max_parallel_items: 4}
 
 steps:
-  - name: "confgen_step"
-    type: "confgen"
-    params:
-      chains: ["1-2-3-4-5"]
-      ...
+  - id: confgen
+    executor: confgen
+    bindings: {structure: {source: {run: structures}}}
+    confgen: {native: {chains: ["1-2-3-4"], angle_step: 120}, seed: 20260928}
 
-  - name: "calc_step"
-    type: "calc"
-    params:
-      iprog: "g16"
-      itask: "opt"
-      keyword: "B3LYP/6-31G* opt freq"
-      ...
+  - id: opt
+    executor: calculation
+    bindings: {structure: {source: {step: confgen, port: structures}}}
+    calculation:
+      program: orca
+      role: opt
+      native: {keyword: "B3LYP D3BJ def2-SVP Opt"}
+      checks: ["normal_termination", "geometry_required"]
+      overrides: {freeze: [1, 2]}
 ```
 
-### 计算配置传递
+### 配置 wire 的当前状态
 
-YAML 由 `confflow.config.models.WorkflowConfig` 解析为 typed model。calc step 通过 `CalcStepParams` 进入 `CalcStepRunner`；仅在调用现有 policy/task runner 时生成 runtime dict，不再存在 legacy flat config 作为公共合同。
+唯一受支持的配置 wire 是 V4（`confflow.configuration-contract.v4` /
+`confflow.workflow.v4`）。V4 生产者契约由
+`confflow.producer.contract.generate_contract_bytes` 生成，并由
+`confflow v4 contract --json` 发布；`confflow.config.contract_schemas` 是
+schema id 的唯一权威。
+
+已发布的 V1/V2 配置 wire（`configuration-contract.v1/.v2`、
+`confflow.workflow.v2` schema、公开 parser/validator、V2 editor manifest 与
+recipe catalog、V2 -> canonical migration、`--dry-run`/`--config-show`
+planner、`confflow config validate`）由 Architecture Diet PR-9 退役；V1/V2/V3
+文档在入口处以 `unsupported_workflow_version` / `legacy_workflow_not_executable`
+失败关闭，不做 fallback、不自动 upgrade、不执行。
+
+`confflow.calc`（`confts` CLI 与 `CalcStepRunner`/`TaskRunner`）是独立的 legacy
+计算工具，位于 V4 运行时闭包之外；它读取本地 legacy YAML 时使用自己的
+`confflow.calc.config_model`，不发布任何 schema 或 contract。
 
 ## 测试组织
 
@@ -471,7 +498,7 @@ tests/
 ├── test_io.py                # XYZ 文件读写、元数据解析
 ├── test_data.py              # 共价半径、元素符号、原子序数
 ├── test_models.py            # TaskContext Pydantic 模型
-├── test_config_models.py     # typed YAML 配置模型
+├── test_retired_wire_versions.py  # V1/V2/V3 配置 wire 失败关闭闸门
 ├── test_keyword_rewrite.py   # TS→scan 关键字改写
 │
 ├── test_confgen.py           # confgen 构象生成
@@ -511,7 +538,7 @@ tests/
 confflow/__init__.py (包入口)
   ├── main.py (工作流主程序)
   │   └── workflow.engine.run_workflow()
-  │       ├── config/models.py (typed 配置加载)
+  │       ├── calc/config_model.py (legacy 工具的 typed 配置读取)
   │       ├── blocks/confgen (构象生成)
   │       ├── calc/runner.py (量子计算)
   │       │   ├── calc/policies/* (Gaussian/ORCA)

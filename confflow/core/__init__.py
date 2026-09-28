@@ -7,9 +7,12 @@ type definitions, and validation.
 
 The historical ``from confflow.core import X`` surface is preserved, but it is
 resolved lazily (PEP 562): importing :mod:`confflow.core` no longer executes
-the legacy implementation modules (``core.models`` → canonical V2 pydantic
-models, ``core.types``, ``core.validation``, ``core.io``, ...).  Import the
-concrete submodule when you need the implementation.
+the implementation modules (``core.models``, ``core.validation``,
+``core.io``, ...).  Import the concrete submodule when you need the
+implementation.
+
+The ``core.types`` TypedDict module was retired by the Architecture Diet PR-9:
+it only described the released V1/V2 configuration wire, which is gone.
 """
 
 from __future__ import annotations
@@ -27,20 +30,7 @@ _LAZY_EXPORTS: dict[str, tuple[str, str]] = {
     "get_atomic_number": (".data", "get_atomic_number"),
     "get_covalent_radius": (".data", "get_covalent_radius"),
     "get_element_symbol": (".data", "get_element_symbol"),
-    # Types (TypedDict — for type annotations)
-    "CoordLine": (".types", "CoordLine"),
-    "CoordLines": (".types", "CoordLines"),
-    "Coords3D": (".types", "Coords3D"),
-    "AtomList": (".types", "AtomList"),
-    "GlobalConfig": (".types", "GlobalConfig"),
-    "StepParams": (".types", "StepParams"),
-    "ConformerData": (".types", "ConformerData"),
-    "TaskResult": (".types", "TaskResult"),
-    "WorkflowStats": (".types", "WorkflowStats"),
-    "StepStats": (".types", "StepStats"),
-    "ParsedOutput": (".types", "ParsedOutput"),
-    "ValidationResult": (".types", "ValidationResult"),
-    # Models (Pydantic — runtime validation)
+    # Models (Pydantic — runtime validation, legacy calc tooling)
     "TaskContext": (".models", "TaskContext"),
     # Validation
     "ValidationError": (".validation", "ValidationError"),

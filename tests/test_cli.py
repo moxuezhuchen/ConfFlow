@@ -25,7 +25,6 @@ from confflow.cli import (
     main,
     stop_all_confflow_processes,
 )
-from confflow.workflow.dry_run import estimate_confgen_combinations
 
 
 def _v4_config(path):
@@ -280,135 +279,6 @@ def test_main_normal_path_still_calls_run_workflow(tmp_path):
     mock_run.assert_called_once()
 
 
-def test_main_dry_run_does_not_call_run_workflow(tmp_path, capsys):
-    input_xyz = tmp_path / "input.xyz"
-    input_xyz.write_text("3\ntest\nC 0 0 0\nH 0 0 1\nH 0 1 0\n", encoding="utf-8")
-    config_yaml = tmp_path / "config.yaml"
-    config_yaml.write_text(
-        "global: {}\n"
-        "steps:\n"
-        "  - name: gen\n"
-        "    type: confgen\n"
-        "    params:\n"
-        "      chains: ['1-2']\n",
-        encoding="utf-8",
-    )
-
-    with patch("confflow.cli.run_workflow") as mock_run:
-        result = main([str(input_xyz), "-c", str(config_yaml), "--dry-run"])
-
-    captured = capsys.readouterr()
-    assert result == 0
-    assert "ConfFlow dry-run" in captured.out
-    assert "gen (confgen)" in captured.out
-    mock_run.assert_not_called()
-
-
-def test_main_dry_run_confgen_without_chains_reports_zero_combinations(tmp_path, capsys):
-    input_xyz = tmp_path / "input.xyz"
-    input_xyz.write_text("2\ntest\nC 0 0 0\nH 0 0 1\n", encoding="utf-8")
-    config_yaml = tmp_path / "config.yaml"
-    config_yaml.write_text(
-        "global: {}\nsteps:\n  - name: gen\n    type: confgen\n    params: {}\n",
-        encoding="utf-8",
-    )
-
-    result = main([str(input_xyz), "-c", str(config_yaml), "--dry-run"])
-
-    captured = capsys.readouterr()
-    assert result == 0
-    assert "confgen combinations: 0" in captured.out
-
-
-def test_dry_run_confgen_combination_estimate():
-    assert estimate_confgen_combinations({"chains": ["1-2-3"], "angle_step": 120}) == 9
-
-
-def test_main_dry_run_calc_resolved_config_shows_step_override(tmp_path, capsys):
-    input_xyz = tmp_path / "input.xyz"
-    input_xyz.write_text("2\ntest\nC 0 0 0\nH 0 0 1\n", encoding="utf-8")
-    config_yaml = tmp_path / "config.yaml"
-    config_yaml.write_text(
-        "global:\n"
-        "  iprog: orca\n"
-        "  itask: sp\n"
-        "  keyword: global-keyword\n"
-        "  cores_per_task: 1\n"
-        "  max_parallel_jobs: 2\n"
-        "  total_memory: 4GB\n"
-        "steps:\n"
-        "  - name: calc1\n"
-        "    type: calc\n"
-        "    params:\n"
-        "      keyword: step-keyword\n"
-        "      cores_per_task: 4\n",
-        encoding="utf-8",
-    )
-
-    result = main([str(input_xyz), "-c", str(config_yaml), "--dry-run"])
-
-    captured = capsys.readouterr()
-    assert result == 0
-    assert "calc1 (calc)" in captured.out
-    assert "keyword=step-keyword" in captured.out
-    assert "cores_per_task=4" in captured.out
-
-
-def test_main_dry_run_skips_disabled_step_input_chain(tmp_path, capsys):
-    input_xyz = tmp_path / "input.xyz"
-    input_xyz.write_text("1\ntest\nH 0 0 0\n", encoding="utf-8")
-    config_yaml = tmp_path / "config.yaml"
-    config_yaml.write_text(
-        "global:\n"
-        "  iprog: orca\n"
-        "  itask: sp\n"
-        "  keyword: HF\n"
-        "steps:\n"
-        "  - name: disabled\n"
-        "    type: calc\n"
-        "    enabled: false\n"
-        "    params: {}\n"
-        "  - name: active\n"
-        "    type: calc\n"
-        "    params: {}\n",
-        encoding="utf-8",
-    )
-
-    result = main(
-        [str(input_xyz), "-c", str(config_yaml), "--dry-run", "-w", str(tmp_path / "work")]
-    )
-
-    output = capsys.readouterr().out
-    assert result == 0
-    assert "disabled: true" in output
-    assert f"input: {input_xyz}" in output
-
-
-def test_main_dry_run_missing_executable_path_is_reported(tmp_path, capsys):
-    input_xyz = tmp_path / "input.xyz"
-    input_xyz.write_text("2\ntest\nC 0 0 0\nH 0 0 1\n", encoding="utf-8")
-    config_yaml = tmp_path / "config.yaml"
-    missing_g16 = tmp_path / "missing" / "g16"
-    config_yaml.write_text(
-        "global:\n"
-        "  iprog: gaussian\n"
-        "  itask: sp\n"
-        "  keyword: hf/sto-3g\n"
-        f"  gaussian_path: {missing_g16}\n"
-        "steps:\n"
-        "  - name: calc1\n"
-        "    type: calc\n"
-        "    params: {}\n",
-        encoding="utf-8",
-    )
-
-    result = main([str(input_xyz), "-c", str(config_yaml), "--dry-run"])
-
-    captured = capsys.readouterr()
-    assert result == 0
-    assert f"gaussian_path: missing: {missing_g16}" in captured.out
-
-
 @patch("confflow.cli.run_workflow")
 def test_main_full_run(mock_run, tmp_path):
     input_xyz = tmp_path / "input.xyz"
@@ -661,81 +531,10 @@ def test_main_work_dir_default(tmp_path, monkeypatch):
         assert "input_work" in kwargs["work_dir"]
 
 
-def test_resolve_default_work_dir_uses_sandbox_root(tmp_path):
-    input_xyz = tmp_path / "input.xyz"
-    input_xyz.write_text("2\ntest\nC 0 0 0\nH 0 0 1\n", encoding="utf-8")
-    sandbox = tmp_path / "sandbox"
-
-    resolved = _resolve_default_work_dir([str(input_xyz)], sandbox_root=str(sandbox))
-
-    assert resolved == str(sandbox / "input_work")
-
-
-def test_main_default_work_dir_inside_sandbox_root(tmp_path):
-    input_xyz = tmp_path / "input.xyz"
-    input_xyz.write_text("2\ntest\nC 0 0 0\nH 0 0 1\n", encoding="utf-8")
-    config_yaml = _v4_config(tmp_path / "config.yaml")
-    config_yaml.write_text(
-        "schema: confflow.workflow.v4\n"
-        "inputs:\n"
-        "  structures: {kind: structure, cardinality: many}\n"
-        "global:\n"
-        "  scientific_defaults: {charge: 0, multiplicity: 1}\n"
-        "  sandbox_root: " + str(tmp_path / "sandbox") + "\n"
-        "steps:\n"
-        "  - id: s_opt\n"
-        "    executor: calculation\n"
-        "    bindings:\n"
-        "      structure: {source: {run: structures}}\n"
-        "    calculation:\n"
-        "      program: orca\n"
-        "      role: opt\n"
-        "      execution_adapter: standard\n"
-        "      result_profile: standard\n"
-        "      native: {keyword: B3LYP Opt}\n"
-        "      checks: [normal_termination]\n"
-        "      recovery: {profile: none}\n",
-        encoding="utf-8",
-    )
-
-    with patch("confflow.cli.run_workflow") as mock_run:
-        main([str(input_xyz), "-c", str(config_yaml)])
-        _, kwargs = mock_run.call_args
-        assert kwargs["work_dir"] == str(tmp_path / "sandbox" / "input_work")
-
-
-def test_main_invalid_work_dir_returns_usage_error(tmp_path):
-    input_xyz = tmp_path / "input.xyz"
-    input_xyz.write_text("2\ntest\nC 0 0 0\nH 0 0 1\n", encoding="utf-8")
-    config_yaml = _v4_config(tmp_path / "config.yaml")
-    config_yaml.write_text(
-        "schema: confflow.workflow.v4\n"
-        "inputs:\n"
-        "  structures: {kind: structure, cardinality: many}\n"
-        "global:\n"
-        "  scientific_defaults: {charge: 0, multiplicity: 1}\n"
-        "  sandbox_root: " + str(tmp_path / "sandbox") + "\n"
-        "steps:\n"
-        "  - id: s_opt\n"
-        "    executor: calculation\n"
-        "    bindings:\n"
-        "      structure: {source: {run: structures}}\n"
-        "    calculation:\n"
-        "      program: orca\n"
-        "      role: opt\n"
-        "      execution_adapter: standard\n"
-        "      result_profile: standard\n"
-        "      native: {keyword: B3LYP Opt}\n"
-        "      checks: [normal_termination]\n"
-        "      recovery: {profile: none}\n",
-        encoding="utf-8",
-    )
-
-    result = main([str(input_xyz), "-c", str(config_yaml), "-w", str(tmp_path / "outside")])
-
-    assert result == 1
-    content = (tmp_path / "input.txt").read_text(encoding="utf-8")
-    assert "work_dir escapes sandbox_root" in content
+def test_resolve_default_work_dir_shape():
+    """The default work directory is derived from the input basename only."""
+    assert _resolve_default_work_dir(["/tmp/one.xyz"]) == "one_work"
+    assert _resolve_default_work_dir(["/tmp/one.xyz", "/tmp/two.xyz"]) == "one_multi_work"
 
 
 def test_main_consistency_error_no_interactive_prompt_on_tty(tmp_path):
@@ -849,14 +648,6 @@ def test_cli_main_logger_error_failure(tmp_path):
             assert ret == 2
 
 
-def test_build_parser_config_show():
-    """Test that --config-show flag is correctly parsed."""
-    parser = build_parser()
-    args = parser.parse_args(["--config-show", "-c", "config.yaml"])
-    assert args.config_show is True
-    assert args.config == "config.yaml"
-
-
 def test_build_parser_step_dest():
     """Test that --step parameter has correct dest."""
     parser = build_parser()
@@ -868,10 +659,10 @@ def test_build_parser_step_dest():
 def test_build_parser_format_extended():
     """Test that --format choices include text."""
     parser = build_parser()
-    args = parser.parse_args(["--config-show", "-c", "config.yaml", "--format", "text"])
+    args = parser.parse_args(["--export", "work", "--format", "text"])
     assert args.format == "text"
 
-    args = parser.parse_args(["--config-show", "-c", "config.yaml", "--format", "json"])
+    args = parser.parse_args(["--export", "work", "--format", "json"])
     assert args.format == "json"
 
 

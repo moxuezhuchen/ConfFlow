@@ -47,7 +47,7 @@ JOBDESK_SRC_ENV = "JOBDESK_V2_SRC"
 DEFAULT_JOBDESK_SRC = Path("/opt/jobdesk-v2-v4/src")
 
 #: Pinned JobDesk revision the cross-repo evidence was produced against.
-EXPECTED_JOBDESK_SHA = "678ffce01e8c26271661d78cf04ebe3dac5e28c9"
+EXPECTED_JOBDESK_SHA = "7f6540843d4d7bc45a467b5be8a9ad5d9f8ccce9"
 
 #: Explicit escape hatch for development against a different checkout.
 ALLOW_ANY_SHA_ENV = "JOBDESK_V2_ALLOW_ANY_SHA"

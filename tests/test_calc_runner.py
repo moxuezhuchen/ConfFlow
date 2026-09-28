@@ -10,8 +10,8 @@ from unittest.mock import patch
 
 import pytest
 
+from confflow.calc.config_model import CalcStepParams, GlobalOptions
 from confflow.calc.runner import CalcStepRequest, CalcStepRunner
-from confflow.config.models import CalcStepParams, GlobalOptions
 
 
 def _config():

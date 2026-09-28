@@ -1,16 +1,15 @@
 #!/usr/bin/env python3
 
-"""The producer's program/task defaults have exactly one source.
+"""The legacy tooling's program/task defaults have exactly one source.
 
 ``GlobalOptions.iprog`` and ``.itask`` used to be string literals in the dataclass
-while every other option default came from :mod:`confflow.shared.defaults`. That
-was survivable while the default was only a runtime fallback, but publishing a
-producer-owned editor manifest would have made it the *third* copy of the same
-fact -- the manifest, the dataclass default, and the ``from_mapping`` fallback.
+while every other option default came from :mod:`confflow.shared.defaults`.  The
+constants are what they always were, and the legacy typed model still reads them
+instead of carrying its own copy.
 
-These tests pin both halves of the fix: the constants are what they always were
-(so behaviour did not move), and the typed model and the manifest both read them
-(so the copies are gone).
+The manifest half of this file was retired with the V1/V2 editor manifest
+(Architecture Diet PR-9); the V4 manifest is the only published manifest and is
+covered by ``tests/v4/test_v46_producer_contract.py``.
 """
 
 from __future__ import annotations
@@ -20,8 +19,7 @@ from typing import get_args
 import pytest
 
 import confflow.shared.defaults as defaults
-from confflow.config.canonical.editor_manifest import build_editor_manifest
-from confflow.config.canonical.types import (
+from confflow.calc.config_model import (
     CalcStepParams,
     GlobalOptions,
     ProgramName,
@@ -87,22 +85,3 @@ class TestTheTypedModelReadsTheConstants:
 
         assert params.program == "g16"
         assert params.task == "opt"
-
-
-class TestTheManifestIsNotAThirdCopy:
-    def test_the_manifest_publishes_the_same_defaults(self) -> None:
-        fields = {item["field_id"]: item for item in build_editor_manifest()["fields"]}
-
-        assert fields["calc.program"]["default"] == DEFAULT_PROGRAM
-        assert fields["calc.task"]["default"] == DEFAULT_TASK
-
-    def test_the_manifest_default_tracks_the_typed_model(self) -> None:
-        """If the constant moved, the model and the manifest would move with it.
-
-        That is the whole point of there being one source.
-        """
-        options = GlobalOptions()
-        fields = {item["field_id"]: item for item in build_editor_manifest()["fields"]}
-
-        assert fields["calc.program"]["default"] == options.iprog
-        assert fields["calc.task"]["default"] == options.itask

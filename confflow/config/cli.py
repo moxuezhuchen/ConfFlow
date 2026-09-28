@@ -1,84 +1,90 @@
-"""Machine-readable configuration-contract command handlers.
+#!/usr/bin/env python3
+"""Machine-readable configuration-contract command handlers (V4 only).
 
-``confflow config contract --json`` emits ``confflow.configuration-contract.v1``
-by default; ``--version 2`` emits the same document plus the editor manifest and
-the recipe catalog. The default is v1 on purpose: the v1 document has a published
-shape and existing consumers parse it, so a version bump has to be asked for.
+The only supported configuration wire is V4.  ``confflow config contract
+--json`` emits ``confflow.configuration-contract.v4`` -- the same canonical
+envelope ``confflow v4 contract --json`` emits -- and ``--version 4`` names it
+explicitly.
 
-The never-released ``--version 3`` (the Workflow V3 public wire) was retired by
-the Architecture Diet PR-7 and now fails closed with the stable unsupported
-contract-version error.
+The released V1 (``confflow.configuration-contract.v1``) and V2
+(``…-contract.v2``) documents, and the never-released V3 wire, were retired by
+the Architecture Diet (PR-7 retired V3, PR-9 retired V1/V2).  Asking for any
+of them now fails closed with the stable ``unsupported_workflow_version``
+code: no fallback to another version, no automatic upgrade, no parsing of the
+retired document, and no execution.
+
+The historical ``config validate --stdin`` handler validated the released V2
+document shape.  It has no V4 successor here on purpose: the producer-owned V4
+validator is reached through ``confflow v4 validate`` (or the
+``confflow.producer.validation`` module boundary JobDesk already uses), so a
+second V4 validation surface cannot drift from it.  The retired handler keeps
+its route and fails closed.
 """
 
 from __future__ import annotations
 
 import argparse
-import json
 import sys
 from typing import Any
 
-from ..__build__ import COMMIT, DIRTY
 from ..core.contracts import ExitCode
-from .canonical import (
-    CONFIGURATION_VALIDATION_SCHEMA,
-    build_configuration_contract_for_version,
-    validate_workflow_definition,
-    workflow_schema_sha256,
-)
 
-#: The contract version emitted when ``--version`` is not given. Kept as a named
-#: constant so the default and its rationale are not buried in the argparse call.
-#: v1 stays the default for old-consumer compatibility; v2 is opt-in.
-DEFAULT_CONTRACT_VERSION = 1
+#: The configuration-contract version emitted when ``--version`` is not given.
+#: V4 is the only current configuration wire, so it is also the only default.
+DEFAULT_CONTRACT_VERSION = 4
+
+#: Every contract version this CLI will emit. ``--version 1`` / ``2`` / ``3``
+#: and every unknown value are explicitly unsupported.
+SUPPORTED_CONTRACT_VERSIONS: tuple[int, ...] = (4,)
+
+#: Stable fail-closed vocabulary for a retired or unknown version.
+UNSUPPORTED_WORKFLOW_VERSION = "unsupported_workflow_version"
+
+#: Retail explanations, keyed by the retired version a caller asked for.
+_RETIRED_VERSIONS: dict[int, str] = {
+    1: "the released V1 configuration wire was retired by the Architecture Diet PR-9",
+    2: "the released V2 configuration wire was retired by the Architecture Diet PR-9",
+    3: "the never-released V3 configuration wire was retired by the Architecture Diet PR-7",
+}
 
 
-def _emit(payload: dict[str, Any]) -> None:
-    print(json.dumps(payload, sort_keys=True, separators=(",", ":"), allow_nan=False))
-
-
-def _validate_stdin() -> int:
-    try:
-        raw = json.load(sys.stdin)
-    except json.JSONDecodeError as exc:
-        print(f"Error: invalid JSON input: {exc.msg}", file=sys.stderr)
-        return ExitCode.USAGE_ERROR
-    if not isinstance(raw, dict):
-        _emit(
-            {
-                "schema": CONFIGURATION_VALIDATION_SCHEMA,
-                "valid": False,
-                "workflow_schema_sha256": workflow_schema_sha256(),
-                "issues": [{"path": "", "message": "workflow config root must be a mapping"}],
-            }
-        )
-        return ExitCode.USAGE_ERROR
-    # Definition validation only: it examines the document, never the run
-    # context (input files, executables on this host), which stdin does not
-    # carry. The internal diagnostics are projected to the frozen
-    # ``configuration-validation.v1`` issue shape (exactly ``path``/``message``),
-    # which is what the JobDesk consumer parses without extra members. Only the
-    # V2 document shape is recognisable; the retired V3 wire (and any unknown
-    # version) fails closed here as an invalid document.
-    errors = [diagnostic for diagnostic in validate_workflow_definition(raw) if diagnostic.is_error]
-    if errors:
-        _emit(
-            {
-                "schema": CONFIGURATION_VALIDATION_SCHEMA,
-                "valid": False,
-                "workflow_schema_sha256": workflow_schema_sha256(),
-                "issues": [diagnostic.to_v1_issue() for diagnostic in errors],
-            }
-        )
-        return ExitCode.USAGE_ERROR
-    _emit(
-        {
-            "schema": CONFIGURATION_VALIDATION_SCHEMA,
-            "valid": True,
-            "workflow_schema_sha256": workflow_schema_sha256(),
-            "issues": [],
-        }
+def _unsupported_version_error(version: Any) -> ValueError:
+    """Build the stable, side-effect-free rejection for *version*."""
+    reason = _RETIRED_VERSIONS.get(version) if isinstance(version, int) else None
+    detail = f" ({reason})" if reason else ""
+    return ValueError(
+        f"{UNSUPPORTED_WORKFLOW_VERSION}: unsupported configuration contract "
+        f"version {version!r}{detail}; supported: "
+        f"{', '.join(str(item) for item in SUPPORTED_CONTRACT_VERSIONS)} "
+        "(confflow.configuration-contract.v4). Use "
+        "'confflow config contract --json' or 'confflow v4 contract --json'."
     )
-    return ExitCode.SUCCESS
+
+
+def build_contract_document(version: int) -> dict[str, Any]:
+    """Build the canonical contract envelope for *version*, or fail closed.
+
+    The envelope is built with no build-time provenance: the V4 wire has a
+    single published reference envelope (``confflow v4 contract --json``, whose
+    ``producer.commit`` / ``producer.dirty`` are unknown in a source checkout),
+    and ``config contract`` must emit exactly those bytes on every route and in
+    every install.  ``build_configuration_contract_v4`` still accepts provenance
+    for callers that own a released build.
+    """
+    if version not in SUPPORTED_CONTRACT_VERSIONS:
+        raise _unsupported_version_error(version)
+    import warnings
+
+    from ..producer.contract import build_configuration_contract_v4
+
+    producer_version = __import__("confflow").__version__
+    # Machine-readable stdout must stay the only output: the producer's own
+    # envelope is imported here for the first time on this route, and
+    # importing it defines pydantic models whose field-shadowing warnings are
+    # not part of the contract.
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        return build_configuration_contract_v4(producer_version=producer_version)
 
 
 def main(args_list: list[str]) -> int:
@@ -91,34 +97,46 @@ def main(args_list: list[str]) -> int:
         type=int,
         default=DEFAULT_CONTRACT_VERSION,
         help=(
-            "Configuration contract version to emit. Defaults to "
-            f"{DEFAULT_CONTRACT_VERSION}, which is the document consumers already "
-            "parse; version 2 additionally carries the editor manifest and the "
-            "recipe catalog."
+            "Configuration contract version to emit. V4 "
+            "(confflow.configuration-contract.v4) is the only current wire and "
+            f"the default ({DEFAULT_CONTRACT_VERSION}); versions 1, 2 and 3 are "
+            "retired and fail closed."
         ),
     )
-    validate = subparsers.add_parser("validate")
+    validate = subparsers.add_parser(
+        "validate",
+        help="Retired: the released V2 document validator; use 'confflow v4 validate'",
+    )
     validate.add_argument("--json", action="store_true", required=True)
     validate.add_argument("--stdin", action="store_true", required=True)
     args = parser.parse_args(args_list)
     if args.command == "contract":
-        producer_version = __import__("confflow").__version__
         try:
-            document = build_configuration_contract_for_version(
-                args.version,
-                producer_version=producer_version,
-                producer_commit=COMMIT,
-                producer_dirty=DIRTY,
-            )
+            document = build_contract_document(args.version)
         except ValueError as error:
-            # Fail closed, side-effect free: the retired V3 contract (and any
-            # other unsupported version) never falls back to v1/v2 and never
-            # emits a document.
             print(f"Error: {error}", file=sys.stderr)
             return ExitCode.USAGE_ERROR
-        _emit(document)
+        from ..producer.contract import contract_canonical_json
+
+        # Canonical machine output: one document on stdout, nothing else.
+        sys.stdout.write(contract_canonical_json(document))
+        sys.stdout.write("\n")
         return ExitCode.SUCCESS
-    return _validate_stdin()
+    print(
+        "Error: "
+        f"{UNSUPPORTED_WORKFLOW_VERSION}: 'confflow config validate' validated the "
+        "released V2 workflow document, which is retired by the Architecture Diet "
+        "PR-9; the only supported workflow format is 'confflow.workflow.v4'. Use "
+        "'confflow v4 validate --workflow FILE --json' (or --stdin).",
+        file=sys.stderr,
+    )
+    return ExitCode.USAGE_ERROR
 
 
-__all__ = ["DEFAULT_CONTRACT_VERSION", "main"]
+__all__ = [
+    "DEFAULT_CONTRACT_VERSION",
+    "SUPPORTED_CONTRACT_VERSIONS",
+    "UNSUPPORTED_WORKFLOW_VERSION",
+    "build_contract_document",
+    "main",
+]

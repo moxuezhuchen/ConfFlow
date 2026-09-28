@@ -18,7 +18,7 @@ from typing import Any
 
 import yaml
 
-from confflow.config.canonical.contract import CONFIGURATION_VALIDATION_SCHEMA
+from confflow.config.contract_schemas import CONFIGURATION_VALIDATION_SCHEMA
 from confflow.domain.canonical import canonical_json_bytes, canonical_sha256
 from confflow.execution.contracts import ExecutorCapability
 from confflow.execution.native import ProgramName

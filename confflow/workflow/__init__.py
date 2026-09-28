@@ -3,13 +3,15 @@
 """Workflow compatibility surface.
 
 The V2/V3 workflow execution runtime was removed by the post-closure
-Architecture Diet.  The retired runtime names resolve to fail-closed stubs
-(:mod:`confflow.workflow._retired_runtime`), while the diagnostic planners
-(``plan``, ``helpers``, ``step_naming``, ``validation``) stay importable for
-``--dry-run`` / ``--config-show`` and migration readers.
+Architecture Diet, and the V2 diagnostic planners (``plan``,
+``config_show``, ``dry_run``) were removed with the released V1/V2
+configuration wire (PR-9).  The retired runtime names resolve to fail-closed
+stubs (:mod:`confflow.workflow._retired_runtime`), while the remaining input
+helpers (``helpers``, ``step_naming``, ``validation``) stay importable for
+``--export`` and the legacy tooling that shares them.
 
 The exports below are resolved lazily (PEP 562) so that importing
-``confflow.workflow.v4`` does not drag in the V2/V3 planner or config layer.
+``confflow.workflow.v4`` does not drag in the legacy helpers.
 """
 
 from __future__ import annotations

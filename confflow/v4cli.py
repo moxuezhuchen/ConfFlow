@@ -83,12 +83,23 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def _contract(args: argparse.Namespace) -> int:
-    """Print the V4 producer contract bytes."""
+    """Print the V4 producer contract bytes.
+
+    Machine-readable stdout is the only output on purpose: building the
+    envelope imports the producer's remote capability authority for the first
+    time on this route, and importing it defines pydantic models whose
+    field-shadowing warnings are not part of the contract.
+    """
+    import warnings
+
     import confflow
 
     from .producer.contract import generate_contract_bytes
 
-    sys.stdout.write(generate_contract_bytes(producer_version=confflow.__version__).decode("utf-8"))
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        payload = generate_contract_bytes(producer_version=confflow.__version__)
+    sys.stdout.write(payload.decode("utf-8"))
     sys.stdout.write("\n")
     return 0
 
@@ -115,7 +126,9 @@ def _validate(args: argparse.Namespace) -> int:
 
 def _run(args: argparse.Namespace) -> int:
     """Run a whole V4 workflow and print the report."""
+    from .application.v4_entry import require_v4_document
     from .application.v4_run import V4RunApplication, V4RunRequest, import_xyz
+    from .core.exceptions import ConfFlowError
     from .domain._immutable import FrozenDict
     from .execution.process import NativeProcessSupervisor
     from .workflow.v4.assembly import RunInputs
@@ -124,17 +137,14 @@ def _run(args: argparse.Namespace) -> int:
         import yaml
 
         document = yaml.safe_load(handle)
-    if not isinstance(document, dict):
-        print(
-            "Error: legacy_workflow_not_executable: workflow document must be a mapping; migration required",
-            file=sys.stderr,
-        )
-        return 1
-    if document.get("schema", "") != "confflow.workflow.v4":
-        print(
-            "Error: legacy_workflow_not_executable: not a V4 workflow document; migration required",
-            file=sys.stderr,
-        )
+    # Single version-discriminator authority: a V1/V2/V3 (or unknown) schema
+    # fails closed with ``legacy_workflow_not_executable`` plus the stable
+    # ``unsupported_workflow_version`` code for a retired id, before any run
+    # root, store or process side effect.
+    try:
+        require_v4_document(document)
+    except ConfFlowError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
         return 1
     structures: dict[str, Any] = {}
     for assignment in args.inputs:

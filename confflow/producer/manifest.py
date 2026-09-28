@@ -2,8 +2,7 @@
 
 """Producer-owned V4 editor manifest: which workflow fields a GUI may edit.
 
-The manifest follows the structural pattern of
-:mod:`confflow.config.canonical.editor_manifest` (field entries with
+The manifest follows the historical structural pattern (field entries with
 ``field_id``/``context``/``json_pointer``/``label``/``value_type``/``editor``,
 step fields addressed at ``/steps/{id}`` with an explicit
 ``step_selector: "id"`` plus ``relative_pointer``), but every pointer targets
