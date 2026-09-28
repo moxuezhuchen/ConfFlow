@@ -9,8 +9,8 @@ carries zero legacy semantics:
 - ``confflow.workflow.v4`` and ``confflow.execution`` import only
   ``confflow.domain`` / ``confflow.execution`` / ``confflow.workflow.v4``;
 - forbidden legacy symbols never appear as code (docstrings may explain them);
-- importing the V4 core never imports the V2/V3 runtime, legacy config, or the
-  calc subsystem;
+- importing the V4 core never imports the V2/V3 runtime, legacy config, the
+  calc subsystem, the retired PR-6 remote helpers, or the dev fixture modules;
 - the V4 packages are discoverable by ``setuptools.find_packages``.
 """
 
@@ -257,10 +257,13 @@ REMOVED_LEGACY_MODULES: frozenset[str] = frozenset(
     }
 )
 
-#: V2/V3 execution-runtime modules retired by Architecture Diet PR-4.  They
-#: must stay physically absent, unimportable, and unreferenced by the V4
-#: production sources.  The historically public names resolve to fail-closed
-#: retirement stubs (``confflow.workflow._retired_runtime``), never to code.
+#: V2/V3 execution-runtime modules retired by Architecture Diet PR-4, plus
+#: the dead remote duplicates retired by PR-6 (their live authorities are
+#: ``launch_lease.TokenLaunchLease``, ``persistence.recovery.reconcile_owner``
+#: and ``worker_supervision``).  They must stay physically absent,
+#: unimportable, and unreferenced by the V4 production sources.  The
+#: historically public V2/V3 names resolve to fail-closed retirement stubs
+#: (``confflow.workflow._retired_runtime``), never to code.
 RETIRED_RUNTIME_MODULES: tuple[str, ...] = (
     "confflow.workflow.engine",
     "confflow.workflow.state",
@@ -277,6 +280,9 @@ RETIRED_RUNTIME_MODULES: tuple[str, ...] = (
     "confflow.workflow.dag",
     "confflow.workflow.dag.explicit",
     "confflow.workflow.dag.legacy",
+    "confflow.remote.lease",
+    "confflow.remote.supervision",
+    "confflow.remote.schema",
 )
 
 #: Retained-by-design compatibility modules that are explicitly allowed to
@@ -678,6 +684,14 @@ class TestRemoteBoundary:
                         offenders.append((str(path.relative_to(REPO_ROOT)), candidate, lineno))
         assert offenders == []
 
+    def test_remote_package_does_not_export_retired_helpers(self) -> None:
+        """PR-6: the remote package exports typed envelopes only."""
+        import confflow.remote as remote
+
+        retired = ("lease", "supervision", "schema")
+        assert [name for name in retired if name in remote.__all__] == []
+        assert [name for name in retired if hasattr(remote, name)] == []
+
 
 class TestRuntimeIsolation:
     """Runtime import isolation, checked in subprocesses."""
@@ -729,6 +743,33 @@ class TestRuntimeIsolation:
             "    assert 'retired' in str(exc), exc\n"
             "else:\n"
             "    raise AssertionError('retired run_workflow must fail closed')\n"
+        )
+        result = self._run(script)
+        assert result.returncode == 0, result.stderr
+
+    def test_remote_seams_do_not_load_retired_helpers(self) -> None:
+        script = (
+            "import sys; import confflow.remote.handoff; "
+            "import confflow.remote.staging; import confflow.remote.transport; "
+            "import confflow.remote.worker; "
+            "banned = ('confflow.remote.lease', 'confflow.remote.supervision', "
+            "'confflow.remote.schema'); "
+            "loaded = [m for m in banned if m in sys.modules]; "
+            "assert not loaded, loaded"
+        )
+        result = self._run(script)
+        assert result.returncode == 0, result.stderr
+
+    def test_v4_runtime_entries_do_not_load_dev_fixtures(self) -> None:
+        script = (
+            "import sys; import confflow.v4cli; import confflow.application.v4_entry; "
+            "import confflow.application.execution.workflow_adapter; "
+            "import confflow.control_worker; "
+            "banned = ('confflow.application.execution.memory', "
+            "'confflow.application.execution.synthetic_producer', "
+            "'confflow.fixture_agent'); "
+            "loaded = [m for m in banned if m in sys.modules]; "
+            "assert not loaded, loaded"
         )
         result = self._run(script)
         assert result.returncode == 0, result.stderr

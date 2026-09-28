@@ -1,18 +1,17 @@
 #!/usr/bin/env python3
 
-"""PR-6 dev/remote boundary guardrails.
+"""PR-6 dev-fixture surface guardrails.
 
-Locks the Architecture Diet cleanup in place:
+The retired remote helpers (``confflow.remote.lease`` / ``supervision`` /
+``schema``) and the V4-root/dev-fixture import boundary are locked by
+``tests/v4/test_architecture_boundaries.py`` (``RETIRED_RUNTIME_MODULES``,
+``TestRemoteBoundary``, ``TestRuntimeIsolation``).  This file keeps only the
+fixture-tool contracts that have no home in the V4 boundary gate:
 
-- the retired V4-4 helper modules (``confflow.remote.lease``,
-  ``confflow.remote.supervision``, ``confflow.remote.schema``) were dead
-  second authorities and are gone; nothing may reintroduce them as an
-  import target without a production consumer;
-- the production remote seams (handoff, staging, transport, worker) never
-  load those retired helpers;
-- the surviving development-fixture surface (synthetic producer, in-memory
-  test repository, fixture-agent console tool) stays importable through its
-  public lazy map, while the formal V4 production roots never load it.
+- the fixture-only execution helpers stay importable through the public
+  lazy map;
+- the ``confflow-fixture-agent`` console entry keeps working and stays lazy
+  about the synthetic producer stack.
 """
 
 from __future__ import annotations
@@ -23,28 +22,6 @@ from pathlib import Path
 from typing import Final
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-
-#: Retired modules with zero production importers at PR-6.
-RETIRED_MODULES: Final[tuple[str, ...]] = (
-    "confflow.remote.lease",
-    "confflow.remote.supervision",
-    "confflow.remote.schema",
-)
-
-#: Dev/fixture-only modules that must never be pulled by production roots.
-DEV_FIXTURE_MODULES: Final[tuple[str, ...]] = (
-    "confflow.application.execution.memory",
-    "confflow.application.execution.synthetic_producer",
-    "confflow.fixture_agent",
-)
-
-#: Formal V4 production entrypoints (the architecture-metrics roots).
-V4_ROOTS: Final[tuple[str, ...]] = (
-    "confflow.v4cli",
-    "confflow.application.v4_entry",
-    "confflow.application.execution.workflow_adapter",
-    "confflow.control_worker",
-)
 
 #: Public fixture names that must stay importable from the lazy package map.
 PUBLIC_FIXTURE_EXPORTS: Final[tuple[str, ...]] = (
@@ -71,44 +48,6 @@ def _run(script: str) -> subprocess.CompletedProcess[str]:
     )
 
 
-class TestRetiredRemoteHelpers:
-    """The V4-4 helper modules stay retired."""
-
-    def test_retired_modules_are_gone(self) -> None:
-        script = (
-            "import importlib.util, sys; import confflow.remote; "
-            f"retired = {RETIRED_MODULES!r}; "
-            "found = [m for m in retired if importlib.util.find_spec(m) is not None]; "
-            "assert not found, found"
-        )
-        result = _run(script)
-        assert result.returncode == 0, result.stderr
-
-    def test_remote_package_does_not_export_them(self) -> None:
-        script = (
-            "import confflow.remote as remote; "
-            "names = ('lease', 'supervision', 'schema'); "
-            "exported = [n for n in names if n in remote.__all__]; "
-            "assert not exported, exported; "
-            "loaded = [n for n in names if hasattr(remote, n)]; "
-            "assert not loaded, loaded"
-        )
-        result = _run(script)
-        assert result.returncode == 0, result.stderr
-
-    def test_production_remote_seams_do_not_load_them(self) -> None:
-        script = (
-            "import sys; "
-            "import confflow.remote.handoff; import confflow.remote.staging; "
-            "import confflow.remote.transport; import confflow.remote.worker; "
-            f"banned = {RETIRED_MODULES!r}; "
-            "loaded = [m for m in banned if m in sys.modules]; "
-            "assert not loaded, loaded"
-        )
-        result = _run(script)
-        assert result.returncode == 0, result.stderr
-
-
 class TestDevFixtureSurface:
     """Fixture-only helpers keep working through their public surface."""
 
@@ -125,17 +64,6 @@ class TestDevFixtureSurface:
         )
         result = _run(script)
         assert result.returncode == 0, result.stderr
-
-    def test_v4_roots_never_load_dev_fixture_modules(self) -> None:
-        for root in V4_ROOTS:
-            script = (
-                f"import sys; import {root}; "
-                f"banned = {DEV_FIXTURE_MODULES!r}; "
-                "loaded = [m for m in banned if m in sys.modules]; "
-                "assert not loaded, loaded"
-            )
-            result = _run(script)
-            assert result.returncode == 0, f"{root}: {result.stderr}"
 
     def test_fixture_agent_console_entry_remains(self) -> None:
         pyproject = (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
