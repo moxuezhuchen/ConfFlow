@@ -29,7 +29,6 @@ projections and are never written here.
 
 from __future__ import annotations
 
-import itertools
 import json
 import os
 from collections.abc import Iterable
@@ -72,6 +71,7 @@ from .contracts import (
     step_result_path,
     validate_run_root,
 )
+from .fsatomic import publish_bytes
 
 __all__ = [
     "STEP_RESULT_DIGEST_KIND",
@@ -83,50 +83,6 @@ __all__ = [
 
 #: Digest domain marker for published step-result identity.
 STEP_RESULT_DIGEST_KIND: Final[str] = "confflow.step_result.v1"
-
-_TMP_COUNTER = itertools.count()
-
-
-def _tmp_suffix() -> str:
-    """Return a unique temp-file suffix for this process."""
-    return f".tmp.{os.getpid()}.{next(_TMP_COUNTER)}"
-
-
-def _atomic_write_bytes(target_path: str, payload: bytes) -> None:
-    """Write *payload* to *target_path* atomically via temp file + rename.
-
-    Parameters
-    ----------
-    target_path : str
-        Final destination path; the temp file lives in the same directory.
-    payload : bytes
-        Exact bytes to durably persist.
-    """
-    directory = os.path.dirname(target_path)
-    os.makedirs(directory, exist_ok=True)
-    tmp_path = target_path + _tmp_suffix()
-    try:
-        with open(tmp_path, "wb") as handle:
-            handle.write(payload)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(tmp_path, target_path)
-    finally:
-        try:
-            if os.path.exists(tmp_path):
-                os.remove(tmp_path)
-        except OSError:
-            pass
-    try:
-        dir_fd = os.open(directory, os.O_RDONLY)
-    except OSError:
-        return
-    try:
-        os.fsync(dir_fd)
-    except OSError:
-        pass
-    finally:
-        os.close(dir_fd)
 
 
 def _tmp_prefix() -> str:
@@ -182,7 +138,7 @@ def publish_step_result(
     payload = step_result.to_dict()
 
     def _write() -> str:
-        _atomic_write_bytes(target, canonical_json_bytes(payload))
+        publish_bytes(target, canonical_json_bytes(payload))
         return typed_digest(STEP_RESULT_DIGEST_KIND, payload)
 
     if expected_generation_id is None:

@@ -343,6 +343,54 @@ RETIRED_V3_SYMBOLS = frozenset(
     }
 )
 
+#: Architecture Diet PR-8 consolidated helper authorities.  Six byte-identical
+#: durable-publish copies (run_state/publication/generation/arbitration/
+#: v4_run/producer) now route through the single ``persistence.fsatomic``
+#: protocol, and both program renderers re-export the single
+#: ``programs._naming`` job-name sanitizer.  The single-authority identity is
+#: pinned, and the deleted local copies must never regrow.
+PUBLISH_AUTHORITY_PATH = "confflow/persistence/fsatomic.py"
+SANITIZER_AUTHORITY_PATH = "confflow/programs/_naming.py"
+
+#: Consumer modules that must expose the authority object itself, never a copy.
+PUBLISH_AUTHORITY_CONSUMERS = (
+    "confflow.persistence.run_state",
+    "confflow.persistence.publication",
+    "confflow.persistence.generation",
+    "confflow.persistence.arbitration",
+    "confflow.application.v4_run",
+    "confflow.producer.run_result",
+)
+FSYNC_DIRECTORY_CONSUMERS = (
+    "confflow.persistence.imports",
+    "confflow.application.execution.workflow_adapter",
+)
+
+#: Production scopes scanned for regrown local helper copies.
+#: ``confflow.remote`` is intentionally excluded: its writers are
+#: deliberately self-contained (different O_EXCL/O_NOFOLLOW/mode/taxonomy
+#: semantics; deferred PR-8 audit boundary) and must not be conflated with the
+#: durable-publish authority.
+CONSOLIDATED_AUTHORITY_SCOPES = (
+    "confflow/domain",
+    "confflow/execution",
+    "confflow/workflow/v4",
+    "confflow/persistence",
+    "confflow/programs",
+    "confflow/producer",
+    "confflow/application",
+)
+
+#: Helper definitions that exist only in the PR-8 authority modules.
+DUPLICATE_ATOMIC_HELPER_MARKERS = (
+    "def _atomic_write_bytes(",
+    "def _fsync_directory(",
+    "def _fsync_dir(",
+    "def _tmp_suffix(",
+    "def _next_tmp_suffix(",
+)
+DUPLICATE_SANITIZER_MARKER = "def sanitize_job_name("
+
 
 def _legacy_module_exists(module: str) -> bool:
     base = REPO_ROOT / Path(module.replace(".", "/"))
@@ -949,6 +997,58 @@ class TestV3PublicWireRetired:
                 if found:
                     offenders.append((str(path.relative_to(REPO_ROOT)), found))
         assert offenders == []
+
+
+class TestConsolidatedHelperAuthorities:
+    """PR-8 consolidated helpers stay single-source (no local copies regrow).
+
+    Architecture Diet PR-8 collapsed six byte-identical durable-publish copies
+    onto ``confflow.persistence.fsatomic`` and the Gaussian/ORCA job-name
+    sanitizer copies onto ``confflow.programs._naming``.  This gate pins the
+    authority identity for every consolidated consumer and refuses a revived
+    local helper definition anywhere in the production closure.
+    """
+
+    def test_no_local_atomic_helper_copies_regrow(self) -> None:
+        offenders: list[tuple[str, str]] = []
+        for scope in CONSOLIDATED_AUTHORITY_SCOPES:
+            for path in _iter_python_files(REPO_ROOT / scope):
+                relative = str(path.relative_to(REPO_ROOT))
+                if relative == PUBLISH_AUTHORITY_PATH:
+                    continue
+                text = path.read_text(encoding="utf-8")
+                for marker in DUPLICATE_ATOMIC_HELPER_MARKERS:
+                    if marker in text:
+                        offenders.append((relative, marker))
+        assert offenders == []
+
+    def test_job_name_sanitizer_is_not_redefined_in_programs(self) -> None:
+        offenders: list[str] = []
+        for path in _iter_python_files(PROGRAMS_ROOT):
+            relative = str(path.relative_to(REPO_ROOT))
+            if relative == SANITIZER_AUTHORITY_PATH:
+                continue
+            if DUPLICATE_SANITIZER_MARKER in path.read_text(encoding="utf-8"):
+                offenders.append(relative)
+        assert offenders == []
+
+    def test_publish_consumers_share_the_single_authority(self) -> None:
+        from confflow.persistence import fsatomic
+
+        for module_name in PUBLISH_AUTHORITY_CONSUMERS:
+            module = importlib.import_module(module_name)
+            assert module.publish_bytes is fsatomic.publish_bytes, module_name
+        for module_name in FSYNC_DIRECTORY_CONSUMERS:
+            module = importlib.import_module(module_name)
+            assert module.fsync_directory is fsatomic.fsync_directory, module_name
+
+    def test_both_renderers_reexport_the_single_sanitizer(self) -> None:
+        from confflow.programs import _naming
+        from confflow.programs.gaussian import rendering as gaussian
+        from confflow.programs.orca import rendering as orca
+
+        assert gaussian.sanitize_job_name is _naming.sanitize_job_name
+        assert orca.sanitize_job_name is _naming.sanitize_job_name
 
 
 class TestLegacyToolingBoundary:

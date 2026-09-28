@@ -54,7 +54,6 @@ from the manifest; a claim without one is revoked (it never linearized).
 from __future__ import annotations
 
 import errno
-import itertools
 import json
 import os
 import threading
@@ -67,6 +66,7 @@ from typing import Any
 from ..domain._immutable import FrozenDict
 from ..domain.canonical import canonical_json_bytes
 from .contracts import CorruptStateError, validate_run_root, wall_now
+from .fsatomic import publish_bytes
 from .generation import (
     RunGeneration,
     load_run_generation,
@@ -121,8 +121,6 @@ _CLAIMANTS: dict[str, str] = {
 #: only ever holds the lock across one manifest/ledger publication.
 _LOCK_TIMEOUT_SECONDS = 120.0
 _LOCK_POLL_SECONDS = 0.005
-
-_TMP_COUNTER = itertools.count()
 
 try:  # POSIX advisory locking (the durable execution service is POSIX-only).
     import fcntl as _fcntl
@@ -377,33 +375,7 @@ def _load_ledger_file(root: str) -> GenerationLedger | None:
 
 def _save_ledger_locked(root: str, ledger: GenerationLedger) -> None:
     target = _ledger_path(root)
-    tmp_path = f"{target}.tmp.{os.getpid()}.{next(_TMP_COUNTER)}"
-    try:
-        with open(tmp_path, "wb") as handle:
-            handle.write(canonical_json_bytes(ledger.to_dict()))
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(tmp_path, target)
-    finally:
-        try:
-            if os.path.exists(tmp_path):
-                os.remove(tmp_path)
-        except OSError:
-            pass
-    _fsync_directory(root)
-
-
-def _fsync_directory(directory: str) -> None:
-    try:
-        dir_fd = os.open(directory, os.O_RDONLY)
-    except OSError:
-        return
-    try:
-        os.fsync(dir_fd)
-    except OSError:
-        pass
-    finally:
-        os.close(dir_fd)
+    publish_bytes(target, canonical_json_bytes(ledger.to_dict()))
 
 
 def _init_ledger_from_public(root: str) -> GenerationLedger:

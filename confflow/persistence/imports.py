@@ -34,6 +34,7 @@ from .contracts import (
     PersistenceError,
     validate_run_root,
 )
+from .fsatomic import fsync_directory
 
 __all__ = [
     "IMPORT_MAP_SCHEMA_VERSION",
@@ -75,20 +76,6 @@ def _map_path(run_root: str, input_name: str) -> str:
     return os.path.join(_imports_dir(run_root), f"{input_name}.json")
 
 
-def _fsync_directory(directory: str) -> None:
-    """Fsync *directory* so a new publication survives a crash."""
-    try:
-        dir_fd = os.open(directory, os.O_RDONLY)
-    except OSError:
-        return
-    try:
-        os.fsync(dir_fd)
-    except OSError:
-        pass
-    finally:
-        os.close(dir_fd)
-
-
 def _exclusive_publish(target_path: str, payload: bytes) -> bool:
     """Install *payload* at *target_path*, arbitrating concurrent writers.
 
@@ -117,7 +104,7 @@ def _exclusive_publish(target_path: str, payload: bytes) -> bool:
             os.remove(tmp_path)
         except OSError:
             pass
-    _fsync_directory(directory)
+    fsync_directory(directory)
     return won
 
 

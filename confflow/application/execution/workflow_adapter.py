@@ -32,6 +32,7 @@ from ...contract import (
 )
 from ...core.exceptions import StopRequestedError
 from ...persistence import arbitration
+from ...persistence.fsatomic import fsync_directory
 from ..v4_entry import formal_v4_runner as default_workflow_runner
 from ..v4_entry import require_v4_document_file
 from .errors import ErrorCode, ExecutionServiceError
@@ -74,16 +75,7 @@ def _publish_control_run_root(run_paths: RunPaths, work_dir: str) -> None:
                 os.remove(tmp_path)
         except OSError:
             pass
-    try:
-        dir_fd = os.open(str(target.parent), os.O_RDONLY)
-    except OSError:
-        return
-    try:
-        os.fsync(dir_fd)
-    except OSError:
-        pass
-    finally:
-        os.close(dir_fd)
+    fsync_directory(str(target.parent))
 
 
 def _control_run_root_path(state_root: StateRoot, run_id: str) -> Path:

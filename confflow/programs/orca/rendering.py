@@ -10,9 +10,10 @@ this module owns V4-native copies and never imports those legacy packages.
 
 from __future__ import annotations
 
-import re
 from collections.abc import Mapping, Sequence
 from typing import Any
+
+from .._naming import sanitize_job_name
 
 __all__ = [
     "ALLOWED_NATIVE_KEYS",
@@ -39,8 +40,6 @@ BYTES_PER_MB: int = 1024 * 1024
 
 #: Floor for derived ``%maxcore`` values, in megabytes.
 MIN_MAXCORE_MB: int = 100
-
-_JOB_SANITIZE_PATTERN = re.compile(r"[^A-Za-z0-9_.\-]+")
 
 
 def format_orca_blocks(blocks: Any) -> str:
@@ -121,29 +120,6 @@ def orca_constraint_block(freeze_indices_1based: Sequence[int]) -> str:
     lines.append("  end")
     lines.append("end")
     return "\n".join(lines) + "\n"
-
-
-def sanitize_job_name(value: str, *, fallback: str = "job") -> str:
-    """Sanitize a logical key into a filesystem-safe ORCA job name.
-
-    Parameters
-    ----------
-    value : str
-        Candidate job name, usually the work-item logical key.
-    fallback : str, optional
-        Name used when nothing sanitizable remains.
-
-    Returns
-    -------
-    str
-        Deterministic job name containing only ``[A-Za-z0-9_.-]``.
-    """
-    cleaned = _JOB_SANITIZE_PATTERN.sub("_", str(value).strip()).strip("._")
-    if not cleaned:
-        cleaned = _JOB_SANITIZE_PATTERN.sub("_", str(fallback).strip()).strip("._")
-    if not cleaned:
-        cleaned = "job"
-    return cleaned[:128]
 
 
 def resolve_keyword(native: Mapping[str, Any]) -> str:
