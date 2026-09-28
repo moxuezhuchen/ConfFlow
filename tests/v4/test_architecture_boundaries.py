@@ -148,6 +148,13 @@ EXTENDED_V4_PRODUCTION_FILES = (
     APPLICATION_ROOT / "v4_run.py",
 )
 
+#: Formal V4 runtime paths added to the IMPORT-ONLY legacy gate.  Their public
+#: compatibility signatures legitimately carry historical parameter names
+#: (``input_xyz`` on the service boundary), so the symbol/filename scans stay
+#: on the roots above while the import ban covers these paths too.
+IMPORT_ONLY_V4_PRODUCTION_ROOTS = (APPLICATION_ROOT / "execution",)
+IMPORT_ONLY_V4_PRODUCTION_FILES = (PACKAGE_ROOT / "control_worker.py",)
+
 #: Import prefixes that must never (re)appear in a formal V4 production
 #: file.  ``confflow.core.exceptions`` is intentionally NOT in the exact
 #: forbidden-module tuple below: the formal entry module needs the shared
@@ -493,6 +500,15 @@ def _iter_extended_production_files() -> list[Path]:
     return sorted(files)
 
 
+def _iter_import_only_production_files() -> list[Path]:
+    """Return the formal service/control paths covered by the import gate."""
+    files: list[Path] = []
+    for root in IMPORT_ONLY_V4_PRODUCTION_ROOTS:
+        files.extend(_iter_python_files(root))
+    files.extend(IMPORT_ONLY_V4_PRODUCTION_FILES)
+    return sorted(files)
+
+
 def _is_forbidden_legacy_runtime_import(path: Path, absolute: str) -> bool:
     """Return whether *absolute* is a forbidden legacy import for *path*.
 
@@ -555,6 +571,22 @@ class TestExtendedV4ProductionRoots:
             for token in TestStaticLegacyFilenameContracts.LEGACY_FILENAME_TOKENS:
                 if token in text and token not in exempt:
                     offenders.append((relative, token))
+        assert offenders == []
+
+    def test_formal_service_and_control_paths_have_no_legacy_runtime_imports(self) -> None:
+        """The formal service/control runtime never imports legacy roots.
+
+        Import-only coverage: ``application/execution`` and
+        ``control_worker.py`` are the formal V4 runtime service and control
+        paths (the PR-3 lazy-facade fix targets exactly this closure), while
+        their compatibility signatures keep the historical parameter names.
+        """
+        offenders: list[tuple[str, str, int]] = []
+        for path in _iter_import_only_production_files():
+            for raw, lineno in _imports(path):
+                absolute = _resolve_import(path, raw)
+                if _is_forbidden_legacy_runtime_import(path, absolute):
+                    offenders.append((str(path.relative_to(REPO_ROOT)), absolute, lineno))
         assert offenders == []
 
 
@@ -758,6 +790,104 @@ class TestProducerImportIsolation:
         assert WorkflowConfig.__name__ == "WorkflowConfig"
         assert GlobalOptions.__name__ == "GlobalOptions"
         assert callable(load_workflow_model)
+
+
+class TestFacadeLazyIsolation:
+    """Compatibility facades stay lazy (Architecture Diet PR-3).
+
+    ``confflow.core`` and ``confflow.application[.execution]`` keep every
+    historical public name, but importing the package no longer executes the
+    legacy implementation modules behind those names.
+    """
+
+    def _run(self, script: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [sys.executable, "-c", script],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    def test_core_package_stays_lazy(self) -> None:
+        script = (
+            "import sys; import confflow.core; "
+            "banned = sorted(m for m in sys.modules if m.startswith('confflow.config')); "
+            "assert not banned, banned; "
+            "assert 'confflow.core.models' not in sys.modules, 'eager core.models'; "
+            "assert 'confflow.core.types' not in sys.modules, 'eager core.types'; "
+            "assert 'confflow.core.validation' not in sys.modules, 'eager core.validation'"
+        )
+        result = self._run(script)
+        assert result.returncode == 0, result.stderr
+
+    def test_application_packages_stay_lazy(self) -> None:
+        script = (
+            "import sys\n"
+            "import confflow.application\n"
+            "assert 'confflow.application.execution' not in sys.modules, "
+            "'eager application.execution'\n"
+            "import confflow.application.execution\n"
+            "for name in ('memory', 'synthetic_producer', 'sqlite', 'service', "
+            "'workflow_adapter'):\n"
+            "    module = f'confflow.application.execution.{name}'\n"
+            "    assert module not in sys.modules, module\n"
+        )
+        result = self._run(script)
+        assert result.returncode == 0, result.stderr
+
+    def test_v4_runtime_entries_do_not_load_canonical_config(self) -> None:
+        for entry in (
+            "import confflow.v4cli",
+            "import confflow.application.v4_entry",
+            "import confflow.control_worker",
+        ):
+            script = (
+                f"import sys; {entry}; "
+                "banned = sorted(m for m in sys.modules if ("
+                "m == 'confflow.config.canonical' "
+                "or m.startswith('confflow.config.canonical.') "
+                "or m == 'confflow.core.models' "
+                "or m == 'confflow.shared.config_validation')); "
+                "assert not banned, banned"
+            )
+            result = self._run(script)
+            assert result.returncode == 0, f"{entry}: {result.stderr}"
+
+    def test_core_public_surface_still_importable(self) -> None:
+        from confflow.core import (
+            HARTREE_TO_KCALMOL,
+            PERIODIC_SYMBOLS,
+            TaskContext,
+            ValidationError,
+            get_atomic_number,
+            validate_positive,
+        )
+
+        assert TaskContext.__name__ == "TaskContext"
+        assert ValidationError.__name__ == "ValidationError"
+        assert callable(get_atomic_number)
+        assert callable(validate_positive)
+        assert len(PERIODIC_SYMBOLS) > 0
+        assert isinstance(HARTREE_TO_KCALMOL, float)
+
+    def test_application_public_surface_still_importable(self) -> None:
+        from confflow.application import ExecutionService as AppExecutionService
+        from confflow.application.execution import (
+            ExecutionService,
+            InMemoryExecutionRepository,
+            RunPaths,
+            RunState,
+            SyntheticProducerExecutor,
+            build_workflow_service,
+        )
+
+        assert ExecutionService is AppExecutionService
+        assert RunState.__name__ == "RunState"
+        assert RunPaths.__name__ == "RunPaths"
+        assert InMemoryExecutionRepository.__name__ == "InMemoryExecutionRepository"
+        assert SyntheticProducerExecutor.__name__ == "SyntheticProducerExecutor"
+        assert callable(build_workflow_service)
 
 
 class TestPackaging:
