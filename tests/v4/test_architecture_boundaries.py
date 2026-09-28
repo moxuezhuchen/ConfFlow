@@ -11,6 +11,9 @@ carries zero legacy semantics:
 - forbidden legacy symbols never appear as code (docstrings may explain them);
 - importing the V4 core never imports the V2/V3 runtime, legacy config, the
   calc subsystem, the retired PR-6 remote helpers, or the dev fixture modules;
+- the retired never-released Workflow V3 public wire (PR-7) stays physically
+  absent and unimported: no V3 parser/graph/contract/catalog/capability module,
+  no V3 CLI route, and no V2->V3 migration kernel;
 - the V4 packages are discoverable by ``setuptools.find_packages``.
 """
 
@@ -289,6 +292,56 @@ RETIRED_RUNTIME_MODULES: tuple[str, ...] = (
 #: be absent from the source tree.  Empty today; a module moves here only
 #: with a written compatibility decision.
 RETAINED_COMPAT_ALLOWLIST: frozenset[str] = frozenset()
+
+#: The retired never-released Workflow V3 public wire (Architecture Diet PR-7).
+#: These modules served only the V3 parser/graph/semantic validation, the V3
+#: editor/recipe catalogs, the ``configuration-contract.v3`` document, the
+#: V2->V3 upgrade emitter, and the V3 capability advertisement. V3 was never in
+#: a published release, so none of them may reappear.
+PUBLIC_V3_WIRE_MODULES = (
+    "confflow.config.canonical.v3_parser",
+    "confflow.config.canonical.v3_graph",
+    "confflow.config.canonical.upgrade",
+    "confflow.config.canonical.structured",
+    "confflow.config.canonical.theory",
+    "confflow.config.canonical.extensions",
+    "confflow.config.canonical.yaml_io",
+    "confflow.config.canonical.execution_versions",
+    "confflow.config.workflow_cli",
+)
+
+#: PR-7 decision: the minimal internal migration kernel is empty. No released
+#: V1/V2 compatibility path needs a ``V1/V2 -> internal V3 IR -> canonical``
+#: chain (the V2 path is ``V2 -> canonical IR -> V2 execution shape`` directly),
+#: so there is no internal-only V3 module to allow. If one were ever retained it
+#: must be listed here and must not be importable from the V4 production roots.
+INTERNAL_ONLY_V3_MIGRATION_MODULES: tuple[str, ...] = ()
+
+#: Symbols that only the retired V3 public wire ever defined. A V4 production
+#: module referencing one would be a new V3 consumer (forbidden by PR-7).
+RETIRED_V3_SYMBOLS = frozenset(
+    {
+        "parse_v3_document",
+        "build_validated_graph",
+        "v3_id_order_key",
+        "validate_workflow_v3",
+        "validate_v3_definition",
+        "workflow_json_schema_v3",
+        "workflow_schema_sha256_v3",
+        "build_configuration_contract_v3",
+        "build_editor_manifest_v3",
+        "build_recipe_catalog_v3",
+        "instantiate_recipe_v3",
+        "allocate_step_id",
+        "compile_structured_calc",
+        "upgrade_v2_to_v3",
+        "v3_calc_keys",
+        "param_properties",
+        "execution_versions",
+        "v3_parser",
+        "v3_graph",
+    }
+)
 
 
 def _legacy_module_exists(module: str) -> bool:
@@ -829,6 +882,73 @@ class TestRetiredRuntimeBoundary:
             stub = getattr(_retired_runtime, name)
             with pytest.raises(_retired_runtime.RetiredRuntimeError):
                 stub()
+
+
+class TestV3PublicWireRetired:
+    """The never-released Workflow V3 public wire must stay physically absent.
+
+    Architecture Diet PR-7 retired the V3 parser/graph/semantic validation, the
+    V3 contract, catalogs and capability advertisement, and the V2->V3 upgrade
+    CLI. V3 was never in a published release; this gate makes sure no source
+    file, import edge, V4-root reference or internal migration kernel can
+    resurrect it.
+    """
+
+    def test_public_v3_wire_modules_are_absent_from_disk(self) -> None:
+        present = [module for module in PUBLIC_V3_WIRE_MODULES if _legacy_module_exists(module)]
+        assert present == []
+
+    def test_public_v3_wire_modules_are_not_importable(self) -> None:
+        still_present: list[str] = []
+        for module in PUBLIC_V3_WIRE_MODULES:
+            try:
+                importlib.import_module(module)
+            except ModuleNotFoundError:
+                continue
+            except Exception as exc:  # pragma: no cover - import error is enough
+                still_present.append(f"{module}: {type(exc).__name__}")
+                continue
+            still_present.append(module)
+        assert still_present == []
+
+    def test_no_production_module_imports_a_retired_v3_module(self) -> None:
+        offenders: list[tuple[str, str, int]] = []
+        for path in _iter_python_files(PACKAGE_ROOT):
+            for raw, lineno in _imports(path):
+                absolute = _resolve_import(path, raw)
+                if any(
+                    absolute == module or absolute.startswith(module + ".")
+                    for module in PUBLIC_V3_WIRE_MODULES
+                ):
+                    offenders.append((str(path.relative_to(REPO_ROOT)), absolute, lineno))
+        assert offenders == []
+
+    def test_no_internal_v3_migration_kernel_is_retained(self) -> None:
+        assert INTERNAL_ONLY_V3_MIGRATION_MODULES == ()
+        present = [
+            module for module in INTERNAL_ONLY_V3_MIGRATION_MODULES if _legacy_module_exists(module)
+        ]
+        assert present == []
+
+    def test_v4_roots_reference_no_retired_v3_symbol(self) -> None:
+        offenders: list[tuple[str, list[str]]] = []
+        roots = (
+            DOMAIN_ROOT,
+            EXECUTION_ROOT,
+            V4_ROOT,
+            PERSISTENCE_ROOT,
+            PROGRAMS_ROOT,
+            REMOTE_ROOT,
+            PRODUCER_ROOT,
+            ANALYSIS_ROOT,
+            APPLICATION_ROOT,
+        )
+        for root in roots:
+            for path in _iter_python_files(root):
+                found = sorted(RETIRED_V3_SYMBOLS & _code_symbols(path))
+                if found:
+                    offenders.append((str(path.relative_to(REPO_ROOT)), found))
+        assert offenders == []
 
 
 class TestLegacyToolingBoundary:

@@ -22,14 +22,18 @@ Post-cutover scope (V4 Core Closure, ``44b478d``):
   (worker-side legacy helpers).
 - RETIRED READ-ONLY / separate tools (out of scope by design):
   ``confflow/calc`` (legacy calculation tooling), ``confflow.confts`` /
-  ``confflow.blocks`` (standalone legacy CLIs), and the V1/V2/V3
+  ``confflow.blocks`` (standalone legacy CLIs), and the V1/V2
   configuration-contract emission (JobDesk wire compatibility).  The
   V2/V3 workflow *execution* runtime was physically removed by Architecture
   Diet PR-4; the diagnostic planners (dry-run / config-show / export) and the
-  canonical V1/V2/V3 readers remain.  Any retired runtime module reappearing
-  on disk is flagged by ``RETIRED_RUNTIME_MODULES`` below, which PR-6 extends
-  with the dead remote duplicates (``remote.lease`` / ``remote.supervision`` /
-  ``remote.schema``).
+  canonical V1/V2 readers remain.  The never-released V3 *public wire*
+  (V3 parser/graph/semantic validation, the ``configuration-contract.v3``
+  document, the V3 catalogs and capability advertisement, and the
+  ``workflow upgrade`` emitter) was retired by Architecture Diet PR-7 and is
+  flagged by ``RETIRED_V3_WIRE_MODULES`` below.  Any retired runtime module
+  reappearing on disk is flagged by ``RETIRED_RUNTIME_MODULES``, which PR-6
+  extended with the dead remote duplicates (``remote.lease`` /
+  ``remote.supervision`` / ``remote.schema``).
 
 Contract-source imports (``confflow.config.canonical.contract`` / editor
 manifest / recipes) are the producer's recorded PR-2 decoupling debt and are
@@ -118,6 +122,23 @@ RETIRED_RUNTIME_MODULES: tuple[str, ...] = (
     "confflow.remote.lease",
     "confflow.remote.supervision",
     "confflow.remote.schema",
+)
+
+#: The never-released Workflow V3 public wire retired by Architecture Diet
+#: PR-7: V3 parser/graph, the V3 semantic validation profile, the V3 editor and
+#: recipe catalogs, the ``configuration-contract.v3`` document, the V2->V3
+#: upgrade emitter and the V3 capability advertisement.  V3 never entered a
+#: published release, so any of these reappearing on disk is a regression.
+RETIRED_V3_WIRE_MODULES: tuple[str, ...] = (
+    "confflow.config.canonical.v3_parser",
+    "confflow.config.canonical.v3_graph",
+    "confflow.config.canonical.upgrade",
+    "confflow.config.canonical.structured",
+    "confflow.config.canonical.theory",
+    "confflow.config.canonical.extensions",
+    "confflow.config.canonical.yaml_io",
+    "confflow.config.canonical.execution_versions",
+    "confflow.config.workflow_cli",
 )
 
 PATTERNS: tuple[tuple[str, str], ...] = (
@@ -273,7 +294,7 @@ def _pattern_hits(path: Path, lines: list[str]) -> list[ArchHit]:
 def _retired_module_hits() -> list[ArchHit]:
     """Flag any retired V2/V3 execution-runtime module that reappears."""
     hits: list[ArchHit] = []
-    for module in RETIRED_RUNTIME_MODULES:
+    for module in (*RETIRED_RUNTIME_MODULES, *RETIRED_V3_WIRE_MODULES):
         candidate = REPO_ROOT / Path(module.replace(".", "/"))
         for path in (candidate.with_suffix(".py"), candidate / "__init__.py"):
             if path.exists():
