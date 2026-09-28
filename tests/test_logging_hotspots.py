@@ -12,10 +12,22 @@ from _pytest.logging import LogCaptureHandler
 import confflow.core.logging as cf_logging
 
 
+def _is_pytest_capture_stream(stream: object) -> bool:
+    """Return True for a stream owned by pytest's capture machinery."""
+    return type(stream).__module__.startswith("_pytest.")
+
+
 def _reset_logger_singleton() -> None:
     logger = logging.getLogger("confflow")
     for handler in list(logger.handlers):
         logger.removeHandler(handler)
+        # Never close a stream owned by pytest's capture: ``handler.close()``
+        # closes ``handler.stream``, and closing pytest's capture object
+        # breaks every later test in the session.  Detach it first.
+        if isinstance(handler, logging.StreamHandler) and _is_pytest_capture_stream(
+            getattr(handler, "stream", None)
+        ):
+            handler.setStream(io.StringIO())
         try:
             handler.close()
         except Exception:

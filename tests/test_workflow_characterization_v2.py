@@ -33,7 +33,6 @@ from confflow.config.canonical import (
 from confflow.config.canonical.schema import WORKFLOW_SCHEMA_VERSION
 from confflow.config.canonical.types import WorkflowConfig
 from confflow.workflow.plan import build_workflow_plan
-from confflow.workflow.step_handlers import _resolve_chk_input_dir
 
 # ---------------------------------------------------------------------------
 # Golden digests captured from the shipping V2 implementation.
@@ -243,26 +242,6 @@ def test_terminal_detection_explicit_multiple_terminals(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 # J — checkpoint reference (name and 1-based numeric position)
 # ---------------------------------------------------------------------------
-def test_chk_from_step_resolves_by_name_and_position() -> None:
-    steps = [
-        {"name": "first step", "type": "calc", "params": {"keyword": "HF"}},
-        {"name": "second", "type": "calc", "params": {"keyword": "HF"}},
-    ]
-
-    assert _resolve_chk_input_dir({"chk_from_step": "first step"}, "/root", steps) == (
-        "/root/first_step/backups"
-    )
-    assert _resolve_chk_input_dir({"chk_from_step": "1"}, "/root", steps) == (
-        "/root/first_step/backups"
-    )
-    assert _resolve_chk_input_dir({"chk_from_step": "2"}, "/root", steps) == (
-        "/root/second/backups"
-    )
-    assert _resolve_chk_input_dir({"chk_from_step": "99"}, "/root", steps) is None
-    assert _resolve_chk_input_dir({"chk_from_step": "missing"}, "/root", steps) is None
-    assert _resolve_chk_input_dir({}, "/root", steps) is None
-
-
 # ---------------------------------------------------------------------------
 # K — unknown / extension fields
 # ---------------------------------------------------------------------------

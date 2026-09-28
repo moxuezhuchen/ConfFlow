@@ -1,18 +1,15 @@
 #!/usr/bin/env python3
 
-"""Workflow execution engines.
+"""Workflow compatibility surface.
 
-This package hosts two independent engines:
-
-- the frozen V2/V3 runtime (``engine``, ``v3_runtime`` and friends), kept as
-  historical reference and for existing users;
-- the greenfield V4 core (``confflow.workflow.v4``), which shares only the
-  dependency-free ``confflow.domain`` layer and never imports the V2/V3
-  runtime.
+The V2/V3 workflow execution runtime was removed by the post-closure
+Architecture Diet.  The retired runtime names resolve to fail-closed stubs
+(:mod:`confflow.workflow._retired_runtime`), while the diagnostic planners
+(``plan``, ``helpers``, ``step_naming``, ``validation``) stay importable for
+``--dry-run`` / ``--config-show`` and migration readers.
 
 The exports below are resolved lazily (PEP 562) so that importing
-``confflow.workflow.v4`` does not drag in the legacy runtime, while
-``from confflow.workflow import run_workflow`` continues to work.
+``confflow.workflow.v4`` does not drag in the V2/V3 planner or config layer.
 """
 
 from __future__ import annotations
@@ -21,20 +18,20 @@ import importlib
 from typing import Any
 
 _LAZY_EXPORTS: dict[str, tuple[str, str]] = {
-    "run_workflow": (".engine", "run_workflow"),
-    "StepRecord": (".state", "StepRecord"),
-    "WorkflowState": (".state", "WorkflowState"),
-    "WorkflowStateStore": (".state", "WorkflowStateStore"),
+    "run_workflow": ("._retired_runtime", "run_workflow"),
+    "StepRecord": ("._retired_runtime", "StepRecord"),
+    "WorkflowState": ("._retired_runtime", "WorkflowState"),
+    "WorkflowStateStore": ("._retired_runtime", "WorkflowStateStore"),
     "pushd": (".helpers", "pushd"),
     "as_list": (".helpers", "as_list"),
     "count_conformers_any": (".helpers", "count_conformers_any"),
     "count_conformers_in_xyz": (".helpers", "count_conformers_in_xyz"),
     "validate_inputs_compatible": (".validation", "validate_inputs_compatible"),
-    "CheckpointManager": (".stats", "CheckpointManager"),
-    "WorkflowStatsTracker": (".stats", "WorkflowStatsTracker"),
-    "TaskStatsCollector": (".stats", "TaskStatsCollector"),
-    "FailureTracker": (".stats", "FailureTracker"),
-    "Tracer": (".stats", "Tracer"),
+    "CheckpointManager": ("._retired_runtime", "CheckpointManager"),
+    "WorkflowStatsTracker": ("._retired_runtime", "WorkflowStatsTracker"),
+    "TaskStatsCollector": ("._retired_runtime", "TaskStatsCollector"),
+    "FailureTracker": ("._retired_runtime", "FailureTracker"),
+    "Tracer": ("._retired_runtime", "Tracer"),
 }
 
 __all__ = [*sorted(_LAZY_EXPORTS)]

@@ -2,8 +2,10 @@
 
 """Consistency tests for the shared ConfGen parameter resolver (P0-C).
 
-These lock the invariant that ``config-show``, workflow fingerprinting,
-validation, and execution all interpret confgen parameters identically.
+These lock the invariant that ``config-show``, workflow fingerprinting, and
+validation interpret confgen parameters identically.  The execution-adapter
+half of this file was removed with the V2/V3 workflow runtime in the
+post-closure Architecture Diet.
 """
 
 from __future__ import annotations
@@ -16,8 +18,6 @@ from confflow.config.canonical.fingerprint import workflow_fingerprint
 from confflow.config.canonical.types import GlobalOptions
 from confflow.core.exceptions import ConfigurationError
 from confflow.shared.confgen_params import resolve_confgen_params
-from confflow.workflow import step_handlers
-from confflow.workflow.step_handlers import _build_confgen_run_kwargs, run_confgen_step
 from confflow.workflow.validation import validate_inputs_compatible
 
 
@@ -134,50 +134,6 @@ def test_force_rotate_is_rejected():
 def test_empty_force_rotate_normalized_to_none():
     assert _resolve()["force_rotate"] is None
     assert _resolve(force_rotate=[])["force_rotate"] is None
-
-
-# --------------------------------------------------------------------------
-# Execution adapter
-# --------------------------------------------------------------------------
-
-
-def test_execution_receives_clash_threshold():
-    kwargs = _build_confgen_run_kwargs({"clash_threshold": 0.50}, "in.xyz", {})
-    assert kwargs["clash_threshold"] == 0.50
-
-
-def test_execution_receives_bond_threshold_alias():
-    assert _build_confgen_run_kwargs({"bond_threshold": 1.3}, "in.xyz", {})["bond_threshold"] == 1.3
-    assert (
-        _build_confgen_run_kwargs({"bond_multiplier": 1.3}, "in.xyz", {})["bond_threshold"] == 1.3
-    )
-
-
-def test_run_confgen_step_forwards_resolved_params(tmp_path, monkeypatch):
-    captured: dict = {}
-
-    def fake_run_generation(**kwargs):
-        captured.update(kwargs)
-        with open("search.xyz", "w", encoding="utf-8") as handle:
-            handle.write("1\nframe\nH 0 0 0\n")
-
-    monkeypatch.setattr(step_handlers.confgen, "run_generation", fake_run_generation)
-
-    input_xyz = _write_xyz(tmp_path / "input.xyz")
-    step_dir = tmp_path / "step_01_gen"
-    step_dir.mkdir()
-
-    result = run_confgen_step(
-        str(step_dir),
-        str(input_xyz),
-        {"clash_threshold": 0.50, "chain": ["1-2-3"]},
-        [str(input_xyz)],
-        {},
-    )
-
-    assert result.output_path == str(step_dir / "search.xyz")
-    assert captured["clash_threshold"] == 0.50
-    assert captured["chains"] == ["1-2-3"]
 
 
 # --------------------------------------------------------------------------
