@@ -14,7 +14,6 @@ from pathlib import Path
 from typing import Any
 
 from . import cli
-from .application.execution.synthetic_producer import synthetic_agent_entry
 from .control import _snapshot_response, _write_response, run_request
 from .core.contracts import ExitCode
 
@@ -36,6 +35,8 @@ def _fixture_after_execute(
     _queued_response: dict[str, Any],
 ) -> dict[str, Any]:
     """Consume the same durable queued intent and return its final snapshot."""
+    from .application.execution.synthetic_producer import synthetic_agent_entry
+
     snapshot = synthetic_agent_entry(state_root, run_id, identity_executable=identity_executable)
     return _snapshot_response("execute", snapshot)
 
