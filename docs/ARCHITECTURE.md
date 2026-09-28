@@ -252,7 +252,6 @@ LICENSE                        # MIT 许可证
   - 区分 `running` / `completed` / `failed` 状态
 
 - **`run_services.py`**：
-  - `WorkDirService`：`work_dir` / `backup_dir` / `results.db` 初始化
   - `TaskSourceBuilder`：流式读取 XYZ 并构建 `TaskContext`
   - `TaskRecoveryService`：`results.db` / `backups` 恢复与 pending 过滤
   - `ResultAssemblyService`：`result.xyz` / `failed.xyz` 聚合与收尾
