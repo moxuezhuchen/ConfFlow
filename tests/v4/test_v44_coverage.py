@@ -20,7 +20,7 @@ import pytest
 from confflow.domain import FrozenDict
 from confflow.domain.artifact import ArtifactLocator, ArtifactRef, ArtifactSet
 from confflow.domain.errors import DomainError
-from confflow.persistence import OwnerIdentity, OwnerVerdict
+from confflow.persistence import OwnerIdentity
 from confflow.persistence.contracts import store_path
 from confflow.persistence.work_items import SqliteWorkItemStore
 from confflow.remote.envelope import (
@@ -34,9 +34,7 @@ from confflow.remote.envelope import (
     bundle_entry_digest,
 )
 from confflow.remote.handoff import HandoffError, write_handoff_envelope
-from confflow.remote.lease import AttemptLease, LeaseError
 from confflow.remote.staging import StagingError, stage_input_bundle
-from confflow.remote.supervision import CancelProof, attempt_liveness, cancel_attempt
 from confflow.remote.transport import (
     LocalTransport,
     RemoteTransport,
@@ -881,191 +879,6 @@ class TestHandoffEdges:
         for bad in ("", None, 123, "-x", ".x", "_x", "has space", "a/b", "semi;colon"):
             with pytest.raises(HandoffError):
                 _handoff_module._checked_launch_token(bad)
-
-
-class TestLeaseEdges:
-    """Lease guards beyond the delivery suite."""
-
-    def test_unsafe_components_rejected(self, tmp_path: Path) -> None:
-        root = str(tmp_path / "leases")
-        for kwargs in (
-            {"run_id": "../x"},
-            {"run_id": ""},
-            {"step_id": "a/b"},
-            {"work_item_id": ""},
-            {"launch_token": "has space"},
-            {"attempt_number": 0},
-        ):
-            fields: dict[str, Any] = {
-                "run_id": "r",
-                "step_id": "s",
-                "work_item_id": "wi:s:a",
-                "attempt_number": 1,
-                "launch_token": "tok",
-            }
-            fields.update(kwargs)
-            with pytest.raises(LeaseError):
-                AttemptLease(lease_root=root, **fields)
-
-    def test_colon_item_id_sanitized(self, tmp_path: Path) -> None:
-        root = str(tmp_path / "leases")
-        lease = AttemptLease(
-            lease_root=root,
-            run_id="r",
-            step_id="s",
-            work_item_id="wi:s:a",
-            attempt_number=1,
-            launch_token="tok",
-        )
-        assert lease.acquire() is True
-        assert "+" in lease.path.name
-        assert ":" not in lease.path.name
-        lease.release()
-        lease.release()
-
-    def test_context_manager_refused_when_held(self, tmp_path: Path) -> None:
-        root = str(tmp_path / "leases")
-        first = AttemptLease(
-            lease_root=root,
-            run_id="r",
-            step_id="s",
-            work_item_id="wi:s:a",
-            attempt_number=1,
-            launch_token="tok",
-        )
-        assert first.acquire() is True
-        second = AttemptLease(
-            lease_root=root,
-            run_id="r",
-            step_id="s",
-            work_item_id="wi:s:a",
-            attempt_number=1,
-            launch_token="tok",
-        )
-        assert second.acquire() is False
-        with pytest.raises(LeaseError):
-            with second:
-                pass
-        with AttemptLease(
-            lease_root=root,
-            run_id="r",
-            step_id="s2",
-            work_item_id="wi:s2:a",
-            attempt_number=1,
-            launch_token="tok",
-        ) as held:
-            assert held.acquire() is True
-        first.release()
-
-    def test_previous_owner_flows(self, tmp_path: Path) -> None:
-        root = str(tmp_path / "leases")
-        first = AttemptLease(
-            lease_root=root,
-            run_id="r",
-            step_id="s",
-            work_item_id="wi:s:a",
-            attempt_number=1,
-            launch_token="tok",
-        )
-        assert first.acquire() is True
-        assert first.previous_owner is None
-        first.release()
-        second = AttemptLease(
-            lease_root=root,
-            run_id="r",
-            step_id="s",
-            work_item_id="wi:s:a",
-            attempt_number=1,
-            launch_token="tok",
-        )
-        assert second.acquire() is True
-        assert second.previous_owner is not None
-        assert second.previous_owner.get("pid") == os.getpid()
-        second.release()
-
-
-class TestSupervisionEdges:
-    """Supervision guards and verdict combinations."""
-
-    def test_cancel_bad_grace(self) -> None:
-        with pytest.raises(ValueError):
-            cancel_attempt(
-                owner=OwnerIdentity(owner_token="t", pid=2**30), work_dir=None, grace_seconds=-1.0
-            )
-        with pytest.raises(ValueError):
-            cancel_attempt(
-                owner=OwnerIdentity(owner_token="t", pid=2**30),
-                work_dir=None,
-                grace_seconds=True,  # type: ignore[arg-type]
-            )
-        with pytest.raises(ValueError):
-            cancel_attempt(
-                owner=OwnerIdentity(owner_token="t", pid=2**30),
-                work_dir=None,
-                grace_seconds="fast",  # type: ignore[arg-type]
-            )
-
-    def test_cancel_ghost_is_unconfirmed(self, tmp_path: Path) -> None:
-        proof = cancel_attempt(
-            owner=OwnerIdentity(owner_token="t", pid=2**30),
-            work_dir=str(tmp_path),
-            grace_seconds=0.5,
-        )
-        assert isinstance(proof, CancelProof)
-        assert proof.confirmed is False
-
-    def test_cancel_without_signallable_group(self) -> None:
-        live = owner_identity_current_for_test()
-        assert isinstance(live.pid, int)
-        proof = cancel_attempt(owner=live, work_dir=None, grace_seconds=0.5)
-        assert proof.confirmed is False
-
-    def test_liveness_combinations(self, tmp_path: Path) -> None:
-        ghost = OwnerIdentity(owner_token="t", pid=2**30)
-        assert attempt_liveness(owner=ghost) is OwnerVerdict.DEFINITELY_DEAD
-        assert attempt_liveness(owner=ghost, work_dir=str(tmp_path)) in (
-            OwnerVerdict.DEFINITELY_DEAD,
-            OwnerVerdict.UNCERTAIN,
-        )
-        assert (
-            attempt_liveness(owner=OwnerIdentity(owner_token="t", pid=None))
-            is OwnerVerdict.UNCERTAIN
-        )
-
-    def test_liveness_dir_holder_upgrades(self, tmp_path: Path) -> None:
-        import subprocess as _subprocess
-        import time as _time
-
-        ghost = OwnerIdentity(owner_token="t", pid=2**30)
-        helper = _subprocess.Popen(["/bin/sleep", "30"], cwd=str(tmp_path), start_new_session=False)
-        try:
-            deadline = _time.monotonic() + 10.0
-            assert helper.poll() is None or _time.monotonic() < deadline
-            verdict = attempt_liveness(owner=ghost, work_dir=str(tmp_path))
-            assert verdict in (OwnerVerdict.UNCERTAIN, OwnerVerdict.DEFINITELY_DEAD)
-        finally:
-            helper.terminate()
-            helper.wait(timeout=10)
-
-    def test_wait_helpers(self) -> None:
-        from confflow.remote import supervision as _supervision
-
-        ghost = OwnerIdentity(owner_token="t", pid=2**30)
-        assert (
-            _supervision._wait_for_verdict(ghost, OwnerVerdict.DEFINITELY_ALIVE, deadline=0.05)
-            is OwnerVerdict.DEFINITELY_DEAD
-        )
-        assert _supervision._own_group_ids()[0] in (os.getpgid(0), None)
-
-
-def owner_identity_current_for_test() -> OwnerIdentity:
-    """Return this process's owner identity without a recorded group."""
-    import dataclasses as _dc
-
-    from confflow.persistence.recovery import owner_identity_current
-
-    identity = owner_identity_current(owner_token="test-no-group")
-    return _dc.replace(identity, process_group_id=None, session_id=None)
 
 
 # ---------------------------------------------------------------------------

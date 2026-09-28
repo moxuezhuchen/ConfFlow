@@ -16,13 +16,13 @@ policy:
 - (F) ACK-loss duplicate import dedupe: one attempt row, one result;
 - (G) corrupt-transfer rejection: typed error, no partial commit;
 - duplicate dispatch of the same attempt launches native exactly once
-  (AttemptLease-gated, plus the transport delivery cache);
+  (plus the transport delivery cache);
 - cancellation uncertainty resolves to BLOCKED, never to a CANCELLED rerun;
 - environment-binary change resolves to INVALIDATE_ENVIRONMENT (V4-3 policy).
 
-Seam status: handoff write/read, staging, lease acquisition, supervision
-liveness, store-level resume, reuse-policy, and executor-cancellation verdicts
-are green against landed code.  Tests that dispatch through the remote worker
+Seam status: handoff write/read, staging, store-level resume, reuse-policy,
+and executor-cancellation verdicts are green against landed code.  Tests that
+dispatch through the remote worker
 entry point are blocked on the missing ``confflow.remote.worker`` module and
 fail with a plain import error, never a skip.  Native-launch counting tests
 assume the worker resolves the test executable from the handoff execution
@@ -60,7 +60,6 @@ from confflow.persistence.contracts import (
     store_path,
 )
 from confflow.programs.registry import get_program_adapter
-from confflow.remote.lease import AttemptLease, LeaseError
 from tests.v4._builders import (
     assemble,
     calc_step,
@@ -339,74 +338,6 @@ class TestTransportDedupe:
             assert "/" not in atlantic.launch_token_for(items[0], 1)
 
 
-class TestAttemptLease:
-    """AttemptLease gates one native launch per attempt (green)."""
-
-    def _lease(self, tmp_path: Path, token: str, *, attempt: int = 1) -> AttemptLease:
-        return AttemptLease(tmp_path / "leases", "run", "s_opt", "wi:s_opt:s0", attempt, token)
-
-    def test_acquire_and_release_round_trip(self, tmp_path: Path) -> None:
-        lease = self._lease(tmp_path, "tok-a1")
-        assert lease.acquire() is True
-        assert lease.path.is_file()
-        lease.release()
-        assert self._lease(tmp_path, "tok-a1").acquire() is True
-
-    def test_same_token_second_acquirer_attaches(self, tmp_path: Path) -> None:
-        first = self._lease(tmp_path, "tok-b1")
-        assert first.acquire() is True
-        second = self._lease(tmp_path, "tok-b1")
-        assert second.acquire() is False
-
-    def test_different_token_same_attempt_refused_while_held(self, tmp_path: Path) -> None:
-        first = self._lease(tmp_path, "tok-c1")
-        assert first.acquire() is True
-        rival = self._lease(tmp_path, "tok-c2")
-        assert rival.acquire() is False
-        first.release()
-        assert self._lease(tmp_path, "tok-c2").acquire() is True
-
-    def test_reacquire_reports_previous_owner(self, tmp_path: Path) -> None:
-        first = self._lease(tmp_path, "tok-d1")
-        assert first.acquire() is True
-        assert first.previous_owner is None
-        first.release()
-        second = self._lease(tmp_path, "tok-d1")
-        assert second.acquire() is True
-        assert second.previous_owner is not None
-        assert second.previous_owner["launch_token"] == "tok-d1"
-
-    def test_unsafe_identities_rejected(self, tmp_path: Path) -> None:
-        with pytest.raises(LeaseError):
-            self._lease(tmp_path, "../escape")
-        with pytest.raises(LeaseError):
-            self._lease(tmp_path, "tok-ok+plus")
-        with pytest.raises(LeaseError):
-            self._lease(tmp_path, "tok-ok", attempt=0)
-        with pytest.raises(LeaseError):
-            AttemptLease(tmp_path / "leases", "", "s_opt", "wi:s_opt:s0", 1, "tok-ok")
-
-    def test_lease_dirs_are_owner_private(self, tmp_path: Path) -> None:
-        import stat as stat_mod
-
-        lease = self._lease(tmp_path, "tok-e1")
-        assert lease.acquire() is True
-        step_dir = lease.path.parent
-        assert stat_mod.S_IMODE(os.stat(step_dir).st_mode) == 0o700
-
-    def test_context_manager_releases(self, tmp_path: Path) -> None:
-        with self._lease(tmp_path, "tok-f1"):
-            assert self._lease(tmp_path, "tok-f1").acquire() is False
-        assert self._lease(tmp_path, "tok-f1").acquire() is True
-
-    def test_context_manager_raises_when_owned(self, tmp_path: Path) -> None:
-        first = self._lease(tmp_path, "tok-g1")
-        assert first.acquire() is True
-        with pytest.raises(LeaseError):
-            with self._lease(tmp_path, "tok-g1"):
-                pass
-
-
 class TestFaultADispatchBeforeClaim:
     """Dispatch, crash before claim, retry: one handoff, one staged bundle."""
 
@@ -556,7 +487,6 @@ class TestFaultCProducerCrash:
             build_producer_provenance,
             evaluate_reuse,
         )
-        from confflow.remote.supervision import attempt_liveness
 
         run_root = str(tmp_path / "run")
         item_id = "wi:s_opt:c"
@@ -586,7 +516,6 @@ class TestFaultCProducerCrash:
             recorded = reopened.get_owner(item_id)
             assert recorded is not None
             assert reconcile_owner(recorded).name == "DEFINITELY_DEAD"
-            assert attempt_liveness(owner=recorded) is OwnerVerdict.DEFINITELY_DEAD
             reopened.mark_interrupted(item_id, reason="owner-dead: producer crash")
             assert (
                 reopened.claim(
@@ -611,7 +540,7 @@ class TestFaultCProducerCrash:
             )
             live = OwnerIdentity(owner_token="owner-live", pid=os.getpid())
             assert live_store.claim(live_item, owner=live) is True
-            assert attempt_liveness(owner=live) is OwnerVerdict.DEFINITELY_ALIVE
+            assert reconcile_owner(live) is OwnerVerdict.DEFINITELY_ALIVE
             rival = OwnerIdentity(owner_token="owner-rival", pid=os.getpid())
             assert live_store.claim(live_item, owner=rival) is False
             axes = ReuseInputs(
@@ -624,7 +553,7 @@ class TestFaultCProducerCrash:
                 current=axes,
                 stored=axes,
                 stored_status=StoredWorkItemStatus.RUNNING,
-                owner_verdict=attempt_liveness(owner=live),
+                owner_verdict=reconcile_owner(live),
                 work_item_id=live_item,
             )
             assert decision.decision is ReuseCode.BLOCKED_UNCERTAIN_OWNER
@@ -981,16 +910,6 @@ class TestDuplicateDispatch:
             assert first.to_dict() == second.to_dict()
         assert _native_launches(counter) == 1
 
-    def test_lease_gates_duplicate_native_launch(self, tmp_path: Path) -> None:
-        """The lease seam refuses a second native boundary for one attempt."""
-        first = AttemptLease(tmp_path / "leases", "run", "s_opt", "wi:s_opt:s0", 1, "tok-h1")
-        assert first.acquire() is True
-        try:
-            rival = AttemptLease(tmp_path / "leases", "run", "s_opt", "wi:s_opt:s0", 1, "tok-h2")
-            assert rival.acquire() is False
-        finally:
-            first.release()
-
 
 class TestCancellationUncertainty:
     """Unconfirmed cancellation resolves to BLOCKED, never a CANCELLED rerun."""
@@ -1038,26 +957,6 @@ class TestCancellationUncertainty:
             work_item_id="wi:s_opt:u",
         )
         assert decision.decision is ReuseCode.BLOCKED_UNCERTAIN_OWNER
-
-    def test_dead_owner_cancel_proof_is_unconfirmed(self, tmp_path: Path) -> None:
-        from confflow.remote.supervision import cancel_attempt
-
-        proof = cancel_attempt(owner=_dead_owner("cancel-dead"), work_dir=None)
-        assert proof.confirmed is False
-        assert proof.verdict in (OwnerVerdict.DEFINITELY_DEAD, OwnerVerdict.UNCERTAIN)
-
-    def test_live_workdir_upgrades_dead_to_uncertain(self, tmp_path: Path) -> None:
-        from confflow.remote.supervision import attempt_liveness
-
-        work_dir = tmp_path / "attempt-work"
-        work_dir.mkdir(exist_ok=True)
-        assert attempt_liveness(owner=_dead_owner("live-dir"), work_dir=None) is (
-            OwnerVerdict.DEFINITELY_DEAD
-        )
-        assert attempt_liveness(owner=_dead_owner("live-dir"), work_dir=str(tmp_path)) in (
-            OwnerVerdict.DEFINITELY_DEAD,
-            OwnerVerdict.UNCERTAIN,
-        )
 
     def test_remote_preset_cancel_never_completes(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

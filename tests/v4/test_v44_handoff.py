@@ -5,8 +5,7 @@
 Covers ``confflow.remote.handoff`` (atomic write/read round-trip, digest
 tamper detection, schema and run identity, size bounds, strict JSON and
 strict model validation, launch-token charset, symlink and permission
-fail-closed behavior) and ``confflow.remote.schema`` (thin JSON Schema
-wrappers with no duplicated field definitions).
+fail-closed behavior).
 
 Legacy V1 envelope keys appear below only as string literals inside
 negative-case payload dicts; the V3 implementation itself never defines or
@@ -28,14 +27,12 @@ from confflow.domain.canonical import canonical_json_bytes
 from confflow.remote.envelope import (
     HANDOFF_SCHEMA_V3,
     MAX_HANDOFF_BYTES,
-    RESULT_SCHEMA_V3,
     EnvironmentRequest,
     ExecutionDefinition,
     InputBundleManifest,
     WorkerHandoffV2,
 )
 from confflow.remote.handoff import HandoffError, read_handoff_envelope, write_handoff_envelope
-from confflow.remote.schema import SCHEMA_IDS, handoff_json_schema, result_json_schema
 
 RUN_ID = "run-001"
 STEP_ID = "s_opt"
@@ -350,40 +347,6 @@ class TestSymlinkAndPermissions:
             os.chmod(path, 0o600)
 
 
-class TestSchemaModule:
-    """JSON Schema views are thin wrappers over the frozen models."""
-
-    def test_schema_ids(self) -> None:
-        assert SCHEMA_IDS == (HANDOFF_SCHEMA_V3, RESULT_SCHEMA_V3)
-        assert SCHEMA_IDS == (
-            "confflow.control.worker-handoff.v3",
-            "confflow.control.worker-result.v3",
-        )
-        assert RESULT_SCHEMA_V3 == "confflow.control.worker-result.v3"
-
-    def test_handoff_json_schema(self) -> None:
-        schema = handoff_json_schema()
-        assert schema == WorkerHandoffV2.model_json_schema()
-        assert isinstance(schema, dict)
-        assert schema["properties"]["run_id"]["type"] == "string"
-        assert "manifest_digest" in schema["properties"]
-
-    def test_result_json_schema(self) -> None:
-        from confflow.remote.envelope import ResultBundle
-
-        schema = result_json_schema()
-        assert schema == ResultBundle.model_json_schema()
-        assert isinstance(schema, dict)
-        assert "bundle_digest" in schema["properties"]
-
-    def test_no_duplicated_field_definitions(self) -> None:
-        import confflow.remote.schema as schema_module
-
-        source = Path(str(schema_module.__file__)).read_text(encoding="utf-8")
-        for field in ("manifest_digest", "bundle_digest", "work_item_digest", "launch_token"):
-            assert f'"{field}"' not in source and f"'{field}'" not in source, field
-
-
 class TestModuleHygiene:
     """The file protocol stays minimal: stdlib plus canonical plus envelope."""
 
@@ -391,33 +354,25 @@ class TestModuleHygiene:
 
     def test_no_legacy_tokens_in_implementation(self) -> None:
         import confflow.remote.handoff as handoff_module
-        import confflow.remote.schema as schema_module
 
-        for module in (handoff_module, schema_module):
-            source = Path(str(module.__file__)).read_text(encoding="utf-8")
-            lowered = source.lower()
-            assert "yaml" not in lowered, module.__name__
-            for token in self.LEGACY_TOKENS:
-                assert token not in source, (module.__name__, token)
+        source = Path(str(handoff_module.__file__)).read_text(encoding="utf-8")
+        lowered = source.lower()
+        assert "yaml" not in lowered, handoff_module.__name__
+        for token in self.LEGACY_TOKENS:
+            assert token not in source, (handoff_module.__name__, token)
 
     def test_minimal_public_surface(self) -> None:
         import confflow.remote.handoff as handoff_module
-        import confflow.remote.schema as schema_module
 
         assert set(handoff_module.__all__) == {
             "HandoffError",
             "read_handoff_envelope",
             "write_handoff_envelope",
         }
-        assert set(schema_module.__all__) == {
-            "SCHEMA_IDS",
-            "handoff_json_schema",
-            "result_json_schema",
-        }
 
     def test_import_stays_minimal(self) -> None:
         script = (
-            "import sys; import confflow.remote.handoff; import confflow.remote.schema; "
+            "import sys; import confflow.remote.handoff; "
             "forbidden = [m for m in sys.modules "
             "if m.startswith('confflow.calc') or m.startswith('confflow.core') "
             "or m.startswith('confflow.config') or m.startswith('confflow.execution') "
