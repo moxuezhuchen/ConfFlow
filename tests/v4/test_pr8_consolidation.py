@@ -10,8 +10,9 @@ authority shared by the Gaussian and ORCA renderers.
 
 These are deliberately not happy-path-only: every failure axis that the
 former copies handled (replace failure, write/fsync failure, unopenable or
-unsyncable directory) is exercised, and a static scan refuses any new
-local copies of the consolidated helpers.
+unsyncable directory) is exercised.  The single-authority identity pins and
+the no-local-copies regression scan live in the shared architecture gate
+(``tests/v4/test_architecture_boundaries.py``, PR-8 section).
 """
 
 from __future__ import annotations
@@ -23,31 +24,6 @@ from pathlib import Path
 import pytest
 
 from confflow.persistence import fsatomic
-
-REPO_ROOT = Path(__file__).resolve().parents[2]
-
-#: Production scopes whose local copies were consolidated in PR-8.  The
-#: ``remote`` package keeps its deliberately self-contained no-follow
-#: writers (deferred by audit: different O_EXCL/O_NOFOLLOW/mode/taxonomy)
-#: and is intentionally out of this scan.
-CONSOLIDATED_SCOPES = (
-    "confflow/domain",
-    "confflow/execution",
-    "confflow/workflow/v4",
-    "confflow/persistence",
-    "confflow/programs",
-    "confflow/producer",
-    "confflow/application",
-)
-
-#: Helper names that must exist only in the authority module.
-DUPLICATE_HELPER_MARKERS = (
-    "def _atomic_write_bytes(",
-    "def _fsync_directory(",
-    "def _fsync_dir(",
-    "def _tmp_suffix(",
-    "def _next_tmp_suffix(",
-)
 
 
 def _tmp_leftovers(directory: Path) -> list[str]:
@@ -278,31 +254,8 @@ class TestPublishBytesProtocol:
         fsatomic.fsync_directory(str(tmp_path / "missing"))
 
 
-class TestSingleAuthority:
-    """Exactly one authority, and every consolidated consumer imports it."""
-
-    def test_no_local_helper_copies_in_consolidated_scopes(self) -> None:
-        offenders: list[tuple[str, str]] = []
-        for scope in CONSOLIDATED_SCOPES:
-            for path in sorted((REPO_ROOT / scope).rglob("*.py")):
-                if path.name == "fsatomic.py" and path.parent.name == "persistence":
-                    continue
-                text = path.read_text(encoding="utf-8")
-                for marker in DUPLICATE_HELPER_MARKERS:
-                    if marker in text:
-                        offenders.append((str(path.relative_to(REPO_ROOT)), marker))
-        assert offenders == []
-
-    def test_consumers_import_the_authority_object(self) -> None:
-        from confflow.application import v4_run
-        from confflow.application.execution import workflow_adapter
-        from confflow.persistence import arbitration, generation, imports, publication, run_state
-        from confflow.producer import run_result
-
-        for module in (run_state, publication, generation, arbitration, v4_run, run_result):
-            assert module.publish_bytes is fsatomic.publish_bytes
-        assert imports.fsync_directory is fsatomic.fsync_directory
-        assert workflow_adapter.fsync_directory is fsatomic.fsync_directory
+class TestProducerPublishPipeline:
+    """The producer keeps validation/verify while writing via the authority."""
 
     def test_producer_publish_goes_through_the_authority(self) -> None:
         import inspect
@@ -317,15 +270,7 @@ class TestSingleAuthority:
 
 
 class TestJobNameSanitizerAuthority:
-    """One sanitizer authority re-exported by both program renderers."""
-
-    def test_both_renderers_reexport_the_single_authority(self) -> None:
-        from confflow.programs import _naming
-        from confflow.programs.gaussian import rendering as gaussian
-        from confflow.programs.orca import rendering as orca
-
-        assert gaussian.sanitize_job_name is _naming.sanitize_job_name
-        assert orca.sanitize_job_name is _naming.sanitize_job_name
+    """The authority preserves the exact former renderer sanitizer rule."""
 
     @staticmethod
     def _legacy_sanitize(value: str, fallback: str = "job") -> str:
