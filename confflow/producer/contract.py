@@ -50,14 +50,12 @@ from ..workflow.v4.schema import (
     build_workflow_json_schema,
     defaults_summary,
 )
+from .boundary import RESULT_MANIFEST_SCHEMA, boundary_section
 from .manifest import build_editor_manifest_v4
 from .recipes import build_recipe_catalog_v4
 
 #: Next wire version of the configuration contract: the V4 workflow line.
 CONFIGURATION_CONTRACT_V4_SCHEMA = "confflow.configuration-contract.v4"
-
-#: Content schema of the run-result manifest defined below.
-RESULT_MANIFEST_SCHEMA = "confflow.run_result_manifest.v1"
 
 #: Frozen analysis capability: the reaction-profile analysis contract.
 ANALYSIS_REACTION_PROFILE_CAPABILITY = "reaction_profile"
@@ -673,6 +671,17 @@ def build_configuration_contract_v4(
         "remote_capability": remote,
         "transform_kinds": list(TRANSFORM_KINDS),
     }
+    envelope["boundary"] = boundary_section(
+        executors=envelope["executors"],
+        execution_adapters=envelope["execution_adapters"],
+        result_profiles=envelope["result_profiles"],
+        scientific_checks=envelope["scientific_checks"],
+        recovery_profiles=envelope["recovery_profiles"],
+        programs=envelope["programs"],
+        analysis_capabilities=analysis_capabilities,
+        transform_kinds=TRANSFORM_KINDS,
+        result_schema_sha256=run_result_schema_sha256(),
+    )
     envelope["contract_digest"] = canonical_sha256(
         {key: value for key, value in envelope.items() if key != "contract_digest"}
     )
@@ -689,6 +698,38 @@ def contract_digest_of(envelope: dict[str, Any]) -> str:
 def contract_canonical_json(envelope: dict[str, Any]) -> str:
     """Return the deterministic canonical JSON bytes of an envelope, decoded."""
     return canonical_json_bytes(envelope).decode("utf-8")
+
+
+def build_boundary_document(
+    *,
+    producer_version: str,
+    producer_commit: str | None = None,
+    producer_dirty: bool | None = None,
+) -> dict[str, Any]:
+    """Build the full P0 boundary document from the real registry.
+
+    The contract envelope embeds only the compact boundary section; this
+    returns the full document with canonicalization vectors and JSON Schemas,
+    rebuilt from the same real descriptors the envelope publishes.
+    """
+    envelope = build_configuration_contract_v4(
+        producer_version=producer_version,
+        producer_commit=producer_commit,
+        producer_dirty=producer_dirty,
+    )
+    from .boundary import boundary_document
+
+    return boundary_document(
+        executors=envelope["executors"],
+        execution_adapters=envelope["execution_adapters"],
+        result_profiles=envelope["result_profiles"],
+        scientific_checks=envelope["scientific_checks"],
+        recovery_profiles=envelope["recovery_profiles"],
+        programs=envelope["programs"],
+        analysis_capabilities=envelope["analysis_capabilities"]["capabilities"],
+        transform_kinds=tuple(envelope["transform_kinds"]),
+        result_schema_sha256=envelope["result_schema_sha256"],
+    )
 
 
 def generate_contract_bytes(
@@ -732,6 +773,7 @@ __all__ = [
     "RESULT_MANIFEST_SCHEMA",
     "SCIENTIFIC_OVERRIDE_KEYS",
     "build_configuration_contract_v4",
+    "build_boundary_document",
     "build_run_result_manifest",
     "contract_canonical_json",
     "contract_digest_of",

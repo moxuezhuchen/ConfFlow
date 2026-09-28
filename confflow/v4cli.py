@@ -9,6 +9,10 @@ to the legacy engine: unknown/legacy workflows fail closed with
 Commands
 --------
 - ``v4 contract --json`` — print the V4 producer contract bytes.
+- ``v4 boundary --json`` — print the P0 boundary protocol document
+  (canonicalization vectors, identities, compatibility vocabulary, schemas).
+- ``v4 canonical --stdin --json`` — canonicalize JSON bytes with RFC 8785
+  (JCS); duplicate keys and non-finite numbers are rejected structurally.
 - ``v4 validate (--workflow FILE | --stdin) --json`` — validate exact
   workflow bytes through the producer validator.
 - ``v4 run --workflow FILE --inputs NAME=FILE ... --run-root DIR
@@ -38,6 +42,10 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.command == "contract":
             return _contract(args)
+        if args.command == "boundary":
+            return _boundary(args)
+        if args.command == "canonical":
+            return _canonical(args)
         if args.command == "validate":
             return _validate(args)
         if args.command == "run":
@@ -55,6 +63,13 @@ def _build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
     contract = subparsers.add_parser("contract", help="Print the V4 producer contract")
     contract.add_argument("--json", action="store_true", required=True)
+    boundary = subparsers.add_parser("boundary", help="Print the P0 boundary protocol document")
+    boundary.add_argument("--json", action="store_true", required=True)
+    canonical = subparsers.add_parser("canonical", help="Canonicalize JSON bytes (RFC 8785 / JCS)")
+    canonical.add_argument("--json", action="store_true", required=True)
+    canonical.add_argument(
+        "--stdin", action="store_true", required=True, help="Read JSON bytes from stdin"
+    )
     validate = subparsers.add_parser("validate", help="Validate V4 workflow bytes")
     validate.add_argument("--json", action="store_true", required=True)
     source = validate.add_mutually_exclusive_group(required=True)
@@ -110,6 +125,49 @@ def _read_workflow_bytes(args: argparse.Namespace) -> bytes:
         return sys.stdin.buffer.read()
     with open(args.workflow, "rb") as handle:
         return handle.read()
+
+
+def _boundary(args: argparse.Namespace) -> int:
+    """Print the full P0 boundary protocol document."""
+    import warnings
+
+    import confflow
+
+    from .producer.contract import build_boundary_document
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        document = build_boundary_document(producer_version=confflow.__version__)
+    sys.stdout.write(json.dumps(document, indent=2, ensure_ascii=False, sort_keys=True))
+    sys.stdout.write("\n")
+    return 0
+
+
+def _canonical(args: argparse.Namespace) -> int:
+    """Canonicalize JSON stdin and print the producer's canonical form."""
+    from .producer.boundary import CANONICALIZATION_ID, canonicalize_text
+
+    data = sys.stdin.buffer.read()
+    outcome = canonicalize_text(data)
+    if outcome["ok"]:
+        payload = {
+            "ok": True,
+            "canonicalization_id": CANONICALIZATION_ID,
+            "canonical_json": outcome["canonical_json"],
+            "canonical_sha256": outcome["canonical_sha256"],
+        }
+        sys.stdout.write(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+        sys.stdout.write("\n")
+        return 0
+    payload = {
+        "ok": False,
+        "canonicalization_id": CANONICALIZATION_ID,
+        "reason_code": outcome["reason_code"],
+        "detail": outcome["detail"],
+    }
+    sys.stdout.write(json.dumps(payload, ensure_ascii=True, sort_keys=True))
+    sys.stdout.write("\n")
+    return 1
 
 
 def _validate(args: argparse.Namespace) -> int:
