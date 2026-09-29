@@ -27,7 +27,12 @@ from ...execution.contracts import (
 )
 from ...execution.registry import ExecutionRegistry, RegistryLookupError, default_registry
 from .diagnostics import DiagnosticCode, DiagnosticReason, error
-from .document import RunInputDeclaration, StepDefinition, WorkflowDefinition
+from .document import (
+    RunInputDeclaration,
+    ScientificDefaults,
+    StepDefinition,
+    WorkflowDefinition,
+)
 from .fingerprint import step_semantic_digest
 from .schema import (
     DEFAULT_CORES_PER_ITEM,
@@ -394,6 +399,7 @@ def _validate_step(
     run_resources: ResourceRequest,
     run_scheduler: SchedulerPolicy,
     registry: ExecutionRegistry,
+    run_scientific_defaults: ScientificDefaults,
 ) -> tuple[ValidatedStep | None, list[Diagnostic]]:
     diagnostics: list[Diagnostic] = []
     field_path = f"steps.{step.id}"
@@ -438,6 +444,39 @@ def _validate_step(
                     step_id=step.id,
                     field_path=f"{field_path}.calculation.program",
                     details={"program": scientific.program},
+                )
+            )
+
+    if capability is ExecutorCapability.CALCULATION and step.enabled:
+        # Native rendering requires resolved charge and multiplicity for the
+        # driving structure at execution time.  A document that declares
+        # neither a step override nor a run-level scientific default relies
+        # entirely on the input structures carrying explicit values; the
+        # producer cannot verify that from document bytes, so the omission is
+        # execution-critical and fails closed here (the same requirement the
+        # work-item executor enforces before native rendering).  Disabled
+        # steps never render and therefore never carry this requirement.
+        unresolved = tuple(
+            name
+            for name in ("charge", "multiplicity")
+            if scientific.overrides.get(name) is None
+            and getattr(run_scientific_defaults, name, None) is None
+        )
+        if unresolved:
+            diagnostics.append(
+                error(
+                    DiagnosticCode.SCIENTIFIC_PARAMETER_CONFLICT,
+                    DiagnosticReason.METADATA_UNAVAILABLE,
+                    "charge and multiplicity must be resolved before native rendering",
+                    step_id=step.id,
+                    field_path=f"{field_path}.calculation.overrides",
+                    details={
+                        "missing": list(unresolved),
+                        "declared_sources": [
+                            "calculation.overrides",
+                            "global.scientific_defaults",
+                        ],
+                    },
                 )
             )
 
@@ -749,7 +788,9 @@ def validate_definition(
     run_resources, run_scheduler = _resolve_run_policy(definition)
     steps: list[ValidatedStep] = []
     for step in definition.steps:
-        validated, step_diagnostics = _validate_step(step, run_resources, run_scheduler, active)
+        validated, step_diagnostics = _validate_step(
+            step, run_resources, run_scheduler, active, definition.scientific_defaults
+        )
         diagnostics.extend(step_diagnostics)
         if validated is not None:
             steps.append(validated)

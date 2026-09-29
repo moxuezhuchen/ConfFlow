@@ -367,7 +367,9 @@ def _resolve_step_facts(
     pairing, or adapter rule is re-implemented here.
     """
     run_resources, run_scheduler = _resolve_run_policy(definition)
-    validated, diagnostics = _validate_step(step, run_resources, run_scheduler, registry)
+    validated, diagnostics = _validate_step(
+        step, run_resources, run_scheduler, registry, definition.scientific_defaults
+    )
     if validated is not None:
         return _StepFacts(
             definition=step,

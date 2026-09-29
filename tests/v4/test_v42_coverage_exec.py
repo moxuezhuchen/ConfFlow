@@ -295,8 +295,14 @@ def _context(
     checks: tuple = (),
     recovery: Any = None,
     executable: str | None = None,
+    scientific_defaults: Any = None,
 ) -> ItemExecutionContext:
-    """Build an item execution context."""
+    """Build an item execution context.
+
+    ``scientific_defaults`` overrides the parsed document's run-level defaults;
+    tests use the empty ``ScientificDefaults()`` to reproduce a request that
+    bypassed document validation.
+    """
     from confflow.workflow.v4 import parse_workflow_document
 
     parsed = parse_workflow_document(_document())
@@ -306,7 +312,11 @@ def _context(
     return ItemExecutionContext(
         step_id="s_opt",
         scientific=scientific,
-        scientific_defaults=parsed.definition.scientific_defaults,
+        scientific_defaults=(
+            parsed.definition.scientific_defaults
+            if scientific_defaults is None
+            else scientific_defaults
+        ),
         adapter=adapter,
         profile=PROFILES["standard"],
         checks=checks,
@@ -392,12 +402,22 @@ class TestExecutorPrelaunch:
         assert result.error.code == "scientific_parameter_conflict"
 
     def test_unresolved_charge_blocks_rendering(self, tmp_path: Path) -> None:
+        # Document validation now rejects this omission earlier; the executor
+        # check remains as fail-closed defense for callers that bypass it
+        # (worker/legacy requests), reproduced here with empty run defaults.
         plan = _compiled()
         bare = structure("s0", charge=None, multiplicity=None)
         assembly = assemble(plan, run_inputs(structures={"structures": StructureSet.of(bare)}))
         assert assembly.ok
         item = assembly.items[0]
-        context = _context(plan, item, str(tmp_path), StubSupervisor(), StubAdapter())
+        context = _context(
+            plan,
+            item,
+            str(tmp_path),
+            StubSupervisor(),
+            StubAdapter(),
+            scientific_defaults=_defaults(),
+        )
         result = WorkItemExecutor().execute(item, context)
         assert result.status is WorkItemStatus.FAILED
         assert result.error is not None

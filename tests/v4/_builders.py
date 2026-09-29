@@ -158,12 +158,20 @@ def v4_doc(
     inputs: Mapping[str, Any] | None = None,
     global_config: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Build a raw V4 document mapping."""
+    """Build a raw V4 document mapping.
+
+    Native rendering requires resolved charge/multiplicity; documents carry
+    the neutral scientific fallback (charge ``0``, multiplicity ``1``) unless
+    the caller declares its own ``scientific_defaults``.  Every test structure
+    built by this module already carries those explicit values, so the
+    fallback never changes what a test computes.
+    """
     document: dict[str, Any] = {"schema": V4_SCHEMA, "steps": steps}
     if inputs is not None:
         document["inputs"] = dict(inputs)
-    if global_config is not None:
-        document["global"] = dict(global_config)
+    globals_mapping = dict(global_config or {})
+    globals_mapping.setdefault("scientific_defaults", {"charge": 0, "multiplicity": 1})
+    document["global"] = globals_mapping
     return document
 
 

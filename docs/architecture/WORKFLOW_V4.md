@@ -114,6 +114,8 @@ StructureRecord 固有属性 > step explicit override > run-level scientific def
 
 - 结构显式值与 step override 冲突：step 生效 + `scientific_parameter_conflict(structure_value_overridden)` warning。
 - charge/multiplicity 都已知时校验 electron parity（不可能的组合直接 error）。
+- 计算步骤（capability=calculation、enabled）的 charge/multiplicity 必须在文档层可解析：step override 与 run-level default 都缺失时，语义验证以
+  `scientific_parameter_conflict(metadata_unavailable)` error 拒绝该文档——native rendering 前二者必须 resolved；禁用步骤与纯执行器不承载该要求，structure 固有值仍按 precedence 权威优先。
 - `freeze`（1-based 原子索引）同样由该权威解析：step override > run default；索引排序去重进入 digest；越界报 `freeze_index_out_of_range`。
 - precedence 结果进入 work-item 输入内容（effective charge/multiplicity/freeze）。
 

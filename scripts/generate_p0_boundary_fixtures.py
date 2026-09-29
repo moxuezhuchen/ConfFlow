@@ -195,6 +195,9 @@ inputs:
     cardinality: many
     pairing: per_structure
 global:
+  scientific_defaults:
+    charge: 0
+    multiplicity: 1
   resources:
     cores_per_item: 8
     memory_per_item: 16GiB

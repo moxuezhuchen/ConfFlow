@@ -238,6 +238,7 @@ def compile_g16_plan(*, native: dict[str, Any], checks: list[str], **kwargs: Any
     )
     document = {
         "schema": "confflow.workflow.v4",
+        "global": {"scientific_defaults": {"charge": 0, "multiplicity": 1}},
         "steps": [step],
         "inputs": STRUCTURE_INPUTS,
     }
@@ -276,6 +277,7 @@ def compile_orca_plan(*, native: dict[str, Any], checks: list[str], **kwargs: An
     )
     document = {
         "schema": "confflow.workflow.v4",
+        "global": {"scientific_defaults": {"charge": 0, "multiplicity": 1}},
         "steps": [step],
         "inputs": STRUCTURE_INPUTS,
     }
