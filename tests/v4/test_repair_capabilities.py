@@ -250,12 +250,15 @@ class TestGoatSeedValidation:
     def test_goat_native_seed_conflict_rejected(self) -> None:
         # Any user-supplied native RANDOMSEED is a second seed authority
         # and fails closed — set the step seed instead (the adapter
-        # renders the deterministic boolean flag itself).
+        # renders the deterministic boolean flag itself).  The refusal is
+        # the adapter-owned native-definition requirement (one rule, one
+        # diagnostic).
         doc = _goat_doc(seed=11)
         doc["steps"][0]["calculation"]["native"]["goat"]["RANDOMSEED"] = 99
         result = compile_doc(doc)
         assert not result.ok
-        assert "seed_conflict" in reasons(result.errors)
+        errors = result.errors
+        assert any("RANDOMSEED" in item.message for item in errors), errors
 
     def test_goat_matching_native_seed_compiles(self) -> None:
         # Even a matching native RANDOMSEED is a second authority: the

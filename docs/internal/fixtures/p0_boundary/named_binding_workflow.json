@@ -11,7 +11,7 @@
     "sp_1": "memory_per_item only; cores_per_item stays absent in the wire"
   },
   "validation": {
-    "definition_digest": "sha256:d4fa541aed60a68174f088f3fb87e34c536739bc08cbe1aa38cd02ba9f2e5e52",
+    "definition_digest": "sha256:85412311200ae5916dd7a2527baacdf060f17bb86d7318f059e098756f8f942f",
     "diagnostics": [],
     "ok": true,
     "schema": "confflow.configuration-validation.v1",
@@ -21,5 +21,5 @@
     ],
     "workflow_schema_id": "confflow.workflow.v4"
   },
-  "workflow_yaml": "schema: confflow.workflow.v4\ninputs:\n  structures:\n    kind: structure\n    cardinality: many\n    pairing: per_structure\nglobal:\n  scientific_defaults:\n    charge: 0\n    multiplicity: 1\n  resources:\n    cores_per_item: 8\n    memory_per_item: 16GiB\n  scheduler:\n    max_parallel_items: 2\nsteps:\n  - id: opt_1\n    label: Optimize\n    executor: calculation\n    calculation:\n      program: orca\n      role: opt\n      native:\n        calculation:\n          task: optimize\n    bindings:\n      structure:\n        source:\n          run: structures\n  - id: sp_1\n    label: Single point\n    executor: calculation\n    calculation:\n      program: orca\n      role: sp\n    resources:\n      memory_per_item: 32GiB\n    bindings:\n      structure:\n        source:\n          step: opt_1\n          port: structures\n"
+  "workflow_yaml": "schema: confflow.workflow.v4\ninputs:\n  structures:\n    kind: structure\n    cardinality: many\n    pairing: per_structure\nglobal:\n  scientific_defaults:\n    charge: 0\n    multiplicity: 1\n  resources:\n    cores_per_item: 8\n    memory_per_item: 16GiB\n  scheduler:\n    max_parallel_items: 2\nsteps:\n  - id: opt_1\n    label: Optimize\n    executor: calculation\n    calculation:\n      program: orca\n      role: opt\n      native:\n        keyword: B3LYP D3BJ Opt\n    bindings:\n      structure:\n        source:\n          run: structures\n  - id: sp_1\n    label: Single point\n    executor: calculation\n    calculation:\n      program: orca\n      role: sp\n      native:\n        keyword: B3LYP D3BJ SP\n    resources:\n      memory_per_item: 32GiB\n    bindings:\n      structure:\n        source:\n          step: opt_1\n          port: structures\n"
 }

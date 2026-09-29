@@ -26,6 +26,7 @@ __all__ = [
     "format_keyword_line",
     "format_memory_gb",
     "keyword_requests_freq",
+    "native_definition_errors",
     "normalize_gaussian_keyword",
     "render_gaussian_input",
     "rescue_freeze_directive",
@@ -178,6 +179,65 @@ def resolve_keyword(native: Mapping[str, Any]) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ValueError("native_input_error: Gaussian 'keyword' must be a non-empty string")
     return value.strip()
+
+
+def native_definition_errors(native: Mapping[str, Any]) -> tuple[str, ...]:
+    """Return deterministic native-definition failures without rendering.
+
+    This is the authoritative, structure-independent half of Gaussian native
+    rendering: the strict native vocabulary, the required non-empty
+    ``keyword`` (including a keyword that normalizes to nothing), and the
+    deterministic section shapes (``extra_sections``/``gaussian_extra``/
+    ``modredundant``/``link0``) that never depend on a structure, geometry or
+    resources.  Semantic validation calls it before anything can be submitted,
+    and the renderer derives its own refusals from the same functions, so the
+    requirement is never stated twice.
+
+    The structure-dependent requirements (charge/multiplicity resolution,
+    geometry, freeze indices, checkpoints, QST/IRC route shape) stay in the
+    runtime rendering path and are not evaluated here.
+
+    Parameters
+    ----------
+    native : Mapping[str, Any]
+        Native option mapping from a workflow document or resolved inputs.
+
+    Returns
+    -------
+    tuple[str, ...]
+        ``native_input_error``-prefixed messages, in deterministic order;
+        empty when the native definition is deterministically renderable.
+    """
+    try:
+        check_native_keys(native)
+    except ValueError as exc:
+        return (str(exc),)
+    errors: list[str] = []
+    try:
+        keyword = resolve_keyword(native)
+    except ValueError as exc:
+        errors.append(str(exc))
+    else:
+        try:
+            format_keyword_line(keyword)
+        except ValueError as exc:
+            errors.append(str(exc))
+    try:
+        resolve_extra_section(native)
+    except ValueError as exc:
+        errors.append(str(exc))
+    try:
+        # The user Link0 lines are the only structure-independent part of
+        # Link0 assembly; the job/checkpoint names are rendering decisions.
+        resolve_link0_lines(
+            job="validation",
+            write_chk=resolve_write_chk(native),
+            oldchk_name=None,
+            user_link0=native.get("link0"),
+        )
+    except ValueError as exc:
+        errors.append(str(exc))
+    return tuple(errors)
 
 
 def coerce_section_lines(value: Any, key: str) -> list[str]:

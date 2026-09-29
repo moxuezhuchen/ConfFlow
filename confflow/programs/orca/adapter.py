@@ -83,6 +83,15 @@ def _input_error(message: str) -> ValueError:
     return ValueError(f"{NativeErrorCode.NATIVE_INPUT_ERROR.value}: {message}")
 
 
+#: Refusal shared by the definition validator and the renderer: a user native
+#: RANDOMSEED is a second seed authority (one string, one rule).
+_GOAT_RANDOMSEED_MESSAGE = (
+    "native_input_error: native goat RANDOMSEED is a second seed authority; "
+    "set the step seed instead (compile-time validation rejects this key "
+    "before rendering)"
+)
+
+
 def _require_goat_seed(seed: object) -> int:
     """Validate the single-authority GOAT seed for native rendering.
 
@@ -141,6 +150,95 @@ def _require_keyword_for_mode(keyword: str, mode: str) -> None:
         )
 
 
+def native_definition_errors(native: Any) -> tuple[str, ...]:
+    """Return deterministic native-definition failures without rendering.
+
+    The structure-independent half of ORCA native rendering: strict native
+    vocabulary, required non-empty keyword, block/path-mode option validation
+    (``irc``/``goat``/``neb`` sections) and deterministic option values.
+    Semantic validation calls this through the adapter before a document can
+    be submitted; the renderer refuses on the same render helpers, so the
+    requirement is never stated twice.
+
+    Structure-dependent requirements (charge/multiplicity resolution,
+    geometry, freeze indices, checkpoint consumption, the NEB product
+    structure slot) stay in the runtime rendering path.
+    """
+    if not isinstance(native, Mapping):
+        return ("native_input_error: ORCA native options must be a mapping",)
+    errors: list[str] = []
+    unknown = sorted(set(native) - set(ALLOWED_NATIVE_KEYS))
+    if unknown:
+        errors.append(f"native_input_error: ORCA unknown native keys: {', '.join(unknown)}")
+    keyword: str | None = None
+    try:
+        keyword = resolve_keyword(native)
+    except ValueError as exc:
+        errors.append(str(exc))
+    try:
+        resolve_blocks_text(native)
+    except ValueError as exc:
+        errors.append(str(exc))
+    modes = [key for key in ("irc", "neb", "goat") if native.get(key) is not None]
+    if len(modes) > 1:
+        errors.append(
+            f"native_input_error: ORCA accepts at most one path/ensemble mode, got {modes}; "
+            "one WorkItem carries one native mode"
+        )
+    elif modes:
+        mode = modes[0]
+        section = native.get(mode)
+        if not isinstance(section, Mapping):
+            errors.append(f"native_input_error: ORCA '{mode}' native options must be a mapping")
+        else:
+            errors.extend(_path_mode_option_errors(mode, section))
+            if keyword is not None:
+                if mode == "neb" and section.get("neb_ts", False) is True:
+                    mode = "neb_ts"
+                try:
+                    _require_keyword_for_mode(keyword, mode)
+                except ValueError as exc:
+                    errors.append(str(exc))
+    # A non-blank explicit override is deterministic; a blank value means
+    # "absent" and the renderer derives %maxcore from resolved resources (a
+    # runtime/resource concern), so it must not be refused here.
+    if native.get("maxcore") is not None and str(native.get("maxcore")).strip():
+        try:
+            resolve_maxcore(native, memory_bytes=None, cores=None)
+        except ValueError as exc:
+            errors.append(str(exc))
+    return tuple(errors)
+
+
+def _path_mode_option_errors(mode: str, section: Mapping[str, Any]) -> tuple[str, ...]:
+    """Validate one path/ensemble mode section with the real render helpers.
+
+    ``irc``/``goat``/``neb`` option validation is structure-independent, so
+    the definition validator exercises exactly the helpers the renderer calls.
+    The NEB product endpoint name is a rendering decision, never a document
+    member; a neutral valid name is used here and the product *structure*
+    requirement stays in the runtime path.
+    """
+    from .goat import render_goat_blocks
+    from .neb import render_neb_blocks
+    from .path import render_irc_blocks
+
+    try:
+        if mode == "irc":
+            render_irc_blocks(section)
+        elif mode == "goat":
+            if "RANDOMSEED" in section:
+                return (_GOAT_RANDOMSEED_MESSAGE,)
+            render_goat_blocks({"goat": dict(section)})
+        elif mode == "neb":
+            render_neb_blocks(section, product_xyz_name="neb_endpoint.xyz")
+        else:  # pragma: no cover - the caller only passes the three modes
+            return ()
+    except ValueError as exc:
+        return (str(exc),)
+    return ()
+
+
 class OrcaProgramAdapter(ProgramAdapter):
     """File-format authority for ORCA native execution."""
 
@@ -173,6 +271,17 @@ class OrcaProgramAdapter(ProgramAdapter):
     def default_executable(self) -> str:
         """Return the default executable name used for PATH lookup."""
         return "orca"
+
+    def validate_native_definition(self, native: Mapping[str, Any]) -> tuple[str, ...]:
+        """Return deterministic native-definition failures without rendering.
+
+        The adapter is the file-format authority: this method exposes the
+        structure-independent half of native rendering to semantic validation,
+        and :meth:`materialize_native_input` refuses on the same result before
+        rendering anything.  Structure-dependent requirements stay in the
+        rendering path.
+        """
+        return native_definition_errors(native)
 
     def materialize_native_input(
         self, inputs: ResolvedCalculationInputs
@@ -211,9 +320,9 @@ class OrcaProgramAdapter(ProgramAdapter):
             raise _input_error(f"ORCA 'multiplicity' must be >= 1, got {multiplicity}")
 
         native = inputs.native
-        unknown = sorted(set(native) - set(ALLOWED_NATIVE_KEYS))
-        if unknown:
-            raise _input_error(f"ORCA unknown native keys: {', '.join(unknown)}")
+        native_errors = self.validate_native_definition(native)
+        if native_errors:
+            raise ValueError(native_errors[0])
 
         keyword = resolve_keyword(native)
         blocks_text = resolve_blocks_text(native)
@@ -310,11 +419,7 @@ class OrcaProgramAdapter(ProgramAdapter):
             _require_goat_seed(inputs.seed)
             user_goat = dict(section)
             if "RANDOMSEED" in user_goat:
-                raise _input_error(
-                    "native goat RANDOMSEED is a second seed authority; "
-                    "set the step seed instead (compile-time validation "
-                    "rejects this key before rendering)"
-                )
+                raise ValueError(_GOAT_RANDOMSEED_MESSAGE)
             # The step seed is workflow identity (digest/envelope), never
             # a native stream selector: ORCA 6.1 defines RANDOMSEED as a
             # boolean switch with no numeric stream semantics, so the

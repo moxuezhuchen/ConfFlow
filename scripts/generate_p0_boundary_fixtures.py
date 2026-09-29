@@ -211,8 +211,7 @@ steps:
       program: orca
       role: opt
       native:
-        calculation:
-          task: optimize
+        keyword: B3LYP D3BJ Opt
     bindings:
       structure:
         source:
@@ -223,6 +222,8 @@ steps:
     calculation:
       program: orca
       role: sp
+      native:
+        keyword: B3LYP D3BJ SP
     resources:
       memory_per_item: 32GiB
     bindings:

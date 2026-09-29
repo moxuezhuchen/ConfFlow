@@ -301,72 +301,12 @@ def _is_goat_native(native: Any) -> bool:
     return "goat" in _active_native_modes(native)
 
 
-def _goat_seed_conflict(native: Any, seed: int | None) -> str | None:
-    """Describe a native ``RANDOMSEED`` vs step-seed conflict, or ``None``.
-
-    The step-level seed is the single effective seed: the program
-    adapter requires it and always renders the native boolean switch
-    deterministically as ``RANDOMSEED false`` (ORCA 6.1 defines no
-    numeric stream-selection semantics for this key).  A
-    user-supplied ``native["goat"]["RANDOMSEED"]`` is a second seed
-    authority and always fails closed — set the step seed instead.
-    (The invented ``Seed`` key never existed natively and is rejected
-    downstream as unknown vocabulary.)
-    """
-    goat = _native_option(native, "goat")
-    if not isinstance(goat, Mapping):
-        return None
-    if "RANDOMSEED" in goat:
-        return (
-            f"native goat RANDOMSEED {goat.get('RANDOMSEED')!r} is a second seed "
-            "authority; the step-level seed is the single effective seed "
-            "(remove the native key and set the step seed)"
-        )
-    return None
-
-
 #: Result profiles each native path/ensemble mode can actually execute.
 _MODE_PROFILES: dict[str, tuple[str, ...]] = {
     "goat": ("ensemble",),
     "irc": ("path_endpoints",),
     "neb": ("ensemble", "path_endpoints"),
 }
-
-
-def _orca_mode_keyword_mismatch(program: Any, native: Any) -> str | None:
-    """Describe an ORCA mode-block/job-keyword mismatch, or ``None``.
-
-    Verified against the installed ORCA 6.1.1 binary: a ``%irc`` /
-    ``%neb`` / ``%goat`` block under a plain keyword runs a different
-    job silently (a plain optimization ignoring the block).  The keyword
-    must therefore name the job for the declared native mode.
-    """
-    if not isinstance(program, str) or program.strip().lower() != "orca":
-        return None
-    if not isinstance(native, Mapping):
-        return None
-    modes = [key for key in ("irc", "neb", "goat") if native.get(key) is not None]
-    if len(modes) != 1:
-        return None
-    keyword = native.get("keyword")
-    tokens = keyword.split() if isinstance(keyword, str) else []
-    upper = [token.upper() for token in tokens]
-    mode = modes[0]
-    if mode == "irc":
-        required: tuple[str, ...] = ("IRC",)
-    elif mode == "goat":
-        required = ("GOAT",)
-    else:
-        section = native.get("neb")
-        neb_ts = isinstance(section, Mapping) and section.get("neb_ts", False) is True
-        required = ("NEB-TS",) if neb_ts else ("NEB",)
-    if not any(token in upper for token in required):
-        return (
-            f"ORCA {mode} mode requires keyword {'/'.join(required)} "
-            f"(got {keyword!r}); a mode block under a plain keyword "
-            "runs a different job silently"
-        )
-    return None
 
 
 def _native_mode_profile_mismatch(native: Any, profile_name: str) -> str | None:
@@ -429,12 +369,13 @@ def _validate_step(
                 field_path=f"{field_path}.calculation.program",
             )
         )
+    program_adapter: Any = None
     if capability is ExecutorCapability.CALCULATION and scientific.program:
         # Program names are scientific vocabulary resolved through the real
         # program registry: unknown programs fail closed at compile time.
         # Role/task names never participate in dispatch.
         try:
-            registry.resolve_program(scientific.program)
+            program_adapter = registry.resolve_program(scientific.program)
         except RegistryLookupError as exc:
             diagnostics.append(
                 error(
@@ -444,6 +385,30 @@ def _validate_step(
                     step_id=step.id,
                     field_path=f"{field_path}.calculation.program",
                     details={"program": scientific.program},
+                )
+            )
+
+    if program_adapter is not None and step.enabled:
+        # The program adapter is the file-format authority.  Its
+        # structure-independent native-definition requirements (strict native
+        # vocabulary, required non-empty values, deterministic option
+        # constraints) are evaluated here, at compile time, on the same path
+        # the renderer uses.  Anything the adapter would deterministically
+        # refuse at rendering must be refused before submission; only
+        # structure-dependent checks stay in the runtime.  Disabled steps
+        # never render and therefore carry no native requirement.
+        for native_message in program_adapter.validate_native_definition(scientific.native):
+            diagnostics.append(
+                error(
+                    DiagnosticCode.SCIENTIFIC_PARAMETER_CONFLICT,
+                    DiagnosticReason.INVALID_VALUE,
+                    native_message.removeprefix("native_input_error: "),
+                    step_id=step.id,
+                    field_path=f"{field_path}.calculation.native",
+                    details={
+                        "program": scientific.program,
+                        "requirement": "native_definition",
+                    },
                 )
             )
 
@@ -619,19 +584,6 @@ def _validate_step(
             )
         )
     if capability is ExecutorCapability.CALCULATION:
-        conflict = _goat_seed_conflict(scientific.native, scientific.seed)
-        if conflict is not None:
-            diagnostics.append(
-                error(
-                    DiagnosticCode.CAPABILITY_ERROR,
-                    DiagnosticReason.SEED_CONFLICT,
-                    conflict,
-                    step_id=step.id,
-                    field_path=f"{field_path}.calculation.native",
-                    details={"seed": scientific.seed},
-                )
-            )
-    if capability is ExecutorCapability.CALCULATION:
         mismatch = _native_mode_profile_mismatch(scientific.native, profile.name)
         if mismatch is not None:
             diagnostics.append(
@@ -645,18 +597,6 @@ def _validate_step(
                         "profile": profile.name,
                         "modes": _active_native_modes(scientific.native),
                     },
-                )
-            )
-        keyword_mismatch = _orca_mode_keyword_mismatch(scientific.program, scientific.native)
-        if keyword_mismatch is not None:
-            diagnostics.append(
-                error(
-                    DiagnosticCode.CAPABILITY_ERROR,
-                    DiagnosticReason.INCOMPATIBLE_CAPABILITY_COMBINATION,
-                    keyword_mismatch,
-                    step_id=step.id,
-                    field_path=f"{field_path}.calculation.native",
-                    details={"program": scientific.program},
                 )
             )
     if scientific.transform is not None and scientific.transform not in TRANSFORM_KINDS:
