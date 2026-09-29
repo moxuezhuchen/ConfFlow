@@ -46,6 +46,7 @@ def _calculation_document(
     program: str = "g16",
     profile: str = "standard",
     enabled: bool | None = None,
+    seed: int | None = None,
 ) -> dict[str, Any]:
     """Build a calculation document with an explicit native mapping (None omits it)."""
     step = calc_step(
@@ -54,6 +55,7 @@ def _calculation_document(
         program=program,
         profile=profile,
         enabled=enabled,
+        seed=seed,
     )
     if native is None:
         del step["calculation"]["native"]
@@ -315,6 +317,53 @@ def test_orca_neb_option_is_rejected_by_validation() -> None:
         )
     )
     _assert_native_rejection(report, "n_images")
+
+
+def test_orca_irc_max_iter_out_of_range_is_rejected() -> None:
+    report = validate_workflow_bytes(
+        _document_bytes(
+            _calculation_document(
+                {"keyword": "IRC", "irc": {"max_iter": 0}},
+                program="orca",
+                profile="path_endpoints",
+            )
+        )
+    )
+    _assert_native_rejection(report, "max_iter")
+
+
+def test_orca_goat_max_iter_out_of_range_is_rejected() -> None:
+    report = validate_workflow_bytes(
+        _document_bytes(
+            _calculation_document(
+                {"keyword": "GOAT", "goat": {"MaxIter": 0}},
+                program="orca",
+                profile="ensemble",
+                seed=11,
+            )
+        )
+    )
+    _assert_native_rejection(report, "MaxIter")
+
+
+def test_orca_goat_randomseed_is_rejected_exactly_once() -> None:
+    # The second-seed-authority rule lives in the adapter's definition
+    # validator (shared with the renderer); semantic validation must not
+    # re-state it.
+    report = validate_workflow_bytes(
+        _document_bytes(
+            _calculation_document(
+                {"keyword": "GOAT", "goat": {"RANDOMSEED": 11}},
+                program="orca",
+                profile="ensemble",
+                seed=11,
+            )
+        )
+    )
+    assert report.ok is False
+    errors = report.errors()
+    assert len(errors) == 1, errors
+    assert "RANDOMSEED" in errors[0]["message"]
 
 
 def test_orca_mode_keyword_mismatch_is_rejected_once() -> None:

@@ -83,6 +83,15 @@ def _input_error(message: str) -> ValueError:
     return ValueError(f"{NativeErrorCode.NATIVE_INPUT_ERROR.value}: {message}")
 
 
+#: Refusal shared by the definition validator and the renderer: a user native
+#: RANDOMSEED is a second seed authority (one string, one rule).
+_GOAT_RANDOMSEED_MESSAGE = (
+    "native_input_error: native goat RANDOMSEED is a second seed authority; "
+    "set the step seed instead (compile-time validation rejects this key "
+    "before rendering)"
+)
+
+
 def _require_goat_seed(seed: object) -> int:
     """Validate the single-authority GOAT seed for native rendering.
 
@@ -219,11 +228,7 @@ def _path_mode_option_errors(mode: str, section: Mapping[str, Any]) -> tuple[str
             render_irc_blocks(section)
         elif mode == "goat":
             if "RANDOMSEED" in section:
-                return (
-                    "native_input_error: native goat RANDOMSEED is a second seed authority; "
-                    "set the step seed instead (compile-time validation rejects this key "
-                    "before rendering)",
-                )
+                return (_GOAT_RANDOMSEED_MESSAGE,)
             render_goat_blocks({"goat": dict(section)})
         elif mode == "neb":
             render_neb_blocks(section, product_xyz_name="neb_endpoint.xyz")
@@ -414,11 +419,7 @@ class OrcaProgramAdapter(ProgramAdapter):
             _require_goat_seed(inputs.seed)
             user_goat = dict(section)
             if "RANDOMSEED" in user_goat:
-                raise _input_error(
-                    "native goat RANDOMSEED is a second seed authority; "
-                    "set the step seed instead (compile-time validation "
-                    "rejects this key before rendering)"
-                )
+                raise ValueError(_GOAT_RANDOMSEED_MESSAGE)
             # The step seed is workflow identity (digest/envelope), never
             # a native stream selector: ORCA 6.1 defines RANDOMSEED as a
             # boolean switch with no numeric stream semantics, so the

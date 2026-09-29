@@ -301,30 +301,6 @@ def _is_goat_native(native: Any) -> bool:
     return "goat" in _active_native_modes(native)
 
 
-def _goat_seed_conflict(native: Any, seed: int | None) -> str | None:
-    """Describe a native ``RANDOMSEED`` vs step-seed conflict, or ``None``.
-
-    The step-level seed is the single effective seed: the program
-    adapter requires it and always renders the native boolean switch
-    deterministically as ``RANDOMSEED false`` (ORCA 6.1 defines no
-    numeric stream-selection semantics for this key).  A
-    user-supplied ``native["goat"]["RANDOMSEED"]`` is a second seed
-    authority and always fails closed — set the step seed instead.
-    (The invented ``Seed`` key never existed natively and is rejected
-    downstream as unknown vocabulary.)
-    """
-    goat = _native_option(native, "goat")
-    if not isinstance(goat, Mapping):
-        return None
-    if "RANDOMSEED" in goat:
-        return (
-            f"native goat RANDOMSEED {goat.get('RANDOMSEED')!r} is a second seed "
-            "authority; the step-level seed is the single effective seed "
-            "(remove the native key and set the step seed)"
-        )
-    return None
-
-
 #: Result profiles each native path/ensemble mode can actually execute.
 _MODE_PROFILES: dict[str, tuple[str, ...]] = {
     "goat": ("ensemble",),
@@ -607,19 +583,6 @@ def _validate_step(
                 details={"executor": capability.value, "goat": goat_stochastic},
             )
         )
-    if capability is ExecutorCapability.CALCULATION:
-        conflict = _goat_seed_conflict(scientific.native, scientific.seed)
-        if conflict is not None:
-            diagnostics.append(
-                error(
-                    DiagnosticCode.CAPABILITY_ERROR,
-                    DiagnosticReason.SEED_CONFLICT,
-                    conflict,
-                    step_id=step.id,
-                    field_path=f"{field_path}.calculation.native",
-                    details={"seed": scientific.seed},
-                )
-            )
     if capability is ExecutorCapability.CALCULATION:
         mismatch = _native_mode_profile_mismatch(scientific.native, profile.name)
         if mismatch is not None:
