@@ -122,6 +122,7 @@ def geometry_document(*, steps: list[dict[str, Any]] | None = None) -> dict[str,
             },
         },
         "global": {
+            "scientific_defaults": {"charge": 0, "multiplicity": 1},
             "resources": dict(GLOBAL_RESOURCES),
             "scheduler": dict(GLOBAL_SCHEDULER),
         },
@@ -636,6 +637,7 @@ class TestInstantiateCard:
                     "grouping": "each_entity",
                 }
             },
+            "global": {"scientific_defaults": {"charge": 0, "multiplicity": 1}},
             "steps": [],
         }
         snapshot = calc_step("card", role="sp", keyword="B3LYP D3BJ SP")
@@ -655,6 +657,7 @@ class TestInstantiateCard:
                     "grouping": "each_entity",
                 }
             },
+            "global": {"scientific_defaults": {"charge": 0, "multiplicity": 1}},
             "steps": [],
         }
         snapshot = calc_step("card", role="sp", keyword="B3LYP D3BJ SP")

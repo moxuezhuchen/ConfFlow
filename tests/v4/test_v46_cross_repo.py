@@ -390,6 +390,7 @@ class JobdeskContractDouble:
         return {
             "schema": WORKFLOW_SCHEMA_V4,
             "inputs": {"structures": {"kind": "structure", "cardinality": "many"}},
+            "global": {"scientific_defaults": {"charge": 0, "multiplicity": 1}},
             "steps": [
                 _calc("s_irc", "path_endpoints", "IRC B3LYP D3BJ"),
                 _calc("s_opt", "standard", "B3LYP Opt"),

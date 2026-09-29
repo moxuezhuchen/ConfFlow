@@ -110,10 +110,20 @@ def _run_binding() -> dict[str, Any]:
 def _document(
     steps: list[dict[str, Any]], *, inputs: dict[str, Any] | None = None
 ) -> dict[str, Any]:
-    """Wrap recipe steps into a complete V4 workflow document."""
+    """Wrap recipe steps into a complete V4 workflow document.
+
+    Recipe documents carry the neutral scientific fallback (charge ``0``,
+    multiplicity ``1``) exactly like every executable V4 document: native
+    rendering requires resolved charge/multiplicity, and the exposed
+    ``calc.overrides.charge`` / ``calc.overrides.multiplicity`` fields let the
+    user replace the fallback per run.  Structure-inherent values still win
+    over the run-level default (the one precedence authority is
+    ``confflow.workflow.v4.scientific``).
+    """
     return {
         "schema": SCHEMA_ID,
         "inputs": copy.deepcopy(inputs or _STRUCTURES_INPUT),
+        "global": {"scientific_defaults": {"charge": 0, "multiplicity": 1}},
         "steps": steps,
     }
 

@@ -108,6 +108,17 @@ class TestRecipesCompile:
             report = validate_workflow_bytes(payload)
             assert report.ok, (recipe["id"], [str(d) for d in report.diagnostics])
 
+    def test_every_recipe_declares_the_scientific_fallback(self) -> None:
+        # Native rendering requires resolved charge/multiplicity; the recipe
+        # documents carry the neutral run-level fallback and expose the
+        # per-step overrides so the user can replace it.
+        for recipe in _catalog()["recipes"]:
+            document = recipe["document"]
+            assert document["global"]["scientific_defaults"] == {
+                "charge": 0,
+                "multiplicity": 1,
+            }, recipe["id"]
+
     def test_uncompilable_recipe_fails(self) -> None:
         broken = copy.deepcopy(_by_id("optimize")["document"])
         broken["steps"][0]["executor"] = "no_such_executor"

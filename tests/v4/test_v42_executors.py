@@ -61,6 +61,7 @@ from confflow.execution.profile_standard import PROFILES
 from confflow.execution.recovery_standard import RECOVERIES
 from confflow.execution.work_item_executor import ItemExecutionContext, WorkItemExecutor
 from confflow.programs.registry import get_program_adapter
+from confflow.workflow.v4.document import ScientificDefaults
 from tests.v4._builders import (
     assemble,
     calc_step,
@@ -153,13 +154,21 @@ def item_context(
     checks: list[str],
     *,
     recovery: Any = None,
+    scientific_defaults: Any = None,
 ) -> ItemExecutionContext:
-    """Build an item execution context wired to real adapters and profiles."""
+    """Build an item execution context wired to real adapters and profiles.
+
+    ``scientific_defaults`` overrides the plan's run-level defaults; tests use
+    the empty ``ScientificDefaults()`` to reproduce a request that bypassed
+    document validation (the executor keeps its own fail-closed check).
+    """
     planned = plan.steps[0]
     return ItemExecutionContext(
         step_id=planned.step_id,
         scientific=planned.scientific,
-        scientific_defaults=plan.scientific_defaults,
+        scientific_defaults=(
+            plan.scientific_defaults if scientific_defaults is None else scientific_defaults
+        ),
         adapter=get_program_adapter(program),
         profile=PROFILES["standard"],
         checks=tuple(CHECKS[name] for name in checks),
@@ -181,14 +190,23 @@ def step_request(
     run_root: str,
     work_base: str,
     checks: list[str],
+    *,
+    scientific_defaults: Any = None,
 ) -> StepExecutionRequest:
-    """Build a batch step request wired to real adapters and profiles."""
+    """Build a batch step request wired to real adapters and profiles.
+
+    ``scientific_defaults`` overrides the plan's run-level defaults (tests use
+    the empty ``ScientificDefaults()`` to reproduce a request that bypassed
+    document validation).
+    """
     planned = plan.steps[0]
     return StepExecutionRequest(
         step=planned,
         items=tuple(items),
         scientific=planned.scientific,
-        scientific_defaults=plan.scientific_defaults,
+        scientific_defaults=(
+            plan.scientific_defaults if scientific_defaults is None else scientific_defaults
+        ),
         adapter=get_program_adapter(program),
         profile=PROFILES["standard"],
         checks=tuple(CHECKS[name] for name in checks),
@@ -473,6 +491,9 @@ class TestWorkItemExecutor:
         assert failed.error.details["reason"] == "imaginary_count_mismatch"
 
     def test_unresolved_charge_is_input_error(self, tmp_path: Path) -> None:
+        # Document validation now rejects this omission earlier; the executor
+        # check remains as fail-closed defense for callers that bypass it
+        # (worker/legacy requests), reproduced here with empty run defaults.
         plan = compile_plan(calculation_doc("orca", ORCA_NATIVE, str(FAKE_ORCA)))
         bare = StructureSet.of(structure("free", charge=None, multiplicity=None))
         items = assemble_items(plan, bare)
@@ -485,6 +506,7 @@ class TestWorkItemExecutor:
             str(tmp_path / "items"),
             supervisor,
             ["normal_termination"],
+            scientific_defaults=ScientificDefaults(),
         )
         result = WorkItemExecutor().execute(items[0], context)
         assert result.status is WorkItemStatus.FAILED
@@ -607,6 +629,11 @@ class TestBatchSection26Gate:
             str(tmp_path),
             str(tmp_path / "items"),
             ["normal_termination"],
+            # Empty run defaults: the bare s2 item cannot resolve
+            # charge/multiplicity and fails at the executor boundary
+            # (document validation rejects this omission earlier; this
+            # reproduces a request that bypassed it).
+            scientific_defaults=ScientificDefaults(),
         )
         step_result = batch_executor().execute_step(request)
         assert step_result.status is StepStatus.FAILED
@@ -637,6 +664,8 @@ class TestBatchSection26Gate:
             str(tmp_path),
             str(tmp_path / "items"),
             ["normal_termination"],
+            # Same bypassed-request reproduction as require_all above.
+            scientific_defaults=ScientificDefaults(),
         )
         step_result = batch_executor().execute_step(request)
         assert step_result.status is StepStatus.PARTIAL
