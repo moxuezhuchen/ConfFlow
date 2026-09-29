@@ -429,12 +429,13 @@ def _validate_step(
                 field_path=f"{field_path}.calculation.program",
             )
         )
+    program_adapter: Any = None
     if capability is ExecutorCapability.CALCULATION and scientific.program:
         # Program names are scientific vocabulary resolved through the real
         # program registry: unknown programs fail closed at compile time.
         # Role/task names never participate in dispatch.
         try:
-            registry.resolve_program(scientific.program)
+            program_adapter = registry.resolve_program(scientific.program)
         except RegistryLookupError as exc:
             diagnostics.append(
                 error(
@@ -444,6 +445,30 @@ def _validate_step(
                     step_id=step.id,
                     field_path=f"{field_path}.calculation.program",
                     details={"program": scientific.program},
+                )
+            )
+
+    if program_adapter is not None and step.enabled:
+        # The program adapter is the file-format authority.  Its
+        # structure-independent native-definition requirements (strict native
+        # vocabulary, required non-empty values, deterministic option
+        # constraints) are evaluated here, at compile time, on the same path
+        # the renderer uses.  Anything the adapter would deterministically
+        # refuse at rendering must be refused before submission; only
+        # structure-dependent checks stay in the runtime.  Disabled steps
+        # never render and therefore carry no native requirement.
+        for native_message in program_adapter.validate_native_definition(scientific.native):
+            diagnostics.append(
+                error(
+                    DiagnosticCode.SCIENTIFIC_PARAMETER_CONFLICT,
+                    DiagnosticReason.INVALID_VALUE,
+                    native_message.removeprefix("native_input_error: "),
+                    step_id=step.id,
+                    field_path=f"{field_path}.calculation.native",
+                    details={
+                        "program": scientific.program,
+                        "requirement": "native_definition",
+                    },
                 )
             )
 

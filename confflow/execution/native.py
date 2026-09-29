@@ -16,6 +16,7 @@ process boundary.  It defines facts and requests, never workflow topology:
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Protocol, runtime_checkable
@@ -513,6 +514,18 @@ class ProgramAdapter(Protocol):
         self, inputs: ResolvedCalculationInputs
     ) -> MaterializedNativeInput:
         """Render the native input files for one calculation."""
+        ...
+
+    def validate_native_definition(self, native: Mapping[str, Any]) -> tuple[str, ...]:
+        """Return deterministic native-definition failures, or ``()``.
+
+        The structure-independent half of native rendering: strict native
+        vocabulary, required/empty native values, and deterministic native
+        option constraints that never depend on a structure, geometry or
+        resources.  Semantic validation calls this before a document can be
+        submitted; :meth:`materialize_native_input` refuses on the same
+        result, so validator and renderer share one requirement path.
+        """
         ...
 
     def build_execution_request(

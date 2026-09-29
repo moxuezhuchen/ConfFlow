@@ -141,6 +141,60 @@ def _require_keyword_for_mode(keyword: str, mode: str) -> None:
         )
 
 
+def native_definition_errors(native: Any) -> tuple[str, ...]:
+    """Return deterministic native-definition failures without rendering.
+
+    The structure-independent half of ORCA native rendering: strict native
+    vocabulary, required non-empty keyword, block/path-mode shape and
+    deterministic option values.  Semantic validation calls this through the
+    adapter before a document can be submitted; the renderer refuses on the
+    same result, so the requirement is never stated twice.
+
+    Structure-dependent requirements (charge/multiplicity resolution,
+    geometry, freeze indices, checkpoint consumption, NEB product slots)
+    stay in the runtime rendering path.
+    """
+    if not isinstance(native, Mapping):
+        return ("native_input_error: ORCA native options must be a mapping",)
+    errors: list[str] = []
+    unknown = sorted(set(native) - set(ALLOWED_NATIVE_KEYS))
+    if unknown:
+        errors.append(f"native_input_error: ORCA unknown native keys: {', '.join(unknown)}")
+    keyword: str | None = None
+    try:
+        keyword = resolve_keyword(native)
+    except ValueError as exc:
+        errors.append(str(exc))
+    try:
+        resolve_blocks_text(native)
+    except ValueError as exc:
+        errors.append(str(exc))
+    modes = [key for key in ("irc", "neb", "goat") if native.get(key) is not None]
+    if len(modes) > 1:
+        errors.append(
+            f"native_input_error: ORCA accepts at most one path/ensemble mode, got {modes}; "
+            "one WorkItem carries one native mode"
+        )
+    elif modes:
+        mode = modes[0]
+        section = native.get(mode)
+        if not isinstance(section, Mapping):
+            errors.append(f"native_input_error: ORCA '{mode}' native options must be a mapping")
+        elif keyword is not None:
+            if mode == "neb" and section.get("neb_ts", False) is True:
+                mode = "neb_ts"
+            try:
+                _require_keyword_for_mode(keyword, mode)
+            except ValueError as exc:
+                errors.append(str(exc))
+    if native.get("maxcore") is not None:
+        try:
+            resolve_maxcore(native, memory_bytes=None, cores=None)
+        except ValueError as exc:
+            errors.append(str(exc))
+    return tuple(errors)
+
+
 class OrcaProgramAdapter(ProgramAdapter):
     """File-format authority for ORCA native execution."""
 
@@ -173,6 +227,17 @@ class OrcaProgramAdapter(ProgramAdapter):
     def default_executable(self) -> str:
         """Return the default executable name used for PATH lookup."""
         return "orca"
+
+    def validate_native_definition(self, native: Mapping[str, Any]) -> tuple[str, ...]:
+        """Return deterministic native-definition failures without rendering.
+
+        The adapter is the file-format authority: this method exposes the
+        structure-independent half of native rendering to semantic validation,
+        and :meth:`materialize_native_input` refuses on the same result before
+        rendering anything.  Structure-dependent requirements stay in the
+        rendering path.
+        """
+        return native_definition_errors(native)
 
     def materialize_native_input(
         self, inputs: ResolvedCalculationInputs
@@ -211,9 +276,9 @@ class OrcaProgramAdapter(ProgramAdapter):
             raise _input_error(f"ORCA 'multiplicity' must be >= 1, got {multiplicity}")
 
         native = inputs.native
-        unknown = sorted(set(native) - set(ALLOWED_NATIVE_KEYS))
-        if unknown:
-            raise _input_error(f"ORCA unknown native keys: {', '.join(unknown)}")
+        native_errors = self.validate_native_definition(native)
+        if native_errors:
+            raise ValueError(native_errors[0])
 
         keyword = resolve_keyword(native)
         blocks_text = resolve_blocks_text(native)

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+from collections.abc import Mapping
 from typing import Any
 
 from ...domain._immutable import FrozenDict
@@ -204,6 +205,18 @@ class GaussianProgramAdapter:
         """
         return _rendering.keyword_requests_freq(keyword)
 
+    def validate_native_definition(self, native: Mapping[str, Any]) -> tuple[str, ...]:
+        """Return deterministic native-definition failures without rendering.
+
+        The adapter is the file-format authority: this method exposes the
+        structure-independent half of native rendering (strict native
+        vocabulary and the required non-empty keyword) to semantic validation,
+        and :meth:`materialize_native_input` refuses on the same result before
+        rendering anything.  Structure-dependent requirements stay in the
+        rendering path.
+        """
+        return _rendering.native_definition_errors(native)
+
     def build_rescue_inputs(
         self,
         inputs: ResolvedCalculationInputs,
@@ -302,7 +315,9 @@ class GaussianProgramAdapter:
             resources, or native vocabulary entries are missing or invalid.
         """
         native = inputs.native
-        _rendering.check_native_keys(native)
+        native_errors = self.validate_native_definition(native)
+        if native_errors:
+            raise ValueError(native_errors[0])
         charge = _rendering.resolve_charge(inputs.charge)
         multiplicity = _rendering.resolve_multiplicity(inputs.multiplicity)
         cores = _rendering.resolve_core_count(inputs.resources.cores_per_item)

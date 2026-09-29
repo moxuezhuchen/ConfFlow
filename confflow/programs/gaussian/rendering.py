@@ -19,6 +19,7 @@ from .._naming import sanitize_job_name
 __all__ = [
     "ALLOWED_NATIVE_KEYS",
     "apply_freeze",
+    "check_native_definition",
     "check_native_keys",
     "coerce_section_lines",
     "ensure_modredundant_keyword",
@@ -26,6 +27,7 @@ __all__ = [
     "format_keyword_line",
     "format_memory_gb",
     "keyword_requests_freq",
+    "native_definition_errors",
     "normalize_gaussian_keyword",
     "render_gaussian_input",
     "rescue_freeze_directive",
@@ -178,6 +180,67 @@ def resolve_keyword(native: Mapping[str, Any]) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ValueError("native_input_error: Gaussian 'keyword' must be a non-empty string")
     return value.strip()
+
+
+def native_definition_errors(native: Mapping[str, Any]) -> tuple[str, ...]:
+    """Return deterministic native-definition failures without rendering.
+
+    This is the authoritative, structure-independent half of Gaussian native
+    rendering: the strict native vocabulary and the required non-empty
+    ``keyword`` (including a keyword that normalizes to nothing).  Semantic
+    validation calls it before anything can be submitted, and the renderer
+    derives its own refusals from the same function, so the requirement is
+    never stated twice.
+
+    The structure-dependent requirements (charge/multiplicity resolution,
+    geometry, freeze indices, checkpoints) stay in the runtime rendering path
+    and are not evaluated here.
+
+    Parameters
+    ----------
+    native : Mapping[str, Any]
+        Native option mapping from a workflow document or resolved inputs.
+
+    Returns
+    -------
+    tuple[str, ...]
+        ``native_input_error``-prefixed messages, in deterministic order;
+        empty when the native definition is deterministically renderable.
+    """
+    try:
+        check_native_keys(native)
+    except ValueError as exc:
+        return (str(exc),)
+    errors: list[str] = []
+    try:
+        keyword = resolve_keyword(native)
+    except ValueError as exc:
+        errors.append(str(exc))
+    else:
+        try:
+            format_keyword_line(keyword)
+        except ValueError as exc:
+            errors.append(str(exc))
+    return tuple(errors)
+
+
+def check_native_definition(native: Mapping[str, Any]) -> None:
+    """Raise the first deterministic native-definition failure, if any.
+
+    Parameters
+    ----------
+    native : Mapping[str, Any]
+        Native option mapping from resolved calculation inputs.
+
+    Raises
+    ------
+    ValueError
+        Raised with the first ``native_input_error`` message when the native
+        definition is deterministically non-renderable.
+    """
+    errors = native_definition_errors(native)
+    if errors:
+        raise ValueError(errors[0])
 
 
 def coerce_section_lines(value: Any, key: str) -> list[str]:
