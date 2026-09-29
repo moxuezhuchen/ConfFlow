@@ -333,42 +333,6 @@ _MODE_PROFILES: dict[str, tuple[str, ...]] = {
 }
 
 
-def _orca_mode_keyword_mismatch(program: Any, native: Any) -> str | None:
-    """Describe an ORCA mode-block/job-keyword mismatch, or ``None``.
-
-    Verified against the installed ORCA 6.1.1 binary: a ``%irc`` /
-    ``%neb`` / ``%goat`` block under a plain keyword runs a different
-    job silently (a plain optimization ignoring the block).  The keyword
-    must therefore name the job for the declared native mode.
-    """
-    if not isinstance(program, str) or program.strip().lower() != "orca":
-        return None
-    if not isinstance(native, Mapping):
-        return None
-    modes = [key for key in ("irc", "neb", "goat") if native.get(key) is not None]
-    if len(modes) != 1:
-        return None
-    keyword = native.get("keyword")
-    tokens = keyword.split() if isinstance(keyword, str) else []
-    upper = [token.upper() for token in tokens]
-    mode = modes[0]
-    if mode == "irc":
-        required: tuple[str, ...] = ("IRC",)
-    elif mode == "goat":
-        required = ("GOAT",)
-    else:
-        section = native.get("neb")
-        neb_ts = isinstance(section, Mapping) and section.get("neb_ts", False) is True
-        required = ("NEB-TS",) if neb_ts else ("NEB",)
-    if not any(token in upper for token in required):
-        return (
-            f"ORCA {mode} mode requires keyword {'/'.join(required)} "
-            f"(got {keyword!r}); a mode block under a plain keyword "
-            "runs a different job silently"
-        )
-    return None
-
-
 def _native_mode_profile_mismatch(native: Any, profile_name: str) -> str | None:
     """Describe a native-mode/result-profile mismatch, or ``None``.
 
@@ -670,18 +634,6 @@ def _validate_step(
                         "profile": profile.name,
                         "modes": _active_native_modes(scientific.native),
                     },
-                )
-            )
-        keyword_mismatch = _orca_mode_keyword_mismatch(scientific.program, scientific.native)
-        if keyword_mismatch is not None:
-            diagnostics.append(
-                error(
-                    DiagnosticCode.CAPABILITY_ERROR,
-                    DiagnosticReason.INCOMPATIBLE_CAPABILITY_COMBINATION,
-                    keyword_mismatch,
-                    step_id=step.id,
-                    field_path=f"{field_path}.calculation.native",
-                    details={"program": scientific.program},
                 )
             )
     if scientific.transform is not None and scientific.transform not in TRANSFORM_KINDS:

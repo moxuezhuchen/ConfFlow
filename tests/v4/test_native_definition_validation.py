@@ -44,6 +44,7 @@ def _calculation_document(
     native: dict[str, Any] | None,
     *,
     program: str = "g16",
+    profile: str = "standard",
     enabled: bool | None = None,
 ) -> dict[str, Any]:
     """Build a calculation document with an explicit native mapping (None omits it)."""
@@ -51,6 +52,7 @@ def _calculation_document(
         "step_1",
         bindings={"structure": {"source": {"run": "structures"}}},
         program=program,
+        profile=profile,
         enabled=enabled,
     )
     if native is None:
@@ -131,6 +133,42 @@ def test_unknown_native_key_is_rejected_by_validation() -> None:
         _document_bytes(_calculation_document({"keyword": "B3LYP", "not_a_key": 1}))
     )
     _assert_native_rejection(report, "unknown native key")
+
+
+def test_extra_section_alias_conflict_is_rejected_by_validation() -> None:
+    report = validate_workflow_bytes(
+        _document_bytes(
+            _calculation_document(
+                {
+                    "keyword": "B3LYP",
+                    "extra_sections": "A\n",
+                    "gaussian_extra": "B\n",
+                }
+            )
+        )
+    )
+    _assert_native_rejection(report, "conflict")
+
+
+def test_mapping_valued_extra_sections_is_rejected_by_validation() -> None:
+    report = validate_workflow_bytes(
+        _document_bytes(_calculation_document({"keyword": "B3LYP", "extra_sections": {"x": 1}}))
+    )
+    _assert_native_rejection(report, "must be a string")
+
+
+def test_mapping_valued_link0_is_rejected_by_validation() -> None:
+    report = validate_workflow_bytes(
+        _document_bytes(_calculation_document({"keyword": "B3LYP", "link0": {"x": 1}}))
+    )
+    _assert_native_rejection(report, "link0")
+
+
+def test_mapping_valued_modredundant_is_rejected_by_validation() -> None:
+    report = validate_workflow_bytes(
+        _document_bytes(_calculation_document({"keyword": "B3LYP", "modredundant": {"x": 1}}))
+    )
+    _assert_native_rejection(report, "modredundant")
 
 
 def test_omitted_native_member_is_rejected_by_validation() -> None:
@@ -218,6 +256,96 @@ def test_orca_maxcore_override_is_validated_at_compile_time() -> None:
     _assert_native_rejection(report, "maxcore")
 
 
+def test_orca_blank_maxcore_still_derives_from_resources() -> None:
+    # A blank override means "absent": the renderer derives %maxcore from
+    # resolved resources, so validation must not refuse it.
+    report = validate_workflow_bytes(
+        _document_bytes(_calculation_document({"keyword": "B3LYP D3BJ Opt", "maxcore": "  "}, program="orca"))
+    )
+    assert report.ok is True, report.diagnostics
+
+
+def test_orca_irc_unknown_key_is_rejected_by_validation() -> None:
+    report = validate_workflow_bytes(
+        _document_bytes(
+            _calculation_document(
+                {"keyword": "IRC", "irc": {"bogus": 1}}, program="orca", profile="path_endpoints"
+            )
+        )
+    )
+    _assert_native_rejection(report, "unsupported native keys")
+
+
+def test_orca_irc_unsupported_direction_is_rejected_by_validation() -> None:
+    report = validate_workflow_bytes(
+        _document_bytes(
+            _calculation_document(
+                {"keyword": "IRC", "irc": {"direction": "forward"}},
+                program="orca",
+                profile="path_endpoints",
+            )
+        )
+    )
+    _assert_native_rejection(report, "direction")
+
+
+def test_orca_goat_unknown_option_is_rejected_by_validation() -> None:
+    report = validate_workflow_bytes(
+        _document_bytes(
+            _calculation_document(
+                {"keyword": "GOAT", "goat": {"Seed": 1}},
+                program="orca",
+                profile="ensemble",
+            )
+        )
+    )
+    assert report.ok is False
+    assert any(
+        item["code"] == "scientific_parameter_conflict" and "%goat" in item["message"]
+        for item in report.errors()
+    )
+
+
+def test_orca_neb_option_is_rejected_by_validation() -> None:
+    report = validate_workflow_bytes(
+        _document_bytes(
+            _calculation_document(
+                {"keyword": "NEB", "neb": {"n_images": 1}}, program="orca", profile="ensemble"
+            )
+        )
+    )
+    _assert_native_rejection(report, "n_images")
+
+
+def test_orca_mode_keyword_mismatch_is_rejected_once() -> None:
+    # The mode/keyword rule lives in the adapter's definition validator now;
+    # semantic validation must not re-state it (no duplicate rule table, no
+    # duplicate diagnostic).
+    report = validate_workflow_bytes(
+        _document_bytes(
+            _calculation_document(
+                {"keyword": "B3LYP Opt", "irc": {"direction": "both"}},
+                program="orca",
+                profile="path_endpoints",
+            )
+        )
+    )
+    _assert_native_rejection(report, "mode requires keyword IRC")
+
+
+def test_orca_mode_with_matching_keyword_is_valid() -> None:
+    report = validate_workflow_bytes(
+        _document_bytes(
+            _calculation_document(
+                {"keyword": "IRC", "irc": {"direction": "both"}},
+                program="orca",
+                profile="path_endpoints",
+            )
+        )
+    )
+    assert report.ok is True, report.diagnostics
+
+
 # -- runtime-rule consistency ------------------------------------------------
 
 
@@ -252,6 +380,24 @@ def test_orca_renderer_refuses_unknown_keys_identically() -> None:
     ]
     with pytest.raises(ValueError) as excinfo:
         adapter.materialize_native_input(_orca_inputs({"keyword": "B3LYP Opt", "bogus": 1}))
+    assert str(excinfo.value) == message
+
+
+def test_gaussian_renderer_refuses_section_conflict_identically() -> None:
+    adapter = GaussianProgramAdapter()
+    native = {"keyword": "B3LYP", "extra_sections": "A\n", "gaussian_extra": "B\n"}
+    message = adapter.validate_native_definition(FrozenDict(native))[0]
+    with pytest.raises(ValueError) as excinfo:
+        adapter.materialize_native_input(_gaussian_inputs(native))
+    assert str(excinfo.value) == message
+
+
+def test_orca_renderer_refuses_irc_unknown_option_identically() -> None:
+    adapter = OrcaProgramAdapter()
+    native = {"keyword": "IRC", "irc": {"bogus": 1}}
+    message = adapter.validate_native_definition(FrozenDict(native))[0]
+    with pytest.raises(ValueError) as excinfo:
+        adapter.materialize_native_input(_orca_inputs(native))
     assert str(excinfo.value) == message
 
 

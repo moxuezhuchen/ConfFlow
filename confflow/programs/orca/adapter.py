@@ -145,14 +145,15 @@ def native_definition_errors(native: Any) -> tuple[str, ...]:
     """Return deterministic native-definition failures without rendering.
 
     The structure-independent half of ORCA native rendering: strict native
-    vocabulary, required non-empty keyword, block/path-mode shape and
-    deterministic option values.  Semantic validation calls this through the
-    adapter before a document can be submitted; the renderer refuses on the
-    same result, so the requirement is never stated twice.
+    vocabulary, required non-empty keyword, block/path-mode option validation
+    (``irc``/``goat``/``neb`` sections) and deterministic option values.
+    Semantic validation calls this through the adapter before a document can
+    be submitted; the renderer refuses on the same render helpers, so the
+    requirement is never stated twice.
 
     Structure-dependent requirements (charge/multiplicity resolution,
-    geometry, freeze indices, checkpoint consumption, NEB product slots)
-    stay in the runtime rendering path.
+    geometry, freeze indices, checkpoint consumption, the NEB product
+    structure slot) stay in the runtime rendering path.
     """
     if not isinstance(native, Mapping):
         return ("native_input_error: ORCA native options must be a mapping",)
@@ -180,19 +181,57 @@ def native_definition_errors(native: Any) -> tuple[str, ...]:
         section = native.get(mode)
         if not isinstance(section, Mapping):
             errors.append(f"native_input_error: ORCA '{mode}' native options must be a mapping")
-        elif keyword is not None:
-            if mode == "neb" and section.get("neb_ts", False) is True:
-                mode = "neb_ts"
-            try:
-                _require_keyword_for_mode(keyword, mode)
-            except ValueError as exc:
-                errors.append(str(exc))
-    if native.get("maxcore") is not None:
+        else:
+            errors.extend(_path_mode_option_errors(mode, section))
+            if keyword is not None:
+                if mode == "neb" and section.get("neb_ts", False) is True:
+                    mode = "neb_ts"
+                try:
+                    _require_keyword_for_mode(keyword, mode)
+                except ValueError as exc:
+                    errors.append(str(exc))
+    # A non-blank explicit override is deterministic; a blank value means
+    # "absent" and the renderer derives %maxcore from resolved resources (a
+    # runtime/resource concern), so it must not be refused here.
+    if native.get("maxcore") is not None and str(native.get("maxcore")).strip():
         try:
             resolve_maxcore(native, memory_bytes=None, cores=None)
         except ValueError as exc:
             errors.append(str(exc))
     return tuple(errors)
+
+
+def _path_mode_option_errors(mode: str, section: Mapping[str, Any]) -> tuple[str, ...]:
+    """Validate one path/ensemble mode section with the real render helpers.
+
+    ``irc``/``goat``/``neb`` option validation is structure-independent, so
+    the definition validator exercises exactly the helpers the renderer calls.
+    The NEB product endpoint name is a rendering decision, never a document
+    member; a neutral valid name is used here and the product *structure*
+    requirement stays in the runtime path.
+    """
+    from .goat import render_goat_blocks
+    from .neb import render_neb_blocks
+    from .path import render_irc_blocks
+
+    try:
+        if mode == "irc":
+            render_irc_blocks(section)
+        elif mode == "goat":
+            if "RANDOMSEED" in section:
+                return (
+                    "native_input_error: native goat RANDOMSEED is a second seed authority; "
+                    "set the step seed instead (compile-time validation rejects this key "
+                    "before rendering)",
+                )
+            render_goat_blocks({"goat": dict(section)})
+        elif mode == "neb":
+            render_neb_blocks(section, product_xyz_name="neb_endpoint.xyz")
+        else:  # pragma: no cover - the caller only passes the three modes
+            return ()
+    except ValueError as exc:
+        return (str(exc),)
+    return ()
 
 
 class OrcaProgramAdapter(ProgramAdapter):
