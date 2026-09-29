@@ -50,7 +50,7 @@ DEFAULT_JOBDESK_SRC = Path("/opt/jobdesk-v2-v4/src")
 #: Tracks the frozen JobDesk FINAL-REPAIR candidate (result-identity
 #: binding, submission validation invariant, legacy fallback authority
 #: retirement, scientific-mirror removal, fixture re-vendor).
-EXPECTED_JOBDESK_SHA = "27a96c5a0a3ea595eb8dadbc9ab7ea33e6c21039"
+EXPECTED_JOBDESK_SHA = "7ce13c5f5a76b877c03b7fcfa89f4a84e6976258"
 
 #: Explicit escape hatch for development against a different checkout.
 ALLOW_ANY_SHA_ENV = "JOBDESK_V2_ALLOW_ANY_SHA"
