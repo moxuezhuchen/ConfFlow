@@ -236,8 +236,13 @@ are satisfied, the response is fresh, and the applied document validates.
 - Every machine failure is structured JSON on stdout with a stable
   `reason_code`/`code`; human text goes to stderr.
 - Exit codes: `0` success/valid, `1` structured failure, `2` usage error.
-- Consumers fail closed: unknown boundary protocol version, missing schema, or
-  digest mismatch refuses the boundary; there is no fallback to legacy wire.
+- Consumers fail closed: unknown boundary protocol version, a missing required
+  schema digest, or digest mismatch refuses the boundary; there is no fallback
+  to legacy wire.  The required digest set covers the authoring schemas
+  (`authoring_request`, `authoring_response`); the future-only PreparedRun
+  manifest and validation receipt digests (§8, PR-3) are published by the
+  producer and recorded by the consumer when present, but they are not required
+  for boundary acceptance.
 - Diagnostics carry `code`, `severity`, `message`, optional `step_id` and
   `field_path`; `step_id` is always a V4 step id or null.
 
