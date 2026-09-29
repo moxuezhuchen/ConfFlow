@@ -47,9 +47,9 @@ JOBDESK_SRC_ENV = "JOBDESK_V2_SRC"
 DEFAULT_JOBDESK_SRC = Path("/opt/jobdesk-v2-v4/src")
 
 #: Pinned JobDesk revision the cross-repo evidence was produced against.
-#: Tracks the normalised JobDesk master after the P0 PR-2 identity/resource
-#: merge and the boundary fixture re-sync.
-EXPECTED_JOBDESK_SHA = "da445597a3eef4c38a55d2b81b4a985dfb4a21c0"
+#: Tracks the normalised JobDesk master after the P0 PR-2b named-Binding
+#: repair merge.
+EXPECTED_JOBDESK_SHA = "ddf0b37f1e0f27ee98e1f85b7a30380b6837c235"
 
 #: Explicit escape hatch for development against a different checkout.
 ALLOW_ANY_SHA_ENV = "JOBDESK_V2_ALLOW_ANY_SHA"
