@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import yaml
@@ -36,12 +37,22 @@ def test_v216_release_metadata_and_runtime_inputs_are_consistent():
     assert "confflow-2.1.6-py312-linux-x86_64.lock" in RELEASE_LOCK.read_text(encoding="utf-8")
     assert not (repository / "release" / "confflow-2.1.5-py312-linux-x86_64.lock").exists()
     assert not (repository / "release" / "confflow-2.1.5-py312-linux-x86_64.SHA256SUMS").exists()
-    assert 'capabilities.version != "2.1.6"' in JOBDESK_CONTRACT_WORKFLOW.read_text(
-        encoding="utf-8"
+    # The paired CI now targets the current JobDesk-v2 consumer; the release
+    # consistency requirement is that both workflows pin the same audited
+    # consumer revision the cross-repo tests enforce, and reference no
+    # retired consumer repository.
+    pin_match = re.search(
+        r'EXPECTED_JOBDESK_SHA = "([0-9a-f]{40})"',
+        (repository / "tests" / "v4" / "jobdesk_integration.py").read_text(encoding="utf-8"),
     )
-    assert 'capabilities.version != "2.1.6"' in PAIRED_COMPATIBILITY_WORKFLOW.read_text(
-        encoding="utf-8"
-    )
+    assert pin_match is not None, "the cross-repo pin constant must exist"
+    pinned = pin_match.group(1)
+    for workflow in (JOBDESK_CONTRACT_WORKFLOW, PAIRED_COMPATIBILITY_WORKFLOW):
+        text = workflow.read_text(encoding="utf-8")
+        assert "moxuezhuchen/jobdesk-v2" in text, workflow.name
+        assert pinned in text, workflow.name
+        assert "moxuezhuchen/jobdesk\n" not in text, workflow.name
+        assert "jobdesk_app" not in text, workflow.name
 
 
 def test_release_workflow_is_valid_yaml_with_tag_only_trigger_and_ordered_gates():
