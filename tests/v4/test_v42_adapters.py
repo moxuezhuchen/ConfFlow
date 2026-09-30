@@ -147,10 +147,10 @@ class TestProgramResolution:
         assert orca.input_extension == "inp"
         assert orca.log_extension == "out"
         assert orca.default_executable == "orca"
-        assert gaussian.adapter_version == "confflow.program.gaussian.v1"
-        assert gaussian.parser_version == "confflow.program.gaussian.parser.v1"
+        assert gaussian.adapter_version == "confflow.program.gaussian.v2"
+        assert gaussian.parser_version == "confflow.program.gaussian.parser.v2"
         assert orca.adapter_version == "confflow.program.orca.v1"
-        assert orca.parser_version == "confflow.program.orca.parser.v1"
+        assert orca.parser_version == "confflow.program.orca.parser.v2"
 
     def test_adapters_satisfy_the_program_adapter_protocol(self) -> None:
         assert isinstance(GaussianProgramAdapter(), ProgramAdapter)

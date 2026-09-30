@@ -1,0 +1,65 @@
+[
+  {
+    "case": "verified",
+    "status": "completed",
+    "results": {
+      "energy": -74.965901192193,
+      "gibbs_energy": -74.95926275,
+      "gibbs_correction": 0.00663844,
+      "frequencies": [
+        2169.82,
+        4139.63,
+        4390.66
+      ],
+      "num_imaginary_frequencies": 0,
+      "lowest_frequency": 2169.82
+    },
+    "diagnostics": [
+      {
+        "code": "native_termination",
+        "details": {
+          "terminated": true
+        }
+      }
+    ],
+    "max_log_xyz_coordinate_difference_angstrom": 3.8519754996801936e-07
+  },
+  {
+    "case": "rejected",
+    "status": "failed",
+    "results": {},
+    "diagnostics": [
+      {
+        "code": "scientific_check_error",
+        "details": {
+          "reason": "geometry_not_converged"
+        }
+      },
+      {
+        "code": "native_termination",
+        "details": {
+          "terminated": true
+        }
+      },
+      {
+        "code": "scientific_check_error",
+        "details": {
+          "reason": "geometry_not_converged"
+        }
+      },
+      {
+        "code": "scientific_check_error",
+        "details": {
+          "reason": "geometry_not_converged"
+        }
+      },
+      {
+        "code": "scientific_check_error",
+        "details": {
+          "check": "geometry_required",
+          "reason": "geometry_missing"
+        }
+      }
+    ]
+  }
+]

@@ -36,9 +36,9 @@ TERMINATION_MARKER: str = "****ORCA TERMINATED NORMALLY****"
 #: Modes within this many cm^-1 of zero are numerical noise, never imaginary.
 FREQUENCY_NOISE_FLOOR_CM: float = 10.0
 
-_FINAL_ENERGY_PATTERN = re.compile(r"FINAL SINGLE POINT ENERGY\s+([\d.\-]+)")
-_GIBBS_CORRECTION_PATTERN = re.compile(r"G-E\(el\)\s+\.\.\.\s+([\d.\-]+)\s+Eh")
-_GIBBS_ENERGY_PATTERN = re.compile(r"Final Gibbs free energy\s+\.\.\.\s+([\d.\-]+)\s+Eh")
+_FINAL_ENERGY_PATTERN = re.compile(r"FINAL SINGLE POINT ENERGY\s+(\S+)")
+_GIBBS_CORRECTION_PATTERN = re.compile(r"G-E\(el\)\s+\.\.\.\s+(\S+)\s+Eh")
+_GIBBS_ENERGY_PATTERN = re.compile(r"Final Gibbs free energy\s+\.\.\.\s+(\S+)\s+Eh")
 _FREQ_VALUE_PATTERN = re.compile(r"\d+:\s+([-\d.]+)\s+cm")
 
 _COORD_HEADER = "CARTESIAN COORDINATES (ANGSTROEM)"
@@ -67,7 +67,7 @@ def read_log_text(path: str) -> str | None:
 
 
 def termination_reached(text: str) -> bool:
-    """Return whether the log text carries the normal-termination marker.
+    """Return whether the last termination event is normal.
 
     Parameters
     ----------
@@ -77,9 +77,11 @@ def termination_reached(text: str) -> bool:
     Returns
     -------
     bool
-        True when ``****ORCA TERMINATED NORMALLY****`` is present.
+        True when the normal marker is present with no later error termination.
     """
-    return TERMINATION_MARKER in text
+    normal = text.rfind(TERMINATION_MARKER)
+    error = text.rfind("ORCA finished by error")
+    return normal >= 0 and normal > error
 
 
 def orca_error_details(text: str) -> str:
@@ -106,7 +108,7 @@ def orca_error_details(text: str) -> str:
 
 def _to_float(token: str) -> float | None:
     try:
-        value = float(token)
+        value = float(token.replace("D", "E").replace("d", "e"))
     except (TypeError, ValueError):
         return None
     return value if math.isfinite(value) else None
@@ -294,6 +296,8 @@ def parse_xyz_companion(path: str) -> tuple[tuple[str, ...], tuple[tuple[float, 
         with open(path, errors="ignore") as handle:
             lines = handle.readlines()
         count = int(lines[0].strip())
+        if count <= 0:
+            return None
         atoms: list[str] = []
         coords: list[tuple[float, ...]] = []
         for line in lines[2 : 2 + count]:

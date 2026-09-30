@@ -96,7 +96,7 @@ def read_log_text(path: str) -> str | None:
 
 
 def termination_reached(text: str) -> bool:
-    """Return whether log text carries the normal-termination marker.
+    """Return whether the last termination event is normal.
 
     Parameters
     ----------
@@ -106,9 +106,11 @@ def termination_reached(text: str) -> bool:
     Returns
     -------
     bool
-        True when ``"Normal termination"`` is present.
+        True when a normal marker is present with no later error termination.
     """
-    return TERMINATION_MARKER in text
+    normal = text.rfind(TERMINATION_MARKER)
+    error = text.rfind("Error termination")
+    return normal >= 0 and normal > error
 
 
 def check_termination(log_path: str) -> bool:
@@ -122,8 +124,8 @@ def check_termination(log_path: str) -> bool:
     Returns
     -------
     bool
-        True when ``"Normal termination"`` appears in the trailing bytes of
-        the file; False when the file is missing or unreadable.
+        True when a normal marker appears in the trailing bytes with no
+        later error termination; False when the file is missing or unreadable.
     """
     if not os.path.exists(log_path):
         return False
@@ -133,7 +135,7 @@ def check_termination(log_path: str) -> bool:
             size = handle.tell()
             handle.seek(max(0, size - _TAIL_BYTES))
             content = handle.read().decode("utf-8", errors="ignore")
-            return TERMINATION_MARKER in content
+            return termination_reached(content)
     except OSError:
         return False
 

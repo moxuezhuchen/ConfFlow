@@ -690,7 +690,7 @@ def _default_executors() -> tuple[ExecutorContract, ...]:
         ),
         ExecutorContract(
             capability=ExecutorCapability.CONFGEN,
-            contract_version="confflow.contract.executor.confgen.v1",
+            contract_version="confflow.contract.executor.confgen.v2",
             input_ports=(
                 _structure_port(
                     "structure",

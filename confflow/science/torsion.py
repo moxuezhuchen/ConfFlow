@@ -188,7 +188,7 @@ def rotating_side(
         if index != left
         and index != right
         and index not in far_set
-        and dist_near[index] <= dist_far[index]
+        and dist_near[index] < dist_far[index]
     ]
 
 

@@ -352,7 +352,7 @@ def _build_chain_rotations(
                 for idx in range(n_atoms)
                 if idx not in (a_left, a_right)
                 and idx not in right_source_set
-                and dist_left[idx] <= dist_right[idx]
+                and dist_left[idx] < dist_right[idx]
             ]
 
             rot_bonds.append((int(a_left), int(a_right), np.array(rotate_atoms, dtype=np.int64)))

@@ -1091,6 +1091,20 @@ class WorkItemExecutor:
         cancellation_confirmed: bool,
         recovery_attempt: int = 0,
     ) -> WorkItemResult:
+        geometry = native_result.final_geometry
+        if geometry is not None and tuple(geometry.atoms) != tuple(
+            self._resolved_inputs(work_item, context).structure.atoms
+        ):
+            return self._finish_error(
+                work_item,
+                context,
+                NativeErrorCode.NATIVE_PARSE_ERROR,
+                "native output atom sequence does not match the calculation input",
+                wall_start,
+                monotonic_start,
+                diagnostics=base_diagnostics + tuple(native_result.parser_diagnostics),
+                details={"reason": "geometry_atoms_mismatch"},
+            )
         try:
             item_dir = context.attempt_dir(work_item)
         except Exception:
@@ -1141,7 +1155,14 @@ class WorkItemExecutor:
             + list(native_result.parser_diagnostics)
             + list(profile_output.diagnostics)
         )
-        failures: list[Diagnostic] = []
+        # Parser errors are authoritative even when no optional scientific
+        # checks were declared. Normal process termination alone cannot make
+        # an incomplete or explicitly unconverged result acceptable.
+        failures: list[Diagnostic] = [
+            diagnostic
+            for diagnostic in native_result.parser_diagnostics
+            if diagnostic.severity is DiagnosticSeverity.ERROR
+        ]
         for check in context.checks:
             params = context.scientific.check_params_for(check.name)
             merged = dict(CHECK_DEFAULTS.get(check.name, {}))

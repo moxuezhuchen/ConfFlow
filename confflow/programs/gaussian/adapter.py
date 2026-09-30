@@ -41,10 +41,10 @@ __all__ = [
 ]
 
 #: Adapter contract version folded into digests.
-ADAPTER_VERSION: str = "confflow.program.gaussian.v1"
+ADAPTER_VERSION: str = "confflow.program.gaussian.v2"
 
 #: Parser contract version folded into digests.
-PARSER_VERSION: str = "confflow.program.gaussian.parser.v1"
+PARSER_VERSION: str = "confflow.program.gaussian.parser.v2"
 
 #: Media types recorded on discovered artifacts, keyed by file extension.
 MEDIA_TYPES_BY_EXTENSION: dict[str, str] = {

@@ -75,4 +75,5 @@ def covalent_radii(atomic_numbers: Sequence[int]) -> list[float]:
             raise ValueError(
                 f"atom Z={int(number)} has no usable covalent radius"
             ) from UnknownElementError(f"Z={int(number)}")
+        radii.append(float(radius))
     return [float(item) for item in radii]
