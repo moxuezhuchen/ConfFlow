@@ -309,20 +309,33 @@ _MODE_PROFILES: dict[str, tuple[str, ...]] = {
 }
 
 
-def _native_mode_profile_mismatch(native: Any, profile_name: str) -> str | None:
+def _native_mode_profile_mismatch(
+    native: Any, profile_name: str, *, native_definition_reported: bool = False
+) -> str | None:
     """Describe a native-mode/result-profile mismatch, or ``None``.
 
     A GOAT ensemble rendered into a non-ensemble profile (or an IRC into a
     non-endpoint profile) would silently drop computed structures, so the
     combination fails closed at compile time.
+
+    Native-definition shape and mode exclusivity are the program adapter's
+    requirement (``validate_native_definition``); when that path already
+    reported the defect, the same fact is not restated here (one defect, one
+    diagnostic).  For steps the adapter path does not evaluate (disabled
+    steps never render), the shape/exclusivity checks stay as the document's
+    fail-closed guard, so the accept/reject outcome never changes.
     """
     modes = _active_native_modes(native)
     if len(modes) > 1:
+        if native_definition_reported:
+            return None
         return f"native modes {modes} are mutually exclusive; one work item carries one native mode"
     if not modes:
         return None
     mode = modes[0]
     if not isinstance(_native_option(native, mode), Mapping):
+        if native_definition_reported:
+            return None
         return f"native {mode!r} options must be a mapping"
     allowed = _MODE_PROFILES[mode]
     if profile_name not in allowed:
@@ -388,6 +401,7 @@ def _validate_step(
                 )
             )
 
+    native_definition_reported = False
     if program_adapter is not None and step.enabled:
         # The program adapter is the file-format authority.  Its
         # structure-independent native-definition requirements (strict native
@@ -398,6 +412,7 @@ def _validate_step(
         # structure-dependent checks stay in the runtime.  Disabled steps
         # never render and therefore carry no native requirement.
         for native_message in program_adapter.validate_native_definition(scientific.native):
+            native_definition_reported = True
             diagnostics.append(
                 error(
                     DiagnosticCode.SCIENTIFIC_PARAMETER_CONFLICT,
@@ -584,7 +599,11 @@ def _validate_step(
             )
         )
     if capability is ExecutorCapability.CALCULATION:
-        mismatch = _native_mode_profile_mismatch(scientific.native, profile.name)
+        mismatch = _native_mode_profile_mismatch(
+            scientific.native,
+            profile.name,
+            native_definition_reported=native_definition_reported,
+        )
         if mismatch is not None:
             diagnostics.append(
                 error(
