@@ -47,9 +47,9 @@ JOBDESK_SRC_ENV = "JOBDESK_V2_SRC"
 DEFAULT_JOBDESK_SRC = Path("/opt/jobdesk-v2-v4/src")
 
 #: Pinned JobDesk revision the cross-repo evidence was produced against.
-#: Tracks the frozen JobDesk POST-ACCEPTANCE-MAINTENANCE head (native
-#: failure diagnostics projection pin on top of the accepted baseline).
-EXPECTED_JOBDESK_SHA = "b3ea03f83a69321b3a076484fbe40b49645a65f1"
+#: Tracks the frozen JobDesk SCIENTIFIC-RELIABILITY re-vendor head (P0
+#: boundary fixtures regenerated from the scientific-reliability remediation).
+EXPECTED_JOBDESK_SHA = "9beeaf2fc52932dbf9ca183898f1aa92c4366d97"
 
 #: Explicit escape hatch for development against a different checkout.
 ALLOW_ANY_SHA_ENV = "JOBDESK_V2_ALLOW_ANY_SHA"

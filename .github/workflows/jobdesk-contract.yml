@@ -19,7 +19,7 @@ permissions:
 
 env:
   #: Pinned current-consumer compatibility target (JobDesk-v2).
-  JOBDESK_COMPAT_SHA: "b3ea03f83a69321b3a076484fbe40b49645a65f1"
+  JOBDESK_COMPAT_SHA: "9beeaf2fc52932dbf9ca183898f1aa92c4366d97"
 
 jobs:
   candidate-wheel-against-current-consumer:
