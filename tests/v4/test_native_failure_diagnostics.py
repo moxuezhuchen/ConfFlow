@@ -17,6 +17,7 @@ JSON schema so the projection stays wire-conformant.
 from __future__ import annotations
 
 import json
+import stat
 import tempfile
 from pathlib import Path
 
@@ -157,3 +158,51 @@ def test_an_error_already_carried_by_the_item_is_not_duplicated() -> None:
 
 def test_completed_items_never_gain_an_error_diagnostic() -> None:
     assert _item_error_diagnostics(_failed_item(error=None), step_id="sp") == ()
+
+
+def test_an_error_only_failure_still_reaches_the_manifest(tmp_path: Path) -> None:
+    """The exact audit-I2 shape: no failure-site diagnostic, only item.error.
+
+    A walltime timeout records the reason in ``item_results[].error`` with no
+    item diagnostic.  This is the path the fix exists for: before it, both the
+    step result and the manifest carried no reason at all.
+    """
+    document = _document()
+    document["steps"][0]["execution"] = {"walltime_seconds": 1}
+    script = tmp_path / "slow-native"
+    script.write_text("#!/bin/sh\nsleep 10\nexit 0\n", encoding="utf-8")
+    script.chmod(script.stat().st_mode | stat.S_IXUSR)
+
+    run_root = Path(tempfile.mkdtemp(prefix="native-failure-timeout-", dir=tmp_path))
+    report = V4RunApplication(supervisor=NativeProcessSupervisor()).run(
+        V4RunRequest(
+            workflow_document=document,
+            run_inputs=RunInputs(
+                structures=FrozenDict({"structures": import_xyz(_WATER_XYZ)})
+            ),
+            run_root=str(run_root),
+            executables=FrozenDict({"g16": str(script)}),
+        )
+    )
+
+    assert report.status == "failed", report.status
+    step = json.loads((run_root / "steps/sp/step_result.json").read_text())
+    item = step["item_results"][0]
+    assert item["error"] is not None
+    assert item["diagnostics"] == [], "this scenario must exercise the error-only path"
+
+    errors = [entry for entry in step["diagnostics"] if entry["severity"] == "error"]
+    assert len(errors) == 1, errors
+    assert errors[0]["code"] == item["error"]["code"]
+    assert errors[0]["message"] == item["error"]["message"]
+    assert errors[0]["step_id"] == "sp"
+
+    manifest = json.loads((run_root / "run_result.json").read_text())
+    manifest_errors = [
+        entry
+        for entry in manifest["steps"][0]["diagnostics"]
+        if entry["severity"] == "error"
+    ]
+    assert len(manifest_errors) == 1, manifest_errors
+    assert manifest_errors[0]["code"] == item["error"]["code"]
+    assert manifest_errors[0]["step_id"] == "sp"
