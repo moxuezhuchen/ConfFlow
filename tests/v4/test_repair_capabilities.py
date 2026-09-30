@@ -393,7 +393,10 @@ class TestNativeModeProfileCombinations:
         )
         result = compile_doc(doc)
         assert not result.ok
-        assert "incompatible_capability_combination" in reasons(result.errors)
+        # The adapter-owned native-definition requirement is the single
+        # report for this defect (P3 dedup); the outcome is unchanged.
+        assert "invalid_value" in reasons(result.errors)
+        assert any("at most one path/ensemble mode" in item.message for item in result.errors)
 
     def test_non_mapping_mode_section_rejected(self) -> None:
         doc = v4_doc(
@@ -411,7 +414,8 @@ class TestNativeModeProfileCombinations:
         )
         result = compile_doc(doc)
         assert not result.ok
-        assert "incompatible_capability_combination" in reasons(result.errors)
+        assert "invalid_value" in reasons(result.errors)
+        assert any("must be a mapping" in item.message for item in result.errors)
 
 
 class TestCustomRegistryResolution:

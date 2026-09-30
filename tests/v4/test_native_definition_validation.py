@@ -455,3 +455,59 @@ def test_adapters_expose_the_requirement_path_on_the_protocol() -> None:
 
     assert isinstance(GaussianProgramAdapter(), ProgramAdapter)
     assert isinstance(OrcaProgramAdapter(), ProgramAdapter)
+
+
+# -- P3: one defect, one diagnostic -------------------------------------------
+
+
+def test_orca_non_mapping_mode_section_yields_one_diagnostic() -> None:
+    report = validate_workflow_bytes(
+        _document_bytes(
+            _calculation_document(
+                {"keyword": "GOAT", "goat": "not-a-mapping"},
+                program="orca",
+                profile="ensemble",
+                seed=11,
+            )
+        )
+    )
+    assert report.ok is False
+    errors = report.errors()
+    assert len(errors) == 1, errors
+    assert errors[0]["code"] == "scientific_parameter_conflict"
+    assert "must be a mapping" in errors[0]["message"]
+
+
+def test_orca_two_modes_yield_one_diagnostic() -> None:
+    report = validate_workflow_bytes(
+        _document_bytes(
+            _calculation_document(
+                {"keyword": "GOAT", "goat": {"MaxIter": 5}, "irc": {"direction": "both"}},
+                program="orca",
+                profile="ensemble",
+                seed=11,
+            )
+        )
+    )
+    assert report.ok is False
+    errors = report.errors()
+    assert len(errors) == 1, errors
+    assert "at most one path/ensemble mode" in errors[0]["message"]
+
+
+def test_orca_profile_mismatch_still_reports_its_own_rule() -> None:
+    report = validate_workflow_bytes(
+        _document_bytes(
+            _calculation_document(
+                {"keyword": "GOAT", "goat": {"MaxIter": 5}},
+                program="orca",
+                profile="standard",
+                seed=11,
+            )
+        )
+    )
+    assert report.ok is False
+    errors = report.errors()
+    assert len(errors) == 1, errors
+    assert errors[0]["code"] == "capability_error"
+    assert "requires result profile" in errors[0]["message"]
