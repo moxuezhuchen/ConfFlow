@@ -857,6 +857,7 @@ class TestDurableRunnerSeams:
             profile_version=PROFILES["standard"].contract_version,
             check_versions={"normal_termination": CHECKS["normal_termination"].contract_version},
             recovery_version=RECOVERIES["none"].contract_version,
+            parser_version=adapter.parser_version,
         )
         with SqliteWorkItemStore.open(store_path(str(tmp_path / "run"), STEP_ID)) as store:
             # Same provenance and environment, different input digest: the

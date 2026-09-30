@@ -30,6 +30,7 @@ from ...execution.native import (
     ProgramName,
     ResolvedCalculationInputs,
 )
+from . import energy_semantics as _energy_semantics
 from . import parsing as _parsing
 from . import rendering as _rendering
 
@@ -41,10 +42,10 @@ __all__ = [
 ]
 
 #: Adapter contract version folded into digests.
-ADAPTER_VERSION: str = "confflow.program.gaussian.v1"
+ADAPTER_VERSION: str = "confflow.program.gaussian.v2"
 
 #: Parser contract version folded into digests.
-PARSER_VERSION: str = "confflow.program.gaussian.parser.v1"
+PARSER_VERSION: str = "confflow.program.gaussian.parser.v2"
 
 #: Media types recorded on discovered artifacts, keyed by file extension.
 MEDIA_TYPES_BY_EXTENSION: dict[str, str] = {
@@ -618,6 +619,12 @@ class GaussianProgramAdapter:
                 log_file_name=log_file_name,
             )
         energies, sources = _parsing.parse_energies(text)
+        # Runtime publication proof: the published electronic energy is the
+        # last SCF Done value only when no later method-final-energy marker
+        # exists.  A failure is an ERROR parser diagnostic, which the
+        # executor treats as authoritative even with no declared checks, so
+        # no scientific result is published from an unverified energy.
+        semantics_problem = _energy_semantics.final_energy_semantics_problem(text, sources)
         committed = _parsing.parse_frequencies(text)
         frequencies = _parsing.true_vibrational_modes(committed)
         mode = materialized.metadata.get("mode", "standard")
@@ -662,7 +669,27 @@ class GaussianProgramAdapter:
             "electronic_source": sources.get("electronic", "absent"),
             "gibbs_source": sources.get("gibbs", "absent"),
             "gibbs_correction_source": sources.get("gibbs_correction", "absent"),
+            "energy_semantics": ("verified" if semantics_problem is None else semantics_problem),
         }
+        parser_diagnostics: tuple[Diagnostic, ...] = ()
+        if semantics_problem is not None:
+            parser_diagnostics = (
+                Diagnostic(
+                    code="native_energy_semantics_error",
+                    message=(
+                        "Gaussian final-energy semantics could not be verified "
+                        f"({semantics_problem}); refusing to publish the SCF "
+                        "value as the requested method's energy"
+                    ),
+                    severity=DiagnosticSeverity.ERROR,
+                    details=FrozenDict(
+                        {
+                            "reason": semantics_problem,
+                            "electronic_source": sources.get("electronic", "absent"),
+                        }
+                    ),
+                ),
+            )
         return NativeResult(
             program=ProgramName.GAUSSIAN,
             terminated_normally=terminated,
@@ -672,7 +699,7 @@ class GaussianProgramAdapter:
             frequencies_cm=frequencies,
             native_metadata=FrozenDict(metadata),
             produced_files=tuple(produced),
-            parser_diagnostics=(),
+            parser_diagnostics=parser_diagnostics,
             log_file_name=log_file_name,
         )
 

@@ -250,12 +250,12 @@ class OrcaProgramAdapter(ProgramAdapter):
     @property
     def adapter_version(self) -> str:
         """Return the adapter contract version (folded into digests)."""
-        return "confflow.program.orca.v1"
+        return "confflow.program.orca.v2"
 
     @property
     def parser_version(self) -> str:
         """Return the parser contract version (folded into digests)."""
-        return "confflow.program.orca.parser.v1"
+        return "confflow.program.orca.parser.v2"
 
     @property
     def input_extension(self) -> str:
@@ -605,6 +605,25 @@ class OrcaProgramAdapter(ProgramAdapter):
         if error_details:
             metadata["error_details"] = error_details
 
+        # ORCA can exit normally after exhausting the geometry iterations.
+        # Preserve termination as a native fact, but refuse its unconverged
+        # structure/energy through an error diagnostic consumed by the executor.
+        parser_diagnostics: list[Diagnostic] = []
+        for marker, reason in (
+            ("The optimization did not converge", "geometry_not_converged"),
+            ("SCF NOT CONVERGED", "scf_not_converged"),
+            ("SCF DID NOT CONVERGE", "scf_not_converged"),
+        ):
+            if marker.lower() in text.lower():
+                parser_diagnostics.append(
+                    Diagnostic(
+                        code=NativeErrorCode.SCIENTIFIC_CHECK_ERROR.value,
+                        message=f"ORCA reported {reason.replace('_', ' ')}.",
+                        severity=DiagnosticSeverity.ERROR,
+                        details=FrozenDict({"reason": reason}),
+                    )
+                )
+
         return NativeResult(
             program=ProgramName.ORCA,
             terminated_normally=terminated,
@@ -614,7 +633,7 @@ class OrcaProgramAdapter(ProgramAdapter):
             frequencies_cm=tuple(modes),
             native_metadata=FrozenDict(metadata),
             produced_files=tuple(produced),
-            parser_diagnostics=(),
+            parser_diagnostics=tuple(parser_diagnostics),
             log_file_name=log_file_name,
         )
 

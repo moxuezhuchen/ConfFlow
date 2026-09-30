@@ -15,6 +15,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 from .._naming import sanitize_job_name
+from .energy_semantics import unsupported_method_finding
 
 __all__ = [
     "ALLOWED_NATIVE_KEYS",
@@ -67,6 +68,12 @@ _OPT_BARE_RE = re.compile(r"(?i)\bopt\b")
 _MODREDUNDANT_RE = re.compile(r"(?i)\bmodredundant\b")
 _FREQ_TOKEN_PATTERN = re.compile(r"(?i)(^|\s)freq\b(\s*=\s*\([^)]*\)|\s*\([^)]*\)|\s*=\s*[^\s]+)?")
 _WHITESPACE_PATTERN = re.compile(r"\s+")
+
+# The authoritative method-capability model lives in ``energy_semantics``;
+# validation and rendering refuse the same families through that one module.
+# The current parser reads SCF/HF energies only: methods whose final energy is
+# a different field would silently publish a reference SCF energy as the
+# requested method's energy.
 
 #: Optimization items dropped when a TS keyword is rewritten for a scan job.
 _REMOVE_OPT_ITEMS: frozenset[str] = frozenset(
@@ -222,6 +229,13 @@ def native_definition_errors(native: Mapping[str, Any]) -> tuple[str, ...]:
             format_keyword_line(keyword)
         except ValueError as exc:
             errors.append(str(exc))
+        unsupported = unsupported_method_finding(keyword)
+        if unsupported is not None:
+            errors.append(
+                "native_input_error: Gaussian method "
+                f"{unsupported.token!r} is {unsupported.reason}; "
+                "the SCF reference energy must not be published as this method's energy"
+            )
     try:
         resolve_extra_section(native)
     except ValueError as exc:

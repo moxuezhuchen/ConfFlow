@@ -840,6 +840,13 @@ def _resolve_program(program: str | None, versions: dict[str, str]) -> Any:
             f"unknown program {program!r}: {exc}"
         ) from exc
     _require_contract_version(versions, "adapter", adapter.adapter_version, "program adapter")
+    if not versions.get("parser"):
+        raise WorkerError(
+            "remote worker failed at stage 'resolve execution contracts': "
+            "program parser contract version is missing from the handoff; "
+            "refusing a handoff that does not pin parser semantics"
+        )
+    _require_contract_version(versions, "parser", adapter.parser_version, "program parser")
     return adapter
 
 

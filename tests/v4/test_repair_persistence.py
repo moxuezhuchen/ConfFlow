@@ -330,6 +330,7 @@ class TestStrictPublication:
                 ).contract_version
             },
             recovery_version=registry.recovery_implementation("none").contract_version,
+            parser_version=adapter.parser_version,
         )
         with SqliteWorkItemStore.open(store_path(run_root, "s_opt")) as store:
             store.register_item(

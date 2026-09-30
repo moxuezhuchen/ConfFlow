@@ -1,0 +1,11 @@
+{
+  "status": "completed",
+  "energy_hartree": -74.965901192193,
+  "gibbs_energy_hartree": -74.95926275,
+  "manifest": "/tmp/confflow-scientific-audit/application-current/run_result.json",
+  "manifest_status": "completed",
+  "persisted_step_values_match": true,
+  "all_result_subjects_match_output_structure": true,
+  "manifest_result_ids_match": true,
+  "manifest_artifact_checksums_match": true
+}

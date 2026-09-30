@@ -120,6 +120,7 @@ def build_producer_provenance(
     profile_version: str,
     check_versions: Mapping[str, str],
     recovery_version: str,
+    parser_version: str | None = None,
     canonicalization_id: str = CANONICALIZATION_ID,
 ) -> FrozenDict:
     """Build the single shared producer-provenance shape.
@@ -134,6 +135,11 @@ def build_producer_provenance(
         Mapping of check name to check contract version.
     recovery_version : str
         Version of the recovery policy contract.
+    parser_version : str | None
+        Version of the native program parser contract.  Native calculation
+        steps always pass it so parser semantics are part of the durable
+        provenance and of the reuse comparison; pure executors (no native
+        parser) omit it.
     canonicalization_id : str
         Canonicalization identifier; defaults to
         :data:`~confflow.domain.canonical.CANONICALIZATION_ID`.
@@ -142,8 +148,8 @@ def build_producer_provenance(
     -------
     FrozenDict
         Frozen provenance mapping with exactly the keys ``adapter_version``,
-        ``profile_version``, ``check_versions``, ``recovery_version``, and
-        ``canonicalization_id``.
+        ``profile_version``, ``recovery_version``, ``canonicalization_id``,
+        and — when *parser_version* is provided — ``parser_version``.
 
     Raises
     ------
@@ -157,6 +163,8 @@ def build_producer_provenance(
         "recovery_version": recovery_version,
         "canonicalization_id": canonicalization_id,
     }
+    if parser_version is not None:
+        versions["parser_version"] = parser_version
     for name, value in versions.items():
         if not isinstance(value, str) or not value.strip():
             raise PersistenceError(f"{name} must be a non-empty string")
@@ -167,15 +175,16 @@ def build_producer_provenance(
             raise PersistenceError("check_versions keys must be non-empty strings")
         if not isinstance(value, str) or not value.strip():
             raise PersistenceError("check_versions values must be non-empty strings")
-    return FrozenDict(
-        {
-            "adapter_version": adapter_version,
-            "profile_version": profile_version,
-            "check_versions": dict(check_versions),
-            "recovery_version": recovery_version,
-            "canonicalization_id": canonicalization_id,
-        }
-    )
+    result = {
+        "adapter_version": adapter_version,
+        "profile_version": profile_version,
+        "check_versions": dict(check_versions),
+        "recovery_version": recovery_version,
+        "canonicalization_id": canonicalization_id,
+    }
+    if parser_version is not None:
+        result["parser_version"] = parser_version
+    return FrozenDict(result)
 
 
 def _normalize_status(value: StoredWorkItemStatus | str | None) -> StoredWorkItemStatus | None:

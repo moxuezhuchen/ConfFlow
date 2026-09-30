@@ -996,6 +996,7 @@ class RemoteTransport:
                 **(
                     {
                         "adapter": adapter.adapter_version,
+                        "parser": adapter.parser_version,
                         "profile": context.profile.contract_version,
                     }
                     if adapter is not None and context.profile is not None

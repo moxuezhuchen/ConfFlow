@@ -1,0 +1,427 @@
+{
+  "rdkit_version": "2026.03.4",
+  "scope": "V4 ConfgenExecutor; MMFF94s is a proxy, not quantum truth; labeled torsion basin comparison; no exhaustive completeness claim",
+  "results": [
+    {
+      "case": "butane_phase0_step120",
+      "status": "completed",
+      "members": 3,
+      "torsions_deg": [
+        -0.0,
+        -120.0,
+        120.0
+      ],
+      "raw_mmff_kcal_mol": [
+        2.2128,
+        -0.8244,
+        -0.6158
+      ]
+    },
+    {
+      "case": "butane_phase0_step60",
+      "status": "completed",
+      "members": 6,
+      "torsions_deg": [
+        -0.0,
+        -60.0,
+        -120.0,
+        -180.0,
+        120.0,
+        60.0
+      ],
+      "raw_mmff_kcal_mol": [
+        2.2128,
+        -4.2105,
+        -0.8244,
+        -4.7028,
+        -0.6158,
+        -3.235
+      ]
+    },
+    {
+      "case": "butane_phase30_step120",
+      "status": "completed",
+      "members": 3,
+      "torsions_deg": [
+        30.0,
+        -90.0,
+        150.0
+      ],
+      "raw_mmff_kcal_mol": [
+        -0.0236,
+        -2.7983,
+        -2.6928
+      ]
+    },
+    {
+      "case": "butane_phase30_step60",
+      "status": "completed",
+      "members": 6,
+      "torsions_deg": [
+        30.0,
+        -30.0,
+        -90.0,
+        -150.0,
+        150.0,
+        90.0
+      ],
+      "raw_mmff_kcal_mol": [
+        -0.0236,
+        -1.1377,
+        -2.7983,
+        -2.7164,
+        -2.6928,
+        -2.4448
+      ]
+    },
+    {
+      "case": "butane_phase60_step120",
+      "status": "completed",
+      "members": 3,
+      "torsions_deg": [
+        60.0,
+        -60.0,
+        -180.0
+      ],
+      "raw_mmff_kcal_mol": [
+        -3.235,
+        -4.2105,
+        -4.7028
+      ]
+    },
+    {
+      "case": "butane_phase60_step60",
+      "status": "completed",
+      "members": 6,
+      "torsions_deg": [
+        60.0,
+        0.0,
+        -60.0,
+        -120.0,
+        -180.0,
+        120.0
+      ],
+      "raw_mmff_kcal_mol": [
+        -3.235,
+        2.2128,
+        -4.2105,
+        -0.8244,
+        -4.7028,
+        -0.6158
+      ]
+    },
+    {
+      "case": "butane_phase180_step120",
+      "status": "completed",
+      "members": 3,
+      "torsions_deg": [
+        180.0,
+        60.0,
+        -60.0
+      ],
+      "raw_mmff_kcal_mol": [
+        -4.7028,
+        -3.235,
+        -4.2105
+      ]
+    },
+    {
+      "case": "butane_phase180_step60",
+      "status": "completed",
+      "members": 6,
+      "torsions_deg": [
+        180.0,
+        120.0,
+        60.0,
+        -0.0,
+        -60.0,
+        -120.0
+      ],
+      "raw_mmff_kcal_mol": [
+        -4.7028,
+        -0.6158,
+        -3.235,
+        2.2128,
+        -4.2105,
+        -0.8244
+      ]
+    },
+    {
+      "case": "butane_chains_2-3",
+      "status": "completed",
+      "members": 3,
+      "heavy_atom_rmsd_unique_0p1A": 3
+    },
+    {
+      "case": "butane_chains_1-2-3-4",
+      "status": "completed",
+      "members": 27,
+      "heavy_atom_rmsd_unique_0p1A": 3
+    },
+    {
+      "case": "butane_chains_2-3_2-3",
+      "status": "completed",
+      "members": 9,
+      "heavy_atom_rmsd_unique_0p1A": 3
+    },
+    {
+      "case": "duplicate_dimensions_cap2_seeds0_to11",
+      "samples": [
+        {
+          "seed": 0,
+          "members": 2,
+          "heavy_unique": 2
+        },
+        {
+          "seed": 1,
+          "members": 2,
+          "heavy_unique": 2
+        },
+        {
+          "seed": 2,
+          "members": 2,
+          "heavy_unique": 2
+        },
+        {
+          "seed": 3,
+          "members": 2,
+          "heavy_unique": 1
+        },
+        {
+          "seed": 4,
+          "members": 2,
+          "heavy_unique": 2
+        },
+        {
+          "seed": 5,
+          "members": 2,
+          "heavy_unique": 2
+        },
+        {
+          "seed": 6,
+          "members": 2,
+          "heavy_unique": 1
+        },
+        {
+          "seed": 7,
+          "members": 2,
+          "heavy_unique": 2
+        },
+        {
+          "seed": 8,
+          "members": 2,
+          "heavy_unique": 2
+        },
+        {
+          "seed": 9,
+          "members": 2,
+          "heavy_unique": 2
+        },
+        {
+          "seed": 10,
+          "members": 2,
+          "heavy_unique": 1
+        },
+        {
+          "seed": 11,
+          "members": 2,
+          "heavy_unique": 2
+        }
+      ]
+    },
+    {
+      "case": "pentane_step120",
+      "members": 9,
+      "mmff_converged": 9,
+      "reference_embedded": 200,
+      "reference_minimum_mmff_kcal_mol": -5.2717524507073605,
+      "reference_optimized_converged": 200,
+      "reference_low_energy_torsion_basins": [
+        [
+          -60.0,
+          -60.0
+        ],
+        [
+          -60.0,
+          180.0
+        ],
+        [
+          60.0,
+          60.0
+        ],
+        [
+          60.0,
+          180.0
+        ],
+        [
+          180.0,
+          -60.0
+        ],
+        [
+          180.0,
+          60.0
+        ],
+        [
+          180.0,
+          180.0
+        ]
+      ],
+      "generated_after_mmff_low_energy_basins": [
+        [
+          -60.0,
+          -60.0
+        ],
+        [
+          -60.0,
+          180.0
+        ],
+        [
+          60.0,
+          60.0
+        ],
+        [
+          60.0,
+          180.0
+        ],
+        [
+          180.0,
+          -60.0
+        ],
+        [
+          180.0,
+          60.0
+        ],
+        [
+          180.0,
+          180.0
+        ]
+      ],
+      "reference_basin_coverage": 1.0,
+      "max_original_bond_length_drift_A": 1.1102230246251565e-15,
+      "status": "completed",
+      "messages": [
+        "confgen scanned 9 torsion points, kept 9 (0 clash-dropped)"
+      ],
+      "raw_mmff_range_kcal_mol": [
+        -4.790898178759262,
+        252.62220130047896
+      ],
+      "optimized_mmff_range_kcal_mol": [
+        -5.271752450553345,
+        -1.5717219058565108
+      ]
+    },
+    {
+      "case": "pentane_step60",
+      "members": 36,
+      "mmff_converged": 36,
+      "reference_embedded": 200,
+      "reference_minimum_mmff_kcal_mol": -5.2717524507073605,
+      "reference_optimized_converged": 200,
+      "reference_low_energy_torsion_basins": [
+        [
+          -60.0,
+          -60.0
+        ],
+        [
+          -60.0,
+          180.0
+        ],
+        [
+          60.0,
+          60.0
+        ],
+        [
+          60.0,
+          180.0
+        ],
+        [
+          180.0,
+          -60.0
+        ],
+        [
+          180.0,
+          60.0
+        ],
+        [
+          180.0,
+          180.0
+        ]
+      ],
+      "generated_after_mmff_low_energy_basins": [
+        [
+          -60.0,
+          -60.0
+        ],
+        [
+          -60.0,
+          180.0
+        ],
+        [
+          60.0,
+          60.0
+        ],
+        [
+          60.0,
+          180.0
+        ],
+        [
+          180.0,
+          -60.0
+        ],
+        [
+          180.0,
+          60.0
+        ],
+        [
+          180.0,
+          180.0
+        ]
+      ],
+      "reference_basin_coverage": 1.0,
+      "max_original_bond_length_drift_A": 1.3322676295501878e-15,
+      "status": "completed",
+      "messages": [
+        "confgen scanned 36 torsion points, kept 36 (0 clash-dropped)"
+      ],
+      "raw_mmff_range_kcal_mol": [
+        -4.790898178759262,
+        815.6363057595773
+      ],
+      "optimized_mmff_range_kcal_mol": [
+        -5.271752450621946,
+        -1.571721904388541
+      ]
+    },
+    {
+      "case": "alkene_double_bond",
+      "status": "completed",
+      "members": 3,
+      "torsions_deg": [
+        -180.0,
+        90.0,
+        0.0
+      ]
+    },
+    {
+      "case": "cyclohexane_ring",
+      "status": "failed",
+      "messages": [
+        "confgen chain bond 1-2 is a ring bond and cannot be rotated independently; exclude it via no_rotate"
+      ]
+    },
+    {
+      "case": "disconnected_water",
+      "status": "completed",
+      "water_max_atom_displacements_A": [
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "case": "clash_direct_1_4_pair",
+      "end_atom_distance_A": 0.05,
+      "clash_detected": false
+    }
+  ]
+}

@@ -1,0 +1,260 @@
+{
+  "rdkit_version": "2026.03.4",
+  "scope": "V4 ConfgenExecutor; MMFF94s is a proxy, not quantum truth; labeled torsion basin comparison; no exhaustive completeness claim",
+  "results": [
+    {
+      "case": "butane_phase0_step120",
+      "status": "failed",
+      "members": 0,
+      "torsions_deg": [],
+      "raw_mmff_kcal_mol": []
+    },
+    {
+      "case": "butane_phase0_step60",
+      "status": "failed",
+      "members": 0,
+      "torsions_deg": [],
+      "raw_mmff_kcal_mol": []
+    },
+    {
+      "case": "butane_phase30_step120",
+      "status": "failed",
+      "members": 0,
+      "torsions_deg": [],
+      "raw_mmff_kcal_mol": []
+    },
+    {
+      "case": "butane_phase30_step60",
+      "status": "failed",
+      "members": 0,
+      "torsions_deg": [],
+      "raw_mmff_kcal_mol": []
+    },
+    {
+      "case": "butane_phase60_step120",
+      "status": "failed",
+      "members": 0,
+      "torsions_deg": [],
+      "raw_mmff_kcal_mol": []
+    },
+    {
+      "case": "butane_phase60_step60",
+      "status": "failed",
+      "members": 0,
+      "torsions_deg": [],
+      "raw_mmff_kcal_mol": []
+    },
+    {
+      "case": "butane_phase180_step120",
+      "status": "failed",
+      "members": 0,
+      "torsions_deg": [],
+      "raw_mmff_kcal_mol": []
+    },
+    {
+      "case": "butane_phase180_step60",
+      "status": "failed",
+      "members": 0,
+      "torsions_deg": [],
+      "raw_mmff_kcal_mol": []
+    },
+    {
+      "case": "butane_chains_2-3",
+      "status": "failed",
+      "members": 0,
+      "heavy_atom_rmsd_unique_0p1A": 0
+    },
+    {
+      "case": "butane_chains_1-2-3-4",
+      "status": "failed",
+      "members": 0,
+      "heavy_atom_rmsd_unique_0p1A": 0
+    },
+    {
+      "case": "butane_chains_2-3_2-3",
+      "status": "failed",
+      "members": 0,
+      "heavy_atom_rmsd_unique_0p1A": 0
+    },
+    {
+      "case": "duplicate_dimensions_cap2_seeds0_to11",
+      "samples": [
+        {
+          "seed": 0,
+          "members": 0,
+          "heavy_unique": 0
+        },
+        {
+          "seed": 1,
+          "members": 0,
+          "heavy_unique": 0
+        },
+        {
+          "seed": 2,
+          "members": 0,
+          "heavy_unique": 0
+        },
+        {
+          "seed": 3,
+          "members": 0,
+          "heavy_unique": 0
+        },
+        {
+          "seed": 4,
+          "members": 0,
+          "heavy_unique": 0
+        },
+        {
+          "seed": 5,
+          "members": 0,
+          "heavy_unique": 0
+        },
+        {
+          "seed": 6,
+          "members": 0,
+          "heavy_unique": 0
+        },
+        {
+          "seed": 7,
+          "members": 0,
+          "heavy_unique": 0
+        },
+        {
+          "seed": 8,
+          "members": 0,
+          "heavy_unique": 0
+        },
+        {
+          "seed": 9,
+          "members": 0,
+          "heavy_unique": 0
+        },
+        {
+          "seed": 10,
+          "members": 0,
+          "heavy_unique": 0
+        },
+        {
+          "seed": 11,
+          "members": 0,
+          "heavy_unique": 0
+        }
+      ]
+    },
+    {
+      "case": "pentane_step120",
+      "members": 0,
+      "mmff_converged": 0,
+      "reference_embedded": 200,
+      "reference_optimized_converged": 200,
+      "reference_low_energy_torsion_basins": [
+        [
+          -60.0,
+          -60.0
+        ],
+        [
+          -60.0,
+          180.0
+        ],
+        [
+          60.0,
+          60.0
+        ],
+        [
+          60.0,
+          180.0
+        ],
+        [
+          180.0,
+          -60.0
+        ],
+        [
+          180.0,
+          60.0
+        ],
+        [
+          180.0,
+          180.0
+        ]
+      ],
+      "generated_after_mmff_low_energy_basins": [],
+      "reference_basin_coverage": 0.0,
+      "max_original_bond_length_drift_A": 0.0,
+      "status": "failed",
+      "messages": [
+        "confgen internal failure: list index out of range"
+      ],
+      "raw_mmff_range_kcal_mol": null,
+      "optimized_mmff_range_kcal_mol": null
+    },
+    {
+      "case": "pentane_step60",
+      "members": 0,
+      "mmff_converged": 0,
+      "reference_embedded": 200,
+      "reference_optimized_converged": 200,
+      "reference_low_energy_torsion_basins": [
+        [
+          -60.0,
+          -60.0
+        ],
+        [
+          -60.0,
+          180.0
+        ],
+        [
+          60.0,
+          60.0
+        ],
+        [
+          60.0,
+          180.0
+        ],
+        [
+          180.0,
+          -60.0
+        ],
+        [
+          180.0,
+          60.0
+        ],
+        [
+          180.0,
+          180.0
+        ]
+      ],
+      "generated_after_mmff_low_energy_basins": [],
+      "reference_basin_coverage": 0.0,
+      "max_original_bond_length_drift_A": 0.0,
+      "status": "failed",
+      "messages": [
+        "confgen internal failure: list index out of range"
+      ],
+      "raw_mmff_range_kcal_mol": null,
+      "optimized_mmff_range_kcal_mol": null
+    },
+    {
+      "case": "alkene_double_bond",
+      "status": "failed",
+      "members": 0,
+      "torsions_deg": []
+    },
+    {
+      "case": "cyclohexane_ring",
+      "status": "failed",
+      "messages": [
+        "confgen chain bond 1-2 is a ring bond and cannot be rotated independently; exclude it via no_rotate"
+      ]
+    },
+    {
+      "case": "disconnected_water",
+      "status": "failed",
+      "water_max_atom_displacements_A": []
+    },
+    {
+      "case": "clash_direct_1_4_pair",
+      "end_atom_distance_A": 0.05,
+      "clash_detected": false
+    }
+  ]
+}

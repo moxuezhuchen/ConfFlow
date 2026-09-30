@@ -190,6 +190,7 @@ def _test_handoff(
         profile_version=profile.contract_version,
         check_versions=check_versions,
         recovery_version=getattr(recovery, "contract_version", "none") or "none",
+        parser_version=adapter.parser_version,
     )
     base = tempfile.mkdtemp(prefix="confflow-fault-test-")
     run_root = os.path.join(base, run_id)
