@@ -15,6 +15,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 from .._naming import sanitize_job_name
+from .energy_semantics import unsupported_method_finding
 
 __all__ = [
     "ALLOWED_NATIVE_KEYS",
@@ -68,17 +69,11 @@ _MODREDUNDANT_RE = re.compile(r"(?i)\bmodredundant\b")
 _FREQ_TOKEN_PATTERN = re.compile(r"(?i)(^|\s)freq\b(\s*=\s*\([^)]*\)|\s*\([^)]*\)|\s*=\s*[^\s]+)?")
 _WHITESPACE_PATTERN = re.compile(r"\s+")
 
-# The current parser reads SCF/HF energies only. These methods need different
-# final-energy fields; accepting their route would silently publish a reference
-# SCF energy as the requested method's energy. Refuse known unsupported methods
-# until method-specific parsing is backed by native-output fixtures.
-_UNSUPPORTED_ENERGY_METHOD = re.compile(
-    r"(?i)(?<![a-z0-9_-])(?:"
-    r"(?:ro|r|u)?(?:mp[2-5]|ccsd|ccd|qcisd|cisd|cid|casscf)"
-    r"|b2plyp|b2gpplyp|mpw2plyp|pbe0dh|pbeqidh|dsd-[a-z0-9-]+"
-    r"|cbs-[a-z0-9-]+|g[1-4]|w1[a-z0-9-]*"
-    r")(?=$|[\s/=(,])"
-)
+# The authoritative method-capability model lives in ``energy_semantics``;
+# validation and rendering refuse the same families through that one module.
+# The current parser reads SCF/HF energies only: methods whose final energy is
+# a different field would silently publish a reference SCF energy as the
+# requested method's energy.
 
 #: Optimization items dropped when a TS keyword is rewritten for a scan job.
 _REMOVE_OPT_ITEMS: frozenset[str] = frozenset(
@@ -234,11 +229,11 @@ def native_definition_errors(native: Mapping[str, Any]) -> tuple[str, ...]:
             format_keyword_line(keyword)
         except ValueError as exc:
             errors.append(str(exc))
-        unsupported = _UNSUPPORTED_ENERGY_METHOD.search(keyword)
+        unsupported = unsupported_method_finding(keyword)
         if unsupported is not None:
             errors.append(
                 "native_input_error: Gaussian method "
-                f"{unsupported.group()!r} requires final-energy parsing that is not supported; "
+                f"{unsupported.token!r} is {unsupported.reason}; "
                 "the SCF reference energy must not be published as this method's energy"
             )
     try:

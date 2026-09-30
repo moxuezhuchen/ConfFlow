@@ -250,7 +250,7 @@ class OrcaProgramAdapter(ProgramAdapter):
     @property
     def adapter_version(self) -> str:
         """Return the adapter contract version (folded into digests)."""
-        return "confflow.program.orca.v1"
+        return "confflow.program.orca.v2"
 
     @property
     def parser_version(self) -> str:

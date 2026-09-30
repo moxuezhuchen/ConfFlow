@@ -840,6 +840,7 @@ def _resolve_program(program: str | None, versions: dict[str, str]) -> Any:
             f"unknown program {program!r}: {exc}"
         ) from exc
     _require_contract_version(versions, "adapter", adapter.adapter_version, "program adapter")
+    _require_contract_version(versions, "parser", adapter.parser_version, "program parser")
     return adapter
 
 

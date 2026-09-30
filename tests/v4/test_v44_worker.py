@@ -403,6 +403,7 @@ def make_handoff(
         profile_version=profile.contract_version,
         check_versions=check_versions,
         recovery_version=getattr(recovery, "contract_version", "none") or "none",
+        parser_version=adapter.parser_version,
     )
     scratch = tempfile.mkdtemp(prefix="confflow-handoff-test-")
     store = SqliteWorkItemStore.open(os.path.join(scratch, "step.db"))

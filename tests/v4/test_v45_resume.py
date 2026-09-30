@@ -249,6 +249,7 @@ def _provenance_for(request: StepExecutionRequest) -> FrozenDict:
         profile_version=request.profile.contract_version,
         check_versions={check.name: check.contract_version for check in request.checks},
         recovery_version=recovery_version,
+        parser_version=request.adapter.parser_version,
     )
 
 

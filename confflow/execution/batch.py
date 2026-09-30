@@ -165,9 +165,7 @@ class InMemoryReuseStore:
             self._results[result.semantic_digest] = result
 
 
-def _item_error_diagnostics(
-    item: WorkItemResult, *, step_id: str
-) -> tuple[Diagnostic, ...]:
+def _item_error_diagnostics(item: WorkItemResult, *, step_id: str) -> tuple[Diagnostic, ...]:
     """Project one failed item's error into a step-level diagnostic.
 
     The item error is the authoritative failure record
@@ -815,6 +813,7 @@ class BatchStepExecutor:
             profile_version=profile.contract_version,
             check_versions={check.name: check.contract_version for check in request.checks},
             recovery_version=recovery_version,
+            parser_version=adapter.parser_version,
         )
 
     @staticmethod
