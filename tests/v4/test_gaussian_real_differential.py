@@ -50,7 +50,7 @@ def _run_gaussian(keyword: str, run_root: Path):
     return report
 
 
-@pytest.mark.parametrize("keyword", ["HF/STO-3G SP", "B3LYP/STO-3G SP"])
+@pytest.mark.parametrize("keyword", ["HF/STO-3G SP", "B3LYP/STO-3G SP", "PBE1PBE/STO-3G SP"])
 def test_real_g16_scf_methods_publish_their_own_final_energy(tmp_path, keyword):
     run_root = tmp_path / "run"
     report = _run_gaussian(keyword, run_root)
@@ -80,6 +80,10 @@ def test_real_g16_scf_methods_publish_their_own_final_energy(tmp_path, keyword):
         "G3B3",
         "G3MP2B3",
         "CCSD(T)/STO-3G SP",
+        "TD B3LYP/STO-3G SP",
+        "TDA B3LYP/STO-3G SP",
+        "CIS=(NStates=3)/STO-3G SP",
+        "ZINDO/STO-3G SP",
     ],
 )
 def test_real_g16_unsupported_methods_are_refused_before_execution(keyword):
@@ -88,3 +92,20 @@ def test_real_g16_unsupported_methods_are_refused_before_execution(keyword):
     errors = GaussianProgramAdapter().validate_native_definition({"keyword": keyword})
     assert errors, f"{keyword!r} must be refused before execution"
     assert any("ConfFlow cannot extract" in message for message in errors)
+
+
+def test_real_g16_pbe0_is_refused_by_the_runtime_proof(tmp_path):
+    """Gaussian 16 Rev C.02 executes ``PBE0`` as the PBE0DH double hybrid.
+
+    Static validation accepts the common spelling (other revisions run it as a
+    proper hybrid), so the runtime publication proof must fail the item closed
+    instead of publishing the reference energy.  ``PBE1PBE`` is the hybrid
+    control that must still publish its own final energy.
+    """
+    report = _run_gaussian("PBE0/STO-3G SP", tmp_path / "run")
+    assert report.status != "completed"
+    item = report.step_results[0].item_results[0]
+    assert not item.is_completed
+    assert item.error is not None
+    assert item.error.details["reason"] == ("post_scf_final_energy_marker:double_hybrid_e2")
+    assert item.results.is_empty

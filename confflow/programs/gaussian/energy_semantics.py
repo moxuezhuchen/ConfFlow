@@ -102,9 +102,15 @@ _COMPOSITE: Final[re.Pattern[str]] = re.compile(
     r"^(?:" r"g[1-4][a-z0-9()]*" r"|cbs-?[a-z0-9-]+" r"|w1[a-z0-9-]*" r")$"
 )
 
-#: Response / excited-state methods whose final energy is not the SCF energy.
+#: Response / excited-state methods whose final energy is not the SCF energy:
+#: CIS and its option forms, the TD/TDA job keywords (any option form),
+#: EOM-CCSD, SAC-CI, and the semi-empirical ZINDO whose final energy is the
+#: CI/TDA total energy, not the SCF value.
 _RESPONSE: Final[re.Pattern[str]] = re.compile(
-    r"^(?:cis(?:\([^)]*\))?|eom-?ccsd|sac-?ci|td-?dft|td-?hf)$"
+    r"^(?:"
+    r"(?:cis|td|tda)(?:\([^)]*\)|=[a-z0-9()=,+-]+)?"
+    r"|eom-?ccsd|sac-?ci|td-?dft|td-?hf|zindo"
+    r")$"
 )
 
 _FAMILIES: Final[tuple[tuple[MethodFamily, re.Pattern[str]], ...]] = (
@@ -127,7 +133,7 @@ _METHOD_FINAL_ENERGY_MARKERS: Final[tuple[tuple[str, re.Pattern[str]], ...]] = (
     ("double_hybrid_e2", re.compile(r"(?<![A-Za-z0-9])E2\s*\(")),
     (
         "method_energy_assignment",
-        re.compile(r"(?<![A-Za-z0-9])E\([A-Za-z][A-Za-z0-9()+-]*\)\s*="),
+        re.compile(r"(?<![A-Za-z0-9])E\([A-Za-z][A-Za-z0-9()+/=-]*\)\s*="),
     ),
     ("second_order_energy", re.compile(r"(?<![A-Za-z0-9])E2\s*=")),
     ("post_scf_mp", re.compile(r"(?<![A-Za-z0-9])MP[2-5]\s*=")),

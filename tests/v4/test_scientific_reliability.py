@@ -191,6 +191,10 @@ def test_output_atom_changes_cannot_be_published_as_input_energy(tmp_path, monke
         "CASSCF(2,2)",
         "CIS",
         "CIS(D)",
+        "CIS=(NStates=3)",
+        "TD",
+        "TDA",
+        "ZINDO",
         "B2PLYP",
         "B2GP-PLYP",
         "PBE0DH",
@@ -224,7 +228,7 @@ def test_gaussian_unsupported_method_families_are_refused(method):
         "IRC B3LYP D3BJ",
         "QST2 B3LYP",
         "wB97XD/def2-TZVP SP",
-        "PBE0/6-31G* SP",
+        "PBE1PBE/6-31G* SP",
         "TPSSh/def2-SVP SP",
         "SCAN/def2-TZVP SP",
     ],
@@ -290,6 +294,14 @@ def test_gaussian_runtime_energy_semantics_accepts_plain_scf(tmp_path):
         ),
         (
             " E(CI)=   -75.0129607",
+            "post_scf_final_energy_marker:method_energy_assignment",
+        ),
+        (
+            " Total Energy, E(TD-HF/TD-DFT) =  -74.8893991087",
+            "post_scf_final_energy_marker:method_energy_assignment",
+        ),
+        (
+            " Total Energy, E(CIS/TDA) =  -74.4833339544",
             "post_scf_final_energy_marker:method_energy_assignment",
         ),
     ],
@@ -465,3 +477,12 @@ def test_orca_mixed_parser_handoff_is_rejected(recorded_parser, accepted):
     else:
         with pytest.raises(WorkerError, match="program parser"):
             _resolve_program("orca", versions)
+
+
+def test_orca_handoff_without_parser_key_is_rejected():
+    """A handoff that does not pin parser semantics fails closed."""
+    from confflow.remote.worker import WorkerError, _resolve_program
+
+    adapter = OrcaProgramAdapter()
+    with pytest.raises(WorkerError, match="parser contract version is missing"):
+        _resolve_program("orca", {"adapter": adapter.adapter_version})

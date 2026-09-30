@@ -104,9 +104,15 @@ H -0.76 0.59 0.00
 ### 本轮修复
 
 - **Gaussian**：新增唯一权威模块 `programs/gaussian/energy_semantics.py`。编译/渲染路径按方法族静态拒绝
-  （post-SCF、双杂化、复合、响应方法，含真实拼写与 R/U/RO 前缀），解析/发布路径要求“最后一个 `SCF Done`
-  之后没有其他方法的最终能量标记”，否则产生 `native_energy_semantics_error`（ERROR），执行器在未声明任何
-  检查时也会拒绝发布。archive-only 日志不再视为可发布证据。
+  （post-SCF、双杂化、复合、响应方法，含真实拼写与 R/U/RO 前缀；响应族包含 `CIS`、`CIS(D)`、
+  `CIS=(NStates=…)`、`TD`、`TDA`、`TD=(NStates=…)`、`ZINDO` 等真实关键字形式），解析/发布路径要求
+  “最后一个 `SCF Done` 之后没有其他方法的最终能量标记”（`E2(`、`E(Method)=`、`E(TD-HF/TD-DFT)`、
+  `E(CIS/TDA)`、`MPn=`、`CCSD=`、复合能摘要、`MCSCF=` 等），否则产生
+  `native_energy_semantics_error`（ERROR），执行器在未声明任何检查时也会拒绝发布。archive-only 日志
+  不再视为可发布证据。独立对抗审查发现的响应方法缺口（`TD`/`TDA`/`CIS=(...)`）已按此修复并加入真实
+  G16 回归。
+- **二进制相关限制**：Gaussian 16 Rev C.02 将常见拼写 `PBE0` 执行为 PBE0DH（双杂化），静态验证按其他
+  版本语义仍接受该拼写，但运行证明会拒绝发布（fail closed）；`PBE1PBE` 是仍可正常发布的杂化泛函对照。
 - **ORCA**：`adapter_version` 升级为 v2（parser 语义变化）；`parser_version` 进入持久 producer provenance
   并参与 reuse 比较；远端 handoff 的 contract set 增加 `parser` 并由 worker 校验。旧身份结果不再透明复用，
   混合版本 handoff fail closed。
