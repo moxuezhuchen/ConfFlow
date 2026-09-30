@@ -165,6 +165,53 @@ class InMemoryReuseStore:
             self._results[result.semantic_digest] = result
 
 
+def _item_error_diagnostics(
+    item: WorkItemResult, *, step_id: str
+) -> tuple[Diagnostic, ...]:
+    """Project one failed item's error into a step-level diagnostic.
+
+    The item error is the authoritative failure record
+    (``WorkItemResult.error``); the step diagnostics and the manifest are
+    projections of it, never a second interpretation.  The diagnostic uses
+    the producer's own error code and message and is deduplicated against
+    diagnostics the item already emitted for the same failure (for example
+    cancellation, which records its diagnostic at the failure site), so one
+    defect yields one diagnostic.
+
+    Parameters
+    ----------
+    item : WorkItemResult
+        Collected work-item result, possibly failed.
+    step_id : str
+        Step the item belongs to; carried on the diagnostic so consumers can
+        associate the reason with the failed step.
+
+    Returns
+    -------
+    tuple[Diagnostic, ...]
+        Zero or one diagnostic: empty when the item carries no error or the
+        error is already represented on the item's own diagnostics.
+    """
+    error = item.error
+    if error is None:
+        return ()
+    if any(
+        existing.code == error.code and existing.message == error.message
+        for existing in item.diagnostics
+    ):
+        return ()
+    return (
+        Diagnostic(
+            code=error.code,
+            message=error.message,
+            severity=DiagnosticSeverity.ERROR,
+            step_id=step_id,
+            work_item_id=item.work_item_id,
+            details=error.details,
+        ),
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class StepExecutionRequest:
     """Everything batch execution of one step may read."""
@@ -1427,6 +1474,7 @@ class BatchStepExecutor:
         diagnostics = list(step_diagnostics)
         for item in collected:
             diagnostics.extend(item.diagnostics)
+            diagnostics.extend(_item_error_diagnostics(item, step_id=step.step_id))
         return StepResult(
             step_id=step.step_id,
             status=status,
