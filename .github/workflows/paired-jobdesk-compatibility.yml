@@ -51,9 +51,11 @@ jobs:
 
       - name: Resolve the paired JobDesk-v2 revision
         id: pair
+        env:
+          REQUESTED_JOBDESK_REF: ${{ inputs.jobdesk_ref }}
         run: |
           set -euo pipefail
-          ref="${{ inputs.jobdesk_ref }}"
+          ref="${REQUESTED_JOBDESK_REF:-}"
           if [ -z "$ref" ]; then
             ref="$JOBDESK_COMPAT_SHA"
           fi
@@ -66,6 +68,10 @@ jobs:
           ref: ${{ steps.pair.outputs.jobdesk_ref }}
           path: jobdesk-v2
           fetch-depth: 1
+          # The current consumer repository is private; the token is a
+          # repository secret.  Fork pull requests do not receive it and
+          # the job fails closed instead of silently skipping the pair.
+          token: ${{ secrets.JOBDESK_V2_TOKEN }}
 
       - name: Set up Python
         uses: actions/setup-python@v7
