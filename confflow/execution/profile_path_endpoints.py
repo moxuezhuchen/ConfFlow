@@ -249,6 +249,11 @@ class PathEndpointsProfile:
             )
 
         parent_ids, lineage_root, group_key = endpoint_lineage(driving)
+        # Endpoints inherit the driving input's intended topology (resolved
+        # once on the driving geometry); explicit charge/spin inputs retained.
+        from ..science.topology import resolve_and_persist_kwargs as _persist_kwargs
+
+        topo_kwargs = _persist_kwargs(driving, driving.coordinates)
         ranked: list[tuple[tuple[int, int], StructureRecord, NativePathEndpoint]] = []
         for endpoint in endpoints:
             role = _endpoint_role(endpoint.direction)
@@ -272,6 +277,7 @@ class PathEndpointsProfile:
                         "converged": endpoint.converged,
                     }
                 ),
+                **topo_kwargs,
             )
             ranked.append((output_ordering_key(role, 0), record, endpoint))
         ranked.sort(key=lambda item: item[0])

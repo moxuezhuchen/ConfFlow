@@ -292,6 +292,8 @@ def _build_structure(payload: Any) -> StructureRecord:
             ordinal=payload.get("ordinal"),
             group_key=payload.get("group_key"),
             metadata=metadata if isinstance(metadata, dict) else {},
+            topology_patch=payload.get("topology_patch"),
+            working_topology=payload.get("working_topology"),
         )
     except (KeyError, TypeError, DomainError, ValueError) as exc:
         raise CorruptStateError(f"structure payload is invalid: {exc}") from exc

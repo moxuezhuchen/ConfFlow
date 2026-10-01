@@ -400,10 +400,12 @@ def _confgen_section() -> dict[str, Any]:
         "limits": dict(probe.limits.model_dump()),
         "description": (
             "Typed ConfGen v3 scope: schema_version 3 with explicit index_base, "
-            "coordination/rings/torsions declarations, typed topology, recorded "
-            "stereochemistry, policy exclusions, tolerances, limits, and "
-            "seed-authored sampling. The legacy native.chains vocabulary stays "
-            "available as an explicitly versioned adapter path."
+            "coordination/rings/torsions declarations, Phase 0 path-based rotor "
+            "declarations (endpoint pairs resolved on the working topology), "
+            "typed topology, recorded stereochemistry, policy exclusions, "
+            "tolerances, limits, and seed-authored sampling. The legacy "
+            "native.chains vocabulary stays available as an explicitly "
+            "versioned adapter path."
         ),
     }
 
@@ -658,6 +660,8 @@ def build_configuration_contract_v4(
         Execution registry every capability descriptor is generated from.
         Defaults to the shared default registry.
     """
+    from .intent import intent_catalog
+
     active = registry if registry is not None else default_registry()
     workflow_schema = build_workflow_json_schema(active)
     manifest = build_editor_manifest_v4(registry=active)
@@ -710,6 +714,7 @@ def build_configuration_contract_v4(
         ],
         "programs": _program_descriptors(),
         "confgen": _confgen_section(),
+        "authoring_intent": intent_catalog(),
         "ports": _ports_section(active),
         "resources": _resources_section(),
         "policies": _policy_section(),

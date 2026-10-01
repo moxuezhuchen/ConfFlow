@@ -38,6 +38,7 @@ from confflow.science.torsion import (
 __all__ = [
     "legacy_cap_v1",
     "legacy_grid_geometries",
+    "legacy_oriented_grid_geometries",
     "legacy_rotatable_bonds",
     "iter_legacy_grid",
 ]
@@ -124,6 +125,44 @@ def legacy_grid_geometries(
     for ordinal, combo in enumerate(itertools.product(*lists)):
         coords = base.copy()
         for (left, right, rotating), angle in zip(rot_bonds, combo):
+            rotate_atoms_around_bond(coords, left, right, rotating, float(angle))
+        if radii is not None and topo is not None and clash_threshold is not None:
+            if clashes(coords, list(radii), topo, float(clash_threshold)):
+                continue
+        yield ordinal, coords
+
+
+def legacy_oriented_grid_geometries(
+    base_coords: np.ndarray | Sequence[Sequence[float]],
+    rot_bonds: Sequence[tuple[int, int, Sequence[int]]],
+    angle_lists: Sequence[Sequence[float]],
+    *,
+    radii: Sequence[float] | None = None,
+    topo: Sequence[Sequence[int]] | None = None,
+    clash_threshold: float | None = None,
+) -> Iterator[tuple[int, np.ndarray]]:
+    """Yield ``(ordinal, coordinates)`` over a prebuilt oriented rotor grid.
+
+    Phase 0 input-simplification adapter: the numeric application semantics
+    are IDENTICAL to :func:`legacy_grid_geometries` (cumulative Rodrigues
+    application in declared order, row-major ``itertools.product`` ordinals
+    with the last rotor fastest, optional post-geometry clash filter) --
+    only the bond supply differs. Callers pass caller-resolved oriented
+    ``(pivot, second, rotating)`` bonds (e.g. path-resolved rotors with
+    per-rotor moving sides) instead of chains plus a global ``rotate_side``.
+    Pure legacy chains never route through here; they keep
+    :func:`legacy_grid_geometries` bit-for-bit.
+    """
+    import itertools
+
+    bonds = [(int(left), int(right), list(rotating)) for left, right, rotating in rot_bonds]
+    lists = [list(map(float, angles)) for angles in angle_lists]
+    if len(lists) != len(bonds):
+        raise ValueError("angle_lists must hold one list per rotor bond")
+    base = np.asarray(base_coords, dtype=np.float64)
+    for ordinal, combo in enumerate(itertools.product(*lists)):
+        coords = base.copy()
+        for (left, right, rotating), angle in zip(bonds, combo):
             rotate_atoms_around_bond(coords, left, right, rotating, float(angle))
         if radii is not None and topo is not None and clash_threshold is not None:
             if clashes(coords, list(radii), topo, float(clash_threshold)):

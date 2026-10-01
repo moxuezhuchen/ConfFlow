@@ -1,0 +1,1098 @@
+#!/usr/bin/env python3
+
+"""Producer checkpoint/Hessian reuse helper (Phase 6 input simplification).
+
+:func:`wire_checkpoint_reuse` adds one semantic checkpoint edge to a strict
+V4 document: the target step gains a ``checkpoint`` input binding fed by the
+source step's ``artifacts`` output with the ``checkpoint`` role selector,
+promised with binding cardinality ``one``.  It is a pure authoring helper:
+every rule it applies comes from an existing authority, and it creates no
+second runtime.
+
+Authorities consulted (imported, never copied):
+
+- :mod:`confflow.execution.registry` -- executor contracts, the ``standard``
+  adapter's ``checkpoint`` input port (``optional``/``by_subject`` with the
+  ``checkpoint`` role) and the calculation ``artifacts`` output port roles;
+- :func:`confflow.programs.gaussian.rendering.resolve_write_chk` -- whether
+  the source natively writes a checkpoint file;
+- :func:`confflow.programs.gaussian.path.parse_irc_route` -- IRC option
+  validation, direction-vote conflicts, and unknown-option refusal;
+- :func:`confflow.programs.gaussian.energy_semantics.unsupported_method_finding`
+  -- method families whose final energy ConfFlow cannot publish;
+- :mod:`confflow.workflow.v4.graph` -- binding cardinality strengthening
+  (``optional`` ports accept a required ``one`` binding), selector/role
+  checks, and cycle detection;
+- :func:`confflow.workflow.v4.compiler.compile_workflow` -- the full
+  document is compiled through the existing compiler, so cycles, unknown
+  steps, ORCA/QST misuse, and every semantic rule reject exactly as
+  hand-written documents do;
+- :class:`confflow.programs.gaussian.adapter.GaussianProgramAdapter` (in
+  tests) -- the current renderer proving ``%Chk``/``%OldChk`` output and
+  the scope cardinality of the checkpoint edge.
+
+Consumption promise
+-------------------
+The emitted binding declares cardinality ``one`` (which the graph
+authority permits on the ``optional`` checkpoint port).  At assembly the
+``one`` contract requires exactly one subject-matched artifact, so a
+missing checkpoint fails through the existing ``artifact_flow`` guard
+(``artifact_subject_missing``) instead of silently running without restart
+data.  Atom matching stays with the existing ``by_subject`` pairing: the
+helper never sets a pairing, so no path or order guessing is introduced.
+
+Method compatibility (no chemistry guessing)
+--------------------------------------------
+The helper retains each calculation's native method verbatim and records
+the source relationship in the digest-covered binding (bindings are part
+of the definition digest).  Two checks are decidable at authoring time
+without guessing chemistry and therefore refuse loudly:
+
+- charge/spin compatibility: explicit step overrides and declared bound
+  structure state propagate along structure bindings. Known unequal values
+  refuse. Unknown values are compatible only when the target inherits the
+  checkpoint source's state without a field override. Run defaults remain
+  fallbacks and never replace inherited state. An explicit target override
+  against an unknown source fails closed;
+- effective route method: the route keywords, after removing only the
+  helper-managed job-type items (``Opt(...)``, ``IRC(...)``, ``Freq``,
+  standalone ``SP``), must agree token-for-token, and the remaining native scientific
+  payload (basis/ECP/extra sections, ``modredundant``, atom mapping --
+  everything except the helper-managed ``keyword``/``write_chk``/
+  ``link0`` keys) must agree exactly; any other difference is a known
+  differing method for Hessian reuse and is refused by default.  The
+  comparison is conservative exact equality: no chemistry equivalence is
+  ever guessed.
+
+Everything else is deferred to runtime and documented as such: structure
+atom counts (structures are runtime data; ``by_subject`` pairing plus the
+executor's atom-sequence gate own them), basis/method equivalence beyond
+token identity, and checkpoint file presence (owned by staging and the
+``one`` cardinality guard).  A user-intended method change (for example a
+deliberate Hessian transfer across levels of theory) is accepted only
+with the explicit advanced override ``allow_method_change=True``, which
+is recorded in the authoring-layer provenance annotation on the target
+step (annotations are digest-excluded by design; the binding itself stays
+digest-covered).
+"""
+
+from __future__ import annotations
+
+import copy
+import re
+from collections.abc import Mapping
+from typing import Any
+
+from ..domain.binding import PortKind
+from ..domain.errors import DomainError, InvalidBindingError
+from ..execution.contracts import ExecutorCapability
+from ..execution.native import ProgramName
+from ..execution.registry import ExecutionRegistry, RegistryLookupError, default_registry
+from ..programs.gaussian import energy_semantics as _energy_semantics
+from ..programs.gaussian import path as _irc_path
+from ..programs.gaussian import rendering as _gaussian_rendering
+from ..workflow.v4.compiler import compile_workflow
+from ..workflow.v4.schema import CalculationModel
+
+__all__ = [
+    "CHECKPOINT_REUSE_VERSION",
+    "REUSE_MODES",
+    "wire_checkpoint_reuse",
+]
+
+#: Version stamp recorded on every checkpoint-reuse provenance annotation.
+CHECKPOINT_REUSE_VERSION = "confflow.producer.checkpoints.v1"
+
+#: Supported reuse modes.
+REUSE_MODES: tuple[str, ...] = ("checkpoint", "readfc", "rcfc")
+
+#: Annotation key carrying the authoring-layer reuse provenance on the
+#: target step.  Annotations are digest-excluded by design; the
+#: digest-covered binding carries the scientific relationship.
+_REUSE_ANNOTATION_KEY = "confflow.checkpoint_reuse"
+
+#: QST route token (mirrors ``named._QST_ITEM_PATTERN``; the compiler and
+#: the named-structures adapter own the real rule, this is only the early
+#: refusal so the error names checkpoint vocabulary).
+_QST_TOKEN_RE = re.compile(r"(?<![A-Za-z0-9])QST[23](?![0-9])", re.IGNORECASE)
+
+#: Managed IRC item in all its forms (bare ``IRC``, ``IRC(...)``,
+#: ``IRC=X``, ``IRC=(...)``), for the method comparison strip.  Option
+#: semantics stay with :func:`parse_irc_route`; this pattern only removes
+#: the item text.
+_IRC_MANAGED_RE = re.compile(
+    r"(?<![A-Za-z0-9])IRC(?![A-Za-z0-9])" r"(\s*=\s*\([^)]*\)|\s*\([^)]*\)|\s*=\s*[^\s,()]+)?",
+    re.IGNORECASE,
+)
+
+#: Bare IRC route item locator for the ``RCFC`` edit span (option
+#: semantics stay with :func:`parse_irc_route`, which already validated
+#: the route before the edit span is located here).
+_IRC_ITEM_RE = re.compile(r"(?<![A-Za-z0-9])IRC(?![A-Za-z0-9])", re.IGNORECASE)
+
+#: Opt route item forms (mirrors ``rendering._OPT_PAREN_RE`` /
+#: ``_OPT_ASSIGN_RE`` / ``_OPT_BARE_RE``; the compiler and the adapter own
+#: the real rule, this only locates the edit span for the managed option).
+_OPT_PAREN_RE = re.compile(r"(?i)\bopt\s*(=)?\s*\(([^)]*)\)")
+_OPT_ASSIGN_RE = re.compile(r"(?i)\bopt\s*=\s*([^\s()]+)")
+_OPT_BARE_RE = re.compile(r"(?i)\bopt\b")
+
+#: Frequency token (mirrors ``rendering._FREQ_TOKEN_PATTERN``; used only to
+#: strip the helper-managed job-type items for the method comparison).
+_FREQ_TOKEN_RE = re.compile(r"(?i)(^|\s)freq\b(\s*=\s*\([^)]*\)|\s*\([^)]*\)|\s*=\s*[^\s]+)?")
+
+#: Standalone single-point job-type token for the method comparison.  An
+#: explicit Gaussian ``SP`` is a valid job type (single point is otherwise
+#: the default), not a method change, so it strips exactly like the other
+#: managed job-type items.  Requiring whitespace or string boundaries
+#: keeps letters ``SP`` inside functional/basis keywords (for
+#: example ``B3LYP/SP``, ``CSP``) or other scientific keywords/options
+#: untouched: only a whitespace-delimited standalone ``SP`` item is removed.
+_SP_MANAGED_RE = re.compile(r"(?i)(?<!\S)sp(?=\s|$)")
+
+#: Force-constant options opposed to an explicit ``ReadFC`` inside one
+#: ``Opt(...)`` group: reading stored force constants while computing them
+#: (``CalcFC``/``CalcAll``) or voting the both-directions checkpoint form
+#: (``RCFC``) is ambiguous, so the combination is refused.  An already
+#: present ``ReadFC`` is the idempotent accept: a user card that already
+#: spells the option keeps its keyword verbatim.
+_READFC_CONFLICTS = frozenset({"rcfc", "calcfc", "calcall"})
+
+#: Force-constant options opposed to the ``RCFC`` vote inside one ``IRC``
+#: item: computing force constants (``CalcFC``/``CalcAll``) while voting
+#: the checkpoint-read form is ambiguous.  An already present ``RCFC`` is
+#: the idempotent accept.
+_RCFC_CONFLICTS = frozenset({"calcfc", "calcall"})
+
+#: User-managed checkpoint path directives: the adapter renders ``%Chk``
+#: and ``%OldChk`` itself, so a target that manages them by hand is
+#: refused instead of racing the renderer.
+_LINK0_CHECKPOINT_RE = re.compile(r"(?i)%\s*(oldchk|chk)\b")
+
+
+def _refuse(message: str) -> DomainError:
+    """Build the refusal error for a checkpoint-reuse violation."""
+    return InvalidBindingError(message)
+
+
+def _raw_steps(document: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Return the mutable step mappings of *document*, or refuse."""
+    steps = document.get("steps")
+    if not isinstance(steps, list) or not steps:
+        raise _refuse("the document declares no steps")
+    for step in steps:
+        if not isinstance(step, Mapping):
+            raise _refuse("every step must be a mapping")
+    return [step for step in steps if isinstance(step, dict)]
+
+
+def _find_step(steps: list[dict[str, Any]], step_id: str, *, role: str) -> dict[str, Any]:
+    """Return the step mapping with *step_id*, or refuse."""
+    for step in steps:
+        if step.get("id") == step_id:
+            return step
+    raise _refuse(f"unknown {role} step {step_id!r}")
+
+
+def _calculation_block(step: Mapping[str, Any]) -> dict[str, Any]:
+    """Return the ``calculation`` block of *step*, or refuse."""
+    block = step.get("calculation")
+    if not isinstance(block, dict):
+        raise _refuse(
+            f"step {step.get('id')!r} is not a calculation step; "
+            "checkpoint reuse needs calculation steps on both ends"
+        )
+    return block
+
+
+def _program_of(block: Mapping[str, Any], step_id: str) -> str:
+    """Return the declared program of a calculation block, or refuse."""
+    program = block.get("program")
+    if not isinstance(program, str) or not program.strip():
+        raise _refuse(f"step {step_id!r} declares no calculation program")
+    return program
+
+
+def _native_of(block: Mapping[str, Any], step_id: str) -> dict[str, Any]:
+    """Return the mutable native mapping of a calculation block, or refuse."""
+    native = block.get("native")
+    if not isinstance(native, dict):
+        raise _refuse(f"step {step_id!r} declares no native mapping")
+    return native
+
+
+def _keyword_of(native: Mapping[str, Any], step_id: str) -> str:
+    """Return the native route keyword of *native*, or refuse."""
+    keyword = native.get("keyword")
+    if not isinstance(keyword, str) or not keyword.strip():
+        raise _refuse(f"step {step_id!r} declares no native route keyword")
+    return keyword
+
+
+def _check_gaussian_sides(
+    registry: ExecutionRegistry,
+    source: Mapping[str, Any],
+    target: Mapping[str, Any],
+) -> tuple[str, str]:
+    """Enforce the Gaussian/standard-adapter/IRC requirements, or refuse.
+
+    Returns the ``(source_keyword, target_keyword)`` pair for the route
+    layer.  Both ends must resolve through the program registry to
+    Gaussian, both must use the ``standard`` execution adapter (which owns
+    the ``checkpoint`` input port), and neither route may carry a QST
+    item: the Gaussian adapter declares no checkpoint vocabulary for QST
+    rendering and refuses staged-but-unused success at render time.
+    """
+    for step in (source, target):
+        step_id = str(step.get("id"))
+        block = _calculation_block(step)
+        program = _program_of(block, step_id)
+        try:
+            adapter = registry.resolve_program(program)
+        except RegistryLookupError as exc:
+            raise _refuse(f"step {step_id!r} uses an unknown program: {exc}") from exc
+        if adapter.program_name is not ProgramName.GAUSSIAN:
+            raise _refuse(
+                f"step {step_id!r} uses program {program!r}: ORCA declares no "
+                "checkpoint input vocabulary, so checkpoint reuse is refused "
+                "instead of staging artifacts nothing can consume"
+            )
+        execution_adapter = block.get("execution_adapter", "standard")
+        if execution_adapter != "standard":
+            raise _refuse(
+                f"step {step_id!r} uses execution adapter {execution_adapter!r}: "
+                "checkpoint reuse needs the 'standard' adapter (or an IRC route "
+                "on it); named-structure/QST shapes carry no checkpoint port"
+            )
+    source_block = _calculation_block(source)
+    target_block = _calculation_block(target)
+    source_keyword = _keyword_of(
+        _native_of(source_block, str(source.get("id"))), str(source.get("id"))
+    )
+    target_keyword = _keyword_of(
+        _native_of(target_block, str(target.get("id"))), str(target.get("id"))
+    )
+    for step_id, keyword in (
+        (str(source.get("id")), source_keyword),
+        (str(target.get("id")), target_keyword),
+    ):
+        if _QST_TOKEN_RE.search(keyword) is not None:
+            raise _refuse(
+                f"step {step_id!r} carries a QST route item: Gaussian QST "
+                "rendering declares no checkpoint input vocabulary"
+            )
+    try:
+        standard_adapter = registry.resolve_adapter("standard")
+    except RegistryLookupError as exc:
+        raise _refuse(f"the 'standard' execution adapter is not registered: {exc}") from exc
+    checkpoint_port = standard_adapter.input_port("checkpoint")
+    if checkpoint_port is None or "checkpoint" not in tuple(checkpoint_port.roles):
+        raise _refuse(
+            "the 'standard' adapter advertises no 'checkpoint' role on its "
+            "'checkpoint' port; the reuse edge has no supported role"
+        )
+    try:
+        contract = registry.resolve_executor(source_block.get("executor", "calculation"))
+    except (RegistryLookupError, ValueError) as exc:
+        raise _refuse(f"cannot resolve the calculation executor contract: {exc}") from exc
+    artifacts_port = contract.output_port("artifacts")
+    if artifacts_port is None or "checkpoint" not in tuple(artifacts_port.roles):
+        raise _refuse(
+            "the calculation contract advertises no 'checkpoint' role on its "
+            "'artifacts' port; the reuse edge has no supported role"
+        )
+    return source_keyword, target_keyword
+
+
+def _check_write_chk(source: Mapping[str, Any]) -> None:
+    """Require the source to write a checkpoint file, then make it explicit."""
+    step_id = str(source.get("id"))
+    native = _native_of(_calculation_block(source), step_id)
+    if not _gaussian_rendering.resolve_write_chk(native):
+        raise _refuse(
+            f"source step {step_id!r} disables native 'write_chk': "
+            "there is no checkpoint file for the target to consume"
+        )
+    native["write_chk"] = True
+
+
+def _check_target_link0(target: Mapping[str, Any]) -> None:
+    """Refuse a target that hand-manages checkpoint Link0 directives."""
+    step_id = str(target.get("id"))
+    native = _native_of(_calculation_block(target), step_id)
+    user_link0 = native.get("link0")
+    if user_link0 is None:
+        return
+    lines = _gaussian_rendering.coerce_section_lines(user_link0, "link0")
+    for line in lines:
+        if _LINK0_CHECKPOINT_RE.search(line) is not None:
+            raise _refuse(
+                f"target step {step_id!r} manages checkpoint paths in native "
+                f"'link0' ({line!r}): the adapter renders '%Chk'/'%OldChk' "
+                "itself, so user-managed checkpoint paths are refused"
+            )
+
+
+def _add_opt_option(keyword: str, option: str, *, step_id: str) -> str:
+    """Insert *option* into the first ``Opt`` item of *keyword*.
+
+    The insertion mirrors the adapter-owned ``ensure_modredundant_keyword``
+    shape handling (paren group, ``opt=X`` assignment, bare ``opt``); only
+    the managed ``ReadFC`` option is ever inserted, never a naked keyword.
+    """
+
+    def _paren_replace(match: re.Match[str]) -> str:
+        marker = match.group(1)
+        items = [item.strip() for item in (match.group(2) or "").split(",") if item.strip()]
+        lowered = {item.split("=")[0].strip().lower() for item in items}
+        conflicts = sorted(lowered & _READFC_CONFLICTS)
+        if conflicts:
+            raise _refuse(
+                f"target step {step_id!r} already declares opposed Opt "
+                f"option(s) {conflicts}: an explicit Hessian source cannot be "
+                "combined with computed force constants"
+            )
+        if "readfc" in lowered:
+            return match.group(0)
+        items.append(option)
+        return f"opt{'=' if marker == '=' else ''}({','.join(items)})"
+
+    updated, count = _OPT_PAREN_RE.subn(_paren_replace, keyword, count=1)
+    if count:
+        return updated
+
+    def _assign_replace(match: re.Match[str]) -> str:
+        current = match.group(1).strip()
+        lowered = current.split("=")[0].strip().lower()
+        if lowered == "readfc":
+            return match.group(0)
+        if lowered in _READFC_CONFLICTS:
+            raise _refuse(
+                f"target step {step_id!r} already declares opposed Opt "
+                f"option {current!r}: an explicit Hessian source cannot be "
+                "combined with computed force constants"
+            )
+        return f"opt=({current},{option})"
+
+    updated, count = _OPT_ASSIGN_RE.subn(_assign_replace, keyword, count=1)
+    if count:
+        return updated
+    if _OPT_BARE_RE.search(keyword) is not None:
+        return _OPT_BARE_RE.sub(f"opt={option}", keyword, count=1)
+    raise _refuse(
+        f"target step {step_id!r} carries no Opt route item: mode 'readfc' "
+        "explicitly modifies an Opt route only"
+    )
+
+
+def _add_irc_rcfc(keyword: str, *, step_id: str) -> str:
+    """Insert the ``RCFC`` vote into the first ``IRC`` item of *keyword*.
+
+    Direction votes and unknown options are validated by the existing
+    :func:`parse_irc_route` authority first: an explicit
+    forward/reverse vote conflicts with the both-directions ``RCFC`` form,
+    and an already-present ``RCFC`` is refused instead of duplicated.  The
+    bare ``IRC`` form already means both directions, so spelling ``RCFC``
+    out is the explicit, digest-covered record of that intent.
+    """
+    try:
+        route = _irc_path.parse_irc_route(keyword)
+    except ValueError as exc:
+        raise _refuse(f"target step {step_id!r} has an invalid IRC route: {exc}") from exc
+    raw_options = tuple(str(item) for item in route.get("raw_options", ()))
+    lowered_options = {item.upper() for item in raw_options}
+    opposed = sorted(item for item in raw_options if item.lower() in _RCFC_CONFLICTS)
+    if opposed:
+        raise _refuse(
+            f"target step {step_id!r} already declares opposed IRC "
+            f"option(s) {opposed}: the checkpoint-read vote cannot be "
+            "combined with computed force constants"
+        )
+    if "RCFC" in lowered_options:
+        return keyword
+    if route.get("mode") != "both":
+        raise _refuse(
+            f"target step {step_id!r} votes an explicit IRC direction "
+            f"({route.get('mode')!r}): mode 'rcfc' needs both directions"
+        )
+    match = _IRC_ITEM_RE.search(keyword)
+    if match is None:  # Unreachable: parse_irc_route already found the item.
+        raise _refuse(f"target step {step_id!r} carries no IRC route item")
+    tail = keyword[match.end() :]
+    stripped = tail.lstrip()
+    if stripped.startswith("("):
+        closing = stripped.find(")")
+        if closing < 0:
+            raise _refuse(f"target step {step_id!r} has a malformed IRC option group")
+        inner = stripped[1:closing].strip()
+        replacement = f"IRC({inner},RCFC)" if inner else "IRC(RCFC)"
+        return keyword[: match.start()] + replacement + stripped[closing + 1 :]
+    if stripped.startswith("="):
+        after = stripped[1:].lstrip()
+        if after.startswith("("):
+            closing = after.find(")")
+            if closing < 0:
+                raise _refuse(f"target step {step_id!r} has a malformed IRC option group")
+            inner = after[1:closing].strip()
+            replacement = f"IRC=({inner},RCFC)" if inner else "IRC=(RCFC)"
+            return keyword[: match.start()] + replacement + after[closing + 1 :]
+        token = after.split(",")[0].strip().split()[0] if after.strip() else ""
+        if not token:
+            raise _refuse(f"target step {step_id!r} has a malformed IRC= option")
+        return keyword[: match.start()] + f"IRC=({token},RCFC)" + after[len(token) :]
+    return keyword[: match.start()] + "IRC(RCFC)" + tail
+
+
+def _strip_managed_items(keyword: str) -> str:
+    """Remove helper-managed job-type items for the method comparison.
+
+    Only the ``Opt(...)`` item in all its forms, the ``IRC`` item in all
+    its forms, ``Freq`` tokens, and the standalone ``SP`` job-type token
+    are removed: these are the items this helper understands and edits.
+    Everything else (functional, basis set, solvation, extra keywords)
+    must agree token-for-token, so no chemistry equivalence is ever
+    guessed.  The ``SP`` strip requires a whitespace-delimited standalone
+    token, so letters ``SP`` inside functional/basis keywords (for example
+    ``B3LYP/SP``, ``CSP``) or other scientific keywords/options stay
+    untouched.
+    """
+    text = _gaussian_rendering.normalize_gaussian_keyword(keyword)
+    text = _OPT_PAREN_RE.sub(" ", text)
+    text = _OPT_ASSIGN_RE.sub(" ", text)
+    text = _OPT_BARE_RE.sub(" ", text)
+    text = _IRC_MANAGED_RE.sub(" ", text)
+    text = _FREQ_TOKEN_RE.sub(" ", text)
+    text = _SP_MANAGED_RE.sub(" ", text)
+    return " ".join(text.replace("#", " ").split()).lower()
+
+
+#: Native keys managed by this helper and therefore excluded from the
+#: scientific-payload comparison: ``keyword`` is compared through the
+#: managed job-type strip, ``write_chk`` is set explicitly on the source
+#: by this helper, and ``link0`` carries renderer-owned checkpoint paths
+#: plus user Link0 lines that never change the science.  Every other
+#: native key (basis/ECP/extra sections, ``modredundant``, atom mapping)
+#: is scientific payload and must agree exactly.
+_NATIVE_MANAGED_KEYS = frozenset({"keyword", "write_chk", "link0"})
+
+
+def _native_scientific_core(native: Mapping[str, Any]) -> dict[str, Any]:
+    """Return the scientific payload of *native* minus helper-managed keys."""
+    return {key: value for key, value in native.items() if key not in _NATIVE_MANAGED_KEYS}
+
+
+def _step_override_value(step: Mapping[str, Any], field: str) -> Any:
+    """Return the explicit step scientific override for *field*, if declared.
+
+    Only ``calculation.overrides`` and ``confgen.overrides`` count.
+    Transform steps carry no scientific overrides.  ``None`` means no
+    explicit declaration (unknown at this layer).
+    """
+    for block_name in ("calculation", "confgen"):
+        block = step.get(block_name)
+        if isinstance(block, Mapping):
+            overrides = block.get("overrides")
+            if isinstance(overrides, Mapping) and overrides.get(field) is not None:
+                return overrides.get(field)
+    return None
+
+
+def _raw_inputs_by_name(document: Mapping[str, Any]) -> dict[str, Mapping[str, Any]]:
+    """Return the raw run-input declarations keyed by name."""
+    inputs = document.get("inputs")
+    if not isinstance(inputs, Mapping):
+        return {}
+    return {str(name): value for name, value in inputs.items() if isinstance(value, Mapping)}
+
+
+def _structure_input_ports_raw(
+    step: Mapping[str, Any], registry: ExecutionRegistry
+) -> set[str] | None:
+    """Return STRUCTURE-kind input port names for *step*, or ``None`` if unknown.
+
+    Port facts come from the existing execution registry only (executor
+    contract plus the resolved execution adapter when one is required).
+    ``None`` means the ports cannot be proven (unknown executor/adapter),
+    so callers fail closed instead of guessing.
+    """
+    try:
+        executor_name = step.get("executor")
+        if not isinstance(executor_name, str) or not executor_name:
+            return None
+        capability = ExecutorCapability(executor_name)
+        contract = registry.resolve_executor(capability)
+    except Exception:
+        return None
+    try:
+        if contract.requires_adapter:
+            adapter_name = None
+            calculation = step.get("calculation")
+            if isinstance(calculation, Mapping):
+                adapter_name = calculation.get(
+                    "execution_adapter",
+                    CalculationModel.model_fields["execution_adapter"].default,
+                )
+            if not isinstance(adapter_name, str) or not adapter_name:
+                return None
+            adapter = registry.resolve_adapter(adapter_name)
+            ports = adapter.input_ports
+        else:
+            ports = contract.input_ports
+    except Exception:
+        return None
+    try:
+        return {port.name for port in ports if getattr(port, "kind", None) is PortKind.STRUCTURE}
+    except Exception:
+        return None
+
+
+def _producer_output_is_structure_raw(
+    producer: Mapping[str, Any], port_name: Any, registry: ExecutionRegistry
+) -> bool | None:
+    """Return whether *producer*'s output *port_name* carries structures.
+
+    ``True`` means definitely a structure output (contract output port is
+    STRUCTURE-kind and the producer's result profile provides structures).
+    ``False`` means definitely not (unknown port, non-structure kind, or a
+    profile without structures) so callers skip the edge.  ``None`` means
+    the fact cannot be proven (unresolvable contract/profile), so callers
+    fail closed instead of guessing.  Mirrors the registry port authority
+    used by semantic validation without duplicating the runtime resolver.
+    """
+    if not isinstance(port_name, str) or not port_name:
+        return False
+    try:
+        executor_name = producer.get("executor")
+        if not isinstance(executor_name, str) or not executor_name:
+            return None
+        contract = registry.resolve_executor(ExecutorCapability(executor_name))
+    except Exception:
+        return None
+    try:
+        output_ports = contract.output_ports
+    except Exception:
+        return None
+    matched: bool | None = None
+    try:
+        for port in output_ports:
+            if port.name == port_name:
+                matched = port.kind is PortKind.STRUCTURE
+                break
+        else:
+            return False
+    except Exception:
+        return None
+    if matched is not True:
+        return False
+    profile_name = "standard"
+    try:
+        calculation = producer.get("calculation")
+        if isinstance(calculation, Mapping):
+            candidate = calculation.get("result_profile")
+            if isinstance(candidate, str) and candidate:
+                profile_name = candidate
+        profile = registry.resolve_profile(profile_name)
+    except Exception:
+        return None
+    try:
+        return bool(getattr(profile, "provides_structures", False))
+    except Exception:
+        return None
+
+
+def _declared_lineage_value(
+    document: Mapping[str, Any],
+    steps_by_id: Mapping[str, Mapping[str, Any]],
+    inputs_by_name: Mapping[str, Mapping[str, Any]],
+    step_id: str,
+    field: str,
+    registry: ExecutionRegistry,
+    seen: frozenset[str],
+) -> tuple[bool, Any]:
+    """Return the bound-lineage DECLARED VALUE for *field* on *step_id*.
+
+    Conservative proof only (no chemistry guessing, no second runtime):
+
+    - an explicit step scientific override wins when present;
+    - otherwise every bound STRUCTURE input root must prove the same
+      declared value: run-input declarations carrying the field explicitly,
+      or producer steps proven recursively through their own override or
+      structure lineage (transform/ConfGen passthrough propagates when the
+      registry declares structure ports on both ends);
+    - only STRUCTURE input bindings and STRUCTURE output ports are
+      followed (artifact/checkpoint edges are skipped, never chosen);
+    - cycles, disabled producers, unknown producers/ports/contracts, and
+      ambiguous differing values across roots are unknown (not picked).
+
+    Run ``global.scientific_defaults`` are deliberately NOT consulted
+    here: a default is a fallback for rendering, never proof of the
+    absolute actual charge when a runtime-imported structure may carry its
+    own value.  ``(False, None)`` means unknown/deferred-or-refused by the
+    caller; ``(True, value)`` is a proven declared value.
+    """
+    step = steps_by_id.get(step_id)
+    if step is None:
+        return False, None
+    if step.get("enabled") is False:
+        return False, None
+    override = _step_override_value(step, field)
+    if override is not None:
+        return True, override
+    if step_id in seen:
+        return False, None
+    extended = seen | {step_id}
+    ports = _structure_input_ports_raw(step, registry)
+    if ports is None:
+        return False, None
+    bindings = step.get("bindings")
+    if not isinstance(bindings, Mapping):
+        return False, None
+    relevant = False
+    candidates: list[Any] = []
+    for port_name, binding in bindings.items():
+        if port_name not in ports:
+            continue
+        if not isinstance(binding, Mapping):
+            return False, None
+        source = binding.get("source")
+        if not isinstance(source, Mapping):
+            return False, None
+        if isinstance(source.get("run"), str) and source.get("run"):
+            declaration = inputs_by_name.get(str(source.get("run")))
+            if declaration is None:
+                return False, None
+            if str(declaration.get("kind")) != PortKind.STRUCTURE.value:
+                return False, None
+            relevant = True
+            value = declaration.get(field)
+            if value is None:
+                return False, None
+            candidates.append(value)
+        elif isinstance(source.get("step"), str) and source.get("step"):
+            producer_id = str(source.get("step"))
+            producer = steps_by_id.get(producer_id)
+            if producer is None or producer.get("enabled") is False:
+                return False, None
+            flag = _producer_output_is_structure_raw(producer, source.get("port"), registry)
+            if flag is False:
+                continue
+            if flag is None:
+                return False, None
+            relevant = True
+            known, value = _declared_lineage_value(
+                document, steps_by_id, inputs_by_name, producer_id, field, registry, extended
+            )
+            if not known:
+                return False, None
+            candidates.append(value)
+        else:
+            return False, None
+    if not relevant:
+        return False, None
+    first = candidates[0]
+    for candidate in candidates[1:]:
+        if candidate != first:
+            return False, None
+    return True, first
+
+
+def _effective_declared_state(
+    document: Mapping[str, Any],
+    steps_by_id: Mapping[str, Mapping[str, Any]],
+    inputs_by_name: Mapping[str, Mapping[str, Any]],
+    step: Mapping[str, Any],
+    field: str,
+    registry: ExecutionRegistry,
+) -> tuple[bool, Any]:
+    """Return the effective declared state (override > lineage, no globals)."""
+    step_id = str(step.get("id"))
+    return _declared_lineage_value(
+        document, steps_by_id, inputs_by_name, step_id, field, registry, frozenset()
+    )
+
+
+def _all_structure_roots_reach_source(
+    steps_by_id: Mapping[str, Mapping[str, Any]],
+    inputs_by_name: Mapping[str, Mapping[str, Any]],
+    consumer_id: str,
+    source_id: str,
+    field: str,
+    registry: ExecutionRegistry,
+    seen: frozenset[str] = frozenset(),
+) -> bool:
+    """Return whether every STRUCTURE root of *consumer* reaches *source*.
+
+    Symbolic same-lineage identity proof: the target shares the exact
+    produced records only when all of its bound STRUCTURE inputs derive
+    transitively from the checkpoint source through STRUCTURE ports, with
+    no overriding scientific field on the path and no independent run-input
+    or foreign-step root.  Artifact/checkpoint edges are never followed.
+    Unknown ports, disabled/unknown producers, cycles, overrides on the
+    path, and any independent root all fail closed (``False``).
+    """
+    if consumer_id == source_id:
+        return True
+    if consumer_id in seen:
+        return False
+    consumer = steps_by_id.get(consumer_id)
+    if consumer is None or consumer.get("enabled") is False:
+        return False
+    if _step_override_value(consumer, field) is not None:
+        return False
+    extended = seen | {consumer_id}
+    ports = _structure_input_ports_raw(consumer, registry)
+    if ports is None:
+        return False
+    bindings = consumer.get("bindings")
+    if not isinstance(bindings, Mapping):
+        return False
+    relevant = False
+    for port_name, binding in bindings.items():
+        if port_name not in ports:
+            continue
+        if not isinstance(binding, Mapping):
+            return False
+        source = binding.get("source")
+        if not isinstance(source, Mapping):
+            return False
+        if isinstance(source.get("run"), str) and source.get("run"):
+            return False
+        if isinstance(source.get("step"), str) and source.get("step"):
+            producer_id = str(source.get("step"))
+            producer = steps_by_id.get(producer_id)
+            if producer is None or producer.get("enabled") is False:
+                return False
+            flag = _producer_output_is_structure_raw(producer, source.get("port"), registry)
+            if flag is False:
+                continue
+            if flag is None:
+                return False
+            relevant = True
+            if not _all_structure_roots_reach_source(
+                steps_by_id, inputs_by_name, producer_id, source_id, field, registry, extended
+            ):
+                return False
+        else:
+            return False
+    return relevant
+
+
+def _check_charge_spin_compatibility(
+    document: Mapping[str, Any],
+    source: Mapping[str, Any],
+    target: Mapping[str, Any],
+    registry: ExecutionRegistry,
+) -> None:
+    """Refuse unverified Hessian charge/spin differences (fail closed).
+
+    Conservative policy, identical for every checkpoint mode; the advanced
+    ``allow_method_change`` override never bypasses charge/spin proof:
+
+    - known unequal declared values refuse (explicit overrides, run-input
+      declarations, or propagated upstream overrides);
+    - a source override inherited verbatim by the target accepts;
+    - an unknown concrete state accepts ONLY when symbolic
+      bound-STRUCTURE lineage proves the same inherited state (the target
+      transitively consumes the source structures with no overriding
+      field, so ``by_subject`` pairs the exact produced records);
+    - a target explicit override against an unknown source fails closed;
+    - mixed/ambiguous roots never pick one state (fail closed);
+    - run globals are fallback only and never infer the absolute actual
+      charge when a runtime structure may carry its own value.
+    """
+    source_id = str(source.get("id"))
+    target_id = str(target.get("id"))
+    steps_by_id: dict[str, Mapping[str, Any]] = {}
+    raw_steps = document.get("steps")
+    if isinstance(raw_steps, list):
+        for entry in raw_steps:
+            if isinstance(entry, Mapping) and isinstance(entry.get("id"), str):
+                steps_by_id[str(entry.get("id"))] = entry
+    inputs_by_name = _raw_inputs_by_name(document)
+    for field, label in (("charge", "charge"), ("multiplicity", "multiplicity")):
+        source_override = _step_override_value(source, field)
+        target_override = _step_override_value(target, field)
+        source_known, source_value = _effective_declared_state(
+            document, steps_by_id, inputs_by_name, source, field, registry
+        )
+        target_known, target_value = _effective_declared_state(
+            document, steps_by_id, inputs_by_name, target, field, registry
+        )
+        if source_override is not None and target_override is not None:
+            if source_override != target_override:
+                raise _refuse(
+                    f"source step {source_id!r} declares {label} {source_override!r} but "
+                    f"target step {target_id!r} declares {label} {target_override!r}: "
+                    "checkpoint reuse across charge states is refused"
+                    if label == "charge"
+                    else f"source step {source_id!r} declares {label} {source_override!r} but "
+                    f"target step {target_id!r} declares {label} {target_override!r}: "
+                    "checkpoint reuse across spin states is refused"
+                )
+            continue
+        if source_override is not None and target_override is None:
+            if target_known and target_value == source_override:
+                continue
+            raise _refuse(
+                f"source step {source_id!r} declares {label} {source_override!r} but "
+                f"target step {target_id!r} does not prove the same inherited state: "
+                "checkpoint reuse across charge states is refused"
+                if label == "charge"
+                else f"source step {source_id!r} declares {label} {source_override!r} but "
+                f"target step {target_id!r} does not prove the same inherited state: "
+                "checkpoint reuse across spin states is refused"
+            )
+        if source_override is None and target_override is not None:
+            if source_known and source_value == target_override:
+                continue
+            raise _refuse(
+                f"source step {source_id!r} does not prove {label} {target_override!r} "
+                f"declared by target step {target_id!r}: "
+                "checkpoint reuse across charge states is refused"
+                if label == "charge"
+                else f"source step {source_id!r} does not prove {label} {target_override!r} "
+                f"declared by target step {target_id!r}: "
+                "checkpoint reuse across spin states is refused"
+            )
+        if source_known and target_known:
+            if source_value != target_value:
+                raise _refuse(
+                    f"source step {source_id!r} declares {label} {source_value!r} but "
+                    f"target step {target_id!r} declares {label} {target_value!r}: "
+                    "checkpoint reuse across charge states is refused"
+                    if label == "charge"
+                    else f"source step {source_id!r} declares {label} {source_value!r} but "
+                    f"target step {target_id!r} declares {label} {target_value!r}: "
+                    "checkpoint reuse across spin states is refused"
+                )
+            continue
+        if _all_structure_roots_reach_source(
+            steps_by_id, inputs_by_name, target_id, source_id, field, registry
+        ):
+            continue
+        raise _refuse(
+            f"source step {source_id!r} and target step {target_id!r} do not prove "
+            f"the same inherited {label} state: "
+            "checkpoint reuse across charge states is refused"
+            if label == "charge"
+            else f"source step {source_id!r} and target step {target_id!r} do not prove "
+            f"the same inherited {label} state: "
+            "checkpoint reuse across spin states is refused"
+        )
+
+
+def _explicit_charge_spin(document: Mapping[str, Any], step: Mapping[str, Any]) -> tuple[Any, Any]:
+    """Return the effective declared (charge, multiplicity) for *step*.
+
+    Bound-lineage DECLARED VALUE proof (override wins, then every bound
+    STRUCTURE root through STRUCTURE output ports; run globals are never
+    used to infer absolute actual charge).  ``None`` means unknown: the
+    caller fails closed unless same-lineage identity proves the exact
+    produced records are shared.  Structure-carried runtime values are
+    never guessed here; the runtime scientific resolver owns them.
+    """
+    steps_by_id: dict[str, Mapping[str, Any]] = {}
+    raw_steps = document.get("steps")
+    if isinstance(raw_steps, list):
+        for entry in raw_steps:
+            if isinstance(entry, Mapping) and isinstance(entry.get("id"), str):
+                steps_by_id[str(entry.get("id"))] = entry
+    inputs_by_name = _raw_inputs_by_name(document)
+    try:
+        registry = default_registry()
+    except Exception:
+        return None, None
+    charge_known, charge = _effective_declared_state(
+        document, steps_by_id, inputs_by_name, step, "charge", registry
+    )
+    spin_known, spin = _effective_declared_state(
+        document, steps_by_id, inputs_by_name, step, "multiplicity", registry
+    )
+    return (charge if charge_known else None, spin if spin_known else None)
+
+
+def _check_method_compatibility(
+    document: Mapping[str, Any],
+    source: Mapping[str, Any],
+    target: Mapping[str, Any],
+    source_keyword: str,
+    target_keyword: str,
+    *,
+    allow_method_change: bool,
+    registry: ExecutionRegistry,
+) -> None:
+    """Refuse known charge/spin/method incompatibilities (fail closed)."""
+    _check_charge_spin_compatibility(document, source, target, registry)
+    source_id = str(source.get("id"))
+    target_id = str(target.get("id"))
+    finding = _energy_semantics.unsupported_method_finding(target_keyword)
+    if finding is not None:
+        raise _refuse(
+            f"target step {target_id!r} requests method {finding.token!r}: "
+            f"{finding.reason} (family {finding.family.value})"
+        )
+    source_core = _strip_managed_items(source_keyword)
+    target_core = _strip_managed_items(target_keyword)
+    if source_core != target_core and not allow_method_change:
+        raise _refuse(
+            f"source step {source_id!r} and target step {target_id!r} differ "
+            "beyond the helper-managed Opt/IRC/Freq/SP items "
+            f"({source_core!r} != {target_core!r}): a known differing method "
+            "for Hessian reuse is refused by default; pass "
+            "allow_method_change=True when the method change is intended"
+        )
+    source_native = _native_of(_calculation_block(source), source_id)
+    target_native = _native_of(_calculation_block(target), target_id)
+    if (
+        _native_scientific_core(source_native) != _native_scientific_core(target_native)
+        and not allow_method_change
+    ):
+        raise _refuse(
+            f"source step {source_id!r} and target step {target_id!r} carry "
+            "different native scientific payloads (basis/ECP/extra sections, "
+            "modredundant, or atom mapping): a known differing method for "
+            "Hessian reuse is refused by default; pass "
+            "allow_method_change=True when the method change is intended"
+        )
+
+
+def _compile_diagnostics_text(compiled: Any) -> str:
+    """Render compiler diagnostics for a refusal message."""
+    parts: list[str] = []
+    for item in compiled.diagnostics:
+        reason = item.details.get("reason") if hasattr(item, "details") else None
+        parts.append(f"{item.code}[{reason}]: {item.message}")
+    return "; ".join(parts)
+
+
+def wire_checkpoint_reuse(
+    document: Mapping[str, Any],
+    target_step_id: str,
+    source_step_id: str,
+    mode: str = "checkpoint",
+    *,
+    allow_method_change: bool = False,
+    registry: ExecutionRegistry | None = None,
+) -> dict[str, Any]:
+    """Add one semantic checkpoint edge to a strict V4 document.
+
+    Parameters
+    ----------
+    document :
+        Raw V4 document mapping (the strict wire shape the compiler
+        accepts).  It is never mutated; a deep copy is wired and returned.
+    target_step_id :
+        Step consuming the checkpoint (gains the ``checkpoint`` binding).
+    source_step_id :
+        Step producing the checkpoint (its ``artifacts`` output with the
+        ``checkpoint`` role selector feeds the edge).
+    mode :
+        ``"checkpoint"`` wires restart data only; ``"readfc"`` additionally
+        inserts the ``ReadFC`` option into the target's ``Opt`` route item;
+        ``"rcfc"`` additionally inserts the ``RCFC`` vote into the target's
+        ``IRC`` route item.  The mode is user scientific intent and must be
+        passed explicitly by the caller.
+    allow_method_change :
+        Advanced explicit override.  When ``False`` (default), a known
+        differing effective method between source and target is refused.
+        When ``True``, the intended method change is accepted and recorded
+        in the authoring-layer provenance annotation on the target step.
+    registry :
+        Execution registry every contract check resolves against.  Defaults
+        to the shared default registry.
+
+    Returns
+    -------
+    dict
+        The copied strict V4 document with the ``checkpoint`` binding
+        (cardinality ``one``), the explicit source ``write_chk`` record,
+        the mode route edit, and the reuse provenance annotation.
+
+    Raises
+    ------
+    InvalidBindingError
+        On unknown steps, self-links, pre-existing checkpoint bindings,
+        non-Gaussian programs, non-``standard`` adapters, QST routes,
+        disabled ``write_chk`` sources, user-managed checkpoint Link0,
+        route conflicts, charge/spin/method incompatibilities, or a
+        compiler rejection (cycles, cardinality, and every other semantic
+        rule) of the wired document.
+    """
+    if not isinstance(document, Mapping):
+        raise _refuse("the document must be a mapping")
+    if not isinstance(target_step_id, str) or not target_step_id:
+        raise _refuse("the target step id must be a non-empty string")
+    if not isinstance(source_step_id, str) or not source_step_id:
+        raise _refuse("the source step id must be a non-empty string")
+    if mode not in REUSE_MODES:
+        raise _refuse(f"unknown reuse mode {mode!r}; expected one of {list(REUSE_MODES)}")
+    if not isinstance(allow_method_change, bool):
+        raise _refuse("'allow_method_change' must be a boolean")
+
+    active = registry if registry is not None else default_registry()
+    wired = copy.deepcopy(dict(document))
+    steps = _raw_steps(wired)
+    if target_step_id == source_step_id:
+        raise _refuse("a step must not consume its own checkpoint")
+    target = _find_step(steps, target_step_id, role="target")
+    source = _find_step(steps, source_step_id, role="source")
+    for step in (target, source):
+        if step.get("enabled") is False:
+            raise _refuse(
+                f"step {step.get('id')!r} is disabled: checkpoint reuse needs "
+                "enabled steps on both ends"
+            )
+    target_bindings = target.get("bindings")
+    if not isinstance(target_bindings, dict):
+        raise _refuse(f"target step {target_step_id!r} declares no bindings mapping")
+    if "checkpoint" in target_bindings:
+        raise _refuse(
+            f"target step {target_step_id!r} already declares a 'checkpoint' "
+            "binding; existing bindings are never silently overwritten"
+        )
+
+    source_keyword, target_keyword = _check_gaussian_sides(active, source, target)
+    _check_write_chk(source)
+    _check_target_link0(source)
+    _check_target_link0(target)
+    _check_method_compatibility(
+        wired,
+        source,
+        target,
+        source_keyword,
+        target_keyword,
+        allow_method_change=allow_method_change,
+        registry=active,
+    )
+
+    target_native = _native_of(_calculation_block(target), target_step_id)
+    if mode == "readfc":
+        target_native["keyword"] = _add_opt_option(target_keyword, "ReadFC", step_id=target_step_id)
+    elif mode == "rcfc":
+        target_native["keyword"] = _add_irc_rcfc(target_keyword, step_id=target_step_id)
+
+    target_bindings["checkpoint"] = {
+        "source": {
+            "step": source_step_id,
+            "port": "artifacts",
+            "select": {"role": "checkpoint"},
+        },
+        "cardinality": "one",
+    }
+    annotations = target.get("annotations")
+    if not isinstance(annotations, dict):
+        annotations = {}
+        target["annotations"] = annotations
+    annotations[_REUSE_ANNOTATION_KEY] = {
+        "source_step": source_step_id,
+        "mode": mode,
+        "allow_method_change": allow_method_change,
+        "version": CHECKPOINT_REUSE_VERSION,
+    }
+
+    compiled = compile_workflow(wired, registry=active)
+    if not compiled.ok:
+        raise _refuse(
+            "the wired document is rejected by the compiler: " + _compile_diagnostics_text(compiled)
+        )
+    return wired

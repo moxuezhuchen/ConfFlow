@@ -39,7 +39,7 @@ import json
 import math
 import os
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 import numpy as np
@@ -54,7 +54,26 @@ from ..domain.result import ResultSet
 from ..domain.structure import StructureRecord, StructureSet
 from ..domain.work_item import RecoveryInfo, Timing, WorkItem, WorkItemResult
 from ..science.bonds import covalent_radii, perceive_adjacency
-from ..science.confgen.torsion.legacy import legacy_cap_v1, legacy_grid_geometries
+from ..science.confgen.torsion.legacy import (
+    legacy_cap_v1,
+    legacy_oriented_grid_geometries,
+    legacy_rotatable_bonds,
+)
+from ..science.confgen.torsion.paths import (
+    CanonicalRotor,
+    PathDeclarationError,
+    PathResolutionError,
+    build_chain_rotors,
+    canonical_grid_size,
+    canonicalize_rotors,
+    parse_path_declarations,
+    resolve_paths,
+)
+from ..science.topology import (
+    check_spec_patch_conflict,
+    resolve_working_adjacency,
+    should_persist_working_graph,
+)
 from ..science.torsion import (
     parse_bond_pair,
     parse_chain,
@@ -90,6 +109,11 @@ CONFGEN_STATE_KIND = "confgen_state"
 CONFGEN_STATE_PORT = "confgen_state"
 
 #: Allowed step-native keys for the legacy chains path (unknown keys fail closed).
+#: Phase 0 adds ``paths`` (endpoint-pair rotor declarations resolved on the
+#: final working topology) plus the ``strict_path_bond_check`` toggle. Any
+#: declared ``paths`` entry opts the work item into the strict
+#: canonicalization contract (dedup/conflict rules); pure-``chains`` items
+#: keep bit-for-bit legacy behavior.
 ALLOWED_NATIVE_KEYS = frozenset(
     {
         "chains",
@@ -104,6 +128,8 @@ ALLOWED_NATIVE_KEYS = frozenset(
         "clash_threshold",
         "max_conformers",
         "optimize",
+        "paths",
+        "strict_path_bond_check",
     }
 )
 
@@ -116,6 +142,21 @@ _DEFAULT_CLASH_THRESHOLD = 0.65
 #: blindly): a legacy grid above this refuses before geometry, mirroring
 #: the v3 preflight limit discipline on this versioned path.
 _LEGACY_MAX_DECLARED_STATES = 10000
+
+
+class _GridCancelled(Exception):
+    """Internal signal: a cancellation probe fired mid-grid (never escapes)."""
+
+
+def _thaw_path_resolution(value: Mapping[str, Any] | None) -> dict[str, Any] | None:
+    """Deep-thaw an optional resolved-spec mapping for JSON report output."""
+    if value is None:
+        return None
+    thaw = getattr(value, "thaw", None)
+    if callable(thaw):
+        thawed = thaw()
+        return dict(thawed) if isinstance(thawed, Mapping) else dict(value)
+    return dict(value)
 
 
 class ConfgenExecutor:
@@ -264,6 +305,13 @@ class ConfgenExecutor:
         if overrides.get("multiplicity") is not None:
             multiplicity = int(overrides["multiplicity"])
         parent_ids, lineage_root, group_key = endpoint_lineage(driving)
+        persist_graph = should_persist_working_graph(driving)
+        inherit_patch = driving.topology_patch if persist_graph else None
+        inherit_graph = (
+            tuple(tuple(int(v) for v in row) for row in science_context.adjacency)
+            if persist_graph
+            else None
+        )
         ordered = sorted(run.leaves, key=lambda leaf: int(leaf.provenance.get("leaf_ordinal", 0)))
         members: list[StructureRecord] = []
         for leaf in ordered:
@@ -290,6 +338,8 @@ class ConfgenExecutor:
                     ordinal=ordinal,
                     group_key=group_key,
                     metadata=FrozenDict(metadata),
+                    topology_patch=inherit_patch,
+                    working_topology=inherit_graph,
                 )
             )
         restated = self._restate_leaves(run.leaves, members)
@@ -312,6 +362,7 @@ class ConfgenExecutor:
             report,
             seed=int(seed) if seed is not None else None,
             upstream=upstream,
+            path_resolution=science_context.resolved_spec.get("paths_resolved"),
         )
         timing = Timing(
             started_at=wall_start,
@@ -319,6 +370,20 @@ class ConfgenExecutor:
             duration_seconds=max(0.0, time.monotonic() - monotonic_start),
         )
         published = len(members)
+        resolved_paths = science_context.resolved_spec.get("paths_resolved")
+        path_warnings: Sequence[str] = (
+            tuple(resolved_paths.get("warnings", ())) if isinstance(resolved_paths, Mapping) else ()
+        )
+        info_details: dict[str, Any] = {
+            "members": published,
+            "seed": int(seed) if seed is not None else None,
+            "certificate": report["certificate"]["digest"],
+            "raw_targets": report["counts"].get("raw"),
+        }
+        if isinstance(resolved_paths, Mapping):
+            info_details["path_rotors"] = len(resolved_paths.get("rotors", ()))
+            info_details["path_raw_states"] = resolved_paths.get("raw_cartesian_size")
+            info_details["path_warnings"] = len(path_warnings)
         return WorkItemResult(
             work_item_id=work_item.id,
             status=WorkItemStatus.COMPLETED,
@@ -337,15 +402,10 @@ class ConfgenExecutor:
                     step_id=work_item.step_id,
                     work_item_id=work_item.id,
                     logical_key=work_item.logical_key,
-                    details=FrozenDict(
-                        {
-                            "members": published,
-                            "seed": int(seed) if seed is not None else None,
-                            "certificate": report["certificate"]["digest"],
-                            "raw_targets": report["counts"].get("raw"),
-                        }
-                    ),
+                    details=FrozenDict(info_details),
                 ),
+                *self._resolved_path_diagnostics(resolved_paths, work_item),
+                *self._warning_diagnostics(path_warnings, work_item),
             ),
             timing=timing,
             recovery=RecoveryInfo(profile="none", attempted=False),
@@ -611,6 +671,7 @@ class ConfgenExecutor:
         *,
         seed: int | None,
         upstream: Mapping[str, Any],
+        path_resolution: Mapping[str, Any] | None = None,
     ) -> ArtifactSet:
         attempt_dir = context.attempt_dir(work_item)
         os.makedirs(attempt_dir, exist_ok=True)
@@ -654,6 +715,7 @@ class ConfgenExecutor:
             "certificate": report["certificate"],
             "sampling": report["sampling"],
             "scope": report["scope"],
+            "path_resolution": _thaw_path_resolution(path_resolution),
             "drift_events": report["drift_events"],
             "members": leaf_rows,
         }
@@ -771,23 +833,7 @@ class ConfgenExecutor:
                 "confgen optimize=true is unsupported in V4 (MMFF legacy); "
                 "declare chains without pre-optimization"
             )
-        raw_chains = native.get("chains")
-        if not isinstance(raw_chains, (list, tuple)) or not raw_chains:
-            raise DomainError(
-                "confgen requires explicit 'chains' (1-based dash-separated atom chains); "
-                "automatic rotatable-bond detection does not exist"
-            )
-        try:
-            chains = [parse_chain(item) for item in raw_chains]
-        except ValueError as exc:
-            raise DomainError(f"confgen {exc}") from exc
         n_atoms = len(driving.atoms)
-        for chain in chains:
-            for index in chain:
-                if index < 0 or index >= n_atoms:
-                    raise DomainError(
-                        f"confgen chain index {index + 1} out of range for {n_atoms} atoms"
-                    )
         angle_step = native.get("angle_step", _DEFAULT_ANGLE_STEP)
         if isinstance(angle_step, bool) or not isinstance(angle_step, int):
             raise DomainError(f"confgen angle_step must be an integer, got {angle_step!r}")
@@ -819,26 +865,99 @@ class ConfgenExecutor:
             raise DomainError(
                 f"confgen max_conformers must be an integer >= 1, got {max_conformers!r}"
             )
-        chain_steps = self._as_str_list(native.get("chain_steps"), "chain_steps", len(chains))
-        chain_angles = self._as_str_list(native.get("chain_angles"), "chain_angles", len(chains))
+        strict_raw = native.get("strict_path_bond_check", False)
+        if type(strict_raw) is not bool:
+            raise DomainError(
+                "confgen strict_path_bond_check must be a boolean, " f"got {strict_raw!r}"
+            )
+        chain_steps_raw = native.get("chain_steps")
+        chain_angles_raw = native.get("chain_angles")
         no_rotate = self._bond_set(native.get("no_rotate", []) or [], "no_rotate")
         add_bond = [self._bond_pair(item) for item in native.get("add_bond", []) or []]
         del_bond = [self._bond_pair(item) for item in native.get("del_bond", []) or []]
 
+        raw_paths = native.get("paths", None)
+        if raw_paths is not None:
+            # Phase 0 strict mode: any declared paths list opts this work
+            # item into the canonicalization contract (paths resolve on the
+            # driving geometry with the pure resolver; chains, when also
+            # declared, canonicalize with them instead of legacy overlap).
+            if not isinstance(raw_paths, (list, tuple)) or not raw_paths:
+                raise DomainError(
+                    "confgen paths must be a non-empty list of " "{start, end, move} declarations"
+                )
+            raw_chains_opt = native.get("chains", None)
+            if raw_chains_opt is None:
+                chains_opt: list[list[int]] = []
+            else:
+                if not isinstance(raw_chains_opt, (list, tuple)) or not raw_chains_opt:
+                    raise DomainError(
+                        "confgen chains must be a non-empty list of 1-based "
+                        "dash-separated atom chains"
+                    )
+                try:
+                    chains_opt = [parse_chain(item) for item in raw_chains_opt]
+                except ValueError as exc:
+                    raise DomainError(f"confgen {exc}") from exc
+                for chain in chains_opt:
+                    for index in chain:
+                        if index < 0 or index >= n_atoms:
+                            raise DomainError(
+                                f"confgen chain index {index + 1} out of range "
+                                f"for {n_atoms} atoms"
+                            )
+            return self._run_legacy_paths(
+                work_item,
+                context,
+                wall_start,
+                monotonic_start,
+                should_cancel,
+                scientific=scientific,
+                seed=int(seed),
+                driving=driving,
+                native=native,
+                chains=chains_opt,
+                angle_step=angle_step,
+                rotate_side=rotate_side,
+                chain_steps_raw=chain_steps_raw,
+                chain_angles_raw=chain_angles_raw,
+                no_rotate=no_rotate,
+                add_bond=add_bond,
+                del_bond=del_bond,
+                bond_scale=bond_scale,
+                clash_threshold=clash_threshold,
+                max_conformers=max_conformers,
+                strict_path_bond_check=bool(strict_raw),
+            )
+        raw_chains = native.get("chains")
+        if not isinstance(raw_chains, (list, tuple)) or not raw_chains:
+            raise DomainError(
+                "confgen requires explicit 'chains' (1-based dash-separated atom chains); "
+                "automatic rotatable-bond detection does not exist"
+            )
+        try:
+            chains = [parse_chain(item) for item in raw_chains]
+        except ValueError as exc:
+            raise DomainError(f"confgen {exc}") from exc
+        for chain in chains:
+            for index in chain:
+                if index < 0 or index >= n_atoms:
+                    raise DomainError(
+                        f"confgen chain index {index + 1} out of range for {n_atoms} atoms"
+                    )
+        chain_steps = self._as_str_list(native.get("chain_steps"), "chain_steps", len(chains))
+        chain_angles = self._as_str_list(native.get("chain_angles"), "chain_angles", len(chains))
+
         atomic_numbers = [atomic_number(symbol) for symbol in driving.atoms]
-        adjacency = perceive_adjacency(atomic_numbers, driving.coordinates, bond_scale=bond_scale)
-        for first, second in add_bond:
-            self._check_index(first, n_atoms, "add_bond")
-            self._check_index(second, n_atoms, "add_bond")
-            if second not in adjacency[first]:
-                adjacency[first].append(second)
-                adjacency[second].append(first)
-        for first, second in del_bond:
-            self._check_index(first, n_atoms, "del_bond")
-            if second in adjacency[first]:
-                adjacency[first].remove(second)
-                adjacency[second].remove(first)
-        adjacency = [sorted(row) for row in adjacency]
+        adjacency = self._working_adjacency(
+            atomic_numbers,
+            driving.coordinates,
+            bond_scale,
+            add_bond,
+            del_bond,
+            n_atoms,
+            structure=driving,
+        )
 
         rot_bond_count = 0
         excluded_bonds = 0
@@ -883,47 +1002,342 @@ class ConfgenExecutor:
                 "chains or use a v3 sampling cap instead"
             )
         base = np.asarray(driving.coordinates, dtype=np.float64)
-        radii = covalent_radii(atomic_numbers)
-        topo = topological_distance_matrix(adjacency)
         # Science-owned legacy grid: identical ordinals/coordinates to the
         # versioned legacy executor (chain-aware sides, cumulative
         # application, post-geometry clash filter). Never routed through the
-        # v3 TorsionStage, whose sign convention differs by design.
+        # v3 TorsionStage, whose sign convention differs by design. The
+        # oriented adapter below is the same numeric loop with caller-supplied
+        # bonds, so pure-legacy geometry is unchanged.
         try:
-            stream = legacy_grid_geometries(
-                base,
-                chains,
-                full_angle_lists,
+            legacy_bonds = legacy_rotatable_bonds(chains, adjacency, rotate_side)
+        except ValueError as exc:
+            raise DomainError(f"confgen {exc}") from exc
+        try:
+            kept, clash_dropped = self._realize_grid_members(
+                driving_coordinates=base,
+                adjacency=adjacency,
+                atomic_numbers=atomic_numbers,
+                clash_threshold=clash_threshold,
+                rot_bonds=[
+                    (int(left), int(right), list(rotating))
+                    for left, right, rotating in legacy_bonds
+                ],
+                angle_lists=full_angle_lists,
+                total=total,
+                should_cancel=should_cancel,
+            )
+        except _GridCancelled:
+            return self._cancelled(work_item, context, wall_start, monotonic_start)
+        except ValueError as exc:
+            raise DomainError(f"confgen {exc}") from exc
+        return self._complete_legacy_grid(
+            work_item,
+            context,
+            wall_start,
+            monotonic_start,
+            driving=driving,
+            seed=int(seed),
+            native=native,
+            scientific=scientific,
+            total=total,
+            kept=kept,
+            clash_dropped=clash_dropped,
+            max_conformers=max_conformers,
+            summary_prefix=f"confgen scanned {total} torsion points",
+            extra_details={},
+            report_extra=None,
+            extra_diagnostics=(),
+            working_graph=(
+                [list(row) for row in adjacency] if should_persist_working_graph(driving) else None
+            ),
+        )
+
+    # -- helpers ---------------------------------------------------------
+
+    @staticmethod
+    def _working_adjacency(
+        atomic_numbers: list[int],
+        coordinates: Any,
+        bond_scale: float,
+        add_bond: list[tuple[int, int]],
+        del_bond: list[tuple[int, int]],
+        n_atoms: int,
+        *,
+        structure: StructureRecord | None = None,
+    ) -> list[list[int]]:
+        """Build the final working topology (perception + corrections).
+
+        Shared by the pure-legacy and Phase 0 paths modes so both resolve on
+        the identical working graph.  A record-authoritative graph (a
+        nonempty ``topology_patch`` or a persisted ``working_topology``)
+        wins verbatim: simultaneous native ``add_bond``/``del_bond``
+        corrections fail closed instead of silently overriding it.
+        Pure-legacy records keep bit-for-bit the legacy construction below.
+        """
+        if structure is not None and should_persist_working_graph(structure):
+            check_spec_patch_conflict(
+                {"add_bond": list(add_bond), "del_bond": list(del_bond)},
+                structure,
+                where="confgen legacy",
+            )
+            return resolve_working_adjacency(
+                structure, atomic_numbers, coordinates, bond_scale=bond_scale
+            )
+        adjacency = perceive_adjacency(atomic_numbers, coordinates, bond_scale=bond_scale)
+        for first, second in add_bond:
+            ConfgenExecutor._check_index(first, n_atoms, "add_bond")
+            ConfgenExecutor._check_index(second, n_atoms, "add_bond")
+            if second not in adjacency[first]:
+                adjacency[first].append(second)
+                adjacency[second].append(first)
+        for first, second in del_bond:
+            ConfgenExecutor._check_index(first, n_atoms, "del_bond")
+            if second in adjacency[first]:
+                adjacency[first].remove(second)
+                adjacency[second].remove(first)
+        return [sorted(row) for row in adjacency]
+
+    def _prepare_path_rotors(
+        self,
+        *,
+        driving: StructureRecord,
+        native: Mapping[str, Any],
+        chains: list[list[int]],
+        angle_step: int,
+        rotate_side: str,
+        chain_steps_raw: Any,
+        chain_angles_raw: Any,
+        no_rotate: set[tuple[int, int]],
+        add_bond: list[tuple[int, int]],
+        del_bond: list[tuple[int, int]],
+        bond_scale: float,
+        strict_path_bond_check: bool,
+    ) -> dict[str, Any]:
+        """Compile path (+ optional chain) declarations to canonical rotors.
+
+        Preparation only: parses declarations, resolves paths on the driving
+        working topology with the pure resolver, builds declared-grid chain
+        descriptors via the shared science helper, canonicalizes
+        (conflict-before-exclusion), and guards the final canonical task
+        count pre-geometry. No geometry runs here. Returns rotors plus the
+        working topology, radii inputs, declaration/canonical sizes, and the
+        raw resolution for reporting.
+        """
+        n_atoms = len(driving.atoms)
+        chain_steps = self._as_str_list(chain_steps_raw, "chain_steps", len(chains))
+        chain_angles = self._as_str_list(chain_angles_raw, "chain_angles", len(chains))
+        try:
+            parsed = parse_path_declarations(
+                list(native.get("paths") or []),
+                index_base=1,
+                default_step=angle_step,
+                source_prefix="native.paths",
+            )
+        except (PathResolutionError, ValueError) as exc:
+            raise DomainError(f"confgen {exc}") from exc
+        atomic_numbers = [atomic_number(symbol) for symbol in driving.atoms]
+        adjacency = self._working_adjacency(
+            atomic_numbers,
+            driving.coordinates,
+            bond_scale,
+            add_bond,
+            del_bond,
+            n_atoms,
+            structure=driving,
+        )
+        try:
+            radii = covalent_radii(atomic_numbers)
+        except ValueError as exc:
+            raise DomainError(f"confgen {exc}") from exc
+        try:
+            resolution = resolve_paths(
+                parsed,
                 adjacency,
-                rotate_side=rotate_side,
+                n_atoms=n_atoms,
+                coords=[tuple(point) for point in driving.coordinates],
+                radii=list(radii),
+                strict_bond_check=strict_path_bond_check,
+                topology_extra={
+                    "add_bond": sorted(f"{a + 1}-{b + 1}" for a, b in add_bond),
+                    "del_bond": sorted(f"{a + 1}-{b + 1}" for a, b in del_bond),
+                    "bond_scale": bond_scale,
+                },
+            )
+        except (PathResolutionError, PathDeclarationError) as exc:
+            raise DomainError(f"confgen {exc}") from exc
+        per_chain: list[list[list[float]]] = []
+        for chain_index, chain in enumerate(chains):
+            try:
+                per_chain.append(
+                    resolve_angle_lists(
+                        len(chain) - 1,
+                        chain_steps[chain_index] if chain_steps else None,
+                        chain_angles[chain_index] if chain_angles else None,
+                        angle_step,
+                    )
+                )
+            except ValueError as exc:
+                raise DomainError(f"confgen {exc}") from exc
+        try:
+            chain_rotors = build_chain_rotors(
+                chains, adjacency, per_chain, rotate_side, source_prefix="chains"
+            )
+        except PathResolutionError as exc:
+            raise DomainError(f"confgen {exc}") from exc
+        declared_chain = 1
+        for lists in per_chain:
+            for angles in lists:
+                declared_chain *= len(angles)
+        declared_size = int(resolution.raw_cartesian_size) * declared_chain
+        try:
+            rotors = canonicalize_rotors(
+                [*resolution.rotors, *chain_rotors], excluded_bonds=sorted(no_rotate)
+            )
+        except PathResolutionError as exc:
+            raise DomainError(f"confgen {exc}") from exc
+        if not rotors:
+            raise DomainError("confgen paths selected no rotatable bonds")
+        if all(
+            rotor.angles == (0.0,) and "excluded:no_rotate" in rotor.sources for rotor in rotors
+        ):
+            raise DomainError("confgen chains selected no rotatable bonds")
+        # Arbitrary-precision final canonical task count BEFORE any geometric
+        # generation or allocation (Python ints are unbounded). This guards
+        # compute; max_conformers stays a post-geometry survivor cap only.
+        canonical_size = canonical_grid_size(rotors)
+        if canonical_size > _LEGACY_MAX_DECLARED_STATES:
+            raise DomainError(
+                f"confgen paths grid declares {canonical_size} states "
+                f"(declared {declared_size}) above the pre-geometry limit "
+                f"{_LEGACY_MAX_DECLARED_STATES}; split the paths or narrow "
+                "the angle grids"
+            )
+        return {
+            "rotors": rotors,
+            "resolution": resolution,
+            "adjacency": adjacency,
+            "atomic_numbers": atomic_numbers,
+            "declared_size": declared_size,
+            "canonical_size": canonical_size,
+        }
+
+    @staticmethod
+    def _resolved_path_diagnostics(
+        payload: Mapping[str, Any] | None, work_item: WorkItem
+    ) -> tuple[Diagnostic, ...]:
+        """Expose the resolver's audited chains without another graph traversal."""
+        if payload is None:
+            return ()
+        symbols = payload.get("atom_symbols", ())
+        diagnostics: list[Diagnostic] = []
+        for ordinal, declaration in enumerate(payload.get("declared_paths", ()), 1):
+            route = declaration["route"]
+            chain = "-".join(f"{atom}({symbols[atom - 1]})" for atom in route)
+            bonds = ", ".join(f"{first}-{second}" for first, second in zip(route, route[1:]))
+            move = declaration["move"]
+            diagnostics.append(
+                Diagnostic(
+                    code="confgen_path_resolved",
+                    message=(
+                        f"Path P{ordinal}: {chain}; move {move} endpoint "
+                        f"{declaration[move]}; rotors: {bonds}"
+                    ),
+                    severity=DiagnosticSeverity.INFO,
+                    step_id=work_item.step_id,
+                    work_item_id=work_item.id,
+                    logical_key=work_item.logical_key,
+                    details=FrozenDict(
+                        {
+                            "source": declaration["source"],
+                            "route": list(route),
+                            "move": move,
+                            "topology_digest": payload["topology_digest"],
+                        }
+                    ),
+                )
+            )
+        return tuple(diagnostics)
+
+    @staticmethod
+    def _warning_diagnostics(
+        warnings: Sequence[str], work_item: WorkItem
+    ) -> tuple[Diagnostic, ...]:
+        """Expose resolver warnings as stable WARNING_SHORT_BOND diagnostics."""
+        found: list[Diagnostic] = []
+        for note in warnings:
+            found.append(
+                Diagnostic(
+                    code="warning_short_bond",
+                    message=note,
+                    severity=DiagnosticSeverity.WARNING,
+                    step_id=work_item.step_id,
+                    work_item_id=work_item.id,
+                    logical_key=work_item.logical_key,
+                    details=FrozenDict({"warning": "short_bond"}),
+                )
+            )
+        return tuple(found)
+
+    def _realize_grid_members(
+        self,
+        *,
+        driving_coordinates: Any,
+        adjacency: list[list[int]],
+        atomic_numbers: list[int],
+        clash_threshold: float,
+        rot_bonds: list[tuple[int, int, list[int]]],
+        angle_lists: list[list[float]],
+        total: int,
+        should_cancel: Callable[[], bool] | None,
+    ) -> tuple[list[tuple[int, np.ndarray]], int]:
+        """Run the shared legacy grid pipeline (one existing runtime only).
+
+        Consumes the oriented numeric adapter (cumulative Rodrigues
+        application in declared order, row-major ordinals, post-geometry
+        clash filter) and returns ``(kept, clash_dropped)``. Both the pure
+        chains mode and the strict paths mode flow through here, so charge,
+        lineage, capping, and report behaviors cannot diverge.
+        """
+        try:
+            radii = covalent_radii(atomic_numbers)
+        except ValueError as exc:
+            raise DomainError(f"confgen {exc}") from exc
+        topo = topological_distance_matrix(adjacency)
+        try:
+            stream = legacy_oriented_grid_geometries(
+                np.asarray(driving_coordinates, dtype=np.float64),
+                rot_bonds,
+                angle_lists,
                 radii=radii,
                 topo=topo,
                 clash_threshold=clash_threshold,
             )
-            kept: list[tuple[int, np.ndarray]] = []
-            for ordinal, coords in stream:
-                kept.append((ordinal, coords))
-                if should_cancel is not None and should_cancel():
-                    return self._cancelled(work_item, context, wall_start, monotonic_start)
         except ValueError as exc:
             raise DomainError(f"confgen {exc}") from exc
-        clash_dropped = total - len(kept)
-        if not kept:
-            raise DomainError(
-                f"confgen generated no clash-free conformers ({total} grid points, "
-                f"{clash_dropped} clash-dropped)"
-            )
-        if max_conformers is not None and len(kept) > max_conformers:
-            # Versioned survivor cap (post-geometry shuffle-truncate-restore):
-            # different science from v3 pre-geometry sampling, never mixed.
-            kept = legacy_cap_v1(
-                kept,
-                seed=int(seed),
-                logical_key=work_item.logical_key,
-                cap=max_conformers,
-                key=lambda item: item[0],
-            )
+        kept: list[tuple[int, np.ndarray]] = []
+        for ordinal, coords in stream:
+            kept.append((ordinal, coords))
+            if should_cancel is not None and should_cancel():
+                raise _GridCancelled()
+        return kept, total - len(kept)
 
+    def _build_conformer_members(
+        self,
+        *,
+        driving: StructureRecord,
+        kept: list[tuple[int, np.ndarray]],
+        seed: int,
+        work_item: WorkItem,
+        scientific: Any,
+        working_graph: list[list[int]] | None = None,
+    ) -> list[StructureRecord]:
+        """Build output members preserving atom order, lineage, and charge.
+
+        Members inherit the driving record's intended topology: the patch
+        plus the working graph resolved exactly once on the driving
+        geometry (never re-perceived on moved output coordinates).
+        Pure-legacy members (``working_graph=None``) gain no new content.
+        """
         charge = driving.charge
         multiplicity = driving.multiplicity
         overrides = scientific.overrides
@@ -932,6 +1346,12 @@ class ConfgenExecutor:
         if overrides.get("multiplicity") is not None:
             multiplicity = int(overrides["multiplicity"])
         parent_ids, lineage_root, group_key = endpoint_lineage(driving)
+        inherit_patch = driving.topology_patch if working_graph is not None else None
+        inherit_graph = (
+            tuple(tuple(int(v) for v in row) for row in working_graph)
+            if working_graph is not None
+            else None
+        )
         members: list[StructureRecord] = []
         for ordinal, coords in sorted(kept, key=lambda item: item[0]):
             members.append(
@@ -953,8 +1373,57 @@ class ConfgenExecutor:
                     metadata=FrozenDict(
                         {CONFORMER_MEMBER_METADATA_KEY: ordinal, "seed": int(seed)}
                     ),
+                    topology_patch=inherit_patch,
+                    working_topology=inherit_graph,
                 )
             )
+        return members
+
+    def _complete_legacy_grid(
+        self,
+        work_item: WorkItem,
+        context: ItemExecutionContext,
+        wall_start: float,
+        monotonic_start: float,
+        *,
+        driving: StructureRecord,
+        seed: int,
+        native: Mapping[str, Any],
+        scientific: Any,
+        total: int,
+        kept: list[tuple[int, np.ndarray]],
+        clash_dropped: int,
+        max_conformers: int | None,
+        summary_prefix: str,
+        extra_details: dict[str, Any],
+        report_extra: dict[str, Any] | None,
+        extra_diagnostics: tuple[Diagnostic, ...] = (),
+        working_graph: list[list[int]] | None = None,
+    ) -> WorkItemResult:
+        """Finish one legacy grid run: cap, members, report, result."""
+        if not kept:
+            raise DomainError(
+                f"confgen generated no clash-free conformers ({total} grid points, "
+                f"{clash_dropped} clash-dropped)"
+            )
+        if max_conformers is not None and len(kept) > max_conformers:
+            # Versioned survivor cap (post-geometry shuffle-truncate-restore):
+            # different science from v3 pre-geometry sampling, never mixed.
+            kept = legacy_cap_v1(
+                kept,
+                seed=int(seed),
+                logical_key=work_item.logical_key,
+                cap=max_conformers,
+                key=lambda item: item[0],
+            )
+        members = self._build_conformer_members(
+            driving=driving,
+            kept=kept,
+            seed=int(seed),
+            work_item=work_item,
+            scientific=scientific,
+            working_graph=working_graph,
+        )
         artifacts = self._write_report(
             work_item,
             context,
@@ -964,12 +1433,20 @@ class ConfgenExecutor:
             native,
             grid=total,
             clash_dropped=clash_dropped,
+            path_resolution=report_extra,
         )
         timing = Timing(
             started_at=wall_start,
             finished_at=max(time.time(), wall_start),
             duration_seconds=max(0.0, time.monotonic() - monotonic_start),
         )
+        details: dict[str, Any] = {
+            "members": len(members),
+            "seed": int(seed),
+            "grid_points": total,
+            "clash_dropped": clash_dropped,
+        }
+        details.update(extra_details)
         return WorkItemResult(
             work_item_id=work_item.id,
             status=WorkItemStatus.COMPLETED,
@@ -980,29 +1457,193 @@ class ConfgenExecutor:
                 Diagnostic(
                     code="confgen_completed",
                     message=(
-                        f"confgen scanned {total} torsion points, kept "
-                        f"{len(members)} ({clash_dropped} clash-dropped)"
+                        f"{summary_prefix}, kept {len(members)} " f"({clash_dropped} clash-dropped)"
                     ),
                     severity=DiagnosticSeverity.INFO,
                     step_id=work_item.step_id,
                     work_item_id=work_item.id,
                     logical_key=work_item.logical_key,
-                    details=FrozenDict(
-                        {
-                            "members": len(members),
-                            "seed": int(seed),
-                            "grid_points": total,
-                            "clash_dropped": clash_dropped,
-                        }
-                    ),
+                    details=FrozenDict(details),
                 ),
+                *extra_diagnostics,
             ),
             timing=timing,
             recovery=RecoveryInfo(profile="none", attempted=False),
             semantic_digest=work_item.semantic_digest,
         )
 
-    # -- helpers ---------------------------------------------------------
+    def _run_legacy_paths(
+        self,
+        work_item: WorkItem,
+        context: ItemExecutionContext,
+        wall_start: float,
+        monotonic_start: float,
+        should_cancel: Callable[[], bool] | None,
+        *,
+        scientific: Any,
+        seed: int,
+        driving: StructureRecord,
+        native: Mapping[str, Any],
+        chains: list[list[int]],
+        angle_step: int,
+        rotate_side: str,
+        chain_steps_raw: Any,
+        chain_angles_raw: Any,
+        no_rotate: set[tuple[int, int]],
+        add_bond: list[tuple[int, int]],
+        del_bond: list[tuple[int, int]],
+        bond_scale: float,
+        clash_threshold: float,
+        max_conformers: int | None,
+        strict_path_bond_check: bool,
+    ) -> WorkItemResult:
+        """Run the Phase 0 strict paths mode (paths [+ chains]).
+
+        Version behavior: declaring ``paths`` opts into the strict
+        canonicalization contract (unordered-bond dedup, direction/sampling
+        conflicts fail closed, ring crossings refused, raw Cartesian size
+        guarded pre-geometry). Pure-``chains`` items never enter this method
+        and keep bit-for-bit legacy behavior. Numerics reuse the legacy
+        Rodrigues application and clash filter through the oriented adapter
+        (per-rotor moving sides); the typed-v3 stage is never involved.
+        Resolution runs per work item on the driving structure (which may be
+        an upstream product), so upstream-supplied geometry resolves with the
+        same pure resolver; submission-time document checks stay advisory.
+        """
+        prep = self._prepare_path_rotors(
+            driving=driving,
+            native=native,
+            chains=chains,
+            angle_step=angle_step,
+            rotate_side=rotate_side,
+            chain_steps_raw=chain_steps_raw,
+            chain_angles_raw=chain_angles_raw,
+            no_rotate=no_rotate,
+            add_bond=add_bond,
+            del_bond=del_bond,
+            bond_scale=bond_scale,
+            strict_path_bond_check=strict_path_bond_check,
+        )
+        rotors: list[CanonicalRotor] = prep["rotors"]
+        resolution = prep["resolution"]
+        total: int = prep["canonical_size"]
+        if should_cancel is not None and should_cancel():
+            return self._cancelled(work_item, context, wall_start, monotonic_start)
+        try:
+            kept, clash_dropped = self._realize_grid_members(
+                driving_coordinates=np.asarray(driving.coordinates, dtype=np.float64),
+                adjacency=prep["adjacency"],
+                atomic_numbers=prep["atomic_numbers"],
+                clash_threshold=clash_threshold,
+                rot_bonds=[
+                    (rotor.ordered[0], rotor.ordered[1], list(rotor.moving)) for rotor in rotors
+                ],
+                angle_lists=[list(rotor.angles) for rotor in rotors],
+                total=total,
+                should_cancel=should_cancel,
+            )
+        except _GridCancelled:
+            return self._cancelled(work_item, context, wall_start, monotonic_start)
+        except ValueError as exc:
+            raise DomainError(f"confgen {exc}") from exc
+        path_resolution = self._path_resolution_payload(
+            native,
+            driving,
+            rotors,
+            resolution,
+            declared_size=prep["declared_size"],
+            canonical_size=total,
+            strict_path_bond_check=strict_path_bond_check,
+        )
+        return self._complete_legacy_grid(
+            work_item,
+            context,
+            wall_start,
+            monotonic_start,
+            driving=driving,
+            seed=int(seed),
+            native=native,
+            scientific=scientific,
+            total=total,
+            kept=kept,
+            clash_dropped=clash_dropped,
+            max_conformers=max_conformers,
+            summary_prefix=(
+                f"confgen scanned {total} torsion points over {len(rotors)} path rotors"
+            ),
+            extra_details={
+                "path_rotors": len(rotors),
+                "topology_digest": resolution.topology_digest,
+                "path_warnings": len(resolution.warnings),
+            },
+            report_extra=path_resolution,
+            extra_diagnostics=(
+                *self._resolved_path_diagnostics(path_resolution, work_item),
+                *self._warning_diagnostics(resolution.warnings, work_item),
+            ),
+            working_graph=(
+                [list(row) for row in prep["adjacency"]]
+                if should_persist_working_graph(driving)
+                else None
+            ),
+        )
+
+    @staticmethod
+    def _path_resolution_payload(
+        native: Mapping[str, Any],
+        driving: StructureRecord,
+        rotors: Sequence[CanonicalRotor],
+        resolution: Any,
+        *,
+        declared_size: int,
+        canonical_size: int,
+        strict_path_bond_check: bool,
+    ) -> dict[str, Any]:
+        """Build the JSON-serializable path-resolution audit record.
+
+        Per-source routes come from the resolver authority
+        (``resolution.declared_paths``), never re-derived. ``raw_cartesian_size``
+        is the executed canonical task count (post-dedup, post-exclusion);
+        ``declared_cartesian_size`` preserves the pre-dedup declaration space.
+        """
+        return {
+            "driving_note": "resolved per work item on the driving structure",
+            "driving_id": driving.id,
+            "driving_geometry_digest": driving.geometry_digest,
+            "atom_symbols": list(driving.atoms),
+            "paths": [dict(item) for item in (native.get("paths") or [])],
+            "declared_paths": [
+                {
+                    "source": item.source,
+                    "start": item.raw_start,
+                    "end": item.raw_end,
+                    "move": item.move,
+                    "route": [atom + 1 for atom in item.route],
+                    "angles": list(item.angles),
+                    "index_base": 1,
+                }
+                for item in resolution.declared_paths
+            ],
+            "strict_path_bond_check": bool(strict_path_bond_check),
+            "topology_digest": resolution.topology_digest,
+            "declared_cartesian_size": int(declared_size),
+            "raw_cartesian_size": int(canonical_size),
+            "warnings": list(resolution.warnings),
+            "rotors": [
+                {
+                    "bond": [rotor.bond[0] + 1, rotor.bond[1] + 1],
+                    "ordered": [rotor.ordered[0] + 1, rotor.ordered[1] + 1],
+                    "moving_atom": rotor.moving_atom + 1,
+                    "moving": [atom + 1 for atom in rotor.moving],
+                    "fixed": [atom + 1 for atom in rotor.fixed],
+                    "angles": list(rotor.angles),
+                    "sources": list(rotor.sources),
+                    "model": rotor.model,
+                    "index_base": 1,
+                }
+                for rotor in rotors
+            ],
+        }
 
     @staticmethod
     def _driving(work_item: WorkItem) -> StructureRecord:
@@ -1063,6 +1704,7 @@ class ConfgenExecutor:
         *,
         grid: int,
         clash_dropped: int,
+        path_resolution: dict[str, Any] | None = None,
     ) -> ArtifactSet:
         attempt_dir = context.attempt_dir(work_item)
         os.makedirs(attempt_dir, exist_ok=True)
@@ -1082,6 +1724,8 @@ class ConfgenExecutor:
                 for record in members
             ],
         }
+        if path_resolution is not None:
+            payload["path_resolution"] = dict(path_resolution)
         name = "confgen_report.json"
         path = os.path.join(attempt_dir, name)
         try:

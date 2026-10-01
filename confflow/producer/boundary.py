@@ -717,6 +717,8 @@ def authoring_protocol_schema() -> dict[str, Any]:
         "instantiate_card",
         "validate_document",
         "check_compatibility",
+        "compile_intent",
+        "preview_paths",
     ]
     return {
         "request": {

@@ -38,6 +38,7 @@ from confflow.science.confgen.model import (
 )
 from confflow.science.confgen.planner import MixedRadixGrid, TorsionAxis, resolve_torsion_axes
 from confflow.science.confgen.torsion.measure import measure_dihedral, wrap_degrees
+from confflow.science.topology import inherit_topology_kwargs
 from confflow.science.torsion import (
     clashes,
     edge_in_cycle,
@@ -374,6 +375,7 @@ class TorsionStage(GenerationStage):
             metadata=FrozenDict(
                 {"axis": "torsions", "ordinal": int(target.ordinal), "backend": BACKEND_NAME}
             ),
+            **inherit_topology_kwargs(parent.structure, context.adjacency),
         )
         return RealizationResult(
             structure=record,

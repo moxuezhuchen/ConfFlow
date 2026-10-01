@@ -15,6 +15,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
+from ...domain.binding import PortKind, SourceKind
 from ...domain.diagnostics import Diagnostic, diagnostic_sort_key
 from ...domain.errors import DomainError
 from ...domain.resources import OnFailure, ResourceRequest, SchedulerPolicy
@@ -387,12 +388,154 @@ def _native_mode_profile_mismatch(
     return None
 
 
+def _structure_target_ports(
+    step: StepDefinition,
+    capability: Any,
+    contract: ExecutorContract | None,
+    registry: ExecutionRegistry,
+) -> set[str]:
+    """Return the structure-kind input port names bound on *step*.
+
+    Calculation input ports are adapter-resolved (standard vs
+    named_structures), so the same resolver the step validation uses
+    supplies the port facts here; no port rule is re-implemented.
+    """
+    if contract is None:
+        return set()
+    try:
+        _adapter, ports, _diagnostics = resolve_step_input_ports(
+            step, capability, contract, registry
+        )
+    except Exception:
+        return set()
+    if not ports:
+        return set()
+    return {port.name for port in ports if getattr(port, "kind", None) is PortKind.STRUCTURE}
+
+
+def _producer_port_is_structure(
+    producer: StepDefinition, port_name: str | None, registry: ExecutionRegistry
+) -> bool:
+    """Return whether *producer*'s output *port_name* carries structures.
+
+    Both the executor contract output port and the producer's actual
+    result profile must provide structures (binding validation separately
+    guards the wiring itself).  Unknown producers, unresolvable
+    contracts/profiles, and unknown ports are not structure provenance:
+    callers fail closed and other gates report the underlying defect.
+    """
+    if not port_name:
+        return False
+    try:
+        _capability, contract, _diagnostics = resolve_executor_contract(producer, registry)
+    except Exception:
+        return False
+    if contract is None:
+        return False
+    try:
+        output_ports = contract.output_ports
+    except Exception:
+        return False
+    port_match = False
+    for port in output_ports:
+        if port.name == port_name:
+            port_match = port.kind is PortKind.STRUCTURE
+            break
+    if not port_match:
+        return False
+    scientific = producer.scientific
+    profile_name = (scientific.result_profile if scientific is not None else None) or "standard"
+    try:
+        profile = registry.resolve_profile(profile_name)
+    except Exception:
+        return False
+    return bool(getattr(profile, "provides_structures", False))
+
+
+def _proven_input_state(
+    step: StepDefinition,
+    field: str,
+    *,
+    inputs_by_name: Mapping[str, RunInputDeclaration],
+    steps_by_id: Mapping[str, StepDefinition],
+    run_defaults: ScientificDefaults,
+    registry: ExecutionRegistry,
+    _seen: frozenset[str] = frozenset(),
+) -> bool:
+    """Return whether *field* (charge/multiplicity) is provably available.
+
+    Proof order: an explicit step override, the run-level default, else
+    every bound structure root — run-input declarations carrying the
+    field explicitly, or producer steps proven recursively through
+    calculation overrides and transform/ConfGen propagation.  Distinct
+    values across roots stay per-structure knowledge (never merged into
+    a guessed global).  Unknown producers, cycles, disabled producers,
+    and steps with no bound structure roots are unproven: fail closed.
+    """
+    scientific = step.scientific
+    try:
+        override = scientific.overrides.get(field) if scientific is not None else None
+    except Exception:
+        override = None
+    if override is not None:
+        return True
+    if getattr(run_defaults, field, None) is not None:
+        return True
+    if step.id in _seen:
+        return False
+    seen = _seen | {step.id}
+    try:
+        capability, contract, _diagnostics = resolve_executor_contract(step, registry)
+    except Exception:
+        return False
+    targets = _structure_target_ports(step, capability, contract, registry)
+    try:
+        bindings = tuple(step.bindings)
+    except Exception:
+        return False
+    relevant = False
+    for binding in bindings:
+        if binding.target_port not in targets:
+            continue
+        source = binding.source
+        if source.kind is SourceKind.RUN_INPUT:
+            declaration = inputs_by_name.get(source.port)
+            if declaration is None or declaration.kind is not PortKind.STRUCTURE:
+                return False
+            relevant = True
+            if getattr(declaration, field, None) is None:
+                return False
+        elif source.kind is SourceKind.STEP_OUTPUT:
+            producer = steps_by_id.get(source.step_id or "")
+            if producer is None or not producer.enabled:
+                return False
+            if not _producer_port_is_structure(producer, source.port, registry):
+                continue
+            relevant = True
+            if not _proven_input_state(
+                producer,
+                field,
+                inputs_by_name=inputs_by_name,
+                steps_by_id=steps_by_id,
+                run_defaults=run_defaults,
+                registry=registry,
+                _seen=seen,
+            ):
+                return False
+        else:
+            return False
+    return relevant
+
+
 def _validate_step(
     step: StepDefinition,
     run_resources: ResourceRequest,
     run_scheduler: SchedulerPolicy,
     registry: ExecutionRegistry,
     run_scientific_defaults: ScientificDefaults,
+    *,
+    input_declarations: Mapping[str, RunInputDeclaration] | None = None,
+    all_steps: tuple[StepDefinition, ...] | None = None,
 ) -> tuple[ValidatedStep | None, list[Diagnostic]]:
     diagnostics: list[Diagnostic] = []
     field_path = f"steps.{step.id}"
@@ -469,19 +612,34 @@ def _validate_step(
 
     if capability is ExecutorCapability.CALCULATION and step.enabled:
         # Native rendering requires resolved charge and multiplicity for the
-        # driving structure at execution time.  A document that declares
-        # neither a step override nor a run-level scientific default relies
-        # entirely on the input structures carrying explicit values; the
-        # producer cannot verify that from document bytes, so the omission is
-        # execution-critical and fails closed here (the same requirement the
+        # driving structure at execution time.  Proof order per field: an
+        # explicit step override, the run-level default, else every bound
+        # structure root — run-input declarations carrying the field, or
+        # producer steps proven recursively through calculation overrides
+        # and transform/ConfGen propagation (heterogeneous per-structure
+        # values stay per-structure knowledge; the runtime resolves each
+        # work item's inherited record state).  Unproven, unknown, or
+        # cyclic provenance fails closed here (the same requirement the
         # work-item executor enforces before native rendering).  Disabled
         # steps never render and therefore never carry this requirement.
-        unresolved = tuple(
-            name
-            for name in ("charge", "multiplicity")
-            if scientific.overrides.get(name) is None
-            and getattr(run_scientific_defaults, name, None) is None
-        )
+        inputs_by_name = dict(input_declarations) if input_declarations is not None else {}
+        steps_by_id = {item.id: item for item in (all_steps or ())}
+        unresolved = []
+        for name in ("charge", "multiplicity"):
+            if scientific.overrides.get(name) is not None:
+                continue
+            if getattr(run_scientific_defaults, name, None) is not None:
+                continue
+            if _proven_input_state(
+                step,
+                name,
+                inputs_by_name=inputs_by_name,
+                steps_by_id=steps_by_id,
+                run_defaults=run_scientific_defaults,
+                registry=registry,
+            ):
+                continue
+            unresolved.append(name)
         if unresolved:
             diagnostics.append(
                 error(
@@ -495,6 +653,8 @@ def _validate_step(
                         "declared_sources": [
                             "calculation.overrides",
                             "global.scientific_defaults",
+                            "run input declarations",
+                            "upstream step overrides",
                         ],
                     },
                 )
@@ -811,9 +971,16 @@ def validate_definition(
 
     run_resources, run_scheduler = _resolve_run_policy(definition)
     steps: list[ValidatedStep] = []
+    inputs_by_name = {item.name: item for item in definition.inputs}
     for step in definition.steps:
         validated, step_diagnostics = _validate_step(
-            step, run_resources, run_scheduler, active, definition.scientific_defaults
+            step,
+            run_resources,
+            run_scheduler,
+            active,
+            definition.scientific_defaults,
+            input_declarations=inputs_by_name,
+            all_steps=tuple(definition.steps),
         )
         diagnostics.extend(step_diagnostics)
         if validated is not None:

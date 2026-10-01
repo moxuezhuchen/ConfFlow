@@ -63,6 +63,7 @@ from confflow.science.confgen.model import (
 from confflow.science.confgen.model import (
     StageEstimate as CoreStageEstimate,
 )
+from confflow.science.topology import inherit_topology_kwargs
 
 from ..graph import (
     CN_SHAPES,
@@ -655,7 +656,12 @@ class CoordinationStage(GenerationStage):
             attempts.append(_attempt_summary(rigid))
             if rigid.status == "REALIZED" and self._backend == "rigid_then_flexible":
                 return self._wrap_native(
-                    rigid, shape_name, parent, target, attempt_records=attempts
+                    rigid,
+                    shape_name,
+                    parent,
+                    target,
+                    context.adjacency,
+                    attempt_records=attempts,
                 )
         if self._backend in ("flexible", "rigid_then_flexible"):
             flexible = realize_flexible(
@@ -675,7 +681,9 @@ class CoordinationStage(GenerationStage):
             natives.append(flexible)
             attempts.append(_attempt_summary(flexible))
         native = next((item for item in natives if item.status == "REALIZED"), natives[-1])
-        return self._wrap_native(native, shape_name, parent, target, attempt_records=attempts)
+        return self._wrap_native(
+            native, shape_name, parent, target, context.adjacency, attempt_records=attempts
+        )
 
     def _wrap_native(
         self,
@@ -683,6 +691,7 @@ class CoordinationStage(GenerationStage):
         shape_name: str,
         parent: WorkingRealization,
         target: GenerationTarget,
+        adjacency: Any,
         attempt_records: list[dict[str, Any]] | None = None,
     ) -> CoreRealizationResult:
         """Map a native verdict onto the core result, retaining evidence."""
@@ -718,6 +727,7 @@ class CoordinationStage(GenerationStage):
                 multiplicity=parent.structure.multiplicity,
                 parent_ids=(parent.structure.id,),
                 source_step_id="coordination",
+                **inherit_topology_kwargs(parent.structure, adjacency),
             )
             return CoreRealizationResult(
                 structure=record,

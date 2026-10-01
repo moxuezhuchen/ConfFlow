@@ -298,7 +298,9 @@
             "binding_candidates",
             "instantiate_card",
             "validate_document",
-            "check_compatibility"
+            "check_compatibility",
+            "compile_intent",
+            "preview_paths"
           ]
         },
         "parameters": {
@@ -396,7 +398,9 @@
             "binding_candidates",
             "instantiate_card",
             "validate_document",
-            "check_compatibility"
+            "check_compatibility",
+            "compile_intent",
+            "preview_paths"
           ]
         },
         "request_document_digest": {

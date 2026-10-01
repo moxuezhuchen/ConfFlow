@@ -151,7 +151,7 @@ def definition_payload(
         "semantics_version": SEMANTICS_VERSION,
         "scientific_defaults": definition.scientific_defaults.to_payload(),
         "inputs": [
-            declaration.to_dict()
+            declaration.to_payload()
             for declaration in sorted(definition.inputs, key=lambda item: item.name)
         ],
         "steps": step_payloads,

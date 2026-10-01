@@ -693,6 +693,37 @@ def _v4_fields(registry: ExecutionRegistry) -> list[dict[str, Any]]:
             order=23,
         ),
         _step(
+            "confgen.v3.paths",
+            "/confgen/paths",
+            label="Path rotor scopes",
+            description=(
+                "Phase 0 path declarations ({start, end, move} with explicit "
+                "angles or step; endpoints always 1-based). Each bridge-only "
+                "bond between the endpoints becomes a relative-rotation "
+                "rotor; ring crossings refuse with PATH_CROSSES_RING."
+            ),
+            value_type="array",
+            editor="json",
+            item_type="object",
+            group="conformer generation",
+            level="basic",
+            order=24,
+        ),
+        _step(
+            "confgen.v3.strict_path_bond_check",
+            "/confgen/strict_path_bond_check",
+            label="Strict path bond check",
+            description=(
+                "Turn the suspicious-short-bond path warning into a "
+                "PATH_SHORT_BOND error. Default false (warn only)."
+            ),
+            value_type="boolean",
+            editor="checkbox",
+            group="conformer generation",
+            level="advanced",
+            order=25,
+        ),
+        _step(
             "confgen.v3.topology",
             "/confgen/topology",
             label="Typed topology",
@@ -704,7 +735,7 @@ def _v4_fields(registry: ExecutionRegistry) -> list[dict[str, Any]]:
             editor="json",
             group="conformer generation",
             level="advanced",
-            order=24,
+            order=26,
         ),
         _step(
             "confgen.v3.sampling",
@@ -719,7 +750,7 @@ def _v4_fields(registry: ExecutionRegistry) -> list[dict[str, Any]]:
             editor="json",
             group="conformer generation",
             level="advanced",
-            order=25,
+            order=27,
         ),
         _step(
             "confgen.v3.limits",
@@ -733,7 +764,7 @@ def _v4_fields(registry: ExecutionRegistry) -> list[dict[str, Any]]:
             editor="json",
             group="conformer generation",
             level="advanced",
-            order=26,
+            order=28,
         ),
         _step(
             "confgen.v3.tolerances",
@@ -744,7 +775,7 @@ def _v4_fields(registry: ExecutionRegistry) -> list[dict[str, Any]]:
             editor="json",
             group="conformer generation",
             level="advanced",
-            order=27,
+            order=29,
         ),
         _step(
             "confgen.v3.exclusions",
@@ -759,7 +790,7 @@ def _v4_fields(registry: ExecutionRegistry) -> list[dict[str, Any]]:
             item_type="object",
             group="conformer generation",
             level="advanced",
-            order=28,
+            order=30,
         ),
         _step(
             "transform.kind",

@@ -18,6 +18,7 @@ from typing import Any
 
 from confflow.domain._immutable import FrozenDict
 from confflow.domain.structure import StructureRecord
+from confflow.domain.topology import TopologyPatch
 from confflow.science.confgen.model import AXIS_ORDER, SCHEMA_VERSION, StageEstimate
 
 __all__ = [
@@ -44,6 +45,8 @@ _TOP_LEVEL_KEYS = frozenset(
         "coordination",
         "rings",
         "torsions",
+        "paths",
+        "strict_path_bond_check",
         "topology",
         "stereochemistry",
         "exclusions",
@@ -87,6 +90,9 @@ def _spec_has_indices(raw: Mapping[str, Any]) -> bool:
                 return True
     torsions = raw.get("torsions")
     if isinstance(torsions, (list, tuple)) and len(torsions) > 0:
+        return True
+    paths = raw.get("paths")
+    if isinstance(paths, (list, tuple)) and len(paths) > 0:
         return True
     coordination = raw.get("coordination")
     if isinstance(coordination, Mapping):
@@ -484,6 +490,50 @@ def normalize_spec(raw: Mapping[str, Any]) -> dict[str, Any]:
     # independent part); index ranges re-checked with atom counts at stage.
     resolve_torsion_axes(tuple(converted_torsions), index_base=0)
     spec["torsions"] = converted_torsions
+
+    # Phase 0 input simplification: fresh path declarations are ALWAYS
+    # user-facing 1-based (independent of the step index_base) and convert
+    # explicitly with base 1 here. Entries already carrying the explicit
+    # ``internal-0-based:normalized`` marker re-validate as internal 0-based
+    # references with preserved source metadata (no double shift), so
+    # normalization is exactly idempotent. Typed scopes require explicit
+    # per-path sampling (bare paths only default in the legacy native mode,
+    # which expands them before reaching this typed boundary).
+    from confflow.science.confgen.torsion.paths import parse_path_declarations
+
+    raw_paths = raw.get("paths", [])
+    if raw_paths is None:
+        raw_paths = []
+    if not isinstance(raw_paths, (list, tuple)):
+        raise ValueError("spec paths must be a list of path declarations")
+    if raw_paths:
+        internal_paths = marker == "internal-0-based:normalized"
+        try:
+            typed_parsed = parse_path_declarations(
+                list(raw_paths),
+                index_base=0 if internal_paths else 1,
+                default_step=None,
+                source_prefix="$.paths",
+                internal=internal_paths,
+            )
+        except ValueError as exc:
+            raise ValueError(f"spec paths rejected: {exc}") from exc
+        spec["paths"] = [
+            {
+                "start": int(item.start),
+                "end": int(item.end),
+                "move": item.move,
+                "angles": [float(angle) for angle in item.angles],
+                "source": item.source,
+            }
+            for item in typed_parsed
+        ]
+    else:
+        spec["paths"] = []
+    strict_check = raw.get("strict_path_bond_check", False)
+    if type(strict_check) is not bool:
+        raise ValueError(f"$.strict_path_bond_check must be a boolean, got {strict_check!r}")
+    spec["strict_path_bond_check"] = bool(strict_check)
 
     topology = raw.get("topology", {})
     if not isinstance(topology, Mapping):
@@ -977,6 +1027,62 @@ def _overlay_declared_coordination_scope(
         )
 
 
+def _apply_structure_patch(
+    structure: StructureRecord,
+    n_atoms: int,
+    adjacency: list[set[int]],
+    typed: dict[tuple[int, int, Any], Any],
+    _check: Any,
+) -> None:
+    """Apply the record's TopologyPatch on top of perception + corrections.
+
+    Runs after ``add_bond``/``del_bond`` so the declared correction intent
+    wins over raw perception.  Simultaneous spec corrections and a record
+    patch are rejected earlier by :func:`check_spec_patch_conflict`, so a
+    patch here never meets spec add/del entries.  Patched covalent edges
+    are recorded as lane B records with ``topology_patch`` provenance.
+    """
+    from confflow.science.confgen.graph import EdgeType, TypedEdge
+
+    # A captured working graph already incorporates the root patch and any
+    # explicit scientific overlays. Never replay historical corrections on it.
+    if structure.working_topology is not None:
+        return
+    patch = getattr(structure, "topology_patch", None)
+    if patch is None:
+        return
+    if isinstance(patch, dict):
+        patch = TopologyPatch.from_dict(patch)
+    if not isinstance(patch, TopologyPatch) or patch.is_empty:
+        return
+    for first_one, second_one in patch.add_edges:
+        first, second = first_one - 1, second_one - 1
+        _check(first, "topology_patch.add_edges")
+        _check(second, "topology_patch.add_edges")
+        pair = (min(first, second), max(first, second))
+        for _a, _b, kind in list(typed):
+            if (_a, _b) == pair and kind is not EdgeType.COVALENT:
+                raise ValueError(
+                    f"topology_patch adds {pair} already carrying typed role "
+                    f"{kind.value}; contradictory kinds for one pair fail closed"
+                )
+        adjacency[first].add(second)
+        adjacency[second].add(first)
+        typed[(pair[0], pair[1], EdgeType.COVALENT)] = TypedEdge(
+            a=pair[0],
+            b=pair[1],
+            type=EdgeType.COVALENT,
+            provenance="topology_patch",
+        )
+    for first_one, second_one in patch.delete_edges:
+        first, second = first_one - 1, second_one - 1
+        _check(first, "topology_patch.delete_edges")
+        _check(second, "topology_patch.delete_edges")
+        adjacency[first].discard(second)
+        adjacency[second].discard(first)
+        typed.pop((min(first, second), max(first, second), EdgeType.COVALENT), None)
+
+
 def _topo_edge(item: Any) -> tuple[tuple[int, int], Any, dict[str, Any]]:
     """Normalize a converted (0-based) topology entry to (pair, EdgeType, extra)."""
     from confflow.science.confgen.graph import EdgeType, normalize_edge_kind
@@ -1028,6 +1134,12 @@ def build_typed_graph(
         raise ValueError("topology must be a mapping")
     n_atoms = len(structure.atoms)
     elements = list(structure.atoms)
+    from confflow.science.topology import check_spec_patch_conflict as _check_patch_conflict
+
+    try:
+        _check_patch_conflict(topology, structure, where="confgen v3 topology")
+    except Exception as exc:
+        raise ValueError(str(exc)) from exc
     metal_center = _graph_metal_center(resolved, n_atoms)
     tolerances = resolved.get("tolerances", {}) if isinstance(resolved, Mapping) else {}
     bond_scale = float(tolerances.get("bond_scale", 1.15))
@@ -1064,18 +1176,25 @@ def build_typed_graph(
     from confflow.domain.elements import atomic_number
     from confflow.science.bonds import perceive_adjacency
 
-    try:
-        numbers = [atomic_number(symbol) for symbol in structure.atoms]
-    except Exception as exc:
-        raise ValueError(f"bond perception failed: {exc}") from exc
-    try:
-        perceived = perceive_adjacency(
-            numbers,
-            [tuple(point) for point in structure.coordinates],
-            bond_scale=bond_scale,
-        )
-    except ValueError as exc:
-        raise ValueError(f"bond perception failed: {exc}") from exc
+    stored_graph = getattr(structure, "working_topology", None)
+    if stored_graph is not None:
+        # Authoritative persisted graph: never re-perceive moved geometry.
+        perceived = [[int(v) for v in row] for row in stored_graph]
+        if len(perceived) != n_atoms:
+            raise ValueError("persisted working_topology row count mismatches atom count")
+    else:
+        try:
+            numbers = [atomic_number(symbol) for symbol in structure.atoms]
+        except Exception as exc:
+            raise ValueError(f"bond perception failed: {exc}") from exc
+        try:
+            perceived = perceive_adjacency(
+                numbers,
+                [tuple(point) for point in structure.coordinates],
+                bond_scale=bond_scale,
+            )
+        except ValueError as exc:
+            raise ValueError(f"bond perception failed: {exc}") from exc
     if len(perceived) != n_atoms:
         raise ValueError("perceived adjacency row count mismatches atom count")
     adjacency: list[set[int]] = [set(row) for row in perceived]
@@ -1143,6 +1262,7 @@ def build_typed_graph(
                 adjacency[first].discard(second)
                 adjacency[second].discard(first)
                 typed.pop((pair[0], pair[1], EdgeType.COVALENT), None)
+    _apply_structure_patch(structure, n_atoms, adjacency, typed, _check)
     _overlay_declared_coordination_scope(resolved, n_atoms, adjacency, typed, explicit_covalent)
     atoms = [AtomRef(index=position, element=symbol) for position, symbol in enumerate(elements)]
     for decl in topology.get("atoms", []) or []:
