@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import replace
 from typing import Any
 
 from ..domain.elements import atomic_number
@@ -20,7 +21,7 @@ from ..science.confgen.torsion.paths import (
     parse_path_declarations,
     resolve_paths,
 )
-from ..science.topology import resolve_working_adjacency
+from ..science.topology import resolve_and_persist_kwargs, resolve_working_adjacency
 
 
 def preview_paths_request(parameters: Mapping[str, Any]) -> dict[str, Any]:
@@ -69,6 +70,9 @@ def preview_paths(structure: Mapping[str, Any], native: Mapping[str, Any]) -> di
     strict = native.get("strict_path_bond_check", False)
     if type(strict) is not bool:
         raise ValueError("strict_path_bond_check must be boolean")
+    persist_kwargs = resolve_and_persist_kwargs(record, record.coordinates)
+    if persist_kwargs:
+        record = replace(record, **persist_kwargs)
     numbers = [atomic_number(atom) for atom in record.atoms]
     adjacency = resolve_working_adjacency(
         record,
