@@ -61,6 +61,7 @@ from confflow.science.confgen.coordination.symmetry import (
     validate_supplied_witness,
 )
 from confflow.science.confgen.graph import (
+    COVALENT_RADII,
     AtomRef,
     BindingSite,
     CoordinationSpec,
@@ -766,6 +767,26 @@ def _min_nonbonded_gap(coords: np.ndarray, graph: TypedGraph) -> float:
     return best
 
 
+def _min_clash_gap(coords: np.ndarray, graph: TypedGraph, clash_scale: float = 0.70) -> float:
+    """Minimum (distance - clash floor) over non-bonded pairs (production floors)."""
+    bonded = set()
+    for edge in graph.edges:
+        bonded.add((min(edge.a, edge.b), max(edge.a, edge.b)))
+    elements = graph.elements
+    best = float("inf")
+    for a in range(graph.natoms):
+        for b in range(a + 1, graph.natoms):
+            if (a, b) in bonded:
+                continue
+            floor = clash_scale * (
+                COVALENT_RADII.get(elements[a], 1.0) + COVALENT_RADII.get(elements[b], 1.0)
+            )
+            gap = float(np.linalg.norm(coords[a] - coords[b])) - floor
+            if gap < best:
+                best = gap
+    return best
+
+
 def _build_monodentate_system() -> tuple[TypedGraph, CoordinationSpec, np.ndarray, np.ndarray]:
     """Octahedral M with substituted monodentate fragments; ideal + perturbed."""
     dirs = _octahedral_dirs()
@@ -933,8 +954,13 @@ def test_bidentate_rigid_fragment_success() -> None:
         ideal, 0, spec.donor_indices, spec.site_ids, "octahedral"
     )
     assert perceived_ideal.unambiguous is True
-    # Rotate the bidentate fragment 90 degrees about the metal: both donors
-    # move together to a different cis pair; the solver must recover both.
+    # Rigidly displace the bidentate fragment in place (rotation about its own
+    # centroid plus shift): both donors move together by ~0.85A without landing
+    # on an already-occupied donor site, so the input stays clash-valid while
+    # the solver must still recover both donors.  A metal-centered 90-degree
+    # rotation is NOT used: it stacks donor N2 exactly onto the -X water oxygen
+    # (zero-distance overlap), making solver recovery a platform-dependent
+    # finite-difference escape rather than deterministic science.
     plan = partition_fragments(graph, 0)
     member_of = {}
     for index, frag in enumerate(plan.fragments):
@@ -944,12 +970,15 @@ def test_bidentate_rigid_fragment_success() -> None:
     assert member_of[2] == bidentate_frag
     perturbed = ideal.copy()
     block = ideal[list(plan.fragments[bidentate_frag])]
-    center = np.zeros(3)
-    angle = np.radians(90.0)
-    rot = np.array(
-        [[np.cos(angle), -np.sin(angle), 0.0], [np.sin(angle), np.cos(angle), 0.0], [0.0, 0.0, 1.0]]
+    perturbed[list(plan.fragments[bidentate_frag])] = _rigid_perturb(
+        block, 30.0, (0.0, 0.0, 1.0), (0.35, -0.2, 0.15)
     )
-    perturbed[list(plan.fragments[bidentate_frag])] = (block - center) @ rot.T + center
+    # Valid perturbed input: clash floors hold and both chelate donors are
+    # meaningfully displaced (rigid by construction, so intra-fragment
+    # bond/angle deviations are at numerical precision by the outcome audit).
+    assert _min_clash_gap(perturbed, graph) >= 0.0
+    assert _min_nonbonded_gap(perturbed, graph) > 0.9
+    assert float(max(np.linalg.norm(perturbed[d] - ideal[d]) for d in (1, 2))) > 0.5
 
     def _perceive_gate(generated: np.ndarray) -> tuple[int, ...]:
         return perception.perceive_donors(
@@ -2248,33 +2277,180 @@ def test_alkene_ez_flip_detected_not_certified() -> None:
     assert audit["violations"]
 
 
-def test_strained_bidentate_flexible_recovers_where_rigid_stalls() -> None:
-    """Strained + rotated bidentate: rigid fails clash, flexible realizes.
+def _place_dihedral(
+    a: np.ndarray,
+    b: np.ndarray,
+    c: np.ndarray,
+    length: float,
+    angle_deg: float,
+    dihedral_deg: float,
+) -> np.ndarray:
+    """Deterministic NeRF placement: d bonded to c with fixed length/angle/dihedral."""
+    a_v, b_v, c_v = (np.asarray(p, dtype=float) for p in (a, b, c))
+    theta = float(np.radians(angle_deg))
+    phi = float(np.radians(dihedral_deg))
+    bc = (c_v - b_v) / np.linalg.norm(c_v - b_v)
+    normal = np.cross((b_v - a_v) / np.linalg.norm(b_v - a_v), bc)
+    normal /= np.linalg.norm(normal)
+    perp = np.cross(normal, bc)
+    return c_v + length * (
+        -np.cos(theta) * bc + np.sin(theta) * (np.cos(phi) * perp + np.sin(phi) * normal)
+    )
 
-    The N-donor stretched 0.9A sweeps its substituents into a clash under
-    rigid motion (UNRESOLVED geometry audit failure); the flexible
-    internal-coordinate backend relieves it while holding every audit.
-    Both verdicts are solver-measured, never hardcoded.
+
+def _chain_chelate_geometries() -> tuple[np.ndarray, np.ndarray]:
+    """Folded (cis-bite) and syn-compressed N-C-C-C-N chain coordinates.
+
+    Same N1 anchor and C1; the ideal tail folds gauche (bite 3.09A at 95 degrees,
+    cis-compatible) while the strained tail stays syn-compressed (bite 1.78A at
+    36 degrees).  Bond lengths/angles are ideal tetrahedral in both; only
+    torsions (unaudited, physically soft) differ, which is exactly the degree of
+    freedom the flexible backend can use and the rigid backend cannot.
     """
-    graph, spec, ideal = _build_bidentate_system()
+    tetra = 109.47
+    n1 = np.array([2.0, 0.0, 0.0])
+    axis = np.array([-0.3, 0.45, 0.55])
+    axis /= np.linalg.norm(axis)
+    c1 = n1 + 1.47 * axis
+    seed = (n1 - c1) / np.linalg.norm(n1 - c1)
+    helper = np.array([0.0, 1.0, 0.3])
+    helper = helper - (helper @ seed) * seed
+    helper /= np.linalg.norm(helper)
+    c2_anchor = c1 + 1.54 * (np.cos(np.radians(tetra)) * seed + np.sin(np.radians(tetra)) * helper)
+
+    def _tail(c2: np.ndarray, p2: float, p3: float) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        c3 = _place_dihedral(n1, c1, c2, 1.54, tetra, p2)
+        n2 = _place_dihedral(c1, c2, c3, 1.47, tetra, p3)
+        return c2, c3, n2
+
+    c2, c3, n2 = _tail(c2_anchor, 90.0, 0.0)
+    c2s, c3s, n2s = _tail(c2_anchor, 15.0, 0.0)
+    return np.asarray((n1, c1, c2, c3, n2)), np.asarray((n1, c1, c2s, c3s, n2s))
+
+
+def _chain_hydrogens(
+    n1: np.ndarray, c1: np.ndarray, c2: np.ndarray, c3: np.ndarray, n2: np.ndarray
+) -> list[np.ndarray]:
+    """Tetrahedral NH/CH2 hydrogens: N-H pair first (indices 6-7), then CH2 pairs."""
+    tetra = 109.47
+    nh: list[np.ndarray] = []
+    for donor in (n1, n2):
+        direction = donor / np.linalg.norm(donor) + np.array([0.0, 0.0, 0.8])
+        direction /= np.linalg.norm(direction)
+        nh.append(donor + direction * 1.0)
+    out = list(nh)
+    for a, b, c in ((c2, n1, c1), (c3, c1, c2), (c2, n2, c3)):
+        for dihedral in (120.0, -120.0):
+            out.append(_place_dihedral(a, b, c, 1.09, tetra, dihedral))
+    return out
+
+
+def _build_chain_bidentate_system() -> tuple[Any, Any, np.ndarray, np.ndarray]:
+    """Octahedral M with one N-C-C-C-N chain bidentate + 2 waters + 2 chlorides.
+
+    The ideal (folded) geometry perceives unambiguously to a cis class; the
+    strained (syn-compressed) geometry keeps ideal bonds/angles and valid clash
+    floors but carries a kinematically rigid-impossible bite (triangle-inequality
+    lower bound ~0.9A on any rigid two-donor fit, asserted by the caller against
+    solver-measured evidence).  The flexible backend recovers by torsion
+    refolding, which preserves the audited bonds/angles exactly.
+    """
+    ideal_chain, strained_chain = _chain_chelate_geometries()
+    graphs: dict[str, Any] = {}
+    coords: dict[str, np.ndarray] = {}
+    for tag, (n1, c1, c2, c3, n2) in (("ideal", ideal_chain), ("strained", strained_chain)):
+        elements = ["Co"]
+        points = [np.zeros(3)]
+        for element, pos in [("N", n1), ("N", n2), ("C", c1), ("C", c2), ("C", c3)]:
+            elements.append(element)
+            points.append(np.asarray(pos, dtype=float))
+        for pos in _chain_hydrogens(n1, c1, c2, c3, n2):
+            elements.append("H")
+            points.append(np.asarray(pos, dtype=float))
+        for spot in (np.array([-2.0, 0.0, 0.0]), np.array([0.0, -2.0, 0.0])):
+            idx = len(elements)
+            assert idx in (14, 17)
+            h1 = spot + np.array([0.5, 0.5, 0.4])
+            h1 = spot + (h1 - spot) / np.linalg.norm(h1 - spot) * 0.96
+            h2 = spot + np.array([-0.5, 0.5, -0.4])
+            h2 = spot + (h2 - spot) / np.linalg.norm(h2 - spot) * 0.96
+            elements.extend(["O", "H", "H"])
+            points.extend([spot, h1, h2])
+        for spot in (np.array([0.0, 0.0, 2.0]), np.array([0.0, 0.0, -2.0])):
+            elements.append("Cl")
+            points.append(spot)
+        assert len(elements) == 22
+        edges: list[tuple[int, int, EdgeType]] = [
+            (0, 1, EdgeType.COORDINATION),
+            (0, 2, EdgeType.COORDINATION),
+            (1, 3, EdgeType.COVALENT),
+            (3, 4, EdgeType.COVALENT),
+            (4, 5, EdgeType.COVALENT),
+            (5, 2, EdgeType.COVALENT),
+            (1, 6, EdgeType.COVALENT),
+            (2, 7, EdgeType.COVALENT),
+        ]
+        for pos, center in enumerate((3, 4, 5)):
+            edges.append((center, 8 + 2 * pos, EdgeType.COVALENT))
+            edges.append((center, 9 + 2 * pos, EdgeType.COVALENT))
+        edges.append((0, 14, EdgeType.COORDINATION))
+        edges.append((14, 15, EdgeType.COVALENT))
+        edges.append((14, 16, EdgeType.COVALENT))
+        edges.append((0, 17, EdgeType.COORDINATION))
+        edges.append((17, 18, EdgeType.COVALENT))
+        edges.append((17, 19, EdgeType.COVALENT))
+        edges.append((0, 20, EdgeType.COORDINATION))
+        edges.append((0, 21, EdgeType.COORDINATION))
+        atoms = tuple(AtomRef(index=i, element=e) for i, e in enumerate(elements))
+        graphs[tag] = TypedGraph(
+            atoms=atoms,
+            edges=tuple(TypedEdge(a=a, b=b, type=t) for a, b, t in edges),
+            metal_center=0,
+        )
+        coords[tag] = np.array(points)
+    graph, ideal, strained = graphs["ideal"], coords["ideal"], coords["strained"]
+    assert graphs["strained"].edge_set() == graph.edge_set()
+    donors = sorted(n for n in graph.neighbors(0, EdgeType.COORDINATION))
+    assert donors == [1, 2, 14, 17, 20, 21]
+    sites = tuple(
+        BindingSite(id=f"D{i}", kind="atom", atoms=(d,), hapticity=1) for i, d in enumerate(donors)
+    )
+    spec = CoordinationSpec(metal_center=0, binding_sites=sites, shapes=("octahedral",))
+    for tag, frame in (("ideal", ideal), ("strained", strained)):
+        for edge in graph.edges:
+            if edge.type is not EdgeType.COVALENT:
+                continue
+            length = float(np.linalg.norm(frame[edge.a] - frame[edge.b]))
+            assert 0.8 <= length <= 1.9, (tag, edge, length)
+        assert _min_nonbonded_gap(frame, graph) > 0.9, tag
+        assert _min_clash_gap(frame, graph) >= 0.0, tag
+    perceived = perception.perceive_donors(
+        ideal, 0, spec.donor_indices, spec.site_ids, "octahedral"
+    )
+    assert perceived.unambiguous is True
+    assert perceived.margin >= 0.5
+    return graph, spec, ideal, strained
+
+
+def test_strained_bidentate_flexible_recovers_where_rigid_stalls() -> None:
+    """Compressed-bite chain bidentate: rigid provably fails, flexible realizes.
+
+    The strained tail is syn-compressed (bite 1.78A at 36 degrees) while the
+    commanded cis target needs edge ~3.6A.  Any rigid motion preserves the input
+    bite, so by the triangle inequality the best rigid two-donor fit misses by
+    at least (edge - bite)/2 ~= 0.9A — verified against solver-measured evidence
+    below, hence the UNRESOLVED verdict is kinematic (default budgets, donor
+    branch), never an optimizer/budget stall and never a production regression.
+    The flexible internal-coordinate backend refolds torsions (bond/angle
+    preserving, unaudited soft degrees of freedom) to the cis bite and realizes
+    with every audit retained.  Both verdicts are solver-measured, never
+    hardcoded; no tolerance or clash floor is relaxed.
+    """
+    graph, spec, ideal, strained = _build_chain_bidentate_system()
     template = shapes.get_shape("octahedral")
     perceived = perception.perceive_donors(
         ideal, 0, spec.donor_indices, spec.site_ids, "octahedral"
     ).best_class
-    plan = partition_fragments(graph, 0)
-    member_of = {}
-    for index, frag in enumerate(plan.fragments):
-        for atom in frag:
-            member_of[atom] = index
-    bfrag = member_of[1]
-    strained = ideal.copy()
-    block = ideal[list(plan.fragments[bfrag])]
-    angle = np.radians(90.0)
-    rot = np.array(
-        [[np.cos(angle), -np.sin(angle), 0.0], [np.sin(angle), np.cos(angle), 0.0], [0.0, 0.0, 1.0]]
-    )
-    strained[list(plan.fragments[bfrag])] = block @ rot.T
-    strained[2] += np.array([-0.9, 0.0, 0.0])
 
     def _perceive_gate(generated: np.ndarray) -> tuple[int, ...]:
         return perception.perceive_donors(
@@ -2293,8 +2469,22 @@ def test_strained_bidentate_flexible_recovers_where_rigid_stalls() -> None:
         perceive=_perceive_gate,
         max_nfev=40,
     )
+    # Provable rigid impossibility: solver-measured commanded edge vs input bite.
+    target_positions = np.asarray(rigid.evidence["target_positions"], dtype=float)
+    commanded_edge = float(np.linalg.norm(target_positions[0] - target_positions[1]))
+    input_bite = float(
+        np.linalg.norm(strained[spec.donor_indices[0]] - strained[spec.donor_indices[1]])
+    )
+    lower_bound = (commanded_edge - input_bite) / 2.0
+    assert lower_bound > 0.5
     assert rigid.status == "UNRESOLVED"
-    assert "clash" in rigid.reason
+    assert "donor" in rigid.reason
+    # Science proves only the lower bound (any rigid motion preserves the input
+    # bite): the solver may stall anywhere above it, so assert the inequality,
+    # never equality with a global optimum.  Rejection holds at the default
+    # tolerance (no tolerance was relaxed to force this verdict).
+    assert rigid.evidence["max_donor_error"] >= lower_bound - 1e-6
+    assert rigid.evidence["max_donor_error"] > 0.45
     flex = realization.realize_flexible(
         strained,
         graph,
