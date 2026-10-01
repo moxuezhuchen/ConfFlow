@@ -104,6 +104,9 @@ line-length = 100
 target-version = ['py310']
 
 [tool.ruff]
+# Supplied golden verifier is retained byte-for-byte under its SHA256 manifest.
+# It is external fixture data, rather than maintained project source.
+extend-exclude = ["tests/fixtures/confgen/coordination/ts1/benchmark/verify_fixture.py"]
 line-length = 100
 target-version = "py310"
 

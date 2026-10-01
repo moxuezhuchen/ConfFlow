@@ -1,0 +1,6 @@
+assignment=0 index=3 SUCCESS seed=930000 O74-C79=1.6853 C79-O80=1.2889 O74-O80=2.2647 Al-O74=1.9120 Al-O80=1.9190 vertex_map=[0, 1, 2, 4, 3, 5]
+assignment=1 index=5 SUCCESS seed=931000 O74-C79=1.6695 C79-O80=1.2933 O74-O80=2.2734 Al-O74=1.9255 Al-O80=1.9249 vertex_map=[0, 1, 2, 5, 3, 4]
+assignment=2 index=7 SUCCESS seed=932000 O74-C79=1.6713 C79-O80=1.2900 O74-O80=2.2807 Al-O74=1.9295 Al-O80=1.9035 vertex_map=[0, 1, 2, 4, 5, 3]
+assignment=3 index=9 SUCCESS seed=933000 O74-C79=1.6796 C79-O80=1.2859 O74-O80=2.2793 Al-O74=1.8785 Al-O80=1.9244 vertex_map=[0, 1, 2, 5, 4, 3]
+assignment=4 index=10 SUCCESS seed=934000 O74-C79=1.6976 C79-O80=1.2947 O74-O80=2.2980 Al-O74=1.8918 Al-O80=1.9283 vertex_map=[0, 1, 5, 4, 2, 3]
+assignment=5 index=11 SUCCESS seed=935000 O74-C79=1.6697 C79-O80=1.2862 O74-O80=2.2737 Al-O74=1.9243 Al-O80=1.9245 vertex_map=[0, 1, 4, 5, 2, 3]

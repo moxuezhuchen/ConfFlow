@@ -29,6 +29,7 @@ from pydantic import (
 from ...domain.binding import Cardinality, Pairing, PartialConsumption, PortKind
 from ...domain.completion import CompletionMode, PartialOutputPolicy
 from ...domain.resources import OnFailure, parse_memory_bytes
+from .confgen_schema import ConfgenModelV3
 
 __all__ = [
     "DEFAULT_CORES_PER_ITEM",
@@ -40,6 +41,7 @@ __all__ = [
     "CalculationModel",
     "CompletionModel",
     "ConfgenModel",
+    "ConfgenModelV3",
     "DocumentModel",
     "ExecutionModel",
     "GlobalModel",
@@ -229,7 +231,7 @@ class StepModel(BaseModel):
     executor: str = Field(min_length=1)
     bindings: dict[str, BindingModel] = Field(default_factory=dict)
     calculation: CalculationModel | None = None
-    confgen: ConfgenModel | None = None
+    confgen: ConfgenModel | ConfgenModelV3 | None = None
     transform: TransformModel | None = None
     analysis: AnalysisModel | None = None
     resources: ResourcesModel | None = None

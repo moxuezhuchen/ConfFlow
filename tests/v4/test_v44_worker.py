@@ -1294,6 +1294,10 @@ def _bad(name):
         return False
     if name.startswith(("confflow.calc", "confflow.core")):
         return True
+    # ConfGen's typed molecular graph is a science kernel, not a workflow DAG.
+    # Preserve every compiler/parser/legacy ban; permit only this exact module.
+    if name == "confflow.science.confgen.graph":
+        return False
     if any(part in ("compiler", "parser", "graph", "dag") for part in parts):
         return True
     if any(part == "v3" or part.startswith("v3_") for part in parts):

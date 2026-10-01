@@ -432,7 +432,11 @@ def _build_scientific(
         try:
             scientific = ScientificDefinition(
                 result_profile="ensemble",
-                native=FrozenDict(step.confgen.native),
+                native=FrozenDict(
+                    step.confgen.scientific_native()
+                    if hasattr(step.confgen, "scientific_native")
+                    else step.confgen.native
+                ),
                 seed=step.confgen.seed,
                 overrides=FrozenDict(step.confgen.overrides),
             )

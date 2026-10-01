@@ -1,0 +1,89 @@
+{
+  "schema": "confgen_fixture.scine_frames.v1",
+  "frames": [
+    {
+      "file": "scine_F1.xyz",
+      "assignment": 0,
+      "scine_index_of_permutation": 3,
+      "scine_vertex_map": [
+        0,
+        1,
+        2,
+        4,
+        3,
+        5
+      ],
+      "atom_order_matches_original": true
+    },
+    {
+      "file": "scine_F2.xyz",
+      "assignment": 1,
+      "scine_index_of_permutation": 5,
+      "scine_vertex_map": [
+        0,
+        1,
+        2,
+        5,
+        3,
+        4
+      ],
+      "atom_order_matches_original": true
+    },
+    {
+      "file": "scine_F3.xyz",
+      "assignment": 2,
+      "scine_index_of_permutation": 7,
+      "scine_vertex_map": [
+        0,
+        1,
+        2,
+        4,
+        5,
+        3
+      ],
+      "atom_order_matches_original": true
+    },
+    {
+      "file": "scine_F4.xyz",
+      "assignment": 3,
+      "scine_index_of_permutation": 9,
+      "scine_vertex_map": [
+        0,
+        1,
+        2,
+        5,
+        4,
+        3
+      ],
+      "atom_order_matches_original": true
+    },
+    {
+      "file": "scine_F5.xyz",
+      "assignment": 4,
+      "scine_index_of_permutation": 10,
+      "scine_vertex_map": [
+        0,
+        1,
+        5,
+        4,
+        2,
+        3
+      ],
+      "atom_order_matches_original": true
+    },
+    {
+      "file": "scine_F6.xyz",
+      "assignment": 5,
+      "scine_index_of_permutation": 11,
+      "scine_vertex_map": [
+        0,
+        1,
+        4,
+        5,
+        2,
+        3
+      ],
+      "atom_order_matches_original": true
+    }
+  ]
+}

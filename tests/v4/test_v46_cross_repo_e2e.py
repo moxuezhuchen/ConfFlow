@@ -54,8 +54,10 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import math
 import os
 import tempfile
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -117,7 +119,7 @@ def _default_contract_path() -> Path:
 
 
 def _jcs_bytes(value: Any) -> bytes:
-    """Stdlib JCS approximation (sort_keys, no whitespace, UTF-8).
+    """Stdlib JCS approximation including ECMAScript number formatting.
 
     Proven byte-equal to ``confflow.domain.canonical.canonical_json_bytes``
     for real producer envelopes by
@@ -125,13 +127,28 @@ def _jcs_bytes(value: Any) -> bytes:
     Used ONLY inside the JobDesk consumer double (which must stay
     ``confflow``-free); producer-side code uses the real canonical helpers.
     """
-    return json.dumps(
-        value,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-        allow_nan=False,
-    ).encode("utf-8")
+
+    def encode(item: Any) -> str:
+        if isinstance(item, float):
+            if not math.isfinite(item):
+                raise ValueError("nonfinite JCS number")
+            if item == 0:
+                return "0"
+            number = Decimal(repr(item))
+            if 1e-6 <= abs(item) < 1e21:
+                text = format(number, "f")
+                return text.rstrip("0").rstrip(".") if "." in text else text
+            mantissa, exponent = format(number.normalize(), "e").split("e")
+            power = int(exponent)
+            return f"{mantissa}e{'+' if power >= 0 else ''}{power}"
+        if isinstance(item, dict):
+            keys = sorted(item, key=lambda key: key.encode("utf-16be"))
+            return "{" + ",".join(encode(key) + ":" + encode(item[key]) for key in keys) + "}"
+        if isinstance(item, list):
+            return "[" + ",".join(encode(child) for child in item) + "]"
+        return json.dumps(item, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
+
+    return encode(value).encode("utf-8")
 
 
 def _jcs_sha256(value: Any) -> str:
@@ -337,6 +354,11 @@ class TestRealContractRoundtrip:
     def test_wire_bytes_are_canonical(self, real_contract_bytes: bytes) -> None:
         envelope = json.loads(real_contract_bytes.decode("utf-8"))
         assert canonical_json_bytes(envelope) == real_contract_bytes
+
+    @pytest.mark.parametrize("value", [1.0, -0.0, 1e-6, 1e-7, 1e20, 1e21, 0.035])
+    def test_stdlib_jcs_number_format_matches(self, value: float) -> None:
+        """The consumer double verifies float-bearing contracts without hash bypass."""
+        assert _jcs_bytes({"tolerance": value}) == canonical_json_bytes({"tolerance": value})
 
     def test_stdlib_jcs_approximation_matches(self, real_contract_bytes: bytes) -> None:
         """Guard for the JobDesk double: stdlib canonical == real canonical."""

@@ -1,0 +1,47 @@
+{
+  "schema": "confgen_fixture.coordination_constraints.v1",
+  "scope": "TS1 coordination benchmark only",
+  "status_note": "These four exclusions reproduce the previously analyzed 30->12 benchmark. They are declared benchmark constraints, not yet automatic PROVEN_INFEASIBLE rules.",
+  "constraints": [
+    {
+      "id": "C01",
+      "kind": "FORBIDDEN_TRANS",
+      "sites": [
+        "N17",
+        "N19"
+      ],
+      "classification": "REJECTED_BY_POLICY",
+      "source": "prior TS1 coordination enumeration / tetradentate-ligand linkage assumption"
+    },
+    {
+      "id": "C02",
+      "kind": "FORBIDDEN_TRANS",
+      "sites": [
+        "N17",
+        "O46"
+      ],
+      "classification": "REJECTED_BY_POLICY",
+      "source": "prior TS1 coordination enumeration / tetradentate-ligand linkage assumption"
+    },
+    {
+      "id": "C03",
+      "kind": "FORBIDDEN_TRANS",
+      "sites": [
+        "N19",
+        "O45"
+      ],
+      "classification": "REJECTED_BY_POLICY",
+      "source": "prior TS1 coordination enumeration / tetradentate-ligand linkage assumption"
+    },
+    {
+      "id": "C04",
+      "kind": "FORBIDDEN_TRANS",
+      "sites": [
+        "O74",
+        "O80"
+      ],
+      "classification": "REJECTED_BY_POLICY",
+      "source": "reactive Al-O74-C79-O80-Al bridge topology in TS1 benchmark"
+    }
+  ]
+}

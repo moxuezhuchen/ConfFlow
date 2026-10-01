@@ -323,7 +323,12 @@ def _native_section() -> dict[str, Any]:
             {
                 "block": "confgen.native",
                 "role": "verbatim_escape_hatch",
-                "description": "Conformer-generation native definition.",
+                "description": (
+                    "Legacy conformer-generation native definition (chains, "
+                    "ensemble options): the explicitly versioned adapter path. "
+                    "Typed v3 scopes use the confgen.* typed blocks described "
+                    "in the confgen section instead."
+                ),
             },
             {
                 "block": "transform.native",
@@ -353,6 +358,53 @@ def _native_section() -> dict[str, Any]:
                 "description": "Parameters of the declared recovery profile.",
             },
         ],
+    }
+
+
+def _confgen_section() -> dict[str, Any]:
+    """Build confgen v3 typed-option descriptors from the science registries.
+
+    Shapes come from the coordination lane authority, ring templates from
+    the ring-lane registry, and tolerances/limits defaults from the core
+    science authorities -- imported, never copied, so the published options
+    cannot drift from what the engine actually enforces.
+    """
+    import dataclasses
+
+    from ..science.confgen.coordination.stage import BACKEND_CHOICES
+    from ..science.confgen.graph import CN_SHAPES, SUPPORTED_SHAPES
+    from ..science.confgen.ring.templates import TEMPLATES_BY_SIZE
+    from ..science.confgen.tolerances import ConfgenTolerances
+    from ..workflow.v4.confgen_schema import ConfgenModelV3
+
+    tolerances = ConfgenTolerances()
+    probe = ConfgenModelV3.model_validate({"schema_version": 3})
+    return {
+        "schema_version": 3,
+        "coordination_shapes": sorted(SUPPORTED_SHAPES),
+        "coordination_shapes_by_cn": {
+            str(number): list(names) for number, names in sorted(CN_SHAPES.items())
+        },
+        "ring_templates_by_size": {
+            str(size): sorted(names) for size, names in sorted(TEMPLATES_BY_SIZE.items())
+        },
+        "torsion_models": ["relative_rotation_grid", "absolute_dihedral_grid", "chemical"],
+        "treatments": ["enumerate", "preserve_input"],
+        "coordination_backends": list(BACKEND_CHOICES),
+        "coordination_budgets": {"max_nfev": 120, "maxiter": 400},
+        "coordination_site_group_scope": "declared_topological_subgroup",
+        "result_provenance": ["certificate_digest", "inherited_scope"],
+        "tolerances": {
+            field.name: getattr(tolerances, field.name) for field in dataclasses.fields(tolerances)
+        },
+        "limits": dict(probe.limits.model_dump()),
+        "description": (
+            "Typed ConfGen v3 scope: schema_version 3 with explicit index_base, "
+            "coordination/rings/torsions declarations, typed topology, recorded "
+            "stereochemistry, policy exclusions, tolerances, limits, and "
+            "seed-authored sampling. The legacy native.chains vocabulary stays "
+            "available as an explicitly versioned adapter path."
+        ),
     }
 
 
@@ -657,6 +709,7 @@ def build_configuration_contract_v4(
             for name in sorted(active.recovery_names)
         ],
         "programs": _program_descriptors(),
+        "confgen": _confgen_section(),
         "ports": _ports_section(active),
         "resources": _resources_section(),
         "policies": _policy_section(),

@@ -1,0 +1,1378 @@
+#!/usr/bin/env python3
+
+"""ConfGen v3 symbolic planner (CORE lane).
+
+Spec normalization, lazy mixed-radix full-grid enumeration, seeded
+raw-space sampling, symbolic preflight, and fail-before-geometry limit
+checks. No geometry is generated here; counts are exact only with a
+complete declared-group basis, otherwise conservative upper bounds.
+"""
+
+from __future__ import annotations
+
+import math
+import random
+from collections.abc import Iterator, Mapping, Sequence
+from dataclasses import dataclass, field
+from typing import Any
+
+from confflow.domain._immutable import FrozenDict
+from confflow.domain.structure import StructureRecord
+from confflow.science.confgen.model import AXIS_ORDER, SCHEMA_VERSION, StageEstimate
+
+__all__ = [
+    "MixedRadixGrid",
+    "PreflightLimitError",
+    "PreflightReport",
+    "TorsionAxis",
+    "build_typed_graph",
+    "check_limits",
+    "deferred_ranges",
+    "normalize_executor_native",
+    "normalize_spec",
+    "preflight",
+    "resolve_torsion_axes",
+    "sample_indices",
+    "sampling_of",
+]
+
+_TOP_LEVEL_KEYS = frozenset(
+    {
+        "schema_version",
+        "index_base",
+        "index_convention",
+        "coordination",
+        "rings",
+        "torsions",
+        "topology",
+        "stereochemistry",
+        "exclusions",
+        "tolerances",
+        "limits",
+        "sampling",
+        "seed",
+    }
+)
+
+#: Spec-facing topology edge kinds (uppercase, matching the fixture
+#: convention). BREAKING is accepted and preserved losslessly in scope but
+#: has no lane B graph record yet (see core-api-ready.md open requests).
+TOPO_EDGE_KINDS: tuple[str, ...] = ("COVALENT", "COORDINATION", "FORMING", "BREAKING")
+
+_TORSION_MODELS = (
+    "relative_rotation_grid",
+    "absolute_dihedral_grid",
+    "chemical",
+)
+
+_TREATMENTS = ("enumerate", "preserve_input")
+
+
+class PreflightLimitError(ValueError):
+    """Raised when symbolic preflight exceeds declared hard limits."""
+
+
+# ---------------------------------------------------------------------------
+# Index-convention normalization (single explicit base, internal 0-based)
+# ---------------------------------------------------------------------------
+
+
+def _spec_has_indices(raw: Mapping[str, Any]) -> bool:
+    """Return True when any index-bearing section carries content."""
+    topology = raw.get("topology")
+    if isinstance(topology, Mapping):
+        for key in ("bonds", "add_bond", "del_bond", "atoms"):
+            entries = topology.get(key)
+            if isinstance(entries, (list, tuple)) and len(entries) > 0:
+                return True
+    torsions = raw.get("torsions")
+    if isinstance(torsions, (list, tuple)) and len(torsions) > 0:
+        return True
+    coordination = raw.get("coordination")
+    if isinstance(coordination, Mapping):
+        if coordination.get("metal_center") is not None:
+            return True
+        sites = coordination.get("binding_sites")
+        if isinstance(sites, (list, tuple)) and len(sites) > 0:
+            return True
+    rings = raw.get("rings")
+    if isinstance(rings, (list, tuple)) and len(rings) > 0:
+        return True
+    return False
+
+
+def _convert_index(value: Any, *, base: int, path: str) -> int:
+    """Validate one index against the declared base, return 0-based."""
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"{path} must be an integer atom index, got {value!r}")
+    if value < base:
+        raise ValueError(f"{path} index {value} below declared index_base {base}")
+    return int(value) - base
+
+
+def _convert_index_list(values: Any, *, base: int, path: str) -> list[int]:
+    """Validate/convert an index list to internal 0-based."""
+    if isinstance(values, (str, bytes)) or not isinstance(values, Sequence):
+        raise ValueError(f"{path} must be a list of atom indices")
+    return [
+        _convert_index(item, base=base, path=f"{path}[{position}]")
+        for position, item in enumerate(values)
+    ]
+
+
+def _convert_topo_entry(item: Any, *, base: int, path: str) -> Any:
+    """Convert one validated topology entry to internal 0-based."""
+    if isinstance(item, Mapping):
+        converted: dict[str, Any] = {
+            "atoms": _convert_index_list(item["atoms"], base=base, path=f"{path}.atoms"),
+            "kind": str(item.get("kind", "COVALENT")),
+        }
+        if item.get("bond_order") is not None:
+            converted["bond_order"] = float(item["bond_order"])
+        if item.get("provenance") is not None:
+            converted["provenance"] = str(item["provenance"])
+        return converted
+    return _convert_index_list(item, base=base, path=path)
+
+
+# ---------------------------------------------------------------------------
+# Torsion axes
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class TorsionAxis:
+    """One resolved torsion generation axis.
+
+    ``bond`` is the rotating unordered pair (0-based). ``frame`` holds the
+    four dihedral atoms for absolute/chemical-four-atom axes (``bond`` is
+    then ``frame[1:3]``). ``values`` are grid angles in degrees for the
+    grid models; for ``chemical`` they are the resolved state angles in
+    declaration order with ``state_names`` carrying the labels.
+    """
+
+    axis_id: str
+    bond: tuple[int, int]
+    frame: tuple[int, int, int, int] | None
+    model: str
+    values: tuple[float, ...]
+    state_names: tuple[str, ...] = ()
+    treatment: str = "enumerate"
+    rotate_side: str = "left"
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.axis_id, str) or not self.axis_id:
+            raise ValueError("torsion axis id must be a non-empty string")
+        if self.model not in _TORSION_MODELS:
+            raise ValueError(f"unknown torsion model {self.model!r}")
+        if self.treatment not in _TREATMENTS:
+            raise ValueError(f"unknown torsion treatment {self.treatment!r}")
+        if self.rotate_side not in ("left", "right"):
+            raise ValueError(f"rotate_side must be 'left' or 'right', got {self.rotate_side!r}")
+
+
+def _require_finite_angles(values: Any, *, path: str) -> tuple[float, ...]:
+    if isinstance(values, (str, bytes)) or not isinstance(values, Sequence):
+        raise ValueError(f"{path} must be a list of finite angles in degrees")
+    angles: list[float] = []
+    for index, item in enumerate(values):
+        if isinstance(item, bool) or not isinstance(item, (int, float)):
+            raise ValueError(f"{path}[{index}] must be a finite number, got {item!r}")
+        number = float(item)
+        if not math.isfinite(number):
+            raise ValueError(f"{path}[{index}] must be finite, got {item!r}")
+        angles.append(number)
+    if not angles:
+        raise ValueError(f"{path} must hold at least one angle")
+    return tuple(angles)
+
+
+def _reject_periodic_duplicates(values: Sequence[float], *, path: str) -> None:
+    """Reject identical circular grid points without merging nearby states."""
+    for index, value in enumerate(values):
+        for previous in values[:index]:
+            if (value - previous) % 360.0 == 0.0:
+                raise ValueError(f"{path}: periodic duplicate torsion angle {value}")
+
+
+def _require_index_list(
+    values: Any, *, path: str, count: int, n_atoms: int | None, index_base: int = 0
+) -> tuple[int, ...]:
+    """Validate indices in the declared base, return internal 0-based."""
+    if index_base not in (0, 1):
+        raise ValueError(f"{path}: index_base must be 0 or 1")
+    if isinstance(values, (str, bytes)) or not isinstance(values, Sequence):
+        raise ValueError(f"{path} must be a list of {count} atom indices")
+    items = list(values)
+    if len(items) != count:
+        raise ValueError(f"{path} must hold exactly {count} atom indices, got {len(items)}")
+    out: list[int] = []
+    for index, item in enumerate(items):
+        out.append(_convert_index(item, base=index_base, path=f"{path}[{index}]"))
+        if n_atoms is not None and out[-1] >= n_atoms:
+            raise ValueError(f"{path}[{index}] index {item} out of range for {n_atoms} atoms")
+    if len(set(out)) != len(out):
+        raise ValueError(f"{path} must hold distinct atoms, got {list(values)!r}")
+    return tuple(out)  # type: ignore[return-value]
+
+
+def resolve_torsion_axes(
+    entries: Sequence[Mapping[str, Any]],
+    *,
+    n_atoms: int | None = None,
+    index_base: int = 0,
+) -> tuple[TorsionAxis, ...]:
+    """Resolve torsion axis entries into :class:`TorsionAxis` records.
+
+    Entries use the declared ``index_base`` (0 internal, 1 workflow) and are
+    stored 0-based internally. Fail-closed checks: unique non-empty ids,
+    known models/treatments, finite angles, distinct in-range indices,
+    model/index-shape consistency, opt-in chemical ``states`` (explicit
+    map, no defaults), and duplicate bond axes (same unordered rotating
+    pair twice).
+    """
+    axes: list[TorsionAxis] = []
+    seen_ids: set[str] = set()
+    seen_bonds: dict[tuple[int, int], str] = {}
+    for position, entry in enumerate(entries):
+        path = f"$.torsions[{position}]"
+        if not isinstance(entry, Mapping):
+            raise ValueError(f"{path} must be a mapping")
+        unknown = sorted(
+            set(entry)
+            - {"id", "bond", "atoms", "model", "angles", "states", "treatment", "rotate_side"}
+        )
+        if unknown:
+            raise ValueError(f"{path} holds unknown keys {unknown}")
+        axis_id = entry.get("id", f"torsion-{position}")
+        if not isinstance(axis_id, str) or not axis_id:
+            raise ValueError(f"{path}.id must be a non-empty string")
+        if axis_id in seen_ids:
+            raise ValueError(f"duplicate torsion axis id {axis_id!r}")
+        seen_ids.add(axis_id)
+        model = entry.get("model", "relative_rotation_grid")
+        if model not in _TORSION_MODELS:
+            raise ValueError(f"{path}.model must be one of {_TORSION_MODELS}, got {model!r}")
+        treatment = entry.get("treatment", "enumerate")
+        if treatment not in _TREATMENTS:
+            raise ValueError(
+                f"{path}.treatment must be one of {_TREATMENTS}, got {treatment!r}; "
+                "unspecified/unsupported treatments fail closed"
+            )
+        rotate_side = entry.get("rotate_side", "left")
+        if rotate_side not in ("left", "right"):
+            raise ValueError(f"{path}.rotate_side must be 'left' or 'right'")
+        raw_bond = entry.get("bond")
+        raw_atoms = entry.get("atoms")
+        bond: tuple[int, int] | None = None
+        frame: tuple[int, int, int, int] | None = None
+        if model == "relative_rotation_grid":
+            if raw_bond is None:
+                raise ValueError(f"{path}: relative_rotation_grid requires 'bond'")
+            if raw_atoms is not None:
+                raise ValueError(f"{path}: relative_rotation_grid takes 'bond', not 'atoms'")
+            pair = _require_index_list(
+                raw_bond, path=f"{path}.bond", count=2, n_atoms=n_atoms, index_base=index_base
+            )
+            bond = (min(pair), max(pair)) if pair[0] != pair[1] else None
+            if bond is None:
+                raise ValueError(f"{path}.bond must name two distinct atoms")
+            # Preserve declaration order for the rotation axis direction.
+            bond = (pair[0], pair[1])
+        elif model == "absolute_dihedral_grid":
+            if raw_atoms is None:
+                raise ValueError(f"{path}: absolute_dihedral_grid requires 'atoms' (four indices)")
+            if raw_bond is not None:
+                raise ValueError(f"{path}: absolute_dihedral_grid takes 'atoms', not 'bond'")
+            frame = _require_index_list(
+                raw_atoms, path=f"{path}.atoms", count=4, n_atoms=n_atoms, index_base=index_base
+            )  # type: ignore[assignment]
+            assert frame is not None and len(frame) == 4
+            bond = (frame[1], frame[2])
+        else:  # chemical: opt-in named states, bond or four-atom frame
+            states = entry.get("states")
+            if not isinstance(states, Mapping) or not states:
+                raise ValueError(
+                    f"{path}: chemical model is opt-in and requires an explicit "
+                    "non-empty 'states' map of name -> angle"
+                )
+            names: list[str] = []
+            angles: list[float] = []
+            for name, angle in states.items():
+                if not isinstance(name, str) or not name:
+                    raise ValueError(f"{path}.states holds a non-string state name {name!r}")
+                if isinstance(angle, bool) or not isinstance(angle, (int, float)):
+                    raise ValueError(f"{path}.states[{name!r}] must be a finite angle")
+                if not math.isfinite(float(angle)):
+                    raise ValueError(f"{path}.states[{name!r}] must be finite")
+                names.append(name)
+                angles.append(float(angle))
+            _reject_periodic_duplicates(angles, path=f"{path}.states")
+            if raw_bond is not None and raw_atoms is not None:
+                raise ValueError(f"{path}: chemical takes 'bond' or 'atoms', not both")
+            if raw_bond is not None:
+                pair = _require_index_list(
+                    raw_bond, path=f"{path}.bond", count=2, n_atoms=n_atoms, index_base=index_base
+                )
+                if pair[0] == pair[1]:
+                    raise ValueError(f"{path}.bond must name two distinct atoms")
+                bond = (pair[0], pair[1])
+            elif raw_atoms is not None:
+                frame = _require_index_list(
+                    raw_atoms, path=f"{path}.atoms", count=4, n_atoms=n_atoms, index_base=index_base
+                )  # type: ignore[assignment]
+                assert frame is not None and len(frame) == 4
+                bond = (frame[1], frame[2])
+            else:
+                raise ValueError(f"{path}: chemical requires 'bond' or 'atoms'")
+            axes.append(
+                TorsionAxis(
+                    axis_id=axis_id,
+                    bond=bond,
+                    frame=frame,
+                    model=model,
+                    values=tuple(angles),
+                    state_names=tuple(names),
+                    treatment=treatment,
+                    rotate_side=rotate_side,
+                )
+            )
+            key = (min(bond), max(bond))
+            if key in seen_bonds:
+                raise ValueError(
+                    f"duplicate torsion bond axis {bond} "
+                    f"(axes {seen_bonds[key]!r} and {axis_id!r}); "
+                    "duplicate bond axes fail closed"
+                )
+            seen_bonds[key] = axis_id
+            continue
+        raw_angles = entry.get("angles")
+        if raw_angles is None:
+            raise ValueError(f"{path}: model {model!r} requires explicit 'angles'")
+        values = _require_finite_angles(raw_angles, path=f"{path}.angles")
+        _reject_periodic_duplicates(values, path=f"{path}.angles")
+        assert bond is not None
+        key = (min(bond), max(bond))
+        if key in seen_bonds:
+            raise ValueError(
+                f"duplicate torsion bond axis {bond} "
+                f"(axes {seen_bonds[key]!r} and {axis_id!r}); "
+                "duplicate bond axes fail closed"
+            )
+        seen_bonds[key] = axis_id
+        axes.append(
+            TorsionAxis(
+                axis_id=axis_id,
+                bond=bond,
+                frame=frame,
+                model=model,
+                values=values,
+                treatment=treatment,
+                rotate_side=rotate_side,
+            )
+        )
+    return tuple(axes)
+
+
+# ---------------------------------------------------------------------------
+# Spec normalization
+# ---------------------------------------------------------------------------
+
+
+def _check_int(value: Any, *, path: str, minimum: int = 1) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
+        raise ValueError(f"{path} must be an integer >= {minimum}, got {value!r}")
+    return value
+
+
+def normalize_spec(raw: Mapping[str, Any]) -> dict[str, Any]:
+    """Normalize a raw v3 spec into a JSON-compatible resolved spec.
+
+    Unknown top-level keys fail closed. Torsion entries are fully resolved
+    (finite angles, duplicate bonds rejected); coordination/ring sections
+    pass through structurally -- semantic validation is owned by those
+    lanes. Missing ``schema_version`` defaults to 3; any other value fails.
+    """
+    if not isinstance(raw, Mapping):
+        raise ValueError("spec must be a mapping")
+    unknown = sorted(set(raw) - _TOP_LEVEL_KEYS)
+    if unknown:
+        raise ValueError(f"spec holds unknown keys {unknown}; allowed {sorted(_TOP_LEVEL_KEYS)}")
+    version = raw.get("schema_version", SCHEMA_VERSION)
+    if version != SCHEMA_VERSION:
+        raise ValueError(f"spec schema_version must be {SCHEMA_VERSION}, got {version!r}")
+
+    spec: dict[str, Any] = {"schema_version": SCHEMA_VERSION}
+
+    # Single explicit index convention across topology, coordination, rings,
+    # and torsions. The workflow boundary may declare index_base 1 (fixture/
+    # workflow 1-based) or 0 (internal); normalize converts every reference
+    # to internal 0-based exactly once. Re-normalization sees index_base 0
+    # and is a validated no-op (idempotent). Undeclared bases with indices
+    # present fail closed -- never guess from whether atom 0 appears.
+    declared_base = raw.get("index_base")
+    if declared_base is not None and declared_base not in (0, 1):
+        raise ValueError("spec index_base must be 0 or 1 when declared")
+    if declared_base is None and _spec_has_indices(raw):
+        raise ValueError(
+            "spec carries atom indices but declares no index_base; "
+            "declare index_base: 0 or 1 explicitly"
+        )
+    base = int(declared_base) if declared_base is not None else 0
+    marker = raw.get("index_convention")
+    if marker is not None and marker != "internal-0-based:normalized":
+        raise ValueError(f"spec index_convention marker {marker!r} is not recognized")
+    spec["index_convention"] = "internal-0-based:normalized"
+    spec["index_base"] = 0
+
+    coordination = raw.get("coordination")
+    if coordination is not None and not isinstance(coordination, Mapping):
+        raise ValueError("spec coordination must be a mapping or null")
+    if isinstance(coordination, Mapping) and "index_base" in coordination:
+        raise ValueError(
+            "index convention is top-level only; coordination must not declare index_base"
+        )
+    spec["coordination"] = (
+        _convert_coordination(coordination, base=base) if coordination is not None else None
+    )
+
+    rings = raw.get("rings", [])
+    if not isinstance(rings, (list, tuple)):
+        raise ValueError("spec rings must be a list of ring declarations")
+    ring_entries: list[dict[str, Any]] = []
+    for index, entry in enumerate(rings):
+        if not isinstance(entry, Mapping):
+            raise ValueError(f"$.rings[{index}] must be a mapping")
+        if "index_base" in entry:
+            raise ValueError(
+                "index convention is top-level only; ring entries must not declare index_base"
+            )
+        converted = dict(entry)
+        if entry.get("atoms") is not None:
+            converted["atoms"] = _convert_index_list(
+                entry["atoms"], base=base, path=f"$.rings[{index}].atoms"
+            )
+        ring_entries.append(converted)
+    spec["rings"] = ring_entries
+
+    torsions = raw.get("torsions", [])
+    if not isinstance(torsions, (list, tuple)):
+        raise ValueError("spec torsions must be a list of torsion declarations")
+    converted_torsions: list[dict[str, Any]] = []
+    for position, entry in enumerate(torsions):
+        if not isinstance(entry, Mapping):
+            raise ValueError(f"$.torsions[{position}] must be a mapping")
+        if "index_base" in entry:
+            raise ValueError(
+                "index convention is top-level only; torsion entries must not declare index_base"
+            )
+        converted = dict(entry)
+        if entry.get("bond") is not None:
+            converted["bond"] = _convert_index_list(
+                entry["bond"], base=base, path=f"$.torsions[{position}].bond"
+            )
+            if len(converted["bond"]) != 2:
+                raise ValueError(f"$.torsions[{position}].bond must hold exactly two indices")
+        if entry.get("atoms") is not None:
+            converted["atoms"] = _convert_index_list(
+                entry["atoms"], base=base, path=f"$.torsions[{position}].atoms"
+            )
+            if len(converted["atoms"]) != 4:
+                raise ValueError(f"$.torsions[{position}].atoms must hold exactly four indices")
+        converted_torsions.append(converted)
+    # Full torsion validation on internal 0-based entries (structure-
+    # independent part); index ranges re-checked with atom counts at stage.
+    resolve_torsion_axes(tuple(converted_torsions), index_base=0)
+    spec["torsions"] = converted_torsions
+
+    topology = raw.get("topology", {})
+    if not isinstance(topology, Mapping):
+        raise ValueError("spec topology must be a mapping")
+    allowed_topo = {"bonds", "add_bond", "del_bond", "atoms", "index_base"}
+    unknown_topo = sorted(set(topology) - allowed_topo)
+    if unknown_topo:
+        raise ValueError(f"spec topology holds unknown keys {unknown_topo}")
+    if topology.get("index_base") is not None:
+        raise ValueError("index convention is top-level only; topology must not declare index_base")
+    topo: dict[str, Any] = {}
+    for key in ("bonds", "add_bond", "del_bond"):
+        if topology.get(key) is not None:
+            pairs = topology[key]
+            if isinstance(pairs, (str, bytes)) or not isinstance(pairs, Sequence):
+                raise ValueError(f"spec topology.{key} must be a list of index entries")
+            validated: list[Any] = []
+            for index, item in enumerate(pairs):
+                shape = _validate_topo_entry(item, path=f"spec topology.{key}[{index}]")
+                validated.append(
+                    _convert_topo_entry(shape, base=base, path=f"spec topology.{key}[{index}]")
+                )
+            topo[key] = validated
+    if topology.get("atoms") is not None:
+        declarations = topology["atoms"]
+        if isinstance(declarations, (str, bytes)) or not isinstance(declarations, Sequence):
+            raise ValueError("spec topology.atoms must be a list of atom declarations")
+        converted_decls: list[dict[str, Any]] = []
+        for index, item in enumerate(declarations):
+            shape = _validate_atom_declaration(item, path=f"spec topology.atoms[{index}]")
+            converted_decls.append(
+                {
+                    "index": _convert_index(
+                        shape["index"], base=base, path=f"spec topology.atoms[{index}].index"
+                    ),
+                    "label": shape.get("label"),
+                    "role": shape.get("role", ""),
+                    "stereo": shape.get("stereo"),
+                }
+            )
+        topo["atoms"] = converted_decls
+    if "bonds" in topo and ("add_bond" in topo or "del_bond" in topo):
+        raise ValueError(
+            "explicit topology.bonds wins outright and cannot combine with add/del_bond"
+        )
+    # BREAKING stays a typed edge in the lane B graph (never covalent, never
+    # discarded to scope). No partition: bonds entries keep their kinds.
+    spec["topology"] = topo
+
+    stereo = raw.get("stereochemistry", {})
+    if stereo is not None and not isinstance(stereo, Mapping):
+        raise ValueError("spec stereochemistry must be a mapping or null")
+    # Recorded only: core claims no stereo authority.
+    spec["stereochemistry"] = dict(stereo) if stereo is not None else {}
+
+    exclusions = raw.get("exclusions", [])
+    if not isinstance(exclusions, (list, tuple)):
+        raise ValueError("spec exclusions must be a list")
+    exclusion_entries: list[dict[str, Any]] = []
+    for index, entry in enumerate(exclusions):
+        path = f"$.exclusions[{index}]"
+        if not isinstance(entry, Mapping):
+            raise ValueError(f"{path} must be a mapping")
+        axis = entry.get("axis")
+        if axis not in AXIS_ORDER:
+            raise ValueError(f"{path}.axis must be one of {AXIS_ORDER}")
+        match = entry.get("match")
+        if not isinstance(match, Mapping) or not match:
+            raise ValueError(f"{path}.match must be a non-empty mapping")
+        reason = entry.get("reason")
+        if not isinstance(reason, str) or not reason:
+            raise ValueError(f"{path}.reason must be a non-empty string")
+        record = {"axis": axis, "match": dict(match), "reason": reason}
+        proof = entry.get("proof")
+        if proof is not None:
+            if not isinstance(proof, Mapping):
+                raise ValueError(f"{path}.proof must be a mapping")
+            proof_id = proof.get("proof_id")
+            if not isinstance(proof_id, str) or not proof_id:
+                raise ValueError(f"{path}.proof must carry a non-empty proof_id")
+            record["proof"] = dict(proof)
+        exclusion_entries.append(record)
+    spec["exclusions"] = exclusion_entries
+
+    tolerances = raw.get("tolerances", {})
+    if tolerances is None:
+        tolerances = {}
+    from confflow.science.confgen.tolerances import resolve_tolerances
+
+    resolved_tol = resolve_tolerances(tolerances)
+    spec["tolerances"] = {
+        "bond_length_atol": resolved_tol.bond_length_atol,
+        "dihedral_atol_deg": resolved_tol.dihedral_atol_deg,
+        "clash_threshold": resolved_tol.clash_threshold,
+        "bond_scale": resolved_tol.bond_scale,
+        "parent_lock_atol_deg": resolved_tol.parent_lock_atol_deg,
+        "ring_bond_atol": resolved_tol.ring_bond_atol,
+        "substituent_bond_atol": resolved_tol.substituent_bond_atol,
+        "frame_det_min": resolved_tol.frame_det_min,
+        "ring_angle_atol_deg": resolved_tol.ring_angle_atol_deg,
+        "ring_torsion_atol_deg": resolved_tol.ring_torsion_atol_deg,
+        "coordination_bond_atol": resolved_tol.coordination_bond_atol,
+        "coordination_angle_atol_deg": resolved_tol.coordination_angle_atol_deg,
+    }
+
+    limits = raw.get("limits", {})
+    if limits is None:
+        limits = {}
+    if not isinstance(limits, Mapping):
+        raise ValueError("spec limits must be a mapping")
+    allowed_limits = {"max_declared_states", "max_output_structures"}
+    unknown_limits = sorted(set(limits) - allowed_limits)
+    if unknown_limits:
+        raise ValueError(f"spec limits holds unknown keys {unknown_limits}")
+    resolved_limits: dict[str, Any] = {}
+    for key in allowed_limits:
+        if limits.get(key) is not None:
+            resolved_limits[key] = _check_int(limits[key], path=f"$.limits.{key}")
+    spec["limits"] = resolved_limits
+
+    seed = raw.get("seed")
+    if seed is not None and (isinstance(seed, bool) or not isinstance(seed, int)):
+        raise ValueError(f"$.seed must be an integer or null, got {seed!r}")
+    spec["seed"] = seed
+
+    # Single seed authority: the top-level seed is the SOLE stochastic
+    # authority. The sampling section carries the cap only; any sub-seed
+    # (sampling.seed) fails closed -- declare top-level seed only. A cap
+    # without a top-level seed fails closed (no silent stochasticity).
+    sampling = raw.get("sampling", {})
+    if sampling is None:
+        sampling = {}
+    if not isinstance(sampling, Mapping):
+        raise ValueError("spec sampling must be a mapping")
+    allowed_sampling = {"cap"}
+    unknown_sampling = sorted(set(sampling) - allowed_sampling)
+    if unknown_sampling:
+        raise ValueError(
+            f"spec sampling holds unknown keys {unknown_sampling}; "
+            "the sampling section carries cap only (top-level seed is the "
+            "sole stochastic authority)"
+        )
+    cap = sampling.get("cap")
+    if cap is not None:
+        _check_int(cap, path="$.sampling.cap")
+    if cap is not None and seed is None:
+        raise ValueError("$.sampling.cap requires an explicit top-level $.seed")
+    spec["sampling"] = {"cap": cap}
+    return spec
+
+
+def sampling_of(spec: Mapping[str, Any]) -> tuple[int | None, int | None]:
+    """Return ``(cap, seed)`` with the SOLE top-level seed authority.
+
+    The sampling section carries the cap only; the seed always resolves
+    from the top-level ``seed`` (workflow schema exposes sampling.cap plus
+    top-level seed). Conflicting sub-seeds fail closed at normalization.
+    """
+    sampling = spec.get("sampling", {}) or {}
+    seed = spec.get("seed")
+    if seed is not None and (isinstance(seed, bool) or not isinstance(seed, int)):
+        raise ValueError(f"$.seed must be an integer or null, got {seed!r}")
+    return sampling.get("cap"), seed
+
+
+# ---------------------------------------------------------------------------
+# Executor-native normalization (convenience for the executor layer)
+# ---------------------------------------------------------------------------
+
+
+def normalize_executor_native(native: Mapping[str, Any], *, seed: int) -> dict[str, Any]:
+    """Map legacy executor native keys into a v3 torsion spec.
+
+    Executor chains are 1-based spellings, matching the v3 spec 1-based
+    index convention directly. Accepts the executor vocabulary (chains,
+    chain_steps, chain_angles, angle_step, rotate_side, no_rotate,
+    add_bond, del_bond, bond_scale, clash_threshold). ``max_conformers``
+    is NOT mapped -- it fails closed with a pointer to the explicitly
+    versioned ``legacy_cap_v1`` adapter, whose post-geometry
+    shuffle-truncate survivor semantics are different scientific behavior
+    from v3 pre-geometry sampling. ``optimize=true`` fails closed (MMFF
+    legacy).
+    """
+    from confflow.science.torsion import parse_bond_pair, parse_chain, resolve_angle_lists
+
+    if not isinstance(native, Mapping):
+        raise ValueError("native must be a mapping")
+    allowed = {
+        "chains",
+        "chain_steps",
+        "chain_angles",
+        "angle_step",
+        "rotate_side",
+        "no_rotate",
+        "add_bond",
+        "del_bond",
+        "bond_scale",
+        "clash_threshold",
+        "max_conformers",
+        "optimize",
+    }
+    unknown = sorted(set(native) - allowed)
+    if unknown:
+        raise ValueError(f"native holds unknown keys {unknown}")
+    if native.get("optimize") is True:
+        raise ValueError("optimize=true is unsupported (MMFF legacy)")
+    if native.get("max_conformers") is not None:
+        raise ValueError(
+            "max_conformers is not mapped to v3 sampling: use the explicitly versioned "
+            "torsion.legacy.legacy_cap_v1 adapter for legacy-compatible capped subsets, "
+            "or declare spec sampling (cap counts pre-geometry targets, not kept outputs)"
+        )
+    raw_chains = native.get("chains")
+    if not isinstance(raw_chains, (list, tuple)) or not raw_chains:
+        raise ValueError("native requires a non-empty 'chains' list")
+    try:
+        chains = [parse_chain(item) for item in raw_chains]
+    except ValueError as exc:
+        raise ValueError(f"chains: {exc}") from exc
+    angle_step = native.get("angle_step", 120)
+    _check_int(angle_step, path="native.angle_step", minimum=1)
+    if angle_step > 360:
+        raise ValueError(f"native.angle_step must be in 1..360, got {angle_step!r}")
+    rotate_side = native.get("rotate_side", "left")
+    if rotate_side not in ("left", "right"):
+        raise ValueError(f"native.rotate_side must be 'left' or 'right', got {rotate_side!r}")
+
+    def _str_list(raw: Any, key: str) -> list[str] | None:
+        if raw is None:
+            return None
+        items = [raw] if isinstance(raw, str) else list(raw)
+        if not all(isinstance(item, str) for item in items):
+            raise ValueError(f"native {key} must be a string or a list of strings")
+        if len(items) not in (1, len(chains)):
+            raise ValueError(f"native {key} count must be 1 or match chain count {len(chains)}")
+        return items if len(items) == len(chains) else items * len(chains)
+
+    chain_steps = _str_list(native.get("chain_steps"), "chain_steps")
+    chain_angles = _str_list(native.get("chain_angles"), "chain_angles")
+
+    def _bond_list(raw: Any, key: str) -> list[tuple[int, int]]:
+        items = raw if raw is not None else []
+        if not isinstance(items, (list, tuple)) or not all(isinstance(i, str) for i in items):
+            raise ValueError(f"native {key} must be a list of 'a-b' 1-based strings")
+        try:
+            return [parse_bond_pair(item) for item in items]
+        except ValueError as exc:
+            raise ValueError(f"native {key}: {exc}") from exc
+
+    no_rotate = {tuple(sorted(pair)) for pair in _bond_list(native.get("no_rotate"), "no_rotate")}
+    add_bond = _bond_list(native.get("add_bond"), "add_bond")
+    del_bond = _bond_list(native.get("del_bond"), "del_bond")
+    try:
+        bond_scale = float(native.get("bond_scale", 1.15))
+        clash_threshold = float(native.get("clash_threshold", 0.65))
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"native numeric parameter malformed: {exc}") from exc
+    for name, number in (("bond_scale", bond_scale), ("clash_threshold", clash_threshold)):
+        if not math.isfinite(number) or number <= 0:
+            raise ValueError(f"native {name} must be a positive finite number")
+
+    torsions: list[dict[str, Any]] = []
+    matched_no_rotate: set[tuple[int, int]] = set()
+    for chain_index, chain in enumerate(chains):
+        try:
+            per_bond = resolve_angle_lists(
+                len(chain) - 1,
+                chain_steps[chain_index] if chain_steps else None,
+                chain_angles[chain_index] if chain_angles else None,
+                int(angle_step),
+            )
+        except ValueError as exc:
+            raise ValueError(f"chains: {exc}") from exc
+        for position, (left, right) in enumerate(zip(chain, chain[1:])):
+            key = tuple(sorted((left, right)))
+            treatment = "enumerate"
+            if key in no_rotate:
+                treatment = "preserve_input"
+                matched_no_rotate.add(key)
+            torsions.append(
+                {
+                    "id": f"chain{chain_index + 1}:{left + 1}-{right + 1}",
+                    "bond": [int(left) + 1, int(right) + 1],
+                    "model": "relative_rotation_grid",
+                    "angles": [float(item) for item in per_bond[position]],
+                    "treatment": treatment,
+                    "rotate_side": str(rotate_side),
+                }
+            )
+    unmatched = sorted(no_rotate - matched_no_rotate)
+    if unmatched:
+        rendered = [f"{first + 1}-{second + 1}" for first, second in unmatched]
+        raise ValueError(f"native no_rotate entries match no chain bond: {rendered}")
+
+    if isinstance(seed, bool) or not isinstance(seed, int):
+        raise ValueError("seed must be an explicit integer (single stochastic authority)")
+    return normalize_spec(
+        {
+            "schema_version": SCHEMA_VERSION,
+            "index_base": 1,
+            "torsions": torsions,
+            "topology": {
+                "add_bond": [[int(a) + 1, int(b) + 1] for a, b in add_bond],
+                "del_bond": [[int(a) + 1, int(b) + 1] for a, b in del_bond],
+            },
+            "tolerances": {"bond_scale": bond_scale, "clash_threshold": clash_threshold},
+            "seed": int(seed),
+        }
+    )
+
+
+# ---------------------------------------------------------------------------
+# Typed-graph authority
+# ---------------------------------------------------------------------------
+
+
+def _validate_topo_entry(item: Any, *, path: str) -> Any:
+    """Validate one topology entry shape (base-agnostic; see conversion).
+
+    Plain pairs default to COVALENT. Typed mappings carry an uppercase kind
+    (COVALENT/COORDINATION/FORMING/BREAKING), optional bond_order metadata,
+    and optional provenance. Lowercase kinds fail closed (lane B normalizes
+    them, but the spec boundary requires the uppercase fixture spelling).
+    """
+    if isinstance(item, Mapping):
+        unknown = sorted(set(item) - {"atoms", "kind", "bond_order", "provenance"})
+        if unknown:
+            raise ValueError(f"{path} holds unknown keys {unknown}")
+        atoms = item.get("atoms")
+        if isinstance(atoms, (str, bytes)) or not isinstance(atoms, Sequence):
+            raise ValueError(f"{path}.atoms must be an index pair")
+        pair = list(atoms)
+        if len(pair) != 2:
+            raise ValueError(f"{path}.atoms must hold exactly two indices")
+        kind = item.get("kind", "COVALENT")
+        if kind not in TOPO_EDGE_KINDS:
+            raise ValueError(f"{path}.kind must be one of {TOPO_EDGE_KINDS}, got {kind!r}")
+        for name, value in (("first", pair[0]), ("second", pair[1])):
+            if isinstance(value, bool) or not isinstance(value, int):
+                raise ValueError(f"{path}.atoms {name} must be an integer, got {value!r}")
+        if pair[0] == pair[1]:
+            raise ValueError(f"{path}.atoms must name two distinct atoms")
+        record: dict[str, Any] = {"atoms": [int(pair[0]), int(pair[1])], "kind": str(kind)}
+        if item.get("bond_order") is not None:
+            order = item["bond_order"]
+            if isinstance(order, bool) or not isinstance(order, (int, float)):
+                raise ValueError(f"{path}.bond_order must be a number or null")
+            record["bond_order"] = float(order)
+        if item.get("provenance") is not None:
+            if not isinstance(item["provenance"], str):
+                raise ValueError(f"{path}.provenance must be a string")
+            record["provenance"] = str(item["provenance"])
+        return record
+    if isinstance(item, (str, bytes)) or not isinstance(item, Sequence):
+        raise ValueError(f"{path} must be an index pair or typed edge mapping")
+    pair = list(item)
+    if len(pair) != 2:
+        raise ValueError(f"{path} must hold exactly two indices")
+    for name, value in (("first", pair[0]), ("second", pair[1])):
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise ValueError(f"{path} {name} must be an integer, got {value!r}")
+    if pair[0] == pair[1]:
+        raise ValueError(f"{path} must name two distinct atoms")
+    return [int(pair[0]), int(pair[1])]
+
+
+def _validate_atom_declaration(item: Any, *, path: str) -> dict[str, Any]:
+    """Validate one topology atom declaration (roles/stereo/labels)."""
+    if not isinstance(item, Mapping):
+        raise ValueError(f"{path} must be a mapping")
+    unknown = sorted(set(item) - {"index", "label", "role", "stereo"})
+    if unknown:
+        raise ValueError(f"{path} holds unknown keys {unknown}")
+    if "index" not in item:
+        raise ValueError(f"{path} must carry 'index'")
+    shape: dict[str, Any] = {"index": item["index"]}
+    if item.get("label") is not None:
+        if not isinstance(item["label"], str):
+            raise ValueError(f"{path}.label must be a string")
+        shape["label"] = item["label"]
+    shape["role"] = str(item.get("role", ""))
+    if not isinstance(shape["role"], str):
+        raise ValueError(f"{path}.role must be a string")
+    stereo = item.get("stereo")
+    if stereo is not None and not isinstance(stereo, str):
+        raise ValueError(f"{path}.stereo must be a string or null")
+    shape["stereo"] = stereo
+    return shape
+
+
+def _convert_coordination(section: Mapping[str, Any], *, base: int) -> dict[str, Any]:
+    """Convert documented coordination index fields to internal 0-based.
+
+    Converted fields: ``metal_center``, ``binding_sites[].atoms``. Shapes
+    outside this documented contract fail closed when base==1 (never
+    silently leave 1-based indices unconverted); deeper semantic validation
+    stays lane B owned.
+    """
+    converted = dict(section)
+    if section.get("metal_center") is not None:
+        converted["metal_center"] = _convert_index(
+            section["metal_center"], base=base, path="$.coordination.metal_center"
+        )
+    sites = section.get("binding_sites")
+    if sites is not None:
+        if not isinstance(sites, (list, tuple)):
+            raise ValueError("$.coordination.binding_sites must be a list")
+        converted_sites: list[Any] = []
+        for position, site in enumerate(sites):
+            if not isinstance(site, Mapping):
+                raise ValueError(f"$.coordination.binding_sites[{position}] must be a mapping")
+            entry = dict(site)
+            if site.get("atoms") is not None:
+                entry["atoms"] = _convert_index_list(
+                    site["atoms"], base=base, path=f"$.coordination.binding_sites[{position}].atoms"
+                )
+            converted_sites.append(entry)
+        converted["binding_sites"] = converted_sites
+    return converted
+
+
+def _overlay_declared_coordination_scope(
+    resolved: Mapping[str, Any],
+    n_atoms: int,
+    adjacency: list[set[int]],
+    typed: dict[tuple[int, int, Any], Any],
+    explicit_covalent: set[tuple[int, int]],
+) -> None:
+    """Authoritatively type declared metal-site edges (perceived path only).
+
+    Distance perception guesses every close pair COVALENT, including
+    metal-ligand contacts. The declared coordination scope (metal_center
+    plus binding-site donor atoms, internal 0-based) overrides the guess:
+    each metal-donor pair loses its guessed COVALENT edge/adjacency and
+    gains a COORDINATION record, so fragment decomposition and
+    ring/torsion mechanics never see metal-ligand pseudo-bonds. An
+    explicit COVALENT declaration for a declared metal-donor pair is a
+    contradiction and fails closed; perception guesses are overridden
+    silently. Pairs never declared stay exactly as perceived/corrected.
+    """
+    from confflow.science.confgen.graph import EdgeType, TypedEdge
+
+    coordination = resolved.get("coordination") if isinstance(resolved, Mapping) else None
+    if not isinstance(coordination, Mapping):
+        return
+    metal = coordination.get("metal_center")
+    if metal is None:
+        return
+    if isinstance(metal, bool) or not isinstance(metal, int):
+        raise ValueError(f"resolved coordination metal_center malformed: {metal!r}")
+    if metal < 0 or metal >= n_atoms:
+        raise ValueError(f"resolved coordination metal_center out of range: {metal!r}")
+    sites = coordination.get("binding_sites")
+    if sites is None:
+        return
+    if not isinstance(sites, (list, tuple)):
+        raise ValueError("$.coordination.binding_sites must be a list")
+    donors: set[int] = set()
+    for position, site in enumerate(sites):
+        if not isinstance(site, Mapping):
+            raise ValueError(f"$.coordination.binding_sites[{position}] must be a mapping")
+        for atom in site.get("atoms") or []:
+            if isinstance(atom, bool) or not isinstance(atom, int):
+                raise ValueError(
+                    f"$.coordination.binding_sites[{position}].atoms holds "
+                    f"a non-integer index {atom!r}"
+                )
+            if atom < 0 or atom >= n_atoms:
+                raise ValueError(
+                    f"$.coordination.binding_sites[{position}] index {atom} "
+                    f"out of range for {n_atoms} atoms"
+                )
+            donors.add(int(atom))
+    for donor in sorted(donors):
+        if donor == metal:
+            raise ValueError("coordination scope binds the metal to itself")
+        pair = (min(metal, donor), max(metal, donor))
+        if pair in explicit_covalent:
+            raise ValueError(
+                f"topology declares COVALENT for pair {pair} inside the declared "
+                "coordination scope; contradictory kinds for one pair fail closed"
+            )
+        typed.pop((pair[0], pair[1], EdgeType.COVALENT), None)
+        adjacency[metal].discard(donor)
+        adjacency[donor].discard(metal)
+        typed[(pair[0], pair[1], EdgeType.COORDINATION)] = TypedEdge(
+            a=pair[0],
+            b=pair[1],
+            type=EdgeType.COORDINATION,
+            provenance="declared-binding-site",
+        )
+
+
+def _topo_edge(item: Any) -> tuple[tuple[int, int], Any, dict[str, Any]]:
+    """Normalize a converted (0-based) topology entry to (pair, EdgeType, extra)."""
+    from confflow.science.confgen.graph import EdgeType, normalize_edge_kind
+
+    if isinstance(item, Mapping):
+        first, second = item["atoms"]
+        extra: dict[str, Any] = {}
+        if item.get("bond_order") is not None:
+            extra["bond_order"] = float(item["bond_order"])
+        if item.get("provenance") is not None:
+            extra["provenance"] = str(item["provenance"])
+        return (int(first), int(second)), normalize_edge_kind(item.get("kind", "COVALENT")), extra
+    first, second = item
+    return (int(first), int(second)), EdgeType.COVALENT, {}
+
+
+def _graph_metal_center(resolved: Mapping[str, Any], n_atoms: int) -> int | None:
+    """Read the declared metal center (internal 0-based) from resolved scope."""
+    coordination = resolved.get("coordination") if isinstance(resolved, Mapping) else None
+    if not isinstance(coordination, Mapping):
+        return None
+    metal = coordination.get("metal_center")
+    if metal is None:
+        return None
+    if isinstance(metal, bool) or not isinstance(metal, int) or metal < 0 or metal >= n_atoms:
+        raise ValueError(f"resolved coordination metal_center out of range: {metal!r}")
+    return int(metal)
+
+
+def build_typed_graph(
+    structure: StructureRecord, topology: Mapping[str, Any], resolved: Mapping[str, Any]
+) -> tuple[list[list[int]], Any]:
+    """Build covalent adjacency plus the lane B typed-graph authority.
+
+    All entries arrive internal 0-based (normalize_spec converts under the
+    single explicit top-level ``index_base``). Explicit ``topology["bonds"]``
+    wins outright and is built through the lane B workflow parser
+    (``TypedGraph.from_mapping`` with ``convention="internal0"``): records
+    from config mappings only, never file paths. Otherwise legacy covalent
+    perception plus ``add_bond``/``del_bond`` corrections, recorded as the
+    same lane B records. FORMING/COORDINATION/BREAKING edges are authority
+    context and never enter the covalent adjacency used by torsion
+    mechanics. ``tolerances`` are read from the resolved spec.
+    """
+    from confflow.science.confgen.graph import AtomRef, EdgeType, TypedEdge, TypedGraph
+    from confflow.science.confgen.model import covalent_adjacency_of
+
+    if not isinstance(topology, Mapping):
+        raise ValueError("topology must be a mapping")
+    n_atoms = len(structure.atoms)
+    elements = list(structure.atoms)
+    metal_center = _graph_metal_center(resolved, n_atoms)
+    tolerances = resolved.get("tolerances", {}) if isinstance(resolved, Mapping) else {}
+    bond_scale = float(tolerances.get("bond_scale", 1.15))
+
+    def _check(value: int, path: str) -> None:
+        if value < 0 or value >= n_atoms:
+            raise ValueError(f"{path} index {value} out of range for {n_atoms} atoms")
+
+    if topology.get("bonds") is not None:
+        pairs = topology["bonds"]
+        if isinstance(pairs, (str, bytes)) or not isinstance(pairs, Sequence):
+            raise ValueError("topology.bonds must be a list of entries")
+        forming: list[list[int]] = []
+        for index, item in enumerate(pairs):
+            (first, second), kind, _extra = _topo_edge(item)
+            _check(first, f"topology.bonds[{index}]")
+            _check(second, f"topology.bonds[{index}]")
+            if kind is EdgeType.FORMING:
+                forming.append([first, second])
+        mapping = {
+            "bonds": list(pairs),
+            "atoms": list(topology.get("atoms", []) or []),
+            "metal_center": metal_center,
+            "reaction_pairs": forming,
+            "source": "v3-spec-explicit",
+        }
+        graph = TypedGraph.from_mapping(
+            mapping, elements, convention="internal0", source="v3-spec-explicit"
+        )
+        if graph.natoms != n_atoms:  # defensive; from_mapping builds from elements
+            raise ValueError("typed graph atom count mismatches structure")
+        return [list(row) for row in covalent_adjacency_of(graph)], graph
+
+    from confflow.domain.elements import atomic_number
+    from confflow.science.bonds import perceive_adjacency
+
+    try:
+        numbers = [atomic_number(symbol) for symbol in structure.atoms]
+    except Exception as exc:
+        raise ValueError(f"bond perception failed: {exc}") from exc
+    try:
+        perceived = perceive_adjacency(
+            numbers,
+            [tuple(point) for point in structure.coordinates],
+            bond_scale=bond_scale,
+        )
+    except ValueError as exc:
+        raise ValueError(f"bond perception failed: {exc}") from exc
+    if len(perceived) != n_atoms:
+        raise ValueError("perceived adjacency row count mismatches atom count")
+    adjacency: list[set[int]] = [set(row) for row in perceived]
+    typed: dict[tuple[int, int, Any], TypedEdge] = {}
+    for first in range(n_atoms):
+        for second in adjacency[first]:
+            if second > first:
+                edge = TypedEdge(a=first, b=second, type=EdgeType.COVALENT)
+                typed[(first, second, EdgeType.COVALENT)] = edge
+    reaction_pairs = []
+    explicit_covalent: set[tuple[int, int]] = set()
+    typed_non_covalent: set[tuple[int, int]] = set()
+    for key in ("add_bond", "del_bond"):
+        entries = topology.get(key) or []
+        if isinstance(entries, (str, bytes)) or not isinstance(entries, Sequence):
+            raise ValueError(f"topology.{key} must be a list of entries")
+        for index, item in enumerate(entries):
+            (first, second), kind, extra = _topo_edge(item)
+            _check(first, f"topology.{key}[{index}]")
+            _check(second, f"topology.{key}[{index}]")
+            pair = (min(first, second), max(first, second))
+            if key == "add_bond":
+                if kind is EdgeType.COVALENT:
+                    if pair in typed_non_covalent:
+                        raise ValueError(
+                            f"topology.add_bond[{index}] declares COVALENT for pair "
+                            f"{pair} already given a typed non-covalent role; "
+                            "contradictory kinds for one pair fail closed"
+                        )
+                    explicit_covalent.add(pair)
+                    adjacency[first].add(second)
+                    adjacency[second].add(first)
+                else:
+                    if pair in explicit_covalent:
+                        raise ValueError(
+                            f"topology.add_bond[{index}] declares {kind.value} for pair "
+                            f"{pair} already declared COVALENT; contradictory kinds "
+                            "for one pair fail closed"
+                        )
+                    # Authoritative typed overlay: a declared non-covalent
+                    # role replaces the distance-guessed COVALENT edge, so
+                    # the pair leaves the covalent-only adjacency used by
+                    # ring/torsion mechanics.
+                    typed.pop((pair[0], pair[1], EdgeType.COVALENT), None)
+                    adjacency[first].discard(second)
+                    adjacency[second].discard(first)
+                    typed_non_covalent.add(pair)
+                edge = TypedEdge(
+                    a=pair[0],
+                    b=pair[1],
+                    type=kind,
+                    bond_order=extra.get("bond_order"),
+                    provenance=extra.get("provenance", "add_bond"),
+                )
+                typed[(pair[0], pair[1], kind)] = edge
+                if kind is EdgeType.FORMING:
+                    reaction_pairs.append(pair)
+            else:
+                if kind is not EdgeType.COVALENT:
+                    raise ValueError(
+                        f"topology.del_bond[{index}] must name a covalent pair; "
+                        "typed-edge removal is not a perception correction"
+                    )
+                # Legacy-compatible silent discard of absent pairs.
+                adjacency[first].discard(second)
+                adjacency[second].discard(first)
+                typed.pop((pair[0], pair[1], EdgeType.COVALENT), None)
+    _overlay_declared_coordination_scope(resolved, n_atoms, adjacency, typed, explicit_covalent)
+    atoms = [AtomRef(index=position, element=symbol) for position, symbol in enumerate(elements)]
+    for decl in topology.get("atoms", []) or []:
+        position = int(decl["index"])
+        _check(position, "topology.atoms declaration")
+        atoms[position] = AtomRef(
+            index=position,
+            element=atoms[position].element,
+            label=decl.get("label"),
+            role=str(decl.get("role", "")),
+            stereo=decl.get("stereo"),
+        )
+    graph = TypedGraph(
+        atoms=tuple(atoms),
+        edges=tuple(typed.values()),
+        metal_center=metal_center,
+        reaction_pairs=tuple(reaction_pairs),
+        source="v3-spec-perceived",
+    )
+    resolved_adjacency = [sorted(row) for row in adjacency]
+    if covalent_adjacency_of(graph) != tuple(tuple(row) for row in resolved_adjacency):
+        raise ValueError("covalent adjacency diverged from typed graph authority")
+    return resolved_adjacency, graph
+
+
+# ---------------------------------------------------------------------------
+# Lazy mixed-radix grids and seeded sampling
+# ---------------------------------------------------------------------------
+
+
+class MixedRadixGrid:
+    """Lazy full-grid enumeration over per-axis value counts.
+
+    ``index_to_combo`` decodes a flat ordinal into per-axis indices in
+    row-major order (last axis fastest), exactly matching
+    ``itertools.product`` order, so v3 ordinals equal legacy grid ordinals.
+    The grid is never materialized (no ``list(product)``).
+    """
+
+    def __init__(self, sizes: Sequence[int]) -> None:
+        counts = tuple(sizes)
+        for size in counts:
+            if isinstance(size, bool) or not isinstance(size, int) or size < 1:
+                raise ValueError(f"grid sizes must be integers >= 1, got {size!r}")
+        self._sizes = counts
+        total = 1
+        for size in counts:
+            total *= size
+        self._total = total
+
+    @property
+    def sizes(self) -> tuple[int, ...]:
+        """Return the per-axis value counts."""
+        return self._sizes
+
+    @property
+    def total(self) -> int:
+        """Return the total grid size (product of counts)."""
+        return self._total
+
+    def index_to_combo(self, index: int) -> tuple[int, ...]:
+        """Decode a flat ordinal into per-axis indices (lazy, O(axes))."""
+        if isinstance(index, bool) or not isinstance(index, int):
+            raise ValueError(f"grid index must be an integer, got {index!r}")
+        if index < 0 or index >= self._total:
+            raise ValueError(f"grid index {index} out of range for total {self._total}")
+        combo = [0] * len(self._sizes)
+        rest = index
+        for position in range(len(self._sizes) - 1, -1, -1):
+            combo[position] = rest % self._sizes[position]
+            rest //= self._sizes[position]
+        return tuple(combo)
+
+    def iter_indices(self) -> Iterator[int]:
+        """Yield flat ordinals lazily in stable declared order."""
+        return iter(range(self._total))
+
+
+def sample_indices(total: int, cap: int | None, seed: int | None) -> Sequence[int]:
+    """Sample the raw index space without replacement, BEFORE geometry.
+
+    ``cap=None`` returns a lazy ``range`` over the full grid in ordinal
+    order (deterministic no-seed default; never materialized, so arbitrary
+    large totals are supported). A cap without an explicit seed fails
+    closed. A capped sample materializes only O(cap) indices via Floyd's
+    algorithm (uniform without replacement, no population scan), then
+    sorted ordinal presentation. No first-N bias. The cap counts attempted
+    TARGETS, never guaranteed successes.
+    """
+    if isinstance(total, bool) or not isinstance(total, int) or total < 0:
+        raise ValueError(f"total must be an integer >= 0, got {total!r}")
+    if cap is None:
+        return range(total)
+    if isinstance(cap, bool) or not isinstance(cap, int) or cap < 1:
+        raise ValueError(f"cap must be an integer >= 1, got {cap!r}")
+    if seed is None:
+        raise ValueError("sampling cap requires an explicit seed (no silent stochasticity)")
+    if not isinstance(seed, int) or isinstance(seed, bool):
+        raise ValueError(f"seed must be an integer, got {seed!r}")
+    if cap >= total:
+        return range(total)
+    rng = random.Random(int(seed))
+    selected: set[int] = set()
+    for upper in range(total - cap, total):
+        candidate = rng.randrange(upper + 1)
+        selected.add(upper if candidate in selected else candidate)
+    return sorted(selected)
+
+
+def deferred_ranges(sampled: Sequence[int], total: int) -> tuple[tuple[int, int], ...]:
+    """Compress the unsampled complement into ascending inclusive ranges.
+
+    Invariant: ``len(sampled) + sum(end - start + 1) == total``, i.e. the
+    raw space equals sampled targets plus deferred ranges.
+    """
+    if isinstance(total, bool) or not isinstance(total, int) or total < 0:
+        raise ValueError(f"total must be an integer >= 0, got {total!r}")
+    chosen = sorted(int(index) for index in sampled)
+    if any(index < 0 or index >= total for index in chosen):
+        raise ValueError("sampled indices out of range")
+    if len(set(chosen)) != len(chosen):
+        raise ValueError("sampled indices must be unique")
+    ranges: list[tuple[int, int]] = []
+    cursor = 0
+    for index in chosen:
+        if cursor < index:
+            ranges.append((cursor, index - 1))
+        cursor = index + 1
+    if cursor < total:
+        ranges.append((cursor, total - 1))
+    return tuple(ranges)
+
+
+# ---------------------------------------------------------------------------
+# Symbolic preflight and limits
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class PreflightReport:
+    """Symbolic enumeration counts independent of realized geometry."""
+
+    per_axis: Mapping[str, StageEstimate] = field(default_factory=FrozenDict)
+    total_declared: int = 0
+    total_upper_bound: int = 0
+    exact: bool = False
+    basis: str = "empty"
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.per_axis, FrozenDict):
+            object.__setattr__(self, "per_axis", FrozenDict(dict(self.per_axis)))
+        for name in ("total_declared", "total_upper_bound"):
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise ValueError(f"{name} must be an integer >= 0")
+        if self.total_upper_bound < self.total_declared:
+            raise ValueError("total_upper_bound must cover total_declared")
+        if not isinstance(self.exact, bool):
+            raise ValueError("exact must be a bool")
+        if not isinstance(self.basis, str) or not self.basis:
+            raise ValueError("basis must be a non-empty string")
+
+
+def preflight(context: Any, stages: Sequence[Any]) -> PreflightReport:
+    """Symbolically enumerate requested generation WITHOUT geometry.
+
+    Exact only when every stage reports ``exact=True`` with
+    ``scope_coverage="exact"`` (parent-independent symbolic enumeration
+    covering the requested scope). Conditional stages whose later
+    enumeration can change counts must report ``upper_bound`` coverage, and
+    the total is then a conservative upper bound. No unknown count
+    masquerades as exact. Exact raw counts never imply complete symmetry
+    accounting (no Burnside claim without a verified complete group).
+    Ring refusal and other fail-closed stage errors propagate here, before
+    any geometry.
+    """
+    from confflow.science.confgen.model import WorkingRealization
+
+    root = WorkingRealization(structure=context.structure, state_key=context.input_state_key)
+    per_axis: dict[str, StageEstimate] = {}
+    declared = 1
+    upper = 1
+    exact = True
+    basis_parts: list[str] = []
+    for stage in stages:
+        estimate = stage.estimate(root, context)
+        per_axis[stage.axis] = estimate
+        declared *= estimate.declared_count
+        upper *= estimate.upper_bound
+        coverage = estimate.details.get("scope_coverage")
+        exact = exact and estimate.exact and coverage == "exact"
+        basis_parts.append(f"{stage.axis}:{estimate.details.get('basis', 'unstated')}")
+    basis = "; ".join(basis_parts) if basis_parts else "no generation axes requested"
+    return PreflightReport(
+        per_axis=FrozenDict(per_axis),
+        total_declared=declared,
+        total_upper_bound=upper,
+        exact=exact,
+        basis=basis,
+    )
+
+
+def check_limits(report: PreflightReport, limits: Mapping[str, Any]) -> None:
+    """Enforce hard limits BEFORE any geometry (fail closed).
+
+    ``max_declared_states`` rejects when the conservative upper bound
+    exceeds it (equal to declared when exact). ``max_output_structures``
+    rejects when the expected leaf output count (upper bound trimmed by an
+    explicit sampling cap) exceeds it.
+    """
+    if not isinstance(limits, Mapping):
+        raise ValueError("limits must be a mapping")
+    max_declared = limits.get("max_declared_states")
+    if max_declared is not None:
+        _check_int(max_declared, path="limits.max_declared_states")
+        if report.total_upper_bound > max_declared:
+            basis = "exact" if report.exact else "conservative upper bound"
+            raise PreflightLimitError(
+                f"requested enumeration ({basis} {report.total_upper_bound}) exceeds "
+                f"max_declared_states={max_declared}; basis: {report.basis}"
+            )
+    max_output = limits.get("max_output_structures")
+    if max_output is not None:
+        _check_int(max_output, path="limits.max_output_structures")
+        expected = report.total_upper_bound
+        cap = limits.get("_sampling_cap")
+        if isinstance(cap, int) and not isinstance(cap, bool) and cap >= 1:
+            expected = min(expected, cap)
+        if expected > max_output:
+            raise PreflightLimitError(
+                f"expected leaf outputs ({expected}) exceed "
+                f"max_output_structures={max_output}; basis: {report.basis}"
+            )

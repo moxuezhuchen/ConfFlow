@@ -34,6 +34,7 @@ EXPECTED_IDS = (
     "neb",
     "goat",
     "tspes",
+    "confgen_torsion",
 )
 
 TSPES_IDS = (

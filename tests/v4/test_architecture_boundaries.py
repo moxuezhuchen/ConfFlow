@@ -143,6 +143,7 @@ FORBIDDEN_SYMBOLS = (
 EXTENDED_V4_PRODUCTION_ROOTS = (
     PRODUCER_ROOT,
     ANALYSIS_ROOT,
+    PACKAGE_ROOT / "science" / "confgen",
 )
 
 #: Individual formal V4 production files outside the package roots above.
@@ -576,6 +577,24 @@ class TestStaticImports:
             "confflow.persistence",
             "confflow.remote",
         )
+        # ConfGen v3 delegates geometry and discrete state authority to the
+        # science kernel. Keep these imports file-scoped; unrelated V4 code
+        # still has the original restriction and all legacy bans remain.
+        scientific_authorities = {
+            "confflow/workflow/v4/confgen_schema.py": {
+                "confflow.science.confgen.coordination.stage",
+                "confflow.science.confgen.tolerances",
+                "confflow.science.confgen.graph",
+                "confflow.science.confgen.ring.templates",
+                "confflow.science.confgen.torsion.measure",
+            },
+            "confflow/execution/confgen_executor.py": {
+                "confflow.science.confgen.accounting",
+                "confflow.science.confgen.engine",
+                "confflow.science.confgen.model",
+                "confflow.science.confgen.torsion.measure",
+            },
+        }
         offenders: list[tuple[str, str, int]] = []
         for root in (V4_ROOT, EXECUTION_ROOT, PERSISTENCE_ROOT, PROGRAMS_ROOT, REMOTE_ROOT):
             for path in _iter_python_files(root):
@@ -584,7 +603,10 @@ class TestStaticImports:
                         continue
                     if module.startswith(allowed_prefixes):
                         continue
-                    offenders.append((str(path.relative_to(REPO_ROOT)), module, lineno))
+                    relative_path = str(path.relative_to(REPO_ROOT))
+                    if module in scientific_authorities.get(relative_path, set()):
+                        continue
+                    offenders.append((relative_path, module, lineno))
         assert offenders == []
 
     def test_persistence_imports_only_domain_and_self(self) -> None:
@@ -1008,6 +1030,7 @@ class TestRetiredRuntimeBoundary:
             REMOTE_ROOT,
             PRODUCER_ROOT,
             ANALYSIS_ROOT,
+            PACKAGE_ROOT / "science" / "confgen",
         ):
             for path in _iter_python_files(root):
                 for raw, lineno in _imports(path):
@@ -1086,6 +1109,7 @@ class TestV3PublicWireRetired:
             REMOTE_ROOT,
             PRODUCER_ROOT,
             ANALYSIS_ROOT,
+            PACKAGE_ROOT / "science" / "confgen",
             APPLICATION_ROOT,
         )
         for root in roots:
@@ -1165,6 +1189,7 @@ class TestV1V2PublicWireRetired:
             REMOTE_ROOT,
             PRODUCER_ROOT,
             ANALYSIS_ROOT,
+            PACKAGE_ROOT / "science" / "confgen",
             APPLICATION_ROOT,
         )
         for root in roots:

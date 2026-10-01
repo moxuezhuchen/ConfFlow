@@ -1,0 +1,532 @@
+{
+  "schema": "confgen_fixture.coordination_expected.v1",
+  "vertex_convention": {
+    "vertex_order": [
+      "+X",
+      "-X",
+      "+Y",
+      "-Y",
+      "+Z",
+      "-Z"
+    ],
+    "opposite_pairs": [
+      [
+        "+X",
+        "-X"
+      ],
+      [
+        "+Y",
+        "-Y"
+      ],
+      [
+        "+Z",
+        "-Z"
+      ]
+    ],
+    "proper_rotation_count": 24,
+    "proper_rotations_vertex_permutations": [
+      [
+        1,
+        0,
+        3,
+        2,
+        4,
+        5
+      ],
+      [
+        1,
+        0,
+        2,
+        3,
+        5,
+        4
+      ],
+      [
+        0,
+        1,
+        3,
+        2,
+        5,
+        4
+      ],
+      [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      [
+        1,
+        0,
+        5,
+        4,
+        3,
+        2
+      ],
+      [
+        1,
+        0,
+        4,
+        5,
+        2,
+        3
+      ],
+      [
+        0,
+        1,
+        4,
+        5,
+        3,
+        2
+      ],
+      [
+        0,
+        1,
+        5,
+        4,
+        2,
+        3
+      ],
+      [
+        3,
+        2,
+        1,
+        0,
+        5,
+        4
+      ],
+      [
+        2,
+        3,
+        1,
+        0,
+        4,
+        5
+      ],
+      [
+        3,
+        2,
+        0,
+        1,
+        4,
+        5
+      ],
+      [
+        2,
+        3,
+        0,
+        1,
+        5,
+        4
+      ],
+      [
+        4,
+        5,
+        1,
+        0,
+        3,
+        2
+      ],
+      [
+        5,
+        4,
+        1,
+        0,
+        2,
+        3
+      ],
+      [
+        5,
+        4,
+        0,
+        1,
+        3,
+        2
+      ],
+      [
+        4,
+        5,
+        0,
+        1,
+        2,
+        3
+      ],
+      [
+        3,
+        2,
+        4,
+        5,
+        1,
+        0
+      ],
+      [
+        2,
+        3,
+        5,
+        4,
+        1,
+        0
+      ],
+      [
+        3,
+        2,
+        5,
+        4,
+        0,
+        1
+      ],
+      [
+        2,
+        3,
+        4,
+        5,
+        0,
+        1
+      ],
+      [
+        5,
+        4,
+        3,
+        2,
+        1,
+        0
+      ],
+      [
+        4,
+        5,
+        2,
+        3,
+        1,
+        0
+      ],
+      [
+        4,
+        5,
+        3,
+        2,
+        0,
+        1
+      ],
+      [
+        5,
+        4,
+        2,
+        3,
+        0,
+        1
+      ]
+    ]
+  },
+  "site_order": [
+    "N17",
+    "N19",
+    "O45",
+    "O46",
+    "O74",
+    "O80"
+  ],
+  "counts": {
+    "all_labeled_placements": 720,
+    "feasible_labeled_placements_before_shape_quotient": 288,
+    "feasible_shape_rotation_orbits": 12,
+    "topology_level_molecular_sigma_orbits": 6
+  },
+  "important_semantics": {
+    "abstract_state_orbits": 6,
+    "geometry_realization_targets_for_original_nonsymmetric_input_expected": "12 unless H_geom independently verifies suppressions",
+    "geometry_realization_targets_for_C2_symmetric_input_expected": "6 if H_geom verifies the C2 witness",
+    "stereo_status": "The 12->6 value is a topology-level benchmark. Production symmetry code must separately prove stereo/proper preservation before using it for suppression."
+  },
+  "shape_orbit_representatives": [
+    {
+      "id": "L00",
+      "placement_vertex_indices": [
+        0,
+        2,
+        1,
+        4,
+        3,
+        5
+      ],
+      "mapping": {
+        "N17": "+X",
+        "N19": "+Y",
+        "O45": "-X",
+        "O46": "+Z",
+        "O74": "-Y",
+        "O80": "-Z"
+      }
+    },
+    {
+      "id": "L01",
+      "placement_vertex_indices": [
+        0,
+        2,
+        1,
+        4,
+        5,
+        3
+      ],
+      "mapping": {
+        "N17": "+X",
+        "N19": "+Y",
+        "O45": "-X",
+        "O46": "+Z",
+        "O74": "-Z",
+        "O80": "-Y"
+      }
+    },
+    {
+      "id": "L02",
+      "placement_vertex_indices": [
+        0,
+        2,
+        1,
+        5,
+        3,
+        4
+      ],
+      "mapping": {
+        "N17": "+X",
+        "N19": "+Y",
+        "O45": "-X",
+        "O46": "-Z",
+        "O74": "-Y",
+        "O80": "+Z"
+      }
+    },
+    {
+      "id": "L03",
+      "placement_vertex_indices": [
+        0,
+        2,
+        1,
+        5,
+        4,
+        3
+      ],
+      "mapping": {
+        "N17": "+X",
+        "N19": "+Y",
+        "O45": "-X",
+        "O46": "-Z",
+        "O74": "+Z",
+        "O80": "-Y"
+      }
+    },
+    {
+      "id": "L04",
+      "placement_vertex_indices": [
+        0,
+        2,
+        4,
+        3,
+        1,
+        5
+      ],
+      "mapping": {
+        "N17": "+X",
+        "N19": "+Y",
+        "O45": "+Z",
+        "O46": "-Y",
+        "O74": "-X",
+        "O80": "-Z"
+      }
+    },
+    {
+      "id": "L05",
+      "placement_vertex_indices": [
+        0,
+        2,
+        4,
+        3,
+        5,
+        1
+      ],
+      "mapping": {
+        "N17": "+X",
+        "N19": "+Y",
+        "O45": "+Z",
+        "O46": "-Y",
+        "O74": "-Z",
+        "O80": "-X"
+      }
+    },
+    {
+      "id": "L06",
+      "placement_vertex_indices": [
+        0,
+        2,
+        4,
+        5,
+        1,
+        3
+      ],
+      "mapping": {
+        "N17": "+X",
+        "N19": "+Y",
+        "O45": "+Z",
+        "O46": "-Z",
+        "O74": "-X",
+        "O80": "-Y"
+      }
+    },
+    {
+      "id": "L07",
+      "placement_vertex_indices": [
+        0,
+        2,
+        4,
+        5,
+        3,
+        1
+      ],
+      "mapping": {
+        "N17": "+X",
+        "N19": "+Y",
+        "O45": "+Z",
+        "O46": "-Z",
+        "O74": "-Y",
+        "O80": "-X"
+      }
+    },
+    {
+      "id": "L08",
+      "placement_vertex_indices": [
+        0,
+        2,
+        5,
+        3,
+        1,
+        4
+      ],
+      "mapping": {
+        "N17": "+X",
+        "N19": "+Y",
+        "O45": "-Z",
+        "O46": "-Y",
+        "O74": "-X",
+        "O80": "+Z"
+      }
+    },
+    {
+      "id": "L09",
+      "placement_vertex_indices": [
+        0,
+        2,
+        5,
+        3,
+        4,
+        1
+      ],
+      "mapping": {
+        "N17": "+X",
+        "N19": "+Y",
+        "O45": "-Z",
+        "O46": "-Y",
+        "O74": "+Z",
+        "O80": "-X"
+      }
+    },
+    {
+      "id": "L10",
+      "placement_vertex_indices": [
+        0,
+        2,
+        5,
+        4,
+        1,
+        3
+      ],
+      "mapping": {
+        "N17": "+X",
+        "N19": "+Y",
+        "O45": "-Z",
+        "O46": "+Z",
+        "O74": "-X",
+        "O80": "-Y"
+      }
+    },
+    {
+      "id": "L11",
+      "placement_vertex_indices": [
+        0,
+        2,
+        5,
+        4,
+        3,
+        1
+      ],
+      "mapping": {
+        "N17": "+X",
+        "N19": "+Y",
+        "O45": "-Z",
+        "O46": "+Z",
+        "O74": "-Y",
+        "O80": "-X"
+      }
+    }
+  ],
+  "sigma_site_permutation_0based": [
+    1,
+    0,
+    3,
+    2,
+    4,
+    5
+  ],
+  "sigma_site_action": {
+    "N17": "N19",
+    "N19": "N17",
+    "O45": "O46",
+    "O46": "O45",
+    "O74": "O74",
+    "O80": "O80"
+  },
+  "sigma_orbits": [
+    {
+      "id": "O00",
+      "members": [
+        "L00",
+        "L08"
+      ]
+    },
+    {
+      "id": "O01",
+      "members": [
+        "L01",
+        "L09"
+      ]
+    },
+    {
+      "id": "O02",
+      "members": [
+        "L02",
+        "L04"
+      ]
+    },
+    {
+      "id": "O03",
+      "members": [
+        "L03",
+        "L05"
+      ]
+    },
+    {
+      "id": "O04",
+      "members": [
+        "L06",
+        "L07"
+      ]
+    },
+    {
+      "id": "O05",
+      "members": [
+        "L10",
+        "L11"
+      ]
+    }
+  ]
+}

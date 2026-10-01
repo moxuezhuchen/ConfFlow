@@ -203,6 +203,7 @@ class TestEveryRecipeExecutable:
             "neb",
             "goat",
             "tspes",
+            "confgen_torsion",
         )
         for recipe_id in RECIPE_IDS_V4:
             document = self._contract_recipe_document(recipe_id)

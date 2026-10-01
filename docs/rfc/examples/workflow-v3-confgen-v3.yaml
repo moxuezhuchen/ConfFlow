@@ -1,0 +1,56 @@
+# Typed ConfGen v3 example: deterministic torsion scan plus chained refinement.
+#
+# Step cg_scan runs the deterministic full grid (no sampling cap, hence no
+# seed). Step cg_refine chains the upstream confgen_state result by subject
+# and re-scans with a capped, seeded subset. Legacy native.chains documents
+# keep working unchanged on the explicitly versioned adapter path.
+schema: confflow.workflow.v4
+inputs:
+  structures:
+    kind: structure
+    cardinality: many
+global:
+  scientific_defaults:
+    charge: 0
+    multiplicity: 1
+steps:
+  - id: cg_scan
+    executor: confgen
+    bindings:
+      structure:
+        source:
+          run: structures
+    confgen:
+      schema_version: 3
+      index_base: 1
+      torsions:
+        - id: t1
+          bond: [1, 2]
+          model: relative_rotation_grid
+          angles: [0, 120, 240]
+          treatment: enumerate
+  - id: cg_refine
+    executor: confgen
+    bindings:
+      structure:
+        source:
+          step: cg_scan
+          port: structures
+      confgen_state:
+        source:
+          step: cg_scan
+          port: results
+        pairing: by_subject
+        cardinality: optional
+    confgen:
+      schema_version: 3
+      index_base: 1
+      seed: 7
+      sampling:
+        cap: 2
+      torsions:
+        - id: t1
+          bond: [1, 2]
+          model: relative_rotation_grid
+          angles: [0, 60, 120, 180, 240, 300]
+          treatment: enumerate

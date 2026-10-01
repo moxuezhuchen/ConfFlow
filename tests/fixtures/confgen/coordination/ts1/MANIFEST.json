@@ -1,0 +1,101 @@
+{
+  "schema": "confgen_fixture.manifest.v1",
+  "fixture": "ts1_coordination",
+  "files": [
+    {
+      "path": "README.md",
+      "bytes": 3458,
+      "sha256": "ead806d8842203728ea19eae3fd413ff5ae49b23b1370c93036eb07bd342ae5f"
+    },
+    {
+      "path": "benchmark/coordination_constraints.json",
+      "bytes": 1333,
+      "sha256": "3d1d54e618eb88371d292fd4068442fe71d6fe32d48315a4242b74fdc29aee5e"
+    },
+    {
+      "path": "benchmark/expected_coordination_benchmark.json",
+      "bytes": 7516,
+      "sha256": "9beabfe90e109c7ef0a6509515071ba25226cc0ea154acc4cf8527ce6673941d"
+    },
+    {
+      "path": "benchmark/expected_sigma_witness.json",
+      "bytes": 2586,
+      "sha256": "8905783135f96b7419b22695507a2653f0a81c5cd811ba48202b25da03d70bea"
+    },
+    {
+      "path": "benchmark/scine_F1-F6_expected.json",
+      "bytes": 1564,
+      "sha256": "550d858d2cba0000e225206ecaa016d69f2de0db1377e1c6023d866b7bfabd88"
+    },
+    {
+      "path": "benchmark/verify_fixture.py",
+      "bytes": 2525,
+      "sha256": "df550a296bb1d3c89d869a403f9e7f814c043001f56304463eeb261ac9f28515"
+    },
+    {
+      "path": "source/scine_F1-F6_report.txt",
+      "bytes": 866,
+      "sha256": "71b04673a3bb8f0c7f3d108b845cb484f0b4d076eba9c6fd45654be02d698ae2"
+    },
+    {
+      "path": "source/scine_generation_metadata.json",
+      "bytes": 2563,
+      "sha256": "35a291eb1499ca3e8190042b9e9532d6f054ff3855b868694be008f158b50e02"
+    },
+    {
+      "path": "source/si-rr-salanal2-r-end-spdd-ts1.log",
+      "bytes": 4581599,
+      "sha256": "5908d7fc95ad9b59dc0be3d2c7482f7360513bdc548d20479fc5307dbe2ff060"
+    },
+    {
+      "path": "structures/scine_F1.xyz",
+      "bytes": 4846,
+      "sha256": "6bef073a9a84825ddf5c2c4debc2c208a1012f9716b41da79fc2fb85f72813e7"
+    },
+    {
+      "path": "structures/scine_F2.xyz",
+      "bytes": 4846,
+      "sha256": "cde429b5d93292f58343be1a9ad8f21a4ec5c912bc36c91d2d08d8194251962d"
+    },
+    {
+      "path": "structures/scine_F3.xyz",
+      "bytes": 4846,
+      "sha256": "690b3c89becc7117d5f41a1a403bbd539b29a345894bc0a0cd9b1b24f0422b80"
+    },
+    {
+      "path": "structures/scine_F4.xyz",
+      "bytes": 4846,
+      "sha256": "b00101b99f62611bacf229797a0702cd1a2f8355c8edca2eb53515839bc00e5d"
+    },
+    {
+      "path": "structures/scine_F5.xyz",
+      "bytes": 4847,
+      "sha256": "db93591f5704483ee14027ecfe08c8a034560d28cb35a43d6bba54b1ab39f141"
+    },
+    {
+      "path": "structures/scine_F6.xyz",
+      "bytes": 4847,
+      "sha256": "74a59dbb48c7969e3e6fb50170e8e96138aa5727e3dd448c9a00035f19f47621"
+    },
+    {
+      "path": "structures/ts1_original.xyz",
+      "bytes": 3761,
+      "sha256": "4919db4b307ec82bdc414b10c9b404460d9dfd8950afbae45cfd467812e81fb7"
+    },
+    {
+      "path": "structures/ts1_original_plus_F1-F6.xyz",
+      "bytes": 32839,
+      "sha256": "2432c3cfb305f63f15abb6df335810e3a1701c91c6a71971edd88a4c42f8429b"
+    },
+    {
+      "path": "topology/atom_index_roles.csv",
+      "bytes": 1424,
+      "sha256": "0ffc88b1ccab1f87b84a5e39434debb303d1e06f39c68ade49565a6d03950045"
+    },
+    {
+      "path": "topology/typed_topology.json",
+      "bytes": 22195,
+      "sha256": "eebcbff8cfe907e5a879d106b3313b603d79cfd8d3fde354bba5cc2057b2101d"
+    }
+  ]
+}

@@ -1,0 +1,413 @@
+"""Typed declarations for the ConfGen v3 scientific scope.
+
+The legacy native block remains a separate schema. These declarations expose
+only supported controls; atom references share one explicit index convention.
+
+Semantic validators source their vocabularies and defaults from the actual
+science authorities (never duplicated stale values):
+
+- coordination shapes from ``confflow.science.confgen.graph`` (lane B);
+- ring templates from ``confflow.science.confgen.ring.templates`` (ring lane);
+- global tolerances from ``confflow.science.confgen.tolerances`` (core lane);
+- coordination section tolerances from the coordination stage defaults.
+
+Deeper geometric validation (bonded/ring/measurability checks, duplicate bond
+axes, conditional scope) stays lane-owned and runs at normalization and
+stage construction; the typed boundary fails closed early on ambiguous
+declarations.
+"""
+
+from __future__ import annotations
+
+from typing import Annotated, Any, Literal, cast
+
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr, model_validator
+
+Index = Annotated[StrictInt, Field(ge=0)]
+Positive = Annotated[float, Field(gt=0, strict=True)]
+Treatment = Literal["enumerate", "preserve_input"]
+
+
+def _coordination_section_defaults() -> dict[str, float]:
+    """Return lane-owned coordination section tolerance defaults."""
+    from confflow.science.confgen.coordination.stage import DEFAULT_SECTION_TOLERANCES
+
+    return dict(DEFAULT_SECTION_TOLERANCES)
+
+
+def _global_tolerance_defaults() -> dict[str, float]:
+    """Return core-owned global tolerance defaults."""
+    from confflow.science.confgen.tolerances import ConfgenTolerances
+
+    defaults = ConfgenTolerances()
+    return {
+        "bond_length_atol": defaults.bond_length_atol,
+        "dihedral_atol_deg": defaults.dihedral_atol_deg,
+        "clash_threshold": defaults.clash_threshold,
+        "bond_scale": defaults.bond_scale,
+        "parent_lock_atol_deg": defaults.parent_lock_atol_deg,
+        "ring_bond_atol": defaults.ring_bond_atol,
+        "substituent_bond_atol": defaults.substituent_bond_atol,
+        "frame_det_min": defaults.frame_det_min,
+        "ring_angle_atol_deg": defaults.ring_angle_atol_deg,
+        "ring_torsion_atol_deg": defaults.ring_torsion_atol_deg,
+        "coordination_bond_atol": defaults.coordination_bond_atol,
+        "coordination_angle_atol_deg": defaults.coordination_angle_atol_deg,
+    }
+
+
+def _supported_shapes() -> tuple[str, ...]:
+    """Return registered coordination shape names (lane B authority)."""
+    from confflow.science.confgen.graph import SUPPORTED_SHAPES
+
+    return tuple(SUPPORTED_SHAPES)
+
+
+def _template_sizes() -> dict[str, int]:
+    """Return ring template name -> ring size (ring-lane authority)."""
+    from confflow.science.confgen.ring.templates import TEMPLATE_REGISTRY
+
+    return {name: template.ring_size for name, template in TEMPLATE_REGISTRY.items()}
+
+
+def _wrap_degrees(angle: float) -> float:
+    """Wrap an angle to (-180, 180] (science measurement convention)."""
+    from confflow.science.confgen.torsion.measure import wrap_degrees
+
+    return wrap_degrees(angle)
+
+
+class ConfgenSpecModel(BaseModel):
+    """Fail closed on unknown fields and nonfinite numeric declarations."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, allow_inf_nan=False)
+
+
+class BindingSiteModel(ConfgenSpecModel):
+    id: StrictStr = Field(min_length=1)
+    kind: Literal["atom"] = "atom"
+    atoms: list[Index] = Field(min_length=1, max_length=1)
+    hapticity: StrictInt = Field(default=1, ge=1, le=1)
+
+
+class CoordinationConstraintModel(ConfgenSpecModel):
+    """Declared trans exclusions are policies; no unverified proof input."""
+
+    id: StrictStr = Field(min_length=1)
+    kind: Literal["FORBIDDEN_TRANS"] = "FORBIDDEN_TRANS"
+    sites: tuple[StrictStr, StrictStr]
+    classification: Literal["REJECTED_BY_POLICY"] = "REJECTED_BY_POLICY"
+    provenance: StrictStr = Field(min_length=1)
+
+
+class DonorConfigurationModel(ConfgenSpecModel):
+    """Declared donor configuration: preserved input, never enumerated.
+
+    The list form names the declared donor site ids (lane serialization);
+    both forms declare — never enumerate — the donor set. Geometry audit
+    rejects silent donor flips at the stage; the executor re-checks donor
+    identity on chained runs.
+    """
+
+    treatment: Literal["preserve_input"] = "preserve_input"
+
+
+class SiteGroupModel(ConfgenSpecModel):
+    """Declared topological subgroup for molecular-orbit accounting.
+
+    Generators are SITE POSITION permutations (positions into
+    ``binding_sites``, convention-free — not atom indices). This certifies
+    exactly the declared subgroup scope and nothing more: never full
+    molecular symmetry, never stereo/improper action, never suppression
+    authority (H_geom suppression stays a separate, stricter proof gate).
+    ``provenance`` names the witness source (e.g. a fixture sigma audit)
+    so the claim stays auditable.
+    """
+
+    generators: list[list[StrictInt]] = Field(min_length=1)
+    provenance: StrictStr | None = None
+    scope: Literal["declared_topological_subgroup"] = "declared_topological_subgroup"
+
+
+class CoordinationTolerancesModel(ConfgenSpecModel):
+    """Lane-owned section tolerances; defaults track the stage authority."""
+
+    realize_tol: Positive = 0.45
+    reaction_tol: Positive = 0.25
+    clash_scale: Positive = 0.70
+    rmsd_tolerance: Positive = 0.35
+    margin_tolerance: Positive = 0.05
+    shape_margin_tolerance: Positive = 0.15
+
+
+class CoordinationBudgetModel(ConfgenSpecModel):
+    """Lane-owned realization budgets; defaults track the stage authority."""
+
+    max_nfev: StrictInt = Field(default=120, ge=1)
+    maxiter: StrictInt = Field(default=400, ge=1)
+
+
+class CoordinationGenerationSpec(ConfgenSpecModel):
+    metal_center: Index
+    binding_sites: list[BindingSiteModel] = Field(min_length=4, max_length=6)
+    shapes: Literal["auto"] | list[StrictStr] = "auto"
+    treatment: Treatment = "enumerate"
+    constraints: list[CoordinationConstraintModel] = Field(default_factory=list)
+    donor_configuration: DonorConfigurationModel | list[StrictStr] = Field(
+        default_factory=DonorConfigurationModel
+    )
+    backend: Literal["rigid", "flexible", "rigid_then_flexible"] = "rigid_then_flexible"
+    site_group: SiteGroupModel | None = None
+    tolerances: CoordinationTolerancesModel = Field(default_factory=CoordinationTolerancesModel)
+    budgets: CoordinationBudgetModel = Field(default_factory=CoordinationBudgetModel)
+
+    @model_validator(mode="after")
+    def check_shapes_and_sites(self) -> CoordinationGenerationSpec:
+        shapes = self.shapes
+        if isinstance(shapes, list):
+            if not shapes:
+                raise ValueError("coordination shapes must name at least one shape")
+            if len(set(shapes)) != len(shapes):
+                raise ValueError(f"coordination shapes hold duplicates: {shapes!r}")
+            allowed = set(_supported_shapes())
+            unknown = [name for name in shapes if name not in allowed]
+            if unknown:
+                raise ValueError(
+                    f"coordination shapes {unknown!r} are not registered; "
+                    f"allowed {sorted(allowed)} or 'auto'"
+                )
+        seen: set[str] = set()
+        for site in self.binding_sites:
+            if site.id in seen:
+                raise ValueError(f"duplicate coordination binding site id {site.id!r}")
+            seen.add(site.id)
+        if self.site_group is not None:
+            positions = list(range(len(self.binding_sites)))
+            for index, generator in enumerate(self.site_group.generators):
+                if any(position < 0 for position in generator):
+                    raise ValueError(
+                        f"coordination site_group generators[{index}] holds negative positions"
+                    )
+                if sorted(generator) != positions:
+                    raise ValueError(
+                        f"coordination site_group generators[{index}] must permute "
+                        f"all site positions {positions}"
+                    )
+        if isinstance(self.donor_configuration, list) and len(set(self.donor_configuration)) != len(
+            self.donor_configuration
+        ):
+            raise ValueError("coordination donor_configuration holds duplicate site ids")
+        return self
+
+
+class RingGenerationSpec(ConfgenSpecModel):
+    id: StrictStr = Field(min_length=1)
+    atoms: list[Index] = Field(min_length=4, max_length=6)
+    templates: list[StrictStr] = Field(default_factory=list)
+    treatment: Treatment = "enumerate"
+
+    @model_validator(mode="after")
+    def check_templates(self) -> RingGenerationSpec:
+        if not self.templates:
+            return self
+        if len(set(self.templates)) != len(self.templates):
+            raise ValueError(f"ring {self.id!r} templates hold duplicates")
+        registry = _template_sizes()
+        for name in self.templates:
+            size = registry.get(name)
+            if size is None:
+                raise ValueError(
+                    f"ring {self.id!r} template {name!r} is not registered; "
+                    f"allowed {sorted(registry)}"
+                )
+            if size != len(self.atoms):
+                raise ValueError(
+                    f"ring {self.id!r} template {name!r} fits size {size}, "
+                    f"not ring size {len(self.atoms)}"
+                )
+        return self
+
+
+class TorsionGenerationSpec(ConfgenSpecModel):
+    id: StrictStr = Field(min_length=1)
+    bond: tuple[Index, Index] | None = None
+    atoms: tuple[Index, Index, Index, Index] | None = None
+    model: Literal["relative_rotation_grid", "absolute_dihedral_grid", "chemical"]
+    angles: list[Annotated[float, Field(strict=True)]] | None = None
+    states: dict[StrictStr, Annotated[float, Field(strict=True)]] | None = None
+    treatment: Treatment = "enumerate"
+    rotate_side: Literal["left", "right"] = "left"
+
+    @model_validator(mode="after")
+    def check_model_shape(self) -> TorsionGenerationSpec:
+        if self.model == "relative_rotation_grid":
+            if self.bond is None:
+                raise ValueError("relative_rotation_grid requires 'bond'")
+            if self.atoms is not None:
+                raise ValueError("relative_rotation_grid takes 'bond', not 'atoms'")
+            if self.states is not None:
+                raise ValueError("relative_rotation_grid takes 'angles', not 'states'")
+            if self.treatment == "enumerate" and not self.angles:
+                raise ValueError(
+                    "relative_rotation_grid with treatment 'enumerate' requires "
+                    "a non-empty 'angles' grid"
+                )
+        elif self.model == "absolute_dihedral_grid":
+            if self.atoms is None:
+                raise ValueError("absolute_dihedral_grid requires 'atoms' (four indices)")
+            if self.bond is not None:
+                raise ValueError("absolute_dihedral_grid takes 'atoms', not 'bond'")
+            if self.states is not None:
+                raise ValueError("absolute_dihedral_grid takes 'angles', not 'states'")
+            if self.treatment == "enumerate" and not self.angles:
+                raise ValueError(
+                    "absolute_dihedral_grid with treatment 'enumerate' requires "
+                    "a non-empty 'angles' grid"
+                )
+        else:  # chemical: opt-in named states on a four-atom absolute frame
+            if self.atoms is None:
+                raise ValueError(
+                    "chemical torsion requires a four-atom absolute 'atoms' frame "
+                    "so named states carry real gauche/anti meaning; "
+                    "'bond'-only chemical axes are rejected"
+                )
+            if self.bond is not None:
+                raise ValueError("chemical torsion takes 'atoms', not 'bond'")
+            if not self.states:
+                raise ValueError(
+                    "chemical torsion is opt-in and requires an explicit "
+                    "non-empty 'states' map of name -> angle"
+                )
+            if self.angles is not None:
+                raise ValueError("chemical torsion takes 'states', not 'angles'")
+        if self.bond is not None and self.bond[0] == self.bond[1]:
+            raise ValueError("torsion 'bond' must name two distinct atoms")
+        if self.atoms is not None and len(set(self.atoms)) != 4:
+            raise ValueError("torsion 'atoms' must hold four distinct atoms")
+        if self.angles is not None:
+            for left in range(len(self.angles)):
+                for right in range(left + 1, len(self.angles)):
+                    if _wrap_degrees(self.angles[left] - self.angles[right]) == 0.0:
+                        raise ValueError(
+                            f"torsion {self.id!r} angles hold a periodic duplicate: "
+                            f"{self.angles[left]!r} and {self.angles[right]!r} name "
+                            "the identical physical state (one state, one key)"
+                        )
+        return self
+
+
+class TypedEdgeModel(ConfgenSpecModel):
+    atoms: tuple[Index, Index]
+    kind: Literal["COVALENT", "COORDINATION", "FORMING", "BREAKING"] = "COVALENT"
+    bond_order: Annotated[float, Field(gt=0, le=4, strict=True)] | None = None
+    provenance: StrictStr = "explicit"
+
+
+class TopologyAtomModel(ConfgenSpecModel):
+    index: Index
+    label: StrictStr | None = None
+    role: StrictStr = ""
+    stereo: StrictStr | None = None
+
+
+class ConfgenTopologyModel(ConfgenSpecModel):
+    bonds: list[TypedEdgeModel | tuple[Index, Index]] | None = None
+    atoms: list[TopologyAtomModel] = Field(default_factory=list)
+    add_bond: list[tuple[Index, Index]] | None = None
+    del_bond: list[tuple[Index, Index]] | None = None
+
+
+class ConfgenLimits(ConfgenSpecModel):
+    max_declared_states: StrictInt = Field(default=10000, ge=1)
+    max_output_structures: StrictInt = Field(default=10000, ge=1)
+
+
+class SamplingSpec(ConfgenSpecModel):
+    """Cap sampled targets before geometry; the step seed is sole authority."""
+
+    cap: StrictInt = Field(ge=1)
+
+
+class ConfgenToleranceModel(ConfgenSpecModel):
+    """Global tolerances; defaults track the core science authority."""
+
+    bond_length_atol: Positive = 1e-6
+    dihedral_atol_deg: Positive = 1.0
+    clash_threshold: Positive = 0.65
+    bond_scale: Positive = 1.15
+    parent_lock_atol_deg: Positive = 1.0
+    ring_bond_atol: Positive = 0.08
+    substituent_bond_atol: Positive = 1e-6
+    frame_det_min: Positive = 1e-8
+    ring_angle_atol_deg: Positive = 5.0
+    ring_torsion_atol_deg: Positive = 10.0
+    coordination_bond_atol: Positive = 0.05
+    coordination_angle_atol_deg: Positive = 3.0
+
+
+class ConfgenExclusionModel(ConfgenSpecModel):
+    """Declared exclusions are recorded policy, never verified proof.
+
+    An optional ``proof`` mapping is a policy annotation (proof_id required)
+    until a sound backend proof enforcement exists; it never authorizes
+    automatic infeasibility claims.
+    """
+
+    axis: Literal["coordination", "rings", "torsions"]
+    match: dict[str, Any] = Field(min_length=1)
+    reason: StrictStr = Field(min_length=1)
+    proof: dict[str, Any] | None = None
+
+    @model_validator(mode="after")
+    def check_proof(self) -> ConfgenExclusionModel:
+        if self.proof is not None and not self.proof.get("proof_id"):
+            raise ValueError("exclusion proof must carry a non-empty proof_id")
+        return self
+
+
+class ConfgenModelV3(ConfgenSpecModel):
+    """One typed v3 declaration, independent of legacy native configuration."""
+
+    schema_version: Literal[3] = 3
+    index_base: Literal[0, 1] = 1
+    coordination: CoordinationGenerationSpec | None = None
+    rings: list[RingGenerationSpec] = Field(default_factory=list)
+    torsions: list[TorsionGenerationSpec] = Field(default_factory=list)
+    topology: ConfgenTopologyModel = Field(default_factory=ConfgenTopologyModel)
+    stereochemistry: dict[str, Any] = Field(default_factory=dict)
+    exclusions: list[ConfgenExclusionModel] = Field(default_factory=list)
+    tolerances: ConfgenToleranceModel = Field(default_factory=ConfgenToleranceModel)
+    limits: ConfgenLimits = Field(default_factory=ConfgenLimits)
+    sampling: SamplingSpec | None = None
+    seed: StrictInt | None = None
+    overrides: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="before")
+    @classmethod
+    def require_integer_versions(cls, value: Any) -> Any:
+        if isinstance(value, dict):
+            for name in ("schema_version", "index_base"):
+                if name in value and type(value[name]) is not int:
+                    raise ValueError(f"{name} must be an integer")
+        return value
+
+    @model_validator(mode="after")
+    def check_scope(self) -> ConfgenModelV3:
+        if self.sampling is not None and self.seed is None:
+            raise ValueError(
+                "sampling.cap requires an explicit top-level seed "
+                "(the seed is the sole stochastic authority)"
+            )
+        seen: set[str] = set()
+        for entry in (*self.rings, *self.torsions):
+            if entry.id in seen:
+                raise ValueError(f"duplicate confgen axis id {entry.id!r}")
+            seen.add(entry.id)
+        return self
+
+    def scientific_native(self) -> dict[str, Any]:
+        """Return the typed scope wire; orchestration overrides stay separate."""
+        return cast(
+            dict[str, Any],
+            self.model_dump(mode="json", exclude={"overrides"}, exclude_none=True),
+        )

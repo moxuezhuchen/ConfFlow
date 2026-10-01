@@ -1,0 +1,159 @@
+{
+  "source_xyz": "/mnt/data/scine_ts1_test/ts1.xyz",
+  "source_log": "/mnt/data/scine_ts1_test/si-rr-salanal2-r-end-spdd-ts1.log",
+  "atom_count": 122,
+  "al_index_0based": 46,
+  "site_order_0based": [
+    16,
+    18,
+    44,
+    45,
+    73,
+    79
+  ],
+  "site_order_1based": [
+    17,
+    19,
+    45,
+    46,
+    74,
+    80
+  ],
+  "auto_vertex_map_current_ts1": [
+    0,
+    5,
+    1,
+    4,
+    2,
+    3
+  ],
+  "components_after_removing_al": [
+    {
+      "size": 72,
+      "donors_0based": [
+        16,
+        18,
+        44,
+        45
+      ],
+      "donors_1based": [
+        17,
+        19,
+        45,
+        46
+      ]
+    },
+    {
+      "size": 27,
+      "donors_0based": [
+        73
+      ],
+      "donors_1based": [
+        74
+      ]
+    },
+    {
+      "size": 22,
+      "donors_0based": [
+        79
+      ],
+      "donors_1based": [
+        80
+      ]
+    }
+  ],
+  "frames": [
+    {
+      "assignment": 0,
+      "index_of_permutation": 1,
+      "vertex_map": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "donor_rms_to_targets_A": 0.63518467512071
+    },
+    {
+      "assignment": 1,
+      "index_of_permutation": 3,
+      "vertex_map": [
+        0,
+        1,
+        2,
+        4,
+        3,
+        5
+      ],
+      "donor_rms_to_targets_A": 1.2487331782170779
+    },
+    {
+      "assignment": 2,
+      "index_of_permutation": 5,
+      "vertex_map": [
+        0,
+        1,
+        2,
+        5,
+        3,
+        4
+      ],
+      "donor_rms_to_targets_A": 0.45091127174350243
+    },
+    {
+      "assignment": 3,
+      "index_of_permutation": 7,
+      "vertex_map": [
+        0,
+        1,
+        2,
+        4,
+        5,
+        3
+      ],
+      "donor_rms_to_targets_A": 1.2487331782170779
+    },
+    {
+      "assignment": 4,
+      "index_of_permutation": 9,
+      "vertex_map": [
+        0,
+        1,
+        2,
+        5,
+        4,
+        3
+      ],
+      "donor_rms_to_targets_A": 0.45091127174350243
+    },
+    {
+      "assignment": 5,
+      "index_of_permutation": 10,
+      "vertex_map": [
+        0,
+        1,
+        5,
+        4,
+        2,
+        3
+      ],
+      "donor_rms_to_targets_A": 1.6011859927046785
+    },
+    {
+      "assignment": 6,
+      "index_of_permutation": 11,
+      "vertex_map": [
+        0,
+        1,
+        4,
+        5,
+        2,
+        3
+      ],
+      "donor_rms_to_targets_A": 0.7153263885973012
+    }
+  ],
+  "note": "These seven frames are approximate rigid-body embeddings built from the seven SCINE-feasible assignments. They are not re-optimized."
+}

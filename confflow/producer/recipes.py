@@ -63,6 +63,69 @@ _CALC_EXPOSED = [
 _CALC_REQUIRED = ["calc.program", "calc.native"]
 
 
+_CONFGEN_V3_EXPOSED = [
+    "confgen.seed",
+    "confgen.v3.coordination",
+    "confgen.v3.rings",
+    "confgen.v3.torsions",
+    "confgen.v3.topology",
+    "confgen.v3.sampling",
+    "confgen.v3.limits",
+    "confgen.v3.tolerances",
+    "confgen.v3.exclusions",
+]
+
+_CONFGEN_V3_REQUIRED = ["confgen.v3.torsions"]
+
+
+def _confgen_v3_recipe() -> dict[str, Any]:
+    """Build the typed ConfGen v3 torsion-scan recipe.
+
+    A deterministic starting point (no sampling cap, hence no seed): one
+    relative-rotation grid over the first declared bond. The user must
+    confirm the bond selection fits their seed structures; the executor
+    fails closed on unbonded or ring bonds. Adding a ``sampling`` cap
+    requires setting the step ``seed`` (the sole stochastic authority).
+    """
+    return {
+        "id": "confgen_torsion",
+        "label": "ConfGen Torsion Scan",
+        "description": (
+            "Typed ConfGen v3 torsion ensemble over one declared bond grid "
+            "(deterministic full grid; add a sampling cap plus seed for "
+            "capped subsets). Confirm the bond selection for each structure."
+        ),
+        "category": "Conformers",
+        # Root decision: the original eleven keep their orders; the new card
+        # goes last in catalog list order, so its order sits above tspes (110).
+        "order": 120,
+        "document": _document(
+            [
+                {
+                    "id": "confgen",
+                    "label": "Torsion scan",
+                    "executor": "confgen",
+                    "bindings": _run_binding(),
+                    "confgen": {
+                        "schema_version": 3,
+                        "torsions": [
+                            {
+                                "id": "t1",
+                                "bond": [1, 2],
+                                "model": "relative_rotation_grid",
+                                "angles": [0, 120, 240],
+                                "treatment": "enumerate",
+                            }
+                        ],
+                    },
+                }
+            ]
+        ),
+        "required_fields": list(_CONFGEN_V3_REQUIRED),
+        "exposed_fields": list(_CONFGEN_V3_EXPOSED),
+    }
+
+
 def _calc_step(
     step_id: str,
     *,
@@ -495,6 +558,7 @@ def _recipes() -> list[dict[str, Any]]:
             seed=42,
         ),
         _tspes_recipe(),
+        _confgen_v3_recipe(),
     ]
 
 
@@ -511,6 +575,7 @@ RECIPE_IDS_V4: tuple[str, ...] = (
     "neb",
     "goat",
     "tspes",
+    "confgen_torsion",
 )
 
 

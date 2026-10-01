@@ -1,0 +1,1310 @@
+{
+  "schema": "confgen_fixture.typed_topology.v1",
+  "atom_count": 122,
+  "charge": 0,
+  "multiplicity": 1,
+  "indexing": {
+    "external": "1-based",
+    "internal_recommended": "0-based",
+    "atom_order_must_remain_fixed": true
+  },
+  "atoms": [
+    {
+      "index_1based": 1,
+      "index_0based": 0,
+      "element": "C"
+    },
+    {
+      "index_1based": 2,
+      "index_0based": 1,
+      "element": "C"
+    },
+    {
+      "index_1based": 3,
+      "index_0based": 2,
+      "element": "C"
+    },
+    {
+      "index_1based": 4,
+      "index_0based": 3,
+      "element": "C"
+    },
+    {
+      "index_1based": 5,
+      "index_0based": 4,
+      "element": "C"
+    },
+    {
+      "index_1based": 6,
+      "index_0based": 5,
+      "element": "C"
+    },
+    {
+      "index_1based": 7,
+      "index_0based": 6,
+      "element": "H"
+    },
+    {
+      "index_1based": 8,
+      "index_0based": 7,
+      "element": "H"
+    },
+    {
+      "index_1based": 9,
+      "index_0based": 8,
+      "element": "H"
+    },
+    {
+      "index_1based": 10,
+      "index_0based": 9,
+      "element": "H"
+    },
+    {
+      "index_1based": 11,
+      "index_0based": 10,
+      "element": "H"
+    },
+    {
+      "index_1based": 12,
+      "index_0based": 11,
+      "element": "H"
+    },
+    {
+      "index_1based": 13,
+      "index_0based": 12,
+      "element": "H"
+    },
+    {
+      "index_1based": 14,
+      "index_0based": 13,
+      "element": "H"
+    },
+    {
+      "index_1based": 15,
+      "index_0based": 14,
+      "element": "H"
+    },
+    {
+      "index_1based": 16,
+      "index_0based": 15,
+      "element": "H"
+    },
+    {
+      "index_1based": 17,
+      "index_0based": 16,
+      "element": "N"
+    },
+    {
+      "index_1based": 18,
+      "index_0based": 17,
+      "element": "H"
+    },
+    {
+      "index_1based": 19,
+      "index_0based": 18,
+      "element": "N"
+    },
+    {
+      "index_1based": 20,
+      "index_0based": 19,
+      "element": "H"
+    },
+    {
+      "index_1based": 21,
+      "index_0based": 20,
+      "element": "C"
+    },
+    {
+      "index_1based": 22,
+      "index_0based": 21,
+      "element": "H"
+    },
+    {
+      "index_1based": 23,
+      "index_0based": 22,
+      "element": "H"
+    },
+    {
+      "index_1based": 24,
+      "index_0based": 23,
+      "element": "C"
+    },
+    {
+      "index_1based": 25,
+      "index_0based": 24,
+      "element": "H"
+    },
+    {
+      "index_1based": 26,
+      "index_0based": 25,
+      "element": "H"
+    },
+    {
+      "index_1based": 27,
+      "index_0based": 26,
+      "element": "C"
+    },
+    {
+      "index_1based": 28,
+      "index_0based": 27,
+      "element": "C"
+    },
+    {
+      "index_1based": 29,
+      "index_0based": 28,
+      "element": "C"
+    },
+    {
+      "index_1based": 30,
+      "index_0based": 29,
+      "element": "C"
+    },
+    {
+      "index_1based": 31,
+      "index_0based": 30,
+      "element": "C"
+    },
+    {
+      "index_1based": 32,
+      "index_0based": 31,
+      "element": "H"
+    },
+    {
+      "index_1based": 33,
+      "index_0based": 32,
+      "element": "C"
+    },
+    {
+      "index_1based": 34,
+      "index_0based": 33,
+      "element": "H"
+    },
+    {
+      "index_1based": 35,
+      "index_0based": 34,
+      "element": "H"
+    },
+    {
+      "index_1based": 36,
+      "index_0based": 35,
+      "element": "C"
+    },
+    {
+      "index_1based": 37,
+      "index_0based": 36,
+      "element": "C"
+    },
+    {
+      "index_1based": 38,
+      "index_0based": 37,
+      "element": "C"
+    },
+    {
+      "index_1based": 39,
+      "index_0based": 38,
+      "element": "C"
+    },
+    {
+      "index_1based": 40,
+      "index_0based": 39,
+      "element": "C"
+    },
+    {
+      "index_1based": 41,
+      "index_0based": 40,
+      "element": "H"
+    },
+    {
+      "index_1based": 42,
+      "index_0based": 41,
+      "element": "C"
+    },
+    {
+      "index_1based": 43,
+      "index_0based": 42,
+      "element": "H"
+    },
+    {
+      "index_1based": 44,
+      "index_0based": 43,
+      "element": "H"
+    },
+    {
+      "index_1based": 45,
+      "index_0based": 44,
+      "element": "O"
+    },
+    {
+      "index_1based": 46,
+      "index_0based": 45,
+      "element": "O"
+    },
+    {
+      "index_1based": 47,
+      "index_0based": 46,
+      "element": "Al"
+    },
+    {
+      "index_1based": 48,
+      "index_0based": 47,
+      "element": "C"
+    },
+    {
+      "index_1based": 49,
+      "index_0based": 48,
+      "element": "C"
+    },
+    {
+      "index_1based": 50,
+      "index_0based": 49,
+      "element": "H"
+    },
+    {
+      "index_1based": 51,
+      "index_0based": 50,
+      "element": "H"
+    },
+    {
+      "index_1based": 52,
+      "index_0based": 51,
+      "element": "H"
+    },
+    {
+      "index_1based": 53,
+      "index_0based": 52,
+      "element": "C"
+    },
+    {
+      "index_1based": 54,
+      "index_0based": 53,
+      "element": "H"
+    },
+    {
+      "index_1based": 55,
+      "index_0based": 54,
+      "element": "H"
+    },
+    {
+      "index_1based": 56,
+      "index_0based": 55,
+      "element": "H"
+    },
+    {
+      "index_1based": 57,
+      "index_0based": 56,
+      "element": "C"
+    },
+    {
+      "index_1based": 58,
+      "index_0based": 57,
+      "element": "H"
+    },
+    {
+      "index_1based": 59,
+      "index_0based": 58,
+      "element": "H"
+    },
+    {
+      "index_1based": 60,
+      "index_0based": 59,
+      "element": "H"
+    },
+    {
+      "index_1based": 61,
+      "index_0based": 60,
+      "element": "C"
+    },
+    {
+      "index_1based": 62,
+      "index_0based": 61,
+      "element": "C"
+    },
+    {
+      "index_1based": 63,
+      "index_0based": 62,
+      "element": "H"
+    },
+    {
+      "index_1based": 64,
+      "index_0based": 63,
+      "element": "H"
+    },
+    {
+      "index_1based": 65,
+      "index_0based": 64,
+      "element": "H"
+    },
+    {
+      "index_1based": 66,
+      "index_0based": 65,
+      "element": "C"
+    },
+    {
+      "index_1based": 67,
+      "index_0based": 66,
+      "element": "H"
+    },
+    {
+      "index_1based": 68,
+      "index_0based": 67,
+      "element": "H"
+    },
+    {
+      "index_1based": 69,
+      "index_0based": 68,
+      "element": "H"
+    },
+    {
+      "index_1based": 70,
+      "index_0based": 69,
+      "element": "C"
+    },
+    {
+      "index_1based": 71,
+      "index_0based": 70,
+      "element": "H"
+    },
+    {
+      "index_1based": 72,
+      "index_0based": 71,
+      "element": "H"
+    },
+    {
+      "index_1based": 73,
+      "index_0based": 72,
+      "element": "H"
+    },
+    {
+      "index_1based": 74,
+      "index_0based": 73,
+      "element": "O"
+    },
+    {
+      "index_1based": 75,
+      "index_0based": 74,
+      "element": "C"
+    },
+    {
+      "index_1based": 76,
+      "index_0based": 75,
+      "element": "H"
+    },
+    {
+      "index_1based": 77,
+      "index_0based": 76,
+      "element": "H"
+    },
+    {
+      "index_1based": 78,
+      "index_0based": 77,
+      "element": "C"
+    },
+    {
+      "index_1based": 79,
+      "index_0based": 78,
+      "element": "C"
+    },
+    {
+      "index_1based": 80,
+      "index_0based": 79,
+      "element": "O"
+    },
+    {
+      "index_1based": 81,
+      "index_0based": 80,
+      "element": "O"
+    },
+    {
+      "index_1based": 82,
+      "index_0based": 81,
+      "element": "C"
+    },
+    {
+      "index_1based": 83,
+      "index_0based": 82,
+      "element": "C"
+    },
+    {
+      "index_1based": 84,
+      "index_0based": 83,
+      "element": "O"
+    },
+    {
+      "index_1based": 85,
+      "index_0based": 84,
+      "element": "O"
+    },
+    {
+      "index_1based": 86,
+      "index_0based": 85,
+      "element": "H"
+    },
+    {
+      "index_1based": 87,
+      "index_0based": 86,
+      "element": "H"
+    },
+    {
+      "index_1based": 88,
+      "index_0based": 87,
+      "element": "H"
+    },
+    {
+      "index_1based": 89,
+      "index_0based": 88,
+      "element": "C"
+    },
+    {
+      "index_1based": 90,
+      "index_0based": 89,
+      "element": "C"
+    },
+    {
+      "index_1based": 91,
+      "index_0based": 90,
+      "element": "C"
+    },
+    {
+      "index_1based": 92,
+      "index_0based": 91,
+      "element": "C"
+    },
+    {
+      "index_1based": 93,
+      "index_0based": 92,
+      "element": "H"
+    },
+    {
+      "index_1based": 94,
+      "index_0based": 93,
+      "element": "C"
+    },
+    {
+      "index_1based": 95,
+      "index_0based": 94,
+      "element": "H"
+    },
+    {
+      "index_1based": 96,
+      "index_0based": 95,
+      "element": "C"
+    },
+    {
+      "index_1based": 97,
+      "index_0based": 96,
+      "element": "H"
+    },
+    {
+      "index_1based": 98,
+      "index_0based": 97,
+      "element": "H"
+    },
+    {
+      "index_1based": 99,
+      "index_0based": 98,
+      "element": "H"
+    },
+    {
+      "index_1based": 100,
+      "index_0based": 99,
+      "element": "C"
+    },
+    {
+      "index_1based": 101,
+      "index_0based": 100,
+      "element": "O"
+    },
+    {
+      "index_1based": 102,
+      "index_0based": 101,
+      "element": "O"
+    },
+    {
+      "index_1based": 103,
+      "index_0based": 102,
+      "element": "C"
+    },
+    {
+      "index_1based": 104,
+      "index_0based": 103,
+      "element": "H"
+    },
+    {
+      "index_1based": 105,
+      "index_0based": 104,
+      "element": "C"
+    },
+    {
+      "index_1based": 106,
+      "index_0based": 105,
+      "element": "C"
+    },
+    {
+      "index_1based": 107,
+      "index_0based": 106,
+      "element": "C"
+    },
+    {
+      "index_1based": 108,
+      "index_0based": 107,
+      "element": "C"
+    },
+    {
+      "index_1based": 109,
+      "index_0based": 108,
+      "element": "H"
+    },
+    {
+      "index_1based": 110,
+      "index_0based": 109,
+      "element": "C"
+    },
+    {
+      "index_1based": 111,
+      "index_0based": 110,
+      "element": "H"
+    },
+    {
+      "index_1based": 112,
+      "index_0based": 111,
+      "element": "C"
+    },
+    {
+      "index_1based": 113,
+      "index_0based": 112,
+      "element": "H"
+    },
+    {
+      "index_1based": 114,
+      "index_0based": 113,
+      "element": "H"
+    },
+    {
+      "index_1based": 115,
+      "index_0based": 114,
+      "element": "H"
+    },
+    {
+      "index_1based": 116,
+      "index_0based": 115,
+      "element": "C"
+    },
+    {
+      "index_1based": 117,
+      "index_0based": 116,
+      "element": "O"
+    },
+    {
+      "index_1based": 118,
+      "index_0based": 117,
+      "element": "O"
+    },
+    {
+      "index_1based": 119,
+      "index_0based": 118,
+      "element": "C"
+    },
+    {
+      "index_1based": 120,
+      "index_0based": 119,
+      "element": "H"
+    },
+    {
+      "index_1based": 121,
+      "index_0based": 120,
+      "element": "H"
+    },
+    {
+      "index_1based": 122,
+      "index_0based": 121,
+      "element": "H"
+    }
+  ],
+  "edges": [
+    {
+      "a_1based": 1,
+      "b_1based": 2,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 1,
+      "b_1based": 6,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 1,
+      "b_1based": 8,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 1,
+      "b_1based": 9,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 2,
+      "b_1based": 3,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 2,
+      "b_1based": 7,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 2,
+      "b_1based": 19,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 3,
+      "b_1based": 4,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 3,
+      "b_1based": 16,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 3,
+      "b_1based": 17,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 4,
+      "b_1based": 5,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 4,
+      "b_1based": 10,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 4,
+      "b_1based": 11,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 5,
+      "b_1based": 6,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 5,
+      "b_1based": 12,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 5,
+      "b_1based": 13,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 6,
+      "b_1based": 14,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 6,
+      "b_1based": 15,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 17,
+      "b_1based": 18,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 17,
+      "b_1based": 24,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 17,
+      "b_1based": 47,
+      "type": "COORDINATION"
+    },
+    {
+      "a_1based": 19,
+      "b_1based": 20,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 19,
+      "b_1based": 21,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 19,
+      "b_1based": 47,
+      "type": "COORDINATION"
+    },
+    {
+      "a_1based": 21,
+      "b_1based": 22,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 21,
+      "b_1based": 23,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 21,
+      "b_1based": 27,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 24,
+      "b_1based": 25,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 24,
+      "b_1based": 26,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 24,
+      "b_1based": 36,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 27,
+      "b_1based": 28,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 27,
+      "b_1based": 29,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 28,
+      "b_1based": 30,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 28,
+      "b_1based": 45,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 29,
+      "b_1based": 31,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 29,
+      "b_1based": 32,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 30,
+      "b_1based": 33,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 30,
+      "b_1based": 61,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 31,
+      "b_1based": 33,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 31,
+      "b_1based": 34,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 33,
+      "b_1based": 35,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 36,
+      "b_1based": 37,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 36,
+      "b_1based": 38,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 37,
+      "b_1based": 39,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 37,
+      "b_1based": 46,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 38,
+      "b_1based": 40,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 38,
+      "b_1based": 41,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 39,
+      "b_1based": 42,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 39,
+      "b_1based": 48,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 40,
+      "b_1based": 42,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 40,
+      "b_1based": 43,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 42,
+      "b_1based": 44,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 45,
+      "b_1based": 47,
+      "type": "COORDINATION"
+    },
+    {
+      "a_1based": 46,
+      "b_1based": 47,
+      "type": "COORDINATION"
+    },
+    {
+      "a_1based": 47,
+      "b_1based": 74,
+      "type": "COORDINATION"
+    },
+    {
+      "a_1based": 47,
+      "b_1based": 80,
+      "type": "COORDINATION"
+    },
+    {
+      "a_1based": 48,
+      "b_1based": 49,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 48,
+      "b_1based": 53,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 48,
+      "b_1based": 57,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 49,
+      "b_1based": 50,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 49,
+      "b_1based": 51,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 49,
+      "b_1based": 52,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 53,
+      "b_1based": 54,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 53,
+      "b_1based": 55,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 53,
+      "b_1based": 56,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 57,
+      "b_1based": 58,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 57,
+      "b_1based": 59,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 57,
+      "b_1based": 60,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 61,
+      "b_1based": 62,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 61,
+      "b_1based": 66,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 61,
+      "b_1based": 70,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 62,
+      "b_1based": 63,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 62,
+      "b_1based": 64,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 62,
+      "b_1based": 65,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 66,
+      "b_1based": 67,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 66,
+      "b_1based": 68,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 66,
+      "b_1based": 69,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 70,
+      "b_1based": 71,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 70,
+      "b_1based": 72,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 70,
+      "b_1based": 73,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 74,
+      "b_1based": 75,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 75,
+      "b_1based": 76,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 75,
+      "b_1based": 77,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 75,
+      "b_1based": 100,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 78,
+      "b_1based": 79,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 78,
+      "b_1based": 85,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 78,
+      "b_1based": 87,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 78,
+      "b_1based": 89,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 79,
+      "b_1based": 80,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 79,
+      "b_1based": 81,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 81,
+      "b_1based": 82,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 82,
+      "b_1based": 83,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 82,
+      "b_1based": 86,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 82,
+      "b_1based": 88,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 83,
+      "b_1based": 84,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 83,
+      "b_1based": 85,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 89,
+      "b_1based": 90,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 89,
+      "b_1based": 91,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 90,
+      "b_1based": 92,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 90,
+      "b_1based": 93,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 91,
+      "b_1based": 94,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 91,
+      "b_1based": 95,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 92,
+      "b_1based": 96,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 92,
+      "b_1based": 97,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 94,
+      "b_1based": 96,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 94,
+      "b_1based": 98,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 96,
+      "b_1based": 99,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 100,
+      "b_1based": 101,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 100,
+      "b_1based": 102,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 102,
+      "b_1based": 103,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 103,
+      "b_1based": 104,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 103,
+      "b_1based": 105,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 103,
+      "b_1based": 116,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 105,
+      "b_1based": 106,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 105,
+      "b_1based": 107,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 106,
+      "b_1based": 108,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 106,
+      "b_1based": 109,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 107,
+      "b_1based": 110,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 107,
+      "b_1based": 111,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 108,
+      "b_1based": 112,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 108,
+      "b_1based": 113,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 110,
+      "b_1based": 112,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 110,
+      "b_1based": 114,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 112,
+      "b_1based": 115,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 116,
+      "b_1based": 117,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 116,
+      "b_1based": 118,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 118,
+      "b_1based": 119,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 119,
+      "b_1based": 120,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 119,
+      "b_1based": 121,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 119,
+      "b_1based": 122,
+      "type": "COVALENT"
+    },
+    {
+      "a_1based": 74,
+      "b_1based": 79,
+      "type": "FORMING",
+      "note": "TS forming O74-C79 relation; do not treat as ordinary covalent edge."
+    }
+  ],
+  "coordination": {
+    "metal_center_1based": 47,
+    "binding_sites_1based": [
+      17,
+      19,
+      45,
+      46,
+      74,
+      80
+    ],
+    "site_labels": [
+      "N17",
+      "N19",
+      "O45",
+      "O46",
+      "O74",
+      "O80"
+    ],
+    "coordination_number": 6,
+    "reference_shape": "octahedral"
+  },
+  "reaction_relations": [
+    {
+      "a_1based": 74,
+      "b_1based": 79,
+      "type": "FORMING"
+    }
+  ],
+  "source": "Gaussian Berny Initial Parameters R1-R130 plus explicit TS-forming relation O74-C79."
+}

@@ -632,13 +632,134 @@ def _v4_fields(registry: ExecutionRegistry) -> list[dict[str, Any]]:
         _step(
             "confgen.native",
             "/confgen/native",
-            label="Native input",
-            description="Conformer-generation native definition (chains, ensemble options).",
+            label="Native input (legacy)",
+            description=(
+                "Legacy conformer-generation native definition (chains, "
+                "ensemble options): the explicitly versioned adapter path. "
+                "Typed v3 scopes use the confgen.v3.* fields instead."
+            ),
             value_type="object",
             editor="json",
             group="conformer generation",
             level="basic",
             order=20,
+        ),
+        _step(
+            "confgen.v3.coordination",
+            "/confgen/coordination",
+            label="Coordination scope",
+            description=(
+                "Typed v3 coordination declaration (metal_center, "
+                "binding_sites, shapes from the registered vocabulary or "
+                "'auto', treatment, policy constraints, donor configuration). "
+                "Indices follow the step index_base convention."
+            ),
+            value_type="object",
+            editor="json",
+            group="conformer generation",
+            level="basic",
+            order=21,
+        ),
+        _step(
+            "confgen.v3.rings",
+            "/confgen/rings",
+            label="Ring scopes",
+            description=(
+                "Typed v3 ring declarations (ordered atoms, templates from "
+                "the registered per-size vocabulary, treatment). "
+                "Empty templates select the size defaults."
+            ),
+            value_type="array",
+            editor="json",
+            item_type="object",
+            group="conformer generation",
+            level="basic",
+            order=22,
+        ),
+        _step(
+            "confgen.v3.torsions",
+            "/confgen/torsions",
+            label="Torsion scopes",
+            description=(
+                "Typed v3 torsion declarations (relative_rotation_grid, "
+                "absolute_dihedral_grid, or chemical named states on a "
+                "four-atom frame; treatment enumerate or preserve_input)."
+            ),
+            value_type="array",
+            editor="json",
+            item_type="object",
+            group="conformer generation",
+            level="basic",
+            order=23,
+        ),
+        _step(
+            "confgen.v3.topology",
+            "/confgen/topology",
+            label="Typed topology",
+            description=(
+                "Typed v3 topology authority (COVALENT/COORDINATION/FORMING/ "
+                "BREAKING edges, atom declarations, add/del_bond corrections)."
+            ),
+            value_type="object",
+            editor="json",
+            group="conformer generation",
+            level="advanced",
+            order=24,
+        ),
+        _step(
+            "confgen.v3.sampling",
+            "/confgen/sampling",
+            label="Sampling cap",
+            description=(
+                "v3 pre-geometry sampling cap over raw targets; requires the "
+                "step seed (the sole stochastic authority). Absent means the "
+                "deterministic full grid."
+            ),
+            value_type="object",
+            editor="json",
+            group="conformer generation",
+            level="advanced",
+            order=25,
+        ),
+        _step(
+            "confgen.v3.limits",
+            "/confgen/limits",
+            label="Enumeration limits",
+            description=(
+                "Hard symbolic limits (max_declared_states, "
+                "max_output_structures) enforced before geometry."
+            ),
+            value_type="object",
+            editor="json",
+            group="conformer generation",
+            level="advanced",
+            order=26,
+        ),
+        _step(
+            "confgen.v3.tolerances",
+            "/confgen/tolerances",
+            label="Tolerances",
+            description="v3 numeric tolerances; unknown keys fail closed.",
+            value_type="object",
+            editor="json",
+            group="conformer generation",
+            level="advanced",
+            order=27,
+        ),
+        _step(
+            "confgen.v3.exclusions",
+            "/confgen/exclusions",
+            label="Policy exclusions",
+            description=(
+                "Declared policy exclusions (axis, match, reason). "
+                "Recorded policy only, never verified proof."
+            ),
+            value_type="array",
+            editor="json",
+            item_type="object",
+            group="conformer generation",
+            level="advanced",
+            order=28,
         ),
         _step(
             "transform.kind",

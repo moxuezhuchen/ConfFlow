@@ -254,6 +254,46 @@ def resolve_step_input_ports(
     return adapter, adapter.input_ports, diagnostics
 
 
+def _confgen_seed_requirement(native: Any) -> str | None:
+    """Return why a confgen step needs a seed, or ``None`` when deterministic.
+
+    The legacy ``native.chains`` path keeps its explicitly versioned
+    stochastic semantics (seed always required). The typed v3 scope is
+    deterministic by default; a seed is required only when ``sampling``
+    requests a capped subset (the sole stochastic authority).
+    """
+    if isinstance(native, Mapping) and native.get("schema_version") == 3:
+        sampling = native.get("sampling") or {}
+        if isinstance(sampling, Mapping) and sampling.get("cap") is not None:
+            return "v3 sampling cap requires an explicit top-level seed"
+        return None
+    return "legacy confgen requires an explicit seed"
+
+
+def _confgen_freeze_rejection(
+    scientific: Any, run_scientific_defaults: ScientificDefaults
+) -> str | None:
+    """Return why a confgen step's freeze declaration is rejected, if any.
+
+    Frozen-atom constraints are unsupported by conformer generation: a
+    non-empty freeze override or run default fails closed instead of being
+    silently ignored.
+    """
+    try:
+        override_freeze = scientific.overrides.get("freeze")
+    except Exception:
+        override_freeze = None
+    if override_freeze:
+        return "confgen does not support freeze overrides; declare an empty freeze"
+    default_freeze = getattr(run_scientific_defaults, "freeze", None)
+    if default_freeze:
+        return (
+            "confgen does not support frozen atoms; the run-level freeze default "
+            "must be empty for confgen steps"
+        )
+    return None
+
+
 def _resolve_run_policy(
     definition: WorkflowDefinition,
 ) -> tuple[ResourceRequest, SchedulerPolicy]:
@@ -598,6 +638,31 @@ def _validate_step(
                 details={"executor": capability.value, "goat": goat_stochastic},
             )
         )
+    if capability is ExecutorCapability.CONFGEN and step.enabled:
+        seed_reason = _confgen_seed_requirement(scientific.native)
+        if seed_reason is not None and scientific.seed is None:
+            diagnostics.append(
+                error(
+                    DiagnosticCode.CAPABILITY_ERROR,
+                    DiagnosticReason.SEED_REQUIRED,
+                    seed_reason,
+                    step_id=step.id,
+                    field_path=f"{field_path}.seed",
+                    details={"executor": capability.value},
+                )
+            )
+        freeze_reason = _confgen_freeze_rejection(scientific, run_scientific_defaults)
+        if freeze_reason is not None:
+            diagnostics.append(
+                error(
+                    DiagnosticCode.SCIENTIFIC_PARAMETER_CONFLICT,
+                    DiagnosticReason.INVALID_VALUE,
+                    freeze_reason,
+                    step_id=step.id,
+                    field_path=f"{field_path}.confgen.overrides",
+                    details={"executor": capability.value},
+                )
+            )
     if capability is ExecutorCapability.CALCULATION:
         mismatch = _native_mode_profile_mismatch(
             scientific.native,
