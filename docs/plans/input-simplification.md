@@ -1,8 +1,7 @@
 # Input Simplification Implementation Plan (saved roadmap)
 
 Owner: parent integration with parallel Muse Spark 1.3 implementation sessions.
-Status: **Phases 0–7 accepted after independent review on 2026-10-01**;
-Phase 8 is in final GUI integration acceptance.
+Status: **Phases 0–8 accepted after independent review on 2026-10-01**.
 Parent coordinates shared interfaces and verifies actual code and test exits.
 
 ## Phase 0 — PathResolver (ACCEPTED)
@@ -50,9 +49,9 @@ tests (all 86 path tests, legacy executor and typed integration). Full
 repository Ruff and mypy passed (258 source files); Black checked all 13
 changed Python files. Both actual documentation YAML examples compiled.
 All 19 golden fixture hashes matched and the fixture tree/ZIP remained
-unchanged. The full repository suite was not run. These changes remain
-uncommitted on `implementation/input-simplification`; the prior ConfGen v3
-baseline is already pushed as `d5a40ae`.
+unchanged. The full repository suite was not run. The backend implementation
+is committed and pushed on `implementation/input-simplification` as
+`89303ac`; the prior ConfGen v3 baseline is `d5a40ae`.
 
 ## Phase 1 — Structure TopologyPatch (ACCEPTED)
 
@@ -87,19 +86,38 @@ identity; machine profiles hold executable/env/target/scheduler.
 
 ## Phase 6 — Semantic checkpoint/Hessian edges (ACCEPTED)
 
-Compile to existing artifact relationships/staging and program-native input;
-validated for method and atom compatibility.
+Gaussian standard-adapter relationships compile to existing artifact staging
+and native input. ReadFC targets Opt; RCFC targets IRC. Method/native-input
+compatibility and bound charge/spin lineage fail closed; runtime artifact
+pairing and staging retain atom authority.
 
 ## Phase 7 — Versioned Refine/Dedup presets (ACCEPTED)
 
 Explicit visible strategy, advanced overrides, existing strict execution.
 
-## Phase 8 — JobDesk UX simplification (IN PROGRESS)
+## Phase 8 — JobDesk UX simplification (ACCEPTED)
 
 Structure atom selection, charge/spin controls, endpoint-only ConfGen,
 card and recipe authoring, resources and semantic checkpoint controls.
-JobDesk changes are authorized and implemented in `/opt/jobdesk-v2-v4`;
-actual normal Run and live producer GUI acceptance remains in progress.
+JobDesk implementation in `/opt/jobdesk-v2-v4` preserves the existing strict
+submission path. Normal Run compiles intent automatically, with producer
+path estimates, explicit moving side and freeze actions, per-input state,
+card/template controls and optional machine/checkpoint/preset panels.
+Advanced documents remain lossless; invalid or pending normal edits and
+stale asynchronous replies fail closed. Reauthoring preserves explicit
+seeds and operational overrides while rederiving generated values.
+
+Independent final acceptance: all 2570 JobDesk tests passed, with 4 skipped
+(actual process exit 0). The final 135 new intent/live-GUI tests and 4
+existing frozen-validation SP tests also passed independently. The rebuilt
+wheel passed all 7 source/version/content verification checks. Scoped Ruff
+and mypy passed; the type check excludes existing missing YAML stubs and
+their associated unused-ignore diagnostics.
+
+The atom picker currently supports XYZ through a 2D XY projection plus an
+accessible atom table; GJF/INP files can be submitted but cannot drive atom
+picking. Native GOAT sampling has no integer seed control. Unsupported
+energy-window presets and waypoints remain deferred as documented above.
 
 ## Parallel ownership (2026-10-01)
 
@@ -134,6 +152,11 @@ Producer transport exposes additive `compile_intent` and `preview_paths`
 operations and publishes a versioned card/preset catalog. Endpoint-only
 preview uses the same working topology, path resolver, rotor deduplication
 and raw-space limit as execution; it never generates conformers.
+The `6a9c1cb` follow-up persists nonempty structure patches through the shared
+input-topology authority before previewing. Independent tests verify the
+preview and executor agree on graph digest, moving atoms, angles and count
+under a nondefault bond scale (43 boundary tests and 46 topology/preview
+tests passed, with overlap).
 
 Unsupported energy-window presets are omitted. Waypoints, automatic rotor
 perception and workflow-total conformer budgets remain outside this scope.
