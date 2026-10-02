@@ -102,6 +102,16 @@ python3 $TOOLS/test_inventory.py run     --repo <cf|jd> --out $ACC/outcomes.json
 - T3 `skipped` 集合不得增加（随本卡删除的节点除外）。增加 → **退回**（属于 W1 的变体，例如条件 skip 被触发）。
 - T4 CF 跨仓测试（`-m cross_repo`）必须实际运行，不能是 skip：`$JDPIN` 的 HEAD 必须等于 `tests/v4/jobdesk_integration.py` 的 `EXPECTED_JOBDESK_SHA`。如果发生 skip，先修正环境再验收，不算执行模型的责任。
 
+### 4.2a 加速规则（2026-10-02 起，验收方内部使用，不影响执行方）
+
+- **CF 全量测试用分片并行运行器**：`python3 docs/refactor/tools-acc/run_sharded.py --cf <验收树> --out <文件> --shards 14 --weights docs/refactor/tools-acc/weights.json`。输出格式与 `test_inventory.py run` 相同，已验证与串行结果逐项一致（4502 项）。16 核本机约 3.5 分钟（串行约 21 分钟）。每张 CF 卡仍然跑一次完整测试，只是改用这个运行器。
+- **JD 全量测试仍串行**（GUI 测试必须串行，约 3 分钟）。
+- **golden 分层**：
+  - 每张卡都运行：contract/boundary 摘要与 JD contract_key（几秒）。
+  - 触及 `confflow/science/`、`confflow/execution/`、`confflow/domain/`、`confflow/persistence/`、`confflow/workflow/v4/`、`confflow/remote/` 的卡（含 C4.3、L1 等）、以及所有阶段收尾处（Phase 2、3、4、5 结束，IS.0、IS.5 前后）：再运行完整 golden（TS1 三份 + 83 份 engine 报告，约 6 分钟）。
+  - 只改 `.github/`、`docs/`、`tests/`、JD、工具的卡：可以只做摘要检查。TS1 与 engine 报告的输入没有变化，任何科学行为变化都必须经过上面第二类卡才可能发生；若有怀疑，仍然升级为完整 golden。
+- 多张彼此独立的卡的验收可以同时进行（各用独立的验收工作树，显式传 `--cf`）。
+
 ### 4.3 golden
 
 ```bash

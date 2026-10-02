@@ -182,3 +182,9 @@
 - 测试（验收方在独立工作树、显式 `--cf` 重跑）：4502 项，4490 passed / 0 failed / 12 skipped；与 C1.3 之后的集合相同（相对基线少 33 个节点，无新增，无结果变化）
 - golden：TS1、83 份 engine 报告、contract 五项摘要全部不变（contract / boundary 字节不变）
 - 结论：通过。Phase 1 完成。
+
+## 2026-10-02 验收加速
+
+- 新增验收方工具 `docs/refactor/tools-acc/run_sharded.py`（分片并行运行 CF 测试）与 `weights.json`（每个测试文件的实测耗时）。
+- 在 C1.4（b8e85a3）上验证：分片运行结果与串行运行逐项一致（4502 项，4490 passed / 12 skipped）；全量 21 分钟 → 3.5 分钟（14 个分片，下限由两个各约 3 分钟的测试文件决定）。
+- ACCEPTANCE §4.2a 记录了新规则：CF 每卡仍跑一次完整测试但改用分片；完整 golden 只对触及 science/execution/domain/persistence/workflow/v4/remote 的卡和阶段收尾运行，其余卡只做摘要检查。
