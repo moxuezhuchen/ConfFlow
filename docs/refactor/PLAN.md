@@ -960,8 +960,9 @@ IS 分支上没有 `docs/refactor/`。各卡如需工具，从 `$TOOLS` 运行�
   5. 成对距离下界剪枝：仅全原子比较（`heavy_only=False`）时启用，`pair_error ≥ 2·(n−1)·n·cutoff²` 的分支被安全剪掉；`heavy_only=True` 时关闭。
   6. 恒等映射优先，已评估的投影用 `seen_projections` 去重；返回的是第一个 RMSD < 阈值的见证映射，不是全局最小值。
   7. 预算耗尽 / 无合法映射 / 所有映射都高于阈值 分别给出 `unresolved` / `different_topology` / `distinct`，不得改变。
-- 性能测试（随迁，新增，不改被测代码）：固定输入下 `MappingSearch.nodes` 不超过记录值（丁烷、叔丁基、苯环），预算耗尽路径返回 `unresolved`，剪枝开关时 `pruned > 0`。
-- 需先核实（执行前由验收方确认，写入卡片）：`topology.py` 依赖 `core.bonding.build_adjacency` 与 `_compat.load_refine_data`，而 `core/` 将在 C5.5 删除，`science/` 不得依赖它；`science/bonds.perceive_adjacency` 是否与 `build_adjacency` 逐位等价（若不等价，搬迁时需把 `build_adjacency` 一并搬入 `science/` 而非替换）。
+- 性能测试（随迁，新增，不改被测代码）：固定输入（丁烷、叔丁基、苯环）下 `MappingSearch.nodes` 等于记录值，预算耗尽路径返回 `unresolved`，剪枝开启时 `pruned > 0`；见下。
+- **已核实（验收方，2026-10-02）：** `science/bonds.perceive_adjacency` 只是 `core.bonding.build_adjacency` 的薄封装（先校验 `bond_scale>0`，并把 `UnknownElementError` 转成 `ValueError`）。随机 12000 例（3000 个随机分子 × 4 个 bond_scale，含近重合坐标）输出逐位相同；差别只在错误处理：`bond_scale ≤ 0/NaN` 旧函数不报错、新封装抛 `ValueError`，未知元素旧抛 `UnknownElementError`、新抛 `ValueError`。因此搬迁**不替换**函数体：保留对 `build_adjacency` 的调用（只改 import 路径），以保持旧行为。结果：`science/` 对 `core.bonding` 与 `core.data` 的依赖本来就存在（`science/bonds.py`），**C5.5 必须保留 `core/bonding.py`、`core/data.py`（或先把它们迁入 `science/`）**；`blocks/refine/_compat.load_refine_data` 的依赖也要一并核对。
+- 性能测试**按节点预算与结果固定，不依赖耗时**：断言 `MappingSearch.nodes`/`pruned`/`mappings` 与返回的 `PairVerdict`（状态、`search_complete`、映射）等于记录值，禁止使用墙钟时间。
 - 验收：标准验收；golden 不变；新搬模块的测试全部通过；`deleted_modules_check` 不涉及（本卡不删模块）。
 
 ### C5.3b — V4 refine 调用对称映射去重（logic；Q-R1）
@@ -974,13 +975,21 @@ IS 分支上没有 `docs/refactor/`。各卡如需工具，从 `$TOOLS` 运行�
   3. 性能测试沿用 C5.3a 的节点数记录，V4 路径下不得增加。
 - 任何与 TS1、环、扭转、立体相关的行为变化 → 升级用户，不得写成"预期变化"。
 
-### C5.3c — V4 refine 获取 ConfGen 声明的拓扑（Q-R2；**来源未定，不开始**）
+### C5.3c — refine 的 `topology_bonds` 参数（Q-R2，用户 2026-10-02 选方案 B）
 
-- 前置：C5.3b；**用户先决定拓扑来源**。验收方的调查结论（@refactor/diet-c5 2f95dc1）：
-  - 现状：`TransformExecutor._refine` 只看到 `StructureRecord`（`atoms`/`coordinates`/`metadata`）；ConfGen 发布的结构 `metadata` 只有 `conformer_member`、`seed`、`input_confgen_state`，**不含任何拓扑**；ConfGen 的 `topology.bonds`、`add_bond`、`del_bond` 只存在于工作流文档（`ConfgenTopologyModel`）和执行时的原生参数中；refine 目前只能用几何感知（`perceive_adjacency`，`bond_scale`）。
-  - 候选来源：A 结构元数据：ConfGen 执行器在每个发布结构的 `metadata` 写入 `topology_bonds`（`metadata` 不进 `geometry_digest`，属非语义标注，但会改变 ConfGen 的发布内容与哈希以外的记录，需要走 contract 声明）；B refine 步骤自带 `topology_bonds` native 键，由用户在文档里写，或由 intent 编译器从上游 ConfGen 步骤复制；C 读 ConfGen 报告（`ensemble_report.json`）：transform 端口只传结构，无法取得，需改端口，代价最大。
-  - 验收方倾向 A；决定后再写卡。
-- 规则：来源不明则不开始（用户 2026-10-02 要求）。
+拆为两张卡：**C5.3c-1（CF，logic）** 与 **C5.3c-2（编译器自动复制，IS 分支）**。
+
+**拓扑来源（已定）：** refine 步骤新增 native 参数 `topology_bonds`；由 intent 编译器从上游 ConfGen 步骤自动复制。不改 ConfGen 的发布内容，不改 contract（验收方已核实：transform 的 native 键不在 contract 中，`rmsd_threshold` 等均未出现在 `contract.full.json`；`REFINE_NATIVE_KEYS` 只在 `transform_executor.py` 的运行时校验里）。
+
+**C5.3c-1（CF，前置：C5.3b；类型 `logic`）：**
+1. 参数形状：`topology_bonds = {"index_base": 0|1, "bonds": [{"atoms": [i, j], "kind": "COVALENT"|"COORDINATION"|"FORMING"[, "BREAKING"]}]}`，与 ConfGen 文档里的 `index_base` 与 `TypedEdgeModel` 同形；边类型词汇直接取 `science/confgen/graph.py::EdgeType`（单一来源）。**待用户确认的小点：** ConfGen 的类型词汇还有 `BREAKING`，你列出的是三种；默认与 ConfGen 一致，四种都接受，如要只收三种请告知。
+2. `index_base` 必须与 ConfGen 一致（默认与 ConfGen 文档相同，为 1）；原子数校验：任何索引越界、自环、重复边、与结构原子数不符 → `DomainError`（失败即停，不静默）。
+3. 同构映射保持边类型：在 C5.3a 搬来的映射搜索上增加边类型标签（这是对已搬代码的 logic 修改，只发生在本卡，不在 move 卡）；几何相同但反应键连接的原子对不同（例如 FORMING 边连在不同的原子对上）→ **不得合并**，必须有测试。
+4. 未提供该参数时保持旧行为（`perceive_adjacency` 几何感知成键），不报错；提供时以声明的边集为拓扑，并与几何感知结果的关系明确（声明边覆盖几何感知的同一原子对，其余仍由几何感知补全；若用户之后要求"只用声明边"，另议）。**这一裁定由验收方在写补丁前再核对 ConfGen 旧 `AddBond/DelBond` 的语义后写入卡片。**
+5. 测试：沿用 C5.3b 的全部对照（RDKit GetBestRMS 等）；新增：反应键异位不合并；`index_base` 0/1 等价；原子数不符报错；无参数与旧行为逐位一致。
+6. 文档（本卡必须写）：ConfGen 的带标号状态计数与 refine 之后的物理构象数是两个口径（σ 相关结构会被合并）；TS1 的 refine 结果作为信息性记录，不作为通过条件。
+
+**C5.3c-2（编译器，前置：IS 合并进 main 之后；类型 `logic`）：** intent 编译器在生成 refine 步骤时，从紧邻上游的 ConfGen 步骤复制 `topology.bonds`（含 `index_base`）到 `topology_bonds`；上游无声明则不写该参数。编译器位置：`implementation/input-simplification` 分支的 JD `application/intent/`（refactor/diet 上尚不存在），具体文件在 IS.5 之后核实。
 
 ### C5.3d — 删除 `blocks/refine/`（前置：C5.3a、C5.3b 通过；C5.3c 的结论）
 
@@ -1000,6 +1009,7 @@ IS 分支上没有 `docs/refactor/`。各卡如需工具，从 `$TOOLS` 运行�
 - ID：C5.5 ／ 前置：C5.4
 - 类型：`delete`
 - 允许修改的文件：`confflow/core/*.py`、`confflow/core/__init__.py`、`confflow/shared/config_coercion.py`、`tests/v4/test_architecture_boundaries.py`、`scripts/v4_arch_scan.py`、只引用被删模块的测试
+- **保留要求（2026-10-02 核实）：** `core/bonding.py`、`core/data.py` 被 `science/bonds.py` 使用，且 C5.3a 搬入 `science/` 的映射代码仍调用 `build_adjacency`，C5.5 不得删除它们（可达性重跑会自动保留，但要在 Removed 清单复核）。
 - 步骤：重新运行 `reachability.py`。写方案时（C5.2–C5.4 之前）的候选是 `core/validation.py`（333 行）、`core/chem_validation.py`、`core/cli_base.py`、`core/constants.py`、`core/keyword_rewrite.py`、`core/models.py`、`core/pairs.py`、`shared/config_coercion.py`，**以重新运行的结果为准**，只删除不可达的模块。`core/__init__.py` 的 `_LAZY_EXPORTS`（L23-50）中指向被删模块的条目一并删除；`TestFacadeLazyIsolation::test_core_public_surface_still_importable`（`test_architecture_boundaries.py` 约 L1610-1625）中 import 被删名字的断言删除，其余断言保留。
 - 验收：标准验收；golden 不变。
 

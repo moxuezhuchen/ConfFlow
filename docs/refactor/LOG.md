@@ -326,3 +326,8 @@
 - Q-R2 一起移植，但须先写明 V4 中 refine 获取拓扑的来源，来源不明则不开始：验收方调查结论写入 PLAN C5.3c（现状无来源；候选 A 结构元数据 / B refine 自带键 / C 读 ConfGen 报告），等待用户决定。
 - Q-R3 同意不移植；PLAN-2 记一条（优化后键连接变化的构象 V4 是否有检查）。
 - 推送授权改为：refactor/* 与 docs/refactor-plan 可推送；main/master 一律不推。
+
+## 2026-10-02 用户答复 Q-R2 = B 与 C5.3a 要求
+- Q-R2 选 B：refine 步骤新增 `topology_bonds`（带 COVALENT/COORDINATION/FORMING 类型、index_base 与 ConfGen 一致、校验原子数、映射保持边类型、无参数时旧行为）；intent 编译器从上游 ConfGen 复制；不改 ConfGen 发布内容与 contract。已写入 PLAN C5.3c-1/-2。待确认小点：ConfGen 还有 BREAKING 边类型，默认四种都接受。
+- 验收方核实：`perceive_adjacency` 是 `core.bonding.build_adjacency` 的薄封装，12000 例输出逐位相同，仅错误处理不同 → C5.3a 保留对 `build_adjacency` 的调用；C5.5 须保留 core/bonding.py、core/data.py。
+- C5.3a 性能测试按节点预算与结果固定，不依赖耗时。等 C3 报告回来后再做 C5.3a 补丁。
