@@ -335,3 +335,8 @@
 ## 2026-10-02 用户答复（C5.3c 细节）
 - 边类型四种（含 BREAKING）都接受。PLAN-2 新增：core/bonding.py、core/data.py 最终移入 science/。
 - 验收方核对 ConfGen 构图（planner.build_typed_graph）后发现与"声明边覆盖同一原子对、其余几何感知补全"不一致，已回头请用户裁定（见对话）；裁定前 C5.3c-1 不写补丁。
+
+## 2026-10-02 用户裁定（C5.3c 构图规则）
+- 选 A：refine 复用 build_typed_graph；topology_bonds = ConfGen 的 topology + index_base，coordination 与 tolerances.bond_scale 由编译器复制；声明了拓扑时用 ConfGen 的 bond_scale（默认 1.15），未声明时 1.2 保持旧行为；接受与旧 AddBond/DelBond 的差异并写文档。
+- C5.3c-2：沿数据流向上找最近 ConfGen 步骤（不要求紧邻）；多个上游来源且声明不一致 → 报错并要求显式指定。
+- PLAN-2：统一 refine 与 ConfGen 的默认 bond_scale。

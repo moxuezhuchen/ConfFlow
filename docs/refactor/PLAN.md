@@ -981,15 +981,17 @@ IS 分支上没有 `docs/refactor/`。各卡如需工具，从 `$TOOLS` 运行�
 
 **拓扑来源（已定）：** refine 步骤新增 native 参数 `topology_bonds`；由 intent 编译器从上游 ConfGen 步骤自动复制。不改 ConfGen 的发布内容，不改 contract（验收方已核实：transform 的 native 键不在 contract 中，`rmsd_threshold` 等均未出现在 `contract.full.json`；`REFINE_NATIVE_KEYS` 只在 `transform_executor.py` 的运行时校验里）。
 
-**C5.3c-1（CF，前置：C5.3b；类型 `logic`）：**
-1. 参数形状：`topology_bonds = {"index_base": 0|1, "bonds": [{"atoms": [i, j], "kind": "COVALENT"|"COORDINATION"|"FORMING"[, "BREAKING"]}]}`，与 ConfGen 文档里的 `index_base` 与 `TypedEdgeModel` 同形；边类型词汇直接取 `science/confgen/graph.py::EdgeType`（单一来源）。**已确认（用户 2026-10-02）：** 四种（含 `BREAKING`）都接受，与 ConfGen 一致。
-2. `index_base` 必须与 ConfGen 一致（默认与 ConfGen 文档相同，为 1）；原子数校验：任何索引越界、自环、重复边、与结构原子数不符 → `DomainError`（失败即停，不静默）。
-3. 同构映射保持边类型：在 C5.3a 搬来的映射搜索上增加边类型标签（这是对已搬代码的 logic 修改，只发生在本卡，不在 move 卡）；几何相同但反应键连接的原子对不同（例如 FORMING 边连在不同的原子对上）→ **不得合并**，必须有测试。
-4. 未提供该参数时保持旧行为（`perceive_adjacency` 几何感知成键），不报错；提供时以声明的边集为拓扑，并与几何感知结果的关系明确（声明边覆盖几何感知的同一原子对，其余仍由几何感知补全；若用户之后要求"只用声明边"，另议）。**这一裁定由验收方在写补丁前再核对 ConfGen 旧 `AddBond/DelBond` 的语义后写入卡片。**
-5. 测试：沿用 C5.3b 的全部对照（RDKit GetBestRMS 等）；新增：反应键异位不合并；`index_base` 0/1 等价；原子数不符报错；无参数与旧行为逐位一致。
-6. 文档（本卡必须写）：ConfGen 的带标号状态计数与 refine 之后的物理构象数是两个口径（σ 相关结构会被合并）；TS1 的 refine 结果作为信息性记录，不作为通过条件。
+**C5.3c-1（CF，前置：C5.3b；类型 `logic`）——用户 2026-10-02 裁定后的规则：**
+1. **构图：refine 直接复用 `science/confgen/planner.build_typed_graph(structure, topology, resolved)`**，规则与 ConfGen 完全相同：声明了 `bonds` 时声明边完全胜出、不做几何感知；否则几何感知后依次应用 `add_bond`（非共价类型替换同一对感知出的共价边；COVALENT 为新增）、`del_bond`（只能删共价对，不存在的对静默忽略）、配位范围叠加；同一对给出矛盾类型报错。
+2. **参数形状：** `topology_bonds` = ConfGen 的 `topology`（`bonds` 或 `add_bond`/`del_bond`，带类型，外加 `atoms`），加 `index_base`（0|1，默认与 ConfGen 文档一致为 1）；`coordination` 范围与 `tolerances.bond_scale` 由编译器一并复制到 refine 步骤（`topology_bonds` 内以 `coordination`、`bond_scale` 两个成员携带）。类型词汇四种（COVALENT/COORDINATION/FORMING/BREAKING），取自 `science/confgen/graph.py::EdgeType`。
+3. **`bond_scale`：** 声明了拓扑时用复制来的 ConfGen 值（默认 1.15）；未声明时仍用 refine 自己的 1.2，保持旧行为。refine 在内部构造 `resolved = {"tolerances": {"bond_scale": ...}, "coordination": ...}` 传给 `build_typed_graph`，不改 ConfGen 代码。
+4. **校验：** `index_base` 与 ConfGen 一致；转换成 0 起始后，索引越界、原子数不符、矛盾类型 → `DomainError`（`build_typed_graph` 抛出的 `ValueError` 统一转换）。
+5. **映射保持边类型：** 在 C5.3a 搬来的映射搜索上增加边类型标签（对已搬代码的 logic 修改，只发生在本卡）；几何相同但反应键（FORMING 等）连接的原子对不同 → **不得合并**。
+6. **测试：** 沿用 C5.3b 全部对照；新增：反应键异位不合并；`index_base` 0/1 等价；原子数不符报错；无参数时与旧行为逐位一致；**同一份声明分别经 ConfGen 构图（`build_typed_graph` 经 ConfGen 路径）与经 refine 构图，边集合（含类型）完全相同**（`bonds` 模式与 `add_bond/del_bond` 模式各一组，含 `coordination` 一组）。
+7. **与旧 `AddBond/DelBond` 的差异（用户已接受，文档必须写明）：** 同一对同时出现在 add 与 del 时，旧 refine 先 del 后 add（add 胜），ConfGen 先 add 后 del（del 胜），新规则取 ConfGen；非法条目旧为静默忽略，新为报错；感知 `bond_scale` 旧为 refine 的 1.2，新（声明了拓扑时）为 ConfGen 的 1.15；来源由"帧注释"改为步骤参数。
+8. **文档（本卡必须写）：** ConfGen 的带标号状态计数与 refine 之后的物理构象数是两个口径（σ 相关结构会被合并）；TS1 的 refine 结果作为信息性记录，不作为通过条件；第 7 条的差异。
 
-**C5.3c-2（编译器，前置：IS 合并进 main 之后；类型 `logic`）：** intent 编译器在生成 refine 步骤时，从紧邻上游的 ConfGen 步骤复制 `topology.bonds`（含 `index_base`）到 `topology_bonds`；上游无声明则不写该参数。编译器位置：`implementation/input-simplification` 分支的 JD `application/intent/`（refactor/diet 上尚不存在），具体文件在 IS.5 之后核实。
+**C5.3c-2（编译器，前置：IS 合并进 main 之后；类型 `logic`）：** intent 编译器在生成 refine 步骤时，**沿结构数据流向上找最近的 ConfGen 步骤**复制 `topology`（含 `index_base`）、`coordination` 范围与 `tolerances.bond_scale` 到 `topology_bonds`，**不要求紧邻**（中间可隔着优化等步骤）。若沿数据流存在多个上游 ConfGen 来源且它们的拓扑声明不一致 → 不自动复制，报错并要求用户显式指定；声明一致则可复制；上游没有 ConfGen 或无拓扑声明则不写该参数（保持旧行为）。编译器位置：`implementation/input-simplification` 分支的 JD `application/intent/`（refactor/diet 上尚不存在），具体文件在 IS.5 之后核实。
 
 ### C5.3d — 删除 `blocks/refine/`（前置：C5.3a、C5.3b 通过；C5.3c 的结论）
 
@@ -1112,3 +1114,5 @@ IS 分支上没有 `docs/refactor/`。各卡如需工具，从 `$TOOLS` 运行�
 N. **优化后键连接变化的构象（Q-R3，用户 2026-10-02）：** 旧 `blocks/refine` 的多数拓扑过滤会删除少数拓扑构象；V4 refine 不过滤，各自保留。待核实：V4 对"优化后键连接发生变化的构象"是否有检查。用最小工作流实际运行确认；没有则记为缺口，交用户决定。
 
 N+1. **`core/bonding.py`、`core/data.py` 最终移入 `science/`（用户 2026-10-02）：** 使 `core/` 可整体删除。当前 `science/bonds.py` 与 C5.3a 搬入的映射代码依赖它们，C5.5 暂时保留。
+
+N+2. **统一 refine 与 ConfGen 的默认 `bond_scale`（用户 2026-10-02）：** 目前 refine 默认 1.2，ConfGen 默认 1.15。统一是行为变化，本轮不做；C5.3c-1 只在声明了拓扑时复制 ConfGen 的值。
