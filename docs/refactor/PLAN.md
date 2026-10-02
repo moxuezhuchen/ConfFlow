@@ -786,20 +786,18 @@ IS 分支上没有 `docs/refactor/`。各卡如需工具，从 `$TOOLS` 运行�
 - 步骤：`git -C $CFIS merge --no-ff main`。冲突一律保留 main 的删除；IS 新增的代码如果引用了被删符号（例如 `capability_identity`），按 main 的删除去掉引用，并在合并提交信息中逐条列出。JD 同理：`git -C $JDIS merge --no-ff master`。
 - 验收：两仓标准验收；engine 报告与 TS1 必须等于 B0.1（IS 分支新增测试产生的新报告记录为新的报告检查点 `checkpoints/IS.0/engine_reports/`，由验收方核对：已有报告不得变化）。
 
-### IS.2 — intent 编译器始终输出 `schema_version: 3`，paths 走 v3
+### IS.2 — intent 编译器把 legacy paths 编译成 typed v3（始终输出 `schema_version: 3`）
 
-- ID：IS.2 ／ 仓库：ConfFlow ／ 分支：IS ／ 前置：IS.0、IS.1b 通过，且 IS.1b 的含氢用例中没有 `NOT_EQUIVALENT`，`LEGACY_ONLY_TERMINAL_ROTOR` 为 0 或用户已对其数值作出决定（`V3_EMPTY_DEGENERATE`、`BOTH_REJECT` 不阻塞）
-- 目标：`_wire_confgen` 对带 paths 的 legacy native 生成 typed v3 块，而不是透传。
-- 类型：`logic`
-- 允许修改的文件：`confflow/producer/intent.py`、`tests/v4/` 下与 intent 编译相关的测试文件（逐条声明）
-- 具体步骤（@f87da58 `intent.py:917-951`）：
-  1. intent 的 confgen 步骤如果 `native` 不是 v3，且只包含 `paths` / `angle_step` / `bond_scale` / `strict_path_bond_check`，就按 IS.1 第 2 步的映射规则生成 `{"schema_version": 3, "index_base": 1, "paths": […], …}`；L948-950 的步骤级 `paths` / `strict_path_bond_check` 同样并入 v3 块。映射规则必须与 IS.1 的工具逐字一致（从同一函数导入或复制并注明来源）。
-  2. bare 声明补 `step: 120`（Q2b）。
-  3. 末端原子端点（Q2a、Q2c 方向 1）：intent 编译器不做检查（编译时没有结构），也不得自动把端点换成邻居；路径原样编译成 v3，由运行时的 v3 拒绝承担，诊断里的具体键由 IS.2b 负责。
+- ID：IS.2 ／ 仓库：ConfFlow ／ 分支：`implementation/input-simplification`（工作树 `/opt/cf-worktrees/exec-cf-is`，基点 fe2acf0） ／ 前置：IS.0 完成、IS.1b 通过且含氢用例无 `NOT_EQUIVALENT`、`LEGACY_ONLY_TERMINAL_ROTOR` = 0（均已满足） ／ 类型：`logic`。做法：应用 `handoff/IS.2-src-tests.patch`（5 个文件），不重新设计。
+- 内容：`confflow/producer/intent.py` 新增 `_legacy_paths_to_v3`：当 confgen 步骤的 `native` 只含 `paths`/`angle_step`/`bond_scale`/`strict_path_bond_check` 时，按 IS.1 golden 的 `map_native` 规则逐字映射成 `{"schema_version": 3, "index_base": 1, "paths": […], …}`（bare 声明补 `step`：优先 `angle_step`，否则 120；`bond_scale` → `tolerances.bond_scale`；`strict_path_bond_check` → v3 顶层标志）；步骤 `seed`/`overrides` 照旧附加。`native` 含其他键（如 `chains`）的仍原样透传 legacy（IS.3 再拒绝）。路径声明含映射表之外的键 → 编译期报错（`unsupported keys`，`waypoint` 另附提示），**不静默丢弃**。末端原子端点原样编译，不检查、不换成邻居（交给运行时 v3，诊断见 IS.2b）。
+- 发现（验收方，需用户知晓）：**legacy 路径声明支持 `waypoint`（多端点路径），typed v3 不支持（`torsion/paths.py` 明确 "deferred"）。** IS.1 golden 的 `case_0024` 在 legacy 上能跑、v3 无对应声明。IS.2 之后，intent 里带 `waypoint` 的路径会在编译期被拒绝并指明原因。这是 Q2 "paths 一律走 v3" 的直接后果；是否要给 v3 补 `waypoint` 另议（PLAN-2 记一条）。
+- 另一个发现：步骤级 `paths`/`strict_path_bond_check` 并不是 intent 的合法步骤成员（`_STEP_KEYS` 不含），原卡"并入"的分支不可达，所以未实现。
+- 同卡带入的 IS.0 检查点：`docs/refactor/baseline/checkpoints/IS.0/contract*.json`、`boundary.full.json`（IS 分支合并 main 后、IS.2 之前的 contract/boundary 基线；它相对 C3.3 检查点的大量差异来自 IS 分支自带的 intent/authoring 改动，不是本卡造成）。
+- 新增测试 `tests/v4/test_intent_legacy_paths_to_v3.py`（53 项）：所有 golden 用例用 golden 自己的 `map_native` 对拍（可映射的逐项相等；含未知路径键的被拒；含 `chains` 等的保持 legacy）；bare 步长 120、`angle_step`、`bond_scale`、strict 标志、`seed`/`overrides`；9 个含氢 `EQUIVALENT` 用例经**编译后的块**执行，输出与 golden 记录的 v3 结果逐项相同（状态、诊断、转子、构象坐标 1e-9）。
 - 禁止事项：G1–G9；不得修改 `confgen_executor.py`、`science/`。
-- 验收命令：标准验收（在 `$CFIS` 上）；IS.1 中每个 `EQUIVALENT` 用例再通过 intent 编译 → 执行，输出必须与 IS.1 中的 v3 输出逐项相同；每个 `LEGACY_DEGENERATE` 用例必须失败，且不得被自动裁剪后执行。
-- 预期行为变化：intent 中的 legacy paths 不再以 legacy native 执行，而以 typed v3 执行；bare 声明显式变为 `step: 120`；末端原子端点的路径在运行时被 v3 拒绝（诊断见 IS.2b）。
-- 提交信息模板：`feat(producer)!: compile ConfGen intent paths into typed v3 scopes` + 通用尾部。
+- 自检期望：全量 `{"passed": 5138, "skipped": 12}`；collect 5097 → 5150（+53，Removed 0）；`golden_check.py --checkpoint docs/refactor/baseline/checkpoints/IS.0/contract.json` 的 contract 五项全 ok、ts1 三种 ok，engine 报告 added 5 / different 1 且与 `checkpoints/IS.0/engine_reports/` 逐字节相同（见 handoff）；`mypy`/`ruff`/`black` 通过。
+- 预期行为变化：intent 中的 legacy paths 不再以 legacy native 执行，而以 typed v3 执行；bare 声明显式变为 `step: 120`（或 `angle_step`）；含 `waypoint` 或其他未知路径键的声明在编译期被拒绝。
+- 提交信息模板：`feat(producer)!: compile ConfGen intent paths into typed v3 scopes` + 通用尾部（Added-Tests 53，测试名从清单逐字复制；Behavior-Change 含上面三条，并写明 `waypoint` 不再可用）。
 
 ### IS.2b — v3 拒绝末端原子端点时，诊断指明具体的键
 
@@ -1124,3 +1122,5 @@ N. **优化后键连接变化的构象（Q-R3，用户 2026-10-02）：** 旧 `b
 N+1. **`core/bonding.py`、`core/data.py` 最终移入 `science/`（用户 2026-10-02）：** 使 `core/` 可整体删除。当前 `science/bonds.py` 与 C5.3a 搬入的映射代码依赖它们，C5.5 暂时保留。
 
 N+2. **统一 refine 与 ConfGen 的默认 `bond_scale`（用户 2026-10-02）：** 目前 refine 默认 1.2，ConfGen 默认 1.15。统一是行为变化，本轮不做；C5.3c-1 只在声明了拓扑时复制 ConfGen 的值。
+
+N+3. **v3 的 `waypoint`（多端点路径）支持（IS.2 发现）：** legacy paths 支持 `waypoint`，typed v3 暂不支持；IS.2 之后 intent 里带 `waypoint` 的路径在编译期被拒绝。是否需要 v3 补上，由用户在 PLAN-2 决定。

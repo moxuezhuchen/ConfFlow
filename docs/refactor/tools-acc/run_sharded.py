@@ -73,6 +73,21 @@ def main(argv: list[str] | None = None) -> int:
     if not counts:
         sys.stderr.write(collect.stdout[-2000:] + collect.stderr[-2000:])
         return 2
+    # A file that fails at *collection* (for example an import of a deleted
+    # symbol) has no nodes and would silently vanish from the shards.
+    broken = sorted(
+        {
+            line.split()[1].split("::")[0]
+            for line in (collect.stdout + collect.stderr).splitlines()
+            if line.startswith("ERROR ") and len(line.split()) > 1
+        }
+    )
+    if broken or collect.returncode not in (0,):
+        sys.stderr.write("COLLECTION ERRORS (these files were NOT run):\n")
+        for name in broken:
+            sys.stderr.write(f"  {name}\n")
+        sys.stderr.write(collect.stdout[-1500:] + collect.stderr[-1500:])
+        return 3
     weights: dict[str, float] = {}
     if args.weights and Path(args.weights).is_file():
         weights = json.loads(Path(args.weights).read_text())

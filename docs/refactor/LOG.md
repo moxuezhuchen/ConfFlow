@@ -384,3 +384,8 @@
 - 基点 a261bbf；3 个文件；全量 4121 passed + 2 个已知负载敏感测试（单独通过）= 4123，collect 4135（+15），golden ok；RDKit GetBestRMS 交叉验证四个对称体系一致、两个构象对一致不合并。
 - 发现并处理：直接在顶层导入 science 模块会令 worker 导入闭包载入 confflow.core（test_worker_run_import_closure_is_compiler_free 失败），改为懒加载。
 - 裁定：严格小于（用户默认）；阈值 0 不再合并；记入卡片。
+
+## IS.0 追加修复与 IS.2 补丁已备（2026-10-03）
+- 工具漏洞：run_sharded.py 以前会悄悄漏掉“收集阶段就报错”的测试文件；已修复（现在直接报错退出）。据此发现 IS.0 合并后 tests/v4/test_producer_authoring_boundary_coverage.py（IS 分支新增）仍 import 已删的 compare_identities / evaluate_compatibility，已在 IS 分支追加提交 fe2acf0 删除只守护已删函数的 4 个测试与未用辅助函数。此前所有已验收卡片的 collect 数量都与期望一致，未受该漏洞影响。
+- IS.2 补丁（基点 fe2acf0）：全量 5138 passed，collect +53，golden：contract 与 IS.0 检查点一致；engine 报告与 IS.0 检查点同批同字节。
+- 发现：legacy 路径的 `waypoint` 在 typed v3 中没有对应形式，IS.2 之后 intent 里带 waypoint 的路径在编译期被拒绝（见 PLAN IS.2 与 PLAN-2）。
