@@ -286,9 +286,7 @@ REMOVED_LEGACY_MODULES: frozenset[str] = frozenset(
 #: the dead remote duplicates retired by PR-6 (their live authorities are
 #: ``launch_lease.TokenLaunchLease``, ``persistence.recovery.reconcile_owner``
 #: and ``worker_supervision``).  They must stay physically absent,
-#: unimportable, and unreferenced by the V4 production sources.  The
-#: historically public V2/V3 names resolve to fail-closed retirement stubs
-#: (``confflow.workflow._retired_runtime``), never to code.
+#: unimportable, and unreferenced by the V4 production sources.
 RETIRED_RUNTIME_MODULES: tuple[str, ...] = (
     "confflow.workflow.engine",
     "confflow.workflow.state",
@@ -949,24 +947,6 @@ class TestRuntimeIsolation:
         result = self._run(script)
         assert result.returncode == 0, result.stderr
 
-    def test_importing_workflow_package_stays_lazy(self) -> None:
-        script = (
-            "import sys\n"
-            "import confflow.workflow\n"
-            "assert 'confflow.workflow.engine' not in sys.modules, 'eager engine import'\n"
-            "from confflow.workflow import run_workflow\n"
-            "assert callable(run_workflow)\n"
-            "assert 'confflow.workflow.engine' not in sys.modules, 'retired engine loaded'\n"
-            "try:\n"
-            "    run_workflow()\n"
-            "except RuntimeError as exc:\n"
-            "    assert 'retired' in str(exc), exc\n"
-            "else:\n"
-            "    raise AssertionError('retired run_workflow must fail closed')\n"
-        )
-        result = self._run(script)
-        assert result.returncode == 0, result.stderr
-
     def test_remote_seams_do_not_load_retired_helpers(self) -> None:
         script = (
             "import sys; import confflow.remote.handoff; "
@@ -1041,15 +1021,6 @@ class TestRetiredRuntimeBoundary:
                     ):
                         offenders.append((str(path.relative_to(REPO_ROOT)), absolute, lineno))
         assert offenders == []
-
-    def test_retirement_stubs_fail_closed(self) -> None:
-        from confflow.workflow import _retired_runtime
-
-        assert _retired_runtime.RETIRED_NAMES
-        for name in _retired_runtime.RETIRED_NAMES:
-            stub = getattr(_retired_runtime, name)
-            with pytest.raises(_retired_runtime.RetiredRuntimeError):
-                stub()
 
 
 class TestV3PublicWireRetired:

@@ -75,7 +75,6 @@ except ImportError:
 
 _LAZY_EXPORTS: dict[str, tuple[str, str]] = {
     "main": (".main", "main"),
-    "run_workflow": (".workflow", "run_workflow"),
     "CalcStepRunner": (".calc", "CalcStepRunner"),
     "CalcStepRequest": (".calc", "CalcStepRequest"),
     "CalcStepResult": (".calc", "CalcStepResult"),
