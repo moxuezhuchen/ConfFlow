@@ -1,0 +1,908 @@
+{
+ "backend": "flexible",
+ "leaves": [
+  {
+   "atoms": [
+    "C",
+    "C",
+    "C",
+    "C",
+    "C",
+    "C",
+    "H",
+    "H",
+    "H",
+    "H",
+    "H",
+    "H",
+    "H",
+    "H",
+    "H",
+    "H",
+    "N",
+    "H",
+    "N",
+    "H",
+    "C",
+    "H",
+    "H",
+    "C",
+    "H",
+    "H",
+    "C",
+    "C",
+    "C",
+    "C",
+    "C",
+    "H",
+    "C",
+    "H",
+    "H",
+    "C",
+    "C",
+    "C",
+    "C",
+    "C",
+    "H",
+    "C",
+    "H",
+    "H",
+    "O",
+    "O",
+    "Al",
+    "C",
+    "C",
+    "H",
+    "H",
+    "H",
+    "C",
+    "H",
+    "H",
+    "H",
+    "C",
+    "H",
+    "H",
+    "H",
+    "C",
+    "C",
+    "H",
+    "H",
+    "H",
+    "C",
+    "H",
+    "H",
+    "H",
+    "C",
+    "H",
+    "H",
+    "H",
+    "O",
+    "C",
+    "H",
+    "H",
+    "C",
+    "C",
+    "O",
+    "O",
+    "C",
+    "C",
+    "O",
+    "O",
+    "H",
+    "H",
+    "H",
+    "C",
+    "C",
+    "C",
+    "C",
+    "H",
+    "C",
+    "H",
+    "C",
+    "H",
+    "H",
+    "H",
+    "C",
+    "O",
+    "O",
+    "C",
+    "H",
+    "C",
+    "C",
+    "C",
+    "C",
+    "H",
+    "C",
+    "H",
+    "C",
+    "H",
+    "H",
+    "H",
+    "C",
+    "O",
+    "O",
+    "C",
+    "H",
+    "H",
+    "H"
+   ],
+   "coords_sha256": "7bf680360e362e29d5b0fade970ddc255fcdbc7d7c745a1d9afe1411e87c8559",
+   "state_key": {
+    "coordination": {
+     "center": 46,
+     "placement": [
+      0,
+      2,
+      1,
+      4,
+      3,
+      5
+     ],
+     "shape": "octahedral",
+     "sites": {
+      "N17": "+X",
+      "N19": "+Y",
+      "O45": "-X",
+      "O46": "+Z",
+      "O74": "-Y",
+      "O80": "-Z"
+     }
+    },
+    "rings": {},
+    "schema_version": 3,
+    "torsions": {}
+   }
+  },
+  {
+   "atoms": [
+    "C",
+    "C",
+    "C",
+    "C",
+    "C",
+    "C",
+    "H",
+    "H",
+    "H",
+    "H",
+    "H",
+    "H",
+    "H",
+    "H",
+    "H",
+    "H",
+    "N",
+    "H",
+    "N",
+    "H",
+    "C",
+    "H",
+    "H",
+    "C",
+    "H",
+    "H",
+    "C",
+    "C",
+    "C",
+    "C",
+    "C",
+    "H",
+    "C",
+    "H",
+    "H",
+    "C",
+    "C",
+    "C",
+    "C",
+    "C",
+    "H",
+    "C",
+    "H",
+    "H",
+    "O",
+    "O",
+    "Al",
+    "C",
+    "C",
+    "H",
+    "H",
+    "H",
+    "C",
+    "H",
+    "H",
+    "H",
+    "C",
+    "H",
+    "H",
+    "H",
+    "C",
+    "C",
+    "H",
+    "H",
+    "H",
+    "C",
+    "H",
+    "H",
+    "H",
+    "C",
+    "H",
+    "H",
+    "H",
+    "O",
+    "C",
+    "H",
+    "H",
+    "C",
+    "C",
+    "O",
+    "O",
+    "C",
+    "C",
+    "O",
+    "O",
+    "H",
+    "H",
+    "H",
+    "C",
+    "C",
+    "C",
+    "C",
+    "H",
+    "C",
+    "H",
+    "C",
+    "H",
+    "H",
+    "H",
+    "C",
+    "O",
+    "O",
+    "C",
+    "H",
+    "C",
+    "C",
+    "C",
+    "C",
+    "H",
+    "C",
+    "H",
+    "C",
+    "H",
+    "H",
+    "H",
+    "C",
+    "O",
+    "O",
+    "C",
+    "H",
+    "H",
+    "H"
+   ],
+   "coords_sha256": "42d7130bb1b506d3dff0d2ccdbae7df712806d66204d67f4c20d0ac864701037",
+   "state_key": {
+    "coordination": {
+     "center": 46,
+     "placement": [
+      0,
+      2,
+      4,
+      3,
+      1,
+      5
+     ],
+     "shape": "octahedral",
+     "sites": {
+      "N17": "+X",
+      "N19": "+Y",
+      "O45": "+Z",
+      "O46": "-Y",
+      "O74": "-X",
+      "O80": "-Z"
+     }
+    },
+    "rings": {},
+    "schema_version": 3,
+    "torsions": {}
+   }
+  },
+  {
+   "atoms": [
+    "C",
+    "C",
+    "C",
+    "C",
+    "C",
+    "C",
+    "H",
+    "H",
+    "H",
+    "H",
+    "H",
+    "H",
+    "H",
+    "H",
+    "H",
+    "H",
+    "N",
+    "H",
+    "N",
+    "H",
+    "C",
+    "H",
+    "H",
+    "C",
+    "H",
+    "H",
+    "C",
+    "C",
+    "C",
+    "C",
+    "C",
+    "H",
+    "C",
+    "H",
+    "H",
+    "C",
+    "C",
+    "C",
+    "C",
+    "C",
+    "H",
+    "C",
+    "H",
+    "H",
+    "O",
+    "O",
+    "Al",
+    "C",
+    "C",
+    "H",
+    "H",
+    "H",
+    "C",
+    "H",
+    "H",
+    "H",
+    "C",
+    "H",
+    "H",
+    "H",
+    "C",
+    "C",
+    "H",
+    "H",
+    "H",
+    "C",
+    "H",
+    "H",
+    "H",
+    "C",
+    "H",
+    "H",
+    "H",
+    "O",
+    "C",
+    "H",
+    "H",
+    "C",
+    "C",
+    "O",
+    "O",
+    "C",
+    "C",
+    "O",
+    "O",
+    "H",
+    "H",
+    "H",
+    "C",
+    "C",
+    "C",
+    "C",
+    "H",
+    "C",
+    "H",
+    "C",
+    "H",
+    "H",
+    "H",
+    "C",
+    "O",
+    "O",
+    "C",
+    "H",
+    "C",
+    "C",
+    "C",
+    "C",
+    "H",
+    "C",
+    "H",
+    "C",
+    "H",
+    "H",
+    "H",
+    "C",
+    "O",
+    "O",
+    "C",
+    "H",
+    "H",
+    "H"
+   ],
+   "coords_sha256": "6bcfbcf593f4ea0f7efd736c8e235653f40c38b4d6f0912a0b9e3b731ac99010",
+   "state_key": {
+    "coordination": {
+     "center": 46,
+     "placement": [
+      0,
+      2,
+      4,
+      3,
+      5,
+      1
+     ],
+     "shape": "octahedral",
+     "sites": {
+      "N17": "+X",
+      "N19": "+Y",
+      "O45": "+Z",
+      "O46": "-Y",
+      "O74": "-Z",
+      "O80": "-X"
+     }
+    },
+    "rings": {},
+    "schema_version": 3,
+    "torsions": {}
+   }
+  }
+ ],
+ "report": {
+  "attempt_ledger": {
+   "attempted_without_success": 9,
+   "basis": "issued per-level stage attempts along every explored path: geometry-successful internal expansions plus published leaves plus terminal attempt failures; policy-screened, suppressed-skipped, and deferred-unissued units excluded",
+   "by_status": {
+    "failed_numerical": 9,
+    "published_leaf": 3
+   },
+   "deferred_unissued": 0,
+   "geometry_successful": 3,
+   "internal_expanded": 0,
+   "issued_attempts": 12,
+   "policy_screened": 0,
+   "published_leaves": 3,
+   "suppressed_skipped": 0
+  },
+  "axis_order": [
+   "coordination",
+   "rings",
+   "torsions"
+  ],
+  "certificate": {
+   "basis": "terminal equations verify over target records",
+   "digest": "sha256:a726adc79595defea3b200d173cf59b605b3fb04862fcde1a2942c5bc5c309da",
+   "equations_ok": true
+  },
+  "counts": {
+   "anomalies": {
+    "AMBIGUOUS_KEY": 0
+   },
+   "deferred_parent_failed_leaves": 0,
+   "deferred_sampled_out": 0,
+   "equation_exact": true,
+   "estimated_deferred_leaves": 0,
+   "failed": {
+    "failed_numerical": 9
+   },
+   "internal_expanded": 0,
+   "policy_excluded": 0,
+   "published": 3,
+   "raw": 12,
+   "realized": 3,
+   "sampled": 12,
+   "status_counts": {
+    "failed_numerical": 9,
+    "published_leaf": 3
+   },
+   "target_categories": {
+    "DEFERRED": 0,
+    "DRIFTED": 0,
+    "REALIZATION_SUPPRESSED_BY_VERIFIED_SYMMETRY": 0,
+    "REALIZED": 3,
+    "UNRESOLVED": 9
+   },
+   "unit_basis": {
+    "authoritative_sections": [
+     "leaf_certificate",
+     "attempt_ledger"
+    ],
+    "published": "final leaves",
+    "realized": "successful stage attempts, including internal expansions",
+    "target_categories": "mixed diagnostic records; no certificate equation"
+   }
+  },
+  "drift_events": [],
+  "enumeration": {
+   "basis": "coordination:complete proper-rotation groups at declared shapes; exact raw/policy/shape layers per shape; molecular orbits only where a verified declared site group is supplied",
+   "deferred_sampled_out": 0,
+   "digest": "sha256:bebc310d0f0613bfdee37badf55051e42fdf3b4f2ff0608cb7a653acfcc23faf",
+   "exact": true,
+   "exclusions": [],
+   "per_axis": {
+    "coordination": {
+     "basis": "complete proper-rotation groups at declared shapes; exact raw/policy/shape layers per shape; molecular orbits only where a verified declared site group is supplied",
+     "declared_count": 12,
+     "exact": true,
+     "scope_coverage": "exact",
+     "upper_bound": 720
+    }
+   },
+   "policy_excluded": 0,
+   "sampled": 12,
+   "sampling": {
+    "cap": null,
+    "capped": false,
+    "seed": null,
+    "sorted": true
+   },
+   "symbolic": {
+    "basis": "unconditional product space",
+    "exact": true,
+    "paths_consistent": true,
+    "paths_detail": "unconditional product space",
+    "raw_leaf_states": 12
+   },
+   "total_declared": 12,
+   "total_upper_bound": 720
+  },
+  "inherited": {
+   "audited": false,
+   "basis": "no incoming chained state",
+   "entries": []
+  },
+  "leaf_certificate": {
+   "anomalies": {
+    "AMBIGUOUS_KEY": 0
+   },
+   "basis": "final joint leaves only: published leaves, terminal leaf failures, leaf rejections, verified suppressions, and deferred ranges (counted arithmetically); internal attempts excluded",
+   "count_details": {
+    "attempted": 12,
+    "deferred_parent": 0,
+    "deferred_sampled_out": 0,
+    "failed": 9,
+    "ok": true,
+    "published": 3,
+    "raw": 12,
+    "rejected": 0,
+    "sampled": 12,
+    "suppressed": 0
+   },
+   "equation_exact": true,
+   "equations_ok": true,
+   "leaf_categories": {
+    "DEFERRED": 0,
+    "DRIFTED": 0,
+    "REALIZATION_SUPPRESSED_BY_VERIFIED_SYMMETRY": 0,
+    "REALIZED": 3,
+    "REJECTED": 0,
+    "UNRESOLVED": 9
+   },
+   "total": 12
+  },
+  "levels": [
+   "coordination"
+  ],
+  "preflight": {
+   "basis": "coordination:complete proper-rotation groups at declared shapes; exact raw/policy/shape layers per shape; molecular orbits only where a verified declared site group is supplied",
+   "exact": true,
+   "total_declared": 12,
+   "total_upper_bound": 720
+  },
+  "provenance": {
+   "backend": "geometric-rodrigues",
+   "input_id": "ts1",
+   "seed": null
+  },
+  "realization": {
+   "attempted": 12,
+   "count_details": {
+    "attempted": 12,
+    "deferred_parent": 0,
+    "deferred_sampled_out": 0,
+    "failed": 9,
+    "ok": true,
+    "published": 3,
+    "raw": 12,
+    "rejected": 0,
+    "sampled": 12,
+    "suppressed": 0
+   },
+   "count_equations_ok": true,
+   "failed": {
+    "failed_numerical": 9
+   },
+   "paths_consistent": true,
+   "paths_detail": "unconditional product space",
+   "proof_contradictions": [],
+   "published": 3,
+   "realization_attempts": 12,
+   "realized": 3,
+   "status_counts": {
+    "failed_numerical": 9,
+    "published_leaf": 3
+   },
+   "suppressed": 0,
+   "terminal_detail": "ok",
+   "terminal_equations_ok": true
+  },
+  "sampling": {
+   "cap": null,
+   "capped": false,
+   "seed": null,
+   "sorted": true
+  },
+  "schema_version": 3,
+  "scope": {
+   "breaking_pairs": [],
+   "donor_configuration": {
+    "backend": "flexible",
+    "binding_sites": [
+     {
+      "atoms": [
+       16
+      ],
+      "hapticity": 1,
+      "id": "N17",
+      "kind": "atom"
+     },
+     {
+      "atoms": [
+       18
+      ],
+      "hapticity": 1,
+      "id": "N19",
+      "kind": "atom"
+     },
+     {
+      "atoms": [
+       44
+      ],
+      "hapticity": 1,
+      "id": "O45",
+      "kind": "atom"
+     },
+     {
+      "atoms": [
+       45
+      ],
+      "hapticity": 1,
+      "id": "O46",
+      "kind": "atom"
+     },
+     {
+      "atoms": [
+       73
+      ],
+      "hapticity": 1,
+      "id": "O74",
+      "kind": "atom"
+     },
+     {
+      "atoms": [
+       79
+      ],
+      "hapticity": 1,
+      "id": "O80",
+      "kind": "atom"
+     }
+    ],
+    "budgets": {
+     "max_nfev": 120,
+     "maxiter": 400
+    },
+    "constraints": [
+     {
+      "classification": "REJECTED_BY_POLICY",
+      "id": "C01",
+      "kind": "FORBIDDEN_TRANS",
+      "provenance": "prior TS1 coordination enumeration / tetradentate-ligand linkage assumption",
+      "sites": [
+       "N17",
+       "N19"
+      ]
+     },
+     {
+      "classification": "REJECTED_BY_POLICY",
+      "id": "C02",
+      "kind": "FORBIDDEN_TRANS",
+      "provenance": "prior TS1 coordination enumeration / tetradentate-ligand linkage assumption",
+      "sites": [
+       "N17",
+       "O46"
+      ]
+     },
+     {
+      "classification": "REJECTED_BY_POLICY",
+      "id": "C03",
+      "kind": "FORBIDDEN_TRANS",
+      "provenance": "prior TS1 coordination enumeration / tetradentate-ligand linkage assumption",
+      "sites": [
+       "N19",
+       "O45"
+      ]
+     },
+     {
+      "classification": "REJECTED_BY_POLICY",
+      "id": "C04",
+      "kind": "FORBIDDEN_TRANS",
+      "provenance": "reactive Al-O74-C79-O80-Al bridge topology in TS1 benchmark",
+      "sites": [
+       "O74",
+       "O80"
+      ]
+     }
+    ],
+    "donor_configuration": [
+     "N17",
+     "N19",
+     "O45",
+     "O46",
+     "O74",
+     "O80"
+    ],
+    "metal_center": 46,
+    "shapes": [
+     "octahedral"
+    ],
+    "site_group": {
+     "generators": [
+      [
+       1,
+       0,
+       3,
+       2,
+       4,
+       5
+      ]
+     ],
+     "provenance": "expected_sigma_witness.json",
+     "scope": "declared_topological_subgroup"
+    },
+    "tolerances": {
+     "clash_scale": 0.7,
+     "margin_tolerance": 0.05,
+     "reaction_tol": 0.25,
+     "realize_tol": 0.45,
+     "rmsd_tolerance": 0.35,
+     "shape_margin_tolerance": 0.15
+    },
+    "treatment": "enumerate"
+   },
+   "excluded_axes": [],
+   "preserved_axes": [],
+   "unsupported": []
+  },
+  "suppression": {
+   "disabled_reason": null,
+   "scope": "single-axis runs without sampling caps or top-level exclusions: verified records suppress with a realized representative; otherwise targets realize normally (joint-tree stabilizer, sampled-representative, and policy-excluded-representative scopes pending)",
+   "supported": true,
+   "suppressed": 0
+  }
+ },
+ "report_sha256": "ee63e17b9806caa44dbd311e12d03fd825e1f4249fb64e5fcef31c7b5109b5e4",
+ "status_counts": {
+  "failed_numerical": 9,
+  "published_leaf": 3
+ },
+ "targets": [
+  {
+   "axis": "coordination",
+   "evidence_sha256": "67fe2c4490b82d680d0afb823e80afd889b143f70b7df99cfc8fb714e5ea2035",
+   "ordinal": 0,
+   "parent_target_id": null,
+   "reason": "published_leaf",
+   "status": "published_leaf",
+   "target_id": "coordination:000000"
+  },
+  {
+   "axis": "coordination",
+   "evidence_sha256": "d266769cc6e73af83cd693859f3a50a983ca1fd02624326e32faf073687db48f",
+   "ordinal": 1,
+   "parent_target_id": null,
+   "reason": "geometry audit failure at the commanded state: intra-fragment angle deviation 3.415e+00deg exceeds 3.0deg",
+   "status": "failed_numerical",
+   "target_id": "coordination:000001"
+  },
+  {
+   "axis": "coordination",
+   "evidence_sha256": "096e2207b470b74e79b0a7ff0ca720b50ba5c7edd7c9c9c5b5cdde859d0e19cf",
+   "ordinal": 2,
+   "parent_target_id": null,
+   "reason": "geometry audit failure at the commanded state: intra-fragment angle deviation 1.733e+01deg exceeds 3.0deg; clash gap -0.667A below floor",
+   "status": "failed_numerical",
+   "target_id": "coordination:000002"
+  },
+  {
+   "axis": "coordination",
+   "evidence_sha256": "4d367022fc135c3dca00976259790288cbc284e53c74e589d37a7d12b0300f38",
+   "ordinal": 3,
+   "parent_target_id": null,
+   "reason": "geometry audit failure at the commanded state: clash gap -0.623A below floor",
+   "status": "failed_numerical",
+   "target_id": "coordination:000003"
+  },
+  {
+   "axis": "coordination",
+   "evidence_sha256": "21e28d69590d342668748b27e2cab25aa8b688138e15daa0be41768339d6065b",
+   "ordinal": 4,
+   "parent_target_id": null,
+   "reason": "published_leaf",
+   "status": "published_leaf",
+   "target_id": "coordination:000004"
+  },
+  {
+   "axis": "coordination",
+   "evidence_sha256": "2470d3a812b1623d038b6d731cd5e14a367a33332f656a2e1618cb221d103611",
+   "ordinal": 5,
+   "parent_target_id": null,
+   "reason": "published_leaf",
+   "status": "published_leaf",
+   "target_id": "coordination:000005"
+  },
+  {
+   "axis": "coordination",
+   "evidence_sha256": "2dd0cbf79ee1c0fa46b85412dbb7e77ff72fee206c980a240c0a54e0f8b05020",
+   "ordinal": 6,
+   "parent_target_id": null,
+   "reason": "geometry audit failure at the commanded state: intra-fragment angle deviation 3.436e+00deg exceeds 3.0deg; clash gap -0.326A below floor",
+   "status": "failed_numerical",
+   "target_id": "coordination:000006"
+  },
+  {
+   "axis": "coordination",
+   "evidence_sha256": "cd579c60d205fc7104e0a84f8bad580f8c1f7322bdc03a7bc6ad11f6b60a040b",
+   "ordinal": 7,
+   "parent_target_id": null,
+   "reason": "geometry audit failure at the commanded state: intra-fragment angle deviation 5.219e+00deg exceeds 3.0deg; clash gap -0.343A below floor",
+   "status": "failed_numerical",
+   "target_id": "coordination:000007"
+  },
+  {
+   "axis": "coordination",
+   "evidence_sha256": "b5dcfaf3f8e961e6b0484e84783b0e1607548c7ae3e7f87c569f9fa2879e64c9",
+   "ordinal": 8,
+   "parent_target_id": null,
+   "reason": "geometry audit failure at the commanded state: intra-fragment angle deviation 5.906e+00deg exceeds 3.0deg; clash gap -0.399A below floor",
+   "status": "failed_numerical",
+   "target_id": "coordination:000008"
+  },
+  {
+   "axis": "coordination",
+   "evidence_sha256": "59927c290b7a7ef95926636a41c36755e72059cdda9a65864f536c5ca0516815",
+   "ordinal": 9,
+   "parent_target_id": null,
+   "reason": "geometry audit failure at the commanded state: intra-fragment angle deviation 7.887e+00deg exceeds 3.0deg; clash gap -0.433A below floor",
+   "status": "failed_numerical",
+   "target_id": "coordination:000009"
+  },
+  {
+   "axis": "coordination",
+   "evidence_sha256": "4fb779dd24f1893f2503afe7f7b36a5b9c975b37b2be40d1ee83f72b6ab62ad2",
+   "ordinal": 10,
+   "parent_target_id": null,
+   "reason": "geometry audit failure at the commanded state: intra-fragment angle deviation 7.323e+00deg exceeds 3.0deg; clash gap -0.644A below floor",
+   "status": "failed_numerical",
+   "target_id": "coordination:000010"
+  },
+  {
+   "axis": "coordination",
+   "evidence_sha256": "3a15edf6213038657522a362fa28661d371d3d06fe905bfc0920de4e65e8c054",
+   "ordinal": 11,
+   "parent_target_id": null,
+   "reason": "geometry audit failure at the commanded state: intra-fragment angle deviation 2.236e+01deg exceeds 3.0deg; clash gap -0.506A below floor",
+   "status": "failed_numerical",
+   "target_id": "coordination:000011"
+  }
+ ]
+}

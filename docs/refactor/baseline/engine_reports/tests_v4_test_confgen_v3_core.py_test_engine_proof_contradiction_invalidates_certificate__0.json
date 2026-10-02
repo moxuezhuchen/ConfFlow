@@ -1,0 +1,246 @@
+{
+ "leaves": [],
+ "report": {
+  "attempt_ledger": {
+   "attempted_without_success": 1,
+   "basis": "issued per-level stage attempts along every explored path: geometry-successful internal expansions plus published leaves plus terminal attempt failures; policy-screened, suppressed-skipped, and deferred-unissued units excluded",
+   "by_status": {
+    "failed_drift": 1
+   },
+   "deferred_unissued": 0,
+   "geometry_successful": 0,
+   "internal_expanded": 0,
+   "issued_attempts": 1,
+   "policy_screened": 1,
+   "published_leaves": 0,
+   "suppressed_skipped": 0
+  },
+  "axis_order": [
+   "coordination",
+   "rings",
+   "torsions"
+  ],
+  "certificate": {
+   "basis": "INVALID: 1 proof contradiction(s): a realized-via-drift state matches a PROVEN_INFEASIBLE exclusion",
+   "digest": "sha256:92bfdb2184c0abc3e0a8dd0d702b75e08e8f6b09ee07e365cd69ca600a5dedf6",
+   "equations_ok": false
+  },
+  "counts": {
+   "anomalies": {
+    "AMBIGUOUS_KEY": 0
+   },
+   "deferred_parent_failed_leaves": 0,
+   "deferred_sampled_out": 0,
+   "equation_exact": true,
+   "estimated_deferred_leaves": 0,
+   "failed": {
+    "failed_drift": 1
+   },
+   "internal_expanded": 0,
+   "policy_excluded": 1,
+   "published": 0,
+   "raw": 2,
+   "realized": 0,
+   "sampled": 2,
+   "status_counts": {
+    "failed_drift": 1,
+    "rejected_by_policy": 1
+   },
+   "target_categories": {
+    "DEFERRED": 0,
+    "DRIFTED": 1,
+    "REALIZATION_SUPPRESSED_BY_VERIFIED_SYMMETRY": 0,
+    "REALIZED": 0,
+    "UNRESOLVED": 1
+   },
+   "unit_basis": {
+    "authoritative_sections": [
+     "leaf_certificate",
+     "attempt_ledger"
+    ],
+    "published": "final leaves",
+    "realized": "successful stage attempts, including internal expansions",
+    "target_categories": "mixed diagnostic records; no certificate equation"
+   }
+  },
+  "drift_events": [],
+  "enumeration": {
+   "basis": "torsions:t",
+   "deferred_sampled_out": 0,
+   "digest": "sha256:312e0759093964235639339ba62988c8e42ca61769acdd13fe3cb9b1536b6ad4",
+   "exact": true,
+   "exclusions": [
+    {
+     "axis": "torsions",
+     "match": {
+      "ax": 0.0
+     },
+     "proof_id": "P1",
+     "reason": "bound"
+    }
+   ],
+   "per_axis": {
+    "torsions": {
+     "basis": "t",
+     "declared_count": 2,
+     "exact": true,
+     "scope_coverage": "exact",
+     "upper_bound": 2
+    }
+   },
+   "policy_excluded": 1,
+   "sampled": 2,
+   "sampling": {
+    "cap": null,
+    "capped": false,
+    "seed": null,
+    "sorted": true
+   },
+   "symbolic": {
+    "basis": "unconditional product space",
+    "exact": true,
+    "paths_consistent": true,
+    "paths_detail": "unconditional product space",
+    "raw_leaf_states": 2
+   },
+   "total_declared": 2,
+   "total_upper_bound": 2
+  },
+  "inherited": {
+   "audited": false,
+   "basis": "no incoming chained state",
+   "entries": []
+  },
+  "leaf_certificate": {
+   "anomalies": {
+    "AMBIGUOUS_KEY": 0
+   },
+   "basis": "final joint leaves only: published leaves, terminal leaf failures, leaf rejections, verified suppressions, and deferred ranges (counted arithmetically); internal attempts excluded",
+   "count_details": {
+    "attempted": 2,
+    "deferred_parent": 0,
+    "deferred_sampled_out": 0,
+    "failed": 1,
+    "ok": true,
+    "published": 0,
+    "raw": 2,
+    "rejected": 1,
+    "sampled": 2,
+    "suppressed": 0
+   },
+   "equation_exact": true,
+   "equations_ok": true,
+   "leaf_categories": {
+    "DEFERRED": 0,
+    "DRIFTED": 1,
+    "REALIZATION_SUPPRESSED_BY_VERIFIED_SYMMETRY": 0,
+    "REALIZED": 0,
+    "REJECTED": 1,
+    "UNRESOLVED": 0
+   },
+   "total": 2
+  },
+  "levels": [
+   "torsions"
+  ],
+  "preflight": {
+   "basis": "torsions:t",
+   "exact": true,
+   "total_declared": 2,
+   "total_upper_bound": 2
+  },
+  "provenance": {
+   "backend": "geometric-rodrigues",
+   "input_id": "seed",
+   "seed": null
+  },
+  "realization": {
+   "attempted": 2,
+   "count_details": {
+    "attempted": 2,
+    "deferred_parent": 0,
+    "deferred_sampled_out": 0,
+    "failed": 1,
+    "ok": true,
+    "published": 0,
+    "raw": 2,
+    "rejected": 1,
+    "sampled": 2,
+    "suppressed": 0
+   },
+   "count_equations_ok": true,
+   "failed": {
+    "failed_drift": 1
+   },
+   "paths_consistent": true,
+   "paths_detail": "unconditional product space",
+   "proof_contradictions": [
+    {
+     "matched": {
+      "ax": 0.0
+     },
+     "proof_id": "P1",
+     "target_id": "torsions:000001"
+    }
+   ],
+   "published": 0,
+   "realization_attempts": 2,
+   "realized": 0,
+   "status_counts": {
+    "failed_drift": 1,
+    "rejected_by_policy": 1
+   },
+   "suppressed": 0,
+   "terminal_detail": "ok",
+   "terminal_equations_ok": true
+  },
+  "sampling": {
+   "cap": null,
+   "capped": false,
+   "seed": null,
+   "sorted": true
+  },
+  "schema_version": 3,
+  "scope": {
+   "breaking_pairs": [],
+   "donor_configuration": null,
+   "excluded_axes": [
+    {
+     "axis": "torsions",
+     "match": {
+      "ax": 0.0
+     },
+     "reason": "bound"
+    }
+   ],
+   "preserved_axes": [],
+   "unsupported": []
+  },
+  "suppression": {
+   "disabled_reason": "exclusions-present",
+   "scope": "single-axis runs without sampling caps or top-level exclusions: verified records suppress with a realized representative; otherwise targets realize normally (joint-tree stabilizer, sampled-representative, and policy-excluded-representative scopes pending)",
+   "supported": false,
+   "suppressed": 0
+  }
+ },
+ "targets": [
+  {
+   "axis": "torsions",
+   "evidence_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+   "ordinal": 0,
+   "parent_target_id": null,
+   "reason": "rejected_by_policy:bound",
+   "status": "rejected_by_policy",
+   "target_id": "torsions:000000"
+  },
+  {
+   "axis": "torsions",
+   "evidence_sha256": "e447f234b812087771ea3f30f66031594829f2c67aae86d963cbbf490312d469",
+   "ordinal": 1,
+   "parent_target_id": null,
+   "reason": "drift",
+   "status": "failed_drift",
+   "target_id": "torsions:000001"
+  }
+ ]
+}
