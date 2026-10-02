@@ -241,11 +241,13 @@ J0b 起，每张卡由 CodeBuddy 的 `glm-5.3-flash` 以非交互方式执行，
 ```bash
 cd <卡片所在仓库的执行工作树> && codebuddy -p --model glm-5.3-flash \
   --permission-mode acceptEdits \
-  --allowedTools "Read Edit Write Grep Glob Bash" \
+  --allowedTools "Read Edit Write Grep Glob Bash(*)" \
   --disallowedTools "Bash(unshare:*) Bash(mount:*) Bash(sudo:*) Bash(pip:*) Bash(pip3:*) Bash(apt:*) Bash(apt-get:*) Bash(git push:*)" \
   --add-dir /opt/cf-worktrees/exec-cf --add-dir /opt/cf-worktrees/exec-jd --add-dir /opt/cf-worktrees/jd-pin \
   --output-format json "<交接提示词>"
 ```
+
+注意：`--allowedTools` 中必须写 `Bash(*)`。只写 `Bash` 时，非交互模式会拒绝所有 shell 命令（2026-10-02 J0b 首次发起时实测）。已实测：允许 `Bash(*)` 时，`--disallowedTools` 仍能拦截 `unshare` 等命令。
 
 交接提示词必须包含：卡片 ID；PLAN.md 和 ACCEPTANCE.md 的路径；"只执行这一张卡、提交后停止"；G1–G10 全文；"JD 测试只能通过 `run_jd_tests.sh` 运行，禁止直接调用 unshare/mount"；"不得 push"；退回时附上验收方的具体要求，并要求用 `git commit --amend` 重新交付。
 
