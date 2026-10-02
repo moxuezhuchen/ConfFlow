@@ -56,3 +56,9 @@
 ## 2026-10-02 执行模型变更
 
 - 用户决定：执行模型改为 Sonnet 5.5，以 Claude Code 子代理方式由验收方直接调用。CodeBuddy `glm-5.3-flash` 不再使用。PLAN §2.8 已更新。
+
+## 2026-10-02 J0b — 第一次发起停在测试步骤（工具缺陷，不计为退回）
+
+- 执行模型：Sonnet 5.5 子代理。步骤 1–4 完成（4 个测试文件已移植、fixture 已重新 vendor、ruff/format/mypy 通过），改动保留在 `exec-jd`，未提交。
+- 停止原因：`run_jd_tests.sh` 在 `exec-cf` 中没有执行权限。仓库设置了 `core.fileMode=false`，验收方提交脚本时 x 位没有进入索引（`100644`）。执行模型按 G9 停止，没有用 `bash <脚本>` 绕过。
+- 处理：验收方用 `git update-index --chmod=+x` 修正（`100755`），并同步到 `exec-cf`；让同一执行模型从步骤 5 继续。
