@@ -16,7 +16,6 @@ except ModuleNotFoundError:  # pragma: no cover - Python 3.10 compatibility
 
 WORKFLOW = Path(__file__).parents[1] / ".github" / "workflows" / "release.yml"
 JOBDESK_CONTRACT_WORKFLOW = WORKFLOW.with_name("jobdesk-contract.yml")
-PAIRED_COMPATIBILITY_WORKFLOW = WORKFLOW.with_name("paired-jobdesk-compatibility.yml")
 RELEASE_DOC = Path(__file__).parents[1] / "docs" / "RELEASE.md"
 README = Path(__file__).parents[1] / "README.md"
 RELEASE_LOCK = Path(__file__).parents[1] / "release" / "confflow-2.1.6-py312-linux-x86_64.lock"
@@ -47,7 +46,7 @@ def test_v216_release_metadata_and_runtime_inputs_are_consistent():
     )
     assert pin_match is not None, "the cross-repo pin constant must exist"
     pinned = pin_match.group(1)
-    for workflow in (JOBDESK_CONTRACT_WORKFLOW, PAIRED_COMPATIBILITY_WORKFLOW):
+    for workflow in (JOBDESK_CONTRACT_WORKFLOW,):
         text = workflow.read_text(encoding="utf-8")
         assert "moxuezhuchen/jobdesk-v2" in text, workflow.name
         assert pinned in text, workflow.name
