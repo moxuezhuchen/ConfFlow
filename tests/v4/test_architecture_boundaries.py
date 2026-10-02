@@ -279,6 +279,8 @@ REMOVED_LEGACY_MODULES: frozenset[str] = frozenset(
         "confflow.workflow.plan",
         "confflow.workflow.config_show",
         "confflow.workflow.dry_run",
+        "confflow.workflow.helpers",
+        "confflow.workflow.validation",
     }
 )
 
