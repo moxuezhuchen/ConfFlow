@@ -623,24 +623,22 @@ JD contract_key、CF 的 contract/boundary 字节在本阶段都必须不变。
 
 ### J2.4 — 删除 V1/V2 合同实现、file mode 和内置快照
 
-- ID：J2.4 ／ 仓库：JobDesk-v2 ／ 分支：`refactor/diet` ／ 前置：J2.3
-- 目标：删除 V1/V2 合同解析、provider、service、内置 manifest/catalog 快照、file mode，以及只守护它们的测试和 fixture。
-- 类型：`delete`
-- 允许修改的文件：
-  - 删除：`src/jobdesk_v2/application/editor/contract/parse.py`、`providers.py`、`service.py`；`src/jobdesk_v2/infrastructure/editor/byte_source.py`；`tests/fixtures/contract/*.json` 中除 `producer_v2.json` 以外只被删除测试使用的文件；`tests/application/test_contract_parsing.py`、`tests/application/test_contract_providers.py`
-  - 修改：`src/jobdesk_v2/application/editor/contract/__init__.py`、`models.py`、`remote_v4.py`；`src/jobdesk_v2/application/editor/__init__.py`、`manifest.py`（只删内置快照函数和数据）、`recipes.py`（只删内置快照函数和数据）、`service.py`（editor service 中对 fallback 的引用）、`recipes.py` 中 `EditorContractService` 的引用；`src/jobdesk_v2/infrastructure/editor/__init__.py`；`src/jobdesk_v2/gui/app.py`；`tests/contract_fixtures.py`、`tests/application/conftest.py`；`tests/application/test_architecture.py`、`tests/gui/test_architecture.py`、`tests/application/test_manifest.py`、`tests/application/test_recipes.py`、`tests/application/test_service.py`、`tests/application/test_remote.py`、`tests/gui/test_contract_integration.py`、`tests/application/test_confflow_v4_e2e.py`（只删除守护被删符号的测试或断言）；`README.md`（删除 `JOBDESK_V2_CONTRACT` 一节，README L284 附近）
-- 具体步骤（@9beeaf2，结合 J2.1–J2.3 之后的状态）：
-  1. 先生成删除清单写入提交信息：`git grep -n` 以下符号，确认生产代码引用都在本卡允许的文件中：`SUPPORTED_CONTRACT_SCHEMAS`、`StableFallbackContractProvider`、`LocalProducerContractProvider`、`EditorContractService`、`ContractRefresh`、`FallbackArtifacts`、`snapshot_contract`、`parse_contract_bytes`、`verified_contract_from_mapping`、`VerifiedEditorContract`、`ContractByteSource`、`EmptyContractByteSource`、`LocalFileByteSource`、`CONTRACT_ENV_VAR`、`build_contract_service`、`build_editor_service`、`editor_manifest_document`、`load_editor_manifest`、`recipe_catalog_document`、`load_recipe_catalog`。
-  2. 删除上述符号的定义、导出和全部引用；`gui/app.py` 删除 `CONTRACT_ENV_VAR`（L62）、`build_contract_service`（L120-138）、`build_editor_service`（L497-507）、`file_mode` 分支（L355、L432-433，L183 的 `contract_override`）、`main()` 中的 else 分支（L561-562）。`remote_v4.py` 删除 `_degrade`（L403-416）、`fallback`/`fallback_artifacts` 参数（L241-255）、返回类型中的 `| VerifiedEditorContract`。
-  3. `manifest.py` 删除内置快照（`editor_manifest_document` L966 起、`load_editor_manifest` L978 起，以及只被它们使用的常量和数据块，约 L540-1009；执行时用"只被快照函数引用"来界定，解析器部分 L1-539 不动）。`recipes.py` 同理（`recipe_catalog_document` L308、`load_recipe_catalog` L318 以及内置配方数据，含 L239-246 的 `conformer_search` 配方；`RecipeCatalog`/`recipe_catalog_from_mapping` 等模型与解析保留）。
-  4. 删除只守护被删符号的测试：整个 `test_contract_parsing.py`（41 项）、`test_contract_providers.py`（27 项），以及其他列出文件中直接 import 被删符号的测试函数（逐条写入 Removed-Tests）。`conftest.py` 中的 `fallback_artifacts`、`fallback_contract` fixture 删除。
-- 禁止事项：G1–G9；`EditorManifest`/`RecipeCatalog` 的解析器、`ContractLike`、`ContractDiagnostic`、`DiagnosticCode`、`ContractTarget`、`EditorCapabilities` 保留；不得改任何 V4 代码的行为。
+- ID：J2.4 ／ 仓库：JobDesk-v2 ／ 分支：`refactor/diet` ／ 前置：J2.1c（基点 13b6f55）
+- 目标：删除 V1/V2 合同解析、provider、service、内置 manifest/catalog 快照、file mode，以及只守护它们的测试。
+- 类型：`delete`（带必要的测试改写）
+- 做法：验收方已在 13b6f55 上做出并通过全量验证的原型，导出为 `handoff/J2.4-src-tests.patch`（35 个文件）。执行模型**应用补丁、复核、自检、提交**，不重新设计。
+- 允许修改的文件：与补丁涉及的 35 个文件完全一致（删除 7 个、修改 26 个、删除脚本 2 个）；补丁之外任何文件的改动都算越界。
+- 具体步骤：
+  1. `git apply --check` 再 `git apply` 补丁；`git status` 的文件集合必须等于补丁的文件集合。
+  2. 复核补丁：删除了 `contract/parse.py`、`providers.py`、`service.py`、`infrastructure/editor/*`、`manifest.py` 与 `recipes.py` 中的内置快照、`models.py` 中的 `VerifiedEditorContract`/`ContractLevel`/`ArtifactSource`、`app.py` 的 file mode、`diagnostics.py` 的 Contract override 行、README 的 `JOBDESK_V2_CONTRACT` 与降级说明、`scripts/screenshots_phase_g.py`、`scripts/gen_editor_field_matrix.py`；没有任何 V4 行为代码被改。
+  3. 被删除的测试恰好是 `handoff/J2.4-removed-tests.txt` 的 82 项（逐行对照，不多不少）。
+- 禁止事项：G1–G9；不得手工再改补丁内容；若补丁无法应用或自检与期望不符，停止报告，不要自行修补。
 - 验收命令：JD 标准验收，另加
   ```bash
-  cd $JD && git grep -nE "SUPPORTED_CONTRACT_SCHEMAS|StableFallback|LocalProducerContractProvider|EditorContractService|FallbackArtifacts|snapshot_contract|parse_contract_bytes|VerifiedEditorContract|JOBDESK_V2_CONTRACT|LocalFileByteSource" -- src tests README.md && echo FAIL || echo ok
+  cd $JD && git grep -nE "StableFallback|VerifiedEditorContract|JOBDESK_V2_CONTRACT|parse_contract_bytes|LocalFileByteSource|build_contract_service" -- src tests scripts README.md && echo FAIL || echo ok
   ```
-  期望：Removed-Tests 等于提交信息中逐条列出的节点；失败集合 ⊆ J2.3 的失败集合（不得新增）；contract_key 不变。
-- 提交信息模板：`refactor(editor)!: delete the V1/V2 contract wire, file mode and bundled snapshot` + 通用尾部。
+  期望：0 failed、7 skipped、2325 passed；collect 2332（2414−82，无新增）；`startup_smoke.py` 输出 `startup smoke: ok`；ruff/format/mypy 通过。
+- 提交信息模板：`refactor(editor)!: delete the V1/V2 contract wire, file mode and bundled snapshot` + 通用尾部（Removed-Tests 写 82 并附清单文件名，Behavior-Change 写：无合同时编辑被禁用，提示改为 "Configuration editing is disabled until a server contract is resolved."；JOBDESK_V2_CONTRACT 环境变量不再有效）。
 
 ### J2.5 — （可选）离线编辑：缓存最近一次 V4 contract
 
