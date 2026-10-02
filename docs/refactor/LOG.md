@@ -379,3 +379,8 @@
 - 验收人独立：两提交与 handoff 补丁字节一致；move_identity_check：topology 21 个、frame_compare 7 个定义 AST 相同；deleted_modules_check（calc、workflow.export）通过；ruff/mypy 通过；全量 4106 passed + 2 个负载敏感失败（test_v4_runtime_cutover 的两个端到端测试，单独运行均通过），执行模型自报 4108 passed / 12 skipped；golden 由执行模型自报 ok。
 - 已知负载敏感测试（并行分片下偶发，单独稳定）：test_v44_worker::test_cancel_trap…、test_v4_runtime_cutover 的 test_worker_runs_v4_end_to_end / test_plain_cli_runs_v4_application。
 - 推送 refactor/diet-c5（授权：refactor/*）。
+
+## C5.3b 补丁已备（2026-10-03，验收方原型）
+- 基点 a261bbf；3 个文件；全量 4121 passed + 2 个已知负载敏感测试（单独通过）= 4123，collect 4135（+15），golden ok；RDKit GetBestRMS 交叉验证四个对称体系一致、两个构象对一致不合并。
+- 发现并处理：直接在顶层导入 science 模块会令 worker 导入闭包载入 confflow.core（test_worker_run_import_closure_is_compiler_free 失败），改为懒加载。
+- 裁定：严格小于（用户默认）；阈值 0 不再合并；记入卡片。

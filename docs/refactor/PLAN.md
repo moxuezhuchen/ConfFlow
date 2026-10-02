@@ -972,13 +972,16 @@ IS 分支上没有 `docs/refactor/`。各卡如需工具，从 `$TOOLS` 运行�
 
 ### C5.3b — V4 refine 调用对称映射去重（logic；Q-R1）
 
-- ID：C5.3b ／ 前置：C5.3a ／ 类型：`logic`（科学行为变化：V4 refine 将合并仅原子标号对称置换的构象）
-- 内容：`TransformExecutor._duplicate_of` 改为调用 `science/frame_compare.compare_frames`（或等价封装），保持科学分组（`_scientific_group`）与 `max_structures` 语义；新增 native 键 `mapping_budget`（默认 `DEFAULT_MAPPING_NODE_BUDGET`）；`unresolved` 保留两帧并在 notes 中写明；阈值比较方向沿用现有 V4 语义（`<=`）还是旧语义（`<`）需在卡片中显式裁定并以测试固定。
-- 独立对照验收（必须）：
-  1. RDKit `rdMolAlign.GetBestRMS` 交叉验证：对下列体系，V4 refine 判定重复 ⇔ GetBestRMS < 阈值，不一致即升级给用户；
-  2. 回归用例（均含氢的真实分子）：丁烷（甲基氢循环置换，应合并）、叔丁基（甲基内部与甲基间置换，应合并）、苯环翻转（应合并）、非对称体系（如 2-丁醇/不同取代基的构象，**不得误合并**）、真正不同的二面角（不得合并）；
-  3. 性能测试沿用 C5.3a 的节点数记录，V4 路径下不得增加。
-- 任何与 TS1、环、扭转、立体相关的行为变化 → 升级用户，不得写成"预期变化"。
+- ID：C5.3b ／ 仓库：ConfFlow ／ 分支：`refactor/diet-c5` ／ 前置：C5.3a、C5.2b（基点 a261bbf） ／ 类型：`logic`（科学行为变化：V4 refine 将合并仅原子标号对称置换的构象）。做法：应用 `handoff/C5.3b-src-tests.patch`（3 个文件），不重新设计。
+- 内容：`TransformExecutor._refine` 改用 `science/frame_compare.compare_frames`（懒加载，避免 worker 导入闭包载入 `confflow.core`，该约束由 `test_worker_run_import_closure_is_compiler_free` 守护）；每条记录用 `perceive_adjacency`（`bond_scale`，错误语义不变）建图后做合法映射下的 RMSD 比较；新增 native 键 `mapping_budget`（非负整数，默认 1000 = `DEFAULT_MAPPING_NODE_BUDGET`），映射搜索预算耗尽 → 两帧都保留，notes 写明 "unresolved"。科学分组（含元素顺序）、`max_structures`、`heavy_only` 语义不变。
+- **裁定（用户默认，写入此处）：** 阈值比较用旧 refine 的严格小于（`rmsd < threshold`），与搬来的 `compare_frames` 及其测试一致；因此 `rmsd_threshold_angstrom = 0` 不再合并任何结构（旧 V4 的 `<=` 在 0 时会合并完全相同的复制品）。notes 文本从 `<=` 改为 `<`。
+- 独立对照与回归（新增 15 项，带氢的真实分子）：
+  1. RDKit `rdMolAlign.GetBestRMS` 交叉验证：丁烷（甲基氢置换）、叔丁醇（甲基互换+氢循环）、甲苯（邻/间位互换）、苯环（环旋转），V4 合并 ⇔ GetBestRMS < 0.25；其中除苯环外固定下标 RMSD 都大于阈值，所以合并只能来自合法映射搜索。
+  2. 不得误合并：反式/邻位交叉丁烷、反式/邻位交叉 2-丁醇（GetBestRMS > 0.25，两者都保留）；对称置换的副本不得掩盖真正不同的构象。
+  3. 输入顺序不影响结果；预算耗尽 → 保留并注明；`mapping_budget` 校验；阈值 0 不合并；`REFINE_DEFAULT_MAPPING_BUDGET == DEFAULT_MAPPING_NODE_BUDGET`。
+- 限制（已核实，不在本卡改变）：科学分组键含元素顺序，只在同一元素序列内比较；ConfGen 同一输入产生的构象元素序列相同，所以这是相关情形。
+- 自检期望：`{"passed": 4123, "skipped": 12}`（含两个负载敏感测试，见下），collect 4135（4120 + 15），Removed 0、Added 15（清单 `handoff/C5.3b-added-tests.txt`）；`golden_check.py` ok（TS1、engine 报告不涉及 refine）；ruff/mypy/black 通过。**已知负载敏感：** `tests/v4/test_v4_runtime_cutover.py` 的 `test_worker_runs_v4_end_to_end`、`test_plain_cli_runs_v4_application` 在并行分片且机器忙时偶发失败（单独运行稳定通过）；若只有它们失败，单独重跑，通过则在报告里如实写出。
+- 提交信息模板：`feat(execution)!: refine merges symmetry-equivalent relabellings through the legal-mapping search` + 通用尾部（Added-Tests 15，测试名从清单逐字复制；Behavior-Change 写明严格小于与阈值 0）。
 
 ### C5.3c — refine 的 `topology_bonds` 参数（Q-R2，用户 2026-10-02 选方案 B）
 

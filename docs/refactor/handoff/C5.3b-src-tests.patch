@@ -1,0 +1,640 @@
+diff --git a/confflow/execution/transform_executor.py b/confflow/execution/transform_executor.py
+index 9b403ff..d12860e 100644
+--- a/confflow/execution/transform_executor.py
++++ b/confflow/execution/transform_executor.py
+@@ -19,11 +19,13 @@ The geometry comparison science lives in :mod:`confflow.science`
+ - default ``bond_scale = 1.2`` is ``topology.BOND_SCALE_FACTOR``;
+ - default ``rmsd_threshold_angstrom = 0.25`` is
+   ``RefineOptions.threshold``;
+-- duplicate comparison follows the ``rmsd_engine.compare_frames`` rule
+-  that RMSD is only evaluated under a legal element/edge-preserving
+-  mapping, with the Kabsch formulation of ``rmsd_engine.kabsch_rmsd``
+-  in :mod:`confflow.science.cluster`.  This module only wires those
+-  algorithms to typed V4 domain records.
++- duplicate comparison is :func:`confflow.science.frame_compare.compare_frames`:
++  RMSD is only evaluated under a legal element/edge-preserving mapping
++  found by the budgeted exact search of
++  :mod:`confflow.science.topology_mapping` (so atoms that differ only by
++  symmetry-equivalent labels, such as the hydrogens of a methyl group, are
++  recognised as duplicates).  This module only wires those algorithms to
++  typed V4 domain records.
+ 
+ What is NOT carried over: XYZ file I/O, multiprocessing pools, CLI
+ progress, energy-window / imaginary-frequency filtering (transform input
+@@ -41,6 +43,10 @@ Kinds:
+   grouping as above plus element signature; within a group, candidates
+   in canonical id order are compared against retained representatives
+   and dropped only on a proven RMSD witness at or below the threshold.
++  A candidate is a duplicate when some legal mapping gives an RMSD
++  strictly below the threshold.  When the mapping search exhausts its node
++  budget (``mapping_budget``, default 1000 nodes per pair) the pair is
++  *unresolved*: both structures are kept and the step notes say so.
+   Optional ``max_structures`` truncates in id order.
+ - ``filter``: explicit ``min_atoms`` / ``max_atoms`` / ``max_structures``
+   selection in canonical id order.  Unknown native keys fail closed.
+@@ -69,7 +75,6 @@ from ..domain.result import ResultSet
+ from ..domain.structure import StructureRecord, StructureSet
+ from ..domain.work_item import RecoveryInfo, Timing, WorkItem, WorkItemResult
+ from ..science.bonds import perceive_adjacency
+-from ..science.cluster import kabsch_rmsd
+ from .native import NativeErrorCode
+ from .work_item_executor import ItemExecutionContext, _diagnostic
+ 
+@@ -83,10 +88,16 @@ REFINE_DEFAULT_RMSD_THRESHOLD_ANGSTROM = 0.25
+ #: Default bond-perception scale (``topology.BOND_SCALE_FACTOR``).
+ REFINE_DEFAULT_BOND_SCALE = 1.2
+ 
++#: Default mapping-search node budget per compared pair
++#: (``topology_mapping.DEFAULT_MAPPING_NODE_BUDGET``; equality is tested).  The
++#: science modules are imported lazily inside ``_frame``/``_duplicate_of`` so the
++#: worker import closure does not load ``confflow.core`` for non-refine runs.
++REFINE_DEFAULT_MAPPING_BUDGET = 1000
++
+ #: Allowed step-native keys per kind (unknown keys fail closed).
+ FILTER_NATIVE_KEYS = frozenset({"max_structures", "min_atoms", "max_atoms"})
+ REFINE_NATIVE_KEYS = frozenset(
+-    {"rmsd_threshold_angstrom", "bond_scale", "heavy_only", "max_structures"}
++    {"rmsd_threshold_angstrom", "bond_scale", "heavy_only", "max_structures", "mapping_budget"}
+ )
+ 
+ 
+@@ -254,6 +265,7 @@ class TransformExecutor:
+         )
+         bond_scale = float(native.get("bond_scale", REFINE_DEFAULT_BOND_SCALE))
+         heavy_only = native.get("heavy_only", False)
++        mapping_budget = native.get("mapping_budget", REFINE_DEFAULT_MAPPING_BUDGET)
+         max_structures = native.get("max_structures")
+         if not math.isfinite(threshold) or threshold < 0:
+             raise DomainError(
+@@ -261,6 +273,14 @@ class TransformExecutor:
+             )
+         if not math.isfinite(bond_scale) or bond_scale <= 0:
+             raise DomainError(f"refine bond_scale must be a positive number, got {bond_scale!r}")
++        if (
++            isinstance(mapping_budget, bool)
++            or not isinstance(mapping_budget, int)
++            or mapping_budget < 0
++        ):
++            raise DomainError(
++                f"refine mapping_budget must be an integer >= 0, got {mapping_budget!r}"
++            )
+         if not isinstance(heavy_only, bool):
+             raise DomainError(f"refine heavy_only must be a boolean, got {heavy_only!r}")
+         if max_structures is not None and (
+@@ -278,22 +298,24 @@ class TransformExecutor:
+         notes: list[str] = []
+         for group in groups.values():
+             ordered = sorted(group, key=lambda item: item.id)
+-            adjacency = {record.id: self._adjacency(record, bond_scale) for record in ordered}
++            frames = {record.id: self._frame(record, bond_scale) for record in ordered}
+             retained: list[StructureRecord] = []
+             for record in ordered:
+                 witness = self._duplicate_of(
+                     record,
+-                    adjacency[record.id],
++                    frames[record.id],
+                     retained,
+-                    adjacency,
++                    frames,
+                     threshold,
+                     bool(heavy_only),
++                    int(mapping_budget),
++                    notes,
+                 )
+                 if witness is not None:
+                     other, rmsd = witness
+                     notes.append(
+                         f"dropped {record.id} as duplicate of {other.id} "
+-                        f"(rmsd {rmsd:.4f} A <= {threshold:g} A)"
++                        f"(rmsd {rmsd:.4f} A < {threshold:g} A)"
+                     )
+                     continue
+                 retained.append(record)
+@@ -317,44 +339,53 @@ class TransformExecutor:
+         except ValueError as exc:
+             raise DomainError(f"refine bond perception failed for {record.id}: {exc}") from exc
+ 
++    @classmethod
++    def _frame(cls, record: StructureRecord, bond_scale: float) -> dict[str, Any]:
++        """Return the comparison frame (atoms, coordinates, bonding graph) of one record."""
++        from ..science.topology_mapping import graph_from_adjacency
++
++        graph = graph_from_adjacency(record.atoms, cls._adjacency(record, bond_scale))
++        return {
++            "atoms": list(record.atoms),
++            "coords": np.asarray(record.coordinates, dtype=np.float64),
++            "graph": graph,
++        }
++
+     @staticmethod
+     def _duplicate_of(
+         record: StructureRecord,
+-        adjacency: Sequence[Sequence[int]],
++        frame: dict[str, Any],
+         retained: Sequence[StructureRecord],
+-        adjacency_by_id: Mapping[str, Sequence[Sequence[int]]],
++        frames: Mapping[str, dict[str, Any]],
+         threshold: float,
+         heavy_only: bool,
++        mapping_budget: int,
++        notes: list[str],
+     ) -> tuple[StructureRecord, float] | None:
+         """Return the retained duplicate witness for *record*, if proven.
+ 
+-        Proof requires identical elements at identical indices and
+-        identical adjacency (fixed-index topology identity) plus a Kabsch
+-        RMSD at or below the threshold.  Anything else — different
+-        topology, different order — is kept, never collapsed.
++        Proof requires a legal element/edge-preserving mapping under which
++        the Kabsch RMSD is strictly below the threshold.  A pair whose
++        mapping search runs out of budget is unresolved and is kept, never
++        collapsed; anything else (different topology, distinct geometry) is
++        kept too.
+         """
+-        mine = np.asarray(record.coordinates, dtype=np.float64)
++        from ..science.frame_compare import compare_frames
++
+         for other in retained:
+-            if len(other.atoms) != len(record.atoms):
+-                continue
+-            if tuple(other.atoms) != tuple(record.atoms):
+-                continue
+-            if [list(row) for row in adjacency_by_id[other.id]] != [list(row) for row in adjacency]:
+-                continue
+-            theirs = np.asarray(other.coordinates, dtype=np.float64)
+-            if heavy_only:
+-                kept_idx = [
+-                    i for i, symbol in enumerate(record.atoms) if atomic_number(symbol) != 1
+-                ]
+-                if not kept_idx:
+-                    continue
+-                mine_sub = mine[np.asarray(kept_idx)]
+-                theirs_sub = theirs[np.asarray(kept_idx)]
+-            else:
+-                mine_sub, theirs_sub = mine, theirs
+-            rmsd = kabsch_rmsd(theirs_sub, mine_sub)
+-            if rmsd <= threshold:
+-                return other, rmsd
++            verdict = compare_frames(
++                frame,
++                frames[other.id],
++                threshold=threshold,
++                heavy_only=heavy_only,
++                node_budget=mapping_budget,
++            )
++            if verdict.status == "duplicate" and verdict.witness_rmsd is not None:
++                return other, float(verdict.witness_rmsd)
++            if verdict.status == "unresolved":
++                notes.append(
++                    f"kept {record.id}: comparison with {other.id} is unresolved ({verdict.reason})"
++                )
+         return None
+ 
+     # -- filter ---------------------------------------------------------------
+diff --git a/tests/science/data/molecules_h.json b/tests/science/data/molecules_h.json
+index 4dd7c1c..6944a9d 100644
+--- a/tests/science/data/molecules_h.json
++++ b/tests/science/data/molecules_h.json
+@@ -347,6 +347,198 @@
+    ]
+   ]
+  },
++ "butanol2_anti": {
++  "atoms": [
++   "C",
++   "C",
++   "O",
++   "C",
++   "C",
++   "H",
++   "H",
++   "H",
++   "H",
++   "H",
++   "H",
++   "H",
++   "H",
++   "H",
++   "H"
++  ],
++  "coords": [
++   [
++    -1.358042,
++    -0.759459,
++    -0.343227
++   ],
++   [
++    -0.683509,
++    0.389374,
++    0.394476
++   ],
++   [
++    -1.427086,
++    1.583066,
++    0.147859
++   ],
++   [
++    0.767976,
++    0.623821,
++    -0.032223
++   ],
++   [
++    1.441455,
++    1.770233,
++    0.703764
++   ],
++   [
++    -0.893601,
++    -1.721205,
++    -0.108753
++   ],
++   [
++    -2.418,
++    -0.815216,
++    -0.071862
++   ],
++   [
++    -1.319662,
++    -0.605899,
++    -1.427264
++   ],
++   [
++    -0.727615,
++    0.203044,
++    1.473028
++   ],
++   [
++    -1.400572,
++    1.758713,
++    -0.808349
++   ],
++   [
++    1.351905,
++    -0.294958,
++    0.10458
++   ],
++   [
++    0.791151,
++    0.827902,
++    -1.110235
++   ],
++   [
++    0.867281,
++    2.696048,
++    0.598087
++   ],
++   [
++    2.44167,
++    1.943674,
++    0.293889
++   ],
++   [
++    1.554109,
++    1.551429,
++    1.769615
++   ]
++  ]
++ },
++ "butanol2_gauche": {
++  "atoms": [
++   "C",
++   "C",
++   "O",
++   "C",
++   "C",
++   "H",
++   "H",
++   "H",
++   "H",
++   "H",
++   "H",
++   "H",
++   "H",
++   "H",
++   "H"
++  ],
++  "coords": [
++   [
++    -1.358042,
++    -0.759459,
++    -0.343227
++   ],
++   [
++    -0.683509,
++    0.389374,
++    0.394476
++   ],
++   [
++    -1.427086,
++    1.583066,
++    0.147859
++   ],
++   [
++    0.767976,
++    0.623821,
++    -0.032223
++   ],
++   [
++    0.922916,
++    0.957346,
++    -1.506762
++   ],
++   [
++    -0.893601,
++    -1.721205,
++    -0.108753
++   ],
++   [
++    -2.418,
++    -0.815216,
++    -0.071862
++   ],
++   [
++    -1.319662,
++    -0.605899,
++    -1.427264
++   ],
++   [
++    -0.727615,
++    0.203044,
++    1.473028
++   ],
++   [
++    -1.400572,
++    1.758713,
++    -0.808349
++   ],
++   [
++    1.212633,
++    1.422569,
++    0.574508
++   ],
++   [
++    1.353074,
++    -0.276504,
++    0.194429
++   ],
++   [
++    0.469902,
++    0.18337,
++    -2.134229
++   ],
++   [
++    1.984128,
++    1.025684,
++    -1.766897
++   ],
++   [
++    0.459822,
++    1.917674,
++    -1.751545
++   ]
++  ]
++ },
+  "tbutanol": {
+   "atoms": [
+    "C",
+diff --git a/tests/v4/test_transform_refine_symmetry.py b/tests/v4/test_transform_refine_symmetry.py
+new file mode 100644
+index 0000000..28472ae
+--- /dev/null
++++ b/tests/v4/test_transform_refine_symmetry.py
+@@ -0,0 +1,238 @@
++#!/usr/bin/env python3
++
++"""V4 ``refine`` recognises symmetry-equivalent relabellings (C5.3b).
++
++Every structure here carries hydrogens.  ``refine`` must merge two records
++that differ only by a symmetry-equivalent relabelling of atoms of the same
++element (methyl hydrogens, the arms of a tert-butyl group, the two ortho/meta
++positions of a ring) and must never merge records whose geometry really
++differs.  The independent reference is RDKit's symmetry-aware
++``rdMolAlign.GetBestRMS``: ``refine`` merges a pair exactly when RDKit's best
++RMSD is below the threshold.
++"""
++
++from __future__ import annotations
++
++import json
++from pathlib import Path
++
++import numpy as np
++import pytest
++
++from confflow.domain.errors import DomainError
++from confflow.domain.structure import StructureRecord
++from confflow.execution.transform_executor import (
++    REFINE_DEFAULT_MAPPING_BUDGET,
++    TransformExecutor,
++)
++from confflow.science.cluster import kabsch_rmsd
++from confflow.science.topology_mapping import DEFAULT_MAPPING_NODE_BUDGET, build_graph
++
++DATA = Path(__file__).resolve().parent.parent / "science" / "data" / "molecules_h.json"
++THRESHOLD = 0.25
++
++SMILES = {
++    "butane": "CCCC",
++    "butane_anti": "CCCC",
++    "butane_gauche": "CCCC",
++    "tbutanol": "CC(C)(C)O",
++    "benzene": "c1ccccc1",
++    "toluene": "Cc1ccccc1",
++    "butanol2_anti": "CC(O)CC",
++    "butanol2_gauche": "CC(O)CC",
++}
++
++
++def _molecule(name: str) -> tuple[list[str], np.ndarray]:
++    payload = json.loads(DATA.read_text(encoding="utf-8"))[name]
++    return list(payload["atoms"]), np.array(payload["coords"], dtype=float)
++
++
++def _record(identifier: str, atoms: list[str], coords: np.ndarray) -> StructureRecord:
++    return StructureRecord(
++        id=identifier,
++        atoms=tuple(atoms),
++        coordinates=tuple(tuple(float(x) for x in row) for row in coords),
++        charge=0,
++        multiplicity=1,
++    )
++
++
++def _hydrogens(graph, carbon: int) -> list[int]:
++    return [j for j in graph.adjacency[carbon] if graph.symbols[j] == "H"]
++
++
++def _carbons_with(graph, carbon_neighbours: int) -> list[int]:
++    return [
++        i
++        for i, symbol in enumerate(graph.symbols)
++        if symbol == "C"
++        and sum(graph.symbols[j] == "C" for j in graph.adjacency[i]) == carbon_neighbours
++    ]
++
++
++def _symmetric_permutation(name: str) -> list[int]:
++    """Return a permutation of atom labels that is a symmetry of the molecular graph."""
++    atoms, coords = _molecule(name)
++    graph = build_graph(atoms, coords).graph
++    permutation = list(range(len(atoms)))
++    if name == "butane":
++        first, last = _hydrogens(graph, 0), _hydrogens(graph, 3)
++        permutation[first[0]], permutation[first[1]], permutation[first[2]] = (
++            first[1],
++            first[2],
++            first[0],
++        )
++        permutation[last[0]], permutation[last[1]] = last[1], last[0]
++    elif name == "tbutanol":
++        quaternary = _carbons_with(graph, 3)[0]
++        first, second, third = [j for j in graph.adjacency[quaternary] if graph.symbols[j] == "C"]
++        permutation[first], permutation[second] = second, first
++        for x, y in zip(_hydrogens(graph, first), _hydrogens(graph, second)):
++            permutation[x], permutation[y] = y, x
++        cycle = _hydrogens(graph, third)
++        permutation[cycle[0]], permutation[cycle[1]], permutation[cycle[2]] = (
++            cycle[1],
++            cycle[2],
++            cycle[0],
++        )
++    elif name == "toluene":
++        ipso = _carbons_with(graph, 3)[0]
++        ortho = [j for j in graph.adjacency[ipso] if _carbons_with_neighbour_count(graph, j) == 2]
++        meta = [
++            [k for k in graph.adjacency[o] if graph.symbols[k] == "C" and k != ipso][0]
++            for o in ortho
++        ]
++        for x, y in ((ortho[0], ortho[1]), (meta[0], meta[1])):
++            permutation[x], permutation[y] = y, x
++            hx, hy = _hydrogens(graph, x)[0], _hydrogens(graph, y)[0]
++            permutation[hx], permutation[hy] = hy, hx
++    elif name == "benzene":
++        carbons = [i for i, symbol in enumerate(graph.symbols) if symbol == "C"]
++        ring = [carbons[0]]
++        while len(ring) < 6:
++            ring.append(
++                [j for j in graph.adjacency[ring[-1]] if graph.symbols[j] == "C" and j not in ring][
++                    0
++                ]
++            )
++        for k in range(6):
++            target = ring[(k + 2) % 6]
++            permutation[ring[k]] = target
++            permutation[_hydrogens(graph, ring[k])[0]] = _hydrogens(graph, target)[0]
++    else:  # pragma: no cover - guard against a typo in the parametrisation
++        raise AssertionError(name)
++    return permutation
++
++
++def _carbons_with_neighbour_count(graph, index: int) -> int:
++    return (
++        sum(graph.symbols[j] == "C" for j in graph.adjacency[index])
++        if graph.symbols[index] == "C"
++        else -1
++    )
++
++
++def _kept_ids(records: list[StructureRecord], **native) -> list[str]:
++    kept, _notes = TransformExecutor()._refine(records, native)
++    return [record.id for record in kept]
++
++
++def _rdkit_best_rms(name: str, coords_a: np.ndarray, coords_b: np.ndarray) -> float:
++    """Symmetry-aware RMSD of two coordinate sets of the same molecule (RDKit)."""
++    from rdkit import Chem
++    from rdkit.Chem import rdMolAlign
++    from rdkit.Geometry import Point3D
++
++    mol = Chem.AddHs(Chem.MolFromSmiles(SMILES[name]))
++
++    def with_coordinates(coords: np.ndarray):
++        copy = Chem.Mol(mol)
++        conformer = Chem.Conformer(copy.GetNumAtoms())
++        for index, (x, y, z) in enumerate(coords):
++            conformer.SetAtomPosition(index, Point3D(float(x), float(y), float(z)))
++        copy.RemoveAllConformers()
++        copy.AddConformer(conformer, assignId=True)
++        return copy
++
++    return float(rdMolAlign.GetBestRMS(with_coordinates(coords_b), with_coordinates(coords_a)))
++
++
++@pytest.mark.parametrize("name", ["butane", "tbutanol", "toluene", "benzene"])
++def test_symmetric_relabelling_is_merged_and_agrees_with_rdkit(name: str) -> None:
++    atoms, coords = _molecule(name)
++    permutation = _symmetric_permutation(name)
++    relabelled = coords[permutation]
++    assert _rdkit_best_rms(name, coords, relabelled) < THRESHOLD
++    # For the non-trivial relabellings the fixed-index RMSD is large, so a merge
++    # can only come from the legal-mapping search (benzene's ring rotation is a
++    # rigid symmetry of the coordinates and stays small).
++    fixed_index = kabsch_rmsd(coords, relabelled)
++    assert (fixed_index > THRESHOLD) is (name != "benzene")
++    records = [_record("a", atoms, coords), _record("b", atoms, relabelled)]
++    assert _kept_ids(records, rmsd_threshold_angstrom=THRESHOLD) == ["a"]
++
++
++@pytest.mark.parametrize(
++    ("first", "second"),
++    [("butane_anti", "butane_gauche"), ("butanol2_anti", "butanol2_gauche")],
++)
++def test_different_conformers_are_never_merged_and_agree_with_rdkit(first, second) -> None:
++    atoms, coords_a = _molecule(first)
++    _atoms, coords_b = _molecule(second)
++    assert _rdkit_best_rms(first, coords_a, coords_b) > THRESHOLD
++    records = [_record("a", atoms, coords_a), _record("b", atoms, coords_b)]
++    assert _kept_ids(records, rmsd_threshold_angstrom=THRESHOLD) == ["a", "b"]
++
++
++def test_symmetric_relabelling_of_one_conformer_does_not_hide_a_different_one() -> None:
++    atoms, anti = _molecule("butane_anti")
++    _atoms, gauche = _molecule("butane_gauche")
++    graph = build_graph(atoms, anti).graph
++    first = _hydrogens(graph, 0)
++    permutation = list(range(len(atoms)))
++    permutation[first[0]], permutation[first[1]], permutation[first[2]] = (
++        first[1],
++        first[2],
++        first[0],
++    )
++    records = [
++        _record("a", atoms, anti),
++        _record("b", atoms, gauche),
++        _record("c", atoms, anti[permutation]),
++    ]
++    assert _kept_ids(records, rmsd_threshold_angstrom=THRESHOLD) == ["a", "b"]
++
++
++def test_result_does_not_depend_on_input_order() -> None:
++    atoms, coords = _molecule("butane")
++    permutation = _symmetric_permutation("butane")
++    records = [_record("a", atoms, coords), _record("b", atoms, coords[permutation])]
++    assert _kept_ids(records) == _kept_ids(list(reversed(records))) == ["a"]
++
++
++def test_exhausted_mapping_budget_keeps_both_and_says_so() -> None:
++    atoms, coords = _molecule("butane")
++    permutation = _symmetric_permutation("butane")
++    records = [_record("a", atoms, coords), _record("b", atoms, coords[permutation])]
++    kept, notes = TransformExecutor()._refine(records, {"mapping_budget": 5})
++    assert [record.id for record in kept] == ["a", "b"]
++    assert any("unresolved" in note and "b" in note for note in notes)
++
++
++def test_threshold_zero_merges_nothing_because_the_comparison_is_strict() -> None:
++    atoms, coords = _molecule("butane")
++    records = [_record("a", atoms, coords), _record("b", atoms, coords)]
++    assert _kept_ids(records, rmsd_threshold_angstrom=0.0) == ["a", "b"]
++    assert _kept_ids(records) == ["a"]
++
++
++@pytest.mark.parametrize("budget", [-1, True, 1.5, "10"])
++def test_mapping_budget_must_be_a_non_negative_integer(budget) -> None:
++    atoms, coords = _molecule("butane")
++    with pytest.raises(DomainError, match="mapping_budget"):
++        TransformExecutor()._refine([_record("a", atoms, coords)], {"mapping_budget": budget})
++
++
++def test_default_mapping_budget_is_the_science_default() -> None:
++    assert REFINE_DEFAULT_MAPPING_BUDGET == DEFAULT_MAPPING_NODE_BUDGET == 1000
