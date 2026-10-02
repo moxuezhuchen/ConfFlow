@@ -107,3 +107,16 @@
   2. `reachability.py` 把有可达子模块的包（`confflow.domain`、`confflow.science`、`confflow.workflow` 等 16 个）也列为不可达。包的 `__init__` 会被隐式导入，这是误报，方向危险；叶子模块名单（55 个）与验收方独立计算的结果一致，仅 `shared.orca_blocks` 一处差异。C5.2 和 C5.5 之前必须修复，在那之前只信叶子模块并人工核对。
   3. 提交信息的署名行为 `Co-Authored-By: glm-5.3-flash`，没有邮箱，不规范，不改写历史。
 - 产物：/tmp/refactor-acc/B0.1/
+
+## 2026-10-02 B0.2 — 通过
+
+- 仓库/分支/提交：ConfFlow `refactor/diet` 096af5f（父 eec4e80）；执行者：外部模型
+- 类型：baseline（工具修复）；白名单检查：ok，只改 `docs/refactor/tools/reachability.py`（+11/-1）和 `test_inventory.py`（+4/-3）；`baseline/` 与其他工具未动
+- 静态检查（验收方重跑）：ruff ok；black ok；mypy ok（257）
+- 验收方重跑：
+  - `reachability.py`：输出 62 个模块，与验收方独立计算的不可达名单（62 个）逐个相同；没有残留的有可达后代的包；`workflow.step_naming`、`workflow.export`、`science.torsion`、`science.confgen.engine`、`execution.confgen_executor`、`producer.contract`、`shared.orca_blocks`、`shared.defaults` 均不在名单中
+  - `test_inventory.py diff`（用 J0b 前后的清单，删 1 增 2）：`--declared 1 --declared-added 2` 退出 0；`--declared-added 1` 退出 1；不带 `--declared-added` 退出 1（与修复前相同）；两份相同清单 `--declared 0` 退出 0
+- golden：未重跑。本卡没有修改任何生成工具和基线文件；工具文件之外的树与 eec4e80 相同
+- 远端：未推送（`origin/refactor/diet` 仍不存在于 CF；JD 仍为 5847bc7）
+- 结论：通过。B0.1 验收时登记的两个工具缺陷已关闭。
+- 遗留：提交署名为 `glm-5.3-flash <noreply@example.com>`，格式已符合要求。
