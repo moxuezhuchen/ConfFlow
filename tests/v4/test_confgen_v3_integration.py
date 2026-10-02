@@ -1298,6 +1298,12 @@ class TestProducerWiring:
         assert section["coordination_budgets"] == {"max_nfev": 120, "maxiter": 400}
         assert section["coordination_site_group_scope"] == "declared_topological_subgroup"
         assert section["result_provenance"] == ["certificate_digest", "inherited_scope"]
+        assert section["report_provenance"] == [
+            "/certificate/digest",
+            "/enumeration/digest",
+            "/input_state_digest",
+            "/input_certificate_digest",
+        ]
 
     def test_manifest_v3_fields_resolve(self) -> None:
         from confflow.producer.manifest import build_editor_manifest_v4
