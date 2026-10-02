@@ -1,0 +1,464 @@
+{
+ "leaves": [
+  {
+   "atoms": [
+    "C",
+    "C",
+    "C",
+    "C",
+    "C",
+    "C",
+    "C",
+    "H"
+   ],
+   "coords_sha256": "b896c01987b421865c2a13c670ac73471299ba83de4f1211e814d5389be919c0",
+   "state_key": {
+    "coordination": null,
+    "rings": {
+     "r1": {
+      "anchor": 0,
+      "direction": "as_given",
+      "template": "chair_A_6",
+      "torsions": [
+       -60.0,
+       60.0,
+       -60.0,
+       60.0,
+       -60.0,
+       60.0
+      ]
+     }
+    },
+    "schema_version": 3,
+    "torsions": {
+     "t1": 60.0
+    }
+   }
+  },
+  {
+   "atoms": [
+    "C",
+    "C",
+    "C",
+    "C",
+    "C",
+    "C",
+    "C",
+    "H"
+   ],
+   "coords_sha256": "64934a19ed0a0c18fb4d34e91a5197ee619bc13da1a37956bbde26f458ac628d",
+   "state_key": {
+    "coordination": null,
+    "rings": {
+     "r1": {
+      "anchor": 0,
+      "direction": "as_given",
+      "template": "chair_B_6",
+      "torsions": [
+       60.0,
+       -60.0,
+       60.0,
+       -60.0,
+       60.0,
+       -60.0
+      ]
+     }
+    },
+    "schema_version": 3,
+    "torsions": {
+     "t1": 60.0
+    }
+   }
+  },
+  {
+   "atoms": [
+    "C",
+    "C",
+    "C",
+    "C",
+    "C",
+    "C",
+    "C",
+    "H"
+   ],
+   "coords_sha256": "bc4396af0ec0c61ed9e9498ed4427315a340b073a07e7030381c6886aba09bb7",
+   "state_key": {
+    "coordination": null,
+    "rings": {
+     "r1": {
+      "anchor": 0,
+      "direction": "as_given",
+      "template": "chair_A_6",
+      "torsions": [
+       -60.0,
+       60.0,
+       -60.0,
+       60.0,
+       -60.0,
+       60.0
+      ]
+     }
+    },
+    "schema_version": 3,
+    "torsions": {
+     "t1": 180.0
+    }
+   }
+  },
+  {
+   "atoms": [
+    "C",
+    "C",
+    "C",
+    "C",
+    "C",
+    "C",
+    "C",
+    "H"
+   ],
+   "coords_sha256": "6fbca2429b58502bb51f6617e113698089139435172e4ebd3782f1fa769c8148",
+   "state_key": {
+    "coordination": null,
+    "rings": {
+     "r1": {
+      "anchor": 0,
+      "direction": "as_given",
+      "template": "chair_B_6",
+      "torsions": [
+       60.0,
+       -60.0,
+       60.0,
+       -60.0,
+       60.0,
+       -60.0
+      ]
+     }
+    },
+    "schema_version": 3,
+    "torsions": {
+     "t1": 180.0
+    }
+   }
+  }
+ ],
+ "report": {
+  "attempt_ledger": {
+   "attempted_without_success": 4,
+   "basis": "issued per-level stage attempts along every explored path: geometry-successful internal expansions plus published leaves plus terminal attempt failures; policy-screened, suppressed-skipped, and deferred-unissued units excluded",
+   "by_status": {
+    "expanded": 4,
+    "failed_numerical": 4,
+    "published_leaf": 4
+   },
+   "deferred_unissued": 0,
+   "geometry_successful": 8,
+   "internal_expanded": 4,
+   "issued_attempts": 12,
+   "policy_screened": 0,
+   "published_leaves": 4,
+   "suppressed_skipped": 0
+  },
+  "axis_order": [
+   "coordination",
+   "rings",
+   "torsions"
+  ],
+  "certificate": {
+   "basis": "terminal equations verify over target records",
+   "digest": "sha256:0c67d494c42069940398868e2ba8fb24b5606ac6373337d92c021034b8a5bbd1",
+   "equations_ok": true
+  },
+  "counts": {
+   "anomalies": {
+    "AMBIGUOUS_KEY": 0
+   },
+   "deferred_parent_failed_leaves": 0,
+   "deferred_sampled_out": 0,
+   "equation_exact": true,
+   "estimated_deferred_leaves": 0,
+   "failed": {
+    "failed_numerical": 4
+   },
+   "internal_expanded": 4,
+   "policy_excluded": 0,
+   "published": 4,
+   "raw": 8,
+   "realized": 8,
+   "sampled": 8,
+   "status_counts": {
+    "expanded": 4,
+    "failed_numerical": 4,
+    "published_leaf": 4
+   },
+   "target_categories": {
+    "DEFERRED": 0,
+    "DRIFTED": 0,
+    "REALIZATION_SUPPRESSED_BY_VERIFIED_SYMMETRY": 0,
+    "REALIZED": 4,
+    "UNRESOLVED": 4
+   },
+   "unit_basis": {
+    "authoritative_sections": [
+     "leaf_certificate",
+     "attempt_ledger"
+    ],
+    "published": "final leaves",
+    "realized": "successful stage attempts, including internal expansions",
+    "target_categories": "mixed diagnostic records; no certificate equation"
+   }
+  },
+  "drift_events": [],
+  "enumeration": {
+   "basis": "rings:finite declared template product over isolated ring systems; unsupported systems contribute zero with explicit reasons; torsions:complete declared torsion group: 1 enumerate axes with counts [2]; 0 preserve_input",
+   "deferred_sampled_out": 0,
+   "digest": "sha256:1b8d2bc7ed460420639ba8860e253ed3cf39025915dbca3b4f66eaaf296a64db",
+   "exact": true,
+   "exclusions": [],
+   "per_axis": {
+    "rings": {
+     "basis": "finite declared template product over isolated ring systems; unsupported systems contribute zero with explicit reasons",
+     "declared_count": 4,
+     "exact": true,
+     "scope_coverage": "exact",
+     "upper_bound": 4
+    },
+    "torsions": {
+     "basis": "complete declared torsion group: 1 enumerate axes with counts [2]; 0 preserve_input",
+     "declared_count": 2,
+     "exact": true,
+     "scope_coverage": "exact",
+     "upper_bound": 2
+    }
+   },
+   "policy_excluded": 0,
+   "sampled": 8,
+   "sampling": {
+    "cap": null,
+    "capped": false,
+    "seed": null,
+    "sorted": true
+   },
+   "symbolic": {
+    "basis": "unconditional product space",
+    "exact": true,
+    "paths_consistent": true,
+    "paths_detail": "unconditional product space",
+    "raw_leaf_states": 8
+   },
+   "total_declared": 8,
+   "total_upper_bound": 8
+  },
+  "inherited": {
+   "audited": false,
+   "basis": "no incoming chained state",
+   "entries": []
+  },
+  "leaf_certificate": {
+   "anomalies": {
+    "AMBIGUOUS_KEY": 0
+   },
+   "basis": "final joint leaves only: published leaves, terminal leaf failures, leaf rejections, verified suppressions, and deferred ranges (counted arithmetically); internal attempts excluded",
+   "count_details": {
+    "attempted": 8,
+    "deferred_parent": 0,
+    "deferred_sampled_out": 0,
+    "failed": 4,
+    "ok": true,
+    "published": 4,
+    "raw": 8,
+    "rejected": 0,
+    "sampled": 8,
+    "suppressed": 0
+   },
+   "equation_exact": true,
+   "equations_ok": true,
+   "leaf_categories": {
+    "DEFERRED": 0,
+    "DRIFTED": 0,
+    "REALIZATION_SUPPRESSED_BY_VERIFIED_SYMMETRY": 0,
+    "REALIZED": 4,
+    "REJECTED": 0,
+    "UNRESOLVED": 4
+   },
+   "total": 8
+  },
+  "levels": [
+   "rings",
+   "torsions"
+  ],
+  "preflight": {
+   "basis": "rings:finite declared template product over isolated ring systems; unsupported systems contribute zero with explicit reasons; torsions:complete declared torsion group: 1 enumerate axes with counts [2]; 0 preserve_input",
+   "exact": true,
+   "total_declared": 8,
+   "total_upper_bound": 8
+  },
+  "provenance": {
+   "backend": "geometric-rodrigues",
+   "input_id": "mch",
+   "seed": null
+  },
+  "realization": {
+   "attempted": 8,
+   "count_details": {
+    "attempted": 8,
+    "deferred_parent": 0,
+    "deferred_sampled_out": 0,
+    "failed": 4,
+    "ok": true,
+    "published": 4,
+    "raw": 8,
+    "rejected": 0,
+    "sampled": 8,
+    "suppressed": 0
+   },
+   "count_equations_ok": true,
+   "failed": {
+    "failed_numerical": 4
+   },
+   "paths_consistent": true,
+   "paths_detail": "unconditional product space",
+   "proof_contradictions": [],
+   "published": 4,
+   "realization_attempts": 8,
+   "realized": 8,
+   "status_counts": {
+    "expanded": 4,
+    "failed_numerical": 4,
+    "published_leaf": 4
+   },
+   "suppressed": 0,
+   "terminal_detail": "ok",
+   "terminal_equations_ok": true
+  },
+  "sampling": {
+   "cap": null,
+   "capped": false,
+   "seed": null,
+   "sorted": true
+  },
+  "schema_version": 3,
+  "scope": {
+   "breaking_pairs": [],
+   "donor_configuration": null,
+   "excluded_axes": [],
+   "preserved_axes": [],
+   "unsupported": []
+  },
+  "suppression": {
+   "disabled_reason": "combined-axes",
+   "scope": "single-axis runs without sampling caps or top-level exclusions: verified records suppress with a realized representative; otherwise targets realize normally (joint-tree stabilizer, sampled-representative, and policy-excluded-representative scopes pending)",
+   "supported": false,
+   "suppressed": 0
+  }
+ },
+ "targets": [
+  {
+   "axis": "rings",
+   "evidence_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+   "ordinal": 0,
+   "parent_target_id": null,
+   "reason": "expanded",
+   "status": "expanded",
+   "target_id": "rings:000000"
+  },
+  {
+   "axis": "torsions",
+   "evidence_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+   "ordinal": 0,
+   "parent_target_id": "rings:000000",
+   "reason": "published_leaf",
+   "status": "published_leaf",
+   "target_id": "torsions:000000"
+  },
+  {
+   "axis": "torsions",
+   "evidence_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+   "ordinal": 1,
+   "parent_target_id": "rings:000000",
+   "reason": "published_leaf",
+   "status": "published_leaf",
+   "target_id": "torsions:000001"
+  },
+  {
+   "axis": "rings",
+   "evidence_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+   "ordinal": 1,
+   "parent_target_id": null,
+   "reason": "expanded",
+   "status": "expanded",
+   "target_id": "rings:000001"
+  },
+  {
+   "axis": "torsions",
+   "evidence_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+   "ordinal": 0,
+   "parent_target_id": "rings:000001",
+   "reason": "published_leaf",
+   "status": "published_leaf",
+   "target_id": "torsions:000000"
+  },
+  {
+   "axis": "torsions",
+   "evidence_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+   "ordinal": 1,
+   "parent_target_id": "rings:000001",
+   "reason": "published_leaf",
+   "status": "published_leaf",
+   "target_id": "torsions:000001"
+  },
+  {
+   "axis": "rings",
+   "evidence_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+   "ordinal": 2,
+   "parent_target_id": null,
+   "reason": "expanded",
+   "status": "expanded",
+   "target_id": "rings:000002"
+  },
+  {
+   "axis": "torsions",
+   "evidence_sha256": "4731f75ce6571b21241c7116d76cbd1710278b8a377c3af1bc93ffeec973e9bb",
+   "ordinal": 0,
+   "parent_target_id": "rings:000002",
+   "reason": "stage_error:ValueError",
+   "status": "failed_numerical",
+   "target_id": "torsions:000000"
+  },
+  {
+   "axis": "torsions",
+   "evidence_sha256": "4731f75ce6571b21241c7116d76cbd1710278b8a377c3af1bc93ffeec973e9bb",
+   "ordinal": 1,
+   "parent_target_id": "rings:000002",
+   "reason": "stage_error:ValueError",
+   "status": "failed_numerical",
+   "target_id": "torsions:000001"
+  },
+  {
+   "axis": "rings",
+   "evidence_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+   "ordinal": 3,
+   "parent_target_id": null,
+   "reason": "expanded",
+   "status": "expanded",
+   "target_id": "rings:000003"
+  },
+  {
+   "axis": "torsions",
+   "evidence_sha256": "4731f75ce6571b21241c7116d76cbd1710278b8a377c3af1bc93ffeec973e9bb",
+   "ordinal": 0,
+   "parent_target_id": "rings:000003",
+   "reason": "stage_error:ValueError",
+   "status": "failed_numerical",
+   "target_id": "torsions:000000"
+  },
+  {
+   "axis": "torsions",
+   "evidence_sha256": "4731f75ce6571b21241c7116d76cbd1710278b8a377c3af1bc93ffeec973e9bb",
+   "ordinal": 1,
+   "parent_target_id": "rings:000003",
+   "reason": "stage_error:ValueError",
+   "status": "failed_numerical",
+   "target_id": "torsions:000001"
+  }
+ ]
+}

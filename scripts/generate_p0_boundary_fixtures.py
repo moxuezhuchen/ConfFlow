@@ -4,9 +4,8 @@
 
 Every fixture is produced by running the real producer code now -- JCS vectors
 come from ``confflow.domain.canonical`` through
-``confflow.producer.boundary.canonicalize_text``, compatibility expectations
-come from ``evaluate_compatibility``, and the named-binding workflow is
-validated by ``validate_workflow_bytes``.  Consumers copy these files and
+``confflow.producer.boundary.canonicalize_text``, and the named-binding
+workflow is validated by ``validate_workflow_bytes``.  Consumers copy these files and
 verify against them; they may never hand-write an expected value.
 
 Usage
@@ -32,157 +31,13 @@ if str(ROOT) not in sys.path:
 import confflow  # noqa: E402
 from confflow.producer.boundary import (  # noqa: E402
     CANONICALIZATION_ID,
-    compatibility_vocabulary,
-    evaluate_compatibility,
     jcs_vectors,
 )
 from confflow.producer.contract import build_boundary_document  # noqa: E402
 from confflow.producer.validation import validate_workflow_bytes  # noqa: E402
 
 JCS_VECTORS_SCHEMA = "confflow.p0.jcs_vectors.v1"
-COMPATIBILITY_CASES_SCHEMA = "confflow.p0.compatibility_cases.v1"
 NAMED_BINDING_WORKFLOW_SCHEMA = "confflow.p0.named_binding_workflow.v1"
-
-#: Producer-owned compatibility cases.  Expected decisions are computed below,
-#: never written down.
-_COMPATIBILITY_CASES: tuple[dict[str, Any], ...] = (
-    {
-        "id": "exact_capability_match",
-        "requirements": [
-            {
-                "kind": "capability",
-                "name": "calculation",
-                "contract_version": "confflow.contract.calculation.v1",
-            }
-        ],
-        "offered": {
-            "capabilities": {"calculation": "confflow.contract.calculation.v1"},
-            "contracts": {},
-            "semantics_version": "confflow.workflow.v4.semantics.v1",
-        },
-        "content_identity_changed": False,
-        "build_provenance_changed": False,
-    },
-    {
-        "id": "missing_capability",
-        "requirements": [
-            {
-                "kind": "capability",
-                "name": "confgen",
-                "contract_version": "confflow.contract.confgen.v1",
-            }
-        ],
-        "offered": {
-            "capabilities": {"calculation": "confflow.contract.calculation.v1"},
-            "contracts": {},
-            "semantics_version": "confflow.workflow.v4.semantics.v1",
-        },
-        "content_identity_changed": False,
-        "build_provenance_changed": False,
-    },
-    {
-        "id": "capability_version_bump",
-        "requirements": [
-            {
-                "kind": "capability",
-                "name": "calculation",
-                "contract_version": "confflow.contract.calculation.v1",
-            }
-        ],
-        "offered": {
-            "capabilities": {"calculation": "confflow.contract.calculation.v2"},
-            "contracts": {},
-            "semantics_version": "confflow.workflow.v4.semantics.v1",
-        },
-        "content_identity_changed": False,
-        "build_provenance_changed": False,
-    },
-    {
-        "id": "display_only_manifest_change",
-        "requirements": [
-            {
-                "kind": "capability",
-                "name": "calculation",
-                "contract_version": "confflow.contract.calculation.v1",
-            }
-        ],
-        "offered": {
-            "capabilities": {"calculation": "confflow.contract.calculation.v1"},
-            "contracts": {},
-            "semantics_version": "confflow.workflow.v4.semantics.v1",
-        },
-        "content_identity_changed": False,
-        "build_provenance_changed": False,
-    },
-    {
-        "id": "content_identity_changed_same_capabilities",
-        "requirements": [
-            {
-                "kind": "capability",
-                "name": "calculation",
-                "contract_version": "confflow.contract.calculation.v1",
-            }
-        ],
-        "offered": {
-            "capabilities": {"calculation": "confflow.contract.calculation.v1"},
-            "contracts": {},
-            "semantics_version": "confflow.workflow.v4.semantics.v1",
-        },
-        "content_identity_changed": True,
-        "build_provenance_changed": False,
-    },
-    {
-        "id": "build_provenance_changed",
-        "requirements": [
-            {
-                "kind": "capability",
-                "name": "calculation",
-                "contract_version": "confflow.contract.calculation.v1",
-            }
-        ],
-        "offered": {
-            "capabilities": {"calculation": "confflow.contract.calculation.v1"},
-            "contracts": {},
-            "semantics_version": "confflow.workflow.v4.semantics.v1",
-        },
-        "content_identity_changed": False,
-        "build_provenance_changed": True,
-    },
-    {
-        "id": "semantics_version_mismatch",
-        "requirements": [
-            {
-                "kind": "semantic",
-                "name": "semantics_version",
-                "contract_version": "confflow.workflow.v4.semantics.v2",
-            }
-        ],
-        "offered": {
-            "capabilities": {},
-            "contracts": {},
-            "semantics_version": "confflow.workflow.v4.semantics.v1",
-        },
-        "content_identity_changed": False,
-        "build_provenance_changed": False,
-    },
-    {
-        "id": "unsupported_beats_revalidation",
-        "requirements": [
-            {
-                "kind": "capability",
-                "name": "goat",
-                "contract_version": "confflow.contract.calculation.v1",
-            }
-        ],
-        "offered": {
-            "capabilities": {},
-            "contracts": {},
-            "semantics_version": "confflow.workflow.v4.semantics.v1",
-        },
-        "content_identity_changed": True,
-        "build_provenance_changed": True,
-    },
-)
 
 #: The frozen named-binding wire example: run input -> step 1 -> step 2, with a
 #: step-level memory-only override over global resources.  Producer-validated
@@ -251,37 +106,6 @@ def build_jcs_vectors_fixture() -> dict[str, Any]:
     }
 
 
-def build_compatibility_cases_fixture() -> dict[str, Any]:
-    """Return compatibility cases with producer-computed expectations."""
-    cases: list[dict[str, Any]] = []
-    for case in _COMPATIBILITY_CASES:
-        decision = evaluate_compatibility(
-            case["requirements"],
-            case["offered"],
-            content_identity_changed=case["content_identity_changed"],
-            build_provenance_changed=case["build_provenance_changed"],
-        )
-        cases.append(
-            {
-                "id": case["id"],
-                "requirements": case["requirements"],
-                "offered": case["offered"],
-                "content_identity_changed": case["content_identity_changed"],
-                "build_provenance_changed": case["build_provenance_changed"],
-                "expected": {
-                    "status": decision["status"],
-                    "reason_codes": [reason["code"] for reason in decision["reasons"]],
-                },
-            }
-        )
-    return {
-        "content_schema": COMPATIBILITY_CASES_SCHEMA,
-        "vocabulary": compatibility_vocabulary(),
-        "producer_version": confflow.__version__,
-        "cases": cases,
-    }
-
-
 def build_named_binding_fixture() -> tuple[str, dict[str, Any]]:
     """Return the named-binding workflow text plus its producer validation."""
     report = validate_workflow_bytes(NAMED_BINDING_WORKFLOW.encode("utf-8"))
@@ -321,7 +145,6 @@ def generate(out_dir: Path) -> dict[str, str]:
     boundary = build_boundary_document(producer_version=confflow.__version__)
     emit("boundary_protocol.json", boundary)
     emit("jcs_vectors.json", build_jcs_vectors_fixture())
-    emit("compatibility_cases.json", build_compatibility_cases_fixture())
     _, named = build_named_binding_fixture()
     emit("named_binding_workflow.json", named)
     return written

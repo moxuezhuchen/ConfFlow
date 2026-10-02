@@ -1,0 +1,339 @@
+{
+ "leaves": [
+  {
+   "atoms": [
+    "C",
+    "C",
+    "C",
+    "C"
+   ],
+   "coords_sha256": "714920b22e41edbb6efffa8a046b59b8803e27f7193caf46ee019e188068473b",
+   "state_key": {
+    "coordination": {
+     "mode": "A"
+    },
+    "rings": {
+     "mode": "r0"
+    },
+    "schema_version": 3,
+    "torsions": {}
+   }
+  },
+  {
+   "atoms": [
+    "C",
+    "C",
+    "C",
+    "C"
+   ],
+   "coords_sha256": "f3f003399e956ced4dbfd6ca6ed70ef0e1ae8bb57dfa05bdbe9db051cedceda9",
+   "state_key": {
+    "coordination": {
+     "mode": "B"
+    },
+    "rings": {
+     "mode": "r0"
+    },
+    "schema_version": 3,
+    "torsions": {}
+   }
+  },
+  {
+   "atoms": [
+    "C",
+    "C",
+    "C",
+    "C"
+   ],
+   "coords_sha256": "aee363545c4469fc8e22cb4de5ebb5afac9df0389f0fc052569a3efe67e71cb8",
+   "state_key": {
+    "coordination": {
+     "mode": "A"
+    },
+    "rings": {
+     "mode": "r1"
+    },
+    "schema_version": 3,
+    "torsions": {}
+   }
+  },
+  {
+   "atoms": [
+    "C",
+    "C",
+    "C",
+    "C"
+   ],
+   "coords_sha256": "ba8491ab1a0da2508833731dd7b5f10cc41f7fcc4aebe6d58bdb0e0c64ec8e80",
+   "state_key": {
+    "coordination": {
+     "mode": "B"
+    },
+    "rings": {
+     "mode": "r1"
+    },
+    "schema_version": 3,
+    "torsions": {}
+   }
+  }
+ ],
+ "report": {
+  "attempt_ledger": {
+   "attempted_without_success": 0,
+   "basis": "issued per-level stage attempts along every explored path: geometry-successful internal expansions plus published leaves plus terminal attempt failures; policy-screened, suppressed-skipped, and deferred-unissued units excluded",
+   "by_status": {
+    "expanded": 2,
+    "published_leaf": 4
+   },
+   "deferred_unissued": 0,
+   "geometry_successful": 6,
+   "internal_expanded": 2,
+   "issued_attempts": 6,
+   "policy_screened": 0,
+   "published_leaves": 4,
+   "suppressed_skipped": 0
+  },
+  "axis_order": [
+   "coordination",
+   "rings",
+   "torsions"
+  ],
+  "certificate": {
+   "basis": "terminal equations verify over target records",
+   "digest": "sha256:18fc436fe70fcac1a0491549142d844ac3a584bfb9e4a7c43b6e489568410c81",
+   "equations_ok": true
+  },
+  "counts": {
+   "anomalies": {
+    "AMBIGUOUS_KEY": 0
+   },
+   "deferred_parent_failed_leaves": 0,
+   "deferred_sampled_out": 0,
+   "equation_exact": true,
+   "estimated_deferred_leaves": 0,
+   "failed": {},
+   "internal_expanded": 2,
+   "policy_excluded": 0,
+   "published": 4,
+   "raw": 4,
+   "realized": 6,
+   "sampled": 4,
+   "status_counts": {
+    "expanded": 2,
+    "published_leaf": 4
+   },
+   "target_categories": {
+    "DEFERRED": 0,
+    "DRIFTED": 0,
+    "REALIZATION_SUPPRESSED_BY_VERIFIED_SYMMETRY": 0,
+    "REALIZED": 4,
+    "UNRESOLVED": 0
+   },
+   "unit_basis": {
+    "authoritative_sections": [
+     "leaf_certificate",
+     "attempt_ledger"
+    ],
+    "published": "final leaves",
+    "realized": "successful stage attempts, including internal expansions",
+    "target_categories": "mixed diagnostic records; no certificate equation"
+   }
+  },
+  "drift_events": [],
+  "enumeration": {
+   "basis": "coordination:fixed test states; rings:fixed test states",
+   "deferred_sampled_out": 0,
+   "digest": "sha256:461ddcf34f67c301ae0d77dd496c0d1c831317026adbf19df0d30ba4ffaec1a0",
+   "exact": true,
+   "exclusions": [],
+   "per_axis": {
+    "coordination": {
+     "basis": "fixed test states",
+     "declared_count": 2,
+     "exact": true,
+     "scope_coverage": "exact",
+     "upper_bound": 2
+    },
+    "rings": {
+     "basis": "fixed test states",
+     "declared_count": 2,
+     "exact": true,
+     "scope_coverage": "exact",
+     "upper_bound": 2
+    }
+   },
+   "policy_excluded": 0,
+   "sampled": 4,
+   "sampling": {
+    "cap": null,
+    "capped": false,
+    "seed": null,
+    "sorted": true
+   },
+   "symbolic": {
+    "basis": "unconditional product space",
+    "exact": true,
+    "paths_consistent": true,
+    "paths_detail": "unconditional product space",
+    "raw_leaf_states": 4
+   },
+   "total_declared": 4,
+   "total_upper_bound": 4
+  },
+  "inherited": {
+   "audited": false,
+   "basis": "no incoming chained state",
+   "entries": []
+  },
+  "leaf_certificate": {
+   "anomalies": {
+    "AMBIGUOUS_KEY": 0
+   },
+   "basis": "final joint leaves only: published leaves, terminal leaf failures, leaf rejections, verified suppressions, and deferred ranges (counted arithmetically); internal attempts excluded",
+   "count_details": {
+    "attempted": 4,
+    "deferred_parent": 0,
+    "deferred_sampled_out": 0,
+    "failed": 0,
+    "ok": true,
+    "published": 4,
+    "raw": 4,
+    "rejected": 0,
+    "sampled": 4,
+    "suppressed": 0
+   },
+   "equation_exact": true,
+   "equations_ok": true,
+   "leaf_categories": {
+    "DEFERRED": 0,
+    "DRIFTED": 0,
+    "REALIZATION_SUPPRESSED_BY_VERIFIED_SYMMETRY": 0,
+    "REALIZED": 4,
+    "REJECTED": 0,
+    "UNRESOLVED": 0
+   },
+   "total": 4
+  },
+  "levels": [
+   "coordination",
+   "rings"
+  ],
+  "preflight": {
+   "basis": "coordination:fixed test states; rings:fixed test states",
+   "exact": true,
+   "total_declared": 4,
+   "total_upper_bound": 4
+  },
+  "provenance": {
+   "backend": "geometric-rodrigues",
+   "input_id": "seed",
+   "seed": 21
+  },
+  "realization": {
+   "attempted": 4,
+   "count_details": {
+    "attempted": 4,
+    "deferred_parent": 0,
+    "deferred_sampled_out": 0,
+    "failed": 0,
+    "ok": true,
+    "published": 4,
+    "raw": 4,
+    "rejected": 0,
+    "sampled": 4,
+    "suppressed": 0
+   },
+   "count_equations_ok": true,
+   "failed": {},
+   "paths_consistent": true,
+   "paths_detail": "unconditional product space",
+   "proof_contradictions": [],
+   "published": 4,
+   "realization_attempts": 4,
+   "realized": 6,
+   "status_counts": {
+    "expanded": 2,
+    "published_leaf": 4
+   },
+   "suppressed": 0,
+   "terminal_detail": "ok",
+   "terminal_equations_ok": true
+  },
+  "sampling": {
+   "cap": null,
+   "capped": false,
+   "seed": null,
+   "sorted": true
+  },
+  "schema_version": 3,
+  "scope": {
+   "breaking_pairs": [],
+   "donor_configuration": null,
+   "excluded_axes": [],
+   "preserved_axes": [],
+   "unsupported": []
+  },
+  "suppression": {
+   "disabled_reason": "combined-axes",
+   "scope": "single-axis runs without sampling caps or top-level exclusions: verified records suppress with a realized representative; otherwise targets realize normally (joint-tree stabilizer, sampled-representative, and policy-excluded-representative scopes pending)",
+   "supported": false,
+   "suppressed": 0
+  }
+ },
+ "targets": [
+  {
+   "axis": "coordination",
+   "evidence_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+   "ordinal": 0,
+   "parent_target_id": null,
+   "reason": "expanded",
+   "status": "expanded",
+   "target_id": "coordination:000000"
+  },
+  {
+   "axis": "rings",
+   "evidence_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+   "ordinal": 0,
+   "parent_target_id": "coordination:000000",
+   "reason": "published_leaf",
+   "status": "published_leaf",
+   "target_id": "rings:000000"
+  },
+  {
+   "axis": "rings",
+   "evidence_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+   "ordinal": 1,
+   "parent_target_id": "coordination:000000",
+   "reason": "published_leaf",
+   "status": "published_leaf",
+   "target_id": "rings:000001"
+  },
+  {
+   "axis": "coordination",
+   "evidence_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+   "ordinal": 1,
+   "parent_target_id": null,
+   "reason": "expanded",
+   "status": "expanded",
+   "target_id": "coordination:000001"
+  },
+  {
+   "axis": "rings",
+   "evidence_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+   "ordinal": 0,
+   "parent_target_id": "coordination:000001",
+   "reason": "published_leaf",
+   "status": "published_leaf",
+   "target_id": "rings:000000"
+  },
+  {
+   "axis": "rings",
+   "evidence_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+   "ordinal": 1,
+   "parent_target_id": "coordination:000001",
+   "reason": "published_leaf",
+   "status": "published_leaf",
+   "target_id": "rings:000001"
+  }
+ ]
+}

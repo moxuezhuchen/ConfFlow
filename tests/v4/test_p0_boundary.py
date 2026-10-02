@@ -26,28 +26,17 @@ from confflow.producer.boundary import (
     BOUNDARY_PROTOCOL_VERSION,
     COMPATIBILITY_REASON_CODES,
     COMPATIBILITY_STATUSES,
-    PREPARED_RUN_MANIFEST_SCHEMA,
     RESULT_MANIFEST_SCHEMA,
-    VALIDATION_RECEIPT_SCHEMA,
     authoring_protocol_schema,
     boundary_document,
     boundary_section,
-    capability_identity,
-    compare_identities,
-    compatibility_matrix,
-    evaluate_compatibility,
     jcs_vectors,
-    prepared_run_manifest_schema,
-    semantic_identity,
-    validation_receipt_schema,
-    wire_examples,
 )
 from confflow.producer.contract import (
     build_boundary_document,
     build_configuration_contract_v4,
 )
 from confflow.workflow.v4.document import SCHEMA_ID as WORKFLOW_SCHEMA_ID
-from confflow.workflow.v4.fingerprint import SEMANTICS_VERSION
 
 FIXTURE_DIR = (
     Path(__file__).resolve().parent.parent.parent / "docs" / "internal" / "fixtures" / "p0_boundary"
@@ -114,59 +103,11 @@ class TestCanonicalizationVectors:
 
 class TestBoundaryIdentity:
     def test_protocol_identity(self) -> None:
-        section = boundary_section(
-            executors=[],
-            execution_adapters=[],
-            result_profiles=[],
-            scientific_checks=[],
-            recovery_profiles=[],
-            programs=[],
-            analysis_capabilities=[],
-            transform_kinds=(),
-        )
+        section = boundary_section()
         assert section["protocol_id"] == BOUNDARY_PROTOCOL_ID
         assert section["protocol_version"] == BOUNDARY_PROTOCOL_VERSION
         assert section["canonicalization_id"] == CANONICALIZATION_ID
         assert section["workflow_schema_id"] == WORKFLOW_SCHEMA_ID
-
-    def test_capability_identity_is_display_inert(self) -> None:
-        base = {
-            "executors": [{"capability": "calculation", "contract_version": "v1"}],
-            "execution_adapters": [],
-            "result_profiles": [],
-            "scientific_checks": [],
-            "recovery_profiles": [],
-            "programs": [],
-            "analysis_capabilities": [],
-            "transform_kinds": (),
-        }
-        first = capability_identity(**base)
-        with_description = capability_identity(
-            **{
-                **base,
-                "executors": [
-                    {"capability": "calculation", "contract_version": "v1", "description": "prose"}
-                ],
-            }
-        )
-        assert (
-            first["digest"] != with_description["digest"]
-        ), "descriptor identity covers the full wire descriptor by design"
-        assert compare_identities(first, first) == {"changed": False}
-        assert compare_identities(first, None) == {"changed": True}
-
-    def test_semantic_identity_components(self) -> None:
-        identity = semantic_identity()
-        names = {component["name"] for component in identity["components"]}
-        assert {
-            "workflow_schema",
-            "semantics",
-            "canonicalization",
-            "prepared_run_manifest",
-            "validation_receipt",
-            "authoring_protocol",
-        } <= names
-        assert identity["digest"].startswith("sha256:")
 
     def test_contract_embeds_boundary(self) -> None:
         envelope = build_configuration_contract_v4(producer_version="test")
@@ -174,14 +115,7 @@ class TestBoundaryIdentity:
         assert boundary["protocol_id"] == BOUNDARY_PROTOCOL_ID
         assert boundary["protocol_version"] == BOUNDARY_PROTOCOL_VERSION
         assert boundary["canonicalization_id"] == CANONICALIZATION_ID
-        assert boundary["capability_identity"]["digest"].startswith("sha256:")
-        assert boundary["semantic_identity"]["digest"].startswith("sha256:")
-        assert set(boundary["schemas"]) == {
-            "authoring_request",
-            "authoring_response",
-            "prepared_run_manifest",
-            "validation_receipt",
-        }
+        assert set(boundary["schemas"]) == {"authoring_request", "authoring_response"}
         for schema in boundary["schemas"].values():
             assert len(schema["sha256"]) == 64
 
@@ -190,91 +124,9 @@ class TestCompatibility:
     def test_vocabulary(self) -> None:
         assert COMPATIBILITY_STATUSES == ("compatible", "needs_revalidation", "unsupported")
         assert "capability_missing" in COMPATIBILITY_REASON_CODES
-        matrix = compatibility_matrix()
-        decisions = {row["decision"] for row in matrix}
-        assert decisions == {"compatible", "needs_revalidation", "unsupported"}
-
-    def test_display_only_change_is_not_incompatible(self) -> None:
-        decision = evaluate_compatibility(
-            [{"kind": "capability", "name": "calculation", "contract_version": "v1"}],
-            {
-                "capabilities": {"calculation": "v1"},
-                "contracts": {},
-                "semantics_version": SEMANTICS_VERSION,
-            },
-        )
-        assert decision["status"] == "compatible"
-
-    def test_build_change_is_revalidation_not_unsupported(self) -> None:
-        decision = evaluate_compatibility(
-            [{"kind": "capability", "name": "calculation", "contract_version": "v1"}],
-            {
-                "capabilities": {"calculation": "v1"},
-                "contracts": {},
-                "semantics_version": SEMANTICS_VERSION,
-            },
-            build_provenance_changed=True,
-        )
-        assert decision["status"] == "needs_revalidation"
-        assert [reason["code"] for reason in decision["reasons"]] == ["build_provenance_changed"]
-
-    def test_missing_capability_is_unsupported(self) -> None:
-        decision = evaluate_compatibility(
-            [{"kind": "capability", "name": "goat", "contract_version": "v1"}],
-            {"capabilities": {}, "contracts": {}, "semantics_version": SEMANTICS_VERSION},
-        )
-        assert decision["status"] == "unsupported"
-        assert decision["reasons"][0]["code"] == "capability_missing"
-
-    def test_unsupported_beats_revalidation(self) -> None:
-        decision = evaluate_compatibility(
-            [{"kind": "capability", "name": "goat", "contract_version": "v1"}],
-            {"capabilities": {}, "contracts": {}, "semantics_version": SEMANTICS_VERSION},
-            content_identity_changed=True,
-            build_provenance_changed=True,
-        )
-        assert decision["status"] == "unsupported"
-
-    def test_semantic_version_mismatch_is_unsupported(self) -> None:
-        decision = evaluate_compatibility(
-            [
-                {
-                    "kind": "semantic",
-                    "name": "semantics_version",
-                    "contract_version": "confflow.workflow.v4.semantics.v2",
-                }
-            ],
-            {"capabilities": {}, "contracts": {}, "semantics_version": SEMANTICS_VERSION},
-        )
-        assert decision["status"] == "unsupported"
-        assert decision["reasons"][0]["code"] == "semantic_version_incompatible"
 
 
 class TestPublishedSchemas:
-    def test_wire_examples_conform_to_schemas(self) -> None:
-        examples = wire_examples()
-        Draft202012Validator(prepared_run_manifest_schema()).validate(
-            examples["prepared_run_manifest"]
-        )
-        receipt = {
-            "content_schema": VALIDATION_RECEIPT_SCHEMA,
-            "submission_id": "submission-0001",
-            "snapshot_digest": "sha256:" + "0" * 64,
-            "workflow_bytes_sha256": "sha256:" + "1" * 64,
-            "input_manifest_digest": "sha256:" + "2" * 64,
-            "execution_binding_digest": "sha256:" + "3" * 64,
-            "producer_semantics_identity": semantic_identity(),
-            "producer_build_provenance": {
-                "package": "confflow",
-                "version": "0.0.0",
-                "commit": None,
-                "dirty": None,
-            },
-            "ok": True,
-            "diagnostics": [],
-        }
-        Draft202012Validator(validation_receipt_schema()).validate(receipt)
-
     def test_authoring_schemas_expose_operations(self) -> None:
         schemas = authoring_protocol_schema()
         Draft202012Validator.check_schema(schemas["request"])
@@ -292,8 +144,6 @@ class TestPublishedSchemas:
 
     def test_schema_ids(self) -> None:
         assert RESULT_MANIFEST_SCHEMA == "confflow.run_result_manifest.v1"
-        assert PREPARED_RUN_MANIFEST_SCHEMA == "confflow.prepared_run_manifest.v1"
-        assert VALIDATION_RECEIPT_SCHEMA == "confflow.validation_receipt.v1"
         assert AUTHORING_PROTOCOL_SCHEMA == "confflow.authoring.v4"
 
 
@@ -314,7 +164,6 @@ class TestFixtureFreshness:
         (
             "boundary_protocol.json",
             "jcs_vectors.json",
-            "compatibility_cases.json",
             "named_binding_workflow.json",
         ),
     )
@@ -341,16 +190,7 @@ class TestFixtureFreshness:
         assert payload["validation"]["step_ids"] == ["opt_1", "sp_1"]
 
     def test_boundary_document_is_deterministic(self) -> None:
-        first = boundary_document(
-            executors=[],
-            execution_adapters=[],
-            result_profiles=[],
-            scientific_checks=[],
-            recovery_profiles=[],
-            programs=[],
-            analysis_capabilities=[],
-            transform_kinds=(),
-        )
+        first = boundary_document()
         second = build_boundary_document(producer_version=PRODUCER_VERSION)
         assert first["protocol_id"] == second["protocol_id"]
         assert first["canonicalization"]["canonicalization_id"] == (

@@ -19,13 +19,11 @@ def test_confflow_package_exports_current_public_api():
     assert hasattr(confflow, "PSUTIL_AVAILABLE")
     assert hasattr(confflow, "NUMBA_AVAILABLE")
     assert hasattr(confflow, "read_xyz_file")
-    assert hasattr(confflow, "run_workflow")
     assert hasattr(confflow, "CalcStepRunner")
     assert hasattr(confflow, "CalcStepRequest")
     assert hasattr(confflow, "CalcStepResult")
 
     assert "CalcStepRunner" in confflow.__all__
-    assert "run_workflow" in confflow.__all__
     assert "read_xyz_file" in confflow.__all__
     assert "ChemTaskManager" not in confflow.__all__
     assert "run_calc_workflow_step" not in confflow.__all__

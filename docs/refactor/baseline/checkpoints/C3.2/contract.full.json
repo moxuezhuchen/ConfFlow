@@ -1,0 +1,5044 @@
+{
+ "analysis_capabilities": {
+  "capabilities": [
+   {
+    "capability": "reaction_profile",
+    "contract_version": "confflow.contract.analysis.reaction_profile.v1"
+   }
+  ],
+  "source": "registry"
+ },
+ "boundary": {
+  "canonicalization_id": "confflow.v4.jcs.v1",
+  "compatibility": {
+   "reason_codes": [
+    "capability_missing",
+    "capability_version_incompatible",
+    "contract_missing",
+    "contract_version_incompatible",
+    "semantic_requirement_unsatisfied",
+    "semantic_version_incompatible",
+    "capability_identity_changed",
+    "content_identity_changed",
+    "build_provenance_changed"
+   ],
+   "requirement_kinds": [
+    "capability",
+    "contract",
+    "semantic"
+   ],
+   "rule": "Evaluate requirements in order; any missing or version-incompatible requirement is unsupported. Otherwise a changed content identity or build provenance is needs_revalidation. Otherwise compatible.",
+   "statuses": [
+    "compatible",
+    "needs_revalidation",
+    "unsupported"
+   ]
+  },
+  "protocol_id": "confflow.boundary.v4",
+  "protocol_version": "1.0.0",
+  "schemas": {
+   "authoring_request": {
+    "schema_id": "ConfFlow authoring request",
+    "sha256": "db9e1216194987cb53dec3c2d53317d0bad83221a458315dfa40c48bf4c942e3"
+   },
+   "authoring_response": {
+    "schema_id": "ConfFlow authoring response",
+    "sha256": "afc884643cea05e5cc1d939d17625fced832d94063bc1656831e25be35d82edb"
+   }
+  },
+  "workflow_schema_id": "confflow.workflow.v4"
+ },
+ "confgen": {
+  "coordination_backends": [
+   "rigid",
+   "flexible",
+   "rigid_then_flexible"
+  ],
+  "coordination_budgets": {
+   "max_nfev": 120,
+   "maxiter": 400
+  },
+  "coordination_shapes": [
+   "octahedral",
+   "square_planar",
+   "square_pyramidal",
+   "tetrahedral",
+   "trigonal_bipyramidal",
+   "trigonal_prismatic"
+  ],
+  "coordination_shapes_by_cn": {
+   "4": [
+    "tetrahedral",
+    "square_planar"
+   ],
+   "5": [
+    "trigonal_bipyramidal",
+    "square_pyramidal"
+   ],
+   "6": [
+    "octahedral",
+    "trigonal_prismatic"
+   ]
+  },
+  "coordination_site_group_scope": "declared_topological_subgroup",
+  "description": "Typed ConfGen v3 scope: schema_version 3 with explicit index_base, coordination/rings/torsions declarations, typed topology, recorded stereochemistry, policy exclusions, tolerances, limits, and seed-authored sampling. The legacy native.chains vocabulary stays available as an explicitly versioned adapter path.",
+  "limits": {
+   "max_declared_states": 10000,
+   "max_output_structures": 10000
+  },
+  "result_provenance": [
+   "certificate_digest",
+   "inherited_scope"
+  ],
+  "ring_templates_by_size": {
+   "4": [
+    "planar_4",
+    "pucker_down_4",
+    "pucker_up_4"
+   ],
+   "5": [
+    "envelope_5",
+    "planar_5",
+    "twist_5"
+   ],
+   "6": [
+    "boat_6",
+    "chair_A_6",
+    "chair_B_6",
+    "twist_boat_6"
+   ]
+  },
+  "schema_version": 3,
+  "tolerances": {
+   "bond_length_atol": 1e-06,
+   "bond_scale": 1.15,
+   "clash_threshold": 0.65,
+   "coordination_angle_atol_deg": 3,
+   "coordination_bond_atol": 0.05,
+   "dihedral_atol_deg": 1,
+   "frame_det_min": 1e-08,
+   "parent_lock_atol_deg": 1,
+   "ring_angle_atol_deg": 5,
+   "ring_bond_atol": 0.08,
+   "ring_torsion_atol_deg": 10,
+   "substituent_bond_atol": 1e-06
+  },
+  "torsion_models": [
+   "relative_rotation_grid",
+   "absolute_dihedral_grid",
+   "chemical"
+  ],
+  "treatments": [
+   "enumerate",
+   "preserve_input"
+  ]
+ },
+ "content_schema": "confflow.configuration-contract.v4",
+ "contract_digest": "f1c08673f059f2d17f7bc6d80006aa480baded8a2e0a22efe081c8514f25619d",
+ "editor_manifest": {
+  "fields": [
+   {
+    "context": "global",
+    "description": "Total molecular charge applied unless a step overrides it.",
+    "editor": "integer",
+    "field_id": "global.charge",
+    "group": "system",
+    "json_pointer": "/global/scientific_defaults/charge",
+    "label": "Charge",
+    "level": "basic",
+    "order": 10,
+    "value_type": "integer"
+   },
+   {
+    "context": "global",
+    "description": "Spin multiplicity; must be at least 1.",
+    "editor": "integer",
+    "field_id": "global.multiplicity",
+    "group": "system",
+    "json_pointer": "/global/scientific_defaults/multiplicity",
+    "label": "Multiplicity",
+    "level": "basic",
+    "order": 20,
+    "value_type": "integer"
+   },
+   {
+    "context": "global",
+    "description": "1-based atom indices held fixed where the program supports it.",
+    "editor": "integer_list",
+    "field_id": "global.freeze",
+    "group": "system",
+    "item_type": "integer",
+    "json_pointer": "/global/scientific_defaults/freeze",
+    "label": "Frozen atoms",
+    "level": "advanced",
+    "order": 30,
+    "value_type": "array"
+   },
+   {
+    "context": "global",
+    "default": 1,
+    "description": "Default core count. A step may override it.",
+    "editor": "integer",
+    "field_id": "global.cores_per_item",
+    "group": "resources",
+    "json_pointer": "/global/resources/cores_per_item",
+    "label": "CPU cores per item",
+    "level": "basic",
+    "order": 40,
+    "value_type": "integer"
+   },
+   {
+    "context": "global",
+    "default": "1GiB",
+    "description": "Default memory per item, written as e.g. 4GiB or 8000MB.",
+    "editor": "memory",
+    "field_id": "global.memory_per_item",
+    "group": "resources",
+    "json_pointer": "/global/resources/memory_per_item",
+    "label": "Memory per item",
+    "level": "basic",
+    "order": 50,
+    "value_type": "string"
+   },
+   {
+    "context": "global",
+    "default": 1,
+    "description": "Maximum number of work items running concurrently.",
+    "editor": "integer",
+    "field_id": "global.max_parallel_items",
+    "group": "scheduling",
+    "json_pointer": "/global/scheduler/max_parallel_items",
+    "label": "Parallel items",
+    "level": "basic",
+    "order": 60,
+    "value_type": "integer"
+   },
+   {
+    "choices": [
+     {
+      "label": "continue",
+      "value": "continue"
+     },
+     {
+      "label": "fail fast",
+      "value": "fail_fast"
+     }
+    ],
+    "context": "global",
+    "default": "continue",
+    "description": "Whether remaining items keep running after a failure.",
+    "editor": "select",
+    "field_id": "global.on_failure",
+    "group": "scheduling",
+    "json_pointer": "/global/scheduler/on_failure",
+    "label": "On failure",
+    "level": "advanced",
+    "order": 70,
+    "value_type": "string"
+   },
+   {
+    "choices": [
+     {
+      "label": "Gaussian",
+      "value": "gaussian"
+     },
+     {
+      "label": "ORCA",
+      "value": "orca"
+     }
+    ],
+    "context": "calc",
+    "description": "Quantum chemistry program; selects the file-format adapter.",
+    "editor": "select",
+    "field_id": "calc.program",
+    "group": "calculation",
+    "json_pointer": "/steps/{id}/calculation/program",
+    "label": "Program",
+    "level": "basic",
+    "order": 10,
+    "relative_pointer": "/calculation/program",
+    "step_selector": "id",
+    "value_type": "string"
+   },
+   {
+    "context": "calc",
+    "description": "Scientific annotation of the step's intent (opt, sp, freq, ts, irc, qst2, neb, ...). Never selects runtime behavior.",
+    "editor": "text",
+    "field_id": "calc.role",
+    "group": "calculation",
+    "json_pointer": "/steps/{id}/calculation/role",
+    "label": "Role",
+    "level": "basic",
+    "order": 20,
+    "relative_pointer": "/calculation/role",
+    "step_selector": "id",
+    "value_type": "string"
+   },
+   {
+    "choices": [
+     {
+      "label": "named structures",
+      "value": "named_structures"
+     },
+     {
+      "label": "standard",
+      "value": "standard"
+     }
+    ],
+    "context": "calc",
+    "default": "standard",
+    "description": "How step inputs are supplied to the native program.",
+    "editor": "select",
+    "field_id": "calc.execution_adapter",
+    "group": "calculation",
+    "json_pointer": "/steps/{id}/calculation/execution_adapter",
+    "label": "Execution adapter",
+    "level": "advanced",
+    "order": 30,
+    "relative_pointer": "/calculation/execution_adapter",
+    "step_selector": "id",
+    "value_type": "string"
+   },
+   {
+    "choices": [
+     {
+      "label": "ensemble",
+      "value": "ensemble"
+     },
+     {
+      "label": "path endpoints",
+      "value": "path_endpoints"
+     },
+     {
+      "label": "standard",
+      "value": "standard"
+     }
+    ],
+    "context": "calc",
+    "default": "standard",
+    "description": "How native output is interpreted into results.",
+    "editor": "select",
+    "field_id": "calc.result_profile",
+    "group": "calculation",
+    "json_pointer": "/steps/{id}/calculation/result_profile",
+    "label": "Result profile",
+    "level": "advanced",
+    "order": 40,
+    "relative_pointer": "/calculation/result_profile",
+    "step_selector": "id",
+    "value_type": "string"
+   },
+   {
+    "choices": [
+     {
+      "label": "bond drift",
+      "value": "bond_drift"
+     },
+     {
+      "label": "frequencies required",
+      "value": "frequencies_required"
+     },
+     {
+      "label": "geometry required",
+      "value": "geometry_required"
+     },
+     {
+      "label": "imaginary frequency count",
+      "value": "imaginary_frequency_count"
+     },
+     {
+      "label": "max rmsd from input",
+      "value": "max_rmsd_from_input"
+     },
+     {
+      "label": "normal termination",
+      "value": "normal_termination"
+     }
+    ],
+    "context": "calc",
+    "description": "Acceptance checks; each must be supported by the result profile.",
+    "editor": "multi_select",
+    "field_id": "calc.checks",
+    "group": "checks",
+    "item_type": "string",
+    "json_pointer": "/steps/{id}/calculation/checks",
+    "label": "Scientific checks",
+    "level": "basic",
+    "order": 50,
+    "relative_pointer": "/calculation/checks",
+    "step_selector": "id",
+    "value_type": "array"
+   },
+   {
+    "context": "calc",
+    "description": "Per-check parameters keyed by check name.",
+    "editor": "json",
+    "field_id": "calc.check_params",
+    "group": "checks",
+    "json_pointer": "/steps/{id}/calculation/check_params",
+    "label": "Check parameters",
+    "level": "advanced",
+    "order": 60,
+    "relative_pointer": "/calculation/check_params",
+    "step_selector": "id",
+    "value_type": "object"
+   },
+   {
+    "choices": [
+     {
+      "label": "none",
+      "value": "none"
+     },
+     {
+      "label": "ts rescue scan",
+      "value": "ts_rescue_scan"
+     }
+    ],
+    "context": "calc",
+    "default": "none",
+    "description": "Declared recovery; only ever triggered when declared here.",
+    "editor": "select",
+    "field_id": "calc.recovery",
+    "group": "recovery",
+    "json_pointer": "/steps/{id}/calculation/recovery/profile",
+    "label": "Recovery profile",
+    "level": "advanced",
+    "order": 70,
+    "relative_pointer": "/calculation/recovery/profile",
+    "step_selector": "id",
+    "value_type": "string"
+   },
+   {
+    "context": "calc",
+    "description": "Parameters of the declared recovery profile.",
+    "editor": "json",
+    "field_id": "calc.recovery_params",
+    "group": "recovery",
+    "json_pointer": "/steps/{id}/calculation/recovery/params",
+    "label": "Recovery parameters",
+    "level": "advanced",
+    "order": 80,
+    "relative_pointer": "/calculation/recovery/params",
+    "step_selector": "id",
+    "value_type": "object"
+   },
+   {
+    "context": "calc",
+    "description": "Explicit seed; required for stochastic executors.",
+    "editor": "integer",
+    "field_id": "calc.seed",
+    "group": "calculation",
+    "json_pointer": "/steps/{id}/calculation/seed",
+    "label": "Seed",
+    "level": "advanced",
+    "order": 90,
+    "relative_pointer": "/calculation/seed",
+    "step_selector": "id",
+    "value_type": "integer"
+   },
+   {
+    "context": "calc",
+    "description": "Program-native definition (keyword, irc/goat/neb sections, atom mapping). The verbatim escape hatch into file format.",
+    "editor": "json",
+    "field_id": "calc.native",
+    "group": "calculation",
+    "json_pointer": "/steps/{id}/calculation/native",
+    "label": "Native input",
+    "level": "basic",
+    "order": 100,
+    "relative_pointer": "/calculation/native",
+    "step_selector": "id",
+    "value_type": "object"
+   },
+   {
+    "context": "calc",
+    "description": "Step override. Clear it to inherit the global value.",
+    "editor": "integer",
+    "field_id": "calc.overrides.charge",
+    "group": "system",
+    "inherit_from": "global.charge",
+    "json_pointer": "/steps/{id}/calculation/overrides/charge",
+    "label": "Charge override",
+    "level": "advanced",
+    "order": 110,
+    "relative_pointer": "/calculation/overrides/charge",
+    "step_selector": "id",
+    "value_type": "integer"
+   },
+   {
+    "context": "calc",
+    "description": "Step override. Clear it to inherit the global value.",
+    "editor": "integer",
+    "field_id": "calc.overrides.multiplicity",
+    "group": "system",
+    "inherit_from": "global.multiplicity",
+    "json_pointer": "/steps/{id}/calculation/overrides/multiplicity",
+    "label": "Multiplicity override",
+    "level": "advanced",
+    "order": 120,
+    "relative_pointer": "/calculation/overrides/multiplicity",
+    "step_selector": "id",
+    "value_type": "integer"
+   },
+   {
+    "context": "calc",
+    "description": "Step override. Clear it to inherit the global value.",
+    "editor": "integer_list",
+    "field_id": "calc.overrides.freeze",
+    "group": "system",
+    "inherit_from": "global.freeze",
+    "item_type": "integer",
+    "json_pointer": "/steps/{id}/calculation/overrides/freeze",
+    "label": "Frozen atoms override",
+    "level": "advanced",
+    "order": 130,
+    "relative_pointer": "/calculation/overrides/freeze",
+    "step_selector": "id",
+    "value_type": "array"
+   },
+   {
+    "context": "calc",
+    "description": "Step override. Clear it to inherit the global value.",
+    "editor": "integer",
+    "field_id": "calc.resources.cores_per_item",
+    "group": "resources",
+    "inherit_from": "global.cores_per_item",
+    "json_pointer": "/steps/{id}/resources/cores_per_item",
+    "label": "CPU cores per item",
+    "level": "advanced",
+    "order": 140,
+    "relative_pointer": "/resources/cores_per_item",
+    "step_selector": "id",
+    "value_type": "integer"
+   },
+   {
+    "context": "calc",
+    "description": "Step override. Clear it to inherit the global value.",
+    "editor": "memory",
+    "field_id": "calc.resources.memory_per_item",
+    "group": "resources",
+    "inherit_from": "global.memory_per_item",
+    "json_pointer": "/steps/{id}/resources/memory_per_item",
+    "label": "Memory per item",
+    "level": "advanced",
+    "order": 150,
+    "relative_pointer": "/resources/memory_per_item",
+    "step_selector": "id",
+    "value_type": "string"
+   },
+   {
+    "context": "calc",
+    "description": "Step override. Clear it to inherit the global value.",
+    "editor": "integer",
+    "field_id": "calc.scheduler.max_parallel_items",
+    "group": "scheduling",
+    "inherit_from": "global.max_parallel_items",
+    "json_pointer": "/steps/{id}/scheduler/max_parallel_items",
+    "label": "Parallel items",
+    "level": "advanced",
+    "order": 160,
+    "relative_pointer": "/scheduler/max_parallel_items",
+    "step_selector": "id",
+    "value_type": "integer"
+   },
+   {
+    "choices": [
+     {
+      "label": "continue",
+      "value": "continue"
+     },
+     {
+      "label": "fail fast",
+      "value": "fail_fast"
+     }
+    ],
+    "context": "calc",
+    "description": "Step override of the scheduler failure behavior.",
+    "editor": "select",
+    "field_id": "calc.scheduler.on_failure",
+    "group": "scheduling",
+    "inherit_from": "global.on_failure",
+    "json_pointer": "/steps/{id}/scheduler/on_failure",
+    "label": "On failure",
+    "level": "advanced",
+    "order": 170,
+    "relative_pointer": "/scheduler/on_failure",
+    "step_selector": "id",
+    "value_type": "string"
+   },
+   {
+    "choices": [
+     {
+      "label": "require all",
+      "value": "require_all"
+     },
+     {
+      "label": "allow partial",
+      "value": "allow_partial"
+     }
+    ],
+    "context": "calc",
+    "default": "require_all",
+    "description": "Whether a step may finish with a partial subset accepted.",
+    "editor": "select",
+    "field_id": "calc.completion.mode",
+    "group": "completion",
+    "json_pointer": "/steps/{id}/completion/mode",
+    "label": "Completion mode",
+    "level": "advanced",
+    "order": 180,
+    "relative_pointer": "/completion/mode",
+    "step_selector": "id",
+    "value_type": "string"
+   },
+   {
+    "context": "calc",
+    "description": "Minimum completed items still accepted under allow_partial.",
+    "editor": "integer",
+    "field_id": "calc.completion.minimum_success",
+    "group": "completion",
+    "json_pointer": "/steps/{id}/completion/minimum_success",
+    "label": "Minimum success",
+    "level": "advanced",
+    "order": 190,
+    "relative_pointer": "/completion/minimum_success",
+    "step_selector": "id",
+    "value_type": "integer",
+    "visible_when": {
+     "equals": "allow_partial",
+     "field": "calc.completion.mode"
+    }
+   },
+   {
+    "choices": [
+     {
+      "label": "deny",
+      "value": "deny"
+     },
+     {
+      "label": "allow",
+      "value": "allow"
+     }
+    ],
+    "context": "calc",
+    "default": "deny",
+    "description": "Whether downstream steps may consume a partial producer.",
+    "editor": "select",
+    "field_id": "calc.completion.partial_output",
+    "group": "completion",
+    "json_pointer": "/steps/{id}/completion/partial_output",
+    "label": "Partial output",
+    "level": "advanced",
+    "order": 200,
+    "relative_pointer": "/completion/partial_output",
+    "step_selector": "id",
+    "value_type": "string"
+   },
+   {
+    "context": "calc",
+    "description": "Machine binding selected at run time; never affects reuse identity.",
+    "editor": "text",
+    "field_id": "calc.execution.binding_id",
+    "group": "execution",
+    "json_pointer": "/steps/{id}/execution/binding_id",
+    "label": "Execution binding",
+    "level": "advanced",
+    "order": 210,
+    "relative_pointer": "/execution/binding_id",
+    "step_selector": "id",
+    "value_type": "string"
+   },
+   {
+    "context": "calc",
+    "description": "Resolved executable override for this step.",
+    "editor": "text",
+    "field_id": "calc.execution.executable",
+    "group": "execution",
+    "json_pointer": "/steps/{id}/execution/executable",
+    "label": "Executable",
+    "level": "advanced",
+    "order": 220,
+    "relative_pointer": "/execution/executable",
+    "step_selector": "id",
+    "value_type": "string"
+   },
+   {
+    "context": "calc",
+    "description": "Walltime limit in seconds for this step.",
+    "editor": "integer",
+    "field_id": "calc.execution.walltime_seconds",
+    "group": "execution",
+    "json_pointer": "/steps/{id}/execution/walltime_seconds",
+    "label": "Walltime",
+    "level": "advanced",
+    "order": 230,
+    "relative_pointer": "/execution/walltime_seconds",
+    "step_selector": "id",
+    "value_type": "integer"
+   },
+   {
+    "context": "calc",
+    "description": "Scheduler target or queue for this step.",
+    "editor": "text",
+    "field_id": "calc.execution.target",
+    "group": "execution",
+    "json_pointer": "/steps/{id}/execution/target",
+    "label": "Target",
+    "level": "advanced",
+    "order": 240,
+    "relative_pointer": "/execution/target",
+    "step_selector": "id",
+    "value_type": "string"
+   },
+   {
+    "context": "confgen",
+    "description": "Explicit seed; conformer generation is stochastic.",
+    "editor": "integer",
+    "field_id": "confgen.seed",
+    "group": "conformer generation",
+    "json_pointer": "/steps/{id}/confgen/seed",
+    "label": "Seed",
+    "level": "basic",
+    "order": 10,
+    "relative_pointer": "/confgen/seed",
+    "step_selector": "id",
+    "value_type": "integer"
+   },
+   {
+    "context": "confgen",
+    "description": "Legacy conformer-generation native definition (chains, ensemble options): the explicitly versioned adapter path. Typed v3 scopes use the confgen.v3.* fields instead.",
+    "editor": "json",
+    "field_id": "confgen.native",
+    "group": "conformer generation",
+    "json_pointer": "/steps/{id}/confgen/native",
+    "label": "Native input (legacy)",
+    "level": "basic",
+    "order": 20,
+    "relative_pointer": "/confgen/native",
+    "step_selector": "id",
+    "value_type": "object"
+   },
+   {
+    "context": "confgen",
+    "description": "Typed v3 coordination declaration (metal_center, binding_sites, shapes from the registered vocabulary or 'auto', treatment, policy constraints, donor configuration). Indices follow the step index_base convention.",
+    "editor": "json",
+    "field_id": "confgen.v3.coordination",
+    "group": "conformer generation",
+    "json_pointer": "/steps/{id}/confgen/coordination",
+    "label": "Coordination scope",
+    "level": "basic",
+    "order": 21,
+    "relative_pointer": "/confgen/coordination",
+    "step_selector": "id",
+    "value_type": "object"
+   },
+   {
+    "context": "confgen",
+    "description": "Typed v3 ring declarations (ordered atoms, templates from the registered per-size vocabulary, treatment). Empty templates select the size defaults.",
+    "editor": "json",
+    "field_id": "confgen.v3.rings",
+    "group": "conformer generation",
+    "item_type": "object",
+    "json_pointer": "/steps/{id}/confgen/rings",
+    "label": "Ring scopes",
+    "level": "basic",
+    "order": 22,
+    "relative_pointer": "/confgen/rings",
+    "step_selector": "id",
+    "value_type": "array"
+   },
+   {
+    "context": "confgen",
+    "description": "Typed v3 torsion declarations (relative_rotation_grid, absolute_dihedral_grid, or chemical named states on a four-atom frame; treatment enumerate or preserve_input).",
+    "editor": "json",
+    "field_id": "confgen.v3.torsions",
+    "group": "conformer generation",
+    "item_type": "object",
+    "json_pointer": "/steps/{id}/confgen/torsions",
+    "label": "Torsion scopes",
+    "level": "basic",
+    "order": 23,
+    "relative_pointer": "/confgen/torsions",
+    "step_selector": "id",
+    "value_type": "array"
+   },
+   {
+    "context": "confgen",
+    "description": "Typed v3 topology authority (COVALENT/COORDINATION/FORMING/ BREAKING edges, atom declarations, add/del_bond corrections).",
+    "editor": "json",
+    "field_id": "confgen.v3.topology",
+    "group": "conformer generation",
+    "json_pointer": "/steps/{id}/confgen/topology",
+    "label": "Typed topology",
+    "level": "advanced",
+    "order": 24,
+    "relative_pointer": "/confgen/topology",
+    "step_selector": "id",
+    "value_type": "object"
+   },
+   {
+    "context": "confgen",
+    "description": "v3 pre-geometry sampling cap over raw targets; requires the step seed (the sole stochastic authority). Absent means the deterministic full grid.",
+    "editor": "json",
+    "field_id": "confgen.v3.sampling",
+    "group": "conformer generation",
+    "json_pointer": "/steps/{id}/confgen/sampling",
+    "label": "Sampling cap",
+    "level": "advanced",
+    "order": 25,
+    "relative_pointer": "/confgen/sampling",
+    "step_selector": "id",
+    "value_type": "object"
+   },
+   {
+    "context": "confgen",
+    "description": "Hard symbolic limits (max_declared_states, max_output_structures) enforced before geometry.",
+    "editor": "json",
+    "field_id": "confgen.v3.limits",
+    "group": "conformer generation",
+    "json_pointer": "/steps/{id}/confgen/limits",
+    "label": "Enumeration limits",
+    "level": "advanced",
+    "order": 26,
+    "relative_pointer": "/confgen/limits",
+    "step_selector": "id",
+    "value_type": "object"
+   },
+   {
+    "context": "confgen",
+    "description": "v3 numeric tolerances; unknown keys fail closed.",
+    "editor": "json",
+    "field_id": "confgen.v3.tolerances",
+    "group": "conformer generation",
+    "json_pointer": "/steps/{id}/confgen/tolerances",
+    "label": "Tolerances",
+    "level": "advanced",
+    "order": 27,
+    "relative_pointer": "/confgen/tolerances",
+    "step_selector": "id",
+    "value_type": "object"
+   },
+   {
+    "context": "confgen",
+    "description": "Declared policy exclusions (axis, match, reason). Recorded policy only, never verified proof.",
+    "editor": "json",
+    "field_id": "confgen.v3.exclusions",
+    "group": "conformer generation",
+    "item_type": "object",
+    "json_pointer": "/steps/{id}/confgen/exclusions",
+    "label": "Policy exclusions",
+    "level": "advanced",
+    "order": 28,
+    "relative_pointer": "/confgen/exclusions",
+    "step_selector": "id",
+    "value_type": "array"
+   },
+   {
+    "choices": [
+     {
+      "label": "refine",
+      "value": "refine"
+     },
+     {
+      "label": "deduplicate",
+      "value": "deduplicate"
+     },
+     {
+      "label": "filter",
+      "value": "filter"
+     }
+    ],
+    "context": "transform",
+    "description": "Explicit structure-set transformation.",
+    "editor": "select",
+    "field_id": "transform.kind",
+    "group": "transform",
+    "json_pointer": "/steps/{id}/transform/kind",
+    "label": "Transform kind",
+    "level": "basic",
+    "order": 10,
+    "relative_pointer": "/transform/kind",
+    "step_selector": "id",
+    "value_type": "string"
+   },
+   {
+    "choices": [
+     {
+      "label": "bond drift",
+      "value": "bond_drift"
+     },
+     {
+      "label": "frequencies required",
+      "value": "frequencies_required"
+     },
+     {
+      "label": "geometry required",
+      "value": "geometry_required"
+     },
+     {
+      "label": "imaginary frequency count",
+      "value": "imaginary_frequency_count"
+     },
+     {
+      "label": "max rmsd from input",
+      "value": "max_rmsd_from_input"
+     },
+     {
+      "label": "normal termination",
+      "value": "normal_termination"
+     }
+    ],
+    "context": "analysis",
+    "description": "Acceptance checks applied to the analysis inputs.",
+    "editor": "multi_select",
+    "field_id": "analysis.checks",
+    "group": "analysis",
+    "item_type": "string",
+    "json_pointer": "/steps/{id}/analysis/checks",
+    "label": "Analysis checks",
+    "level": "basic",
+    "order": 10,
+    "relative_pointer": "/analysis/checks",
+    "step_selector": "id",
+    "value_type": "array"
+   },
+   {
+    "context": "analysis",
+    "description": "Analysis native definition (method, options).",
+    "editor": "json",
+    "field_id": "analysis.native",
+    "group": "analysis",
+    "json_pointer": "/steps/{id}/analysis/native",
+    "label": "Native input",
+    "level": "basic",
+    "order": 20,
+    "relative_pointer": "/analysis/native",
+    "step_selector": "id",
+    "value_type": "object"
+   },
+   {
+    "context": "binding",
+    "description": "Per-binding cardinality and pairing. Allowed cardinalities: one, optional, one_or_more, many. Allowed pairings: single, per_structure, by_subject, by_group_key. See the contract ports section for the per-port rules.",
+    "editor": "json",
+    "field_id": "binding.cardinality",
+    "group": "bindings",
+    "json_pointer": "/steps/{id}/bindings",
+    "label": "Binding cardinality",
+    "level": "advanced",
+    "order": 10,
+    "relative_pointer": "/bindings",
+    "step_selector": "id",
+    "value_type": "object"
+   }
+  ],
+  "schema": "confflow.editor-manifest.v1",
+  "step_contexts": {
+   "analysis": "analysis",
+   "binding": "binding",
+   "calc": "calc",
+   "confgen": "confgen",
+   "transform": "transform"
+  },
+  "workflow_schema_version": "confflow.workflow.v4"
+ },
+ "editor_manifest_sha256": "7886bc067ec8e160063dbb85c8e1d02634b6980f06f90fd73ea619d0a30c3fd7",
+ "execution_adapters": [
+  {
+   "capability": "calculation",
+   "contract_version": "confflow.contract.adapter.named_structures.v1",
+   "description": "Named-structure calculations paired by explicit group key.",
+   "input_ports": [
+    {
+     "cardinality": "one",
+     "description": "Reactant structure of the reaction (QST2/QST3/NEB).",
+     "kind": "structure",
+     "name": "reactant",
+     "pairing": "by_group_key",
+     "required": true,
+     "roles": []
+    },
+    {
+     "cardinality": "one",
+     "description": "Product structure of the reaction (QST2/QST3/NEB).",
+     "kind": "structure",
+     "name": "product",
+     "pairing": "by_group_key",
+     "required": true,
+     "roles": []
+    },
+    {
+     "cardinality": "optional",
+     "description": "Optional transition-state guess (QST3).",
+     "kind": "structure",
+     "name": "guess",
+     "pairing": "by_group_key",
+     "required": false,
+     "roles": []
+    }
+   ],
+   "name": "named_structures"
+  },
+  {
+   "capability": "calculation",
+   "contract_version": "confflow.contract.adapter.standard.v1",
+   "description": "Single-structure native calculation with optional checkpoint.",
+   "input_ports": [
+    {
+     "cardinality": "one",
+     "description": "The single structure this calculation is run for.",
+     "kind": "structure",
+     "name": "structure",
+     "pairing": "per_structure",
+     "required": true,
+     "roles": []
+    },
+    {
+     "cardinality": "optional",
+     "description": "Optional checkpoint bound to the same subject structure.",
+     "kind": "artifact",
+     "name": "checkpoint",
+     "pairing": "by_subject",
+     "required": false,
+     "roles": [
+      "checkpoint"
+     ]
+    }
+   ],
+   "name": "standard"
+  }
+ ],
+ "executors": [
+  {
+   "capability": "analysis",
+   "contract_version": "confflow.contract.executor.analysis.v1",
+   "description": "Analysis over structures, results, or artifacts.",
+   "input_ports": [
+    {
+     "cardinality": "optional",
+     "description": "Optional subject structure for the analysis.",
+     "kind": "structure",
+     "name": "structure",
+     "pairing": "single",
+     "required": false,
+     "roles": []
+    },
+    {
+     "cardinality": "many",
+     "description": "Subject structures for the analysis (for example path endpoints).",
+     "kind": "structure",
+     "name": "structures",
+     "pairing": "single",
+     "required": false,
+     "roles": []
+    },
+    {
+     "cardinality": "many",
+     "description": "Transition-state structures referenced by endpoint parent links.",
+     "kind": "structure",
+     "name": "ts_structures",
+     "pairing": "single",
+     "required": false,
+     "roles": []
+    },
+    {
+     "cardinality": "many",
+     "description": "Intermediate optimized structures (for example endpoint optimization outputs) carried so frequency-measurement results resolve to their reaction node through parent-id lineage. Optional; absent bindings change nothing.",
+     "kind": "structure",
+     "name": "lineage_structures",
+     "pairing": "single",
+     "required": false,
+     "roles": []
+    },
+    {
+     "cardinality": "many",
+     "description": "Endpoint single-point output structures carried so high-level electronic results (which mint passthrough subjects) resolve to their reaction node through parent-id lineage. Optional; absent bindings change nothing.",
+     "kind": "structure",
+     "name": "sp_structures",
+     "pairing": "single",
+     "required": false,
+     "roles": []
+    },
+    {
+     "cardinality": "many",
+     "description": "Transition-state single-point output structures carried so high-level electronic results (which mint passthrough subjects) resolve to their reaction node through parent-id lineage. Optional; absent bindings change nothing.",
+     "kind": "structure",
+     "name": "ts_sp_structures",
+     "pairing": "single",
+     "required": false,
+     "roles": []
+    },
+    {
+     "cardinality": "many",
+     "description": "Scientific results produced by the step.",
+     "kind": "result",
+     "name": "results",
+     "pairing": "single",
+     "required": false,
+     "roles": []
+    },
+    {
+     "cardinality": "many",
+     "description": "Scientific results produced by the step.",
+     "kind": "result",
+     "name": "ts_results",
+     "pairing": "single",
+     "required": false,
+     "roles": []
+    },
+    {
+     "cardinality": "many",
+     "description": "Scientific results produced by the step.",
+     "kind": "result",
+     "name": "sp_results",
+     "pairing": "single",
+     "required": false,
+     "roles": []
+    },
+    {
+     "cardinality": "many",
+     "description": "Scientific results produced by the step.",
+     "kind": "result",
+     "name": "ts_sp_results",
+     "pairing": "single",
+     "required": false,
+     "roles": []
+    }
+   ],
+   "output_ports": [
+    {
+     "cardinality": "many",
+     "description": "Scientific results produced by the step.",
+     "kind": "result",
+     "name": "results",
+     "pairing": "by_subject",
+     "required": false,
+     "roles": []
+    },
+    {
+     "cardinality": "many",
+     "description": "Analysis report artifacts.",
+     "kind": "artifact",
+     "name": "artifacts",
+     "pairing": "single",
+     "required": false,
+     "roles": [
+      "report"
+     ]
+    }
+   ],
+   "passthrough_ports": {},
+   "requires_adapter": false,
+   "stochastic": false
+  },
+  {
+   "capability": "calculation",
+   "contract_version": "confflow.contract.executor.calculation.v1",
+   "description": "Quantum-chemistry calculation executed by a native program.",
+   "input_ports": [],
+   "output_ports": [
+    {
+     "cardinality": "many",
+     "description": "Structures produced by the calculation.",
+     "kind": "structure",
+     "name": "structures",
+     "pairing": "per_structure",
+     "required": false,
+     "roles": []
+    },
+    {
+     "cardinality": "many",
+     "description": "Native artifacts produced by the calculation.",
+     "kind": "artifact",
+     "name": "artifacts",
+     "pairing": "by_subject",
+     "required": false,
+     "roles": [
+      "checkpoint",
+      "native_output",
+      "trajectory"
+     ]
+    },
+    {
+     "cardinality": "many",
+     "description": "Scientific results produced by the step.",
+     "kind": "result",
+     "name": "results",
+     "pairing": "by_subject",
+     "required": false,
+     "roles": []
+    }
+   ],
+   "passthrough_ports": {},
+   "requires_adapter": true,
+   "stochastic": false
+  },
+  {
+   "capability": "confgen",
+   "contract_version": "confflow.contract.executor.confgen.v3",
+   "description": "Conformer generation; deterministic by default. A seed is required only when v3 sampling requests a capped subset or when the versioned legacy capped path is used.",
+   "input_ports": [
+    {
+     "cardinality": "one",
+     "description": "Seed structure to generate conformers for.",
+     "kind": "structure",
+     "name": "structure",
+     "pairing": "per_structure",
+     "required": true,
+     "roles": []
+    },
+    {
+     "cardinality": "optional",
+     "description": "Optional upstream confgen_state result bound to the same subject structure for chained generation; the value is the input StateKey, selected strictly by result identity.",
+     "kind": "result",
+     "name": "confgen_state",
+     "pairing": "by_subject",
+     "required": false,
+     "roles": []
+    }
+   ],
+   "output_ports": [
+    {
+     "cardinality": "many",
+     "description": "Generated conformer ensemble.",
+     "kind": "structure",
+     "name": "structures",
+     "pairing": "per_structure",
+     "required": false,
+     "roles": []
+    },
+    {
+     "cardinality": "many",
+     "description": "Scientific results produced by the step.",
+     "kind": "result",
+     "name": "results",
+     "pairing": "by_subject",
+     "required": false,
+     "roles": []
+    },
+    {
+     "cardinality": "many",
+     "description": "Conformer ensemble report and canonical target records.",
+     "kind": "artifact",
+     "name": "artifacts",
+     "pairing": "single",
+     "required": false,
+     "roles": [
+      "ensemble_report",
+      "ensemble_targets"
+     ]
+    }
+   ],
+   "passthrough_ports": {},
+   "requires_adapter": false,
+   "stochastic": false
+  },
+  {
+   "capability": "structure_transform",
+   "contract_version": "confflow.contract.executor.structure_transform.v1",
+   "description": "Explicit structure-set transformation; never a hidden post-processing tail of a calculation.",
+   "input_ports": [
+    {
+     "cardinality": "one_or_more",
+     "description": "The whole structure set to transform (refine/deduplicate/filter).",
+     "kind": "structure",
+     "name": "structure",
+     "pairing": "single",
+     "required": true,
+     "roles": []
+    }
+   ],
+   "output_ports": [
+    {
+     "cardinality": "many",
+     "description": "Transformed structure set.",
+     "kind": "structure",
+     "name": "structures",
+     "pairing": "per_structure",
+     "required": false,
+     "roles": []
+    },
+    {
+     "cardinality": "many",
+     "description": "Scientific results produced by the step.",
+     "kind": "result",
+     "name": "results",
+     "pairing": "by_subject",
+     "required": false,
+     "roles": []
+    },
+    {
+     "cardinality": "many",
+     "description": "Transform report artifacts.",
+     "kind": "artifact",
+     "name": "artifacts",
+     "pairing": "single",
+     "required": false,
+     "roles": [
+      "report"
+     ]
+    }
+   ],
+   "passthrough_ports": {},
+   "requires_adapter": false,
+   "stochastic": false
+  }
+ ],
+ "native_escape_hatches": {
+  "blocks": [
+   {
+    "block": "calculation.native",
+    "description": "Program-native definition (keyword, irc/goat/neb sections, atom mapping). Rendered verbatim by the program adapter.",
+    "role": "verbatim_escape_hatch"
+   },
+   {
+    "block": "confgen.native",
+    "description": "Legacy conformer-generation native definition (chains, ensemble options): the explicitly versioned adapter path. Typed v3 scopes use the confgen.* typed blocks described in the confgen section instead.",
+    "role": "verbatim_escape_hatch"
+   },
+   {
+    "block": "transform.native",
+    "description": "Structure-transform native options.",
+    "role": "verbatim_escape_hatch"
+   },
+   {
+    "block": "analysis.native",
+    "description": "Analysis native definition (method, options).",
+    "role": "verbatim_escape_hatch"
+   }
+  ],
+  "overrides": {
+   "allowlist": [
+    "charge",
+    "multiplicity",
+    "freeze"
+   ],
+   "description": "The only scientific overrides with defined precedence semantics; any other override key fails closed."
+  },
+  "parameter_mappings": [
+   {
+    "block": "calculation.check_params",
+    "description": "Per-check parameters keyed by declared check name."
+   },
+   {
+    "block": "calculation.recovery.params",
+    "description": "Parameters of the declared recovery profile."
+   }
+  ]
+ },
+ "policies": {
+  "completion": {
+   "defaults": {
+    "mode": "require_all",
+    "partial_output": "deny"
+   },
+   "description": "Acceptance policy per step; partial consumption needs an explicit partial_consumption declaration on the binding.",
+   "modes": [
+    "require_all",
+    "allow_partial"
+   ],
+   "partial_output_policies": [
+    "deny",
+    "allow"
+   ]
+  },
+  "scheduler": {
+   "defaults": {
+    "max_parallel_items": 1
+   },
+   "description": "Operational policy only; excluded from every digest.",
+   "on_failure": [
+    "continue",
+    "fail_fast"
+   ]
+  }
+ },
+ "ports": {
+  "allowed_pairings_by_kind": {
+   "artifact": [
+    "single",
+    "by_subject"
+   ],
+   "result": [
+    "single",
+    "by_subject"
+   ],
+   "structure": [
+    "single",
+    "per_structure",
+    "by_group_key"
+   ]
+  },
+  "port_index": [
+   {
+    "input_ports": [
+     "structure",
+     "structures",
+     "ts_structures",
+     "lineage_structures",
+     "sp_structures",
+     "ts_sp_structures",
+     "results",
+     "ts_results",
+     "sp_results",
+     "ts_sp_results"
+    ],
+    "output_ports": [
+     "results",
+     "artifacts"
+    ],
+    "owner": "executor:analysis"
+   },
+   {
+    "input_ports": [],
+    "output_ports": [
+     "structures",
+     "artifacts",
+     "results"
+    ],
+    "owner": "executor:calculation"
+   },
+   {
+    "input_ports": [
+     "structure",
+     "confgen_state"
+    ],
+    "output_ports": [
+     "structures",
+     "results",
+     "artifacts"
+    ],
+    "owner": "executor:confgen"
+   },
+   {
+    "input_ports": [
+     "structure"
+    ],
+    "output_ports": [
+     "structures",
+     "results",
+     "artifacts"
+    ],
+    "owner": "executor:structure_transform"
+   },
+   {
+    "input_ports": [
+     "reactant",
+     "product",
+     "guess"
+    ],
+    "output_ports": [],
+    "owner": "adapter:named_structures"
+   },
+   {
+    "input_ports": [
+     "structure",
+     "checkpoint"
+    ],
+    "output_ports": [],
+    "owner": "adapter:standard"
+   }
+  ],
+  "vocabulary": {
+   "cardinalities": [
+    "one",
+    "optional",
+    "one_or_more",
+    "many"
+   ],
+   "pairings": [
+    "single",
+    "per_structure",
+    "by_subject",
+    "by_group_key"
+   ],
+   "partial_consumption": [
+    "require_complete",
+    "accept_subset"
+   ],
+   "port_kinds": [
+    "structure",
+    "artifact",
+    "result"
+   ],
+   "selector_kinds": [
+    "all",
+    "role",
+    "ids"
+   ],
+   "source_kinds": [
+    "run_input",
+    "step_output"
+   ]
+  }
+ },
+ "producer": {
+  "commit": null,
+  "dirty": null,
+  "package": "confflow",
+  "version": "2.1.6"
+ },
+ "programs": [
+  {
+   "adapter_version": "confflow.program.gaussian.v2",
+   "aliases": [
+    "g03",
+    "g09",
+    "g16",
+    "gaussian"
+   ],
+   "default_executable": "g16",
+   "input_extension": "gjf",
+   "log_extension": "log",
+   "parser_version": "confflow.program.gaussian.parser.v2",
+   "program": "gaussian"
+  },
+  {
+   "adapter_version": "confflow.program.orca.v2",
+   "aliases": [
+    "orca"
+   ],
+   "default_executable": "orca",
+   "input_extension": "inp",
+   "log_extension": "out",
+   "parser_version": "confflow.program.orca.parser.v2",
+   "program": "orca"
+  }
+ ],
+ "recipe_catalog": {
+  "label": "V4 calculation recipes",
+  "recipes": [
+   {
+    "category": "Optimization",
+    "description": "Relax the structure to a minimum.",
+    "document": {
+     "global": {
+      "scientific_defaults": {
+       "charge": 0,
+       "multiplicity": 1
+      }
+     },
+     "inputs": {
+      "structures": {
+       "cardinality": "many",
+       "grouping": "each_entity",
+       "kind": "structure"
+      }
+     },
+     "schema": "confflow.workflow.v4",
+     "steps": [
+      {
+       "bindings": {
+        "structure": {
+         "source": {
+          "run": "structures"
+         }
+        }
+       },
+       "calculation": {
+        "checks": [
+         "normal_termination",
+         "geometry_required"
+        ],
+        "execution_adapter": "standard",
+        "native": {
+         "keyword": "B3LYP D3BJ Opt"
+        },
+        "program": "orca",
+        "recovery": {
+         "profile": "none"
+        },
+        "result_profile": "standard",
+        "role": "opt"
+       },
+       "executor": "calculation",
+       "id": "optimize",
+       "label": "Optimize"
+      }
+     ]
+    },
+    "exposed_fields": [
+     "calc.program",
+     "calc.role",
+     "calc.execution_adapter",
+     "calc.result_profile",
+     "calc.checks",
+     "calc.check_params",
+     "calc.recovery",
+     "calc.seed",
+     "calc.native",
+     "calc.overrides.charge",
+     "calc.overrides.multiplicity",
+     "calc.overrides.freeze"
+    ],
+    "id": "optimize",
+    "label": "Optimize",
+    "order": 10,
+    "required_fields": [
+     "calc.program",
+     "calc.native"
+    ]
+   },
+   {
+    "category": "Energy",
+    "description": "One energy evaluation on the geometry as provided.",
+    "document": {
+     "global": {
+      "scientific_defaults": {
+       "charge": 0,
+       "multiplicity": 1
+      }
+     },
+     "inputs": {
+      "structures": {
+       "cardinality": "many",
+       "grouping": "each_entity",
+       "kind": "structure"
+      }
+     },
+     "schema": "confflow.workflow.v4",
+     "steps": [
+      {
+       "bindings": {
+        "structure": {
+         "source": {
+          "run": "structures"
+         }
+        }
+       },
+       "calculation": {
+        "checks": [
+         "normal_termination"
+        ],
+        "execution_adapter": "standard",
+        "native": {
+         "keyword": "B3LYP D3BJ SP"
+        },
+        "program": "orca",
+        "recovery": {
+         "profile": "none"
+        },
+        "result_profile": "standard",
+        "role": "sp"
+       },
+       "executor": "calculation",
+       "id": "single_point",
+       "label": "Single Point"
+      }
+     ]
+    },
+    "exposed_fields": [
+     "calc.program",
+     "calc.role",
+     "calc.execution_adapter",
+     "calc.result_profile",
+     "calc.checks",
+     "calc.check_params",
+     "calc.recovery",
+     "calc.seed",
+     "calc.native",
+     "calc.overrides.charge",
+     "calc.overrides.multiplicity",
+     "calc.overrides.freeze"
+    ],
+    "id": "single_point",
+    "label": "Single Point",
+    "order": 20,
+    "required_fields": [
+     "calc.program",
+     "calc.native"
+    ]
+   },
+   {
+    "category": "Energy",
+    "description": "Vibrational frequencies on the geometry as provided.",
+    "document": {
+     "global": {
+      "scientific_defaults": {
+       "charge": 0,
+       "multiplicity": 1
+      }
+     },
+     "inputs": {
+      "structures": {
+       "cardinality": "many",
+       "grouping": "each_entity",
+       "kind": "structure"
+      }
+     },
+     "schema": "confflow.workflow.v4",
+     "steps": [
+      {
+       "bindings": {
+        "structure": {
+         "source": {
+          "run": "structures"
+         }
+        }
+       },
+       "calculation": {
+        "checks": [
+         "normal_termination",
+         "frequencies_required"
+        ],
+        "execution_adapter": "standard",
+        "native": {
+         "keyword": "B3LYP D3BJ Freq"
+        },
+        "program": "orca",
+        "recovery": {
+         "profile": "none"
+        },
+        "result_profile": "standard",
+        "role": "freq"
+       },
+       "executor": "calculation",
+       "id": "frequency",
+       "label": "Frequency"
+      }
+     ]
+    },
+    "exposed_fields": [
+     "calc.program",
+     "calc.role",
+     "calc.execution_adapter",
+     "calc.result_profile",
+     "calc.checks",
+     "calc.check_params",
+     "calc.recovery",
+     "calc.seed",
+     "calc.native",
+     "calc.overrides.charge",
+     "calc.overrides.multiplicity",
+     "calc.overrides.freeze"
+    ],
+    "id": "frequency",
+    "label": "Frequency",
+    "order": 30,
+    "required_fields": [
+     "calc.program",
+     "calc.native"
+    ]
+   },
+   {
+    "category": "Optimization",
+    "description": "Relax the structure, then confirm the stationary point.",
+    "document": {
+     "global": {
+      "scientific_defaults": {
+       "charge": 0,
+       "multiplicity": 1
+      }
+     },
+     "inputs": {
+      "structures": {
+       "cardinality": "many",
+       "grouping": "each_entity",
+       "kind": "structure"
+      }
+     },
+     "schema": "confflow.workflow.v4",
+     "steps": [
+      {
+       "bindings": {
+        "structure": {
+         "source": {
+          "run": "structures"
+         }
+        }
+       },
+       "calculation": {
+        "checks": [
+         "normal_termination",
+         "frequencies_required"
+        ],
+        "execution_adapter": "standard",
+        "native": {
+         "keyword": "B3LYP D3BJ Opt Freq"
+        },
+        "program": "orca",
+        "recovery": {
+         "profile": "none"
+        },
+        "result_profile": "standard",
+        "role": "opt_freq"
+       },
+       "executor": "calculation",
+       "id": "opt_freq",
+       "label": "Optimize + Frequency"
+      }
+     ]
+    },
+    "exposed_fields": [
+     "calc.program",
+     "calc.role",
+     "calc.execution_adapter",
+     "calc.result_profile",
+     "calc.checks",
+     "calc.check_params",
+     "calc.recovery",
+     "calc.seed",
+     "calc.native",
+     "calc.overrides.charge",
+     "calc.overrides.multiplicity",
+     "calc.overrides.freeze"
+    ],
+    "id": "opt_freq",
+    "label": "Optimize + Frequency",
+    "order": 40,
+    "required_fields": [
+     "calc.program",
+     "calc.native"
+    ]
+   },
+   {
+    "category": "Transition state",
+    "description": "Saddle-point search with one imaginary frequency expected.",
+    "document": {
+     "global": {
+      "scientific_defaults": {
+       "charge": 0,
+       "multiplicity": 1
+      }
+     },
+     "inputs": {
+      "structures": {
+       "cardinality": "many",
+       "grouping": "each_entity",
+       "kind": "structure"
+      }
+     },
+     "schema": "confflow.workflow.v4",
+     "steps": [
+      {
+       "bindings": {
+        "structure": {
+         "source": {
+          "run": "structures"
+         }
+        }
+       },
+       "calculation": {
+        "check_params": {
+         "imaginary_frequency_count": {
+          "expected": 1
+         }
+        },
+        "checks": [
+         "normal_termination",
+         "imaginary_frequency_count"
+        ],
+        "execution_adapter": "standard",
+        "native": {
+         "keyword": "B3LYP/6-31G(d) Opt(TS,CalcFC)"
+        },
+        "program": "gaussian",
+        "recovery": {
+         "profile": "none"
+        },
+        "result_profile": "standard",
+        "role": "ts"
+       },
+       "executor": "calculation",
+       "id": "transition_state",
+       "label": "Transition State"
+      }
+     ]
+    },
+    "exposed_fields": [
+     "calc.program",
+     "calc.role",
+     "calc.execution_adapter",
+     "calc.result_profile",
+     "calc.checks",
+     "calc.check_params",
+     "calc.recovery",
+     "calc.seed",
+     "calc.native",
+     "calc.overrides.charge",
+     "calc.overrides.multiplicity",
+     "calc.overrides.freeze"
+    ],
+    "id": "transition_state",
+    "label": "Transition State",
+    "order": 50,
+    "required_fields": [
+     "calc.program",
+     "calc.native"
+    ]
+   },
+   {
+    "category": "Reaction path",
+    "description": "Intrinsic reaction coordinate into forward/reverse endpoints.",
+    "document": {
+     "global": {
+      "scientific_defaults": {
+       "charge": 0,
+       "multiplicity": 1
+      }
+     },
+     "inputs": {
+      "structures": {
+       "cardinality": "many",
+       "grouping": "each_entity",
+       "kind": "structure"
+      }
+     },
+     "schema": "confflow.workflow.v4",
+     "steps": [
+      {
+       "bindings": {
+        "structure": {
+         "source": {
+          "run": "structures"
+         }
+        }
+       },
+       "calculation": {
+        "checks": [
+         "normal_termination"
+        ],
+        "execution_adapter": "standard",
+        "native": {
+         "irc": {
+          "direction": "both"
+         },
+         "keyword": "B3LYP D3BJ IRC"
+        },
+        "program": "orca",
+        "recovery": {
+         "profile": "none"
+        },
+        "result_profile": "path_endpoints",
+        "role": "irc"
+       },
+       "executor": "calculation",
+       "id": "irc",
+       "label": "IRC"
+      }
+     ]
+    },
+    "exposed_fields": [
+     "calc.program",
+     "calc.role",
+     "calc.execution_adapter",
+     "calc.result_profile",
+     "calc.checks",
+     "calc.check_params",
+     "calc.recovery",
+     "calc.seed",
+     "calc.native",
+     "calc.overrides.charge",
+     "calc.overrides.multiplicity",
+     "calc.overrides.freeze"
+    ],
+    "id": "irc",
+    "label": "IRC",
+    "order": 55,
+    "required_fields": [
+     "calc.program",
+     "calc.native"
+    ]
+   },
+   {
+    "category": "Transition state",
+    "description": "Two-ended transition-state search from reactant and product.",
+    "document": {
+     "global": {
+      "scientific_defaults": {
+       "charge": 0,
+       "multiplicity": 1
+      }
+     },
+     "inputs": {
+      "products": {
+       "cardinality": "many",
+       "kind": "structure"
+      },
+      "reactants": {
+       "cardinality": "many",
+       "kind": "structure"
+      }
+     },
+     "schema": "confflow.workflow.v4",
+     "steps": [
+      {
+       "bindings": {
+        "product": {
+         "cardinality": "one",
+         "pairing": "by_group_key",
+         "source": {
+          "run": "products"
+         }
+        },
+        "reactant": {
+         "cardinality": "one",
+         "pairing": "by_group_key",
+         "source": {
+          "run": "reactants"
+         }
+        }
+       },
+       "calculation": {
+        "check_params": {
+         "imaginary_frequency_count": {
+          "expected": 1
+         }
+        },
+        "checks": [
+         "normal_termination",
+         "imaginary_frequency_count"
+        ],
+        "execution_adapter": "named_structures",
+        "native": {
+         "atom_mapping": {
+          "kind": "identity"
+         },
+         "keyword": "B3LYP/6-31G(d) QST2 Opt"
+        },
+        "program": "gaussian",
+        "recovery": {
+         "profile": "none"
+        },
+        "result_profile": "standard",
+        "role": "ts"
+       },
+       "executor": "calculation",
+       "id": "qst2",
+       "label": "QST2"
+      }
+     ]
+    },
+    "exposed_fields": [
+     "calc.program",
+     "calc.role",
+     "calc.execution_adapter",
+     "calc.result_profile",
+     "calc.checks",
+     "calc.check_params",
+     "calc.recovery",
+     "calc.seed",
+     "calc.native",
+     "calc.overrides.charge",
+     "calc.overrides.multiplicity",
+     "calc.overrides.freeze"
+    ],
+    "id": "qst2",
+    "label": "QST2",
+    "order": 60,
+    "required_fields": [
+     "calc.program",
+     "calc.native"
+    ]
+   },
+   {
+    "category": "Transition state",
+    "description": "Three-ended transition-state search with an explicit guess.",
+    "document": {
+     "global": {
+      "scientific_defaults": {
+       "charge": 0,
+       "multiplicity": 1
+      }
+     },
+     "inputs": {
+      "guesses": {
+       "cardinality": "many",
+       "kind": "structure"
+      },
+      "products": {
+       "cardinality": "many",
+       "kind": "structure"
+      },
+      "reactants": {
+       "cardinality": "many",
+       "kind": "structure"
+      }
+     },
+     "schema": "confflow.workflow.v4",
+     "steps": [
+      {
+       "bindings": {
+        "guess": {
+         "cardinality": "one",
+         "pairing": "by_group_key",
+         "source": {
+          "run": "guesses"
+         }
+        },
+        "product": {
+         "cardinality": "one",
+         "pairing": "by_group_key",
+         "source": {
+          "run": "products"
+         }
+        },
+        "reactant": {
+         "cardinality": "one",
+         "pairing": "by_group_key",
+         "source": {
+          "run": "reactants"
+         }
+        }
+       },
+       "calculation": {
+        "check_params": {
+         "imaginary_frequency_count": {
+          "expected": 1
+         }
+        },
+        "checks": [
+         "normal_termination",
+         "imaginary_frequency_count"
+        ],
+        "execution_adapter": "named_structures",
+        "native": {
+         "atom_mapping": {
+          "kind": "identity"
+         },
+         "keyword": "B3LYP/6-31G(d) QST3 Opt"
+        },
+        "program": "gaussian",
+        "recovery": {
+         "profile": "none"
+        },
+        "result_profile": "standard",
+        "role": "ts"
+       },
+       "executor": "calculation",
+       "id": "qst3",
+       "label": "QST3"
+      }
+     ]
+    },
+    "exposed_fields": [
+     "calc.program",
+     "calc.role",
+     "calc.execution_adapter",
+     "calc.result_profile",
+     "calc.checks",
+     "calc.check_params",
+     "calc.recovery",
+     "calc.seed",
+     "calc.native",
+     "calc.overrides.charge",
+     "calc.overrides.multiplicity",
+     "calc.overrides.freeze"
+    ],
+    "id": "qst3",
+    "label": "QST3",
+    "order": 70,
+    "required_fields": [
+     "calc.program",
+     "calc.native"
+    ]
+   },
+   {
+    "category": "Reaction path",
+    "description": "Nudged elastic band path with reactant and product endpoints.",
+    "document": {
+     "global": {
+      "scientific_defaults": {
+       "charge": 0,
+       "multiplicity": 1
+      }
+     },
+     "inputs": {
+      "products": {
+       "cardinality": "many",
+       "kind": "structure"
+      },
+      "reactants": {
+       "cardinality": "many",
+       "kind": "structure"
+      }
+     },
+     "schema": "confflow.workflow.v4",
+     "steps": [
+      {
+       "bindings": {
+        "product": {
+         "cardinality": "one",
+         "pairing": "by_group_key",
+         "source": {
+          "run": "products"
+         }
+        },
+        "reactant": {
+         "cardinality": "one",
+         "pairing": "by_group_key",
+         "source": {
+          "run": "reactants"
+         }
+        }
+       },
+       "calculation": {
+        "checks": [
+         "normal_termination"
+        ],
+        "execution_adapter": "named_structures",
+        "native": {
+         "atom_mapping": {
+          "kind": "identity"
+         },
+         "keyword": "B3LYP D3BJ NEB-TS",
+         "neb": {
+          "n_images": 7,
+          "neb_ts": true
+         }
+        },
+        "program": "orca",
+        "recovery": {
+         "profile": "none"
+        },
+        "result_profile": "ensemble",
+        "role": "neb"
+       },
+       "executor": "calculation",
+       "id": "neb",
+       "label": "NEB"
+      }
+     ]
+    },
+    "exposed_fields": [
+     "calc.program",
+     "calc.role",
+     "calc.execution_adapter",
+     "calc.result_profile",
+     "calc.checks",
+     "calc.check_params",
+     "calc.recovery",
+     "calc.seed",
+     "calc.native",
+     "calc.overrides.charge",
+     "calc.overrides.multiplicity",
+     "calc.overrides.freeze"
+    ],
+    "id": "neb",
+    "label": "NEB",
+    "order": 80,
+    "required_fields": [
+     "calc.program",
+     "calc.native"
+    ]
+   },
+   {
+    "category": "Conformers",
+    "description": "Global-optimization conformer ensemble for one structure.",
+    "document": {
+     "global": {
+      "scientific_defaults": {
+       "charge": 0,
+       "multiplicity": 1
+      }
+     },
+     "inputs": {
+      "structures": {
+       "cardinality": "many",
+       "grouping": "each_entity",
+       "kind": "structure"
+      }
+     },
+     "schema": "confflow.workflow.v4",
+     "steps": [
+      {
+       "bindings": {
+        "structure": {
+         "source": {
+          "run": "structures"
+         }
+        }
+       },
+       "calculation": {
+        "checks": [
+         "normal_termination"
+        ],
+        "execution_adapter": "standard",
+        "native": {
+         "goat": {
+          "MaxIter": 50
+         },
+         "keyword": "B3LYP D3BJ GOAT"
+        },
+        "program": "orca",
+        "recovery": {
+         "profile": "none"
+        },
+        "result_profile": "ensemble",
+        "role": "goat",
+        "seed": 42
+       },
+       "executor": "calculation",
+       "id": "goat",
+       "label": "GOAT Conformers"
+      }
+     ]
+    },
+    "exposed_fields": [
+     "calc.program",
+     "calc.role",
+     "calc.execution_adapter",
+     "calc.result_profile",
+     "calc.checks",
+     "calc.check_params",
+     "calc.recovery",
+     "calc.seed",
+     "calc.native",
+     "calc.overrides.charge",
+     "calc.overrides.multiplicity",
+     "calc.overrides.freeze"
+    ],
+    "id": "goat",
+    "label": "GOAT Conformers",
+    "order": 100,
+    "required_fields": [
+     "calc.program",
+     "calc.native"
+    ]
+   },
+   {
+    "category": "Reaction path",
+    "description": "Transition-state search with frequency confirmation, an IRC into forward/reverse endpoints, endpoint optimization, frequency, and single point, plus a reaction-profile analysis.",
+    "document": {
+     "global": {
+      "scientific_defaults": {
+       "charge": 0,
+       "multiplicity": 1
+      }
+     },
+     "inputs": {
+      "structures": {
+       "cardinality": "many",
+       "grouping": "each_entity",
+       "kind": "structure"
+      }
+     },
+     "schema": "confflow.workflow.v4",
+     "steps": [
+      {
+       "bindings": {
+        "structure": {
+         "source": {
+          "run": "structures"
+         }
+        }
+       },
+       "calculation": {
+        "check_params": {
+         "imaginary_frequency_count": {
+          "expected": 1
+         }
+        },
+        "checks": [
+         "normal_termination",
+         "imaginary_frequency_count"
+        ],
+        "execution_adapter": "standard",
+        "native": {
+         "keyword": "B3LYP D3BJ OptTS"
+        },
+        "program": "orca",
+        "recovery": {
+         "profile": "none"
+        },
+        "result_profile": "standard",
+        "role": "ts"
+       },
+       "executor": "calculation",
+       "id": "ts",
+       "label": "Transition state"
+      },
+      {
+       "bindings": {
+        "structure": {
+         "source": {
+          "port": "structures",
+          "step": "ts"
+         }
+        }
+       },
+       "calculation": {
+        "checks": [
+         "normal_termination",
+         "frequencies_required"
+        ],
+        "execution_adapter": "standard",
+        "native": {
+         "keyword": "B3LYP D3BJ Freq"
+        },
+        "program": "orca",
+        "recovery": {
+         "profile": "none"
+        },
+        "result_profile": "standard",
+        "role": "freq"
+       },
+       "executor": "calculation",
+       "id": "ts_freq",
+       "label": "TS frequency"
+      },
+      {
+       "bindings": {
+        "structure": {
+         "source": {
+          "port": "structures",
+          "step": "ts"
+         }
+        }
+       },
+       "calculation": {
+        "checks": [
+         "normal_termination"
+        ],
+        "execution_adapter": "standard",
+        "native": {
+         "keyword": "B3LYP D3BJ SP"
+        },
+        "program": "orca",
+        "recovery": {
+         "profile": "none"
+        },
+        "result_profile": "standard",
+        "role": "sp"
+       },
+       "executor": "calculation",
+       "id": "ts_sp",
+       "label": "TS single point"
+      },
+      {
+       "bindings": {
+        "structure": {
+         "source": {
+          "port": "structures",
+          "step": "ts"
+         }
+        }
+       },
+       "calculation": {
+        "checks": [
+         "normal_termination"
+        ],
+        "execution_adapter": "standard",
+        "native": {
+         "irc": {
+          "direction": "both"
+         },
+         "keyword": "B3LYP D3BJ IRC"
+        },
+        "program": "orca",
+        "recovery": {
+         "profile": "none"
+        },
+        "result_profile": "path_endpoints",
+        "role": "irc"
+       },
+       "executor": "calculation",
+       "id": "irc",
+       "label": "IRC"
+      },
+      {
+       "bindings": {
+        "structure": {
+         "source": {
+          "port": "structures",
+          "step": "irc"
+         }
+        }
+       },
+       "calculation": {
+        "checks": [
+         "normal_termination",
+         "geometry_required"
+        ],
+        "execution_adapter": "standard",
+        "native": {
+         "keyword": "B3LYP D3BJ Opt"
+        },
+        "program": "orca",
+        "recovery": {
+         "profile": "none"
+        },
+        "result_profile": "standard",
+        "role": "opt"
+       },
+       "executor": "calculation",
+       "id": "endpoint_opt",
+       "label": "Endpoint optimization"
+      },
+      {
+       "bindings": {
+        "structure": {
+         "source": {
+          "port": "structures",
+          "step": "endpoint_opt"
+         }
+        }
+       },
+       "calculation": {
+        "checks": [
+         "normal_termination",
+         "frequencies_required"
+        ],
+        "execution_adapter": "standard",
+        "native": {
+         "keyword": "B3LYP D3BJ Freq"
+        },
+        "program": "orca",
+        "recovery": {
+         "profile": "none"
+        },
+        "result_profile": "standard",
+        "role": "freq"
+       },
+       "executor": "calculation",
+       "id": "endpoint_freq",
+       "label": "Endpoint frequency"
+      },
+      {
+       "bindings": {
+        "structure": {
+         "source": {
+          "port": "structures",
+          "step": "endpoint_freq"
+         }
+        }
+       },
+       "calculation": {
+        "checks": [
+         "normal_termination"
+        ],
+        "execution_adapter": "standard",
+        "native": {
+         "keyword": "B3LYP D3BJ SP"
+        },
+        "program": "orca",
+        "recovery": {
+         "profile": "none"
+        },
+        "result_profile": "standard",
+        "role": "sp"
+       },
+       "executor": "calculation",
+       "id": "endpoint_sp",
+       "label": "Endpoint single point"
+      },
+      {
+       "analysis": {
+        "checks": [],
+        "native": {
+         "correction_result_kind": "gibbs_correction",
+         "correction_source_steps": [
+          "endpoint_freq",
+          "ts_freq"
+         ],
+         "electronic_result_kind": "energy",
+         "electronic_source_steps": [
+          "endpoint_sp",
+          "ts_sp"
+         ],
+         "endpoint_assignment": {
+          "forward": "unassigned",
+          "reverse": "unassigned"
+         },
+         "energy_fallback": "none",
+         "energy_mode": "composite",
+         "method": "reaction_profile",
+         "partial_policy": "require_complete"
+        }
+       },
+       "bindings": {
+        "lineage_structures": {
+         "source": {
+          "port": "structures",
+          "step": "endpoint_opt"
+         }
+        },
+        "results": {
+         "source": {
+          "port": "results",
+          "step": "endpoint_freq"
+         }
+        },
+        "sp_results": {
+         "source": {
+          "port": "results",
+          "step": "endpoint_sp"
+         }
+        },
+        "sp_structures": {
+         "source": {
+          "port": "structures",
+          "step": "endpoint_sp"
+         }
+        },
+        "structures": {
+         "source": {
+          "port": "structures",
+          "step": "irc"
+         }
+        },
+        "ts_results": {
+         "source": {
+          "port": "results",
+          "step": "ts_freq"
+         }
+        },
+        "ts_sp_results": {
+         "source": {
+          "port": "results",
+          "step": "ts_sp"
+         }
+        },
+        "ts_sp_structures": {
+         "source": {
+          "port": "structures",
+          "step": "ts_sp"
+         }
+        },
+        "ts_structures": {
+         "source": {
+          "port": "structures",
+          "step": "ts"
+         }
+        }
+       },
+       "executor": "analysis",
+       "id": "reaction_profile",
+       "label": "Reaction profile"
+      }
+     ]
+    },
+    "exposed_fields": [
+     "calc.program",
+     "calc.role",
+     "calc.execution_adapter",
+     "calc.result_profile",
+     "calc.checks",
+     "calc.check_params",
+     "calc.recovery",
+     "calc.seed",
+     "calc.native",
+     "calc.overrides.charge",
+     "calc.overrides.multiplicity",
+     "calc.overrides.freeze",
+     "analysis.checks",
+     "analysis.native"
+    ],
+    "id": "tspes",
+    "label": "TS + Path Endpoints + SP",
+    "order": 110,
+    "required_fields": [
+     "calc.program",
+     "calc.native"
+    ]
+   },
+   {
+    "category": "Conformers",
+    "description": "Typed ConfGen v3 torsion ensemble over one declared bond grid (deterministic full grid; add a sampling cap plus seed for capped subsets). Confirm the bond selection for each structure.",
+    "document": {
+     "global": {
+      "scientific_defaults": {
+       "charge": 0,
+       "multiplicity": 1
+      }
+     },
+     "inputs": {
+      "structures": {
+       "cardinality": "many",
+       "grouping": "each_entity",
+       "kind": "structure"
+      }
+     },
+     "schema": "confflow.workflow.v4",
+     "steps": [
+      {
+       "bindings": {
+        "structure": {
+         "source": {
+          "run": "structures"
+         }
+        }
+       },
+       "confgen": {
+        "schema_version": 3,
+        "torsions": [
+         {
+          "angles": [
+           0,
+           120,
+           240
+          ],
+          "bond": [
+           1,
+           2
+          ],
+          "id": "t1",
+          "model": "relative_rotation_grid",
+          "treatment": "enumerate"
+         }
+        ]
+       },
+       "executor": "confgen",
+       "id": "confgen",
+       "label": "Torsion scan"
+      }
+     ]
+    },
+    "exposed_fields": [
+     "confgen.seed",
+     "confgen.v3.coordination",
+     "confgen.v3.rings",
+     "confgen.v3.torsions",
+     "confgen.v3.topology",
+     "confgen.v3.sampling",
+     "confgen.v3.limits",
+     "confgen.v3.tolerances",
+     "confgen.v3.exclusions"
+    ],
+    "id": "confgen_torsion",
+    "label": "ConfGen Torsion Scan",
+    "order": 120,
+    "required_fields": [
+     "confgen.v3.torsions"
+    ]
+   }
+  ],
+  "schema": "confflow.recipe-catalog.v1",
+  "workflow_schema_version": "confflow.workflow.v4"
+ },
+ "recipe_catalog_sha256": "bc63fc178492ae7b853c1404b8a9c7f4741967a954cc8027d1f3892b5294b098",
+ "recovery_profiles": [
+  {
+   "contract_version": "confflow.contract.recovery.none.v1",
+   "description": "No recovery; failures are reported as-is.",
+   "name": "none",
+   "supported_capabilities": [
+    "analysis",
+    "calculation",
+    "confgen",
+    "structure_transform"
+   ]
+  },
+  {
+   "contract_version": "confflow.contract.recovery.ts_rescue_scan.v1",
+   "description": "Bond scan rescue for a failed transition-state calculation (V4-2).",
+   "name": "ts_rescue_scan",
+   "supported_capabilities": [
+    "calculation"
+   ]
+  }
+ ],
+ "remote_capability": {
+  "handoff": "confflow.control.worker-handoff.v3",
+  "result": "confflow.control.worker-result.v3"
+ },
+ "resources": {
+  "fields": [
+   {
+    "constraints": ">= 1",
+    "default": 1,
+    "description": "CPU cores reserved per work item; changes native input.",
+    "name": "cores_per_item",
+    "path": "resources.cores_per_item",
+    "value_type": "integer"
+   },
+   {
+    "constraints": "binary suffixes KB/KiB/MB/MiB/GB/GiB/TB/TiB",
+    "default": "1GiB",
+    "description": "Memory reserved per work item; changes native input.",
+    "name": "memory_per_item",
+    "path": "resources.memory_per_item",
+    "value_type": "string"
+   },
+   {
+    "constraints": ">= 1",
+    "default": 1,
+    "description": "Scheduler-only width; never changes reuse identity.",
+    "name": "max_parallel_items",
+    "path": "scheduler.max_parallel_items",
+    "value_type": "integer"
+   },
+   {
+    "constraints": "one of ['continue', 'fail_fast']",
+    "default": "continue",
+    "description": "Scheduler-only failure behavior; digest-inert.",
+    "name": "on_failure",
+    "path": "scheduler.on_failure",
+    "value_type": "string"
+   }
+  ]
+ },
+ "result_profiles": [
+  {
+   "contract_version": "confflow.contract.result_profile.ensemble.v1",
+   "description": "Conformer ensemble: many structures, energy results.",
+   "name": "ensemble",
+   "provides_artifacts": true,
+   "provides_results": true,
+   "provides_structures": true,
+   "supported_checks": [
+    "normal_termination",
+    "geometry_required"
+   ]
+  },
+  {
+   "contract_version": "confflow.contract.result_profile.path_endpoints.v1",
+   "description": "Reaction-path endpoints (IRC/NEB): no frequency checks.",
+   "name": "path_endpoints",
+   "provides_artifacts": true,
+   "provides_results": true,
+   "provides_structures": true,
+   "supported_checks": [
+    "normal_termination",
+    "geometry_required",
+    "max_rmsd_from_input",
+    "bond_drift"
+   ]
+  },
+  {
+   "contract_version": "confflow.contract.result_profile.standard.v1",
+   "description": "Standard parser: geometries, results, and native artifacts.",
+   "name": "standard",
+   "provides_artifacts": true,
+   "provides_results": true,
+   "provides_structures": true,
+   "supported_checks": [
+    "normal_termination",
+    "geometry_required",
+    "frequencies_required",
+    "imaginary_frequency_count",
+    "max_rmsd_from_input",
+    "bond_drift"
+   ]
+  }
+ ],
+ "result_schema": {
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+   "analyses": {
+    "items": {
+     "anyOf": [
+      {
+       "additionalProperties": false,
+       "properties": {
+        "capability": {
+         "minLength": 1,
+         "type": "string"
+        },
+        "step_id": {
+         "minLength": 1,
+         "type": "string"
+        }
+       },
+       "required": [
+        "capability",
+        "step_id"
+       ],
+       "type": "object"
+      },
+      {
+       "additionalProperties": true,
+       "properties": {
+        "assignment": {},
+        "barriers": {
+         "type": "object"
+        },
+        "capability": {
+         "minLength": 1,
+         "type": "string"
+        },
+        "energies": {
+         "type": "object"
+        },
+        "forward_endpoint_id": {
+         "type": [
+          "string",
+          "null"
+         ]
+        },
+        "group_key": {
+         "minLength": 1,
+         "type": "string"
+        },
+        "provenance": {
+         "type": "object"
+        },
+        "reverse_endpoint_id": {
+         "type": [
+          "string",
+          "null"
+         ]
+        },
+        "source_result_ids": {
+         "items": {
+          "minLength": 1,
+          "type": "string"
+         },
+         "type": "array"
+        },
+        "step_id": {
+         "minLength": 1,
+         "type": "string"
+        },
+        "ts_structure_id": {
+         "type": [
+          "string",
+          "null"
+         ]
+        }
+       },
+       "required": [
+        "group_key"
+       ],
+       "type": "object"
+      }
+     ]
+    },
+    "type": "array"
+   },
+   "artifacts": {
+    "items": {
+     "additionalProperties": false,
+     "properties": {
+      "checksum": {
+       "pattern": "^sha256:[0-9a-f]{64}$",
+       "type": "string"
+      },
+      "fetch": {
+       "type": [
+        "string",
+        "null"
+       ]
+      },
+      "locator": {
+       "minLength": 1,
+       "type": "string"
+      },
+      "role": {
+       "minLength": 1,
+       "type": "string"
+      },
+      "subject": {
+       "type": [
+        "string",
+        "null"
+       ]
+      }
+     },
+     "required": [
+      "role",
+      "checksum",
+      "locator"
+     ],
+     "type": "object"
+    },
+    "type": "array"
+   },
+   "content_schema": {
+    "const": "confflow.run_result_manifest.v1"
+   },
+   "definition_digest": {
+    "pattern": "^sha256:[0-9a-f]{64}$",
+    "type": "string"
+   },
+   "generation_id": {
+    "minLength": 1,
+    "type": [
+     "string",
+     "null"
+    ]
+   },
+   "provenance": {
+    "additionalProperties": false,
+    "properties": {
+     "commit": {
+      "type": [
+       "string",
+       "null"
+      ]
+     },
+     "dirty": {
+      "type": [
+       "boolean",
+       "null"
+      ]
+     },
+     "package": {
+      "minLength": 1,
+      "type": "string"
+     },
+     "version": {
+      "minLength": 1,
+      "type": "string"
+     }
+    },
+    "required": [
+     "package",
+     "version"
+    ],
+    "type": "object"
+   },
+   "results": {
+    "items": {
+     "additionalProperties": false,
+     "properties": {
+      "identity_digest": {
+       "type": [
+        "string",
+        "null"
+       ]
+      },
+      "kind": {
+       "minLength": 1,
+       "type": "string"
+      },
+      "origin": {
+       "enum": [
+        "produced",
+        "run_input"
+       ]
+      },
+      "producer_digest": {
+       "pattern": "(^sha256:[0-9a-f]{64}$)?",
+       "type": [
+        "string",
+        "null"
+       ]
+      },
+      "result_id": {
+       "minLength": 1,
+       "type": "string"
+      },
+      "source_step_id": {
+       "type": [
+        "string",
+        "null"
+       ]
+      },
+      "source_work_item_id": {
+       "type": [
+        "string",
+        "null"
+       ]
+      },
+      "subject_structure_id": {
+       "type": [
+        "string",
+        "null"
+       ]
+      },
+      "value_digest": {
+       "type": [
+        "string",
+        "null"
+       ]
+      }
+     },
+     "required": [
+      "result_id",
+      "kind"
+     ],
+     "type": "object"
+    },
+    "type": "array"
+   },
+   "run_id": {
+    "minLength": 1,
+    "type": "string"
+   },
+   "status": {
+    "enum": [
+     "completed",
+     "partial",
+     "failed",
+     "cancelled"
+    ]
+   },
+   "steps": {
+    "items": {
+     "additionalProperties": false,
+     "properties": {
+      "counts": {
+       "additionalProperties": false,
+       "properties": {
+        "cancelled": {
+         "minimum": 0,
+         "type": "integer"
+        },
+        "completed": {
+         "minimum": 0,
+         "type": "integer"
+        },
+        "failed": {
+         "minimum": 0,
+         "type": "integer"
+        }
+       },
+       "required": [
+        "completed",
+        "failed",
+        "cancelled"
+       ],
+       "type": "object"
+      },
+      "diagnostics": {
+       "items": {
+        "additionalProperties": false,
+        "properties": {
+         "code": {
+          "minLength": 1,
+          "type": "string"
+         },
+         "field_path": {
+          "type": [
+           "string",
+           "null"
+          ]
+         },
+         "message": {
+          "minLength": 1,
+          "type": "string"
+         },
+         "severity": {
+          "minLength": 1,
+          "type": "string"
+         },
+         "step_id": {
+          "type": [
+           "string",
+           "null"
+          ]
+         }
+        },
+        "required": [
+         "code",
+         "severity",
+         "message"
+        ],
+        "type": "object"
+       },
+       "type": "array"
+      },
+      "digest": {
+       "pattern": "^sha256:[0-9a-f]{64}$",
+       "type": "string"
+      },
+      "id": {
+       "minLength": 1,
+       "type": "string"
+      },
+      "semantic_digest": {
+       "pattern": "^sha256:[0-9a-f]{64}$",
+       "type": "string"
+      },
+      "status": {
+       "enum": [
+        "completed",
+        "partial",
+        "failed",
+        "cancelled"
+       ]
+      }
+     },
+     "required": [
+      "id",
+      "status",
+      "digest",
+      "counts",
+      "diagnostics"
+     ],
+     "type": "object"
+    },
+    "type": "array"
+   }
+  },
+  "required": [
+   "content_schema",
+   "run_id",
+   "status",
+   "definition_digest",
+   "provenance",
+   "steps",
+   "analyses",
+   "artifacts"
+  ],
+  "title": "ConfFlow run result manifest",
+  "type": "object"
+ },
+ "result_schema_sha256": "f214e7065d180df3459bc883ee64f666627e683434a57961bfeb819ea07029a0",
+ "scientific_checks": [
+  {
+   "contract_version": "confflow.contract.check.bond_drift.v1",
+   "description": "Check drift of declared bond lengths against a threshold.",
+   "name": "bond_drift"
+  },
+  {
+   "contract_version": "confflow.contract.check.frequencies_required.v1",
+   "description": "Require a parsed vibrational frequency set.",
+   "name": "frequencies_required"
+  },
+  {
+   "contract_version": "confflow.contract.check.geometry_required.v1",
+   "description": "Require at least one parsed geometry.",
+   "name": "geometry_required"
+  },
+  {
+   "contract_version": "confflow.contract.check.imaginary_frequency_count.v1",
+   "description": "Check the count of imaginary frequencies against an expectation.",
+   "name": "imaginary_frequency_count"
+  },
+  {
+   "contract_version": "confflow.contract.check.max_rmsd_from_input.v1",
+   "description": "Check the RMSD between a parsed geometry and its input structure.",
+   "name": "max_rmsd_from_input"
+  },
+  {
+   "contract_version": "confflow.contract.check.normal_termination.v1",
+   "description": "Require the native program to report normal termination.",
+   "name": "normal_termination"
+  }
+ ],
+ "transform_kinds": [
+  "refine",
+  "deduplicate",
+  "filter"
+ ],
+ "validation_response_schema": "confflow.configuration-validation.v1",
+ "workflow_schema": {
+  "$defs": {
+   "AnalysisModel": {
+    "additionalProperties": false,
+    "description": "Analysis step definition.",
+    "properties": {
+     "check_params": {
+      "additionalProperties": {
+       "additionalProperties": true,
+       "type": "object"
+      },
+      "title": "Check Params",
+      "type": "object"
+     },
+     "checks": {
+      "items": {
+       "enum": [
+        "bond_drift",
+        "frequencies_required",
+        "geometry_required",
+        "imaginary_frequency_count",
+        "max_rmsd_from_input",
+        "normal_termination"
+       ],
+       "type": "string"
+      },
+      "title": "Checks",
+      "type": "array"
+     },
+     "native": {
+      "additionalProperties": true,
+      "title": "Native",
+      "type": "object"
+     }
+    },
+    "title": "AnalysisModel",
+    "type": "object"
+   },
+   "BindingModel": {
+    "additionalProperties": false,
+    "description": "One binding into a named target port.",
+    "properties": {
+     "cardinality": {
+      "anyOf": [
+       {
+        "$ref": "#/$defs/Cardinality"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "pairing": {
+      "anyOf": [
+       {
+        "$ref": "#/$defs/Pairing"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "partial_consumption": {
+      "anyOf": [
+       {
+        "$ref": "#/$defs/PartialConsumption"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "source": {
+      "$ref": "#/$defs/SourceModel"
+     }
+    },
+    "required": [
+     "source"
+    ],
+    "title": "BindingModel",
+    "type": "object"
+   },
+   "BindingSiteModel": {
+    "additionalProperties": false,
+    "properties": {
+     "atoms": {
+      "items": {
+       "minimum": 0,
+       "type": "integer"
+      },
+      "maxItems": 1,
+      "minItems": 1,
+      "title": "Atoms",
+      "type": "array"
+     },
+     "hapticity": {
+      "default": 1,
+      "maximum": 1,
+      "minimum": 1,
+      "title": "Hapticity",
+      "type": "integer"
+     },
+     "id": {
+      "minLength": 1,
+      "title": "Id",
+      "type": "string"
+     },
+     "kind": {
+      "const": "atom",
+      "default": "atom",
+      "title": "Kind",
+      "type": "string"
+     }
+    },
+    "required": [
+     "id",
+     "atoms"
+    ],
+    "title": "BindingSiteModel",
+    "type": "object"
+   },
+   "CalculationModel": {
+    "additionalProperties": false,
+    "description": "Scientific definition of a calculation step.",
+    "properties": {
+     "check_params": {
+      "additionalProperties": {
+       "additionalProperties": true,
+       "type": "object"
+      },
+      "title": "Check Params",
+      "type": "object"
+     },
+     "checks": {
+      "items": {
+       "enum": [
+        "bond_drift",
+        "frequencies_required",
+        "geometry_required",
+        "imaginary_frequency_count",
+        "max_rmsd_from_input",
+        "normal_termination"
+       ],
+       "type": "string"
+      },
+      "title": "Checks",
+      "type": "array"
+     },
+     "execution_adapter": {
+      "default": "standard",
+      "enum": [
+       "named_structures",
+       "standard"
+      ],
+      "title": "Execution Adapter",
+      "type": "string"
+     },
+     "native": {
+      "additionalProperties": true,
+      "title": "Native",
+      "type": "object"
+     },
+     "overrides": {
+      "additionalProperties": true,
+      "title": "Overrides",
+      "type": "object"
+     },
+     "program": {
+      "minLength": 1,
+      "title": "Program",
+      "type": "string"
+     },
+     "recovery": {
+      "$ref": "#/$defs/RecoveryModel",
+      "properties": {
+       "profile": {
+        "enum": [
+         "none",
+         "ts_rescue_scan"
+        ]
+       }
+      }
+     },
+     "result_profile": {
+      "default": "standard",
+      "enum": [
+       "ensemble",
+       "path_endpoints",
+       "standard"
+      ],
+      "title": "Result Profile",
+      "type": "string"
+     },
+     "role": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "title": "Role"
+     },
+     "seed": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "title": "Seed"
+     }
+    },
+    "required": [
+     "program"
+    ],
+    "title": "CalculationModel",
+    "type": "object"
+   },
+   "Cardinality": {
+    "description": "Cardinality contract of a target port.\n\nAttributes\n----------\nONE\n    Exactly one value; missing or multiple values is an error.\nOPTIONAL\n    Zero or one value.\nONE_OR_MORE\n    At least one value.\nMANY\n    Zero or more values.",
+    "enum": [
+     "one",
+     "optional",
+     "one_or_more",
+     "many"
+    ],
+    "title": "Cardinality",
+    "type": "string"
+   },
+   "CompletionMode": {
+    "description": "Acceptance mode for a step's work items.\n\nAttributes\n----------\nREQUIRE_ALL\n    Every item must complete; any failure, cancellation, or skip fails\n    the step.\nALLOW_PARTIAL\n    A step may be ``partial``; see :class:`CompletionPolicy`.",
+    "enum": [
+     "require_all",
+     "allow_partial"
+    ],
+    "title": "CompletionMode",
+    "type": "string"
+   },
+   "CompletionModel": {
+    "additionalProperties": false,
+    "description": "Acceptance policy of a step.",
+    "properties": {
+     "minimum_success": {
+      "anyOf": [
+       {
+        "minimum": 1,
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "title": "Minimum Success"
+     },
+     "mode": {
+      "$ref": "#/$defs/CompletionMode",
+      "default": "require_all"
+     },
+     "partial_output": {
+      "$ref": "#/$defs/PartialOutputPolicy",
+      "default": "deny"
+     }
+    },
+    "title": "CompletionModel",
+    "type": "object"
+   },
+   "ConfgenExclusionModel": {
+    "additionalProperties": false,
+    "description": "Declared exclusions are recorded policy, never verified proof.\n\nAn optional ``proof`` mapping is a policy annotation (proof_id required)\nuntil a sound backend proof enforcement exists; it never authorizes\nautomatic infeasibility claims.",
+    "properties": {
+     "axis": {
+      "enum": [
+       "coordination",
+       "rings",
+       "torsions"
+      ],
+      "title": "Axis",
+      "type": "string"
+     },
+     "match": {
+      "additionalProperties": true,
+      "minProperties": 1,
+      "title": "Match",
+      "type": "object"
+     },
+     "proof": {
+      "anyOf": [
+       {
+        "additionalProperties": true,
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "title": "Proof"
+     },
+     "reason": {
+      "minLength": 1,
+      "title": "Reason",
+      "type": "string"
+     }
+    },
+    "required": [
+     "axis",
+     "match",
+     "reason"
+    ],
+    "title": "ConfgenExclusionModel",
+    "type": "object"
+   },
+   "ConfgenLimits": {
+    "additionalProperties": false,
+    "properties": {
+     "max_declared_states": {
+      "default": 10000,
+      "minimum": 1,
+      "title": "Max Declared States",
+      "type": "integer"
+     },
+     "max_output_structures": {
+      "default": 10000,
+      "minimum": 1,
+      "title": "Max Output Structures",
+      "type": "integer"
+     }
+    },
+    "title": "ConfgenLimits",
+    "type": "object"
+   },
+   "ConfgenModel": {
+    "additionalProperties": false,
+    "description": "Scientific definition of a conformer-generation step.",
+    "properties": {
+     "native": {
+      "additionalProperties": true,
+      "title": "Native",
+      "type": "object"
+     },
+     "overrides": {
+      "additionalProperties": true,
+      "title": "Overrides",
+      "type": "object"
+     },
+     "seed": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "title": "Seed"
+     }
+    },
+    "title": "ConfgenModel",
+    "type": "object"
+   },
+   "ConfgenModelV3": {
+    "additionalProperties": false,
+    "description": "One typed v3 declaration, independent of legacy native configuration.",
+    "properties": {
+     "coordination": {
+      "anyOf": [
+       {
+        "$ref": "#/$defs/CoordinationGenerationSpec"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "exclusions": {
+      "items": {
+       "$ref": "#/$defs/ConfgenExclusionModel"
+      },
+      "title": "Exclusions",
+      "type": "array"
+     },
+     "index_base": {
+      "default": 1,
+      "enum": [
+       0,
+       1
+      ],
+      "title": "Index Base",
+      "type": "integer"
+     },
+     "limits": {
+      "$ref": "#/$defs/ConfgenLimits"
+     },
+     "overrides": {
+      "additionalProperties": true,
+      "title": "Overrides",
+      "type": "object"
+     },
+     "rings": {
+      "items": {
+       "$ref": "#/$defs/RingGenerationSpec"
+      },
+      "title": "Rings",
+      "type": "array"
+     },
+     "sampling": {
+      "anyOf": [
+       {
+        "$ref": "#/$defs/SamplingSpec"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "schema_version": {
+      "const": 3,
+      "default": 3,
+      "title": "Schema Version",
+      "type": "integer"
+     },
+     "seed": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "title": "Seed"
+     },
+     "stereochemistry": {
+      "additionalProperties": true,
+      "title": "Stereochemistry",
+      "type": "object"
+     },
+     "tolerances": {
+      "$ref": "#/$defs/ConfgenToleranceModel"
+     },
+     "topology": {
+      "$ref": "#/$defs/ConfgenTopologyModel"
+     },
+     "torsions": {
+      "items": {
+       "$ref": "#/$defs/TorsionGenerationSpec"
+      },
+      "title": "Torsions",
+      "type": "array"
+     }
+    },
+    "title": "ConfgenModelV3",
+    "type": "object"
+   },
+   "ConfgenToleranceModel": {
+    "additionalProperties": false,
+    "description": "Global tolerances; defaults track the core science authority.",
+    "properties": {
+     "bond_length_atol": {
+      "default": 1e-06,
+      "exclusiveMinimum": 0,
+      "title": "Bond Length Atol",
+      "type": "number"
+     },
+     "bond_scale": {
+      "default": 1.15,
+      "exclusiveMinimum": 0,
+      "title": "Bond Scale",
+      "type": "number"
+     },
+     "clash_threshold": {
+      "default": 0.65,
+      "exclusiveMinimum": 0,
+      "title": "Clash Threshold",
+      "type": "number"
+     },
+     "coordination_angle_atol_deg": {
+      "default": 3,
+      "exclusiveMinimum": 0,
+      "title": "Coordination Angle Atol Deg",
+      "type": "number"
+     },
+     "coordination_bond_atol": {
+      "default": 0.05,
+      "exclusiveMinimum": 0,
+      "title": "Coordination Bond Atol",
+      "type": "number"
+     },
+     "dihedral_atol_deg": {
+      "default": 1,
+      "exclusiveMinimum": 0,
+      "title": "Dihedral Atol Deg",
+      "type": "number"
+     },
+     "frame_det_min": {
+      "default": 1e-08,
+      "exclusiveMinimum": 0,
+      "title": "Frame Det Min",
+      "type": "number"
+     },
+     "parent_lock_atol_deg": {
+      "default": 1,
+      "exclusiveMinimum": 0,
+      "title": "Parent Lock Atol Deg",
+      "type": "number"
+     },
+     "ring_angle_atol_deg": {
+      "default": 5,
+      "exclusiveMinimum": 0,
+      "title": "Ring Angle Atol Deg",
+      "type": "number"
+     },
+     "ring_bond_atol": {
+      "default": 0.08,
+      "exclusiveMinimum": 0,
+      "title": "Ring Bond Atol",
+      "type": "number"
+     },
+     "ring_torsion_atol_deg": {
+      "default": 10,
+      "exclusiveMinimum": 0,
+      "title": "Ring Torsion Atol Deg",
+      "type": "number"
+     },
+     "substituent_bond_atol": {
+      "default": 1e-06,
+      "exclusiveMinimum": 0,
+      "title": "Substituent Bond Atol",
+      "type": "number"
+     }
+    },
+    "title": "ConfgenToleranceModel",
+    "type": "object"
+   },
+   "ConfgenTopologyModel": {
+    "additionalProperties": false,
+    "properties": {
+     "add_bond": {
+      "anyOf": [
+       {
+        "items": {
+         "maxItems": 2,
+         "minItems": 2,
+         "prefixItems": [
+          {
+           "minimum": 0,
+           "type": "integer"
+          },
+          {
+           "minimum": 0,
+           "type": "integer"
+          }
+         ],
+         "type": "array"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "title": "Add Bond"
+     },
+     "atoms": {
+      "items": {
+       "$ref": "#/$defs/TopologyAtomModel"
+      },
+      "title": "Atoms",
+      "type": "array"
+     },
+     "bonds": {
+      "anyOf": [
+       {
+        "items": {
+         "anyOf": [
+          {
+           "$ref": "#/$defs/TypedEdgeModel"
+          },
+          {
+           "maxItems": 2,
+           "minItems": 2,
+           "prefixItems": [
+            {
+             "minimum": 0,
+             "type": "integer"
+            },
+            {
+             "minimum": 0,
+             "type": "integer"
+            }
+           ],
+           "type": "array"
+          }
+         ]
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "title": "Bonds"
+     },
+     "del_bond": {
+      "anyOf": [
+       {
+        "items": {
+         "maxItems": 2,
+         "minItems": 2,
+         "prefixItems": [
+          {
+           "minimum": 0,
+           "type": "integer"
+          },
+          {
+           "minimum": 0,
+           "type": "integer"
+          }
+         ],
+         "type": "array"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "title": "Del Bond"
+     }
+    },
+    "title": "ConfgenTopologyModel",
+    "type": "object"
+   },
+   "CoordinationBudgetModel": {
+    "additionalProperties": false,
+    "description": "Lane-owned realization budgets; defaults track the stage authority.",
+    "properties": {
+     "max_nfev": {
+      "default": 120,
+      "minimum": 1,
+      "title": "Max Nfev",
+      "type": "integer"
+     },
+     "maxiter": {
+      "default": 400,
+      "minimum": 1,
+      "title": "Maxiter",
+      "type": "integer"
+     }
+    },
+    "title": "CoordinationBudgetModel",
+    "type": "object"
+   },
+   "CoordinationConstraintModel": {
+    "additionalProperties": false,
+    "description": "Declared trans exclusions are policies; no unverified proof input.",
+    "properties": {
+     "classification": {
+      "const": "REJECTED_BY_POLICY",
+      "default": "REJECTED_BY_POLICY",
+      "title": "Classification",
+      "type": "string"
+     },
+     "id": {
+      "minLength": 1,
+      "title": "Id",
+      "type": "string"
+     },
+     "kind": {
+      "const": "FORBIDDEN_TRANS",
+      "default": "FORBIDDEN_TRANS",
+      "title": "Kind",
+      "type": "string"
+     },
+     "provenance": {
+      "minLength": 1,
+      "title": "Provenance",
+      "type": "string"
+     },
+     "sites": {
+      "maxItems": 2,
+      "minItems": 2,
+      "prefixItems": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "string"
+       }
+      ],
+      "title": "Sites",
+      "type": "array"
+     }
+    },
+    "required": [
+     "id",
+     "sites",
+     "provenance"
+    ],
+    "title": "CoordinationConstraintModel",
+    "type": "object"
+   },
+   "CoordinationGenerationSpec": {
+    "additionalProperties": false,
+    "properties": {
+     "backend": {
+      "default": "rigid_then_flexible",
+      "enum": [
+       "rigid",
+       "flexible",
+       "rigid_then_flexible"
+      ],
+      "title": "Backend",
+      "type": "string"
+     },
+     "binding_sites": {
+      "items": {
+       "$ref": "#/$defs/BindingSiteModel"
+      },
+      "maxItems": 6,
+      "minItems": 4,
+      "title": "Binding Sites",
+      "type": "array"
+     },
+     "budgets": {
+      "$ref": "#/$defs/CoordinationBudgetModel"
+     },
+     "constraints": {
+      "items": {
+       "$ref": "#/$defs/CoordinationConstraintModel"
+      },
+      "title": "Constraints",
+      "type": "array"
+     },
+     "donor_configuration": {
+      "anyOf": [
+       {
+        "$ref": "#/$defs/DonorConfigurationModel"
+       },
+       {
+        "items": {
+         "type": "string"
+        },
+        "type": "array"
+       }
+      ],
+      "title": "Donor Configuration"
+     },
+     "metal_center": {
+      "minimum": 0,
+      "title": "Metal Center",
+      "type": "integer"
+     },
+     "shapes": {
+      "anyOf": [
+       {
+        "const": "auto",
+        "type": "string"
+       },
+       {
+        "items": {
+         "type": "string"
+        },
+        "type": "array"
+       }
+      ],
+      "default": "auto",
+      "title": "Shapes"
+     },
+     "site_group": {
+      "anyOf": [
+       {
+        "$ref": "#/$defs/SiteGroupModel"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "tolerances": {
+      "$ref": "#/$defs/CoordinationTolerancesModel"
+     },
+     "treatment": {
+      "default": "enumerate",
+      "enum": [
+       "enumerate",
+       "preserve_input"
+      ],
+      "title": "Treatment",
+      "type": "string"
+     }
+    },
+    "required": [
+     "metal_center",
+     "binding_sites"
+    ],
+    "title": "CoordinationGenerationSpec",
+    "type": "object"
+   },
+   "CoordinationTolerancesModel": {
+    "additionalProperties": false,
+    "description": "Lane-owned section tolerances; defaults track the stage authority.",
+    "properties": {
+     "clash_scale": {
+      "default": 0.7,
+      "exclusiveMinimum": 0,
+      "title": "Clash Scale",
+      "type": "number"
+     },
+     "margin_tolerance": {
+      "default": 0.05,
+      "exclusiveMinimum": 0,
+      "title": "Margin Tolerance",
+      "type": "number"
+     },
+     "reaction_tol": {
+      "default": 0.25,
+      "exclusiveMinimum": 0,
+      "title": "Reaction Tol",
+      "type": "number"
+     },
+     "realize_tol": {
+      "default": 0.45,
+      "exclusiveMinimum": 0,
+      "title": "Realize Tol",
+      "type": "number"
+     },
+     "rmsd_tolerance": {
+      "default": 0.35,
+      "exclusiveMinimum": 0,
+      "title": "Rmsd Tolerance",
+      "type": "number"
+     },
+     "shape_margin_tolerance": {
+      "default": 0.15,
+      "exclusiveMinimum": 0,
+      "title": "Shape Margin Tolerance",
+      "type": "number"
+     }
+    },
+    "title": "CoordinationTolerancesModel",
+    "type": "object"
+   },
+   "DonorConfigurationModel": {
+    "additionalProperties": false,
+    "description": "Declared donor configuration: preserved input, never enumerated.\n\nThe list form names the declared donor site ids (lane serialization);\nboth forms declare \u2014 never enumerate \u2014 the donor set. Geometry audit\nrejects silent donor flips at the stage; the executor re-checks donor\nidentity on chained runs.",
+    "properties": {
+     "treatment": {
+      "const": "preserve_input",
+      "default": "preserve_input",
+      "title": "Treatment",
+      "type": "string"
+     }
+    },
+    "title": "DonorConfigurationModel",
+    "type": "object"
+   },
+   "ExecutionModel": {
+    "additionalProperties": false,
+    "description": "Machine-specific execution binding (never part of scientific digests).",
+    "properties": {
+     "allowed_executables": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Allowed Executables",
+      "type": "array"
+     },
+     "binding_id": {
+      "default": "default",
+      "title": "Binding Id",
+      "type": "string"
+     },
+     "env": {
+      "additionalProperties": {
+       "type": "string"
+      },
+      "title": "Env",
+      "type": "object"
+     },
+     "executable": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "title": "Executable"
+     },
+     "sandbox": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "title": "Sandbox"
+     },
+     "target": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "title": "Target"
+     },
+     "walltime_seconds": {
+      "anyOf": [
+       {
+        "minimum": 1,
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "title": "Walltime Seconds"
+     }
+    },
+    "title": "ExecutionModel",
+    "type": "object"
+   },
+   "GlobalModel": {
+    "additionalProperties": false,
+    "description": "Run-level defaults: science, resources, scheduler.",
+    "properties": {
+     "resources": {
+      "$ref": "#/$defs/ResourcesModel"
+     },
+     "scheduler": {
+      "$ref": "#/$defs/SchedulerModel"
+     },
+     "scientific_defaults": {
+      "$ref": "#/$defs/ScientificDefaultsModel"
+     }
+    },
+    "title": "GlobalModel",
+    "type": "object"
+   },
+   "InputModel": {
+    "additionalProperties": false,
+    "description": "Declaration of a named run input.",
+    "properties": {
+     "cardinality": {
+      "$ref": "#/$defs/Cardinality",
+      "default": "many"
+     },
+     "description": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "title": "Description"
+     },
+     "grouping": {
+      "anyOf": [
+       {
+        "const": "each_entity",
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "title": "Grouping"
+     },
+     "kind": {
+      "$ref": "#/$defs/PortKind"
+     },
+     "pairing": {
+      "anyOf": [
+       {
+        "$ref": "#/$defs/Pairing"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "role": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "title": "Role"
+     }
+    },
+    "required": [
+     "kind"
+    ],
+    "title": "InputModel",
+    "type": "object"
+   },
+   "OnFailure": {
+    "description": "Scheduler behavior when a work item fails.\n\nAttributes\n----------\nCONTINUE\n    Remaining eligible items keep running.\nFAIL_FAST\n    Not-yet-started items are cancelled; acceptance policy still applies\n    to the items that did run.",
+    "enum": [
+     "continue",
+     "fail_fast"
+    ],
+    "title": "OnFailure",
+    "type": "string"
+   },
+   "Pairing": {
+    "description": "How source values are matched to work items.\n\nAttributes\n----------\nSINGLE\n    One value (or set) shared by every work item of the step.\nPER_STRUCTURE\n    One value per structure; drives work-item fan-out.\nBY_SUBJECT\n    Match values to the driving structure by ``subject_structure_id``.\nBY_GROUP_KEY\n    Match values by explicit producer-assigned group key.",
+    "enum": [
+     "single",
+     "per_structure",
+     "by_subject",
+     "by_group_key"
+    ],
+    "title": "Pairing",
+    "type": "string"
+   },
+   "PartialConsumption": {
+    "description": "Whether a consumer may consume an ``allow_partial`` producer's subset.\n\nAttributes\n----------\nREQUIRE_COMPLETE\n    The consumer is not scheduled unless the producer fully completed.\nACCEPT_SUBSET\n    The consumer may be materialized from the accepted completed subset.",
+    "enum": [
+     "require_complete",
+     "accept_subset"
+    ],
+    "title": "PartialConsumption",
+    "type": "string"
+   },
+   "PartialOutputPolicy": {
+    "description": "Whether downstream steps may consume a partial producer.\n\nAttributes\n----------\nDENY\n    Consuming a partial producer is a compile error.\nALLOW\n    Downstream may be materialized from the accepted completed subset.",
+    "enum": [
+     "deny",
+     "allow"
+    ],
+    "title": "PartialOutputPolicy",
+    "type": "string"
+   },
+   "PortKind": {
+    "description": "Kinds of named ports in the binding graph.",
+    "enum": [
+     "structure",
+     "artifact",
+     "result"
+    ],
+    "title": "PortKind",
+    "type": "string"
+   },
+   "RecoveryModel": {
+    "additionalProperties": false,
+    "description": "Declared recovery profile.",
+    "properties": {
+     "params": {
+      "additionalProperties": true,
+      "title": "Params",
+      "type": "object"
+     },
+     "profile": {
+      "default": "none",
+      "title": "Profile",
+      "type": "string"
+     }
+    },
+    "title": "RecoveryModel",
+    "type": "object"
+   },
+   "ResourcesModel": {
+    "additionalProperties": false,
+    "description": "Per-item resource request; every field is presence-preserving.\n\n``None`` means *absent*: the field was not declared at this level and the\nvalue inherits from the run global (or, at the run global itself, from the\nschema fallback).  Parsing never injects a concrete default, so a\nmemory-only step override stays memory-only in the wire; effective values\nresolve through ``ResourceRequest.with_defaults()`` in the validation\nauthority, exactly once.",
+    "properties": {
+     "cores_per_item": {
+      "anyOf": [
+       {
+        "minimum": 1,
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "title": "Cores Per Item"
+     },
+     "memory_per_item": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "title": "Memory Per Item"
+     }
+    },
+    "title": "ResourcesModel",
+    "type": "object"
+   },
+   "RingGenerationSpec": {
+    "additionalProperties": false,
+    "properties": {
+     "atoms": {
+      "items": {
+       "minimum": 0,
+       "type": "integer"
+      },
+      "maxItems": 6,
+      "minItems": 4,
+      "title": "Atoms",
+      "type": "array"
+     },
+     "id": {
+      "minLength": 1,
+      "title": "Id",
+      "type": "string"
+     },
+     "templates": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Templates",
+      "type": "array"
+     },
+     "treatment": {
+      "default": "enumerate",
+      "enum": [
+       "enumerate",
+       "preserve_input"
+      ],
+      "title": "Treatment",
+      "type": "string"
+     }
+    },
+    "required": [
+     "id",
+     "atoms"
+    ],
+    "title": "RingGenerationSpec",
+    "type": "object"
+   },
+   "SamplingSpec": {
+    "additionalProperties": false,
+    "description": "Cap sampled targets before geometry; the step seed is sole authority.",
+    "properties": {
+     "cap": {
+      "minimum": 1,
+      "title": "Cap",
+      "type": "integer"
+     }
+    },
+    "required": [
+     "cap"
+    ],
+    "title": "SamplingSpec",
+    "type": "object"
+   },
+   "SchedulerModel": {
+    "additionalProperties": false,
+    "description": "Scheduler-only policy; every field is presence-preserving.\n\n``None`` means *absent* and inherits from the run global (``on_failure``\nfrom ``OnFailure.CONTINUE``).  Scheduling is operational and never\nparticipates in scientific identity.",
+    "properties": {
+     "max_parallel_items": {
+      "anyOf": [
+       {
+        "minimum": 1,
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "title": "Max Parallel Items"
+     },
+     "on_failure": {
+      "anyOf": [
+       {
+        "$ref": "#/$defs/OnFailure"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     }
+    },
+    "title": "SchedulerModel",
+    "type": "object"
+   },
+   "ScientificDefaultsModel": {
+    "additionalProperties": false,
+    "description": "Run-level explicit scientific defaults.",
+    "properties": {
+     "charge": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "title": "Charge"
+     },
+     "freeze": {
+      "anyOf": [
+       {
+        "items": {
+         "type": "integer"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "title": "Freeze"
+     },
+     "multiplicity": {
+      "anyOf": [
+       {
+        "minimum": 1,
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "title": "Multiplicity"
+     }
+    },
+    "title": "ScientificDefaultsModel",
+    "type": "object"
+   },
+   "SelectModel": {
+    "additionalProperties": false,
+    "description": "Explicit selector on a binding source.",
+    "properties": {
+     "ids": {
+      "anyOf": [
+       {
+        "items": {
+         "type": "string"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "title": "Ids"
+     },
+     "role": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "title": "Role"
+     }
+    },
+    "title": "SelectModel",
+    "type": "object"
+   },
+   "SiteGroupModel": {
+    "additionalProperties": false,
+    "description": "Declared topological subgroup for molecular-orbit accounting.\n\nGenerators are SITE POSITION permutations (positions into\n``binding_sites``, convention-free \u2014 not atom indices). This certifies\nexactly the declared subgroup scope and nothing more: never full\nmolecular symmetry, never stereo/improper action, never suppression\nauthority (H_geom suppression stays a separate, stricter proof gate).\n``provenance`` names the witness source (e.g. a fixture sigma audit)\nso the claim stays auditable.",
+    "properties": {
+     "generators": {
+      "items": {
+       "items": {
+        "type": "integer"
+       },
+       "type": "array"
+      },
+      "minItems": 1,
+      "title": "Generators",
+      "type": "array"
+     },
+     "provenance": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "title": "Provenance"
+     },
+     "scope": {
+      "const": "declared_topological_subgroup",
+      "default": "declared_topological_subgroup",
+      "title": "Scope",
+      "type": "string"
+     }
+    },
+    "required": [
+     "generators"
+    ],
+    "title": "SiteGroupModel",
+    "type": "object"
+   },
+   "SourceModel": {
+    "additionalProperties": false,
+    "description": "Binding source: exactly one of ``run`` or ``step``.",
+    "properties": {
+     "port": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "title": "Port"
+     },
+     "run": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "title": "Run"
+     },
+     "select": {
+      "anyOf": [
+       {
+        "$ref": "#/$defs/SelectModel"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "step": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "title": "Step"
+     }
+    },
+    "title": "SourceModel",
+    "type": "object"
+   },
+   "StepModel": {
+    "additionalProperties": false,
+    "description": "One workflow step.",
+    "properties": {
+     "analysis": {
+      "anyOf": [
+       {
+        "$ref": "#/$defs/AnalysisModel"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "annotations": {
+      "additionalProperties": true,
+      "title": "Annotations",
+      "type": "object"
+     },
+     "bindings": {
+      "additionalProperties": {
+       "$ref": "#/$defs/BindingModel"
+      },
+      "title": "Bindings",
+      "type": "object"
+     },
+     "calculation": {
+      "anyOf": [
+       {
+        "$ref": "#/$defs/CalculationModel"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "completion": {
+      "$ref": "#/$defs/CompletionModel"
+     },
+     "confgen": {
+      "anyOf": [
+       {
+        "$ref": "#/$defs/ConfgenModel"
+       },
+       {
+        "$ref": "#/$defs/ConfgenModelV3"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "title": "Confgen"
+     },
+     "enabled": {
+      "default": true,
+      "title": "Enabled",
+      "type": "boolean"
+     },
+     "execution": {
+      "anyOf": [
+       {
+        "$ref": "#/$defs/ExecutionModel"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "executor": {
+      "enum": [
+       "analysis",
+       "calculation",
+       "confgen",
+       "structure_transform"
+      ],
+      "minLength": 1,
+      "title": "Executor",
+      "type": "string"
+     },
+     "id": {
+      "minLength": 1,
+      "title": "Id",
+      "type": "string"
+     },
+     "label": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "title": "Label"
+     },
+     "resources": {
+      "anyOf": [
+       {
+        "$ref": "#/$defs/ResourcesModel"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "scheduler": {
+      "anyOf": [
+       {
+        "$ref": "#/$defs/SchedulerModel"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "transform": {
+      "anyOf": [
+       {
+        "$ref": "#/$defs/TransformModel"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     }
+    },
+    "required": [
+     "id",
+     "executor"
+    ],
+    "title": "StepModel",
+    "type": "object"
+   },
+   "TopologyAtomModel": {
+    "additionalProperties": false,
+    "properties": {
+     "index": {
+      "minimum": 0,
+      "title": "Index",
+      "type": "integer"
+     },
+     "label": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "title": "Label"
+     },
+     "role": {
+      "default": "",
+      "title": "Role",
+      "type": "string"
+     },
+     "stereo": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "title": "Stereo"
+     }
+    },
+    "required": [
+     "index"
+    ],
+    "title": "TopologyAtomModel",
+    "type": "object"
+   },
+   "TorsionGenerationSpec": {
+    "additionalProperties": false,
+    "properties": {
+     "angles": {
+      "anyOf": [
+       {
+        "items": {
+         "type": "number"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "title": "Angles"
+     },
+     "atoms": {
+      "anyOf": [
+       {
+        "maxItems": 4,
+        "minItems": 4,
+        "prefixItems": [
+         {
+          "minimum": 0,
+          "type": "integer"
+         },
+         {
+          "minimum": 0,
+          "type": "integer"
+         },
+         {
+          "minimum": 0,
+          "type": "integer"
+         },
+         {
+          "minimum": 0,
+          "type": "integer"
+         }
+        ],
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "title": "Atoms"
+     },
+     "bond": {
+      "anyOf": [
+       {
+        "maxItems": 2,
+        "minItems": 2,
+        "prefixItems": [
+         {
+          "minimum": 0,
+          "type": "integer"
+         },
+         {
+          "minimum": 0,
+          "type": "integer"
+         }
+        ],
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "title": "Bond"
+     },
+     "id": {
+      "minLength": 1,
+      "title": "Id",
+      "type": "string"
+     },
+     "model": {
+      "enum": [
+       "relative_rotation_grid",
+       "absolute_dihedral_grid",
+       "chemical"
+      ],
+      "title": "Model",
+      "type": "string"
+     },
+     "rotate_side": {
+      "default": "left",
+      "enum": [
+       "left",
+       "right"
+      ],
+      "title": "Rotate Side",
+      "type": "string"
+     },
+     "states": {
+      "anyOf": [
+       {
+        "additionalProperties": {
+         "type": "number"
+        },
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "title": "States"
+     },
+     "treatment": {
+      "default": "enumerate",
+      "enum": [
+       "enumerate",
+       "preserve_input"
+      ],
+      "title": "Treatment",
+      "type": "string"
+     }
+    },
+    "required": [
+     "id",
+     "model"
+    ],
+    "title": "TorsionGenerationSpec",
+    "type": "object"
+   },
+   "TransformModel": {
+    "additionalProperties": false,
+    "description": "Explicit structure-set transformation (refine/deduplicate/filter).",
+    "properties": {
+     "kind": {
+      "enum": [
+       "refine",
+       "deduplicate",
+       "filter"
+      ],
+      "minLength": 1,
+      "title": "Kind",
+      "type": "string"
+     },
+     "native": {
+      "additionalProperties": true,
+      "title": "Native",
+      "type": "object"
+     }
+    },
+    "required": [
+     "kind"
+    ],
+    "title": "TransformModel",
+    "type": "object"
+   },
+   "TypedEdgeModel": {
+    "additionalProperties": false,
+    "properties": {
+     "atoms": {
+      "maxItems": 2,
+      "minItems": 2,
+      "prefixItems": [
+       {
+        "minimum": 0,
+        "type": "integer"
+       },
+       {
+        "minimum": 0,
+        "type": "integer"
+       }
+      ],
+      "title": "Atoms",
+      "type": "array"
+     },
+     "bond_order": {
+      "anyOf": [
+       {
+        "exclusiveMinimum": 0,
+        "maximum": 4,
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "title": "Bond Order"
+     },
+     "kind": {
+      "default": "COVALENT",
+      "enum": [
+       "COVALENT",
+       "COORDINATION",
+       "FORMING",
+       "BREAKING"
+      ],
+      "title": "Kind",
+      "type": "string"
+     },
+     "provenance": {
+      "default": "explicit",
+      "title": "Provenance",
+      "type": "string"
+     }
+    },
+    "required": [
+     "atoms"
+    ],
+    "title": "TypedEdgeModel",
+    "type": "object"
+   }
+  },
+  "additionalProperties": false,
+  "description": "A complete V4 workflow document.",
+  "properties": {
+   "global": {
+    "$ref": "#/$defs/GlobalModel"
+   },
+   "inputs": {
+    "additionalProperties": {
+     "$ref": "#/$defs/InputModel"
+    },
+    "title": "Inputs",
+    "type": "object"
+   },
+   "schema": {
+    "minLength": 1,
+    "title": "Schema",
+    "type": "string"
+   },
+   "steps": {
+    "items": {
+     "$ref": "#/$defs/StepModel"
+    },
+    "minItems": 1,
+    "title": "Steps",
+    "type": "array"
+   }
+  },
+  "required": [
+   "schema",
+   "steps"
+  ],
+  "title": "DocumentModel",
+  "type": "object"
+ },
+ "workflow_schema_id": "confflow.workflow.v4",
+ "workflow_schema_sha256": "38a546f6170671f6fdba21b290c428d7c7b09d4a657589698f3ca0e018a8ba58"
+}
