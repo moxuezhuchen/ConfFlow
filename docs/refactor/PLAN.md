@@ -565,7 +565,7 @@ JD contract_key、CF 的 contract/boundary 字节在本阶段都必须不变。
      - 若某个测试在新设计下已没有意义，不要删除，停止并报告。
 - 禁止事项：G1–G10；不得删除任何测试；不得改动上面 14 个以外的测试；诊断的 `code` 和 `severity` 不得变化。
 - 预期行为变化：(a) 读不到 V4 合同的服务器（连不上、没装 ConfFlow、版本太旧、文档不是 V4、文档损坏）现在显示"不可用 · 禁止提交"并给出具体原因，而不是"兼容性回退 · 只读"；(b) V4 会话中已被禁用的旧配方选择器的数据源变为空（用户可见的 V4 配方不变）。
-- 验收命令：JD 标准验收。期望：collect 数与 J2.1a 之后相同（2411）；0 failed、7 skipped；被改写的恰好是上面 14 个测试；`git grep -n "_degrade\|fallback_artifacts" -- src` 无输出。
+- 验收命令：JD 标准验收。期望：collect 数与 J2.1a 之后相同（2411）；0 failed、7 skipped；被改写的恰好是上面 14 个测试；`git grep -n "_degrade\|fallback_artifacts" -- src/jobdesk_v2/application/editor/contract/remote_v4.py src/jobdesk_v2/gui` 无输出（`providers.py` 里 `LocalProducerContractProvider` 自己的 `_degrade`/`fallback_artifacts` 留给 J2.4，`runs/confflow_backend.py` 的 `_degrade` 与合同无关，不在本卡范围）。
 - 提交信息模板：`feat(contract)!: report a server without a V4 contract as unavailable` + 通用尾部。
 
 ### J2.2 — 测试基础设施不再经过 V1/V2 解析

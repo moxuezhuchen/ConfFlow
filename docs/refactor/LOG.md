@@ -211,3 +211,10 @@
   - 夹具全部不含氢，所以"端点是甲基碳"这个最有意义的真实场景（绕 C–CH3 键的旋转会真正改变构象）没有被覆盖。
 - 方案缺陷：PLAN §8 IS.1 的"不叠合"规则错误（验收方的失误）；已新增卡 IS.1b 修正（`docs/refactor-plan` 5811ece）。
 - 结论：升级给用户（IS.1 的规则：只要有 NOT_EQUIVALENT 就不放行 IS.2）。
+
+## 2026-10-02 J2.1b — 执行方按 G9 停止（验收方的卡片缺陷，不计为退回）
+
+- 情况：J2.1b 的全部改动已完成并通过自检，唯有 handoff 第 4 条 `git grep "_degrade|fallback_artifacts" -- src` 按原文无法满足。命中来自白名单之外、先于本卡存在的代码：`providers.py`（`LocalProducerContractProvider` 自己的降级机制，J2.4 删除）和 `runs/confflow_backend.py`（与合同无关的私有方法）。执行方没有提交，如实报告。
+- 验收方复核（把执行方未提交的 diff 应用到独立 JD 工作树 df25678 之上）：源码改动与卡片逐条一致；ruff / format / mypy ok；全量 2411 项，2404 passed / 0 failed / 7 skipped；collect 清单与 J2.1a 之后逐项相同（14 个测试的 nodeid 不变，没有删除、没有新增）；没有新增 skip/xfail；两个 `TestRemoteErrorSanitization` 测试保留，检查范围由 `diagnostics` 的 message 扩大为 `str(exc)` 加 `diagnostic.message`，同一组 CANARIES；合同解析失败经 `_spawn(on_error=deliver_error)` 进入 `_on_contract_failed`，提交在状态不是 `ready` 时仍被禁用（presenter L817、L977）。
+- 观察（记录，不阻塞）：解析失败时 presenter 只把状态改为 `unavailable`，上一台服务器已采纳的 V4 合同与字段模型仍留在内存里供卡片编辑器显示，提交被状态拦住。之前的降级路径会把它换成 fallback。这是预期内的行为变化的一部分，但切换到一台坏服务器后界面上仍显示上一台的字段，J2.4 或 PLAN-2 可以考虑清空。
+- 处理：PLAN 与 handoff/J2.1b.md 的 grep 范围已更正为 `remote_v4.py` 与 `gui/`；让同一执行方按现状提交。
