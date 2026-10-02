@@ -282,3 +282,10 @@
 - ConfFlow `docs/refactor-plan`：1ccf347 → 4917e86（本日志推送前的最后一个提交）
 - 未推送：`master`、`main`、`implementation/input-simplification`（IS.1、IS.1b 的提交仍只在本地的 `exec-cf-is` 工作树里；远端的输入简化分支仍为 f87da58）。此条日志本身在推送之后写入，下次推送一并带上。
 - 合并提醒：CF `refactor/diet` 上的 `docs/refactor/PLAN.md`、`ACCEPTANCE.md` 是早期版本（随 B0.1 的父提交带入），`docs/refactor-plan` 上是最新版本。把 `refactor/diet` 合入 `main` 时，这两个文件以 `docs/refactor-plan` 的版本为准。
+
+## 2026-10-02 J2.1a 验收疏漏 — 已推送的 c94fcab 无法启动应用（验收方发现，新增 J2.1c 修复）
+
+- 发现经过：为 J2.4 做删除原型时，`NewRunPage` 在空 `NoContract` 上构造失败（`EditorManifestError: unknown field id: 'global.charge'`）。验收方随后直接在已提交的 c94fcab 上复现应用的启动路径：`MainWindow(WorkflowEditorService(), store)` 在 `CalculationSection.__init__` 抛出同样的异常。`gui/app.py::main` 正是这样构造主窗口的，所以 J2.1a 之后（含已推送的 J2.1b、J2.2、J2.3）的 JobDesk 在没有合同的状态下无法启动。
+- 原因：J2.1a 把会话默认值换成空的 `NoContract`，但新建页面在构造时要求 manifest 里有 `global.charge` / `global.multiplicity`。J2.1a 的全套测试都显式传入合同，没有测试覆盖"没有合同的默认会话 + 真实页面"。验收方在 J2.1a 验收和原型阶段都只运行了测试套件，没有做启动路径检查。
+- 影响范围：只影响工作分支 `refactor/diet`（JD 远端 c94fcab），`master` 没有受影响（它仍是 9beeaf2）。
+- 处理：新增卡 J2.1c（`CalculationSection` 的全局行改为跟随当前 manifest 构建并随变化重建，附启动冒烟测试）；验收协议新增 §4.2b（对改变会话默认值、合同解析或组合根的 JD logic 卡，必须运行 `tools-acc/startup_smoke.py`）。验收方的启动冒烟脚本在 c94fcab 上失败、在修复版上通过。

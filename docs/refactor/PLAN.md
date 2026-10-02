@@ -55,7 +55,7 @@ J0       JD 兼容修复          J0a → J0b
 Phase 0  基线冻结            B0.1 → B0.2(工具修复)
 Phase 1  ConfFlow 外围删除    C1.1 → C1.2 → C1.3 → C1.4
 J1       JD 删除 evaluate_compatibility
-Phase 2  JD 删除 V1/V2        J2.1a → J2.1b → J2.2 → J2.3 → J2.4   (J2.5 可选，需用户确认)
+Phase 2  JD 删除 V1/V2        J2.1a → J2.1b → J2.2 → J2.3 → J2.1c(修复) → J2.4   (J2.5 可选，需用户确认)
 Phase 3  边界瘦身（两仓成对） J3.1 → J3.2 → C3.1 → C3.2 → C3.3 → J3.3 → C3.4
 IS       输入简化分支改造     IS.1(golden) → IS.1b(修正比较) … IS.0(合入 main) → IS.2 → IS.2b → IS.3 → IS.4(JD) → IS.5(合并到 main，需用户批准)
 Phase 4  ConfFlow chain 路径  C4.1 → J4.1 → C4.2 → C4.3 → C4.4
@@ -567,6 +567,23 @@ JD contract_key、CF 的 contract/boundary 字节在本阶段都必须不变。
 - 预期行为变化：(a) 读不到 V4 合同的服务器（连不上、没装 ConfFlow、版本太旧、文档不是 V4、文档损坏）现在显示"不可用 · 禁止提交"并给出具体原因，而不是"兼容性回退 · 只读"；(b) V4 会话中已被禁用的旧配方选择器的数据源变为空（用户可见的 V4 配方不变）。
 - 验收命令：JD 标准验收。期望：collect 数与 J2.1a 之后相同（2411）；0 failed、7 skipped；被改写的恰好是上面 14 个测试；`git grep -n "_degrade\|fallback_artifacts" -- src/jobdesk_v2/application/editor/contract/remote_v4.py src/jobdesk_v2/gui` 无输出（`providers.py` 里 `LocalProducerContractProvider` 自己的 `_degrade`/`fallback_artifacts` 留给 J2.4，`runs/confflow_backend.py` 的 `_degrade` 与合同无关，不在本卡范围）。
 - 提交信息模板：`feat(contract)!: report a server without a V4 contract as unavailable` + 通用尾部。
+
+### J2.1c — 修复 J2.1a 造成的应用启动崩溃（验收方发现，J2.1a 之后补）
+
+- ID：J2.1c ／ 仓库：JobDesk-v2 ／ 分支：`refactor/diet` ／ 前置：J2.3（c94fcab）
+- 背景：J2.1a 让 `WorkflowEditorService()` 默认使用空的 `NoContract`，`gui/app.py::main` 用它构造主窗口。但 `CalculationSection.__init__`（`gui/new_run/calculation_section.py` 约 L139-146）在构造时对 `global.charge`、`global.multiplicity` 调用 `manifest.require_field`，空 manifest 里没有它们，于是应用启动时抛出 `EditorManifestError: unknown field id: 'global.charge'`。验收方在 J2.1a 验收时只运行了测试套件，没有做真实启动路径检查，没有发现这个问题（已记入 LOG）。即使不崩溃，旧代码也只在构造时建一次这两行，选定服务器、绑定 V4 合同之后它们不会重新生成。
+- 目标：新建页面在没有合同时可以构造；全局两行跟随当前 manifest 的字段出现和消失。
+- 类型：`logic`
+- 允许修改的文件：`src/jobdesk_v2/gui/new_run/calculation_section.py`，新增 `tests/gui/test_startup_smoke.py`
+- 具体步骤（@c94fcab；验收方已在该提交的干净副本上原型验证：补丁应用后全量 2404 passed，启动冒烟通过）：
+  1. 应用 `docs/refactor/handoff/J2.1c-calculation_section.patch`（`git apply`，已验证可干净应用）。补丁的内容：新增 `_GLOBAL_FIELD_IDS` 常量；`CalculationSection` 用一个容器和 `_global_key` 记录当前已画的全局行；新增 `_rebuild_global_rows()`，用 `manifest.field(...)`（找不到返回 `None`）取描述符，字段集合或 `json_pointer` 变化时清空并重画；构造函数和 `refresh()` 开头各调用一次。注意：不要给容器布局调用 `setContentsMargins`——`tests/gui/test_architecture.py::test_pages_never_own_styling` 禁止页面自己设样式，步骤行的容器也是这样做的。
+  2. 新增 `tests/gui/test_startup_smoke.py`（标记 `@pytest.mark.gui`，用 `qtbot`），3 个测试：
+     - `test_the_main_window_builds_on_a_session_with_no_contract`：`service = WorkflowEditorService()`，`MainWindow(service, WorkflowDraftStore(service))` 构造成功，依次 `show_page` 打开 `new_run`、`workflows`、`workflow_editor`、`files`、`runs`、`settings`，每个都返回 True；
+     - `test_global_rows_follow_the_manifest_in_force`：对上面那个窗口的 New Run 页面（`window.stack.widget(0)`），没有合同时 `calculation_section._global_controls` 为空；`service.rebind(authoritative_contract())` 并调用 `page._refresh()` 之后键恰为 `global.charge`、`global.multiplicity`；
+     - `test_global_rows_disappear_when_the_contract_is_unbound`：再 `service.rebind(WorkflowEditorService().contract)` 并 `page._refresh()` 后又为空。
+- 禁止事项：G1–G11；不得改动任何已有测试；不得改 `app.py`、`presenter.py`、`manifest.py`。
+- 验收命令：JD 标准验收，另加验收方的启动冒烟 `docs/refactor/tools-acc/startup_smoke.py`（在 c94fcab 上必须失败、在本卡提交上必须通过）。期望：collect 2411 + 3 = 2414；2407 passed、7 skipped、0 failed；`contract_key` 不变。
+- 提交标题：`fix(new-run): build the global rows from the manifest in force so the app starts without a contract`
 
 ### J2.2 — 测试夹具不再经过 V1/V2 解析器
 

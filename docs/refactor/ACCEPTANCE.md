@@ -113,6 +113,16 @@ python3 $TOOLS/test_inventory.py run     --repo <cf|jd> --out $ACC/outcomes.json
   - 只改 `.github/`、`docs/`、`tests/`、JD、工具的卡：可以只做摘要检查。TS1 与 engine 报告的输入没有变化，任何科学行为变化都必须经过上面第二类卡才可能发生；若有怀疑，仍然升级为完整 golden。
 - 多张彼此独立的卡的验收可以同时进行（各用独立的验收工作树，显式传 `--cf`）。
 
+### 4.2b 启动路径检查（2026-10-02 增补）
+
+JD 的 `logic` 卡只要改变了会话默认值、合同解析或应用组合根（`gui/app.py`、`WorkflowEditorService`、`NoContract`、`presenter`），验收时除全量测试外，必须在被验收的提交上运行：
+
+```bash
+cd <被验收的 JD 工作树> && QT_QPA_PLATFORM=offscreen PYTHONPATH=src:. python3 /opt/cf-worktrees/refactor-plan/docs/refactor/tools-acc/startup_smoke.py
+```
+
+期望输出 `startup smoke: ok`。原因：J2.1a 验收时只跑了测试套件，没有发现真实应用在没有合同时无法启动（见 LOG 的 J2.1c 条）。
+
 ### 4.3 golden
 
 ```bash

@@ -1,0 +1,66 @@
+diff --git a/src/jobdesk_v2/gui/new_run/calculation_section.py b/src/jobdesk_v2/gui/new_run/calculation_section.py
+index ab69246..d935ea7 100644
+--- a/src/jobdesk_v2/gui/new_run/calculation_section.py
++++ b/src/jobdesk_v2/gui/new_run/calculation_section.py
+@@ -96,6 +96,9 @@ def _on_field_value(
+             presenter.set_step_field(step_id, field_id, value)
+ 
+ 
++_GLOBAL_FIELD_IDS = ("global.charge", "global.multiplicity")
++
++
+ class CalculationSection(Section):
+     """Recipe chooser plus the basic settings for the workflow's first step.
+ 
+@@ -134,15 +137,36 @@ class CalculationSection(Section):
+         #: alone would keep the previous recipe's rows on screen.
+         self._built_key: tuple[str, str] | None = None
+ 
+-        # Global charge / multiplicity are always present.
++        # Global charge / multiplicity come from the manifest in force.  A session
++        # that has not resolved a contract yet has none, so the rows are drawn
++        # when the manifest provides them and redrawn when it changes.
+         self._global_controls: dict[str, FieldControl] = {}
+         self._global_rows: dict[str, tuple[FieldDescriptor, FieldRow]] = {}
+-        for field_id in ("global.charge", "global.multiplicity"):
+-            descriptor = presenter.service.manifest.require_field(field_id)
+-            row, control = build_field_row(presenter, descriptor)
+-            self.content_layout.addWidget(row)
+-            self._global_controls[field_id] = control
+-            self._global_rows[field_id] = (descriptor, row)
++        self._global_holder = QWidget(self)
++        self._global_layout = QVBoxLayout(self._global_holder)
++        self.content_layout.addWidget(self._global_holder)
++        self._global_key: tuple[str, ...] | None = None
++        self._rebuild_global_rows()
++
++    def _rebuild_global_rows(self) -> None:
++        manifest = self._presenter.service.manifest
++        descriptors = [
++            descriptor
++            for field_id in _GLOBAL_FIELD_IDS
++            if (descriptor := manifest.field(field_id)) is not None
++        ]
++        key = tuple(f"{item.field_id}|{item.json_pointer}" for item in descriptors)
++        if key == self._global_key:
++            return
++        self._global_key = key
++        self._global_controls.clear()
++        self._global_rows.clear()
++        clear_layout(self._global_layout)
++        for descriptor in descriptors:
++            row, control = build_field_row(self._presenter, descriptor)
++            self._global_layout.addWidget(row)
++            self._global_controls[descriptor.field_id] = control
++            self._global_rows[descriptor.field_id] = (descriptor, row)
+ 
+     # -- wiring --------------------------------------------------------------
+ 
+@@ -172,6 +196,7 @@ class CalculationSection(Section):
+             recipe = presenter.service.catalog.recipe(recipe_id)
+             self._recipe_desc.setText(recipe.description if recipe is not None else "")
+ 
++        self._rebuild_global_rows()
+         global_states = {s.field_id: s for s in presenter.field_states()}
+         for field_id, control in self._global_controls.items():
+             state = global_states.get(field_id)
