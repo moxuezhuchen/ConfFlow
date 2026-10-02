@@ -373,3 +373,9 @@
 - engine 报告：B0.1 基线未变。golden_check 报告 6 项（5 项新增 + 1 项 different），均记入 `docs/refactor/baseline/checkpoints/IS.0/engine_reports/`：1 项 different 是 `test_pinned_coordination_ring_damage_is_drift`，原因是 IS 分支的 99283a7 改了**测试输入**（把对称打平的正方形种子换成蝴蝶形环）；验收方证据：IS 的引擎用**旧测试输入**逐字节复现基线报告，故引擎行为未变，不是科学行为变化。
 - 未推送：IS 分支（implementation/*）不在推送授权内，main/master 一律不推。
 - 发现并修复我自己的错误：C5.2b 卡的 PLAN 编辑误删第 8–10 节，已从 ff9f23c 恢复（见前一提交）。
+
+## C5.3a + C5.2b（侧分支）— 验收通过（2026-10-03）
+- 执行：外部模型 glm-5.3-flash；CF refactor/diet-c5：da047c0（C5.3a）、a261bbf（C5.2b），一次通过。
+- 验收人独立：两提交与 handoff 补丁字节一致；move_identity_check：topology 21 个、frame_compare 7 个定义 AST 相同；deleted_modules_check（calc、workflow.export）通过；ruff/mypy 通过；全量 4106 passed + 2 个负载敏感失败（test_v4_runtime_cutover 的两个端到端测试，单独运行均通过），执行模型自报 4108 passed / 12 skipped；golden 由执行模型自报 ok。
+- 已知负载敏感测试（并行分片下偶发，单独稳定）：test_v44_worker::test_cancel_trap…、test_v4_runtime_cutover 的 test_worker_runs_v4_end_to_end / test_plain_cli_runs_v4_application。
+- 推送 refactor/diet-c5（授权：refactor/*）。
