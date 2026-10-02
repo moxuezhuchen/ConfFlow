@@ -289,3 +289,8 @@
 - 原因：J2.1a 把会话默认值换成空的 `NoContract`，但新建页面在构造时要求 manifest 里有 `global.charge` / `global.multiplicity`。J2.1a 的全套测试都显式传入合同，没有测试覆盖"没有合同的默认会话 + 真实页面"。验收方在 J2.1a 验收和原型阶段都只运行了测试套件，没有做启动路径检查。
 - 影响范围：只影响工作分支 `refactor/diet`（JD 远端 c94fcab），`master` 没有受影响（它仍是 9beeaf2）。
 - 处理：新增卡 J2.1c（`CalculationSection` 的全局行改为跟随当前 manifest 构建并随变化重建，附启动冒烟测试）；验收协议新增 §4.2b（对改变会话默认值、合同解析或组合根的 JD logic 卡，必须运行 `tools-acc/startup_smoke.py`）。验收方的启动冒烟脚本在 c94fcab 上失败、在修复版上通过。
+
+## J2.1c — 验收通过（2026-10-02）
+- 执行：外部模型 glm-5.3-flash；JD `refactor/diet` 13b6f55（父 c94fcab），1 次提交，未退回。
+- 验收人独立重跑（accjd 工作树）：src 改动与 handoff/J2.1c-calculation_section.patch 逐行一致，无 setContentsMargins；仅 2 个文件（calculation_section.py、tests/gui/test_startup_smoke.py）；ruff/format/mypy 通过；全量 JD 2407 passed / 7 skipped（与期望一致）；startup_smoke.py 输出 `startup smoke: ok`。
+- 用户授权推送（"下轮一起推送"）：JD refactor/diet、CF refactor/diet、CF docs/refactor-plan。
