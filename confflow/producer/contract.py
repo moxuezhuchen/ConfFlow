@@ -72,33 +72,21 @@ def _analysis_capabilities() -> tuple[list[dict[str, str]], str]:
     """Return analysis capabilities plus their provenance.
 
     The capabilities are imported from ``confflow.analysis.registry`` when
-    that module exists; otherwise the frozen reaction-profile strings below
-    are declared. The drift test fails loudly the moment the registry
+    that module exists. The drift test fails loudly the moment the registry
     appears with different strings.
     """
-    try:
-        analysis_registry: Any = importlib.import_module("confflow.analysis.registry")
-        capabilities = analysis_registry.capabilities()
-        return (
-            [
-                {
-                    "capability": str(item["capability"]),
-                    "contract_version": str(item["contract_version"]),
-                }
-                for item in capabilities
-            ],
-            "registry",
-        )
-    except Exception:  # noqa: BLE001 - absence of the registry is the normal path
-        return (
-            [
-                {
-                    "capability": ANALYSIS_REACTION_PROFILE_CAPABILITY,
-                    "contract_version": ANALYSIS_REACTION_PROFILE_CONTRACT,
-                }
-            ],
-            "frozen",
-        )
+    analysis_registry: Any = importlib.import_module("confflow.analysis.registry")
+    capabilities = analysis_registry.capabilities()
+    return (
+        [
+            {
+                "capability": str(item["capability"]),
+                "contract_version": str(item["contract_version"]),
+            }
+            for item in capabilities
+        ],
+        "registry",
+    )
 
 
 def _port_dict(port: PortSpec) -> dict[str, Any]:
