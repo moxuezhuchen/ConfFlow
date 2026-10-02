@@ -86,7 +86,7 @@ JD：`cd $JD && ruff check src tests && ruff format --check src tests && mypy`�
 
 ### 4.2 测试
 
-按 `PLAN.md` §2.2 / §2.3 运行全量测试（JD 一律用 `run_jd_tests.sh`；验收方检查执行模型的 Bash 记录中没有直接调用 `unshare`/`mount`，有则按 G10 **退回**），输出 junit，再转成 `{nodeid: outcome}`：
+按 `PLAN.md` §2.2 / §2.3 运行全量测试（JD 一律用 `run_jd_tests.sh`；验收方从 CodeBuddy 的 JSON 输出中提取全部 Bash 调用，检查没有直接或经 `bash -c`/`python3 -c` 等间接调用 `unshare`、`mount`、`sudo`、包安装命令，也没有 `push`（含 `git -C … push`），有则按 G10 **退回**；并用 `git ls-remote origin <分支>` 核对远端分支未变；执行模型报告的命令输出不作为证据，一律由验收方重跑），输出 junit，再转成 `{nodeid: outcome}`：
 
 ```bash
 python3 $TOOLS/test_inventory.py collect --repo <cf|jd> --out $ACC/collect.txt

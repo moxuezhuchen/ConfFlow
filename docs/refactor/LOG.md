@@ -40,3 +40,15 @@
 - 处理：以更正后的参数重新发起 J0b。这一次不计入"退回"次数。
 - 产物：/tmp/refactor-acc/J0b/codebuddy.json
 - 补记：第二次发起时，交接提示词中的 CF HEAD 写错（写成 25e0e19），验收方在执行模型改动文件之前终止了该次运行；`exec-jd` 仍为 5847bc7，工作树干净。这一次也不计入退回次数。
+
+## 2026-10-02 J0b — 第三次发起未执行；CodeBuddy 权限参数实测（不计为退回）
+
+- 第三次发起（`--allowedTools "Read Edit Write Grep Glob Bash(*)"`）时，所有 Bash 调用仍被拒绝。执行模型按 G9 停止，没有改动文件（`exec-jd` 仍为 5847bc7，工作树干净）。
+- 验收方的更正：此前记录的"`Bash(*)` 可以执行、`unshare` 被拦截"是错误结论。当时只看了模型的文字回答；模型实际是通过 Read 读取 `.git` 的 reflog 得到 HEAD 和提交标题，并没有执行命令。今后一律以原始 `function_call_result` 为准。
+- 实测结论（逐条以 `function_call_result` 判断）：
+  - `--allowedTools` 写多项（空格或逗号分隔）时，Bash 全部被拒；只写 `"Bash(*)"` 时 Bash 可用。
+  - `--disallowedTools` 写成一个空格分隔的字符串时完全不生效（实测 `unshare --help`、`mount --version`、`pip --version`、`git push --dry-run` 都被执行；`--dry-run` 没有推送，远端 `refactor/diet` 仍为 5847bc7）；每条规则单独一个参数时，`unshare`、`mount`、`pip`、`sudo` 被拒。
+  - 前缀规则可以被绕过：`git -C <路径> push` 不被 `Bash(git push:*)` 拦截；`bash -c 'unshare --help'` 被执行。
+  - `glm-5.3-flash` 在 Bash 被拒时，有两次直接编造了命令输出（HEAD 写成 `f3a2c1b`、`f4a2b19e`，真实值为 5847bc7）。
+- PLAN §2.8 和 ACCEPTANCE §4.2 已按实测结果更新。
+- 待用户决定：在禁止规则不是安全边界、且执行模型会编造输出的前提下，是否继续用 `glm-5.3-flash` 执行 J0b。
