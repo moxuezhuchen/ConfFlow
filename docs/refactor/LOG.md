@@ -188,3 +188,26 @@
 - 新增验收方工具 `docs/refactor/tools-acc/run_sharded.py`（分片并行运行 CF 测试）与 `weights.json`（每个测试文件的实测耗时）。
 - 在 C1.4（b8e85a3）上验证：分片运行结果与串行运行逐项一致（4502 项，4490 passed / 12 skipped）；全量 21 分钟 → 3.5 分钟（14 个分片，下限由两个各约 3 分钟的测试文件决定）。
 - ACCEPTANCE §4.2a 记录了新规则：CF 每卡仍跑一次完整测试但改用分片；完整 golden 只对触及 science/execution/domain/persistence/workflow/v4/remote 的卡和阶段收尾运行，其余卡只做摘要检查。
+
+## 2026-10-02 J2.1a — 通过
+
+- 仓库/分支/提交：JobDesk-v2 `refactor/diet` df25678（父 fe85b0d）；执行者：外部模型
+- 类型：logic；白名单检查：ok（`contract/models.py`、`editor/service.py`、`gui/app.py`、`tests/application/test_service.py`）
+- diff 核对：新增 `NoContract`（空 manifest / 空配方 / `source="none"` / 不 authoritative / 带 `blocked_reasons`），`ContractSource` 增加 `"none"`；`WorkflowEditorService()` 默认使用 `NoContract()`；`app.py` 远程模式的启动会话改为 `WorkflowEditorService()`；`StableFallbackContractProvider` 的 import 保留（J2.1b 处理）；`test_service.py` 只新增 2 个测试，没有删除任何已有行
+- 静态检查（验收方重跑）：ruff / format / mypy（166）ok
+- 测试（验收方在独立 JD 工作树重跑，CF 用只读参考树）：2411 项，2404 passed / 0 failed / 7 skipped；相对 J1 之后恰好新增声明的 2 个节点，无删除，无结果变化
+- contract：JD `contract_key` 与全部摘要和基线相同
+- 结论：通过。与写方案时的原型结果一致（不需要改任何已有测试）。
+
+## 2026-10-02 IS.1 — 升级（交付物完整，需要用户对结果作决定）
+
+- 仓库/分支/提交：ConfFlow `implementation/input-simplification` 9340601（父 f87da58）；执行者：外部模型
+- 类型：baseline；白名单检查：ok（只新增 `docs/refactor/paths_equivalence/` 下 5 个文件）；`--check` 连续两次逐字节复现（执行方报告，验收方抽查见下）
+- 结果（执行方）：28 个用例，EQUIVALENT 4、LEGACY_DEGENERATE 1、NOT_EQUIVALENT 14、OUT_OF_SCOPE 9
+- 验收方复核（只读复核，未改任何文件）：
+  - 12 个 NOT_EQUIVALENT 的共同原因是 PLAN 规定的"LEGACY_DEGENERATE 比较不做叠合"本身有缺陷：butane 夹具没有氢，legacy 绕含末端原子的键旋转，只是整个分子的刚体转动，是同一个构象，却因坐标不同被判成不同（例：case_0020 的两个结构是绕 C1–C2 轴的刚体转动）。用 `kabsch_rmsd`（阈值 1e-6）重新比较，case_0009、0015、0020、0021、0022、extra_terminal_endpoint、extra_bare_path、extra_bare_path_angle_step 共 8 个的集合完全相同（去重后 2/2、1/1、3/3、6/6）。
+  - case_0010、0011、0016、0017：输入是完全共线的链（所有原子在一条直线上），绕中间键的转动是恒等操作、框架无定义。legacy 保留输入结构（去重后 1 个），v3（对照声明）COMPLETED 但发布 0 个结构（"published 0 leaf structures (2 raw targets)"）。这是真实的行为差异，但只在退化几何下出现。
+  - case_0023、0024：legacy 与 v3 都拒绝，只是原因不同（legacy：声明 13824 个状态超过预几何上限 10000 / 未知键 waypoint；v3：末端端点）。
+  - 夹具全部不含氢，所以"端点是甲基碳"这个最有意义的真实场景（绕 C–CH3 键的旋转会真正改变构象）没有被覆盖。
+- 方案缺陷：PLAN §8 IS.1 的"不叠合"规则错误（验收方的失误）；已新增卡 IS.1b 修正（`docs/refactor-plan` 5811ece）。
+- 结论：升级给用户（IS.1 的规则：只要有 NOT_EQUIVALENT 就不放行 IS.2）。
