@@ -982,7 +982,7 @@ IS 分支上没有 `docs/refactor/`。各卡如需工具，从 `$TOOLS` 运行�
 **拓扑来源（已定）：** refine 步骤新增 native 参数 `topology_bonds`；由 intent 编译器从上游 ConfGen 步骤自动复制。不改 ConfGen 的发布内容，不改 contract（验收方已核实：transform 的 native 键不在 contract 中，`rmsd_threshold` 等均未出现在 `contract.full.json`；`REFINE_NATIVE_KEYS` 只在 `transform_executor.py` 的运行时校验里）。
 
 **C5.3c-1（CF，前置：C5.3b；类型 `logic`）：**
-1. 参数形状：`topology_bonds = {"index_base": 0|1, "bonds": [{"atoms": [i, j], "kind": "COVALENT"|"COORDINATION"|"FORMING"[, "BREAKING"]}]}`，与 ConfGen 文档里的 `index_base` 与 `TypedEdgeModel` 同形；边类型词汇直接取 `science/confgen/graph.py::EdgeType`（单一来源）。**待用户确认的小点：** ConfGen 的类型词汇还有 `BREAKING`，你列出的是三种；默认与 ConfGen 一致，四种都接受，如要只收三种请告知。
+1. 参数形状：`topology_bonds = {"index_base": 0|1, "bonds": [{"atoms": [i, j], "kind": "COVALENT"|"COORDINATION"|"FORMING"[, "BREAKING"]}]}`，与 ConfGen 文档里的 `index_base` 与 `TypedEdgeModel` 同形；边类型词汇直接取 `science/confgen/graph.py::EdgeType`（单一来源）。**已确认（用户 2026-10-02）：** 四种（含 `BREAKING`）都接受，与 ConfGen 一致。
 2. `index_base` 必须与 ConfGen 一致（默认与 ConfGen 文档相同，为 1）；原子数校验：任何索引越界、自环、重复边、与结构原子数不符 → `DomainError`（失败即停，不静默）。
 3. 同构映射保持边类型：在 C5.3a 搬来的映射搜索上增加边类型标签（这是对已搬代码的 logic 修改，只发生在本卡，不在 move 卡）；几何相同但反应键连接的原子对不同（例如 FORMING 边连在不同的原子对上）→ **不得合并**，必须有测试。
 4. 未提供该参数时保持旧行为（`perceive_adjacency` 几何感知成键），不报错；提供时以声明的边集为拓扑，并与几何感知结果的关系明确（声明边覆盖几何感知的同一原子对，其余仍由几何感知补全；若用户之后要求"只用声明边"，另议）。**这一裁定由验收方在写补丁前再核对 ConfGen 旧 `AddBond/DelBond` 的语义后写入卡片。**
@@ -1110,3 +1110,5 @@ IS 分支上没有 `docs/refactor/`。各卡如需工具，从 `$TOOLS` 运行�
 4. **Q2c 方向 2**：在 JD 的路径预览阶段（有结构）提前报出末端原子端点，指明具体的键。本轮由运行时拒绝承担（IS.2b）。
 
 N. **优化后键连接变化的构象（Q-R3，用户 2026-10-02）：** 旧 `blocks/refine` 的多数拓扑过滤会删除少数拓扑构象；V4 refine 不过滤，各自保留。待核实：V4 对"优化后键连接发生变化的构象"是否有检查。用最小工作流实际运行确认；没有则记为缺口，交用户决定。
+
+N+1. **`core/bonding.py`、`core/data.py` 最终移入 `science/`（用户 2026-10-02）：** 使 `core/` 可整体删除。当前 `science/bonds.py` 与 C5.3a 搬入的映射代码依赖它们，C5.5 暂时保留。

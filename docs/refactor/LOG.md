@@ -331,3 +331,7 @@
 - Q-R2 选 B：refine 步骤新增 `topology_bonds`（带 COVALENT/COORDINATION/FORMING 类型、index_base 与 ConfGen 一致、校验原子数、映射保持边类型、无参数时旧行为）；intent 编译器从上游 ConfGen 复制；不改 ConfGen 发布内容与 contract。已写入 PLAN C5.3c-1/-2。待确认小点：ConfGen 还有 BREAKING 边类型，默认四种都接受。
 - 验收方核实：`perceive_adjacency` 是 `core.bonding.build_adjacency` 的薄封装，12000 例输出逐位相同，仅错误处理不同 → C5.3a 保留对 `build_adjacency` 的调用；C5.5 须保留 core/bonding.py、core/data.py。
 - C5.3a 性能测试按节点预算与结果固定，不依赖耗时。等 C3 报告回来后再做 C5.3a 补丁。
+
+## 2026-10-02 用户答复（C5.3c 细节）
+- 边类型四种（含 BREAKING）都接受。PLAN-2 新增：core/bonding.py、core/data.py 最终移入 science/。
+- 验收方核对 ConfGen 构图（planner.build_typed_graph）后发现与"声明边覆盖同一原子对、其余几何感知补全"不一致，已回头请用户裁定（见对话）；裁定前 C5.3c-1 不写补丁。
