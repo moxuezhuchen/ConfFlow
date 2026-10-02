@@ -1,0 +1,345 @@
+diff --git a/src/jobdesk_v2/application/cards/binding_candidates.py b/src/jobdesk_v2/application/cards/binding_candidates.py
+index bc425be..f1c2e04 100644
+--- a/src/jobdesk_v2/application/cards/binding_candidates.py
++++ b/src/jobdesk_v2/application/cards/binding_candidates.py
+@@ -35,7 +35,7 @@ from __future__ import annotations
+ 
+ from collections.abc import Mapping, Sequence
+ from copy import deepcopy
+-from dataclasses import dataclass, field
++from dataclasses import dataclass
+ from typing import Any
+ 
+ from jobdesk_v2.application.cards.authoring import (
+@@ -115,14 +115,12 @@ class BindingCandidate:
+     auto_wire: bool = False
+     auto_wire_reasons: tuple[str, ...] = ()
+     request_document_digest: str | None = None
+-    capability_identity: Mapping[str, Any] = field(default_factory=dict)
+     diagnostics: tuple[Mapping[str, Any], ...] = ()
+ 
+     def __post_init__(self) -> None:
+         if not isinstance(self.source, Mapping) or not self.source:
+             raise ValueError("a binding candidate needs a non-empty source mapping")
+         object.__setattr__(self, "source", deepcopy(dict(self.source)))
+-        object.__setattr__(self, "capability_identity", deepcopy(dict(self.capability_identity)))
+         object.__setattr__(
+             self,
+             "diagnostics",
+@@ -138,7 +136,6 @@ class BindingCandidatesAnswer:
+     candidates: tuple[BindingCandidate, ...] = ()
+     diagnostics: tuple[Mapping[str, Any], ...] = ()
+     request_document_digest: str | None = None
+-    capability_identity: Mapping[str, Any] = field(default_factory=dict)
+ 
+     def __post_init__(self) -> None:
+         object.__setattr__(self, "candidates", tuple(self.candidates))
+@@ -147,7 +144,6 @@ class BindingCandidatesAnswer:
+             "diagnostics",
+             tuple(deepcopy(dict(item)) for item in self.diagnostics),
+         )
+-        object.__setattr__(self, "capability_identity", deepcopy(dict(self.capability_identity)))
+ 
+ 
+ def authoring_document_digest(document: Mapping[str, Any]) -> str:
+@@ -231,11 +227,6 @@ def _candidate_from_wire(raw: Any, where: str) -> BindingCandidate:
+     auto_wire = raw.get("auto_wire")
+     if type(auto_wire) is not bool:
+         raise AuthoringOperationError(f"{where} carries a non-boolean auto_wire")
+-    capability_identity = raw.get("capability_identity")
+-    if capability_identity is None:
+-        capability_identity = {}
+-    if not isinstance(capability_identity, Mapping):
+-        raise AuthoringOperationError(f"{where} carries a malformed capability_identity")
+     return BindingCandidate(
+         target_step_id=target_step_id,
+         target_port=target_port,
+@@ -249,7 +240,6 @@ def _candidate_from_wire(raw: Any, where: str) -> BindingCandidate:
+         auto_wire=auto_wire,
+         auto_wire_reasons=reason_tuple,
+         request_document_digest=_optional_text(raw.get("request_document_digest")),
+-        capability_identity=capability_identity,
+         diagnostics=_diagnostics_of(raw.get("diagnostics"), where),
+     )
+ 
+@@ -357,7 +347,6 @@ class ProducerBindingCandidates:
+             candidates=candidates,
+             diagnostics=envelope["diagnostics"],
+             request_document_digest=request_digest if isinstance(request_digest, str) else None,
+-            capability_identity=envelope["capability_identity"],
+         )
+ 
+     # -- wire ----------------------------------------------------------------
+@@ -443,16 +432,10 @@ class ProducerBindingCandidates:
+         ok = raw.get("ok")
+         if type(ok) is not bool:
+             raise AuthoringOperationError("the producer authoring answer's 'ok' is not a boolean")
+-        capability_identity = raw.get("capability_identity")
+-        if not isinstance(capability_identity, Mapping):
+-            raise AuthoringOperationError(
+-                "the producer authoring answer carries no capability identity"
+-            )
+         return {
+             "operation": operation,
+             "ok": ok,
+             "diagnostics": _diagnostics_of(raw.get("diagnostics"), "the authoring answer"),
+             "request_document_digest": raw.get("request_document_digest"),
+-            "capability_identity": dict(capability_identity),
+             "result": raw.get("result"),
+         }
+diff --git a/src/jobdesk_v2/application/editor/contract/boundary.py b/src/jobdesk_v2/application/editor/contract/boundary.py
+index cf0bf56..55ca568 100644
+--- a/src/jobdesk_v2/application/editor/contract/boundary.py
++++ b/src/jobdesk_v2/application/editor/contract/boundary.py
+@@ -37,7 +37,6 @@ __all__ = [
+     "COMPATIBILITY_REQUIREMENT_KINDS",
+     "COMPATIBILITY_STATUSES",
+     "BoundaryProtocol",
+-    "offered_identity_from_envelope",
+     "parse_boundary_section",
+ ]
+ 
+@@ -83,15 +82,6 @@ _REQUIRED_SCHEMAS: tuple[str, ...] = (
+     "authoring_response",
+ )
+ 
+-#: Future-only (PR-3) schema digests, recorded when the producer publishes
+-#: them.  Their absence must not refuse an otherwise compatible contract
+-#: (BC-1): the PreparedRun manifest / validation receipt family is not a
+-#: precondition of ordinary authoring, validation or submission.
+-_OPTIONAL_SCHEMAS: tuple[str, ...] = (
+-    "prepared_run_manifest",
+-    "validation_receipt",
+-)
+-
+ _SHA256_HEX_LENGTH = 64
+ 
+ 
+@@ -119,22 +109,6 @@ def _require_text(raw: Mapping[str, Any], member: str, where: str) -> str:
+     return value
+ 
+ 
+-def _parse_identity(identity: Mapping[str, Any], where: str) -> Mapping[str, Any]:
+-    algorithm = identity.get("algorithm")
+-    digest = identity.get("digest")
+-    if algorithm != "sha256":
+-        raise _boundary_error(
+-            "contract.boundary_parse_failed",
+-            f"{where} identity must declare algorithm 'sha256', got {algorithm!r}",
+-        )
+-    if not isinstance(digest, str) or not digest.startswith("sha256:"):
+-        raise _boundary_error(
+-            "contract.boundary_parse_failed",
+-            f"{where} identity must carry a sha256: digest",
+-        )
+-    return deepcopy(dict(identity))
+-
+-
+ def _parse_schema_digest(name: str, entry: Mapping[str, Any]) -> dict[str, str]:
+     schema_id = entry.get("schema_id")
+     digest = entry.get("sha256")
+@@ -166,16 +140,6 @@ def _parse_schema_digests(raw: Mapping[str, Any]) -> dict[str, dict[str, str]]:
+                 f"boundary does not publish the {name!r} schema digest",
+             )
+         parsed[name] = _parse_schema_digest(name, entry)
+-    for name in _OPTIONAL_SCHEMAS:
+-        if name not in schemas:
+-            continue
+-        entry = schemas[name]
+-        if not isinstance(entry, Mapping):
+-            raise _boundary_error(
+-                "contract.boundary_parse_failed",
+-                f"boundary schema {name!r} must be an object when published",
+-            )
+-        parsed[name] = _parse_schema_digest(name, entry)
+     return parsed
+ 
+ 
+@@ -229,12 +193,6 @@ def parse_boundary_section(raw: Mapping[str, Any]) -> BoundaryProtocol:
+             f"implements {CANONICALIZATION_ID!r}",
+         )
+     workflow_schema_id = _require_text(raw, "workflow_schema_id", "boundary")
+-    capability_identity = _parse_identity(
+-        _require_mapping(raw, "capability_identity", "boundary"), "capability"
+-    )
+-    semantic_identity = _parse_identity(
+-        _require_mapping(raw, "semantic_identity", "boundary"), "semantic"
+-    )
+     compatibility = _parse_compatibility(raw)
+     schema_digests = _parse_schema_digests(raw)
+     return BoundaryProtocol(
+@@ -242,8 +200,6 @@ def parse_boundary_section(raw: Mapping[str, Any]) -> BoundaryProtocol:
+         protocol_version=version,
+         canonicalization_id=canonicalization_id,
+         workflow_schema_id=workflow_schema_id,
+-        capability_identity=capability_identity,
+-        semantic_identity=semantic_identity,
+         compatibility=compatibility,
+         schema_digests=schema_digests,
+         raw=deepcopy(dict(raw)),
+@@ -258,8 +214,6 @@ class BoundaryProtocol:
+     protocol_version: str
+     canonicalization_id: str
+     workflow_schema_id: str
+-    capability_identity: Mapping[str, Any]
+-    semantic_identity: Mapping[str, Any]
+     compatibility: Mapping[str, Any]
+     schema_digests: Mapping[str, Mapping[str, str]]
+     raw: Mapping[str, Any] = field(default_factory=dict)
+@@ -272,56 +226,3 @@ class BoundaryProtocol:
+     def schema_sha256(self, name: str) -> str | None:
+         entry = self.schema_digests.get(name)
+         return None if entry is None else entry["sha256"]
+-
+-
+-def offered_identity_from_envelope(raw: Mapping[str, Any]) -> dict[str, Any]:
+-    """Project one contract envelope onto the compatibility ``offered`` view.
+-
+-    The projection is mechanical: names and contract versions are copied out of
+-    the producer's own lists, never invented.  Executors and analysis
+-    capabilities offer capabilities; adapters, profiles, checks and recoveries
+-    offer named contracts; the semantics version is read from the boundary's
+-    semantic identity.
+-    """
+-    capabilities: dict[str, str] = {}
+-    contracts: dict[str, str] = {}
+-    executors = raw.get("executors")
+-    if isinstance(executors, list):
+-        for entry in executors:
+-            if isinstance(entry, Mapping) and entry.get("capability"):
+-                capabilities[str(entry["capability"])] = str(entry.get("contract_version") or "")
+-    analysis = raw.get("analysis_capabilities")
+-    if isinstance(analysis, Mapping):
+-        entries = analysis.get("capabilities")
+-        if isinstance(entries, list):
+-            for entry in entries:
+-                if isinstance(entry, Mapping) and entry.get("capability"):
+-                    capabilities[str(entry["capability"])] = str(
+-                        entry.get("contract_version") or ""
+-                    )
+-    for section, name_key, version_key in (
+-        ("execution_adapters", "name", "contract_version"),
+-        ("result_profiles", "name", "contract_version"),
+-        ("scientific_checks", "name", "contract_version"),
+-        ("recovery_profiles", "name", "contract_version"),
+-    ):
+-        entries = raw.get(section)
+-        if isinstance(entries, list):
+-            for entry in entries:
+-                if isinstance(entry, Mapping) and entry.get(name_key):
+-                    contracts[str(entry[name_key])] = str(entry.get(version_key) or "")
+-    semantics_version = ""
+-    boundary = raw.get("boundary")
+-    if isinstance(boundary, Mapping):
+-        semantic_identity = boundary.get("semantic_identity")
+-        if isinstance(semantic_identity, Mapping):
+-            components = semantic_identity.get("components")
+-            if isinstance(components, list):
+-                for component in components:
+-                    if isinstance(component, Mapping) and component.get("name") == "semantics":
+-                        semantics_version = str(component.get("version") or "")
+-    return {
+-        "capabilities": capabilities,
+-        "contracts": contracts,
+-        "semantics_version": semantics_version,
+-    }
+diff --git a/src/jobdesk_v2/application/editor/contract/v4.py b/src/jobdesk_v2/application/editor/contract/v4.py
+index 9b52afa..8e166c6 100644
+--- a/src/jobdesk_v2/application/editor/contract/v4.py
++++ b/src/jobdesk_v2/application/editor/contract/v4.py
+@@ -42,7 +42,6 @@ from typing import Any, Literal
+ from ..jcs import jcs_sha256
+ from .boundary import (
+     BoundaryProtocol,
+-    offered_identity_from_envelope,
+     parse_boundary_section,
+ )
+ from .errors import ARTIFACT_CONTRACT, ContractParseError, decode_json_object
+@@ -137,8 +136,6 @@ class VerifiedV4Contract:
+     validation_response_schema: str = V4_VALIDATION_RESPONSE_SCHEMA
+     #: Parsed P0 boundary protocol; a V4 contract without one is refused.
+     boundary: BoundaryProtocol | None = None
+-    #: Mechanical ``offered`` projection used by compatibility evaluation.
+-    offered_identity: Mapping[str, Any] = field(default_factory=dict)
+     #: Executor capabilities the envelope declares (e.g. ``calculation``,
+     #: ``analysis``).  The step definition blocks cards may carry are exactly
+     #: these names plus step identity -- read off the envelope, never listed
+@@ -170,18 +167,6 @@ class VerifiedV4Contract:
+         if not self.executor_capabilities:
+             raise ValueError("a verified V4 contract requires executor capabilities")
+ 
+-    @property
+-    def capability_identity(self) -> Mapping[str, Any]:
+-        """The producer capability identity digest (boundary-provided)."""
+-        assert self.boundary is not None
+-        return self.boundary.capability_identity
+-
+-    @property
+-    def semantic_identity(self) -> Mapping[str, Any]:
+-        """The producer semantic identity digest (boundary-provided)."""
+-        assert self.boundary is not None
+-        return self.boundary.semantic_identity
+-
+     @property
+     def canonicalization_id(self) -> str:
+         """The canonicalization id the producer and this consumer share."""
+@@ -333,7 +318,6 @@ def verified_v4_contract_from_mapping(raw: Mapping[str, Any]) -> VerifiedV4Contr
+         producer_version=str(producer_version) if producer_version is not None else None,
+         validation_response_schema=response_schema,
+         boundary=boundary,
+-        offered_identity=offered_identity_from_envelope(raw),
+         executor_capabilities=executor_capabilities,
+         diagnostics=tuple(diagnostics),
+     )
+diff --git a/tests/application/test_p0_boundary.py b/tests/application/test_p0_boundary.py
+index 680c6ad..5fc5940 100644
+--- a/tests/application/test_p0_boundary.py
++++ b/tests/application/test_p0_boundary.py
+@@ -199,12 +199,6 @@ class TestBoundaryParsing:
+         for name in ("authoring_request", "authoring_response"):
+             assert boundary.schema_sha256(name)
+ 
+-    def test_future_only_digests_are_recorded_when_present(self, section: dict[str, Any]) -> None:
+-        """BC-1: published PR-3 digests are recorded, not discarded."""
+-        boundary = parse_boundary_section(section)
+-        for name in ("prepared_run_manifest", "validation_receipt"):
+-            assert boundary.schema_sha256(name) == section["schemas"][name]["sha256"]
+-
+     def test_absent_future_only_digests_do_not_refuse_the_boundary(
+         self, section: dict[str, Any]
+     ) -> None:
+@@ -229,12 +223,7 @@ class TestBoundaryParsing:
+ 
+     @pytest.mark.parametrize(
+         "name",
+-        (
+-            "authoring_request",
+-            "authoring_response",
+-            "prepared_run_manifest",
+-            "validation_receipt",
+-        ),
++        ("authoring_request", "authoring_response"),
+     )
+     @pytest.mark.parametrize(
+         "malformed",
+@@ -285,7 +274,7 @@ class TestBoundaryParsing:
+         assert excinfo.value.code == "contract.boundary_status_vocabulary"
+ 
+     def test_missing_required_member_is_refused(self, section: dict[str, Any]) -> None:
+-        for member in ("capability_identity", "semantic_identity", "schemas"):
++        for member in ("schemas",):
+             tampered = {key: value for key, value in section.items() if key != member}
+             with pytest.raises(ContractParseError):
+                 parse_boundary_section(tampered)
+@@ -386,11 +375,6 @@ class TestLiveProducerParity:
+         assert contract.boundary is not None
+         assert contract.boundary.protocol_id == BOUNDARY_PROTOCOL_ID
+         assert contract.canonicalization_id == CANONICALIZATION_ID
+-        assert contract.capability_identity["digest"].startswith("sha256:")
+-        assert contract.semantic_identity["digest"].startswith("sha256:")
+-        offered = contract.offered_identity
+-        assert offered["capabilities"], "the envelope must offer executor capabilities"
+-        assert offered["semantics_version"]
+ 
+     def test_real_envelope_without_future_digests_is_accepted(
+         self, reference_contract: bytes

@@ -1,0 +1,16 @@
+diff --git a/src/jobdesk_v2/gui/new_run/presenter.py b/src/jobdesk_v2/gui/new_run/presenter.py
+index ab609ea..b4e9739 100644
+--- a/src/jobdesk_v2/gui/new_run/presenter.py
++++ b/src/jobdesk_v2/gui/new_run/presenter.py
+@@ -861,11 +861,6 @@ class NewRunPresenter(QObject):
+             self._active_contract if self._active_contract is not None else self._service.contract
+         )
+         key = self._contract_key_of(contract)
+-        capability = getattr(contract, "capability_identity", None)
+-        if isinstance(capability, Mapping):
+-            digest = str(capability.get("digest") or "")
+-            if digest:
+-                return f"{key}|{digest}"
+         return key
+ 
+     def _document_projection(

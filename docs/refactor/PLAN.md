@@ -655,32 +655,25 @@ JD contract_key、CF 的 contract/boundary 字节在本阶段都必须不变。
 
 ### J3.1 — 删除 presenter 中读取 `capability_identity` 的死分支
 
-- ID：J3.1 ／ 仓库：JobDesk-v2 ／ 分支：`refactor/diet` ／ 前置：J2.4
-- 目标：决策 4 要求把 `presenter.py:858` 的 getattr bug 单独提交删除。该分支永远取不到值（`ResolvedContract` 是 `slots=True`，没有 `capability_identity` 属性，`contract/remote_v4.py:68-115`@9beeaf2），删除后行为不变。
-- 类型：`delete`
+- ID：J3.1 ／ 仓库：JobDesk-v2 ／ 分支：`refactor/diet` ／ 前置：J2.4（基点 fedac0850964f0bacc720018bae802cef83456c4）
+- 目标：`presenter.py` 的 `_capability_identity()` 里 `getattr(contract, "capability_identity", None)` 永远取不到值（`ResolvedContract` 是 `slots=True`，没有该属性），删除后行为不变。
+- 类型：`delete`。做法：应用 `handoff/J3.1-presenter.patch`（1 个文件，−5 行），不重新设计。
 - 允许修改的文件：`src/jobdesk_v2/gui/new_run/presenter.py`
-- 具体步骤（@9beeaf2 L853-863）：在 `_capability_identity()` 中删除 L858-862（`capability = getattr(...)` 到 `return f"{key}|{digest}"`），函数只剩 `contract = …`、`key = …`、`return key`。函数名保持不变（G4），L2 再重构。
-- 禁止事项：G1–G9。
-- 验收命令：JD 标准验收。期望：Removed-Tests 0；失败集合不变。
+- 禁止事项：G1–G9；函数名保持不变（L2 再重构）。
+- 验收命令：JD 标准验收。期望：2325 passed、7 skipped、collect 2332（Removed-Tests 0）；ruff/format/mypy 通过。
 - 提交信息模板：`refactor(new-run): drop the unreachable capability-identity read` + 通用尾部。
 
 ### J3.2 — JD 不再要求、不再保存 producer 的无读取方身份字段
 
 - ID：J3.2 ／ 仓库：JobDesk-v2 ／ 分支：`refactor/diet` ／ 前置：J3.1
 - 目标：`capability_identity`（boundary 与 authoring 回答）、`semantic_identity`、`offered_identity` 不再被解析或保存；`prepared_run_manifest` / `validation_receipt` 两个可选 schema 摘要不再被记录。这样 producer 删除它们之后，JD 仍能接受 contract。
-- 类型：`delete`
-- 允许修改的文件：
-  - `src/jobdesk_v2/application/editor/contract/boundary.py`
-  - `src/jobdesk_v2/application/editor/contract/v4.py`
-  - `src/jobdesk_v2/application/cards/binding_candidates.py`
-  - `tests/application/test_p0_boundary.py`、`tests/application/test_p0_pr2b_named_binding.py`、`tests/application/test_confflow_v4_contract.py`（只删除守护被删字段的测试或断言，逐条声明）
-- 具体步骤（@9beeaf2）：
-  1. `boundary.py`：`parse_boundary_section` 删除 L236-241 两段解析；`BoundaryProtocol` 删除 `capability_identity`、`semantic_identity` 字段（L266-267）以及 `parse_boundary_section` 末尾构造 `BoundaryProtocol` 时的这两个实参；删除 `_OPTIONAL_SCHEMAS`（L95 起）及其循环（L174 起）；删除 `offered_identity_from_envelope`（L441-491）及其 `__all__` 条目；`_parse_identity`（L127-141）若再无调用方则删除。
-  2. `v4.py`：删除 import `offered_identity_from_envelope`（L45）、字段 `offered_identity`（L140-141）、属性 `capability_identity` / `semantic_identity`（L173-183）、构造参数（L336）。
-  3. `binding_candidates.py`：删除两个数据类的 `capability_identity` 字段（L118、L141）及其 `__post_init__` 行（L125、L150）、解析（L234-238、L252）、L360 的传参、L446-450 的必需检查和 L456 的输出键。`request_document_digest` 保留（`instantiate.py:308` 在比较它）。
-- 禁止事项：G1–G9；`contract_digest`、`result_schema_sha256`、`request_document_digest` 和 compatibility 词汇的解析保留。
-- 验收命令：JD 标准验收（绑定当前 `$CF`，此时 producer 仍发布这些字段，JD 必须照常接受）；`contract_key` 不变；`git grep -n "capability_identity\|semantic_identity\|offered_identity" -- src` 只允许命中 `remote/v4_validation.py`、`gui/new_run/presenter.py`（token，L2 处理）。期望：Removed-Tests 按声明。
-- 提交信息模板：`refactor(contract): stop parsing producer identity members nobody reads` + 通用尾部。
+- 类型：`delete`。做法：应用 `handoff/J3.2-src-tests.patch`（4 个文件）。验收方已在其上跑通全量。
+- 允许修改的文件：`application/editor/contract/boundary.py`、`application/editor/contract/v4.py`、`application/cards/binding_candidates.py`、`tests/application/test_p0_boundary.py`。
+- 被删测试恰好是 `handoff/J3.2-removed-tests.txt` 的 19 项（`test_future_only_digests_are_recorded_when_present` 1 项，加 `test_malformed_digest_entries_are_refused` 对 `prepared_run_manifest`/`validation_receipt` 的 18 个参数化节点）；另有 2 个测试被改写但节点不变：`test_missing_required_member_is_refused`（不再要求 `capability_identity`/`semantic_identity`）、`test_real_contract_bytes_carry_boundary`（去掉对这两个身份和 `offered_identity` 的断言）。
+- 不动：`remote/v4_validation.py` 与 `presenter.py` 的 token（L2 处理）；`tests/fixtures/p0_boundary/*`（vendored producer fixture，J3.3 再同步）；compatibility 词汇里的 `capability_identity_changed`。
+- 禁止事项：G1–G9；不得手改补丁。
+- 验收命令：JD 标准验收（此时 producer 仍发布这些字段，JD 必须照常接受，由 `TestLiveProducerParity` 真实字节测试证明）。期望：2306 passed、7 skipped、collect 2313（2332−19）；`git grep -n "capability_identity\|semantic_identity\|offered_identity" -- src` 只命中 `boundary.py` 的 `capability_identity_changed`、`remote/v4_validation.py`、`gui/new_run/presenter.py`。
+- 提交信息模板：`refactor(contract): stop parsing producer identity members nobody reads` + 通用尾部（Removed-Tests 19，附清单文件名）。
 
 ### C3.1 — re-pin 到 J3.2
 
