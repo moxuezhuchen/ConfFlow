@@ -703,27 +703,21 @@ JD contract_key、CF 的 contract/boundary 字节在本阶段都必须不变。
 
 ### C3.3 — 在 contract 中标注 ConfGen 溯源字段
 
-- ID：C3.3 ／ 仓库：ConfFlow ／ 分支：`refactor/diet` ／ 前置：C3.2
-- 目标：决策 5：把 `certificate_digest`、`enumeration.digest`、`input_state_digest`、`input_certificate_digest` 显式标注为科学溯源字段。
-- 类型：`logic`（只改 contract 声明，不改任何计算）
-- 允许修改的文件：`confflow/producer/contract.py`、`tests/v4/test_confgen_v3_integration.py`、`docs/refactor/baseline/checkpoints/C3.3/*`
-- 具体步骤（Q4 已确认）：在 `_confgen_section()`（@d5a40ae L364-410）中，紧接 `"result_provenance"`（L396）新增 `"report_provenance": ["/certificate/digest", "/enumeration/digest", "/input_state_digest", "/input_certificate_digest"]`（JSON pointer 相对于 `ensemble_report`；字段位置已核实：`execution/confgen_executor.py:632-654`@d5a40ae）。在 `TestProducerWiring::test_contract_confgen_section_tracks_registries`（L1253 起）中加一条对应断言（Added-Tests 0，断言 +1）。写检查点 `checkpoints/C3.3/`。
-- 禁止事项：G1–G9；不得改 `confgen_executor.py`、`science/`；不得改变任何报告内容。
-- 验收命令：标准验收；`json_paths_diff.py` 对比 C3.2 检查点：只新增 `/confgen/report_provenance`（及派生摘要变化）。engine 报告与 TS1 不变。
+- ID：C3.3 ／ 仓库：ConfFlow ／ 分支：`refactor/diet` ／ 前置：C3.2（e5c3032）
+- 类型：`logic`（只改 contract 声明，不改任何计算）。做法：应用 `handoff/C3.3-src-tests.patch`（5 个文件，含检查点）。
+- 内容：`_confgen_section()` 在 `result_provenance` 之后新增 `"report_provenance": ["/certificate/digest", "/enumeration/digest", "/input_state_digest", "/input_certificate_digest"]`（JSON pointer 相对于 `ensemble_report`；验收方已核实 `certificate.digest`、`enumeration.digest` 在引擎报告中存在）；`test_contract_confgen_section_tracks_registries` 加一条断言；新增检查点 `docs/refactor/baseline/checkpoints/C3.3/`。
+- 路径差异（验收方实测）：相对 C3.2 检查点，contract 只新增 `/confgen/report_provenance`、修改 `/contract_digest`；boundary 无任何变化；`result_schema_sha256` 与 `jd_contract_key` 不变。
+- 自检期望：全量 `{"passed": 4481, "skipped": 12}`，collect 4493（Removed 0，Added 0）；`golden_check.py --checkpoint …/checkpoints/C3.3/contract.json` ok；`json_paths_diff` 对 C3.2 检查点与上面一致；ruff/mypy/black 通过。
 - 提交信息模板：`feat(producer): declare confgen report provenance fields` + 通用尾部。
 
 ### J3.3 — JD 重新 vendor P0 boundary fixture
 
-- ID：J3.3 ／ 仓库：JobDesk-v2 ／ 分支：`refactor/diet` ／ 前置：C3.3
-- 目标：JD 的 `tests/fixtures/p0_boundary/` 与 CF C3.3 生成的 fixture 一致。
-- 类型：`test-only`
-- 允许修改的文件：`tests/fixtures/p0_boundary/*`、`scripts/sync_p0_boundary_fixtures.py`（只改 `FIXTURE_NAMES`）、`tests/application/test_p0_boundary.py`
-- 具体步骤：
-  1. `scripts/sync_p0_boundary_fixtures.py`：从 `FIXTURE_NAMES` 中删除 `"compatibility_cases.json"`。
-  2. `python3 scripts/sync_p0_boundary_fixtures.py --source $CF/docs/internal/fixtures/p0_boundary`，然后核对 `PROVENANCE.json` 的 `source_commit` = CF C3.3 的提交 SHA；`git rm tests/fixtures/p0_boundary/compatibility_cases.json`。
-  3. `test_p0_boundary.py`：删除 `TestCompatibilityParity::test_vocabulary_matches_producer_fixture`（它读取已删除的 fixture）以及整个空类；从文件头的 fixture 名单（L58 附近）中删除 `compatibility_cases.json`。
-- 禁止事项：G1–G9；不得手改 fixture 内容（只能由同步脚本写入）。
-- 验收命令：JD 标准验收（绑定 `$CF` = C3.3）；`TestFixtureProvenance` 通过。期望：Removed-Tests 1；失败集合不变；`contract_key` 与 C3.3 检查点一致。
+- ID：J3.3 ／ 仓库：JobDesk-v2 ／ 分支：`refactor/diet` ／ 前置：C3.3 提交（需要知道其 SHA，fixture 由 CF 的 `docs/internal/fixtures/p0_boundary` 同步）
+- 类型：`test-only`。做法：先应用 `handoff/J3.3-code.patch`（2 个文件），再运行同步脚本（`PROVENANCE.json` 的 `source_commit` 只能由脚本写入，不能放进补丁），最后 `git rm` 已退役的 fixture。
+- 补丁内容：`scripts/sync_p0_boundary_fixtures.py` 的 `FIXTURE_NAMES` 去掉 `compatibility_cases.json`；`tests/application/test_p0_boundary.py`：去掉 `compatibility_cases.json` 名单项，删除 `TestCompatibilityParity` 整类，删除 `test_real_envelope_without_future_digests_is_accepted`（它删除 producer 已不再发布的键，且被 `test_real_contract_bytes_carry_boundary` 覆盖），`_compact_section` 不再读取 `semantic_identity`/`capability_identity`/`matrix`，`workflow_schema_id` 取自 `V4_WORKFLOW_SCHEMA_ID`，schemas 只含两个 authoring schema。
+- 被删测试：`handoff/J3.3-removed-tests.txt` 的 3 项（`test_vocabulary_matches_producer_fixture`、`test_real_envelope_without_future_digests_is_accepted`、`test_vendored_fixture_matches_live_producer[compatibility_cases.json]`）。
+- 执行后期望：JD 全量（绑定 `--cf` = C3.3 之后的 `exec-cf`）`2303 passed, 7 skipped`，collect 2310（2313−3），ruff/format/mypy 通过，`TestFixtureProvenance` 通过，`PROVENANCE.json` 的 `source_commit` = C3.3 提交 SHA，`tests/fixtures/p0_boundary/` 中不再有 `compatibility_cases.json`；`boundary_protocol.json` 与 CF `docs/internal/fixtures/p0_boundary/boundary_protocol.json` 字节一致。
+- 附注（验收方发现）：在 C3.2 之后、J3.3 之前，用新 producer 跑 JD 全量会有 3 个失败（两项 fixture 指纹未同步、一项删除 producer 已不发布的键）；这是预期的，J3.3 修复。
 - 提交信息模板：`test(fixtures): re-vendor P0 boundary fixtures from ConfFlow <short sha>` + 通用尾部。
 
 ### C3.4 — re-pin 到 J3.3

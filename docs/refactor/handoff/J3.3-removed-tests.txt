@@ -1,0 +1,3 @@
+tests/application/test_p0_boundary.py::TestCompatibilityParity::test_vocabulary_matches_producer_fixture
+tests/application/test_p0_boundary.py::TestLiveProducerParity::test_real_envelope_without_future_digests_is_accepted
+tests/application/test_p0_boundary.py::TestLiveProducerParity::test_vendored_fixture_matches_live_producer[compatibility_cases.json]

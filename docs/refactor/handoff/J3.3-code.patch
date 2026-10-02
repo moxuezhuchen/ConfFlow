@@ -1,0 +1,116 @@
+diff --git a/scripts/sync_p0_boundary_fixtures.py b/scripts/sync_p0_boundary_fixtures.py
+index 91f5fae..59e325f 100644
+--- a/scripts/sync_p0_boundary_fixtures.py
++++ b/scripts/sync_p0_boundary_fixtures.py
+@@ -28,7 +28,6 @@ ROOT = Path(__file__).resolve().parent.parent
+ FIXTURE_NAMES: tuple[str, ...] = (
+     "boundary_protocol.json",
+     "jcs_vectors.json",
+-    "compatibility_cases.json",
+     "named_binding_workflow.json",
+ )
+ 
+diff --git a/tests/application/test_p0_boundary.py b/tests/application/test_p0_boundary.py
+index 5fc5940..7ff7fb2 100644
+--- a/tests/application/test_p0_boundary.py
++++ b/tests/application/test_p0_boundary.py
+@@ -21,7 +21,6 @@ import pytest
+ from jobdesk_v2.application.editor.contract.boundary import (
+     BOUNDARY_PROTOCOL_ID,
+     BOUNDARY_PROTOCOL_VERSION,
+-    COMPATIBILITY_REASON_CODES,
+     COMPATIBILITY_STATUSES,
+     BoundaryProtocol,
+     parse_boundary_section,
+@@ -51,7 +50,6 @@ CONFFLOW_GENERATOR = "/opt/ConfFlow/scripts/generate_p0_boundary_fixtures.py"
+ FIXTURE_NAMES = (
+     "boundary_protocol.json",
+     "jcs_vectors.json",
+-    "compatibility_cases.json",
+     "named_binding_workflow.json",
+ )
+ 
+@@ -78,20 +76,12 @@ def _compact_section(full: dict[str, Any], **overrides: Any) -> dict[str, Any]:
+ 
+     Used only as parse input; every value comes from the producer fixture.
+     """
+-    components = {
+-        str(component["name"]): str(component["version"])
+-        for component in full["semantic_identity"]["components"]
+-    }
+     section: dict[str, Any] = {
+         "protocol_id": full["protocol_id"],
+         "protocol_version": full["protocol_version"],
+         "canonicalization_id": full["canonicalization"]["canonicalization_id"],
+-        "workflow_schema_id": components["workflow_schema"],
+-        "capability_identity": full["capability_identity"],
+-        "semantic_identity": full["semantic_identity"],
+-        "compatibility": {
+-            key: value for key, value in full["compatibility"].items() if key != "matrix"
+-        },
++        "workflow_schema_id": V4_WORKFLOW_SCHEMA_ID,
++        "compatibility": dict(full["compatibility"]),
+         "schemas": {
+             name: {
+                 "schema_id": schema.get("title") or name,
+@@ -100,13 +90,7 @@ def _compact_section(full: dict[str, Any], **overrides: Any) -> dict[str, Any]:
+                 ).hexdigest(),
+             }
+             for name, schema in full["schemas"].items()
+-            if name
+-            in (
+-                "authoring_request",
+-                "authoring_response",
+-                "prepared_run_manifest",
+-                "validation_receipt",
+-            )
++            if name in ("authoring_request", "authoring_response")
+         },
+     }
+     section.update(overrides)
+@@ -286,18 +270,6 @@ class TestBoundaryParsing:
+             verified_v4_contract_from_mapping({"content_schema": V4_CONTRACT_SCHEMA})
+ 
+ 
+-# ---------------------------------------------------------------------------
+-# Compatibility parity
+-# ---------------------------------------------------------------------------
+-
+-
+-class TestCompatibilityParity:
+-    def test_vocabulary_matches_producer_fixture(self) -> None:
+-        payload = _load("compatibility_cases.json")
+-        assert set(payload["vocabulary"]["statuses"]) == set(COMPATIBILITY_STATUSES)
+-        assert set(COMPATIBILITY_REASON_CODES) <= set(payload["vocabulary"]["reason_codes"])
+-
+-
+ # ---------------------------------------------------------------------------
+ # Fixture provenance
+ # ---------------------------------------------------------------------------
+@@ -375,26 +347,3 @@ class TestLiveProducerParity:
+         assert contract.boundary is not None
+         assert contract.boundary.protocol_id == BOUNDARY_PROTOCOL_ID
+         assert contract.canonicalization_id == CANONICALIZATION_ID
+-
+-    def test_real_envelope_without_future_digests_is_accepted(
+-        self, reference_contract: bytes
+-    ) -> None:
+-        """BC-1 end to end: the real envelope minus PR-3 digests still parses.
+-
+-        Only the two future-only schema entries are dropped; the envelope is
+-        re-signed so every remaining digest still verifies.  The producer wire
+-        itself is untouched -- this is a consumer-side acceptance probe.
+-        """
+-        raw = json.loads(reference_contract.decode("utf-8"))
+-        schemas = raw["boundary"]["schemas"]
+-        for name in ("prepared_run_manifest", "validation_receipt"):
+-            del schemas[name]
+-        raw["contract_digest"] = jcs_sha256(
+-            {key: value for key, value in raw.items() if key != "contract_digest"}
+-        )
+-        contract = parse_v4_contract_bytes(json.dumps(raw).encode("utf-8"))
+-        assert contract.boundary is not None
+-        assert contract.boundary.schema_sha256("prepared_run_manifest") is None
+-        assert contract.boundary.schema_sha256("validation_receipt") is None
+-        assert contract.boundary.schema_sha256("authoring_request")
+-        assert contract.boundary.schema_sha256("authoring_response")

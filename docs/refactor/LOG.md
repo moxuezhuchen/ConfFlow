@@ -340,3 +340,9 @@
 - 选 A：refine 复用 build_typed_graph；topology_bonds = ConfGen 的 topology + index_base，coordination 与 tolerances.bond_scale 由编译器复制；声明了拓扑时用 ConfGen 的 bond_scale（默认 1.15），未声明时 1.2 保持旧行为；接受与旧 AddBond/DelBond 的差异并写文档。
 - C5.3c-2：沿数据流向上找最近 ConfGen 步骤（不要求紧邻）；多个上游来源且声明不一致 → 报错并要求显式指定。
 - PLAN-2：统一 refine 与 ConfGen 的默认 bond_scale。
+
+## C3.1 + C3.2 — 验收通过（2026-10-03）
+- 执行：外部模型 glm-5.3-flash；CF refactor/diet 65c4e0c（C3.1）、e5c3032（C3.2）；两提交与 handoff 补丁字节一致；run_sharded 4481 passed / 12 skipped；ruff/mypy 通过；golden（检查点）由执行模型自报 ok，验收方在同一补丁上已验。
+- 执行模型自述：C3.2 首次提交的 Removed-Tests 正文测试名写错，已 amend 修正（仅提交信息）。已在后续卡片补一条"提交信息中的测试名必须从清单逐字复制"。
+- 跨仓验证（验收方）：用新 producer（exec-cf）跑 JD 全量，3 个失败正是预期的 fixture 未同步类（两项指纹、一项删除 producer 已不发布的键），由 J3.3 修复；J3.3 补丁已在 CF=C3.3 原型上实测 2303 passed / 7 skipped。
+- 推送：按 2026-10-02 授权（refactor/*），推送 CF refactor/diet。
