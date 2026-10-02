@@ -996,7 +996,7 @@ IS 分支上没有 `docs/refactor/`。各卡如需工具，从 `$TOOLS` 运行�
 7. **与旧 `AddBond/DelBond` 的差异（用户已接受，文档必须写明）：** 同一对同时出现在 add 与 del 时，旧 refine 先 del 后 add（add 胜），ConfGen 先 add 后 del（del 胜），新规则取 ConfGen；非法条目旧为静默忽略，新为报错；感知 `bond_scale` 旧为 refine 的 1.2，新（声明了拓扑时）为 ConfGen 的 1.15；来源由"帧注释"改为步骤参数。
 8. **文档（本卡必须写）：** ConfGen 的带标号状态计数与 refine 之后的物理构象数是两个口径（σ 相关结构会被合并）；TS1 的 refine 结果作为信息性记录，不作为通过条件；第 7 条的差异。
 
-**C5.3c-2（编译器，前置：IS 合并进 main 之后；类型 `logic`）：** intent 编译器在生成 refine 步骤时，**沿结构数据流向上找最近的 ConfGen 步骤**复制 `topology`（含 `index_base`）、`coordination` 范围与 `tolerances.bond_scale` 到 `topology_bonds`，**不要求紧邻**（中间可隔着优化等步骤）。若沿数据流存在多个上游 ConfGen 来源且它们的拓扑声明不一致 → 不自动复制，报错并要求用户显式指定；声明一致则可复制；上游没有 ConfGen 或无拓扑声明则不写该参数（保持旧行为）。编译器位置：`implementation/input-simplification` 分支的 JD `application/intent/`（refactor/diet 上尚不存在），具体文件在 IS.5 之后核实。
+**C5.3c-2（编译器，前置：IS 合并进 main 之后；类型 `logic`）：** intent 编译器在生成 refine 步骤时，**沿结构数据流向上找最近的 ConfGen 步骤**复制 `topology`（含 `index_base`）、`coordination` 范围与 `tolerances.bond_scale` 到 `topology_bonds`，**不要求紧邻**（中间可隔着优化等步骤）。若沿数据流存在多个上游 ConfGen 来源且它们的拓扑声明不一致 → 不自动复制，报错并要求用户显式指定；声明一致则可复制；上游没有 ConfGen 或无拓扑声明则不写该参数（保持旧行为）。编译器位置（IS.0 后核实）：ConfFlow 的 `confflow/producer/intent.py`（`implementation/input-simplification` 分支，IS.5 合并进 main 之后）；JD 的 `application/intent/` 只是调用方，不需要改动。
 
 ### C5.3d — 删除 `blocks/refine/`（前置：C5.3a、C5.3b 通过；C5.3c 的结论）
 

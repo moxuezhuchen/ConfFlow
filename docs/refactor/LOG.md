@@ -366,3 +366,10 @@
 - CF main d5a40ae → 8291fb9（合并 refactor/diet baeb451）；JD master 9beeaf2 → 2f11b49（合并 refactor/diet edb068a）。两个合并结果的树与 refactor/diet 完全相同。
 - 合并后复验：CF 4481 passed / 12 skipped；JD（绑定合并后的 CF）2303 passed / 7 skipped。
 - 合并工作树：/opt/cf-worktrees/merge-cf（main）、/opt/cf-worktrees/merge-jd（master）。
+
+## IS.0（CF + JD）— 验收方亲自合并并验收通过（2026-10-03）
+- CF：`implementation/input-simplification` ← main，合并提交 b0e8c64，无冲突。验证：ruff/mypy 通过，全量 4853 passed / 12 skipped（main 的 4481 + IS 新增）。
+- JD：`implementation/input-simplification` ← master，合并提交 bcdea5b，4 处冲突全部按 master 的删除解决（fixture、editor/__init__.py、test_confflow_v4_contract.py）；IS 代码里对已删符号的引用逐条去掉：intent/compiler.py 与 preview.py（ContractParseError 改自 contract.errors；producer 回答不再需要 capability_identity）、3 个测试文件（load_recipe_catalog → fixture_catalog）、2 个测试文件假回答里的 capability_identity、10 处 yaml `# type: ignore`；fixture 从合并后的 CF IS 重新 vendor（多出 compile_intent / preview_paths 两个 authoring 操作）。验证：ruff/format/mypy 通过，JD 全量（绑定合并后的 CF IS）2465 passed / 7 skipped。
+- engine 报告：B0.1 基线未变。golden_check 报告 6 项（5 项新增 + 1 项 different），均记入 `docs/refactor/baseline/checkpoints/IS.0/engine_reports/`：1 项 different 是 `test_pinned_coordination_ring_damage_is_drift`，原因是 IS 分支的 99283a7 改了**测试输入**（把对称打平的正方形种子换成蝴蝶形环）；验收方证据：IS 的引擎用**旧测试输入**逐字节复现基线报告，故引擎行为未变，不是科学行为变化。
+- 未推送：IS 分支（implementation/*）不在推送授权内，main/master 一律不推。
+- 发现并修复我自己的错误：C5.2b 卡的 PLAN 编辑误删第 8–10 节，已从 ff9f23c 恢复（见前一提交）。
