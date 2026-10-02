@@ -31,3 +31,11 @@
 ## 2026-10-02 推送授权
 
 - 用户授权推送 JD `refactor/diet` 和 CF `docs/refactor-plan` 两个工作分支，不动 `master`/`main`。
+
+## 2026-10-02 J0b — 发起失败（不计为退回）
+
+- 执行模型：CodeBuddy `glm-5.3-flash`
+- 情况：`--allowedTools "... Bash"` 在非交互模式下没有授予 shell 权限，执行模型的第一条只读命令就被拒绝；它按 G9 停止，没有改动任何文件（`exec-jd` 仍为 5847bc7，工作树干净）。
+- 原因：验收方的调用参数写错，应为 `Bash(*)`。已用最小命令实测：`Bash(*)` 可以执行；`--disallowedTools` 仍能拦截 `unshare`。PLAN §2.8 已更正。
+- 处理：以更正后的参数重新发起 J0b。这一次不计入"退回"次数。
+- 产物：/tmp/refactor-acc/J0b/codebuddy.json
