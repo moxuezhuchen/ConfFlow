@@ -119,11 +119,11 @@ def cmd_diff(args: argparse.Namespace) -> int:
     print(f"removed: {len(removed)}")
     for n in removed:
         print("  -", n)
-    ok = not added and len(removed) == args.declared
+    ok = len(removed) == args.declared and len(added) == args.declared_added
     if len(removed) != args.declared:
         print(f"FAIL: removed {len(removed)} != declared {args.declared}")
-    if added:
-        print("FAIL: new nodes")
+    if len(added) != args.declared_added:
+        print(f"FAIL: added {len(added)} != declared-added {args.declared_added}")
     if args.allowed_files:
         allowed = [f for f in args.allowed_files.split(",") if f]
         for n in removed:
@@ -147,6 +147,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--prev", required=True)
     p.add_argument("--cur", required=True)
     p.add_argument("--declared", type=int, required=True)
+    p.add_argument("--declared-added", type=int, default=0)
     p.add_argument("--allowed-files", default="")
     args = parser.parse_args(argv)
     return {"collect": cmd_collect, "run": cmd_run, "diff": cmd_diff}[args.cmd](args)

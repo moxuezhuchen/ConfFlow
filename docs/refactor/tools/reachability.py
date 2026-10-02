@@ -159,7 +159,17 @@ def compute(cf: Path, package: str) -> dict[str, list[str]]:
     stack = [m for m in ENTRY_MODULES if m in modules]
     reachable.update(stack)
     while stack:
-        for dep in deps_by_module.get(stack.pop(), ()):
+        name = stack.pop()
+        # Importing a module imports (and executes ``__init__`` of) every
+        # ancestor package, so those parents are reachable too and their own
+        # imports must enter the closure.
+        parts = name.split(".")
+        for i in range(1, len(parts)):
+            parent = ".".join(parts[:i])
+            if parent in modules and parent not in reachable:
+                reachable.add(parent)
+                stack.append(parent)
+        for dep in deps_by_module.get(name, ()):
             if dep in modules and dep not in reachable:
                 reachable.add(dep)
                 stack.append(dep)
