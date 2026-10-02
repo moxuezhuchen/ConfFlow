@@ -254,3 +254,13 @@
 
 - J2.3 情况：改动全部完成并通过其余全部测试（2403 passed），唯一失败是 `tests/application/test_architecture.py::test_only_dedicated_parsers_decode_producer_json`：该守护把 producer JSON 的 `json.loads` 限定在允许名单里，J2.3 把 `decode_json_object` 和 `decode_strict_json` 原样搬到 `contract/errors.py` 与 `editor/jcs.py` 后，这两处不在名单里。该文件不在卡片白名单，执行方按规则停止。
 - 验收方复核：违规位置恰好是这两处；`application/` 下 `json.loads` 调用点搬迁前后都是 3 处（parse.py 2、confflow_state.py 1 → errors.py 1、jcs.py 1、confflow_state.py 1），没有新增，所以守护的意图未被削弱。授权只在 `_ALLOWED_JSON_MODULES` 里新增这两项；PLAN J2.3 卡已补入白名单。
+
+## 2026-10-02 J2.2 — 通过
+
+- 仓库/分支/提交：JobDesk-v2 `refactor/diet` b1ba08d（父 4c5f6ec）；执行者：外部模型
+- 类型：test-only；白名单检查：ok（`tests/contract_fixtures.py`、`tests/application/conftest.py`；没有修改任何 `test_*.py`）
+- diff 核对：新增 `FixtureContract` 替身；`authoritative_contract()` 直接用 `producer_v2.json` 的 manifest 与配方目录构造；`conftest.py` 只把类型注解改为 `ContractLike`
+- 独立等价核对（验收方）：把 `authoritative_contract()` 与旧路径 `parse_fixture("producer_v2.json")` 逐项比较——`contract_key`、`source`、`is_authoritative`、`level`、`capabilities`、`producer_version`、`diagnostics`、`errors`、`warnings`、`schema`、`workflow_schema_version`、两个 sha256、`describe_source()` 全部相同；`editor_manifest` 与 `recipe_catalog` 对象相等（27 个字段、4 个配方）
+- 静态检查：ruff / format / mypy（166）ok
+- 测试（验收方在独立 JD 工作树重跑）：见本条下方数字；与 J2.1b 之后集合逐项相同
+- 结论：通过
