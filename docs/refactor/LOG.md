@@ -356,3 +356,6 @@
 - 验收人独立：C3.3 提交与 handoff/C3.3-src-tests.patch 字节一致；J3.3 代码部分与 J3.3-code.patch 一致，fixture 与 CF 源字节一致，PROVENANCE.source_commit = 8d968dc；CF 全量 4481 passed / 12 skipped；JD（accjd@edb068a，绑定 exec-cf）2303 passed / 7 skipped；ruff/mypy/冒烟通过。
 - C3.4 补丁已备（pin 到 edb068a；验收方实测 4481 passed、release workflow 测试 14 passed）；jd-pin 已移到 edb068a。
 - 推送：refactor/diet（CF、JD）按 2026-10-02 授权推送。
+
+## 2026-10-03 C5.2b 补丁已备
+- 用户确认旧 results.db 不需保存、不需 README；已生成的导出文件原样保留。C5.2b 排入侧分支。补丁在 C5.2（4101 passed/collect 4113）与 C5.3a 之上（4108/4120）均实测通过，golden ok，被删 17 项。

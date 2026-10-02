@@ -1,0 +1,1037 @@
+diff --git a/confflow/cli.py b/confflow/cli.py
+index 0b9b3f3..c0c97cd 100755
+--- a/confflow/cli.py
++++ b/confflow/cli.py
+@@ -42,13 +42,11 @@ from .contract import (
+ from .core.contracts import ExitCode, cli_output_to_txt, output_txt_path_for_input
+ from .core.exceptions import (
+     ConfFlowError,
+-    PathSafetyError,
+ )
+ from .core.io import parse_gaussian_input_text, write_xyz_file
+ from .core.path_policy import validate_managed_path
+ from .core.utils import get_logger
+ from .install_provenance import read_install_provenance
+-from .workflow.export import NoExportableResultsError, export_results
+ 
+ # Package initialization suppresses import-time warnings for the real probes.
+ _HANDSHAKE_PROBE = any(flag in sys.argv[1:] for flag in ("--version", "--capabilities"))
+@@ -258,24 +256,10 @@ def build_parser() -> argparse.ArgumentParser:
+         action="store_true",
+         help="Stop all running ConfFlow tasks, including child processes",
+     )
+-    parser.add_argument(
+-        "--export",
+-        dest="export_work_dir",
+-        help="Export existing workflow results from a work directory without running ConfFlow",
+-    )
+-    parser.add_argument(
+-        "--format",
+-        choices=("csv", "json", "text"),
+-        default="csv",
+-        help="Output format for --export (csv/json, default: csv)",
+-    )
+     parser.add_argument(
+         "-o",
+         "--output",
+-        help=(
+-            "Output file for --export (default: <work_dir>/confflow_results.<format>), "
+-            "or output directory for --rerun-failed"
+-        ),
++        help="Output directory for --rerun-failed",
+     )
+     parser.add_argument(
+         "--rerun-failed",
+@@ -583,33 +567,6 @@ def main(
+     if args.stop:
+         return stop_all_confflow_processes()
+ 
+-    if args.export_work_dir:
+-        if args.format not in {"csv", "json"}:
+-            print("Error: --export supports --format csv or json", file=sys.stderr)
+-            return ExitCode.USAGE_ERROR
+-        try:
+-            result = export_results(
+-                args.export_work_dir,
+-                output_format=args.format,
+-                output_path=args.output,
+-            )
+-        except (FileNotFoundError, PathSafetyError) as e:
+-            print(f"Error: {e}", file=sys.stderr)
+-            return ExitCode.USAGE_ERROR
+-        except NoExportableResultsError as e:
+-            for warning in e.warnings:
+-                print(f"Warning: {warning}", file=sys.stderr)
+-            print(f"Error: {e}", file=sys.stderr)
+-            return ExitCode.RUNTIME_ERROR
+-        except (OSError, ValueError) as e:
+-            print(f"Error: {e}", file=sys.stderr)
+-            return ExitCode.RUNTIME_ERROR
+-
+-        for warning in result.warnings:
+-            print(f"Warning: {warning}", file=sys.stderr)
+-        print(f"Exported {result.row_count} result row(s) to {result.output_path}")
+-        return ExitCode.SUCCESS
+-
+     if args.rerun_failed_step_dir:
+         # Formal runtime cutover (worker I): the legacy rerun-failed glue is
+         # execution, not migration diagnostics. Every formal entry runs the
+diff --git a/confflow/workflow/export.py b/confflow/workflow/export.py
+deleted file mode 100644
+index 63c8a4b..0000000
+--- a/confflow/workflow/export.py
++++ /dev/null
+@@ -1,311 +0,0 @@
+-#!/usr/bin/env python3
+-
+-"""Export calculation results from an existing ConfFlow work directory."""
+-
+-from __future__ import annotations
+-
+-import csv
+-import json
+-import os
+-import sqlite3
+-from dataclasses import dataclass
+-from pathlib import Path
+-from typing import Any
+-
+-from confflow.contract import RUN_SUMMARY_FILE, WORKFLOW_STATE_FILE, WORKFLOW_STATS_FILE
+-from confflow.core.path_policy import validate_managed_path
+-from confflow.workflow.step_naming import build_step_dir_name_map
+-
+-__all__ = [
+-    "EXPORT_FIELDS",
+-    "ExportResult",
+-    "NoExportableResultsError",
+-    "export_results",
+-]
+-
+-EXPORT_FIELDS = [
+-    "step_name",
+-    "step_dir",
+-    "job_name",
+-    "cid",
+-    "status",
+-    "energy",
+-    "final_gibbs_energy",
+-    "final_sp_energy",
+-    "g_corr",
+-    "num_imag_freqs",
+-    "lowest_freq",
+-    "ts_bond_atoms",
+-    "ts_bond_length",
+-    "error",
+-    "source_db",
+-]
+-
+-_RESULT_COLUMNS = [
+-    "job_name",
+-    "cid",
+-    "status",
+-    "energy",
+-    "final_gibbs_energy",
+-    "final_sp_energy",
+-    "g_corr",
+-    "num_imag_freqs",
+-    "lowest_freq",
+-    "ts_bond_atoms",
+-    "ts_bond_length",
+-    "error",
+-]
+-
+-
+-class NoExportableResultsError(RuntimeError):
+-    """Raised when a work directory contains no exportable result rows."""
+-
+-    def __init__(self, message: str, warnings: list[str] | None = None) -> None:
+-        super().__init__(message)
+-        self.warnings = list(warnings or [])
+-
+-
+-@dataclass(frozen=True)
+-class ExportResult:
+-    output_path: str
+-    row_count: int
+-    warnings: list[str]
+-
+-
+-@dataclass(frozen=True)
+-class _StepMeta:
+-    order: dict[str, int]
+-    names: dict[str, str]
+-
+-
+-def _default_output_path(work_dir: str, output_format: str) -> str:
+-    suffix = "csv" if output_format == "csv" else "json"
+-    return os.path.join(work_dir, f"confflow_results.{suffix}")
+-
+-
+-def _iter_step_dirs(work_dir: str) -> list[Path]:
+-    return sorted(
+-        (path for path in Path(work_dir).iterdir() if path.is_dir()),
+-        key=lambda path: path.name,
+-    )
+-
+-
+-def _load_json_file(path: Path) -> dict[str, Any] | None:
+-    try:
+-        with open(path, encoding="utf-8") as handle:
+-            data = json.load(handle)
+-    except (OSError, json.JSONDecodeError):
+-        return None
+-    return data if isinstance(data, dict) else None
+-
+-
+-def _load_step_meta(work_dir: str) -> _StepMeta:
+-    # A workflow state file keys records by the exact directory name chosen by
+-    # the planner.  Prefer it when present: a resumed run's stats only contain
+-    # steps executed during that attempt and cannot reconstruct omitted steps
+-    # or collision-safe names from their partial list.
+-    state_data = _load_json_file(Path(work_dir) / WORKFLOW_STATE_FILE)
+-    state_steps = state_data.get("steps") if state_data else None
+-    state_order: dict[str, int] = {}
+-    state_names: dict[str, str] = {}
+-    if isinstance(state_steps, dict):
+-        for index, (raw_dirname, raw_step) in enumerate(state_steps.items(), start=1):
+-            dirname = str(raw_dirname)
+-            if Path(dirname).name != dirname or not isinstance(raw_step, dict):
+-                continue
+-            raw_name = str(raw_step.get("name") or "").strip()
+-            state_order[dirname] = index
+-            state_names[dirname] = raw_name or dirname
+-
+-    for filename in (WORKFLOW_STATS_FILE, RUN_SUMMARY_FILE):
+-        data = _load_json_file(Path(work_dir) / filename)
+-        if not data:
+-            continue
+-        steps = data.get("steps")
+-        if not isinstance(steps, list):
+-            continue
+-
+-        order: dict[str, int] = {}
+-        names: dict[str, str] = {}
+-        normalized_steps: list[dict[str, Any]] = []
+-        for step in steps:
+-            if not isinstance(step, dict):
+-                continue
+-            normalized_steps.append(step)
+-
+-        # Use the state mapping when available.  Otherwise use the same global
+-        # collision allocator as planning/execution.  A local ``base ->
+-        # count`` loop can map ``A!``, ``A?``, ``A_2`` to the same directory.
+-        fallback_dirnames, _ = build_step_dir_name_map(normalized_steps)
+-        for fallback_index, (step, dirname) in enumerate(
+-            zip(normalized_steps, fallback_dirnames, strict=True), start=1
+-        ):
+-            raw_name = str(step.get("name") or "").strip()
+-
+-            if state_names:
+-                matching = [
+-                    state_dirname
+-                    for state_dirname, state_name in state_names.items()
+-                    if state_name == (raw_name or state_dirname)
+-                ]
+-                if len(matching) == 1:
+-                    dirname = matching[0]
+-
+-            raw_index = step.get("index", fallback_index)
+-            index = raw_index if isinstance(raw_index, int) else fallback_index
+-            order[dirname] = index
+-            names[dirname] = raw_name or dirname
+-        if order:
+-            if state_names:
+-                # Preserve exact directory records for steps omitted from a
+-                # resumed stats payload; stats indexes remain authoritative for
+-                # ordering whenever they are available.
+-                for dirname, name in state_names.items():
+-                    names.setdefault(dirname, name)
+-                    order.setdefault(dirname, state_order.get(dirname, 1_000_000))
+-            return _StepMeta(order=order, names=names)
+-
+-    return _StepMeta(order=state_order, names=state_names)
+-
+-
+-def _table_columns(conn: sqlite3.Connection) -> set[str]:
+-    return {str(row[1]) for row in conn.execute("PRAGMA table_info(task_results)")}
+-
+-
+-def _read_rows_from_db(db_path: Path, step_dir: Path, step_name: str) -> list[dict[str, Any]]:
+-    conn = sqlite3.connect(str(db_path))
+-    conn.row_factory = sqlite3.Row
+-    try:
+-        columns = _table_columns(conn)
+-        if not columns:
+-            return []
+-
+-        selected = ["task_id"] if "task_id" in columns else []
+-        selected.extend(col for col in _RESULT_COLUMNS if col in columns)
+-        if not selected:
+-            return []
+-
+-        if "job_name" in columns and "task_id" in columns:
+-            select_exprs = [f"tr.{col}" if col in columns else col for col in selected]
+-            query = f"""
+-                SELECT {", ".join(select_exprs)}
+-                FROM task_results tr
+-                JOIN (
+-                    SELECT job_name, MAX(task_id) AS max_task_id
+-                    FROM task_results
+-                    GROUP BY job_name
+-                ) latest
+-                    ON latest.job_name = tr.job_name
+-                   AND latest.max_task_id = tr.task_id
+-            """
+-        else:
+-            query = f"SELECT {', '.join(selected)} FROM task_results"
+-
+-        rows = []
+-        for row in conn.execute(query):
+-            row_dict = dict(row)
+-            exported = {field: None for field in EXPORT_FIELDS}
+-            exported["step_name"] = step_name
+-            exported["step_dir"] = str(step_dir)
+-            exported["source_db"] = str(db_path)
+-            for col in _RESULT_COLUMNS:
+-                if col in row_dict:
+-                    exported[col] = row_dict[col]
+-            rows.append(exported)
+-        return rows
+-    finally:
+-        conn.close()
+-
+-
+-def _sort_key(row: dict[str, Any], step_order: dict[str, int]) -> tuple[int, str, str]:
+-    step_dirname = Path(str(row.get("step_dir") or "")).name
+-    return (
+-        step_order.get(step_dirname, 1_000_000),
+-        step_dirname,
+-        str(row.get("job_name") or ""),
+-    )
+-
+-
+-def _escape_csv_cell(value: Any) -> Any:
+-    if not isinstance(value, str):
+-        return value
+-    stripped = value.lstrip()
+-    if stripped and stripped[0] in {"=", "+", "-", "@"}:
+-        return "'" + value
+-    return value
+-
+-
+-def _write_csv(path: str, rows: list[dict[str, Any]]) -> None:
+-    with open(path, "w", newline="", encoding="utf-8") as handle:
+-        writer = csv.DictWriter(handle, fieldnames=EXPORT_FIELDS)
+-        writer.writeheader()
+-        for row in rows:
+-            writer.writerow({field: _escape_csv_cell(row.get(field)) for field in EXPORT_FIELDS})
+-
+-
+-def _write_json(path: str, rows: list[dict[str, Any]]) -> None:
+-    with open(path, "w", encoding="utf-8") as handle:
+-        json.dump(rows, handle, indent=2, ensure_ascii=False)
+-        handle.write("\n")
+-
+-
+-def export_results(
+-    work_dir: str,
+-    *,
+-    output_format: str,
+-    output_path: str | None = None,
+-) -> ExportResult:
+-    """Export all available step-level calculation results to CSV or JSON."""
+-    if output_format not in {"csv", "json"}:
+-        raise ValueError(f"Unsupported export format: {output_format}")
+-
+-    safe_work_dir = validate_managed_path(work_dir, label="work_dir")
+-    if not os.path.isdir(safe_work_dir):
+-        raise FileNotFoundError(f"Work directory does not exist: {safe_work_dir}")
+-
+-    raw_output = output_path or _default_output_path(safe_work_dir, output_format)
+-    safe_output = validate_managed_path(
+-        raw_output,
+-        label="output",
+-        sandbox_root=safe_work_dir,
+-        base_dir=safe_work_dir,
+-    )
+-
+-    warnings: list[str] = []
+-    rows: list[dict[str, Any]] = []
+-    step_meta = _load_step_meta(safe_work_dir)
+-
+-    step_dirs = _iter_step_dirs(safe_work_dir)
+-    if not step_dirs:
+-        warnings.append(f"No step directories found in work directory: {safe_work_dir}")
+-
+-    for step_dir in step_dirs:
+-        db_path = step_dir / "results.db"
+-        if not db_path.exists():
+-            warnings.append(f"Skipping step without results.db: {step_dir}")
+-            continue
+-        try:
+-            rows.extend(
+-                _read_rows_from_db(
+-                    db_path,
+-                    step_dir,
+-                    step_name=step_meta.names.get(step_dir.name, step_dir.name),
+-                )
+-            )
+-        except sqlite3.Error as exc:
+-            warnings.append(f"Skipping unreadable results.db {db_path}: {exc}")
+-
+-    rows.sort(key=lambda row: _sort_key(row, step_meta.order))
+-    if not rows:
+-        raise NoExportableResultsError(
+-            f"No exportable results found under work directory: {safe_work_dir}",
+-            warnings=warnings,
+-        )
+-
+-    os.makedirs(os.path.dirname(safe_output), exist_ok=True)
+-    if output_format == "csv":
+-        _write_csv(safe_output, rows)
+-    else:
+-        _write_json(safe_output, rows)
+-
+-    return ExportResult(output_path=safe_output, row_count=len(rows), warnings=warnings)
+diff --git a/docs/ARCHITECTURE.md b/docs/ARCHITECTURE.md
+index 921f53e..7b257e8 100755
+--- a/docs/ARCHITECTURE.md
++++ b/docs/ARCHITECTURE.md
+@@ -135,7 +135,6 @@ confflow/
+ │   ├── helpers.py            # 辅助工具（pushd、构象计数、列表转换）
+ │   ├── validation.py         # 输入验证与标签标准化
+ │   ├── stats.py              # 检查点、统计追踪、构象溯源
+-│   ├── export.py             # 导出功能
+ │   ├── rerun_failed.py       # 失败重跑
+ │   ├── supervisor.py         # 子进程监督与停止处理
+ │   └── step_naming.py        # 步骤命名
+diff --git a/docs/TESTING.md b/docs/TESTING.md
+index 0bb1e45..db5d4a5 100755
+--- a/docs/TESTING.md
++++ b/docs/TESTING.md
+@@ -134,7 +134,6 @@ CI 也会执行 `pip check`，用于尽早发现声明依赖与解析结果不
+ | 文件 | 覆盖模块 | 说明 |
+ |------|----------|------|
+ | `test_engine.py` | workflow/engine, helpers | 工作流引擎、断点恢复、步骤调度 |
+-| `test_export.py` | workflow/export | 导出功能测试 |
+ | `test_rerun_failed.py` | workflow/rerun_failed | 失败重跑功能测试 |
+ | `test_step_handlers.py` | workflow/step_handlers | 步骤执行适配器（confgen/calc 步骤） |
+ | `test_runtime_context.py` | workflow/runtime_context | 运行时上下文初始化 |
+@@ -291,7 +290,6 @@ pytest tests/ --cov=confflow --cov-report=term-missing
+ - Workflow `calc` steps：ORCA SP 和 Gaussian SP 均完成。
+ - `confgen`：butane 旋转搜索生成 27 个 conformer；workflow 方式也完成。
+ - `confrefine`：butane conformer 去重筛选完成。
+-- export/report：ORCA/Gaussian 工作目录可导出 JSON/CSV，文本报告生成路径可调用。
+ 
+ 发现的环境和使用注意事项：
+ 
+diff --git a/tests/results_db_fixture.py b/tests/results_db_fixture.py
+deleted file mode 100644
+index af506b8..0000000
+--- a/tests/results_db_fixture.py
++++ /dev/null
+@@ -1,105 +0,0 @@
+-"""A minimal writer for the legacy ``results.db`` that ``workflow.export`` reads.
+-
+-``confflow.calc`` (the only producer of ``results.db``) is gone; the export
+-reader still accepts such databases, so its tests build one directly.
+-"""
+-
+-from __future__ import annotations
+-
+-import json
+-import sqlite3
+-from typing import Any
+-
+-_SCHEMA = """
+-CREATE TABLE IF NOT EXISTS task_results (
+-    task_id INTEGER PRIMARY KEY AUTOINCREMENT,
+-    job_name TEXT NOT NULL,
+-    task_index INTEGER,
+-    cid TEXT,
+-    status TEXT NOT NULL,
+-    energy REAL,
+-    final_gibbs_energy REAL,
+-    final_sp_energy REAL,
+-    num_imag_freqs INTEGER,
+-    lowest_freq REAL,
+-    g_corr REAL,
+-    ts_bond_atoms TEXT,
+-    ts_bond_length REAL,
+-    final_coords TEXT,
+-    error TEXT,
+-    error_kind TEXT,
+-    error_details TEXT,
+-    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+-)
+-"""
+-
+-_COLUMNS = (
+-    "job_name",
+-    "task_index",
+-    "status",
+-    "energy",
+-    "final_gibbs_energy",
+-    "final_sp_energy",
+-    "num_imag_freqs",
+-    "lowest_freq",
+-    "g_corr",
+-    "ts_bond_atoms",
+-    "ts_bond_length",
+-    "final_coords",
+-    "error",
+-    "error_kind",
+-    "error_details",
+-    "cid",
+-)
+-
+-
+-class ResultsDB:
+-    """Insert and read back task rows in the legacy ``task_results`` layout."""
+-
+-    def __init__(self, db_path: str) -> None:
+-        self.conn = sqlite3.connect(db_path)
+-        self.conn.row_factory = sqlite3.Row
+-        self.conn.execute(_SCHEMA)
+-        self.conn.commit()
+-
+-    def insert_result(self, task_info: dict[str, Any]) -> int:
+-        coords = task_info.get("final_coords")
+-        values = (
+-            task_info.get("job_name"),
+-            task_info.get("index"),
+-            task_info.get("status"),
+-            task_info.get("energy"),
+-            task_info.get("final_gibbs_energy"),
+-            task_info.get("final_sp_energy"),
+-            task_info.get("num_imag_freqs"),
+-            task_info.get("lowest_freq"),
+-            task_info.get("g_corr"),
+-            task_info.get("ts_bond_atoms"),
+-            task_info.get("ts_bond_length"),
+-            json.dumps(coords) if coords else None,
+-            task_info.get("error"),
+-            task_info.get("error_kind"),
+-            task_info.get("error_details"),
+-            task_info.get("cid") or (task_info.get("metadata") or {}).get("CID"),
+-        )
+-        cursor = self.conn.execute(
+-            f"INSERT INTO task_results ({', '.join(_COLUMNS)}) "
+-            f"VALUES ({', '.join('?' for _ in _COLUMNS)})",
+-            values,
+-        )
+-        self.conn.commit()
+-        return int(cursor.lastrowid or 0)
+-
+-    def get_result_by_job_name(self, job_name: str) -> dict[str, Any] | None:
+-        row = self.conn.execute(
+-            "SELECT * FROM task_results WHERE job_name = ? ORDER BY task_id DESC LIMIT 1",
+-            (job_name,),
+-        ).fetchone()
+-        if row is None:
+-            return None
+-        result = {key: row[key] for key in row.keys()}
+-        result["index"] = result.pop("task_index")
+-        return result
+-
+-    def close(self) -> None:
+-        self.conn.close()
+diff --git a/tests/test_cli.py b/tests/test_cli.py
+index a1ee207..d15afdc 100644
+--- a/tests/test_cli.py
++++ b/tests/test_cli.py
+@@ -126,7 +126,6 @@ def test_build_parser():
+     assert not args.resume
+     assert not args.verbose
+     assert not args.stop
+-    assert args.export_work_dir is None
+ 
+ 
+ def test_convert_gjf_to_xyz(tmp_path):
+@@ -216,52 +215,6 @@ def test_main_stop_command():
+         mock_stop.assert_called_once()
+ 
+ 
+-def test_main_export_does_not_call_run_workflow(tmp_path, capsys):
+-    work_dir = tmp_path / "work"
+-    work_dir.mkdir()
+-    output = work_dir / "out.csv"
+-
+-    with (
+-        patch("confflow.cli.export_results") as mock_export,
+-        patch("confflow.cli.run_workflow") as mock_run,
+-    ):
+-        mock_export.return_value.row_count = 1
+-        mock_export.return_value.output_path = str(output)
+-        mock_export.return_value.warnings = []
+-        result = main(["--export", str(work_dir), "--format", "csv", "-o", str(output)])
+-
+-    captured = capsys.readouterr()
+-    assert result == 0
+-    assert f"Exported 1 result row(s) to {output}" in captured.out
+-    mock_export.assert_called_once_with(
+-        str(work_dir),
+-        output_format="csv",
+-        output_path=str(output),
+-    )
+-    mock_run.assert_not_called()
+-
+-
+-def test_main_export_missing_work_dir_returns_usage_error(tmp_path, capsys):
+-    missing = tmp_path / "missing"
+-
+-    result = main(["--export", str(missing), "--format", "json"])
+-
+-    captured = capsys.readouterr()
+-    assert result == 1
+-    assert "Work directory does not exist" in captured.err
+-
+-
+-def test_main_export_text_format_returns_usage_error(tmp_path, capsys):
+-    work_dir = tmp_path / "work"
+-    work_dir.mkdir()
+-
+-    result = main(["--export", str(work_dir), "--format", "text"])
+-
+-    captured = capsys.readouterr()
+-    assert result == 1
+-    assert "--export supports --format csv or json" in captured.err
+-
+-
+ def test_main_normal_path_still_calls_run_workflow(tmp_path):
+     input_xyz = tmp_path / "input.xyz"
+     input_xyz.write_text("2\ntest\nC 0 0 0\nH 0 0 1\n", encoding="utf-8")
+@@ -656,16 +609,6 @@ def test_build_parser_step_dest():
+     assert args.rerun_failed_step_dir == "dir"
+ 
+ 
+-def test_build_parser_format_extended():
+-    """Test that --format choices include text."""
+-    parser = build_parser()
+-    args = parser.parse_args(["--export", "work", "--format", "text"])
+-    assert args.format == "text"
+-
+-    args = parser.parse_args(["--export", "work", "--format", "json"])
+-    assert args.format == "json"
+-
+-
+ # =============================================================================
+ # Capability handshake tests (JobDesk <-> ConfFlow v1.4.2)
+ # =============================================================================
+diff --git a/tests/test_contract.py b/tests/test_contract.py
+index 3c71c9e..9519f65 100644
+--- a/tests/test_contract.py
++++ b/tests/test_contract.py
+@@ -10,14 +10,12 @@ coordinated with the JobDesk consumer.
+ 
+ from __future__ import annotations
+ 
+-import inspect
+ import json
+ import os
+ from pathlib import Path
+ from types import SimpleNamespace
+ 
+ import confflow.cli as cli_module
+-import confflow.workflow.export as export_module
+ from confflow import contract
+ 
+ 
+@@ -203,24 +201,3 @@ def test_executable_resolution_keeps_posix_reported_path_before_exe_sibling(tmp_
+     assert cli_module._resolve_existing_executable(reported) == str(reported.resolve())
+     assert os.name == host_os_name
+     assert Path(os.fspath(tmp_path)).is_dir()
+-
+-
+-def test_export_uses_contract_filenames():
+-    """The export step meta-loader must consult the contract filenames."""
+-    import json
+-    import tempfile
+-    from pathlib import Path
+-
+-    # Exercise the real loader against a temp dir using the contract names.
+-    with tempfile.TemporaryDirectory() as tmp:
+-        (Path(tmp) / contract.WORKFLOW_STATS_FILE).write_text(
+-            json.dumps({"steps": [{"name": "s1", "index": 1}]})
+-        )
+-        meta = export_module._load_step_meta(tmp)
+-        assert meta.names == {"s1": "s1"}
+-        assert meta.order == {"s1": 1}
+-
+-    src = inspect.getsource(export_module)
+-    assert "from confflow.contract import" in src
+-    assert contract.RUN_SUMMARY_FILE not in src, "literal filename must not appear in source"
+-    assert contract.WORKFLOW_STATS_FILE not in src, "literal filename must not appear in source"
+diff --git a/tests/test_export.py b/tests/test_export.py
+deleted file mode 100644
+index 166500f..0000000
+--- a/tests/test_export.py
++++ /dev/null
+@@ -1,271 +0,0 @@
+-#!/usr/bin/env python3
+-
+-"""Tests for exporting existing workflow results."""
+-
+-from __future__ import annotations
+-
+-import csv
+-import json
+-import sqlite3
+-
+-import pytest
+-
+-from confflow.workflow.export import (
+-    EXPORT_FIELDS,
+-    NoExportableResultsError,
+-    export_results,
+-)
+-from tests.results_db_fixture import ResultsDB
+-
+-
+-def _write_result_db(path, rows):
+-    db = ResultsDB(str(path))
+-    try:
+-        for row in rows:
+-            db.insert_result(row)
+-    finally:
+-        db.close()
+-
+-
+-def test_export_csv_writes_default_output(tmp_path):
+-    work_dir = tmp_path / "work"
+-    step_dir = work_dir / "calc_step"
+-    step_dir.mkdir(parents=True)
+-    _write_result_db(
+-        step_dir / "results.db",
+-        [
+-            {
+-                "job_name": "job_b",
+-                "status": "success",
+-                "energy": -2.0,
+-                "final_gibbs_energy": -1.8,
+-            },
+-            {"job_name": "job_a", "status": "failed", "error": "boom"},
+-        ],
+-    )
+-
+-    result = export_results(str(work_dir), output_format="csv")
+-
+-    assert result.row_count == 2
+-    assert result.output_path == str(work_dir / "confflow_results.csv")
+-    with open(result.output_path, newline="", encoding="utf-8") as handle:
+-        rows = list(csv.DictReader(handle))
+-    assert rows[0]["job_name"] == "job_a"
+-    assert rows[1]["job_name"] == "job_b"
+-    assert rows[1]["energy"] == "-2.0"
+-    assert rows[1]["step_name"] == "calc_step"
+-    assert rows[1]["source_db"] == str(step_dir / "results.db")
+-
+-
+-def test_export_csv_escapes_formula_like_text_fields(tmp_path):
+-    work_dir = tmp_path / "work"
+-    step_dir = work_dir / "calc_step"
+-    step_dir.mkdir(parents=True)
+-    _write_result_db(
+-        step_dir / "results.db",
+-        [
+-            {
+-                "job_name": "=job",
+-                "status": "failed",
+-                "error": "+cmd",
+-            }
+-        ],
+-    )
+-
+-    result = export_results(str(work_dir), output_format="csv")
+-
+-    with open(result.output_path, newline="", encoding="utf-8") as handle:
+-        rows = list(csv.DictReader(handle))
+-    assert rows[0]["job_name"] == "'=job"
+-    assert rows[0]["error"] == "'+cmd"
+-
+-
+-def test_export_json_writes_explicit_output(tmp_path):
+-    work_dir = tmp_path / "work"
+-    step_dir = work_dir / "task_step"
+-    step_dir.mkdir(parents=True)
+-    _write_result_db(
+-        step_dir / "results.db",
+-        [{"job_name": "job_1", "status": "success", "final_sp_energy": -3.2}],
+-    )
+-    output = work_dir / "nested" / "results.json"
+-
+-    result = export_results(str(work_dir), output_format="json", output_path=str(output))
+-
+-    assert result.output_path == str(output)
+-    data = json.loads(output.read_text(encoding="utf-8"))
+-    assert data == [
+-        {
+-            "step_name": "task_step",
+-            "step_dir": str(step_dir),
+-            "job_name": "job_1",
+-            "cid": None,
+-            "status": "success",
+-            "energy": None,
+-            "final_gibbs_energy": None,
+-            "final_sp_energy": -3.2,
+-            "g_corr": None,
+-            "num_imag_freqs": None,
+-            "lowest_freq": None,
+-            "ts_bond_atoms": None,
+-            "ts_bond_length": None,
+-            "error": None,
+-            "source_db": str(step_dir / "results.db"),
+-        }
+-    ]
+-
+-
+-def test_export_missing_work_dir_raises_file_not_found(tmp_path):
+-    with pytest.raises(FileNotFoundError, match="Work directory does not exist"):
+-        export_results(str(tmp_path / "missing"), output_format="csv")
+-
+-
+-def test_export_without_results_db_reports_warning(tmp_path):
+-    work_dir = tmp_path / "work"
+-    (work_dir / "calc_without_db").mkdir(parents=True)
+-
+-    with pytest.raises(NoExportableResultsError) as excinfo:
+-        export_results(str(work_dir), output_format="csv")
+-
+-    assert "No exportable results found" in str(excinfo.value)
+-    assert excinfo.value.warnings == [
+-        f"Skipping step without results.db: {work_dir / 'calc_without_db'}"
+-    ]
+-
+-
+-def test_export_missing_columns_uses_null_values(tmp_path):
+-    work_dir = tmp_path / "work"
+-    step_dir = work_dir / "old_calc"
+-    step_dir.mkdir(parents=True)
+-    db_path = step_dir / "results.db"
+-    conn = sqlite3.connect(str(db_path))
+-    conn.execute("""
+-        CREATE TABLE task_results (
+-            task_id INTEGER PRIMARY KEY AUTOINCREMENT,
+-            job_name TEXT NOT NULL,
+-            status TEXT NOT NULL
+-        )
+-    """)
+-    conn.execute(
+-        "INSERT INTO task_results (job_name, status) VALUES (?, ?)",
+-        ("old_job", "success"),
+-    )
+-    conn.commit()
+-    conn.close()
+-
+-    output = work_dir / "confflow_results.json"
+-    export_results(str(work_dir), output_format="json", output_path=str(output))
+-
+-    data = json.loads(output.read_text(encoding="utf-8"))
+-    assert list(data[0]) == EXPORT_FIELDS
+-    assert data[0]["job_name"] == "old_job"
+-    assert data[0]["energy"] is None
+-    assert data[0]["final_gibbs_energy"] is None
+-    assert data[0]["error"] is None
+-
+-
+-def test_export_uses_workflow_step_order_when_available(tmp_path):
+-    work_dir = tmp_path / "work"
+-    first_step = work_dir / "z_second_alphabetically"
+-    second_step = work_dir / "a_first_alphabetically"
+-    first_step.mkdir(parents=True)
+-    second_step.mkdir(parents=True)
+-    _write_result_db(
+-        first_step / "results.db",
+-        [{"job_name": "job_z", "status": "success", "energy": -1.0}],
+-    )
+-    _write_result_db(
+-        second_step / "results.db",
+-        [{"job_name": "job_a", "status": "success", "energy": -2.0}],
+-    )
+-    (work_dir / "workflow_stats.json").write_text(
+-        json.dumps(
+-            {
+-                "steps": [
+-                    {"index": 1, "name": "z_second_alphabetically", "type": "calc"},
+-                    {"index": 2, "name": "a_first_alphabetically", "type": "calc"},
+-                ]
+-            }
+-        ),
+-        encoding="utf-8",
+-    )
+-
+-    output = work_dir / "ordered.json"
+-    export_results(str(work_dir), output_format="json", output_path=str(output))
+-
+-    data = json.loads(output.read_text(encoding="utf-8"))
+-    assert [row["job_name"] for row in data] == ["job_z", "job_a"]
+-    assert [row["step_name"] for row in data] == [
+-        "z_second_alphabetically",
+-        "a_first_alphabetically",
+-    ]
+-
+-
+-def test_export_uses_collision_safe_workflow_step_mapping(tmp_path):
+-    work_dir = tmp_path / "work"
+-    for dirname, job_name in (("A", "job_a"), ("A_3", "job_b"), ("A_2", "job_c")):
+-        step_dir = work_dir / dirname
+-        step_dir.mkdir(parents=True)
+-        _write_result_db(
+-            step_dir / "results.db",
+-            [{"job_name": job_name, "status": "success"}],
+-        )
+-    (work_dir / "workflow_stats.json").write_text(
+-        json.dumps(
+-            {
+-                "steps": [
+-                    {"index": 1, "name": "A!", "type": "calc"},
+-                    {"index": 2, "name": "A?", "type": "calc"},
+-                    {"index": 3, "name": "A_2", "type": "calc"},
+-                ]
+-            }
+-        ),
+-        encoding="utf-8",
+-    )
+-
+-    result = export_results(str(work_dir), output_format="json")
+-    rows = json.loads((work_dir / "confflow_results.json").read_text(encoding="utf-8"))
+-
+-    assert result.row_count == 3
+-    assert [(row["step_name"], row["job_name"]) for row in rows] == [
+-        ("A!", "job_a"),
+-        ("A?", "job_b"),
+-        ("A_2", "job_c"),
+-    ]
+-
+-
+-def test_export_prefers_exact_state_directory_mapping_after_resume(tmp_path):
+-    work_dir = tmp_path / "work"
+-    for dirname, job_name in (("A", "job_a"), ("A_3", "job_b"), ("A_2", "job_c")):
+-        step_dir = work_dir / dirname
+-        step_dir.mkdir(parents=True)
+-        _write_result_db(
+-            step_dir / "results.db",
+-            [{"job_name": job_name, "status": "success"}],
+-        )
+-    (work_dir / ".workflow_state.json").write_text(
+-        json.dumps(
+-            {
+-                "steps": {
+-                    "A": {"name": "A!", "type": "calc"},
+-                    "A_3": {"name": "A?", "type": "calc"},
+-                    "A_2": {"name": "A_2", "type": "calc"},
+-                }
+-            }
+-        ),
+-        encoding="utf-8",
+-    )
+-    # A resumed run may only list the last step in its fresh statistics.
+-    (work_dir / "workflow_stats.json").write_text(
+-        json.dumps({"steps": [{"index": 3, "name": "A_2", "type": "calc"}]}),
+-        encoding="utf-8",
+-    )
+-
+-    export_results(str(work_dir), output_format="json")
+-    rows = json.loads((work_dir / "confflow_results.json").read_text(encoding="utf-8"))
+-
+-    assert {row["job_name"]: row["step_name"] for row in rows} == {
+-        "job_a": "A!",
+-        "job_b": "A?",
+-        "job_c": "A_2",
+-    }
+diff --git a/tests/test_provenance_metadata.py b/tests/test_provenance_metadata.py
+index 6201f71..c9d8029 100644
+--- a/tests/test_provenance_metadata.py
++++ b/tests/test_provenance_metadata.py
+@@ -4,57 +4,9 @@
+ 
+ from __future__ import annotations
+ 
+-import json
+-from pathlib import Path
+-
+ import numpy as np
+ 
+ from confflow.blocks.refine import processor
+-from confflow.workflow.export import export_results
+-from tests.results_db_fixture import ResultsDB
+-
+-
+-def test_db_persists_cid_from_metadata(tmp_path):
+-    db = ResultsDB(str(tmp_path / "results.db"))
+-    db.insert_result(
+-        {
+-            "job_name": "j1",
+-            "index": 0,
+-            "status": "success",
+-            "energy": -1.0,
+-            "metadata": {"CID": "CID1"},
+-        }
+-    )
+-
+-    record = db.get_result_by_job_name("j1")
+-
+-    assert record is not None
+-    assert record["cid"] == "CID1"
+-
+-
+-def test_db_persists_explicit_cid(tmp_path):
+-    db = ResultsDB(str(tmp_path / "results.db"))
+-    db.insert_result({"job_name": "j1", "status": "success", "energy": -1.0, "cid": "X9"})
+-
+-    record = db.get_result_by_job_name("j1")
+-
+-    assert record is not None
+-    assert record["cid"] == "X9"
+-
+-
+-def test_export_includes_cid(tmp_path):
+-    work_dir = tmp_path / "work"
+-    step_dir = work_dir / "step_01_calc"
+-    step_dir.mkdir(parents=True)
+-    db = ResultsDB(str(step_dir / "results.db"))
+-    db.insert_result({"job_name": "j1", "status": "success", "energy": -1.0, "cid": "CID1"})
+-    db.close()
+-
+-    result = export_results(str(work_dir), output_format="json")
+-    payload = json.loads(Path(result.output_path).read_text(encoding="utf-8"))
+-    rows = payload["results"] if isinstance(payload, dict) and "results" in payload else payload
+-
+-    assert any(row.get("cid") == "CID1" for row in rows)
+ 
+ 
+ def test_refine_output_keeps_ts_metadata(tmp_path):
+diff --git a/tests/v4/test_architecture_boundaries.py b/tests/v4/test_architecture_boundaries.py
+index 6815250..4d44f37 100644
+--- a/tests/v4/test_architecture_boundaries.py
++++ b/tests/v4/test_architecture_boundaries.py
+@@ -81,7 +81,6 @@ FORBIDDEN_LEGACY_MODULES = (
+     "confflow.workflow.resume_validation",
+     "confflow.workflow.dag",
+     "confflow.workflow.dry_run",
+-    "confflow.workflow.export",
+     "confflow.workflow.rerun_failed",
+     "confflow.workflow.config_show",
+     "confflow.workflow.composition",
+@@ -246,6 +245,8 @@ REMOVED_LEGACY_MODULES: frozenset[str] = frozenset(
+         "confflow.confts",
+         "confflow.workflow.composition",
+         "confflow.blocks.viz",
++        # C5.2b: the results.db export reader (nothing writes results.db any more).
++        "confflow.workflow.export",
+         # PR-4: retired V2/V3 execution runtime.
+         "confflow.workflow.engine",
+         "confflow.workflow.state",
+@@ -1903,9 +1904,9 @@ class TestNoFilenameOrdinalPairing:
+ 
+     def test_scanners_flag_pairing_idioms(self) -> None:
+         assert _filename_pairing_offenders(_FIXTURE_FILENAME_PAIRING), "basename scanner must trip"
+-        assert _range_ordinal_pairing_offenders(_FIXTURE_ORDINAL_PAIRING), (
+-            "ordinal scanner must trip"
+-        )
++        assert _range_ordinal_pairing_offenders(
++            _FIXTURE_ORDINAL_PAIRING
++        ), "ordinal scanner must trip"
+ 
+     def test_no_filename_idioms_in_tree(self) -> None:
+         offenders: list[tuple[str, int, str]] = []
