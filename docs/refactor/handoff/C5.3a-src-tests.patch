@@ -1,0 +1,3350 @@
+diff --git a/confflow/blocks/refine/rmsd_engine.py b/confflow/blocks/refine/rmsd_engine.py
+index 3f75626..5009f62 100644
+--- a/confflow/blocks/refine/rmsd_engine.py
++++ b/confflow/blocks/refine/rmsd_engine.py
+@@ -15,12 +15,21 @@ from __future__ import annotations
+ import hashlib
+ import logging
+ from collections.abc import Sequence
+-from dataclasses import dataclass
+ from typing import cast
+ 
+ import numpy as np
+ 
+ from ...core.bonding import build_adjacency
++from ...science.frame_compare import (  # noqa: F401
++    ENERGY_RMSD_SCALE_FACTOR,
++    PairVerdict,
++    _build_candidate_priority,
++    _effective_cutoff,
++    _element_distance_fingerprint,
++    _frame_graph,
++    compare_frames,
++    kabsch_rmsd,
++)
+ from ._compat import (
+     load_console_bindings,
+     load_hartree_to_kcal,
+@@ -29,15 +38,9 @@ from ._compat import (
+ )
+ from .topology import (
+     DEFAULT_MAPPING_NODE_BUDGET,
+-    Graph,
+-    MappingBudgetExceeded,
+-    MappingSearch,
+     MappingSearchStats,
+-    build_graph,
+     build_graph_from_atomic_numbers,
+-    fixed_index_isomorphism,
+     get_element_atomic_number,
+-    graphs_may_be_isomorphic,
+ )
+ 
+ logger = logging.getLogger("confflow.refine")
+@@ -59,7 +62,6 @@ numba = load_numba_runtime("confflow.refine")
+ 
+ BOND_SCALE_FACTOR = 1.2
+ PMI_TOLERANCE_FACTOR = 0.05
+-ENERGY_RMSD_SCALE_FACTOR = 1.5
+ 
+ __all__ = [
+     "BOND_SCALE_FACTOR",
+@@ -170,29 +172,6 @@ def fast_rmsd(coords1, coords2):
+     return np.sqrt(np.sum(diff * diff) / n)
+ 
+ 
+-def kabsch_rmsd(coords1, coords2) -> float:
+-    """Pure-NumPy proper Kabsch RMSD used by graph-mapped comparisons.
+-
+-    Uses the same formulation as :func:`fast_rmsd` but is not JIT compiled and
+-    returns a Python float.
+-    """
+-    x = np.asarray(coords1, dtype=np.float64)
+-    y = np.asarray(coords2, dtype=np.float64)
+-    if x.shape[0] != y.shape[0] or x.shape[0] == 0:
+-        return 999.9
+-    if not np.all(np.isfinite(x)) or not np.all(np.isfinite(y)):
+-        return 999.9
+-    x_centered = x - x.mean(axis=0)
+-    y_centered = y - y.mean(axis=0)
+-    h = y_centered.T @ x_centered
+-    u, _s, vt = np.linalg.svd(h)
+-    d = np.eye(3)
+-    d[-1, -1] = 1.0 if np.linalg.det(u @ vt) >= 0.0 else -1.0
+-    rotation = u @ d @ vt
+-    aligned = y_centered @ rotation
+-    return float(np.sqrt(np.mean(np.sum((x_centered - aligned) ** 2, axis=1))))
+-
+-
+ @numba.njit(fastmath=True, cache=True)
+ def greedy_permutation_rmsd(coords1, coords2, elem_ids1, elem_ids2):
+     """Legacy element-greedy matcher (compatibility entry point only).
+@@ -271,33 +250,6 @@ def greedy_permutation_rmsd(coords1, coords2, elem_ids1, elem_ids2):
+ # ---------------------------------------------------------------------------
+ 
+ 
+-@dataclass(frozen=True)
+-class PairVerdict:
+-    """Outcome of comparing one candidate against one retained representative."""
+-
+-    status: str  # duplicate | distinct | different_topology | unresolved | invalid
+-    witness_rmsd: float | None = None
+-    cutoff: float = 0.0
+-    mapping: tuple[int, ...] | None = None
+-    mapping_kind: str = "none"  # identity | graph_mapping | none
+-    search_complete: bool = False
+-    search_work: MappingSearchStats | None = None
+-    reason: str = ""
+-
+-
+-def _frame_graph(frame: dict) -> Graph | None:
+-    graph = frame.get("graph")
+-    if graph is not None:
+-        return cast(Graph, graph)
+-    if "graph_status" in frame and frame.get("graph_status") != "ok":
+-        return None
+-    build = build_graph(frame.get("atoms", []), frame.get("coords", np.empty((0, 3))))
+-    frame["graph"] = build.graph
+-    frame["graph_status"] = build.status
+-    frame["graph_reason"] = build.reason
+-    return build.graph
+-
+-
+ def _frame_sort_key(frame: dict) -> tuple[float, int]:
+     energy = frame.get("energy", float("inf"))
+     try:
+@@ -309,259 +261,6 @@ def _frame_sort_key(frame: dict) -> tuple[float, int]:
+     return (energy_value, int(frame.get("original_index", 0)))
+ 
+ 
+-def _effective_cutoff(
+-    candidate: dict, representative: dict, threshold: float, energy_tolerance: float
+-) -> float:
+-    """Energy-assisted cutoff relaxation, guarded against missing energies."""
+-    cutoff = float(threshold)
+-    try:
+-        cand_energy = float(candidate.get("energy", float("inf")))
+-        rep_energy = float(representative.get("energy", float("inf")))
+-    except (TypeError, ValueError):
+-        return cutoff
+-    if not np.isfinite(cand_energy) or not np.isfinite(rep_energy):
+-        return cutoff
+-    if energy_tolerance <= 0:
+-        # tolerance 0 must genuinely disable the relaxation, including the
+-        # exactly-equal-energy case.
+-        return cutoff
+-    energy_diff = abs(cand_energy - rep_energy) * HARTREE_TO_KCALMOL
+-    if energy_diff <= energy_tolerance:
+-        return cutoff * ENERGY_RMSD_SCALE_FACTOR
+-    return cutoff
+-
+-
+-def _element_distance_fingerprint(
+-    atomic_numbers: Sequence[int],
+-    coords: np.ndarray,
+-    elements: Sequence[int] | None = None,
+-) -> np.ndarray:
+-    """Rigid-invariant per-atom fingerprint: nearest distance per element.
+-
+-    The fingerprint is invariant under translation, rotation and atom
+-    renumbering, so identical atoms of rigid copies receive identical rows.
+-    It is used only to order the exact graph search (never to accept a match).
+-    """
+-    numbers = np.asarray(atomic_numbers)
+-    coordinates = np.asarray(coords, dtype=np.float64)
+-    if elements is None:
+-        elements = sorted({int(number) for number in numbers.tolist()})
+-    element_list = [int(element) for element in elements]
+-    n = len(numbers)
+-    diff = coordinates[:, None, :] - coordinates[None, :, :]
+-    distances = np.sqrt(np.sum(diff * diff, axis=-1))
+-    distances[np.arange(n), np.arange(n)] = np.inf
+-    fingerprint = np.empty((n, len(element_list)), dtype=np.float64)
+-    for column, element in enumerate(element_list):
+-        mask = numbers == element
+-        if not np.any(mask):
+-            fingerprint[:, column] = 0.0
+-            continue
+-        column_distances = distances[:, mask].min(axis=1)
+-        fingerprint[:, column] = np.nan_to_num(column_distances, posinf=0.0, nan=0.0)
+-    return fingerprint
+-
+-
+-def _build_candidate_priority(
+-    graph_candidate: Graph,
+-    graph_representative: Graph,
+-    cand_coords: np.ndarray,
+-    rep_coords: np.ndarray,
+-) -> dict[int, tuple[int, ...]] | None:
+-    """Order search candidates by fingerprint similarity (heuristic only).
+-
+-    Every produced candidate list is still filtered and validated by the exact
+-    graph search, so ordering cannot admit an illegal mapping.  The mapping
+-    maps candidate indices to representative indices, so the candidate lists
+-    are always representative indices; both sides keep all atoms (including H).
+-    """
+-    positions_b: dict[int, list[int]] = {}
+-    for index in range(graph_representative.n):
+-        positions_b.setdefault(graph_representative.atomic_numbers[index], []).append(index)
+-    elements = sorted(
+-        set(graph_candidate.atomic_numbers) | set(graph_representative.atomic_numbers)
+-    )
+-    fingerprint_candidate = _element_distance_fingerprint(
+-        graph_candidate.atomic_numbers, cand_coords, elements
+-    )
+-    fingerprint_representative = _element_distance_fingerprint(
+-        graph_representative.atomic_numbers, rep_coords, elements
+-    )
+-
+-    priority: dict[int, tuple[int, ...]] = {}
+-    for index in range(graph_candidate.n):
+-        element = graph_candidate.atomic_numbers[index]
+-        candidates = positions_b.get(element)
+-        if not candidates:
+-            return None
+-        # Vectorised squared fingerprint distances for this candidate atom
+-        # against every same-element representative atom.  ``positions_b`` is
+-        # built in ascending index order and ``argsort(kind="stable")`` keeps
+-        # that order for equal scores, reproducing the previous
+-        # ``sorted((score, other))`` tie-breaking exactly.  The per-row
+-        # reduction matches the previous per-pair ``np.sum`` on a 1-D row.
+-        candidate_indices = np.asarray(candidates, dtype=np.intp)
+-        diff = fingerprint_representative[candidate_indices] - fingerprint_candidate[index]
+-        scores = np.sum(diff * diff, axis=1)
+-        order = np.argsort(scores, kind="stable")
+-        priority[index] = tuple(int(candidate_indices[position]) for position in order)
+-    return priority
+-
+-
+-def compare_frames(
+-    candidate: dict,
+-    representative: dict,
+-    *,
+-    threshold: float,
+-    heavy_only: bool = False,
+-    energy_tolerance: float = 0.05,
+-    node_budget: int = DEFAULT_MAPPING_NODE_BUDGET,
+-) -> PairVerdict:
+-    """Decide whether *candidate* duplicates *representative* under legal mappings.
+-
+-    The bonding graph is authoritative: RMSD is only evaluated for complete
+-    element/edge-preserving bijections.  The identity mapping is tried first
+-    when it is legal; otherwise, or when it fails the cutoff, the bounded
+-    mapping search continues.  A match yields a witness (not a proven global
+-    minimum); exhausting the search yields ``distinct``; running out of budget
+-    yields ``unresolved``.
+-    """
+-    graph_candidate = _frame_graph(candidate)
+-    graph_representative = _frame_graph(representative)
+-    if graph_candidate is None or graph_representative is None:
+-        return PairVerdict("invalid", reason="invalid graph")
+-    if graph_candidate.n != graph_representative.n:
+-        return PairVerdict("different_topology", reason="size_mismatch", search_complete=True)
+-    if not graphs_may_be_isomorphic(graph_candidate, graph_representative):
+-        return PairVerdict("different_topology", reason="invariant_mismatch", search_complete=True)
+-
+-    cand_coords = np.asarray(candidate["coords"], dtype=np.float64)
+-    rep_coords = np.asarray(representative["coords"], dtype=np.float64)
+-    if cand_coords.shape != rep_coords.shape:
+-        return PairVerdict(
+-            "different_topology", reason="coordinate_shape_mismatch", search_complete=True
+-        )
+-
+-    cutoff = _effective_cutoff(candidate, representative, threshold, energy_tolerance)
+-    # The comparison domain belongs to the *candidate* graph: mapping goes
+-    # candidate index -> representative index, so heavy indices must be read
+-    # from the candidate and mapped forward into the representative.
+-    candidate_heavy_indices = [
+-        i for i, number in enumerate(graph_candidate.atomic_numbers) if number != 1
+-    ]
+-    if heavy_only and not candidate_heavy_indices:
+-        return PairVerdict(
+-            "unresolved",
+-            cutoff=cutoff,
+-            reason="empty_comparison_domain",
+-            search_complete=False,
+-        )
+-    comparison_indices = candidate_heavy_indices if heavy_only else list(range(graph_candidate.n))
+-
+-    def evaluate(mapping: tuple[int, ...]) -> float:
+-        target = rep_coords[[mapping[i] for i in comparison_indices]]
+-        moving = cand_coords[comparison_indices]
+-        return kabsch_rmsd(target, moving)
+-
+-    seen_projections: set[tuple[int, ...]] = set()
+-
+-    if fixed_index_isomorphism(graph_candidate, graph_representative):
+-        identity = tuple(range(graph_candidate.n))
+-        if heavy_only:
+-            seen_projections.add(tuple(identity[i] for i in comparison_indices))
+-        else:
+-            seen_projections.add(identity)
+-        rmsd = evaluate(identity)
+-        if rmsd < cutoff:
+-            return PairVerdict(
+-                "duplicate",
+-                witness_rmsd=rmsd,
+-                cutoff=cutoff,
+-                mapping=identity,
+-                mapping_kind="identity",
+-                search_complete=False,
+-                reason="identity_mapping_within_cutoff",
+-            )
+-
+-    priority = _build_candidate_priority(
+-        graph_candidate,
+-        graph_representative,
+-        cand_coords,
+-        rep_coords,
+-    )
+-    search = MappingSearch(
+-        graph_candidate,
+-        graph_representative,
+-        node_budget,
+-        # The pairwise-distance lower bound only holds for a full-atom
+-        # comparison domain; noH uses the exact search without this prune.
+-        rmsd_cutoff=None if heavy_only else cutoff,
+-        coords_a=None if heavy_only else cand_coords,
+-        coords_b=None if heavy_only else rep_coords,
+-        candidate_priority=priority,
+-    )
+-    any_mapping = False
+-    try:
+-        for mapping in search.iter_mappings():
+-            any_mapping = True
+-            projection = tuple(mapping[i] for i in comparison_indices)
+-            if projection in seen_projections:
+-                continue
+-            seen_projections.add(projection)
+-            rmsd = evaluate(mapping)
+-            if rmsd < cutoff:
+-                return PairVerdict(
+-                    "duplicate",
+-                    witness_rmsd=rmsd,
+-                    cutoff=cutoff,
+-                    mapping=mapping,
+-                    mapping_kind=(
+-                        "identity"
+-                        if fixed_index_isomorphism(graph_candidate, graph_representative)
+-                        and mapping == tuple(range(graph_candidate.n))
+-                        else "graph_mapping"
+-                    ),
+-                    search_complete=False,
+-                    search_work=search.stats(),
+-                    reason="legal_mapping_within_cutoff",
+-                )
+-    except MappingBudgetExceeded:
+-        return PairVerdict(
+-            "unresolved",
+-            cutoff=cutoff,
+-            search_complete=False,
+-            search_work=search.stats(),
+-            reason="mapping_budget_exhausted",
+-        )
+-
+-    if not any_mapping:
+-        if search.pruned:
+-            # Every branch was either evaluated above the cutoff or pruned by
+-            # the rigorous pairwise-distance bound, so no legal mapping can be
+-            # a duplicate; the graphs are still isomorphic candidates.
+-            return PairVerdict(
+-                "distinct",
+-                cutoff=cutoff,
+-                search_complete=True,
+-                search_work=search.stats(),
+-                reason="all_legal_mappings_pruned_above_cutoff",
+-            )
+-        return PairVerdict(
+-            "different_topology",
+-            cutoff=cutoff,
+-            search_complete=True,
+-            search_work=search.stats(),
+-            reason="no_legal_mapping_exists",
+-        )
+-    return PairVerdict(
+-        "distinct",
+-        cutoff=cutoff,
+-        search_complete=True,
+-        search_work=search.stats(),
+-        reason="all_legal_mappings_above_cutoff",
+-    )
+-
+-
+ # ---------------------------------------------------------------------------
+ # Worker / compatibility functions
+ # ---------------------------------------------------------------------------
+diff --git a/confflow/blocks/refine/topology.py b/confflow/blocks/refine/topology.py
+index 8e00191..facbe8d 100644
+--- a/confflow/blocks/refine/topology.py
++++ b/confflow/blocks/refine/topology.py
+@@ -1,36 +1,69 @@
+ #!/usr/bin/env python3
+ 
+-"""Element-labelled bonding graphs and budgeted exact graph mapping.
+-
+-The graph layer is shared by topology classification and geometry comparison:
+-
+-* bonds follow the existing rule ``d < bond_scale * (r_i + r_j)``;
+-* cheap invariants (element counts, degree sequence, colour refinement) are
+-  pre-filters only -- they can prove graphs differ, never that they match;
+-* exact matching enumerates complete bijections that preserve elements and all
+-  edges, under a deterministic node budget.  Exhausting the budget is reported
+-  as ``unresolved`` instead of being mistaken for a known result.
+-"""
++"""Compatibility re-export: the graph/mapping layer now lives in ``confflow.science``."""
+ 
+ from __future__ import annotations
+ 
+-import hashlib
+-import re
+-from collections.abc import Iterator, Sequence
+-from dataclasses import dataclass
+-from typing import Any
+-
+-import numpy as np
+-
+-from ...core.bonding import build_adjacency
+-from ._compat import load_refine_data
+-
+-_periodic_symbols, GV_COVALENT_RADII = load_refine_data()
+-PERIODIC_SYMBOLS: tuple[str, ...] = tuple(_periodic_symbols)
+-
+-BOND_SCALE_FACTOR = 1.2
+-DEFAULT_MAPPING_NODE_BUDGET = 1_000
+-_WL_ROUNDS = 4
++from ...science.topology_mapping import (
++    BOND_SCALE_FACTOR as BOND_SCALE_FACTOR,
++)
++from ...science.topology_mapping import (
++    DEFAULT_MAPPING_NODE_BUDGET as DEFAULT_MAPPING_NODE_BUDGET,
++)
++from ...science.topology_mapping import (
++    Graph as Graph,
++)
++from ...science.topology_mapping import (
++    GraphBuild as GraphBuild,
++)
++from ...science.topology_mapping import (
++    MappingBudgetExceeded as MappingBudgetExceeded,
++)
++from ...science.topology_mapping import (
++    MappingSearch as MappingSearch,
++)
++from ...science.topology_mapping import (
++    MappingSearchResult as MappingSearchResult,
++)
++from ...science.topology_mapping import (
++    MappingSearchStats as MappingSearchStats,
++)
++from ...science.topology_mapping import (
++    TopologyCluster as TopologyCluster,
++)
++from ...science.topology_mapping import (
++    apply_bond_overrides as apply_bond_overrides,
++)
++from ...science.topology_mapping import (
++    build_graph as build_graph,
++)
++from ...science.topology_mapping import (
++    build_graph_from_atomic_numbers as build_graph_from_atomic_numbers,
++)
++from ...science.topology_mapping import (
++    find_isomorphism as find_isomorphism,
++)
++from ...science.topology_mapping import (
++    fixed_index_isomorphism as fixed_index_isomorphism,
++)
++from ...science.topology_mapping import (
++    get_element_atomic_number as get_element_atomic_number,
++)
++from ...science.topology_mapping import (
++    graph_from_adjacency as graph_from_adjacency,
++)
++from ...science.topology_mapping import (
++    graphs_may_be_isomorphic as graphs_may_be_isomorphic,
++)
++from ...science.topology_mapping import (
++    group_frames_by_topology as group_frames_by_topology,
++)
++from ...science.topology_mapping import (
++    parse_bond_override as parse_bond_override,
++)
++from ...science.topology_mapping import (
++    validate_mapping as validate_mapping,
++)
+ 
+ __all__ = [
+     "BOND_SCALE_FACTOR",
+@@ -54,607 +87,3 @@ __all__ = [
+     "group_frames_by_topology",
+     "validate_mapping",
+ ]
+-
+-
+-def get_element_atomic_number(symbol: str) -> int:
+-    """Get atomic number from element symbol (0 for unknown/empty)."""
+-    if not symbol:
+-        return 0
+-    s = str(symbol).capitalize()
+-    try:
+-        return PERIODIC_SYMBOLS.index(s)
+-    except ValueError:
+-        return 0
+-
+-
+-@dataclass(frozen=True)
+-class Graph:
+-    """Element-labelled undirected bonding graph over all atoms (including H)."""
+-
+-    symbols: tuple[str, ...]
+-    atomic_numbers: tuple[int, ...]
+-    adjacency: tuple[tuple[int, ...], ...]
+-    fingerprint: bytes
+-
+-    @property
+-    def n(self) -> int:
+-        return len(self.atomic_numbers)
+-
+-    @property
+-    def edge_count(self) -> int:
+-        return sum(len(row) for row in self.adjacency) // 2
+-
+-    @property
+-    def degree_sequence(self) -> tuple[int, ...]:
+-        return tuple(sorted(len(row) for row in self.adjacency))
+-
+-    @property
+-    def element_counts(self) -> tuple[tuple[int, int], ...]:
+-        counts: dict[int, int] = {}
+-        for atomic_number in self.atomic_numbers:
+-            counts[atomic_number] = counts.get(atomic_number, 0) + 1
+-        return tuple(sorted(counts.items()))
+-
+-    def has_edge(self, i: int, j: int) -> bool:
+-        return j in self.adjacency[i]
+-
+-
+-@dataclass(frozen=True)
+-class GraphBuild:
+-    """Result of building a graph from raw atoms/coordinates."""
+-
+-    graph: Graph | None
+-    status: str
+-    reason: str = ""
+-
+-
+-def _wl_fingerprint(
+-    atomic_numbers: tuple[int, ...],
+-    adjacency: tuple[tuple[int, ...], ...],
+-) -> bytes:
+-    """Cross-graph comparable colour-refinement fingerprint (invariant).
+-
+-    Equal fingerprints only mean "candidate"; different fingerprints prove the
+-    graphs are not isomorphic.  Because colour updates hash the previous colour
+-    plus the sorted neighbour colours, the final colour multiset is independent
+-    of any vertex numbering.
+-    """
+-    colors = [str(number) for number in atomic_numbers]
+-    rounds = min(_WL_ROUNDS, max(1, len(colors)))
+-    for _ in range(rounds):
+-        updated = []
+-        for i in range(len(colors)):
+-            neighbor_colors = sorted(colors[j] for j in adjacency[i])
+-            payload = f"{colors[i]}|{','.join(neighbor_colors)}"
+-            updated.append(hashlib.blake2b(payload.encode("ascii"), digest_size=8).hexdigest())
+-        colors = updated
+-    canonical = ";".join(sorted(colors))
+-    return hashlib.blake2b(canonical.encode("ascii"), digest_size=16).digest()
+-
+-
+-def _adjacency_from_coords(
+-    atomic_numbers: tuple[int, ...],
+-    coords: np.ndarray,
+-    bond_scale: float,
+-) -> tuple[tuple[int, ...], ...]:
+-    neighbors = build_adjacency(atomic_numbers, coords, bond_scale=bond_scale)
+-    return tuple(tuple(row) for row in neighbors)
+-
+-
+-def _graph_from_parts(
+-    symbols: Sequence[str],
+-    atomic_numbers: tuple[int, ...],
+-    adjacency: tuple[tuple[int, ...], ...],
+-) -> Graph:
+-    return Graph(
+-        symbols=tuple(str(symbol) for symbol in symbols),
+-        atomic_numbers=atomic_numbers,
+-        adjacency=adjacency,
+-        fingerprint=_wl_fingerprint(atomic_numbers, adjacency),
+-    )
+-
+-
+-def build_graph_from_atomic_numbers(
+-    atomic_numbers: Sequence[int],
+-    coords,
+-    *,
+-    bond_scale: float = BOND_SCALE_FACTOR,
+-) -> GraphBuild:
+-    """Build a graph from atomic numbers and coordinates."""
+-    numbers = tuple(int(z) for z in atomic_numbers)
+-    if not numbers:
+-        return GraphBuild(None, "empty", "no atoms")
+-    arr = np.asarray(coords, dtype=np.float64)
+-    if arr.ndim != 2 or arr.shape[0] != len(numbers) or arr.shape[1] != 3:
+-        return GraphBuild(None, "invalid_coordinates", "coordinate shape does not match atoms")
+-    if not np.all(np.isfinite(arr)):
+-        return GraphBuild(None, "non_finite_coordinates", "coordinates contain NaN or infinity")
+-    if any(z <= 0 for z in numbers):
+-        return GraphBuild(None, "unknown_element", "atom with unknown element")
+-    if any(z >= len(GV_COVALENT_RADII) or GV_COVALENT_RADII[z] <= 0.0 for z in numbers):
+-        return GraphBuild(None, "unknown_element", "atom without a covalent radius")
+-
+-    symbols = [PERIODIC_SYMBOLS[z] if 0 <= z < len(PERIODIC_SYMBOLS) else "" for z in numbers]
+-    adjacency = _adjacency_from_coords(numbers, arr, bond_scale)
+-    return GraphBuild(
+-        _graph_from_parts(symbols, numbers, adjacency),
+-        "ok",
+-        "",
+-    )
+-
+-
+-def build_graph(
+-    atoms: Sequence[str],
+-    coords,
+-    *,
+-    bond_scale: float = BOND_SCALE_FACTOR,
+-) -> GraphBuild:
+-    """Build an element-labelled bonding graph from symbols and coordinates."""
+-    symbols = [str(atom) for atom in atoms]
+-    if not symbols:
+-        return GraphBuild(None, "empty", "no atoms")
+-    numbers = tuple(get_element_atomic_number(symbol) for symbol in symbols)
+-    if any(number <= 0 for number in numbers):
+-        return GraphBuild(None, "unknown_element", "atom with unknown element")
+-    arr = np.asarray(coords, dtype=np.float64)
+-    if arr.ndim != 2 or arr.shape[0] != len(symbols) or arr.shape[1] != 3:
+-        return GraphBuild(None, "invalid_coordinates", "coordinate shape does not match atoms")
+-    if not np.all(np.isfinite(arr)):
+-        return GraphBuild(None, "non_finite_coordinates", "coordinates contain NaN or infinity")
+-    if any(
+-        number >= len(GV_COVALENT_RADII) or GV_COVALENT_RADII[number] <= 0.0 for number in numbers
+-    ):
+-        return GraphBuild(None, "unknown_element", "atom without a covalent radius")
+-
+-    adjacency = _adjacency_from_coords(numbers, arr, bond_scale)
+-    return GraphBuild(_graph_from_parts(symbols, numbers, adjacency), "ok", "")
+-
+-
+-def parse_bond_override(value: Any) -> list[tuple[int, int]]:
+-    """Parse an ``AddBond``/``DelBond`` metadata value into 1-based pairs.
+-
+-    Accepts ``"1-2;3-4"`` (ConfGen output), a list of strings, or a list of
+-    ``[a, b]`` pairs. Invalid tokens are ignored.
+-    """
+-    if value is None:
+-        return []
+-    if isinstance(value, (list, tuple)):
+-        tokens: list[str] = []
+-        for item in value:
+-            if isinstance(item, str):
+-                tokens.extend(re.split(r"[;,\s]+", item))
+-            elif isinstance(item, (list, tuple)) and len(item) == 2:
+-                tokens.append(f"{item[0]}-{item[1]}")
+-            else:
+-                tokens.append(str(item))
+-    else:
+-        tokens = re.split(r"[;,\s]+", str(value))
+-
+-    pairs: list[tuple[int, int]] = []
+-    for token in tokens:
+-        token = token.strip()
+-        if not token:
+-            continue
+-        parts = token.split("-")
+-        if len(parts) != 2:
+-            continue
+-        try:
+-            a, b = int(parts[0]), int(parts[1])
+-        except ValueError:
+-            continue
+-        if a != b:
+-            pairs.append((a, b))
+-    return pairs
+-
+-
+-def apply_bond_overrides(
+-    build: GraphBuild,
+-    *,
+-    add_bond: Sequence[tuple[int, int]],
+-    del_bond: Sequence[tuple[int, int]],
+-) -> GraphBuild:
+-    """Return *build* with topology overrides applied to its adjacency.
+-
+-    ``add_bond``/``del_bond`` are 1-based pairs in the frame's own atom order.
+-    """
+-    graph = build.graph
+-    if graph is None or (not add_bond and not del_bond):
+-        return build
+-    n = graph.n
+-    adjacency = [set(row) for row in graph.adjacency]
+-    changed = False
+-    for a, b in del_bond:
+-        i, j = a - 1, b - 1
+-        if 0 <= i < n and 0 <= j < n and j in adjacency[i]:
+-            adjacency[i].discard(j)
+-            adjacency[j].discard(i)
+-            changed = True
+-    for a, b in add_bond:
+-        i, j = a - 1, b - 1
+-        if 0 <= i < n and 0 <= j < n and i != j and j not in adjacency[i]:
+-            adjacency[i].add(j)
+-            adjacency[j].add(i)
+-            changed = True
+-    if not changed:
+-        return build
+-    updated = tuple(tuple(sorted(row)) for row in adjacency)
+-    return GraphBuild(
+-        _graph_from_parts(graph.symbols, graph.atomic_numbers, updated),
+-        build.status,
+-        build.reason,
+-    )
+-
+-
+-def graph_from_adjacency(elements: Sequence[str], adjacency: Sequence[Sequence[int]]) -> Graph:
+-    """Build a graph from explicit symbol/adjacency data (fixtures, tests).
+-
+-    The adjacency must be symmetric and free of self loops.
+-    """
+-    symbols = tuple(str(element) for element in elements)
+-    numbers = tuple(get_element_atomic_number(symbol) for symbol in symbols)
+-    n = len(symbols)
+-    rows: list[tuple[int, ...]] = []
+-    for i, row in enumerate(adjacency):
+-        neighbors = tuple(sorted({int(j) for j in row}))
+-        for j in neighbors:
+-            if j == i or not 0 <= j < n:
+-                raise ValueError(f"invalid adjacency entry {j} for atom {i}")
+-            if i not in tuple(int(x) for x in adjacency[j]):
+-                raise ValueError(f"adjacency must be symmetric: {i}->{j} missing reverse edge")
+-        rows.append(neighbors)
+-    if len(rows) != n:
+-        raise ValueError("adjacency row count does not match elements")
+-    return _graph_from_parts(symbols, numbers, tuple(rows))
+-
+-
+-def fixed_index_isomorphism(graph_a: Graph, graph_b: Graph) -> bool:
+-    """Check whether the fixed atom numbering already proves graph equality."""
+-    return (
+-        graph_a.atomic_numbers == graph_b.atomic_numbers and graph_a.adjacency == graph_b.adjacency
+-    )
+-
+-
+-def graphs_may_be_isomorphic(graph_a: Graph, graph_b: Graph) -> bool:
+-    """Cheap invariant pre-filter.  False proves non-isomorphism."""
+-    if graph_a.n != graph_b.n or graph_a.edge_count != graph_b.edge_count:
+-        return False
+-    if graph_a.element_counts != graph_b.element_counts:
+-        return False
+-    if graph_a.degree_sequence != graph_b.degree_sequence:
+-        return False
+-    return graph_a.fingerprint == graph_b.fingerprint
+-
+-
+-def validate_mapping(graph_a: Graph, graph_b: Graph, mapping: Sequence[int]) -> bool:
+-    """Validate that *mapping* is a complete element/edge-preserving bijection."""
+-    n = graph_a.n
+-    if graph_b.n != n or len(mapping) != n:
+-        return False
+-    seen = [False] * n
+-    for i, j in enumerate(mapping):
+-        if not 0 <= j < n or seen[j]:
+-            return False
+-        seen[j] = True
+-        if graph_a.atomic_numbers[i] != graph_b.atomic_numbers[j]:
+-            return False
+-        if len(graph_a.adjacency[i]) != len(graph_b.adjacency[j]):
+-            return False
+-    adjacency_b = graph_b.adjacency
+-    for i, row in enumerate(graph_a.adjacency):
+-        mapped_i = mapping[i]
+-        for neighbor in row:
+-            if mapped_i not in adjacency_b[mapping[neighbor]]:
+-                return False
+-    return True
+-
+-
+-@dataclass(frozen=True)
+-class MappingSearchStats:
+-    """Deterministic work accounting for one mapping search."""
+-
+-    nodes: int
+-    mappings: int
+-    node_budget: int
+-    complete: bool
+-    reason: str
+-    pruned: int = 0
+-
+-
+-@dataclass(frozen=True)
+-class MappingSearchResult:
+-    """Outcome of looking for a single isomorphism."""
+-
+-    status: str  # isomorphic | non_isomorphic | unresolved
+-    mapping: tuple[int, ...] | None
+-    stats: MappingSearchStats
+-
+-
+-class MappingBudgetExceeded(Exception):
+-    """Raised internally when the node budget is exhausted mid-search."""
+-
+-
+-class MappingSearch:
+-    """Budgeted exact enumeration of element/edge-preserving bijections.
+-
+-    ``iter_mappings`` yields complete mappings of ``graph_a`` onto ``graph_b``.
+-    Exhausting the generator means all mappings have been visited; hitting the
+-    node budget raises :class:`MappingBudgetExceeded`, which callers must treat
+-    as an incomplete (unresolved) search rather than a negative result.
+-    """
+-
+-    def __init__(
+-        self,
+-        graph_a: Graph,
+-        graph_b: Graph,
+-        node_budget: int,
+-        *,
+-        rmsd_cutoff: float | None = None,
+-        coords_a=None,
+-        coords_b=None,
+-        candidate_priority: dict[int, tuple[int, ...]] | None = None,
+-    ) -> None:
+-        self.graph_a = graph_a
+-        self.graph_b = graph_b
+-        self.node_budget = max(0, int(node_budget))
+-        self.nodes = 0
+-        self.mappings = 0
+-        self.pruned = 0
+-        self.complete = False
+-        self.reason = ""
+-        self._started = False
+-        self.candidate_priority = candidate_priority or {}
+-        self._pair_error_threshold: float | None = None
+-        self._dist_a = None
+-        self._dist_b = None
+-        if rmsd_cutoff is not None and coords_a is not None and coords_b is not None:
+-            n = graph_a.n
+-            if n > 1 and rmsd_cutoff > 0.0:
+-                coords_a = np.asarray(coords_a, dtype=np.float64)
+-                coords_b = np.asarray(coords_b, dtype=np.float64)
+-                if coords_a.shape == (n, 3) and coords_b.shape == (n, 3):
+-                    self._dist_a = np.linalg.norm(
+-                        coords_a[:, None, :] - coords_a[None, :, :], axis=-1
+-                    )
+-                    self._dist_b = np.linalg.norm(
+-                        coords_b[:, None, :] - coords_b[None, :, :], axis=-1
+-                    )
+-                    # |d_ij - d'_ij| <= e_i + e_j for alignment residuals e, so
+-                    # sum_pairs (delta d)^2 <= 2 * (n - 1) * sum_i e_i^2
+-                    #                        = 2 * (n - 1) * n * rmsd^2.
+-                    self._pair_error_threshold = 2.0 * (n - 1) * n * float(rmsd_cutoff) ** 2
+-
+-    def stats(self) -> MappingSearchStats:
+-        return MappingSearchStats(
+-            nodes=self.nodes,
+-            mappings=self.mappings,
+-            node_budget=self.node_budget,
+-            complete=self.complete,
+-            reason=self.reason,
+-            pruned=self.pruned,
+-        )
+-
+-    def _iter(self) -> Iterator[tuple[int, ...]]:
+-        graph_a = self.graph_a
+-        graph_b = self.graph_b
+-        n = graph_a.n
+-        if n != graph_b.n:
+-            self.reason = "size_mismatch"
+-            return
+-        if not graphs_may_be_isomorphic(graph_a, graph_b):
+-            self.reason = "invariant_mismatch"
+-            return
+-
+-        adjacency_a = graph_a.adjacency
+-        adjacency_a_sets = [frozenset(row) for row in adjacency_a]
+-        adjacency_b_sets = [frozenset(row) for row in graph_b.adjacency]
+-        degree_a = [len(row) for row in adjacency_a]
+-        numbers_a = graph_a.atomic_numbers
+-        numbers_b = graph_b.atomic_numbers
+-
+-        candidates_by_key: dict[tuple[int, int], tuple[int, ...]] = {}
+-        grouped: dict[tuple[int, int], list[int]] = {}
+-        for other in range(n):
+-            grouped.setdefault((numbers_b[other], len(adjacency_b_sets[other])), []).append(other)
+-        candidates_by_key = {key: tuple(value) for key, value in grouped.items()}
+-
+-        used = [False] * n
+-        mapping = [-1] * n
+-        mapped_neighbor_count = [0] * n
+-        unmapped = set(range(n))
+-        assigned_stack: list[int] = []
+-
+-        priority = self.candidate_priority
+-
+-        def candidate_vertices(vertex: int) -> Iterator[int]:
+-            neighbors_a = adjacency_a_sets[vertex]
+-            base = priority.get(vertex)
+-            if base is None:
+-                base = candidates_by_key.get((numbers_a[vertex], degree_a[vertex]), ())
+-            for other in base:
+-                if used[other]:
+-                    continue
+-                if numbers_b[other] != numbers_a[vertex]:
+-                    continue
+-                if len(adjacency_b_sets[other]) != degree_a[vertex]:
+-                    continue
+-                neighbors_b = adjacency_b_sets[other]
+-                valid = True
+-                for assigned in assigned_stack:
+-                    assigned_to = mapping[assigned]
+-                    if (assigned in neighbors_a) != (assigned_to in neighbors_b):
+-                        valid = False
+-                        break
+-                if valid:
+-                    yield other
+-
+-        dist_a = self._dist_a
+-        dist_b = self._dist_b
+-        error_threshold = self._pair_error_threshold
+-
+-        def backtrack(remaining: int, pair_error: float) -> Iterator[tuple[int, ...]]:
+-            if remaining == 0:
+-                self.mappings += 1
+-                yield tuple(mapping)
+-                return
+-            if not assigned_stack:
+-                vertex = max(unmapped, key=lambda v: (degree_a[v], -v))
+-            else:
+-                vertex = max(
+-                    unmapped,
+-                    key=lambda v: (mapped_neighbor_count[v], degree_a[v], -v),
+-                )
+-            for other in candidate_vertices(vertex):
+-                self.nodes += 1
+-                if self.nodes > self.node_budget:
+-                    raise MappingBudgetExceeded
+-                mapping[vertex] = other
+-                used[other] = True
+-                unmapped.discard(vertex)
+-                next_error = pair_error
+-                if dist_a is not None and dist_b is not None:
+-                    for assigned in assigned_stack:
+-                        delta = dist_a[vertex, assigned] - dist_b[other, mapping[assigned]]
+-                        next_error += delta * delta
+-                assigned_stack.append(vertex)
+-                for neighbor in adjacency_a[vertex]:
+-                    mapped_neighbor_count[neighbor] += 1
+-                if error_threshold is None or next_error < error_threshold:
+-                    yield from backtrack(remaining - 1, next_error)
+-                else:
+-                    # Pairwise-distance lower bound proves no completion of
+-                    # this branch can reach the cutoff.
+-                    self.pruned += 1
+-                for neighbor in adjacency_a[vertex]:
+-                    mapped_neighbor_count[neighbor] -= 1
+-                assigned_stack.pop()
+-                unmapped.add(vertex)
+-                used[other] = False
+-                mapping[vertex] = -1
+-
+-        yield from backtrack(n, 0.0)
+-
+-    def iter_mappings(self) -> Iterator[tuple[int, ...]]:
+-        if self._started:
+-            raise RuntimeError("MappingSearch instances are single-use")
+-        self._started = True
+-        try:
+-            yield from self._iter()
+-        except MappingBudgetExceeded:
+-            self.reason = "budget_exhausted"
+-            raise
+-        else:
+-            self.complete = True
+-            if not self.reason:
+-                self.reason = "exhausted"
+-
+-    def find_one(self) -> MappingSearchResult:
+-        try:
+-            for mapping in self.iter_mappings():
+-                self.reason = "found"
+-                return MappingSearchResult("isomorphic", mapping, self.stats())
+-        except MappingBudgetExceeded:
+-            return MappingSearchResult("unresolved", None, self.stats())
+-        if self.reason == "invariant_mismatch" or self.reason == "size_mismatch":
+-            return MappingSearchResult("non_isomorphic", None, self.stats())
+-        return MappingSearchResult("non_isomorphic", None, self.stats())
+-
+-
+-def find_isomorphism(
+-    graph_a: Graph,
+-    graph_b: Graph,
+-    node_budget: int = DEFAULT_MAPPING_NODE_BUDGET,
+-) -> MappingSearchResult:
+-    """Find one exact isomorphism or prove none exists within the budget."""
+-    if fixed_index_isomorphism(graph_a, graph_b):
+-        stats = MappingSearchStats(
+-            nodes=0,
+-            mappings=1,
+-            node_budget=max(0, int(node_budget)),
+-            complete=False,
+-            reason="fixed_index",
+-        )
+-        return MappingSearchResult("isomorphic", tuple(range(graph_a.n)), stats)
+-    return MappingSearch(graph_a, graph_b, node_budget).find_one()
+-
+-
+-@dataclass
+-class TopologyCluster:
+-    """Frames proven (or not yet provable) to share one bonding topology."""
+-
+-    cluster_id: str
+-    status: str  # confirmed | unresolved | invalid
+-    frames: list[dict]
+-    first_index: int
+-    reason: str = ""
+-
+-
+-def group_frames_by_topology(
+-    frames: Sequence[dict],
+-    node_budget: int = DEFAULT_MAPPING_NODE_BUDGET,
+-) -> list[TopologyCluster]:
+-    """Partition frames into exact topology classes.
+-
+-    Frames without a valid graph become ``invalid`` singletons.  Frames whose
+-    exact match cannot be completed within the budget become ``unresolved``
+-    singletons; they are never merged into a confirmed class.
+-    """
+-    clusters: list[TopologyCluster] = []
+-    for frame in frames:
+-        graph = frame.get("graph")
+-        first_index = int(frame.get("original_index", 0))
+-        if graph is None:
+-            clusters.append(
+-                TopologyCluster(
+-                    cluster_id=f"T{len(clusters)}",
+-                    status="invalid",
+-                    frames=[frame],
+-                    first_index=first_index,
+-                    reason=str(frame.get("graph_reason") or "invalid graph"),
+-                )
+-            )
+-            continue
+-
+-        placed = False
+-        unresolved_reason: str | None = None
+-        for cluster in clusters:
+-            if cluster.status != "confirmed":
+-                continue
+-            representative = cluster.frames[0].get("graph")
+-            if representative is None:
+-                continue
+-            if fixed_index_isomorphism(representative, graph):
+-                cluster.frames.append(frame)
+-                placed = True
+-                break
+-            if not graphs_may_be_isomorphic(representative, graph):
+-                continue
+-            result = find_isomorphism(representative, graph, node_budget)
+-            if result.status == "isomorphic":
+-                cluster.frames.append(frame)
+-                placed = True
+-                break
+-            if result.status == "unresolved":
+-                unresolved_reason = result.stats.reason
+-        if placed:
+-            continue
+-        if unresolved_reason is not None:
+-            clusters.append(
+-                TopologyCluster(
+-                    cluster_id=f"T{len(clusters)}",
+-                    status="unresolved",
+-                    frames=[frame],
+-                    first_index=first_index,
+-                    reason=unresolved_reason,
+-                )
+-            )
+-        else:
+-            clusters.append(
+-                TopologyCluster(
+-                    cluster_id=f"T{len(clusters)}",
+-                    status="confirmed",
+-                    frames=[frame],
+-                    first_index=first_index,
+-                    reason="",
+-                )
+-            )
+-    return clusters
+diff --git a/confflow/science/frame_compare.py b/confflow/science/frame_compare.py
+new file mode 100644
+index 0000000..95fd26e
+--- /dev/null
++++ b/confflow/science/frame_compare.py
+@@ -0,0 +1,341 @@
++#!/usr/bin/env python3
++
++"""Graph-constrained frame comparison (moved unchanged from refine's RMSD engine).
++
++Geometry comparisons are only performed through legal graph mappings produced
++by :mod:`confflow.science.topology_mapping`; a fixed-index RMSD is never assumed
++to be the minimum over symmetry-equivalent mappings.  The function bodies are
++the legacy ``confflow.blocks.refine.rmsd_engine`` ones, byte for byte.
++"""
++
++from __future__ import annotations
++
++from collections.abc import Sequence
++from dataclasses import dataclass
++from typing import cast
++
++import numpy as np
++
++from ..core.constants import HARTREE_TO_KCALMOL
++from .topology_mapping import (
++    DEFAULT_MAPPING_NODE_BUDGET,
++    Graph,
++    MappingBudgetExceeded,
++    MappingSearch,
++    MappingSearchStats,
++    build_graph,
++    fixed_index_isomorphism,
++    graphs_may_be_isomorphic,
++)
++
++ENERGY_RMSD_SCALE_FACTOR = 1.5
++
++__all__ = [
++    "ENERGY_RMSD_SCALE_FACTOR",
++    "PairVerdict",
++    "compare_frames",
++    "kabsch_rmsd",
++]
++
++
++def kabsch_rmsd(coords1, coords2) -> float:
++    """Pure-NumPy proper Kabsch RMSD used by graph-mapped comparisons.
++
++    Uses the same formulation as :func:`fast_rmsd` but is not JIT compiled and
++    returns a Python float.
++    """
++    x = np.asarray(coords1, dtype=np.float64)
++    y = np.asarray(coords2, dtype=np.float64)
++    if x.shape[0] != y.shape[0] or x.shape[0] == 0:
++        return 999.9
++    if not np.all(np.isfinite(x)) or not np.all(np.isfinite(y)):
++        return 999.9
++    x_centered = x - x.mean(axis=0)
++    y_centered = y - y.mean(axis=0)
++    h = y_centered.T @ x_centered
++    u, _s, vt = np.linalg.svd(h)
++    d = np.eye(3)
++    d[-1, -1] = 1.0 if np.linalg.det(u @ vt) >= 0.0 else -1.0
++    rotation = u @ d @ vt
++    aligned = y_centered @ rotation
++    return float(np.sqrt(np.mean(np.sum((x_centered - aligned) ** 2, axis=1))))
++
++
++@dataclass(frozen=True)
++class PairVerdict:
++    """Outcome of comparing one candidate against one retained representative."""
++
++    status: str  # duplicate | distinct | different_topology | unresolved | invalid
++    witness_rmsd: float | None = None
++    cutoff: float = 0.0
++    mapping: tuple[int, ...] | None = None
++    mapping_kind: str = "none"  # identity | graph_mapping | none
++    search_complete: bool = False
++    search_work: MappingSearchStats | None = None
++    reason: str = ""
++
++
++def _frame_graph(frame: dict) -> Graph | None:
++    graph = frame.get("graph")
++    if graph is not None:
++        return cast(Graph, graph)
++    if "graph_status" in frame and frame.get("graph_status") != "ok":
++        return None
++    build = build_graph(frame.get("atoms", []), frame.get("coords", np.empty((0, 3))))
++    frame["graph"] = build.graph
++    frame["graph_status"] = build.status
++    frame["graph_reason"] = build.reason
++    return build.graph
++
++
++def _effective_cutoff(
++    candidate: dict, representative: dict, threshold: float, energy_tolerance: float
++) -> float:
++    """Energy-assisted cutoff relaxation, guarded against missing energies."""
++    cutoff = float(threshold)
++    try:
++        cand_energy = float(candidate.get("energy", float("inf")))
++        rep_energy = float(representative.get("energy", float("inf")))
++    except (TypeError, ValueError):
++        return cutoff
++    if not np.isfinite(cand_energy) or not np.isfinite(rep_energy):
++        return cutoff
++    if energy_tolerance <= 0:
++        # tolerance 0 must genuinely disable the relaxation, including the
++        # exactly-equal-energy case.
++        return cutoff
++    energy_diff = abs(cand_energy - rep_energy) * HARTREE_TO_KCALMOL
++    if energy_diff <= energy_tolerance:
++        return cutoff * ENERGY_RMSD_SCALE_FACTOR
++    return cutoff
++
++
++def _element_distance_fingerprint(
++    atomic_numbers: Sequence[int],
++    coords: np.ndarray,
++    elements: Sequence[int] | None = None,
++) -> np.ndarray:
++    """Rigid-invariant per-atom fingerprint: nearest distance per element.
++
++    The fingerprint is invariant under translation, rotation and atom
++    renumbering, so identical atoms of rigid copies receive identical rows.
++    It is used only to order the exact graph search (never to accept a match).
++    """
++    numbers = np.asarray(atomic_numbers)
++    coordinates = np.asarray(coords, dtype=np.float64)
++    if elements is None:
++        elements = sorted({int(number) for number in numbers.tolist()})
++    element_list = [int(element) for element in elements]
++    n = len(numbers)
++    diff = coordinates[:, None, :] - coordinates[None, :, :]
++    distances = np.sqrt(np.sum(diff * diff, axis=-1))
++    distances[np.arange(n), np.arange(n)] = np.inf
++    fingerprint = np.empty((n, len(element_list)), dtype=np.float64)
++    for column, element in enumerate(element_list):
++        mask = numbers == element
++        if not np.any(mask):
++            fingerprint[:, column] = 0.0
++            continue
++        column_distances = distances[:, mask].min(axis=1)
++        fingerprint[:, column] = np.nan_to_num(column_distances, posinf=0.0, nan=0.0)
++    return fingerprint
++
++
++def _build_candidate_priority(
++    graph_candidate: Graph,
++    graph_representative: Graph,
++    cand_coords: np.ndarray,
++    rep_coords: np.ndarray,
++) -> dict[int, tuple[int, ...]] | None:
++    """Order search candidates by fingerprint similarity (heuristic only).
++
++    Every produced candidate list is still filtered and validated by the exact
++    graph search, so ordering cannot admit an illegal mapping.  The mapping
++    maps candidate indices to representative indices, so the candidate lists
++    are always representative indices; both sides keep all atoms (including H).
++    """
++    positions_b: dict[int, list[int]] = {}
++    for index in range(graph_representative.n):
++        positions_b.setdefault(graph_representative.atomic_numbers[index], []).append(index)
++    elements = sorted(
++        set(graph_candidate.atomic_numbers) | set(graph_representative.atomic_numbers)
++    )
++    fingerprint_candidate = _element_distance_fingerprint(
++        graph_candidate.atomic_numbers, cand_coords, elements
++    )
++    fingerprint_representative = _element_distance_fingerprint(
++        graph_representative.atomic_numbers, rep_coords, elements
++    )
++
++    priority: dict[int, tuple[int, ...]] = {}
++    for index in range(graph_candidate.n):
++        element = graph_candidate.atomic_numbers[index]
++        candidates = positions_b.get(element)
++        if not candidates:
++            return None
++        # Vectorised squared fingerprint distances for this candidate atom
++        # against every same-element representative atom.  ``positions_b`` is
++        # built in ascending index order and ``argsort(kind="stable")`` keeps
++        # that order for equal scores, reproducing the previous
++        # ``sorted((score, other))`` tie-breaking exactly.  The per-row
++        # reduction matches the previous per-pair ``np.sum`` on a 1-D row.
++        candidate_indices = np.asarray(candidates, dtype=np.intp)
++        diff = fingerprint_representative[candidate_indices] - fingerprint_candidate[index]
++        scores = np.sum(diff * diff, axis=1)
++        order = np.argsort(scores, kind="stable")
++        priority[index] = tuple(int(candidate_indices[position]) for position in order)
++    return priority
++
++
++def compare_frames(
++    candidate: dict,
++    representative: dict,
++    *,
++    threshold: float,
++    heavy_only: bool = False,
++    energy_tolerance: float = 0.05,
++    node_budget: int = DEFAULT_MAPPING_NODE_BUDGET,
++) -> PairVerdict:
++    """Decide whether *candidate* duplicates *representative* under legal mappings.
++
++    The bonding graph is authoritative: RMSD is only evaluated for complete
++    element/edge-preserving bijections.  The identity mapping is tried first
++    when it is legal; otherwise, or when it fails the cutoff, the bounded
++    mapping search continues.  A match yields a witness (not a proven global
++    minimum); exhausting the search yields ``distinct``; running out of budget
++    yields ``unresolved``.
++    """
++    graph_candidate = _frame_graph(candidate)
++    graph_representative = _frame_graph(representative)
++    if graph_candidate is None or graph_representative is None:
++        return PairVerdict("invalid", reason="invalid graph")
++    if graph_candidate.n != graph_representative.n:
++        return PairVerdict("different_topology", reason="size_mismatch", search_complete=True)
++    if not graphs_may_be_isomorphic(graph_candidate, graph_representative):
++        return PairVerdict("different_topology", reason="invariant_mismatch", search_complete=True)
++
++    cand_coords = np.asarray(candidate["coords"], dtype=np.float64)
++    rep_coords = np.asarray(representative["coords"], dtype=np.float64)
++    if cand_coords.shape != rep_coords.shape:
++        return PairVerdict(
++            "different_topology", reason="coordinate_shape_mismatch", search_complete=True
++        )
++
++    cutoff = _effective_cutoff(candidate, representative, threshold, energy_tolerance)
++    # The comparison domain belongs to the *candidate* graph: mapping goes
++    # candidate index -> representative index, so heavy indices must be read
++    # from the candidate and mapped forward into the representative.
++    candidate_heavy_indices = [
++        i for i, number in enumerate(graph_candidate.atomic_numbers) if number != 1
++    ]
++    if heavy_only and not candidate_heavy_indices:
++        return PairVerdict(
++            "unresolved",
++            cutoff=cutoff,
++            reason="empty_comparison_domain",
++            search_complete=False,
++        )
++    comparison_indices = candidate_heavy_indices if heavy_only else list(range(graph_candidate.n))
++
++    def evaluate(mapping: tuple[int, ...]) -> float:
++        target = rep_coords[[mapping[i] for i in comparison_indices]]
++        moving = cand_coords[comparison_indices]
++        return kabsch_rmsd(target, moving)
++
++    seen_projections: set[tuple[int, ...]] = set()
++
++    if fixed_index_isomorphism(graph_candidate, graph_representative):
++        identity = tuple(range(graph_candidate.n))
++        if heavy_only:
++            seen_projections.add(tuple(identity[i] for i in comparison_indices))
++        else:
++            seen_projections.add(identity)
++        rmsd = evaluate(identity)
++        if rmsd < cutoff:
++            return PairVerdict(
++                "duplicate",
++                witness_rmsd=rmsd,
++                cutoff=cutoff,
++                mapping=identity,
++                mapping_kind="identity",
++                search_complete=False,
++                reason="identity_mapping_within_cutoff",
++            )
++
++    priority = _build_candidate_priority(
++        graph_candidate,
++        graph_representative,
++        cand_coords,
++        rep_coords,
++    )
++    search = MappingSearch(
++        graph_candidate,
++        graph_representative,
++        node_budget,
++        # The pairwise-distance lower bound only holds for a full-atom
++        # comparison domain; noH uses the exact search without this prune.
++        rmsd_cutoff=None if heavy_only else cutoff,
++        coords_a=None if heavy_only else cand_coords,
++        coords_b=None if heavy_only else rep_coords,
++        candidate_priority=priority,
++    )
++    any_mapping = False
++    try:
++        for mapping in search.iter_mappings():
++            any_mapping = True
++            projection = tuple(mapping[i] for i in comparison_indices)
++            if projection in seen_projections:
++                continue
++            seen_projections.add(projection)
++            rmsd = evaluate(mapping)
++            if rmsd < cutoff:
++                return PairVerdict(
++                    "duplicate",
++                    witness_rmsd=rmsd,
++                    cutoff=cutoff,
++                    mapping=mapping,
++                    mapping_kind=(
++                        "identity"
++                        if fixed_index_isomorphism(graph_candidate, graph_representative)
++                        and mapping == tuple(range(graph_candidate.n))
++                        else "graph_mapping"
++                    ),
++                    search_complete=False,
++                    search_work=search.stats(),
++                    reason="legal_mapping_within_cutoff",
++                )
++    except MappingBudgetExceeded:
++        return PairVerdict(
++            "unresolved",
++            cutoff=cutoff,
++            search_complete=False,
++            search_work=search.stats(),
++            reason="mapping_budget_exhausted",
++        )
++
++    if not any_mapping:
++        if search.pruned:
++            # Every branch was either evaluated above the cutoff or pruned by
++            # the rigorous pairwise-distance bound, so no legal mapping can be
++            # a duplicate; the graphs are still isomorphic candidates.
++            return PairVerdict(
++                "distinct",
++                cutoff=cutoff,
++                search_complete=True,
++                search_work=search.stats(),
++                reason="all_legal_mappings_pruned_above_cutoff",
++            )
++        return PairVerdict(
++            "different_topology",
++            cutoff=cutoff,
++            search_complete=True,
++            search_work=search.stats(),
++            reason="no_legal_mapping_exists",
++        )
++    return PairVerdict(
++        "distinct",
++        cutoff=cutoff,
++        search_complete=True,
++        search_work=search.stats(),
++        reason="all_legal_mappings_above_cutoff",
++    )
+diff --git a/confflow/science/topology_mapping.py b/confflow/science/topology_mapping.py
+new file mode 100644
+index 0000000..d336031
+--- /dev/null
++++ b/confflow/science/topology_mapping.py
+@@ -0,0 +1,660 @@
++#!/usr/bin/env python3
++
++"""Element-labelled bonding graphs and budgeted exact graph mapping.
++
++The graph layer is shared by topology classification and geometry comparison:
++
++* bonds follow the existing rule ``d < bond_scale * (r_i + r_j)``;
++* cheap invariants (element counts, degree sequence, colour refinement) are
++  pre-filters only -- they can prove graphs differ, never that they match;
++* exact matching enumerates complete bijections that preserve elements and all
++  edges, under a deterministic node budget.  Exhausting the budget is reported
++  as ``unresolved`` instead of being mistaken for a known result.
++"""
++
++from __future__ import annotations
++
++import hashlib
++import re
++from collections.abc import Iterator, Sequence
++from dataclasses import dataclass
++from typing import Any
++
++import numpy as np
++
++from ..core.bonding import build_adjacency
++from ..core.data import GV_COVALENT_RADII
++from ..core.data import PERIODIC_SYMBOLS as _periodic_symbols
++
++PERIODIC_SYMBOLS: tuple[str, ...] = tuple(_periodic_symbols)
++
++BOND_SCALE_FACTOR = 1.2
++DEFAULT_MAPPING_NODE_BUDGET = 1_000
++_WL_ROUNDS = 4
++
++__all__ = [
++    "BOND_SCALE_FACTOR",
++    "DEFAULT_MAPPING_NODE_BUDGET",
++    "Graph",
++    "GraphBuild",
++    "MappingBudgetExceeded",
++    "MappingSearch",
++    "MappingSearchResult",
++    "MappingSearchStats",
++    "TopologyCluster",
++    "build_graph",
++    "build_graph_from_atomic_numbers",
++    "apply_bond_overrides",
++    "parse_bond_override",
++    "find_isomorphism",
++    "fixed_index_isomorphism",
++    "get_element_atomic_number",
++    "graph_from_adjacency",
++    "graphs_may_be_isomorphic",
++    "group_frames_by_topology",
++    "validate_mapping",
++]
++
++
++def get_element_atomic_number(symbol: str) -> int:
++    """Get atomic number from element symbol (0 for unknown/empty)."""
++    if not symbol:
++        return 0
++    s = str(symbol).capitalize()
++    try:
++        return PERIODIC_SYMBOLS.index(s)
++    except ValueError:
++        return 0
++
++
++@dataclass(frozen=True)
++class Graph:
++    """Element-labelled undirected bonding graph over all atoms (including H)."""
++
++    symbols: tuple[str, ...]
++    atomic_numbers: tuple[int, ...]
++    adjacency: tuple[tuple[int, ...], ...]
++    fingerprint: bytes
++
++    @property
++    def n(self) -> int:
++        return len(self.atomic_numbers)
++
++    @property
++    def edge_count(self) -> int:
++        return sum(len(row) for row in self.adjacency) // 2
++
++    @property
++    def degree_sequence(self) -> tuple[int, ...]:
++        return tuple(sorted(len(row) for row in self.adjacency))
++
++    @property
++    def element_counts(self) -> tuple[tuple[int, int], ...]:
++        counts: dict[int, int] = {}
++        for atomic_number in self.atomic_numbers:
++            counts[atomic_number] = counts.get(atomic_number, 0) + 1
++        return tuple(sorted(counts.items()))
++
++    def has_edge(self, i: int, j: int) -> bool:
++        return j in self.adjacency[i]
++
++
++@dataclass(frozen=True)
++class GraphBuild:
++    """Result of building a graph from raw atoms/coordinates."""
++
++    graph: Graph | None
++    status: str
++    reason: str = ""
++
++
++def _wl_fingerprint(
++    atomic_numbers: tuple[int, ...],
++    adjacency: tuple[tuple[int, ...], ...],
++) -> bytes:
++    """Cross-graph comparable colour-refinement fingerprint (invariant).
++
++    Equal fingerprints only mean "candidate"; different fingerprints prove the
++    graphs are not isomorphic.  Because colour updates hash the previous colour
++    plus the sorted neighbour colours, the final colour multiset is independent
++    of any vertex numbering.
++    """
++    colors = [str(number) for number in atomic_numbers]
++    rounds = min(_WL_ROUNDS, max(1, len(colors)))
++    for _ in range(rounds):
++        updated = []
++        for i in range(len(colors)):
++            neighbor_colors = sorted(colors[j] for j in adjacency[i])
++            payload = f"{colors[i]}|{','.join(neighbor_colors)}"
++            updated.append(hashlib.blake2b(payload.encode("ascii"), digest_size=8).hexdigest())
++        colors = updated
++    canonical = ";".join(sorted(colors))
++    return hashlib.blake2b(canonical.encode("ascii"), digest_size=16).digest()
++
++
++def _adjacency_from_coords(
++    atomic_numbers: tuple[int, ...],
++    coords: np.ndarray,
++    bond_scale: float,
++) -> tuple[tuple[int, ...], ...]:
++    neighbors = build_adjacency(atomic_numbers, coords, bond_scale=bond_scale)
++    return tuple(tuple(row) for row in neighbors)
++
++
++def _graph_from_parts(
++    symbols: Sequence[str],
++    atomic_numbers: tuple[int, ...],
++    adjacency: tuple[tuple[int, ...], ...],
++) -> Graph:
++    return Graph(
++        symbols=tuple(str(symbol) for symbol in symbols),
++        atomic_numbers=atomic_numbers,
++        adjacency=adjacency,
++        fingerprint=_wl_fingerprint(atomic_numbers, adjacency),
++    )
++
++
++def build_graph_from_atomic_numbers(
++    atomic_numbers: Sequence[int],
++    coords,
++    *,
++    bond_scale: float = BOND_SCALE_FACTOR,
++) -> GraphBuild:
++    """Build a graph from atomic numbers and coordinates."""
++    numbers = tuple(int(z) for z in atomic_numbers)
++    if not numbers:
++        return GraphBuild(None, "empty", "no atoms")
++    arr = np.asarray(coords, dtype=np.float64)
++    if arr.ndim != 2 or arr.shape[0] != len(numbers) or arr.shape[1] != 3:
++        return GraphBuild(None, "invalid_coordinates", "coordinate shape does not match atoms")
++    if not np.all(np.isfinite(arr)):
++        return GraphBuild(None, "non_finite_coordinates", "coordinates contain NaN or infinity")
++    if any(z <= 0 for z in numbers):
++        return GraphBuild(None, "unknown_element", "atom with unknown element")
++    if any(z >= len(GV_COVALENT_RADII) or GV_COVALENT_RADII[z] <= 0.0 for z in numbers):
++        return GraphBuild(None, "unknown_element", "atom without a covalent radius")
++
++    symbols = [PERIODIC_SYMBOLS[z] if 0 <= z < len(PERIODIC_SYMBOLS) else "" for z in numbers]
++    adjacency = _adjacency_from_coords(numbers, arr, bond_scale)
++    return GraphBuild(
++        _graph_from_parts(symbols, numbers, adjacency),
++        "ok",
++        "",
++    )
++
++
++def build_graph(
++    atoms: Sequence[str],
++    coords,
++    *,
++    bond_scale: float = BOND_SCALE_FACTOR,
++) -> GraphBuild:
++    """Build an element-labelled bonding graph from symbols and coordinates."""
++    symbols = [str(atom) for atom in atoms]
++    if not symbols:
++        return GraphBuild(None, "empty", "no atoms")
++    numbers = tuple(get_element_atomic_number(symbol) for symbol in symbols)
++    if any(number <= 0 for number in numbers):
++        return GraphBuild(None, "unknown_element", "atom with unknown element")
++    arr = np.asarray(coords, dtype=np.float64)
++    if arr.ndim != 2 or arr.shape[0] != len(symbols) or arr.shape[1] != 3:
++        return GraphBuild(None, "invalid_coordinates", "coordinate shape does not match atoms")
++    if not np.all(np.isfinite(arr)):
++        return GraphBuild(None, "non_finite_coordinates", "coordinates contain NaN or infinity")
++    if any(
++        number >= len(GV_COVALENT_RADII) or GV_COVALENT_RADII[number] <= 0.0 for number in numbers
++    ):
++        return GraphBuild(None, "unknown_element", "atom without a covalent radius")
++
++    adjacency = _adjacency_from_coords(numbers, arr, bond_scale)
++    return GraphBuild(_graph_from_parts(symbols, numbers, adjacency), "ok", "")
++
++
++def parse_bond_override(value: Any) -> list[tuple[int, int]]:
++    """Parse an ``AddBond``/``DelBond`` metadata value into 1-based pairs.
++
++    Accepts ``"1-2;3-4"`` (ConfGen output), a list of strings, or a list of
++    ``[a, b]`` pairs. Invalid tokens are ignored.
++    """
++    if value is None:
++        return []
++    if isinstance(value, (list, tuple)):
++        tokens: list[str] = []
++        for item in value:
++            if isinstance(item, str):
++                tokens.extend(re.split(r"[;,\s]+", item))
++            elif isinstance(item, (list, tuple)) and len(item) == 2:
++                tokens.append(f"{item[0]}-{item[1]}")
++            else:
++                tokens.append(str(item))
++    else:
++        tokens = re.split(r"[;,\s]+", str(value))
++
++    pairs: list[tuple[int, int]] = []
++    for token in tokens:
++        token = token.strip()
++        if not token:
++            continue
++        parts = token.split("-")
++        if len(parts) != 2:
++            continue
++        try:
++            a, b = int(parts[0]), int(parts[1])
++        except ValueError:
++            continue
++        if a != b:
++            pairs.append((a, b))
++    return pairs
++
++
++def apply_bond_overrides(
++    build: GraphBuild,
++    *,
++    add_bond: Sequence[tuple[int, int]],
++    del_bond: Sequence[tuple[int, int]],
++) -> GraphBuild:
++    """Return *build* with topology overrides applied to its adjacency.
++
++    ``add_bond``/``del_bond`` are 1-based pairs in the frame's own atom order.
++    """
++    graph = build.graph
++    if graph is None or (not add_bond and not del_bond):
++        return build
++    n = graph.n
++    adjacency = [set(row) for row in graph.adjacency]
++    changed = False
++    for a, b in del_bond:
++        i, j = a - 1, b - 1
++        if 0 <= i < n and 0 <= j < n and j in adjacency[i]:
++            adjacency[i].discard(j)
++            adjacency[j].discard(i)
++            changed = True
++    for a, b in add_bond:
++        i, j = a - 1, b - 1
++        if 0 <= i < n and 0 <= j < n and i != j and j not in adjacency[i]:
++            adjacency[i].add(j)
++            adjacency[j].add(i)
++            changed = True
++    if not changed:
++        return build
++    updated = tuple(tuple(sorted(row)) for row in adjacency)
++    return GraphBuild(
++        _graph_from_parts(graph.symbols, graph.atomic_numbers, updated),
++        build.status,
++        build.reason,
++    )
++
++
++def graph_from_adjacency(elements: Sequence[str], adjacency: Sequence[Sequence[int]]) -> Graph:
++    """Build a graph from explicit symbol/adjacency data (fixtures, tests).
++
++    The adjacency must be symmetric and free of self loops.
++    """
++    symbols = tuple(str(element) for element in elements)
++    numbers = tuple(get_element_atomic_number(symbol) for symbol in symbols)
++    n = len(symbols)
++    rows: list[tuple[int, ...]] = []
++    for i, row in enumerate(adjacency):
++        neighbors = tuple(sorted({int(j) for j in row}))
++        for j in neighbors:
++            if j == i or not 0 <= j < n:
++                raise ValueError(f"invalid adjacency entry {j} for atom {i}")
++            if i not in tuple(int(x) for x in adjacency[j]):
++                raise ValueError(f"adjacency must be symmetric: {i}->{j} missing reverse edge")
++        rows.append(neighbors)
++    if len(rows) != n:
++        raise ValueError("adjacency row count does not match elements")
++    return _graph_from_parts(symbols, numbers, tuple(rows))
++
++
++def fixed_index_isomorphism(graph_a: Graph, graph_b: Graph) -> bool:
++    """Check whether the fixed atom numbering already proves graph equality."""
++    return (
++        graph_a.atomic_numbers == graph_b.atomic_numbers and graph_a.adjacency == graph_b.adjacency
++    )
++
++
++def graphs_may_be_isomorphic(graph_a: Graph, graph_b: Graph) -> bool:
++    """Cheap invariant pre-filter.  False proves non-isomorphism."""
++    if graph_a.n != graph_b.n or graph_a.edge_count != graph_b.edge_count:
++        return False
++    if graph_a.element_counts != graph_b.element_counts:
++        return False
++    if graph_a.degree_sequence != graph_b.degree_sequence:
++        return False
++    return graph_a.fingerprint == graph_b.fingerprint
++
++
++def validate_mapping(graph_a: Graph, graph_b: Graph, mapping: Sequence[int]) -> bool:
++    """Validate that *mapping* is a complete element/edge-preserving bijection."""
++    n = graph_a.n
++    if graph_b.n != n or len(mapping) != n:
++        return False
++    seen = [False] * n
++    for i, j in enumerate(mapping):
++        if not 0 <= j < n or seen[j]:
++            return False
++        seen[j] = True
++        if graph_a.atomic_numbers[i] != graph_b.atomic_numbers[j]:
++            return False
++        if len(graph_a.adjacency[i]) != len(graph_b.adjacency[j]):
++            return False
++    adjacency_b = graph_b.adjacency
++    for i, row in enumerate(graph_a.adjacency):
++        mapped_i = mapping[i]
++        for neighbor in row:
++            if mapped_i not in adjacency_b[mapping[neighbor]]:
++                return False
++    return True
++
++
++@dataclass(frozen=True)
++class MappingSearchStats:
++    """Deterministic work accounting for one mapping search."""
++
++    nodes: int
++    mappings: int
++    node_budget: int
++    complete: bool
++    reason: str
++    pruned: int = 0
++
++
++@dataclass(frozen=True)
++class MappingSearchResult:
++    """Outcome of looking for a single isomorphism."""
++
++    status: str  # isomorphic | non_isomorphic | unresolved
++    mapping: tuple[int, ...] | None
++    stats: MappingSearchStats
++
++
++class MappingBudgetExceeded(Exception):
++    """Raised internally when the node budget is exhausted mid-search."""
++
++
++class MappingSearch:
++    """Budgeted exact enumeration of element/edge-preserving bijections.
++
++    ``iter_mappings`` yields complete mappings of ``graph_a`` onto ``graph_b``.
++    Exhausting the generator means all mappings have been visited; hitting the
++    node budget raises :class:`MappingBudgetExceeded`, which callers must treat
++    as an incomplete (unresolved) search rather than a negative result.
++    """
++
++    def __init__(
++        self,
++        graph_a: Graph,
++        graph_b: Graph,
++        node_budget: int,
++        *,
++        rmsd_cutoff: float | None = None,
++        coords_a=None,
++        coords_b=None,
++        candidate_priority: dict[int, tuple[int, ...]] | None = None,
++    ) -> None:
++        self.graph_a = graph_a
++        self.graph_b = graph_b
++        self.node_budget = max(0, int(node_budget))
++        self.nodes = 0
++        self.mappings = 0
++        self.pruned = 0
++        self.complete = False
++        self.reason = ""
++        self._started = False
++        self.candidate_priority = candidate_priority or {}
++        self._pair_error_threshold: float | None = None
++        self._dist_a = None
++        self._dist_b = None
++        if rmsd_cutoff is not None and coords_a is not None and coords_b is not None:
++            n = graph_a.n
++            if n > 1 and rmsd_cutoff > 0.0:
++                coords_a = np.asarray(coords_a, dtype=np.float64)
++                coords_b = np.asarray(coords_b, dtype=np.float64)
++                if coords_a.shape == (n, 3) and coords_b.shape == (n, 3):
++                    self._dist_a = np.linalg.norm(
++                        coords_a[:, None, :] - coords_a[None, :, :], axis=-1
++                    )
++                    self._dist_b = np.linalg.norm(
++                        coords_b[:, None, :] - coords_b[None, :, :], axis=-1
++                    )
++                    # |d_ij - d'_ij| <= e_i + e_j for alignment residuals e, so
++                    # sum_pairs (delta d)^2 <= 2 * (n - 1) * sum_i e_i^2
++                    #                        = 2 * (n - 1) * n * rmsd^2.
++                    self._pair_error_threshold = 2.0 * (n - 1) * n * float(rmsd_cutoff) ** 2
++
++    def stats(self) -> MappingSearchStats:
++        return MappingSearchStats(
++            nodes=self.nodes,
++            mappings=self.mappings,
++            node_budget=self.node_budget,
++            complete=self.complete,
++            reason=self.reason,
++            pruned=self.pruned,
++        )
++
++    def _iter(self) -> Iterator[tuple[int, ...]]:
++        graph_a = self.graph_a
++        graph_b = self.graph_b
++        n = graph_a.n
++        if n != graph_b.n:
++            self.reason = "size_mismatch"
++            return
++        if not graphs_may_be_isomorphic(graph_a, graph_b):
++            self.reason = "invariant_mismatch"
++            return
++
++        adjacency_a = graph_a.adjacency
++        adjacency_a_sets = [frozenset(row) for row in adjacency_a]
++        adjacency_b_sets = [frozenset(row) for row in graph_b.adjacency]
++        degree_a = [len(row) for row in adjacency_a]
++        numbers_a = graph_a.atomic_numbers
++        numbers_b = graph_b.atomic_numbers
++
++        candidates_by_key: dict[tuple[int, int], tuple[int, ...]] = {}
++        grouped: dict[tuple[int, int], list[int]] = {}
++        for other in range(n):
++            grouped.setdefault((numbers_b[other], len(adjacency_b_sets[other])), []).append(other)
++        candidates_by_key = {key: tuple(value) for key, value in grouped.items()}
++
++        used = [False] * n
++        mapping = [-1] * n
++        mapped_neighbor_count = [0] * n
++        unmapped = set(range(n))
++        assigned_stack: list[int] = []
++
++        priority = self.candidate_priority
++
++        def candidate_vertices(vertex: int) -> Iterator[int]:
++            neighbors_a = adjacency_a_sets[vertex]
++            base = priority.get(vertex)
++            if base is None:
++                base = candidates_by_key.get((numbers_a[vertex], degree_a[vertex]), ())
++            for other in base:
++                if used[other]:
++                    continue
++                if numbers_b[other] != numbers_a[vertex]:
++                    continue
++                if len(adjacency_b_sets[other]) != degree_a[vertex]:
++                    continue
++                neighbors_b = adjacency_b_sets[other]
++                valid = True
++                for assigned in assigned_stack:
++                    assigned_to = mapping[assigned]
++                    if (assigned in neighbors_a) != (assigned_to in neighbors_b):
++                        valid = False
++                        break
++                if valid:
++                    yield other
++
++        dist_a = self._dist_a
++        dist_b = self._dist_b
++        error_threshold = self._pair_error_threshold
++
++        def backtrack(remaining: int, pair_error: float) -> Iterator[tuple[int, ...]]:
++            if remaining == 0:
++                self.mappings += 1
++                yield tuple(mapping)
++                return
++            if not assigned_stack:
++                vertex = max(unmapped, key=lambda v: (degree_a[v], -v))
++            else:
++                vertex = max(
++                    unmapped,
++                    key=lambda v: (mapped_neighbor_count[v], degree_a[v], -v),
++                )
++            for other in candidate_vertices(vertex):
++                self.nodes += 1
++                if self.nodes > self.node_budget:
++                    raise MappingBudgetExceeded
++                mapping[vertex] = other
++                used[other] = True
++                unmapped.discard(vertex)
++                next_error = pair_error
++                if dist_a is not None and dist_b is not None:
++                    for assigned in assigned_stack:
++                        delta = dist_a[vertex, assigned] - dist_b[other, mapping[assigned]]
++                        next_error += delta * delta
++                assigned_stack.append(vertex)
++                for neighbor in adjacency_a[vertex]:
++                    mapped_neighbor_count[neighbor] += 1
++                if error_threshold is None or next_error < error_threshold:
++                    yield from backtrack(remaining - 1, next_error)
++                else:
++                    # Pairwise-distance lower bound proves no completion of
++                    # this branch can reach the cutoff.
++                    self.pruned += 1
++                for neighbor in adjacency_a[vertex]:
++                    mapped_neighbor_count[neighbor] -= 1
++                assigned_stack.pop()
++                unmapped.add(vertex)
++                used[other] = False
++                mapping[vertex] = -1
++
++        yield from backtrack(n, 0.0)
++
++    def iter_mappings(self) -> Iterator[tuple[int, ...]]:
++        if self._started:
++            raise RuntimeError("MappingSearch instances are single-use")
++        self._started = True
++        try:
++            yield from self._iter()
++        except MappingBudgetExceeded:
++            self.reason = "budget_exhausted"
++            raise
++        else:
++            self.complete = True
++            if not self.reason:
++                self.reason = "exhausted"
++
++    def find_one(self) -> MappingSearchResult:
++        try:
++            for mapping in self.iter_mappings():
++                self.reason = "found"
++                return MappingSearchResult("isomorphic", mapping, self.stats())
++        except MappingBudgetExceeded:
++            return MappingSearchResult("unresolved", None, self.stats())
++        if self.reason == "invariant_mismatch" or self.reason == "size_mismatch":
++            return MappingSearchResult("non_isomorphic", None, self.stats())
++        return MappingSearchResult("non_isomorphic", None, self.stats())
++
++
++def find_isomorphism(
++    graph_a: Graph,
++    graph_b: Graph,
++    node_budget: int = DEFAULT_MAPPING_NODE_BUDGET,
++) -> MappingSearchResult:
++    """Find one exact isomorphism or prove none exists within the budget."""
++    if fixed_index_isomorphism(graph_a, graph_b):
++        stats = MappingSearchStats(
++            nodes=0,
++            mappings=1,
++            node_budget=max(0, int(node_budget)),
++            complete=False,
++            reason="fixed_index",
++        )
++        return MappingSearchResult("isomorphic", tuple(range(graph_a.n)), stats)
++    return MappingSearch(graph_a, graph_b, node_budget).find_one()
++
++
++@dataclass
++class TopologyCluster:
++    """Frames proven (or not yet provable) to share one bonding topology."""
++
++    cluster_id: str
++    status: str  # confirmed | unresolved | invalid
++    frames: list[dict]
++    first_index: int
++    reason: str = ""
++
++
++def group_frames_by_topology(
++    frames: Sequence[dict],
++    node_budget: int = DEFAULT_MAPPING_NODE_BUDGET,
++) -> list[TopologyCluster]:
++    """Partition frames into exact topology classes.
++
++    Frames without a valid graph become ``invalid`` singletons.  Frames whose
++    exact match cannot be completed within the budget become ``unresolved``
++    singletons; they are never merged into a confirmed class.
++    """
++    clusters: list[TopologyCluster] = []
++    for frame in frames:
++        graph = frame.get("graph")
++        first_index = int(frame.get("original_index", 0))
++        if graph is None:
++            clusters.append(
++                TopologyCluster(
++                    cluster_id=f"T{len(clusters)}",
++                    status="invalid",
++                    frames=[frame],
++                    first_index=first_index,
++                    reason=str(frame.get("graph_reason") or "invalid graph"),
++                )
++            )
++            continue
++
++        placed = False
++        unresolved_reason: str | None = None
++        for cluster in clusters:
++            if cluster.status != "confirmed":
++                continue
++            representative = cluster.frames[0].get("graph")
++            if representative is None:
++                continue
++            if fixed_index_isomorphism(representative, graph):
++                cluster.frames.append(frame)
++                placed = True
++                break
++            if not graphs_may_be_isomorphic(representative, graph):
++                continue
++            result = find_isomorphism(representative, graph, node_budget)
++            if result.status == "isomorphic":
++                cluster.frames.append(frame)
++                placed = True
++                break
++            if result.status == "unresolved":
++                unresolved_reason = result.stats.reason
++        if placed:
++            continue
++        if unresolved_reason is not None:
++            clusters.append(
++                TopologyCluster(
++                    cluster_id=f"T{len(clusters)}",
++                    status="unresolved",
++                    frames=[frame],
++                    first_index=first_index,
++                    reason=unresolved_reason,
++                )
++            )
++        else:
++            clusters.append(
++                TopologyCluster(
++                    cluster_id=f"T{len(clusters)}",
++                    status="confirmed",
++                    frames=[frame],
++                    first_index=first_index,
++                    reason="",
++                )
++            )
++    return clusters
+diff --git a/tests/science/__init__.py b/tests/science/__init__.py
+new file mode 100644
+index 0000000..d814f74
+--- /dev/null
++++ b/tests/science/__init__.py
+@@ -0,0 +1 @@
++"""Tests for ``confflow.science``."""
+diff --git a/tests/science/data/molecules_h.json b/tests/science/data/molecules_h.json
+new file mode 100644
+index 0000000..4dd7c1c
+--- /dev/null
++++ b/tests/science/data/molecules_h.json
+@@ -0,0 +1,542 @@
++{
++ "benzene": {
++  "atoms": [
++   "C",
++   "C",
++   "C",
++   "C",
++   "C",
++   "C",
++   "H",
++   "H",
++   "H",
++   "H",
++   "H",
++   "H"
++  ],
++  "coords": [
++   [
++    1.277231,
++    0.559515,
++    -0.034105
++   ],
++   [
++    1.121477,
++    -0.825997,
++    -0.074569
++   ],
++   [
++    -0.155755,
++    -1.385513,
++    -0.040459
++   ],
++   [
++    -1.277232,
++    -0.559516,
++    0.034103
++   ],
++   [
++    -1.121476,
++    0.825996,
++    0.074563
++   ],
++   [
++    0.155755,
++    1.385511,
++    0.04046
++   ],
++   [
++    2.272341,
++    0.995442,
++    -0.060668
++   ],
++   [
++    1.995238,
++    -1.46954,
++    -0.132672
++   ],
++   [
++    -0.277107,
++    -2.464986,
++    -0.071979
++   ],
++   [
++    -2.272343,
++    -0.995441,
++    0.06067
++   ],
++   [
++    -1.995232,
++    1.469546,
++    0.132662
++   ],
++   [
++    0.277103,
++    2.464984,
++    0.071994
++   ]
++  ]
++ },
++ "butane": {
++  "atoms": [
++   "C",
++   "C",
++   "C",
++   "C",
++   "H",
++   "H",
++   "H",
++   "H",
++   "H",
++   "H",
++   "H",
++   "H",
++   "H",
++   "H"
++  ],
++  "coords": [
++   [
++    -1.550522,
++    -0.360095,
++    0.410678
++   ],
++   [
++    -0.709624,
++    0.402483,
++    -0.601523
++   ],
++   [
++    0.73266,
++    -0.096517,
++    -0.693747
++   ],
++   [
++    1.532897,
++    0.125999,
++    0.580338
++   ],
++   [
++    -1.191924,
++    -0.200113,
++    1.431696
++   ],
++   [
++    -1.537181,
++    -1.434651,
++    0.202784
++   ],
++   [
++    -2.590151,
++    -0.019734,
++    0.367548
++   ],
++   [
++    -0.719992,
++    1.470149,
++    -0.35311
++   ],
++   [
++    -1.176262,
++    0.302203,
++    -1.588735
++   ],
++   [
++    1.231468,
++    0.431068,
++    -1.515476
++   ],
++   [
++    0.743149,
++    -1.16257,
++    -0.948986
++   ],
++   [
++    1.1414,
++    -0.470961,
++    1.409212
++   ],
++   [
++    1.518018,
++    1.180112,
++    0.874772
++   ],
++   [
++    2.576064,
++    -0.167374,
++    0.424549
++   ]
++  ]
++ },
++ "butane_anti": {
++  "atoms": [
++   "C",
++   "C",
++   "C",
++   "C",
++   "H",
++   "H",
++   "H",
++   "H",
++   "H",
++   "H",
++   "H",
++   "H",
++   "H",
++   "H"
++  ],
++  "coords": [
++   [
++    -1.550522,
++    -0.360095,
++    0.410678
++   ],
++   [
++    -0.709624,
++    0.402483,
++    -0.601523
++   ],
++   [
++    0.73266,
++    -0.096517,
++    -0.693747
++   ],
++   [
++    1.573557,
++    0.666062,
++    -1.705948
++   ],
++   [
++    -1.191924,
++    -0.200113,
++    1.431696
++   ],
++   [
++    -1.537181,
++    -1.434651,
++    0.202784
++   ],
++   [
++    -2.590151,
++    -0.019734,
++    0.367548
++   ],
++   [
++    -0.719992,
++    1.470149,
++    -0.35311
++   ],
++   [
++    -1.176262,
++    0.302203,
++    -1.588735
++   ],
++   [
++    0.716995,
++    -1.154883,
++    -0.980121
++   ],
++   [
++    1.210207,
++    -0.04187,
++    0.291489
++   ],
++   [
++    1.7154,
++    1.708302,
++    -1.405481
++   ],
++   [
++    1.106631,
++    0.650961,
++    -2.695806
++   ],
++   [
++    2.564312,
++    0.20829,
++    -1.791876
++   ]
++  ]
++ },
++ "butane_gauche": {
++  "atoms": [
++   "C",
++   "C",
++   "C",
++   "C",
++   "H",
++   "H",
++   "H",
++   "H",
++   "H",
++   "H",
++   "H",
++   "H",
++   "H",
++   "H"
++  ],
++  "coords": [
++   [
++    -1.550522,
++    -0.360095,
++    0.410678
++   ],
++   [
++    -0.709624,
++    0.402483,
++    -0.601523
++   ],
++   [
++    0.73266,
++    -0.096517,
++    -0.693747
++   ],
++   [
++    0.842918,
++    -1.557161,
++    -1.103073
++   ],
++   [
++    -1.191924,
++    -0.200113,
++    1.431696
++   ],
++   [
++    -1.537181,
++    -1.434651,
++    0.202784
++   ],
++   [
++    -2.590151,
++    -0.019734,
++    0.367548
++   ],
++   [
++    -0.719992,
++    1.470149,
++    -0.35311
++   ],
++   [
++    -1.176262,
++    0.302203,
++    -1.588735
++   ],
++   [
++    1.207124,
++    0.027577,
++    0.287007
++   ],
++   [
++    1.297592,
++    0.523272,
++    -1.399751
++   ],
++   [
++    0.484852,
++    -1.715517,
++    -2.124531
++   ],
++   [
++    0.265612,
++    -2.198667,
++    -0.429831
++   ],
++   [
++    1.888329,
++    -1.879929,
++    -1.064714
++   ]
++  ]
++ },
++ "tbutanol": {
++  "atoms": [
++   "C",
++   "C",
++   "C",
++   "C",
++   "O",
++   "H",
++   "H",
++   "H",
++   "H",
++   "H",
++   "H",
++   "H",
++   "H",
++   "H",
++   "H"
++  ],
++  "coords": [
++   [
++    -0.338831,
++    -1.200727,
++    -0.726401
++   ],
++   [
++    -0.07703,
++    -0.037343,
++    0.229053
++   ],
++   [
++    -0.531388,
++    1.285688,
++    -0.385797
++   ],
++   [
++    1.401359,
++    0.025411,
++    0.606732
++   ],
++   [
++    -0.81862,
++    -0.259176,
++    1.429196
++   ],
++   [
++    0.222256,
++    -1.090129,
++    -1.660023
++   ],
++   [
++    -0.060693,
++    -2.154664,
++    -0.264034
++   ],
++   [
++    -1.404841,
++    -1.274506,
++    -0.97004
++   ],
++   [
++    -0.391103,
++    2.11195,
++    0.320426
++   ],
++   [
++    0.020504,
++    1.514842,
++    -1.303187
++   ],
++   [
++    -1.601121,
++    1.259921,
++    -0.622842
++   ],
++   [
++    1.58575,
++    0.828959,
++    1.328995
++   ],
++   [
++    1.719981,
++    -0.904513,
++    1.09158
++   ],
++   [
++    2.035618,
++    0.194539,
++    -0.269543
++   ],
++   [
++    -1.761841,
++    -0.300253,
++    1.195883
++   ]
++  ]
++ },
++ "toluene": {
++  "atoms": [
++   "C",
++   "C",
++   "C",
++   "C",
++   "C",
++   "C",
++   "C",
++   "H",
++   "H",
++   "H",
++   "H",
++   "H",
++   "H",
++   "H",
++   "H"
++  ],
++  "coords": [
++   [
++    -2.219766,
++    -0.081258,
++    -0.007587
++   ],
++   [
++    -0.721248,
++    -0.026596,
++    0.022344
++   ],
++   [
++    0.032283,
++    -1.206713,
++    -0.001766
++   ],
++   [
++    1.42729,
++    -1.154927,
++    -0.005707
++   ],
++   [
++    2.080301,
++    0.076179,
++    0.00385
++   ],
++   [
++    1.338962,
++    1.256208,
++    0.013024
++   ],
++   [
++    -0.056093,
++    1.205722,
++    0.016977
++   ],
++   [
++    -2.652543,
++    0.781029,
++    0.510474
++   ],
++   [
++    -2.588,
++    -0.980851,
++    0.496749
++   ],
++   [
++    -2.573362,
++    -0.086146,
++    -1.04318
++   ],
++   [
++    -0.463648,
++    -2.17449,
++    -0.016799
++   ],
++   [
++    2.004208,
++    -2.07578,
++    -0.019143
++   ],
++   [
++    3.166177,
++    0.115988,
++    -0.000121
++   ],
++   [
++    1.846951,
++    2.216899,
++    0.014205
++   ],
++   [
++    -0.621511,
++    2.134736,
++    0.01668
++   ]
++  ]
++ }
++}
+diff --git a/tests/science/test_topology_mapping.py b/tests/science/test_topology_mapping.py
+new file mode 100644
+index 0000000..2e72b01
+--- /dev/null
++++ b/tests/science/test_topology_mapping.py
+@@ -0,0 +1,446 @@
++#!/usr/bin/env python3
++
++"""Graph mapping and frame comparison, moved to ``confflow.science`` (C5.3a).
++
++The first group of tests moved here unchanged from
++``tests/test_refine_graph_rmsd.py``.  The second group pins the *work* of the
++mapping search (node counts, pruning and verdicts) on hydrogen-bearing
++molecules; it never measures time.  ``DEFAULT_MAPPING_NODE_BUDGET`` (1000
++nodes per pair), the candidate-priority ordering and the pairwise-distance
++bound are the reasons these numbers are small, so a change in them shows up
++here as a different count or verdict.
++"""
++
++from __future__ import annotations
++
++import json
++import math
++from pathlib import Path
++
++import numpy as np
++import pytest
++
++from confflow.science.frame_compare import compare_frames
++from confflow.science.topology_mapping import (
++    DEFAULT_MAPPING_NODE_BUDGET,
++    build_graph,
++)
++
++SEED = 20260913
++DATA = Path(__file__).parent / "data" / "molecules_h.json"
++
++
++def _reference_kabsch_rmsd(coords1, coords2) -> float:
++    """Independent proper-Kabsch reference (plan section 3.3)."""
++    x = np.asarray(coords1, dtype=np.float64)
++    y = np.asarray(coords2, dtype=np.float64)
++    xc = x - x.mean(axis=0)
++    yc = y - y.mean(axis=0)
++    h = yc.T @ x
++    u, _s, vt = np.linalg.svd(h)
++    d = np.eye(3)
++    d[-1, -1] = 1.0 if np.linalg.det(u @ vt) >= 0.0 else -1.0
++    r = u @ d @ vt
++    aligned = yc @ r
++    return float(np.sqrt(np.mean(np.sum((xc - aligned) ** 2, axis=1))))
++
++
++def _triangle(scale: float) -> np.ndarray:
++    radius = (1.0 / math.sqrt(3.0)) * scale
++    angles = np.deg2rad([90.0, 210.0, 330.0])
++    return np.column_stack([radius * np.cos(angles), radius * np.sin(angles), np.zeros(3)])
++
++
++def _prism_graph():
++    from confflow.science.topology_mapping import graph_from_adjacency
++
++    adjacency = [
++        (1, 2, 3),
++        (0, 2, 4),
++        (0, 1, 5),
++        (0, 4, 5),
++        (1, 3, 5),
++        (2, 3, 4),
++    ]
++    return graph_from_adjacency(["C"] * 6, adjacency)
++
++
++def _k33_graph():
++    from confflow.science.topology_mapping import graph_from_adjacency
++
++    adjacency = [
++        (3, 4, 5),
++        (3, 4, 5),
++        (3, 4, 5),
++        (0, 1, 2),
++        (0, 1, 2),
++        (0, 1, 2),
++    ]
++    return graph_from_adjacency(["C"] * 6, adjacency)
++
++
++def _renumbered_co_frames(o_distance: float):
++    """Build reference C-O-H order versus renumbered H-C-O candidate."""
++    reference = {
++        "original_index": 0,
++        "energy": -1.0,
++        "atoms": ["C", "O", "H"],
++        "coords": np.array([[0.0, 0.0, 0.0], [1.4, 0.0, 0.0], [2.3, 0.0, 0.0]]),
++    }
++    candidate = {
++        "original_index": 1,
++        "energy": 0.0,
++        "atoms": ["H", "C", "O"],
++        "coords": np.array([[2.3, 0.0, 0.0], [0.0, 0.0, 0.0], [o_distance, 0.0, 0.0]]),
++    }
++    return reference, candidate
++
++
++def test_prism_and_k33_share_cheap_invariants_but_are_not_isomorphic():
++    from confflow.science.topology_mapping import find_isomorphism, graphs_may_be_isomorphic
++
++    prism = _prism_graph()
++    k33 = _k33_graph()
++    assert sorted(prism.degree_sequence) == sorted(k33.degree_sequence)
++    assert graphs_may_be_isomorphic(prism, k33)  # 3-regular WL cannot separate them
++
++    result = find_isomorphism(prism, k33, node_budget=100_000)
++    assert result.status == "non_isomorphic"
++    assert result.mapping is None
++    assert result.stats.complete is True
++
++    same = find_isomorphism(prism, k33, node_budget=100_000)  # deterministic repeat
++    assert same.status == result.status
++
++
++def test_group_frames_by_topology_separates_prism_and_k33():
++    from confflow.science.topology_mapping import group_frames_by_topology
++
++    prism = _prism_graph()
++    k33 = _k33_graph()
++    frames = []
++    for idx, graph in enumerate([prism, prism, k33, k33]):
++        frames.append(
++            {
++                "original_index": idx,
++                "energy": -1.0 - idx * 0.01,
++                "atoms": ["C"] * 6,
++                "coords": np.zeros((6, 3)),
++                "graph": graph,
++            }
++        )
++    clusters = group_frames_by_topology(frames, node_budget=100_000)
++    sizes = sorted(len(cluster.frames) for cluster in clusters if cluster.status == "confirmed")
++    assert sizes == [2, 2]
++    assigned = {
++        frame["original_index"]: cluster.cluster_id
++        for cluster in clusters
++        for frame in cluster.frames
++    }
++    assert assigned[0] == assigned[1]
++    assert assigned[2] == assigned[3]
++    assert assigned[0] != assigned[2]
++
++
++def test_compare_frames_never_matches_across_topologies():
++    from confflow.science.frame_compare import compare_frames
++
++    prism = _prism_graph()
++    k33 = _k33_graph()
++    coords = np.array(
++        [
++            [0.0, 0.0, 0.0],
++            [1.0, 0.0, 0.0],
++            [0.0, 1.0, 0.0],
++            [1.0, 1.0, 0.0],
++            [0.0, 0.0, 1.0],
++            [1.0, 0.0, 1.0],
++        ]
++    )
++    candidate = {
++        "original_index": 1,
++        "energy": -1.0,
++        "atoms": ["C"] * 6,
++        "coords": coords,
++        "graph": k33,
++    }
++    representative = {
++        "original_index": 0,
++        "energy": -1.0,
++        "atoms": ["C"] * 6,
++        "coords": coords,
++        "graph": prism,
++    }
++    verdict = compare_frames(candidate, representative, threshold=10.0, heavy_only=False)
++    assert verdict.status == "different_topology"
++    assert verdict.witness_rmsd is None
++
++
++def test_compare_frames_budget_exhaustion_is_unresolved_not_duplicate_or_distinct():
++    from confflow.science.frame_compare import compare_frames
++
++    path = np.array(
++        [
++            [0.0, 0.0, 0.0],
++            [1.5, 0.0, 0.0],
++            [2.0, 1.4, 0.0],
++            [1.0, 2.5, 0.2],
++            [1.0, 3.0, 1.6],
++        ]
++    )
++    candidate = {
++        "original_index": 1,
++        "energy": -1.0,
++        "atoms": ["C"] * 5,
++        "coords": path[::-1].copy(),
++    }
++    representative = {
++        "original_index": 0,
++        "energy": -1.5,
++        "atoms": ["C"] * 5,
++        "coords": path,
++    }
++    verdict = compare_frames(
++        candidate,
++        representative,
++        threshold=0.25,
++        heavy_only=False,
++        node_budget=3,
++    )
++    assert verdict.status == "unresolved"
++    assert verdict.search_complete is False
++    assert verdict.witness_rmsd is None
++
++
++def test_compare_frames_threshold_is_strictly_less_than():
++    from confflow.science.frame_compare import compare_frames, kabsch_rmsd
++
++    left = {
++        "original_index": 0,
++        "energy": -2.0,
++        "atoms": ["C", "C", "C"],
++        "coords": _triangle(1.0),
++    }
++    right = {
++        "original_index": 1,
++        "energy": -1.0,
++        "atoms": ["C", "C", "C"],
++        "coords": _triangle(1.2),
++    }
++    exact = kabsch_rmsd(_triangle(1.0), _triangle(1.2))
++    assert exact > 0.0
++    equal_cutoff = compare_frames(left, right, threshold=exact, heavy_only=False)
++    assert equal_cutoff.status == "distinct"
++    above_cutoff = compare_frames(left, right, threshold=exact * (1.0 + 1e-9), heavy_only=False)
++    assert above_cutoff.status == "duplicate"
++    assert above_cutoff.witness_rmsd < above_cutoff.cutoff
++
++
++def test_f1_noH_renumbered_distinct_heavy_geometry_is_not_deleted():
++    reference, candidate = _renumbered_co_frames(1.6)
++    # Correct heavy-atom distance is 0.1 A, above the 0.05 cutoff.
++    correct = _reference_kabsch_rmsd(candidate["coords"][[1, 2]], reference["coords"][[0, 1]])
++    assert correct == pytest.approx(0.1, abs=1e-9)
++
++    for first, second in ((candidate, reference), (reference, candidate)):
++        verdict = compare_frames(
++            first, second, threshold=0.05, heavy_only=True, energy_tolerance=0.0
++        )
++        assert verdict.status == "distinct", verdict
++        assert verdict.witness_rmsd is None
++
++
++def test_f1_noH_renumbered_true_duplicate_is_deleted_both_directions():
++    reference, candidate = _renumbered_co_frames(1.4)
++    verdict_forward = compare_frames(
++        candidate, reference, threshold=0.05, heavy_only=True, energy_tolerance=0.0
++    )
++    verdict_backward = compare_frames(
++        reference, candidate, threshold=0.05, heavy_only=True, energy_tolerance=0.0
++    )
++    for verdict in (verdict_forward, verdict_backward):
++        assert verdict.status == "duplicate", verdict
++        assert verdict.witness_rmsd == pytest.approx(0.0, abs=1e-9)
++        assert verdict.mapping is not None
++
++    assert verdict_forward.mapping == (2, 0, 1)
++    assert verdict_backward.mapping == (1, 2, 0)
++
++
++def test_f1_noH_random_renumbering_duplicate_and_non_duplicate():
++    base_atoms = ["C", "C", "O", "H"]
++    base = np.array([[0.0, 0.0, 0.0], [1.5, 0.0, 0.0], [2.7, 0.0, 0.0], [2.7, 0.97, 0.0]])
++    rng = np.random.default_rng(SEED)
++    representative = {
++        "original_index": 0,
++        "energy": -1.0,
++        "atoms": base_atoms,
++        "coords": base,
++    }
++    for _ in range(6):
++        permutation = rng.permutation(4)
++        atoms = [base_atoms[j] for j in permutation]
++        coords = base[permutation].copy()
++        duplicate = {
++            "original_index": 1,
++            "energy": 0.0,
++            "atoms": atoms,
++            "coords": coords,
++        }
++        shifted = coords.copy()
++        shifted[atoms.index("O")] += np.array([0.0, 0.0, 0.25])
++        non_duplicate = {
++            "original_index": 2,
++            "energy": 0.0,
++            "atoms": atoms,
++            "coords": shifted,
++        }
++
++        duplicate_verdict = compare_frames(
++            duplicate, representative, threshold=0.05, heavy_only=True, energy_tolerance=0.0
++        )
++        assert duplicate_verdict.status == "duplicate", (permutation, duplicate_verdict)
++        assert duplicate_verdict.witness_rmsd == pytest.approx(0.0, abs=1e-9)
++
++        non_duplicate_verdict = compare_frames(
++            non_duplicate, representative, threshold=0.05, heavy_only=True, energy_tolerance=0.0
++        )
++        assert non_duplicate_verdict.status != "duplicate", (permutation, non_duplicate_verdict)
++
++
++# ---------------------------------------------------------------------------
++# Work pins on hydrogen-bearing molecules (counts and verdicts, never time)
++# ---------------------------------------------------------------------------
++
++
++def _molecule(name: str) -> dict:
++    payload = json.loads(DATA.read_text(encoding="utf-8"))[name]
++    return {"atoms": list(payload["atoms"]), "coords": np.array(payload["coords"], dtype=float)}
++
++
++def _hydrogens(graph, carbon: int) -> list[int]:
++    return [j for j in graph.adjacency[carbon] if graph.symbols[j] == "H"]
++
++
++def _relabel(frame: dict, permutation: list[int]) -> dict:
++    """Relabel the atoms: new atom ``i`` is old atom ``permutation[i]``."""
++    return {
++        "atoms": [frame["atoms"][p] for p in permutation],
++        "coords": frame["coords"][permutation],
++    }
++
++
++def _work(verdict) -> tuple[int, int, int, bool]:
++    work = verdict.search_work
++    return (work.nodes, work.mappings, work.pruned, work.complete)
++
++
++def test_default_node_budget_is_the_legacy_value():
++    assert DEFAULT_MAPPING_NODE_BUDGET == 1000
++
++
++def test_butane_methyl_hydrogen_permutation_is_one_legal_mapping_away():
++    frame = _molecule("butane")
++    graph = build_graph(frame["atoms"], frame["coords"]).graph
++    first, last = _hydrogens(graph, 0), _hydrogens(graph, 3)
++    permutation = list(range(14))
++    permutation[first[0]], permutation[first[1]], permutation[first[2]] = (
++        first[1],
++        first[2],
++        first[0],
++    )
++    permutation[last[0]], permutation[last[1]] = last[1], last[0]
++    verdict = compare_frames(frame, _relabel(frame, permutation), threshold=0.25)
++    assert verdict.status == "duplicate"
++    assert verdict.mapping_kind == "graph_mapping"
++    assert _work(verdict) == (14, 1, 0, False)
++
++
++def test_tert_butyl_alcohol_methyl_swap_needs_one_mapping_within_budget():
++    frame = _molecule("tbutanol")
++    graph = build_graph(frame["atoms"], frame["coords"]).graph
++    quaternary = [
++        i
++        for i, symbol in enumerate(graph.symbols)
++        if symbol == "C" and sum(graph.symbols[j] == "C" for j in graph.adjacency[i]) == 3
++    ][0]
++    methyls = [j for j in graph.adjacency[quaternary] if graph.symbols[j] == "C"]
++    permutation = list(range(15))
++    first, second, third = methyls
++    permutation[first], permutation[second] = second, first
++    for x, y in zip(_hydrogens(graph, first), _hydrogens(graph, second)):
++        permutation[x], permutation[y] = y, x
++    cycle = _hydrogens(graph, third)
++    permutation[cycle[0]], permutation[cycle[1]], permutation[cycle[2]] = (
++        cycle[1],
++        cycle[2],
++        cycle[0],
++    )
++    verdict = compare_frames(frame, _relabel(frame, permutation), threshold=0.25)
++    assert verdict.status == "duplicate"
++    assert verdict.mapping_kind == "graph_mapping"
++    assert _work(verdict) == (15, 1, 0, False)
++
++
++def test_benzene_ring_relabelling_is_the_identity_mapping():
++    frame = _molecule("benzene")
++    graph = build_graph(frame["atoms"], frame["coords"]).graph
++    carbons = [i for i, symbol in enumerate(graph.symbols) if symbol == "C"]
++    ring = [carbons[0]]
++    while len(ring) < 6:
++        ring.append(
++            [j for j in graph.adjacency[ring[-1]] if graph.symbols[j] == "C" and j not in ring][0]
++        )
++    for step in (2, -1):
++        permutation = list(range(12))
++        for k in range(6):
++            target = ring[(step * k) % 6] if step == -1 else ring[(k + step) % 6]
++            permutation[ring[k]] = target
++            permutation[_hydrogens(graph, ring[k])[0]] = _hydrogens(graph, target)[0]
++        verdict = compare_frames(frame, _relabel(frame, permutation), threshold=0.25)
++        assert verdict.status == "duplicate"
++        assert verdict.mapping_kind == "identity"
++        assert verdict.search_work is None
++
++
++def test_toluene_ortho_meta_swap_needs_a_graph_mapping():
++    frame = _molecule("toluene")
++    graph = build_graph(frame["atoms"], frame["coords"]).graph
++    ipso = [
++        i
++        for i, symbol in enumerate(graph.symbols)
++        if symbol == "C" and sum(graph.symbols[j] == "C" for j in graph.adjacency[i]) == 3
++    ][0]
++    ortho = [
++        j
++        for j in graph.adjacency[ipso]
++        if graph.symbols[j] == "C" and sum(graph.symbols[k] == "C" for k in graph.adjacency[j]) == 2
++    ]
++    meta = [
++        [k for k in graph.adjacency[o] if graph.symbols[k] == "C" and k != ipso][0] for o in ortho
++    ]
++    permutation = list(range(len(frame["atoms"])))
++    for x, y in ((ortho[0], ortho[1]), (meta[0], meta[1])):
++        permutation[x], permutation[y] = y, x
++        hx, hy = _hydrogens(graph, x)[0], _hydrogens(graph, y)[0]
++        permutation[hx], permutation[hy] = hy, hx
++    verdict = compare_frames(frame, _relabel(frame, permutation), threshold=0.25)
++    assert verdict.status == "duplicate"
++    assert verdict.mapping_kind == "graph_mapping"
++    assert _work(verdict) == (15, 1, 0, False)
++
++
++def test_anti_and_gauche_butane_are_never_merged_and_the_search_is_pruned():
++    anti, gauche = _molecule("butane_anti"), _molecule("butane_gauche")
++    verdict = compare_frames(anti, gauche, threshold=0.25)
++    assert verdict.status == "distinct"
++    assert verdict.reason == "all_legal_mappings_pruned_above_cutoff"
++    assert _work(verdict) == (576, 0, 246, True)
++
++
++def test_a_tiny_budget_is_unresolved_never_a_duplicate():
++    anti, gauche = _molecule("butane_anti"), _molecule("butane_gauche")
++    verdict = compare_frames(anti, gauche, threshold=0.25, node_budget=5)
++    assert verdict.status == "unresolved"
++    assert verdict.reason == "mapping_budget_exhausted"
++    assert _work(verdict) == (6, 0, 0, False)
+diff --git a/tests/test_refine_graph_rmsd.py b/tests/test_refine_graph_rmsd.py
+index 2e4d78e..9239561 100644
+--- a/tests/test_refine_graph_rmsd.py
++++ b/tests/test_refine_graph_rmsd.py
+@@ -29,7 +29,6 @@ from confflow.blocks.refine.processor import (
+     read_xyz_file,
+ )
+ from confflow.blocks.refine.rmsd_engine import (
+-    compare_frames,
+     fast_rmsd,
+     get_topology_hash_worker,
+     process_topology_group,
+@@ -262,146 +261,6 @@ def _k33_graph():
+     return graph_from_adjacency(["C"] * 6, adjacency)
+ 
+ 
+-def test_prism_and_k33_share_cheap_invariants_but_are_not_isomorphic():
+-    from confflow.blocks.refine.topology import find_isomorphism, graphs_may_be_isomorphic
+-
+-    prism = _prism_graph()
+-    k33 = _k33_graph()
+-    assert sorted(prism.degree_sequence) == sorted(k33.degree_sequence)
+-    assert graphs_may_be_isomorphic(prism, k33)  # 3-regular WL cannot separate them
+-
+-    result = find_isomorphism(prism, k33, node_budget=100_000)
+-    assert result.status == "non_isomorphic"
+-    assert result.mapping is None
+-    assert result.stats.complete is True
+-
+-    same = find_isomorphism(prism, k33, node_budget=100_000)  # deterministic repeat
+-    assert same.status == result.status
+-
+-
+-def test_group_frames_by_topology_separates_prism_and_k33():
+-    from confflow.blocks.refine.topology import group_frames_by_topology
+-
+-    prism = _prism_graph()
+-    k33 = _k33_graph()
+-    frames = []
+-    for idx, graph in enumerate([prism, prism, k33, k33]):
+-        frames.append(
+-            {
+-                "original_index": idx,
+-                "energy": -1.0 - idx * 0.01,
+-                "atoms": ["C"] * 6,
+-                "coords": np.zeros((6, 3)),
+-                "graph": graph,
+-            }
+-        )
+-    clusters = group_frames_by_topology(frames, node_budget=100_000)
+-    sizes = sorted(len(cluster.frames) for cluster in clusters if cluster.status == "confirmed")
+-    assert sizes == [2, 2]
+-    assigned = {
+-        frame["original_index"]: cluster.cluster_id
+-        for cluster in clusters
+-        for frame in cluster.frames
+-    }
+-    assert assigned[0] == assigned[1]
+-    assert assigned[2] == assigned[3]
+-    assert assigned[0] != assigned[2]
+-
+-
+-def test_compare_frames_never_matches_across_topologies():
+-    from confflow.blocks.refine.rmsd_engine import compare_frames
+-
+-    prism = _prism_graph()
+-    k33 = _k33_graph()
+-    coords = np.array(
+-        [
+-            [0.0, 0.0, 0.0],
+-            [1.0, 0.0, 0.0],
+-            [0.0, 1.0, 0.0],
+-            [1.0, 1.0, 0.0],
+-            [0.0, 0.0, 1.0],
+-            [1.0, 0.0, 1.0],
+-        ]
+-    )
+-    candidate = {
+-        "original_index": 1,
+-        "energy": -1.0,
+-        "atoms": ["C"] * 6,
+-        "coords": coords,
+-        "graph": k33,
+-    }
+-    representative = {
+-        "original_index": 0,
+-        "energy": -1.0,
+-        "atoms": ["C"] * 6,
+-        "coords": coords,
+-        "graph": prism,
+-    }
+-    verdict = compare_frames(candidate, representative, threshold=10.0, heavy_only=False)
+-    assert verdict.status == "different_topology"
+-    assert verdict.witness_rmsd is None
+-
+-
+-def test_compare_frames_budget_exhaustion_is_unresolved_not_duplicate_or_distinct():
+-    from confflow.blocks.refine.rmsd_engine import compare_frames
+-
+-    path = np.array(
+-        [
+-            [0.0, 0.0, 0.0],
+-            [1.5, 0.0, 0.0],
+-            [2.0, 1.4, 0.0],
+-            [1.0, 2.5, 0.2],
+-            [1.0, 3.0, 1.6],
+-        ]
+-    )
+-    candidate = {
+-        "original_index": 1,
+-        "energy": -1.0,
+-        "atoms": ["C"] * 5,
+-        "coords": path[::-1].copy(),
+-    }
+-    representative = {
+-        "original_index": 0,
+-        "energy": -1.5,
+-        "atoms": ["C"] * 5,
+-        "coords": path,
+-    }
+-    verdict = compare_frames(
+-        candidate,
+-        representative,
+-        threshold=0.25,
+-        heavy_only=False,
+-        node_budget=3,
+-    )
+-    assert verdict.status == "unresolved"
+-    assert verdict.search_complete is False
+-    assert verdict.witness_rmsd is None
+-
+-
+-def test_compare_frames_threshold_is_strictly_less_than():
+-    from confflow.blocks.refine.rmsd_engine import compare_frames, kabsch_rmsd
+-
+-    left = {
+-        "original_index": 0,
+-        "energy": -2.0,
+-        "atoms": ["C", "C", "C"],
+-        "coords": _triangle(1.0),
+-    }
+-    right = {
+-        "original_index": 1,
+-        "energy": -1.0,
+-        "atoms": ["C", "C", "C"],
+-        "coords": _triangle(1.2),
+-    }
+-    exact = kabsch_rmsd(_triangle(1.0), _triangle(1.2))
+-    assert exact > 0.0
+-    equal_cutoff = compare_frames(left, right, threshold=exact, heavy_only=False)
+-    assert equal_cutoff.status == "distinct"
+-    above_cutoff = compare_frames(left, right, threshold=exact * (1.0 + 1e-9), heavy_only=False)
+-    assert above_cutoff.status == "duplicate"
+-    assert above_cutoff.witness_rmsd < above_cutoff.cutoff
+-
+-
+ # ---------------------------------------------------------------------------
+ # Phase 4: pipeline integration (topology collision, reports, atomic output)
+ # ---------------------------------------------------------------------------
+@@ -753,37 +612,6 @@ def _write_renumbered_co_pair(path: Path, o_distance: float) -> None:
+     )
+ 
+ 
+-def test_f1_noH_renumbered_distinct_heavy_geometry_is_not_deleted():
+-    reference, candidate = _renumbered_co_frames(1.6)
+-    # Correct heavy-atom distance is 0.1 A, above the 0.05 cutoff.
+-    correct = _reference_kabsch_rmsd(candidate["coords"][[1, 2]], reference["coords"][[0, 1]])
+-    assert correct == pytest.approx(0.1, abs=1e-9)
+-
+-    for first, second in ((candidate, reference), (reference, candidate)):
+-        verdict = compare_frames(
+-            first, second, threshold=0.05, heavy_only=True, energy_tolerance=0.0
+-        )
+-        assert verdict.status == "distinct", verdict
+-        assert verdict.witness_rmsd is None
+-
+-
+-def test_f1_noH_renumbered_true_duplicate_is_deleted_both_directions():
+-    reference, candidate = _renumbered_co_frames(1.4)
+-    verdict_forward = compare_frames(
+-        candidate, reference, threshold=0.05, heavy_only=True, energy_tolerance=0.0
+-    )
+-    verdict_backward = compare_frames(
+-        reference, candidate, threshold=0.05, heavy_only=True, energy_tolerance=0.0
+-    )
+-    for verdict in (verdict_forward, verdict_backward):
+-        assert verdict.status == "duplicate", verdict
+-        assert verdict.witness_rmsd == pytest.approx(0.0, abs=1e-9)
+-        assert verdict.mapping is not None
+-
+-    assert verdict_forward.mapping == (2, 0, 1)
+-    assert verdict_backward.mapping == (1, 2, 0)
+-
+-
+ def test_f1_process_xyz_noH_renumbering_does_not_delete_distinct_frame(tmp_path):
+     source = tmp_path / "renumbered.xyz"
+     _write_renumbered_co_pair(source, 1.6)
+@@ -848,47 +676,6 @@ def test_f1_process_xyz_noH_renumbering_deletes_true_duplicate_with_replayable_m
+     assert recomputed == pytest.approx(removed["witness_rmsd"], abs=1e-12)
+ 
+ 
+-def test_f1_noH_random_renumbering_duplicate_and_non_duplicate():
+-    base_atoms = ["C", "C", "O", "H"]
+-    base = np.array([[0.0, 0.0, 0.0], [1.5, 0.0, 0.0], [2.7, 0.0, 0.0], [2.7, 0.97, 0.0]])
+-    rng = np.random.default_rng(SEED)
+-    representative = {
+-        "original_index": 0,
+-        "energy": -1.0,
+-        "atoms": base_atoms,
+-        "coords": base,
+-    }
+-    for _ in range(6):
+-        permutation = rng.permutation(4)
+-        atoms = [base_atoms[j] for j in permutation]
+-        coords = base[permutation].copy()
+-        duplicate = {
+-            "original_index": 1,
+-            "energy": 0.0,
+-            "atoms": atoms,
+-            "coords": coords,
+-        }
+-        shifted = coords.copy()
+-        shifted[atoms.index("O")] += np.array([0.0, 0.0, 0.25])
+-        non_duplicate = {
+-            "original_index": 2,
+-            "energy": 0.0,
+-            "atoms": atoms,
+-            "coords": shifted,
+-        }
+-
+-        duplicate_verdict = compare_frames(
+-            duplicate, representative, threshold=0.05, heavy_only=True, energy_tolerance=0.0
+-        )
+-        assert duplicate_verdict.status == "duplicate", (permutation, duplicate_verdict)
+-        assert duplicate_verdict.witness_rmsd == pytest.approx(0.0, abs=1e-9)
+-
+-        non_duplicate_verdict = compare_frames(
+-            non_duplicate, representative, threshold=0.05, heavy_only=True, energy_tolerance=0.0
+-        )
+-        assert non_duplicate_verdict.status != "duplicate", (permutation, non_duplicate_verdict)
+-
+-
+ # ---------------------------------------------------------------------------
+ # F2: report path must not alias the input or output file
+ # ---------------------------------------------------------------------------

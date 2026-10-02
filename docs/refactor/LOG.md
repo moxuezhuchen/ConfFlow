@@ -346,3 +346,7 @@
 - 执行模型自述：C3.2 首次提交的 Removed-Tests 正文测试名写错，已 amend 修正（仅提交信息）。已在后续卡片补一条"提交信息中的测试名必须从清单逐字复制"。
 - 跨仓验证（验收方）：用新 producer（exec-cf）跑 JD 全量，3 个失败正是预期的 fixture 未同步类（两项指纹、一项删除 producer 已不发布的键），由 J3.3 修复；J3.3 补丁已在 CF=C3.3 原型上实测 2303 passed / 7 skipped。
 - 推送：按 2026-10-02 授权（refactor/*），推送 CF refactor/diet。
+
+## C5.3a 补丁已备（2026-10-03，验收方原型）
+- 基点 2f95dc1。搬迁等价：topology 21 个定义与 rmsd_engine 的 7 个定义 AST 逐一相同（tools-acc/move_identity_check.py）。全量 4125 passed / 12 skipped，collect 4137；golden ok。
+- 发现：被搬的 compare_frames 依赖 core.constants.HARTREE_TO_KCALMOL，C5.5 须保留 core/constants.py（并入 PLAN-2 的 core→science 迁移）。

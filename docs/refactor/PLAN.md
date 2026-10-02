@@ -944,20 +944,25 @@ IS 分支上没有 `docs/refactor/`。各卡如需工具，从 `$TOOLS` 运行�
 
 ### C5.3a — 把图同构映射原样搬入 `confflow/science/`（move；用户 2026-10-02 决定 Q-R1 移植）
 
-- ID：C5.3a ／ 仓库：ConfFlow ／ 前置：C5.2 合入、C4 系列无关 ／ 类型：`move`（函数体一字不改，旧测试随迁）
-- 内容：`blocks/refine/topology.py`（`Graph`、`build_graph*`、`MappingSearch`、`find_isomorphism`、`group_frames_by_topology`、`graphs_may_be_isomorphic`、`DEFAULT_MAPPING_NODE_BUDGET`）与 `rmsd_engine.py` 中 `compare_frames` 及其私有依赖（`_frame_graph`、`_effective_cutoff`、`_build_candidate_priority`、`PairVerdict`）原样搬到 `confflow/science/`（建议 `science/topology_mapping.py`、`science/frame_compare.py`）；`blocks/refine` 暂时改为从新位置 import（保持其行为与测试不变，直到 C5.3d 删除）。随迁测试：与这些符号相关的测试（`tests/test_refine*.py`、`tests/test_rmsd_engine_hotspots.py` 中的相关部分）搬到 `tests/science/`，函数体不改。
-- **必须保留并以性能测试固定的上限与剪枝**（验收方已读源码，原样列出）：
-  1. 节点预算：`DEFAULT_MAPPING_NODE_BUDGET = 1000`，对每一对结构的每次映射搜索计数（`MappingSearch.nodes`），超过即抛 `MappingBudgetExceeded` → 该对结果为 `unresolved`（两帧都保留，绝不合并）。
-  2. 前置不变量过滤：原子数、元素计数、度序列、4 轮 Weisfeiler-Lehman 着色（`graphs_may_be_isomorphic`），只能证明不同，不能证明相同。
-  3. 候选集分桶：按（原子序数，度）分桶，并按已映射邻居一致性逐点检查。
-  4. 候选优先级：`_build_candidate_priority` 按局部几何距离给候选排序，使第一批完整映射接近最优；这是 1000 节点预算在高对称体系（叔丁基）上仍可用的前提。
-  5. 成对距离下界剪枝：仅全原子比较（`heavy_only=False`）时启用，`pair_error ≥ 2·(n−1)·n·cutoff²` 的分支被安全剪掉；`heavy_only=True` 时关闭。
-  6. 恒等映射优先，已评估的投影用 `seen_projections` 去重；返回的是第一个 RMSD < 阈值的见证映射，不是全局最小值。
-  7. 预算耗尽 / 无合法映射 / 所有映射都高于阈值 分别给出 `unresolved` / `different_topology` / `distinct`，不得改变。
-- 性能测试（随迁，新增，不改被测代码）：固定输入（丁烷、叔丁基、苯环）下 `MappingSearch.nodes` 等于记录值，预算耗尽路径返回 `unresolved`，剪枝开启时 `pruned > 0`；见下。
-- **已核实（验收方，2026-10-02）：** `science/bonds.perceive_adjacency` 只是 `core.bonding.build_adjacency` 的薄封装（先校验 `bond_scale>0`，并把 `UnknownElementError` 转成 `ValueError`）。随机 12000 例（3000 个随机分子 × 4 个 bond_scale，含近重合坐标）输出逐位相同；差别只在错误处理：`bond_scale ≤ 0/NaN` 旧函数不报错、新封装抛 `ValueError`，未知元素旧抛 `UnknownElementError`、新抛 `ValueError`。因此搬迁**不替换**函数体：保留对 `build_adjacency` 的调用（只改 import 路径），以保持旧行为。结果：`science/` 对 `core.bonding` 与 `core.data` 的依赖本来就存在（`science/bonds.py`），**C5.5 必须保留 `core/bonding.py`、`core/data.py`（或先把它们迁入 `science/`）**；`blocks/refine/_compat.load_refine_data` 的依赖也要一并核对。
-- 性能测试**按节点预算与结果固定，不依赖耗时**：断言 `MappingSearch.nodes`/`pruned`/`mappings` 与返回的 `PairVerdict`（状态、`search_complete`、映射）等于记录值，禁止使用墙钟时间。
-- 验收：标准验收；golden 不变；新搬模块的测试全部通过；`deleted_modules_check` 不涉及（本卡不删模块）。
+- ID：C5.3a ／ 仓库：ConfFlow ／ 分支：`refactor/diet-c5`（侧分支，基点 2f95dc1，即 C5.2 提交） ／ 前置：C5.2 ／ 类型：`move`（函数体一字不改，旧测试随迁）。做法：应用 `handoff/C5.3a-src-tests.patch`（8 个文件），不重新设计。
+- 内容：
+  1. `blocks/refine/topology.py` → `science/topology_mapping.py`（git mv）；只改文件头的 import 行（`core.bonding.build_adjacency`、`core.data` 直接导入，不再经 `_compat` 的回退加载）；`blocks/refine/topology.py` 变为 20 个名字的纯重导出垫片（C5.3d 一并删除）。
+  2. `rmsd_engine.py` 中的 `kabsch_rmsd`（旧版，含 999.9 哨兵值，**不是** `science/cluster.kabsch_rmsd`）、`PairVerdict`、`_frame_graph`、`_effective_cutoff`、`_element_distance_fingerprint`、`_build_candidate_priority`、`compare_frames` 原样搬到新文件 `science/frame_compare.py`（`ENERGY_RMSD_SCALE_FACTOR` 随迁），`rmsd_engine.py` 从新位置重导入，其余内容不动。
+  3. 随迁测试：`tests/test_refine_graph_rmsd.py` 中只依赖被搬代码的 8 个测试及其辅助函数搬到 `tests/science/test_topology_mapping.py`（测试体不变，仅 import 路径改为新模块）。
+  4. 新增性能/行为固定测试（不测耗时，只固定节点数、映射数、剪枝数与判定），数据为带氢分子的字面坐标 `tests/science/data/molecules_h.json`：丁烷（甲基氢置换）(14,1,0)、叔丁醇（甲基互换+氢循环）(15,1,0)、苯环重标号（恒等映射）、甲苯邻/间位互换（需图映射）(15,1,0)、反式/邻位交叉丁烷（不得合并，`distinct`，(576,0,246,完整)）、预算 5 → `unresolved`（节点 6）；另固定 `DEFAULT_MAPPING_NODE_BUDGET == 1000`。
+- **必须保留的上限与剪枝**（验收方已读源码，被搬代码原样保留，由上面的固定测试守护）：
+  1. 节点预算 `DEFAULT_MAPPING_NODE_BUDGET = 1000`（每对结构、每次搜索），超过 → `unresolved`（两帧都保留，绝不合并）。
+  2. 前置不变量过滤：原子数、元素计数、度序列、4 轮 Weisfeiler-Lehman 着色。
+  3. 候选按（原子序数，度）分桶，并逐点检查邻接一致性。
+  4. 候选优先级 `_build_candidate_priority` 按局部几何距离排序：第一批完整映射接近最优，是 1000 节点预算在高对称体系上仍可用的前提。
+  5. 成对距离下界剪枝：仅全原子比较启用，`heavy_only=True` 时关闭。
+  6. 恒等映射优先，`seen_projections` 去重；返回第一个 RMSD < 阈值的见证映射，不是全局最小。
+  7. 预算耗尽 / 无合法映射 / 所有映射都高于阈值 → `unresolved` / `different_topology` / `distinct`，不得改变。
+- **已核实：** `science/bonds.perceive_adjacency` 只是 `core.bonding.build_adjacency` 的薄封装（12000 例逐位相同，仅错误处理不同），故搬迁不替换函数体，保留 `build_adjacency` 调用。结果：`science/` 依赖 `core/bonding.py`、`core/data.py`、**`core/constants.py`**（`HARTREE_TO_KCALMOL`），C5.5 必须保留这三个文件（PLAN-2：最终移入 `science/`）。
+- 验收：
+  - `python3 tools-acc/move_identity_check.py <树> HEAD confflow/blocks/refine/topology.py confflow/science/topology_mapping.py '*'` 输出 21 个 identical、退出码 0；同工具对 `rmsd_engine.py → science/frame_compare.py` 的 7 个名字全部 identical。
+  - 全量（`run_sharded.py --jdpin /opt/cf-worktrees/jd-pin-cf`）`{"passed": 4125, "skipped": 12}`；collect 4137（4130 − 8 + 8 + 7）；被删节点恰为 `handoff/C5.3a-removed-tests.txt` 的 8 项（搬走的旧 id），新增节点恰为 `handoff/C5.3a-added-tests.txt` 的 15 项（8 项搬入 + 7 项新固定测试）；`golden_check.py` ok；ruff/mypy/black 通过。
+- 提交信息模板：`refactor(science): move graph isomorphism mapping and frame comparison out of blocks/refine` + 通用尾部（Removed-Tests 8、Added-Tests 15，附清单文件名；测试名从清单逐字复制）。
 
 ### C5.3b — V4 refine 调用对称映射去重（logic；Q-R1）
 
@@ -1005,7 +1010,7 @@ IS 分支上没有 `docs/refactor/`。各卡如需工具，从 `$TOOLS` 运行�
 - ID：C5.5 ／ 前置：C5.4
 - 类型：`delete`
 - 允许修改的文件：`confflow/core/*.py`、`confflow/core/__init__.py`、`confflow/shared/config_coercion.py`、`tests/v4/test_architecture_boundaries.py`、`scripts/v4_arch_scan.py`、只引用被删模块的测试
-- **保留要求（2026-10-02 核实）：** `core/bonding.py`、`core/data.py` 被 `science/bonds.py` 使用，且 C5.3a 搬入 `science/` 的映射代码仍调用 `build_adjacency`，C5.5 不得删除它们（可达性重跑会自动保留，但要在 Removed 清单复核）。
+- **保留要求（2026-10-02 核实）：** `core/bonding.py`、`core/data.py`、`core/constants.py` 被 `science/bonds.py` 使用，且 C5.3a 搬入 `science/` 的映射代码仍调用 `build_adjacency`，C5.5 不得删除它们（可达性重跑会自动保留，但要在 Removed 清单复核）。
 - 步骤：重新运行 `reachability.py`。写方案时（C5.2–C5.4 之前）的候选是 `core/validation.py`（333 行）、`core/chem_validation.py`、`core/cli_base.py`、`core/constants.py`、`core/keyword_rewrite.py`、`core/models.py`、`core/pairs.py`、`shared/config_coercion.py`，**以重新运行的结果为准**，只删除不可达的模块。`core/__init__.py` 的 `_LAZY_EXPORTS`（L23-50）中指向被删模块的条目一并删除；`TestFacadeLazyIsolation::test_core_public_surface_still_importable`（`test_architecture_boundaries.py` 约 L1610-1625）中 import 被删名字的断言删除，其余断言保留。
 - 验收：标准验收；golden 不变。
 
