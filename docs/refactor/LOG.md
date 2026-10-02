@@ -82,3 +82,28 @@
 - Sonnet 5.5 子代理第一次执行时因 API 额度上限（HTTP 429）退出；恢复后，用户因额度不足中断，验收方停止了该子代理。没有提交。
 - `exec-cf` 中留下 7 个未验收的未跟踪文件：`docs/refactor/tools/{env.sh,ts1_engine.py,capture_engine_reports.py,contract_digests.py,golden_check.py,json_paths_diff.py,test_inventory.py}`；`baseline/` 为空。
 - 用户决定：后续由用户把交接提示词粘贴给另一个模型执行，验收方继续负责验收。B0.1 的交接提示词见 `docs/refactor/handoff/B0.1.md`。
+
+## 2026-10-02 B0.1 — 通过
+
+- 仓库/分支/提交：ConfFlow `refactor/diet` eec4e80（父 3f8aff3）；执行者：外部模型（用户转交提示词 `handoff/B0.1.md`，提交署名为 glm-5.3-flash）
+- 类型：baseline；白名单检查：ok。103 个新增文件，全部在 `docs/refactor/tools/` 与 `docs/refactor/baseline/` 下；没有修改任何已有文件；`run_jd_tests.sh`、PLAN、ACCEPTANCE、LOG 未动
+- 静态检查（验收方重跑）：`ruff check .` ok；`black --check docs/refactor/tools` ok；`mypy confflow` ok（257）
+- 可重复性（验收方重跑，全部与基线逐字节一致）：
+  - TS1 三种 backend 的输出与 `baseline/ts1/*.json` 相同。engine 状态计数：default `{failed_numerical: 9, published_leaf: 3}`、rigid `{failed_numerical: 11, published_leaf: 1}`、flexible `{failed_numerical: 9, published_leaf: 3}`（与写方案时独立测得的值相同）
+  - engine 报告：重新捕获 83 份，`diff -r` 与 `baseline/engine_reports/` 无差异
+  - `contract.json`、`contract.full.json`、`boundary.full.json` 相同；contract/boundary/contract_digest 摘要与写方案时独立测得的值相同（9fdc5ccd…、8fe36f86…、eab1dd86…；JD contract_key `…/workflow:38a546f61706/manifest:7886bc067ec8/recipes:bc63fc178492`）
+  - collect：CF 4535、JD 2412，清单与 `baseline/inventory/` 逐字节相同
+  - 两仓全量测试重跑，outcomes 与基线完全相同：CF 4523 passed / 0 failed / 12 skipped，JD 2405 passed / 0 failed / 7 skipped
+  - CF 的 7 个 `cross_repo` 测试全部在 passed 中（没有被跳过）。12 个 skipped 是环境相关（wheel 构建、numba、root 权限等），已列入 README 的"已知 skipped"
+  - README 中 93 条 sha256 与文件逐一核对，全部一致
+- 工具抽查：
+  - `diff_guard.py`：J0b 用 test-only + 完整白名单通过；缩小白名单报 R1；J0a 作为 test-only 报"改了生产代码"；J0a 作为 delete 报"新增逻辑"；B0.1 自身作为 baseline 通过
+  - `test_inventory.py diff`：能正确列出新增/删除节点，并检查声明数量与允许的文件范围
+  - `golden_check.py`：对篡改后的基线副本（改 rigid.json 的计数、改动并删除各一份报告）返回退出码 1，指出 `ts1.rigid: DIFF`、`different`、`added`
+- 审计：`git ls-remote` 显示 JD `refactor/diet` 仍为 5847bc7，CF `refactor/diet` 远端不存在（均未推送）
+- 结论：通过。TS1、engine 报告、contract 和两仓测试清单的基线已冻结。
+- 发现的工具缺陷（不影响本卡通过，已登记，需要在对应卡之前修复）：
+  1. `test_inventory.py diff` 只要有新增节点就一律判 FAIL，没有"声明新增 N 个"的开关；会声明新增测试的卡（logic、test-only 等）只能由验收方人工核对新增清单。
+  2. `reachability.py` 把有可达子模块的包（`confflow.domain`、`confflow.science`、`confflow.workflow` 等 16 个）也列为不可达。包的 `__init__` 会被隐式导入，这是误报，方向危险；叶子模块名单（55 个）与验收方独立计算的结果一致，仅 `shared.orca_blocks` 一处差异。C5.2 和 C5.5 之前必须修复，在那之前只信叶子模块并人工核对。
+  3. 提交信息的署名行为 `Co-Authored-By: glm-5.3-flash`，没有邮箱，不规范，不改写历史。
+- 产物：/tmp/refactor-acc/B0.1/
