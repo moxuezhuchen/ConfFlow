@@ -424,12 +424,14 @@ J0 的提交在 JD 的 `refactor/diet` 分支上（从 9beeaf2 建立，见 §2.
   - `confflow/workflow/__init__.py`
   - `confflow/__init__.py`
   - `tests/v4/test_architecture_boundaries.py`
+  - `tests/test_core.py`
 - 具体步骤（@d5a40ae）：
   1. 删除 `confflow/workflow/_retired_runtime.py`（65 行）。已核实 `confflow/` 中只有 `workflow/__init__.py` 的 lazy 表引用它。
   2. `confflow/workflow/__init__.py`：从 `_LAZY_EXPORTS`（L22-37）中删除目标为 `"._retired_runtime"` 的 9 项：L23-26 与 L32-36。删除 docstring 中描述 stub 的那一句（L8-9 的 "The retired runtime names resolve to fail-closed stubs (...)"）。
   3. `confflow/__init__.py`：从 `_LAZY_EXPORTS`（L76-87）中删除 L78 的 `"run_workflow": (".workflow", "run_workflow")`。
+     `tests/test_core.py::test_confflow_package_exports_current_public_api` 守护这个导出，删除后必须随之修改：**只**删除两行断言，`assert hasattr(confflow, "run_workflow")`（L22）和 `assert "run_workflow" in confflow.__all__`（L28）；该测试函数的其余断言一字不改，测试节点不删除（B0.2 之后的 collect 数量不因这一步变化）。这两行是卡片明确声明的断言删除（ACCEPTANCE W2）。
   4. `tests/v4/test_architecture_boundaries.py`：删除 `TestRuntimeIsolation::test_importing_workflow_package_stays_lazy`（L952-968）和 `TestRetiredRuntimeBoundary::test_retirement_stubs_fail_closed`（L1045-1052）；删除 `RETIRED_RUNTIME_MODULES` 上方注释中提到 stub 的最后一句（L289-291）。
-- 禁止事项：G1–G9；不得改动 `confflow/cli.py` 中的 `run_workflow`（它是 `formal_v4_runner` 的别名，`cli.py:30`，与本卡无关）。
+- 禁止事项：G1–G10；除上面声明的 `tests/test_core.py` 两行断言外，不得删除或修改任何断言；不得改动 `confflow/cli.py` 中的 `run_workflow`（它是 `formal_v4_runner` 的别名，`cli.py:30`，与本卡无关）。
 - 验收命令：标准验收，另加
   ```bash
   cd $CF && git grep -n "_retired_runtime\|RetiredRuntimeError" -- confflow tests scripts && echo FAIL || echo ok
