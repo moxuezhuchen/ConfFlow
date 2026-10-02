@@ -19,11 +19,13 @@ The geometry comparison science lives in :mod:`confflow.science`
 - default ``bond_scale = 1.2`` is ``topology.BOND_SCALE_FACTOR``;
 - default ``rmsd_threshold_angstrom = 0.25`` is
   ``RefineOptions.threshold``;
-- duplicate comparison follows the ``rmsd_engine.compare_frames`` rule
-  that RMSD is only evaluated under a legal element/edge-preserving
-  mapping, with the Kabsch formulation of ``rmsd_engine.kabsch_rmsd``
-  in :mod:`confflow.science.cluster`.  This module only wires those
-  algorithms to typed V4 domain records.
+- duplicate comparison is :func:`confflow.science.frame_compare.compare_frames`:
+  RMSD is only evaluated under a legal element/edge-preserving mapping
+  found by the budgeted exact search of
+  :mod:`confflow.science.topology_mapping` (so atoms that differ only by
+  symmetry-equivalent labels, such as the hydrogens of a methyl group, are
+  recognised as duplicates).  This module only wires those algorithms to
+  typed V4 domain records.
 
 What is NOT carried over: XYZ file I/O, multiprocessing pools, CLI
 progress, energy-window / imaginary-frequency filtering (transform input
@@ -41,6 +43,10 @@ Kinds:
   grouping as above plus element signature; within a group, candidates
   in canonical id order are compared against retained representatives
   and dropped only on a proven RMSD witness at or below the threshold.
+  A candidate is a duplicate when some legal mapping gives an RMSD
+  strictly below the threshold.  When the mapping search exhausts its node
+  budget (``mapping_budget``, default 1000 nodes per pair) the pair is
+  *unresolved*: both structures are kept and the step notes say so.
   Optional ``max_structures`` truncates in id order.
 - ``filter``: explicit ``min_atoms`` / ``max_atoms`` / ``max_structures``
   selection in canonical id order.  Unknown native keys fail closed.
@@ -69,7 +75,6 @@ from ..domain.result import ResultSet
 from ..domain.structure import StructureRecord, StructureSet
 from ..domain.work_item import RecoveryInfo, Timing, WorkItem, WorkItemResult
 from ..science.bonds import perceive_adjacency
-from ..science.cluster import kabsch_rmsd
 from .native import NativeErrorCode
 from .work_item_executor import ItemExecutionContext, _diagnostic
 
@@ -83,10 +88,16 @@ REFINE_DEFAULT_RMSD_THRESHOLD_ANGSTROM = 0.25
 #: Default bond-perception scale (``topology.BOND_SCALE_FACTOR``).
 REFINE_DEFAULT_BOND_SCALE = 1.2
 
+#: Default mapping-search node budget per compared pair
+#: (``topology_mapping.DEFAULT_MAPPING_NODE_BUDGET``; equality is tested).  The
+#: science modules are imported lazily inside ``_frame``/``_duplicate_of`` so the
+#: worker import closure does not load ``confflow.core`` for non-refine runs.
+REFINE_DEFAULT_MAPPING_BUDGET = 1000
+
 #: Allowed step-native keys per kind (unknown keys fail closed).
 FILTER_NATIVE_KEYS = frozenset({"max_structures", "min_atoms", "max_atoms"})
 REFINE_NATIVE_KEYS = frozenset(
-    {"rmsd_threshold_angstrom", "bond_scale", "heavy_only", "max_structures"}
+    {"rmsd_threshold_angstrom", "bond_scale", "heavy_only", "max_structures", "mapping_budget"}
 )
 
 
@@ -254,6 +265,7 @@ class TransformExecutor:
         )
         bond_scale = float(native.get("bond_scale", REFINE_DEFAULT_BOND_SCALE))
         heavy_only = native.get("heavy_only", False)
+        mapping_budget = native.get("mapping_budget", REFINE_DEFAULT_MAPPING_BUDGET)
         max_structures = native.get("max_structures")
         if not math.isfinite(threshold) or threshold < 0:
             raise DomainError(
@@ -261,6 +273,14 @@ class TransformExecutor:
             )
         if not math.isfinite(bond_scale) or bond_scale <= 0:
             raise DomainError(f"refine bond_scale must be a positive number, got {bond_scale!r}")
+        if (
+            isinstance(mapping_budget, bool)
+            or not isinstance(mapping_budget, int)
+            or mapping_budget < 0
+        ):
+            raise DomainError(
+                f"refine mapping_budget must be an integer >= 0, got {mapping_budget!r}"
+            )
         if not isinstance(heavy_only, bool):
             raise DomainError(f"refine heavy_only must be a boolean, got {heavy_only!r}")
         if max_structures is not None and (
@@ -278,22 +298,24 @@ class TransformExecutor:
         notes: list[str] = []
         for group in groups.values():
             ordered = sorted(group, key=lambda item: item.id)
-            adjacency = {record.id: self._adjacency(record, bond_scale) for record in ordered}
+            frames = {record.id: self._frame(record, bond_scale) for record in ordered}
             retained: list[StructureRecord] = []
             for record in ordered:
                 witness = self._duplicate_of(
                     record,
-                    adjacency[record.id],
+                    frames[record.id],
                     retained,
-                    adjacency,
+                    frames,
                     threshold,
                     bool(heavy_only),
+                    int(mapping_budget),
+                    notes,
                 )
                 if witness is not None:
                     other, rmsd = witness
                     notes.append(
                         f"dropped {record.id} as duplicate of {other.id} "
-                        f"(rmsd {rmsd:.4f} A <= {threshold:g} A)"
+                        f"(rmsd {rmsd:.4f} A < {threshold:g} A)"
                     )
                     continue
                 retained.append(record)
@@ -317,44 +339,53 @@ class TransformExecutor:
         except ValueError as exc:
             raise DomainError(f"refine bond perception failed for {record.id}: {exc}") from exc
 
+    @classmethod
+    def _frame(cls, record: StructureRecord, bond_scale: float) -> dict[str, Any]:
+        """Return the comparison frame (atoms, coordinates, bonding graph) of one record."""
+        from ..science.topology_mapping import graph_from_adjacency
+
+        graph = graph_from_adjacency(record.atoms, cls._adjacency(record, bond_scale))
+        return {
+            "atoms": list(record.atoms),
+            "coords": np.asarray(record.coordinates, dtype=np.float64),
+            "graph": graph,
+        }
+
     @staticmethod
     def _duplicate_of(
         record: StructureRecord,
-        adjacency: Sequence[Sequence[int]],
+        frame: dict[str, Any],
         retained: Sequence[StructureRecord],
-        adjacency_by_id: Mapping[str, Sequence[Sequence[int]]],
+        frames: Mapping[str, dict[str, Any]],
         threshold: float,
         heavy_only: bool,
+        mapping_budget: int,
+        notes: list[str],
     ) -> tuple[StructureRecord, float] | None:
         """Return the retained duplicate witness for *record*, if proven.
 
-        Proof requires identical elements at identical indices and
-        identical adjacency (fixed-index topology identity) plus a Kabsch
-        RMSD at or below the threshold.  Anything else — different
-        topology, different order — is kept, never collapsed.
+        Proof requires a legal element/edge-preserving mapping under which
+        the Kabsch RMSD is strictly below the threshold.  A pair whose
+        mapping search runs out of budget is unresolved and is kept, never
+        collapsed; anything else (different topology, distinct geometry) is
+        kept too.
         """
-        mine = np.asarray(record.coordinates, dtype=np.float64)
+        from ..science.frame_compare import compare_frames
+
         for other in retained:
-            if len(other.atoms) != len(record.atoms):
-                continue
-            if tuple(other.atoms) != tuple(record.atoms):
-                continue
-            if [list(row) for row in adjacency_by_id[other.id]] != [list(row) for row in adjacency]:
-                continue
-            theirs = np.asarray(other.coordinates, dtype=np.float64)
-            if heavy_only:
-                kept_idx = [
-                    i for i, symbol in enumerate(record.atoms) if atomic_number(symbol) != 1
-                ]
-                if not kept_idx:
-                    continue
-                mine_sub = mine[np.asarray(kept_idx)]
-                theirs_sub = theirs[np.asarray(kept_idx)]
-            else:
-                mine_sub, theirs_sub = mine, theirs
-            rmsd = kabsch_rmsd(theirs_sub, mine_sub)
-            if rmsd <= threshold:
-                return other, rmsd
+            verdict = compare_frames(
+                frame,
+                frames[other.id],
+                threshold=threshold,
+                heavy_only=heavy_only,
+                node_budget=mapping_budget,
+            )
+            if verdict.status == "duplicate" and verdict.witness_rmsd is not None:
+                return other, float(verdict.witness_rmsd)
+            if verdict.status == "unresolved":
+                notes.append(
+                    f"kept {record.id}: comparison with {other.id} is unresolved ({verdict.reason})"
+                )
         return None
 
     # -- filter ---------------------------------------------------------------
