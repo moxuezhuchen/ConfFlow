@@ -593,6 +593,7 @@ JD contract_key、CF 的 contract/boundary 字节在本阶段都必须不变。
   - `src/jobdesk_v2/application/editor/jcs.py`
   - `src/jobdesk_v2/application/cards/binding_candidates.py`、`src/jobdesk_v2/application/remote/v4_validation.py`、`src/jobdesk_v2/application/runs/v4_results.py`
   - `tests/application/test_p0_boundary.py`、`tests/application/test_confflow_v4_contract.py`，以及任何其他 import 了被移动符号的 `tests/` 文件（**只允许改 import 语句**）
+  - `tests/application/test_architecture.py`：**只允许**在 `_ALLOWED_JSON_MODULES`（约 L144）里新增两项 `Path("application") / "editor" / "contract" / "errors.py"` 和 `Path("application") / "editor" / "jcs.py"`，并在其上方注释补一句说明它们是从 `parse.py` 原样搬来的专门解码模块。这条守护的意图（解码 producer JSON 的 `json.loads` 只能在专门的解析模块里）不变；搬迁前后 `application/` 下的 `json.loads` 调用点数量不变（验收方已核对，同为 3 处：parse.py 两处→errors.py 与 jcs.py，confflow_state.py 一处）。J2.4 删除 `parse.py` 时再把 `_PARSER_MODULE` 一项移除。除此之外不得改这个文件。
 - 具体步骤（@J2.2 之后；移动的函数体、类体逐字不变）：
   1. 新增 `errors.py`：从 `parse.py` 原样剪切 `ARTIFACT_CONTRACT`（约 L84）、`ContractParseError`（约 L114-143）、`decode_json_object`（约 L146-184）。依赖的 import（`json`、`Any`、`ContractDiagnostic`、`DiagnosticCode`）按需带过去。
   2. 移到 `application/editor/jcs.py` 末尾（同样原样剪切）：`_DuplicateKeyError`、`_NonFiniteConstantError`、`_strict_object_pairs`、`_reject_constant`、`decode_strict_json`（约 L187-238）、`canonicalize_text`（约 L241-258）。依赖的 `json`、`hashlib`、`JcsError`、`reason_code_for`、`jcs_bytes` 在 jcs.py 里本来就有或按需 import。这两个函数在源码里只有 parse.py 自己用，只有 `test_p0_boundary.py` 里的 JCS 一致性测试在用；它们守护的是 JD 与 producer 的 JCS 接受规则一致，所以保留而不删除。

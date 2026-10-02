@@ -249,3 +249,8 @@
 - 由验收方直接编写：`docs/refactor/REFINE_GAP.md`（`blocks/refine` 与 V4 `transform_executor` refine 的逐项对比）
 - 关键发现（已实验证实）：旧 refine 通过图同构做对称感知的去重，V4 refine 只做固定下标比较。同一个丁烷分子，仅把一个甲基的三个等价氢标号循环置换，固定下标 RMSD 0.807 Å；V4 refine 保留 2 个，旧 refine 合并为 1 个。其余差异项为设计上不适用（无能量/频率数据）或可不要（CLI、报告、并行）。
 - 待用户决定：Q-R1（对称感知去重是移植到 `confflow/science/` 还是放弃）、Q-R2（ConfGen 声明的拓扑覆盖是否一并移植）、Q-R3（多数拓扑过滤不移植）。C5.3 在这些确认之前不得开始。
+
+## 2026-10-02 J2.2 — 通过（见下）；J2.3 — 执行方按停止条件停下（验收方的卡片遗漏，不计为退回）
+
+- J2.3 情况：改动全部完成并通过其余全部测试（2403 passed），唯一失败是 `tests/application/test_architecture.py::test_only_dedicated_parsers_decode_producer_json`：该守护把 producer JSON 的 `json.loads` 限定在允许名单里，J2.3 把 `decode_json_object` 和 `decode_strict_json` 原样搬到 `contract/errors.py` 与 `editor/jcs.py` 后，这两处不在名单里。该文件不在卡片白名单，执行方按规则停止。
+- 验收方复核：违规位置恰好是这两处；`application/` 下 `json.loads` 调用点搬迁前后都是 3 处（parse.py 2、confflow_state.py 1 → errors.py 1、jcs.py 1、confflow_state.py 1），没有新增，所以守护的意图未被削弱。授权只在 `_ALLOWED_JSON_MODULES` 里新增这两项；PLAN J2.3 卡已补入白名单。
