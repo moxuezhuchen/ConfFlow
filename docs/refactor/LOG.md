@@ -303,3 +303,9 @@
 - 执行：外部模型 glm-5.3-flash；JD `refactor/diet` fedac08（父 13b6f55）。第一次 G9 停止属规划方疏漏，第二次一次通过。
 - 验收人独立重跑：提交相对 13b6f55 的 diff 与 handoff/J2.4-src-tests.patch 字节一致；ruff/format/mypy 通过；全量 JD 2325 passed / 7 skipped；startup_smoke ok；PLAN 的 git grep 输出 ok；被删测试 82 项由执行模型对照清单（验收方补丁生成时已核）。
 - 用户授权推送（"下轮一起推送"）：JD refactor/diet。
+
+## J3.1 + J3.2 — 验收通过（2026-10-02）
+- 执行：外部模型 glm-5.3-flash；JD `refactor/diet` 26c5ccb（J3.1）、1ca4052（J3.2），一次通过。
+- 验收人独立：两提交 diff 与 handoff/J3.1-presenter.patch、J3.2-src-tests.patch 字节一致；ruff/format/mypy 通过；全量 JD 2306 passed / 7 skipped；startup_smoke ok。
+- 附：发现验收工具盲区（venv 可编辑安装钩子会从 /opt/ConfFlow 找回被删模块），已加 tools-acc/noeditable 并让 run_sharded.py 默认使用；对已验收的 CF refactor/diet b8e85a3 重跑 4490 passed / 0 failed，此前验收结论不变。
+- 用户授权推送（"下轮一起推送"）：JD refactor/diet。
