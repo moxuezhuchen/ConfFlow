@@ -946,20 +946,21 @@ IS 分支上没有 `docs/refactor/`。各卡如需工具，从 `$TOOLS` 运行�
 - 步骤：逐项对比 `confflow/blocks/refine/`（`processor.py` 878 行、`rmsd_engine.py` 797 行、`topology.py` 660 行，入口 `blocks/refine/__init__.py:main`）与 V4 的 refine（`confflow/execution/transform_executor.py`；preset `refine_default`，在 IS 合并后的 `producer/presets.py` 中）。至少覆盖：去重判据（RMSD 算法、对称性/原子置换处理、阈值）、能量窗口、拓扑一致性检查、输入/输出格式、溯源元数据（`input_sha256`/`output_sha256`）、性能路径（numba）。每项给出"blocks/refine 有 / V4 有 / 差异与证据（文件:行号）"。缺失项单独列在文首。
 - 验收：只新增该文件。**结论固定为"升级给用户"**，等用户逐项确认后，C5.3 才能开始。
 
-### C5.2 — 删除 `calc/`、`confts.py`、`workflow/composition.py`、`blocks/viz/`
+### C5.2 — 删除 `calc/`、`confts.py`、`workflow/composition.py`、`blocks/viz/`（侧分支）
 
-- ID：C5.2 ／ 仓库：ConfFlow ／ 前置：D11、C4.4
-- 类型：`delete`
-- 允许修改的文件：
-  - 删除：`confflow/calc/**`、`confflow/confts.py`、`confflow/workflow/composition.py`、`confflow/blocks/viz/**`
-  - 修改：`confflow/__init__.py`（删除 L79-81 的 `CalcStepRunner`/`CalcStepRequest`/`CalcStepResult` lazy export）、`confflow/blocks/refine/result.py`（它 import calc；如果整个模块只为 calc 服务则删除）、`pyproject.toml`（删除 L79 `confts` 入口）、`scripts/architecture_metrics.py`、`scripts/v4_arch_scan.py`（只删除对被删模块的列举）、`tests/v4/test_architecture_boundaries.py`（把被删模块加入 `REMOVED_LEGACY_MODULES`）
-  - 删除的测试：第 1 步得到的测试文件清单（写方案时按 import 核对，约 30 个文件，例如 `tests/test_calc*.py`、`tests/test_policies*.py`、`tests/test_rescue*.py`、`tests/test_confts_*.py`、`tests/test_viz_report.py`、`tests/test_ts_acceptance.py`、`tests/test_task_acceptance.py`）
-- 步骤：
-  1. 执行前：`python3 $TOOLS/reachability.py --cf $CF` 必须把以上模块列为不可达或只从 legacy 入口可达；用 `git grep -ln "confflow.calc\|from \.\.calc\|from \.calc\|confflow.confts\|blocks.viz\|workflow.composition" -- tests` 得到测试清单。**只引用被删模块的测试文件整个删除；同时引用保留模块的文件（例如 `tests/test_core.py`、`tests/test_dependency_boundaries.py`、`tests/test_small_adapters_extra.py`、`tests/v4/test_v42_adapters.py`、`tests/test_worker_supervision.py`）只删除引用被删模块的测试函数**，逐条列入 Removed-Tests。
-  2. 删除模块和导出。
-- 禁止事项：G1–G9；不得删除 `blocks/refine`（C5.3）、`blocks/confgen`（C5.4）、`core/`、`shared/`（C5.5）。
-- 验收命令：标准验收；`python3 -c "import confflow; confflow.CalcStepRunner"` 必须抛 `AttributeError`；`git grep -n "confflow.calc\|confflow.confts" -- confflow scripts pyproject.toml` 无命中。golden 不变。
-- 提交信息模板：`refactor!: delete the legacy calc tooling and the confts CLI` + 通用尾部。
+- ID：C5.2 ／ 仓库：ConfFlow ／ 分支：`refactor/diet-c5`（从 `refactor/diet` 的 b8e85a3 分出，**侧分支**，与 JD/Phase 3 的主线并行；Phase 3 结束后由验收方合回 `refactor/diet`）／ 前置：D11
+- 类型：`delete`（带必要的测试改写）。做法：应用 `handoff/C5.2-src-tests.patch`（73 个文件），**不重新设计**。验收方已在其上跑通全量测试与 golden。
+- 内容：删除 `confflow/calc/**`、`confts.py`、`workflow/composition.py`、`blocks/viz/**`；`blocks/refine/result.py` 自带 `RefineResult`（不再 import calc）；删除 `confflow/__init__.py` 的 CalcStep* 导出、`pyproject.toml` 的 `confts` 入口；`scripts/architecture_metrics.py` 去掉被删模块；架构测试的 `REMOVED_LEGACY_MODULES` 加入四个被删模块；删除只测试被删模块的测试文件，混合文件只删或改写相关测试；新增 `tests/results_db_fixture.py`（`workflow/export.py` 仍读取旧 `results.db`，其测试需要一个最小写入器，见下"发现"）。
+- 被删测试：`handoff/C5.2-removed-tests.txt` 的 376 项（含 `tests/test_viz_report.py::TestCoreTypesRetired::test_core_types_module_is_gone`，它被原样搬到 `tests/test_core_types_retired.py`，新增节点共 4 个：这一个加三个 `test_legacy_module_inventory_is_intentional[confflow.blocks.viz|confflow.calc|confflow.confts]`）。
+- **发现（需用户之后决定，不阻塞本卡）**：`confflow/workflow/export.py` 与 `confflow export` 命令读取 calc 产生的 `results.db`；本卡之后没有任何生产代码再写该文件。本卡保留 export 及其测试（用最小写入器造库），是否整体删除 export 另议。
+- 禁止事项：G1–G9；不得手改补丁；不得运行 `ruff format` 于整个仓库（只允许 `ruff format --check` 于被改文件）。
+- 验收命令（**必须用屏蔽可编辑安装钩子的环境**，否则被删模块会从 `/opt/ConfFlow` 里被找到而假通过）：
+  ```bash
+  A=/opt/cf-worktrees/refactor-plan/docs/refactor/tools-acc
+  python3 $A/run_sharded.py --cf $CF --out /tmp/refactor-acc/C5.2/out.json --jdpin /opt/cf-worktrees/jd-pin
+  ```
+  期望：`{"passed": 4118, "skipped": 12}`，0 failed；collect 4130（4502−376+4）；`golden_check.py` 全部 ok；`PYTHONPATH=$A/noeditable:. python3 -c "import confflow; confflow.CalcStepRunner"` 抛 `AttributeError`；`git grep -nE "(from|import) +confflow\.(calc|confts)|from +\.+(calc|confts)" -- confflow scripts` 无输出；ruff check、mypy 通过。
+- 提交信息模板：`refactor!: delete the legacy calc tooling and the confts CLI` + 通用尾部（Removed-Tests 376 附清单文件名，Added-Tests 4）。
 
 ### C5.3 — 删除 `blocks/refine/`（前置：用户确认 C5.1）
 

@@ -57,6 +57,9 @@ def main(argv: list[str] | None = None) -> int:
     env.update(
         JOBDESK_V2_SRC=str(Path(args.jdpin) / "src"),
         PYTHONDONTWRITEBYTECODE="1",
+        PYTHONPATH=os.pathsep.join(
+            [str(TOOLS / "noeditable"), str(cf), os.environ.get("PYTHONPATH", "")]
+        ),
         QT_QPA_PLATFORM="offscreen",
     )
     base = [sys.executable, "-m", "pytest", "-o", "addopts=", "-p", "no:cacheprovider"]
