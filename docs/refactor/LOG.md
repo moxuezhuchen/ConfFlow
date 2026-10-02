@@ -144,3 +144,10 @@
 - golden：TS1 三种 backend、83 份 engine 报告、contract 五项摘要全部不变（contract 与 boundary 字节不变，符合 Phase 1 要求）
 - 提交信息：已声明 Removed-Tests: 2、Removed-Assertions: 2 与 Behavior-Change，与实际一致
 - 结论：通过
+
+## 2026-10-02 D11 — 完成（由验收方直接执行，不经执行模型）
+
+- 文件：/opt/confjob-coordinator/DECISIONS.md（非 git 仓库）；只在文末追加 D011，未改动已有条目
+- sha256 前：f0f6540b40b23e54ae4c36c1458cdd6f055cac069a1bd5bd7446e254726c1136
+- sha256 后：aba1dacc78dcc812ab91ea5c23b9ea86f4131e65f2e4c4e953a8fa6bb5263a9e
+- 内容依据：用户决定"D010 被取代：confts / confgen / confrefine 从未使用"；D010 要求的"新的可达性与使用审计"以用户的使用说明加静态导入闭包报告为证据
