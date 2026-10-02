@@ -76,3 +76,9 @@
 - 提交信息更正（不改写历史，在此记录）：Verification 中 "golden: unchanged" 应为 "n/a（B0.1 尚未建立）"；"failed set == previous checkpoint: yes" 应为 "8 → 0，与卡片预期一致"
 - 结论：通过。B0.1 的前置条件（J0b 通过、JD 全绿）满足。
 - 产物：/tmp/refactor-acc/J0b/
+
+## 2026-10-02 B0.1 — 执行中断（不计为退回）
+
+- Sonnet 5.5 子代理第一次执行时因 API 额度上限（HTTP 429）退出；恢复后，用户因额度不足中断，验收方停止了该子代理。没有提交。
+- `exec-cf` 中留下 7 个未验收的未跟踪文件：`docs/refactor/tools/{env.sh,ts1_engine.py,capture_engine_reports.py,contract_digests.py,golden_check.py,json_paths_diff.py,test_inventory.py}`；`baseline/` 为空。
+- 用户决定：后续由用户把交接提示词粘贴给另一个模型执行，验收方继续负责验收。B0.1 的交接提示词见 `docs/refactor/handoff/B0.1.md`。
