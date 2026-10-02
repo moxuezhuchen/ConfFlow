@@ -243,3 +243,9 @@
 - 验收：已提交的 diff 与验收方在停止期间已验证的未提交补丁逐字节相同（忽略 index 行）。该补丁的验证结果直接适用：ruff / format / mypy ok；全量 2411 项，2404 passed / 0 failed / 7 skipped；collect 清单与 J2.1a 之后逐项相同；14 个测试 nodeid 不变；无 skip/xfail；两个脱敏测试检查范围扩大；更正后的 grep（`remote_v4.py`、`gui/`）无输出
 - 远端：`origin/refactor/diet` 仍为 5847bc7（未推送）
 - 结论：通过。
+
+## 2026-10-02 C5.1 — 完成，等待用户确认
+
+- 由验收方直接编写：`docs/refactor/REFINE_GAP.md`（`blocks/refine` 与 V4 `transform_executor` refine 的逐项对比）
+- 关键发现（已实验证实）：旧 refine 通过图同构做对称感知的去重，V4 refine 只做固定下标比较。同一个丁烷分子，仅把一个甲基的三个等价氢标号循环置换，固定下标 RMSD 0.807 Å；V4 refine 保留 2 个，旧 refine 合并为 1 个。其余差异项为设计上不适用（无能量/频率数据）或可不要（CLI、报告、并行）。
+- 待用户决定：Q-R1（对称感知去重是移植到 `confflow/science/` 还是放弃）、Q-R2（ConfGen 声明的拓扑覆盖是否一并移植）、Q-R3（多数拓扑过滤不移植）。C5.3 在这些确认之前不得开始。
