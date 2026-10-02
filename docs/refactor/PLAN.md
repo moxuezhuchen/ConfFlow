@@ -57,7 +57,7 @@ Phase 1  ConfFlow 外围删除    C1.1 → C1.2 → C1.3 → C1.4
 J1       JD 删除 evaluate_compatibility
 Phase 2  JD 删除 V1/V2        J2.1a → J2.1b → J2.2 → J2.3 → J2.4   (J2.5 可选，需用户确认)
 Phase 3  边界瘦身（两仓成对） J3.1 → J3.2 → C3.1 → C3.2 → C3.3 → J3.3 → C3.4
-IS       输入简化分支改造     IS.1(golden) … IS.0(合入 main) → IS.2 → IS.2b → IS.3 → IS.4(JD) → IS.5(合并到 main，需用户批准)
+IS       输入简化分支改造     IS.1(golden) → IS.1b(修正比较) … IS.0(合入 main) → IS.2 → IS.2b → IS.3 → IS.4(JD) → IS.5(合并到 main，需用户批准)
 Phase 4  ConfFlow chain 路径  C4.1 → J4.1 → C4.2 → C4.3 → C4.4
 Phase 5  calc/CLI/core 清理   D11 → C5.1(差异报告，需用户确认) → C5.2 → C5.3 → C5.4 → C5.5 → C5.6 → C5.7 → C5.8
 逻辑尾部                       L1 (CF pairing 常量) ， L2 (JD token)
@@ -758,6 +758,21 @@ IS 分支上没有 `docs/refactor/`。各卡如需工具，从 `$TOOLS` 运行�
 - 验收命令：`cd $CFIS && python3 docs/refactor/paths_equivalence/run_equivalence.py --check`（重跑并与 `result.json` 逐字节比较）。
   期望：可重复。`LEGACY_DEGENERATE` 不阻塞，但验收方要逐个核对去重证明。**只要有一个 `NOT_EQUIVALENT`，验收结论就是"升级"，IS.2 不得开始。**
 - 提交信息模板：`test(confgen): record legacy-vs-v3 paths equivalence golden` + 通用尾部。
+
+### IS.1b — 修正 IS.1 的比较方法并补充含氢用例（IS.1 验收后新增）
+
+- ID：IS.1b ／ 仓库：ConfFlow ／ 分支：`implementation/input-simplification` ／ 前置：IS.1（提交 9340601）、用户对 IS.1 报告的答复
+- 目标：IS.1 的 `LEGACY_DEGENERATE` 比较沿用了 PLAN 的"不做叠合"，这是方案本身的错误：绕含末端原子的键旋转，在没有氢的夹具（`_butane`）上只是整个分子的刚体转动，是同一个构象，却被判成不同。同时补充含氢（甲基）的用例，那才是末端端点的真实科学场景。
+- 类型：`baseline`
+- 允许修改的文件：`docs/refactor/paths_equivalence/run_equivalence.py`、`cases.json`、`result.json`、`README.md`（只改本目录下已有文件，不碰其他）
+- 具体步骤：
+  1. 比较改为叠合不变：两个结构的原子顺序相同，用 `confflow.science.cluster.kabsch_rmsd`（不含镜像）计算，阈值 1e-6 Å。集合去重、集合相等都使用这个度量。EQUIVALENT 判定里"逐原子最大偏差"保持不变（它比较的是 legacy 与 v3 在同一坐标系中的输出，两边都不涉及绕末端轴的转动）。
+  2. 新增标记 `BOTH_REJECT`：legacy 与 v3 都以非 COMPLETED 结束，只是失败原因不同（例如 legacy 因预几何上限拒绝，v3 因末端端点拒绝）。记录两边各自的原因，不再记为 NOT_EQUIVALENT。
+  3. 新增标记 `V3_EMPTY_DEGENERATE`：legacy 产出结构，v3（或对照声明）COMPLETED 但发布 0 个结构，且输入链的所有原子共线（任意三个原子构成的叉积范数 < 1e-9）。记录共线判定的数据。
+  4. 新增含氢用例（`extra_methyl_*`，使用 RDKit 或手写坐标构造带氢的丁烷/丙烷，保持确定性）：(a) 端点是甲基碳，move 到另一端，angles=[0,120,240]；(b) 同上用 bare 声明；(c) 内部键、两端都是非末端原子的对照路径（应当 EQUIVALENT）。对 (a)(b)，叠合不变的比较若 legacy 集合大于对照集合，标记 `LEGACY_ONLY_TERMINAL_ROTOR`，并记录两边的集合大小——这是用户已接受的"v3 拒绝末端原子端点"的真实后果，不判为失败，但要如实量化。
+  5. 其余规则不变：结果必须可重复（`--check` 连续两次逐字节相同）。
+- 禁止事项：G1–G10；不得改 `confflow/`、`tests/`。
+- 提交标题：`test(confgen): compare terminal-endpoint paths up to rigid motion and add methyl cases`
 
 ### IS.0 — 把 Phase 1–3 后的 main 合入 IS 分支
 
