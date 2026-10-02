@@ -218,3 +218,21 @@
 - 验收方复核（把执行方未提交的 diff 应用到独立 JD 工作树 df25678 之上）：源码改动与卡片逐条一致；ruff / format / mypy ok；全量 2411 项，2404 passed / 0 failed / 7 skipped；collect 清单与 J2.1a 之后逐项相同（14 个测试的 nodeid 不变，没有删除、没有新增）；没有新增 skip/xfail；两个 `TestRemoteErrorSanitization` 测试保留，检查范围由 `diagnostics` 的 message 扩大为 `str(exc)` 加 `diagnostic.message`，同一组 CANARIES；合同解析失败经 `_spawn(on_error=deliver_error)` 进入 `_on_contract_failed`，提交在状态不是 `ready` 时仍被禁用（presenter L817、L977）。
 - 观察（记录，不阻塞）：解析失败时 presenter 只把状态改为 `unavailable`，上一台服务器已采纳的 V4 合同与字段模型仍留在内存里供卡片编辑器显示，提交被状态拦住。之前的降级路径会把它换成 fallback。这是预期内的行为变化的一部分，但切换到一台坏服务器后界面上仍显示上一台的字段，J2.4 或 PLAN-2 可以考虑清空。
 - 处理：PLAN 与 handoff/J2.1b.md 的 grep 范围已更正为 `remote_v4.py` 与 `gui/`；让同一执行方按现状提交。
+
+## 2026-10-02 IS.1b — 通过（IS.1 的升级随之解除）
+
+- 仓库/分支/提交：ConfFlow `implementation/input-simplification` e21277d（父 9340601）；执行者：外部模型
+- 类型：baseline；白名单检查：ok（只改 `docs/refactor/paths_equivalence/` 下已有的 README / cases / result / run_equivalence，新增 `fixtures_h.json`、`make_fixtures_h.py`）；未触碰 `confflow/`、`tests/`
+- 静态与可重复性（验收方重跑）：ruff / black ok；`--check` 连续两次逐字节相同
+- 工具自检（执行方记录，验收方复核方法）：SC1 刚体旋转 RMSD 1.3e-15；SC2 镜像 1.231；SC3 二面角 60° 0.578；阈值 1e-5；`proper_rotation_rmsd` 包装 `confflow.science.cluster.kabsch_rmsd`，验收方读过源码，带行列式修正（`cluster.py:27-42`）
+- 验收方独立复核（不使用执行方的比较代码，直接调用 `ConfgenExecutor`，阈值 1e-5，`kabsch_rmsd`）：n-丁烷（1→4）、1-丙醇（O4→C1）、丙胺（N4→C1），angles=[0,120,240]：
+  - legacy 与 v3 都 COMPLETED，各 27 个结构，旋转去重后 27 个互不相同；
+  - 两个集合互相完全覆盖；
+  - v3 确实走 v3 路径（产出 `ensemble_report.json`，legacy 产出 `confgen_report.json`），消息为 "published 27 leaf structures (27 raw targets)"；
+  - 反向对照（v3 换成角度 [0,90,180]）不会覆盖 legacy 的结构，说明比较有区分能力。
+- 含氢结果：9 个用例全部 EQUIVALENT；`LEGACY_ONLY_TERMINAL_ROTOR` = 0（达到用户的期望值），`symmetry_aware_legacy_only` = 0；`BOTH_REJECT` 0、`V3_EMPTY_DEGENERATE` 0（含氢用例中没有出现）
+- 关键发现（纠正验收方此前的预测）：带氢分子上 v3 **不会**拒绝末端端点声明。C–H 键提供了可测的二面角框架，"no measurable dihedral frame" 只出现在没有任何取代基的末端（如无氢夹具）。因此用户此前接受的"v3 拒绝末端原子端点"在含氢真实分子上并没有造成构象损失。
+- 已知局限（不阻塞，不计入结论）：
+  - 无氢回归部分（`no_hydrogen_regression`，EQUIVALENT 5 / NOT_EQUIVALENT 14 / OUT_OF_SCOPE 9）没有再走对照声明流程，14 个 "NOT_EQUIVALENT" 实为 "v3 拒绝，发布 0 个结构"，信息量低于 IS.1 的原判。按 G11 这些夹具不能用于结论，所以未要求返工。
+  - 尚未覆盖"末端重原子上没有任何取代基"的真实场景（C–F、C–Cl、C=O 的 O、腈基的 N）：v3 对此类端点仍会以 "no measurable dihedral frame" 拒绝，legacy 则会产生刚体转动的重复结构。IS.2b 的诊断（指明具体的键）仍然有用。PLAN-2 可以补一个含此类端基的含氢用例。
+- 结论：通过。IS.2 的前置条件之一（含氢用例无 NOT_EQUIVALENT，`LEGACY_ONLY_TERMINAL_ROTOR` 为 0）已满足；其他前置条件（IS.0，即 Phase 3 完成并合并到 main）仍待满足。
