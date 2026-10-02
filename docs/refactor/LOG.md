@@ -359,3 +359,10 @@
 
 ## 2026-10-03 C5.2b 补丁已备
 - 用户确认旧 results.db 不需保存、不需 README；已生成的导出文件原样保留。C5.2b 排入侧分支。补丁在 C5.2（4101 passed/collect 4113）与 C5.3a 之上（4108/4120）均实测通过，golden ok，被删 17 项。
+
+## C3.4 验收通过；Phase 3 完成；refactor/diet 合入主分支（2026-10-03）
+- C3.4：CF refactor/diet baeb451，与补丁字节一致；4481 passed / 12 skipped；release workflow 测试通过。
+- 用户授权验收方自行合并（"你直接合并就行，你自己决定怎样合并分支"）。合并方式：独立工作树（不动用户检出的 research/realization-handoff 与 implementation/input-simplification），`--no-ff`，只更新本地 main / master，**未推送 main/master**（遵守"main/master 一律不推"）。
+- CF main d5a40ae → 8291fb9（合并 refactor/diet baeb451）；JD master 9beeaf2 → 2f11b49（合并 refactor/diet edb068a）。两个合并结果的树与 refactor/diet 完全相同。
+- 合并后复验：CF 4481 passed / 12 skipped；JD（绑定合并后的 CF）2303 passed / 7 skipped。
+- 合并工作树：/opt/cf-worktrees/merge-cf（main）、/opt/cf-worktrees/merge-jd（master）。
