@@ -1,0 +1,9 @@
+tests/v4/test_p0_boundary.py::TestBoundaryIdentity::test_capability_identity_is_display_inert
+tests/v4/test_p0_boundary.py::TestBoundaryIdentity::test_semantic_identity_components
+tests/v4/test_p0_boundary.py::TestCompatibility::test_build_change_is_revalidation_not_unsupported
+tests/v4/test_p0_boundary.py::TestCompatibility::test_display_only_change_is_not_incompatible
+tests/v4/test_p0_boundary.py::TestCompatibility::test_missing_capability_is_unsupported
+tests/v4/test_p0_boundary.py::TestCompatibility::test_semantic_version_mismatch_is_unsupported
+tests/v4/test_p0_boundary.py::TestCompatibility::test_unsupported_beats_revalidation
+tests/v4/test_p0_boundary.py::TestFixtureFreshness::test_fixture_is_current[compatibility_cases.json]
+tests/v4/test_p0_boundary.py::TestPublishedSchemas::test_wire_examples_conform_to_schemas

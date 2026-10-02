@@ -179,3 +179,11 @@ python3 $TOOLS/golden_check.py --base $BASE --cf <对应 CF 提交的工作树> 
 ```
 
 非 git 位置的改动（D11）同样记录前后文件的 sha256。
+
+
+## 附：删除类卡片的两项附加检查（2026-10-02 起，用户要求）
+
+1. **被删模块必须 ModuleNotFoundError，且包解析到被测工作树：** 
+   `python3 docs/refactor/tools-acc/deleted_modules_check.py cf --tree <CF 工作树> <被删模块…>`（CF，自动屏蔽可编辑安装钩子）；
+   `python3 docs/refactor/tools-acc/deleted_modules_check.py jd --tree <JD 工作树> <被删模块…>`（JD，`PYTHONPATH=<树>/src`）。退出码 0 才算通过。JD 全量测试经 `run_jd_tests.sh` 运行，其 `PYTHONPATH=$JD_DIR/src`，`jobdesk_v2` 解析到被测 JD 树（验收方已实测 accjd）。
+2. **CF 全量测试一律用 `tools-acc/run_sharded.py`**（它设置 `PYTHONPATH=noeditable:<树>`），不得直接 pytest。

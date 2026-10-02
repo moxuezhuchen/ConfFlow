@@ -309,3 +309,8 @@
 - 验收人独立：两提交 diff 与 handoff/J3.1-presenter.patch、J3.2-src-tests.patch 字节一致；ruff/format/mypy 通过；全量 JD 2306 passed / 7 skipped；startup_smoke ok。
 - 附：发现验收工具盲区（venv 可编辑安装钩子会从 /opt/ConfFlow 找回被删模块），已加 tools-acc/noeditable 并让 run_sharded.py 默认使用；对已验收的 CF refactor/diet b8e85a3 重跑 4490 passed / 0 failed，此前验收结论不变。
 - 用户授权推送（"下轮一起推送"）：JD refactor/diet。
+
+## 2026-10-02 用户决定与验收工具补充
+- export：用户同意作为 C5.2 之后的独立 delete 卡（C5.2b）处理，前提：JD 不依赖 `confflow export`（验收方已 grep 确认：JD 的 export 仅为工作流 YAML 导出，无 results.db 依赖）；V4 结果出口为 run_result_manifest（JD parse_result_bytes）；用户确认没有需保留的旧 results.db 后才执行。
+- 验收工具：新增 tools-acc/deleted_modules_check.py；JD 测试经 run_jd_tests.sh 的 PYTHONPATH 解析到被测 JD 树（已实测）；删除类卡片附加检查写入 ACCEPTANCE。对已验收的 J2.4/J3.2（accjd@1ca4052）补查：被删模块全部 ModuleNotFoundError。
+- C3.1/C3.2 已备补丁（验收方原型）；C3.2 实测路径差异与计划一致，jd_contract_key 不变；已知并行分片下 test_cancel_trap 偶发失败（单独运行稳定）。

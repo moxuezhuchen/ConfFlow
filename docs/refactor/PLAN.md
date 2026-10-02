@@ -677,43 +677,29 @@ JD contract_key、CF 的 contract/boundary 字节在本阶段都必须不变。
 
 ### C3.1 — re-pin 到 J3.2
 
-- ID：C3.1 ／ 仓库：ConfFlow ／ 分支：`refactor/diet` ／ 前置：C1.4、J3.2
-- 目标：CF 跨仓测试改为针对 J3.2 的 JD 提交。
-- 类型：`ci`
-- 允许修改的文件：`tests/v4/jobdesk_integration.py`（L52）、`.github/workflows/jobdesk-contract.yml`（`JOBDESK_COMPAT_SHA`）
-- 具体步骤：把两处 40 位 SHA 改为 J3.2 的提交 SHA（`git -C $JD rev-parse HEAD`）；把 `jobdesk_integration.py:49-51` 注释中的出处说明改为"refactor/diet J3.2"。然后执行 `git -C $JDPIN checkout --detach <J3.2 SHA>`。
-- 禁止事项：G1–G9。
-- 验收命令：标准验收（`JOBDESK_V2_SRC=$JDPIN/src`）；`python3 -m pytest -q -o addopts="" -m cross_repo` 全部通过；`tests/test_release_workflow.py` 通过（它校验两处 pin 一致）。期望：Removed-Tests 0；golden 不变。
-- 提交信息模板：`chore(cross-repo): pin JobDesk-v2 to <short sha> (J3.2)` + 通用尾部。
+- ID：C3.1 ／ 仓库：ConfFlow ／ 分支：`refactor/diet` ／ 前置：C1.4、J3.2（JD 提交 1ca4052a7715421f70fcb40889aec482a35d9d6b）
+- 类型：`ci`。做法：应用 `handoff/C3.1-pin.patch`（2 个文件）。
+- 内容：`tests/v4/jobdesk_integration.py` 与 `.github/workflows/jobdesk-contract.yml` 的 40 位 SHA 改为 J3.2；`jobdesk_integration.py` 里 `ContractParseError` 的 import 改自 `contract.errors`（J2.1b 起它不再在 `contract.parse`，J2.4 删除了 `parse`）。执行后 `git -C /opt/cf-worktrees/jd-pin checkout --detach 1ca4052a7715421f70fcb40889aec482a35d9d6b`（验收方已执行）。
+- 验收：标准验收（`JOBDESK_V2_SRC=$JDPIN/src`）；跨仓测试通过；`tests/test_release_workflow.py` 通过。期望 Removed-Tests 0，golden 不变。
+- 提交信息模板：`chore(cross-repo): pin JobDesk-v2 to 1ca4052 (J3.2)` + 通用尾部。
 
 ### C3.2 — producer 删除无读取方的边界成员与摘要
 
 - ID：C3.2 ／ 仓库：ConfFlow ／ 分支：`refactor/diet` ／ 前置：C3.1
-- 目标：删除只写不读的边界 schema、身份和摘要字段。
-- 类型：`delete`
-- 允许修改的文件：
-  - `confflow/producer/boundary.py`、`confflow/producer/authoring.py`、`confflow/producer/contract.py`、`confflow/producer/run_result.py`、`confflow/producer/__init__.py`
-  - `scripts/generate_p0_boundary_fixtures.py`
-  - `docs/internal/fixtures/p0_boundary/*`（重新生成；删除 `compatibility_cases.json`）
-  - `tests/v4/test_p0_boundary.py`、`tests/v4/test_p0_pr1_authoring.py`、`tests/v4/test_v46_producer_contract.py`（只删除守护被删项的测试或断言，逐条声明）
-  - `docs/refactor/baseline/checkpoints/C3.2/*`（新增）
-- 具体步骤（@d5a40ae 行号；C1.4 后 `contract.py` 行号整体前移约 12 行，按符号定位）：
-  1. `boundary.py` 删除：`compatibility_matrix`（L363-397）、`compare_identities`（L399-413）、`evaluate_compatibility`（L415-561）、`validation_receipt_schema`（L563-626）、`prepared_run_manifest_schema`（L628-709）、`identity_relationships`（L791-841）、`wire_examples`（L862-942）、`capability_identity`（L294-328）；常量 `PREPARED_RUN_MANIFEST_SCHEMA`（L77）、`VALIDATION_RECEIPT_SCHEMA`（L80）；以上在 `__all__`（L36-62）中的条目。`boundary_section`（L944-987）删除 `capability_identity` 成员和 `schemas` 中的 `prepared_run_manifest`、`validation_receipt`；`boundary_document`（L990-1034）删除 `capability_identity`、`compatibility.matrix`、`identity_relationships`、两个 schema、`wire_examples`。`boundary_section`/`boundary_document` 的签名中只为 `capability_identity` 服务的参数删除，调用方（`contract.py` 中 `envelope["boundary"] = boundary_section(…)`、`build_boundary_document`）同步删除对应实参。
-  2. `authoring.py`：删除 `_capability_identity_cached` / `_capability_identity`（L144-156）以及回答中的 `"capability_identity"` 键（L253、L528、L820/L894 处的 `identity`），并删除 `authoring_protocol_schema()` 响应 schema 中对应的属性和 required 项。
-  3. `contract.py`：删除 `_resources_section` 中 4 个 `"digest_axis"` 键（@d5a40ae L256、L265、L274、L283）；删除 result schema 中的 `"result_digest"` 属性（L443）和 docstring 中的提及（L427）。
-  4. `run_result.py`：删除 L222-234 中计算 `result_digest` 的代码块（`identity_digests` 变量只为它服务）。
-  5. `scripts/generate_p0_boundary_fixtures.py`：删除 `COMPATIBILITY_CASES_SCHEMA`（L43）、`build_compatibility_cases_fixture`（L254-283）、`emit("compatibility_cases.json", …)`（L324），以及 `evaluate_compatibility` 的 import。运行 `python3 scripts/generate_p0_boundary_fixtures.py` 重新生成 `docs/internal/fixtures/p0_boundary/`，再 `git rm` 其中的 `compatibility_cases.json`。
-  6. 测试：删除 `tests/v4/test_p0_boundary.py` 中的 `TestCompatibility` 整类（L189-252）、`TestBoundaryIdentity::test_capability_identity_is_display_inert`（L132-157）、`TestPublishedSchemas::test_wire_examples_conform_to_schemas`（L254-277），并从 `TestFixtureFreshness` 的参数列表中删除 `"compatibility_cases.json"`（L313-317）；其余命中由 `git grep -n "capability_identity\|evaluate_compatibility\|compare_identities\|wire_examples\|identity_relationships\|validation_receipt\|prepared_run_manifest\|digest_axis\|result_digest" -- tests` 找出，逐条处理并声明。
-  7. 删除 `semantic_identity`（Q7 已确认）：`boundary.py` 中的 `semantic_identity()`（L330-347）、`_SEMANTIC_CONTRACT_COMPONENTS`（L112 起，若再无使用方）、`boundary_section` / `boundary_document` 中的 `semantic_identity` 成员、`__all__` 条目，以及 `boundary_section` 中只为它服务的 `result_schema_sha256` 参数和调用方实参。
-  8. 写检查点：`python3 $TOOLS/contract_digests.py --cf $CF --jd-src $JDPIN/src --out docs/refactor/baseline/checkpoints/C3.2/contract.json`。
-- 禁止事项：G1–G9；不得改动 `compatibility_vocabulary`、`canonicalization_document`、`jcs_vectors`、`authoring_protocol_schema` 的请求部分、`diagnostic_envelope`；不得改 `BOUNDARY_PROTOCOL_VERSION`（Q6）。
-- 验收命令：标准验收（golden 中 TS1 与 engine 报告对 B0.1，contract 部分对 checkpoint），另加
-  ```bash
-  python3 $TOOLS/json_paths_diff.py $BASE/contract.full.json  $CF/docs/refactor/baseline/checkpoints/C3.2/contract.full.json
-  python3 $TOOLS/json_paths_diff.py $BASE/boundary.full.json  $CF/docs/refactor/baseline/checkpoints/C3.2/boundary.full.json
-  ```
-  期望：删除路径恰好是步骤 1–7 声明的成员；"修改"路径只能是派生摘要（`contract_digest`、`result_schema_sha256`、`boundary/schemas/*/sha256`、`capability`/`semantic` 之外的 digest 不得变化）；没有新增路径。跨仓测试（`$JDPIN` = J3.2）全部通过。
-- 提交信息模板：`refactor(producer)!: delete unread boundary identities, schemas and digests` + 通用尾部（Behavior-Change：列出被删的 wire 成员）。提交说明正文必须包含这一句（Q6）：`服务器 ConfFlow 与 JD 必须同步升级：旧 JD 要求 boundary.capability_identity / semantic_identity，会拒绝本提交之后的 producer；BOUNDARY_PROTOCOL_VERSION 不变。`
+- 类型：`delete`（wire 内容变化）。做法：应用 `handoff/C3.2-src-tests.patch`（12 个文件），不重新设计。验收方已在其上跑通全量测试与 golden，并核对 contract/boundary 的路径差异。
+- 内容：`boundary.py` 删除 `capability_identity`、`semantic_identity`、`compatibility_matrix`、`compare_identities`、`evaluate_compatibility`、`validation_receipt_schema`、`prepared_run_manifest_schema`、`identity_relationships`、`wire_examples` 及相关常量；`boundary_section()`/`boundary_document()` 不再带参数；`authoring.py` 的响应不再带 `capability_identity`；`contract.py` 删除 `digest_axis` 与 `result_digest` schema 属性；`run_result.py` 不再写每步 `result_digest`；`generate_p0_boundary_fixtures.py` 与 `docs/internal/fixtures/p0_boundary/` 重新生成并删除 `compatibility_cases.json`；`tests/v4/test_p0_boundary.py`、`test_p0_pr1_authoring.py` 删除对应测试/断言；新增检查点 `docs/refactor/baseline/checkpoints/C3.2/`。
+- 被删测试：`handoff/C3.2-removed-tests.txt` 的 9 项；新增 0 项。
+- 路径差异（验收方实测，期望完全一致）：contract 删除 9 条（`/boundary/capability_identity`、`/boundary/semantic_identity`、两个 schema 摘要、四个 `digest_axis`、`result_digest` 属性），修改 3 条（`/boundary/schemas/authoring_response/sha256`、`/contract_digest`、`/result_schema_sha256`）；boundary 删除 9 条、修改 2 条（`required` 下标移位）；`jd_contract_key` 不变。
+- 禁止事项：G1–G9；不得手改补丁；不得改 `BOUNDARY_PROTOCOL_VERSION`（Q6）。
+- 自检期望：全量 `{"passed": 4481, "skipped": 12}`，collect 4493（4502−9）；`golden_check.py --checkpoint` ok；contract 与 boundary 的 `json_paths_diff` 与上面一致；ruff/mypy 通过；**用 `tools-acc/noeditable` 的 run_sharded.py**。注意 `tests/v4/test_v44_worker.py::TestCancellation::test_cancel_trap_yields_cancelled_without_rescue` 在并行分片下偶发超时（与本卡无关，单独运行稳定通过）；若只有它失败，单独重跑三次，三次都过则记入报告，不算失败。
+- 提交信息模板：`refactor(producer)!: delete unread boundary identities, schemas and digests` + 通用尾部；正文必须包含：`服务器 ConfFlow 与 JD 必须同步升级：旧 JD 要求 boundary.capability_identity / semantic_identity，会拒绝本提交之后的 producer；BOUNDARY_PROTOCOL_VERSION 不变。`
+
+### C5.2b — 删除 `confflow export`（独立 delete 卡，待用户确认后执行）
+
+- ID：C5.2b ／ 仓库：ConfFlow ／ 前置：C5.2 合入；**用户确认没有需要保留的旧 `results.db`**
+- 范围：`workflow/export.py`、`cli.py` 的 export 子命令及 import、`tests/results_db_fixture.py` 及对应测试（`test_export.py`、`test_provenance_metadata.py` 中依赖 `ResultsDB` 的部分）、`docs/COMMAND_REFERENCE.md` 相关章节。
+- 已核实（验收方）：JD 源码、测试、脚本、README 中没有对 `confflow export` 或 `results.db` 的依赖（JD 的 "export" 只是工作流 YAML 导出）；V4 的结果出口是 `confflow v4 run` 产出的 `confflow.run_result_manifest.v1`，由 JD 的 `parse_result_bytes` 读取；V4 没有 `export` 子命令。
+- 做法：和 C5.2 一样，验收方先在侧分支做补丁，执行模型应用。
 
 ### C3.3 — 在 contract 中标注 ConfGen 溯源字段
 
