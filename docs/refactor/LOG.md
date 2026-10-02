@@ -236,3 +236,10 @@
   - 无氢回归部分（`no_hydrogen_regression`，EQUIVALENT 5 / NOT_EQUIVALENT 14 / OUT_OF_SCOPE 9）没有再走对照声明流程，14 个 "NOT_EQUIVALENT" 实为 "v3 拒绝，发布 0 个结构"，信息量低于 IS.1 的原判。按 G11 这些夹具不能用于结论，所以未要求返工。
   - 尚未覆盖"末端重原子上没有任何取代基"的真实场景（C–F、C–Cl、C=O 的 O、腈基的 N）：v3 对此类端点仍会以 "no measurable dihedral frame" 拒绝，legacy 则会产生刚体转动的重复结构。IS.2b 的诊断（指明具体的键）仍然有用。PLAN-2 可以补一个含此类端基的含氢用例。
 - 结论：通过。IS.2 的前置条件之一（含氢用例无 NOT_EQUIVALENT，`LEGACY_ONLY_TERMINAL_ROTOR` 为 0）已满足；其他前置条件（IS.0，即 Phase 3 完成并合并到 main）仍待满足。
+
+## 2026-10-02 J2.1b — 通过
+
+- 仓库/分支/提交：JobDesk-v2 `refactor/diet` 4c5f6ec（父 df25678）；执行者：外部模型
+- 验收：已提交的 diff 与验收方在停止期间已验证的未提交补丁逐字节相同（忽略 index 行）。该补丁的验证结果直接适用：ruff / format / mypy ok；全量 2411 项，2404 passed / 0 failed / 7 skipped；collect 清单与 J2.1a 之后逐项相同；14 个测试 nodeid 不变；无 skip/xfail；两个脱敏测试检查范围扩大；更正后的 grep（`remote_v4.py`、`gui/`）无输出
+- 远端：`origin/refactor/diet` 仍为 5847bc7（未推送）
+- 结论：通过。
