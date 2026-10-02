@@ -47,9 +47,9 @@ JOBDESK_SRC_ENV = "JOBDESK_V2_SRC"
 DEFAULT_JOBDESK_SRC = Path("/opt/jobdesk-v2-v4/src")
 
 #: Pinned JobDesk revision the cross-repo evidence was produced against.
-#: Tracks the frozen JobDesk SCIENTIFIC-RELIABILITY re-vendor head (P0
-#: boundary fixtures regenerated from the scientific-reliability remediation).
-EXPECTED_JOBDESK_SHA = "9beeaf2fc52932dbf9ca183898f1aa92c4366d97"
+#: Tracks JobDesk-v2 ``refactor/diet`` at J3.2 (stops requiring the producer's
+#: capability/semantic identity members).
+EXPECTED_JOBDESK_SHA = "1ca4052a7715421f70fcb40889aec482a35d9d6b"
 
 #: Explicit escape hatch for development against a different checkout.
 ALLOW_ANY_SHA_ENV = "JOBDESK_V2_ALLOW_ANY_SHA"
@@ -198,7 +198,7 @@ def load_jobdesk() -> JobDeskIntegration:
         sys.path.insert(0, src_text)
     _purge_conflicting_jobdesk_modules(src)
     from jobdesk_v2.application.cards.v4_provider import author_v4_document
-    from jobdesk_v2.application.editor.contract.parse import ContractParseError
+    from jobdesk_v2.application.editor.contract.errors import ContractParseError
     from jobdesk_v2.application.editor.contract.v4 import parse_v4_contract_bytes
     from jobdesk_v2.application.runs.v4_results import parse_result_bytes
 
