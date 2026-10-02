@@ -55,7 +55,7 @@ J0       JD 兼容修复          J0a → J0b
 Phase 0  基线冻结            B0.1 → B0.2(工具修复)
 Phase 1  ConfFlow 外围删除    C1.1 → C1.2 → C1.3 → C1.4
 J1       JD 删除 evaluate_compatibility
-Phase 2  JD 删除 V1/V2        J2.1 → J2.2 → J2.3 → J2.4   (J2.5 可选，需用户确认)
+Phase 2  JD 删除 V1/V2        J2.1a → J2.1b → J2.2 → J2.3 → J2.4   (J2.5 可选，需用户确认)
 Phase 3  边界瘦身（两仓成对） J3.1 → J3.2 → C3.1 → C3.2 → C3.3 → J3.3 → C3.4
 IS       输入简化分支改造     IS.1(golden) … IS.0(合入 main) → IS.2 → IS.2b → IS.3 → IS.4(JD) → IS.5(合并到 main，需用户批准)
 Phase 4  ConfFlow chain 路径  C4.1 → J4.1 → C4.2 → C4.3 → C4.4
@@ -68,7 +68,7 @@ Phase 5  calc/CLI/core 清理   D11 → C5.1(差异报告，需用户确认) →
 ```
 J0a ─> J0b ─> B0.1 ──┬──> C1.1 ─> C1.2 ─> C1.3 ─> C1.4 ──────────────┐
        │                                               │
-       ├──> J1 ─> J2.1 ─> J2.2 ─> J2.3 ─> J2.4 ────────┤
+       ├──> J1 ─> J2.1a ─> J2.1b ─> J2.2 ─> J2.3 ─> J2.4 ────────┤
        │                                               v
        │                     J3.1 ─> J3.2 ─> C3.1 ─> C3.2 ─> C3.3 ─> J3.3 ─> C3.4
        │                                                                      │
@@ -503,38 +503,73 @@ J0 的提交在 JD 的 `refactor/diet` 分支上（从 9beeaf2 建立，见 §2.
 Phase 2 的目标状态：JD 只认 V4 contract；没有 V1/V2 解析、没有内置 fallback 快照、没有 file mode。
 JD contract_key、CF 的 contract/boundary 字节在本阶段都必须不变。
 
-### J2.1 — 运行时不再依赖内置 fallback 快照
+### J2.1a — 会话默认值改为"无合同"，启动不再借用 fallback 快照
 
-- ID：J2.1 ／ 仓库：JobDesk-v2 ／ 分支：`refactor/diet` ／ 前置：J1
-- 目标：让 remote 模式在没有 V1/V2 fallback 的情况下运行：未选服务器时是"无合同"状态，非 V4 服务器报"不可用"，V4 编辑合同不再借用会话中的 fallback recipe catalog。
+- ID：J2.1a ／ 仓库：JobDesk-v2 ／ 分支：`refactor/diet` ／ 前置：J1（已验收，fe85b0d）
+- 目标：`WorkflowEditorService()` 和 remote 模式的启动会话不再使用内置的 V1/V2 快照，而是空的"无合同"。
 - 类型：`logic`
 - 允许修改的文件：
+  - `src/jobdesk_v2/application/editor/contract/models.py`
   - `src/jobdesk_v2/application/editor/service.py`
-  - `src/jobdesk_v2/application/editor/contract/remote_v4.py`
-  - `src/jobdesk_v2/application/editor/contract/models.py`（只允许新增"无合同"类型）
   - `src/jobdesk_v2/gui/app.py`
+  - `tests/application/test_service.py`（只允许新增 2 个测试）
+- 具体步骤（@fe85b0d；写方案时已在临时副本上原型验证：改动后全量 JD 测试 2402 passed、0 failed，即不需要修改任何已有测试）：
+  1. `models.py`：新增 `@dataclass(frozen=True, slots=True) class NoContract`，满足 `ContractLike`：`editor_manifest` 为空的 `EditorManifest`（`schema="confflow.editor-manifest.v1"`、`contract_key=""`、`workflow_schema_version=""`、`fields=()`），`recipe_catalog` 为空的 `RecipeCatalog`（`schema="confflow.recipe-catalog.v1"`、`contract_key=""`、`recipes=()`），`contract_key=""`，`source="none"`，`capabilities=EditorCapabilities(can_edit_fields=False, can_use_recipes=False, blocked_reasons=("No server contract has been resolved yet.",))`，`is_authoritative=False`，`describe_source()` 返回 `"No server contract"`。字段默认值用 `field(default_factory=...)`。`ContractSource` 从 `Literal["producer", "stable-fallback"]` 改为 `Literal["producer", "stable-fallback", "none"]`。在 `__all__` 中导出 `NoContract`。
+  2. `service.py`（约 L28、L181-184）：`from .contract import ContractLike, StableFallbackContractProvider` 改为只 import `ContractLike`，另 `from .contract.models import NoContract`；构造函数里 `contract if contract is not None else StableFallbackContractProvider().resolve()` 改为 `... else NoContract()`。
+  3. `app.py`（约 L560）：`service = WorkflowEditorService(contract=StableFallbackContractProvider().resolve())` 改为 `service = WorkflowEditorService()`。`StableFallbackContractProvider` 在 `app.py` 里仍被 L443 使用（J2.1b 才处理），import 保留。
+  4. `tests/application/test_service.py` 新增 2 个测试：(a) `WorkflowEditorService()` 默认的 `contract` 不是 authoritative、`manifest.fields` 为空、`catalog.recipes` 为空、`contract_key == ""`；(b) 对该默认会话 `create_blank()` 不抛异常。
+- 禁止事项：G1–G10；不得修改任何已有测试；不得改 `StableFallbackContractProvider` 及其他 V1/V2 代码。
+- 预期行为变化：(a) 远程模式下，选择服务器之前，编辑区没有字段和配方；(b) `WorkflowEditorService()` 不带参数时不再使用内置快照。
+- 验收命令：JD 标准验收（`run_jd_tests.sh --cf <只读 CF 参考树> --jd <JD 树>`）。期望：2409 + 2 = 2411 项，2404 passed、7 skipped、0 failed；`contract_key` 与基线相同。
+- 提交信息模板：`feat(editor): start sessions without the bundled V1/V2 snapshot` + 通用尾部。
+
+### J2.1b — 非 V4 服务器报"不可用"，V4 会话不再借用会话的配方目录
+
+- ID：J2.1b ／ 仓库：JobDesk-v2 ／ 分支：`refactor/diet` ／ 前置：J2.1a
+- 目标：用户确认的行为变化 (b)：读不到 V4 合同的服务器显示"不可用"，不再退回到只读 fallback。同时保留原来显示给用户的具体原因，不泄露远端文本。
+- 类型：`logic`
+- 允许修改的文件：
+  - `src/jobdesk_v2/application/editor/contract/remote_v4.py`
   - `src/jobdesk_v2/gui/new_run/presenter.py`
-  - `tests/gui/test_new_run_remote.py`、`tests/gui/test_new_run_v4_contract.py`、`tests/gui/test_contract_integration.py`、`tests/application/test_service.py`（只允许修改/删除断言 fallback 行为的测试，逐条声明）
-- 具体步骤（@9beeaf2）：
-  1. `models.py`：新增 `NoContract`（实现 `ContractLike` 协议，`models.py:359-395`）：空 `EditorManifest`、空 `RecipeCatalog`、`is_authoritative=False`、`describe_source()` 返回"No server contract"、`contract_key=""`。
-  2. `service.py:181-184`：`contract=None` 时使用 `NoContract()`，不再调用 `StableFallbackContractProvider().resolve()`。
-  3. `app.py:557-560`：remote 模式起始服务为 `WorkflowEditorService()`（即 `NoContract`）。file mode 分支暂时保留，J2.4 删除。
-  4. `remote_v4.py`：`V4ProducerContractProvider.resolve/_fetch`（L263-400）在服务器不支持 V4 或获取失败时，不再 `_degrade` 到 fallback，而是抛出 `ContractParseError`（使用现有诊断码，不新增诊断码），由 presenter 现有的 `_on_contract_failed`（`presenter.py:760-770`）进入 `unavailable` 状态。`_degrade` 与 `fallback`/`fallback_artifacts` 参数在 J2.4 删除。
-  5. `presenter.py:703`：`v4_editor_contract(v4, recipe_catalog=…)` 改为传入空 `RecipeCatalog`。
-     **Q8(c) 核实结果（写方案时，@9beeaf2）**：V4 会话的配方已经由卡片编辑器的 producer provider 提供，会话 catalog 在 V4 下不可见：
-     - V4 contract 生效时，页面安装 `V4ProducerAuthoringProvider`，能力面板渲染的是它的 recipe catalog（`gui/new_run/page.py:242-262`）；
-     - 该 provider 直接读 V4 contract 的 `recipe_catalog["recipes"]`（`application/cards/v4_provider.py:128`、`:139`）；
-     - 会话的 recipe 选择器在 V4 下被禁用，`create_from_recipe` 被拒绝，由现有测试 `tests/gui/test_new_run_v4_contract.py::test_the_legacy_recipe_entry_is_not_active_under_v4`（L180-203）守护。
-     所以传空 catalog 不会让用户失去可见配方。执行时先重新运行这个测试和 `git grep -n "recipe_catalog" -- src/jobdesk_v2/gui src/jobdesk_v2/application/cards`，确认结论仍然成立；不成立就停止（G9）。
-  6. 预期行为变化（写入 `Behavior-Change`；(a)(b) 已获用户确认）：(a) 选服务器前编辑区没有字段和配方；(b) 非 V4 服务器的状态从 `restricted`（只读 fallback）变为 `unavailable`；(c) V4 会话中已禁用的旧配方选择器的数据源变为空（用户可见的 V4 配方不变）。
-- 禁止事项：G1、G4–G9；不得删除任何 V1/V2 代码（J2.4 才删）；不得改变 V4 contract 的解析、contract_key 或提交路径。
-- 验收命令：JD 标准验收；`contract_key` 与基线相同。另外由验收方逐条核对测试改动：每条被修改或删除的测试都必须断言的是上述 (a)(b)(c) 之一。
-  期望：0 failed（J0 之后的基线全绿）。
-- 提交信息模板：`feat(editor)!: run without the V1/V2 fallback snapshot` + 通用尾部（Behavior-Change 逐条列出）。
+  - `src/jobdesk_v2/gui/app.py`
+  - `tests/application/test_contract_remote_v4.py`、`tests/application/test_remote.py`、`tests/application/test_contract_providers.py`（只允许改写下面列出的 14 个测试）
+- 写方案时的原型结果（@fe85b0d 加 J2.1a；全量 JD 测试）：下面 14 个测试失败，其余全部通过（2388 passed）。GUI 测试不受影响。
+  ```
+  test_contract_providers.py::TestProviderProtocol::test_the_remote_provider_refuses_rather_than_pretends
+  test_contract_remote_v4.py::TestProviderDispatch::test_the_fetch_asks_the_v4_command
+  test_contract_remote_v4.py::TestProviderDispatch::test_a_v1_document_fails_closed_to_the_compatibility_fallback
+  test_contract_remote_v4.py::TestProviderDispatch::test_a_v2_document_fails_closed_to_the_compatibility_fallback
+  test_contract_remote_v4.py::TestProviderDispatch::test_a_degraded_answer_is_not_cached_as_a_contract
+  test_contract_remote_v4.py::TestUnknownDocumentFailsClosed::test_an_unknown_schema_is_refused_with_an_explicit_diagnostic
+  test_contract_remote_v4.py::TestUnknownDocumentFailsClosed::test_a_document_with_no_schema_at_all_is_refused
+  test_contract_remote_v4.py::TestUnknownDocumentFailsClosed::test_invalid_json_is_refused
+  test_contract_remote_v4.py::TestUnknownDocumentFailsClosed::test_a_transport_failure_degrades_with_producer_unavailable
+  test_contract_remote_v4.py::TestUnknownDocumentFailsClosed::test_a_failed_command_degrades_with_command_failed
+  test_contract_remote_v4.py::TestCacheAndService::test_the_service_publishes_a_degraded_answer_as_the_restricted_value
+  test_remote.py::TestProductionContractCommand::test_the_provider_asks_config_contract_without_a_version
+  test_remote.py::TestRemoteErrorSanitization::test_transport_text_never_reaches_the_contract_diagnostics
+  test_remote.py::TestRemoteErrorSanitization::test_remote_stderr_never_reaches_the_contract_diagnostics
+  ```
+- 具体步骤（@J2.1a 之后）：
+  1. `remote_v4.py`：在 `V4ContractRefresh` 之前新增 `class ContractUnavailableError(ValueError)`：构造参数 `diagnostic: ContractDiagnostic`，`super().__init__(diagnostic.message)`，保存为 `self.diagnostic`。
+  2. `V4ProducerContractProvider._fetch`（约 L318-380）里所有 `return self._degrade(...)` 改为 `raise ContractUnavailableError(<同一个 ContractDiagnostic>) from exc`（在 `except ... as exc` 里）或不带 `from`（`if not result.succeeded` 分支）。诊断对象（`severity`、`code`、`artifact`）保持不变；其中 message 里的 "The compatibility fallback is in use." 这句话和 `_acquisition_diagnostic` 里 "so only the compatibility fallback is available." 一类提到 fallback 的半句删除，其余文字不变。返回类型改为 `ResolvedContract`，`resolve()` 的返回类型同步。
+  3. 删除 `_degrade` 方法、构造函数的 `fallback` 与 `fallback_artifacts` 参数及其赋值、不再使用的 import（`replace`、`FallbackArtifacts`、`StableFallbackContractProvider`、`ProducerContractProvider` 等，以 ruff 报告为准）。
+  4. `presenter.py`：(i) `_on_contract_failed`（约 L760-770）里把 `ContractUnavailableError` 加入"允许显示 `str(exc)`"的元组（与 `ProducerValidationError`、`EndpointChangedError` 并列）——这些 message 是 JD 自己写的有界句子，不含远端文本；(ii) `_adopt_v4_field_model`（约 L703）里 `recipe_catalog=self._service.catalog` 改为 `NoContract().recipe_catalog`（V4 的配方由卡片编辑器的 producer provider 提供，会话的配方目录在 V4 下本来就不可见。Q8(c) 的核实证据 @9beeaf2：V4 合同生效时页面安装 `V4ProducerAuthoringProvider`，能力面板渲染的是它的 recipe catalog（`gui/new_run/page.py:242-262`）；该 provider 直接读 V4 合同的 `recipe_catalog["recipes"]`（`application/cards/v4_provider.py:128`、`:139`）；会话的 recipe 选择器在 V4 下被禁用，`create_from_recipe` 被拒绝，由现有测试 `tests/gui/test_new_run_v4_contract.py::test_the_legacy_recipe_entry_is_not_active_under_v4` 守护。执行时先重新运行这个测试和 `git grep -n "recipe_catalog" -- src/jobdesk_v2/gui src/jobdesk_v2/application/cards`，确认结论仍然成立，不成立就停止（G9））。需要的 import：`NoContract`（`...application.editor.contract.models`）、`ContractUnavailableError`（`...application.editor.contract.remote_v4`）。
+  5. `app.py`（约 L440-446）：`V4ProducerContractProvider(...)` 调用里删除 `fallback=StableFallbackContractProvider(),` 一行；`StableFallbackContractProvider` 的 import 如果不再被使用就删除。
+  6. 改写上面 14 个测试，原则：**断言的严格程度不得降低**。
+     - 原来断言"返回降级合同，诊断里有 code X / 消息含 Y"的，改成 `pytest.raises(ContractUnavailableError)`，并断言 `exc.value.diagnostic.code == X`、消息仍含 Y。
+     - 原来断言"降级结果不被缓存"的，改成"失败不被缓存，再次调用会重新发起命令"。
+     - 两个 `TestRemoteErrorSanitization` 测试守护的是安全属性（传输层文本、远端 stderr 不得出现在用户可见内容中）：必须保留，改为对异常的 `str(exc)` 和 `exc.diagnostic.message` 断言同样的禁止内容（原来断言的是诊断文本里没有 `secret.example`、`alice`、`id_rsa` 等）；不得删除这两个测试，也不得缩小被检查的文本范围。
+     - `test_the_service_publishes_a_degraded_answer_as_the_restricted_value`：改成断言 `V4ContractService` 遇到不可用时把异常交给调用方（presenter 的 `_on_contract_failed` 路径），不再发布 restricted 值。
+     - 若某个测试在新设计下已没有意义，不要删除，停止并报告。
+- 禁止事项：G1–G10；不得删除任何测试；不得改动上面 14 个以外的测试；诊断的 `code` 和 `severity` 不得变化。
+- 预期行为变化：(a) 读不到 V4 合同的服务器（连不上、没装 ConfFlow、版本太旧、文档不是 V4、文档损坏）现在显示"不可用 · 禁止提交"并给出具体原因，而不是"兼容性回退 · 只读"；(b) V4 会话中已被禁用的旧配方选择器的数据源变为空（用户可见的 V4 配方不变）。
+- 验收命令：JD 标准验收。期望：collect 数与 J2.1a 之后相同（2411）；0 failed、7 skipped；被改写的恰好是上面 14 个测试；`git grep -n "_degrade\|fallback_artifacts" -- src` 无输出。
+- 提交信息模板：`feat(contract)!: report a server without a V4 contract as unavailable` + 通用尾部。
 
 ### J2.2 — 测试基础设施不再经过 V1/V2 解析
 
-- ID：J2.2 ／ 仓库：JobDesk-v2 ／ 分支：`refactor/diet` ／ 前置：J2.1
+- ID：J2.2 ／ 仓库：JobDesk-v2 ／ 分支：`refactor/diet` ／ 前置：J2.1b
 - 目标：`tests/contract_fixtures.authoritative_contract()` 不再调用 `parse_contract_bytes`（V1/V2），改为直接构造一个使用相同 manifest/catalog 文档的 `ContractLike`。
 - 类型：`test-only`
 - 允许修改的文件：`tests/contract_fixtures.py`、`tests/application/conftest.py`、`tests/gui/conftest.py`
@@ -542,7 +577,7 @@ JD contract_key、CF 的 contract/boundary 字节在本阶段都必须不变。
   1. `contract_fixtures.py:65-74`：`authoritative_contract()` 改为读 `tests/fixtures/contract/producer_v2.json` 中的 `editor_manifest` 和 `recipe_catalog` 两段，用 `editor_manifest_from_mapping` / `recipe_catalog_from_mapping`（两者都保留，V4 也在用）构造，再包进一个测试内定义的 `ContractLike` 数据类：`source="producer"`、`is_authoritative=True`，`contract_key` 的计算方式与 `VerifiedEditorContract.contract_key` 相同，用同样的输入。
   2. `application/conftest.py:90-94` 的 `fallback_contract` fixture 保留，到 J2.4 随 fallback 一起删除。
 - 禁止事项：G1–G9；不得修改任何 `test_*.py`；被测代码不得变化。
-- 验收命令：JD 标准验收。期望：collect 数不变；失败集合与 J2.1 相同；`git diff HEAD~1 --stat` 只有允许的 3 个文件。
+- 验收命令：JD 标准验收。期望：collect 数不变；失败集合与 J2.1b 相同；`git diff HEAD~1 --stat` 只有允许的 3 个文件。
 - 提交信息模板：`test(contract): build the authoring fixture contract without the V1/V2 parser` + 通用尾部。
 
 ### J2.3 — 把 V4 仍需要的符号移出 `parse.py`
@@ -984,7 +1019,8 @@ IS 分支上没有 `docs/refactor/`。各卡如需工具，从 `$TOOLS` 运行�
 | J0a / J0b | 中 | J0a 之后的失败集合若与预演的 8 项不同，说明本机环境或 CF 工作树与预演时不同；J0b 改名一个测试（G4 的明示例外），以后与 IS 分支合并时由同一改名吸收。 | `git revert`；B0.1 必须在 J0b 之后重做。 |
 | C1.1 | 中 | GitHub Actions 无法在本地运行，触发器合并错误要到下一次 PR 才会暴露。 | `git revert`；本地以 yaml 解析断言和 `test_release_workflow.py` 兜底。 |
 | C1.4 | 中 | registry 的返回值与冻结值不同会改变 contract 字节。 | contract sha256 必须不变，否则不提交；`git revert`。 |
-| J2.1 | 高 | GUI 行为变化（Q8）；已知失败集合（Q0）可能变化；presenter 状态机进入 `unavailable` 的路径与原 `restricted` 不同。 | 单提交 `git revert`；J2.2–J2.4 依赖它，须按逆序一并回滚。 |
+| J2.1a | 低 | 远程模式下选择服务器之前编辑区为空（用户已确认）。原型验证不需要改任何已有测试。 | `git revert`。 |
+| J2.1b | 高 | GUI 行为变化（用户已确认）；14 个测试需要改写，其中 2 个守护"远端文本不泄露"的安全属性，改写时严格度不得降低；presenter 进入 `unavailable` 的路径与原 `restricted` 不同。 | `git revert`；J2.2–J2.4 依赖它，须按逆序一并回滚。 |
 | J2.4 | 高 | 删除量大，`manifest.py` / `recipes.py` 的快照边界判断失误会误删解析器；34 个使用 `service` fixture 的测试文件依赖 J2.2 的替代 fixture。 | `git revert J2.4`；J2.2 的 fixture 保证测试仍可运行。 |
 | J3.2 / C3.2 | 高 | 删除 boundary 必需成员会让已部署的旧 JD 拒绝新 producer（Q6）；`result_digest` 在 result schema 中是 `additionalProperties: false` 下的可选属性（`contract.py:436-443`），如果有代码用新 schema 校验旧运行目录里的 manifest，旧 manifest 会被拒。执行时需 `git grep -n "result_schema" -- confflow` 确认没有这种读取路径，有则停止并升级。 | 按 C3.4 → J3.3 → C3.3 → C3.2 → C3.1 → J3.2 的逆序 revert，并把 `$JDPIN` 切回上一 pin。 |
 | C3.3 | 中 | provenance 标注位置需用户确认（Q4）。 | revert；只影响 contract。 |
