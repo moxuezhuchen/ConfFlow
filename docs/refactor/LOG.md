@@ -62,3 +62,17 @@
 - 执行模型：Sonnet 5.5 子代理。步骤 1–4 完成（4 个测试文件已移植、fixture 已重新 vendor、ruff/format/mypy 通过），改动保留在 `exec-jd`，未提交。
 - 停止原因：`run_jd_tests.sh` 在 `exec-cf` 中没有执行权限。仓库设置了 `core.fileMode=false`，验收方提交脚本时 x 位没有进入索引（`100644`）。执行模型按 G9 停止，没有用 `bash <脚本>` 绕过。
 - 处理：验收方用 `git update-index --chmod=+x` 修正（`100755`），并同步到 `exec-cf`；让同一执行模型从步骤 5 继续。
+
+## 2026-10-02 J0b — 通过
+
+- 仓库/分支/提交：JobDesk-v2 `refactor/diet` ee0eabb（父 5847bc7）；执行者：Sonnet 5.5 子代理
+- 类型：test-only；白名单检查：ok（4 个测试文件 + `tests/fixtures/p0_boundary/PROVENANCE.json`、`boundary_protocol.json`）
+- 逐字核对：4 个测试文件与 92d48f1 中的版本完全相同；4 个 fixture 与 `exec-cf/docs/internal/fixtures/p0_boundary/` 逐字节相同；PROVENANCE `source_commit` = 38a0c16（与 d5a40ae 只差 `docs/refactor/`）
+- 静态检查（验收方重跑）：ruff ok；ruff format ok（275）；mypy ok（166）
+- 测试（验收方重跑，`run_jd_tests.sh --cf exec-cf@ee39d62`）：2405 passed / 0 failed / 7 skipped；collect 2411 → 2412；删除 `tests/gui/test_confflow_v4_cards.py::TestCapabilityCardsRender::test_all_eleven_cards_render`；新增 `…::test_all_twelve_cards_render`、`tests/application/test_confflow_v4_e2e.py::TestDoubleDigestAndRecipe::test_canonical_bytes_render_floats_as_jcs`，与声明一致
+- 测试削弱检查：没有新增 skip/xfail；被修改的 6 条断言（配方数 11→12、`canonical_sha256`→`jcs_sha256`）均来自卡片规定的逐字移植
+- 失败集合：J0a 预期的 8 项全部消失，与卡片预言一致；JD 全绿
+- 远端：`origin/refactor/diet` 仍为 5847bc7（执行模型没有 push）
+- 提交信息更正（不改写历史，在此记录）：Verification 中 "golden: unchanged" 应为 "n/a（B0.1 尚未建立）"；"failed set == previous checkpoint: yes" 应为 "8 → 0，与卡片预期一致"
+- 结论：通过。B0.1 的前置条件（J0b 通过、JD 全绿）满足。
+- 产物：/tmp/refactor-acc/J0b/
