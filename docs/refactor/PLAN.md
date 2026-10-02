@@ -704,6 +704,250 @@ JD contract_key、CF 的 contract/boundary 字节在本阶段都必须不变。
 - 提交信息模板：`refactor!: delete the confflow export command and its results.db reader` + 通用尾部（Removed-Tests 17，附清单文件名；测试名从清单逐字复制）。
 - Behavior-Change：`confflow --export`、`--format` 不再存在；没有任何生产代码再写 `results.db`。
 
+### C3.3 — 在 contract 中标注 ConfGen 溯源字段
+
+- ID：C3.3 ／ 仓库：ConfFlow ／ 分支：`refactor/diet` ／ 前置：C3.2（e5c3032）
+- 类型：`logic`（只改 contract 声明，不改任何计算）。做法：应用 `handoff/C3.3-src-tests.patch`（5 个文件，含检查点）。
+- 内容：`_confgen_section()` 在 `result_provenance` 之后新增 `"report_provenance": ["/certificate/digest", "/enumeration/digest", "/input_state_digest", "/input_certificate_digest"]`（JSON pointer 相对于 `ensemble_report`；验收方已核实 `certificate.digest`、`enumeration.digest` 在引擎报告中存在）；`test_contract_confgen_section_tracks_registries` 加一条断言；新增检查点 `docs/refactor/baseline/checkpoints/C3.3/`。
+- 路径差异（验收方实测）：相对 C3.2 检查点，contract 只新增 `/confgen/report_provenance`、修改 `/contract_digest`；boundary 无任何变化；`result_schema_sha256` 与 `jd_contract_key` 不变。
+- 自检期望：全量 `{"passed": 4481, "skipped": 12}`，collect 4493（Removed 0，Added 0）；`golden_check.py --checkpoint …/checkpoints/C3.3/contract.json` ok；`json_paths_diff` 对 C3.2 检查点与上面一致；ruff/mypy/black 通过。
+- 提交信息模板：`feat(producer): declare confgen report provenance fields` + 通用尾部。
+
+### J3.3 — JD 重新 vendor P0 boundary fixture
+
+- ID：J3.3 ／ 仓库：JobDesk-v2 ／ 分支：`refactor/diet` ／ 前置：C3.3 提交（需要知道其 SHA，fixture 由 CF 的 `docs/internal/fixtures/p0_boundary` 同步）
+- 类型：`test-only`。做法：先应用 `handoff/J3.3-code.patch`（2 个文件），再运行同步脚本（`PROVENANCE.json` 的 `source_commit` 只能由脚本写入，不能放进补丁），最后 `git rm` 已退役的 fixture。
+- 补丁内容：`scripts/sync_p0_boundary_fixtures.py` 的 `FIXTURE_NAMES` 去掉 `compatibility_cases.json`；`tests/application/test_p0_boundary.py`：去掉 `compatibility_cases.json` 名单项，删除 `TestCompatibilityParity` 整类，删除 `test_real_envelope_without_future_digests_is_accepted`（它删除 producer 已不再发布的键，且被 `test_real_contract_bytes_carry_boundary` 覆盖），`_compact_section` 不再读取 `semantic_identity`/`capability_identity`/`matrix`，`workflow_schema_id` 取自 `V4_WORKFLOW_SCHEMA_ID`，schemas 只含两个 authoring schema。
+- 被删测试：`handoff/J3.3-removed-tests.txt` 的 3 项（`test_vocabulary_matches_producer_fixture`、`test_real_envelope_without_future_digests_is_accepted`、`test_vendored_fixture_matches_live_producer[compatibility_cases.json]`）。
+- 执行后期望：JD 全量（绑定 `--cf` = C3.3 之后的 `exec-cf`）`2303 passed, 7 skipped`，collect 2310（2313−3），ruff/format/mypy 通过，`TestFixtureProvenance` 通过，`PROVENANCE.json` 的 `source_commit` = C3.3 提交 SHA，`tests/fixtures/p0_boundary/` 中不再有 `compatibility_cases.json`；`boundary_protocol.json` 与 CF `docs/internal/fixtures/p0_boundary/boundary_protocol.json` 字节一致。
+- 附注（验收方发现）：在 C3.2 之后、J3.3 之前，用新 producer 跑 JD 全量会有 3 个失败（两项 fixture 指纹未同步、一项删除 producer 已不发布的键）；这是预期的，J3.3 修复。
+- 提交信息模板：`test(fixtures): re-vendor P0 boundary fixtures from ConfFlow <short sha>` + 通用尾部。
+
+### C3.4 — re-pin 到 J3.3
+
+- ID：C3.4 ／ 仓库：ConfFlow ／ 分支：`refactor/diet` ／ 前置：J3.3（JD 提交 edb068ac258447f26eed2184d58e34554c323a18）
+- 类型：`ci`。做法：应用 `handoff/C3.4-pin.patch`（2 个文件，SHA 两处 + 注释）。`jd-pin` 已由验收方移到该提交。
+- 验收：跨仓测试全部通过；全量 `{"passed": 4481, "skipped": 12}`，collect 4493；`tests/test_release_workflow.py` 14 项通过；JD 侧 `TestLiveProducerParity` 在 §2.3 绑定下通过（J3.3 已验）。
+- 提交信息模板：`chore(cross-repo): pin JobDesk-v2 to edb068a (J3.3)` + 通用尾部。**这是 Phase 3 的最后一张卡。**
+
+---
+
+## 8. 输入简化分支改造（IS）
+
+IS 阶段在 `implementation/input-simplification`（ConfFlow，`$CFIS`）与 JD 的同名分支（`$JDIS`）上进行。基准：CF `f87da58`，JD `92d48f1`。
+IS 分支上没有 `docs/refactor/`。各卡如需工具，从 `$TOOLS` 运行，不复制进 IS 分支（IS.1 的 golden 数据除外）。
+
+### IS.1 — legacy paths 与 v3 paths 等价 golden（改造之前）
+
+- ID：IS.1 ／ 仓库：ConfFlow ／ 分支：`implementation/input-simplification` ／ 前置：B0.1（可提前）
+- 目标：在改动之前，记录每一个 legacy paths 用例在 legacy 执行路径和对应 typed v3 声明下的输出，并判断是否等价。
+- 类型：`baseline`
+- 允许修改的文件（新增）：`docs/refactor/paths_equivalence/run_equivalence.py`、`docs/refactor/paths_equivalence/cases.json`、`docs/refactor/paths_equivalence/result.json`、`docs/refactor/paths_equivalence/README.md`
+- 具体步骤（@f87da58）：
+  1. 用例来源：(a) 运行 `tests/v4/test_confgen_paths_phase0.py`（44 项）和 `tests/v4/test_confgen_paths_audit.py`（26 项），包装 `ConfgenExecutor._run_legacy_paths`（`execution/confgen_executor.py:1475`）记录每次调用的 `(records, native)`，去重后写入 `cases.json`；(b) 显式加入 Q2 的两类用例：端点是末端原子（只有一个邻居）的路径；bare `{start, end, move}`（不给 `angles`/`step`）的路径。分子用 `tests/v4/test_repair_executors.py` 中的 `_butane` 等现成构造器。
+  2. 每个用例执行两次，都通过公开入口 `ConfgenExecutor().execute(item, ctx)`，构造方式与 `tests/v4/test_confgen_paths_audit.py:34-39` 相同：
+     - legacy：`native` 原样；
+     - v3：`{"schema_version": 3, "index_base": 1, "paths": [...]}`，每条声明的 `start/end/move/id` 原样；有 `angles`/`step` 的原样；bare 声明补 `step: 120`（= `_DEFAULT_ANGLE_STEP`，见 Q2）；`angle_step`、`bond_scale`、`strict_path_bond_check` 按 v3 schema 中对应字段映射，没有对应字段的写进 `result.json` 的 `unmapped` 列表。
+  3. 比较并写入 `result.json`：状态（completed/failed 及失败原因）；构象数；按网格序号排序后每个构象的原子顺序和坐标（逐原子最大偏差，阈值 1e-6 Å）；每个转子的角度集合。每个用例给出三种标记之一：
+     - `EQUIVALENT`：以上全部相同。
+     - `LEGACY_DEGENERATE`（Q2a）：只适用于 v3 因"末端原子端点没有可测二面角框架"而拒绝的用例。此时另构造一个对照声明：把末端端点换成它唯一的邻居原子，其余不变，用 v3 执行；再把 legacy 的输出按几何去重（两个构象逐原子最大偏差 ≤ 1e-6 Å 视为同一个，不做叠合，因为两者在同一坐标系中）。去重后的 legacy 集合与对照声明的 v3 集合**完全相同**时，才标记为 `LEGACY_DEGENERATE`，并在 `result.json` 中写明被替换的端点、去重前后数量和两边的集合摘要。替换后 `start == end` 或声明非法时，标记为 `NOT_EQUIVALENT`。
+     - `NOT_EQUIVALENT`：其他任何差异。
+- 禁止事项：G1–G9；不得修改 `confflow/`、`tests/`。
+- 验收命令：`cd $CFIS && python3 docs/refactor/paths_equivalence/run_equivalence.py --check`（重跑并与 `result.json` 逐字节比较）。
+  期望：可重复。`LEGACY_DEGENERATE` 不阻塞，但验收方要逐个核对去重证明。**只要有一个 `NOT_EQUIVALENT`，验收结论就是"升级"，IS.2 不得开始。**
+- 提交信息模板：`test(confgen): record legacy-vs-v3 paths equivalence golden` + 通用尾部。
+
+### IS.1b — 修正 IS.1 的比较方法并补充含氢用例（IS.1 验收后新增，用户已确认规则）
+
+- ID：IS.1b ／ 仓库：ConfFlow ／ 分支：`implementation/input-simplification` ／ 前置：IS.1（提交 9340601）
+- 目标：IS.1 的比较沿用了 PLAN 的"不做叠合"，这是方案本身的错误（无氢夹具上绕末端键的旋转只是刚体转动）。本卡改用只允许真旋转的叠合比较，通过三个自检后才可用于下结论，并补充带氢的真实分子用例。
+- 类型：`baseline`
+- 允许修改的文件：`docs/refactor/paths_equivalence/` 下已有的 `run_equivalence.py`、`cases.json`、`result.json`、`README.md`，以及新增的同目录文件（如 `fixtures_h.json`）。不碰其他目录。
+- 用户已确认的规则：
+  1. 叠合只允许真旋转（行列式 +1），禁止镜像。`confflow.science.cluster.kabsch_rmsd` 已实现"无镜像 Kabsch"（`cluster.py:27-42`），可以直接使用，但必须先通过下面的自检。
+  2. 比较工具先通过三个自检才可用于出结论，自检结果写入 README 和 result.json 的 `selfcheck` 节；任何一个失败，工具以非零退出，不生成 result.json：
+     - SC1 刚体旋转 → 相同：取一个带氢的非平面结构，施加随机真旋转和平移，RMSD ≤ 1e-5；
+     - SC2 镜像 → 不同：取一个手性分子（带氢，例如 CHFClBr 或 2-丁醇，坐标来自确定性构造并保存在 `fixtures_h.json` 中），做镜像（x → −x），RMSD > 1e-5（并记录实际值）；
+     - SC3 真实二面角变化 → 不同：取带氢的丁烷（或 1-丙醇），绕一个 C–C 键把一端转 60°，RMSD > 1e-5（并记录实际值）。
+  3. 阈值统一为 1e-5 Å（所有比较，包括原来的逐原子比较），在 README 和 result.json 里写明。
+  4. 用例须带氢，且同时覆盖对称甲基（CH3）和非对称端基（OH、NH2）：至少 n-丁烷（两端甲基）、1-丙醇（OH 端基，另一端甲基）、丙胺（NH2 端基，另一端甲基），端点在末端原子上、路径经过内部键，angles 用 [0,120,240]；各配一个 bare 声明版本（不写 angles/step）；再配内部键、两端都是非末端原子的对照路径（应为 EQUIVALENT）。分子坐标用 RDKit 的确定性嵌入（`AllChem.EmbedMolecule(mol, randomSeed=7)` 加 MMFF 优化）生成一次后**把坐标直接存入 `fixtures_h.json`**，之后各步骤都从文件读取，不再依赖 RDKit 版本。
+  5. `LEGACY_ONLY_TERMINAL_ROTOR` 的期望是 0：对每个端点在末端原子上的含氢用例，统计"legacy 结构（用叠合不变的度量去重后）中，在 v3 对照集合里找不到对应结构的个数"。该个数大于 0 就标记 `LEGACY_ONLY_TERMINAL_ROTOR` 并如实记录两边的集合大小。**结果大于 0 时，验收结论为升级**（执行方不要试图让它变成 0，也不要改判定）。对 CH3 和 NH2/OH 分别记录，另外对端基氢原子做置换的版本也各记录一份（`symmetry_aware_legacy_only`，只置换同一个端基重原子上的氢），便于区分"标号不同的等价构象"和"真正不同的构象"。
+  6. 新增标记：`BOTH_REJECT`（legacy 与 v3 都以非 COMPLETED 结束，仅原因不同，记录两边原因）；`V3_EMPTY_DEGENERATE`（legacy 产出结构，v3 或对照声明 COMPLETED 但发布 0 个结构，且输入链所有原子共线，任意三原子构成的叉积范数 < 1e-9；记录共线判定数据）。这两个标记都不是失败，不阻塞 IS.2。
+  7. 原有的 28 个无氢用例保留，在新度量下重新判定并写入 result.json 的 `no_hydrogen_regression` 节，**不计入结论**（G11）；结论计数只来自 `fixtures_h.json` 中的含氢用例和 `hydrogen_cases` 节。
+  8. `--check` 连续两次逐字节相同（沿用 IS.1）。
+- 禁止事项：G1–G11；不得改 `confflow/`、`tests/`；不得为了让某个标记计数变成期望值而改判定或阈值。
+- 验收命令（验收方运行）：`run_equivalence.py --check`；检查 README 里三个自检的数值；逐个用例核对含氢用例的标记。
+- 提交标题：`test(confgen): compare terminal-endpoint paths up to proper rotation with hydrogen-bearing cases`
+
+### IS.0 — 把 Phase 1–3 后的 main 合入 IS 分支
+
+- ID：IS.0 ／ 仓库：ConfFlow（以及 JD：IS.0-JD）／ 前置：C3.4；**用户先把 `refactor/diet` 合入 `main`**（该操作由用户执行）
+- 类型：`merge`
+- 步骤：`git -C $CFIS merge --no-ff main`。冲突一律保留 main 的删除；IS 新增的代码如果引用了被删符号（例如 `capability_identity`），按 main 的删除去掉引用，并在合并提交信息中逐条列出。JD 同理：`git -C $JDIS merge --no-ff master`。
+- 验收：两仓标准验收；engine 报告与 TS1 必须等于 B0.1（IS 分支新增测试产生的新报告记录为新的报告检查点 `checkpoints/IS.0/engine_reports/`，由验收方核对：已有报告不得变化）。
+
+### IS.2 — intent 编译器始终输出 `schema_version: 3`，paths 走 v3
+
+- ID：IS.2 ／ 仓库：ConfFlow ／ 分支：IS ／ 前置：IS.0、IS.1b 通过，且 IS.1b 的含氢用例中没有 `NOT_EQUIVALENT`，`LEGACY_ONLY_TERMINAL_ROTOR` 为 0 或用户已对其数值作出决定（`V3_EMPTY_DEGENERATE`、`BOTH_REJECT` 不阻塞）
+- 目标：`_wire_confgen` 对带 paths 的 legacy native 生成 typed v3 块，而不是透传。
+- 类型：`logic`
+- 允许修改的文件：`confflow/producer/intent.py`、`tests/v4/` 下与 intent 编译相关的测试文件（逐条声明）
+- 具体步骤（@f87da58 `intent.py:917-951`）：
+  1. intent 的 confgen 步骤如果 `native` 不是 v3，且只包含 `paths` / `angle_step` / `bond_scale` / `strict_path_bond_check`，就按 IS.1 第 2 步的映射规则生成 `{"schema_version": 3, "index_base": 1, "paths": […], …}`；L948-950 的步骤级 `paths` / `strict_path_bond_check` 同样并入 v3 块。映射规则必须与 IS.1 的工具逐字一致（从同一函数导入或复制并注明来源）。
+  2. bare 声明补 `step: 120`（Q2b）。
+  3. 末端原子端点（Q2a、Q2c 方向 1）：intent 编译器不做检查（编译时没有结构），也不得自动把端点换成邻居；路径原样编译成 v3，由运行时的 v3 拒绝承担，诊断里的具体键由 IS.2b 负责。
+- 禁止事项：G1–G9；不得修改 `confgen_executor.py`、`science/`。
+- 验收命令：标准验收（在 `$CFIS` 上）；IS.1 中每个 `EQUIVALENT` 用例再通过 intent 编译 → 执行，输出必须与 IS.1 中的 v3 输出逐项相同；每个 `LEGACY_DEGENERATE` 用例必须失败，且不得被自动裁剪后执行。
+- 预期行为变化：intent 中的 legacy paths 不再以 legacy native 执行，而以 typed v3 执行；bare 声明显式变为 `step: 120`；末端原子端点的路径在运行时被 v3 拒绝（诊断见 IS.2b）。
+- 提交信息模板：`feat(producer)!: compile ConfGen intent paths into typed v3 scopes` + 通用尾部。
+
+### IS.2b — v3 拒绝末端原子端点时，诊断指明具体的键
+
+- ID：IS.2b ／ 仓库：ConfFlow ／ 分支：IS ／ 前置：IS.2
+- 目标：Q2c 方向 1。v3 因"端点没有可测二面角框架"拒绝路径时，错误信息指明是哪条路径声明的哪个键，例如 `confgen.paths[1].end (atom 7) is a terminal atom with no measurable dihedral frame`。
+- 类型：`logic`（只改诊断文本和为其传递来源键所需的参数，不改任何判定）
+- 允许修改的文件：`confflow/science/confgen/torsion/stage.py`、`confflow/science/confgen/torsion/paths.py`、`confflow/science/confgen/planner.py`（只允许把路径来源键传到 axis 上），以及断言该错误文本的测试（逐条声明）
+- 具体步骤（@f87da58，IS.0 合并后按符号定位）：
+  1. 找到抛出点：`torsion/stage.py` 中"has no measurable dihedral frame (terminal pair)"（L96-108）；找到 typed `paths` 解析成 torsion axis 的位置（`torsion/paths.py` 的 `resolve_paths` / `parse_path_declarations`，以及 `planner.py` 中对 `paths` 的处理，L494-520）。
+  2. 解析时把每条路径的来源键（`paths[<j>]` 与具体端点字段 `start`/`end`，以及 1-based 原子号）记录到由该路径产生的 axis 上（只增加一个只读的来源描述字段，不参与任何计算、排序、去重或 state key）。
+  3. 拒绝时，如果 axis 带有来源描述，就把它写进错误信息；没有来源描述的 axis（`torsions` 声明产生的）错误信息保持原样。
+- 禁止事项：G1–G10；不得改变哪些输入被接受或拒绝；来源字段不得进入 state key、报告的 `enumeration`/`certificate` 或任何 digest。
+- 验收：标准验收（在 `$CFIS`）。**TS1 与 engine 报告必须逐字节不变**（来源字段一旦进入报告就是违规）；IS.1 中每个 `LEGACY_DEGENERATE` 用例经 intent 编译后执行，失败信息必须包含对应的 `paths[<j>].<start|end>` 键。
+- 预期行为变化：只有错误信息文本变化。
+- 提交信息模板：`fix(confgen): name the offending path key when a terminal endpoint is refused` + 通用尾部。
+
+### IS.3 — `_wire_confgen` 拒绝非 v3 native
+
+- ID：IS.3 ／ 仓库：ConfFlow ／ 分支：IS ／ 前置：IS.2
+- 目标：IS.2 映射之后仍然不是 v3 的 native（例如 `chains`），直接 `_fail`，不再透传。
+- 类型：`logic`
+- 允许修改的文件：`confflow/producer/intent.py`、相关测试（逐条声明）
+- 具体步骤：`intent.py:941-951` 的透传分支改为 `raise _fail("step …: ConfGen intent requires a typed schema_version 3 scope", step_id=…)`；`_passthrough_legacy`（L269-290，legacy V4 文档的透传）不在本卡范围，保持不变。
+- 验收命令：标准验收。期望：只有断言"非 v3 native 透传"的测试被修改，逐条声明。
+
+### IS.4 — JD 输入简化分支改用 typed v3（Q1 已确认）
+
+- ID：IS.4 ／ 仓库：JobDesk-v2 ／ 分支：`implementation/input-simplification`（已完成 IS.0-JD 合并）／ 前置：IS.3
+- 目标：JD 不再写出 legacy `native.paths`；新的 ConfGen 步骤和路径编辑一律使用 typed v3。
+- 类型：`logic`
+- 允许修改的文件：
+  - `src/jobdesk_v2/gui/new_run/confgen_v3_form.py`
+  - `src/jobdesk_v2/gui/new_run/page.py`
+  - `src/jobdesk_v2/application/intent/model.py`
+  - `tests/application/test_intent_model.py`、`tests/gui/test_intent_live_gui.py`、`tests/gui/test_confgen_v3_editor.py`、`tests/application/test_confgen_v3_jobdesk.py`（只修改断言 legacy 默认值或 legacy 表示的测试，逐条声明）
+- 具体步骤（@92d48f1 行号；IS.0-JD 合并后按符号定位）：
+  1. `confgen_v3_form.py`：路径表示选择器（L548-555）删除 `("legacy", "legacy native.paths (frame-free, default)")` 选项，只保留 typed，默认值 `"typed"`；`_paths_mode` 为 `"legacy"` 的分支（L783-803 读取 `native.paths`、L897、L962-975 写回 native）中，写回 legacy native 的分支删除；读取已有文档中 legacy `native.paths` 的分支保留为只读展示，并显示"legacy paths 需转换为 typed v3"的提示（提示文本写入提交信息）。
+  2. `page.py`：新 confgen 步骤的初始块（L486-491）从 `{"confgen": {"native": {}}}` 改为 `{"confgen": {"schema_version": 3}}`。
+  3. `intent/model.py`：`_intent_confgen_step`（L919-977）的 `has_legacy` 分支改为 `raise IntentNotRepresentable(...)`，消息指明具体键 `confgen.native`，并说明需改用 typed v3；模块 docstring（L84、L663-666）中关于 producer 包装 legacy paths 的描述同步删除。
+  4. 不改：`confgen.native` 字段行（`confgen_v3_form.py:661`，J4.1 处理）；`intent/preview.py` 的 `build_preview_native`（Q10，保留）；`intent/sampling.py` 对已有文档中 `native.paths` 的读取。
+- 预期行为变化：(a) 新建 ConfGen 步骤是 typed v3；(b) 表单不能再写出 legacy paths；(c) 含 legacy native 的已有文档不能再走 intent 编译，会得到指明 `confgen.native` 的错误。
+- 禁止事项：G1–G9。
+- 验收命令：JD 标准验收（§2.3 绑定 `$CFIS` 的 IS.3 提交）。期望：失败集合为空；被修改的测试只断言 (a)(b)(c)。
+- 提交信息模板：`feat(new-run)!: author ConfGen paths as typed v3 only` + 通用尾部。
+
+### IS.5 — 把 IS 分支合入 main（需要用户批准）
+
+- 由用户执行或明确授权。合并后运行两仓标准验收，记录新的 engine 报告检查点 `checkpoints/IS.5/`；已有报告必须与 B0.1 相同。
+
+---
+
+## 9. Phase 4：删除 ConfFlow chain / legacy native 路径
+
+基准：IS.5 之后的 `main`。下文行号 @f87da58，执行时以符号为准。
+
+### C4.1 — 测试构造器默认改为 v3
+
+- ID：C4.1 ／ 仓库：ConfFlow ／ 分支：`refactor/diet`（从 IS.5 后的 main 重新建立）／ 前置：IS.5
+- 类型：`test-only`
+- 允许修改的文件：`tests/v4/_builders.py`
+- 步骤：`confgen_step()`（@d5a40ae L233-257）的默认值从 `{"native": {"chains": ["1-2-3"]}}`（L243）改为最小合法的 v3 块，例如 `{"schema_version": 3, "torsions": [{"id": "t1", "bond": [2, 3], "model": "relative_rotation_grid", "angles": [0, 120, 240], "treatment": "enumerate"}]}`（与 `producer/recipes.py:109-120` 的配方相同，原子号按该 builder 默认结构调整）。显式传入 `native=` 的调用不变。
+- 验收：标准验收。期望：collect 不变；使用默认值的 6 个文件（`test_repair_capabilities.py`、`test_p0_pr1_authoring.py`、`test_compiler.py`、`test_native_definition_validation.py`、`test_execution_critical_validation.py`、`test_digest_axes.py`）全部通过，且没有任何断言被修改。如果有测试只能靠改断言才能通过，停止并升级（说明它依赖 legacy 行为）。
+
+### J4.1 — JD 不再使用 `confgen.native` 字段（Q9 已确认）
+
+- ID：J4.1 ／ 仓库：JobDesk-v2 ／ 前置：C4.1
+- 类型：`delete`
+- 范围：IS.4 合入 JD master 之后，`git grep -n "confgen.native\|CONFGEN_NATIVE_FIELD" -- src tests` 的全部命中。如果没有命中，本卡记为"无改动"，写入 LOG 并跳过。
+
+### C4.2 — re-pin 到 J4.1（J4.1 无改动时跳过）
+
+- 同 C3.1。
+
+### C4.3 — 删除 legacy native 执行路径与 schema
+
+- ID：C4.3 ／ 仓库：ConfFlow ／ 前置：C4.2
+- 目标：删除 `native.chains` / `native.paths` 的执行、解析和 contract 字段。
+- 类型：`delete`
+- 允许修改的文件：
+  - `confflow/execution/confgen_executor.py`
+  - `confflow/science/confgen/planner.py`、`confflow/science/confgen/__init__.py`、`confflow/science/confgen/torsion/__init__.py`、`confflow/science/confgen/torsion/legacy.py`（删除）
+  - `confflow/workflow/v4/confgen_schema.py`、`confflow/workflow/v4/schema.py`、`confflow/workflow/v4/parser.py`、`confflow/workflow/v4/document.py`
+  - `confflow/producer/manifest.py`、`confflow/producer/contract.py`
+  - `docs/refactor/baseline/checkpoints/C4.3/*`
+  - 测试：由第 1 步的 grep 结果确定，逐条声明
+- 具体步骤（@f87da58）：
+  1. 执行前列出调用方：对 `confgen_executor.py` 中 `_run_legacy`（L812）、`_working_adjacency`（L1058）、`_prepare_path_rotors`（L1100）、`_realize_grid_members`（L1281）、`_build_conformer_members`（L1324）、`_complete_legacy_grid`（L1382）、`_run_legacy_paths`（L1475）、`_path_resolution_payload`（L1592）、`_as_str_list`（L1661）、`_bond_set`（L1674）、`_bond_pair`（L1683）、`_check_index`（L1692）、`_write_report`（L1696）、`_GridCancelled`（L147）、`ALLOWED_NATIVE_KEYS`（L117）、`_DEFAULT_*`（L136-138）、`_LEGACY_MAX_DECLARED_STATES`（L144），运行 `grep -n "<名字>\b" confflow/execution/confgen_executor.py`，只删除调用方全部在被删集合内的项。写方案时核实，v3 路径仍在使用 `_resolved_path_diagnostics`（v3 调用于 L407）、`_warning_diagnostics`（L408）、`_thaw_path_resolution`（L718）、`_driving`（L247）、`_fail`、`_cancelled`，这些保留。
+  2. `_run`（L190-206）中 `schema_version != 3` 的分支改为直接 `_fail("confgen requires a typed schema_version 3 scope")`。这是删除分支后剩下的唯一出口，不算新增逻辑；在提交信息中说明。
+  3. `planner.py`：删除 `normalize_executor_native`（L707-852）；删除 `torsion/legacy.py` 及 `science/confgen/__init__.py`、`torsion/__init__.py` 中的再导出。
+  4. `confgen_schema.py`：删除 `LegacyPathDeclarationModel`（L339-…）以及 step 级 legacy `native` 的 schema 和解析合并逻辑（`parser.py:433-440` 中的 `native` 回退）。用 `git grep -n "LegacyPathDeclarationModel\|native\[\"paths\"\]\|legacy native"` 核对。
+  5. `manifest.py:633-634` 的 `confgen.native` 字段、`contract.py:324` 的 `confgen.native` 块删除。写检查点 `checkpoints/C4.3/`。
+- 禁止事项：G1–G9；`science/torsion.py` 不在本卡（C4.4）；不得改动 v3 路径的任何代码行。
+- 验收命令：标准验收；`json_paths_diff.py` 对比上一检查点，删除的只能是 `confgen.native` 相关路径；**TS1 与 engine 报告与 B0.1 / IS.5 检查点逐字节相同**（随测试删除的报告除外）。
+- 提交信息模板：`refactor(confgen)!: delete the legacy native chains/paths path` + 通用尾部。
+
+### C4.4 — 删除 `science/torsion.py` 中只被 legacy 使用的函数
+
+- ID：C4.4 ／ 仓库：ConfFlow ／ 前置：C4.3
+- 类型：`delete`
+- 允许修改的文件：`confflow/science/torsion.py`、`confflow/science/__init__.py`、对应测试（逐条声明）
+- 步骤：对 `science/torsion.py` 中每个顶层函数运行 `git grep -n "\b<名字>\b" -- confflow`，只删除再无调用方的函数。写方案时核实，v3 torsion stage 依赖 `clashes`、`edge_in_cycle`、`rotate_atoms_around_bond`、`rotating_side`、`topological_distance_matrix`（`science/confgen/torsion/stage.py:41-47`@d5a40ae），必须保留；`science/confgen/torsion/paths.py`（IS 新增）的依赖也必须保留。
+- 验收：标准验收；golden 不变。
+
+---
+
+## 10. Phase 5：calc / 遗留 CLI / core 清理
+
+基准：C4.4 之后的 `refactor/diet`。行号 @d5a40ae（IS 分支没有改动这些文件）。
+
+### D11 — 在 DECISIONS.md 追加取代 D010 的决策
+
+- ID：D11 ／ 位置：`/opt/confjob-coordinator/DECISIONS.md`（不是 git 仓库，Q14）／ 前置：无
+- 类型：`doc`
+- 步骤：按文件头规定的格式（L9-17）在文末追加：
+  ```
+  ## D011 — calc/confts/confgen/confrefine legacy tooling is retired (supersedes D010)
+  Date: <执行日期>
+  Status: ACCEPTED
+  Decision: confts, confgen and confrefine have never been used. confflow/calc, confflow/confts.py, confflow/blocks/{confgen,refine,viz}, the legacy-only parts of confflow/core, confflow/shared/config_coercion.py, their console scripts and lazy exports are deleted. blocks/refine is deleted only after the refine gap report (refactor card C5.1) is confirmed by the owner.
+  Reason: Owner confirmation that the CLIs have no users; static reachability shows these modules are reachable only from the legacy console scripts.
+  Consequences: D010 is superseded. Public CLI commands confts/confgen/confrefine and the confflow.CalcStepRunner/CalcStepRequest/CalcStepResult exports disappear.
+  ```
+  不得修改已有条目。在 LOG.md 记录追加前后文件的 sha256。
+
+### C5.1 — refine 差异报告（结论需要用户确认）
+
+- ID：C5.1 ／ 仓库：ConfFlow ／ 前置：B0.1（可提前）
+- 类型：`doc`
+- 允许修改的文件：`docs/refactor/REFINE_GAP.md`（新增）
+- 步骤：逐项对比 `confflow/blocks/refine/`（`processor.py` 878 行、`rmsd_engine.py` 797 行、`topology.py` 660 行，入口 `blocks/refine/__init__.py:main`）与 V4 的 refine（`confflow/execution/transform_executor.py`；preset `refine_default`，在 IS 合并后的 `producer/presets.py` 中）。至少覆盖：去重判据（RMSD 算法、对称性/原子置换处理、阈值）、能量窗口、拓扑一致性检查、输入/输出格式、溯源元数据（`input_sha256`/`output_sha256`）、性能路径（numba）。每项给出"blocks/refine 有 / V4 有 / 差异与证据（文件:行号）"。缺失项单独列在文首。
+- 验收：只新增该文件。**结论固定为"升级给用户"**，等用户逐项确认后，C5.3 才能开始。
+
+### C5.2 — 删除 `calc/`、`confts.py`、`workflow/composition.py`、`blocks/viz/`（侧分支）
+
+- ID：C5.2 ／ 仓库：ConfFlow ／ 分支：`refactor/diet-c5`（从 `refactor/diet` 的 b8e85a3 分出，**侧分支**，与 JD/Phase 3 的主线并行；Phase 3 结束后由验收方合回 `refactor/diet`）／ 前置：D11
+- 类型：`delete`（带必要的测试改写）。做法：应用 `handoff/C5.2-src-tests.patch`（73 个文件），**不重新设计**。验收方已在其上跑通全量测试与 golden。
+- 内容：删除 `confflow/calc/**`、`confts.py`、`workflow/composition.py`、`blocks/viz/**`；`blocks/refine/result.py` 自带 `RefineResult`（不再 import calc）；删除 `confflow/__init__.py` 的 CalcStep* 导出、`pyproject.toml` 的 `confts` 入口；`scripts/architecture_metrics.py` 去掉被删模块；架构测试的 `REMOVED_LEGACY_MODULES` 加入四个被删模块；删除只测试被删模块的测试文件，混合文件只删或改写相关测试；新增 `tests/results_db_fixture.py`（`workflow/export.py` 仍读取旧 `results.db`，其测试需要一个最小写入器，见下"发现"）。
+- 被删测试：`handoff/C5.2-removed-tests.txt` 的 376 项（含 `tests/test_viz_report.py::TestCoreTypesRetired::test_core_types_module_is_gone`，它被原样搬到 `tests/test_core_types_retired.py`，新增节点共 4 个：这一个加三个 `test_legacy_module_inventory_is_intentional[confflow.blocks.viz|confflow.calc|confflow.confts]`）。
+- **发现（需用户之后决定，不阻塞本卡）**：`confflow/workflow/export.py` 与 `confflow export` 命令读取 calc 产生的 `results.db`；本卡之后没有任何生产代码再写该文件。本卡保留 export 及其测试（用最小写入器造库），是否整体删除 export 另议。
+- 禁止事项：G1–G9；不得手改补丁；不得运行 `ruff format` 于整个仓库（只允许 `ruff format --check` 于被改文件）。
+- 验收命令（**必须用屏蔽可编辑安装钩子的环境**，否则被删模块会从 `/opt/ConfFlow` 里被找到而假通过）：
+  ```bash
+  A=/opt/cf-worktrees/refactor-plan/docs/refactor/tools-acc
+  python3 $A/run_sharded.py --cf $CF --out /tmp/refactor-acc/C5.2/out.json --jdpin /opt/cf-worktrees/jd-pin
+  ```
+  期望：`{"passed": 4118, "skipped": 12}`，0 failed；collect 4130（4502−376+4）；`golden_check.py` 全部 ok；`PYTHONPATH=$A/noeditable:. python3 -c "import confflow; confflow.CalcStepRunner"` 抛 `AttributeError`；`git grep -nE "(from|import) +confflow\.(calc|confts)|from +\.+(calc|confts)" -- confflow scripts` 无输出；ruff check、mypy 通过。
+- 提交信息模板：`refactor!: delete the legacy calc tooling and the confts CLI` + 通用尾部（Removed-Tests 376 附清单文件名，Added-Tests 4）。
+
 ### C5.3a — 把图同构映射原样搬入 `confflow/science/`（move；用户 2026-10-02 决定 Q-R1 移植）
 
 - ID：C5.3a ／ 仓库：ConfFlow ／ 分支：`refactor/diet-c5`（侧分支，基点 2f95dc1，即 C5.2 提交） ／ 前置：C5.2 ／ 类型：`move`（函数体一字不改，旧测试随迁）。做法：应用 `handoff/C5.3a-src-tests.patch`（8 个文件），不重新设计。
