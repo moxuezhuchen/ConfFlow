@@ -120,3 +120,27 @@
 - 远端：未推送（`origin/refactor/diet` 仍不存在于 CF；JD 仍为 5847bc7）
 - 结论：通过。B0.1 验收时登记的两个工具缺陷已关闭。
 - 遗留：提交署名为 `glm-5.3-flash <noreply@example.com>`，格式已符合要求。
+
+## 2026-10-02 C1.1 — 通过
+
+- 仓库/分支/提交：ConfFlow `refactor/diet` fc6b821（父 096af5f）；执行者：外部模型
+- 类型：ci；白名单检查：ok（`jobdesk-contract.yml`、删除 `paired-jobdesk-compatibility.yml`、`tests/test_release_workflow.py`）
+- diff 核对：pin 值 `JOBDESK_COMPAT_SHA` 与 `EXPECTED_JOBDESK_SHA` 均为 9beeaf2，未动；触发器恰为 push / pull_request / workflow_dispatch；`test_release_workflow.py` 只去掉常量并把循环元组改为单项，断言原样；没有新增 skip/xfail
+- 静态检查（验收方重跑）：ruff / black / mypy 全部 ok
+- 验收环境：独立工作树 `acc-cf`（固定在 fc6b821）；golden_check 用 `--cf` 指定；测试清单用 `--cf` 指定
+- 测试（验收方重跑）：4535 项，4523 passed / 0 failed / 12 skipped；清单与结果与基线逐项相同（没有删除、新增或结果变化）
+- golden：TS1 三种 backend、83 份 engine 报告、contract 五项摘要全部不变
+- 结论：通过
+- 验收方失误记录：第一次验收时没有给 `test_inventory.py` 传 `--cf`，工具默认测试了 `exec-cf`（当时已包含 C1.2），得到 4521 passed 的无效结果；发现后在显式指定工作树的情况下重跑，上面的数字来自重跑。今后验收命令一律显式传 `--cf`。
+
+## 2026-10-02 C1.2 — 通过
+
+- 仓库/分支/提交：ConfFlow `refactor/diet` 8eda87f（父 fc6b821）；执行者：外部模型
+- 类型：delete；白名单检查：ok（5 个文件：`_retired_runtime.py`（删除）、`workflow/__init__.py`、`confflow/__init__.py`、`tests/v4/test_architecture_boundaries.py`、`tests/test_core.py`）
+- diff 核对：没有新增逻辑；`workflow/__init__.py` 只删 9 个 lazy export 和 docstring 中关于 stub 的半句；`confflow/__init__.py` 只删 `run_workflow` 一项；`tests/test_core.py` 只删 PLAN 声明的两行断言（`hasattr(confflow, "run_workflow")`、`"run_workflow" in confflow.__all__`），其余断言原样；`test_architecture_boundaries.py` 只删两个声明的测试方法和一句注释
+- 静态检查（验收方重跑）：ruff ok；black ok；mypy ok（256）
+- 行为核对：`from confflow import run_workflow` 抛 ImportError；`confflow.cli.run_workflow` 仍为 `formal_v4_runner`；仓库内无 `_retired_runtime`/`RetiredRuntimeError` 引用
+- 测试（验收方重跑，工作树 `acc2-cf` = 8eda87f）：collect 4535 → 4533；4521 passed / 0 failed / 12 skipped；与基线相比恰好少 2 个节点（`TestRetiredRuntimeBoundary::test_retirement_stubs_fail_closed`、`TestRuntimeIsolation::test_importing_workflow_package_stays_lazy`），无新增、无结果变化；`test_inventory.py diff --declared 2 --allowed-files tests/v4/test_architecture_boundaries.py` 退出 0
+- golden：TS1 三种 backend、83 份 engine 报告、contract 五项摘要全部不变（contract 与 boundary 字节不变，符合 Phase 1 要求）
+- 提交信息：已声明 Removed-Tests: 2、Removed-Assertions: 2 与 Behavior-Change，与实际一致
+- 结论：通过
