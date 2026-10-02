@@ -314,3 +314,9 @@
 - export：用户同意作为 C5.2 之后的独立 delete 卡（C5.2b）处理，前提：JD 不依赖 `confflow export`（验收方已 grep 确认：JD 的 export 仅为工作流 YAML 导出，无 results.db 依赖）；V4 结果出口为 run_result_manifest（JD parse_result_bytes）；用户确认没有需保留的旧 results.db 后才执行。
 - 验收工具：新增 tools-acc/deleted_modules_check.py；JD 测试经 run_jd_tests.sh 的 PYTHONPATH 解析到被测 JD 树（已实测）；删除类卡片附加检查写入 ACCEPTANCE。对已验收的 J2.4/J3.2（accjd@1ca4052）补查：被删模块全部 ModuleNotFoundError。
 - C3.1/C3.2 已备补丁（验收方原型）；C3.2 实测路径差异与计划一致，jd_contract_key 不变；已知并行分片下 test_cancel_trap 偶发失败（单独运行稳定）。
+
+## C5.2（侧分支 refactor/diet-c5）— 验收通过（2026-10-02）
+- 执行：外部模型 glm-5.3-flash；CF `refactor/diet-c5` 2f95dc1（父 b8e85a3），一次通过。
+- 验收人独立：提交与 handoff/C5.2-src-tests.patch 字节一致；deleted_modules_check 通过（calc、calc.runner、confts、workflow.composition、blocks.viz 均 ModuleNotFoundError，包解析到 cf-c5）；ruff/mypy 通过；run_sharded 4118 passed / 12 skipped。执行模型自报 golden ok、被删测试 376 项逐行一致、新增 4 项。
+- 环境教训：共享 jd-pin 随主线推进到 J3.2 后，侧分支（pin 仍为 9beeaf2）需专用 pin：/opt/cf-worktrees/jd-pin-cf（9beeaf2）。侧分支验收一律 `--jdpin /opt/cf-worktrees/jd-pin-cf`；合回主线后改用 jd-pin。
+- 侧分支未合并、未推送（合并时机：C3.4 之后，由验收方做 merge 并复验）。
