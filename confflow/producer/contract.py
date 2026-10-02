@@ -378,6 +378,14 @@ def _confgen_section() -> dict[str, Any]:
         "coordination_budgets": {"max_nfev": 120, "maxiter": 400},
         "coordination_site_group_scope": "declared_topological_subgroup",
         "result_provenance": ["certificate_digest", "inherited_scope"],
+        # JSON pointers into ``ensemble_report`` of scientific provenance
+        # digests: published and consumed on purpose, not dead fields.
+        "report_provenance": [
+            "/certificate/digest",
+            "/enumeration/digest",
+            "/input_state_digest",
+            "/input_certificate_digest",
+        ],
         "tolerances": {
             field.name: getattr(tolerances, field.name) for field in dataclasses.fields(tolerances)
         },

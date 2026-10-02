@@ -1,0 +1,340 @@
+{
+ "canonicalization": {
+  "algorithm": "RFC 8785 JSON Canonicalization Scheme (JCS)",
+  "canonicalization_id": "confflow.v4.jcs.v1",
+  "digest": "SHA-256",
+  "encoding": "UTF-8",
+  "reason_codes": [
+   "invalid_json",
+   "duplicate_mapping_key",
+   "non_finite_number",
+   "integer_out_of_domain",
+   "non_canonical_value"
+  ],
+  "rules": {
+   "arrays": "order preserved",
+   "duplicates": "rejected (duplicate_mapping_key)",
+   "integers": "rejected beyond the IEEE-754 safe integer domain",
+   "mapping_keys": "sorted by UTF-16 code units; never normalized",
+   "non_finite": "rejected (non_finite_number)",
+   "numbers": "ECMAScript Number::toString; -0.0 canonicalizes to 0"
+  },
+  "vectors": [
+   {
+    "canonical_bytes_hex": "31",
+    "canonical_json": "1",
+    "canonical_sha256": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+    "expect": "ok",
+    "id": "scalar_float_one",
+    "input_json": "1.0"
+   },
+   {
+    "canonical_bytes_hex": "30",
+    "canonical_json": "0",
+    "canonical_sha256": "5feceb66ffc86f38d952786c6d696c79c2dbc239dd4e91b46729d73a27fb57e9",
+    "expect": "ok",
+    "id": "scalar_float_negative_zero",
+    "input_json": "-0.0"
+   },
+   {
+    "canonical_bytes_hex": "31652d37",
+    "canonical_json": "1e-7",
+    "canonical_sha256": "5b33e02f2c5103a05d32f6ba9cb058294452bfbf393967f68bb30c1bdcbbab22",
+    "expect": "ok",
+    "id": "scalar_float_small_exponent",
+    "input_json": "1e-7"
+   },
+   {
+    "canonical_bytes_hex": "31652b3231",
+    "canonical_json": "1e+21",
+    "canonical_sha256": "241c4643fa70b1dcde1205b71be4e3bebb17e9f880c8e1a33d0ead6c27271d3c",
+    "expect": "ok",
+    "id": "scalar_float_large_exponent",
+    "input_json": "1e21"
+   },
+   {
+    "canonical_bytes_hex": "302e31",
+    "canonical_json": "0.1",
+    "canonical_sha256": "14be4b45f18e0d8c67b4f719b5144eee88497e413709d11d85b096d8e2346310",
+    "expect": "ok",
+    "id": "scalar_float_thousandths",
+    "input_json": "0.1"
+   },
+   {
+    "canonical_bytes_hex": "3333333333333333332e33333333333333",
+    "canonical_json": "333333333.3333333",
+    "canonical_sha256": "6bd9be1c141028789cc35db62f1b43e80d5d4ee24d6d542e775deb16799ff4c7",
+    "expect": "ok",
+    "id": "scalar_float_shortest_roundtrip",
+    "input_json": "333333333.33333329"
+   },
+   {
+    "canonical_bytes_hex": "39303037313939323534373430393931",
+    "canonical_json": "9007199254740991",
+    "canonical_sha256": "f40b423c2dd95ff2b2f027e22208f438cf7242862e5e746860e697308c9add26",
+    "expect": "ok",
+    "id": "scalar_int_max_safe",
+    "input_json": "9007199254740991"
+   },
+   {
+    "detail": "cannot encode canonical JSON: 9007199254740993 exceeds safe integer domain for JSON floats",
+    "expect": "rejected",
+    "id": "scalar_int_beyond_safe",
+    "input_json": "9007199254740993",
+    "reason_code": "integer_out_of_domain"
+   },
+   {
+    "canonical_bytes_hex": "7b2261223a332c22f0908080223a322c22efbcba223a317d",
+    "canonical_json": "{\"a\":3,\"\ud800\udc00\":2,\"\uff3a\":1}",
+    "canonical_sha256": "34d8be823c091fa46acd15ceaf5c1d3753e796b9940f6f50705611b2759f6cdb",
+    "expect": "ok",
+    "id": "unicode_utf16_key_order",
+    "input_json": "{\"\\uff3a\":1,\"\\ud800\\udc00\":2,\"a\":3}"
+   },
+   {
+    "canonical_bytes_hex": "7b2265cc81223a322c22c3a9223a317d",
+    "canonical_json": "{\"e\u0301\":2,\"\u00e9\":1}",
+    "canonical_sha256": "a7962fb10dc1255be368ece9c22b2256605921dc6d0a8c9409d3ee406bcb86e5",
+    "expect": "ok",
+    "id": "unicode_no_normalization",
+    "input_json": "{\"\\u00e9\":1,\"e\\u0301\":2}"
+   },
+   {
+    "canonical_bytes_hex": "7b2261223a5b5d2c2262223a7b2264223a5b312c322c7b2261223a747275652c227a223a6e756c6c7d5d7d7d",
+    "canonical_json": "{\"a\":[],\"b\":{\"d\":[1,2,{\"a\":true,\"z\":null}]}}",
+    "canonical_sha256": "61e81f969738e5b4c116a65c75ec2028f98d0fa7ce0e004abc7e60261f11771c",
+    "expect": "ok",
+    "id": "nested_objects",
+    "input_json": "{\"b\":{\"d\":[1,2,{\"z\":null,\"a\":true}]},\"a\":[]}"
+   },
+   {
+    "canonical_bytes_hex": "5b332c312c325d",
+    "canonical_json": "[3,1,2]",
+    "canonical_sha256": "51bda7ab4e44726cde71fcb6e4b515357059bb6b6dd5146d1fc50f73f11678c6",
+    "expect": "ok",
+    "id": "array_order_preserved",
+    "input_json": "[3,1,2]"
+   },
+   {
+    "canonical_bytes_hex": "7b2273223a22615c22625c5c635c6e5c745c75303030305c7530303166227d",
+    "canonical_json": "{\"s\":\"a\\\"b\\\\c\\n\\t\\u0000\\u001f\"}",
+    "canonical_sha256": "3584528a3223d09b44eaa3341761502f92d1dcd96616fad2767df9a8728f8941",
+    "expect": "ok",
+    "id": "string_escapes",
+    "input_json": "{\"s\":\"a\\\"b\\\\c\\n\\t\\u0000\\u001f\"}"
+   },
+   {
+    "detail": "a",
+    "expect": "rejected",
+    "id": "duplicate_keys_rejected",
+    "input_json": "{\"a\":1,\"a\":2}",
+    "reason_code": "duplicate_mapping_key"
+   },
+   {
+    "detail": "NaN",
+    "expect": "rejected",
+    "id": "non_finite_nan_rejected",
+    "input_json": "{\"x\":NaN}",
+    "reason_code": "non_finite_number"
+   },
+   {
+    "detail": "Infinity",
+    "expect": "rejected",
+    "id": "non_finite_infinity_rejected",
+    "input_json": "{\"x\":Infinity}",
+    "reason_code": "non_finite_number"
+   },
+   {
+    "detail": "-Infinity",
+    "expect": "rejected",
+    "id": "nested_non_finite_rejected",
+    "input_json": "{\"x\":[1,-Infinity]}",
+    "reason_code": "non_finite_number"
+   }
+  ]
+ },
+ "compatibility": {
+  "reason_codes": [
+   "capability_missing",
+   "capability_version_incompatible",
+   "contract_missing",
+   "contract_version_incompatible",
+   "semantic_requirement_unsatisfied",
+   "semantic_version_incompatible",
+   "capability_identity_changed",
+   "content_identity_changed",
+   "build_provenance_changed"
+  ],
+  "requirement_kinds": [
+   "capability",
+   "contract",
+   "semantic"
+  ],
+  "rule": "Evaluate requirements in order; any missing or version-incompatible requirement is unsupported. Otherwise a changed content identity or build provenance is needs_revalidation. Otherwise compatible.",
+  "statuses": [
+   "compatible",
+   "needs_revalidation",
+   "unsupported"
+  ]
+ },
+ "content_schema": "confflow.boundary.v4",
+ "diagnostic_envelope": {
+  "fields": {
+   "code": "stable machine code",
+   "field_path": "document field path or null",
+   "message": "human text",
+   "reason": "stable reason code or null (validation answers)",
+   "severity": "error | warning | info",
+   "step_id": "V4 step id or null"
+  },
+  "rule": "consumers branch on code/reason/step_id, never on message text; step_id is always a V4 step id, never an index or a jd_* id",
+  "severities": [
+   "error",
+   "warning",
+   "info"
+  ]
+ },
+ "protocol_id": "confflow.boundary.v4",
+ "protocol_version": "1.0.0",
+ "schemas": {
+  "authoring_request": {
+   "$schema": "https://json-schema.org/draft/2020-12/schema",
+   "additionalProperties": false,
+   "properties": {
+    "content_schema": {
+     "const": "confflow.authoring.v4"
+    },
+    "document": {
+     "type": "object"
+    },
+    "document_digest": {
+     "pattern": "^sha256:[0-9a-f]{64}$",
+     "type": "string"
+    },
+    "operation": {
+     "enum": [
+      "describe_step",
+      "binding_candidates",
+      "instantiate_card",
+      "validate_document",
+      "check_compatibility"
+     ]
+    },
+    "parameters": {
+     "properties": {
+      "binding_choices": {
+       "type": "object"
+      },
+      "requested_step_id": {
+       "minLength": 1,
+       "type": "string"
+      },
+      "requirements": {
+       "type": "array"
+      },
+      "step_id": {
+       "minLength": 1,
+       "type": "string"
+      },
+      "target_port": {
+       "minLength": 1,
+       "type": "string"
+      },
+      "target_step_id": {
+       "minLength": 1,
+       "type": "string"
+      }
+     },
+     "type": "object"
+    }
+   },
+   "required": [
+    "content_schema",
+    "operation"
+   ],
+   "title": "ConfFlow authoring request",
+   "type": "object"
+  },
+  "authoring_response": {
+   "$schema": "https://json-schema.org/draft/2020-12/schema",
+   "additionalProperties": false,
+   "properties": {
+    "content_schema": {
+     "const": "confflow.authoring.v4"
+    },
+    "diagnostics": {
+     "items": {
+      "properties": {
+       "code": {
+        "minLength": 1,
+        "type": "string"
+       },
+       "field_path": {
+        "type": [
+         "string",
+         "null"
+        ]
+       },
+       "message": {
+        "minLength": 1,
+        "type": "string"
+       },
+       "severity": {
+        "minLength": 1,
+        "type": "string"
+       },
+       "step_id": {
+        "type": [
+         "string",
+         "null"
+        ]
+       }
+      },
+      "required": [
+       "code",
+       "severity",
+       "message"
+      ],
+      "type": "object"
+     },
+     "type": "array"
+    },
+    "ok": {
+     "type": "boolean"
+    },
+    "operation": {
+     "enum": [
+      "describe_step",
+      "binding_candidates",
+      "instantiate_card",
+      "validate_document",
+      "check_compatibility"
+     ]
+    },
+    "request_document_digest": {
+     "pattern": "(^sha256:[0-9a-f]{64}$)?",
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "result": {
+     "type": [
+      "object",
+      "array",
+      "null"
+     ]
+    }
+   },
+   "required": [
+    "content_schema",
+    "operation",
+    "ok",
+    "result",
+    "diagnostics"
+   ],
+   "title": "ConfFlow authoring response",
+   "type": "object"
+  }
+ }
+}
