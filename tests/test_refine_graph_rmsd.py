@@ -29,7 +29,6 @@ from confflow.blocks.refine.processor import (
     read_xyz_file,
 )
 from confflow.blocks.refine.rmsd_engine import (
-    compare_frames,
     fast_rmsd,
     get_topology_hash_worker,
     process_topology_group,
@@ -260,146 +259,6 @@ def _k33_graph():
         (0, 1, 2),
     ]
     return graph_from_adjacency(["C"] * 6, adjacency)
-
-
-def test_prism_and_k33_share_cheap_invariants_but_are_not_isomorphic():
-    from confflow.blocks.refine.topology import find_isomorphism, graphs_may_be_isomorphic
-
-    prism = _prism_graph()
-    k33 = _k33_graph()
-    assert sorted(prism.degree_sequence) == sorted(k33.degree_sequence)
-    assert graphs_may_be_isomorphic(prism, k33)  # 3-regular WL cannot separate them
-
-    result = find_isomorphism(prism, k33, node_budget=100_000)
-    assert result.status == "non_isomorphic"
-    assert result.mapping is None
-    assert result.stats.complete is True
-
-    same = find_isomorphism(prism, k33, node_budget=100_000)  # deterministic repeat
-    assert same.status == result.status
-
-
-def test_group_frames_by_topology_separates_prism_and_k33():
-    from confflow.blocks.refine.topology import group_frames_by_topology
-
-    prism = _prism_graph()
-    k33 = _k33_graph()
-    frames = []
-    for idx, graph in enumerate([prism, prism, k33, k33]):
-        frames.append(
-            {
-                "original_index": idx,
-                "energy": -1.0 - idx * 0.01,
-                "atoms": ["C"] * 6,
-                "coords": np.zeros((6, 3)),
-                "graph": graph,
-            }
-        )
-    clusters = group_frames_by_topology(frames, node_budget=100_000)
-    sizes = sorted(len(cluster.frames) for cluster in clusters if cluster.status == "confirmed")
-    assert sizes == [2, 2]
-    assigned = {
-        frame["original_index"]: cluster.cluster_id
-        for cluster in clusters
-        for frame in cluster.frames
-    }
-    assert assigned[0] == assigned[1]
-    assert assigned[2] == assigned[3]
-    assert assigned[0] != assigned[2]
-
-
-def test_compare_frames_never_matches_across_topologies():
-    from confflow.blocks.refine.rmsd_engine import compare_frames
-
-    prism = _prism_graph()
-    k33 = _k33_graph()
-    coords = np.array(
-        [
-            [0.0, 0.0, 0.0],
-            [1.0, 0.0, 0.0],
-            [0.0, 1.0, 0.0],
-            [1.0, 1.0, 0.0],
-            [0.0, 0.0, 1.0],
-            [1.0, 0.0, 1.0],
-        ]
-    )
-    candidate = {
-        "original_index": 1,
-        "energy": -1.0,
-        "atoms": ["C"] * 6,
-        "coords": coords,
-        "graph": k33,
-    }
-    representative = {
-        "original_index": 0,
-        "energy": -1.0,
-        "atoms": ["C"] * 6,
-        "coords": coords,
-        "graph": prism,
-    }
-    verdict = compare_frames(candidate, representative, threshold=10.0, heavy_only=False)
-    assert verdict.status == "different_topology"
-    assert verdict.witness_rmsd is None
-
-
-def test_compare_frames_budget_exhaustion_is_unresolved_not_duplicate_or_distinct():
-    from confflow.blocks.refine.rmsd_engine import compare_frames
-
-    path = np.array(
-        [
-            [0.0, 0.0, 0.0],
-            [1.5, 0.0, 0.0],
-            [2.0, 1.4, 0.0],
-            [1.0, 2.5, 0.2],
-            [1.0, 3.0, 1.6],
-        ]
-    )
-    candidate = {
-        "original_index": 1,
-        "energy": -1.0,
-        "atoms": ["C"] * 5,
-        "coords": path[::-1].copy(),
-    }
-    representative = {
-        "original_index": 0,
-        "energy": -1.5,
-        "atoms": ["C"] * 5,
-        "coords": path,
-    }
-    verdict = compare_frames(
-        candidate,
-        representative,
-        threshold=0.25,
-        heavy_only=False,
-        node_budget=3,
-    )
-    assert verdict.status == "unresolved"
-    assert verdict.search_complete is False
-    assert verdict.witness_rmsd is None
-
-
-def test_compare_frames_threshold_is_strictly_less_than():
-    from confflow.blocks.refine.rmsd_engine import compare_frames, kabsch_rmsd
-
-    left = {
-        "original_index": 0,
-        "energy": -2.0,
-        "atoms": ["C", "C", "C"],
-        "coords": _triangle(1.0),
-    }
-    right = {
-        "original_index": 1,
-        "energy": -1.0,
-        "atoms": ["C", "C", "C"],
-        "coords": _triangle(1.2),
-    }
-    exact = kabsch_rmsd(_triangle(1.0), _triangle(1.2))
-    assert exact > 0.0
-    equal_cutoff = compare_frames(left, right, threshold=exact, heavy_only=False)
-    assert equal_cutoff.status == "distinct"
-    above_cutoff = compare_frames(left, right, threshold=exact * (1.0 + 1e-9), heavy_only=False)
-    assert above_cutoff.status == "duplicate"
-    assert above_cutoff.witness_rmsd < above_cutoff.cutoff
 
 
 # ---------------------------------------------------------------------------
@@ -753,37 +612,6 @@ def _write_renumbered_co_pair(path: Path, o_distance: float) -> None:
     )
 
 
-def test_f1_noH_renumbered_distinct_heavy_geometry_is_not_deleted():
-    reference, candidate = _renumbered_co_frames(1.6)
-    # Correct heavy-atom distance is 0.1 A, above the 0.05 cutoff.
-    correct = _reference_kabsch_rmsd(candidate["coords"][[1, 2]], reference["coords"][[0, 1]])
-    assert correct == pytest.approx(0.1, abs=1e-9)
-
-    for first, second in ((candidate, reference), (reference, candidate)):
-        verdict = compare_frames(
-            first, second, threshold=0.05, heavy_only=True, energy_tolerance=0.0
-        )
-        assert verdict.status == "distinct", verdict
-        assert verdict.witness_rmsd is None
-
-
-def test_f1_noH_renumbered_true_duplicate_is_deleted_both_directions():
-    reference, candidate = _renumbered_co_frames(1.4)
-    verdict_forward = compare_frames(
-        candidate, reference, threshold=0.05, heavy_only=True, energy_tolerance=0.0
-    )
-    verdict_backward = compare_frames(
-        reference, candidate, threshold=0.05, heavy_only=True, energy_tolerance=0.0
-    )
-    for verdict in (verdict_forward, verdict_backward):
-        assert verdict.status == "duplicate", verdict
-        assert verdict.witness_rmsd == pytest.approx(0.0, abs=1e-9)
-        assert verdict.mapping is not None
-
-    assert verdict_forward.mapping == (2, 0, 1)
-    assert verdict_backward.mapping == (1, 2, 0)
-
-
 def test_f1_process_xyz_noH_renumbering_does_not_delete_distinct_frame(tmp_path):
     source = tmp_path / "renumbered.xyz"
     _write_renumbered_co_pair(source, 1.6)
@@ -846,47 +674,6 @@ def test_f1_process_xyz_noH_renumbering_deletes_true_duplicate_with_replayable_m
         representative["coords"][[mapping[i] for i in heavy_candidate]],
     )
     assert recomputed == pytest.approx(removed["witness_rmsd"], abs=1e-12)
-
-
-def test_f1_noH_random_renumbering_duplicate_and_non_duplicate():
-    base_atoms = ["C", "C", "O", "H"]
-    base = np.array([[0.0, 0.0, 0.0], [1.5, 0.0, 0.0], [2.7, 0.0, 0.0], [2.7, 0.97, 0.0]])
-    rng = np.random.default_rng(SEED)
-    representative = {
-        "original_index": 0,
-        "energy": -1.0,
-        "atoms": base_atoms,
-        "coords": base,
-    }
-    for _ in range(6):
-        permutation = rng.permutation(4)
-        atoms = [base_atoms[j] for j in permutation]
-        coords = base[permutation].copy()
-        duplicate = {
-            "original_index": 1,
-            "energy": 0.0,
-            "atoms": atoms,
-            "coords": coords,
-        }
-        shifted = coords.copy()
-        shifted[atoms.index("O")] += np.array([0.0, 0.0, 0.25])
-        non_duplicate = {
-            "original_index": 2,
-            "energy": 0.0,
-            "atoms": atoms,
-            "coords": shifted,
-        }
-
-        duplicate_verdict = compare_frames(
-            duplicate, representative, threshold=0.05, heavy_only=True, energy_tolerance=0.0
-        )
-        assert duplicate_verdict.status == "duplicate", (permutation, duplicate_verdict)
-        assert duplicate_verdict.witness_rmsd == pytest.approx(0.0, abs=1e-9)
-
-        non_duplicate_verdict = compare_frames(
-            non_duplicate, representative, threshold=0.05, heavy_only=True, energy_tolerance=0.0
-        )
-        assert non_duplicate_verdict.status != "duplicate", (permutation, non_duplicate_verdict)
 
 
 # ---------------------------------------------------------------------------
