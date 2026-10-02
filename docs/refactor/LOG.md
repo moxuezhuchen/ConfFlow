@@ -172,3 +172,13 @@
 - 测试（验收方在独立 JD 工作树重跑，CF 用只读参考树 `cf-for-jd`@445d4f5）：2409 项，2402 passed / 0 failed / 7 skipped；相对基线恰好少 3 个声明的节点，无新增，无结果变化
 - contract：JD `contract_key` 与全部摘要和基线相同
 - 结论：通过
+
+## 2026-10-02 C1.4 — 通过
+
+- 仓库/分支/提交：ConfFlow `refactor/diet` b8e85a3（父 445d4f5）；执行者：外部模型
+- 类型：delete；白名单检查：ok（只改 `confflow/producer/contract.py`，+13/-25）
+- diff 核对：`_analysis_capabilities()` 删除 `try/except Exception` 与 "frozen" 分支，`importlib.import_module("confflow.analysis.registry")` 调用原样保留，来源标签仍为 `"registry"`；docstring 去掉相应半句；常量保留；没有改任何测试
+- 静态检查（验收方重跑）：ruff / black / mypy（253）ok
+- 测试（验收方在独立工作树、显式 `--cf` 重跑）：4502 项，4490 passed / 0 failed / 12 skipped；与 C1.3 之后的集合相同（相对基线少 33 个节点，无新增，无结果变化）
+- golden：TS1、83 份 engine 报告、contract 五项摘要全部不变（contract / boundary 字节不变）
+- 结论：通过。Phase 1 完成。
