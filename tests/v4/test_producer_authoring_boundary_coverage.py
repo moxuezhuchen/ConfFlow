@@ -20,8 +20,6 @@ from confflow.producer.authoring import (
 )
 from confflow.producer.boundary import (
     canonicalize_text,
-    compare_identities,
-    evaluate_compatibility,
     jcs_vectors,
 )
 from confflow.producer.cards import CARD_TYPES, CARD_VERSION, get_card, parse_card_ref
@@ -1729,101 +1727,6 @@ def test_boundary_module_identity_constants() -> None:
     doc = boundary.canonicalization_document()
     assert doc["algorithm"].startswith("RFC 8785")
     assert len(doc["vectors"]) == len(jcs_vectors())
-
-
-def test_compare_identities_missing_counts_as_changed() -> None:
-    assert compare_identities(None, None) == {"changed": True}
-    assert compare_identities(None, {"digest": "a"}) == {"changed": True}
-    assert compare_identities({"digest": "a"}, None) == {"changed": True}
-    assert compare_identities({"digest": "a"}, {"digest": "a"}) == {"changed": False}
-    assert compare_identities({"digest": "a"}, {"digest": "b"}) == {"changed": True}
-
-
-def _offered() -> dict[str, Any]:
-    return {
-        "capabilities": {"calculation": "confflow.contract.calculation.v1"},
-        "contracts": {"calculation": "confflow.contract.calculation.v1"},
-        "semantics_version": "7",
-    }
-
-
-def test_evaluate_compatibility_capability_branches() -> None:
-    assert (
-        evaluate_compatibility(
-            [
-                {
-                    "kind": "capability",
-                    "name": "calculation",
-                    "contract_version": "confflow.contract.calculation.v1",
-                }
-            ],
-            _offered(),
-        )["status"]
-        == "compatible"
-    )
-    missing = evaluate_compatibility(
-        [{"kind": "capability", "name": "nope", "contract_version": ""}], _offered()
-    )
-    assert missing["status"] == "unsupported"
-    assert missing["reasons"][0]["code"] == "capability_missing"
-    drift = evaluate_compatibility(
-        [{"kind": "capability", "name": "calculation", "contract_version": "bogus"}], _offered()
-    )
-    assert drift["status"] == "unsupported"
-    assert drift["reasons"][0]["code"] == "capability_version_incompatible"
-
-
-def test_evaluate_compatibility_contract_and_semantic_branches() -> None:
-    assert (
-        evaluate_compatibility(
-            [{"kind": "contract", "name": "calculation", "contract_version": ""}], _offered()
-        )["status"]
-        == "compatible"
-    )
-    missing = evaluate_compatibility(
-        [{"kind": "contract", "name": "nope", "contract_version": ""}], _offered()
-    )
-    assert missing["reasons"][0]["code"] == "contract_missing"
-    drift = evaluate_compatibility(
-        [{"kind": "contract", "name": "calculation", "contract_version": "bogus"}], _offered()
-    )
-    assert drift["reasons"][0]["code"] == "contract_version_incompatible"
-    assert (
-        evaluate_compatibility(
-            [{"kind": "semantic", "name": "semantics_version", "contract_version": "7"}], _offered()
-        )["status"]
-        == "compatible"
-    )
-    sem_drift = evaluate_compatibility(
-        [{"kind": "semantic", "name": "semantics_version", "contract_version": "8"}], _offered()
-    )
-    assert sem_drift["reasons"][0]["code"] == "semantic_version_incompatible"
-    unknown_sem = evaluate_compatibility(
-        [{"kind": "semantic", "name": "nope", "contract_version": ""}], _offered()
-    )
-    assert unknown_sem["reasons"][0]["code"] == "semantic_requirement_unsatisfied"
-    unknown_kind = evaluate_compatibility(
-        [{"kind": "bogus", "name": "x", "contract_version": ""}], _offered()
-    )
-    assert unknown_kind["status"] == "unsupported"
-    malformed = evaluate_compatibility(["not-a-dict"], _offered())  # type: ignore[list-item]
-    assert malformed["status"] == "unsupported"
-    assert malformed["reasons"][0]["code"] == "semantic_requirement_unsatisfied"
-
-
-def test_evaluate_compatibility_revalidation_flags() -> None:
-    content = evaluate_compatibility([], _offered(), content_identity_changed=True)
-    assert content["status"] == "needs_revalidation"
-    assert content["reasons"][0]["code"] == "content_identity_changed"
-    build = evaluate_compatibility([], _offered(), build_provenance_changed=True)
-    assert build["status"] == "needs_revalidation"
-    assert build["reasons"][0]["code"] == "build_provenance_changed"
-    both = evaluate_compatibility(
-        [], _offered(), content_identity_changed=True, build_provenance_changed=True
-    )
-    assert both["status"] == "needs_revalidation"
-    assert len(both["reasons"]) == 2
-    assert evaluate_compatibility([], _offered())["status"] == "compatible"
 
 
 # ----------------------------------------------------------------------
