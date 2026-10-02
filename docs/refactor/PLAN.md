@@ -1,6 +1,6 @@
 # ConfFlow / JobDesk V2 重构执行方案
 
-> 状态：**定稿 v1（2026-10-02）**，已纳入用户对 Q0–Q15 的答复（§0.1）。仍待答复：Q0b（阻塞 J0b 及其后全部卡片）、Q2c（只阻塞 IS.2 第 3 步）。
+> 状态：**定稿 v2（2026-10-02）**，已纳入用户对 Q0–Q15、Q0b、Q2c 的答复（§0.1）。没有待答复事项。
 > 作者角色：方案与验收（不执行）。执行模型只按本文件和 `ACCEPTANCE.md` 工作。
 > 事实基准提交：ConfFlow `main` = `d5a40ae`；ConfFlow `implementation/input-simplification` = `f87da58`；
 > JobDesk-v2 `master` = `9beeaf2`；JobDesk-v2 `implementation/input-simplification` = `92d48f1`。
@@ -32,13 +32,15 @@
 | Q14 | `/opt/confjob-coordinator/DECISIONS.md` 不是 git 仓库。 | 按默认：D11 只追加内容，在 LOG 记录前后 sha256。 |
 | Q15 | JD 测试把 `/opt/ConfFlow` 和它的 `.venv` 写死为 producer。 | 按默认：用 mount namespace 绑定（§2.3）；改为环境变量记入 §13。 |
 
-### 0.2 待确认（写方案时新发现，执行到对应卡前必须答复）
+### 0.2 第二轮确认（2026-10-02）
 
-| # | 事实（附证据） | 影响 | 方案处理 |
-|---|---|---|---|
-| Q0b | **只移植解析器修复不能让 JD 全绿。** 在 JD master 的副本上只改 `manifest.py` 的 3 行（J0a），按 §2.3 绑定 CF d5a40ae 运行，仍有 9 个失败：(1) 4 个测试断言 producer 有 11 个配方，main 新增 `confgen_torsion` 后是 12 个（`producer/recipes.py:561`@d5a40ae）；(2) 3 个测试用 `sort_keys` 的 `canonical_sha256` 复算 JCS 签名，main 的 typed schema 含浮点（`360.0` 在 JCS 中写作 `360`），复算不一致（生产代码用 `jcs_sha256`，不受影响）；(3) 1 个测试发现 vendored 的 `boundary_protocol.json` 与 main 的 producer 不一致（JD fixture 来自 62a40c4）；(4) 1 个测试（`test_cards_library.py::test_library_modules_import_without_qt`）在子进程中 import 不到 `jobdesk_v2`，属于环境问题，运行时加 `PYTHONPATH=$JD/src` 即可解决。**预演**：再加上 J0b（逐字移植 92d48f1 对 4 个测试文件的改动，并从 CF d5a40ae 重新 vendor `tests/fixtures/p0_boundary/`），环境加 `PYTHONPATH`，JD 全量 2405 passed / 7 skipped / 0 failed。 | 按"J0 后仍有失败就停止"的规则，J0a 之后会停。 | 方案加入 J0b（`test-only`），标为 **BLOCKED-Q0b**：请确认是否把 J0b 纳入 J0。确认之前，执行模型只能做 J0a。 |
-
-| Q2c | Q2a 要求 IS.2 在 intent 编译时对末端原子端点报错。但 `compile_intent`（`producer/intent.py:1371-1395`@f87da58）的输入只有 intent 文档、machine profile 和 registry，**没有结构**；结构在运行时通过输入端口提供（`intent.py:46`、`:1121-1185`）。编译时无法判断一个端点是不是末端原子。 | IS.2 无法在编译时完成这一项检查。 | IS.2 中只有这一子步骤（第 3 步）标为 **BLOCKED-Q2c**，其余照做。可选方向：(i) 由运行时的 v3 拒绝承担，并要求诊断指明具体键（需要改执行器诊断，属于另一张 logic 卡）；(ii) 在 JD 的路径预览（有结构）阶段报错；(iii) 让 compile 接收结构。**请选择。** |
+| # | 事实 | 用户决定 → 方案中的落点 |
+|---|---|---|
+| Q0b | 只移植解析器（J0a）后，JD 仍有 8 个失败（测试写死 11 个配方、测试用 `sort_keys` 复算 JCS 签名、vendored boundary fixture 过期），外加 1 个环境问题（`PYTHONPATH`）。 | J0b 纳入 J0，作为 J0a 之后单独的 `test-only` 提交；J0b 通过且 JD 全绿后才做 B0.1。 |
+| Q2c | `compile_intent`（`producer/intent.py:1371-1395`@f87da58）没有结构，编译时无法判断末端原子端点。 | 方向 1：由运行时的 v3 拒绝承担，诊断必须指明具体的键 → 新卡 IS.2b。方向 2（在 JD 路径预览阶段报错）记入 §13。 |
+| 环境 | JD 的 mypy 需要 `types-PyYAML`（JD `pyproject.toml:34` 的 dev extras），本机原先没有安装。 | 已安装 `types-PyYAML 6.0.12.20260906`，写入 §2.1。 |
+| 执行 | 执行模型的选择与权限。 | J0a 由 Opus 子代理执行；J0b 起改由 CodeBuddy `glm-5.3-flash` 执行（§2.8），权限为 `acceptEdits` 加限定工具，不用 bypass；JD 测试一律通过 `docs/refactor/tools/run_jd_tests.sh` 运行（G10）。同一张卡被退回两次时，报告用户，由用户决定是否换更强的模型。 |
+| 推送 | — | 用户授权推送 JD `refactor/diet` 和 CF `docs/refactor-plan` 两个工作分支（不动 `master`/`main`）。其他分支和后续推送仍需逐次授权。 |
 
 说明（不需要决定）：TS1 走完整 engine 时，状态使用 engine 的 `TerminalStatus` 词汇（`published_leaf` / `failed_numerical` / …，`science/confgen/model.py:86-101`@d5a40ae），与 `feasibility_spike` 的 REALIZED/UNRESOLVED 不是同一套。基线按 engine 词汇原样记录。
 
@@ -49,13 +51,13 @@
 ### 1.1 阶段顺序
 
 ```
-J0       JD 兼容修复          J0a → J0b(BLOCKED-Q0b)
+J0       JD 兼容修复          J0a → J0b
 Phase 0  基线冻结            B0.1
 Phase 1  ConfFlow 外围删除    C1.1 → C1.2 → C1.3 → C1.4
 J1       JD 删除 evaluate_compatibility
 Phase 2  JD 删除 V1/V2        J2.1 → J2.2 → J2.3 → J2.4   (J2.5 可选，需用户确认)
 Phase 3  边界瘦身（两仓成对） J3.1 → J3.2 → C3.1 → C3.2 → C3.3 → J3.3 → C3.4
-IS       输入简化分支改造     IS.1(golden) … IS.0(合入 main) → IS.2 → IS.3 → IS.4(JD) → IS.5(合并到 main，需用户批准)
+IS       输入简化分支改造     IS.1(golden) … IS.0(合入 main) → IS.2 → IS.2b → IS.3 → IS.4(JD) → IS.5(合并到 main，需用户批准)
 Phase 4  ConfFlow chain 路径  C4.1 → J4.1 → C4.2 → C4.3 → C4.4
 Phase 5  calc/CLI/core 清理   D11 → C5.1(差异报告，需用户确认) → C5.2 → C5.3 → C5.4 → C5.5 → C5.6 → C5.7 → C5.8
 逻辑尾部                       L1 (CF pairing 常量) ， L2 (JD token)
@@ -72,7 +74,7 @@ J0a ─> J0b ─> B0.1 ──┬──> C1.1 ─> C1.2 ─> C1.3 ─> C1.4 ─�
        │                                                                      │
        ├──> IS.1 (在 IS 分支上，只读 main，可提前) ────────────┐               │
        │                                                      v               v
-       │                                         IS.0 (把 main 合入 IS 分支) ─> IS.2 ─> IS.3 ─> IS.4 ─> IS.5
+       │                                         IS.0 (把 main 合入 IS 分支) ─> IS.2 ─> IS.2b ─> IS.3 ─> IS.4 ─> IS.5
        │                                                                                          │
        │                                                       C4.1 ─> J4.1 ─> C4.2 ─> C4.3 ─> C4.4
        │                                                                                          │
@@ -137,7 +139,7 @@ export PYTHONDONTWRITEBYTECODE=1
 export QT_QPA_PLATFORM=offscreen
 ```
 
-- 解释器：`/usr/bin/python3`（3.12.3，已安装 pytest、scipy、PySide6、ruff、black、mypy）。在 `$CF` 中以 `python3 -m …` 运行时，cwd 下的 `confflow` 优先于 `/opt/ConfFlow` 的 editable 安装。
+- 解释器：`/usr/bin/python3`（3.12.3，已安装 pytest、scipy、PySide6、ruff、black、mypy，以及 JD mypy 需要的 `types-PyYAML>=6.0.12`）。系统 Python 受 PEP 668 管理，以上包装在 `/usr/local/lib/python3.12/dist-packages`；执行模型不得自行安装或升级任何包，缺包时停止并报告（G9）。在 `$CF` 中以 `python3 -m …` 运行时，cwd 下的 `confflow` 优先于 `/opt/ConfFlow` 的 editable 安装。
 - **禁止**在 `/opt/ConfFlow`、`/opt/jobdesk-v2-v4` 的主工作树中改文件或切分支。
 - 不 push、不开 PR、不合并到 `main`/`master`。推送和合并由用户决定（IS.5 例外，它需要用户逐次批准）。
 
@@ -153,19 +155,17 @@ cd $CF && JOBDESK_V2_SRC=$JDPIN/src python3 -m pytest -q -o addopts="" -p no:cac
 
 ### 2.3 运行 JD 测试（必须绑定 producer）
 
-JD 测试把 `/opt/ConfFlow` 写死为 producer 的 cwd，并把 `/opt/ConfFlow/.venv/bin/python` 写死为 producer 解释器（Q15；`tests/contract_fixtures.py:38-39`、`tests/application/test_p0_boundary.py:51-52`、`tests/application/test_confflow_v4_workflows.py:69`@9beeaf2）。用私有 mount namespace 先把 `$CF` 绑定到 `/opt/ConfFlow`，再把原来的 `.venv` 绑回去（root 下可用，不影响其他进程；`.venv/` 已被 `.gitignore` 忽略）：
+JD 测试把 `/opt/ConfFlow` 写死为 producer 的 cwd，并把 `/opt/ConfFlow/.venv/bin/python` 写死为 producer 解释器（Q15；`tests/contract_fixtures.py:38-39`、`tests/application/test_p0_boundary.py:51-52`、`tests/application/test_confflow_v4_workflows.py:69`@9beeaf2）。`docs/refactor/tools/run_jd_tests.sh` 在私有 mount namespace 中把指定的 CF 工作树绑定到 `/opt/ConfFlow`，再把原来的 `.venv` 绑回去，并设置 `PYTHONPATH=<JD>/src`、`QT_QPA_PLATFORM=offscreen`。这个绑定不影响其他进程，也不切换 `/opt/ConfFlow` 的分支：
 
 ```bash
-source $TOOLS/env.sh
-mkdir -p $CF/.venv /tmp/refactor-venv          # 空挂载点
-unshare -m --propagation private sh -c "\
-  mount --bind /opt/ConfFlow/.venv /tmp/refactor-venv && \
-  mount --bind $CF /opt/ConfFlow && \
-  mount --bind /tmp/refactor-venv /opt/ConfFlow/.venv && \
-  cd $JD && PYTHONPATH=$JD/src python3 -m pytest -q -o addopts='' -p no:cacheprovider --junitxml=/tmp/refactor-acc/<CARD>/jd-junit.xml"
+$TOOLS/run_jd_tests.sh --cf $CF --jd $JD --junit /tmp/refactor-acc/<CARD>/jd-junit.xml            # 全量
+$TOOLS/run_jd_tests.sh --cf $CF --jd $JD -- --collect-only -q                                     # 只收集
+$TOOLS/run_jd_tests.sh --cf $CF --jd $JD -- tests/application/test_p0_boundary.py -rf             # 指定测试
 ```
 
-只绑定 `$CF` 而不绑回 `.venv` 时，约 49 个 JD 测试会以 "ConfFlow interpreter unreachable" 跳过；不设 `PYTHONPATH=$JD/src` 时，`tests/application/test_cards_library.py::test_library_modules_import_without_qt` 会因子进程 import 不到 `jobdesk_v2` 而失败（本机没有 pip 安装 JD）。两者都是环境错误，不能作为验收结果。
+**执行模型只能通过这个脚本运行 JD 测试，不得直接调用 `unshare` 或 `mount`（G10）。**
+
+脚本解决了两个环境问题：不绑回 `.venv` 时，约 49 个 JD 测试会以 "ConfFlow interpreter unreachable" 跳过；不设 `PYTHONPATH` 时，`tests/application/test_cards_library.py::test_library_modules_import_without_qt` 会失败。
 
 `$CF` 必须是与该 JD 提交配对的 ConfFlow 提交（通常是 `refactor/diet` 当前已验收的 HEAD）。静态检查：`cd $JD && ruff check src tests && ruff format --check src tests && mypy`。
 
@@ -177,7 +177,7 @@ unshare -m --propagation private sh -c "\
 - TS1 engine 三种 backend 在本机各约 20–60 秒；engine 报告捕获（`tests/v4/test_confgen_*.py`，274 个测试）约 4 分钟，两次运行结果逐字节相同。
 - `confflow v4 contract --json` 和 `v4 boundary --json` 在源码树中运行时字节确定（`producer.commit` 为 `null`），可以跨提交比较。
 
-### 2.5 通用禁止事项（每张卡都适用，卡片中以"G1–G9"引用）
+### 2.5 通用禁止事项（每张卡都适用，卡片中以"G1–G10"引用）
 
 - G1 不得修改白名单以外的任何文件（含格式化工具顺手改的文件）。
 - G2 `delete` / `move` 卡不得新增逻辑：不得新增函数、类、条件分支、异常处理、默认值。
@@ -187,7 +187,8 @@ unshare -m --propagation private sh -c "\
 - G6 不得改变科学行为（TS1、ring、torsion、stereo、atom ordering）。只要 golden 有差异就停止，在 LOG 中写明差异并升级，不得自行判定为"预期变化"。
 - G7 每张卡恰好一个提交；提交前 `git status` 必须干净（没有未跟踪的残留）。
 - G8 不得 push、不得改 `main`/`master`、不得切换 `/opt/ConfFlow` 或 `/opt/jobdesk-v2-v4` 主工作树的分支。
-- G9 发现卡片与代码不符（锚点找不到、行为与描述不同）时，停止并在提交前报告，不得自行变通。
+- G9 发现卡片与代码不符（锚点找不到、行为与描述不同），或者环境缺包、命令失败时，停止并在提交前报告，不得自行变通。
+- G10 不得直接调用 `unshare`、`mount`、`sudo`、`pip`/`apt` 安装命令；JD 测试只通过 `docs/refactor/tools/run_jd_tests.sh` 运行。
 
 ### 2.6 每张卡的通用验收（卡片中写"标准验收"即指本节）
 
@@ -233,6 +234,23 @@ Verification:
   golden: unchanged | checkpoint <file>
 ```
 
+### 2.8 执行模型的调用方式
+
+J0b 起，每张卡由 CodeBuddy 的 `glm-5.3-flash` 以非交互方式执行，一次一张卡。验收方（本方案作者）负责发起和验收：
+
+```bash
+cd <卡片所在仓库的执行工作树> && codebuddy -p --model glm-5.3-flash \
+  --permission-mode acceptEdits \
+  --allowedTools "Read Edit Write Grep Glob Bash" \
+  --disallowedTools "Bash(unshare:*) Bash(mount:*) Bash(sudo:*) Bash(pip:*) Bash(pip3:*) Bash(apt:*) Bash(apt-get:*) Bash(git push:*)" \
+  --add-dir /opt/cf-worktrees/exec-cf --add-dir /opt/cf-worktrees/exec-jd --add-dir /opt/cf-worktrees/jd-pin \
+  --output-format json "<交接提示词>"
+```
+
+交接提示词必须包含：卡片 ID；PLAN.md 和 ACCEPTANCE.md 的路径；"只执行这一张卡、提交后停止"；G1–G10 全文；"JD 测试只能通过 `run_jd_tests.sh` 运行，禁止直接调用 unshare/mount"；"不得 push"；退回时附上验收方的具体要求，并要求用 `git commit --amend` 重新交付。
+
+同一张卡被退回两次后，不再第三次交给同一个模型，而是报告用户，由用户决定是否换更强的模型。
+
 ---
 
 ## 3. J0（JD 兼容修复）与 Phase 0（基线冻结）
@@ -265,12 +283,12 @@ J0 的提交在 JD 的 `refactor/diet` 分支上（从 9beeaf2 建立，见 §2.
   tests/application/test_p0_boundary.py::TestLiveProducerParity::test_vendored_fixture_matches_live_producer[boundary_protocol.json]
   tests/gui/test_confflow_v4_cards.py::TestCapabilityCardsRender::test_all_eleven_cards_render
   ```
-  按用户规则"J0 后仍有失败就停止"：如果 Q0b 尚未答复，J0a 验收后停止，结论为"升级"。
+  J0a 已于 2026-10-02 按此验收通过（见 LOG）。
 - 提交信息模板：`fix(editor): accept object item types published by the V4 producer manifest` + 通用尾部（Behavior-Change 如上，并写明 `Ported-From: 92d48f1 (manifest parser only)`）。
 
-### J0b — 移植测试侧修复并重新 vendor P0 boundary fixture（BLOCKED-Q0b）
+### J0b — 移植测试侧修复并重新 vendor P0 boundary fixture（Q0b 已确认）
 
-- ID：J0b ／ 仓库：JobDesk-v2 ／ 分支：`refactor/diet` ／ 前置：J0a、用户确认 Q0b
+- ID：J0b ／ 仓库：JobDesk-v2 ／ 分支：`refactor/diet` ／ 前置：J0a（已验收，JD `refactor/diet` 5847bc7）
 - 目标：JD 测试与 CF main 的 producer 对齐，JD 全绿。
 - 类型：`test-only`
 - 允许修改的文件：`tests/application/test_confflow_v4_contract.py`、`tests/application/test_confflow_v4_e2e.py`、`tests/application/test_confflow_v4_workflows.py`、`tests/gui/test_confflow_v4_cards.py`、`tests/fixtures/p0_boundary/PROVENANCE.json`、`tests/fixtures/p0_boundary/boundary_protocol.json`、`tests/fixtures/p0_boundary/compatibility_cases.json`、`tests/fixtures/p0_boundary/jcs_vectors.json`、`tests/fixtures/p0_boundary/named_binding_workflow.json`
@@ -288,7 +306,7 @@ J0 的提交在 JD 的 `refactor/diet` 分支上（从 9beeaf2 建立，见 §2.
 - ID：B0.1 ／ 仓库：ConfFlow ／ 分支：`refactor/diet`（建在 `docs/refactor-plan` 上）／ 前置：J0b 验收通过（JD 全绿）
 - 目标：在任何代码改动之前，冻结两仓测试清单与结果、TS1 engine 结果、engine 报告快照、contract/boundary 摘要和 JD contract_key。
 - 类型：`baseline`
-- 允许修改的文件（全部为新增）：
+- 允许修改的文件（全部为新增；`docs/refactor/tools/run_jd_tests.sh` 已随方案提交，本卡不得修改）：
   - `docs/refactor/tools/env.sh`
   - `docs/refactor/tools/ts1_engine.py`
   - `docs/refactor/tools/capture_engine_reports.py`
@@ -315,7 +333,7 @@ J0 的提交在 JD 的 `refactor/diet` 分支上（从 9beeaf2 建立，见 §2.
      `cd $CF && CAP_OUT=$BASE/engine_reports PYTHONPATH=$TOOLS python3 -m pytest -q -o addopts="" -p capture_engine_reports -p no:cacheprovider tests/v4/test_confgen_*.py`
   4. `contract_digests.py --cf DIR [--jd-src DIR] --out FILE`：在子进程中（cwd=DIR）计算 `v4cli.main(["contract","--json"])` 标准输出的 sha256、`v4cli.main(["boundary","--json"])` 标准输出的 sha256、`generate_contract_bytes(producer_version=confflow.__version__)` 的 sha256、contract 内的 `contract_digest` 字段；提供 `--jd-src` 时再用该 JD 源码的 `parse_v4_contract_bytes(...)` 计算 `contract_key`。同时把 contract 和 boundary 的完整 JSON 存为 `--out` 旁边的 `contract.full.json` 和 `boundary.full.json`（供 Phase 3 做路径 diff）。
   5. `test_inventory.py`：
-     - `collect --repo cf|jd --out FILE`：运行 `pytest --collect-only -q -o addopts=""`，写排序后的 nodeid 列表。CF 设 `JOBDESK_V2_SRC=$JDPIN/src`；JD 按 §2.3 绑定。
+     - `collect --repo cf|jd --out FILE`：运行 `pytest --collect-only -q -o addopts=""`，写排序后的 nodeid 列表。CF 设 `JOBDESK_V2_SRC=$JDPIN/src`；JD 一律通过 `run_jd_tests.sh` 运行（§2.3）。
      - `run --repo cf|jd --out FILE`：完整运行并读 junit xml，写 `{nodeid: passed|failed|error|skipped}`。
      - `diff --prev A --cur B --declared N [--allowed-files f1,f2,...]`：输出新增节点、删除节点，检查删除数 == N，删除节点全部落在 `--allowed-files` 中；不满足时以非零退出。
   6. `golden_check.py --base DIR --cf DIR [--jd-src DIR] [--checkpoint FILE] [--removed-nodes FILE]`：重新生成 TS1 三份、engine 报告和 contract 摘要，与基线（或 `--checkpoint` 指定的 contract 检查点）逐字节比较。engine 报告缺失时，只有对应 nodeid 出现在 `--removed-nodes` 中才允许。新增报告一律报告为差异。
@@ -703,11 +721,26 @@ IS 分支上没有 `docs/refactor/`。各卡如需工具，从 `$TOOLS` 运行�
 - 具体步骤（@f87da58 `intent.py:917-951`）：
   1. intent 的 confgen 步骤如果 `native` 不是 v3，且只包含 `paths` / `angle_step` / `bond_scale` / `strict_path_bond_check`，就按 IS.1 第 2 步的映射规则生成 `{"schema_version": 3, "index_base": 1, "paths": […], …}`；L948-950 的步骤级 `paths` / `strict_path_bond_check` 同样并入 v3 块。映射规则必须与 IS.1 的工具逐字一致（从同一函数导入或复制并注明来源）。
   2. bare 声明补 `step: 120`（Q2b）。
-  3. （**BLOCKED-Q2c**）末端原子端点：按 Q2a，不自动裁剪，报错并指明具体的键（例如 `steps[<i>].native.paths[<j>].end`）。在 Q2c 答复之前不实现这一项，也不得用"自动把端点换成邻居"代替。
+  3. 末端原子端点（Q2a、Q2c 方向 1）：intent 编译器不做检查（编译时没有结构），也不得自动把端点换成邻居；路径原样编译成 v3，由运行时的 v3 拒绝承担，诊断里的具体键由 IS.2b 负责。
 - 禁止事项：G1–G9；不得修改 `confgen_executor.py`、`science/`。
 - 验收命令：标准验收（在 `$CFIS` 上）；IS.1 中每个 `EQUIVALENT` 用例再通过 intent 编译 → 执行，输出必须与 IS.1 中的 v3 输出逐项相同；每个 `LEGACY_DEGENERATE` 用例必须失败，且不得被自动裁剪后执行。
-- 预期行为变化：intent 中的 legacy paths 不再以 legacy native 执行，而以 typed v3 执行；bare 声明显式变为 `step: 120`；末端原子端点的路径失败（失败的阶段和诊断取决于 Q2c）。
+- 预期行为变化：intent 中的 legacy paths 不再以 legacy native 执行，而以 typed v3 执行；bare 声明显式变为 `step: 120`；末端原子端点的路径在运行时被 v3 拒绝（诊断见 IS.2b）。
 - 提交信息模板：`feat(producer)!: compile ConfGen intent paths into typed v3 scopes` + 通用尾部。
+
+### IS.2b — v3 拒绝末端原子端点时，诊断指明具体的键
+
+- ID：IS.2b ／ 仓库：ConfFlow ／ 分支：IS ／ 前置：IS.2
+- 目标：Q2c 方向 1。v3 因"端点没有可测二面角框架"拒绝路径时，错误信息指明是哪条路径声明的哪个键，例如 `confgen.paths[1].end (atom 7) is a terminal atom with no measurable dihedral frame`。
+- 类型：`logic`（只改诊断文本和为其传递来源键所需的参数，不改任何判定）
+- 允许修改的文件：`confflow/science/confgen/torsion/stage.py`、`confflow/science/confgen/torsion/paths.py`、`confflow/science/confgen/planner.py`（只允许把路径来源键传到 axis 上），以及断言该错误文本的测试（逐条声明）
+- 具体步骤（@f87da58，IS.0 合并后按符号定位）：
+  1. 找到抛出点：`torsion/stage.py` 中"has no measurable dihedral frame (terminal pair)"（L96-108）；找到 typed `paths` 解析成 torsion axis 的位置（`torsion/paths.py` 的 `resolve_paths` / `parse_path_declarations`，以及 `planner.py` 中对 `paths` 的处理，L494-520）。
+  2. 解析时把每条路径的来源键（`paths[<j>]` 与具体端点字段 `start`/`end`，以及 1-based 原子号）记录到由该路径产生的 axis 上（只增加一个只读的来源描述字段，不参与任何计算、排序、去重或 state key）。
+  3. 拒绝时，如果 axis 带有来源描述，就把它写进错误信息；没有来源描述的 axis（`torsions` 声明产生的）错误信息保持原样。
+- 禁止事项：G1–G10；不得改变哪些输入被接受或拒绝；来源字段不得进入 state key、报告的 `enumeration`/`certificate` 或任何 digest。
+- 验收：标准验收（在 `$CFIS`）。**TS1 与 engine 报告必须逐字节不变**（来源字段一旦进入报告就是违规）；IS.1 中每个 `LEGACY_DEGENERATE` 用例经 intent 编译后执行，失败信息必须包含对应的 `paths[<j>].<start|end>` 键。
+- 预期行为变化：只有错误信息文本变化。
+- 提交信息模板：`fix(confgen): name the offending path key when a terminal endpoint is refused` + 通用尾部。
 
 ### IS.3 — `_wire_confgen` 拒绝非 v3 native
 
@@ -951,5 +984,5 @@ IS 分支上没有 `docs/refactor/`。各卡如需工具，从 `$TOOLS` 运行�
 
 1. **`preview_paths` 改收 v3 声明**（Q10）：`producer/path_preview.py:27-95`@f87da58 目前接收 legacy 形状 `native: {paths, angle_step, bond_scale, strict_path_bond_check}`；JD 的 `application/intent/preview.py` 的 `build_preview_native` 生成这一形状。PLAN-2 将改为接收 typed v3 的 `paths` 声明，两仓成对修改。
 2. **JD 测试的 producer 路径改为环境变量**（Q15）：`tests/contract_fixtures.py:38-39`、`tests/application/test_p0_boundary.py:51-52`、`tests/application/test_confflow_v4_workflows.py:69`、`tests/application/test_confflow_v4_contract.py:49-50`、`tests/application/test_confflow_v4_tspes_chain.py:62-76`@9beeaf2 把 `/opt/ConfFlow` 和 `/opt/ConfFlow/.venv/bin/python` 写死。改为统一读取环境变量（例如 `CONFFLOW_CWD`、`CONFFLOW_PYTHON`）后，§2.3 的 mount namespace 绑定就可以取消。
-3. **Q2c 的后续**：如果用户为 Q2c 选择"由运行时承担并在诊断中指明键"或"让 compile 接收结构"，相应的执行器或编译器改动放在 PLAN-2。
+3. **Q2c 方向 2**：在 JD 的路径预览阶段（有结构）提前报出末端原子端点，指明具体的键。本轮由运行时拒绝承担（IS.2b）。
 

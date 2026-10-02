@@ -80,13 +80,13 @@ python3 $TOOLS/diff_guard.py --repo $REPO --base HEAD~1 --head HEAD --type <卡�
 ### 4.1 静态检查
 
 CF：`cd $CF && ruff check . && mypy confflow && git diff --name-only HEAD~1 -- '*.py' | xargs -r ls 2>/dev/null | xargs -r black --check`
-JD：`cd $JD && ruff check src tests && ruff format --check src tests && mypy`
+JD：`cd $JD && ruff check src tests && ruff format --check src tests && mypy`（需要 `types-PyYAML`，PLAN §2.1）
 
 任何失败 → **退回**。
 
 ### 4.2 测试
 
-按 `PLAN.md` §2.2 / §2.3 运行全量测试，输出 junit，再转成 `{nodeid: outcome}`：
+按 `PLAN.md` §2.2 / §2.3 运行全量测试（JD 一律用 `run_jd_tests.sh`；验收方检查执行模型的 Bash 记录中没有直接调用 `unshare`/`mount`，有则按 G10 **退回**），输出 junit，再转成 `{nodeid: outcome}`：
 
 ```bash
 python3 $TOOLS/test_inventory.py collect --repo <cf|jd> --out $ACC/collect.txt
@@ -131,6 +131,8 @@ python3 $TOOLS/golden_check.py --base $BASE --cf <对应 CF 提交的工作树> 
 | **升级给用户** | G-TS1 / G-ENG / G-ATOM 有任何差异；ring、torsion、stereo、coordination、atom ordering 的行为有任何变化（包括测试结果的变化暗示了这些变化）；卡片标注了 BLOCKED-Qn 而用户尚未答复；`logic` 卡出现卡片未列出的行为变化；已知失败意外消失；contract 出现未声明的新增路径；IS.1 有 `NOT_EQUIVALENT`；C5.1（固定升级）；执行模型报告 G9（卡片与代码不符）；需要改变已定决策才能继续。 |
 | **退回** | R1–R4、类型规则、W1–W6、T1–T3、G-CON（声明不符）、静态检查或卡片额外验收命令中任何一项不满足；提交信息缺项；工作树不干净。退回时必须写明：哪条规则、证据（命令 + 输出摘录或 文件:行号）、要求执行模型做什么。执行模型修正时用 `git commit --amend` 重新交付同一张卡（仍是一个提交）。 |
 | **通过** | 以上都不成立。通过后，该提交成为下一张卡的"上一检查点"。 |
+
+**同一张卡被退回两次**：不再第三次交给同一个执行模型。验收方把两次退回的原因和证据报告给用户，由用户决定是否换更强的模型执行该卡（PLAN §2.8）。
 
 "升级"时验收方停止整个流水线中依赖该卡的后续卡片，把问题、证据和可选项写给用户，等用户答复后再继续。不得以"预期变化"放行科学行为差异。
 
