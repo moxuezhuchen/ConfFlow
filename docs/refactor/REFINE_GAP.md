@@ -1,6 +1,6 @@
 # blocks/refine 与 V4 refine 的功能差异报告（C5.1）
 
-> 状态：**待用户确认**。用户决定（2026-10-02）：删除 `confflow/blocks/refine/` 之前，先对比它与 `transform_executor` 的 refine 功能，缺失项列出来交用户确认。
+> 状态：**用户已于 2026-10-02 答复**：Q-R1 移植（拆 C5.3a move + C5.3b logic）；Q-R2 一起移植但拓扑来源须先定（见 PLAN C5.3c）；Q-R3 同意不移植，缺口记入 PLAN-2。原状态：待用户确认。用户决定（2026-10-02）：删除 `confflow/blocks/refine/` 之前，先对比它与 `transform_executor` 的 refine 功能，缺失项列出来交用户确认。
 > 对比对象（@ConfFlow `refactor/diet` b8e85a3 与 main d5a40ae 在这两处完全相同）：
 > - 旧：`confflow/blocks/refine/`（`processor.py` 878 行、`rmsd_engine.py` 797 行、`topology.py` 660 行）。
 > - 新：`confflow/execution/transform_executor.py` 的 `TransformExecutor._refine`（L235 起）、`_duplicate_of`（L321 起）。

@@ -948,16 +948,49 @@ IS 分支上没有 `docs/refactor/`。各卡如需工具，从 `$TOOLS` 运行�
   期望：`{"passed": 4118, "skipped": 12}`，0 failed；collect 4130（4502−376+4）；`golden_check.py` 全部 ok；`PYTHONPATH=$A/noeditable:. python3 -c "import confflow; confflow.CalcStepRunner"` 抛 `AttributeError`；`git grep -nE "(from|import) +confflow\.(calc|confts)|from +\.+(calc|confts)" -- confflow scripts` 无输出；ruff check、mypy 通过。
 - 提交信息模板：`refactor!: delete the legacy calc tooling and the confts CLI` + 通用尾部（Removed-Tests 376 附清单文件名，Added-Tests 4）。
 
-### C5.3 — 删除 `blocks/refine/`（前置：用户确认 C5.1）
+### C5.3a — 把图同构映射原样搬入 `confflow/science/`（move；用户 2026-10-02 决定 Q-R1 移植）
 
-- ID：C5.3 ／ 前置：C5.2、用户确认 REFINE_GAP.md
-- 类型：`delete`
-- 允许修改的文件：`confflow/blocks/refine/**`（删除）、`pyproject.toml`（L81 `confrefine`）、`tests/v4/test_architecture_boundaries.py`、引用 `blocks.refine` 的测试（`tests/test_refine*.py`、`tests/test_processor_hotspots.py`、`tests/test_rmsd_engine_hotspots.py`、`tests/test_bonding_consistency.py` 等，按 grep 结果逐条声明）
-- 验收：标准验收；golden 不变。
+- ID：C5.3a ／ 仓库：ConfFlow ／ 前置：C5.2 合入、C4 系列无关 ／ 类型：`move`（函数体一字不改，旧测试随迁）
+- 内容：`blocks/refine/topology.py`（`Graph`、`build_graph*`、`MappingSearch`、`find_isomorphism`、`group_frames_by_topology`、`graphs_may_be_isomorphic`、`DEFAULT_MAPPING_NODE_BUDGET`）与 `rmsd_engine.py` 中 `compare_frames` 及其私有依赖（`_frame_graph`、`_effective_cutoff`、`_build_candidate_priority`、`PairVerdict`）原样搬到 `confflow/science/`（建议 `science/topology_mapping.py`、`science/frame_compare.py`）；`blocks/refine` 暂时改为从新位置 import（保持其行为与测试不变，直到 C5.3d 删除）。随迁测试：与这些符号相关的测试（`tests/test_refine*.py`、`tests/test_rmsd_engine_hotspots.py` 中的相关部分）搬到 `tests/science/`，函数体不改。
+- **必须保留并以性能测试固定的上限与剪枝**（验收方已读源码，原样列出）：
+  1. 节点预算：`DEFAULT_MAPPING_NODE_BUDGET = 1000`，对每一对结构的每次映射搜索计数（`MappingSearch.nodes`），超过即抛 `MappingBudgetExceeded` → 该对结果为 `unresolved`（两帧都保留，绝不合并）。
+  2. 前置不变量过滤：原子数、元素计数、度序列、4 轮 Weisfeiler-Lehman 着色（`graphs_may_be_isomorphic`），只能证明不同，不能证明相同。
+  3. 候选集分桶：按（原子序数，度）分桶，并按已映射邻居一致性逐点检查。
+  4. 候选优先级：`_build_candidate_priority` 按局部几何距离给候选排序，使第一批完整映射接近最优；这是 1000 节点预算在高对称体系（叔丁基）上仍可用的前提。
+  5. 成对距离下界剪枝：仅全原子比较（`heavy_only=False`）时启用，`pair_error ≥ 2·(n−1)·n·cutoff²` 的分支被安全剪掉；`heavy_only=True` 时关闭。
+  6. 恒等映射优先，已评估的投影用 `seen_projections` 去重；返回的是第一个 RMSD < 阈值的见证映射，不是全局最小值。
+  7. 预算耗尽 / 无合法映射 / 所有映射都高于阈值 分别给出 `unresolved` / `different_topology` / `distinct`，不得改变。
+- 性能测试（随迁，新增，不改被测代码）：固定输入下 `MappingSearch.nodes` 不超过记录值（丁烷、叔丁基、苯环），预算耗尽路径返回 `unresolved`，剪枝开关时 `pruned > 0`。
+- 需先核实（执行前由验收方确认，写入卡片）：`topology.py` 依赖 `core.bonding.build_adjacency` 与 `_compat.load_refine_data`，而 `core/` 将在 C5.5 删除，`science/` 不得依赖它；`science/bonds.perceive_adjacency` 是否与 `build_adjacency` 逐位等价（若不等价，搬迁时需把 `build_adjacency` 一并搬入 `science/` 而非替换）。
+- 验收：标准验收；golden 不变；新搬模块的测试全部通过；`deleted_modules_check` 不涉及（本卡不删模块）。
+
+### C5.3b — V4 refine 调用对称映射去重（logic；Q-R1）
+
+- ID：C5.3b ／ 前置：C5.3a ／ 类型：`logic`（科学行为变化：V4 refine 将合并仅原子标号对称置换的构象）
+- 内容：`TransformExecutor._duplicate_of` 改为调用 `science/frame_compare.compare_frames`（或等价封装），保持科学分组（`_scientific_group`）与 `max_structures` 语义；新增 native 键 `mapping_budget`（默认 `DEFAULT_MAPPING_NODE_BUDGET`）；`unresolved` 保留两帧并在 notes 中写明；阈值比较方向沿用现有 V4 语义（`<=`）还是旧语义（`<`）需在卡片中显式裁定并以测试固定。
+- 独立对照验收（必须）：
+  1. RDKit `rdMolAlign.GetBestRMS` 交叉验证：对下列体系，V4 refine 判定重复 ⇔ GetBestRMS < 阈值，不一致即升级给用户；
+  2. 回归用例（均含氢的真实分子）：丁烷（甲基氢循环置换，应合并）、叔丁基（甲基内部与甲基间置换，应合并）、苯环翻转（应合并）、非对称体系（如 2-丁醇/不同取代基的构象，**不得误合并**）、真正不同的二面角（不得合并）；
+  3. 性能测试沿用 C5.3a 的节点数记录，V4 路径下不得增加。
+- 任何与 TS1、环、扭转、立体相关的行为变化 → 升级用户，不得写成"预期变化"。
+
+### C5.3c — V4 refine 获取 ConfGen 声明的拓扑（Q-R2；**来源未定，不开始**）
+
+- 前置：C5.3b；**用户先决定拓扑来源**。验收方的调查结论（@refactor/diet-c5 2f95dc1）：
+  - 现状：`TransformExecutor._refine` 只看到 `StructureRecord`（`atoms`/`coordinates`/`metadata`）；ConfGen 发布的结构 `metadata` 只有 `conformer_member`、`seed`、`input_confgen_state`，**不含任何拓扑**；ConfGen 的 `topology.bonds`、`add_bond`、`del_bond` 只存在于工作流文档（`ConfgenTopologyModel`）和执行时的原生参数中；refine 目前只能用几何感知（`perceive_adjacency`，`bond_scale`）。
+  - 候选来源：A 结构元数据：ConfGen 执行器在每个发布结构的 `metadata` 写入 `topology_bonds`（`metadata` 不进 `geometry_digest`，属非语义标注，但会改变 ConfGen 的发布内容与哈希以外的记录，需要走 contract 声明）；B refine 步骤自带 `topology_bonds` native 键，由用户在文档里写，或由 intent 编译器从上游 ConfGen 步骤复制；C 读 ConfGen 报告（`ensemble_report.json`）：transform 端口只传结构，无法取得，需改端口，代价最大。
+  - 验收方倾向 A；决定后再写卡。
+- 规则：来源不明则不开始（用户 2026-10-02 要求）。
+
+### C5.3d — 删除 `blocks/refine/`（前置：C5.3a、C5.3b 通过；C5.3c 的结论）
+
+- ID：C5.3d（原 C5.3） ／ 类型：`delete`
+- 允许修改的文件：`confflow/blocks/refine/**`（删除）、`pyproject.toml`（L81 `confrefine`）、`tests/v4/test_architecture_boundaries.py`、引用 `blocks.refine` 的测试（按 grep 结果逐条声明；已随迁的测试不得重复删除）
+- 验收：标准验收；golden 不变；`deleted_modules_check` 对 `confflow.blocks.refine` 通过。
 
 ### C5.4 — 删除 `blocks/confgen/`（Q11）
 
-- ID：C5.4 ／ 前置：C5.3
+- ID：C5.4 ／ 前置：C5.3d、C5.3c 的结论（`blocks/confgen` 中的 `AddBond`/`DelBond` 拓扑覆盖逻辑要等 Q-R2 有结论后才能删）
 - 类型：`delete`
 - 允许修改的文件：`confflow/blocks/confgen/**`、`confflow/blocks/__init__.py`（blocks 空了就删除整个包）、`pyproject.toml`（L80 `confgen`）、引用的测试（`tests/test_confgen.py`、`tests/test_collision*.py`、`tests/test_confgen_validator.py`、`tests/test_mapping.py`、`tests/test_confgen_refine_fallbacks.py`、`tests/test_optional_numba.py`、`tests/v4/test_confgen_scientific_regressions.py` 等，按 grep 逐条声明）
 - 验收：标准验收。写方案时核实：B0.1 的 engine 报告捕获中没有来自 `test_confgen_scientific_regressions.py` 的报告，删除它不影响 golden。
@@ -1066,3 +1099,4 @@ IS 分支上没有 `docs/refactor/`。各卡如需工具，从 `$TOOLS` 运行�
    - 绑定基数：`workflow/v4/graph.py:56-62` 允许绑定把必需端口放宽为 `many`（零个或多个），所以 0 个结构不一定在编译期被拒绝。
 4. **Q2c 方向 2**：在 JD 的路径预览阶段（有结构）提前报出末端原子端点，指明具体的键。本轮由运行时拒绝承担（IS.2b）。
 
+N. **优化后键连接变化的构象（Q-R3，用户 2026-10-02）：** 旧 `blocks/refine` 的多数拓扑过滤会删除少数拓扑构象；V4 refine 不过滤，各自保留。待核实：V4 对"优化后键连接发生变化的构象"是否有检查。用最小工作流实际运行确认；没有则记为缺口，交用户决定。

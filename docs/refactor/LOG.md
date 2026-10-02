@@ -319,4 +319,10 @@
 - 执行：外部模型 glm-5.3-flash；CF `refactor/diet-c5` 2f95dc1（父 b8e85a3），一次通过。
 - 验收人独立：提交与 handoff/C5.2-src-tests.patch 字节一致；deleted_modules_check 通过（calc、calc.runner、confts、workflow.composition、blocks.viz 均 ModuleNotFoundError，包解析到 cf-c5）；ruff/mypy 通过；run_sharded 4118 passed / 12 skipped。执行模型自报 golden ok、被删测试 376 项逐行一致、新增 4 项。
 - 环境教训：共享 jd-pin 随主线推进到 J3.2 后，侧分支（pin 仍为 9beeaf2）需专用 pin：/opt/cf-worktrees/jd-pin-cf（9beeaf2）。侧分支验收一律 `--jdpin /opt/cf-worktrees/jd-pin-cf`；合回主线后改用 jd-pin。
-- 侧分支未合并。注：验收方在记录时误将 refactor/diet-c5 推送到了 origin（此前授权只含 JD refactor/diet、CF refactor/diet、CF docs/refactor-plan），已如实告知用户；合并时机：C3.4 之后，由验收方做 merge 并复验。
+- 侧分支未合并；已在远端（用户 2026-10-02 确认保留）。授权范围更新为：refactor/* 与 docs/refactor-plan 可推送，main/master 一律不推。合并时机：C3.4 之后，由验收方做 merge 并复验。
+
+## 2026-10-02 用户答复 Q-R1/2/3
+- Q-R1 移植，拆两张卡：C5.3a（move：图同构映射原样搬入 science/，函数体不改，旧测试随迁，并保留预算与剪枝、加性能测试）、C5.3b（logic：V4 refine 调用；独立对照 RDKit GetBestRMS；丁烷、叔丁基、苯环翻转、非对称不得误合并）。
+- Q-R2 一起移植，但须先写明 V4 中 refine 获取拓扑的来源，来源不明则不开始：验收方调查结论写入 PLAN C5.3c（现状无来源；候选 A 结构元数据 / B refine 自带键 / C 读 ConfGen 报告），等待用户决定。
+- Q-R3 同意不移植；PLAN-2 记一条（优化后键连接变化的构象 V4 是否有检查）。
+- 推送授权改为：refactor/* 与 docs/refactor-plan 可推送；main/master 一律不推。
