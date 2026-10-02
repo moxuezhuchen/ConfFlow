@@ -294,3 +294,7 @@
 - 执行：外部模型 glm-5.3-flash；JD `refactor/diet` 13b6f55（父 c94fcab），1 次提交，未退回。
 - 验收人独立重跑（accjd 工作树）：src 改动与 handoff/J2.1c-calculation_section.patch 逐行一致，无 setContentsMargins；仅 2 个文件（calculation_section.py、tests/gui/test_startup_smoke.py）；ruff/format/mypy 通过；全量 JD 2407 passed / 7 skipped（与期望一致）；startup_smoke.py 输出 `startup smoke: ok`。
 - 用户授权推送（"下轮一起推送"）：JD refactor/diet、CF refactor/diet、CF docs/refactor-plan。
+
+## J2.4 — 第一次 G9 停止（2026-10-02，规划方疏漏，不计退回）
+- 执行模型自检 5（git grep）命中 3 处残留：`test_architecture.py:410` 的示例字符串、`test_confflow_v4_e2e.py:16/470` 的过时注释。其余自检全部通过（2325/7、collect 2332、冒烟 ok、82 项被删测试逐行一致）。
+- 原因：规划方定稿时的 grep 没覆盖这三处。已修补丁（36 个文件，新增 `test_confflow_v4_e2e.py` 两处注释，`test_architecture.py` 示例串改名），验收方实测 grep 输出 ok。

@@ -3108,7 +3108,7 @@ index 2635c4f..885f6e5 100644
      from tests.contract_fixtures import authoritative_contract
  
 diff --git a/tests/application/test_architecture.py b/tests/application/test_architecture.py
-index 0c8d0f2..790ee02 100644
+index 0c8d0f2..815b99d 100644
 --- a/tests/application/test_architecture.py
 +++ b/tests/application/test_architecture.py
 @@ -132,7 +132,6 @@ def test_only_commands_and_document_mutate_a_payload() -> None:
@@ -3166,6 +3166,15 @@ index 0c8d0f2..790ee02 100644
  def test_the_editor_service_depends_on_the_contract_facade_only() -> None:
      """``service.py`` may import ``.contract`` and nothing inside it.
  
+@@ -441,7 +407,7 @@ def test_the_gate_accepts_a_pure_port_call() -> None:
+     clean = (
+         "def resolve(self, target=None):\n"
+         "    payload = self._byte_source.read(location)\n"
+-        "    return parse_contract_bytes(payload)\n"
++        "    return decode_payload(payload)\n"
+     )
+     assert _scan_reads(clean) == []
+     assert _scan_writes(clean) == []
 @@ -527,7 +493,6 @@ _REMEDIATION_EXPORTS: tuple[tuple[str, str], ...] = (
      ("jobdesk_v2.infrastructure.runs.registry", "migrate_json_registry"),
      ("jobdesk_v2.infrastructure.runs.json_registry", "JsonSubmissionRegistry"),
@@ -3202,6 +3211,38 @@ index 683b757..5ac7e6c 100644
  
  
  class TestLegacyRefusal:
+diff --git a/tests/application/test_confflow_v4_e2e.py b/tests/application/test_confflow_v4_e2e.py
+index 6b97835..27c40a7 100644
+--- a/tests/application/test_confflow_v4_e2e.py
++++ b/tests/application/test_confflow_v4_e2e.py
+@@ -13,8 +13,7 @@ REAL-vs-DOUBLE inventory (see ``TestRealVsDoubleInventoryJD``):
+   - contract bytes: REAL (``generate_contract_bytes`` output from ConfFlow).
+   - JobDesk V4 provider (``...editor.contract.v4`` + ``...cards.v4_provider``):
+     LANDED -- ``TestRealV4ProviderSeams`` parses/authorizes through the REAL
+-    provider on the REAL bytes; the legacy v1/v2 ``parse_contract_bytes``
+-    still REFUSES v4 bytes by design, and the production
++    provider on the REAL bytes; the production
+     ``V4ProducerContractProvider`` answers only the V4 envelope, failing a
+     legacy document closed into the compatibility fallback (see
+     ``tests/application/test_contract_remote_v4.py``).
+@@ -465,13 +464,11 @@ class TestRealV4ProviderSeams:
+ 
+ 
+ # ---------------------------------------------------------------------------
+-# The legacy (v1/v2) parser, pinned with the REAL JobDesk seam.
++# The legacy (v1/v2) parser has been deleted.
+ #
+-# The legacy ``parse_contract_bytes`` still refuses V4 bytes on its own -- it
+-# understands ``confflow.workflow.v2`` and nothing else.  The production
+-# remote fetch no longer dispatches to it at all:
+-# ``V4ProducerContractProvider`` understands only the V4 envelope and fails a
+-# legacy document closed into the non-authoritative compatibility fallback.
++# The production remote fetch dispatches only to ``V4ProducerContractProvider``,
++# which understands only the V4 envelope and fails a legacy document closed
++# into the non-authoritative compatibility fallback.
+ # That dispatch is covered by ``tests/application/test_contract_remote_v4.py``.
+ # ---------------------------------------------------------------------------
+ 
 diff --git a/tests/application/test_contract_parsing.py b/tests/application/test_contract_parsing.py
 deleted file mode 100644
 index ada3875..0000000

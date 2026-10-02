@@ -626,8 +626,8 @@ JD contract_key、CF 的 contract/boundary 字节在本阶段都必须不变。
 - ID：J2.4 ／ 仓库：JobDesk-v2 ／ 分支：`refactor/diet` ／ 前置：J2.1c（基点 13b6f55）
 - 目标：删除 V1/V2 合同解析、provider、service、内置 manifest/catalog 快照、file mode，以及只守护它们的测试。
 - 类型：`delete`（带必要的测试改写）
-- 做法：验收方已在 13b6f55 上做出并通过全量验证的原型，导出为 `handoff/J2.4-src-tests.patch`（35 个文件）。执行模型**应用补丁、复核、自检、提交**，不重新设计。
-- 允许修改的文件：与补丁涉及的 35 个文件完全一致（删除 7 个、修改 26 个、删除脚本 2 个）；补丁之外任何文件的改动都算越界。
+- 做法：验收方已在 13b6f55 上做出并通过全量验证的原型，导出为 `handoff/J2.4-src-tests.patch`（36 个文件，含修正 G9 停止后补入的 `test_confflow_v4_e2e.py`）。执行模型**应用补丁、复核、自检、提交**，不重新设计。
+- 允许修改的文件：与补丁涉及的文件完全一致（删除 7 个、修改 27 个、删除脚本 2 个）；补丁之外任何文件的改动都算越界。
 - 具体步骤：
   1. `git apply --check` 再 `git apply` 补丁；`git status` 的文件集合必须等于补丁的文件集合。
   2. 复核补丁：删除了 `contract/parse.py`、`providers.py`、`service.py`、`infrastructure/editor/*`、`manifest.py` 与 `recipes.py` 中的内置快照、`models.py` 中的 `VerifiedEditorContract`/`ContractLevel`/`ArtifactSource`、`app.py` 的 file mode、`diagnostics.py` 的 Contract override 行、README 的 `JOBDESK_V2_CONTRACT` 与降级说明、`scripts/screenshots_phase_g.py`、`scripts/gen_editor_field_matrix.py`；没有任何 V4 行为代码被改。
@@ -637,7 +637,7 @@ JD contract_key、CF 的 contract/boundary 字节在本阶段都必须不变。
   ```bash
   cd $JD && git grep -nE "StableFallback|VerifiedEditorContract|JOBDESK_V2_CONTRACT|parse_contract_bytes|LocalFileByteSource|build_contract_service" -- src tests scripts README.md && echo FAIL || echo ok
   ```
-  期望：0 failed、7 skipped、2325 passed；collect 2332（2414−82，无新增）；`startup_smoke.py` 输出 `startup smoke: ok`；ruff/format/mypy 通过。
+  （验收方已在补丁上实测输出 ok。）期望：0 failed、7 skipped、2325 passed；collect 2332（2414−82，无新增）；`startup_smoke.py` 输出 `startup smoke: ok`；ruff/format/mypy 通过。
 - 提交信息模板：`refactor(editor)!: delete the V1/V2 contract wire, file mode and bundled snapshot` + 通用尾部（Removed-Tests 写 82 并附清单文件名，Behavior-Change 写：无合同时编辑被禁用，提示改为 "Configuration editing is disabled until a server contract is resolved."；JOBDESK_V2_CONTRACT 环境变量不再有效）。
 
 ### J2.5 — （可选）离线编辑：缓存最近一次 V4 contract
