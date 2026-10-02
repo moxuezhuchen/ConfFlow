@@ -350,3 +350,9 @@
 ## C5.3a 补丁已备（2026-10-03，验收方原型）
 - 基点 2f95dc1。搬迁等价：topology 21 个定义与 rmsd_engine 的 7 个定义 AST 逐一相同（tools-acc/move_identity_check.py）。全量 4125 passed / 12 skipped，collect 4137；golden ok。
 - 发现：被搬的 compare_frames 依赖 core.constants.HARTREE_TO_KCALMOL，C5.5 须保留 core/constants.py（并入 PLAN-2 的 core→science 迁移）。
+
+## C3.3 + J3.3 — 验收通过（2026-10-03）
+- 执行：外部模型 glm-5.3-flash；CF refactor/diet 8d968dc（C3.3）、JD refactor/diet edb068a（J3.3），一次通过。
+- 验收人独立：C3.3 提交与 handoff/C3.3-src-tests.patch 字节一致；J3.3 代码部分与 J3.3-code.patch 一致，fixture 与 CF 源字节一致，PROVENANCE.source_commit = 8d968dc；CF 全量 4481 passed / 12 skipped；JD（accjd@edb068a，绑定 exec-cf）2303 passed / 7 skipped；ruff/mypy/冒烟通过。
+- C3.4 补丁已备（pin 到 edb068a；验收方实测 4481 passed、release workflow 测试 14 passed）；jd-pin 已移到 edb068a。
+- 推送：refactor/diet（CF、JD）按 2026-10-02 授权推送。

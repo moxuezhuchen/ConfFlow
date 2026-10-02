@@ -722,7 +722,10 @@ JD contract_key、CF 的 contract/boundary 字节在本阶段都必须不变。
 
 ### C3.4 — re-pin 到 J3.3
 
-- 同 C3.1，SHA 换成 J3.3 的提交。前置：J3.3。验收：跨仓测试全部通过，`TestLiveProducerParity`（JD 侧）在 §2.3 绑定下通过。
+- ID：C3.4 ／ 仓库：ConfFlow ／ 分支：`refactor/diet` ／ 前置：J3.3（JD 提交 edb068ac258447f26eed2184d58e34554c323a18）
+- 类型：`ci`。做法：应用 `handoff/C3.4-pin.patch`（2 个文件，SHA 两处 + 注释）。`jd-pin` 已由验收方移到该提交。
+- 验收：跨仓测试全部通过；全量 `{"passed": 4481, "skipped": 12}`，collect 4493；`tests/test_release_workflow.py` 14 项通过；JD 侧 `TestLiveProducerParity` 在 §2.3 绑定下通过（J3.3 已验）。
+- 提交信息模板：`chore(cross-repo): pin JobDesk-v2 to edb068a (J3.3)` + 通用尾部。**这是 Phase 3 的最后一张卡。**
 
 ---
 
