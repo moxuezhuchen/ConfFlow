@@ -52,7 +52,7 @@
 
 ```
 J0       JD 兼容修复          J0a → J0b
-Phase 0  基线冻结            B0.1
+Phase 0  基线冻结            B0.1 → B0.2(工具修复)
 Phase 1  ConfFlow 外围删除    C1.1 → C1.2 → C1.3 → C1.4
 J1       JD 删除 evaluate_compatibility
 Phase 2  JD 删除 V1/V2        J2.1 → J2.2 → J2.3 → J2.4   (J2.5 可选，需用户确认)
@@ -361,6 +361,30 @@ J0 的提交在 JD 的 `refactor/diet` 分支上（从 9beeaf2 建立，见 §2.
   Behavior-Change: none
   Verification: ...
   ```
+
+### B0.2 — 修复 B0.1 验收时发现的两个工具缺陷
+
+- ID：B0.2 ／ 仓库：ConfFlow ／ 分支：`refactor/diet` ／ 前置：B0.1（已验收，eec4e80）
+- 目标：`reachability.py` 不再把有可达子模块的包列为不可达；`test_inventory.py diff` 支持声明新增节点数。
+- 类型：`baseline`（只改 `docs/refactor/tools/` 下已有的工具文件；不改 `baseline/` 下任何文件）
+- 允许修改的文件：`docs/refactor/tools/reachability.py`、`docs/refactor/tools/test_inventory.py`
+- 具体步骤：
+  1. `reachability.py`：Python 导入一个模块时，会先导入它的所有父包并执行其 `__init__`。因此，凡是可达模块的父包都必须计为可达，并且这些父包 `__init__` 里的 import（包括 `from .x import y`）也要计入可达闭包。修复后，输出中不得出现任何有可达后代的包。输出格式不变（每行一个模块名）。
+  2. `test_inventory.py diff`：新增可选参数 `--declared-added N`（默认 0）。当新增节点数不等于 N 时判 FAIL；默认值 0 时行为与现在完全相同（有新增即 FAIL）。删除检查（`--declared`、`--allowed-files`）不变。新增节点清单仍照常打印。
+- 禁止事项：G1–G10；不得改 `baseline/`、`run_jd_tests.sh` 及其他工具；不得改变两个工具的现有参数和默认行为。
+- 验收命令（验收方运行）：
+  ```bash
+  cd $CF && python3 $TOOLS/reachability.py --cf $CF > /tmp/refactor-acc/B0.2/reach.txt
+  # 期望：不含 confflow.domain / science / workflow / application / producer / programs / remote / analysis 等有可达子模块的包；
+  #       叶子模块名单仍包含 workflow._retired_runtime、workflow.helpers、workflow.validation、shared.confgen_params、core.validation、
+  #       blocks.viz.report、confts、calc.runner、blocks.refine.processor、blocks.confgen.generator、workflow.composition；
+  #       不含 workflow.step_naming、workflow.export、science.torsion、science.confgen.engine、execution.confgen_executor、producer.contract
+  A=/tmp/refactor-acc/J0b/acc   # prev.txt 与 cur.txt 是 J0b 前后的 JD collect 清单：删 1 增 2
+  python3 $TOOLS/test_inventory.py diff --prev $A/prev.txt --cur $A/cur.txt --declared 1 --declared-added 2 --allowed-files tests/gui/test_confflow_v4_cards.py   # 期望退出码 0
+  python3 $TOOLS/test_inventory.py diff --prev $A/prev.txt --cur $A/cur.txt --declared 1 --declared-added 1 --allowed-files tests/gui/test_confflow_v4_cards.py   # 期望非 0
+  python3 $TOOLS/test_inventory.py diff --prev $A/prev.txt --cur $A/cur.txt --declared 1 --allowed-files tests/gui/test_confflow_v4_cards.py                       # 期望非 0（与修复前相同）
+  ```
+- 提交信息模板：`chore(refactor): fix package false positives in reachability and add --declared-added` + 通用尾部（Removed-Tests: 0，Added-Tests: 0）。
 
 ---
 ## 4. Phase 1：ConfFlow 外围删除（contract 与 boundary 字节必须不变）
