@@ -151,3 +151,24 @@
 - sha256 前：f0f6540b40b23e54ae4c36c1458cdd6f055cac069a1bd5bd7446e254726c1136
 - sha256 后：aba1dacc78dcc812ab91ea5c23b9ea86f4131e65f2e4c4e953a8fa6bb5263a9e
 - 内容依据：用户决定"D010 被取代：confts / confgen / confrefine 从未使用"；D010 要求的"新的可达性与使用审计"以用户的使用说明加静态导入闭包报告为证据
+
+## 2026-10-02 C1.3 — 通过
+
+- 仓库/分支/提交：ConfFlow `refactor/diet` 445d4f5（父 8eda87f）；执行者：外部模型
+- 类型：delete；白名单检查：ok（删除 `workflow/validation.py`、`workflow/helpers.py`、`shared/confgen_params.py` 与对应 3 个测试文件；修改 `workflow/__init__.py`、`tests/v4/test_architecture_boundaries.py`）
+- diff 核对：`tests/v4/test_architecture_boundaries.py` 只在 `REMOVED_LEGACY_MODULES` 增加 `confflow.workflow.helpers`、`confflow.workflow.validation` 两项；`workflow/__init__.py` 只剩 shebang、第一段 docstring 与 `from __future__ import annotations`。执行方额外删除了 `__dir__()`，它依赖被删除的 `__all__`，否则 NameError；这是 PLAN 卡片遗漏，已认可并在此记录
+- 静态检查（验收方重跑）：ruff / black / mypy（253）ok；仓库内无被删模块引用；保留的 `step_naming`、`export`、`composition` 仍可导入
+- 测试（验收方在独立工作树、显式 `--cf` 重跑）：4502 项，4490 passed / 0 failed / 12 skipped；相对基线恰好少 33 个节点（C1.2 的 2 个 + 本卡 31 个：`test_confgen_params_consistency.py` 16、`test_workflow_helpers.py` 5、`test_workflow_validation_extra.py` 10），无新增，无结果变化
+- golden：TS1、83 份 engine 报告、contract 五项摘要全部不变
+- 结论：通过
+- 备注：执行方指出验收提示词里的 grep 模式 `.` 被当作通配符，命中了几处普通英文 "workflow validation"；之后的提示词改用 `git grep -F`
+
+## 2026-10-02 J1 — 通过
+
+- 仓库/分支/提交：JobDesk-v2 `refactor/diet` fe85b0d（父 ee0eabb）；执行者：外部模型
+- 类型：delete；白名单检查：ok（`contract/boundary.py`、`tests/application/test_p0_boundary.py`）
+- diff 核对：删除 `CompatibilityDecision`（含装饰器）、`evaluate_compatibility`、两者的 `__all__` 条目、孤立的 `Sequence` import、docstring 中对应半句、三个测试与孤立的 `cases` fixture；没有新增逻辑；`test_vocabulary_matches_producer_fixture` 与 fixture 保留
+- 静态检查（验收方重跑）：ruff / format / mypy（166）ok
+- 测试（验收方在独立 JD 工作树重跑，CF 用只读参考树 `cf-for-jd`@445d4f5）：2409 项，2402 passed / 0 failed / 7 skipped；相对基线恰好少 3 个声明的节点，无新增，无结果变化
+- contract：JD `contract_key` 与全部摘要和基线相同
+- 结论：通过
