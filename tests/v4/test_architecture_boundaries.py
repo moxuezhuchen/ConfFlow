@@ -81,7 +81,6 @@ FORBIDDEN_LEGACY_MODULES = (
     "confflow.workflow.resume_validation",
     "confflow.workflow.dag",
     "confflow.workflow.dry_run",
-    "confflow.workflow.export",
     "confflow.workflow.rerun_failed",
     "confflow.workflow.config_show",
     "confflow.workflow.composition",
@@ -246,6 +245,8 @@ REMOVED_LEGACY_MODULES: frozenset[str] = frozenset(
         "confflow.confts",
         "confflow.workflow.composition",
         "confflow.blocks.viz",
+        # C5.2b: the results.db export reader (nothing writes results.db any more).
+        "confflow.workflow.export",
         # PR-4: retired V2/V3 execution runtime.
         "confflow.workflow.engine",
         "confflow.workflow.state",
@@ -1903,9 +1904,9 @@ class TestNoFilenameOrdinalPairing:
 
     def test_scanners_flag_pairing_idioms(self) -> None:
         assert _filename_pairing_offenders(_FIXTURE_FILENAME_PAIRING), "basename scanner must trip"
-        assert _range_ordinal_pairing_offenders(_FIXTURE_ORDINAL_PAIRING), (
-            "ordinal scanner must trip"
-        )
+        assert _range_ordinal_pairing_offenders(
+            _FIXTURE_ORDINAL_PAIRING
+        ), "ordinal scanner must trip"
 
     def test_no_filename_idioms_in_tree(self) -> None:
         offenders: list[tuple[str, int, str]] = []

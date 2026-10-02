@@ -134,7 +134,6 @@ CI 也会执行 `pip check`，用于尽早发现声明依赖与解析结果不�
 | 文件 | 覆盖模块 | 说明 |
 |------|----------|------|
 | `test_engine.py` | workflow/engine, helpers | 工作流引擎、断点恢复、步骤调度 |
-| `test_export.py` | workflow/export | 导出功能测试 |
 | `test_rerun_failed.py` | workflow/rerun_failed | 失败重跑功能测试 |
 | `test_step_handlers.py` | workflow/step_handlers | 步骤执行适配器（confgen/calc 步骤） |
 | `test_runtime_context.py` | workflow/runtime_context | 运行时上下文初始化 |
@@ -291,7 +290,6 @@ pytest tests/ --cov=confflow --cov-report=term-missing
 - Workflow `calc` steps：ORCA SP 和 Gaussian SP 均完成。
 - `confgen`：butane 旋转搜索生成 27 个 conformer；workflow 方式也完成。
 - `confrefine`：butane conformer 去重筛选完成。
-- export/report：ORCA/Gaussian 工作目录可导出 JSON/CSV，文本报告生成路径可调用。
 
 发现的环境和使用注意事项：
 

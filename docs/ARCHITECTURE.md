@@ -135,7 +135,6 @@ confflow/
 │   ├── helpers.py            # 辅助工具（pushd、构象计数、列表转换）
 │   ├── validation.py         # 输入验证与标签标准化
 │   ├── stats.py              # 检查点、统计追踪、构象溯源
-│   ├── export.py             # 导出功能
 │   ├── rerun_failed.py       # 失败重跑
 │   ├── supervisor.py         # 子进程监督与停止处理
 │   └── step_naming.py        # 步骤命名
