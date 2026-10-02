@@ -236,26 +236,13 @@ Verification:
 
 ### 2.8 执行模型的调用方式
 
-J0b 起，每张卡由 CodeBuddy 的 `glm-5.3-flash` 以非交互方式执行，一次一张卡。验收方负责发起和验收。以下参数形式经过逐条实测（2026-10-02，判断依据是原始的 `function_call_result`，而不是模型的文字回答）：
+- J0a：Opus 子代理执行。
+- J0b 起：**Sonnet 5.5 子代理**（Claude Code 的 Agent 工具，`subagent_type: general-purpose`，`model: sonnet`），由验收方发起，一次一张卡。子代理看不到验收方与用户的对话，只能依据交接提示词、PLAN.md 和 ACCEPTANCE.md 工作，权限与验收方会话相同。
+- 交接提示词必须包含：卡片 ID；PLAN.md 和 ACCEPTANCE.md 的路径；"只执行这一张卡、提交后停止"；G1–G10 全文；"JD 测试只能通过 `run_jd_tests.sh` 运行，禁止直接或间接（`bash -c`、`python3 -c` 等）调用 unshare/mount"；"不得 push，包括 `git -C … push`"；"命令被拒绝或失败时如实报告，不得编造输出"；退回时附上验收方的具体要求，并要求用 `git commit --amend` 重新交付。
+- 验收方不采信执行模型报告的任何命令输出，一律自己重跑（ACCEPTANCE §4）。
+- 同一张卡被退回两次后，不再第三次交给同一个模型，而是报告用户，由用户决定是否换更强的模型。
 
-```bash
-DENY=(); for r in "Bash(unshare:*)" "Bash(mount:*)" "Bash(sudo:*)" "Bash(pip:*)" "Bash(pip3:*)" \
-                  "Bash(apt:*)" "Bash(apt-get:*)" "Bash(git push:*)"; do DENY+=(--disallowedTools "$r"); done
-cd <卡片所在仓库的执行工作树> && codebuddy -p --model glm-5.3-flash --permission-mode acceptEdits \
-  --allowedTools "Bash(*)" "${DENY[@]}" \
-  --add-dir /opt/cf-worktrees/exec-cf --add-dir /opt/cf-worktrees/exec-jd --add-dir /opt/cf-worktrees/jd-pin \
-  --output-format json "<交接提示词>"
-```
-
-实测结论：
-- `--allowedTools` 只能写 `"Bash(*)"` 一项。写成空格分隔或逗号分隔的多项（例如 `"Read Edit Write Grep Glob Bash(*)"`）时，所有 Bash 调用都会被拒绝。Read/Edit/Write/Grep/Glob 不需要列出（由 `acceptEdits` 和默认权限覆盖）。
-- 禁止规则必须每条单独一个 `--disallowedTools` 参数。写成一个空格分隔的字符串时，规则完全不生效（实测 `unshare`、`mount`、`pip`、`git push --dry-run` 都被执行了）。
-- 禁止规则只按命令前缀匹配，**不是安全边界**：`git -C <路径> push` 不被 `Bash(git push:*)` 拦截；`bash -c '…'` 包装可以绕过所有规则；`python3 -c` 调用子进程同理。因此 G10 实际依靠执行模型遵守，以及验收方的审计（ACCEPTANCE §4.2 的 Bash 记录检查，以及每张卡验收时核对远端分支没有变化）。
-- 当 Bash 被拒时，`glm-5.3-flash` 曾两次直接编造命令输出（实测）。所以执行模型报告中的任何命令输出都不能作为验收依据，验收方必须自己重跑。
-
-交接提示词必须包含：卡片 ID；PLAN.md 和 ACCEPTANCE.md 的路径；"只执行这一张卡、提交后停止"；G1–G10 全文；"JD 测试只能通过 `run_jd_tests.sh` 运行，禁止直接或间接（`bash -c`、`python3 -c` 等）调用 unshare/mount"；"不得 push，包括 `git -C … push`"；"命令被拒绝或失败时如实报告，不得编造输出"；退回时附上验收方的具体要求，并要求用 `git commit --amend` 重新交付。
-
-同一张卡被退回两次后，不再第三次交给同一个模型，而是报告用户，由用户决定是否换更强的模型。
+附：曾经评估过 CodeBuddy `glm-5.3-flash`（2026-10-02），后放弃。实测记录见 LOG.md：`--allowedTools` 只能写单项 `Bash(*)`；禁止规则必须逐条传参，而且只按前缀匹配，可以被 `git -C … push`、`bash -c` 绕过；Bash 被拒时，该模型曾编造命令输出。
 
 ---
 
