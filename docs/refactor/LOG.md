@@ -298,3 +298,8 @@
 ## J2.4 — 第一次 G9 停止（2026-10-02，规划方疏漏，不计退回）
 - 执行模型自检 5（git grep）命中 3 处残留：`test_architecture.py:410` 的示例字符串、`test_confflow_v4_e2e.py:16/470` 的过时注释。其余自检全部通过（2325/7、collect 2332、冒烟 ok、82 项被删测试逐行一致）。
 - 原因：规划方定稿时的 grep 没覆盖这三处。已修补丁（36 个文件，新增 `test_confflow_v4_e2e.py` 两处注释，`test_architecture.py` 示例串改名），验收方实测 grep 输出 ok。
+
+## J2.4 — 验收通过（2026-10-02）
+- 执行：外部模型 glm-5.3-flash；JD `refactor/diet` fedac08（父 13b6f55）。第一次 G9 停止属规划方疏漏，第二次一次通过。
+- 验收人独立重跑：提交相对 13b6f55 的 diff 与 handoff/J2.4-src-tests.patch 字节一致；ruff/format/mypy 通过；全量 JD 2325 passed / 7 skipped；startup_smoke ok；PLAN 的 git grep 输出 ok；被删测试 82 项由执行模型对照清单（验收方补丁生成时已核）。
+- 用户授权推送（"下轮一起推送"）：JD refactor/diet。
