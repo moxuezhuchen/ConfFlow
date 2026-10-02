@@ -241,7 +241,6 @@ def _resources_section() -> dict[str, Any]:
                 "value_type": "integer",
                 "constraints": ">= 1",
                 "default": defaults["resources"]["cores_per_item"],
-                "digest_axis": "scientific",
                 "description": "CPU cores reserved per work item; changes native input.",
             },
             {
@@ -250,7 +249,6 @@ def _resources_section() -> dict[str, Any]:
                 "value_type": "string",
                 "constraints": "binary suffixes KB/KiB/MB/MiB/GB/GiB/TB/TiB",
                 "default": defaults["resources"]["memory_per_item"],
-                "digest_axis": "scientific",
                 "description": "Memory reserved per work item; changes native input.",
             },
             {
@@ -259,7 +257,6 @@ def _resources_section() -> dict[str, Any]:
                 "value_type": "integer",
                 "constraints": ">= 1",
                 "default": defaults["scheduler"]["max_parallel_items"],
-                "digest_axis": "operational",
                 "description": "Scheduler-only width; never changes reuse identity.",
             },
             {
@@ -268,7 +265,6 @@ def _resources_section() -> dict[str, Any]:
                 "value_type": "string",
                 "constraints": f"one of {[item.value for item in OnFailure]}",
                 "default": OnFailure.CONTINUE.value,
-                "digest_axis": "operational",
                 "description": "Scheduler-only failure behavior; digest-inert.",
             },
         ],
@@ -412,7 +408,7 @@ def run_result_json_schema() -> dict[str, Any]:
     sqlite internals are not part of the shape.
 
     Richer optional members (top-level ``results`` with ResultRef identity,
-    per-step ``semantic_digest``/``result_digest``, artifact ``subject``/
+    per-step ``semantic_digest``, artifact ``subject``/
     ``fetch`` handles, and reaction-profile group entries inside
     ``analyses``) are accepted so the manifest can carry the full runtime
     truth while staying readable by consumers that only require the
@@ -428,7 +424,6 @@ def run_result_json_schema() -> dict[str, Any]:
             "status": {"enum": ["completed", "partial", "failed", "cancelled"]},
             "digest": {"type": "string", "pattern": digest_pattern},
             "semantic_digest": {"type": "string", "pattern": digest_pattern},
-            "result_digest": {"type": "string", "pattern": digest_pattern},
             "counts": {
                 "type": "object",
                 "required": ["completed", "failed", "cancelled"],
@@ -712,17 +707,7 @@ def build_configuration_contract_v4(
         "remote_capability": remote,
         "transform_kinds": list(TRANSFORM_KINDS),
     }
-    envelope["boundary"] = boundary_section(
-        executors=envelope["executors"],
-        execution_adapters=envelope["execution_adapters"],
-        result_profiles=envelope["result_profiles"],
-        scientific_checks=envelope["scientific_checks"],
-        recovery_profiles=envelope["recovery_profiles"],
-        programs=envelope["programs"],
-        analysis_capabilities=analysis_capabilities,
-        transform_kinds=TRANSFORM_KINDS,
-        result_schema_sha256=run_result_schema_sha256(),
-    )
+    envelope["boundary"] = boundary_section()
     envelope["contract_digest"] = canonical_sha256(
         {key: value for key, value in envelope.items() if key != "contract_digest"}
     )
@@ -747,30 +732,17 @@ def build_boundary_document(
     producer_commit: str | None = None,
     producer_dirty: bool | None = None,
 ) -> dict[str, Any]:
-    """Build the full P0 boundary document from the real registry.
+    """Build the full P0 boundary document.
 
     The contract envelope embeds only the compact boundary section; this
-    returns the full document with canonicalization vectors and JSON Schemas,
-    rebuilt from the same real descriptors the envelope publishes.
+    returns the full document with canonicalization vectors and JSON Schemas.
+    The document no longer depends on the build, so the producer arguments are
+    accepted only to keep the call sites stable.
     """
-    envelope = build_configuration_contract_v4(
-        producer_version=producer_version,
-        producer_commit=producer_commit,
-        producer_dirty=producer_dirty,
-    )
+    del producer_version, producer_commit, producer_dirty
     from .boundary import boundary_document
 
-    return boundary_document(
-        executors=envelope["executors"],
-        execution_adapters=envelope["execution_adapters"],
-        result_profiles=envelope["result_profiles"],
-        scientific_checks=envelope["scientific_checks"],
-        recovery_profiles=envelope["recovery_profiles"],
-        programs=envelope["programs"],
-        analysis_capabilities=envelope["analysis_capabilities"]["capabilities"],
-        transform_kinds=tuple(envelope["transform_kinds"]),
-        result_schema_sha256=envelope["result_schema_sha256"],
-    )
+    return boundary_document()
 
 
 def generate_contract_bytes(

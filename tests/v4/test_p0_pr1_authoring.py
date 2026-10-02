@@ -161,7 +161,6 @@ def assert_response_conforms(response: dict[str, Any]) -> None:
     assert response["content_schema"] == "confflow.authoring.v4"
     assert response["operation"] in AUTHORING_OPERATIONS
     assert isinstance(response["ok"], bool)
-    assert response["capability_identity"]["digest"].startswith("sha256:")
 
 
 # ----------------------------------------------------------------------
