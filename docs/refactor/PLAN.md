@@ -568,38 +568,40 @@ JD contract_key、CF 的 contract/boundary 字节在本阶段都必须不变。
 - 验收命令：JD 标准验收。期望：collect 数与 J2.1a 之后相同（2411）；0 failed、7 skipped；被改写的恰好是上面 14 个测试；`git grep -n "_degrade\|fallback_artifacts" -- src/jobdesk_v2/application/editor/contract/remote_v4.py src/jobdesk_v2/gui` 无输出（`providers.py` 里 `LocalProducerContractProvider` 自己的 `_degrade`/`fallback_artifacts` 留给 J2.4，`runs/confflow_backend.py` 的 `_degrade` 与合同无关，不在本卡范围）。
 - 提交信息模板：`feat(contract)!: report a server without a V4 contract as unavailable` + 通用尾部。
 
-### J2.2 — 测试基础设施不再经过 V1/V2 解析
+### J2.2 — 测试夹具不再经过 V1/V2 解析器
 
-- ID：J2.2 ／ 仓库：JobDesk-v2 ／ 分支：`refactor/diet` ／ 前置：J2.1b
-- 目标：`tests/contract_fixtures.authoritative_contract()` 不再调用 `parse_contract_bytes`（V1/V2），改为直接构造一个使用相同 manifest/catalog 文档的 `ContractLike`。
+- ID：J2.2 ／ 仓库：JobDesk-v2 ／ 分支：`refactor/diet` ／ 前置：J2.1b（已验收，4c5f6ec）
+- 目标：`tests/contract_fixtures.authoritative_contract()` 不再调用 `parse_contract_bytes`，改为直接用 `producer_v2.json` 里的 manifest 和配方目录构造一个测试内的 `ContractLike` 替身，为 J2.4 删除 V1/V2 解析器和 `VerifiedEditorContract` 做准备。
 - 类型：`test-only`
 - 允许修改的文件：`tests/contract_fixtures.py`、`tests/application/conftest.py`、`tests/gui/conftest.py`
-- 具体步骤（@9beeaf2）：
-  1. `contract_fixtures.py:65-74`：`authoritative_contract()` 改为读 `tests/fixtures/contract/producer_v2.json` 中的 `editor_manifest` 和 `recipe_catalog` 两段，用 `editor_manifest_from_mapping` / `recipe_catalog_from_mapping`（两者都保留，V4 也在用）构造，再包进一个测试内定义的 `ContractLike` 数据类：`source="producer"`、`is_authoritative=True`，`contract_key` 的计算方式与 `VerifiedEditorContract.contract_key` 相同，用同样的输入。
-  2. `application/conftest.py:90-94` 的 `fallback_contract` fixture 保留，到 J2.4 随 fallback 一起删除。
-- 禁止事项：G1–G9；不得修改任何 `test_*.py`；被测代码不得变化。
-- 验收命令：JD 标准验收。期望：collect 数不变；失败集合与 J2.1b 相同；`git diff HEAD~1 --stat` 只有允许的 3 个文件。
-- 提交信息模板：`test(contract): build the authoring fixture contract without the V1/V2 parser` + 通用尾部。
+- 具体步骤（@4c5f6ec）：
+  1. `contract_fixtures.py`（约 L65-77）：定义一个 frozen dataclass `FixtureContract`，提供与 `VerifiedEditorContract` 相同的**使用面**：`editor_manifest`、`recipe_catalog`（用 `editor_manifest_from_mapping` / `recipe_catalog_from_mapping` 从 `tests/fixtures/contract/producer_v2.json` 的 `editor_manifest`、`recipe_catalog` 段构造；这两个函数 J2.4 之后依然保留）、`source="producer"`、`is_authoritative=True`、`capabilities=EditorCapabilities(can_edit_fields=True, can_use_recipes=bool(recipes))`、`diagnostics=()`、`contract_key`（格式与 `VerifiedEditorContract.contract_key` 完全相同：`f"{schema}/{source}/manifest:{manifest_sha256[:12]}/recipes:{recipe_sha256[:12]}"`，输入取自 `producer_v2.json` 的 `schema` 与两个 sha256 字段，保证 key 字符串不变）、`describe_source()`（返回与原来相同的 `"Using ConfFlow contract <producer_version or '(unversioned)'>"`）。其余测试用到而上面没有的属性，按需要补上，补多少就在提交信息里列多少。
+  2. `authoritative_contract()` 与 `_authoritative_contract_cached()` 返回 `FixtureContract`；`authoring_service()` 不变。`fallback_artifacts()` 和 `parse_fixture()` 保留（还有用 V1/V2 解析器的测试在用，J2.4 才删）。
+  3. `application/conftest.py` 的 `contract` fixture（约 L98-110）和 `gui/conftest.py` 的 `service` fixture 已经调用 `authoritative_contract()`，如不需要改动就不动。
+- 禁止事项：G1–G11；不得修改任何 `test_*.py`；被测代码不得变化；`fallback_contract` / `fallback_artifacts` fixture 这一卡不删。若发现必须改动 `test_*.py` 才能通过（例如某个测试断言 `isinstance(contract, VerifiedEditorContract)`），停止并报告，不要变通。
+- 验收命令：JD 标准验收。期望：collect 2411 不变；结果与 J2.1b 之后逐项相同（2404 passed / 7 skipped / 0 failed）；`git diff --stat` 只涉及白名单内的文件。
+- 提交标题：`test(contract): build the authoring fixture contract without the V1/V2 parser`
 
 ### J2.3 — 把 V4 仍需要的符号移出 `parse.py`
 
 - ID：J2.3 ／ 仓库：JobDesk-v2 ／ 分支：`refactor/diet` ／ 前置：J2.2
-- 目标：V4 代码只从新模块 `contract/errors.py` 取 `ContractParseError`、`decode_json_object`、`ARTIFACT_CONTRACT`，不再 import `parse.py` / `providers.py`。
+- 目标：V4 代码和测试不再 import `contract.parse`；通用的错误类型和 JSON 解码原语移到新模块和 `jcs.py`，`parse.py` 只剩 V1/V2 的内容（J2.4 删除）。
 - 类型：`move`
 - 允许修改的文件：
-  - `src/jobdesk_v2/application/editor/contract/errors.py`（新增）
-  - `src/jobdesk_v2/application/editor/contract/parse.py`
-  - `src/jobdesk_v2/application/editor/contract/v4.py`
-  - `src/jobdesk_v2/application/editor/contract/boundary.py`
-  - `src/jobdesk_v2/application/editor/contract/remote_v4.py`
-  - `src/jobdesk_v2/application/editor/contract/__init__.py`
-- 具体步骤（@9beeaf2）：
-  1. 核对 V4 侧依赖：`v4.py:49`（`ARTIFACT_CONTRACT, ContractParseError, decode_json_object`）、`boundary.py:33`（`ContractParseError`）、`remote_v4.py:38-44`（`parse` 与 `providers` 的 import）。
-  2. 把 `ContractParseError`（`parse.py:114` 起）、`decode_json_object`（`parse.py:146` 起）及其私有依赖、`ARTIFACT_CONTRACT`（`parse.py:84`）原样剪切到 `errors.py`；`parse.py` 改为从 `errors.py` import 这些名字（`parse.py` 在 J2.4 删除）。
-  3. 改 `v4.py`、`boundary.py`、`remote_v4.py` 的 import 路径；`contract/__init__.py` 中这些名字的导出来源改为 `errors`。
-- 禁止事项：G1–G9；函数体逐字不变。
-- 验收命令：JD 标准验收，另加 `git diff HEAD~1 -U0 | grep '^[-+]' | grep -v '^[-+]\s*\(from\|import\|#\|$\)'`，验收方核对删除行与新增行一一对应（移动）。期望：collect 不变；失败集合不变；contract_key 不变。
-- 提交信息模板：`refactor(contract): move V4-shared parse errors into contract.errors` + 通用尾部。
+  - 新增 `src/jobdesk_v2/application/editor/contract/errors.py`
+  - `src/jobdesk_v2/application/editor/contract/parse.py`、`__init__.py`、`v4.py`、`boundary.py`、`remote_v4.py`
+  - `src/jobdesk_v2/application/editor/jcs.py`
+  - `src/jobdesk_v2/application/cards/binding_candidates.py`、`src/jobdesk_v2/application/remote/v4_validation.py`、`src/jobdesk_v2/application/runs/v4_results.py`
+  - `tests/application/test_p0_boundary.py`、`tests/application/test_confflow_v4_contract.py`，以及任何其他 import 了被移动符号的 `tests/` 文件（**只允许改 import 语句**）
+- 具体步骤（@J2.2 之后；移动的函数体、类体逐字不变）：
+  1. 新增 `errors.py`：从 `parse.py` 原样剪切 `ARTIFACT_CONTRACT`（约 L84）、`ContractParseError`（约 L114-143）、`decode_json_object`（约 L146-184）。依赖的 import（`json`、`Any`、`ContractDiagnostic`、`DiagnosticCode`）按需带过去。
+  2. 移到 `application/editor/jcs.py` 末尾（同样原样剪切）：`_DuplicateKeyError`、`_NonFiniteConstantError`、`_strict_object_pairs`、`_reject_constant`、`decode_strict_json`（约 L187-238）、`canonicalize_text`（约 L241-258）。依赖的 `json`、`hashlib`、`JcsError`、`reason_code_for`、`jcs_bytes` 在 jcs.py 里本来就有或按需 import。这两个函数在源码里只有 parse.py 自己用，只有 `test_p0_boundary.py` 里的 JCS 一致性测试在用；它们守护的是 JD 与 producer 的 JCS 接受规则一致，所以保留而不删除。
+  3. `parse.py`：从 `errors` 和 `jcs` import 上述名字（它自己内部还在用）；`parse.py` 自己不再定义它们。
+  4. 把全部 import 方改成新位置：`v4.py`（`ARTIFACT_CONTRACT, ContractParseError, decode_json_object` ← `.errors`）、`boundary.py`（`ContractParseError` ← `.errors`）、`remote_v4.py`、`contract/__init__.py`（这些名字的再导出改为来自 `errors` 与 `jcs`）、`binding_candidates.py`、`v4_validation.py`、`v4_results.py`、以及上面列出的测试文件里的 import 语句。`jcs.py` 开头 docstring 里提到 "`contract.parse.decode_strict_json`" 的地方改成本模块。
+  5. 完成后 `git grep -n "contract.parse\|from .parse\|from ..parse" -- src tests` 的命中只允许出现在 `contract/` 内的 V1/V2 模块自己（`parse.py` 内部、`providers.py`）和 J2.4 才删除的测试里（`test_contract_parsing.py`、`test_contract_providers.py` 等 V1/V2 专属测试）。
+- 禁止事项：G1–G11；函数体、类体逐字不变；不得重命名；不得改任何测试断言。
+- 验收命令：JD 标准验收，另加 `git diff HEAD~1 -U0 | grep '^[-+]' | grep -v '^[-+][-+]'` 由验收方核对（删除行和新增行除 import、`__all__`、空行、注释外一一对应）。期望：collect 2411 不变；结果与 J2.2 之后逐项相同；`contract_key` 不变。
+- 提交标题：`refactor(contract): move V4-shared errors and JSON primitives out of parse.py`
 
 ### J2.4 — 删除 V1/V2 合同实现、file mode 和内置快照
 
