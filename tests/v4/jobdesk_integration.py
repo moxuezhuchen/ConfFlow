@@ -47,9 +47,9 @@ JOBDESK_SRC_ENV = "JOBDESK_V2_SRC"
 DEFAULT_JOBDESK_SRC = Path("/opt/jobdesk-v2-v4/src")
 
 #: Pinned JobDesk revision the cross-repo evidence was produced against.
-#: Tracks JobDesk-v2 ``refactor/diet`` at J3.2 (stops requiring the producer's
+#: Tracks JobDesk-v2 ``refactor/diet`` at J3.3 (stops requiring the producer's
 #: capability/semantic identity members).
-EXPECTED_JOBDESK_SHA = "1ca4052a7715421f70fcb40889aec482a35d9d6b"
+EXPECTED_JOBDESK_SHA = "edb068ac258447f26eed2184d58e34554c323a18"
 
 #: Explicit escape hatch for development against a different checkout.
 ALLOW_ANY_SHA_ENV = "JOBDESK_V2_ALLOW_ANY_SHA"
