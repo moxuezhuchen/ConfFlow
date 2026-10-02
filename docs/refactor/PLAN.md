@@ -177,7 +177,7 @@ $TOOLS/run_jd_tests.sh --cf $CF --jd $JD -- tests/application/test_p0_boundary.p
 - TS1 engine 三种 backend 在本机各约 20–60 秒；engine 报告捕获（`tests/v4/test_confgen_*.py`，274 个测试）约 4 分钟，两次运行结果逐字节相同。
 - `confflow v4 contract --json` 和 `v4 boundary --json` 在源码树中运行时字节确定（`producer.commit` 为 `null`），可以跨提交比较。
 
-### 2.5 通用禁止事项（每张卡都适用，卡片中以"G1–G10"引用）
+### 2.5 通用禁止事项（每张卡都适用，卡片中以"G1–G11"引用）
 
 - G1 不得修改白名单以外的任何文件（含格式化工具顺手改的文件）。
 - G2 `delete` / `move` 卡不得新增逻辑：不得新增函数、类、条件分支、异常处理、默认值。
@@ -189,6 +189,7 @@ $TOOLS/run_jd_tests.sh --cf $CF --jd $JD -- tests/application/test_p0_boundary.p
 - G8 不得 push、不得改 `main`/`master`、不得切换 `/opt/ConfFlow` 或 `/opt/jobdesk-v2-v4` 主工作树的分支。
 - G9 发现卡片与代码不符（锚点找不到、行为与描述不同），或者环境缺包、命令失败时，停止并在提交前报告，不得自行变通。
 - G10 不得直接调用 `unshare`、`mount`、`sudo`、`pip`/`apt` 安装命令；JD 测试只通过 `docs/refactor/tools/run_jd_tests.sh` 运行。
+- G11 涉及构象比较的夹具必须使用带氢的真实分子（用户 2026-10-02 增补）。没有氢的夹具上，绕含末端原子的键的旋转只是刚体转动，不能用于判断构象是否等价；这类夹具只能作为回归记录，结论不得来自它们。
 
 ### 2.6 每张卡的通用验收（卡片中写"标准验收"即指本节）
 
@@ -759,20 +760,27 @@ IS 分支上没有 `docs/refactor/`。各卡如需工具，从 `$TOOLS` 运行�
   期望：可重复。`LEGACY_DEGENERATE` 不阻塞，但验收方要逐个核对去重证明。**只要有一个 `NOT_EQUIVALENT`，验收结论就是"升级"，IS.2 不得开始。**
 - 提交信息模板：`test(confgen): record legacy-vs-v3 paths equivalence golden` + 通用尾部。
 
-### IS.1b — 修正 IS.1 的比较方法并补充含氢用例（IS.1 验收后新增）
+### IS.1b — 修正 IS.1 的比较方法并补充含氢用例（IS.1 验收后新增，用户已确认规则）
 
-- ID：IS.1b ／ 仓库：ConfFlow ／ 分支：`implementation/input-simplification` ／ 前置：IS.1（提交 9340601）、用户对 IS.1 报告的答复
-- 目标：IS.1 的 `LEGACY_DEGENERATE` 比较沿用了 PLAN 的"不做叠合"，这是方案本身的错误：绕含末端原子的键旋转，在没有氢的夹具（`_butane`）上只是整个分子的刚体转动，是同一个构象，却被判成不同。同时补充含氢（甲基）的用例，那才是末端端点的真实科学场景。
+- ID：IS.1b ／ 仓库：ConfFlow ／ 分支：`implementation/input-simplification` ／ 前置：IS.1（提交 9340601）
+- 目标：IS.1 的比较沿用了 PLAN 的"不做叠合"，这是方案本身的错误（无氢夹具上绕末端键的旋转只是刚体转动）。本卡改用只允许真旋转的叠合比较，通过三个自检后才可用于下结论，并补充带氢的真实分子用例。
 - 类型：`baseline`
-- 允许修改的文件：`docs/refactor/paths_equivalence/run_equivalence.py`、`cases.json`、`result.json`、`README.md`（只改本目录下已有文件，不碰其他）
-- 具体步骤：
-  1. 比较改为叠合不变：两个结构的原子顺序相同，用 `confflow.science.cluster.kabsch_rmsd`（不含镜像）计算，阈值 1e-6 Å。集合去重、集合相等都使用这个度量。EQUIVALENT 判定里"逐原子最大偏差"保持不变（它比较的是 legacy 与 v3 在同一坐标系中的输出，两边都不涉及绕末端轴的转动）。
-  2. 新增标记 `BOTH_REJECT`：legacy 与 v3 都以非 COMPLETED 结束，只是失败原因不同（例如 legacy 因预几何上限拒绝，v3 因末端端点拒绝）。记录两边各自的原因，不再记为 NOT_EQUIVALENT。
-  3. 新增标记 `V3_EMPTY_DEGENERATE`：legacy 产出结构，v3（或对照声明）COMPLETED 但发布 0 个结构，且输入链的所有原子共线（任意三个原子构成的叉积范数 < 1e-9）。记录共线判定的数据。
-  4. 新增含氢用例（`extra_methyl_*`，使用 RDKit 或手写坐标构造带氢的丁烷/丙烷，保持确定性）：(a) 端点是甲基碳，move 到另一端，angles=[0,120,240]；(b) 同上用 bare 声明；(c) 内部键、两端都是非末端原子的对照路径（应当 EQUIVALENT）。对 (a)(b)，叠合不变的比较若 legacy 集合大于对照集合，标记 `LEGACY_ONLY_TERMINAL_ROTOR`，并记录两边的集合大小——这是用户已接受的"v3 拒绝末端原子端点"的真实后果，不判为失败，但要如实量化。
-  5. 其余规则不变：结果必须可重复（`--check` 连续两次逐字节相同）。
-- 禁止事项：G1–G10；不得改 `confflow/`、`tests/`。
-- 提交标题：`test(confgen): compare terminal-endpoint paths up to rigid motion and add methyl cases`
+- 允许修改的文件：`docs/refactor/paths_equivalence/` 下已有的 `run_equivalence.py`、`cases.json`、`result.json`、`README.md`，以及新增的同目录文件（如 `fixtures_h.json`）。不碰其他目录。
+- 用户已确认的规则：
+  1. 叠合只允许真旋转（行列式 +1），禁止镜像。`confflow.science.cluster.kabsch_rmsd` 已实现"无镜像 Kabsch"（`cluster.py:27-42`），可以直接使用，但必须先通过下面的自检。
+  2. 比较工具先通过三个自检才可用于出结论，自检结果写入 README 和 result.json 的 `selfcheck` 节；任何一个失败，工具以非零退出，不生成 result.json：
+     - SC1 刚体旋转 → 相同：取一个带氢的非平面结构，施加随机真旋转和平移，RMSD ≤ 1e-5；
+     - SC2 镜像 → 不同：取一个手性分子（带氢，例如 CHFClBr 或 2-丁醇，坐标来自确定性构造并保存在 `fixtures_h.json` 中），做镜像（x → −x），RMSD > 1e-5（并记录实际值）；
+     - SC3 真实二面角变化 → 不同：取带氢的丁烷（或 1-丙醇），绕一个 C–C 键把一端转 60°，RMSD > 1e-5（并记录实际值）。
+  3. 阈值统一为 1e-5 Å（所有比较，包括原来的逐原子比较），在 README 和 result.json 里写明。
+  4. 用例须带氢，且同时覆盖对称甲基（CH3）和非对称端基（OH、NH2）：至少 n-丁烷（两端甲基）、1-丙醇（OH 端基，另一端甲基）、丙胺（NH2 端基，另一端甲基），端点在末端原子上、路径经过内部键，angles 用 [0,120,240]；各配一个 bare 声明版本（不写 angles/step）；再配内部键、两端都是非末端原子的对照路径（应为 EQUIVALENT）。分子坐标用 RDKit 的确定性嵌入（`AllChem.EmbedMolecule(mol, randomSeed=7)` 加 MMFF 优化）生成一次后**把坐标直接存入 `fixtures_h.json`**，之后各步骤都从文件读取，不再依赖 RDKit 版本。
+  5. `LEGACY_ONLY_TERMINAL_ROTOR` 的期望是 0：对每个端点在末端原子上的含氢用例，统计"legacy 结构（用叠合不变的度量去重后）中，在 v3 对照集合里找不到对应结构的个数"。该个数大于 0 就标记 `LEGACY_ONLY_TERMINAL_ROTOR` 并如实记录两边的集合大小。**结果大于 0 时，验收结论为升级**（执行方不要试图让它变成 0，也不要改判定）。对 CH3 和 NH2/OH 分别记录，另外对端基氢原子做置换的版本也各记录一份（`symmetry_aware_legacy_only`，只置换同一个端基重原子上的氢），便于区分"标号不同的等价构象"和"真正不同的构象"。
+  6. 新增标记：`BOTH_REJECT`（legacy 与 v3 都以非 COMPLETED 结束，仅原因不同，记录两边原因）；`V3_EMPTY_DEGENERATE`（legacy 产出结构，v3 或对照声明 COMPLETED 但发布 0 个结构，且输入链所有原子共线，任意三原子构成的叉积范数 < 1e-9；记录共线判定数据）。这两个标记都不是失败，不阻塞 IS.2。
+  7. 原有的 28 个无氢用例保留，在新度量下重新判定并写入 result.json 的 `no_hydrogen_regression` 节，**不计入结论**（G11）；结论计数只来自 `fixtures_h.json` 中的含氢用例和 `hydrogen_cases` 节。
+  8. `--check` 连续两次逐字节相同（沿用 IS.1）。
+- 禁止事项：G1–G11；不得改 `confflow/`、`tests/`；不得为了让某个标记计数变成期望值而改判定或阈值。
+- 验收命令（验收方运行）：`run_equivalence.py --check`；检查 README 里三个自检的数值；逐个用例核对含氢用例的标记。
+- 提交标题：`test(confgen): compare terminal-endpoint paths up to proper rotation with hydrogen-bearing cases`
 
 ### IS.0 — 把 Phase 1–3 后的 main 合入 IS 分支
 
@@ -783,7 +791,7 @@ IS 分支上没有 `docs/refactor/`。各卡如需工具，从 `$TOOLS` 运行�
 
 ### IS.2 — intent 编译器始终输出 `schema_version: 3`，paths 走 v3
 
-- ID：IS.2 ／ 仓库：ConfFlow ／ 分支：IS ／ 前置：IS.0，且 IS.1 中没有 `NOT_EQUIVALENT`
+- ID：IS.2 ／ 仓库：ConfFlow ／ 分支：IS ／ 前置：IS.0、IS.1b 通过，且 IS.1b 的含氢用例中没有 `NOT_EQUIVALENT`，`LEGACY_ONLY_TERMINAL_ROTOR` 为 0 或用户已对其数值作出决定（`V3_EMPTY_DEGENERATE`、`BOTH_REJECT` 不阻塞）
 - 目标：`_wire_confgen` 对带 paths 的 legacy native 生成 typed v3 块，而不是透传。
 - 类型：`logic`
 - 允许修改的文件：`confflow/producer/intent.py`、`tests/v4/` 下与 intent 编译相关的测试文件（逐条声明）
@@ -1054,5 +1062,9 @@ IS 分支上没有 `docs/refactor/`。各卡如需工具，从 `$TOOLS` 运行�
 
 1. **`preview_paths` 改收 v3 声明**（Q10）：`producer/path_preview.py:27-95`@f87da58 目前接收 legacy 形状 `native: {paths, angle_step, bond_scale, strict_path_bond_check}`；JD 的 `application/intent/preview.py` 的 `build_preview_native` 生成这一形状。PLAN-2 将改为接收 typed v3 的 `paths` 声明，两仓成对修改。
 2. **JD 测试的 producer 路径改为环境变量**（Q15）：`tests/contract_fixtures.py:38-39`、`tests/application/test_p0_boundary.py:51-52`、`tests/application/test_confflow_v4_workflows.py:69`、`tests/application/test_confflow_v4_contract.py:49-50`、`tests/application/test_confflow_v4_tspes_chain.py:62-76`@9beeaf2 把 `/opt/ConfFlow` 和 `/opt/ConfFlow/.venv/bin/python` 写死。改为统一读取环境变量（例如 `CONFFLOW_CWD`、`CONFFLOW_PYTHON`）后，§2.3 的 mount namespace 绑定就可以取消。
-3. **Q2c 方向 2**：在 JD 的路径预览阶段（有结构）提前报出末端原子端点，指明具体的键。本轮由运行时拒绝承担（IS.2b）。
+3. **v3 发布 0 个结构时应失败或明确告警，不得 completed**（用户 2026-10-02 增补，来自 IS.1 的共线链用例）：v3 执行器在 `confgen v3 published 0 leaf structures (2 raw targets)` 的情况下仍返回 COMPLETED。需要改为失败或带明确的告警诊断。同时必须核实并记录下游步骤收到 0 个结构时的行为。写方案时的初步核实（@d5a40ae，读代码，未运行）：
+   - `transform`（refine / deduplicate）：`transform_executor.py:198-204` 对空的 `structure` 输入集抛 `DomainError("transform requires a non-empty 'structure' input set ...")`，即在下游失败得很明确；
+   - 计算步骤（calculation，按 `each_entity`/per-structure 绑定）：收到 0 个结构时会产生 0 个 work item 还是报错，**尚未核实**，PLAN-2 需要用最小工作流实际运行确认并记录；
+   - 绑定基数：`workflow/v4/graph.py:56-62` 允许绑定把必需端口放宽为 `many`（零个或多个），所以 0 个结构不一定在编译期被拒绝。
+4. **Q2c 方向 2**：在 JD 的路径预览阶段（有结构）提前报出末端原子端点，指明具体的键。本轮由运行时拒绝承担（IS.2b）。
 

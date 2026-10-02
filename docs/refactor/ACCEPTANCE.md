@@ -71,6 +71,7 @@ python3 $TOOLS/diff_guard.py --repo $REPO --base HEAD~1 --head HEAD --type <卡�
 - W4 删除的测试节点必须全部在 `Removed-Tests` 中声明，并且属于卡片允许删除的文件或函数：
   `python3 $TOOLS/test_inventory.py diff --prev <上一张卡的 collect> --cur $ACC/collect.txt --declared N --allowed-files <...>`
 - W5 新增测试节点只允许出现在 `logic`、`test-only`、`baseline` 卡，并且必须在 `Added-Tests` 中声明。
+- W7 构象比较类的夹具（用例、测试数据）如果没有氢原子，其结论不得作为等价性证据（PLAN G11）。含氢夹具的坐标必须存成文件，不得依赖运行时 RDKit 嵌入。
 - W6 被删除的测试如果守护的不是本卡删除的代码（看它 import 或调用的符号），→ **退回**。
 
 ---
