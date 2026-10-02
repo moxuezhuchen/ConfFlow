@@ -10,12 +10,12 @@ import sqlite3
 
 import pytest
 
-from confflow.calc.db.database import ResultsDB
 from confflow.workflow.export import (
     EXPORT_FIELDS,
     NoExportableResultsError,
     export_results,
 )
+from tests.results_db_fixture import ResultsDB
 
 
 def _write_result_db(path, rows):

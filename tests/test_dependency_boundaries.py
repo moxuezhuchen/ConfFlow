@@ -41,36 +41,15 @@ def test_core_and_shared_never_import_the_blocks_layer() -> None:
     assert offenders == []
 
 
-def test_calc_never_imports_the_blocks_layer() -> None:
-    """Calc depends on a neutral refine port, never on concrete blocks."""
-    offenders = [
-        (path, module) for path, module in _package_modules("calc") if _contains_blocks(module)
-    ]
-    assert offenders == []
-
-
-def test_calc_does_not_import_the_legacy_refine_result_module() -> None:
-    """Calc code consumes the neutral result contract owned by calc itself."""
-    offenders = [
-        (path, module)
-        for path, module in _package_modules("calc")
-        if module.lstrip(".").endswith("blocks.refine.result")
-    ]
-    assert offenders == []
-
-
 def test_legacy_compatibility_shims_preserve_object_identity() -> None:
     """Old import paths re-export the exact neutral/core objects."""
     from confflow.blocks.confgen.generator import load_mol_from_xyz as legacy_loader
     from confflow.blocks.confgen.validator import ChainValidator as legacy_validator
-    from confflow.blocks.refine.result import RefineResult as legacy_result
-    from confflow.calc.result import RefineResult
     from confflow.core.chem_validation import (
         ChainValidator,
         load_mol_from_xyz,
     )
 
-    assert legacy_result is RefineResult
     assert legacy_validator is ChainValidator
     assert legacy_loader is load_mol_from_xyz
 

@@ -5,14 +5,13 @@
 from __future__ import annotations
 
 import json
-import sqlite3
 from pathlib import Path
 
 import numpy as np
 
 from confflow.blocks.refine import processor
-from confflow.calc.db.database import ResultsDB
 from confflow.workflow.export import export_results
+from tests.results_db_fixture import ResultsDB
 
 
 def test_db_persists_cid_from_metadata(tmp_path):
@@ -41,30 +40,6 @@ def test_db_persists_explicit_cid(tmp_path):
 
     assert record is not None
     assert record["cid"] == "X9"
-
-
-def test_db_migrates_cid_column_on_old_schema(tmp_path):
-    path = tmp_path / "results.db"
-    conn = sqlite3.connect(path)
-    conn.execute(
-        "CREATE TABLE task_results ("
-        "task_id INTEGER PRIMARY KEY AUTOINCREMENT, job_name TEXT NOT NULL, "
-        "task_index INTEGER, status TEXT NOT NULL, energy REAL, "
-        "final_gibbs_energy REAL, final_sp_energy REAL, num_imag_freqs INTEGER, "
-        "lowest_freq REAL, g_corr REAL, final_coords TEXT, error TEXT, "
-        "error_kind TEXT, error_details TEXT, timestamp DATETIME)"
-    )
-    conn.execute(
-        "INSERT INTO task_results (job_name, status, energy) VALUES ('old', 'success', -1.0)"
-    )
-    conn.commit()
-    conn.close()
-
-    db = ResultsDB(str(path))
-    record = db.get_result_by_job_name("old")
-
-    assert record is not None
-    assert record["cid"] is None
 
 
 def test_export_includes_cid(tmp_path):

@@ -19,11 +19,9 @@ def test_confflow_package_exports_current_public_api():
     assert hasattr(confflow, "PSUTIL_AVAILABLE")
     assert hasattr(confflow, "NUMBA_AVAILABLE")
     assert hasattr(confflow, "read_xyz_file")
-    assert hasattr(confflow, "CalcStepRunner")
-    assert hasattr(confflow, "CalcStepRequest")
-    assert hasattr(confflow, "CalcStepResult")
+    assert not hasattr(confflow, "CalcStepRunner")
 
-    assert "CalcStepRunner" in confflow.__all__
+    assert "CalcStepRunner" not in confflow.__all__
     assert "read_xyz_file" in confflow.__all__
     assert "ChemTaskManager" not in confflow.__all__
     assert "run_calc_workflow_step" not in confflow.__all__
@@ -63,14 +61,3 @@ def test_confgen_and_refine_key_symbols_present():
     assert refine.get_element_atomic_number("Cl") == 17
     coords = np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0]], dtype=np.float64)
     assert refine.fast_rmsd(coords, coords) < 1e-6
-
-
-def test_calc_resultsdb_roundtrip(tmp_path):
-    import confflow.calc as calc
-
-    db = calc.ResultsDB(str(tmp_path / "res.db"))
-    job_id = db.insert_result({"job_name": "j", "index": 1, "status": "success"})
-    assert job_id == 1
-    got = db.get_result_by_job_name("j")
-    assert got is not None and got["status"] == "success"
-    db.close()

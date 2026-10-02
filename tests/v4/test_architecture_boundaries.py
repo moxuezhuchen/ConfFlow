@@ -86,7 +86,6 @@ FORBIDDEN_LEGACY_MODULES = (
     "confflow.workflow.config_show",
     "confflow.workflow.composition",
     "confflow.config.canonical",
-    "confflow.calc.runner",
     "confflow.core.models",
     "confflow.core.types",
     "confflow.core.parsers",
@@ -242,6 +241,11 @@ REMOVED_LEGACY_MODULES: frozenset[str] = frozenset(
         "confflow.workflow.supervisor",
         "confflow.workflow.rerun_failed",
         "confflow.calc.async_exec",
+        # C5.2: legacy calc tooling, confts CLI, composition and viz.
+        "confflow.calc",
+        "confflow.confts",
+        "confflow.workflow.composition",
+        "confflow.blocks.viz",
         # PR-4: retired V2/V3 execution runtime.
         "confflow.workflow.engine",
         "confflow.workflow.state",
@@ -1295,57 +1299,6 @@ class TestLegacyToolingBoundary:
         result = self._run(script)
         assert result.returncode == 0, f"{entry}: {result.stderr}"
 
-    def test_calc_facade_resolves_public_names_lazily(self) -> None:
-        script = (
-            "import sys\n"
-            "import confflow.calc\n"
-            "banned = [m for m in sys.modules if m.startswith('confflow.calc.')]\n"
-            "assert not banned, banned\n"
-            "from confflow.calc import CalcStepRequest, CalcStepRunner, TaskRunner\n"
-            "from confflow.calc import ResultsDB, get_policy, parse_output\n"
-            "assert CalcStepRunner.__module__ == 'confflow.calc.runner'\n"
-            "assert CalcStepRequest.__module__ == 'confflow.calc.runner'\n"
-            "assert TaskRunner.__module__ == 'confflow.calc.components.task_runner'\n"
-            "assert ResultsDB.__module__ == 'confflow.calc.db.database'\n"
-            "assert get_policy.__module__ == 'confflow.calc.policies'\n"
-            "assert parse_output.__module__ == 'confflow.calc.components.parser'\n"
-            "assert confflow.calc.runner.CalcStepRunner is CalcStepRunner\n"
-        )
-        result = self._run(script)
-        assert result.returncode == 0, result.stderr
-
-    def test_calc_facade_declares_every_public_name_lazily(self) -> None:
-        path = PACKAGE_ROOT / "calc" / "__init__.py"
-        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-
-        eager: list[str] = []
-        all_names: list[str] = []
-        lazy_names: list[str] = []
-        for node in tree.body:
-            if isinstance(node, ast.Import):
-                eager.extend(
-                    alias.name for alias in node.names if alias.name.startswith("confflow")
-                )
-            elif isinstance(node, ast.ImportFrom):
-                if node.level or (node.module or "").startswith("confflow"):
-                    eager.append(node.module or ".")
-            elif isinstance(node, ast.Assign):
-                if any(isinstance(t, ast.Name) and t.id == "__all__" for t in node.targets):
-                    all_names = [
-                        elt.value for elt in node.value.elts if isinstance(elt, ast.Constant)
-                    ]
-            elif isinstance(node, ast.AnnAssign):
-                target = node.target
-                if isinstance(target, ast.Name) and target.id == "_LAZY_EXPORTS":
-                    assert isinstance(node.value, ast.Dict)
-                    lazy_names = [
-                        key.value for key in node.value.keys if isinstance(key, ast.Constant)
-                    ]
-
-        assert eager == [], eager
-        assert all_names, "calc facade must declare __all__"
-        assert sorted(all_names) == sorted(lazy_names), (all_names, lazy_names)
-
     def test_confrefine_tooling_does_not_load_calc_execution_runtime(self) -> None:
         script = (
             "import sys; import confflow.blocks.refine; "
@@ -1357,31 +1310,11 @@ class TestLegacyToolingBoundary:
         result = self._run(script)
         assert result.returncode == 0, result.stderr
 
-    def test_composition_bridge_does_not_load_calc_execution_runtime(self) -> None:
-        script = (
-            "import sys; from confflow.workflow import composition; "
-            "calc_mods = sorted(m for m in sys.modules if m.startswith('confflow.calc')); "
-            "allowed = {'confflow.calc', 'confflow.calc.postprocess', 'confflow.calc.result'}; "
-            "banned = sorted(set(calc_mods) - allowed); "
-            "assert not banned, banned"
-        )
-        result = self._run(script)
-        assert result.returncode == 0, result.stderr
-
     def test_confgen_tooling_does_not_load_calc_at_all(self) -> None:
         script = (
             "import sys; import confflow.blocks.confgen; "
             "banned = sorted(m for m in sys.modules if m.startswith('confflow.calc')); "
             "assert not banned, banned"
-        )
-        result = self._run(script)
-        assert result.returncode == 0, result.stderr
-
-    def test_confts_cli_still_uses_the_calc_runner(self) -> None:
-        script = (
-            "import sys; import confflow.confts; "
-            "assert callable(confflow.confts.main); "
-            "assert 'confflow.calc.runner' in sys.modules"
         )
         result = self._run(script)
         assert result.returncode == 0, result.stderr
@@ -1970,9 +1903,9 @@ class TestNoFilenameOrdinalPairing:
 
     def test_scanners_flag_pairing_idioms(self) -> None:
         assert _filename_pairing_offenders(_FIXTURE_FILENAME_PAIRING), "basename scanner must trip"
-        assert _range_ordinal_pairing_offenders(
-            _FIXTURE_ORDINAL_PAIRING
-        ), "ordinal scanner must trip"
+        assert _range_ordinal_pairing_offenders(_FIXTURE_ORDINAL_PAIRING), (
+            "ordinal scanner must trip"
+        )
 
     def test_no_filename_idioms_in_tree(self) -> None:
         offenders: list[tuple[str, int, str]] = []

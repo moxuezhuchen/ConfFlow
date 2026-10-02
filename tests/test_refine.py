@@ -558,19 +558,3 @@ def test_refine_preserves_cid_provenance_without_energy(tmp_path):
     text = out.read_text()
     assert "CID=A000001" in text
     assert "inf" not in text and "nan" not in text
-
-
-def test_refine_energyless_output_is_a_clean_calc_input(tmp_path):
-    from confflow.calc.runner import CalcStepRunner
-
-    xyz = tmp_path / "in.xyz"
-    out = tmp_path / "out.xyz"
-    _write_energy_xyz(str(xyz), [("frame 0", _ETHANE), ("frame 1", _ETHANE)])
-    result = process_xyz(RefineOptions(input_file=str(xyz), output=str(out), threshold=0.25))
-    assert result.produced_output
-
-    geoms = list(CalcStepRunner()._iter_input_geometries(str(out)))
-    assert geoms
-    for geom in geoms:
-        assert "inf" not in str(geom["metadata"]).lower()
-        assert "nan" not in str(geom["metadata"]).lower()

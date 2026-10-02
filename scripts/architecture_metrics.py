@@ -71,19 +71,11 @@ V4_ROOTS: tuple[str, ...] = (
 )
 
 #: Public tooling entrypoints that consume calc; used by the CALC metrics.
-CALC_PUBLIC_TOOLING_ROOTS: tuple[str, ...] = (
-    "confflow.confts",
-    "confflow.blocks.refine",
-    "confflow.workflow.composition",
-    "confflow.calc",
-)
+CALC_PUBLIC_TOOLING_ROOTS: tuple[str, ...] = ("confflow.blocks.refine",)
 
 #: ``(file, package)`` pairs whose PEP 562 ``_LAZY_EXPORTS`` declare public
 #: tooling names; the declared concrete modules count as consumed.
-_LAZY_EXPORT_FILES: tuple[tuple[str, str], ...] = (
-    ("confflow/__init__.py", "confflow"),
-    ("confflow/calc/__init__.py", "confflow.calc"),
-)
+_LAZY_EXPORT_FILES: tuple[tuple[str, str], ...] = (("confflow/__init__.py", "confflow"),)
 
 #: The retired never-released Workflow V3 public wire (Architecture Diet PR-7).
 #: The metric counts any of these reappearing on disk; it must stay empty.
@@ -522,7 +514,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"PHYSICAL_PRODUCTION_LOC={metrics['PHYSICAL_PRODUCTION_LOC']}")
     print(f"V4_REACHABLE_MODULES={metrics['V4_REACHABLE_MODULES']}")
     print(f"V4_REACHABLE_LOC={metrics['V4_REACHABLE_LOC']}")
-    print("LEGACY_OR_NON_V4_REACHABLE_LOC=" f"{metrics['LEGACY_OR_NON_V4_REACHABLE_LOC']}")
+    print(f"LEGACY_OR_NON_V4_REACHABLE_LOC={metrics['LEGACY_OR_NON_V4_REACHABLE_LOC']}")
     print(f"CALC_MODULES={metrics['CALC_MODULES']}")
     print(f"CALC_LOC={metrics['CALC_LOC']}")
     print(f"CALC_V4_REACHABLE_MODULES={metrics['CALC_V4_REACHABLE_MODULES']}")

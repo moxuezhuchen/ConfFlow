@@ -7,13 +7,11 @@ import os
 import subprocess
 import sys
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
 import confflow.control_worker as control_worker
 import confflow.worker_supervision as worker_supervision
-from confflow.calc.executor import LocalCalcExecutor
 
 pytestmark = pytest.mark.skipif(
     os.name != "posix", reason="worker supervision contract requires POSIX"
@@ -39,22 +37,17 @@ def test_supervision_detects_calculation_in_its_own_session(tmp_path: Path) -> N
     work_dir = tmp_path / "work"
     task_dir = work_dir / "step" / "task"
     task_dir.mkdir(parents=True)
-    executor = LocalCalcExecutor()
-    handle = executor.submit(
-        str(task_dir),
-        "task",
-        SimpleNamespace(log_ext="log"),
-        [],
-        {},
+    process = subprocess.Popen(
         [sys.executable, "-c", "import time; time.sleep(60)"],
-        None,
+        cwd=task_dir,
+        start_new_session=True,
     )
-    process = handle.executor_data["_proc"]
     try:
         assert os.getsid(process.pid) == process.pid
         assert worker_supervision._has_live_work_process(str(work_dir))
         assert not worker_supervision._cancel_owner_is_stopped(str(work_dir), owner=None)
-        executor.cancel(handle)
+        process.terminate()
+        process.wait(timeout=5)
         assert not worker_supervision._has_live_work_process(str(work_dir))
         assert worker_supervision._cancel_owner_is_stopped(str(work_dir), owner=None)
     finally:
@@ -65,7 +58,6 @@ def test_supervision_detects_calculation_in_its_own_session(tmp_path: Path) -> N
         except subprocess.TimeoutExpired:
             process.kill()
             process.wait(timeout=5)
-        executor._close_streams(handle)
 
 
 def test_control_worker_supervision_wrappers_preserve_legacy_patch_seams(
