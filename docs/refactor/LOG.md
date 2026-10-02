@@ -264,3 +264,13 @@
 - 静态检查：ruff / format / mypy（166）ok
 - 测试（验收方在独立 JD 工作树重跑）：见本条下方数字；与 J2.1b 之后集合逐项相同
 - 结论：通过
+
+## 2026-10-02 J2.3 — 通过
+
+- 仓库/分支/提交：JobDesk-v2 `refactor/diet` c94fcab（父 b1ba08d）；执行者：外部模型
+- 类型：move；白名单检查：ok（13 个文件：新增 `contract/errors.py`；改 `parse.py`、`jcs.py`、`contract/__init__.py`、`v4.py`、`boundary.py`、`remote_v4.py`、`binding_candidates.py`、`v4_validation.py`、`v4_results.py`；测试侧 `test_p0_boundary.py`、`test_confflow_v4_contract.py` 只改 import；`test_architecture.py` 只在 `_ALLOWED_JSON_MODULES` 增加两项并补注释，经验收方授权）
+- 搬迁核对（验收方独立重做）：对 `git diff -U0` 做"删除行 vs 新增行"多重集合比较（忽略 import 与括号行）——函数体、类体逐字抵消；剩余差异只有新增/删除的文档字符串、注释和 `__all__` 条目；`application/` 下 `json.loads` 调用点仍为 3 处（errors.py、jcs.py、confflow_state.py）
+- 静态检查（验收方重跑）：ruff / format / mypy（167）ok
+- 测试（验收方在独立 JD 工作树重跑）：2411 项，2404 passed / 0 failed / 7 skipped；与 J2.2 之后逐项相同，无新增无删除无变化
+- contract：JD `contract_key` 与全部摘要和基线相同
+- 结论：通过
