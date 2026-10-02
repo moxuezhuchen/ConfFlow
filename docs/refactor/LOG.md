@@ -274,3 +274,11 @@
 - 测试（验收方在独立 JD 工作树重跑）：2411 项，2404 passed / 0 failed / 7 skipped；与 J2.2 之后逐项相同，无新增无删除无变化
 - contract：JD `contract_key` 与全部摘要和基线相同
 - 结论：通过
+
+## 2026-10-02 推送（用户授权"下轮一起推送"）
+
+- JobDesk-v2 `refactor/diet`：5847bc7 → c94fcab（J0b、J1、J2.1a、J2.1b、J2.2、J2.3 共 6 个提交）
+- ConfFlow `refactor/diet`：新建，b8e85a3（B0.1、B0.2、C1.1–C1.4）
+- ConfFlow `docs/refactor-plan`：1ccf347 → 4917e86（本日志推送前的最后一个提交）
+- 未推送：`master`、`main`、`implementation/input-simplification`（IS.1、IS.1b 的提交仍只在本地的 `exec-cf-is` 工作树里；远端的输入简化分支仍为 f87da58）。此条日志本身在推送之后写入，下次推送一并带上。
+- 合并提醒：CF `refactor/diet` 上的 `docs/refactor/PLAN.md`、`ACCEPTANCE.md` 是早期版本（随 B0.1 的父提交带入），`docs/refactor-plan` 上是最新版本。把 `refactor/diet` 合入 `main` 时，这两个文件以 `docs/refactor-plan` 的版本为准。
