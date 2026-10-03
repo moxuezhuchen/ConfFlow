@@ -285,7 +285,10 @@ class TestGoatSeedValidation:
         bad = v4_doc(
             [
                 confgen_step(
-                    "s_conf", bindings={"structure": {"source": {"run": "structures"}}}, seed=None
+                    "s_conf",
+                    bindings={"structure": {"source": {"run": "structures"}}},
+                    native={"chains": ["1-2-3"]},
+                    seed=None,
                 )
             ],
             inputs=STRUCTURE_INPUTS,
@@ -296,7 +299,10 @@ class TestGoatSeedValidation:
         good = v4_doc(
             [
                 confgen_step(
-                    "s_conf", bindings={"structure": {"source": {"run": "structures"}}}, seed=7
+                    "s_conf",
+                    bindings={"structure": {"source": {"run": "structures"}}},
+                    native={"chains": ["1-2-3"]},
+                    seed=7,
                 )
             ],
             inputs=STRUCTURE_INPUTS,

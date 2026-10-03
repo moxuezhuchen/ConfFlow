@@ -240,7 +240,22 @@ def confgen_step(
     enabled: bool | None = None,
 ) -> dict[str, Any]:
     """Build a confgen step mapping."""
-    confgen: dict[str, Any] = {"native": dict(native or {"chains": ["1-2-3"]})}
+    confgen: dict[str, Any]
+    if native:
+        confgen = {"native": dict(native)}
+    else:
+        confgen = {
+            "schema_version": 3,
+            "torsions": [
+                {
+                    "id": "t1",
+                    "bond": [2, 3],
+                    "model": "relative_rotation_grid",
+                    "angles": [0, 120, 240],
+                    "treatment": "enumerate",
+                }
+            ],
+        }
     if seed is not None:
         confgen["seed"] = seed
     if overrides is not None:

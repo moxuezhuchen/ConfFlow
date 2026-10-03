@@ -481,6 +481,7 @@ class TestCapabilityVocabulary:
                 confgen_step(
                     "s_conf",
                     bindings={"structure": {"source": {"run": "structures"}}},
+                    native={"chains": ["1-2-3"]},
                     seed=None,
                 )
             ],
