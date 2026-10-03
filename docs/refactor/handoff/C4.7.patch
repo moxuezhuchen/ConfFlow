@@ -1,0 +1,2078 @@
+diff --git a/README.md b/README.md
+index 773ab17..6f3de12 100644
+--- a/README.md
++++ b/README.md
+@@ -66,7 +66,7 @@ Requirements and packaging notes:
+ - Python 3.10+
+ - Packaging is defined in `pyproject.toml`
+ - RDKit is required
+-- `numba` is optional and only used for acceleration when installed
++- `numba` is an optional extra, but no current code path depends on it for acceleration
+ 
+ ## ConfFlow ↔ JobDesk Capability Handshake (v2.1.6 candidate)
+ 
+diff --git a/docs/ARCHITECTURE.md b/docs/ARCHITECTURE.md
+index afa939b..fc4016b 100755
+--- a/docs/ARCHITECTURE.md
++++ b/docs/ARCHITECTURE.md
+@@ -1,455 +1,122 @@
+ # ConfFlow 项目架构
+ 
+-## Workflow V4（greenfield）
++本文是当前代码结构的总览：有哪些包、各自负责什么、数据怎样从一份工作流文档流到结果、依赖规则由什么测试把关。
++工作流 V4 的逐项语义（digest 四轴、端口契约、持久化、remote、多输出……）见
++[`architecture/WORKFLOW_V4.md`](architecture/WORKFLOW_V4.md)；输入简化与 ConfGen paths 见
++[`PRODUCER_INTENT.md`](PRODUCER_INTENT.md) 与 [`CONFGEN_PATHS.md`](CONFGEN_PATHS.md)。代码和测试是第一权威。
+ 
+-V4 是独立的新 workflow engine，代码位于 `confflow/domain`、`confflow/execution`、
+-`confflow/workflow/v4`。它不依赖本文档描述的 V2/V3 workflow runtime，也不经过
+-旧的 calc 调度链。V4 架构事实见
+-`docs/architecture/WORKFLOW_V4.md`。
++## 1. 它是什么
+ 
+-## 项目概述
++ConfFlow 是计算化学工作流的**生产者（producer）**：给定一份 V4 工作流文档（`schema: confflow.workflow.v4`）和若干 XYZ 输入，
++它编译出确定性的执行计划，按 work item 运行构象生成、Gaussian / ORCA 量化计算、结构变换（精修/去重/过滤）和反应分析，
++并发布带类型的结果（`StepResult`、整次运行的 `run_result.json` manifest）。
+ 
+-ConfFlow 是一个自动化计算化学工作流引擎，用于分子构象搜索、量子化学计算、构象筛选和结果可视化。核心设计遵循模块化、可扩展原则，支持多种量子化学程序（Gaussian 16、ORCA）。
++同时它向 GUI 客户端（JobDesk-v2）**发布契约**：配置契约、边界协议、authoring 接口和输入简化（intent）编译器都由 producer 生成，
++客户端只读取、不重新实现这些语义。
+ 
+-## 当前重构主线
++唯一受支持的工作流格式是 V4。V1/V2/V3 文档在入口处以 `unsupported_workflow_version` / `legacy_workflow_not_executable` 失败关闭。
+ 
+-当前主执行路径是破兼容后的 V4-only 结构：
+-
+-- 配置/工作流格式：唯一受支持的是 V4（`confflow.workflow.v4` /
+-  `confflow.configuration-contract.v4`）；`confflow.config.contract_schemas`
+-  是 schema id 的唯一权威。
+-- 正式执行入口：`confflow.application.v4_entry.formal_v4_runner`
+-  （`confflow` CLI、application service 与 control worker 全部经此进入）。
+-- V4 编译/执行：`confflow.workflow.v4.compile_workflow` ->
+-  `confflow.application.v4_run.V4RunApplication` -> `WorkItem` -> executor ->
+-  `StepResult` 发布 -> run result manifest。
+-- 发布契约：`confflow v4 contract --json`
+-  （`confflow.producer.contract.generate_contract_bytes`）。
+-
+-已退役：旧的 calc/blocks 工具链及其独立 CLI、V2/V3 workflow 执行运行时（PR-4）、无发布的 V3 public wire（PR-7）、
+-已发布的 V1/V2 配置 wire（PR-9）。旧的 `ChemTaskManager`、INI settings、
+-legacy flat calc config、MD5 `.config_hash` 兼容路径已从主执行路径和公共导出中移除。
+-
+-## 目录结构
++## 2. 包与职责
+ 
+ ```
+ confflow/
+-├── contract.py                # JobDesk capability/artifact wire contract
+-├── core/                      # 基础设施层（共享工具、I/O、日志）
+-│   ├── __init__.py
+-│   ├── utils.py              # 统一的工具函数、异常类、日志系统
+-│   ├── io.py                 # XYZ I/O 门面与读写入口
+-│   ├── chem_validation.py    # 中立化学结构/柔性链校验服务
+-│   ├── path_policy.py        # 路径/可执行文件安全策略
+-│   ├── xyz_metadata.py       # XYZ 注释元数据与 CID 处理
+-│   ├── gaussian_input.py     # Gaussian 输入与坐标解析
+-│   ├── data.py               # 共价半径、元素符号等化学数据
+-│   ├── models.py             # canonical Pydantic 模型的 compatibility facade
+-│   ├── types.py              # 类型定义与常量
+-│   ├── constants.py          # 核心常量
+-│   ├── contracts.py          # 输入/输出契约验证
+-│   ├── console.py            # 控制台输出格式化
+-│   ├── exceptions.py         # 异常类定义
+-│   ├── keyword_rewrite.py    # TS→scan 关键字改写
+-│   ├── logging.py            # 日志配置
+-│   ├── parsers.py            # 通用解析工具
+-│   ├── pairs.py              # 原子对操作
+-│   ├── validation.py         # 核心验证逻辑
+-│   └── cli_base.py           # CLI 基础工具
+-│
+-├── config/                    # 配置层（配置加载、解析、验证）
+-│   ├── canonical/            # producer-owned parser/types/schema/serialization
+-│   └── models.py             # compatibility facade, no independent rules
+-│
+-├── shared/                    # 轻量共享层（稳定常量/格式化/结构校验）
+-│   ├── __init__.py
+-│   ├── defaults.py           # 与 config 解耦的默认常量
+-│   ├── orca_blocks.py        # ORCA blocks 格式化
+-│   └── config_validation.py  # YAML 结构校验
+-│
+-├── workflow/                  # 工作流编排层
+-│   ├── __init__.py           # 公共 API 导出
+-│   ├── dag/                   # 显式 inputs DAG 构建、校验与拓扑排序
+-│   ├── engine.py             # 工作流执行引擎（核心调度逻辑）
+-│   ├── state.py              # .workflow_state.json 原子状态模型与存储
+-│   ├── step_handlers.py      # 步骤执行适配层（薄壳，默认调用 calc 官方入口）
+-│   ├── presenter.py          # 步骤展示与报告输出
+-│   ├── runtime_context.py    # 运行时状态初始化与恢复
+-│   ├── helpers.py            # 辅助工具（pushd、构象计数、列表转换）
+-│   ├── validation.py         # 输入验证与标签标准化
+-│   ├── stats.py              # 检查点、统计追踪、构象溯源
+-│   ├── rerun_failed.py       # 失败重跑
+-│   ├── supervisor.py         # 子进程监督与停止处理
+-│   └── step_naming.py        # 步骤命名
+-│
+-├── cli.py                     # CLI 参数解析
+-├── main.py                    # 工作流主程序入口
+-└── __init__.py               # 轻量包入口
+-
+-docs/                          # 文档
+-├── ARCHITECTURE.md           # 本文档（项目架构说明）
+-├── USAGE.md                  # 使用说明（精简版）
+-├── COMMAND_REFERENCE.md      # 所有命令的参考手册
+-├── TESTING.md                # 测试说明
+-├── STYLE_CONTRACT.md         # 代码/输入/输出一致性标准
+-└── DEVELOPMENT.md            # 开发指南
+-
+-tests/                         # 测试套件（以 pytest --collect-only -q 和 CI 输出为准）
+-├── conftest.py               # 共享 fixtures
+-├── _helpers.py               # 共享 fake 对象与工具函数
+-├── test_core.py              # 包导出与核心公共入口
+-├── test_io.py                # XYZ 读写、元数据解析
+-├── test_data.py              # 共价半径、元素符号
+-├── test_retired_wire_versions.py  # V1/V2/V3 配置 wire 失败关闭闸门
+-├── test_cli.py               # CLI 入口
+-└── ...                       # 完整清单见 docs/TESTING.md
+-
+-confflow.example.yaml          # 工作流示例配置
+-pyproject.toml                 # 项目配置（PEP 621 + 构建系统）
+-README.md                      # 项目简介
+-LICENSE                        # MIT 许可证
+-```
+-
+-## 核心模块说明
+-
+-### 1. `core/` - 基础设施层
+-
+-**职责**：提供所有模块都需要的共享功能。
+-
+-- **`utils.py`**：
+-  - 基础异常与输入校验（`ConfFlowError`, `InputFileError`, `XYZFormatError` 等）
+-  - 日志系统（`ConfFlowLogger`, `get_logger()`）
+-  - 输入验证（XYZ）
+-  - 工具函数（内存解析、iprog/itask 解析、freeze 索引范围解析）
+-
+-- **`io.py`**：
+-  - 统一的 XYZ 文件读写入口
+-  - 提供 `iter_xyz_frames()` 流式读取接口，避免大轨迹全量装载
+-
+-- **`xyz_metadata.py` / `gaussian_input.py`**：
+-  - 分离 XYZ 注释/CID 规则与 Gaussian 坐标解析
+-  - 降低 `io.py` 的职责耦合和维护成本
+-
+-- **`types.py`**：
+-  - 枚举类型（`TaskType`, `ProgType` 等）
+-  - 常量定义
+-
+-### 2. `config/` 与 `shared/` - 配置层与轻量共享层
+-
+-**职责**：处理工作流配置，并把稳定常量/格式化/结构校验从 `config` 中抽离出去，避免 `core -> config` 反向依赖。
+-
+-- **`loader.py`**：加载并解析 YAML/INI 文件
+-- **`schema.py`**：配置架构定义、验证与合并
+-- **`defaults.py`**：兼容层默认值导出
+-- **`shared/defaults.py`**：真实默认常量来源
+-- **`shared/config_validation.py`**：YAML 结构校验
+-- **`shared/orca_blocks.py`**：ORCA blocks 渲染
+-
+-### 5. `workflow/` - 工作流编排层
+-
+-**职责**：协调各模块执行，管理工作流逻辑。当前版本已将原单体 `engine.py` 拆分为“编排 + 执行适配 + 展示 + 运行时上下文 + 统计”的多模块结构。
+-
+-- **`engine.py`**：
+-  - 入口 `run_workflow()` 负责 prepare / execute / finalize 三段主流程
+-  - resume 时复用 `resolve_step_output()` 按 step type 校验标准工件，避免把 `search.xyz` 误当成 calc 完成输出
+-  - calc step 的配置/input digest、stale 判断和复用语义由 `calc.artifacts` 的 `manifest.json` 合同负责
+-  - 只要任一步声明 `inputs` 就进入显式 DAG 模式；无 `inputs` 的旧配置继续按声明顺序线性执行
+-  - 显式 DAG 在初始化运行目录或调用 step handler 前完成未知依赖、环和终端数校验
+-  - 当前显式 DAG 必须恰好有一个终端 step；不支持多输出聚合
+-
+-- **`dag/explicit.py`**：
+-  - 规范化 step 名称与 `inputs`，构建 predecessor map
+-  - 使用确定性拓扑 wave 校验未知依赖与环
+-
+-- **`state.py`**：
+-  - 通过临时文件 + 原子替换维护 `.workflow_state.json`
+-
+-- **`runtime_context.py`**：
+-  - 初始化 `root_dir/failed/.checkpoint/workflow_stats` 等运行时状态
+-  - 封装 resume 场景下的恢复信息（`resume_from_step/current_input`）
+-
+-- **`step_handlers.py`**：
+-  - `run_confgen_step` / `run_calc_step` 的执行适配层
+-  - 不再作为 calc artifact/stale/resume 的主语义中心
+-
+-- **`presenter.py`**：
+-  - 统一 step header/footer 输出
+-  - 统一最终报告与最低能构象落盘逻辑
+-
+-- **`helpers.py`**：
+-  - 工具函数：`pushd`、`as_list`、`resolve_step_output`
+-  - `resolve_step_output` 按 step type 区分 `search.xyz` 与 `output.xyz` / `result.xyz`
+-  - 构象计数：`count_conformers_any`、`count_conformers_in_xyz`
+-
+-- **`validation.py`**：
+-  - `validate_inputs_compatible`：多输入兼容性校验
+-  - `chain` / `chains` 两种配置键都会触发柔性链映射模式
+-  - 支持 `force_consistency=true` 的“警告并继续”分支
+-
+-- **`stats.py`**：
+-  - `CheckpointManager`：断点序列化/反序列化
+-  - `WorkflowStatsTracker`：流程统计追踪
+-  - `TaskStatsCollector`：results.db 状态聚合（优先按每个 `job_name` 的最新记录统计）
+-  - `FailureTracker`：跨步骤失败构象汇总
+-  - `Tracer`：低能构象溯源
+-
+-### 6. CLI 层
+-
+-- **`cli.py`**：参数解析（`confflow` 命令）
+-- **`main.py`**：工作流主程序入口
+-- **`contract.py`**：版本、schema、能力、产物名以及构建身份的 wire contract；`cli.py` 负责发出 capability JSON
+-
+-## 设计模式与架构原则
+-
+-### 1. 策略模式 (Strategy Pattern)
+-
+-
+-```python
+-# 基类定义
+-class CalculationPolicy:
+-    def generate_input(self, ...): ...
+-    def parse_output(self, ...): ...
+-
+-# 具体实现
+-class GaussianPolicy(CalculationPolicy):
+-    def generate_input(self, ...):
+-        # Gaussian 特定的输入格式
+-
+-class OrcaPolicy(CalculationPolicy):
+-    def parse_output(self, ...):
+-        # ORCA 特定的输出解析
++  domain/        不可变语义核心：结构、绑定、work item、step result、完成策略、digest 规范化（无仓库内依赖）
++  workflow/v4/   V4 编译器：严格解析 → 语义校验 → 带类型的绑定图 → 不可变 ExecutionPlan → 合成 WorkItem
++  execution/     能力注册表与各类执行器：calculation / confgen / transform / analysis、
++                 检查（checks）、恢复（recovery）、结果 profile、原生进程边界、批执行
++  science/       纯科学计算：ConfGen v3 引擎（扭转/环/配位）、工作拓扑权威、图同构映射、帧比较、键感知
++  programs/      量化程序适配器（Gaussian、ORCA）：输入渲染与输出解析
++  persistence/   持久化：逐 work item 的 SQLite 存储、发布协议、复用判定、孤儿回收、run state
++  application/   应用层：正式 V4 入口 `v4_entry`、整次运行 `v4_run`、执行服务与仓库（SQLite）
++  remote/        远程执行边界：worker-handoff v2、安全 staging、传输、结果包
++  analysis/      反应/PES 聚合：反应组发现、Gibbs 能、势垒
++  producer/      对客户端发布的契约与工具：contract / boundary / authoring / intent、cards、presets、
++                 editor manifest、recipes、字节级校验、run result 投影、种子与机器检查点辅助
++  config/        契约 schema id 的唯一权威（无依赖）
++  core/          基础设施：XYZ I/O、元素与数据表、键感知、路径策略、日志、控制台、异常
++  shared/        跨层默认值与 ORCA block 格式化
++  cli.py main.py v4cli.py                命令行入口
++  control.py control_worker.py worker_*  控制协议 v1 适配器与外部 worker（排队的启动意图）
++  contract.py artifact_json.py install_provenance.py release_dependencies.py   契约常量、原子 JSON、安装/发布溯源
+ ```
+ 
+-**好处**：
+-- 代码复用：共同的执行流程放在 `Manager`
+-- 易维护：新增程序时只需新增 Policy 类
+-- 易测试：可独立测试每个 Policy
++`science/` 与 `domain/` 不做 I/O；`execution/` 不解析 YAML；`workflow/v4` 不执行任何东西。执行层只通过
++`execution.registry` 的描述符认识能力，不按 role 或 program 名做分支。
+ 
+-### 2. 模块化架构
+-
+-- **单一职责**：每个模块只处理一个功能域
+-- **依赖明确**：`shared` 承担轻量公共边界，`core` 不再反向依赖 `config.schema`
+-
+-### 3. 公共入口设计
+-
+-- 顶层 `confflow.__init__` 暴露轻量官方入口（如 `run_workflow`）
+-- 旧 INI / legacy flat config / `.config_hash` / manager facade 已从主路径移除
+-- 仓库内部代码应直接从真实子模块导入，避免重新扩大包初始化耦合
+-
+-## 工作流执行流程
++## 3. 数据流
+ 
+ ```
+-confflow <input.xyz> -c <config.yaml>
+-        ↓
+-    cli.py (参数解析)
+-        ↓
+-    main.py → workflow.engine.run_workflow()
+-        ↓
+-    +------- confgen -------+
+-    | 链旋转 → 生成构象 |
+-    +-----────────────────+
+-            ↓
+-    +------- calc (step 1-N) -------+
+-    | 并行执行量子计算               |
+-    | - 调用 Policy 生成输入        |
+-    | - 执行 Gaussian/ORCA         |
+-    | - 调用 Policy 解析输出        |
+-    | - 保存结果到 DB              |
+-    +------────────────────────────+
+-            ↓
+-    +------- refine -------+
+-    | RMSD 去重            |
+-    | 能量筛选             |
+-    | 虚频过滤             |
+-    +-----────────────────+
+-            ↓
+-    +------- viz -------+
+-    | 生成文本报告     |
+-    +──────────────────+
++ intent（可选）            工作流文档 YAML/JSON
++ confflow.intent.v1  ──►  schema: confflow.workflow.v4
++   producer.intent          │
++   (cards/presets)          ▼
++                      parse（重复键拒绝、extra=forbid）
++                            ▼
++                      semantic validation（registry 词汇表、端口、checks、seed、资源）
++                            ▼
++                      typed BindingGraph（bindings 是唯一的边来源）
++                            ▼
++                      ExecutionPlan（不可变、确定性、稳定 ID）
++                            ▼
++                      assemble_work_items（run 输入 + 已发布输出 → WorkItem）
++                            ▼
++   application.v4_run  ──► executors（calculation / confgen / transform / analysis）
++                            ▼  每个 work item 的结果先落盘（persistence）
++                      StepResult 发布（崩溃一致性协议）
++                            ▼
++                      run_result.json（producer.run_result 投影，客户端只读）
+ ```
+ 
+-## 配置系统
+-
+-### V4 工作流配置 (`confflow.example.yaml`)
+-
+-当前唯一受支持的 workflow/config 格式是 V4（`schema: confflow.workflow.v4`）。
+-随包分发的示例文件是一个可编译的 V4 文档：
+-
+-```yaml
+-schema: confflow.workflow.v4
+-
+-inputs:
+-  structures: {kind: structure, cardinality: many, grouping: each_entity}
+-
+-global:
+-  scientific_defaults: {charge: 0, multiplicity: 1}
+-  resources: {cores_per_item: 8, memory_per_item: 32GiB}
+-  scheduler: {max_parallel_items: 4}
+-
+-steps:
+-  - id: confgen
+-    executor: confgen
+-    bindings: {structure: {source: {run: structures}}}
+-    confgen: {native: {chains: ["1-2-3-4"], angle_step: 120}, seed: 20260928}
+-
+-  - id: opt
+-    executor: calculation
+-    bindings: {structure: {source: {step: confgen, port: structures}}}
+-    calculation:
+-      program: orca
+-      role: opt
+-      native: {keyword: "B3LYP D3BJ def2-SVP Opt"}
+-      checks: ["normal_termination", "geometry_required"]
+-      overrides: {freeze: [1, 2]}
+-```
+-
+-### 配置 wire 的当前状态
+-
+-唯一受支持的配置 wire 是 V4（`confflow.configuration-contract.v4` /
+-`confflow.workflow.v4`）。V4 生产者契约由
+-`confflow.producer.contract.generate_contract_bytes` 生成，并由
+-`confflow v4 contract --json` 发布；`confflow.config.contract_schemas` 是
+-schema id 的唯一权威。
+-
+-已发布的 V1/V2 配置 wire（`configuration-contract.v1/.v2`、
+-`confflow.workflow.v2` schema、公开 parser/validator、V2 editor manifest 与
+-recipe catalog、V2 -> canonical migration、`--dry-run`/`--config-show`
+-planner、`confflow config validate`）由 Architecture Diet PR-9 退役；V1/V2/V3
+-文档在入口处以 `unsupported_workflow_version` / `legacy_workflow_not_executable`
+-失败关闭，不做 fallback、不自动 upgrade、不执行。
+-
+-## 测试组织
+-
+-测试按被测模块分层组织，完整清单见 `docs/TESTING.md`。
+-
+-```
+-tests/
+-├── conftest.py               # 共享 fixtures（input_xyz, cd_tmp, sync_executor）
+-├── _helpers.py               # 共享 fake 对象（FakeResultsDB, FakeExecutor 等）
+-│
+-├── test_core.py              # 包导出与核心公共入口
+-├── test_io.py                # XYZ 文件读写、元数据解析
+-├── test_data.py              # 共价半径、元素符号、原子序数
+-├── test_retired_wire_versions.py  # V1/V2/V3 配置 wire 失败关闭闸门
+-│
+-│
+-│
+-│
+-├── test_cli.py               # CLI 参数解析
+-├── test_console.py           # 控制台输出
+-├── test_contracts.py         # 输入/输出契约
+-```
+-
+-当前测试套件的文件数与用例数以 `pytest --collect-only -q` 和 CI 输出为准；完整清单见 `docs/TESTING.md`。除主测试文件外，还包含一组 `*_hotspots.py` 用例，专门覆盖回退逻辑、异常路径和历史回归点。
+-
+-## 依赖关系图
+-
+-```
+-confflow/__init__.py (包入口)
+-  ├── main.py (工作流主程序)
+-  │   └── workflow.engine.run_workflow()
+-  │
+-  └── core/
+-      ├── utils.py (日志、异常、验证)
+-      ├── io.py (XYZ 文件 I/O 门面)
+-      ├── xyz_metadata.py (XYZ 注释/CID)
+-      ├── gaussian_input.py (Gaussian/坐标解析)
+-      └── types.py (类型定义)
+-```
+-
+-## 关键特性
+-
+-### 1. 断点续传
+-
+-- 工作目录中保存 `.checkpoint` 文件
+-- 记录已完成的步骤和构象处理状态
+-- 使用 `--resume` 标志从中断点恢复
+-- resume 会按步骤类型验证标准产物：`confgen` 只接受 `search.xyz`，`calc` 只接受 `output.xyz` / `result.xyz`
+-- calc step 的 manifest 记录配置/input digest；digest 不匹配时由 `calc.artifacts` 清理 stale 工件并重跑
+-- 若工作目录缺少对应工件，会直接报错而不是沿用错误输入继续运行
+-
+-### 2. 并行执行
+-
+-- 使用 `ProcessPoolExecutor` 并行运行多个计算任务
+-- 资源限制：`max_parallel_jobs`, `cores_per_task`, `total_memory`
+-- 自动队列管理与负载均衡
+-- 上述并行发生在单个 calc step 内部的构象任务层
+-- DAG step 当前按确定性拓扑顺序串行执行；本里程碑不承诺 wave 级并发
+-
+-### 3. TS 失败救援
+-
+-- `itask=ts` 失败时自动改为 `itask=scan`（受 `ts_rescue_scan` 参数控制）
+-- 扫描键长空间以找到正确的 TS 结构
+-- 若 TS keyword 不含 `freq`，仅使用关键键长漂移作为几何判据
+-
+-### 4. 多程序支持
+-
+-- Gaussian 16（使用 `.gjf` 输入格式）
+-- ORCA（使用 `.inp` 输入格式）
+-- 易于扩展新程序（创建新 Policy 类）
+-
+-### 5. 资源监控
+-
+-- 实时监控 CPU 和内存使用
+-- 支持动态资源限制
+-- 异常监控与进程清理
+-
+-## 标准产物（calc/task step）
+-
+-- `results.db`：SQLite 结果库（持久化每个 `job_name` 的运行结果；读取/统计时默认使用最新记录视图）
+-- `result.xyz` / `output.xyz`：成功构象输出（是否 cleaned 取决于 auto_clean/refine）
+-- `failed.xyz`：失败构象集合（输入结构坐标，注释行包含失败原因），便于重算与排障
+-- `manifest.json`：calc step 状态、typed config digest、input digest、输出路径和任务统计
+-
+-> **v1.0.5 变更**：计算任务直接在 `step_xx/` 目录运行，不再创建 `step_xx/work/` 子目录。
+-
+-## 失败聚合产物（工作目录）
+-
+-- `_work/failed/failed.xyz`：合并后的失败构象（注释行包含 `Step=...`）
+-- `_work/failed/failed_summary.txt`：失败清单（结构名 + 错误原因 + 建议救援方案）
+-- `_work/failed/<config>.yaml`：运行时配置副本（便于在 failed 目录重跑）
+-
+-## 扩展指南
+-
+-### 添加新的计算程序
+-
+-2. 实现 `CalculationPolicy` 基类
+-
+-### 添加新的分析工具
+-
+-2. 实现核心处理函数
+-3. 提供 `main()` console script 入口
+-4. 在 `workflow/engine.py` 中集成
+-
+-### 添加新的计算任务类型
+-
+-1. 在 `core/types.py` 中扩展 `TaskType` 枚举
+-2. 在各 Policy 中实现新任务的输入/输出处理
+-3. 添加相应的测试
+-
+-## 常见问题
+-
+-**Q: 为什么要用策略模式？**
+-
+-A: 不同程序（Gaussian/ORCA）的输入输出格式完全不同，策略模式可以将这些差异隐藏起来，让上层代码不需要关心具体使用哪个程序。
+-
+-**Q: 如何添加对新程序的支持？**
+-
+-A: 创建新的 Policy 类，实现 `generate_input()` 和 `parse_output()` 方法，其他代码无需修改。
+-
+-**Q: 断点续传如何工作？**
+-
+-A: 每次运行记录已完成的任务到 `results.db`，再次运行时自动跳过已完成的任务。如果 DB 丢失但备份存在，会从备份恢复。
+-
+-**Q: 可以自定义资源限制吗？**
+-
+-A: 可以，在步骤级别 (`params`) 中覆盖全局配置：
+-
+-```yaml
+-steps:
+-  - name: heavy_calc
+-    type: calc
+-    params:
+-      cores_per_task: 16
+-      total_memory: "64GB"
+-```
++- **同一份科学语义在本地和远程相同**：同一个 `WorkItem` 可以直接执行，也可以经 `worker-handoff.v2` 边界交给远程 worker。
++- **resume 靠持久化而不是重跑**：已发布的 step 从磁盘加载；未完成的 step 按 work item 续跑，已完成的 work item 复用。
++- **没有隐式收尾**：清理、去重、精修都是显式的 `transform` / `analysis` 步骤；不存在 calculation 的隐藏尾巴。
++
++## 4. 入口与对外接口
++
++| 入口 | 作用 |
++| --- | --- |
++| `confflow v4 run` | 运行整份 V4 工作流（`--workflow`、`--inputs NAME=FILE`、`--run-root`、`--executable PROG=PATH`，`--json` 输出机器可读报告） |
++| `confflow v4 validate` | 对精确的工作流字节做 producer 校验 |
++| `confflow v4 contract --json` | 发布配置契约（`confflow.configuration-contract.v4`） |
++| `confflow v4 boundary --json` | 发布边界协议文档（`confflow.boundary.v4`） |
++| `confflow v4 authoring --json --stdin` | authoring 接口：`describe_step`、`binding_candidates`、`instantiate_card`、`validate_document`、`check_compatibility`、`compile_intent`、`preview_paths` |
++| `confflow v4 canonical --json --stdin` | RFC 8785（JCS）规范化 |
++| `confflow --capabilities --json` | 能力握手 JSON |
++| `confflow-control-worker` | 控制协议 v1 的外部 worker |
++
++`confflow <input.xyz> -c <工作流>` 这一调用形式保留，作为同一个 V4 应用的薄入口（供 JobDesk 与控制 worker 沿用既有调用方式）；
++它只接受 V4 文档，V1/V2/V3 文档以 `legacy_workflow_not_executable` 失败关闭且没有任何副作用。
++
++## 5. 契约与摘要
++
++- **配置契约**由真实注册表生成（工作流 JSON schema、editor manifest、recipe 目录、能力、端口、资源、分析与结果 schema），
++  全部用 digest 钉住；客户端据此编辑、校验、提交。
++- **边界协议**（`confflow.boundary.v4`）声明规范化算法（JCS）、authoring 请求/响应 schema 与兼容性词汇；已发布的契约 digest
++  由 `tests/` 和 `docs/refactor/baseline/` 的检查点固定。
++- **四个 digest 轴**（WorkflowDefinition / StepSemantic / WorkItem / ExecutionEnvironment）区分"科学内容"和"调度/展示内容"：
++  改 label、`max_parallel_items`、executable 路径不会移动科学 digest；改 native、checks、seed、资源、科学默认值会。
++
++## 6. 科学包要点
++
++- **ConfGen v3**（`science/confgen/`）：条件式的 配位 → 环 → 扭转 树；每个目标以唯一终态结束；报告里区分
++  "带标号的状态数"和"最终发布的叶子数"。种子是唯一的随机性权威，缺失即编译错误（全枚举时不需要种子）。
++- **工作拓扑权威**（`science/topology.py`）：结构记录自带 `working_topology` / `topology_patch`；
++  ConfGen、refine、计算输出 profile 都经 `resolve_working_adjacency` 取同一份"预期共价图"，
++  不再各自做感知加修正。spec 级拓扑声明与记录级权威同时出现会失败关闭。
++- **精修去重**（`execution/transform_executor.py` + `science/frame_compare.py`、`topology_mapping.py`）：
++  只在合法的元素/边保持映射下比较 Kabsch RMSD，所以仅标号对称置换的构象会被合并；搜索有节点预算
++  （默认 1000/每对），预算耗尽的一对保留两个并在 notes 中说明。可选的 `topology_bonds` 声明带类型的边
++  （COVALENT / COORDINATION / FORMING / BREAKING），映射必须保持这些类型。
++
++## 7. 依赖规则与把关
++
++- `domain` 不 import 任何其他 `confflow.*`；`workflow/v4` 与 `execution` 只依赖 `domain`、`execution`、`workflow/v4`
++  以及各自文档化的 `science` 入口。
++- 已退役的模块必须从磁盘上消失：`tests/v4/test_architecture_boundaries.py` 的 `REMOVED_LEGACY_MODULES`
++  与"模块必须不存在"测试保证它们不会被悄悄恢复；禁止导入前缀与静态扫描见 `scripts/v4_arch_scan.py`。
++- worker 的导入闭包不得加载编译器或重依赖包（`test_worker_run_import_closure_is_compiler_free`）。
++
++## 8. 已退役
++
++旧的 calc 调度链与 `confts` / `confgen` / `confrefine` 独立 CLI、`blocks/`、V1/V2/V3 工作流执行与配置 wire、
++`confflow export`（`results.db` 读取器）都已删除。迁移史与逐卡验收记录见 `docs/refactor/`（`PLAN.md`、`LOG.md`）。
+diff --git a/docs/COMMAND_REFERENCE.md b/docs/COMMAND_REFERENCE.md
+index 43f15ac..92c8708 100755
+--- a/docs/COMMAND_REFERENCE.md
++++ b/docs/COMMAND_REFERENCE.md
+@@ -1,26 +1,91 @@
+ # ConfFlow 命令行参考
+ 
+-本文件列出项目内主要 CLI 的常用参数与用法示例。
++只有一个公开命令 `confflow`（另有两个安装即带的辅助入口，见末尾）。正式的 V4 命令都在 `confflow v4` 下。
+ 
+-## confflow
++## confflow v4
++
++```text
++confflow v4 {contract,boundary,canonical,validate,authoring,run} ...
++```
++
++### run — 运行整份 V4 工作流
++
++```bash
++confflow v4 run --workflow <文件> --run-root <目录> [--inputs NAME=FILE ...] \
++                [--executable PROG=PATH ...] [--owner-token TOKEN] [--json]
++```
++
++| 参数 | 说明 |
++| --- | --- |
++| `--workflow` | V4 工作流文档（YAML 或 JSON） |
++| `--inputs NAME=FILE` | 把 XYZ 文件 `FILE` 作为运行输入 `NAME`（可重复） |
++| `--run-root` | 受管的运行根目录（持久化状态、已发布结果、产物） |
++| `--executable PROG=PATH` | 程序 `PROG`（如 `orca`、`g16`）的可执行文件（可重复） |
++| `--owner-token` | 运行的所有权令牌（默认 `v4-cli`） |
++| `--json` | 在标准输出打印机器可读报告（`run_id`、`status`、`definition_digest`、各步骤状态、`manifest`） |
++
++运行 `completed` 返回 0，否则返回 1。重新执行同一条命令即续跑。V1/V2/V3 文档以 `legacy_workflow_not_executable` 失败关闭。
++
++### validate — 校验工作流字节
++
++```bash
++confflow v4 validate --json (--workflow <文件> | --stdin)
++```
++
++输出 `confflow.configuration-validation.v1` 报告：`ok`、`diagnostics`（`code`/`reason`/`field_path`/`step_id`）、
++`definition_digest`、`step_ids`。
++
++### contract / boundary — 发布契约与边界协议
+ 
+ ```bash
+-confflow <input.xyz> [-c <config.yaml>] [-w <work_dir>] [--resume] [--verbose]
++confflow v4 contract --json      # confflow.configuration-contract.v4
++confflow v4 boundary --json      # confflow.boundary.v4
+ ```
+ 
+-说明：仓库根目录提供 `confflow.example.yaml` 作为示例配置；工作流 CLI（`confflow`）默认不向终端打印运行日志；stdout/stderr 会写入输入目录下同名文件 `<input_basename>.txt`。
++### authoring — authoring 接口
+ 
+ ```bash
+-tail -f input.txt
++confflow v4 authoring --json --stdin < request.json
+ ```
+ 
+-- `-c/--config`：工作流 YAML；省略时默认使用第一个输入文件同目录下的 `confflow.yaml`
+-- `-w/--work_dir`：工作目录（默认 `<input_basename>_work`）
+-- `--resume`：从断点继续
+-- `--verbose`：更详细日志
++请求/响应遵循 `confflow.authoring.v4`；操作：`describe_step`、`binding_candidates`、`instantiate_card`、
++`validate_document`、`check_compatibility`、`compile_intent`、`preview_paths`。
++
++### canonical — RFC 8785（JCS）规范化
+ 
+-## 统一返回码
++```bash
++confflow v4 canonical --json --stdin < input.json
++```
++
++## confflow（顶层）
++
++```bash
++confflow <input.xyz> ... -c <V4 工作流> [-w <运行根目录>] [--resume] [--verbose]
++confflow --version
++confflow --capabilities [--json]
++confflow --stop
++```
++
++| 参数 | 说明 |
++| --- | --- |
++| `-c/--config` | V4 工作流文档（旧版文档会失败关闭） |
++| `-w/--work_dir` | 运行根目录（默认 `<输入文件名>_work`） |
++| `--resume` | 从已有状态续跑 |
++| `--verbose` | 更详细的日志 |
++| `--capabilities [--json]` | 打印能力握手 JSON 后退出 |
++| `--version` | 打印版本后退出 |
++| `--stop` | 停止所有正在运行的 ConfFlow 任务（含子进程；需要 `psutil`） |
++
++顶层调用是同一个 V4 应用的薄入口；运行日志写入输入目录下的 `<输入文件名>.txt`，不向终端打印。
++`--rerun-failed` / `--step` 属于已退役的 legacy 执行路径，会以 `legacy_workflow_not_executable` 失败关闭。
++
++## 返回码
+ 
+ - `0`：成功
+ - `1`：用法 / 输入 / 配置错误
+ - `2`：运行时失败
++
++## 辅助入口
++
++- `confflow-control-worker`：控制协议 v1 的外部 worker（排队的启动意图），见 `docs/CONTROL_PROTOCOL_RFC.md`。
++- `confflow-fixture-agent`：显式启用的、不做计算的生命周期夹具，仅用于测试。
+diff --git a/docs/CONFGEN_PATHS.md b/docs/CONFGEN_PATHS.md
+index d0fef52..30c7315 100644
+--- a/docs/CONFGEN_PATHS.md
++++ b/docs/CONFGEN_PATHS.md
+@@ -1,187 +1,86 @@
+-# ConfGen Path-Based Rotor Declarations (Phase 0)
++# ConfGen 路径声明（paths）
+ 
+-Phase 0 of the input-simplification roadmap adds endpoint-pair rotor
+-declarations (`paths`) to ConfGen. Instead of spelling every chain bond,
+-declare the two endpoints and the moving side. Both spellings below are
+-complete, valid V4 documents (legacy `paths` accept `confgen.paths` or
+-`confgen.native.paths` with `confgen.seed`; typed `paths` live under `confgen` with
+-`schema_version: 3` and explicit sampling):
++不必逐个写出链上的每根键：给出两个端点和移动的一侧，ConfGen 在工作拓扑上解析出连接路径，
++把路径上每根键变成一个相对旋转的扭转自由度。
+ 
+-```yaml
+-# Legacy native mode: bare paths fall back to angle_step (120 here).
+-# confgen.seed stays required (single stochastic authority until Phase 2).
+-schema: confflow.workflow.v4
+-inputs:
+-  structures: {kind: structure, cardinality: many}
+-global:
+-  scientific_defaults: {charge: 0, multiplicity: 1}
+-steps:
+-  - id: s_gen
+-    executor: confgen
+-    bindings:
+-      structure:
+-        source: {run: structures}
+-    confgen:
+-      seed: 11
+-      paths:
+-        - {start: 81, end: 92, move: end, step: 120}
+-```
++## 1. 写法
+ 
+-The `confgen.native.paths` spelling (inside `native:`) is equivalent;
+-declaring `paths` (or `strict_path_bond_check`) at both levels fails
+-closed. Both compile into the existing native runtime -- bare paths are
+-never silently routed into the strict typed scope.
++在 V4 文档里使用 typed v3（`schema_version: 3`）；采样必须显式声明（`angles` 或 `step`），没有隐式默认值：
+ 
+ ```yaml
+-# Typed v3 scope: explicit sampling is required (no silent defaults).
+-schema: confflow.workflow.v4
+-inputs:
+-  structures: {kind: structure, cardinality: many}
+-global:
+-  scientific_defaults: {charge: 0, multiplicity: 1}
+ steps:
+   - id: s_gen
+     executor: confgen
+     bindings:
+-      structure:
+-        source: {run: structures}
++      structure: {source: {run: structures}}
+     confgen:
+       schema_version: 3
+       index_base: 1
+       paths:
+         - {start: 81, end: 92, move: end, angles: [0.0, 120.0, 240.0]}
++        - {start: 5,  end: 9,  move: start, step: 60}
+ ```
+ 
+-A bare `confgen.paths` spelling without `schema_version: 3` compiles into
+-the legacy native runtime (never into the strict typed scope, which keeps
+-requiring explicit sampling). Simple authoring therefore routes either
+-into `confgen.paths` (legacy, defaults from `angle_step`) or into the
+-strict typed scope above with visible sampling. `confflow v4 validate`
+-accepts all documents above; full route resolution stays deferred to
+-execution (advisory at submission).
+-
+-Endpoints are **always user-facing 1-based atom numbers**, in both the legacy
+-native mode and typed v3 scopes. `move` is **REQUIRED** and exactly `start`
+-or `end`: scientific intent is never inferred.
+-
+-## Declaration shape
+-
+-| Key      | Required | Meaning                                                        |
+-| -------- | -------- | -------------------------------------------------------------- |
+-| `start`  | yes      | 1-based atom number (integer; bools/floats rejected)           |
+-| `end`    | yes      | 1-based atom number, distinct from `start`                     |
+-| `move`   | yes      | `start` or `end`: the endpoint whose side moves                |
+-| `angles` | no\*     | explicit grid, e.g. `[0.0, 120.0, 240.0]`                      |
+-| `step`   | no\*     | shorthand expanding to `range(0, 360, step)`                   |
+-| `id`     | no       | provenance label                                               |
+-
+-\* Exactly one of `angles`/`step` may be given. A bare declaration
+-(`{start, end, move}`) falls back to the legacy `angle_step` default (120)
+-in the **legacy native mode only**. Typed v3 scopes fail closed on bare
+-paths so the scientific grid stays explicitly declared. Unknown keys,
+-non-integer endpoints, `bool` endpoints, same endpoints, non-finite angles,
+-periodic angle duplicates, and `step` outside 1..360 all fail closed.
+-
+-`waypoint` (multi-endpoint routes) is deferred: only `start`/`end` pairs
+-are supported in Phase 0.
+-
+-## Resolution rules
+-
+-Resolution runs **per work item on the final working topology** (covalent
+-perception plus declared `add_bond`/`del_bond` corrections) of the driving
+-structure, which may be an upstream product. Submission-time document checks
+-are structural only (advisory); the same pure resolver runs at execution.
+-
+-1. Endpoints are classified on the **full graph** first: different
+-   components fail with `PATH_DISCONNECTED`.
+-2. Cycle edges are removed (bridges kept). Endpoints connected there resolve
+-   to the **unique** bridge-only path. Full-graph connected but bridge-only
+-   disconnected fails with `PATH_CROSSES_RING`: ring bonds never rotate
+-   independently. Ring atoms may still be *endpoints* of a bridge-only path.
+-3. `PATH_AMBIGUOUS` is reserved and never emitted: a forest admits at most
+-   one simple path between two nodes, so no valid ambiguity fixture exists.
+-4. Each rotor bond is cut; the component containing the explicitly chosen
+-   endpoint moves. **Axis atoms never move.** Branch atoms ride rigidly
+-   inside their component but their internal bonds never become extra DOFs.
+-   Unrelated disconnected components stay unmoved. Output atom order is
+-   preserved.
+-
+-## Canonicalization (mixed `paths` + `chains`)
+-
+-Declaring any `paths` entry opts the work item into the strict
+-canonicalization contract. Pure-`chains` items keep bit-for-bit legacy
+-behavior, including overlapping chains.
+-
+-- Rotors order deterministically: paths in listed order (start→end bonds),
+-  then chains in listed order. First declaration wins position; output
+-  ordinals are row-major with the last rotor fastest (legacy-compatible).
+-- Canonical bond identity is unordered (`{a, b}`); the oriented axis
+-  (traversal order) carries the signed-angle meaning. Identical duplicates
+-  (same bond, orientation, moving side, grid, model) merge with **all**
+-  source provenance recorded.
+-- Opposite moving sides fail with `PATH_DIRECTION_CONFLICT`.
+-- Different grids, reversed traversals with asymmetric meaning, or
+-  absolute/relative/chemical model mismatches fail with
+-  `ROTOR_SAMPLING_CONFLICT`. Grids are never silently unioned.
+-- Conflict checks run on the **declared** grids first; only afterwards do
+-  legacy `no_rotate` exclusions collapse a bond to the single `(0.0,)`
+-  point (ordinals stay stable), recorded as `excluded:no_rotate`.
+-  Identical declarations under a shared exclusion therefore merge; genuinely
+-  contradictory grids still conflict even when excluded.
+-- An explicitly declared single-state grid (e.g. `angles: [0.0]`) is one
+-  valid state and executes normally; it is not an exclusion. Only the
+-  all-excluded case (every rotor collapsed via `no_rotate`) fails closed
+-  with "selected no rotatable bonds", matching the legacy contract.
+-
+-## Equivalence and machinery
+-
+-No second runtime exists: legacy `paths` items reuse the legacy Rodrigues
+-application and clash filter through an oriented adapter (per-rotor moving
+-sides). A nonoverlapping single legacy chain and its equivalent path
+-(`move: end` ≡ `rotate_side: right`, `move: start` ≡ `rotate_side: left`)
+-produce identical rotors, counts, ordinals, and coordinates. Typed paths
+-expand to `relative_rotation_grid` torsion axes and inherit typed
+-measurability (terminal bonds fail instead of inventing frames).
+-
+-## Limits, warnings, freeze
+-
+-- Two counts are recorded: `declared_cartesian_size` (pre-dedup declaration
+-  space) and `raw_cartesian_size`, the **final canonical task count**
+-  (post-dedup, post-exclusion) that actually executes. The canonical count
+-  (`∏ len(grid)`, arbitrary precision) is computed **before** any geometric
+-  generation and refused past the 10,000 pre-geometry guard (legacy) /
+-  `max_declared_states` (typed). The post-geometry `max_conformers`
+-  survivor cap is not compute safety. Typed reports additionally show the
+-  total C/R/T space (`counts.raw`) beside the path-only canonical count.
+-  The guard is per work item; no workflow-total multi-structure budget
+-  exists yet (remaining work).
+-- Suspiciously short newly path-expanded bonds (measured length below
+-  **0.92× the summed covalent radii**) emit `WARNING_SHORT_BOND` findings:
+-  1.34 A C-C and 1.33 A C-N warn, 1.52 A C-C stays quiet. This is a cheap
+-  distance heuristic, not chemistry: legitimately short bonds
+-  (multiple/aromatic character, strain) can also trip it, so findings are
+-  **warning only** -- no skipping, no bond-order inference. They surface as
+-  `warning_short_bond` diagnostics and report notes.
+-  `strict_path_bond_check: true` turns the warning into a `PATH_SHORT_BOND`
+-  error. Pure-legacy chains never warn.
+-- `freeze` stays fail-closed for ConfGen, with or without paths.
+-- Typed paths inherit typed measurability: a path bond without a dihedral
+-  frame (e.g. terminal bonds) fails instead of inventing a state key; use
+-  the legacy native mode where frame-free mechanics apply.
+-
+-## Provenance
+-
+-Reports (`confgen_report.json`, `ensemble_report.json`) record the driving
+-structure id and geometry digest, atom symbols, per-source resolved routes
+-(`declared_paths`: source, endpoints, move, ordered 1-based route, angles --
+-read from the single resolver authority, never re-derived), the
+-working-graph topology digest, ordered rotors (bonds, moving/fixed sets,
+-angles, sources), warnings, and both declaration and canonical counts.
+-Runtime `confgen_completed` diagnostics expose rotor counts, the raw task
+-count, the topology digest, and the warning count; short-bond findings add
+-`warning_short_bond` diagnostics. Each `confgen_path_resolved` informational
+-diagnostic also prints the ordered chain with atom symbols, the explicitly
+-chosen moving endpoint and its rotor bonds, without asking for confirmation.
+-Declared paths already participate in the
+-step semantic digest, so resolution identity affects reuse correctness; no
+-machine paths enter scientific digests.
++端点**始终是面向用户的 1 基原子序号**，与 `index_base` 无关。`move` 必填，只能是 `start` 或 `end`，不会被推断。
++
++| 键 | 必填 | 含义 |
++| --- | --- | --- |
++| `start` | 是 | 1 基原子序号（整数；拒绝 bool/浮点） |
++| `end` | 是 | 1 基原子序号，必须与 `start` 不同 |
++| `move` | 是 | `start` 或 `end`：哪个端点所在的一侧移动 |
++| `angles` | 二选一 | 显式角度表，如 `[0.0, 120.0, 240.0]`；周期重复（如 `0` 与 `360`）被拒绝 |
++| `step` | 二选一 | 简写，展开为 `range(0, 360, step)`，`step` 取 1..360 |
++| `id` | 否 | 溯源标签 |
++
++未知键、非整数/bool 端点、相同端点、非有限角度、`angles` 与 `step` 同时给出、两者都不给，均失败关闭。
++不支持 `waypoint`（多端点路线）：需要时请改用显式的 `torsions` 声明。
++
++## 2. 简化输入（intent）里的旧写法
++
++`confflow.intent.v1` 的 confgen 卡仍接受旧的 `native.paths` 词汇，并由编译器**机械地**改写成 typed v3：
++裸声明的 `step` 取 `angle_step`（缺省 120），`bond_scale` 变为 `tolerances.bond_scale`，
++`strict_path_bond_check` 变为 v3 顶层标志；端点不被检查或改写。以下情形在编译期报错：
++
++- `native` 含 paths 以外的旧词汇（如 `chains`）：该范围没有 typed 形式；
++- 路径声明含 `waypoint` 或其他未知键：报错并提示改用 `torsions`；
++- `native` 已写 `schema_version: 3` 时按 typed 原样使用。
++
++直接写在 V4 工作流里的旧 `confgen.native`（`chains`、`paths`、`angle_step` 等）已不再被支持：文档会被 ConfFlow 以
++`unknown_member` 拒绝（失败关闭）。需要手动改为 typed v3，对照见 [`USAGE.md`](USAGE.md) 的"迁移旧文档里的 `confgen.native`"。
++
++## 3. 解析规则
++
++解析在**每个 work item 的最终工作拓扑**上进行（结构记录自带的工作拓扑；驱动结构可以是上游产物）。
++提交期的文档检查只是结构性的；同一个纯解析器在执行期运行。
++
++1. 先在**完整图**上判断端点是否连通；不在同一连通分量 → `PATH_DISCONNECTED`。
++2. 去掉环上的边（保留桥）。在桥图中连通的端点解析为**唯一**的桥路径；完整图连通而桥图不连通 →
++   `PATH_CROSSES_RING`（环上的键不独立旋转；环原子仍可作为桥路径的端点）。
++3. `PATH_AMBIGUOUS` 保留但目前不会产生：森林里两点之间至多一条简单路径。
++4. 每根旋转键被切开，包含所选端点的分量移动。**轴原子不动**；侧链原子随所在分量刚性移动，
++   其内部键不成为额外自由度；无关的分量不动；输出的原子顺序不变。
++5. 路径键若没有二面角框架（例如末端键），typed v3 失败关闭，不会凭空造一个框架。
++
++## 4. 合并与冲突
++
++同一根键被多处声明时：
++
++- 相同的声明（同键、同取向、同移动侧、同角度表）合并，并记录**全部**来源；
++- 相反的移动侧 → `PATH_DIRECTION_CONFLICT`；
++- 角度表不同、方向相反但含义不对称、绝对/相对/化学模型不一致 → `ROTOR_SAMPLING_CONFLICT`；角度表绝不隐式求并集。
++
++## 5. 上限、警告与 freeze
++
++- 记录两个计数：`declared_cartesian_size`（去重前的声明空间）与最终规范任务数；规范任务数在任何几何生成**之前**
++  以任意精度计算，超过 `max_declared_states` 即拒绝。后置的 `max_conformers` 只是幸存者上限，不是计算安全阀。
++- 新展开的键若测得长度低于共价半径之和的 **0.92 倍**，产生 `WARNING_SHORT_BOND`（例如 1.34 Å 的 C–C 会警告，1.52 Å 不会）。
++  这只是距离启发式，不做化学判断；**仅警告**，不跳过。`strict_path_bond_check: true` 把它升级为 `PATH_SHORT_BOND` 错误。
++- ConfGen 对 `freeze` 失败关闭，有无 paths 都一样。
++
++## 6. 溯源
++
++报告（`confgen_report.json`、`ensemble_report.json`）记录：驱动结构 id 与几何 digest、原子符号、
++每个来源解析出的路线（`declared_paths`：来源、端点、`move`、有序 1 基路线、角度；来自唯一的解析器）、
++工作图拓扑 digest、有序的旋转键（键、移动/固定集合、角度、来源）、警告，以及声明计数与规范计数。
++`confgen_path_resolved` 信息诊断会打印带元素符号的有序链和所选移动端点。
++已声明的 paths 参与步骤语义 digest；机器路径不进入科学 digest。
+diff --git a/docs/DEVELOPMENT.md b/docs/DEVELOPMENT.md
+index 0e58617..02a8280 100755
+--- a/docs/DEVELOPMENT.md
++++ b/docs/DEVELOPMENT.md
+@@ -1,304 +1,97 @@
+ # ConfFlow 开发指南
+ 
+-## 项目结构
++面向要改 ConfFlow 代码的人：怎么搭环境、质量门禁是什么、代码放哪、新增能力怎么接、契约和跨仓测试怎么处理。
++整体结构见 [`ARCHITECTURE.md`](ARCHITECTURE.md)，测试见 [`TESTING.md`](TESTING.md)。
+ 
+-```
+-confflow/
+-├── confflow/              # 核心包
+-│   ├── main.py            # 工作流主程序
+-│   ├── cli.py             # 命令行入口
+-│   ├── config/            # 配置加载与校验
+-│   ├── core/              # 基础 IO、数据、模型与工具函数
+-│   └── workflow/          # 工作流引擎
+-├── tests/                 # 测试目录（数量以 docs/TESTING.md 和 CI 输出为准）
+-├── docs/                  # 文档
+-├── confflow.example.yaml  # 配置模板
+-├── README.md              # 主文档
+-└── pyproject.toml         # 项目元数据与打包配置
+-```
+-
+-## 开发环境设置
+-
+-### 1. 克隆仓库
+-
+-```bash
+-git clone https://github.com/moxuezhuchen/ConfFlow.git
+-cd ConfFlow
+-```
++## 1. 环境
+ 
+-### 2. 创建虚拟环境
+-
+-```bash
+-conda create -n confflow-dev python=3.10 -y
+-conda activate confflow-dev
+-```
+-
+-### 3. 安装开发依赖
++- Python ≥ 3.10（CI 矩阵 3.10–3.13；release 安装器相关测试固定在 3.12）。
++- 运行依赖：numpy、scipy、pyyaml、psutil、rich、pydantic、rdkit、jsonschema、referencing、rfc8785。
+ 
+ ```bash
++git clone https://github.com/moxuezhuchen/ConfFlow.git && cd ConfFlow
++python3 -m venv .venv && source .venv/bin/activate
+ pip install -e ".[dev]"
+ ```
+ 
+-## 代码规范
+-
+-### 格式化
+-
+-使用 Black 进行代码格式化：
+-
+-```bash
+-black confflow/ tests/
+-```
+-
+-### 类型检查
+-
+-```bash
+-mypy confflow
+-```
+-
+-### 代码风格检查
+-
+-```bash
+-ruff check confflow tests
+-```
+-
+-统一风格与输入/输出契约见：`docs/STYLE_CONTRACT.md`
+-
+-## 架构与设计文档
+-
+-### 核心架构
+-
+-- `docs/ARCHITECTURE.md`：完整的架构设计与模块说明
+-- `docs/internal/COMPAT_EXECUTION_BOUNDARY.md`：Compat/Execution 边界契约（workflow→calc 双轨接口）
+-- `docs/archive/HANDOFF_PHASE2_WORKFLOW_CALC.md`：阶段 2 完整历史与问题台账
+-
+-## 当前推荐入口
+-
+-- 工作流主入口：`confflow.workflow.run_workflow` 或顶层 `confflow.run_workflow`
+-- typed 配置入口：`confflow.config.models.WorkflowConfig` / `CalcStepParams`
+-
+-不要为新代码新增 INI settings、legacy flat calc config、`.config_hash` MD5 兼容或 `ChemTaskManager` 依赖。
+-
+-### 开发指南
+-
+-- `docs/DEVELOPMENT.md`：本文档
+-- `docs/TESTING.md`：测试套件文档
+-- `docs/STYLE_CONTRACT.md`：代码/输入/输出一致性标准
+-
+-### 用户文档
+-
+-- `docs/USAGE.md`：快速开始指南
+-- `docs/COMMAND_REFERENCE.md`：所有命令的完整参考
+-
+-## 运行测试
+-
+-### 所有测试
+-
+-```bash
+-./scripts/test.sh
+-```
+-
+-### 指定测试文件
+-
+-```bash
+-./scripts/test.sh tests/test_confgen.py -v
+-```
+-
+-### 仅集成测试
+-
+-```bash
+-./scripts/test.sh -m integration
+-```
+-
+-### 代码覆盖率
+-
+-```bash
+-./scripts/test.sh --cov=confflow --cov-report=term-missing
+-```
+-
+-覆盖率阈值已配置在 `pyproject.toml` 中（`fail_under = 85`），并启用了分支覆盖率。
++- `dev` 额外装 black、ruff、mypy、pytest、pytest-cov、build 与类型桩。
++- `speed` / `all` extra 装 numba；目前没有任何代码路径依赖 numba 加速（`confflow/__init__.py` 只探测它是否可用）。
++- 真实的 Gaussian / ORCA 需要自己安装并取得许可；仓库内测试只用 `tests/v4/fakes/` 里的假可执行文件。
+ 
+-### 常用质量门禁（推荐）
++## 2. 质量门禁（与 CI 一致）
+ 
+ ```bash
+-ruff check confflow tests
++black --check .            # 行宽 100，target py310
++ruff check .               # E F I B UP D；numpy 风格 docstring；模块/包 docstring 必须有
+ mypy confflow
+-./scripts/test.sh -q
+-```
+-
+-当前本地基线（2026-04-12）：
+-
+-- `ruff check confflow tests`：通过
+-- `mypy confflow`：通过
+-- `pytest -q`：当前测试数量会随仓库演进变化；以 `docs/TESTING.md` 和 CI 结果为准
+-
+-### 测试产物目录规范
+-
+-- 推荐测试入口：`./scripts/test.sh`（pytest/coverage 产物重定向到系统临时目录，并在结束后自动清理）
+-- 直接运行 `pytest` 时，仓库根目录可能出现：`.pytest_cache_temp`、`.coverage_temp`、`coverage.xml`、`htmlcov/`、`reports/`
+-
+-以上路径均已在 `.gitignore` 中忽略，避免污染仓库根目录。
+-
+-测试架构详见：`docs/TESTING.md`
+-
+-### 目录清理（缓存/临时文件）
+-
+-```bash
+-find . -type d -name "__pycache__" -exec rm -rf {} +
+-rm -rf .pytest_cache_temp .mypy_cache .ruff_cache confflow.egg-info build dist htmlcov coverage.xml reports .coverage_temp
++pytest -q                  # 见 TESTING.md；scripts/test.sh 会把所有产物放进系统临时目录
+ ```
+ 
+-## 核心模块说明
++- 格式化只用 black；ruff 只做 lint（不要用 `ruff format` 整体重排）。
++- 公开类/函数 docstring（D101–D107）暂缓强制；模块与包 docstring 必须有，且应说明该模块**拥有**什么、**不做**什么。
++- `pyproject.toml` 里 `strict_config = true`：未声明的 pytest 标记会报错。
+ 
+-## 添加新功能的步骤
++## 3. 代码放哪
+ 
+-### 1. 新的量子化学程序支持
++| 要做的事 | 放在 | 注意 |
++| --- | --- | --- |
++| 新的领域概念（不可变记录、digest 规范化） | `domain/` | 不得 import 其他 `confflow.*`，不做 I/O |
++| 新的纯科学计算 | `science/` | 纯函数；不读环境、不写文件；有预算/上限的算法要把预算做成显式参数并用"节点数/结果"测试固定，而不是用耗时 |
++| 新的执行器能力或 step 类型 | `execution/` + `execution/registry.py` | 能力、adapter、profile、check、recovery 都带独立的 contract version，进入 step digest |
++| 新的量化程序 | `programs/<name>/` + `programs/registry.py` | 适配器只负责输入渲染与输出解析 |
++| 新的科学检查 / 恢复策略 | `execution/checks_standard.py`、`recovery_standard.py` | 必须在文档里显式声明才会生效，没有按 role 隐式触发 |
++| 工作流 schema 字段 | `workflow/v4/schema.py` | 默认值只在这里定义；JSON schema 由模型生成 |
++| 对客户端发布的内容 | `producer/` | 改动会移动契约/边界 digest，见 §5 |
++| 持久化格式 | `persistence/` | 通过 `persistence/contracts.py` 的冻结契约 |
+ 
+-**文件修改：**
+-- `confflow/config/models.py`：如果需要新的程序特定配置项，更新 typed model。
++原则：复用正确的低层能力，替换错误的高层抽象；不要因为"方便"绕过 registry 或在执行层按 program/role 名分支。
+ 
+-**示例：**
++## 4. 新增能力的最小步骤
+ 
+-```python
+-# 在 calc/policies/myprog.py 中
+-class MyProgPolicy(CalculationPolicy):
+-    def generate_input(self, ...):
+-        pass
+-    def parse_output(self, ...):
+-        pass
+-```
+-
+-### 2. 新的构象生成策略
+-
+-**文件修改：**
+-- `confflow/config/models.py`：添加新参数。
+-
+-### 3. 新的筛选条件
+-
+-**文件修改：**
+-
+-## 性能优化
+-
+-### 1. 使用 Numba JIT
++**新的 calculation program**：写适配器（渲染 + 解析 + artifact 发现 + 环境探测）→ 在 `programs/registry.py` 注册 →
++在 `tests/v4/fakes/` 加一个行为可控的假可执行文件 → 在 `tests/v4/` 里加渲染/解析/一致性测试 →
++`confflow v4 contract --json` 里 program 列表随之变化，确认契约变更是预期的（见 §5）。
+ 
+-对计算密集型函数使用 `@jit` 装饰器：
++**新的科学检查 / 结果 profile**：在 `execution/contracts.py` 描述符中声明（带 contract version）→ 实现 → 注册 →
++测试覆盖"通过/失败/缺数据"三种情形。
+ 
+-```python
+-from numba import jit
++**新的 ConfGen 声明（torsion / ring / coordination / path）**：改 `workflow/v4/confgen_schema.py` 与
++`science/confgen/` 中对应的 lane；任何改变构象集合的改动都要有等价性或回归证据，并且要重新捕获引擎报告基线
++（`docs/refactor/baseline/` 与 `docs/refactor/tools/`）。
+ 
+-@jit(nopython=True)
+-def fast_calculation(arr):
+-    # 计算密集的代码
+-    pass
+-```
+-
+-### 2. 并行处理
+-
+-使用 `multiprocessing` 处理多个构象：
+-
+-```python
+-from multiprocessing import Pool
+-
+-def process_batch(conformers):
+-    with Pool(max_workers) as pool:
+-        results = pool.map(process_one, conformers)
+-    return results
+-```
++## 5. 契约与指纹
+ 
+-### 3. 内存管理
++`producer/` 生成的内容（配置契约、边界协议、authoring schema、editor manifest、recipes）是对 JobDesk 的**公共接口**：
+ 
+-- 及时释放大数组
+-- 使用流式处理处理大量构象
+-
+-## 文档编写
+-
+-### Python 文档字符串
+-
+-使用英文 NumPy 风格的文档字符串：
+-
+-```python
+-def calculate_energy(conformer: np.ndarray) -> float:
+-    """Calculate the conformer energy.
+-
+-    Parameters
+-    ----------
+-    conformer : np.ndarray
+-        Cartesian coordinates with shape ``(N, 3)``.
+-
+-    Returns
+-    -------
+-    float
+-        Energy in Hartree.
+-
+-    Raises
+-    ------
+-    ValueError
+-        Raised when the conformer is invalid.
+-    """
+-    return 0.0
+-```
+-
+-### Markdown 文档
+-
+-- 使用清晰的标题层级
+-- 提供代码示例
+-- 包含常见问题解答
+-- 用户文档统一使用中文说明，不依赖尾随空格实现换行
+-- 风格基准以 `docs/STYLE_CONTRACT.md` 为准
+-
+-## 版本管理
+-
+-### 版本号格式
+-
+-采用语义版本化 (Semantic Versioning)：
+-- MAJOR: 不兼容的 API 改变
+-- MINOR: 向后兼容的功能添加
+-- PATCH: 向后兼容的 bug 修复
+-
+-**示例：** 1.0.0 (主版本.次版本.修订版本)
+-
+-### 发布流程
+-
+-当前为手动发布流程，详见 `docs/RELEASE.md`。PyPI 发布尚未作为自动化项目流程提供；不要在未确认维护者已发布前假设包可从 PyPI 获取。
+-
+-## 常见问题
+-
+-### Q: 如何调试工作流？
+-
+-A: 使用 `--verbose` 启用调试日志：
+-```bash
+-confflow input.xyz -c confflow.example.yaml --verbose
+-```
+-
+-### Q: 日志系统的工作模式是什么？
+-
+-A: ConfFlow 日志系统默认运行在 **standalone 模式**：
+-- CLI 运行时，日志写入 `<input_basename>.txt` 文件
+-- 同时在终端显示 INFO 级别的简洁输出
+-- 默认使用独立的 console handler；但当检测到明确的 host-managed 自定义 root handler 时，会自动切换到 embedded 模式
+-- `pytest` capture、标准库通用 handler、`NullHandler`、常见 notebook handler 不会触发该自动 embedded
+-
+-如果 ConfFlow 被嵌入到其他应用（如 GibbsFlow）中，外部调用方可以显式启用 **embedded 模式**：
+-```python
+-from confflow.core.logging import ConfFlowLogger
+-ConfFlowLogger.set_embedded_mode(True)  # 移除独立 console handler，日志传播到父 logger
+-```
++- `confflow v4 contract --json`、`confflow v4 boundary --json` 的字节是被钉住的；改动前后用
++  `docs/refactor/tools/contract_digests.py` 对比，用 `json_paths_diff.py` 看具体差了哪些路径。
++- 边界协议的 fixture 由 `scripts/generate_p0_boundary_fixtures.py` 生成（生产者拥有），JobDesk 通过同步脚本原样拷贝，
++  不得手改；`tests/v4/test_p0_boundary.py` 会检查入库的 fixture 与现在生成的一致。
++- 删除或重命名 wire 成员属于不兼容变更：JobDesk 必须同步升级，并在提交信息里写明。
+ 
+-这样可以避免日志重复输出，并让外部应用统一管理日志格式。
++## 6. 跨仓库测试
+ 
+-### Q: 如何添加新的量子化学程序？
++`tests/v4/jobdesk_integration.py` 把 JobDesk-v2 的源码当作消费者来读取真实的 producer 字节：
+ 
+-A: 参考"添加新功能的步骤"中的量子化学程序部分，实现新的 `CalculationPolicy`。
++- 用环境变量 `JOBDESK_V2_SRC=<JobDesk-v2 的 src 目录>` 指向检出；缺失时这些测试跳过（标记 `cross_repo`）。
++- 检出的提交必须等于 `EXPECTED_JOBDESK_SHA`，且与 `.github/workflows/jobdesk-contract.yml` 的 `JOBDESK_COMPAT_SHA` 一致
++  （`tests/test_release_workflow.py` 校验两处相同）。需要对着别的提交开发时设 `JOBDESK_V2_ALLOW_ANY_SHA=1`。
++- 升级 JobDesk 侧提交后，按顺序更新两处 SHA 并重新跑跨仓测试。
+ 
+-### Q: 如何优化性能？
++## 7. 架构护栏
+ 
+-A: 查看"性能优化"部分，或调整 `confflow.example.yaml` 中的 `max_parallel_jobs` 并行数。
++- `tests/v4/test_architecture_boundaries.py`：包依赖规则、禁止导入前缀、"已删除的模块必须不存在"、导入闭包检查。
++- `scripts/v4_arch_scan.py`、`scripts/architecture_metrics.py`：静态扫描与度量，CI 外也可手动运行。
++- 删除代码时要同时删掉只守护它的测试（以及它们在护栏清单中的条目），并把已删除的模块名加入 `REMOVED_LEGACY_MODULES`。
+ 
+-## 联系与反馈
++## 8. 发布
+ 
+-- 提交 Issue 报告 bug
+-- 提交 Pull Request 贡献代码
+-- 安全问题请优先按仓库根目录 `SECURITY.md` 私密提报，不要公开提交敏感日志或私有计算数据
++发布流程、锁文件、wheel 安装器与溯源见 [`RELEASE.md`](RELEASE.md)；依赖锁用
++`scripts/generate_dependency_locks.py --write/--check` 生成与核对；发布 wheel 的隔离安装用
++`scripts/install_release_wheel.py`。
+ 
+----
++## 9. 重构记录
+ 
+-感谢为 ConfFlow 做贡献！
++2026 年的架构瘦身（删除 calc/blocks/legacy CLI、边界瘦身、输入简化、refine 对称映射）的计划、逐卡验收和检查点在
++`docs/refactor/`：`PLAN.md`（任务卡）、`ACCEPTANCE.md`（验收协议）、`LOG.md`（验收记录）、`baseline/`（TS1 与引擎报告基线及各阶段检查点）、
++`paths_equivalence/`（legacy paths 与 typed v3 的等价性证据）、`tools/`（基线与验收工具）。这些文件是历史记录与证据，普通开发不需要改它们。
+diff --git a/docs/PRODUCER_INTENT.md b/docs/PRODUCER_INTENT.md
+index 1299074..2082944 100644
+--- a/docs/PRODUCER_INTENT.md
++++ b/docs/PRODUCER_INTENT.md
+@@ -47,6 +47,14 @@ defaults), `preset` (transform cards), `from` (semantic predecessor
+ allow_method_change?}` — explicit only, strict boolean, wired late via
+ `producer.checkpoints`), `execution`/`label`.
+ 
++Confgen cards: `native` must be a typed `schema_version: 3` scope.  A
++legacy `paths` scope (optionally with `angle_step`, `bond_scale`,
++`strict_path_bond_check`) is rewritten mechanically into the equivalent v3
++block (see `CONFGEN_PATHS.md` §2); any other legacy native vocabulary
++(`chains`, ...) and `waypoint` path declarations are refused at compile time
++with a message that names the offending key.  A seed is declared at the step
++level, never inside `native`.
++
+ Non-applicable fields are rejected, never silently dropped (a seed or
+ program on a transform, a program/role/adapter/profile/checks/recovery
+ on a confgen, a preset on a calculation).
+@@ -114,7 +122,7 @@ seeds, scheduler, machine/execution, annotations, labels, input
+ descriptions, output paths.  Explicit seeds are preserved verbatim and
+ audited as `explicit` — even on steps that are not stochastically
+ required (e.g. an uncapped typed ConfGen carrying a user seed);
+-full-enumeration typed ConfGen without a user seed gets none; legacy/capped ConfGen and GOAT
++full-enumeration typed ConfGen without a user seed gets none; capped ConfGen and GOAT
+ get derived-or-explicit seeds in strict `confgen.seed` /
+ `calculation.seed`.  Seeds assign after machine and checkpoint updates,
+ so checkpoint edges move seeds.  GOAT seeds are workflow identity only
+diff --git a/docs/SECURITY_MODEL.md b/docs/SECURITY_MODEL.md
+index cbb2945..549b9c1 100644
+--- a/docs/SECURITY_MODEL.md
++++ b/docs/SECURITY_MODEL.md
+@@ -52,7 +52,7 @@ ConfFlow may create or update:
+ 
+ - Workflow directories and step directories.
+ - `search.xyz`, `output.xyz`, `result.xyz`, `failed.xyz`, and related XYZ files.
+-- `results.db`, `manifest.json`, checkpoint metadata, and JSON summary files.
++- `manifest.json`, checkpoint metadata, and JSON summary files.
+ - `<input_basename>.txt` CLI output reports.
+ - `confflow.log` and backup copies of external program logs and outputs.
+ 
+diff --git a/docs/TESTING.md b/docs/TESTING.md
+index cad891e..3a24495 100755
+--- a/docs/TESTING.md
++++ b/docs/TESTING.md
+@@ -1,267 +1,71 @@
+ # ConfFlow 测试指南
+ 
+-## 快速开始
++怎么跑测试、测试放在哪、有哪些固定的约定和已知的坑。工程规范见 [`DEVELOPMENT.md`](DEVELOPMENT.md)，
++`tests/README.md` 是对测试编写准则的补充。
+ 
+-### 推荐方式（零产物）
++## 1. 运行
+ 
+ ```bash
+-# 全量测试
+-./scripts/test.sh
+-
+-# 带覆盖率
+-./scripts/test.sh --cov=confflow --cov-report=term-missing
+-
+-# 仅集成测试
+-./scripts/test.sh -m integration
+-
+-# 跳过集成测试
+-./scripts/test.sh -m "not integration"
+-
+-# 指定测试文件
+-./scripts/test.sh tests/test_core.py -v
+-
+-# 透传任意 pytest 参数
+-./scripts/test.sh -k test_manager --maxfail=1
+-```
+-
+-`./scripts/test.sh` 将所有 pytest 和 coverage 产物重定向到系统临时目录，测试结束后自动清理。
+-
+-### 干净环境安装验证
+-
+-发布前或调整依赖边界后，应在全新虚拟环境中验证声明依赖和打包配置：
+-
+-```bash
+-python -m pip install --upgrade pip
+-python -m pip install -e ".[dev]"
+-python -m pip check
+-python -m pytest
+-```
+-
+-CI 也会执行 `pip check`，用于尽早发现声明依赖与解析结果不一致的问题。
+-
+-### 直接运行 pytest
+-
+-```bash
+-.venv/bin/python -m pytest -q
+-```
+-
+-本项目当前开发环境使用仓库内 `.venv`。优先使用 `.venv/bin/python -m pytest`，避免误用系统 Python 中的 pytest 或依赖版本。直接运行 `pytest` 会在项目根目录产生 `.pytest_cache_temp` 和 `.coverage_temp`（已在 .gitignore 中，不会提交）。由于 pytest 和 pytest-cov 的初始化机制限制，无法在不传参数的情况下完全避免这些文件。
+-
+----
+-
+-## 测试概览
+-
+-| 指标 | 数值 |
+-|------|------|
+-| 总测试数 | 以 `pytest --collect-only -q` 和 CI 输出为准 |
+-| 测试文件 | 以当前 `tests/` 目录为准 |
+-| 通过率 | 以当前 CI 和本地测试输出为准 |
+-| 覆盖率门禁 | `fail_under = 85`（见 `pyproject.toml`） |
+-| 运行时间 | 取决于机器、依赖版本和测试范围 |
+-
+----
+-
+-## 测试文件清单
+-
+-### 核心层 (`core/`)
+-
+-| 文件 | 覆盖模块 | 说明 |
+-|------|----------|------|
+-| `test_core.py` | package exports, shared entrypoints | 包导出、核心公共入口 |
+-| `test_io.py` | core/io | XYZ 文件读写、元数据解析、键长计算 |
+-| `test_data.py` | core/data | 共价半径、元素符号、原子序数 |
+-| `test_console.py` | core/console | 控制台输出格式化 |
+-| `test_contracts.py` | core/contracts | 输入/输出契约验证 |
+-| `test_logging_hotspots.py` | core/logging | 日志重定向、handler 切换热点路径 |
+-
+-### 配置层 (`config/`)
+-
+-| 文件 | 覆盖模块 | 说明 |
+-|------|----------|------|
+-| `test_retired_wire_versions.py` | 配置 wire | V1/V2/V3 文档与版本全部 fail closed（`unsupported_workflow_version`）、`config validate` 退役、`--dry-run`/`--config-show` 开关退役、V4 validate/compile 正常、producer contract 无 V1/V2 面 |
+-| `test_example_workflow.py` | confflow.example.yaml | 随包示例是当前 V4 文档且能编译/校验 |
+-| `test_v46_cross_repo.py` / `test_v46_cross_repo_e2e.py` | 跨仓库（V4） | 真实 producer contract 字节 → JobDesk V4 解析路径（`JOBDESK_V2_SRC` 可指向 JobDesk 检出；可选依赖） |
+-
+-> Architecture Diet PR-9 退役了已发布的 V1/V2 配置 wire（`configuration-contract.v1/.v2`、`confflow.workflow.v2` schema、公开 parser/validator、V2 editor manifest/recipe catalog、V2→canonical migration、V2 diagnostic planners）。唯一受支持的配置 wire 是 V4；V1/V2/V3 文档在入口处失败关闭。因此 `test_config_models.py`、`test_editor_manifest.py`、`test_recipe_catalog.py`、`test_configuration_contract_v2.py`、`test_config_contract_v2_cli.py`、`test_jobdesk_contract_compatibility.py`（V2 契约跨仓库闸门）与 `test_pr7_v3_retirement.py` 已删除，由上面的短闸门替代。
+-
+-### 回退测试
+-
+-| 文件 | 覆盖模块 | 说明 |
+-|------|----------|------|
+-
+-### 工作流 (`workflow/`)
+-
+-| 文件 | 覆盖模块 | 说明 |
+-|------|----------|------|
+-
+-### 可视化与报告
+-
+-| 文件 | 覆盖模块 | 说明 |
+-|------|----------|------|
+-
+-### 其他
+-
+-| 文件 | 覆盖模块 | 说明 |
+-|------|----------|------|
+-| `test_cli.py` | cli, main | CLI 参数解析、主入口集成 |
+-
+----
+-
+-## Fixtures 与 Helpers
+-
+-### 共享 Fixtures (`conftest.py`)
+-
+-| Fixture | 说明 |
+-|---------|------|
+-| `input_xyz` | 在 `tmp_path` 中创建一个最小 XYZ 文件 |
+-| `config_yaml` | 在 `tmp_path` 中创建一个最小 YAML 配置 |
+-| `cd_tmp` | 切换到 `tmp_path` 并在结束后恢复 |
+-| `sync_executor` | 同步执行器（替代 ProcessPoolExecutor） |
+-
+-### 共享 Helpers (`_helpers.py`)
+-
+-| Helper | 说明 |
+-|--------|------|
+-| `FakeRunner` | 计算任务的假执行器 |
+-| `FakeResultsDB` | 可配置结果的假数据库 |
+-| `FakeFuture` | 返回预设值的假 Future |
+-| `FakeExecutor` | 使用 FakeFuture 的假线程池 |
+-| `assert_raises_match` | 带正则匹配的异常断言 |
+-| `reload_with_import_block` | 模拟模块导入失败后重新加载 |
+-
+----
+-
+-## 测试标记
+-
+-| 标记 | 说明 | 用法 |
+-|------|------|------|
+-| `integration` | 端到端集成测试 | `pytest -m integration` |
+-
+----
+-
+-## 覆盖率
+-
+-已在 `pyproject.toml` 中配置：
+-
+-```toml
+-[tool.coverage.run]
+-source = ["confflow"]
+-branch = true
+-data_file = ".coverage_temp"
+-
+-[tool.coverage.report]
+-fail_under = 85
+-show_missing = true
+-```
+-
+-运行带覆盖率检查的测试：
+-
+-```bash
+-# 推荐方式（零产物）
+-./scripts/test.sh --cov=confflow --cov-report=term-missing
+-
+-# 或直接运行 pytest
+-pytest tests/ --cov=confflow --cov-report=term-missing
++scripts/test.sh                      # 推荐：所有产物（缓存、覆盖率、basetemp）都放进系统临时目录，退出时清理
++scripts/test.sh -m integration       # 只跑端到端集成测试
++scripts/test.sh tests/v4/test_compiler.py -k binding    # 透传任意 pytest 参数
++pytest -q                            # 直接跑（pyproject 的 addopts 是 -v --tb=short，testpaths 是 tests）
++pytest --collect-only -q | tail -1   # 当前收集到的测试数（文档不写固定数字）
+ ```
+ 
+-**注意**：
+-- `./scripts/test.sh` 将 coverage 数据文件重定向到系统临时目录
+-- 直接运行 `pytest` 会在项目根目录生成 `.coverage_temp`（已在 .gitignore 中）
+-
+-最近一次本地验证基线（2026-04-12）：
+-
+-- `pytest -q`：当前测试数量会随仓库演进变化；以当前 CI 输出为准
+-- `ruff check confflow tests`：通过
+-- `mypy confflow`：通过
+-- 本轮未重跑 `pytest tests/ --cov=confflow --cov-report=term`，因此不在此处重复历史覆盖率数值
+-
+-最近一次重构验证（2026-06-20）：
+-
+-- `python3 -m compileall confflow tests`：通过
+-- `.venv/bin/python -m pytest --collect-only -q`：701 tests collected
+-- `.venv/bin/python -m pytest -q`：701 passed
+-- `.venv/bin/python -m pytest tests/ --cov=confflow --cov-report=term-missing --cov-report=xml`：通过，total coverage 85.65%
+-- `.venv/bin/ruff check confflow tests`：通过
+-- `.venv/bin/mypy confflow`：通过（`mypy.ini` 仍提示存在未使用的 `[mypy-tests.*]` section）
+-- `.venv/bin/python -m pip check`：通过
+-- `.venv/bin/python -m pip wheel . -w /tmp/confflow-wheel`：通过，生成 `confflow-1.0.10-py3-none-any.whl`
+-
+----
+-
+-## 公共 CI 覆盖边界
+-
+-公共 GitHub Actions CI 当前覆盖：
+-
+-- Python 3.10、3.11、3.12、3.13 上运行 `pytest -q`。
+-- Python 3.11 上运行 Black gate、`ruff check .`、`mypy confflow`。
+-- 独立 coverage job 在 Python 3.11 上运行 `pytest tests/ --cov=confflow --cov-report=term-missing --cov-report=xml`，并使用 `pyproject.toml` 中的 coverage 门禁。
+-- Gaussian/ORCA policy、输入生成、输出解析、错误处理、TS rescue、workflow resume 等逻辑通过单元测试、fake runner、mock、fixture 和样例日志覆盖。
+-
+-公共 CI 当前不完整覆盖：
+-
+-- 真实 Gaussian 16 或 ORCA 安装环境中的端到端计算。
+-- 商业软件许可证、环境模块、集群调度器、scratch 目录和站点特定 wrapper。
+-- 大规模分子体系、长时间运行任务、真实 checkpoint 文件生命周期。
+-- 每个操作系统和 RDKit 安装组合；公共 CI 主要在 Ubuntu runner 上验证。
+-
+-### Fake/Mock 与真实 E2E 的区别
+-
+-仓库测试会使用 fake ORCA/Gaussian 输出、mock policy、fake executor 或预制日志来验证 ConfFlow 的解析、调度和错误处理逻辑。这些测试可以证明 ConfFlow 的内部控制流和数据契约，但不能证明真实外部程序在目标机器上已正确安装、授权、收敛或生成完全一致的输出格式。
+-
+-真实 Gaussian/ORCA 环境仍需要手动或站点内 CI 验证。
++- 覆盖率门禁 `fail_under = 85`（`pyproject.toml`；CI 的 coverage 任务执行）。
++- 真实的 Gaussian / ORCA 不在测试范围内；所有计算类测试都用 `tests/v4/fakes/`（`fake_g16.py`、`fake_orca.py`、
++  `fake_goat.py`、`fake_irc.py`、`fake_neb.py`）和 `tests/fake_orca.sh` 这类行为可控的假可执行文件。
+ 
+-### 真实环境手动验证建议
++## 2. 目录
+ 
+-在公开或部署到新的计算环境前，建议至少手动验证：
++| 位置 | 内容 |
++| --- | --- |
++| `tests/v4/` | V4 的主体：domain、编译器、digest、执行器、持久化、resume、remote、分析、producer 契约/边界/authoring/intent、ConfGen v3（torsion / ring / coordination / 报告）、refine 与拓扑、架构护栏、跨仓测试 |
++| `tests/science/` | `confflow.science` 的图同构映射与帧比较（含按节点数/剪枝数固定的工作量测试）和带氢分子数据 `data/molecules_h.json` |
++| `tests/` 根目录 | 入口与基础设施：CLI、控制协议适配器与外部 worker、执行服务与 SQLite 仓库、安装/发布溯源与 wheel 安装器、路径策略、日志、I/O、数据表、键感知、示例工作流、退役 wire 的失败关闭 |
++| `tests/fixtures/` | 静态夹具：ConfGen（含 TS1 基准）、控制协议、durable 存储、Gaussian 日志样例 |
++| `tests/input/` | 输入 XYZ 样例 |
++| `tests/conftest.py`、`tests/v4/conftest.py`、`tests/v4/_builders.py` | 共享 fixtures、替身与构造器 |
+ 
+-1. `confflow --help` 能正常运行。
+-2. RDKit 能导入，并能完成一个最小 XYZ 的构象生成。
+-3. `allowed_executables` 指向的 Gaussian/ORCA 可执行文件存在且不带额外 shell 参数。
+-4. 一个最小 Gaussian 或 ORCA `sp` 任务能生成 `results.db`、`output.xyz` / `result.xyz` 和日志。
+-5. 一个失败任务能写入 `failed.xyz` 和可诊断的 `error_details`。
+-6. 如果使用 `sandbox_root`，确认 `work_dir`、`backup_dir`、`input_chk_dir` 均被限制在预期目录下。
+-7. 对包含敏感结构或私有路径的日志进行脱敏后再分享。
++## 3. 标记
+ 
+-### 本地真实 Gaussian/ORCA E2E 记录
++- `integration`：端到端测试（`pytest -m integration`）。
++- `cross_repo`：消费 JobDesk-v2 检出的测试；没有检出时跳过。设 `JOBDESK_V2_SRC=<JobDesk-v2/src>`；检出的提交必须等于
++  `tests/v4/jobdesk_integration.py::EXPECTED_JOBDESK_SHA`，否则测试报错（开发时可设 `JOBDESK_V2_ALLOW_ANY_SHA=1`）。
++- 未在 `pyproject.toml` 声明的标记会因 `strict_config = true` 报错。
+ 
+-2026-06-20 在 `/opt/ConfFlow` 当前环境中，使用 `/opt/g16/g16` 和 `/opt/orca611/orca` 完成以下真实端到端验证。测试产物保留在未跟踪目录 `e2e_real/`，用于本机复查，不属于发布包内容。
++## 4. 写测试的约定
+ 
+-已通过：
++- 断言可观察的行为和不变量，不要对私有实现细节 patch；需要替身时用小型 fake。
++- **不要用耗时断言性能。** 有预算的算法（例如图映射搜索）把节点数、映射数、剪枝数和判定结果当作固定值来断言。
++- **构象比较类夹具必须使用带氢的真实分子。** 不带氢的夹具会让末端键没有可测二面角，等价性结论没有意义。
++- 比较构象集合时使用只含**真旋转**的 Kabsch RMSD（不含镜像），阈值写明；不要逐原子比较未叠合的坐标。
++- 删除代码时同时删除只守护它的测试；"已删除的模块必须不存在"的护栏保留（`REMOVED_LEGACY_MODULES`）。
++- 用 `tmp_path`，不要自己建临时目录；`importlib.reload` 放进 `try/finally`。
++- 子进程类测试（导入闭包、worker、CLI）要给足超时，并避免依赖机器忙闲。
+ 
+-- CLI 入口：`confflow --help`。
+-- ORCA：`sp`、`opt`、`freq`、`opt_freq` 最小水分子真实任务，manifest 均为 `completed`。
+-- Gaussian 16：`sp`、`opt`、`freq`、`opt_freq` 最小水分子真实任务，使用独立可写 `GAUSS_SCRDIR`，manifest 均为 `completed`。
+-- Gaussian checkpoint 继承：两步 `g16_seed_sp -> g16_readchk_sp`，第二步生成 `%OldChk=WATER001.old.chk`，并从上一阶段 `backups/WATER001.chk` 复制 checkpoint。
+-- 混合 workflow：`confgen -> ORCA opt + auto_clean refine -> Gaussian sp`，8 个 butane conformer 经 ORCA opt 后 refine 为 2 个，再由 Gaussian SP 完成。
+-- sandbox 正向：`sandbox_root` 下默认 work dir 解析到 `e2e_real/sandbox_root/water_work` 并完成 ORCA SP。
+-- sandbox 负向：显式 `-w` 指向 `sandbox_root` 外部时 CLI 返回非零，未创建逃逸 work dir。
+-- `allowed_executables` 负向：`orca_path: /bin/echo` 被拒绝，`failed.xyz` 记录 `ErrorKind=worker_exception` 和 allowlist 错误。
+-- `max_wall_time_seconds`：真实 ORCA 进程被超时杀掉，`failed.xyz` 记录 `ErrorKind=exec_error` 和 `exceeded max_wall_time_seconds`。
+-- STOP beacon：对 decane ORCA freq 运行期间连续写入 `STOP`，CLI 返回非零，`failed.xyz` 记录 `ErrorKind=stop_requested`。
+-- Workflow `calc` steps：ORCA SP 和 Gaussian SP 均完成。
+-- `confgen`：butane 旋转搜索生成 27 个 conformer；workflow 方式也完成。
++## 5. 已知的负载敏感测试
+ 
+-发现的环境和使用注意事项：
++以下测试涉及真实子进程/并发，在多进程并行（例如把测试分片同时跑）且机器很忙时偶发超时失败，单独运行稳定通过：
+ 
+-- Gaussian 默认 scratch `/opt/g16/scratch` 在本容器中不可写；真实 Gaussian 任务需要设置可写 `GAUSS_SCRDIR`。
+-- Gaussian 多个 workflow 并行运行时不要共用同一个 `GAUSS_SCRDIR` 和相同 job name，否则可能产生 scratch/checkpoint 竞争。
+-- `itask` 用于 ConfFlow 的解析、分类和后处理语义；不会自动把 `Opt`、`Freq`、`TS` 注入 Gaussian/ORCA route keyword。真实 `opt/freq/opt_freq/ts` 任务必须在 `keyword` 中显式写外部程序关键字，例如 `HF/STO-3G Opt Freq` 或 `HF STO-3G Freq`。
+-- workflow schema 当前允许 `refine` / `viz` step type，但 engine 实际只执行 `confgen` 和 `calc`；真实 refine workflow 目前通过 calc step 的 `auto_clean` 后处理路径覆盖。
++- `tests/v4/test_v4_runtime_cutover.py::TestControlWorkerEntersV4::test_worker_runs_v4_end_to_end`
++- `tests/v4/test_v4_runtime_cutover.py::TestPlainCliEntersV4::test_plain_cli_runs_v4_application`
++- `tests/v4/test_v44_worker.py::TestCancellation::test_cancel_trap_yields_cancelled_without_rescue`
++- `tests/v4/test_terminal_arbitration_recheck.py::TestRealControlCancel::test_concurrent_control_cancel_and_completion_stay_consistent`
++- `tests/test_cli.py::test_kill_proc_tree_timeout`
+ 
+-尚未完整覆盖，建议按需追加站点内长测：
++如果只有它们失败，单独重跑；单独也失败才是真问题。
+ 
+-- Gaussian/ORCA 真实 `ts` 全组合和 TS rescue scan；这类任务需要合适 TS 初猜和更长运行时间。
+-- 多输入 topology consistency / chain transfer 的真实 workflow；单元测试已覆盖映射逻辑，但尚未在真实外部程序链路中跑完整批量。
+-- 大分子、多 conformer、大并发资源调度压力测试；本轮只覆盖 decane STOP 和 butane 小批量混合 workflow。
+-- 真实外部程序失败类型的完整分类矩阵，例如 SCF 不收敛、内存不足、异常终止等；本轮覆盖了非法 executable、timeout、STOP、Gaussian scratch 不可写和本机异常终止样例。
+-- clean venv 安装测试已通过 editable reinstall 和 wheel 构建，但未在全新空 venv 中安装 wheel 后跑全量 CLI。
++## 6. 引擎与契约基线（重构证据）
+ 
+----
++`docs/refactor/baseline/` 固定了 TS1（三种后端）的 ConfGen 输出、全部引擎报告、契约与边界的 digest；
++`docs/refactor/tools/` 里的 `golden_check.py`、`capture_engine_reports.py`、`contract_digests.py`、`json_paths_diff.py`
++用来重新生成并逐字节比较。任何会改变科学输出的改动都必须先用它们给出差异，再决定是否更新基线。
++`docs/refactor/paths_equivalence/` 记录 legacy paths 与 typed v3 声明在含氢分子上的等价性结论。
+ 
+-## 编写测试的约定
++## 7. CI
+ 
+-1. **使用 `tmp_path`**：所有文件操作使用 pytest 内置的 `tmp_path` fixture，不要用 `tempfile` + 手动清理
+-2. **try/finally 保护 `importlib.reload`**：回退测试中修改模块状态后必须在 `finally` 中恢复
+-3. **每个测试必须有断言**：不允许仅调用函数而不检查结果的"烟雾测试"
+-4. **参数化优于复制**：相同逻辑不同输入使用 `@pytest.mark.parametrize`
+-5. **Fake 对象集中维护**：放在 `_helpers.py`，不在各测试文件内重复定义
++`.github/workflows/ci.yml`：black / ruff / mypy 门禁；`pytest -q`（固定 3.12，含 release 安装器测试）和 3.10–3.13 矩阵
++（排除依赖锁的 release 安装器测试）；coverage 门禁并上传 `coverage.xml`。`jobdesk-contract.yml` 用固定的 JobDesk 提交
++检查契约互通；`release.yml` 构建并验证发布 wheel。真实 Gaussian/ORCA 的手动验证不在 CI 内，记录在发布说明里。
+diff --git a/docs/USAGE.md b/docs/USAGE.md
+index 9319408..a2576e4 100755
+--- a/docs/USAGE.md
++++ b/docs/USAGE.md
+@@ -1,263 +1,149 @@
+-# ConfFlow 使用说明（精简版）
++# ConfFlow 使用说明
+ 
+-本文档只保留必要信息：安装、工作流命令行参数、YAML 配置格式。
++怎么装、怎么写一份 V4 工作流、怎么校验和运行、怎么续跑、结果在哪。命令行参数的完整列表见
++[`COMMAND_REFERENCE.md`](COMMAND_REFERENCE.md)，工作流语义见 [`architecture/WORKFLOW_V4.md`](architecture/WORKFLOW_V4.md)。
+ 
+ ## 1. 安装
+ 
+ ```bash
+-pip install -e .
++pip install -e .            # 开发安装；或 pip install .
++confflow --version
+ ```
+ 
+-## 2. 工具总览
++真实计算需要你自己安装并取得许可的 Gaussian 16 或 ORCA；ConfFlow 不随包提供它们。
+ 
+-本项目提供 1 个公开命令行工具（安装后可直接调用）：
++## 2. 工作流文档
+ 
+-- `confflow`：按 YAML 工作流调度（当前支持 `confgen` / `calc` 步骤，并在流程结束后自动生成报告）
++唯一受支持的格式是 V4（`schema: confflow.workflow.v4`，YAML 或 JSON）。一份文档由四部分组成：
+ 
+-所有 CLI 的运行日志默认写入输入目录中的 `<input_basename>.txt`。
++- `inputs`：具名运行输入（例如 `structures`，多个结构）。
++- `global`：运行级默认值：`scientific_defaults`（电荷、多重度、freeze）、`resources`、`scheduler`。它们是**默认值**，步骤级声明会覆盖。
++- `steps`：每步恰好一个 `executor`，用 `bindings` 声明输入来自哪里（`source.run` 或 `source.step` + `port`）。
++  依赖关系只来自 bindings，不来自文件名或列表顺序。
++- 步骤类型：`confgen`（构象生成）、`calculation`（Gaussian / ORCA 计算）、`structure_transform`（精修 `refine`、
++  `deduplicate`、`filter`，YAML 块名 `transform`）、`analysis`（反应/PES 分析）。
+ 
+-> `viz` 当前作为工作流内部步骤自动运行（生成美化的纯文本总结报告并合并到 .txt 输出），无需用户手动调用。
++没有隐式的清理或去重：想去重就写一个显式的 `structure_transform` 步骤。
+ 
+-更完整的命令参数与示例见：`docs/COMMAND_REFERENCE.md`。
+-
+-## 3. confflow：工作流调度
+-
+-### 3.1 命令格式
+-
+-```bash
+-confflow <input.xyz> -c <config.yaml> [-w <work_dir>] [--resume] [--verbose]
+-```
+-
+-也支持一次输入多个 XYZ（会在 confgen 步骤对每个输入生成构象并合并后，进入后续统一计算/报告）：
+-
+-```bash
+-confflow a.xyz b.xyz -c confflow.example.yaml
+-```
+-
+-约束：多文件输入模式要求每个输入为单帧 XYZ。
+-
+-- 未指定 `chains` / `chain`：要求所有输入具有相同的原子数与元素顺序。
+-- 指定 `chains` 或 `chain`：允许原子顺序不同，但要求原子数一致且元素计数一致；柔性链将基于拓扑映射自动对齐。
+-
+-### 3.2 参数说明
+-
+-- `<input.xyz>`：输入 XYZ（单帧或多帧）
+-- `-c/--config`：YAML 配置文件路径；省略时默认读取第一个输入文件同目录下的 `confflow.yaml`
+-- `-w/--work_dir`：工作目录（默认：`<input_basename>_work`）
+-- `--resume`：从 `.checkpoint` 断点继续
+-- `--verbose`：输出更详细日志
+-
+-> 说明：`confflow` 运行时默认将 stdout/stderr 全部重定向到输入目录下的 `<input_basename>.txt`，
+-> 因此终端默认不会有输出；你需要查看该 `.txt` 文件获取运行日志、step 摘要与最终报告。
+-> 文本输出采用固定 100 列宽，分隔线与表格按同一宽度对齐。
+-
+-一致性校验失败（多输入原子顺序/柔性链不一致等）时也不会弹出交互提示；错误信息会写入 `<input>.txt`，并以非 0 退出码结束。
+-
+-统一返回码：`0` 成功，`1` 输入/配置/用法错误，`2` 运行时失败。
+-
+-若要限制运行边界，可在 YAML `global` 中加入：
++一个"生成构象 → 精修去重 → 优化"的例子（可直接 `validate`）：
+ 
+ ```yaml
+-global:
+-  sandbox_root: "/scratch/confjobs"
+-  allowed_executables: ["g16", "/opt/orca/orca"]
+-```
+-
+-其中 `sandbox_root` 会限制 `work_dir`、`backup_dir`、`input_chk_dir`，`allowed_executables` 会限制 `gaussian_path` / `orca_path` 只能命中白名单中的单个可执行目标。
+-
+-### 3.3 柔性链一致性与自动映射
+-
+-当 `confgen` 使用 `chains`（或兼容别名 `chain`）时，系统会在第一个输入文件上校验链定义：
+-
+-- 链上相邻原子必须有键连接（否则报错，并提示使用 `--add_bond` 或调整 `bond_threshold`）。
+-- 多输入情况下，后续输入会通过拓扑 MCS 映射自动识别对应柔性链，即便原子序号不同也可匹配。
+-
+-若映射失败（例如骨架不一致或 MCS 覆盖率过低），会报错并终止。
+-
+-### 3.4 主要输出文件（用户重点关注）
+-
+-- `<input>.txt`：运行日志 + FINAL REPORT（统一主输出）
+-- `<input>min.xyz`：最低能量构象（单帧 XYZ）
+-- 最后一步输出多帧 XYZ：通常为 `step_xx/output.xyz`（若未生成 cleaned 则为 `step_xx/result.xyz`）
+-
+-`confgen` 现在会边生成边写 `search.xyz`，结束后再原子替换目标文件；中途失败时不会留下半帧损坏文件。
+-
+-其余如 `.checkpoint`、`workflow_stats.json`、`results.db`、`confflow.log` 属于过程/诊断工件，不作为主交付物。
+-
+-### 3.5 Step 摘要输出（写入 .txt）
+-
+-运行 `confflow` 时，每个 step 会在开始/结束各写入一段简洁摘要（位于 `<input>.txt` 中）：
++schema: confflow.workflow.v4
+ 
+-- 开始行：step 名称、类型、输入构象数；对 `calc/task` 还会输出 `prog/itask/max_jobs/cores/mem/freeze`。
+-- keyword：另起一行输出完整 `keyword`（便于复制复现）。
+-- 结束行：step 状态与汇总统计（输入/输出/失败数）及耗时。
++inputs:
++  structures: {kind: structure, cardinality: many}
+ 
+-每个 `calc/task` step 目录下常见文件：
+-
+-- `step_xx/output.xyz`：该步后处理（refine）输出（若开启 `auto_clean`）
+-- `step_xx/result.xyz`：未精炼的原始输出（若未生成 cleaned 则以此为准）
+-- `step_xx/failed.xyz`：该步失败构象集合（始终使用输入结构坐标），注释行包含 `Job/CID/Error`
+-- `step_xx/manifest.json`：当前 calc step 状态、typed config digest、input digest、输出路径和任务统计
+-- manifest 的 digest 不匹配时，该 step 的旧工件会被视为 stale 并重算
+-
+-在 `_work/failed` 目录下会聚合所有步骤的失败信息：
+-
+-- `_work/failed/failed.xyz`：合并后的失败构象集合（注释行附带 `Step=...`）
+-- `_work/failed/failed_summary.txt`：失败清单（结构名 + 错误原因 + 建议救援方案）
+-- `_work/failed/<config>.yaml`：本次运行的工作流配置副本（便于手动重跑）
+-
+-## Gaussian `.chk` 跨步骤传递（按 CID 完全对应）
+-
+-ConfFlow 对每个构象会维护一个稳定的 **CID**（写在 XYZ comment metadata 里），并据此派生稳定的 **job_name**：
+-
+-- **来源感知的 CID**：首个输入文件的构象前缀为 `A`，第二个为 `B`，以此类推。
+-- **示例**：`CID=A000001` → `job_name=A000001`。
+-- **稳定性**：即使在中间步骤（如 `refine`）中丢弃了部分构象，剩余构象的 CID 保持不变，确保了 Gaussian `.chk` 文件等资源在后续步骤中能准确对应。
+-
+-因此，跨步骤传递 Gaussian checkpoint 时采用 **按 job_name 精确匹配** 的方式，保证“工件与输入文件完全对应”，不会因后续步骤筛选/重排构象而错配。
+-
+-### 用法
+-
+-在需要“读取某一步 chk”的 calc 步骤中增加：
+-
+-- `chk_from_step`: 指定 chk 来源步骤（可写步骤名或 1-based 步骤序号）
+-  - `chk_from_step: "step_06"`
+-  - `chk_from_step: 6`
+-
+-运行每个 job 前，ConfFlow 会执行：
+-
+-1. 从 `<work_dir>/<source_step>/backups/{job_name}.chk` 找到对应 chk
+-2. 复制到当前 job 的工作目录并命名为 `{job_name}.old.chk`
+-3. 自动在 Gaussian 输入文件中注入 `%OldChk={job_name}.old.chk`
+-4. 默认也会写出新的 `%Chk={job_name}.chk`，供后续步骤继续链式使用（可用 `gaussian_write_chk=false` 关闭）
+-
+-### 典型 route
+-
+-下游步骤通常在 `keyword` 中加入：
+-
+-- `guess=read geom=allcheck`
+-
+-## TS 失败救援功能 (ts_rescue_scan)
++global:
++  scientific_defaults: {charge: 0, multiplicity: 1}
++  resources: {cores_per_item: 4, memory_per_item: 8GiB}
+ 
+-对于 `itask=ts` 的步骤，ConfFlow 提供了失败救援功能。当 TS 搜索失败（不收敛、虚频不对、关键键长几何判据失败等）时，程序可以自动尝试通过 Scan 寻找更好的起始点。
++steps:
++  - id: s_gen
++    executor: confgen
++    bindings:
++      structure: {source: {run: structures}}
++    confgen:
++      schema_version: 3           # typed v3：声明要转的路径
++      index_base: 1               # 原子序号从 1 开始
++      paths:
++        - {start: 1, end: 4, move: end, step: 120}
++
++  - id: s_refine
++    executor: structure_transform
++    bindings:
++      structure: {source: {step: s_gen, port: structures}}
++    transform:
++      kind: refine
++      native: {rmsd_threshold_angstrom: 0.25}
++
++  - id: s_opt
++    executor: calculation
++    bindings:
++      structure: {source: {step: s_refine, port: structures}}
++    calculation:
++      program: orca
++      role: opt
++      native: {keyword: "B3LYP D3BJ def2-SVP Opt"}
++      checks: [normal_termination, geometry_required]
++```
+ 
+-### 控制参数
++仓库根目录的 `confflow.example.yaml` 是更完整的、带注释的示例（安装后的 wheel 里是 `share/confflow/confflow.example.yaml`）。
+ 
+-在步骤的 `params` 或 `global` 中设置：
++### ConfGen 的声明方式
+ 
+-- `ts_rescue_scan: true`：开启救援。
+-- `ts_rescue_scan: false` (默认)：关闭救援，失败后直接报错。
++新工作流请用 typed v3（`schema_version: 3`）：`paths`（起止原子对 + 移动侧 + 步长或角度表）、`torsions`、`rings`、
++`coordination` 等，细节见 [`CONFGEN_PATHS.md`](CONFGEN_PATHS.md)。全枚举不需要种子；使用 `sampling` 上限时必须给种子。
++旧的 `native.chains` / `native.paths` 词汇已不再被执行（非 v3 的 confgen 文档在解析阶段失败关闭）。迁移旧文档时注意：**v3 比旧路径严格，拒绝末端原子端点**（旋转末端原子在几何上是 no-op），路径的起止原子必须是有可测二面角的非末端原子。
+ 
+-### 示例
++#### 迁移旧文档里的 `confgen.native`
+ 
+-```yaml
+-  - name: "step_06_ts"
+-    type: "calc"
+-    params:
+-      iprog: g16
+-      itask: ts
+-      keyword: "opt=(ts,calcfc,noeigen) b3lyp/6-31g(d) freq"
+-      ts_rescue_scan: true  # 显式开启救援
+-      ts_bond_atoms: [1, 2]
+-```
++含 `confgen.native` 的旧文档会被 ConfFlow 以 `unknown_member` 拒绝（失败关闭），JobDesk 也不再提供编辑或移除它的界面，文档里的 `native` 内容不会被丢弃，需要手动改为 typed v3。`native.chains` 的对照写法（与 `confflow.example.yaml` 已验证的写法相同）：
+ 
+-以便从 chk 继承波函数与几何信息。
+-- `step_xx/results.db`：任务结果库（按 `job_name` / `CID` 记录 success/failed/skipped 与 error 详情；统计默认读取每个任务的最新状态）
++| 旧写法 | typed v3 |
++| --- | --- |
++| `native: {chains: ["1-2-3-4"], angle_step: 120}` | `schema_version: 3`、`index_base: 1`、`paths: [{start: 1, end: 4, move: start, step: 120}]` |
+ 
+-## 7. YAML 配置：工作流格式
++- 链 `1-2-3-4` 旋转 1-2、2-3、3-4 三根键；旧默认旋转侧是 left，对应 `move: start`；`angle_step` 对应 `step`。
++- `native.paths` 的写法（`start`/`end`/`move`，`angles` 或 `step`）可以原样搬到 typed 的 `paths`；裸声明须补上 `step` 或 `angles`（旧默认 120 不再隐式生效）。
++- 种子原样保留；全枚举不需要种子，`sampling.cap` 才必须给种子。
++- 注意：**末端原子端点会被 v3 拒绝**，起止原子必须是有可测二面角的非末端原子。
++- `no_rotate`、`chain_steps`、`chain_angles`、`max_conformers` 等旧词汇没有一对一的 typed 写法，需要按 `docs/CONFGEN_PATHS.md` 与 typed 的 `torsions`/`sampling` 重新声明。
+ 
+-### 7.1 顶层结构
+ 
+-```yaml
+-global:
+-  gaussian_path: "/opt/g16/g16"    # 可选
+-  orca_path: "/opt/orca/orca"      # 可选
+-  cores_per_task: 4
+-  total_memory: "16GB"
+-  max_parallel_jobs: 1
+-  charge: 0
+-  multiplicity: 1
++### 精修去重（refine）
+ 
+-  # 冻结原子（仅对 opt/opt_freq 生效；sp/freq/ts 会强制关闭）
+-  # 支持：
+-  # - 列表： [1, 5]
+-  # - 字符串："1,5" / "1 5"
+-  # - 范围："1-5" / "1,2,5-7"
+-  freeze: [1, 5]
++`refine` 只在合法的元素/边保持映射下比较 RMSD（默认阈值 0.25 Å，严格小于才算重复），所以仅原子标号对称置换的构象
++（甲基氢、叔丁基的三个甲基、环的取代位）会被合并。需要时：
+ 
++- `rmsd_threshold_angstrom`：阈值；`0` 表示不合并任何结构。
++- `heavy_only`：只比较重原子。
++- `mapping_budget`：每对结构的映射搜索节点预算（默认 1000）；用尽的一对被保留并在步骤说明里标明。
++- `topology_bonds`：显式声明带类型的拓扑（形状同 ConfGen 的 `topology`，外加 `index_base`、`coordination`、`bond_scale`）。
++  不写时，拓扑来自结构记录自带的工作拓扑，再不然由几何感知得到。
++  ConfGen spec 声明的 `topology`/`coordination`/`add_bond`/`del_bond` **不会**写入输出记录；反应边/配位边体系的 refine 需要手写 `topology_bonds`，否则按几何感知建图（`bond_scale` 1.2）。
++- `max_structures`：按 id 顺序截断。
+ 
+-  # ORCA 专用：直接写入 %maxcore（单位：MB per core）
+-  orca_maxcore: 4500
++ConfGen 报告里的"带标号状态数"与精修之后的"物理构象数"是两个口径：σ 相关（对称等价）的结构会被合并。
+ 
+-  # TS 专用：指定参与“成键/断键”的两个原子（1-based），用于在 result.xyz 注释行输出 TS 键长
+-  # - 可写 [12, 15] 或 "12,15"
+-  # - 若不写，且 freeze 恰好给出两个原子，则默认沿用 freeze
+-  ts_bond_atoms: [12, 15]
++## 3. 校验与运行
+ 
+-  # 多输入柔性链检查：若为 true，允许跳过一致性检查（仅建议在已确认无误时使用）
+-  force_consistency: false
+-
+-steps:
+-  - name: step_01
+-    type: confgen
+-    params: { ... }
+-  - name: step_02
+-    type: calc
+-    params: { ... }
++```bash
++# 校验精确的文档字节（不运行任何东西）
++confflow v4 validate --workflow flow.yaml --json
++
++# 运行整份工作流
++confflow v4 run --workflow flow.yaml \
++  --inputs structures=mol.xyz \
++  --run-root ./run \
++  --executable orca=/opt/orca/orca \
++  --json
+ ```
+ 
+-### 7.2 step.type = confgen
++- `--inputs NAME=FILE` 可重复；`--executable PROG=PATH` 指定程序的可执行文件。
++- `--run-root` 是受管的运行根目录：持久化状态、已发布的步骤结果与产物都在里面。
++- 旧的 V1/V2/V3 文档（`iprog`/`itask` 一类）不能再运行：无论从哪个入口，都会以 `legacy_workflow_not_executable` 失败关闭，且没有副作用。
++- 退出码：运行 `completed` 为 0，否则为 1；`--json` 在标准输出打印报告（`run_id`、`status`、`definition_digest`、
++  各步骤状态、`manifest`）。
+ 
+-```yaml
+-- name: step_01
+-  type: confgen
+-  params:
+-    chains: ["1-2-3-4-5"]
+-    chain_steps: ["180,180,180,180"]
+-    # 或 chain_angles: ["0,120,240;0,60,120,180;180;0,120"]
+-    rotate_side: left
+-    angle_step: 120
+-    bond_multiplier: 1.15
+-    optimize: false
+-```
++## 4. 续跑
+ 
+-### 7.3 step.type = calc
++重新执行同一条命令即可：已发布的步骤从磁盘加载，未完成的步骤按 work item 续跑，已完成的 work item 复用，
++不会从头再来。改动科学内容（native、checks、seed、资源、科学默认值）会改变 digest，相应步骤不会被复用；
++改 label、`max_parallel_items`、executable 路径不会。
+ 
+-```yaml
+-- name: step_02_orca_sp
+-  type: calc
+-  params:
+-    iprog: orca              # orca / g16
+-    itask: sp                # opt / sp / freq / opt_freq / ts
+-    keyword: "B97-3c"
+-
+-    # 可覆盖全局资源
+-    cores_per_task: 4
+-    total_memory: "16GB"
+-    max_parallel_jobs: 1
+-
+-    # 可选：覆盖 ORCA %maxcore（单位：MB per core）
+-    orca_maxcore: 4500
+-
+-    # TS 可选：指定 TS 成键/断键原子对（1-based）；用于输出 TSAtoms/TSBond 到 result.xyz 注释行
+-    ts_bond_atoms: [12, 15]
+-
+-    # [1-based] ORCA 专用：写 ORCA 的 %block ... end
+-    # 推荐直接使用多行字符串，格式与 ORCA .inp 文件完全一致。
+-    # 程序会自动合并 freeze 产生的 %geom Constraints。
+-    blocks: |
+-      %method
+-        ProgExt "/opt/orcauma.py"
+-      end
+-      %geom
+-        Calc_Hess true
+-        NumHess true
+-      end
+-```
++## 5. 结果
+ 
+-`itask` 只定义 ConfFlow 的任务语义，用于结果解析、能量字段分类、频率/TS 后处理和 manifest 签名；它不会自动改写外部程序输入文件的 route keyword。真实 Gaussian/ORCA 的 `opt`、`freq`、`opt_freq`、`ts` 计算必须在 `keyword` 中显式写对应程序关键字，例如 Gaussian `HF/STO-3G Opt Freq`，或 ORCA `HF STO-3G Freq`。
++- 每个步骤发布带类型的 `StepResult`（结构、科学结果、产物）。
++- 整次运行发布 `run_result.json`（`confflow.run_result_manifest.v1`）：步骤状态、digest、结果与产物的可移植定位。
++  GUI 客户端只读取它，不重新计算。
++- 反应路径分析产出结构化的反应组结果（TS、前后端点、Gibbs 能、势垒）。
+ 
+-### 7.4 已移除功能（不再支持）
++## 6. 给 GUI 与脚本用的接口
+ 
+-- 键冻结 / ModRedundant / constraints：仅保留 `freeze`（冻结原子坐标）。
+-- solvent_block / custom_block：已统一升级为结构化的 `blocks` 字典管理。
++- `confflow v4 contract --json`：配置契约（工作流 schema、editor manifest、recipe 目录、能力词汇）。
++- `confflow v4 boundary --json`：边界协议。
++- `confflow v4 authoring --json --stdin`：authoring 请求（`describe_step`、`binding_candidates`、`instantiate_card`、
++  `validate_document`、`check_compatibility`、`compile_intent`、`preview_paths`）。
++- 简化输入（intent）：用 `confflow.intent.v1` 写"卡片 + 预设"式的简化文档，由 producer 编译成严格的 V4 文档，
++  见 [`PRODUCER_INTENT.md`](PRODUCER_INTENT.md)。
++- `confflow --capabilities --json`：能力握手。
+diff --git a/tests/README.md b/tests/README.md
+index 2b1c1ae..a3fc901 100755
+--- a/tests/README.md
++++ b/tests/README.md
+@@ -1,11 +1,13 @@
+ # tests 目录说明与准入规则
+ 
++详细的运行方式、目录与已知坑见 [`docs/TESTING.md`](../docs/TESTING.md)。
++
+ **目标**: 提供清晰的测试组织策略、编码准则与提交流程，保持测试可读、稳定且易于维护。
+ 
+ **快速指南**
+ - **位置与用途**: 所有单元/集成/回归测试位于 `tests/` 目录。
+ - **命名**: 测试文件必须以 `test_` 开头，测试函数以 `test_` 开头。
+-- **共享资源**: 使用 `tests/conftest.py` 中的 fixtures（如 `cd_tmp`, `input_xyz`, `config_yaml`）替代每个文件内重复的 setup/teardown。复用 `tests/_helpers.py` 中的 Fake 对象（`FakeResultsDB`, `FakeExecutor` 等）。
++- **共享资源**: 使用 `tests/conftest.py` 与 `tests/v4/conftest.py`、`tests/v4/_builders.py` 中的 fixtures 和构造器（如 `cd_tmp`, `input_xyz`, `config_yaml`, `fake_qc_executables`）替代每个文件内重复的 setup/teardown；假的 Gaussian/ORCA 可执行文件在 `tests/v4/fakes/`。
+ - **断言风格**: 偏向具体、可重复的断言，避免对私有实现细节进行断言或 patch；优先使用黑盒接口或小型替身（fakes）来验证行为。
+ - **参数化**: 对重复的输入→期望对使用 `@pytest.mark.parametrize` 简化。
+ - **隔离**: 使用 `tmp_path` 代替 `tempfile` + 手动清理；`importlib.reload` 必须放在 `try/finally` 中。

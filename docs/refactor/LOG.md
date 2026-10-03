@@ -572,3 +572,12 @@
 - CF `refactor/diet-p4` `015a174`。验收方独立核对：diff 与 handoff/C4.6.patch 逐字相同；分支名 `refactor/diet-p4`；ruff/mypy ok；`v4_arch_scan.py` `OK: 50 entry files clean`；metrics 输出只剩 8 个键且值不变；相关测试 156 passed；全量 `{"passed": 4473, "skipped": 10}`；golden_check ok；未推送。
 - Phase 4 提交序列（CF `refactor/diet-p4`，基点 f8a1f75）：b55b476（L1）→ 23251fd（C4.3a）→ 250f947（C4.3，验收方改写提交信息）→ 1de64b6（C4.2）→ ea93daa（C4.4）→ 888f872（C4.5）→ 015a174（C4.6）；另有 C4.1 c6b88ff、C5.5a aa920b8。JD `refactor/diet-p4`（基点 master 2c7e121）：4b9ed1c（L2）→ 9de35d6（J4.1'）。
 - 待用户排序（均需明确决定）：JD `refactor/diet-p4` 的推送；`refactor/docs-rewrite` 与最终树的同步；本地 main/master 的去向。
+
+## 文档收尾卡 C4.7/C4.8 原型；推送前历史扫描（2026-10-03）
+
+- **C4.7**（仅文档，10 个文件，基点 015a174）：把 `refactor/docs-rewrite` 的 5 个提交 cherry-pick 到最终树（无冲突），去掉两个非文档改动，再更新 `CONFGEN_PATHS.md` 的旧 `confgen.paths` 段落（已不再支持）与 `SECURITY_MODEL.md` 的 `results.db`。USAGE 里的示例工作流在最终树上 `v4 validate` 通过。补丁 handoff/C4.7.patch，卡片 handoff/C4.7.md，提示词 handoff/C4.7-executor-prompt.txt。
+- **C4.8**（2 个文件）：删除 `ci.yml` 的失效 `numba-optional-extra` 作业与无人使用的 `tests/_helpers.py`（从 docs-rewrite 拆出，因其不是文档改动）。补丁 handoff/C4.8.patch，卡片 handoff/C4.8.md。预演：ruff/mypy ok，collect 4483，发布工作流测试 14 passed。`refactor/docs-rewrite` 分支被 C4.7/C4.8 取代，不再合并。
+- **推送前历史扫描**（用户批准推送两个 refactor/diet-p4，先 JD 后 CF）：
+  - JD（`origin/master..refactor/diet-p4`，19 个提交）：无 results.db/CSV/导出文件、无密钥或 token 模式；1 处本地绝对路径：`tests/fixtures/p0_boundary/PROVENANCE.json` 的 `"source_path": "/opt/cf-worktrees/exec-cf-is/docs/internal/fixtures/p0_boundary"`（origin/master 上同文件已有 `/opt/ConfFlow/...`）。作者身份 `JD-SP-MATERIALIZE-SUBMIT lane`、`moxue@jobdesk.local`。
+  - CF（`origin/main..refactor/diet-p4`，52 个提交）：无 results.db/CSV/导出文件、无密钥或 token 模式；本地绝对路径出现在 `docs/refactor/` 的工具与记录（PLAN/ACCEPTANCE/baseline README、`run_jd_tests.sh`、`env.sh`、`test_inventory.py`、`golden_check.py`、`paths_equivalence/README.md`）和 `docs/plans/input-simplification.md`（`/opt/jobdesk-v2-v4`）；其中 `docs/refactor/` 的同类路径已随 `refactor/diet`、`refactor/diet-c5`、`docs/refactor-plan` 公开在远端。文本提到 `results.db` 的只有说明性注释/文档。
+  - 因扫描有命中，**未推送**，等用户决定。
