@@ -132,6 +132,11 @@ def test_bond_scale_and_strict_flag_map_to_the_v3_members() -> None:
     assert block["strict_path_bond_check"] is True
 
 
+def test_waypoint_is_refused_with_the_torsions_hint() -> None:
+    with pytest.raises(IntentCompilationError, match="use explicit torsions declarations instead"):
+        _compile({"native": {"paths": [{"start": 1, "end": 4, "move": "end", "waypoint": 2}]}})
+
+
 def test_unknown_path_keys_and_non_mapping_declarations_are_refused() -> None:
     with pytest.raises(IntentCompilationError, match="unsupported keys: rotate"):
         _compile({"native": {"paths": [{"start": 1, "end": 4, "rotate": True}]}})

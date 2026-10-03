@@ -958,7 +958,11 @@ def _legacy_paths_to_v3(native: Mapping[str, Any], step_id: str) -> dict[str, An
             raise _fail(f"step {step_id!r}: paths[{index}] must be a mapping", step_id=step_id)
         unknown = sorted(set(declaration) - _LEGACY_PATH_KEYS)
         if unknown:
-            hint = " (waypoint paths have no typed v3 form)" if "waypoint" in unknown else ""
+            hint = (
+                " (waypoint paths have no typed v3 form; use explicit torsions declarations instead)"
+                if "waypoint" in unknown
+                else ""
+            )
             raise _fail(
                 f"step {step_id!r}: paths[{index}] carries unsupported keys: "
                 f"{', '.join(unknown)}{hint}",
