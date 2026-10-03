@@ -407,3 +407,6 @@
 
 ## IS.2b 补丁已备（2026-10-03，验收方原型）
 - 基点 2e0295a（可与 IS.2c 任意顺序；文件互不重叠，两者都已验证可应用）。实现与原卡不同：stage 只读已存在的 paths_resolved 审计来措辞，不增加任何字段，所以不可能进入 digest/报告；全量 5144 passed（+6），golden：contract 与 TS1 ok，6 份 IS.0 引擎报告逐字节不变。测试文件名避开 test_confgen_ 前缀，以免被 golden 的引擎捕获规则多收一份报告。
+
+## C5.3c-1（侧分支）— 验收通过（2026-10-03）
+- 执行：外部模型 glm-5.3-flash；CF refactor/diet-c5 6521581（父 efbaecd），一次通过。与补丁字节一致；提交信息 21 个测试名与清单逐行相同；ruff/mypy 通过；全量 4144 passed / 12 skipped。已推送（refactor/*）。
