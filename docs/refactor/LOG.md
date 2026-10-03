@@ -629,3 +629,9 @@
 - 用户自己运行 `gh pr merge 99 -R moxuezhuchen/ConfFlow --merge`，PR #99 合并，合并提交 `afdf9dfe6c3da39211a6d67cab7fe5f8ed6f13f8`，远端 `main` 现为该提交；`b9b9797` 在 `main` 中；`refactor/diet-p4` 分支保留。
 - `main` 上的工作流：`CI` run 37134525785、`coverage-push` run 37134525753、`JobDesk Consumer Contract` run 37134525797，全部 success（后者检出并对照 JD 9de35d6）。
 - 两个仓库的本地 `main`（f8a1f75）/`master`（2c7e121）与远端分叉，仍未动；清理需要用户明确指示。所有 PLAN 卡片已完成，J2.5 保持可选，PLAN-2 登记项留待下一轮。
+
+## 本地主分支与远端对齐（2026-10-04，用户："把本地与远程对齐"）
+
+- ConfFlow 本地 `main`：f8a1f75 → afdf9df（快进，`git fetch origin main:main`），与 `origin/main` 零差异。
+- JobDesk 本地 `master`：2c7e121 → 3addb94（快进，`git fetch origin master:master`），与 `origin/master` 零差异。
+- 旧顶端仍由两个仓库的备份分支 `refactor/integrated`（f8a1f75、2c7e121）保留；两个主工作树当前分支（`research/realization-handoff`、`implementation/input-simplification`）与工作区均未动。
