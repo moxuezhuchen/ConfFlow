@@ -7,8 +7,7 @@ type definitions, and validation.
 
 The historical ``from confflow.core import X`` surface is preserved, but it is
 resolved lazily (PEP 562): importing :mod:`confflow.core` no longer executes
-the implementation modules (``core.models``, ``core.validation``,
-``core.io``, ...).  Import the concrete submodule when you need the
+the implementation modules (``core.io``, ``core.data``, ...).  Import the concrete submodule when you need the
 implementation.
 
 The ``core.types`` TypedDict module was retired by the Architecture Diet PR-9:
@@ -30,23 +29,6 @@ _LAZY_EXPORTS: dict[str, tuple[str, str]] = {
     "get_atomic_number": (".data", "get_atomic_number"),
     "get_covalent_radius": (".data", "get_covalent_radius"),
     "get_element_symbol": (".data", "get_element_symbol"),
-    # Models (Pydantic — runtime validation, legacy calc tooling)
-    "TaskContext": (".models", "TaskContext"),
-    # Validation
-    "ValidationError": (".validation", "ValidationError"),
-    "validate_positive": (".validation", "validate_positive"),
-    "validate_non_negative": (".validation", "validate_non_negative"),
-    "validate_integer": (".validation", "validate_integer"),
-    "validate_float_range": (".validation", "validate_float_range"),
-    "validate_not_empty": (".validation", "validate_not_empty"),
-    "validate_file_exists": (".validation", "validate_file_exists"),
-    "validate_dir_exists": (".validation", "validate_dir_exists"),
-    "validate_coords_array": (".validation", "validate_coords_array"),
-    "validate_atom_indices": (".validation", "validate_atom_indices"),
-    "validate_bond_pair": (".validation", "validate_bond_pair"),
-    "validate_choice": (".validation", "validate_choice"),
-    "validate_string_not_empty": (".validation", "validate_string_not_empty"),
-    "validate_params": (".validation", "validate_params"),
 }
 
 __all__ = [*sorted(_LAZY_EXPORTS)]

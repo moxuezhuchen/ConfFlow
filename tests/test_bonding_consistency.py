@@ -13,7 +13,6 @@ from confflow.core.bonding import (
     covalent_radius,
     infer_bond_pairs,
 )
-from confflow.core.chem_validation import load_mol_from_xyz
 from confflow.science.topology_mapping import build_graph
 
 _WATER_ATOMS = ["O", "H", "H"]
@@ -59,7 +58,7 @@ def test_single_known_atom_returns_no_bonds():
     assert build_adjacency([6], [[0.0, 0.0, 0.0]], bond_scale=1.2) == [[]]
 
 
-def test_same_scale_yields_same_topology_across_consumers(tmp_path):
+def test_same_scale_yields_same_topology_across_consumers():
     scale = 1.2
     adjacency = build_adjacency(_WATER_NUMBERS, _WATER_COORDS, bond_scale=scale)
     expected = _edge_set(adjacency)
@@ -70,15 +69,3 @@ def test_same_scale_yields_same_topology_across_consumers(tmp_path):
     assert graph_build.status == "ok"
     assert graph_build.graph is not None
     assert _edge_set(graph_build.graph.adjacency) == expected
-
-    # confgen/chem_validation RDKit loader
-    xyz = tmp_path / "water.xyz"
-    lines = [str(len(_WATER_ATOMS)), "water"]
-    lines += [f"{atom} {x} {y} {z}" for atom, (x, y, z) in zip(_WATER_ATOMS, _WATER_COORDS)]
-    xyz.write_text("\n".join(lines) + "\n", encoding="utf-8")
-
-    mol = load_mol_from_xyz(str(xyz), scale)
-    mol_edges = {
-        frozenset((bond.GetBeginAtomIdx(), bond.GetEndAtomIdx())) for bond in mol.GetBonds()
-    }
-    assert mol_edges == expected

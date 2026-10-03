@@ -85,7 +85,6 @@ FORBIDDEN_LEGACY_MODULES = (
     "confflow.workflow.config_show",
     "confflow.workflow.composition",
     "confflow.config.canonical",
-    "confflow.core.models",
     "confflow.core.types",
     "confflow.core.parsers",
     "confflow.core.path_policy",
@@ -251,6 +250,14 @@ REMOVED_LEGACY_MODULES: frozenset[str] = frozenset(
         "confflow.blocks",
         "confflow.blocks.refine",
         "confflow.blocks.confgen",
+        # C5.5: legacy-only core/shared modules.
+        "confflow.core.models",
+        "confflow.core.validation",
+        "confflow.core.chem_validation",
+        "confflow.core.cli_base",
+        "confflow.core.keyword_rewrite",
+        "confflow.core.pairs",
+        "confflow.shared.config_coercion",
         # PR-4: retired V2/V3 execution runtime.
         "confflow.workflow.engine",
         "confflow.workflow.state",
@@ -1502,16 +1509,10 @@ class TestFacadeLazyIsolation:
         from confflow.core import (
             HARTREE_TO_KCALMOL,
             PERIODIC_SYMBOLS,
-            TaskContext,
-            ValidationError,
             get_atomic_number,
-            validate_positive,
         )
 
-        assert TaskContext.__name__ == "TaskContext"
-        assert ValidationError.__name__ == "ValidationError"
         assert callable(get_atomic_number)
-        assert callable(validate_positive)
         assert len(PERIODIC_SYMBOLS) > 0
         assert isinstance(HARTREE_TO_KCALMOL, float)
 
