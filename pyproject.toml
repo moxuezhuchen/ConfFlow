@@ -64,7 +64,7 @@ dev = [
     "referencing>=0.30.0",
     "rfc8785>=0.1.4",
     "tomli>=2.0.1; python_version < '3.11'",
-    "types-PyYAML>=6.0.0",
+    "types-PyYAML>=6.0.12.20260906",
 ]
 # numba provides JIT acceleration; the code has a pure-Python fallback when absent
 speed = [
