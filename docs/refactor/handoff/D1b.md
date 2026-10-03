@@ -1,6 +1,6 @@
 # D1b — CHANGELOG 按这次重构重写，README 发布身份段落手工移植（ConfFlow，refactor/cleanup-d1；纯文档）
 
-- 工作树 /opt/cf-worktrees/d1，分支 `refactor/cleanup-d1`，HEAD 应为 D1a 的提交（标题 `test: delete unreferenced durable-v2 fixtures, fake_orca.sh and legacy gjf inputs`，父提交 afdf9df），工作树干净。**提交前再核对分支名。**每条命令显式 `cd`。
+- 工作树 /opt/cf-worktrees/d1，分支 `refactor/cleanup-d1`，HEAD 应为 `bcfc9d8`（D1a，标题 `test: delete unreferenced durable-v2 fixtures, fake_orca.sh and legacy gjf inputs`，父提交 afdf9df），工作树干净。**提交前再核对分支名。**每条命令显式 `cd`。
 - 类型：`doc`。白名单（恰 2 个文件）：`CHANGELOG.md`、`README.md`。
 - 应用：`cd /opt/cf-worktrees/d1 && git apply --check /opt/cf-worktrees/refactor-plan/docs/refactor/handoff/D1b.patch && git apply …`；`git status --short` 恰 2 个已修改文件。
 
