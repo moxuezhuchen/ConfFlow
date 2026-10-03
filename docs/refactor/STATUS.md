@@ -62,8 +62,8 @@
 | C4.3a（新增）typed 版路径测试 | 完成 | CF 23251fd |
 | C4.3 删除 legacy native 执行路径与 schema | 完成 | CF 250f947 |
 | C4.4 删除 `science/torsion.py` 的 chain 函数 | 完成 | CF ea93daa |
-| C4.5（新增）删除 C4.3 之后的死代码 | 完成 | CF 888f872 |
-| C4.6（新增）删除脚本里退役统计代码并更新说明 | 完成 | CF 015a174 |
+| C4.5（新增）删除 `build_chain_rotors`、`cut_component` 包装（零调用方）及 C4.3 之后无人引用的 6 个测试辅助函数 | 完成 | CF 888f872 |
+| C4.6（新增）删除 `architecture_metrics.py` 里针对已删除对象（calc、V1/V2/V3 wire）的 31 个全为 0 的统计键及其代码，保留键的值逐值不变，并更新两个脚本的说明 | 完成 | CF 015a174 |
 | C4.7（新增）文档收尾 | 补丁已备，执行中 | — |
 | C4.7b（新增）WORKFLOW_V4.md 顶部说明 | 待做（前置 C4.7） | — |
 | C4.8（新增）删除失效 CI 作业与无人使用的 `tests/_helpers.py` | 待做（前置 C4.7b 之后，文件不相交） | — |
@@ -82,13 +82,18 @@
 | C5.3d + C5.4 删除 `blocks/refine` 与 `blocks/confgen`（C5.4 并入） | 完成 | CF deadf46 |
 | C5.5 删除只被 legacy 使用的 `core/` 与 `shared/` 部分 | 完成 | CF da44bf5 |
 | C5.5a（新增）删除 `workflow/step_naming.py` | 完成 | CF aa920b8 |
-| C5.6 + C5.7 + C5.8 进程识别、文档、架构测试收尾（合并） | 完成 | CF b84f84b |
+| C5.6 + C5.7 + C5.8 进程识别、文档、架构测试收尾（三张卡合并为一个提交，见下方证据） | 完成 | CF b84f84b（合并提交，父 da44bf5；11 个文件，+13/−828；Removed-Tests 6） |
 
 ## 逻辑尾部
 | 卡 | 状态 | 提交 |
 | --- | --- | --- |
 | L1 `_allowed_pairings_by_kind` 读常量 | 完成 | CF b55b476 |
 | L2 validation token 改为 content / contract / target | 完成 | JD 4b9ed1c |
+
+## C5.6 / C5.7 / C5.8 三张卡各自的验收证据（合并提交 b84f84b）
+- **C5.6（`cli.py` 清理）**：`confflow/cli.py` 的进程识别集合由 `{"confflow", "confts", "confgen", "confrefine", "confcalc"}` 改为 `{"confflow"}`，并删除关于 `confcalc` 的 6 行历史注释（`git show b84f84b -- confflow/cli.py`：8 行改动，−7 +1）。当前树：`grep -nE "confts|confgen|confrefine|confcalc" confflow/cli.py` 无命中；没有测试断言过这些名字，合并时全量无失败（3849 passed / 10 skipped）。
+- **C5.7（文档）**：README 删除三个已删命令的命令表与 `confgen` 示例；`COMMAND_REFERENCE.md` 删 `confgen`/`confrefine`/`confts` 三节；`USAGE.md`、`ARCHITECTURE.md`、`DEVELOPMENT.md`、`TESTING.md`、`architecture/WORKFLOW_V4.md` 删去已删工具的描述；`docs/KEYWORD_REFERENCE.md` 删除。当前树：`ls docs/KEYWORD_REFERENCE.md` 不存在；卡片里的 grep（`confts|confrefine|confflow.calc|blocks/refine|CalcStepRunner|KEYWORD_REFERENCE`）在 C4.7 之前的 015a174 无命中；C4.7 之后有 1 处命中，位置是 `docs/ARCHITECTURE.md` §8"已退役"一句，那一句是说明这些东西已被删除，属有意保留。
+- **C5.8（架构测试）**：`tests/v4/test_architecture_boundaries.py` 与 `scripts/v4_arch_scan.py` 的 `FORBIDDEN_IMPORT_PREFIXES` 去掉对已不存在的包 `confflow.calc`、`confflow.blocks`、`confflow.confts` 的三个条目（`git show b84f84b -- scripts/v4_arch_scan.py`：−3）；删除整个对不存在的包恒为真的 `TestLegacyToolingBoundary` 类（6 个参数化节点，清单 handoff/C5.6-8-removed-tests.txt）。当前树：`git grep -n "TestLegacyToolingBoundary" -- tests` 无命中。
 
 ## 登记到 PLAN-2（本轮不做）
 `preview_paths` 改收 v3；JD 测试 producer 路径改环境变量；v3 发布 0 个结构的行为；优化后键连接变化的检查；`core/bonding.py`、`data.py`、`constants.py` 移入 `science/`；refine 与 ConfGen 默认 `bond_scale` 统一；v3 `waypoint`；`analysis/pes.py` 定位；可达性工具补扫 `scripts/`；路径预览改接 v3 并统一 `topology_digest`；GUI 内移除/迁移旧 `confgen.native`；`SECURITY_MODEL.md` 文件清单核对（详见 PLAN §13 的 1–4 与 N 到 N+8）。
