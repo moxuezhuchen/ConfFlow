@@ -1,0 +1,17 @@
+schema: confflow.workflow.v4
+inputs:
+  structures: {kind: structure, cardinality: many}
+global:
+  scientific_defaults: {charge: 0, multiplicity: 1}
+  resources: {cores_per_item: 1, memory_per_item: 1GiB}
+steps:
+  - id: s_gen
+    executor: confgen
+    bindings:
+      structure: {source: {run: structures}}
+    confgen:
+      schema_version: 3
+      index_base: 1
+      paths:
+        - {start: 2, end: 5, move: end, angles: [0.0, 120.0]}
+
