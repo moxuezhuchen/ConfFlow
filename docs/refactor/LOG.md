@@ -442,3 +442,6 @@
 
 ## C5.5（侧分支）— 验收通过（2026-10-03）
 - CF refactor/diet-c5 da44bf5（父 deadf46）。与补丁字节一致；提交信息 86+6 个测试名与清单逐行相同；ruff/mypy 通过；全量 3855 passed / 10 skipped（验收方独立重跑）。已推送。执行模型指出卡片括号里"10 删 4 改"应为"11 删 3 改"（总数 14 相符），属卡片笔误。
+
+## C5.6+C5.7+C5.8 补丁已备（2026-10-03，验收方原型）
+- 基点 da44bf5；11 个文件；全量 3849 passed / 10 skipped，collect 3865→3859（−6）；文档 grep 无命中；golden ok。整个删除 docs/KEYWORD_REFERENCE.md（全文为已删 CLI 与旧调用形式）。ARCHITECTURE/DEVELOPMENT/TESTING 仍大量描述旧架构的其他部分，按计划不在本卡范围。

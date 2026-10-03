@@ -1033,26 +1033,15 @@ IS 分支上没有 `docs/refactor/`。各卡如需工具，从 `$TOOLS` 运行�
 - 自检期望：**在 `rm`/删除全部完成之后**跑全量：`{"passed": 3855, "skipped": 10}`；collect 3945 → 3865（−86 +6）；`deleted_modules_check.py cf --tree <树> confflow.core.models confflow.core.validation confflow.core.chem_validation confflow.core.cli_base confflow.core.keyword_rewrite confflow.core.pairs confflow.shared.config_coercion` 退出码 0；golden（`--removed-nodes`）ok；ruff/mypy/black 通过。
 - 提交信息模板：`refactor!: delete the legacy-only core and shared modules` + 通用尾部（Removed-Tests 86、Added-Tests 6，测试名从清单逐字复制）。
 
-### C5.6 — `cli.py` 进程识别不再包含退役 CLI 名
+### C5.6 + C5.7 + C5.8 — 进程识别、文档与架构测试收尾（合并为一张卡）
 
-- ID：C5.6 ／ 前置：C5.5 ／ 类型：`delete`
-- 允许修改的文件：`confflow/cli.py`、对应测试
-- 步骤：`cli.py:418`（@d5a40ae）的集合从 `{"confflow", "confts", "confgen", "confrefine", "confcalc"}` 改为 `{"confflow"}`；删除 L411-416 关于 `confcalc` 的注释。
-- 验收：标准验收；只允许修改断言这些名字被识别的测试。
-
-### C5.7 — 文档（Q5 已确认）
-
-- ID：C5.7 ／ 前置：C5.6 ／ 类型：`doc`
-- 允许修改的文件：`README.md`、`docs/KEYWORD_REFERENCE.md`、`docs/ARCHITECTURE.md`、`docs/DEVELOPMENT.md`、`docs/COMMAND_REFERENCE.md`、`docs/TESTING.md`、`docs/USAGE.md`、`docs/architecture/WORKFLOW_V4.md`
-- 步骤：删除描述 `confts`/`confgen`/`confrefine` CLI、`confflow.calc`、`blocks/*` 的章节和句子。`KEYWORD_REFERENCE.md` 如果全文都是 confts 关键字，整个删除，并删除其他文档中指向它的链接。历史文档不动。
-- 验收：`git grep -nE "\bconfts\b|\bconfrefine\b|confflow\.calc|blocks/refine|CalcStepRunner" -- README.md docs ':!docs/archive' ':!docs/internal' ':!docs/rfc' ':!docs/refactor'` 无命中；`tests/test_release_workflow.py` 中检查 README 的测试通过。
-
-### C5.8 — 架构测试收尾
-
-- ID：C5.8 ／ 前置：C5.7 ／ 类型：`delete`
-- 允许修改的文件：`tests/v4/test_architecture_boundaries.py`、`scripts/v4_arch_scan.py`、`scripts/architecture_metrics.py`
-- 步骤：只删除如今恒为真的守护项：`FORBIDDEN_IMPORT_PREFIXES`（L42-62）中对应包已不存在的条目，以及只针对已删包的测试函数。`REMOVED_LEGACY_MODULES` 与"模块必须不存在"的测试保留。
-- 验收：标准验收；Removed-Tests 逐条声明。
+- ID：C5.6+C5.7+C5.8 ／ 仓库：ConfFlow ／ 分支：`refactor/diet-c5` ／ 基点 da44bf5（C5.5） ／ 类型：`delete`（含文档）。做法：应用 `handoff/C5.6-8-src-tests.patch`（11 个文件），不重新设计。
+- **C5.6：** `confflow/cli.py` 的进程识别集合改为 `{"confflow"}`，并删除关于 `confcalc` 的历史注释；没有测试断言过这些名字（全量无失败）。
+- **C5.7（文档）：** README 删除 `confgen`/`confrefine`/`confts` 三行命令表与 `confgen` 示例及 Keyword Reference 链接；`COMMAND_REFERENCE.md` 删除 `confgen`/`confrefine`/`confts` 三节并把说明里的命令列表改为 `confflow`；`USAGE.md` 删除工具总览中的三个已删命令及第 4（confgen）、5（confrefine）、6（Calc step 与 TS 救援）节；`ARCHITECTURE.md`、`DEVELOPMENT.md`、`TESTING.md` 删除 `blocks/`、`calc/` 两棵目录树与对应章节、指向已删测试文件的条目和已删 CLI 的说明；`WORKFLOW_V4.md` 把对已删符号的名字引用改为"已删除的旧 calc 运行器"等中性措辞（含上一张卡新增的那一句）；**整个删除 `docs/KEYWORD_REFERENCE.md`**（全文只有已删的 `confgen`/`confrefine` 关键字和已退役的旧 `confflow input.xyz -c …` 调用形式；README、ARCHITECTURE、DEVELOPMENT 中指向它的链接/条目已一并删除）。历史文档（`docs/archive`、`docs/internal`、`docs/rfc`、`docs/refactor`）不动。**说明：** 这几份文档整体上仍大量描述旧架构的其他部分（例如 calc step 与 TS 救援、工作流引擎），不在本卡范围；本卡只做计划规定的"删除描述已删 CLI/包的章节和句子"。
+- **C5.8：** `tests/v4/test_architecture_boundaries.py` 与 `scripts/v4_arch_scan.py` 的 `FORBIDDEN_IMPORT_PREFIXES` 去掉对已不存在的包（`confflow.calc`、`confflow.blocks`、`confflow.confts`）的条目；删除整个 `TestLegacyToolingBoundary` 类（它唯一剩下的测试对已不存在的包恒为真，6 个参数化节点）。`REMOVED_LEGACY_MODULES` 与"模块必须不存在"的测试全部保留。
+- 被删测试：`handoff/C5.6-8-removed-tests.txt` 的 6 项；新增 0 项。
+- 自检期望：全量 `{"passed": 3849, "skipped": 10}`；collect 3865 → 3859（−6）；`git grep -nE "\bconfts\b|\bconfrefine\b|confflow\.calc|blocks/refine|CalcStepRunner|KEYWORD_REFERENCE" -- README.md docs ':!docs/archive' ':!docs/internal' ':!docs/rfc' ':!docs/refactor'` 无输出（退出码 1）；`tests/test_release_workflow.py` 通过；golden（`--removed-nodes`）ok；ruff/mypy/black 通过。
+- 提交信息模板：`refactor!: finish the legacy CLI retirement (process names, docs, architecture guards)` + 通用尾部（Removed-Tests 6，测试名从清单逐字复制）。
 
 ---
 
