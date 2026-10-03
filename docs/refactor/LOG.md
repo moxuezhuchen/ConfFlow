@@ -585,3 +585,7 @@
 ## C4.7 验收通过（2026-10-03）
 
 - CF `refactor/diet-p4` `4900cb8`。验收方独立核对：diff 与 handoff/C4.7.patch 逐字相同，恰 10 个文档文件；分支名 `refactor/diet-p4`；ruff ok；相关测试 75 passed；遗留措辞 grep 无命中；全量 `{"passed": 4473, "skipped": 10}`；golden_check ok；C4.7b、C4.8 补丁仍可在其上应用；未推送。C4.7b 卡片的 HEAD 已填为 4900cb8。
+
+## C4.7b 验收通过（2026-10-03）
+
+- CF `refactor/diet-p4` `59465df`。验收方独立核对：diff 与 handoff/C4.7b.patch 逐字相同，只改 `docs/architecture/WORKFLOW_V4.md`（+2 行、无删除）；分支名 `refactor/diet-p4`；工作树干净；未推送。执行器自报全量 `{"passed": 4473, "skipped": 10}`、collect 4483 不变、golden_check ok；整树验收时验收方会在最终提交上再独立重跑全量与 golden_check。
