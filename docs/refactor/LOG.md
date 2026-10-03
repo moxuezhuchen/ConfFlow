@@ -484,3 +484,9 @@
 - **L2 原型**（JD，4 个文件，+62/−126）：全量 `2467 passed, 7 skipped`；ruff check/format、mypy ok。偏离卡片两处，见 PLAN L2（回退合同用 contract_key；两个测试按预期行为变化 (a) 改写，其中一个改名）。补丁 handoff/L2.patch、卡片 handoff/L2.md、提示词 handoff/L2-executor-prompt.txt。
 - **L1 原型**（CF，2 个文件，+10/−22，分支 refactor/diet-l1，基点 c6b88ff）：表字节相同；collect 4521；全量 `{"passed": 4511, "skipped": 10}`；golden ok（契约/边界逐项 ok）。补丁 handoff/L1.patch、卡片 handoff/L1.md、提示词 handoff/L1-executor-prompt.txt。
 - **J4.1 前置检查**：JD 有命中（见 PLAN J4.1），本卡不是"无改动"，需要原型；待 L2/L1 之后。
+
+## 本地主分支状态（2026-10-03，用户决定保留，均未推送）
+
+- **ConfFlow**：本地 `main` 领先 `origin/main`（d5a40ae）4 个提交：8291fb9、7d93fae、db56e35、f8a1f75。备份分支 `refactor/integrated` = f8a1f75。
+- **JobDesk-v2**：本地 `master` tip 2c7e121，领先 `origin/master`（9beeaf2）。备份分支 `refactor/integrated` = 2c7e121。
+- 两处均未推送，是否推送由用户决定；不回退、不直接提交。此后所有工作在两个仓库的 `refactor/diet-p4`（及其并行分支 CF `refactor/diet-l1`）上进行。新增规则 G12（见 PLAN §2.5）。
