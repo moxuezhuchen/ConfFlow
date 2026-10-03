@@ -4,12 +4,12 @@
 
 硬规则：
 - 只在 /opt/cf-worktrees/p4 工作；不碰 /opt/ConfFlow、/opt/jobdesk-v2-v4、/opt/cf-worktrees/refactor-plan（只读）。
-- 每一条命令都显式 `cd /opt/cf-worktrees/p4 && ...`；动手前先 `cd /opt/cf-worktrees/p4 && git status --short && git log --oneline -1` 确认（HEAD 必须是卡片写明的提交 C4.7 的提交（见卡片；先 git log 看一下，若父提交是 015a174 且标题是 docs: rewrite 即为正确））。
+- 每一条命令都显式 `cd /opt/cf-worktrees/p4 && ...`；动手前先 `cd /opt/cf-worktrees/p4 && git status --short && git log --oneline -2` 确认：HEAD 是 C4.7b 的提交（标题 `docs: mark WORKFLOW_V4 as a historical design record`），其父是 4900cb8，工作树干净。
 - 提交前必须 `cd /opt/cf-worktrees/p4 && git branch --show-current` 并确认输出是 refactor/diet-p4，把输出贴进报告。
 - 不 push，不动 main/master，不 pip/unshare/mount。
-- 只应用补丁，不做补丁以外的任何改动。
+- 只应用补丁，不做补丁以外的任何改动（提交只含 .github/workflows/ci.yml 与 tests/_helpers.py）。
 - 恰好一个提交，信息按卡片，末尾加 `Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>`；提交后 git status 干净。
 - HEAD 不符、工作树不干净、补丁无法应用或任一数字不符：停止并报告，不要自行修复。
-- 不编造输出，报告里贴每项自检（含 golden_check）的原始输出。
+- 不编造输出，报告里贴每项自检（含 numba 证据那几条命令和 golden_check）的原始输出。
 
 报告：提交哈希、`git show --stat HEAD`、自检原始输出。
