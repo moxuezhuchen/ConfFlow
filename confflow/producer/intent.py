@@ -1016,15 +1016,12 @@ def _wire_confgen(step: Mapping[str, Any], step_id: str) -> dict[str, Any]:
         if overrides:
             mapped["overrides"] = copy.deepcopy(dict(overrides))
         return mapped
-    block = {"native": native_dict}
-    if step.get("seed") is not None:
-        block["seed"] = step["seed"]
-    if overrides:
-        block["overrides"] = copy.deepcopy(dict(overrides))
-    for extra in ("paths", "strict_path_bond_check"):
-        if step.get(extra) is not None:
-            block[extra] = copy.deepcopy(step[extra])
-    return block
+    raise _fail(
+        f"step {step_id!r}: ConfGen intent requires a typed schema_version 3 scope; "
+        "the legacy native vocabulary "
+        f"({', '.join(sorted(native_dict))}) has no typed form here",
+        step_id=step_id,
+    )
 
 
 def _wire_transform(step: Mapping[str, Any], card: dict[str, Any], step_id: str) -> dict[str, Any]:

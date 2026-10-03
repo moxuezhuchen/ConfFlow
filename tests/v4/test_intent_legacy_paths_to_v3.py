@@ -89,10 +89,29 @@ def test_unknown_path_keys_are_refused_not_dropped(case: dict[str, Any]) -> None
 
 
 @pytest.mark.parametrize("case", UNMAPPABLE, ids=[case["case_id"] for case in UNMAPPABLE])
-def test_scopes_outside_the_paths_vocabulary_stay_legacy_for_now(case: dict[str, Any]) -> None:
-    block = _compile({"native": copy.deepcopy(case["native"])})
-    assert block["native"] == case["native"]
-    assert "schema_version" not in block
+def test_scopes_outside_the_paths_vocabulary_are_refused(case: dict[str, Any]) -> None:
+    with pytest.raises(IntentCompilationError, match="requires a typed schema_version 3 scope"):
+        _compile({"native": copy.deepcopy(case["native"])})
+
+
+@pytest.mark.parametrize(
+    "native",
+    [
+        {"angle_step": 60},
+        {"bond_scale": 1.3},
+        {"strict_path_bond_check": True},
+        {"chains": ["1-2-3-4"], "chain_angles": [[0, 120, 240]]},
+    ],
+)
+def test_legacy_native_without_a_paths_declaration_is_refused_and_named(
+    native: dict[str, Any],
+) -> None:
+    with pytest.raises(
+        IntentCompilationError, match="requires a typed schema_version 3 scope"
+    ) as raised:
+        _compile({"native": native})
+    for key in native:
+        assert key in str(raised.value)
 
 
 def test_bare_declaration_gets_the_legacy_default_step_120() -> None:
