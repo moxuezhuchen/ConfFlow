@@ -52,7 +52,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-    "build>=1.0.0",
+    "build>=1.6.1",
     "setuptools>=82.0.1",
     "wheel",
     "pytest>=6.0.0",
