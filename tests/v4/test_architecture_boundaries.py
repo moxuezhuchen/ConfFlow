@@ -421,9 +421,11 @@ V1_MIGRATION_MODULES: tuple[str, ...] = ()
 V2_MIGRATION_MODULES: tuple[str, ...] = ("confflow.config.canonical.v2_adapter",)
 
 #: Source tokens that identify the retired V1/V2 configuration wire.  This is
-#: deliberately *not* a ban on the strings "v1"/"v2": read the metric docstring
-#: in ``scripts/architecture_metrics.py`` for the current protocol ids that keep
-#: those majors.
+#: deliberately *not* a ban on the strings "v1"/"v2": the current producer
+#: protocol keeps ``confflow.configuration-validation.v1``,
+#: ``confflow.editor-manifest.v1``, ``confflow.recipe-catalog.v1`` and the
+#: ``confflow.contract.*.v1`` capability ids, and unrelated lines (control
+#: protocol, remote envelope) keep their own v1/v2 majors.
 RETIRED_V1_V2_WIRE_TOKENS: tuple[str, ...] = (
     "confflow.workflow.v1",
     "confflow.workflow.v2",
