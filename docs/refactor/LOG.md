@@ -581,3 +581,7 @@
   - JD（`origin/master..refactor/diet-p4`，19 个提交）：无 results.db/CSV/导出文件、无密钥或 token 模式；1 处本地绝对路径：`tests/fixtures/p0_boundary/PROVENANCE.json` 的 `"source_path": "/opt/cf-worktrees/exec-cf-is/docs/internal/fixtures/p0_boundary"`（origin/master 上同文件已有 `/opt/ConfFlow/...`）。作者身份 `JD-SP-MATERIALIZE-SUBMIT lane`、`moxue@jobdesk.local`。
   - CF（`origin/main..refactor/diet-p4`，52 个提交）：无 results.db/CSV/导出文件、无密钥或 token 模式；本地绝对路径出现在 `docs/refactor/` 的工具与记录（PLAN/ACCEPTANCE/baseline README、`run_jd_tests.sh`、`env.sh`、`test_inventory.py`、`golden_check.py`、`paths_equivalence/README.md`）和 `docs/plans/input-simplification.md`（`/opt/jobdesk-v2-v4`）；其中 `docs/refactor/` 的同类路径已随 `refactor/diet`、`refactor/diet-c5`、`docs/refactor-plan` 公开在远端。文本提到 `results.db` 的只有说明性注释/文档。
   - 因扫描有命中，**未推送**，等用户决定。
+
+## C4.7 验收通过（2026-10-03）
+
+- CF `refactor/diet-p4` `4900cb8`。验收方独立核对：diff 与 handoff/C4.7.patch 逐字相同，恰 10 个文档文件；分支名 `refactor/diet-p4`；ruff ok；相关测试 75 passed；遗留措辞 grep 无命中；全量 `{"passed": 4473, "skipped": 10}`；golden_check ok；C4.7b、C4.8 补丁仍可在其上应用；未推送。C4.7b 卡片的 HEAD 已填为 4900cb8。

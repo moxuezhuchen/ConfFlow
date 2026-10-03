@@ -64,7 +64,7 @@
 | C4.4 删除 `science/torsion.py` 的 chain 函数 | 完成 | CF ea93daa |
 | C4.5（新增）删除 `build_chain_rotors`、`cut_component` 包装（零调用方）及 C4.3 之后无人引用的 6 个测试辅助函数 | 完成 | CF 888f872 |
 | C4.6（新增）删除 `architecture_metrics.py` 里针对已删除对象（calc、V1/V2/V3 wire）的 31 个全为 0 的统计键及其代码，保留键的值逐值不变，并更新两个脚本的说明 | 完成 | CF 015a174 |
-| C4.7（新增）文档收尾 | 补丁已备，执行中 | — |
+| C4.7（新增）文档收尾（10 个文件：把 docs-rewrite 的内容应用到最终树，更新 CONFGEN_PATHS 旧段落与 SECURITY_MODEL 的 results.db） | 完成 | CF 4900cb8 |
 | C4.7b（新增）WORKFLOW_V4.md 顶部说明 | 待做（前置 C4.7） | — |
 | C4.8（新增）删除失效 CI 作业与无人使用的 `tests/_helpers.py` | 待做（前置 C4.7b 之后，文件不相交） | — |
 
