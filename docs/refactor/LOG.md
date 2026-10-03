@@ -415,3 +415,9 @@
 - 基点 6521581；35 个文件；全量 3937 passed / 10 skipped，collect 4156→3947（−212 +3）；golden（--removed-nodes）ok，engine 报告无差异。
 - 发现：`git rm` 后目录里残留的 `__pycache__` 会让 `confflow.blocks` 仍作为命名空间包可被 import（deleted_modules_check 报出）；卡片要求应用补丁后 `rm -rf confflow/blocks`。另发现 `test_optional_numba` 的两个测试在本环境为 skipped，但 import 了 blocks（有 numba 的环境会失败），已随卡删除。
 - 另一个负载敏感测试：test_terminal_arbitration_recheck::TestRealControlCancel::…（并行分片偶发，单独稳定）。
+
+## C5.3d+C5.4 第一次 G9 停止（2026-10-03，验收方疏漏，不计退回）
+- 执行模型按规则停止：全量 3935 passed + 2 failed（TestLegacyToolingBoundary 的两个守护测试在子进程里 import 已删的 confflow.blocks）。原因是验收方原型最后一次全量跑在 `rm -rf confflow/blocks` 之前，残留的 `__pycache__` 命名空间包让这两个测试空转通过；没有在删除目录之后重跑。
+- 修正补丁：额外删除这两个测试；removed 214、added 3、passed 3935、collect 3945；已在 rm 之后重跑全量并通过，golden ok，deleted_modules_check 通过。教训：删除类卡片的最终验证必须在完成所有删除步骤（含 rm -rf）之后重跑。
+## IS.2c + IS.2b — 验收通过（2026-10-03）
+- CF implementation/input-simplification：6046b44（IS.2c）、0a9f28d（IS.2b）。两提交与补丁字节一致；IS.2b 提交里 6 个测试名与清单逐行相同；ruff/mypy 通过；全量 5145 passed / 12 skipped（验收方独立重跑）。执行模型报告 IS.2c 首次全量遇到 test_cli::test_kill_proc_tree_timeout 偶发失败，重跑通过（又一个负载敏感测试，已记）。未推送。

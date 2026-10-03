@@ -7546,7 +7546,7 @@ index d834fb0..0000000
 -
 -    assert frames[0]["extra_data"]["DelBond"] == "2-3"
 diff --git a/tests/v4/test_architecture_boundaries.py b/tests/v4/test_architecture_boundaries.py
-index 4d44f37..0d919b3 100644
+index 4d44f37..1e15b7f 100644
 --- a/tests/v4/test_architecture_boundaries.py
 +++ b/tests/v4/test_architecture_boundaries.py
 @@ -247,6 +247,10 @@ REMOVED_LEGACY_MODULES: frozenset[str] = frozenset(
@@ -7560,6 +7560,33 @@ index 4d44f37..0d919b3 100644
          # PR-4: retired V2/V3 execution runtime.
          "confflow.workflow.engine",
          "confflow.workflow.state",
+@@ -1300,26 +1304,6 @@ class TestLegacyToolingBoundary:
+         result = self._run(script)
+         assert result.returncode == 0, f"{entry}: {result.stderr}"
+ 
+-    def test_confrefine_tooling_does_not_load_calc_execution_runtime(self) -> None:
+-        script = (
+-            "import sys; import confflow.blocks.refine; "
+-            "calc_mods = sorted(m for m in sys.modules if m.startswith('confflow.calc')); "
+-            "banned = sorted(m for m in calc_mods if m not in "
+-            "('confflow.calc', 'confflow.calc.result')); "
+-            "assert not banned, banned"
+-        )
+-        result = self._run(script)
+-        assert result.returncode == 0, result.stderr
+-
+-    def test_confgen_tooling_does_not_load_calc_at_all(self) -> None:
+-        script = (
+-            "import sys; import confflow.blocks.confgen; "
+-            "banned = sorted(m for m in sys.modules if m.startswith('confflow.calc')); "
+-            "assert not banned, banned"
+-        )
+-        result = self._run(script)
+-        assert result.returncode == 0, result.stderr
+-
+ 
+ class TestProducerImportIsolation:
+     """Producer import isolation (Architecture Diet PR-0 baseline → PR-2 hard).
 diff --git a/tests/v4/test_confgen_scientific_regressions.py b/tests/v4/test_confgen_scientific_regressions.py
 deleted file mode 100644
 index 1c0aa8b..0000000
