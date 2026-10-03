@@ -490,3 +490,9 @@
 - **ConfFlow**：本地 `main` 领先 `origin/main`（d5a40ae）4 个提交：8291fb9、7d93fae、db56e35、f8a1f75。备份分支 `refactor/integrated` = f8a1f75。
 - **JobDesk-v2**：本地 `master` tip 2c7e121，领先 `origin/master`（9beeaf2）。备份分支 `refactor/integrated` = 2c7e121。
 - 两处均未推送，是否推送由用户决定；不回退、不直接提交。此后所有工作在两个仓库的 `refactor/diet-p4`（及其并行分支 CF `refactor/diet-l1`）上进行。新增规则 G12（见 PLAN §2.5）。
+
+## L1、L2 验收通过（2026-10-03）
+
+- **L1**：CF `refactor/diet-l1` `b55b476`（基点 c6b88ff）。验收方独立核对：diff 与 handoff/L1.patch 逐字相同；ruff/mypy ok；全量 `{"passed": 4511, "skipped": 10}`；golden 契约/边界摘要逐项 ok。已快进合入 CF `refactor/diet-p4`（tip b55b476）。
+  - 执行器自报事故：首次 `git apply` 因 shell 工作目录漂移误应用到 refactor-plan 工作树，发现后核对并 `git checkout --` 恢复。验收方核实：refactor-plan 工作树干净、无多余提交（tip 8e428ae）、无 stash。已知此类风险：卡片/提示词应要求每条命令显式 `cd` 到工作树（后续提示词照此写）。
+- **L2**：JD `refactor/diet-p4` `4b9ed1c`（基点 2c7e121）。验收方独立核对：diff 与 handoff/L2.patch 逐字相同；ruff check/format、mypy ok；全量 `2467 passed, 7 skipped`；未推送，master 仍为 2c7e121。执行器报告的 grep 残留（presenter 1292/1304 行是 intent 编译陈旧守卫读取 store 自身的 session_epoch）属 store 自身，不在本卡范围，判定正确；L2.md 自检第 2 条措辞应补一句"store 自身的 session_epoch 除外"。提交作者为 JD 仓库里的 lane 身份（`JD-SP-MATERIALIZE-SUBMIT lane`），属该仓库既有 git 配置，不重写。
