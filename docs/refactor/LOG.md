@@ -470,3 +470,9 @@
 - **C5.3c-2 取消（用户确认）。** 依据：refine 无 `topology_bonds` 时按记录的 working_topology，否则几何感知（bond_scale 1.2）建图，不是固定索引；含甲基氢互换的丁烷用例两种情况都正确（RMSD 0.0000，对照固定索引 0.671）。ConfGen 只在驱动结构带 patch 或已持久化图时才把 working_topology 写进输出，spec 里声明的 topology/coordination/add_bond/del_bond 不写入输出记录；故反应边/配位边体系的 refine 需手写 `topology_bonds`（已写入 USAGE，refactor/docs-rewrite 1758314 之后）。refine 1.2 与 ConfGen 1.15 的差异已在 PLAN-2。
 - **C5.5a（只删 workflow/step_naming.py）**：零引用核实（代码、测试、scripts、入口、lazy 表、文档；仅剩历史 RFC/PLAN）。`workflow/export.py` 是它唯一的使用者，已由 **C5.2b**（a261bbf）删除（此前误记为 C5.5）。`analysis/pes.py` 记 PLAN-2 N+4；`memory.py`、`release_dependencies.py` 保留；可达性工具补扫 `scripts/` 记 N+5。
 - 验收方原型（f8a1f75 基点，2 个文件，+2/−67）：collect 4520→4521；全量 `{"passed": 4511, "skipped": 10}`（`--jdpin jd-pin`，即 edb068a；用 jd-pin-cf 9beeaf2 会让 7 项跨仓测试报 error，这是 pin 选错，不是回归）；ruff/mypy/black ok；deleted_modules_check 通过；golden 对 IS.5 检查点 ok（对 B0.1 基线会显示 IS 线的 6 个引擎报告差异，属已记录检查点内容）。补丁 handoff/C5.5a.patch，卡片 handoff/C5.5a.md。
+
+## C5.5a 验收通过；C4.1 原型与修订（2026-10-03）
+
+- **C5.5a**：refactor/diet-p4 `aa920b8`（执行器 Sonnet 5.5 子代理）。验收方独立重跑：diff 与 handoff/C5.5a.patch 逐字相同；ruff/mypy ok；deleted_modules_check ok；全量 `{"passed": 4511, "skipped": 10}`；collect 4521；golden 对 IS.5 检查点 ok；未推送，origin/main 仍为 d5a40ae。
+- **C4.1 升级（卡片原样不可行）**：默认改 v3 后 2 个测试失败（`test_confgen_requires_explicit_seed`、`test_confgen_seed_rules_preserved`），固定的是旧 native 的 `seed_required`；`sampling.cap` 无种子则报 schema 错误，仍不满足。用户选 A：白名单加这两个文件、只显式传 legacy native，断言不动。已登记在 PLAN 的 C4.1 修订与 C4.3 卡片（须改写为 v3 对应规则或删除，删除需用户批准；并确认「v3 全枚举无需种子」为预期）。
+- C4.1 原型（基点 aa920b8，3 个文件，+25/−3，diff 中无 assert 行）：ruff/mypy/black ok；collect 4521 不变；全量 `{"passed": 4511, "skipped": 10}`；golden 对 IS.5 检查点 ok（引擎报告无差异）。补丁 handoff/C4.1.patch，卡片 handoff/C4.1.md，提示词 handoff/C4.1-executor-prompt.txt。

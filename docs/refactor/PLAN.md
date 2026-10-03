@@ -856,6 +856,7 @@ IS 分支上没有 `docs/refactor/`。各卡如需工具，从 `$TOOLS` 运行�
 - 类型：`test-only`
 - 允许修改的文件：`tests/v4/_builders.py`
 - 步骤：`confgen_step()`（@d5a40ae L233-257）的默认值从 `{"native": {"chains": ["1-2-3"]}}`（L243）改为最小合法的 v3 块，例如 `{"schema_version": 3, "torsions": [{"id": "t1", "bond": [2, 3], "model": "relative_rotation_grid", "angles": [0, 120, 240], "treatment": "enumerate"}]}`（与 `producer/recipes.py:109-120` 的配方相同，原子号按该 builder 默认结构调整）。显式传入 `native=` 的调用不变。
+- **修订（用户 2026-10-03，选 A）：** 验收方原型发现 `test_compiler.py::TestCapabilityVocabulary::test_confgen_requires_explicit_seed` 与 `test_repair_capabilities.py::TestGoatSeedValidation::test_confgen_seed_rules_preserved` 固定的是旧 native 的 `seed_required` 规则（v3 全枚举无需种子；加 `sampling.cap` 而无种子则变成 schema 错误），任何 v3 默认块都无法在不改断言时通过。故白名单增加这两个文件，只在它们的 3 处 `confgen_step(...)` 调用中显式传 `native={"chains": ["1-2-3"]}`（等同旧默认），断言/测试名/其它代码不动。补丁 handoff/C4.1.patch。
 - 验收：标准验收。期望：collect 不变；使用默认值的 6 个文件（`test_repair_capabilities.py`、`test_p0_pr1_authoring.py`、`test_compiler.py`、`test_native_definition_validation.py`、`test_execution_critical_validation.py`、`test_digest_axes.py`）全部通过，且没有任何断言被修改。如果有测试只能靠改断言才能通过，停止并升级（说明它依赖 legacy 行为）。
 
 ### J4.1 — JD 不再使用 `confgen.native` 字段（Q9 已确认）
@@ -869,6 +870,8 @@ IS 分支上没有 `docs/refactor/`。各卡如需工具，从 `$TOOLS` 运行�
 - 同 C3.1。
 
 ### C4.3 — 删除 legacy native 执行路径与 schema
+
+- **登记（用户 2026-10-03）：** `TestCapabilityVocabulary::test_confgen_requires_explicit_seed` 与 `TestGoatSeedValidation::test_confgen_seed_rules_preserved` 固定的是旧 native 的 `seed_required` 规则（C4.1 中改为显式 legacy native）。C4.3 删除旧路径时必须处理：改写为 v3 对应规则，或删除（删除需用户批准）。同时须确认「v3 全枚举无需种子」是预期行为（设计依据：种子是唯一的随机性权威，全枚举无随机性；`PRODUCER_INTENT.md` 同此），并报告用户。
 
 - ID：C4.3 ／ 仓库：ConfFlow ／ 前置：C4.2
 - 目标：删除 `native.chains` / `native.paths` 的执行、解析和 contract 字段。

@@ -1,0 +1,12 @@
+You are the executor for one small refactor card. Read /opt/cf-worktrees/refactor-plan/docs/refactor/handoff/C4.1.md and follow it exactly.
+
+Context: repo ConfFlow, worktree /opt/cf-worktrees/p4 (branch refactor/diet-p4). The patch is /opt/cf-worktrees/refactor-plan/docs/refactor/handoff/C4.1.patch.
+
+Hard rules:
+- Work only in /opt/cf-worktrees/p4. Do not touch /opt/ConfFlow or /opt/jobdesk-v2-v4; do not switch their branches.
+- Do not push. Do not touch main/master. Do not run pip/unshare/mount. Do not edit any file outside the card's whitelist (3 files). Do not modify, add or remove any assertion, test name or other code beyond what the patch does.
+- Exactly one commit, message from the card, ending with the trailer line `Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>`. `git status` clean afterwards.
+- If HEAD is not aa920b8, the worktree is dirty, the patch does not apply, or any expected number does not match, STOP and report; do not improvise or fix.
+- Do not fabricate output: paste the raw output of every self-check in the report.
+
+Report: commit hash, `git show --stat HEAD`, raw output of each self-check (ruff/mypy/black, the assert grep, collect count, the run_sharded final line).
