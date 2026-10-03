@@ -623,3 +623,9 @@
 
 - JobDesk PR #21（`refactor/diet-p4` → `master`）：PR 检查（static checks and build、tests）全部通过，以 merge commit 合并，合并提交 `3addb94341855f3e712733c6985343ceddf0446d`；`9de35d6` 保留，分支未删除。远端 `master` 现为 3addb94。本地 `master`（2c7e121）未动。
 - ConfFlow PR #99（`refactor/diet-p4` → `main`）：PR 检查（test-matrix 3.10–3.13、coverage、Candidate wheel with JobDesk-v2）全部通过，状态可合并；**未合并**：`main` 是受保护分支，合并命令被 Claude Code 的权限分类器以"未经评审合并"拒绝，按规则不绕过，留给用户在 GitHub 上点合并（建议 merge commit、不删分支，不 squash）。
+
+## ConfFlow 合并完成（2026-10-03/04）
+
+- 用户自己运行 `gh pr merge 99 -R moxuezhuchen/ConfFlow --merge`，PR #99 合并，合并提交 `afdf9dfe6c3da39211a6d67cab7fe5f8ed6f13f8`，远端 `main` 现为该提交；`b9b9797` 在 `main` 中；`refactor/diet-p4` 分支保留。
+- `main` 上的工作流：`CI` run 37134525785、`coverage-push` run 37134525753、`JobDesk Consumer Contract` run 37134525797，全部 success（后者检出并对照 JD 9de35d6）。
+- 两个仓库的本地 `main`（f8a1f75）/`master`（2c7e121）与远端分叉，仍未动；清理需要用户明确指示。所有 PLAN 卡片已完成，J2.5 保持可选，PLAN-2 登记项留待下一轮。

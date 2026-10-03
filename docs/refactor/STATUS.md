@@ -99,5 +99,6 @@
 `preview_paths` 改收 v3；JD 测试 producer 路径改环境变量；v3 发布 0 个结构的行为；优化后键连接变化的检查；`core/bonding.py`、`data.py`、`constants.py` 移入 `science/`；refine 与 ConfGen 默认 `bond_scale` 统一；v3 `waypoint`；`analysis/pes.py` 定位；可达性工具补扫 `scripts/`；路径预览改接 v3 并统一 `topology_digest`；GUI 内移除/迁移旧 `confgen.native`；`SECURITY_MODEL.md` 文件清单核对（详见 PLAN §13 的 1–4 与 N 到 N+8）。
 
 ## 推送与合并
+- **已合并**：JobDesk PR #21 → `master` 合并提交 3addb94；ConfFlow PR #99 → `main` 合并提交 afdf9df（由用户运行 `gh pr merge 99 -R moxuezhuchen/ConfFlow --merge`）。`main` 上的 `CI`、`coverage-push`、`JobDesk Consumer Contract` 全部成功。
 - **已推送**（2026-10-03）：JD `refactor/diet-p4` = 9de35d6，随后 CF `refactor/diet-p4` = b9b9797；两边 CI 全绿（见 LOG）。历史扫描已做，用户选"按现状推送"。
 - `main` / `master`（含本地 f8a1f75、2c7e121）不动；用户在 GitHub 上从 `refactor/diet-p4` 开 PR 自己合并。
