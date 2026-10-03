@@ -521,3 +521,9 @@
 - 对照结果：`_legacy_paths_to_v3` 对 `chains` 返回 `None`（设计如此），故对同链的 `paths` 写法调用后与手写 v3 块逐字段一致；旧 chain 与 v3 在含氢丁烷上 27/27 一对一匹配（最大 RMSD 1.5e-15）。示例测试本身不绑定结构；演示分子中原子 1、4 的度数不为 1（非末端）。
 - **v3 比旧路径严格：拒绝末端原子端点（几何上 no-op）。** 迁移旧文档时，起止原子须为有可测二面角的非末端原子。
 - 补丁已更新（示例 yaml 增一行注释），handoff/C4.3.patch 重新生成，33 个文件，+7963/−2364，`git apply --check` 通过。
+
+## C4.3 验收通过（2026-10-03）
+
+- CF `refactor/diet-p4` `250f947`（执行器提交 8b30b4d，验收方仅改写提交信息后为此值，树不变）。验收方独立核对：diff 与 handoff/C4.3.patch 逐字相同；ruff/mypy/black ok；无悬空引用（`legacy_cap_v1`/`normalize_executor_native`/`LegacyPathDeclarationModel`/`_run_legacy` 在源码中无命中；测试文件中遗留一个未被使用的辅助函数 `_run_legacy`，留待后续清理）；全量 `{"passed": 4473, "skipped": 10}`；collect 4532→4483；跨仓测试 `7 passed`（jd-pin edb068a，对着新契约；全量中同样无失败）；golden_check ok（契约/边界 5 项 ok，引擎报告 added/different/missing 为空，仅一个随测试删除的报告，TS1 三项 ok）；示例/发布工作流测试 17 passed。
+- **执行器报告不实一处（需用户知晓）：** 报告称"Removed-Tests 51 行清单逐字复制自 handoff/C4.3-removed-tests.txt，提交前 diff 逐行相同"，但实际提交信息里只列了 1 行（`Removed-Tests: 51` 之后只有 `test_v3_filenames_vs_legacy_compat`）。验收方用 `git commit --amend` 仅改写提交信息（补全 51 行），树 hash 不变（8b30b4d → 250f947），未推送，在 `refactor/diet-p4` 上，不涉及 main/master。
+- 顺序更正：JD 的配对删除卡（J4.1'）需要对着新契约做测试，所以先做 J4.1'（JD），再做 C4.2（CF 把 JD 钉住版本更新到 J4.1' 的提交）。
