@@ -74,10 +74,8 @@ __all__ = [
     "PathResolution",
     "PathResolutionError",
     "ResolvedPath",
-    "build_chain_rotors",
     "canonical_grid_size",
     "canonicalize_rotors",
-    "cut_component",
     "parse_path_declarations",
     "resolve_paths",
     "topology_digest_of",
@@ -428,17 +426,6 @@ def _cut_component(
     return seen
 
 
-def cut_component(
-    adjacency: Sequence[Sequence[int]], keep: int, cut_a: int, cut_b: int
-) -> set[int]:
-    """Return the cut-bond component containing *keep* (shared pure helper).
-
-    Single authority for the cut rule; the executor and chain-rotor builder
-    use this instead of private mirrors.
-    """
-    return _cut_component(adjacency, keep, cut_a, cut_b)
-
-
 def topology_digest_of(
     adjacency: Sequence[Sequence[int]],
     *,
@@ -749,77 +736,3 @@ def canonical_grid_size(rotors: Sequence[CanonicalRotor]) -> int:
     for rotor in rotors:
         size *= len(rotor.angles)
     return size
-
-
-def build_chain_rotors(
-    chains: Sequence[Sequence[int]],
-    adjacency: Sequence[Sequence[int]],
-    per_chain_angle_lists: Sequence[Sequence[Sequence[float]]],
-    rotate_side: str,
-    *,
-    source_prefix: str = "chains",
-) -> tuple[CanonicalRotor, ...]:
-    """Build declared-grid chain rotor descriptors (shared pure helper).
-
-    Uses the same cut rule as path resolution (identical to the legacy
-    chain-position BFS on bridge bonds) with traversal-ordered axes, so
-    chain declarations canonicalize against path declarations without a
-    private executor-side mirror. Grids stay DECLARED here; exclusions are
-    applied later by :func:`canonicalize_rotors` (conflict-before-exclusion).
-    Ring bonds fail closed (they cannot rotate independently, and -- unlike
-    a skip list -- no exclusion can make them rotatable).
-    """
-    from confflow.science.torsion import edge_in_cycle
-
-    if rotate_side not in ("left", "right"):
-        raise PathResolutionError(
-            PATH_INVALID_ENDPOINT,
-            f"rotate_side must be 'left' or 'right', got {rotate_side!r}",
-        )
-    n_atoms = len(adjacency)
-    if len(per_chain_angle_lists) != len(chains):
-        raise PathResolutionError(
-            PATH_INVALID_ENDPOINT,
-            "per-chain angle lists must hold one entry per chain",
-        )
-    rotors: list[CanonicalRotor] = []
-    for chain_index, chain in enumerate(chains):
-        per_bond = per_chain_angle_lists[chain_index]
-        if len(per_bond) != len(chain) - 1:
-            raise PathResolutionError(
-                PATH_INVALID_ENDPOINT,
-                f"chains[{chain_index}] needs {len(chain) - 1} angle lists",
-            )
-        ref_atom = chain[0] if rotate_side == "left" else chain[-1]
-        for position, (left, right) in enumerate(zip(chain, chain[1:])):
-            if right not in adjacency[left]:
-                raise PathResolutionError(
-                    PATH_INVALID_ENDPOINT,
-                    f"chain atoms {left + 1}-{right + 1} are not bonded; "
-                    "use add_bond or adjust bond_scale",
-                    bond=(min(left, right), max(left, right)),
-                )
-            if edge_in_cycle(adjacency, left, right):
-                raise PathResolutionError(
-                    PATH_CROSSES_RING,
-                    f"chain bond {left + 1}-{right + 1} is a ring bond and "
-                    "cannot be rotated independently",
-                    bond=(min(left, right), max(left, right)),
-                )
-            component = _cut_component(adjacency, int(ref_atom), left, right)
-            moving_atom = left if left in component else right
-            moving = tuple(sorted(a for a in component if a not in (left, right)))
-            fixed = tuple(sorted(a for a in range(n_atoms) if a not in set(moving)))
-            rotors.append(
-                CanonicalRotor(
-                    bond=(min(left, right), max(left, right)),
-                    ordered=(int(left), int(right)),
-                    moving_atom=moving_atom,
-                    moving=moving,
-                    fixed=fixed,
-                    angles=tuple(float(a) for a in per_bond[position]),
-                    sources=(f"{source_prefix}[{chain_index}]",),
-                    model="relative_rotation_grid",
-                )
-            )
-    return tuple(rotors)

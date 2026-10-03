@@ -31,23 +31,6 @@ from confflow.science.confgen.torsion.paths import (
 from tests.v4.test_repair_executors import _butane, _ctx, _item, _sci
 
 
-def _run_legacy(records, native, tmp_path):
-    """Execute the legacy executor (FAILED results returned, never raised)."""
-    item = _item("c1:g1", "c1", records)
-    return ConfgenExecutor().execute(
-        item, _ctx(_sci(seed=11, native=FrozenDict(dict(native))), str(tmp_path))
-    )
-
-
-def _legacy_report(tmp_path) -> dict[str, Any]:
-    """Load the legacy confgen report artifact from the attempt directory."""
-    for root, _, files in os.walk(str(tmp_path)):
-        if "confgen_report.json" in files:
-            with open(os.path.join(root, "confgen_report.json"), encoding="utf-8") as fh:
-                return json.load(fh)
-    raise AssertionError("confgen_report.json not written")
-
-
 def _ensemble_report(tmp_path) -> dict[str, Any]:
     """Load the typed ensemble report artifact from the attempt directory."""
     for root, _, files in os.walk(str(tmp_path)):

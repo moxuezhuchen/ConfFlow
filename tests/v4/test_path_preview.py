@@ -61,20 +61,6 @@ def test_preview_public_boundary_returns_resolved_count():
     assert response["result"]["raw_conformers"] == 81
 
 
-def _stretched_repro():
-    structure = {
-        "atoms": ["C"] * 4,
-        "coordinates": [[i * 1.7, 0, 0] for i in range(4)],
-        "topology": {"add": [[1, 2]]},
-    }
-    native = {
-        "paths": [{"start": 1, "end": 4, "move": "end"}],
-        "angle_step": 120,
-        "bond_scale": 1.1,
-    }
-    return structure, native
-
-
 def test_preview_plain_and_empty_patch_retain_native_scale():
     natives = {
         "paths": [{"start": 1, "end": 4, "move": "end"}],

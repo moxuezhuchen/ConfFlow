@@ -89,19 +89,6 @@ def _ring_tail() -> tuple[StructureRecord, list[list[int]]]:
     return record, adj
 
 
-def _legacy_result(records: list[StructureRecord], native: dict[str, Any], tmp_path) -> Any:
-    """Execute the legacy executor (FAILED results returned, never raised)."""
-    item = _item("c1:g1", "c1", records)
-    sci = _sci(seed=11, native=FrozenDict(dict(native)))
-    return ConfgenExecutor().execute(item, _ctx(sci, str(tmp_path)))
-
-
-def _failed_message(result: Any) -> str:
-    """Return the failure diagnostic message of a FAILED result."""
-    assert result.status is WorkItemStatus.FAILED
-    return " ".join(d.message for d in result.diagnostics)
-
-
 # -- simple resolution -------------------------------------------------------
 
 
@@ -466,15 +453,6 @@ def test_raw_cartesian_size_exact_before_geometry():
 
 
 # -- legacy executor --------------------------------------------------------------
-
-
-def _report_payload(tmp_path) -> dict[str, Any]:
-    """Load the legacy confgen report artifact from the attempt directory."""
-    for root, _, files in os.walk(str(tmp_path)):
-        if "confgen_report.json" in files:
-            with open(os.path.join(root, "confgen_report.json"), encoding="utf-8") as fh:
-                return json.load(fh)
-    raise AssertionError("confgen_report.json not written")
 
 
 # -- typed v3 -------------------------------------------------------------------
