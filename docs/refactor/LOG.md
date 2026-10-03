@@ -548,3 +548,8 @@
 
 - **C4.2**：CF `refactor/diet-p4` `1de64b6`。验收方独立核对：diff 与 handoff/C4.2.patch 逐字相同；分支名 `refactor/diet-p4`；ruff ok；发布工作流测试 14 passed；全量 `{"passed": 4473, "skipped": 10}`（`--jdpin jd-pin-p4`）；golden_check ok；未推送。待用户决定的 JD 推送问题见上一节。
 - **C4.4 原型**（基点 1de64b6，2 个文件，+6/−92）：删 `parse_chain`、`parse_bond_pair`、`resolve_angle_lists`（只被再导出引用，测试/脚本零引用）；其余函数均有 v3 调用方，保留。ruff/mypy ok；collect 4483 不变；全量 `{"passed": 4473, "skipped": 10}`；golden_check ok（引擎报告无差异）。补丁 handoff/C4.4.patch，卡片 handoff/C4.4.md，提示词 handoff/C4.4-executor-prompt.txt。另发现 C4.3 之后新出现的死代码 `build_chain_rotors`（paths.py）与测试里的 `_run_legacy` 辅助，不在 C4.4 白名单内，待用户批准后另开小卡。
+
+## 收尾卡 C4.5、C4.6 原型（2026-10-03；用户：死代码一起删，放在收尾）
+
+- **C4.5**（死代码，5 个文件，+0/−144）：`build_chain_rotors`、`cut_component` 包装（零调用方）及再导出；C4.3 之后无引用的 6 个测试辅助函数。collect 4483 不变；全量 `{"passed": 4473, "skipped": 10}`；ruff/mypy ok；golden_check ok。补丁 handoff/C4.5.patch，卡片 handoff/C4.5.md，提示词 handoff/C4.5-executor-prompt.txt。前置 C4.4（文件不相交）。
+- **C4.6**（脚本说明，2 个文件，+22/−28，纯 docstring）：`architecture_metrics.py`、`v4_arch_scan.py` 的过时说明；脚本输出不变；`v4_arch_scan.py` 输出 `OK: 50 entry files clean`；相关测试 156 passed。补丁 handoff/C4.6.patch，卡片 handoff/C4.6.md，提示词 handoff/C4.6-executor-prompt.txt。`architecture_metrics.py` 里针对已删包的统计代码（CALC_/V1_/V2_/V3_ 全为 0）本轮不删（会改变输出结构），待用户另行决定。

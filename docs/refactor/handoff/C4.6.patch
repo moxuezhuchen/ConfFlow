@@ -1,0 +1,73 @@
+diff --git a/scripts/architecture_metrics.py b/scripts/architecture_metrics.py
+index 4ee13c8..3bf2382 100644
+--- a/scripts/architecture_metrics.py
++++ b/scripts/architecture_metrics.py
+@@ -23,18 +23,14 @@ Fixed definitions (PR-2.6):
+   dynamic indirection are not statically resolvable and are excluded.
+ - ``LEGACY_OR_NON_V4_REACHABLE_LOC`` = ``PHYSICAL_PRODUCTION_LOC`` -
+   ``V4_REACHABLE_LOC``.
+-- ``CALC_MODULES`` / ``CALC_LOC``: every module under
+-  ``confflow/calc`` (the legacy calculation tooling).
+-- ``CALC_V4_REACHABLE_MODULES``: calc modules inside the fixed V4 closure.
+-  Must stay ``0`` — the formal V4 runtime never imports calc.
+-- ``CALC_PUBLIC_TOOLING_MODULES``: calc modules reachable from the public
+-  tooling roots (the ``confts`` CLI, the ``confrefine`` package, the refine
+-  composition bridge) plus the declared PEP 562 lazy exports of
+-  ``confflow/__init__.py`` and ``confflow/calc/__init__.py``.  These are the
+-  calc modules with an explicit current consumer.
+-- ``CALC_DEAD_MODULES``: calc modules that are neither in the V4 closure nor
+-  reachable from any public tooling root or declared lazy export.  Must stay
+-  ``0``.
++- ``CALC_*`` metrics: the legacy calculation tooling ``confflow/calc`` (with the
++  ``confts`` / ``confrefine`` CLIs and ``confflow/blocks``) has been physically
++  removed, so every ``CALC_*`` count is ``0``.  The metrics are kept so
++  historical reports stay comparable; they must stay ``0``.  (Originally:
++  ``CALC_MODULES`` / ``CALC_LOC`` count every module under ``confflow/calc``,
++  ``CALC_V4_REACHABLE_MODULES`` those inside the V4 closure,
++  ``CALC_PUBLIC_TOOLING_MODULES`` those reachable from public tooling roots or
++  declared lazy exports, ``CALC_DEAD_MODULES`` the rest.)
+ - ``V3_PUBLIC_MODULES`` / ``V3_PUBLIC_LOC``: modules of the never-released
+   Workflow V3 public wire (V3 parser/graph/validation, V3 catalogs, the
+   ``configuration-contract.v3`` document, the V2->V3 upgrade emitter, the V3
+diff --git a/scripts/v4_arch_scan.py b/scripts/v4_arch_scan.py
+index ca8345d..95ac37a 100644
+--- a/scripts/v4_arch_scan.py
++++ b/scripts/v4_arch_scan.py
+@@ -17,23 +17,21 @@ Post-cutover scope (V4 Core Closure, ``44b478d``):
+   ``confflow/control.py`` / ``confflow/remote``.
+ - NOT YET SCANNED (known legacy-helper debt, tracked for the architecture
+   diet follow-ups; these are formal entries now, not legacy shims):
+-  ``confflow/cli.py`` (dry-run/config-show/export diagnostics and path
+-  helpers still come from the legacy line) and ``confflow/control_worker.py``
+-  (worker-side legacy helpers).
+-- RETIRED READ-ONLY / separate tools (out of scope by design):
+-  ``confflow/calc`` (legacy calculation tooling), ``confflow.confts`` /
+-  ``confflow.blocks`` (standalone legacy CLIs), and the V1/V2
+-  configuration-contract emission (JobDesk wire compatibility).  The
+-  V2/V3 workflow *execution* runtime was physically removed by Architecture
+-  Diet PR-4; the diagnostic planners (dry-run / config-show / export) and the
+-  canonical V1/V2 readers remain.  The never-released V3 *public wire*
+-  (V3 parser/graph/semantic validation, the ``configuration-contract.v3``
++  ``confflow/cli.py`` (path helpers still come from the legacy line) and
++  ``confflow/control_worker.py`` (worker-side legacy helpers).
++- RETIRED and physically removed (guarded by ``RETIRED_RUNTIME_MODULES`` and
++  the architecture-boundary tests): ``confflow/calc`` (legacy calculation
++  tooling), ``confflow.confts`` / ``confflow.blocks`` (standalone legacy
++  CLIs), the ``confflow export`` reader, the V2/V3 workflow *execution*
++  runtime (Architecture Diet PR-4), the V1/V2 diagnostic planners and
++  configuration wire (PR-9), and the never-released V3 *public wire* (V3
++  parser/graph/semantic validation, the ``configuration-contract.v3``
+   document, the V3 catalogs and capability advertisement, and the
+-  ``workflow upgrade`` emitter) was retired by Architecture Diet PR-7 and is
+-  flagged by ``RETIRED_V3_WIRE_MODULES`` below.  Any retired runtime module
+-  reappearing on disk is flagged by ``RETIRED_RUNTIME_MODULES``, which PR-6
+-  extended with the dead remote duplicates (``remote.lease`` /
+-  ``remote.supervision`` / ``remote.schema``).
++  ``workflow upgrade`` emitter; PR-7, flagged by ``RETIRED_V3_WIRE_MODULES``
++  below).  Any retired runtime module reappearing on disk is flagged by
++  ``RETIRED_RUNTIME_MODULES``, which PR-6 extended with the dead remote
++  duplicates (``remote.lease`` / ``remote.supervision`` /
++  ``remote.schema``).
+ 
+ Contract-source imports (``confflow.config.canonical.contract`` / editor
+ manifest / recipes) are the producer's recorded PR-2 decoupling debt and are
