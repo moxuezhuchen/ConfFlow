@@ -243,6 +243,8 @@ REMOVED_LEGACY_MODULES: frozenset[str] = frozenset(
         "confflow.blocks.viz",
         # C5.2b: the results.db export reader (nothing writes results.db any more).
         "confflow.workflow.export",
+        # C5.5a: step-directory naming helper; its only user was the export reader.
+        "confflow.workflow.step_naming",
         # C5.3d/C5.4: the legacy refine and confgen blocks (and their CLIs).
         "confflow.blocks",
         "confflow.blocks.refine",
