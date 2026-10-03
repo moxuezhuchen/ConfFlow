@@ -462,3 +462,11 @@
 - 验证：ruff 通过；示例工作流与 release workflow 测试 17 项通过；收集 4520；文档中的 intent 行为（旧 paths→v3、waypoint 拒绝、chains 拒绝）实测。black 报 3 个文件需重排，在合并前基线上同样存在（非本次引入）。
 - 未处理：`confflow.example.yaml` 仍用旧 `confgen.native.chains`（Phase 4）；`scripts/architecture_metrics.py`、`v4_arch_scan.py` 的 docstring 仍提到已删模块。
 - 未推送；`refactor/docs-rewrite` 可按授权推送，main 不推。
+
+## 分支状态与决定（2026-10-03，用户）
+
+- **本地 main 领先 origin/main 4 个提交**：8291fb9（合并 refactor/diet）、7d93fae（合并 input-simplification）、db56e35（合并 refactor/diet-c5）、f8a1f75（refine 拓扑测试）。**未推送，是否推送由用户决定。** 用户未明确批准合并进 main（合并由验收方在"自行决定如何合并"的授权下做在本地 main 上）；用户决定保持现状，不回退、不推送。
+- 备份分支 `refactor/integrated`（= f8a1f75）。此后 Phase 4、C5.5a 等全部在 `refactor/diet-p4`（从 f8a1f75 建立，工作树 /opt/cf-worktrees/p4）上做；不得直接在 main 上提交。
+- **C5.3c-2 取消（用户确认）。** 依据：refine 无 `topology_bonds` 时按记录的 working_topology，否则几何感知（bond_scale 1.2）建图，不是固定索引；含甲基氢互换的丁烷用例两种情况都正确（RMSD 0.0000，对照固定索引 0.671）。ConfGen 只在驱动结构带 patch 或已持久化图时才把 working_topology 写进输出，spec 里声明的 topology/coordination/add_bond/del_bond 不写入输出记录；故反应边/配位边体系的 refine 需手写 `topology_bonds`（已写入 USAGE，refactor/docs-rewrite 1758314 之后）。refine 1.2 与 ConfGen 1.15 的差异已在 PLAN-2。
+- **C5.5a（只删 workflow/step_naming.py）**：零引用核实（代码、测试、scripts、入口、lazy 表、文档；仅剩历史 RFC/PLAN）。`workflow/export.py` 是它唯一的使用者，已由 **C5.2b**（a261bbf）删除（此前误记为 C5.5）。`analysis/pes.py` 记 PLAN-2 N+4；`memory.py`、`release_dependencies.py` 保留；可达性工具补扫 `scripts/` 记 N+5。
+- 验收方原型（f8a1f75 基点，2 个文件，+2/−67）：collect 4520→4521；全量 `{"passed": 4511, "skipped": 10}`（`--jdpin jd-pin`，即 edb068a；用 jd-pin-cf 9beeaf2 会让 7 项跨仓测试报 error，这是 pin 选错，不是回归）；ruff/mypy/black ok；deleted_modules_check 通过；golden 对 IS.5 检查点 ok（对 B0.1 基线会显示 IS 线的 6 个引擎报告差异，属已记录检查点内容）。补丁 handoff/C5.5a.patch，卡片 handoff/C5.5a.md。
