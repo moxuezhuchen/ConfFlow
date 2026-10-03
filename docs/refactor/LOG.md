@@ -537,3 +537,9 @@
 
 - native 死胡同：不加新逻辑，不单开卡；保持失败关闭（`unknown_member`），数据不丢（守护测试 `test_a_legacy_native_member_survives_editing_other_confgen_fields`）。文档补充：USAGE（`refactor/docs-rewrite`，未推送）写明旧 `confgen.native` 会被拒绝、需手动改为 typed v3，并附 `native.chains → paths` 对照（沿用示例 yaml 写法，注明末端原子端点会被 v3 拒绝）。PLAN-2 登记 N+7（触发条件：首次有用户在 GUI 遇到该死胡同）。
 - 后续顺序确认：J4.1' → C4.2（ConfFlow 钉住版本更新到 J4.1' 提交）→ C4.4。执行器每条命令显式 `cd`，提交前核对分支名为 `refactor/diet-p4`（已写入 J4.1' 卡片与提示词）。
+
+## J4.1' 验收通过；C4.2 原型（2026-10-03）
+
+- **J4.1'**：JD `refactor/diet-p4` `9de35d6`。验收方独立核对：diff 与 handoff/J4.1p.patch 逐字相同；分支名 `refactor/diet-p4`；ruff check/format、mypy ok；退役符号 grep 无命中；全量（CF 绑定 C4.3 树）`2467 passed, 7 skipped`；golden_check ok（`jd_contract_key` ok）；未推送，master 仍 2c7e121，origin/master 仍 9beeaf2。
+- **C4.2 原型**（CF，基点 250f947，2 个文件，+4/−4）：CF 的 `JOBDESK_COMPAT_SHA` 与 `EXPECTED_JOBDESK_SHA` 改为 9de35d66…（原 edb068a）。新建只读 JD 钉住工作树 `/opt/cf-worktrees/jd-pin-p4`（detached 9de35d6）。验证：ruff/black ok；`test_release_workflow.py` 14 passed；全量 `{"passed": 4473, "skipped": 10}`；跨仓 `7 passed`（对着 jd-pin-p4）；golden_check ok。补丁 handoff/C4.2.patch，卡片 handoff/C4.2.md，提示词 handoff/C4.2-executor-prompt.txt。
+- **待用户决定：** 该 SHA 是 JD 本地提交，未推送，GitHub 上的 `jobdesk-contract.yml` 检出时会找不到，直到 JD `refactor/diet-p4` 推送；而该分支含本地合并进 `master` 的 input-simplification 提交，推送会一并公开。

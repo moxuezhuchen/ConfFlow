@@ -1,0 +1,30 @@
+diff --git a/.github/workflows/jobdesk-contract.yml b/.github/workflows/jobdesk-contract.yml
+index c560194..e373eab 100644
+--- a/.github/workflows/jobdesk-contract.yml
++++ b/.github/workflows/jobdesk-contract.yml
+@@ -19,7 +19,7 @@ permissions:
+ 
+ env:
+   #: Pinned current-consumer compatibility target (JobDesk-v2).
+-  JOBDESK_COMPAT_SHA: "edb068ac258447f26eed2184d58e34554c323a18"
++  JOBDESK_COMPAT_SHA: "9de35d66f8047e0e7f71ab004e584bbdf0b6c8db"
+ 
+ jobs:
+   candidate-wheel-against-current-consumer:
+diff --git a/tests/v4/jobdesk_integration.py b/tests/v4/jobdesk_integration.py
+index 85af3c2..1eaf803 100644
+--- a/tests/v4/jobdesk_integration.py
++++ b/tests/v4/jobdesk_integration.py
+@@ -47,9 +47,9 @@ JOBDESK_SRC_ENV = "JOBDESK_V2_SRC"
+ DEFAULT_JOBDESK_SRC = Path("/opt/jobdesk-v2-v4/src")
+ 
+ #: Pinned JobDesk revision the cross-repo evidence was produced against.
+-#: Tracks JobDesk-v2 ``refactor/diet`` at J3.3 (stops requiring the producer's
+-#: capability/semantic identity members).
+-EXPECTED_JOBDESK_SHA = "edb068ac258447f26eed2184d58e34554c323a18"
++#: Tracks JobDesk-v2 ``refactor/diet-p4`` at J4.1' (no longer edits the retired
++#: ``confgen.native`` field; validation answers bind to content, contract and target).
++EXPECTED_JOBDESK_SHA = "9de35d66f8047e0e7f71ab004e584bbdf0b6c8db"
+ 
+ #: Explicit escape hatch for development against a different checkout.
+ ALLOW_ANY_SHA_ENV = "JOBDESK_V2_ALLOW_ANY_SHA"
