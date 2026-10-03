@@ -1124,4 +1124,8 @@ N+1. **`core/bonding.py`、`core/data.py` 最终移入 `science/`（用户 2026-
 
 N+2. **统一 refine 与 ConfGen 的默认 `bond_scale`（用户 2026-10-02）：** 目前 refine 默认 1.2，ConfGen 默认 1.15。统一是行为变化，本轮不做；C5.3c-1 只在声明了拓扑时复制 ConfGen 的值。
 
+N+4. **`analysis/pes.py` 的产品定位（用户 2026-10-03）：** 没有生产代码导入，只有测试使用（test_v46_pes、test_v45_tspes、test_v46_tspes_e2e、test_v46_debt 清单）。留待决定。本轮不动。`application/execution/memory.py`（测试替身）与 `release_dependencies.py`（scripts 使用）保留。
+
+N+5. **可达性工具补扫 `scripts/`（用户 2026-10-03）：** 用单独的小卡，不与删除卡混合。
+
 N+3. **v3 的 `waypoint`（多端点路径）（IS.2 发现；用户 2026-10-03 裁定）：** 用户从未使用，本轮不在 v3 补支持，IS.2 保持编译期拒绝并提示改用显式 `torsions` 声明。**触发条件：**首次实际遇到 `PATH_AMBIGUOUS`（带 `add_bond` 的 TS、金属配合物）时，再为 v3 设计 `waypoint`。IS.5 不受影响。
