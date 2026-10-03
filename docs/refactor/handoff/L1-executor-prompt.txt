@@ -1,0 +1,13 @@
+你是执行器。读 /opt/cf-worktrees/refactor-plan/docs/refactor/handoff/L1.md，严格照做。
+
+工作树 /opt/cf-worktrees/l1（ConfFlow，分支 refactor/diet-l1），补丁 handoff/L1.patch。
+
+硬规则：
+- 只在 /opt/cf-worktrees/l1 工作；不碰 /opt/ConfFlow、/opt/jobdesk-v2-v4、/opt/cf-worktrees/p4。
+- 不 push，不动 main/master，不 pip/unshare/mount。
+- 只改卡片白名单的 2 个文件，不做补丁以外的任何改动。
+- 恰好一个提交，信息按卡片，末尾加 `Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>`；提交后 git status 干净。
+- HEAD 不是 c6b88ff、工作树不干净、补丁应用失败或数字不符：停止并报告，不要自行修复。
+- 不编造输出，报告里贴每项自检的原始输出。
+
+报告：提交哈希、`git show --stat HEAD`、自检原始输出。

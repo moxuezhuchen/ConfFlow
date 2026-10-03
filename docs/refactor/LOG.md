@@ -476,3 +476,11 @@
 - **C5.5a**：refactor/diet-p4 `aa920b8`（执行器 Sonnet 5.5 子代理）。验收方独立重跑：diff 与 handoff/C5.5a.patch 逐字相同；ruff/mypy ok；deleted_modules_check ok；全量 `{"passed": 4511, "skipped": 10}`；collect 4521；golden 对 IS.5 检查点 ok；未推送，origin/main 仍为 d5a40ae。
 - **C4.1 升级（卡片原样不可行）**：默认改 v3 后 2 个测试失败（`test_confgen_requires_explicit_seed`、`test_confgen_seed_rules_preserved`），固定的是旧 native 的 `seed_required`；`sampling.cap` 无种子则报 schema 错误，仍不满足。用户选 A：白名单加这两个文件、只显式传 legacy native，断言不动。已登记在 PLAN 的 C4.1 修订与 C4.3 卡片（须改写为 v3 对应规则或删除，删除需用户批准；并确认「v3 全枚举无需种子」为预期）。
 - C4.1 原型（基点 aa920b8，3 个文件，+25/−3，diff 中无 assert 行）：ruff/mypy/black ok；collect 4521 不变；全量 `{"passed": 4511, "skipped": 10}`；golden 对 IS.5 检查点 ok（引擎报告无差异）。补丁 handoff/C4.1.patch，卡片 handoff/C4.1.md，提示词 handoff/C4.1-executor-prompt.txt。
+
+## C4.1 验收通过；L1/L2 原型；J4.1 前置检查（2026-10-03）
+
+- **C4.1**：refactor/diet-p4 `c6b88ff`（执行器子代理）。验收方独立核对：diff 与 handoff/C4.1.patch 逐字相同；ruff/mypy ok；全量 `{"passed": 4511, "skipped": 10}`；golden 对 IS.5 检查点 ok。小瑕疵：提交信息 Behavior-Change 行里有一处括号笔误（`["1-2-3"])}`），不影响内容，不重写历史。
+- **JD 分支状态（需用户知晓）：** JD 的本地 `master` 也在 `2c7e121`（合并了 implementation/input-simplification），领先 `origin/master`（9beeaf2），未推送——与 CF main 同样的情况，且同样未经用户明确批准合并进 master。JD 的 `refactor/diet` 仍在 edb068a。已建 JD 分支 `refactor/diet-p4`（2c7e121，工作树 /opt/cf-worktrees/jd-p4）承接 L2、J4.1；不得直接在 master 上提交。
+- **L2 原型**（JD，4 个文件，+62/−126）：全量 `2467 passed, 7 skipped`；ruff check/format、mypy ok。偏离卡片两处，见 PLAN L2（回退合同用 contract_key；两个测试按预期行为变化 (a) 改写，其中一个改名）。补丁 handoff/L2.patch、卡片 handoff/L2.md、提示词 handoff/L2-executor-prompt.txt。
+- **L1 原型**（CF，2 个文件，+10/−22，分支 refactor/diet-l1，基点 c6b88ff）：表字节相同；collect 4521；全量 `{"passed": 4511, "skipped": 10}`；golden ok（契约/边界逐项 ok）。补丁 handoff/L1.patch、卡片 handoff/L1.md、提示词 handoff/L1-executor-prompt.txt。
+- **J4.1 前置检查**：JD 有命中（见 PLAN J4.1），本卡不是"无改动"，需要原型；待 L2/L1 之后。

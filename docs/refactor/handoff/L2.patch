@@ -1,0 +1,403 @@
+diff --git a/src/jobdesk_v2/application/remote/v4_validation.py b/src/jobdesk_v2/application/remote/v4_validation.py
+index e49d299..555425d 100644
+--- a/src/jobdesk_v2/application/remote/v4_validation.py
++++ b/src/jobdesk_v2/application/remote/v4_validation.py
+@@ -258,27 +258,22 @@ def check_submission_bytes(validated_bytes: bytes, submitted_bytes: bytes) -> st
+ # editing states -- an undo restores an older revision, and a redo can return to
+ # one -- so an answer must carry *all* of:
+ #
+-# ``session_id``                which editing session asked;
+-# ``session_epoch``             how many mutations that session had applied;
+-# ``request_id``                which request this answer belongs to;
+ # ``document_content_digest``   the exact payload that was validated;
+-# ``target_identity``           the server/base directory the run was aimed at;
+-# ``capability_identity``       the contract/capability the answer was judged by.
++# ``contract_digest``           the producer contract the answer was judged by;
++# ``target_identity``           the server/base directory the run was aimed at.
+ #
+ # Any disagreement means the answer is about a state that no longer exists and
+ # is discarded.  Requiring the whole set also catches the case a revision
+ # counter cannot: an undo back to the same revision with different metadata,
+-# resources or target.
++# resources or target.  The answer is about the content, so which editing
++# session or request asked does not matter.
+ # ---------------------------------------------------------------------------
+ 
+ #: Every token a validation answer must match.  All of them, or it is stale.
+ VALIDATION_IDENTITY_FIELDS: tuple[str, ...] = (
+-    "session_id",
+-    "session_epoch",
+-    "request_id",
+     "document_content_digest",
++    "contract_digest",
+     "target_identity",
+-    "capability_identity",
+ )
+ 
+ 
+@@ -300,7 +295,7 @@ def document_content_digest(document: Mapping[str, Any]) -> str:
+ 
+ @dataclass(frozen=True, slots=True)
+ class ValidationRequestIdentity:
+-    """The six tokens an async validation answer must still match.
++    """The three tokens an async validation answer must still match.
+ 
+     :meth:`require_current` is the gate: it raises
+     :class:`StaleValidationResponseError` naming every token that moved.  A
+@@ -308,35 +303,24 @@ class ValidationRequestIdentity:
+     cannot be checked, so it is refused instead.
+     """
+ 
+-    session_id: str
+-    session_epoch: int
+-    request_id: str
+     document_content_digest: str
++    contract_digest: str
+     target_identity: str
+-    capability_identity: str
+ 
+     def __post_init__(self) -> None:
+-        for name in ("session_id", "request_id", "document_content_digest"):
++        for name in ("document_content_digest", "contract_digest"):
+             if not str(getattr(self, name) or "").strip():
+                 raise ValueError(f"a validation request identity requires {name}")
+-        if self.session_epoch < 0:
+-            raise ValueError("session_epoch must not be negative")
+ 
+     def stale_reasons(self, current: ValidationRequestIdentity) -> tuple[str, ...]:
+         """Names of the tokens that disagree, in field order."""
+         reasons: list[str] = []
+-        if self.session_id != current.session_id:
+-            reasons.append("session_id")
+-        if self.session_epoch != current.session_epoch:
+-            reasons.append("session_epoch")
+-        if self.request_id != current.request_id:
+-            reasons.append("request_id")
+         if self.document_content_digest != current.document_content_digest:
+             reasons.append("document_content_digest")
++        if self.contract_digest != current.contract_digest:
++            reasons.append("contract_digest")
+         if self.target_identity != current.target_identity:
+             reasons.append("target_identity")
+-        if self.capability_identity != current.capability_identity:
+-            reasons.append("capability_identity")
+         return tuple(reasons)
+ 
+     def matches(self, current: ValidationRequestIdentity) -> bool:
+@@ -355,18 +339,6 @@ class ValidationRequestGate:
+ 
+     request: ValidationRequestIdentity
+ 
+-    @property
+-    def session_id(self) -> str:
+-        return self.request.session_id
+-
+-    @property
+-    def session_epoch(self) -> int:
+-        return self.request.session_epoch
+-
+-    @property
+-    def request_id(self) -> str:
+-        return self.request.request_id
+-
+     def stale_reasons(self, current: ValidationRequestIdentity) -> tuple[str, ...]:
+         return self.request.stale_reasons(current)
+ 
+@@ -376,46 +348,33 @@ class ValidationRequestGate:
+ 
+ def validation_request_identity(
+     *,
+-    session_id: str,
+-    session_epoch: int,
+-    request_id: str,
+     document: Mapping[str, Any],
++    contract_digest: str,
+     target_identity: str = "",
+-    capability_identity: str = "",
+ ) -> ValidationRequestIdentity:
+     """Build the identity of one validation request over ``document``."""
+     return validation_request_identity_from_digest(
+-        session_id=session_id,
+-        session_epoch=session_epoch,
+-        request_id=request_id,
+         document_digest=document_content_digest(document),
++        contract_digest=contract_digest,
+         target_identity=target_identity,
+-        capability_identity=capability_identity,
+     )
+ 
+ 
+ def validation_request_identity_from_digest(
+     *,
+-    session_id: str,
+-    session_epoch: int,
+-    request_id: str,
+     document_digest: str,
++    contract_digest: str,
+     target_identity: str = "",
+-    capability_identity: str = "",
+ ) -> ValidationRequestIdentity:
+     """Build an identity when the content digest was captured earlier.
+ 
+-    The GUI keeps a small ``(session_id, session_epoch, digest)`` snapshot on
+-    the UI thread so a worker can check an in-flight validation without ever
+-    reading the store itself.
++    The GUI keeps the content digest as a snapshot on the UI thread so a worker
++    can check an in-flight validation without ever reading the store itself.
+     """
+     return ValidationRequestIdentity(
+-        session_id=session_id,
+-        session_epoch=session_epoch,
+-        request_id=request_id,
+         document_content_digest=document_digest,
++        contract_digest=contract_digest,
+         target_identity=target_identity,
+-        capability_identity=capability_identity,
+     )
+ 
+ 
+diff --git a/src/jobdesk_v2/gui/new_run/presenter.py b/src/jobdesk_v2/gui/new_run/presenter.py
+index bac003f..ba0ea0f 100644
+--- a/src/jobdesk_v2/gui/new_run/presenter.py
++++ b/src/jobdesk_v2/gui/new_run/presenter.py
+@@ -36,7 +36,6 @@ from __future__ import annotations
+ 
+ import threading
+ import time
+-import uuid
+ from collections.abc import Callable, Mapping, Sequence
+ from dataclasses import replace
+ from typing import Any, Literal
+@@ -223,7 +222,7 @@ class NewRunPresenter(QObject):
+         # The current editing state, kept fresh on the UI thread (store
+         # changes) so a worker can compare against it without touching the
+         # store.  A tuple assignment is atomic; the worker only reads it.
+-        self._edit_snapshot: tuple[str, int, str] = ("", 0, "")
++        self._edit_snapshot: str = ""
+         self._background_result.connect(self._dispatch_result)
+         self._background_error.connect(self._dispatch_error)
+         self._background_stage.connect(self._on_submission_stage)
+@@ -845,10 +844,10 @@ class NewRunPresenter(QObject):
+ 
+     # -- validation request identity -----------------------------------------
+     # An async producer answer is only valid for the exact state that asked for
+-    # it.  The gate below binds session id, session epoch, request id, document
+-    # digest, target identity and capability identity; all six must still agree
+-    # when the answer lands, or the answer is discarded.  The current state is
+-    # snapshotted on the UI thread so a worker never has to read the store.
++    # it.  The gate below binds the document digest, the contract digest and the
++    # target identity; all three must still agree when the answer lands, or the
++    # answer is discarded.  The current state is snapshotted on the UI thread so
++    # a worker never has to read the store.
+ 
+     def _target_identity(self) -> str:
+         target = self._target
+@@ -856,12 +855,16 @@ class NewRunPresenter(QObject):
+             return ""
+         return f"{target.server_id}:{target.remote_base_dir}"
+ 
+-    def _capability_identity(self) -> str:
++    def _contract_digest(self) -> str:
+         contract = (
+             self._active_contract if self._active_contract is not None else self._service.contract
+         )
+-        key = self._contract_key_of(contract)
+-        return key
++        v4 = contract.v4 if isinstance(contract, ResolvedContract) else contract
++        if isinstance(v4, VerifiedV4Contract):
++            return v4.contract_digest
++        # Only a verified V4 contract has a producer digest; the compatibility
++        # fallback is identified by its own contract key, as before.
++        return self._contract_key_of(contract)
+ 
+     def _document_projection(
+         self,
+@@ -897,35 +900,22 @@ class NewRunPresenter(QObject):
+             # here would disagree with the request digest above and make every
+             # current answer look stale the moment an editor-only member exists.
+             payload = projection(payload)
+-        self._edit_snapshot = (
+-            self._store.session_id,
+-            self._store.session_epoch,
+-            document_content_digest(payload),
+-        )
++        self._edit_snapshot = document_content_digest(payload)
+ 
+-    def _current_validation_identity(self, request_id: str) -> ValidationRequestIdentity:
+-        session_id, epoch, digest = self._edit_snapshot
++    def _current_validation_identity(self) -> ValidationRequestIdentity:
+         return validation_request_identity_from_digest(
+-            session_id=session_id,
+-            session_epoch=epoch,
+-            request_id=request_id,
+-            document_digest=digest,
++            document_digest=self._edit_snapshot,
++            contract_digest=self._contract_digest(),
+             target_identity=self._target_identity(),
+-            capability_identity=self._capability_identity(),
+         )
+ 
+-    def _begin_validation_request(
+-        self, request_id: str, compiled: CompiledRun
+-    ) -> ValidationRequestGate:
++    def _begin_validation_request(self, compiled: CompiledRun) -> ValidationRequestGate:
+         """Capture the identity of the validation about to be requested."""
+         self._refresh_edit_snapshot()
+         request = validation_request_identity(
+-            session_id=self._store.session_id,
+-            session_epoch=self._store.session_epoch,
+-            request_id=request_id,
+             document=dict(compiled.workflow_payload),
++            contract_digest=self._contract_digest(),
+             target_identity=self._target_identity(),
+-            capability_identity=self._capability_identity(),
+         )
+         return ValidationRequestGate(request=request)
+ 
+@@ -935,7 +925,7 @@ class NewRunPresenter(QObject):
+         Called from the worker; reads only the UI-thread snapshot and plain
+         presenter values, never the store.
+         """
+-        gate.check(self._current_validation_identity(gate.request_id))
++        gate.check(self._current_validation_identity())
+ 
+     def _recorded_validation(
+         self, context: Any | None, contract: Any, validated: ValidatedSubmission
+@@ -986,7 +976,7 @@ class NewRunPresenter(QObject):
+         # producer line the run belongs to, so the digest-bearing key follows it.
+         if compiled.contract_key != self._contract_key_of(contract):
+             compiled = replace(compiled, contract_key=self._contract_key_of(contract))
+-        gate = self._begin_validation_request(uuid.uuid4().hex, compiled)
++        gate = self._begin_validation_request(compiled)
+         frozen = self._frozen_endpoint
+         context = self._submission_context(compiled, frozen)
+         self._submission_state = "validating"
+diff --git a/tests/application/test_p0_pr2_identity_resource.py b/tests/application/test_p0_pr2_identity_resource.py
+index 9178f9e..4f1f83a 100644
+--- a/tests/application/test_p0_pr2_identity_resource.py
++++ b/tests/application/test_p0_pr2_identity_resource.py
+@@ -404,45 +404,43 @@ def test_undo_redo_of_a_resource_edit_restores_exactly() -> None:
+ 
+ 
+ # ---------------------------------------------------------------------------
+-# 15: an async answer is rejected when the epoch moved, even at equal revision
++# 15: an async answer is bound to content, contract and target only
+ # ---------------------------------------------------------------------------
+ 
+ 
+-def _identity(store: WorkflowDraftStore, request_id: str) -> Any:
++def _identity(store: WorkflowDraftStore) -> Any:
+     return validation_request_identity(
+-        session_id=store.session_id,
+-        session_epoch=store.session_epoch,
+-        request_id=request_id,
+         document=store.current.document.payload,
++        contract_digest="contract-digest",
+         target_identity="server:/base",
+-        capability_identity="contract-capability",
+     )
+ 
+ 
+-def test_stale_validation_response_is_rejected_by_epoch_even_when_revision_matches() -> None:
++def test_validation_response_survives_undo_back_to_the_same_content() -> None:
+     _service, store = _store()
+     revision_before = store.current.revision
+-    request = _identity(store, "req-1")
++    request = _identity(store)
+ 
+     store.dispatch(SetStepResource("opt_1", "memory_per_item", "32GiB"))
++    # While the content differs the answer describes a state that no longer
++    # exists and must be discarded.
++    edited = _identity(store)
++    assert edited.stale_reasons(request) == ("document_content_digest",)
++    with pytest.raises(StaleValidationResponseError) as excinfo:
++        request.require_current(edited)
++    assert "document_content_digest" in str(excinfo.value)
++
+     store.undo()
+-    # The payload is back and the revision happens to match again ...
++    # The content is back: the answer is about this content, whichever editing
++    # session or request asked, so it is current again.
+     assert store.current.revision == revision_before
+-    # ... but the session moved, so the answer describes a state that no
+-    # longer exists and must be discarded.
+-    current = _identity(store, "req-1")
+-    assert current.document_content_digest == request.document_content_digest
+-    assert current.stale_reasons(request) == ("session_epoch",)
+-    with pytest.raises(StaleValidationResponseError) as excinfo:
+-        request.require_current(current)
+-    assert "session_epoch" in str(excinfo.value)
++    current = _identity(store)
++    assert current.stale_reasons(request) == ()
++    request.require_current(current)
+     assert set(VALIDATION_IDENTITY_FIELDS) == {
+-        "session_id",
+-        "session_epoch",
+-        "request_id",
+         "document_content_digest",
++        "contract_digest",
+         "target_identity",
+-        "capability_identity",
+     }
+ 
+ 
+@@ -455,23 +453,16 @@ def test_every_identity_token_is_checked_and_undo_redo_advance_the_epoch() -> No
+     assert store.session_epoch == epoch_before + 3
+     assert store.session_id
+ 
+-    request = _identity(store, "req-2")
+-    assert request.matches(_identity(store, "req-2"))
++    request = _identity(store)
++    assert request.matches(_identity(store))
+ 
+     for field_name in VALIDATION_IDENTITY_FIELDS:
+         values: dict[str, Any] = {
+-            "session_id": request.session_id,
+-            "session_epoch": request.session_epoch,
+-            "request_id": request.request_id,
+             "document_content_digest": request.document_content_digest,
++            "contract_digest": request.contract_digest,
+             "target_identity": request.target_identity,
+-            "capability_identity": request.capability_identity,
+         }
+-        values[field_name] = (
+-            values[field_name] + 1
+-            if field_name == "session_epoch"
+-            else f"other-{values[field_name]}"
+-        )
++        values[field_name] = f"other-{values[field_name]}"
+         tampered = ValidationRequestIdentity(**values)
+         assert tampered.stale_reasons(request) == (field_name,), field_name
+ 
+diff --git a/tests/gui/test_new_run_remote.py b/tests/gui/test_new_run_remote.py
+index 7089150..d6435a8 100644
+--- a/tests/gui/test_new_run_remote.py
++++ b/tests/gui/test_new_run_remote.py
+@@ -598,10 +598,9 @@ def test_target_edit_during_validation_keeps_the_submit_endpoint_snapshot(qtbot,
+ def test_an_edit_during_validation_discards_the_stale_answer(qtbot, editor):
+     """A validation answer from before an edit is discarded, sink untouched.
+ 
+-    The edit is *undone* before the answer lands, so the visible revision is
+-    exactly the one the submission started from.  Revision equality is
+-    therefore not enough to accept the answer: the session epoch moved, and the
+-    six-token gate must refuse it.
++    The edit changes the content before the answer lands, so the answer is
++    about a document that no longer exists and the three-token gate (content,
++    contract, target) must refuse it.
+     """
+     service, store = editor
+     sink = _ContextSink()
+@@ -611,13 +610,10 @@ def test_an_edit_during_validation_discards_the_stale_answer(qtbot, editor):
+ 
+     assert presenter.begin_submission() is True
+     assert validator.entered.wait(timeout=5), "validation did not start"
+-    revision_before = presenter.run.revision
+     step_id = presenter.first_step_id()
+     assert step_id is not None
+ 
+     store.dispatch(SetStepField(step_id, "calc.keyword", "M062X"))
+-    store.undo()
+-    assert presenter.run.revision == revision_before, "revision matches again"
+     validator.gate.set()
+ 
+     qtbot.waitUntil(lambda: presenter.submission_state == "failed")

@@ -864,6 +864,7 @@ IS 分支上没有 `docs/refactor/`。各卡如需工具，从 `$TOOLS` 运行�
 - ID：J4.1 ／ 仓库：JobDesk-v2 ／ 前置：C4.1
 - 类型：`delete`
 - 范围：IS.4 合入 JD master 之后，`git grep -n "confgen.native\|CONFGEN_NATIVE_FIELD" -- src tests` 的全部命中。如果没有命中，本卡记为"无改动"，写入 LOG 并跳过。
+- **前置检查结果（2026-10-03，@2c7e121）：有命中，不能跳过。** `application/editor/confgen_v3.py`（`CONFGEN_NATIVE_FIELD` 定义与字段表）、`gui/new_run/confgen_v3_form.py`（"Native input (legacy)" 表单控件）、`tests/gui/test_intent_live_gui.py`、`tests/gui/test_intent_panels.py`；`application/intent/model.py` 的拒绝提示文字是 IS.4 的行为，保留。
 
 ### C4.2 — re-pin 到 J4.1（J4.1 无改动时跳过）
 
@@ -1057,6 +1058,7 @@ IS 分支上没有 `docs/refactor/`。各卡如需工具，从 `$TOOLS` 运行�
 - 允许修改的文件：`confflow/producer/contract.py`、`confflow/execution/contracts.py`（只允许把 `_STRUCTURE_PORT_PAIRINGS` / `_VALUE_PORT_PAIRINGS` 改为公开名或增加只读访问函数）
 - 步骤（@d5a40ae）：`contract.py:180-202` 的"构造 `PortSpec` 试探"改为直接按 `execution/contracts.py:110-117` 的规则从这两个常量生成表：`structure` kind 用 `_STRUCTURE_PORT_PAIRINGS`，其他 kind 用 `_VALUE_PORT_PAIRINGS`，列表顺序与 `Pairing` 枚举顺序一致。
 - 验收：标准验收；**contract 与 boundary 的 sha256 与最新检查点逐字节相同**。
+- **实现（验收方原型，2026-10-03）：** 常量保持私有，新增只读函数 `allowed_port_pairings(kind)`（`execution/contracts.py`），`producer/contract.py` 调用它；表与旧探测结果相同；分支 `refactor/diet-l1`（基点 c6b88ff），补丁 handoff/L1.patch。
 
 ### L2 — validation token 字段改为 document_content_digest、contract_digest、target_identity（Q3：决策 4 已修改）
 
@@ -1082,6 +1084,7 @@ IS 分支上没有 `docs/refactor/`。各卡如需工具，从 `$TOOLS` 运行�
      - (b) 合同变化时，旧结论会被丢弃。之前在生产中实际比较的是 `contract_key`（`capability_identity` 那一支永远取不到值，见 J3.1），现在比较的是 `contract_digest`：`contract_digest` 覆盖整个 envelope，而 `contract_key` 只取 schema/manifest/recipes 三个摘要的前 12 位，所以 producer 只改了其他 section 时，旧结论现在也会被丢弃。
      - (c) 目标（服务器 + 远端目录）变化时，旧结论仍然被丢弃（与现在相同）。
      - (d) 不再有 request 级别的标识；同一份内容、合同、目标下，先发出的请求的结论也会被接受（结论是关于同一内容的，不影响提交安全，因为提交还受 `ValidatedSubmission.validated_sha256` 字节绑定的约束，`v4_validation.py:206-235`）。
+- **实现差异（验收方原型，2026-10-03）：** 非 V4 的回退合同没有 `contract_digest`，若为空即拒绝会让 16 个测试失败（`ValueError: requires contract_digest`）；实现在非 V4 时改用合同自身的 `contract_key`（同变更前，回退合同按其 key 判过期）。分支 JD `refactor/diet-p4`（基点 2c7e121），补丁 handoff/L2.patch；`test_new_run_remote.py::test_an_edit_during_validation_discards_the_stale_answer` 因预期行为变化 (a) 去掉 undo，`test_p0_pr2_identity_resource.py` 的 epoch 测试改名并改写。
 - 禁止事项：G1–G9；不得改 `bind_validated_submission`、`check_submission_bytes`、`submission_identity`。
 - 验收命令：JD 标准验收。期望：失败集合为空；被修改的测试只断言 (a)–(d) 涉及的字段；`git grep -n "session_epoch" -- src/jobdesk_v2/application/remote src/jobdesk_v2/gui/new_run/presenter.py` 在 token 相关代码中无命中（store 自身的 `session_epoch` 不在本卡范围）。
 - 提交信息模板：`refactor(validation)!: bind validation answers to content, contract and target only` + 通用尾部（Behavior-Change 列出 (a)–(d)）。

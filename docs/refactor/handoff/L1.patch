@@ -1,0 +1,68 @@
+diff --git a/confflow/execution/contracts.py b/confflow/execution/contracts.py
+index 24609e7..5ebc897 100644
+--- a/confflow/execution/contracts.py
++++ b/confflow/execution/contracts.py
+@@ -34,6 +34,7 @@ __all__ = [
+     "PortSpec",
+     "RecoverySpec",
+     "ResultProfileSpec",
++    "allowed_port_pairings",
+ ]
+ 
+ 
+@@ -50,6 +51,12 @@ _STRUCTURE_PORT_PAIRINGS = frozenset({Pairing.SINGLE, Pairing.PER_STRUCTURE, Pai
+ _VALUE_PORT_PAIRINGS = frozenset({Pairing.SINGLE, Pairing.BY_SUBJECT})
+ 
+ 
++def allowed_port_pairings(kind: PortKind) -> tuple[Pairing, ...]:
++    """Return the pairings a port of *kind* accepts, in ``Pairing`` order."""
++    allowed = _STRUCTURE_PORT_PAIRINGS if kind is PortKind.STRUCTURE else _VALUE_PORT_PAIRINGS
++    return tuple(pairing for pairing in Pairing if pairing in allowed)
++
++
+ def _require_text(value: Any, field_name: str) -> str:
+     if not isinstance(value, str) or not value or value != value.strip():
+         raise DomainError(f"{field_name} must be a non-empty, trimmed string")
+diff --git a/confflow/producer/contract.py b/confflow/producer/contract.py
+index 8c5f0ff..7e4043f 100644
+--- a/confflow/producer/contract.py
++++ b/confflow/producer/contract.py
+@@ -42,6 +42,7 @@ from ..execution.contracts import (
+     ExecutorContract,
+     PortSpec,
+     ResultProfileSpec,
++    allowed_port_pairings,
+ )
+ from ..execution.registry import ExecutionRegistry, default_registry
+ from ..workflow.v4.document import SCHEMA_ID
+@@ -166,28 +167,8 @@ def _program_descriptors() -> list[dict[str, Any]]:
+ 
+ 
+ def _allowed_pairings_by_kind() -> dict[str, list[str]]:
+-    """Probe the pairing rule from the single source: ``PortSpec`` itself.
+-
+-    Each pairing is accepted for a kind exactly when ``PortSpec`` constructs
+-    without raising, so the published rule can never disagree with the
+-    validation the compiler enforces.
+-    """
+-    table: dict[str, list[str]] = {}
+-    for kind in PortKind:
+-        allowed: list[str] = []
+-        for pairing in Pairing:
+-            try:
+-                PortSpec(
+-                    name="probe",
+-                    kind=kind,
+-                    cardinality=Cardinality.ONE,
+-                    pairing=pairing,
+-                )
+-            except Exception:  # noqa: BLE001 - rejection is the signal
+-                continue
+-            allowed.append(pairing.value)
+-        table[kind.value] = allowed
+-    return table
++    """Publish the pairing rule from the single source ``PortSpec`` validates with."""
++    return {kind.value: [p.value for p in allowed_port_pairings(kind)] for kind in PortKind}
+ 
+ 
+ def _ports_section(registry: ExecutionRegistry) -> dict[str, Any]:
