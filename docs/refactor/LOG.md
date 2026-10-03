@@ -589,3 +589,24 @@
 ## C4.7b 验收通过（2026-10-03）
 
 - CF `refactor/diet-p4` `59465df`。验收方独立核对：diff 与 handoff/C4.7b.patch 逐字相同，只改 `docs/architecture/WORKFLOW_V4.md`（+2 行、无删除）；分支名 `refactor/diet-p4`；工作树干净；未推送。执行器自报全量 `{"passed": 4473, "skipped": 10}`、collect 4483 不变、golden_check ok；整树验收时验收方会在最终提交上再独立重跑全量与 golden_check。
+
+## C4.8 验收通过；整树验收（推送前，2026-10-03）
+
+- **C4.8**：CF `refactor/diet-p4` `b9b9797`。验收方独立核对：diff 与 handoff/C4.8.patch 逐字相同；分支名 `refactor/diet-p4`；ruff/mypy ok；CI 作业清单 `['coverage', 'test-matrix']`。numba 证据（验收方原始输出）：
+  ```
+  $ ls tests/test_optional_numba.py
+  ls: cannot access 'tests/test_optional_numba.py': No such file or directory
+  $ git ls-files tests | grep -i numba
+  （无输出）
+  $ git log --diff-filter=D --format='%h %s' -- tests/test_optional_numba.py
+  deadf46 refactor!: delete the legacy refine and confgen blocks and their CLIs
+  $ git show 59465df:.github/workflows/ci.yml | grep -n "test_optional_numba"     # C4.8 之前的 ci.yml
+  136:        run: pytest -q tests/test_optional_numba.py
+  ```
+  C4.8 之后 `ci.yml` 不再含该引用。
+- **整树验收**（ConfFlow `refactor/diet-p4` = b9b9797；JobDesk `refactor/diet-p4` = 9de35d6）：
+  - ConfFlow 全量：`{"passed": 4473, "skipped": 10}`（`--jdpin jd-pin-p4`）；JobDesk 全量（CF 绑定 b9b9797）：`2467 passed, 7 skipped`。
+  - ConfFlow `pytest -m cross_repo`（JD 9de35d6）：`7 passed, 4476 deselected`，无 skipped。
+  - golden_check 对 C4.3 检查点：`ok: true`（契约/边界 5 项 ok，TS1 三项 ok，引擎报告 added/different/missing 为空，仅一个随测试删除的报告）。
+  - golden_check 对 **IS.5 检查点**：boundary ok；TS1 三项 ok；引擎报告 different 0、missing 0、added 6（C4.3a 新增 typed 测试的报告，已纳入 C4.3 检查点）；contract 摘要 DIFF，差异恰为 C4.3 的预期契约变化——最终树的 contract 与 C4.3 检查点逐字节相同；对 IS.5：manifest 字段只少 `confgen.native`，escape hatch 块少 `confgen.native`，schema 定义少 `ConfgenModel`、`LegacyPathDeclarationModel`，别无其它。
+  - `git ls-files confflow/core`（15 个文件）：`__init__.py bonding.py console.py constants.py contracts.py data.py elements.py exceptions.py gaussian_input.py io.py logging.py parsers.py path_policy.py utils.py xyz_metadata.py`；`core/bonding.py`、`core/data.py`（以及 `core/constants.py`）仍在。

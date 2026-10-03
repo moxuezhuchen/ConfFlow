@@ -66,7 +66,7 @@
 | C4.6（新增）删除 `architecture_metrics.py` 里针对已删除对象（calc、V1/V2/V3 wire）的 31 个全为 0 的统计键及其代码，保留键的值逐值不变，并更新两个脚本的说明 | 完成 | CF 015a174 |
 | C4.7（新增）文档收尾（10 个文件：把 docs-rewrite 的内容应用到最终树，更新 CONFGEN_PATHS 旧段落与 SECURITY_MODEL 的 results.db） | 完成 | CF 4900cb8 |
 | C4.7b（新增）WORKFLOW_V4.md 顶部加"历史设计记录"说明（+2 行） | 完成 | CF 59465df |
-| C4.8（新增）删除失效 CI 作业与无人使用的 `tests/_helpers.py` | 待做（前置 C4.7b 之后，文件不相交） | — |
+| C4.8（新增）删除运行已不存在测试文件的 numba CI 作业，及无人使用的 `tests/_helpers.py` | 完成 | CF b9b9797 |
 
 ## Phase 5：calc / 遗留 CLI / core 清理
 | 卡 | 状态 | 提交 |
