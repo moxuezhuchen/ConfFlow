@@ -828,23 +828,17 @@ IS 分支上没有 `docs/refactor/`。各卡如需工具，从 `$TOOLS` 运行�
 
 ### IS.4 — JD 输入简化分支改用 typed v3（Q1 已确认）
 
-- ID：IS.4 ／ 仓库：JobDesk-v2 ／ 分支：`implementation/input-simplification`（已完成 IS.0-JD 合并）／ 前置：IS.3
-- 目标：JD 不再写出 legacy `native.paths`；新的 ConfGen 步骤和路径编辑一律使用 typed v3。
-- 类型：`logic`
-- 允许修改的文件：
-  - `src/jobdesk_v2/gui/new_run/confgen_v3_form.py`
-  - `src/jobdesk_v2/gui/new_run/page.py`
-  - `src/jobdesk_v2/application/intent/model.py`
-  - `tests/application/test_intent_model.py`、`tests/gui/test_intent_live_gui.py`、`tests/gui/test_confgen_v3_editor.py`、`tests/application/test_confgen_v3_jobdesk.py`（只修改断言 legacy 默认值或 legacy 表示的测试，逐条声明）
-- 具体步骤（@92d48f1 行号；IS.0-JD 合并后按符号定位）：
-  1. `confgen_v3_form.py`：路径表示选择器（L548-555）删除 `("legacy", "legacy native.paths (frame-free, default)")` 选项，只保留 typed，默认值 `"typed"`；`_paths_mode` 为 `"legacy"` 的分支（L783-803 读取 `native.paths`、L897、L962-975 写回 native）中，写回 legacy native 的分支删除；读取已有文档中 legacy `native.paths` 的分支保留为只读展示，并显示"legacy paths 需转换为 typed v3"的提示（提示文本写入提交信息）。
-  2. `page.py`：新 confgen 步骤的初始块（L486-491）从 `{"confgen": {"native": {}}}` 改为 `{"confgen": {"schema_version": 3}}`。
-  3. `intent/model.py`：`_intent_confgen_step`（L919-977）的 `has_legacy` 分支改为 `raise IntentNotRepresentable(...)`，消息指明具体键 `confgen.native`，并说明需改用 typed v3；模块 docstring（L84、L663-666）中关于 producer 包装 legacy paths 的描述同步删除。
-  4. 不改：`confgen.native` 字段行（`confgen_v3_form.py:661`，J4.1 处理）；`intent/preview.py` 的 `build_preview_native`（Q10，保留）；`intent/sampling.py` 对已有文档中 `native.paths` 的读取。
-- 预期行为变化：(a) 新建 ConfGen 步骤是 typed v3；(b) 表单不能再写出 legacy paths；(c) 含 legacy native 的已有文档不能再走 intent 编译，会得到指明 `confgen.native` 的错误。
-- 禁止事项：G1–G9。
-- 验收命令：JD 标准验收（§2.3 绑定 `$CFIS` 的 IS.3 提交）。期望：失败集合为空；被修改的测试只断言 (a)(b)(c)。
-- 提交信息模板：`feat(new-run)!: author ConfGen paths as typed v3 only` + 通用尾部。
+- ID：IS.4 ／ 仓库：JobDesk-v2 ／ 分支：`implementation/input-simplification`（工作树就是 `/opt/jobdesk-v2-v4`，HEAD bcdea5b，须干净） ／ 前置：IS.3 已提交（**IS.4 的测试要绑定 CF 的 IS.3 提交**：`--cf /opt/cf-worktrees/exec-cf-is`，其 HEAD 提交标题必须是 `feat(producer)!: reject non-v3 ConfGen native in intent compilation`，否则先停下报告） ／ 类型：`logic`。做法：应用 `handoff/IS.4-src-tests.patch`（6 个文件），不重新设计。
+- 内容：
+  1. `confgen_v3_form.py`：删除"路径表示"选择器（legacy / typed）及所有 legacy 写回分支，表单只写 typed v3 `paths`。含 legacy `native.paths` 的已有文档：加载到同一组路径编辑器并显示提示 "This document carries legacy native.paths. Legacy paths must be converted to typed v3: edit any path to convert them."；**只加载不写入**；用户一旦编辑，就写出 typed `paths` 并从 `native` 中只删掉 `paths`（其余 native 成员保留）。（验收方对原卡"只读展示"的调整：原卡的只读控件没有现成实现，改为"加载+提示+编辑即转换"，行为更友好，不会产生两种表示并存。）
+  2. `page.py`：新建 ConfGen 步骤的初始块从 `{"confgen": {"native": {}}}` 改为 `{"confgen": {"schema_version": 3}}`。
+  3. `intent/model.py`：`_intent_confgen_step` 对非空 `confgen.native` 一律抛 `IntentNotRepresentable`，消息指明 `confgen.native` 并说明改用 typed v3；删除"mixes representations"分支和 legacy 展开；同步更新 docstring。GUI 对 `IntentNotRepresentable` 的既有处理是回落到直接 V4 路径（状态栏 "Direct V4 path (unvalidated by intent): …"）。
+  4. 不改：`confgen.native` 字段行（J4.1 处理）；`intent/preview.py` 的 `build_preview_native`（Q10 保留）；`intent/sampling.py` 对已有文档中 `native.paths` 的读取。
+- **实测发现（需知晓）：** 改成 typed 之后，Normal 里编辑的 ConfGen 路径是**全枚举，编译结果不再带推导出的种子**（legacy native 路径以前总是带一个 producer 推导的整数种子）。依赖"必有种子"的 3 个实机 GUI 测试已改为断言 `seed is None`；"改路径后种子随科学身份变化"的测试改写为"编译结果随路径变化且无种子"。
+- 测试改动：删除/改名 3 项（`test_confgen_hybrid_representation_refuses`、`test_confgen_hybrid_representation_refuses_fast`、`test_second_run_rederives_seed_after_path_change`，清单 `handoff/IS.4-removed-tests.txt`）；新增 5 项（`handoff/IS.4-added-tests.txt`：legacy native 一律拒绝并指名、实机 GUI 的拒绝、编译随路径变化且无种子、legacy native.paths 的提示与编辑即转换、表单无 legacy 切换）；另有 4 个实机/面板测试被改写但节点名不变（去掉 legacy 模式、断言 typed 路径与 `schema_version == 3`）。
+- 自检期望：JD 全量（绑定 IS.3 之后的 CF）`2467 passed, 7 skipped`；collect 2472 → 2474；ruff/format/mypy 通过；`startup_smoke.py` 输出 ok。
+- 预期行为变化：(a) 新建 ConfGen 步骤是 typed v3；(b) 表单不能再写出 legacy paths；(c) 含 legacy native 的已有文档不能再走 intent 编译（得到指明 `confgen.native` 的提示并回落到直接 V4 路径）。
+- 提交信息模板：`feat(new-run)!: author ConfGen paths as typed v3 only` + 通用尾部（Removed-Tests 3、Added-Tests 5，测试名从清单逐字复制；提示文本写入提交信息）。
 
 ### IS.5 — 把 IS 分支合入 main（需要用户批准）
 

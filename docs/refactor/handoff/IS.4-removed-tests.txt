@@ -1,0 +1,3 @@
+tests/application/test_intent_model.py::test_confgen_hybrid_representation_refuses
+tests/gui/test_intent_live_gui.py::test_confgen_hybrid_representation_refuses_fast
+tests/gui/test_intent_live_gui.py::test_second_run_rederives_seed_after_path_change

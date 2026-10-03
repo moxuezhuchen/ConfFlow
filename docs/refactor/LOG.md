@@ -426,3 +426,8 @@
 - CF refactor/diet-c5 deadf46（父 6521581）。与更正后补丁字节一致；提交信息 214+3 个测试名与清单逐行相同；confflow/blocks 已不存在，deleted_modules_check 通过；ruff/mypy 通过；全量 3935 passed / 10 skipped（验收方独立重跑，rm 之后）。已推送。
 ## IS.3 补丁已备（2026-10-03，验收方原型）
 - 基点 0a9f28d；2 个文件；全量 5149 passed；collect 5157→5161（−9 +13）；golden：contract/ts1 ok，6 份 IS.0 引擎报告不变。只有 IS.2 自己新增的 9 个“保持 legacy”测试断言了透传，已改写为必须被拒绝。
+
+## IS.4 补丁已备（2026-10-03，验收方原型，绑定带 IS.3 补丁的 CF 工作树）
+- 基点 bcdea5b；6 个文件；JD 全量 2467 passed / 7 skipped，collect 2472→2474（−3 +5），ruff/format/mypy/startup_smoke 通过。
+- 发现：typed 路径是全枚举，编译结果不再带推导种子（legacy native 路径以前总带）；3 个实机 GUI 测试和 1 个"改路径后种子变化"测试相应改写。原卡"只读展示"改为"加载+提示+编辑即转换"。
+- 事故：在原型阶段我误对整个 src 跑了 black（项目用 ruff format），产生了无关改动；已全部还原并重做，补丁里只有 6 个相关文件。

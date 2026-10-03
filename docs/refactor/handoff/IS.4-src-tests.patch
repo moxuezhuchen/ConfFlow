@@ -1,0 +1,493 @@
+diff --git a/src/jobdesk_v2/application/intent/model.py b/src/jobdesk_v2/application/intent/model.py
+index 587b9d3..e9a3c69 100644
+--- a/src/jobdesk_v2/application/intent/model.py
++++ b/src/jobdesk_v2/application/intent/model.py
+@@ -80,9 +80,8 @@ CALCULATION_CARDS: frozenset[str] = frozenset(
+ NAMED_CARDS: frozenset[str] = frozenset({"qst2", "qst3", "neb"})
+ 
+ #: Allowed step keys: the backend ``_STEP_KEYS`` verbatim.  ConfGen scopes
+-#: travel inside ``native`` (the typed ``schema_version: 3`` block directly;
+-#: legacy paths/chains mappings are wrapped by the producer into strict
+-#: ``confgen.native``); there is no ``confgen`` step key.
++#: travel inside ``native`` as the typed ``schema_version: 3`` block directly
++#: (the legacy ConfGen vocabulary is refused); there is no ``confgen`` step key.
+ _ALLOWED_STEP_KEYS: frozenset[str] = frozenset(
+     {
+         "id",
+@@ -660,12 +659,11 @@ def intent_from_workflow_document(
+       guessed (no silent ``sp`` default): it refuses.
+     * ``confgen`` steps become ``confgen@v1`` cards whose ``native`` carries
+       the ``steps[].confgen`` scope itself: the typed ``schema_version: 3``
+-      block directly, or a legacy paths/chains mapping the producer wraps
+-      into strict ``confgen.native``.  The step ``seed`` rides at the step
+-      level (never inside ``native``); typed scopes compile seedless and the
+-      producer derives the seed.  A step mixing the legacy ``native`` path
+-      with typed v3 scopes refuses: the producer accepts one representation,
+-      never a hybrid.
++      block directly.  The step ``seed`` rides at the step level (never
++      inside ``native``); typed scopes compile seedless and the producer
++      derives the seed.  A step that still carries the legacy
++      ``confgen.native`` vocabulary refuses (:class:`IntentNotRepresentable`
++      naming ``confgen.native``): re-author it as typed v3.
+     * ``structure_transform`` steps become ``refine@v1``/``deduplicate@v1``
+       cards (from ``transform.kind``) with the preset preserved when the
+       step annotations name one, and explicit ``native`` overrides otherwise.
+@@ -937,40 +935,12 @@ def _intent_confgen_step(raw: Mapping[str, Any], where: object) -> dict[str, Any
+     native = scope.pop("native", None)
+     if native is not None and not isinstance(native, Mapping):
+         raise IntentError(f"confgen step {where!r} native must be a mapping")
+-    has_legacy = isinstance(native, Mapping) and bool(native)
+-    typed = sorted(key for key in scope if key in _TYPED_CONFGEN_SCOPE_KEYS)
+-    if has_legacy and typed:
+-        raise IntentError(
+-            f"Confgen step {where!r} mixes representations: legacy "
+-            f"native.paths with typed v3 scopes ({', '.join(typed)}). Clear "
+-            "one side before compiling -- remove the legacy path scopes, or "
+-            "remove the typed scopes in Advanced. The producer accepts "
+-            "legacy {{native}} or typed {{schema_version: 3, ...}}, never both."
+-        )
+-    if has_legacy:
+-        assert isinstance(native, Mapping)
+-        unknown = sorted(
+-            key
+-            for key in scope
+-            if key not in _TYPED_CONFGEN_SCOPE_KEYS
+-            and key not in _VERSION_MARKER_KEYS
+-            and key != "strict_path_bond_check"
++    if isinstance(native, Mapping) and native:
++        raise IntentNotRepresentable(
++            f"confgen step {where!r} carries confgen.native ({', '.join(sorted(native))}), "
++            "the legacy ConfGen vocabulary; the intent path compiles typed schema_version 3 "
++            "scopes only -- re-author the scope as typed v3 (confgen.paths, torsions, ...)"
+         )
+-        if unknown:
+-            raise IntentNotRepresentable(
+-                f"confgen step {where!r} member(s) {', '.join(unknown)} have "
+-                "no legacy intent counterpart; author it on the direct V4 path"
+-            )
+-        # Legacy blocks carry their scope one level down (``native.paths``);
+-        # unwrap exactly one level so the intent ``native`` holds the scope
+-        # the producer wraps -- never a doubled ``native.native``.  Bare
+-        # version markers are recipe residue, not science, and stay behind.
+-        merged = deepcopy(dict(native))
+-        strict = scope.get("strict_path_bond_check")
+-        if strict is not None:
+-            merged["strict_path_bond_check"] = deepcopy(strict)
+-        entry["native"] = merged
+-        return entry
+     # Typed ``schema_version: 3`` blocks travel directly (an empty legacy
+     # mapping carries no science and is dropped, never shipped).
+     entry["native"] = scope
+diff --git a/src/jobdesk_v2/gui/new_run/confgen_v3_form.py b/src/jobdesk_v2/gui/new_run/confgen_v3_form.py
+index ccc3948..a411495 100644
+--- a/src/jobdesk_v2/gui/new_run/confgen_v3_form.py
++++ b/src/jobdesk_v2/gui/new_run/confgen_v3_form.py
+@@ -23,7 +23,7 @@ instead of leaving the whole block as opaque JSON:
+   normal mode because deterministic full enumeration needs no seed, with the
+   conditional rule stated: a sampling cap requires it), sampling cap and
+   enumeration limits (producer defaults as placeholders, never written
+-  values), and the legacy ``native`` path plus ``topology`` / ``tolerances``
++  values), and the ``native`` JSON (legacy, read-only residue) plus ``topology`` / ``tolerances``
+   / ``exclusions`` JSON blocks with their support notes.
+ 
+ Every control is built from the verified manifest descriptors (labels,
+@@ -545,18 +545,13 @@ class ConfgenV3Form(QWidget):
+         )
+         paths_section.content_layout.addWidget(self._paths_host)
+         paths_section.content_layout.addWidget(add_path)
+-        self._paths_mode = SelectField(
+-            (
+-                ("legacy", "legacy native.paths (frame-free, default)"),
+-                ("typed", "typed v3 paths (Advanced: needs measurable frames)"),
+-            ),
+-            unset_label="(representation)",
+-        )
+-        self._paths_mode.set_value("legacy")
+-        self._paths_mode.value_changed.connect(lambda _value: self._on_paths_changed())
+-        paths_section.content_layout.addWidget(
+-            FieldRow("Path representation", self._paths_mode, orientation="stacked")
++        self._legacy_paths_notice = BodyLabel(
++            "This document carries legacy native.paths. Legacy paths must be converted "
++            "to typed v3: edit any path to convert them.",
++            word_wrap=True,
+         )
++        self._legacy_paths_notice.setVisible(False)
++        paths_section.content_layout.addWidget(self._legacy_paths_notice)
+         self._preview_button = LinkButton("Preview paths on structure…")
+         self._preview_button.clicked.connect(lambda: self.preview_requested.emit())
+         paths_section.content_layout.addWidget(self._preview_button)
+@@ -782,26 +777,19 @@ class ConfgenV3Form(QWidget):
+     def _set_paths(
+         self, value: object, native: object = None, *, typed_present: bool = False
+     ) -> None:
+-        # Typed v3 carries top-level ``paths``; the normal legacy
+-        # representation carries ``native.paths`` (frame-free).  Either shape
+-        # loads into the same editors; the mode switch records which emitted.
+-        # A draft staging typed scopes (torsions/rings/...) with no paths yet
+-        # is honestly shown as typed, never mislabeled legacy.
++        # Typed v3 carries top-level ``paths``.  A document that still carries
++        # the legacy ``native.paths`` loads into the same editors and shows a
++        # notice: any edit converts it to typed v3 (the form never writes the
++        # legacy representation).
++        del typed_present
+         entries = [item for item in _as_mapping_list(value)]
+-        mode = "typed"
++        legacy_loaded = False
+         if not entries and isinstance(native, Mapping):
+             legacy = [item for item in _as_mapping_list(native.get("paths"))]
+             if legacy:
+                 entries = legacy
+-                mode = "legacy"
+-        elif entries:
+-            mode = "typed"
+-        elif typed_present:
+-            mode = "typed"
+-        else:
+-            current_mode = self._paths_mode.value()
+-            mode = current_mode if isinstance(current_mode, str) else "legacy"
+-        self._paths_mode.set_value(mode)
++                legacy_loaded = True
++        self._legacy_paths_notice.setVisible(legacy_loaded)
+         while len(self._path_pairs) < len(entries):
+             self._add_path({}, emit=False)
+         while len(self._path_pairs) > len(entries):
+@@ -894,22 +882,17 @@ class ConfgenV3Form(QWidget):
+     def _on_paths_changed(self) -> None:
+         entries = [widget.dump() for widget, _remove in self._path_pairs]
+         value = entries if entries else None
+-        if (self._paths_mode.value() or "legacy") == "typed":
+-            self._emit(CONFGEN_V3_PATHS_FIELD, value)
+-        else:
+-            control = self._json_controls.get(CONFGEN_NATIVE_FIELD)
+-            if control is not None:
+-                current_native = control.value()
+-                base = dict(current_native) if isinstance(current_native, dict) else {}
+-                if value is None:
+-                    base.pop("paths", None)
+-                else:
+-                    base["paths"] = value
+-                control.set_value(base or None)
+-            self._emit(
+-                CONFGEN_NATIVE_FIELD,
+-                control.value() if control is not None else ({"paths": value} if value else None),
+-            )
++        # Editing converts: the typed paths are written and any legacy
++        # ``native.paths`` the document carried is dropped, never kept beside them.
++        control = self._json_controls.get(CONFGEN_NATIVE_FIELD)
++        if control is not None:
++            current_native = control.value()
++            if isinstance(current_native, dict) and "paths" in current_native:
++                remaining = {k: v for k, v in current_native.items() if k != "paths"}
++                control.set_value(remaining or None)
++                self._emit(CONFGEN_NATIVE_FIELD, control.value())
++        self._legacy_paths_notice.setVisible(False)
++        self._emit(CONFGEN_V3_PATHS_FIELD, value)
+         self._refresh_estimate()
+ 
+     def _dump_coordination(self) -> dict[str, Any] | None:
+@@ -959,12 +942,9 @@ class ConfgenV3Form(QWidget):
+         torsions = [widget.dump() for widget, _remove in self._torsion_pairs]
+         if torsions:
+             block["torsions"] = torsions
+-        if (self._paths_mode.value() or "legacy") == "typed":
+-            paths = [widget.dump() for widget, _remove in self._path_pairs]
+-            if paths:
+-                block["paths"] = paths
+-        # Legacy mode paths already merged into the native JSON control by
+-        # _on_paths_changed; the passthrough below carries them.
++        paths = [widget.dump() for widget, _remove in self._path_pairs]
++        if paths:
++            block["paths"] = paths
+         sampling = self._dump_sampling()
+         if sampling is not None:
+             block["sampling"] = sampling
+diff --git a/src/jobdesk_v2/gui/new_run/page.py b/src/jobdesk_v2/gui/new_run/page.py
+index 54e7e70..fdcff28 100644
+--- a/src/jobdesk_v2/gui/new_run/page.py
++++ b/src/jobdesk_v2/gui/new_run/page.py
+@@ -487,7 +487,7 @@ class NewRunPage(QWidget):
+             step = {
+                 "name": card_type,
+                 "executor": "confgen",
+-                "confgen": {"native": {}},
++                "confgen": {"schema_version": 3},
+             }
+         elif executor == "structure_transform":
+             step = {
+diff --git a/tests/application/test_intent_model.py b/tests/application/test_intent_model.py
+index cefb75c..f599190 100644
+--- a/tests/application/test_intent_model.py
++++ b/tests/application/test_intent_model.py
+@@ -221,57 +221,41 @@ def test_card_native_conflict_rejected() -> None:
+         )
+ 
+ 
+-def test_confgen_hybrid_representation_refuses() -> None:
++def test_confgen_legacy_native_refuses_and_names_the_key() -> None:
+     from jobdesk_v2.application.intent.model import IntentNotRepresentable
+ 
+-    document = {
+-        "schema": "confflow.workflow.v4",
+-        "steps": [
+-            {
+-                "id": "cg_1",
+-                "executor": "confgen",
+-                "confgen": {
+-                    "schema_version": 3,
+-                    "torsions": [{"id": "t1"}],
+-                    "native": {"paths": [{"start": 1, "end": 2, "move": "end"}]},
+-                },
+-            }
+-        ],
+-    }
+-    with pytest.raises(IntentError, match="mixes representations"):
+-        intent_from_workflow_document(document)
+-    # Bare version residue with legacy paths is not a hybrid: legacy wins.
+-    legacy = {
+-        "schema": "confflow.workflow.v4",
+-        "steps": [
+-            {
+-                "id": "cg_1",
+-                "executor": "confgen",
+-                "confgen": {
+-                    "schema_version": 3,
+-                    "native": {"paths": [{"start": 1, "end": 2, "move": "end"}]},
+-                },
+-            }
+-        ],
++    legacy_paths = {"paths": [{"start": 1, "end": 2, "move": "end"}]}
++    blocks = {
++        "legacy beside typed scopes": {
++            "schema_version": 3,
++            "torsions": [{"id": "t1"}],
++            "native": legacy_paths,
++        },
++        "legacy beside a bare version marker": {"schema_version": 3, "native": legacy_paths},
++        "legacy beside unknown members": {"native": {"paths": []}, "future_scope": {"x": 1}},
++        "legacy chains": {"native": {"chains": ["1-2-3-4"]}},
+     }
+-    intent = intent_from_workflow_document(legacy)
+-    assert intent["steps"][0]["native"] == {"paths": [{"start": 1, "end": 2, "move": "end"}]}
+-    # Unknown members beside legacy native keep the direct V4 path.
+-    unknown = {
++    for label, block in blocks.items():
++        document = {
++            "schema": "confflow.workflow.v4",
++            "steps": [{"id": "cg_1", "executor": "confgen", "confgen": block}],
++        }
++        with pytest.raises(IntentNotRepresentable, match=r"confgen\.native") as raised:
++            intent_from_workflow_document(document)
++        assert "typed v3" in str(raised.value), label
++    # An empty legacy mapping carries no science: the typed block travels.
++    typed = {
+         "schema": "confflow.workflow.v4",
+         "steps": [
+             {
+                 "id": "cg_1",
+                 "executor": "confgen",
+-                "confgen": {
+-                    "native": {"paths": []},
+-                    "future_scope": {"x": 1},
+-                },
++                "confgen": {"schema_version": 3, "native": {}, "torsions": [{"id": "t1"}]},
+             }
+         ],
+     }
+-    with pytest.raises(IntentNotRepresentable):
+-        intent_from_workflow_document(unknown)
++    intent = intent_from_workflow_document(typed)
++    assert intent["steps"][0]["native"] == {"schema_version": 3, "torsions": [{"id": "t1"}]}
+ 
+ 
+ def test_missing_calculation_role_never_guesses() -> None:
+diff --git a/tests/gui/test_intent_live_gui.py b/tests/gui/test_intent_live_gui.py
+index 3620b90..5babc4d 100644
+--- a/tests/gui/test_intent_live_gui.py
++++ b/tests/gui/test_intent_live_gui.py
+@@ -281,8 +281,6 @@ def test_confgen_endpoint_seedless_compiles_derived(qtbot: Any, tmp_path: Any) -
+     page._refresh()
+     form = page._calc_section.confgen_form
+     assert form is not None
+-    # The reviewed recipe is honestly shown as typed, not mislabeled legacy.
+-    assert form._paths_mode.value() == "typed"
+     while form._torsion_pairs:
+         form._remove_pair(
+             form._torsions_layout,
+@@ -297,7 +295,6 @@ def test_confgen_endpoint_seedless_compiles_derived(qtbot: Any, tmp_path: Any) -
+         ),
+         timeout=10000,
+     )
+-    form._paths_mode.set_value("legacy")
+     # Real vocabulary bond [2, 3], no seed anywhere in Normal.
+     form._set_paths([])
+     form._add_path({"start": 2, "end": 3, "move": "end", "angles": [0, 120]})
+@@ -305,30 +302,30 @@ def test_confgen_endpoint_seedless_compiles_derived(qtbot: Any, tmp_path: Any) -
+     _wait_compiled(qtbot, page)
+     payload = store.current.document.to_mapping()
+     confgen = payload["steps"][0]["confgen"]
+-    assert confgen["native"]["paths"][0]["move"] == "end"
+-    assert isinstance(confgen.get("seed"), int)
+-    assert "torsions" not in confgen and "schema_version" not in confgen
++    assert confgen["paths"][0]["move"] == "end"
++    assert confgen["schema_version"] == 3
++    assert confgen.get("seed") is None  # full enumeration needs no seed
++    assert "torsions" not in confgen and "native" not in confgen
+ 
+ 
+ @requires_producer
+ @pytest.mark.gui
+-def test_confgen_hybrid_representation_refuses_fast(qtbot: Any, tmp_path: Any) -> None:
+-    """Legacy paths staged over typed scopes fail closed, never half-wired."""
++def test_confgen_legacy_native_refuses_compile_and_names_the_key(qtbot: Any, tmp_path: Any) -> None:
++    """A document that still carries legacy ``native.paths`` is not representable as intent."""
+     contract = _live_contract()
+     page, _service, store = _live_page(qtbot, contract, tmp_path)
+     store.reset(author_v4_draft(contract, "confgen_torsion"))
+     page._refresh()
+     form = page._calc_section.confgen_form
+     assert form is not None
+-    form._paths_mode.set_value("legacy")
+-    form._set_paths([])
+-    form._add_path({"start": 2, "end": 3, "move": "end", "angles": [0, 120]})
++    form._emit("confgen.native", {"paths": [{"start": 2, "end": 3, "move": "end"}]})
+     page._on_compile_intent()
+     qtbot.waitUntil(
+-        lambda: "Cannot compile" in page._intent_section._status.text(),
++        lambda: "Direct V4 path" in page._intent_section._status.text(),
+         timeout=10000,
+     )
+-    assert "mixes representations" in page._intent_section._status.text()
++    status = page._intent_section._status.text()
++    assert "confgen.native" in status and "typed v3" in status
+ 
+ 
+ @requires_producer
+@@ -354,7 +351,6 @@ def test_normal_add_confgen_runs_seedless_derived(qtbot: Any, tmp_path: Any) ->
+ 
+     form = page._calc_section.confgen_form
+     assert form is not None
+-    form._paths_mode.set_value("legacy")
+     form._set_paths([])
+     form._add_path({"start": 1, "end": 2, "move": "end", "angles": [0, 120]})
+ 
+@@ -366,8 +362,9 @@ def test_normal_add_confgen_runs_seedless_derived(qtbot: Any, tmp_path: Any) ->
+     payload = store.current.document.to_mapping()
+     assert payload["schema"] == "confflow.workflow.v4"
+     confgen = payload["steps"][0]["confgen"]
+-    assert confgen["native"]["paths"][0]["move"] == "end"
+-    assert isinstance(confgen.get("seed"), int)
++    assert confgen["paths"][0]["move"] == "end"
++    assert confgen["schema_version"] == 3
++    assert confgen.get("seed") is None  # full enumeration needs no seed
+ 
+ 
+ @requires_producer
+@@ -550,7 +547,6 @@ def test_explicit_seed_survives_recompile(qtbot: Any, tmp_path: Any) -> None:
+             form._torsion_pairs[0],
+             form._on_torsions_changed,
+         )
+-    form._paths_mode.set_value("legacy")
+     form._set_paths([])
+     form._add_path({"start": 2, "end": 3, "move": "end", "angles": [0, 120]})
+     # A real user edit (typing emits; set_value is a silent programmatic push).
+@@ -573,11 +569,11 @@ def test_explicit_seed_survives_recompile(qtbot: Any, tmp_path: Any) -> None:
+ 
+ @requires_producer
+ @pytest.mark.gui
+-def test_second_run_rederives_seed_after_path_change(qtbot: Any, tmp_path: Any) -> None:
+-    """Derived seeds follow scientific identity: changed paths, changed seed.
++def test_recompile_follows_the_edited_paths_and_stays_seedless(qtbot: Any, tmp_path: Any) -> None:
++    """Typed full enumeration needs no seed; the compiled block follows the paths.
+ 
+-    Compile seedless (producer derives), change the endpoint grid, recompile:
+-    the seed must change.  Recompiling unchanged science keeps the seed.
++    Compile, recompile unchanged science (the block is stable), change the
++    endpoint grid, recompile: the typed ``paths`` change and no seed appears.
+     Requires the replay lane (derived-seed stripping on reprojection).
+     """
+     contract = _live_contract()
+@@ -593,24 +589,23 @@ def test_second_run_rederives_seed_after_path_change(qtbot: Any, tmp_path: Any)
+             form._torsion_pairs[0],
+             form._on_torsions_changed,
+         )
+-    form._paths_mode.set_value("legacy")
+     form._set_paths([])
+     form._add_path({"start": 2, "end": 3, "move": "end", "angles": [0, 120]})
+-    page._on_compile_intent()
+-    _wait_compiled(qtbot, page)
+-    first = store.current.document.to_mapping()["steps"][0]["confgen"].get("seed")
+-    assert isinstance(first, int)
+-    page._on_compile_intent()
+-    _wait_compiled(qtbot, page)
+-    stable = store.current.document.to_mapping()["steps"][0]["confgen"].get("seed")
+-    assert stable == first
++
++    def compiled_block() -> dict[str, Any]:
++        page._on_compile_intent()
++        _wait_compiled(qtbot, page)
++        return dict(store.current.document.to_mapping()["steps"][0]["confgen"])
++
++    first = compiled_block()
++    assert first.get("seed") is None
++    assert first["paths"][0]["angles"] == [0, 120]
++    assert compiled_block() == first
+     form._set_paths([])
+     form._add_path({"start": 2, "end": 3, "move": "end", "angles": [0, 60]})
+-    page._on_compile_intent()
+-    _wait_compiled(qtbot, page)
+-    changed = store.current.document.to_mapping()["steps"][0]["confgen"].get("seed")
+-    assert isinstance(changed, int)
+-    assert changed != first
++    changed = compiled_block()
++    assert changed["paths"][0]["angles"] == [0, 60]
++    assert changed.get("seed") is None
+ 
+ 
+ @requires_producer
+diff --git a/tests/gui/test_intent_panels.py b/tests/gui/test_intent_panels.py
+index bacad5b..bd0d11a 100644
+--- a/tests/gui/test_intent_panels.py
++++ b/tests/gui/test_intent_panels.py
+@@ -101,8 +101,9 @@ def test_confgen_paths_form_requires_move(qapp: Any) -> None:
+     form = ConfgenV3Form({}, ConfgenV3Options())
+     form._add_path({"start": 1, "end": 3, "move": "end", "angles": [0, 90]})
+     block = form.current_block()
+-    # Normal default is the legacy frame-free representation.
+-    assert block["native"]["paths"] == [{"start": 1, "end": 3, "move": "end", "angles": [0, 90]}]
++    # The form writes typed v3 paths only; it never writes the legacy ``native``.
++    assert block["paths"] == [{"start": 1, "end": 3, "move": "end", "angles": [0, 90]}]
++    assert "native" not in block
+     # The REQUIRED-move rule is stated next to the control, not defaulted.
+     assert form._path_pairs[0][0]._move.value() == "end"
+ 
+@@ -254,3 +255,30 @@ def test_normal_generation_bumps_on_edits(qapp: Any) -> None:
+     second = section.normal_generation
+     section._charge.line_edit.setText("x")
+     assert section.normal_generation > second
++
++
++def test_a_document_with_legacy_native_paths_shows_a_notice_and_converts_on_edit(qapp: Any) -> None:
++    form = ConfgenV3Form({}, ConfgenV3Options())
++    emitted: list[tuple[str, Any]] = []
++    form.value_changed.connect(lambda field_id, value: emitted.append((field_id, value)))
++    legacy = {"paths": [{"start": 1, "end": 3, "move": "end", "angles": [0, 90]}], "angle_step": 90}
++    form.set_step({"native": legacy}, None)
++    assert not form._legacy_paths_notice.isHidden()
++    assert form._path_pairs[0][0].dump()["start"] == 1
++    # Loading alone writes nothing; the document is untouched until the user edits.
++    assert emitted == []
++    form._on_paths_changed()
++    assert form._legacy_paths_notice.isHidden()
++    emitted_by_field = dict(emitted)
++    assert emitted_by_field["confgen.v3.paths"] == [
++        {"start": 1, "end": 3, "move": "end", "angles": [0, 90]}
++    ]
++    # The converted document keeps the other native members and drops only ``paths``.
++    assert emitted_by_field["confgen.native"] == {"angle_step": 90}
++
++
++def test_the_form_has_no_legacy_representation_switch(qapp: Any) -> None:
++    form = ConfgenV3Form({}, ConfgenV3Options())
++    assert not hasattr(form, "_paths_mode")
++    form._add_path({"start": 1, "end": 3, "move": "end", "angles": [0, 90]})
++    assert "native" not in form.current_block()
