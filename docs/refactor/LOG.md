@@ -445,3 +445,7 @@
 
 ## C5.6+C5.7+C5.8 补丁已备（2026-10-03，验收方原型）
 - 基点 da44bf5；11 个文件；全量 3849 passed / 10 skipped，collect 3865→3859（−6）；文档 grep 无命中；golden ok。整个删除 docs/KEYWORD_REFERENCE.md（全文为已删 CLI 与旧调用形式）。ARCHITECTURE/DEVELOPMENT/TESTING 仍大量描述旧架构的其他部分，按计划不在本卡范围。
+
+## IS.4 验收通过；IS.5 合并完成（2026-10-03，用户批准"同意合并"）
+- IS.4：JD implementation/input-simplification 49f9d37，与补丁字节一致，dist/ 未动；验收方此前已在干净工作树复验 2467 passed / 7 skipped。
+- IS.5：用户批准后验收方在独立工作树 `--no-ff` 合并，只更新本地分支，**未推送 main/master**。CF main 8291fb9 → 7d93fae（合入 IS 分支 c094af4，无冲突）；JD master 2f11b49 → 2c7e121（合入 49f9d37，无冲突，合并结果的树与 IS 分支相同）。合并后复验：CF 5149 passed / 12 skipped；JD（绑定合并后的 CF）2467 passed / 7 skipped；ruff/format/mypy 通过；golden：contract 与 IS.0 检查点逐项相同，TS1 三种 ok，engine 报告 added 5 / different 1，6 份与检查点逐字节相同；新增检查点 docs/refactor/baseline/checkpoints/IS.5/（含 README，随 CF 合并提交入库）。
