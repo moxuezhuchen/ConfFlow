@@ -434,3 +434,8 @@
 
 ## C5.5 补丁已备（2026-10-03，验收方原型；删除全部完成之后重跑过全量）
 - 基点 deadf46；14 个文件；全量 3855 passed / 10 skipped，collect 3945→3865（−86 +6）；golden ok；deleted_modules_check 通过。reachability 另报 analysis.pes、application.execution.memory、release_dependencies、workflow.step_naming 四个 CLI 不可达模块，计划无对应卡，已记入卡片留给用户决定。
+
+## IS.3 — 验收通过（2026-10-03）；IS.4 的环境差异（2026-10-03）
+- IS.3：CF implementation/input-simplification c094af4（父 0a9f28d），与 handoff/IS.3-src-tests.patch 字节一致；提交信息 22 个测试名与清单逐行相同；ruff/mypy 通过；全量 5149 passed / 12 skipped（验收方独立重跑）。未推送。
+- IS.4：执行模型在 /opt/jobdesk-v2-v4（用户检出）里自检得 2 failed / 2468 passed / 4 skipped，原因是该目录下存在未跟踪的旧 `dist/jobdesk_v2-0.9.0rc1-…whl`（2026-10-01 构建），wheel 与源码树比对的两个测试（test_rc_artifact）失败，另有 3 个 legacy backend / 1 个 packaging 的环境性 skip。验收方在没有 dist/ 的干净工作树（bcdea5b + IS.4 补丁，绑定 CF c094af4）复验：2467 passed / 7 skipped，与期望一致。结论：环境差异，不是补丁问题；执行模型的处理（停止并报告）正确。指示：不要动 dist/，按验收方环境的数字接受，直接提交。
+- 以后 JD 验收一律在不含 dist/ 的干净工作树里复验。
