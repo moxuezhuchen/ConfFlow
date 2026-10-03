@@ -610,3 +610,11 @@
   - golden_check 对 C4.3 检查点：`ok: true`（契约/边界 5 项 ok，TS1 三项 ok，引擎报告 added/different/missing 为空，仅一个随测试删除的报告）。
   - golden_check 对 **IS.5 检查点**：boundary ok；TS1 三项 ok；引擎报告 different 0、missing 0、added 6（C4.3a 新增 typed 测试的报告，已纳入 C4.3 检查点）；contract 摘要 DIFF，差异恰为 C4.3 的预期契约变化——最终树的 contract 与 C4.3 检查点逐字节相同；对 IS.5：manifest 字段只少 `confgen.native`，escape hatch 块少 `confgen.native`，schema 定义少 `ConfgenModel`、`LegacyPathDeclarationModel`，别无其它。
   - `git ls-files confflow/core`（15 个文件）：`__init__.py bonding.py console.py constants.py contracts.py data.py elements.py exceptions.py gaussian_input.py io.py logging.py parsers.py path_policy.py utils.py xyz_metadata.py`；`core/bonding.py`、`core/data.py`（以及 `core/constants.py`）仍在。
+
+## 推送与 CI（2026-10-03）
+
+- 推送（仅 `refactor/diet-p4`，无 force、无 tag）：JD `9de35d66f8047e0e7f71ab004e584bbdf0b6c8db`（新分支）→ CF `b9b9797b3dd3aba2c45c931e4b1261511d4fdafc`（新分支）。远端 `main` 仍为 d5a40ae，JD 远端 `master` 仍为 9beeaf2；本地 f8a1f75、2c7e121 未推送，main/master 未做任何操作。
+- CI：
+  - CF `CI`（push 触发）run 37130782858：`test-matrix` 3.10/3.11/3.12/3.13 与 `coverage` 全部 success；
+  - JD `CI` 只在 push 到 master、PR 与手动触发时运行，推送分支不触发，故用 `workflow_dispatch` 在 `refactor/diet-p4` 上手动触发：run 37130822281 success（9de35d6）；
+  - CF `JobDesk Consumer Contract`（只在 push 到 main、PR、手动触发时运行）同样手动触发：run 37130826162 success（b9b9797，检出并对照 JD 9de35d6）。
