@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from typing import Annotated, Any, Literal, cast
 
-from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, StrictStr, model_validator
 
 Index = Annotated[StrictInt, Field(ge=0)]
 Positive = Annotated[float, Field(gt=0, strict=True)]
@@ -296,6 +296,46 @@ class TorsionGenerationSpec(ConfgenSpecModel):
         return self
 
 
+class PathDeclarationModel(ConfgenSpecModel):
+    """Phase 0 input simplification: one endpoint-pair rotor declaration.
+
+    Endpoints are ALWAYS user-facing 1-based atom numbers (independent of
+    the step ``index_base``; the planner converts them explicitly with
+    base 1, never guessed). ``move`` is REQUIRED and exactly
+    ``start``/``end`` (intent is never inferred). Every consecutive bond of the resolved bridge-only
+    path becomes a relative-rotation rotor. Sampling is explicit: exactly
+    one of ``angles``/``step`` may be given; a bare declaration only
+    defaults in the legacy native mode (typed scopes fail closed without
+    explicit sampling so the scientific grid stays declared).
+    """
+
+    start: StrictInt = Field(ge=1)
+    end: StrictInt = Field(ge=1)
+    move: Literal["start", "end"]
+    angles: list[Annotated[float, Field(strict=True)]] | None = None
+    step: StrictInt | None = Field(default=None, ge=1, le=360)
+    id: StrictStr | None = Field(default=None, min_length=1)
+
+    @model_validator(mode="after")
+    def check_path_shape(self) -> PathDeclarationModel:
+        if self.start == self.end:
+            raise ValueError("path 'start' and 'end' must name two distinct atoms")
+        if self.angles is not None and self.step is not None:
+            raise ValueError("path declares both 'angles' and 'step'; declare exactly one")
+        if self.angles is not None:
+            if not self.angles:
+                raise ValueError("path 'angles' must hold at least one angle")
+            for left in range(len(self.angles)):
+                for right in range(left + 1, len(self.angles)):
+                    if _wrap_degrees(self.angles[left] - self.angles[right]) == 0.0:
+                        raise ValueError(
+                            f"path angles hold a periodic duplicate: "
+                            f"{self.angles[left]!r} and {self.angles[right]!r} name "
+                            "the identical physical state (one state, one key)"
+                        )
+        return self
+
+
 class TypedEdgeModel(ConfgenSpecModel):
     atoms: tuple[Index, Index]
     kind: Literal["COVALENT", "COORDINATION", "FORMING", "BREAKING"] = "COVALENT"
@@ -373,6 +413,8 @@ class ConfgenModelV3(ConfgenSpecModel):
     coordination: CoordinationGenerationSpec | None = None
     rings: list[RingGenerationSpec] = Field(default_factory=list)
     torsions: list[TorsionGenerationSpec] = Field(default_factory=list)
+    paths: list[PathDeclarationModel] = Field(default_factory=list)
+    strict_path_bond_check: StrictBool = False
     topology: ConfgenTopologyModel = Field(default_factory=ConfgenTopologyModel)
     stereochemistry: dict[str, Any] = Field(default_factory=dict)
     exclusions: list[ConfgenExclusionModel] = Field(default_factory=list)

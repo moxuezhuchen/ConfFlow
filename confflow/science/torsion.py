@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 
-"""Chain-mode torsion science for V4 confgen (pure numeric).
+"""Torsion mechanics for V4 confgen (pure numeric).
 
 Extracted from the pure-numpy subset of ``confflow.blocks.confgen`` —
-``rotations`` (chain language, angle resolution, Rodrigues rotation,
-BFS side selection, ring refusal) and ``collision`` (clash rule) — with
-no import of the legacy generator, pools, RDKit molecules, MMFF, XYZ
-I/O, or CLI.  Dependencies: stdlib + NumPy only.
+``rotations`` (Rodrigues rotation, BFS side selection, ring refusal) and
+``collision`` (clash rule) — with no import of the legacy generator,
+pools, RDKit molecules, MMFF, XYZ I/O, or CLI.  Dependencies: stdlib +
+NumPy only.
 
 Each public helper names its source algorithm.  Callers supply atomic
 numbers, coordinates, radii, and adjacency explicitly; nothing is
@@ -26,9 +26,6 @@ __all__ = [
     "bfs_distances",
     "clashes",
     "edge_in_cycle",
-    "parse_bond_pair",
-    "parse_chain",
-    "resolve_angle_lists",
     "rotate_atoms_around_bond",
     "rotating_side",
     "topological_distance_matrix",
@@ -38,83 +35,6 @@ __all__ = [
 #: ``collision.check_clash_core`` (``ignore_hops = 3``): pairs within
 #: three bonds are ignored (non-bonded interaction standard).
 TOPO_IGNORE_HOPS = 3
-
-
-def parse_chain(chain: str) -> list[int]:
-    """Parse a 1-based dash-separated chain to 0-based indices.
-
-    Source: ``rotations._parse_chain``.  Raises :class:`ValueError` on
-    malformed, non-positive, or duplicated entries.
-    """
-    parts = [item.strip() for item in str(chain).replace(",", "-").split("-") if item.strip()]
-    if len(parts) < 2:
-        raise ValueError(f"chain format error: {chain!r}")
-    try:
-        atoms_1based = [int(item) for item in parts]
-    except ValueError as exc:
-        raise ValueError(f"chain must be a list of integers: {chain!r}") from exc
-    if any(item <= 0 for item in atoms_1based):
-        raise ValueError(f"chain indices must be positive (1-based): {chain!r}")
-    atoms = [item - 1 for item in atoms_1based]
-    if len(set(atoms)) != len(atoms):
-        raise ValueError(f"chain contains duplicate atoms: {chain!r}")
-    return atoms
-
-
-def parse_bond_pair(text: str) -> tuple[int, int]:
-    """Parse one ``"a-b"`` 1-based bond pair to a 0-based tuple."""
-    parts = [item.strip() for item in str(text).replace(",", "-").split("-") if item.strip()]
-    if len(parts) != 2:
-        raise ValueError(f"bond entries must be 'a-b' pairs, got {text!r}")
-    try:
-        first, second = int(parts[0]), int(parts[1])
-    except ValueError as exc:
-        raise ValueError(f"bond entries must be 'a-b' pairs, got {text!r}") from exc
-    if first <= 0 or second <= 0 or first == second:
-        raise ValueError(f"bond entries must name two distinct atoms, got {text!r}")
-    return first - 1, second - 1
-
-
-def resolve_angle_lists(
-    n_bonds: int,
-    chain_steps: str | None,
-    chain_angles: str | None,
-    angle_step: int,
-) -> list[list[float]]:
-    """Resolve per-bond rotation angle lists.
-
-    Source: ``rotations._resolve_angle_lists`` (legacy ``--steps`` /
-    ``--angles`` spellings).  Raises :class:`ValueError` on count or
-    range mismatches.
-    """
-    if chain_angles is not None:
-        segs = [item.strip() for item in str(chain_angles).split(";") if item.strip()]
-        if len(segs) != n_bonds:
-            raise ValueError(
-                f"chain_angles needs {n_bonds} ';'-separated segments, got {len(segs)}"
-            )
-        out: list[list[float]] = []
-        for seg in segs:
-            vals = [item.strip() for item in seg.split(",") if item.strip()]
-            if not vals:
-                raise ValueError("chain_angles segment is empty")
-            try:
-                out.append([float(item) for item in vals])
-            except ValueError as exc:
-                raise ValueError(f"chain_angles must be numbers: {seg!r}") from exc
-        return out
-    if chain_steps is not None:
-        parts = [item.strip() for item in str(chain_steps).split(",") if item.strip()]
-        if len(parts) != n_bonds:
-            raise ValueError(f"chain_steps needs {n_bonds} values, got {len(parts)}")
-        try:
-            steps = [int(item) for item in parts]
-        except ValueError as exc:
-            raise ValueError(f"chain_steps must be integers: {chain_steps!r}") from exc
-        if any(item <= 0 or item > 360 for item in steps):
-            raise ValueError(f"chain_steps must be in 1..360: {chain_steps!r}")
-        return [[float(angle) for angle in range(0, 360, item)] for item in steps]
-    return [[float(angle) for angle in range(0, 360, angle_step)] for _ in range(n_bonds)]
 
 
 def bfs_distances(adjacency: Sequence[Sequence[int]], sources: Sequence[int]) -> list[int]:

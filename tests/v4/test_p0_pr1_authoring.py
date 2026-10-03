@@ -100,7 +100,19 @@ def confgen_step(step_id: str, *, bindings: dict[str, Any] | None = None) -> dic
     return {
         "id": step_id,
         "executor": "confgen",
-        "confgen": {"native": {"chains": ["1-2-3"]}, "seed": 42},
+        "confgen": {
+            "schema_version": 3,
+            "torsions": [
+                {
+                    "id": "t1",
+                    "bond": [2, 3],
+                    "model": "relative_rotation_grid",
+                    "angles": [0, 120, 240],
+                    "treatment": "enumerate",
+                }
+            ],
+            "seed": 42,
+        },
         "bindings": dict(bindings or {}),
     }
 
@@ -161,7 +173,6 @@ def assert_response_conforms(response: dict[str, Any]) -> None:
     assert response["content_schema"] == "confflow.authoring.v4"
     assert response["operation"] in AUTHORING_OPERATIONS
     assert isinstance(response["ok"], bool)
-    assert response["capability_identity"]["digest"].startswith("sha256:")
 
 
 # ----------------------------------------------------------------------

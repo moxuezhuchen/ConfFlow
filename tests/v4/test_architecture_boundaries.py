@@ -40,8 +40,6 @@ ANALYSIS_ROOT = PACKAGE_ROOT / "analysis"
 APPLICATION_ROOT = PACKAGE_ROOT / "application"
 
 FORBIDDEN_IMPORT_PREFIXES = (
-    "confflow.blocks",
-    "confflow.calc",
     "confflow.config",
     "confflow.core",
     "confflow.shared",
@@ -56,7 +54,6 @@ FORBIDDEN_IMPORT_PREFIXES = (
     "confflow.artifact_json",
     "confflow.cli",
     "confflow.main",
-    "confflow.confts",
     "confflow.contract",
     "confflow.install_provenance",
     "confflow.fixture_agent",
@@ -81,13 +78,10 @@ FORBIDDEN_LEGACY_MODULES = (
     "confflow.workflow.resume_validation",
     "confflow.workflow.dag",
     "confflow.workflow.dry_run",
-    "confflow.workflow.export",
     "confflow.workflow.rerun_failed",
     "confflow.workflow.config_show",
     "confflow.workflow.composition",
     "confflow.config.canonical",
-    "confflow.calc.runner",
-    "confflow.core.models",
     "confflow.core.types",
     "confflow.core.parsers",
     "confflow.core.path_policy",
@@ -242,6 +236,27 @@ REMOVED_LEGACY_MODULES: frozenset[str] = frozenset(
         "confflow.workflow.supervisor",
         "confflow.workflow.rerun_failed",
         "confflow.calc.async_exec",
+        # C5.2: legacy calc tooling, confts CLI, composition and viz.
+        "confflow.calc",
+        "confflow.confts",
+        "confflow.workflow.composition",
+        "confflow.blocks.viz",
+        # C5.2b: the results.db export reader (nothing writes results.db any more).
+        "confflow.workflow.export",
+        # C5.5a: step-directory naming helper; its only user was the export reader.
+        "confflow.workflow.step_naming",
+        # C5.3d/C5.4: the legacy refine and confgen blocks (and their CLIs).
+        "confflow.blocks",
+        "confflow.blocks.refine",
+        "confflow.blocks.confgen",
+        # C5.5: legacy-only core/shared modules.
+        "confflow.core.models",
+        "confflow.core.validation",
+        "confflow.core.chem_validation",
+        "confflow.core.cli_base",
+        "confflow.core.keyword_rewrite",
+        "confflow.core.pairs",
+        "confflow.shared.config_coercion",
         # PR-4: retired V2/V3 execution runtime.
         "confflow.workflow.engine",
         "confflow.workflow.state",
@@ -279,6 +294,8 @@ REMOVED_LEGACY_MODULES: frozenset[str] = frozenset(
         "confflow.workflow.plan",
         "confflow.workflow.config_show",
         "confflow.workflow.dry_run",
+        "confflow.workflow.helpers",
+        "confflow.workflow.validation",
     }
 )
 
@@ -286,9 +303,7 @@ REMOVED_LEGACY_MODULES: frozenset[str] = frozenset(
 #: the dead remote duplicates retired by PR-6 (their live authorities are
 #: ``launch_lease.TokenLaunchLease``, ``persistence.recovery.reconcile_owner``
 #: and ``worker_supervision``).  They must stay physically absent,
-#: unimportable, and unreferenced by the V4 production sources.  The
-#: historically public V2/V3 names resolve to fail-closed retirement stubs
-#: (``confflow.workflow._retired_runtime``), never to code.
+#: unimportable, and unreferenced by the V4 production sources.
 RETIRED_RUNTIME_MODULES: tuple[str, ...] = (
     "confflow.workflow.engine",
     "confflow.workflow.state",
@@ -406,9 +421,11 @@ V1_MIGRATION_MODULES: tuple[str, ...] = ()
 V2_MIGRATION_MODULES: tuple[str, ...] = ("confflow.config.canonical.v2_adapter",)
 
 #: Source tokens that identify the retired V1/V2 configuration wire.  This is
-#: deliberately *not* a ban on the strings "v1"/"v2": read the metric docstring
-#: in ``scripts/architecture_metrics.py`` for the current protocol ids that keep
-#: those majors.
+#: deliberately *not* a ban on the strings "v1"/"v2": the current producer
+#: protocol keeps ``confflow.configuration-validation.v1``,
+#: ``confflow.editor-manifest.v1``, ``confflow.recipe-catalog.v1`` and the
+#: ``confflow.contract.*.v1`` capability ids, and unrelated lines (control
+#: protocol, remote envelope) keep their own v1/v2 majors.
 RETIRED_V1_V2_WIRE_TOKENS: tuple[str, ...] = (
     "confflow.workflow.v1",
     "confflow.workflow.v2",
@@ -949,24 +966,6 @@ class TestRuntimeIsolation:
         result = self._run(script)
         assert result.returncode == 0, result.stderr
 
-    def test_importing_workflow_package_stays_lazy(self) -> None:
-        script = (
-            "import sys\n"
-            "import confflow.workflow\n"
-            "assert 'confflow.workflow.engine' not in sys.modules, 'eager engine import'\n"
-            "from confflow.workflow import run_workflow\n"
-            "assert callable(run_workflow)\n"
-            "assert 'confflow.workflow.engine' not in sys.modules, 'retired engine loaded'\n"
-            "try:\n"
-            "    run_workflow()\n"
-            "except RuntimeError as exc:\n"
-            "    assert 'retired' in str(exc), exc\n"
-            "else:\n"
-            "    raise AssertionError('retired run_workflow must fail closed')\n"
-        )
-        result = self._run(script)
-        assert result.returncode == 0, result.stderr
-
     def test_remote_seams_do_not_load_retired_helpers(self) -> None:
         script = (
             "import sys; import confflow.remote.handoff; "
@@ -1041,15 +1040,6 @@ class TestRetiredRuntimeBoundary:
                     ):
                         offenders.append((str(path.relative_to(REPO_ROOT)), absolute, lineno))
         assert offenders == []
-
-    def test_retirement_stubs_fail_closed(self) -> None:
-        from confflow.workflow import _retired_runtime
-
-        assert _retired_runtime.RETIRED_NAMES
-        for name in _retired_runtime.RETIRED_NAMES:
-            stub = getattr(_retired_runtime, name)
-            with pytest.raises(_retired_runtime.RetiredRuntimeError):
-                stub()
 
 
 class TestV3PublicWireRetired:
@@ -1282,138 +1272,6 @@ class TestConsolidatedHelperAuthorities:
         assert orca.sanitize_job_name is _naming.sanitize_job_name
 
 
-class TestLegacyToolingBoundary:
-    """``calc``/``confts``/``blocks`` are tooling, never V4 runtime (PR-5).
-
-    The formal V4 closure must stay free of the legacy calculation tooling,
-    the ``confts`` CLI must keep working, and the calc package facade must
-    stay lazy so the refine tooling does not load the calc execution runtime.
-    """
-
-    def _run(self, script: str) -> subprocess.CompletedProcess[str]:
-        return subprocess.run(
-            [sys.executable, "-c", script],
-            cwd=REPO_ROOT,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-
-    @pytest.mark.parametrize(
-        "entry",
-        (
-            "confflow.v4cli",
-            "confflow.application.v4_entry",
-            "confflow.application.execution",
-            "confflow.application.execution.workflow_adapter",
-            "confflow.control_worker",
-            "confflow.producer",
-        ),
-    )
-    def test_v4_runtime_entries_do_not_load_legacy_tooling(self, entry: str) -> None:
-        script = (
-            f"import sys; import {entry}; "
-            "banned = sorted(m for m in sys.modules if ("
-            "m == 'confflow.calc' or m.startswith('confflow.calc.') or "
-            "m == 'confflow.confts' or m.startswith('confflow.confts.') or "
-            "m == 'confflow.blocks' or m.startswith('confflow.blocks.'))); "
-            "assert not banned, banned"
-        )
-        result = self._run(script)
-        assert result.returncode == 0, f"{entry}: {result.stderr}"
-
-    def test_calc_facade_resolves_public_names_lazily(self) -> None:
-        script = (
-            "import sys\n"
-            "import confflow.calc\n"
-            "banned = [m for m in sys.modules if m.startswith('confflow.calc.')]\n"
-            "assert not banned, banned\n"
-            "from confflow.calc import CalcStepRequest, CalcStepRunner, TaskRunner\n"
-            "from confflow.calc import ResultsDB, get_policy, parse_output\n"
-            "assert CalcStepRunner.__module__ == 'confflow.calc.runner'\n"
-            "assert CalcStepRequest.__module__ == 'confflow.calc.runner'\n"
-            "assert TaskRunner.__module__ == 'confflow.calc.components.task_runner'\n"
-            "assert ResultsDB.__module__ == 'confflow.calc.db.database'\n"
-            "assert get_policy.__module__ == 'confflow.calc.policies'\n"
-            "assert parse_output.__module__ == 'confflow.calc.components.parser'\n"
-            "assert confflow.calc.runner.CalcStepRunner is CalcStepRunner\n"
-        )
-        result = self._run(script)
-        assert result.returncode == 0, result.stderr
-
-    def test_calc_facade_declares_every_public_name_lazily(self) -> None:
-        path = PACKAGE_ROOT / "calc" / "__init__.py"
-        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-
-        eager: list[str] = []
-        all_names: list[str] = []
-        lazy_names: list[str] = []
-        for node in tree.body:
-            if isinstance(node, ast.Import):
-                eager.extend(
-                    alias.name for alias in node.names if alias.name.startswith("confflow")
-                )
-            elif isinstance(node, ast.ImportFrom):
-                if node.level or (node.module or "").startswith("confflow"):
-                    eager.append(node.module or ".")
-            elif isinstance(node, ast.Assign):
-                if any(isinstance(t, ast.Name) and t.id == "__all__" for t in node.targets):
-                    all_names = [
-                        elt.value for elt in node.value.elts if isinstance(elt, ast.Constant)
-                    ]
-            elif isinstance(node, ast.AnnAssign):
-                target = node.target
-                if isinstance(target, ast.Name) and target.id == "_LAZY_EXPORTS":
-                    assert isinstance(node.value, ast.Dict)
-                    lazy_names = [
-                        key.value for key in node.value.keys if isinstance(key, ast.Constant)
-                    ]
-
-        assert eager == [], eager
-        assert all_names, "calc facade must declare __all__"
-        assert sorted(all_names) == sorted(lazy_names), (all_names, lazy_names)
-
-    def test_confrefine_tooling_does_not_load_calc_execution_runtime(self) -> None:
-        script = (
-            "import sys; import confflow.blocks.refine; "
-            "calc_mods = sorted(m for m in sys.modules if m.startswith('confflow.calc')); "
-            "banned = sorted(m for m in calc_mods if m not in "
-            "('confflow.calc', 'confflow.calc.result')); "
-            "assert not banned, banned"
-        )
-        result = self._run(script)
-        assert result.returncode == 0, result.stderr
-
-    def test_composition_bridge_does_not_load_calc_execution_runtime(self) -> None:
-        script = (
-            "import sys; from confflow.workflow import composition; "
-            "calc_mods = sorted(m for m in sys.modules if m.startswith('confflow.calc')); "
-            "allowed = {'confflow.calc', 'confflow.calc.postprocess', 'confflow.calc.result'}; "
-            "banned = sorted(set(calc_mods) - allowed); "
-            "assert not banned, banned"
-        )
-        result = self._run(script)
-        assert result.returncode == 0, result.stderr
-
-    def test_confgen_tooling_does_not_load_calc_at_all(self) -> None:
-        script = (
-            "import sys; import confflow.blocks.confgen; "
-            "banned = sorted(m for m in sys.modules if m.startswith('confflow.calc')); "
-            "assert not banned, banned"
-        )
-        result = self._run(script)
-        assert result.returncode == 0, result.stderr
-
-    def test_confts_cli_still_uses_the_calc_runner(self) -> None:
-        script = (
-            "import sys; import confflow.confts; "
-            "assert callable(confflow.confts.main); "
-            "assert 'confflow.calc.runner' in sys.modules"
-        )
-        result = self._run(script)
-        assert result.returncode == 0, result.stderr
-
-
 class TestProducerImportIsolation:
     """Producer import isolation (Architecture Diet PR-0 baseline → PR-2 hard).
 
@@ -1611,16 +1469,10 @@ class TestFacadeLazyIsolation:
         from confflow.core import (
             HARTREE_TO_KCALMOL,
             PERIODIC_SYMBOLS,
-            TaskContext,
-            ValidationError,
             get_atomic_number,
-            validate_positive,
         )
 
-        assert TaskContext.__name__ == "TaskContext"
-        assert ValidationError.__name__ == "ValidationError"
         assert callable(get_atomic_number)
-        assert callable(validate_positive)
         assert len(PERIODIC_SYMBOLS) > 0
         assert isinstance(HARTREE_TO_KCALMOL, float)
 

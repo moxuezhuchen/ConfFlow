@@ -126,7 +126,6 @@ def test_build_parser():
     assert not args.resume
     assert not args.verbose
     assert not args.stop
-    assert args.export_work_dir is None
 
 
 def test_convert_gjf_to_xyz(tmp_path):
@@ -214,52 +213,6 @@ def test_main_stop_command():
     with patch("confflow.cli.stop_all_confflow_processes", return_value=0) as mock_stop:
         assert main(["--stop"]) == 0
         mock_stop.assert_called_once()
-
-
-def test_main_export_does_not_call_run_workflow(tmp_path, capsys):
-    work_dir = tmp_path / "work"
-    work_dir.mkdir()
-    output = work_dir / "out.csv"
-
-    with (
-        patch("confflow.cli.export_results") as mock_export,
-        patch("confflow.cli.run_workflow") as mock_run,
-    ):
-        mock_export.return_value.row_count = 1
-        mock_export.return_value.output_path = str(output)
-        mock_export.return_value.warnings = []
-        result = main(["--export", str(work_dir), "--format", "csv", "-o", str(output)])
-
-    captured = capsys.readouterr()
-    assert result == 0
-    assert f"Exported 1 result row(s) to {output}" in captured.out
-    mock_export.assert_called_once_with(
-        str(work_dir),
-        output_format="csv",
-        output_path=str(output),
-    )
-    mock_run.assert_not_called()
-
-
-def test_main_export_missing_work_dir_returns_usage_error(tmp_path, capsys):
-    missing = tmp_path / "missing"
-
-    result = main(["--export", str(missing), "--format", "json"])
-
-    captured = capsys.readouterr()
-    assert result == 1
-    assert "Work directory does not exist" in captured.err
-
-
-def test_main_export_text_format_returns_usage_error(tmp_path, capsys):
-    work_dir = tmp_path / "work"
-    work_dir.mkdir()
-
-    result = main(["--export", str(work_dir), "--format", "text"])
-
-    captured = capsys.readouterr()
-    assert result == 1
-    assert "--export supports --format csv or json" in captured.err
 
 
 def test_main_normal_path_still_calls_run_workflow(tmp_path):
@@ -654,16 +607,6 @@ def test_build_parser_step_dest():
     args = parser.parse_args(["--rerun-failed", "dir", "-c", "conf.yaml", "--step", "opt1"])
     assert args.step == "opt1"
     assert args.rerun_failed_step_dir == "dir"
-
-
-def test_build_parser_format_extended():
-    """Test that --format choices include text."""
-    parser = build_parser()
-    args = parser.parse_args(["--export", "work", "--format", "text"])
-    assert args.format == "text"
-
-    args = parser.parse_args(["--export", "work", "--format", "json"])
-    assert args.format == "json"
 
 
 # =============================================================================

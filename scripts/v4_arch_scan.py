@@ -17,23 +17,21 @@ Post-cutover scope (V4 Core Closure, ``44b478d``):
   ``confflow/control.py`` / ``confflow/remote``.
 - NOT YET SCANNED (known legacy-helper debt, tracked for the architecture
   diet follow-ups; these are formal entries now, not legacy shims):
-  ``confflow/cli.py`` (dry-run/config-show/export diagnostics and path
-  helpers still come from the legacy line) and ``confflow/control_worker.py``
-  (worker-side legacy helpers).
-- RETIRED READ-ONLY / separate tools (out of scope by design):
-  ``confflow/calc`` (legacy calculation tooling), ``confflow.confts`` /
-  ``confflow.blocks`` (standalone legacy CLIs), and the V1/V2
-  configuration-contract emission (JobDesk wire compatibility).  The
-  V2/V3 workflow *execution* runtime was physically removed by Architecture
-  Diet PR-4; the diagnostic planners (dry-run / config-show / export) and the
-  canonical V1/V2 readers remain.  The never-released V3 *public wire*
-  (V3 parser/graph/semantic validation, the ``configuration-contract.v3``
+  ``confflow/cli.py`` (path helpers still come from the legacy line) and
+  ``confflow/control_worker.py`` (worker-side legacy helpers).
+- RETIRED and physically removed (guarded by ``RETIRED_RUNTIME_MODULES`` and
+  the architecture-boundary tests): ``confflow/calc`` (legacy calculation
+  tooling), ``confflow.confts`` / ``confflow.blocks`` (standalone legacy
+  CLIs), the ``confflow export`` reader, the V2/V3 workflow *execution*
+  runtime (Architecture Diet PR-4), the V1/V2 diagnostic planners and
+  configuration wire (PR-9), and the never-released V3 *public wire* (V3
+  parser/graph/semantic validation, the ``configuration-contract.v3``
   document, the V3 catalogs and capability advertisement, and the
-  ``workflow upgrade`` emitter) was retired by Architecture Diet PR-7 and is
-  flagged by ``RETIRED_V3_WIRE_MODULES`` below.  Any retired runtime module
-  reappearing on disk is flagged by ``RETIRED_RUNTIME_MODULES``, which PR-6
-  extended with the dead remote duplicates (``remote.lease`` /
-  ``remote.supervision`` / ``remote.schema``).
+  ``workflow upgrade`` emitter; PR-7, flagged by ``RETIRED_V3_WIRE_MODULES``
+  below).  Any retired runtime module reappearing on disk is flagged by
+  ``RETIRED_RUNTIME_MODULES``, which PR-6 extended with the dead remote
+  duplicates (``remote.lease`` / ``remote.supervision`` /
+  ``remote.schema``).
 
 Contract-source imports (``confflow.config.canonical.contract`` / editor
 manifest / recipes) are the producer's recorded PR-2 decoupling debt and are
@@ -67,12 +65,9 @@ SCOPE: tuple[str, ...] = (
 )
 
 FORBIDDEN_IMPORT_PREFIXES: tuple[str, ...] = (
-    "confflow.calc",
-    "confflow.blocks",
     "confflow.shared",
     "confflow.cli",
     "confflow.main",
-    "confflow.confts",
     "confflow.workflow.engine",
     "confflow.workflow.state",
     "confflow.workflow.v3_runtime",

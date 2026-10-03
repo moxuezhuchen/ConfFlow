@@ -130,27 +130,6 @@ CONFGEN_NATIVE = {
 }
 
 
-def test_confgen_torsion_scan_deterministic(tmp_path):
-    item = _item("c1:g1", "c1", [_butane("seed-a")])
-    sci = _sci(seed=11, native=FrozenDict(dict(CONFGEN_NATIVE)))
-    ctx = _ctx(sci, str(tmp_path))
-    out1 = ConfgenExecutor().execute(item, ctx)
-    out2 = ConfgenExecutor().execute(item, ctx)
-    assert out1.status is WorkItemStatus.COMPLETED
-    assert len(out1.structures) == 3
-    assert [r.id for r in out1.structures] == [r.id for r in out2.structures]
-    assert [r.coordinates for r in out1.structures] == [r.coordinates for r in out2.structures]
-    assert [r.id for r in out1.structures] == [
-        f"{item.logical_key}:structure:conformer:{i}" for i in (0, 1, 2)
-    ]
-    assert all(r.role == "conformer" for r in out1.structures)
-    assert all(r.parent_ids == ("seed-a",) for r in out1.structures)
-    # Torsion actually moved atoms between members.
-    assert out1.structures[0].coordinates != out1.structures[1].coordinates
-    assert len(out1.artifacts) == 1
-    assert out1.artifacts[0].checksum.startswith("sha256:")
-
-
 def test_confgen_seed_missing_and_bad_native_fail_closed(tmp_path):
     item = _item("c1:g1", "c1", [_butane("seed-a")])
     out = ConfgenExecutor().execute(item, _ctx(_sci(seed=None), str(tmp_path)))
@@ -209,25 +188,6 @@ def test_confgen_ring_bond_and_no_rotate(tmp_path):
     )
     # Every chain bond excluded -> no rotatable bonds (ring bond 2-3 excluded first).
     assert out2.status is WorkItemStatus.FAILED
-
-
-def test_confgen_max_conformers_seeded_cap(tmp_path):
-    item = _item("c1:g1", "c1", [_butane("seed-a")])
-    native = {"chains": ["1-2-3-4"], "angle_step": 60, "max_conformers": 4}
-    out_a = ConfgenExecutor().execute(
-        item, _ctx(_sci(seed=1, native=FrozenDict(native)), str(tmp_path))
-    )
-    out_b = ConfgenExecutor().execute(
-        item, _ctx(_sci(seed=2, native=FrozenDict(native)), str(tmp_path))
-    )
-    assert out_a.status is WorkItemStatus.COMPLETED
-    assert len(out_a.structures) == 4
-    # Same grid, different seed -> different deterministic subset.
-    assert [r.id for r in out_a.structures] != [r.id for r in out_b.structures]
-    out_a2 = ConfgenExecutor().execute(
-        item, _ctx(_sci(seed=1, native=FrozenDict(native)), str(tmp_path))
-    )
-    assert [r.id for r in out_a.structures] == [r.id for r in out_a2.structures]
 
 
 def test_transform_deduplicate_scientific_groups(tmp_path):

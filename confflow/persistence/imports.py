@@ -283,6 +283,8 @@ def resolve_imported_structures(
                 ordinal=record.ordinal,
                 group_key=record.group_key,
                 metadata=dict(record.metadata.thaw()),
+                topology_patch=record.topology_patch,
+                working_topology=record.working_topology,
             )
         )
     return StructureSet(tuple(rebuilt))

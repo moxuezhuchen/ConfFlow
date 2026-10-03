@@ -49,12 +49,12 @@ def test_unknown_or_ambiguous_scope_rejected(changes):
         ConfgenModelV3.model_validate({**declaration(), **changes})
 
 
-def test_step_routes_legacy_and_typed_definitions_separately():
-    legacy = StepModel.model_validate(
-        {"id": "c", "executor": "confgen", "confgen": {"native": {"chains": ["1-2"]}}}
-    )
+def test_step_accepts_typed_definitions_and_rejects_legacy_native():
+    with pytest.raises(ValidationError):
+        StepModel.model_validate(
+            {"id": "c", "executor": "confgen", "confgen": {"native": {"chains": ["1-2"]}}}
+        )
     typed = StepModel.model_validate({"id": "c", "executor": "confgen", "confgen": declaration()})
-    assert not isinstance(legacy.confgen, ConfgenModelV3)
     assert isinstance(typed.confgen, ConfgenModelV3)
 
 

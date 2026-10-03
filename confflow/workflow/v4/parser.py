@@ -430,13 +430,10 @@ def _build_scientific(
             )
             return None, True, diagnostics
         try:
+            raw_native = step.confgen.scientific_native()
             scientific = ScientificDefinition(
                 result_profile="ensemble",
-                native=FrozenDict(
-                    step.confgen.scientific_native()
-                    if hasattr(step.confgen, "scientific_native")
-                    else step.confgen.native
-                ),
+                native=FrozenDict(raw_native),
                 seed=step.confgen.seed,
                 overrides=FrozenDict(step.confgen.overrides),
             )
@@ -622,6 +619,15 @@ def _build_inputs(
     for name, model in inputs.items():
         try:
             require_identifier(name, "run input name")
+            topology: dict[str, Any] | None = None
+            if model.topology is not None:
+                topology = {
+                    "add_edges": [[int(pair[0]), int(pair[1])] for pair in model.topology.add],
+                    "delete_edges": [
+                        [int(pair[0]), int(pair[1])] for pair in model.topology.delete
+                    ],
+                    "provenance": model.topology.provenance,
+                }
             declarations.append(
                 RunInputDeclaration(
                     name=name,
@@ -631,6 +637,9 @@ def _build_inputs(
                     role=model.role,
                     description=model.description,
                     grouping=model.grouping,
+                    topology=topology,
+                    charge=model.charge,
+                    multiplicity=model.multiplicity,
                 )
             )
         except DomainError as exc:

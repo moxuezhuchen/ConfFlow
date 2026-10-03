@@ -34,6 +34,7 @@ __all__ = [
     "PortSpec",
     "RecoverySpec",
     "ResultProfileSpec",
+    "allowed_port_pairings",
 ]
 
 
@@ -48,6 +49,12 @@ class ExecutorCapability(str, Enum):
 
 _STRUCTURE_PORT_PAIRINGS = frozenset({Pairing.SINGLE, Pairing.PER_STRUCTURE, Pairing.BY_GROUP_KEY})
 _VALUE_PORT_PAIRINGS = frozenset({Pairing.SINGLE, Pairing.BY_SUBJECT})
+
+
+def allowed_port_pairings(kind: PortKind) -> tuple[Pairing, ...]:
+    """Return the pairings a port of *kind* accepts, in ``Pairing`` order."""
+    allowed = _STRUCTURE_PORT_PAIRINGS if kind is PortKind.STRUCTURE else _VALUE_PORT_PAIRINGS
+    return tuple(pairing for pairing in Pairing if pairing in allowed)
 
 
 def _require_text(value: Any, field_name: str) -> str:

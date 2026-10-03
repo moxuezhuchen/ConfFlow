@@ -75,10 +75,6 @@ except ImportError:
 
 _LAZY_EXPORTS: dict[str, tuple[str, str]] = {
     "main": (".main", "main"),
-    "run_workflow": (".workflow", "run_workflow"),
-    "CalcStepRunner": (".calc", "CalcStepRunner"),
-    "CalcStepRequest": (".calc", "CalcStepRequest"),
-    "CalcStepResult": (".calc", "CalcStepResult"),
     "read_xyz_file": (".core.io", "read_xyz_file"),
     "write_xyz_file": (".core.io", "write_xyz_file"),
     "parse_comment_metadata": (".core.io", "parse_comment_metadata"),

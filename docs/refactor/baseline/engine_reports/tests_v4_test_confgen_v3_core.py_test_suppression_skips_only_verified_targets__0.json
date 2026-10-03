@@ -1,0 +1,261 @@
+{
+ "leaves": [
+  {
+   "atoms": [
+    "C",
+    "C",
+    "C",
+    "C"
+   ],
+   "coords_sha256": "714920b22e41edbb6efffa8a046b59b8803e27f7193caf46ee019e188068473b",
+   "state_key": {
+    "coordination": {
+     "mode": "A"
+    },
+    "rings": {},
+    "schema_version": 3,
+    "torsions": {}
+   }
+  },
+  {
+   "atoms": [
+    "C",
+    "C",
+    "C",
+    "C"
+   ],
+   "coords_sha256": "4b1f67fbc2eca276324488498b902452292f25fd9cebb573b6e730fb0cc11bf1",
+   "state_key": {
+    "coordination": {
+     "mode": "C"
+    },
+    "rings": {},
+    "schema_version": 3,
+    "torsions": {}
+   }
+  }
+ ],
+ "report": {
+  "attempt_ledger": {
+   "attempted_without_success": 0,
+   "basis": "issued per-level stage attempts along every explored path: geometry-successful internal expansions plus published leaves plus terminal attempt failures; policy-screened, suppressed-skipped, and deferred-unissued units excluded",
+   "by_status": {
+    "published_leaf": 2
+   },
+   "deferred_unissued": 0,
+   "geometry_successful": 2,
+   "internal_expanded": 0,
+   "issued_attempts": 2,
+   "policy_screened": 0,
+   "published_leaves": 2,
+   "suppressed_skipped": 1
+  },
+  "axis_order": [
+   "coordination",
+   "rings",
+   "torsions"
+  ],
+  "certificate": {
+   "basis": "terminal equations verify over target records",
+   "digest": "sha256:f6bcce44bccfc08cae982f078590fb046ec754787fe11cfb6be764ef121c5870",
+   "equations_ok": true
+  },
+  "counts": {
+   "anomalies": {
+    "AMBIGUOUS_KEY": 0
+   },
+   "deferred_parent_failed_leaves": 0,
+   "deferred_sampled_out": 0,
+   "equation_exact": true,
+   "estimated_deferred_leaves": 0,
+   "failed": {},
+   "internal_expanded": 0,
+   "policy_excluded": 0,
+   "published": 2,
+   "raw": 3,
+   "realized": 2,
+   "sampled": 3,
+   "status_counts": {
+    "published_leaf": 2,
+    "suppressed_by_verified_symmetry": 1
+   },
+   "target_categories": {
+    "DEFERRED": 0,
+    "DRIFTED": 0,
+    "REALIZATION_SUPPRESSED_BY_VERIFIED_SYMMETRY": 1,
+    "REALIZED": 2,
+    "UNRESOLVED": 0
+   },
+   "unit_basis": {
+    "authoritative_sections": [
+     "leaf_certificate",
+     "attempt_ledger"
+    ],
+    "published": "final leaves",
+    "realized": "successful stage attempts, including internal expansions",
+    "target_categories": "mixed diagnostic records; no certificate equation"
+   }
+  },
+  "drift_events": [],
+  "enumeration": {
+   "basis": "coordination:fixed test states",
+   "deferred_sampled_out": 0,
+   "digest": "sha256:d279584cee591c22b321eec3d6e253c2fe7ce5109a71c000b8644ac03d6bb7d9",
+   "exact": true,
+   "exclusions": [],
+   "per_axis": {
+    "coordination": {
+     "basis": "fixed test states",
+     "declared_count": 3,
+     "exact": true,
+     "scope_coverage": "exact",
+     "upper_bound": 3
+    }
+   },
+   "policy_excluded": 0,
+   "sampled": 3,
+   "sampling": {
+    "cap": null,
+    "capped": false,
+    "seed": null,
+    "sorted": true
+   },
+   "symbolic": {
+    "basis": "unconditional product space",
+    "exact": true,
+    "paths_consistent": true,
+    "paths_detail": "unconditional product space",
+    "raw_leaf_states": 3
+   },
+   "total_declared": 3,
+   "total_upper_bound": 3
+  },
+  "inherited": {
+   "audited": false,
+   "basis": "no incoming chained state",
+   "entries": []
+  },
+  "leaf_certificate": {
+   "anomalies": {
+    "AMBIGUOUS_KEY": 0
+   },
+   "basis": "final joint leaves only: published leaves, terminal leaf failures, leaf rejections, verified suppressions, and deferred ranges (counted arithmetically); internal attempts excluded",
+   "count_details": {
+    "attempted": 3,
+    "deferred_parent": 0,
+    "deferred_sampled_out": 0,
+    "failed": 0,
+    "ok": true,
+    "published": 2,
+    "raw": 3,
+    "rejected": 0,
+    "sampled": 3,
+    "suppressed": 1
+   },
+   "equation_exact": true,
+   "equations_ok": true,
+   "leaf_categories": {
+    "DEFERRED": 0,
+    "DRIFTED": 0,
+    "REALIZATION_SUPPRESSED_BY_VERIFIED_SYMMETRY": 1,
+    "REALIZED": 2,
+    "REJECTED": 0,
+    "UNRESOLVED": 0
+   },
+   "total": 3
+  },
+  "levels": [
+   "coordination"
+  ],
+  "preflight": {
+   "basis": "coordination:fixed test states",
+   "exact": true,
+   "total_declared": 3,
+   "total_upper_bound": 3
+  },
+  "provenance": {
+   "backend": "geometric-rodrigues",
+   "input_id": "seed",
+   "seed": 21
+  },
+  "realization": {
+   "attempted": 3,
+   "count_details": {
+    "attempted": 3,
+    "deferred_parent": 0,
+    "deferred_sampled_out": 0,
+    "failed": 0,
+    "ok": true,
+    "published": 2,
+    "raw": 3,
+    "rejected": 0,
+    "sampled": 3,
+    "suppressed": 1
+   },
+   "count_equations_ok": true,
+   "failed": {},
+   "paths_consistent": true,
+   "paths_detail": "unconditional product space",
+   "proof_contradictions": [],
+   "published": 2,
+   "realization_attempts": 2,
+   "realized": 2,
+   "status_counts": {
+    "published_leaf": 2,
+    "suppressed_by_verified_symmetry": 1
+   },
+   "suppressed": 1,
+   "terminal_detail": "ok",
+   "terminal_equations_ok": true
+  },
+  "sampling": {
+   "cap": null,
+   "capped": false,
+   "seed": null,
+   "sorted": true
+  },
+  "schema_version": 3,
+  "scope": {
+   "breaking_pairs": [],
+   "donor_configuration": null,
+   "excluded_axes": [],
+   "preserved_axes": [],
+   "unsupported": []
+  },
+  "suppression": {
+   "disabled_reason": null,
+   "scope": "single-axis runs without sampling caps or top-level exclusions: verified records suppress with a realized representative; otherwise targets realize normally (joint-tree stabilizer, sampled-representative, and policy-excluded-representative scopes pending)",
+   "supported": true,
+   "suppressed": 1
+  }
+ },
+ "targets": [
+  {
+   "axis": "coordination",
+   "evidence_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+   "ordinal": 0,
+   "parent_target_id": null,
+   "reason": "published_leaf",
+   "status": "published_leaf",
+   "target_id": "coordination:000000"
+  },
+  {
+   "axis": "coordination",
+   "evidence_sha256": "f73ce13bdaceab0cb90ae4a6c1147fefad19fee0cff6301b5bfd8d17a13221ce",
+   "ordinal": 1,
+   "parent_target_id": null,
+   "reason": "suppressed_by_verified_symmetry:representative=coordination:000000",
+   "status": "suppressed_by_verified_symmetry",
+   "target_id": "coordination:000001"
+  },
+  {
+   "axis": "coordination",
+   "evidence_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+   "ordinal": 2,
+   "parent_target_id": null,
+   "reason": "published_leaf",
+   "status": "published_leaf",
+   "target_id": "coordination:000002"
+  }
+ ]
+}

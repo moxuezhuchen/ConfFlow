@@ -13,21 +13,15 @@ import itertools
 import numpy as np
 import pytest
 
-from confflow.domain import FrozenDict, StructureRecord
-from confflow.domain.completion import WorkItemStatus
-from confflow.execution.confgen_executor import ConfgenExecutor
-from confflow.science.bonds import covalent_radii
+from confflow.domain import StructureRecord
 from confflow.science.confgen.model import WorkingRealization, build_context
-from confflow.science.confgen.planner import MixedRadixGrid, normalize_executor_native
+from confflow.science.confgen.planner import MixedRadixGrid
 from confflow.science.confgen.torsion import (
     TorsionStage,
-    legacy_cap_v1,
-    legacy_grid_geometries,
-    legacy_rotatable_bonds,
     measure_dihedral,
     wrap_degrees,
 )
-from tests.v4.test_repair_executors import _butane, _ctx, _item, _sci
+from tests.v4.test_repair_executors import _butane
 
 
 def _butane_context(**overrides):
@@ -183,110 +177,7 @@ def test_chemical_requires_explicit_states():
         )
 
 
-def test_stage_sign_convention_vs_legacy():
-    """Stage coords equal legacy coords at negated angles (sign pinned)."""
-    context = _butane_context()
-    stage = TorsionStage(context.resolved_spec)
-    root = _root(context)
-    base = np.asarray(context.structure.coordinates, dtype=float)
-    adjacency = [list(row) for row in context.adjacency]
-    legacy = {
-        ordinal: coords
-        for ordinal, coords in legacy_grid_geometries(
-            base, [[1, 2]], [[0.0, 120.0, 240.0]], adjacency, rotate_side="left"
-        )
-    }
-    angles = [0.0, 120.0, 240.0]
-    for target in stage.enumerate_targets(root, context):
-        outcome = stage.realize(root, target, context)
-        assert outcome.status == "realized"
-        commanded = float(target.state_value["central"])
-        # Legacy rotates about the chain-direction axis: equal geometry at
-        # the negated angle (mod 360).
-        ordinal = angles.index((-commanded) % 360.0)
-        assert np.allclose(np.asarray(outcome.structure.coordinates), legacy[ordinal], atol=1e-9)
-
-
 # -- legacy adapter parity ---------------------------------------------------
-
-
-def test_legacy_adapter_matches_executor_coordinates_and_ordinals():
-    """Legacy adapter reproduces executor geometry/ordinals bit-for-bit."""
-    from confflow.science.torsion import topological_distance_matrix
-
-    record = _butane("seed-a")
-    native = {"chains": ["1-2-3-4"], "chain_angles": "0;0,120,240;0"}
-    item = _item("c1:g1", "c1", [record])
-    result = ConfgenExecutor().execute(item, _ctx(_sci(seed=11, native=FrozenDict(native)), "/tmp"))
-    assert result.status is WorkItemStatus.COMPLETED
-    base = np.asarray(record.coordinates, dtype=float)
-    adjacency = legacy_adapter_adjacency(record)
-    angle_lists = [[0.0], [0.0, 120.0, 240.0], [0.0]]
-    chains = [[0, 1, 2, 3]]
-    numbers = [6, 6, 6, 6]
-    radii = covalent_radii(numbers)
-    topo = topological_distance_matrix(adjacency)
-    kept = {
-        ordinal: coords
-        for ordinal, coords in legacy_grid_geometries(
-            base,
-            chains,
-            angle_lists,
-            adjacency,
-            radii=radii,
-            topo=topo,
-            clash_threshold=0.65,
-        )
-    }
-    assert [m.ordinal for m in result.structures] == sorted(kept)
-    for member in result.structures:
-        assert np.allclose(np.asarray(member.coordinates), kept[member.ordinal], atol=0.0)
-
-
-def legacy_adapter_adjacency(record: StructureRecord):
-    """Perceive covalent adjacency exactly like the executor default."""
-    from confflow.domain.elements import atomic_number
-    from confflow.science.bonds import perceive_adjacency
-
-    numbers = [atomic_number(symbol) for symbol in record.atoms]
-    return perceive_adjacency(numbers, [tuple(p) for p in record.coordinates], bond_scale=1.15)
-
-
-def test_legacy_cap_v1_matches_executor_capped_subset():
-    """Versioned cap keeps the executor's survivor subset (documented)."""
-    record = _butane("seed-a")
-    native = {"chains": ["1-2-3-4"], "chain_angles": "0;0,60,120,180,240,300;0"}
-    full = ConfgenExecutor().execute(
-        _item("c1:g1", "c1", [record]), _ctx(_sci(seed=11, native=FrozenDict(native)), "/tmp")
-    )
-    assert full.status is WorkItemStatus.COMPLETED
-    full_ordinals = sorted(m.ordinal for m in full.structures)
-    capped = ConfgenExecutor().execute(
-        _item("c1:g1", "c1", [record]),
-        _ctx(_sci(seed=11, native=FrozenDict({**native, "max_conformers": 2})), "/tmp"),
-    )
-    assert capped.status is WorkItemStatus.COMPLETED
-    expected = sorted(legacy_cap_v1(full_ordinals, seed=11, logical_key="c1:g1", cap=2))
-    assert sorted(m.ordinal for m in capped.structures) == expected
-
-
-def test_executor_native_normalization_round_trip():
-    """Executor native maps to a normalized v3 spec with 0-based bonds."""
-    spec = normalize_executor_native(
-        {"chains": ["1-2-3-4"], "chain_angles": "0;0,120;0", "no_rotate": ["1-2"]},
-        seed=7,
-    )
-    assert spec["index_base"] == 0
-    bonds = {tuple(entry["bond"]): entry["treatment"] for entry in spec["torsions"]}
-    assert bonds[(0, 1)] == "preserve_input"
-    assert bonds[(1, 2)] == "enumerate"
-    assert spec["torsions"][1]["angles"] == [0.0, 120.0]
-
-
-def test_executor_native_rejects_max_conformers_mapping():
-    """Old cap must use the versioned adapter, never silent v3 sampling."""
-    with pytest.raises(ValueError, match="legacy_cap_v1"):
-        normalize_executor_native({"chains": ["1-2-3-4"], "max_conformers": 2}, seed=1)
 
 
 # -- fail-closed validation ----------------------------------------------------
@@ -471,11 +362,3 @@ def test_mixed_radix_matches_product_order():
     grid = MixedRadixGrid([1, 3, 1])
     combos = [grid.index_to_combo(i) for i in grid.iter_indices()]
     assert combos == list(itertools.product(range(1), range(3), range(1)))
-
-
-def test_legacy_bond_builder_matches_executor_sides():
-    """Chain-aware side selection mirrors executor construction."""
-    adjacency = [[1], [0, 2], [1, 3], [2]]
-    bonds = legacy_rotatable_bonds([[0, 1, 2, 3]], adjacency, "left")
-    assert [(b[0], b[1]) for b in bonds] == [(0, 1), (1, 2), (2, 3)]
-    assert bonds[1][2] == [0]

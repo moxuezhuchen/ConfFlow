@@ -25,6 +25,11 @@ from ._immutable import FrozenDict
 from .canonical import typed_digest
 from .elements import canonical_element_symbol
 from .errors import ElementSymbolError, InvalidStructureError
+from .topology import (
+    TOPOLOGY_PAYLOAD_KEY,
+    WORKING_TOPOLOGY_PAYLOAD_KEY,
+    TopologyPatch,
+)
 from .units import Unit
 
 __all__ = [
@@ -32,6 +37,7 @@ __all__ = [
     "Coordinates",
     "StructureRecord",
     "StructureSet",
+    "TopologyPatch",
     "check_structure_id_conflicts",
     "structure_reuse_payload",
 ]
@@ -92,6 +98,51 @@ def _normalize_coordinates(coordinates: Any) -> Coordinates:
     if not points:
         raise InvalidStructureError("coordinates must not be empty")
     return tuple(points)
+
+
+def _normalize_working_topology(value: Any, n_atoms: int) -> tuple[tuple[int, ...], ...] | None:
+    """Validate an optional persisted working adjacency (zero-based)."""
+    if value is None:
+        return None
+    if isinstance(value, (str, bytes)) or not isinstance(value, (list, tuple)):
+        raise InvalidStructureError("working_topology must hold one neighbour row per atom")
+    rows = list(value)
+    if len(rows) != n_atoms:
+        raise InvalidStructureError(
+            f"working_topology holds {len(rows)} rows but the structure has {n_atoms} atoms"
+        )
+    normalized: list[tuple[int, ...]] = []
+    for index, row in enumerate(rows):
+        if isinstance(row, (str, bytes)) or not isinstance(row, (list, tuple)):
+            raise InvalidStructureError(f"working_topology[{index}] must be a neighbour list")
+        neighbours: list[int] = []
+        for position, entry in enumerate(row):
+            if type(entry) is not int:
+                raise InvalidStructureError(
+                    f"working_topology[{index}][{position}] must be a strict integer "
+                    f"atom index, got {entry!r}"
+                )
+            if entry < 0 or entry >= n_atoms:
+                raise InvalidStructureError(
+                    f"working_topology[{index}][{position}] index {entry} out of range "
+                    f"for {n_atoms} atoms"
+                )
+            if entry == index:
+                raise InvalidStructureError(f"working_topology[{index}] holds a self loop")
+            neighbours.append(entry)
+        if tuple(sorted(neighbours)) != tuple(neighbours):
+            raise InvalidStructureError(f"working_topology[{index}] must be sorted")
+        if len(set(neighbours)) != len(neighbours):
+            raise InvalidStructureError(f"working_topology[{index}] holds a duplicate neighbour")
+        normalized.append(tuple(neighbours))
+    for index, row in enumerate(normalized):
+        for other in row:
+            if index not in normalized[other]:
+                raise InvalidStructureError(
+                    f"working_topology is not symmetric: {index} lists {other} "
+                    "but not vice versa"
+                )
+    return tuple(normalized)
 
 
 def _validate_optional_int(value: Any, field_name: str, *, minimum: int | None = None) -> None:
@@ -157,6 +208,8 @@ class StructureRecord:
     ordinal: int | None = None
     group_key: str | None = None
     metadata: FrozenDict = field(default_factory=FrozenDict)
+    topology_patch: TopologyPatch | None = None
+    working_topology: tuple[tuple[int, ...], ...] | None = None
 
     def __post_init__(self) -> None:
         _require_identifier(self.id, "id")
@@ -191,6 +244,25 @@ class StructureRecord:
             _require_identifier(self.group_key, "group_key")
         if not isinstance(self.metadata, FrozenDict):
             object.__setattr__(self, "metadata", FrozenDict(self.metadata))
+        patch = self.topology_patch
+        if patch is not None:
+            if isinstance(patch, dict):
+                try:
+                    patch = TopologyPatch.from_dict(patch)
+                except InvalidStructureError as exc:
+                    raise InvalidStructureError(f"topology_patch invalid: {exc}") from exc
+            if not isinstance(patch, TopologyPatch):
+                raise InvalidStructureError(
+                    "topology_patch must be a TopologyPatch or None, "
+                    f"got {type(self.topology_patch).__name__}"
+                )
+            patch.validate_for(len(self.atoms))
+            object.__setattr__(self, "topology_patch", patch)
+        object.__setattr__(
+            self,
+            "working_topology",
+            _normalize_working_topology(self.working_topology, len(self.atoms)),
+        )
 
     @property
     def geometry_digest(self) -> str:
@@ -213,16 +285,26 @@ class StructureRecord:
         """Return this structure's contribution to a work-item digest.
 
         The payload carries everything that can change computed results
-        without changing the geometry: geometry content, charge, and
-        multiplicity.  Entity id and provenance are deliberately excluded so
-        that identical scientific content re-imported under new entity ids
-        keeps the same reuse identity.
+        without changing the geometry: geometry content, charge,
+        multiplicity, and — only when declared — the topology correction
+        and the authoritative persisted working graph. Entity id and
+        provenance are deliberately excluded so that identical scientific
+        content re-imported under new entity ids keeps the same reuse
+        identity. Records without a patch and without a persisted graph
+        keep the exact legacy shape so legacy digests never move.
         """
-        return {
+        payload: dict[str, Any] = {
             "geometry_digest": self.geometry_digest,
             "charge": self.charge,
             "multiplicity": self.multiplicity,
         }
+        if self.topology_patch is not None and not self.topology_patch.is_empty:
+            payload[TOPOLOGY_PAYLOAD_KEY] = self.topology_patch.to_payload()
+        if self.working_topology is not None:
+            payload[WORKING_TOPOLOGY_PAYLOAD_KEY] = [
+                [int(v) for v in row] for row in self.working_topology
+            ]
+        return payload
 
     def reuse_payload(self, effective: Any | None = None) -> dict[str, Any]:
         """Return the provenance-aware reuse payload for work-item digests.
@@ -246,7 +328,7 @@ class StructureRecord:
             multiplicity = getattr(effective, "multiplicity", self.multiplicity)
             raw_freeze = getattr(effective, "freeze", None)
             freeze = list(raw_freeze) if raw_freeze is not None else None
-        return {
+        payload = {
             "entity_id": self.id,
             "geometry_digest": self.geometry_digest,
             "charge": charge,
@@ -257,6 +339,13 @@ class StructureRecord:
             "parent_ids": list(self.parent_ids),
             "lineage_root_id": self.lineage_root_id,
         }
+        if self.topology_patch is not None and not self.topology_patch.is_empty:
+            payload[TOPOLOGY_PAYLOAD_KEY] = self.topology_patch.to_payload()
+        if self.working_topology is not None:
+            payload[WORKING_TOPOLOGY_PAYLOAD_KEY] = [
+                [int(v) for v in row] for row in self.working_topology
+            ]
+        return payload
 
     def has_same_content(self, other: StructureRecord) -> bool:
         """Return whether *other* has identical scientific content.
@@ -269,8 +358,12 @@ class StructureRecord:
         )
 
     def to_dict(self) -> dict[str, Any]:
-        """Return a canonical, JSON-compatible representation."""
-        return {
+        """Return a canonical, JSON-compatible representation.
+
+        ``topology_patch`` and ``working_topology`` are omitted when
+        absent so legacy records keep their exact legacy representation.
+        """
+        payload: dict[str, Any] = {
             "id": self.id,
             "atoms": list(self.atoms),
             "coordinates": [list(point) for point in self.coordinates],
@@ -286,6 +379,11 @@ class StructureRecord:
             "metadata": self.metadata.thaw(),
             "geometry_digest": self.geometry_digest,
         }
+        if self.topology_patch is not None:
+            payload["topology_patch"] = self.topology_patch.to_dict()
+        if self.working_topology is not None:
+            payload["working_topology"] = [[int(v) for v in row] for row in self.working_topology]
+        return payload
 
 
 @dataclass(frozen=True, slots=True)

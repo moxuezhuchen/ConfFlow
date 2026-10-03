@@ -370,11 +370,6 @@ class TestValidationRules:
         reasons, ok = self._reasons(_v3_doc(_typed_native(seed=7, sampling={"cap": 2})))
         assert ok, reasons
 
-    def test_legacy_without_seed_stays_rejected(self) -> None:
-        reasons, ok = self._reasons(_v3_doc({"native": {"chains": ["1-2-3"]}}))
-        assert not ok
-        assert any("seed" in reason for reason in reasons), reasons
-
     def test_confgen_freeze_override_rejected(self) -> None:
         doc = _v3_doc({"native": {"chains": ["1-2-3"]}, "seed": 1, "overrides": {"freeze": [1]}})
         reasons, ok = self._reasons(doc)
@@ -1003,72 +998,6 @@ class TestChainedLocks:
 # ----------------------------------------------------------------------
 
 
-class TestLegacyRegressions:
-    def test_v3_filenames_vs_legacy_compat(self, tmp_path) -> None:
-        out, _ = _run_v3(_typed_native(), None, str(tmp_path))
-        assert out.status is WorkItemStatus.COMPLETED
-        names = sorted(ref.locator.path.rsplit("/", 1)[-1] for ref in out.artifacts)
-        assert names == ["confgen_states.jsonl.gz", "ensemble_report.json"]
-        legacy, _ = _run_v3({"chains": ["1-2-3-4"]}, 11, str(tmp_path))
-        assert legacy.status is WorkItemStatus.COMPLETED
-        assert [ref.locator.path.rsplit("/", 1)[-1] for ref in legacy.artifacts] == [
-            "confgen_report.json"
-        ]
-
-    def test_full_grid_parity(self, tmp_path) -> None:
-        native = {"chains": ["1-2-3-4"], "chain_angles": "0;0,120,240;0"}
-        out, _ = _run_v3(native, 11, str(tmp_path))  # legacy path by shape
-        assert out.status is WorkItemStatus.COMPLETED
-        assert [r.ordinal for r in out.structures] == [0, 1, 2]
-        assert len(out.results) == 0  # legacy emits structures only, no state keys
-        assert [ref.role for ref in out.artifacts] == [CONFGEN_REPORT_ROLE]
-
-    def test_legacy_missing_seed_still_fails(self, tmp_path) -> None:
-        out, _ = _run_v3({"chains": ["1-2-3-4"]}, None, str(tmp_path))
-        assert out.status is WorkItemStatus.FAILED
-
-    def test_legacy_cap_keeps_survivor_semantics(self, tmp_path) -> None:
-        from confflow.science.confgen.torsion.legacy import legacy_cap_v1
-
-        native = {"chains": ["1-2-3-4"], "chain_angles": "0;0,60,120,180,240,300;0"}
-        full, _ = _run_v3(native, 11, str(tmp_path))
-        capped, _ = _run_v3({**native, "max_conformers": 2}, 11, str(tmp_path))
-        assert full.status is WorkItemStatus.COMPLETED
-        assert capped.status is WorkItemStatus.COMPLETED
-        expected = sorted(
-            legacy_cap_v1(
-                sorted(r.ordinal for r in full.structures),
-                seed=11,
-                logical_key="c1:g1",
-                cap=2,
-            )
-        )
-        assert sorted(r.ordinal for r in capped.structures) == expected
-
-    def test_legacy_grid_guard_refuses_explosion_pre_geometry(self, tmp_path) -> None:
-        from confflow.execution.confgen_executor import _LEGACY_MAX_DECLARED_STATES
-        from confflow.workflow.v4.confgen_schema import ConfgenLimits
-
-        assert _LEGACY_MAX_DECLARED_STATES == ConfgenLimits().max_declared_states
-        out, _ = _run_v3({"chains": ["1-2-3-4"], "angle_step": 1}, 11, str(tmp_path))
-        assert out.status is WorkItemStatus.FAILED
-        assert "pre-geometry limit" in out.diagnostics[0].message
-        assert not out.structures
-
-    def test_legacy_emits_no_state_identity(self, tmp_path) -> None:
-        # Pinned contract: legacy structures-only output carries no
-        # confgen_state and hence cannot chain, until a versioned
-        # legacy->StateKey adapter exists (it must refuse terminal-bond
-        # and degenerate grids rather than mint bare ordinal keys).
-        out, _ = _run_v3(
-            {"chains": ["1-2-3-4"], "chain_angles": "0;0,120,240;0"}, 11, str(tmp_path)
-        )
-        assert out.status is WorkItemStatus.COMPLETED
-        assert len(out.structures) == 3
-        assert len(out.results) == 0
-        assert [ref.role for ref in out.artifacts] == [CONFGEN_REPORT_ROLE]
-
-
 # ----------------------------------------------------------------------
 # Coordination boundary: backend/budgets/witnessed site_group + TS1 sigma
 # ----------------------------------------------------------------------
@@ -1298,6 +1227,12 @@ class TestProducerWiring:
         assert section["coordination_budgets"] == {"max_nfev": 120, "maxiter": 400}
         assert section["coordination_site_group_scope"] == "declared_topological_subgroup"
         assert section["result_provenance"] == ["certificate_digest", "inherited_scope"]
+        assert section["report_provenance"] == [
+            "/certificate/digest",
+            "/enumeration/digest",
+            "/input_state_digest",
+            "/input_certificate_digest",
+        ]
 
     def test_manifest_v3_fields_resolve(self) -> None:
         from confflow.producer.manifest import build_editor_manifest_v4
@@ -1305,7 +1240,7 @@ class TestProducerWiring:
         manifest = build_editor_manifest_v4()
         ids = {field["field_id"] for field in manifest["fields"]}
         assert "confgen.v3.torsions" in ids
-        assert "confgen.native" in ids  # legacy path retained
+        assert "confgen.native" not in ids  # the legacy native path is retired
 
     def test_confgen_recipe_compiles(self) -> None:
         from confflow.producer.recipes import get_recipe_v4

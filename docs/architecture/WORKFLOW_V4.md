@@ -1,9 +1,11 @@
 # ConfFlow Workflow V4 架构（V4-1 Greenfield Core + Compiler）
 
+> 本文为历史设计记录，部分描述已被取代，以 ARCHITECTURE.md 为准。
+
 本文只记录已经落地在代码与测试中的事实。代码/测试是第一权威；本文反映当前实现。
 
 里程碑状态：**V4-1 已完成**（greenfield domain + schema/parser + validator + typed binding graph + deterministic compiler + synthetic WorkItem assembly）。
-V4-1 **不执行**任何 Gaussian/ORCA 原生程序，也不接入旧的 `CalcStepRunner` / `TaskRunner`。
+V4-1 **不执行**任何 Gaussian/ORCA 原生程序，也不接入已删除的旧 calc 运行器。
 
 ## 1. 包边界与依赖规则
 
@@ -48,7 +50,7 @@ confflow/
 
 - `confflow.domain` 不 import 任何其它 `confflow.*`（仅 stdlib、pydantic 之外的第三方：`rfc8785`）。
 - `confflow.workflow.v4` / `confflow.execution` 只允许 import `confflow.domain`、`confflow.execution`、`confflow.workflow.v4`。
-- 禁止 import 前缀：`confflow.config`、`confflow.calc`、`confflow.core`、`confflow.blocks`、`confflow.shared`、`confflow.application`、`confflow.worker_*`、`confflow.control*`、`confflow.cli/main/confts/contract/artifact_json`，以及全部 V2/V3 workflow 模块。
+- 禁止 import 前缀：`confflow.config`、`confflow.core`、`confflow.shared`、`confflow.application`、`confflow.worker_*`、`confflow.control*`、`confflow.cli/main/contract/artifact_json`，以及全部 V2/V3 workflow 模块。
 - `confflow.domain` 中的元素表是 V4 自有的最小副本；`tests/v4/test_elements_drift.py` 与 `confflow.core.data.PERIODIC_SYMBOLS` 交叉校验，防止静默漂移（生产代码不 import legacy）。
 - `import confflow.workflow.v4` 在子进程中验证不会把 V3 runtime / 旧 config / calc 拉进 `sys.modules`。
 
@@ -186,7 +188,7 @@ WorkflowDocument (YAML)
 ## 7. 复用决策（来自低层审计，V4-2 执行前生效）
 
 - REUSE（计划）：`artifact_json.write_atomic_json`、`worker_staging._stage_file` 的 secure-copy 语义、`core/path_policy.py` 的配置无关校验、Gaussian/ORCA 纯渲染/解析函数、`calc/geometry.py` 的 `parse_last_geometry`/`check_termination`、`core/io.py` 的流式 XYZ 读取、`worker_supervision` 的 liveness 规则、`launch_lease` 的 flock 模式。
-- DO_NOT_REUSE：`CalcStepRunner`/`CalcStepRequest`/`CalcStepResult`、`TaskRunner`、`CalculationPolicy` 注册表、`TaskContext`、`GlobalOptions`、V2/V3 canonical fingerprint、manifest/results.db 合同、itask/iprog 映射、`chk_from_step`/`backup_dir`/`ibkout` 语义、worker handoff 的 `input_xyz` envelope。
+- DO_NOT_REUSE：旧 calc 运行器与任务运行器（已删除）、`CalculationPolicy` 注册表、`TaskContext`、`GlobalOptions`、V2/V3 canonical fingerprint、manifest/results.db 合同、itask/iprog 映射、`chk_from_step`/`backup_dir`/`ibkout` 语义、worker handoff 的 `input_xyz` envelope。
 - 原则：复用正确低层能力，替换错误高层抽象；V4-1 不复制任何 legacy 代码。
 
 ## 8. 明确非目标（V4-1）
@@ -215,7 +217,7 @@ WorkflowDocument (YAML)
 # V4-2：New Standard Calculation Engine（已完成）
 
 里程碑状态：**V4-2 已完成**。建立了真正的 standard-calculation vertical slice，
-全程不经过 `input_xyz → CalcStepRunner → output_path`。
+全程不经过旧的 calc 调度链。
 
 ```
 StructureSet → Binding/WorkItem → BatchStepExecutor → WorkItemExecutor
@@ -863,3 +865,27 @@ FINAL CLOSURE READINESS：YES — 在不再改变核心架构的前提下，可�
 执行最终验收（JobDesk → 真实 producer contract → 真实 V4 workflow →
 真实 Gaussian/ORCA → 中断/resume → local/remote → IRC fan-out →
 端点 Opt/Freq/SP → Analysis/PES → manifest → JobDesk）。
+
+---
+
+# structure_transform `refine` 的对称映射与声明拓扑（事实）
+
+- **去重判据：** `refine` 在同一科学分组（电荷、多重度、`group_key`、`role`、元素序列）内逐对比较，
+  只在**合法的元素/边保持映射**下评估 Kabsch RMSD；某个映射下 RMSD **严格小于**阈值即判重复
+  （`rmsd_threshold_angstrom = 0` 因此不合并任何结构）。映射由有预算的精确搜索得到
+  （`mapping_budget`，默认 1000 个搜索节点/每对结构）；预算耗尽的一对为 *unresolved*，两个结构都保留，
+  步骤 notes 注明。所以只是对称等价原子（甲基氢、叔丁基的臂、苯环取代位）标号不同的构象会被合并。
+- **两个口径：** ConfGen 报告的"带标号状态数"（枚举出的、按标号区分的状态）与 `refine` 之后的
+  "物理构象数"是两个不同口径——σ 相关（对称等价）的结构会被合并，所以后者通常小于前者，这是预期，
+  不是丢失。TS1 的 refine 结果仅作为信息性记录，不作为通过条件。
+- **声明拓扑 `topology_bonds`（可选 native 参数）：** 形状与 ConfGen v3 的 `topology` 相同——
+  `bonds`，或 `add_bond`/`del_bond`；带类型的边（`COVALENT`/`COORDINATION`/`FORMING`/`BREAKING`）；
+  `atoms`；`index_base`（0 或 1，默认 1，与 ConfGen 文档一致）——外加 `coordination` 范围与 `bond_scale`
+  （缺省为 ConfGen 的默认值 1.15）。`refine` 用 ConfGen 的同一构图函数（`planner.build_typed_graph`）建图，
+  因此同一份声明在两边得到完全相同的边集合；映射必须保持非共价边的类型（反应键连在不同原子对上的
+  两个几何相同的结构不会被合并）。索引越界、与结构原子数不符、矛盾的类型一律报错。
+  未提供时，拓扑仍由几何感知得到（`bond_scale`，默认 1.2），行为不变；同时给出 `bond_scale` 与
+  `topology_bonds` 属于冲突，报错。
+- **与旧 refine 工具的 `AddBond`/`DelBond` 的差异（已接受）：** 同一原子对同时出现在 add 与 del 时，
+  旧实现先删后加（add 胜），ConfGen 与新实现先加后删（del 胜）；非法条目旧为静默忽略，新为报错；
+  声明了拓扑时感知用的 `bond_scale` 由 1.2 变为 ConfGen 的 1.15；来源由逐帧注释改为步骤参数。

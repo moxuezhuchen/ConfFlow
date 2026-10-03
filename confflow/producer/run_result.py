@@ -7,8 +7,7 @@ manifest from the REAL runtime objects only -- :class:`StepResult` /
 ``ArtifactSet`` / ``Analysis`` outputs -- never from hand-built shapes:
 
 * per-step ``id``/``status``/published ``digest`` plus the compiler
-  ``semantic_digest`` and the per-step ``result_digest`` over emitted
-  result identity digests; counts and diagnostics come from the real
+  ``semantic_digest``; counts and diagnostics come from the real
   ``StepResult`` (never ``"completed"``-as-digest, never filename-as-truth);
 * top-level ``results`` with ``ResultRef`` identity (``result_id``/``kind``/
   ``subject``/``source`` provenance plus ``value_digest``/``identity_digest``);
@@ -221,17 +220,6 @@ def step_entry(
         if not str(resolved_semantic).startswith("sha256:"):
             raise ValueError(f"step {result.step_id!r} semantic digest is not a sha256 digest")
         entry["semantic_digest"] = str(resolved_semantic).lower()
-    identity_digests = sorted(
-        {
-            record.identity_digest
-            for record in result.results
-            if getattr(record, "identity_digest", None)
-        }
-    )
-    if identity_digests:
-        entry["result_digest"] = (
-            "sha256:" + hashlib.sha256(canonical_json_bytes(identity_digests)).hexdigest()
-        )
     return entry
 
 

@@ -5,21 +5,21 @@ name: JobDesk Consumer Contract
 # checked against the current consumer's boundary in a neutral working
 # directory (no source shadowing) and then exercised by the current
 # consumer's V4 cross-repo suites at an explicit pinned SHA.  The pin is kept
-# identical to tests/v4/jobdesk_integration.py::EXPECTED_JOBDESK_SHA and to
-# the paired workflow.  The retired legacy consumer repository is not
-# referenced.
+# identical to tests/v4/jobdesk_integration.py::EXPECTED_JOBDESK_SHA.  The
+# retired legacy consumer repository is not referenced.
 
 on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 env:
   #: Pinned current-consumer compatibility target (JobDesk-v2).
-  JOBDESK_COMPAT_SHA: "9beeaf2fc52932dbf9ca183898f1aa92c4366d97"
+  JOBDESK_COMPAT_SHA: "9de35d66f8047e0e7f71ab004e584bbdf0b6c8db"
 
 jobs:
   candidate-wheel-against-current-consumer:

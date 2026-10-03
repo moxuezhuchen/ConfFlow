@@ -5,21 +5,17 @@
 Pure executor: never shells to Gaussian/ORCA, never calls the calculation
 pipeline, never imports legacy runner code.
 
-Two versioned science paths share this executor (never mixed):
+The only science path is the typed v3 scope; a scope without
+``schema_version: 3`` fails closed.
 
-- Legacy ``native.chains`` torsion scans keep their explicitly versioned
-  behavior bit-for-bit: full-grid ordinals and coordinates, the
-  ``max_conformers`` survivor shuffle-truncate subset (see
-  ``confflow.science.confgen.torsion.legacy.legacy_cap_v1``), and the
-  always-required seed. Science lives in :mod:`confflow.science.torsion`.
-- Typed v3 scopes (``native.schema_version == 3``) run the
-  Declare -> Enumerate -> Realize -> Perceive -> Account engine over the
-  normalized wire in ``ScientificDefinition.native``: resolve inputs to a
-  typed spec/context, expand the conditional C->R->T tree, publish
-  leaf-only structures, stamp ``confgen_state`` results, and write the
-  ``ensemble_report`` plus canonical gzip JSONL target records. The v3 path
-  is deterministic by default; a seed is required only when ``sampling``
-  requests a capped subset.
+Typed v3 scopes (``native.schema_version == 3``) run the
+Declare -> Enumerate -> Realize -> Perceive -> Account engine over the
+normalized wire in ``ScientificDefinition.native``: resolve inputs to a
+typed spec/context, expand the conditional C->R->T tree, publish
+leaf-only structures, stamp ``confgen_state`` results, and write the
+``ensemble_report`` plus canonical gzip JSONL target records. The v3 path
+is deterministic by default; a seed is required only when ``sampling``
+requests a capped subset.
 
 Identity: members use the frozen
 :func:`confflow.execution.output_identity.conformer_output_id` authority
@@ -36,10 +32,9 @@ import gzip
 import hashlib
 import io
 import json
-import math
 import os
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 import numpy as np
@@ -48,18 +43,12 @@ from ..domain._immutable import FrozenDict
 from ..domain.artifact import ArtifactLocator, ArtifactRef, ArtifactSet
 from ..domain.completion import WorkItemStatus
 from ..domain.diagnostics import Diagnostic, DiagnosticSeverity
-from ..domain.elements import atomic_number
 from ..domain.errors import DomainError
 from ..domain.result import ResultSet
 from ..domain.structure import StructureRecord, StructureSet
 from ..domain.work_item import RecoveryInfo, Timing, WorkItem, WorkItemResult
-from ..science.bonds import covalent_radii, perceive_adjacency
-from ..science.confgen.torsion.legacy import legacy_cap_v1, legacy_grid_geometries
-from ..science.torsion import (
-    parse_bond_pair,
-    parse_chain,
-    resolve_angle_lists,
-    topological_distance_matrix,
+from ..science.topology import (
+    should_persist_working_graph,
 )
 from .native import NativeErrorCode
 from .output_identity import (
@@ -89,37 +78,30 @@ CONFGEN_STATE_KIND = "confgen_state"
 #: Optional result input port carrying an upstream chained StateKey.
 CONFGEN_STATE_PORT = "confgen_state"
 
-#: Allowed step-native keys for the legacy chains path (unknown keys fail closed).
-ALLOWED_NATIVE_KEYS = frozenset(
-    {
-        "chains",
-        "chain_steps",
-        "chain_angles",
-        "angle_step",
-        "rotate_side",
-        "no_rotate",
-        "add_bond",
-        "del_bond",
-        "bond_scale",
-        "clash_threshold",
-        "max_conformers",
-        "optimize",
-    }
-)
 
+#: Defaults of the read-only path preview (``producer.path_preview`` still takes the
+#: legacy declaration shape until the preview moves to typed v3).
 _DEFAULT_ANGLE_STEP = 120
 _DEFAULT_BOND_SCALE = 1.15
-_DEFAULT_CLASH_THRESHOLD = 0.65
 
-#: Pre-geometry grid guard for the legacy chains path. Tracks
-#: ``ConfgenLimits.max_declared_states`` (asserted by test, never copied
-#: blindly): a legacy grid above this refuses before geometry, mirroring
-#: the v3 preflight limit discipline on this versioned path.
+#: Pre-geometry grid guard of the path preview. Tracks
+#: ``ConfgenLimits.max_declared_states`` (asserted by test, never copied blindly).
 _LEGACY_MAX_DECLARED_STATES = 10000
 
 
+def _thaw_path_resolution(value: Mapping[str, Any] | None) -> dict[str, Any] | None:
+    """Deep-thaw an optional resolved-spec mapping for JSON report output."""
+    if value is None:
+        return None
+    thaw = getattr(value, "thaw", None)
+    if callable(thaw):
+        thawed = thaw()
+        return dict(thawed) if isinstance(thawed, Mapping) else dict(value)
+    return dict(value)
+
+
 class ConfgenExecutor:
-    """Conformer-generation executor (legacy chains + typed v3 engine)."""
+    """Conformer-generation executor (typed v3 engine)."""
 
     def execute(
         self,
@@ -158,7 +140,13 @@ class ConfgenExecutor:
         native = dict(scientific.native)
         if native.get("schema_version") == 3:
             return self._run_v3(work_item, context, wall_start, monotonic_start, should_cancel)
-        return self._run_legacy(work_item, context, wall_start, monotonic_start, should_cancel)
+        return self._fail(
+            work_item,
+            context,
+            wall_start,
+            monotonic_start,
+            "confgen requires a typed schema_version 3 scope",
+        )
 
     # ------------------------------------------------------------------
     # Typed v3 path
@@ -264,6 +252,13 @@ class ConfgenExecutor:
         if overrides.get("multiplicity") is not None:
             multiplicity = int(overrides["multiplicity"])
         parent_ids, lineage_root, group_key = endpoint_lineage(driving)
+        persist_graph = should_persist_working_graph(driving)
+        inherit_patch = driving.topology_patch if persist_graph else None
+        inherit_graph = (
+            tuple(tuple(int(v) for v in row) for row in science_context.adjacency)
+            if persist_graph
+            else None
+        )
         ordered = sorted(run.leaves, key=lambda leaf: int(leaf.provenance.get("leaf_ordinal", 0)))
         members: list[StructureRecord] = []
         for leaf in ordered:
@@ -290,6 +285,8 @@ class ConfgenExecutor:
                     ordinal=ordinal,
                     group_key=group_key,
                     metadata=FrozenDict(metadata),
+                    topology_patch=inherit_patch,
+                    working_topology=inherit_graph,
                 )
             )
         restated = self._restate_leaves(run.leaves, members)
@@ -312,6 +309,7 @@ class ConfgenExecutor:
             report,
             seed=int(seed) if seed is not None else None,
             upstream=upstream,
+            path_resolution=science_context.resolved_spec.get("paths_resolved"),
         )
         timing = Timing(
             started_at=wall_start,
@@ -319,6 +317,20 @@ class ConfgenExecutor:
             duration_seconds=max(0.0, time.monotonic() - monotonic_start),
         )
         published = len(members)
+        resolved_paths = science_context.resolved_spec.get("paths_resolved")
+        path_warnings: Sequence[str] = (
+            tuple(resolved_paths.get("warnings", ())) if isinstance(resolved_paths, Mapping) else ()
+        )
+        info_details: dict[str, Any] = {
+            "members": published,
+            "seed": int(seed) if seed is not None else None,
+            "certificate": report["certificate"]["digest"],
+            "raw_targets": report["counts"].get("raw"),
+        }
+        if isinstance(resolved_paths, Mapping):
+            info_details["path_rotors"] = len(resolved_paths.get("rotors", ()))
+            info_details["path_raw_states"] = resolved_paths.get("raw_cartesian_size")
+            info_details["path_warnings"] = len(path_warnings)
         return WorkItemResult(
             work_item_id=work_item.id,
             status=WorkItemStatus.COMPLETED,
@@ -337,15 +349,10 @@ class ConfgenExecutor:
                     step_id=work_item.step_id,
                     work_item_id=work_item.id,
                     logical_key=work_item.logical_key,
-                    details=FrozenDict(
-                        {
-                            "members": published,
-                            "seed": int(seed) if seed is not None else None,
-                            "certificate": report["certificate"]["digest"],
-                            "raw_targets": report["counts"].get("raw"),
-                        }
-                    ),
+                    details=FrozenDict(info_details),
                 ),
+                *self._resolved_path_diagnostics(resolved_paths, work_item),
+                *self._warning_diagnostics(path_warnings, work_item),
             ),
             timing=timing,
             recovery=RecoveryInfo(profile="none", attempted=False),
@@ -380,8 +387,6 @@ class ConfgenExecutor:
         descriptor until CORE owns frame resolution end to end.
         """
         import dataclasses
-
-        import numpy as np
 
         from confflow.science.confgen.torsion.measure import measure_dihedral
 
@@ -611,6 +616,7 @@ class ConfgenExecutor:
         *,
         seed: int | None,
         upstream: Mapping[str, Any],
+        path_resolution: Mapping[str, Any] | None = None,
     ) -> ArtifactSet:
         attempt_dir = context.attempt_dir(work_item)
         os.makedirs(attempt_dir, exist_ok=True)
@@ -654,6 +660,7 @@ class ConfgenExecutor:
             "certificate": report["certificate"],
             "sampling": report["sampling"],
             "scope": report["scope"],
+            "path_resolution": _thaw_path_resolution(path_resolution),
             "drift_events": report["drift_events"],
             "members": leaf_rows,
         }
@@ -743,245 +750,28 @@ class ConfgenExecutor:
             )
         return ArtifactSet(tuple(refs))
 
-    # ------------------------------------------------------------------
-    # Legacy chains path (explicitly versioned behavior, bit-for-bit)
-    # ------------------------------------------------------------------
+    # -- helpers ---------------------------------------------------------
 
-    def _run_legacy(
-        self,
-        work_item: WorkItem,
-        context: ItemExecutionContext,
-        wall_start: float,
-        monotonic_start: float,
-        should_cancel: Callable[[], bool] | None,
-    ) -> WorkItemResult:
-        scientific = context.scientific
-        seed = scientific.seed
-        if seed is None or isinstance(seed, bool) or not isinstance(seed, int):
-            raise DomainError("confgen requires the explicit integer step seed (single authority)")
-        driving = self._driving(work_item)
-        native = dict(scientific.native)
-        unknown = sorted(set(native) - ALLOWED_NATIVE_KEYS)
-        if unknown:
-            raise DomainError(
-                f"confgen got unknown native keys {unknown}; allowed {sorted(ALLOWED_NATIVE_KEYS)}"
-            )
-        if native.get("optimize") is True:
-            raise DomainError(
-                "confgen optimize=true is unsupported in V4 (MMFF legacy); "
-                "declare chains without pre-optimization"
-            )
-        raw_chains = native.get("chains")
-        if not isinstance(raw_chains, (list, tuple)) or not raw_chains:
-            raise DomainError(
-                "confgen requires explicit 'chains' (1-based dash-separated atom chains); "
-                "automatic rotatable-bond detection does not exist"
-            )
-        try:
-            chains = [parse_chain(item) for item in raw_chains]
-        except ValueError as exc:
-            raise DomainError(f"confgen {exc}") from exc
-        n_atoms = len(driving.atoms)
-        for chain in chains:
-            for index in chain:
-                if index < 0 or index >= n_atoms:
-                    raise DomainError(
-                        f"confgen chain index {index + 1} out of range for {n_atoms} atoms"
-                    )
-        angle_step = native.get("angle_step", _DEFAULT_ANGLE_STEP)
-        if isinstance(angle_step, bool) or not isinstance(angle_step, int):
-            raise DomainError(f"confgen angle_step must be an integer, got {angle_step!r}")
-        if angle_step <= 0 or angle_step > 360:
-            raise DomainError(f"confgen angle_step must be in 1..360, got {angle_step!r}")
-        rotate_side = str(native.get("rotate_side", "left"))
-        if rotate_side not in ("left", "right"):
-            raise DomainError(f"confgen rotate_side must be 'left' or 'right', got {rotate_side!r}")
-        try:
-            bond_scale = float(native.get("bond_scale", _DEFAULT_BOND_SCALE))
-            clash_threshold = float(native.get("clash_threshold", _DEFAULT_CLASH_THRESHOLD))
-        except (TypeError, ValueError) as exc:
-            raise DomainError(f"confgen numeric parameter malformed: {exc}") from exc
-        if not math.isfinite(bond_scale) or bond_scale <= 0:
-            raise DomainError(
-                f"confgen bond_scale must be a positive number, got {native.get('bond_scale')!r}"
-            )
-        if not math.isfinite(clash_threshold) or clash_threshold <= 0:
-            raise DomainError(
-                "confgen clash_threshold must be a positive number, "
-                f"got {native.get('clash_threshold')!r}"
-            )
-        max_conformers = native.get("max_conformers")
-        if max_conformers is not None and (
-            isinstance(max_conformers, bool)
-            or not isinstance(max_conformers, int)
-            or max_conformers < 1
-        ):
-            raise DomainError(
-                f"confgen max_conformers must be an integer >= 1, got {max_conformers!r}"
-            )
-        chain_steps = self._as_str_list(native.get("chain_steps"), "chain_steps", len(chains))
-        chain_angles = self._as_str_list(native.get("chain_angles"), "chain_angles", len(chains))
-        no_rotate = self._bond_set(native.get("no_rotate", []) or [], "no_rotate")
-        add_bond = [self._bond_pair(item) for item in native.get("add_bond", []) or []]
-        del_bond = [self._bond_pair(item) for item in native.get("del_bond", []) or []]
-
-        atomic_numbers = [atomic_number(symbol) for symbol in driving.atoms]
-        adjacency = perceive_adjacency(atomic_numbers, driving.coordinates, bond_scale=bond_scale)
-        for first, second in add_bond:
-            self._check_index(first, n_atoms, "add_bond")
-            self._check_index(second, n_atoms, "add_bond")
-            if second not in adjacency[first]:
-                adjacency[first].append(second)
-                adjacency[second].append(first)
-        for first, second in del_bond:
-            self._check_index(first, n_atoms, "del_bond")
-            if second in adjacency[first]:
-                adjacency[first].remove(second)
-                adjacency[second].remove(first)
-        adjacency = [sorted(row) for row in adjacency]
-
-        rot_bond_count = 0
-        excluded_bonds = 0
-        full_angle_lists: list[list[float]] = []
-        for chain_index, chain in enumerate(chains):
-            try:
-                per_bond = resolve_angle_lists(
-                    len(chain) - 1,
-                    chain_steps[chain_index] if chain_steps else None,
-                    chain_angles[chain_index] if chain_angles else None,
-                    angle_step,
-                )
-            except ValueError as exc:
-                raise DomainError(f"confgen {exc}") from exc
-            for position, (left, right) in enumerate(zip(chain, chain[1:])):
-                rot_bond_count += 1
-                if right not in adjacency[left]:
-                    raise DomainError(
-                        f"confgen chain atoms {left + 1}-{right + 1} are not bonded; "
-                        "use add_bond or adjust bond_scale"
-                    )
-                if tuple(sorted((left, right))) in no_rotate:
-                    # Excluded bonds hold a single 0.0 grid point: ordinals
-                    # stay identical to the versioned legacy grid.
-                    full_angle_lists.append([0.0])
-                    excluded_bonds += 1
-                    continue
-                # Ring-bond refusal now comes from the science helper below
-                # (fail closed even for no_rotate-listed ring bonds: refusal,
-                # never a silent skip).
-                full_angle_lists.append([float(item) for item in per_bond[position]])
-        if excluded_bonds >= rot_bond_count:
-            raise DomainError("confgen chains selected no rotatable bonds")
-        if should_cancel is not None and should_cancel():
-            return self._cancelled(work_item, context, wall_start, monotonic_start)
-
-        total = math.prod(len(angles) for angles in full_angle_lists)
-        if total > _LEGACY_MAX_DECLARED_STATES:
-            raise DomainError(
-                f"confgen legacy grid declares {total} points above the "
-                f"pre-geometry limit {_LEGACY_MAX_DECLARED_STATES}; split the "
-                "chains or use a v3 sampling cap instead"
-            )
-        base = np.asarray(driving.coordinates, dtype=np.float64)
-        radii = covalent_radii(atomic_numbers)
-        topo = topological_distance_matrix(adjacency)
-        # Science-owned legacy grid: identical ordinals/coordinates to the
-        # versioned legacy executor (chain-aware sides, cumulative
-        # application, post-geometry clash filter). Never routed through the
-        # v3 TorsionStage, whose sign convention differs by design.
-        try:
-            stream = legacy_grid_geometries(
-                base,
-                chains,
-                full_angle_lists,
-                adjacency,
-                rotate_side=rotate_side,
-                radii=radii,
-                topo=topo,
-                clash_threshold=clash_threshold,
-            )
-            kept: list[tuple[int, np.ndarray]] = []
-            for ordinal, coords in stream:
-                kept.append((ordinal, coords))
-                if should_cancel is not None and should_cancel():
-                    return self._cancelled(work_item, context, wall_start, monotonic_start)
-        except ValueError as exc:
-            raise DomainError(f"confgen {exc}") from exc
-        clash_dropped = total - len(kept)
-        if not kept:
-            raise DomainError(
-                f"confgen generated no clash-free conformers ({total} grid points, "
-                f"{clash_dropped} clash-dropped)"
-            )
-        if max_conformers is not None and len(kept) > max_conformers:
-            # Versioned survivor cap (post-geometry shuffle-truncate-restore):
-            # different science from v3 pre-geometry sampling, never mixed.
-            kept = legacy_cap_v1(
-                kept,
-                seed=int(seed),
-                logical_key=work_item.logical_key,
-                cap=max_conformers,
-                key=lambda item: item[0],
-            )
-
-        charge = driving.charge
-        multiplicity = driving.multiplicity
-        overrides = scientific.overrides
-        if overrides.get("charge") is not None:
-            charge = int(overrides["charge"])
-        if overrides.get("multiplicity") is not None:
-            multiplicity = int(overrides["multiplicity"])
-        parent_ids, lineage_root, group_key = endpoint_lineage(driving)
-        members: list[StructureRecord] = []
-        for ordinal, coords in sorted(kept, key=lambda item: item[0]):
-            members.append(
-                StructureRecord(
-                    id=conformer_output_id(work_item.logical_key, ordinal),
-                    atoms=tuple(driving.atoms),
-                    coordinates=tuple(
-                        (float(x), float(y), float(z)) for x, y, z in coords.tolist()
-                    ),
-                    charge=charge,
-                    multiplicity=multiplicity,
-                    parent_ids=parent_ids,
-                    lineage_root_id=lineage_root,
-                    source_step_id=work_item.step_id,
-                    source_work_item_id=work_item.id,
-                    role="conformer",
-                    ordinal=ordinal,
-                    group_key=group_key,
-                    metadata=FrozenDict(
-                        {CONFORMER_MEMBER_METADATA_KEY: ordinal, "seed": int(seed)}
-                    ),
-                )
-            )
-        artifacts = self._write_report(
-            work_item,
-            context,
-            driving,
-            members,
-            int(seed),
-            native,
-            grid=total,
-            clash_dropped=clash_dropped,
-        )
-        timing = Timing(
-            started_at=wall_start,
-            finished_at=max(time.time(), wall_start),
-            duration_seconds=max(0.0, time.monotonic() - monotonic_start),
-        )
-        return WorkItemResult(
-            work_item_id=work_item.id,
-            status=WorkItemStatus.COMPLETED,
-            structures=StructureSet(tuple(members)),
-            results=ResultSet(),
-            artifacts=artifacts,
-            diagnostics=(
+    @staticmethod
+    def _resolved_path_diagnostics(
+        payload: Mapping[str, Any] | None, work_item: WorkItem
+    ) -> tuple[Diagnostic, ...]:
+        """Expose the resolver's audited chains without another graph traversal."""
+        if payload is None:
+            return ()
+        symbols = payload.get("atom_symbols", ())
+        diagnostics: list[Diagnostic] = []
+        for ordinal, declaration in enumerate(payload.get("declared_paths", ()), 1):
+            route = declaration["route"]
+            chain = "-".join(f"{atom}({symbols[atom - 1]})" for atom in route)
+            bonds = ", ".join(f"{first}-{second}" for first, second in zip(route, route[1:]))
+            move = declaration["move"]
+            diagnostics.append(
                 Diagnostic(
-                    code="confgen_completed",
+                    code="confgen_path_resolved",
                     message=(
-                        f"confgen scanned {total} torsion points, kept "
-                        f"{len(members)} ({clash_dropped} clash-dropped)"
+                        f"Path P{ordinal}: {chain}; move {move} endpoint "
+                        f"{declaration[move]}; rotors: {bonds}"
                     ),
                     severity=DiagnosticSeverity.INFO,
                     step_id=work_item.step_id,
@@ -989,20 +779,35 @@ class ConfgenExecutor:
                     logical_key=work_item.logical_key,
                     details=FrozenDict(
                         {
-                            "members": len(members),
-                            "seed": int(seed),
-                            "grid_points": total,
-                            "clash_dropped": clash_dropped,
+                            "source": declaration["source"],
+                            "route": list(route),
+                            "move": move,
+                            "topology_digest": payload["topology_digest"],
                         }
                     ),
-                ),
-            ),
-            timing=timing,
-            recovery=RecoveryInfo(profile="none", attempted=False),
-            semantic_digest=work_item.semantic_digest,
-        )
+                )
+            )
+        return tuple(diagnostics)
 
-    # -- helpers ---------------------------------------------------------
+    @staticmethod
+    def _warning_diagnostics(
+        warnings: Sequence[str], work_item: WorkItem
+    ) -> tuple[Diagnostic, ...]:
+        """Expose resolver warnings as stable WARNING_SHORT_BOND diagnostics."""
+        found: list[Diagnostic] = []
+        for note in warnings:
+            found.append(
+                Diagnostic(
+                    code="warning_short_bond",
+                    message=note,
+                    severity=DiagnosticSeverity.WARNING,
+                    step_id=work_item.step_id,
+                    work_item_id=work_item.id,
+                    logical_key=work_item.logical_key,
+                    details=FrozenDict({"warning": "short_bond"}),
+                )
+            )
+        return tuple(found)
 
     @staticmethod
     def _driving(work_item: WorkItem) -> StructureRecord:
@@ -1015,95 +820,6 @@ class ConfgenExecutor:
             "confgen requires exactly one 'structure' input per work item; "
             f"observed ports {sorted(sets)}"
         )
-
-    @staticmethod
-    def _as_str_list(raw: Any, key: str, n_chains: int) -> list[str] | None:
-        if raw is None:
-            return None
-        if isinstance(raw, str):
-            raw = [raw]
-        if not isinstance(raw, (list, tuple)) or not all(isinstance(item, str) for item in raw):
-            raise DomainError(f"confgen {key} must be a string or a list of strings")
-        if len(raw) not in (1, n_chains):
-            raise DomainError(f"confgen {key} count must be 1 or match chain count {n_chains}")
-        items = list(raw)
-        return items if len(items) == n_chains else items * n_chains
-
-    @staticmethod
-    def _bond_set(raw: Any, key: str) -> set[tuple[int, int]]:
-        if not isinstance(raw, (list, tuple)) or not all(isinstance(item, str) for item in raw):
-            raise DomainError(f"confgen {key} must be a list of 'a-b' strings")
-        try:
-            return {tuple(sorted(parse_bond_pair(item))) for item in raw}  # type: ignore[misc]
-        except ValueError as exc:
-            raise DomainError(f"confgen {key}: {exc}") from exc
-
-    @staticmethod
-    def _bond_pair(item: Any) -> tuple[int, int]:
-        if not isinstance(item, str):
-            raise DomainError(f"confgen bond overrides must be 'a-b' strings, got {item!r}")
-        try:
-            return parse_bond_pair(item)
-        except ValueError as exc:
-            raise DomainError(f"confgen bond override: {exc}") from exc
-
-    @staticmethod
-    def _check_index(index: int, n_atoms: int, key: str) -> None:
-        if index < 0 or index >= n_atoms:
-            raise DomainError(f"confgen {key} index {index + 1} out of range for {n_atoms} atoms")
-
-    def _write_report(
-        self,
-        work_item: WorkItem,
-        context: ItemExecutionContext,
-        driving: StructureRecord,
-        members: list[StructureRecord],
-        seed: int,
-        native: Mapping[str, Any],
-        *,
-        grid: int,
-        clash_dropped: int,
-    ) -> ArtifactSet:
-        attempt_dir = context.attempt_dir(work_item)
-        os.makedirs(attempt_dir, exist_ok=True)
-        payload = {
-            "seed": seed,
-            "driving_id": driving.id,
-            "chains": list(native.get("chains", [])),
-            "grid_points": grid,
-            "clash_dropped": clash_dropped,
-            "limits": {"max_declared_states": _LEGACY_MAX_DECLARED_STATES},
-            "members": [
-                {
-                    "id": record.id,
-                    "ordinal": record.ordinal,
-                    "geometry_digest": record.geometry_digest,
-                }
-                for record in members
-            ],
-        }
-        name = "confgen_report.json"
-        path = os.path.join(attempt_dir, name)
-        try:
-            with open(path, "w", encoding="utf-8") as handle:
-                json.dump(payload, handle, indent=2, sort_keys=True)
-            with open(path, "rb") as handle:
-                checksum = "sha256:" + hashlib.sha256(handle.read()).hexdigest()
-        except OSError as exc:
-            raise DomainError(f"confgen report write failed: {exc}") from exc
-        prefix = context.run_relative_prefix(work_item)
-        locator_path = f"{prefix}/{name}" if prefix else name
-        ref = ArtifactRef(
-            id=f"{work_item.id}/{name}",
-            role=CONFGEN_REPORT_ROLE,
-            locator=ArtifactLocator.run_relative(locator_path),
-            checksum=checksum,
-            producer_step_id=work_item.step_id,
-            producer_work_item_id=work_item.id,
-            subject_structure_id=driving.id,
-            metadata=FrozenDict({"seed": seed}),
-        )
-        return ArtifactSet((ref,))
 
     def _fail(
         self,

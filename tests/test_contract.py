@@ -10,14 +10,12 @@ coordinated with the JobDesk consumer.
 
 from __future__ import annotations
 
-import inspect
 import json
 import os
 from pathlib import Path
 from types import SimpleNamespace
 
 import confflow.cli as cli_module
-import confflow.workflow.export as export_module
 from confflow import contract
 
 
@@ -203,24 +201,3 @@ def test_executable_resolution_keeps_posix_reported_path_before_exe_sibling(tmp_
     assert cli_module._resolve_existing_executable(reported) == str(reported.resolve())
     assert os.name == host_os_name
     assert Path(os.fspath(tmp_path)).is_dir()
-
-
-def test_export_uses_contract_filenames():
-    """The export step meta-loader must consult the contract filenames."""
-    import json
-    import tempfile
-    from pathlib import Path
-
-    # Exercise the real loader against a temp dir using the contract names.
-    with tempfile.TemporaryDirectory() as tmp:
-        (Path(tmp) / contract.WORKFLOW_STATS_FILE).write_text(
-            json.dumps({"steps": [{"name": "s1", "index": 1}]})
-        )
-        meta = export_module._load_step_meta(tmp)
-        assert meta.names == {"s1": "s1"}
-        assert meta.order == {"s1": 1}
-
-    src = inspect.getsource(export_module)
-    assert "from confflow.contract import" in src
-    assert contract.RUN_SUMMARY_FILE not in src, "literal filename must not appear in source"
-    assert contract.WORKFLOW_STATS_FILE not in src, "literal filename must not appear in source"

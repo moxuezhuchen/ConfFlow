@@ -1,0 +1,7 @@
+{
+ "boundary_cli_sha256": "7ca4da409699b9439587e35564805e3f7245b297900658c49e1c2e99cd2df780",
+ "contract_bytes_sha256": "bec962dad9e544e0e5b3a88670ed40b9e6d63f93fa79b5d38ac8b39a2eba2f11",
+ "contract_cli_sha256": "f045afd6bd6c75d6d8ae8a0b1fd8ca56c33bbdff361687d2f566a8bddfbfdbee",
+ "contract_digest": "1618efcf2c1c456971569ac69dc5d332d593f39bd955f5ce320cca8c8eb63a79",
+ "jd_contract_key": "confflow.configuration-contract.v4/producer/workflow:e8ef9feb69b9/manifest:a977f49c0dd0/recipes:bc63fc178492"
+}

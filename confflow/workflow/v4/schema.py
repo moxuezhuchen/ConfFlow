@@ -24,6 +24,7 @@ from pydantic import (
     StrictInt,
     ValidationError,
     field_validator,
+    model_validator,
 )
 
 from ...domain.binding import Cardinality, Pairing, PartialConsumption, PortKind
@@ -40,7 +41,6 @@ __all__ = [
     "BindingModel",
     "CalculationModel",
     "CompletionModel",
-    "ConfgenModel",
     "ConfgenModelV3",
     "DocumentModel",
     "ExecutionModel",
@@ -53,6 +53,7 @@ __all__ = [
     "ScientificDefaultsModel",
     "SourceModel",
     "StepModel",
+    "TopologyPatchModel",
     "TransformModel",
     "build_workflow_json_schema",
     "defaults_summary",
@@ -141,6 +142,54 @@ class SchedulerModel(BaseModel):
     on_failure: OnFailure | None = None
 
 
+class TopologyPatchModel(BaseModel):
+    """Phase 1 input simplification: bond corrections on one run input.
+
+    One-based ``add``/``delete`` edge lists plus a nonsemantic
+    ``provenance`` label.  Strict integers (bools rejected), ``>= 1``,
+    distinct endpoints, no duplicate edges, and no pair declared both
+    added and deleted — anything else fails closed.  Upper bounds against
+    the imported atom count are enforced at the application boundary,
+    where the atom count is known.
+    """
+
+    model_config = _STRICT
+
+    add: list[tuple[StrictInt, StrictInt]] = Field(default_factory=list)
+    delete: list[tuple[StrictInt, StrictInt]] = Field(default_factory=list)
+    provenance: str = ""
+
+    @field_validator("add", "delete")
+    @classmethod
+    def _validate_edges(
+        cls, value: list[tuple[StrictInt, StrictInt]]
+    ) -> list[tuple[StrictInt, StrictInt]]:
+        seen: set[tuple[int, int]] = set()
+        for position, pair in enumerate(value):
+            first, second = int(pair[0]), int(pair[1])
+            if first < 1 or second < 1:
+                raise ValueError(f"topology edge [{position}] is one-based and must be >= 1")
+            if first == second:
+                raise ValueError(f"topology edge [{position}] must name two distinct atoms")
+            canonical = (min(first, second), max(first, second))
+            if canonical in seen:
+                raise ValueError(f"topology edge [{position}] duplicates {canonical}")
+            seen.add(canonical)
+        return value
+
+    @model_validator(mode="after")
+    def _check_add_delete_disjoint(self) -> TopologyPatchModel:
+        add = {(min(int(a), int(b)), max(int(a), int(b))) for a, b in self.add}
+        delete = {(min(int(a), int(b)), max(int(a), int(b))) for a, b in self.delete}
+        shared = sorted(add & delete)
+        if shared:
+            raise ValueError(
+                "topology declares the same edge as added and deleted: "
+                + ", ".join(f"{a}-{b}" for a, b in shared)
+            )
+        return self
+
+
 class CompletionModel(BaseModel):
     """Acceptance policy of a step."""
 
@@ -173,16 +222,6 @@ class CalculationModel(BaseModel):
     checks: list[str] = Field(default_factory=list)
     check_params: dict[str, dict[str, Any]] = Field(default_factory=dict)
     recovery: RecoveryModel = Field(default_factory=RecoveryModel)
-    seed: StrictInt | None = None
-    overrides: dict[str, Any] = Field(default_factory=dict)
-
-
-class ConfgenModel(BaseModel):
-    """Scientific definition of a conformer-generation step."""
-
-    model_config = _STRICT
-
-    native: dict[str, Any] = Field(default_factory=dict)
     seed: StrictInt | None = None
     overrides: dict[str, Any] = Field(default_factory=dict)
 
@@ -231,7 +270,7 @@ class StepModel(BaseModel):
     executor: str = Field(min_length=1)
     bindings: dict[str, BindingModel] = Field(default_factory=dict)
     calculation: CalculationModel | None = None
-    confgen: ConfgenModel | ConfgenModelV3 | None = None
+    confgen: ConfgenModelV3 | None = None
     transform: TransformModel | None = None
     analysis: AnalysisModel | None = None
     resources: ResourcesModel | None = None
@@ -257,6 +296,26 @@ class InputModel(BaseModel):
     #: id (never from list position or filename).  ``None`` declares no
     #: grouping semantics.
     grouping: Literal["each_entity"] | None = None
+    #: Phase 1 bond corrections applied to every imported record of this
+    #: input (one-based add/delete plus nonsemantic provenance).  ``None``
+    #: declares no correction.
+    topology: TopologyPatchModel | None = None
+    #: Optional user-set charge/multiplicity for this input's records.
+    #: Applied only where the record carries none; a conflicting record
+    #: value fails closed at the application boundary.
+    charge: StrictInt | None = None
+    multiplicity: StrictInt | None = Field(default=None, ge=1)
+
+    @model_validator(mode="after")
+    def _check_structure_only_topology(self) -> InputModel:
+        if self.kind is not PortKind.STRUCTURE and (
+            self.topology is not None or self.charge is not None or self.multiplicity is not None
+        ):
+            raise ValueError(
+                "input topology/charge/multiplicity apply to structure inputs only; "
+                f"kind {self.kind.value!r} carries no structure records"
+            )
+        return self
 
 
 class ScientificDefaultsModel(BaseModel):

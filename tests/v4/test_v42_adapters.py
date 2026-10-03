@@ -782,32 +782,3 @@ class TestFakeConformance:
             assert len(result.frequencies_cm) == len(fake_orca.REAL_FREQUENCIES)
         else:
             assert result.frequencies_cm == ()
-
-
-class TestLegacyParserCrossCheck:
-    """Fake logs also satisfy the legacy policy parsers they were modeled on."""
-
-    def test_gaussian_legacy_parse_output(self, tmp_path: Path) -> None:
-        from confflow.calc.policies.gaussian import GAUSSIAN_POLICY
-
-        log_text = fake_g16.render_log_text("success_freq", WATER_ATOMS, WATER_COORDS)
-        log_path = tmp_path / "job.log"
-        log_path.write_text(log_text, encoding="utf-8")
-        parsed = GAUSSIAN_POLICY.parse_output(str(log_path), {"itask": "opt_freq"})
-        assert parsed["e_low"] == pytest.approx(fake_g16.ENERGY_HARTREE)
-        assert parsed["g_low"] == pytest.approx(fake_g16.gibbs_energy())
-        assert parsed["num_imag_freqs"] == 0
-        assert parsed["final_coords"] is not None and len(parsed["final_coords"]) == 3
-        assert GAUSSIAN_POLICY.check_termination(str(log_path)) is True
-
-    def test_orca_legacy_parse_output(self, tmp_path: Path) -> None:
-        from confflow.calc.policies.orca import ORCA_POLICY
-
-        log_text = fake_orca.render_log_text("success_freq", WATER_ATOMS, WATER_COORDS)
-        log_path = tmp_path / "job.out"
-        log_path.write_text(log_text, encoding="utf-8")
-        parsed = ORCA_POLICY.parse_output(str(log_path), {"itask": "opt_freq"})
-        assert parsed["g_low"] == pytest.approx(fake_orca.gibbs_energy())
-        assert parsed["g_corr"] == pytest.approx(fake_orca.GIBBS_CORRECTION)
-        assert parsed["num_imag_freqs"] == 0
-        assert ORCA_POLICY.check_termination(str(log_path)) is True

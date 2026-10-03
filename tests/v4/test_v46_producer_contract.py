@@ -220,7 +220,6 @@ class TestGeneratedFromRegistries:
         assert envelope["policies"]["scheduler"]["on_failure"] == ["continue", "fail_fast"]
         assert [b["block"] for b in envelope["native_escape_hatches"]["blocks"]] == [
             "calculation.native",
-            "confgen.native",
             "transform.native",
             "analysis.native",
         ]

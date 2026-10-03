@@ -72,6 +72,7 @@ from confflow.science.confgen.planner import (
     sample_indices,
     sampling_of,
 )
+from confflow.science.topology import inherit_topology_kwargs
 
 __all__ = [
     "AtomOrderViolationError",
@@ -734,6 +735,7 @@ class ConfgenEngine:
             ordinal=0,
             group_key=context.structure.group_key,
             metadata=FrozenDict({"preserved": True, "backend": self._backend}),
+            **inherit_topology_kwargs(context.structure, context.adjacency),
         )
         leaf = WorkingRealization(
             structure=leaf_structure,

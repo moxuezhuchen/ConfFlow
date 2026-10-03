@@ -66,7 +66,7 @@ Requirements and packaging notes:
 - Python 3.10+
 - Packaging is defined in `pyproject.toml`
 - RDKit is required
-- `numba` is optional and only used for acceleration when installed
+- `numba` is an optional extra, but no current code path depends on it for acceleration
 
 ## ConfFlow ↔ JobDesk Capability Handshake (v2.1.6 candidate)
 
@@ -354,17 +354,10 @@ ConfFlow is not recommended for unattended use or for non-isolated production co
 | Command | Purpose |
 | --- | --- |
 | `confflow` | Run the formal V4 runtime (`confflow v4 run` / `confflow v4 validate` / `confflow v4 contract --json`) |
-| `confgen` | Generate conformers in chain mode (standalone structure tool) |
-| `confrefine` | Deduplicate and filter conformers (standalone structure tool) |
-| `confts` | TS-focused tooling: scan-keyword rewrite, and legacy single-step calc from a local V2 YAML |
 
 Examples:
 
 ```bash
-# Chain-based conformer generation
-confgen mol.xyz --chain 1-2-3-4-5 --steps 180,180,180,180 -y
-# Explicit angle sets
-confgen mol.xyz --chain 1-2-3-4-5 --angles "0,120,240;0,60,120,180;180;0,120" -y
 # Validate and run a V4 workflow from the shipped example
 confflow v4 validate --workflow confflow.example.yaml --json
 ```
@@ -376,7 +369,6 @@ See the [Command Reference](docs/COMMAND_REFERENCE.md) for the full CLI referenc
 - [Architecture](docs/ARCHITECTURE.md)
 - [Usage](docs/USAGE.md)
 - [Command Reference](docs/COMMAND_REFERENCE.md)
-- [Keyword Reference](docs/KEYWORD_REFERENCE.md)
 - [Security Model](docs/SECURITY_MODEL.md)
 - [Public Alpha Notes](docs/PUBLIC_ALPHA.md)
 - [Development Guide](docs/DEVELOPMENT.md)

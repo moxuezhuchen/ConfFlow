@@ -1,66 +1,91 @@
 # ConfFlow 命令行参考
 
-本文件列出项目内主要 CLI 的常用参数与用法示例。
+只有一个公开命令 `confflow`（另有两个安装即带的辅助入口，见末尾）。正式的 V4 命令都在 `confflow v4` 下。
 
-## confflow
+## confflow v4
 
-```bash
-confflow <input.xyz> [-c <config.yaml>] [-w <work_dir>] [--resume] [--verbose]
+```text
+confflow v4 {contract,boundary,canonical,validate,authoring,run} ...
 ```
 
-说明：仓库根目录提供 `confflow.example.yaml` 作为示例配置；工作流 CLI（`confflow`/`confgen`/`confrefine`/`confts`）默认不向终端打印运行日志；stdout/stderr 会写入输入目录下同名文件 `<input_basename>.txt`。
+### run — 运行整份 V4 工作流
 
 ```bash
-tail -f input.txt
+confflow v4 run --workflow <文件> --run-root <目录> [--inputs NAME=FILE ...] \
+                [--executable PROG=PATH ...] [--owner-token TOKEN] [--json]
 ```
 
-- `-c/--config`：工作流 YAML；省略时默认使用第一个输入文件同目录下的 `confflow.yaml`
-- `-w/--work_dir`：工作目录（默认 `<input_basename>_work`）
-- `--resume`：从断点继续
-- `--verbose`：更详细日志
+| 参数 | 说明 |
+| --- | --- |
+| `--workflow` | V4 工作流文档（YAML 或 JSON） |
+| `--inputs NAME=FILE` | 把 XYZ 文件 `FILE` 作为运行输入 `NAME`（可重复） |
+| `--run-root` | 受管的运行根目录（持久化状态、已发布结果、产物） |
+| `--executable PROG=PATH` | 程序 `PROG`（如 `orca`、`g16`）的可执行文件（可重复） |
+| `--owner-token` | 运行的所有权令牌（默认 `v4-cli`） |
+| `--json` | 在标准输出打印机器可读报告（`run_id`、`status`、`definition_digest`、各步骤状态、`manifest`） |
 
-## confgen
+运行 `completed` 返回 0，否则返回 1。重新执行同一条命令即续跑。V1/V2/V3 文档以 `legacy_workflow_not_executable` 失败关闭。
+
+### validate — 校验工作流字节
 
 ```bash
-confgen <mol.xyz> [<angle_step>] --chain <a-b-c-...> [--steps <...> | --angles "..."] [-y] [--opt]
+confflow v4 validate --json (--workflow <文件> | --stdin)
 ```
 
-说明：
+输出 `confflow.configuration-validation.v1` 报告：`ok`、`diagnostics`（`code`/`reason`/`field_path`/`step_id`）、
+`definition_digest`、`step_ids`。
 
-- 多输入时仅需指定第一份输入的 `--chain`，其余输入会基于拓扑映射自动识别对应柔性链。
-- 链上相邻原子必须成键，否则会报错并提示调整 `--add_bond` 或 `bond_threshold`。
-- 运行日志写入第一个输入文件对应的 `<input_basename>.txt`。
-
-## confrefine
+### contract / boundary — 发布契约与边界协议
 
 ```bash
-confrefine <input.xyz> [-o <output.xyz>] [-t <rmsd>] [--ewin <kcal/mol>] [--imag <n>] [--noH] [-n <max>] [--dedup-only] [-w <workers>] [--energy-tolerance <kcal/mol>]
+confflow v4 contract --json      # confflow.configuration-contract.v4
+confflow v4 boundary --json      # confflow.boundary.v4
 ```
 
-- `-t/--threshold`：RMSD 阈值（默认 0.25 Å）
-- `--energy-tolerance`：能量辅助去重容差（默认 0.05 kcal/mol）。当两个构象能量差 ≤ 此值时，RMSD 阈值自动放宽 1.5 倍，提高大分子去重召回率
-- `--ewin`：能量窗口（kcal/mol）
-- `--noH`：RMSD 计算忽略氢原子
-- `-n/--max-conformers`：最大输出构象数
-- `--dedup-only`：仅去重，不做能量窗口筛选
-- `-w/--workers`：仅为 CLI/API 兼容而保留；当前 Refine 不使用该值控制构象去重并行度，去重以确定性的串行方式执行（不会改变并发度或输出）
-
-运行日志写入 `<input_basename>.txt`。
-
-## confts
-
-`confts` 提供 TS 相关的辅助功能：
-
-- **keyword 改写**：把 TS keyword 改成 scan 用 keyword（移除 `opt(...)` 内的 `calcfc/tight/ts/noeigentest`，移除 `freq`；`nomicro` 保留）。
+### authoring — authoring 接口
 
 ```bash
-confts --rewrite-scan-keyword "opt(nomicro,calcfc,tight,ts,noeigentest) freq b3lyp/6-31g(d)"
+confflow v4 authoring --json --stdin < request.json
 ```
 
-TS 失败后的 scan 救援由 calc 执行器在运行 TS 任务失败时自动触发，细节见 `docs/USAGE.md`。
+请求/响应遵循 `confflow.authoring.v4`；操作：`describe_step`、`binding_candidates`、`instantiate_card`、
+`validate_document`、`check_compatibility`、`compile_intent`、`preview_paths`。
 
-## 统一返回码
+### canonical — RFC 8785（JCS）规范化
+
+```bash
+confflow v4 canonical --json --stdin < input.json
+```
+
+## confflow（顶层）
+
+```bash
+confflow <input.xyz> ... -c <V4 工作流> [-w <运行根目录>] [--resume] [--verbose]
+confflow --version
+confflow --capabilities [--json]
+confflow --stop
+```
+
+| 参数 | 说明 |
+| --- | --- |
+| `-c/--config` | V4 工作流文档（旧版文档会失败关闭） |
+| `-w/--work_dir` | 运行根目录（默认 `<输入文件名>_work`） |
+| `--resume` | 从已有状态续跑 |
+| `--verbose` | 更详细的日志 |
+| `--capabilities [--json]` | 打印能力握手 JSON 后退出 |
+| `--version` | 打印版本后退出 |
+| `--stop` | 停止所有正在运行的 ConfFlow 任务（含子进程；需要 `psutil`） |
+
+顶层调用是同一个 V4 应用的薄入口；运行日志写入输入目录下的 `<输入文件名>.txt`，不向终端打印。
+`--rerun-failed` / `--step` 属于已退役的 legacy 执行路径，会以 `legacy_workflow_not_executable` 失败关闭。
+
+## 返回码
 
 - `0`：成功
 - `1`：用法 / 输入 / 配置错误
 - `2`：运行时失败
+
+## 辅助入口
+
+- `confflow-control-worker`：控制协议 v1 的外部 worker（排队的启动意图），见 `docs/CONTROL_PROTOCOL_RFC.md`。
+- `confflow-fixture-agent`：显式启用的、不做计算的生命周期夹具，仅用于测试。

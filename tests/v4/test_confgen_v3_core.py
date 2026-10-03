@@ -2286,7 +2286,11 @@ class _PinnedCoordination(GenerationStage):
             self._sites,
             self._shape,
         )
-        return dict(perception.labeled_key), perception
+        # Canonical class state (production command_key authority): the
+        # gauge-invariant shape-class assignment.  The raw labeled fit gauge is
+        # orientation display, never physical state: two fits in one class must
+        # never count as drift.
+        return dict(perception.best_key["sites"]), perception
 
     def perceive(self, structure: StructureRecord, context: MolecularContext) -> PerceptionResult:
         assignment, perception = self._assignment(structure)
@@ -2330,14 +2334,20 @@ class _PinnedCoordination(GenerationStage):
 
 
 def _square_syn() -> tuple[StructureRecord, dict[str, Any]]:
-    """Square 4-ring plus metal center (pinned-C + ring tests, no H)."""
-    coords = (
-        (0.0, 0.0, 0.0),
-        (1.5, 0.0, 0.0),
-        (1.5, 1.5, 0.0),
-        (0.0, 1.5, 0.0),
-        (0.0, 0.0, 2.0),
-    )
+    """Butterfly 4-ring (pucker_up_4 template) plus metal center (no H).
+
+    The seed takes the ring lane's own puckered geometry, so the pinned
+    tetrahedral class is genuinely defined (no symmetry tie).  The declared
+    ring templates are restricted to the two puckers: planar_4 is excluded
+    because a square-planar donor set ties the tetrahedral classes exactly
+    (margin 0.0 for every metal position — perception centers offsets, so the
+    viewpoint cancels), leaving its class undefined on the ambiguity boundary.
+    """
+    from confflow.science.confgen.ring.templates import get_template
+
+    ring = np.array(get_template("pucker_up_4").coordinates, dtype=float)
+    ring = ring + np.array([0.75, 0.75, 0.0])
+    coords = tuple(tuple(point) for point in ring) + ((0.0, 0.0, 2.0),)
     record = StructureRecord(
         id="sq", atoms=("C", "C", "C", "C", "Fe"), coordinates=coords, charge=0, multiplicity=1
     )
@@ -2346,7 +2356,9 @@ def _square_syn() -> tuple[StructureRecord, dict[str, Any]]:
         "index_base": 1,
         "seed": 9,
         "topology": {"bonds": [[1, 2], [2, 3], [3, 4], [4, 1]]},
-        "rings": [{"id": "r1", "atoms": [1, 2, 3, 4]}],
+        "rings": [
+            {"id": "r1", "atoms": [1, 2, 3, 4], "templates": ["pucker_up_4", "pucker_down_4"]}
+        ],
     }
     return record, spec
 
@@ -2371,20 +2383,25 @@ def _pinned_stage(
 
 
 def test_pinned_coordination_ring_damage_is_drift():
-    """Pinned-C + real ring: planar control publishes, pucker damage drifts.
+    """Pinned-C + real ring: pucker control publishes, inverted pucker drifts.
 
-    Current verified behavior on the fixed square seed: planar_4 and
-    pucker_up_4 preserve the donor assignment (published with verified
-    locks); pucker_down_4 rebuilds donors into a flipped assignment and the
-    strict lock audit marks it DRIFTED with observed routing (never
-    published with a stale C key). Update only on intentional lane change.
+    Physical scope: a butterfly-puckered 4-ring (the ring lane's own
+    pucker_up_4 geometry, as real cyclobutane puckers) with a pinned
+    tetrahedral donor class.  The same-pucker ring output preserves the
+    canonical class (published with a verified lock); the inverted pucker
+    rebuilds donors into the opposite tetrahedral class and the strict lock
+    audit marks it DRIFTED with observed routing (never published with a stale
+    C key).  planar_4 is deliberately excluded from the declared templates: a
+    square-planar donor set is class-undefined under tetrahedral perception
+    (exact margin-0.0 tie), so no stable planar control exists there.
     """
     from confflow.science.confgen.coordination.perception import perceive_donors
     from confflow.science.confgen.ring.stage import RingStage
 
     record, spec = _square_syn()
     context = build_context(record, spec)
-    # Pin the commanded state from the input's own real measurement.
+    # Pin the commanded state from the input's own real measurement, in the
+    # canonical class form production locks compare (gauge-invariant).
     seen = perceive_donors(
         np.asarray(record.coordinates, dtype=float),
         4,
@@ -2392,16 +2409,32 @@ def test_pinned_coordination_ring_damage_is_drift():
         ("a", "b", "c", "d"),
         "tetrahedral",
     )
-    commanded = dict(seen.labeled_key)
+    commanded = dict(seen.best_key["sites"])
     assert commanded == {"a": "T0", "b": "T1", "c": "T2", "d": "T3"}
+    # Preconditions on canonical classes (never raw fit gauge): the pinned
+    # class wins by a nonzero margin, and the inverted pucker is genuinely the
+    # opposite canonical class with its own nonzero margin — so the ledger
+    # below asserts real class change, not a sort tie or gauge relabeling.
+    assert seen.margin > 0.05
+    from confflow.science.confgen.ring.templates import get_template as _get_template
+
+    _offset = np.array([0.75, 0.75, 0.0])
+    _metal = np.asarray(record.coordinates, dtype=float)[4]
+    _down_coords = np.vstack(
+        [np.array(_get_template("pucker_down_4").coordinates, dtype=float) + _offset, _metal]
+    )
+    _down = perceive_donors(_down_coords, 4, (0, 1, 2, 3), ("a", "b", "c", "d"), "tetrahedral")
+    assert _down.margin > 0.05
+    assert seen.best_class != _down.best_class
+    assert dict(_down.best_key["sites"]) != commanded
     pinned = _pinned_stage((0, 1, 2, 3), ("a", "b", "c", "d"), commanded, metal=4)
     ring = RingStage(context.resolved_spec.thaw())
 
     run = ConfgenEngine(stages=[pinned, ring]).run(context)
     report = run.report.thaw()
-    assert report["counts"]["published"] == 2
+    assert report["counts"]["published"] == 1
     assert report["counts"]["target_categories"]["DRIFTED"] == 1
-    assert report["counts"]["target_categories"]["REALIZED"] == 2
+    assert report["counts"]["target_categories"]["REALIZED"] == 1
     assert report["counts"]["target_categories"]["UNRESOLVED"] == 0
     assert report["realization"]["terminal_equations_ok"] is True
     assert report["realization"]["count_equations_ok"] is True

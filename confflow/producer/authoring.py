@@ -37,7 +37,6 @@ import copy
 import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from functools import lru_cache
 from typing import Any
 
 from jsonschema import Draft202012Validator
@@ -140,22 +139,6 @@ _SOURCE_KEYS = ("run", "step", "port", "select")
 # ----------------------------------------------------------------------
 
 
-@lru_cache(maxsize=1)
-def _capability_identity_cached() -> dict[str, Any]:
-    """Return the registry-derived capability identity (built once)."""
-    import confflow
-
-    from .contract import build_configuration_contract_v4
-
-    envelope = build_configuration_contract_v4(producer_version=confflow.__version__)
-    return dict(envelope["boundary"]["capability_identity"])
-
-
-def _capability_identity() -> dict[str, Any]:
-    """Return a fresh copy of the producer's capability identity."""
-    return copy.deepcopy(_capability_identity_cached())
-
-
 def _diagnostic(
     severity: DiagnosticSeverity,
     code: str,
@@ -250,7 +233,6 @@ def _envelope(
         "content_schema": AUTHORING_PROTOCOL_SCHEMA,
         "operation": operation,
         "ok": ok,
-        "capability_identity": _capability_identity(),
         "request_document_digest": request_document_digest,
         "result": result,
         "diagnostics": [
@@ -368,7 +350,13 @@ def _resolve_step_facts(
     """
     run_resources, run_scheduler = _resolve_run_policy(definition)
     validated, diagnostics = _validate_step(
-        step, run_resources, run_scheduler, registry, definition.scientific_defaults
+        step,
+        run_resources,
+        run_scheduler,
+        registry,
+        definition.scientific_defaults,
+        input_declarations={item.name: item for item in definition.inputs},
+        all_steps=tuple(definition.steps),
     )
     if validated is not None:
         return _StepFacts(
@@ -525,7 +513,6 @@ def _project_step(
             step.scheduler.with_defaults(run_scheduler).to_dict(),
         ),
         "completion": step.completion.to_dict(),
-        "capability_identity": _capability_identity(),
         "diagnostics": [
             _diagnostic_wire(item)
             for item in facts.diagnostics
@@ -817,7 +804,6 @@ def binding_candidates(
     required_ports = {port.name for port in target_facts.input_ports if port.is_required}
     required_satisfied = required_ports <= bound_ports
 
-    identity = _capability_identity()
     evaluations: list[tuple[_CandidateSource, Binding, Any, list[Diagnostic], str, str, str]] = []
     for candidate in candidate_sources:
         binding = Binding(
@@ -891,7 +877,6 @@ def binding_candidates(
                 "compatibility": compatibility,
                 "diagnostics": [_diagnostic_wire(item) for item in edge_errors],
                 "request_document_digest": digest,
-                "capability_identity": copy.deepcopy(identity),
                 "auto_wire": not reasons,
                 "auto_wire_reasons": reasons,
             }
@@ -1244,6 +1229,46 @@ def dispatch_request(data: bytes | bytearray | str) -> dict[str, Any]:
         )
     if operation == "validate_document":
         return validate_document(document if document is not None else {})
+    if operation == "compile_intent":
+        intent = params.get("intent", document)
+        profile = params.get("machine_profile")
+        if not isinstance(intent, Mapping) or (
+            profile is not None and not isinstance(profile, Mapping)
+        ):
+            return _envelope(
+                operation,
+                False,
+                None,
+                None,
+                [_schema_problem("intent and machine_profile must be objects")],
+            )
+        from .intent import compile_intent
+
+        try:
+            resolved = compile_intent(intent, machine_profile=profile)
+        except (ValueError, DomainError) as exc:
+            return _envelope(
+                operation,
+                False,
+                _document_digest(intent),
+                None,
+                [_schema_problem(str(exc), field_path="parameters.intent")],
+            )
+        return _envelope(operation, True, _document_digest(intent), {"document": resolved}, [])
+    if operation == "preview_paths":
+        from .path_preview import preview_paths_request
+
+        try:
+            preview = preview_paths_request(params)
+        except (ValueError, DomainError) as exc:
+            return _envelope(
+                operation,
+                False,
+                None,
+                None,
+                [_schema_problem(str(exc), field_path="parameters.native")],
+            )
+        return _envelope(operation, True, None, preview, [])
     return _envelope(
         operation,
         False,

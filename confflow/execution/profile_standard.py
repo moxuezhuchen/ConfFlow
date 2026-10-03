@@ -268,6 +268,25 @@ def _output_structure(context: ProfileContext) -> tuple[StructureRecord, Geometr
     source = inputs.structure
     charge = inputs.charge if inputs.charge is not None else source.charge
     multiplicity = inputs.multiplicity if inputs.multiplicity is not None else source.multiplicity
+    # Intended-topology inheritance (resolved once on the pre-change source
+    # geometry; explicit calculation charge/spin overrides above retained).
+    from ..science.topology import resolve_and_persist_kwargs as _persist_kwargs
+
+    topo_kwargs = _persist_kwargs(source, source.coordinates)
+    # A newly captured intended graph (or a newly attached patch) is new
+    # scientific state even when the coordinates did not move: retaining
+    # the source entity would silently drop it downstream.
+    topo_changed = False
+    if topo_kwargs:
+        kept_patch = topo_kwargs.get("topology_patch")
+        if topo_kwargs.get("working_topology") is not None and (source.working_topology is None):
+            topo_changed = True
+        if (
+            kept_patch is not None
+            and not kept_patch.is_empty
+            and (source.topology_patch is None or source.topology_patch.is_empty)
+        ):
+            topo_changed = True
     parent_ids: tuple[str, ...] = (source.id,)
     lineage_root_id = source.lineage_root_id
     group_key = source.group_key
@@ -284,9 +303,16 @@ def _output_structure(context: ProfileContext) -> tuple[StructureRecord, Geometr
             tuple(geometry.atoms) == tuple(source.atoms)
             and _geometry_digest_of(geometry) == source.geometry_digest
             and named_parents is None
+            and charge == source.charge
+            and multiplicity == source.multiplicity
+            and not topo_changed
         ):
-            # Measurement of unchanged geometry: retain input identity.
+            # Measurement of unchanged geometry and unchanged state:
+            # retain input identity.
             return source, GeometrySemantics.PASSTHROUGH
+        # Same geometry with new scientific state (explicit charge/spin or
+        # newly captured topology) is a derived entity preserving the
+        # transition — never the source with silently dropped state.
         record = StructureRecord(
             id=produced_structure_id(context.logical_key, 0),
             atoms=tuple(geometry.atoms),
@@ -301,6 +327,7 @@ def _output_structure(context: ProfileContext) -> tuple[StructureRecord, Geometr
             ordinal=0,
             group_key=group_key,
             metadata=FrozenDict({}),
+            **topo_kwargs,
         )
         return record, GeometrySemantics.PRODUCED
     record = StructureRecord(
@@ -317,6 +344,7 @@ def _output_structure(context: ProfileContext) -> tuple[StructureRecord, Geometr
         ordinal=0,
         group_key=group_key,
         metadata=FrozenDict({}),
+        **topo_kwargs,
     )
     return record, GeometrySemantics.PASSTHROUGH
 

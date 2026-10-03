@@ -75,6 +75,8 @@ _STRUCTURE_FIELDS: frozenset[str] = frozenset(
         "ordinal",
         "group_key",
         "metadata",
+        "topology_patch",
+        "working_topology",
     }
 )
 

@@ -19,11 +19,13 @@ The geometry comparison science lives in :mod:`confflow.science`
 - default ``bond_scale = 1.2`` is ``topology.BOND_SCALE_FACTOR``;
 - default ``rmsd_threshold_angstrom = 0.25`` is
   ``RefineOptions.threshold``;
-- duplicate comparison follows the ``rmsd_engine.compare_frames`` rule
-  that RMSD is only evaluated under a legal element/edge-preserving
-  mapping, with the Kabsch formulation of ``rmsd_engine.kabsch_rmsd``
-  in :mod:`confflow.science.cluster`.  This module only wires those
-  algorithms to typed V4 domain records.
+- duplicate comparison is :func:`confflow.science.frame_compare.compare_frames`:
+  RMSD is only evaluated under a legal element/edge-preserving mapping
+  found by the budgeted exact search of
+  :mod:`confflow.science.topology_mapping` (so atoms that differ only by
+  symmetry-equivalent labels, such as the hydrogens of a methyl group, are
+  recognised as duplicates).  This module only wires those algorithms to
+  typed V4 domain records.
 
 What is NOT carried over: XYZ file I/O, multiprocessing pools, CLI
 progress, energy-window / imaginary-frequency filtering (transform input
@@ -41,6 +43,17 @@ Kinds:
   grouping as above plus element signature; within a group, candidates
   in canonical id order are compared against retained representatives
   and dropped only on a proven RMSD witness at or below the threshold.
+  A candidate is a duplicate when some legal mapping gives an RMSD
+  strictly below the threshold.  When the mapping search exhausts its node
+  budget (``mapping_budget``, default 1000 nodes per pair) the pair is
+  *unresolved*: both structures are kept and the step notes say so.
+  ``topology_bonds`` (optional) declares the bonding topology exactly as a
+  ConfGen v3 ``topology`` does (``bonds`` or ``add_bond``/``del_bond``, typed
+  ``COVALENT``/``COORDINATION``/``FORMING``/``BREAKING`` edges, ``atoms``,
+  ``index_base``, plus ``coordination`` and ``bond_scale``) and is built by the
+  very function ConfGen uses (``planner.build_typed_graph``); typed
+  non-covalent edges must be preserved by every mapping.  Without it the
+  topology is perceived from geometry as before.
   Optional ``max_structures`` truncates in id order.
 - ``filter``: explicit ``min_atoms`` / ``max_atoms`` / ``max_structures``
   selection in canonical id order.  Unknown native keys fail closed.
@@ -68,8 +81,7 @@ from ..domain.errors import DomainError
 from ..domain.result import ResultSet
 from ..domain.structure import StructureRecord, StructureSet
 from ..domain.work_item import RecoveryInfo, Timing, WorkItem, WorkItemResult
-from ..science.bonds import perceive_adjacency
-from ..science.cluster import kabsch_rmsd
+from ..science.topology import resolve_working_adjacency
 from .native import NativeErrorCode
 from .work_item_executor import ItemExecutionContext, _diagnostic
 
@@ -83,19 +95,54 @@ REFINE_DEFAULT_RMSD_THRESHOLD_ANGSTROM = 0.25
 #: Default bond-perception scale (``topology.BOND_SCALE_FACTOR``).
 REFINE_DEFAULT_BOND_SCALE = 1.2
 
+#: Default mapping-search node budget per compared pair
+#: (``topology_mapping.DEFAULT_MAPPING_NODE_BUDGET``; equality is tested).  The
+#: science modules are imported lazily inside ``_frame``/``_duplicate_of`` so the
+#: worker import closure does not load ``confflow.core`` for non-refine runs.
+REFINE_DEFAULT_MAPPING_BUDGET = 1000
+
 #: Allowed step-native keys per kind (unknown keys fail closed).
 FILTER_NATIVE_KEYS = frozenset({"max_structures", "min_atoms", "max_atoms"})
 REFINE_NATIVE_KEYS = frozenset(
-    {"rmsd_threshold_angstrom", "bond_scale", "heavy_only", "max_structures"}
+    {
+        "rmsd_threshold_angstrom",
+        "bond_scale",
+        "heavy_only",
+        "max_structures",
+        "mapping_budget",
+        "topology_bonds",
+    }
 )
+
+
+def _topology_identity(record: StructureRecord) -> tuple[Any, ...]:
+    """Return the topology half of the scientific-identity grouping key.
+
+    A nonempty patch contributes its semantic payload (provenance
+    excluded); a persisted working graph contributes its adjacency rows.
+    Pure-legacy records contribute ``(None, None)`` so legacy grouping
+    never moves.
+    """
+    patch = record.topology_patch
+    patch_key = None
+    if patch is not None and not patch.is_empty:
+        patch_key = (
+            tuple(patch.add_edges),
+            tuple(patch.delete_edges),
+        )
+    graph_key = None
+    if record.working_topology is not None:
+        graph_key = tuple(tuple(row) for row in record.working_topology)
+    return (patch_key, graph_key)
 
 
 def _scientific_group(record: StructureRecord) -> tuple[Any, ...]:
     """Return the scientific-identity grouping key for one record.
 
     Records collapse only within one group: charge, multiplicity,
-    group key, role, and element signature must all agree.  Geometry
-    content alone never merges distinct scientific entities.
+    group key, role, element signature, and intended topology must all
+    agree.  Geometry content alone never merges distinct scientific
+    entities.
     """
     return (
         record.charge,
@@ -103,6 +150,7 @@ def _scientific_group(record: StructureRecord) -> tuple[Any, ...]:
         record.group_key,
         record.role,
         tuple(record.atoms),
+        _topology_identity(record),
     )
 
 
@@ -254,6 +302,7 @@ class TransformExecutor:
         )
         bond_scale = float(native.get("bond_scale", REFINE_DEFAULT_BOND_SCALE))
         heavy_only = native.get("heavy_only", False)
+        mapping_budget = native.get("mapping_budget", REFINE_DEFAULT_MAPPING_BUDGET)
         max_structures = native.get("max_structures")
         if not math.isfinite(threshold) or threshold < 0:
             raise DomainError(
@@ -261,6 +310,15 @@ class TransformExecutor:
             )
         if not math.isfinite(bond_scale) or bond_scale <= 0:
             raise DomainError(f"refine bond_scale must be a positive number, got {bond_scale!r}")
+        declared = self._declared_topology(native)
+        if (
+            isinstance(mapping_budget, bool)
+            or not isinstance(mapping_budget, int)
+            or mapping_budget < 0
+        ):
+            raise DomainError(
+                f"refine mapping_budget must be an integer >= 0, got {mapping_budget!r}"
+            )
         if not isinstance(heavy_only, bool):
             raise DomainError(f"refine heavy_only must be a boolean, got {heavy_only!r}")
         if max_structures is not None and (
@@ -278,22 +336,24 @@ class TransformExecutor:
         notes: list[str] = []
         for group in groups.values():
             ordered = sorted(group, key=lambda item: item.id)
-            adjacency = {record.id: self._adjacency(record, bond_scale) for record in ordered}
+            frames = {record.id: self._frame(record, bond_scale, declared) for record in ordered}
             retained: list[StructureRecord] = []
             for record in ordered:
                 witness = self._duplicate_of(
                     record,
-                    adjacency[record.id],
+                    frames[record.id],
                     retained,
-                    adjacency,
+                    frames,
                     threshold,
                     bool(heavy_only),
+                    int(mapping_budget),
+                    notes,
                 )
                 if witness is not None:
                     other, rmsd = witness
                     notes.append(
                         f"dropped {record.id} as duplicate of {other.id} "
-                        f"(rmsd {rmsd:.4f} A <= {threshold:g} A)"
+                        f"(rmsd {rmsd:.4f} A < {threshold:g} A)"
                     )
                     continue
                 retained.append(record)
@@ -307,54 +367,135 @@ class TransformExecutor:
 
     @staticmethod
     def _adjacency(record: StructureRecord, bond_scale: float) -> list[list[int]]:
-        """Perceive the bond adjacency of one record (central authority)."""
+        """Resolve the intended bond adjacency of one record.
+
+        The single working-topology authority: a persisted graph wins
+        verbatim, otherwise perception plus the record patch.  Refine
+        comparisons therefore see the same intended graph ConfGen used.
+        """
         try:
             numbers = [atomic_number(symbol) for symbol in record.atoms]
         except Exception as exc:
             raise DomainError(f"refine element lookup failed for {record.id}: {exc}") from exc
         try:
-            return perceive_adjacency(numbers, record.coordinates, bond_scale=bond_scale)
+            return resolve_working_adjacency(
+                record, numbers, record.coordinates, bond_scale=bond_scale
+            )
+        except DomainError as exc:
+            raise DomainError(f"refine working topology failed for {record.id}: {exc}") from exc
         except ValueError as exc:
             raise DomainError(f"refine bond perception failed for {record.id}: {exc}") from exc
 
     @staticmethod
+    def _declared_topology(native: Mapping[str, Any]) -> dict[str, Any] | None:
+        """Resolve ``topology_bonds`` into the normalised ConfGen spec, or ``None``."""
+        raw = native.get("topology_bonds")
+        if raw is None:
+            return None
+        if not isinstance(raw, Mapping):
+            raise DomainError(f"refine topology_bonds must be a mapping, got {raw!r}")
+        allowed = {
+            "index_base",
+            "bonds",
+            "add_bond",
+            "del_bond",
+            "atoms",
+            "coordination",
+            "bond_scale",
+        }
+        unknown = sorted(set(raw) - allowed)
+        if unknown:
+            raise DomainError(
+                f"refine topology_bonds got unknown members {unknown}; allowed {sorted(allowed)}"
+            )
+        if "bond_scale" in native:
+            raise DomainError(
+                "refine got both bond_scale and topology_bonds; with a declared topology the "
+                "perception scale is topology_bonds.bond_scale (default: the ConfGen default)"
+            )
+        spec: dict[str, Any] = {
+            "schema_version": 3,
+            "index_base": raw.get("index_base", 1),
+            "topology": {
+                key: raw[key] for key in ("bonds", "add_bond", "del_bond", "atoms") if key in raw
+            },
+        }
+        if raw.get("coordination") is not None:
+            spec["coordination"] = raw["coordination"]
+        if raw.get("bond_scale") is not None:
+            spec["tolerances"] = {"bond_scale": raw["bond_scale"]}
+        from ..science.confgen.planner import normalize_spec
+
+        try:
+            return dict(normalize_spec(spec))
+        except (ValueError, TypeError, KeyError) as exc:
+            raise DomainError(f"refine topology_bonds is invalid: {exc}") from exc
+
+    @classmethod
+    def _frame(
+        cls, record: StructureRecord, bond_scale: float, declared: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        """Return the comparison frame (atoms, coordinates, bonding graph) of one record."""
+        from ..science.topology_mapping import graph_from_adjacency, with_typed_edges
+
+        if declared is None:
+            graph = graph_from_adjacency(record.atoms, cls._adjacency(record, bond_scale))
+        else:
+            from ..science.confgen.planner import build_typed_graph
+
+            try:
+                adjacency, typed = build_typed_graph(record, declared["topology"], declared)
+            except (ValueError, TypeError, KeyError) as exc:
+                raise DomainError(f"refine topology_bonds does not fit {record.id}: {exc}") from exc
+            graph = with_typed_edges(
+                graph_from_adjacency(record.atoms, adjacency),
+                [
+                    (edge.a, edge.b, edge.type.value)
+                    for edge in typed.edges
+                    if edge.type.value != "COVALENT"
+                ],
+            )
+        return {
+            "atoms": list(record.atoms),
+            "coords": np.asarray(record.coordinates, dtype=np.float64),
+            "graph": graph,
+        }
+
+    @staticmethod
     def _duplicate_of(
         record: StructureRecord,
-        adjacency: Sequence[Sequence[int]],
+        frame: dict[str, Any],
         retained: Sequence[StructureRecord],
-        adjacency_by_id: Mapping[str, Sequence[Sequence[int]]],
+        frames: Mapping[str, dict[str, Any]],
         threshold: float,
         heavy_only: bool,
+        mapping_budget: int,
+        notes: list[str],
     ) -> tuple[StructureRecord, float] | None:
         """Return the retained duplicate witness for *record*, if proven.
 
-        Proof requires identical elements at identical indices and
-        identical adjacency (fixed-index topology identity) plus a Kabsch
-        RMSD at or below the threshold.  Anything else — different
-        topology, different order — is kept, never collapsed.
+        Proof requires a legal element/edge-preserving mapping under which
+        the Kabsch RMSD is strictly below the threshold.  A pair whose
+        mapping search runs out of budget is unresolved and is kept, never
+        collapsed; anything else (different topology, distinct geometry) is
+        kept too.
         """
-        mine = np.asarray(record.coordinates, dtype=np.float64)
+        from ..science.frame_compare import compare_frames
+
         for other in retained:
-            if len(other.atoms) != len(record.atoms):
-                continue
-            if tuple(other.atoms) != tuple(record.atoms):
-                continue
-            if [list(row) for row in adjacency_by_id[other.id]] != [list(row) for row in adjacency]:
-                continue
-            theirs = np.asarray(other.coordinates, dtype=np.float64)
-            if heavy_only:
-                kept_idx = [
-                    i for i, symbol in enumerate(record.atoms) if atomic_number(symbol) != 1
-                ]
-                if not kept_idx:
-                    continue
-                mine_sub = mine[np.asarray(kept_idx)]
-                theirs_sub = theirs[np.asarray(kept_idx)]
-            else:
-                mine_sub, theirs_sub = mine, theirs
-            rmsd = kabsch_rmsd(theirs_sub, mine_sub)
-            if rmsd <= threshold:
-                return other, rmsd
+            verdict = compare_frames(
+                frame,
+                frames[other.id],
+                threshold=threshold,
+                heavy_only=heavy_only,
+                node_budget=mapping_budget,
+            )
+            if verdict.status == "duplicate" and verdict.witness_rmsd is not None:
+                return other, float(verdict.witness_rmsd)
+            if verdict.status == "unresolved":
+                notes.append(
+                    f"kept {record.id}: comparison with {other.id} is unresolved ({verdict.reason})"
+                )
         return None
 
     # -- filter ---------------------------------------------------------------

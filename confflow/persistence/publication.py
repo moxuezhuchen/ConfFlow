@@ -212,6 +212,8 @@ def _structure_record(entry: Any) -> StructureRecord:
             ordinal=data.get("ordinal"),
             group_key=data.get("group_key"),
             metadata=_mapping_or_empty(data.get("metadata"), "structure metadata"),
+            topology_patch=data.get("topology_patch"),
+            working_topology=data.get("working_topology"),
         )
     except CorruptStateError:
         raise

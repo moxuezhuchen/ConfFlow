@@ -962,6 +962,8 @@ def _build_structure_set(items: Any, *, what: str) -> StructureSet:
                     ordinal=item.get("ordinal"),
                     group_key=item.get("group_key"),
                     metadata=FrozenDict(_require_mapping(item.get("metadata", {}), "metadata")),
+                    topology_patch=item.get("topology_patch"),
+                    working_topology=item.get("working_topology"),
                 )
             )
         except StagingError:
