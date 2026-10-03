@@ -392,3 +392,6 @@
 
 ## C5.3b（侧分支）— 验收通过（2026-10-03）
 - 执行：外部模型 glm-5.3-flash；CF refactor/diet-c5 efbaecd（父 a261bbf），一次通过。与 handoff/C5.3b-src-tests.patch 字节一致；ruff/mypy 通过；全量 4123 passed / 12 skipped；新测试 15 passed。已推送（refactor/*）。
+
+## C5.3c-1 补丁已备（2026-10-03，验收方原型）
+- 基点 efbaecd；5 个文件；全量 4144 passed，collect +21；golden ok。复用 build_typed_graph；映射保持边类型（Graph.typed_edges + MappingSearch 边类型检查），无类型边时搜索节点数/判定与 C5.3a 固定测试逐项不变；同一声明经 ConfGen 与 refine 两条路径边集合相同（5 组）；反应键异位不合并（对照：无类型边时合并）。验收方裁定：native bond_scale 与 topology_bonds 同时给出视为冲突报错。文档已写入 docs/architecture/WORKFLOW_V4.md。

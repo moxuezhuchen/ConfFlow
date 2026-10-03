@@ -987,6 +987,21 @@ IS 分支上没有 `docs/refactor/`。各卡如需工具，从 `$TOOLS` 运行�
 
 **拓扑来源（已定）：** refine 步骤新增 native 参数 `topology_bonds`；由 intent 编译器从上游 ConfGen 步骤自动复制。不改 ConfGen 的发布内容，不改 contract（验收方已核实：transform 的 native 键不在 contract 中，`rmsd_threshold` 等均未出现在 `contract.full.json`；`REFINE_NATIVE_KEYS` 只在 `transform_executor.py` 的运行时校验里）。
 
+**C5.3c-1（CF，前置：C5.3b；类型 `logic`）——用户 2026-10-02 裁定后的规则（补丁已备，基点 efbaecd）：** 做法：应用 `handoff/C5.3c-1-src-tests.patch`（5 个文件），不重新设计。
+1. **构图：refine 直接复用 `science/confgen/planner.build_typed_graph`**（经 `normalize_spec` 规范化，与 ConfGen 同一路径），规则与 ConfGen 完全相同：声明了 `bonds` 时声明边完全胜出、不做几何感知；否则几何感知后依次应用 `add_bond`（非共价类型替换同一对感知出的共价边；COVALENT 为新增）、`del_bond`（只能删共价对，不存在的对静默忽略）、配位范围叠加；同一对给出矛盾类型报错。
+2. **参数 `topology_bonds`**（`REFINE_NATIVE_KEYS` 新增）：成员 `index_base`（0|1，默认 1）、`bonds`、`add_bond`、`del_bond`、`atoms`、`coordination`、`bond_scale`；类型词汇四种（COVALENT/COORDINATION/FORMING/BREAKING），取自 `science/confgen/graph.py::EdgeType`。`ValueError` 一律转成 `DomainError`（`refine topology_bonds is invalid` / `does not fit <id>`）；索引越界、与结构原子数不符、矛盾类型都报错。
+3. **`bond_scale`：** 声明了拓扑时用 `topology_bonds.bond_scale`（缺省为 ConfGen 的 1.15）；未声明时仍用 refine 的 1.2，行为不变；**同时给出 native `bond_scale` 与 `topology_bonds` 视为冲突，报错**（验收方裁定，避免两个口径悄悄并存）。
+4. **映射保持边类型：** `science/topology_mapping.Graph` 新增可选字段 `typed_edges`（非共价类型边，默认空）与 `with_typed_edges()`；`MappingSearch` 在候选检查中比较已赋值顶点对的边类型，`fixed_index_isomorphism`、`graphs_may_be_isomorphic`（按类型计数）、`validate_mapping` 同步；没有类型边的图，搜索节点数、剪枝数与判定逐项不变（C5.3a 的固定测试原样通过）。边的 `bond_order`、`atoms` 的 label/role/stereo 不参与映射（文档写明）。
+5. **新增测试 21 项**：同一份声明经 ConfGen 路径（`normalize_spec`+`build_typed_graph`）与经 refine 路径，边集合（含类型）完全相同（`bonds`+FORMING、`bonds`+BREAKING 且 `index_base: 0`、`add_bond`+`del_bond`、配位范围、显式 `bond_scale` 共 5 组）；声明的类型确实出现；`index_base` 0/1 等价；**几何相同、反应键连在不同物理原子上 → 不合并**（对照：无类型边时合并），反应键在对称不变的位置时仍合并；无参数时与旧行为一致；非法声明、原子数不符、`bond_scale` 冲突的报错；`science` 层的类型边单元测试。
+6. **文档（已写）：** `docs/architecture/WORKFLOW_V4.md` 新增 refine 章节：去重判据（合法映射、严格小于、预算与 unresolved）、**ConfGen 带标号状态数与 refine 后物理构象数是两个口径（σ 相关结构会被合并）**、TS1 的 refine 结果仅作信息性记录不作通过条件、`topology_bonds` 语义、与旧 `AddBond/DelBond` 的三处差异。
+7. **与旧 `AddBond/DelBond` 的差异（用户已接受，文档已写明）：** 同一对同时出现在 add 与 del 时，旧 refine 先 del 后 add（add 胜），ConfGen 先 add 后 del（del 胜），新规则取 ConfGen；非法条目旧为静默忽略，新为报错；声明了拓扑时 `bond_scale` 由 1.2 变 1.15；来源由"帧注释"改为步骤参数。
+- 自检期望：全量 `{"passed": 4144, "skipped": 12}`；collect 4135 → 4156（+21，Removed 0，清单 `handoff/C5.3c-1-added-tests.txt`）；`golden_check.py` ok；ruff/mypy/black 通过。
+- 提交信息模板：`feat(execution)!: refine accepts a declared typed topology and preserves typed edges in its mappings` + 通用尾部（Added-Tests 21，测试名从清单逐字复制）。
+
+**C5.3c-2（编译器自动复制，IS 分支）**。
+
+**拓扑来源（已定）：** refine 步骤新增 native 参数 `topology_bonds`；由 intent 编译器从上游 ConfGen 步骤自动复制。不改 ConfGen 的发布内容，不改 contract（验收方已核实：transform 的 native 键不在 contract 中，`rmsd_threshold` 等均未出现在 `contract.full.json`；`REFINE_NATIVE_KEYS` 只在 `transform_executor.py` 的运行时校验里）。
+
 **C5.3c-1（CF，前置：C5.3b；类型 `logic`）——用户 2026-10-02 裁定后的规则：**
 1. **构图：refine 直接复用 `science/confgen/planner.build_typed_graph(structure, topology, resolved)`**，规则与 ConfGen 完全相同：声明了 `bonds` 时声明边完全胜出、不做几何感知；否则几何感知后依次应用 `add_bond`（非共价类型替换同一对感知出的共价边；COVALENT 为新增）、`del_bond`（只能删共价对，不存在的对静默忽略）、配位范围叠加；同一对给出矛盾类型报错。
 2. **参数形状：** `topology_bonds` = ConfGen 的 `topology`（`bonds` 或 `add_bond`/`del_bond`，带类型，外加 `atoms`），加 `index_base`（0|1，默认与 ConfGen 文档一致为 1）；`coordination` 范围与 `tolerances.bond_scale` 由编译器一并复制到 refine 步骤（`topology_bonds` 内以 `coordination`、`bond_scale` 两个成员携带）。类型词汇四种（COVALENT/COORDINATION/FORMING/BREAKING），取自 `science/confgen/graph.py::EdgeType`。
