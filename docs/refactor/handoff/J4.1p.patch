@@ -1,0 +1,306 @@
+diff --git a/src/jobdesk_v2/application/editor/__init__.py b/src/jobdesk_v2/application/editor/__init__.py
+index d28a759..41cc8f3 100644
+--- a/src/jobdesk_v2/application/editor/__init__.py
++++ b/src/jobdesk_v2/application/editor/__init__.py
+@@ -60,7 +60,6 @@ from .confgen_v3 import (
+     ConfgenFinding,
+     ConfgenV3Options,
+     block_key_for_field,
+-    is_legacy_native_block,
+     is_typed_v3_block,
+     read_confgen_block,
+     set_block_value,
+@@ -253,7 +252,6 @@ __all__ = [
+     "V4EditorContract",
+     "V4ProducerContractProvider",
+     "block_key_for_field",
+-    "is_legacy_native_block",
+     "is_typed_v3_block",
+     "read_confgen_block",
+     "set_block_value",
+diff --git a/src/jobdesk_v2/application/editor/confgen_v3.py b/src/jobdesk_v2/application/editor/confgen_v3.py
+index 7f34dff..aaac04b 100644
+--- a/src/jobdesk_v2/application/editor/confgen_v3.py
++++ b/src/jobdesk_v2/application/editor/confgen_v3.py
+@@ -3,7 +3,7 @@
+ A V4 confgen step carries its scope under ``steps[].confgen``: ``seed`` plus
+ the typed ``schema_version: 3`` blocks (``coordination`` / ``rings`` /
+ ``torsions`` / ``topology`` / ``sampling`` / ``limits`` / ``tolerances`` /
+-``exclusions``) and the legacy ``native`` adapter path.  This module is the
++``exclusions``).  This module is the
+ pure-Python seam between that payload and the GUI:
+ 
+ * :class:`ConfgenV3Options` reads the choice vocabularies (shapes, ring
+@@ -35,7 +35,6 @@ from typing import Any
+ 
+ #: Manifest field ids of the V4 confgen step, in manifest order.
+ CONFGEN_SEED_FIELD = "confgen.seed"
+-CONFGEN_NATIVE_FIELD = "confgen.native"
+ CONFGEN_V3_COORDINATION_FIELD = "confgen.v3.coordination"
+ CONFGEN_V3_RINGS_FIELD = "confgen.v3.rings"
+ CONFGEN_V3_TORSIONS_FIELD = "confgen.v3.torsions"
+@@ -49,7 +48,6 @@ CONFGEN_V3_EXCLUSIONS_FIELD = "confgen.v3.exclusions"
+ 
+ CONFGEN_FIELD_IDS: tuple[str, ...] = (
+     CONFGEN_SEED_FIELD,
+-    CONFGEN_NATIVE_FIELD,
+     CONFGEN_V3_COORDINATION_FIELD,
+     CONFGEN_V3_RINGS_FIELD,
+     CONFGEN_V3_TORSIONS_FIELD,
+@@ -65,7 +63,6 @@ CONFGEN_FIELD_IDS: tuple[str, ...] = (
+ #: Payload keys of the typed blocks, in the order the producer documents them.
+ CONFGEN_BLOCK_KEYS: tuple[str, ...] = (
+     "seed",
+-    "native",
+     "coordination",
+     "rings",
+     "torsions",
+@@ -81,7 +78,6 @@ CONFGEN_BLOCK_KEYS: tuple[str, ...] = (
+ #: Field id -> payload key within ``steps[].confgen``.
+ FIELD_TO_BLOCK_KEY: dict[str, str] = {
+     CONFGEN_SEED_FIELD: "seed",
+-    CONFGEN_NATIVE_FIELD: "native",
+     CONFGEN_V3_COORDINATION_FIELD: "coordination",
+     CONFGEN_V3_RINGS_FIELD: "rings",
+     CONFGEN_V3_TORSIONS_FIELD: "torsions",
+@@ -240,12 +236,6 @@ def set_block_value(block: Mapping[str, Any], key: str, value: object) -> dict[s
+     return updated
+ 
+ 
+-def is_legacy_native_block(block: Mapping[str, Any]) -> bool:
+-    """Whether ``block`` carries the legacy ``native`` chains vocabulary."""
+-    native = block.get("native")
+-    return isinstance(native, Mapping) and bool(native)
+-
+-
+ def is_typed_v3_block(block: Mapping[str, Any]) -> bool:
+     """Whether ``block`` declares the typed v3 ``schema_version: 3`` scope."""
+     return block.get("schema_version") == 3 or any(
+@@ -602,7 +592,6 @@ __all__ = [
+     "CONFGEN_AXES",
+     "CONFGEN_BLOCK_KEYS",
+     "CONFGEN_FIELD_IDS",
+-    "CONFGEN_NATIVE_FIELD",
+     "CONFGEN_SEED_FIELD",
+     "CONFGEN_V3_COORDINATION_FIELD",
+     "CONFGEN_V3_EXCLUSIONS_FIELD",
+@@ -618,7 +607,6 @@ __all__ = [
+     "ConfgenFinding",
+     "ConfgenV3Options",
+     "block_key_for_field",
+-    "is_legacy_native_block",
+     "is_typed_v3_block",
+     "read_confgen_block",
+     "set_block_value",
+diff --git a/src/jobdesk_v2/gui/new_run/confgen_v3_form.py b/src/jobdesk_v2/gui/new_run/confgen_v3_form.py
+index a411495..12299de 100644
+--- a/src/jobdesk_v2/gui/new_run/confgen_v3_form.py
++++ b/src/jobdesk_v2/gui/new_run/confgen_v3_form.py
+@@ -23,8 +23,8 @@ instead of leaving the whole block as opaque JSON:
+   normal mode because deterministic full enumeration needs no seed, with the
+   conditional rule stated: a sampling cap requires it), sampling cap and
+   enumeration limits (producer defaults as placeholders, never written
+-  values), and the ``native`` JSON (legacy, read-only residue) plus ``topology`` / ``tolerances``
+-  / ``exclusions`` JSON blocks with their support notes.
++  values), and the ``topology`` / ``tolerances`` / ``exclusions`` JSON blocks with their
++  support notes.
+ 
+ Every control is built from the verified manifest descriptors (labels,
+ descriptions) and from :class:`ConfgenV3Options` (choices); no scientific
+@@ -47,7 +47,6 @@ from PySide6.QtCore import Signal
+ from PySide6.QtWidgets import QVBoxLayout, QWidget
+ 
+ from ...application.editor.confgen_v3 import (
+-    CONFGEN_NATIVE_FIELD,
+     CONFGEN_SEED_FIELD,
+     CONFGEN_V3_COORDINATION_FIELD,
+     CONFGEN_V3_EXCLUSIONS_FIELD,
+@@ -545,13 +544,6 @@ class ConfgenV3Form(QWidget):
+         )
+         paths_section.content_layout.addWidget(self._paths_host)
+         paths_section.content_layout.addWidget(add_path)
+-        self._legacy_paths_notice = BodyLabel(
+-            "This document carries legacy native.paths. Legacy paths must be converted "
+-            "to typed v3: edit any path to convert them.",
+-            word_wrap=True,
+-        )
+-        self._legacy_paths_notice.setVisible(False)
+-        paths_section.content_layout.addWidget(self._legacy_paths_notice)
+         self._preview_button = LinkButton("Preview paths on structure…")
+         self._preview_button.clicked.connect(lambda: self.preview_requested.emit())
+         paths_section.content_layout.addWidget(self._preview_button)
+@@ -653,7 +645,6 @@ class ConfgenV3Form(QWidget):
+ 
+         self._json_controls: dict[str, JsonField] = {}
+         for field_id, title in (
+-            (CONFGEN_NATIVE_FIELD, "Native input (legacy)"),
+             (CONFGEN_V3_TOPOLOGY_FIELD, "Typed topology"),
+             (CONFGEN_V3_TOLERANCES_FIELD, "Tolerances"),
+             (CONFGEN_V3_EXCLUSIONS_FIELD, "Policy exclusions"),
+@@ -691,28 +682,11 @@ class ConfgenV3Form(QWidget):
+                 self._seed.set_value(seed)
+             self._set_torsions(block.get("torsions"))
+             self._set_rings(block.get("rings"))
+-            self._set_paths(
+-                block.get("paths"),
+-                block.get("native"),
+-                typed_present=any(
+-                    block.get(key) is not None
+-                    for key in (
+-                        "torsions",
+-                        "rings",
+-                        "coordination",
+-                        "topology",
+-                        "sampling",
+-                        "limits",
+-                        "tolerances",
+-                        "exclusions",
+-                    )
+-                ),
+-            )
++            self._set_paths(block.get("paths"))
+             self._set_coordination(block.get("coordination"))
+             self._set_sampling(block.get("sampling"))
+             self._set_limits(block.get("limits"))
+             for field_id, key in (
+-                (CONFGEN_NATIVE_FIELD, "native"),
+                 (CONFGEN_V3_TOPOLOGY_FIELD, "topology"),
+                 (CONFGEN_V3_TOLERANCES_FIELD, "tolerances"),
+                 (CONFGEN_V3_EXCLUSIONS_FIELD, "exclusions"),
+@@ -774,22 +748,8 @@ class ConfgenV3Form(QWidget):
+             if widget.dump() != entry:
+                 widget.load(entry)
+ 
+-    def _set_paths(
+-        self, value: object, native: object = None, *, typed_present: bool = False
+-    ) -> None:
+-        # Typed v3 carries top-level ``paths``.  A document that still carries
+-        # the legacy ``native.paths`` loads into the same editors and shows a
+-        # notice: any edit converts it to typed v3 (the form never writes the
+-        # legacy representation).
+-        del typed_present
++    def _set_paths(self, value: object) -> None:
+         entries = [item for item in _as_mapping_list(value)]
+-        legacy_loaded = False
+-        if not entries and isinstance(native, Mapping):
+-            legacy = [item for item in _as_mapping_list(native.get("paths"))]
+-            if legacy:
+-                entries = legacy
+-                legacy_loaded = True
+-        self._legacy_paths_notice.setVisible(legacy_loaded)
+         while len(self._path_pairs) < len(entries):
+             self._add_path({}, emit=False)
+         while len(self._path_pairs) > len(entries):
+@@ -882,16 +842,6 @@ class ConfgenV3Form(QWidget):
+     def _on_paths_changed(self) -> None:
+         entries = [widget.dump() for widget, _remove in self._path_pairs]
+         value = entries if entries else None
+-        # Editing converts: the typed paths are written and any legacy
+-        # ``native.paths`` the document carried is dropped, never kept beside them.
+-        control = self._json_controls.get(CONFGEN_NATIVE_FIELD)
+-        if control is not None:
+-            current_native = control.value()
+-            if isinstance(current_native, dict) and "paths" in current_native:
+-                remaining = {k: v for k, v in current_native.items() if k != "paths"}
+-                control.set_value(remaining or None)
+-                self._emit(CONFGEN_NATIVE_FIELD, control.value())
+-        self._legacy_paths_notice.setVisible(False)
+         self._emit(CONFGEN_V3_PATHS_FIELD, value)
+         self._refresh_estimate()
+ 
+@@ -952,7 +902,6 @@ class ConfgenV3Form(QWidget):
+         if limits is not None:
+             block["limits"] = limits
+         for field_id, key in (
+-            (CONFGEN_NATIVE_FIELD, "native"),
+             (CONFGEN_V3_TOPOLOGY_FIELD, "topology"),
+             (CONFGEN_V3_TOLERANCES_FIELD, "tolerances"),
+             (CONFGEN_V3_EXCLUSIONS_FIELD, "exclusions"),
+diff --git a/tests/gui/test_intent_live_gui.py b/tests/gui/test_intent_live_gui.py
+index 5babc4d..0d9a810 100644
+--- a/tests/gui/test_intent_live_gui.py
++++ b/tests/gui/test_intent_live_gui.py
+@@ -17,6 +17,7 @@ import os
+ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+ 
+ import threading
++from dataclasses import replace
+ from types import SimpleNamespace
+ from typing import Any
+ 
+@@ -314,11 +315,11 @@ def test_confgen_legacy_native_refuses_compile_and_names_the_key(qtbot: Any, tmp
+     """A document that still carries legacy ``native.paths`` is not representable as intent."""
+     contract = _live_contract()
+     page, _service, store = _live_page(qtbot, contract, tmp_path)
+-    store.reset(author_v4_draft(contract, "confgen_torsion"))
++    draft = author_v4_draft(contract, "confgen_torsion")
++    payload = draft.document.to_mapping()
++    payload["steps"][0]["confgen"]["native"] = {"paths": [{"start": 2, "end": 3, "move": "end"}]}
++    store.reset(replace(draft, document=draft.document.with_payload(payload)))
+     page._refresh()
+-    form = page._calc_section.confgen_form
+-    assert form is not None
+-    form._emit("confgen.native", {"paths": [{"start": 2, "end": 3, "move": "end"}]})
+     page._on_compile_intent()
+     qtbot.waitUntil(
+         lambda: "Direct V4 path" in page._intent_section._status.text(),
+@@ -328,6 +329,28 @@ def test_confgen_legacy_native_refuses_compile_and_names_the_key(qtbot: Any, tmp
+     assert "confgen.native" in status and "typed v3" in status
+ 
+ 
++@requires_producer
++@pytest.mark.gui
++def test_a_legacy_native_member_survives_editing_other_confgen_fields(
++    qtbot: Any, tmp_path: Any
++) -> None:
++    """The GUI never drops ``confgen.native`` it cannot edit; the producer reports it."""
++    contract = _live_contract()
++    page, _service, store = _live_page(qtbot, contract, tmp_path)
++    draft = author_v4_draft(contract, "confgen_torsion")
++    payload = draft.document.to_mapping()
++    legacy = {"chains": ["1-2-3-4"], "angle_step": 120}
++    payload["steps"][0]["confgen"]["native"] = dict(legacy)
++    store.reset(replace(draft, document=draft.document.with_payload(payload)))
++    page._refresh()
++    form = page._calc_section.confgen_form
++    assert form is not None
++    form._add_path({"start": 2, "end": 3, "move": "end", "angles": [0, 120]})
++    confgen = store.current.document.to_mapping()["steps"][0]["confgen"]
++    assert confgen["native"] == legacy
++    assert confgen["paths"][0]["move"] == "end"
++
++
+ @requires_producer
+ @pytest.mark.gui
+ def test_normal_add_confgen_runs_seedless_derived(qtbot: Any, tmp_path: Any) -> None:
+diff --git a/tests/gui/test_intent_panels.py b/tests/gui/test_intent_panels.py
+index bd0d11a..4cd9b88 100644
+--- a/tests/gui/test_intent_panels.py
++++ b/tests/gui/test_intent_panels.py
+@@ -257,26 +257,6 @@ def test_normal_generation_bumps_on_edits(qapp: Any) -> None:
+     assert section.normal_generation > second
+ 
+ 
+-def test_a_document_with_legacy_native_paths_shows_a_notice_and_converts_on_edit(qapp: Any) -> None:
+-    form = ConfgenV3Form({}, ConfgenV3Options())
+-    emitted: list[tuple[str, Any]] = []
+-    form.value_changed.connect(lambda field_id, value: emitted.append((field_id, value)))
+-    legacy = {"paths": [{"start": 1, "end": 3, "move": "end", "angles": [0, 90]}], "angle_step": 90}
+-    form.set_step({"native": legacy}, None)
+-    assert not form._legacy_paths_notice.isHidden()
+-    assert form._path_pairs[0][0].dump()["start"] == 1
+-    # Loading alone writes nothing; the document is untouched until the user edits.
+-    assert emitted == []
+-    form._on_paths_changed()
+-    assert form._legacy_paths_notice.isHidden()
+-    emitted_by_field = dict(emitted)
+-    assert emitted_by_field["confgen.v3.paths"] == [
+-        {"start": 1, "end": 3, "move": "end", "angles": [0, 90]}
+-    ]
+-    # The converted document keeps the other native members and drops only ``paths``.
+-    assert emitted_by_field["confgen.native"] == {"angle_step": 90}
+-
+-
+ def test_the_form_has_no_legacy_representation_switch(qapp: Any) -> None:
+     form = ConfgenV3Form({}, ConfgenV3Options())
+     assert not hasattr(form, "_paths_mode")

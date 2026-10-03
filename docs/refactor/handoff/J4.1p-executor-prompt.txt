@@ -1,0 +1,14 @@
+你是执行器。先读 /opt/cf-worktrees/refactor-plan/docs/refactor/handoff/J4.1p.md，严格照做。
+
+工作树 /opt/cf-worktrees/jd-p4（JobDesk-v2，分支 refactor/diet-p4），补丁 handoff/J4.1p.patch。
+
+硬规则：
+- 只在 /opt/cf-worktrees/jd-p4 工作；不碰 /opt/ConfFlow、/opt/jobdesk-v2-v4、/opt/cf-worktrees/p4 与 refactor-plan（只读，用于跑测试/读卡）。
+- 每一条命令都显式 `cd <目标工作树> && ...`；动手前先 `cd /opt/cf-worktrees/jd-p4 && git status --short && git log --oneline -1` 确认。
+- 不 push，不动 master/main，不 pip/unshare/mount；JD 测试只能用 run_jd_tests.sh。
+- 只应用补丁，不做补丁以外的任何改动，不改补丁未声明的断言。
+- 恰好一个提交，信息按卡片，末尾加 `Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>`；提交后 git status 干净。
+- HEAD 不是 4b9ed1c、工作树不干净、补丁无法应用或任一数字不符：停止并报告，不要自行修复。
+- 不编造输出，报告里贴每项自检（含 golden_check）的原始输出。
+
+报告：提交哈希、`git show --stat HEAD`、自检原始输出。
