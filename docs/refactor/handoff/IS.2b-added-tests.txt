@@ -1,0 +1,6 @@
+tests/v4/test_terminal_endpoint_diagnostic.py::test_a_declaration_that_is_accepted_is_still_accepted
+tests/v4/test_terminal_endpoint_diagnostic.py::test_the_index_of_the_offending_declaration_is_named
+tests/v4/test_terminal_endpoint_diagnostic.py::test_the_refusal_names_the_path_key_and_the_atom[path0-confgen.paths[0].start (atom 1)]
+tests/v4/test_terminal_endpoint_diagnostic.py::test_the_refusal_names_the_path_key_and_the_atom[path1-confgen.paths[0].end (atom 4)]
+tests/v4/test_terminal_endpoint_diagnostic.py::test_the_refusal_names_the_path_key_and_the_atom[path2-confgen.paths[0].start (atom 1)]
+tests/v4/test_terminal_endpoint_diagnostic.py::test_torsions_declared_axes_keep_their_original_text

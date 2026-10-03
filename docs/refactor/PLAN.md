@@ -808,18 +808,13 @@ IS 分支上没有 `docs/refactor/`。各卡如需工具，从 `$TOOLS` 运行�
 
 ### IS.2b — v3 拒绝末端原子端点时，诊断指明具体的键
 
-- ID：IS.2b ／ 仓库：ConfFlow ／ 分支：IS ／ 前置：IS.2
-- 目标：Q2c 方向 1。v3 因"端点没有可测二面角框架"拒绝路径时，错误信息指明是哪条路径声明的哪个键，例如 `confgen.paths[1].end (atom 7) is a terminal atom with no measurable dihedral frame`。
-- 类型：`logic`（只改诊断文本和为其传递来源键所需的参数，不改任何判定）
-- 允许修改的文件：`confflow/science/confgen/torsion/stage.py`、`confflow/science/confgen/torsion/paths.py`、`confflow/science/confgen/planner.py`（只允许把路径来源键传到 axis 上），以及断言该错误文本的测试（逐条声明）
-- 具体步骤（@f87da58，IS.0 合并后按符号定位）：
-  1. 找到抛出点：`torsion/stage.py` 中"has no measurable dihedral frame (terminal pair)"（L96-108）；找到 typed `paths` 解析成 torsion axis 的位置（`torsion/paths.py` 的 `resolve_paths` / `parse_path_declarations`，以及 `planner.py` 中对 `paths` 的处理，L494-520）。
-  2. 解析时把每条路径的来源键（`paths[<j>]` 与具体端点字段 `start`/`end`，以及 1-based 原子号）记录到由该路径产生的 axis 上（只增加一个只读的来源描述字段，不参与任何计算、排序、去重或 state key）。
-  3. 拒绝时，如果 axis 带有来源描述，就把它写进错误信息；没有来源描述的 axis（`torsions` 声明产生的）错误信息保持原样。
-- 禁止事项：G1–G10；不得改变哪些输入被接受或拒绝；来源字段不得进入 state key、报告的 `enumeration`/`certificate` 或任何 digest。
-- 验收：标准验收（在 `$CFIS`）。**TS1 与 engine 报告必须逐字节不变**（来源字段一旦进入报告就是违规）；IS.1 中每个 `LEGACY_DEGENERATE` 用例经 intent 编译后执行，失败信息必须包含对应的 `paths[<j>].<start|end>` 键。
+- ID：IS.2b ／ 仓库：ConfFlow ／ 分支：`implementation/input-simplification` ／ 前置：IS.2c（基点 2e0295a 之上再加 IS.2c） ／ 类型：`logic`（只改拒绝时的错误信息措辞，不改任何判定）。做法：应用 `handoff/IS.2b-src-tests.patch`（2 个文件）。
+- 实现（验收方核对后的方案，与原卡不同）：`TorsionStage.__init__` 本来就收到完整的 resolved spec，其中的 `paths_resolved`（`declared_paths` 的 `source`/`start`/`end` 与 `rotors` 的 `id`/`sources`）已由 planner 附上。因此 stage 只需**只读**这份审计，在 `_frame_for` 抛出"terminal pair"之前，按 axis id 查到来源路径，判断终端原子等于该路径的 `start` 还是 `end`，把 `confgen.paths[<j>].<start|end> (atom N) is a terminal atom with no measurable dihedral frame; ` 放在原句前面。**没有给 `TorsionAxis`、torsion 条目或 spec 增加任何字段**，所以不可能进入 state key、报告的 `enumeration`/`certificate` 或任何 digest。原卡"改 `paths.py`/`planner.py`"不需要。
+- 非 `paths` 产生的 axis（`torsions` 声明）错误信息保持原样；原句 `has no measurable dihedral frame (terminal pair)` 仍在，旧断言不受影响。
+- 新增测试 6 项（`tests/v4/test_terminal_endpoint_diagnostic.py`；文件名特意不以 `test_confgen_` 开头，避免被 golden 的引擎报告捕获规则收入）：start 端点、end 端点、两端都是末端时先报 start；多路径时指明具体的 `paths[1]`；`torsions` 轴文本不变；被接受的声明仍被接受。
+- 自检期望（在 IS.2c 之后应用）：全量 `{"passed": 5145, "skipped": 12}`；collect 5151 → 5157（+6，Removed 0，清单 `handoff/IS.2b-added-tests.txt`）；golden：contract 五项 ok、ts1 三种 ok、engine 报告 added 5 / different 1 且 6 份与 `checkpoints/IS.0/engine_reports/` 逐字节相同（**TS1 与 engine 报告必须逐字节不变**）；ruff/mypy/black 通过。
 - 预期行为变化：只有错误信息文本变化。
-- 提交信息模板：`fix(confgen): name the offending path key when a terminal endpoint is refused` + 通用尾部。
+- 提交信息模板：`fix(confgen): name the offending path key when a terminal endpoint is refused` + 通用尾部（Added-Tests 6，测试名从清单逐字复制）。
 
 ### IS.3 — `_wire_confgen` 拒绝非 v3 native
 

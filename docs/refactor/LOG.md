@@ -404,3 +404,6 @@
 - 执行：外部模型 glm-5.3-flash；CF implementation/input-simplification 2e0295a（父 fe2acf0），一次通过。提交与 handoff/IS.2-src-tests.patch 字节一致；验收方独立：ruff 通过，run_sharded 5138 passed / 12 skipped；提交信息里的 53 个测试名与 handoff/IS.2-added-tests.txt 逐行相同。
 - 说明：执行报告正文里复述的测试名有两个与提交里的真实名字不同（报告写 `…_rejected_at_compile_time`），属报告正文笔误；提交信息本身正确（验收方逐行对照）。
 - 未推送（该分支不在推送授权内）。
+
+## IS.2b 补丁已备（2026-10-03，验收方原型）
+- 基点 2e0295a（可与 IS.2c 任意顺序；文件互不重叠，两者都已验证可应用）。实现与原卡不同：stage 只读已存在的 paths_resolved 审计来措辞，不增加任何字段，所以不可能进入 digest/报告；全量 5144 passed（+6），golden：contract 与 TS1 ok，6 份 IS.0 引擎报告逐字节不变。测试文件名避开 test_confgen_ 前缀，以免被 golden 的引擎捕获规则多收一份报告。
