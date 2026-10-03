@@ -42,6 +42,7 @@ from ..execution.contracts import (
     ExecutorContract,
     PortSpec,
     ResultProfileSpec,
+    allowed_port_pairings,
 )
 from ..execution.registry import ExecutionRegistry, default_registry
 from ..workflow.v4.document import SCHEMA_ID
@@ -166,28 +167,8 @@ def _program_descriptors() -> list[dict[str, Any]]:
 
 
 def _allowed_pairings_by_kind() -> dict[str, list[str]]:
-    """Probe the pairing rule from the single source: ``PortSpec`` itself.
-
-    Each pairing is accepted for a kind exactly when ``PortSpec`` constructs
-    without raising, so the published rule can never disagree with the
-    validation the compiler enforces.
-    """
-    table: dict[str, list[str]] = {}
-    for kind in PortKind:
-        allowed: list[str] = []
-        for pairing in Pairing:
-            try:
-                PortSpec(
-                    name="probe",
-                    kind=kind,
-                    cardinality=Cardinality.ONE,
-                    pairing=pairing,
-                )
-            except Exception:  # noqa: BLE001 - rejection is the signal
-                continue
-            allowed.append(pairing.value)
-        table[kind.value] = allowed
-    return table
+    """Publish the pairing rule from the single source ``PortSpec`` validates with."""
+    return {kind.value: [p.value for p in allowed_port_pairings(kind)] for kind in PortKind}
 
 
 def _ports_section(registry: ExecutionRegistry) -> dict[str, Any]:
