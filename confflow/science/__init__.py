@@ -11,7 +11,7 @@ SciPy (lazy), ``confflow.domain`` element data, and the centralised
 edge in :mod:`confflow.science.bonds`).
 
 Provenance: torsion mechanics extracted from the pure-numpy subset of
-``confflow.blocks.confgen`` (chain language, Rodrigues rotation, ring
+``confflow.blocks.confgen`` (Rodrigues rotation, ring
 refusal, clash rule); clustering mechanics extracted from the pure
 subset of ``confflow.blocks.refine`` (bond rule, Kabsch formulation,
 mapping-gated comparison rule).  Each function cites its source.
@@ -24,9 +24,6 @@ from .cluster import kabsch_rmsd
 from .torsion import (
     bfs_distances,
     edge_in_cycle,
-    parse_bond_pair,
-    parse_chain,
-    resolve_angle_lists,
     rotate_atoms_around_bond,
     topological_distance_matrix,
 )
@@ -36,10 +33,7 @@ __all__ = [
     "covalent_radii",
     "edge_in_cycle",
     "kabsch_rmsd",
-    "parse_bond_pair",
-    "parse_chain",
     "perceive_adjacency",
-    "resolve_angle_lists",
     "rotate_atoms_around_bond",
     "topological_distance_matrix",
 ]
