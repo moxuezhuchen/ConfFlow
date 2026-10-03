@@ -421,3 +421,8 @@
 - 修正补丁：额外删除这两个测试；removed 214、added 3、passed 3935、collect 3945；已在 rm 之后重跑全量并通过，golden ok，deleted_modules_check 通过。教训：删除类卡片的最终验证必须在完成所有删除步骤（含 rm -rf）之后重跑。
 ## IS.2c + IS.2b — 验收通过（2026-10-03）
 - CF implementation/input-simplification：6046b44（IS.2c）、0a9f28d（IS.2b）。两提交与补丁字节一致；IS.2b 提交里 6 个测试名与清单逐行相同；ruff/mypy 通过；全量 5145 passed / 12 skipped（验收方独立重跑）。执行模型报告 IS.2c 首次全量遇到 test_cli::test_kill_proc_tree_timeout 偶发失败，重跑通过（又一个负载敏感测试，已记）。未推送。
+
+## C5.3d+C5.4（侧分支）— 验收通过（2026-10-03，更正补丁后）
+- CF refactor/diet-c5 deadf46（父 6521581）。与更正后补丁字节一致；提交信息 214+3 个测试名与清单逐行相同；confflow/blocks 已不存在，deleted_modules_check 通过；ruff/mypy 通过；全量 3935 passed / 10 skipped（验收方独立重跑，rm 之后）。已推送。
+## IS.3 补丁已备（2026-10-03，验收方原型）
+- 基点 0a9f28d；2 个文件；全量 5149 passed；collect 5157→5161（−9 +13）；golden：contract/ts1 ok，6 份 IS.0 引擎报告不变。只有 IS.2 自己新增的 9 个“保持 legacy”测试断言了透传，已改写为必须被拒绝。

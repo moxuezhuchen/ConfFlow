@@ -1,0 +1,64 @@
+diff --git a/confflow/producer/intent.py b/confflow/producer/intent.py
+index 9331e54..2239356 100644
+--- a/confflow/producer/intent.py
++++ b/confflow/producer/intent.py
+@@ -1016,15 +1016,12 @@ def _wire_confgen(step: Mapping[str, Any], step_id: str) -> dict[str, Any]:
+         if overrides:
+             mapped["overrides"] = copy.deepcopy(dict(overrides))
+         return mapped
+-    block = {"native": native_dict}
+-    if step.get("seed") is not None:
+-        block["seed"] = step["seed"]
+-    if overrides:
+-        block["overrides"] = copy.deepcopy(dict(overrides))
+-    for extra in ("paths", "strict_path_bond_check"):
+-        if step.get(extra) is not None:
+-            block[extra] = copy.deepcopy(step[extra])
+-    return block
++    raise _fail(
++        f"step {step_id!r}: ConfGen intent requires a typed schema_version 3 scope; "
++        "the legacy native vocabulary "
++        f"({', '.join(sorted(native_dict))}) has no typed form here",
++        step_id=step_id,
++    )
+ 
+ 
+ def _wire_transform(step: Mapping[str, Any], card: dict[str, Any], step_id: str) -> dict[str, Any]:
+diff --git a/tests/v4/test_intent_legacy_paths_to_v3.py b/tests/v4/test_intent_legacy_paths_to_v3.py
+index 681a891..596092a 100644
+--- a/tests/v4/test_intent_legacy_paths_to_v3.py
++++ b/tests/v4/test_intent_legacy_paths_to_v3.py
+@@ -89,10 +89,29 @@ def test_unknown_path_keys_are_refused_not_dropped(case: dict[str, Any]) -> None
+ 
+ 
+ @pytest.mark.parametrize("case", UNMAPPABLE, ids=[case["case_id"] for case in UNMAPPABLE])
+-def test_scopes_outside_the_paths_vocabulary_stay_legacy_for_now(case: dict[str, Any]) -> None:
+-    block = _compile({"native": copy.deepcopy(case["native"])})
+-    assert block["native"] == case["native"]
+-    assert "schema_version" not in block
++def test_scopes_outside_the_paths_vocabulary_are_refused(case: dict[str, Any]) -> None:
++    with pytest.raises(IntentCompilationError, match="requires a typed schema_version 3 scope"):
++        _compile({"native": copy.deepcopy(case["native"])})
++
++
++@pytest.mark.parametrize(
++    "native",
++    [
++        {"angle_step": 60},
++        {"bond_scale": 1.3},
++        {"strict_path_bond_check": True},
++        {"chains": ["1-2-3-4"], "chain_angles": [[0, 120, 240]]},
++    ],
++)
++def test_legacy_native_without_a_paths_declaration_is_refused_and_named(
++    native: dict[str, Any],
++) -> None:
++    with pytest.raises(
++        IntentCompilationError, match="requires a typed schema_version 3 scope"
++    ) as raised:
++        _compile({"native": native})
++    for key in native:
++        assert key in str(raised.value)
+ 
+ 
+ def test_bare_declaration_gets_the_legacy_default_step_120() -> None:

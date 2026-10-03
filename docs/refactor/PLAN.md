@@ -818,12 +818,13 @@ IS 分支上没有 `docs/refactor/`。各卡如需工具，从 `$TOOLS` 运行�
 
 ### IS.3 — `_wire_confgen` 拒绝非 v3 native
 
-- ID：IS.3 ／ 仓库：ConfFlow ／ 分支：IS ／ 前置：IS.2
-- 目标：IS.2 映射之后仍然不是 v3 的 native（例如 `chains`），直接 `_fail`，不再透传。
-- 类型：`logic`
-- 允许修改的文件：`confflow/producer/intent.py`、相关测试（逐条声明）
-- 具体步骤：`intent.py:941-951` 的透传分支改为 `raise _fail("step …: ConfGen intent requires a typed schema_version 3 scope", step_id=…)`；`_passthrough_legacy`（L269-290，legacy V4 文档的透传）不在本卡范围，保持不变。
-- 验收命令：标准验收。期望：只有断言"非 v3 native 透传"的测试被修改，逐条声明。
+- ID：IS.3 ／ 仓库：ConfFlow ／ 分支：`implementation/input-simplification` ／ 基点 0a9f28d（IS.2b） ／ 前置：IS.2、IS.2b、IS.2c ／ 类型：`logic`。做法：应用 `handoff/IS.3-src-tests.patch`（2 个文件）。
+- 内容：`confflow/producer/intent.py::_wire_confgen` 的 legacy 透传分支（含已不可达的步骤级 `paths`/`strict_path_bond_check` 循环）改为 `raise _fail("step … ConfGen intent requires a typed schema_version 3 scope; the legacy native vocabulary (<键>) has no typed form here")`。IS.2 映射之后仍不是 v3 的 native（`chains`/`chain_angles`/`rotate_side`/`no_rotate`，以及只有 `angle_step`/`bond_scale`/`strict_path_bond_check` 而没有 `paths` 的）都会在编译期被拒绝，并在消息里列出具体键。`_passthrough_legacy`（legacy V4 文档的透传）不在本卡范围，不变。
+- 实测（验收方）：整个测试集中**只有**IS.2 新增的那组"范围之外的 native 保持 legacy"的 9 个测试断言了透传，没有任何其他测试依赖透传；它们被改写为"必须被拒绝"（9 个节点改名），并新增 4 个参数化节点（只有 `angle_step`、只有 `bond_scale`、只有 strict 标志、`chains`+`chain_angles` 都被拒绝且消息指名这些键）。
+- 被删（改名）测试：`handoff/IS.3-removed-tests.txt` 的 9 项；新增 `handoff/IS.3-added-tests.txt` 的 13 项（含 9 个改名后的节点）。
+- 自检期望：全量 `{"passed": 5149, "skipped": 12}`；collect 5157 → 5161（−9 +13）；golden（`--checkpoint …/checkpoints/IS.0/contract.json`）：contract 五项 ok、ts1 三种 ok、engine 报告 added 5 / different 1（IS.0 同批，6 份与 `checkpoints/IS.0/engine_reports/` 逐字节相同）；ruff/mypy/black 通过。
+- 预期行为变化：legacy ConfGen native（`chains` 等）在 intent 编译期被拒绝，不再透传到 legacy 执行路径。
+- 提交信息模板：`feat(producer)!: reject non-v3 ConfGen native in intent compilation` + 通用尾部（Removed-Tests 9、Added-Tests 13，测试名从清单逐字复制）。
 
 ### IS.4 — JD 输入简化分支改用 typed v3（Q1 已确认）
 
