@@ -5,8 +5,6 @@ from __future__ import annotations
 from unittest.mock import Mock, patch
 
 from confflow.core.chem_validation import (
-    ChainValidator,
-    load_mol_from_xyz,
     validate_chain_definitions,
 )
 
@@ -31,11 +29,3 @@ def test_validate_chain_definitions_returns_invalid_messages() -> None:
     load_mol.assert_called_once_with("mol.xyz", 1.2)
     validator.validate_mol.assert_called_once()
     assert messages == ["2-3: not bonded"]
-
-
-def test_chem_validation_legacy_paths_preserve_core_identity() -> None:
-    from confflow.blocks.confgen.generator import load_mol_from_xyz as legacy_loader
-    from confflow.blocks.confgen.validator import ChainValidator as legacy_validator
-
-    assert legacy_loader is load_mol_from_xyz
-    assert legacy_validator is ChainValidator

@@ -71,7 +71,7 @@ V4_ROOTS: tuple[str, ...] = (
 )
 
 #: Public tooling entrypoints that consume calc; used by the CALC metrics.
-CALC_PUBLIC_TOOLING_ROOTS: tuple[str, ...] = ("confflow.blocks.refine",)
+CALC_PUBLIC_TOOLING_ROOTS: tuple[str, ...] = ()
 
 #: ``(file, package)`` pairs whose PEP 562 ``_LAZY_EXPORTS`` declare public
 #: tooling names; the declared concrete modules count as consumed.

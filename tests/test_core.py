@@ -48,16 +48,3 @@ def test_main_entrypoint_callable_and_non_integer_mapping():
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(main_mod, "_cli_main", lambda _args=None: None)
         assert main_mod.main([]) == 2
-
-
-def test_confgen_and_refine_key_symbols_present():
-    import numpy as np
-
-    import confflow.blocks.confgen as confgen
-    import confflow.blocks.refine as refine
-
-    assert hasattr(confgen, "run_generation")
-    assert hasattr(confgen, "check_clash_core")
-    assert refine.get_element_atomic_number("Cl") == 17
-    coords = np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0]], dtype=np.float64)
-    assert refine.fast_rmsd(coords, coords) < 1e-6

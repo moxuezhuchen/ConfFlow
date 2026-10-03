@@ -247,6 +247,10 @@ REMOVED_LEGACY_MODULES: frozenset[str] = frozenset(
         "confflow.blocks.viz",
         # C5.2b: the results.db export reader (nothing writes results.db any more).
         "confflow.workflow.export",
+        # C5.3d/C5.4: the legacy refine and confgen blocks (and their CLIs).
+        "confflow.blocks",
+        "confflow.blocks.refine",
+        "confflow.blocks.confgen",
         # PR-4: retired V2/V3 execution runtime.
         "confflow.workflow.engine",
         "confflow.workflow.state",
@@ -1299,26 +1303,6 @@ class TestLegacyToolingBoundary:
         )
         result = self._run(script)
         assert result.returncode == 0, f"{entry}: {result.stderr}"
-
-    def test_confrefine_tooling_does_not_load_calc_execution_runtime(self) -> None:
-        script = (
-            "import sys; import confflow.blocks.refine; "
-            "calc_mods = sorted(m for m in sys.modules if m.startswith('confflow.calc')); "
-            "banned = sorted(m for m in calc_mods if m not in "
-            "('confflow.calc', 'confflow.calc.result')); "
-            "assert not banned, banned"
-        )
-        result = self._run(script)
-        assert result.returncode == 0, result.stderr
-
-    def test_confgen_tooling_does_not_load_calc_at_all(self) -> None:
-        script = (
-            "import sys; import confflow.blocks.confgen; "
-            "banned = sorted(m for m in sys.modules if m.startswith('confflow.calc')); "
-            "assert not banned, banned"
-        )
-        result = self._run(script)
-        assert result.returncode == 0, result.stderr
 
 
 class TestProducerImportIsolation:
