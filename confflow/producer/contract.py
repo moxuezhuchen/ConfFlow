@@ -286,16 +286,6 @@ def _native_section() -> dict[str, Any]:
                 ),
             },
             {
-                "block": "confgen.native",
-                "role": "verbatim_escape_hatch",
-                "description": (
-                    "Legacy conformer-generation native definition (chains, "
-                    "ensemble options): the explicitly versioned adapter path. "
-                    "Typed v3 scopes use the confgen.* typed blocks described "
-                    "in the confgen section instead."
-                ),
-            },
-            {
                 "block": "transform.native",
                 "role": "verbatim_escape_hatch",
                 "description": "Structure-transform native options.",

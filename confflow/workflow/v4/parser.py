@@ -430,11 +430,7 @@ def _build_scientific(
             )
             return None, True, diagnostics
         try:
-            if hasattr(step.confgen, "scientific_native"):
-                raw_native = step.confgen.scientific_native()
-            else:
-                compiler = getattr(step.confgen, "compiled_native", None)
-                raw_native = compiler() if callable(compiler) else step.confgen.native
+            raw_native = step.confgen.scientific_native()
             scientific = ScientificDefinition(
                 result_profile="ensemble",
                 native=FrozenDict(raw_native),

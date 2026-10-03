@@ -100,7 +100,19 @@ def confgen_step(step_id: str, *, bindings: dict[str, Any] | None = None) -> dic
     return {
         "id": step_id,
         "executor": "confgen",
-        "confgen": {"native": {"chains": ["1-2-3"]}, "seed": 42},
+        "confgen": {
+            "schema_version": 3,
+            "torsions": [
+                {
+                    "id": "t1",
+                    "bond": [2, 3],
+                    "model": "relative_rotation_grid",
+                    "angles": [0, 120, 240],
+                    "treatment": "enumerate",
+                }
+            ],
+            "seed": 42,
+        },
         "bindings": dict(bindings or {}),
     }
 

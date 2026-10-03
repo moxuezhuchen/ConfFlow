@@ -630,21 +630,6 @@ def _v4_fields(registry: ExecutionRegistry) -> list[dict[str, Any]]:
             order=10,
         ),
         _step(
-            "confgen.native",
-            "/confgen/native",
-            label="Native input (legacy)",
-            description=(
-                "Legacy conformer-generation native definition (chains, "
-                "ensemble options): the explicitly versioned adapter path. "
-                "Typed v3 scopes use the confgen.v3.* fields instead."
-            ),
-            value_type="object",
-            editor="json",
-            group="conformer generation",
-            level="basic",
-            order=20,
-        ),
-        _step(
             "confgen.v3.coordination",
             "/confgen/coordination",
             label="Coordination scope",

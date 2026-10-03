@@ -336,47 +336,6 @@ class PathDeclarationModel(ConfgenSpecModel):
         return self
 
 
-class LegacyPathDeclarationModel(ConfgenSpecModel):
-    """Legacy authoring spelling for one endpoint-pair rotor declaration.
-
-    Same indices/``move`` contract as :class:`PathDeclarationModel`
-    (always 1-based endpoints, REQUIRED exact ``start``/``end`` move), but
-    sampling may be omitted: a bare ``{start, end, move}`` declaration falls
-    back to the legacy ``angle_step`` default at execution (the pre-Phase-2
-    sampling rule; an explicit ``confgen.seed`` is still required). This is
-    authoring compilation into the existing native runtime -- the parser
-    merges these entries into ``native["paths"]`` -- not a new execution
-    path, and never a silent route into the strict typed scope (which keeps
-    requiring explicit sampling).
-    """
-
-    start: StrictInt = Field(ge=1)
-    end: StrictInt = Field(ge=1)
-    move: Literal["start", "end"]
-    angles: list[Annotated[float, Field(strict=True)]] | None = None
-    step: StrictInt | None = Field(default=None, ge=1, le=360)
-    id: StrictStr | None = Field(default=None, min_length=1)
-
-    @model_validator(mode="after")
-    def check_legacy_path_shape(self) -> LegacyPathDeclarationModel:
-        if self.start == self.end:
-            raise ValueError("path 'start' and 'end' must name two distinct atoms")
-        if self.angles is not None and self.step is not None:
-            raise ValueError("path declares both 'angles' and 'step'; declare exactly one")
-        if self.angles is not None:
-            if not self.angles:
-                raise ValueError("path 'angles' must hold at least one angle")
-            for left in range(len(self.angles)):
-                for right in range(left + 1, len(self.angles)):
-                    if _wrap_degrees(self.angles[left] - self.angles[right]) == 0.0:
-                        raise ValueError(
-                            f"path angles hold a periodic duplicate: "
-                            f"{self.angles[left]!r} and {self.angles[right]!r} name "
-                            "the identical physical state (one state, one key)"
-                        )
-        return self
-
-
 class TypedEdgeModel(ConfgenSpecModel):
     atoms: tuple[Index, Index]
     kind: Literal["COVALENT", "COORDINATION", "FORMING", "BREAKING"] = "COVALENT"

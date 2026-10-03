@@ -22,7 +22,6 @@ import json
 import os
 from typing import Any
 
-import numpy as np
 import pytest
 
 from confflow.domain import FrozenDict, StructureRecord
@@ -34,7 +33,6 @@ from confflow.science.confgen.torsion.paths import (
     PATH_DIRECTION_CONFLICT,
     PATH_DISCONNECTED,
     PATH_INVALID_ENDPOINT,
-    PATH_SHORT_BOND,
     ROTOR_SAMPLING_CONFLICT,
     PathResolutionError,
     canonicalize_rotors,
@@ -470,175 +468,6 @@ def test_raw_cartesian_size_exact_before_geometry():
 # -- legacy executor --------------------------------------------------------------
 
 
-def test_legacy_equivalence_rotors_counts_and_geometries(tmp_path):
-    """An equivalent nonoverlapping single chain and path agree exactly."""
-    grid = "0,120;0,120;0,120"
-    chain_native = {"chains": ["1-2-3-4"], "chain_angles": grid, "rotate_side": "right"}
-    path_native = {"paths": [{"start": 1, "end": 4, "move": "end", "angles": [0.0, 120.0]}]}
-    chain_result = _legacy_result([_butane("seed-a")], chain_native, tmp_path)
-    path_result = _legacy_result([_butane("seed-a")], path_native, tmp_path)
-    assert chain_result.status is WorkItemStatus.COMPLETED
-    assert path_result.status is WorkItemStatus.COMPLETED
-    assert [m.ordinal for m in chain_result.structures] == [
-        m.ordinal for m in path_result.structures
-    ]
-    assert len(path_result.structures) == 8
-    for left, right in zip(chain_result.structures, path_result.structures):
-        assert tuple(left.atoms) == tuple(right.atoms)
-        assert np.allclose(np.asarray(left.coordinates), np.asarray(right.coordinates), atol=0.0)
-
-
-def test_pure_legacy_overlapping_chains_preserved(tmp_path):
-    """Pure-chains items keep legacy overlap behavior (no strict contract)."""
-    native = {
-        "chains": ["1-2-3-4", "1-2-3-4"],
-        "chain_angles": ["0;0,120;0", "0;0,120;0"],
-    }
-    result = _legacy_result([_butane("seed-a")], native, tmp_path)
-    assert result.status is WorkItemStatus.COMPLETED
-    assert len(result.structures) == 4  # cumulative duplicate application
-
-
-def test_mixed_paths_chains_dedup(tmp_path):
-    """Mixed mode dedups identical declarations with merged provenance."""
-    native = {
-        "paths": [{"start": 1, "end": 4, "move": "end", "angles": [0.0, 120.0]}],
-        "chains": ["1-2-3-4"],
-        "chain_angles": "0,120;0,120;0,120",
-        "rotate_side": "right",
-    }
-    result = _legacy_result([_butane("seed-a")], native, tmp_path)
-    assert result.status is WorkItemStatus.COMPLETED
-    assert len(result.structures) == 8
-    payload = _report_payload(tmp_path)
-    sources = payload["path_resolution"]["rotors"][0]["sources"]
-    assert "native.paths[0]" in sources and "chains[0]" in sources
-
-
-def test_mixed_direction_conflict(tmp_path):
-    """Mixed opposite moving sides fail with PATH_DIRECTION_CONFLICT."""
-    native = {
-        "paths": [{"start": 1, "end": 4, "move": "end", "angles": [0.0, 120.0]}],
-        "chains": ["1-2-3-4"],
-        "chain_angles": "0,120;0,120;0,120",
-        "rotate_side": "left",
-    }
-    result = _legacy_result([_butane("seed-a")], native, tmp_path)
-    assert PATH_DIRECTION_CONFLICT in _failed_message(result)
-
-
-def test_mixed_sampling_conflict(tmp_path):
-    """Mixed incompatible grids fail with ROTOR_SAMPLING_CONFLICT."""
-    native = {
-        "paths": [{"start": 1, "end": 4, "move": "end", "angles": [0.0, 120.0]}],
-        "chains": ["1-2-3-4"],
-        "chain_angles": "0,90;0,90;0,90",
-        "rotate_side": "right",
-    }
-    result = _legacy_result([_butane("seed-a")], native, tmp_path)
-    assert ROTOR_SAMPLING_CONFLICT in _failed_message(result)
-
-
-def test_executor_ring_refusal_before_geometry(tmp_path, monkeypatch):
-    """A refused task-space never reaches geometry generation."""
-    import confflow.execution.confgen_executor as executor_module
-
-    called = {"n": 0}
-
-    def _spy(*args, **kwargs):
-        called["n"] += 1
-        raise AssertionError("geometry must not run for refused task-spaces")
-
-    monkeypatch.setattr(executor_module, "legacy_oriented_grid_geometries", _spy)
-    record, _ = _ring_tail()
-    native = {"paths": [{"start": 1, "end": 3, "move": "end", "angles": [0.0, 90.0]}]}
-    result = _legacy_result([record], native, tmp_path)
-    assert PATH_CROSSES_RING in _failed_message(result)
-    assert called["n"] == 0
-
-
-def test_pregeometry_limit_refusal(tmp_path, monkeypatch):
-    """Oversize raw grids refuse before allocation (cap stays post-only)."""
-    import confflow.execution.confgen_executor as executor_module
-
-    called = {"n": 0}
-
-    def _spy(*args, **kwargs):
-        called["n"] += 1
-        raise AssertionError("geometry must not run past the pregeometry guard")
-
-    monkeypatch.setattr(executor_module, "legacy_oriented_grid_geometries", _spy)
-    native = {"paths": [{"start": 1, "end": 4, "move": "end", "step": 15}]}
-    result = _legacy_result([_butane("seed-a")], native, tmp_path)
-    message = _failed_message(result)
-    assert "pre-geometry limit" in message and "13824" in message
-    assert called["n"] == 0
-
-
-def test_atom_ordering_preserved(tmp_path):
-    """Output members keep the driving atom sequence exactly."""
-    record, _ = _branched()
-    native = {"paths": [{"start": 1, "end": 4, "move": "end", "angles": [0.0, 180.0]}]}
-    result = _legacy_result([record], native, tmp_path)
-    assert result.status is WorkItemStatus.COMPLETED
-    for member in result.structures:
-        assert tuple(member.atoms) == tuple(record.atoms)
-
-
-def test_short_bond_warning_and_strict_mode(tmp_path):
-    """Suspicious short bonds warn; strict mode turns the warning into error."""
-    record = StructureRecord(
-        id="short",
-        atoms=("C", "C", "C", "C"),
-        coordinates=((0.0, 0.0, 0.0), (1.5, 0.0, 0.0), (2.0, 0.0, 0.0), (3.5, 0.4, 0.0)),
-        charge=0,
-        multiplicity=1,
-    )
-    native = {"paths": [{"start": 1, "end": 4, "move": "end", "angles": [0.0, 180.0]}]}
-    result = _legacy_result([record], native, tmp_path)
-    assert result.status is WorkItemStatus.COMPLETED
-    payload = _report_payload(tmp_path)
-    warnings = payload["path_resolution"]["warnings"]
-    assert any("2-3" in note for note in warnings)
-    strict_native = dict(native, strict_path_bond_check=True)
-    strict_result = _legacy_result([record], strict_native, tmp_path)
-    assert PATH_SHORT_BOND in _failed_message(strict_result)
-
-
-def test_pure_legacy_has_no_path_warnings(tmp_path):
-    """Pure legacy behavior is unaltered (no new warnings for chains)."""
-    native = {"chains": ["1-2-3-4"], "chain_angles": "0;0,120;0"}
-    result = _legacy_result([_butane("seed-a")], native, tmp_path)
-    assert result.status is WorkItemStatus.COMPLETED
-    payload = _report_payload(tmp_path)
-    assert "path_resolution" not in payload
-
-
-def test_deferred_resolution_for_upstream_structures(tmp_path):
-    """The same declarations resolve per driving geometry (upstream-aware)."""
-    near, _ = _branched()
-    far = StructureRecord(
-        id="upstream-product",
-        atoms=near.atoms,
-        coordinates=(
-            (0.0, 0.0, 0.0),
-            (1.5, 0.0, 0.0),
-            (10.0, 0.0, 0.0),  # stretched: bond 2-3 perception breaks
-            (11.5, 0.0, 0.0),
-            (1.5, 1.4, 0.0),
-        ),
-        charge=0,
-        multiplicity=1,
-        parent_ids=("seed-a",),
-    )
-    native = {"paths": [{"start": 1, "end": 4, "move": "end", "angles": [0.0, 180.0]}]}
-    ok_result = _legacy_result([near], native, tmp_path)
-    assert ok_result.status is WorkItemStatus.COMPLETED
-    moved = _legacy_result([far], native, tmp_path)
-    assert moved.status is WorkItemStatus.FAILED
-    assert PATH_DISCONNECTED in _failed_message(moved)
-
-
 def _report_payload(tmp_path) -> dict[str, Any]:
     """Load the legacy confgen report artifact from the attempt directory."""
     for root, _, files in os.walk(str(tmp_path)):
@@ -646,23 +475,6 @@ def _report_payload(tmp_path) -> dict[str, Any]:
             with open(os.path.join(root, "confgen_report.json"), encoding="utf-8") as fh:
                 return json.load(fh)
     raise AssertionError("confgen_report.json not written")
-
-
-def test_report_records_resolution_identity(tmp_path):
-    """Report/provenance audits input identity, graph, rotors, and counts."""
-    record, _ = _branched()
-    native = {"paths": [{"start": 1, "end": 4, "move": "end", "angles": [0.0, 180.0]}]}
-    result = _legacy_result([record], native, tmp_path)
-    assert result.status is WorkItemStatus.COMPLETED
-    payload = _report_payload(tmp_path)
-    assert payload["driving_id"] == "branched"
-    resolved = payload["path_resolution"]
-    assert resolved["topology_digest"].startswith("sha256:")
-    assert resolved["raw_cartesian_size"] == 8
-    assert len(resolved["rotors"]) == 3
-    first = resolved["rotors"][0]
-    assert first["bond"] == [1, 2] and first["moving_atom"] == 2
-    assert 5 in first["moving"] and first["sources"] == ["native.paths[0]"]
 
 
 # -- typed v3 -------------------------------------------------------------------
@@ -885,20 +697,3 @@ def test_producer_contract_and_manifest_cover_paths():
     ids = {field["field_id"] for field in manifest["fields"]}
     assert "confgen.v3.paths" in ids
     assert "confgen.v3.strict_path_bond_check" in ids
-
-
-def test_strict_native_flag_type_rejected(tmp_path):
-    """strict_path_bond_check=1 (int) is rejected: no bool/int coercion."""
-    native = {
-        "paths": [{"start": 1, "end": 4, "move": "end", "angles": [0.0]}],
-        "strict_path_bond_check": 1,
-    }
-    result = _legacy_result([_butane("seed-a")], native, tmp_path)
-    assert "boolean" in _failed_message(result)
-
-
-def test_unknown_native_path_key_rejected(tmp_path):
-    """Unknown keys inside path entries fail closed at the executor."""
-    native = {"paths": [{"start": 1, "end": 4, "move": "end", "waypoint": 2}]}
-    result = _legacy_result([_butane("seed-a")], native, tmp_path)
-    assert "unknown keys" in _failed_message(result)

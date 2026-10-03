@@ -29,9 +29,8 @@ from pydantic import (
 
 from ...domain.binding import Cardinality, Pairing, PartialConsumption, PortKind
 from ...domain.completion import CompletionMode, PartialOutputPolicy
-from ...domain.errors import DomainError
 from ...domain.resources import OnFailure, parse_memory_bytes
-from .confgen_schema import ConfgenModelV3, LegacyPathDeclarationModel
+from .confgen_schema import ConfgenModelV3
 
 __all__ = [
     "DEFAULT_CORES_PER_ITEM",
@@ -42,7 +41,6 @@ __all__ = [
     "BindingModel",
     "CalculationModel",
     "CompletionModel",
-    "ConfgenModel",
     "ConfgenModelV3",
     "DocumentModel",
     "ExecutionModel",
@@ -228,46 +226,6 @@ class CalculationModel(BaseModel):
     overrides: dict[str, Any] = Field(default_factory=dict)
 
 
-class ConfgenModel(BaseModel):
-    """Scientific definition of a conformer-generation step."""
-
-    model_config = _STRICT
-
-    native: dict[str, Any] = Field(default_factory=dict)
-    seed: StrictInt | None = None
-    overrides: dict[str, Any] = Field(default_factory=dict)
-    paths: list[LegacyPathDeclarationModel] | None = None
-    strict_path_bond_check: StrictBool | None = None
-
-    def compiled_native(self) -> dict[str, Any]:
-        """Compile root-level authoring fields into the legacy native mapping.
-
-        Bare ``paths`` (and the strict flag) are authoring compilation into
-        the existing native runtime: entries merge into ``native["paths"]``
-        verbatim (1-based authoring form; the executor expands defaults).
-        Declaring the same key at both levels fails closed instead of
-        picking a silent winner.
-        """
-        merged: dict[str, Any] = dict(self.native)
-        if self.paths is not None:
-            if "paths" in merged:
-                raise DomainError(
-                    "confgen declares 'paths' at both the step level and inside "
-                    "'native'; declare it once"
-                )
-            merged["paths"] = [
-                entry.model_dump(mode="json", exclude_none=True) for entry in self.paths
-            ]
-        if self.strict_path_bond_check is not None:
-            if "strict_path_bond_check" in merged:
-                raise DomainError(
-                    "confgen declares 'strict_path_bond_check' at both the step "
-                    "level and inside 'native'; declare it once"
-                )
-            merged["strict_path_bond_check"] = bool(self.strict_path_bond_check)
-        return merged
-
-
 class TransformModel(BaseModel):
     """Explicit structure-set transformation (refine/deduplicate/filter)."""
 
@@ -312,7 +270,7 @@ class StepModel(BaseModel):
     executor: str = Field(min_length=1)
     bindings: dict[str, BindingModel] = Field(default_factory=dict)
     calculation: CalculationModel | None = None
-    confgen: ConfgenModel | ConfgenModelV3 | None = None
+    confgen: ConfgenModelV3 | None = None
     transform: TransformModel | None = None
     analysis: AnalysisModel | None = None
     resources: ResourcesModel | None = None

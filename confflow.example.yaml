@@ -23,10 +23,12 @@
 # steps     每个步骤恰好一个 executor：
 #
 #   executor: confgen           确定性的扭转角构象生成
-#     confgen.native.chains     1-based、以 "-" 连接的原子链，必需
-#     confgen.native.angle_step 每根键的角度步长（1..360）
-#     confgen.native.*          旋转侧、键长缩放、碰撞阈值、max_conformers 等
-#     confgen.seed              显式整数种子（单一权威；未声明则失败关闭）
+#     confgen.schema_version    3（typed 声明；唯一受支持的 confgen 形式）
+#     confgen.paths             端点对声明: start/end（1-based 原子序号）、
+#                               move（start 或 end，必填）、step 或 angles
+#     confgen.torsions/rings/coordination  其余 typed 声明，见 docs/CONFGEN_PATHS.md
+#     confgen.seed              显式整数种子（随机性的唯一权威；全枚举不需要，
+#                               使用 sampling 上限时必须给出）
 #
 #   executor: calculation       一次量子化学计算
 #     calculation.program       "orca" / "g16"（真实注册表为准）
@@ -81,9 +83,11 @@ steps:
       structure:
         source: {run: structures}
     confgen:
-      native:
-        chains: ["1-2-3-4"]
-        angle_step: 120
+      schema_version: 3
+      index_base: 1
+      paths:
+        # start/end must be non-terminal atoms (they need a measurable dihedral frame).
+        - {start: 1, end: 4, move: start, step: 120}
       seed: 20260928
     resources:
       cores_per_item: 1

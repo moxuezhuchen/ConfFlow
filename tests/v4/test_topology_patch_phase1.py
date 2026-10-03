@@ -17,14 +17,12 @@ from __future__ import annotations
 import dataclasses
 from typing import Any
 
-import numpy as np
 import pytest
 
 from confflow.application.v4_run import V4RunApplication, V4RunRequest, import_xyz
 from confflow.domain.errors import DomainError
 from confflow.domain.structure import StructureRecord, StructureSet
 from confflow.domain.topology import TopologyPatch
-from confflow.execution.confgen_executor import ConfgenExecutor
 from confflow.execution.registry import default_registry
 from confflow.execution.transform_executor import TransformExecutor
 from confflow.persistence import imports as import_store
@@ -269,66 +267,6 @@ class TestConfgenTopology:
         record = _record(topology_patch=TopologyPatch(delete_edges=[(1, 2)]))
         context = build_context(record, {"schema_version": 3, "index_base": 1})
         assert [list(row) for row in context.adjacency] == [[2], [], [0]]
-
-    def test_legacy_working_adjacency(self) -> None:
-        executor = ConfgenExecutor()
-        record = _record(topology_patch=TopologyPatch(delete_edges=[(1, 2)]))
-        adjacency = executor._working_adjacency(
-            [8, 1, 1], record.coordinates, 1.15, [], [], 3, structure=record
-        )
-        assert adjacency == [[2], [], [0]]
-        with pytest.raises(DomainError):
-            executor._working_adjacency(
-                [8, 1, 1], record.coordinates, 1.15, [(0, 1)], [], 3, structure=record
-            )
-        graph_only = _record(working_topology=((1,), (0, 2), (1,)))
-        with pytest.raises(DomainError):
-            executor._working_adjacency(
-                [8, 1, 1],
-                graph_only.coordinates,
-                1.15,
-                [],
-                [(0, 1)],
-                3,
-                structure=graph_only,
-            )
-        # Pure legacy keeps the legacy construction.
-        legacy = executor._working_adjacency(
-            [8, 1, 1], record.coordinates, 1.15, [], [], 3, structure=_record()
-        )
-        assert legacy == [[1, 2], [0], [0]]
-
-    def test_legacy_members_inherit_graph(self) -> None:
-        from types import SimpleNamespace
-
-        from confflow.domain._immutable import FrozenDict
-
-        executor = ConfgenExecutor()
-        driving = _record(topology_patch=TopologyPatch(delete_edges=[(1, 2)]))
-        atoms, coords = _water()
-        kept = [(0, np.asarray(coords, dtype=float))]
-        work_item = SimpleNamespace(logical_key="opt:g1", step_id="opt", id="wi:1")
-        scientific = SimpleNamespace(overrides=FrozenDict({}))
-        members = executor._build_conformer_members(
-            driving=driving,
-            kept=kept,
-            seed=7,
-            work_item=work_item,
-            scientific=scientific,
-            working_graph=[[2], [], [0]],
-        )
-        assert members[0].topology_patch == driving.topology_patch
-        assert members[0].working_topology == ((2,), (), (0,))
-        bare = executor._build_conformer_members(
-            driving=_record(),
-            kept=kept,
-            seed=7,
-            work_item=work_item,
-            scientific=scientific,
-            working_graph=None,
-        )
-        assert bare[0].topology_patch is None
-        assert bare[0].working_topology is None
 
 
 # ---------------------------------------------------------------------------

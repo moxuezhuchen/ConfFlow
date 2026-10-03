@@ -2,20 +2,12 @@
 
 """ConfGen v3 torsion subpackage (CORE lane).
 
-Stage, dihedral measurement, and the explicitly versioned legacy adapter.
+Stage, dihedral measurement, and path resolution.
 Wraps :mod:`confflow.science.torsion` primitives without rewriting them.
 """
 
 from __future__ import annotations
 
-from confflow.science.confgen.torsion.legacy import (
-    iter_legacy_grid,
-    legacy_cap_v1,
-    legacy_grid_geometries,
-    legacy_oriented_grid_geometries,
-    legacy_rotatable_bonds,
-    legacy_selection_fingerprint,
-)
 from confflow.science.confgen.torsion.measure import measure_dihedral, wrap_degrees
 from confflow.science.confgen.torsion.paths import (
     PATH_AMBIGUOUS,
@@ -61,12 +53,6 @@ __all__ = [
     "canonical_grid_size",
     "canonicalize_rotors",
     "cut_component",
-    "legacy_cap_v1",
-    "legacy_grid_geometries",
-    "legacy_oriented_grid_geometries",
-    "legacy_rotatable_bonds",
-    "legacy_selection_fingerprint",
-    "iter_legacy_grid",
     "measure_dihedral",
     "parse_path_declarations",
     "resolve_paths",

@@ -282,32 +282,20 @@ class TestGoatSeedValidation:
         assert compile_doc(doc).ok
 
     def test_confgen_seed_rules_preserved(self) -> None:
-        bad = v4_doc(
-            [
-                confgen_step(
-                    "s_conf",
-                    bindings={"structure": {"source": {"run": "structures"}}},
-                    native={"chains": ["1-2-3"]},
-                    seed=None,
-                )
-            ],
-            inputs=STRUCTURE_INPUTS,
-        )
-        result = compile_doc(bad)
-        assert not result.ok
-        assert "seed_required" in reasons(result.errors)
-        good = v4_doc(
-            [
-                confgen_step(
-                    "s_conf",
-                    bindings={"structure": {"source": {"run": "structures"}}},
-                    native={"chains": ["1-2-3"]},
-                    seed=7,
-                )
-            ],
-            inputs=STRUCTURE_INPUTS,
-        )
-        assert compile_doc(good).ok
+        bindings = {"structure": {"source": {"run": "structures"}}}
+
+        def doc_with(seed: int | None, *, cap: int | None) -> dict:
+            step = confgen_step("s_conf", bindings=bindings, seed=seed)
+            if cap is not None:
+                step["confgen"]["sampling"] = {"cap": cap}
+            return v4_doc([step], inputs=STRUCTURE_INPUTS)
+
+        # v3 rule: full enumeration needs no seed; capped sampling does.
+        assert compile_doc(doc_with(None, cap=None)).ok
+        bad = compile_doc(doc_with(None, cap=3))
+        assert not bad.ok
+        assert "invalid_value" in reasons(bad.errors)
+        assert compile_doc(doc_with(7, cap=3)).ok
 
 
 class TestNativeModeProfileCombinations:
