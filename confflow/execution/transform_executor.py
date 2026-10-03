@@ -68,8 +68,8 @@ from ..domain.errors import DomainError
 from ..domain.result import ResultSet
 from ..domain.structure import StructureRecord, StructureSet
 from ..domain.work_item import RecoveryInfo, Timing, WorkItem, WorkItemResult
-from ..science.bonds import perceive_adjacency
 from ..science.cluster import kabsch_rmsd
+from ..science.topology import resolve_working_adjacency
 from .native import NativeErrorCode
 from .work_item_executor import ItemExecutionContext, _diagnostic
 
@@ -90,12 +90,34 @@ REFINE_NATIVE_KEYS = frozenset(
 )
 
 
+def _topology_identity(record: StructureRecord) -> tuple[Any, ...]:
+    """Return the topology half of the scientific-identity grouping key.
+
+    A nonempty patch contributes its semantic payload (provenance
+    excluded); a persisted working graph contributes its adjacency rows.
+    Pure-legacy records contribute ``(None, None)`` so legacy grouping
+    never moves.
+    """
+    patch = record.topology_patch
+    patch_key = None
+    if patch is not None and not patch.is_empty:
+        patch_key = (
+            tuple(patch.add_edges),
+            tuple(patch.delete_edges),
+        )
+    graph_key = None
+    if record.working_topology is not None:
+        graph_key = tuple(tuple(row) for row in record.working_topology)
+    return (patch_key, graph_key)
+
+
 def _scientific_group(record: StructureRecord) -> tuple[Any, ...]:
     """Return the scientific-identity grouping key for one record.
 
     Records collapse only within one group: charge, multiplicity,
-    group key, role, and element signature must all agree.  Geometry
-    content alone never merges distinct scientific entities.
+    group key, role, element signature, and intended topology must all
+    agree.  Geometry content alone never merges distinct scientific
+    entities.
     """
     return (
         record.charge,
@@ -103,6 +125,7 @@ def _scientific_group(record: StructureRecord) -> tuple[Any, ...]:
         record.group_key,
         record.role,
         tuple(record.atoms),
+        _topology_identity(record),
     )
 
 
@@ -307,13 +330,22 @@ class TransformExecutor:
 
     @staticmethod
     def _adjacency(record: StructureRecord, bond_scale: float) -> list[list[int]]:
-        """Perceive the bond adjacency of one record (central authority)."""
+        """Resolve the intended bond adjacency of one record.
+
+        The single working-topology authority: a persisted graph wins
+        verbatim, otherwise perception plus the record patch.  Refine
+        comparisons therefore see the same intended graph ConfGen used.
+        """
         try:
             numbers = [atomic_number(symbol) for symbol in record.atoms]
         except Exception as exc:
             raise DomainError(f"refine element lookup failed for {record.id}: {exc}") from exc
         try:
-            return perceive_adjacency(numbers, record.coordinates, bond_scale=bond_scale)
+            return resolve_working_adjacency(
+                record, numbers, record.coordinates, bond_scale=bond_scale
+            )
+        except DomainError as exc:
+            raise DomainError(f"refine working topology failed for {record.id}: {exc}") from exc
         except ValueError as exc:
             raise DomainError(f"refine bond perception failed for {record.id}: {exc}") from exc
 

@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import os
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -84,6 +85,7 @@ from ..workflow.v4.assembly import (
     assemble_work_items,
 )
 from ..workflow.v4.compiler import compile_workflow
+from ..workflow.v4.parser import parse_workflow_document
 
 __all__ = [
     "RUN_RESULT_FILENAME",
@@ -296,6 +298,95 @@ def _declared_input_grouping(document: Any) -> dict[str, str]:
     return grouping
 
 
+def _apply_declared_input_topology(name: str, structures: Any, declaration: Any) -> StructureSet:
+    """Attach a declared input topology/charge/spin to every record.
+
+    The declaration is the compiled ``RunInputDeclaration`` for *name*.
+    A record-level patch semantically distinct from the declared patch
+    fails closed (identical edge sets are accepted — provenance may
+    differ); likewise a conflicting record charge/multiplicity.  The
+    working graph then resolves exactly once on the import geometry for
+    every persist-worthy record (declared or producer-attached patch),
+    so descendants never re-perceive moved geometry.  Pure-legacy
+    records pass through untouched.
+    """
+    from dataclasses import replace as _replace
+
+    from ..science.topology import resolve_and_persist_kwargs as _persist_kwargs
+
+    decl_patch = getattr(declaration, "topology", None)
+    decl_charge = getattr(declaration, "charge", None)
+    decl_mult = getattr(declaration, "multiplicity", None)
+    rebuilt: list[StructureRecord] = []
+    changed = False
+    for record in structures:
+        if not isinstance(record, StructureRecord):
+            raise DomainError(
+                f"run input {name!r} carries a non-structure member; "
+                "topology attachment requires typed structure records"
+            )
+        patch = record.topology_patch
+        if decl_patch is not None and not decl_patch.is_empty:
+            if patch is None or patch.is_empty:
+                if record.working_topology is not None:
+                    raise DomainError(
+                        f"run input {name!r} record {record.id!r} already carries "
+                        "an authoritative working graph with no patch, and the "
+                        "input declares a new topology patch; declare one "
+                        "authority"
+                    )
+                patch = decl_patch
+            elif not decl_patch.same_semantics(patch):
+                raise DomainError(
+                    f"run input {name!r} record {record.id!r} carries a topology "
+                    "patch distinct from the declared input topology; "
+                    "declare one authority"
+                )
+        charge = record.charge
+        if decl_charge is not None:
+            if charge is None:
+                charge = decl_charge
+            elif charge != decl_charge:
+                raise DomainError(
+                    f"run input {name!r} record {record.id!r} carries charge "
+                    f"{charge} conflicting with the declared input charge "
+                    f"{decl_charge}; declare it once"
+                )
+        multiplicity = record.multiplicity
+        if decl_mult is not None:
+            if multiplicity is None:
+                multiplicity = decl_mult
+            elif multiplicity != decl_mult:
+                raise DomainError(
+                    f"run input {name!r} record {record.id!r} carries multiplicity "
+                    f"{multiplicity} conflicting with the declared input "
+                    f"multiplicity {decl_mult}; declare it once"
+                )
+        merged = record
+        if (
+            patch is not record.topology_patch
+            or charge != record.charge
+            or multiplicity != record.multiplicity
+        ):
+            merged = _replace(
+                record,
+                topology_patch=patch,
+                charge=charge,
+                multiplicity=multiplicity,
+            )
+            changed = True
+        graph_kwargs = _persist_kwargs(merged, merged.coordinates)
+        if graph_kwargs:
+            merged = _replace(merged, **graph_kwargs)
+            changed = True
+        rebuilt.append(merged)
+    if not changed:
+        if isinstance(structures, StructureSet):
+            return structures
+        return StructureSet(tuple(structures))
+    return StructureSet.of(*rebuilt)
+
+
 def _stamp_each_entity_grouping(name: str, structures: Any) -> StructureSet:
     """Derive group identity for an ``each_entity`` input.
 
@@ -406,7 +497,8 @@ class V4RunApplication:
         run_id = context.run_id
         run_root = context.run_root
         generation_id = context.generation_id
-        compiled = compile_workflow(request.workflow_document)
+        parsed_doc = parse_workflow_document(request.workflow_document)
+        compiled = compile_workflow(parsed_doc)
         if not compiled.ok:
             raise DomainError(
                 "V4 workflow does not compile: "
@@ -433,7 +525,15 @@ class V4RunApplication:
         _save_run_state_fenced(run_root, state, generation_id)
         context.state = state
         context.generation_started = True
-        run_inputs = self._resolve_run_inputs(run_root=run_root, request=request)
+        run_inputs = self._resolve_run_inputs(
+            run_root=run_root,
+            request=request,
+            declarations=(
+                {item.name: item for item in parsed_doc.definition.inputs}
+                if parsed_doc.definition is not None
+                else {}
+            ),
+        )
         self._preflight_targets(plan, request)
         self._preflight_grouping(plan, run_inputs)
         materialized = MaterializedOutputs.empty()
@@ -769,7 +869,12 @@ class V4RunApplication:
         return existing
 
     @staticmethod
-    def _resolve_run_inputs(*, run_root: str, request: V4RunRequest) -> RunInputs:
+    def _resolve_run_inputs(
+        *,
+        run_root: str,
+        request: V4RunRequest,
+        declarations: Mapping[str, Any] | None = None,
+    ) -> RunInputs:
         """Reconcile typed run inputs against durable import maps.
 
         Inputs carrying a raw source text in ``request.import_sources``
@@ -777,7 +882,12 @@ class V4RunApplication:
         first imports arbitrate to one winner) and fail closed on changed
         bytes.  Inputs without a source text are validated against a
         persisted entity snapshot so a silently re-minted import can never
-        masquerade as the original entities.
+        masquerade as the original entities.  Declared input topology and
+        charge/spin (``declarations``, the compiled ``RunInputDeclaration``
+        records) then attach to every record of that input: a conflicting
+        record-level patch or charge fails closed, an identical semantic
+        patch is accepted (provenance may differ), and the working graph
+        resolves exactly once on the import geometry before execution.
         """
         structures = dict(request.run_inputs.structures.items())
         for name, current in list(structures.items()):
@@ -794,6 +904,11 @@ class V4RunApplication:
                 structures[name] = _validate_unresolved_input(
                     run_root=run_root, input_name=name, current=current
                 )
+        declared = declarations or {}
+        for name, current in list(structures.items()):
+            declaration = declared.get(name)
+            if declaration is not None:
+                structures[name] = _apply_declared_input_topology(name, current, declaration)
         grouping = _declared_input_grouping(request.workflow_document)
         for name, current in list(structures.items()):
             if grouping.get(name) == "each_entity":

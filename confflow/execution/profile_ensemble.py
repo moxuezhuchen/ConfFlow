@@ -250,6 +250,11 @@ class EnsembleProfile:
         # Single-parent lineage: the seed is the parent, its root propagates
         # (or its own id), and the group key falls back to the seed id — the
         # same rule the path-endpoints profile applies to its driving input.
+        # Members inherit the seed's intended topology (resolved once on the
+        # seed geometry); explicit charge/spin inputs above are retained.
+        from ..science.topology import resolve_and_persist_kwargs as _persist_kwargs
+
+        topo_kwargs = _persist_kwargs(seed, seed.coordinates)
         parent_ids, lineage_root, group_key = endpoint_lineage(seed)
         ordered = tuple(sorted(members, key=lambda member: member.member_index))
         ranked: list[tuple[tuple[int, int], StructureRecord, NativeEnsembleMember]] = []
@@ -268,6 +273,7 @@ class EnsembleProfile:
                 ordinal=member.member_index,
                 group_key=group_key,
                 metadata=FrozenDict({"member_index": member.member_index}),
+                **topo_kwargs,
             )
             ranked.append((output_ordering_key(member.role, member.member_index), record, member))
         ranked.sort(key=lambda item: item[0])

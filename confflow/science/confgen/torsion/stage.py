@@ -38,6 +38,7 @@ from confflow.science.confgen.model import (
 )
 from confflow.science.confgen.planner import MixedRadixGrid, TorsionAxis, resolve_torsion_axes
 from confflow.science.confgen.torsion.measure import measure_dihedral, wrap_degrees
+from confflow.science.topology import inherit_topology_kwargs
 from confflow.science.torsion import (
     clashes,
     edge_in_cycle,
@@ -71,6 +72,8 @@ class TorsionStage(GenerationStage):
         if not isinstance(entries, (list, tuple)):
             raise ValueError("resolved spec torsions must be a list")
         self._entries = tuple(dict(entry) for entry in entries)
+        # Read-only provenance of path-expanded axes, used only to word a refusal.
+        self._paths_resolved = axis_spec.get("paths_resolved")
         # Structure-independent validation now (ranges re-checked with counts).
         resolve_torsion_axes(self._entries, index_base=0)
 
@@ -91,6 +94,33 @@ class TorsionStage(GenerationStage):
             self._entries, n_atoms=len(context.structure.atoms), index_base=0
         )
 
+    def _terminal_origin(self, axis_id: str, terminal_atom: int) -> str:
+        """Name the path declaration key that produced a terminal endpoint.
+
+        Wording only: it reads the resolved-path audit (``paths_resolved``) the
+        planner already attached to the spec and never feeds a state key, digest
+        or report.  Returns ``""`` for axes that did not come from ``paths``.
+        """
+        resolved = self._paths_resolved
+        if not isinstance(resolved, Mapping):
+            return ""
+        sources: list[str] = []
+        for rotor in resolved.get("rotors", ()) or ():
+            if isinstance(rotor, Mapping) and rotor.get("id") == axis_id:
+                sources = [str(item) for item in rotor.get("sources", ()) or ()]
+        atom = terminal_atom + 1
+        keys: list[str] = []
+        for declared in resolved.get("declared_paths", ()) or ():
+            if not isinstance(declared, Mapping) or str(declared.get("source")) not in sources:
+                continue
+            label = str(declared["source"]).replace("$.", "confgen.", 1)
+            for key in ("start", "end"):
+                if declared.get(key) == atom:
+                    keys.append(f"{label}.{key} (atom {atom})")
+        if not keys:
+            return ""
+        return f"{' and '.join(keys)} is a terminal atom with no measurable dihedral frame; "
+
     def _frame_for(self, axis: TorsionAxis, context: MolecularContext) -> tuple[int, int, int, int]:
         """Resolve the identity frame, refusing unmeasurable terminal bonds.
 
@@ -102,7 +132,9 @@ class TorsionStage(GenerationStage):
         near = [n for n in context.adjacency[first] if n != second]
         far = [n for n in context.adjacency[second] if n != first]
         if not near or not far:
+            terminal = first if not near else second
             raise ValueError(
+                f"{self._terminal_origin(axis.axis_id, terminal)}"
                 f"torsion axis {axis.axis_id!r}: bond {first + 1}-{second + 1} "
                 "has no measurable dihedral frame (terminal pair)"
             )
@@ -374,6 +406,7 @@ class TorsionStage(GenerationStage):
             metadata=FrozenDict(
                 {"axis": "torsions", "ordinal": int(target.ordinal), "backend": BACKEND_NAME}
             ),
+            **inherit_topology_kwargs(parent.structure, context.adjacency),
         )
         return RealizationResult(
             structure=record,

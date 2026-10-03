@@ -19,7 +19,7 @@ Frozen semantics (see ``docs/plans/confgen-v3-upgrade.md``):
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
@@ -285,6 +285,141 @@ class MolecularContext:
                 )
 
 
+def _expand_typed_paths(
+    resolved: dict[str, Any],
+    structure: StructureRecord,
+    adjacency: Sequence[Sequence[int]],
+) -> None:
+    """Expand Phase 0 path declarations into torsion axes (deferred).
+
+    Runs at context build time -- on the final working topology after
+    perception plus add/del_bond corrections -- with the SAME pure resolver
+    the legacy executor uses. Path-expanded rotors use the relative-rotation
+    grid model with ``rotate_side`` derived from the explicitly chosen
+    moving endpoint (``move=start`` behaves like the ``left`` side of the
+    traversal-ordered bond, ``move=end`` like ``right``). Any canonical-bond
+    collision with an explicitly declared torsion axis (any model) fails
+    closed with ``ROTOR_SAMPLING_CONFLICT``; identical path duplicates
+    deduplicate with merged provenance. The expansion record
+    (``paths_resolved``) audits rotors, warnings, and the topology digest.
+    """
+    from confflow.domain.elements import atomic_number
+    from confflow.science.bonds import covalent_radii
+    from confflow.science.confgen.planner import resolve_torsion_axes
+    from confflow.science.confgen.torsion.paths import (
+        ROTOR_SAMPLING_CONFLICT,
+        ParsedPath,
+        PathResolutionError,
+        canonical_grid_size,
+        canonicalize_rotors,
+        resolve_paths,
+    )
+
+    entries = resolved.get("paths") or []
+    parsed = [
+        ParsedPath(
+            start=int(item["start"]),
+            end=int(item["end"]),
+            move=str(item["move"]),
+            angles=tuple(float(a) for a in item["angles"]),
+            source=str(item.get("source", f"$.paths[{i}]")),
+            raw_start=int(item["start"]) + 1,
+            raw_end=int(item["end"]) + 1,
+        )
+        for i, item in enumerate(entries)
+    ]
+    n_atoms = len(structure.atoms)
+    try:
+        numbers = [atomic_number(symbol) for symbol in structure.atoms]
+        radii = covalent_radii(numbers)
+    except ValueError as exc:
+        raise ValueError(f"path short-bond assessment failed: {exc}") from exc
+    strict = bool(resolved.get("strict_path_bond_check", False))
+    try:
+        resolution = resolve_paths(
+            parsed,
+            [list(row) for row in adjacency],
+            n_atoms=n_atoms,
+            coords=[tuple(p) for p in structure.coordinates],
+            radii=list(radii),
+            strict_bond_check=strict,
+        )
+        rotors = canonicalize_rotors(resolution.rotors)
+    except PathResolutionError as exc:
+        raise ValueError(str(exc)) from exc
+    explicit: dict[tuple[int, int], str] = {}
+    for position, entry in enumerate(resolved.get("torsions", []) or []):
+        bond = entry.get("bond")
+        atoms = entry.get("atoms")
+        if bond is not None:
+            key = (min(int(bond[0]), int(bond[1])), max(int(bond[0]), int(bond[1])))
+        elif atoms is not None:
+            key = (min(int(atoms[1]), int(atoms[2])), max(int(atoms[1]), int(atoms[2])))
+        else:
+            continue
+        explicit[key] = str(entry.get("id", f"$.torsions[{position}]"))
+    typed_torsions = list(resolved.get("torsions", []) or [])
+    records: list[dict[str, Any]] = []
+    for ordinal, rotor in enumerate(rotors):
+        if rotor.bond in explicit:
+            raise ValueError(
+                f"{ROTOR_SAMPLING_CONFLICT}: path-expanded bond "
+                f"{rotor.bond[0] + 1}-{rotor.bond[1] + 1} "
+                f"({', '.join(rotor.sources)}) collides with explicitly "
+                f"declared torsion {explicit[rotor.bond]!r}; declare one "
+                "sampling per bond (grids are never unioned)"
+            )
+        first, second = rotor.ordered
+        axis_id = f"path{ordinal + 1}:{rotor.bond[0] + 1}-{rotor.bond[1] + 1}"
+        typed_torsions.append(
+            {
+                "id": axis_id,
+                "bond": [int(first), int(second)],
+                "model": "relative_rotation_grid",
+                "angles": [float(a) for a in rotor.angles],
+                "treatment": "enumerate",
+                "rotate_side": "left" if rotor.moving_atom == first else "right",
+            }
+        )
+        records.append(
+            {
+                "id": axis_id,
+                "bond": [rotor.bond[0] + 1, rotor.bond[1] + 1],
+                "ordered": [first + 1, second + 1],
+                "moving_atom": rotor.moving_atom + 1,
+                "moving": [a + 1 for a in rotor.moving],
+                "fixed": [a + 1 for a in rotor.fixed],
+                "angles": [float(a) for a in rotor.angles],
+                "sources": list(rotor.sources),
+                "index_base": 1,
+            }
+        )
+    resolve_torsion_axes(tuple(typed_torsions), index_base=0)
+    resolved["torsions"] = typed_torsions
+    resolved["paths_resolved"] = {
+        "driving_id": structure.id,
+        "driving_geometry_digest": structure.geometry_digest,
+        "atom_symbols": list(structure.atoms),
+        "declared_paths": [
+            {
+                "source": item.source,
+                "start": item.raw_start,
+                "end": item.raw_end,
+                "move": item.move,
+                "route": [atom + 1 for atom in item.route],
+                "angles": list(item.angles),
+                "index_base": 1,
+            }
+            for item in resolution.declared_paths
+        ],
+        "rotors": records,
+        "warnings": list(resolution.warnings),
+        "topology_digest": resolution.topology_digest,
+        "declared_cartesian_size": int(resolution.raw_cartesian_size),
+        "raw_cartesian_size": int(canonical_grid_size(rotors)),
+    }
+
+
 def build_context(
     structure: StructureRecord,
     spec: Mapping[str, Any],
@@ -324,6 +459,8 @@ def build_context(
     resolved = normalize_spec(spec)
     tolerances = resolve_tolerances(resolved.get("tolerances", {}))
     adjacency, graph = build_typed_graph(structure, resolved.get("topology", {}), resolved)
+    if resolved.get("paths"):
+        _expand_typed_paths(resolved, structure, adjacency)
     key = input_state_key if input_state_key is not None else ConfgenStateKey()
     if not isinstance(key, ConfgenStateKey):
         raise ValueError("input_state_key must be a ConfgenStateKey")

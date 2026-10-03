@@ -10,6 +10,7 @@ program registry, domain vocabularies) -- never copied lists.
 
 from __future__ import annotations
 
+from .checkpoints import CHECKPOINT_REUSE_VERSION, REUSE_MODES, wire_checkpoint_reuse
 from .contract import (
     ANALYSIS_REACTION_PROFILE_CAPABILITY,
     ANALYSIS_REACTION_PROFILE_CONTRACT,
@@ -24,6 +25,7 @@ from .contract import (
     run_result_json_schema,
     run_result_schema_sha256,
 )
+from .machine import MACHINE_RESOLUTION_VERSION, resolve_machine_resources
 from .manifest import build_editor_manifest_v4, editor_manifest_sha256_v4
 from .recipes import (
     RECIPE_IDS_V4,
@@ -53,9 +55,12 @@ from .validation import ValidationReport, validate_workflow_bytes
 __all__ = [
     "ANALYSIS_REACTION_PROFILE_CAPABILITY",
     "ANALYSIS_REACTION_PROFILE_CONTRACT",
+    "CHECKPOINT_REUSE_VERSION",
     "CONFIGURATION_CONTRACT_V4_SCHEMA",
+    "MACHINE_RESOLUTION_VERSION",
     "RESULT_MANIFEST_SCHEMA",
     "RECIPE_IDS_V4",
+    "REUSE_MODES",
     "PRODUCER_RUN_RESULT_FILENAME",
     "ValidationReport",
     "artifact_entry",
@@ -77,6 +82,7 @@ __all__ = [
     "reaction_group_dict",
     "reaction_group_entry",
     "recipe_catalog_sha256_v4",
+    "resolve_machine_resources",
     "result_ref_entry",
     "run_result_json_schema",
     "run_result_schema_sha256",
@@ -84,4 +90,5 @@ __all__ = [
     "validate_workflow_bytes",
     "verify_artifact_bytes",
     "verify_manifest_on_disk",
+    "wire_checkpoint_reuse",
 ]

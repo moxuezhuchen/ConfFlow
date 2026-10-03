@@ -92,6 +92,7 @@ from .structure import (
     check_structure_id_conflicts,
     structure_reuse_payload,
 )
+from .topology import TopologyPatch
 from .units import (
     CANONICAL_UNITS,
     UNIT_QUANTITIES,
@@ -149,6 +150,7 @@ __all__ = [
     "Coordinates",
     "StructureRecord",
     "StructureSet",
+    "TopologyPatch",
     "check_structure_id_conflicts",
     "structure_reuse_payload",
     # Artifact

@@ -350,7 +350,13 @@ def _resolve_step_facts(
     """
     run_resources, run_scheduler = _resolve_run_policy(definition)
     validated, diagnostics = _validate_step(
-        step, run_resources, run_scheduler, registry, definition.scientific_defaults
+        step,
+        run_resources,
+        run_scheduler,
+        registry,
+        definition.scientific_defaults,
+        input_declarations={item.name: item for item in definition.inputs},
+        all_steps=tuple(definition.steps),
     )
     if validated is not None:
         return _StepFacts(
@@ -1223,6 +1229,46 @@ def dispatch_request(data: bytes | bytearray | str) -> dict[str, Any]:
         )
     if operation == "validate_document":
         return validate_document(document if document is not None else {})
+    if operation == "compile_intent":
+        intent = params.get("intent", document)
+        profile = params.get("machine_profile")
+        if not isinstance(intent, Mapping) or (
+            profile is not None and not isinstance(profile, Mapping)
+        ):
+            return _envelope(
+                operation,
+                False,
+                None,
+                None,
+                [_schema_problem("intent and machine_profile must be objects")],
+            )
+        from .intent import compile_intent
+
+        try:
+            resolved = compile_intent(intent, machine_profile=profile)
+        except (ValueError, DomainError) as exc:
+            return _envelope(
+                operation,
+                False,
+                _document_digest(intent),
+                None,
+                [_schema_problem(str(exc), field_path="parameters.intent")],
+            )
+        return _envelope(operation, True, _document_digest(intent), {"document": resolved}, [])
+    if operation == "preview_paths":
+        from .path_preview import preview_paths_request
+
+        try:
+            preview = preview_paths_request(params)
+        except (ValueError, DomainError) as exc:
+            return _envelope(
+                operation,
+                False,
+                None,
+                None,
+                [_schema_problem(str(exc), field_path="parameters.native")],
+            )
+        return _envelope(operation, True, None, preview, [])
     return _envelope(
         operation,
         False,

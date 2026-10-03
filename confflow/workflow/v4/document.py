@@ -21,6 +21,7 @@ from ...domain.completion import CompletionPolicy
 from ...domain.errors import DomainError
 from ...domain.resources import ResourceRequest, SchedulerPolicy
 from ...domain.stochastic import validate_seed
+from ...domain.topology import TopologyPatch
 
 __all__ = [
     "SCHEMA_ID",
@@ -65,6 +66,10 @@ class RunInputDeclaration:
 
     Run inputs are named, never positional: the invocation boundary maps
     files or collections onto these names, so no filename can become identity.
+    An optional ``topology`` correction (plus optional ``charge`` /
+    ``multiplicity`` set once by the user) attaches to every imported
+    structure record of this input at the application boundary; absent
+    declarations keep the exact legacy payload.
     """
 
     name: str
@@ -74,6 +79,9 @@ class RunInputDeclaration:
     role: str | None = None
     description: str | None = None
     grouping: str | None = None
+    topology: TopologyPatch | None = None
+    charge: int | None = None
+    multiplicity: int | None = None
 
     def __post_init__(self) -> None:
         require_identifier(self.name, "run input name")
@@ -90,6 +98,24 @@ class RunInputDeclaration:
             raise DomainError(
                 f"run input grouping must be 'each_entity' or None, got {self.grouping!r}"
             )
+        if self.topology is not None:
+            if isinstance(self.topology, dict):
+                try:
+                    object.__setattr__(self, "topology", TopologyPatch.from_dict(self.topology))
+                except Exception as exc:
+                    raise DomainError(f"run input topology invalid: {exc}") from exc
+            if not isinstance(self.topology, TopologyPatch):
+                raise DomainError("run input topology must be a TopologyPatch or None")
+        if self.charge is not None and (
+            isinstance(self.charge, bool) or not isinstance(self.charge, int)
+        ):
+            raise DomainError("run input charge must be an integer or None")
+        if self.multiplicity is not None and (
+            isinstance(self.multiplicity, bool)
+            or not isinstance(self.multiplicity, int)
+            or self.multiplicity < 1
+        ):
+            raise DomainError("run input multiplicity must be an integer >= 1 or None")
 
     @property
     def effective_pairing(self) -> Pairing:
@@ -103,8 +129,11 @@ class RunInputDeclaration:
     def to_dict(self) -> dict[str, Any]:
         """Return a canonical, JSON-compatible representation.
 
-        ``grouping`` is omitted when undeclared so adding the field never
-        moves the definition digest of documents that do not use it.
+        ``grouping``, ``topology``, ``charge``, and ``multiplicity`` are
+        omitted when undeclared so adding the fields never moves the
+        representation of documents that do not use them.  ``to_dict``
+        round-trips the full patch including nonsemantic provenance;
+        :meth:`to_payload` is the digest projection.
         """
         payload: dict[str, Any] = {
             "name": self.name,
@@ -116,6 +145,37 @@ class RunInputDeclaration:
         }
         if self.grouping is not None:
             payload["grouping"] = self.grouping
+        if self.topology is not None:
+            payload["topology"] = self.topology.to_dict()
+        if self.charge is not None:
+            payload["charge"] = self.charge
+        if self.multiplicity is not None:
+            payload["multiplicity"] = self.multiplicity
+        return payload
+
+    def to_payload(self) -> dict[str, Any]:
+        """Return the semantic digest contribution of this declaration.
+
+        Patch provenance is nonsemantic and excluded: only ``add``/``delete``
+        edge sets move the definition digest.  Absent declarations keep the
+        exact legacy shape.
+        """
+        payload: dict[str, Any] = {
+            "name": self.name,
+            "kind": self.kind.value,
+            "cardinality": self.cardinality.value,
+            "pairing": self.pairing.value if self.pairing is not None else None,
+            "role": self.role,
+            "description": self.description,
+        }
+        if self.grouping is not None:
+            payload["grouping"] = self.grouping
+        if self.topology is not None and not self.topology.is_empty:
+            payload["topology"] = self.topology.to_payload()
+        if self.charge is not None:
+            payload["charge"] = self.charge
+        if self.multiplicity is not None:
+            payload["multiplicity"] = self.multiplicity
         return payload
 
 
