@@ -1,0 +1,2 @@
+tests/v4/test_compiler.py::TestCapabilityVocabulary::test_confgen_seed_is_required_only_for_capped_sampling
+tests/v4/test_confgen_v3_schema.py::test_step_accepts_typed_definitions_and_rejects_legacy_native

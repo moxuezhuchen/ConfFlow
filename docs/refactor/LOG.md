@@ -508,3 +508,9 @@
 - C4.3a 原型（基点 b55b476，新增 1 个文件、11 个测试）：ruff/mypy/black ok；collect 4521→4532；全量 `{"passed": 4522, "skipped": 10}`。三项"故意破坏一行→测试应失败"抽样均失败（见 handoff/C4.3a.md，已还原）。
 - 登记差异（未凑）：①typed 只旋转有二面角框架的内部键（旧 butane `1→4` 改为 C6 链 `2→5`）；②预览与 typed 运行时 `topology_digest` 不相等（预览并入旧校正元数据，typed 不并入），测试不比较摘要，记入 PLAN-2；③pre-geometry 上限 typed 有两道闸，测试把输出上限调高以单独验证 `max_declared_states`。补丁 handoff/C4.3a.patch，卡片 handoff/C4.3a.md，提示词 handoff/C4.3a-executor-prompt.txt。
 - C4.3 预演的 WIP 补丁（源码删除 + 6 个 torsion 测试删除）保存在 /tmp/refactor-acc/C4.3/proto_wip.patch，待 C4.3a 提交后在其上重做完整版。
+
+## C4.3a 验收通过；C4.3 原型（2026-10-03）
+
+- **C4.3a**：CF `refactor/diet-p4` `23251fd`。验收方独立核对：diff 与 handoff/C4.3a.patch 逐字相同；ruff/mypy ok；全量 `{"passed": 4522, "skipped": 10}`；collect 4532。**验收疏漏（自我披露）**：验收 C4.3a 时没有跑 golden；C4.3a 新增的 typed 测试会产生 6 个新的引擎报告，这些报告未纳入基线，到 C4.3 原型的 golden 才发现，现随 C4.3 检查点（`checkpoints/C4.3/engine_reports`）纳入，内容为新增文件，已有报告无任何差异。
+- **C4.3 原型**（基点 23251fd，33 个文件）：ruff/mypy/black ok；collect 4532→4483（−51 +2）；全量 `{"passed": 4473, "skipped": 10}`；跨仓测试用现有 JD 钉住版本 edb068a 对着去掉 `confgen.native` 后的新契约：`7 passed`；golden ok（TS1 三项 ok，引擎报告无差异，仅 `TestLegacyRegressions::test_v3_filenames_vs_legacy_compat` 随测试删除）；契约对 IS.5：boundary 逐字节相同，contract 只少 `confgen.native` 字段/escape hatch 块/两个 schema def，`StepModel.confgen` 收窄为 v3，其余字段内容与顺序不变。三个常量保留在 `confgen_executor.py` 顶部，引用方 `path_preview.py` 与一项断言测试，无悬空引用。补丁 handoff/C4.3.patch，卡片 handoff/C4.3.md，提示词 handoff/C4.3-executor-prompt.txt。
+- 待用户确认：示例工作流 `native.chains` → `paths`（`move: start, step: 120`，保留种子）的转换，及 v3 对末端键拒绝这一差异。
