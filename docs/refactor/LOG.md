@@ -558,3 +558,7 @@
 
 - CF `refactor/diet-p4` `ea93daa`。验收方独立核对：diff 与 handoff/C4.4.patch 逐字相同；分支名 `refactor/diet-p4`；ruff/mypy ok；三个函数 grep 无命中；C4.5/C4.6 补丁仍可在其上应用；全量 `{"passed": 4473, "skipped": 10}`；golden_check ok；未推送。
 - C4.5 卡片的 HEAD 已填为 ea93daa；C4.6 卡片的 HEAD 待 C4.5 验收后填入。
+
+## C4.6 改为"删除脚本中的退役统计代码"（2026-10-03，用户："不需要的代码都删掉"）
+
+- 原 C4.6（纯 docstring）改为：`architecture_metrics.py` 删除 CALC_/V1_/V2_/V3_ 统计代码（542→约 201 行，31 个全为 0 的输出键），保留键逐值不变；`v4_arch_scan.py` 仅改 docstring（其 `RETIRED_*` 是重新出现的守卫，保留）；测试里一条指向被删说明的注释改为自包含。3 个文件，+33/−374；ruff/black ok；`v4_arch_scan.py` 仍 `OK: 50 entry files clean`；相关测试 156 passed；collect 4483；全量 `{"passed": 4473, "skipped": 10}`；golden_check ok。补丁 handoff/C4.6.patch 已重新生成，卡片 handoff/C4.6.md 已重写。
