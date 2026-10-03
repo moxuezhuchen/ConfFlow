@@ -62,7 +62,7 @@ index 46dff29..2e73f3e 100644
  
  ### Fixed
 diff --git a/README.md b/README.md
-index 6f3de12..f15aa8f 100644
+index 6f3de12..fd52bd5 100644
 --- a/README.md
 +++ b/README.md
 @@ -27,10 +27,21 @@ It is not recommended for:
@@ -85,8 +85,8 @@ index 6f3de12..f15aa8f 100644
 +  with no GitHub Release or assets; v2.1.5 is not a fix-forward candidate.
 +  The v2.1.6 fix-forward candidate remains unpublished, and the production
 +  endpoint remains ConfFlow v2.0.0.
-+- `pre-v4-greenfield` and `v4-core-closure` are internal architecture tags,
-+  not public wire versions or releases.
++- `v4-core-closure` is an internal architecture tag, not a public wire
++  version or release.
 +
  Candidate wheels are local review artifacts and do not replace the published
  package or promote a production endpoint.

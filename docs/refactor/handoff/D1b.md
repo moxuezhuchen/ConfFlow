@@ -6,8 +6,7 @@
 
 ## 内容
 1. `CHANGELOG.md`：在 `## v2.1.6` 之前新增 `## Unreleased — Architecture diet: legacy native path retired`（+52 行），分 Removed / Added / Changed，只写用户可见变化，每条标明对应卡片与 ConfFlow 提交：`confgen.native` 移除（250f947 C4.3，及 ea93daa、888f872、015a174）、`confflow export` 移除（a261bbf C5.2b）、`confts`/`confgen`/`confrefine` 与 calc/blocks 移除（2f95dc1、deadf46、da44bf5、b84f84b）、producer 边界无读取方成员移除（e5c3032）、retired-runtime 桩与 `run_workflow` 导出移除（8eda87f）、intent 映射到 typed v3 与拒绝非 v3/`waypoint`（2e0295a、c094af4、6046b44）、refine 的 `topology_bonds`/`mapping_budget`（6521581、efbaecd）、ConfGen 溯源字段（8d968dc）、refine 对称映射去重（da047c0、efbaecd）、v3 拒绝末端原子端点并指明键（0a9f28d）、文档重写（4900cb8）。不改动文件里原有的任何条目。
-2. `README.md`："Identity boundaries" 段落：把原来挤在一段里的事实拆成四条要点（`confflow --version` 打印 2.1.6；`--capabilities --json` 的安装身份块与 `install_provenance.status`；v2.1.4/v2.1.5 为失败的仅标签发布、v2.1.6 候选未发布、生产端点仍为 v2.0.0；`pre-v4-greenfield` 与 `v4-core-closure` 是内部架构标签），内容取自分支 `refactor/v4-diet-pr10-repository-hygiene` 的提交 69ba0d7，**只改事实措辞，不借机重写，README 其余部分一字不动**（该提交的补丁因 README 已被重构重写而不能直接应用，故手工移植；`git diff README.md` 只有这一处）。
-- 已知差异（升级给用户，不由执行器处理）：`pre-v4-greenfield` 标签目前只存在于本地仓库，远端没有；`v4-core-closure` 两边都有。
+2. `README.md`："Identity boundaries" 段落：把原来挤在一段里的事实拆成四条要点（`confflow --version` 打印 2.1.6；`--capabilities --json` 的安装身份块与 `install_provenance.status`；v2.1.4/v2.1.5 为失败的仅标签发布、v2.1.6 候选未发布、生产端点仍为 v2.0.0；`v4-core-closure` 是内部架构标签——用户 2026-10-04 决定去掉对远端不存在的 `pre-v4-greenfield` 的引用，只保留 `v4-core-closure`；不推送任何标签），内容取自分支 `refactor/v4-diet-pr10-repository-hygiene` 的提交 69ba0d7，**只改事实措辞，不借机重写，README 其余部分一字不动**（该提交的补丁因 README 已被重构重写而不能直接应用，故手工移植；`git diff README.md` 只有这一处）。
 
 ## 自检（原始输出）
 1. `cd /opt/cf-worktrees/d1 && git diff --name-only HEAD`：恰 `CHANGELOG.md`、`README.md`（提交前）。
