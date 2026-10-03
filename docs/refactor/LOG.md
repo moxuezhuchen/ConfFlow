@@ -431,3 +431,6 @@
 - 基点 bcdea5b；6 个文件；JD 全量 2467 passed / 7 skipped，collect 2472→2474（−3 +5），ruff/format/mypy/startup_smoke 通过。
 - 发现：typed 路径是全枚举，编译结果不再带推导种子（legacy native 路径以前总带）；3 个实机 GUI 测试和 1 个"改路径后种子变化"测试相应改写。原卡"只读展示"改为"加载+提示+编辑即转换"。
 - 事故：在原型阶段我误对整个 src 跑了 black（项目用 ruff format），产生了无关改动；已全部还原并重做，补丁里只有 6 个相关文件。
+
+## C5.5 补丁已备（2026-10-03，验收方原型；删除全部完成之后重跑过全量）
+- 基点 deadf46；14 个文件；全量 3855 passed / 10 skipped，collect 3945→3865（−86 +6）；golden ok；deleted_modules_check 通过。reachability 另报 analysis.pes、application.execution.memory、release_dependencies、workflow.step_naming 四个 CLI 不可达模块，计划无对应卡，已记入卡片留给用户决定。

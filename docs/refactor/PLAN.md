@@ -1025,12 +1025,13 @@ IS 分支上没有 `docs/refactor/`。各卡如需工具，从 `$TOOLS` 运行�
 
 ### C5.5 — 删除 `core/` 和 `shared/` 中只被 legacy 使用的部分
 
-- ID：C5.5 ／ 前置：C5.4
-- 类型：`delete`
-- 允许修改的文件：`confflow/core/*.py`、`confflow/core/__init__.py`、`confflow/shared/config_coercion.py`、`tests/v4/test_architecture_boundaries.py`、`scripts/v4_arch_scan.py`、只引用被删模块的测试
-- **保留要求（2026-10-02 核实）：** `core/bonding.py`、`core/data.py`、`core/constants.py` 被 `science/bonds.py` 使用，且 C5.3a 搬入 `science/` 的映射代码仍调用 `build_adjacency`，C5.5 不得删除它们（可达性重跑会自动保留，但要在 Removed 清单复核）。
-- 步骤：重新运行 `reachability.py`。写方案时（C5.2–C5.4 之前）的候选是 `core/validation.py`（333 行）、`core/chem_validation.py`、`core/cli_base.py`、`core/constants.py`、`core/keyword_rewrite.py`、`core/models.py`、`core/pairs.py`、`shared/config_coercion.py`，**以重新运行的结果为准**，只删除不可达的模块。`core/__init__.py` 的 `_LAZY_EXPORTS`（L23-50）中指向被删模块的条目一并删除；`TestFacadeLazyIsolation::test_core_public_surface_still_importable`（`test_architecture_boundaries.py` 约 L1610-1625）中 import 被删名字的断言删除，其余断言保留。
-- 验收：标准验收；golden 不变。
+- ID：C5.5 ／ 仓库：ConfFlow ／ 分支：`refactor/diet-c5` ／ 基点 deadf46（C5.3d+C5.4） ／ 类型：`delete`。做法：应用 `handoff/C5.5-src-tests.patch`（14 个文件），不重新设计。
+- 依据：在 C5.3d+C5.4 之后重新运行 `reachability.py`，`core/` 与 `shared/` 里不可达的模块恰为 `core/chem_validation.py`、`cli_base.py`、`keyword_rewrite.py`、`models.py`、`pairs.py`、`validation.py`、`shared/config_coercion.py`（并已 grep 确认生产代码没有 import）；`core/bonding.py`、`data.py`、`constants.py` 被 `science/` 使用，保留（PLAN-2：最终移入 `science/`）。
+- 内容：删除上述 7 个模块；`core/__init__.py` 的 `_LAZY_EXPORTS` 删除 `TaskContext` 与全部 `validate_*`；删除只测试它们的测试文件（`test_keyword_rewrite`、`test_models`、`test_validation`、`test_small_adapters_extra`）；`test_bonding_consistency` 去掉依赖 `chem_validation` 的 RDKit 加载器那一段（保留 `build_adjacency` 与 `science` 图层的一致性断言）；架构测试把 7 个模块加入 `REMOVED_LEGACY_MODULES`，把 `confflow.core.models` 从 `FORBIDDEN_LEGACY_MODULES` 移走，并从 `test_core_public_surface_still_importable` 去掉对已删符号的断言。
+- 被删测试：`handoff/C5.5-removed-tests.txt` 的 86 项；新增 `handoff/C5.5-added-tests.txt` 的 6 项（6 个"必须已删除"的参数化节点；`core.models` 的节点本来就在）。
+- 另发现（**不在本卡**）：`reachability.py` 还报出 `analysis.pes`、`application.execution.memory`、`release_dependencies`、`workflow.step_naming` 四个从 CLI 入口不可达的模块，计划里没有对应的卡；很可能只被测试或打包脚本使用，不动，留给用户决定。
+- 自检期望：**在 `rm`/删除全部完成之后**跑全量：`{"passed": 3855, "skipped": 10}`；collect 3945 → 3865（−86 +6）；`deleted_modules_check.py cf --tree <树> confflow.core.models confflow.core.validation confflow.core.chem_validation confflow.core.cli_base confflow.core.keyword_rewrite confflow.core.pairs confflow.shared.config_coercion` 退出码 0；golden（`--removed-nodes`）ok；ruff/mypy/black 通过。
+- 提交信息模板：`refactor!: delete the legacy-only core and shared modules` + 通用尾部（Removed-Tests 86、Added-Tests 6，测试名从清单逐字复制）。
 
 ### C5.6 — `cli.py` 进程识别不再包含退役 CLI 名
 

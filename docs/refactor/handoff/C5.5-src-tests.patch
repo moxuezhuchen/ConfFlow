@@ -1,0 +1,1848 @@
+diff --git a/confflow/core/__init__.py b/confflow/core/__init__.py
+index e47b111..a1eba75 100755
+--- a/confflow/core/__init__.py
++++ b/confflow/core/__init__.py
+@@ -7,8 +7,7 @@ type definitions, and validation.
+ 
+ The historical ``from confflow.core import X`` surface is preserved, but it is
+ resolved lazily (PEP 562): importing :mod:`confflow.core` no longer executes
+-the implementation modules (``core.models``, ``core.validation``,
+-``core.io``, ...).  Import the concrete submodule when you need the
++the implementation modules (``core.io``, ``core.data``, ...).  Import the concrete submodule when you need the
+ implementation.
+ 
+ The ``core.types`` TypedDict module was retired by the Architecture Diet PR-9:
+@@ -30,23 +29,6 @@ _LAZY_EXPORTS: dict[str, tuple[str, str]] = {
+     "get_atomic_number": (".data", "get_atomic_number"),
+     "get_covalent_radius": (".data", "get_covalent_radius"),
+     "get_element_symbol": (".data", "get_element_symbol"),
+-    # Models (Pydantic — runtime validation, legacy calc tooling)
+-    "TaskContext": (".models", "TaskContext"),
+-    # Validation
+-    "ValidationError": (".validation", "ValidationError"),
+-    "validate_positive": (".validation", "validate_positive"),
+-    "validate_non_negative": (".validation", "validate_non_negative"),
+-    "validate_integer": (".validation", "validate_integer"),
+-    "validate_float_range": (".validation", "validate_float_range"),
+-    "validate_not_empty": (".validation", "validate_not_empty"),
+-    "validate_file_exists": (".validation", "validate_file_exists"),
+-    "validate_dir_exists": (".validation", "validate_dir_exists"),
+-    "validate_coords_array": (".validation", "validate_coords_array"),
+-    "validate_atom_indices": (".validation", "validate_atom_indices"),
+-    "validate_bond_pair": (".validation", "validate_bond_pair"),
+-    "validate_choice": (".validation", "validate_choice"),
+-    "validate_string_not_empty": (".validation", "validate_string_not_empty"),
+-    "validate_params": (".validation", "validate_params"),
+ }
+ 
+ __all__ = [*sorted(_LAZY_EXPORTS)]
+diff --git a/confflow/core/chem_validation.py b/confflow/core/chem_validation.py
+deleted file mode 100644
+index 864c2b4..0000000
+--- a/confflow/core/chem_validation.py
++++ /dev/null
+@@ -1,225 +0,0 @@
+-#!/usr/bin/env python3
+-
+-"""Chemistry validation services shared by workflow and block adapters.
+-
+-This module is deliberately owned by ``core``.  The confgen block keeps
+-compatibility imports, but the validation implementation must not import the
+-block layer back from core.  RDKit/SciPy are loaded lazily so importing the
+-workflow/config packages remains usable in environments without chemistry
+-extras installed.
+-"""
+-
+-from __future__ import annotations
+-
+-import os
+-from typing import Any
+-
+-from .bonding import infer_bond_pairs
+-from .elements import canonicalize_element_symbol
+-
+-__all__ = [
+-    "ChainValidator",
+-    "load_mol_from_xyz",
+-    "validate_chain_definitions",
+-]
+-
+-
+-def _parse_chain(chain_str: str) -> list[int]:
+-    """Parse a 1-based chain specification into zero-based atom indices."""
+-    parts = [part.strip() for part in chain_str.replace(",", "-").split("-") if part.strip()]
+-    if len(parts) < 2:
+-        raise ValueError(f"chain format error: {chain_str}")
+-    try:
+-        atoms_1based = [int(part) for part in parts]
+-    except ValueError as exc:
+-        raise ValueError(f"chain must be a list of integers: {chain_str}") from exc
+-    if any(atom <= 0 for atom in atoms_1based):
+-        raise ValueError(f"chain indices must be positive (1-based): {chain_str}")
+-    atoms = [atom - 1 for atom in atoms_1based]
+-    if len(set(atoms)) != len(atoms):
+-        raise ValueError(f"chain contains duplicate atoms: {chain_str}")
+-    return atoms
+-
+-
+-def load_mol_from_xyz(filename: str, bond_coeff: float):
+-    """Load an RDKit molecule with 3D coordinates and detected bonds.
+-
+-    The implementation intentionally lives in ``core`` so workflow input
+-    validation can use it without depending on ``blocks.confgen``.  RDKit and
+-    SciPy remain optional at import time and are required only when this
+-    chemistry operation is called.
+-    """
+-    try:
+-        from rdkit import Chem, RDLogger
+-    except ImportError as exc:  # pragma: no cover - environment dependent
+-        raise ImportError(
+-            "Chemistry validation requires RDKit; install the chemistry extras"
+-        ) from exc
+-
+-    RDLogger.DisableLog("rdApp.*")  # type: ignore[attr-defined]
+-
+-    if not os.path.exists(filename):
+-        raise FileNotFoundError(f"input file does not exist: {filename}")
+-    if not os.path.isfile(filename):
+-        raise ValueError(f"path is not a file: {filename}")
+-    if os.path.getsize(filename) == 0:
+-        raise ValueError(f"file is empty: {filename}")
+-
+-    with open(filename, encoding="utf-8") as handle:
+-        lines = handle.readlines()
+-    if len(lines) < 3:
+-        raise ValueError(f"XYZ file format error, insufficient lines: {filename}")
+-
+-    try:
+-        num_atoms = int(lines[0].strip())
+-    except ValueError as exc:
+-        raise ValueError(f"cannot parse atom count: {lines[0].strip()}") from exc
+-    if num_atoms <= 0:
+-        raise ValueError(f"XYZ file must contain at least one atom: {filename}")
+-    if len(lines) < num_atoms + 2:
+-        raise ValueError(f"file declares {num_atoms} atoms but has insufficient lines")
+-
+-    symbols: list[str] = []
+-    positions: list[tuple[float, float, float]] = []
+-    for line in lines[2 : 2 + num_atoms]:
+-        parts = line.split()
+-        if len(parts) < 4:
+-            raise ValueError(f"coordinate line format error: {line.strip()}")
+-        symbols.append(canonicalize_element_symbol(parts[0]))
+-        positions.append((float(parts[1]), float(parts[2]), float(parts[3])))
+-
+-    rw_mol = Chem.RWMol()
+-    for symbol in symbols:
+-        rw_mol.AddAtom(Chem.Atom(symbol))
+-    atom_numbers = [atom.GetAtomicNum() for atom in rw_mol.GetAtoms()]
+-
+-    conformer = Chem.Conformer(num_atoms)
+-    for index, position in enumerate(positions):
+-        conformer.SetAtomPosition(index, position)
+-    rw_mol.AddConformer(conformer)
+-
+-    pairs = infer_bond_pairs(atom_numbers, positions, bond_scale=float(bond_coeff))
+-    for i, j in pairs:
+-        rw_mol.AddBond(int(i), int(j), Chem.BondType.SINGLE)
+-
+-    mol = rw_mol.GetMol()
+-    try:
+-        Chem.SanitizeMol(mol)
+-    except Exception:
+-        mol.UpdatePropertyCache(strict=False)
+-
+-    # Keep the historical topology summary emitted by the public loader.
+-    from .console import console, print_kv
+-
+-    print_kv("Topology", f"{mol.GetNumBonds()} bonds detected (1-based)")
+-    bonds = []
+-    for bond in mol.GetBonds():
+-        atom_a = bond.GetBeginAtom()
+-        atom_b = bond.GetEndAtom()
+-        bonds.append(
+-            f"{atom_a.GetIdx() + 1}({atom_a.GetSymbol()})-{atom_b.GetIdx() + 1}({atom_b.GetSymbol()})"
+-        )
+-    columns = 4 if (console.width or 80) >= 75 else 3 if (console.width or 80) >= 58 else 2
+-    column_width = ((console.width or 80) - 14) // columns
+-    for start in range(0, len(bonds), columns):
+-        line = "".join(f"{item:<{column_width}}" for item in bonds[start : start + columns])
+-        console.print(f"[muted]{'':14}{line}[/muted]")
+-    return mol
+-
+-
+-class ChainValidator:
+-    """Validate chain connectivity and atom identities across input molecules."""
+-
+-    def __init__(self, chains: list[str]):
+-        self.raw_chains = chains
+-        self.parsed_chains = [_parse_chain(chain) for chain in chains] if chains else []
+-
+-    def validate_mol(self, mol: Any, filename: str) -> list[dict[str, Any]]:
+-        """Return per-chain connectivity and element validation details."""
+-        del filename  # retained in the public signature for compatibility
+-        n_atoms = mol.GetNumAtoms()
+-        results: list[dict[str, Any]] = []
+-        for index, chain_indices in enumerate(self.parsed_chains):
+-            chain_info: dict[str, Any] = {
+-                "chain_id": index,
+-                "raw_chain": self.raw_chains[index],
+-                "indices": chain_indices,
+-                "elements": [],
+-                "connected": True,
+-                "valid": True,
+-                "error": None,
+-            }
+-            if any(atom_index >= n_atoms for atom_index in chain_indices):
+-                chain_info["valid"] = False
+-                chain_info["error"] = f"Indices out of range (max {n_atoms - 1})"
+-                results.append(chain_info)
+-                continue
+-            try:
+-                chain_info["elements"] = [
+-                    mol.GetAtomWithIdx(atom_index).GetSymbol() for atom_index in chain_indices
+-                ]
+-            except (IndexError, RuntimeError) as exc:
+-                chain_info["valid"] = False
+-                chain_info["error"] = str(exc)
+-                results.append(chain_info)
+-                continue
+-            for left, right in zip(chain_indices, chain_indices[1:]):
+-                if mol.GetBondBetweenAtoms(int(left), int(right)) is None:
+-                    chain_info["connected"] = False
+-                    chain_info["valid"] = False
+-                    chain_info["error"] = f"not bonded: {left + 1}-{right + 1}"
+-                    break
+-            results.append(chain_info)
+-        return results
+-
+-    @staticmethod
+-    def compare_inputs(inputs_data: dict[str, list[dict[str, Any]]]) -> tuple[bool, list[str]]:
+-        """Compare validated chain features from multiple input molecules."""
+-        if not inputs_data:
+-            return True, []
+-        filenames = list(inputs_data)
+-        if len(filenames) < 2:
+-            return True, []
+-        reference_file = filenames[0]
+-        reference_chains = inputs_data[reference_file]
+-        errors: list[str] = []
+-        consistent = True
+-        for index, reference in enumerate(reference_chains):
+-            if not reference["valid"]:
+-                continue
+-            for other_file in filenames[1:]:
+-                other_chains = inputs_data[other_file]
+-                if index >= len(other_chains):
+-                    continue
+-                other = other_chains[index]
+-                if not other["valid"]:
+-                    consistent = False
+-                    errors.append(
+-                        f"Chain {reference['raw_chain']} in {other_file}: Invalid ({other['error']})"
+-                    )
+-                    continue
+-                if other["elements"] != reference["elements"]:
+-                    consistent = False
+-                    errors.append(
+-                        f"Chain {reference['raw_chain']} mismatch:\n"
+-                        f"  - {reference_file}: {'-'.join(reference['elements'])}\n"
+-                        f"  - {other_file}: {'-'.join(other['elements'])}"
+-                    )
+-        return consistent, errors
+-
+-
+-def validate_chain_definitions(
+-    *,
+-    input_file: str,
+-    chains: list[str],
+-    bond_threshold: float,
+-) -> list[str]:
+-    """Validate flexible chain definitions against a reference XYZ file."""
+-    validator = ChainValidator(chains)
+-    molecule = load_mol_from_xyz(input_file, bond_threshold)
+-    ref_data = validator.validate_mol(molecule, input_file)
+-    return [
+-        f"{entry.get('raw_chain')}: {entry.get('error')}"
+-        for entry in ref_data
+-        if not entry.get("valid")
+-    ]
+diff --git a/confflow/core/cli_base.py b/confflow/core/cli_base.py
+deleted file mode 100644
+index 5ce3b22..0000000
+--- a/confflow/core/cli_base.py
++++ /dev/null
+@@ -1,8 +0,0 @@
+-#!/usr/bin/env python3
+-"""Backward-compatibility shim — canonical location is console.py."""
+-
+-from __future__ import annotations
+-
+-from .console import require_existing_path  # noqa: F401
+-
+-__all__ = ["require_existing_path"]
+diff --git a/confflow/core/keyword_rewrite.py b/confflow/core/keyword_rewrite.py
+deleted file mode 100644
+index 584d167..0000000
+--- a/confflow/core/keyword_rewrite.py
++++ /dev/null
+@@ -1,89 +0,0 @@
+-#!/usr/bin/env python3
+-"""Keyword line rewriting for scan jobs from TS keywords."""
+-
+-from __future__ import annotations
+-
+-import re
+-
+-__all__ = [
+-    "make_scan_keyword_from_ts_keyword",
+-    "ensure_gaussian_modredundant_keyword",
+-]
+-
+-_REMOVE_OPT_ITEMS = {"calcfc", "tight", "ts", "noeigentest", "rcfc", "readfc"}
+-
+-
+-def make_scan_keyword_from_ts_keyword(keyword: str) -> str:
+-    """Rewrite a TS keyword line into one suitable for a scan job."""
+-    kw = (keyword or "").strip()
+-    if not kw:
+-        return ""
+-
+-    def _rewrite_opt_group(match: re.Match[str]) -> str:
+-        full = match.group(0)
+-        inner = match.group(1) or ""
+-        has_equal = "=" in full
+-
+-        items = [x.strip() for x in inner.split(",") if x.strip()]
+-        kept: list[str] = []
+-        for item in items:
+-            key = item.split("=")[0].strip().lower()
+-            if key in _REMOVE_OPT_ITEMS:
+-                continue
+-            kept.append(item)
+-
+-        if not kept:
+-            return "opt"
+-        joined = ",".join(kept)
+-        return f"opt{'=' if has_equal else ''}({joined})"
+-
+-    kw = re.sub(r"(?i)\bopt\s*(?:=\s*)?\(([^)]*)\)", _rewrite_opt_group, kw)
+-    kw = re.sub(r"(?i)(^|\s)freq\b(\s*=\s*\([^)]*\)|\s*\([^)]*\)|\s*=\s*[^\s]+)?", " ", kw)
+-    kw = re.sub(r"\s+", " ", kw).strip()
+-    return kw
+-
+-
+-_OPT_PAREN_RE = re.compile(r"(?i)\bopt\s*(=)?\s*\(([^)]*)\)")
+-_OPT_ASSIGN_RE = re.compile(r"(?i)\bopt\s*=\s*([^\s()]+)")
+-_OPT_BARE_RE = re.compile(r"(?i)\bopt\b")
+-
+-
+-def ensure_gaussian_modredundant_keyword(keyword: str) -> str:
+-    """Return a Gaussian keyword line that enables ``ModRedundant``.
+-
+-    Preserves any existing ``opt`` items and does not duplicate the directive
+-    when it is already requested.
+-    """
+-    kw = (keyword or "").strip()
+-    if not kw:
+-        return kw
+-    if re.search(r"(?i)\bmodredundant\b", kw):
+-        return kw
+-
+-    def _add_to_items(items: list[str]) -> list[str]:
+-        if not any(item.split("=")[0].strip().lower() == "modredundant" for item in items):
+-            items.append("modredundant")
+-        return items
+-
+-    def _paren_repl(match: re.Match[str]) -> str:
+-        has_equal = match.group(1) == "="
+-        items = [item.strip() for item in match.group(2).split(",") if item.strip()]
+-        _add_to_items(items)
+-        return f"opt{'=' if has_equal else ''}({','.join(items)})"
+-
+-    new_kw, count = _OPT_PAREN_RE.subn(_paren_repl, kw, count=1)
+-    if count:
+-        return new_kw
+-
+-    def _assign_repl(match: re.Match[str]) -> str:
+-        items = _add_to_items([match.group(1).strip()])
+-        return f"opt=({','.join(items)})"
+-
+-    new_kw, count = _OPT_ASSIGN_RE.subn(_assign_repl, kw, count=1)
+-    if count:
+-        return new_kw
+-
+-    if _OPT_BARE_RE.search(kw):
+-        return _OPT_BARE_RE.sub("opt=modredundant", kw, count=1)
+-
+-    return f"opt=modredundant {kw}".strip()
+diff --git a/confflow/core/models.py b/confflow/core/models.py
+deleted file mode 100644
+index 15beef5..0000000
+--- a/confflow/core/models.py
++++ /dev/null
+@@ -1,264 +0,0 @@
+-#!/usr/bin/env python3
+-
+-"""Pydantic runtime models of the legacy standalone calc tooling.
+-
+-These containers require runtime validation and serialisation, unlike the
+-lightweight ``TypedDict`` annotations they historically complemented.  They
+-are consumed only by :mod:`confflow.calc` (never by the V4 production
+-closure), so they live with their consumer instead of behind a configuration
+-facade: the ``confflow.config.models`` compatibility module was retired by the
+-Architecture Diet PR-9 with the rest of the released V1/V2 configuration wire.
+-"""
+-
+-from __future__ import annotations
+-
+-import re
+-from typing import Any
+-
+-from pydantic import BaseModel, ConfigDict, Field, field_validator
+-
+-from ..shared.config_coercion import (
+-    coerce_freeze_indices,
+-    coerce_two_atom_indices,
+-)
+-from ..shared.defaults import (
+-    DEFAULT_CHARGE,
+-    DEFAULT_CORES_PER_TASK,
+-    DEFAULT_ENABLE_DYNAMIC_RESOURCES,
+-    DEFAULT_FORCE_CONSISTENCY,
+-    DEFAULT_MAX_PARALLEL_JOBS,
+-    DEFAULT_MULTIPLICITY,
+-    DEFAULT_RESUME_FROM_BACKUPS,
+-    DEFAULT_RMSD_THRESHOLD,
+-    DEFAULT_SCAN_COARSE_STEP,
+-    DEFAULT_SCAN_FINE_STEP,
+-    DEFAULT_SCAN_UPHILL_LIMIT,
+-    DEFAULT_STOP_CHECK_INTERVAL_SECONDS,
+-    DEFAULT_TOTAL_MEMORY,
+-    DEFAULT_TS_BOND_DRIFT_THRESHOLD,
+-    DEFAULT_TS_RESCUE_SCAN,
+-    DEFAULT_TS_RMSD_THRESHOLD,
+-)
+-
+-__all__ = [
+-    "TaskContext",
+-    "GlobalConfigModel",
+-    "CalcConfigModel",
+-]
+-
+-
+-def _coerce_freeze_indices(v: Any) -> list[int]:
+-    """Backward-compatible private alias for the shared v2 coercer."""
+-    return coerce_freeze_indices(v)
+-
+-
+-def _coerce_two_atom_indices(v: Any) -> list[int] | None:
+-    """Backward-compatible private alias for the shared v2 coercer."""
+-    return coerce_two_atom_indices(v)
+-
+-
+-class TaskContext(BaseModel):
+-    """Context information for a computation task."""
+-
+-    model_config = ConfigDict(extra="allow")
+-
+-    job_name: str
+-    work_dir: str
+-    coords: list[str]
+-    metadata: dict[str, Any] = Field(default_factory=dict)
+-    config: dict[str, Any] = Field(default_factory=dict)
+-
+-
+-class GlobalConfigModel(BaseModel):
+-    """Pydantic model for global configuration validation.
+-
+-    Provides runtime type coercion and validation for all global parameters.
+-    Used for runtime validation in low-level task contexts.
+-    """
+-
+-    model_config = ConfigDict(extra="allow")
+-
+-    # Program paths
+-    gaussian_path: str = ""
+-    orca_path: str = ""
+-
+-    # Resource configuration
+-    cores_per_task: int = DEFAULT_CORES_PER_TASK
+-    total_memory: str = DEFAULT_TOTAL_MEMORY
+-    max_parallel_jobs: int = DEFAULT_MAX_PARALLEL_JOBS
+-
+-    # Molecular properties
+-    charge: int = DEFAULT_CHARGE
+-    multiplicity: int = DEFAULT_MULTIPLICITY
+-
+-    # Refine parameters
+-    rmsd_threshold: float = DEFAULT_RMSD_THRESHOLD
+-    energy_window: float | None = None
+-    energy_tolerance: float = 0.05
+-    noH: bool = False
+-
+-    # Freeze & TS
+-    freeze: list[int] = Field(default_factory=list)
+-    ts_bond_atoms: list[int] | None = None
+-
+-    # TS rescue
+-    ts_rescue_scan: bool = DEFAULT_TS_RESCUE_SCAN
+-    scan_coarse_step: float = DEFAULT_SCAN_COARSE_STEP
+-    scan_fine_step: float = DEFAULT_SCAN_FINE_STEP
+-    scan_uphill_limit: int = DEFAULT_SCAN_UPHILL_LIMIT
+-    ts_bond_drift_threshold: float = DEFAULT_TS_BOND_DRIFT_THRESHOLD
+-    ts_rmsd_threshold: float = DEFAULT_TS_RMSD_THRESHOLD
+-
+-    # Workflow control
+-    enable_dynamic_resources: bool = DEFAULT_ENABLE_DYNAMIC_RESOURCES
+-    resume_from_backups: bool = DEFAULT_RESUME_FROM_BACKUPS
+-    stop_check_interval_seconds: int = DEFAULT_STOP_CHECK_INTERVAL_SECONDS
+-    force_consistency: bool = DEFAULT_FORCE_CONSISTENCY
+-
+-    @field_validator("cores_per_task")
+-    @classmethod
+-    def validate_cores(cls, v: int) -> int:
+-        """Ensure cores_per_task >= 1."""
+-        if v < 1:
+-            raise ValueError(f"cores_per_task must be >= 1, got {v}")
+-        return v
+-
+-    @field_validator("max_parallel_jobs")
+-    @classmethod
+-    def validate_max_jobs(cls, v: int) -> int:
+-        """Ensure max_parallel_jobs >= 1."""
+-        if v < 1:
+-            raise ValueError(f"max_parallel_jobs must be >= 1, got {v}")
+-        return v
+-
+-    @field_validator("multiplicity")
+-    @classmethod
+-    def validate_multiplicity(cls, v: int) -> int:
+-        """Ensure multiplicity >= 1."""
+-        if v < 1:
+-            raise ValueError(f"multiplicity must be >= 1, got {v}")
+-        return v
+-
+-    @field_validator("total_memory")
+-    @classmethod
+-    def validate_memory_format(cls, v: str) -> str:
+-        """Validate memory format like '4GB' or '500MB'."""
+-        v_upper = str(v).strip().upper()
+-        if not re.match(r"^\d+(?:\.\d+)?\s*(?:GB|MB|KB|B)$", v_upper):
+-            raise ValueError(f"total_memory format error: '{v}', expected '4GB' or '500MB'")
+-        return v
+-
+-    @field_validator("freeze", mode="before")
+-    @classmethod
+-    def coerce_freeze(cls, v: Any) -> list[int]:
+-        """Accept list or comma-separated string for freeze indices."""
+-        return _coerce_freeze_indices(v)
+-
+-    @field_validator("ts_bond_atoms", mode="before")
+-    @classmethod
+-    def coerce_ts_bond_atoms(cls, v: Any) -> list[int] | None:
+-        """Accept list or comma/space-separated string for ts_bond_atoms."""
+-        if v is None:
+-            return None
+-        try:
+-            coerced = _coerce_two_atom_indices(v)
+-        except (TypeError, ValueError) as exc:
+-            raise ValueError("ts_bond_atoms must contain exactly two atom indices") from exc
+-        if coerced is not None:
+-            return coerced
+-        if isinstance(v, str) or isinstance(v, (list, tuple)):
+-            raise ValueError("ts_bond_atoms must contain exactly two atom indices")
+-        raise ValueError("ts_bond_atoms must be a list or comma-separated string")
+-
+-
+-class CalcConfigModel(BaseModel):
+-    """Pydantic model for calc step configuration validation.
+-
+-    Validates required fields and program/task type constraints.
+-    """
+-
+-    model_config = ConfigDict(extra="allow")
+-
+-    iprog: str | int
+-    itask: str | int
+-    keyword: str
+-    cores_per_task: int | None = None
+-    total_memory: str | None = None
+-    max_parallel_jobs: int | None = None
+-    charge: int | None = None
+-    multiplicity: int | None = None
+-    ts_bond_atoms: list[int] | None = None
+-
+-    @field_validator("keyword")
+-    @classmethod
+-    def validate_keyword(cls, v: str) -> str:
+-        """Ensure keyword is non-empty."""
+-        if not isinstance(v, str) or not v.strip():
+-            raise ValueError("keyword must be a non-empty string")
+-        return v
+-
+-    @field_validator("iprog")
+-    @classmethod
+-    def validate_iprog(cls, v: str | int) -> str | int:
+-        """Validate program identifier."""
+-        valid = {"gaussian", "g16", "orca", "1", "2", 1, 2}
+-        if v not in valid:
+-            raise ValueError(f"invalid iprog: {v}, valid: gaussian, g16, orca, 1, 2")
+-        return v
+-
+-    @field_validator("itask")
+-    @classmethod
+-    def validate_itask(cls, v: str | int) -> str | int:
+-        """Validate task type."""
+-        valid = {"opt", "sp", "freq", "opt_freq", "ts", "0", "1", "2", "3", "4", 0, 1, 2, 3, 4}
+-        if v not in valid:
+-            raise ValueError(f"invalid itask: {v}, valid: opt, sp, freq, opt_freq, ts, 0-4")
+-        return v
+-
+-    @field_validator("cores_per_task")
+-    @classmethod
+-    def validate_cores_per_task(cls, v: int | None) -> int | None:
+-        """Ensure cores_per_task >= 1 when provided."""
+-        if v is not None and v < 1:
+-            raise ValueError(f"cores_per_task must be >= 1, got {v}")
+-        return v
+-
+-    @field_validator("max_parallel_jobs")
+-    @classmethod
+-    def validate_max_parallel_jobs(cls, v: int | None) -> int | None:
+-        """Ensure max_parallel_jobs >= 1 when provided."""
+-        if v is not None and v < 1:
+-            raise ValueError(f"max_parallel_jobs must be >= 1, got {v}")
+-        return v
+-
+-    @field_validator("multiplicity")
+-    @classmethod
+-    def validate_calc_multiplicity(cls, v: int | None) -> int | None:
+-        """Ensure multiplicity >= 1 when provided."""
+-        if v is not None and v < 1:
+-            raise ValueError(f"multiplicity must be >= 1, got {v}")
+-        return v
+-
+-    @field_validator("total_memory")
+-    @classmethod
+-    def validate_calc_memory_format(cls, v: str | None) -> str | None:
+-        """Validate memory format like '4GB' or '500MB' when provided."""
+-        if v is None:
+-            return None
+-        v_upper = str(v).strip().upper()
+-        if not re.match(r"^\d+(?:\.\d+)?\s*(?:GB|MB|KB|B)$", v_upper):
+-            raise ValueError(f"total_memory format error: '{v}', expected '4GB' or '500MB'")
+-        return v
+-
+-    @field_validator("ts_bond_atoms", mode="before")
+-    @classmethod
+-    def coerce_calc_ts_bond_atoms(cls, v: Any) -> list[int] | None:
+-        """Accept list or comma/space-separated string for ts_bond_atoms."""
+-        if v is None:
+-            return None
+-        coerced = _coerce_two_atom_indices(v)
+-        if coerced is not None:
+-            return coerced
+-        if isinstance(v, str) or isinstance(v, (list, tuple)):
+-            raise ValueError("ts_bond_atoms must contain exactly two atom indices")
+-        raise ValueError("ts_bond_atoms must be a list or comma-separated string")
+diff --git a/confflow/core/pairs.py b/confflow/core/pairs.py
+deleted file mode 100644
+index 0af2b4f..0000000
+--- a/confflow/core/pairs.py
++++ /dev/null
+@@ -1,43 +0,0 @@
+-#!/usr/bin/env python3
+-"""Atom pair list normalization utilities."""
+-
+-from __future__ import annotations
+-
+-import re
+-from typing import Any
+-
+-__all__ = [
+-    "normalize_pair_list",
+-]
+-
+-
+-def normalize_pair_list(value: Any) -> list[list[int]] | None:
+-    """Normalize pair-like input into [[a, b], ...] (1-based)."""
+-    if value is None:
+-        return None
+-
+-    if isinstance(value, list):
+-        if len(value) == 0:
+-            return []
+-        if len(value) == 2 and all(isinstance(x, (int, float)) for x in value):
+-            return [[int(value[0]), int(value[1])]]
+-        if all(isinstance(x, (list, tuple)) and len(x) == 2 for x in value):
+-            return [[int(a), int(b)] for a, b in value]
+-        if all(isinstance(x, str) for x in value):
+-            out = []
+-            for item in value:
+-                parts = re.split(r"[\s,\-]+", item.strip())
+-                parts = [p for p in parts if p]
+-                if len(parts) != 2:
+-                    raise ValueError(f"pair format error: {item}, expected 'a b' or 'a,b' or 'a-b'")
+-                out.append([int(parts[0]), int(parts[1])])
+-            return out
+-
+-    if isinstance(value, str):
+-        parts = re.split(r"[\s,\-]+", value.strip())
+-        parts = [p for p in parts if p]
+-        if len(parts) != 2:
+-            raise ValueError(f"pair format error: {value}, expected 'a b' or 'a,b' or 'a-b'")
+-        return [[int(parts[0]), int(parts[1])]]
+-
+-    raise ValueError(f"unsupported pair format: {type(value)}")
+diff --git a/confflow/core/validation.py b/confflow/core/validation.py
+deleted file mode 100644
+index 7bf6aec..0000000
+--- a/confflow/core/validation.py
++++ /dev/null
+@@ -1,333 +0,0 @@
+-#!/usr/bin/env python3
+-
+-"""ConfFlow input validation module.
+-
+-Provides unified parameter validation utilities for checking argument
+-legality at function entry points.
+-"""
+-
+-from __future__ import annotations
+-
+-import logging
+-import os
+-from collections.abc import Callable
+-from functools import wraps
+-from typing import Any, TypeVar
+-
+-import numpy as np
+-
+-from .exceptions import ValidationError  # noqa: F401 — re-export for compatibility
+-
+-logger = logging.getLogger("confflow.validation")
+-
+-F = TypeVar("F", bound=Callable[..., Any])
+-
+-
+-def validate_positive(value: Any, name: str) -> None:
+-    """Validate that a value is positive."""
+-    try:
+-        num = float(value)
+-    except (ValueError, TypeError) as e:
+-        raise ValidationError(name, "must be a numeric type", value) from e
+-
+-    if num <= 0:
+-        raise ValidationError(name, "must be positive", value)
+-
+-
+-def validate_non_negative(value: Any, name: str) -> None:
+-    """Validate that a value is non-negative."""
+-    try:
+-        num = float(value)
+-    except (ValueError, TypeError) as e:
+-        raise ValidationError(name, "must be a numeric type", value) from e
+-
+-    if num < 0:
+-        raise ValidationError(name, "must be non-negative", value)
+-
+-
+-def validate_integer(
+-    value: Any, name: str, min_val: int | None = None, max_val: int | None = None
+-) -> int:
+-    """Validate that a value is an integer, with optional range checking.
+-
+-    Parameters
+-    ----------
+-    value : Any
+-        Value to validate.
+-    name : str
+-        Parameter name (used in error messages).
+-    min_val : int or None
+-        Minimum allowed value.
+-    max_val : int or None
+-        Maximum allowed value.
+-
+-    Returns
+-    -------
+-    int
+-        The validated integer.
+-    """
+-    try:
+-        num = int(value)
+-    except (ValueError, TypeError) as e:
+-        raise ValidationError(name, "must be an integer", value) from e
+-
+-    if min_val is not None and num < min_val:
+-        raise ValidationError(name, f"must be >= {min_val}", value)
+-    if max_val is not None and num > max_val:
+-        raise ValidationError(name, f"must be <= {max_val}", value)
+-
+-    return num
+-
+-
+-def validate_float_range(
+-    value: Any, name: str, min_val: float | None = None, max_val: float | None = None
+-) -> float:
+-    """Validate that a value is a float, with optional range checking.
+-
+-    Parameters
+-    ----------
+-    value : Any
+-        Value to validate.
+-    name : str
+-        Parameter name (used in error messages).
+-    min_val : float or None
+-        Minimum allowed value.
+-    max_val : float or None
+-        Maximum allowed value.
+-
+-    Returns
+-    -------
+-    float
+-        The validated float.
+-    """
+-    try:
+-        num = float(value)
+-    except (ValueError, TypeError) as e:
+-        raise ValidationError(name, "must be a float", value) from e
+-
+-    if min_val is not None and num < min_val:
+-        raise ValidationError(name, f"must be >= {min_val}", value)
+-    if max_val is not None and num > max_val:
+-        raise ValidationError(name, f"must be <= {max_val}", value)
+-
+-    return num
+-
+-
+-def validate_not_empty(value: Any, name: str) -> None:
+-    """Validate that a value is not empty (None or zero-length)."""
+-    if value is None:
+-        raise ValidationError(name, "must not be None")
+-    if isinstance(value, (str, list, tuple, dict)) and len(value) == 0:
+-        raise ValidationError(name, "must not be empty")
+-
+-
+-def validate_file_exists(filepath: str, name: str) -> None:
+-    """Validate that a file exists."""
+-    if not filepath:
+-        raise ValidationError(name, "file path must not be empty")
+-    if not os.path.exists(filepath):
+-        raise ValidationError(name, f"file does not exist: {filepath}")
+-    if not os.path.isfile(filepath):
+-        raise ValidationError(name, f"path is not a file: {filepath}")
+-
+-
+-def validate_dir_exists(dirpath: str, name: str) -> None:
+-    """Validate that a directory exists."""
+-    if not dirpath:
+-        raise ValidationError(name, "directory path must not be empty")
+-    if not os.path.exists(dirpath):
+-        raise ValidationError(name, f"directory does not exist: {dirpath}")
+-    if not os.path.isdir(dirpath):
+-        raise ValidationError(name, f"path is not a directory: {dirpath}")
+-
+-
+-def validate_coords_array(coords: Any, name: str, expected_atoms: int | None = None) -> np.ndarray:
+-    """Validate a coordinate array.
+-
+-    Parameters
+-    ----------
+-    coords : Any
+-        Coordinate data (list or numpy array).
+-    name : str
+-        Parameter name.
+-    expected_atoms : int or None
+-        Expected number of atoms (optional).
+-
+-    Returns
+-    -------
+-    numpy.ndarray
+-        Validated numpy array of shape ``(N, 3)``.
+-    """
+-    if coords is None:
+-        raise ValidationError(name, "coordinates must not be None")
+-
+-    try:
+-        arr = np.asarray(coords, dtype=float)
+-    except (ValueError, TypeError) as e:
+-        raise ValidationError(name, "cannot convert to numeric array", coords) from e
+-
+-    if arr.ndim != 2:
+-        raise ValidationError(name, f"coordinates must be a 2D array, got {arr.ndim}D")
+-
+-    if arr.shape[1] != 3:
+-        raise ValidationError(name, f"coordinates must have shape (N, 3), got {arr.shape}")
+-
+-    if expected_atoms is not None and arr.shape[0] != expected_atoms:
+-        raise ValidationError(
+-            name, f"atom count mismatch, expected {expected_atoms}, got {arr.shape[0]}"
+-        )
+-
+-    # Check for NaN and Inf
+-    if np.any(np.isnan(arr)):
+-        raise ValidationError(name, "coordinates contain NaN values")
+-    if np.any(np.isinf(arr)):
+-        raise ValidationError(name, "coordinates contain Inf values")
+-
+-    return arr  # type: ignore[no-any-return]
+-
+-
+-def validate_atom_indices(indices: list[int], name: str, max_index: int) -> None:
+-    """Validate atom index list.
+-
+-    Parameters
+-    ----------
+-    indices : list[int]
+-        Atom index list (1-based).
+-    name : str
+-        Parameter name.
+-    max_index : int
+-        Maximum allowed index.
+-    """
+-    if not indices:
+-        return
+-
+-    for i, idx in enumerate(indices):
+-        if not isinstance(idx, int):
+-            raise ValidationError(name, f"index {i} is not an integer: {idx}")
+-        if idx < 1:
+-            raise ValidationError(name, f"atom index must be >= 1 (1-based), got: {idx}")
+-        if idx > max_index:
+-            raise ValidationError(name, f"atom index {idx} out of range (max: {max_index})")
+-
+-
+-def validate_bond_pair(pair: list[int] | tuple, name: str, max_index: int) -> tuple:
+-    """Validate a bond pair.
+-
+-    Parameters
+-    ----------
+-    pair : list[int] or tuple
+-        Bond pair ``[a, b]`` or ``(a, b)`` (1-based).
+-    name : str
+-        Parameter name.
+-    max_index : int
+-        Maximum allowed index.
+-
+-    Returns
+-    -------
+-    tuple
+-        Validated pair ``(a, b)``.
+-    """
+-    if not isinstance(pair, (list, tuple)) or len(pair) != 2:
+-        raise ValidationError(name, "bond pair must be a list or tuple of length 2", pair)
+-
+-    a, b = pair
+-    try:
+-        a, b = int(a), int(b)
+-    except (ValueError, TypeError) as e:
+-        raise ValidationError(name, "bond pair elements must be integers", pair) from e
+-
+-    if a < 1 or b < 1:
+-        raise ValidationError(name, f"atom index must be >= 1 (1-based), got: ({a}, {b})")
+-    if a > max_index or b > max_index:
+-        raise ValidationError(name, f"atom index out of range (max: {max_index}), got: ({a}, {b})")
+-    if a == b:
+-        raise ValidationError(name, f"bond pair must not refer to the same atom: ({a}, {b})")
+-
+-    return (a, b)
+-
+-
+-def validate_choice(value: Any, name: str, choices: list[Any]) -> None:
+-    """Validate that a value is in the allowed choices."""
+-    if value not in choices:
+-        raise ValidationError(name, f"must be one of: {choices}", value)
+-
+-
+-def validate_string_not_empty(value: Any, name: str) -> str:
+-    """Validate that a value is a non-empty string."""
+-    if value is None:
+-        raise ValidationError(name, "must not be None")
+-    if not isinstance(value, str):
+-        raise ValidationError(name, "must be a string type", value)
+-    if not value.strip():
+-        raise ValidationError(name, "must not be an empty string")
+-    return value.strip()
+-
+-
+-# ==============================================================================
+-# Validation decorator
+-# ==============================================================================
+-
+-
+-def validate_params(**validators: Callable[[Any, str], None]) -> Callable[[F], F]:
+-    """Parameter validation decorator.
+-
+-    Parameters
+-    ----------
+-    **validators : Callable[[Any, str], None]
+-        Mapping of parameter name to validation function.
+-
+-    Examples
+-    --------
+-    >>> @validate_params(
+-    ...     threshold=lambda v, n: validate_positive(v, n),
+-    ...     coords=lambda v, n: validate_not_empty(v, n),
+-    ... )
+-    ... def my_function(threshold, coords):
+-    ...     ...
+-    """
+-
+-    def decorator(func: F) -> F:
+-        @wraps(func)
+-        def wrapper(*args, **kwargs):
+-            # Get function signature to map positional arguments
+-            import inspect
+-
+-            sig = inspect.signature(func)
+-            bound = sig.bind_partial(*args, **kwargs)
+-            bound.apply_defaults()
+-
+-            # Run validations
+-            for param_name, validator in validators.items():
+-                if param_name in bound.arguments:
+-                    value = bound.arguments[param_name]
+-                    if value is not None:  # Skip None values (allow optional params)
+-                        try:
+-                            validator(value, param_name)
+-                        except ValidationError:
+-                            raise
+-                        except Exception as e:
+-                            raise ValidationError(param_name, str(e), value) from e
+-
+-            return func(*args, **kwargs)
+-
+-        return wrapper  # type: ignore[return-value]
+-
+-    return decorator
+-
+-
+-__all__ = [
+-    "ValidationError",
+-    "validate_positive",
+-    "validate_non_negative",
+-    "validate_integer",
+-    "validate_float_range",
+-    "validate_not_empty",
+-    "validate_file_exists",
+-    "validate_dir_exists",
+-    "validate_coords_array",
+-    "validate_atom_indices",
+-    "validate_bond_pair",
+-    "validate_choice",
+-    "validate_string_not_empty",
+-    "validate_params",
+-]
+diff --git a/confflow/shared/config_coercion.py b/confflow/shared/config_coercion.py
+deleted file mode 100644
+index 4d5969c..0000000
+--- a/confflow/shared/config_coercion.py
++++ /dev/null
+@@ -1,87 +0,0 @@
+-"""Version-stable coercion helpers shared by legacy and typed config models.
+-
+-This module deliberately has no dependency on ``confflow.core.models``.  The
+-legacy Pydantic entry points and the v2 typed factories both delegate here so
+-their accepted wire forms cannot drift independently.
+-"""
+-
+-from __future__ import annotations
+-
+-import re
+-from typing import Any
+-
+-__all__ = [
+-    "coerce_freeze_indices",
+-    "coerce_positive_int",
+-    "coerce_two_atom_indices",
+-]
+-
+-
+-def _parse_index_spec(value: Any) -> list[int]:
+-    if value is None:
+-        return []
+-    if isinstance(value, (int, float)) and int(value) == 0:
+-        return []
+-    if isinstance(value, str) and value.strip().lower() in {"", "0", "none", "false"}:
+-        return []
+-
+-    if isinstance(value, (list, tuple)):
+-        tokens = [part for item in value for part in str(item).replace(",", " ").split()]
+-    else:
+-        tokens = str(value).replace(",", " ").split()
+-
+-    indices: list[int] = []
+-    for token in tokens:
+-        match = re.fullmatch(r"(\d+)\s*-\s*(\d+)", token.strip())
+-        if match:
+-            start, end = int(match.group(1)), int(match.group(2))
+-            if start > 0 and end > 0:
+-                low, high = sorted((start, end))
+-                indices.extend(range(low, high + 1))
+-            continue
+-        if token.isdigit():
+-            index = int(token)
+-            if index > 0:
+-                indices.append(index)
+-            continue
+-        indices.extend(int(item) for item in re.findall(r"\d+", token) if int(item) > 0)
+-    return sorted(set(indices))
+-
+-
+-def coerce_freeze_indices(value: Any) -> list[int]:
+-    """Coerce the v2 freeze wire formats into a list of atom indices."""
+-    if value is None:
+-        return []
+-    if isinstance(value, str):
+-        return _parse_index_spec(value)
+-    if isinstance(value, (list, tuple)):
+-        result: list[int] = []
+-        for item in value:
+-            if isinstance(item, str):
+-                result.extend(_parse_index_spec(item))
+-            else:
+-                result.append(int(item))
+-        return result
+-    return []
+-
+-
+-def coerce_two_atom_indices(value: Any) -> list[int] | None:
+-    """Coerce the v2 two-atom wire formats into ``[a, b]``."""
+-    if value is None:
+-        return None
+-    if isinstance(value, str):
+-        parts = value.replace(",", " ").split()
+-        if len(parts) == 2:
+-            return [int(parts[0]), int(parts[1])]
+-        return None
+-    if isinstance(value, (list, tuple)) and len(value) == 2:
+-        return [int(value[0]), int(value[1])]
+-    return None
+-
+-
+-def coerce_positive_int(value: Any, *, field: str) -> int:
+-    """Coerce a positive integer field while retaining its public field name."""
+-    coerced = int(value)
+-    if coerced < 1:
+-        raise ValueError(f"{field} must be >= 1, got {coerced}")
+-    return coerced
+diff --git a/tests/test_bonding_consistency.py b/tests/test_bonding_consistency.py
+index cc0bb1b..64d1a63 100644
+--- a/tests/test_bonding_consistency.py
++++ b/tests/test_bonding_consistency.py
+@@ -13,7 +13,6 @@ from confflow.core.bonding import (
+     covalent_radius,
+     infer_bond_pairs,
+ )
+-from confflow.core.chem_validation import load_mol_from_xyz
+ from confflow.science.topology_mapping import build_graph
+ 
+ _WATER_ATOMS = ["O", "H", "H"]
+@@ -59,7 +58,7 @@ def test_single_known_atom_returns_no_bonds():
+     assert build_adjacency([6], [[0.0, 0.0, 0.0]], bond_scale=1.2) == [[]]
+ 
+ 
+-def test_same_scale_yields_same_topology_across_consumers(tmp_path):
++def test_same_scale_yields_same_topology_across_consumers():
+     scale = 1.2
+     adjacency = build_adjacency(_WATER_NUMBERS, _WATER_COORDS, bond_scale=scale)
+     expected = _edge_set(adjacency)
+@@ -70,15 +69,3 @@ def test_same_scale_yields_same_topology_across_consumers(tmp_path):
+     assert graph_build.status == "ok"
+     assert graph_build.graph is not None
+     assert _edge_set(graph_build.graph.adjacency) == expected
+-
+-    # confgen/chem_validation RDKit loader
+-    xyz = tmp_path / "water.xyz"
+-    lines = [str(len(_WATER_ATOMS)), "water"]
+-    lines += [f"{atom} {x} {y} {z}" for atom, (x, y, z) in zip(_WATER_ATOMS, _WATER_COORDS)]
+-    xyz.write_text("\n".join(lines) + "\n", encoding="utf-8")
+-
+-    mol = load_mol_from_xyz(str(xyz), scale)
+-    mol_edges = {
+-        frozenset((bond.GetBeginAtomIdx(), bond.GetEndAtomIdx())) for bond in mol.GetBonds()
+-    }
+-    assert mol_edges == expected
+diff --git a/tests/test_keyword_rewrite.py b/tests/test_keyword_rewrite.py
+deleted file mode 100644
+index f70a404..0000000
+--- a/tests/test_keyword_rewrite.py
++++ /dev/null
+@@ -1,54 +0,0 @@
+-#!/usr/bin/env python3
+-
+-"""Tests for confflow.core.keyword_rewrite — scan keyword rewriting."""
+-
+-from __future__ import annotations
+-
+-import pytest
+-
+-from confflow.core.keyword_rewrite import make_scan_keyword_from_ts_keyword
+-
+-
+-class TestMakeScanKeyword:
+-    """Direct tests for make_scan_keyword_from_ts_keyword."""
+-
+-    @pytest.mark.parametrize(
+-        "input_kw, expected_substring",
+-        [
+-            ("", ""),
+-            ("   ", ""),
+-            # Should strip opt sub-options like calcfc, ts, tight
+-            ("opt=(ts,calcfc) freq B3LYP/6-31G*", "opt"),
+-            # freq should be removed entirely
+-            ("B3LYP/6-31G* freq", "B3LYP/6-31G*"),
+-            # opt with only removable items reduces to bare opt
+-            ("opt=(ts,calcfc,tight)", "opt"),
+-            # opt with non-removable items preserves them
+-            ("opt=(maxcycles=100,ts)", "maxcycles=100"),
+-            # freq with arguments should be removed
+-            ("B3LYP freq=(noraman)", "B3LYP"),
+-            # noeigentest, rcfc, readfc removed from opt
+-            ("opt=(noeigentest,rcfc,readfc,maxstep=5)", "maxstep=5"),
+-        ],
+-    )
+-    def test_rewrite_cases(self, input_kw, expected_substring):
+-        result = make_scan_keyword_from_ts_keyword(input_kw)
+-        if expected_substring:
+-            assert expected_substring in result
+-        else:
+-            assert result == ""
+-
+-    def test_ts_removed_from_opt(self):
+-        result = make_scan_keyword_from_ts_keyword("opt=(ts,calcfc) B3LYP/6-31G*")
+-        assert "ts" not in result.lower().split("opt")[0]  # ts not before opt
+-        # In the opt(...) part, ts should be gone
+-        assert "calcfc" not in result
+-
+-    def test_freq_fully_removed(self):
+-        result = make_scan_keyword_from_ts_keyword("opt B3LYP freq 6-31G*")
+-        assert "freq" not in result
+-
+-    def test_preserves_non_opt_non_freq_keywords(self):
+-        result = make_scan_keyword_from_ts_keyword("opt=(ts) B3LYP/6-31G* scf=tight")
+-        assert "B3LYP/6-31G*" in result
+-        assert "scf=tight" in result
+diff --git a/tests/test_models.py b/tests/test_models.py
+deleted file mode 100644
+index 790ce47..0000000
+--- a/tests/test_models.py
++++ /dev/null
+@@ -1,177 +0,0 @@
+-#!/usr/bin/env python3
+-
+-"""Tests for confflow.core.models — Pydantic data models."""
+-
+-from __future__ import annotations
+-
+-import pytest
+-from pydantic import ValidationError
+-
+-from confflow.core.models import CalcConfigModel, GlobalConfigModel, TaskContext
+-
+-
+-class TestTaskContext:
+-    """Tests for the TaskContext Pydantic model."""
+-
+-    def test_minimal_creation(self):
+-        ctx = TaskContext(job_name="j1", work_dir="/tmp", coords=["H 0 0 0"])
+-        assert ctx.job_name == "j1"
+-        assert ctx.work_dir == "/tmp"
+-        assert ctx.coords == ["H 0 0 0"]
+-        assert ctx.metadata == {}
+-        assert ctx.config == {}
+-
+-    def test_full_creation(self):
+-        ctx = TaskContext(
+-            job_name="opt1",
+-            work_dir="/work",
+-            coords=["C 0 0 0", "H 1 0 0"],
+-            metadata={"source": "test"},
+-            config={"charge": 0, "mult": 1},
+-        )
+-        assert ctx.metadata["source"] == "test"
+-        assert ctx.config["charge"] == 0
+-
+-    def test_extra_fields_allowed(self):
+-        ctx = TaskContext(job_name="j", work_dir="/w", coords=[], custom_field="hello")
+-        assert ctx.custom_field == "hello"  # type: ignore[attr-defined]
+-
+-    def test_serialization_roundtrip(self):
+-        ctx = TaskContext(
+-            job_name="j1",
+-            work_dir="/work",
+-            coords=["H 0 0 0"],
+-            metadata={"k": "v"},
+-        )
+-        data = ctx.model_dump()
+-        assert isinstance(data, dict)
+-        assert data["job_name"] == "j1"
+-        ctx2 = TaskContext(**data)
+-        assert ctx2 == ctx
+-
+-    def test_missing_required_field_raises(self):
+-        with pytest.raises(ValidationError):
+-            TaskContext(job_name="j")  # type: ignore[call-arg]
+-
+-
+-class TestGlobalConfigModel:
+-    """Tests for the GlobalConfigModel Pydantic model."""
+-
+-    def test_defaults(self):
+-        cfg = GlobalConfigModel()
+-        assert cfg.cores_per_task == 1
+-        assert cfg.total_memory == "4GB"
+-        assert cfg.max_parallel_jobs == 1
+-        assert cfg.charge == 0
+-        assert cfg.multiplicity == 1
+-        assert cfg.rmsd_threshold == 0.25
+-        assert cfg.freeze == []
+-        assert cfg.ts_bond_atoms is None
+-        assert cfg.ts_rescue_scan is False
+-        assert cfg.enable_dynamic_resources is False
+-
+-    def test_custom_values(self):
+-        cfg = GlobalConfigModel(
+-            cores_per_task=8,
+-            total_memory="64GB",
+-            max_parallel_jobs=4,
+-            charge=-1,
+-            multiplicity=2,
+-            freeze=[1, 2, 3],
+-            ts_bond_atoms=[86, 92],
+-        )
+-        assert cfg.cores_per_task == 8
+-        assert cfg.total_memory == "64GB"
+-        assert cfg.charge == -1
+-        assert cfg.freeze == [1, 2, 3]
+-        assert cfg.ts_bond_atoms == [86, 92]
+-
+-    def test_freeze_from_string(self):
+-        cfg = GlobalConfigModel(freeze="1,2,3")
+-        assert cfg.freeze == [1, 2, 3]
+-
+-    def test_freeze_from_range_string(self):
+-        cfg = GlobalConfigModel(freeze="1-3,5")
+-        assert cfg.freeze == [1, 2, 3, 5]
+-
+-    def test_freeze_from_none(self):
+-        cfg = GlobalConfigModel(freeze=None)
+-        assert cfg.freeze == []
+-
+-    def test_ts_bond_atoms_from_string(self):
+-        cfg = GlobalConfigModel(ts_bond_atoms="86,92")
+-        assert cfg.ts_bond_atoms == [86, 92]
+-
+-    def test_ts_bond_atoms_invalid_string(self):
+-        with pytest.raises(ValidationError, match="ts_bond_atoms"):
+-            GlobalConfigModel(ts_bond_atoms="1,2,3")
+-
+-    def test_cores_validation(self):
+-        with pytest.raises(Exception, match="cores_per_task"):
+-            GlobalConfigModel(cores_per_task=0)
+-
+-    def test_max_jobs_validation(self):
+-        with pytest.raises(Exception, match="max_parallel_jobs"):
+-            GlobalConfigModel(max_parallel_jobs=-1)
+-
+-    def test_multiplicity_validation(self):
+-        with pytest.raises(Exception, match="multiplicity"):
+-            GlobalConfigModel(multiplicity=0)
+-
+-    def test_memory_format_validation(self):
+-        # Valid formats
+-        GlobalConfigModel(total_memory="4GB")
+-        GlobalConfigModel(total_memory="500MB")
+-        GlobalConfigModel(total_memory="1024KB")
+-
+-        # Invalid format
+-        with pytest.raises(Exception, match="total_memory"):
+-            GlobalConfigModel(total_memory="invalid")
+-
+-    def test_extra_fields_allowed(self):
+-        cfg = GlobalConfigModel(custom_param="value")
+-        assert cfg.custom_param == "value"  # type: ignore[attr-defined]
+-
+-    def test_serialization(self):
+-        cfg = GlobalConfigModel(cores_per_task=4, freeze=[1, 2])
+-        data = cfg.model_dump()
+-        assert data["cores_per_task"] == 4
+-        assert data["freeze"] == [1, 2]
+-
+-
+-class TestCalcConfigModel:
+-    """Tests for the CalcConfigModel Pydantic model."""
+-
+-    def test_valid_orca_sp(self):
+-        cfg = CalcConfigModel(iprog="orca", itask="sp", keyword="HF def2-SVP")
+-        assert cfg.iprog == "orca"
+-        assert cfg.itask == "sp"
+-        assert cfg.keyword == "HF def2-SVP"
+-
+-    def test_valid_gaussian_ts(self):
+-        cfg = CalcConfigModel(iprog="g16", itask="ts", keyword="opt=(ts,calcfc) b3lyp/6-31g(d)")
+-        assert cfg.iprog == "g16"
+-
+-    def test_valid_numeric_iprog(self):
+-        cfg = CalcConfigModel(iprog=1, itask=0, keyword="opt b3lyp/6-31g(d)")
+-        assert cfg.iprog == 1
+-
+-    def test_invalid_iprog(self):
+-        with pytest.raises(Exception, match="invalid iprog"):
+-            CalcConfigModel(iprog="invalid", itask="sp", keyword="HF")
+-
+-    def test_invalid_itask(self):
+-        with pytest.raises(Exception, match="invalid itask"):
+-            CalcConfigModel(iprog="orca", itask="invalid", keyword="HF")
+-
+-    def test_empty_keyword(self):
+-        with pytest.raises(Exception, match="keyword"):
+-            CalcConfigModel(iprog="orca", itask="sp", keyword="")
+-
+-    def test_whitespace_keyword(self):
+-        with pytest.raises(Exception, match="keyword"):
+-            CalcConfigModel(iprog="orca", itask="sp", keyword="   ")
+-
+-    def test_extra_fields(self):
+-        cfg = CalcConfigModel(iprog="orca", itask="sp", keyword="HF", energy_window=5.0)
+-        assert cfg.energy_window == 5.0  # type: ignore[attr-defined]
+diff --git a/tests/test_small_adapters_extra.py b/tests/test_small_adapters_extra.py
+deleted file mode 100644
+index 0649aee..0000000
+--- a/tests/test_small_adapters_extra.py
++++ /dev/null
+@@ -1,31 +0,0 @@
+-"""Tests for small compatibility adapters."""
+-
+-from __future__ import annotations
+-
+-from unittest.mock import Mock, patch
+-
+-from confflow.core.chem_validation import (
+-    validate_chain_definitions,
+-)
+-
+-
+-def test_validate_chain_definitions_returns_invalid_messages() -> None:
+-    validator = Mock()
+-    validator.validate_mol.return_value = [
+-        {"valid": True, "raw_chain": "1-2"},
+-        {"valid": False, "raw_chain": "2-3", "error": "not bonded"},
+-    ]
+-
+-    with (
+-        patch("confflow.core.chem_validation.ChainValidator", return_value=validator),
+-        patch("confflow.core.chem_validation.load_mol_from_xyz", return_value=object()) as load_mol,
+-    ):
+-        messages = validate_chain_definitions(
+-            input_file="mol.xyz",
+-            chains=["1-2", "2-3"],
+-            bond_threshold=1.2,
+-        )
+-
+-    load_mol.assert_called_once_with("mol.xyz", 1.2)
+-    validator.validate_mol.assert_called_once()
+-    assert messages == ["2-3: not bonded"]
+diff --git a/tests/test_validation.py b/tests/test_validation.py
+deleted file mode 100644
+index 3fc2075..0000000
+--- a/tests/test_validation.py
++++ /dev/null
+@@ -1,352 +0,0 @@
+-#!/usr/bin/env python3
+-"""Validation tests for CLI and workflow config helpers."""
+-
+-from __future__ import annotations
+-
+-import pytest
+-
+-from confflow.core import validation
+-
+-
+-def test_validate_positive_success():
+-    validation.validate_positive(10, "test_param")
+-    validation.validate_positive("2.5", "test_param")
+-
+-
+-def test_validate_positive_fail():
+-    with pytest.raises(validation.ValidationError, match="must be positive"):
+-        validation.validate_positive(0, "test_param")
+-    with pytest.raises(validation.ValidationError, match="must be positive"):
+-        validation.validate_positive(-1, "test_param")
+-    with pytest.raises(validation.ValidationError, match="must be a numeric type"):
+-        validation.validate_positive("abc", "test_param")
+-
+-
+-def test_validate_non_negative_success():
+-    validation.validate_non_negative(0, "test_param")
+-    validation.validate_non_negative(10, "test_param")
+-
+-
+-def test_validate_non_negative_fail():
+-    with pytest.raises(validation.ValidationError, match="must be non-negative"):
+-        validation.validate_non_negative(-0.1, "test_param")
+-
+-
+-def test_validate_integer_success():
+-    assert validation.validate_integer(10, "p") == 10
+-    assert validation.validate_integer("5", "p") == 5
+-
+-
+-def test_validate_integer_range():
+-    with pytest.raises(validation.ValidationError, match="must be >= 1"):
+-        validation.validate_integer(0, "p", min_val=1)
+-    with pytest.raises(validation.ValidationError, match="must be <= 10"):
+-        validation.validate_integer(11, "p", max_val=10)
+-
+-
+-def test_validate_float_range():
+-    assert validation.validate_float_range(0.5, "p", min_val=0.0, max_val=1.0) == 0.5
+-    with pytest.raises(validation.ValidationError):
+-        validation.validate_float_range(1.5, "p", max_val=1.0)
+-
+-
+-def test_validate_not_empty():
+-    validation.validate_not_empty([1], "p")
+-    validation.validate_not_empty("s", "p")
+-    with pytest.raises(validation.ValidationError, match="must not be None"):
+-        validation.validate_not_empty(None, "p")
+-    with pytest.raises(validation.ValidationError, match="must not be empty"):
+-        validation.validate_not_empty([], "p")
+-    with pytest.raises(validation.ValidationError, match="must not be empty"):
+-        validation.validate_not_empty("", "p")
+-
+-
+-def test_validate_file_exists(tmp_path):
+-    f = tmp_path / "test.txt"
+-    f.touch()
+-    validation.validate_file_exists(str(f), "file")
+-
+-    with pytest.raises(validation.ValidationError, match="file does not exist"):
+-        validation.validate_file_exists(str(tmp_path / "missing.txt"), "file")
+-    with pytest.raises(validation.ValidationError, match="file path must not be empty"):
+-        validation.validate_file_exists("", "file")
+-
+-
+-def test_validate_file_exists_not_a_file(tmp_path):
+-    """Test validation fails when path is not a file."""
+-    with pytest.raises(validation.ValidationError, match="path is not a file"):
+-        validation.validate_file_exists(str(tmp_path), "file")
+-
+-
+-def test_validate_dir_exists_success(tmp_path):
+-    """Test directory exists validation."""
+-    validation.validate_dir_exists(str(tmp_path), "dir")
+-
+-
+-def test_validate_dir_exists_missing(tmp_path):
+-    """Test validation fails for missing directory."""
+-    with pytest.raises(validation.ValidationError, match="directory does not exist"):
+-        validation.validate_dir_exists(str(tmp_path / "missing"), "dir")
+-
+-
+-def test_validate_dir_exists_empty_path():
+-    """Test validation fails for empty directory path."""
+-    with pytest.raises(validation.ValidationError, match="directory path must not be empty"):
+-        validation.validate_dir_exists("", "dir")
+-
+-
+-def test_validate_dir_exists_not_a_dir(tmp_path):
+-    """Test validation fails when path is not a directory."""
+-    f = tmp_path / "file.txt"
+-    f.touch()
+-    with pytest.raises(validation.ValidationError, match="path is not a directory"):
+-        validation.validate_dir_exists(str(f), "dir")
+-
+-
+-def test_validate_coords_array_success():
+-    """Test coordinate array validation."""
+-    coords = [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]]
+-    result = validation.validate_coords_array(coords, "coords")
+-    assert result.shape == (2, 3)
+-
+-
+-def test_validate_coords_array_with_expected_atoms():
+-    """Test coordinate array validation with expected atom count."""
+-    coords = [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]]
+-    result = validation.validate_coords_array(coords, "coords", expected_atoms=2)
+-    assert result.shape == (2, 3)
+-
+-
+-def test_validate_coords_array_wrong_atom_count():
+-    """Test validation fails for wrong atom count."""
+-    coords = [[0.0, 0.0, 0.0]]
+-    with pytest.raises(validation.ValidationError, match="atom count mismatch"):
+-        validation.validate_coords_array(coords, "coords", expected_atoms=5)
+-
+-
+-def test_validate_coords_array_none():
+-    """Test validation fails for None coords."""
+-    with pytest.raises(validation.ValidationError, match="coordinates must not be None"):
+-        validation.validate_coords_array(None, "coords")
+-
+-
+-def test_validate_coords_array_not_2d():
+-    """Test validation fails for non-2D array."""
+-    coords = [0.0, 0.0, 0.0]  # 1D
+-    with pytest.raises(validation.ValidationError, match="coordinates must be a 2D array"):
+-        validation.validate_coords_array(coords, "coords")
+-
+-
+-def test_validate_coords_array_wrong_shape():
+-    """Test validation fails for wrong shape."""
+-    coords = [[0.0, 0.0]]  # (N, 2) instead of (N, 3)
+-    with pytest.raises(validation.ValidationError, match="coordinates must have shape \\(N, 3\\)"):
+-        validation.validate_coords_array(coords, "coords")
+-
+-
+-def test_validate_coords_array_with_nan():
+-    """Test validation fails for NaN values."""
+-    coords = [[0.0, 0.0, float("nan")]]
+-    with pytest.raises(validation.ValidationError, match="coordinates contain NaN"):
+-        validation.validate_coords_array(coords, "coords")
+-
+-
+-def test_validate_coords_array_with_inf():
+-    """Test validation fails for Inf values."""
+-    coords = [[0.0, 0.0, float("inf")]]
+-    with pytest.raises(validation.ValidationError, match="coordinates contain Inf"):
+-        validation.validate_coords_array(coords, "coords")
+-
+-
+-def test_validate_coords_array_non_numeric():
+-    """Test validation fails for non-numeric values."""
+-    coords = [["a", "b", "c"]]
+-    with pytest.raises(validation.ValidationError, match="cannot convert to numeric array"):
+-        validation.validate_coords_array(coords, "coords")
+-
+-
+-def test_validate_atom_indices_success():
+-    """Test atom indices validation."""
+-    validation.validate_atom_indices([1, 2, 3], "indices", max_index=5)
+-
+-
+-def test_validate_atom_indices_empty():
+-    """Test empty indices list is valid."""
+-    validation.validate_atom_indices([], "indices", max_index=5)
+-
+-
+-def test_validate_atom_indices_not_integer():
+-    """Test validation fails for non-integer indices."""
+-    with pytest.raises(validation.ValidationError, match="is not an integer"):
+-        validation.validate_atom_indices([1, 2.5, 3], "indices", max_index=5)
+-
+-
+-def test_validate_atom_indices_below_one():
+-    """Test validation fails for indices < 1."""
+-    with pytest.raises(validation.ValidationError, match="atom index must be >= 1"):
+-        validation.validate_atom_indices([0, 1, 2], "indices", max_index=5)
+-
+-
+-def test_validate_atom_indices_exceeds_max():
+-    """Test validation fails for indices > max."""
+-    with pytest.raises(validation.ValidationError, match="atom index.*out of range"):
+-        validation.validate_atom_indices([1, 2, 10], "indices", max_index=5)
+-
+-
+-def test_validate_bond_pair_success():
+-    """Test bond pair validation."""
+-    result = validation.validate_bond_pair([1, 2], "bond", max_index=5)
+-    assert result == (1, 2)
+-
+-
+-def test_validate_bond_pair_tuple():
+-    """Test bond pair validation with tuple."""
+-    result = validation.validate_bond_pair((3, 4), "bond", max_index=5)
+-    assert result == (3, 4)
+-
+-
+-def test_validate_bond_pair_wrong_length():
+-    """Test validation fails for wrong length."""
+-    with pytest.raises(
+-        validation.ValidationError, match="bond pair must be a list or tuple of length 2"
+-    ):
+-        validation.validate_bond_pair([1, 2, 3], "bond", max_index=5)
+-
+-
+-def test_validate_bond_pair_not_list_or_tuple():
+-    """Test validation fails for wrong type."""
+-    with pytest.raises(
+-        validation.ValidationError, match="bond pair must be a list or tuple of length 2"
+-    ):
+-        validation.validate_bond_pair("12", "bond", max_index=5)
+-
+-
+-def test_validate_bond_pair_non_integer():
+-    """Test validation fails for non-integer elements."""
+-    with pytest.raises(validation.ValidationError, match="bond pair elements must be integers"):
+-        validation.validate_bond_pair([1, "a"], "bond", max_index=5)
+-
+-
+-def test_validate_bond_pair_below_one():
+-    """Test validation fails for indices < 1."""
+-    with pytest.raises(validation.ValidationError, match="atom index must be >= 1"):
+-        validation.validate_bond_pair([0, 1], "bond", max_index=5)
+-
+-
+-def test_validate_bond_pair_exceeds_max():
+-    """Test validation fails for indices > max."""
+-    with pytest.raises(validation.ValidationError, match="atom index out of range"):
+-        validation.validate_bond_pair([1, 10], "bond", max_index=5)
+-
+-
+-def test_validate_bond_pair_same_atom():
+-    """Test validation fails for same atom."""
+-    with pytest.raises(
+-        validation.ValidationError, match="bond pair must not refer to the same atom"
+-    ):
+-        validation.validate_bond_pair([2, 2], "bond", max_index=5)
+-
+-
+-def test_validate_choice_success():
+-    """Test choice validation."""
+-    validation.validate_choice("a", "choice", ["a", "b", "c"])
+-
+-
+-def test_validate_choice_fail():
+-    """Test validation fails for invalid choice."""
+-    with pytest.raises(validation.ValidationError, match="must be one of"):
+-        validation.validate_choice("d", "choice", ["a", "b", "c"])
+-
+-
+-def test_validate_string_not_empty_success():
+-    """Test string validation."""
+-    result = validation.validate_string_not_empty("  hello  ", "str")
+-    assert result == "hello"
+-
+-
+-def test_validate_string_not_empty_none():
+-    """Test validation fails for None."""
+-    with pytest.raises(validation.ValidationError, match="must not be None"):
+-        validation.validate_string_not_empty(None, "str")
+-
+-
+-def test_validate_string_not_empty_not_string():
+-    """Test validation fails for non-string."""
+-    with pytest.raises(validation.ValidationError, match="must be a string type"):
+-        validation.validate_string_not_empty(123, "str")
+-
+-
+-def test_validate_string_not_empty_whitespace():
+-    """Test validation fails for whitespace-only string."""
+-    with pytest.raises(validation.ValidationError, match="must not be an empty string"):
+-        validation.validate_string_not_empty("   ", "str")
+-
+-
+-def test_validate_params_decorator():
+-    """Test validate_params decorator."""
+-
+-    @validation.validate_params(
+-        threshold=lambda v, n: validation.validate_positive(v, n),
+-    )
+-    def my_func(threshold):
+-        return threshold * 2
+-
+-    result = my_func(threshold=5)
+-    assert result == 10
+-
+-
+-def test_validate_params_decorator_fail():
+-    """Test validate_params decorator raises on invalid."""
+-
+-    @validation.validate_params(
+-        threshold=lambda v, n: validation.validate_positive(v, n),
+-    )
+-    def my_func(threshold):
+-        return threshold
+-
+-    with pytest.raises(validation.ValidationError):
+-        my_func(threshold=-1)
+-
+-
+-def test_validate_params_decorator_skip_none():
+-    """Test validate_params decorator skips None values."""
+-
+-    @validation.validate_params(
+-        threshold=lambda v, n: validation.validate_positive(v, n),
+-    )
+-    def my_func(threshold=None):
+-        return threshold
+-
+-    result = my_func(threshold=None)
+-    assert result is None
+-
+-
+-def test_validate_params_decorator_generic_exception():
+-    """Test validate_params decorator catches generic exceptions from validators."""
+-
+-    def broken_validator(v, n):
+-        raise RuntimeError("Unexpected error in validator")
+-
+-    @validation.validate_params(
+-        p=broken_validator,
+-    )
+-    def my_func(p):
+-        return p
+-
+-    with pytest.raises(validation.ValidationError, match="Unexpected error in validator"):
+-        my_func(p=10)
+-
+-
+-def test_validation_error_str():
+-    """Test ValidationError string representation."""
+-    err = validation.ValidationError("param", "test error", value=123)
+-    assert "param" in str(err)
+-    assert "test error" in str(err)
+-    assert "123" in str(err)
+-
+-
+-def test_validation_error_no_value():
+-    """Test ValidationError without value."""
+-    err = validation.ValidationError("param", "test error")
+-    assert "param" in str(err)
+-    assert "test error" in str(err)
+diff --git a/tests/v4/test_architecture_boundaries.py b/tests/v4/test_architecture_boundaries.py
+index 1e15b7f..1a93f52 100644
+--- a/tests/v4/test_architecture_boundaries.py
++++ b/tests/v4/test_architecture_boundaries.py
+@@ -85,7 +85,6 @@ FORBIDDEN_LEGACY_MODULES = (
+     "confflow.workflow.config_show",
+     "confflow.workflow.composition",
+     "confflow.config.canonical",
+-    "confflow.core.models",
+     "confflow.core.types",
+     "confflow.core.parsers",
+     "confflow.core.path_policy",
+@@ -251,6 +250,14 @@ REMOVED_LEGACY_MODULES: frozenset[str] = frozenset(
+         "confflow.blocks",
+         "confflow.blocks.refine",
+         "confflow.blocks.confgen",
++        # C5.5: legacy-only core/shared modules.
++        "confflow.core.models",
++        "confflow.core.validation",
++        "confflow.core.chem_validation",
++        "confflow.core.cli_base",
++        "confflow.core.keyword_rewrite",
++        "confflow.core.pairs",
++        "confflow.shared.config_coercion",
+         # PR-4: retired V2/V3 execution runtime.
+         "confflow.workflow.engine",
+         "confflow.workflow.state",
+@@ -1502,16 +1509,10 @@ class TestFacadeLazyIsolation:
+         from confflow.core import (
+             HARTREE_TO_KCALMOL,
+             PERIODIC_SYMBOLS,
+-            TaskContext,
+-            ValidationError,
+             get_atomic_number,
+-            validate_positive,
+         )
+ 
+-        assert TaskContext.__name__ == "TaskContext"
+-        assert ValidationError.__name__ == "ValidationError"
+         assert callable(get_atomic_number)
+-        assert callable(validate_positive)
+         assert len(PERIODIC_SYMBOLS) > 0
+         assert isinstance(HARTREE_TO_KCALMOL, float)
+ 

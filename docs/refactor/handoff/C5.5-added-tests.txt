@@ -1,0 +1,6 @@
+tests/v4/test_architecture_boundaries.py::test_legacy_module_inventory_is_intentional[confflow.core.chem_validation]
+tests/v4/test_architecture_boundaries.py::test_legacy_module_inventory_is_intentional[confflow.core.cli_base]
+tests/v4/test_architecture_boundaries.py::test_legacy_module_inventory_is_intentional[confflow.core.keyword_rewrite]
+tests/v4/test_architecture_boundaries.py::test_legacy_module_inventory_is_intentional[confflow.core.pairs]
+tests/v4/test_architecture_boundaries.py::test_legacy_module_inventory_is_intentional[confflow.core.validation]
+tests/v4/test_architecture_boundaries.py::test_legacy_module_inventory_is_intentional[confflow.shared.config_coercion]
