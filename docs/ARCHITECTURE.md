@@ -4,7 +4,7 @@
 
 V4 是独立的新 workflow engine，代码位于 `confflow/domain`、`confflow/execution`、
 `confflow/workflow/v4`。它不依赖本文档描述的 V2/V3 workflow runtime，也不经过
-`input_xyz → CalcStepRunner → output_path` 链。V4 架构事实见
+旧的 calc 调度链。V4 架构事实见
 `docs/architecture/WORKFLOW_V4.md`。
 
 ## 项目概述
@@ -25,10 +25,8 @@ ConfFlow 是一个自动化计算化学工作流引擎，用于分子构象搜�
   `StepResult` 发布 -> run result manifest。
 - 发布契约：`confflow v4 contract --json`
   （`confflow.producer.contract.generate_contract_bytes`）。
-- legacy 独立工具（V4 运行时闭包之外）：`confflow.calc`（`confts` CLI、
-  `CalcStepRunner`/`TaskRunner`）与 `confflow.blocks`（`confgen`/`confrefine`）。
 
-已退役：V2/V3 workflow 执行运行时（PR-4）、无发布的 V3 public wire（PR-7）、
+已退役：旧的 calc/blocks 工具链及其独立 CLI、V2/V3 workflow 执行运行时（PR-4）、无发布的 V3 public wire（PR-7）、
 已发布的 V1/V2 配置 wire（PR-9）。旧的 `ChemTaskManager`、INI settings、
 legacy flat calc config、MD5 `.config_hash` 兼容路径已从主执行路径和公共导出中移除。
 
@@ -69,61 +67,6 @@ confflow/
 │   ├── orca_blocks.py        # ORCA blocks 格式化
 │   └── config_validation.py  # YAML 结构校验
 │
-├── blocks/                    # 业务逻辑层（具体功能模块）
-│   ├── confgen/              # 构象生成模块
-│   │   ├── __init__.py
-│   │   ├── generator.py      # 构象生成核心（链旋转模式）
-│   │   ├── collision.py      # 碰撞检测
-│   │   ├── mapping.py        # 多输入拓扑映射
-│   │   ├── rotations.py      # 旋转操作
-│   │   └── validator.py      # 构象验证器
-│   │
-│   ├── refine/               # 构象筛选模块
-│   │   ├── __init__.py
-│   │   ├── processor.py      # RMSD 去重、能量筛选、虚频过滤、JSON 报告
-│   │   ├── rmsd_engine.py    # proper Kabsch、合法图映射几何比较、代表式去重
-│   │   ├── topology.py       # 连接图、颜色细化预筛、有界精确图映射
-│   │   ├── _compat.py        # 兼容层
-│   │   └── result.py         # 结果数据结构
-│   │
-│   └── viz/                  # 可视化模块
-│       ├── __init__.py
-│       └── report.py         # 美化纯文本报告生成（Boltzmann 权重、工作流统计）
-│
-├── calc/                      # 量子化学计算子系统
-│   ├── __init__.py           # calc 官方入口
-│   ├── runner.py             # typed calc step runner
-│   ├── artifacts.py          # manifest / digest / stale / reuse 合同
-│   ├── run_services.py       # TaskSource / Recovery / ResultAssembly 服务
-│   ├── setup.py              # 计算模块初始化
-│   ├── analysis.py           # 计算分析工具函数
-│   ├── postprocess.py        # calc -> refine 共享后处理适配器
-│   ├── constants.py          # 程序常量（路径、参数等）
-│   ├── geometry.py           # 几何解析（parse_last_geometry, check_termination）
-│   ├── psutil_compat.py      # psutil 兼容层
-│   ├── result_writer.py      # 结果写入器
-│   ├── resources.py          # 资源监控（CPU、内存）
-│   ├── rescue.py             # TS 失败救援逻辑
-│   ├── scan_ops.py           # 扫描操作
-│   ├── task_execution.py     # 任务执行逻辑
-│   │
-│   ├── policies/             # 策略模式实现（按程序区分）
-│   │   ├── __init__.py
-│   │   ├── base.py           # 基类 CalculationPolicy
-│   │   ├── gaussian.py       # Gaussian 16 专用实现
-│   │   └── orca.py           # ORCA 专用实现
-│   │
-│   ├── components/           # 内部组件（低层操作）
-│   │   ├── __init__.py
-│   │   ├── input_helpers.py     # 共享的内存/关键字/约束助手
-│   │   ├── parser.py            # 解析计算输出文件
-│   │   ├── executor.py          # 执行计算程序
-│   │   └── task_runner.py       # 单个任务运行器
-│   │
-│   └── db/                   # 结果数据库
-│       ├── __init__.py
-│       └── database.py       # SQLite 结果库管理
-│
 ├── workflow/                  # 工作流编排层
 │   ├── __init__.py           # 公共 API 导出
 │   ├── dag/                   # 显式 inputs DAG 构建、校验与拓扑排序
@@ -141,14 +84,12 @@ confflow/
 │
 ├── cli.py                     # CLI 参数解析
 ├── main.py                    # 工作流主程序入口
-├── confts.py                  # TS 专用执行器与 keyword 改写工具
 └── __init__.py               # 轻量包入口
 
 docs/                          # 文档
 ├── ARCHITECTURE.md           # 本文档（项目架构说明）
 ├── USAGE.md                  # 使用说明（精简版）
 ├── COMMAND_REFERENCE.md      # 所有命令的参考手册
-├── KEYWORD_REFERENCE.md      # YAML/INI 关键字参考
 ├── TESTING.md                # 测试说明
 ├── STYLE_CONTRACT.md         # 代码/输入/输出一致性标准
 └── DEVELOPMENT.md            # 开发指南
@@ -159,22 +100,8 @@ tests/                         # 测试套件（以 pytest --collect-only -q 和
 ├── test_core.py              # 包导出与核心公共入口
 ├── test_io.py                # XYZ 读写、元数据解析
 ├── test_data.py              # 共价半径、元素符号
-├── test_models.py            # Pydantic 数据模型（legacy calc 工具）
 ├── test_retired_wire_versions.py  # V1/V2/V3 配置 wire 失败关闭闸门
-├── test_confgen.py           # 构象生成
-├── test_refine.py            # 构象筛选
-├── test_calc.py              # 计算任务基础
-├── test_calc_artifacts.py    # manifest 复用与 stale cleanup
-├── test_calc_runner.py       # typed calc runner
-├── test_calc_full.py         # policy 与 typed config 集成
-├── test_policies.py          # Gaussian/ORCA 策略
-├── test_rescue.py            # TS 救援
-├── test_rescue_ts_scan_paths.py # TS 救援扫描路径测试
-├── test_engine.py            # 工作流引擎
-├── test_export.py            # 导出功能测试
-├── test_rerun_failed.py      # 失败重跑测试
 ├── test_cli.py               # CLI 入口
-├── test_validation.py        # 输入验证
 └── ...                       # 完整清单见 docs/TESTING.md
 
 confflow.example.yaml          # 工作流示例配置
@@ -218,89 +145,6 @@ LICENSE                        # MIT 许可证
 - **`shared/config_validation.py`**：YAML 结构校验
 - **`shared/orca_blocks.py`**：ORCA blocks 渲染
 
-### 3. `blocks/` - 业务逻辑层
-
-**职责**：提供工作流的具体功能步骤。
-
-- **`confgen/`**：
-  - 使用 RDKit 生成分子构象
-  - 支持链旋转模式（需显式指定旋转链）
-  - MMFF94s 预优化
-
-- **`refine/`**：
-  - RMSD 去重（支持 Numba JIT 加速；proper Kabsch，禁止反射）
-  - 精确拓扑分组：距离判键图 + 颜色细化预筛 + 有界精确图映射；跨拓扑永不做 RMSD 删除
-  - 合法图映射下的几何比较：identity 不达标时继续搜索其他合法映射，找到 witness 才删除
-  - 搜索预算（节点数）确定性；预算耗尽返回 unresolved 并保留构象，不伪装成 distinct
-  - 能量辅助去重（ΔE ≤ tolerance 时放宽 RMSD 阈值，并在报告中给出 effective cutoff）
-  - 能量窗口筛选
-  - 虚频校验
-  - 机器可读 JSON 报告（拓扑组、直接代表、witness RMSD、mapping/search work）
-
-- **`viz/`**：
-  - 生成美化的纯文本总结报告（.txt）
-  - Boltzmann 权重计算
-  - 工作流统计信息
-  - CID 后向追踪
-
-### 4. `calc/` - 量子化学计算子系统
-
-**职责**：管理所有量子化学计算。
-
-**设计**：使用**策略模式** (Policy Pattern) 区分不同程序（Gaussian/ORCA）的实现细节。
-
-- **`runner.py`**：
-  - `CalcStepRunner` 是 workflow -> calc 的官方入口
-  - 输入为 `CalcStepRequest(step_name, step_dir, input_xyz, CalcStepParams)`
-  - 输出为显式 `CalcStepResult`
-
-- **`artifacts.py`**：
-  - 负责 `manifest.json`、typed config digest、input digest、stale cleanup、reuse 判断
-  - 区分 `running` / `completed` / `failed` 状态
-
-- **`run_services.py`**：
-  - `TaskSourceBuilder`：流式读取 XYZ 并构建 `TaskContext`
-  - `TaskRecoveryService`：`results.db` / `backups` 恢复与 pending 过滤
-  - `ResultAssemblyService`：`result.xyz` / `failed.xyz` 聚合与收尾
-
-- **`policies/`** - 程序专用实现：
-  - `base.py`：抽象基类 `CalculationPolicy`
-  - `gaussian.py`：Gaussian 16 的输入/输出格式、参数处理
-  - `orca.py`：ORCA 的输入/输出格式、参数处理
-
-- **`components/`** - 内部组件：
--  - `input_helpers.py`：内存/关键字/约束/冻结的共享工具，供 policy 与 TaskRunner 复用
--  - `parser.py`：解析计算输出（兼容层；当前委托给对应 Policy）
--  - `executor.py`：执行计算程序、监控进程
--  - `task_runner.py`：单任务执行主入口（推荐：`TaskRunner().run(...)`，不再暴露旧兼容 helper）
-
-- **`db/`** - 结果数据库：
-  - `database.py`：SQLite 数据库管理
-  - 存储：任务 ID、状态、能量、虚频、错误信息等
-  - 提供 `iter_all_results()`，避免一次性反序列化全部结果
-
-- **其他**：
-  - `analysis.py`：TS 键长分析、频率分析等
-  - `constants.py`：程序路径、任务常量等
-  - `resources.py`：CPU/内存监控
-  - `rescue.py`：TS 失败后的 scan 救援逻辑
-
-  ### TS 失败后的 scan 救援（calc/rescue.py）
-
-  实现要点（只覆盖当前实现）：
-
-  - **起点结构**：优先读取失败 TS 的输入文件 `<work_dir>/<job>.gjf|.com`；若 TS 失败后工作目录已被备份/清理，则回退到 `backup_dir/<job>.gjf|.com`。
-  - **约束与扫描**：对 `ts_bond_atoms` 对应键长做多点扫描，每个点为一次 `opt`。
-    - 约束方式复用 confflow 原生 `freeze`（Gaussian 坐标第二列 `-1`），不依赖 ModRedundant。
-  - **输出组织**：scan 点输出集中写入 `<work_dir>/scan/`（平铺文件），避免产生大量子目录。
-  - **TS 重跑**：选取能量局部极大值点作为初猜后，用原 TS 的 `keyword` 重新跑 TS（保证方法一致）。
-  - **备份**：若配置了 `backup_dir`，TS 任务结束时会把 `scan/` 一并备份到 `backup_dir/<basename(work_dir)>_scan`。
-
-  ### Gaussian checkpoint（`.chk`）作为跨步骤工件
-
-  - ConfFlow 将每个构象映射为稳定的 `job_name`（优先使用 `CID`，例如 `CID=A000001 -> A000001`）。
-  - 当启用 `gaussian_write_chk`（默认开启）时，Gaussian 输入会写出 `%Chk={job_name}.chk`，并随常规备份规则进入对应步骤的 `backups/`。
-  - 当某一步声明 `chk_from_step` 时，会从**指定步骤**（不限定“上一步”）的 `backups/{job_name}.chk` 回填到当前 job 工作目录，并通过 `%OldChk=...` 注入。
 ### 5. `workflow/` - 工作流编排层
 
 **职责**：协调各模块执行，管理工作流逻辑。当前版本已将原单体 `engine.py` 拆分为“编排 + 执行适配 + 展示 + 运行时上下文 + 统计”的多模块结构。
@@ -309,7 +153,6 @@ LICENSE                        # MIT 许可证
   - 入口 `run_workflow()` 负责 prepare / execute / finalize 三段主流程
   - resume 时复用 `resolve_step_output()` 按 step type 校验标准工件，避免把 `search.xyz` 误当成 calc 完成输出
   - calc step 的配置/input digest、stale 判断和复用语义由 `calc.artifacts` 的 `manifest.json` 合同负责
-  - 明确 step type 合同（`confgen/gen/calc/task`）并做早期校验
   - 只要任一步声明 `inputs` 就进入显式 DAG 模式；无 `inputs` 的旧配置继续按声明顺序线性执行
   - 显式 DAG 在初始化运行目录或调用 step handler 前完成未知依赖、环和终端数校验
   - 当前显式 DAG 必须恰好有一个终端 step；不支持多输出聚合
@@ -327,7 +170,6 @@ LICENSE                        # MIT 许可证
 
 - **`step_handlers.py`**：
   - `run_confgen_step` / `run_calc_step` 的执行适配层
-  - 只负责组装 step 上下文、构造 `CalcStepParams`、调用 `CalcStepRunner`、处理失败聚合和返回路径
   - 不再作为 calc artifact/stale/resume 的主语义中心
 
 - **`presenter.py`**：
@@ -355,14 +197,12 @@ LICENSE                        # MIT 许可证
 
 - **`cli.py`**：参数解析（`confflow` 命令）
 - **`main.py`**：工作流主程序入口
-- **`confts.py`**：TS 专用执行器与 keyword 改写工具
 - **`contract.py`**：版本、schema、能力、产物名以及构建身份的 wire contract；`cli.py` 负责发出 capability JSON
 
 ## 设计模式与架构原则
 
 ### 1. 策略模式 (Strategy Pattern)
 
-在 `calc/policies/` 中实现，用于处理不同量子化学程序的差异：
 
 ```python
 # 基类定义
@@ -387,14 +227,12 @@ class OrcaPolicy(CalculationPolicy):
 
 ### 2. 模块化架构
 
-- **分层**：core → config → blocks/calc → workflow
 - **单一职责**：每个模块只处理一个功能域
 - **依赖明确**：`shared` 承担轻量公共边界，`core` 不再反向依赖 `config.schema`
 
 ### 3. 公共入口设计
 
-- 顶层 `confflow.__init__` 暴露轻量官方入口（如 `run_workflow`、`CalcStepRunner`）
-- `confflow.calc.__init__` 暴露 typed calc runner 和低层组件
+- 顶层 `confflow.__init__` 暴露轻量官方入口（如 `run_workflow`）
 - 旧 INI / legacy flat config / `.config_hash` / manager facade 已从主路径移除
 - 仓库内部代码应直接从真实子模块导入，避免重新扩大包初始化耦合
 
@@ -480,10 +318,6 @@ planner、`confflow config validate`）由 Architecture Diet PR-9 退役；V1/V2
 文档在入口处以 `unsupported_workflow_version` / `legacy_workflow_not_executable`
 失败关闭，不做 fallback、不自动 upgrade、不执行。
 
-`confflow.calc`（`confts` CLI 与 `CalcStepRunner`/`TaskRunner`）是独立的 legacy
-计算工具，位于 V4 运行时闭包之外；它读取本地 legacy YAML 时使用自己的
-`confflow.calc.config_model`，不发布任何 schema 或 contract。
-
 ## 测试组织
 
 测试按被测模块分层组织，完整清单见 `docs/TESTING.md`。
@@ -496,37 +330,14 @@ tests/
 ├── test_core.py              # 包导出与核心公共入口
 ├── test_io.py                # XYZ 文件读写、元数据解析
 ├── test_data.py              # 共价半径、元素符号、原子序数
-├── test_models.py            # TaskContext Pydantic 模型
 ├── test_retired_wire_versions.py  # V1/V2/V3 配置 wire 失败关闭闸门
-├── test_keyword_rewrite.py   # TS→scan 关键字改写
 │
-├── test_confgen.py           # confgen 构象生成
-├── test_confgen_validator.py  # 构象验证器
-├── test_confts_keyword.py    # confts 关键字解析
-├── test_confgen_refine_fallbacks.py  # numba 回退路径
 │
-├── test_refine.py            # refine 筛选与去重
-├── test_calc.py              # calc 基础 + task_runner
-├── test_calc_artifacts.py    # manifest 复用与 stale cleanup
-├── test_calc_runner.py       # typed calc runner
-├── test_calc_full.py         # policy 与 typed config 集成
-├── test_policies.py          # Gaussian/ORCA Policy
-├── test_rescue.py            # TS 救援逻辑
-├── test_rescue_ts_scan_paths.py # TS 救援扫描路径测试
-├── test_geometry.py          # 几何解析与终止检测
 │
-├── test_engine.py            # workflow engine
-├── test_export.py            # 导出功能测试
-├── test_rerun_failed.py      # 失败重跑测试
-├── test_runtime_context.py   # 运行时上下文
-├── test_presenter.py         # 步骤展示与报告
-├── test_validation.py        # 输入验证
 │
 ├── test_cli.py               # CLI 参数解析
 ├── test_console.py           # 控制台输出
 ├── test_contracts.py         # 输入/输出契约
-├── test_viz_report.py        # 可视化报告
-└── test_input_snapshot.py    # 输入文件快照
 ```
 
 当前测试套件的文件数与用例数以 `pytest --collect-only -q` 和 CI 输出为准；完整清单见 `docs/TESTING.md`。除主测试文件外，还包含一组 `*_hotspots.py` 用例，专门覆盖回退逻辑、异常路径和历史回归点。
@@ -537,14 +348,6 @@ tests/
 confflow/__init__.py (包入口)
   ├── main.py (工作流主程序)
   │   └── workflow.engine.run_workflow()
-  │       ├── calc/config_model.py (legacy 工具的 typed 配置读取)
-  │       ├── blocks/confgen (构象生成)
-  │       ├── calc/runner.py (量子计算)
-  │       │   ├── calc/policies/* (Gaussian/ORCA)
-  │       │   ├── calc/db/database.py (结果库)
-  │       │   └── calc/components/* (I/O 与执行)
-  │       ├── blocks/refine (构象筛选)
-  │       └── blocks/viz (可视化)
   │
   └── core/
       ├── utils.py (日志、异常、验证)
@@ -578,7 +381,6 @@ confflow/__init__.py (包入口)
 - `itask=ts` 失败时自动改为 `itask=scan`（受 `ts_rescue_scan` 参数控制）
 - 扫描键长空间以找到正确的 TS 结构
 - 若 TS keyword 不含 `freq`，仅使用关键键长漂移作为几何判据
-- 实现在 `calc/rescue.py`
 
 ### 4. 多程序支持
 
@@ -611,14 +413,10 @@ confflow/__init__.py (包入口)
 
 ### 添加新的计算程序
 
-1. 在 `calc/policies/` 中创建新文件，例如 `mopac.py`
 2. 实现 `CalculationPolicy` 基类
-3. 在 `calc/policies/__init__.py` 中注册新程序
-4. 在 `calc/constants.py` 中添加程序常量
 
 ### 添加新的分析工具
 
-1. 在 `blocks/` 中创建新目录
 2. 实现核心处理函数
 3. 提供 `main()` console script 入口
 4. 在 `workflow/engine.py` 中集成

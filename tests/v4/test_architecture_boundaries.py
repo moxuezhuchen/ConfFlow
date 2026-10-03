@@ -40,8 +40,6 @@ ANALYSIS_ROOT = PACKAGE_ROOT / "analysis"
 APPLICATION_ROOT = PACKAGE_ROOT / "application"
 
 FORBIDDEN_IMPORT_PREFIXES = (
-    "confflow.blocks",
-    "confflow.calc",
     "confflow.config",
     "confflow.core",
     "confflow.shared",
@@ -56,7 +54,6 @@ FORBIDDEN_IMPORT_PREFIXES = (
     "confflow.artifact_json",
     "confflow.cli",
     "confflow.main",
-    "confflow.confts",
     "confflow.contract",
     "confflow.install_provenance",
     "confflow.fixture_agent",
@@ -1269,47 +1266,6 @@ class TestConsolidatedHelperAuthorities:
 
         assert gaussian.sanitize_job_name is _naming.sanitize_job_name
         assert orca.sanitize_job_name is _naming.sanitize_job_name
-
-
-class TestLegacyToolingBoundary:
-    """``calc``/``confts``/``blocks`` are tooling, never V4 runtime (PR-5).
-
-    The formal V4 closure must stay free of the legacy calculation tooling,
-    the ``confts`` CLI must keep working, and the calc package facade must
-    stay lazy so the refine tooling does not load the calc execution runtime.
-    """
-
-    def _run(self, script: str) -> subprocess.CompletedProcess[str]:
-        return subprocess.run(
-            [sys.executable, "-c", script],
-            cwd=REPO_ROOT,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-
-    @pytest.mark.parametrize(
-        "entry",
-        (
-            "confflow.v4cli",
-            "confflow.application.v4_entry",
-            "confflow.application.execution",
-            "confflow.application.execution.workflow_adapter",
-            "confflow.control_worker",
-            "confflow.producer",
-        ),
-    )
-    def test_v4_runtime_entries_do_not_load_legacy_tooling(self, entry: str) -> None:
-        script = (
-            f"import sys; import {entry}; "
-            "banned = sorted(m for m in sys.modules if ("
-            "m == 'confflow.calc' or m.startswith('confflow.calc.') or "
-            "m == 'confflow.confts' or m.startswith('confflow.confts.') or "
-            "m == 'confflow.blocks' or m.startswith('confflow.blocks.'))); "
-            "assert not banned, banned"
-        )
-        result = self._run(script)
-        assert result.returncode == 0, f"{entry}: {result.stderr}"
 
 
 class TestProducerImportIsolation:

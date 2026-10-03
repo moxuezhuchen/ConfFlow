@@ -3,7 +3,7 @@
 本文只记录已经落地在代码与测试中的事实。代码/测试是第一权威；本文反映当前实现。
 
 里程碑状态：**V4-1 已完成**（greenfield domain + schema/parser + validator + typed binding graph + deterministic compiler + synthetic WorkItem assembly）。
-V4-1 **不执行**任何 Gaussian/ORCA 原生程序，也不接入旧的 `CalcStepRunner` / `TaskRunner`。
+V4-1 **不执行**任何 Gaussian/ORCA 原生程序，也不接入已删除的旧 calc 运行器。
 
 ## 1. 包边界与依赖规则
 
@@ -48,7 +48,7 @@ confflow/
 
 - `confflow.domain` 不 import 任何其它 `confflow.*`（仅 stdlib、pydantic 之外的第三方：`rfc8785`）。
 - `confflow.workflow.v4` / `confflow.execution` 只允许 import `confflow.domain`、`confflow.execution`、`confflow.workflow.v4`。
-- 禁止 import 前缀：`confflow.config`、`confflow.calc`、`confflow.core`、`confflow.blocks`、`confflow.shared`、`confflow.application`、`confflow.worker_*`、`confflow.control*`、`confflow.cli/main/confts/contract/artifact_json`，以及全部 V2/V3 workflow 模块。
+- 禁止 import 前缀：`confflow.config`、`confflow.core`、`confflow.shared`、`confflow.application`、`confflow.worker_*`、`confflow.control*`、`confflow.cli/main/contract/artifact_json`，以及全部 V2/V3 workflow 模块。
 - `confflow.domain` 中的元素表是 V4 自有的最小副本；`tests/v4/test_elements_drift.py` 与 `confflow.core.data.PERIODIC_SYMBOLS` 交叉校验，防止静默漂移（生产代码不 import legacy）。
 - `import confflow.workflow.v4` 在子进程中验证不会把 V3 runtime / 旧 config / calc 拉进 `sys.modules`。
 
@@ -186,7 +186,7 @@ WorkflowDocument (YAML)
 ## 7. 复用决策（来自低层审计，V4-2 执行前生效）
 
 - REUSE（计划）：`artifact_json.write_atomic_json`、`worker_staging._stage_file` 的 secure-copy 语义、`core/path_policy.py` 的配置无关校验、Gaussian/ORCA 纯渲染/解析函数、`calc/geometry.py` 的 `parse_last_geometry`/`check_termination`、`core/io.py` 的流式 XYZ 读取、`worker_supervision` 的 liveness 规则、`launch_lease` 的 flock 模式。
-- DO_NOT_REUSE：`CalcStepRunner`/`CalcStepRequest`/`CalcStepResult`、`TaskRunner`、`CalculationPolicy` 注册表、`TaskContext`、`GlobalOptions`、V2/V3 canonical fingerprint、manifest/results.db 合同、itask/iprog 映射、`chk_from_step`/`backup_dir`/`ibkout` 语义、worker handoff 的 `input_xyz` envelope。
+- DO_NOT_REUSE：旧 calc 运行器与任务运行器（已删除）、`CalculationPolicy` 注册表、`TaskContext`、`GlobalOptions`、V2/V3 canonical fingerprint、manifest/results.db 合同、itask/iprog 映射、`chk_from_step`/`backup_dir`/`ibkout` 语义、worker handoff 的 `input_xyz` envelope。
 - 原则：复用正确低层能力，替换错误高层抽象；V4-1 不复制任何 legacy 代码。
 
 ## 8. 明确非目标（V4-1）
@@ -215,7 +215,7 @@ WorkflowDocument (YAML)
 # V4-2：New Standard Calculation Engine（已完成）
 
 里程碑状态：**V4-2 已完成**。建立了真正的 standard-calculation vertical slice，
-全程不经过 `input_xyz → CalcStepRunner → output_path`。
+全程不经过旧的 calc 调度链。
 
 ```
 StructureSet → Binding/WorkItem → BatchStepExecutor → WorkItemExecutor
@@ -884,6 +884,6 @@ FINAL CLOSURE READINESS：YES — 在不再改变核心架构的前提下，可�
   两个几何相同的结构不会被合并）。索引越界、与结构原子数不符、矛盾的类型一律报错。
   未提供时，拓扑仍由几何感知得到（`bond_scale`，默认 1.2），行为不变；同时给出 `bond_scale` 与
   `topology_bonds` 属于冲突，报错。
-- **与旧 `confrefine` 的 `AddBond`/`DelBond` 的差异（已接受）：** 同一原子对同时出现在 add 与 del 时，
+- **与旧 refine 工具的 `AddBond`/`DelBond` 的差异（已接受）：** 同一原子对同时出现在 add 与 del 时，
   旧实现先删后加（add 胜），ConfGen 与新实现先加后删（del 胜）；非法条目旧为静默忽略，新为报错；
   声明了拓扑时感知用的 `bond_scale` 由 1.2 变为 ConfGen 的 1.15；来源由逐帧注释改为步骤参数。

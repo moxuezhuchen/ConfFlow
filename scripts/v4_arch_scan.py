@@ -67,12 +67,9 @@ SCOPE: tuple[str, ...] = (
 )
 
 FORBIDDEN_IMPORT_PREFIXES: tuple[str, ...] = (
-    "confflow.calc",
-    "confflow.blocks",
     "confflow.shared",
     "confflow.cli",
     "confflow.main",
-    "confflow.confts",
     "confflow.workflow.engine",
     "confflow.workflow.state",
     "confflow.workflow.v3_runtime",

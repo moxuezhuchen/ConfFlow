@@ -70,89 +70,40 @@ CI 也会执行 `pip check`，用于尽早发现声明依赖与解析结果不�
 | `test_core.py` | package exports, shared entrypoints | 包导出、核心公共入口 |
 | `test_io.py` | core/io | XYZ 文件读写、元数据解析、键长计算 |
 | `test_data.py` | core/data | 共价半径、元素符号、原子序数 |
-| `test_models.py` | core/models | TaskContext、GlobalConfigModel、CalcConfigModel |
 | `test_console.py` | core/console | 控制台输出格式化 |
 | `test_contracts.py` | core/contracts | 输入/输出契约验证 |
-| `test_keyword_rewrite.py` | core/keyword_rewrite | TS→scan 关键字改写 |
 | `test_logging_hotspots.py` | core/logging | 日志重定向、handler 切换热点路径 |
 
 ### 配置层 (`config/`)
 
 | 文件 | 覆盖模块 | 说明 |
 |------|----------|------|
-| `test_validation.py` | workflow/validation | 输入验证与兼容性校验 |
-| `test_producer_defaults.py` | shared/defaults, calc/config_model | `DEFAULT_PROGRAM`/`DEFAULT_TASK` 单一来源与派生一致性 |
 | `test_retired_wire_versions.py` | 配置 wire | V1/V2/V3 文档与版本全部 fail closed（`unsupported_workflow_version`）、`config validate` 退役、`--dry-run`/`--config-show` 开关退役、V4 validate/compile 正常、producer contract 无 V1/V2 面 |
 | `test_example_workflow.py` | confflow.example.yaml | 随包示例是当前 V4 文档且能编译/校验 |
 | `test_v46_cross_repo.py` / `test_v46_cross_repo_e2e.py` | 跨仓库（V4） | 真实 producer contract 字节 → JobDesk V4 解析路径（`JOBDESK_V2_SRC` 可指向 JobDesk 检出；可选依赖） |
 
 > Architecture Diet PR-9 退役了已发布的 V1/V2 配置 wire（`configuration-contract.v1/.v2`、`confflow.workflow.v2` schema、公开 parser/validator、V2 editor manifest/recipe catalog、V2→canonical migration、V2 diagnostic planners）。唯一受支持的配置 wire 是 V4；V1/V2/V3 文档在入口处失败关闭。因此 `test_config_models.py`、`test_editor_manifest.py`、`test_recipe_catalog.py`、`test_configuration_contract_v2.py`、`test_config_contract_v2_cli.py`、`test_jobdesk_contract_compatibility.py`（V2 契约跨仓库闸门）与 `test_pr7_v3_retirement.py` 已删除，由上面的短闸门替代。
 
-### 构象生成 (`blocks/confgen/`)
-
-| 文件 | 覆盖模块 | 说明 |
-|------|----------|------|
-| `test_confgen.py` | confgen/generator | 构象生成核心、链旋转、CLI 入口 |
-| `test_confgen_validator.py` | confgen/validator | 构象验证器 |
-| `test_collision.py` | confgen/collision | 碰撞检测核心与拓扑过滤 |
-| `test_mapping.py` | confgen/mapping | 多输入拓扑映射与柔性链索引转移 |
-| `test_confts_keyword.py` | confts | TS 关键字解析、confts CLI |
-
-### 构象筛选 (`blocks/refine/`)
-
-| 文件 | 覆盖模块 | 说明 |
-|------|----------|------|
-| `test_refine.py` | refine/processor, rmsd_engine | RMSD 去重、能量筛选、虚频过滤 |
-| `test_processor_hotspots.py` | refine/processor | 去重、能量窗口、失败路径热点 |
-| `test_rmsd_engine_hotspots.py` | refine/rmsd_engine | 合法映射去重与拓扑分组热点路径 |
-| `test_refine_graph_rmsd.py` | refine/topology, refine/rmsd_engine | proper Kabsch、精确拓扑分组、跨拓扑隔离、搜索预算与报告 |
-
 ### 回退测试
 
 | 文件 | 覆盖模块 | 说明 |
 |------|----------|------|
-| `test_confgen_refine_fallbacks.py` | confgen, refine | 回退路径、RMSD/collision 边界测试 |
-
-### 量化计算 (`calc/`)
-
-| 文件 | 覆盖模块 | 说明 |
-|------|----------|------|
-| `test_calc.py` | calc 基础 + task_runner + input_helpers | 任务运行器、输入生成、资源计算 |
-| `test_calc_artifacts.py` | calc/artifacts | manifest 复用、stale cleanup、sandbox 边界 |
-| `test_calc_runner.py` | calc/runner | typed runner 执行、manifest 写入与复用 |
-| `test_calc_full.py` | calc policies + typed config | policy 解析/输入生成与 runtime dict 集成 |
-| `test_policies.py` | policies/gaussian, orca | Gaussian/ORCA 输入生成与输出解析 |
-| `test_rescue.py` | calc/rescue, scan_ops | TS 失败救援、约束扫描 |
-| `test_rescue_ts_scan_paths.py` | calc/rescue, scan_ops | TS 救援扫描路径与目录策略 |
-| `test_geometry.py` | calc/geometry | 几何解析、正常终止检测 |
-| `test_input_helpers_hotspots.py` | calc/components/input_helpers | 内存、约束、冻结参数热点路径 |
-| `test_policies_hotspots.py` | calc/policies | Gaussian/ORCA 策略边缘路径 |
-| `test_rescue_hotspots.py` | calc/rescue | TS 救援扫描与重优化热点路径 |
 
 ### 工作流 (`workflow/`)
 
 | 文件 | 覆盖模块 | 说明 |
 |------|----------|------|
-| `test_engine.py` | workflow/engine, helpers | 工作流引擎、断点恢复、步骤调度 |
-| `test_rerun_failed.py` | workflow/rerun_failed | 失败重跑功能测试 |
-| `test_step_handlers.py` | workflow/step_handlers | 步骤执行适配器（confgen/calc 步骤） |
-| `test_runtime_context.py` | workflow/runtime_context | 运行时上下文初始化 |
-| `test_presenter.py` | workflow/presenter | 步骤展示与报告输出 |
-| `test_runtime_and_policy_base_hotspots.py` | workflow/runtime_context, policies/base | 运行时上下文与策略基类热点路径 |
 
 ### 可视化与报告
 
 | 文件 | 覆盖模块 | 说明 |
 |------|----------|------|
-| `test_viz_report.py` | viz/report, core/types | Boltzmann 权重、报告生成、时间格式化 |
 
 ### 其他
 
 | 文件 | 覆盖模块 | 说明 |
 |------|----------|------|
 | `test_cli.py` | cli, main | CLI 参数解析、主入口集成 |
-| `test_input_snapshot.py` | core/io (快照) | Gaussian/ORCA 输入文件生成快照 |
-| `test_collision_hotspots.py` | confgen/collision | Numba/Python 回退执行路径 |
 
 ---
 
@@ -263,7 +214,7 @@ pytest tests/ --cov=confflow --cov-report=term-missing
 
 在公开或部署到新的计算环境前，建议至少手动验证：
 
-1. `confflow --help`、`confgen --help`、`confrefine --help` 能正常运行。
+1. `confflow --help` 能正常运行。
 2. RDKit 能导入，并能完成一个最小 XYZ 的构象生成。
 3. `allowed_executables` 指向的 Gaussian/ORCA 可执行文件存在且不带额外 shell 参数。
 4. 一个最小 Gaussian 或 ORCA `sp` 任务能生成 `results.db`、`output.xyz` / `result.xyz` 和日志。
@@ -277,7 +228,7 @@ pytest tests/ --cov=confflow --cov-report=term-missing
 
 已通过：
 
-- CLI 入口：`confflow --help`、`confts --rewrite-scan-keyword`、`confrefine --help`。
+- CLI 入口：`confflow --help`。
 - ORCA：`sp`、`opt`、`freq`、`opt_freq` 最小水分子真实任务，manifest 均为 `completed`。
 - Gaussian 16：`sp`、`opt`、`freq`、`opt_freq` 最小水分子真实任务，使用独立可写 `GAUSS_SCRDIR`，manifest 均为 `completed`。
 - Gaussian checkpoint 继承：两步 `g16_seed_sp -> g16_readchk_sp`，第二步生成 `%OldChk=WATER001.old.chk`，并从上一阶段 `backups/WATER001.chk` 复制 checkpoint。
@@ -289,7 +240,6 @@ pytest tests/ --cov=confflow --cov-report=term-missing
 - STOP beacon：对 decane ORCA freq 运行期间连续写入 `STOP`，CLI 返回非零，`failed.xyz` 记录 `ErrorKind=stop_requested`。
 - Workflow `calc` steps：ORCA SP 和 Gaussian SP 均完成。
 - `confgen`：butane 旋转搜索生成 27 个 conformer；workflow 方式也完成。
-- `confrefine`：butane conformer 去重筛选完成。
 
 发现的环境和使用注意事项：
 

@@ -393,13 +393,7 @@ def _is_confflow_process_cmdline(cmdline: list[str]) -> bool:
     if not cmdline or "--stop" in cmdline:
         return False
 
-    # NOTE (P2 audit, v1.4.5 Gate A): "confcalc" remains in the
-    # process-recognizer set as a historical entry. Current README,
-    # [project.scripts], and the pyproject CLI entry do not register a
-    # `confcalc` command. Removing this entry requires an independent
-    # code change with its own tests; per the P2 plan this Gate A
-    # stage does not delete or restore a `confcalc` CLI surface.
-    entrypoints = {"confflow", "confts", "confgen", "confrefine", "confcalc"}
+    entrypoints = {"confflow"}
     first = os.path.basename(cmdline[0])
     if first in entrypoints:
         return True
