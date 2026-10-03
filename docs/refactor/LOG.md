@@ -532,3 +532,8 @@
 
 - 对着新契约，JD 在 L2 之上实测 6 个失败（字段清单、4 个表单测试、旧 native 拒绝编译测试）。删除 `confgen.native` 字段/表单控件/迁移提示后：全量 `2466 passed, 7 skipped`（删 1 个提示测试），加 1 个守护测试后 `2467 passed, 7 skipped`；ruff check/format、mypy ok；golden_check（CF C4.3 树 + JD 本分支源码）ok，`jd_contract_key` ok。补丁 handoff/J4.1p.patch（5 个文件，+32/−94），卡片 handoff/J4.1p.md，提示词 handoff/J4.1p-executor-prompt.txt。
 - **用户约束核对**：旧文档的 `confgen.native` 不会被静默丢弃（JD 的文档层本就只改被编辑字段，新增守护测试验证）；但删除迁移提示后，含旧 `native` 的文档在 GUI 内**没有办法移除或转换** `native`，只能由 ConfFlow 校验以 `unknown_member` 报错（失败关闭）。是否需要新逻辑（例如只读提示+移除按钮或自动迁移）交用户决定，属单独升级。
+
+## J4.1' 决定（2026-10-03，用户）
+
+- native 死胡同：不加新逻辑，不单开卡；保持失败关闭（`unknown_member`），数据不丢（守护测试 `test_a_legacy_native_member_survives_editing_other_confgen_fields`）。文档补充：USAGE（`refactor/docs-rewrite`，未推送）写明旧 `confgen.native` 会被拒绝、需手动改为 typed v3，并附 `native.chains → paths` 对照（沿用示例 yaml 写法，注明末端原子端点会被 v3 拒绝）。PLAN-2 登记 N+7（触发条件：首次有用户在 GUI 遇到该死胡同）。
+- 后续顺序确认：J4.1' → C4.2（ConfFlow 钉住版本更新到 J4.1' 提交）→ C4.4。执行器每条命令显式 `cd`，提交前核对分支名为 `refactor/diet-p4`（已写入 J4.1' 卡片与提示词）。
