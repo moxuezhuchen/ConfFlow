@@ -501,3 +501,10 @@
 
 - 原因：JD 的 `test_confgen_v3_jobdesk.py` 要求 manifest 字段清单与 `CONFGEN_FIELD_IDS` 完全相等，ConfFlow 必须先去掉 `confgen.native`；先删 JD 控件会让旧文档编辑时静默丢 `native`。
 - 新顺序：C4.3 → C4.2（re-pin）→ J4.1'（JD 配对删除卡）→ C4.4。J4.1' 中若需要原样保留/迁移旧 native 内容，属新逻辑，单独升级给用户。给执行器的命令此后一律显式 `cd` 到目标工作树。
+
+## C4.3 分诊获批，C4.3a 原型（2026-10-03）
+
+- 用户批准：A 类 31 个删除；B 类 11 项先移植为 typed 测试（C4.3a，先于 C4.3）；两个旧 `seed_required` 测试改写（新旧规则：全枚举无种子→通过；`sampling.cap` 无种子→拒绝，原因码 `invalid_value`；有种子→通过）；契约清单测试去掉 `confgen.native`；`confflow.example.yaml` 改 typed v3 并入白名单（逐条对照 `native.chains`，不引入新默认值，拿不准就问用户）；三个常量保留；预览改接 v3 登记 PLAN-2。**确认：v3 全枚举无需种子是预期行为。**
+- C4.3a 原型（基点 b55b476，新增 1 个文件、11 个测试）：ruff/mypy/black ok；collect 4521→4532；全量 `{"passed": 4522, "skipped": 10}`。三项"故意破坏一行→测试应失败"抽样均失败（见 handoff/C4.3a.md，已还原）。
+- 登记差异（未凑）：①typed 只旋转有二面角框架的内部键（旧 butane `1→4` 改为 C6 链 `2→5`）；②预览与 typed 运行时 `topology_digest` 不相等（预览并入旧校正元数据，typed 不并入），测试不比较摘要，记入 PLAN-2；③pre-geometry 上限 typed 有两道闸，测试把输出上限调高以单独验证 `max_declared_states`。补丁 handoff/C4.3a.patch，卡片 handoff/C4.3a.md，提示词 handoff/C4.3a-executor-prompt.txt。
+- C4.3 预演的 WIP 补丁（源码删除 + 6 个 torsion 测试删除）保存在 /tmp/refactor-acc/C4.3/proto_wip.patch，待 C4.3a 提交后在其上重做完整版。

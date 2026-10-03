@@ -1130,6 +1130,8 @@ N+2. **统一 refine 与 ConfGen 的默认 `bond_scale`（用户 2026-10-02）�
 
 N+4. **`analysis/pes.py` 的产品定位（用户 2026-10-03）：** 没有生产代码导入，只有测试使用（test_v46_pes、test_v45_tspes、test_v46_tspes_e2e、test_v46_debt 清单）。留待决定。本轮不动。`application/execution/memory.py`（测试替身）与 `release_dependencies.py`（scripts 使用）保留。
 
+N+6. **路径预览改接 typed v3（C4.3a 登记，用户 2026-10-03 批准）：** `producer/path_preview.py` 仍接收旧声明形状，并依赖 `confgen_executor` 里保留的 `_DEFAULT_ANGLE_STEP`、`_DEFAULT_BOND_SCALE`、`_LEGACY_MAX_DECLARED_STATES` 三个常量（C4.3 保留，位置见该模块）。改接 v3 时：删除这三个常量的旧名、统一预览与 typed 运行时的 `topology_digest`（预览并入 `add_bond`/`del_bond`/`bond_scale` 元数据，typed 不并入）。
+
 N+5. **可达性工具补扫 `scripts/`（用户 2026-10-03）：** 用单独的小卡，不与删除卡混合。
 
 N+3. **v3 的 `waypoint`（多端点路径）（IS.2 发现；用户 2026-10-03 裁定）：** 用户从未使用，本轮不在 v3 补支持，IS.2 保持编译期拒绝并提示改用显式 `torsions` 声明。**触发条件：**首次实际遇到 `PATH_AMBIGUOUS`（带 `add_bond` 的 TS、金属配合物）时，再为 v3 设计 `waypoint`。IS.5 不受影响。
