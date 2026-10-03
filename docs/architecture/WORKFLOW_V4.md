@@ -863,3 +863,27 @@ FINAL CLOSURE READINESS：YES — 在不再改变核心架构的前提下，可�
 执行最终验收（JobDesk → 真实 producer contract → 真实 V4 workflow →
 真实 Gaussian/ORCA → 中断/resume → local/remote → IRC fan-out →
 端点 Opt/Freq/SP → Analysis/PES → manifest → JobDesk）。
+
+---
+
+# structure_transform `refine` 的对称映射与声明拓扑（事实）
+
+- **去重判据：** `refine` 在同一科学分组（电荷、多重度、`group_key`、`role`、元素序列）内逐对比较，
+  只在**合法的元素/边保持映射**下评估 Kabsch RMSD；某个映射下 RMSD **严格小于**阈值即判重复
+  （`rmsd_threshold_angstrom = 0` 因此不合并任何结构）。映射由有预算的精确搜索得到
+  （`mapping_budget`，默认 1000 个搜索节点/每对结构）；预算耗尽的一对为 *unresolved*，两个结构都保留，
+  步骤 notes 注明。所以只是对称等价原子（甲基氢、叔丁基的臂、苯环取代位）标号不同的构象会被合并。
+- **两个口径：** ConfGen 报告的"带标号状态数"（枚举出的、按标号区分的状态）与 `refine` 之后的
+  "物理构象数"是两个不同口径——σ 相关（对称等价）的结构会被合并，所以后者通常小于前者，这是预期，
+  不是丢失。TS1 的 refine 结果仅作为信息性记录，不作为通过条件。
+- **声明拓扑 `topology_bonds`（可选 native 参数）：** 形状与 ConfGen v3 的 `topology` 相同——
+  `bonds`，或 `add_bond`/`del_bond`；带类型的边（`COVALENT`/`COORDINATION`/`FORMING`/`BREAKING`）；
+  `atoms`；`index_base`（0 或 1，默认 1，与 ConfGen 文档一致）——外加 `coordination` 范围与 `bond_scale`
+  （缺省为 ConfGen 的默认值 1.15）。`refine` 用 ConfGen 的同一构图函数（`planner.build_typed_graph`）建图，
+  因此同一份声明在两边得到完全相同的边集合；映射必须保持非共价边的类型（反应键连在不同原子对上的
+  两个几何相同的结构不会被合并）。索引越界、与结构原子数不符、矛盾的类型一律报错。
+  未提供时，拓扑仍由几何感知得到（`bond_scale`，默认 1.2），行为不变；同时给出 `bond_scale` 与
+  `topology_bonds` 属于冲突，报错。
+- **与旧 `confrefine` 的 `AddBond`/`DelBond` 的差异（已接受）：** 同一原子对同时出现在 add 与 del 时，
+  旧实现先删后加（add 胜），ConfGen 与新实现先加后删（del 胜）；非法条目旧为静默忽略，新为报错；
+  声明了拓扑时感知用的 `bond_scale` 由 1.2 变为 ConfGen 的 1.15；来源由逐帧注释改为步骤参数。

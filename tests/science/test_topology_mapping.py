@@ -444,3 +444,72 @@ def test_a_tiny_budget_is_unresolved_never_a_duplicate():
     assert verdict.status == "unresolved"
     assert verdict.reason == "mapping_budget_exhausted"
     assert _work(verdict) == (6, 0, 0, False)
+
+
+# ---------------------------------------------------------------------------
+# Typed non-covalent edges (C5.3c-1)
+# ---------------------------------------------------------------------------
+
+
+def _typed_pair(kind_a: str, kind_b: str):
+    """Two six-atom rings that differ only in where a typed edge sits."""
+    from confflow.science.topology_mapping import graph_from_adjacency, with_typed_edges
+
+    ring = [[1, 5], [0, 2], [1, 3], [2, 4], [3, 5], [4, 0]]
+    base = graph_from_adjacency(["C"] * 6, ring)
+    return (
+        with_typed_edges(base, [(0, 3, kind_a)]),
+        with_typed_edges(base, [(0, 2, kind_b)]),
+    )
+
+
+def test_typed_edges_are_normalised_and_validated():
+    from confflow.science.topology_mapping import graph_from_adjacency, with_typed_edges
+
+    base = graph_from_adjacency(["C", "C", "C"], [[1], [0], []])
+    graph = with_typed_edges(base, [(2, 0, "FORMING"), (0, 2, "FORMING")])
+    assert graph.typed_edges == ((0, 2, "FORMING"),)
+    assert base.typed_edges == ()
+    with pytest.raises(ValueError):
+        with_typed_edges(base, [(1, 1, "FORMING")])
+    with pytest.raises(ValueError):
+        with_typed_edges(base, [(0, 7, "FORMING")])
+
+
+def test_a_mapping_must_preserve_typed_edges():
+    from confflow.science.topology_mapping import (
+        MappingSearch,
+        fixed_index_isomorphism,
+        graphs_may_be_isomorphic,
+        validate_mapping,
+    )
+
+    across, adjacent = _typed_pair("FORMING", "FORMING")
+    # Same covalent ring and one FORMING edge each, but across the ring versus
+    # between ring neighbours-of-neighbours: no covalent automorphism maps one
+    # onto the other.
+    assert graphs_may_be_isomorphic(across, adjacent)
+    assert not fixed_index_isomorphism(across, adjacent)
+    search = MappingSearch(across, adjacent, 10_000)
+    assert list(search.iter_mappings()) == []
+    assert not validate_mapping(across, adjacent, list(range(6)))
+    # The same typed edge in the same place is an isomorphism, and the search
+    # finds a mapping that preserves it.
+    same, _ = _typed_pair("FORMING", "FORMING")
+    again, _ = _typed_pair("FORMING", "FORMING")
+    found = list(MappingSearch(same, again, 10_000).iter_mappings())
+    assert found and all(validate_mapping(same, again, list(m)) for m in found)
+
+
+def test_different_kinds_are_never_isomorphic():
+    from confflow.science.topology_mapping import graphs_may_be_isomorphic
+
+    forming, _ = _typed_pair("FORMING", "FORMING")
+    breaking, _ = _typed_pair("BREAKING", "BREAKING")
+    assert not graphs_may_be_isomorphic(forming, breaking)
+
+
+def test_graphs_without_typed_edges_search_exactly_as_before():
+    anti, gauche = _molecule("butane_anti"), _molecule("butane_gauche")
+    verdict = compare_frames(anti, gauche, threshold=0.25)
+    assert _work(verdict) == (576, 0, 246, True)

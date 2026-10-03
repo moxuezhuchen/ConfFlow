@@ -47,6 +47,13 @@ Kinds:
   strictly below the threshold.  When the mapping search exhausts its node
   budget (``mapping_budget``, default 1000 nodes per pair) the pair is
   *unresolved*: both structures are kept and the step notes say so.
+  ``topology_bonds`` (optional) declares the bonding topology exactly as a
+  ConfGen v3 ``topology`` does (``bonds`` or ``add_bond``/``del_bond``, typed
+  ``COVALENT``/``COORDINATION``/``FORMING``/``BREAKING`` edges, ``atoms``,
+  ``index_base``, plus ``coordination`` and ``bond_scale``) and is built by the
+  very function ConfGen uses (``planner.build_typed_graph``); typed
+  non-covalent edges must be preserved by every mapping.  Without it the
+  topology is perceived from geometry as before.
   Optional ``max_structures`` truncates in id order.
 - ``filter``: explicit ``min_atoms`` / ``max_atoms`` / ``max_structures``
   selection in canonical id order.  Unknown native keys fail closed.
@@ -97,7 +104,14 @@ REFINE_DEFAULT_MAPPING_BUDGET = 1000
 #: Allowed step-native keys per kind (unknown keys fail closed).
 FILTER_NATIVE_KEYS = frozenset({"max_structures", "min_atoms", "max_atoms"})
 REFINE_NATIVE_KEYS = frozenset(
-    {"rmsd_threshold_angstrom", "bond_scale", "heavy_only", "max_structures", "mapping_budget"}
+    {
+        "rmsd_threshold_angstrom",
+        "bond_scale",
+        "heavy_only",
+        "max_structures",
+        "mapping_budget",
+        "topology_bonds",
+    }
 )
 
 
@@ -273,6 +287,7 @@ class TransformExecutor:
             )
         if not math.isfinite(bond_scale) or bond_scale <= 0:
             raise DomainError(f"refine bond_scale must be a positive number, got {bond_scale!r}")
+        declared = self._declared_topology(native)
         if (
             isinstance(mapping_budget, bool)
             or not isinstance(mapping_budget, int)
@@ -298,7 +313,7 @@ class TransformExecutor:
         notes: list[str] = []
         for group in groups.values():
             ordered = sorted(group, key=lambda item: item.id)
-            frames = {record.id: self._frame(record, bond_scale) for record in ordered}
+            frames = {record.id: self._frame(record, bond_scale, declared) for record in ordered}
             retained: list[StructureRecord] = []
             for record in ordered:
                 witness = self._duplicate_of(
@@ -339,12 +354,75 @@ class TransformExecutor:
         except ValueError as exc:
             raise DomainError(f"refine bond perception failed for {record.id}: {exc}") from exc
 
-    @classmethod
-    def _frame(cls, record: StructureRecord, bond_scale: float) -> dict[str, Any]:
-        """Return the comparison frame (atoms, coordinates, bonding graph) of one record."""
-        from ..science.topology_mapping import graph_from_adjacency
+    @staticmethod
+    def _declared_topology(native: Mapping[str, Any]) -> dict[str, Any] | None:
+        """Resolve ``topology_bonds`` into the normalised ConfGen spec, or ``None``."""
+        raw = native.get("topology_bonds")
+        if raw is None:
+            return None
+        if not isinstance(raw, Mapping):
+            raise DomainError(f"refine topology_bonds must be a mapping, got {raw!r}")
+        allowed = {
+            "index_base",
+            "bonds",
+            "add_bond",
+            "del_bond",
+            "atoms",
+            "coordination",
+            "bond_scale",
+        }
+        unknown = sorted(set(raw) - allowed)
+        if unknown:
+            raise DomainError(
+                f"refine topology_bonds got unknown members {unknown}; allowed {sorted(allowed)}"
+            )
+        if "bond_scale" in native:
+            raise DomainError(
+                "refine got both bond_scale and topology_bonds; with a declared topology the "
+                "perception scale is topology_bonds.bond_scale (default: the ConfGen default)"
+            )
+        spec: dict[str, Any] = {
+            "schema_version": 3,
+            "index_base": raw.get("index_base", 1),
+            "topology": {
+                key: raw[key] for key in ("bonds", "add_bond", "del_bond", "atoms") if key in raw
+            },
+        }
+        if raw.get("coordination") is not None:
+            spec["coordination"] = raw["coordination"]
+        if raw.get("bond_scale") is not None:
+            spec["tolerances"] = {"bond_scale": raw["bond_scale"]}
+        from ..science.confgen.planner import normalize_spec
 
-        graph = graph_from_adjacency(record.atoms, cls._adjacency(record, bond_scale))
+        try:
+            return dict(normalize_spec(spec))
+        except (ValueError, TypeError, KeyError) as exc:
+            raise DomainError(f"refine topology_bonds is invalid: {exc}") from exc
+
+    @classmethod
+    def _frame(
+        cls, record: StructureRecord, bond_scale: float, declared: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        """Return the comparison frame (atoms, coordinates, bonding graph) of one record."""
+        from ..science.topology_mapping import graph_from_adjacency, with_typed_edges
+
+        if declared is None:
+            graph = graph_from_adjacency(record.atoms, cls._adjacency(record, bond_scale))
+        else:
+            from ..science.confgen.planner import build_typed_graph
+
+            try:
+                adjacency, typed = build_typed_graph(record, declared["topology"], declared)
+            except (ValueError, TypeError, KeyError) as exc:
+                raise DomainError(f"refine topology_bonds does not fit {record.id}: {exc}") from exc
+            graph = with_typed_edges(
+                graph_from_adjacency(record.atoms, adjacency),
+                [
+                    (edge.a, edge.b, edge.type.value)
+                    for edge in typed.edges
+                    if edge.type.value != "COVALENT"
+                ],
+            )
         return {
             "atoms": list(record.atoms),
             "coords": np.asarray(record.coordinates, dtype=np.float64),
