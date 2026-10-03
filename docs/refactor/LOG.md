@@ -635,3 +635,9 @@
 - ConfFlow 本地 `main`：f8a1f75 → afdf9df（快进，`git fetch origin main:main`），与 `origin/main` 零差异。
 - JobDesk 本地 `master`：2c7e121 → 3addb94（快进，`git fetch origin master:master`），与 `origin/master` 零差异。
 - 旧顶端仍由两个仓库的备份分支 `refactor/integrated`（f8a1f75、2c7e121）保留；两个主工作树当前分支（`research/realization-handoff`、`implementation/input-simplification`）与工作区均未动。
+
+## 清理（2026-10-04，用户："清理文件"）
+
+- 删除工作树（清理前逐个确认无未提交改动，其提交均已在 `origin/main` / `origin/master` 或对应远端分支中）：CF 的 `cf-c5`、`cf-for-jd`、`exec-cf-is`、`exec-cf`、`l1`、`p4-proto`、`p4`、`side-merge`；JD 的 `accjd`、`exec-jd`、`jd-p4`、`jd-pin`、`jd-pin-cf`、`jd-pin-p4`。保留 `/opt/cf-worktrees/refactor-plan`（`docs/refactor-plan` 分支，计划、验收记录、各卡补丁）。
+- 删除 `/tmp/refactor-acc/`（验收临时输出）与 `/tmp/refactor-venv`。
+- 未删除任何分支。仍存在的本地分支包括 `refactor/diet-p4`、`refactor/diet-c5`、`refactor/diet`、`refactor/integrated`（备份）、`refactor/diet-l1`、`refactor/docs-rewrite`（被 C4.7 取代，未推送）。文中出现的 `/opt/cf-worktrees/<名字>` 路径此后只有 `refactor-plan` 仍存在。
