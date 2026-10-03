@@ -58,7 +58,7 @@ J1       JD 删除 evaluate_compatibility
 Phase 2  JD 删除 V1/V2        J2.1a → J2.1b → J2.2 → J2.3 → J2.1c(修复) → J2.4   (J2.5 可选，需用户确认)
 Phase 3  边界瘦身（两仓成对） J3.1 → J3.2 → C3.1 → C3.2 → C3.3 → J3.3 → C3.4
 IS       输入简化分支改造     IS.1(golden) → IS.1b(修正比较) … IS.0(合入 main) → IS.2 → IS.2b → IS.3 → IS.4(JD) → IS.5(合并到 main，需用户批准)
-Phase 4  ConfFlow chain 路径  C4.1 → J4.1 → C4.2 → C4.3 → C4.4
+Phase 4  ConfFlow chain 路径  C4.1 → C4.3 → C4.2（re-pin）→ J4.1'（JD 配对删除卡）→ C4.4（用户 2026-10-03 改序，见 C4.3 前的说明）
 Phase 5  calc/CLI/core 清理   D11 → C5.1(差异报告，需用户确认) → C5.2 → C5.3 → C5.4 → C5.5 → C5.6 → C5.7 → C5.8
 逻辑尾部                       L1 (CF pairing 常量) ， L2 (JD token)
 ```
@@ -860,22 +860,19 @@ IS 分支上没有 `docs/refactor/`。各卡如需工具，从 `$TOOLS` 运行�
 - **修订（用户 2026-10-03，选 A）：** 验收方原型发现 `test_compiler.py::TestCapabilityVocabulary::test_confgen_requires_explicit_seed` 与 `test_repair_capabilities.py::TestGoatSeedValidation::test_confgen_seed_rules_preserved` 固定的是旧 native 的 `seed_required` 规则（v3 全枚举无需种子；加 `sampling.cap` 而无种子则变成 schema 错误），任何 v3 默认块都无法在不改断言时通过。故白名单增加这两个文件，只在它们的 3 处 `confgen_step(...)` 调用中显式传 `native={"chains": ["1-2-3"]}`（等同旧默认），断言/测试名/其它代码不动。补丁 handoff/C4.1.patch。
 - 验收：标准验收。期望：collect 不变；使用默认值的 6 个文件（`test_repair_capabilities.py`、`test_p0_pr1_authoring.py`、`test_compiler.py`、`test_native_definition_validation.py`、`test_execution_critical_validation.py`、`test_digest_axes.py`）全部通过，且没有任何断言被修改。如果有测试只能靠改断言才能通过，停止并升级（说明它依赖 legacy 行为）。
 
-### J4.1 — JD 不再使用 `confgen.native` 字段（Q9 已确认）
+### J4.1 / C4.2 — 合并为「C4.3 之后的 JD 配对卡」（用户 2026-10-03 改序）
 
-- ID：J4.1 ／ 仓库：JobDesk-v2 ／ 前置：C4.1
-- 类型：`delete`
-- 范围：IS.4 合入 JD master 之后，`git grep -n "confgen.native\|CONFGEN_NATIVE_FIELD" -- src tests` 的全部命中。如果没有命中，本卡记为"无改动"，写入 LOG 并跳过。
-- **前置检查结果（2026-10-03，@2c7e121）：有命中，不能跳过。** `application/editor/confgen_v3.py`（`CONFGEN_NATIVE_FIELD` 定义与字段表）、`gui/new_run/confgen_v3_form.py`（"Native input (legacy)" 表单控件）、`tests/gui/test_intent_live_gui.py`、`tests/gui/test_intent_panels.py`；`application/intent/model.py` 的拒绝提示文字是 IS.4 的行为，保留。
-
-### C4.2 — re-pin 到 J4.1（J4.1 无改动时跳过）
-
-- 同 C3.1。
+- **变更原因：** JD 的 `tests/application/test_confgen_v3_jobdesk.py::test_the_manifest_carries_the_ten_confgen_fields_by_id` 要求 manifest 里的 `confgen.*` 字段清单与 `CONFGEN_FIELD_IDS` 完全相等，JD 的字段清单是 ConfFlow manifest 的镜像，ConfFlow 必须先去掉 `confgen.native`。同时，JD 表单对旧文档的 `native.paths` 有载入与转换提示，旧 native JSON 控件是只读残留；先删控件会让旧文档编辑时悄悄丢掉 `native` 里的内容。
+- 新顺序：**C4.3（CF）→ C4.2（re-pin，JD 钉到含 J4.1' 之前的状态或同步）→ J4.1'（JD 配对删除卡）**。J4.1' 删除：`CONFGEN_NATIVE_FIELD` 与其在 `CONFGEN_FIELD_IDS` / `CONFGEN_BLOCK_KEYS` / `FIELD_TO_BLOCK_KEY` 的条目、表单的 native JSON 控件、旧 `native.paths` 迁移提示与 `_set_paths` 的 native 分支、对应测试（逐条声明）；与 ConfFlow 新契约配对。
+- **用户 2026-10-03 约束：** 旧文档打开时不得静默丢弃 `native` 里的内容。如果为此需要"原样保留"或迁移逻辑，这是新逻辑，**单独升级给用户，不放进删除卡**。
+- `application/intent/model.py` 的拒绝提示（IS.4）与 `intent/sampling.py` 对已有文档 `native.paths` 的读取保持不变。
 
 ### C4.3 — 删除 legacy native 执行路径与 schema
 
 - **登记（用户 2026-10-03）：** `TestCapabilityVocabulary::test_confgen_requires_explicit_seed` 与 `TestGoatSeedValidation::test_confgen_seed_rules_preserved` 固定的是旧 native 的 `seed_required` 规则（C4.1 中改为显式 legacy native）。C4.3 删除旧路径时必须处理：改写为 v3 对应规则，或删除（删除需用户批准）。同时须确认「v3 全枚举无需种子」是预期行为（设计依据：种子是唯一的随机性权威，全枚举无随机性；`PRODUCER_INTENT.md` 同此），并报告用户。
 
-- ID：C4.3 ／ 仓库：ConfFlow ／ 前置：C4.2
+- ID：C4.3 ／ 仓库：ConfFlow ／ 前置：C4.1（原为 C4.2；改序见上）
+- **预演要求（用户 2026-10-03）：** 必须提供真实命令输出，证明 ConfFlow 的跨仓测试用现有 JD 钉住版本对着去掉 `confgen.native` 后的新契约仍通过；并处理两个旧 `seed_required` 测试（改写为 v3 对应规则，或删除——删除需用户批准，先报告再动手）。
 - 目标：删除 `native.chains` / `native.paths` 的执行、解析和 contract 字段。
 - 类型：`delete`
 - 允许修改的文件：
