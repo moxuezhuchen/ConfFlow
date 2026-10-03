@@ -219,7 +219,7 @@ jobs:
 
       - name: Attest final wheel build provenance
         id: attest
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@v4
         with:
           subject-path: dist/confflow-*.whl
           show-summary: true
