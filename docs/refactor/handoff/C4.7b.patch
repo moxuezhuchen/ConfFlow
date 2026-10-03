@@ -1,0 +1,12 @@
+diff --git a/docs/architecture/WORKFLOW_V4.md b/docs/architecture/WORKFLOW_V4.md
+index da76548..cd7dc0a 100644
+--- a/docs/architecture/WORKFLOW_V4.md
++++ b/docs/architecture/WORKFLOW_V4.md
+@@ -1,5 +1,7 @@
+ # ConfFlow Workflow V4 架构（V4-1 Greenfield Core + Compiler）
+ 
++> 本文为历史设计记录，部分描述已被取代，以 ARCHITECTURE.md 为准。
++
+ 本文只记录已经落地在代码与测试中的事实。代码/测试是第一权威；本文反映当前实现。
+ 
+ 里程碑状态：**V4-1 已完成**（greenfield domain + schema/parser + validator + typed binding graph + deterministic compiler + synthetic WorkItem assembly）。
