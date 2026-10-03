@@ -389,3 +389,6 @@
 - 工具漏洞：run_sharded.py 以前会悄悄漏掉“收集阶段就报错”的测试文件；已修复（现在直接报错退出）。据此发现 IS.0 合并后 tests/v4/test_producer_authoring_boundary_coverage.py（IS 分支新增）仍 import 已删的 compare_identities / evaluate_compatibility，已在 IS 分支追加提交 fe2acf0 删除只守护已删函数的 4 个测试与未用辅助函数。此前所有已验收卡片的 collect 数量都与期望一致，未受该漏洞影响。
 - IS.2 补丁（基点 fe2acf0）：全量 5138 passed，collect +53，golden：contract 与 IS.0 检查点一致；engine 报告与 IS.0 检查点同批同字节。
 - 发现：legacy 路径的 `waypoint` 在 typed v3 中没有对应形式，IS.2 之后 intent 里带 waypoint 的路径在编译期被拒绝（见 PLAN IS.2 与 PLAN-2）。
+
+## C5.3b（侧分支）— 验收通过（2026-10-03）
+- 执行：外部模型 glm-5.3-flash；CF refactor/diet-c5 efbaecd（父 a261bbf），一次通过。与 handoff/C5.3b-src-tests.patch 字节一致；ruff/mypy 通过；全量 4123 passed / 12 skipped；新测试 15 passed。已推送（refactor/*）。
