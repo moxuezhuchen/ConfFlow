@@ -42,13 +42,11 @@ from .contract import (
 from .core.contracts import ExitCode, cli_output_to_txt, output_txt_path_for_input
 from .core.exceptions import (
     ConfFlowError,
-    PathSafetyError,
 )
 from .core.io import parse_gaussian_input_text, write_xyz_file
 from .core.path_policy import validate_managed_path
 from .core.utils import get_logger
 from .install_provenance import read_install_provenance
-from .workflow.export import NoExportableResultsError, export_results
 
 # Package initialization suppresses import-time warnings for the real probes.
 _HANDSHAKE_PROBE = any(flag in sys.argv[1:] for flag in ("--version", "--capabilities"))
@@ -259,23 +257,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="Stop all running ConfFlow tasks, including child processes",
     )
     parser.add_argument(
-        "--export",
-        dest="export_work_dir",
-        help="Export existing workflow results from a work directory without running ConfFlow",
-    )
-    parser.add_argument(
-        "--format",
-        choices=("csv", "json", "text"),
-        default="csv",
-        help="Output format for --export (csv/json, default: csv)",
-    )
-    parser.add_argument(
         "-o",
         "--output",
-        help=(
-            "Output file for --export (default: <work_dir>/confflow_results.<format>), "
-            "or output directory for --rerun-failed"
-        ),
+        help="Output directory for --rerun-failed",
     )
     parser.add_argument(
         "--rerun-failed",
@@ -409,13 +393,7 @@ def _is_confflow_process_cmdline(cmdline: list[str]) -> bool:
     if not cmdline or "--stop" in cmdline:
         return False
 
-    # NOTE (P2 audit, v1.4.5 Gate A): "confcalc" remains in the
-    # process-recognizer set as a historical entry. Current README,
-    # [project.scripts], and the pyproject CLI entry do not register a
-    # `confcalc` command. Removing this entry requires an independent
-    # code change with its own tests; per the P2 plan this Gate A
-    # stage does not delete or restore a `confcalc` CLI surface.
-    entrypoints = {"confflow", "confts", "confgen", "confrefine", "confcalc"}
+    entrypoints = {"confflow"}
     first = os.path.basename(cmdline[0])
     if first in entrypoints:
         return True
@@ -582,33 +560,6 @@ def main(
 
     if args.stop:
         return stop_all_confflow_processes()
-
-    if args.export_work_dir:
-        if args.format not in {"csv", "json"}:
-            print("Error: --export supports --format csv or json", file=sys.stderr)
-            return ExitCode.USAGE_ERROR
-        try:
-            result = export_results(
-                args.export_work_dir,
-                output_format=args.format,
-                output_path=args.output,
-            )
-        except (FileNotFoundError, PathSafetyError) as e:
-            print(f"Error: {e}", file=sys.stderr)
-            return ExitCode.USAGE_ERROR
-        except NoExportableResultsError as e:
-            for warning in e.warnings:
-                print(f"Warning: {warning}", file=sys.stderr)
-            print(f"Error: {e}", file=sys.stderr)
-            return ExitCode.RUNTIME_ERROR
-        except (OSError, ValueError) as e:
-            print(f"Error: {e}", file=sys.stderr)
-            return ExitCode.RUNTIME_ERROR
-
-        for warning in result.warnings:
-            print(f"Warning: {warning}", file=sys.stderr)
-        print(f"Exported {result.row_count} result row(s) to {result.output_path}")
-        return ExitCode.SUCCESS
 
     if args.rerun_failed_step_dir:
         # Formal runtime cutover (worker I): the legacy rerun-failed glue is

@@ -7,15 +7,6 @@ confflow/
 ├── confflow/              # 核心包
 │   ├── main.py            # 工作流主程序
 │   ├── cli.py             # 命令行入口
-│   ├── confts.py          # TS 专用执行器
-│   ├── blocks/            # 工作流步骤块
-│   │   ├── confgen/       # 构象生成
-│   │   ├── refine/        # 结果筛选与精炼
-│   │   └── viz/           # 可视化与报告
-│   ├── calc/              # 量子计算核心
-│   │   ├── policies/      # 程序特定策略 (Gaussian/Orca)
-│   │   ├── components/    # 执行器与任务管理
-│   │   └── db/            # 结果数据库
 │   ├── config/            # 配置加载与校验
 │   ├── core/              # 基础 IO、数据、模型与工具函数
 │   └── workflow/          # 工作流引擎
@@ -83,9 +74,7 @@ ruff check confflow tests
 ## 当前推荐入口
 
 - 工作流主入口：`confflow.workflow.run_workflow` 或顶层 `confflow.run_workflow`
-- workflow -> calc 执行入口：`confflow.calc.runner.CalcStepRunner`
 - typed 配置入口：`confflow.config.models.WorkflowConfig` / `CalcStepParams`
-- calc step 工件边界：`confflow.calc.artifacts.CalcArtifactManager` 和 `manifest.json`
 
 不要为新代码新增 INI settings、legacy flat calc config、`.config_hash` MD5 兼容或 `ChemTaskManager` 依赖。
 
@@ -99,7 +88,6 @@ ruff check confflow tests
 
 - `docs/USAGE.md`：快速开始指南
 - `docs/COMMAND_REFERENCE.md`：所有命令的完整参考
-- `docs/KEYWORD_REFERENCE.md`：YAML 配置关键字
 
 ## 运行测试
 
@@ -161,77 +149,11 @@ rm -rf .pytest_cache_temp .mypy_cache .ruff_cache confflow.egg-info build dist h
 
 ## 核心模块说明
 
-### blocks/confgen - 构象生成
-
-**主要类与函数：**
-- `ConformerGenerator` - 构象生成核心类
-- `gen_confs()` - 生成初始构象集（CLI 入口）
-
-**扩展点：**
-- 在 `generator.py` 中添加新的构象生成策略。
-
-### calc - 量子计算
-
-**架构：**
-- `calc.runner.CalcStepRunner`：workflow 调用 calc 的 typed 执行入口
-- `calc.artifacts.CalcArtifactManager`：calc step 的 manifest / stale / reuse 契约边界
-- `policies/`：定义不同程序的输入生成与输出解析逻辑（如 `GaussianPolicy`, `OrcaPolicy`）。
-- `components/task_runner.py`：管理单个任务的生命周期（生成、执行、解析、救援）。
-- `components/executor.py`：底层 shell 命令执行。
-
-**分层建议：**
-- 新功能如果影响 calc step 工件复用、manifest、stale/resume 判定，应优先落在 `calc.artifacts`
-- 新功能如果只是 workflow 编排，应落在 `workflow.engine` / `workflow.step_handlers`
-- 不要在 `workflow.step_handlers` 中再实现一套 artifact/stale/resume 语义
-
-**支持的程序：**
-- Gaussian 16
-- ORCA 6.0+
-
-**扩展新程序：**
-1. 在 `calc/policies/` 下创建新的 Policy 类，继承自 `CalculationPolicy`。
-2. 实现 `generate_input` 和 `parse_output` 方法。
-3. 在 `calc/policies/__init__.py` 中注册新程序。
-
-## workflow -> calc 调用约定
-
-推荐流程：
-
-1. workflow 侧用 `config.models.CalcStepParams` 组装 typed calc config。
-2. `workflow.step_handlers` 只组装 step 上下文并调用 `CalcStepRunner`。
-3. `CalcStepRunner` 内部协调 manifest、任务构建、执行、结果库和 auto-clean。
-
-不推荐的新依赖方式：
-
-- 在 workflow 新代码里直接拼 manifest / stale / resume 逻辑
-- 新增 INI settings、legacy flat config 或 `.config_hash` 兼容路径
-
-### blocks/refine - 结果筛选
-
-**主要功能：**
-- 能量窗口筛选
-- RMSD 去重
-- 虚频过滤
-- 结构有效性检查
-
-### core/utils.py - 工具函数
-
-**核心工具：**
-- `ConfFlowLogger` - 日志系统
-- `fast_rmsd()` - 快速 RMSD 计算
-
-### blocks/viz - 可视化
-
-**主要功能：**
-- 生成文本报告（可合并到 .txt 输出）。
-- 能量分布与收敛轨迹可视化。
-
 ## 添加新功能的步骤
 
 ### 1. 新的量子化学程序支持
 
 **文件修改：**
-- `confflow/calc/policies/`：添加新的 Policy 实现。
 - `confflow/config/models.py`：如果需要新的程序特定配置项，更新 typed model。
 
 **示例：**
@@ -248,13 +170,11 @@ class MyProgPolicy(CalculationPolicy):
 ### 2. 新的构象生成策略
 
 **文件修改：**
-- `confflow/blocks/confgen/generator.py`：添加新的生成逻辑。
 - `confflow/config/models.py`：添加新参数。
 
 ### 3. 新的筛选条件
 
 **文件修改：**
-- `confflow/blocks/refine/processor.py`：添加新的筛选逻辑。
 
 ## 性能优化
 

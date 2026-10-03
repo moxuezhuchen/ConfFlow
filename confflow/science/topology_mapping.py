@@ -17,15 +17,15 @@ from __future__ import annotations
 import hashlib
 import re
 from collections.abc import Iterator, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 import numpy as np
 
-from ...core.bonding import build_adjacency
-from ._compat import load_refine_data
+from ..core.bonding import build_adjacency
+from ..core.data import GV_COVALENT_RADII
+from ..core.data import PERIODIC_SYMBOLS as _periodic_symbols
 
-_periodic_symbols, GV_COVALENT_RADII = load_refine_data()
 PERIODIC_SYMBOLS: tuple[str, ...] = tuple(_periodic_symbols)
 
 BOND_SCALE_FACTOR = 1.2
@@ -75,6 +75,10 @@ class Graph:
     atomic_numbers: tuple[int, ...]
     adjacency: tuple[tuple[int, ...], ...]
     fingerprint: bytes
+    #: Declared non-covalent edges ``(low, high, kind)`` (``COORDINATION``,
+    #: ``FORMING``, ``BREAKING``), sorted.  They are not in ``adjacency``; a
+    #: mapping must send every one of them onto an edge of the same kind.
+    typed_edges: tuple[tuple[int, int, str], ...] = ()
 
     @property
     def n(self) -> int:
@@ -307,10 +311,28 @@ def graph_from_adjacency(elements: Sequence[str], adjacency: Sequence[Sequence[i
     return _graph_from_parts(symbols, numbers, tuple(rows))
 
 
+def with_typed_edges(graph: Graph, typed_edges: Sequence[tuple[int, int, str]]) -> Graph:
+    """Return *graph* carrying declared non-covalent edges (normalised and sorted)."""
+    normalised = {(min(a, b), max(a, b), str(kind)) for a, b, kind in typed_edges}
+    for a, b, _kind in normalised:
+        if a == b or not 0 <= a < graph.n or not 0 <= b < graph.n:
+            raise ValueError(f"invalid typed edge ({a}, {b}) for {graph.n} atoms")
+    return replace(graph, typed_edges=tuple(sorted(normalised)))
+
+
+def _typed_kind_counts(graph: Graph) -> tuple[tuple[str, int], ...]:
+    counts: dict[str, int] = {}
+    for _a, _b, kind in graph.typed_edges:
+        counts[kind] = counts.get(kind, 0) + 1
+    return tuple(sorted(counts.items()))
+
+
 def fixed_index_isomorphism(graph_a: Graph, graph_b: Graph) -> bool:
     """Check whether the fixed atom numbering already proves graph equality."""
     return (
-        graph_a.atomic_numbers == graph_b.atomic_numbers and graph_a.adjacency == graph_b.adjacency
+        graph_a.atomic_numbers == graph_b.atomic_numbers
+        and graph_a.adjacency == graph_b.adjacency
+        and graph_a.typed_edges == graph_b.typed_edges
     )
 
 
@@ -321,6 +343,8 @@ def graphs_may_be_isomorphic(graph_a: Graph, graph_b: Graph) -> bool:
     if graph_a.element_counts != graph_b.element_counts:
         return False
     if graph_a.degree_sequence != graph_b.degree_sequence:
+        return False
+    if _typed_kind_counts(graph_a) != _typed_kind_counts(graph_b):
         return False
     return graph_a.fingerprint == graph_b.fingerprint
 
@@ -345,6 +369,11 @@ def validate_mapping(graph_a: Graph, graph_b: Graph, mapping: Sequence[int]) -> 
         for neighbor in row:
             if mapped_i not in adjacency_b[mapping[neighbor]]:
                 return False
+    kinds_b = {(a, b): kind for a, b, kind in graph_b.typed_edges}
+    for a, b, kind in graph_a.typed_edges:
+        low, high = sorted((mapping[a], mapping[b]))
+        if kinds_b.get((low, high)) != kind:
+            return False
     return True
 
 
@@ -457,6 +486,10 @@ class MappingSearch:
             grouped.setdefault((numbers_b[other], len(adjacency_b_sets[other])), []).append(other)
         candidates_by_key = {key: tuple(value) for key, value in grouped.items()}
 
+        kinds_a = {(a, b): kind for a, b, kind in graph_a.typed_edges}
+        kinds_b = {(a, b): kind for a, b, kind in graph_b.typed_edges}
+        typed = bool(kinds_a or kinds_b)
+
         used = [False] * n
         mapping = [-1] * n
         mapped_neighbor_count = [0] * n
@@ -482,6 +515,11 @@ class MappingSearch:
                 for assigned in assigned_stack:
                     assigned_to = mapping[assigned]
                     if (assigned in neighbors_a) != (assigned_to in neighbors_b):
+                        valid = False
+                        break
+                    if typed and kinds_a.get(
+                        (min(vertex, assigned), max(vertex, assigned))
+                    ) != kinds_b.get((min(other, assigned_to), max(other, assigned_to))):
                         valid = False
                         break
                 if valid:

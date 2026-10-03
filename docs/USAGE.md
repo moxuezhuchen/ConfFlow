@@ -10,12 +10,9 @@ pip install -e .
 
 ## 2. 工具总览
 
-本项目提供 4 个公开命令行工具（安装后可直接调用）：
+本项目提供 1 个公开命令行工具（安装后可直接调用）：
 
 - `confflow`：按 YAML 工作流调度（当前支持 `confgen` / `calc` 步骤，并在流程结束后自动生成报告）
-- `confgen`：构象生成（链模式）
-- `confrefine`：构象去重/筛选（RMSD/能量窗口/虚频过滤）
-- `confts`：TS 专用执行器/工具（TS 失败后 scan 救援、keyword 改写）
 
 所有 CLI 的运行日志默认写入输入目录中的 `<input_basename>.txt`。
 
@@ -166,87 +163,6 @@ ConfFlow 对每个构象会维护一个稳定的 **CID**（写在 XYZ comment me
 
 以便从 chk 继承波函数与几何信息。
 - `step_xx/results.db`：任务结果库（按 `job_name` / `CID` 记录 success/failed/skipped 与 error 详情；统计默认读取每个任务的最新状态）
-
-## 4. confgen：构象生成（链模式）
-
-### 4.1 重要说明
-
-- 已移除“自动柔性键识别”，必须用 `--chain` 指定要旋转的链。
-- 原子编号均为 **1-based**。
-
-### 4.2 命令格式
-
-```bash
-confgen <mol.xyz> [<angle_step>] --chain <a-b-c-...> [--steps <s1,s2,...> | --angles "..." ] [--rotate_side left|right] [-y] [-opt]
-```
-
-### 4.3 常用示例
-
-- 默认角度步长=120（链模式）：
-
-```bash
-confgen mol.xyz --chain 1-2-3-4-5 --steps 180,180,180,180 -y
-```
-
-- 显式角度列表（每根键用 `;` 分隔，每根键内部用 `,` 分隔角度）：
-
-```bash
-confgen mol.xyz --chain 1-2-3-4-5 --angles "0,120,240;0,60,120,180;180;0,120" -y
-```
-
-### 4.4 主要参数
-
-- `--chain`：链（可重复多次）
-- `--steps`：每根键的角度步长列表（与链内键数一致）
-- `--angles`：每根键的角度集合（优先于 `--steps`）
-- `--rotate_side`：旋转链的哪一侧（默认 `left`，即包含链首原子的一侧）
-- `-y/--yes`：自动确认，不交互
-- `--opt/--optimize`：MMFF94s 预优化
-
-可选：手动修正拓扑/旋转约束（用于 XYZ 猜键不可靠、金属配位/闭环等场景）：
-
-- `--add_bond a b`：强制添加键（可重复）
-- `--del_bond a b`：强制删除键（可重复）
-- `--no_rotate a b`：禁止旋转指定键（可重复；仅对链上键生效）
-
-输出：当前目录生成 `search.xyz`（多帧 XYZ）。
-
-补充说明：多输入链模式下，`search.xyz` 会保留每个输入构象原始的原子顺序，不会被参考输入的元素顺序覆盖。
-
-## 5. confrefine：构象后处理
-
-### 5.1 命令格式
-
-```bash
-confrefine <input.xyz> [-o <output.xyz>] [-t <rmsd>] [--ewin <kcal/mol>] [--imag <n>] [--noH] [-n <max>] [--dedup-only] [--keep-all-topos] [-w <workers>]
-```
-
-> `-w/--workers` 仅为向后兼容而保留：当前 Refine 不使用该值控制拓扑/RMSD 去重的并行度，去重以确定性的串行方式执行，因此该参数不会改变 Refine 去重的并发度或输出。显式传入时会在 stderr 给出提示。
-
-### 5.2 输出
-
-- 默认输出为 `<input>_cleaned.xyz`，或由 `-o` 指定。
-- 若 `--imag` 或 `--ewin` 过滤后没有剩余构象，程序会提示 `No conformers remain after filtering.` 并直接结束，不再进入 RMSD 去重。
-
-## 6. Calc step 与 TS 救援
-
-量化计算通过工作流中的 `type: calc` step 执行。该 step 读取 YAML 中的 typed 配置，并在 step 目录中维护 `manifest.json`、`results.db`、`result.xyz` 与 `failed.xyz`。
-
-### 6.1 TS 失败后的 scan 救援（g16）
-
-当 `itask=ts` 任务失败（例如 freq 判据不满足/关键键长判据失败/运行异常）且配置启用 `ts_rescue_scan=true` 时，ConfFlow 会尝试自动救援：
-
-- **起点结构来源**：优先使用“失败 TS 的输入文件”中的结构（`<work_dir>/<job>.gjf|.com`）；若 TS 失败后已被备份/清理，则会在 `backup_dir/<job>.gjf|.com` 中继续寻找。
-- **扫描方式**：对 `ts_bond_atoms` 指定的键长做多点优化扫描。
-  - 每个点：先把目标键长设到指定值，然后执行 `opt(...)`。
-  - **约束方式**：使用 confflow 的 `freeze` 机制冻结 `ts_bond_atoms` 两个原子（Gaussian 输入坐标第二列写 `-1`），不依赖 `modredundant`。
-- **目录结构**：scan 点输出集中在 `<work_dir>/scan/` 下（不再为每个点创建大量子目录）。
-- **文件命名**：扫描点作业名统一使用格式化后的 **键长数值** (如 `1.746.log`)，方便用户快速定位特定区域的计算。
-- **Scan 表格输出**：会在 `<work_dir>/scan/scan_table.txt` 写入“键长-能量”关系表（标记能量最高点 `MAX`），并同样记录到 `<input>.txt`（终端默认无输出）。
-- **选峰与 TS 重跑**：从 scan 能量曲线中选取局部极大值点作为 TS 初猜，然后用原始 TS 的 `keyword` 重新计算 TS（保持与主流程一致的方法/基组/外部势能等）。
-- **结果汇总**：若 TS rescue 成功，运行时结果对象会包含内部 provenance 标记 `rescued_by_scan=true` 与 `scan_peak_bond`；当前这些字段仅存在于运行时结果对象，不会写入最终 `result.xyz` 或结果数据库（`ts_bond_atoms`/`ts_bond_length` 则会按常规流程写入）。
-
-备注：`scan/` 目录会随该 TS 任务一并备份（若配置了 `backup_dir`）。备份位置为 `<work_dir>/<step>/backups/<job>_scan/`，其中也会包含 `scan_table.txt`。
 
 ## 7. YAML 配置：工作流格式
 
