@@ -514,3 +514,10 @@
 - **C4.3a**：CF `refactor/diet-p4` `23251fd`。验收方独立核对：diff 与 handoff/C4.3a.patch 逐字相同；ruff/mypy ok；全量 `{"passed": 4522, "skipped": 10}`；collect 4532。**验收疏漏（自我披露）**：验收 C4.3a 时没有跑 golden；C4.3a 新增的 typed 测试会产生 6 个新的引擎报告，这些报告未纳入基线，到 C4.3 原型的 golden 才发现，现随 C4.3 检查点（`checkpoints/C4.3/engine_reports`）纳入，内容为新增文件，已有报告无任何差异。
 - **C4.3 原型**（基点 23251fd，33 个文件）：ruff/mypy/black ok；collect 4532→4483（−51 +2）；全量 `{"passed": 4473, "skipped": 10}`；跨仓测试用现有 JD 钉住版本 edb068a 对着去掉 `confgen.native` 后的新契约：`7 passed`；golden ok（TS1 三项 ok，引擎报告无差异，仅 `TestLegacyRegressions::test_v3_filenames_vs_legacy_compat` 随测试删除）；契约对 IS.5：boundary 逐字节相同，contract 只少 `confgen.native` 字段/escape hatch 块/两个 schema def，`StepModel.confgen` 收窄为 v3，其余字段内容与顺序不变。三个常量保留在 `confgen_executor.py` 顶部，引用方 `path_preview.py` 与一项断言测试，无悬空引用。补丁 handoff/C4.3.patch，卡片 handoff/C4.3.md，提示词 handoff/C4.3-executor-prompt.txt。
 - 待用户确认：示例工作流 `native.chains` → `paths`（`move: start, step: 120`，保留种子）的转换，及 v3 对末端键拒绝这一差异。
+
+## 示例工作流转换获批（2026-10-03）
+
+- 用户同意 `native.chains` → `paths: [{start: 1, end: 4, move: start, step: 120}]`，并要求：对照证据（见 handoff/C4.3.md E 节）、注释一行"起止原子须为非末端原子"、USAGE/LOG 记录"v3 比旧路径严格，拒绝末端原子端点（几何上 no-op）"、此后每张验收卡清单含 golden_check（已写入 ACCEPTANCE.md）。
+- 对照结果：`_legacy_paths_to_v3` 对 `chains` 返回 `None`（设计如此），故对同链的 `paths` 写法调用后与手写 v3 块逐字段一致；旧 chain 与 v3 在含氢丁烷上 27/27 一对一匹配（最大 RMSD 1.5e-15）。示例测试本身不绑定结构；演示分子中原子 1、4 的度数不为 1（非末端）。
+- **v3 比旧路径严格：拒绝末端原子端点（几何上 no-op）。** 迁移旧文档时，起止原子须为有可测二面角的非末端原子。
+- 补丁已更新（示例 yaml 增一行注释），handoff/C4.3.patch 重新生成，33 个文件，+7963/−2364，`git apply --check` 通过。

@@ -187,3 +187,8 @@ python3 $TOOLS/golden_check.py --base $BASE --cf <对应 CF 提交的工作树> 
    `python3 docs/refactor/tools-acc/deleted_modules_check.py cf --tree <CF 工作树> <被删模块…>`（CF，自动屏蔽可编辑安装钩子）；
    `python3 docs/refactor/tools-acc/deleted_modules_check.py jd --tree <JD 工作树> <被删模块…>`（JD，`PYTHONPATH=<树>/src`）。退出码 0 才算通过。JD 全量测试经 `run_jd_tests.sh` 运行，其 `PYTHONPATH=$JD_DIR/src`，`jobdesk_v2` 解析到被测 JD 树（验收方已实测 accjd）。
 2. **CF 全量测试一律用 `tools-acc/run_sharded.py`**（它设置 `PYTHONPATH=noeditable:<树>`），不得直接 pytest。
+
+
+## 补充（用户 2026-10-03）
+
+每张验收卡的清单里必须包含 `golden_check.py`（TS1 三后端、引擎报告、契约/边界摘要），不得省略。引擎报告的基线是 B0.1 加上各检查点（`checkpoints/IS.5`、`checkpoints/C4.3` …）的 `engine_reports` 叠加；新增测试产生新报告时，随该卡补入检查点。

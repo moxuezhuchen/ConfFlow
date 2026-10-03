@@ -1,5 +1,5 @@
 diff --git a/confflow.example.yaml b/confflow.example.yaml
-index d2fb88c..13a2e64 100755
+index d2fb88c..67695aa 100755
 --- a/confflow.example.yaml
 +++ b/confflow.example.yaml
 @@ -23,10 +23,12 @@
@@ -19,7 +19,7 @@ index d2fb88c..13a2e64 100755
  #
  #   executor: calculation       一次量子化学计算
  #     calculation.program       "orca" / "g16"（真实注册表为准）
-@@ -81,9 +83,10 @@ steps:
+@@ -81,9 +83,11 @@ steps:
        structure:
          source: {run: structures}
      confgen:
@@ -29,6 +29,7 @@ index d2fb88c..13a2e64 100755
 +      schema_version: 3
 +      index_base: 1
 +      paths:
++        # start/end must be non-terminal atoms (they need a measurable dihedral frame).
 +        - {start: 1, end: 4, move: start, step: 120}
        seed: 20260928
      resources:
