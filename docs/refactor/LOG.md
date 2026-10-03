@@ -553,3 +553,8 @@
 
 - **C4.5**（死代码，5 个文件，+0/−144）：`build_chain_rotors`、`cut_component` 包装（零调用方）及再导出；C4.3 之后无引用的 6 个测试辅助函数。collect 4483 不变；全量 `{"passed": 4473, "skipped": 10}`；ruff/mypy ok；golden_check ok。补丁 handoff/C4.5.patch，卡片 handoff/C4.5.md，提示词 handoff/C4.5-executor-prompt.txt。前置 C4.4（文件不相交）。
 - **C4.6**（脚本说明，2 个文件，+22/−28，纯 docstring）：`architecture_metrics.py`、`v4_arch_scan.py` 的过时说明；脚本输出不变；`v4_arch_scan.py` 输出 `OK: 50 entry files clean`；相关测试 156 passed。补丁 handoff/C4.6.patch，卡片 handoff/C4.6.md，提示词 handoff/C4.6-executor-prompt.txt。`architecture_metrics.py` 里针对已删包的统计代码（CALC_/V1_/V2_/V3_ 全为 0）本轮不删（会改变输出结构），待用户另行决定。
+
+## C4.4 验收通过（2026-10-03）
+
+- CF `refactor/diet-p4` `ea93daa`。验收方独立核对：diff 与 handoff/C4.4.patch 逐字相同；分支名 `refactor/diet-p4`；ruff/mypy ok；三个函数 grep 无命中；C4.5/C4.6 补丁仍可在其上应用；全量 `{"passed": 4473, "skipped": 10}`；golden_check ok；未推送。
+- C4.5 卡片的 HEAD 已填为 ea93daa；C4.6 卡片的 HEAD 待 C4.5 验收后填入。
