@@ -1,0 +1,3 @@
+tests/v4/test_architecture_boundaries.py::test_legacy_module_inventory_is_intentional[confflow.blocks.confgen]
+tests/v4/test_architecture_boundaries.py::test_legacy_module_inventory_is_intentional[confflow.blocks.refine]
+tests/v4/test_architecture_boundaries.py::test_legacy_module_inventory_is_intentional[confflow.blocks]

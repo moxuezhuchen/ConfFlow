@@ -410,3 +410,8 @@
 
 ## C5.3c-1（侧分支）— 验收通过（2026-10-03）
 - 执行：外部模型 glm-5.3-flash；CF refactor/diet-c5 6521581（父 efbaecd），一次通过。与补丁字节一致；提交信息 21 个测试名与清单逐行相同；ruff/mypy 通过；全量 4144 passed / 12 skipped。已推送（refactor/*）。
+
+## C5.3d+C5.4 补丁已备（2026-10-03，验收方原型）
+- 基点 6521581；35 个文件；全量 3937 passed / 10 skipped，collect 4156→3947（−212 +3）；golden（--removed-nodes）ok，engine 报告无差异。
+- 发现：`git rm` 后目录里残留的 `__pycache__` 会让 `confflow.blocks` 仍作为命名空间包可被 import（deleted_modules_check 报出）；卡片要求应用补丁后 `rm -rf confflow/blocks`。另发现 `test_optional_numba` 的两个测试在本环境为 skipped，但 import 了 blocks（有 numba 的环境会失败），已随卡删除。
+- 另一个负载敏感测试：test_terminal_arbitration_recheck::TestRealControlCancel::…（并行分片偶发，单独稳定）。

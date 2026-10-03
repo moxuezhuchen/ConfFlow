@@ -1016,18 +1016,17 @@ IS 分支上没有 `docs/refactor/`。各卡如需工具，从 `$TOOLS` 运行�
 
 **C5.3c-2（编译器，前置：IS 合并进 main 之后；类型 `logic`）：** intent 编译器在生成 refine 步骤时，**沿结构数据流向上找最近的 ConfGen 步骤**复制 `topology`（含 `index_base`）、`coordination` 范围与 `tolerances.bond_scale` 到 `topology_bonds`，**不要求紧邻**（中间可隔着优化等步骤）。若沿数据流存在多个上游 ConfGen 来源且它们的拓扑声明不一致 → 不自动复制，报错并要求用户显式指定；声明一致则可复制；上游没有 ConfGen 或无拓扑声明则不写该参数（保持旧行为）。编译器位置（IS.0 后核实）：ConfFlow 的 `confflow/producer/intent.py`（`implementation/input-simplification` 分支，IS.5 合并进 main 之后）；JD 的 `application/intent/` 只是调用方，不需要改动。
 
-### C5.3d — 删除 `blocks/refine/`（前置：C5.3a、C5.3b 通过；C5.3c 的结论）
+### C5.3d + C5.4 — 删除 `blocks/refine/` 与 `blocks/confgen/`（合并为一张 delete 卡；前置：C5.3a/b/c-1 通过）
 
-- ID：C5.3d（原 C5.3） ／ 类型：`delete`
-- 允许修改的文件：`confflow/blocks/refine/**`（删除）、`pyproject.toml`（L81 `confrefine`）、`tests/v4/test_architecture_boundaries.py`、引用 `blocks.refine` 的测试（按 grep 结果逐条声明；已随迁的测试不得重复删除）
-- 验收：标准验收；golden 不变；`deleted_modules_check` 对 `confflow.blocks.refine` 通过。
+- ID：C5.3d+C5.4 ／ 仓库：ConfFlow ／ 分支：`refactor/diet-c5` ／ 基点 6521581（C5.3c-1） ／ 类型：`delete`。做法：应用 `handoff/C5.3d-4-src-tests.patch`（35 个文件），**随后 `rm -rf confflow/blocks`**（`git rm` 之后目录里还残留未跟踪的 `__pycache__`，会让 `confflow.blocks` 仍能作为命名空间包被 import，`deleted_modules_check` 会报错）。
+- 前提已满足：对称映射去重已搬入 `science/`（C5.3a）并接入 V4 refine（C5.3b）；声明拓扑与类型边已接入（C5.3c-1，替代 `blocks/confgen` 里的 `AddBond`/`DelBond` 覆盖逻辑）；`blocks` 在生产代码里没有任何 import（只有 `pyproject.toml` 的两个入口）。C5.3c-2（编译器自动复制拓扑）在 IS 合并后单独做，不阻塞本卡。
+- 内容：删除 `confflow/blocks/**`；`pyproject.toml` 删除 `confgen`、`confrefine` 两个入口；`scripts/architecture_metrics.py` 的 `CALC_PUBLIC_TOOLING_ROOTS` 清空；架构测试把 `confflow.blocks`、`confflow.blocks.refine`、`confflow.blocks.confgen` 加入 `REMOVED_LEGACY_MODULES`（新增 3 个参数化节点）；删除只测试被删模块的测试文件 16 个（`test_collision*`、`test_confgen`、`test_confgen_validator`、`test_confgen_refine_fallbacks`、`test_mapping`、`test_optional_numba`（其两个 numba 测试在本环境为 skipped，但都 import `blocks`）、`test_processor_hotspots`、`test_provenance_metadata`、`test_refine`、`test_refine_graph_rmsd`、`test_rmsd_engine_hotspots`、`test_topology_provenance`、`v4/test_confgen_scientific_regressions`）；混合文件只删相关测试（`test_bonding_consistency` 删 hash-worker 测试并把 `build_graph` 改自 `science.topology_mapping`；`test_core`、`test_dependency_boundaries`、`test_small_adapters_extra` 各删守护已删包的测试）。
+- 被删测试：`handoff/C5.3d-4-removed-tests.txt` 的 212 项；新增 `handoff/C5.3d-4-added-tests.txt` 的 3 项。B0.1 的 engine 报告捕获没有来自被删文件的报告（golden 实测 `missing_allowed_removed` 为空、`different` 为空）。
+- 自检期望：全量 `{"passed": 3937, "skipped": 10}`；collect 4156 → 3947（−212 +3）；`deleted_modules_check.py cf --tree <树> confflow.blocks confflow.blocks.refine confflow.blocks.confgen` 退出码 0（**必须先 rm -rf confflow/blocks**）；golden `--removed-nodes` 清单后 ok；ruff/mypy/black 通过。
+- 已知负载敏感测试（并行分片下偶发，单独稳定）：`test_v4_runtime_cutover` 的两个端到端测试、`test_v44_worker::test_cancel_trap…`、`test_terminal_arbitration_recheck::TestRealControlCancel::test_concurrent_control_cancel_and_completion_stay_consistent`；若只有它们失败，单独重跑，通过则如实报告。
+- 提交信息模板：`refactor!: delete the legacy refine and confgen blocks and their CLIs` + 通用尾部（Removed-Tests 212 附清单文件名，Added-Tests 3；测试名从清单逐字复制）。
 
-### C5.4 — 删除 `blocks/confgen/`（Q11）
-
-- ID：C5.4 ／ 前置：C5.3d、C5.3c 的结论（`blocks/confgen` 中的 `AddBond`/`DelBond` 拓扑覆盖逻辑要等 Q-R2 有结论后才能删）
-- 类型：`delete`
-- 允许修改的文件：`confflow/blocks/confgen/**`、`confflow/blocks/__init__.py`（blocks 空了就删除整个包）、`pyproject.toml`（L80 `confgen`）、引用的测试（`tests/test_confgen.py`、`tests/test_collision*.py`、`tests/test_confgen_validator.py`、`tests/test_mapping.py`、`tests/test_confgen_refine_fallbacks.py`、`tests/test_optional_numba.py`、`tests/v4/test_confgen_scientific_regressions.py` 等，按 grep 逐条声明）
-- 验收：标准验收。写方案时核实：B0.1 的 engine 报告捕获中没有来自 `test_confgen_scientific_regressions.py` 的报告，删除它不影响 golden。
+### C5.4 — （已并入上一卡）
 
 ### C5.5 — 删除 `core/` 和 `shared/` 中只被 legacy 使用的部分
 
