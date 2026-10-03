@@ -566,3 +566,9 @@
 ## C4.5 验收通过（2026-10-03）
 
 - CF `refactor/diet-p4` `888f872`。验收方独立核对：diff 与 handoff/C4.5.patch 逐字相同；分支名 `refactor/diet-p4`；ruff/mypy ok；死代码 grep 无命中；全量 `{"passed": 4473, "skipped": 10}`；golden_check ok；未推送。C4.6 补丁在其上可应用，卡片 HEAD 已填为 888f872。
+
+## C4.6 验收通过；Phase 4 主线完成（2026-10-03）
+
+- CF `refactor/diet-p4` `015a174`。验收方独立核对：diff 与 handoff/C4.6.patch 逐字相同；分支名 `refactor/diet-p4`；ruff/mypy ok；`v4_arch_scan.py` `OK: 50 entry files clean`；metrics 输出只剩 8 个键且值不变；相关测试 156 passed；全量 `{"passed": 4473, "skipped": 10}`；golden_check ok；未推送。
+- Phase 4 提交序列（CF `refactor/diet-p4`，基点 f8a1f75）：b55b476（L1）→ 23251fd（C4.3a）→ 250f947（C4.3，验收方改写提交信息）→ 1de64b6（C4.2）→ ea93daa（C4.4）→ 888f872（C4.5）→ 015a174（C4.6）；另有 C4.1 c6b88ff、C5.5a aa920b8。JD `refactor/diet-p4`（基点 master 2c7e121）：4b9ed1c（L2）→ 9de35d6（J4.1'）。
+- 待用户排序（均需明确决定）：JD `refactor/diet-p4` 的推送；`refactor/docs-rewrite` 与最终树的同步；本地 main/master 的去向。
