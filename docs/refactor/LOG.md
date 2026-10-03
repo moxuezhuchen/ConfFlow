@@ -395,3 +395,7 @@
 
 ## C5.3c-1 补丁已备（2026-10-03，验收方原型）
 - 基点 efbaecd；5 个文件；全量 4144 passed，collect +21；golden ok。复用 build_typed_graph；映射保持边类型（Graph.typed_edges + MappingSearch 边类型检查），无类型边时搜索节点数/判定与 C5.3a 固定测试逐项不变；同一声明经 ConfGen 与 refine 两条路径边集合相同（5 组）；反应键异位不合并（对照：无类型边时合并）。验收方裁定：native bond_scale 与 topology_bonds 同时给出视为冲突报错。文档已写入 docs/architecture/WORKFLOW_V4.md。
+
+## 2026-10-03 用户裁定 waypoint；IS.2c 补丁已备
+- waypoint 不在 v3 补支持；IS.2 保持编译期拒绝，错误信息补"改用显式 torsions 声明"；PLAN-2 记触发条件（首次遇到 PATH_AMBIGUOUS：带 add_bond 的 TS、金属配合物）；IS.5 不受影响。
+- IS.2 已被执行模型提交（2e0295a，与 handoff/IS.2-src-tests.patch 字节一致）；提示语变更作为小卡 IS.2c（基点 2e0295a，+1 测试）单独发出，不改 IS.2。

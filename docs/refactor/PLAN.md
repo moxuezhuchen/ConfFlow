@@ -799,6 +799,13 @@ IS 分支上没有 `docs/refactor/`。各卡如需工具，从 `$TOOLS` 运行�
 - 预期行为变化：intent 中的 legacy paths 不再以 legacy native 执行，而以 typed v3 执行；bare 声明显式变为 `step: 120`（或 `angle_step`）；含 `waypoint` 或其他未知路径键的声明在编译期被拒绝。
 - 提交信息模板：`feat(producer)!: compile ConfGen intent paths into typed v3 scopes` + 通用尾部（Added-Tests 53，测试名从清单逐字复制；Behavior-Change 含上面三条，并写明 `waypoint` 不再可用）。
 
+### IS.2c — waypoint 的编译期提示补半句（用户 2026-10-03 裁定）
+
+- ID：IS.2c ／ 仓库：ConfFlow ／ 分支：`implementation/input-simplification` ／ 前置：IS.2（2e0295a） ／ 类型：`logic`（只改错误信息文本，加 1 个测试）。做法：应用 `handoff/IS.2c-waypoint-hint.patch`（2 个文件）。
+- 用户裁定：`waypoint` 用户从未使用，不在 v3 补支持；IS.2 保持编译期拒绝，错误信息补半句"改用显式 torsions 声明"。IS.5 不受影响，不需要等待。错误信息变为：`… carries unsupported keys: waypoint (waypoint paths have no typed v3 form; use explicit torsions declarations instead)`。
+- 自检期望：全量 `{"passed": 5139, "skipped": 12}`，collect 5150 → 5151（+1：`tests/v4/test_intent_legacy_paths_to_v3.py::test_waypoint_is_refused_with_the_torsions_hint`），ruff/mypy/black 通过。
+- 提交信息模板：`fix(producer): point waypoint users to explicit torsions in the compile-time refusal` + 通用尾部。
+
 ### IS.2b — v3 拒绝末端原子端点时，诊断指明具体的键
 
 - ID：IS.2b ／ 仓库：ConfFlow ／ 分支：IS ／ 前置：IS.2
@@ -1138,4 +1145,4 @@ N+1. **`core/bonding.py`、`core/data.py` 最终移入 `science/`（用户 2026-
 
 N+2. **统一 refine 与 ConfGen 的默认 `bond_scale`（用户 2026-10-02）：** 目前 refine 默认 1.2，ConfGen 默认 1.15。统一是行为变化，本轮不做；C5.3c-1 只在声明了拓扑时复制 ConfGen 的值。
 
-N+3. **v3 的 `waypoint`（多端点路径）支持（IS.2 发现）：** legacy paths 支持 `waypoint`，typed v3 暂不支持；IS.2 之后 intent 里带 `waypoint` 的路径在编译期被拒绝。是否需要 v3 补上，由用户在 PLAN-2 决定。
+N+3. **v3 的 `waypoint`（多端点路径）（IS.2 发现；用户 2026-10-03 裁定）：** 用户从未使用，本轮不在 v3 补支持，IS.2 保持编译期拒绝并提示改用显式 `torsions` 声明。**触发条件：**首次实际遇到 `PATH_AMBIGUOUS`（带 `add_bond` 的 TS、金属配合物）时，再为 v3 设计 `waypoint`。IS.5 不受影响。

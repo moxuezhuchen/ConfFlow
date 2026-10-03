@@ -1,0 +1,33 @@
+diff --git a/confflow/producer/intent.py b/confflow/producer/intent.py
+index 9ac462d..9331e54 100644
+--- a/confflow/producer/intent.py
++++ b/confflow/producer/intent.py
+@@ -958,7 +958,11 @@ def _legacy_paths_to_v3(native: Mapping[str, Any], step_id: str) -> dict[str, An
+             raise _fail(f"step {step_id!r}: paths[{index}] must be a mapping", step_id=step_id)
+         unknown = sorted(set(declaration) - _LEGACY_PATH_KEYS)
+         if unknown:
+-            hint = " (waypoint paths have no typed v3 form)" if "waypoint" in unknown else ""
++            hint = (
++                " (waypoint paths have no typed v3 form; use explicit torsions declarations instead)"
++                if "waypoint" in unknown
++                else ""
++            )
+             raise _fail(
+                 f"step {step_id!r}: paths[{index}] carries unsupported keys: "
+                 f"{', '.join(unknown)}{hint}",
+diff --git a/tests/v4/test_intent_legacy_paths_to_v3.py b/tests/v4/test_intent_legacy_paths_to_v3.py
+index a17009e..681a891 100644
+--- a/tests/v4/test_intent_legacy_paths_to_v3.py
++++ b/tests/v4/test_intent_legacy_paths_to_v3.py
+@@ -132,6 +132,11 @@ def test_bond_scale_and_strict_flag_map_to_the_v3_members() -> None:
+     assert block["strict_path_bond_check"] is True
+ 
+ 
++def test_waypoint_is_refused_with_the_torsions_hint() -> None:
++    with pytest.raises(IntentCompilationError, match="use explicit torsions declarations instead"):
++        _compile({"native": {"paths": [{"start": 1, "end": 4, "move": "end", "waypoint": 2}]}})
++
++
+ def test_unknown_path_keys_and_non_mapping_declarations_are_refused() -> None:
+     with pytest.raises(IntentCompilationError, match="unsupported keys: rotate"):
+         _compile({"native": {"paths": [{"start": 1, "end": 4, "rotate": True}]}})
