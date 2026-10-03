@@ -543,3 +543,8 @@
 - **J4.1'**：JD `refactor/diet-p4` `9de35d6`。验收方独立核对：diff 与 handoff/J4.1p.patch 逐字相同；分支名 `refactor/diet-p4`；ruff check/format、mypy ok；退役符号 grep 无命中；全量（CF 绑定 C4.3 树）`2467 passed, 7 skipped`；golden_check ok（`jd_contract_key` ok）；未推送，master 仍 2c7e121，origin/master 仍 9beeaf2。
 - **C4.2 原型**（CF，基点 250f947，2 个文件，+4/−4）：CF 的 `JOBDESK_COMPAT_SHA` 与 `EXPECTED_JOBDESK_SHA` 改为 9de35d66…（原 edb068a）。新建只读 JD 钉住工作树 `/opt/cf-worktrees/jd-pin-p4`（detached 9de35d6）。验证：ruff/black ok；`test_release_workflow.py` 14 passed；全量 `{"passed": 4473, "skipped": 10}`；跨仓 `7 passed`（对着 jd-pin-p4）；golden_check ok。补丁 handoff/C4.2.patch，卡片 handoff/C4.2.md，提示词 handoff/C4.2-executor-prompt.txt。
 - **待用户决定：** 该 SHA 是 JD 本地提交，未推送，GitHub 上的 `jobdesk-contract.yml` 检出时会找不到，直到 JD `refactor/diet-p4` 推送；而该分支含本地合并进 `master` 的 input-simplification 提交，推送会一并公开。
+
+## C4.2 验收通过；C4.4 原型（2026-10-03）
+
+- **C4.2**：CF `refactor/diet-p4` `1de64b6`。验收方独立核对：diff 与 handoff/C4.2.patch 逐字相同；分支名 `refactor/diet-p4`；ruff ok；发布工作流测试 14 passed；全量 `{"passed": 4473, "skipped": 10}`（`--jdpin jd-pin-p4`）；golden_check ok；未推送。待用户决定的 JD 推送问题见上一节。
+- **C4.4 原型**（基点 1de64b6，2 个文件，+6/−92）：删 `parse_chain`、`parse_bond_pair`、`resolve_angle_lists`（只被再导出引用，测试/脚本零引用）；其余函数均有 v3 调用方，保留。ruff/mypy ok；collect 4483 不变；全量 `{"passed": 4473, "skipped": 10}`；golden_check ok（引擎报告无差异）。补丁 handoff/C4.4.patch，卡片 handoff/C4.4.md，提示词 handoff/C4.4-executor-prompt.txt。另发现 C4.3 之后新出现的死代码 `build_chain_rotors`（paths.py）与测试里的 `_run_legacy` 辅助，不在 C4.4 白名单内，待用户批准后另开小卡。
