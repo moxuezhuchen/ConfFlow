@@ -1,455 +1,122 @@
 # ConfFlow 项目架构
 
-## Workflow V4（greenfield）
+本文是当前代码结构的总览：有哪些包、各自负责什么、数据怎样从一份工作流文档流到结果、依赖规则由什么测试把关。
+工作流 V4 的逐项语义（digest 四轴、端口契约、持久化、remote、多输出……）见
+[`architecture/WORKFLOW_V4.md`](architecture/WORKFLOW_V4.md)；输入简化与 ConfGen paths 见
+[`PRODUCER_INTENT.md`](PRODUCER_INTENT.md) 与 [`CONFGEN_PATHS.md`](CONFGEN_PATHS.md)。代码和测试是第一权威。
 
-V4 是独立的新 workflow engine，代码位于 `confflow/domain`、`confflow/execution`、
-`confflow/workflow/v4`。它不依赖本文档描述的 V2/V3 workflow runtime，也不经过
-旧的 calc 调度链。V4 架构事实见
-`docs/architecture/WORKFLOW_V4.md`。
+## 1. 它是什么
 
-## 项目概述
+ConfFlow 是计算化学工作流的**生产者（producer）**：给定一份 V4 工作流文档（`schema: confflow.workflow.v4`）和若干 XYZ 输入，
+它编译出确定性的执行计划，按 work item 运行构象生成、Gaussian / ORCA 量化计算、结构变换（精修/去重/过滤）和反应分析，
+并发布带类型的结果（`StepResult`、整次运行的 `run_result.json` manifest）。
 
-ConfFlow 是一个自动化计算化学工作流引擎，用于分子构象搜索、量子化学计算、构象筛选和结果可视化。核心设计遵循模块化、可扩展原则，支持多种量子化学程序（Gaussian 16、ORCA）。
+同时它向 GUI 客户端（JobDesk-v2）**发布契约**：配置契约、边界协议、authoring 接口和输入简化（intent）编译器都由 producer 生成，
+客户端只读取、不重新实现这些语义。
 
-## 当前重构主线
+唯一受支持的工作流格式是 V4。V1/V2/V3 文档在入口处以 `unsupported_workflow_version` / `legacy_workflow_not_executable` 失败关闭。
 
-当前主执行路径是破兼容后的 V4-only 结构：
-
-- 配置/工作流格式：唯一受支持的是 V4（`confflow.workflow.v4` /
-  `confflow.configuration-contract.v4`）；`confflow.config.contract_schemas`
-  是 schema id 的唯一权威。
-- 正式执行入口：`confflow.application.v4_entry.formal_v4_runner`
-  （`confflow` CLI、application service 与 control worker 全部经此进入）。
-- V4 编译/执行：`confflow.workflow.v4.compile_workflow` ->
-  `confflow.application.v4_run.V4RunApplication` -> `WorkItem` -> executor ->
-  `StepResult` 发布 -> run result manifest。
-- 发布契约：`confflow v4 contract --json`
-  （`confflow.producer.contract.generate_contract_bytes`）。
-
-已退役：旧的 calc/blocks 工具链及其独立 CLI、V2/V3 workflow 执行运行时（PR-4）、无发布的 V3 public wire（PR-7）、
-已发布的 V1/V2 配置 wire（PR-9）。旧的 `ChemTaskManager`、INI settings、
-legacy flat calc config、MD5 `.config_hash` 兼容路径已从主执行路径和公共导出中移除。
-
-## 目录结构
+## 2. 包与职责
 
 ```
 confflow/
-├── contract.py                # JobDesk capability/artifact wire contract
-├── core/                      # 基础设施层（共享工具、I/O、日志）
-│   ├── __init__.py
-│   ├── utils.py              # 统一的工具函数、异常类、日志系统
-│   ├── io.py                 # XYZ I/O 门面与读写入口
-│   ├── chem_validation.py    # 中立化学结构/柔性链校验服务
-│   ├── path_policy.py        # 路径/可执行文件安全策略
-│   ├── xyz_metadata.py       # XYZ 注释元数据与 CID 处理
-│   ├── gaussian_input.py     # Gaussian 输入与坐标解析
-│   ├── data.py               # 共价半径、元素符号等化学数据
-│   ├── models.py             # canonical Pydantic 模型的 compatibility facade
-│   ├── types.py              # 类型定义与常量
-│   ├── constants.py          # 核心常量
-│   ├── contracts.py          # 输入/输出契约验证
-│   ├── console.py            # 控制台输出格式化
-│   ├── exceptions.py         # 异常类定义
-│   ├── keyword_rewrite.py    # TS→scan 关键字改写
-│   ├── logging.py            # 日志配置
-│   ├── parsers.py            # 通用解析工具
-│   ├── pairs.py              # 原子对操作
-│   ├── validation.py         # 核心验证逻辑
-│   └── cli_base.py           # CLI 基础工具
-│
-├── config/                    # 配置层（配置加载、解析、验证）
-│   ├── canonical/            # producer-owned parser/types/schema/serialization
-│   └── models.py             # compatibility facade, no independent rules
-│
-├── shared/                    # 轻量共享层（稳定常量/格式化/结构校验）
-│   ├── __init__.py
-│   ├── defaults.py           # 与 config 解耦的默认常量
-│   ├── orca_blocks.py        # ORCA blocks 格式化
-│   └── config_validation.py  # YAML 结构校验
-│
-├── workflow/                  # 工作流编排层
-│   ├── __init__.py           # 公共 API 导出
-│   ├── dag/                   # 显式 inputs DAG 构建、校验与拓扑排序
-│   ├── engine.py             # 工作流执行引擎（核心调度逻辑）
-│   ├── state.py              # .workflow_state.json 原子状态模型与存储
-│   ├── step_handlers.py      # 步骤执行适配层（薄壳，默认调用 calc 官方入口）
-│   ├── presenter.py          # 步骤展示与报告输出
-│   ├── runtime_context.py    # 运行时状态初始化与恢复
-│   ├── helpers.py            # 辅助工具（pushd、构象计数、列表转换）
-│   ├── validation.py         # 输入验证与标签标准化
-│   ├── stats.py              # 检查点、统计追踪、构象溯源
-│   ├── rerun_failed.py       # 失败重跑
-│   ├── supervisor.py         # 子进程监督与停止处理
-│   └── step_naming.py        # 步骤命名
-│
-├── cli.py                     # CLI 参数解析
-├── main.py                    # 工作流主程序入口
-└── __init__.py               # 轻量包入口
-
-docs/                          # 文档
-├── ARCHITECTURE.md           # 本文档（项目架构说明）
-├── USAGE.md                  # 使用说明（精简版）
-├── COMMAND_REFERENCE.md      # 所有命令的参考手册
-├── TESTING.md                # 测试说明
-├── STYLE_CONTRACT.md         # 代码/输入/输出一致性标准
-└── DEVELOPMENT.md            # 开发指南
-
-tests/                         # 测试套件（以 pytest --collect-only -q 和 CI 输出为准）
-├── conftest.py               # 共享 fixtures
-├── _helpers.py               # 共享 fake 对象与工具函数
-├── test_core.py              # 包导出与核心公共入口
-├── test_io.py                # XYZ 读写、元数据解析
-├── test_data.py              # 共价半径、元素符号
-├── test_retired_wire_versions.py  # V1/V2/V3 配置 wire 失败关闭闸门
-├── test_cli.py               # CLI 入口
-└── ...                       # 完整清单见 docs/TESTING.md
-
-confflow.example.yaml          # 工作流示例配置
-pyproject.toml                 # 项目配置（PEP 621 + 构建系统）
-README.md                      # 项目简介
-LICENSE                        # MIT 许可证
+  domain/        不可变语义核心：结构、绑定、work item、step result、完成策略、digest 规范化（无仓库内依赖）
+  workflow/v4/   V4 编译器：严格解析 → 语义校验 → 带类型的绑定图 → 不可变 ExecutionPlan → 合成 WorkItem
+  execution/     能力注册表与各类执行器：calculation / confgen / transform / analysis、
+                 检查（checks）、恢复（recovery）、结果 profile、原生进程边界、批执行
+  science/       纯科学计算：ConfGen v3 引擎（扭转/环/配位）、工作拓扑权威、图同构映射、帧比较、键感知
+  programs/      量化程序适配器（Gaussian、ORCA）：输入渲染与输出解析
+  persistence/   持久化：逐 work item 的 SQLite 存储、发布协议、复用判定、孤儿回收、run state
+  application/   应用层：正式 V4 入口 `v4_entry`、整次运行 `v4_run`、执行服务与仓库（SQLite）
+  remote/        远程执行边界：worker-handoff v2、安全 staging、传输、结果包
+  analysis/      反应/PES 聚合：反应组发现、Gibbs 能、势垒
+  producer/      对客户端发布的契约与工具：contract / boundary / authoring / intent、cards、presets、
+                 editor manifest、recipes、字节级校验、run result 投影、种子与机器检查点辅助
+  config/        契约 schema id 的唯一权威（无依赖）
+  core/          基础设施：XYZ I/O、元素与数据表、键感知、路径策略、日志、控制台、异常
+  shared/        跨层默认值与 ORCA block 格式化
+  cli.py main.py v4cli.py                命令行入口
+  control.py control_worker.py worker_*  控制协议 v1 适配器与外部 worker（排队的启动意图）
+  contract.py artifact_json.py install_provenance.py release_dependencies.py   契约常量、原子 JSON、安装/发布溯源
 ```
 
-## 核心模块说明
+`science/` 与 `domain/` 不做 I/O；`execution/` 不解析 YAML；`workflow/v4` 不执行任何东西。执行层只通过
+`execution.registry` 的描述符认识能力，不按 role 或 program 名做分支。
 
-### 1. `core/` - 基础设施层
-
-**职责**：提供所有模块都需要的共享功能。
-
-- **`utils.py`**：
-  - 基础异常与输入校验（`ConfFlowError`, `InputFileError`, `XYZFormatError` 等）
-  - 日志系统（`ConfFlowLogger`, `get_logger()`）
-  - 输入验证（XYZ）
-  - 工具函数（内存解析、iprog/itask 解析、freeze 索引范围解析）
-
-- **`io.py`**：
-  - 统一的 XYZ 文件读写入口
-  - 提供 `iter_xyz_frames()` 流式读取接口，避免大轨迹全量装载
-
-- **`xyz_metadata.py` / `gaussian_input.py`**：
-  - 分离 XYZ 注释/CID 规则与 Gaussian 坐标解析
-  - 降低 `io.py` 的职责耦合和维护成本
-
-- **`types.py`**：
-  - 枚举类型（`TaskType`, `ProgType` 等）
-  - 常量定义
-
-### 2. `config/` 与 `shared/` - 配置层与轻量共享层
-
-**职责**：处理工作流配置，并把稳定常量/格式化/结构校验从 `config` 中抽离出去，避免 `core -> config` 反向依赖。
-
-- **`loader.py`**：加载并解析 YAML/INI 文件
-- **`schema.py`**：配置架构定义、验证与合并
-- **`defaults.py`**：兼容层默认值导出
-- **`shared/defaults.py`**：真实默认常量来源
-- **`shared/config_validation.py`**：YAML 结构校验
-- **`shared/orca_blocks.py`**：ORCA blocks 渲染
-
-### 5. `workflow/` - 工作流编排层
-
-**职责**：协调各模块执行，管理工作流逻辑。当前版本已将原单体 `engine.py` 拆分为“编排 + 执行适配 + 展示 + 运行时上下文 + 统计”的多模块结构。
-
-- **`engine.py`**：
-  - 入口 `run_workflow()` 负责 prepare / execute / finalize 三段主流程
-  - resume 时复用 `resolve_step_output()` 按 step type 校验标准工件，避免把 `search.xyz` 误当成 calc 完成输出
-  - calc step 的配置/input digest、stale 判断和复用语义由 `calc.artifacts` 的 `manifest.json` 合同负责
-  - 只要任一步声明 `inputs` 就进入显式 DAG 模式；无 `inputs` 的旧配置继续按声明顺序线性执行
-  - 显式 DAG 在初始化运行目录或调用 step handler 前完成未知依赖、环和终端数校验
-  - 当前显式 DAG 必须恰好有一个终端 step；不支持多输出聚合
-
-- **`dag/explicit.py`**：
-  - 规范化 step 名称与 `inputs`，构建 predecessor map
-  - 使用确定性拓扑 wave 校验未知依赖与环
-
-- **`state.py`**：
-  - 通过临时文件 + 原子替换维护 `.workflow_state.json`
-
-- **`runtime_context.py`**：
-  - 初始化 `root_dir/failed/.checkpoint/workflow_stats` 等运行时状态
-  - 封装 resume 场景下的恢复信息（`resume_from_step/current_input`）
-
-- **`step_handlers.py`**：
-  - `run_confgen_step` / `run_calc_step` 的执行适配层
-  - 不再作为 calc artifact/stale/resume 的主语义中心
-
-- **`presenter.py`**：
-  - 统一 step header/footer 输出
-  - 统一最终报告与最低能构象落盘逻辑
-
-- **`helpers.py`**：
-  - 工具函数：`pushd`、`as_list`、`resolve_step_output`
-  - `resolve_step_output` 按 step type 区分 `search.xyz` 与 `output.xyz` / `result.xyz`
-  - 构象计数：`count_conformers_any`、`count_conformers_in_xyz`
-
-- **`validation.py`**：
-  - `validate_inputs_compatible`：多输入兼容性校验
-  - `chain` / `chains` 两种配置键都会触发柔性链映射模式
-  - 支持 `force_consistency=true` 的“警告并继续”分支
-
-- **`stats.py`**：
-  - `CheckpointManager`：断点序列化/反序列化
-  - `WorkflowStatsTracker`：流程统计追踪
-  - `TaskStatsCollector`：results.db 状态聚合（优先按每个 `job_name` 的最新记录统计）
-  - `FailureTracker`：跨步骤失败构象汇总
-  - `Tracer`：低能构象溯源
-
-### 6. CLI 层
-
-- **`cli.py`**：参数解析（`confflow` 命令）
-- **`main.py`**：工作流主程序入口
-- **`contract.py`**：版本、schema、能力、产物名以及构建身份的 wire contract；`cli.py` 负责发出 capability JSON
-
-## 设计模式与架构原则
-
-### 1. 策略模式 (Strategy Pattern)
-
-
-```python
-# 基类定义
-class CalculationPolicy:
-    def generate_input(self, ...): ...
-    def parse_output(self, ...): ...
-
-# 具体实现
-class GaussianPolicy(CalculationPolicy):
-    def generate_input(self, ...):
-        # Gaussian 特定的输入格式
-
-class OrcaPolicy(CalculationPolicy):
-    def parse_output(self, ...):
-        # ORCA 特定的输出解析
-```
-
-**好处**：
-- 代码复用：共同的执行流程放在 `Manager`
-- 易维护：新增程序时只需新增 Policy 类
-- 易测试：可独立测试每个 Policy
-
-### 2. 模块化架构
-
-- **单一职责**：每个模块只处理一个功能域
-- **依赖明确**：`shared` 承担轻量公共边界，`core` 不再反向依赖 `config.schema`
-
-### 3. 公共入口设计
-
-- 顶层 `confflow.__init__` 暴露轻量官方入口（如 `run_workflow`）
-- 旧 INI / legacy flat config / `.config_hash` / manager facade 已从主路径移除
-- 仓库内部代码应直接从真实子模块导入，避免重新扩大包初始化耦合
-
-## 工作流执行流程
+## 3. 数据流
 
 ```
-confflow <input.xyz> -c <config.yaml>
-        ↓
-    cli.py (参数解析)
-        ↓
-    main.py → workflow.engine.run_workflow()
-        ↓
-    +------- confgen -------+
-    | 链旋转 → 生成构象 |
-    +-----────────────────+
-            ↓
-    +------- calc (step 1-N) -------+
-    | 并行执行量子计算               |
-    | - 调用 Policy 生成输入        |
-    | - 执行 Gaussian/ORCA         |
-    | - 调用 Policy 解析输出        |
-    | - 保存结果到 DB              |
-    +------────────────────────────+
-            ↓
-    +------- refine -------+
-    | RMSD 去重            |
-    | 能量筛选             |
-    | 虚频过滤             |
-    +-----────────────────+
-            ↓
-    +------- viz -------+
-    | 生成文本报告     |
-    +──────────────────+
+ intent（可选）            工作流文档 YAML/JSON
+ confflow.intent.v1  ──►  schema: confflow.workflow.v4
+   producer.intent          │
+   (cards/presets)          ▼
+                      parse（重复键拒绝、extra=forbid）
+                            ▼
+                      semantic validation（registry 词汇表、端口、checks、seed、资源）
+                            ▼
+                      typed BindingGraph（bindings 是唯一的边来源）
+                            ▼
+                      ExecutionPlan（不可变、确定性、稳定 ID）
+                            ▼
+                      assemble_work_items（run 输入 + 已发布输出 → WorkItem）
+                            ▼
+   application.v4_run  ──► executors（calculation / confgen / transform / analysis）
+                            ▼  每个 work item 的结果先落盘（persistence）
+                      StepResult 发布（崩溃一致性协议）
+                            ▼
+                      run_result.json（producer.run_result 投影，客户端只读）
 ```
 
-## 配置系统
+- **同一份科学语义在本地和远程相同**：同一个 `WorkItem` 可以直接执行，也可以经 `worker-handoff.v2` 边界交给远程 worker。
+- **resume 靠持久化而不是重跑**：已发布的 step 从磁盘加载；未完成的 step 按 work item 续跑，已完成的 work item 复用。
+- **没有隐式收尾**：清理、去重、精修都是显式的 `transform` / `analysis` 步骤；不存在 calculation 的隐藏尾巴。
 
-### V4 工作流配置 (`confflow.example.yaml`)
+## 4. 入口与对外接口
 
-当前唯一受支持的 workflow/config 格式是 V4（`schema: confflow.workflow.v4`）。
-随包分发的示例文件是一个可编译的 V4 文档：
+| 入口 | 作用 |
+| --- | --- |
+| `confflow v4 run` | 运行整份 V4 工作流（`--workflow`、`--inputs NAME=FILE`、`--run-root`、`--executable PROG=PATH`，`--json` 输出机器可读报告） |
+| `confflow v4 validate` | 对精确的工作流字节做 producer 校验 |
+| `confflow v4 contract --json` | 发布配置契约（`confflow.configuration-contract.v4`） |
+| `confflow v4 boundary --json` | 发布边界协议文档（`confflow.boundary.v4`） |
+| `confflow v4 authoring --json --stdin` | authoring 接口：`describe_step`、`binding_candidates`、`instantiate_card`、`validate_document`、`check_compatibility`、`compile_intent`、`preview_paths` |
+| `confflow v4 canonical --json --stdin` | RFC 8785（JCS）规范化 |
+| `confflow --capabilities --json` | 能力握手 JSON |
+| `confflow-control-worker` | 控制协议 v1 的外部 worker |
 
-```yaml
-schema: confflow.workflow.v4
+`confflow <input.xyz> -c <工作流>` 这一调用形式保留，作为同一个 V4 应用的薄入口（供 JobDesk 与控制 worker 沿用既有调用方式）；
+它只接受 V4 文档，V1/V2/V3 文档以 `legacy_workflow_not_executable` 失败关闭且没有任何副作用。
 
-inputs:
-  structures: {kind: structure, cardinality: many, grouping: each_entity}
+## 5. 契约与摘要
 
-global:
-  scientific_defaults: {charge: 0, multiplicity: 1}
-  resources: {cores_per_item: 8, memory_per_item: 32GiB}
-  scheduler: {max_parallel_items: 4}
+- **配置契约**由真实注册表生成（工作流 JSON schema、editor manifest、recipe 目录、能力、端口、资源、分析与结果 schema），
+  全部用 digest 钉住；客户端据此编辑、校验、提交。
+- **边界协议**（`confflow.boundary.v4`）声明规范化算法（JCS）、authoring 请求/响应 schema 与兼容性词汇；已发布的契约 digest
+  由 `tests/` 和 `docs/refactor/baseline/` 的检查点固定。
+- **四个 digest 轴**（WorkflowDefinition / StepSemantic / WorkItem / ExecutionEnvironment）区分"科学内容"和"调度/展示内容"：
+  改 label、`max_parallel_items`、executable 路径不会移动科学 digest；改 native、checks、seed、资源、科学默认值会。
 
-steps:
-  - id: confgen
-    executor: confgen
-    bindings: {structure: {source: {run: structures}}}
-    confgen: {native: {chains: ["1-2-3-4"], angle_step: 120}, seed: 20260928}
+## 6. 科学包要点
 
-  - id: opt
-    executor: calculation
-    bindings: {structure: {source: {step: confgen, port: structures}}}
-    calculation:
-      program: orca
-      role: opt
-      native: {keyword: "B3LYP D3BJ def2-SVP Opt"}
-      checks: ["normal_termination", "geometry_required"]
-      overrides: {freeze: [1, 2]}
-```
+- **ConfGen v3**（`science/confgen/`）：条件式的 配位 → 环 → 扭转 树；每个目标以唯一终态结束；报告里区分
+  "带标号的状态数"和"最终发布的叶子数"。种子是唯一的随机性权威，缺失即编译错误（全枚举时不需要种子）。
+- **工作拓扑权威**（`science/topology.py`）：结构记录自带 `working_topology` / `topology_patch`；
+  ConfGen、refine、计算输出 profile 都经 `resolve_working_adjacency` 取同一份"预期共价图"，
+  不再各自做感知加修正。spec 级拓扑声明与记录级权威同时出现会失败关闭。
+- **精修去重**（`execution/transform_executor.py` + `science/frame_compare.py`、`topology_mapping.py`）：
+  只在合法的元素/边保持映射下比较 Kabsch RMSD，所以仅标号对称置换的构象会被合并；搜索有节点预算
+  （默认 1000/每对），预算耗尽的一对保留两个并在 notes 中说明。可选的 `topology_bonds` 声明带类型的边
+  （COVALENT / COORDINATION / FORMING / BREAKING），映射必须保持这些类型。
 
-### 配置 wire 的当前状态
+## 7. 依赖规则与把关
 
-唯一受支持的配置 wire 是 V4（`confflow.configuration-contract.v4` /
-`confflow.workflow.v4`）。V4 生产者契约由
-`confflow.producer.contract.generate_contract_bytes` 生成，并由
-`confflow v4 contract --json` 发布；`confflow.config.contract_schemas` 是
-schema id 的唯一权威。
+- `domain` 不 import 任何其他 `confflow.*`；`workflow/v4` 与 `execution` 只依赖 `domain`、`execution`、`workflow/v4`
+  以及各自文档化的 `science` 入口。
+- 已退役的模块必须从磁盘上消失：`tests/v4/test_architecture_boundaries.py` 的 `REMOVED_LEGACY_MODULES`
+  与"模块必须不存在"测试保证它们不会被悄悄恢复；禁止导入前缀与静态扫描见 `scripts/v4_arch_scan.py`。
+- worker 的导入闭包不得加载编译器或重依赖包（`test_worker_run_import_closure_is_compiler_free`）。
 
-已发布的 V1/V2 配置 wire（`configuration-contract.v1/.v2`、
-`confflow.workflow.v2` schema、公开 parser/validator、V2 editor manifest 与
-recipe catalog、V2 -> canonical migration、`--dry-run`/`--config-show`
-planner、`confflow config validate`）由 Architecture Diet PR-9 退役；V1/V2/V3
-文档在入口处以 `unsupported_workflow_version` / `legacy_workflow_not_executable`
-失败关闭，不做 fallback、不自动 upgrade、不执行。
+## 8. 已退役
 
-## 测试组织
-
-测试按被测模块分层组织，完整清单见 `docs/TESTING.md`。
-
-```
-tests/
-├── conftest.py               # 共享 fixtures（input_xyz, cd_tmp, sync_executor）
-├── _helpers.py               # 共享 fake 对象（FakeResultsDB, FakeExecutor 等）
-│
-├── test_core.py              # 包导出与核心公共入口
-├── test_io.py                # XYZ 文件读写、元数据解析
-├── test_data.py              # 共价半径、元素符号、原子序数
-├── test_retired_wire_versions.py  # V1/V2/V3 配置 wire 失败关闭闸门
-│
-│
-│
-│
-├── test_cli.py               # CLI 参数解析
-├── test_console.py           # 控制台输出
-├── test_contracts.py         # 输入/输出契约
-```
-
-当前测试套件的文件数与用例数以 `pytest --collect-only -q` 和 CI 输出为准；完整清单见 `docs/TESTING.md`。除主测试文件外，还包含一组 `*_hotspots.py` 用例，专门覆盖回退逻辑、异常路径和历史回归点。
-
-## 依赖关系图
-
-```
-confflow/__init__.py (包入口)
-  ├── main.py (工作流主程序)
-  │   └── workflow.engine.run_workflow()
-  │
-  └── core/
-      ├── utils.py (日志、异常、验证)
-      ├── io.py (XYZ 文件 I/O 门面)
-      ├── xyz_metadata.py (XYZ 注释/CID)
-      ├── gaussian_input.py (Gaussian/坐标解析)
-      └── types.py (类型定义)
-```
-
-## 关键特性
-
-### 1. 断点续传
-
-- 工作目录中保存 `.checkpoint` 文件
-- 记录已完成的步骤和构象处理状态
-- 使用 `--resume` 标志从中断点恢复
-- resume 会按步骤类型验证标准产物：`confgen` 只接受 `search.xyz`，`calc` 只接受 `output.xyz` / `result.xyz`
-- calc step 的 manifest 记录配置/input digest；digest 不匹配时由 `calc.artifacts` 清理 stale 工件并重跑
-- 若工作目录缺少对应工件，会直接报错而不是沿用错误输入继续运行
-
-### 2. 并行执行
-
-- 使用 `ProcessPoolExecutor` 并行运行多个计算任务
-- 资源限制：`max_parallel_jobs`, `cores_per_task`, `total_memory`
-- 自动队列管理与负载均衡
-- 上述并行发生在单个 calc step 内部的构象任务层
-- DAG step 当前按确定性拓扑顺序串行执行；本里程碑不承诺 wave 级并发
-
-### 3. TS 失败救援
-
-- `itask=ts` 失败时自动改为 `itask=scan`（受 `ts_rescue_scan` 参数控制）
-- 扫描键长空间以找到正确的 TS 结构
-- 若 TS keyword 不含 `freq`，仅使用关键键长漂移作为几何判据
-
-### 4. 多程序支持
-
-- Gaussian 16（使用 `.gjf` 输入格式）
-- ORCA（使用 `.inp` 输入格式）
-- 易于扩展新程序（创建新 Policy 类）
-
-### 5. 资源监控
-
-- 实时监控 CPU 和内存使用
-- 支持动态资源限制
-- 异常监控与进程清理
-
-## 标准产物（calc/task step）
-
-- `results.db`：SQLite 结果库（持久化每个 `job_name` 的运行结果；读取/统计时默认使用最新记录视图）
-- `result.xyz` / `output.xyz`：成功构象输出（是否 cleaned 取决于 auto_clean/refine）
-- `failed.xyz`：失败构象集合（输入结构坐标，注释行包含失败原因），便于重算与排障
-- `manifest.json`：calc step 状态、typed config digest、input digest、输出路径和任务统计
-
-> **v1.0.5 变更**：计算任务直接在 `step_xx/` 目录运行，不再创建 `step_xx/work/` 子目录。
-
-## 失败聚合产物（工作目录）
-
-- `_work/failed/failed.xyz`：合并后的失败构象（注释行包含 `Step=...`）
-- `_work/failed/failed_summary.txt`：失败清单（结构名 + 错误原因 + 建议救援方案）
-- `_work/failed/<config>.yaml`：运行时配置副本（便于在 failed 目录重跑）
-
-## 扩展指南
-
-### 添加新的计算程序
-
-2. 实现 `CalculationPolicy` 基类
-
-### 添加新的分析工具
-
-2. 实现核心处理函数
-3. 提供 `main()` console script 入口
-4. 在 `workflow/engine.py` 中集成
-
-### 添加新的计算任务类型
-
-1. 在 `core/types.py` 中扩展 `TaskType` 枚举
-2. 在各 Policy 中实现新任务的输入/输出处理
-3. 添加相应的测试
-
-## 常见问题
-
-**Q: 为什么要用策略模式？**
-
-A: 不同程序（Gaussian/ORCA）的输入输出格式完全不同，策略模式可以将这些差异隐藏起来，让上层代码不需要关心具体使用哪个程序。
-
-**Q: 如何添加对新程序的支持？**
-
-A: 创建新的 Policy 类，实现 `generate_input()` 和 `parse_output()` 方法，其他代码无需修改。
-
-**Q: 断点续传如何工作？**
-
-A: 每次运行记录已完成的任务到 `results.db`，再次运行时自动跳过已完成的任务。如果 DB 丢失但备份存在，会从备份恢复。
-
-**Q: 可以自定义资源限制吗？**
-
-A: 可以，在步骤级别 (`params`) 中覆盖全局配置：
-
-```yaml
-steps:
-  - name: heavy_calc
-    type: calc
-    params:
-      cores_per_task: 16
-      total_memory: "64GB"
-```
+旧的 calc 调度链与 `confts` / `confgen` / `confrefine` 独立 CLI、`blocks/`、V1/V2/V3 工作流执行与配置 wire、
+`confflow export`（`results.db` 读取器）都已删除。迁移史与逐卡验收记录见 `docs/refactor/`（`PLAN.md`、`LOG.md`）。

@@ -52,7 +52,7 @@ ConfFlow may create or update:
 
 - Workflow directories and step directories.
 - `search.xyz`, `output.xyz`, `result.xyz`, `failed.xyz`, and related XYZ files.
-- `results.db`, `manifest.json`, checkpoint metadata, and JSON summary files.
+- `manifest.json`, checkpoint metadata, and JSON summary files.
 - `<input_basename>.txt` CLI output reports.
 - `confflow.log` and backup copies of external program logs and outputs.
 

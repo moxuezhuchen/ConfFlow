@@ -66,7 +66,7 @@ Requirements and packaging notes:
 - Python 3.10+
 - Packaging is defined in `pyproject.toml`
 - RDKit is required
-- `numba` is optional and only used for acceleration when installed
+- `numba` is an optional extra, but no current code path depends on it for acceleration
 
 ## ConfFlow ↔ JobDesk Capability Handshake (v2.1.6 candidate)
 

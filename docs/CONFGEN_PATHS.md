@@ -1,187 +1,86 @@
-# ConfGen Path-Based Rotor Declarations (Phase 0)
+# ConfGen 路径声明（paths）
 
-Phase 0 of the input-simplification roadmap adds endpoint-pair rotor
-declarations (`paths`) to ConfGen. Instead of spelling every chain bond,
-declare the two endpoints and the moving side. Both spellings below are
-complete, valid V4 documents (legacy `paths` accept `confgen.paths` or
-`confgen.native.paths` with `confgen.seed`; typed `paths` live under `confgen` with
-`schema_version: 3` and explicit sampling):
+不必逐个写出链上的每根键：给出两个端点和移动的一侧，ConfGen 在工作拓扑上解析出连接路径，
+把路径上每根键变成一个相对旋转的扭转自由度。
+
+## 1. 写法
+
+在 V4 文档里使用 typed v3（`schema_version: 3`）；采样必须显式声明（`angles` 或 `step`），没有隐式默认值：
 
 ```yaml
-# Legacy native mode: bare paths fall back to angle_step (120 here).
-# confgen.seed stays required (single stochastic authority until Phase 2).
-schema: confflow.workflow.v4
-inputs:
-  structures: {kind: structure, cardinality: many}
-global:
-  scientific_defaults: {charge: 0, multiplicity: 1}
 steps:
   - id: s_gen
     executor: confgen
     bindings:
-      structure:
-        source: {run: structures}
-    confgen:
-      seed: 11
-      paths:
-        - {start: 81, end: 92, move: end, step: 120}
-```
-
-The `confgen.native.paths` spelling (inside `native:`) is equivalent;
-declaring `paths` (or `strict_path_bond_check`) at both levels fails
-closed. Both compile into the existing native runtime -- bare paths are
-never silently routed into the strict typed scope.
-
-```yaml
-# Typed v3 scope: explicit sampling is required (no silent defaults).
-schema: confflow.workflow.v4
-inputs:
-  structures: {kind: structure, cardinality: many}
-global:
-  scientific_defaults: {charge: 0, multiplicity: 1}
-steps:
-  - id: s_gen
-    executor: confgen
-    bindings:
-      structure:
-        source: {run: structures}
+      structure: {source: {run: structures}}
     confgen:
       schema_version: 3
       index_base: 1
       paths:
         - {start: 81, end: 92, move: end, angles: [0.0, 120.0, 240.0]}
+        - {start: 5,  end: 9,  move: start, step: 60}
 ```
 
-A bare `confgen.paths` spelling without `schema_version: 3` compiles into
-the legacy native runtime (never into the strict typed scope, which keeps
-requiring explicit sampling). Simple authoring therefore routes either
-into `confgen.paths` (legacy, defaults from `angle_step`) or into the
-strict typed scope above with visible sampling. `confflow v4 validate`
-accepts all documents above; full route resolution stays deferred to
-execution (advisory at submission).
+端点**始终是面向用户的 1 基原子序号**，与 `index_base` 无关。`move` 必填，只能是 `start` 或 `end`，不会被推断。
 
-Endpoints are **always user-facing 1-based atom numbers**, in both the legacy
-native mode and typed v3 scopes. `move` is **REQUIRED** and exactly `start`
-or `end`: scientific intent is never inferred.
+| 键 | 必填 | 含义 |
+| --- | --- | --- |
+| `start` | 是 | 1 基原子序号（整数；拒绝 bool/浮点） |
+| `end` | 是 | 1 基原子序号，必须与 `start` 不同 |
+| `move` | 是 | `start` 或 `end`：哪个端点所在的一侧移动 |
+| `angles` | 二选一 | 显式角度表，如 `[0.0, 120.0, 240.0]`；周期重复（如 `0` 与 `360`）被拒绝 |
+| `step` | 二选一 | 简写，展开为 `range(0, 360, step)`，`step` 取 1..360 |
+| `id` | 否 | 溯源标签 |
 
-## Declaration shape
+未知键、非整数/bool 端点、相同端点、非有限角度、`angles` 与 `step` 同时给出、两者都不给，均失败关闭。
+不支持 `waypoint`（多端点路线）：需要时请改用显式的 `torsions` 声明。
 
-| Key      | Required | Meaning                                                        |
-| -------- | -------- | -------------------------------------------------------------- |
-| `start`  | yes      | 1-based atom number (integer; bools/floats rejected)           |
-| `end`    | yes      | 1-based atom number, distinct from `start`                     |
-| `move`   | yes      | `start` or `end`: the endpoint whose side moves                |
-| `angles` | no\*     | explicit grid, e.g. `[0.0, 120.0, 240.0]`                      |
-| `step`   | no\*     | shorthand expanding to `range(0, 360, step)`                   |
-| `id`     | no       | provenance label                                               |
+## 2. 简化输入（intent）里的旧写法
 
-\* Exactly one of `angles`/`step` may be given. A bare declaration
-(`{start, end, move}`) falls back to the legacy `angle_step` default (120)
-in the **legacy native mode only**. Typed v3 scopes fail closed on bare
-paths so the scientific grid stays explicitly declared. Unknown keys,
-non-integer endpoints, `bool` endpoints, same endpoints, non-finite angles,
-periodic angle duplicates, and `step` outside 1..360 all fail closed.
+`confflow.intent.v1` 的 confgen 卡仍接受旧的 `native.paths` 词汇，并由编译器**机械地**改写成 typed v3：
+裸声明的 `step` 取 `angle_step`（缺省 120），`bond_scale` 变为 `tolerances.bond_scale`，
+`strict_path_bond_check` 变为 v3 顶层标志；端点不被检查或改写。以下情形在编译期报错：
 
-`waypoint` (multi-endpoint routes) is deferred: only `start`/`end` pairs
-are supported in Phase 0.
+- `native` 含 paths 以外的旧词汇（如 `chains`）：该范围没有 typed 形式；
+- 路径声明含 `waypoint` 或其他未知键：报错并提示改用 `torsions`；
+- `native` 已写 `schema_version: 3` 时按 typed 原样使用。
 
-## Resolution rules
+直接写在 V4 工作流里的旧 `confgen.native`（`chains`、`paths`、`angle_step` 等）已不再被支持：文档会被 ConfFlow 以
+`unknown_member` 拒绝（失败关闭）。需要手动改为 typed v3，对照见 [`USAGE.md`](USAGE.md) 的"迁移旧文档里的 `confgen.native`"。
 
-Resolution runs **per work item on the final working topology** (covalent
-perception plus declared `add_bond`/`del_bond` corrections) of the driving
-structure, which may be an upstream product. Submission-time document checks
-are structural only (advisory); the same pure resolver runs at execution.
+## 3. 解析规则
 
-1. Endpoints are classified on the **full graph** first: different
-   components fail with `PATH_DISCONNECTED`.
-2. Cycle edges are removed (bridges kept). Endpoints connected there resolve
-   to the **unique** bridge-only path. Full-graph connected but bridge-only
-   disconnected fails with `PATH_CROSSES_RING`: ring bonds never rotate
-   independently. Ring atoms may still be *endpoints* of a bridge-only path.
-3. `PATH_AMBIGUOUS` is reserved and never emitted: a forest admits at most
-   one simple path between two nodes, so no valid ambiguity fixture exists.
-4. Each rotor bond is cut; the component containing the explicitly chosen
-   endpoint moves. **Axis atoms never move.** Branch atoms ride rigidly
-   inside their component but their internal bonds never become extra DOFs.
-   Unrelated disconnected components stay unmoved. Output atom order is
-   preserved.
+解析在**每个 work item 的最终工作拓扑**上进行（结构记录自带的工作拓扑；驱动结构可以是上游产物）。
+提交期的文档检查只是结构性的；同一个纯解析器在执行期运行。
 
-## Canonicalization (mixed `paths` + `chains`)
+1. 先在**完整图**上判断端点是否连通；不在同一连通分量 → `PATH_DISCONNECTED`。
+2. 去掉环上的边（保留桥）。在桥图中连通的端点解析为**唯一**的桥路径；完整图连通而桥图不连通 →
+   `PATH_CROSSES_RING`（环上的键不独立旋转；环原子仍可作为桥路径的端点）。
+3. `PATH_AMBIGUOUS` 保留但目前不会产生：森林里两点之间至多一条简单路径。
+4. 每根旋转键被切开，包含所选端点的分量移动。**轴原子不动**；侧链原子随所在分量刚性移动，
+   其内部键不成为额外自由度；无关的分量不动；输出的原子顺序不变。
+5. 路径键若没有二面角框架（例如末端键），typed v3 失败关闭，不会凭空造一个框架。
 
-Declaring any `paths` entry opts the work item into the strict
-canonicalization contract. Pure-`chains` items keep bit-for-bit legacy
-behavior, including overlapping chains.
+## 4. 合并与冲突
 
-- Rotors order deterministically: paths in listed order (start→end bonds),
-  then chains in listed order. First declaration wins position; output
-  ordinals are row-major with the last rotor fastest (legacy-compatible).
-- Canonical bond identity is unordered (`{a, b}`); the oriented axis
-  (traversal order) carries the signed-angle meaning. Identical duplicates
-  (same bond, orientation, moving side, grid, model) merge with **all**
-  source provenance recorded.
-- Opposite moving sides fail with `PATH_DIRECTION_CONFLICT`.
-- Different grids, reversed traversals with asymmetric meaning, or
-  absolute/relative/chemical model mismatches fail with
-  `ROTOR_SAMPLING_CONFLICT`. Grids are never silently unioned.
-- Conflict checks run on the **declared** grids first; only afterwards do
-  legacy `no_rotate` exclusions collapse a bond to the single `(0.0,)`
-  point (ordinals stay stable), recorded as `excluded:no_rotate`.
-  Identical declarations under a shared exclusion therefore merge; genuinely
-  contradictory grids still conflict even when excluded.
-- An explicitly declared single-state grid (e.g. `angles: [0.0]`) is one
-  valid state and executes normally; it is not an exclusion. Only the
-  all-excluded case (every rotor collapsed via `no_rotate`) fails closed
-  with "selected no rotatable bonds", matching the legacy contract.
+同一根键被多处声明时：
 
-## Equivalence and machinery
+- 相同的声明（同键、同取向、同移动侧、同角度表）合并，并记录**全部**来源；
+- 相反的移动侧 → `PATH_DIRECTION_CONFLICT`；
+- 角度表不同、方向相反但含义不对称、绝对/相对/化学模型不一致 → `ROTOR_SAMPLING_CONFLICT`；角度表绝不隐式求并集。
 
-No second runtime exists: legacy `paths` items reuse the legacy Rodrigues
-application and clash filter through an oriented adapter (per-rotor moving
-sides). A nonoverlapping single legacy chain and its equivalent path
-(`move: end` ≡ `rotate_side: right`, `move: start` ≡ `rotate_side: left`)
-produce identical rotors, counts, ordinals, and coordinates. Typed paths
-expand to `relative_rotation_grid` torsion axes and inherit typed
-measurability (terminal bonds fail instead of inventing frames).
+## 5. 上限、警告与 freeze
 
-## Limits, warnings, freeze
+- 记录两个计数：`declared_cartesian_size`（去重前的声明空间）与最终规范任务数；规范任务数在任何几何生成**之前**
+  以任意精度计算，超过 `max_declared_states` 即拒绝。后置的 `max_conformers` 只是幸存者上限，不是计算安全阀。
+- 新展开的键若测得长度低于共价半径之和的 **0.92 倍**，产生 `WARNING_SHORT_BOND`（例如 1.34 Å 的 C–C 会警告，1.52 Å 不会）。
+  这只是距离启发式，不做化学判断；**仅警告**，不跳过。`strict_path_bond_check: true` 把它升级为 `PATH_SHORT_BOND` 错误。
+- ConfGen 对 `freeze` 失败关闭，有无 paths 都一样。
 
-- Two counts are recorded: `declared_cartesian_size` (pre-dedup declaration
-  space) and `raw_cartesian_size`, the **final canonical task count**
-  (post-dedup, post-exclusion) that actually executes. The canonical count
-  (`∏ len(grid)`, arbitrary precision) is computed **before** any geometric
-  generation and refused past the 10,000 pre-geometry guard (legacy) /
-  `max_declared_states` (typed). The post-geometry `max_conformers`
-  survivor cap is not compute safety. Typed reports additionally show the
-  total C/R/T space (`counts.raw`) beside the path-only canonical count.
-  The guard is per work item; no workflow-total multi-structure budget
-  exists yet (remaining work).
-- Suspiciously short newly path-expanded bonds (measured length below
-  **0.92× the summed covalent radii**) emit `WARNING_SHORT_BOND` findings:
-  1.34 A C-C and 1.33 A C-N warn, 1.52 A C-C stays quiet. This is a cheap
-  distance heuristic, not chemistry: legitimately short bonds
-  (multiple/aromatic character, strain) can also trip it, so findings are
-  **warning only** -- no skipping, no bond-order inference. They surface as
-  `warning_short_bond` diagnostics and report notes.
-  `strict_path_bond_check: true` turns the warning into a `PATH_SHORT_BOND`
-  error. Pure-legacy chains never warn.
-- `freeze` stays fail-closed for ConfGen, with or without paths.
-- Typed paths inherit typed measurability: a path bond without a dihedral
-  frame (e.g. terminal bonds) fails instead of inventing a state key; use
-  the legacy native mode where frame-free mechanics apply.
+## 6. 溯源
 
-## Provenance
-
-Reports (`confgen_report.json`, `ensemble_report.json`) record the driving
-structure id and geometry digest, atom symbols, per-source resolved routes
-(`declared_paths`: source, endpoints, move, ordered 1-based route, angles --
-read from the single resolver authority, never re-derived), the
-working-graph topology digest, ordered rotors (bonds, moving/fixed sets,
-angles, sources), warnings, and both declaration and canonical counts.
-Runtime `confgen_completed` diagnostics expose rotor counts, the raw task
-count, the topology digest, and the warning count; short-bond findings add
-`warning_short_bond` diagnostics. Each `confgen_path_resolved` informational
-diagnostic also prints the ordered chain with atom symbols, the explicitly
-chosen moving endpoint and its rotor bonds, without asking for confirmation.
-Declared paths already participate in the
-step semantic digest, so resolution identity affects reuse correctness; no
-machine paths enter scientific digests.
+报告（`confgen_report.json`、`ensemble_report.json`）记录：驱动结构 id 与几何 digest、原子符号、
+每个来源解析出的路线（`declared_paths`：来源、端点、`move`、有序 1 基路线、角度；来自唯一的解析器）、
+工作图拓扑 digest、有序的旋转键（键、移动/固定集合、角度、来源）、警告，以及声明计数与规范计数。
+`confgen_path_resolved` 信息诊断会打印带元素符号的有序链和所选移动端点。
+已声明的 paths 参与步骤语义 digest；机器路径不进入科学 digest。

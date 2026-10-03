@@ -1,26 +1,91 @@
 # ConfFlow 命令行参考
 
-本文件列出项目内主要 CLI 的常用参数与用法示例。
+只有一个公开命令 `confflow`（另有两个安装即带的辅助入口，见末尾）。正式的 V4 命令都在 `confflow v4` 下。
 
-## confflow
+## confflow v4
 
-```bash
-confflow <input.xyz> [-c <config.yaml>] [-w <work_dir>] [--resume] [--verbose]
+```text
+confflow v4 {contract,boundary,canonical,validate,authoring,run} ...
 ```
 
-说明：仓库根目录提供 `confflow.example.yaml` 作为示例配置；工作流 CLI（`confflow`）默认不向终端打印运行日志；stdout/stderr 会写入输入目录下同名文件 `<input_basename>.txt`。
+### run — 运行整份 V4 工作流
 
 ```bash
-tail -f input.txt
+confflow v4 run --workflow <文件> --run-root <目录> [--inputs NAME=FILE ...] \
+                [--executable PROG=PATH ...] [--owner-token TOKEN] [--json]
 ```
 
-- `-c/--config`：工作流 YAML；省略时默认使用第一个输入文件同目录下的 `confflow.yaml`
-- `-w/--work_dir`：工作目录（默认 `<input_basename>_work`）
-- `--resume`：从断点继续
-- `--verbose`：更详细日志
+| 参数 | 说明 |
+| --- | --- |
+| `--workflow` | V4 工作流文档（YAML 或 JSON） |
+| `--inputs NAME=FILE` | 把 XYZ 文件 `FILE` 作为运行输入 `NAME`（可重复） |
+| `--run-root` | 受管的运行根目录（持久化状态、已发布结果、产物） |
+| `--executable PROG=PATH` | 程序 `PROG`（如 `orca`、`g16`）的可执行文件（可重复） |
+| `--owner-token` | 运行的所有权令牌（默认 `v4-cli`） |
+| `--json` | 在标准输出打印机器可读报告（`run_id`、`status`、`definition_digest`、各步骤状态、`manifest`） |
 
-## 统一返回码
+运行 `completed` 返回 0，否则返回 1。重新执行同一条命令即续跑。V1/V2/V3 文档以 `legacy_workflow_not_executable` 失败关闭。
+
+### validate — 校验工作流字节
+
+```bash
+confflow v4 validate --json (--workflow <文件> | --stdin)
+```
+
+输出 `confflow.configuration-validation.v1` 报告：`ok`、`diagnostics`（`code`/`reason`/`field_path`/`step_id`）、
+`definition_digest`、`step_ids`。
+
+### contract / boundary — 发布契约与边界协议
+
+```bash
+confflow v4 contract --json      # confflow.configuration-contract.v4
+confflow v4 boundary --json      # confflow.boundary.v4
+```
+
+### authoring — authoring 接口
+
+```bash
+confflow v4 authoring --json --stdin < request.json
+```
+
+请求/响应遵循 `confflow.authoring.v4`；操作：`describe_step`、`binding_candidates`、`instantiate_card`、
+`validate_document`、`check_compatibility`、`compile_intent`、`preview_paths`。
+
+### canonical — RFC 8785（JCS）规范化
+
+```bash
+confflow v4 canonical --json --stdin < input.json
+```
+
+## confflow（顶层）
+
+```bash
+confflow <input.xyz> ... -c <V4 工作流> [-w <运行根目录>] [--resume] [--verbose]
+confflow --version
+confflow --capabilities [--json]
+confflow --stop
+```
+
+| 参数 | 说明 |
+| --- | --- |
+| `-c/--config` | V4 工作流文档（旧版文档会失败关闭） |
+| `-w/--work_dir` | 运行根目录（默认 `<输入文件名>_work`） |
+| `--resume` | 从已有状态续跑 |
+| `--verbose` | 更详细的日志 |
+| `--capabilities [--json]` | 打印能力握手 JSON 后退出 |
+| `--version` | 打印版本后退出 |
+| `--stop` | 停止所有正在运行的 ConfFlow 任务（含子进程；需要 `psutil`） |
+
+顶层调用是同一个 V4 应用的薄入口；运行日志写入输入目录下的 `<输入文件名>.txt`，不向终端打印。
+`--rerun-failed` / `--step` 属于已退役的 legacy 执行路径，会以 `legacy_workflow_not_executable` 失败关闭。
+
+## 返回码
 
 - `0`：成功
 - `1`：用法 / 输入 / 配置错误
 - `2`：运行时失败
+
+## 辅助入口
+
+- `confflow-control-worker`：控制协议 v1 的外部 worker（排队的启动意图），见 `docs/CONTROL_PROTOCOL_RFC.md`。
+- `confflow-fixture-agent`：显式启用的、不做计算的生命周期夹具，仅用于测试。

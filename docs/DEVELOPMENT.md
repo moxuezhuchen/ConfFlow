@@ -1,304 +1,97 @@
 # ConfFlow 开发指南
 
-## 项目结构
+面向要改 ConfFlow 代码的人：怎么搭环境、质量门禁是什么、代码放哪、新增能力怎么接、契约和跨仓测试怎么处理。
+整体结构见 [`ARCHITECTURE.md`](ARCHITECTURE.md)，测试见 [`TESTING.md`](TESTING.md)。
 
-```
-confflow/
-├── confflow/              # 核心包
-│   ├── main.py            # 工作流主程序
-│   ├── cli.py             # 命令行入口
-│   ├── config/            # 配置加载与校验
-│   ├── core/              # 基础 IO、数据、模型与工具函数
-│   └── workflow/          # 工作流引擎
-├── tests/                 # 测试目录（数量以 docs/TESTING.md 和 CI 输出为准）
-├── docs/                  # 文档
-├── confflow.example.yaml  # 配置模板
-├── README.md              # 主文档
-└── pyproject.toml         # 项目元数据与打包配置
-```
+## 1. 环境
 
-## 开发环境设置
-
-### 1. 克隆仓库
+- Python ≥ 3.10（CI 矩阵 3.10–3.13；release 安装器相关测试固定在 3.12）。
+- 运行依赖：numpy、scipy、pyyaml、psutil、rich、pydantic、rdkit、jsonschema、referencing、rfc8785。
 
 ```bash
-git clone https://github.com/moxuezhuchen/ConfFlow.git
-cd ConfFlow
-```
-
-### 2. 创建虚拟环境
-
-```bash
-conda create -n confflow-dev python=3.10 -y
-conda activate confflow-dev
-```
-
-### 3. 安装开发依赖
-
-```bash
+git clone https://github.com/moxuezhuchen/ConfFlow.git && cd ConfFlow
+python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 ```
 
-## 代码规范
+- `dev` 额外装 black、ruff、mypy、pytest、pytest-cov、build 与类型桩。
+- `speed` / `all` extra 装 numba；目前没有任何代码路径依赖 numba 加速（`confflow/__init__.py` 只探测它是否可用）。
+- 真实的 Gaussian / ORCA 需要自己安装并取得许可；仓库内测试只用 `tests/v4/fakes/` 里的假可执行文件。
 
-### 格式化
-
-使用 Black 进行代码格式化：
-
-```bash
-black confflow/ tests/
-```
-
-### 类型检查
+## 2. 质量门禁（与 CI 一致）
 
 ```bash
+black --check .            # 行宽 100，target py310
+ruff check .               # E F I B UP D；numpy 风格 docstring；模块/包 docstring 必须有
 mypy confflow
+pytest -q                  # 见 TESTING.md；scripts/test.sh 会把所有产物放进系统临时目录
 ```
 
-### 代码风格检查
+- 格式化只用 black；ruff 只做 lint（不要用 `ruff format` 整体重排）。
+- 公开类/函数 docstring（D101–D107）暂缓强制；模块与包 docstring 必须有，且应说明该模块**拥有**什么、**不做**什么。
+- `pyproject.toml` 里 `strict_config = true`：未声明的 pytest 标记会报错。
 
-```bash
-ruff check confflow tests
-```
+## 3. 代码放哪
 
-统一风格与输入/输出契约见：`docs/STYLE_CONTRACT.md`
+| 要做的事 | 放在 | 注意 |
+| --- | --- | --- |
+| 新的领域概念（不可变记录、digest 规范化） | `domain/` | 不得 import 其他 `confflow.*`，不做 I/O |
+| 新的纯科学计算 | `science/` | 纯函数；不读环境、不写文件；有预算/上限的算法要把预算做成显式参数并用"节点数/结果"测试固定，而不是用耗时 |
+| 新的执行器能力或 step 类型 | `execution/` + `execution/registry.py` | 能力、adapter、profile、check、recovery 都带独立的 contract version，进入 step digest |
+| 新的量化程序 | `programs/<name>/` + `programs/registry.py` | 适配器只负责输入渲染与输出解析 |
+| 新的科学检查 / 恢复策略 | `execution/checks_standard.py`、`recovery_standard.py` | 必须在文档里显式声明才会生效，没有按 role 隐式触发 |
+| 工作流 schema 字段 | `workflow/v4/schema.py` | 默认值只在这里定义；JSON schema 由模型生成 |
+| 对客户端发布的内容 | `producer/` | 改动会移动契约/边界 digest，见 §5 |
+| 持久化格式 | `persistence/` | 通过 `persistence/contracts.py` 的冻结契约 |
 
-## 架构与设计文档
+原则：复用正确的低层能力，替换错误的高层抽象；不要因为"方便"绕过 registry 或在执行层按 program/role 名分支。
 
-### 核心架构
+## 4. 新增能力的最小步骤
 
-- `docs/ARCHITECTURE.md`：完整的架构设计与模块说明
-- `docs/internal/COMPAT_EXECUTION_BOUNDARY.md`：Compat/Execution 边界契约（workflow→calc 双轨接口）
-- `docs/archive/HANDOFF_PHASE2_WORKFLOW_CALC.md`：阶段 2 完整历史与问题台账
+**新的 calculation program**：写适配器（渲染 + 解析 + artifact 发现 + 环境探测）→ 在 `programs/registry.py` 注册 →
+在 `tests/v4/fakes/` 加一个行为可控的假可执行文件 → 在 `tests/v4/` 里加渲染/解析/一致性测试 →
+`confflow v4 contract --json` 里 program 列表随之变化，确认契约变更是预期的（见 §5）。
 
-## 当前推荐入口
+**新的科学检查 / 结果 profile**：在 `execution/contracts.py` 描述符中声明（带 contract version）→ 实现 → 注册 →
+测试覆盖"通过/失败/缺数据"三种情形。
 
-- 工作流主入口：`confflow.workflow.run_workflow` 或顶层 `confflow.run_workflow`
-- typed 配置入口：`confflow.config.models.WorkflowConfig` / `CalcStepParams`
+**新的 ConfGen 声明（torsion / ring / coordination / path）**：改 `workflow/v4/confgen_schema.py` 与
+`science/confgen/` 中对应的 lane；任何改变构象集合的改动都要有等价性或回归证据，并且要重新捕获引擎报告基线
+（`docs/refactor/baseline/` 与 `docs/refactor/tools/`）。
 
-不要为新代码新增 INI settings、legacy flat calc config、`.config_hash` MD5 兼容或 `ChemTaskManager` 依赖。
+## 5. 契约与指纹
 
-### 开发指南
+`producer/` 生成的内容（配置契约、边界协议、authoring schema、editor manifest、recipes）是对 JobDesk 的**公共接口**：
 
-- `docs/DEVELOPMENT.md`：本文档
-- `docs/TESTING.md`：测试套件文档
-- `docs/STYLE_CONTRACT.md`：代码/输入/输出一致性标准
+- `confflow v4 contract --json`、`confflow v4 boundary --json` 的字节是被钉住的；改动前后用
+  `docs/refactor/tools/contract_digests.py` 对比，用 `json_paths_diff.py` 看具体差了哪些路径。
+- 边界协议的 fixture 由 `scripts/generate_p0_boundary_fixtures.py` 生成（生产者拥有），JobDesk 通过同步脚本原样拷贝，
+  不得手改；`tests/v4/test_p0_boundary.py` 会检查入库的 fixture 与现在生成的一致。
+- 删除或重命名 wire 成员属于不兼容变更：JobDesk 必须同步升级，并在提交信息里写明。
 
-### 用户文档
+## 6. 跨仓库测试
 
-- `docs/USAGE.md`：快速开始指南
-- `docs/COMMAND_REFERENCE.md`：所有命令的完整参考
+`tests/v4/jobdesk_integration.py` 把 JobDesk-v2 的源码当作消费者来读取真实的 producer 字节：
 
-## 运行测试
+- 用环境变量 `JOBDESK_V2_SRC=<JobDesk-v2 的 src 目录>` 指向检出；缺失时这些测试跳过（标记 `cross_repo`）。
+- 检出的提交必须等于 `EXPECTED_JOBDESK_SHA`，且与 `.github/workflows/jobdesk-contract.yml` 的 `JOBDESK_COMPAT_SHA` 一致
+  （`tests/test_release_workflow.py` 校验两处相同）。需要对着别的提交开发时设 `JOBDESK_V2_ALLOW_ANY_SHA=1`。
+- 升级 JobDesk 侧提交后，按顺序更新两处 SHA 并重新跑跨仓测试。
 
-### 所有测试
+## 7. 架构护栏
 
-```bash
-./scripts/test.sh
-```
+- `tests/v4/test_architecture_boundaries.py`：包依赖规则、禁止导入前缀、"已删除的模块必须不存在"、导入闭包检查。
+- `scripts/v4_arch_scan.py`、`scripts/architecture_metrics.py`：静态扫描与度量，CI 外也可手动运行。
+- 删除代码时要同时删掉只守护它的测试（以及它们在护栏清单中的条目），并把已删除的模块名加入 `REMOVED_LEGACY_MODULES`。
 
-### 指定测试文件
+## 8. 发布
 
-```bash
-./scripts/test.sh tests/test_confgen.py -v
-```
+发布流程、锁文件、wheel 安装器与溯源见 [`RELEASE.md`](RELEASE.md)；依赖锁用
+`scripts/generate_dependency_locks.py --write/--check` 生成与核对；发布 wheel 的隔离安装用
+`scripts/install_release_wheel.py`。
 
-### 仅集成测试
+## 9. 重构记录
 
-```bash
-./scripts/test.sh -m integration
-```
-
-### 代码覆盖率
-
-```bash
-./scripts/test.sh --cov=confflow --cov-report=term-missing
-```
-
-覆盖率阈值已配置在 `pyproject.toml` 中（`fail_under = 85`），并启用了分支覆盖率。
-
-### 常用质量门禁（推荐）
-
-```bash
-ruff check confflow tests
-mypy confflow
-./scripts/test.sh -q
-```
-
-当前本地基线（2026-04-12）：
-
-- `ruff check confflow tests`：通过
-- `mypy confflow`：通过
-- `pytest -q`：当前测试数量会随仓库演进变化；以 `docs/TESTING.md` 和 CI 结果为准
-
-### 测试产物目录规范
-
-- 推荐测试入口：`./scripts/test.sh`（pytest/coverage 产物重定向到系统临时目录，并在结束后自动清理）
-- 直接运行 `pytest` 时，仓库根目录可能出现：`.pytest_cache_temp`、`.coverage_temp`、`coverage.xml`、`htmlcov/`、`reports/`
-
-以上路径均已在 `.gitignore` 中忽略，避免污染仓库根目录。
-
-测试架构详见：`docs/TESTING.md`
-
-### 目录清理（缓存/临时文件）
-
-```bash
-find . -type d -name "__pycache__" -exec rm -rf {} +
-rm -rf .pytest_cache_temp .mypy_cache .ruff_cache confflow.egg-info build dist htmlcov coverage.xml reports .coverage_temp
-```
-
-## 核心模块说明
-
-## 添加新功能的步骤
-
-### 1. 新的量子化学程序支持
-
-**文件修改：**
-- `confflow/config/models.py`：如果需要新的程序特定配置项，更新 typed model。
-
-**示例：**
-
-```python
-# 在 calc/policies/myprog.py 中
-class MyProgPolicy(CalculationPolicy):
-    def generate_input(self, ...):
-        pass
-    def parse_output(self, ...):
-        pass
-```
-
-### 2. 新的构象生成策略
-
-**文件修改：**
-- `confflow/config/models.py`：添加新参数。
-
-### 3. 新的筛选条件
-
-**文件修改：**
-
-## 性能优化
-
-### 1. 使用 Numba JIT
-
-对计算密集型函数使用 `@jit` 装饰器：
-
-```python
-from numba import jit
-
-@jit(nopython=True)
-def fast_calculation(arr):
-    # 计算密集的代码
-    pass
-```
-
-### 2. 并行处理
-
-使用 `multiprocessing` 处理多个构象：
-
-```python
-from multiprocessing import Pool
-
-def process_batch(conformers):
-    with Pool(max_workers) as pool:
-        results = pool.map(process_one, conformers)
-    return results
-```
-
-### 3. 内存管理
-
-- 及时释放大数组
-- 使用流式处理处理大量构象
-
-## 文档编写
-
-### Python 文档字符串
-
-使用英文 NumPy 风格的文档字符串：
-
-```python
-def calculate_energy(conformer: np.ndarray) -> float:
-    """Calculate the conformer energy.
-
-    Parameters
-    ----------
-    conformer : np.ndarray
-        Cartesian coordinates with shape ``(N, 3)``.
-
-    Returns
-    -------
-    float
-        Energy in Hartree.
-
-    Raises
-    ------
-    ValueError
-        Raised when the conformer is invalid.
-    """
-    return 0.0
-```
-
-### Markdown 文档
-
-- 使用清晰的标题层级
-- 提供代码示例
-- 包含常见问题解答
-- 用户文档统一使用中文说明，不依赖尾随空格实现换行
-- 风格基准以 `docs/STYLE_CONTRACT.md` 为准
-
-## 版本管理
-
-### 版本号格式
-
-采用语义版本化 (Semantic Versioning)：
-- MAJOR: 不兼容的 API 改变
-- MINOR: 向后兼容的功能添加
-- PATCH: 向后兼容的 bug 修复
-
-**示例：** 1.0.0 (主版本.次版本.修订版本)
-
-### 发布流程
-
-当前为手动发布流程，详见 `docs/RELEASE.md`。PyPI 发布尚未作为自动化项目流程提供；不要在未确认维护者已发布前假设包可从 PyPI 获取。
-
-## 常见问题
-
-### Q: 如何调试工作流？
-
-A: 使用 `--verbose` 启用调试日志：
-```bash
-confflow input.xyz -c confflow.example.yaml --verbose
-```
-
-### Q: 日志系统的工作模式是什么？
-
-A: ConfFlow 日志系统默认运行在 **standalone 模式**：
-- CLI 运行时，日志写入 `<input_basename>.txt` 文件
-- 同时在终端显示 INFO 级别的简洁输出
-- 默认使用独立的 console handler；但当检测到明确的 host-managed 自定义 root handler 时，会自动切换到 embedded 模式
-- `pytest` capture、标准库通用 handler、`NullHandler`、常见 notebook handler 不会触发该自动 embedded
-
-如果 ConfFlow 被嵌入到其他应用（如 GibbsFlow）中，外部调用方可以显式启用 **embedded 模式**：
-```python
-from confflow.core.logging import ConfFlowLogger
-ConfFlowLogger.set_embedded_mode(True)  # 移除独立 console handler，日志传播到父 logger
-```
-
-这样可以避免日志重复输出，并让外部应用统一管理日志格式。
-
-### Q: 如何添加新的量子化学程序？
-
-A: 参考"添加新功能的步骤"中的量子化学程序部分，实现新的 `CalculationPolicy`。
-
-### Q: 如何优化性能？
-
-A: 查看"性能优化"部分，或调整 `confflow.example.yaml` 中的 `max_parallel_jobs` 并行数。
-
-## 联系与反馈
-
-- 提交 Issue 报告 bug
-- 提交 Pull Request 贡献代码
-- 安全问题请优先按仓库根目录 `SECURITY.md` 私密提报，不要公开提交敏感日志或私有计算数据
-
----
-
-感谢为 ConfFlow 做贡献！
+2026 年的架构瘦身（删除 calc/blocks/legacy CLI、边界瘦身、输入简化、refine 对称映射）的计划、逐卡验收和检查点在
+`docs/refactor/`：`PLAN.md`（任务卡）、`ACCEPTANCE.md`（验收协议）、`LOG.md`（验收记录）、`baseline/`（TS1 与引擎报告基线及各阶段检查点）、
+`paths_equivalence/`（legacy paths 与 typed v3 的等价性证据）、`tools/`（基线与验收工具）。这些文件是历史记录与证据，普通开发不需要改它们。

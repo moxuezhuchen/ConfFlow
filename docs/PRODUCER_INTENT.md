@@ -47,6 +47,14 @@ defaults), `preset` (transform cards), `from` (semantic predecessor
 allow_method_change?}` — explicit only, strict boolean, wired late via
 `producer.checkpoints`), `execution`/`label`.
 
+Confgen cards: `native` must be a typed `schema_version: 3` scope.  A
+legacy `paths` scope (optionally with `angle_step`, `bond_scale`,
+`strict_path_bond_check`) is rewritten mechanically into the equivalent v3
+block (see `CONFGEN_PATHS.md` §2); any other legacy native vocabulary
+(`chains`, ...) and `waypoint` path declarations are refused at compile time
+with a message that names the offending key.  A seed is declared at the step
+level, never inside `native`.
+
 Non-applicable fields are rejected, never silently dropped (a seed or
 program on a transform, a program/role/adapter/profile/checks/recovery
 on a confgen, a preset on a calculation).
@@ -114,7 +122,7 @@ seeds, scheduler, machine/execution, annotations, labels, input
 descriptions, output paths.  Explicit seeds are preserved verbatim and
 audited as `explicit` — even on steps that are not stochastically
 required (e.g. an uncapped typed ConfGen carrying a user seed);
-full-enumeration typed ConfGen without a user seed gets none; legacy/capped ConfGen and GOAT
+full-enumeration typed ConfGen without a user seed gets none; capped ConfGen and GOAT
 get derived-or-explicit seeds in strict `confgen.seed` /
 `calculation.seed`.  Seeds assign after machine and checkpoint updates,
 so checkpoint edges move seeds.  GOAT seeds are workflow identity only
