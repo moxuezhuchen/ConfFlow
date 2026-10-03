@@ -454,3 +454,11 @@
 - C5.6-8：CF refactor/diet-c5 b84f84b（父 da44bf5），与补丁字节一致，6 个测试名与清单逐行相同，文档 grep 无命中，ruff/mypy 通过，全量 3849 passed / 10 skipped（验收方独立重跑）。已推送。侧分支 C5.2–C5.8 全部完成。
 - 侧分支合入 CF main：`--no-ff`，本地，**未推送 main**。main 7d93fae → db56e35（合并）→ f8a1f75（补两个测试）。唯一冲突在 `confflow/execution/transform_executor.py` 的 import：输入简化线让 refine 的默认邻接来自"单一 working-topology 权威"（`science.topology.resolve_working_adjacency`，记录自带的 `working_topology`/`topology_patch`），解决为保留它作为默认来源，`topology_bonds` 作为显式的步骤级覆盖；两者同时出现时由 `build_typed_graph` 里已有的 `check_spec_patch_conflict` 失败关闭（"declare one authority"），新增 2 个测试固定这点。合并后复验：全量 4510 passed / 10 skipped；JD（master 2c7e121，干净树）2467 passed / 7 skipped；golden：contract 与 IS.5 检查点一致，TS1 ok，engine 报告 added 5 / different 1（IS 那 6 份）。
 - **设计收敛（需用户知晓）：** 输入简化线已经让每条结构记录携带 `working_topology`/`topology_patch` 并沿数据流传递（ConfGen 与 refine 共用同一权威），这实际上就是 Q-R2 要找的"拓扑来源"。因此 C5.3c-2（编译器沿数据流把 ConfGen 拓扑复制到 refine 的 `topology_bonds`）很可能不再需要；`topology_bonds` 保留为显式覆盖。待用户裁定是否取消 C5.3c-2。
+
+## 文档重写（refactor/docs-rewrite，be62bf8）
+
+- 重写：ARCHITECTURE / DEVELOPMENT / TESTING / USAGE / COMMAND_REFERENCE；更新 CONFGEN_PATHS（typed v3、旧 paths 经 intent 机械映射、waypoint/chains 编译期拒绝）、PRODUCER_INTENT（confgen 卡规则）、tests/README、README 的 numba 说明。
+- 修复：CI 的 `numba-optional-extra` 作业运行已删除的 `tests/test_optional_numba.py`，已移除该作业；删除无人导入的 `tests/_helpers.py`。
+- 验证：ruff 通过；示例工作流与 release workflow 测试 17 项通过；收集 4520；文档中的 intent 行为（旧 paths→v3、waypoint 拒绝、chains 拒绝）实测。black 报 3 个文件需重排，在合并前基线上同样存在（非本次引入）。
+- 未处理：`confflow.example.yaml` 仍用旧 `confgen.native.chains`（Phase 4）；`scripts/architecture_metrics.py`、`v4_arch_scan.py` 的 docstring 仍提到已删模块。
+- 未推送；`refactor/docs-rewrite` 可按授权推送，main 不推。
