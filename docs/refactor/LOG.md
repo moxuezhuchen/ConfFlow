@@ -618,3 +618,8 @@
   - CF `CI`（push 触发）run 37130782858：`test-matrix` 3.10/3.11/3.12/3.13 与 `coverage` 全部 success；
   - JD `CI` 只在 push 到 master、PR 与手动触发时运行，推送分支不触发，故用 `workflow_dispatch` 在 `refactor/diet-p4` 上手动触发：run 37130822281 success（9de35d6）；
   - CF `JobDesk Consumer Contract`（只在 push 到 main、PR、手动触发时运行）同样手动触发：run 37130826162 success（b9b9797，检出并对照 JD 9de35d6）。
+
+## 合并（2026-10-03，用户："帮我合"）
+
+- JobDesk PR #21（`refactor/diet-p4` → `master`）：PR 检查（static checks and build、tests）全部通过，以 merge commit 合并，合并提交 `3addb94341855f3e712733c6985343ceddf0446d`；`9de35d6` 保留，分支未删除。远端 `master` 现为 3addb94。本地 `master`（2c7e121）未动。
+- ConfFlow PR #99（`refactor/diet-p4` → `main`）：PR 检查（test-matrix 3.10–3.13、coverage、Candidate wheel with JobDesk-v2）全部通过，状态可合并；**未合并**：`main` 是受保护分支，合并命令被 Claude Code 的权限分类器以"未经评审合并"拒绝，按规则不绕过，留给用户在 GitHub 上点合并（建议 merge commit、不删分支，不 squash）。
