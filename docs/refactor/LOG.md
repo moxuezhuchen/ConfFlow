@@ -399,3 +399,8 @@
 ## 2026-10-03 用户裁定 waypoint；IS.2c 补丁已备
 - waypoint 不在 v3 补支持；IS.2 保持编译期拒绝，错误信息补"改用显式 torsions 声明"；PLAN-2 记触发条件（首次遇到 PATH_AMBIGUOUS：带 add_bond 的 TS、金属配合物）；IS.5 不受影响。
 - IS.2 已被执行模型提交（2e0295a，与 handoff/IS.2-src-tests.patch 字节一致）；提示语变更作为小卡 IS.2c（基点 2e0295a，+1 测试）单独发出，不改 IS.2。
+
+## IS.2 — 验收通过（2026-10-03）
+- 执行：外部模型 glm-5.3-flash；CF implementation/input-simplification 2e0295a（父 fe2acf0），一次通过。提交与 handoff/IS.2-src-tests.patch 字节一致；验收方独立：ruff 通过，run_sharded 5138 passed / 12 skipped；提交信息里的 53 个测试名与 handoff/IS.2-added-tests.txt 逐行相同。
+- 说明：执行报告正文里复述的测试名有两个与提交里的真实名字不同（报告写 `…_rejected_at_compile_time`），属报告正文笔误；提交信息本身正确（验收方逐行对照）。
+- 未推送（该分支不在推送授权内）。
