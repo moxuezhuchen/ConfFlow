@@ -1,0 +1,62 @@
+继续 ConfFlow PLAN-2：本轮将 E1/E2/E3 合并为一张 E-fast 卡。外部模型 glm5.3-flash。用户已批准合并可合并的任务，减少交接；按以下固定范围依次完成预演、产物生成及正式执行，最后只交回一次报告。不启动 subagent，不自由扩展。
+旧 E1-planning-prompt.txt 作废，不执行它。C1 集成、B1/B2、D类均不混入本卡。
+
+先读 HANDOFF、STATUS 和现有 C1a 卡片。位置均在 /opt/cf-worktrees/refactor-plan/docs/refactor/ 下。
+每条 shell 命令显式 cd；先打印 HEAD、分支、status。main/master 一律只读，保留 ConfFlow 两个未跟踪项。禁止 push、开/合 PR、reset 主分支、安装依赖。
+
+固定来源：
+- CF main基点 d05927cf31b39a72c68e7bf17b43869336fc174b。
+- 文档计划基点45ace941683c2e9dfe1f3772b86f3ae9fa177846；当前文档HEAD可有本提示词提交，先打印并保证干净，不要求它等于计划基点。
+- 调度数据 /tmp/c1a-accept-8go9pcgm/weights.json，sha256=7995630aa5967a3e65cc3595a46f6eacbb6f99bf6de4e194585e2dce3dacba33。
+- 速度对照与固定验收CF代码为 c4a78d6e6948cfa58ecf7fe111c7d1face48d8bf；既有独立全量4476 passed/10 skipped、collect4486、321秒，仅作对照，不替代本轮实跑。
+- JD只读检出 /opt/cf-worktrees/jd-pin @9de35d6。
+HEAD、来源摘要或干净状态不符合即停止报告，不自行修复。
+
+统一工具实现分支从 CF main固定基点建立，建议 refactor/acceptance-fast；临时预演树与正式执行树分别建立，不能共用。
+工具代码在此分支，验收对象 CF=c4a78d6 的独立检出，--cf必须指向它，不能误跑工具分支的不同科学代码。
+
+白名单（最多9个文件，源文件只按说明复制，产品科学代码不变）：
+1. docs/refactor/tools-acc/run_sharded.py：从文档计划基点复制现有版本，再扩展。
+2. docs/refactor/tools-acc/noeditable/sitecustomize.py：从文档计划基点原样复制，不能改语义。
+3. docs/refactor/tools-acc/weights.json：实测种子。
+4. docs/refactor/tools/golden_check.py：扩展现有权威脚本，不新增第二套golden逻辑。
+5. docs/refactor/tools/capture_engine_reports.py：为完整全量限制捕获范围，默认旧行为保留。
+6. docs/refactor/tools/capture_provenance.py：runner与golden共用的摘要/完整性验证，避免两端规则不同。
+7. docs/refactor/tools-acc/test_fast_acceptance.py：工具自己的有意义负例测试，不放进产品tests目录，不改变产品收集数。
+8. docs/refactor/plan2/ACCEPTANCE_FAST.md：完整运行命令、复用边界及诊断。
+9. docs/refactor/tools-acc/run_fast_acceptance.py：如有必要提供薄流程入口，只编排已有检查；不另写比较逻辑。如不需要则不要创建。
+不改产品代码/测试、基线、检查点、TS1科学脚本和报告文件格式。不新增第三方依赖。不调分片数量，不拆科学测试。
+
+接口和语义已定：
+A. 使用现有 --weights，12分片；每次复制种子到新的输出目录，运行只更新副本。Black --workers 1。探测/opt/g16的收集/全量用适当宿主权限，不靠跳过测试解决权限错误。
+B. runner 增加 --capture-engine-reports DIR（可选，旧用法继续有效）。DIR须不存在或为空，禁止混入旧报告。
+   - 与旧golden相同范围：tests/v4/test_confgen_*.py；其它测试仍全量执行但不写入这套golden报告。
+   - capture插件增加可选范围配置，只过滤报告写出，不阻止任何测试/引擎调用；默认保持原行为。
+   - 每分片独立目录，全部结束后合并；同名报告冲突直接失败，不覆盖、不任选其一。
+   - 完整collect节点集合和JUnit节点集合精确一致（无缺漏/重复），pytest子进程退出码与节点结果都检查；failed/error、收集不完整、缺JUnit或捕获失败必须非零，不能产出成功manifest。
+   - 不仅核对节点总数；数量相同但节点替换也要被拒绝。
+   - runner原本无捕获模式也必须返回真实失败状态，不能失败却exit0。
+C. 完成manifest最后写出，只允许本次完整成功运行生成。记录版本、唯一run_id、CF规范路径、CF当前源码/测试/相关配置内容摘要、工具内容摘要、JD固定版本、collect完整节点摘要、实际tally，以及每个捕获文件内容摘要。
+   - 摘要依据当前文件内容，不仅HEAD；临时未提交改动必须改变摘要。
+   - 输出目录不能放在参与源码摘要的目录里；发现污染应报错。
+   - 无manifest、运行失败、摘要不符、来源CF/JD不符、节点不完整、制品缺失/多出/损坏均拒绝。
+   - 这是本轮独立验收生成制品的绑定，不能拿执行器或上轮验收的制品冒充本轮独立运行。
+D. golden 增加 --engine-capture DIR（可选）。不提供时旧流程保留；提供时先验证manifest全部约束，再按现有规则逐字节比较引擎报告，不重跑这部分pytest。
+   - TS1三后端、契约/边界五摘要仍现场计算，不复用上轮结果。
+   - 来源验证失败直接非零，明确报告原因，不能静默退回旧流程掩盖问题。
+   - 保留removed-nodes既有语义；不能放宽added/different/missing判定。
+   - 引擎报告本身与旧golden格式和命名逐字一致。
+
+内部顺序（同一张卡，不需要每步交接）：
+1. 核对来源，建立临时预演树；先做A，再做B/C，最后D。
+2. 先跑工具小测试。必须覆盖：分片失败即非零、缺节点、等数量错节点、同名报告冲突、未完成manifest、CF未提交改动、工具改动、报告损坏/缺失、其它节点不被过滤执行、旧调用保留。使用小型假pytest/小fixture或直接测函数，不为每个负例跑4000多测试。
+3. 在固定CF副本一次独立完整运行，同时产出所有outcomes、weights、engine捕获与manifest。节点集合完整、4476/10、collect4486；各分片失败日志保留。
+4. 用同次捕获运行新golden。另跑一次旧golden作本卡唯一的等价性对照，比较捕获报告文件名和字节、TS1和五摘要以及结论一致。该旧流程对照只用于本卡首次验证，以后每卡不再双跑。新/旧输出中的临时路径字段不作为科学差异。
+5. static与完整测试独立项可并行；报告比较必须等捕获完成，不并发破坏同一个CF树。记录总wall time、全量/TS1/golden阶段时间；不为了得到好数字反复重跑，不保证必须快于321秒。
+6. 生成 E-fast.patch、E-fast.md、E-fast-executor-prompt.txt。写精确白名单、工具分支基点、固定CF版本、实测数字、完整命令、停止规则和补丁sha256。
+7. 临时预演树清回干净；正式执行树从原固定基点建立，确认干净和补丁apply --check，通过后仅应用已冻结补丁。不得在执行期间修订补丁。
+8. 在正式执行树验证最终工具与预演补丁逐字相同；正式全量/新golden各跑一次，不再重复旧golden对照（工具负例测试仍跑）。来源绑定使用正式树当前内容，不能使用预演的成功manifest作正式证据。
+9. 提交前打印并核对分支名；一卡一提交，只add白名单，提交后干净。尾行：Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>。不push。补丁、卡片、提示词和STATUS记录可存入文档分支，但不改主分支；工具实现不能直接写进docs/refactor-plan2。
+10. 交回一次报告：最终提交/父提交、文档交付提交及补丁sha256、白名单stat、完整日志路径、真实节点数/tally、负例结果、旧新等价性、实测耗时和执行偏差。失败或数字不符停止报告，不自行amend或修复。报告不是最终验收，规划者会独立重跑新全量和golden。
+
+本卡止于工具实现与报告交付，不继续C1集成/B1/B2/D。后续每组仍各一提交和独立验收，但在能共用完整验证时合卡，不为文案/参数单独增加一轮。
