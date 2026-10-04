@@ -154,6 +154,63 @@ def _scientific_group(record: StructureRecord) -> tuple[Any, ...]:
     )
 
 
+_CONNECTIVITY_NOTE_LIMIT = 8
+
+
+def _graph_bonds(frame: Mapping[str, Any]) -> frozenset[tuple[int, int]]:
+    """Return the covalent bonds (0-based index pairs) of one comparison frame."""
+    adjacency = frame["graph"].adjacency
+    return frozenset(
+        (int(first), int(second))
+        for first, row in enumerate(adjacency)
+        for second in row
+        if int(first) < int(second)
+    )
+
+
+def _bond_labels(bonds: Sequence[tuple[int, int]], atoms: Sequence[str]) -> str:
+    """Render bonds as 1-based ``C2-C5`` labels, capped for readability."""
+    labels = [f"{atoms[a]}{a + 1}-{atoms[b]}{b + 1}" for a, b in sorted(bonds)]
+    if len(labels) > _CONNECTIVITY_NOTE_LIMIT:
+        extra = len(labels) - _CONNECTIVITY_NOTE_LIMIT
+        labels = [*labels[:_CONNECTIVITY_NOTE_LIMIT], f"... (+{extra} more)"]
+    return "[" + ", ".join(labels) + "]"
+
+
+def _connectivity_notes(
+    ordered: Sequence[StructureRecord], frames: Mapping[str, Mapping[str, Any]]
+) -> list[str]:
+    """Report structures whose bonding graph differs from the majority of their group.
+
+    Report only: nothing is dropped, merged or reordered.  Within one scientific
+    group the most common bond set is the reference (ties go to the set held by
+    the structure with the smallest id); every structure with a different bond
+    set gets one note naming the bonds it gained and lost.
+    """
+    bond_sets = {record.id: _graph_bonds(frames[record.id]) for record in ordered}
+    counts: dict[frozenset[tuple[int, int]], int] = {}
+    first_seen: dict[frozenset[tuple[int, int]], str] = {}
+    for record in ordered:
+        bonds = bond_sets[record.id]
+        counts[bonds] = counts.get(bonds, 0) + 1
+        first_seen.setdefault(bonds, record.id)
+    if len(counts) < 2:
+        return []
+    reference = min(counts, key=lambda bonds: (-counts[bonds], first_seen[bonds]))
+    notes: list[str] = []
+    for record in ordered:
+        bonds = bond_sets[record.id]
+        if bonds == reference:
+            continue
+        notes.append(
+            f"connectivity of {record.id} differs from the majority bonding graph of its group "
+            f"({counts[reference]} of {len(ordered)} structures): "
+            f"gained {_bond_labels(sorted(bonds - reference), record.atoms)}, "
+            f"lost {_bond_labels(sorted(reference - bonds), record.atoms)}"
+        )
+    return notes
+
+
 class TransformExecutor:
     """Pure explicit structure-set transformation executor."""
 
@@ -337,6 +394,7 @@ class TransformExecutor:
         for group in groups.values():
             ordered = sorted(group, key=lambda item: item.id)
             frames = {record.id: self._frame(record, bond_scale, declared) for record in ordered}
+            notes.extend(_connectivity_notes(ordered, frames))
             retained: list[StructureRecord] = []
             for record in ordered:
                 witness = self._duplicate_of(
