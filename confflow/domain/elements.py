@@ -2,10 +2,10 @@
 
 """V4 canonical element symbols.
 
-The V4 domain layer is dependency-free, so it owns this minimal element table
-instead of importing ``confflow.science.data`` (whose package initialiser pulls
-in the science package).  ``tests/v4`` cross-checks the table against that
-source to prevent silent drift.
+The V4 domain layer is dependency-free, so it owns this minimal element table.
+``confflow.science.data`` re-exports the same object as ``PERIODIC_SYMBOLS``
+(there is no duplicate table), and ``tests/v4`` pins that identity to prevent
+silent divergence.
 """
 
 from __future__ import annotations
