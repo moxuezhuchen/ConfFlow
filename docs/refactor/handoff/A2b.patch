@@ -1,0 +1,182 @@
+diff --git a/confflow/execution/transform_executor.py b/confflow/execution/transform_executor.py
+index ca52247..f2235fa 100644
+--- a/confflow/execution/transform_executor.py
++++ b/confflow/execution/transform_executor.py
+@@ -154,6 +154,63 @@ def _scientific_group(record: StructureRecord) -> tuple[Any, ...]:
+     )
+ 
+ 
++_CONNECTIVITY_NOTE_LIMIT = 8
++
++
++def _graph_bonds(frame: Mapping[str, Any]) -> frozenset[tuple[int, int]]:
++    """Return the covalent bonds (0-based index pairs) of one comparison frame."""
++    adjacency = frame["graph"].adjacency
++    return frozenset(
++        (int(first), int(second))
++        for first, row in enumerate(adjacency)
++        for second in row
++        if int(first) < int(second)
++    )
++
++
++def _bond_labels(bonds: Sequence[tuple[int, int]], atoms: Sequence[str]) -> str:
++    """Render bonds as 1-based ``C2-C5`` labels, capped for readability."""
++    labels = [f"{atoms[a]}{a + 1}-{atoms[b]}{b + 1}" for a, b in sorted(bonds)]
++    if len(labels) > _CONNECTIVITY_NOTE_LIMIT:
++        extra = len(labels) - _CONNECTIVITY_NOTE_LIMIT
++        labels = [*labels[:_CONNECTIVITY_NOTE_LIMIT], f"... (+{extra} more)"]
++    return "[" + ", ".join(labels) + "]"
++
++
++def _connectivity_notes(
++    ordered: Sequence[StructureRecord], frames: Mapping[str, Mapping[str, Any]]
++) -> list[str]:
++    """Report structures whose bonding graph differs from the majority of their group.
++
++    Report only: nothing is dropped, merged or reordered.  Within one scientific
++    group the most common bond set is the reference (ties go to the set held by
++    the structure with the smallest id); every structure with a different bond
++    set gets one note naming the bonds it gained and lost.
++    """
++    bond_sets = {record.id: _graph_bonds(frames[record.id]) for record in ordered}
++    counts: dict[frozenset[tuple[int, int]], int] = {}
++    first_seen: dict[frozenset[tuple[int, int]], str] = {}
++    for record in ordered:
++        bonds = bond_sets[record.id]
++        counts[bonds] = counts.get(bonds, 0) + 1
++        first_seen.setdefault(bonds, record.id)
++    if len(counts) < 2:
++        return []
++    reference = min(counts, key=lambda bonds: (-counts[bonds], first_seen[bonds]))
++    notes: list[str] = []
++    for record in ordered:
++        bonds = bond_sets[record.id]
++        if bonds == reference:
++            continue
++        notes.append(
++            f"connectivity of {record.id} differs from the majority bonding graph of its group "
++            f"({counts[reference]} of {len(ordered)} structures): "
++            f"gained {_bond_labels(sorted(bonds - reference), record.atoms)}, "
++            f"lost {_bond_labels(sorted(reference - bonds), record.atoms)}"
++        )
++    return notes
++
++
+ class TransformExecutor:
+     """Pure explicit structure-set transformation executor."""
+ 
+@@ -337,6 +394,7 @@ class TransformExecutor:
+         for group in groups.values():
+             ordered = sorted(group, key=lambda item: item.id)
+             frames = {record.id: self._frame(record, bond_scale, declared) for record in ordered}
++            notes.extend(_connectivity_notes(ordered, frames))
+             retained: list[StructureRecord] = []
+             for record in ordered:
+                 witness = self._duplicate_of(
+diff --git a/tests/v4/test_refine_connectivity_report.py b/tests/v4/test_refine_connectivity_report.py
+new file mode 100644
+index 0000000..3cc9ce3
+--- /dev/null
++++ b/tests/v4/test_refine_connectivity_report.py
+@@ -0,0 +1,100 @@
++#!/usr/bin/env python3
++
++"""``refine`` reports connectivity that differs inside a group; it never filters on it (A2-b).
++
++The legacy refine block deleted the minority-topology conformers.  V4 refine keeps
++every structure, so a conformer whose bonding changed (for example a bond that
++broke during an optimization) must at least be named in the step notes.
++"""
++
++from __future__ import annotations
++
++import json
++from pathlib import Path
++
++import numpy as np
++
++from confflow.domain.structure import StructureRecord
++from confflow.execution.transform_executor import TransformExecutor
++
++DATA = Path(__file__).resolve().parent.parent / "science" / "data" / "molecules_h.json"
++NO_MERGE = {"rmsd_threshold_angstrom": 0}
++
++
++def _butane() -> tuple[list[str], np.ndarray]:
++    payload = json.loads(DATA.read_text(encoding="utf-8"))["butane"]
++    return list(payload["atoms"]), np.array(payload["coords"], dtype=float)
++
++
++def _record(identifier: str, atoms: list[str], coords: np.ndarray) -> StructureRecord:
++    return StructureRecord(
++        id=identifier,
++        atoms=tuple(atoms),
++        coordinates=tuple(tuple(float(x) for x in row) for row in coords),
++        charge=0,
++        multiplicity=1,
++    )
++
++
++def _with_h5_detached() -> tuple[list[str], np.ndarray]:
++    """Butane with the hydrogen H5 (bonded to C1) pulled well beyond bonding distance."""
++    atoms, coords = _butane()
++    moved = coords.copy()
++    direction = moved[4] - moved[0]
++    moved[4] = moved[0] + direction / np.linalg.norm(direction) * 2.6
++    return atoms, moved
++
++
++def _connectivity_notes(notes: list[str]) -> list[str]:
++    return [note for note in notes if note.startswith("connectivity of ")]
++
++
++def test_a_structure_with_a_lost_bond_is_named_and_kept() -> None:
++    atoms, coords = _butane()
++    _, detached = _with_h5_detached()
++    records = [_record("a", atoms, coords), _record("b", atoms, detached)]
++    kept, notes = TransformExecutor()._refine(records, dict(NO_MERGE))
++    assert [record.id for record in kept] == ["a", "b"]
++    assert _connectivity_notes(notes) == [
++        "connectivity of b differs from the majority bonding graph of its group "
++        "(1 of 2 structures): gained [], lost [C1-H5]"
++    ]
++
++
++def test_the_majority_graph_is_the_reference() -> None:
++    atoms, coords = _butane()
++    _, detached = _with_h5_detached()
++    records = [
++        _record("a", atoms, coords),
++        _record("b", atoms, coords + 0.001),
++        _record("c", atoms, detached),
++    ]
++    kept, notes = TransformExecutor()._refine(records, dict(NO_MERGE))
++    assert [record.id for record in kept] == ["a", "b", "c"]
++    assert _connectivity_notes(notes) == [
++        "connectivity of c differs from the majority bonding graph of its group "
++        "(2 of 3 structures): gained [], lost [C1-H5]"
++    ]
++
++
++def test_a_gained_bond_is_reported_as_gained() -> None:
++    atoms, coords = _butane()
++    _, detached = _with_h5_detached()
++    records = [
++        _record("a", atoms, detached),
++        _record("b", atoms, detached + 0.001),
++        _record("c", atoms, coords),
++    ]
++    _, notes = TransformExecutor()._refine(records, dict(NO_MERGE))
++    assert _connectivity_notes(notes) == [
++        "connectivity of c differs from the majority bonding graph of its group "
++        "(2 of 3 structures): gained [C1-H5], lost []"
++    ]
++
++
++def test_equal_connectivity_adds_no_note() -> None:
++    atoms, coords = _butane()
++    records = [_record("a", atoms, coords), _record("b", atoms, coords + 0.001)]
++    kept, notes = TransformExecutor()._refine(records, dict(NO_MERGE))
++    assert [record.id for record in kept] == ["a", "b"]
++    assert _connectivity_notes(notes) == []

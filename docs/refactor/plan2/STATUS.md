@@ -4,3 +4,5 @@
 - D1b `715c018`（同分支）：验收通过。CHANGELOG 新增 Unreleased 条目（20 个哈希已逐一核对）、README 发布身份段落手工移植（已去掉 `pre-v4-greenfield`）；diff 与补丁逐字相同。
 - 已按用户决定删除本地分支 `refactor/v4-diet-pr10-repository-hygiene`（6 个未合并提交；bundle 备份 `/root/refactor-backups/confflow-refactor-v4-diet-pr10-repository-hygiene.bundle`，已验证）。`refactor/cleanup-d1` 尚未推送，等待用户决定。
 - A1-2 `6f5bbde`（分支 `refactor/a1-empty-inputs`）：已提交，验收中。A1-3、A1-1 待执行。
+- A1-3 `bc2a0b4`（`refactor/a1-empty-inputs`）：验收通过（diff 与补丁一致；全量 4477/10；golden ok）。A1-1 待执行。
+- A2-b 补丁已备（分支 `refactor/a2-connectivity-report`，基点 afdf9df，handoff/A2b.patch）：只往 refine 已有的 `notes` 加"键连接与组内多数不同"的条目，不过滤、不改契约。
