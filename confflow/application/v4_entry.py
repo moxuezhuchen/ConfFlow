@@ -226,8 +226,7 @@ def formal_v4_runner(**kwargs: Any) -> dict[str, Any] | None:
     publication flows through the durable V4 store, not callbacks.
     """
     from ..domain._immutable import FrozenDict
-    from ..workflow.v4.assembly import RunInputs
-    from .v4_run import V4RunApplication, V4RunRequest, import_xyz
+    from .v4_run import V4RunApplication, V4RunRequest
 
     input_xyz = kwargs.get("input_xyz") or []
     config_file = kwargs.get("config_file")
@@ -268,27 +267,25 @@ def formal_v4_runner(**kwargs: Any) -> dict[str, Any] | None:
                 xyz_texts[str(path)] = handle.read()
         except OSError as exc:
             raise _legacy_error(f"XYZ input is not readable: {path}") from exc
+    # Delegate assembly to the shared helper while preserving the inline
+    # assembly's exact input contract: input_xyz is consumed exactly once
+    # (the read loop above); the single-input source_name comes from
+    # subscripting the ORIGINAL sequence, so a non-subscriptable input
+    # (e.g. a one-shot generator) must still fail with TypeError -- and it
+    # must do so only in the single-input branch, only after the
+    # empty-content rejection.  The branch decision is therefore repeated
+    # here instead of eagerly building an alias map from input_xyz.
     names = _declared_input_names(document)
     if not names:
         names = ["structures"]
-    structures: dict[str, Any] = {}
-    sources: dict[str, str] = {}
     if len(names) == 1:
         combined = "\n".join(text for text in xyz_texts.values() if text.strip())
         if not combined.strip():
             raise _legacy_error("no XYZ input content")
-        structures[names[0]] = import_xyz(combined, source_name=str(input_xyz[0]))
-        sources[names[0]] = combined
+        source_names = {next(iter(xyz_texts)): str(input_xyz[0])}
     else:
-        ordered = list(xyz_texts)
-        if len(ordered) != len(names):
-            raise _legacy_error(
-                f"V4 workflow declares {len(names)} inputs but got {len(ordered)} XYZ files"
-            )
-        for name, path in zip(names, ordered):
-            structures[name] = import_xyz(xyz_texts[path], source_name=path)
-            sources[name] = xyz_texts[path]
-    run_inputs = RunInputs(structures=FrozenDict(structures))
+        source_names = {}
+    run_inputs, import_sources = _build_run_inputs(document, xyz_texts, source_names=source_names)
     from ..execution.process import NativeProcessSupervisor
 
     resolved_supervisor = supervisor if supervisor is not None else NativeProcessSupervisor()
@@ -300,7 +297,7 @@ def formal_v4_runner(**kwargs: Any) -> dict[str, Any] | None:
         executables=FrozenDict(dict(executables)),
         supervisor=resolved_supervisor,
         transport=transport,
-        import_sources=FrozenDict(sources),
+        import_sources=import_sources,
         should_cancel=should_cancel,
     )
     # One V4 application authority: compile_workflow lives inside run().
