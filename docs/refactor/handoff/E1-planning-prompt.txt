@@ -1,0 +1,52 @@
+继续 ConfFlow PLAN-2。本轮模型 glm5.3-flash，只处理 E1：启用已有验收提速配置，并产出可执行卡片。不要开始 E2/E3、B1/B2/D 类，不启动 subagent。
+
+先读：
+/opt/cf-worktrees/refactor-plan/docs/refactor/plan2/HANDOFF.md
+/opt/cf-worktrees/refactor-plan/docs/refactor/plan2/STATUS.md
+/opt/cf-worktrees/refactor-plan/docs/refactor/tools-acc/run_sharded.py
+现有 handoff/C1a.md 与 C1a-executor-prompt.txt，沿用卡片和执行约束。
+中文、简短、先说结论；一次只做本张卡，不自增任务。
+
+已知基点（先实查；不符即停止报告）：
+- ConfFlow main=d05927cf31b39a72c68e7bf17b43869336fc174b。
+- 文档计划基点=8842c52；当前 docs/refactor-plan2 可包含其后的提示词提交。先打印交付 HEAD 并核对干净树，预演实现仍从固定基点8842c52建立，不误将交付 HEAD 必须等于计划基点。
+- 已验收 C1-a= c4a78d6e6948cfa58ecf7fe111c7d1face48d8bf，父 afdf9df；尚未叠加 main，不更新、不合并、不推送。
+- JobDesk master=3addb94，钉住只读 JD=/opt/cf-worktrees/jd-pin @9de35d6。
+- /opt/ConfFlow 的 confgen_realization_handoff.tar.gz 和 research/ 保留。
+
+E1 范围已定，不需要重新设计：
+1. run_sharded.py 已支持 --weights；不改其代码。
+2. 用最近独立验收的耗时数据替换文档树 tools-acc/weights.json，作为下次调度种子。
+   来源 /tmp/c1a-accept-8go9pcgm/weights.json
+   SHA256=7995630aa5967a3e65cc3595a46f6eacbb6f99bf6de4e194585e2dce3dacba33。
+   文件不存在/摘要不符则停止报告，不能用执行器报告数字代替实测数据。
+3. 新增 docs/refactor/plan2/ACCEPTANCE_FAST.md，写清固定流程：
+   - 每次运行建独立输出目录。
+   - 从种子复制 weights.json 到此次输出目录，再把此副本传给 --weights；不让运行器覆盖已提交的种子。
+   - PYTHONPATH 仍包含 tools-acc/noeditable 和待验收 CF 根目录。
+   - Black 固定 --workers 1 或 BLACK_NUM_WORKERS=1。
+   - 会探测 /opt/g16 的收集/全量使用适当宿主权限；遇权限失败停止，不能通过跳过测试掩盖。
+   - 静态、全量、golden 可并行，抽样破坏必须用独立副本，避免污染正在测试的树。
+   - 运行器的退出码不能单独证明全量通过：必须检查 out.json 的节点集合与本次 collect 精确一致，无重复/缺失，无 failed/error，汇总实际 passed/skipped。
+   - golden 每卡仍跑，本卡不做制品复用；不使用执行器的产物作为独立验收证据。
+   - 交付要钉文档提交和补丁 SHA256；外部执行开始后不得并发修改交付物，修订先通知停止再重新交付。
+白名单恰两个文件：docs/refactor/tools-acc/weights.json、docs/refactor/plan2/ACCEPTANCE_FAST.md。
+不改产品代码、测试、runner、golden、基线、检查点。不调整分片数量或测试跳过规则，不引入依赖。
+
+工作步骤（必须顺序执行，不是一口气并行开发）：
+A. 只读核对上述 HEAD/分支/工作树。每条 shell 命令显式 cd 到目标目录。
+B. 从文档基点建临时预演树，做上述两个文件变化，生成 E1.patch；不要直接在主树改实现。
+C. 单次实测验证：从 c4a78d6 建独立 CF 验证副本，用复制出的新 weights 跑完整 run_sharded，仍是12个分片。已知旧独立验收基准为4476 passed/10 skipped、321秒，collect4486。新结果必须节点集合完全一致、4476/10无失败。记录实测耗时，但不设“必须更快”的虚假通过阈值；机器负载会波动。不为了漂亮数字反复重跑。
+D. 同一固定 CF 副本并行跑静态检查和现有完整 golden_check；基线/检查点/removed-nodes 按 C1a 卡片。检查 golden 五摘要、三 TS1 后端和引擎报告均 ok。golden_check 的实际路径在该 CF 副本 docs/refactor/tools/golden_check.py，不在文档树的 tools/ 中；不要读错树。
+E. 检查文件白名单、diff --check、JSON权重为有限非负数字，输出含具体命令、日志路径及退出码。新增文档不能把一次时长当成所有环境的速度保证。
+F. 生成 handoff/E1.md、E1.patch、E1-executor-prompt.txt，并更新 STATUS。卡片写明文档基点、固定CF版本、两文件白名单、实际数字、命令、验收标准。补丁变化仅两个白名单文件。预演后清回干净，执行器工作树干净且 apply --check 通过。
+G. 到此停止，交回规划者；不要进入外部正式执行/提交工具实现、不要push、不要开或合并PR、不要处理C1集成或E2/E3。
+
+执行器提示词必须包含：每条命令显式cd；动手前确认固定HEAD和干净树；提交前核对并贴分支名；一卡一提交；不push；HEAD/数字/白名单不符即停止报告，不自行修复；不编造输出；正确保存并恢复抽样破坏文件，绝不能用未提交的HEAD覆盖补丁；提交尾行 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>。
+
+报告限制：结论+产物路径+真实验证数字+剩余问题，不贴巨大收集清单；完整原始输出保存在日志中，必要失败片段贴出。实测尚未完成就明确写待验证，不能写全部通过。
+
+后续安排仅作背景，不执行：
+E2 单卡：全量分片同时捕获与 golden 相同范围的 ConfGen 报告；逐分片隔离输出、合并拒绝重名冲突、失败/收集不完整不能产生有效完成证明。
+E3 单卡（依赖E2）：golden 仅接受本轮独立全量生成、与CF源码及工具摘要绑定、完整性校验通过的制品；TS1和契约/边界仍现场计算；没有制品时保持现有完整执行。实现后先证明旧/新golden一致，并验证旧版本制品、损坏制品和不完整运行均被拒绝。
+E2/E3接口和白名单由规划者下一轮提供，不留给本轮自由扩展。

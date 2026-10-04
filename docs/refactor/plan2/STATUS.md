@@ -17,3 +17,5 @@
 
 - 合并（2026-10-04，用户“那就合并”，随后明确委派 subagent）：PR #100 D1 → 3185e0b；PR #101 A1 更新基点后 → 13807fdd；PR #102 A2 更新基点后 → d05927cf。各 PR 必需矩阵/coverage 与 JobDesk 契约均通过；未使用 admin、未改保护规则、未删除分支。验收方独立核对三个 PR 均 MERGED，本地/远端 main=d05927cf，两个未跟踪项保留。
 - C1-a c4a78d6（基点 afdf9df，refactor/c1a-bond-scale）：最终实现独立验收通过，diff 与修订补丁逐字一致、白名单恰三文件、单提交；ruff/mypy/black 通过，collect 4486；全量 4476 passed / 10 skipped，321s；golden ok（五摘要、TS1 三后端、引擎报告均一致）；抽样破坏恰 1 failed / 2 passed，恢复后 3 passed。TS1 默认/显式1.15/1.2×budget1000/200000共六组均保留7/8，预算1000的未决notes数为20/20/22，预算200000均为0。距离1.6853 Å对应scine_F1；ts1_original为1.6955 Å，各夹具都介于两尺度阈值之间。预设显式1.2保持不变；C1尚未push/开PR/合并，也尚未验证叠加最新main后的完整集成树。
+
+- 验收提速（用户“就这样做，写后续提示词”，外部执行器glm5.3-flash）：按小卡串行，E1仅启用现有加权调度、单worker和正确权限/日志流程；E2分片捕获报告；E3校验来源完整性后golden复用。E1规划预演提示词已备 handoff/E1-planning-prompt.txt；此时尚未生成E1实现补丁或执行器卡片，不能视为已验证提速。E2/E3需先定接口与补丁再交执行器；C1最新main集成及B1/B2/D尚未开展。
