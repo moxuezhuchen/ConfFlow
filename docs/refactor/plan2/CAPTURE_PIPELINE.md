@@ -8,13 +8,13 @@
 
 | 文件 | 角色 |
 | --- | --- |
-| `docs/refactor/tools-acc/run_sharded.py` | runner：分片执行 + 可选捕获（`--capture-engine-reports DIR --run-id ID`） |
-| `docs/refactor/tools/capture_engine_reports.py` | pytest 插件；`CAP_SCOPE_GLOB` 限制**写出范围**（默认不过滤，旧行为不变） |
-| `docs/refactor/tools/capture_provenance.py` | runner 与 golden **共用**的绑定/校验实现 |
-| `docs/refactor/tools/golden_check.py` | 校验通过后复用捕获（`--engine-capture DIR --run-id ID`） |
+| `tools/refactor-acc/run_sharded.py` | runner：分片执行 + 可选捕获（`--capture-engine-reports DIR --run-id ID`） |
+| `tools/refactor/capture_engine_reports.py` | pytest 插件；`CAP_SCOPE_GLOB` 限制**写出范围**（默认不过滤，旧行为不变） |
+| `tools/refactor/capture_provenance.py` | runner 与 golden **共用**的绑定/校验实现 |
+| `tools/refactor/golden_check.py` | 校验通过后复用捕获（`--engine-capture DIR --run-id ID`） |
 
-工具链必须在 ConfFlow 树内布局（`docs/refactor/tools-acc` 与
-`docs/refactor/tools` 同树），capture 模式据此定位共享模块与插件。
+工具链必须在 ConfFlow 树内布局（`tools/refactor-acc` 与
+`tools/refactor` 同树，L0.1 起位于仓库根），capture 模式据此定位共享模块与插件。
 
 ## 捕获语义
 
@@ -51,16 +51,16 @@ added/different/missing 判定不放宽。捕获模式不重跑该批 ConfGen py
 ```sh
 RUN=/tmp/acc2/integr-<日期>-$$          # 新建独立输出目录
 mkdir -p "$RUN"
-cp docs/refactor/tools-acc/weights.json "$RUN/weights.json"
+cp tools/refactor-acc/weights.json "$RUN/weights.json"
 cd <固定集成CF树>
-PYTHONPATH=$PWD/docs/refactor/tools-acc/noeditable:$PWD \
-python3 docs/refactor/tools-acc/run_sharded.py \
+PYTHONPATH=$PWD/tools/refactor-acc/noeditable:$PWD \
+python3 tools/refactor-acc/run_sharded.py \
   --cf . --out "$RUN/out.json" --weights "$RUN/weights.json" \
   --shards 12 --jdpin /opt/cf-worktrees/jd-pin \
   --capture-engine-reports "$RUN/capture" --run-id "integr-<日期>-$$"
 
-PYTHONPATH=$PWD/docs/refactor/tools-acc/noeditable:$PWD \
-python3 docs/refactor/tools/golden_check.py \
+PYTHONPATH=$PWD/tools/refactor-acc/noeditable:$PWD \
+python3 tools/refactor/golden_check.py \
   --base <按既有流程准备的 base 目录> \
   --checkpoint docs/refactor/baseline/checkpoints/C4.3/contract.json \
   --cf . --jd-src /opt/cf-worktrees/jd-pin/src \

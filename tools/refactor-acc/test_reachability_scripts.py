@@ -2,10 +2,10 @@
 
 """Fixture tests for the scripts/ entry scan of ``tools/reachability.py``.
 
-Card D tool test (docs/refactor/tools-acc, not part of the product
+Card D tool test (tools/refactor-acc, not part of the product
 ``tests/`` collect).  Run explicitly with::
 
-    pytest docs/refactor/tools-acc/test_reachability_scripts.py
+    pytest tools/refactor-acc/test_reachability_scripts.py
 
 Covers: script roots under ``scripts/`` including subdirectories, literal
 ``importlib.import_module`` roots, unreferenced modules staying unreachable,
@@ -21,8 +21,8 @@ import subprocess
 import sys
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
-TOOL_PATH = REPO_ROOT / "docs" / "refactor" / "tools" / "reachability.py"
+REPO_ROOT = Path(__file__).resolve().parents[2]
+TOOL_PATH = REPO_ROOT / "tools" / "refactor" / "reachability.py"
 
 
 def _load_tool():

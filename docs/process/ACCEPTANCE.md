@@ -1,7 +1,7 @@
 # 验收协议
 
 > 适用于 `PLAN.md` 中的每一张卡。执行模型每完成一张卡（一个提交）就交给验收方。验收方只读、只运行，不修改执行分支。
-> 验收方的工作目录：`/tmp/refactor-acc/<CARD>/`。结论追加到 `docs/refactor/LOG.md`（在 `docs/refactor-plan` 工作树 `/opt/cf-worktrees/refactor-plan` 中维护，不进入执行分支）。
+> 验收方的工作目录：`/tmp/refactor-acc/<CARD>/`。验收工具位于 `tools/refactor/`；Plan2 的分片 runner、`weights.json` 与 `noeditable/` 位于并列目录 `tools/refactor-acc/`。结论追加到 `docs/refactor/LOG.md`（在 `docs/refactor-plan` 工作树 `/opt/cf-worktrees/refactor-plan` 中维护，不进入执行分支）。
 
 ---
 
@@ -10,7 +10,7 @@
 执行模型交付时必须提供：
 
 1. 卡片 ID、仓库、提交 SHA（`git rev-parse HEAD`）和父提交 SHA。
-2. 提交信息，按 `PLAN.md` §2.7 的格式，包含 `Removed-Tests`、`Added-Tests`、`Behavior-Change`、`Verification`。
+2. 提交信息，按 `docs/process/RULES.md` 提交信息格式（原 `docs/refactor/PLAN.md` §2.7）的格式，包含 `Removed-Tests`、`Added-Tests`、`Behavior-Change`、`Verification`。
 3. 卡片要求的额外产物（检查点目录、报告文件）。
 
 缺任何一项，直接**退回**。
@@ -18,7 +18,7 @@
 验收方先准备：
 
 ```bash
-source /opt/cf-worktrees/exec-cf/docs/refactor/tools/env.sh
+source $CF/tools/refactor/env.sh
 CARD=<ID>; ACC=/tmp/refactor-acc/$CARD; mkdir -p $ACC
 REPO=<$CF 或 $JD 或 $CFIS 或 $JDIS>
 git -C $REPO log -1 --format='%H %P %s' > $ACC/commit.txt

@@ -19,8 +19,8 @@ from pathlib import Path
 import pytest
 
 TOOLS_ACC = Path(__file__).resolve().parent
-TOOLS = TOOLS_ACC.parent / "tools"
-CF_ROOT = Path(__file__).resolve().parents[3]
+TOOLS = TOOLS_ACC.parent / "refactor"
+CF_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(TOOLS))
 sys.path.insert(0, str(TOOLS_ACC))
 
@@ -81,13 +81,13 @@ class ConfgenEngine:
 # Tool files copied into the fixture CF tree (left UNTRACKED there on purpose:
 # they must be bound by the tool digest, not by the CF source digest).
 TOOL_FILES = {
-    "docs/refactor/tools/capture_engine_reports.py",
-    "docs/refactor/tools/capture_provenance.py",
-    "docs/refactor/tools/golden_check.py",
-    "docs/refactor/tools/ts1_engine.py",
-    "docs/refactor/tools/contract_digests.py",
-    "docs/refactor/tools-acc/run_sharded.py",
-    "docs/refactor/tools-acc/noeditable/sitecustomize.py",
+    "tools/refactor/capture_engine_reports.py",
+    "tools/refactor/capture_provenance.py",
+    "tools/refactor/golden_check.py",
+    "tools/refactor/ts1_engine.py",
+    "tools/refactor/contract_digests.py",
+    "tools/refactor-acc/run_sharded.py",
+    "tools/refactor-acc/noeditable/sitecustomize.py",
 }
 
 
@@ -152,7 +152,7 @@ def _fixture(
             "def test_touch_tool():\n"
             "    if os.environ.get('E23TEST_TOOL_MUTATE') != '1':\n"
             "        return\n"
-            "    tool = Path.cwd() / 'docs/refactor/tools/ts1_engine.py'\n"
+            "    tool = Path.cwd() / 'tools/refactor/ts1_engine.py'\n"
             "    with tool.open('a') as fh:\n"
             "        fh.write('# mutated during run\\n')\n"
         )
@@ -172,7 +172,7 @@ def _fixture(
     # Tool copies stay untracked: only real CF source/tests/config participate
     # in the tree digest; tools are bound separately via the tool digest.
     subprocess.run(
-        ["git", "rm", "--cached", "-r", "-f", "-q", "docs"],
+        ["git", "rm", "--cached", "-r", "-f", "-q", "tools"],
         cwd=tmp,
         check=True,
         capture_output=True,
@@ -351,7 +351,7 @@ def test_verify_rejects_tool_and_jd_changes(tmp_path: Path) -> None:
     )
     jd_src = _jd_src(cf)
 
-    tool_copy = cf / "docs" / "refactor" / "tools" / "ts1_engine.py"
+    tool_copy = cf / "tools" / "refactor" / "ts1_engine.py"
     tool_copy.write_text(tool_copy.read_text() + "# tool touch\n")
     assert any(
         "tool content changed" in p
@@ -372,7 +372,7 @@ def test_noeditable_change_fails_reuse(tmp_path: Path) -> None:
     assert (
         _run_runner(cf, tmp_path / "out.json", _jdpin(cf), *_capture_args(capture)).returncode == 0
     )
-    sitecustomize = cf / "docs" / "refactor" / "tools-acc" / "noeditable" / "sitecustomize.py"
+    sitecustomize = cf / "tools" / "refactor-acc" / "noeditable" / "sitecustomize.py"
     sitecustomize.write_text(sitecustomize.read_text() + "# touch\n")
     problems = prov.verify_capture(capture, run_id="run-1", cf=cf, jd_src=_jd_src(cf))
     assert any("tool content changed" in p for p in problems)

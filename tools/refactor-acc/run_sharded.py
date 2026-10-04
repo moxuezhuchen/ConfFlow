@@ -17,7 +17,7 @@ engine reports into its own subdirectory (only for files matching
 ``tests/v4/test_confgen_*.py``; all tests still run).  After every shard has
 succeeded and the JUnit node set matches the collect node set exactly, the
 reports are merged and a completion manifest is written LAST (see
-``docs/refactor/tools/capture_provenance.py``).  Any failure exits nonzero
+``tools/refactor/capture_provenance.py``).  Any failure exits nonzero
 and never produces a manifest.  Without the capture options the behavior is
 unchanged.
 """
@@ -59,7 +59,7 @@ def _setup_capture(cf: Path, capture_arg: str, run_id: str, jdpin: str) -> dict:
     capture_dir = Path(capture_arg).resolve()
     if capture_dir.exists() and any(capture_dir.iterdir()):
         raise CaptureError(f"capture directory exists and is not empty: {capture_dir}")
-    tools_dir = TOOLS.parent / "tools"
+    tools_dir = TOOLS.parent / "refactor"
     if not (tools_dir / "capture_provenance.py").is_file():
         raise CaptureError(
             f"capture mode requires the ConfFlow-tree tool layout ({tools_dir} missing)"

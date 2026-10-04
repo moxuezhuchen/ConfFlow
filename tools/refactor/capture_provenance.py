@@ -2,10 +2,10 @@
 
 Single implementation used by BOTH ends of the pipeline:
 
-- ``tools-acc/run_sharded.py`` (writer): builds the completion manifest after
+- ``tools/refactor-acc/run_sharded.py`` (writer): builds the completion manifest after
   every shard succeeded, binding the run to content digests of the CF tree,
   the acceptance tools and the JobDesk source.
-- ``tools/golden_check.py`` (verifier): re-verifies every binding before the
+- ``tools/refactor/golden_check.py`` (verifier): re-verifies every binding before the
   captured engine reports are accepted in place of a live capture run.
 
 A capture run is only usable when a ``manifest.json`` with ``status ==
@@ -29,13 +29,13 @@ CONFGEN_SCOPE = "tests/v4/test_confgen_*.py"
 #: golden checker, the existing TS1/contract helpers and the sitecustomize
 #: hook that actually steers test imports.
 TOOL_RELPATHS = (
-    "docs/refactor/tools/capture_engine_reports.py",
-    "docs/refactor/tools/capture_provenance.py",
-    "docs/refactor/tools/golden_check.py",
-    "docs/refactor/tools/ts1_engine.py",
-    "docs/refactor/tools/contract_digests.py",
-    "docs/refactor/tools-acc/run_sharded.py",
-    "docs/refactor/tools-acc/noeditable/sitecustomize.py",
+    "tools/refactor/capture_engine_reports.py",
+    "tools/refactor/capture_provenance.py",
+    "tools/refactor/golden_check.py",
+    "tools/refactor/ts1_engine.py",
+    "tools/refactor/contract_digests.py",
+    "tools/refactor-acc/run_sharded.py",
+    "tools/refactor-acc/noeditable/sitecustomize.py",
 )
 
 BAD_OUTCOMES = ("failed", "error")

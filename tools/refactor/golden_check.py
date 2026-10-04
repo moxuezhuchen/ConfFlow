@@ -121,7 +121,7 @@ def _collect_nodeids(cf: Path) -> set[str]:
     """Fresh ``pytest --collect-only`` node set (no tests are executed)."""
     env = _env(cf)
     env["PYTHONPATH"] = os.pathsep.join(
-        [str(TOOLS.parent / "tools-acc" / "noeditable"), str(TOOLS), str(cf)]
+        [str(TOOLS.parent / "refactor-acc" / "noeditable"), str(TOOLS), str(cf)]
     )
     proc = subprocess.run(
         [

@@ -5,8 +5,8 @@
 ## 1. 固定原则
 
 - 每次验收运行建**独立输出目录**（如 `/tmp/acc2/<卡名>-run/`，须为新建）。静态检查、全量、golden_check 可并行；**抽样破坏必须另用独立副本**，避免污染正在测试的树。
-- 种子权重：从文档树 `docs/refactor/tools-acc/weights.json` **复制**到本次输出目录，再把副本传给 `--weights`。运行器会把实测秒数写回该副本；已提交的种子文件不允许被运行器覆盖。
-- `run_sharded.py` 自行注入 `PYTHONPATH=<tools-acc>/noeditable:<待验收 CF 根目录>` 并设置 `JOBDESK_V2_SRC`、`QT_QPA_PLATFORM=offscreen`；不要破坏或覆盖这些设置。
+- 种子权重：从仓库内 `tools/refactor-acc/weights.json` **复制**到本次输出目录，再把副本传给 `--weights`。运行器会把实测秒数写回该副本；已提交的种子文件不允许被运行器覆盖。
+- `run_sharded.py` 自行注入 `PYTHONPATH=<tools/refactor-acc>/noeditable:<待验收 CF 根目录>` 并设置 `JOBDESK_V2_SRC`、`QT_QPA_PLATFORM=offscreen`；不要破坏或覆盖这些设置。
 - Black 固定单 worker：`black --check --workers 1`（或环境变量 `BLACK_NUM_WORKERS=1`）。
 - 涉及 `/opt/g16` 的测试需要适当宿主权限；遇权限失败**停止报告**，不得通过跳过测试掩盖。
 - 按最新批量验收规则（`plan2/ACCEPTANCE_BATCH_POLICY.md`，2026-10-04）：每卡只跑影响范围内的必要检查与相关静态检查，**不逐卡重复全量/golden**；完整 `run_sharded.py` 全量与完整 golden_check 在固定集成树最终验收时各跑一次。执行器的产物不作为独立验收证据。
@@ -16,10 +16,10 @@
 ```sh
 E1RUN=/tmp/acc2/<卡名>-run        # 必须是本次新建的独立目录
 mkdir -p "$E1RUN"
-cp /opt/cf-worktrees/refactor-plan/docs/refactor/tools-acc/weights.json "$E1RUN/weights.json"
+cp tools/refactor-acc/weights.json "$E1RUN/weights.json"
 cd <待验收CF副本根目录>
-PYTHONPATH=/opt/cf-worktrees/refactor-plan/docs/refactor/tools-acc/noeditable:$PWD \
-python3 /opt/cf-worktrees/refactor-plan/docs/refactor/tools-acc/run_sharded.py \
+PYTHONPATH=$PWD/tools/refactor-acc/noeditable:$PWD \
+python3 tools/refactor-acc/run_sharded.py \
   --cf . --out "$E1RUN/out.json" --weights "$E1RUN/weights.json" \
   --shards 12 --jdpin /opt/cf-worktrees/jd-pin > "$E1RUN/run.log" 2>&1
 ```
@@ -32,7 +32,7 @@ python3 /opt/cf-worktrees/refactor-plan/docs/refactor/tools-acc/run_sharded.py \
 cd <待验收CF副本根目录>
 JOBDESK_V2_SRC=/opt/cf-worktrees/jd-pin/src PYTHONDONTWRITEBYTECODE=1 \
 QT_QPA_PLATFORM=offscreen \
-PYTHONPATH=/opt/cf-worktrees/refactor-plan/docs/refactor/tools-acc/noeditable:$PWD \
+PYTHONPATH=$PWD/tools/refactor-acc/noeditable:$PWD \
 python3 -m pytest -o addopts= -p no:cacheprovider --collect-only -q \
   > "$E1RUN/collect.txt" 2>&1
 
@@ -70,8 +70,8 @@ rm -rf "$B" && cp -r docs/refactor/baseline "$B" && rm -rf "$B/checkpoints"
 cp docs/refactor/baseline/checkpoints/IS.5/engine_reports/* "$B/engine_reports/"
 cp docs/refactor/baseline/checkpoints/C4.3/engine_reports/* "$B/engine_reports/"
 printf 'tests/v4/test_confgen_v3_integration.py::TestLegacyRegressions::test_v3_filenames_vs_legacy_compat\n' > "$E1RUN/removed.txt"
-PYTHONPATH=/opt/cf-worktrees/refactor-plan/docs/refactor/tools-acc/noeditable:. \
-python3 docs/refactor/tools/golden_check.py --base "$B" \
+PYTHONPATH=$PWD/tools/refactor-acc/noeditable:. \
+python3 tools/refactor/golden_check.py --base "$B" \
   --checkpoint docs/refactor/baseline/checkpoints/C4.3/contract.json --cf . \
   --jd-src /opt/cf-worktrees/jd-pin/src --removed-nodes "$E1RUN/removed.txt" \
   --out "$E1RUN/golden.json"
