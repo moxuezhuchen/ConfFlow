@@ -111,3 +111,39 @@ def test_release_dependencies_reachable_via_scripts_in_real_repo() -> None:
     # modules stay unreachable.
     assert "confflow.analysis.pes" in result["unreachable"]
     assert "confflow.application.execution.memory" in result["unreachable"]
+
+
+def test_script_import_through_lazy_facade_resolves_target(tmp_path) -> None:
+    """Regression (D follow-up) for script imports through a lazy facade.
+
+    A script doing ``from <package> import <name>`` must pull the lazy
+    ``_LAZY_EXPORTS`` target module into the closure, exactly like a
+    package-module import does.
+    """
+    reach = _load_tool()
+    cf = tmp_path / "cf_lazy"
+    pkg = cf / "confflow"
+    core = pkg / "core"
+    core.mkdir(parents=True)
+    (pkg / "__init__.py").write_text("", encoding="utf-8")
+    (core / "__init__.py").write_text(
+        "_LAZY_EXPORTS = {'value': ('confflow.hidden', 'value')}\n",
+        encoding="utf-8",
+    )
+    (pkg / "hidden.py").write_text("value = 1\n", encoding="utf-8")
+    (pkg / "orphan.py").write_text("value = 2\n", encoding="utf-8")
+    scripts = cf / "scripts"
+    scripts.mkdir()
+    (scripts / "use_facade.py").write_text(
+        "from confflow.core import value\n",
+        encoding="utf-8",
+    )
+
+    result = reach.compute(cf, "confflow")
+
+    entries = result["script_entry_modules"]
+    assert entries["scripts/use_facade.py"] == ["confflow.core", "confflow.hidden"]
+    # The actually-referenced lazy target is reachable...
+    assert "confflow.hidden" not in result["unreachable"]
+    # ...while modules nothing references stay unreachable.
+    assert "confflow.orphan" in result["unreachable"]

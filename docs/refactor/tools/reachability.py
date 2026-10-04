@@ -150,14 +150,18 @@ def imports_of(module: str, path: Path, lazy_tables: dict[str, dict[str, str]]) 
     return deps
 
 
-def script_entry_imports(cf: Path, modules: dict[str, Path]) -> dict[str, set[str]]:
+def script_entry_imports(
+    cf: Path, modules: dict[str, Path], lazy_tables: dict[str, dict[str, str]]
+) -> dict[str, set[str]]:
     """Collect static / literal-importlib confflow imports from ``scripts/``.
 
     Scripts are not package modules; the returned mapping keys each script by
     its path relative to ``cf`` (POSIX separators) and lists the confflow
     modules it pulls in.  Only files that actually import confflow modules
     appear, and only names that are real modules of the package are kept
-    (imported symbol names are not module paths).
+    (imported symbol names are not module paths).  The package ``_LAZY_EXPORTS``
+    tables already resolved by :func:`compute` are applied, so a script doing
+    ``from <package> import <name>`` also roots the lazy target module.
     """
     root = cf / "scripts"
     entries: dict[str, set[str]] = {}
@@ -165,7 +169,7 @@ def script_entry_imports(cf: Path, modules: dict[str, Path]) -> dict[str, set[st
         return entries
     for path in sorted(root.rglob("*.py")):
         try:
-            deps = imports_of(f"scripts.{path.stem}", path, {})
+            deps = imports_of(f"scripts.{path.stem}", path, lazy_tables)
         except (OSError, SyntaxError, ValueError):
             continue
         deps = {dep for dep in deps if dep in modules}
@@ -183,7 +187,7 @@ def compute(cf: Path, package: str) -> dict[str, list[str] | dict[str, list[str]
             if exports:
                 lazy_tables[name] = exports
     deps_by_module = {name: imports_of(name, path, lazy_tables) for name, path in modules.items()}
-    script_entries = script_entry_imports(cf, modules)
+    script_entries = script_entry_imports(cf, modules, lazy_tables)
     script_roots = sorted(
         {dep for deps in script_entries.values() for dep in deps if dep in modules}
     )
