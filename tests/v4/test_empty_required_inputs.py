@@ -2,24 +2,32 @@
 
 """A required input of zero structures fails; it is never a silent success (A1).
 
-* assembly (A1-2): a required structure port is not satisfied by artifacts or
-  results that happen to sit beside an empty structure set;
-* ``confflow v4 run`` (A1-3): a run that cannot assemble a step ends with a
-  non-zero exit code and a JSON report naming the reason, not a traceback.
+Three layers, one regression family:
+
+* assembly: a required structure port is not satisfied by artifacts or results
+  that happen to sit beside an empty structure set (A1-2);
+* ConfGen: a v3 run that realized no structure fails with the ledger vocabulary
+  (A1-1);
+* ``confflow v4 run``: every downstream shape of such a run ends with a non-zero
+  exit code and a JSON report naming the reason, never a traceback or a
+  ``completed`` run that executed nothing (A1-3).
 """
 
 from __future__ import annotations
 
 import json
+import tempfile
 from pathlib import Path
 from typing import Any
 
 import pytest
 
 from confflow import v4cli
-from confflow.domain import FrozenDict, StructureSet
-from confflow.domain.completion import StepStatus
+from confflow.domain import FrozenDict, StructureRecord, StructureSet
+from confflow.domain.completion import StepStatus, WorkItemStatus
+from confflow.execution.confgen_executor import ConfgenExecutor
 from confflow.workflow.v4 import MaterializedOutputs, StepOutputs, assemble_work_items
+from confflow.workflow.v4.confgen_schema import ConfgenModelV3
 from tests.v4._builders import (
     calc_step,
     checkpoint_set,
@@ -28,9 +36,31 @@ from tests.v4._builders import (
     structure_set,
     v4_doc,
 )
+from tests.v4.test_repair_executors import _ctx, _item, _sci
 
 FAKE_ORCA = Path(__file__).parent / "fakes" / "fake_orca.py"
 STRUCTURE_INPUTS = {"structures": {"kind": "structure", "cardinality": "many"}}
+NO_REALIZED = "confgen_no_realized_structures"
+
+
+def _chain(spacing_x: float, zigzag: float, count: int = 6) -> StructureRecord:
+    return StructureRecord(
+        id="chain",
+        atoms=("C",) * count,
+        coordinates=tuple((i * spacing_x, zigzag * (i % 2), 0.0) for i in range(count)),
+        charge=0,
+        multiplicity=1,
+    )
+
+
+def _confgen_wire() -> dict[str, Any]:
+    return ConfgenModelV3.model_validate(
+        {
+            "schema_version": 3,
+            "index_base": 1,
+            "paths": [{"start": 2, "end": 5, "move": "end", "angles": [0.0, 120.0]}],
+        }
+    ).scientific_native()
 
 
 # -- A1-2: assembly ------------------------------------------------------------
@@ -68,6 +98,37 @@ def test_artifacts_do_not_satisfy_an_empty_required_structure_port() -> None:
     assert assembly.for_step("s_freq") == ()
 
 
+# -- A1-1: the ConfGen executor --------------------------------------------------
+
+
+def _execute(record: StructureRecord) -> Any:
+    item = _item("c1:g1", "c1", [record])
+    sci = _sci(seed=None, native=FrozenDict(_confgen_wire()))
+    return ConfgenExecutor().execute(item, _ctx(sci, tempfile.mkdtemp()))
+
+
+def test_confgen_that_realized_nothing_fails_with_the_ledger_vocabulary() -> None:
+    result = _execute(_chain(1.5, 0.0))  # collinear: the dihedral frames are ambiguous
+    assert result.status is WorkItemStatus.FAILED
+    assert len(result.structures) == 0
+    (diagnostic,) = [d for d in result.diagnostics if d.code == NO_REALIZED]
+    assert diagnostic.severity.value == "error"
+    assert diagnostic.message == (
+        "confgen v3 realized no structure: 0 of 8 raw targets published "
+        "(target outcomes: UNRESOLVED=8; anomalies: AMBIGUOUS_KEY=8); "
+        "see the ensemble report for the per-target ledger"
+    )
+    assert dict(diagnostic.details["target_categories"]) == {"UNRESOLVED": 8}
+    assert not [d for d in result.diagnostics if d.code == "confgen_completed"]
+
+
+def test_confgen_that_realized_structures_still_completes() -> None:
+    result = _execute(_chain(1.5, 0.4))
+    assert result.status is WorkItemStatus.COMPLETED
+    assert len(result.structures) == 8
+    assert not [d for d in result.diagnostics if d.code == NO_REALIZED]
+
+
 # -- A1-3: `confflow v4 run` ------------------------------------------------------
 
 _CONFGEN_STEP = """
@@ -82,6 +143,7 @@ _CONFGEN_STEP = """
         - {start: 2, end: 5, move: end, angles: [0.0, 120.0]}
 """
 _DOWNSTREAM = {
+    "none": "",
     "refine": """
   - id: s_next
     executor: structure_transform
@@ -143,18 +205,20 @@ def _run_cli(tmp_path: Path, capsys: Any, downstream: str) -> tuple[int, dict[st
 
 
 @pytest.mark.parametrize("downstream", sorted(_DOWNSTREAM))
-def test_a_consumer_with_no_input_structures_fails_with_a_json_reason(
+def test_a_run_whose_confgen_realized_nothing_fails_with_a_json_reason(
     tmp_path: Path, capsys: Any, downstream: str
 ) -> None:
     code, report = _run_cli(tmp_path, capsys, downstream)
     assert code != 0
     assert report["status"] == "failed"
+    steps = {item["id"]: item["status"] for item in report["steps"]}
+    assert steps["s_gen"] == "failed"
+    assert "completed" not in steps.values()
     failures = report["failures"]
-    blocked = [item for item in failures if item["code"] == "run_not_executable"]
-    assert len(blocked) == 1
-    assert blocked[0]["message"] == (
-        "step 's_next' is not assemblable and never executes: cardinality_error: "
-        "required structure port 'structure' has no values "
-        "(step 's_gen' published no structure for it)"
-    )
-    assert {item["id"] for item in report["steps"]} == {"s_gen"}
+    assert any(item["code"] == NO_REALIZED and item["step_id"] == "s_gen" for item in failures)
+    if downstream != "none":
+        blocked = [item for item in failures if item["code"] == "run_not_executable"]
+        assert len(blocked) == 1
+        assert blocked[0]["message"].startswith(
+            "step 's_next' is not assemblable and never executes"
+        )
