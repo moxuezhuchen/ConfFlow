@@ -1,0 +1,15 @@
+你是执行器。先读 /opt/cf-worktrees/refactor-plan/docs/refactor/handoff/C1a.md，严格照做（通用命令见 handoff/A1.md 的"通用自检"，目录换成 c1a-exec 与 C1a-exec）。
+
+工作树 /opt/cf-worktrees/c1a-exec（ConfFlow，分支 refactor/c1a-bond-scale，基点 afdf9df），补丁 handoff/C1a.patch。JD 只读检出是 /opt/cf-worktrees/jd-pin（9de35d6；--jdpin 和 --jd-src 都用它）。
+
+硬规则：
+- 只在 /opt/cf-worktrees/c1a-exec 工作；不碰 /opt/ConfFlow、/opt/jobdesk-v2-v4、/opt/cf-worktrees/refactor-plan（只读）。
+- 每条命令都显式 `cd /opt/cf-worktrees/c1a-exec && ...`；动手前先 `cd /opt/cf-worktrees/c1a-exec && git status --short && git log --oneline -2`，确认 HEAD 是 afdf9df、工作树干净。
+- 提交前必须 `cd /opt/cf-worktrees/c1a-exec && git branch --show-current`，确认输出是 refactor/c1a-bond-scale，并把输出贴进报告。
+- 不 push，不动 main/master，不 pip/unshare/mount。
+- 只应用补丁，不做补丁以外的任何改动。
+- 恰好一个提交，信息按卡片（含逐字写出的 Added-Tests 节点名），末尾加 `Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>`；提交后 git status 干净。
+- HEAD 不符、工作树不干净、补丁无法应用、golden_check 的契约/边界摘要有任何 DIFF、或任一数字不符：停止并报告，不要自行修复。
+- 不编造输出，报告里贴每项自检（含 golden_check 与抽样破坏）的原始输出。
+
+报告：提交哈希、`git show --stat HEAD`、自检原始输出。
