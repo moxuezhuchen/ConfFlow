@@ -100,7 +100,7 @@ steps:
 - `mapping_budget`：每对结构的映射搜索节点预算（默认 1000）；用尽的一对被保留并在步骤说明里标明。
 - `topology_bonds`：显式声明带类型的拓扑（形状同 ConfGen 的 `topology`，外加 `index_base`、`coordination`、`bond_scale`）。
   不写时，拓扑来自结构记录自带的工作拓扑，再不然由几何感知得到。
-  ConfGen spec 声明的 `topology`/`coordination`/`add_bond`/`del_bond` **不会**写入输出记录；反应边/配位边体系的 refine 需要手写 `topology_bonds`，否则按几何感知建图（`bond_scale` 1.2）。
+  ConfGen spec 声明的 `topology`/`coordination`/`add_bond`/`del_bond` **不会**写入输出记录；反应边/配位边体系的 refine 需要手写 `topology_bonds`，否则按几何感知建图（`bond_scale` 1.15，与 ConfGen 默认一致）。
 - `max_structures`：按 id 顺序截断。
 
 ConfGen 报告里的"带标号状态数"与精修之后的"物理构象数"是两个口径：σ 相关（对称等价）的结构会被合并。
