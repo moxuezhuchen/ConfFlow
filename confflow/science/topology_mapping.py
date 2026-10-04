@@ -22,9 +22,9 @@ from typing import Any
 
 import numpy as np
 
-from ..core.bonding import build_adjacency
-from ..core.data import GV_COVALENT_RADII
-from ..core.data import PERIODIC_SYMBOLS as _periodic_symbols
+from .bonding import build_adjacency
+from .data import GV_COVALENT_RADII
+from .data import PERIODIC_SYMBOLS as _periodic_symbols
 
 PERIODIC_SYMBOLS: tuple[str, ...] = tuple(_periodic_symbols)
 

@@ -50,11 +50,22 @@ Even with these settings, run ConfFlow in a dedicated working area and keep unre
 
 ConfFlow may create or update:
 
-- Workflow directories and step directories.
-- `search.xyz`, `output.xyz`, `result.xyz`, `failed.xyz`, and related XYZ files.
-- `manifest.json`, checkpoint metadata, and JSON summary files.
+- Workflow directories, step directories, and the run root itself.
+- V4 formal run artifacts: `run_result.json` (the published run manifest),
+  `run_generation.json` (durable execution-generation record),
+  `imports/<input_name>.snapshot.json` (validated-input snapshot), the
+  per-step SQLite work-item store (`work_items.sqlite`), and the
+  `ensemble_report.json` / `confgen_states.jsonl.gz` confgen reports.
+- Captured external program output such as `stdout.log` and `stderr.log`.
 - `<input_basename>.txt` CLI output reports.
-- `confflow.log` and backup copies of external program logs and outputs.
+
+Legacy compatibility entrypoints such as `--rerun-failed` fail closed and do
+not create their legacy artifacts.  The historical file names `search.xyz`,
+`output.xyz`, `result.xyz`, `failed.xyz`, `manifest.json`, `confflow.log`,
+checkpoint metadata files, and external-log backup copies have no creation
+site in the current V4 code paths reviewed for this document; their absence
+under every historical mode is not proven, so they are recorded as pending
+verification rather than as current artifacts.
 
 ConfFlow may remove stale step artifacts when manifest digests no longer match the current task. Path checks exist to reject obviously dangerous cleanup targets such as filesystem roots, home directories, repository roots, or paths outside configured sandbox roots.
 

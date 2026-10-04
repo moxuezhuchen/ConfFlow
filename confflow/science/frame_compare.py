@@ -16,7 +16,7 @@ from typing import cast
 
 import numpy as np
 
-from ..core.constants import HARTREE_TO_KCALMOL
+from .constants import HARTREE_TO_KCALMOL
 from .topology_mapping import (
     DEFAULT_MAPPING_NODE_BUDGET,
     Graph,

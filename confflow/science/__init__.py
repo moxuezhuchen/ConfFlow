@@ -6,9 +6,9 @@ Numeric geometry/graph algorithms owned by the V4 execution layer, with
 no dependency on legacy orchestration entrypoints (no
 ``blocks.confgen`` generator/pools/CLI, no ``blocks.refine`` processor,
 no XYZ file I/O, no progress UI).  Allowed dependencies: stdlib, NumPy,
-SciPy (lazy), ``confflow.domain`` element data, and the centralised
-``confflow.core.bonding`` bond-perception authority (single explicit
-edge in :mod:`confflow.science.bonds`).
+SciPy (lazy), ``confflow.domain`` element data, and the in-package
+``confflow.science.bonding`` bond-perception authority (reached through
+:mod:`confflow.science.bonds`).
 
 Provenance: torsion mechanics extracted from the pure-numpy subset of
 ``confflow.blocks.confgen`` (Rodrigues rotation, ring

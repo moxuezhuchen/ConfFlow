@@ -3,7 +3,7 @@
 """Bond-perception edge for V4 science (single explicit dependency).
 
 The bond rule ``d < bond_scale * (r_i + r_j)`` with the 0.4 A minimum and
-the GaussView covalent radii is centralised in ``confflow.core.bonding``
+the GaussView covalent radii is centralised in ``confflow.science.bonding``
 so the same atoms/coordinates/scale always produce the same topology.
 This module is the V4 execution layer's sole entrypoint to that
 authority: explicit typed inputs, :class:`ValueError` failures, no
@@ -45,7 +45,7 @@ def perceive_adjacency(
         Raised for unknown elements, malformed coordinates, or a
         non-positive scale.
     """
-    from ..core.bonding import UnknownElementError, build_adjacency
+    from .bonding import UnknownElementError, build_adjacency
 
     scale = float(bond_scale)
     if not math.isfinite(scale) or scale <= 0:
@@ -66,7 +66,7 @@ def covalent_radii(atomic_numbers: Sequence[int]) -> list[float]:
     ValueError
         Raised when any atom has no usable covalent radius.
     """
-    from ..core.bonding import UnknownElementError, covalent_radius
+    from .bonding import UnknownElementError, covalent_radius
 
     radii: list[float] = []
     for number in atomic_numbers:

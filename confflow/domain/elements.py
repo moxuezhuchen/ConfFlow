@@ -3,8 +3,8 @@
 """V4 canonical element symbols.
 
 The V4 domain layer is dependency-free, so it owns this minimal element table
-instead of importing ``confflow.core.data`` (whose package initialiser pulls in
-legacy runtime models).  ``tests/v4`` cross-checks the table against the legacy
+instead of importing ``confflow.science.data`` (whose package initialiser pulls
+in the science package).  ``tests/v4`` cross-checks the table against that
 source to prevent silent drift.
 """
 

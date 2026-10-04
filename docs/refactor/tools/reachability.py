@@ -7,7 +7,11 @@ Starting from the fixed entry modules (CLI surfaces and workers), every module
 reachable through ``import`` / ``from ... import`` statements, relative imports,
 literal ``importlib.import_module("...")`` calls, and package ``_LAZY_EXPORTS``
 tables (only when some module actually does ``from <package> import <name>``)
-is marked reachable.  The remaining modules are printed, one per line.
+is marked reachable.  In addition, the static and literal-importlib confflow
+imports of the Python scripts under ``scripts/`` (including subdirectories)
+are added as extra closure entrypoints: scripts are not package modules, and
+the ``script_entry_modules`` diagnostic records which script pulls in which
+module.  The remaining modules are printed, one per line.
 """
 
 from __future__ import annotations
@@ -146,7 +150,35 @@ def imports_of(module: str, path: Path, lazy_tables: dict[str, dict[str, str]]) 
     return deps
 
 
-def compute(cf: Path, package: str) -> dict[str, list[str]]:
+def script_entry_imports(
+    cf: Path, modules: dict[str, Path], lazy_tables: dict[str, dict[str, str]]
+) -> dict[str, set[str]]:
+    """Collect static / literal-importlib confflow imports from ``scripts/``.
+
+    Scripts are not package modules; the returned mapping keys each script by
+    its path relative to ``cf`` (POSIX separators) and lists the confflow
+    modules it pulls in.  Only files that actually import confflow modules
+    appear, and only names that are real modules of the package are kept
+    (imported symbol names are not module paths).  The package ``_LAZY_EXPORTS``
+    tables already resolved by :func:`compute` are applied, so a script doing
+    ``from <package> import <name>`` also roots the lazy target module.
+    """
+    root = cf / "scripts"
+    entries: dict[str, set[str]] = {}
+    if not root.is_dir():
+        return entries
+    for path in sorted(root.rglob("*.py")):
+        try:
+            deps = imports_of(f"scripts.{path.stem}", path, lazy_tables)
+        except (OSError, SyntaxError, ValueError):
+            continue
+        deps = {dep for dep in deps if dep in modules}
+        if deps:
+            entries[path.relative_to(cf).as_posix()] = deps
+    return entries
+
+
+def compute(cf: Path, package: str) -> dict[str, list[str] | dict[str, list[str]]]:
     modules = enumerate_modules(cf, package)
     lazy_tables: dict[str, dict[str, str]] = {}
     for name, path in modules.items():
@@ -155,8 +187,13 @@ def compute(cf: Path, package: str) -> dict[str, list[str]]:
             if exports:
                 lazy_tables[name] = exports
     deps_by_module = {name: imports_of(name, path, lazy_tables) for name, path in modules.items()}
+    script_entries = script_entry_imports(cf, modules, lazy_tables)
+    script_roots = sorted(
+        {dep for deps in script_entries.values() for dep in deps if dep in modules}
+    )
     reachable: set[str] = set()
     stack = [m for m in ENTRY_MODULES if m in modules]
+    stack.extend(script_roots)
     reachable.update(stack)
     while stack:
         name = stack.pop()
@@ -179,6 +216,7 @@ def compute(cf: Path, package: str) -> dict[str, list[str]]:
         "module_count": len(modules),
         "reachable_count": len(reachable),
         "missing_entry_modules": missing_entries,
+        "script_entry_modules": {k: sorted(v) for k, v in sorted(script_entries.items())},
         "unreachable": unreachable,
     }
 
