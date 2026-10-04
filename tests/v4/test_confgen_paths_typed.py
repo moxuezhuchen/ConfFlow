@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -32,6 +33,8 @@ from confflow.science.confgen.torsion.paths import (
 from confflow.science.confgen.torsion.stage import TorsionStage
 from confflow.workflow.v4.confgen_schema import ConfgenModelV3
 from tests.v4.test_repair_executors import _ctx, _item, _sci
+
+GOLDEN = Path(__file__).resolve().parent.parent.parent / "docs" / "refactor" / "paths_equivalence"
 
 
 def _hexane(
@@ -258,22 +261,25 @@ def test_unknown_path_key_is_rejected():
 
 
 def test_preview_matches_the_runtime_persisted_graph_with_a_nondefault_bond_scale():
-    """Same working graph, rotors, moving sets and canonical size (digest excluded, see below)."""
+    """Same working graph, rotors, moving sets, size AND digest (typed preview)."""
     from confflow.application.v4_run import _apply_declared_input_topology
     from confflow.domain.topology import TopologyPatch
     from confflow.producer.path_preview import preview_paths
 
+    hydrogen = json.loads((GOLDEN / "cases.json").read_text(encoding="utf-8"))["hydrogen_cases"][0]
+    record_data = hydrogen["record"]
     structure = {
-        "atoms": ["C"] * 4,
-        "coordinates": [[i * 1.7, 0, 0] for i in range(4)],
+        "atoms": list(record_data["atoms"]),
+        "coordinates": [list(point) for point in record_data["coordinates"]],
         "topology": {"add": [[1, 2]]},
     }
-    legacy_shape = {
-        "paths": [{"start": 1, "end": 4, "move": "end"}],
-        "angle_step": 120,
-        "bond_scale": 1.1,
+    typed = {
+        "schema_version": 3,
+        "index_base": 1,
+        "tolerances": {"bond_scale": 1.1},
+        "paths": [{"start": 1, "end": 4, "move": "end", "angles": [0.0, 120.0, 240.0]}],
     }
-    result = preview_paths(structure, legacy_shape)
+    result = preview_paths(structure, typed)
     assert result["raw_conformers"] == 27
     assert result["resolved_rotors"] == 3
 
@@ -284,23 +290,11 @@ def test_preview_matches_the_runtime_persisted_graph_with_a_nondefault_bond_scal
         topology_patch=TopologyPatch(add_edges=[[1, 2]], delete_edges=(), provenance=""),
     )
     driving = list(_apply_declared_input_topology("repro", [record], None))[0]
-    expected_graph = [[1], [0, 2], [1, 3], [2]]
-    assert [list(row) for row in driving.working_topology] == expected_graph
-
-    context = build_context(
-        driving,
-        {
-            "schema_version": 3,
-            "index_base": 1,
-            "tolerances": {"bond_scale": 1.1},
-            "paths": [{"start": 1, "end": 4, "move": "end", "step": 120}],
-        },
-    )
-    assert [list(row) for row in context.adjacency] == expected_graph
+    context = build_context(driving, dict(typed))
     resolved = context.resolved_spec["paths_resolved"]
-    # Not compared: ``topology_digest``.  The preview digest covers the legacy
-    # correction metadata (add/del_bond, bond_scale); the typed runtime digest
-    # does not.  Recorded for the preview move to typed v3 (PLAN-2).
+    # The preview digest is the runtime digest, verbatim: no correction
+    # metadata (bond_scale/add_bond/del_bond) is folded in on either side.
+    assert result["topology_digest"] == resolved["topology_digest"]
     assert resolved["raw_cartesian_size"] == 27
     assert [entry["bond"] for entry in result["rotors"]] == [
         list(entry["bond"]) for entry in resolved["rotors"]
@@ -308,3 +302,138 @@ def test_preview_matches_the_runtime_persisted_graph_with_a_nondefault_bond_scal
     assert [entry["moving_atoms"] for entry in result["rotors"]] == [
         list(entry["moving"]) for entry in resolved["rotors"]
     ]
+
+
+def _preview_record(structure: dict[str, Any]) -> StructureRecord:
+    from confflow.domain.topology import TopologyPatch
+
+    patch = None
+    if structure.get("topology") is not None:
+        patch = TopologyPatch(
+            add_edges=structure["topology"].get("add", ()),
+            delete_edges=structure["topology"].get("delete", ()),
+            provenance=structure["topology"].get("provenance", ""),
+        )
+    return StructureRecord(
+        id="preview",
+        atoms=tuple(structure["atoms"]),
+        coordinates=tuple(tuple(point) for point in structure["coordinates"]),
+        topology_patch=patch,
+    )
+
+
+def _butane_structure() -> dict[str, Any]:
+    case = json.loads((GOLDEN / "cases.json").read_text(encoding="utf-8"))["hydrogen_cases"][0]
+    return {
+        "atoms": list(case["record"]["atoms"]),
+        "coordinates": [list(point) for point in case["record"]["coordinates"]],
+    }
+
+
+def test_preview_digest_tracks_every_runtime_graph_authority():
+    """Patch, typed topology, add/del edges and metadata neutrality agree."""
+    from confflow.producer.path_preview import preview_paths
+
+    base = _butane_structure()
+    backbone = [[1, 2], [2, 3], [3, 4]]
+    scenarios = {
+        "default_scale": (
+            base,
+            {
+                "schema_version": 3,
+                "index_base": 1,
+                "paths": [{"start": 1, "end": 2, "move": "end", "angles": [0.0]}],
+            },
+        ),
+        "nondefault_scale": (
+            base,
+            {
+                "schema_version": 3,
+                "index_base": 1,
+                "tolerances": {"bond_scale": 1.1},
+                "paths": [{"start": 1, "end": 2, "move": "end", "angles": [0.0]}],
+            },
+        ),
+        "typed_topology": (
+            base,
+            {
+                "schema_version": 3,
+                "index_base": 1,
+                "topology": {"bonds": backbone},
+                "paths": [{"start": 2, "end": 3, "move": "end", "angles": [0.0]}],
+            },
+        ),
+        "del_edge": (
+            base,
+            {
+                "schema_version": 3,
+                "index_base": 1,
+                "topology": {"del_bond": [[2, 3]]},
+                "paths": [{"start": 1, "end": 2, "move": "end", "angles": [0.0]}],
+            },
+        ),
+        "add_edge": (
+            base,
+            {
+                "schema_version": 3,
+                "index_base": 1,
+                "topology": {"add_bond": [[5, 6]]},
+                "paths": [{"start": 1, "end": 2, "move": "end", "angles": [0.0]}],
+            },
+        ),
+    }
+    digests = {}
+    for name, (structure, native) in scenarios.items():
+        result = preview_paths(structure, native)
+        context = build_context(_preview_record(structure), dict(native))
+        resolved = context.resolved_spec["paths_resolved"]
+        assert result["topology_digest"] == resolved["topology_digest"], name
+        assert result["raw_conformers"] == resolved["raw_cartesian_size"], name
+        digests[name] = result["topology_digest"]
+    # The same graph under different spellings/metadata digests identically.
+    assert digests["default_scale"] == digests["nondefault_scale"]
+    # Atom labels/roles never enter the digest (same edges, extra metadata).
+    labelled = {
+        "schema_version": 3,
+        "index_base": 1,
+        "topology": {
+            "bonds": [
+                {"atoms": pair, "kind": "COVALENT", "provenance": "declared"} for pair in backbone
+            ],
+            "atoms": [{"index": 1, "label": "C1", "role": "anchor"}],
+        },
+        "paths": [{"start": 2, "end": 3, "move": "end", "angles": [0.0]}],
+    }
+    labelled_result = preview_paths(base, labelled)
+    assert labelled_result["topology_digest"] == digests["typed_topology"]
+
+
+def test_preview_refuses_structured_and_typed_dual_authority():
+    """A structure patch plus typed topology corrections fails closed."""
+    from confflow.producer.path_preview import preview_paths
+
+    structure = _butane_structure()
+    structure["topology"] = {"add": []}
+    # An empty patch is no authority; the typed add_bond then applies alone.
+    result = preview_paths(
+        structure,
+        {
+            "schema_version": 3,
+            "index_base": 1,
+            "topology": {"del_bond": [[2, 3]]},
+            "paths": [{"start": 1, "end": 2, "move": "end", "angles": [0.0]}],
+        },
+    )
+    assert result["raw_conformers"] == 1
+    # A real patch plus a typed correction is a dual-authority conflict.
+    structure["topology"] = {"add": [[1, 2]]}
+    with pytest.raises(ValueError, match="authority|conflict"):
+        preview_paths(
+            structure,
+            {
+                "schema_version": 3,
+                "index_base": 1,
+                "topology": {"del_bond": [[2, 3]]},
+                "paths": [{"start": 1, "end": 2, "move": "end", "angles": [0.0]}],
+            },
+        )

@@ -79,16 +79,6 @@ CONFGEN_STATE_KIND = "confgen_state"
 CONFGEN_STATE_PORT = "confgen_state"
 
 
-#: Defaults of the read-only path preview (``producer.path_preview`` still takes the
-#: legacy declaration shape until the preview moves to typed v3).
-_DEFAULT_ANGLE_STEP = 120
-_DEFAULT_BOND_SCALE = 1.15
-
-#: Pre-geometry grid guard of the path preview. Tracks
-#: ``ConfgenLimits.max_declared_states`` (asserted by test, never copied blindly).
-_LEGACY_MAX_DECLARED_STATES = 10000
-
-
 def _thaw_path_resolution(value: Mapping[str, Any] | None) -> dict[str, Any] | None:
     """Deep-thaw an optional resolved-spec mapping for JSON report output."""
     if value is None:
