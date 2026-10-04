@@ -15,7 +15,7 @@ The geometry comparison science lives in :mod:`confflow.science`
 
 - bond perception ``d < bond_scale * (r_i + r_j)`` with the 0.4 A minimum
   and GaussView covalent radii via :mod:`confflow.science.bonds` (edge
-  over the centralised ``core.bonding`` authority);
+  over the centralised :mod:`confflow.science.bonding` authority);
 - default ``bond_scale = 1.15`` matches the ConfGen perception default
   (``tolerances.bond_scale``); ``topology_mapping.BOND_SCALE_FACTOR`` (1.2)
   remains the default of the generic graph helpers, not of refine;
