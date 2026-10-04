@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from .data import PERIODIC_SYMBOLS, SYMBOL_TO_ATOMIC_NUMBER
+from ..science.data import PERIODIC_SYMBOLS, SYMBOL_TO_ATOMIC_NUMBER
 
 __all__ = [
     "canonicalize_element_symbol",

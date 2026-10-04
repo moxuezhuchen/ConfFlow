@@ -57,7 +57,7 @@ def parse_gaussian_input_text(text: str, source_label: str = "text") -> dict[str
     coordinate block. This avoids mistaking an all-numeric title line such
     as ``1 1`` for the real QM header.
     """
-    from .data import get_element_symbol
+    from ..science.data import get_element_symbol
 
     def _looks_like_coordinate_line(raw_line: str) -> bool:
         parts = raw_line.split()

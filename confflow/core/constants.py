@@ -1,19 +1,16 @@
 #!/usr/bin/env python3
 
-"""ConfFlow core physical constants.
+"""Compatibility forwarding shim.
 
-Centralises physical constants referenced across layers in the core layer
-to avoid cross-layer dependencies (e.g. blocks -> calc).
+The physical constants live in :mod:`confflow.science.constants`; this
+module re-exports the same objects so historical ``confflow.core.constants``
+imports keep working against the single authority.
 """
 
 from __future__ import annotations
 
+from ..science.constants import HARTREE_TO_KCALMOL
+
 __all__ = [
     "HARTREE_TO_KCALMOL",
 ]
-
-# =============================================================================
-# Physical constants
-# =============================================================================
-
-HARTREE_TO_KCALMOL: float = 627.5094740631  # Hartree to kcal/mol
