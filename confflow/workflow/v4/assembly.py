@@ -405,6 +405,31 @@ def _resolve_source(
     )
 
 
+def _port_value_count(resolved: _ResolvedSource) -> int:
+    """Count the resolved values that can actually fill the target port.
+
+    A producer publishes structures, artifacts and results side by side; a
+    structure port is filled by structures only (an ensemble report must not
+    satisfy it), an artifact port by artifacts, a result port by results.
+    """
+    kind = resolved.edge.target_port.kind
+    if kind is PortKind.STRUCTURE:
+        return len(resolved.structures)
+    if kind is PortKind.ARTIFACT:
+        return len(resolved.artifacts)
+    return len(resolved.results)
+
+
+def _empty_required_port_message(resolved: _ResolvedSource) -> str:
+    """Name the empty required port, its kind and (for a step output) the producer."""
+    edge = resolved.edge
+    port = edge.target_port
+    message = f"required {port.kind.value} port {port.name!r} has no values"
+    if edge.source.kind is SourceKind.STEP_OUTPUT and edge.source.step_id is not None:
+        message += f" (step {edge.source.step_id!r} published no {port.kind.value} for it)"
+    return message
+
+
 def _cardinality_diagnostic(
     step_id: str,
     resolved: _ResolvedSource,
@@ -832,7 +857,7 @@ def assemble_work_items(
         provisioning_errors: list[Diagnostic] = []
         for resolved in resolved_sources:
             required = resolved.edge.cardinality in (Cardinality.ONE, Cardinality.ONE_OR_MORE)
-            count = len(resolved.structures) + len(resolved.artifacts) + len(resolved.results)
+            count = _port_value_count(resolved)
             if not required or count > 0:
                 continue
             edge = resolved.edge
@@ -856,11 +881,13 @@ def assemble_work_items(
                         )
                     )
                     continue
+            if edge.source.kind is SourceKind.STEP_OUTPUT:
+                details["producer_step_id"] = edge.source.step_id
             provisioning_errors.append(
                 error(
                     DiagnosticCode.CARDINALITY_ERROR,
                     DiagnosticReason.CARDINALITY_MISMATCH,
-                    f"required port {edge.target_port.name!r} has no values",
+                    _empty_required_port_message(resolved),
                     step_id=step.step_id,
                     logical_key=f"{step.step_id}:*",
                     field_path=f"steps.{step.step_id}.bindings.{edge.target_port.name}",

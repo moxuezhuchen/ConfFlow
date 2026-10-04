@@ -331,6 +331,22 @@ class ConfgenExecutor:
             info_details["path_rotors"] = len(resolved_paths.get("rotors", ()))
             info_details["path_raw_states"] = resolved_paths.get("raw_cartesian_size")
             info_details["path_warnings"] = len(path_warnings)
+        if published == 0:
+            return WorkItemResult(
+                work_item_id=work_item.id,
+                status=WorkItemStatus.FAILED,
+                structures=StructureSet(),
+                results=results,
+                artifacts=artifacts,
+                diagnostics=(
+                    self._no_realized_structure_diagnostic(work_item, report),
+                    *self._resolved_path_diagnostics(resolved_paths, work_item),
+                    *self._warning_diagnostics(path_warnings, work_item),
+                ),
+                timing=timing,
+                recovery=RecoveryInfo(profile="none", attempted=False),
+                semantic_digest=work_item.semantic_digest,
+            )
         return WorkItemResult(
             work_item_id=work_item.id,
             status=WorkItemStatus.COMPLETED,
@@ -360,6 +376,50 @@ class ConfgenExecutor:
         )
 
     @staticmethod
+    def _no_realized_structure_diagnostic(
+        work_item: WorkItem, report: Mapping[str, Any]
+    ) -> Diagnostic:
+        """Explain a run that published no structure, from the enumeration ledger.
+
+        Uses the terminal-status vocabulary of the report's ``target_categories``
+        (REALIZED / UNRESOLVED / DRIFTED / ...): a run with no REALIZED target
+        is a failure, never a completed empty ensemble.
+        """
+        counts = report.get("counts", {})
+        categories = {
+            name: int(value)
+            for name, value in dict(counts.get("target_categories", {})).items()
+            if int(value)
+        }
+        anomalies = {name: int(value) for name, value in dict(counts.get("anomalies", {})).items()}
+        raw = counts.get("raw", "?")
+        outcome = ", ".join(f"{name}={value}" for name, value in sorted(categories.items()))
+        reason = (
+            f"; anomalies: {', '.join(f'{name}={value}' for name, value in sorted(anomalies.items()))}"
+            if anomalies
+            else ""
+        )
+        return Diagnostic(
+            code="confgen_no_realized_structures",
+            message=(
+                f"confgen v3 realized no structure: 0 of {raw} raw targets published "
+                f"(target outcomes: {outcome or 'none recorded'}{reason}); "
+                "see the ensemble report for the per-target ledger"
+            ),
+            severity=DiagnosticSeverity.ERROR,
+            step_id=work_item.step_id,
+            work_item_id=work_item.id,
+            logical_key=work_item.logical_key,
+            details=FrozenDict(
+                {
+                    "raw_targets": raw,
+                    "published": 0,
+                    "target_categories": categories,
+                    "anomalies": anomalies,
+                }
+            ),
+        )
+
     @staticmethod
     def _attach_inherited_scope(
         results: ResultSet,
