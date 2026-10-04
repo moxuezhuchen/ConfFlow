@@ -1,0 +1,402 @@
+diff --git a/docs/refactor/plan2/ACCEPTANCE_FAST.md b/docs/refactor/plan2/ACCEPTANCE_FAST.md
+new file mode 100644
+index 0000000..070ac81
+--- /dev/null
++++ b/docs/refactor/plan2/ACCEPTANCE_FAST.md
+@@ -0,0 +1,84 @@
++# 验收提速固定流程（E1 起生效）
++
++本文件规定独立验收全量测试的固定流程：启用 `run_sharded.py` 已有的 `--weights` 加权调度，固定 Black 单 worker 与宿主权限，并强制核对结果。本流程不改变通过标准；任何一次实测时长都只是当时机器负载下的记录，**不构成对所有环境的速度保证**。
++
++## 1. 固定原则
++
++- 每次验收运行建**独立输出目录**（如 `/tmp/acc2/<卡名>-run/`，须为新建）。静态检查、全量、golden_check 可并行；**抽样破坏必须另用独立副本**，避免污染正在测试的树。
++- 种子权重：从文档树 `docs/refactor/tools-acc/weights.json` **复制**到本次输出目录，再把副本传给 `--weights`。运行器会把实测秒数写回该副本；已提交的种子文件不允许被运行器覆盖。
++- `run_sharded.py` 自行注入 `PYTHONPATH=<tools-acc>/noeditable:<待验收 CF 根目录>` 并设置 `JOBDESK_V2_SRC`、`QT_QPA_PLATFORM=offscreen`；不要破坏或覆盖这些设置。
++- Black 固定单 worker：`black --check --workers 1`（或环境变量 `BLACK_NUM_WORKERS=1`）。
++- 涉及 `/opt/g16` 的测试需要适当宿主权限；遇权限失败**停止报告**，不得通过跳过测试掩盖。
++- golden_check 每卡仍完整执行；本阶段不做制品复用；执行器的产物不作为独立验收证据。
++
++## 2. 全量命令模板
++
++```sh
++E1RUN=/tmp/acc2/<卡名>-run        # 必须是本次新建的独立目录
++mkdir -p "$E1RUN"
++cp /opt/cf-worktrees/refactor-plan/docs/refactor/tools-acc/weights.json "$E1RUN/weights.json"
++cd <待验收CF副本根目录>
++PYTHONPATH=/opt/cf-worktrees/refactor-plan/docs/refactor/tools-acc/noeditable:$PWD \
++python3 /opt/cf-worktrees/refactor-plan/docs/refactor/tools-acc/run_sharded.py \
++  --cf . --out "$E1RUN/out.json" --weights "$E1RUN/weights.json" \
++  --shards 12 --jdpin /opt/cf-worktrees/jd-pin > "$E1RUN/run.log" 2>&1
++```
++
++## 3. 结果核对（退出码 0 不单独构成通过证明）
++
++先重新收集本次节点集合，再与 `out.json` 逐项比对：
++
++```sh
++cd <待验收CF副本根目录>
++JOBDESK_V2_SRC=/opt/cf-worktrees/jd-pin/src PYTHONDONTWRITEBYTECODE=1 \
++QT_QPA_PLATFORM=offscreen \
++PYTHONPATH=/opt/cf-worktrees/refactor-plan/docs/refactor/tools-acc/noeditable:$PWD \
++python3 -m pytest -o addopts= -p no:cacheprovider --collect-only -q \
++  > "$E1RUN/collect.txt" 2>&1
++
++python3 - "$E1RUN/out.json" "$E1RUN/collect.txt" <<'EOF'
++import json, sys
++out = json.load(open(sys.argv[1]))
++col = {l.rstrip("\n") for l in open(sys.argv[2])
++       if "::" in l and not l[:1].isspace() and not l.startswith("ERROR ")}
++o = set(out)
++missing, extra = sorted(col - o), sorted(o - col)
++tally = {}
++for v in out.values():
++    tally[v] = tally.get(v, 0) + 1
++bad = {k: v for k, v in out.items() if v not in ("passed", "skipped")}
++print(f"collect={len(col)} out={len(out)} missing={len(missing)} extra={len(extra)}")
++print("tally", dict(sorted(tally.items())))
++if missing or extra or bad:
++    print("MISMATCH")
++    sys.exit(1)
++print("OK")
++EOF
++```
++
++通过条件（全部满足）：`out.json` 节点集合与本次 collect **精确一致**（无重复、无缺失、无多余）、无 `failed`/`error`、汇总实际 `passed`/`skipped` 数与卡片预期相符。
++
++## 4. 静态检查与 golden_check 模板
++
++```sh
++cd <待验收CF副本根目录>
++ruff check confflow tests scripts && mypy confflow
++BLACK_NUM_WORKERS=1 black --check <本卡改动的 .py；无改动文件时可省略>
++
++B="$E1RUN/golden-base"
++rm -rf "$B" && cp -r docs/refactor/baseline "$B" && rm -rf "$B/checkpoints"
++cp docs/refactor/baseline/checkpoints/IS.5/engine_reports/* "$B/engine_reports/"
++cp docs/refactor/baseline/checkpoints/C4.3/engine_reports/* "$B/engine_reports/"
++printf 'tests/v4/test_confgen_v3_integration.py::TestLegacyRegressions::test_v3_filenames_vs_legacy_compat\n' > "$E1RUN/removed.txt"
++PYTHONPATH=/opt/cf-worktrees/refactor-plan/docs/refactor/tools-acc/noeditable:. \
++python3 docs/refactor/tools/golden_check.py --base "$B" \
++  --checkpoint docs/refactor/baseline/checkpoints/C4.3/contract.json --cf . \
++  --jd-src /opt/cf-worktrees/jd-pin/src --removed-nodes "$E1RUN/removed.txt" \
++  --out "$E1RUN/golden.json"
++```
++
++golden_check 期望 `ok: true`，契约/边界摘要 5 项全部 ok，引擎报告 added/different/missing 为空；任何 DIFF → 停止报告。
++
++## 5. 交付钉住
++
++交付钉文档提交与补丁 SHA256；外部执行开始后不得并发修改交付物，修订须先通知停止、再重新交付。
+diff --git a/docs/refactor/tools-acc/weights.json b/docs/refactor/tools-acc/weights.json
+index 99c34f7..2d2e064 100644
+--- a/docs/refactor/tools-acc/weights.json
++++ b/docs/refactor/tools-acc/weights.json
+@@ -1,154 +1,156 @@
+ {
+- "tests/science/test_topology_mapping.py": 0.23400000000000004,
+- "tests/test_bonding_consistency.py": 0.273,
+- "tests/test_cli.py": 4.765000000000002,
+- "tests/test_console.py": 0.03900000000000003,
+- "tests/test_contract.py": 0.007,
+- "tests/test_contracts.py": 0.003,
+- "tests/test_control_adapter.py": 0.5910000000000001,
+- "tests/test_control_protocol_schema.py": 0.12600000000000006,
+- "tests/test_control_worker.py": 4.069999999999999,
+- "tests/test_core.py": 0.026000000000000002,
+- "tests/test_core_types_retired.py": 0.003,
+- "tests/test_data.py": 0.001,
+- "tests/test_dependency_boundaries.py": 0.005,
+- "tests/test_example_workflow.py": 0.057,
+- "tests/test_execution_identity_resume.py": 0.008,
+- "tests/test_execution_service.py": 0.065,
+- "tests/test_fixture_agent.py": 0.736,
+- "tests/test_install_provenance.py": 0.046,
+- "tests/test_install_release_wheel.py": 63.79899999999999,
+- "tests/test_io.py": 0.044000000000000004,
+- "tests/test_legacy_execution_guard.py": 0.008,
+- "tests/test_logging_hotspots.py": 0.008,
+- "tests/test_opencode_executor.py": 0.05000000000000002,
+- "tests/test_path_policy.py": 0.008,
+- "tests/test_producer_defaults.py": 0.001,
+- "tests/test_release_dependencies.py": 0.021000000000000005,
+- "tests/test_release_workflow.py": 0.014000000000000002,
+- "tests/test_retired_wire_versions.py": 1.483999999999999,
+- "tests/test_review_cli_integration.py": 17.015,
+- "tests/test_sqlite_execution_repository.py": 2.6869999999999994,
+- "tests/test_synthetic_producer.py": 13.180999999999997,
+- "tests/test_v4_entry_helpers.py": 0.004,
+- "tests/test_worker_attempt.py": 0.074,
++ "tests/science/test_topology_mapping.py": 0.457,
++ "tests/test_bonding_consistency.py": 0.002,
++ "tests/test_cli.py": 4.808,
++ "tests/test_console.py": 0.05900000000000003,
++ "tests/test_contract.py": 0.014,
++ "tests/test_contracts.py": 0.006,
++ "tests/test_control_adapter.py": 1.01,
++ "tests/test_control_protocol_schema.py": 0.2450000000000001,
++ "tests/test_control_worker.py": 4.762,
++ "tests/test_core.py": 0.004,
++ "tests/test_core_types_retired.py": 0.001,
++ "tests/test_data.py": 0.0,
++ "tests/test_dependency_boundaries.py": 0.012,
++ "tests/test_example_workflow.py": 0.073,
++ "tests/test_execution_identity_resume.py": 0.022,
++ "tests/test_execution_service.py": 0.035,
++ "tests/test_fixture_agent.py": 0.5910000000000001,
++ "tests/test_install_provenance.py": 0.068,
++ "tests/test_install_release_wheel.py": 79.848,
++ "tests/test_io.py": 0.03200000000000001,
++ "tests/test_legacy_execution_guard.py": 0.01,
++ "tests/test_logging_hotspots.py": 0.084,
++ "tests/test_opencode_executor.py": 0.07700000000000003,
++ "tests/test_path_policy.py": 0.026000000000000002,
++ "tests/test_producer_defaults.py": 0.0,
++ "tests/test_release_dependencies.py": 0.04,
++ "tests/test_release_workflow.py": 0.029,
++ "tests/test_retired_wire_versions.py": 3.038999999999998,
++ "tests/test_review_cli_integration.py": 26.166999999999998,
++ "tests/test_sqlite_execution_repository.py": 1.972,
++ "tests/test_synthetic_producer.py": 15.757000000000001,
++ "tests/test_v4_entry_helpers.py": 0.018,
++ "tests/test_worker_attempt.py": 0.034,
+  "tests/test_worker_handoff.py": 0.003,
+- "tests/test_worker_sidecars.py": 0.006,
+- "tests/test_worker_staging.py": 0.09600000000000002,
+- "tests/test_worker_supervision.py": 0.02,
+- "tests/test_workflow_execution_adapter.py": 0.06700000000000002,
+- "tests/v4/test_architecture_boundaries.py": 28.113999999999994,
+- "tests/v4/test_assembly.py": 2.892000000000001,
+- "tests/v4/test_audit_redteam_r2.py": 28.797,
+- "tests/v4/test_audit_regressions_r2.py": 91.67599999999999,
+- "tests/v4/test_binding.py": 2.3910000000000005,
+- "tests/v4/test_compiler.py": 3.81,
+- "tests/v4/test_confgen_paths_audit.py": 2.8039999999999994,
+- "tests/v4/test_confgen_paths_phase0.py": 6.504,
+- "tests/v4/test_confgen_v3_combination.py": 9.269,
+- "tests/v4/test_confgen_v3_coordination.py": 204.74899999999997,
+- "tests/v4/test_confgen_v3_core.py": 30.684,
+- "tests/v4/test_confgen_v3_integration.py": 8.059000000000003,
+- "tests/v4/test_confgen_v3_ring.py": 4.901000000000001,
+- "tests/v4/test_confgen_v3_schema.py": 0.8249999999999998,
+- "tests/v4/test_confgen_v3_torsion.py": 1.6480000000000001,
+- "tests/v4/test_crossstate_hardening.py": 10.045000000000002,
+- "tests/v4/test_dev_remote_boundaries.py": 1.299,
+- "tests/v4/test_digest_axes.py": 2.716,
+- "tests/v4/test_domain_identity.py": 8.441,
+- "tests/v4/test_domain_structure.py": 2.435,
+- "tests/v4/test_elements_drift.py": 13.798000000000009,
+- "tests/v4/test_execution_critical_validation.py": 0.9919999999999999,
+- "tests/v4/test_failure_policy.py": 1.929,
+- "tests/v4/test_fake_native_isolation.py": 0.621,
+- "tests/v4/test_gaussian_real_differential.py": 7.205000000000002,
+- "tests/v4/test_intent_boundary.py": 0.376,
+- "tests/v4/test_intent_legacy_paths_to_v3.py": 5.58,
+- "tests/v4/test_native_definition_validation.py": 3.0060000000000002,
+- "tests/v4/test_native_failure_diagnostics.py": 1.989,
+- "tests/v4/test_p0_boundary.py": 2.129,
+- "tests/v4/test_p0_pr1_authoring.py": 3.693,
+- "tests/v4/test_path_preview.py": 0.7969999999999999,
+- "tests/v4/test_pr8_consolidation.py": 3.1950000000000003,
+- "tests/v4/test_producer_authoring_boundary_coverage.py": 24.824999999999978,
+- "tests/v4/test_producer_checkpoint_boundary_coverage.py": 4.503999999999999,
+- "tests/v4/test_producer_checkpoints.py": 5.626000000000002,
+- "tests/v4/test_producer_intent.py": 5.754999999999999,
+- "tests/v4/test_producer_intent_regressions.py": 2.4690000000000003,
+- "tests/v4/test_producer_machine.py": 4.058999999999999,
+- "tests/v4/test_publication_retention.py": 1.3160000000000003,
+- "tests/v4/test_repair_capabilities.py": 2.4179999999999997,
+- "tests/v4/test_repair_environment.py": 1.816,
+- "tests/v4/test_repair_executors.py": 1.734,
+- "tests/v4/test_repair_identity.py": 1.8570000000000004,
+- "tests/v4/test_repair_persistence.py": 4.2090000000000005,
+- "tests/v4/test_resource.py": 3.032,
+- "tests/v4/test_schema.py": 2.427,
+- "tests/v4/test_scientific_params.py": 1.7770000000000001,
+- "tests/v4/test_scientific_reliability.py": 6.629999999999999,
+- "tests/v4/test_terminal_arbitration.py": 26.544000000000004,
+- "tests/v4/test_terminal_arbitration_races.py": 169.934,
+- "tests/v4/test_terminal_arbitration_recheck.py": 41.024,
+- "tests/v4/test_terminal_endpoint_diagnostic.py": 0.44799999999999995,
+- "tests/v4/test_topology_patch_phase1.py": 3.0840000000000005,
+- "tests/v4/test_transform_refine_symmetry.py": 0.9630000000000001,
+- "tests/v4/test_transform_refine_topology_bonds.py": 1.2029999999999998,
+- "tests/v4/test_v42_adapters.py": 7.291,
+- "tests/v4/test_v42_coverage_contracts.py": 6.425000000000002,
+- "tests/v4/test_v42_coverage_exec.py": 7.255000000000002,
+- "tests/v4/test_v42_coverage_process.py": 14.558,
+- "tests/v4/test_v42_coverage_recovery.py": 3.149,
+- "tests/v4/test_v42_coverage_render.py": 3.153,
+- "tests/v4/test_v42_debt.py": 1.552,
+- "tests/v4/test_v42_executors.py": 15.192000000000002,
+- "tests/v4/test_v42_profiles_checks.py": 4.504000000000003,
+- "tests/v4/test_v42_recovery.py": 1.836,
+- "tests/v4/test_v43_abandoned.py": 2.697000000000001,
+- "tests/v4/test_v43_artifacts.py": 2.055,
+- "tests/v4/test_v43_coverage.py": 3.9279999999999995,
+- "tests/v4/test_v43_crash_matrix.py": 1.6280000000000001,
+- "tests/v4/test_v43_matrices.py": 12.630000000000003,
+- "tests/v4/test_v43_publication.py": 5.2330000000000005,
+- "tests/v4/test_v43_resume.py": 7.839,
+- "tests/v4/test_v43_reuse.py": 5.297,
+- "tests/v4/test_v43_store.py": 4.676,
+- "tests/v4/test_v44_artifact_flow.py": 3.144,
+- "tests/v4/test_v44_claim.py": 0.661,
+- "tests/v4/test_v44_coverage.py": 7.155000000000001,
+- "tests/v4/test_v44_crash_matrix.py": 3.738,
+- "tests/v4/test_v44_crash_matrix2.py": 10.448,
+- "tests/v4/test_v44_faults.py": 6.179,
+- "tests/v4/test_v44_handoff.py": 6.797000000000001,
+- "tests/v4/test_v44_hardening.py": 13.476999999999999,
+- "tests/v4/test_v44_parity.py": 12.572,
+- "tests/v4/test_v44_resume_remote.py": 12.506,
+- "tests/v4/test_v44_security.py": 5.171000000000002,
+- "tests/v4/test_v44_staging.py": 2.01,
+- "tests/v4/test_v44_worker.py": 10.208000000000002,
+- "tests/v4/test_v45_atom_mapping.py": 5.283,
+- "tests/v4/test_v45_gaussian_path.py": 5.574000000000002,
+- "tests/v4/test_v45_goat.py": 3.629999999999999,
+- "tests/v4/test_v45_multi_output.py": 2.352,
+- "tests/v4/test_v45_named.py": 4.087,
+- "tests/v4/test_v45_orca_path.py": 6.689,
+- "tests/v4/test_v45_parity.py": 11.406000000000002,
+- "tests/v4/test_v45_path_profile.py": 2.5340000000000003,
+- "tests/v4/test_v45_reaction_chain.py": 10.958999999999998,
+- "tests/v4/test_v45_resume.py": 2.988,
+- "tests/v4/test_v45_tspes.py": 10.822000000000001,
+- "tests/v4/test_v46_analysis.py": 5.857000000000001,
+- "tests/v4/test_v46_analysis_grouping.py": 1.3929999999999998,
+- "tests/v4/test_v46_application.py": 6.529000000000001,
+- "tests/v4/test_v46_cross_repo.py": 4.2700000000000005,
+- "tests/v4/test_v46_cross_repo_e2e.py": 5.688000000000002,
+- "tests/v4/test_v46_debt.py": 5.9430000000000005,
+- "tests/v4/test_v46_pes.py": 1.7800000000000002,
+- "tests/v4/test_v46_producer_closure.py": 8.119,
+- "tests/v4/test_v46_producer_contract.py": 3.835,
+- "tests/v4/test_v46_production_gates.py": 5.3340000000000005,
+- "tests/v4/test_v46_reaction.py": 5.064000000000001,
+- "tests/v4/test_v46_recipes.py": 1.66,
+- "tests/v4/test_v46_tspes_e2e.py": 205.70800000000003,
+- "tests/v4/test_v46_tspes_science.py": 8.688,
+- "tests/v4/test_v4_runtime_cutover.py": 6.181
++ "tests/test_worker_sidecars.py": 0.013000000000000001,
++ "tests/test_worker_staging.py": 0.08800000000000001,
++ "tests/test_worker_supervision.py": 0.13,
++ "tests/test_workflow_execution_adapter.py": 0.18400000000000005,
++ "tests/v4/test_architecture_boundaries.py": 42.53100000000003,
++ "tests/v4/test_assembly.py": 3.384000000000001,
++ "tests/v4/test_audit_redteam_r2.py": 30.833000000000002,
++ "tests/v4/test_audit_regressions_r2.py": 98.33200000000001,
++ "tests/v4/test_binding.py": 1.9959999999999996,
++ "tests/v4/test_compiler.py": 6.0169999999999995,
++ "tests/v4/test_confgen_paths_audit.py": 2.138,
++ "tests/v4/test_confgen_paths_phase0.py": 5.013000000000001,
++ "tests/v4/test_confgen_paths_typed.py": 1.7360000000000002,
++ "tests/v4/test_confgen_v3_combination.py": 12.658000000000001,
++ "tests/v4/test_confgen_v3_coordination.py": 246.46200000000002,
++ "tests/v4/test_confgen_v3_core.py": 42.150999999999996,
++ "tests/v4/test_confgen_v3_integration.py": 5.995,
++ "tests/v4/test_confgen_v3_ring.py": 6.8020000000000005,
++ "tests/v4/test_confgen_v3_schema.py": 0.9089999999999997,
++ "tests/v4/test_confgen_v3_torsion.py": 2.6539999999999995,
++ "tests/v4/test_crossstate_hardening.py": 11.120000000000001,
++ "tests/v4/test_dev_remote_boundaries.py": 1.206,
++ "tests/v4/test_digest_axes.py": 3.4819999999999993,
++ "tests/v4/test_domain_identity.py": 6.058,
++ "tests/v4/test_domain_structure.py": 4.1850000000000005,
++ "tests/v4/test_elements_drift.py": 13.992000000000006,
++ "tests/v4/test_execution_critical_validation.py": 0.848,
++ "tests/v4/test_failure_policy.py": 2.5890000000000004,
++ "tests/v4/test_fake_native_isolation.py": 0.52,
++ "tests/v4/test_gaussian_real_differential.py": 13.915999999999999,
++ "tests/v4/test_intent_boundary.py": 0.27299999999999996,
++ "tests/v4/test_intent_legacy_paths_to_v3.py": 9.55,
++ "tests/v4/test_native_definition_validation.py": 3.6880000000000006,
++ "tests/v4/test_native_failure_diagnostics.py": 2.206,
++ "tests/v4/test_p0_boundary.py": 4.781,
++ "tests/v4/test_p0_pr1_authoring.py": 4.715000000000001,
++ "tests/v4/test_path_preview.py": 1.0170000000000001,
++ "tests/v4/test_pr8_consolidation.py": 2.8230000000000004,
++ "tests/v4/test_producer_authoring_boundary_coverage.py": 26.99600000000001,
++ "tests/v4/test_producer_checkpoint_boundary_coverage.py": 9.102,
++ "tests/v4/test_producer_checkpoints.py": 8.992000000000004,
++ "tests/v4/test_producer_intent.py": 4.401000000000001,
++ "tests/v4/test_producer_intent_regressions.py": 2.607,
++ "tests/v4/test_producer_machine.py": 4.3919999999999995,
++ "tests/v4/test_publication_retention.py": 2.7270000000000008,
++ "tests/v4/test_refine_default_bond_scale.py": 0.6419999999999999,
++ "tests/v4/test_repair_capabilities.py": 2.9630000000000005,
++ "tests/v4/test_repair_environment.py": 4.593,
++ "tests/v4/test_repair_executors.py": 1.8030000000000002,
++ "tests/v4/test_repair_identity.py": 2.2619999999999996,
++ "tests/v4/test_repair_persistence.py": 3.6010000000000004,
++ "tests/v4/test_resource.py": 5.689999999999998,
++ "tests/v4/test_schema.py": 1.9640000000000002,
++ "tests/v4/test_scientific_params.py": 1.8960000000000001,
++ "tests/v4/test_scientific_reliability.py": 7.690000000000002,
++ "tests/v4/test_terminal_arbitration.py": 25.578000000000007,
++ "tests/v4/test_terminal_arbitration_races.py": 179.07700000000003,
++ "tests/v4/test_terminal_arbitration_recheck.py": 40.109,
++ "tests/v4/test_terminal_endpoint_diagnostic.py": 1.557,
++ "tests/v4/test_topology_patch_phase1.py": 4.615,
++ "tests/v4/test_transform_refine_symmetry.py": 1.519,
++ "tests/v4/test_transform_refine_topology_bonds.py": 2.497999999999999,
++ "tests/v4/test_v42_adapters.py": 7.060000000000002,
++ "tests/v4/test_v42_coverage_contracts.py": 9.629999999999999,
++ "tests/v4/test_v42_coverage_exec.py": 13.615000000000002,
++ "tests/v4/test_v42_coverage_process.py": 17.85,
++ "tests/v4/test_v42_coverage_recovery.py": 3.6499999999999995,
++ "tests/v4/test_v42_coverage_render.py": 5.376000000000001,
++ "tests/v4/test_v42_debt.py": 1.085,
++ "tests/v4/test_v42_executors.py": 15.663999999999998,
++ "tests/v4/test_v42_profiles_checks.py": 6.941999999999998,
++ "tests/v4/test_v42_recovery.py": 2.046,
++ "tests/v4/test_v43_abandoned.py": 5.08,
++ "tests/v4/test_v43_artifacts.py": 2.5700000000000007,
++ "tests/v4/test_v43_coverage.py": 7.873000000000001,
++ "tests/v4/test_v43_crash_matrix.py": 1.317,
++ "tests/v4/test_v43_matrices.py": 13.886000000000003,
++ "tests/v4/test_v43_publication.py": 3.849000000000001,
++ "tests/v4/test_v43_resume.py": 11.015,
++ "tests/v4/test_v43_reuse.py": 3.7090000000000014,
++ "tests/v4/test_v43_store.py": 5.381,
++ "tests/v4/test_v44_artifact_flow.py": 2.745,
++ "tests/v4/test_v44_claim.py": 1.122,
++ "tests/v4/test_v44_coverage.py": 9.266000000000004,
++ "tests/v4/test_v44_crash_matrix.py": 4.051,
++ "tests/v4/test_v44_crash_matrix2.py": 13.615,
++ "tests/v4/test_v44_faults.py": 9.208000000000002,
++ "tests/v4/test_v44_handoff.py": 5.739000000000001,
++ "tests/v4/test_v44_hardening.py": 17.457000000000004,
++ "tests/v4/test_v44_parity.py": 12.784,
++ "tests/v4/test_v44_resume_remote.py": 12.705999999999998,
++ "tests/v4/test_v44_security.py": 5.458000000000002,
++ "tests/v4/test_v44_staging.py": 2.915,
++ "tests/v4/test_v44_worker.py": 10.138999999999998,
++ "tests/v4/test_v45_atom_mapping.py": 5.873000000000002,
++ "tests/v4/test_v45_gaussian_path.py": 7.1930000000000005,
++ "tests/v4/test_v45_goat.py": 5.718000000000001,
++ "tests/v4/test_v45_multi_output.py": 4.618,
++ "tests/v4/test_v45_named.py": 2.4989999999999997,
++ "tests/v4/test_v45_orca_path.py": 8.155000000000001,
++ "tests/v4/test_v45_parity.py": 11.690999999999999,
++ "tests/v4/test_v45_path_profile.py": 3.091,
++ "tests/v4/test_v45_reaction_chain.py": 11.393,
++ "tests/v4/test_v45_resume.py": 5.139999999999999,
++ "tests/v4/test_v45_tspes.py": 11.126,
++ "tests/v4/test_v46_analysis.py": 10.188,
++ "tests/v4/test_v46_analysis_grouping.py": 1.539,
++ "tests/v4/test_v46_application.py": 6.666,
++ "tests/v4/test_v46_cross_repo.py": 3.672,
++ "tests/v4/test_v46_cross_repo_e2e.py": 6.390000000000001,
++ "tests/v4/test_v46_debt.py": 6.754000000000002,
++ "tests/v4/test_v46_pes.py": 1.4320000000000002,
++ "tests/v4/test_v46_producer_closure.py": 9.935999999999998,
++ "tests/v4/test_v46_producer_contract.py": 4.294,
++ "tests/v4/test_v46_production_gates.py": 5.5680000000000005,
++ "tests/v4/test_v46_reaction.py": 5.214999999999999,
++ "tests/v4/test_v46_recipes.py": 2.5860000000000003,
++ "tests/v4/test_v46_tspes_e2e.py": 204.471,
++ "tests/v4/test_v46_tspes_science.py": 9.008,
++ "tests/v4/test_v4_runtime_cutover.py": 5.557
+ }

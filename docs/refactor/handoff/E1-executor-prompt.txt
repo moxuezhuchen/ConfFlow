@@ -1,0 +1,31 @@
+任务：在文档树应用 E1 补丁并提交。只做本卡，不开始 E2/E3、B1/B2、C1 集成或其他任务。
+
+硬规则：
+- 每条命令显式 cd。
+- 动手前确认固定 HEAD（规划者交付时贴出的 docs/plan2-e1 提交哈希）与干净树：git rev-parse HEAD、git status --short。不符即停止报告，不要自行修复。
+- 提交前核对并贴出 cd /opt/cf-worktrees/e1-exec && git branch --show-current 的输出（应为 docs/plan2-e1）。
+- 一卡一提交；不 push；不动 main/master，也不动 docs/refactor-plan2 分支本身。
+- HEAD/数字/白名单不符即停止报告，不自行修复；不编造输出；报告只写真实执行的命令与真实输出。
+- 正确保存并恢复抽样破坏文件，绝不能用未提交的 HEAD 覆盖补丁（本卡无产品代码改动，通常不触发，规则仍有效）。
+- 提交尾行必须是：Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+背景：白名单恰两个文件与预期数字见 /opt/cf-worktrees/refactor-plan/docs/refactor/handoff/E1.md；补丁 /opt/cf-worktrees/refactor-plan/docs/refactor/handoff/E1.patch（基点 8842c52，SHA256=22e4689c6a46b8392ad58757a134e52bfcf962cac884e2b9edc6e4d22e89a4f0）。
+
+步骤：
+1. cd /opt/cf-worktrees/e1-exec && git rev-parse HEAD && git status --short
+   —— HEAD 与规划者贴出的交付提交一致，树必须干净（无任何输出）。
+2. cd /opt/cf-worktrees/e1-exec && git apply --check /opt/cf-worktrees/refactor-plan/docs/refactor/handoff/E1.patch
+   —— 必须通过；失败即停止报告。
+3. cd /opt/cf-worktrees/e1-exec && git apply /opt/cf-worktrees/refactor-plan/docs/refactor/handoff/E1.patch && git status --short
+   —— 必须恰为： M docs/refactor/tools-acc/weights.json 与 ?? docs/refactor/plan2/ACCEPTANCE_FAST.md，多一个少一个都停止报告。
+4. cd /opt/cf-worktrees/e1-exec && python3 -c "import json,math; d=json.load(open('docs/refactor/tools-acc/weights.json')); assert len(d)==154; assert all(isinstance(v,(int,float)) and not isinstance(v,bool) and math.isfinite(v) and v>=0 for v in d.values()); print('weights ok')"
+5. cd /opt/cf-worktrees/e1-exec && git diff --check
+   —— 必须无输出。
+6. cd /opt/cf-worktrees/e1-exec && git branch --show-current
+   —— 贴出输出，应为 docs/plan2-e1。
+7. cd /opt/cf-worktrees/e1-exec && git add docs/refactor/tools-acc/weights.json docs/refactor/plan2/ACCEPTANCE_FAST.md && git commit -m "docs(plan2): seed acceptance sharding weights and pin fast-acceptance flow" -m "Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>"
+   —— 一卡一提交，不得把其他改动混入。
+8. cd /opt/cf-worktrees/e1-exec && git rev-parse HEAD && git show --stat HEAD && git status --short
+   —— 工作树必须回到干净。
+
+报告：提交哈希、git show --stat 输出、git diff 与补丁逐字一致的比较结论、第 4/5 步真实输出。不 push；完成后交回规划者独立验收。
