@@ -28,4 +28,4 @@
 - `run_sharded.py --cf DIR --out FILE [--shards 12] [--weights FILE] [--jdpin DIR] [--capture-engine-reports DIR --run-id ID] [-- extra pytest args]`：分片并行运行并合并结果；捕获模式在全部校验通过后最后写 manifest。
 - 权重：把 `tools/refactor-acc/weights.json` **复制**到仓库外的本次运行目录，再把副本传给 `--weights`；运行器把实测秒数写回该副本，已提交的种子不被覆盖。
 - `run_sharded.py` 自动注入 `PYTHONPATH=<tools/refactor-acc>/noeditable:<CF 根目录>` 并设置 `JOBDESK_V2_SRC` 与 `QT_QPA_PLATFORM=offscreen`，不要破坏或覆盖。
-- checker 与 runner 的调用位置：`tools/refactor/golden_check.py`（`--engine-capture DIR --run-id ID` 复用捕获）与 `tools/refactor-acc/run_sharded.py`；详细协议见 `docs/refactor/plan2/CAPTURE_PIPELINE.md` 与 `docs/refactor/plan2/ACCEPTANCE_FAST.md`。
+- checker 与 runner 的调用位置：`tools/refactor/golden_check.py`（`--engine-capture DIR --run-id ID` 复用捕获）与 `tools/refactor-acc/run_sharded.py`；详细协议（原 `docs/refactor/plan2/CAPTURE_PIPELINE.md` 与 `docs/refactor/plan2/ACCEPTANCE_FAST.md`，已随 architecture-diet-1 归档）通过 `docs/ARCHITECTURE_DIET_1.md` 与 `docs/archive_manifests/architecture_diet_1.json` 定位，用 `git show 671c3fb14663e9a6f4ccf9880228c59d28fbb762:docs/refactor/plan2/CAPTURE_PIPELINE.md`（及 `…:docs/refactor/plan2/ACCEPTANCE_FAST.md`）自归档提交读取；这些是 git 对象定位，不再是工作树链接。

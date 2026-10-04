@@ -1,0 +1,680 @@
+{
+ "archive_parent": "671c3fb14663e9a6f4ccf9880228c59d28fbb762",
+ "bundle": {
+  "path": "/tmp/l0-archive-output/architecture-diet-1.bundle",
+  "sha256": "077c23c9f995276904784c0be273c142a96685b2617d333344b55754929b12d2"
+ },
+ "files": {
+  "docs/refactor/LOG.md": {
+   "blob": "df3d600a67d9779fac909bf50fd068814db92afd",
+   "mode": "100644",
+   "sha256": "8e8a390afd5dbd8772897d9fdbd69db66e10966e305f926dae30bb36c26fe88b"
+  },
+  "docs/refactor/PLAN.md": {
+   "blob": "b5f4f7e8c226b0bbe6576fe5fcd115e1060fe74c",
+   "mode": "100644",
+   "sha256": "46ed292ee9514f76ec8306214d26ce2905990f79b67da384cc1c9f16a766348a"
+  },
+  "docs/refactor/baseline/README.md": {
+   "blob": "e69d2e06686e597c6f340e46f6b32f2da83b994e",
+   "mode": "100644",
+   "sha256": "c09ff0191a98c94731b0869a311a7c6d00012a46880abce56de78a5e60b806d4"
+  },
+  "docs/refactor/baseline/boundary.full.json": {
+   "blob": "505b87e129289b68ec3f2267131dfd8b3afd1ff9",
+   "mode": "100644",
+   "sha256": "b4f64f53e6c0c7570dc1797ffaa79b2042eaa903df5f24a7de44c12b25c56c41"
+  },
+  "docs/refactor/baseline/checkpoints/C3.2/boundary.full.json": {
+   "blob": "9414a4da54ba881c01d4be6aa58389f8acc27657",
+   "mode": "100644",
+   "sha256": "86271b2cfac417300ce7dc2f4f9fa5db90ffd486ca1666947f2ebe4d275ca8eb"
+  },
+  "docs/refactor/baseline/checkpoints/C3.2/contract.full.json": {
+   "blob": "3273c02a8d03660a48e90e75645904a9ee38ee0b",
+   "mode": "100644",
+   "sha256": "6a340a674c1593812e5035ab669ff22c48688d542d56287a08e47e4ac00fb93f"
+  },
+  "docs/refactor/baseline/checkpoints/C3.2/contract.json": {
+   "blob": "18b2067b04191bd159b3aa2b5e54497efeb350c4",
+   "mode": "100644",
+   "sha256": "bc584f6d2557842b9667415e9093feb5fcb1b4f53fef0f34f4bf7af6306ed0c7"
+  },
+  "docs/refactor/baseline/checkpoints/C3.3/boundary.full.json": {
+   "blob": "9414a4da54ba881c01d4be6aa58389f8acc27657",
+   "mode": "100644",
+   "sha256": "86271b2cfac417300ce7dc2f4f9fa5db90ffd486ca1666947f2ebe4d275ca8eb"
+  },
+  "docs/refactor/baseline/checkpoints/C3.3/contract.full.json": {
+   "blob": "0fb0695bd4e409eede6bfab75912d00f990edb06",
+   "mode": "100644",
+   "sha256": "df0458f1ba060c5b0aa05d411ce4b28c48527177cfab259059ff68d0bf379349"
+  },
+  "docs/refactor/baseline/checkpoints/C3.3/contract.json": {
+   "blob": "b28ff4bf605ebfb28f84570482e275400884dbff",
+   "mode": "100644",
+   "sha256": "a12228ae1daf23a76b09f092c1bf6b33e427830a27f0857222bddc552dc0a55c"
+  },
+  "docs/refactor/baseline/checkpoints/C4.3/README.md": {
+   "blob": "50a3c6e7906e1ed51a54b899bc8611f3033813d7",
+   "mode": "100644",
+   "sha256": "7f0269fcd1e60dbb8534fb59c385cfc3bc154d9c3cb01bf48088e8f51ab8e186"
+  },
+  "docs/refactor/baseline/checkpoints/C4.3/boundary.full.json": {
+   "blob": "b1fc187b641331e74109b92bcf3e71458e955422",
+   "mode": "100644",
+   "sha256": "ee811b9995f49dec9668693d58e9f4d68fa170bfa232837486a8998b6aed9d20"
+  },
+  "docs/refactor/baseline/checkpoints/C4.3/contract.full.json": {
+   "blob": "4c4783effc8ea3e9725afe94554afc708b65b0b2",
+   "mode": "100644",
+   "sha256": "453e6810a70eb1734e10050f7192c7e5e01261df624344e4c7cb94b56bc8b28f"
+  },
+  "docs/refactor/baseline/checkpoints/C4.3/contract.json": {
+   "blob": "b5bd0d87389909647b63ced0b75c18bbb79d1ce7",
+   "mode": "100644",
+   "sha256": "71bba0cd175934f42c195dfa1eda8d40bdc805d21a81fdc27fa4c3acc2244790"
+  },
+  "docs/refactor/baseline/checkpoints/C4.3/engine_reports/tests_v4_test_confgen_paths_typed.py_test_atom_ordering_is_preserved__0.json": {
+   "blob": "16f97c55a429b726bf87e496afec8f9c5c1252c9",
+   "mode": "100644",
+   "sha256": "2b6a9af371ac1d898aae5a2b4c2f61896e083071a3bafd5e1597e84326876e8e"
+  },
+  "docs/refactor/baseline/checkpoints/C4.3/engine_reports/tests_v4_test_confgen_paths_typed.py_test_explicit_single_nonzero_grid_rotates_once__0.json": {
+   "blob": "8c18f25f792055dc24a0a21ef14340427dc9ed02",
+   "mode": "100644",
+   "sha256": "395824f321e637811ab8511858b12867f1610eba475b688929ee30ece394b80b"
+  },
+  "docs/refactor/baseline/checkpoints/C4.3/engine_reports/tests_v4_test_confgen_paths_typed.py_test_explicit_zero_grid_is_one_valid_state__0.json": {
+   "blob": "cd5fd6f6e0c70f1f2f99884f6cf231da7c71c3d8",
+   "mode": "100644",
+   "sha256": "6370ba04af781fbd72cf0da8c36182515fa0a8c0deb06ac5bcfacb81827ce184"
+  },
+  "docs/refactor/baseline/checkpoints/C4.3/engine_reports/tests_v4_test_confgen_paths_typed.py_test_resolution_follows_the_driving_geometry__0.json": {
+   "blob": "b5ad769c0a885a11c02a886dc81af79cdee21822",
+   "mode": "100644",
+   "sha256": "57e433b608384f2e65bd20ac081b574fdaf3df7d58bd9cdc15ec65a9dc69d9d4"
+  },
+  "docs/refactor/baseline/checkpoints/C4.3/engine_reports/tests_v4_test_confgen_paths_typed.py_test_short_bond_warns_and_strict_mode_refuses__0.json": {
+   "blob": "3339522d775bc14d8d076ae1ae413892e72a7b8f",
+   "mode": "100644",
+   "sha256": "7e3ebb3592e034007b78b900fd52d244799dd6c7df33e43b2e96b9921d4bfd33"
+  },
+  "docs/refactor/baseline/checkpoints/C4.3/engine_reports/tests_v4_test_confgen_paths_typed.py_test_upstream_driving_geometry_is_audited_by_its_own_identity__0.json": {
+   "blob": "3a218fd321f79f42be6a64e587829dd91e580b81",
+   "mode": "100644",
+   "sha256": "f241e35b941c52e530d27d56b37e0d2e7e204a5c0d3e6bef1f617897cd3d0294"
+  },
+  "docs/refactor/baseline/checkpoints/IS.0/README.md": {
+   "blob": "9c02bf19fa7cc2f981d758753f820700d04d68bf",
+   "mode": "100644",
+   "sha256": "ee5618cf5d1ffd89ea26420c0b0ed838b52185f710aa7c2ddbb90ca4424d687e"
+  },
+  "docs/refactor/baseline/checkpoints/IS.0/boundary.full.json": {
+   "blob": "b1fc187b641331e74109b92bcf3e71458e955422",
+   "mode": "100644",
+   "sha256": "ee811b9995f49dec9668693d58e9f4d68fa170bfa232837486a8998b6aed9d20"
+  },
+  "docs/refactor/baseline/checkpoints/IS.0/contract.full.json": {
+   "blob": "a745954e3330a929f87dbe363ee74713d94e3a11",
+   "mode": "100644",
+   "sha256": "042eaed7ea114975694bc742b3a5366e77bd5e306d535456b2e0e7ff6de3665e"
+  },
+  "docs/refactor/baseline/checkpoints/IS.0/contract.json": {
+   "blob": "da5c9c9824bc504d9580c5bd76939022ce55e39e",
+   "mode": "100644",
+   "sha256": "e84e4ddbe3406cb089883b7619600d48a6a10dda45714ae169f8c2e6a465014f"
+  },
+  "docs/refactor/baseline/checkpoints/IS.0/engine_reports/tests_v4_test_confgen_paths_audit.py_test_runtime_diagnostics_show_resolved_chain_and_moving_endpoint_True__0.json": {
+   "blob": "b378a51438e5cb43d939984237943c097d75da9c",
+   "mode": "100644",
+   "sha256": "73608019ed17e6aa231ac2988511be75090d50164503cd12e2b165b4412fa4af"
+  },
+  "docs/refactor/baseline/checkpoints/IS.0/engine_reports/tests_v4_test_confgen_paths_audit.py_test_typed_declared_paths_audit__0.json": {
+   "blob": "3697c24e989cbf78d0c2297ee989f65e5b6e2414",
+   "mode": "100644",
+   "sha256": "75057bf825b2be86b04240f18b843b3a14eaa64d36f82b47a55aa796ecb87467"
+  },
+  "docs/refactor/baseline/checkpoints/IS.0/engine_reports/tests_v4_test_confgen_paths_audit.py_test_typed_duplicated_paths_counts__0.json": {
+   "blob": "d93cf230abd6f1789e2d8a3d91b3d19618d7c492",
+   "mode": "100644",
+   "sha256": "95271515c4ed09d425fd176b6a3ed64328314873e14f500526a0b5c1afbab446"
+  },
+  "docs/refactor/baseline/checkpoints/IS.0/engine_reports/tests_v4_test_confgen_paths_audit.py_test_typed_short_bond_reported__0.json": {
+   "blob": "3339522d775bc14d8d076ae1ae413892e72a7b8f",
+   "mode": "100644",
+   "sha256": "7e3ebb3592e034007b78b900fd52d244799dd6c7df33e43b2e96b9921d4bfd33"
+  },
+  "docs/refactor/baseline/checkpoints/IS.0/engine_reports/tests_v4_test_confgen_paths_phase0.py_test_typed_paths_executor_publishes__0.json": {
+   "blob": "0a415c48f4f00fe4d85237655fad589058fa748c",
+   "mode": "100644",
+   "sha256": "7b5e2f7660f6e0971a148fe7257dda5efc9e51829a6ea8ac2438e0fc0be8a9c5"
+  },
+  "docs/refactor/baseline/checkpoints/IS.0/engine_reports/tests_v4_test_confgen_v3_core.py_test_pinned_coordination_ring_damage_is_drift__0.json": {
+   "blob": "74ffc471a6aad32ffcdd6baa1e753da7933851b4",
+   "mode": "100644",
+   "sha256": "f2b0edd7f30ed15ba925438ea3f225d328a7a887b6abe60dc3b67fe0365cb4be"
+  },
+  "docs/refactor/baseline/checkpoints/IS.5/README.md": {
+   "blob": "67b98e038e713a1ed3978ef965a4401a22a8ae44",
+   "mode": "100644",
+   "sha256": "d33b7c84fad5d5c8eb83cf6563918e34656dd22722c8d2f60e3c23fbecd7f8a9"
+  },
+  "docs/refactor/baseline/checkpoints/IS.5/boundary.full.json": {
+   "blob": "b1fc187b641331e74109b92bcf3e71458e955422",
+   "mode": "100644",
+   "sha256": "ee811b9995f49dec9668693d58e9f4d68fa170bfa232837486a8998b6aed9d20"
+  },
+  "docs/refactor/baseline/checkpoints/IS.5/contract.full.json": {
+   "blob": "a745954e3330a929f87dbe363ee74713d94e3a11",
+   "mode": "100644",
+   "sha256": "042eaed7ea114975694bc742b3a5366e77bd5e306d535456b2e0e7ff6de3665e"
+  },
+  "docs/refactor/baseline/checkpoints/IS.5/contract.json": {
+   "blob": "da5c9c9824bc504d9580c5bd76939022ce55e39e",
+   "mode": "100644",
+   "sha256": "e84e4ddbe3406cb089883b7619600d48a6a10dda45714ae169f8c2e6a465014f"
+  },
+  "docs/refactor/baseline/checkpoints/IS.5/engine_reports/tests_v4_test_confgen_paths_audit.py_test_runtime_diagnostics_show_resolved_chain_and_moving_endpoint_True__0.json": {
+   "blob": "b378a51438e5cb43d939984237943c097d75da9c",
+   "mode": "100644",
+   "sha256": "73608019ed17e6aa231ac2988511be75090d50164503cd12e2b165b4412fa4af"
+  },
+  "docs/refactor/baseline/checkpoints/IS.5/engine_reports/tests_v4_test_confgen_paths_audit.py_test_typed_declared_paths_audit__0.json": {
+   "blob": "3697c24e989cbf78d0c2297ee989f65e5b6e2414",
+   "mode": "100644",
+   "sha256": "75057bf825b2be86b04240f18b843b3a14eaa64d36f82b47a55aa796ecb87467"
+  },
+  "docs/refactor/baseline/checkpoints/IS.5/engine_reports/tests_v4_test_confgen_paths_audit.py_test_typed_duplicated_paths_counts__0.json": {
+   "blob": "d93cf230abd6f1789e2d8a3d91b3d19618d7c492",
+   "mode": "100644",
+   "sha256": "95271515c4ed09d425fd176b6a3ed64328314873e14f500526a0b5c1afbab446"
+  },
+  "docs/refactor/baseline/checkpoints/IS.5/engine_reports/tests_v4_test_confgen_paths_audit.py_test_typed_short_bond_reported__0.json": {
+   "blob": "3339522d775bc14d8d076ae1ae413892e72a7b8f",
+   "mode": "100644",
+   "sha256": "7e3ebb3592e034007b78b900fd52d244799dd6c7df33e43b2e96b9921d4bfd33"
+  },
+  "docs/refactor/baseline/checkpoints/IS.5/engine_reports/tests_v4_test_confgen_paths_phase0.py_test_typed_paths_executor_publishes__0.json": {
+   "blob": "0a415c48f4f00fe4d85237655fad589058fa748c",
+   "mode": "100644",
+   "sha256": "7b5e2f7660f6e0971a148fe7257dda5efc9e51829a6ea8ac2438e0fc0be8a9c5"
+  },
+  "docs/refactor/baseline/checkpoints/IS.5/engine_reports/tests_v4_test_confgen_v3_core.py_test_pinned_coordination_ring_damage_is_drift__0.json": {
+   "blob": "74ffc471a6aad32ffcdd6baa1e753da7933851b4",
+   "mode": "100644",
+   "sha256": "f2b0edd7f30ed15ba925438ea3f225d328a7a887b6abe60dc3b67fe0365cb4be"
+  },
+  "docs/refactor/baseline/contract.full.json": {
+   "blob": "5d8d902bc37f082897600f087b608b6aec4edfb4",
+   "mode": "100644",
+   "sha256": "b31af7e9fb9d47e1634691fa3af3607bb5cbbcdbf4bbdf8f043d122e5e118fef"
+  },
+  "docs/refactor/baseline/contract.json": {
+   "blob": "98a7b59f426156f4718f45a79d375c4a5c3c1e75",
+   "mode": "100644",
+   "sha256": "41d0afe46947cd670983dcf40c5d2704227cb79fedaf3c26583690cf143070ad"
+  },
+  "docs/refactor/baseline/engine_reports/tests_v4_test_confgen_v3_combination.py_test_combination_36_leaves_real_stages__0.json": {
+   "blob": "2cd3bc6056ed1be3133e8d9fdef300709ccd239e",
+   "mode": "100644",
+   "sha256": "985b0f2dc068ef3a01a05ee7901290cc8cf69c20ad7ae6f135ca40ca5d7eec29"
+  },
+  "docs/refactor/baseline/engine_reports/tests_v4_test_confgen_v3_combination.py_test_combination_36_leaves_real_stages__1.json": {
+   "blob": "2cd3bc6056ed1be3133e8d9fdef300709ccd239e",
+   "mode": "100644",
+   "sha256": "985b0f2dc068ef3a01a05ee7901290cc8cf69c20ad7ae6f135ca40ca5d7eec29"
+  },
+  "docs/refactor/baseline/engine_reports/tests_v4_test_confgen_v3_combination.py_test_combination_adversarial_tamper_caught__0.json": {
+   "blob": "f0af81517e8f42a701b90ee748bbefc406f5f39a",
+   "mode": "100644",
+   "sha256": "2a5e0df8c8db5b80b31f6f190f03e6f515c417c15a52fb0d350c5db3d84d2a2e"
+  },
+  "docs/refactor/baseline/engine_reports/tests_v4_test_confgen_v3_combination.py_test_combination_perturbation_key_invariance__0.json": {
+   "blob": "2cd3bc6056ed1be3133e8d9fdef300709ccd239e",
+   "mode": "100644",
+   "sha256": "985b0f2dc068ef3a01a05ee7901290cc8cf69c20ad7ae6f135ca40ca5d7eec29"
+  },
+  "docs/refactor/baseline/engine_reports/tests_v4_test_confgen_v3_combination.py_test_combination_perturbation_key_invariance__1.json": {
+   "blob": "75264b7b339314bd16871d11644afbcdd1037a15",
+   "mode": "100644",
+   "sha256": "f1a0ace18f5c8406a25248a402f064895ae9a52bb7c20fcc854d97135dd23066"
+  },
+  "docs/refactor/baseline/engine_reports/tests_v4_test_confgen_v3_combination.py_test_combination_real_perception_locks__0.json": {
+   "blob": "2cd3bc6056ed1be3133e8d9fdef300709ccd239e",
+   "mode": "100644",
+   "sha256": "985b0f2dc068ef3a01a05ee7901290cc8cf69c20ad7ae6f135ca40ca5d7eec29"
+  },
+  "docs/refactor/baseline/engine_reports/tests_v4_test_confgen_v3_coordination.py_test_engine_default_registration_end_to_end__0.json": {
+   "blob": "e63928745a1267268851c01105f0253054754df7",
+   "mode": "100644",
+   "sha256": "682be766cd9776e9bdc3b235c6a094a459c6cf4fb2773631db8afbce942de504"
+  },
+  "docs/refactor/baseline/engine_reports/tests_v4_test_confgen_v3_core.py_test_chained_ring_enumeration_preserves_only_torsion_axis_locks__0.json": {
+   "blob": "26b7a5286d8c563a18ffdfbb17d02b71acc1a7f9",
+   "mode": "100644",
+   "sha256": "e4e04adf9925197e003fd328ea382cf95e6e0bd8e8db3909211f4f1dbf1565b0"
+  },
+  "docs/refactor/baseline/engine_reports/tests_v4_test_confgen_v3_core.py_test_chained_ring_enumeration_preserves_only_torsion_axis_locks__1.json": {
+   "blob": "dc854943e69323f54d78f709f60e67520fd0a8ae",
+   "mode": "100644",
+   "sha256": "fd34776eb462762c791049fd080fc5399ac5202008210cd88fa207e346b3db6e"
+  },
+  "docs/refactor/baseline/engine_reports/tests_v4_test_confgen_v3_core.py_test_chained_ring_enumeration_preserves_only_torsion_axis_locks__2.json": {
+   "blob": "c0fbea83cc6e1377d72a3e8f5359592c2ff7daf2",
+   "mode": "100644",
+   "sha256": "c1f7375a7539a1c6091c23f3fba15580a61608c9891aceace864e7bf1b1b1dfb"
+  },
+  "docs/refactor/baseline/engine_reports/tests_v4_test_confgen_v3_core.py_test_conditional_exact_nine_not_twelve__0.json": {
+   "blob": "99979efa2b9cf7e8ef18251c0cf7a4475ba4e5ba",
+   "mode": "100644",
+   "sha256": "ad6f5e5f241b4edfaa87c4fde6e4fff044108057bab69f0e1620fb29d0f30288"
+  },
+  "docs/refactor/baseline/engine_reports/tests_v4_test_confgen_v3_core.py_test_conditional_failed_top_parent_defers_exact_subtree__0.json": {
+   "blob": "6c7dcb7f8546630354a8227b466c09d0655466d7",
+   "mode": "100644",
+   "sha256": "5092b31ba3fbe9a5a44828fab96b08b730be2e393e3e45144ca33d886fc52d78"
+  },
+  "docs/refactor/baseline/engine_reports/tests_v4_test_confgen_v3_core.py_test_conditional_failure_defers_exact_subtree__0.json": {
+   "blob": "96975da8221991259204410a8ce9adccb265d442",
+   "mode": "100644",
+   "sha256": "98c0c5613aed415da117f53b0f17ff94b728c7278a09011e257c953feb9dd663"
+  },
+  "docs/refactor/baseline/engine_reports/tests_v4_test_confgen_v3_core.py_test_coordination_engine_run_end_to_end__0.json": {
+   "blob": "eca162a0f333c7724d0eed6600fb31bfe76be857",
+   "mode": "100644",
+   "sha256": "7a57aa1af01658721204d87a7397914ff9badcf2f5fc0d01578dde1b3bd201d0"
+  },
+  "docs/refactor/baseline/engine_reports/tests_v4_test_confgen_v3_core.py_test_engine_clash_failures_stay_accounted__0.json": {
+   "blob": "17ac866a9d5ea5c593998a4775467b78af24317a",
+   "mode": "100644",
+   "sha256": "85b9816ac30bac871ab499e7eaca4531ed6be282f028787c175959ef720b4fbf"
+  },
+  "docs/refactor/baseline/engine_reports/tests_v4_test_confgen_v3_core.py_test_engine_damaged_geometry_never_publishes__0.json": {
+   "blob": "ad30e28704ff8807b14daaf096df91f7b939da72",
+   "mode": "100644",
+   "sha256": "f4e0edd03e5f89d1e4e6edbf86848071462364ce472613d0464f5d21ee1e12e9"
+  },
+  "docs/refactor/baseline/engine_reports/tests_v4_test_confgen_v3_core.py_test_engine_full_grid_run_and_certificate__0.json": {
+   "blob": "55e095c9282eb0ea20f234d7381a0b1a5785466b",
+   "mode": "100644",
+   "sha256": "8826f25265be866f3b9e7ac982d7c9a4aebdb8ef9635d08a3c73df6f354ed179"
+  },
+  "docs/refactor/baseline/engine_reports/tests_v4_test_confgen_v3_core.py_test_engine_policy_exclusions_are_not_proofs__0.json": {
+   "blob": "33a21aad773616ebe4c17b1ccac4d9ca5a82843d",
+   "mode": "100644",
+   "sha256": "2a9eb9aae81957bbfb830ec10c12bee4ca2396824af4c7d363e6e97d4cb23c2f"
+  },
+  "docs/refactor/baseline/engine_reports/tests_v4_test_confgen_v3_core.py_test_engine_preflight_limits_reject_before_geometry__0.json": {
+   "blob": "178ca9cdcbaac51c720a06e3eaf09486c8fd70ff",
+   "mode": "100644",
+   "sha256": "0640121c827080aa70c22ed48100a6d992bd5c085a4a1ecb9972b0ea2547268b"
+  },
+  "docs/refactor/baseline/engine_reports/tests_v4_test_confgen_v3_core.py_test_engine_preserve_input_and_chained_state__0.json": {
+   "blob": "9d9f4d8a50e1d75a34c2a6c92ddc10883cd3c23d",
+   "mode": "100644",
+   "sha256": "96defa5202487649327a80e1762eb081ea8ad50c12675c464e79edf9fbc69ce5"
+  },
+  "docs/refactor/baseline/engine_reports/tests_v4_test_confgen_v3_core.py_test_engine_preserve_input_and_chained_state__1.json": {
+   "blob": "ebe31dd73fcf7710e4ad646ec9f40f22748e6a44",
+   "mode": "100644",
+   "sha256": "7c57d6e023eeed9445d9e6abd8225307eec90785f7081a5637474b58ca6d49a3"
+  },
+  "docs/refactor/baseline/engine_reports/tests_v4_test_confgen_v3_core.py_test_engine_preserve_input_and_chained_state__2.json": {
+   "blob": "ce1390480691d18ac46c0575e9714d6ca43bf587",
+   "mode": "100644",
+   "sha256": "6475678244ada51179ade717fef9a130319af3e215106dd49c0b9c2ef8ca8789"
+  },
+  "docs/refactor/baseline/engine_reports/tests_v4_test_confgen_v3_core.py_test_engine_proof_contradiction_invalidates_certificate__0.json": {
+   "blob": "9138d16fae9d72742f1c93314d87fba84c0e183b",
+   "mode": "100644",
+   "sha256": "0cee4b4f9a79b15511bb1a26141652e791bc2c7377d615e1f358ba5d0d7164f1"
+  },
+  "docs/refactor/baseline/engine_reports/tests_v4_test_confgen_v3_core.py_test_engine_ring_torsion_control_locks_hold__0.json": {
+   "blob": "033ce44ce8c9ed996b8f7ec000860bf71cab48c1",
+   "mode": "100644",
+   "sha256": "beb35671157cffee3154e33d670e76f90c4b095ea6f50c55c76849da4e79e2ae"
+  },
+  "docs/refactor/baseline/engine_reports/tests_v4_test_confgen_v3_core.py_test_engine_rings_only_run__0.json": {
+   "blob": "70baaf6568aa64ae705343a02dd5e00473de7b4c",
+   "mode": "100644",
+   "sha256": "4fa5b65b09f17bbb8a7e60f00b11c19dd61fc7aaa2860cb4f38b3fdac5222d07"
+  },
+  "docs/refactor/baseline/engine_reports/tests_v4_test_confgen_v3_core.py_test_engine_sampling_counts_targets_not_successes__0.json": {
+   "blob": "f3340984f083ad6a10854086faca597e8ccbf12a",
+   "mode": "100644",
+   "sha256": "aa5c69be04fe7bdcaf432062946bfd79fd6a7498e628a93a9184c59d3052c332"
+  },
+  "docs/refactor/baseline/engine_reports/tests_v4_test_confgen_v3_core.py_test_engine_sampling_counts_targets_not_successes__1.json": {
+   "blob": "f3340984f083ad6a10854086faca597e8ccbf12a",
+   "mode": "100644",
+   "sha256": "aa5c69be04fe7bdcaf432062946bfd79fd6a7498e628a93a9184c59d3052c332"
+  },
+  "docs/refactor/baseline/engine_reports/tests_v4_test_confgen_v3_core.py_test_engine_stamps_confgen_state_results__0.json": {
+   "blob": "b97e9a8d4b9d435edf012543e4481de3ce8a73af",
+   "mode": "100644",
+   "sha256": "cd7c4f2682a6f7d5dbf110bda5f7374d7be5939987720f61c927d639b150cbdf"
+  },
+  "docs/refactor/baseline/engine_reports/tests_v4_test_confgen_v3_core.py_test_inherited_adversarial_rotation_is_drift_never_stale__0.json": {
+   "blob": "85c59e3d836c97bc9c7c511eac8dd1ca6717effe",
+   "mode": "100644",
+   "sha256": "4a845675c23e62a62c9a83edf3752f24c14498f17f3fd290153f6cdf9eed9bb4"
+  },
+  "docs/refactor/baseline/engine_reports/tests_v4_test_confgen_v3_core.py_test_inherited_adversarial_rotation_is_drift_never_stale__1.json": {
+   "blob": "3e127949a101cc306296413c1f7b8351c83314c3",
+   "mode": "100644",
+   "sha256": "4652e712067a261a6f9fd66655c737126aefbe7b5d7134b3afc1989adfa3b819"
+  },
+  "docs/refactor/baseline/engine_reports/tests_v4_test_confgen_v3_core.py_test_inherited_adversarial_rotation_is_drift_never_stale__2.json": {
+   "blob": "e6c0df7f34812fe2411fa0037c3bf0c01a8ff492",
+   "mode": "100644",
+   "sha256": "591362e1681f8f7a8609250ef89a0a17e6134b12fed6c2f59dbb2b7414a21de7"
+  },
+  "docs/refactor/baseline/engine_reports/tests_v4_test_confgen_v3_core.py_test_inherited_chemical_absolute_lock_carries__0.json": {
+   "blob": "c63e9ee21e1b4ee6f95a4775d1655b231c294257",
+   "mode": "100644",
+   "sha256": "b26bf29d83edb615c4374f595b9f380350dbc46246286a0baa17a50365ec89f0"
+  },
+  "docs/refactor/baseline/engine_reports/tests_v4_test_confgen_v3_core.py_test_inherited_chemical_absolute_lock_carries__1.json": {
+   "blob": "5c57878755bb3a5b3c308fca82c18c03155a8439",
+   "mode": "100644",
+   "sha256": "d546a530ee13b1d235f356aa5db52bfd9d75f1104f5766a11ac5e0efbec6eb87"
+  },
+  "docs/refactor/baseline/engine_reports/tests_v4_test_confgen_v3_core.py_test_inherited_relative_lock_rejects_new_reference_masquerade__0.json": {
+   "blob": "85c59e3d836c97bc9c7c511eac8dd1ca6717effe",
+   "mode": "100644",
+   "sha256": "4a845675c23e62a62c9a83edf3752f24c14498f17f3fd290153f6cdf9eed9bb4"
+  },
+  "docs/refactor/baseline/engine_reports/tests_v4_test_confgen_v3_core.py_test_inherited_relative_lock_rejects_new_reference_masquerade__1.json": {
+   "blob": "9c0b069c4e03f16b1d008bf66b5781d183af0cfe",
+   "mode": "100644",
+   "sha256": "092336eef769e219582727b17eba8e7483ff3c956dbc59bf83b4fc14639d5d8d"
+  },
+  "docs/refactor/baseline/engine_reports/tests_v4_test_confgen_v3_core.py_test_lock_reference_parent_uses_accepted_parent_geometry__0.json": {
+   "blob": "e73687cdd2a5dd7e95b7e51525e07e2b55fb7c00",
+   "mode": "100644",
+   "sha256": "1fd2af9bc0eccc2418f38726cf905e8dba6eae5b123c3262f62f47f755f107c7"
+  },
+  "docs/refactor/baseline/engine_reports/tests_v4_test_confgen_v3_core.py_test_lock_reference_parent_uses_accepted_parent_geometry__1.json": {
+   "blob": "e73687cdd2a5dd7e95b7e51525e07e2b55fb7c00",
+   "mode": "100644",
+   "sha256": "1fd2af9bc0eccc2418f38726cf905e8dba6eae5b123c3262f62f47f755f107c7"
+  },
+  "docs/refactor/baseline/engine_reports/tests_v4_test_confgen_v3_core.py_test_native_drift_into_proven_state_invalidates_certificate__0.json": {
+   "blob": "fb281d1bee1141491b48b2e0b848296fd4c8a9cd",
+   "mode": "100644",
+   "sha256": "6ce2a508437b874dc41a527deb5e6925374384fb24363e747878d14db02de9ae"
+  },
+  "docs/refactor/baseline/engine_reports/tests_v4_test_confgen_v3_core.py_test_native_drift_matching_key_with_clash_is_unresolved__0.json": {
+   "blob": "3bd81710bc2c6e3f4d0d9bba96774d6163e29761",
+   "mode": "100644",
+   "sha256": "08fd2234d798580bfb547cba342035af2b0af1aa2f6116aeecc992a8b30f69e4"
+  },
+  "docs/refactor/baseline/engine_reports/tests_v4_test_confgen_v3_core.py_test_native_drift_untrusted_quality_alerts_without_invalidating__0.json": {
+   "blob": "552a7d3626df956a1a3a841161d84ec9ed28f3eb",
+   "mode": "100644",
+   "sha256": "8759ea0ba5dcb3b851df2e5e1e7aab320a751798f0f13652392e383b74ad03bb"
+  },
+  "docs/refactor/baseline/engine_reports/tests_v4_test_confgen_v3_core.py_test_native_drift_with_observed_key_is_failed_drift__0.json": {
+   "blob": "8dd313400102f1736517d804c58202d03f49eff0",
+   "mode": "100644",
+   "sha256": "cc49d4bbd8a924b3f231ce082dfd6ec9eb6b87fbcdf7c5388ca6d54bc0bda356"
+  },
+  "docs/refactor/baseline/engine_reports/tests_v4_test_confgen_v3_core.py_test_native_drift_without_observed_key_stays_geometry_failure__0.json": {
+   "blob": "379ee177cbb9f73af32e3e7c40388b6eb118dc9a",
+   "mode": "100644",
+   "sha256": "aa51ed9f96b8a9a03c568c5a8b41b43134de2c23fb7565fc473960d1e268604e"
+  },
+  "docs/refactor/baseline/engine_reports/tests_v4_test_confgen_v3_core.py_test_no_suppression_without_witnesses_real_stage__0.json": {
+   "blob": "eca162a0f333c7724d0eed6600fb31bfe76be857",
+   "mode": "100644",
+   "sha256": "7a57aa1af01658721204d87a7397914ff9badcf2f5fc0d01578dde1b3bd201d0"
+  },
+  "docs/refactor/baseline/engine_reports/tests_v4_test_confgen_v3_core.py_test_pinned_coordination_ring_damage_is_drift__0.json": {
+   "blob": "1cd8a0f934ef41929cbe1c88c030f4d7da681e8f",
+   "mode": "100644",
+   "sha256": "b85f309093cf988a1de0877d7f2cb11e0c4c9ff4a9342c10384fa1bdb2d0e51a"
+  },
+  "docs/refactor/baseline/engine_reports/tests_v4_test_confgen_v3_core.py_test_suppression_combined_axes_realize_normally__0.json": {
+   "blob": "6eeda317c569279edf0c6e01fd71726940b66f65",
+   "mode": "100644",
+   "sha256": "02eabe8b971915caa5112c9e439023d8b64c82e7be23360b3b3d30f568867972"
+  },
+  "docs/refactor/baseline/engine_reports/tests_v4_test_confgen_v3_core.py_test_suppression_disabled_under_sampling_cap__0.json": {
+   "blob": "9dd08813c62efb756101a438df769740111628d1",
+   "mode": "100644",
+   "sha256": "d4de2ceb240f7471921b166c9d335d454d03bf077fdc6afa0aab86418d0ecd76"
+  },
+  "docs/refactor/baseline/engine_reports/tests_v4_test_confgen_v3_core.py_test_suppression_disabled_with_top_level_exclusions__0.json": {
+   "blob": "bd0157d5880ce9c10832e252e6ce8c67f081c3ed",
+   "mode": "100644",
+   "sha256": "35e4e0d6e82d96fcd2a02d5ba996507b8e45e3a83cf5a5194865ffda5cc59e6c"
+  },
+  "docs/refactor/baseline/engine_reports/tests_v4_test_confgen_v3_core.py_test_suppression_positive_control_real_stage_fewer_attempts__0.json": {
+   "blob": "d0363f1d884617bc100948ee97d3b393d56c3d5f",
+   "mode": "100644",
+   "sha256": "44fec5499d6d8888bb0fd4bf9a7451b398d7255a4e1df1e90a18375cb9298091"
+  },
+  "docs/refactor/baseline/engine_reports/tests_v4_test_confgen_v3_core.py_test_suppression_skips_only_verified_targets__0.json": {
+   "blob": "e2ab2b0c9c793ac38212a799b840315ddce8a877",
+   "mode": "100644",
+   "sha256": "56f41d2aaeb73c8620506c8ba5232bc1090790d364897864d725ae739b9a674f"
+  },
+  "docs/refactor/baseline/engine_reports/tests_v4_test_confgen_v3_core.py_test_suppression_without_realized_representative_realizes__0.json": {
+   "blob": "54f0e6d874dd901d38c0ea0452f239da72501633",
+   "mode": "100644",
+   "sha256": "6c00173e8be686724eb9892f65e76c4c8bf3a3594db219892d8d5b9179aa5848"
+  },
+  "docs/refactor/baseline/engine_reports/tests_v4_test_confgen_v3_core.py_test_zero_axes_with_incoming_key_validates_before_realized__0.json": {
+   "blob": "ee381e207237a1f9e3038db6d3b500cda3bb41f1",
+   "mode": "100644",
+   "sha256": "5790560ec7d5bf6b88ada3a4ba244ca7572d9719819b1d6c50ce72941757f4dc"
+  },
+  "docs/refactor/baseline/engine_reports/tests_v4_test_confgen_v3_core.py_test_zero_axes_with_incoming_key_validates_before_realized__1.json": {
+   "blob": "b75fa85b4cf4f401d9f67e78729e6fcc7963543f",
+   "mode": "100644",
+   "sha256": "4b01159c130dbd7229e35f444cd34a138db1b420f4a2c23588b8477a908594b9"
+  },
+  "docs/refactor/baseline/engine_reports/tests_v4_test_confgen_v3_integration.py_TestChainedLocks_test_adversarial_rotation_cannot_publish_stale__0.json": {
+   "blob": "a861808c36b955a34038614a24869e886245c75e",
+   "mode": "100644",
+   "sha256": "01961969545a4834cedef94f41b780d58837f98ebe3ebc23ec3cf0906fda445e"
+  },
+  "docs/refactor/baseline/engine_reports/tests_v4_test_confgen_v3_integration.py_TestChainedLocks_test_crafted_ring_and_coord_entries_audited__0.json": {
+   "blob": "c996da29ba1bed249892f14d38d26f18659e93b0",
+   "mode": "100644",
+   "sha256": "3d96dbbaab962170a957063f02662b1943bbab9f0655439b70c42ef2d809b149"
+  },
+  "docs/refactor/baseline/engine_reports/tests_v4_test_confgen_v3_integration.py_TestChainedLocks_test_missing_scope_provenance_fails_closed__0.json": {
+   "blob": "c996da29ba1bed249892f14d38d26f18659e93b0",
+   "mode": "100644",
+   "sha256": "3d96dbbaab962170a957063f02662b1943bbab9f0655439b70c42ef2d809b149"
+  },
+  "docs/refactor/baseline/engine_reports/tests_v4_test_confgen_v3_integration.py_TestChainedLocks_test_preserve_unchanged_passes_with_inherited_label__0.json": {
+   "blob": "a861808c36b955a34038614a24869e886245c75e",
+   "mode": "100644",
+   "sha256": "01961969545a4834cedef94f41b780d58837f98ebe3ebc23ec3cf0906fda445e"
+  },
+  "docs/refactor/baseline/engine_reports/tests_v4_test_confgen_v3_integration.py_TestChainedLocks_test_preserve_unchanged_passes_with_inherited_label__1.json": {
+   "blob": "11bf0fa728de5b3a30955c13d9931b59df71fd2f",
+   "mode": "100644",
+   "sha256": "4218bbc90c44d470d0a79e41b2bf36b88abebae3fb31676a98e389dddee6f478"
+  },
+  "docs/refactor/baseline/engine_reports/tests_v4_test_confgen_v3_integration.py_TestChainedLocks_test_relative_omitted_fails__0.json": {
+   "blob": "c996da29ba1bed249892f14d38d26f18659e93b0",
+   "mode": "100644",
+   "sha256": "3d96dbbaab962170a957063f02662b1943bbab9f0655439b70c42ef2d809b149"
+  },
+  "docs/refactor/baseline/engine_reports/tests_v4_test_confgen_v3_integration.py_TestChainedLocks_test_relative_preserve_consistent_passes__0.json": {
+   "blob": "c996da29ba1bed249892f14d38d26f18659e93b0",
+   "mode": "100644",
+   "sha256": "3d96dbbaab962170a957063f02662b1943bbab9f0655439b70c42ef2d809b149"
+  },
+  "docs/refactor/baseline/engine_reports/tests_v4_test_confgen_v3_integration.py_TestChainedLocks_test_relative_preserve_consistent_passes__1.json": {
+   "blob": "a8918ca2242432a07be4afea51f66a13b23161a1",
+   "mode": "100644",
+   "sha256": "0f6e110560adb05345d3885e388d3d538a1d33acc1f63e3629e72ee79c45d3e3"
+  },
+  "docs/refactor/baseline/engine_reports/tests_v4_test_confgen_v3_integration.py_TestChainedLocks_test_relative_preserve_drifted_blocked__0.json": {
+   "blob": "c996da29ba1bed249892f14d38d26f18659e93b0",
+   "mode": "100644",
+   "sha256": "3d96dbbaab962170a957063f02662b1943bbab9f0655439b70c42ef2d809b149"
+  },
+  "docs/refactor/baseline/engine_reports/tests_v4_test_confgen_v3_integration.py_TestChainedLocks_test_relative_reenumerated_passes_fresh__0.json": {
+   "blob": "c996da29ba1bed249892f14d38d26f18659e93b0",
+   "mode": "100644",
+   "sha256": "3d96dbbaab962170a957063f02662b1943bbab9f0655439b70c42ef2d809b149"
+  },
+  "docs/refactor/baseline/engine_reports/tests_v4_test_confgen_v3_integration.py_TestChainedLocks_test_relative_reenumerated_passes_fresh__1.json": {
+   "blob": "e07067b7ba9c912ac224b7de7d4db4f57fc0d026",
+   "mode": "100644",
+   "sha256": "a31d800b1db9654885e6f4aab9f84f1d3143f4af44a32ecf8d57db64650c7c55"
+  },
+  "docs/refactor/baseline/engine_reports/tests_v4_test_confgen_v3_integration.py_TestChainedLocks_test_scope_persisted_in_provenance_not_key_or_metadata__0.json": {
+   "blob": "a861808c36b955a34038614a24869e886245c75e",
+   "mode": "100644",
+   "sha256": "01961969545a4834cedef94f41b780d58837f98ebe3ebc23ec3cf0906fda445e"
+  },
+  "docs/refactor/baseline/engine_reports/tests_v4_test_confgen_v3_integration.py_TestChainedLocks_test_zero_axes_with_incoming_key_fails_closed__0.json": {
+   "blob": "c996da29ba1bed249892f14d38d26f18659e93b0",
+   "mode": "100644",
+   "sha256": "3d96dbbaab962170a957063f02662b1943bbab9f0655439b70c42ef2d809b149"
+  },
+  "docs/refactor/baseline/engine_reports/tests_v4_test_confgen_v3_integration.py_TestExecutorV3_test_ambiguous_chained_state_rejected__0.json": {
+   "blob": "c996da29ba1bed249892f14d38d26f18659e93b0",
+   "mode": "100644",
+   "sha256": "3d96dbbaab962170a957063f02662b1943bbab9f0655439b70c42ef2d809b149"
+  },
+  "docs/refactor/baseline/engine_reports/tests_v4_test_confgen_v3_integration.py_TestExecutorV3_test_deterministic_full_grid_no_seed__0.json": {
+   "blob": "c996da29ba1bed249892f14d38d26f18659e93b0",
+   "mode": "100644",
+   "sha256": "3d96dbbaab962170a957063f02662b1943bbab9f0655439b70c42ef2d809b149"
+  },
+  "docs/refactor/baseline/engine_reports/tests_v4_test_confgen_v3_integration.py_TestExecutorV3_test_gzip_bytes_deterministic__0.json": {
+   "blob": "c996da29ba1bed249892f14d38d26f18659e93b0",
+   "mode": "100644",
+   "sha256": "3d96dbbaab962170a957063f02662b1943bbab9f0655439b70c42ef2d809b149"
+  },
+  "docs/refactor/baseline/engine_reports/tests_v4_test_confgen_v3_integration.py_TestExecutorV3_test_gzip_bytes_deterministic__1.json": {
+   "blob": "c996da29ba1bed249892f14d38d26f18659e93b0",
+   "mode": "100644",
+   "sha256": "3d96dbbaab962170a957063f02662b1943bbab9f0655439b70c42ef2d809b149"
+  },
+  "docs/refactor/baseline/engine_reports/tests_v4_test_confgen_v3_integration.py_TestExecutorV3_test_nested_run_rows_carry_units__0.json": {
+   "blob": "7be2da18c126f43951ae6393d4b1186d7513dfec",
+   "mode": "100644",
+   "sha256": "485a31b1470bfcfa42c58324a9efd5ccd71cf2ee220d43774391f02d36725642"
+  },
+  "docs/refactor/baseline/engine_reports/tests_v4_test_confgen_v3_integration.py_TestExecutorV3_test_repeat_runs_are_identical__0.json": {
+   "blob": "c996da29ba1bed249892f14d38d26f18659e93b0",
+   "mode": "100644",
+   "sha256": "3d96dbbaab962170a957063f02662b1943bbab9f0655439b70c42ef2d809b149"
+  },
+  "docs/refactor/baseline/engine_reports/tests_v4_test_confgen_v3_integration.py_TestExecutorV3_test_repeat_runs_are_identical__1.json": {
+   "blob": "c996da29ba1bed249892f14d38d26f18659e93b0",
+   "mode": "100644",
+   "sha256": "3d96dbbaab962170a957063f02662b1943bbab9f0655439b70c42ef2d809b149"
+  },
+  "docs/refactor/baseline/engine_reports/tests_v4_test_confgen_v3_integration.py_TestExecutorV3_test_report_and_targets_artifacts__0.json": {
+   "blob": "c996da29ba1bed249892f14d38d26f18659e93b0",
+   "mode": "100644",
+   "sha256": "3d96dbbaab962170a957063f02662b1943bbab9f0655439b70c42ef2d809b149"
+  },
+  "docs/refactor/baseline/engine_reports/tests_v4_test_confgen_v3_integration.py_TestExecutorV3_test_report_points_at_unit_sections__0.json": {
+   "blob": "45088040f7f7eebef30d6c727d26329770490dc0",
+   "mode": "100644",
+   "sha256": "c26a2cea3b1c0332bf5a2f6eb2e6b00ba451a7be40727efe5996b1a374e5dfed"
+  },
+  "docs/refactor/baseline/engine_reports/tests_v4_test_confgen_v3_integration.py_TestExecutorV3_test_result_provenance_carries_certificate__0.json": {
+   "blob": "c996da29ba1bed249892f14d38d26f18659e93b0",
+   "mode": "100644",
+   "sha256": "3d96dbbaab962170a957063f02662b1943bbab9f0655439b70c42ef2d809b149"
+  },
+  "docs/refactor/baseline/engine_reports/tests_v4_test_confgen_v3_integration.py_TestExecutorV3_test_sampled_subset_sorted_and_stable__0.json": {
+   "blob": "45088040f7f7eebef30d6c727d26329770490dc0",
+   "mode": "100644",
+   "sha256": "c26a2cea3b1c0332bf5a2f6eb2e6b00ba451a7be40727efe5996b1a374e5dfed"
+  },
+  "docs/refactor/baseline/engine_reports/tests_v4_test_confgen_v3_integration.py_TestExecutorV3_test_sampled_subset_sorted_and_stable__1.json": {
+   "blob": "45088040f7f7eebef30d6c727d26329770490dc0",
+   "mode": "100644",
+   "sha256": "c26a2cea3b1c0332bf5a2f6eb2e6b00ba451a7be40727efe5996b1a374e5dfed"
+  },
+  "docs/refactor/baseline/engine_reports/tests_v4_test_confgen_v3_integration.py_TestExecutorV3_test_state_results_leaf_only_no_energy__0.json": {
+   "blob": "c996da29ba1bed249892f14d38d26f18659e93b0",
+   "mode": "100644",
+   "sha256": "3d96dbbaab962170a957063f02662b1943bbab9f0655439b70c42ef2d809b149"
+  },
+  "docs/refactor/baseline/engine_reports/tests_v4_test_confgen_v3_integration.py_TestExecutorV3_test_subject_none_chained_rejected__0.json": {
+   "blob": "c996da29ba1bed249892f14d38d26f18659e93b0",
+   "mode": "100644",
+   "sha256": "3d96dbbaab962170a957063f02662b1943bbab9f0655439b70c42ef2d809b149"
+  },
+  "docs/refactor/baseline/engine_reports/tests_v4_test_confgen_v3_integration.py_TestExecutorV3_test_upstream_state_chaining__0.json": {
+   "blob": "c996da29ba1bed249892f14d38d26f18659e93b0",
+   "mode": "100644",
+   "sha256": "3d96dbbaab962170a957063f02662b1943bbab9f0655439b70c42ef2d809b149"
+  },
+  "docs/refactor/baseline/engine_reports/tests_v4_test_confgen_v3_integration.py_TestExecutorV3_test_upstream_state_chaining__1.json": {
+   "blob": "e07067b7ba9c912ac224b7de7d4db4f57fc0d026",
+   "mode": "100644",
+   "sha256": "a31d800b1db9654885e6f4aab9f84f1d3143f4af44a32ecf8d57db64650c7c55"
+  },
+  "docs/refactor/baseline/engine_reports/tests_v4_test_confgen_v3_integration.py_TestLegacyRegressions_test_v3_filenames_vs_legacy_compat__0.json": {
+   "blob": "c996da29ba1bed249892f14d38d26f18659e93b0",
+   "mode": "100644",
+   "sha256": "3d96dbbaab962170a957063f02662b1943bbab9f0655439b70c42ef2d809b149"
+  },
+  "docs/refactor/baseline/engine_reports/tests_v4_test_confgen_v3_integration.py_TestProducerWiring_test_workflow_chaining_compiles_and_assembles__0.json": {
+   "blob": "c996da29ba1bed249892f14d38d26f18659e93b0",
+   "mode": "100644",
+   "sha256": "3d96dbbaab962170a957063f02662b1943bbab9f0655439b70c42ef2d809b149"
+  },
+  "docs/refactor/baseline/inventory/cf-collect.txt": {
+   "blob": "36aeb6f5189374e71d3406f5e8359b7370c50705",
+   "mode": "100644",
+   "sha256": "f8128456df004f8e0cf2ac28fc09d94d2c7570fa6c67b62c1df3d622f3721b5b"
+  },
+  "docs/refactor/baseline/inventory/cf-outcomes.json": {
+   "blob": "fa0d71ae723e35aa71d4609fba9894d786259da3",
+   "mode": "100644",
+   "sha256": "31119feabdd2d586491a833adf142c0d4b6e71213e37208d7d902e0950112846"
+  },
+  "docs/refactor/baseline/inventory/jd-collect.txt": {
+   "blob": "6830fdf593523ba902a148681b46a3913774edc4",
+   "mode": "100644",
+   "sha256": "abacb9a72edb585dd809f4250a7bc50a93813856461fcb14b46b559d6730bb1d"
+  },
+  "docs/refactor/baseline/inventory/jd-outcomes.json": {
+   "blob": "de7301bce0d03a52d9e233e63814abc3e6b33e65",
+   "mode": "100644",
+   "sha256": "50ef489f24dc9376b29c2ae877a4437a50d293c5a1f1b073f73b12ec215ac9be"
+  },
+  "docs/refactor/baseline/ts1/default.json": {
+   "blob": "a0f21b4dbfda653d322892c1ce0f497d858fb488",
+   "mode": "100644",
+   "sha256": "80ab4c60f2032027804fb63ff4247de48e6dcaa073cc79385d4ca34d3dd1a9a1"
+  },
+  "docs/refactor/baseline/ts1/flexible.json": {
+   "blob": "1cff851fb53a4d20d74a74a205081f3ede2d3e29",
+   "mode": "100644",
+   "sha256": "5ea6e00cbfc095221e877efc962dd734e7cfdf4ba85dd1732aa39775acf80382"
+  },
+  "docs/refactor/baseline/ts1/rigid.json": {
+   "blob": "5ae85b9478c1c8360a73668a2b5f135cc88389f1",
+   "mode": "100644",
+   "sha256": "ef09e8849e906ed6ce887bbae504e3dfbddad4cab2fd6a076d53127e64e46043"
+  },
+  "docs/refactor/plan2/ACCEPTANCE_FAST.md": {
+   "blob": "ee03006f8d959ec11e03e8e072285b62333436b5",
+   "mode": "100644",
+   "sha256": "3ac1e26168ca4603ca6198154127606589d7188dca13fdbc1c0823a9ec5e3391"
+  },
+  "docs/refactor/plan2/CAPTURE_PIPELINE.md": {
+   "blob": "f957407d737e1c2272f53ba2dd373d7e7598b7cc",
+   "mode": "100644",
+   "sha256": "4d447f0e0c6dde405245170680118a5c6483df25285a778f82a8ef087d303490"
+  }
+ },
+ "note": "\u8986\u76d6 archive_parent \u63d0\u4ea4\u4e2d docs/refactor/ \u4e0b\u5168\u90e8\u6587\u4ef6\uff1bmode \u4e3a git \u6587\u4ef6\u6a21\u5f0f\uff0cblob \u4e3a git \u5bf9\u8c61\u54c8\u5e0c\uff0csha256 \u4e3a\u5185\u5bb9\u54c8\u5e0c\u3002"
+}

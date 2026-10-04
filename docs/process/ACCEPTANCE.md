@@ -1,7 +1,7 @@
 # 验收协议
 
 > 适用于 `PLAN.md` 中的每一张卡。执行模型每完成一张卡（一个提交）就交给验收方。验收方只读、只运行，不修改执行分支。
-> 验收方的工作目录：`/tmp/refactor-acc/<CARD>/`。验收工具位于 `tools/refactor/`；Plan2 的分片 runner、`weights.json` 与 `noeditable/` 位于并列目录 `tools/refactor-acc/`。结论追加到 `docs/refactor/LOG.md`（在 `docs/refactor-plan` 工作树 `/opt/cf-worktrees/refactor-plan` 中维护，不进入执行分支）。
+> 验收方的工作目录：`/tmp/refactor-acc/<CARD>/`。验收工具位于 `tools/refactor/`；Plan2 的分片 runner、`weights.json` 与 `noeditable/` 位于并列目录 `tools/refactor-acc/`。结论追加到 `docs/confgen-fix/LOG.md`（不进入执行分支）。
 
 ---
 
@@ -42,7 +42,7 @@ python3 $TOOLS/diff_guard.py --repo $REPO --base HEAD~1 --head HEAD --type <卡�
 
 - R1 改动的文件 ⊆ 白名单。超出白名单的任何文件（包括格式化工具顺手改的文件）→ **退回**。
 - R2 提交恰好一个，父提交是同一仓库同一分支上上一张已验收卡的提交（`merge` 卡除外）。
-- R3 没有改动 `docs/refactor/baseline/` 的已有文件；只有卡片明确要求的检查点目录可以新增。
+- R3 没有改动 `docs/confgen-fix/checkpoints/` 的已有文件；只有卡片明确要求的检查点目录可以新增。两种护栏职责：R3 只保护**仓内**检查点记录（git diff 可见）；仓库外 `$CKPT`/基线不在 git diff 范围内，由验收方按对应 MANIFEST 前后校验，工具不声称保护外部文件。
 - R4 没有改动 pytest 配置：`pyproject.toml` 的 `[tool.pytest.ini_options]`、`conftest.py` 中的 `collect_ignore` / `pytest_collection_modifyitems` / `addopts` / `markers` / `filterwarnings`、CI 中的 `--deselect` / `-k` / `--ignore`。卡片白名单包含该文件且步骤明确要求的除外。
 
 ### 2.2 按类型
@@ -140,7 +140,7 @@ python3 $TOOLS/golden_check.py --base $BASE --cf <对应 CF 提交的工作树> 
 
 ## 6. LOG.md 记录格式
 
-每次验收（包括退回后的重新验收）在 `docs/refactor/LOG.md` 末尾追加一条：
+每次验收（包括退回后的重新验收）在 `docs/confgen-fix/LOG.md` 末尾追加一条：
 
 ```
 ## <YYYY-MM-DD HH:MM> <CARD> — 通过 | 退回 | 升级

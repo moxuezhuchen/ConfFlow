@@ -11,7 +11,7 @@
 | `logic` | 行为改变。卡片必须列出每一处预期的行为变化。 |
 | `test-only` | 只改 `tests/`（以及 fixture 数据）；被测代码不变。 |
 | `ci` | 只改 `.github/workflows/`、pin 常量和与之一致性相关的测试。 |
-| `baseline` | 只新增 `docs/refactor/` 下的文件（工具、基线数据）。（新增类型，用户列表中没有。） |
+| `baseline` | 只新增仓库外检查点（`$CKPT/<里程碑>/<卡>/`）；仓内仅提交对应 manifest/DIFF 与 LOG。（新增类型，用户列表中没有。） |
 | `doc` | 只改文档。（新增类型。） |
 | `merge` | 把一个分支合入另一个分支，冲突只按卡片规定的方向解决。（新增类型。） |
 
@@ -24,7 +24,7 @@
 - G2 `delete` / `move` 卡不得新增逻辑：不得新增函数、类、条件分支、异常处理、默认值。
 - G3 不得为了让测试通过而删除、跳过（`skip`/`skipif`/`xfail`/`importorskip`）或放宽测试断言。被删代码的守护测试可以删除，但必须在卡片中逐条声明。
 - G4 不得重命名任何保留下来的符号、文件、测试。
-- G5 不得改动 `docs/refactor/baseline/` 的已有文件（Phase 3 / IS.0 / IS.5 卡新增"检查点"文件除外，见各卡）。
+- G5' 不得修改 `$CKPT` 下已有的检查点文件；每张卡只能新增自己的检查点目录。（原 G5 保护仓内 `docs/refactor/baseline/`；该目录已随 architecture-diet-1 归档，仓内检查点记录 `docs/confgen-fix/checkpoints/` 由 diff_guard R3 保护只增不改。）
 - G6 不得改变科学行为（TS1、ring、torsion、stereo、atom ordering）。只要 golden 有差异就停止，在 LOG 中写明差异并升级，不得自行判定为"预期变化"。
 - G7 每张卡恰好一个提交；提交前 `git status` 必须干净（没有未跟踪的残留）。
 - G8 不得 push、不得改 `main`/`master`、不得切换 `/opt/ConfFlow` 或 `/opt/jobdesk-v2-v4` 主工作树的分支。

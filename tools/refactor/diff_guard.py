@@ -5,8 +5,9 @@ Usage: diff_guard.py --repo DIR --base SHA --head SHA --type TYPE
                      --whitelist FILE [--json]
 
 Implements ACCEPTANCE.md §2: R1 (whitelist), R2 (single commit whose parent is
---base), R3 (no modification of existing baseline files), R4 (pytest config
-untouched) and the per-type rules (delete / move / test-only).  Rules that need
+--base), R3 (no modification of existing in-repo checkpoint files under
+docs/confgen-fix/checkpoints/), R4 (pytest config untouched) and the per-type
+rules (delete / move / test-only).  Rules that need
 human judgement are printed as SUSPECT lines; rule breaches make the exit
 status non-zero.
 """
@@ -21,7 +22,10 @@ import sys
 from collections import Counter
 from pathlib import Path
 
-BASELINE_PREFIX = "docs/refactor/baseline/"
+# R3 protects the in-repo checkpoint record (manifest + DIFF) as add-only.
+# External checkpoint trees ($CKPT, e.g. /tmp/l0-baseline-run-v2/baseline) are
+# outside git diff; the acceptance side verifies them separately via MANIFEST.
+CHECKPOINT_PREFIX = "docs/confgen-fix/checkpoints/"
 CONFTEST_KEYWORDS = (
     "collect_ignore",
     "pytest_collection_modifyitems",
@@ -222,8 +226,8 @@ def main(argv: list[str] | None = None) -> int:
 
     # R3: baseline files may only be added, never modified or deleted.
     for path, status in sorted(files.items()):
-        if path.startswith(BASELINE_PREFIX) and status != "A":
-            problems.append(f"R3: existing baseline file modified ({status}): {path}")
+        if path.startswith(CHECKPOINT_PREFIX) and status != "A":
+            problems.append(f"R3: existing checkpoint file modified ({status}): {path}")
 
     check_r4(repo, base, head, lines, problems)
     check_type_rules(args.card_type, lines, problems, suspects)

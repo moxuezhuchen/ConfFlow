@@ -57,7 +57,7 @@ pytest -q                  # 见 TESTING.md；scripts/test.sh 会把所有产物
 
 **新的 ConfGen 声明（torsion / ring / coordination / path）**：改 `workflow/v4/confgen_schema.py` 与
 `science/confgen/` 中对应的 lane；任何改变构象集合的改动都要有等价性或回归证据，并且要重新捕获引擎报告基线
-（`docs/refactor/baseline/` 与 `tools/refactor/`）。
+（外部基线 `$BASE` 与 `tools/refactor/`；本轮实际路径示例 `/tmp/l0-baseline-run-v2/baseline`，配套 `MANIFEST.json`，不是通用设计）。
 
 ## 5. 契约与指纹
 
@@ -93,5 +93,5 @@ pytest -q                  # 见 TESTING.md；scripts/test.sh 会把所有产物
 ## 9. 重构记录
 
 2026 年的架构瘦身（删除 calc/blocks/legacy CLI、边界瘦身、输入简化、refine 对称映射）的计划、逐卡验收和检查点在
-`docs/refactor/`：`PLAN.md`（任务卡）、`LOG.md`（验收记录）、`baseline/`（TS1 与引擎报告基线及各阶段检查点）、
+历史归档：`docs/refactor/`（`PLAN.md`、`LOG.md`、`baseline/` 等）已随 architecture-diet-1 归档（见 `docs/ARCHITECTURE_DIET_1.md` 与 `docs/archive_manifests/architecture_diet_1.json`，按归档提交 SHA/blob 定位）。
 等价性证据 `paths_equivalence/` 已迁至 `tests/fixtures/paths_equivalence/`。验收协议在 `docs/process/ACCEPTANCE.md`，通用规则在 `docs/process/RULES.md`，验收工具在 `tools/refactor/` 与并列的 `tools/refactor-acc/`。这些文件是历史记录与证据，普通开发不需要改它们。
