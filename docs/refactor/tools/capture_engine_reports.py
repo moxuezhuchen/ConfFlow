@@ -2,10 +2,16 @@
 
 Environment: ``CAP_OUT`` is the output directory.  Load with
 ``PYTHONPATH=<tools dir> pytest -p capture_engine_reports``.
+
+Optional: ``CAP_SCOPE_GLOB`` restricts the *write-out* to tests whose file
+matches the glob (e.g. ``tests/v4/test_confgen_*.py``).  Filtered engine runs
+are still executed and returned; only the report writing is skipped.  When
+unset, every run is written (the original behavior).
 """
 
 from __future__ import annotations
 
+import fnmatch
 import json
 import os
 import re
@@ -36,9 +42,13 @@ def pytest_configure(config: pytest.Config) -> None:
 
     original = ConfgenEngine.run
     _state["orig"] = original
+    _state["scope"] = os.environ.get("CAP_SCOPE_GLOB", "")
 
     def wrapped(self: Any, *args: Any, **kwargs: Any) -> Any:
         run = original(self, *args, **kwargs)
+        scope = _state.get("scope", "")
+        if scope and not fnmatch.fnmatch(_state["nodeid"].split("::")[0], scope):
+            return run
         summary = summarize_run(run)
         payload = {
             "report": run.report_json(),
