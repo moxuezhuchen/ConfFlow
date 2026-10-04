@@ -11,15 +11,15 @@ from confflow.execution.work_item_executor import WorkItemExecutor
 from confflow.programs.gaussian import parsing as gaussian
 from confflow.programs.orca import OrcaProgramAdapter
 from confflow.programs.orca import parsing as orca
-from tests.v4.test_v42_adapters import orca_inputs
-from tests.v4.test_v42_executors import (
+from tests.v4._builders import structure_set
+from tests.v4._helpers.v42_adapters import orca_inputs
+from tests.v4._helpers.v42_executors import (
     FAKE_ORCA,
     ORCA_NATIVE,
     assemble_items,
     calculation_doc,
     compile_plan,
     item_context,
-    structure_set,
 )
 
 
@@ -206,7 +206,7 @@ def test_output_atom_changes_cannot_be_published_as_input_energy(tmp_path, monke
 )
 def test_gaussian_unsupported_method_families_are_refused(method):
     from confflow.programs.gaussian import GaussianProgramAdapter
-    from tests.v4.test_v42_adapters import gaussian_inputs
+    from tests.v4._helpers.v42_adapters import gaussian_inputs
 
     adapter = GaussianProgramAdapter()
     native = FrozenDict({"keyword": f"{method}/6-31G* SP"})
@@ -251,7 +251,7 @@ def _gaussian_log(*tail_lines: str, scf_line: str | None = None) -> str:
 
 def _parse_synthetic_gaussian_log(tmp_path, text: str):
     from confflow.programs.gaussian import GaussianProgramAdapter
-    from tests.v4.test_v42_adapters import gaussian_inputs
+    from tests.v4._helpers.v42_adapters import gaussian_inputs
 
     adapter = GaussianProgramAdapter()
     materialized = adapter.materialize_native_input(gaussian_inputs())
@@ -332,7 +332,7 @@ def test_gaussian_archive_only_energy_is_not_publishable(tmp_path):
 
 def test_gaussian_foreign_final_energy_is_not_published(tmp_path):
     """The executor refuses the item even with no declared checks."""
-    from tests.v4.test_v42_executors import FAKE_G16, GAUSSIAN_NATIVE
+    from tests.v4._helpers.v42_executors import FAKE_G16, GAUSSIAN_NATIVE
 
     plan = compile_plan(calculation_doc("gaussian", GAUSSIAN_NATIVE, str(FAKE_G16), checks=[]))
     item = assemble_items(plan, structure_set("water"))[0]

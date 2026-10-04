@@ -18,7 +18,7 @@ from confflow.application.v4_run import V4RunApplication, V4RunRequest
 from confflow.domain import FrozenDict, StructureRecord, StructureSet
 from confflow.execution.process import NativeProcessSupervisor
 from confflow.workflow.v4.assembly import RunInputs
-from tests.v4.test_v42_executors import calculation_doc
+from tests.v4._helpers.v42_executors import calculation_doc
 
 G16 = Path("/opt/g16/g16")
 

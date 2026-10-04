@@ -46,7 +46,7 @@ from confflow.science.confgen import (
 )
 from confflow.science.confgen.planner import deferred_ranges, sampling_of
 from confflow.science.confgen.torsion import TorsionStage
-from tests.v4.test_repair_executors import _butane
+from tests.v4._helpers.repair import _butane
 
 
 def _pentane(struct_id: str) -> StructureRecord:

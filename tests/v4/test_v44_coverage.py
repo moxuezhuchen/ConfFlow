@@ -900,9 +900,9 @@ class TestTransportMapping:
 
         transport._lock = _threading.Lock()
         transport._delivered = {}
-        from tests.v4.test_v43_coverage import _compile as _compile_doc
-        from tests.v4.test_v43_coverage import _document as _make_doc
-        from tests.v4.test_v43_coverage import _items as _assemble_items
+        from tests.v4._helpers.v43_coverage import _compile as _compile_doc
+        from tests.v4._helpers.v43_coverage import _document as _make_doc
+        from tests.v4._helpers.v43_coverage import _items as _assemble_items
 
         compiled = _compile_doc(_make_doc())
         (item,) = _assemble_items(compiled, 1)
@@ -933,9 +933,9 @@ class TestTransportMapping:
             assert transport.launch_token_for.__self__ is transport or True
 
     def test_manifest_validation(self, tmp_path: Path) -> None:
-        from tests.v4.test_v43_coverage import _compile as _compile_doc
-        from tests.v4.test_v43_coverage import _document as _make_doc
-        from tests.v4.test_v43_coverage import _items as _assemble_items
+        from tests.v4._helpers.v43_coverage import _compile as _compile_doc
+        from tests.v4._helpers.v43_coverage import _document as _make_doc
+        from tests.v4._helpers.v43_coverage import _items as _assemble_items
 
         compiled = _compile_doc(_make_doc())
         (item,) = _assemble_items(compiled, 1)
@@ -947,9 +947,9 @@ class TestTransportMapping:
         import dataclasses as _dc
 
         from confflow.domain.work_item import WorkItemInputs
-        from tests.v4.test_v43_coverage import _compile as _compile_doc
-        from tests.v4.test_v43_coverage import _document as _make_doc
-        from tests.v4.test_v43_coverage import _items as _assemble_items
+        from tests.v4._helpers.v43_coverage import _compile as _compile_doc
+        from tests.v4._helpers.v43_coverage import _document as _make_doc
+        from tests.v4._helpers.v43_coverage import _items as _assemble_items
 
         compiled = _compile_doc(_make_doc())
         (item,) = _assemble_items(compiled, 1)
@@ -1022,9 +1022,9 @@ class TestTransportMapping:
         assert native_definition.freeze == (1, 2)
 
     def test_local_transport_delegates(self, tmp_path: Path) -> None:
-        from tests.v4.test_v43_coverage import _compile as _compile_doc
-        from tests.v4.test_v43_coverage import _document as _make_doc
-        from tests.v4.test_v43_coverage import _items as _assemble_items
+        from tests.v4._helpers.v43_coverage import _compile as _compile_doc
+        from tests.v4._helpers.v43_coverage import _document as _make_doc
+        from tests.v4._helpers.v43_coverage import _items as _assemble_items
 
         compiled = _compile_doc(_make_doc())
         (item,) = _assemble_items(compiled, 1)
@@ -1044,9 +1044,9 @@ class TestTransportMapping:
         assert stub.calls == [item.id]
 
     def test_transport_error_result_shape(self) -> None:
-        from tests.v4.test_v43_coverage import _compile as _compile_doc
-        from tests.v4.test_v43_coverage import _document as _make_doc
-        from tests.v4.test_v43_coverage import _items as _assemble_items
+        from tests.v4._helpers.v43_coverage import _compile as _compile_doc
+        from tests.v4._helpers.v43_coverage import _document as _make_doc
+        from tests.v4._helpers.v43_coverage import _items as _assemble_items
 
         compiled = _compile_doc(_make_doc())
         (item,) = _assemble_items(compiled, 1)

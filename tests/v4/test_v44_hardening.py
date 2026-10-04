@@ -41,19 +41,19 @@ FAKE_ORCA = Path(__file__).resolve().parent / "fakes" / "fake_orca.py"
 
 
 def _compiled(plan_doc: Any) -> Any:
-    from tests.v4.test_v43_coverage import _compile as _compile_doc
+    from tests.v4._helpers.v43_coverage import _compile as _compile_doc
 
     return _compile_doc(plan_doc)
 
 
 def _made_doc() -> Any:
-    from tests.v4.test_v43_coverage import _document as _make_doc
+    from tests.v4._helpers.v43_coverage import _document as _make_doc
 
     return _make_doc()
 
 
 def _made_items(compiled: Any, count: int) -> Any:
-    from tests.v4.test_v43_coverage import _items as _assemble_items
+    from tests.v4._helpers.v43_coverage import _items as _assemble_items
 
     return _assemble_items(compiled, count)
 
@@ -635,10 +635,10 @@ class TestPackageBranches:
     def test_missing_transfer_source(self, tmp_path: Path) -> None:
         from confflow.domain.completion import WorkItemStatus as _Status
         from confflow.remote.result_bundle import ResultBundleError, package_result_bundle
-        from tests.v4.test_v43_coverage import _compile as _compile_doc
-        from tests.v4.test_v43_coverage import _document as _make_doc
-        from tests.v4.test_v43_coverage import _items as _assemble_items
-        from tests.v4.test_v43_coverage import _result as _make_result
+        from tests.v4._helpers.v43_coverage import _compile as _compile_doc
+        from tests.v4._helpers.v43_coverage import _document as _make_doc
+        from tests.v4._helpers.v43_coverage import _items as _assemble_items
+        from tests.v4._helpers.v43_coverage import _result as _make_result
 
         compiled = _compile_doc(_make_doc())
         (item,) = _assemble_items(compiled, 1)
@@ -730,9 +730,9 @@ class TestTransportLeftovers:
         os.makedirs(worker_root, exist_ok=True)
         with SqliteWorkItemStore.open(store_path(run_root, STEP_ID)) as store:
             transport = RemoteTransport(run_root=run_root, store=store, worker_root=worker_root)
-            from tests.v4.test_v43_coverage import _compile as _compile_doc
-            from tests.v4.test_v43_coverage import _document as _make_doc
-            from tests.v4.test_v43_coverage import _items as _assemble_items
+            from tests.v4._helpers.v43_coverage import _compile as _compile_doc
+            from tests.v4._helpers.v43_coverage import _document as _make_doc
+            from tests.v4._helpers.v43_coverage import _items as _assemble_items
 
             compiled = _compile_doc(_make_doc())
             (item,) = _assemble_items(compiled, 1)
@@ -748,9 +748,9 @@ class TestTransportLeftovers:
 
         from confflow.domain.work_item import WorkItemInputs
         from confflow.remote.transport import RemoteTransport as _Transport
-        from tests.v4.test_v43_coverage import _compile as _compile_doc
-        from tests.v4.test_v43_coverage import _document as _make_doc
-        from tests.v4.test_v43_coverage import _items as _assemble_items
+        from tests.v4._helpers.v43_coverage import _compile as _compile_doc
+        from tests.v4._helpers.v43_coverage import _document as _make_doc
+        from tests.v4._helpers.v43_coverage import _items as _assemble_items
 
         compiled = _compile_doc(_make_doc())
         (item,) = _assemble_items(compiled, 1)
@@ -842,10 +842,10 @@ class TestWorkItemsLeftovers:
 
     def test_sqlite_error_injection(self, tmp_path: Path) -> None:
         from confflow.domain.completion import WorkItemStatus as _Status
-        from tests.v4.test_v43_coverage import _compile as _compile_doc
-        from tests.v4.test_v43_coverage import _document as _make_doc
-        from tests.v4.test_v43_coverage import _items as _assemble_items
-        from tests.v4.test_v43_coverage import _result as _make_result
+        from tests.v4._helpers.v43_coverage import _compile as _compile_doc
+        from tests.v4._helpers.v43_coverage import _document as _make_doc
+        from tests.v4._helpers.v43_coverage import _items as _assemble_items
+        from tests.v4._helpers.v43_coverage import _result as _make_result
 
         compiled = _compile_doc(_make_doc())
         (item,) = _assemble_items(compiled, 1)
@@ -1042,10 +1042,10 @@ class TestResultBundleBranches:
         from confflow.domain.artifact import ArtifactSet as _ArtifactSet
         from confflow.domain.completion import WorkItemStatus as _Status
         from confflow.remote.result_bundle import ResultBundleError, package_result_bundle
-        from tests.v4.test_v43_coverage import _compile as _compile_doc
-        from tests.v4.test_v43_coverage import _document as _make_doc
-        from tests.v4.test_v43_coverage import _items as _assemble_items
-        from tests.v4.test_v43_coverage import _result as _make_result
+        from tests.v4._helpers.v43_coverage import _compile as _compile_doc
+        from tests.v4._helpers.v43_coverage import _document as _make_doc
+        from tests.v4._helpers.v43_coverage import _items as _assemble_items
+        from tests.v4._helpers.v43_coverage import _result as _make_result
 
         compiled = _compile_doc(_make_doc())
         (item,) = _assemble_items(compiled, 1)
@@ -1225,10 +1225,10 @@ class TestStoreFaultBranches:
 
     def test_terminal_sqlite_errors(self, tmp_path: Path) -> None:
         from confflow.domain.completion import WorkItemStatus as _Status
-        from tests.v4.test_v43_coverage import _compile as _compile_doc
-        from tests.v4.test_v43_coverage import _document as _make_doc
-        from tests.v4.test_v43_coverage import _items as _assemble_items
-        from tests.v4.test_v43_coverage import _result as _make_result
+        from tests.v4._helpers.v43_coverage import _compile as _compile_doc
+        from tests.v4._helpers.v43_coverage import _document as _make_doc
+        from tests.v4._helpers.v43_coverage import _items as _assemble_items
+        from tests.v4._helpers.v43_coverage import _result as _make_result
 
         compiled = _compile_doc(_make_doc())
         (item,) = _assemble_items(compiled, 1)
@@ -1351,10 +1351,10 @@ class TestResultBundleMoreBranches:
         from confflow.domain.artifact import ArtifactSet as _ArtifactSet
         from confflow.domain.completion import WorkItemStatus as _Status
         from confflow.remote.result_bundle import ResultBundleError, package_result_bundle
-        from tests.v4.test_v43_coverage import _compile as _compile_doc
-        from tests.v4.test_v43_coverage import _document as _make_doc
-        from tests.v4.test_v43_coverage import _items as _assemble_items
-        from tests.v4.test_v43_coverage import _result as _make_result
+        from tests.v4._helpers.v43_coverage import _compile as _compile_doc
+        from tests.v4._helpers.v43_coverage import _document as _make_doc
+        from tests.v4._helpers.v43_coverage import _items as _assemble_items
+        from tests.v4._helpers.v43_coverage import _result as _make_result
 
         compiled = _compile_doc(_make_doc())
         (item,) = _assemble_items(compiled, 1)
@@ -1584,9 +1584,9 @@ class TestBatchLeftoverBranches:
         from confflow.execution.batch import BatchStepExecutor as _Batch
         from confflow.execution.process import NativeProcessSupervisor as _Supervisor
         from confflow.execution.work_item_executor import WorkItemExecutor as _Executor
-        from tests.v4.test_v43_coverage import _compile as _compile_doc
-        from tests.v4.test_v43_coverage import _document as _make_doc
-        from tests.v4.test_v43_coverage import _items as _assemble_items
+        from tests.v4._helpers.v43_coverage import _compile as _compile_doc
+        from tests.v4._helpers.v43_coverage import _document as _make_doc
+        from tests.v4._helpers.v43_coverage import _items as _assemble_items
 
         compiled = _compile_doc(_make_doc())
         (item,) = _assemble_items(compiled, 1)
@@ -1618,9 +1618,9 @@ class TestBatchLeftoverBranches:
         from confflow.execution.batch import BatchStepExecutor as _Batch
         from confflow.execution.process import NativeProcessSupervisor as _Supervisor
         from confflow.execution.work_item_executor import WorkItemExecutor as _Executor
-        from tests.v4.test_v43_coverage import _compile as _compile_doc
-        from tests.v4.test_v43_coverage import _document as _make_doc
-        from tests.v4.test_v43_coverage import _items as _assemble_items
+        from tests.v4._helpers.v43_coverage import _compile as _compile_doc
+        from tests.v4._helpers.v43_coverage import _document as _make_doc
+        from tests.v4._helpers.v43_coverage import _items as _assemble_items
 
         compiled = _compile_doc(_make_doc())
         (item,) = _assemble_items(compiled, 1)
@@ -1846,18 +1846,18 @@ class TestRecoverPriorBranches:
         self._handoff_inbox(tmp_path, handoff, token="tok1")
         with SqliteWorkItemStore.open(store_path(str(tmp_path / "run"), STEP_ID)) as store:
             transport = self._transport(tmp_path, store)
-            from tests.v4.test_v43_coverage import _compile as _compile_doc
-            from tests.v4.test_v43_coverage import _document as _make_doc
-            from tests.v4.test_v43_coverage import _items as _assemble_items
+            from tests.v4._helpers.v43_coverage import _compile as _compile_doc
+            from tests.v4._helpers.v43_coverage import _document as _make_doc
+            from tests.v4._helpers.v43_coverage import _items as _assemble_items
 
             compiled = _compile_doc(_make_doc())
             (item,) = _assemble_items(compiled, 1)
             assert transport._recover_prior_result(item, "other-token") is None
 
     def test_corrupt_prior_returns_none(self, tmp_path: Path) -> None:
-        from tests.v4.test_v43_coverage import _compile as _compile_doc
-        from tests.v4.test_v43_coverage import _document as _make_doc
-        from tests.v4.test_v43_coverage import _items as _assemble_items
+        from tests.v4._helpers.v43_coverage import _compile as _compile_doc
+        from tests.v4._helpers.v43_coverage import _document as _make_doc
+        from tests.v4._helpers.v43_coverage import _items as _assemble_items
 
         compiled = _compile_doc(_make_doc())
         (item,) = _assemble_items(compiled, 1)
@@ -1882,9 +1882,9 @@ class TestRecoverPriorBranches:
     def test_non_result_import_raises(self, tmp_path: Path) -> None:
         import unittest.mock as _mock
 
-        from tests.v4.test_v43_coverage import _compile as _compile_doc
-        from tests.v4.test_v43_coverage import _document as _make_doc
-        from tests.v4.test_v43_coverage import _items as _assemble_items
+        from tests.v4._helpers.v43_coverage import _compile as _compile_doc
+        from tests.v4._helpers.v43_coverage import _document as _make_doc
+        from tests.v4._helpers.v43_coverage import _items as _assemble_items
 
         compiled = _compile_doc(_make_doc())
         (item,) = _assemble_items(compiled, 1)
@@ -1919,9 +1919,9 @@ class TestRecoverPriorBranches:
     def test_launch_token_format(self, tmp_path: Path) -> None:
         with SqliteWorkItemStore.open(store_path(str(tmp_path / "run"), STEP_ID)) as store:
             transport = self._transport(tmp_path, store)
-            from tests.v4.test_v43_coverage import _compile as _compile_doc
-            from tests.v4.test_v43_coverage import _document as _make_doc
-            from tests.v4.test_v43_coverage import _items as _assemble_items
+            from tests.v4._helpers.v43_coverage import _compile as _compile_doc
+            from tests.v4._helpers.v43_coverage import _document as _make_doc
+            from tests.v4._helpers.v43_coverage import _items as _assemble_items
 
             compiled = _compile_doc(_make_doc())
             (item,) = _assemble_items(compiled, 1)
@@ -2046,10 +2046,10 @@ class TestResultBundleChecksumBranches:
         from confflow.domain.artifact import ArtifactSet as _DomainArtifacts
         from confflow.domain.completion import WorkItemStatus as _Status
         from confflow.remote.result_bundle import ResultBundleError, package_result_bundle
-        from tests.v4.test_v43_coverage import _compile as _compile_doc
-        from tests.v4.test_v43_coverage import _document as _make_doc
-        from tests.v4.test_v43_coverage import _items as _assemble_items
-        from tests.v4.test_v43_coverage import _result as _make_result
+        from tests.v4._helpers.v43_coverage import _compile as _compile_doc
+        from tests.v4._helpers.v43_coverage import _document as _make_doc
+        from tests.v4._helpers.v43_coverage import _items as _assemble_items
+        from tests.v4._helpers.v43_coverage import _result as _make_result
 
         compiled = _compile_doc(_make_doc())
         (item,) = _assemble_items(compiled, 1)

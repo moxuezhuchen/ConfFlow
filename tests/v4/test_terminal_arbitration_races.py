@@ -48,7 +48,7 @@ from confflow.persistence import arbitration
 from confflow.persistence.contracts import PersistenceError
 from confflow.persistence.generation import load_run_generation
 from confflow.workflow.v4.assembly import RunInputs
-from tests.v4.test_audit_regressions_r2 import WATER_XYZ, _science_native, _single_step_doc
+from tests.v4._helpers.audit_native import WATER_XYZ, _science_native, _single_step_doc
 
 TIMEOUT = 60.0
 CANCEL_ITERATIONS = 100

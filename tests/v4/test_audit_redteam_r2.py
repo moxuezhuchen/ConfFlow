@@ -37,16 +37,18 @@ from confflow.persistence.contracts import store_path
 from confflow.persistence.work_items import SqliteWorkItemStore
 from confflow.remote.transport import RemoteTransport
 from confflow.workflow.v4.assembly import RunInputs
-from tests.v4.test_audit_regressions_r2 import (
+from tests.v4._helpers.audit_native import (
     REPO_ROOT,
     WATER_XYZ,
-    TestR6GenerationLifecycle,
     _digest_over,
     _last_record,
     _launches,
+    _science_chain_native,
     _science_native,
     _single_step_doc,
     _stored_environment_digest,
+    _tspes_doc,
+    _tspes_inputs,
 )
 
 RED_TEAM_ENV = "CF_R2_REDTEAM_SCIENCE"
@@ -142,7 +144,7 @@ class TestRedTeamTarget:
     def test_bad_target_on_a_later_step_launches_nothing(self, tmp_path: Path) -> None:
         """A typo on step 2 must not let step 1 run first."""
         script = _redteam_native(tmp_path)
-        doc = copy.deepcopy(TestR6GenerationLifecycle._tspes_doc(script, sp="-70", freq="-60"))
+        doc = copy.deepcopy(_tspes_doc(script, sp="-70", freq="-60"))
         # Make the *last* step (analysis) carry the bad target.
         doc["steps"][-1]["execution"] = {"target": "cluster-r2-ghost"}
         with pytest.raises(DomainError):
@@ -206,13 +208,13 @@ class TestRedTeamReferences:
             project_analysis_groups,
         )
 
-        script = TestR6GenerationLifecycle._science_chain_native(tmp_path)
-        doc = TestR6GenerationLifecycle._tspes_doc(script, sp="-70", freq="-60")
+        script = _science_chain_native(tmp_path)
+        doc = _tspes_doc(script, sp="-70", freq="-60")
         run_root = tmp_path / "run"
         first = V4RunApplication(supervisor=NativeProcessSupervisor()).run(
             V4RunRequest(
                 workflow_document=doc,
-                run_inputs=TestR6GenerationLifecycle._tspes_inputs(),
+                run_inputs=_tspes_inputs(),
                 run_root=str(run_root),
                 import_sources=FrozenDict({"structures": WATER_XYZ}),
             )
@@ -274,8 +276,8 @@ class TestRedTeamReferences:
 
 class TestRedTeamTspes:
     def test_different_numbers_yield_matching_barriers(self, tmp_path: Path) -> None:
-        script = TestR6GenerationLifecycle._science_chain_native(tmp_path)
-        doc = TestR6GenerationLifecycle._tspes_doc(script, sp="-123.4", freq="-45.6")
+        script = _science_chain_native(tmp_path)
+        doc = _tspes_doc(script, sp="-123.4", freq="-45.6")
         run_root = tmp_path / "run"
         report = V4RunApplication(supervisor=NativeProcessSupervisor()).run(
             V4RunRequest(

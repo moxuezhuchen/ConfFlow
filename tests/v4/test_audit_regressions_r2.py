@@ -39,58 +39,24 @@ from confflow.application.v4_run import (
 )
 from confflow.domain import FrozenDict
 from confflow.domain.errors import DomainError
-from confflow.execution.environment import ExecutionEnvironment, measure_executable
 from confflow.execution.process import NativeProcessSupervisor
 from confflow.persistence.contracts import store_path
 from confflow.persistence.work_items import SqliteWorkItemStore
 from confflow.producer import get_recipe_v4
-from confflow.programs.registry import get_program_adapter
 from confflow.workflow.v4.assembly import RunInputs
-
-REPO_ROOT = Path(__file__).resolve().parents[2]
-FAKE_ORCA = Path(__file__).resolve().parent / "fakes" / "fake_orca.py"
-
-WATER_XYZ = "3\nwater\nO 0 0 0\nH .76 .59 0\nH .76 -.59 0\n"
-
-
-def _science_native(root: Path, *, delay: float = 0.0) -> Path:
-    """Install the audit fake native: records launch + received env.
-
-    The script appends one line per launch to ``science-count`` and dumps
-    the complete environment it actually received plus the value it used
-    for the reported energy.  ``SCIENCE_ENV`` (or its absence) drives a
-    real, observable scientific difference.
-    """
-    root.mkdir(parents=True, exist_ok=True)
-    script = root / "science_orca"
-    script.write_text(textwrap.dedent(f"""\
-            #!{sys.executable}
-            import json, os, sys, time
-            from pathlib import Path
-            sys.path.insert(0, {str(REPO_ROOT)!r})
-            from tests.v4.fakes import fake_orca as f
-            count = Path({str(root / "science-count")!r})
-            lines = count.read_text().splitlines() if count.exists() else []
-            count.write_text("\\n".join(lines + ["launch"]) + "\\n")
-            record = Path({str(root / "science-record")!r})
-            record.write_text(json.dumps({{
-                "value": os.environ.get("SCIENCE_ENV", "ABSENT"),
-                "env": dict(os.environ),
-            }}))
-            time.sleep({delay!r})
-            f.ENERGY_HARTREE = float(os.environ.get("SCIENCE_ENV", -30))
-            os.environ["FAKE_MODE"] = "ts_candidate"
-            sys.exit(f.main(sys.argv))
-            """))
-    script.chmod(0o755)
-    return script
-
-
-def _launches(root: Path) -> int:
-    count = root / "science-count"
-    if not count.exists():
-        return 0
-    return len(count.read_text().splitlines())
+from tests.v4._helpers.audit_native import (
+    REPO_ROOT,
+    WATER_XYZ,
+    _digest_over,
+    _last_record,
+    _launches,
+    _science_chain_native,
+    _science_native,
+    _single_step_doc,
+    _stored_environment_digest,
+    _tspes_doc,
+    _tspes_inputs,
+)
 
 
 def _chain_launches(root: Path) -> int:
@@ -99,22 +65,6 @@ def _chain_launches(root: Path) -> int:
     if not count.exists():
         return 0
     return len(count.read_text().splitlines())
-
-
-def _last_record(root: Path) -> dict[str, Any]:
-    return json.loads((root / "science-record").read_text())
-
-
-def _single_step_doc(executable: Path, *, env: dict[str, str] | None = None) -> dict[str, Any]:
-    """Recipe-derived one-step document (the R1 attack shape)."""
-    doc = copy.deepcopy(get_recipe_v4("tspes")["document"])
-    doc["steps"] = doc["steps"][:1]
-    doc["global"] = {"scientific_defaults": {"charge": 0, "multiplicity": 1}}
-    execution: dict[str, Any] = {"executable": str(executable)}
-    if env is not None:
-        execution["env"] = dict(env)
-    doc["steps"][0]["execution"] = execution
-    return doc
 
 
 def _water_inputs() -> RunInputs:
@@ -143,28 +93,6 @@ def _energy(report: Any) -> Any:
         item.value for step in report.step_results for item in step.results if item.kind == "energy"
     ]
     return results[0] if results else None
-
-
-def _stored_environment_digest(run_root: Path, step_id: str) -> str:
-    """Return the single item's durable environment digest from the store."""
-    with SqliteWorkItemStore.open(store_path(str(run_root), step_id)) as store:
-        item_ids = store.list_items()
-        assert len(item_ids) == 1, item_ids
-        registered = store.get_registered(item_ids[0])
-    digest = registered["environment_digest"]
-    assert isinstance(digest, str) and digest.startswith("sha256:")
-    return digest
-
-
-def _digest_over(executable: Path, env: dict[str, str]) -> str:
-    """Recompute the exact environment digest over a launched env mapping."""
-    identity = measure_executable(str(executable), adapter=get_program_adapter("orca"))
-    return ExecutionEnvironment(
-        program="orca",
-        program_version=identity.program_version,
-        executable_digest=identity.digest,
-        relevant_env=FrozenDict(env),
-    ).digest()
 
 
 class TestR1EnvironmentIdentity:
@@ -753,8 +681,8 @@ class TestR5TypedGrouping:
     def test_plain_xyz_derives_entity_group_identity(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        script = TestR6GenerationLifecycle._science_chain_native(tmp_path)
-        doc = TestR6GenerationLifecycle._tspes_doc(script, sp="-70", freq="-60")
+        script = _science_chain_native(tmp_path)
+        doc = _tspes_doc(script, sp="-70", freq="-60")
         run_root = tmp_path / "run"
         report = self._run_plain(doc, WATER_XYZ, run_root)
         assert report.status == "completed"
@@ -773,8 +701,8 @@ class TestR5TypedGrouping:
     def test_twenty_plain_ts_blocks_yield_twenty_groups(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        script = TestR6GenerationLifecycle._science_chain_native(tmp_path)
-        doc = TestR6GenerationLifecycle._tspes_doc(script, sp="-70", freq="-60")
+        script = _science_chain_native(tmp_path)
+        doc = _tspes_doc(script, sp="-70", freq="-60")
         blocks = []
         for index in range(20):
             shift = index * 0.013
@@ -798,8 +726,8 @@ class TestR5TypedGrouping:
     def test_grouping_requirement_fails_closed_before_native(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        script = TestR6GenerationLifecycle._science_chain_native(tmp_path)
-        doc = TestR6GenerationLifecycle._tspes_doc(script, sp="-70", freq="-60")
+        script = _science_chain_native(tmp_path)
+        doc = _tspes_doc(script, sp="-70", freq="-60")
         # Remove the typed grouping contract: the workflow still needs
         # reaction grouping, but the input cannot establish identity.
         del doc["inputs"]["structures"]["grouping"]
@@ -813,72 +741,11 @@ class TestR5TypedGrouping:
 class TestR6GenerationLifecycle:
     """R6: a new generation can never leave an old manifest current."""
 
-    @staticmethod
-    def _science_chain_native(root: Path) -> Path:
-        """Fake native for the full TSPES chain (freq failure switchable)."""
-        root.mkdir(parents=True, exist_ok=True)
-        script = root / "chain_orca"
-        script.write_text(textwrap.dedent(f"""\
-                #!{sys.executable}
-                import os, sys
-                from pathlib import Path
-                sys.path.insert(0, {str(REPO_ROOT)!r})
-                from tests.v4.fakes import fake_orca as f
-                counter = Path({str(root / "chain-count")!r})
-                lines = counter.read_text().splitlines() if counter.exists() else []
-                counter.write_text("\\n".join(lines + ["launch"]) + "\\n")
-                text = open(sys.argv[1]).read()
-                cwd = os.getcwd()
-                if "IRC" in text:
-                    os.execv(sys.executable, [sys.executable, {str(REPO_ROOT / "tests/v4/fakes/fake_irc.py")!r}, *sys.argv[1:]])
-                if "Freq" in text:
-                    os.environ["FAKE_MODE"] = "success_freq_noshift"
-                    ts = "/ts_freq/" in cwd
-                    f.ENERGY_HARTREE = float(os.environ["TS_FREQ_E"]) if ts else -65.0
-                    f.GIBBS_CORRECTION = 0.10 if ts else 0.20
-                elif " SP" in text:
-                    os.environ["FAKE_MODE"] = "success_sp"
-                    f.ENERGY_HARTREE = float(os.environ["TS_SP_E"]) if "/ts_sp/" in cwd else -80.0
-                elif "OptTS" in text:
-                    os.environ["FAKE_MODE"] = "ts_candidate"
-                else:
-                    os.environ["FAKE_MODE"] = "success_opt"
-                sys.exit(f.main(sys.argv))
-                """))
-        script.chmod(0o755)
-        return script
-
-    @staticmethod
-    def _tspes_doc(script: Path, *, sp: str, freq: str) -> dict[str, Any]:
-
-        doc = copy.deepcopy(get_recipe_v4("tspes")["document"])
-        doc["global"] = {"scientific_defaults": {"charge": 0, "multiplicity": 1}}
-        for step in doc["steps"]:
-            if step["executor"] == "calculation":
-                step["execution"] = {
-                    "executable": str(script),
-                    "env": {"TS_SP_E": sp, "TS_FREQ_E": freq},
-                }
-        return doc
-
-    @staticmethod
-    def _tspes_inputs() -> RunInputs:
-        from dataclasses import replace as _replace
-
-        from confflow.domain import StructureSet
-
-        (record,) = tuple(import_xyz(WATER_XYZ))
-        # Stable group identity for this pre-R5 helper: a constant group key
-        # survives import-map reconciliation; lineage re-roots to the
-        # persisted entity id on both the fresh and resumed paths.
-        record = _replace(record, group_key="rxn")
-        return RunInputs(structures=FrozenDict({"structures": StructureSet.of(record)}))
-
     def _run_tspes(self, doc: dict[str, Any], run_root: Path) -> Any:
         return V4RunApplication(supervisor=NativeProcessSupervisor()).run(
             V4RunRequest(
                 workflow_document=doc,
-                run_inputs=self._tspes_inputs(),
+                run_inputs=_tspes_inputs(),
                 run_root=str(run_root),
                 import_sources=FrozenDict({"structures": WATER_XYZ}),
             )
@@ -890,9 +757,9 @@ class TestR6GenerationLifecycle:
         """Case A: gen1 completed, gen2 fails downstream -> gen2 truth wins."""
         from confflow.persistence.generation import load_run_generation
 
-        script = self._science_chain_native(tmp_path)
+        script = _science_chain_native(tmp_path)
         run_root = tmp_path / "run"
-        first = self._run_tspes(self._tspes_doc(script, sp="-70", freq="-60"), run_root)
+        first = self._run_tspes(_tspes_doc(script, sp="-70", freq="-60"), run_root)
         assert first.status == "completed"
         first_manifest = json.loads((run_root / RUN_RESULT_FILENAME).read_text())
         first_generation = load_run_generation(str(run_root))
@@ -900,7 +767,7 @@ class TestR6GenerationLifecycle:
         assert first_generation.status == "completed"
         assert first_manifest["generation_id"] == first_generation.generation_id
 
-        failing = self._tspes_doc(script, sp="-70", freq="invalid-number")
+        failing = _tspes_doc(script, sp="-70", freq="invalid-number")
         with pytest.raises(DomainError):
             self._run_tspes(failing, run_root)
 
@@ -924,9 +791,9 @@ class TestR6GenerationLifecycle:
         """Case B: upstream failed -> blocked downstream -> explicit terminal."""
         from confflow.persistence.generation import load_run_generation
 
-        script = self._science_chain_native(tmp_path)
+        script = _science_chain_native(tmp_path)
         run_root = tmp_path / "run"
-        doc = self._tspes_doc(script, sp="-70", freq="invalid-number")
+        doc = _tspes_doc(script, sp="-70", freq="invalid-number")
         with pytest.raises(DomainError):
             self._run_tspes(doc, run_root)
         generation = load_run_generation(str(run_root))
@@ -941,9 +808,9 @@ class TestR6GenerationLifecycle:
     ) -> None:
         from confflow.persistence.generation import load_run_generation
 
-        script = self._science_chain_native(tmp_path)
+        script = _science_chain_native(tmp_path)
         run_root = tmp_path / "run"
-        doc = self._tspes_doc(script, sp="-70", freq="-60")
+        doc = _tspes_doc(script, sp="-70", freq="-60")
         first = self._run_tspes(doc, run_root)
         assert first.status == "completed"
         first_launches = _chain_launches(tmp_path)

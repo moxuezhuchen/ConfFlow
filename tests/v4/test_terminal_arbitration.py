@@ -54,19 +54,9 @@ from confflow.execution.process import NativeProcessSupervisor
 from confflow.persistence import arbitration
 from confflow.persistence.generation import load_run_generation
 from confflow.workflow.v4.assembly import RunInputs
-from tests.v4.test_audit_regressions_r2 import (
-    REPO_ROOT,
-    WATER_XYZ,
-    _science_native,
-    _single_step_doc,
-)
-from tests.v4.test_crossstate_hardening import (
-    RUN_ID as CONTROL_RUN_ID,
-)
-from tests.v4.test_crossstate_hardening import (
-    _control_setup,
-    _crash_worker,
-)
+from tests.v4._helpers.arbitration_state import RUN_ID as CONTROL_RUN_ID
+from tests.v4._helpers.arbitration_state import _control_setup, _crash_worker
+from tests.v4._helpers.audit_native import REPO_ROOT, WATER_XYZ, _science_native, _single_step_doc
 
 ARBITRATION_DEADLOCK_TIMEOUT = 60.0
 
@@ -601,9 +591,13 @@ class TestMatrixCGenerationWriters:
     def test_c5_g2_failed_g1_late_completed_manifest_rejected(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        from tests.v4.test_audit_regressions_r2 import TestR6GenerationLifecycle
+        from tests.v4._helpers.audit_native import (
+            _science_chain_native,
+            _tspes_doc,
+            _tspes_inputs,
+        )
 
-        chain = TestR6GenerationLifecycle._science_chain_native(tmp_path)
+        chain = _science_chain_native(tmp_path)
         run_root = tmp_path / "run"
         barrier = _PublicationBarrier(monkeypatch, position="before")
         results: dict[str, Any] = {}
@@ -612,7 +606,7 @@ class TestMatrixCGenerationWriters:
             return V4RunApplication(supervisor=NativeProcessSupervisor()).run(
                 V4RunRequest(
                     workflow_document=doc,
-                    run_inputs=TestR6GenerationLifecycle._tspes_inputs(),
+                    run_inputs=_tspes_inputs(),
                     run_root=str(run_root),
                     import_sources=FrozenDict({"structures": WATER_XYZ}),
                 )
@@ -620,9 +614,7 @@ class TestMatrixCGenerationWriters:
 
         def g1() -> None:
             try:
-                results["g1"] = run_chain(
-                    TestR6GenerationLifecycle._tspes_doc(chain, sp="-70", freq="-60")
-                )
+                results["g1"] = run_chain(_tspes_doc(chain, sp="-70", freq="-60"))
             except Exception as exc:  # noqa: BLE001
                 results["g1_error"] = exc
 
@@ -635,7 +627,7 @@ class TestMatrixCGenerationWriters:
         from confflow.domain.errors import DomainError
 
         with pytest.raises(DomainError):
-            run_chain(TestR6GenerationLifecycle._tspes_doc(chain, sp="-70", freq="invalid-number"))
+            run_chain(_tspes_doc(chain, sp="-70", freq="invalid-number"))
         g2 = _generation(run_root)
         assert g2.status == "failed"
 

@@ -21,7 +21,7 @@ from confflow.science.confgen.torsion import (
     measure_dihedral,
     wrap_degrees,
 )
-from tests.v4.test_repair_executors import _butane
+from tests.v4._helpers.repair import _butane
 
 
 def _butane_context(**overrides):

@@ -41,7 +41,14 @@ from confflow.persistence import (
 from confflow.persistence.artifacts import ArtifactIntegrityError, plan_gc
 from confflow.persistence.recovery import owner_identity_current, reconcile_owner
 from confflow.persistence.work_items import SqliteWorkItemStore
-from tests.v4.test_v43_coverage import (
+from tests.v4._helpers.publication_doubles import (
+    _double,
+    _forged_ref,
+    _inject_result,
+    _publish_valid,
+    _valid_payload,
+)
+from tests.v4._helpers.v43_coverage import (
     STEP_ID,
     _items,
     _register,
@@ -52,37 +59,10 @@ from tests.v4.test_v43_coverage import (
 FAKE_ORCA = Path(__file__).resolve().parent / "fakes" / "fake_orca.py"
 
 
-def _valid_payload(item: Any) -> dict[str, Any]:
-    """Return a valid completed-result payload for *item*."""
-    return _result(item, status=WorkItemStatus.COMPLETED).to_dict()
-
-
-def _inject_result(store: SqliteWorkItemStore, item: Any, payload: Any) -> None:
-    """Overwrite the latest attempt result JSON directly in SQLite."""
-    import json as _json
-
-    text = payload if isinstance(payload, (bytes, str)) else _json.dumps(payload)
-    if isinstance(text, str):
-        text = text.encode("utf-8")
-    connection = sqlite3.connect(store.path)
-    try:
-        connection.execute(
-            "UPDATE attempts SET status = 'completed', result_json = ?" " WHERE work_item_id = ?",
-            (text.decode("utf-8", errors="surrogateescape"), item.id),
-        )
-        connection.execute(
-            "UPDATE items SET status = 'completed' WHERE work_item_id = ?",
-            (item.id,),
-        )
-        connection.commit()
-    finally:
-        connection.close()
-
-
 def _setup_claimed(tmp_path: Path) -> tuple[SqliteWorkItemStore, Any]:
     """Register and claim one item, returning the open store and the item."""
-    from tests.v4.test_v43_coverage import _compile as _compile_doc
-    from tests.v4.test_v43_coverage import _document as _make_doc
+    from tests.v4._helpers.v43_coverage import _compile as _compile_doc
+    from tests.v4._helpers.v43_coverage import _document as _make_doc
 
     compiled = _compile_doc(_make_doc())
     (item,) = _items(compiled, 1)
@@ -317,39 +297,14 @@ class TestStoreRowCorruption:
             store.close()
 
 
-def _forged_ref(artifact_id: str, kind: Any, path: Any, uri: Any) -> ArtifactRef:
-    """Build an artifact reference bypassing the domain constructor."""
-    from confflow.domain.artifact import ArtifactLocator as _Locator
-    from confflow.domain.artifact import ArtifactRef as _Ref
-    from confflow.domain.retention import RetentionClass as _RC
-
-    locator = object.__new__(_Locator)
-    object.__setattr__(locator, "kind", kind)
-    object.__setattr__(locator, "path", path)
-    object.__setattr__(locator, "uri", uri)
-    ref = object.__new__(_Ref)
-    object.__setattr__(ref, "id", artifact_id)
-    object.__setattr__(ref, "role", "native_output")
-    object.__setattr__(ref, "locator", locator)
-    object.__setattr__(ref, "checksum", None)
-    object.__setattr__(ref, "media_type", None)
-    object.__setattr__(ref, "program", None)
-    object.__setattr__(ref, "producer_step_id", None)
-    object.__setattr__(ref, "producer_work_item_id", None)
-    object.__setattr__(ref, "subject_structure_id", None)
-    object.__setattr__(ref, "retention", _RC.RETAINED)
-    object.__setattr__(ref, "metadata", FrozenDict({}))
-    return ref
-
-
 class TestPublicationCorruptionMatrix:
     """Every publication rebuild branch fails closed on corrupt files."""
 
     def _publish_valid(self, tmp_path: Path) -> str:
         from confflow.persistence.publication import publish_step_result, rebuild_step_result
-        from tests.v4.test_v43_coverage import _compile as _compile_doc
-        from tests.v4.test_v43_coverage import _document as _make_doc
-        from tests.v4.test_v43_coverage import _items as _assemble_items
+        from tests.v4._helpers.v43_coverage import _compile as _compile_doc
+        from tests.v4._helpers.v43_coverage import _document as _make_doc
+        from tests.v4._helpers.v43_coverage import _items as _assemble_items
 
         compiled = _compile_doc(_make_doc())
         items = _assemble_items(compiled, 2)
@@ -709,9 +664,9 @@ class TestBatchSeams:
     """Batch validation and contested-claim unit seams."""
 
     def test_preflight_variants(self, tmp_path: Path) -> None:
-        from tests.v4.test_v43_coverage import _compile as _compile_doc
-        from tests.v4.test_v43_coverage import _document as _make_doc
-        from tests.v4.test_v43_coverage import _items as _assemble_items
+        from tests.v4._helpers.v43_coverage import _compile as _compile_doc
+        from tests.v4._helpers.v43_coverage import _document as _make_doc
+        from tests.v4._helpers.v43_coverage import _items as _assemble_items
 
         compiled = _compile_doc(_make_doc())
         (item,) = _assemble_items(compiled, 1)
@@ -736,9 +691,9 @@ class TestBatchSeams:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setenv("FAKE_MODE", "success_opt")
-        from tests.v4.test_v43_coverage import _compile as _compile_doc
-        from tests.v4.test_v43_coverage import _document as _make_doc
-        from tests.v4.test_v43_coverage import _items as _assemble_items
+        from tests.v4._helpers.v43_coverage import _compile as _compile_doc
+        from tests.v4._helpers.v43_coverage import _document as _make_doc
+        from tests.v4._helpers.v43_coverage import _items as _assemble_items
 
         compiled = _compile_doc(_make_doc())
         (item,) = _assemble_items(compiled, 1)
@@ -783,9 +738,9 @@ class TestBatchSeams:
             assert result.status is WorkItemStatus.COMPLETED
 
     def test_contested_retry_then_blocked(self, tmp_path: Path) -> None:
-        from tests.v4.test_v43_coverage import _compile as _compile_doc
-        from tests.v4.test_v43_coverage import _document as _make_doc
-        from tests.v4.test_v43_coverage import _items as _assemble_items
+        from tests.v4._helpers.v43_coverage import _compile as _compile_doc
+        from tests.v4._helpers.v43_coverage import _document as _make_doc
+        from tests.v4._helpers.v43_coverage import _items as _assemble_items
 
         compiled = _compile_doc(_make_doc())
         (item,) = _assemble_items(compiled, 1)
@@ -833,11 +788,11 @@ class TestRoundThree:
     """Remaining branch closure: metadata shapes, links, doubles, rivals."""
 
     def test_store_metadata_variants(self, tmp_path: Path) -> None:
-        from tests.v4.test_v43_coverage import _compile as _compile_doc
-        from tests.v4.test_v43_coverage import _document as _make_doc
-        from tests.v4.test_v43_coverage import _items as _assemble_items
-        from tests.v4.test_v43_matrices import _inject_result as _inject
-        from tests.v4.test_v43_matrices import _valid_payload as _payload
+        from tests.v4._helpers.publication_doubles import _inject_result as _inject
+        from tests.v4._helpers.publication_doubles import _valid_payload as _payload
+        from tests.v4._helpers.v43_coverage import _compile as _compile_doc
+        from tests.v4._helpers.v43_coverage import _document as _make_doc
+        from tests.v4._helpers.v43_coverage import _items as _assemble_items
 
         compiled = _compile_doc(_make_doc())
         (item,) = _assemble_items(compiled, 1)
@@ -916,10 +871,10 @@ class TestRoundThree:
                 assert store.get_result(item.id) is not None
 
     def test_store_extra_misuse(self, tmp_path: Path) -> None:
-        from tests.v4.test_v43_coverage import _compile as _compile_doc
-        from tests.v4.test_v43_coverage import _document as _make_doc
-        from tests.v4.test_v43_coverage import _items as _assemble_items
-        from tests.v4.test_v43_coverage import _result as _make_result
+        from tests.v4._helpers.v43_coverage import _compile as _compile_doc
+        from tests.v4._helpers.v43_coverage import _document as _make_doc
+        from tests.v4._helpers.v43_coverage import _items as _assemble_items
+        from tests.v4._helpers.v43_coverage import _result as _make_result
 
         compiled = _compile_doc(_make_doc())
         (item,) = _assemble_items(compiled, 1)
@@ -951,10 +906,8 @@ class TestRoundThree:
             load_published_step_result,
             publish_step_result,
         )
-        from tests.v4.test_v43_matrices import TestPublicationCorruptionMatrix as _Matrix
 
-        helper = _Matrix()
-        run_root = helper._publish_valid(tmp_path)
+        run_root = _publish_valid(tmp_path)
         target = Path(step_result_path(run_root, STEP_ID))
         base = _json.loads(target.read_bytes().decode("utf-8"))
         variants: list[Any] = [
@@ -1043,7 +996,7 @@ class TestRoundThree:
     def test_planning_locator_variants(self, tmp_path: Path) -> None:
         from confflow.domain.artifact import LocatorKind as _Kind
         from confflow.domain.retention import RetentionClass as _RC
-        from tests.v4.test_v43_matrices import _forged_ref as _forge
+        from tests.v4._helpers.publication_doubles import _forged_ref as _forge
 
         run_root = str(tmp_path / "run")
         os.makedirs(os.path.join(run_root, "steps", "s_opt"))
@@ -1119,26 +1072,22 @@ class TestRoundThree:
 
     def test_probe_pid_branches(self) -> None:
         from confflow.persistence.recovery import _probe_pid
-        from tests.v4.test_v43_matrices import TestPsutilDoubles as _Doubles
 
-        helper = _Doubles()
-        assert _probe_pid(pid=4242, psutil_mod=helper._double()).live is False
-        fake = helper._double(procs={4242: "process-error"})
+        assert _probe_pid(pid=4242, psutil_mod=_double()).live is False
+        fake = _double(procs={4242: "process-error"})
         assert _probe_pid(pid=4242, psutil_mod=fake).live is None
-        fake = helper._double(procs={4242: {"running": False}})
+        fake = _double(procs={4242: {"running": False}})
         assert _probe_pid(pid=4242, psutil_mod=fake).live is False
-        fake = helper._double(procs={4242: {"status": "gone"}})
+        fake = _double(procs={4242: {"status": "gone"}})
         assert _probe_pid(pid=4242, psutil_mod=fake).live is False
-        fake = helper._double(procs={4242: {"status": "error"}})
+        fake = _double(procs={4242: {"status": "error"}})
         assert _probe_pid(pid=4242, psutil_mod=fake).live is None
-        fake = helper._double(procs={4242: {"create_time": "error"}})
+        fake = _double(procs={4242: {"create_time": "error"}})
         assert _probe_pid(pid=4242, psutil_mod=fake).live is None
 
     def test_candidate_branches(self) -> None:
-        from tests.v4.test_v43_matrices import TestPsutilDoubles as _Doubles
 
-        helper = _Doubles()
-        fake = helper._double()
+        fake = _double()
 
         class _ZombieInfo:
             pid = 1111
@@ -1187,10 +1136,7 @@ class TestRoundThree:
     def test_scan_self_and_stranger(self) -> None:
         import os as _os
 
-        from tests.v4.test_v43_matrices import TestPsutilDoubles as _Doubles
-
-        helper = _Doubles()
-        fake = helper._double()
+        fake = _double()
         import confflow.persistence.recovery as _recovery
 
         class _Self:
@@ -1212,7 +1158,7 @@ class TestRoundThree:
                 owner=OwnerIdentity(
                     owner_token="t", pid=4242, process_group_id=_os.getpgid(_os.getpid())
                 ),
-                psutil_mod=helper._double(everything=(_Self(),)),
+                psutil_mod=_double(everything=(_Self(),)),
             )
             is False
         )
@@ -1226,7 +1172,7 @@ class TestRoundThree:
         assert (
             _recovery._boundary_has_survivor(
                 owner=OwnerIdentity(owner_token="t", pid=4242, session_id=_os.getsid(_os.getpid())),
-                psutil_mod=helper._double(everything=(_Stranger(),)),
+                psutil_mod=_double(everything=(_Stranger(),)),
             )
             is False
         )
@@ -1235,9 +1181,9 @@ class TestRoundThree:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setenv("FAKE_MODE", "success_opt")
-        from tests.v4.test_v43_coverage import _compile as _compile_doc
-        from tests.v4.test_v43_coverage import _document as _make_doc
-        from tests.v4.test_v43_coverage import _items as _assemble_items
+        from tests.v4._helpers.v43_coverage import _compile as _compile_doc
+        from tests.v4._helpers.v43_coverage import _document as _make_doc
+        from tests.v4._helpers.v43_coverage import _items as _assemble_items
 
         compiled = _compile_doc(_make_doc())
         (item,) = _assemble_items(compiled, 1)

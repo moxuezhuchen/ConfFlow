@@ -24,9 +24,9 @@ from confflow.persistence import (
     store_path,
 )
 from confflow.persistence.work_items import SqliteWorkItemStore
-from tests.v4.test_v43_coverage import _compile as _compile_doc
-from tests.v4.test_v43_coverage import _document as _make_doc
-from tests.v4.test_v43_coverage import _items as _assemble_items
+from tests.v4._helpers.v43_coverage import _compile as _compile_doc
+from tests.v4._helpers.v43_coverage import _document as _make_doc
+from tests.v4._helpers.v43_coverage import _items as _assemble_items
 
 STEP_ID = "s_opt"
 
