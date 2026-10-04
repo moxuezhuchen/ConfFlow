@@ -26,7 +26,8 @@ CONFGEN_SCOPE = "tests/v4/test_confgen_*.py"
 
 #: Tool files bound by content, relative to the ConfFlow tree root.  The
 #: capture plugin, the shared digest/validation module, the runner, the
-#: golden checker and the existing TS1/contract helpers.
+#: golden checker, the existing TS1/contract helpers and the sitecustomize
+#: hook that actually steers test imports.
 TOOL_RELPATHS = (
     "docs/refactor/tools/capture_engine_reports.py",
     "docs/refactor/tools/capture_provenance.py",
@@ -34,9 +35,20 @@ TOOL_RELPATHS = (
     "docs/refactor/tools/ts1_engine.py",
     "docs/refactor/tools/contract_digests.py",
     "docs/refactor/tools-acc/run_sharded.py",
+    "docs/refactor/tools-acc/noeditable/sitecustomize.py",
 )
 
 BAD_OUTCOMES = ("failed", "error")
+
+#: Untracked files under these top-level directories can still be imported by
+#: Python or collected by pytest, so they participate in the tree digest.
+UNTRACKED_SCAN_DIRS = ("confflow", "tests")
+#: Untracked root-level files that influence pytest/Python behavior.
+UNTRACKED_ROOT_CONFIGS = ("conftest.py", "pyproject.toml", "pytest.ini", "setup.cfg", "tox.ini")
+#: Run artifacts that must never enter the digest (caches, logs, archives,
+#: user data such as ``research/``).
+UNTRACKED_EXCLUDE_DIR_NAMES = {"__pycache__", "research", ".git"}
+UNTRACKED_EXCLUDE_SUFFIXES = (".pyc", ".pyo", ".log", ".tar.gz")
 
 
 def sha256_bytes(data: bytes) -> str:
@@ -54,20 +66,51 @@ def nodes_digest(nodeids: list[str] | set[str]) -> str:
     return h.hexdigest()
 
 
-def tree_source_digest(root: Path) -> str:
-    """Content digest over all git-tracked files of ``root`` read from disk.
+def _relevant_untracked(root: Path) -> list[bytes]:
+    """Untracked files that Python/pytest could actually pick up.
 
-    Reads the working-tree bytes (not HEAD), so any uncommitted modification
-    of a tracked file changes the digest.  Tracked-but-deleted files are
-    hashed as a MISSING marker.  Untracked files do not participate.
+    ``git ls-files --others --exclude-standard`` minus run artifacts: caches,
+    logs, archives and ``research/`` never participate, and only source/test
+    directories plus root-level pytest/Python configs are relevant.
+    """
+    proc = subprocess.run(
+        ["git", "-C", str(root), "ls-files", "--others", "-z", "--exclude-standard"],
+        capture_output=True,
+        check=True,
+    )
+    relevant = []
+    for rel in sorted(f for f in proc.stdout.split(b"\0") if f):
+        parts = Path(rel.decode("utf-8")).parts
+        name = parts[-1]
+        if name.endswith(".tar.gz") or any(name.endswith(s) for s in UNTRACKED_EXCLUDE_SUFFIXES):
+            continue
+        if any(p in UNTRACKED_EXCLUDE_DIR_NAMES for p in parts[:-1]):
+            continue
+        if len(parts) == 1 and name in UNTRACKED_ROOT_CONFIGS:
+            relevant.append(rel)
+        elif parts[0] in UNTRACKED_SCAN_DIRS:
+            relevant.append(rel)
+    return relevant
+
+
+def tree_source_digest(root: Path) -> str:
+    """Content digest over the CF source/tests/config actually on disk.
+
+    Covers every git-tracked file read from the working tree (not HEAD, so
+    uncommitted modifications change the digest; tracked-but-deleted files
+    hash as a MISSING marker) plus untracked files that Python/pytest could
+    still import or collect (``confflow/``, ``tests/`` and root-level
+    pytest/Python configs).  Caches, logs, archives, ``research/`` and other
+    run artifacts are excluded.
     """
     files = subprocess.run(
         ["git", "-C", str(root), "ls-files", "-z"],
         capture_output=True,
         check=True,
     ).stdout.split(b"\0")
+    files = sorted({f for f in files if f} | set(_relevant_untracked(root)))
     h = hashlib.sha256()
-    for rel in sorted(f for f in files if f):
+    for rel in files:
         path = root.joinpath(*Path(rel.decode("utf-8")).parts)
         if path.is_file() and not path.is_symlink():
             digest = sha256_bytes(path.read_bytes())
@@ -112,17 +155,29 @@ def build_manifest(
     tally: dict[str, int],
     out_file: Path,
     reports_dir: Path,
+    cf_source_sha256: str | None = None,
+    tools_sha256: dict[str, str] | None = None,
+    jd_src_sha256: str | None = None,
 ) -> dict[str, Any]:
-    """Assemble the completion manifest (does not write it)."""
+    """Assemble the completion manifest (does not write it).
+
+    The digest arguments let the runner pass the END digests it already
+    compared against the pre-run values, so the manifest binds exactly the
+    verified content instead of a recomputation that could race ahead.
+    """
     return {
         "kind": KIND,
         "status": "complete",
         "run_id": run_id,
         "cf_path": str(cf),
-        "cf_source_sha256": tree_source_digest(cf),
-        "tools_sha256": tool_digests(cf),
+        "cf_source_sha256": (
+            cf_source_sha256 if cf_source_sha256 is not None else tree_source_digest(cf)
+        ),
+        "tools_sha256": tools_sha256 if tools_sha256 is not None else tool_digests(cf),
         "jd_src_path": str(jd_src),
-        "jd_src_sha256": directory_source_digest(jd_src),
+        "jd_src_sha256": (
+            jd_src_sha256 if jd_src_sha256 is not None else directory_source_digest(jd_src)
+        ),
         "nodes_sha256": nodes_digest(nodeids),
         "node_count": len(nodeids),
         "tally": dict(tally),

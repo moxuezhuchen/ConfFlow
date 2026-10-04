@@ -9,6 +9,7 @@ stand in for a full product run or a complete golden_check.
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 import sys
@@ -77,6 +78,8 @@ class ConfgenEngine:
         return _Run(f"run-{_SEQ}")
 """
 
+# Tool files copied into the fixture CF tree (left UNTRACKED there on purpose:
+# they must be bound by the tool digest, not by the CF source digest).
 TOOL_FILES = {
     "docs/refactor/tools/capture_engine_reports.py",
     "docs/refactor/tools/capture_provenance.py",
@@ -84,6 +87,7 @@ TOOL_FILES = {
     "docs/refactor/tools/ts1_engine.py",
     "docs/refactor/tools/contract_digests.py",
     "docs/refactor/tools-acc/run_sharded.py",
+    "docs/refactor/tools-acc/noeditable/sitecustomize.py",
 }
 
 
@@ -91,7 +95,21 @@ def _clean(nodeid: str) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]+", "_", nodeid).strip("_")
 
 
-def _fixture(tmp: Path, *, failing: bool = False) -> Path:
+def _jdpin(cf: Path) -> Path:
+    return cf.parent / "jdpin"
+
+
+def _jd_src(cf: Path) -> Path:
+    return _jdpin(cf) / "src"
+
+
+def _fixture(
+    tmp: Path,
+    *,
+    failing: bool = False,
+    jd_mutator: bool = False,
+    tool_mutator: bool = False,
+) -> Path:
     files = {
         "confflow/__init__.py": "",
         "confflow/domain/__init__.py": "",
@@ -119,23 +137,52 @@ def _fixture(tmp: Path, *, failing: bool = False) -> Path:
     }
     if failing:
         files["tests/test_plain.py"] += "def test_plain_failing():\n    assert False\n"
+    if jd_mutator:
+        files["tests/test_jd_mutator.py"] = (
+            "import os\nfrom pathlib import Path\n\n\n"
+            "def test_touch_jd():\n"
+            "    if os.environ.get('E23TEST_JD_MUTATE') != '1':\n"
+            "        return\n"
+            "    with (Path(os.environ['JOBDESK_V2_SRC']) / 'marker.py').open('a') as fh:\n"
+            "        fh.write('# mutated during run\\n')\n"
+        )
+    if tool_mutator:
+        files["tests/test_tool_mutator.py"] = (
+            "import os\nfrom pathlib import Path\n\n\n"
+            "def test_touch_tool():\n"
+            "    if os.environ.get('E23TEST_TOOL_MUTATE') != '1':\n"
+            "        return\n"
+            "    tool = Path.cwd() / 'docs/refactor/tools/ts1_engine.py'\n"
+            "    with tool.open('a') as fh:\n"
+            "        fh.write('# mutated during run\\n')\n"
+        )
     for rel, text in files.items():
         path = tmp / rel
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text)
-    # The tools are part of the CF tree content binding: copy them in.
     for rel in TOOL_FILES:
         path = tmp / rel
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text((CF_ROOT / rel).read_text())
-    (tmp / "jdpin" / "src").mkdir(parents=True)
-    (tmp / "jdpin" / "src" / "marker.py").write_text("MARKER = 1\n")
+    # The JD source tree lives OUTSIDE the CF tree.
+    (_jdpin(tmp) / "src").mkdir(parents=True, exist_ok=True)
+    (_jd_src(tmp) / "marker.py").write_text("MARKER = 1\n")
     for args in (["init", "-q"], ["add", "-A"]):
         subprocess.run(["git", *args], cwd=tmp, check=True, capture_output=True)
+    # Tool copies stay untracked: only real CF source/tests/config participate
+    # in the tree digest; tools are bound separately via the tool digest.
+    subprocess.run(
+        ["git", "rm", "--cached", "-r", "-f", "-q", "docs"],
+        cwd=tmp,
+        check=True,
+        capture_output=True,
+    )
     return tmp
 
 
-def _run_runner(cf: Path, out: Path, *extra: str) -> subprocess.CompletedProcess[str]:
+def _run_runner(
+    cf: Path, out: Path, jdpin: Path, *extra: str, env: dict[str, str] | None = None
+) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [
             sys.executable,
@@ -147,11 +194,12 @@ def _run_runner(cf: Path, out: Path, *extra: str) -> subprocess.CompletedProcess
             "--shards",
             "2",
             "--jdpin",
-            str(cf / "jdpin"),
+            str(jdpin),
             *extra,
         ],
         capture_output=True,
         text=True,
+        env={**os.environ, **(env or {})},
     )
 
 
@@ -167,7 +215,7 @@ def _capture_args(capture: Path, run_id: str = "run-1") -> list[str]:
 def test_runner_without_capture_keeps_old_behavior(tmp_path: Path) -> None:
     cf = _fixture(tmp_path / "cf")
     out = tmp_path / "out.json"
-    proc = _run_runner(cf, out)
+    proc = _run_runner(cf, out, _jdpin(cf))
     assert proc.returncode == 0, proc.stderr
     outcomes = json.loads(out.read_text())
     assert len(outcomes) == 6
@@ -179,7 +227,7 @@ def test_capture_success_binds_manifest_and_plain_tests_still_run(tmp_path: Path
     cf = _fixture(tmp_path / "cf")
     out = tmp_path / "out.json"
     capture = tmp_path / "capture"
-    proc = _run_runner(cf, out, *_capture_args(capture))
+    proc = _run_runner(cf, out, _jdpin(cf), *_capture_args(capture))
     assert proc.returncode == 0, proc.stderr
     outcomes = json.loads((capture / "out.json").read_text())
     # Non-ConfGen tests were executed, not skipped.
@@ -201,14 +249,14 @@ def test_capture_success_binds_manifest_and_plain_tests_still_run(tmp_path: Path
         )
     }
     assert not [p for p in names if "plain" in p]
-    assert prov.verify_capture(capture, run_id="run-1", cf=cf, jd_src=cf / "jdpin" / "src") == []
+    assert prov.verify_capture(capture, run_id="run-1", cf=cf, jd_src=_jd_src(cf)) == []
 
 
 def test_failed_shard_produces_no_manifest_and_no_out(tmp_path: Path) -> None:
     cf = _fixture(tmp_path / "cf", failing=True)
     out = tmp_path / "out.json"
     capture = tmp_path / "capture"
-    proc = _run_runner(cf, out, *_capture_args(capture))
+    proc = _run_runner(cf, out, _jdpin(cf), *_capture_args(capture))
     assert proc.returncode != 0
     assert not (capture / "manifest.json").exists()
     assert not out.exists()
@@ -221,6 +269,7 @@ def test_missing_junit_aborts_without_manifest(tmp_path: Path) -> None:
     proc = _run_runner(
         cf,
         tmp_path / "out.json",
+        _jdpin(cf),
         *_capture_args(tmp_path / "capture"),
         "--junitxml=" + str(elsewhere),
     )
@@ -234,6 +283,7 @@ def test_deselected_node_is_reported_missing(tmp_path: Path) -> None:
     proc = _run_runner(
         cf,
         tmp_path / "out.json",
+        _jdpin(cf),
         *_capture_args(tmp_path / "capture"),
         "-k",
         "not slow",
@@ -269,8 +319,8 @@ def test_verify_rejects_tampering(tmp_path: Path) -> None:
     cf = _fixture(tmp_path / "cf")
     capture = tmp_path / "capture"
     out = tmp_path / "out.json"
-    assert _run_runner(cf, out, *_capture_args(capture)).returncode == 0
-    jd_src = cf / "jdpin" / "src"
+    assert _run_runner(cf, out, _jdpin(cf), *_capture_args(capture)).returncode == 0
+    jd_src = _jd_src(cf)
 
     wrong_id = prov.verify_capture(capture, run_id="run-0", cf=cf, jd_src=jd_src)
     assert any("run_id" in p for p in wrong_id)
@@ -281,11 +331,25 @@ def test_verify_rejects_tampering(tmp_path: Path) -> None:
     assert any("CF source content changed" in p for p in drifted)
 
 
+def test_untracked_science_source_cannot_silently_reuse(tmp_path: Path) -> None:
+    cf = _fixture(tmp_path / "cf")
+    capture = tmp_path / "capture"
+    assert (
+        _run_runner(cf, tmp_path / "out.json", _jdpin(cf), *_capture_args(capture)).returncode == 0
+    )
+    probe = cf / "confflow" / "_accept_untracked_probe.py"
+    probe.write_text("X = 1\n")
+    problems = prov.verify_capture(capture, run_id="run-1", cf=cf, jd_src=_jd_src(cf))
+    assert any("CF source content changed" in p for p in problems)
+
+
 def test_verify_rejects_tool_and_jd_changes(tmp_path: Path) -> None:
     cf = _fixture(tmp_path / "cf")
     capture = tmp_path / "capture"
-    assert _run_runner(cf, tmp_path / "out.json", *_capture_args(capture)).returncode == 0
-    jd_src = cf / "jdpin" / "src"
+    assert (
+        _run_runner(cf, tmp_path / "out.json", _jdpin(cf), *_capture_args(capture)).returncode == 0
+    )
+    jd_src = _jd_src(cf)
 
     tool_copy = cf / "docs" / "refactor" / "tools" / "ts1_engine.py"
     tool_copy.write_text(tool_copy.read_text() + "# tool touch\n")
@@ -302,11 +366,25 @@ def test_verify_rejects_tool_and_jd_changes(tmp_path: Path) -> None:
     )
 
 
+def test_noeditable_change_fails_reuse(tmp_path: Path) -> None:
+    cf = _fixture(tmp_path / "cf")
+    capture = tmp_path / "capture"
+    assert (
+        _run_runner(cf, tmp_path / "out.json", _jdpin(cf), *_capture_args(capture)).returncode == 0
+    )
+    sitecustomize = cf / "docs" / "refactor" / "tools-acc" / "noeditable" / "sitecustomize.py"
+    sitecustomize.write_text(sitecustomize.read_text() + "# touch\n")
+    problems = prov.verify_capture(capture, run_id="run-1", cf=cf, jd_src=_jd_src(cf))
+    assert any("tool content changed" in p for p in problems)
+
+
 def test_verify_rejects_missing_extra_and_corrupt_reports(tmp_path: Path) -> None:
     cf = _fixture(tmp_path / "cf")
     capture = tmp_path / "capture"
-    assert _run_runner(cf, tmp_path / "out.json", *_capture_args(capture)).returncode == 0
-    jd_src = cf / "jdpin" / "src"
+    assert (
+        _run_runner(cf, tmp_path / "out.json", _jdpin(cf), *_capture_args(capture)).returncode == 0
+    )
+    jd_src = _jd_src(cf)
     reports = capture / "engine_reports"
     victim = sorted(reports.glob("*.json"))[0]
     original = victim.read_bytes()
@@ -335,24 +413,56 @@ def test_verify_rejects_missing_extra_and_corrupt_reports(tmp_path: Path) -> Non
 def test_verify_rejects_incomplete_manifest(tmp_path: Path) -> None:
     cf = _fixture(tmp_path / "cf")
     capture = tmp_path / "capture"
-    assert _run_runner(cf, tmp_path / "out.json", *_capture_args(capture)).returncode == 0
+    assert (
+        _run_runner(cf, tmp_path / "out.json", _jdpin(cf), *_capture_args(capture)).returncode == 0
+    )
     manifest = json.loads((capture / "manifest.json").read_text())
     manifest["status"] = "partial"
     (capture / "manifest.json").write_text(json.dumps(manifest))
-    problems = prov.verify_capture(capture, run_id="run-1", cf=cf, jd_src=cf / "jdpin" / "src")
+    problems = prov.verify_capture(capture, run_id="run-1", cf=cf, jd_src=_jd_src(cf))
     assert any("status" in p for p in problems)
 
     (capture / "manifest.json").unlink()
-    problems = prov.verify_capture(capture, run_id="run-1", cf=cf, jd_src=cf / "jdpin" / "src")
+    problems = prov.verify_capture(capture, run_id="run-1", cf=cf, jd_src=_jd_src(cf))
     assert any("manifest.json missing" in p for p in problems)
 
 
 def test_runner_rejects_capture_dir_inside_cf(tmp_path: Path) -> None:
     cf = _fixture(tmp_path / "cf")
-    proc = _run_runner(cf, tmp_path / "out.json", *_capture_args(cf / "capture"))
+    proc = _run_runner(cf, tmp_path / "out.json", _jdpin(cf), *_capture_args(cf / "capture"))
     assert proc.returncode == 4
     assert "outside" in proc.stderr
     assert not (cf / "capture" / "manifest.json").exists()
+
+
+def test_jd_change_during_run_writes_no_manifest(tmp_path: Path) -> None:
+    cf = _fixture(tmp_path / "cf", jd_mutator=True)
+    capture = tmp_path / "capture"
+    proc = _run_runner(
+        cf,
+        tmp_path / "out.json",
+        _jdpin(cf),
+        *_capture_args(capture),
+        env={"E23TEST_JD_MUTATE": "1"},
+    )
+    assert proc.returncode != 0
+    assert "JD source content changed" in proc.stderr
+    assert not (capture / "manifest.json").exists()
+
+
+def test_tool_change_during_run_writes_no_manifest(tmp_path: Path) -> None:
+    cf = _fixture(tmp_path / "cf", tool_mutator=True)
+    capture = tmp_path / "capture"
+    proc = _run_runner(
+        cf,
+        tmp_path / "out.json",
+        _jdpin(cf),
+        *_capture_args(capture),
+        env={"E23TEST_TOOL_MUTATE": "1"},
+    )
+    assert proc.returncode != 0
+    assert "tool content changed" in proc.stderr
+    assert not (capture / "manifest.json").exists()
 
 
 def test_golden_pair_args_validation(tmp_path: Path) -> None:
@@ -375,7 +485,9 @@ def test_golden_pair_args_validation(tmp_path: Path) -> None:
 def test_golden_rejects_stale_run_id_before_any_live_work(tmp_path: Path) -> None:
     cf = _fixture(tmp_path / "cf")
     capture = tmp_path / "capture"
-    assert _run_runner(cf, tmp_path / "out.json", *_capture_args(capture)).returncode == 0
+    assert (
+        _run_runner(cf, tmp_path / "out.json", _jdpin(cf), *_capture_args(capture)).returncode == 0
+    )
     base = tmp_path / "base"
     (base / "ts1").mkdir(parents=True)
     (base / "engine_reports").mkdir()
@@ -390,7 +502,7 @@ def test_golden_rejects_stale_run_id_before_any_live_work(tmp_path: Path) -> Non
             "--cf",
             str(cf),
             "--jd-src",
-            str(cf / "jdpin" / "src"),
+            str(_jd_src(cf)),
             "--engine-capture",
             str(capture),
             "--run-id",

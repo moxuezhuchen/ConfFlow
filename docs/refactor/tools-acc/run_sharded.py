@@ -79,6 +79,8 @@ def _setup_capture(cf: Path, capture_arg: str, run_id: str, jdpin: str) -> dict:
         "tools_dir": tools_dir,
         "jd_src": jd_src,
         "cf_digest_pre": prov.tree_source_digest(cf),
+        "jd_digest_pre": prov.directory_source_digest(jd_src),
+        "tools_pre": prov.tool_digests(cf),
     }
 
 
@@ -249,8 +251,15 @@ def main(argv: list[str] | None = None) -> int:
     if capture:
         shutil.copyfile(Path(args.out), capture["dir"] / "out.json")
         merged = _merge_reports(capture)
-        if capture["prov"].tree_source_digest(cf) != capture["cf_digest_pre"]:
+        cf_digest = capture["prov"].tree_source_digest(cf)
+        if cf_digest != capture["cf_digest_pre"]:
             raise CaptureError("CF source content changed during the run")
+        jd_digest = capture["prov"].directory_source_digest(capture["jd_src"])
+        if jd_digest != capture["jd_digest_pre"]:
+            raise CaptureError("JD source content changed during the run")
+        tools = capture["prov"].tool_digests(cf)
+        if tools != capture["tools_pre"]:
+            raise CaptureError("acceptance tool content changed during the run")
         manifest = capture["prov"].build_manifest(
             run_id=args.run_id,
             cf=cf,
@@ -260,6 +269,9 @@ def main(argv: list[str] | None = None) -> int:
             tally=dict(Counter(outcomes.values())),
             out_file=capture["dir"] / "out.json",
             reports_dir=merged,
+            cf_source_sha256=cf_digest,
+            tools_sha256=tools,
+            jd_src_sha256=jd_digest,
         )
         # The completion manifest is written LAST: its mere existence under a
         # nonempty capture directory means every check above has passed.

@@ -26,8 +26,15 @@
   全部通过后才写 `manifest.json`（status=complete，最后写入）。任何失败
   都以非零码退出且**不产生 manifest**。
 - manifest 绑定：本轮 run-id、CF 路径、CF 源/测试/配置**内容**摘要（读取
-  工作树而非 HEAD；运行前后各算一次，变化即失败）、工具文件内容摘要、
-  JD 源树内容摘要、节点摘要与数量、tally、out.json 与全部报告的 sha256。
+  工作树而非 HEAD；运行前后各算一次，变化即失败）、工具文件内容摘要
+  （含 `noeditable/sitecustomize.py`；同样前后校验）、JD 源树内容摘要
+  （同样前后校验，运行中 JD 变化即失败且无 manifest）、节点摘要与数量、
+  tally、out.json 与全部报告的 sha256。manifest 使用与前置比较**相同的
+  结束摘要**构造，避免比较与写入之间再次计算。
+- CF 摘要覆盖 git 跟踪文件（读工作树）**加**未跟踪但可被 Python 导入或
+  pytest 收集的 `confflow/`、`tests/` 下源码与根级 pytest/Python 配置
+  （`conftest.py`、`pyproject.toml` 等）；缓存、日志、归档（`*.tar.gz`）、
+  `research/` 等运行副产物与用户数据明确排除，不参与摘要。
 - 捕获目录必须事先不存在或为空，且位于 CF 树与 JD 源树之外。
 
 ## golden 复用
