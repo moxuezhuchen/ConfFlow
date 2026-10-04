@@ -9,3 +9,4 @@
 - A1-1 `f8752e6`（`refactor/a1-empty-inputs`）：验收通过（diff 与补丁一致；全量 4480/10；golden ok；契约/边界摘要不变）。A1 三卡序列完成：A1-2 `6f5bbde` → A1-3 `bc2a0b4` → A1-1 `f8752e6`，未推送，待用户决定。端到端复现（共线 C6，w1 到 w4）：四种工作流均退出码 1、`status: failed`、无回溯，`failures` 首条分别为 `confgen_no_realized_structures`（仅 ConfGen）与 `run_not_executable`（下游步骤被挡住）。
 - A2-b：执行器第一次因 `a2` 工作树里有验收方预演遗留的暂存改动而按规则停止（验收方的疏漏，已清理；补丁未变）。待重新传给执行器。
 - 推送（2026-10-04，用户："都可以推送"）：`refactor/cleanup-d1`（715c018，D1a + D1b）与 `refactor/a1-empty-inputs`（f8752e6，A1-2/A1-3/A1-1）已推送；推送前历史扫描无密钥、无本地绝对路径、无导出文件（唯一命中是 CHANGELOG 里提到已移除的 `results.db` 读取器）。push 触发的 CI：run 37174742202（d1）与 37174742159（a1），`test-matrix` 3.10 到 3.13 与 `coverage` 全部 success。远端 `main` 仍为 afdf9df。A2-b 未推送（执行器尚未提交）。
+- A2-b `801ad07`（`refactor/a2-connectivity-report`）：验收通过（diff 与补丁一致；全量 4477/10；golden ok，契约/边界摘要 5 项不变）。未推送，待用户决定。C1 评估材料已写：`docs/refactor/plan2/C1-evaluation.md`（TS1 上 1.15 与 1.2 的 refine 结果相同；未动代码）。
