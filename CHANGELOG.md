@@ -5,6 +5,58 @@
 > The archived-snapshot notice below describes the earlier repository state. ConfFlow is active again
 > as JobDesk's external chemistry workflow dependency beginning with v1.4.0.
 
+## Unreleased — Architecture diet: legacy native path retired
+
+User-visible changes of the 2026-10 architecture diet. Every item names the
+ConfFlow commit (card) that made it. ConfGen now has one input form, typed
+`schema_version: 3`. The configuration contract changed (it no longer publishes
+`confgen.native`); removing the legacy native path (`250f947`) left the
+published boundary (`confflow.boundary.v4`) byte-identical.
+
+### Removed
+
+- **`confgen.native`** (the legacy `chains` / `paths` / `angle_step` / `no_rotate`
+  / `max_conformers` vocabulary) is gone from workflows, from the editor
+  manifest and from the configuration contract. A workflow that still carries it
+  is rejected with `unknown_member`; rewrite it as typed v3 (see
+  `docs/USAGE.md`, "迁移旧文档里的 `confgen.native`"). `250f947` (C4.3), with
+  the dead chain-language helpers removed by `ea93daa` (C4.4), `888f872`
+  (C4.5) and `015a174` (C4.6).
+- **`confflow export`** and the `results.db` reader. `a261bbf` (C5.2b).
+- **The standalone `confts`, `confgen` and `confrefine` commands**, the legacy
+  calculation tooling (`confflow.calc`), `confflow.blocks`, and the
+  `CalcStepRunner` / `CalcStepRequest` / `CalcStepResult` exports. The
+  process-recognition set is now just `confflow`. `2f95dc1` (C5.2), `deadf46`
+  (C5.3d + C5.4), `da44bf5` (C5.5), `b84f84b` (C5.6 to C5.8).
+- **Producer boundary members and digests no consumer reads.** `e5c3032` (C3.2).
+- **The retired-runtime stubs and the `run_workflow` lazy export.** `8eda87f`
+  (C1.2).
+
+### Added
+
+- **Intent compilation to typed v3.** The simplified-input compiler maps a legacy
+  `paths` scope to `schema_version: 3` mechanically; any other legacy native
+  vocabulary and `waypoint` paths are refused at compile time, with a hint to use
+  explicit `torsions`. `2e0295a` (IS.2), `c094af4` (IS.3), `6046b44` (IS.2c).
+- **`topology_bonds` and `mapping_budget` for `refine`.** A typed topology
+  (covalent, coordination, forming and breaking edges) can be declared for
+  `refine`; the node budget of the mapping search is configurable. `6521581`
+  (C5.3c-1), `efbaecd` (C5.3b).
+- **ConfGen report provenance fields** are declared in the configuration
+  contract. `8d968dc` (C3.3).
+
+### Changed
+
+- **`refine` merges symmetry-equivalent relabellings** (for example the three
+  hydrogens of a methyl group) by comparing structures under element- and
+  edge-preserving mappings; the duplicate threshold is a strict `<`. `da047c0`
+  (C5.3a), `efbaecd` (C5.3b).
+- **v3 ConfGen refuses a path endpoint that is a terminal atom** (rotating it is
+  geometrically a no-op) and the diagnostic names the offending key. This is
+  stricter than the legacy route. `0a9f28d` (IS.2b).
+- **Documentation rewritten** around the V4-only runtime (architecture,
+  development, testing, usage, command reference). `4900cb8` (C4.7).
+
 ## v2.1.6 (2026-08-27) - Attestation-verification fix-forward
 
 ### Fixed

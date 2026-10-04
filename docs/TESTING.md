@@ -15,7 +15,7 @@ pytest --collect-only -q | tail -1   # 当前收集到的测试数（文档不�
 
 - 覆盖率门禁 `fail_under = 85`（`pyproject.toml`；CI 的 coverage 任务执行）。
 - 真实的 Gaussian / ORCA 不在测试范围内；所有计算类测试都用 `tests/v4/fakes/`（`fake_g16.py`、`fake_orca.py`、
-  `fake_goat.py`、`fake_irc.py`、`fake_neb.py`）和 `tests/fake_orca.sh` 这类行为可控的假可执行文件。
+  `fake_goat.py`、`fake_irc.py`、`fake_neb.py`）这类行为可控的假可执行文件。
 
 ## 2. 目录
 
@@ -24,8 +24,7 @@ pytest --collect-only -q | tail -1   # 当前收集到的测试数（文档不�
 | `tests/v4/` | V4 的主体：domain、编译器、digest、执行器、持久化、resume、remote、分析、producer 契约/边界/authoring/intent、ConfGen v3（torsion / ring / coordination / 报告）、refine 与拓扑、架构护栏、跨仓测试 |
 | `tests/science/` | `confflow.science` 的图同构映射与帧比较（含按节点数/剪枝数固定的工作量测试）和带氢分子数据 `data/molecules_h.json` |
 | `tests/` 根目录 | 入口与基础设施：CLI、控制协议适配器与外部 worker、执行服务与 SQLite 仓库、安装/发布溯源与 wheel 安装器、路径策略、日志、I/O、数据表、键感知、示例工作流、退役 wire 的失败关闭 |
-| `tests/fixtures/` | 静态夹具：ConfGen（含 TS1 基准）、控制协议、durable 存储、Gaussian 日志样例 |
-| `tests/input/` | 输入 XYZ 样例 |
+| `tests/fixtures/` | 静态夹具：ConfGen（含 TS1 基准）、控制协议、Gaussian 日志样例 |
 | `tests/conftest.py`、`tests/v4/conftest.py`、`tests/v4/_builders.py` | 共享 fixtures、替身与构造器 |
 
 ## 3. 标记
