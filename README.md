@@ -27,10 +27,21 @@ It is not recommended for:
 
 The shared source tree, this isolated v2.1.6 fix-forward candidate, the
 published v2.1.3 package, and the configured production executable are distinct
-identities. The protected v2.1.4 and v2.1.5 tags are failed tag-only release
-attempts with no GitHub Release or assets; neither is reused. The v2.1.6
-candidate is not published, and the current production endpoint remains
-ConfFlow v2.0.0.
+identities.
+
+- `confflow --version` prints "2.1.6" in this checkout; the candidate wheel
+  `confflow-2.1.6-py3-none-any.whl` is a local review artifact, not a release.
+- `confflow --capabilities --json` emits the install identity block, whose
+  producer block contains `"version": "2.1.6"`. Only
+  `producer.install_provenance.status == "verified"` is acceptable as
+  production input; `"missing"`/`"invalid"` are diagnostic-only.
+- The protected v2.1.4 and v2.1.5 tags are failed tag-only release attempts
+  with no GitHub Release or assets; v2.1.5 is not a fix-forward candidate.
+  The v2.1.6 fix-forward candidate remains unpublished, and the production
+  endpoint remains ConfFlow v2.0.0.
+- `v4-core-closure` is an internal architecture tag, not a public wire
+  version or release.
+
 Candidate wheels are local review artifacts and do not replace the published
 package or promote a production endpoint.
 
