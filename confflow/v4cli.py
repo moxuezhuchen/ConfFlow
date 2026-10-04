@@ -209,6 +209,7 @@ def _run(args: argparse.Namespace) -> int:
     from .application.v4_run import V4RunApplication, V4RunRequest, import_xyz
     from .core.exceptions import ConfFlowError
     from .domain._immutable import FrozenDict
+    from .domain.errors import DomainError
     from .execution.process import NativeProcessSupervisor
     from .workflow.v4.assembly import RunInputs
 
@@ -238,15 +239,18 @@ def _run(args: argparse.Namespace) -> int:
         if not program or not path:
             raise ValueError(f"--executable entry must be PROG=PATH, got {assignment!r}")
         executables[program] = path
-    report = V4RunApplication(supervisor=NativeProcessSupervisor()).run(
-        V4RunRequest(
-            workflow_document=document,
-            run_inputs=RunInputs(structures=FrozenDict(structures)),
-            run_root=args.run_root,
-            owner_token=args.owner_token,
-            executables=FrozenDict(executables),
+    try:
+        report = V4RunApplication(supervisor=NativeProcessSupervisor()).run(
+            V4RunRequest(
+                workflow_document=document,
+                run_inputs=RunInputs(structures=FrozenDict(structures)),
+                run_root=args.run_root,
+                owner_token=args.owner_token,
+                executables=FrozenDict(executables),
+            )
         )
-    )
+    except DomainError as exc:
+        return _report_run_failure(args, exc)
     payload = {
         "run_id": report.run_id,
         "status": report.status,
@@ -256,9 +260,80 @@ def _run(args: argparse.Namespace) -> int:
         ],
         "manifest": report.manifest.thaw(),
     }
+    if report.status != "completed":
+        payload["failures"] = _step_failures(payload["manifest"])
     if args.json:
         sys.stdout.write(json.dumps(payload, indent=2, sort_keys=True))
         sys.stdout.write("\n")
     else:
         print(f"run {report.run_id}: {report.status}", file=sys.stderr)
     return 0 if report.status == "completed" else 1
+
+
+def _report_run_failure(args: argparse.Namespace, exc: Exception) -> int:
+    """Report a run that failed with a domain error as a structured failure.
+
+    The application has already published the failed generation's terminal
+    truth (``run_result.json``) before the exception reaches this point; the
+    report reuses its steps and digest and names the reason, so ``--json``
+    always carries a report and the process exits non-zero without a traceback.
+    """
+    import os
+
+    run_id = os.path.basename(str(args.run_root).rstrip(os.sep)) or "run"
+    manifest: dict[str, Any] = {}
+    try:
+        with open(os.path.join(str(args.run_root), "run_result.json"), encoding="utf-8") as handle:
+            loaded = json.load(handle)
+        if isinstance(loaded, dict):
+            manifest = loaded
+    except (OSError, ValueError):
+        manifest = {}
+    steps = [
+        {"id": item.get("id"), "status": item.get("status")}
+        for item in manifest.get("steps", ())
+        if isinstance(item, dict)
+    ]
+    payload = {
+        "run_id": run_id,
+        "status": "failed",
+        "definition_digest": manifest.get("definition_digest"),
+        "steps": steps,
+        "failures": [
+            {
+                "step_id": None,
+                "code": "run_not_executable",
+                "message": str(exc),
+            },
+            *_step_failures(manifest),
+        ],
+        "manifest": manifest,
+    }
+    if args.json:
+        sys.stdout.write(json.dumps(payload, indent=2, sort_keys=True))
+        sys.stdout.write("\n")
+    else:
+        print(f"Error: {exc}", file=sys.stderr)
+    return 1
+
+
+def _step_failures(manifest: dict[str, Any]) -> list[dict[str, Any]]:
+    """List the error diagnostics of the failed steps of a run manifest.
+
+    One entry per error diagnostic: ``step_id``, the diagnostic ``code`` and its
+    ``message``.  This is the machine-readable reason a run did not complete.
+    """
+    failures: list[dict[str, Any]] = []
+    for step in manifest.get("steps", ()):
+        if not isinstance(step, dict) or step.get("status") != "failed":
+            continue
+        for item in step.get("diagnostics", ()):
+            if isinstance(item, dict) and item.get("severity") == "error":
+                failures.append(
+                    {
+                        "step_id": step.get("id"),
+                        "code": item.get("code"),
+                        "message": item.get("message"),
+                    }
+                )
+    return failures
