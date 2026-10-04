@@ -3,7 +3,7 @@
 """Intent compiles legacy ConfGen paths scopes into typed ``schema_version: 3`` (IS.2).
 
 The mapping is pinned to the IS.1 equivalence golden
-(``docs/refactor/paths_equivalence``): every case is mapped by the golden's own
+(``tests/fixtures/paths_equivalence``): every case is mapped by the golden's own
 ``map_native``, and every hydrogen-bearing ``EQUIVALENT`` case is executed from the
 *compiled* block and must reproduce the golden's recorded v3 output.
 """
@@ -21,7 +21,7 @@ import pytest
 
 from confflow.producer.intent import IntentCompilationError, compile_intent
 
-GOLDEN = Path(__file__).resolve().parent.parent.parent / "docs" / "refactor" / "paths_equivalence"
+GOLDEN = Path(__file__).resolve().parent.parent / "fixtures" / "paths_equivalence"
 SCOPE_KEYS = {"paths", "angle_step", "bond_scale", "strict_path_bond_check"}
 
 

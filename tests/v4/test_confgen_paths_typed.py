@@ -34,7 +34,7 @@ from confflow.science.confgen.torsion.stage import TorsionStage
 from confflow.workflow.v4.confgen_schema import ConfgenModelV3
 from tests.v4.test_repair_executors import _ctx, _item, _sci
 
-GOLDEN = Path(__file__).resolve().parent.parent.parent / "docs" / "refactor" / "paths_equivalence"
+GOLDEN = Path(__file__).resolve().parent.parent / "fixtures" / "paths_equivalence"
 
 
 def _hexane(

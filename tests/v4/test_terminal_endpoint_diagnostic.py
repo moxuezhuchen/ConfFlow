@@ -21,7 +21,7 @@ import pytest
 
 from confflow.producer.intent import compile_intent
 
-GOLDEN = Path(__file__).resolve().parent.parent.parent / "docs" / "refactor" / "paths_equivalence"
+GOLDEN = Path(__file__).resolve().parent.parent / "fixtures" / "paths_equivalence"
 
 
 def _golden() -> Any:

@@ -94,4 +94,4 @@ pytest -q                  # 见 TESTING.md；scripts/test.sh 会把所有产物
 
 2026 年的架构瘦身（删除 calc/blocks/legacy CLI、边界瘦身、输入简化、refine 对称映射）的计划、逐卡验收和检查点在
 `docs/refactor/`：`PLAN.md`（任务卡）、`LOG.md`（验收记录）、`baseline/`（TS1 与引擎报告基线及各阶段检查点）、
-`paths_equivalence/`（legacy paths 与 typed v3 的等价性证据）。验收协议在 `docs/process/ACCEPTANCE.md`，通用规则在 `docs/process/RULES.md`，验收工具在 `tools/refactor/` 与并列的 `tools/refactor-acc/`。这些文件是历史记录与证据，普通开发不需要改它们。
+等价性证据 `paths_equivalence/` 已迁至 `tests/fixtures/paths_equivalence/`。验收协议在 `docs/process/ACCEPTANCE.md`，通用规则在 `docs/process/RULES.md`，验收工具在 `tools/refactor/` 与并列的 `tools/refactor-acc/`。这些文件是历史记录与证据，普通开发不需要改它们。
