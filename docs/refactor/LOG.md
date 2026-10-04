@@ -641,3 +641,13 @@
 - 删除工作树（清理前逐个确认无未提交改动，其提交均已在 `origin/main` / `origin/master` 或对应远端分支中）：CF 的 `cf-c5`、`cf-for-jd`、`exec-cf-is`、`exec-cf`、`l1`、`p4-proto`、`p4`、`side-merge`；JD 的 `accjd`、`exec-jd`、`jd-p4`、`jd-pin`、`jd-pin-cf`、`jd-pin-p4`。保留 `/opt/cf-worktrees/refactor-plan`（`docs/refactor-plan` 分支，计划、验收记录、各卡补丁）。
 - 删除 `/tmp/refactor-acc/`（验收临时输出）与 `/tmp/refactor-venv`。
 - 未删除任何分支。仍存在的本地分支包括 `refactor/diet-p4`、`refactor/diet-c5`、`refactor/diet`、`refactor/integrated`（备份）、`refactor/diet-l1`、`refactor/docs-rewrite`（被 C4.7 取代，未推送）。文中出现的 `/opt/cf-worktrees/<名字>` 路径此后只有 `refactor-plan` 仍存在。
+
+## PLAN-2 合并与 C1-a 独立验收（2026-10-04）
+
+- 用户明确批准 D1/A1/A2 合并；D1 #100=3185e0b，A1 #101=13807fdd，A2 #102=d05927cf。根代理合并 D1，用户授权委派后由子代理继续 A1/A2；用户要求默认 gpt-6-luna/max 后停用原代理并切换。所有 PR 均在保护要求通过后普通 merge；auto merge 因仓库未启用而不可用，未绕过规则。A1/A2 更新分支后的有效diff逐字核对不变。根代理最后独立核对GitHub结果和本地/远端main=d05927cf；未跟踪handoff归档与research保留，未删分支。
+- C1最终提交c4a78d6（父afdf9df）：根代理在独立/tmp归档检出复跑，未使用执行器输出作为通过依据。补丁逐字相同；三文件白名单、一提交、三测试节点与Co-Authored-By存在。提交信息没有按提示词写“Added-Tests: 3”，但列出完整三个节点；此处记为格式偏差，不修改执行器提交。
+- 独立结果：ruff、mypy（208文件）、black单worker通过；collect4486；全量4476/10，321秒；golden五摘要、引擎报告、TS1三后端全部ok；抽样破坏1失败2通过，finally恢复后3通过；TS1六组保留集合一致7/8。完整原始证据：/tmp/c1a-accept-8go9pcgm（out.json、golden.json、quality-elevated-*.log、mutation.log、restored.log、ts1-refine.log、ts1-distances.log、weights.json）。
+- 执行器披露：恢复时误用checkout HEAD，首提交d85a9bc漏executor修改，后自行amend；执行中补丁更新47abcea后又amend对齐。应按停止规则报告而非自行修复，不能称流程全部合规；最终树已通过独立验收。验收方也有协调疏漏：我更新补丁注释和提示词时外部执行已在进行，没有先锁定交接版本；后续交付须钉文档提交及补丁摘要，修订先通知停止再重新交付。
+- 本轮验收环境疏漏：首次沙箱全量因/opt/g16/g16访问PermissionError而收集失败，原失败日志保留full-sandbox.log；改宿主权限重跑完整收集及全量后通过。默认Black进程池卡住约数分钟，改--workers 1立即通过，确认命令后终止原卡住池。没有跳过测试；后续直接使用有效权限和单worker，避免这类额外等待。
+- 耗时数据已产生weights.json，可用于下一卡调度；最长文件test_confgen_v3_coordination.py累计约246.5秒，随后test_v46_tspes_e2e.py约204.5秒。只增加按文件分片不能消除长文件尾部；加权调度和单次全量捕获golden制品为后续工具改进方向，本轮未修改验收工具。
+- C1仅接受固定基点上的最终实现；尚未推送、开PR或合并，尚未完成最新main叠加后的集成检查。预设显式1.2不纳入本卡。

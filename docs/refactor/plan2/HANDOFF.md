@@ -1,11 +1,11 @@
 # 交接（2026-10-04）— 给新会话的上下文
 
 ## 我是谁、怎么协作
-我（Claude）是规划者和验收方；用户把我写的"卡片 + 补丁 + 提示词"传给一个外部执行器模型执行，再把执行器的报告贴回来；我**独立重跑**一切后才接受（不采信执行器的数字）。**不再启动 subagent**（用户 2026-10-03 指示），只由我写提示词、做验收。
+我（Claude）是规划者和验收方；用户把我写的"卡片 + 补丁 + 提示词"传给一个外部执行器模型执行，再把执行器的报告贴回来；我**独立重跑**一切后才接受（不采信执行器的数字）。默认不启动 subagent；用户本轮明确委派合并任务给 subagent，默认模型 `gpt-6-luna`、effort `max`。规划及验收仍由根代理负责。
 
 ## 仓库与位置
-- ConfFlow：`/opt/ConfFlow`（当前检出 `main` = afdf9df，与 origin/main 一致）。JobDesk-v2：`/opt/jobdesk-v2-v4`（当前 `master` = 3addb94）。
-- 文档/卡片/补丁：`/opt/cf-worktrees/refactor-plan`，分支 **`docs/refactor-plan2`**（已推送）。旧分支 `docs/refactor-plan` 的远端已删，内容存档为标签 `archive/refactor-plan`（ConfFlow，5cf2000）；**不要往 `docs/refactor-plan` 推**。
+- ConfFlow：`/opt/ConfFlow`（当前检出 `main` = d05927cf，与 origin/main 一致）。JobDesk-v2：`/opt/jobdesk-v2-v4`（当前 `master` = 3addb94）。
+- 文档/卡片/补丁：`/opt/cf-worktrees/refactor-plan`，分支 **`docs/refactor-plan2`**（远端66f3456；本轮规划/提示词/验收记录有本地未推提交）。旧分支 `docs/refactor-plan` 的远端已删，内容存档为标签 `archive/refactor-plan`（ConfFlow，5cf2000）；**不要往 `docs/refactor-plan` 推**。
 - 目录：`docs/refactor/{PLAN.md,LOG.md,STATUS.md,ACCEPTANCE.md,handoff/,tools-acc/,plan2/,plan3/}`；PLAN-2 进度在 `plan2/STATUS.md`；各卡在 `handoff/*.md/.patch/*-executor-prompt.txt`。
 - 备份：`/root/refactor-backups/*.bundle`（6 个，已验证）。
 - 验收工具：`docs/refactor/tools-acc/run_sharded.py`（全量，必须 `PYTHONPATH=…/tools-acc/noeditable:.`）、`docs/refactor/tools/golden_check.py`（每张卡必须跑，不得省略；基线=baseline 去掉 checkpoints，再叠加 `checkpoints/IS.5/engine_reports` 与 `checkpoints/C4.3/engine_reports`；`--removed-nodes` 文件写一行 `tests/v4/test_confgen_v3_integration.py::TestLegacyRegressions::test_v3_filenames_vs_legacy_compat`）、`run_jd_tests.sh`（JD 测试，绑定 CF 到 /opt/ConfFlow）。JD 只读检出用 `/opt/cf-worktrees/jd-pin`（需要时从 JD 9de35d6 重建）。验收临时目录 `/tmp/acc2/`（可能已清）。
@@ -13,14 +13,14 @@
 ## 已完成（都已合并进 main/master）
 重构的全部 PLAN 卡片（见 `docs/refactor/STATUS.md` 总表）；ConfFlow PR #99（afdf9df）与 JobDesk PR #21（3addb94）。PLAN-2 之后又做：D1a/D1b、A1（三层）、A2-b。
 
-## 已推送、等用户合并（互不依赖，均基于 afdf9df，CI 全绿，未开 PR）
+## PLAN-2 已合并（原实现基于 afdf9df）
 - `refactor/cleanup-d1`（715c018）：删 25 个死文件、CHANGELOG（Unreleased 条目）、README 身份段落。
 - `refactor/a1-empty-inputs`（f8752e6）：A1-2 `6f5bbde`（必需结构端口只数结构）→ A1-3 `bc2a0b4`（`v4 run` 结构化失败，`failures`，退出码 1）→ A1-1 `f8752e6`（ConfGen 实现 0 个结构则失败，诊断码 `confgen_no_realized_structures`）。
 - `refactor/a2-connectivity-report`（801ad07）：refine 把"键连接与组内多数不同"写进 `notes`，不过滤，不改契约。
-用户想合并时我可以开 PR（附验收证据），**合并由用户点**（`main` 受保护，我的 `gh pr merge` 曾被权限分类器拦下）。
+本轮用户明确授权由我合并。三 PR 已合并：#100 D1=3185e0b、#101 A1=13807fdd、#102 A2=d05927cf；CI/契约通过后普通merge，未绕过保护。新合并仍须单独明确授权。
 
 ## 待办（PLAN-2，用户倾向与顺序：A1 → A2 → C1 → B1 → B2，D 类并行）
-- **C1**（统一 refine 1.2 与 ConfGen 1.15 默认 `bond_scale`）：材料已写 `plan2/C1-evaluation.md`（TS1 上两种尺度 refine 结果相同；TS1 的 `O74–C79` 只在 1.2 下是键；选项 C1-a 到 C1-d）。**等用户定方向，批准前不动代码。**
+- **C1-a** 已执行并独立验收通过：`refactor/c1a-bond-scale` c4a78d6（基点afdf9df），全量4476/10、golden ok、静态及抽样破坏通过。默认1.15；预设显式1.2保持不变。尚未推送/开PR/合并；叠加最新main后的集成验证仍需做。详见STATUS/LOG。
 - **B1**：`preview_paths` 改收 v3 声明 + 统一预览与 v3 运行时的 `topology_digest`（见 PLAN §13 的 1 与 N+6；两仓成对）。**B2**：JD 路径预览提前报末端原子端点（依赖 B1）。
 - **D 类**（零行为，可合并成一两张卡）：`core/bonding.py`、`data.py`、`constants.py` 移入 `science/`；JD 测试的 producer 路径改环境变量；可达性工具补扫 `scripts/`；`SECURITY_MODEL.md` 文件清单核对；`analysis/pes.py` 定位（需用户决定）。
 - **触发条件项，不主动做**：v3 `waypoint`、GUI 内移除旧 `confgen.native`、J2.5 离线编辑。
@@ -37,7 +37,12 @@
 - 记忆文件：`/root/.claude/projects/-opt-ConfFlow/memory/push-authorization.md`（推送授权与 main/master 规则）。
 
 ## 当前未决（等用户）
-1. 三条已推送分支是否开 PR/何时合并。
-2. C1 选哪个方向。
+1. C1-a 是否进入更新基点、集成验证和推送/PR阶段。
+2. refine预设显式1.2是否另卡调整。
 3. 是否继续 B1/B2/D 类，或收手。
 4. 保留的本地分支 `research/realization-handoff`、`repair/refine-audit-quarantine` 的去留（均有 bundle 备份）。
+
+## 本轮验收提速与交接约束
+- Black 使用 `--workers 1`，宿主权限运行会检查 /opt/g16 的测试，避免沙箱PermissionError导致收集失败。不得靠跳过测试解决。
+- 验收原始证据 `/tmp/c1a-accept-8go9pcgm/`，全量321秒，weights.json可供后续加权分片使用。
+- 提示词、补丁须钉文档提交/摘要，外部执行开始后不并发修订；修订需先通知停止，再重新交付。
