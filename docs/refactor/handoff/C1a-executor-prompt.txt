@@ -1,15 +1,73 @@
-你是执行器。先读 /opt/cf-worktrees/refactor-plan/docs/refactor/handoff/C1a.md，严格照做（通用命令见 handoff/A1.md 的"通用自检"，目录换成 c1a-exec 与 C1a-exec）。
+你是外部执行器。本轮只执行 C1-a，不启动 subagent。
+先读 /opt/cf-worktrees/refactor-plan/docs/refactor/handoff/C1a.md。
 
-工作树 /opt/cf-worktrees/c1a-exec（ConfFlow，分支 refactor/c1a-bond-scale，基点 afdf9df），补丁 handoff/C1a.patch。JD 只读检出是 /opt/cf-worktrees/jd-pin（9de35d6；--jdpin 和 --jd-src 都用它）。
+范围：refine 省略 bond_scale 时默认从 1.2 改为 1.15。显式参数、working_topology 继承、ConfGen 默认和 mapping_budget 不变。refine_default/refine_strict 预设的显式 1.2 不属于本卡，不修改。
+
+工作树：/opt/cf-worktrees/c1a-exec
+分支：refactor/c1a-bond-scale
+固定基点：afdf9dfe6c3da39211a6d67cab7fe5f8ed6f13f8
+补丁：/opt/cf-worktrees/refactor-plan/docs/refactor/handoff/C1a.patch
+JD 只读钉住版本：/opt/cf-worktrees/jd-pin @ 9de35d6
+
+main 正在合并其它卡。本卡仍按固定基点执行，不自行更新、rebase 或改变预期数字。抽样破坏使用固定基点，不能使用会变化的 main。
 
 硬规则：
-- 只在 /opt/cf-worktrees/c1a-exec 工作；不碰 /opt/ConfFlow、/opt/jobdesk-v2-v4、/opt/cf-worktrees/refactor-plan（只读）。
-- 每条命令都显式 `cd /opt/cf-worktrees/c1a-exec && ...`；动手前先 `cd /opt/cf-worktrees/c1a-exec && git status --short && git log --oneline -2`，确认 HEAD 是 afdf9df、工作树干净。
-- 提交前必须 `cd /opt/cf-worktrees/c1a-exec && git branch --show-current`，确认输出是 refactor/c1a-bond-scale，并把输出贴进报告。
-- 不 push，不动 main/master，不 pip/unshare/mount。
-- 只应用补丁，不做补丁以外的任何改动。
-- 恰好一个提交，信息按卡片（含逐字写出的 Added-Tests 节点名），末尾加 `Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>`；提交后 git status 干净。
-- HEAD 不符、工作树不干净、补丁无法应用、golden_check 的契约/边界摘要有任何 DIFF、或任一数字不符：停止并报告，不要自行修复。
-- 不编造输出，报告里贴每项自检（含 golden_check 与抽样破坏）的原始输出。
+- 每条 shell 命令显式 cd /opt/cf-worktrees/c1a-exec && ...。
+- 只修改本工作树，文档树和 JD 钉住树只读；不碰 main/master。
+- 动手前贴出完整 HEAD、分支名及 git status --porcelain，核对固定基点、正确分支、干净树。任一不符即停止报告。
+- 只应用补丁。白名单恰三文件：confflow/execution/transform_executor.py、docs/USAGE.md、tests/v4/test_refine_default_bond_scale.py。
+- 任一非预期命令失败、HEAD/数字/白名单不符、补丁不能应用、golden 有差异，立即停止报告，不自行修复。
+- 一卡一提交，不 push、不开或合并 PR、不改预设，不安装依赖、不使用 pip/unshare/mount。
+- 不编造输出。贴实际命令、退出码、原始输出和制品路径。
 
-报告：提交哈希、`git show --stat HEAD`、自检原始输出。
+1. 前置核对：
+cd /opt/cf-worktrees/c1a-exec && git rev-parse HEAD && git branch --show-current && git status --porcelain
+cd /opt/cf-worktrees/c1a-exec && git -C /opt/cf-worktrees/jd-pin rev-parse HEAD && git -C /opt/cf-worktrees/jd-pin status --porcelain
+
+确认满足上述条件后：
+cd /opt/cf-worktrees/c1a-exec && git apply --check /opt/cf-worktrees/refactor-plan/docs/refactor/handoff/C1a.patch && git apply /opt/cf-worktrees/refactor-plan/docs/refactor/handoff/C1a.patch
+cd /opt/cf-worktrees/c1a-exec && git status --short && git diff --check
+预期恰 2 个 M、1 个 ??，路径匹配白名单。
+
+2. 质量检查与测试：
+cd /opt/cf-worktrees/c1a-exec && ruff check confflow tests scripts && mypy confflow && black --check confflow/execution/transform_executor.py tests/v4/test_refine_default_bond_scale.py
+cd /opt/cf-worktrees/c1a-exec && PYTHONPATH=/opt/cf-worktrees/refactor-plan/docs/refactor/tools-acc/noeditable:. python3 -m pytest -q tests/v4/test_refine_default_bond_scale.py
+预期 3 passed。
+cd /opt/cf-worktrees/c1a-exec && PYTHONPATH=/opt/cf-worktrees/refactor-plan/docs/refactor/tools-acc/noeditable:. python3 -m pytest --collect-only -q
+预期 collect 4486。
+cd /opt/cf-worktrees/c1a-exec && mkdir -p /tmp/acc2/C1a-exec
+cd /opt/cf-worktrees/c1a-exec && PYTHONPATH=/opt/cf-worktrees/refactor-plan/docs/refactor/tools-acc/noeditable:. python3 /opt/cf-worktrees/refactor-plan/docs/refactor/tools-acc/run_sharded.py --cf . --out /tmp/acc2/C1a-exec/out.json --jdpin /opt/cf-worktrees/jd-pin
+预期 passed 4476、skipped 10，无失败。
+
+3. golden_check（不得省略）：
+先确认 /tmp/acc2/C1a-exec/base 不存在；已存在则停止报告，不覆盖旧证据。
+cd /opt/cf-worktrees/c1a-exec && test ! -e /tmp/acc2/C1a-exec/base && cp -r docs/refactor/baseline /tmp/acc2/C1a-exec/base && rm -rf /tmp/acc2/C1a-exec/base/checkpoints && cp docs/refactor/baseline/checkpoints/IS.5/engine_reports/* /tmp/acc2/C1a-exec/base/engine_reports/ && cp docs/refactor/baseline/checkpoints/C4.3/engine_reports/* /tmp/acc2/C1a-exec/base/engine_reports/ && printf '%s\n' 'tests/v4/test_confgen_v3_integration.py::TestLegacyRegressions::test_v3_filenames_vs_legacy_compat' > /tmp/acc2/C1a-exec/removed.txt
+cd /opt/cf-worktrees/c1a-exec && PYTHONPATH=/opt/cf-worktrees/refactor-plan/docs/refactor/tools-acc/noeditable:. python3 docs/refactor/tools/golden_check.py --base /tmp/acc2/C1a-exec/base --checkpoint docs/refactor/baseline/checkpoints/C4.3/contract.json --cf . --jd-src /opt/cf-worktrees/jd-pin/src --removed-nodes /tmp/acc2/C1a-exec/removed.txt --out /tmp/acc2/C1a-exec/golden.json
+预期 ok: true；契约/边界摘要 5 项全部 ok；引擎报告 added/different/missing 均空。
+
+4. 抽样破坏：
+保存已应用补丁的 transform_executor.py 原始字节；临时用 git show afdf9dfe6c3da39211a6d67cab7fe5f8ed6f13f8:confflow/execution/transform_executor.py 的内容覆盖此文件。仅跑新测试文件，使用上述 PYTHONPATH。
+预期退出码 1，恰 1 failed、2 passed：失败仅为 test_the_refine_default_matches_the_confgen_perception_scale。
+必须用 try/finally 或等价方法保证恢复已保存的补丁版本，即使测试结果异常也先恢复再停止报告。不要使用 checkout main、reset 或 git restore 覆盖未提交补丁。
+恢复后重跑新测试文件，必须 3 passed，并核对补丁内容和白名单。
+
+5. 提交：
+提交前再次贴出：
+cd /opt/cf-worktrees/c1a-exec && git branch --show-current && git rev-parse HEAD && git status --short
+确认仍为 refactor/c1a-bond-scale、固定基点，恰三个白名单文件。
+只 add 白名单文件；恰一个提交，提交信息如下（用临时文件与 git commit -F 保留换行）：
+
+fix(refine): default the perception scale to the ConfGen 1.15
+
+Added-Tests: 3
+- tests/v4/test_refine_default_bond_scale.py::test_the_refine_default_matches_the_confgen_perception_scale
+- tests/v4/test_refine_default_bond_scale.py::test_an_explicit_bond_scale_still_overrides_the_default
+- tests/v4/test_refine_default_bond_scale.py::test_a_persisted_working_topology_wins_verbatim_at_any_scale
+Removed-Tests: 0
+Behavior-Change: refine default bond_scale 1.2 -> 1.15; explicit scales and working_topology precedence remain unchanged; ConfGen default unchanged.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+提交后：
+cd /opt/cf-worktrees/c1a-exec && git rev-parse HEAD && git show --stat HEAD && git log -1 --format=%B && git status --porcelain
+工作树必须干净。报告提交哈希、实际原始输出及 out.json/golden.json 路径，不 push。你的报告只供验收方独立复跑后判定，不等同于验收通过。

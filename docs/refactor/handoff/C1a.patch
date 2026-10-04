@@ -1,5 +1,5 @@
 diff --git a/confflow/execution/transform_executor.py b/confflow/execution/transform_executor.py
-index ca52247..dd2cb8c 100644
+index ca52247..1312c60 100644
 --- a/confflow/execution/transform_executor.py
 +++ b/confflow/execution/transform_executor.py
 @@ -16,7 +16,9 @@ The geometry comparison science lives in :mod:`confflow.science`
@@ -20,8 +20,8 @@ index ca52247..dd2cb8c 100644
 -#: Default bond-perception scale (``topology.BOND_SCALE_FACTOR``).
 -REFINE_DEFAULT_BOND_SCALE = 1.2
 +#: Default bond-perception scale — the ConfGen perception default
-+#: (``tolerances.bond_scale``, ``confgen_schema.ConfgenToleranceModel``), so one
-+#: scale governs every geometric perception in the engine.
++#: (``tolerances.bond_scale``, ``confgen_schema.ConfgenToleranceModel``).
++#: Explicit scales and persisted working topologies retain their precedence.
 +REFINE_DEFAULT_BOND_SCALE = 1.15
  
  #: Default mapping-search node budget per compared pair
