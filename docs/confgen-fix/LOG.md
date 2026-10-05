@@ -166,3 +166,27 @@ A6正式SHA912e545807f81688236d1214a571e9a6e45ce312；根逐字核对通过。
 - 104 文件 checkpoint `/tmp/fix1a-final-root-run-v2/baseline`：布局复制 B1；engine_reports/out/current-jd-contract 取最终实际采集；collect.json 从最终 out 节点键排序生成；TS1/contract 复制 B1 字节（根 fresh golden 已现场验证相同，不伪称保存 fresh 临时输出）。发布清单 `docs/confgen-fix/checkpoints/A6/MANIFEST.json` 记录外部绝对路径、每文件 sha、tested SHA681fac8、证据路径、run-id、CF/JDcurrent/JDpin 角色；大 golden 不提交。
 - 本最终提交额外差异仅发布文档（A6 MANIFEST + FIX1A-EXECUTION.md + LOG.md）；capture 绑定仍是 `/tmp/fix1a-exec`，不动，不虚称直接绑定新发布提交。
 - 数据备注：rpdd.xyz 为 rpdd.gjf 输入的 CREST xTB1 输出，能量默认 Hartree；CREST 只有服务器有，本机不安装/计算；Q9 缺数据只影响 R7，不阻塞其他任务。
+
+## F1 — ring 基准 fixture（test-only）
+
+- 分支 `fix/confgen-1r`，BASE `213b3060a86abc7b036f6ec54bb28a1486d26419`（`git rev-parse HEAD` 已核对一致）。
+- 源（只读，未写入源目录）：`/mnt/c/dft/wcm/rpdd.gjf` sha256
+  `4929b48cbc4c3a2fa39788f3b68e792471b34c8b36b40f4441b2692c14e5b8a3`（1439 字节）；
+  `/mnt/c/dft/wcm/rpdd.xyz` sha256
+  `2078aca84ff293021553e3046920b9ceb787f7d04193d1f9efdd433705a1c7b1`（4368 字节）。
+- 生产核对（实测）：`confflow/core/gaussian_input.py:43 parse_gaussian_input`
+  （文本版 `:53 parse_gaussian_input_text`）得 22 原子、charge 0 mult 1，元素序列
+  `C C O O C C O O H H H C C C C H C H C H H H`；
+  `confflow/core/io.py:181 read_xyz_file`（`iter_xyz_frames :71`）得目标 3 帧 × 22 原子、
+  元素序列一致、坐标有限；`crest_conformers.xyz` 与源逐字节一致；comment 三行原文逐字保留
+  （`        -44.25350192` / `        -44.25032157` / `        -44.24850601`），单位按用户确认
+  理解为 Hartree，原字节不转换。
+- 用户确认：`rpdd.xyz` 为 `rpdd.gjf` 输入的 CREST xTB1 输出；CREST 仅服务器可用，本机不安装、不计算。
+- 行号偏差：卡片 L7–L28 实为笔误，L7 为 `0 1`，实际坐标行为 L8–L29（22 行），本卡按实测 L8–L29 转写；
+  行尾 CR 去除、前后空白按生产解析器 `strip()` 规范化为 LF 行，行内数值文本逐字不变。
+- 科学口径：2 环盆 3 构象为 PLAN §0.3 科学预期占位，F1 不宣称已做 CP 召回；Q9 缺失仅影响 R7；
+  脯氨酸/吡喃糖身份待指定；环己烷/甲基环己烷由测试辅助函数生成。
+- 容器/来源核对通过；collect 用 `tools/refactor/test_inventory.py collect` 得 4862 节点，
+  与 `/tmp/fix1a-final-root-run-v2/baseline/collect.json` 逐字节一致；未跑全量/TS1/golden。
+- 新增：`tests/fixtures/confgen/ring/rpdd/{input_ts_fragment.xyz,crest_conformers.xyz,README.md}`、
+  `docs/confgen-fix/checkpoints/F1/MANIFEST.json`，另本段 LOG 追加。

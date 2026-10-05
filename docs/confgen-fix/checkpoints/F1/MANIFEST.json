@@ -1,0 +1,41 @@
+{
+  "card": "F1",
+  "type": "test-only",
+  "branch": "fix/confgen-1r",
+  "base": "213b3060a86abc7b036f6ec54bb28a1486d26419",
+  "sources": {
+    "/mnt/c/dft/wcm/rpdd.gjf": {
+      "sha256": "4929b48cbc4c3a2fa39788f3b68e792471b34c8b36b40f4441b2692c14e5b8a3",
+      "bytes": 1439
+    },
+    "/mnt/c/dft/wcm/rpdd.xyz": {
+      "sha256": "2078aca84ff293021553e3046920b9ceb787f7d04193d1f9efdd433705a1c7b1",
+      "bytes": 4368
+    }
+  },
+  "targets": {
+    "tests/fixtures/confgen/ring/rpdd/input_ts_fragment.xyz": {
+      "sha256": "df3fb368be5029b4aa1807a7cde33f233e9673ba421cc508074e05bd8006a494",
+      "bytes": 1432,
+      "source": "rpdd.gjf lines 8-29 (22 coordinate lines) transcribed; header 22 + source comment; CRLF stripped to LF, strip-normalized per production parser, numeric text verbatim"
+    },
+    "tests/fixtures/confgen/ring/rpdd/crest_conformers.xyz": {
+      "sha256": "2078aca84ff293021553e3046920b9ceb787f7d04193d1f9efdd433705a1c7b1",
+      "bytes": 4368,
+      "source": "rpdd.xyz full 72 lines byte-identical copy"
+    },
+    "tests/fixtures/confgen/ring/rpdd/README.md": {
+      "sha256": "b37e031f1b891d4138a3b946db662d5868c0074c472bebff76d9febf9ce985e5",
+      "bytes": 2890,
+      "source": "generated per F1 card + ROOT-F1-FREEZE-RULES + USER-DATA-CONFIRMATION"
+    }
+  },
+  "notes": [
+    "user confirmed rpdd.xyz is CREST xTB1 output from rpdd.gjf; CREST default XYZ energy comment unit Hartree; raw bytes and comments unconverted",
+    "card line reference L7-L28 is off by one; actual coordinate lines are L8-L29 (L7 is '0 1'); recorded here as measured",
+    "22 atoms / charge 0 mult 1 verified by production parse_gaussian_input_text; 3 frames x 22 atoms and element sequence verified by production read_xyz_file/iter_xyz_frames; finite coords",
+    "2 ring basins / 3 conformers is PLAN section 0.3 scientific expectation only; F1 does not claim CP recall",
+    "Q9 missing blocks only R7; CREST server-only, no local install/compute",
+    "checkpoint large files outside repo: sources stay at absolute paths above (read-only); repo only records sha/sources"
+  ]
+}
