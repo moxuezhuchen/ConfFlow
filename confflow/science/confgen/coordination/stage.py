@@ -47,6 +47,7 @@ from typing import Any
 
 import numpy as np
 
+from confflow.science.confgen.kernel_records import RetryResult, TelemetryRow
 from confflow.science.confgen.model import (
     GenerationStage,
     GenerationTarget,
@@ -391,6 +392,141 @@ class CoordinationStage(GenerationStage):
         from confflow.science.confgen.coordination.scope import describe_scope as _describe
 
         return _describe(resolved)
+
+    def report_statistics(self, snapshot: tuple[Any, ...]) -> Mapping[str, Any] | None:
+        """Return the D3 coordination statistics fragment (L-D3 hook).
+
+        Read-only aggregation over the engine-bound run-local snapshot.
+        ``start_statistics`` counts per start kind (``input`` from the
+        engine input gate, ``sigma_image``/``sibling`` from the D3 phase
+        payloads): each entry holds ``attempts`` (every real solver
+        entry, failures included), ``solve_successes`` (geometry
+        success: realized with structure) and ``accepted`` (engine
+        audited publication). ``skip_diagnostics`` lists the zero-attempt
+        decline rows (``attempts == 0``, never accepted) with their
+        verbatim ``sigma_skip_diagnosis``/``sibling_skip_diagnosis``
+        reason. Empty snapshots return ``None`` so non-coordination
+        reports stay byte-identical; no instance/global cache is written.
+        Snapshots containing the generic legacy `"retry"` phase (old
+        `retry_solve` override path, per-candidate count unobservable)
+        also return `None`: no `sigma_image attempts=0` masquerade as
+        complete statistics for that override component. The default
+        built-in instrumented path never emits `"retry"` and is
+        unaffected.
+        """
+        try:
+            events = tuple(snapshot) if snapshot is not None else ()
+        except TypeError:
+            return None
+        if not events:
+            return None
+        for _legacy_probe in events:
+            try:
+                if str(getattr(_legacy_probe, "phase", "")) == "retry":
+                    return None
+            except Exception:
+                continue
+        input_attempts = 0
+        input_solved = 0
+        input_accepted = 0
+        sigma_attempts = 0
+        sigma_solved = 0
+        sigma_accepted = 0
+        sibling_attempts = 0
+        sibling_solved = 0
+        sibling_accepted = 0
+        skips: list[dict[str, Any]] = []
+        for event in events:
+            try:
+                phase = str(getattr(event, "phase", ""))
+                attempts = int(getattr(event, "attempts", 0))
+                solved = int(getattr(event, "solve_successes", 0))
+                accepted = bool(getattr(event, "accepted", False))
+                target_id = str(getattr(event, "target_id", ""))
+                parent_id = getattr(event, "parent_target_id", None)
+                diagnostic = dict(getattr(event, "diagnostic", {}) or {})
+            except Exception:
+                continue
+            if phase == "input":
+                input_attempts += attempts
+                input_solved += solved
+                if accepted:
+                    input_accepted += 1
+            elif phase == "sigma":
+                sigma_attempts += attempts
+                sigma_solved += solved
+                if accepted:
+                    sigma_accepted += 1
+            elif phase == "sibling":
+                sibling_attempts += attempts
+                sibling_solved += solved
+                if accepted:
+                    sibling_accepted += 1
+            else:
+                continue
+            if attempts == 0:
+                reason = diagnostic.get("skip_reason", diagnostic.get("reason", ""))
+                try:
+                    reason_str = str(reason)
+                except Exception:
+                    reason_str = ""
+                if not reason_str:
+                    continue
+                skips.append(
+                    {
+                        "parent_target_id": parent_id,
+                        "target_id": target_id,
+                        "phase": phase,
+                        "reason": reason_str,
+                    }
+                )
+        # A coordination snapshot with no input/sigma/sibling rows carries
+        # no statistics (e.g. foreign phases only): keep golden identical.
+        if (
+            input_attempts == 0
+            and sigma_attempts == 0
+            and sibling_attempts == 0
+            and not skips
+            and input_solved == 0
+            and sigma_solved == 0
+            and sibling_solved == 0
+        ):
+            # Still distinguish: an all-zero snapshot with only foreign
+            # phases must not emit; an input-only zero is impossible
+            # (input rows always attempts>=1). Re-check real buckets.
+            has_own = any(
+                str(getattr(e, "phase", "")) in ("input", "sigma", "sibling") for e in events
+            )
+            if not has_own:
+                return None
+        skips.sort(
+            key=lambda item: (
+                str(item.get("phase", "")),
+                str(item.get("parent_target_id", "")),
+                str(item.get("target_id", "")),
+                str(item.get("reason", "")),
+            )
+        )
+        return {
+            "start_statistics": {
+                "input": {
+                    "attempts": int(input_attempts),
+                    "solve_successes": int(input_solved),
+                    "accepted": int(input_accepted),
+                },
+                "sigma_image": {
+                    "attempts": int(sigma_attempts),
+                    "solve_successes": int(sigma_solved),
+                    "accepted": int(sigma_accepted),
+                },
+                "sibling": {
+                    "attempts": int(sibling_attempts),
+                    "solve_successes": int(sibling_solved),
+                    "accepted": int(sibling_accepted),
+                },
+            },
+            "skip_diagnostics": skips,
+        }
 
     def axis_ids(self, context: MolecularContext) -> tuple[str, ...]:
         """Return the observed-key fields for engine coverage checks."""
@@ -773,25 +909,31 @@ class CoordinationStage(GenerationStage):
         first_pass: Any,
         phase_id: str,
         phase_snapshot: Any,
-    ) -> CoreRealizationResult | None:
+    ) -> Any:
         """Phase-aware dispatch for sigma then sibling starts (D0.2 engine).
 
-        ``"sigma"`` delegates to the legacy sigma-only hook with the
-        permanent ``first_pass`` table (D1 bytes preserved). ``"sibling"``
-        runs the D2 sibling retry from the frozen ``phase_snapshot`` table
-        (audited published/expanded sources including sigma recoverers,
-        at most 3 in source-ordinal order). Any other id declines
-        (fail-closed); the legacy hook is never reused for a non-default
-        id by the engine, preserving the D0.2 duck rule.
+        ``"sigma"``: the default built-in path runs the D3 instrumented
+        sigma retry with full telemetry (same candidate order/budget/solver
+        path as the legacy :meth:`retry_solve`). When a subclass overrides
+        the public legacy :meth:`retry_solve` (e.g. old test doubles), the
+        override is still called with plain outcome/``None`` semantics via
+        the generic legacy path (single solve, no double-solve for
+        telemetry); that opaque hook's per-candidate count is unobservable
+        and is not masqueraded as sigma solver attempts. ``"sibling"`` runs
+        the D2 sibling retry with D3 telemetry (same order, ``<=3``
+        budget). Already-successful or non-retryable targets decline with
+        plain ``None`` and no row. Any other id declines fail-closed.
         """
         try:
             pid = str(phase_id)
         except Exception:
             return None
         if pid == "sigma":
-            return self.retry_solve(parent, target, context, should_cancel, first_pass)
+            if self._has_legacy_sigma_override():
+                return self.retry_solve(parent, target, context, should_cancel, first_pass)
+            return self._sigma_retry_phase(parent, target, context, should_cancel, first_pass)
         if pid == "sibling":
-            return self._sibling_retry(
+            return self._sibling_retry_phase(
                 parent, target, context, should_cancel, first_pass, phase_snapshot
             )
         from confflow.science.confgen.model import RETRY_DEFAULT_PHASE as _DEFAULT
@@ -799,6 +941,477 @@ class CoordinationStage(GenerationStage):
         if pid == _DEFAULT:
             return self.retry_solve(parent, target, context, should_cancel, first_pass)
         return None
+
+    def _has_legacy_sigma_override(self) -> bool:
+        """Report whether a subclass overrides the public legacy hook.
+
+        Generic MRO probe (same shape as the engine hook readers): any
+        ``retry_solve`` entry in a subclass ``__dict__`` before
+        :class:`CoordinationStage` means the old public hook is overridden
+        and the sigma phase must preserve its call semantics instead of
+        the instrumented path. The default built-in stage has no such
+        override. No instance/global state is read or written.
+        """
+        for klass in type(self).__mro__:
+            if klass is CoordinationStage:
+                break
+            try:
+                slots = klass.__dict__
+            except Exception:
+                continue
+            if "retry_solve" in slots:
+                return True
+        return False
+
+    def _sigma_retry_phase(
+        self,
+        parent: StageParentProtocol,
+        target: GenerationTarget,
+        context: MolecularContext,
+        should_cancel: Any | None,
+        first_pass: Any,
+    ) -> Any:
+        """D3 sigma phase: same science as :meth:`retry_solve`, plus telemetry.
+
+        Exactly one :class:`TelemetryRow` per real solver entry
+        (``attempts=1``; ``solve_successes=1`` only for geometry success;
+        failures included). Declines emit one zero-attempt diagnostic row
+        whose ``skip_reason`` is the verbatim
+        :meth:`sigma_skip_diagnosis` label. Success names its row via
+        ``success_index``; the trailing diagnostic is never selected.
+        Already-successful/non-retryable targets return plain ``None``
+        with no row (no skip emitted for them). No instance/global cache;
+        cancellation propagates with no partial wrapper.
+        """
+        from .symmetry import validate_full_witness
+
+        if getattr(target, "axis", None) != "coordination":
+            return None
+        try:
+            table = tuple(first_pass) if first_pass is not None else ()
+        except TypeError:
+            return None
+        current_status: str | None = None
+        current_solver_error = False
+        try:
+            current_ordinal = int(target.ordinal)  # type: ignore[attr-defined]
+        except (AttributeError, TypeError, ValueError):
+            return None
+        for entry in table:
+            try:
+                if int(entry.ordinal) == current_ordinal and str(entry.target_id) == str(
+                    target.target_id  # type: ignore[attr-defined]
+                ):
+                    current_status = str(entry.status)
+                    current_solver_error = bool(entry.solver_error)
+                    break
+            except (AttributeError, TypeError, ValueError):
+                continue
+        if current_status is None:
+            return None
+        if current_solver_error:
+            return None
+        if current_status not in (
+            "failed_geometry",
+            "failed_numerical",
+            "unresolved",
+        ):
+            return None
+        sources: list[tuple[int, str, Any]] = []
+        for entry in table:
+            try:
+                status = str(entry.status)
+                structure = entry.structure
+            except AttributeError:
+                continue
+            if status not in ("published_leaf", "expanded") or structure is None:
+                continue
+            try:
+                sources.append((int(entry.ordinal), str(entry.target_id), structure))
+            except (TypeError, ValueError):
+                continue
+        sources.sort(key=lambda item: item[0])
+        if not sources:
+            reason = self.sigma_skip_diagnosis(
+                n_sources=0, n_validated_witnesses=0, n_candidates=0, n_successes=0
+            )
+            return RetryResult(
+                outcome=None,
+                telemetry=(
+                    TelemetryRow(
+                        kind="sigma_image",
+                        attempts=0,
+                        solve_successes=0,
+                        diagnostic={"skip_reason": reason},
+                    ),
+                ),
+            )
+        try:
+            graph = self._check_context(context)
+        except ValueError:
+            return None
+        witnesses = list(self._site_witnesses) if self._site_witnesses else []
+        if not witnesses:
+            reason = self.sigma_skip_diagnosis(
+                n_sources=len(sources),
+                n_validated_witnesses=0,
+                n_candidates=0,
+                n_successes=0,
+            )
+            return RetryResult(
+                outcome=None,
+                telemetry=(
+                    TelemetryRow(
+                        kind="sigma_image",
+                        attempts=0,
+                        solve_successes=0,
+                        diagnostic={"skip_reason": reason},
+                    ),
+                ),
+            )
+        validated: list[dict[str, Any]] = []
+        for witness in witnesses:
+            try:
+                mapping = tuple(int(v) for v in witness["mapping"])
+                provenance = str(witness.get("provenance", ""))
+            except (KeyError, TypeError, ValueError):
+                continue
+            report = validate_full_witness(graph, self._spec, mapping, provenance)
+            if bool(report.get("authority_valid")):
+                validated.append({"mapping": mapping, "provenance": provenance})
+        if not validated:
+            reason = self.sigma_skip_diagnosis(
+                n_sources=len(sources),
+                n_validated_witnesses=0,
+                n_candidates=0,
+                n_successes=0,
+            )
+            return RetryResult(
+                outcome=None,
+                telemetry=(
+                    TelemetryRow(
+                        kind="sigma_image",
+                        attempts=0,
+                        solve_successes=0,
+                        diagnostic={"skip_reason": reason},
+                    ),
+                ),
+            )
+        try:
+            shape_of_target, _ = self._target_plan(target)  # type: ignore[arg-type]
+        except ValueError:
+            return None
+        try:
+            target_placement = tuple(int(v) for v in dict(target.state_value)["placement"])  # type: ignore[attr-defined]
+        except (KeyError, TypeError, ValueError):
+            return None
+        group = proper_rotation_group(shape_of_target)
+        target_canon = canonical_representative(target_placement, group)
+        ordinal_plan: dict[int, tuple[str, tuple[int, ...]]] = {}
+        try:
+            for item in self.enumerate_targets(parent, context):
+                try:
+                    ordinal_plan[int(item.ordinal)] = (
+                        str(normalize_command_key(dict(item.state_value))["shape"]),
+                        tuple(int(v) for v in dict(item.state_value)["placement"]),
+                    )
+                except (KeyError, TypeError, ValueError):
+                    continue
+        except ValueError:
+            return None
+        donor_order = list(self._spec.donor_indices)
+        position_of = {donor: pos for pos, donor in enumerate(donor_order)}
+
+        def _relabel(placement: Sequence[int], site_perm: Sequence[int]) -> tuple[int, ...]:
+            perm = tuple(int(v) for v in site_perm)
+            inv = [0] * len(perm)
+            for old, new in enumerate(perm):
+                inv[new] = old
+            current = tuple(int(v) for v in placement)
+            return tuple(current[inv[index]] for index in range(len(perm)))
+
+        candidates: list[tuple[str, Any]] = []
+        seen_images: set[bytes] = set()
+        for source_ordinal, source_id, source_structure in sources:
+            plan_entry = ordinal_plan.get(source_ordinal)
+            if plan_entry is None:
+                continue
+            source_shape, source_placement = plan_entry
+            if source_shape != shape_of_target:
+                continue
+            try:
+                source_coords = np.array(source_structure.coordinates, dtype=float)
+            except (AttributeError, TypeError, ValueError):
+                continue
+            if source_coords.shape[0] != graph.natoms:
+                continue
+            for witness in validated:
+                mapping = witness["mapping"]
+                action = graph.induced_site_action(mapping, donor_order)
+                if action is None:
+                    continue
+                try:
+                    site_perm = tuple(position_of[action[d]] for d in donor_order)
+                except KeyError:
+                    continue
+                image = _relabel(source_placement, site_perm)
+                if canonical_representative(image, group) != target_canon:
+                    continue
+                perm = tuple(int(v) for v in mapping)
+                try:
+                    inv_perm = [0] * len(perm)
+                    for old, new in enumerate(perm):
+                        inv_perm[new] = old
+                    sigma_coords = np.array(
+                        [source_coords[inv_perm[index]] for index in range(len(perm))],
+                        dtype=float,
+                    )
+                except (IndexError, TypeError, ValueError):
+                    continue
+                key = np.asarray(sigma_coords, dtype=float).tobytes()
+                if key in seen_images:
+                    continue
+                seen_images.add(key)
+                candidates.append((source_id, sigma_coords))
+        if not candidates:
+            reason = self.sigma_skip_diagnosis(
+                n_sources=len(sources),
+                n_validated_witnesses=len(validated),
+                n_candidates=0,
+                n_successes=0,
+            )
+            return RetryResult(
+                outcome=None,
+                telemetry=(
+                    TelemetryRow(
+                        kind="sigma_image",
+                        attempts=0,
+                        solve_successes=0,
+                        diagnostic={"skip_reason": reason},
+                    ),
+                ),
+            )
+        rows: list[TelemetryRow] = []
+        for index, (source_id, sigma_coords) in enumerate(candidates):
+            from ..engine import EngineCancelledError as _Cancel
+
+            if should_cancel is not None:
+                try:
+                    if bool(should_cancel()):
+                        raise _Cancel("confgen run cancelled by probe")
+                except _Cancel:
+                    raise
+                except Exception:
+                    pass
+            outcome = self._realize_with_sigma(
+                parent, target, context, shape_of_target, target_placement, sigma_coords
+            )
+            solved = bool(
+                outcome is not None
+                and outcome.status == "realized"
+                and outcome.structure is not None
+            )
+            rows.append(
+                TelemetryRow(
+                    kind="sigma_image",
+                    attempts=1,
+                    solve_successes=1 if solved else 0,
+                    diagnostic={"source_id": str(source_id), "candidate_index": int(index)},
+                )
+            )
+            if solved:
+                assert outcome is not None
+                stamped = self._with_retry_start(
+                    outcome, parent, target, context.adjacency, source_id
+                )
+                return RetryResult(
+                    outcome=stamped, telemetry=tuple(rows), success_index=len(rows) - 1
+                )
+        reason = self.sigma_skip_diagnosis(
+            n_sources=len(sources),
+            n_validated_witnesses=len(validated),
+            n_candidates=len(candidates),
+            n_successes=0,
+        )
+        rows.append(
+            TelemetryRow(
+                kind="sigma_image",
+                attempts=0,
+                solve_successes=0,
+                diagnostic={"skip_reason": reason},
+            )
+        )
+        return RetryResult(outcome=None, telemetry=tuple(rows))
+
+    def _sibling_retry_phase(
+        self,
+        parent: StageParentProtocol,
+        target: GenerationTarget,
+        context: MolecularContext,
+        should_cancel: Any | None,
+        first_pass: Any,
+        phase_snapshot: Any,
+    ) -> Any:
+        """D3 sibling phase: same science as D2, plus telemetry.
+
+        One row per real sibling solver entry; declines carry a
+        zero-attempt ``sibling_skip_diagnosis`` diagnostic; success names
+        its row via ``success_index``. Already-healed/non-retryable
+        targets decline with plain ``None``. Budget ``<=3`` and stable
+        source-ordinal order are unchanged; cancellation propagates.
+        """
+        _ = first_pass
+        if getattr(target, "axis", None) != "coordination":
+            return None
+        try:
+            snapshot = tuple(phase_snapshot) if phase_snapshot is not None else ()
+        except TypeError:
+            return None
+        try:
+            current_ordinal = int(target.ordinal)  # type: ignore[attr-defined]
+        except (AttributeError, TypeError, ValueError):
+            return None
+        try:
+            current_id = str(target.target_id)  # type: ignore[attr-defined]
+        except (AttributeError, TypeError, ValueError):
+            return None
+        current_status: str | None = None
+        current_solver_error = False
+        for entry in snapshot:
+            try:
+                if int(entry.ordinal) == current_ordinal and str(entry.target_id) == current_id:
+                    current_status = str(entry.status)
+                    current_solver_error = bool(entry.solver_error)
+                    break
+            except (AttributeError, TypeError, ValueError):
+                continue
+        if current_status is None:
+            return None
+        if current_solver_error:
+            return None
+        if current_status not in (
+            "failed_geometry",
+            "failed_numerical",
+            "unresolved",
+        ):
+            return None
+        sources: list[tuple[int, str, Any]] = []
+        for entry in snapshot:
+            try:
+                status = str(entry.status)
+                structure = entry.structure
+            except AttributeError:
+                continue
+            if status not in ("published_leaf", "expanded") or structure is None:
+                continue
+            try:
+                sources.append((int(entry.ordinal), str(entry.target_id), structure))
+            except (TypeError, ValueError):
+                continue
+        sources.sort(key=lambda item: item[0])
+        if not sources:
+            reason = self.sibling_skip_diagnosis(n_sources=0, n_candidates=0, n_successes=0)
+            return RetryResult(
+                outcome=None,
+                telemetry=(
+                    TelemetryRow(
+                        kind="sibling",
+                        attempts=0,
+                        solve_successes=0,
+                        diagnostic={"skip_reason": reason},
+                    ),
+                ),
+            )
+        capped = list(sources[:3])
+        try:
+            shape_of_target, _ = self._target_plan(target)  # type: ignore[arg-type]
+        except ValueError:
+            return None
+        try:
+            target_placement = tuple(int(v) for v in dict(target.state_value)["placement"])  # type: ignore[attr-defined]
+        except (KeyError, TypeError, ValueError):
+            return None
+        try:
+            graph = self._check_context(context)
+        except ValueError:
+            return None
+        candidates: list[tuple[str, Any]] = []
+        seen: set[bytes] = set()
+        for _source_ordinal, source_id, source_structure in capped:
+            try:
+                source_coords = np.array(source_structure.coordinates, dtype=float)
+            except (AttributeError, TypeError, ValueError):
+                continue
+            if source_coords.shape[0] != graph.natoms:
+                continue
+            key = np.asarray(source_coords, dtype=float).tobytes()
+            if key in seen:
+                continue
+            seen.add(key)
+            candidates.append((source_id, source_coords))
+        if not candidates:
+            reason = self.sibling_skip_diagnosis(
+                n_sources=len(sources), n_candidates=0, n_successes=0
+            )
+            return RetryResult(
+                outcome=None,
+                telemetry=(
+                    TelemetryRow(
+                        kind="sibling",
+                        attempts=0,
+                        solve_successes=0,
+                        diagnostic={"skip_reason": reason},
+                    ),
+                ),
+            )
+        rows: list[TelemetryRow] = []
+        for index, (source_id, start_coords) in enumerate(candidates):
+            from ..engine import EngineCancelledError as _Cancel
+
+            if should_cancel is not None:
+                try:
+                    if bool(should_cancel()):
+                        raise _Cancel("confgen run cancelled by probe")
+                except _Cancel:
+                    raise
+                except Exception:
+                    pass
+            outcome = self._realize_with_sibling(
+                parent, target, context, shape_of_target, target_placement, start_coords
+            )
+            solved = bool(
+                outcome is not None
+                and outcome.status == "realized"
+                and outcome.structure is not None
+            )
+            rows.append(
+                TelemetryRow(
+                    kind="sibling",
+                    attempts=1,
+                    solve_successes=1 if solved else 0,
+                    diagnostic={"source_id": str(source_id), "candidate_index": int(index)},
+                )
+            )
+            if solved:
+                assert outcome is not None
+                stamped = self._with_sibling_start(
+                    outcome, parent, target, context.adjacency, source_id
+                )
+                return RetryResult(
+                    outcome=stamped, telemetry=tuple(rows), success_index=len(rows) - 1
+                )
+        reason = self.sibling_skip_diagnosis(
+            n_sources=len(sources), n_candidates=len(candidates), n_successes=0
+        )
+        rows.append(
+            TelemetryRow(
+                kind="sibling",
+                attempts=0,
+                solve_successes=0,
+                diagnostic={"skip_reason": reason},
+            )
+        )
+        return RetryResult(outcome=None, telemetry=tuple(rows))
 
     def _sibling_retry(
         self,
