@@ -26,7 +26,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from ..cards import CARD_TYPES, CARD_VERSION, get_card, parse_card_ref
-from ..presets import PRESET_VERSION, get_preset, parse_preset_ref
+from ..presets import PRESET_VERSION, get_preset
 from .bindings import _auto_bindings, _registry_input_ports  # noqa: F401
 from .common import IntentCompilationError, _fail  # noqa: F401
 from .resources import (  # noqa: F401
@@ -42,6 +42,37 @@ __all__ = [
     "compile_intent",
     "intent_catalog",
 ]
+
+
+def __getattr__(name: str) -> Any:
+    """Lazy compat for L1-C2 capability moves (no top-level handler import).
+
+    Old ``confflow.producer.intent.compiler`` private paths stay observable
+    with identical objects (``is`` holds) and old ``__module__``.  Handlers
+    load only when these attributes are accessed, so schema/catalog imports
+    stay pure (no handler/solver load, no side effects).
+    """
+    if name in ("_resolve_program", "_wire_calculation"):
+        from .capabilities.calculation import _resolve_program as _rp
+        from .capabilities.calculation import _wire_calculation as _wc
+
+        return {"_resolve_program": _rp, "_wire_calculation": _wc}[name]
+    if name in (
+        "_LEGACY_PATH_SCOPE_KEYS",
+        "_LEGACY_PATH_KEYS",
+        "_LEGACY_DEFAULT_PATH_STEP",
+        "_legacy_paths_to_v3",
+        "_wire_confgen",
+    ):
+        from .capabilities import confgen as _cg
+
+        return getattr(_cg, name)
+    if name == "_wire_transform":
+        from .capabilities.transform import _wire_transform as _wt
+
+        return _wt
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 #: Accepted simplified intent schema id.
 INTENT_SCHEMA: str = "confflow.intent.v1"
@@ -320,7 +351,40 @@ def _normalize_globals(raw: Any) -> dict[str, Any]:
     return out
 
 
-def _allocate_ids(raw_steps: list[Mapping[str, Any]]) -> list[dict[str, Any]]:
+def _extract_card_type_for_alloc(card_ref: Any, intent_registry: Any | None) -> str | None:
+    """Extract a card type for id allocation via the explicit registry first.
+
+    Returns the registry-hit key, or ``None`` when no custom hit applies so
+    the caller falls back to the legacy ``parse_card_ref`` failure path
+    (preserving old messages when no custom key exists).
+    """
+    if intent_registry is None:
+        return None
+    try:
+        resolve = intent_registry.resolve
+    except AttributeError:
+        return None
+    candidate: str | None = None
+    if isinstance(card_ref, Mapping):
+        raw_type = card_ref.get("type")
+        if isinstance(raw_type, str) and raw_type.strip():
+            candidate = raw_type.strip()
+    elif isinstance(card_ref, str) and "@" in card_ref:
+        head, _, _ = card_ref.partition("@")
+        if head.strip():
+            candidate = head.strip()
+    if candidate is None:
+        return None
+    try:
+        hit = resolve(candidate)
+    except Exception:
+        return None
+    return candidate if hit is not None else None
+
+
+def _allocate_ids(
+    raw_steps: list[Mapping[str, Any]], intent_registry: Any | None = None
+) -> list[dict[str, Any]]:
     """Assign stable ``{cardtype}_{occurrence}`` ids; preserve explicit ones."""
     counts: dict[str, int] = {}
     used: set[str] = set()
@@ -337,10 +401,14 @@ def _allocate_ids(raw_steps: list[Mapping[str, Any]]) -> list[dict[str, Any]]:
         if step.get("id") is not None:
             allocated.append(step)
             continue
-        try:
-            card_type, _ = parse_card_ref(step.get("card"))
-        except ValueError as exc:
-            raise _fail(str(exc)) from exc
+        custom_type = _extract_card_type_for_alloc(step.get("card"), intent_registry)
+        if custom_type is not None:
+            card_type = custom_type
+        else:
+            try:
+                card_type, _ = parse_card_ref(step.get("card"))
+            except ValueError as exc:
+                raise _fail(str(exc)) from exc
         counts[card_type] = counts.get(card_type, 0) + 1
         candidate = f"{card_type}_{counts[card_type]}"
         while candidate in used:
@@ -750,7 +818,9 @@ def _apply_role_cards(
                 step_id=step_id,
             )
         patched_calc = copy.deepcopy(dict(calculation))
-        patched_calc["program"] = _resolve_program(program, step_id=step_id)
+        from .capabilities.calculation import _resolve_program as _resolve_program_cap
+
+        patched_calc["program"] = _resolve_program_cap(program, step_id=step_id)
         patched_calc["native"] = copy.deepcopy(dict(native))
         # Purpose-card scientific defaults replace catalog demo values;
         # explicit template fields win over the purpose defaults.
@@ -806,259 +876,102 @@ def _apply_role_cards(
 
 
 # ----------------------------------------------------------------------
-# Wire builders
+# Capability card resolution (L1-C2, generic; science stays in handlers)
 # ----------------------------------------------------------------------
 
 
-def _resolve_program(program: Any, *, step_id: str) -> str:
-    from ...programs.registry import get_program_adapter
+def _parse_card_ref_with_registry(
+    ref: object, intent_registry: object | None, step_id: str
+) -> tuple[str, str]:
+    """Parse a card ref, consulting the explicit registry before rejection.
 
-    if not isinstance(program, str) or not program.strip():
-        raise _fail(
-            f"step {step_id!r} requires an explicit program",
-            step_id=step_id,
-        )
-    try:
-        adapter = get_program_adapter(program)
-    except Exception as exc:
-        raise _fail(
-            f"step {step_id!r} names unknown program {program!r}: {exc}",
-            step_id=step_id,
-        ) from exc
-    canonical = adapter.program_name.value
-    return canonical if isinstance(canonical, str) else str(program).strip().lower()
-
-
-def _wire_calculation(
-    step: Mapping[str, Any], card: dict[str, Any], step_id: str
-) -> dict[str, Any]:
-    native = step.get("native")
-    if not isinstance(native, Mapping) or not native:
-        raise _fail(
-            f"step {step_id!r} requires an explicit non-empty native mapping",
-            step_id=step_id,
-        )
-    goat_section = native.get("goat")
-    if isinstance(goat_section, Mapping) and "RANDOMSEED" in goat_section:
-        raise _fail(
-            f"step {step_id!r}: native goat RANDOMSEED is a second seed authority; "
-            "set the step seed instead",
-            step_id=step_id,
-        )
-    program_raw = step.get("program")
-    if program_raw is None:
-        raise _fail(f"step {step_id!r} requires an explicit program", step_id=step_id)
-    program = _resolve_program(program_raw, step_id=step_id)
-    role = step.get("role", card.get("default_role"))
-    if role is not None and (not isinstance(role, str) or not role.strip()):
-        raise _fail(f"step {step_id!r} role must be a non-empty string", step_id=step_id)
-    calculation: dict[str, Any] = {
-        "program": program,
-        "execution_adapter": step.get("adapter", card["adapter"]),
-        "result_profile": step.get("profile", card["profile"]),
-        "native": copy.deepcopy(dict(native)),
-        "checks": copy.deepcopy(step.get("checks", card["checks"])),
-        "recovery": {"profile": step.get("recovery", card["recovery"])},
-    }
-    if role is not None:
-        calculation["role"] = role
-    check_params = step.get("check_params", card["check_params"])
-    if check_params:
-        if not isinstance(check_params, Mapping):
-            raise _fail(f"step {step_id!r} check_params must be a mapping", step_id=step_id)
-        calculation["check_params"] = copy.deepcopy(
-            {name: dict(params) for name, params in check_params.items()}
-        )
-    recovery_params = step.get("recovery_params")
-    if recovery_params:
-        if not isinstance(recovery_params, Mapping):
-            raise _fail(f"step {step_id!r} recovery_params must be a mapping", step_id=step_id)
-        calculation["recovery"]["params"] = copy.deepcopy(dict(recovery_params))
-    if step.get("seed") is not None:
-        seed = step["seed"]
-        if isinstance(seed, bool) or not isinstance(seed, int):
-            raise _fail(f"step {step_id!r} seed must be an integer", step_id=step_id)
-        calculation["seed"] = seed
-    overrides = step.get("overrides", {})
-    if overrides:
-        if not isinstance(overrides, Mapping):
-            raise _fail(f"step {step_id!r} overrides must be a mapping", step_id=step_id)
-        unknown = sorted(set(overrides) - {"charge", "multiplicity", "freeze"})
-        if unknown:
-            raise _fail(
-                f"step {step_id!r} carries unsupported overrides: {', '.join(unknown)}",
-                step_id=step_id,
-            )
-        calculation["overrides"] = copy.deepcopy(dict(overrides))
-    return calculation
-
-
-#: Legacy ConfGen ``native`` keys that describe a paths scope and can be
-#: expressed as a typed schema_version 3 block (IS.1 equivalence golden).
-_LEGACY_PATH_SCOPE_KEYS = frozenset({"paths", "angle_step", "bond_scale", "strict_path_bond_check"})
-
-#: Keys a legacy path declaration may carry; anything else cannot be mapped.
-_LEGACY_PATH_KEYS = frozenset({"start", "end", "move", "id", "angles", "step"})
-
-#: The legacy default scan step in degrees (Q2b: bare declarations get it explicitly).
-_LEGACY_DEFAULT_PATH_STEP = 120
-
-
-def _legacy_paths_to_v3(native: Mapping[str, Any], step_id: str) -> dict[str, Any] | None:
-    """Express a legacy paths scope as a typed ``schema_version: 3`` block.
-
-    The mapping is the one recorded by the IS.1 equivalence golden
-    (``tests/fixtures/paths_equivalence/run_equivalence.py::map_native``): a bare
-    declaration gets ``step`` from ``angle_step`` or the legacy default 120,
-    ``bond_scale`` becomes ``tolerances.bond_scale`` and
-    ``strict_path_bond_check`` becomes the v3 top-level flag.  (Step-level
-    ``paths`` / ``strict_path_bond_check`` are not intent step members, so they
-    never reach this function.)
-
-    Returns ``None`` when the native carries anything outside the paths scope
-    (for example ``chains``); such a scope has no v3 form.  No endpoint is
-    inspected or rewritten: a terminal-atom endpoint is compiled as written
-    and refused at run time by v3.
+    Custom keys hit the registry and return immediately; otherwise the
+    legacy ``parse_card_ref`` path runs unchanged so default failures keep
+    their old messages.  ``step_id`` is only used for error context by the
+    caller (this helper raises raw ``ValueError`` like the legacy parser).
     """
-    scope = dict(native)
-    if not set(scope) <= _LEGACY_PATH_SCOPE_KEYS or "paths" not in scope:
-        return None
-    declarations = scope["paths"]
-    if not isinstance(declarations, list) or not declarations:
-        raise _fail(f"step {step_id!r}: paths must be a non-empty list", step_id=step_id)
-    v3: dict[str, Any] = {"schema_version": 3, "index_base": 1, "paths": []}
-    if "strict_path_bond_check" in scope:
-        v3["strict_path_bond_check"] = scope["strict_path_bond_check"]
-    if "bond_scale" in scope:
-        v3["tolerances"] = {"bond_scale": scope["bond_scale"]}
-    default_step = scope.get("angle_step", _LEGACY_DEFAULT_PATH_STEP)
-    for index, declaration in enumerate(declarations):
-        if not isinstance(declaration, Mapping):
-            raise _fail(f"step {step_id!r}: paths[{index}] must be a mapping", step_id=step_id)
-        unknown = sorted(set(declaration) - _LEGACY_PATH_KEYS)
-        if unknown:
-            hint = (
-                " (waypoint paths have no typed v3 form; use explicit torsions declarations instead)"
-                if "waypoint" in unknown
-                else ""
-            )
-            raise _fail(
-                f"step {step_id!r}: paths[{index}] carries unsupported keys: "
-                f"{', '.join(unknown)}{hint}",
-                step_id=step_id,
-            )
-        entry: dict[str, Any] = {
-            key: copy.deepcopy(declaration[key])
-            for key in ("start", "end", "move", "id")
-            if key in declaration
-        }
-        if "angles" in declaration:
-            entry["angles"] = copy.deepcopy(declaration["angles"])
-        elif "step" in declaration:
-            entry["step"] = declaration["step"]
-        else:
-            entry["step"] = default_step
-        v3["paths"].append(entry)
-    return v3
-
-
-def _wire_confgen(step: Mapping[str, Any], step_id: str) -> dict[str, Any]:
-    native = step.get("native")
-    if not isinstance(native, Mapping) or not native:
-        raise _fail(
-            f"step {step_id!r} requires an explicit non-empty native mapping",
-            step_id=step_id,
-        )
-    native_dict = copy.deepcopy(dict(native))
-    if "seed" in native_dict:
-        raise _fail(
-            f"step {step_id!r}: declare the seed at the step level, not inside native",
-            step_id=step_id,
-        )
-    overrides = step.get("overrides", {})
-    if overrides and not isinstance(overrides, Mapping):
-        raise _fail(f"step {step_id!r} overrides must be a mapping", step_id=step_id)
-    if (
-        isinstance(native_dict.get("schema_version"), int)
-        and native_dict.get("schema_version") == 3
-    ):
-        block: dict[str, Any] = dict(native_dict)
-        if step.get("seed") is not None:
-            block["seed"] = step["seed"]
-        if overrides:
-            block["overrides"] = copy.deepcopy(dict(overrides))
-        return block
-    mapped = _legacy_paths_to_v3(native_dict, step_id)
-    if mapped is not None:
-        if step.get("seed") is not None:
-            mapped["seed"] = step["seed"]
-        if overrides:
-            mapped["overrides"] = copy.deepcopy(dict(overrides))
-        return mapped
-    raise _fail(
-        f"step {step_id!r}: ConfGen intent requires a typed schema_version 3 scope; "
-        "the legacy native vocabulary "
-        f"({', '.join(sorted(native_dict))}) has no typed form here",
-        step_id=step_id,
-    )
-
-
-def _wire_transform(step: Mapping[str, Any], card: dict[str, Any], step_id: str) -> dict[str, Any]:
-    kind = card.get("transform_kind")
-    if not kind:
-        raise _fail(f"step {step_id!r}: transform card lacks a kind", step_id=step_id)
-    preset_native: dict[str, Any] = {}
-    preset_name: str | None = None
-    if step.get("preset") is not None:
+    if intent_registry is not None:
         try:
-            preset_name, _ = parse_preset_ref(step["preset"])
-        except ValueError as exc:
-            raise _fail(str(exc), step_id=step_id) from exc
-        preset = get_preset(preset_name)
-        if preset["card"] != kind:
-            raise _fail(
-                f"step {step_id!r}: preset {preset_name!r} serves {preset['card']!r}, "
-                f"not card kind {kind!r}",
-                step_id=step_id,
-            )
-        preset_native = copy.deepcopy(preset["native"])
-    else:
-        preset_name = "refine_default" if kind == "refine" else "dedup_default"
-        preset_native = copy.deepcopy(get_preset(preset_name)["native"])
-    native = step.get("native", {})
-    if native is None:
-        native = {}
-    if not isinstance(native, Mapping):
-        raise _fail(f"step {step_id!r} native must be a mapping", step_id=step_id)
-    if kind == "deduplicate" and native:
-        raise _fail(
-            f"step {step_id!r}: deduplicate takes no native parameters, " f"got {sorted(native)}",
-            step_id=step_id,
-        )
-    merged = dict(preset_native)
-    for key, value in dict(native).items():
-        merged[key] = copy.deepcopy(value)
-    if "energy_window" in merged:
-        raise _fail(
-            f"step {step_id!r}: 'energy_window' is not a V4 transform member and is omitted",
-            step_id=step_id,
-        )
+            resolve = intent_registry.resolve  # type: ignore[attr-defined]
+        except AttributeError:
+            resolve = None
+        else:
+            candidate: str | None = None
+            version: str | None = None
+            if isinstance(ref, Mapping):
+                unknown = sorted(set(ref) - {"type", "version"})
+                if not unknown:
+                    raw_type = ref.get("type")
+                    raw_version = ref.get("version")
+                    if isinstance(raw_type, str) and raw_type.strip():
+                        candidate = raw_type.strip()
+                    if isinstance(raw_version, str) and raw_version.strip():
+                        version = raw_version.strip()
+            elif isinstance(ref, str) and "@" in ref:
+                head, _, tail = ref.partition("@")
+                if head.strip() and tail.strip():
+                    candidate = head.strip()
+                    version = tail.strip()
+            if candidate is not None and version is not None:
+                try:
+                    hit = resolve(candidate)
+                except Exception:
+                    hit = None
+                if hit is not None:
+                    if version != CARD_VERSION:
+                        raise ValueError(
+                            f"unsupported card version {version!r}; "
+                            f"this producer serves {CARD_VERSION!r}"
+                        )
+                    return candidate, version
+    # Legacy path (default 14 cards + all old failure messages).
+    return parse_card_ref(ref)
+
+
+def _resolve_card_and_entry(
+    ref: object, intent_registry: object, step_id: str
+) -> tuple[str, str, dict[str, object], object]:
+    """Resolve ``(card_type, version, card_dict, entry)`` via the registry.
+
+    Custom keys return the descriptor-owned thawed card; default keys return
+    thawed copies equal to ``get_card`` (lists stay lists).  Unknown keys
+    fall through to the legacy ``parse_card_ref``/``get_card`` failure path
+    so default errors are byte-identical.
+    """
+    card_type, card_version = _parse_card_ref_with_registry(ref, intent_registry, step_id)
     try:
-        from ...execution.transform_executor import REFINE_NATIVE_KEYS
-    except ImportError:
-        allowed_keys = frozenset(
-            {"rmsd_threshold_angstrom", "bond_scale", "heavy_only", "max_structures"}
-        )
-    else:
-        allowed_keys = REFINE_NATIVE_KEYS
-    if kind == "refine":
-        unknown = sorted(set(merged) - set(allowed_keys))
-        if unknown:
-            raise _fail(
-                f"step {step_id!r} carries unknown refine native keys: {', '.join(unknown)}",
-                step_id=step_id,
-            )
-    return {"kind": kind, "native": merged, "_preset": preset_name}
+        resolve = intent_registry.resolve  # type: ignore[attr-defined]
+    except AttributeError:
+        resolve = None
+    entry = None
+    if resolve is not None:
+        try:
+            entry = resolve(card_type)
+        except Exception:
+            entry = None
+    if entry is not None:
+        try:
+            card = entry.card_dict()  # type: ignore[attr-defined]
+        except AttributeError:
+            import copy as _copy
+
+            card = _copy.deepcopy(dict(entry.card))  # type: ignore[attr-defined]
+        return card_type, card_version, card, entry
+    # Legacy default path (same errors as before C2).
+    try:
+        legacy_type, legacy_version = parse_card_ref(ref)
+    except ValueError as exc:
+        raise exc
+    card = get_card(legacy_type, legacy_version)
+    return legacy_type, legacy_version, card, None
+
+
+# L1-C2: capability wire builders live in
+# ``capabilities/{calculation,confgen,transform}.py`` (mechanical moves);
+# re-exported lazily via ``__getattr__`` above for compatible ``compiler``
+# import paths (``is`` holds, old ``__module__`` kept).  No analysis handler
+# is added: analysis executors stay fail-closed through the ``None``/unknown
+# path below.
 
 
 _CALC_ONLY_FIELDS = frozenset(
@@ -1071,6 +984,29 @@ _CALC_ONLY_FIELDS = frozenset(
         "check_params",
         "recovery",
         "recovery_params",
+    }
+)
+
+#: Generic wire fields owned by the compiler (workflow syntax boundary).
+#: Capability fragments must never contain these; the compiler merges only
+#: descriptor-declared fragment keys.  ``_preset_ref`` is deliberately NOT
+#: reserved: it is capability-owned private metadata declared in the
+#: transform descriptor's ``fragment_keys`` and carried generically.
+_RESERVED_FRAGMENT_KEYS = frozenset(
+    {
+        "id",
+        "executor",
+        "label",
+        "resources",
+        "scheduler",
+        "bindings",
+        "_from",
+        "execution",
+        "reuse_checkpoint",
+        "_card_type",
+        "_card_version",
+        "_role_default",
+        "_named_card",
     }
 )
 
@@ -1113,11 +1049,16 @@ def compile_intent(
     intent: Mapping[str, Any] | None = None,
     machine_profile: Mapping[str, Any] | None = None,
     registry: Any = None,
+    intent_registry: Any = None,
 ) -> dict[str, Any]:
     """Compile a simplified intent into a strict V4 wire document.
 
     Accepts the mapping positionally (``document``) or as ``intent=``.
-    Legacy strict V4 is returned unchanged; intent v1 is expanded,
+    ``registry`` keeps its existing meaning (``None`` loads the default
+    execution registry once); ``intent_registry`` is the explicit capability
+    registry (``None`` builds the default once and the same instance flows
+    explicitly to every helper).  Legacy strict V4 is returned unchanged;
+    intent v1 is expanded,
     seed-assigned, machine-resolved, checkpoint-wired, then verified with
     the real strict V4 parser and compiler before being returned.
     """
@@ -1229,7 +1170,13 @@ def compile_intent(
     for raw in user_raw:
         _validate_step_keys(raw)
     expanded_raw = [_expand_named_step(dict(item), resolved_cards) for item in user_raw]
-    user_steps = _allocate_ids(expanded_raw)
+    if intent_registry is None:
+        try:
+            from .capabilities.registry import build_default_intent_registry
+        except ImportError as exc:
+            raise _fail(f"cannot load the intent registry: {exc}") from exc
+        intent_registry = build_default_intent_registry()
+    user_steps = _allocate_ids(expanded_raw, intent_registry)
 
     if registry is None:
         try:
@@ -1324,11 +1271,19 @@ def compile_intent(
             role_hint = user.get("role")
             if not isinstance(role_hint, str) or not role_hint.strip():
                 try:
-                    _ft, _fv = parse_card_ref(user.get("card"))
-                except ValueError:
+                    _ft, _fv, _fc, _fe = _resolve_card_and_entry(
+                        user.get("card"), intent_registry, step_id
+                    )
+                except (ValueError, IntentCompilationError):
                     _ft = ""
+                    _fc = {}
+                else:
+                    _ft = _ft
                 try:
-                    role_hint = get_card(_ft).get("default_role") if _ft else None
+                    if isinstance(_fc, Mapping):
+                        role_hint = _fc.get("default_role") if _ft else None
+                    else:
+                        role_hint = get_card(_ft).get("default_role") if _ft else None
                 except ValueError:
                     role_hint = None
             user = {
@@ -1340,28 +1295,69 @@ def compile_intent(
                 ),
             }
         try:
-            card_type, card_version = parse_card_ref(user.get("card"))
+            card_type, card_version, card, _entry = _resolve_card_and_entry(
+                user.get("card"), intent_registry, step_id
+            )
         except ValueError as exc:
             raise _fail(str(exc), step_id=step_id) from exc
-        card = get_card(card_type, card_version)
         executor = str(card["executor"])
         _reject_misplaced_fields(user, card_type, executor, step_id)
+        # Generic dispatch: single handler call, no executor hardcoding.
+        # The same explicit registry instance flows here; a second lookup of
+        # the same key/executor must return the same descriptor.
+        try:
+            _resolve_fn = intent_registry.resolve  # type: ignore[attr-defined]
+        except AttributeError:
+            _resolve_fn = None
+        _entry2 = None
+        if _resolve_fn is not None:
+            try:
+                _entry2 = _resolve_fn(card_type, executor)
+            except Exception:
+                _entry2 = None
+        if _entry is not None and _entry2 is not None and _entry2 is not _entry:
+            _entry = _entry2
+        elif _entry2 is not None:
+            _entry = _entry2
+        if _entry is None or getattr(_entry, "intent_handler", None) is None:
+            raise _fail(f"step {step_id!r}: card executor {executor!r} is not servable")
         wire: dict[str, Any] = {"id": step_id, "executor": executor}
         if user.get("label") is not None:
             if not isinstance(user["label"], str):
                 raise _fail(f"step {step_id!r} label must be a string", step_id=step_id)
             wire["label"] = user["label"]
-        if executor == "calculation":
-            wire["calculation"] = _wire_calculation(user, card, step_id)
-        elif executor == "confgen":
-            wire["confgen"] = _wire_confgen(user, step_id)
-        elif executor == "structure_transform":
-            transform = _wire_transform(user, card, step_id)
-            preset_name = str(transform.pop("_preset"))
-            wire["transform"] = transform
-            wire["_preset_ref"] = preset_name
-        else:
-            raise _fail(f"step {step_id!r}: card executor {executor!r} is not servable")
+        fragment = _entry.intent_handler(user, card, step_id)  # type: ignore[attr-defined]
+        if not isinstance(fragment, Mapping):
+            raise _fail(
+                f"step {step_id!r}: capability handler must return a mapping",
+                step_id=step_id,
+            )
+        try:
+            declared_keys = tuple(getattr(_entry, "fragment_keys", ()))
+        except Exception:
+            declared_keys = ()
+        declared_set = set(declared_keys)
+        fragment_keys = set(fragment.keys())
+        if not fragment_keys or not fragment_keys <= declared_set:
+            raise _fail(
+                f"step {step_id!r}: capability fragment carries undeclared keys: "
+                f"{sorted(fragment_keys - declared_set)}",
+                step_id=step_id,
+            )
+        illegal = sorted(fragment_keys & set(_RESERVED_FRAGMENT_KEYS))
+        if illegal:
+            raise _fail(
+                f"step {step_id!r}: capability fragment must not overwrite "
+                f"generic fields: {', '.join(illegal)}",
+                step_id=step_id,
+            )
+        for _fk, _fv in fragment.items():
+            if _fk in wire:
+                raise _fail(
+                    f"step {step_id!r}: capability fragment overwrites {_fk!r}",
+                    step_id=step_id,
+                )
+            wire[_fk] = copy.deepcopy(_fv)
         resources = _wire_resources(user, step_id)
         if resources is not None:
             wire["resources"] = resources
@@ -1630,7 +1626,9 @@ def _patch_recipe_step(patched: dict[str, Any], user: Mapping[str, Any], step_id
         return
     calculation = copy.deepcopy(dict(calculation))
     if user.get("program") is not None:
-        calculation["program"] = _resolve_program(user["program"], step_id=step_id)
+        from .capabilities.calculation import _resolve_program as _resolve_program_cap2
+
+        calculation["program"] = _resolve_program_cap2(user["program"], step_id=step_id)
     if user.get("native") is not None:
         if not isinstance(user["native"], Mapping):
             raise _fail(f"step {step_id!r} native must be a mapping", step_id=step_id)

@@ -1,0 +1,104 @@
+{
+  "base_head": "01a260d149c99ab8c0571e7eebb6f1bab827d504",
+  "branch": "refactor/l1-c2-proto",
+  "byte_compare": {
+    "contract_boundary": {
+      "boundary_full_sha256": "ee811b9995f49dec9668693d58e9f4d68fa170bfa232837486a8998b6aed9d20",
+      "contract_full_sha256": "2fe92022d2e9fa537b8ad11152d2b173c6f6572e0b0bd3950c7148c332ab43bc",
+      "digests_equal_old_new": true
+    },
+    "real_compile_wire_plus_catalog_sha256": "9b062a30c38124748f9451c2454fa7d9cb419ab16ad72a43d5c1e02b0d2533dc",
+    "wire_catalog_equal_old_new": true
+  },
+  "card": "L1-C2",
+  "checkpoints_in_repo": [
+    "docs/confgen-fix/checkpoints/L1-C2/MANIFEST.json",
+    "docs/confgen-fix/checkpoints/L1-C2/DIFF.md"
+  ],
+  "collect": {
+    "added": [
+      "tests/v4/test_l1_intent_capabilities.py::test_builder_rejects_conflict_unknown_no_handler",
+      "tests/v4/test_l1_intent_capabilities.py::test_custom_handler_content_difference_real_workflow",
+      "tests/v4/test_l1_intent_capabilities.py::test_custom_handler_rejection_difference_same_input",
+      "tests/v4/test_l1_intent_capabilities.py::test_custom_reuses_existing_calculation_runtime",
+      "tests/v4/test_l1_intent_capabilities.py::test_default_dispatch_equals_implicit_for_all_executors",
+      "tests/v4/test_l1_intent_capabilities.py::test_default_handlers_are_real_capability_objects",
+      "tests/v4/test_l1_intent_capabilities.py::test_default_registry_has_exactly_14_no_dummy",
+      "tests/v4/test_l1_intent_capabilities.py::test_fragment_validation_rejects_undeclared_and_overwrite",
+      "tests/v4/test_l1_intent_capabilities.py::test_light_toplevel_no_science_no_handler_side_effect",
+      "tests/v4/test_l1_intent_capabilities.py::test_no_production_dummy_reference",
+      "tests/v4/test_l1_intent_capabilities.py::test_registry_locally_immutable_and_nested_frozen",
+      "tests/v4/test_l1_intent_capabilities.py::test_unknown_capability_failclosed_and_no_catalog_growth"
+    ],
+    "added_count": 12,
+    "new_total": 5013,
+    "old_total": 5001,
+    "removed_count": 0
+  },
+  "descriptor_registry_justification": "Frozen CapabilityDescriptor (key/executor/handler/card/fragment_keys) deeply immutable (MappingProxyType+tuple) with thawed isolated copies for wiring; IntentRegistry locally immutable (MappingProxyType). Explicit build_default_intent_registry (14, fragment adapters, function-local lazy imports, no self-registration, no probe reference). compile_intent keeps registry param and adds optional intent_registry=None default; same instance flows explicitly. Custom card normalization checks registry before CARD_TYPES/get_card rejection; default no-custom keeps old failures. Unknown capability failclosed; no default catalog growth; different intent keys reuse calculation runtime. No analysis fake handler.",
+  "dispatch_fix": "Root review applied: compiler has no if executor== branches and no slot-dict dispatch. Handlers return complete fragments (calculation/confgen/transform+_preset_ref); old _wire_* keep verbatim return + is/module compat; new *_fragment adapters recorded. Descriptor declares fragment_keys; compiler single-calls handler and validates Mapping/declared/reserved/no-overwrite. Custom test returns complete fragment via real compile_intent->compile_workflow contrast.",
+  "executed_validations": {
+    "contract_boundary_digest_old_eq_new": true,
+    "necessary_tests": "C0/C1 compat 11 passed; C2 12 passed; producer_intent+regressions+machine+intent_boundary+p0boundary 141 passed; authoring_boundary+legacy_paths+checkpoint_boundary+checkpoints slice 302 passed (3-file); architecture_policy 333 passed",
+    "new_capability_tests": "12 passed",
+    "real_compile_old_eq_new": true,
+    "static": "ruff check clean; ruff format clean; black clean; mypy clean (6 production files, single worker)"
+  },
+  "external_artifacts_dir": "/tmp/l1-c2-output",
+  "external_artifacts_note": "production evidence is L1-C2-production-only.diff (whitelist production paths only); full-tree proto diff L1-C2-proto.diff lives next to it with sha in SHA256SUMS (never referenced from inside the repo).",
+  "external_artifacts_sha256": {
+    "boundary.full.new.json": "ee811b9995f49dec9668693d58e9f4d68fa170bfa232837486a8998b6aed9d20",
+    "boundary.full.old.json": "ee811b9995f49dec9668693d58e9f4d68fa170bfa232837486a8998b6aed9d20",
+    "contract.full.new.json": "2fe92022d2e9fa537b8ad11152d2b173c6f6572e0b0bd3950c7148c332ab43bc",
+    "contract.full.old.json": "2fe92022d2e9fa537b8ad11152d2b173c6f6572e0b0bd3950c7148c332ab43bc",
+    "contract_digests_new.json": "equal-old (see DIFF)",
+    "contract_digests_old.json": "equal-new (see DIFF)",
+    "new_product.json": "9b062a30c38124748f9451c2454fa7d9cb419ab16ad72a43d5c1e02b0d2533dc",
+    "old_product.json": "9b062a30c38124748f9451c2454fa7d9cb419ab16ad72a43d5c1e02b0d2533dc"
+  },
+  "golden_changed": [],
+  "golden_unchanged_asserted": "contract/boundary digests + real intent wire+catalog bytes; full golden suite at milestone root only (not run here)",
+  "module_compat": {
+    "compiler_reexport_is_identity": true,
+    "facade_is_compiler": true,
+    "helpers_old_module": "confflow.producer.intent.compiler",
+    "is_identity": true,
+    "old_module": "confflow.producer.intent",
+    "pickle_old_path_roundtrip": true
+  },
+  "new_tests": [
+    "tests/v4/test_l1_intent_capabilities.py (12 tests)"
+  ],
+  "note": "pre-rehearsal only; no commit/push/merge/tag/install; shared trees untouched; prior evidence kept; root dispatch review applied",
+  "old_private_import_monkeypatch_inventory": "sole private import tests/v4/test_producer_authoring_boundary_coverage.py:955 _recipe_cards_to_role_cards stays in compiler (not moved), facade re-export unchanged; grep monkeypatch/sys.modules on producer/intent paths: zero hits (only test_architecture_policy.py RUNTIME_RULES/subprocess/metrics_thin, unrelated); production lazy from .intent import in contract.py:633/authoring.py:1245 resolves to facade, unchanged",
+  "plan": "docs/confgen-fix/PLAN.md L1 + /tmp/l1-card-design-output/L1-DESIGN-v2.md C2 + /tmp/l1-c2-output/ROOT-DISPATCH-REVIEW.md (generic fragment dispatch; residual central inventory in DIFF, no zero-claim)",
+  "policy_files_unchanged": [
+    "tools/architecture_policy.py",
+    "tests/v4/test_architecture_policy.py"
+  ],
+  "policy_scope_conflict": "none observed (architecture_policy 333 passed; no new science/registry exemption added; no scope expansion)",
+  "residual_central_inventory": "see DIFF.md: _reject_misplaced_fields, wire_adapters extraction, checkpoint (calculation,confgen) seed blocks, _seed_scope goat rule, recipe calculation assignment lanes kept central/generic with byte equality; A1/C2b to continue. No zero-knowledge claim.",
+  "scope": "L1-C2 logic only (default 100% unchanged)",
+  "type": "logic",
+  "whitelist_measured": {
+    "modified": [
+      "confflow/producer/intent/compiler.py (1664 lines; generic fragment dispatch, no executor branches)"
+    ],
+    "new": [
+      "confflow/producer/intent/capabilities/__init__.py (12 lines; light marker)",
+      "confflow/producer/intent/capabilities/descriptor.py (124 lines; frozen descriptor + fragment_keys)",
+      "confflow/producer/intent/capabilities/registry.py (142 lines; immutable registry + default 14)",
+      "confflow/producer/intent/capabilities/calculation.py (123 lines; verbatim payloads + calculation_fragment)",
+      "confflow/producer/intent/capabilities/confgen.py (150 lines; verbatim payloads + confgen_fragment)",
+      "confflow/producer/intent/capabilities/transform.py (103 lines; verbatim payload + transform_fragment)",
+      "tests/v4/test_l1_intent_capabilities.py (435 lines, 12 tests)",
+      "docs/confgen-fix/checkpoints/L1-C2/DIFF.md",
+      "docs/confgen-fix/checkpoints/L1-C2/MANIFEST.json"
+    ],
+    "unchanged_facade": [
+      "confflow/producer/intent/__init__.py (still only from .compiler)",
+      "confflow/producer/intent/common.py (IntentCompilationError+_fail only)"
+    ]
+  },
+  "worktree": "/tmp/l1-c2-proto"
+}

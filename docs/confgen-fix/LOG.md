@@ -337,3 +337,27 @@ R7 glucose 127/155 的 28 项召回缺口与未做种子优化后 RMSD 验证如
 - 冻结：`git diff --binary HEAD` 见 `/tmp/l1-c1-output/L1-C1-proto.diff`
   （含 new/modes；sha 见同目录 `SHA256SUMS`）。未提交/未推送/未合并/未打 tag；
   共享树与冻结基线未动。
+
+## L1-C2 — intent capability handler + explicit descriptor registry (logic, root dispatch fix; 根验收另行)
+
+- 基点正式 C1 `01a260d149c99ab8c0571e7eebb6f1bab827d504`；工作树 `/tmp/l1-c2-proto`
+  分支 `refactor/l1-c2-proto`；输出 `/tmp/l1-c2-output`。保留旧证据，不重建树。
+  PLAN L1 + L1-DESIGN-v2 + ROOT-DISPATCH-REVIEW（根裁决优先）：补修前
+  `compiler.py:1311-1320` 仍 `if executor==` 硬编码（仅换函数名），未验收；
+  已按根要求下放完整 fragment（calculation/confgen/transform+_preset_ref），
+  旧 `_wire_*` 原返回保持同对象/`__module__`，新增 `*_fragment` 适配器。
+- 白名单实测：改 `compiler.py`（1664 行，通用单次分派+`fragment_keys`/`_RESERVED`
+  校验合并）；新 `capabilities/{__init__(12),descriptor(124),registry(142),
+  calculation(123),confgen(150),transform(103)}`；新
+  `tests/v4/test_l1_intent_capabilities.py`（435 行，12 用例）；新检查点
+  `docs/confgen-fix/checkpoints/L1-C2/`。`common.py/__init__.py`、policy、
+  其他生产/旧测试零改；残留集中点（`_reject_misplaced_fields`、adapter提取、
+  checkpoint种子块、`_seed_scope`、recipe calculation赋值）已在 DIFF 逐项盘点，
+  不宣称清零，留 A1/C2b（根终审）。
+- 自检（非根验收）：新 12 + C0/C1 11（23）；producer等 141；authoring slice 302；
+  policy 333。原/新真实编译产物+catalog 逐字节等（`9b062a30…`）；
+  contract `2fe92022…`/boundary `ee811b99…` 原新一致；collect 5001->5013（+12/-0）。
+  ruff/mypy/black 单 worker 通过；schema导入无handler/solver纯度，无副作用。
+- 冻结：`git diff --binary HEAD` 见 `/tmp/l1-c2-output/L1-C2-proto.diff`
+  （含 new/modes；sha 见同目录 `SHA256SUMS`）。未提交/未推送/未合并/未打 tag；
+  共享树与冻结基线未动。
