@@ -40,7 +40,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
@@ -73,6 +73,9 @@ from confflow.science.confgen.planner import (
     sampling_of,
 )
 from confflow.science.topology import inherit_topology_kwargs
+
+if TYPE_CHECKING:  # Annotation only; resolved lazily to keep model import light.
+    from confflow.science.confgen.registry import ComponentRegistry
 
 __all__ = [
     "AtomOrderViolationError",
@@ -620,84 +623,41 @@ class ConfgenEngine:
         *,
         allow_preserve_input: bool = False,
         backend: str = "geometric-rodrigues",
+        registry: ComponentRegistry | None = None,
     ) -> None:
+        from confflow.science.confgen.registry import resolve_registry
+
         self._explicit_stages = list(stages) if stages is not None else None
         self._allow_preserve_input = bool(allow_preserve_input)
         self._backend = str(backend)
+        self._registry = resolve_registry(registry)
 
     # -- stage registry -------------------------------------------------
 
-    @staticmethod
-    def _load_stage(axis: str, resolved: Mapping[str, Any]) -> GenerationStage:
-        """Load the stage for one axis (lazy; fail closed when unavailable).
+    def _load_stage(self, axis: str, resolved: Mapping[str, Any]) -> GenerationStage:
+        """Load the stage for one axis via the registry (fail closed when unknown).
 
         Constructors receive a plain-data snapshot (dicts/lists) of the
         resolved spec content, which stages must treat as read-only; the
         authoritative frozen spec stays on the context.
         """
-        snapshot = thaw_snapshot(resolved)
-        if axis == "torsions":
-            from confflow.science.confgen.torsion.stage import TorsionStage
-
-            return TorsionStage(snapshot)
-        if axis == "rings":
-            try:
-                from confflow.science.confgen.ring.stage import RingStage
-            except ImportError as exc:
-                raise UnsupportedAxisError(
-                    "rings requested but the ring stage module is unavailable"
-                ) from exc
-            return RingStage(snapshot)
-        if axis == "coordination":
-            try:
-                from confflow.science.confgen.coordination.stage import (
-                    CoordinationStage,
-                    adapt_to_core,
-                )
-            except ImportError as exc:
-                raise UnsupportedAxisError(
-                    "coordination requested but the coordination stage module is unavailable"
-                ) from exc
-            section = snapshot.get("coordination")
-            if not isinstance(section, Mapping):
-                raise UnsupportedAxisError(
-                    "coordination requested but the resolved coordination section is missing"
-                )
-            try:
-                stage = adapt_to_core(CoordinationStage(dict(section)))
-            except UnsupportedAxisError:
-                raise
-            except Exception as exc:
-                raise UnsupportedAxisError(
-                    f"coordination requested but the protocol binding failed: {exc}"
-                ) from exc
-            if getattr(stage, "axis", None) != "coordination":
-                raise UnsupportedAxisError("coordination binding returned a foreign stage")
-            return stage
+        for descriptor in self._registry.descriptors:
+            if descriptor.id == axis:
+                return descriptor.factory(resolved)
         raise UnsupportedAxisError(f"unknown generation axis {axis!r}")
 
     def _levels(self, resolved: Mapping[str, Any]) -> list[tuple[str, GenerationStage]]:
-        """Return active (axis, stage) levels in AXIS_ORDER."""
+        """Return active (axis, stage) levels in registry order."""
         if self._explicit_stages is not None:
             levels = [(stage.axis, stage) for stage in self._explicit_stages]
             axes = [axis for axis, _ in levels]
             if sorted(axes) != sorted(set(axes)):
                 raise ValueError("duplicate stage axes in explicit stage list")
-            order = {axis: position for position, axis in enumerate(AXIS_ORDER)}
-            levels.sort(key=lambda item: order.get(item[0], len(order)))
+            order = {descriptor.id: descriptor.order for descriptor in self._registry.descriptors}
+            fallback = max(order.values(), default=-1) + 1
+            levels.sort(key=lambda item: order.get(item[0], fallback))
             return levels
-        levels = []
-        coordination = resolved.get("coordination")
-        if isinstance(coordination, Mapping) and coordination is not None:
-            if coordination.get("treatment", "enumerate") != "preserve_input":
-                levels.append(("coordination", self._load_stage("coordination", resolved)))
-        rings = resolved.get("rings", [])
-        if isinstance(rings, (list, tuple)) and len(rings) > 0:
-            levels.append(("rings", self._load_stage("rings", resolved)))
-        torsions = resolved.get("torsions", [])
-        if isinstance(torsions, (list, tuple)) and len(torsions) > 0:
-            levels.append(("torsions", self._load_stage("torsions", resolved)))
-        return levels
+        return self._registry.resolve(resolved)
 
     # -- run --------------------------------------------------------------
 
