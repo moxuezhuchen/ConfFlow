@@ -36,7 +36,7 @@ from tests.v4._builders import (
     structure_set,
     v4_doc,
 )
-from tests.v4.test_repair_executors import _ctx, _item, _sci
+from tests.v4._helpers.repair import _ctx, _item, _sci
 
 FAKE_ORCA = Path(__file__).parent / "fakes" / "fake_orca.py"
 STRUCTURE_INPUTS = {"structures": {"kind": "structure", "cardinality": "many"}}

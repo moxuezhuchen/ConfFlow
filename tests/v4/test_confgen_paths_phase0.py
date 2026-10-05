@@ -39,7 +39,7 @@ from confflow.science.confgen.torsion.paths import (
     parse_path_declarations,
     resolve_paths,
 )
-from tests.v4.test_repair_executors import _butane, _ctx, _item, _sci
+from tests.v4._helpers.repair import _butane, _ctx, _item, _sci
 
 
 def _linear(n: int = 4, spacing: float = 1.5) -> list[list[int]]:

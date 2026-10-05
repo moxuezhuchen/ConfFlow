@@ -1,9 +1,0 @@
-export CF=/opt/cf-worktrees/exec-cf
-export JD=/opt/cf-worktrees/exec-jd
-export JDPIN=/opt/cf-worktrees/jd-pin
-export CFIS=/opt/cf-worktrees/exec-cf-is
-export JDIS=/opt/cf-worktrees/exec-jd-is
-export BASE=$CF/docs/refactor/baseline
-export TOOLS=$CF/docs/refactor/tools
-export PYTHONDONTWRITEBYTECODE=1
-export QT_QPA_PLATFORM=offscreen

@@ -58,10 +58,10 @@ pytest --collect-only -q | tail -1   # 当前收集到的测试数（文档不�
 
 ## 6. 引擎与契约基线（重构证据）
 
-`docs/refactor/baseline/` 固定了 TS1（三种后端）的 ConfGen 输出、全部引擎报告、契约与边界的 digest；
-`docs/refactor/tools/` 里的 `golden_check.py`、`capture_engine_reports.py`、`contract_digests.py`、`json_paths_diff.py`
+外部基线（`$BASE`，本轮实际路径示例 `/tmp/l0-baseline-run-v2/baseline`，由 `MANIFEST.json` 钉住 104 个文件）固定了 TS1（三种后端）的 ConfGen 输出、全部引擎报告、契约与边界的 digest；
+`tools/refactor/` 里的 `golden_check.py`、`capture_engine_reports.py`、`contract_digests.py`、`json_paths_diff.py`
 用来重新生成并逐字节比较。任何会改变科学输出的改动都必须先用它们给出差异，再决定是否更新基线。
-`docs/refactor/paths_equivalence/` 记录 legacy paths 与 typed v3 声明在含氢分子上的等价性结论。
+`tests/fixtures/paths_equivalence/` 记录 legacy paths 与 typed v3 声明在含氢分子上的等价性结论。
 
 ## 7. CI
 

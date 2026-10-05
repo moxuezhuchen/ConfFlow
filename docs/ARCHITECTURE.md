@@ -92,7 +92,8 @@ confflow/
 - **配置契约**由真实注册表生成（工作流 JSON schema、editor manifest、recipe 目录、能力、端口、资源、分析与结果 schema），
   全部用 digest 钉住；客户端据此编辑、校验、提交。
 - **边界协议**（`confflow.boundary.v4`）声明规范化算法（JCS）、authoring 请求/响应 schema 与兼容性词汇；已发布的契约 digest
-  由 `tests/` 和 `docs/refactor/baseline/` 的检查点固定。
+  由 `tests/` 与外部检查点（`$BASE`，本轮实际路径示例 `/tmp/l0-baseline-run-v2/baseline`）固定；
+  仓内检查点记录位于 `docs/confgen-fix/checkpoints/`。
 - **四个 digest 轴**（WorkflowDefinition / StepSemantic / WorkItem / ExecutionEnvironment）区分"科学内容"和"调度/展示内容"：
   改 label、`max_parallel_items`、executable 路径不会移动科学 digest；改 native、checks、seed、资源、科学默认值会。
 
@@ -119,4 +120,5 @@ confflow/
 ## 8. 已退役
 
 旧的 calc 调度链与 `confts` / `confgen` / `confrefine` 独立 CLI、`blocks/`、V1/V2/V3 工作流执行与配置 wire、
-`confflow export`（`results.db` 读取器）都已删除。迁移史与逐卡验收记录见 `docs/refactor/`（`PLAN.md`、`LOG.md`）。
+`confflow export`（`results.db` 读取器）都已删除。迁移史与逐卡验收记录随 architecture-diet-1 归档：
+见 `docs/ARCHITECTURE_DIET_1.md`、`docs/archive_manifests/architecture_diet_1.json` 与归档提交 `671c3fb14663e9a6f4ccf9880228c59d28fbb762`（可用仓库外 bundle 恢复，按 git 对象定位，不打 tag）。

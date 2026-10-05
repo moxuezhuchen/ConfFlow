@@ -44,7 +44,7 @@ from confflow.workflow.v4.assembly import (
 from confflow.workflow.v4.compiler import compile_workflow
 from confflow.workflow.v4.confgen_schema import ConfgenModelV3
 from confflow.workflow.v4.parser import parse_workflow_document
-from tests.v4.test_repair_executors import _butane, _ctx, _item, _sci
+from tests.v4._helpers.repair import _butane, _ctx, _item, _sci
 
 
 def _typed_native(**overrides: Any) -> dict[str, Any]:

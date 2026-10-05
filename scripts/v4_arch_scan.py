@@ -2,10 +2,11 @@
 
 """V4 production architecture scanner (worker H).
 
-Scans the formal V4 production paths for legacy execution paths.  Exits 1
-with a hit list when any legacy pattern is found in live code; comments and
-docstrings are ignored so defensive "never X" documentation never counts as
-a hit.
+Thin CLI adapter over the unified static policy
+(``tools/architecture_policy.py``): this module keeps the public command
+surface (default root, output lines, ``ArchHit`` fields, ``scan()``) and
+maps the ``legacy_cli`` compat profile (``AP-088/089/090/091/092``) back
+to the historical hit format.  No AST parsing or scan loop lives here.
 
 Post-cutover scope (V4 Core Closure, ``44b478d``):
 
@@ -43,184 +44,42 @@ fields are protocol data, not legacy truth, and are not flagged.
 
 from __future__ import annotations
 
-import ast
-import io
+import argparse
 import sys
-import tokenize
 from dataclasses import dataclass
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-SCOPE: tuple[str, ...] = (
-    "confflow/v4cli.py",
-    "confflow/application/__init__.py",
-    "confflow/application/v4_entry.py",
-    "confflow/application/v4_run.py",
-    "confflow/application/execution",
-    "confflow/control.py",
-    "confflow/producer",
-    "confflow/remote",
-    "confflow/analysis",
-)
 
-FORBIDDEN_IMPORT_PREFIXES: tuple[str, ...] = (
-    "confflow.shared",
-    "confflow.cli",
-    "confflow.main",
-    "confflow.workflow.engine",
-    "confflow.workflow.state",
-    "confflow.workflow.v3_runtime",
-    "confflow.workflow.v3_dataflow",
-    "confflow.workflow.step_handlers",
-    "confflow.workflow.binding_v2",
-    "confflow.workflow.execution_context",
-    "confflow.workflow.finalize",
-    "confflow.workflow.resume_validation",
-    "confflow.workflow.runtime_context",
-    "confflow.workflow.stats",
-    "confflow.workflow.presenter",
-    "confflow.workflow.dag",
-    "confflow.workflow.plan",
-    "confflow.workflow.rerun_failed",
-    "confflow.workflow.supervisor",
-    "confflow.core.models",
-    "confflow.core.types",
-    "confflow.core.parsers",
-    "confflow.core.path_policy",
-    "confflow.core.io",
-)
+def _load_policy():
+    """Load the policy module from this script's own tree (fail closed)."""
+    import importlib.util
 
-#: V2/V3 execution-runtime modules retired by Architecture Diet PR-4, plus
-#: the dead remote duplicates retired by PR-6 (``remote.lease`` /
-#: ``remote.supervision`` / ``remote.schema``; their live authorities are
-#: ``launch_lease.TokenLaunchLease``, ``persistence.recovery.reconcile_owner``
-#: and ``worker_supervision``).  They must not exist as source files and must
-#: not be importable from scoped files; the historically public V2/V3 names
-#: resolve to fail-closed stubs.
-RETIRED_RUNTIME_MODULES: tuple[str, ...] = (
-    "confflow.workflow.engine",
-    "confflow.workflow.state",
-    "confflow.workflow.v3_runtime",
-    "confflow.workflow.step_handlers",
-    "confflow.workflow.binding_v2",
-    "confflow.workflow.stats",
-    "confflow.workflow.presenter",
-    "confflow.workflow.execution_context",
-    "confflow.workflow.finalize",
-    "confflow.workflow.v3_dataflow",
-    "confflow.workflow.resume_validation",
-    "confflow.workflow.runtime_context",
-    "confflow.workflow.dag",
-    "confflow.workflow.dag.explicit",
-    "confflow.workflow.dag.legacy",
-    "confflow.remote.lease",
-    "confflow.remote.supervision",
-    "confflow.remote.schema",
-)
+    candidate = Path(__file__).resolve().parent.parent / "tools" / "architecture_policy.py"
+    if not candidate.is_file():
+        raise FileNotFoundError(
+            f"authoritative policy not found: {candidate} "
+            "(refusing to fall back to another tree's tools)"
+        )
+    spec = importlib.util.spec_from_file_location("l0_thin_cli_policy", str(candidate))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
-#: The never-released Workflow V3 public wire retired by Architecture Diet
-#: PR-7: V3 parser/graph, the V3 semantic validation profile, the V3 editor and
-#: recipe catalogs, the ``configuration-contract.v3`` document, the V2->V3
-#: upgrade emitter and the V3 capability advertisement.  V3 never entered a
-#: published release, so any of these reappearing on disk is a regression.
-RETIRED_V3_WIRE_MODULES: tuple[str, ...] = (
-    "confflow.config.canonical.v3_parser",
-    "confflow.config.canonical.v3_graph",
-    "confflow.config.canonical.upgrade",
-    "confflow.config.canonical.structured",
-    "confflow.config.canonical.theory",
-    "confflow.config.canonical.extensions",
-    "confflow.config.canonical.yaml_io",
-    "confflow.config.canonical.execution_versions",
-    "confflow.config.workflow_cli",
-)
 
-#: The released V1/V2 configuration wire retired by Architecture Diet PR-9:
-#: the v1/v2 contract documents and their workflow-schema generator, the V2
-#: document parser/validator, the V2->canonical adapter and IR, the V2 editor
-#: manifest and recipe catalog, the V2 fingerprint/param registry, the V2
-#: typed-model and pydantic facades, the V2 diagnostic planners and the legacy
-#: YAML validation wrapper.  Any of these reappearing on disk is a regression.
-RETIRED_V1_V2_WIRE_MODULES: tuple[str, ...] = (
-    "confflow.config.canonical",
-    "confflow.config.canonical.contract",
-    "confflow.config.canonical.schema",
-    "confflow.config.canonical.parser",
-    "confflow.config.canonical.validation",
-    "confflow.config.canonical.v2_adapter",
-    "confflow.config.canonical.workflow",
-    "confflow.config.canonical.editor_manifest",
-    "confflow.config.canonical.recipes",
-    "confflow.config.canonical.fingerprint",
-    "confflow.config.canonical.param_fields",
-    "confflow.config.canonical.pydantic",
-    "confflow.config.canonical.diagnostics",
-    "confflow.config.canonical.serialization",
-    "confflow.config.models",
-    "confflow.shared.config_validation",
-    "confflow.core.types",
-    "confflow.workflow.plan",
-    "confflow.workflow.config_show",
-    "confflow.workflow.dry_run",
-)
+_policy = _load_policy()
 
-#: Semantic source tokens of the retired V1/V2 configuration wire.  A scoped
-#: V4 production file referencing one of these has grown a new V1/V2 consumer.
-#: This is deliberately *not* a ban on the strings "v1"/"v2": the current
-#: producer protocol keeps ``confflow.configuration-validation.v1``, the
-#: ``confflow.contract.*.v1`` capability ids and the ``.v3`` remote capability
-#: ids, and unrelated lines have their own current protocol majors.
-RETIRED_V1_V2_WIRE_TOKENS: tuple[str, ...] = (
-    "confflow.workflow.v1",
-    "confflow.workflow.v2",
-    "confflow.configuration-contract.v1",
-    "confflow.configuration-contract.v2",
-    "confflow.config.canonical",
-    "confflow.config.models",
-    "confflow.shared.config_validation",
-    "confflow.workflow.dry_run",
-    "confflow.workflow.config_show",
-    "to_canonical_workflow",
-    "parse_canonical_workflow",
-    "parse_workflow_mapping",
-    "load_raw_mapping",
-    "load_workflow_definition",
-    "load_workflow_model",
-    "detect_schema_version",
-    "detect_workflow_file_version",
-    "validate_workflow_definition",
-    "calc_input_diagnostics",
-    "resolve_calc_step",
-    "resolve_global_options",
-    "workflow_fingerprint",
-    "build_configuration_contract_v1",
-    "build_configuration_contract_v2",
-    "CONFIGURATION_CONTRACT_BUILDERS",
-    "build_editor_manifest(",
-    "build_recipe_catalog(",
-)
+# Re-exported scanner data (single authority: the policy module).
+SCOPE: tuple[str, ...] = tuple(_policy.SCANNER_SCOPE)
+FORBIDDEN_IMPORT_PREFIXES: tuple[str, ...] = tuple(_policy.SCANNER_FORBIDDEN_IMPORT_PREFIXES)
+RETIRED_RUNTIME_MODULES: tuple[str, ...] = tuple(_policy.SCANNER_RETIRED_RUNTIME_MODULES)
+RETIRED_V3_WIRE_MODULES: tuple[str, ...] = tuple(_policy.SCANNER_RETIRED_V3_WIRE_MODULES)
+RETIRED_V1_V2_WIRE_MODULES: tuple[str, ...] = tuple(_policy.SCANNER_RETIRED_V1_V2_WIRE_MODULES)
+RETIRED_V1_V2_WIRE_TOKENS: tuple[str, ...] = tuple(_policy.SCANNER_RETIRED_V1_V2_WIRE_TOKENS)
+PATTERNS: tuple[tuple[str, str], ...] = tuple(_policy.SCANNER_PATTERNS)
 
-PATTERNS: tuple[tuple[str, str], ...] = (
-    ("legacy-TaskRunner", r"\bTaskRunner\b"),
-    ("legacy-CalcStepRunner", r"\bCalcStepRunner\b"),
-    ("legacy-ResultsDB", r"\bResultsDB\b"),
-    ("legacy-WorkflowState", r"\bWorkflowState\w*\b"),
-    ("legacy-iprog", r"\biprog\b"),
-    ("legacy-itask", r"\bitask\b|\bget_itask\b"),
-    ("legacy-chk-from-step", r"\bchk_from_step\b"),
-    ("legacy-result-xyz", r"result\.xyz|failed\.xyz|\boutput_xyz\b"),
-    ("legacy-output-path", r"\boutput_path\b"),
-    ("legacy-orca-fallback", r"(?i)default[_\s-]*orca|orca[_\s-]*default"),
-    ("legacy-first-match", r"first-match|first_match"),
-    ("legacy-fake-marker", r"FAKE_MODE|fake_native|native_marker|CONFFLOW_FAKE"),
-    ("legacy-stepresult-shortcut", r"\bStepResult\s*\("),
-    (
-        "legacy-duplicate-authority",
-        r"register_executor|register_program|build_default_registry|\bExecutionRegistry\s*\(",
-    ),
-    ("legacy-silent-fallback", r"silent.*fallback|fallback.*silent|\bor\s+[\"']orca[\"']"),
-)
+_LEGACY_RULE_IDS = tuple(_policy.LEGACY_CLI_RULE_IDS)
 
 
 @dataclass(frozen=True, slots=True)
@@ -231,179 +90,88 @@ class ArchHit:
     text: str
 
 
-def _iter_files() -> list[Path]:
-    files: list[Path] = []
-    for entry in SCOPE:
-        candidate = REPO_ROOT / entry
-        if candidate.is_file():
-            files.append(candidate)
-        elif candidate.is_dir():
-            for path in sorted(candidate.rglob("*.py")):
-                if "__pycache__" not in path.parts:
-                    files.append(path)
-    return files
-
-
-def _docstring_spans(tree: ast.AST) -> set[int]:
-    """Return line numbers covered by module/class/function docstrings."""
-    spans: set[int] = set()
-    nodes: list[ast.AST] = [tree]
-    nodes.extend(ast.walk(tree))
-    for node in nodes:
-        body: list[ast.stmt] | None = None
-        if isinstance(node, ast.Module):
-            body = node.body
-        elif isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
-            body = node.body
-        if not body:
-            continue
-        first = body[0]
-        if (
-            isinstance(first, ast.Expr)
-            and isinstance(first.value, ast.Constant)
-            and isinstance(first.value.value, str)
-        ):
-            start = first.lineno
-            end = getattr(first, "end_lineno", start) or start
-            spans.update(range(start, end + 1))
-    return spans
-
-
-def _strip_comments_and_docstrings(source: str, tree: ast.AST) -> list[str]:
-    """Return source lines with comments and docstrings blanked."""
-    lines = source.splitlines()
-    doc_lines = _docstring_spans(tree)
-    try:
-        tokens = list(tokenize.generate_tokens(io.StringIO(source).readline))
-    except (tokenize.TokenError, SyntaxError, IndentationError):
-        tokens = []
-    comment_lines = {token.start[0] for token in tokens if token.type == tokenize.COMMENT}
-    stripped: list[str] = []
-    for number, line in enumerate(lines, start=1):
-        if number in doc_lines or number in comment_lines:
-            stripped.append("")
-        else:
-            stripped.append(line.split("#")[0] if False else line)
-    # Remove trailing comments precisely via token columns for kept lines.
-    by_line: dict[int, list[tokenize.TokenInfo]] = {}
-    for token in tokens:
-        if token.type == tokenize.COMMENT:
-            by_line.setdefault(token.start[0], []).append(token)
-    out = list(stripped)
-    for number, comments in by_line.items():
-        if 1 <= number <= len(out) and number not in doc_lines:
-            col = min(token.start[1] for token in comments)
-            out[number - 1] = out[number - 1][:col]
-    return out
-
-
-def _resolve_relative(package: str, level: int, module: str | None) -> str:
-    """Resolve a relative import to an absolute dotted name."""
-    if level == 0:
-        return module or ""
-    parts = package.split(".") if package else []
-    up = level - 1
-    base = parts[: len(parts) - up] if up <= len(parts) else []
-    if module:
-        return ".".join([*base, module])
-    return ".".join(base)
-
-
-def _import_hits(path: Path, tree: ast.AST) -> list[ArchHit]:
-    """Flag forbidden legacy imports and analysis persistence bypass."""
+def _adapt(violations: list[dict]) -> list[ArchHit]:
+    """Map unified-policy legacy violations to historical ``ArchHit`` rows."""
     hits: list[ArchHit] = []
-    package = ".".join(path.relative_to(REPO_ROOT).with_suffix("").parts[:-1])
-    if path.name == "__init__.py":
-        package = ".".join(path.relative_to(REPO_ROOT).with_suffix("").parts[:-1])
-    rel = str(path.relative_to(REPO_ROOT))
-    in_analysis = rel.startswith("confflow/analysis/")
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            for alias in node.names:
-                name = alias.name
-                if name.startswith(FORBIDDEN_IMPORT_PREFIXES):
-                    hits.append(ArchHit(rel, node.lineno, "legacy-import", name))
-                if in_analysis and name.startswith("confflow.persistence"):
-                    hits.append(ArchHit(rel, node.lineno, "legacy-analysis-persistence", name))
-        elif isinstance(node, ast.ImportFrom):
-            absolute = _resolve_relative(package, node.level, node.module)
-            if absolute.startswith(FORBIDDEN_IMPORT_PREFIXES):
-                hits.append(ArchHit(rel, node.lineno, "legacy-import", absolute))
-            if in_analysis and absolute.startswith("confflow.persistence"):
-                hits.append(ArchHit(rel, node.lineno, "legacy-analysis-persistence", absolute))
-    return hits
-
-
-def _pattern_hits(path: Path, lines: list[str]) -> list[ArchHit]:
-    """Flag legacy code patterns on stripped lines."""
-    import re
-
-    hits: list[ArchHit] = []
-    rel = str(path.relative_to(REPO_ROOT))
-    compiled = [(check, re.compile(pattern)) for check, pattern in PATTERNS]
-    for number, line in enumerate(lines, start=1):
-        if not line.strip():
-            continue
-        for check, regex in compiled:
-            match = regex.search(line)
-            if match:
-                hits.append(ArchHit(rel, number, check, match.group(0).strip()))
-    return hits
-
-
-def _retired_module_hits() -> list[ArchHit]:
-    """Flag any retired V2/V3 execution-runtime module that reappears."""
-    hits: list[ArchHit] = []
-    for module in (*RETIRED_RUNTIME_MODULES, *RETIRED_V3_WIRE_MODULES, *RETIRED_V1_V2_WIRE_MODULES):
-        candidate = REPO_ROOT / Path(module.replace(".", "/"))
-        for path in (candidate.with_suffix(".py"), candidate / "__init__.py"):
-            if path.exists():
-                hits.append(
-                    ArchHit(
-                        str(path.relative_to(REPO_ROOT)),
-                        1,
-                        "retired-runtime-present",
-                        module,
-                    )
+    for violation in violations:
+        rule = violation["rule"]
+        if rule == "AP-088":
+            hits.append(
+                ArchHit(
+                    violation["path"],
+                    violation["line"],
+                    "legacy-import",
+                    violation["detail"],
                 )
-                break
-    return hits
-
-
-def _retired_v1_v2_token_hits(path: Path, source: str, tree: ast.AST) -> list[ArchHit]:
-    """Flag scoped code referencing a retired V1/V2 configuration token."""
-    rel = str(path.relative_to(REPO_ROOT))
-    hits: list[ArchHit] = []
-    for number, line in enumerate(_strip_comments_and_docstrings(source, tree), start=1):
-        for token in RETIRED_V1_V2_WIRE_TOKENS:
-            if token in line:
-                hits.append(ArchHit(rel, number, "retired-v1v2-token", token))
-    return hits
-
-
-def scan() -> list[ArchHit]:
-    """Scan all scoped entry paths; return sorted hits."""
-    hits: list[ArchHit] = list(_retired_module_hits())
-    for path in _iter_files():
-        try:
-            source = path.read_text(encoding="utf-8")
-            tree = ast.parse(source)
-        except (OSError, SyntaxError):
-            continue
-        hits.extend(_import_hits(path, tree))
-        hits.extend(_retired_v1_v2_token_hits(path, source, tree))
-        hits.extend(_pattern_hits(path, _strip_comments_and_docstrings(source, tree)))
+            )
+        elif rule == "AP-089":
+            hits.append(
+                ArchHit(
+                    violation["path"],
+                    violation["line"],
+                    "legacy-analysis-persistence",
+                    violation["detail"],
+                )
+            )
+        elif rule == "AP-090":
+            hits.append(
+                ArchHit(
+                    violation["path"],
+                    violation["line"],
+                    violation["detail"],
+                    violation.get("match", violation["detail"]),
+                )
+            )
+        elif rule == "AP-091":
+            hits.append(
+                ArchHit(
+                    violation["path"],
+                    violation["line"],
+                    "retired-runtime-present",
+                    violation["detail"],
+                )
+            )
+        elif rule == "AP-092":
+            hits.append(
+                ArchHit(
+                    violation["path"],
+                    violation["line"],
+                    "retired-v1v2-token",
+                    violation["detail"],
+                )
+            )
     return sorted(hits, key=lambda hit: (hit.path, hit.line, hit.check))
 
 
-def main() -> int:
-    hits = scan()
+def scan(root: Path | str | None = None) -> list[ArchHit]:
+    """Scan all scoped entry paths; return sorted hits."""
+    base = Path(root) if root is not None else REPO_ROOT
+    violations = _policy.scan(base, rule_ids=_LEGACY_RULE_IDS, profile="legacy_cli")
+    return _adapt(violations)
+
+
+def _iter_files(root: Path | str | None = None) -> list[Path]:
+    base = Path(root) if root is not None else REPO_ROOT
+    return _policy.scope_files(base, profile="legacy_cli")
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--root", default=None, help="Repository root to scan.")
+    parser.add_argument(
+        "--cf",
+        default=None,
+        help="Repository root to scan (control-flow alias for --root).",
+    )
+    args, _unknown = parser.parse_known_args(argv)
+    root = Path(args.cf or args.root) if (args.cf or args.root) else None
+    hits = scan(root)
     for hit in hits:
         print(f"{hit.path}:{hit.line}:{hit.check}:{hit.text}")
     if hits:
         print(f"FAIL: {len(hits)} legacy execution path hits", file=sys.stderr)
         return 1
-    print(f"OK: {len(_iter_files())} entry files clean")
+    print(f"OK: {len(_iter_files(root))} entry files clean")
     return 0
 
 

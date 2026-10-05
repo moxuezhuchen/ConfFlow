@@ -38,13 +38,12 @@ from confflow.execution.native import (
     GeometryOutput,
     ProgramAdapter,
     ProgramName,
-    ResolvedCalculationInputs,
     StagedArtifact,
 )
 from confflow.programs.gaussian import GaussianProgramAdapter
 from confflow.programs.orca import OrcaProgramAdapter
 from confflow.programs.registry import PROGRAM_ALIASES, get_program_adapter
-from tests.v4._builders import structure
+from tests.v4._helpers.v42_adapters import gaussian_inputs, orca_inputs
 from tests.v4.fakes import fake_g16, fake_orca
 
 FAKES_DIR = Path(__file__).resolve().parent / "fakes"
@@ -63,42 +62,6 @@ SUCCESS_MODES = (
 
 WATER_ATOMS = ("O", "H", "H")
 WATER_COORDS = ((0.0, 0.0, 0.0), (0.76, 0.59, 0.0), (0.76, -0.59, 0.0))
-
-
-def gaussian_inputs(**overrides: object) -> ResolvedCalculationInputs:
-    """Build resolved calculation inputs for the Gaussian adapter."""
-    params: dict[str, object] = {
-        "structure": structure("s0"),
-        "charge": 0,
-        "multiplicity": 1,
-        "freeze": None,
-        "resources": ResourceRequest.from_values(cores_per_item=4, memory_per_item="16GB"),
-        "native": FrozenDict({"keyword": "B3LYP/6-31G* Opt"}),
-        "checkpoints": (),
-        "step_id": "s_opt",
-        "work_item_id": "wi:s_opt:item0",
-        "logical_key": "s_opt:item0",
-    }
-    params.update(overrides)
-    return ResolvedCalculationInputs(**params)  # type: ignore[arg-type]
-
-
-def orca_inputs(**overrides: object) -> ResolvedCalculationInputs:
-    """Build resolved calculation inputs for the ORCA adapter."""
-    params: dict[str, object] = {
-        "structure": structure("s0"),
-        "charge": 0,
-        "multiplicity": 1,
-        "freeze": None,
-        "resources": ResourceRequest.from_values(cores_per_item=4, memory_per_item="16GB"),
-        "native": FrozenDict({"keyword": "B3LYP D3BJ def2-SVP Opt"}),
-        "checkpoints": (),
-        "step_id": "s_opt",
-        "work_item_id": "wi:s_opt:item0",
-        "logical_key": "s_opt:item0",
-    }
-    params.update(overrides)
-    return ResolvedCalculationInputs(**params)  # type: ignore[arg-type]
 
 
 def run_fake(fake: Path, work_dir: Path, input_name: str, mode: str) -> int:

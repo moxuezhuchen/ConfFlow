@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Architecture reachability metrics (pure analysis tool).
 
-This script fixes ONE metric definition.  It never imports ``confflow``; it
-only parses the source tree, so it runs identically against any revision.
+Thin CLI adapter over the unified static policy
+(``tools/architecture_policy.py::metrics_snapshot``, AP-095): the metric
+definitions live in the policy module; this script only forwards
+``collect(root)`` and renders the command output.
 
 Fixed definitions:
 
@@ -37,10 +39,9 @@ Usage::
 from __future__ import annotations
 
 import argparse
-import ast
 import json
 import os
-from collections import defaultdict, deque
+from pathlib import Path
 
 #: Formal V4 production entrypoints; the fixed metric never changes these.
 V4_ROOTS: tuple[str, ...] = (
@@ -51,127 +52,36 @@ V4_ROOTS: tuple[str, ...] = (
 )
 
 
-def _module_name(root: str, path: str) -> str:
-    relative = os.path.relpath(path, root)
-    if relative.endswith("__init__.py"):
-        relative = os.path.dirname(relative)
-    else:
-        relative = relative[:-3]
-    return relative.replace(os.sep, ".")
+def _load_policy():
+    """Load the policy module from this script's own tree (fail closed)."""
+    import importlib.util
+
+    candidate = Path(__file__).resolve().parent.parent / "tools" / "architecture_policy.py"
+    if not candidate.is_file():
+        raise FileNotFoundError(
+            f"authoritative policy not found: {candidate} "
+            "(refusing to fall back to another tree's tools)"
+        )
+    spec = importlib.util.spec_from_file_location("l0_thin_metrics_policy", str(candidate))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
-def _discover_modules(root: str) -> dict[str, str]:
-    modules: dict[str, str] = {}
-    package_root = os.path.join(root, "confflow")
-    for dirpath, dirnames, filenames in os.walk(package_root):
-        dirnames[:] = [name for name in dirnames if name != "__pycache__"]
-        for filename in filenames:
-            if filename.endswith(".py"):
-                path = os.path.join(dirpath, filename)
-                modules[_module_name(root, path)] = path
-    return modules
-
-
-def _resolve_import(modules: dict[str, str], base: str, module: str, name: str) -> str:
-    """Resolve one ``from base.module import name`` target to a module name."""
-    if module:
-        target = f"{base}.{module}" if base else module
-        candidate = f"{target}.{name}"
-        return candidate if candidate in modules else target
-    candidate = f"{base}.{name}" if base else name
-    return candidate if candidate in modules else (base or name)
-
-
-def _parse_imports(modules: dict[str, str], module: str, path: str) -> set[str]:
-    is_init = path.endswith("__init__.py")
-    package = module if is_init else module.rsplit(".", 1)[0]
-    found: set[str] = set()
-    tree = ast.parse(open(path, encoding="utf-8").read(), filename=path)
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            for alias in node.names:
-                if alias.name.startswith("confflow"):
-                    found.add(alias.name)
-        elif isinstance(node, ast.ImportFrom):
-            if node.level:
-                parts = package.split(".")
-                up = node.level - 1
-                if up:
-                    parts = parts[:-up] if up <= len(parts) else []
-                base = ".".join(parts)
-            else:
-                base = ""
-            imported = node.module or ""
-            if node.names and all(alias.name == "*" for alias in node.names):
-                target = f"{base}.{imported}" if base or imported else "confflow"
-                if target.startswith("confflow"):
-                    found.add(target)
-                continue
-            for alias in node.names:
-                resolved = _resolve_import(modules, base, imported, alias.name)
-                if resolved.startswith("confflow"):
-                    found.add(resolved)
-    return found
-
-
-def _parents(modules: dict[str, str], module: str) -> set[str]:
-    """Return the parent packages whose ``__init__`` executes on import."""
-    parts = module.split(".")
-    return {
-        ".".join(parts[:index])
-        for index in range(1, len(parts))
-        if ".".join(parts[:index]) in modules
-    }
-
-
-def _closure(modules: dict[str, str], imports: dict[str, set[str]], roots: list[str]) -> set[str]:
-    """Compute the static import closure from *roots*, including parents."""
-    seen: set[str] = set()
-    queue: deque[str] = deque()
-    for root in roots:
-        if root not in modules:
-            raise SystemExit(f"closure root module not found: {root}")
-        for candidate in [root, *sorted(_parents(modules, root))]:
-            if candidate not in seen:
-                seen.add(candidate)
-                queue.append(candidate)
-    while queue:
-        module = queue.popleft()
-        for target in imports.get(module, ()):
-            for candidate in [target, *sorted(_parents(modules, target))]:
-                if candidate in modules and candidate not in seen:
-                    seen.add(candidate)
-                    queue.append(candidate)
-    return seen
-
-
-def _reachable(modules: dict[str, str], imports: dict[str, set[str]]) -> set[str]:
-    return _closure(modules, imports, list(V4_ROOTS))
-
-
-def _loc(path: str) -> int:
-    with open(path, encoding="utf-8") as handle:
-        return sum(1 for _ in handle)
+_policy = _load_policy()
 
 
 def collect(root: str) -> dict[str, object]:
-    modules = _discover_modules(root)
-    imports: dict[str, set[str]] = defaultdict(set)
-    for module, path in modules.items():
-        imports[module] = _parse_imports(modules, module, path)
-    reachable = _reachable(modules, imports)
-    physical_loc = sum(_loc(path) for path in modules.values())
-    reachable_loc = sum(_loc(modules[module]) for module in reachable)
-
+    snapshot = _policy.metrics_snapshot(Path(root))
     return {
         "root": os.path.abspath(root),
         "V4_ROOTS": list(V4_ROOTS),
-        "PHYSICAL_PRODUCTION_MODULES": len(modules),
-        "PHYSICAL_PRODUCTION_LOC": physical_loc,
-        "V4_REACHABLE_MODULES": len(reachable),
-        "V4_REACHABLE_LOC": reachable_loc,
-        "LEGACY_OR_NON_V4_REACHABLE_LOC": physical_loc - reachable_loc,
-        "v4_reachable": sorted(reachable),
+        "PHYSICAL_PRODUCTION_MODULES": snapshot["PHYSICAL_PRODUCTION_MODULES"],
+        "PHYSICAL_PRODUCTION_LOC": snapshot["PHYSICAL_PRODUCTION_LOC"],
+        "V4_REACHABLE_MODULES": snapshot["V4_REACHABLE_MODULES"],
+        "V4_REACHABLE_LOC": snapshot["V4_REACHABLE_LOC"],
+        "LEGACY_OR_NON_V4_REACHABLE_LOC": snapshot["LEGACY_OR_NON_V4_REACHABLE_LOC"],
+        "v4_reachable": snapshot["v4_reachable"],
     }
 
 

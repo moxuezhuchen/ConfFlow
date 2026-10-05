@@ -929,7 +929,7 @@ def _legacy_paths_to_v3(native: Mapping[str, Any], step_id: str) -> dict[str, An
     """Express a legacy paths scope as a typed ``schema_version: 3`` block.
 
     The mapping is the one recorded by the IS.1 equivalence golden
-    (``docs/refactor/paths_equivalence/run_equivalence.py::map_native``): a bare
+    (``tests/fixtures/paths_equivalence/run_equivalence.py::map_native``): a bare
     declaration gets ``step`` from ``angle_step`` or the legacy default 120,
     ``bond_scale`` becomes ``tolerances.bond_scale`` and
     ``strict_path_bond_check`` becomes the v3 top-level flag.  (Step-level

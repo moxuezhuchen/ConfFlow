@@ -57,14 +57,14 @@ pytest -q                  # 见 TESTING.md；scripts/test.sh 会把所有产物
 
 **新的 ConfGen 声明（torsion / ring / coordination / path）**：改 `workflow/v4/confgen_schema.py` 与
 `science/confgen/` 中对应的 lane；任何改变构象集合的改动都要有等价性或回归证据，并且要重新捕获引擎报告基线
-（`docs/refactor/baseline/` 与 `docs/refactor/tools/`）。
+（外部基线 `$BASE` 与 `tools/refactor/`；本轮实际路径示例 `/tmp/l0-baseline-run-v2/baseline`，配套 `MANIFEST.json`，不是通用设计）。
 
 ## 5. 契约与指纹
 
 `producer/` 生成的内容（配置契约、边界协议、authoring schema、editor manifest、recipes）是对 JobDesk 的**公共接口**：
 
 - `confflow v4 contract --json`、`confflow v4 boundary --json` 的字节是被钉住的；改动前后用
-  `docs/refactor/tools/contract_digests.py` 对比，用 `json_paths_diff.py` 看具体差了哪些路径。
+  `tools/refactor/contract_digests.py` 对比，用 `tools/refactor/json_paths_diff.py` 看具体差了哪些路径。
 - 边界协议的 fixture 由 `scripts/generate_p0_boundary_fixtures.py` 生成（生产者拥有），JobDesk 通过同步脚本原样拷贝，
   不得手改；`tests/v4/test_p0_boundary.py` 会检查入库的 fixture 与现在生成的一致。
 - 删除或重命名 wire 成员属于不兼容变更：JobDesk 必须同步升级，并在提交信息里写明。
@@ -93,5 +93,5 @@ pytest -q                  # 见 TESTING.md；scripts/test.sh 会把所有产物
 ## 9. 重构记录
 
 2026 年的架构瘦身（删除 calc/blocks/legacy CLI、边界瘦身、输入简化、refine 对称映射）的计划、逐卡验收和检查点在
-`docs/refactor/`：`PLAN.md`（任务卡）、`ACCEPTANCE.md`（验收协议）、`LOG.md`（验收记录）、`baseline/`（TS1 与引擎报告基线及各阶段检查点）、
-`paths_equivalence/`（legacy paths 与 typed v3 的等价性证据）、`tools/`（基线与验收工具）。这些文件是历史记录与证据，普通开发不需要改它们。
+历史归档：`docs/refactor/`（`PLAN.md`、`LOG.md`、`baseline/` 等）已随 architecture-diet-1 归档（见 `docs/ARCHITECTURE_DIET_1.md` 与 `docs/archive_manifests/architecture_diet_1.json`，按归档提交 SHA/blob 定位）。
+等价性证据 `paths_equivalence/` 已迁至 `tests/fixtures/paths_equivalence/`。验收协议在 `docs/process/ACCEPTANCE.md`，通用规则在 `docs/process/RULES.md`，验收工具在 `tools/refactor/` 与并列的 `tools/refactor-acc/`。这些文件是历史记录与证据，普通开发不需要改它们。

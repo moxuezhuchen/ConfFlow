@@ -18,7 +18,7 @@ import pytest
 from confflow.producer.authoring import dispatch_request
 from confflow.producer.path_preview import preview_paths
 
-GOLDEN = Path(__file__).resolve().parent.parent.parent / "docs" / "refactor" / "paths_equivalence"
+GOLDEN = Path(__file__).resolve().parent.parent / "fixtures" / "paths_equivalence"
 
 #: 1-4 along the butane backbone: three bridge bonds, explicit 3-angle grid.
 PATH_1_4 = {"start": 1, "end": 4, "move": "end", "angles": [0.0, 120.0, 240.0]}

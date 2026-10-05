@@ -28,7 +28,7 @@ from confflow.science.confgen.torsion.paths import (
     parse_path_declarations,
     resolve_paths,
 )
-from tests.v4.test_repair_executors import _butane, _ctx, _item, _sci
+from tests.v4._helpers.repair import _butane, _ctx, _item, _sci
 
 
 def _ensemble_report(tmp_path) -> dict[str, Any]:
@@ -307,7 +307,7 @@ def test_typed_declared_paths_audit(tmp_path):
 @pytest.mark.parametrize("typed", [True])
 def test_runtime_diagnostics_show_resolved_chain_and_moving_endpoint(tmp_path, typed):
     """Both modes expose the actual resolved atom route in unattended run logs."""
-    from tests.v4.test_confgen_paths_phase0 import _hexane
+    from tests.v4._helpers.confgen_paths import _hexane
 
     native = {"paths": [{"start": 2, "end": 5, "move": "end", "angles": [0.0, 120.0]}]}
     if typed:
