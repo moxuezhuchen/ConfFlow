@@ -170,28 +170,32 @@ def _section(system: dict[str, Any], **overrides: Any) -> dict[str, Any]:
 
 
 def _run(section: dict[str, Any], system: dict[str, Any], probe: Any = None) -> Any:
-    structure = StructureRecord(
-        id="refl",
-        atoms=tuple(system["elements"]),
-        coordinates=tuple(tuple(p) for p in system["coords"]),
-        charge=0,
-        multiplicity=1,
-    )
-    topology = {
-        "bonds": [{"atoms": [e.a, e.b], "kind": e.type.value} for e in system["graph"].edges],
-        "atoms": [],
-    }
-    workflow = {
-        "schema_version": 3,
-        "index_base": 0,
-        "topology": topology,
-        "coordination": section,
-    }
-    context = core_model.build_context(structure, workflow)
-    engine = ConfgenEngine(allow_preserve_input=True)
-    if probe is None:
-        return engine.run(context)
-    return engine.run(context, should_cancel=probe)
+    # D2 isolation: the sigma regression scope runs the real engine path
+    # with an explicit real sigma-only stage (single "sigma" phase, no
+    # sibling). Explicit stages through engine.run() would be wrapped in
+    # LegacyStageAdapter (wire_v3.py), which forwards no retry hooks, so
+    # _run goes through public run_kernel (never auto-wrapped) plus the
+    # same project_v3 that engine.run() itself applies. Production default
+    # (sigma+sibling) is covered by the sibling test file; every assertion
+    # below stays sigma-only intact.
+    from confflow.science.confgen.wire_v3 import project_v3
+
+    return project_v3(_run_kernel(section, system, _SigmaOnlyStage(section), probe))
+
+
+class _SigmaOnlyStage(CoordinationStage):
+    """TEST-ONLY D2 isolation: real stage, sigma phase only (no sibling).
+
+    Helper class body isolated to this regression file: it only narrows
+    the stage-owned phase declaration to ``("sigma",)`` so the D1
+    scientific/regression scope keeps its original assertions and node
+    IDs. No production fallback to old behavior is added or implied;
+    production still declares ``("sigma", "sibling")``.
+    """
+
+    def retry_phases(self) -> tuple[str, ...] | None:
+        """Declare the sigma phase only (test isolation, no sibling)."""
+        return ("sigma",)
 
 
 def _run_kernel(
@@ -301,7 +305,13 @@ class _MockSigmaStage(CoordinationStage):
     placement matching, dedup, ordering and cancel checks all run the real
     code through real ``run_kernel`` dispatch. Nothing here counts as a
     science result; the science column below uses the unmodified stage.
+    D2 isolation: the mock declares the sigma phase only, so no sibling
+    attempt can fire inside this regression scope.
     """
+
+    def retry_phases(self) -> tuple[str, ...] | None:
+        """Declare the sigma phase only (test isolation, no sibling)."""
+        return ("sigma",)
 
     def __init__(
         self, section: dict[str, Any], *, fail_ordinals: Any = (), sigma_mode: str = "decline"

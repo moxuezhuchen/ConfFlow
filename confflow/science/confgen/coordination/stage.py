@@ -729,6 +729,204 @@ class CoordinationStage(GenerationStage):
             return "sigma_image: exhausted (all sigma starts failed)"
         return f"sigma_image: realized from {int(n_successes)} candidate(s)"
 
+    def sibling_skip_diagnosis(
+        self,
+        *,
+        n_sources: int,
+        n_candidates: int,
+        n_successes: int,
+    ) -> str:
+        """Return the in-process D2 skip/exhaustion label for one retry decision.
+
+        Pure function of counts (no instance or global state). It pins the
+        fail-closed branch in tests; it is NOT a runtime report — wiring the
+        skip diagnostic into engine/executor reports is deferred to D3 with
+        ``start_statistics`` (root batching decision), and no completion of
+        that reporting requirement is claimed here.
+        """
+        if n_sources <= 0:
+            return "sibling: skipped (no realized source)"
+        if n_candidates <= 0:
+            return "sibling: skipped (no candidate)"
+        if n_successes <= 0:
+            return "sibling: exhausted (all sibling starts failed)"
+        return f"sibling: realized from {int(n_successes)} candidate(s)"
+
+    def retry_phases(self) -> tuple[str, ...] | None:
+        """Declare the D1+D2 retry phases in execution order (D0.2 protocol).
+
+        ``("sigma", "sibling")``: the engine runs every sigma attempt first
+        and only then every sibling attempt, each phase seeing a frozen
+        snapshot (the sibling snapshot includes sigma-phase recoveries).
+        The legacy :meth:`retry_solve` stays sigma-only for compatibility;
+        the ``"sigma"`` phase delegates to it with the permanent first-pass
+        table. No instance or module-global cache is read or written.
+        """
+        return ("sigma", "sibling")
+
+    def retry_solve_phase(
+        self,
+        parent: StageParentProtocol,
+        target: GenerationTarget,
+        context: MolecularContext,
+        should_cancel: Any | None,
+        first_pass: Any,
+        phase_id: str,
+        phase_snapshot: Any,
+    ) -> CoreRealizationResult | None:
+        """Phase-aware dispatch for sigma then sibling starts (D0.2 engine).
+
+        ``"sigma"`` delegates to the legacy sigma-only hook with the
+        permanent ``first_pass`` table (D1 bytes preserved). ``"sibling"``
+        runs the D2 sibling retry from the frozen ``phase_snapshot`` table
+        (audited published/expanded sources including sigma recoverers,
+        at most 3 in source-ordinal order). Any other id declines
+        (fail-closed); the legacy hook is never reused for a non-default
+        id by the engine, preserving the D0.2 duck rule.
+        """
+        try:
+            pid = str(phase_id)
+        except Exception:
+            return None
+        if pid == "sigma":
+            return self.retry_solve(parent, target, context, should_cancel, first_pass)
+        if pid == "sibling":
+            return self._sibling_retry(
+                parent, target, context, should_cancel, first_pass, phase_snapshot
+            )
+        from confflow.science.confgen.model import RETRY_DEFAULT_PHASE as _DEFAULT
+
+        if pid == _DEFAULT:
+            return self.retry_solve(parent, target, context, should_cancel, first_pass)
+        return None
+
+    def _sibling_retry(
+        self,
+        parent: StageParentProtocol,
+        target: GenerationTarget,
+        context: MolecularContext,
+        should_cancel: Any | None,
+        first_pass: Any,
+        phase_snapshot: Any,
+    ) -> CoreRealizationResult | None:
+        """D2 sibling retry for one still-failed coordination target.
+
+        Sources are the frozen ``phase_snapshot`` published/expanded targets
+        in source-ordinal order (audited structures only, sigma recoverers
+        included; no witness required), at most 3 per pending target. Each
+        source coordinate set is only the solver start point via
+        ``initial_coordinates``; all restraint tables and the terminal audit
+        stay anchored at the true parent input. Explicit ``rigid`` never
+        switches to flexible. Success stamps
+        ``retry_start="sibling:<source_id>"`` (new leaves only); decline
+        (``None``) retains the original failure record. Cancellation
+        propagates between candidates; no instance or module-global cache.
+        """
+        _ = first_pass
+        if getattr(target, "axis", None) != "coordination":
+            return None
+        try:
+            snapshot = tuple(phase_snapshot) if phase_snapshot is not None else ()
+        except TypeError:
+            return None
+        try:
+            current_ordinal = int(target.ordinal)  # type: ignore[attr-defined]
+        except (AttributeError, TypeError, ValueError):
+            return None
+        try:
+            current_id = str(target.target_id)  # type: ignore[attr-defined]
+        except (AttributeError, TypeError, ValueError):
+            return None
+        current_status: str | None = None
+        current_solver_error = False
+        for entry in snapshot:
+            try:
+                if int(entry.ordinal) == current_ordinal and str(entry.target_id) == current_id:
+                    current_status = str(entry.status)
+                    current_solver_error = bool(entry.solver_error)
+                    break
+            except (AttributeError, TypeError, ValueError):
+                continue
+        if current_status is None:
+            return None
+        if current_solver_error:
+            return None
+        if current_status not in (
+            "failed_geometry",
+            "failed_numerical",
+            "unresolved",
+        ):
+            return None
+        sources: list[tuple[int, str, Any]] = []
+        for entry in snapshot:
+            try:
+                status = str(entry.status)
+                structure = entry.structure
+            except AttributeError:
+                continue
+            if status not in ("published_leaf", "expanded") or structure is None:
+                continue
+            try:
+                sources.append((int(entry.ordinal), str(entry.target_id), structure))
+            except (TypeError, ValueError):
+                continue
+        sources.sort(key=lambda item: item[0])
+        if not sources:
+            return None
+        # Budget <=3 siblings per target (Q10), stable source-ordinal order.
+        sources = sources[:3]
+        try:
+            shape_of_target, _ = self._target_plan(target)  # type: ignore[arg-type]
+        except ValueError:
+            return None
+        try:
+            target_placement = tuple(int(v) for v in dict(target.state_value)["placement"])  # type: ignore[attr-defined]
+        except (KeyError, TypeError, ValueError):
+            return None
+        try:
+            graph = self._check_context(context)
+        except ValueError:
+            return None
+        candidates: list[tuple[str, Any]] = []
+        seen: set[bytes] = set()
+        for _source_ordinal, source_id, source_structure in sources:
+            try:
+                source_coords = np.array(source_structure.coordinates, dtype=float)
+            except (AttributeError, TypeError, ValueError):
+                continue
+            if source_coords.shape[0] != graph.natoms:
+                continue
+            key = np.asarray(source_coords, dtype=float).tobytes()
+            if key in seen:
+                continue
+            seen.add(key)
+            candidates.append((source_id, source_coords))
+        if not candidates:
+            return None
+        for source_id, start_coords in candidates:
+            from ..engine import EngineCancelledError as _Cancel
+
+            if should_cancel is not None:
+                try:
+                    if bool(should_cancel()):
+                        raise _Cancel("confgen run cancelled by probe")
+                except _Cancel:
+                    raise
+                except Exception:
+                    pass
+            outcome = self._realize_with_sibling(
+                parent, target, context, shape_of_target, target_placement, start_coords
+            )
+            if (
+                outcome is not None
+                and outcome.status == "realized"
+                and outcome.structure is not None
+            ):
+                return self._with_sibling_start(
+                    outcome, parent, target, context.adjacency, source_id
+                )
+        return None
+
     def retry_solve(
         self,
         parent: StageParentProtocol,
@@ -762,8 +960,10 @@ class CoordinationStage(GenerationStage):
           attempts; ``None`` when rigid cannot satisfy); ``flexible`` and
           ``rigid_then_flexible`` run the full flexible solve plus all
           geometry/perception/lock audits through the engine post-solve path;
-        * D2 sibling starts (``<=3``) and D3 ``start_statistics`` are not
-          implemented here (fail-closed; see seam notes).
+        * this hook stays sigma-only for compatibility; D2 sibling starts
+          (``<=3``) run in the later ``"sibling"`` phase via
+          :meth:`retry_solve_phase` from the frozen phase snapshot, and D3
+          ``start_statistics`` is still not added here.
 
         Success carries ``retry_start="sigma_image:<source_target_id>"`` in
         the returned structure metadata (first-pass REALIZED records keep the
@@ -926,13 +1126,13 @@ class CoordinationStage(GenerationStage):
         # Budget 1+|sigma|: the input-only attempt already ran; try each
         # distinct sigma image once, in source-ordinal/witness order.
         for source_id, sigma_coords in candidates:
+            from ..engine import EngineCancelledError as _Cancel
+
             if should_cancel is not None:
                 try:
                     if bool(should_cancel()):
-                        from ..engine import EngineCancelledError
-
-                        raise EngineCancelledError("confgen run cancelled by probe")
-                except EngineCancelledError:
+                        raise _Cancel("confgen run cancelled by probe")
+                except _Cancel:
                     raise
                 except Exception:
                     pass
@@ -957,6 +1157,42 @@ class CoordinationStage(GenerationStage):
         sigma_coords: Any,
     ) -> CoreRealizationResult | None:
         """Run the backend-faithful sigma-start solve (audit-anchored)."""
+        return self._realize_from_start(
+            parent, target, context, shape_name, placement, sigma_coords
+        )
+
+    def _realize_with_sibling(
+        self,
+        parent: StageParentProtocol,
+        target: GenerationTarget,
+        context: MolecularContext,
+        shape_name: str,
+        placement: tuple[int, ...],
+        sibling_coords: Any,
+    ) -> CoreRealizationResult | None:
+        """Run the backend-faithful sibling-start solve (audit-anchored).
+
+        Identical solver path to :meth:`_realize_with_sigma`: the start
+        coordinates alone change; restraint tables and the terminal audit
+        stay anchored at the true parent input. Split as a separate
+        overridable hook so control-flow doubles can script sibling starts
+        independently from sigma starts; production behavior is shared via
+        :meth:`_realize_from_start`.
+        """
+        return self._realize_from_start(
+            parent, target, context, shape_name, placement, sibling_coords
+        )
+
+    def _realize_from_start(
+        self,
+        parent: StageParentProtocol,
+        target: GenerationTarget,
+        context: MolecularContext,
+        shape_name: str,
+        placement: tuple[int, ...],
+        start_coords: Any,
+    ) -> CoreRealizationResult | None:
+        """Run the backend-faithful alternate-start solve (audit-anchored)."""
         from .realization import realize_flexible as _flexible
         from .realization import realize_target as _rigid
 
@@ -994,7 +1230,7 @@ class CoordinationStage(GenerationStage):
                 target_id=target.target_id,  # type: ignore[attr-defined]
                 perceive=_perceive_class,
                 max_nfev=self._max_nfev,
-                initial_coordinates=np.asarray(sigma_coords, dtype=float),
+                initial_coordinates=np.asarray(start_coords, dtype=float),
                 **options,
             )
             natives.append(rigid)
@@ -1030,7 +1266,7 @@ class CoordinationStage(GenerationStage):
                 perceive=_perceive_class,
                 maxiter=self._maxiter,
                 warm_max_nfev=self._max_nfev,
-                initial_coordinates=np.asarray(sigma_coords, dtype=float),
+                initial_coordinates=np.asarray(start_coords, dtype=float),
                 **options,
             )
             natives.append(flexible)
@@ -1053,9 +1289,37 @@ class CoordinationStage(GenerationStage):
         source_target_id: str,
     ) -> CoreRealizationResult:
         """Stamp a sigma-image success with retry provenance (new leaves only)."""
+        return self._with_retry_start_kind(
+            outcome, parent, target, adjacency, source_target_id, "sigma_image"
+        )
+
+    def _with_sibling_start(
+        self,
+        outcome: CoreRealizationResult,
+        parent: StageParentProtocol,
+        target: GenerationTarget,
+        adjacency: Any,
+        source_target_id: str,
+    ) -> CoreRealizationResult:
+        """Stamp a sibling success with retry provenance (new leaves only)."""
+        return self._with_retry_start_kind(
+            outcome, parent, target, adjacency, source_target_id, "sibling"
+        )
+
+    def _with_retry_start_kind(
+        self,
+        outcome: CoreRealizationResult,
+        parent: StageParentProtocol,
+        target: GenerationTarget,
+        adjacency: Any,
+        source_target_id: str,
+        kind: str,
+    ) -> CoreRealizationResult:
+        """Stamp an alternate-start success with retry provenance."""
         assert outcome.structure is not None
+        tag = f"{kind}:{source_target_id}"
         prior = dict(getattr(outcome.structure, "metadata", {}) or {})
-        prior["retry_start"] = f"sigma_image:{source_target_id}"
+        prior["retry_start"] = tag
         record = StructureRecord(
             id=outcome.structure.id,
             atoms=tuple(outcome.structure.atoms),
@@ -1069,9 +1333,9 @@ class CoordinationStage(GenerationStage):
         )
         evidence = [dict(item) for item in tuple(outcome.evidence)]
         if evidence:
-            evidence[0] = {**evidence[0], "retry_start": f"sigma_image:{source_target_id}"}
+            evidence[0] = {**evidence[0], "retry_start": tag}
         else:
-            evidence = [{"retry_start": f"sigma_image:{source_target_id}"}]
+            evidence = [{"retry_start": tag}]
         return CoreRealizationResult(
             structure=record,
             status=outcome.status,
