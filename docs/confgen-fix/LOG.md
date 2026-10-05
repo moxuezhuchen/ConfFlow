@@ -125,3 +125,12 @@
   完整 policy 全节点实跑一次 `311 passed`（旧 310 + 新增 1）；ruff/black（--workers 1）必要文件通过；
   测试均 pipefail/tee 全输出并记录真实 pytest 退出码。不跑全量/golden。
 - 计数实际变化：policy 模块 `310 → 311`（+1 隔离回归）；CI 六失败在同隔离环境下 `6 failed → 7 passed`（六修复+一新增）。
+
+## B1 — FIX-1A baseline frozen
+
+- L0 PR #104 merged as `1038e4abc705b781aa26f497f777d6b6feb0396e`; candidate `5225cf402a4ba6c81aff50ef633a88341360cf16` has the identical Git tree.
+- Two TS1 rounds (three backends) and two engine captures (93 reports) independently matched each other and L0.0 byte for byte. Pin and current JobDesk contracts unchanged.
+- Scientific outputs were precollected during CI; freeze occurred after exact merged-tree verification. Root full evidence reused from `/tmp/l0-final-root-run-v3`: 4656 passed, 10 unchanged skips, 4666 nodes, golden true.
+- External baseline: `/tmp/fix1a-baseline-final-output/baseline` (104 files); SHA256 manifest: `docs/confgen-fix/checkpoints/B1/MANIFEST.json`. No scientific files added to Git.
+- Precollect report authority-path and local-time labels corrected in manifest; minor prose issues did not cause retests. L0 root launch errors (missing --repo, sandbox Gaussian stat restriction, line-list parser) preserved externally and corrected before the successful full/golden run.
+- No tags; main stays at the merged L0 SHA while FIX-1A executes on an isolated feature branch.
