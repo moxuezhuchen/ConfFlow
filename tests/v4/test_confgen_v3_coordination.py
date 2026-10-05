@@ -3110,7 +3110,9 @@ def test_coordination_ring_composition_lock_scope() -> None:
     seen_templates = set()
     for target in rtargets:
         out = rstage.realize(rparent, target, context)
-        template_name = str(dict(target.state_value)["R1"]["template"])
+        # R4 alias: chair_A_6->(C,1), chair_B_6->(C,0), boat_6->(B,3).
+        commanded = dict(dict(target.state_value)["R1"])
+        template_name = (str(commanded["form"]), int(commanded["index"]))
         seen_templates.add(template_name)
         assert out.status == "realized", (template_name, out.reason)
         assert out.structure is not None
@@ -3119,7 +3121,7 @@ def test_coordination_ring_composition_lock_scope() -> None:
         scope = evidence[0]["lock_scope_atoms"]
         assert all(a not in scope for a in system["ring"])
         assert evidence[0]["reference_source"] == "accepted-parent"
-    assert seen_templates == {"chair_A_6", "chair_B_6", "boat_6"}
+    assert seen_templates == {("C", 1), ("C", 0), ("B", 3)}
 
 
 def _audit_direct(

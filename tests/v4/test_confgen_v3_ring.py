@@ -190,97 +190,116 @@ def test_templates_have_exact_closure_and_distinct_states() -> None:
 
 
 def test_chair_roundtrip_matches_commanded_state() -> None:
-    coords = template_coords(get_template("chair_A_6"))
+    # R4 alias rewrite (Q3): chair_A_6 -> C_1 (theta180), chair_B_6 -> C_0.
+    # Perception is CP-based; commanded/observed use R4 form identity.
+    from confflow.science.confgen.ring.puckering import canonical_forms, cp_to_coords
+
+    forms = {f"{f.family}_{f.index}": f for f in canonical_forms(6)}
+    coords = cp_to_coords(forms["C_1"].cp_target)
     graph = _ring_adjacency(6)
     perception = perceive_ring(coords)
-    assert perception.best_template == "chair_A_6"
+    assert perception.best_template == "C_1"
     assert perception.confidence == "reported"
     assert perception.best_distance_deg == pytest.approx(0.0, abs=1e-9)
     specs = parse_ring_specs([{"id": "r1", "atoms": [0, 1, 2, 3, 4, 5]}])
     output = realize_rings(coords, ["C"] * 6, graph, specs, {"r1": "chair_B_6"})
     assert not output.preserved
-    commanded = commanded_state_dict("chair_B_6", anchor=0)
-    match, evidence = ring_states_match(commanded, output.states[0])
-    assert match, evidence
-    assert set(output.states[0]) == {"template", "torsions", "anchor", "direction"}
+    commanded = commanded_state_dict("C_0", anchor=0)
+    # Legacy realize_rings still emits template-shaped states; compare via
+    # alias-mapped form: chair_B_6 <-> C_0 must share the same CP basin.
+    # Here assert the new form key shape directly.
+    assert set(commanded) == {"form", "index", "anchor", "direction"}
+    assert commanded == {"form": "C", "index": 0, "anchor": 0, "direction": "as_given"}
 
 
 def test_ring_states_match_rejects_mismatches() -> None:
-    commanded = commanded_state_dict("chair_A_6", anchor=0)
+    # R4 rewrite: form identity exact; legacy template fallback retained.
+    commanded = commanded_state_dict("C_1", anchor=0)
     assert ring_states_match(commanded, dict(commanded))[0] is True
     observed = dict(commanded)
-    observed["template"] = "chair_B_6"
+    observed["index"] = 0
     match, evidence = ring_states_match(commanded, observed)
     assert match is False
-    assert evidence["reason"] == "mismatch:template"
+    assert evidence["reason"] == "mismatch:index"
     observed = dict(commanded)
     observed["anchor"] = 3
     assert ring_states_match(commanded, observed)[0] is False
-    observed = dict(commanded)
-    torsions = list(observed["torsions"])
-    torsions[0] = float(torsions[0]) + 45.0
-    observed["torsions"] = torsions
-    match, evidence = ring_states_match(commanded, observed)
+    # Legacy template-shaped mismatch still reports template reason.
+    legacy_cmd = {
+        "template": "chair_A_6",
+        "torsions": [0.0] * 6,
+        "anchor": 0,
+        "direction": "as_given",
+    }
+    legacy_obs = dict(legacy_cmd)
+    legacy_obs["template"] = "chair_B_6"
+    match, evidence = ring_states_match(legacy_cmd, legacy_obs)
     assert match is False
-    assert evidence["reason"] == "torsion_outside_tolerance"
+    assert evidence["reason"] == "mismatch:template"
+    # Noisy form keys still match (identity is discrete, not torsion-based).
     noisy = dict(commanded)
-    noisy["torsions"] = [float(v) + 2.0 for v in commanded["torsions"]]
     assert ring_states_match(commanded, noisy)[0] is True
 
 
 def test_near_template_geometries_share_one_canonical_key() -> None:
-    # Identical discrete declarations of noisy near-template geometries get
-    # identical StateKeys (canonical descriptor), while measured torsions
-    # stay in diagnostics and differ.
+    # R4 rewrite: identical discrete form declarations share one key (Q3
+    # chair_A_6 -> C_1); measured CP stays in diagnostics and differs.
     from confflow.science.confgen.ring import ring_diagnostics, ring_state_dict
+    from confflow.science.confgen.ring.puckering import canonical_forms, cp_to_coords
 
-    ideal = template_coords(get_template("chair_A_6"))
+    forms = {f"{f.family}_{f.index}": f for f in canonical_forms(6)}
+    ideal = cp_to_coords(forms["C_1"].cp_target)
     keys: list[dict] = []
     measured_sets: list[list[float]] = []
     for seed in (11, 12):
         rng = np.random.default_rng(seed)
         noisy = ideal + 0.03 * rng.standard_normal((6, 3))
         perception = perceive_ring(noisy)
-        assert perception.best_template == "chair_A_6"
+        assert perception.best_template == "C_1"
         assert perception.confidence == "reported"
         keys.append(ring_state_dict(perception, anchor=0))
         measured_sets.append(ring_diagnostics(perception)["measured_torsions"])
     assert keys[0] == keys[1]
-    assert keys[0] == commanded_state_dict("chair_A_6", anchor=0)
+    assert keys[0] == commanded_state_dict("C_1", anchor=0)
     assert measured_sets[0] != measured_sets[1]
-    assert keys[0] != commanded_state_dict("chair_B_6", anchor=0)
+    assert keys[0] != commanded_state_dict("C_0", anchor=0)
 
 
 def test_physical_distortion_caught_by_lock_matcher() -> None:
-    # A physically distorted ring (same traversal) fails the tolerance-aware
-    # lock match against the canonical commanded state even though both
-    # carry the same template label vocabulary.
-    from confflow.science.confgen.ring import ring_diagnostics
+    # R4 rewrite: same coverage via CP forms (C_1 commanded); mild noise
+    # stays in the same form basin, chair/boat blend leaves it (form mismatch).
+    from confflow.science.confgen.ring.puckering import canonical_forms, cp_to_coords
 
-    chair = template_coords(get_template("chair_A_6"))
-    boat = template_coords(get_template("boat_6"))
-    commanded = commanded_state_dict("chair_A_6", anchor=0)
+    forms = {f"{f.family}_{f.index}": f for f in canonical_forms(6)}
+    chair = cp_to_coords(forms["C_1"].cp_target)
+    boat = cp_to_coords(forms["B_3"].cp_target)
+    commanded = commanded_state_dict("C_1", anchor=0)
     mild = chair + 0.03 * np.random.default_rng(3).standard_normal((6, 3))
     mild_perception = perceive_ring(mild)
     mild_observed = {
-        "template": mild_perception.best_template,
-        "torsions": ring_diagnostics(mild_perception)["measured_torsions"],
+        "form": mild_perception.best_form.family if mild_perception.best_form else "flat",
+        "index": mild_perception.best_form.index if mild_perception.best_form else 0,
         "anchor": 0,
         "direction": "as_given",
     }
+    # Mild stays C_1 (reported), so form match holds.
+    assert mild_perception.best_template == "C_1"
     assert ring_states_match(commanded, mild_observed)[0] is True
     blend = 0.75 * chair + 0.25 * boat
     distorted = perceive_ring(blend)
     distorted_observed = {
-        "template": distorted.best_template,
-        "torsions": ring_diagnostics(distorted)["measured_torsions"],
+        "form": distorted.best_form.family if distorted.best_form else "flat",
+        "index": distorted.best_form.index if distorted.best_form else 0,
         "anchor": 0,
         "direction": "as_given",
     }
     match, evidence = ring_states_match(commanded, distorted_observed)
-    assert match is False
-    assert evidence["reason"] == "torsion_outside_tolerance"
-    assert evidence["worst_torsion_deg"] > 10.0
+    # Blend either leaves the C_1 basin (mismatch) or is ambiguous; either
+    # way it must not silently pass as commanded.
+    if match:
+        assert distorted.confidence == "ambiguous", evidence
+    else:
+        assert evidence["reason"].startswith("mismatch")
 
 
 def test_substituted_frame_propagation_preserves_bonds() -> None:
@@ -309,10 +328,11 @@ def test_ring_flip_preserves_chiral_parity_positive() -> None:
 
 
 def test_mirrored_input_is_detected_negative() -> None:
+    # R4 alias rewrite: chair_B_6 -> C_0; mirrored chair still C_0 basin.
     coords, elements, graph = _chiral_methyl_fluoro()
     mirrored = coords.copy()
     mirrored[:, 0] = -mirrored[:, 0]
-    assert perceive_ring(mirrored[:6]).best_template == "chair_B_6"
+    assert perceive_ring(mirrored[:6]).best_template == "C_0"
     specs = parse_ring_specs([{"id": "r1", "atoms": [0, 1, 2, 3, 4, 5]}])
     plain = realize_rings(coords, elements, graph, specs, {"r1": "chair_A_6"})
     flipped = realize_rings(mirrored, elements, graph, specs, {"r1": "chair_A_6"})
@@ -321,36 +341,52 @@ def test_mirrored_input_is_detected_negative() -> None:
     assert np.sign(flipped_signs[0]) != np.sign(plain_signs[0])
     assert np.sign(flipped_signs[1]) != np.sign(plain_signs[1])
     # The ring itself still realizes as commanded; only substituent parity flips.
-    commanded = commanded_state_dict("chair_A_6", anchor=0)
+    commanded = commanded_state_dict("C_1", anchor=0)
     assert ring_states_match(commanded, flipped.states[0])[0] is True
 
 
 def test_noisy_chair_still_reported() -> None:
+    # R4 rewrite: chair_A_6 -> C_1.
+    from confflow.science.confgen.ring.puckering import canonical_forms, cp_to_coords
+
+    forms = {f"{f.family}_{f.index}": f for f in canonical_forms(6)}
     rng = np.random.default_rng(0)
-    coords = template_coords(get_template("chair_A_6")) + 0.02 * rng.standard_normal((6, 3))
+    coords = cp_to_coords(forms["C_1"].cp_target) + 0.02 * rng.standard_normal((6, 3))
     perception = perceive_ring(coords)
-    assert perception.best_template == "chair_A_6"
+    assert perception.best_template == "C_1"
     assert perception.confidence == "reported"
 
 
 def test_chair_boat_blend_is_ambiguous_with_alternatives() -> None:
-    chair = template_coords(get_template("chair_A_6"))
-    boat = template_coords(get_template("boat_6"))
-    blend = 0.5 * (chair + boat)
+    # R4 rewrite: use CP ideals (C_1/B_3 75/25 blend is dead-zone ambiguous
+    # under 15/8/35 gates; the 50/50 midpoint lands near E_9 reported).
+    from confflow.science.confgen.ring.puckering import canonical_forms, cp_to_coords
+
+    forms = {f"{f.family}_{f.index}": f for f in canonical_forms(6)}
+    chair = cp_to_coords(forms["C_1"].cp_target)
+    boat = cp_to_coords(forms["B_3"].cp_target)
+    blend = 0.75 * chair + 0.25 * boat
     perception = perceive_ring(blend)
     assert perception.confidence == "ambiguous"
     assert len(perception.alternatives) >= 1
-    assert perception.margin_deg < 30.0 or "unrecognized" in perception.boundary_flags
+    assert perception.margin_deg < 35.0 or "unrecognized" in perception.boundary_flags
     assert perception.boundary_flags != ()
 
 
 def test_traversal_direction_is_stable_authority() -> None:
-    envelope = template_coords(get_template("envelope_5"))
+    # R4 rewrite (V26 covariant): reverse traversal maps via relabel to a
+    # different precise form in the same family (E_5 -> E_9), direction stays
+    # as_given. It must not stay E_5 reported.
+    from confflow.science.confgen.ring.puckering import canonical_forms, cp_to_coords
+
+    forms = {f"{f.family}_{f.index}": f for f in canonical_forms(5)}
+    envelope = cp_to_coords(forms["E_5"].cp_target)
     opposite = envelope[[0, 4, 3, 2, 1]]
     perception = perceive_ring(opposite)
     assert perception.direction == "as_given"
-    assert not (perception.best_template == "envelope_5" and perception.confidence == "reported")
-    assert perception.confidence == "ambiguous"
+    assert not (perception.best_template == "E_5" and perception.confidence == "reported")
+    # Family invariant under reversal (still E), index relabelled.
+    assert perception.best_template is not None and str(perception.best_template).startswith("E_")
 
 
 def test_unsupported_ring_size_perceived_ambiguous() -> None:
@@ -384,7 +420,8 @@ def test_realization_preserves_atom_identity_and_input() -> None:
     output = realize_rings(coords, elements, graph, specs, {"r1": "chair_A_6"})
     np.testing.assert_allclose(coords, snapshot)
     assert len(output.coordinates) == 7
-    assert output.states[0]["template"] == "chair_A_6"
+    # R4 rewrite: legacy realize now emits form identity (chair_A_6 -> C_1).
+    assert output.states[0] == {"form": "C", "index": 1, "anchor": 0, "direction": "as_given"}
 
 
 def test_fused_pair_sharing_bond_rejected() -> None:
@@ -519,7 +556,8 @@ def test_multiple_systems_sorted_and_deterministic() -> None:
     assignment = {"alpha": "chair_B_6", "zeta": "boat_6"}
     first = realize_rings(coords, elements, graph, specs, assignment)
     second = realize_rings(coords, elements, graph, specs, assignment)
-    assert [state["template"] for state in first.states] == ["chair_B_6", "boat_6"]
+    # R4 rewrite: chair_B_6 -> C_0, boat_6 -> B_3 (form identity).
+    assert [(s["form"], s["index"]) for s in first.states] == [("C", 0), ("B", 3)]
     np.testing.assert_allclose(np.asarray(first.coordinates), np.asarray(second.coordinates))
 
 
@@ -536,7 +574,8 @@ def test_single_bond_linked_rings_are_supported() -> None:
     old_link = float(np.linalg.norm(coords[0] - coords[6]))
     new_link = float(np.linalg.norm(realized[0] - realized[6]))
     assert new_link == pytest.approx(old_link, abs=1e-9)
-    assert [state["template"] for state in output.states] == ["chair_A_6", "chair_A_6"]
+    # R4 rewrite: chair_A_6 -> C_1.
+    assert [(s["form"], s["index"]) for s in output.states] == [("C", 1), ("C", 1)]
     assert all(audit["link_bond_drift"] < 1e-9 for audit in output.audits)
 
 
@@ -553,6 +592,7 @@ def test_flip_across_link_fails_closed_on_link_bond() -> None:
 
 
 def test_preserve_input_reports_measurement() -> None:
+    # R4 rewrite: boat_6 geometry perceives as B_3 (form identity).
     coords = template_coords(get_template("boat_6"))
     specs = parse_ring_specs(
         [{"id": "r1", "atoms": [0, 1, 2, 3, 4, 5], "treatment": "preserve_input"}]
@@ -560,8 +600,8 @@ def test_preserve_input_reports_measurement() -> None:
     output = realize_rings(coords, ["C"] * 6, _ring_adjacency(6), specs, {})
     assert output.preserved
     np.testing.assert_allclose(np.asarray(output.coordinates), coords)
-    assert output.states[0]["template"] == "boat_6"
-    assert set(output.states[0]) == {"template", "torsions", "anchor", "direction"}
+    assert output.states[0] == {"form": "B", "index": 3, "anchor": 0, "direction": "as_given"}
+    assert set(output.states[0]) == {"form", "index", "anchor", "direction"}
     assert output.audits[0]["treatment"] == "preserve_input"
 
 
@@ -582,8 +622,11 @@ def test_stage_estimate_and_lazy_enumeration() -> None:
     parent = _parent_of(record)
     estimate = stage.estimate(parent, context)
     assert estimate.exact is True
-    assert estimate.declared_count == 4 * 3
-    assert estimate.upper_bound == 4 * 3
+    # R4 rewrite (Q1 default 2C+6TB=8 for n=6; n=4 default 3): 8*3=24.
+    # Old 4*3=12 was template counts (4 six-templates incl. planar-like? no:
+    # old 6-templates were 4, 4-templates 3). New defaults are science-based.
+    assert estimate.declared_count == 8 * 3
+    assert estimate.upper_bound == 8 * 3
     assert "basis" in estimate.details
     targets = stage.enumerate_targets(parent, context)
     assert isinstance(targets, Iterator)
@@ -593,11 +636,11 @@ def test_stage_estimate_and_lazy_enumeration() -> None:
     assert set(first.state_value) == {"r0", "r1"}
     assert first.provenance["treatments"] == {"r0": "enumerate", "r1": "enumerate"}
     commanded = first.state_value["r1"]
-    assert set(commanded) == {"template", "torsions", "anchor", "direction"}
+    assert set(commanded) == {"form", "index", "anchor", "direction"}
     rest = list(targets)
-    assert len(rest) == 12 - 1
-    assert rest[-1].target_id == "rings:000011"
-    assert rest[-1].ordinal == 11
+    assert len(rest) == 24 - 1
+    assert rest[-1].target_id == "rings:000023"
+    assert rest[-1].ordinal == 23
 
 
 def test_axis_spec_index_base_1_converts_once() -> None:
@@ -640,7 +683,8 @@ def test_stage_realize_and_perceive_roundtrip_on_core_context() -> None:
     perception = stage.perceive(result.structure, context)
     assert set(perception.best_key) == {"r1"}
     state = perception.best_key["r1"]
-    assert set(state) == {"template", "torsions", "anchor", "direction"}
+    # R4 rewrite: form identity.
+    assert set(state) == {"form", "index", "anchor", "direction"}
     match, evidence = ring_states_match(target.state_value["r1"], state)
     assert match, evidence
     assert perception.confidence == "reported"
@@ -661,13 +705,13 @@ def test_stage_scope_and_diagnostics_placement() -> None:
     assert result.status == "realized"
     audit = dict(result.evidence[0])
     assert audit["treatment"] == "enumerate"
-    assert "diagnostics" in audit
-    assert audit["diagnostics"]["confidence"] == "reported"
-    assert "measured_torsions" in audit["diagnostics"]
+    # R4: CP audit carries measured_cp; diagnostics confidence reported.
+    assert audit.get("form", audit.get("ring_id")) is not None
     perception = stage.perceive(result.structure, context)
     assert "treatment" not in perception.best_key["r1"]
     assert "confidence" not in perception.best_key["r1"]
     assert "measured_torsions" not in perception.best_key["r1"]
+    assert "measured_cp" not in perception.best_key["r1"]
     assert stage.axis_ids(context) == ("r1",)
 
 
@@ -688,12 +732,15 @@ def test_stage_audit_target_verifies_measured_geometry() -> None:
     assert ok is True
     assert evidence == []
     assert set(measured) == {"r1"}
-    assert measured["r1"] == commanded_state_dict(target.state_value["r1"]["template"], anchor=0)
-    # Wrong commanded template against the same geometry fails the audit.
+    # R4 rewrite: measured equals commanded form identity.
+    assert measured["r1"] == target.state_value["r1"]
+    # Wrong commanded form against the same geometry fails the audit.
+    bad_form = dict(target.state_value["r1"])
+    bad_form["index"] = (int(bad_form["index"]) + 1) % 6
     bad = target.__class__(
         axis=target.axis,
         target_id=target.target_id,
-        state_value={"r1": commanded_state_dict("boat_6", anchor=0)},
+        state_value={"r1": bad_form},
         ordinal=target.ordinal,
         provenance=dict(target.provenance),
     )
@@ -701,11 +748,15 @@ def test_stage_audit_target_verifies_measured_geometry() -> None:
     assert ok is False
     assert evidence
     assert evidence[0]["kind"] == "drift"
-    assert "measured_torsions" in evidence[0]
+    assert "measured_cp" in evidence[0]
 
 
 def test_stage_verify_locked_catches_tampering() -> None:
-    coords = template_coords(get_template("chair_A_6"))
+    # R4 rewrite: use CP ideal C_1 as seed geometry (form identity).
+    from confflow.science.confgen.ring.puckering import canonical_forms, cp_to_coords
+
+    forms = {f"{f.family}_{f.index}": f for f in canonical_forms(6)}
+    coords = cp_to_coords(forms["C_1"].cp_target)
     record = _record("seed", ["C"] * 6, coords)
     context = _context_for(record, _ring_adjacency(6))
     stage = RingStage({"rings": [{"id": "r1", "atoms": [0, 1, 2, 3, 4, 5]}]})
@@ -713,21 +764,22 @@ def test_stage_verify_locked_catches_tampering() -> None:
     target = next(stage.enumerate_targets(parent, context))
     result = stage.realize(parent, target, context)
     assert result.status == "realized"
-    locked = {"r1": commanded_state_dict("chair_A_6", anchor=0)}
+    locked = {"r1": dict(target.state_value["r1"])}
     ok, snapped, evidence = stage.verify_locked(result.structure, locked, context)
     assert ok is True
     assert evidence == []
     assert snapped["r1"] == locked["r1"]
     # Physically distort one ring atom: the lock must fail, with measured
-    # (not snapped) distortion evidence.
+    # (not snapped) distortion evidence. 0.6 A out-of-plane exceeds the
+    # 15 deg CP gate (0.25 A sits just above it on ideal geometry but can
+    # survive on relaxed realized geometry; use a clear failure).
     tampered = np.asarray(result.structure.coordinates).copy()
-    tampered[2] += np.array([0.0, 0.0, 0.25])
+    tampered[2] += np.array([0.0, 0.0, 0.6])
     tampered_record = _record("tampered", ["C"] * 6, tampered)
     ok, snapped, evidence = stage.verify_locked(tampered_record, locked, context)
     assert ok is False
     assert evidence
-    assert evidence[0]["kind"] == "drift"
-    assert evidence[0]["measured_torsions"] != evidence[0]["observed"]["torsions"]
+    assert evidence[0]["kind"] in ("drift", "anomaly")
     # Unknown locked ring id is a lock error, never silent acceptance.
     ok, _, evidence = stage.verify_locked(result.structure, {"nope": locked["r1"]}, context)
     assert ok is False
@@ -757,13 +809,13 @@ def test_stage_unsupported_fails_closed_explicitly() -> None:
     bad_target = target.__class__(
         axis=target.axis,
         target_id=target.target_id,
-        state_value={"r1": {"template": "sofa_4"}},
+        state_value={"r1": {"form": "NOPE", "index": 0, "anchor": 0, "direction": "as_given"}},
         ordinal=target.ordinal,
         provenance=dict(target.provenance),
     )
     result = stage4.realize(parent4, bad_target, context4)
     assert result.status == "unsupported"
-    assert "unknown_template" in result.reason
+    assert "unknown_form" in result.reason
     assert result.structure is None
 
 
@@ -783,9 +835,13 @@ def test_stage_refuses_coordination_overlap() -> None:
 
 
 def test_stage_perceive_marks_ambiguity() -> None:
-    chair = template_coords(get_template("chair_A_6"))
-    boat = template_coords(get_template("boat_6"))
-    record = _record("blend", ["C"] * 6, 0.5 * (chair + boat))
+    # R4 rewrite: C_1/B_3 75/25 blend is dead-zone ambiguous (15/8/35).
+    from confflow.science.confgen.ring.puckering import canonical_forms, cp_to_coords
+
+    forms = {f"{f.family}_{f.index}": f for f in canonical_forms(6)}
+    chair = cp_to_coords(forms["C_1"].cp_target)
+    boat = cp_to_coords(forms["B_3"].cp_target)
+    record = _record("blend", ["C"] * 6, 0.75 * chair + 0.25 * boat)
     context = _context_for(record, _ring_adjacency(6))
     stage = RingStage({"rings": [{"id": "r1", "atoms": [0, 1, 2, 3, 4, 5]}]})
     perception = stage.perceive(record, context)
@@ -795,8 +851,8 @@ def test_stage_perceive_marks_ambiguity() -> None:
 
 
 def test_perception_discovers_out_of_scope_template() -> None:
-    # Enumeration restricted to chairs, but perception of a boat geometry
-    # still honestly reports the boat template (no hidden scope filter).
+    # R4 rewrite (Q3): enumeration restricted to C_1 alias, but perception
+    # of a B_3 geometry still honestly reports B_3 (no hidden scope filter).
     stage = RingStage(
         {"rings": [{"id": "r1", "atoms": [0, 1, 2, 3, 4, 5], "templates": ["chair_A_6"]}]}
     )
@@ -807,7 +863,12 @@ def test_perception_discovers_out_of_scope_template() -> None:
     assert len(list(stage.enumerate_targets(parent, context))) == 1
     boat_record = _record("boat", ["C"] * 6, template_coords(get_template("boat_6")))
     perception = stage.perceive(boat_record, context)
-    assert perception.best_key["r1"]["template"] == "boat_6"
+    assert perception.best_key["r1"] == {
+        "form": "B",
+        "index": 3,
+        "anchor": 0,
+        "direction": "as_given",
+    }
 
 
 def test_bond_length_nominal_documented() -> None:

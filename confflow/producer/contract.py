@@ -349,6 +349,7 @@ def _confgen_section() -> dict[str, Any]:
         "coordination_shapes": owned["coordination_shapes"],
         "coordination_shapes_by_cn": owned["coordination_shapes_by_cn"],
         "ring_templates_by_size": owned["ring_templates_by_size"],
+        "ring_forms_by_size": owned["ring_forms_by_size"],
         "torsion_models": owned["torsion_models"],
         "treatments": owned["treatments"],
         "coordination_backends": owned["coordination_backends"],

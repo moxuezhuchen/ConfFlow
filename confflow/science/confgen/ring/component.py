@@ -135,17 +135,38 @@ def _schema_constants() -> Mapping[str, Any]:
     for size, names in TEMPLATES_BY_SIZE.items():
         for name in names:
             sizes[str(name)] = int(size)
+    # R4: forms vocabulary (authoritative regular forms) without importing
+    # solvers: sizes are fixed by R1 tables (4:3, 5:20, 6:38).
+    # v2 fix: name -> supporting size SET (5/6 share E_0..E_9 etc; a flat
+    # name->single-size map lets 6 overwrite 5). Explicit-P specials P/P_0
+    # for n=5/6 live outside the 20/38 catalogs but stay authorized.
+    from .forms import FORM_NAMES_BY_SIZE
+
+    _acc: dict[str, set[int]] = {}
+    for size, names in FORM_NAMES_BY_SIZE.items():
+        for name in names:
+            _acc.setdefault(str(name), set()).add(int(size))
+    for _p in ("P", "P_0"):
+        _acc.setdefault(_p, set()).update([4, 5, 6] if _p == "P" else [4, 5, 6])
+    form_sizes: dict[str, list[int]] = {name: sorted(sizes) for name, sizes in sorted(_acc.items())}
     return {
         "template_sizes": sizes,
         "templates_by_size": {str(k): tuple(v) for k, v in TEMPLATES_BY_SIZE.items()},
+        "form_sizes": form_sizes,
+        "forms_by_size": {str(k): tuple(v) for k, v in FORM_NAMES_BY_SIZE.items()},
     }
 
 
 def _contract_options() -> Mapping[str, Any]:
     """Return the ring-owned slice of the producer contract."""
+    from .forms import FORM_NAMES_BY_SIZE
+
     return {
         "ring_templates_by_size": {
             str(size): sorted(names) for size, names in sorted(TEMPLATES_BY_SIZE.items())
+        },
+        "ring_forms_by_size": {
+            str(size): list(names) for size, names in sorted(FORM_NAMES_BY_SIZE.items())
         },
     }
 

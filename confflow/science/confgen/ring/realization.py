@@ -178,6 +178,7 @@ class RingSpec:
     atoms: tuple[int, ...]
     treatment: str = "enumerate"
     templates: tuple[str, ...] = ()
+    forms: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -225,12 +226,20 @@ def parse_ring_specs(raw_rings: object) -> tuple[RingSpec, ...]:
             not isinstance(name, str) for name in templates
         ):
             raise RingUnsupported(f"ring {ring_id!r} templates must be names")
+        forms = entry.get("forms", ())
+        if forms is None:
+            forms = ()
+        if not isinstance(forms, (list, tuple)) or any(not isinstance(name, str) for name in forms):
+            raise RingUnsupported(f"ring {ring_id!r} forms must be names")
+        if templates and forms:
+            raise RingUnsupported(f"ring {ring_id!r} declares both templates and forms")
         specs.append(
             RingSpec(
                 id=ring_id,
                 atoms=tuple(int(v) for v in atoms),
                 treatment=treatment,
                 templates=tuple(templates),
+                forms=tuple(forms),
             )
         )
     specs.sort(key=lambda item: item.id)

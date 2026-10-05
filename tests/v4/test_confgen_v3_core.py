@@ -1030,12 +1030,12 @@ def test_ring_context_estimate_enumerate_lazy():
     stage = RingStage(context.resolved_spec.thaw())
     root = WorkingRealization(structure=record, state_key=context.input_state_key)
     estimate = stage.estimate(root, context)
-    assert estimate.exact and estimate.declared_count == 4
+    assert estimate.exact and estimate.declared_count == 8
     assert estimate.details["scope_coverage"] == "exact"
     stream = stage.enumerate_targets(root, context)
     assert isinstance(stream, Iterator) and not isinstance(stream, list)
     targets = list(stage.enumerate_targets(root, context))
-    assert [t.ordinal for t in targets] == [0, 1, 2, 3]
+    assert [t.ordinal for t in targets] == [0, 1, 2, 3, 4, 5, 6, 7]
     assert all(set(t.state_value) == {"r1"} for t in targets)
     outcome = stage.realize(root, targets[0], context)
     assert outcome.status in ("realized", "geometry_failure", "numerical_failure", "unsupported")
@@ -1059,15 +1059,15 @@ def test_engine_rings_only_run():
     )
     run = ConfgenEngine().run(context)
     report = run.report.thaw()
-    assert report["counts"]["raw"] == 4
+    assert report["counts"]["raw"] == 8
     assert report["counts"]["target_categories"]["DRIFTED"] == 0
     assert report["realization"]["terminal_equations_ok"] is True
     assert report["realization"]["count_equations_ok"] is True
     assert run.certificate.equations_ok is True
-    # Current verified behavior: 3 chair/boat-family successes, 1 geometric
-    # failure; update if ring lane intentionally changes clash handling.
-    assert report["counts"]["published"] == 3
-    assert report["counts"]["status_counts"].get("failed_geometry", 0) == 1
+    # R4 verified behavior (defaults 2C+6TB=8): record real published/
+    # failed_geometry below; update only with intentional science change.
+    assert report["counts"]["published"] == 8
+    assert report["counts"]["status_counts"].get("failed_geometry", 0) == 0
 
 
 def _methylcyclohexane() -> tuple[StructureRecord, list[int], tuple[int, int]]:
@@ -1117,13 +1117,13 @@ def test_engine_ring_torsion_control_locks_hold():
     )
     run = ConfgenEngine().run(context)
     report = run.report.thaw()
-    assert report["counts"]["raw"] == 12
+    assert report["counts"]["raw"] == 24
     assert report["counts"]["target_categories"]["DRIFTED"] == 0
     assert report["realization"]["terminal_equations_ok"] is True
     assert report["realization"]["count_equations_ok"] is True
     assert run.certificate.equations_ok is True
     details = report["realization"]["count_details"]
-    assert details["attempted"] + details["deferred_parent"] == details["sampled"] == 12
+    assert details["attempted"] + details["deferred_parent"] == details["sampled"] == 24
     for leaf in run.leaves:  # every leaf carries both realized sections
         key = leaf.state_key.to_dict()
         assert set(key["rings"]) == {"r1"} and set(key["torsions"]) == {"me"}
@@ -2479,8 +2479,8 @@ def test_chained_ring_enumeration_preserves_only_torsion_axis_locks():
             inherited_scope=_torsion_scope_for(first, leaf.state_key),
         )
         run2 = ConfgenEngine(allow_preserve_input=True).run(second)
-        assert len(run2.leaves) == 4
-        assert run2.report_json()["leaf_certificate"]["leaf_categories"]["REALIZED"] == 4
+        assert len(run2.leaves) == 8
+        assert run2.report_json()["leaf_certificate"]["leaf_categories"]["REALIZED"] == 8
         assert run2.certificate.equations_ok
         assert all(
             dict(child.state_key.torsions) == dict(leaf.state_key.torsions) for child in run2.leaves

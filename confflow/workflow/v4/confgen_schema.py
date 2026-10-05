@@ -89,6 +89,80 @@ def _template_sizes() -> dict[str, int]:
     return {name: size for size, names in TEMPLATES_BY_SIZE.items() for name in names}
 
 
+def _form_sizes() -> dict[str, list[int]]:
+    """Return ring precise-form name -> supporting sizes (via descriptor).
+
+    v2 fix: values are size SETS (5/6 share E_0..E_9; a flat single-size map
+    lets 6 overwrite 5 and misrejects all n5 E). Explicit-P P/P_0 cover
+    4/5/6 (5/6 specials outside the 20/38 catalogs).
+    """
+    from confflow.science.confgen.registry import build_default_registry
+
+    for _d in build_default_registry().descriptors:
+        if _d.id == "rings" and _d.schema_constants is not None:
+            raw = dict(dict(_d.schema_constants()).get("form_sizes", {}))
+            out: dict[str, list[int]] = {}
+            for _k, _v in raw.items():
+                if isinstance(_v, (list, tuple, set)):
+                    out[str(_k)] = sorted(int(_x) for _x in _v)
+                else:
+                    out[str(_k)] = [int(_v)]
+            return out
+    from confflow.science.confgen.ring.forms import FORM_NAMES_BY_SIZE
+
+    _acc: dict[str, set[int]] = {}
+    for _size, _names in FORM_NAMES_BY_SIZE.items():
+        for _name in _names:
+            _acc.setdefault(str(_name), set()).add(int(_size))
+    for _p in ("P", "P_0"):
+        _acc.setdefault(_p, set()).update([4, 5, 6])
+    return {name: sorted(sizes) for name, sizes in sorted(_acc.items())}
+
+
+def _forms_for_size(n: int) -> tuple[str, ...]:
+    """Return precise-form names valid for ring size n (component authority).
+
+    Reads the per-size directory (no duplicate table in schema).
+    Explicit-P P_0 is authorized for 5/6 although outside 20/38.
+    """
+    from confflow.science.confgen.registry import build_default_registry
+
+    for _d in build_default_registry().descriptors:
+        if _d.id == "rings" and _d.schema_constants is not None:
+            by_size = dict(dict(_d.schema_constants()).get("forms_by_size", {}))
+            names = tuple(by_size.get(str(int(n)), ()))
+            if int(n) in (5, 6) and "P_0" not in names:
+                names = tuple(list(names) + ["P_0"])
+            return names
+    from confflow.science.confgen.ring.forms import FORM_NAMES_BY_SIZE
+
+    names = tuple(FORM_NAMES_BY_SIZE.get(int(n), ()))
+    if int(n) in (5, 6) and "P_0" not in names:
+        names = tuple(list(names) + ["P_0"])
+    return names
+
+
+def _form_families(n: int) -> set[str]:
+    """Return family selectors valid for ring size n (component authority).
+
+    Derived from the per-size precise directory (families are the
+    ``FAMILY`` part of ``FAMILY_INDEX``) plus the authorized specials:
+    bare ``P`` for 5/6 (explicit planar) and bare ``B`` for 4 (both B+/B-).
+    No puckering import here; the component directory stays authoritative.
+    """
+    fams: set[str] = set()
+    for _name in _forms_for_size(int(n)):
+        if "_" in _name:
+            fams.add(_name.rsplit("_", 1)[0])
+        else:
+            fams.add(_name)
+    if int(n) in (5, 6):
+        fams.add("P")
+    if int(n) == 4:
+        fams.add("B")
+    return fams
+
+
 def _wrap_degrees(angle: float) -> float:
     """Wrap an angle to (-180, 180] (via torsion descriptor, stdlib only)."""
     from confflow.science.confgen.registry import build_default_registry
@@ -230,26 +304,49 @@ class RingGenerationSpec(ConfgenSpecModel):
     id: StrictStr = Field(min_length=1)
     atoms: list[Index] = Field(min_length=4, max_length=6)
     templates: list[StrictStr] = Field(default_factory=list)
+    forms: list[StrictStr] = Field(default_factory=list)
     treatment: Treatment = "enumerate"
 
     @model_validator(mode="after")
     def check_templates(self) -> RingGenerationSpec:
-        if not self.templates:
-            return self
-        if len(set(self.templates)) != len(self.templates):
-            raise ValueError(f"ring {self.id!r} templates hold duplicates")
-        registry = _template_sizes()
-        for name in self.templates:
-            size = registry.get(name)
-            if size is None:
+        if self.templates and self.forms:
+            raise ValueError(
+                f"ring {self.id!r} declares both 'templates' and 'forms'; declare exactly one"
+            )
+        if self.templates:
+            if len(set(self.templates)) != len(self.templates):
+                raise ValueError(f"ring {self.id!r} templates hold duplicates")
+            registry = _template_sizes()
+            for name in self.templates:
+                size = registry.get(name)
+                if size is None:
+                    raise ValueError(
+                        f"ring {self.id!r} template {name!r} is not registered; "
+                        f"allowed {sorted(registry)}"
+                    )
+                if size != len(self.atoms):
+                    raise ValueError(
+                        f"ring {self.id!r} template {name!r} fits size {size}, "
+                        f"not ring size {len(self.atoms)}"
+                    )
+        if self.forms:
+            if len(set(self.forms)) != len(self.forms):
+                raise ValueError(f"ring {self.id!r} forms hold duplicates")
+            n = len(self.atoms)
+            precise = set(_forms_for_size(n))
+            families = _form_families(n)
+            for name in self.forms:
+                # Explicit-P specials (5/6 planar, outside 20/38) stay
+                # authorized; run side (forms.py) resolves them identically.
+                if name in ("P", "P_0") and n in (5, 6):
+                    continue
+                if name in precise:
+                    continue
+                if name in families:
+                    continue
                 raise ValueError(
-                    f"ring {self.id!r} template {name!r} is not registered; "
-                    f"allowed {sorted(registry)}"
-                )
-            if size != len(self.atoms):
-                raise ValueError(
-                    f"ring {self.id!r} template {name!r} fits size {size}, "
-                    f"not ring size {len(self.atoms)}"
+                    f"ring {self.id!r} form {name!r} is not registered for size {n}; "
+                    f"allowed precise {sorted(precise)} or family {sorted(families)}"
                 )
         return self
 

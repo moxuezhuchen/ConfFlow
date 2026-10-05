@@ -745,19 +745,18 @@ class TestFrozenDiscipline:
         import confflow.science.confgen.ring.stage as stage
 
         tree = ast.parse(Path(stage.__file__).read_text())
-        found: list[str] = []
+        calls: list[str] = []
         for node in ast.walk(tree):
-            if isinstance(node, ast.Name) and node.id == "realize_cp_target":
-                found.append("Name")
-            elif isinstance(node, ast.Attribute) and node.attr == "realize_cp_target":
-                found.append("Attribute")
-            elif isinstance(node, (ast.Import, ast.ImportFrom)):
-                for alias in node.names:
-                    if alias.name.split(".")[-1] == "realize_cp_target":
-                        found.append("Import")
-                    elif alias.asname == "realize_cp_target":
-                        found.append("Import")
-        assert found == []
+            if isinstance(node, ast.Call):
+                func = node.func
+                if isinstance(func, ast.Name) and func.id == "realize_cp_target":
+                    calls.append("Call:Name")
+                elif isinstance(func, ast.Attribute) and func.attr == "realize_cp_target":
+                    calls.append("Call:Attribute")
+        # R4 switch (PLAN R3 "new function not called by stage, R4 switches"):
+        # stage now CALLS the frozen realize_cp_target (bare Import/Name
+        # alone cannot prove a call; assert an actual Call node exists).
+        assert calls != []
 
         def _kinds(sample: str) -> list[str]:
             kinds: list[str] = []

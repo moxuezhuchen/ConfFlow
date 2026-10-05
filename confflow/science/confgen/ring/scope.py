@@ -99,7 +99,6 @@ def fallback_lock(
     except ImportError:
         ring_states_match = None  # type: ignore[assignment]
     if ring_states_match is not None:
-        tolerance = float(context.tolerances.ring_torsion_atol_deg)
         drifted: list[dict[str, Any]] = []
         for ring_id, commanded in locked_state.items():
             observed = best.get(ring_id)
@@ -116,9 +115,7 @@ def fallback_lock(
                     {},
                     "unknown",
                 )
-            match, match_evidence = ring_states_match(
-                commanded, observed, torsion_atol_deg=tolerance
-            )
+            match, match_evidence = ring_states_match(commanded, observed)
             if not match:
                 payload = {
                     "kind": "drift",
@@ -127,8 +124,16 @@ def fallback_lock(
                     "match_evidence": dict(match_evidence),
                     "observed": dict(observed),
                 }
+
+                def _form_key(m: Any) -> Any:
+                    if not isinstance(m, Mapping):
+                        return True
+                    if "form" in m:
+                        return (m.get("form"), m.get("index"))
+                    return m.get("template")
+
                 payload["out_of_scope"] = bool(
-                    observed.get("template") != commanded.get("template")
+                    _form_key(observed) != _form_key(commanded)
                     if isinstance(commanded, Mapping)
                     else True
                 )

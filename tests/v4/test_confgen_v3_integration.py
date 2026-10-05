@@ -557,16 +557,26 @@ class TestExecutorV3:
     def test_nested_run_rows_carry_units(self, tmp_path) -> None:
         import math as _math
 
-        from confflow.domain.structure import StructureRecord
+        import numpy as _np
 
-        radius = 1.54
-        coords = [
-            (radius * _math.cos(k * _math.pi / 3), radius * _math.sin(k * _math.pi / 3), 0.0)
-            for k in range(6)
-        ]
-        methyl = (radius + 1.54, 0.0, 0.0)
-        coords.append(methyl)
-        coords.append((methyl[0] + 1.09 * _math.cos(1.2), 1.09 * _math.sin(1.2), 0.35))
+        from confflow.domain.structure import StructureRecord
+        from confflow.science.confgen.ring.puckering import canonical_forms, cp_to_coords
+
+        # R4 rewrite (root-allowed exception): the old planar hexagon input
+        # (z=0) legally publishes 0/16 under R3/CP audits. This units test
+        # proves executor nested-rows metadata, not planar solving, so use
+        # a fixed credible CP chair (frozen R1 inverse, same atom
+        # order/count/elements). The old planar input is preserved verbatim
+        # as a negative case in test_confgen_r4_cp_forms.py.
+        _forms = {f"{f.family}_{f.index}": f for f in canonical_forms(6)}
+        _chair = _np.asarray(cp_to_coords(_forms["C_0"].cp_target))
+        _cent = _chair.mean(axis=0)
+        _out = (_chair[0] - _cent) / float(_np.linalg.norm(_chair[0] - _cent))
+        _methyl_pos = _chair[0] + 1.54 * _out
+        _h_off = _np.array([1.09 * _math.cos(1.2), 1.09 * _math.sin(1.2), 0.35])
+        coords = [tuple(float(v) for v in row) for row in _chair]
+        coords.append(tuple(float(v) for v in _methyl_pos))
+        coords.append(tuple(float(v) for v in (_methyl_pos + _h_off)))
         chain = StructureRecord(
             id="mch",
             atoms=("C",) * 7 + ("H",),
