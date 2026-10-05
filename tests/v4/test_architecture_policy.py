@@ -451,8 +451,60 @@ _SCANNER_RT = {"RT-096"}
 def _materialise(root: Path, files: dict[str, str], rule_id: str) -> None:
     for rel, content in files.items():
         _write(root, rel, content)
+    # Fixture confflow must be a regular package tree: only leaf files are
+    # declared, so fill every missing parent ``__init__.py`` with empty
+    # content.  Existing files (e.g. a mutant init with explicit content)
+    # are never overwritten, preserving scenario semantics.
+    for rel in files:
+        parent = Path(rel).parent
+        if not parent.parts or parent.parts[0] != "confflow":
+            continue
+        for depth in range(1, len(parent.parts) + 1):
+            pkg = Path(*parent.parts[:depth])
+            init_rel = pkg / "__init__.py"
+            if str(init_rel) == rel:
+                continue
+            init_path = root / init_rel
+            if not init_path.exists():
+                _write(root, str(init_rel), "")
     if rule_id in _SCANNER_RT:
         _copy_scanner_tree(root)
+
+
+def test_runtime_fixture_isolated_from_absolute_host_pythonpath(
+    tmp_path: Path, monkeypatch
+) -> None:
+    import os
+
+    import tools.architecture_policy as policy
+
+    host = tmp_path / "host"
+    (host / "confflow/remote").mkdir(parents=True)
+    (host / "confflow/__init__.py").write_text("")
+    (host / "confflow/remote/__init__.py").write_text("__all__ = ['lease']\nlease = 1\n")
+    host_abs = str(host.resolve())
+    monkeypatch.setenv(
+        "PYTHONPATH",
+        host_abs + (os.pathsep + os.environ["PYTHONPATH"] if os.environ.get("PYTHONPATH") else ""),
+    )
+    rule = next(r for r in policy.RUNTIME_RULES if r["id"] == "RT-016")
+    monkeypatch.setattr(policy, "RUNTIME_RULES", [rule])
+    scenario = RUNTIME_SCENARIOS["RT-016"]
+    clean_root = tmp_path / "clean"
+    clean_root.mkdir()
+    _materialise(clean_root, scenario["clean"], "RT-016")
+    clean = scan_runtime(clean_root)
+    assert clean == [], f"clean leaked to absolute host {host_abs}: {clean}"
+    mutant_root = tmp_path / "mutant"
+    mutant_root.mkdir()
+    _materialise(mutant_root, scenario["clean"], "RT-016")
+    _materialise(mutant_root, scenario["mutant"], "RT-016")
+    mutant = scan_runtime(mutant_root)
+    fired = [v for v in mutant if v["rule"] == "RT-016"]
+    assert fired, f"mutant did not fire RT-016: {mutant}"
+    assert not [v for v in fired if "source_binding" in str(v)], fired
+    assert all(v.get("op") == "export_absent" for v in fired), fired
+    assert not [v for v in fired if "error" in v], fired
 
 
 @pytest.mark.parametrize("rule_id", sorted(RUNTIME_SCENARIOS))

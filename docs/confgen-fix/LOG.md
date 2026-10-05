@@ -72,3 +72,30 @@
   删除 L0.7 引入的已退休 guard 导入/定义（见 `CONFLICTS.md` 逐 hunk 记录），不恢复旧测试；
   helper 文件 10 个保持 L0.7 源卡字节。
 - 输出独占 `/tmp/l0-integration-output`（REPORT/SOURCE-COMMITS/CONFLICTS/added/removed/collect/gate/实际日志）。
+
+## L0-runtime-fixture-fix — 旧 runtime fixture namespace 回退补修
+
+- 基点 `b1167274e30ace45d7f80f1fbb734bba6fe16220`，分支 `refactor/l0-runtime-fixture-fix`，工作树
+  `/tmp/l0-runtime-fixture-fix`，输出独占 `/tmp/l0-runtime-fixture-fix-output`；不碰 main/master，
+  不 push/tag/amend，不正式提交。
+- 证据定性：`/tmp/l0-final-root-run/shard7-diagnose.xml` 与 `.log` 的 `16 failed/806 passed/6 skipped`
+  是分片诊断，不是全量汇总；原全量 `run_sharded` 退出 4 且无 manifest，不可复用。
+- 真实失败：首个失败 `RT-016 clean` 的 `source_binding` 全部指向 `/tmp/l0-integration` 宿主树；
+  共 16 个旧 `test_runtime_rule_clean_and_mutant`（RT-016/017/018/019/020/038/039/040/041/042/043/044/045/046/047/065）
+  以同样方式失败。
+- 根因：`_materialise` 只写叶文件，16 个旧 `RUNTIME_SCENARIOS` 缺 `confflow` 包根 `__init__.py`，
+  fixture `confflow` 退化为 namespace；`scan_runtime` 继承绝对宿主 `PYTHONPATH`，
+  宿主 regular `confflow` 遮蔽 fixture，子进程 `source_binding` 指向宿主。原阶段相对
+  `PYTHONPATH:.` 在子进程（cwd=fixture）恰指 fixture，所以假环境完整性通过。
+- 根疏漏：根验收此前没有覆盖绝对宿主路径场景；policy 来源校验本身未放宽，本补修亦不放宽。
+- 补修范围（仅 `tests/v4/test_architecture_policy.py`）：`_materialise` 为 fixture `confflow`
+  所有父包目录补空 `__init__.py`，已有文件不覆盖（mutant 明确 init 内容保留）；scenario 语义、
+  `source_binding`、SYMLINK 回归、noeditable、fail-closed 原样；不改 tools/policy/runner。
+- 新增回归 +1：`test_runtime_fixture_isolated_from_absolute_host_pythonpath`，显式继承宿主绝对
+  `PYTHONPATH`（合成宿主 `confflow/remote` 含 lease 污染），用旧 RT-016 clean/mutant fixture 经真实
+  `scan_runtime` 证明 clean 不串宿主、mutant 命中 `export_absent` 而非 `source_binding`/ImportError；
+  旧逻辑下 clean 报 `export_absent(2)+source_binding(2)+source_binding_path(2)` 失败，新逻辑通过。
+- 必要测试（`PYTHONPATH=<本树>/tools/refactor-acc/noeditable:<本树>` 绝对环境）：
+  新增回归 + 旧 19 个 `test_runtime_rule_clean_and_mutant` 共 20 passed；
+  `runtime_source_binding` 4 passed；ruff/black 通过；collect `309→310`，集成预期 `4664→4665`。
+- 未做：全量/golden/整 309 套未重跑，仍待根统一重跑；不称完成。
