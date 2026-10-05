@@ -157,6 +157,28 @@ def _build_tree(root: Path, rule: dict, *, violate: bool) -> None:
     elif kind == "custom_numeric_dispatch":
         body = "def first(programs):\n    return programs[0]\n"
         _write(root, _anchor_file(scope), body if violate else "x = 1\n")
+    elif kind == "custom_confgen_axis_literals":
+        _write(root, _anchor_file(scope), 'x = "rings"\n' if violate else "x = 1\n")
+    elif kind == "custom_confgen_axis_attrs":
+        body = "def f(o):\n    return o.rings\n"
+        _write(root, _anchor_file(scope), body if violate else "x = 1\n")
+    elif kind == "custom_confgen_component_imports":
+        body = "from confflow.science.confgen.torsion import stage\n"
+        _write(root, _anchor_file(scope), body if violate else "x = 1\n")
+    elif kind == "custom_confgen_getattr_guard":
+        body = (
+            "def __getattr__(name):\n"
+            '    if name in ("InheritedTorsionLock", "ExtraLock"):\n'
+            "        from confflow.science.confgen.torsion.inherited import ExtraLock\n"
+            "        return ExtraLock\n"
+            "    raise AttributeError(name)\n"
+        )
+        _write(root, _anchor_file(scope), body if violate else "x = 1\n")
+    elif kind == "custom_confgen_target_owner":
+        body = "def as_kernel_target(t):\n    return t\n"
+        _write(root, _anchor_file(scope), body if violate else "x = 1\n")
+    elif kind == "custom_confgen_top_register":
+        _write(root, _anchor_file(scope), 'register("x")\n' if violate else "x = 1\n")
     elif kind == "custom_jobdesk_doubles":
         if violate:
             _write(root, rule["files"][0], "class JobdeskDouble:\n    import confflow\n")
@@ -602,6 +624,18 @@ def _banned_item(rule: dict) -> str:
         return "TaskRunner"
     if kind == "custom_task_dispatch":
         return "IRC"
+    if kind == "custom_confgen_axis_literals":
+        return "rings"
+    if kind == "custom_confgen_axis_attrs":
+        return ".rings"
+    if kind == "custom_confgen_component_imports":
+        return "confflow.science.confgen.torsion"
+    if kind == "custom_confgen_getattr_guard":
+        return "ExtraLock"
+    if kind == "custom_confgen_target_owner":
+        return "as_kernel_target"
+    if kind == "custom_confgen_top_register":
+        return "register"
     return "basename"
 
 
@@ -614,6 +648,12 @@ PROSE_KINDS = {
     "custom_filename_idioms",
     "custom_range_ordinal",
     "custom_numeric_dispatch",
+    "custom_confgen_axis_literals",
+    "custom_confgen_axis_attrs",
+    "custom_confgen_component_imports",
+    "custom_confgen_getattr_guard",
+    "custom_confgen_target_owner",
+    "custom_confgen_top_register",
 }
 PROSE_IDS = sorted(r["id"] for r in RULES if r["kind"] in PROSE_KINDS and not r.get("raw_text"))
 
@@ -1002,8 +1042,9 @@ def test_full_tree_scan_is_clean() -> None:
 
 def test_rule_count_matches_the_inventory() -> None:
     # 69 L0.4b rows + AP-033a (the const half of inventory row #33, split out
-    # honestly from the disk half AP-033 per the v3 root ruling).
-    assert RULE_COUNT == 70
+    # honestly from the disk half AP-033 per the v3 root ruling) + 6 A6
+    # G13/G14 confgen purity rules (AP-100..AP-105).
+    assert RULE_COUNT == 76
 
 
 def test_rule_ids_are_unique_and_sources_pinned() -> None:
@@ -1012,8 +1053,19 @@ def test_rule_ids_are_unique_and_sources_pinned() -> None:
     assert all(re.match(r"^#\d+$", r["source"]) for r in RULES)
 
 
-def test_no_g13_g14_rules_are_enabled() -> None:
-    assert not [r for r in RULES if "G13" in r["id"] or "G14" in r["id"]]
+def test_g13_g14_rules_are_enabled() -> None:
+    assert sorted(
+        r["id"]
+        for r in RULES
+        if r["id"] in ("AP-100", "AP-101", "AP-102", "AP-103", "AP-104", "AP-105")
+    ) == [
+        "AP-100",
+        "AP-101",
+        "AP-102",
+        "AP-103",
+        "AP-104",
+        "AP-105",
+    ]
 
 
 # ---------------------------------------------------------------------------
