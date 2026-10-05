@@ -289,3 +289,25 @@ R7 glucose 127/155 的 28 项召回缺口与未做种子优化后 RMSD 验证如
 - 反例：真实根 `..._test_suppression_positive_control_real_stage_fewer_attempts__0.json` input 20 vs ledger 18/12（差 2 issued 后抑制）；spy kernel 直调 3 issued→ledger 2/1（差 1）复现，调用链 `run_level→_expand_target（先抑制后 input 门）→_retry_level（再抑制）→_supersede_failure` 删旧失败。
 - 改动（白名单）：`accounting.py`（`attempt_ledger_counts(..., issued_history=None)`，真 skip vs issued 后抑制分离，条件 `suppressed_after_issue` 键）+ `engine.py`（`_issued_history` 通用集，input 门 + retry 非 None 入账，`finish()` 传入并按真 skip 重算 `realization_attempts`）+ 新测试 5 节点 + `checkpoints/F-ledger/{DESIGN,CARD,DIFF,MANIFEST}.md`；`kernel_records.py`/组件实现/容差/fixtures 未动。
 - 验证：新 5 passed；旧实现跑新测试 2 failed/3 passed；`retry_statistics` 10 passed；core 抑制子集 10 passed；C2 阳性 1 passed；真实差分 issued 18→20/skipped 12→10/after 2/without 3→5/attempts 18→20，leaf 15/3/12 与 cert/count/terminal 全同；无重试 sha `6f64f6a49…` 逐字相同；ruff/mypy/black 通过。
+## L1-C0 — intent 包化制卡预演（move, executor self-check；根验收另行）
+
+- 基点 CF `c7728447162ee76877e38966f96e0417e779f39c`；工作树 `/tmp/l1-c0-proto`
+  分支 `refactor/l1-c0-proto`；输出 `/tmp/l1-c0-output`。AGENTS 缺失，
+  以 `docs/process/RULES.md` + `docs/process/ACCEPTANCE.md` 为准。JD 未动。
+- 白名单实测：删 `confflow/producer/intent.py`（2000 行）；
+  改 `confflow/producer/intent/compiler.py`（2000 行，18+/18- 仅 import 层级，
+  17 处）；新 `intent/__init__.py`（47 行，兼容 facade，四公开同 `__all__` 顺序
+  + 实际私有 `_recipe_cards_to_role_cards`，同对象 `is`，`__module__` 保持旧名，
+  root 裁决机械兼容元数据）；新 `tests/v4/test_l1_intent_package_compat.py`
+  （117 行，6 用例）；新检查点 `docs/confgen-fix/checkpoints/L1-C0/`。
+  `tools/architecture_policy.py` 与 `tests/v4/test_architecture_policy.py`
+  零改（目录 rglob 已覆盖，无 `intent.py` 字面规则）。
+- 自检（非根验收）：新 6 passed；producer_intent+regressions 64；
+  boundary_coverage+legacy_paths 290；checkpoints+terminal 75；
+  architecture_policy 333；boundaries+g13g14 30。
+  原/新真实编译产物 + catalog 逐字节等（sha256 `33240346…`）；
+  contract/boundary 四摘要原新一致；collect 4990 -> 4996（+6/−0）。
+  ruff/black/mypy 按单文件口径通过（compiler.py 保留基线 1056 长行原样）。
+- 冻结：`git diff --binary HEAD` 见 `/tmp/l1-c0-output/L1-C0-proto.diff`
+  （new file mode x2 起，rename 相似度 98%；sha 见同目录 `SHA256SUMS`）。
+  未提交/未推送/未合并/未打 tag；共享树与冻结基线未动。

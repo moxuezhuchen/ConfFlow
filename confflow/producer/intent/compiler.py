@@ -25,8 +25,8 @@ import re
 from collections.abc import Mapping
 from typing import Any
 
-from .cards import CARD_TYPES, CARD_VERSION, get_card, parse_card_ref
-from .presets import PRESET_VERSION, get_preset, parse_preset_ref
+from ..cards import CARD_TYPES, CARD_VERSION, get_card, parse_card_ref
+from ..presets import PRESET_VERSION, get_preset, parse_preset_ref
 
 __all__ = [
     "INTENT_SCHEMA",
@@ -130,11 +130,11 @@ def intent_catalog() -> dict[str, Any]:
     The reusable-card and recipe role-card guides are documented constants
     here so editors can render them without importing the compiler.
     """
-    from .cards import CARD_TYPES
-    from .presets import PRESET_TYPES
+    from ..cards import CARD_TYPES
+    from ..presets import PRESET_TYPES
 
     try:
-        from .recipes import RECIPE_IDS_V4
+        from ..recipes import RECIPE_IDS_V4
     except ImportError:
         recipe_ids: tuple[str, ...] = ()
     else:
@@ -268,7 +268,7 @@ def _coerce_source(document: Any, intent: Any) -> Mapping[str, Any]:
 
 def _passthrough_legacy(source: Mapping[str, Any], registry: Any) -> dict[str, Any]:
     """Verify a strict V4 document with the real compiler; return it unchanged."""
-    from ..workflow.v4.compiler import compile_workflow
+    from ...workflow.v4.compiler import compile_workflow
 
     snapshot = copy.deepcopy(dict(source))
     try:
@@ -832,7 +832,7 @@ def _apply_role_cards(
 
 
 def _resolve_program(program: Any, *, step_id: str) -> str:
-    from ..programs.registry import get_program_adapter
+    from ...programs.registry import get_program_adapter
 
     if not isinstance(program, str) or not program.strip():
         raise _fail(
@@ -1065,7 +1065,7 @@ def _wire_transform(step: Mapping[str, Any], card: dict[str, Any], step_id: str)
             step_id=step_id,
         )
     try:
-        from ..execution.transform_executor import REFINE_NATIVE_KEYS
+        from ...execution.transform_executor import REFINE_NATIVE_KEYS
     except ImportError:
         allowed_keys = frozenset(
             {"rmsd_threshold_angstrom", "bond_scale", "heavy_only", "max_structures"}
@@ -1278,7 +1278,7 @@ def _apply_machine_profile(
     ``execution`` entries win over profile values per key.
     """
     try:
-        from .machine import resolve_machine_resources
+        from ..machine import resolve_machine_resources
     except ImportError as exc:
         raise _fail(
             "machine_profile was provided but producer.machine is not available yet; "
@@ -1288,7 +1288,7 @@ def _apply_machine_profile(
         raise _fail("machine_profile must be a mapping")
     profile_name = machine_profile.get("name", "machine")
     try:
-        from ..workflow.v4.schema import (
+        from ...workflow.v4.schema import (
             DEFAULT_CORES_PER_ITEM,
             DEFAULT_MEMORY_PER_ITEM,
         )
@@ -1399,7 +1399,7 @@ def _apply_checkpoints(
     edge returned, so multiple edges never leak or go stale.
     """
     try:
-        from .checkpoints import wire_checkpoint_reuse
+        from ..checkpoints import wire_checkpoint_reuse
     except ImportError as exc:
         raise _fail(
             "reuse_checkpoint was declared but producer.checkpoints is not available yet"
@@ -1455,8 +1455,8 @@ def compile_intent(
     seed-assigned, machine-resolved, checkpoint-wired, then verified with
     the real strict V4 parser and compiler before being returned.
     """
-    from ..workflow.v4.compiler import compile_workflow
-    from ..workflow.v4.parser import parse_workflow_document
+    from ...workflow.v4.compiler import compile_workflow
+    from ...workflow.v4.parser import parse_workflow_document
 
     source = _coerce_source(document, intent)
     schema = source.get("schema")
@@ -1513,7 +1513,7 @@ def compile_intent(
         if not isinstance(recipe_id, str) or not recipe_id.strip():
             raise _fail("intent 'recipe' must be a non-empty recipe id")
         try:
-            from .recipes import get_recipe_v4
+            from ..recipes import get_recipe_v4
         except ImportError as exc:
             raise _fail(f"intent recipe {recipe_id!r} needs producer.recipes: {exc}") from exc
         try:
@@ -1567,7 +1567,7 @@ def compile_intent(
 
     if registry is None:
         try:
-            from ..execution.registry import default_registry
+            from ...execution.registry import default_registry
         except ImportError as exc:
             raise _fail(f"cannot load the execution registry: {exc}") from exc
         registry = default_registry()
@@ -1785,7 +1785,7 @@ def compile_intent(
     # then strip only the automatically derived ones and re-derive from the
     # final science; explicit seeds are never touched.
     if checkpoint_intents:
-        from .seeds import assign_seeds as _provisional_assign
+        from ..seeds import assign_seeds as _provisional_assign
 
         _prov_doc, _prov_prov = _provisional_assign(wire_document)
         _auto_ids = {
@@ -1830,7 +1830,7 @@ def compile_intent(
                         del _wire_block["seed"]
 
     # Seeds: whole-workflow scientific identity (Phase 2).
-    from .seeds import SEED_VERSION, assign_seeds, seed_identity_for_step
+    from ..seeds import SEED_VERSION, assign_seeds, seed_identity_for_step
 
     wire_document, seed_prov = assign_seeds(wire_document)
 
@@ -1864,7 +1864,7 @@ def compile_intent(
         try:
             import hashlib
 
-            from ..domain.canonical import canonical_json_bytes
+            from ...domain.canonical import canonical_json_bytes
 
             _identity = seed_identity_for_step(step_id, wire_document)
             _identity_digest = (
