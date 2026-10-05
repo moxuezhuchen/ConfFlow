@@ -53,6 +53,17 @@ class ComponentDescriptor:
     preserved_entries: Callable[[Mapping[str, Any]], list[dict[str, Any]]] | None = None
     report_section: Callable[[Mapping[str, Any]], dict[str, Any] | None] | None = None
     describe_scope: Callable[[Mapping[str, Any]], Mapping[str, Any] | None] | None = None
+    # A4b spec hooks (optional for compat; built-ins always set them).
+    # normalize_spec(raw, *, index_base) sees the whole raw spec and returns
+    # ONLY owned keys present in the input; missing builtin defaults are
+    # filled by the planner (coordination->None, rings/torsions/paths->[],
+    # strict->False) so default bytes never change. Custom components without
+    # a hook pass values through unchanged; a hook returning an unowned key
+    # fails closed in the planner. validate_context(resolved, context) runs
+    # after the typed graph/context exists; only checks that already ran at
+    # context stage may live here (none at A4b; always passes).
+    normalize_spec: Callable[..., Mapping[str, Any]] | None = None
+    validate_context: Callable[..., None] | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "spec_keys", tuple(self.spec_keys))

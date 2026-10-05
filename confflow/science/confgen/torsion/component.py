@@ -40,6 +40,8 @@ def _describe_scope(resolved: Mapping[str, Any]) -> Any:
 
 def descriptor() -> ComponentDescriptor:
     """Return the torsions component descriptor."""
+    from confflow.science.confgen.torsion.spec import normalize_spec as _normalize_spec
+    from confflow.science.confgen.torsion.spec import validate_context as _validate_context
 
     def is_active(resolved: Mapping[str, Any]) -> bool:
         torsions = resolved.get("torsions", [])
@@ -67,4 +69,6 @@ def descriptor() -> ComponentDescriptor:
         preserved_entries=_preserved_entries,
         report_section=_report_section,
         describe_scope=_describe_scope,
+        normalize_spec=_normalize_spec,
+        validate_context=_validate_context,
     )

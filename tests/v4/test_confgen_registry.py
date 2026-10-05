@@ -1822,3 +1822,463 @@ def test_a4a_no_toplevel_registry_import_in_model() -> None:
             assert "registry" not in src, f"model top-level imports registry: {src}"
             for n in names:
                 assert "registry" not in n
+
+
+# ---------------------------------------------------------------------------
+# FIX-1A A4b: spec normalization owned by components (V40/V51).
+# Root compat rulings: builtin defaults (coordination=None, rings/torsions/
+# paths=[], strict=False) are filled by the planner so default bytes never
+# change; component hooks return ONLY owned keys present in the input;
+# dispatch order is registry order (= C->R->T for defaults, matching the
+# pre-A4b validation order); topology overlay stays in the planner until A4c;
+# planner.resolve_torsion_axes stays public (no silent API deletion).
+# Checks below use AST only for source structure (no grep).
+# ---------------------------------------------------------------------------
+
+
+def _a4b_battery() -> list[tuple[str, dict[str, Any]]]:
+    return [
+        ("empty", {"index_base": 0}),
+        ("coord-none", {"index_base": 0, "coordination": None}),
+        (
+            "coord-1based",
+            {
+                "index_base": 1,
+                "coordination": {"metal_center": 1, "binding_sites": [{"atoms": [2, 3]}]},
+            },
+        ),
+        ("rings-0based", {"index_base": 0, "rings": [{"atoms": [0, 1, 2, 3, 4]}]}),
+        (
+            "torsion-1based",
+            {
+                "index_base": 1,
+                "torsions": [
+                    {
+                        "id": "c",
+                        "bond": [2, 3],
+                        "model": "relative_rotation_grid",
+                        "angles": [0.0, 120.0],
+                    }
+                ],
+            },
+        ),
+        (
+            "paths-1based",
+            {
+                "index_base": 1,
+                "paths": [{"start": 1, "end": 4, "move": "end", "angles": [0.0, 120.0]}],
+            },
+        ),
+        ("paths-none", {"index_base": 0, "paths": None}),
+        (
+            "mixed-crt",
+            {
+                "index_base": 1,
+                "coordination": {"metal_center": 1},
+                "rings": [{"atoms": [1, 2, 3]}],
+                "torsions": [
+                    {"id": "t", "bond": [1, 2], "model": "relative_rotation_grid", "angles": [0.0]}
+                ],
+            },
+        ),
+    ]
+
+
+def _a4b_bad_battery() -> list[dict[str, Any]]:
+    return [
+        {"index_base": 7, "unknown_top": 1},
+        {"coordination": 42, "rings": "x"},
+        {"index_base": 1, "torsions": [{"id": "a", "bond": [1]}], "rings": [42]},
+        {"index_base": 1, "strict_path_bond_check": "yes"},
+        {"unknown_z": 1},
+        {"topology": {"index_base": 1}},
+    ]
+
+
+def test_a4b_component_hooks_return_only_owned_present_keys() -> None:
+    from confflow.science.confgen.coordination.spec import normalize_spec as coord_ns
+    from confflow.science.confgen.ring.spec import normalize_spec as ring_ns
+    from confflow.science.confgen.torsion.spec import normalize_spec as tors_ns
+
+    assert coord_ns({"index_base": 0}, index_base=0) == {}
+    assert ring_ns({"index_base": 0}, index_base=0) == {}
+    assert tors_ns({"index_base": 0}, index_base=0) == {}
+    assert set(coord_ns({"index_base": 0, "coordination": None}, index_base=0)) == {"coordination"}
+    assert set(ring_ns({"index_base": 0, "rings": []}, index_base=0)) == {"rings"}
+    out = tors_ns({"index_base": 0, "torsions": [], "paths": None}, index_base=0)
+    assert set(out) == {"torsions", "paths"}
+    # Whole-raw input accepted (hook reads its own keys, ignores the rest).
+    mixed = {"index_base": 1, "coordination": {"metal_center": 1}, "rings": [{"atoms": [1]}]}
+    assert set(coord_ns(mixed, index_base=1)) == {"coordination"}
+    assert set(ring_ns(mixed, index_base=1)) == {"rings"}
+    assert tors_ns(mixed, index_base=1) == {}
+
+
+def test_a4b_normalize_spec_defaults_match_builtin_history() -> None:
+    out = normalize_spec({"index_base": 0})
+    assert out["coordination"] is None
+    assert out["rings"] == []
+    assert out["torsions"] == []
+    assert out["paths"] == []
+    assert out["strict_path_bond_check"] is False
+    # Explicit nulls preserved distinctly (coordination=None ok, paths=None -> []).
+    assert normalize_spec({"index_base": 0, "coordination": None})["coordination"] is None
+    assert normalize_spec({"index_base": 0, "paths": None})["paths"] == []
+
+
+def test_a4b_normalize_spec_idempotent_and_1based() -> None:
+    for _name, raw in _a4b_battery():
+        once = normalize_spec(dict(raw))
+        twice = normalize_spec(once)
+        assert twice == once, _name
+    # 1-based workflow indices convert once to 0-based internally.
+    once = normalize_spec(
+        {
+            "index_base": 1,
+            "torsions": [
+                {"id": "c", "bond": [2, 3], "model": "relative_rotation_grid", "angles": [0.0]}
+            ],
+        }
+    )
+    assert once["torsions"][0]["bond"] == [1, 2]
+    assert once["index_base"] == 0
+    assert once["index_convention"] == "internal-0-based:normalized"
+
+
+def test_a4b_error_order_and_unknown_allowed_match_history() -> None:
+    # Two-error spec raises the same first error (C before R before T).
+    bad: dict[str, Any] = {"coordination": 42, "rings": "x"}
+    with pytest.raises(ValueError) as e0:
+        normalize_spec(dict(bad))
+    assert str(e0.value) == "spec coordination must be a mapping or null"
+    bad2: dict[str, Any] = {"index_base": 1, "torsions": [{"id": "a", "bond": [1]}], "rings": [42]}
+    with pytest.raises(ValueError) as e1:
+        normalize_spec(dict(bad2))
+    assert str(e1.value) == "$.rings[0] must be a mapping"
+    # Unknown-key diagnosis: default allowed list equals the legacy 15 keys.
+    with pytest.raises(ValueError) as eu:
+        normalize_spec({"unknown_z": 1})
+    assert "allowed" in str(eu.value)
+    for _legacy in (
+        "coordination",
+        "rings",
+        "torsions",
+        "paths",
+        "strict_path_bond_check",
+    ):
+        assert f"'{_legacy}'" in str(eu.value)
+    for bad_raw in _a4b_bad_battery():
+        with pytest.raises(ValueError):
+            normalize_spec(dict(bad_raw))
+
+
+def test_a4b_probe_hook_called_via_build_context_and_validate() -> None:
+    calls: list[tuple[str, int]] = []
+
+    def _probe_ns(raw: Mapping[str, Any], *, index_base: int) -> Mapping[str, Any]:
+        calls.append(("normalize", int(index_base)))
+        assert raw.get("probe_section", None) is None or isinstance(raw.get("probe_section"), dict)
+        if "probe_section" not in raw:
+            return {}
+        return {"probe_section": dict(raw["probe_section"])}
+
+    validated: list[str] = []
+
+    def _probe_vc(resolved: Mapping[str, Any], context: Any) -> None:
+        validated.append("ok")
+
+    probe = ComponentDescriptor(
+        id="probe",
+        order=40,
+        spec_keys=("probe_section",),
+        state_merge="merge",
+        is_active=lambda resolved: False,
+        factory=lambda resolved: (_ for _ in ()).throw(AssertionError("unused")),
+        normalize_spec=_probe_ns,  # type: ignore[arg-type]
+        validate_context=_probe_vc,  # type: ignore[arg-type]
+    )
+    registry = build_default_registry().with_component(probe)
+    structure = _a4a_probe_structure()
+    ctx = build_context(
+        structure, {"index_base": 0, "probe_section": {"note": "hi"}}, registry=registry
+    )
+    assert ("normalize", 0) in calls
+    assert validated == ["ok"]
+    assert dict(ctx.resolved_spec)["probe_section"] == {"note": "hi"}
+    # Missing custom key stays missing (no undeclared growth).
+    ctx2 = build_context(structure, {"index_base": 0}, registry=registry)
+    assert "probe_section" not in dict(ctx2.resolved_spec)
+
+
+def test_a4b_component_returning_unowned_key_fails_closed() -> None:
+    def _evil_ns(raw: Mapping[str, Any], *, index_base: int) -> Mapping[str, Any]:
+        return {"torsions": []}  # not owned by probe
+
+    evil = ComponentDescriptor(
+        id="probe",
+        order=40,
+        spec_keys=("probe_section",),
+        state_merge="merge",
+        is_active=lambda resolved: False,
+        factory=lambda resolved: (_ for _ in ()).throw(AssertionError("unused")),
+        normalize_spec=_evil_ns,  # type: ignore[arg-type]
+    )
+    registry = build_default_registry().with_component(evil)
+    with pytest.raises(ValueError, match="unowned spec key"):
+        normalize_spec({"index_base": 0}, registry=registry)
+
+
+def test_a4b_planner_keeps_public_torsion_api_and_no_overlay_move() -> None:
+    import confflow.science.confgen.planner as planner
+
+    assert "resolve_torsion_axes" in planner.__all__
+    assert callable(planner.resolve_torsion_axes)
+    tree = ast.parse(Path(planner.__file__).read_text())
+    defined = {n.name for n in tree.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
+    assert "resolve_torsion_axes" in defined
+    # Topology overlay stays in the planner until A4c (not moved early).
+    assert "_overlay_declared_coordination_scope" in defined
+    assert "_convert_coordination" not in defined
+    # Component section blocks no longer live inline in planner.normalize_spec.
+    src = Path(planner.__file__).read_text()
+    assert "coordination/spec" in src or "normalize_spec(raw, index_base" in src
+
+
+def test_a4b_kernel_axis_literals_scoped_not_zero_relaxed() -> None:
+    import ast as _ast
+
+    tree = _ast.parse(Path("confflow/science/confgen/planner.py").read_text())
+    lits: list[str] = []
+    for node in _ast.walk(tree):
+        if isinstance(node, _ast.Constant) and node.value in ("coordination", "rings", "torsions"):
+            lits.append(str(node.value))
+    # Remaining literals are scoped: whitelist/defaults, _spec_has_indices
+    # probes, exclusions AXIS_ORDER check, overlay/graph metal-center reads
+    # (A4c), and tolerance labels -- never a normalization dispatch.
+    assert lits, "expected scoped kernel literals to remain (no zero-relax)"
+    ns_node = next(
+        n
+        for n in tree.body
+        if isinstance(n, (_ast.FunctionDef, _ast.AsyncFunctionDef)) and n.name == "normalize_spec"
+    )
+    for node in _ast.walk(ns_node):
+        if isinstance(node, _ast.Constant) and node.value in ("coordination", "rings", "torsions"):
+            raise AssertionError(f"normalize_spec dispatch still hard-codes {node.value!r}")
+
+
+def test_a4b_v2_byte_order_sort_keys_false_and_key_order() -> None:
+    """v2: root compat byte order with sort_keys=False (no sort_keys masking)."""
+    import json as _json
+
+    _historic = [
+        "schema_version",
+        "index_convention",
+        "index_base",
+        "coordination",
+        "rings",
+        "torsions",
+        "paths",
+        "strict_path_bond_check",
+        "topology",
+        "stereochemistry",
+        "exclusions",
+        "tolerances",
+        "limits",
+        "seed",
+        "sampling",
+    ]
+    _cases = [
+        {},
+        {"index_base": 0, "rings": []},
+        {"index_base": 0, "torsions": []},
+        {"index_base": 0, "strict_path_bond_check": False},
+        {"index_base": 0, "paths": None},
+        {
+            "index_base": 0,
+            "rings": [],
+            "torsions": [],
+            "paths": [],
+            "strict_path_bond_check": False,
+        },
+    ]
+    for raw in _cases:
+        out = normalize_spec(dict(raw))
+        assert list(out.keys()) == _historic, f"key order drifted for {raw!r}: {list(out.keys())!r}"
+        # Byte check without sort_keys masking: order is part of bytes.
+        blob = _json.dumps(out, sort_keys=False)
+        assert blob.index('"coordination"') < blob.index('"rings"') < blob.index('"torsions"')
+        assert blob.index('"torsions"') < blob.index('"paths"')
+        assert blob.index('"paths"') < blob.index('"strict_path_bond_check"')
+        assert blob.index('"strict_path_bond_check"') < blob.index('"topology"')
+    # Empty-input bytes equal the historical shape (defaults preset, not appended).
+    empty = normalize_spec({"index_base": 0})
+    assert empty["coordination"] is None
+    assert empty["rings"] == [] and empty["torsions"] == [] and empty["paths"] == []
+    assert empty["strict_path_bond_check"] is False
+
+
+def test_a4b_v2_custom_keys_descriptor_order_no_growth() -> None:
+    """v2: custom new keys follow descriptor order; unowned never grows."""
+    from confflow.science.confgen.registry import build_default_registry
+
+    def _ns(raw: Mapping[str, Any], *, index_base: int) -> Mapping[str, Any]:
+        # Return in reverse order on purpose; planner must store descriptor order.
+        out: dict[str, Any] = {}
+        if "z_custom" in raw:
+            out["z_custom"] = raw["z_custom"]
+        if "a_custom" in raw:
+            out["a_custom"] = raw["a_custom"]
+        # Exact check lives in planner; here return exactly expected.
+        expected = {k for k in ("a_custom", "z_custom") if k in raw}
+        assert set(out.keys()) == expected
+        return out
+
+    desc = ComponentDescriptor(
+        id="custom",
+        order=40,
+        spec_keys=("a_custom", "z_custom"),
+        state_merge="merge",
+        is_active=lambda resolved: False,
+        factory=lambda resolved: (_ for _ in ()).throw(AssertionError("unused")),
+        normalize_spec=_ns,  # type: ignore[arg-type]
+    )
+    registry = build_default_registry().with_component(desc)
+    out = normalize_spec({"index_base": 0, "z_custom": 2, "a_custom": 1}, registry=registry)
+    keys = list(out.keys())
+    # Builtins keep historic positions; customs insert in descriptor order.
+    assert keys.index("a_custom") < keys.index("z_custom")
+    assert keys.index("strict_path_bond_check") < keys.index("a_custom")
+    assert keys.index("z_custom") < keys.index("topology")
+    # Missing customs stay missing (no undeclared growth, no default literals in kernel).
+    out2 = normalize_spec({"index_base": 0}, registry=registry)
+    assert "a_custom" not in out2 and "z_custom" not in out2
+
+
+def test_a4b_v2_exact_missing_and_extraneous_rejected() -> None:
+    """v2: PLAN exact expected vs partial; missing/extra-owned must fail."""
+    from confflow.science.confgen.registry import build_default_registry
+
+    def _drop_ns(raw: Mapping[str, Any], *, index_base: int) -> Mapping[str, Any]:
+        return {}  # drops present 'probe_section'
+
+    drop = ComponentDescriptor(
+        id="probe",
+        order=40,
+        spec_keys=("probe_section",),
+        state_merge="merge",
+        is_active=lambda resolved: False,
+        factory=lambda resolved: (_ for _ in ()).throw(AssertionError("unused")),
+        normalize_spec=_drop_ns,  # type: ignore[arg-type]
+    )
+    with pytest.raises(ValueError, match="keys mismatch.*missing"):
+        normalize_spec(
+            {"index_base": 0, "probe_section": {"note": "hi"}},
+            registry=build_default_registry().with_component(drop),
+        )
+
+    def _extra_ns(raw: Mapping[str, Any], *, index_base: int) -> Mapping[str, Any]:
+        # 'b' owned but not in raw -> extraneous owned-not-in-raw.
+        return {"a": 1, "b": 2}
+
+    extra = ComponentDescriptor(
+        id="ex",
+        order=40,
+        spec_keys=("a", "b"),
+        state_merge="merge",
+        is_active=lambda resolved: False,
+        factory=lambda resolved: (_ for _ in ()).throw(AssertionError("unused")),
+        normalize_spec=_extra_ns,  # type: ignore[arg-type]
+    )
+    with pytest.raises(ValueError, match="keys mismatch.*extra"):
+        normalize_spec(
+            {"index_base": 0, "a": 1},
+            registry=build_default_registry().with_component(extra),
+        )
+
+
+def test_a4b_v2_no_hook_compat_passowned() -> None:
+    """v2: no-hook legacy descriptors keep compat passowned (old pseudo-stage)."""
+    from confflow.science.confgen.registry import build_default_registry
+
+    legacy = ComponentDescriptor(
+        id="legacy",
+        order=40,
+        spec_keys=("legacy_section",),
+        state_merge="merge",
+        is_active=lambda resolved: False,
+        factory=lambda resolved: (_ for _ in ()).throw(AssertionError("unused")),
+        # No normalize_spec hook -> planner passes owned values through.
+    )
+    registry = build_default_registry().with_component(legacy)
+    out = normalize_spec({"index_base": 0, "legacy_section": {"v": 1}}, registry=registry)
+    assert out["legacy_section"] == {"v": 1}
+    out2 = normalize_spec({"index_base": 0}, registry=registry)
+    assert "legacy_section" not in out2
+
+
+def test_a4b_v2_resolve_moved_delegation_and_no_cycle() -> None:
+    """v2: resolve lives in torsion/spec; planner lazy-delegates; no call cycle."""
+    import confflow.science.confgen.planner as planner
+    import confflow.science.confgen.torsion.spec as tspec
+
+    assert "resolve_torsion_axes" in planner.__all__
+    assert "resolve_torsion_axes" in tspec.__all__
+    assert callable(planner.resolve_torsion_axes)
+    assert callable(tspec.resolve_torsion_axes)
+    # Same signature (lazy delegation preserves it).
+    assert str(inspect.signature(planner.resolve_torsion_axes)) == str(
+        inspect.signature(tspec.resolve_torsion_axes)
+    )
+    # Same behavior and same public type identity (no API sacrifice).
+    sample: list[dict[str, Any]] = [{"bond": [0, 1], "angles": [0.0, 90.0]}]
+    via_planner = planner.resolve_torsion_axes(tuple(sample), index_base=0)
+    via_spec = tspec.resolve_torsion_axes(tuple(sample), index_base=0)
+    assert via_planner == via_spec
+    assert isinstance(via_planner[0], planner.TorsionAxis)
+    assert isinstance(via_spec[0], planner.TorsionAxis)
+    assert type(via_planner[0]) is planner.TorsionAxis
+    # No spec -> planner -> spec call cycle: spec.normalize calls local impl.
+    spec_src = Path(tspec.__file__).read_text()
+    assert "from confflow.science.confgen.planner import resolve_torsion_axes" not in spec_src
+    assert "resolve_torsion_axes(tuple(converted_torsions)" in spec_src
+    # Planner wrapper is delegation only (lazy import, no torsion logic).
+    planner_src = Path(planner.__file__).read_text()
+    assert "from confflow.science.confgen.torsion.spec import" in planner_src
+    tree = ast.parse(planner_src)
+    resolve_node = next(
+        n
+        for n in tree.body
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and n.name == "resolve_torsion_axes"
+    )
+    # Delegation body: import + return, no loops/validation logic.
+    assert not any(isinstance(n, (ast.For, ast.While, ast.If)) for n in ast.walk(resolve_node))
+    # Exclusive closure moved out of planner; shared stays with record.
+    defined = {n.name for n in tree.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
+    assert "_require_finite_angles" not in defined
+    assert "_reject_periodic_duplicates" not in defined
+    assert "_require_index_list" not in defined
+    assert "_overlay_declared_coordination_scope" in defined  # A4c still stays
+    assert "_convert_coordination" not in defined
+    spec_tree = ast.parse(spec_src)
+    spec_defined = {
+        n.name for n in spec_tree.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    assert "_require_finite_angles" in spec_defined
+    assert "_reject_periodic_duplicates" in spec_defined
+    assert "_require_index_list" in spec_defined
+    assert "resolve_torsion_axes" in spec_defined
+    # No top-level kernel import in torsion/spec (lazy only, component stays light).
+    for n in spec_tree.body:
+        if isinstance(n, (ast.ImportFrom, ast.Import)):
+            src = ast.unparse(n)
+            assert "confflow.science.confgen.planner" not in src
+    # G13 staged: normalize dispatch still zero axis literals (no zero-relax).
+    ns_node = next(
+        n
+        for n in tree.body
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == "normalize_spec"
+    )
+    for node in ast.walk(ns_node):
+        if isinstance(node, ast.Constant) and node.value in ("coordination", "rings", "torsions"):
+            raise AssertionError(f"v2 normalize_spec dispatch hard-codes {node.value!r}")

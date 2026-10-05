@@ -493,7 +493,11 @@ def build_context(
         raise ValueError(
             "scoped atom references fail the graph authority audit: " + "; ".join(ref_problems[:5])
         )
-    return MolecularContext(
+    # A4b: component context validation (only checks that already ran at
+    # context stage may live here; builtins are no-ops at A4b, so order and
+    # bytes are unchanged). Hooks run in registry order after the typed
+    # graph exists; no normalize-stage check is moved later here.
+    provisional = MolecularContext(
         structure=structure,
         adjacency=tuple(tuple(row) for row in adjacency),
         graph=graph,
@@ -505,6 +509,11 @@ def build_context(
         atom_refs=atom_refs,
         registry=resolved_registry,
     )
+    for _descriptor in resolved_registry._ordered():
+        _validate = _descriptor.validate_context
+        if _validate is not None:
+            _validate(resolved, provisional)
+    return provisional
 
 
 @dataclass(frozen=True, slots=True)
