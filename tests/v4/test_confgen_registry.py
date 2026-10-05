@@ -510,8 +510,16 @@ def test_run_unknown_axis_fails_at_target_validation() -> None:
 
 
 def test_model_import_loads_no_registry_or_components() -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+    root_str = str(repo_root)
     probe = (
-        "import sys, confflow.science.confgen.model; "
+        "import pathlib, sys; "
+        "_root = pathlib.Path(" + repr(root_str) + "); "
+        "sys.path.insert(0, str(_root)); "
+        "import confflow; "
+        "_cf = pathlib.Path(confflow.__file__).resolve(); "
+        "assert str(_cf).startswith(str(_root) + '/'), str(_cf); "
+        "import confflow.science.confgen.model; "
         "mods=sorted(m for m in sys.modules "
         "if m == 'confflow.science.confgen.registry' "
         "or m.startswith('confflow.science.confgen.coordination.component') "
@@ -524,7 +532,7 @@ def test_model_import_loads_no_registry_or_components() -> None:
         capture_output=True,
         text=True,
         check=False,
-        cwd="/tmp/fix1a-a1-proto",
+        cwd=str(repo_root),
     )
     assert completed.returncode == 0, completed.stderr
     assert completed.stdout.strip() == "[]", completed.stdout
