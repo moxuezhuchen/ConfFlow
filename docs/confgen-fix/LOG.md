@@ -190,3 +190,58 @@ A6正式SHA912e545807f81688236d1214a571e9a6e45ce312；根逐字核对通过。
   与 `/tmp/fix1a-final-root-run-v2/baseline/collect.json` 逐字节一致；未跑全量/TS1/golden。
 - 新增：`tests/fixtures/confgen/ring/rpdd/{input_ts_fragment.xyz,crest_conformers.xyz,README.md}`、
   `docs/confgen-fix/checkpoints/F1/MANIFEST.json`，另本段 LOG 追加。
+
+## R1 — ring puckering CP coordinates + 38 canonical forms (logic, stage-accepted)
+
+- Commit `70b0d4415134ea3230b0af6b7a81dabf90c43651` on `fix/confgen-1r` (parent F1 `5e455aa0df433cebe8ff5cba0b590b6ce0eb626f`).
+- New modules only, unreferenced by production: `confflow/science/confgen/ring/puckering.py` + `tests/v4/test_confgen_ring_puckering.py` (17 tests passed; ruff/black/mypy pass; collect 4862 → 4879, +17/−0, golden unchanged asserted).
+- Root note: CP math (Q/θ/φ, traversal shift/reverse covariance, 38 forms = 2C+6B+6TB+12E+12H) verified at stage; full/golden pending at milestone.
+
+## R2 — ring rigid planar units + local orientation locks (logic, stage-accepted)
+
+- Commit `38b5d4a6443544741bfc9870ac4ad0838adf7c0e` (parent R1).
+- New module only: `ring/rigid_units.py` + `test_confgen_ring_rigid_units.py` (27 tests: 18 frozen + 9 root; static pass; collect 4879 → 4906, +27/−0, golden unchanged).
+- Root note: planar-unit perception + sp2 audit (no chirality lock on topological sp2) staged; full/golden pending.
+
+## R3 — CP-constrained realization (frozen, stage-accepted)
+
+- Commit `f3c2eeffd06c83a159f5c7d4c21d1418661f31ab` (parent R2): `ring/realization.py` + `tolerances.py` (`phase_defined_q_min` frozen at Q/r̄ ≥ 0.05 per Q13/V17, verify-only afterwards) + `test_confgen_ring_v2_realization.py` (30 passed; ruff/black/mypy pass; frozen patch sha256 `575b5d088e8713dd7134cfeccf52cb99dee274b4a28fccc524845f40dcf84d87`; collect 4906 → 4936, +30/−0).
+- Root note: multi-start solver + audit-stamped `failed_geometry` staged; full/golden pending.
+
+## K0 — clash diagnostic: no rescue, K1/K2 to FIX-2 (test-only, stage-accepted)
+
+- Commit `d964ba7e75999b6a7eb4fe48350b19dcdeae925f` (base R3 `f3c2ee…`): `test_confgen_k0_clash_diagnostic.py` + `checkpoints/K0/{COUNTS,MANIFEST,REPORT}.md`.
+- Result: 18 ring targets / 84 rows (S1 12 + S2 24 + S3 48), ring-clash-rejected 0, rescued 0/0/0, B-leaf realized 12/24/46 (S3 2 leaf-clash, non-rescue). Evidence `/tmp/fix1r-k0-root-independent-counts.json` + formal `checkpoints/K0/COUNTS.json` (`total_rescuable: 0`, `total_rows: 84`).
+- Decision per PLAN: K1/K2 move to FIX-2; R4 proceeds. No production/threshold change.
+
+## R4 — enumeration/perception to CP forms + StateKey `{form,index,anchor,direction}` (science, stage-accepted)
+
+- Commit `27e046c138090e68d54b2d0a711b392c7af0a3d8`; frozen patch sha256 `52f9425141f306bec77298dc1bbeeeae759319c99af9ed8138c4a62491776ed7`; root v3 218 + v4 11 tests passed, collect 4951, evidence `/tmp/fix1r-r4-v4-output/ROOT-STAGE-ACCEPTANCE.json` (process note: initial cmp omitted untracked files, corrected intent-to-add exact cmp).
+- Checkpoint (small only, in-repo `checkpoints/R4/MANIFEST.json` + `DIFF.md`; bulk stays at `/tmp/fix1r-r4-root-checkpoint`, MANIFEST self `83353f9ba5c8957f7def878fc694cb38796876db0d71c25a58be74d6aa136168`, 26/26 sha recomputed OK): 26 entries = contract.json `08d51085…` + contract.full.json `2fe92022…` + boundary.full.json `ee811b99…` + collect.txt + DIFF-SUMMARY.json + 21 engine reports.
+- 93 classification (`mapping_93.csv` 93 rows; `DIFF-SUMMARY.json` 13 entries; `contract-diff-paths.json` 4 paths): 21 ring-allowed, actual 13 changed / 8 same; 72 non-ring unchanged. Field direction: ring basis template-product → CP-form product; `state_key.rings` `{template,torsions}` → `{form,index}`; evidence/certificate digests follow. contract/full: 4 paths only (forms + hashes); boundary `ee811b99…` unchanged; TS1 default/flexible/rigid unchanged at stage. Final full/golden pending, not final green. R5/R4G add only illegal-input/diagnostic regressions.
+
+## Q9 — reference ensembles frozen (fixture-only, 181 CREST refs)
+
+- Commit `ccf167f227d21322d1a251591440e75f48123538` (20 files, +5375): thf 1 + cyclohexene 2 + methylcyclohexane 6 + N-acetyl-L-proline-methyl-ester 14 + beta-D-glucopyranose 155 + rpdd 3 = 181 (178 Q9 CREST + 3 rpdd). Verified by frame-parse on formal tree.
+- Method on record (READMEs): server CREST, authorized; default iMTD-GC/GFN1-xTB, neutral charge (`Molecular charge : 0`), energies Hartree (Eh); unverifiable fields explicitly marked, no fabrication. Q9 arrival unblocks R7 only.
+
+## R5 — `distorted_input` into report (report-only, stage-accepted)
+
+- Commit `10c7ffe0caf504be50228684a9b64e484b92fdeb`; frozen patch sha256 `a113bd59a8d933ed60efb43d84452ab1324c920cd15f303ad516cbbee8284408`; root 15 tests passed, 16 existing nodes, 23 captured reports 0 different, collect 4951 → 4966 (+15/−0), `Golden-Changed: []`. Evidence `/tmp/fix1r-r5-v2-output/ROOT-REVIEW.json` + `checkpoints/R5/{MANIFEST,DIFF}.json`.
+- Scope: report/diagnostics only (Q6 report-only); existing golden unchanged; final full/golden pending.
+
+## R4G — unsupported-topology scope guards fail-closed (science guard, stage-accepted)
+
+- Commit `45ff3578129c39dc95572a276dafc304ad80a45c` (parent R5 `10c7ffe…`); root exact patch cmp true, combined 30 tests passed, 16 existing nodes, 23 reports byte-equal. Evidence `/tmp/fix1r-r4g-final-output/ROOT-ACCEPTANCE.json` + `checkpoints/R4G/{MANIFEST,DIFF}.json`.
+- Scope: fail-closed guards + new illegal-input regressions; existing golden unchanged; final full/golden pending.
+
+## R6 — retire Cartesian template realization (delete, stage-accepted)
+
+- Commit `4e5e36a51da3a4e554aed1d2afee27bcea52ac66` (parent R4G); root patch cmp true, 187 tests, 16 capture nodes 23 equal, collect 4979. Evidence `/tmp/fix1r-r6-final-output/ROOT-STAGE-ACCEPTANCE.json` (+ `REPORT.md`/`MAPPING.md`).
+- Deleted only `ring/templates.py` + Cartesian paths; removed tests exactly `test_bond_length_nominal_documented` + `test_templates_have_exact_closure_and_distinct_states`; format-only changes AST-equivalent (`/tmp/fix1r-r6-final-format-equivalence.json`). Golden equals R5 checkpoint; final full/golden pending.
+
+## R7 — benchmark published CP seeds vs reference ensembles (verify-only, stage-accepted)
+
+- Commit `71cf6e241ebaccf0c4c914f616463fe4c77e1217` (base R6 `4e5e36a…`, 5 files +1460): `tools/ring_benchmark.py` + `tools/match_after_opt.py` (user-side only) + `test_confgen_ring_benchmark.py` (11 tests) + `checkpoints/R7/{MANIFEST.json,DIFF.md}`.
+- Root: final 11 tests passed, mch 38 published 6/6 full audits, 3-case R6 re-verify (rpdd-crest-default 3/3, mch-crest-explicit 6/6, synchx-crest-default 2/2, all audit-complete 0 gaps), 195 external artifacts hashed, `R7-v2.patch` cmp consistent (sha256 `75a32dcd9d29c78ee1ec63c1b8917fb28948616274b69c44f2099355ea1ff32a`), collect 4990 = 4979+11 (collect-only). Evidence `/tmp/fix1r-r7-final-output/ROOT-STAGE-ACCEPTANCE.json` + `/tmp/fix1r-r7-v3-root-all-systems/ROOT-SUMMARY.json` (24 manifests verified).
+- Mode rule: explicit + crest-first must be declared for any 100% claim. Required recalls pass: rpdd 3/3, synthetic-cyclohexane 2/2, mch crest-first explicit 6/6. Measured recalls: mch crest-first default 5/6 / explicit 6/6; mch original-input default 3/6 / explicit 4/6 (evidence `/tmp/fix1r-r7-tool-v3-output/SUMMARY.json`). Limits: glucose crest-default 113/155 → explicit 127/155; the remaining 28 is a measured CP-recall gap, not individually attributed (no relaxation, no 100% claim on sugar); other original-input shortfalls are likewise recorded as measured recall shortfalls without causal attribution. `phase_defined_q_min` 0.05 verify-only (never retuned here). Post-seed RMSD recall/redundancy is user-side counting only (`match_after_opt.py`), not performed here. Full milestone full/golden running at root, pending — this LOG does not claim final green.
