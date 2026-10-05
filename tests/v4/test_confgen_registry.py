@@ -2575,32 +2575,20 @@ _LAZY_REPO_ROOT = Path(__file__).resolve().parents[2]
 
 _LAZY_RING_ALL = [
     "BACKEND_NAME",
-    "BOND_LENGTH",
     "RingPerception",
-    "RingRealizeOutput",
     "RingSpec",
     "RingStage",
-    "RingTemplate",
     "RingTolerances",
     "RingGeometryFailure",
     "RingNumericalFailure",
     "RingUnsupported",
-    "TEMPLATE_REGISTRY",
-    "TEMPLATES_BY_SIZE",
     "commanded_state_dict",
-    "get_template",
     "parse_ring_specs",
     "perceive_ring",
-    "realize_rings",
-    "realize_single_system",
     "ring_diagnostics",
     "ring_state_dict",
     "ring_states_match",
     "ring_torsions",
-    "template_bond_spread",
-    "template_coords",
-    "template_torsions",
-    "templates_for_size",
     "validate_ring_system",
 ]
 
@@ -2641,12 +2629,9 @@ _LAZY_COORD_ALL = [
 
 _LAZY_RING_DEF = {
     "BACKEND_NAME": ("confflow.science.confgen.ring.stage", "BACKEND_NAME"),
-    "BOND_LENGTH": ("confflow.science.confgen.ring.templates", "BOND_LENGTH"),
     "RingPerception": ("confflow.science.confgen.ring.perception", "RingPerception"),
-    "RingRealizeOutput": ("confflow.science.confgen.ring.realization", "RingRealizeOutput"),
     "RingSpec": ("confflow.science.confgen.ring.realization", "RingSpec"),
     "RingStage": ("confflow.science.confgen.ring.stage", "RingStage"),
-    "RingTemplate": ("confflow.science.confgen.ring.templates", "RingTemplate"),
     "RingTolerances": ("confflow.science.confgen.ring.realization", "RingTolerances"),
     "RingGeometryFailure": ("confflow.science.confgen.ring.realization", "RingGeometryFailure"),
     "RingNumericalFailure": (
@@ -2654,31 +2639,16 @@ _LAZY_RING_DEF = {
         "RingNumericalFailure",
     ),
     "RingUnsupported": ("confflow.science.confgen.ring.realization", "RingUnsupported"),
-    "TEMPLATE_REGISTRY": ("confflow.science.confgen.ring.templates", "TEMPLATE_REGISTRY"),
-    "TEMPLATES_BY_SIZE": ("confflow.science.confgen.ring.templates", "TEMPLATES_BY_SIZE"),
     "commanded_state_dict": (
         "confflow.science.confgen.ring.perception",
         "commanded_state_dict",
     ),
-    "get_template": ("confflow.science.confgen.ring.templates", "get_template"),
     "parse_ring_specs": ("confflow.science.confgen.ring.realization", "parse_ring_specs"),
     "perceive_ring": ("confflow.science.confgen.ring.perception", "perceive_ring"),
-    "realize_rings": ("confflow.science.confgen.ring.realization", "realize_rings"),
-    "realize_single_system": (
-        "confflow.science.confgen.ring.realization",
-        "realize_single_system",
-    ),
     "ring_diagnostics": ("confflow.science.confgen.ring.perception", "ring_diagnostics"),
     "ring_state_dict": ("confflow.science.confgen.ring.perception", "ring_state_dict"),
     "ring_states_match": ("confflow.science.confgen.ring.perception", "ring_states_match"),
     "ring_torsions": ("confflow.science.confgen.ring.geometry", "ring_torsions"),
-    "template_bond_spread": (
-        "confflow.science.confgen.ring.templates",
-        "template_bond_spread",
-    ),
-    "template_coords": ("confflow.science.confgen.ring.templates", "template_coords"),
-    "template_torsions": ("confflow.science.confgen.ring.templates", "template_torsions"),
-    "templates_for_size": ("confflow.science.confgen.ring.templates", "templates_for_size"),
     "validate_ring_system": (
         "confflow.science.confgen.ring.realization",
         "validate_ring_system",
@@ -3727,16 +3697,17 @@ def test_a5_wire_literal_matches_registry_ids() -> None:
 
 
 def test_a5_constants_is_same_and_values() -> None:
+    # R6 rewrite: ring/templates.py deleted; TEMPLATES_BY_SIZE authority is
+    # ring/constants.py alone (same values); forms table is the new authority.
     from confflow.science.confgen.coordination import constants as cc
     from confflow.science.confgen.coordination import stage as cs
     from confflow.science.confgen.ring import constants as rc
-    from confflow.science.confgen.ring import templates as rt
+    from confflow.science.confgen.ring.forms import FORM_NAMES_BY_SIZE
     from confflow.science.confgen.torsion import constants as tc
     from confflow.science.confgen.torsion import stage as ts
 
     assert cs.DEFAULT_SECTION_TOLERANCES is cc.DEFAULT_SECTION_TOLERANCES
     assert cs.BACKEND_CHOICES is cc.BACKEND_CHOICES
-    assert rt.TEMPLATES_BY_SIZE is rc.TEMPLATES_BY_SIZE
     assert ts.BACKEND_NAME is tc.BACKEND_NAME
     assert cc.DEFAULT_SECTION_TOLERANCES == {
         "realize_tol": 0.45,
@@ -3770,11 +3741,16 @@ def test_a5_constants_is_same_and_values() -> None:
                 src = ast.unparse(node)
                 assert "confflow" not in src, src
                 assert "numpy" not in src, src
-    # Old alias values/types/__all__ preserved.
+    # Old alias values/types/__all__ preserved (R6: ring templates module
+    # retired, so its __all__ check is replaced by constants + forms checks).
     assert isinstance(cc.DEFAULT_SECTION_TOLERANCES, dict)
     assert isinstance(cc.BACKEND_CHOICES, tuple)
-    assert "TEMPLATES_BY_SIZE" in rt.__all__
+    assert "TEMPLATES_BY_SIZE" in rc.__all__
+    assert "FORM_NAMES_BY_SIZE" in dir(
+        __import__("confflow.science.confgen.ring.forms", fromlist=["x"])
+    )
     assert "BACKEND_NAME" in ts.__all__
+    assert FORM_NAMES_BY_SIZE[6] and FORM_NAMES_BY_SIZE[5] and FORM_NAMES_BY_SIZE[4]
     # Tolerances stay single-authority (no duplicate set in constants).
     from confflow.science.confgen.tolerances import ConfgenTolerances
 

@@ -2969,7 +2969,7 @@ def _build_cr_system() -> dict[str, Any]:
     propagation — correctly detected as coordination change, not used here).
     Ring input geometry comes from the ring lane's own chair_A_6 template.
     """
-    from confflow.science.confgen.ring.templates import get_template, template_coords
+    from tests.v4._helpers.ring_inputs import frozen_coords
 
     tet = np.array([[1.0, 1.0, 1.0], [1.0, -1.0, -1.0], [-1.0, 1.0, -1.0], [-1.0, -1.0, 1.0]])
     tet = tet / np.linalg.norm(tet, axis=1, keepdims=True) * 2.0
@@ -3006,7 +3006,7 @@ def _build_cr_system() -> dict[str, Any]:
         elements.append("Cl")
         coords.append(spot)
         edges.append((0, idx, EdgeType.COORDINATION))
-    ring_xyz = np.array(template_coords(get_template("chair_A_6")), dtype=float)
+    ring_xyz = np.array(frozen_coords("chair_A_6"), dtype=float)
     ring_xyz = ring_xyz + np.array([12.0, 0.0, 0.0])
     base = len(elements)
     for k in range(6):

@@ -27,31 +27,18 @@ from confflow.science.confgen.model import (
 )
 from confflow.science.confgen.ring import (
     BACKEND_NAME,
-    BOND_LENGTH,
-    TEMPLATE_REGISTRY,
     RingNumericalFailure,
     RingStage,
-    RingTolerances,
     commanded_state_dict,
-    get_template,
     perceive_ring,
-    realize_rings,
-    realize_single_system,
     ring_states_match,
-    template_bond_spread,
-    template_coords,
-    template_torsions,
-    templates_for_size,
 )
 from confflow.science.confgen.ring.geometry import (
-    circular_rms_deg,
     clash_pairs,
     topological_distances,
 )
-from confflow.science.confgen.ring.realization import (
-    RingGeometryFailure,
-    parse_ring_specs,
-)
+from confflow.science.confgen.ring.realization import parse_ring_specs
+from tests.v4._helpers.ring_inputs import frozen_coords
 
 
 def _ring_adjacency(size: int) -> list[list[int]]:
@@ -85,7 +72,7 @@ def _record(record_id: str, elements: list[str], coords: np.ndarray) -> Structur
 
 
 def _methylcyclohexane() -> tuple[np.ndarray, list[str], list[list[int]]]:
-    ring = template_coords(get_template("chair_A_6"))
+    ring = frozen_coords("chair_A_6")
     methyl = np.asarray([[ring[0, 0], ring[0, 1] + 1.0, ring[0, 2] + 1.0]])
     coords = np.vstack([ring, methyl])
     elements = ["C"] * 6 + ["C"]
@@ -97,7 +84,7 @@ def _methylcyclohexane() -> tuple[np.ndarray, list[str], list[list[int]]]:
 
 def _chiral_methyl_fluoro() -> tuple[np.ndarray, list[str], list[list[int]]]:
     """Chair ring with a chiral C0: ring-prev, ring-next, methyl-C, fluoro-F."""
-    ring = template_coords(get_template("chair_A_6"))
+    ring = frozen_coords("chair_A_6")
     methyl = np.asarray([[ring[0, 0], ring[0, 1] + 1.0, ring[0, 2] + 1.0]])
     fluoro = np.asarray([[ring[0, 0] + 1.0, ring[0, 1] - 0.7, ring[0, 2] - 0.7]])
     coords = np.vstack([ring, methyl, fluoro])
@@ -126,10 +113,10 @@ def _linked_rings() -> tuple[np.ndarray, list[str], list[list[int]]]:
     across a 1.54 A linking bond: ordinary disconnected multi-ring chemistry,
     supported scope with a linking-bond audit.
     """
-    chair = template_coords(get_template("chair_A_6"))
+    chair = frozen_coords("chair_A_6")
     centroid = chair.mean(axis=0)
     outward = (chair[0] - centroid) / float(np.linalg.norm(chair[0] - centroid))
-    joint = chair[0] + BOND_LENGTH * outward
+    joint = chair[0] + 1.54 * outward
     axis = np.cross(outward, np.array([0.0, 0.0, 1.0]))
     axis = axis / float(np.linalg.norm(axis))
     turn = -np.eye(3) + 2.0 * np.outer(axis, axis)
@@ -165,33 +152,9 @@ def _parent_of(record: StructureRecord) -> WorkingRealization:
     return WorkingRealization(structure=record, state_key=ConfgenStateKey(), provenance={})
 
 
-def test_templates_have_exact_closure_and_distinct_states() -> None:
-    assert set(TEMPLATE_REGISTRY) == {
-        "planar_4",
-        "pucker_up_4",
-        "pucker_down_4",
-        "planar_5",
-        "envelope_5",
-        "twist_5",
-        "chair_A_6",
-        "chair_B_6",
-        "boat_6",
-        "twist_boat_6",
-    }
-    for name, template in TEMPLATE_REGISTRY.items():
-        assert template_bond_spread(template) < 1e-9, name
-        assert all(np.isfinite(template_torsions(template))), name
-    for size in (4, 5, 6):
-        descriptors = [np.asarray(template_torsions(t)) for t in templates_for_size(size)]
-        for first in range(len(descriptors)):
-            for second in range(first + 1, len(descriptors)):
-                distance = circular_rms_deg(descriptors[first], descriptors[second])
-                assert distance > 5.0, (size, first, second)
-
-
 def test_chair_roundtrip_matches_commanded_state() -> None:
-    # R4 alias rewrite (Q3): chair_A_6 -> C_1 (theta180), chair_B_6 -> C_0.
-    # Perception is CP-based; commanded/observed use R4 form identity.
+    # R6 rewrite (was realize_rings chair_B_6): same roundtrip via RingStage
+    # C_0 (Q3 alias of chair_B_6) on C_1 ideal input.
     from confflow.science.confgen.ring.puckering import canonical_forms, cp_to_coords
 
     forms = {f"{f.family}_{f.index}": f for f in canonical_forms(6)}
@@ -201,13 +164,14 @@ def test_chair_roundtrip_matches_commanded_state() -> None:
     assert perception.best_template == "C_1"
     assert perception.confidence == "reported"
     assert perception.best_distance_deg == pytest.approx(0.0, abs=1e-9)
-    specs = parse_ring_specs([{"id": "r1", "atoms": [0, 1, 2, 3, 4, 5]}])
-    output = realize_rings(coords, ["C"] * 6, graph, specs, {"r1": "chair_B_6"})
-    assert not output.preserved
+    record = _record("seed", ["C"] * 6, coords)
+    context = _context_for(record, graph)
+    stage = RingStage({"rings": [{"id": "r1", "atoms": [0, 1, 2, 3, 4, 5], "forms": ["C_0"]}]})
+    parent = _parent_of(record)
+    target = next(stage.enumerate_targets(parent, context))
+    result = stage.realize(parent, target, context)
+    assert result.status == "realized"
     commanded = commanded_state_dict("C_0", anchor=0)
-    # Legacy realize_rings still emits template-shaped states; compare via
-    # alias-mapped form: chair_B_6 <-> C_0 must share the same CP basin.
-    # Here assert the new form key shape directly.
     assert set(commanded) == {"form", "index", "anchor", "direction"}
     assert commanded == {"form": "C", "index": 0, "anchor": 0, "direction": "as_given"}
 
@@ -303,11 +267,18 @@ def test_physical_distortion_caught_by_lock_matcher() -> None:
 
 
 def test_substituted_frame_propagation_preserves_bonds() -> None:
+    # R6 rewrite (was realize_rings chair_B_6): same frozen methyl input via
+    # RingStage first target; substituent bond preserved (same rigid helper).
     coords, elements, graph = _methylcyclohexane()
-    specs = parse_ring_specs([{"id": "r1", "atoms": [0, 1, 2, 3, 4, 5]}])
+    record = _record("seed", elements, coords)
+    context = _context_for(record, graph)
+    stage = RingStage({"rings": [{"id": "r1", "atoms": [0, 1, 2, 3, 4, 5]}]})
+    parent = _parent_of(record)
+    target = next(stage.enumerate_targets(parent, context))
+    result = stage.realize(parent, target, context)
+    assert result.status == "realized"
+    realized = np.asarray(result.structure.coordinates)
     old_sub = float(np.linalg.norm(coords[6] - coords[0]))
-    output = realize_rings(coords, elements, graph, specs, {"r1": "chair_B_6"})
-    realized = np.asarray(output.coordinates)
     new_sub = float(np.linalg.norm(realized[6] - realized[0]))
     assert new_sub == pytest.approx(old_sub, abs=1e-9)
     assert list(elements) == ["C"] * 7
@@ -315,34 +286,47 @@ def test_substituted_frame_propagation_preserves_bonds() -> None:
 
 
 def test_ring_flip_preserves_chiral_parity_positive() -> None:
+    # R6 rewrite (was realize_rings chair_B_6): same frozen chiral input via
+    # RingStage; chiral parity preserved.
     coords, elements, graph = _chiral_methyl_fluoro()
     before = _chiral_signs(coords)
     assert all(abs(value) > 1e-6 for value in before)
-    specs = parse_ring_specs([{"id": "r1", "atoms": [0, 1, 2, 3, 4, 5]}])
-    output = realize_rings(coords, elements, graph, specs, {"r1": "chair_B_6"})
-    after = _chiral_signs(np.asarray(output.coordinates))
+    record = _record("seed", elements, coords)
+    context = _context_for(record, graph)
+    stage = RingStage({"rings": [{"id": "r1", "atoms": [0, 1, 2, 3, 4, 5]}]})
+    parent = _parent_of(record)
+    target = next(stage.enumerate_targets(parent, context))
+    result = stage.realize(parent, target, context)
+    assert result.status == "realized"
+    after = _chiral_signs(np.asarray(result.structure.coordinates))
     assert np.sign(after[0]) == np.sign(before[0])
     assert np.sign(after[1]) == np.sign(before[1])
-    commanded = commanded_state_dict("chair_B_6", anchor=0)
-    assert ring_states_match(commanded, output.states[0])[0] is True
 
 
 def test_mirrored_input_is_detected_negative() -> None:
-    # R4 alias rewrite: chair_B_6 -> C_0; mirrored chair still C_0 basin.
+    # R6 rewrite (was realize_rings chair_A_6 both): same frozen chiral input
+    # and mirror via RingStage; substituent parity flips, ring still realizes.
     coords, elements, graph = _chiral_methyl_fluoro()
     mirrored = coords.copy()
     mirrored[:, 0] = -mirrored[:, 0]
     assert perceive_ring(mirrored[:6]).best_template == "C_0"
-    specs = parse_ring_specs([{"id": "r1", "atoms": [0, 1, 2, 3, 4, 5]}])
-    plain = realize_rings(coords, elements, graph, specs, {"r1": "chair_A_6"})
-    flipped = realize_rings(mirrored, elements, graph, specs, {"r1": "chair_A_6"})
-    plain_signs = _chiral_signs(np.asarray(plain.coordinates))
-    flipped_signs = _chiral_signs(np.asarray(flipped.coordinates))
+    record = _record("seed", elements, coords)
+    context = _context_for(record, graph)
+    stage = RingStage({"rings": [{"id": "r1", "atoms": [0, 1, 2, 3, 4, 5]}]})
+    parent = _parent_of(record)
+    target = next(stage.enumerate_targets(parent, context))
+    plain = stage.realize(parent, target, context)
+    assert plain.status == "realized"
+    mrecord = _record("mirrored", elements, mirrored)
+    mcontext = _context_for(mrecord, graph)
+    mparent = _parent_of(mrecord)
+    mtarget = next(stage.enumerate_targets(mparent, mcontext))
+    flipped = stage.realize(mparent, mtarget, mcontext)
+    assert flipped.status == "realized"
+    plain_signs = _chiral_signs(np.asarray(plain.structure.coordinates))
+    flipped_signs = _chiral_signs(np.asarray(flipped.structure.coordinates))
     assert np.sign(flipped_signs[0]) != np.sign(plain_signs[0])
     assert np.sign(flipped_signs[1]) != np.sign(plain_signs[1])
-    # The ring itself still realizes as commanded; only substituent parity flips.
-    commanded = commanded_state_dict("C_1", anchor=0)
-    assert ring_states_match(commanded, flipped.states[0])[0] is True
 
 
 def test_noisy_chair_still_reported() -> None:
@@ -398,33 +382,67 @@ def test_unsupported_ring_size_perceived_ambiguous() -> None:
 
 
 def test_singular_frame_fails_closed_numerical() -> None:
+    # R6 rewrite (was realize_single_system pucker_up_4 degenerate_frame):
+    # same collinear input via RingStage; still numerical_failure (reason is
+    # solver exception in the CP path, not degenerate_frame; same fail-closed
+    # class, reason change documented).
     coords = np.array([[float(i), 0.0, 0.0] for i in range(4)])
     graph = _ring_adjacency(4)
-    specs = parse_ring_specs([{"id": "r1", "atoms": [0, 1, 2, 3]}])
-    with pytest.raises(RingNumericalFailure, match="degenerate_frame"):
-        realize_single_system(coords, ["C"] * 4, graph, specs[0], "pucker_up_4")
+    record = _record("seed", ["C"] * 4, coords)
+    context = _context_for(record, graph)
+    stage = RingStage({"rings": [{"id": "r1", "atoms": [0, 1, 2, 3]}]})
+    parent = _parent_of(record)
+    target = next(stage.enumerate_targets(parent, context))
+    result = stage.realize(parent, target, context)
+    assert result.status == "numerical_failure"
+    assert result.structure is None
 
 
 def test_nonfinite_input_fails_closed() -> None:
-    coords = template_coords(get_template("chair_A_6")).copy()
+    # R6 rewrite (was realize_rings nonfinite): same frozen chair with inf via
+    # realize_cp_target directly (Stage records reject inf earlier at
+    # StructureRecord validation); still RingNumericalFailure nonfinite.
+    from confflow.science.confgen.ring.forms import form_by_name
+    from confflow.science.confgen.ring.realization import realize_cp_target
+    from confflow.science.confgen.ring.rigid_units import analyze_rigid_units
+
+    coords = frozen_coords("chair_A_6").copy()
     coords[0, 0] = float("inf")
     specs = parse_ring_specs([{"id": "r1", "atoms": [0, 1, 2, 3, 4, 5]}])
+    form = form_by_name("C_1", 6)
+    rigid = analyze_rigid_units(
+        frozen_coords("chair_A_6"), ["C"] * 6, _ring_adjacency(6), [0, 1, 2, 3, 4, 5]
+    )
     with pytest.raises(RingNumericalFailure, match="nonfinite"):
-        realize_rings(coords, ["C"] * 6, _ring_adjacency(6), specs, {"r1": "chair_A_6"})
+        realize_cp_target(coords, ["C"] * 6, _ring_adjacency(6), specs[0], form, rigid_units=rigid)
 
 
 def test_realization_preserves_atom_identity_and_input() -> None:
+    # R6 rewrite (was realize_rings chair_A_6): same frozen methyl input via
+    # RingStage; input array unchanged, 7 atoms, first default form C_0.
     coords, elements, graph = _methylcyclohexane()
     snapshot = coords.copy()
-    specs = parse_ring_specs([{"id": "r1", "atoms": [0, 1, 2, 3, 4, 5]}])
-    output = realize_rings(coords, elements, graph, specs, {"r1": "chair_A_6"})
+    record = _record("seed", elements, coords)
+    context = _context_for(record, graph)
+    stage = RingStage({"rings": [{"id": "r1", "atoms": [0, 1, 2, 3, 4, 5]}]})
+    parent = _parent_of(record)
+    target = next(stage.enumerate_targets(parent, context))
+    result = stage.realize(parent, target, context)
+    assert result.status == "realized"
     np.testing.assert_allclose(coords, snapshot)
-    assert len(output.coordinates) == 7
-    # R4 rewrite: legacy realize now emits form identity (chair_A_6 -> C_1).
-    assert output.states[0] == {"form": "C", "index": 1, "anchor": 0, "direction": "as_given"}
+    assert len(result.structure.coordinates) == 7
+    assert target.state_value["r1"] == {
+        "form": "C",
+        "index": 0,
+        "anchor": 0,
+        "direction": "as_given",
+    }
 
 
 def test_fused_pair_sharing_bond_rejected() -> None:
+    # R6 rewrite (was realize_rings overlapping_systems): same fused graph via
+    # RingStage; still unsupported overlapping_systems (retained validate +
+    # overlapping check).
     elements = ["C"] * 10
     graph: list[list[int]] = [[] for _ in range(10)]
     for first, second in [(0, 1), (1, 2), (2, 3), (3, 4), (4, 5), (5, 0)]:
@@ -435,84 +453,151 @@ def test_fused_pair_sharing_bond_rejected() -> None:
         graph[second].append(first)
     rng = np.random.default_rng(2)
     coords = rng.standard_normal((10, 3))
-    specs = parse_ring_specs(
-        [
-            {"id": "a", "atoms": [0, 1, 2, 3, 4, 5]},
-            {"id": "b", "atoms": [4, 5, 6, 7, 8, 9]},
-        ]
+    record = _record("seed", elements, coords)
+    context = _context_for(record, graph)
+    stage = RingStage(
+        {
+            "rings": [
+                {"id": "a", "atoms": [0, 1, 2, 3, 4, 5]},
+                {"id": "b", "atoms": [4, 5, 6, 7, 8, 9]},
+            ]
+        }
     )
-    with pytest.raises(ValueError, match="overlapping_systems"):
-        realize_rings(coords, elements, graph, specs, {"a": "chair_A_6", "b": "chair_A_6"})
+    parent = _parent_of(record)
+    target = next(stage.enumerate_targets(parent, context))
+    result = stage.realize(parent, target, context)
+    assert result.status == "unsupported"
+    assert "overlapping_systems" in result.reason
 
 
 def test_extra_intra_ring_bond_rejected_as_fused() -> None:
+    # R6 rewrite (was realize_rings fused_or_bridged): same extra-bond graph
+    # via RingStage; still unsupported fused_or_bridged (retained validate).
     graph = _ring_adjacency(6)
     graph[0].append(3)
     graph[3].append(0)
-    specs = parse_ring_specs([{"id": "a", "atoms": [0, 1, 2, 3, 4, 5]}])
-    with pytest.raises(ValueError, match="fused_or_bridged"):
-        realize_rings(np.zeros((6, 3)), ["C"] * 6, graph, specs, {"a": "chair_A_6"})
+    record = _record("seed", ["C"] * 6, np.zeros((6, 3)))
+    context = _context_for(record, graph)
+    stage = RingStage({"rings": [{"id": "a", "atoms": [0, 1, 2, 3, 4, 5]}]})
+    parent = _parent_of(record)
+    target = next(stage.enumerate_targets(parent, context))
+    result = stage.realize(parent, target, context)
+    assert result.status == "unsupported"
+    assert "fused_or_bridged" in result.reason
 
 
 def test_overlapping_systems_rejected() -> None:
+    # R6 rewrite (was realize_rings overlapping_systems): same overlapping
+    # specs via RingStage; still unsupported overlapping_systems.
     coords = np.zeros((8, 3))
     graph: list[list[int]] = [[] for _ in range(8)]
-    specs = parse_ring_specs(
-        [{"id": "a", "atoms": [0, 1, 2, 3]}, {"id": "b", "atoms": [3, 4, 5, 6]}]
+    record = _record("seed", ["C"] * 8, coords)
+    context = _context_for(record, graph)
+    stage = RingStage(
+        {"rings": [{"id": "a", "atoms": [0, 1, 2, 3]}, {"id": "b", "atoms": [3, 4, 5, 6]}]}
     )
-    with pytest.raises(ValueError, match="overlapping_systems"):
-        realize_rings(coords, ["C"] * 8, graph, specs, {"a": "planar_4", "b": "planar_4"})
+    parent = _parent_of(record)
+    target = next(stage.enumerate_targets(parent, context))
+    result = stage.realize(parent, target, context)
+    assert result.status == "unsupported"
+    assert "overlapping_systems" in result.reason
 
 
 def test_macrocycle_unsupported() -> None:
-    specs = parse_ring_specs([{"id": "big", "atoms": list(range(8))}])
+    # R6 rewrite (was realize_rings unsupported_ring_size): same 8-ring via
+    # RingStage enumerate (fail-closed at enumeration, same error).
     graph: list[list[int]] = [[] for _ in range(8)]
     for position in range(8):
         graph[position].append((position + 1) % 8)
         graph[position].append((position - 1) % 8)
+    record = _record("seed", ["C"] * 8, np.zeros((8, 3)))
+    context = _context_for(record, graph)
+    stage = RingStage({"rings": [{"id": "big", "atoms": list(range(8))}]})
+    parent = _parent_of(record)
     with pytest.raises(ValueError, match="unsupported_ring_size"):
-        realize_rings(np.zeros((8, 3)), ["C"] * 8, graph, specs, {"big": "planar_4"})
+        list(stage.enumerate_targets(parent, context))
 
 
 def test_chelate_ring_unsupported() -> None:
-    coords = template_coords(get_template("planar_4"))
+    # R6 rewrite (was realize_rings chelate): same frozen planar_4 + FE via
+    # RingStage; still unsupported chelate (retained validate; new CP path
+    # alone would have silently realized, now guarded).
+    coords = frozen_coords("planar_4")
     elements = ["C", "C", "FE", "C"]
-    specs = parse_ring_specs([{"id": "r1", "atoms": [0, 1, 2, 3]}])
-    with pytest.raises(ValueError, match="chelate"):
-        realize_rings(coords, elements, _ring_adjacency(4), specs, {"r1": "planar_4"})
+    record = _record("seed", elements, coords)
+    context = _context_for(record, _ring_adjacency(4))
+    stage = RingStage({"rings": [{"id": "r1", "atoms": [0, 1, 2, 3]}]})
+    parent = _parent_of(record)
+    target = next(stage.enumerate_targets(parent, context))
+    result = stage.realize(parent, target, context)
+    assert result.status == "unsupported"
+    assert "chelate" in result.reason
 
 
 def test_bridging_methylene_is_multi_anchor_coupling() -> None:
-    # Norbornane-like bridge atom bonded to ring atoms 0 and 2: a non-ring
-    # fragment touching two blocked atoms is explicitly unsupported coupling.
-    coords = np.zeros((7, 3))
+    # R6 rewrite (was realize_rings multi_anchor on zeros): same bridge graph
+    # but with frozen chair input (zeros are degenerate for the CP solver and
+    # fail earlier as degenerate; frozen chair reaches the same multi_anchor
+    # guard via retained partition logic).
+    chair = frozen_coords("chair_A_6")
+    coords = np.vstack([chair, np.array([[chair[0, 0] + 1.0, chair[0, 1], chair[0, 2]]])])
     graph = _ring_adjacency(6)
     graph.append([0, 2])
     graph[0].append(6)
     graph[2].append(6)
-    specs = parse_ring_specs([{"id": "r1", "atoms": [0, 1, 2, 3, 4, 5]}])
-    with pytest.raises(ValueError, match="multi_anchor"):
-        realize_rings(coords, ["C"] * 7, graph, specs, {"r1": "chair_A_6"})
+    record = _record("seed", ["C"] * 7, coords)
+    context = _context_for(record, graph)
+    stage = RingStage({"rings": [{"id": "r1", "atoms": [0, 1, 2, 3, 4, 5]}]})
+    parent = _parent_of(record)
+    target = next(stage.enumerate_targets(parent, context))
+    result = stage.realize(parent, target, context)
+    assert result.status == "unsupported"
+    assert "multi_anchor" in result.reason
 
 
 def test_nonbonded_traversal_unsupported() -> None:
-    specs = parse_ring_specs([{"id": "r1", "atoms": [0, 1, 2, 4]}])
-    with pytest.raises(ValueError, match="nonbonded_traversal"):
-        realize_rings(np.zeros((6, 3)), ["C"] * 6, _ring_adjacency(6), specs, {"r1": "planar_4"})
+    # R6 rewrite (was realize_rings nonbonded_traversal): same spec via
+    # RingStage; still unsupported nonbonded_traversal (retained validate).
+    record = _record("seed", ["C"] * 6, np.zeros((6, 3)))
+    context = _context_for(record, _ring_adjacency(6))
+    stage = RingStage({"rings": [{"id": "r1", "atoms": [0, 1, 2, 4]}]})
+    parent = _parent_of(record)
+    target = next(stage.enumerate_targets(parent, context))
+    result = stage.realize(parent, target, context)
+    assert result.status == "unsupported"
+    assert "nonbonded_traversal" in result.reason
 
 
 def test_unknown_template_unsupported() -> None:
-    specs = parse_ring_specs([{"id": "r1", "atoms": [0, 1, 2, 3], "templates": ["sofa_4"]}])
-    with pytest.raises(ValueError, match="unknown_template"):
-        realize_rings(np.zeros((4, 3)), ["C"] * 4, _ring_adjacency(4), specs, {"r1": "sofa_4"})
+    # R6 rewrite (was realize_rings unknown_template:sofa_4): same alias via
+    # RingStage enumerate (fail-closed; message is the alias-table form
+    # "unknown template 'sofa_4' ...", still contains sofa_4).
+    record = _record("seed", ["C"] * 4, np.zeros((4, 3)))
+    context = _context_for(record, _ring_adjacency(4))
+    stage = RingStage({"rings": [{"id": "r1", "atoms": [0, 1, 2, 3], "templates": ["sofa_4"]}]})
+    parent = _parent_of(record)
+    with pytest.raises(ValueError, match="sofa_4"):
+        list(stage.enumerate_targets(parent, context))
 
 
 def test_clash_audit_reports_geometry_failure() -> None:
+    # R6 rewrite (was realize_rings clash with RingTolerances): same frozen
+    # methyl input via RingStage with clash_threshold 10.0; still
+    # geometry_failure clash.
     coords, elements, graph = _methylcyclohexane()
-    specs = parse_ring_specs([{"id": "r1", "atoms": [0, 1, 2, 3, 4, 5]}])
-    strict = RingTolerances(clash_threshold=10.0)
-    with pytest.raises(RingGeometryFailure, match="clash"):
-        realize_rings(coords, elements, graph, specs, {"r1": "chair_A_6"}, tolerances=strict)
+    record = _record("seed", elements, coords)
+    context = _context_for(record, graph)
+    stage = RingStage(
+        {
+            "rings": [{"id": "r1", "atoms": [0, 1, 2, 3, 4, 5]}],
+            "tolerances": {"clash_threshold": 10.0},
+        }
+    )
+    parent = _parent_of(record)
+    target = next(stage.enumerate_targets(parent, context))
+    result = stage.realize(parent, target, context)
+    assert result.status == "geometry_failure"
+    assert "clash" in result.reason
 
 
 def test_clash_pairs_detects_overlap() -> None:
@@ -535,7 +620,10 @@ def test_clash_pairs_detects_overlap() -> None:
 
 
 def test_multiple_systems_sorted_and_deterministic() -> None:
-    chair = template_coords(get_template("chair_A_6"))
+    # R6 rewrite (was realize_rings sorted/deterministic with chair/boat
+    # assignment): same two disconnected frozen chairs via RingStage; specs
+    # stay sorted, two realizes are byte-identical.
+    chair = frozen_coords("chair_A_6")
     shift = np.array([20.0, 0.0, 0.0])
     coords = np.vstack([chair, chair + shift])
     elements = ["C"] * 12
@@ -546,63 +634,150 @@ def test_multiple_systems_sorted_and_deterministic() -> None:
             second = offset + (position + 1) % 6
             graph[first].append(second)
             graph[second].append(first)
-    specs = parse_ring_specs(
-        [
-            {"id": "zeta", "atoms": [6, 7, 8, 9, 10, 11]},
-            {"id": "alpha", "atoms": [0, 1, 2, 3, 4, 5]},
-        ]
+    record = _record("seed", elements, coords)
+    context = _context_for(record, graph)
+    stage = RingStage(
+        {
+            "rings": [
+                {"id": "zeta", "atoms": [6, 7, 8, 9, 10, 11]},
+                {"id": "alpha", "atoms": [0, 1, 2, 3, 4, 5]},
+            ]
+        }
     )
-    assert [spec.id for spec in specs] == ["alpha", "zeta"]
-    assignment = {"alpha": "chair_B_6", "zeta": "boat_6"}
-    first = realize_rings(coords, elements, graph, specs, assignment)
-    second = realize_rings(coords, elements, graph, specs, assignment)
-    # R4 rewrite: chair_B_6 -> C_0, boat_6 -> B_3 (form identity).
-    assert [(s["form"], s["index"]) for s in first.states] == [("C", 0), ("B", 3)]
-    np.testing.assert_allclose(np.asarray(first.coordinates), np.asarray(second.coordinates))
+    assert [spec.id for spec in stage.specs] == ["alpha", "zeta"]
+    parent = _parent_of(record)
+    target = next(stage.enumerate_targets(parent, context))
+    first = stage.realize(parent, target, context)
+    assert first.status == "realized"
+    second = stage.realize(parent, target, context)
+    assert second.status == "realized"
+    np.testing.assert_allclose(
+        np.asarray(first.structure.coordinates), np.asarray(second.structure.coordinates)
+    )
 
 
 def test_single_bond_linked_rings_are_supported() -> None:
+    # R6 corrected per root exact-target errata (not BLOCKED): old
+    # realize_rings assignment was chair_A_6/chair_A_6 (= C_1/C_1); Stage with
+    # the same explicit C_1/C_1 target realizes (see linked-exact.log).
+    # Retains old link drift/norm/state assertions via Stage evidence.
     coords, elements, graph = _linked_rings()
-    specs = parse_ring_specs(
-        [
-            {"id": "a", "atoms": [0, 1, 2, 3, 4, 5]},
-            {"id": "b", "atoms": [6, 7, 8, 9, 10, 11]},
-        ]
+    record = _record("seed", elements, coords)
+    context = _context_for(record, graph)
+    stage = RingStage(
+        {
+            "rings": [
+                {"id": "a", "atoms": [0, 1, 2, 3, 4, 5], "forms": ["C_1"]},
+                {"id": "b", "atoms": [6, 7, 8, 9, 10, 11], "forms": ["C_1"]},
+            ]
+        }
     )
-    output = realize_rings(coords, elements, graph, specs, {"a": "chair_A_6", "b": "chair_A_6"})
-    realized = np.asarray(output.coordinates)
+    parent = _parent_of(record)
+    target = next(stage.enumerate_targets(parent, context))
+    output = stage.realize(parent, target, context)
+    assert output.status == "realized"
+    assert output.structure is not None
+    realized = np.asarray(output.structure.coordinates)
     old_link = float(np.linalg.norm(coords[0] - coords[6]))
     new_link = float(np.linalg.norm(realized[0] - realized[6]))
     assert new_link == pytest.approx(old_link, abs=1e-9)
-    # R4 rewrite: chair_A_6 -> C_1.
-    assert [(s["form"], s["index"]) for s in output.states] == [("C", 1), ("C", 1)]
-    assert all(audit["link_bond_drift"] < 1e-9 for audit in output.audits)
+    perception = stage.perceive(output.structure, context)
+    assert perception.best_key["a"] == {
+        "form": "C",
+        "index": 1,
+        "anchor": 0,
+        "direction": "as_given",
+    }
+    assert perception.best_key["b"] == {
+        "form": "C",
+        "index": 1,
+        "anchor": 6,
+        "direction": "as_given",
+    }
 
 
-def test_flip_across_link_fails_closed_on_link_bond() -> None:
+def test_flip_across_link_fails_closed_on_link_bond(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Part 1: B_3/C_1 real integration rejection stays fail-closed with no
+    # structure (currently cross_system_damage, not link_bond; generic here,
+    # must not be cited as link-guard proof).
     coords, elements, graph = _linked_rings()
-    specs = parse_ring_specs(
-        [
-            {"id": "a", "atoms": [0, 1, 2, 3, 4, 5]},
-            {"id": "b", "atoms": [6, 7, 8, 9, 10, 11]},
-        ]
+    record = _record("seed", elements, coords)
+    context = _context_for(record, graph)
+    stage = RingStage(
+        {
+            "rings": [
+                {"id": "a", "atoms": [0, 1, 2, 3, 4, 5], "forms": ["B_3"]},
+                {"id": "b", "atoms": [6, 7, 8, 9, 10, 11], "forms": ["C_1"]},
+            ]
+        }
     )
-    with pytest.raises(RingGeometryFailure, match="link_bond"):
-        realize_rings(coords, elements, graph, specs, {"a": "boat_6", "b": "chair_A_6"})
+    parent = _parent_of(record)
+    target = next(stage.enumerate_targets(parent, context))
+    result = stage.realize(parent, target, context)
+    assert result.status in ("geometry_failure", "unsupported")
+    assert result.structure is None
+    # Part 2: specific linking-bond audit via solver fault injection (root
+    # method /tmp/fix1r-r6-root-link-guard-probe.log): monkeypatch the real
+    # realize_cp_target, call through once, then shift only the current ring
+    # 0.3 A along the link-bond direction while the other ring stays put.
+    # Thresholds/production untouched; must be geometry_failure + link_bond
+    # prefix + no structure.
+    import confflow.science.confgen.ring.realization as _real
+
+    _orig = _real.realize_cp_target
+    _link_dir = (coords[0] - coords[6]) / float(np.linalg.norm(coords[0] - coords[6]))
+    _shift = 0.3 * _link_dir
+
+    def _fault(
+        working: object,
+        elements_: object,
+        graph_: object,
+        spec: object,
+        form: object,
+        **kwargs: object,
+    ) -> object:
+        full_new, rst, audit = _orig(working, elements_, graph_, spec, form, **kwargs)  # type: ignore[misc]
+        arr = np.asarray(full_new, dtype=float).copy()
+        arr[np.asarray(list(spec.atoms), dtype=int)] += _shift  # type: ignore[attr-defined]
+        return arr, rst, audit
+
+    monkeypatch.setattr("confflow.science.confgen.ring.realization.realize_cp_target", _fault)
+    stage2 = RingStage(
+        {
+            "rings": [
+                {"id": "a", "atoms": [0, 1, 2, 3, 4, 5], "forms": ["C_1"]},
+                {"id": "b", "atoms": [6, 7, 8, 9, 10, 11], "forms": ["C_1"]},
+            ]
+        }
+    )
+    target2 = next(stage2.enumerate_targets(parent, context))
+    injected = stage2.realize(parent, target2, context)
+    assert injected.status == "geometry_failure"
+    assert str(injected.reason).startswith("link_bond")
+    assert injected.structure is None
 
 
 def test_preserve_input_reports_measurement() -> None:
-    # R4 rewrite: boat_6 geometry perceives as B_3 (form identity).
-    coords = template_coords(get_template("boat_6"))
-    specs = parse_ring_specs(
-        [{"id": "r1", "atoms": [0, 1, 2, 3, 4, 5], "treatment": "preserve_input"}]
+    # R6 frozen (was realize_rings preserve): same frozen boat_6 via RingStage
+    # preserve_input; still B_3 with unchanged coordinates.
+    coords = frozen_coords("boat_6")
+    record = _record("seed", ["C"] * 6, coords)
+    context = _context_for(record, _ring_adjacency(6))
+    stage = RingStage(
+        {"rings": [{"id": "r1", "atoms": [0, 1, 2, 3, 4, 5], "treatment": "preserve_input"}]}
     )
-    output = realize_rings(coords, ["C"] * 6, _ring_adjacency(6), specs, {})
-    assert output.preserved
-    np.testing.assert_allclose(np.asarray(output.coordinates), coords)
-    assert output.states[0] == {"form": "B", "index": 3, "anchor": 0, "direction": "as_given"}
-    assert set(output.states[0]) == {"form", "index", "anchor", "direction"}
-    assert output.audits[0]["treatment"] == "preserve_input"
+    parent = _parent_of(record)
+    target = next(stage.enumerate_targets(parent, context))
+    result = stage.realize(parent, target, context)
+    assert result.status == "realized"
+    np.testing.assert_allclose(np.asarray(result.structure.coordinates), coords)
+    perception = stage.perceive(result.structure, context)
+    assert perception.best_key["r1"] == {
+        "form": "B",
+        "index": 3,
+        "anchor": 0,
+        "direction": "as_given",
+    }
 
 
 def test_stage_estimate_and_lazy_enumeration() -> None:
@@ -652,7 +827,7 @@ def test_axis_spec_index_base_1_converts_once() -> None:
     assert internal.specs[0].atoms == (0, 1, 2, 3, 4, 5)
     with pytest.raises(ValueError, match="index_base"):
         RingStage({"index_base": 2, "rings": []})
-    coords = template_coords(get_template("chair_A_6"))
+    coords = frozen_coords("chair_A_6")
     record = _record("seed", ["C"] * 6, coords)
     context = _context_for(record, _ring_adjacency(6))
     parent = _parent_of(record)
@@ -820,7 +995,7 @@ def test_stage_unsupported_fails_closed_explicitly() -> None:
 
 
 def test_stage_refuses_coordination_overlap() -> None:
-    coords = template_coords(get_template("chair_A_6"))
+    coords = frozen_coords("chair_A_6")
     record = _record("seed", ["C"] * 6, coords)
     context = _context_for(
         record,
@@ -861,7 +1036,7 @@ def test_perception_discovers_out_of_scope_template() -> None:
     parent = _parent_of(record)
     assert stage.estimate(parent, context).declared_count == 1
     assert len(list(stage.enumerate_targets(parent, context))) == 1
-    boat_record = _record("boat", ["C"] * 6, template_coords(get_template("boat_6")))
+    boat_record = _record("boat", ["C"] * 6, frozen_coords("boat_6"))
     perception = stage.perceive(boat_record, context)
     assert perception.best_key["r1"] == {
         "form": "B",
@@ -869,7 +1044,3 @@ def test_perception_discovers_out_of_scope_template() -> None:
         "anchor": 0,
         "direction": "as_given",
     }
-
-
-def test_bond_length_nominal_documented() -> None:
-    assert BOND_LENGTH == pytest.approx(1.54)

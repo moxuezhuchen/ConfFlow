@@ -32,7 +32,9 @@ from confflow.science.confgen.model import (
     build_context,
 )
 from confflow.science.confgen.ring import RingStage
-from confflow.science.confgen.ring.templates import get_template, template_coords
+
+# R6 whitelist: frozen old geometry, assertions unchanged.
+from tests.v4._helpers.ring_inputs import frozen_coords
 
 
 def _ring_adjacency(size: int) -> list[list[int]]:
@@ -136,8 +138,8 @@ class TestR4GScopeRegression:
         assert result.structure is None
 
     def test_spiro_shared_atom_rejected(self) -> None:
-        chair = template_coords(get_template("chair_A_6"))
-        other = template_coords(get_template("chair_A_6")) + np.array([3.0, 0.0, 0.0])
+        chair = frozen_coords("chair_A_6")
+        other = frozen_coords("chair_A_6") + np.array([3.0, 0.0, 0.0])
         other[0] = chair[5]
         coords = np.vstack([chair, other[1:]])
         graph: list[list[int]] = [[] for _ in range(11)]
@@ -171,7 +173,7 @@ class TestR4GScopeRegression:
         assert result.structure is None
 
     def test_chelate_metal_in_ring_rejected(self) -> None:
-        coords = template_coords(get_template("planar_4"))
+        coords = frozen_coords("planar_4")
         result = _realize_first(
             coords,
             ["C", "C", "FE", "C"],
@@ -183,7 +185,7 @@ class TestR4GScopeRegression:
         assert result.structure is None
 
     def test_preserve_chelate_rejected(self) -> None:
-        coords = template_coords(get_template("planar_4"))
+        coords = frozen_coords("planar_4")
         result = _realize_first(
             coords,
             ["C", "C", "FE", "C"],
@@ -195,7 +197,7 @@ class TestR4GScopeRegression:
         assert result.structure is None
 
     def test_preserve_coordination_overlap_rejected(self) -> None:
-        coords = template_coords(get_template("chair_A_6"))
+        coords = frozen_coords("chair_A_6")
         result = _realize_first(
             coords,
             ["C"] * 6,
@@ -264,7 +266,7 @@ class TestR4GAlreadyGuarded:
             list(stage.enumerate_targets(parent, context))
 
     def test_enumerate_coordination_overlap_unsupported(self) -> None:
-        coords = template_coords(get_template("chair_A_6"))
+        coords = frozen_coords("chair_A_6")
         record = _record("seed", ["C"] * 6, coords)
         context = _context_for(
             record,
@@ -282,7 +284,7 @@ class TestR4GLegalControls:
     """Legal systems that must still realize and publish."""
 
     def test_single_ring_realizes(self) -> None:
-        coords = template_coords(get_template("chair_A_6"))
+        coords = frozen_coords("chair_A_6")
         result = _realize_first(
             coords, ["C"] * 6, _ring_adjacency(6), [{"id": "r1", "atoms": [0, 1, 2, 3, 4, 5]}]
         )
@@ -290,7 +292,7 @@ class TestR4GLegalControls:
         assert result.structure is not None
 
     def test_linked_rings_with_matching_forms_realize(self) -> None:
-        chair = template_coords(get_template("chair_A_6"))
+        chair = frozen_coords("chair_A_6")
         centroid = chair.mean(axis=0)
         outward = (chair[0] - centroid) / float(np.linalg.norm(chair[0] - centroid))
         joint = chair[0] + 1.54 * outward
@@ -321,7 +323,7 @@ class TestR4GLegalControls:
         assert result.structure is not None
 
     def test_disconnected_rings_realize(self) -> None:
-        chair = template_coords(get_template("chair_A_6"))
+        chair = frozen_coords("chair_A_6")
         coords = np.vstack([chair, chair + np.array([20.0, 0.0, 0.0])])
         graph: list[list[int]] = [[] for _ in range(12)]
         for offset in (0, 6):
@@ -343,7 +345,7 @@ class TestR4GLegalControls:
         assert result.structure is not None
 
     def test_engine_legal_publishes(self) -> None:
-        coords = template_coords(get_template("chair_A_6"))
+        coords = frozen_coords("chair_A_6")
         graph = _ring_adjacency(6)
         record = _record("seed", ["C"] * 6, coords)
         context = build_context(

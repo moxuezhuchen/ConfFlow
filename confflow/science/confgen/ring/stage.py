@@ -198,12 +198,13 @@ class RingStage(GenerationStage):
         if not isinstance(tol, Mapping):
             raise RingUnsupported("tolerances must be a mapping")
         self._tolerances = RingTolerances(
-            ring_bond_atol=float(tol.get("ring_bond_atol", 0.08)),
             substituent_bond_atol=float(tol.get("substituent_bond_atol", 1e-6)),
             clash_threshold=float(tol.get("clash_threshold", 0.65)),
             frame_det_min=float(tol.get("frame_det_min", 1e-8)),
             link_bond_atol=float(tol.get("link_bond_atol", 0.15)),
         )
+        # R6: legacy ``ring_bond_atol`` key is accepted and ignored (schema/
+        # contract compat); the local field is retired with the old path.
         # v4 priority: record whether clash_threshold was explicitly present
         # in the raw mapping (an explicit .65 is explicit, not omitted).
         self._stage_clash_explicit = "clash_threshold" in tol

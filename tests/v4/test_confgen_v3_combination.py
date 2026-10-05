@@ -39,7 +39,7 @@ from confflow.science.confgen.model import (
 )
 from confflow.science.confgen.ring.geometry import dihedral_deg
 from confflow.science.confgen.ring.stage import RingStage
-from confflow.science.confgen.ring.templates import get_template, template_coords
+from tests.v4._helpers.ring_inputs import frozen_coords
 
 TORSION_ANGLES = (60.0, 180.0, 300.0)
 RING_TEMPLATES = ("chair_A_6", "chair_B_6")
@@ -72,7 +72,7 @@ def _build_fixture(noise: float = 0.0, seed: int = 0) -> tuple[StructureRecord, 
     tetra = np.array([[1.0, 1.0, 1.0], [1.0, -1.0, -1.0], [-1.0, 1.0, -1.0], [-1.0, -1.0, 1.0]])
     tetra = tetra / np.linalg.norm(tetra[0]) * 2.0
     center = np.vstack([np.zeros((1, 3)), tetra])
-    ring = template_coords(get_template("chair_A_6")) + np.array([30.0, 0.0, 0.0])
+    ring = frozen_coords("chair_A_6") + np.array([30.0, 0.0, 0.0])
     chain_a = _chain(np.array([-30.0, 0.0, 0.0]))
     chain_b = _chain(np.array([0.0, 30.0, 0.0]))
     coords = np.vstack([center, ring, chain_a, chain_b])

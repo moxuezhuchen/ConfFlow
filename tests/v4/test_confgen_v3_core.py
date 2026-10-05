@@ -2343,9 +2343,9 @@ def _square_syn() -> tuple[StructureRecord, dict[str, Any]]:
     (margin 0.0 for every metal position — perception centers offsets, so the
     viewpoint cancels), leaving its class undefined on the ambiguity boundary.
     """
-    from confflow.science.confgen.ring.templates import get_template
+    from tests.v4._helpers.ring_inputs import frozen_coords
 
-    ring = np.array(get_template("pucker_up_4").coordinates, dtype=float)
+    ring = np.array(frozen_coords("pucker_up_4"), dtype=float)
     ring = ring + np.array([0.75, 0.75, 0.0])
     coords = tuple(tuple(point) for point in ring) + ((0.0, 0.0, 2.0),)
     record = StructureRecord(
@@ -2416,12 +2416,12 @@ def test_pinned_coordination_ring_damage_is_drift():
     # opposite canonical class with its own nonzero margin — so the ledger
     # below asserts real class change, not a sort tie or gauge relabeling.
     assert seen.margin > 0.05
-    from confflow.science.confgen.ring.templates import get_template as _get_template
+    from tests.v4._helpers.ring_inputs import frozen_coords as _frozen_coords
 
     _offset = np.array([0.75, 0.75, 0.0])
     _metal = np.asarray(record.coordinates, dtype=float)[4]
     _down_coords = np.vstack(
-        [np.array(_get_template("pucker_down_4").coordinates, dtype=float) + _offset, _metal]
+        [np.array(_frozen_coords("pucker_down_4"), dtype=float) + _offset, _metal]
     )
     _down = perceive_donors(_down_coords, 4, (0, 1, 2, 3), ("a", "b", "c", "d"), "tetrahedral")
     assert _down.margin > 0.05
