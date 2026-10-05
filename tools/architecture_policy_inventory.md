@@ -325,3 +325,19 @@
 - **机械定位说明**：本清单由 L0 准备任务 B 的登记件按上述状态/基准修订而成；六个来源文件在 `ce0dd996` 与 `db022bab` 间逐字节一致（sha256 实测），故全部行号与位点无需换算，直接有效。
 - **与 L0.7 的组合注意**：L0.7（测试按行为重组）若搬走共享扫描 helper/常量（例如主 gate 的 `FORBIDDEN_*` 表、scanner 的 `PATTERNS`），**最终集成时须以 `SOURCE-ANCHOR-MAP` 重新定位**相关位点后再核对清单；现在不猜新行号、不改 policy 设计。
 - **切基点门槛**：L0.4b/c 在切换基点（或 L0.7 落地后）执行前，仍需根确认清单与基点的完整对应（重新走一遍位点对账），不得默认沿用。
+
+## L0 集成追加（退休对账与重定位，不改 policy 语义）
+
+- 旧 guard 退休映射：`/tmp/l0-4d3-output/DELETION-MAP.json`（151 条，基点 `d79c3dc`），
+  删除清单 `/tmp/l0-4d3-output/removed-nodes.txt`（151），保留 `/tmp/l0-4d3-output/retained-nodes.json`（7 KEEP：
+  `#48` core 兼容面、`#49` application 兼容面、`#50` 打包可发现、`#52` schema 清理词、`#53` 冻结块、
+  `#85/#86` v46 模块清单/覆盖）。
+- 本集成删除 151 + L0.7 重复 3（`/tmp/l0-helpers-output/removed-nodes.txt`）= 154；
+  新增为已接受 policy 源节点 309（`collect-base-policy.txt`）；collect 精确门
+  `4509 + 309 - 151 - 3 = 4664`（`node_gate.py ok=true`）。
+- L0.7 重定位：`tests/v4/_helpers/architecture_guards.py` 经
+  `/tmp/l0-helpers-output/SOURCE-ANCHOR-MAP.json`（8 锚点：`FORBIDDEN_LEGACY_MODULES`/
+  `FORBIDDEN_SYMBOLS`/`_ORDINAL_WITHIN_ITEM_FILES`/`_RANGE_ORDINAL_ALLOWLIST`/
+  `_FILENAME_ATTRIBUTE_TOKENS`/`_FILENAME_NAME_TOKENS`/`_filename_pairing_offenders`/
+  `_range_ordinal_pairing_offenders`，值/算法不变）搬迁；本集成中已退休 guard 导入已删除，
+  helper 文件保持 L0.7 源卡字节，不恢复旧测试。
