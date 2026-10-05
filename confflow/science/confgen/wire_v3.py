@@ -254,12 +254,135 @@ class LegacyStageAdapter(GenerationStage):
     detection; wrappers keep signatures via ``functools.wraps``.
     """
 
+    #: A3 dispatch bools (plain class defaults so hook detection and mypy
+    #: see writeable attributes; per-instance values are set in __init__).
+    check_bond_integrity: bool = False
+    carries_inherited_locks: bool = False
+
     def __init__(self, legacy: GenerationStage) -> None:
         object.__setattr__(self, "_legacy", legacy)
         try:
             object.__setattr__(self, "lock_reference", legacy.lock_reference)
         except AttributeError:
             pass
+        # A3 hooks as plain instance attributes (not properties: the base
+        # declares them as writeable class attributes). Wrapped value when
+        # the wrapped type overrides it, else the v3 torsions rule.
+        object.__setattr__(
+            self, "check_bond_integrity", self._v3_bool(legacy, "check_bond_integrity")
+        )
+        object.__setattr__(
+            self, "carries_inherited_locks", self._v3_bool(legacy, "carries_inherited_locks")
+        )
+
+    @staticmethod
+    def _v3_bool(legacy: Any, name: str) -> bool:
+        """Return the wrapped hook value, else whether axis is torsions."""
+        from confflow.science.confgen.model import GenerationStage as _Base
+
+        try:
+            overridden = any(
+                name in klass.__dict__
+                for klass in type(legacy).__mro__
+                if klass not in (_Base, object)
+            )
+        except Exception:
+            overridden = False
+        if overridden:
+            try:
+                return bool(getattr(legacy, name, False))
+            except Exception:
+                return False
+        try:
+            return bool(str(legacy.axis) == "torsions")
+        except Exception:
+            return False
+
+    @staticmethod
+    def _wrapped_overrides(legacy: Any, name: str) -> bool:
+        """Return True when the wrapped stage type overrides a hook."""
+        from confflow.science.confgen.model import GenerationStage as _Base
+
+        try:
+            return any(
+                name in klass.__dict__
+                for klass in type(legacy).__mro__
+                if klass not in (_Base, object)
+            )
+        except Exception:
+            return False
+
+    def preserved_entries(self, resolved: Any) -> Any:
+        """A3 hook: wrapped entries when overridden, else component slice."""
+        legacy = object.__getattribute__(self, "_legacy")
+        if self._wrapped_overrides(legacy, "preserved_entries"):
+            return legacy.preserved_entries(resolved)
+        try:
+            axis = str(legacy.axis)
+        except Exception:
+            return []
+        if axis == "torsions":
+            from confflow.science.confgen.torsion.scope import preserved_entries as _impl
+
+            return _impl(resolved)
+        if axis == "rings":
+            from confflow.science.confgen.ring.scope import preserved_entries as _impl
+
+            return _impl(resolved)
+        return []
+
+    def report_section(self, resolved: Any) -> Any:
+        """A3 hook: wrapped fragment when overridden, else component slice."""
+        legacy = object.__getattribute__(self, "_legacy")
+        if self._wrapped_overrides(legacy, "report_section"):
+            return legacy.report_section(resolved)
+        try:
+            axis = str(legacy.axis)
+        except Exception:
+            return None
+        if axis == "coordination":
+            from confflow.science.confgen.coordination.scope import report_section as _impl
+
+            return _impl(resolved)
+        return None
+
+    def describe_scope(self, resolved: Any) -> Any:
+        """A3 hook: wrapped slice when overridden, else component slice."""
+        legacy = object.__getattribute__(self, "_legacy")
+        if self._wrapped_overrides(legacy, "describe_scope"):
+            return legacy.describe_scope(resolved)
+        try:
+            axis = str(legacy.axis)
+        except Exception:
+            return None
+        if axis == "coordination":
+            from confflow.science.confgen.coordination.scope import describe_scope as _impl
+
+            return _impl(resolved)
+        if axis == "rings":
+            from confflow.science.confgen.ring.scope import describe_scope as _impl
+
+            return _impl(resolved)
+        if axis == "torsions":
+            from confflow.science.confgen.torsion.scope import describe_scope as _impl
+
+            return _impl(resolved)
+        return None
+
+    def fallback_lock(self, locked_state: Any, structure: Any, context: Any) -> Any:
+        """A3 hook: wrapped fallback when overridden, else ring matcher."""
+        legacy = object.__getattribute__(self, "_legacy")
+        if self._wrapped_overrides(legacy, "fallback_lock"):
+            return legacy.fallback_lock(locked_state, structure, context)
+        try:
+            axis = str(legacy.axis)
+        except Exception:
+            return None
+        if axis == "rings":
+            from confflow.science.confgen.ring.scope import fallback_lock as _impl
+
+            return _impl(self, locked_state, structure, context)
+        return None
 
     @property
     def axis(self) -> str:

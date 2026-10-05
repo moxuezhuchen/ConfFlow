@@ -1231,3 +1231,413 @@ def test_a2_recovery_unannotated_legacy_nine_and_subtree() -> None:
     assert [r for r in run2.target_records if r.status is TerminalStatus.DEFERRED_PARENT_FAILED]
     # Global legacy class annotations untouched (no pollution).
     assert _RecoveryLegacyShift.estimate.__annotations__ != {}
+
+
+# ---------------------------------------------------------------------------
+# FIX-1A A3: engine axis branches move to component hooks (behavior unchanged).
+# ---------------------------------------------------------------------------
+
+
+def _a3_runstate_shell(engine, context, axes, stages):
+    from confflow.science.confgen.engine import _RunState
+    from confflow.science.confgen.planner import MixedRadixGrid
+
+    counts = [1] * max(len(axes), 1)
+    return _RunState(
+        engine=engine,
+        context=context,
+        stages=list(stages),
+        axes=list(axes),
+        level_counts=list(counts),
+        grid=MixedRadixGrid(counts),
+        conditional=False,
+        seed=0,
+        should_cancel=None,
+    )
+
+
+def test_a3_stage_hook_defaults_and_values() -> None:
+    from confflow.science.confgen.coordination.stage import CoordinationStage
+    from confflow.science.confgen.ring.stage import RingStage
+    from confflow.science.confgen.torsion.stage import TorsionStage
+
+    assert GenerationStage.check_bond_integrity is False
+    assert GenerationStage.carries_inherited_locks is False
+    assert GenerationStage.preserved_entries(None, {}) == []
+    assert GenerationStage.report_section(None, {}) is None
+    assert GenerationStage.describe_scope(None, {}) is None
+    assert GenerationStage.fallback_lock(None, {}, None, None) is None
+    assert RingStage.check_bond_integrity is False
+    assert RingStage.carries_inherited_locks is False
+    assert TorsionStage.check_bond_integrity is True
+    assert TorsionStage.carries_inherited_locks is True
+    assert CoordinationStage.check_bond_integrity is False
+    assert CoordinationStage.carries_inherited_locks is False
+
+
+def test_a3_descriptor_hook_values() -> None:
+    registry = build_default_registry()
+    by_id = {d.id: d for d in registry.descriptors}
+    assert by_id["torsions"].check_bond_integrity is True
+    assert by_id["torsions"].carries_inherited_locks is True
+    assert by_id["torsions"].fallback_lock is None
+    assert by_id["rings"].check_bond_integrity is False
+    assert by_id["rings"].carries_inherited_locks is False
+    assert callable(by_id["rings"].fallback_lock)
+    assert by_id["coordination"].check_bond_integrity is False
+    assert by_id["coordination"].carries_inherited_locks is False
+    assert by_id["coordination"].fallback_lock is None
+    for axis in ("coordination", "rings", "torsions"):
+        assert callable(by_id[axis].preserved_entries)
+        assert callable(by_id[axis].report_section)
+        assert callable(by_id[axis].describe_scope)
+
+
+def test_a3_check_bond_integrity_hook_not_axis() -> None:
+    """Counterexample: a torsions stage opting out must be honored."""
+
+    class _NoCheck(_FakeStage):
+        check_bond_integrity = False
+
+    class _YesCheck(_FakeStage):
+        check_bond_integrity = True
+
+    engine = ConfgenEngine()
+    ctx = _probe_context()
+    assert (
+        _a3_runstate_shell(engine, ctx, [], [])._check_bond_integrity(
+            "torsions", _NoCheck({"axis": "torsions"})
+        )
+        is False
+    )
+    assert (
+        _a3_runstate_shell(engine, ctx, [], [])._check_bond_integrity(
+            "rings", _YesCheck({"axis": "rings"})
+        )
+        is True
+    )
+    # Legacy explicit stages without overrides keep the old outcomes.
+    assert (
+        _a3_runstate_shell(engine, ctx, [], [])._check_bond_integrity("torsions", _fake("torsions"))
+        is True
+    )
+    assert (
+        _a3_runstate_shell(engine, ctx, [], [])._check_bond_integrity("rings", _fake("rings"))
+        is False
+    )
+
+
+def test_a3_carries_inherited_locks_hook_not_axis() -> None:
+    class _NoCarry(_FakeStage):
+        carries_inherited_locks = False
+
+    class _YesCarry(_FakeStage):
+        carries_inherited_locks = True
+
+    engine = ConfgenEngine()
+    ctx = _probe_context()
+    assert (
+        _a3_runstate_shell(engine, ctx, [], [])._carries_inherited_locks(
+            "torsions", _NoCarry({"axis": "torsions"})
+        )
+        is False
+    )
+    assert (
+        _a3_runstate_shell(engine, ctx, [], [])._carries_inherited_locks(
+            "rings", _YesCarry({"axis": "rings"})
+        )
+        is True
+    )
+    assert (
+        _a3_runstate_shell(engine, ctx, [], [])._carries_inherited_locks(
+            "torsions", _fake("torsions")
+        )
+        is True
+    )
+
+
+def test_a3_check_bond_integrity_reaches_audit() -> None:
+    """End to end: the audit flag follows the hook, not the axis string."""
+    import confflow.science.confgen.engine as _engine_mod
+
+    seen: list[bool] = []
+    real_audit = _engine_mod.audit_parent_locks
+
+    def _spy(structure, ancestors, context, *, parent, check_bond_integrity=True):
+        seen.append(bool(check_bond_integrity))
+        return real_audit(
+            structure,
+            ancestors,
+            context,
+            parent=parent,
+            check_bond_integrity=check_bond_integrity,
+        )
+
+    class _LaxTorsion(_FakeStage):
+        check_bond_integrity = False
+
+    _engine_mod.audit_parent_locks = _spy
+    try:
+        ConfgenEngine(stages=[_LaxTorsion({"axis": "torsions"})]).run(_probe_context())
+    finally:
+        _engine_mod.audit_parent_locks = real_audit
+    assert seen, "expected at least one fresh-realization audit"
+    assert seen == [False] * len(seen)
+
+
+class _A3NoHookRing(_RecoveryLegacyShift):
+    """Legacy-shaped rings stage with real shift measurement, no lock hooks.
+
+    Mirrors the root probe: a public explicit legacy rings stage with
+    ``verify_locked=None`` followed by torsion. The ring target realizes;
+    the torsion level's ancestor audit reaches the component-owned ring
+    fallback (unmeasured ``mode`` key -> ambiguous -> UNRESOLVED).
+    """
+
+
+def test_a3_ring_fallback_preserved_run_path() -> None:
+    """Legacy explicit rings stage without hooks still hits ring fallback."""
+    import confflow.science.confgen.ring.scope as _ring_scope
+
+    calls: list[str] = []
+    real_fallback = _ring_scope.fallback_lock
+
+    def _spy(stage, locked_state, structure, context):
+        calls.append(type(stage).__name__)
+        return real_fallback(stage, locked_state, structure, context)
+
+    _ring_scope.fallback_lock = _spy
+    try:
+        ring = _A3NoHookRing({"axis": "rings", "states": [("r0", 0.0, 0.0, 0.0)]})
+        ring.verify_locked = None
+        assert getattr(ring, "verify_locked", None) is None
+        run = ConfgenEngine(stages=[ring, _fake("torsions")]).run(_probe_context())
+    finally:
+        _ring_scope.fallback_lock = real_fallback
+    counts = run.report_json()["counts"]
+    assert counts["published"] == 0
+    assert counts["failed"] == {"unresolved": 1}
+    assert len(calls) == 1, calls
+
+
+def test_a3_ring_fallback_descriptor_path() -> None:
+    """Public run_kernel with raw stages reaches the descriptor fallback."""
+    import confflow.science.confgen.ring.scope as _ring_scope
+    from confflow.science.confgen.wire_v3 import from_wire_key
+
+    calls: list[str] = []
+    real_fallback = _ring_scope.fallback_lock
+
+    def _spy(stage, locked_state, structure, context):
+        calls.append(type(stage).__name__)
+        return real_fallback(stage, locked_state, structure, context)
+
+    _ring_scope.fallback_lock = _spy
+    try:
+        ring = _A3NoHookRing({"axis": "rings", "states": [("r0", 0.0, 0.0, 0.0)]})
+        ring.verify_locked = None
+        ctx = _probe_context()
+        run = ConfgenEngine(stages=[ring, _fake("torsions")]).run_kernel(
+            ctx, initial_key=from_wire_key(ctx.input_state_key)
+        )
+    finally:
+        _ring_scope.fallback_lock = real_fallback
+    counts = dict(run.report.thaw()["counts"])
+    assert counts["published"] == 0
+    assert counts["failed"] == {"unresolved": 1}
+    assert len(calls) == 1, calls
+
+
+def test_a3_unknown_axis_without_hooks_stays_generic() -> None:
+    """Unknown legacy stages missing hooks keep the existing fail-closed error."""
+    with pytest.raises(ValueError, match="target axis must be one of"):
+        ConfgenEngine(stages=[_fake("mystery")]).run(_probe_context())
+
+
+def test_a3_preserved_entries_order_and_hooks() -> None:
+    resolved = {
+        "torsions": [{"id": "t0", "treatment": "preserve_input"}],
+        "rings": [{"id": "r0", "treatment": "preserve_input"}],
+    }
+    ctx = _probe_context()
+    object.__setattr__(ctx, "resolved_spec", FrozenDict(dict(resolved)))
+    engine = ConfgenEngine()
+    shell = _a3_runstate_shell(
+        engine, ctx, ["rings", "torsions"], [_fake("rings"), _fake("torsions")]
+    )
+    assert shell._preserved_axes() == [
+        {"axis": "torsions", "id": "t0"},
+        {"axis": "rings", "id": "r0"},
+    ]
+
+    # Counterexample: hook output flows through; nothing is hardcoded.
+    class _Custom(_FakeStage):
+        def preserved_entries(self, resolved):
+            return [{"axis": "mystery", "id": "m0"}]
+
+    custom_engine = ConfgenEngine()._registry.with_component(
+        ComponentDescriptor(
+            id="mystery",
+            order=40,
+            spec_keys=("mystery",),
+            state_merge="merge",
+            is_active=lambda resolved: False,
+            factory=lambda resolved: _Custom({"axis": "mystery"}),
+        )
+    )
+    holder = {"engine": ConfgenEngine()}
+    object.__setattr__(holder["engine"], "_registry", custom_engine)
+    shell2 = _a3_runstate_shell(holder["engine"], ctx, ["mystery"], [_Custom({"axis": "mystery"})])
+    # Custom entries lead in reverse-registry order; unbound built-in
+    # descriptors still contribute their resolved-spec slices (legacy order).
+    assert shell2._preserved_axes() == [
+        {"axis": "mystery", "id": "m0"},
+        {"axis": "torsions", "id": "t0"},
+        {"axis": "rings", "id": "r0"},
+    ]
+
+
+def test_a3_report_section_hooks() -> None:
+    resolved = {"coordination": {"mode": "A"}}
+    ctx = _probe_context()
+    object.__setattr__(ctx, "resolved_spec", FrozenDict(dict(resolved)))
+    engine = ConfgenEngine()
+    shell = _a3_runstate_shell(engine, ctx, ["coordination"], [_fake("coordination")])
+    assert shell._donor_configuration() == {"mode": "A"}
+    shell_none = _a3_runstate_shell(engine, ctx, ["rings"], [_fake("rings")])
+    assert shell_none._donor_configuration() == {"mode": "A"}
+
+
+def test_a3_scope_slices_owned_by_components() -> None:
+    from confflow.science.confgen.coordination.scope import describe_scope as _coord_scope
+    from confflow.science.confgen.ring.scope import describe_scope as _ring_scope
+    from confflow.science.confgen.torsion.scope import describe_scope as _torsion_scope
+
+    assert _ring_scope({"rings": [{"id": "r0"}]}) == {"rings": [{"id": "r0"}]}
+    assert _ring_scope({}) is None
+    assert _torsion_scope({"torsions": [{"id": "t0"}]}) == {"torsions": [{"id": "t0"}]}
+    assert _coord_scope({"coordination": {"mode": "A"}}) == {"coordination": {"mode": "A"}}
+    assert GenerationStage.describe_scope(None, {}) is None
+
+
+def test_a3_moved_dispatch_has_no_axis_literals() -> None:
+    """Quantified AST scope: moved dispatch/report/scope code is axis-free."""
+    import confflow.science.confgen.engine as _engine_mod
+
+    source = Path(_engine_mod.__file__).read_text()
+    tree = ast.parse(source)
+    moved = {
+        "_check_bond_integrity",
+        "_carries_inherited_locks",
+        "_hook_impl",
+        "_descriptor_for",
+        "_fallback_lock",
+        "_preserved_axes",
+        "_donor_configuration",
+    }
+    axes = {"coordination", "rings", "torsions"}
+    offenders: dict[str, list[str]] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in moved:
+            found = sorted(
+                {n.value for n in ast.walk(node) if isinstance(n, ast.Constant) and n.value in axes}
+            )
+            if found:
+                offenders[node.name] = found
+    assert offenders == {}, offenders
+    # Remaining engine literals are inventoried (A4d moves them, not A3).
+    remaining: dict[str, list[str]] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            found = sorted(
+                {n.value for n in ast.walk(node) if isinstance(n, ast.Constant) and n.value in axes}
+            )
+            if found:
+                remaining[node.name] = found
+    assert set(remaining) == {
+        "_key_nonempty",
+        "inherited_torsion_locks",
+        "combine_state_key",
+    }, remaining
+
+
+def test_a3_ring_matcher_import_error_uses_generic_comparison(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Root-sampled ImportError drift: matcher loss must keep A2 generic compare.
+
+    A2 ``engine._fallback_lock`` fell through to the generic missing/drift/exact
+    comparison when ``ring_states_match`` import failed; A3 wrongly returned
+    unconditional ambiguous. Narrow-block only that import, drive the real
+    engine->descriptor dispatch, and require the A2 outcomes (ok/missing/drift).
+    """
+    import builtins
+
+    hits: list[str] = []
+    _real_import = builtins.__import__
+
+    def _blocked(name, globals=None, locals=None, fromlist=(), level=0):  # type: ignore[no-untyped-def]
+        if name == "confflow.science.confgen.ring.perception" and (
+            "ring_states_match" in (fromlist or ())
+        ):
+            hits.append(name)
+            raise ImportError("root-sampled matcher unavailable")
+        return _real_import(name, globals, locals, fromlist, level)
+
+    monkeypatch.setattr(builtins, "__import__", _blocked)
+
+    class _ProbeRing(_FakeStage):
+        def __init__(self, best: Mapping[str, Any]) -> None:
+            super().__init__({"axis": "rings"})
+            self._best = dict(best)
+
+        def perceive(self, structure: Any, context: MolecularContext) -> PerceptionResult:  # type: ignore[override]
+            _ = (structure, context)
+            return PerceptionResult(best_key=dict(self._best))
+
+    def _run_case(locked: Mapping[str, Any], best: Mapping[str, Any]):  # type: ignore[no-untyped-def]
+        engine = ConfgenEngine()
+        ctx = _probe_context()
+        shell = _a3_runstate_shell(engine, ctx, ["rings"], [_ProbeRing(best)])
+        stage = shell._stages[0]
+        before = len(hits)
+        out = shell._fallback_lock(stage, "rings", dict(locked), None, ctx)
+        assert len(hits) > before, "matcher ImportError was not triggered"
+        return out
+
+    ok_locked = {"r1": {"template": "chair_A_6"}}
+    verdict, evidence, observed, oos = _run_case(ok_locked, {"r1": {"template": "chair_A_6"}})
+    assert verdict == "ok"
+    assert evidence == []
+    assert observed == {}
+    assert oos is False
+
+    missing_locked = {"r1": {"template": "chair_A_6"}, "r2": {"template": "chair_A_6"}}
+    verdict, evidence, observed, oos = _run_case(missing_locked, {"r1": {"template": "chair_A_6"}})
+    assert verdict == "ambiguous"
+    assert observed == {}
+    assert oos == "unknown"
+    assert evidence == [
+        {
+            "kind": "anomaly",
+            "anomaly": "AMBIGUOUS_KEY",
+            "detail": "ancestor lock axes unmeasured: ['r2']",
+        }
+    ]
+
+    drift_locked = {"r1": {"template": "chair_A_6"}}
+    drift_best = {"r1": {"template": "boat"}}
+    verdict, evidence, observed, oos = _run_case(drift_locked, drift_best)
+    assert verdict == "drift"
+    assert observed == {"r1": {"template": "boat"}}
+    assert oos == "unknown"
+    assert evidence == [
+        {
+            "kind": "drift",
+            "axis": "rings.r1",
+            "detail": "ancestor lock drifted",
+            "expected": {"template": "chair_A_6"},
+            "measured": {"template": "boat"},
+            "out_of_scope": "unknown",
+        }
+    ]

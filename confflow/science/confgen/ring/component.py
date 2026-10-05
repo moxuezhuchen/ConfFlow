@@ -18,6 +18,39 @@ from confflow.science.confgen.registry import ComponentDescriptor
 __all__ = ["descriptor"]
 
 
+def _fallback_lock(
+    stage: Any,
+    locked_state: Mapping[str, Any],
+    structure: Any,
+    context: Any,
+) -> Any:
+    """Descriptor fallback: ring tolerance-aware matcher (owns behavior)."""
+    from confflow.science.confgen.ring.scope import fallback_lock as _impl
+
+    return _impl(stage, locked_state, structure, context)
+
+
+def _preserved_entries(resolved: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Descriptor fallback: ring ``preserve_input`` entries."""
+    from confflow.science.confgen.ring.scope import preserved_entries as _impl
+
+    return _impl(resolved)
+
+
+def _report_section(resolved: Mapping[str, Any]) -> dict[str, Any] | None:
+    """Descriptor fallback: ring contributes no report section."""
+    from confflow.science.confgen.ring.scope import report_section as _impl
+
+    return _impl(resolved)
+
+
+def _describe_scope(resolved: Mapping[str, Any]) -> Any:
+    """Descriptor fallback: ring scope slice."""
+    from confflow.science.confgen.ring.scope import describe_scope as _impl
+
+    return _impl(resolved)
+
+
 def descriptor() -> ComponentDescriptor:
     """Return the rings component descriptor."""
 
@@ -46,4 +79,10 @@ def descriptor() -> ComponentDescriptor:
         state_merge="merge",
         is_active=is_active,
         factory=factory,
+        check_bond_integrity=False,
+        carries_inherited_locks=False,
+        fallback_lock=_fallback_lock,
+        preserved_entries=_preserved_entries,
+        report_section=_report_section,
+        describe_scope=_describe_scope,
     )

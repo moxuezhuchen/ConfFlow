@@ -40,7 +40,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 
@@ -1428,7 +1428,7 @@ class _RunState:
             ancestors,
             context,
             parent=parent,
-            check_bond_integrity=(axis == "torsions"),
+            check_bond_integrity=self._check_bond_integrity(axis, stage),
         )
         if not locks_ok:
             kinds = {str(item.get("kind")) for item in lock_evidence}
@@ -1731,7 +1731,7 @@ class _RunState:
         self.realized_ok += 1
         merged_state = dict(state_dict)
         merged_state.update(preserved)
-        for lock in self._inherited if axis == "torsions" else ():
+        for lock in self._inherited if self._carries_inherited_locks(axis, stage) else ():
             # Carried axes retain their verified prior discrete identity:
             # re-snapping a relative label against the new input reference
             # would let a new-reference 0 masquerade as the old label.
@@ -1831,6 +1831,113 @@ class _RunState:
                 return stage
         raise ValueError(f"no stage bound for axis {axis!r}")
 
+    def _descriptor_for(self, axis: str) -> Any | None:
+        """Return the registry descriptor for *axis*, if any (generic)."""
+        for descriptor in self._engine._registry.descriptors:
+            if descriptor.id == axis:
+                return descriptor
+        return None
+
+    def _check_bond_integrity(self, axis: str, stage: GenerationStage) -> bool:
+        """Read the bond-integrity hook generically (FIX-1A A3)."""
+        from confflow.science.confgen.model import GenerationStage as _Base
+
+        try:
+            overridden = any(
+                "check_bond_integrity" in klass.__dict__
+                for klass in type(stage).__mro__
+                if klass not in (_Base, object)
+            )
+        except Exception:
+            overridden = False
+        if overridden:
+            try:
+                return bool(getattr(stage, "check_bond_integrity", False))
+            except Exception:
+                return False
+        descriptor = self._descriptor_for(axis)
+        if descriptor is not None:
+            try:
+                return bool(descriptor.check_bond_integrity)
+            except Exception:
+                pass
+        try:
+            return bool(getattr(stage, "check_bond_integrity", False))
+        except Exception:
+            return False
+
+    def _carries_inherited_locks(self, axis: str, stage: GenerationStage) -> bool:
+        """Read the inherited-lock carrier hook generically (FIX-1A A3)."""
+        from confflow.science.confgen.model import GenerationStage as _Base
+
+        try:
+            overridden = any(
+                "carries_inherited_locks" in klass.__dict__
+                for klass in type(stage).__mro__
+                if klass not in (_Base, object)
+            )
+        except Exception:
+            overridden = False
+        if overridden:
+            try:
+                return bool(getattr(stage, "carries_inherited_locks", False))
+            except Exception:
+                return False
+        descriptor = self._descriptor_for(axis)
+        if descriptor is not None:
+            try:
+                return bool(descriptor.carries_inherited_locks)
+            except Exception:
+                pass
+        try:
+            return bool(getattr(stage, "carries_inherited_locks", False))
+        except Exception:
+            return False
+
+    def _hook_impl(self, axis: str, stage: GenerationStage, name: str) -> Any | None:
+        """Return the bound component hook for *name*, if overridden.
+
+        Prefers the stage implementation when the stage type actually
+        overrides the ``GenerationStage`` default (real stages, the
+        legacy wire adapter, and test doubles); otherwise falls back to
+        the registry descriptor (legacy explicit stages inheriting the
+        base defaults). Returns ``None`` when neither provides one. The
+        kernel never compares axis strings or imports components.
+        """
+        from confflow.science.confgen.model import GenerationStage as _Base
+
+        try:
+            overridden = any(
+                name in klass.__dict__
+                for klass in type(stage).__mro__
+                if klass not in (_Base, object)
+            )
+        except Exception:
+            overridden = False
+        if overridden:
+            try:
+                hook = getattr(stage, name, None)
+            except Exception:
+                hook = None
+            if callable(hook):
+                return hook
+        descriptor = self._descriptor_for(axis)
+        if descriptor is not None:
+            try:
+                hook = getattr(descriptor, name, None)
+            except Exception:
+                hook = None
+            if callable(hook):
+                return hook
+        if not overridden:
+            try:
+                hook = getattr(stage, name, None)
+            except Exception:
+                hook = None
+            if callable(hook):
+                return hook
+        return None
+
     @staticmethod
     def _aggregate_oos(evidence: Sequence[Mapping[str, Any]]) -> Any:
         """Aggregate out_of_scope flags: True wins, then False, else unknown."""
@@ -1928,9 +2035,52 @@ class _RunState:
     ) -> tuple[str, list[dict[str, Any]], dict[str, Any], Any]:
         """Verify one ancestor lock without a stage hook.
 
-        Rings use the tolerance-aware matcher; other axes use exact discrete
-        comparison (sound for discrete vocabularies; torsion owns its hook).
+        Component-owned fallback first (stage ``fallback_lock`` hook, else
+        the registry descriptor fallback for legacy explicit stages);
+        otherwise exact discrete comparison (sound for discrete
+        vocabularies; torsion owns its hook). The kernel never compares
+        axis strings or imports components here.
         """
+        # Component-owned fallback (FIX-1A A3). The ring component's
+        # tolerance-aware matcher lives in the ring scope module and is
+        # reached via the stage hook or the descriptor fallback; it is
+        # never replaced by the generic comparison below (which would
+        # wrongly publish this UNRESOLVED leaf).
+        try:
+            stage_hook = getattr(stage, "fallback_lock", None)
+        except Exception:
+            stage_hook = None
+        if callable(stage_hook):
+            try:
+                owned = stage_hook(dict(locked_state), structure, context)
+            except Exception as exc:
+                return (
+                    "ambiguous",
+                    [self._anomaly(f"lock fallback raised {type(exc).__name__}")],
+                    {},
+                    "unknown",
+                )
+            if owned is not None:
+                return cast("tuple[str, list[dict[str, Any]], dict[str, Any], Any]", owned)
+        descriptor = self._descriptor_for(axis)
+        descriptor_hook = None
+        if descriptor is not None:
+            try:
+                descriptor_hook = getattr(descriptor, "fallback_lock", None)
+            except Exception:
+                descriptor_hook = None
+        if callable(descriptor_hook):
+            try:
+                resolved = descriptor_hook(stage, dict(locked_state), structure, context)
+            except Exception as exc:
+                return (
+                    "ambiguous",
+                    [self._anomaly(f"lock fallback raised {type(exc).__name__}")],
+                    {},
+                    "unknown",
+                )
+            if resolved is not None:
+                return cast("tuple[str, list[dict[str, Any]], dict[str, Any], Any]", resolved)
         try:
             perception = stage.perceive(structure, context)
         except Exception as exc:
@@ -1948,43 +2098,6 @@ class _RunState:
                 {},
                 "unknown",
             )
-        if axis == "rings":
-            try:
-                from confflow.science.confgen.ring.perception import ring_states_match
-            except ImportError:
-                ring_states_match = None  # type: ignore[assignment]
-            if ring_states_match is not None:
-                tolerance = float(context.tolerances.ring_torsion_atol_deg)
-                drifted: list[dict[str, Any]] = []
-                for ring_id, commanded in locked_state.items():
-                    observed = best.get(ring_id)
-                    if not isinstance(observed, Mapping):
-                        return (
-                            "ambiguous",
-                            [self._anomaly(f"ancestor ring {ring_id!r} unmeasured")],
-                            {},
-                            "unknown",
-                        )
-                    match, match_evidence = ring_states_match(
-                        commanded, observed, torsion_atol_deg=tolerance
-                    )
-                    if not match:
-                        payload = {
-                            "kind": "drift",
-                            "axis": f"rings.{ring_id}",
-                            "detail": "ancestor ring lock drifted",
-                            "match_evidence": dict(match_evidence),
-                            "observed": dict(observed),
-                        }
-                        payload["out_of_scope"] = bool(
-                            observed.get("template") != commanded.get("template")
-                            if isinstance(commanded, Mapping)
-                            else True
-                        )
-                        drifted.append(payload)
-                if drifted:
-                    return "drift", drifted, {}, self._aggregate_oos(drifted)
-                return "ok", [], {}, False
         missing = [key for key in locked_state if key not in best]
         if missing:
             return (
@@ -2556,11 +2669,7 @@ class _RunState:
             [edge.a, edge.b] for edge in self._context.graph.edges if edge.type.value == "BREAKING"
         )
         scope = {
-            "donor_configuration": (
-                dict(self._context.resolved_spec.get("coordination") or {})
-                if self._context.resolved_spec.get("coordination") is not None
-                else None
-            ),
+            "donor_configuration": self._donor_configuration(),
             "preserved_axes": self._preserved_axes(),
             "excluded_axes": [
                 {
@@ -2645,13 +2754,71 @@ class _RunState:
         )
 
     def _preserved_axes(self) -> list[dict[str, Any]]:
-        """List preserve_input axes declared in the resolved spec."""
+        """List preserve_input axes via component hooks (FIX-1A A3).
+
+        Each component's ``preserved_entries`` hook owns its axis string
+        and entry shape; the engine only concatenates. Reverse registry
+        order reproduces the legacy torsions-then-rings byte order,
+        including axes present in the resolved spec but without a bound
+        stage (e.g. explicit stage lists and ``preserve_input`` levels).
+        """
         resolved = self._context.resolved_spec
+        bound = dict(zip(self._axes, self._stages))
         preserved: list[dict[str, Any]] = []
-        for entry in resolved.get("torsions", []) or []:
-            if isinstance(entry, Mapping) and entry.get("treatment") == "preserve_input":
-                preserved.append({"axis": "torsions", "id": entry.get("id")})
-        for entry in resolved.get("rings", []) or []:
-            if isinstance(entry, Mapping) and entry.get("treatment") == "preserve_input":
-                preserved.append({"axis": "rings", "id": entry.get("id")})
+        for descriptor in reversed(list(self._engine._registry.descriptors)):
+            axis = descriptor.id
+            if axis in bound:
+                hook = self._hook_impl(axis, bound[axis], "preserved_entries")
+            else:
+                try:
+                    hook = getattr(descriptor, "preserved_entries", None)
+                except Exception:
+                    hook = None
+                if not callable(hook):
+                    continue
+            if hook is None:
+                continue
+            try:
+                entries = hook(resolved)
+            except Exception:
+                continue
+            if entries:
+                preserved.extend(dict(item) for item in entries)
         return preserved
+
+    def _donor_configuration(self) -> dict[str, Any] | None:
+        """Return the coordination report fragment via hooks (FIX-1A A3).
+
+        Bound stages first, then unbound registry descriptors (so explicit
+        stage lists and ``preserve_input`` levels report the same
+        ``donor_configuration`` as the resolved spec); only coordination
+        contributes the key.
+        """
+        resolved = self._context.resolved_spec
+        bound = dict(zip(self._axes, self._stages))
+        ordered_axes = list(bound) + [
+            descriptor.id
+            for descriptor in self._engine._registry.descriptors
+            if descriptor.id not in bound
+        ]
+        for axis in ordered_axes:
+            if axis in bound:
+                hook = self._hook_impl(axis, bound[axis], "report_section")
+            else:
+                descriptor = self._descriptor_for(axis)
+                try:
+                    hook = getattr(descriptor, "report_section", None)
+                except Exception:
+                    hook = None
+                if not callable(hook):
+                    continue
+            if hook is None:
+                continue
+            try:
+                section = hook(resolved)
+            except Exception:
+                continue
+            if isinstance(section, Mapping) and "donor_configuration" in section:
+                donor = section["donor_configuration"]
+                return dict(donor) if isinstance(donor, Mapping) else donor
+        return None

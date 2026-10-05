@@ -82,6 +82,28 @@ class TorsionStage(GenerationStage):
         """Return the stage axis (``torsions``)."""
         return "torsions"
 
+    #: A3 dispatch hooks (engine-read; component owns its literals).
+    check_bond_integrity: bool = True
+    carries_inherited_locks: bool = True
+
+    def preserved_entries(self, resolved: Mapping[str, Any]) -> list[dict[str, Any]]:
+        """Return torsion ``preserve_input`` entries (delegates to scope)."""
+        from confflow.science.confgen.torsion.scope import preserved_entries as _entries
+
+        return _entries(resolved)
+
+    def report_section(self, resolved: Mapping[str, Any]) -> dict[str, Any] | None:
+        """Torsion contributes no report section."""
+        from confflow.science.confgen.torsion.scope import report_section as _section
+
+        return _section(resolved)
+
+    def describe_scope(self, resolved: Mapping[str, Any]) -> Mapping[str, Any] | None:
+        """Return the torsion scope slice (delegates to scope)."""
+        from confflow.science.confgen.torsion.scope import describe_scope as _describe
+
+        return _describe(resolved)
+
     def axis_ids(self, context: MolecularContext) -> tuple[str, ...]:
         """Return enumerate-axis ids for perception coverage checks."""
         return tuple(axis.axis_id for axis in self._enumerate_axes(context))

@@ -123,6 +123,39 @@ class RingStage(GenerationStage):
         """Return the stage axis (``rings``)."""
         return "rings"
 
+    #: A3 dispatch hooks (engine-read; component owns its literals).
+    check_bond_integrity: bool = False
+    carries_inherited_locks: bool = False
+
+    def preserved_entries(self, resolved: Mapping[str, Any]) -> list[dict[str, Any]]:
+        """Return ring ``preserve_input`` entries (delegates to scope)."""
+        from confflow.science.confgen.ring.scope import preserved_entries as _entries
+
+        return _entries(resolved)
+
+    def report_section(self, resolved: Mapping[str, Any]) -> dict[str, Any] | None:
+        """Ring contributes no report section."""
+        from confflow.science.confgen.ring.scope import report_section as _section
+
+        return _section(resolved)
+
+    def describe_scope(self, resolved: Mapping[str, Any]) -> Mapping[str, Any] | None:
+        """Return the ring scope slice (delegates to scope)."""
+        from confflow.science.confgen.ring.scope import describe_scope as _describe
+
+        return _describe(resolved)
+
+    def fallback_lock(
+        self,
+        locked_state: Mapping[str, Any],
+        structure: Any,
+        context: MolecularContext,
+    ) -> tuple[str, list[dict[str, Any]], dict[str, Any], Any] | None:
+        """Verify ring ancestor locks without a stage hook (owns matcher)."""
+        from confflow.science.confgen.ring.scope import fallback_lock as _fallback
+
+        return _fallback(self, locked_state, structure, context)
+
     @property
     def specs(self) -> tuple[RingSpec, ...]:
         """Return normalized ring specs in stable (sorted-id) order."""

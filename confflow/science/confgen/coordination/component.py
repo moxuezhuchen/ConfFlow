@@ -19,6 +19,27 @@ from confflow.science.confgen.registry import ComponentDescriptor
 __all__ = ["descriptor"]
 
 
+def _preserved_entries(resolved: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Descriptor fallback: coordination contributes no preserved entries."""
+    from confflow.science.confgen.coordination.scope import preserved_entries as _impl
+
+    return _impl(resolved)
+
+
+def _report_section(resolved: Mapping[str, Any]) -> dict[str, Any] | None:
+    """Descriptor fallback: coordination ``donor_configuration`` fragment."""
+    from confflow.science.confgen.coordination.scope import report_section as _impl
+
+    return _impl(resolved)
+
+
+def _describe_scope(resolved: Mapping[str, Any]) -> Any:
+    """Descriptor fallback: coordination scope slice."""
+    from confflow.science.confgen.coordination.scope import describe_scope as _impl
+
+    return _impl(resolved)
+
+
 def descriptor() -> ComponentDescriptor:
     """Return the coordination component descriptor."""
 
@@ -66,4 +87,10 @@ def descriptor() -> ComponentDescriptor:
         state_merge="replace",
         is_active=is_active,
         factory=factory,
+        check_bond_integrity=False,
+        carries_inherited_locks=False,
+        fallback_lock=None,
+        preserved_entries=_preserved_entries,
+        report_section=_report_section,
+        describe_scope=_describe_scope,
     )

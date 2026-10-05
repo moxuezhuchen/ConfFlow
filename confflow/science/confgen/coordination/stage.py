@@ -374,6 +374,28 @@ class CoordinationStage(GenerationStage):
         """Return the stage axis."""
         return "coordination"
 
+    #: A3 dispatch hooks (engine-read; component owns its literals).
+    check_bond_integrity: bool = False
+    carries_inherited_locks: bool = False
+
+    def preserved_entries(self, resolved: Mapping[str, Any]) -> list[dict[str, Any]]:
+        """Coordination contributes no preserved entries (matches engine)."""
+        from confflow.science.confgen.coordination.scope import preserved_entries as _entries
+
+        return _entries(resolved)
+
+    def report_section(self, resolved: Mapping[str, Any]) -> dict[str, Any] | None:
+        """Return the coordination report fragment (donor_configuration)."""
+        from confflow.science.confgen.coordination.scope import report_section as _section
+
+        return _section(resolved)
+
+    def describe_scope(self, resolved: Mapping[str, Any]) -> Mapping[str, Any] | None:
+        """Return the coordination scope slice (delegates to scope)."""
+        from confflow.science.confgen.coordination.scope import describe_scope as _describe
+
+        return _describe(resolved)
+
     def axis_ids(self, context: MolecularContext) -> tuple[str, ...]:
         """Return the observed-key fields for engine coverage checks."""
         _ = context

@@ -683,6 +683,67 @@ class GenerationStage(ABC):
     #: defined from the run input) must keep ``"input"``.
     lock_reference: str = "input"
 
+    #: Rigid bond-length integrity audit on fresh realizations (engine-read,
+    #: never set per call). Only torsion does rigid rotation, so only the
+    #: torsion stage opts into ``True``. The engine reads this attribute
+    #: (or the registry descriptor fallback for legacy stages without it)
+    #: and never compares axis strings itself. (FIX-1A A3.)
+    check_bond_integrity: bool = False
+
+    #: Whether this axis carries verified inherited locks into child keys
+    #: (engine-read). Only torsion carries inherited torsion locks; other
+    #: axes return ``False``. Legacy stages without the attribute resolve
+    #: via the registry descriptor; the kernel never guesses by id.
+    #: (FIX-1A A3.)
+    carries_inherited_locks: bool = False
+
+    def preserved_entries(self, resolved: Mapping[str, Any]) -> list[dict[str, Any]]:
+        """Return this stage's ``preserve_input`` entries (FIX-1A A3).
+
+        The engine concatenates every bound stage's entries generically
+        (reverse execution order preserves the legacy torsions-then-rings
+        byte order); each component owns its axis string and entry shape.
+        Default is no entries.
+        """
+        return []
+
+    def report_section(self, resolved: Mapping[str, Any]) -> dict[str, Any] | None:
+        """Return this stage's report fragment, if any (FIX-1A A3).
+
+        Only coordination contributes ``donor_configuration``; other
+        stages return ``None``. The engine merges fragments generically;
+        the wire adapter only converts key payloads (no new imports).
+        """
+        return None
+
+    def describe_scope(self, resolved: Mapping[str, Any]) -> Mapping[str, Any] | None:
+        """Return this stage's inherited-scope descriptor slice (FIX-1A A3).
+
+        Per-component scope helpers live in each component's ``scope.py``
+        and are owned there; the engine calls this hook generically when
+        present. Default ``None`` (no slice); A4d continues the opaque
+        inherited-state work without changing behavior here.
+        """
+        return None
+
+    def fallback_lock(
+        self,
+        locked_state: Mapping[str, Any],
+        structure: Any,
+        context: MolecularContext,
+    ) -> tuple[str, list[dict[str, Any]], dict[str, Any], Any] | None:
+        """Verify one ancestor lock without a ``verify_locked`` hook.
+
+        Component-owned fallback (FIX-1A A3). The ring component returns
+        the tolerance-aware matcher verdict verbatim; other components
+        return ``None`` so the engine uses the generic exact discrete
+        comparison. Legacy explicit stages without this hook resolve via
+        their registry descriptor; unknown axes keep the existing
+        fail-closed errors. The kernel never inspects source or guesses
+        by component id.
+        """
+        return None
+
     @abstractmethod
     def estimate(self, parent: StageParentProtocol, context: MolecularContext) -> StageEstimate:
         """Return the symbolic count estimate under *parent*."""

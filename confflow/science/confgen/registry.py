@@ -44,6 +44,15 @@ class ComponentDescriptor:
     state_merge: Literal["replace", "merge"]  # coordination=replace, others merge.
     is_active: Callable[[Mapping[str, Any]], bool]
     factory: Callable[[Mapping[str, Any]], GenerationStage]
+    # A3 optional hooks (compatible defaults; the engine reads the stage
+    # hook first, then this descriptor fallback, for legacy explicit
+    # stages without hooks; it never compares axis strings itself).
+    check_bond_integrity: bool = False
+    carries_inherited_locks: bool = False
+    fallback_lock: Callable[..., Any] | None = None
+    preserved_entries: Callable[[Mapping[str, Any]], list[dict[str, Any]]] | None = None
+    report_section: Callable[[Mapping[str, Any]], dict[str, Any] | None] | None = None
+    describe_scope: Callable[[Mapping[str, Any]], Mapping[str, Any] | None] | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "spec_keys", tuple(self.spec_keys))
