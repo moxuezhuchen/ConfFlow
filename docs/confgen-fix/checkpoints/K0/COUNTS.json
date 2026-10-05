@@ -1,0 +1,78 @@
+{
+  "base": "f3c2eeffd06c83a159f5c7d4c21d1418661f31ab",
+  "systems": {
+    "S1": {
+      "n_rows": 12,
+      "n_ring_clash_rejected": 0,
+      "n_rescued": 0,
+      "n_b_leaf_realized": 12,
+      "n_b_leaf_clash": 0
+    },
+    "S2": {
+      "n_rows": 24,
+      "n_ring_clash_rejected": 0,
+      "n_rescued": 0,
+      "n_b_leaf_realized": 24,
+      "n_b_leaf_clash": 0
+    },
+    "S3": {
+      "n_rows": 48,
+      "n_ring_clash_rejected": 0,
+      "n_rescued": 0,
+      "n_b_leaf_realized": 46,
+      "n_b_leaf_clash": 2
+    }
+  },
+  "total_rescuable": 0,
+  "total_rows": 84,
+  "grids": {
+    "S1": 12,
+    "S2": 24,
+    "S3": 48
+  },
+  "frozen": {
+    "S1_side": [
+      12,
+      13,
+      14,
+      15,
+      16,
+      17,
+      18,
+      19,
+      20,
+      21
+    ],
+    "S2_side": [
+      7,
+      8,
+      9
+    ],
+    "S3_side": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      13,
+      14,
+      15,
+      16,
+      17,
+      18,
+      19
+    ],
+    "S3_b_leaf_realized": 46,
+    "S3_b_leaf_clash": 2,
+    "S1_b_leaf_realized": 12,
+    "S2_b_leaf_realized": 24
+  },
+  "provenance": {
+    "S1_frame_sha": "c4d6ff0ca8016bdf0eb7d02acf2f0582e9d1bcd03fcff9c13f8ef055c29dabb0",
+    "S2_frame_sha": "b977c19ae39008062b75d58ea176a2ac27c5df739bee59185161ac320ae5d07f",
+    "S3_sha": "b86ffcf10ed8576743a8bba6dae72e7ab281320246d88cbe8565a4c824149c73",
+    "rpdd_full_sha": "2078aca84ff293021553e3046920b9ceb787f7d04193d1f9efdd433705a1c7b1",
+    "mch_full_sha": "5db90a3c1eaf3f07039afd2068de6e39a6827a07deee0187e246868e6a57933d"
+  }
+}
