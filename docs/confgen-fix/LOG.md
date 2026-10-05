@@ -134,3 +134,23 @@
 - External baseline: `/tmp/fix1a-baseline-final-output/baseline` (104 files); SHA256 manifest: `docs/confgen-fix/checkpoints/B1/MANIFEST.json`. No scientific files added to Git.
 - Precollect report authority-path and local-time labels corrected in manifest; minor prose issues did not cause retests. L0 root launch errors (missing --repo, sandbox Gaussian stat restriction, line-list parser) preserved externally and corrected before the successful full/golden run.
 - No tags; main stays at the merged L0 SHA while FIX-1A executes on an isolated feature branch.
+
+# LOG-APPEND.md — 只新增段 draft（原 LOG 不重写）
+
+> 用法：原 LOG 保持原样不动，将下面整段追加到 LOG 末尾。时间以根验收时间为准；未知写 pending。
+
+---
+
+## [FIX1A 执行澄清追加段] BASE 55b42a3fe6265bbfc67a78ffda50389b991bec9e（fix/confgen-1a，/tmp/fix1a-exec）
+
+- 链：B1 `1e7718c0` → A1 `ad678f4e`（patch `b0fa685e…0601`）→ A2 `97143eb2`（patch `4ebe1c30…`）→ A3 `062a2859`（patch `de76a29c…`）→ CAP-SIG `e10e161d`（patch `b540c9d6…`）→ A4a `f98a50a4` → A4b `47e913a1` → A4c `6182d46` → lazy `ed4be360` → A4d `26476f5d`（patch `b991544c…`）→ A5 `71b742af`（patch `86900a53…`）→ AG1 `65bfd890`（patch `a683e0c0…`）→ AG2 `d5e096cc`（patch `3baab871…`）→ CAP-cleanup `00a798e0`（patch `93f338de…`）→ 集成 `55b42a3fe`。各 formal/stage ROOT-ACCEPTANCE 见 FIX1A-EXECUTION.md §0 外部路径。
+- 补卡口径：CAP-SIG 保签名（`run.should_cancel` 公开不变，`engine.py:860` 实测）；`build_typed_graph` 公开可省 registry、私有必传（`planner.py:765/786` 实测，A4a 裁决）；A3 fallback 可达故移动非删除（`ring/component.py:168`、`ring/scope.py:99,139`）；A4d 两模块 PEP562 恰 3 名（`engine.py:87-145`、`__init__.py:79-…`，`_INHERITED_LAZY_NAMES` 三元）+ 通用 ValueError 保源标识；AG1 深 freeze/thaw + 空 paths guard 恢复；AG2 legacy 忽略 custom / generic 跟随 custom + `as_kernel_target` 唯一归 `kernel_records`（去本轮误加 facade 导出）；CAP-cleanup scope 仅报告写出（`run_sharded.py:210-213`），根最终 scope `tests/v4/test_confgen_[pv]*.py` 精确 93 基线，全产品 tests 仍执行，old B1 不动，tool7 待根重算。
+- 证据红线：A2 不得称全部 93 重算（仅 keys roundtrip 83/93 域）；A3 旧报告 capture 仅 82/93（11 未覆盖见 stage JSON）；完整 93 / fresh TS1 / contracts 由根最终验收，本轮 stage 接受 ≠ full/golden；A6 与全量 pending。
+- 疏漏留痕：A4d root v2 漏 AST 新测 formal 拒停→v3；A5 partial mypy 漏 Any→`cast(float)`；AG1 v1 共享 mutable→深冻、v2 空 paths 托辞根驳回→guard 恢复；AG2 空/改 registry 差异 303 probe 定案 + 新测漏 `schema_version` 后补；根错路径日志保留；CAP 执行器漏 card/proto 清理根补齐。
+- 根待填：A6 sha / G13/G14 policy / collect delta / full pass-skip-collect-wall / golden / 最终 93 名字节等 / TS1-contracts / tool7 digest，均为 pending（见 FIX1A-EXECUTION.md §4）。
+
+---
+
+最终补修记录见FIX1A-EXECUTION.md §5；根组合必要检查491 passed，完整mypy228无问题；4859 collect，全量/golden未运行，待填实际结果。
+
+A6正式SHA912e545807f81688236d1214a571e9a6e45ce312；根逐字核对通过。
