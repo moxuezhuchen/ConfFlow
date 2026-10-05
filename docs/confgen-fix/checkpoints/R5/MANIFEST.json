@@ -1,0 +1,63 @@
+{
+  "card": "R5",
+  "plan": "docs/confgen-fix/PLAN.md R5 (distorted_input into report, Q6 report-only) + ROOT-HOOK-ADDENDUM generic report_diagnostics(context)",
+  "base_head": "ccf167f227d21322d1a251591440e75f48123538",
+  "scope_frozen": "/tmp/fix1r-r5-root-input-scan/ROOT-SCOPE-FROZEN.json",
+  "exact_scope": "/tmp/fix1r-r5-input-scan-output/EXACT-SCOPE.json",
+  "whitelist_production": [
+    "confflow/science/confgen/ring/stage.py",
+    "confflow/science/confgen/ring/perception.py",
+    "confflow/execution/confgen_executor.py",
+    "confflow/science/confgen/registry.py",
+    "confflow/science/confgen/engine.py",
+    "confflow/science/confgen/ring/component.py"
+  ],
+  "new_tests": ["tests/v4/test_confgen_r5_diagnostics.py (15 tests)"],
+  "checkpoints_in_repo": ["docs/confgen-fix/checkpoints/R5/MANIFEST.json", "docs/confgen-fix/checkpoints/R5/DIFF.md"],
+  "external_artifacts_dir": "/tmp/fix1r-r5-v2-output/checkpoints (v1 dir /tmp/fix1r-r5-output/checkpoints retained read-only, not overwritten)",
+  "external_artifacts_sha256": {
+    "engine-fragment-report.json": "9bb01b78d5fbfad7a9d942657d7fae165bfce0a4eb86c2671b36bbd3cdac52c1",
+    "engine-crest-report.json": "d8dc5c0ac69118142477220d80567269153030e0c9e62946abc2c24e33bfd001",
+    "ensemble-fragment-success.json": "692b049d3b9ea7aa3f3a1db16a317f07342ab76441ba12b1655f5e4cb2b750f6",
+    "ensemble-fragment-zeroleaf.json": "1d037ec296e43bd24a24705f3fcd1fd0619dab74e5a97b28554d8f9f832a06ae"
+  },
+  "v2_warnings": {
+    "artifact_field": "ensemble_report.json warnings[] (code/message/severity/details), non-empty WARNING only; errors separately in errors[]; empty omits both keys",
+    "index_base": 0,
+    "anchor": {"atom": 1, "observed": 338.746618, "expected": ">=350", "ring_id": "r1"},
+    "root_evidence": "/tmp/fix1r-r5-root-warning-probe/old-artifact-fail-corrected.log (2 failures on v1; first probe teardown KeyError log retained, not claimed)",
+    "v1_strong_tests_on_v1": "2 failed (warnings + index_base, recorded in v2 output)"
+  },
+  "raw_evidence": {
+    "rpdd_fragment_C2": {"atom": 1, "observed": 338.746618, "expected": ">=350"},
+    "crest1": {"distorted_input": []}
+  },
+  "golden_changed": [],
+  "golden_unchanged_asserted": "21 ring reports + contract.full + boundary.full + TS1/single/boundary (remaining 72 no-ring + full suite at milestone)",
+  "cap_after": {
+    "path": "/tmp/fix1r-r5-v2-output/cap_after",
+    "n_files": 23,
+    "allowed21_bytes_identical": 21,
+    "mismatches": 0,
+    "baseline": "/tmp/fix1r-r5-input-scan-output/cap_reports and /tmp/fix1r-r4-root-checkpoint/engine_reports"
+  },
+  "contract": {
+    "out_dir": "/tmp/fix1r-r5-v2-output/contract_digests/r5 (no bare /tmp files)",
+    "contract.full.json": "match root checkpoint",
+    "boundary.full.json": "match root checkpoint",
+    "contract_digest": "02cfa4963fce7882064b3a89ac3a8d78bd336245c4ec9014557e793101e2de05 match",
+    "note": "contract.json jd_contract_key omitted without JD src install; core digests identical, no science change"
+  },
+  "collect": {"base": 4951, "proto": 4966, "added": 15, "deleted": 0},
+  "validations": {
+    "new_tests": "15 passed (2 executor tests strengthened with artifact warnings + index_base assertions; nodes still 15)",
+    "new_tests_on_old_base": "12 failed / 3 passed (hook missing, recorded)",
+    "v1_strong_on_v1": "2 failed (warnings field + index_base, recorded)",
+    "root_warning_probe_on_v2": "2 passed",
+    "old_subset": "ring/rigid_units + r4_cp_forms + registry (172 passed); v3_ring + puckering + v2_realization + arch boundaries (92 passed); policy exit 0",
+    "root_16_nodes": "16 passed",
+    "ruff": "pass",
+    "black": "pass (--workers 1 equivalent, single-file check)",
+    "mypy_changed_scope": "pass"
+  }
+}

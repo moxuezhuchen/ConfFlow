@@ -79,6 +79,23 @@ def _has_indices(raw: Mapping[str, Any]) -> bool:
     return _impl(raw)
 
 
+def _report_diagnostics(context: Any) -> Mapping[str, Any] | None:
+    """Lazy proxy: pure driving-input distorted analysis (R5).
+
+    Calls the stage pure helper on the same driving ``context`` (R2
+    authority, covalent graph + typed edges, preserve + enumerate covered,
+    global 0-based ids, deterministic sort). Returns ``None`` when empty
+    so the kernel omits the key; analysis errors surface as an explicit
+    ``{"error": ...}`` mapping, never silent empty.
+    """
+    from confflow.science.confgen.ring.stage import analyze_ring_input_diagnostics as _impl
+
+    try:
+        return _impl(context)
+    except Exception as exc:
+        return {"index_base": 0, "error": f"{type(exc).__name__}: {str(exc)[:300]}"}
+
+
 def _serialize_inherited_state(
     resolved: Mapping[str, Any], state_value: Any, context: Any
 ) -> Mapping[str, Any]:
@@ -214,4 +231,5 @@ def descriptor() -> ComponentDescriptor:
         verify_inherited_state=_verify_inherited_state,
         schema_constants=_schema_constants,
         contract_options=_contract_options,
+        report_diagnostics=_report_diagnostics,
     )

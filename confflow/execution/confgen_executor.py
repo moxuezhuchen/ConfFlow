@@ -340,6 +340,7 @@ class ConfgenExecutor:
                     self._no_realized_structure_diagnostic(work_item, report),
                     *self._resolved_path_diagnostics(resolved_paths, work_item),
                     *self._warning_diagnostics(path_warnings, work_item),
+                    *self._component_diagnostic_warnings(report, work_item),
                 ),
                 timing=timing,
                 recovery=RecoveryInfo(profile="none", attempted=False),
@@ -367,6 +368,7 @@ class ConfgenExecutor:
                 ),
                 *self._resolved_path_diagnostics(resolved_paths, work_item),
                 *self._warning_diagnostics(path_warnings, work_item),
+                *self._component_diagnostic_warnings(report, work_item),
             ),
             timing=timing,
             recovery=RecoveryInfo(profile="none", attempted=False),
@@ -658,6 +660,14 @@ class ConfgenExecutor:
             "drift_events": report["drift_events"],
             "members": leaf_rows,
         }
+        _comp_diags = report.get("component_diagnostics") if isinstance(report, Mapping) else None
+        if isinstance(_comp_diags, Mapping) and dict(_comp_diags):
+            payload["component_diagnostics"] = dict(_comp_diags)
+        _warn_rows, _err_rows = ConfgenExecutor._serialized_component_lists(report, work_item)
+        if _warn_rows:
+            payload["warnings"] = _warn_rows
+        if _err_rows:
+            payload["errors"] = _err_rows
         report_name = "ensemble_report.json"
         report_path = os.path.join(attempt_dir, report_name)
         try:
@@ -802,6 +812,111 @@ class ConfgenExecutor:
                 )
             )
         return tuple(found)
+
+    @staticmethod
+    def _component_diagnostic_warnings(
+        report: Mapping[str, Any], work_item: WorkItem
+    ) -> tuple[Diagnostic, ...]:
+        """Expose engine component diagnostics as visible ensemble warnings.
+
+        Generic over component ids (never names one); distorted rows become
+        WARNING diagnostics, explicit hook errors become ERROR diagnostics.
+        Atom ids are global 0-based (``index_base`` 0, stated in the message
+        and details so readers never mistake them for 1-based labels).
+        Empty or absent input yields no diagnostics so existing outputs
+        stay byte-identical.
+        """
+        raw = report.get("component_diagnostics") if isinstance(report, Mapping) else None
+        if not isinstance(raw, Mapping) or not dict(raw):
+            return ()
+        found: list[Diagnostic] = []
+        for comp_id in sorted(str(k) for k in raw.keys()):
+            payload = raw.get(comp_id)
+            if not isinstance(payload, Mapping):
+                continue
+            if "error" in dict(payload):
+                found.append(
+                    Diagnostic(
+                        code="confgen_component_diagnostics_error",
+                        message=(
+                            f"confgen component {comp_id} diagnostics error: "
+                            f"{payload.get('error')}"
+                        ),
+                        severity=DiagnosticSeverity.ERROR,
+                        step_id=work_item.step_id,
+                        work_item_id=work_item.id,
+                        logical_key=work_item.logical_key,
+                        details=FrozenDict(
+                            {"component": str(comp_id), "error": str(payload.get("error"))}
+                        ),
+                    )
+                )
+                continue
+            entries = payload.get("distorted_input")
+            if not isinstance(entries, (list, tuple)) or not entries:
+                continue
+            for entry in entries:
+                if not isinstance(entry, Mapping):
+                    continue
+                ring = entry.get("ring_id")
+                atom = entry.get("atom")
+                observed = entry.get("observed")
+                expected = entry.get("expected")
+                found.append(
+                    Diagnostic(
+                        code="confgen_distorted_input",
+                        message=(
+                            f"confgen distorted input {comp_id}"
+                            f"{('.' + str(ring)) if ring is not None else ''}"
+                            f" atom {atom} (0-based global, index_base 0):"
+                            f" observed {observed} expected {expected}"
+                        ),
+                        severity=DiagnosticSeverity.WARNING,
+                        step_id=work_item.step_id,
+                        work_item_id=work_item.id,
+                        logical_key=work_item.logical_key,
+                        details=FrozenDict(
+                            {
+                                "component": str(comp_id),
+                                "ring_id": ring,
+                                "atom": atom,
+                                "observed": observed,
+                                "expected": expected,
+                                "index_base": 0,
+                            }
+                        ),
+                    )
+                )
+        return tuple(found)
+
+    @staticmethod
+    def _serialized_component_lists(
+        report: Mapping[str, Any], work_item: WorkItem
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        """Serialize component warnings/errors for the ensemble artifact.
+
+        Built from the same ``_component_diagnostic_warnings`` objects as
+        the runtime diagnostics so artifact and runtime stay consistent.
+        WARNING rows and ERROR rows are returned separately; errors stay
+        explicitly visible and are never relabeled as normal warnings.
+        """
+        warn_rows: list[dict[str, Any]] = []
+        err_rows: list[dict[str, Any]] = []
+        for diag in ConfgenExecutor._component_diagnostic_warnings(report, work_item):
+            sev = diag.severity
+            sev_name = sev.value if isinstance(sev, DiagnosticSeverity) else str(sev)
+            details = dict(diag.details) if isinstance(diag.details, Mapping) else diag.details
+            row = {
+                "code": str(diag.code),
+                "message": str(diag.message),
+                "severity": str(sev_name),
+                "details": details,
+            }
+            if str(sev_name) == DiagnosticSeverity.WARNING.value:
+                warn_rows.append(row)
+            else:
+                err_rows.append(row)
+        return warn_rows, err_rows
 
     @staticmethod
     def _driving(work_item: WorkItem) -> StructureRecord:

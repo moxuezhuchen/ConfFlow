@@ -32,6 +32,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+from typing import Any
 
 import numpy as np
 
@@ -82,6 +83,9 @@ class RingPerception:
     measured_cp: CPCoords | None = None
     q_over_rbar: float = float("inf")
     best_form: CanonicalForm | None = None
+    # R5 optional input-diagnostic payload (default empty so old
+    # constructions stay compatible; empty never serializes).
+    distorted_input: tuple[Any, ...] = ()
 
 
 def _rbar_of(coords: np.ndarray) -> float:
@@ -319,13 +323,56 @@ def commanded_state_dict(template_name: str, *, anchor: int) -> dict[str, object
     }
 
 
-def ring_diagnostics(perception: RingPerception) -> dict[str, object]:
+def ring_diagnostics(
+    perception: RingPerception,
+    distorted_input: Any = (),
+) -> dict[str, object]:
     """Return perception diagnostics (evidence, never state identity).
 
     Carries measured CP (family/index-independent), q/rbar, distances,
     margins, boundary flags and alternatives. Geometry and parent-lock
     audits run against measured CP; nothing is snapped before verification.
+
+    R5: optional ``distorted_input`` (per-ring ``{atom, observed, expected}``
+    rows, or the perception's own ``distorted_input`` payload) serializes
+    only when non-empty; empty input omits the key so existing report
+    bytes stay identical. State identity stays ``form/index/anchor/
+    direction`` only.
     """
+    raw_payload: Any = distorted_input
+    if (not raw_payload) and perception.distorted_input:
+        raw_payload = perception.distorted_input
+    rows: list[dict[str, object]] = []
+    if raw_payload:
+        try:
+            items = list(raw_payload)
+        except TypeError:
+            items = []
+        for item in items:
+            if isinstance(item, Mapping):
+                atom = item.get("atom")
+                rows.append(
+                    {
+                        "atom": int(atom) if atom is not None else None,
+                        "observed": item.get("observed"),
+                        "expected": item.get("expected"),
+                    }
+                )
+            else:
+                atom_v = getattr(item, "atom", None)
+                rows.append(
+                    {
+                        "atom": int(atom_v) if atom_v is not None else None,
+                        "observed": getattr(item, "observed", None),
+                        "expected": getattr(item, "expected", None),
+                    }
+                )
+
+        def _row_key(r: dict[str, object]) -> int:
+            v = r.get("atom")
+            return int(v) if isinstance(v, int) else -1
+
+        rows.sort(key=_row_key)
     cp = perception.measured_cp
     if cp is not None:
         measured_cp: dict[str, object] | None = {
@@ -342,7 +389,7 @@ def ring_diagnostics(perception: RingPerception) -> dict[str, object]:
         }
     else:
         measured_cp = None
-    return {
+    out: dict[str, object] = {
         "confidence": perception.confidence,
         "measured_torsions": [round(value, 6) for value in perception.torsions_deg],
         "measured_cp": measured_cp,
@@ -360,6 +407,9 @@ def ring_diagnostics(perception: RingPerception) -> dict[str, object]:
             for name, dist in perception.alternatives
         ],
     }
+    if rows:
+        out["distorted_input"] = rows
+    return out
 
 
 def ring_states_match(

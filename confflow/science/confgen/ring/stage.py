@@ -72,6 +72,7 @@ from .realization import (
 __all__ = [
     "BACKEND_NAME",
     "RingStage",
+    "analyze_ring_input_diagnostics",
 ]
 
 #: Backend label stamped on every ring realization result.
@@ -81,6 +82,82 @@ BACKEND_NAME = "cp-constrained-v2"
 _CP_MATCH_DEG = 15.0
 _CP_MARGIN_DEG = 8.0
 _CP_REJECT_DEG = 35.0
+
+
+def analyze_ring_input_diagnostics(context: Any) -> Mapping[str, Any] | None:
+    """Analyze driving-input distortion for all ring specs (R5, R2 authority).
+
+    Pure input analysis over ``context.structure`` (the driving geometry,
+    never a realized output) using :func:`rigid_units.analyze_rigid_units`
+    with the stage covalent graph plus ``context.graph`` typed edges.
+    Both ``preserve_input`` and ``enumerate`` specs are covered. Ring atom
+    ids are global 0-based from the normalized resolved spec and are used
+    as-is (no solver-ordinal re-mapping; the solver traversal only permutes
+    order, never renumbers full coordinates).
+
+    Returns ``None`` when every spec is undistorted (callers omit the key
+    so existing report bytes stay identical), else ``{"index_base": 0,
+    "distorted_input": [...]}`` sorted by ``(ring_id, atom)`` with explicit
+    ``ring_id``/``atom``/``observed``/``expected``. Analysis errors raise
+    (never silent empty); the component hook converts them to an explicit
+    ``{"error": ...}`` mapping.
+    """
+    from collections.abc import Mapping as _Mapping
+
+    resolved = getattr(context, "resolved_spec", None)
+    if not isinstance(resolved, _Mapping):
+        raise ValueError("context has no resolved_spec mapping")
+    raw_rings = resolved.get("rings", [])
+    if raw_rings is None:
+        return None
+    if not isinstance(raw_rings, (list, tuple)):
+        raise ValueError("resolved rings section is not a list")
+    if len(raw_rings) == 0:
+        return None
+    structure = getattr(context, "structure", None)
+    if structure is None:
+        raise ValueError("context has no driving structure")
+    coords = np.asarray(structure.coordinates, dtype=float)
+    elements = [str(a) for a in structure.atoms]
+    adjacency = getattr(context, "covalent_adjacency", None)
+    if adjacency is None:
+        adjacency = getattr(context, "adjacency", None)
+    if adjacency is None:
+        raise ValueError("context has no adjacency")
+    covalent_graph = [sorted(set(int(v) for v in row)) for row in adjacency]
+    graph = getattr(context, "graph", None)
+    typed_edges: Any = None
+    if graph is not None:
+        edges = getattr(graph, "edges", None)
+        if edges is not None:
+            typed_edges = list(edges)
+    from .rigid_units import analyze_rigid_units
+
+    entries: list[dict[str, Any]] = []
+    for entry in raw_rings:
+        if not isinstance(entry, _Mapping):
+            raise ValueError(f"bad ring spec entry: {entry!r}")
+        ring_id = entry.get("id")
+        atoms_raw = entry.get("atoms")
+        if ring_id is None or atoms_raw is None:
+            raise ValueError(f"ring spec missing id/atoms: {entry!r}")
+        ring_atoms = [int(a) for a in list(atoms_raw)]
+        analysis = analyze_rigid_units(
+            coords, elements, covalent_graph, ring_atoms, typed_edges=typed_edges
+        )
+        for item in analysis.distorted_input:
+            entries.append(
+                {
+                    "ring_id": str(ring_id),
+                    "atom": int(item.atom),
+                    "observed": round(float(item.observed), 6),
+                    "expected": str(item.expected),
+                }
+            )
+    if not entries:
+        return None
+    entries.sort(key=lambda r: (str(r["ring_id"]), int(r["atom"])))
+    return {"index_base": 0, "distorted_input": entries}
 
 
 class RingStage(GenerationStage):
