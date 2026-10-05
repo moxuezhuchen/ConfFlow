@@ -242,6 +242,32 @@ def project_v3(kernel_run: KernelRun) -> Any:
         if isinstance(kernel_run.report, FrozenDict)
         else dict(kernel_run.report)
     )
+    # INHERITED-REPORT: legacy audited/basis derive from actual entries.
+    # The kernel keeps opaque ComponentInheritedState (non-empty even when
+    # already re-enumerated or payload empty) while legacy locks/entries
+    # are [] there; entries themselves are already byte-identical, so only
+    # restore audited/basis from bool(entries). Old engine builds entries
+    # one-to-one from self._inherited with audited=bool(entries).
+    inherited = report.get("inherited")
+    if isinstance(inherited, Mapping) and "entries" in dict(inherited):
+        entries = dict(inherited).get("entries") or []
+        has_entries = bool(entries)
+        fixed = dict(inherited)
+        fixed["audited"] = bool(has_entries)
+        if has_entries:
+            preserve_basis = (
+                "carried torsion locks re-measured on the input geometry "
+                "against prior absolute frames"
+            )
+            normal_basis = (
+                "carried torsion locks re-measured on every fresh geometry "
+                "against prior absolute frames"
+            )
+            if fixed.get("basis") != preserve_basis:
+                fixed["basis"] = normal_basis
+        else:
+            fixed["basis"] = "no incoming chained state"
+        report["inherited"] = fixed
     return EngineRun(
         leaves=leaves,
         target_records=tuple(records),
