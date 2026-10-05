@@ -360,6 +360,7 @@ RETIRED_V1_V2_WIRE_TOKENS = [
 ]
 V2_MIGRATION_MODULES = ["confflow.config.canonical.v2_adapter"]
 V1_MIGRATION_MODULES = []
+INTERNAL_ONLY_V3_MIGRATION_MODULES = []
 PUBLISH_AUTHORITY_CONSUMERS = (
     "confflow.persistence.run_state",
     "confflow.persistence.publication",
@@ -2013,19 +2014,38 @@ def metrics_snapshot(root: Path) -> dict:
 def check_const_rules(root: Path) -> list[str]:
     """Evaluate the const rules (AP-027/033a/070) against the ACTUAL sources.
 
-    The guarded authorities live in the guard test modules, so this check
-    reads their current values from the real source files instead of trusting
-    the copies embedded above.  Any deviation is reported as a problem.
+    The authoritative tables live in the policy module of the tree UNDER
+    INSPECTION (root/tools/architecture_policy.py), read through the AST
+    helper so edits in the inspected tree are observed.  The copies already
+    imported into this process are never trusted.  Any deviation is reported
+    as a problem.
     """
     problems: list[str] = []
-    guard_source = root / "tests/v4/test_architecture_boundaries.py"
-    v46_source = root / "tests/v4/test_v46_debt.py"
+    policy_source = root / "tools/architecture_policy.py"
 
-    internal = _read_source_constant(guard_source, "INTERNAL_ONLY_V3_MIGRATION_MODULES")
-    if internal is None:
-        problems.append("AP-027: guard source missing INTERNAL_ONLY_V3_MIGRATION_MODULES")
-    else:
-        internal = list(internal)
+    def _read_sequence(name: str, rule_id: str) -> list | None:
+        value = _read_source_constant(policy_source, name)
+        if value is None:
+            problems.append(
+                f"{rule_id}: policy source missing field {name} " "in tools/architecture_policy.py"
+            )
+            return None
+        if not isinstance(value, (list, tuple)):
+            problems.append(
+                f"{rule_id}: policy field {name} must be a list/tuple "
+                "in tools/architecture_policy.py"
+            )
+            return None
+        if any(not isinstance(item, str) for item in value):
+            problems.append(
+                f"{rule_id}: policy field {name} must contain only strings "
+                "in tools/architecture_policy.py"
+            )
+            return None
+        return list(value)
+
+    internal = _read_sequence("INTERNAL_ONLY_V3_MIGRATION_MODULES", "AP-027")
+    if internal is not None:
         if internal != []:
             problems.append("AP-027: INTERNAL_ONLY_V3_MIGRATION_MODULES must be empty")
         for module in internal:
@@ -2033,23 +2053,25 @@ def check_const_rules(root: Path) -> list[str]:
             if (root / relpath).is_file():
                 problems.append(f"AP-027: retired module present on disk: {module}")
 
-    v1 = list(_read_source_constant(guard_source, "V1_MIGRATION_MODULES") or [])
-    v2 = list(_read_source_constant(guard_source, "V2_MIGRATION_MODULES") or [])
-    if v1 != []:
+    v1 = _read_sequence("V1_MIGRATION_MODULES", "AP-033a")
+    v2 = _read_sequence("V2_MIGRATION_MODULES", "AP-033a")
+    if v1 is not None and v1 != []:
         problems.append("AP-033a: V1 migration kernel must be empty")
-    if v2 != ["confflow.config.canonical.v2_adapter"]:
+    if v2 is not None and v2 != ["confflow.config.canonical.v2_adapter"]:
         problems.append("AP-033a: V2 migration kernel must be exactly v2_adapter")
     for module in [*(v1 or []), *(v2 or [])]:
         relpath = module.replace(".", "/") + ".py"
         if (root / relpath).is_file():
             problems.append(f"AP-033a: retired kernel module present on disk: {module}")
 
-    forbidden = _read_source_constant(guard_source, "FORBIDDEN_SYMBOLS")
-    new46 = _read_source_constant(v46_source, "V46_NEW_SYMBOLS")
-    if forbidden is None or new46 is None:
-        problems.append("AP-070: guard symbol tables missing from sources")
-    elif not set(new46).isdisjoint(set(forbidden)):
-        problems.append("AP-070: V46 new symbols overlap the forbidden symbol table")
+    forbidden = _read_sequence("FORBIDDEN_SYMBOLS", "AP-070")
+    new46 = _read_sequence("V46_NEW_SYMBOLS", "AP-070")
+    if forbidden is not None and new46 is not None:
+        overlap = sorted(set(new46).intersection(set(forbidden)))
+        if overlap:
+            problems.append(
+                "AP-070: V46 new symbols overlap the forbidden symbol table: " + ", ".join(overlap)
+            )
     return problems
 
 

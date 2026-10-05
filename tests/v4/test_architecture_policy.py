@@ -572,41 +572,208 @@ def test_rule_ignores_prose_in_docstring_and_comment(rule_id: str, tmp_path: Pat
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# L0.4d1: the authoritative source of the const tables is the policy module of
+# the tree UNDER INSPECTION (read through the AST helper), not the constants
+# already imported into this process and not the legacy guard test modules.
+# ---------------------------------------------------------------------------
+
+POLICY_SOURCE_REL = "tools/architecture_policy.py"
+
+# The clean, five-field policy source every const fixture starts from.  Each
+# corruption fixture rewrites exactly one field, so a failure can only come
+# from the targeted table.
+CLEAN_POLICY_SOURCE = (
+    "INTERNAL_ONLY_V3_MIGRATION_MODULES = []\n"
+    "V1_MIGRATION_MODULES = []\n"
+    'V2_MIGRATION_MODULES = ["confflow.config.canonical.v2_adapter"]\n'
+    'FORBIDDEN_SYMBOLS = ("build_recipe_catalog(",)\n'
+    'V46_NEW_SYMBOLS = ["iprog"]\n'
+)
+
+# field -> the rule id that must be violated when the field is absent or has a
+# non-sequence value.  A missing field is never treated as an empty list.
+CONST_FIELD_RULES = {
+    "INTERNAL_ONLY_V3_MIGRATION_MODULES": "AP-027",
+    "V1_MIGRATION_MODULES": "AP-033a",
+    "V2_MIGRATION_MODULES": "AP-033a",
+    "FORBIDDEN_SYMBOLS": "AP-070",
+    "V46_NEW_SYMBOLS": "AP-070",
+}
+
+
+def _write_policy_source(root: Path, *, drop: str | None = None, override: str = "") -> None:
+    """Write a complete clean policy source, minus ``drop``, plus ``override``."""
+    lines = [
+        line
+        for line in CLEAN_POLICY_SOURCE.splitlines(keepends=True)
+        if drop is None or not line.startswith(f"{drop} =")
+    ]
+    _write(root, POLICY_SOURCE_REL, "".join(lines) + override)
+
+
 def test_ap027_const_rules_clean_on_real_tree() -> None:
     assert check_const_rules(Path(__file__).resolve().parents[2]) == []
 
 
+def test_ap027_const_rules_clean_without_legacy_guard_sources(tmp_path: Path) -> None:
+    # Deleting the old guard test sources from the inspected tree must not
+    # break the check: the authority now lives in tools/architecture_policy.py.
+    _write_policy_source(tmp_path)
+    assert not (tmp_path / "tests/v4/test_architecture_boundaries.py").exists()
+    assert not (tmp_path / "tests/v4/test_v46_debt.py").exists()
+    assert check_const_rules(tmp_path) == []
+
+
 def test_ap027_const_rules_detect_corrupted_v3_kernel(tmp_path: Path) -> None:
-    # The actual guarded authority is INTERNAL_ONLY_V3_MIGRATION_MODULES in the
-    # guard source; a non-empty table (plus its module on disk) must be reported.
-    guard = tmp_path / "tests/v4/test_architecture_boundaries.py"
-    _write(
+    # The authoritative INTERNAL_ONLY_V3_MIGRATION_MODULES table lives in the
+    # policy source; a non-empty table (plus its module on disk) is reported.
+    _write_policy_source(
         tmp_path,
-        str(guard.relative_to(tmp_path)),
-        'INTERNAL_ONLY_V3_MIGRATION_MODULES = ("confflow.config.canonical.v3_adapter",)\n',
+        drop="INTERNAL_ONLY_V3_MIGRATION_MODULES",
+        override='INTERNAL_ONLY_V3_MIGRATION_MODULES = ("confflow.config.canonical.v3_adapter",)\n',
     )
     _write(tmp_path, "confflow/config/canonical/v3_adapter.py", "x = 1\n")
     problems = check_const_rules(tmp_path)
     assert problems and problems[0].startswith("AP-027"), problems
+    assert any("v3_adapter" in p for p in problems), problems
 
 
 def test_ap033a_const_kernel_data_detects_corruption(tmp_path: Path) -> None:
-    _write(
+    _write_policy_source(
         tmp_path,
-        "tests/v4/test_architecture_boundaries.py",
-        'V1_MIGRATION_MODULES = ("confflow.workflow.v1",)\n'
-        'V2_MIGRATION_MODULES = ("confflow.config.canonical.v2_adapter",)\n',
+        drop="V1_MIGRATION_MODULES",
+        override='V1_MIGRATION_MODULES = ("confflow.workflow.v1",)\n',
     )
     _write(tmp_path, "confflow/workflow/v1.py", "x = 1\n")
     problems = check_const_rules(tmp_path)
     assert any(p.startswith("AP-033a") for p in problems), problems
+    assert any("confflow.workflow.v1" in p for p in problems), problems
+
+
+def test_ap033a_const_kernel_detects_wrong_v2_table(tmp_path: Path) -> None:
+    _write_policy_source(
+        tmp_path,
+        drop="V2_MIGRATION_MODULES",
+        override='V2_MIGRATION_MODULES = ["confflow.config.canonical.v1_adapter"]\n',
+    )
+    problems = check_const_rules(tmp_path)
+    assert any(p.startswith("AP-033a") for p in problems), problems
+
+
+def test_ap033a_const_kernel_detects_retired_module_on_disk(tmp_path: Path) -> None:
+    # The listed V2 kernel is still exactly v2_adapter, but its module exists on
+    # disk: AP-033a keeps that as an independent invariant.
+    _write_policy_source(tmp_path)
+    _write(tmp_path, "confflow/config/canonical/v2_adapter.py", "x = 1\n")
+    problems = check_const_rules(tmp_path)
+    assert any(p.startswith("AP-033a") and "on disk" in p for p in problems), problems
 
 
 def test_ap070_const_rules_detect_table_overlap(tmp_path: Path) -> None:
-    _write(tmp_path, "tests/v4/test_architecture_boundaries.py", 'FORBIDDEN_SYMBOLS = ("iprog",)\n')
-    _write(tmp_path, "tests/v4/test_v46_debt.py", 'V46_NEW_SYMBOLS = ("iprog",)\n')
+    _write_policy_source(
+        tmp_path, drop="FORBIDDEN_SYMBOLS", override='FORBIDDEN_SYMBOLS = ("iprog",)\n'
+    )
     problems = check_const_rules(tmp_path)
     assert any(p.startswith("AP-070") for p in problems), problems
+
+
+def test_ap070_const_rules_report_policy_source_tampering(tmp_path: Path) -> None:
+    # Negative counterpart of the clean-without-guard-sources case: tampering
+    # the inspected tree's policy source is reported even though this process
+    # imported clean copies of the same constants.
+    _write(tmp_path, POLICY_SOURCE_REL, "")
+    _write(
+        tmp_path,
+        POLICY_SOURCE_REL,
+        'V46_NEW_SYMBOLS = ["iprog"]\nFORBIDDEN_SYMBOLS = ["iprog"]\n',
+    )
+    problems = check_const_rules(tmp_path)
+    assert any(p.startswith("AP-070") and "iprog" in p for p in problems), problems
+    assert FORBIDDEN_SYMBOLS != ["iprog"], "in-process constant must stay clean"
+
+
+@pytest.mark.parametrize("field,rule_id", sorted(CONST_FIELD_RULES.items()))
+def test_const_rules_report_missing_policy_field(tmp_path: Path, field: str, rule_id: str) -> None:
+    _write_policy_source(tmp_path, drop=field)
+    problems = check_const_rules(tmp_path)
+    assert any(p.startswith(rule_id) and field in p for p in problems), problems
+
+
+@pytest.mark.parametrize("field,rule_id", sorted(CONST_FIELD_RULES.items()))
+def test_const_rules_report_policy_field_type_error(
+    tmp_path: Path, field: str, rule_id: str
+) -> None:
+    _write_policy_source(tmp_path, drop=field, override=f"{field} = 17\n")
+    problems = check_const_rules(tmp_path)
+    assert any(p.startswith(rule_id) and field in p for p in problems), problems
+
+
+def test_const_rules_report_missing_policy_source(tmp_path: Path) -> None:
+    problems = check_const_rules(tmp_path)
+    assert problems, "absent policy source must violate the const rules"
+    assert all(p.split(":")[0] in {"AP-027", "AP-033a", "AP-070"} for p in problems), problems
+
+
+# ---------------------------------------------------------------------------
+# L0.4d1-v2: non-string elements are never silently coerced or skipped.  Each
+# of the five const tables must contain only strings; a None/int/list/dict
+# element is reported with the field's rule id and field name.
+# ---------------------------------------------------------------------------
+
+
+def _element_override(field: str, element) -> str:
+    return f"{field} = {[element]!r}\n"
+
+
+@pytest.mark.parametrize("field,rule_id", sorted(CONST_FIELD_RULES.items()))
+@pytest.mark.parametrize(
+    "bad", [None, 17, ["iprog"], {"bad": 1}], ids=["None", "int", "list", "dict"]
+)
+def test_const_rules_report_policy_field_element_type_error(
+    tmp_path: Path, field: str, rule_id: str, bad
+) -> None:
+    _write_policy_source(tmp_path, drop=field, override=_element_override(field, bad))
+    problems = check_const_rules(tmp_path)
+    assert any(
+        p.startswith(rule_id) and field in p and "only strings" in p for p in problems
+    ), problems
+
+
+def test_ap070_const_rules_reject_malformed_nested_forbidden_element(
+    tmp_path: Path,
+) -> None:
+    # Exact ROOT-MALFORMED-ELEMENT.json repro: full clean five fields except
+    # FORBIDDEN_SYMBOLS=[["iprog"]] while V46_NEW_SYMBOLS=["iprog"].
+    _write_policy_source(
+        tmp_path, drop="FORBIDDEN_SYMBOLS", override='FORBIDDEN_SYMBOLS = [["iprog"]]\n'
+    )
+    problems = check_const_rules(tmp_path)
+    assert problems, "malformed nested element must not silently pass"
+    assert any(p.startswith("AP-070") and "FORBIDDEN_SYMBOLS" in p for p in problems), problems
+
+
+CONST_CLEAN_ELEMENTS = {
+    "INTERNAL_ONLY_V3_MIGRATION_MODULES": [],
+    "V1_MIGRATION_MODULES": [],
+    "V2_MIGRATION_MODULES": ["confflow.config.canonical.v2_adapter"],
+    "FORBIDDEN_SYMBOLS": ["build_recipe_catalog("],
+    "V46_NEW_SYMBOLS": ["iprog"],
+}
+
+
+@pytest.mark.parametrize("field", sorted(CONST_CLEAN_ELEMENTS))
+@pytest.mark.parametrize("container", ["list", "tuple"])
+def test_const_rules_accept_valid_string_sequences(
+    tmp_path: Path, field: str, container: str
+) -> None:
+    elements = CONST_CLEAN_ELEMENTS[field]
+    if container == "list":
+        override = f"{field} = {elements!r}\n"
+    else:
+        override = f"{field} = {tuple(elements)!r}\n"
+    _write_policy_source(tmp_path, drop=field, override=override)
+    assert check_const_rules(tmp_path) == []
 
 
 def test_ap025_public_v3_wire_modules_are_not_importable() -> None:
