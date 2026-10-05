@@ -32,6 +32,7 @@ from confflow.science.confgen.wire_v3_constants import V3_AXIS_ORDER
 __all__ = [
     "LegacyStageAdapter",
     "UnsupportedWireComponent",
+    "assemble_inherited_scope",
     "from_wire_key",
     "is_legacy_stage",
     "project_v3",
@@ -74,6 +75,31 @@ def to_wire_key(key: ComponentStateKey) -> ConfgenStateKey:
         rings=dict(raw.get("rings", {}) or {}),
         torsions=dict(raw.get("torsions", {}) or {}),
     )
+
+
+def assemble_inherited_scope(per_component: Mapping[str, Any]) -> dict[str, Any]:
+    """Assemble the legacy v3 inherited-scope mapping (byte-identical).
+
+    ``per_component`` maps component id to its public JSON payload as
+    returned by ``serialize_inherited_state``. Only the three v3 sections
+    travel on the wire, in legacy order (torsions, rings, coordination);
+    unknown component ids are ignored here (the v3 key conversion already
+    fails closed for them). Missing sections default to the legacy
+    empties (``{}``/``{}``/``None``) so scope bytes never drift.
+    """
+    data = dict(per_component or {})
+    torsions = data.get("torsions", {})
+    rings = data.get("rings", {})
+    coordination = data.get("coordination", None)
+    if torsions is None:
+        torsions = {}
+    if rings is None:
+        rings = {}
+    return {
+        "torsions": dict(torsions) if isinstance(torsions, Mapping) else torsions,
+        "rings": dict(rings) if isinstance(rings, Mapping) else rings,
+        "coordination": (dict(coordination) if isinstance(coordination, Mapping) else coordination),
+    }
 
 
 def to_legacy_realization(r: KernelWorkingRealization) -> WorkingRealization:

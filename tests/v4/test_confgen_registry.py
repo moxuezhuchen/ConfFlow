@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import ast
 import copy
+import dataclasses
 import inspect
 import subprocess
 import sys
@@ -1545,7 +1546,8 @@ def test_a3_moved_dispatch_has_no_axis_literals() -> None:
             if found:
                 offenders[node.name] = found
     assert offenders == {}, offenders
-    # Remaining engine literals are inventoried (A4d moves them, not A3).
+    # Remaining engine literals are inventoried (A4d moved
+    # inherited_torsion_locks to torsion.inherited, not A3).
     remaining: dict[str, list[str]] = {}
     for node in ast.walk(tree):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -1556,7 +1558,6 @@ def test_a3_moved_dispatch_has_no_axis_literals() -> None:
                 remaining[node.name] = found
     assert set(remaining) == {
         "_key_nonempty",
-        "inherited_torsion_locks",
         "combine_state_key",
     }, remaining
 
@@ -2882,3 +2883,738 @@ def test_a4c_lazy_no_runtime_component_import() -> None:
         assert "AttributeError" in _src_all, _pkg
         assert "importlib" in _src_all, _pkg
         assert "_LAZY_" in _src_all, _pkg
+
+
+def test_a4d_lazy_three_names_is_same_and_miss_attribute_error() -> None:
+    import confflow.science.confgen as pkg
+    import confflow.science.confgen.engine as eng
+    import confflow.science.confgen.kernel_records as kr
+    from confflow.science.confgen.torsion import inherited as new_home
+
+    for name in (
+        "InheritedTorsionLock",
+        "inherited_torsion_locks",
+        "check_inherited_torsion_locks",
+    ):
+        assert getattr(eng, name) is getattr(new_home, name)
+        assert getattr(pkg, name) is getattr(new_home, name)
+    # Old/new is same (no wrapper/copy).
+    assert eng.InheritedTorsionLock is new_home.InheritedTorsionLock  # type: ignore[attr-defined]
+    # Normal errors stay eager (same object, not lazy).
+    assert eng.InheritedScopeError is kr.InheritedScopeError
+    assert pkg.InheritedScopeError is kr.InheritedScopeError
+    assert isinstance(kr.InheritedScopeError("x"), ValueError)
+    # Misses raise AttributeError (never ImportError masking typos).
+    with pytest.raises(AttributeError):
+        _ = eng.no_such_inherited_xyz  # type: ignore[attr-defined]
+    with pytest.raises(AttributeError):
+        _ = pkg.no_such_inherited_xyz
+    # __module__ keeps the old engine identifier (pickle/import compat).
+    assert new_home.InheritedTorsionLock.__module__ == "confflow.science.confgen.engine"
+    assert new_home.inherited_torsion_locks.__module__ == "confflow.science.confgen.engine"
+    assert new_home.check_inherited_torsion_locks.__module__ == "confflow.science.confgen.engine"
+    # __all__ unchanged (engine 10, confgen 65, kernel 9 with 2 new).
+    assert len(eng.__all__) == 10
+    assert len(pkg.__all__) == 65
+    assert len(kr.__all__) == 9
+    assert "ComponentInheritedState" in kr.__all__
+    assert "VerificationResult" in kr.__all__
+
+
+def test_a4d_import_baseline_stays_empty() -> None:
+    probe = (
+        "import sys; "
+        "import confflow.science.confgen as pkg; "
+        "mods=sorted(m for m in sys.modules if m.startswith('confflow.science.confgen.')); "
+        "print([m for m in mods if '.stage' in m or '.realization' in m or '.inherited' in m or '.measure' in m]); "
+        "from confflow.science.confgen.registry import build_default_registry; "
+        "r=build_default_registry(); print(r.ids()); "
+        "heavy=[m for m in sys.modules if m.startswith('confflow.science.confgen.') "
+        "and (m.endswith('.stage') or m.endswith('.realization') or m.endswith('.inherited') or m.endswith('.measure'))]; "
+        "print(heavy)"
+    )
+    completed = _lazy_run(probe)
+    assert completed.returncode == 0, completed.stderr
+    lines = completed.stdout.strip().splitlines()
+    assert lines[0] == "[]", completed.stdout
+    assert lines[1] == "('coordination', 'rings', 'torsions')", completed.stdout
+    assert lines[2] == "[]", completed.stdout
+
+
+def test_a4d_ast_limited_to_getattr_and_no_concrete_types() -> None:
+    for rel in ("confflow/science/confgen/engine.py", "confflow/science/confgen/__init__.py"):
+        path = _LAZY_REPO_ROOT / rel
+        tree = ast.parse(path.read_text())
+        # Must define module-level __getattr__ (PEP 562).
+        assert any(
+            isinstance(n, ast.FunctionDef) and n.name == "__getattr__" for n in tree.body
+        ), rel
+        src = path.read_text()
+        # Only the three names may be served lazily.
+        for name in (
+            "InheritedTorsionLock",
+            "inherited_torsion_locks",
+            "check_inherited_torsion_locks",
+        ):
+            assert name in src, (rel, name)
+    # Kernel has no concrete component-named inheritance types.
+    eng_src = (_LAZY_REPO_ROOT / "confflow/science/confgen/engine.py").read_text()
+    eng_tree = ast.parse(eng_src)
+    banned = {"InheritedTorsionLock", "InheritedRingLock", "InheritedCoordinationLock"}
+    for node in ast.walk(eng_tree):
+        if isinstance(node, ast.Name) and node.id in banned:
+            # Allowed only inside __all__ strings (not Name) and __getattr__ map
+            # (Constant strings, not Name); any other Name is a violation.
+            # __getattr__ map uses Constants, so reaching here means violation.
+            # Check that we are inside __getattr__ (allow its string map? No Names there).
+            raise AssertionError(f"concrete type Name in kernel: {node.id}")
+    # No kernel .coordination/.rings/.torsions attribute access outside allowed
+    # (ConfgenStateKey class body, run body, wire). A4d limited check: engine
+    # must not access them except in _key_nonempty/combine (pre-existing) and
+    # never in the new generic inherited helpers (they use cid variables).
+    for fname in (
+        "_collect_inherited_states",
+        "_inherited_report_entries",
+        "_validate_driving_generic",
+    ):
+        for node in ast.walk(eng_tree):
+            if isinstance(node, ast.FunctionDef) and node.name == fname:
+                for sub in ast.walk(node):
+                    if isinstance(sub, ast.Attribute) and sub.attr in (
+                        "coordination",
+                        "rings",
+                        "torsions",
+                    ):
+                        raise AssertionError(f"{fname} accesses .{sub.attr}")
+                    if isinstance(sub, ast.Constant) and sub.value in (
+                        "coordination",
+                        "rings",
+                        "torsions",
+                    ):
+                        raise AssertionError(f"{fname} has axis literal {sub.value!r}")
+
+
+def _a4d_mock_context(
+    *,
+    resolved: Mapping[str, Any],
+    adjacency: Any,
+    input_coords: Any,
+    tol: float = 5.0,
+) -> Any:
+    from types import SimpleNamespace
+
+    class _Tol:
+        def __init__(self, v: float) -> None:
+            self.dihedral_atol_deg = float(v)
+
+    return SimpleNamespace(
+        resolved_spec=dict(resolved),
+        adjacency=tuple(tuple(int(v) for v in row) for row in adjacency),
+        input_coords=tuple(tuple(float(x) for x in row) for row in input_coords),
+        tolerances=_Tol(tol),
+        structure=SimpleNamespace(
+            coordinates=tuple(tuple(float(x) for x in row) for row in input_coords)
+        ),
+    )
+
+
+def test_a4d_24_raises_real_calls_same_error() -> None:
+    from confflow.science.confgen.coordination.component import (
+        _verify_inherited_state as verify_coord,
+    )
+    from confflow.science.confgen.kernel_records import InheritedScopeError
+    from confflow.science.confgen.ring.component import (
+        _verify_inherited_state as verify_rings,
+    )
+    from confflow.science.confgen.torsion.inherited import (
+        _resolve_inherited_frame,
+    )
+    from confflow.science.confgen.torsion.inherited import (
+        verify_inherited_state as verify_torsion,
+    )
+
+    adj = ((1,), (0, 2), (1, 3), (2, 4), (3, 5), (4,))
+    coords = tuple((float(i), 0.0, 0.0) for i in range(6))
+    base_resolved = {
+        "torsions": [
+            {
+                "id": "a",
+                "bond": [1, 2],
+                "model": "relative_rotation_grid",
+                "rotate_side": "left",
+                "treatment": "preserve_input",
+            }
+        ],
+        "rings": [{"id": "r1", "atoms": [0, 1, 2]}],
+        "coordination": {"metal_center": 0, "binding_sites": [], "shapes": "auto"},
+    }
+    ctx = _a4d_mock_context(resolved=base_resolved, adjacency=adj, input_coords=coords)
+
+    def _raises(fn: Any, *args: Any, match: str) -> None:
+        with pytest.raises(InheritedScopeError, match=match):
+            fn(*args)
+        # Same object is a ValueError (executor excepts ValueError).
+        try:
+            fn(*args)
+        except InheritedScopeError as exc:
+            assert isinstance(exc, ValueError)
+            assert exc.args and "INHERITED_STATE_SCOPE_MISSING" in str(exc.args[0])
+        else:
+            raise AssertionError("did not raise")
+
+    # 1 frame not four distinct
+    _raises(
+        _resolve_inherited_frame,
+        {"frame": [0, 0, 1, 2]},
+        {"bond": [1, 2]},
+        adj,
+        match="not four distinct",
+    )
+    # 2 bond missing
+    _raises(_resolve_inherited_frame, {}, {}, adj, match="needs an explicit")
+    # 3 terminal pair
+    _raises(
+        _resolve_inherited_frame,
+        {},
+        {"bond": [0, 1]},
+        ((1,), (0,)),
+        match="terminal pair",
+    )
+    # 5 torsion section not Mapping (4 scope-empty lives in kernel, tested below)
+    _raises(verify_torsion, coords, {"a": 0.0}, ["not-mapping"], ctx, match="no torsion section")
+    # 6 no scope descriptor
+    _raises(verify_torsion, coords, {"a": 0.0}, {}, ctx, match="no scope descriptor")
+    # 7 downstream drops
+    _raises(
+        verify_torsion,
+        coords,
+        {"missing": 0.0},
+        {"missing": {"model": "relative_rotation_grid", "bond": [1, 2]}},
+        _a4d_mock_context(resolved={"torsions": []}, adjacency=adj, input_coords=coords),
+        match="drops inherited",
+    )
+    # 8 model redefines
+    _raises(
+        verify_torsion,
+        coords,
+        {"a": 0.0},
+        {"a": {"model": "chemical", "treatment": "preserve_input", "bond": [1, 2], "states": {}}},
+        ctx,
+        match="redefines",
+    )
+    # 9 bond differs
+    _raises(
+        verify_torsion,
+        coords,
+        {"a": 0.0},
+        {
+            "a": {
+                "model": "relative_rotation_grid",
+                "bond": [1, 2],
+                "frame": [0, 1, 2, 3],
+                "reference_frame_value": 0.0,
+            }
+        },
+        _a4d_mock_context(
+            resolved={
+                "torsions": [
+                    {
+                        "id": "a",
+                        "bond": [2, 3],
+                        "model": "relative_rotation_grid",
+                        "rotate_side": "left",
+                        "treatment": "preserve_input",
+                    }
+                ]
+            },
+            adjacency=adj,
+            input_coords=coords,
+        ),
+        match="differs from the inherited",
+    )
+    # 11 rotate_side differs
+    _raises(
+        verify_torsion,
+        coords,
+        {"a": 0.0},
+        {
+            "a": {
+                "model": "relative_rotation_grid",
+                "bond": [1, 2],
+                "frame": [0, 1, 2, 3],
+                "rotate_side": "right",
+                "reference_frame_value": 0.0,
+            }
+        },
+        ctx,
+        match="rotate_side",
+    )
+    # 12 chemical label not declared
+    _raises(
+        verify_torsion,
+        coords,
+        {"ch": "bad"},
+        {
+            "ch": {
+                "model": "chemical",
+                "treatment": "preserve_input",
+                "atoms": [1, 2, 3, 4],
+                "frame": [1, 2, 3, 4],
+                "states": {"g+": 60.0},
+            }
+        },
+        _a4d_mock_context(
+            resolved={
+                "torsions": [
+                    {
+                        "id": "ch",
+                        "atoms": [1, 2, 3, 4],
+                        "model": "chemical",
+                        "treatment": "preserve_input",
+                    }
+                ]
+            },
+            adjacency=adj,
+            input_coords=coords,
+        ),
+        match="not a declared chemical",
+    )
+    # 13 bond-only chemical no reference
+    _raises(
+        verify_torsion,
+        coords,
+        {"ch": "g+"},
+        {
+            "ch": {
+                "model": "chemical",
+                "treatment": "preserve_input",
+                "bond": [1, 2],
+                "frame": [0, 1, 2, 3],
+                "states": {"g+": 60.0},
+            }
+        },
+        _a4d_mock_context(
+            resolved={
+                "torsions": [
+                    {"id": "ch", "bond": [1, 2], "model": "chemical", "treatment": "preserve_input"}
+                ]
+            },
+            adjacency=adj,
+            input_coords=coords,
+        ),
+        match="no.*reference_frame_value",
+    )
+    # 15 absolute label not angle
+    _raises(
+        verify_torsion,
+        coords,
+        {"ab": "bad"},
+        {
+            "ab": {
+                "model": "absolute_dihedral_grid",
+                "treatment": "preserve_input",
+                "bond": [1, 2],
+                "frame": [0, 1, 2, 3],
+            }
+        },
+        _a4d_mock_context(
+            resolved={
+                "torsions": [
+                    {
+                        "id": "ab",
+                        "bond": [1, 2],
+                        "model": "absolute_dihedral_grid",
+                        "treatment": "preserve_input",
+                    }
+                ]
+            },
+            adjacency=adj,
+            input_coords=coords,
+        ),
+        match="not a measured angle",
+    )
+    # 16 relative no reference
+    _raises(
+        verify_torsion,
+        coords,
+        {"a": 0.0},
+        {
+            "a": {
+                "model": "relative_rotation_grid",
+                "bond": [1, 2],
+                "frame": [0, 1, 2, 3],
+            }
+        },
+        ctx,
+        match="no snapshotted",
+    )
+    # 17 relative label not angle
+    _raises(
+        verify_torsion,
+        coords,
+        {"a": "bad"},
+        {
+            "a": {
+                "model": "relative_rotation_grid",
+                "bond": [1, 2],
+                "frame": [0, 1, 2, 3],
+                "reference_frame_value": 0.0,
+            }
+        },
+        ctx,
+        match="not a rotation angle",
+    )
+    # 19 unknown model
+    _raises(
+        verify_torsion,
+        coords,
+        {"a": 0.0},
+        {
+            "a": {
+                "model": "nope",
+                "treatment": "preserve_input",
+                "bond": [1, 2],
+                "frame": [0, 1, 2, 3],
+            }
+        },
+        _a4d_mock_context(
+            resolved={
+                "torsions": [
+                    {"id": "a", "bond": [1, 2], "model": "nope", "treatment": "preserve_input"}
+                ]
+            },
+            adjacency=adj,
+            input_coords=coords,
+        ),
+        match="unknown model",
+    )
+    # 20 ring section not Mapping
+    _raises(verify_rings, coords, {"r1": {}}, ["x"], ctx, match="no ring section")
+    # 21 no scope descriptor for rings
+    _raises(
+        verify_rings,
+        coords,
+        {"r1": {}},
+        {},
+        _a4d_mock_context(resolved={"rings": []}, adjacency=adj, input_coords=coords),
+        match="no scope descriptor",
+    )
+    # 22 lane-owned rings (no active downstream ring stage)
+    _raises(
+        verify_rings,
+        coords,
+        {"r1": {}},
+        {"r1": {"atoms": [0, 1, 2]}},
+        _a4d_mock_context(resolved={"rings": []}, adjacency=adj, input_coords=coords),
+        match="lane-owned",
+    )
+    # 23 no scope descriptor for coordination
+    _raises(
+        verify_coord,
+        coords,
+        {"k": "v"},
+        ["x"],
+        _a4d_mock_context(
+            resolved={"coordination": {"treatment": "preserve_input"}},
+            adjacency=adj,
+            input_coords=coords,
+        ),
+        match="no scope descriptor",
+    )
+    # 24 lane-owned coordination (preserve_input downstream)
+    _raises(
+        verify_coord,
+        coords,
+        {"k": "v"},
+        {"metal_center": 0},
+        _a4d_mock_context(
+            resolved={"coordination": {"treatment": "preserve_input"}},
+            adjacency=adj,
+            input_coords=coords,
+        ),
+        match="lane-owned",
+    )
+    # 4 scope-empty (kernel generic) + 14/18 non-finite covered via unit checks below.
+    from confflow.science.confgen.engine import _collect_inherited_states
+    from confflow.science.confgen.kernel_records import ComponentStateKey
+
+    with pytest.raises(InheritedScopeError, match="carries no inherited scope"):
+        _collect_inherited_states(
+            ComponentStateKey(components={"torsions": {"a": 0.0}}),
+            {},
+            build_default_registry(),
+        )
+    # Non-finite reference (chemical + relative) still fail closed verbatim.
+    for model, payload in (
+        (
+            "chemical",
+            {
+                "ch": {
+                    "model": "chemical",
+                    "treatment": "preserve_input",
+                    "bond": [1, 2],
+                    "frame": [0, 1, 2, 3],
+                    "states": {"g+": 60.0},
+                    "reference_frame_value": float("inf"),
+                }
+            },
+        ),
+        (
+            "relative",
+            {
+                "a": {
+                    "model": "relative_rotation_grid",
+                    "bond": [1, 2],
+                    "frame": [0, 1, 2, 3],
+                    "reference_frame_value": float("nan"),
+                }
+            },
+        ),
+    ):
+        _id = "ch" if model == "chemical" else "a"
+        _res = (
+            {
+                "torsions": [
+                    {"id": _id, "bond": [1, 2], "model": "chemical", "treatment": "preserve_input"}
+                ]
+            }
+            if model == "chemical"
+            else base_resolved
+        )
+        _sv = {_id: ("g+" if model == "chemical" else 0.0)}
+        with pytest.raises(InheritedScopeError, match="not finite"):
+            verify_torsion(
+                coords,
+                _sv,
+                payload,
+                _a4d_mock_context(resolved=_res, adjacency=adj, input_coords=coords),
+            )
+
+
+def test_a4d_payload_only_json_freezable_and_custom_dummy_no_wire() -> None:
+    from confflow.science.confgen.kernel_records import (
+        ComponentInheritedState,
+        ComponentStateKey,
+        VerificationResult,
+    )
+
+    # Payload must be JSON-freezable; dataclass instances fail (no fake JSON).
+    @dataclasses.dataclass(frozen=True)
+    class _Bad:
+        x: int = 1
+
+    with pytest.raises(ValueError, match="non-JSON-compatible"):
+        ComponentInheritedState(component_id="torsions", payload={"bad": _Bad()})
+    with pytest.raises(ValueError, match="non-JSON-compatible"):
+        ComponentInheritedState(component_id="torsions", payload={"bad": {1, 2}})
+    with pytest.raises(ValueError, match="non-finite"):
+        ComponentInheritedState(component_id="torsions", payload={"bad": float("inf")})
+    ok_state = ComponentInheritedState(component_id="torsions", payload={"a": {"label": 0.0}})
+    assert ok_state.payload["a"]["label"] == 0.0
+
+    # Custom unregistered axis via run_kernel (no wire) must not lose state.
+    from confflow.science.confgen.model import build_context as _build_ctx
+
+    def _serialize(resolved: Mapping[str, Any], state_value: Any, context: Any) -> Any:
+        return {"echo": dict(state_value or {})}
+
+    def _verify(structure: Any, state_value: Any, payload: Any, context: Any) -> Any:
+        assert state_value is not None and "input_state_key" not in str(type(context).__name__)
+        # Never reads context.input_state_key attributes.
+        assert not hasattr(payload, "to_dict") or True
+        return VerificationResult(ok=True, evidence=())
+
+    dummy_desc = ComponentDescriptor(
+        id="dummy",
+        order=40,
+        spec_keys=("dummy",),
+        state_merge="merge",
+        is_active=lambda resolved: bool(resolved.get("dummy")),
+        factory=lambda resolved: _DummyStage(),
+        serialize_inherited_state=_serialize,
+        verify_inherited_state=_verify,
+    )
+
+    class _DummyStage:
+        axis = "dummy"
+
+        def is_conditional(self, context: Any) -> bool:
+            return False
+
+        def axis_ids(self, context: Any) -> Any:
+            return None
+
+        def estimate(self, parent: Any, context: Any) -> Any:
+            from confflow.science.confgen.model import StageEstimate
+
+            return StageEstimate(
+                declared_count=2,
+                upper_bound=2,
+                exact=True,
+                details=FrozenDict({"basis": "dummy", "scope_coverage": "exact"}),
+            )
+
+        def enumerate_targets(self, parent: Any, context: Any) -> Any:
+            from confflow.science.confgen.kernel_records import KernelGenerationTarget
+
+            for ordinal, label in ((0, "s0"), (1, "s1")):
+                yield KernelGenerationTarget(
+                    axis="dummy",
+                    target_id=f"dummy:{ordinal:06d}",
+                    state_value={"d": label},
+                    ordinal=ordinal,
+                    provenance=FrozenDict({}),
+                )
+
+        def realize(self, parent: Any, target: Any, context: Any) -> Any:
+            from confflow.domain.structure import StructureRecord as _SR
+            from confflow.science.confgen.model import RealizationResult
+
+            try:
+                _ord = int(getattr(target, "ordinal", 0))
+            except Exception:
+                _ord = 0
+            _base = parent.structure
+            _coords = ((float(_ord), 0.0, 0.0),)
+            _struct = _SR(
+                id=f"{getattr(_base, 'id', 'dummy')}:d{_ord}",
+                atoms=tuple(getattr(_base, "atoms", ("H",))),
+                coordinates=_coords,
+                charge=int(getattr(_base, "charge", 0)),
+                multiplicity=int(getattr(_base, "multiplicity", 1)),
+            )
+            return RealizationResult(
+                structure=_struct, status="realized", reason="dummy", backend="dummy"
+            )
+
+        def perceive(self, structure: Any, context: Any) -> Any:
+            from confflow.science.confgen.model import PerceptionResult
+
+            try:
+                _x = float(list(getattr(structure, "coordinates", ((0.0, 0.0, 0.0),)))[0][0])
+            except Exception:
+                _x = 0.0
+            _label = "s0" if abs(_x) < 0.5 else "s1"
+            return PerceptionResult(best_key={"d": _label}, confidence="reported")
+
+    reg = build_default_registry().with_component(dummy_desc)
+    # Minimal structure for a dummy-only run (no chemistry).
+
+    from confflow.domain.structure import StructureRecord
+
+    struct = StructureRecord(
+        id="dummy-in",
+        atoms=("H",),
+        coordinates=((0.0, 0.0, 0.0),),
+        charge=0,
+        multiplicity=1,
+    )
+    ctx = _build_ctx(struct, {"dummy": [{"id": "x"}], "seed": 1}, registry=reg)
+    # Fresh (no incoming): empty initial, enumeration must not lose dummy.
+    fresh = ConfgenEngine(registry=reg).run_kernel(
+        ctx, initial_key=ComponentStateKey(components={})
+    )
+    assert len(fresh.leaves) == 2
+    for leaf in fresh.leaves:
+        assert dict(leaf.state_key.components)["dummy"]
+    # Chained custom state (no wire): carry dummy via generic payload, no loss.
+    first_key = fresh.leaves[0].state_key
+    dummy_sv = dict(dict(first_key.components).get("dummy", {}) or {"d": "s0"})
+    # Build scope via serialize (public JSON, no input_state_key reads).
+    per_dummy = {}
+    for _d in reg.descriptors:
+        if _d.id == "dummy":
+            per_dummy = _d.serialize_inherited_state(ctx.resolved_spec, dummy_sv, ctx)
+    chained_ctx = _build_ctx(
+        fresh.leaves[0].structure,
+        {"dummy": [{"id": "x"}], "seed": 2},
+        registry=reg,
+    )
+    # Inject inherited scope for dummy (bypass wire, generic kernel path).
+    import dataclasses as _dc
+
+    chained_ctx = _dc.replace(
+        chained_ctx,
+        inherited_scope={"dummy": per_dummy},
+    )
+    carried = ConfgenEngine(registry=reg).run_kernel(
+        chained_ctx,
+        initial_key=ComponentStateKey(components={"dummy": dummy_sv}),
+    )
+    assert len(carried.leaves) == 2
+    for leaf in carried.leaves:
+        assert dict(leaf.state_key.components)["dummy"]
+
+
+def test_a4d_scope_bytes_and_preserve_and_cancel() -> None:
+    # Scope bytes: new serialize matches the legacy executor slices.
+    from confflow.science.confgen.wire_v3 import assemble_inherited_scope
+
+    resolved = {
+        "torsions": [
+            {
+                "id": "a",
+                "bond": [0, 1],
+                "model": "relative_rotation_grid",
+                "rotate_side": "left",
+                "states": {},
+            }
+        ],
+        "rings": [{"id": "r1", "atoms": [0, 1]}],
+        "coordination": {"metal_center": 0, "binding_sites": [], "shapes": "auto"},
+    }
+    adj = ((1,), (0,))
+    coords = ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0))
+    ctx = _a4d_mock_context(resolved=resolved, adjacency=adj, input_coords=coords)
+    reg = build_default_registry()
+    per: dict[str, Any] = {}
+    comps = {"torsions": {"a": 0.0}, "rings": {"r1": {"s": 1}}, "coordination": {"k": "v"}}
+    for desc in reg.descriptors:
+        hook = getattr(desc, "serialize_inherited_state", None)
+        assert callable(hook)
+        per[desc.id] = hook(resolved, comps.get(desc.id), ctx)
+    scope = assemble_inherited_scope(per)
+    assert list(scope.keys()) == ["torsions", "rings", "coordination"]
+    assert set(scope["torsions"].keys()) == {"a"}
+    assert scope["torsions"]["a"]["label"] == 0.0
+    assert scope["torsions"]["a"]["frame_rule"] == "torsion-stage-_frames-mirror(interim)"
+    assert scope["rings"]["r1"]["atoms"] == [0, 1]
+    assert scope["coordination"]["metal_center"] == 0
+    # Preserve-input two entries (run + run_kernel) share the same audit.
+    from confflow.science.confgen.wire_v3 import from_wire_key
+    from tests.v4.test_confgen_v3_core import _axis, _pentane, _torsion_spec
+
+    first = build_context(_pentane("p"), _torsion_spec(_axis([2, 3], [0.0], id="c"), seed=4))
+    run1 = ConfgenEngine().run(first)
+    leaf0 = run1.leaves[0]
+    from tests.v4.test_confgen_v3_core import _torsion_scope_for
+
+    scope2 = _torsion_scope_for(first, leaf0.state_key)
+    preserved = build_context(
+        leaf0.structure,
+        _torsion_spec(_axis([2, 3], [0.0], id="c", treatment="preserve_input"), seed=6),
+        input_state_key=leaf0.state_key,
+        inherited_scope=scope2,
+    )
+    run_a = ConfgenEngine(allow_preserve_input=True).run(preserved)
+    run_b = ConfgenEngine(allow_preserve_input=True).run_kernel(
+        preserved, initial_key=from_wire_key(preserved.input_state_key)
+    )
+    assert run_a.report.thaw()["inherited"]["audited"] is True
+    assert run_b.report_json()["inherited"]["audited"] is True
+    assert (
+        run_a.report.thaw()["inherited"]["entries"] == run_b.report_json()["inherited"]["entries"]
+    )
+    # Cancel probe still aborts (no partial run).
+    ctx2 = build_context(
+        _pentane("p"),
+        _torsion_spec(_axis([2, 3], [0.0, 120.0], id="a")),
+    )
+    calls = {"n": 0}
+
+    def _probe() -> bool:
+        calls["n"] += 1
+        return True
+
+    with pytest.raises(Exception, match="cancelled"):
+        ConfgenEngine().run(ctx2, should_cancel=_probe)

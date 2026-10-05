@@ -38,6 +38,24 @@ def _describe_scope(resolved: Mapping[str, Any]) -> Any:
     return _impl(resolved)
 
 
+def _serialize_inherited_state(resolved: Mapping[str, Any], state_value: Any, context: Any) -> Any:
+    """Descriptor hook: torsion public scope payload (lazy, no eager solver)."""
+    from confflow.science.confgen.torsion.inherited import (
+        serialize_inherited_state as _impl,
+    )
+
+    return _impl(resolved, state_value, context)
+
+
+def _verify_inherited_state(structure: Any, state_value: Any, payload: Any, context: Any) -> Any:
+    """Descriptor hook: torsion scope+geometry verify (lazy)."""
+    from confflow.science.confgen.torsion.inherited import (
+        verify_inherited_state as _impl,
+    )
+
+    return _impl(structure, state_value, payload, context)
+
+
 def descriptor() -> ComponentDescriptor:
     """Return the torsions component descriptor."""
     from confflow.science.confgen.torsion.spec import normalize_spec as _normalize_spec
@@ -71,4 +89,6 @@ def descriptor() -> ComponentDescriptor:
         describe_scope=_describe_scope,
         normalize_spec=_normalize_spec,
         validate_context=_validate_context,
+        serialize_inherited_state=_serialize_inherited_state,
+        verify_inherited_state=_verify_inherited_state,
     )

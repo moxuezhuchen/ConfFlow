@@ -16,12 +16,14 @@ from typing import Any
 from confflow.domain._immutable import FrozenDict
 
 __all__ = [
+    "ComponentInheritedState",
     "ComponentStateKey",
     "InheritedScopeError",
     "KernelGenerationTarget",
     "KernelRun",
     "KernelWorkingRealization",
     "TopologyBuildContext",
+    "VerificationResult",
     "as_kernel_target",
 ]
 
@@ -176,6 +178,57 @@ def as_kernel_target(t: Any) -> KernelGenerationTarget:
         ordinal=int(t.ordinal),
         provenance=dict(t.provenance),
     )
+
+
+@dataclass(frozen=True, slots=True)
+class ComponentInheritedState:
+    """Generic opaque inherited payload for one component (FIX-1A A4d).
+
+    The kernel never interprets ``payload``; the owning component's
+    ``verify_inherited_state`` does. ``payload`` must be JSON-freezable
+    (plain mappings/lists/str/num/bool/None); dataclass instances or
+    other non-JSON objects fail closed via :func:`_freeze_json` (no fake
+    JSON serialization). Internal lock objects (e.g. torsion locks)
+    stay inside the component; only the public wire payload travels here.
+    """
+
+    component_id: str
+    payload: Any = field(default_factory=FrozenDict)
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.component_id, str) or not self.component_id:
+            raise ValueError("component_id must be a non-empty string")
+        frozen = _freeze_json(
+            dict(self.payload) if isinstance(self.payload, Mapping) else self.payload,
+            path="$.payload",
+        )
+        if isinstance(frozen, dict):
+            object.__setattr__(self, "payload", FrozenDict(frozen))
+        elif isinstance(frozen, list):
+            object.__setattr__(self, "payload", tuple(frozen))
+        else:
+            object.__setattr__(self, "payload", frozen)
+
+
+@dataclass(frozen=True, slots=True)
+class VerificationResult:
+    """Minimal generic inherited-check result (FIX-1A A4d).
+
+    Mirrors the existing ``check_inherited_torsion_locks`` return
+    semantics ``(ok, evidence)`` without inventing thresholds or new
+    conditions. ``ok`` is True when the carried state still holds on
+    the given geometry; ``evidence`` holds drift dicts (empty when ok).
+    Scope failures raise :class:`InheritedScopeError` instead of
+    returning ``ok=False`` (verbatim legacy behavior).
+    """
+
+    ok: bool
+    evidence: tuple[Any, ...] = ()
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.ok, bool):
+            raise ValueError("ok must be a bool")
+        object.__setattr__(self, "evidence", tuple(self.evidence))
 
 
 @dataclass(slots=True)

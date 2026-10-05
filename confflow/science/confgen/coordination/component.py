@@ -14,6 +14,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+from confflow.science.confgen.kernel_records import InheritedScopeError, VerificationResult
 from confflow.science.confgen.registry import ComponentDescriptor
 
 __all__ = ["descriptor"]
@@ -38,6 +39,53 @@ def _describe_scope(resolved: Mapping[str, Any]) -> Any:
     from confflow.science.confgen.coordination.scope import describe_scope as _impl
 
     return _impl(resolved)
+
+
+def _serialize_inherited_state(resolved: Mapping[str, Any], state_value: Any, context: Any) -> Any:
+    """Build the public coordination scope payload (byte-identical)."""
+    coordination = resolved.get("coordination")
+    coord_scope: Any = None
+    if isinstance(coordination, Mapping):
+        coord_scope = {
+            "metal_center": int(coordination.get("metal_center", -1)),
+            "donor_atoms": sorted(
+                int(a)
+                for site in (coordination.get("binding_sites", []) or [])
+                if isinstance(site, Mapping)
+                for a in (site.get("atoms", []) or [])
+            ),
+            "shapes": coordination.get("shapes", "auto"),
+        }
+    if state_value is None:
+        return None
+    scope: Any = {} if coord_scope is None else dict(coord_scope)
+    scope["label"] = dict(state_value) if isinstance(state_value, Mapping) else state_value
+    return scope
+
+
+def _verify_inherited_state(
+    structure: Any, state_value: Any, payload: Any, context: Any
+) -> VerificationResult:
+    """Verify the carried coordination slice (scope completeness only)."""
+    if state_value is None:
+        return VerificationResult(ok=True, evidence=())
+    resolved = context.resolved_spec
+    coordination = resolved.get("coordination")
+    active = (
+        isinstance(coordination, Mapping)
+        and coordination.get("treatment", "enumerate") != "preserve_input"
+    )
+    if active:
+        return VerificationResult(ok=True, evidence=())
+    if not isinstance(payload, Mapping):
+        raise InheritedScopeError(
+            "INHERITED_STATE_SCOPE_MISSING: no scope descriptor for coordination"
+        )
+    raise InheritedScopeError(
+        "INHERITED_STATE_SCOPE_MISSING: inherited coordination is "
+        "lane-owned state with no active downstream coordination "
+        "stage; re-enumerate it (carried lane audit hooks pending)"
+    )
 
 
 def descriptor() -> ComponentDescriptor:
@@ -105,4 +153,6 @@ def descriptor() -> ComponentDescriptor:
         normalize_spec=_normalize_spec,
         validate_context=_validate_context,
         contribute_topology=_contribute_topology,
+        serialize_inherited_state=_serialize_inherited_state,
+        verify_inherited_state=_verify_inherited_state,
     )

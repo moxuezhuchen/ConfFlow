@@ -71,6 +71,19 @@ class ComponentDescriptor:
     # structure patch, before graph assembly). Built-ins without a hook are
     # no-ops.
     contribute_topology: Callable[..., None] | None = None
+    # A4d inherited-state hooks (optional for compat; built-ins always set
+    # them; root-authorized interface addition, PLAN omitted the pairing).
+    # serialize_inherited_state(resolved, state_value, context) sees the full
+    # resolved spec plus this component's state slice (from ComponentStateKey,
+    # never context.input_state_key) and returns the public JSON wire payload
+    # for downstream chaining (byte-identical to the legacy executor slices).
+    # verify_inherited_state(structure, state_value, payload, context) checks
+    # the carried slice against the downstream resolved spec/adjacency (from
+    # context, never input_state_key) plus the given geometry, raising
+    # InheritedScopeError verbatim on scope failures and returning
+    # VerificationResult(ok, evidence) for geometry drift (empty when ok).
+    serialize_inherited_state: Callable[..., Any] | None = None
+    verify_inherited_state: Callable[..., Any] | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "spec_keys", tuple(self.spec_keys))

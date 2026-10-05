@@ -37,8 +37,6 @@ import time
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
-import numpy as np
-
 from ..domain._immutable import FrozenDict
 from ..domain.artifact import ArtifactLocator, ArtifactRef, ArtifactSet
 from ..domain.completion import WorkItemStatus
@@ -428,127 +426,63 @@ class ConfgenExecutor:
     ) -> ResultSet:
         """Attach resolved scope descriptors for downstream chaining.
 
-        The certificate digest and upstream result id already ride in the
-        core stamp's provenance (passed as stamp arguments); this step adds
-        only ``inherited_scope`` — resolved scope/reference descriptors for
-        every axis entry of each leaf's key, in the exact format the CORE
-        ``build_context`` hook reads: torsion defining refs (model,
-        bond/atoms, rotate_side, chemical states) plus the measurable frame
-        and, for relative grids, the absolute frame value snapshotted on
-        this run's input reference geometry; ring atom lists; the
-        coordination metal/donor refs. Original relative labels are
-        preserved verbatim here; downstream locks derive from the snapshotted
-        reference, never from rewritten labels. The production ``result_id``
-        is untouched. Scope lives in domain-semantic ``Provenance`` metadata
-        only — never in the StateKey value, never in structure metadata.
-
-        Relative frames mirror the documented torsion-stage frame rule
-        (minimum-index neighbors); the mirror is marked interim in each
-        descriptor until CORE owns frame resolution end to end.
+        Traverses the registry calling each component's
+        ``serialize_inherited_state`` (state slices from the generic key,
+        never ``context.input_state_key`` attributes); the v3 wire
+        adapter assembles the legacy mapping byte-identically
+        (torsions/rings/coordination order, empties, label verbatim).
+        Scope lives in domain-semantic ``Provenance`` metadata only.
         """
         import dataclasses
 
-        from confflow.science.confgen.torsion.measure import measure_dihedral
+        from confflow.science.confgen.wire_v3 import (
+            assemble_inherited_scope,
+            from_wire_key,
+        )
 
         from ..domain.result import Provenance
 
         resolved = context.resolved_spec
-        torsion_entries = {
-            str(entry.get("id")): entry
-            for entry in (resolved.get("torsions", []) or [])
-            if isinstance(entry, Mapping)
-        }
-        ring_entries = {
-            str(entry.get("id")): entry
-            for entry in (resolved.get("rings", []) or [])
-            if isinstance(entry, Mapping)
-        }
-        coordination = resolved.get("coordination")
-        adjacency = context.adjacency
-        input_coords = np.asarray(context.input_coords, dtype=float)
+        registry = getattr(context, "registry", None)
+        if registry is None:
+            from confflow.science.confgen.registry import default_registry
 
-        def _relative_frame(bond: Any) -> list[int] | None:
-            first, second = int(bond[0]), int(bond[1])
-            near = [n for n in adjacency[first] if n != second]
-            far = [n for n in adjacency[second] if n != first]
-            if not near or not far:
-                return None
-            return [min(near), first, second, min(far)]
-
-        def _torsion_scope(axis_id: str, label: Any) -> dict[str, Any]:
-            entry = torsion_entries.get(axis_id, {})
-            model = str(entry.get("model", ""))
-            bond = entry.get("bond")
-            atoms = entry.get("atoms")
-            frame: Any = None
-            reference_value: Any = None
-            if atoms is not None:
-                frame = [int(a) for a in atoms]
-            elif bond is not None:
-                frame = _relative_frame(bond)
-                if frame is not None:
-                    try:
-                        reference_value = float(measure_dihedral(input_coords, *frame))
-                    except ValueError:
-                        reference_value = None
-            descriptor: dict[str, Any] = {
-                "model": model,
-                "bond": [int(b) for b in bond] if bond is not None else None,
-                "atoms": [int(a) for a in atoms] if atoms is not None else None,
-                "frame": frame,
-                "rotate_side": str(entry.get("rotate_side", "left")),
-                "states": dict(entry.get("states", {}) or {}),
-                "label": label,
-            }
-            if model == "relative_rotation_grid":
-                descriptor["frame_rule"] = "torsion-stage-_frames-mirror(interim)"
-                descriptor["reference_frame_value"] = reference_value
-            return descriptor
-
-        coord_scope: Any = None
-        if isinstance(coordination, Mapping):
-            coord_scope = {
-                "metal_center": int(coordination.get("metal_center", -1)),
-                "donor_atoms": sorted(
-                    int(a)
-                    for site in (coordination.get("binding_sites", []) or [])
-                    if isinstance(site, Mapping)
-                    for a in (site.get("atoms", []) or [])
-                ),
-                "shapes": coordination.get("shapes", "auto"),
-            }
-
+            registry = default_registry()
         attached = []
         for record, leaf in zip(results, leaves):
             key = leaf.state_key
-            torsions = {
-                str(axis_id): _torsion_scope(str(axis_id), label)
-                for axis_id, label in dict(key.torsions).items()
-            }
-            rings = {
-                str(ring_id): {
-                    "atoms": [
-                        int(a) for a in (ring_entries.get(str(ring_id), {}).get("atoms") or [])
-                    ],
-                    "label": (dict(label) if isinstance(label, Mapping) else label),
-                }
-                for ring_id, label in dict(key.rings).items()
-            }
-            coordination_scope: Any = None
-            if key.coordination is not None:
-                coordination_scope = dict(coord_scope) if coord_scope is not None else {}
-                coordination_scope["label"] = (
-                    dict(key.coordination)
-                    if isinstance(key.coordination, Mapping)
-                    else key.coordination
-                )
+            try:
+                generic = from_wire_key(key)
+                comps = dict(generic.components)
+            except Exception:
+                # Already generic (defensive; executor leaves are v3).
+                try:
+                    comps = dict(key.components)
+                except Exception:
+                    comps = {}
+            per: dict[str, Any] = {}
+            for descriptor in getattr(registry, "descriptors", ()) or ():
+                cid = str(getattr(descriptor, "id", ""))
+                if not cid:
+                    continue
+                if cid in comps:
+                    sv: Any = comps[cid]
+                else:
+                    # Missing slice: replace-merge (coordination) means None,
+                    # merge (rings/torsions) means {} (generic via state_merge).
+                    try:
+                        mode = str(getattr(descriptor, "state_merge", "merge"))
+                    except Exception:
+                        mode = "merge"
+                    sv = None if mode == "replace" else {}
+                hook = getattr(descriptor, "serialize_inherited_state", None)
+                if not callable(hook):
+                    continue
+                per[cid] = hook(resolved, sv, context)
+            scope = assemble_inherited_scope(per)
             existing = record.provenance
             meta = dict(existing.metadata) if existing is not None and existing.metadata else {}
-            meta["inherited_scope"] = {
-                "torsions": torsions,
-                "rings": rings,
-                "coordination": coordination_scope,
-            }
+            meta["inherited_scope"] = scope
             if existing is not None:
                 provenance = dataclasses.replace(existing, metadata=FrozenDict(meta))
             else:
