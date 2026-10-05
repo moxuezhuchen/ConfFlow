@@ -99,3 +99,11 @@ CAP-cleanup formal `/tmp/fix1a-cap-cleanup-formal-output/ROOT-ACCEPTANCE.json`�
 - 根AG2移除误加facade导出后漏同步旧A4d导出数量断言，最终65改64，并断言helper仅kernel_records导出，已由根回归验证。A4d218与7capture属于先前运行证据，不冒称最终v3全部重跑。
 - A6正式执行提示词曾把环境简写成/usr/bin/noeditable/jd-pin，执行器误搜索不存在路径；根中断无效运行并用完整环境变量续接，原日志保留。
 - 全量、93份capture、TS1、golden仍待根最终运行。上述阶段通过不替代最终验收。
+
+## 6. 首轮最终验收失败与补修
+
+- 首轮全量0231b4c失败于coordination分片，无完成manifest，不作验收基线。详细定位1 failed/59 passed：旧测试强改冻结context spec却没同步active_components。生产代码无此类spec改写；b870e782ad89bcfb483b81fa5e19be47760354c6只更新夹具为replace并同步派生字段，原断言保留，根独立节点通过，正式diff逐字一致。
+- 根比较部分捕获的93份报告，仅两份继承报告audited/basis漂移。615359ac26c45356441c09928b78e1a2596d9a8a在v3投影按实际entries恢复旧字节；kernel审计/结构/证书不改。根5测试与4实际capture全部逐字等于B1。
+- b6403f945e1380834a3c3ac62df54f59a7532a34保留失败stdout和JUnit。根28工具测试通过，失败仍无manifest，成功绑定验证不放宽。原runner吞stdout并删临时JUnit导致额外科学分片复跑，已如实补修。
+- 继承报告执行器曾搜索无关旧目录；根发现异常耗时后中断搜索、用精确源码锚点续接，原日志保留。
+- 最终ruff及完整mypy228通过；新继承报告测试black排版由根收尾，AST逐字等价。第二轮全量及golden尚待实际结果，不预先宣称通过。

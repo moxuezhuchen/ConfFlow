@@ -5,12 +5,10 @@ from confflow.science.confgen.kernel_records import KernelRun
 from confflow.science.confgen.wire_v3 import project_v3
 
 CARRIED_FRESH = (
-    "carried torsion locks re-measured on every fresh geometry "
-    "against prior absolute frames"
+    "carried torsion locks re-measured on every fresh geometry " "against prior absolute frames"
 )
 CARRIED_INPUT = (
-    "carried torsion locks re-measured on the input geometry "
-    "against prior absolute frames"
+    "carried torsion locks re-measured on the input geometry " "against prior absolute frames"
 )
 EMPTY_BASIS = "no incoming chained state"
 
