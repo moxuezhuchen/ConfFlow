@@ -1986,22 +1986,110 @@ class _RunState:
             return False
 
     def _supports_retry(self, stage: GenerationStage) -> bool:
-        """Report whether the stage overrides the optional retry hook (D0).
+        """Report whether the stage overrides the optional retry hook (D0/D0.2).
 
         Generic MRO probe (same shape as the A3 hook readers); the kernel
         never compares axis strings and never imports components. No
         descriptor fallback: a retry must be an explicit stage override.
+        Duck stages implementing ``retry_solve`` explicitly without
+        inheriting the base remain supported via a callable fallback that
+        ignores the base default implementation.
         """
         from confflow.science.confgen.model import GenerationStage as _Base
 
         try:
-            return any(
-                "retry_solve" in klass.__dict__
+            for klass in type(stage).__mro__:
+                if klass in (_Base, object):
+                    continue
+                slots = klass.__dict__
+                if (
+                    "retry_solve" in slots
+                    or "retry_solve_phase" in slots
+                    or "retry_phases" in slots
+                ):
+                    return True
+        except Exception:
+            pass
+        try:
+            base_legacy = getattr(_Base, "retry_solve", None)
+            base_phase = getattr(_Base, "retry_solve_phase", None)
+            for name, base_fn in (("retry_solve", base_legacy), ("retry_solve_phase", base_phase)):
+                try:
+                    candidate = getattr(stage, name, None)
+                except Exception:
+                    continue
+                if not callable(candidate):
+                    continue
+                if getattr(candidate, "__func__", None) is base_fn:
+                    continue
+                if candidate is base_fn:
+                    continue
+                return True
+        except Exception:
+            pass
+        return False
+
+    def _retry_phase_ids(self, stage: GenerationStage) -> tuple[str, ...]:
+        """Normalize the stage-owned phase declaration (D0.2, fail closed).
+
+        ``None`` means the single generic default phase. Otherwise the
+        declaration must be a non-empty tuple/list of non-empty unique
+        strings in execution order; anything else raises fail-closed.
+        No global or stage-instance run cache is read or written here.
+        Stages hiding the new API (duck stages without inheritance) fall
+        back to the single generic default phase; transparent proxies
+        forwarding the declaration are honored.
+        """
+        from confflow.science.confgen.model import GenerationStage as _Base
+
+        try:
+            overridden = any(
+                "retry_phases" in klass.__dict__
                 for klass in type(stage).__mro__
                 if klass not in (_Base, object)
             )
         except Exception:
-            return False
+            overridden = False
+        declared: Any = None
+        has_declaration = False
+        if overridden:
+            declared = stage.retry_phases()
+            has_declaration = True
+        else:
+            try:
+                candidate = getattr(stage, "retry_phases", None)
+            except Exception:
+                candidate = None
+            if candidate is None:
+                from confflow.science.confgen.model import RETRY_DEFAULT_PHASE
+
+                return (RETRY_DEFAULT_PHASE,)
+            base_fn = getattr(_Base, "retry_phases", None)
+            if candidate is base_fn or getattr(candidate, "__func__", None) is base_fn:
+                from confflow.science.confgen.model import RETRY_DEFAULT_PHASE
+
+                return (RETRY_DEFAULT_PHASE,)
+            if not callable(candidate):
+                from confflow.science.confgen.model import RETRY_DEFAULT_PHASE
+
+                return (RETRY_DEFAULT_PHASE,)
+            declared = candidate()
+            has_declaration = True
+        if not has_declaration or declared is None:
+            from confflow.science.confgen.model import RETRY_DEFAULT_PHASE
+
+            return (RETRY_DEFAULT_PHASE,)
+        if not isinstance(declared, (tuple, list)):
+            raise ValueError("retry phase declaration must be a tuple/list of ids or None")
+        ids = [str(item) for item in list(declared)]
+        if not ids:
+            raise ValueError("retry phase declaration must hold at least one id")
+        for item in list(declared):
+            if not isinstance(item, str) or not item:
+                raise ValueError("retry phase ids must be non-empty strings")
+        if len(set(ids)) != len(ids):
+            raise ValueError("retry phase ids must be unique")
+        return tuple(ids)
 
     @staticmethod
     def _is_solver_error(record: Any) -> bool:
@@ -2130,87 +2218,174 @@ class _RunState:
         exclusions: Sequence[Mapping[str, Any]],
         level_targets: Callable[[int, KernelWorkingRealization], Iterator[KernelGenerationTarget]],
     ) -> None:
-        """Second pass for batch stages: retry solve-failure targets (D0).
+        """Retry pass for batch stages across generic phases (D0/D0.2).
 
-        Only first-pass solve failures (never solver-exception records)
-        are revisited, each through :meth:`_expand_target`, so the
-        policy/suppression gates run again against current records and
-        excluded or suppressed targets are never solved. A retried outcome
-        replaces the stale failure at its exact position (deferred subtree
-        revoked, counters reconciled); a declined hook leaves the single
-        failure record standing. The hook receives the run's real probe
-        plus the immutable per-parent first-pass table. Relocation uses the
-        stored record objects (identity, never id-string search), so
-        earlier replacements cannot shift later ones. No enumeration
-        happens here; no state crosses parents or runs.
+        D0 single-phase behavior is preserved exactly: one generic phase
+        delegating to the legacy hook yields identical records/reports.
+        D0.2 runs stage-owned phases in declaration order. ``first_pass``
+        stays permanently immutable; each phase freezes its own snapshot
+        from current terminals at phase start (same snapshot for every
+        target inside one phase; the next phase snapshot includes prior
+        phase accepted structures). Each phase revisits only currently
+        retryable terminals (never stage errors, drift, policy,
+        suppression, deferral, or publications) through
+        :meth:`_expand_target`, so gates run again and cancellations
+        propagate; a retried outcome replaces the stale failure at its
+        exact position (deferred subtree revoked, counters reconciled) and
+        the live primary reference is updated to the current object, so
+        later phases relocate by identity without cross-parent confusion.
+        Accepted structures are captured from the audited expansion
+        return, never from unaudited solver output. No enumeration happens
+        here; no state crosses parents or runs.
         """
-        hook = stage.retry_solve
+        from confflow.science.confgen.model import RETRY_DEFAULT_PHASE, RetryFirstPass
+
+        try:
+            phase_candidate = getattr(stage, "retry_solve_phase", None)
+        except Exception:
+            phase_candidate = None
+        phase_hook = phase_candidate if callable(phase_candidate) else None
+        try:
+            legacy_candidate = getattr(stage, "retry_solve", None)
+        except Exception:
+            legacy_candidate = None
+        legacy_hook = legacy_candidate if callable(legacy_candidate) else None
         probe = self._should_cancel
         retryable_values = {status.value for status in _RETRYABLE_STATUSES}
-        table = {int(entry.ordinal): entry for entry in first_pass}
-        for target in pending:
-            ordinal = int(target.ordinal)
-            entry = table[ordinal]
-            if entry.status not in retryable_values:
-                continue
-            if bool(entry.solver_error):
-                continue
-            if probe is not None and probe():
-                raise EngineCancelledError("confgen run cancelled by probe")
-            stale = primary[ordinal]
-            mark = len(self.records)
-
-            def _solver(
-                solve_parent: Any,
-                solve_target: Any,
-                solve_context: Any,
-                _hook: Any = hook,
-                _probe: Any = probe,
-                _table: Any = first_pass,
-            ) -> Any:
-                return _hook(solve_parent, solve_target, solve_context, _probe, _table)
-
-            self._expand_target(
-                level,
-                stage,
-                axis,
-                last,
-                parent,
-                path,
-                ancestors,
-                ancestor_specs,
-                parent_target_id,
-                target,
-                exclusions,
-                level_targets,
-                solver=_solver,
+        phase_ids = self._retry_phase_ids(stage)
+        if phase_hook is None and legacy_hook is not None:
+            for declared_id in phase_ids:
+                if declared_id != RETRY_DEFAULT_PHASE:
+                    raise ValueError(
+                        f"retry phase {str(declared_id)!r} has no phase-aware hook; "
+                        "refusing to reuse the legacy hook"
+                    )
+        status_of: dict[int, str] = {}
+        reason_of: dict[int, str] = {}
+        error_of: dict[int, bool] = {}
+        struct_of: dict[int, Any] = {}
+        for entry in first_pass:
+            ordinal_key = int(entry.ordinal)
+            status_of[ordinal_key] = str(entry.status)
+            reason_of[ordinal_key] = str(entry.reason)
+            error_of[ordinal_key] = bool(entry.solver_error)
+            struct_of[ordinal_key] = entry.structure
+        live: dict[int, Any] = dict(primary)
+        ordered = list(pending)
+        for phase_id in phase_ids:
+            snapshot = tuple(
+                RetryFirstPass(
+                    target_id=str(item.target_id),
+                    ordinal=int(item.ordinal),
+                    status=status_of[int(item.ordinal)],
+                    reason=reason_of[int(item.ordinal)],
+                    solver_error=error_of[int(item.ordinal)],
+                    structure=struct_of[int(item.ordinal)],
+                )
+                for item in ordered
             )
-            tail = list(self.records[mark:])
-            target_id = str(target.target_id)
-            prim = [
-                record
-                for record in tail
-                if record.parent_target_id == parent_target_id
-                and record.axis == axis
-                and int(record.ordinal) == ordinal
-            ]
-            if not prim:
-                continue  # hook declined: the failure record stands, single terminal
-            old_idx = self._record_index(stale)
-            self._supersede_failure(old_idx, target_id)
-            tail_ids = {id(record) for record in tail}
-            block_ids = {id(record) for record in prim}
-            block_ids.update(
-                id(record)
-                for record in tail
-                if record.axis == "leaves"
-                and record.parent_target_id == target_id
-                and record.status is TerminalStatus.DEFERRED_PARENT_FAILED
-            )
-            block = [record for record in tail if id(record) in block_ids]
-            rest = [record for record in tail if id(record) not in block_ids]
-            head = [record for record in self.records if id(record) not in tail_ids]
-            self.records[:] = head[:old_idx] + block + head[old_idx:] + rest
+            for target in ordered:
+                ordinal = int(target.ordinal)
+                if status_of[ordinal] not in retryable_values:
+                    continue
+                if error_of[ordinal]:
+                    continue
+                if probe is not None and probe():
+                    raise EngineCancelledError("confgen run cancelled by probe")
+                stale = live[ordinal]
+                mark = len(self.records)
+
+                def _solver(
+                    solve_parent: Any,
+                    solve_target: Any,
+                    solve_context: Any,
+                    _phase_hook: Any = phase_hook,
+                    _legacy: Any = legacy_hook,
+                    _probe: Any = probe,
+                    _table: Any = first_pass,
+                    _phase: Any = phase_id,
+                    _snap: Any = snapshot,
+                ) -> Any:
+                    if _phase == RETRY_DEFAULT_PHASE:
+                        if _phase_hook is not None:
+                            return _phase_hook(
+                                solve_parent,
+                                solve_target,
+                                solve_context,
+                                _probe,
+                                _table,
+                                _phase,
+                                _snap,
+                            )
+                        if _legacy is not None:
+                            return _legacy(
+                                solve_parent, solve_target, solve_context, _probe, _table
+                            )
+                        return None
+                    if _phase_hook is not None:
+                        return _phase_hook(
+                            solve_parent,
+                            solve_target,
+                            solve_context,
+                            _probe,
+                            _table,
+                            _phase,
+                            _snap,
+                        )
+                    if _legacy is not None:
+                        raise ValueError(
+                            f"retry phase {str(_phase)!r} has no phase-aware hook; "
+                            "refusing to reuse the legacy hook"
+                        )
+                    return None
+
+                accepted = self._expand_target(
+                    level,
+                    stage,
+                    axis,
+                    last,
+                    parent,
+                    path,
+                    ancestors,
+                    ancestor_specs,
+                    parent_target_id,
+                    target,
+                    exclusions,
+                    level_targets,
+                    solver=_solver,
+                )
+                tail = list(self.records[mark:])
+                target_id = str(target.target_id)
+                prim = [
+                    record
+                    for record in tail
+                    if record.parent_target_id == parent_target_id
+                    and record.axis == axis
+                    and int(record.ordinal) == ordinal
+                ]
+                if not prim:
+                    continue  # hook declined: the failure record stands, single terminal
+                old_idx = self._record_index(stale)
+                self._supersede_failure(old_idx, target_id)
+                tail_ids = {id(record) for record in tail}
+                block_ids = {id(record) for record in prim}
+                block_ids.update(
+                    id(record)
+                    for record in tail
+                    if record.axis == "leaves"
+                    and record.parent_target_id == target_id
+                    and record.status is TerminalStatus.DEFERRED_PARENT_FAILED
+                )
+                block = [record for record in tail if id(record) in block_ids]
+                rest = [record for record in tail if id(record) not in block_ids]
+                head = [record for record in self.records if id(record) not in tail_ids]
+                self.records[:] = head[:old_idx] + block + head[old_idx:] + rest
+                current = prim[0]
+                live[ordinal] = current
+                status_of[ordinal] = str(current.status.value)
+                reason_of[ordinal] = str(current.reason)
+                error_of[ordinal] = bool(self._is_solver_error(current))
+                struct_of[ordinal] = accepted
 
     def _carries_inherited_locks(self, axis: str, stage: GenerationStage) -> bool:
         """Read the inherited-lock carrier hook generically (FIX-1A A3)."""

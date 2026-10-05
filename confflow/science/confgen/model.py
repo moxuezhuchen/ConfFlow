@@ -42,6 +42,7 @@ from confflow.science.confgen.wire_v3_constants import V3_AXIS_ORDER as AXIS_ORD
 __all__ = [
     "AXIS_ORDER",
     "SCHEMA_VERSION",
+    "RETRY_DEFAULT_PHASE",
     "AtomRef",
     "EdgeType",
     "GenerationStage",
@@ -534,6 +535,17 @@ class RetryFirstPass:
     structure: StructureRecord | None
 
 
+#: Generic default retry phase id (D0.2 protocol).
+#:
+#: Stages that only override :meth:`GenerationStage.retry_solve` run one
+#: phase with this id; the default :meth:`GenerationStage.retry_solve_phase`
+#: delegates to :meth:`GenerationStage.retry_solve` for exactly this id.
+#: Stage-owned multi-phase declarations use generic ids of their own
+#: choosing (non-empty unique strings, declaration order is execution
+#: order). The kernel never interprets ids beyond order/identity.
+RETRY_DEFAULT_PHASE: str = "default"
+
+
 @dataclass(frozen=True, slots=True)
 class PerceptionResult:
     """Stage-local perception of one realized structure."""
@@ -711,6 +723,47 @@ class GenerationStage(ABC):
         probe and must let ``EngineCancelledError`` propagate.
         """
         return None
+
+    def retry_phases(self) -> tuple[str, ...] | None:
+        """Declare stage-owned retry phases in execution order (optional).
+
+        D0.2 generic protocol. ``None`` (the default) means exactly one
+        generic phase (:data:`RETRY_DEFAULT_PHASE`) delegating to
+        :meth:`retry_solve`, preserving D0 single-stage bytes. A tuple
+        declares two or more generic phase ids; ids must be non-empty
+        unique strings and run in declaration order. The declaration is
+        stage-owned data only; the kernel validates fail-closed, keeps no
+        global or stage-instance run cache, and never interprets ids.
+        """
+        return None
+
+    def retry_solve_phase(
+        self,
+        parent: StageParentProtocol,
+        target: GenerationTarget,
+        context: MolecularContext,
+        should_cancel: CancelProbe | None,
+        first_pass: tuple[RetryFirstPass, ...],
+        phase_id: str,
+        phase_snapshot: tuple[RetryFirstPass, ...],
+    ) -> RealizationResult | None:
+        """Phase-aware alternate-start attempt for one failed target (optional).
+
+        D0.2 generic protocol. The engine calls this once per phase, in
+        declaration order, only for targets whose *current* terminal (at
+        that phase start) is a solve-failure terminal, and only after
+        re-running the policy/suppression gates via the full post-solve
+        path. ``first_pass`` is the permanent immutable input-only table;
+        ``phase_snapshot`` is the frozen per-phase table built from current
+        terminals at that phase start (prior-phase accepted structures
+        included; targets within one phase all see the same snapshot).
+        The default delegates the generic phase to :meth:`retry_solve`
+        and declines any other id, so stages overriding only
+        :meth:`retry_solve` keep D0 bytes exactly.
+        """
+        if phase_id != RETRY_DEFAULT_PHASE:
+            return None
+        return self.retry_solve(parent, target, context, should_cancel, first_pass)
 
     @abstractmethod
     def estimate(self, parent: StageParentProtocol, context: MolecularContext) -> StageEstimate:

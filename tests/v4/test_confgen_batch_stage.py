@@ -608,3 +608,327 @@ def test_two_level_decline_keeps_deferred() -> None:
     report = run.report_json()
     assert report["counts"]["deferred_parent_failed_leaves"] == 2
     assert report["certificate"]["equations_ok"] is True
+
+
+class _PhaseStage(_ScriptStage):
+    """Scripted stage with stage-owned generic phases (D0.2, engine-dispatched)."""
+
+    def __init__(self, spec: Mapping[str, Any]) -> None:
+        super().__init__(spec)
+        raw_phases = spec.get("phases", ("alpha", "beta"))
+        self._phases: Any = raw_phases
+        heal_map = spec.get("phase_heal", {})
+        self._phase_heal: dict[str, set[int]] = {
+            str(phase): {int(v) for v in slots} for phase, slots in dict(heal_map).items()
+        }
+        fail_map = spec.get("phase_fail", {})
+        self._phase_fail: dict[str, set[int]] = {
+            str(phase): {int(v) for v in slots} for phase, slots in dict(fail_map).items()
+        }
+        self.phase_calls: list[tuple[str, str]] = []
+        self.phase_snapshots: dict[str, Any] = {}
+        self.phase_snapshot_ids: dict[str, list[int]] = {}
+        self.first_pass_ids: list[int] = []
+        self.first_pass_rows: list[Any] = []
+
+    def retry_phases(self) -> Any:
+        return self._phases
+
+    def retry_solve_phase(
+        self,
+        parent: Any,
+        target: Any,
+        context: Any,
+        should_cancel: Any,
+        first_pass: Any,
+        phase_id: Any,
+        phase_snapshot: Any,
+    ) -> Any:
+        self.phase_calls.append((str(phase_id), str(target.target_id)))
+        self.first_pass_ids.append(id(first_pass))
+        self.first_pass_rows.append(tuple((e.ordinal, e.status) for e in first_pass))
+        self.phase_snapshots.setdefault(str(phase_id), phase_snapshot)
+        self.phase_snapshot_ids.setdefault(str(phase_id), []).append(id(phase_snapshot))
+        slot = int(target.ordinal)
+        if slot in self._phase_heal.get(str(phase_id), set()):
+            return RealizationResult(
+                structure=self._spawn(parent, str(target.target_id)),
+                status="realized",
+                reason="scripted-ok",
+                backend="d0-script",
+                evidence=(),
+            )
+        if slot in self._phase_fail.get(str(phase_id), set()):
+            return RealizationResult(
+                structure=None,
+                status="numerical_failure",
+                reason="scripted-retry-fail",
+                backend="d0-script",
+                evidence=(),
+            )
+        return None
+
+
+def test_phase_all_alpha_before_beta() -> None:
+    """Every alpha attempt precedes every beta attempt (no per-target mixing)."""
+    stage = _PhaseStage(
+        {
+            "slots": 3,
+            "fail_slots": (0, 1),
+            "phases": ("alpha", "beta"),
+            "phase_heal": {"alpha": (0,), "beta": (1,)},
+        }
+    )
+    run = _run(ConfgenEngine(stages=[stage]), _ctx({}))
+    assert _terminals_by_target(run)["rings:000000"] == ["published_leaf"]
+    assert _terminals_by_target(run)["rings:000001"] == ["published_leaf"]
+    phases = [phase for phase, _ in stage.phase_calls]
+    assert sorted(set(phases)) == ["alpha", "beta"]
+    first_beta = phases.index("beta")
+    assert all(p == "alpha" for p in phases[:first_beta])
+    assert all(p == "beta" for p in phases[first_beta:])
+    assert ("alpha", "rings:000000") in stage.phase_calls
+    assert ("beta", "rings:000001") in stage.phase_calls
+
+
+def test_phase_snapshot_carries_heal_and_no_revisit() -> None:
+    """Beta snapshot sees the alpha heal; the healed target is never re-solved."""
+    stage = _PhaseStage(
+        {
+            "slots": 3,
+            "fail_slots": (0, 1),
+            "phases": ("alpha", "beta"),
+            "phase_heal": {"alpha": (0,), "beta": (1,)},
+        }
+    )
+    run = _run(ConfgenEngine(stages=[stage]), _ctx({}))
+    assert _terminals_by_target(run)["rings:000000"] == ["published_leaf"]
+    beta_targets = sorted(t for p, t in stage.phase_calls if p == "beta")
+    assert beta_targets == ["rings:000001"]
+    beta_snap = {e.ordinal: e for e in stage.phase_snapshots["beta"]}
+    assert beta_snap[0].status == "published_leaf"
+    assert beta_snap[0].structure is not None
+    assert beta_snap[1].status == "failed_numerical"
+    assert beta_snap[1].structure is None
+    # Within one phase every target sees the identical frozen snapshot object.
+    assert len(set(stage.phase_snapshot_ids["beta"])) == 1
+    # Permanent first pass never mutates across phases.
+    assert len(set(stage.first_pass_ids)) == 1
+    assert all(rows[1][1] == "failed_numerical" for rows in stage.first_pass_rows)
+
+
+def test_phase_mixed_heal_fail_decline_single_terminal() -> None:
+    """Heal/fail/decline spread across phases keeps exactly one terminal each."""
+    stage = _PhaseStage(
+        {
+            "slots": 4,
+            "fail_slots": (0, 1, 2),
+            "phases": ("alpha", "beta"),
+            "phase_heal": {"alpha": (0,)},
+            "phase_fail": {"beta": (1,)},
+        }
+    )
+    run = _run(ConfgenEngine(stages=[stage]), _ctx({}))
+    by_id = _terminals_by_target(run)
+    assert by_id["rings:000000"] == ["published_leaf"]
+    assert by_id["rings:000001"] == ["failed_numerical"]
+    assert by_id["rings:000002"] == ["failed_numerical"]
+    assert by_id["rings:000003"] == ["published_leaf"]
+    sig = {target_id: reason for target_id, _, reason in _sig(run)}
+    assert sig["rings:000001"] == "scripted-retry-fail"
+    assert sig["rings:000002"] == "scripted-fail"
+    report = run.report_json()
+    assert report["certificate"]["equations_ok"] is True
+    assert report["counts"]["failed"] == {"failed_numerical": 2}
+    records = list(run.target_records)
+    ok, _ = verify_count_equations(records, raw=4, sampled=4)
+    assert ok
+    tok, _ = verify_terminal_equations(records)
+    assert tok
+
+
+def test_phase_explicit_default_equals_legacy_heal_bytes() -> None:
+    """Explicit single default phase heals byte-identically to legacy retry_solve."""
+    legacy = _run(
+        ConfgenEngine(stages=[_BatchStage({"slots": 3, "fail_slots": (1,), "retry_mode": "heal"})]),
+        _ctx({}),
+    )
+    phased = _PhaseStage(
+        {
+            "slots": 3,
+            "fail_slots": (1,),
+            "phases": ("default",),
+            "phase_heal": {"default": (1,)},
+        }
+    )
+    run = _run(ConfgenEngine(stages=[phased]), _ctx({}))
+    assert _sig(run) == _sig(legacy)
+    assert run.report_json() == legacy.report_json()
+    assert _leaf_coords(run) == _leaf_coords(legacy)
+
+
+def test_phase_two_parents_isolated_and_repeatable() -> None:
+    """Per-parent phases never leak; reruns with shared instances agree exactly."""
+    top = _ScriptStage({"axis": "coordination", "slots": 2})
+    low = _PhaseStage(
+        {
+            "axis": "rings",
+            "slots": 2,
+            "fail_slots": (0,),
+            "phases": ("alpha", "beta"),
+            "phase_heal": {"beta": (0,)},
+        }
+    )
+    engine = ConfgenEngine(stages=[top, low])
+    first = _run(engine, _ctx({"seed": 11}, tag="d0p"))
+    assert len(first.leaves) == 4
+    assert _terminals_by_target(first)["rings:000000"] == ["published_leaf"] * 2
+    alpha_targets = sorted(t for p, t in low.phase_calls if p == "alpha")
+    beta_targets = sorted(t for p, t in low.phase_calls if p == "beta")
+    assert alpha_targets == ["rings:000000"] * 2
+    assert beta_targets == ["rings:000000"] * 2
+    second = _run(engine, _ctx({"seed": 11}, tag="d0p"))
+    assert _sig(first) == _sig(second)
+    assert first.report_json() == second.report_json()
+
+
+def test_phase_cancel_between_phases_propagates() -> None:
+    """A probe firing at the beta phase raises instead of recording."""
+    stage = _PhaseStage(
+        {
+            "slots": 3,
+            "fail_slots": (0, 1),
+            "phases": ("alpha", "beta"),
+            "phase_heal": {"alpha": (0,), "beta": (1,)},
+        }
+    )
+    calls: list[int] = []
+    probe_calls = {"n": 0}
+
+    def _probe() -> bool:
+        probe_calls["n"] += 1
+        calls.append(1)
+        # First pass (3) + alpha target (1) pass; fire on the beta target.
+        return len(calls) > 4
+
+    with pytest.raises(EngineCancelledError):
+        _run(ConfgenEngine(stages=[stage]), _ctx({}), probe=_probe)
+    assert ("beta", "rings:000001") not in stage.phase_calls
+
+
+def test_phase_invalid_declarations_fail_closed() -> None:
+    """Empty/duplicate/non-string phase declarations raise loudly."""
+    for bad in ((), ("",), ("alpha", "alpha"), (123,), "alpha", ("alpha", "")):
+        stage = _PhaseStage({"slots": 2, "fail_slots": (0,), "phases": bad})
+        with pytest.raises(ValueError):
+            _run(ConfgenEngine(stages=[stage]), _ctx({}))
+
+
+def test_phase_policy_and_suppression_still_honest() -> None:
+    """Exclusions and suppression screen every phase; successes stay suppressed."""
+    spec = {"exclusions": [{"axis": "rings", "match": {"slot": 1}, "reason": "d0-test"}]}
+    stage = _PhaseStage(
+        {
+            "slots": 3,
+            "fail_slots": (1,),
+            "phases": ("alpha", "beta"),
+            "phase_heal": {"alpha": (1,), "beta": (1,)},
+        }
+    )
+    run = _run(ConfgenEngine(stages=[stage]), _ctx(spec))
+    assert "rings:000001" not in stage.solve_calls
+    assert all(t != "rings:000001" for _, t in stage.phase_calls)
+    rejected = [sig for sig in _sig(run) if sig[0] == "rings:000001"]
+    assert rejected and all(status == "rejected_by_policy" for _, status, _ in rejected)
+
+    suppressed = _PhaseStage(
+        {
+            "slots": 2,
+            "phases": ("alpha", "beta"),
+            "phase_heal": {"alpha": (1,), "beta": (1,)},
+            "representative": "rings:000000",
+        }
+    )
+    run2 = _run(ConfgenEngine(stages=[suppressed]), _ctx({}))
+    by_id = {target_id: status for target_id, status, _ in _sig(run2)}
+    assert by_id["rings:000001"] == "suppressed_by_verified_symmetry"
+    assert suppressed.solve_calls == ["rings:000000"]
+    assert suppressed.phase_calls == []
+
+
+def test_phase_two_level_heal_revokes_deferred() -> None:
+    """Phased top heal revokes stale deferred ranges; replacement keeps position."""
+    low = _PhaseStage({"axis": "rings", "slots": 2, "phases": ("alpha", "beta")})
+    top = _PhaseStage(
+        {
+            "axis": "coordination",
+            "slots": 2,
+            "fail_slots": (0,),
+            "phases": ("alpha", "beta"),
+            "phase_heal": {"beta": (0,)},
+        }
+    )
+    healed = _run(ConfgenEngine(stages=[top, low]), _ctx({"seed": 11}, tag="d0c"))
+    assert ("alpha", "coordination:000000") in top.phase_calls
+    assert ("beta", "coordination:000000") in top.phase_calls
+    assert len(healed.leaves) == 4
+    assert not [r for r in healed.target_records if r.status.value == "deferred_parent_failed"]
+    report = healed.report_json()
+    assert report["counts"]["deferred_parent_failed_leaves"] == 0
+    assert report["certificate"]["equations_ok"] is True
+    ok, _ = verify_count_equations(list(healed.target_records), raw=4, sampled=4)
+    assert ok
+    tok, _ = verify_terminal_equations(list(healed.target_records))
+    assert tok
+    assert _terminals_by_target(healed)["coordination:000000"] == ["expanded"]
+
+
+class _DuckStage:
+    """Root counterexample: legacy duck without inheritance hides the new API."""
+
+    def __init__(self, wrapped: Any) -> None:
+        self.wrapped = wrapped
+
+    def __getattr__(self, key: str) -> Any:
+        if key in ("retry_phases", "retry_solve_phase"):
+            raise AttributeError(key)
+        return getattr(self.wrapped, key)
+
+    def retry_solve(self, *args: Any) -> Any:
+        return self.wrapped.retry_solve(*args)
+
+
+def test_duck_legacy_retry_compat_bytes() -> None:
+    """Duck decline/heal runs equal unwrapped runs (report/records/leaf bytes)."""
+    for mode in ("decline", "heal"):
+        spec: dict[str, Any] = {"slots": 3, "fail_slots": (1,)}
+        if mode == "heal":
+            spec["retry_mode"] = "heal"
+        plain = _BatchStage(dict(spec))
+        duck = _DuckStage(_BatchStage(dict(spec)))
+        plain_run = _run(ConfgenEngine(stages=[plain]), _ctx({}))
+        duck_run = _run(ConfgenEngine(stages=[duck]), _ctx({}))
+        assert _sig(duck_run) == _sig(plain_run)
+        assert duck_run.report_json() == plain_run.report_json()
+        assert _leaf_coords(duck_run) == _leaf_coords(plain_run)
+        assert [r.status.value for r in duck_run.target_records] == [
+            r.status.value for r in plain_run.target_records
+        ]
+        assert duck_run.certificate.digest == plain_run.certificate.digest
+
+
+def test_duck_non_default_phase_refuses_legacy_reuse() -> None:
+    """A forwarded non-default declaration without a phase hook fails closed."""
+
+    class _ForwardPhasesDuck(_DuckStage):
+        def __getattr__(self, key: str) -> Any:
+            if key == "retry_solve_phase":
+                raise AttributeError(key)
+            return getattr(self.wrapped, key)
+
+    wrapped = _BatchStage({"slots": 2, "fail_slots": (0,)})
+    object.__setattr__(wrapped, "_phases", ("alpha", "beta"))
+    duck = _ForwardPhasesDuck(wrapped)
+    duck.retry_phases = lambda: ("alpha", "beta")  # type: ignore[method-assign]
+    with pytest.raises(ValueError):
+        _run(ConfgenEngine(stages=[duck]), _ctx({}))
