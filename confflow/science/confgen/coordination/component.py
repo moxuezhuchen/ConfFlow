@@ -222,4 +222,12 @@ def descriptor() -> ComponentDescriptor:
         verify_inherited_state=_verify_inherited_state,
         schema_constants=_schema_constants,
         contract_options=_contract_options,
+        topology_input_keys=("coordination",),
+        legacy_compat=(
+            (
+                "overlay_declared_scope",
+                "confflow.science.confgen.coordination.spec",
+                "contribute_topology",
+            ),
+        ),
     )

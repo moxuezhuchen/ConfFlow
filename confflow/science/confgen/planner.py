@@ -13,7 +13,7 @@ from __future__ import annotations
 import random
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:  # Annotation only; runtime resolve via local import (avoid cycles).
     from confflow.science.confgen.registry import ComponentRegistry
@@ -214,10 +214,11 @@ def resolve_torsion_axes(
 ) -> tuple[TorsionAxis, ...]:
     """Resolve torsion axis entries into :class:`TorsionAxis` records.
 
-    Compat delegation (A4b-v2): implementation lives in
-    ``torsion/spec.py``; this wrapper preserves signature, ``__all__`` and
-    public import path with a lazy import (no top-level kernel -> component
-    import, no ``spec -> planner -> spec`` call cycle).
+    Compat delegation (AG2 generic): implementation is declared by the
+    owning component via ``registry.legacy_compat`` and loaded lazily
+    through ``resolve_compat`` (no kernel component import, no top-level
+    cost, no call cycle). Signature, ``__all__`` and public import path
+    are unchanged.
 
     Entries use the declared ``index_base`` (0 internal, 1 workflow) and are
     stored 0-based internally. Fail-closed checks: unique non-empty ids,
@@ -226,11 +227,11 @@ def resolve_torsion_axes(
     map, no defaults), and duplicate bond axes (same unordered rotating
     pair twice).
     """
-    from confflow.science.confgen.torsion.spec import (
-        resolve_torsion_axes as _impl,
-    )
+    from confflow.science.confgen.registry import resolve_compat
 
-    return _impl(entries, n_atoms=n_atoms, index_base=index_base)
+    _impl = resolve_compat("resolve_torsion_axes")
+
+    return cast("tuple[TorsionAxis, ...]", _impl(entries, n_atoms=n_atoms, index_base=index_base))
 
 
 # ---------------------------------------------------------------------------
@@ -616,10 +617,11 @@ def _validate_atom_declaration(item: Any, *, path: str) -> dict[str, Any]:
     return shape
 
 
-# NOTE (A4c move): ``_convert_coordination`` and the overlay below now live
-# in ``coordination/spec.py``. The planner keeps ``_overlay_...`` as a lazy
-# compat delegation (no top-level component import); ``_build_typed_graph``
-# calls components via the registry instance instead.
+# NOTE (AG2 generic): the overlay implementation is declared by the
+# owning component via ``registry.legacy_compat``. The planner keeps the
+# old symbol/signature and loads it through ``resolve_compat`` (no kernel
+# component import); ``_build_typed_graph`` calls components via the
+# registry instance instead.
 
 
 def _overlay_declared_coordination_scope(
@@ -629,17 +631,15 @@ def _overlay_declared_coordination_scope(
     typed: dict[tuple[int, int, Any], Any],
     explicit_covalent: set[tuple[int, int]],
 ) -> None:
-    """Compat delegation for the moved coordination overlay (A4c).
+    """Compat delegation for the moved overlay (AG2 generic).
 
-    Implementation lives in ``coordination/spec.py:contribute_topology``;
-    this wrapper preserves the old symbol/signature with a lazy import (no
-    top-level kernel -> component import). New code should call the
-    registry ``contribute_topology`` hook via ``TopologyBuildContext``.
+    Implementation is declared by the owning component and loaded through
+    the registry compat lookup; this wrapper preserves the old
+    symbol/signature. New code should call the registry
+    ``contribute_topology`` hook via ``TopologyBuildContext``.
     """
-    from confflow.science.confgen.coordination.spec import (
-        contribute_topology as _impl,
-    )
     from confflow.science.confgen.kernel_records import TopologyBuildContext
+    from confflow.science.confgen.registry import resolve_compat
 
     def _check(value: int, path: str) -> None:
         if value < 0 or value >= n_atoms:
@@ -652,6 +652,7 @@ def _overlay_declared_coordination_scope(
         explicit_covalent=explicit_covalent,
         check_index=_check,
     )
+    _impl = resolve_compat("overlay_declared_scope")
     _impl(resolved, build)
 
 

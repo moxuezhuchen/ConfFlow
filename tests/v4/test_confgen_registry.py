@@ -1546,8 +1546,9 @@ def test_a3_moved_dispatch_has_no_axis_literals() -> None:
             if found:
                 offenders[node.name] = found
     assert offenders == {}, offenders
-    # Remaining engine literals are inventoried (A4d moved
-    # inherited_torsion_locks to torsion.inherited, not A3).
+    # AG2: engine legacy key helpers are generic via registry descriptors;
+    # no axis literals remain (G13 zero, only ConfgenStateKey class body
+    # in model.py is exempt).
     remaining: dict[str, list[str]] = {}
     for node in ast.walk(tree):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -1556,10 +1557,7 @@ def test_a3_moved_dispatch_has_no_axis_literals() -> None:
             )
             if found:
                 remaining[node.name] = found
-    assert set(remaining) == {
-        "_key_nonempty",
-        "combine_state_key",
-    }, remaining
+    assert remaining == {}, remaining
 
 
 def test_a3_ring_matcher_import_error_uses_generic_comparison(
@@ -2040,9 +2038,13 @@ def test_a4b_planner_keeps_public_torsion_api_and_no_overlay_move() -> None:
     # Topology overlay stays in the planner until A4c (not moved early).
     assert "_overlay_declared_coordination_scope" in defined
     assert "_convert_coordination" not in defined
-    # Component section blocks no longer live inline in planner.normalize_spec.
+    # AG2 generic: component section blocks live in descriptors; the
+    # planner reaches them via the registry compat lookup (no direct
+    # component import, no axis literals).
     src = Path(planner.__file__).read_text()
-    assert "coordination/spec" in src or "normalize_spec(raw, index_base" in src
+    assert "resolve_compat" in src
+    assert "confflow.science.confgen.coordination.spec import" not in src
+    assert "confflow.science.confgen.torsion.spec import" not in src
 
 
 def test_a4b_kernel_axis_literals_scoped_not_zero_relaxed() -> None:
@@ -2265,9 +2267,11 @@ def test_a4b_v2_resolve_moved_delegation_and_no_cycle() -> None:
         expand_fn
     )
     assert "confflow.science.confgen.torsion.paths" in ast.unparse(expand_fn)
-    # Planner wrapper is delegation only (lazy import, no torsion logic).
+    # Planner wrapper is delegation only (generic compat lookup, no torsion logic).
     planner_src = Path(planner.__file__).read_text()
-    assert "from confflow.science.confgen.torsion.spec import" in planner_src
+    assert "resolve_compat" in planner_src
+    assert "resolve_torsion_axes" in planner_src
+    assert "from confflow.science.confgen.torsion.spec import" not in planner_src
     tree = ast.parse(planner_src)
     resolve_node = next(
         n
@@ -2368,12 +2372,14 @@ def test_a4c_overlay_moved_delegation_and_no_cycle() -> None:
     tree = ast.parse(Path(planner.__file__).read_text())
     defined = {n.name for n in tree.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
     assert "_overlay_declared_coordination_scope" in defined
-    # Delegation only: lazy import + context + call, no edge logic (no For over donors).
+    # Delegation only: generic compat lookup + context + call, no edge logic.
     node = next(
         n for n in tree.body if getattr(n, "name", "") == "_overlay_declared_coordination_scope"
     )
     src = ast.unparse(node)
-    assert "from confflow.science.confgen.coordination.spec import" in src
+    assert "resolve_compat" in src
+    assert "overlay_declared_scope" in src
+    assert "from confflow.science.confgen.coordination.spec import" not in src
     assert "TypedEdge(" not in src
     assert "declared-binding-site" not in src
     # No top-level kernel -> component import (G13).
@@ -4111,10 +4117,12 @@ def test_ag1_kernel_axis_literals_generic_zero_and_ag2_residual() -> None:
     for n in ast.walk(mtree):
         if isinstance(n, (ast.Import, ast.ImportFrom)):
             assert "torsion.paths" not in ast.unparse(n)
-    # AG2 residual: exactly the two compat wrappers keep direct imports (no new豁免).
+    # AG2: planner compat wrappers are generic via registry.resolve_compat;
+    # no direct component imports remain (G13 zero, no new exemption).
     psrc = Path("confflow/science/confgen/planner.py").read_text()
-    assert "from confflow.science.confgen.torsion.spec import" in psrc
-    assert "from confflow.science.confgen.coordination.spec import" in psrc
+    assert "resolve_compat" in psrc
+    assert "from confflow.science.confgen.torsion.spec import" not in psrc
+    assert "from confflow.science.confgen.coordination.spec import" not in psrc
     ptree = ast.parse(psrc)
     direct: list[tuple[int, str]] = []
     for n in ast.walk(ptree):
@@ -4126,8 +4134,9 @@ def test_ag1_kernel_axis_literals_generic_zero_and_ag2_residual() -> None:
                 (".coordination.spec", ".ring.spec", ".torsion.spec")
             ):
                 direct.append((n.lineno, mod))
-    mods = sorted(m for _, m in direct)
-    assert mods == [
-        "confflow.science.confgen.coordination.spec",
-        "confflow.science.confgen.torsion.spec",
-    ], mods
+    assert direct == [], direct
+    # Compat declarations live in components and resolve lazily (light import kept).
+    from confflow.science.confgen.registry import resolve_compat as _rc
+
+    assert callable(_rc("resolve_torsion_axes"))
+    assert callable(_rc("overlay_declared_scope"))

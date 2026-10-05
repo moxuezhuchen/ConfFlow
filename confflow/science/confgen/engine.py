@@ -151,10 +151,20 @@ def _key_nonempty(key: ConfgenStateKey | ComponentStateKey) -> bool:
     """Return True when the incoming state key carries any entries."""
     if isinstance(key, ComponentStateKey):
         return bool(dict(key.components))
+    from confflow.science.confgen.registry import resolve_registry
+
     payload = key.to_dict()
-    if payload.get("coordination") is not None:
-        return True
-    return bool(payload.get("rings")) or bool(payload.get("torsions"))
+    for descriptor in resolve_registry(None)._ordered():
+        ident = descriptor.id
+        if ident not in payload:
+            continue
+        value = payload.get(ident)
+        if str(descriptor.state_merge) == "replace":
+            if value is not None:
+                return True
+        elif bool(value):
+            return True
+    return False
 
 
 def thaw_snapshot(resolved: Mapping[str, Any]) -> dict[str, Any]:
@@ -176,51 +186,55 @@ def combine_state_key(
 ) -> ConfgenStateKey | ComponentStateKey:
     """Merge a stage-local state value into the complete labeled key.
 
-    v3 inputs return v3 keys with the frozen three-branch behavior;
-    generic inputs use ``descriptor.state_merge`` (replace vs merge).
+    Legacy inputs return legacy keys with the frozen replace-vs-merge
+    behavior driven by each descriptor's ``state_merge``; generic inputs
+    use ``descriptor.state_merge`` (replace vs merge).
     """
     if isinstance(parent_key, ConfgenStateKey):
+        from confflow.science.confgen.registry import resolve_registry
+
+        # The legacy API ignored registry; keep its frozen v3 semantics.
+        # Only ComponentStateKey below follows a caller-supplied registry.
+        resolved = resolve_registry(None)
+        target = None
+        for descriptor in resolved.descriptors:
+            if descriptor.id == axis:
+                target = descriptor
+                break
+        if target is None:
+            raise ValueError(f"unknown generation axis {axis!r}")
         payload = parent_key.to_dict()
-        if axis == "coordination":
-            return ConfgenStateKey(
-                coordination=dict(state_value),
-                rings=dict(payload.get("rings", {}) or {}),
-                torsions=dict(payload.get("torsions", {}) or {}),
-            )
-        if axis == "rings":
-            merged = dict(payload.get("rings", {}) or {})
-            merged.update(dict(state_value))
-            return ConfgenStateKey(
-                coordination=payload.get("coordination"),
-                rings=merged,
-                torsions=dict(payload.get("torsions", {}) or {}),
-            )
-        if axis == "torsions":
-            merged = dict(payload.get("torsions", {}) or {})
-            merged.update(dict(state_value))
-            return ConfgenStateKey(
-                coordination=payload.get("coordination"),
-                rings=dict(payload.get("rings", {}) or {}),
-                torsions=merged,
-            )
-        raise ValueError(f"unknown generation axis {axis!r}")
+        if target.id not in payload:
+            raise ValueError(f"unknown generation axis {axis!r}")
+        kwargs: dict[str, Any] = {}
+        for descriptor in resolved._ordered():
+            ident = descriptor.id
+            if ident not in payload:
+                continue
+            if ident == axis:
+                if str(descriptor.state_merge) == "replace":
+                    kwargs[ident] = dict(state_value)
+                else:
+                    merged = dict(payload.get(ident) or {})
+                    merged.update(dict(state_value))
+                    kwargs[ident] = merged
+            elif str(descriptor.state_merge) == "replace":
+                kwargs[ident] = payload.get(ident)
+            else:
+                kwargs[ident] = dict(payload.get(ident) or {})
+        return ConfgenStateKey(**kwargs)
     if not isinstance(parent_key, ComponentStateKey):
         raise ValueError("parent_key must be a ConfgenStateKey or ComponentStateKey")
+    from confflow.science.confgen.registry import resolve_registry as _resolve
+
+    resolved_registry = _resolve(registry)
     mode: str | None = None
-    if registry is not None:
-        for descriptor in registry.descriptors:
-            if descriptor.id == axis:
-                mode = str(descriptor.state_merge)
-                break
-        if mode is None:
-            raise ValueError(f"unknown generation axis {axis!r}")
-    else:
-        if axis == "coordination":
-            mode = "replace"
-        elif axis in ("rings", "torsions"):
-            mode = "merge"
-        else:
-            raise ValueError(f"unknown generation axis {axis!r}")
+    for descriptor in resolved_registry.descriptors:
+        if descriptor.id == axis:
+            mode = str(descriptor.state_merge)
+            break
+    if mode is None:
+        raise ValueError(f"unknown generation axis {axis!r}")
     components = dict(parent_key.components)
     if mode == "replace":
         components[axis] = dict(state_value)

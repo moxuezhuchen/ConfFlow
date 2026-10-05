@@ -40,7 +40,6 @@ from confflow.science.confgen.kernel_records import (
     KernelGenerationTarget,
     KernelRun,
     KernelWorkingRealization,
-    as_kernel_target,
 )
 from confflow.science.confgen.model import (
     AXIS_ORDER,
@@ -115,7 +114,6 @@ __all__ = [
     "UnsupportedAxisError",
     "WorkingRealization",
     "accounting",
-    "as_kernel_target",
     "build_certificate",
     "build_context",
     "build_typed_graph",

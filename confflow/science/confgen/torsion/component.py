@@ -149,4 +149,11 @@ def descriptor() -> ComponentDescriptor:
         verify_inherited_state=_verify_inherited_state,
         schema_constants=_schema_constants,
         contract_options=_contract_options,
+        legacy_compat=(
+            (
+                "resolve_torsion_axes",
+                "confflow.science.confgen.torsion.spec",
+                "resolve_torsion_axes",
+            ),
+        ),
     )

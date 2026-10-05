@@ -455,21 +455,30 @@ class TransformExecutor:
         """Resolve ``topology_bonds`` into the normalised ConfGen spec, or ``None``.
 
         A4a: optional ``registry`` passthrough (default keeps existing calls).
+        AG2 generic: allowed members are the six generic keys plus each
+        descriptor's explicit ``topology_input_keys`` (only the built-in
+        overlay contributor declares one; customs default to empty so no
+        future component auto-authorizes new inputs).
         """
         raw = native.get("topology_bonds")
         if raw is None:
             return None
         if not isinstance(raw, Mapping):
             raise DomainError(f"refine topology_bonds must be a mapping, got {raw!r}")
+        from confflow.science.confgen.registry import resolve_registry
+
+        resolved_registry = resolve_registry(registry)
         allowed = {
             "index_base",
             "bonds",
             "add_bond",
             "del_bond",
             "atoms",
-            "coordination",
             "bond_scale",
         }
+        for descriptor in resolved_registry._ordered():
+            for key in tuple(getattr(descriptor, "topology_input_keys", ()) or ()):
+                allowed.add(key)
         unknown = sorted(set(raw) - allowed)
         if unknown:
             raise DomainError(
@@ -487,14 +496,16 @@ class TransformExecutor:
                 key: raw[key] for key in ("bonds", "add_bond", "del_bond", "atoms") if key in raw
             },
         }
-        if raw.get("coordination") is not None:
-            spec["coordination"] = raw["coordination"]
+        for descriptor in resolved_registry._ordered():
+            for key in tuple(getattr(descriptor, "topology_input_keys", ()) or ()):
+                if raw.get(key) is not None:
+                    spec[key] = raw[key]
         if raw.get("bond_scale") is not None:
             spec["tolerances"] = {"bond_scale": raw["bond_scale"]}
         from ..science.confgen.planner import normalize_spec
 
         try:
-            return dict(normalize_spec(spec, registry=registry))
+            return dict(normalize_spec(spec, registry=resolved_registry))
         except (ValueError, TypeError, KeyError) as exc:
             raise DomainError(f"refine topology_bonds is invalid: {exc}") from exc
 
