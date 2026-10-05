@@ -43,6 +43,9 @@ def _describe_scope(resolved: Mapping[str, Any]) -> Any:
 def descriptor() -> ComponentDescriptor:
     """Return the coordination component descriptor."""
     from confflow.science.confgen.coordination.spec import (
+        contribute_topology as _contribute_topology,
+    )
+    from confflow.science.confgen.coordination.spec import (
         normalize_spec as _normalize_spec,
     )
     from confflow.science.confgen.coordination.spec import (
@@ -101,4 +104,5 @@ def descriptor() -> ComponentDescriptor:
         describe_scope=_describe_scope,
         normalize_spec=_normalize_spec,
         validate_context=_validate_context,
+        contribute_topology=_contribute_topology,
     )

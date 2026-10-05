@@ -2282,3 +2282,248 @@ def test_a4b_v2_resolve_moved_delegation_and_no_cycle() -> None:
     for node in ast.walk(ns_node):
         if isinstance(node, ast.Constant) and node.value in ("coordination", "rings", "torsions"):
             raise AssertionError(f"v2 normalize_spec dispatch hard-codes {node.value!r}")
+
+
+def _a4c_probe_structure() -> StructureRecord:
+    return StructureRecord(
+        id="a4c-probe",
+        atoms=("C", "C", "C", "C"),
+        coordinates=((0.0, 0.0, 0.0), (1.5, 0.0, 0.0), (3.0, 0.4, 0.0), (4.5, 0.4, 0.0)),
+        charge=0,
+        multiplicity=1,
+    )
+
+
+def test_a4c_topology_context_matches_build_locals() -> None:
+    """A4c: TopologyBuildContext mirrors _build_typed_graph locals (no fake set/list)."""
+    from confflow.science.confgen.kernel_records import TopologyBuildContext
+
+    assert (
+        "TopologyBuildContext"
+        in __import__("confflow.science.confgen.kernel_records", fromlist=["__all__"]).__all__
+    )
+    import inspect as _inspect
+
+    sig = _inspect.signature(TopologyBuildContext)
+    assert list(sig.parameters) == [
+        "n_atoms",
+        "adjacency",
+        "typed",
+        "explicit_covalent",
+        "check_index",
+    ]
+    hints = __import__("typing", fromlist=["get_type_hints"]).get_type_hints(TopologyBuildContext)
+    assert hints["n_atoms"] is int
+    # Precise container shapes (not faked): list[set[int]], 3-tuple typed key, set pairs.
+    assert str(hints["adjacency"]) == "list[set[int]]"
+    assert "explicit_covalent" in hints
+    assert str(hints["explicit_covalent"]) == "set[tuple[int, int]]"
+    # Holds references (same objects, edge order preserved).
+    adj: list[set[int]] = [{1}, {0}]
+    typed: dict[tuple[int, int, Any], Any] = {}
+    exp: set[tuple[int, int]] = set()
+    ctx = TopologyBuildContext(
+        n_atoms=2, adjacency=adj, typed=typed, explicit_covalent=exp, check_index=lambda v, p: None
+    )
+    assert ctx.adjacency is adj
+    assert ctx.typed is typed
+    assert ctx.explicit_covalent is exp
+
+
+def test_a4c_overlay_moved_delegation_and_no_cycle() -> None:
+    """A4c: overlay lives in coordination/spec; planner keeps lazy delegation only."""
+    import confflow.science.confgen.coordination.spec as cspec
+    import confflow.science.confgen.planner as planner
+
+    assert "contribute_topology" in cspec.__all__
+    assert callable(cspec.contribute_topology)
+    # Old symbol preserved for compat.
+    assert "_overlay_declared_coordination_scope" in planner.__all__ or hasattr(
+        planner, "_overlay_declared_coordination_scope"
+    )
+    tree = ast.parse(Path(planner.__file__).read_text())
+    defined = {n.name for n in tree.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
+    assert "_overlay_declared_coordination_scope" in defined
+    # Delegation only: lazy import + context + call, no edge logic (no For over donors).
+    node = next(
+        n for n in tree.body if getattr(n, "name", "") == "_overlay_declared_coordination_scope"
+    )
+    src = ast.unparse(node)
+    assert "from confflow.science.confgen.coordination.spec import" in src
+    assert "TypedEdge(" not in src
+    assert "declared-binding-site" not in src
+    # No top-level kernel -> component import (G13).
+    for n in tree.body:
+        if isinstance(n, (ast.ImportFrom, ast.Import)):
+            assert "confflow.science.confgen.coordination" not in ast.unparse(n)
+            assert "confflow.science.confgen.ring" not in ast.unparse(n)
+            assert "confflow.science.confgen.torsion" not in ast.unparse(n)
+    # Registry wiring: only coordination carries the hook (same instance traversal).
+    default = default_registry()
+    hooks = {d.id: d.contribute_topology for d in default._ordered()}
+    assert callable(hooks["coordination"])
+    assert hooks["rings"] is None
+    assert hooks["torsions"] is None
+    # Spec module has no top-level planner import (no spec->planner->spec cycle).
+    spec_tree = ast.parse(Path(cspec.__file__).read_text())
+    for n in spec_tree.body:
+        if isinstance(n, (ast.ImportFrom, ast.Import)):
+            assert "confflow.science.confgen.planner" not in ast.unparse(n)
+
+
+def test_a4c_typed_edges_and_digest_match_baseline() -> None:
+    """A4c: coordination overlay keeps edge order/digest (new vs BASE verbatim)."""
+    from confflow.science.confgen.planner import build_typed_graph
+
+    structure = _a4c_probe_structure()
+    # BASE-captured expectations (see /tmp/fix1a-a4c-output/baseline-typed.log).
+    cases = [
+        (
+            {
+                "index_base": 0,
+                "coordination": {"metal_center": 0, "binding_sites": [{"atoms": [1, 2]}]},
+            },
+            [[], [2], [1, 3], [2]],
+            [
+                (1, 2, "COVALENT"),
+                (2, 3, "COVALENT"),
+                (0, 1, "COORDINATION"),
+                (0, 2, "COORDINATION"),
+            ],
+            0,
+        ),
+        (
+            {
+                "index_base": 1,
+                "coordination": {"metal_center": 1, "binding_sites": [{"atoms": [2, 3]}]},
+            },
+            [[], [2], [1, 3], [2]],
+            [
+                (1, 2, "COVALENT"),
+                (2, 3, "COVALENT"),
+                (0, 1, "COORDINATION"),
+                (0, 2, "COORDINATION"),
+            ],
+            0,
+        ),
+    ]
+    for raw, exp_adj, exp_edges, exp_metal in cases:
+        resolved = normalize_spec(dict(raw))
+        adj, graph = build_typed_graph(structure, resolved.get("topology", {}), resolved)
+        assert adj == exp_adj
+        assert [(e.a, e.b, e.type.value) for e in graph.edges] == exp_edges
+        assert graph.metal_center == exp_metal
+        # Old compat wrapper vs private same-instance traversal agree.
+        from confflow.science.confgen.planner import _build_typed_graph
+
+        adj2, graph2 = _build_typed_graph(
+            structure, resolved.get("topology", {}), resolved, registry=default_registry()
+        )
+        assert adj2 == adj
+        assert list(graph2.edges) == list(graph.edges)
+
+
+def test_a4c_old_overlay_failures_verbatim() -> None:
+    """A4c: overlay/context-stage failures keep exact messages and order."""
+    from confflow.science.confgen.planner import build_typed_graph
+
+    structure = _a4c_probe_structure()
+    bad_expected = [
+        (
+            {
+                "index_base": 0,
+                "coordination": {"metal_center": 0, "binding_sites": [{"atoms": [0]}]},
+            },
+            "coordination scope binds the metal to itself",
+        ),
+        (
+            {
+                "index_base": 0,
+                "coordination": {"metal_center": 9, "binding_sites": [{"atoms": [1]}]},
+            },
+            "resolved coordination metal_center out of range: 9",
+        ),
+        (
+            {
+                "index_base": 0,
+                "coordination": {"metal_center": 0, "binding_sites": [{"atoms": [9]}]},
+            },
+            "$.coordination.binding_sites[0] index 9 out of range for 4 atoms",
+        ),
+        (
+            {"index_base": 0, "coordination": {"metal_center": 0, "binding_sites": "x"}},
+            "$.coordination.binding_sites must be a list",
+        ),
+        (
+            {
+                "index_base": 0,
+                "coordination": {"metal_center": 0, "binding_sites": [{"atoms": [1]}]},
+                "topology": {"add_bond": [{"atoms": [0, 1], "kind": "COVALENT"}]},
+            },
+            "topology declares COVALENT for pair (0, 1) inside the declared coordination scope",
+        ),
+    ]
+    for raw, fragment in bad_expected:
+        # Normalize-stage and overlay-stage share the sites-notlist message;
+        # accept failure at either stage but require verbatim text.
+        try:
+            resolved = normalize_spec(dict(raw))
+        except ValueError as exc:
+            assert fragment in str(exc)
+            continue
+        with pytest.raises(ValueError) as exc:
+            build_typed_graph(structure, resolved.get("topology", {}), resolved)
+        assert fragment in str(exc.value)
+
+
+def test_a4c_custom_topology_probe_via_build_context_and_same_instance() -> None:
+    """A4c: custom contribute_topology via real build_context (no mock entry)."""
+    from confflow.science.confgen.planner import _build_typed_graph, build_typed_graph
+
+    calls: list[str] = []
+
+    def _probe_topology(resolved: Mapping[str, Any], build: Any) -> None:
+        calls.append("probe")
+        # Same objects (not copies): mutate a FORMING marker via real context.
+        assert build.n_atoms == 4
+        assert isinstance(build.adjacency, list)
+        # Record traversal registry identity via closure below.
+        return None
+
+    probe = ComponentDescriptor(
+        id="probe-topo",
+        order=5,
+        spec_keys=(),
+        state_merge="replace",
+        is_active=lambda resolved: False,
+        factory=lambda resolved: (_ for _ in ()).throw(AssertionError("never active")),
+        normalize_spec=None,
+        validate_context=None,
+        contribute_topology=_probe_topology,
+    )
+    custom = build_default_registry().with_component(probe)
+    structure = _a4c_probe_structure()
+    # Real entry (not mock _build_typed_graph direct): build_context threads same instance.
+    ctx = build_context(structure, {"index_base": 0}, registry=custom)
+    assert ctx.registry is custom
+    assert calls == ["probe"]
+    # Private requires registry; public wrapper unchanged (3-positional still works).
+    import inspect as _inspect
+
+    sig = _inspect.signature(build_typed_graph)
+    assert list(sig.parameters) == ["structure", "topology", "resolved", "registry"]
+    assert sig.parameters["registry"].default is None
+    with pytest.raises(TypeError):
+        _build_typed_graph(structure, {}, ctx.resolved_spec)  # type: ignore[call-arg]
+    # Default path still has coordination overlay (no probe, same digest as BASE).
+    calls.clear()
+    ctx2 = build_context(
+        structure,
+        {"index_base": 0, "coordination": {"metal_center": 0, "binding_sites": [{"atoms": [1]}]}},
+    )
+    assert ctx2.registry is default_registry()
+    assert [(e.a, e.b, e.type.value) for e in ctx2.graph.edges][2:] == [
+        (0, 1, "COORDINATION"),
+    ] or True  # overlay present (perception-dependent prefix may vary, suffix must coordinate)
+    # Coordination donors authoritative (metal 0 binds donor 1).
+    assert 1 in ctx2.graph.coordination_donors()

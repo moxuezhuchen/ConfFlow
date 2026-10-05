@@ -9,7 +9,7 @@ no ``wire_v3`` imports, no component-id validation (the engine checks
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -21,6 +21,7 @@ __all__ = [
     "KernelGenerationTarget",
     "KernelRun",
     "KernelWorkingRealization",
+    "TopologyBuildContext",
     "as_kernel_target",
 ]
 
@@ -175,3 +176,24 @@ def as_kernel_target(t: Any) -> KernelGenerationTarget:
         ordinal=int(t.ordinal),
         provenance=dict(t.provenance),
     )
+
+
+@dataclass(slots=True)
+class TopologyBuildContext:
+    """Mutable typed-graph build authority (FIX-1A A4c, chemistry-agnostic).
+
+    Field names/types mirror ``_build_typed_graph`` locals exactly (PLAN A4c
+    V52 note): ``n_atoms: int``, ``adjacency: list[set[int]]``,
+    ``typed: dict[tuple[int, int, EdgeType], TypedEdge]`` (3-tuple key with
+    kind, NOT the PLAN draft ``edges: dict[tuple[int, int], ...]``),
+    ``explicit_covalent: set[tuple[int, int]]``, ``check_index`` wrapping
+    the local ``_check(value, path)``. Holds references (same objects, not
+    copies) so ``contribute_topology`` mutations are authoritative and edge
+    order/digest stay byte-identical.
+    """
+
+    n_atoms: int
+    adjacency: list[set[int]]
+    typed: dict[tuple[int, int, Any], Any]
+    explicit_covalent: set[tuple[int, int]]
+    check_index: Callable[[int, str], None]

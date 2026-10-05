@@ -64,6 +64,13 @@ class ComponentDescriptor:
     # context stage may live here (none at A4b; always passes).
     normalize_spec: Callable[..., Mapping[str, Any]] | None = None
     validate_context: Callable[..., None] | None = None
+    # A4c topology hook (optional for compat; only coordination sets it).
+    # contribute_topology(resolved, build) mutates the shared
+    # TopologyBuildContext in place (same adjacency/typed objects, edge order
+    # preserved). Runs in registry order at the pre-A4c overlay site (after
+    # structure patch, before graph assembly). Built-ins without a hook are
+    # no-ops.
+    contribute_topology: Callable[..., None] | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "spec_keys", tuple(self.spec_keys))

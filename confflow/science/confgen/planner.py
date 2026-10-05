@@ -608,10 +608,10 @@ def _validate_atom_declaration(item: Any, *, path: str) -> dict[str, Any]:
     return shape
 
 
-# NOTE (A4b move): ``_convert_coordination`` now lives in
-# ``coordination/spec.py`` (imported lazily by that hook). The planner no
-# longer owns coordination index conversion; the overlay below stays until
-# A4c and must not move early.
+# NOTE (A4c move): ``_convert_coordination`` and the overlay below now live
+# in ``coordination/spec.py``. The planner keeps ``_overlay_...`` as a lazy
+# compat delegation (no top-level component import); ``_build_typed_graph``
+# calls components via the registry instance instead.
 
 
 def _overlay_declared_coordination_scope(
@@ -621,69 +621,30 @@ def _overlay_declared_coordination_scope(
     typed: dict[tuple[int, int, Any], Any],
     explicit_covalent: set[tuple[int, int]],
 ) -> None:
-    """Authoritatively type declared metal-site edges (perceived path only).
+    """Compat delegation for the moved coordination overlay (A4c).
 
-    Distance perception guesses every close pair COVALENT, including
-    metal-ligand contacts. The declared coordination scope (metal_center
-    plus binding-site donor atoms, internal 0-based) overrides the guess:
-    each metal-donor pair loses its guessed COVALENT edge/adjacency and
-    gains a COORDINATION record, so fragment decomposition and
-    ring/torsion mechanics never see metal-ligand pseudo-bonds. An
-    explicit COVALENT declaration for a declared metal-donor pair is a
-    contradiction and fails closed; perception guesses are overridden
-    silently. Pairs never declared stay exactly as perceived/corrected.
+    Implementation lives in ``coordination/spec.py:contribute_topology``;
+    this wrapper preserves the old symbol/signature with a lazy import (no
+    top-level kernel -> component import). New code should call the
+    registry ``contribute_topology`` hook via ``TopologyBuildContext``.
     """
-    from confflow.science.confgen.graph import EdgeType, TypedEdge
+    from confflow.science.confgen.coordination.spec import (
+        contribute_topology as _impl,
+    )
+    from confflow.science.confgen.kernel_records import TopologyBuildContext
 
-    coordination = resolved.get("coordination") if isinstance(resolved, Mapping) else None
-    if not isinstance(coordination, Mapping):
-        return
-    metal = coordination.get("metal_center")
-    if metal is None:
-        return
-    if isinstance(metal, bool) or not isinstance(metal, int):
-        raise ValueError(f"resolved coordination metal_center malformed: {metal!r}")
-    if metal < 0 or metal >= n_atoms:
-        raise ValueError(f"resolved coordination metal_center out of range: {metal!r}")
-    sites = coordination.get("binding_sites")
-    if sites is None:
-        return
-    if not isinstance(sites, (list, tuple)):
-        raise ValueError("$.coordination.binding_sites must be a list")
-    donors: set[int] = set()
-    for position, site in enumerate(sites):
-        if not isinstance(site, Mapping):
-            raise ValueError(f"$.coordination.binding_sites[{position}] must be a mapping")
-        for atom in site.get("atoms") or []:
-            if isinstance(atom, bool) or not isinstance(atom, int):
-                raise ValueError(
-                    f"$.coordination.binding_sites[{position}].atoms holds "
-                    f"a non-integer index {atom!r}"
-                )
-            if atom < 0 or atom >= n_atoms:
-                raise ValueError(
-                    f"$.coordination.binding_sites[{position}] index {atom} "
-                    f"out of range for {n_atoms} atoms"
-                )
-            donors.add(int(atom))
-    for donor in sorted(donors):
-        if donor == metal:
-            raise ValueError("coordination scope binds the metal to itself")
-        pair = (min(metal, donor), max(metal, donor))
-        if pair in explicit_covalent:
-            raise ValueError(
-                f"topology declares COVALENT for pair {pair} inside the declared "
-                "coordination scope; contradictory kinds for one pair fail closed"
-            )
-        typed.pop((pair[0], pair[1], EdgeType.COVALENT), None)
-        adjacency[metal].discard(donor)
-        adjacency[donor].discard(metal)
-        typed[(pair[0], pair[1], EdgeType.COORDINATION)] = TypedEdge(
-            a=pair[0],
-            b=pair[1],
-            type=EdgeType.COORDINATION,
-            provenance="declared-binding-site",
-        )
+    def _check(value: int, path: str) -> None:
+        if value < 0 or value >= n_atoms:
+            raise ValueError(f"{path} index {value} out of range for {n_atoms} atoms")
+
+    build = TopologyBuildContext(
+        n_atoms=n_atoms,
+        adjacency=adjacency,
+        typed=typed,
+        explicit_covalent=explicit_covalent,
+        check_index=_check,
+    )
+    _impl(resolved, build)
 
 
 def _apply_structure_patch(
@@ -801,8 +762,12 @@ def _build_typed_graph(
 ) -> tuple[list[list[int]], Any]:
     """Private typed-graph implementation (registry mandatory, keyword-only).
 
-    Body is the pre-A4a ``build_typed_graph`` implementation moved verbatim
-    (AST unchanged); ``registry`` is threaded but not consulted (V50).
+    A4c: ``registry`` is the same instance threaded from ``build_context``
+    (never re-resolved); ``contribute_topology`` hooks run in registry order
+    at the pre-A4c overlay site (after structure patch, before graph
+    assembly) via a shared ``TopologyBuildContext`` (same objects, edge
+    order preserved). Only coordination contributes; generic topology
+    (bonds/add/del/patch) stays here.
 
     All entries arrive internal 0-based (normalize_spec converts under the
     single explicit top-level ``index_base``). Explicit ``topology["bonds"]``
@@ -950,7 +915,19 @@ def _build_typed_graph(
                 adjacency[second].discard(first)
                 typed.pop((pair[0], pair[1], EdgeType.COVALENT), None)
     _apply_structure_patch(structure, n_atoms, adjacency, typed, _check)
-    _overlay_declared_coordination_scope(resolved, n_atoms, adjacency, typed, explicit_covalent)
+    from confflow.science.confgen.kernel_records import TopologyBuildContext
+
+    build = TopologyBuildContext(
+        n_atoms=n_atoms,
+        adjacency=adjacency,
+        typed=typed,
+        explicit_covalent=explicit_covalent,
+        check_index=_check,
+    )
+    for _descriptor in registry._ordered():
+        _hook = _descriptor.contribute_topology
+        if _hook is not None:
+            _hook(resolved, build)
     atoms = [AtomRef(index=position, element=symbol) for position, symbol in enumerate(elements)]
     for decl in topology.get("atoms", []) or []:
         position = int(decl["index"])
