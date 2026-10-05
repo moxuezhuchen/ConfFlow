@@ -14,7 +14,10 @@ import math
 import random
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:  # Annotation only; runtime resolve via local import (avoid cycles).
+    from confflow.science.confgen.registry import ComponentRegistry
 
 from confflow.domain._immutable import FrozenDict
 from confflow.domain.structure import StructureRecord
@@ -390,14 +393,23 @@ def _check_int(value: Any, *, path: str, minimum: int = 1) -> int:
     return value
 
 
-def normalize_spec(raw: Mapping[str, Any]) -> dict[str, Any]:
+def normalize_spec(
+    raw: Mapping[str, Any], *, registry: ComponentRegistry | None = None
+) -> dict[str, Any]:
     """Normalize a raw v3 spec into a JSON-compatible resolved spec.
 
     Unknown top-level keys fail closed. Torsion entries are fully resolved
     (finite angles, duplicate bonds rejected); coordination/ring sections
     pass through structurally -- semantic validation is owned by those
     lanes. Missing ``schema_version`` defaults to 3; any other value fails.
+
+    A4a registry channel only (V50): ``registry`` is resolved via
+    ``resolve_registry`` for instance threading but no component
+    ``normalize_spec``/``validate`` hook is called here (hooks land in A4b).
     """
+    from confflow.science.confgen.registry import resolve_registry
+
+    resolve_registry(registry)
     if not isinstance(raw, Mapping):
         raise ValueError("spec must be a mapping")
     unknown = sorted(set(raw) - _TOP_LEVEL_KEYS)
@@ -961,9 +973,37 @@ def _graph_metal_center(resolved: Mapping[str, Any], n_atoms: int) -> int | None
 
 
 def build_typed_graph(
-    structure: StructureRecord, topology: Mapping[str, Any], resolved: Mapping[str, Any]
+    structure: StructureRecord,
+    topology: Mapping[str, Any],
+    resolved: Mapping[str, Any],
+    *,
+    registry: ComponentRegistry | None = None,
 ) -> tuple[list[list[int]], Any]:
     """Build covalent adjacency plus the lane B typed-graph authority.
+
+    Public compat wrapper (A4a root ruling, V24): existing 3-positional-arg
+    calls keep working. ``registry`` defaults to ``None`` (resolved to the
+    shared immutable default); the resolved instance is threaded into the
+    private ``_build_typed_graph``. No component hook is called here (V50;
+    hooks land in A4b/A4c).
+    """
+    from confflow.science.confgen.registry import resolve_registry
+
+    resolved_registry = resolve_registry(registry)
+    return _build_typed_graph(structure, topology, resolved, registry=resolved_registry)
+
+
+def _build_typed_graph(
+    structure: StructureRecord,
+    topology: Mapping[str, Any],
+    resolved: Mapping[str, Any],
+    *,
+    registry: ComponentRegistry,
+) -> tuple[list[list[int]], Any]:
+    """Private typed-graph implementation (registry mandatory, keyword-only).
+
+    Body is the pre-A4a ``build_typed_graph`` implementation moved verbatim
+    (AST unchanged); ``registry`` is threaded but not consulted (V50).
 
     All entries arrive internal 0-based (normalize_spec converts under the
     single explicit top-level ``index_base``). Explicit ``topology["bonds"]``

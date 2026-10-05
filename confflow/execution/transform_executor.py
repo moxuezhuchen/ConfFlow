@@ -449,8 +449,13 @@ class TransformExecutor:
             raise DomainError(f"refine bond perception failed for {record.id}: {exc}") from exc
 
     @staticmethod
-    def _declared_topology(native: Mapping[str, Any]) -> dict[str, Any] | None:
-        """Resolve ``topology_bonds`` into the normalised ConfGen spec, or ``None``."""
+    def _declared_topology(
+        native: Mapping[str, Any], *, registry: Any | None = None
+    ) -> dict[str, Any] | None:
+        """Resolve ``topology_bonds`` into the normalised ConfGen spec, or ``None``.
+
+        A4a: optional ``registry`` passthrough (default keeps existing calls).
+        """
         raw = native.get("topology_bonds")
         if raw is None:
             return None
@@ -489,15 +494,23 @@ class TransformExecutor:
         from ..science.confgen.planner import normalize_spec
 
         try:
-            return dict(normalize_spec(spec))
+            return dict(normalize_spec(spec, registry=registry))
         except (ValueError, TypeError, KeyError) as exc:
             raise DomainError(f"refine topology_bonds is invalid: {exc}") from exc
 
     @classmethod
     def _frame(
-        cls, record: StructureRecord, bond_scale: float, declared: dict[str, Any] | None = None
+        cls,
+        record: StructureRecord,
+        bond_scale: float,
+        declared: dict[str, Any] | None = None,
+        *,
+        registry: Any | None = None,
     ) -> dict[str, Any]:
-        """Return the comparison frame (atoms, coordinates, bonding graph) of one record."""
+        """Return the comparison frame (atoms, coordinates, bonding graph) of one record.
+
+        A4a: optional ``registry`` passthrough (default keeps existing calls).
+        """
         from ..science.topology_mapping import graph_from_adjacency, with_typed_edges
 
         if declared is None:
@@ -506,7 +519,9 @@ class TransformExecutor:
             from ..science.confgen.planner import build_typed_graph
 
             try:
-                adjacency, typed = build_typed_graph(record, declared["topology"], declared)
+                adjacency, typed = build_typed_graph(
+                    record, declared["topology"], declared, registry=registry
+                )
             except (ValueError, TypeError, KeyError) as exc:
                 raise DomainError(f"refine topology_bonds does not fit {record.id}: {exc}") from exc
             graph = with_typed_edges(

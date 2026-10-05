@@ -1641,3 +1641,184 @@ def test_a3_ring_matcher_import_error_uses_generic_comparison(
             "out_of_scope": "unknown",
         }
     ]
+
+
+# ---------------------------------------------------------------------------
+# FIX-1A A4a: registry channel (public compat + instance identity, V24/V50).
+# Classification correction (root ruling): planner.build_typed_graph is a
+# PUBLIC export (planner.__all__ + science.confgen.__all__, 5 existing
+# 3-positional test calls). A4a therefore keeps public
+# build_typed_graph(..., *, registry=None) compat and threads into private
+# _build_typed_graph(..., *, registry) (mandatory, keyword-only). No hook
+# is called on this card (hooks land in A4b/A4c).
+# ---------------------------------------------------------------------------
+
+
+def _a4a_probe_structure() -> StructureRecord:
+    return StructureRecord(
+        id="a4a-probe",
+        atoms=("C", "C", "C", "C"),
+        coordinates=((0.0, 0.0, 0.0), (1.5, 0.0, 0.0), (3.0, 0.4, 0.0), (4.5, 0.4, 0.0)),
+        charge=0,
+        multiplicity=1,
+    )
+
+
+def _a4a_custom_registry() -> ComponentRegistry:
+    return build_default_registry().with_component(_descriptor("probe", 5, ()))
+
+
+def test_a4a_public_normalize_spec_compat_and_error_order() -> None:
+    import inspect as _inspect
+
+    sig = _inspect.signature(normalize_spec)
+    assert "registry" in sig.parameters
+    assert sig.parameters["registry"].default is None
+    assert sig.parameters["registry"].kind is _inspect.Parameter.KEYWORD_ONLY
+    good = {
+        "index_base": 1,
+        "torsions": [
+            {"id": "c", "bond": [2, 3], "model": "relative_rotation_grid", "angles": [0.0, 120.0]}
+        ],
+    }
+    via_old = normalize_spec(good)
+    via_default = normalize_spec(dict(good), registry=None)
+    via_explicit = normalize_spec(dict(good), registry=default_registry())
+    via_custom = normalize_spec(dict(good), registry=_a4a_custom_registry())
+    assert via_old == via_default == via_explicit == via_custom
+    # Failure order preserved (two bad sections: bad spec must raise the same
+    # first error regardless of registry channel).
+    bad: dict[str, Any] = {"index_base": 7, "unknown_top": 1}
+    with pytest.raises(ValueError) as _e0:
+        normalize_spec(dict(bad))
+    for reg in (None, default_registry(), _a4a_custom_registry()):
+        with pytest.raises(ValueError) as exc:
+            normalize_spec(dict(bad), registry=reg)
+        assert str(exc.value) == str(_e0.value)
+    with pytest.raises(ValueError) as e1:
+        normalize_spec(dict(bad))
+    with pytest.raises(ValueError) as e2:
+        normalize_spec(dict(bad), registry=_a4a_custom_registry())
+    assert str(e1.value) == str(e2.value)
+
+
+def test_a4a_public_build_typed_graph_compat_and_private_requires_registry() -> None:
+    import inspect as _inspect
+
+    from confflow.science.confgen.planner import _build_typed_graph, build_typed_graph
+
+    sig = _inspect.signature(build_typed_graph)
+    assert list(sig.parameters) == ["structure", "topology", "resolved", "registry"]
+    assert sig.parameters["registry"].default is None
+    assert sig.parameters["registry"].kind is _inspect.Parameter.KEYWORD_ONLY
+    psig = _inspect.signature(_build_typed_graph)
+    assert list(psig.parameters) == ["structure", "topology", "resolved", "registry"]
+    assert psig.parameters["registry"].default is _inspect.Parameter.empty
+    assert psig.parameters["registry"].kind is _inspect.Parameter.KEYWORD_ONLY
+    # Existing 3-positional calls keep working (the 5 pre-A4a test calls).
+    structure = _a4a_probe_structure()
+    resolved = normalize_spec({"index_base": 0})
+    adj_old, graph_old = build_typed_graph(structure, resolved.get("topology", {}), resolved)
+    adj_new, graph_new = build_typed_graph(
+        structure, resolved.get("topology", {}), resolved, registry=_a4a_custom_registry()
+    )
+    assert adj_old == adj_new
+    assert list(graph_old.edges) == list(graph_new.edges)
+    # Private entry without registry fails closed (mandatory keyword-only).
+    with pytest.raises(TypeError):
+        _build_typed_graph(structure, {}, resolved)  # type: ignore[call-arg]
+    # Private with explicit registry works and matches public default.
+    adj_priv, _ = _build_typed_graph(structure, {}, resolved, registry=default_registry())
+    assert adj_priv == adj_old
+
+
+def test_a4a_build_context_threads_single_instance() -> None:
+    structure = _a4a_probe_structure()
+    custom = _a4a_custom_registry()
+    ctx_default = build_context(structure, {"index_base": 0})
+    assert ctx_default.registry is default_registry()
+    ctx_default2 = build_context(structure, {"index_base": 0}, registry=None)
+    assert ctx_default2.registry is default_registry()
+    assert ctx_default.registry is ctx_default2.registry
+    ctx_custom = build_context(structure, {"index_base": 0}, registry=custom)
+    assert ctx_custom.registry is custom
+    # Old outputs unchanged across channels.
+    assert dict(ctx_default.resolved_spec) == dict(ctx_custom.resolved_spec)
+    assert ctx_default.adjacency == ctx_custom.adjacency
+
+
+def test_a4a_handbuilt_context_without_registry_gets_default() -> None:
+    base = _a4a_probe_structure()
+    ctx = build_context(base, {"index_base": 0})
+    rebuilt = MolecularContext(
+        structure=ctx.structure,
+        adjacency=ctx.adjacency,
+        graph=ctx.graph,
+        resolved_spec=ctx.resolved_spec,
+        tolerances=ctx.tolerances,
+        input_state_key=ctx.input_state_key,
+        input_coords=ctx.input_coords,
+        inherited_scope=ctx.inherited_scope,
+        atom_refs=ctx.atom_refs,
+    )
+    assert rebuilt.registry is default_registry()
+
+
+def test_a4a_engine_identity_is_check() -> None:
+    structure = _a4a_probe_structure()
+    custom = _a4a_custom_registry()
+    ctx_default = build_context(structure, {"index_base": 0})
+    ctx_custom = build_context(structure, {"index_base": 0}, registry=custom)
+    # Matching identities run (pseudo stage keeps it cheap).
+    ConfgenEngine(stages=[_fake("torsions")], registry=custom).run(ctx_custom)
+    ConfgenEngine(stages=[_fake("torsions")]).run(ctx_default)
+    # Mismatched identities fail closed.
+    with pytest.raises(ValueError, match="registry mismatch"):
+        ConfgenEngine().run(ctx_custom)
+    with pytest.raises(ValueError, match="registry mismatch"):
+        ConfgenEngine(registry=custom).run(ctx_default)
+    from confflow.science.confgen.wire_v3 import from_wire_key
+
+    with pytest.raises(ValueError, match="registry mismatch"):
+        ConfgenEngine().run_kernel(
+            ctx_custom, initial_key=from_wire_key(ctx_custom.input_state_key)
+        )
+
+
+def test_a4a_executors_optional_passthrough_signatures() -> None:
+    import inspect as _inspect
+
+    from confflow.execution.confgen_executor import ConfgenExecutor
+    from confflow.execution.transform_executor import TransformExecutor
+
+    sig = _inspect.signature(ConfgenExecutor._run_v3)
+    assert "registry" in sig.parameters
+    assert sig.parameters["registry"].default is None
+    assert sig.parameters["registry"].kind is _inspect.Parameter.KEYWORD_ONLY
+    sig_d = _inspect.signature(TransformExecutor._declared_topology)
+    assert "registry" in sig_d.parameters
+    assert sig_d.parameters["registry"].default is None
+    assert sig_d.parameters["registry"].kind is _inspect.Parameter.KEYWORD_ONLY
+    sig_f = _inspect.signature(TransformExecutor._frame)
+    assert "registry" in sig_f.parameters
+    assert sig_f.parameters["registry"].default is None
+    # Public execute() signatures unchanged.
+    assert "registry" not in _inspect.signature(ConfgenExecutor.execute).parameters
+    # Declared-topology channel: default and custom agree (no hook dispatch).
+    native: dict[str, Any] = {"topology_bonds": {"index_base": 1, "add_bond": [[1, 2]]}}
+    assert TransformExecutor._declared_topology(native) == TransformExecutor._declared_topology(
+        dict(native), registry=_a4a_custom_registry()
+    )
+
+
+def test_a4a_no_toplevel_registry_import_in_model() -> None:
+    tree = ast.parse(
+        (Path(__file__).resolve().parents[2] / "confflow/science/confgen/model.py").read_text()
+    )
+    for node in tree.body:
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            src = "" if isinstance(node, ast.Import) else (node.module or "")
+            names = [a.name if isinstance(node, ast.Import) else (a.name) for a in node.names]
+            assert "registry" not in src, f"model top-level imports registry: {src}"
+            for n in names:
+                assert "registry" not in n

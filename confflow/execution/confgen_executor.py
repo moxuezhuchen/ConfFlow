@@ -149,8 +149,14 @@ class ConfgenExecutor:
         wall_start: float,
         monotonic_start: float,
         should_cancel: Callable[[], bool] | None,
+        *,
+        registry: Any | None = None,
     ) -> WorkItemResult:
-        """Run the typed v3 engine path (deterministic unless sampling)."""
+        """Run the typed v3 engine path (deterministic unless sampling).
+
+        A4a: optional ``registry`` passthrough to the CORE boundary
+        (default ``None`` keeps the existing call form).
+        """
         from confflow.science.confgen.accounting import stamp_production_results
         from confflow.science.confgen.engine import (
             AtomOrderViolationError,
@@ -192,11 +198,15 @@ class ConfgenExecutor:
         # InheritedScopeError is a ValueError and fails closed below.
         try:
             science_context = build_context(
-                driving, spec, input_key, inherited_scope=upstream.get("inherited_scope")
+                driving,
+                spec,
+                input_key,
+                inherited_scope=upstream.get("inherited_scope"),
+                registry=registry,
             )
         except ValueError as exc:
             raise DomainError(f"confgen v3 spec rejected: {exc}") from exc
-        engine = ConfgenEngine(allow_preserve_input=True)
+        engine = ConfgenEngine(allow_preserve_input=True, registry=registry)
         try:
             run = engine.run(science_context, should_cancel=should_cancel)
         except EngineCancelledError:

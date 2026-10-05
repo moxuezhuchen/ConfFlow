@@ -22,7 +22,10 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
+
+if TYPE_CHECKING:  # Annotation only; runtime uses local import (avoid model->registry cycle).
+    from confflow.science.confgen.registry import ComponentRegistry
 
 from confflow.domain._immutable import FrozenDict
 from confflow.domain.elements import canonical_element_symbol
@@ -218,6 +221,12 @@ class MolecularContext:
     input_coords: tuple[tuple[float, float, float], ...]
     inherited_scope: Mapping[str, Any] = field(default_factory=FrozenDict)
     atom_refs: tuple[ScopedAtomRef, ...] = ()
+    # A4a registry channel: holds the resolved ComponentRegistry instance for
+    # this run. Defaults to None at construction for backward compat; the
+    # post-init fills the shared immutable default (local import, no top-level
+    # model->registry cycle). ``build_context`` always passes the resolved
+    # instance explicitly.
+    registry: ComponentRegistry | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.structure, StructureRecord):
@@ -281,6 +290,12 @@ class MolecularContext:
                     "atom_refs disagree with the graph authority "
                     "(stale radius/environment for this structure)"
                 )
+        # A4a: fill default registry last so pre-existing error/order checks
+        # above are unchanged (V24 old hand-constructed contexts stay valid).
+        if self.registry is None:
+            from confflow.science.confgen.registry import default_registry
+
+            object.__setattr__(self, "registry", default_registry())
 
 
 def _expand_typed_paths(
@@ -424,6 +439,7 @@ def build_context(
     input_state_key: ConfgenStateKey | None = None,
     *,
     inherited_scope: Mapping[str, Any] | None = None,
+    registry: ComponentRegistry | None = None,
 ) -> MolecularContext:
     """Build the immutable scientific context for one input structure.
 
@@ -448,15 +464,19 @@ def build_context(
     when any entry lacks defining metadata.
     """
     from confflow.science.confgen.planner import build_typed_graph, normalize_spec
+    from confflow.science.confgen.registry import resolve_registry
     from confflow.science.confgen.tolerances import resolve_tolerances
 
     if not isinstance(structure, StructureRecord):
         raise ValueError("structure must be a StructureRecord")
     if not isinstance(spec, Mapping):
         raise ValueError("spec must be a mapping")
-    resolved = normalize_spec(spec)
+    resolved_registry = resolve_registry(registry)
+    resolved = normalize_spec(spec, registry=resolved_registry)
     tolerances = resolve_tolerances(resolved.get("tolerances", {}))
-    adjacency, graph = build_typed_graph(structure, resolved.get("topology", {}), resolved)
+    adjacency, graph = build_typed_graph(
+        structure, resolved.get("topology", {}), resolved, registry=resolved_registry
+    )
     if resolved.get("paths"):
         _expand_typed_paths(resolved, structure, adjacency)
     key = input_state_key if input_state_key is not None else ConfgenStateKey()
@@ -483,6 +503,7 @@ def build_context(
         input_coords=tuple(tuple(point) for point in structure.coordinates),
         inherited_scope=FrozenDict(scope),
         atom_refs=atom_refs,
+        registry=resolved_registry,
     )
 
 

@@ -673,6 +673,19 @@ class ConfgenEngine:
         self._backend = str(backend)
         self._registry = resolve_registry(registry)
 
+    def _require_same_registry(self, context: MolecularContext) -> None:
+        """Fail closed unless engine and context hold the same registry object."""
+        context_registry = getattr(context, "registry", None)
+        if context_registry is None:
+            from confflow.science.confgen.registry import default_registry
+
+            context_registry = default_registry()
+        if context_registry is not self._registry:
+            raise ValueError(
+                "ConfgenEngine registry mismatch: engine holds a different "
+                "registry object than context.registry (must be identical)"
+            )
+
     # -- stage registry -------------------------------------------------
 
     def _load_stage(self, axis: str, resolved: Mapping[str, Any]) -> GenerationStage:
@@ -973,6 +986,7 @@ class ConfgenEngine:
         should_cancel: Callable[[], bool] | None = None,
     ) -> EngineRun:
         """Run the conditional DFS and return leaves plus audit records."""
+        self._require_same_registry(context)
         from typing import cast
 
         from confflow.science.confgen.wire_v3 import (
@@ -1013,7 +1027,13 @@ class ConfgenEngine:
         legacy wire adapter); public ``run_kernel`` explicit stages stay
         generic with no auto-legacy wrapping. Never mutates
         ``self._explicit_stages``.
+
+        A4a registry identity (V24): the engine instance and ``context``
+        must hold the *same* registry object (``is``); otherwise fail
+        closed. Hand-built legacy contexts without a registry resolve to
+        the shared immutable default.
         """
+        self._require_same_registry(context)
         resolved = context.resolved_spec
         seed = resolved.get("seed")
         cap, sampling_seed = sampling_of(resolved)
