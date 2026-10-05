@@ -281,6 +281,20 @@ def _exclusion_match(
     return None
 
 
+#: Solve-failure terminal states eligible for a hooked second attempt (D0).
+#: Only genuine solver-side failures qualify: FAILED_DRIFT carries lock /
+#: perception audit verdicts (not a solve failure) and UNSUPPORTED carries
+#: no solvable geometry contract, so neither is ever retried. Policy
+#: rejections, suppressions, deferrals and publications are never retried.
+_RETRYABLE_STATUSES: frozenset = frozenset(
+    {
+        TerminalStatus.FAILED_GEOMETRY,
+        TerminalStatus.FAILED_NUMERICAL,
+        TerminalStatus.UNRESOLVED,
+    }
+)
+
+
 def _valid_observed_key(value: Any) -> bool:
     """Return True for a complete canonical observed state key.
 
@@ -1204,6 +1218,67 @@ class _RunState:
         axis = self._axes[level]
         last = level == len(self._stages) - 1
         exclusions = self._context.resolved_spec.get("exclusions", []) or []
+        if self._supports_retry(stage):
+            # Batch path: materialize this parent's targets once (hook path
+            # only), run the verbatim first pass, then the retry pass over
+            # solve-failure records. Ghost enumeration never runs geometry;
+            # gates run per target in both passes via _expand_target. The
+            # first-pass table is a per-parent local (never shared cached
+            # state); the primary record index per target lets the retry
+            # pass replace stale terminals at their exact position.
+            from confflow.science.confgen.model import RetryFirstPass
+
+            pending = list(level_targets(level, parent))
+            table: list[RetryFirstPass] = []
+            primary: dict[int, Any] = {}
+            for target in pending:
+                if self._should_cancel is not None and self._should_cancel():
+                    raise EngineCancelledError("confgen run cancelled by probe")
+                ordinal = int(target.ordinal)
+                pre = len(self.records)
+                published = self._expand_target(
+                    level,
+                    stage,
+                    axis,
+                    last,
+                    parent,
+                    path,
+                    ancestors,
+                    ancestor_specs,
+                    parent_target_id,
+                    target,
+                    exclusions,
+                    level_targets,
+                )
+                record = self._primary_after(pre, parent_target_id, axis, ordinal, target.target_id)
+                primary[ordinal] = record
+                table.append(
+                    RetryFirstPass(
+                        target_id=str(target.target_id),
+                        ordinal=ordinal,
+                        status=record.status.value,
+                        reason=str(record.reason),
+                        solver_error=self._is_solver_error(record),
+                        structure=published,
+                    )
+                )
+            self._retry_level(
+                level,
+                stage,
+                axis,
+                last,
+                parent,
+                path,
+                ancestors,
+                ancestor_specs,
+                parent_target_id,
+                pending,
+                tuple(table),
+                primary,
+                exclusions,
+                level_targets,
+            )
+            return
         for target in level_targets(level, parent):
             if self._should_cancel is not None and self._should_cancel():
                 raise EngineCancelledError("confgen run cancelled by probe")
@@ -1236,8 +1311,13 @@ class _RunState:
         target: KernelGenerationTarget,
         exclusions: Sequence[Mapping[str, Any]],
         level_targets: Callable[[int, KernelWorkingRealization], Iterator[KernelGenerationTarget]],
-    ) -> None:
-        """Realize, audit, and account one target."""
+        solver: Callable[[Any, Any, Any], Any] | None = None,
+    ) -> Any:
+        """Realize, audit, and account one target.
+
+        Returns the published structure on success (for the retry hook's
+        first-pass table) and ``None`` otherwise.
+        """
         context = self._context
         state_dict = dict(target.state_value)
         child_path = path + (int(target.ordinal),)
@@ -1285,8 +1365,15 @@ class _RunState:
 
         outcome = None
         try:
-            outcome = stage.realize(parent, target, context)
+            if solver is not None:
+                outcome = solver(parent, target, context)
+            else:
+                outcome = stage.realize(parent, target, context)
         except Exception as exc:  # stage bug: account explicitly, never silent
+            if isinstance(exc, EngineCancelledError) and solver is not None:
+                raise  # retry path only: the probe propagates, never a record
+            # Legacy path unchanged: even EngineCancelledError from a stage
+            # is recorded as stage_error, exactly as before D0.
             self._record_failure(
                 target,
                 axis,
@@ -1307,6 +1394,8 @@ class _RunState:
                 state_dict=state_dict,
             )
             return
+        if solver is not None and outcome is None:
+            return  # hook declined the retry; the failure record stands
         assert outcome is not None
         if outcome.status != "realized" or outcome.structure is None:
             if outcome.status == "geometry_failure":
@@ -1850,6 +1939,7 @@ class _RunState:
                 target.target_id,
                 level_targets,
             )
+        return structure
 
     # -- helpers ----------------------------------------------------------
 
@@ -1894,6 +1984,233 @@ class _RunState:
             return bool(getattr(stage, "check_bond_integrity", False))
         except Exception:
             return False
+
+    def _supports_retry(self, stage: GenerationStage) -> bool:
+        """Report whether the stage overrides the optional retry hook (D0).
+
+        Generic MRO probe (same shape as the A3 hook readers); the kernel
+        never compares axis strings and never imports components. No
+        descriptor fallback: a retry must be an explicit stage override.
+        """
+        from confflow.science.confgen.model import GenerationStage as _Base
+
+        try:
+            return any(
+                "retry_solve" in klass.__dict__
+                for klass in type(stage).__mro__
+                if klass not in (_Base, object)
+            )
+        except Exception:
+            return False
+
+    @staticmethod
+    def _is_solver_error(record: Any) -> bool:
+        """Report whether a failure came from a stage exception.
+
+        Exception-origin failures (``stage_error`` evidence) are code bugs,
+        never science-retryable; solver-returned failures carry no such
+        marker. Checked generically from record evidence.
+        """
+        try:
+            evidence = tuple(record.evidence or ())
+        except Exception:
+            return False
+        return any(
+            isinstance(item, Mapping) and item.get("kind") == "stage_error" for item in evidence
+        )
+
+    def _primary_after(
+        self,
+        pre: int,
+        parent_target_id: str | None,
+        axis: str,
+        ordinal: int,
+        target_id: str,
+    ) -> Any:
+        """Locate the primary record one expansion call appended.
+
+        Scans only the call's own append window: children carry a deeper
+        axis, so the first triple match is this target's terminal. Loud on
+        absence (internal inconsistency, never silent skip).
+        """
+        for record in self.records[pre:]:
+            if (
+                record.parent_target_id == parent_target_id
+                and record.axis == axis
+                and int(record.ordinal) == int(ordinal)
+            ):
+                return record
+        raise EngineConsistencyError(
+            f"no primary record for target {target_id!r}; expansion accounting broken"
+        )
+
+    def _record_index(self, record: Any) -> int:
+        """Return the list index of a known record object."""
+        for index, candidate in enumerate(self.records):
+            if candidate is record:
+                return index
+        raise EngineConsistencyError("primary record lost before retry pass")
+
+    def _supersede_failure(self, old_idx: int, target_id: str) -> None:
+        """Revoke one stale failure and its deferred subtree (D0).
+
+        Removes the failure record at ``old_idx`` plus the maximal run of
+        this target's deferred ranges immediately following it (append
+        adjacency is guaranteed: nothing interleaves inside one expansion
+        call), then reconciles ``failed_counts`` (key dropped at zero, as
+        if first-try) and ``deferred_parent_leaves`` (by removed range
+        weights). Counters use their declared types directly; any negative
+        or missing count raises loudly instead of being masked. Published,
+        suppressed and policy records are never touched. Diagnostic lists
+        (``drift_events``/``proof_contradictions``) are intentionally NOT
+        purged here: they retain real historical attempt diagnostics,
+        including observations made before a later retryable failure.
+        A target_id-keyed purge could delete another parent's diagnostics.
+        """
+        # old_idx comes from a live identity scan with append-only traffic
+        # since; an IndexError here is a loud internal bug, never masked.
+        stale = self.records[old_idx]
+        if stale.status not in _RETRYABLE_STATUSES:
+            raise EngineConsistencyError(
+                f"refusing to supersede non-retryable {stale.status.value} for {target_id!r}"
+            )
+        kill = [old_idx]
+        cursor = old_idx + 1
+        while cursor < len(self.records):
+            candidate = self.records[cursor]
+            if (
+                candidate.axis == "leaves"
+                and candidate.parent_target_id == target_id
+                and candidate.status is TerminalStatus.DEFERRED_PARENT_FAILED
+            ):
+                kill.append(cursor)
+                cursor += 1
+            else:
+                break
+        removed = [self.records[index] for index in kill]
+        for index in sorted(kill, reverse=True):
+            del self.records[index]
+        status = stale.status.value
+        have = self.failed_counts.get(status, 0)
+        if have <= 0:
+            raise EngineConsistencyError(
+                f"failed_counts has no {status} to revoke for {target_id!r}"
+            )
+        if have == 1:
+            del self.failed_counts[status]
+        else:
+            self.failed_counts[status] = have - 1
+        drop = 0
+        for record in removed:
+            state = dict(record.state_value)
+            if "range_start" in state and "range_end" in state:
+                drop += int(state["range_end"]) - int(state["range_start"]) + 1
+        if drop:
+            rest = self.deferred_parent_leaves - drop
+            if rest < 0:
+                raise EngineConsistencyError(
+                    f"deferred_parent_leaves would go negative revoking {drop} for {target_id!r}"
+                )
+            self.deferred_parent_leaves = rest
+
+    def _retry_level(
+        self,
+        level: int,
+        stage: GenerationStage,
+        axis: str,
+        last: bool,
+        parent: KernelWorkingRealization,
+        path: tuple[int, ...],
+        ancestors: tuple[KernelWorkingRealization, ...],
+        ancestor_specs: tuple[tuple[str, Mapping[str, Any], str | None], ...],
+        parent_target_id: str | None,
+        pending: Sequence[KernelGenerationTarget],
+        first_pass: tuple[Any, ...],
+        primary: Mapping[int, Any],
+        exclusions: Sequence[Mapping[str, Any]],
+        level_targets: Callable[[int, KernelWorkingRealization], Iterator[KernelGenerationTarget]],
+    ) -> None:
+        """Second pass for batch stages: retry solve-failure targets (D0).
+
+        Only first-pass solve failures (never solver-exception records)
+        are revisited, each through :meth:`_expand_target`, so the
+        policy/suppression gates run again against current records and
+        excluded or suppressed targets are never solved. A retried outcome
+        replaces the stale failure at its exact position (deferred subtree
+        revoked, counters reconciled); a declined hook leaves the single
+        failure record standing. The hook receives the run's real probe
+        plus the immutable per-parent first-pass table. Relocation uses the
+        stored record objects (identity, never id-string search), so
+        earlier replacements cannot shift later ones. No enumeration
+        happens here; no state crosses parents or runs.
+        """
+        hook = stage.retry_solve
+        probe = self._should_cancel
+        retryable_values = {status.value for status in _RETRYABLE_STATUSES}
+        table = {int(entry.ordinal): entry for entry in first_pass}
+        for target in pending:
+            ordinal = int(target.ordinal)
+            entry = table[ordinal]
+            if entry.status not in retryable_values:
+                continue
+            if bool(entry.solver_error):
+                continue
+            if probe is not None and probe():
+                raise EngineCancelledError("confgen run cancelled by probe")
+            stale = primary[ordinal]
+            mark = len(self.records)
+
+            def _solver(
+                solve_parent: Any,
+                solve_target: Any,
+                solve_context: Any,
+                _hook: Any = hook,
+                _probe: Any = probe,
+                _table: Any = first_pass,
+            ) -> Any:
+                return _hook(solve_parent, solve_target, solve_context, _probe, _table)
+
+            self._expand_target(
+                level,
+                stage,
+                axis,
+                last,
+                parent,
+                path,
+                ancestors,
+                ancestor_specs,
+                parent_target_id,
+                target,
+                exclusions,
+                level_targets,
+                solver=_solver,
+            )
+            tail = list(self.records[mark:])
+            target_id = str(target.target_id)
+            prim = [
+                record
+                for record in tail
+                if record.parent_target_id == parent_target_id
+                and record.axis == axis
+                and int(record.ordinal) == ordinal
+            ]
+            if not prim:
+                continue  # hook declined: the failure record stands, single terminal
+            old_idx = self._record_index(stale)
+            self._supersede_failure(old_idx, target_id)
+            tail_ids = {id(record) for record in tail}
+            block_ids = {id(record) for record in prim}
+            block_ids.update(
+                id(record)
+                for record in tail
+                if record.axis == "leaves"
+                and record.parent_target_id == target_id
+                and record.status is TerminalStatus.DEFERRED_PARENT_FAILED
+            )
+            block = [record for record in tail if id(record) in block_ids]
+            rest = [record for record in tail if id(record) not in block_ids]
+            head = [record for record in self.records if id(record) not in tail_ids]
+            self.records[:] = head[:old_idx] + block + head[old_idx:] + rest
 
     def _carries_inherited_locks(self, axis: str, stage: GenerationStage) -> bool:
         """Read the inherited-lock carrier hook generically (FIX-1A A3)."""

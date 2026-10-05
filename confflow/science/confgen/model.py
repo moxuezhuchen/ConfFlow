@@ -515,6 +515,26 @@ class RealizationResult:
 
 
 @dataclass(frozen=True, slots=True)
+class RetryFirstPass:
+    """Immutable first-pass snapshot row for one target (D0 protocol).
+
+    Built per parent from the input-only pass: the target's terminal
+    status value and reason, whether its failure came from a stage
+    exception (never science-retryable), and the accepted structure for
+    successes (``None`` otherwise). The engine hands the whole per-parent
+    table to :meth:`GenerationStage.retry_solve` so alternate starts
+    derive from explicit data, never shared caches.
+    """
+
+    target_id: str
+    ordinal: int
+    status: str
+    reason: str
+    solver_error: bool
+    structure: StructureRecord | None
+
+
+@dataclass(frozen=True, slots=True)
 class PerceptionResult:
     """Stage-local perception of one realized structure."""
 
@@ -662,6 +682,33 @@ class GenerationStage(ABC):
         their registry descriptor; unknown axes keep the existing
         fail-closed errors. The kernel never inspects source or guesses
         by component id.
+        """
+        return None
+
+    def retry_solve(
+        self,
+        parent: StageParentProtocol,
+        target: GenerationTarget,
+        context: MolecularContext,
+        should_cancel: CancelProbe | None,
+        first_pass: tuple[RetryFirstPass, ...],
+    ) -> RealizationResult | None:
+        """Alternate-start second attempt for one failed target (optional).
+
+        Two-pass hook (D0 protocol). The engine calls this only for targets
+        whose first (input-only) attempt ended in a solve-failure terminal
+        state, and only after re-running the policy/suppression gates, so an
+        excluded or suppressed target is never solved here. ``first_pass``
+        carries the immutable per-parent snapshot (every target's terminal
+        status, reason, solver-error flag and, for successes, the accepted
+        structure) so D1/D2 can derive alternate starts without any shared
+        cache. Returning ``None`` (the default) declines the retry and the
+        failure record stands. A returned outcome replaces the stale
+        failure (with its deferred subtree revoked and counters
+        reconciled) and travels the full post-solve path
+        (drift/lock/perception/audit accounting and child expansion), never
+        publishing directly. The hook receives the run's real cancellation
+        probe and must let ``EngineCancelledError`` propagate.
         """
         return None
 
