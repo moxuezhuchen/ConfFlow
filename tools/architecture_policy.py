@@ -1035,6 +1035,16 @@ R.append(
                 "confflow.science.confgen.torsion.measure",
             ],
         },
+        # Precise file+module exemption (no whole-file skip): only
+        # transform_executor.py may import exactly
+        # confflow.science.confgen.registry (A4a/AG2 channel). Any other
+        # science module in that file, or the same module in any other
+        # file, still trips AP-002.
+        "exempt_precise_imports": {
+            "confflow/execution/transform_executor.py": [
+                "confflow.science.confgen.registry",
+            ],
+        },
     }
 )
 R.append(
@@ -1771,7 +1781,8 @@ def scan(
             continue
         if kind == "imports":
             scope = _resolve_scope(rule["scope"], root)
-            exempt = rule.get("exempt_imports", {})
+            exempt: dict[str, list[str]] = rule.get("exempt_imports", {})
+            precise: dict[str, list[str]] = rule.get("exempt_precise_imports", {})
             resolve_relative = rule.get("resolve_relative", False)
             for relpath, _path in _file_iter(scope, root, skip_pycache=legacy):
                 if relpath in exempt:
@@ -1786,6 +1797,8 @@ def scan(
                     module = resolved if resolve_relative else raw
                     allowed_here = any(
                         module == a or module.startswith(a + ".") for a in exempt.get(relpath, [])
+                    ) or any(
+                        module == a or module.startswith(a + ".") for a in precise.get(relpath, [])
                     )
                     if allowed_here:
                         continue

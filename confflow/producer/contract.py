@@ -328,11 +328,11 @@ def _confgen_section() -> dict[str, Any]:
     """
     import dataclasses
 
-    from ..science.confgen.registry import build_default_registry
+    from ..science.confgen.registry import default_registry
     from ..science.confgen.tolerances import ConfgenTolerances
     from ..workflow.v4.confgen_schema import ConfgenModelV3
 
-    registry = build_default_registry()
+    registry = default_registry()
     owned: dict[str, Any] = {}
     for _descriptor in registry._ordered():
         _options = _descriptor.contract_options
