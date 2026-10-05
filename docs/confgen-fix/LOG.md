@@ -311,3 +311,29 @@ R7 glucose 127/155 的 28 项召回缺口与未做种子优化后 RMSD 验证如
 - 冻结：`git diff --binary HEAD` 见 `/tmp/l1-c0-output/L1-C0-proto.diff`
   （new file mode x2 起，rename 相似度 98%；sha 见同目录 `SHA256SUMS`）。
   未提交/未推送/未合并/未打 tag；共享树与冻结基线未动。
+
+## L1-C1 — intent 通用 bindings/resources 机械拆分预演（move, executor self-check；根验收另行）
+
+- 基点正式 C0 `78ab3d5773c304a11f71f06775b9ef136cf80700`；工作树 `/tmp/l1-c1-proto`
+  分支 `refactor/l1-c1-proto`；输出 `/tmp/l1-c1-output`。三位置前检不存在通过；
+  不基于未冻结活跃 proto。PLAN L1 + L1-DESIGN-v2：v1 主循环改 resolve 属 C2，
+  C1 不引入 dispatch/registry/descriptor，不做能力 science 行为。
+- 白名单实测：改 `confflow/producer/intent/compiler.py`（1666 行，10+/344-，
+  仅新轻 imports + 删 8 已搬定义）；新 `intent/common.py`（48 行，仅
+  `IntentCompilationError`+`_fail`，真实依赖见 MANIFEST，root 审阅边界）、
+  `intent/bindings.py`（129 行，`_registry_input_ports`+`_auto_bindings`）、
+  `intent/resources.py`（236 行，`_wire_resources`+`_wire_scheduler`+
+  `_apply_machine_profile`+`_apply_checkpoints`通用编排，Gaussian 细节留 G1）；
+  新 `tests/v4/test_l1_intent_helpers_compat.py`（156 行，5 用例）；
+  新检查点 `docs/confgen-fix/checkpoints/L1-C1/`。`__init__.py`、
+  `tools/architecture_policy.py`、`tests/v4/test_architecture_policy.py`、
+  其他生产文件/oldtests 零改；policy scope 冲突无（333+7+25 通过），未扩大
+  science 豁免；helper 无回 import compiler。
+- 自检（非根验收）：新 5 + 旧 compat 6（11）；producer_intent 等 130；
+  authoring_boundary 等 433；policy 333+7+25。原/新真实编译产物 + catalog
+  逐字节等（`6ed711d1…`）；contract/boundary 全量与摘要原新一致；collect
+  4996 -> 5001（+5/−0）；AST 8 符号等价；ruff/black/mypy 按单文件口径通过；
+  旧导出 `is` 同一、无新 wrapper、签名等、`__module__`/pickle 兼容。
+- 冻结：`git diff --binary HEAD` 见 `/tmp/l1-c1-output/L1-C1-proto.diff`
+  （含 new/modes；sha 见同目录 `SHA256SUMS`）。未提交/未推送/未合并/未打 tag；
+  共享树与冻结基线未动。
