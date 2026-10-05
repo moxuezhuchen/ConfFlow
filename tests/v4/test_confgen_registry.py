@@ -2923,10 +2923,24 @@ def test_a4d_lazy_three_names_is_same_and_miss_attribute_error() -> None:
     assert new_home.InheritedTorsionLock.__module__ == "confflow.science.confgen.engine"
     assert new_home.inherited_torsion_locks.__module__ == "confflow.science.confgen.engine"
     assert new_home.check_inherited_torsion_locks.__module__ == "confflow.science.confgen.engine"
-    # __all__ unchanged (engine 10, confgen 64, kernel 9 with 2 new).
+    # Legacy facade exports remain unchanged; L-D3 adds four kernel telemetry types.
     assert len(eng.__all__) == 10
     assert len(pkg.__all__) == 64
-    assert len(kr.__all__) == 9
+    assert kr.__all__ == [
+        "BoundTelemetryEvent",
+        "ComponentInheritedState",
+        "ComponentStateKey",
+        "InheritedScopeError",
+        "KernelGenerationTarget",
+        "KernelRun",
+        "KernelWorkingRealization",
+        "RetryResult",
+        "TelemetryError",
+        "TelemetryRow",
+        "TopologyBuildContext",
+        "VerificationResult",
+        "as_kernel_target",
+    ]
     assert "ComponentInheritedState" in kr.__all__
     assert "VerificationResult" in kr.__all__
     # as_kernel_target stays owned by kernel_records only (never a package export).
