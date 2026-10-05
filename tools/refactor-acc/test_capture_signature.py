@@ -18,14 +18,14 @@ def _load_plugin_copy(monkeypatch, fake_engine: ModuleType):
     monkeypatch.setitem(sys.modules, "confflow.science.confgen.engine", fake_engine)
     monkeypatch.syspath_prepend(str(TOOLS))
     for mod in ("ts1_engine", "capture_engine_reports_sigcopy"):
-        sys.modules.pop(mod, None)
+        monkeypatch.delitem(sys.modules, mod, raising=False)
     spec = importlib.util.spec_from_file_location(
         "capture_engine_reports_sigcopy",
         TOOLS / "capture_engine_reports.py",
     )
     assert spec is not None and spec.loader is not None
     plugin = importlib.util.module_from_spec(spec)
-    sys.modules["capture_engine_reports_sigcopy"] = plugin
+    monkeypatch.setitem(sys.modules, "capture_engine_reports_sigcopy", plugin)
     spec.loader.exec_module(plugin)
     return plugin
 
@@ -105,3 +105,35 @@ def test_capture_preserves_real_engine_signature_isolated() -> None:
         },
     )
     assert completed.returncode == 0, completed.stdout + completed.stderr
+
+
+def test_load_plugin_copy_restores_alias_modules(monkeypatch) -> None:
+    orig_ts1 = sys.modules.get("ts1_engine")
+    orig_copy = sys.modules.get("capture_engine_reports_sigcopy")
+    sentinel_ts1 = ModuleType("ts1_engine")
+    sentinel_copy = ModuleType("capture_engine_reports_sigcopy")
+    sys.modules["ts1_engine"] = sentinel_ts1
+    sys.modules["capture_engine_reports_sigcopy"] = sentinel_copy
+    try:
+        fake_engine = _fake_engine_module()
+        plugin = _load_plugin_copy(monkeypatch, fake_engine)
+        assert sys.modules["capture_engine_reports_sigcopy"] is plugin
+        assert sys.modules["capture_engine_reports_sigcopy"] is not sentinel_copy
+        assert sys.modules.get("ts1_engine") is not sentinel_ts1
+        plugin.pytest_configure(None)
+        try:
+            assert fake_engine.ConfgenEngine.run is not None
+        finally:
+            plugin.pytest_unconfigure(None)
+    finally:
+        monkeypatch.undo()
+        assert sys.modules.get("ts1_engine") is sentinel_ts1
+        assert sys.modules.get("capture_engine_reports_sigcopy") is sentinel_copy
+        if orig_ts1 is None:
+            sys.modules.pop("ts1_engine", None)
+        else:
+            sys.modules["ts1_engine"] = orig_ts1
+        if orig_copy is None:
+            sys.modules.pop("capture_engine_reports_sigcopy", None)
+        else:
+            sys.modules["capture_engine_reports_sigcopy"] = orig_copy

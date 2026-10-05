@@ -207,7 +207,10 @@ def main(argv: list[str] | None = None) -> int:
                     [str(capture["tools_dir"]), env.get("PYTHONPATH", "")]
                 )
                 shard_env["CAP_OUT"] = str(capture["dir"] / "shards" / f"shard{i}")
-                shard_env["CAP_SCOPE_GLOB"] = CONFGEN_SCOPE
+                # Explicit CAP_SCOPE_GLOB from the environment wins (final
+                # 93-report scope); otherwise keep the historical broad default.
+                # Scope filters report write-out only; all tests still execute.
+                shard_env["CAP_SCOPE_GLOB"] = env.get("CAP_SCOPE_GLOB", CONFGEN_SCOPE)
                 shard_cmd += ["-p", "capture_engine_reports"]
             procs.append(
                 (
