@@ -432,3 +432,14 @@ R7 glucose 127/155 的 28 项召回缺口与未做种子优化后 RMSD 验证如
 - 白名单实测：改 `confflow/producer/checkpoints.py`（1098->939行，27+/186-，仅删trio旧体+11常量定义、删`re`/`_irc_path`无用import、加一行policy重导出+镜像注释）；新 `confflow/programs/gaussian/checkpoint_policy.py`（226行，11常量值逐字节+`_refuse`+trio体AST原样，imports仅`__future__/re/domain.errors/.path/.rendering`，`_irc_path`/`_gaussian_rendering`同模块对象）；新 `tests/v4/test_l1_gaussian_policy_move.py`（192行，8用例）；新检查点 `docs/confgen-fix/checkpoints/L1-G1a/`。`__all__/version/modes/API/wire/lineage`全不改，旧私有`is`同一，`__module__`为定义处（policy）可记录，不改public module；旧tests不变。
 - 自检（非根验收）：trio+11 `is`同一，`_refuse`同形不同对象，AST 4+11等价，aliases同模块；固定语料28向量base/new return或exception type/message全等（readfc/rcfc/conflicts/unknown/linked-SP边，`B3LYP/SP`不动）；checkpoints(69)+boundary(68)+new(8)=145，intent+regressions 64，contracts 11；collect 5001->5009（+8/-0）；ruff/black/mypy(`-n 1`)生产 clean；contract/boundary字节不变（上测试+白名单外零改）；AST程序层无producer/workflow/science，producer仍有Gaussian分支属G1b（ProgramName/_QST/_LINK0，不假清零）。
 - 冻结：`git diff HEAD --binary -- confflow/producer/checkpoints.py confflow/programs/gaussian/checkpoint_policy.py` 见 `/tmp/l1-g1a-output/L1-G1a-production-only.diff`（含new/modes）；完整 `git diff HEAD --binary` 见 `/tmp/l1-g1a-output/L1-G1a-proto.diff`（含new/modes冻结，sha见`SHA256SUMS`）。未提交/未推送/未合并/未打tag；不跑全量/TS1/golden（L1里程碑根统一）；不扩大scope；proto结束恢复基点干净，不`git clean/install`/改已有证据。
+
+## L1-G1b — Gaussian阶段下沉预演v2补修（logic, executor self-check；根验收另行）
+
+- 基点固定 `ff8eff1d6173ddaa96a6ce3ed8631e63ff845f21`；工作树 `/tmp/l1-g1b-proto` 分支 `refactor/l1-g1b-proto` 独占；源 `/tmp/l1-g1a-exec` 只读；输出 `/tmp/l1-g1b-output`（v1 冻结保留不覆盖，v2 新文件交付）。每命令显式 `cd`。
+- 根裁决继续：v1 的 2FAILED 原证据真实重跑存 `/tmp/l1-g1b-output/v1_2FAILED_evidence.log`（2 failed/6 passed）；授权恰 2 处阶段断言迁移（节点保留，见 DIFF），pure 体/同对象/向量保留；进仓检查点 `docs/confgen-fix/checkpoints/L1-G1b/{MANIFEST.json,DIFF.md}` 在冻结 diff 内。
+- 实测：G1a8+G1b8+checkpoint/boundary+两policy兼容全绿；collect 5009->5020（+11/-0，ID 不 rename）；三契约字节一致；差分 9 项旧新一致（生产未改只做 source-binding 确认）；ruff/mypy/black 单 worker clean。根疏漏：G1a 阶段断言 + G1b 白名单遗漏该文件，现授权增强，疏漏归根不归执行器。
+
+## L1-G1b v3 — duck兼容去assert补修（logic, executor self-check；根验收另行）
+
+- 仅改 `policy.native_scientific_core` 去运行时 Mapping/frozenset asserts（静态 Any/Mapping+cast，运行时旧 `.items`+成员关系）；其它规则/顺序/wrapper/`native_of` 原样，不扩白名单。反例 `/tmp/l1-g1b-root-duck-probe.py`：Duck 旧 `{"basis":"x"}`、v2 新 `AssertionError`、v3 新同旧；`object()` 新旧同 `AttributeError` 同文。记录为真实反例。
+- 回归 `apply` +2（Duck 经旧 helper 路径 + plain 同文，原 8 不放宽）；G1a8+G1b10+checkpoint/boundary+两兼容 163 全绿，policy3 实测 3 passed；collect 5009->5022（+13/-0）；三契约字节一致；ruff/mypy/black 单 worker。

@@ -123,3 +123,11 @@ def test_fifteen_patterns_byte_identical() -> None:
     assert precise == {
         "confflow/execution/transform_executor.py": ["confflow.science.confgen.registry"]
     }
+
+
+def test_g1_gates_clean_on_real_tree() -> None:
+    from pathlib import Path as _P
+
+    from tools.architecture_policy import g1_violations
+
+    assert g1_violations(_P(__file__).resolve().parents[2]) == []

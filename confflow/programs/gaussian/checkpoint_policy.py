@@ -15,17 +15,22 @@ Authority notes (imported, never copied):
   keyword normalization via :func:`normalize_gaussian_keyword`;
 - :mod:`confflow.domain.errors` -- light refusal construction only.
 
-Science authority tables stay with their owners; this module holds no
-``ProgramName``/registry/stage logic (G1b adds stages separately). The
-canonical constant values mirror ``confflow.producer.checkpoints`` which
+Science authority tables stay with their owners; G1b stages use
+``ProgramName`` identity (``is not ProgramName.GAUSSIAN``) and the
+rendering/path/energy_semantics authorities via data-value delegation.
+The canonical constant values mirror ``confflow.producer.checkpoints`` which
 re-exports the same objects (bidirectional mirror).
 """
 
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
+from typing import Any, cast
 
 from ...domain.errors import DomainError, InvalidBindingError
+from ...execution.native import ProgramName
+from . import energy_semantics as _energy_semantics
 from . import path as _irc_path
 from . import rendering as _gaussian_rendering
 
@@ -224,3 +229,163 @@ def _strip_managed_items(keyword: str) -> str:
     text = _FREQ_TOKEN_RE.sub(" ", text)
     text = _SP_MANAGED_RE.sub(" ", text)
     return " ".join(text.replace("#", " ").split()).lower()
+
+
+# ---------------------------------------------------------------------------
+# L1-G1b staged Gaussian policy (explicit per-row delegation, order kept by
+# the producer wrapper). Each stage takes data values only (no Callables,
+# no registry/lineage callbacks). Messages are byte-identical to the old
+# producer bodies. Root priority: ProgramName keeps the original Enum
+# object with ``is not ProgramName.GAUSSIAN`` identity; adapter keeps its
+# original value without extra coercion.
+# ---------------------------------------------------------------------------
+
+
+def require_gaussian_program(*, step_id: str, program: str, program_name: ProgramName) -> None:
+    """Refuse a non-Gaussian program end (old 254-259)."""
+    if program_name is not ProgramName.GAUSSIAN:
+        raise _refuse(
+            f"step {step_id!r} uses program {program!r}: ORCA declares no "
+            "checkpoint input vocabulary, so checkpoint reuse is refused "
+            "instead of staging artifacts nothing can consume"
+        )
+
+
+def require_standard_adapter(*, step_id: str, execution_adapter: object) -> None:
+    """Refuse a non-``standard`` execution adapter (old 260-266)."""
+    if execution_adapter != "standard":
+        raise _refuse(
+            f"step {step_id!r} uses execution adapter {execution_adapter!r}: "
+            "checkpoint reuse needs the 'standard' adapter (or an IRC route "
+            "on it); named-structure/QST shapes carry no checkpoint port"
+        )
+
+
+def require_no_qst(*, step_id: str, keyword: str) -> None:
+    """Refuse a route carrying a QST item (old 279-283)."""
+    if _QST_TOKEN_RE.search(keyword) is not None:
+        raise _refuse(
+            f"step {step_id!r} carries a QST route item: Gaussian QST "
+            "rendering declares no checkpoint input vocabulary"
+        )
+
+
+def require_standard_checkpoint_role(*, port_present: bool, has_checkpoint_role: bool) -> None:
+    """Refuse when the ``standard`` checkpoint port/role is absent (old 289-293)."""
+    if not port_present or not has_checkpoint_role:
+        raise _refuse(
+            "the 'standard' adapter advertises no 'checkpoint' role on its "
+            "'checkpoint' port; the reuse edge has no supported role"
+        )
+
+
+def require_artifact_checkpoint_role(*, port_present: bool, has_checkpoint_role: bool) -> None:
+    """Refuse when the artifacts checkpoint port/role is absent (old 298-303)."""
+    if not port_present or not has_checkpoint_role:
+        raise _refuse(
+            "the calculation contract advertises no 'checkpoint' role on its "
+            "'artifacts' port; the reuse edge has no supported role"
+        )
+
+
+def ensure_source_write_chk(*, step_id: str, native: object) -> None:
+    """Refuse a source that disables checkpoint writing (old 311-315).
+
+    No write-back here; the producer wrapper sets
+    ``native["write_chk"] = True`` after this passes.
+    """
+    from collections.abc import Mapping as _Mapping
+
+    assert isinstance(native, _Mapping)
+    if not _gaussian_rendering.resolve_write_chk(native):  # type: ignore[arg-type]
+        raise _refuse(
+            f"source step {step_id!r} disables native 'write_chk': "
+            "there is no checkpoint file for the target to consume"
+        )
+
+
+def check_target_link0_core(*, step_id: str, link0_value: object) -> None:
+    """Refuse user-managed checkpoint Link0 paths (old 324-333).
+
+    ``coerce_section_lines`` ValueError propagates unchanged (never caught).
+    """
+    if link0_value is None:
+        return
+    lines = _gaussian_rendering.coerce_section_lines(link0_value, "link0")
+    for line in lines:
+        if _LINK0_CHECKPOINT_RE.search(line) is not None:
+            raise _refuse(
+                f"target step {step_id!r} manages checkpoint paths in native "
+                f"'link0' ({line!r}): the adapter renders '%Chk'/'%OldChk' "
+                "itself, so user-managed checkpoint paths are refused"
+            )
+
+
+def check_unsupported_method(*, target_id: str, target_keyword: str) -> None:
+    """Refuse an unsupported method family on the target (old 928-933)."""
+    finding = _energy_semantics.unsupported_method_finding(target_keyword)
+    if finding is not None:
+        raise _refuse(
+            f"target step {target_id!r} requests method {finding.token!r}: "
+            f"{finding.reason} (family {finding.family.value})"
+        )
+
+
+def check_route_cores(
+    *,
+    source_id: str,
+    target_id: str,
+    source_keyword: str,
+    target_keyword: str,
+    allow_method_change: bool,
+) -> None:
+    """Compare managed-strip route cores (old 934-943)."""
+    source_core = _strip_managed_items(source_keyword)
+    target_core = _strip_managed_items(target_keyword)
+    if source_core != target_core and not allow_method_change:
+        raise _refuse(
+            f"source step {source_id!r} and target step {target_id!r} differ "
+            "beyond the helper-managed Opt/IRC/Freq/SP items "
+            f"({source_core!r} != {target_core!r}): a known differing method "
+            "for Hessian reuse is refused by default; pass "
+            "allow_method_change=True when the method change is intended"
+        )
+
+
+def native_scientific_core(native: Any, *, managed_keys: Any) -> dict[Any, Any]:
+    """Return the scientific payload minus helper-managed keys.
+
+    Runtime mirrors the old producer helper exactly (``.items`` + membership,
+    no new shape rejection): Duck objects with ``.items`` succeed, objects
+    without ``.items`` raise the same ``AttributeError`` text as before.
+    Static types stay permissive via ``Any``/``Mapping`` + ``cast``.
+    """
+    return {
+        key: value
+        for key, value in cast(Mapping[Any, Any], native).items()
+        if key not in managed_keys
+    }
+
+
+def check_native_payload_cores(
+    *,
+    source_id: str,
+    target_id: str,
+    source_native: object,
+    target_native: object,
+    allow_method_change: bool,
+    managed_keys: frozenset[str],
+) -> None:
+    """Compare native scientific payloads (old 946-956)."""
+    if (
+        native_scientific_core(source_native, managed_keys=managed_keys)
+        != native_scientific_core(target_native, managed_keys=managed_keys)
+        and not allow_method_change
+    ):
+        raise _refuse(
+            f"source step {source_id!r} and target step {target_id!r} carry "
+            "different native scientific payloads (basis/ECP/extra sections, "
+            "modredundant, or atom mapping): a known differing method for "
+            "Hessian reuse is refused by default; pass "
+            "allow_method_change=True when the method change is intended"
+        )

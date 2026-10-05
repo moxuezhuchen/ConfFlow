@@ -1,0 +1,183 @@
+{
+  "base_head": "ff8eff1d6173ddaa96a6ce3ed8631e63ff845f21",
+  "branch": "refactor/l1-g1b-proto",
+  "byte_compare": {
+    "contract_boundary": {
+      "boundary_full_sha256": "ee811b9995f49dec9668693d58e9f4d68fa170bfa232837486a8998b6aed9d20",
+      "contract_full_sha256": "2fe92022d2e9fa537b8ad11152d2b173c6f6572e0b0bd3950c7148c332ab43bc",
+      "contract_sha256": "08d51085cb4fea98b5c6e977345fbc339d4098a29e791b511e564b13dcd2c6a8",
+      "note": "contract_digests --out exclusive dirs, three files old==new byte-identical"
+    },
+    "probe_quartets_old_eq_new": {
+      "new_sha256": "44d36c8e943eeb722e4de87a989e16dff5a95196571ddbaace57eabc187bc8be",
+      "old_sha256": "44d36c8e943eeb722e4de87a989e16dff5a95196571ddbaace57eabc187bc8be",
+      "probe_scripts": [
+        "/tmp/l1-g1b-output/freeze_probe.py",
+        "/tmp/l1-g1b-output/probe_baseline_old.json",
+        "/tmp/l1-g1b-output/probe_baseline_new.json"
+      ],
+      "vectors": 9
+    }
+  },
+  "card": "L1-G1b",
+  "checkpoints_in_repo": [
+    "docs/confgen-fix/checkpoints/L1-G1b/MANIFEST.json",
+    "docs/confgen-fix/checkpoints/L1-G1b/DIFF.md"
+  ],
+  "collect": {
+    "added": [
+      "tests/v4/test_architecture_policy.py::test_g1_gates_clean_on_real_tree",
+      "tests/v4/test_architecture_policy.py::test_g1_prod_authority_call_fires_on_real_violation",
+      "tests/v4/test_fix1a_policy_compat.py::test_g1_gates_clean_on_real_tree",
+      "tests/v4/test_l1_gaussian_policy_apply.py::test_adapter_raw_value",
+      "tests/v4/test_l1_gaussian_policy_apply.py::test_g1_gates_clean_and_prose_silent",
+      "tests/v4/test_l1_gaussian_policy_apply.py::test_method_stages",
+      "tests/v4/test_l1_gaussian_policy_apply.py::test_native_core_duck_matches_old_helper",
+      "tests/v4/test_l1_gaussian_policy_apply.py::test_native_core_plain_object_same_attribute_error",
+      "tests/v4/test_l1_gaussian_policy_apply.py::test_order_pairs_match_old",
+      "tests/v4/test_l1_gaussian_policy_apply.py::test_program_identity_not_value",
+      "tests/v4/test_l1_gaussian_policy_apply.py::test_qst_and_roles",
+      "tests/v4/test_l1_gaussian_policy_apply.py::test_wrappers_keep_signatures_and_wire",
+      "tests/v4/test_l1_gaussian_policy_apply.py::test_write_chk_and_link0"
+    ],
+    "added_count": 13,
+    "new_total": 5022,
+    "old_total": 5009,
+    "removed_count": 0
+  },
+  "compat_counterexample": {
+    "fix": "policy.native_scientific_core drops runtime Mapping/frozenset asserts; runtime is old .items+membership only; static Any/Mapping+cast; not ignorable type-illegal",
+    "new_v2_before": {
+      "file": "/tmp/l1-g1b-root-duck-new.json",
+      "result": {
+        "exception": "AssertionError",
+        "message": ""
+      }
+    },
+    "new_v3_after": {
+      "value": {
+        "basis": "x"
+      }
+    },
+    "old": {
+      "file": "/tmp/l1-g1b-root-duck-old.json",
+      "result": {
+        "value": {
+          "basis": "x"
+        }
+      }
+    },
+    "plain_object": {
+      "both": {
+        "exception": "AttributeError",
+        "message": "'object' object has no attribute 'items'"
+      }
+    },
+    "probe": "/tmp/l1-g1b-root-duck-probe.py",
+    "status": "recorded as real compat counterexample"
+  },
+  "exception_order_contract": {
+    "method_family_vs_native_missing": "target step 's_opt' requests method 'MP2' ... (family post_scf) (M1 precedes native-shape gate)",
+    "nails": [
+      "target_qst",
+      "unknown_program",
+      "differing_keyword",
+      "checkpoint_role_missing"
+    ],
+    "positive": "checkpoint ok binding=true",
+    "roles_missing_vs_unresolvable_executor": "the 'standard' adapter advertises no 'checkpoint' role (R1 precedes R2 cannot-resolve)",
+    "source_orca_target_unknown": "step 's_freq' uses program 'orca': ORCA declares no checkpoint input vocabulary (S1 precedes target unknown-program)",
+    "source_qst_missing_adapter": "step 's_freq' carries a QST route item (Q-loop precedes R1 not-registered)"
+  },
+  "executed_validations": {
+    "ast_gates": "g1_violations==[] (G-PROD-1/2/3 + G-POL-1); prose/docstring exempt by construction; each rule real-violation + prose-positive",
+    "necessary_tests": "test_l1_gaussian_policy_move(8) + test_l1_gaussian_policy_apply(10) + checkpoints(69) + boundary(68) + fix1a_compat(8) = 163 node-runs all green (no skip, no G1a-only)",
+    "new_compat_tests": "apply 10 (orig 8 unrelaxed + duck 1 + plain-object 1) + move-migrated 2 + architecture 2 + fix1a 1",
+    "static": "ruff check clean; black --check clean; mypy clean (policy+producer), single worker"
+  },
+  "external_artifacts_dir": "/tmp/l1-g1b-output",
+  "external_artifacts_note": "v1 freeze retained untouched (L1-G1b_proto_diff_binary.patch + CARD + SELFCHECK + probe/collect/contract v1); v2 delivers L1-G1b_v2_proto_diff_binary.patch + CARD_v2 + SELFCHECK_v2 + v1_2FAILED_evidence.log + collect/contract v2 confirmations. In-repo checkpoints are part of the frozen gitdiff (this card).",
+  "file_hashes_git_blob_and_sha256": {
+    "confflow/producer/checkpoints.py": {
+      "git_blob": "f04e313cd81a1bca0a8fa7c9ae8717a6ef3fa643",
+      "lines": 919,
+      "sha256": "63e1b5e3f01fddde6268975d2258355ea127074472d6a8a5951cbe47e3ff2540"
+    },
+    "confflow/programs/gaussian/checkpoint_policy.py": {
+      "git_blob": "a21bdef92da5f6865d92132e25828892aac354c3",
+      "lines": 391,
+      "sha256": "e7a63fede074cec0f93e5c18ea992d73cda5ca97dc9cbff60fd064c1d8ea8ce9"
+    },
+    "tests/v4/test_architecture_policy.py": {
+      "git_blob": "0275b4bea042927b013587a3f0b549c2830b9284",
+      "lines": 2007,
+      "sha256": "8743d09415d6cb83218fd4108b3c7fc5ba33e0ed7e18af9ef20f738d1d13c9eb"
+    },
+    "tests/v4/test_fix1a_policy_compat.py": {
+      "git_blob": "6de81c2da64c8c9ecd3b394c8bd1437b8c674a9e",
+      "lines": 133,
+      "sha256": "e668799a8f5608cef00ef5ed80293c8f6ae56a22cb7db4d0b7cd22209b4196a1"
+    },
+    "tests/v4/test_l1_gaussian_policy_apply.py": {
+      "git_blob": "0433b453bb60e5afe1235c67633a8d09e4febd9a",
+      "lines": 270,
+      "sha256": "eff4b40679b229b70eb4799420db183fdabe06703a62905c945e05758d98f1dd"
+    },
+    "tests/v4/test_l1_gaussian_policy_move.py": {
+      "git_blob": "fef092e704fc9f3a7aa4e28ed0b0c6407df7a4e5",
+      "lines": 287,
+      "sha256": "1e42316f6361ea7c7c7ae0fc390fa5e51f491ac343f37febae3f49847518e1b3"
+    },
+    "tools/architecture_policy.py": {
+      "git_blob": "a73e98b1866eef5eb832464df50f41d2b84405be",
+      "lines": 3900,
+      "sha256": "722fa5e43b2aa7d681bf2880c8ffd5a4aef81f00329946a2ee64e216776b1890"
+    }
+  },
+  "golden_changed": [],
+  "golden_unchanged_asserted": "not run here; full/TS1/golden at L1 milestone root only",
+  "note": "v3 repair pre-rehearsal; v1/v2 retained; no commit/push/merge/tag/install; source /tmp/l1-g1a-exec untouched; proto restores ff8eff clean; no git clean",
+  "plan": "L1-G1 DESIGN-v2 + WHITELIST-v2 WL-G1b + ROOT-REVIEW-v2 + root v2 ruling + root v3 duck-compat ruling (de-assert only, no whitelist expansion)",
+  "root_omission_record": "G1a card added staged assertions that G1b by design overturns (policy no-ProgramName; producer keeps Gaussian branches), but G1b whitelist omitted tests/v4/test_l1_gaussian_policy_move.py. Root now authorizes exactly those 2 stage-assertion updates with node IDs retained and history comments for L3 reorg; omission is root whitelist gap, not executor fault.",
+  "scope": "L1-G1b staged apply only",
+  "source_hashes_readonly": {
+    "/tmp/l1-g1a-exec confflow/producer/checkpoints.py": {
+      "git_blob": "bd78089f3f7ef6be82156348eb15f87f1fc10ae0",
+      "sha256": "a7398a4484c3ba59abd85415a4f3ea20c02e7f343ad3cd4f8405ea4f454591e8"
+    },
+    "/tmp/l1-g1a-exec confflow/programs/gaussian/checkpoint_policy.py": {
+      "git_blob": "aebdbd81c3bd2eaf689796fb40c7d9d39063cd3d",
+      "sha256": "b07f35d8b7e1cfb3e4d9b6bfb741648405079f29802c404803013ff3a1683e1b"
+    },
+    "/tmp/l1-g1a-exec tests/v4/test_l1_gaussian_policy_move.py": {
+      "git_blob": "905f4402c924d96954e0cc702b397940ce0cb8da",
+      "sha256": "71c06286939ebf394fb6eabaaf0821307030ea03d0e611b782e72556"
+    },
+    "parent_commit": "ff8eff1d6173ddaa96a6ce3ed8631e63ff845f21"
+  },
+  "stage_assertion_migration": {
+    "test_policy_imports_contain_no_producer_workflow_science": "keeps producer/workflow/science bans; G1b allows ProgramName Enum identity, still forbids ExecutionRegistry/Callable-lambda; adds IsNot identity evidence + .value-absence + fake same-value runtime refusal; does not delete the test",
+    "test_producer_keeps_g1b_gaussian_branches": "node ID retained (history comment for L3); inverts G1a keeps-branches to G1b zero Gaussian conditions/authority calls with real delegation evidence to all 10 stages; consistent with g1_* gates; no skip/G1a-only"
+  },
+  "type": "logic",
+  "v1_evidence_retained": "/tmp/l1-g1b-output/v1_2FAILED_evidence.log (2 failed, 6 passed on v1 patch; real rerun, not fabricated)",
+  "whitelist_measured_v2": {
+    "modified": [
+      "confflow/programs/gaussian/checkpoint_policy.py (10 stages + Enum identity; v3 de-asserts native_scientific_core only)",
+      "confflow/producer/checkpoints.py (5 wrappers interleaved + del ProgramName/energy_semantics/rendering direct imports)",
+      "tools/architecture_policy.py (+g1_* 4 gates)",
+      "tests/v4/test_architecture_policy.py (+2 mechanical)",
+      "tests/v4/test_fix1a_policy_compat.py (+1 mechanical)",
+      "tests/v4/test_l1_gaussian_policy_move.py (exactly 2 staged-assertion migrations authorized)",
+      "docs/confgen-fix/checkpoints/L1-G1b/MANIFEST.json (new, in-diff)",
+      "docs/confgen-fix/checkpoints/L1-G1b/DIFF.md (new, in-diff)",
+      "docs/confgen-fix/LOG.md (append L1-G1b only)"
+    ],
+    "new": [
+      "tests/v4/test_l1_gaussian_policy_apply.py (8 tests)",
+      "docs/confgen-fix/checkpoints/L1-G1b/* (in-diff)"
+    ],
+    "old_tests_unchanged_except_authorized_2": true
+  },
+  "worktree": "/tmp/l1-g1b-proto"
+}

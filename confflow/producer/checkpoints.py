@@ -85,13 +85,11 @@ from typing import Any
 from ..domain.binding import PortKind
 from ..domain.errors import DomainError, InvalidBindingError
 from ..execution.contracts import ExecutorCapability
-from ..execution.native import ProgramName
 from ..execution.registry import ExecutionRegistry, RegistryLookupError, default_registry
-from ..programs.gaussian import energy_semantics as _energy_semantics
-from ..programs.gaussian import rendering as _gaussian_rendering
 
 # G1a: 11 canonical route constants + trio moved to
 # confflow.programs.gaussian.checkpoint_policy (same objects, bidirectional mirror).
+# G1b: Gaussian stages delegate to the same policy module (data values only).
 from ..programs.gaussian.checkpoint_policy import (  # noqa: F401
     _FREQ_TOKEN_RE,
     _IRC_ITEM_RE,
@@ -107,6 +105,19 @@ from ..programs.gaussian.checkpoint_policy import (  # noqa: F401
     _add_irc_rcfc,
     _add_opt_option,
     _strip_managed_items,
+    check_native_payload_cores,
+    check_route_cores,
+    check_target_link0_core,
+    check_unsupported_method,
+    ensure_source_write_chk,
+    require_artifact_checkpoint_role,
+    require_gaussian_program,
+    require_no_qst,
+    require_standard_adapter,
+    require_standard_checkpoint_role,
+)
+from ..programs.gaussian.checkpoint_policy import (
+    native_scientific_core as _policy_native_scientific_core,
 )
 from ..workflow.v4.compiler import compile_workflow
 from ..workflow.v4.schema import CalculationModel
@@ -204,6 +215,9 @@ def _check_gaussian_sides(
     the ``checkpoint`` input port), and neither route may carry a QST
     item: the Gaussian adapter declares no checkpoint vocabulary for QST
     rendering and refuses staged-but-unused success at render time.
+
+    Generic shape/registry I/O stays here in original row order; Gaussian
+    decisions delegate to ``checkpoint_policy`` stages with data values.
     """
     for step in (source, target):
         step_id = str(step.get("id"))
@@ -213,19 +227,12 @@ def _check_gaussian_sides(
             adapter = registry.resolve_program(program)
         except RegistryLookupError as exc:
             raise _refuse(f"step {step_id!r} uses an unknown program: {exc}") from exc
-        if adapter.program_name is not ProgramName.GAUSSIAN:
-            raise _refuse(
-                f"step {step_id!r} uses program {program!r}: ORCA declares no "
-                "checkpoint input vocabulary, so checkpoint reuse is refused "
-                "instead of staging artifacts nothing can consume"
-            )
-        execution_adapter = block.get("execution_adapter", "standard")
-        if execution_adapter != "standard":
-            raise _refuse(
-                f"step {step_id!r} uses execution adapter {execution_adapter!r}: "
-                "checkpoint reuse needs the 'standard' adapter (or an IRC route "
-                "on it); named-structure/QST shapes carry no checkpoint port"
-            )
+        require_gaussian_program(
+            step_id=step_id, program=program, program_name=adapter.program_name
+        )
+        require_standard_adapter(
+            step_id=step_id, execution_adapter=block.get("execution_adapter", "standard")
+        )
     source_block = _calculation_block(source)
     target_block = _calculation_block(target)
     source_keyword = _keyword_of(
@@ -238,31 +245,29 @@ def _check_gaussian_sides(
         (str(source.get("id")), source_keyword),
         (str(target.get("id")), target_keyword),
     ):
-        if _QST_TOKEN_RE.search(keyword) is not None:
-            raise _refuse(
-                f"step {step_id!r} carries a QST route item: Gaussian QST "
-                "rendering declares no checkpoint input vocabulary"
-            )
+        require_no_qst(step_id=step_id, keyword=keyword)
     try:
         standard_adapter = registry.resolve_adapter("standard")
     except RegistryLookupError as exc:
         raise _refuse(f"the 'standard' execution adapter is not registered: {exc}") from exc
     checkpoint_port = standard_adapter.input_port("checkpoint")
-    if checkpoint_port is None or "checkpoint" not in tuple(checkpoint_port.roles):
-        raise _refuse(
-            "the 'standard' adapter advertises no 'checkpoint' role on its "
-            "'checkpoint' port; the reuse edge has no supported role"
-        )
+    require_standard_checkpoint_role(
+        port_present=checkpoint_port is not None,
+        has_checkpoint_role=(
+            "checkpoint" in tuple(checkpoint_port.roles) if checkpoint_port is not None else False
+        ),
+    )
     try:
         contract = registry.resolve_executor(source_block.get("executor", "calculation"))
     except (RegistryLookupError, ValueError) as exc:
         raise _refuse(f"cannot resolve the calculation executor contract: {exc}") from exc
     artifacts_port = contract.output_port("artifacts")
-    if artifacts_port is None or "checkpoint" not in tuple(artifacts_port.roles):
-        raise _refuse(
-            "the calculation contract advertises no 'checkpoint' role on its "
-            "'artifacts' port; the reuse edge has no supported role"
-        )
+    require_artifact_checkpoint_role(
+        port_present=artifacts_port is not None,
+        has_checkpoint_role=(
+            "checkpoint" in tuple(artifacts_port.roles) if artifacts_port is not None else False
+        ),
+    )
     return source_keyword, target_keyword
 
 
@@ -270,11 +275,7 @@ def _check_write_chk(source: Mapping[str, Any]) -> None:
     """Require the source to write a checkpoint file, then make it explicit."""
     step_id = str(source.get("id"))
     native = _native_of(_calculation_block(source), step_id)
-    if not _gaussian_rendering.resolve_write_chk(native):
-        raise _refuse(
-            f"source step {step_id!r} disables native 'write_chk': "
-            "there is no checkpoint file for the target to consume"
-        )
+    ensure_source_write_chk(step_id=step_id, native=native)
     native["write_chk"] = True
 
 
@@ -282,17 +283,7 @@ def _check_target_link0(target: Mapping[str, Any]) -> None:
     """Refuse a target that hand-manages checkpoint Link0 directives."""
     step_id = str(target.get("id"))
     native = _native_of(_calculation_block(target), step_id)
-    user_link0 = native.get("link0")
-    if user_link0 is None:
-        return
-    lines = _gaussian_rendering.coerce_section_lines(user_link0, "link0")
-    for line in lines:
-        if _LINK0_CHECKPOINT_RE.search(line) is not None:
-            raise _refuse(
-                f"target step {step_id!r} manages checkpoint paths in native "
-                f"'link0' ({line!r}): the adapter renders '%Chk'/'%OldChk' "
-                "itself, so user-managed checkpoint paths are refused"
-            )
+    check_target_link0_core(step_id=step_id, link0_value=native.get("link0"))
 
 
 # G1a mirror: _add_opt_option lives in
@@ -319,7 +310,7 @@ _NATIVE_MANAGED_KEYS = frozenset({"keyword", "write_chk", "link0"})
 
 def _native_scientific_core(native: Mapping[str, Any]) -> dict[str, Any]:
     """Return the scientific payload of *native* minus helper-managed keys."""
-    return {key: value for key, value in native.items() if key not in _NATIVE_MANAGED_KEYS}
+    return _policy_native_scientific_core(native, managed_keys=_NATIVE_MANAGED_KEYS)
 
 
 def _step_override_value(step: Mapping[str, Any], field: str) -> Any:
@@ -766,35 +757,24 @@ def _check_method_compatibility(
     _check_charge_spin_compatibility(document, source, target, registry)
     source_id = str(source.get("id"))
     target_id = str(target.get("id"))
-    finding = _energy_semantics.unsupported_method_finding(target_keyword)
-    if finding is not None:
-        raise _refuse(
-            f"target step {target_id!r} requests method {finding.token!r}: "
-            f"{finding.reason} (family {finding.family.value})"
-        )
-    source_core = _strip_managed_items(source_keyword)
-    target_core = _strip_managed_items(target_keyword)
-    if source_core != target_core and not allow_method_change:
-        raise _refuse(
-            f"source step {source_id!r} and target step {target_id!r} differ "
-            "beyond the helper-managed Opt/IRC/Freq/SP items "
-            f"({source_core!r} != {target_core!r}): a known differing method "
-            "for Hessian reuse is refused by default; pass "
-            "allow_method_change=True when the method change is intended"
-        )
+    check_unsupported_method(target_id=target_id, target_keyword=target_keyword)
+    check_route_cores(
+        source_id=source_id,
+        target_id=target_id,
+        source_keyword=source_keyword,
+        target_keyword=target_keyword,
+        allow_method_change=allow_method_change,
+    )
     source_native = _native_of(_calculation_block(source), source_id)
     target_native = _native_of(_calculation_block(target), target_id)
-    if (
-        _native_scientific_core(source_native) != _native_scientific_core(target_native)
-        and not allow_method_change
-    ):
-        raise _refuse(
-            f"source step {source_id!r} and target step {target_id!r} carry "
-            "different native scientific payloads (basis/ECP/extra sections, "
-            "modredundant, or atom mapping): a known differing method for "
-            "Hessian reuse is refused by default; pass "
-            "allow_method_change=True when the method change is intended"
-        )
+    check_native_payload_cores(
+        source_id=source_id,
+        target_id=target_id,
+        source_native=source_native,
+        target_native=target_native,
+        allow_method_change=allow_method_change,
+        managed_keys=frozenset(_NATIVE_MANAGED_KEYS),
+    )
 
 
 def _compile_diagnostics_text(compiled: Any) -> str:

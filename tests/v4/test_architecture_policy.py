@@ -1978,3 +1978,30 @@ def test_confgen_a2_stage_parent_fires() -> None:
             "def f(parent):\n    return parent.state_key\n",
         )
         assert confgen_a2_stage_parent_violations(root)
+
+
+# ---------------------------------------------------------------------------
+# L1-G1b Gaussian gates (mechanical sync; existing rules untouched).
+# ---------------------------------------------------------------------------
+
+
+def test_g1_gates_clean_on_real_tree() -> None:
+    from tools.architecture_policy import g1_violations
+
+    assert g1_violations(_REAL_ROOT) == []
+
+
+def test_g1_prod_authority_call_fires_on_real_violation(tmp_path: Path) -> None:
+    from tools.architecture_policy import g1_prod_authority_call_violations
+
+    _write(tmp_path, "confflow/__init__.py", "")
+    _write(tmp_path, "confflow/producer/__init__.py", "")
+    _write(tmp_path, "confflow/programs/__init__.py", "")
+    _write(tmp_path, "confflow/programs/gaussian/__init__.py", "")
+    _write(
+        tmp_path,
+        "confflow/producer/checkpoints.py",
+        "from confflow.programs.gaussian.rendering import resolve_write_chk\nx = resolve_write_chk({})\n",
+    )
+    _write(tmp_path, "confflow/programs/gaussian/checkpoint_policy.py", "x = 1\n")
+    assert g1_prod_authority_call_violations(tmp_path) != []
