@@ -5,6 +5,11 @@
 The ``factory`` body preserves the ``engine._load_stage`` torsions
 branch verbatim (snapshot handling plus direct stage construction);
 ``is_active`` preserves the ``engine._levels`` torsions predicate.
+
+A5 lightweight: top level imports only this component's stdlib-only
+``constants.py`` plus the registry type. All runtime imports happen
+inside hook bodies when called, never at ``descriptor()`` build time.
+``schema_constants``/``contract_options`` read only ``constants.py``.
 """
 
 from __future__ import annotations
@@ -13,6 +18,8 @@ from collections.abc import Mapping
 from typing import Any
 
 from confflow.science.confgen.registry import ComponentDescriptor
+
+from .constants import TORSION_MODELS, TREATMENTS, wrap_degrees
 
 __all__ = ["descriptor"]
 
@@ -38,6 +45,20 @@ def _describe_scope(resolved: Mapping[str, Any]) -> Any:
     return _impl(resolved)
 
 
+def _normalize_spec(raw: Mapping[str, Any], *, index_base: int) -> Mapping[str, Any]:
+    """Lazy proxy: normalize owned torsion keys only when called."""
+    from confflow.science.confgen.torsion.spec import normalize_spec as _impl
+
+    return _impl(raw, index_base=index_base)
+
+
+def _validate_context(resolved: Mapping[str, Any], context: Any) -> None:
+    """Lazy proxy: torsion context check."""
+    from confflow.science.confgen.torsion.spec import validate_context as _impl
+
+    return _impl(resolved, context)
+
+
 def _serialize_inherited_state(resolved: Mapping[str, Any], state_value: Any, context: Any) -> Any:
     """Descriptor hook: torsion public scope payload (lazy, no eager solver)."""
     from confflow.science.confgen.torsion.inherited import (
@@ -56,10 +77,25 @@ def _verify_inherited_state(structure: Any, state_value: Any, payload: Any, cont
     return _impl(structure, state_value, payload, context)
 
 
+def _schema_constants() -> Mapping[str, Any]:
+    """Return lightweight torsion vocabulary (no solver import)."""
+    return {
+        "models": tuple(TORSION_MODELS),
+        "treatments": tuple(TREATMENTS),
+        "wrap_degrees": wrap_degrees,
+    }
+
+
+def _contract_options() -> Mapping[str, Any]:
+    """Return the torsion-owned slice of the producer contract."""
+    return {
+        "torsion_models": list(TORSION_MODELS),
+        "treatments": list(TREATMENTS),
+    }
+
+
 def descriptor() -> ComponentDescriptor:
-    """Return the torsions component descriptor."""
-    from confflow.science.confgen.torsion.spec import normalize_spec as _normalize_spec
-    from confflow.science.confgen.torsion.spec import validate_context as _validate_context
+    """Return the torsions component descriptor (lightweight build)."""
 
     def is_active(resolved: Mapping[str, Any]) -> bool:
         torsions = resolved.get("torsions", [])
@@ -91,4 +127,6 @@ def descriptor() -> ComponentDescriptor:
         validate_context=_validate_context,
         serialize_inherited_state=_serialize_inherited_state,
         verify_inherited_state=_verify_inherited_state,
+        schema_constants=_schema_constants,
+        contract_options=_contract_options,
     )

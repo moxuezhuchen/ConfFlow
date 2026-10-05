@@ -2845,6 +2845,9 @@ def test_a4c_lazy_star_import() -> None:
 
 
 def test_a4c_lazy_default_registry_spec_not_stage() -> None:
+    # A5: descriptor() no longer imports spec at build time (lazy proxy
+    # hooks load spec only when called); building the registry loads
+    # neither spec nor stage.
     probe = (
         "import sys; "
         "from confflow.science.confgen.registry import build_default_registry; "
@@ -2862,7 +2865,7 @@ def test_a4c_lazy_default_registry_spec_not_stage() -> None:
     lines = completed.stdout.strip().splitlines()
     assert lines[0] == "('coordination', 'rings', 'torsions')", completed.stdout
     assert lines[1] == "[]", completed.stdout
-    assert lines[2] == "True", completed.stdout
+    assert lines[2] == "False", completed.stdout
 
 
 def test_a4c_lazy_no_runtime_component_import() -> None:
@@ -3618,3 +3621,200 @@ def test_a4d_scope_bytes_and_preserve_and_cancel() -> None:
 
     with pytest.raises(Exception, match="cancelled"):
         ConfgenEngine().run(ctx2, should_cancel=_probe)
+
+
+# ---------------------------------------------------------------------------
+# A5 lightweight boundary (FIX-1A A5, logic, behavior unchanged).
+# ---------------------------------------------------------------------------
+
+
+def test_a5_minimal_schema_import_stays_empty() -> None:
+    probe = (
+        "import sys; "
+        "from confflow.workflow.v4.confgen_schema import ConfgenModelV3; "
+        "v=ConfgenModelV3.model_validate({'schema_version': 3}); "
+        "print(v.schema_version); "
+        "mods=[m for m in sys.modules if m.startswith('confflow.science.confgen')]; "
+        "print(mods)"
+    )
+    completed = _lazy_run(probe)
+    assert completed.returncode == 0, completed.stderr
+    lines = completed.stdout.strip().splitlines()
+    assert lines[0] == "3", completed.stdout
+    assert lines[1] == "[]", completed.stdout
+
+
+def test_a5_full_spec_contract_only_light_modules() -> None:
+    probe = (
+        "import sys; "
+        "from confflow.workflow.v4.confgen_schema import ConfgenModelV3; "
+        "spec={'schema_version': 3, 'coordination': "
+        "{'metal_center': 1, 'binding_sites': "
+        "[{'id': 's0', 'kind': 'atom', 'atoms': [2]}, "
+        "{'id': 's1', 'kind': 'atom', 'atoms': [3]}, "
+        "{'id': 's2', 'kind': 'atom', 'atoms': [4]}, "
+        "{'id': 's3', 'kind': 'atom', 'atoms': [5]}], 'shapes': ['tetrahedral']}, "
+        "'rings': [{'id': 'r1', 'atoms': [1, 2, 3, 4], 'templates': ['planar_4']}], "
+        "'torsions': [{'id': 't1', 'bond': [1, 2], 'model': 'relative_rotation_grid', "
+        "'angles': [0.0, 120.0]}], 'paths': []}; "
+        "v=ConfgenModelV3.model_validate(spec); print('spec-ok'); "
+        "from confflow.producer.contract import _confgen_section; "
+        "s=_confgen_section(); print(list(s.keys())); "
+        "from confflow.science.confgen.registry import build_default_registry; "
+        "r=build_default_registry(); print(r.ids()); "
+        "heavy=[m for m in sys.modules if m.startswith('confflow.science.confgen.') "
+        "and (m.endswith('.stage') or m.endswith('.realization') "
+        "or m.endswith('.enumeration') or m.endswith('.hgeom'))]; "
+        "print(heavy)"
+    )
+    completed = _lazy_run(probe)
+    assert completed.returncode == 0, completed.stderr
+    lines = completed.stdout.strip().splitlines()
+    assert lines[0] == "spec-ok", completed.stdout
+    assert "coordination_shapes" in lines[1], completed.stdout
+    assert lines[2] == "('coordination', 'rings', 'torsions')", completed.stdout
+    assert lines[3] == "[]", completed.stdout
+
+
+def test_a5_wire_literal_matches_registry_ids() -> None:
+    from confflow.science.confgen.registry import build_default_registry
+
+    assert build_default_registry().ids() == ("coordination", "rings", "torsions")
+    # v3 wire format preserved (Literal three-axis, not components dict).
+    src = Path(__file__).resolve().parents[2] / "confflow/workflow/v4/confgen_schema.py"
+    text = src.read_text()
+    assert 'Literal["coordination", "rings", "torsions"]' in text
+
+
+def test_a5_constants_is_same_and_values() -> None:
+    from confflow.science.confgen.coordination import constants as cc
+    from confflow.science.confgen.coordination import stage as cs
+    from confflow.science.confgen.ring import constants as rc
+    from confflow.science.confgen.ring import templates as rt
+    from confflow.science.confgen.torsion import constants as tc
+    from confflow.science.confgen.torsion import stage as ts
+
+    assert cs.DEFAULT_SECTION_TOLERANCES is cc.DEFAULT_SECTION_TOLERANCES
+    assert cs.BACKEND_CHOICES is cc.BACKEND_CHOICES
+    assert rt.TEMPLATES_BY_SIZE is rc.TEMPLATES_BY_SIZE
+    assert ts.BACKEND_NAME is tc.BACKEND_NAME
+    assert cc.DEFAULT_SECTION_TOLERANCES == {
+        "realize_tol": 0.45,
+        "reaction_tol": 0.25,
+        "clash_scale": 0.70,
+        "rmsd_tolerance": 0.35,
+        "margin_tolerance": 0.05,
+        "shape_margin_tolerance": 0.15,
+    }
+    assert cc.BACKEND_CHOICES == ("rigid", "flexible", "rigid_then_flexible")
+    assert rc.TEMPLATES_BY_SIZE == {
+        4: ("planar_4", "pucker_up_4", "pucker_down_4"),
+        5: ("planar_5", "envelope_5", "twist_5"),
+        6: ("chair_A_6", "chair_B_6", "boat_6", "twist_boat_6"),
+    }
+    assert tc.TORSION_MODELS == (
+        "relative_rotation_grid",
+        "absolute_dihedral_grid",
+        "chemical",
+    )
+    assert tc.TREATMENTS == ("enumerate", "preserve_input")
+    # stdlib only: constants modules import nothing beyond __future__/math.
+    for rel in (
+        "confflow/science/confgen/coordination/constants.py",
+        "confflow/science/confgen/ring/constants.py",
+        "confflow/science/confgen/torsion/constants.py",
+    ):
+        tree = ast.parse((_LAZY_REPO_ROOT / rel).read_text())
+        for node in tree.body:
+            if isinstance(node, (ast.ImportFrom, ast.Import)):
+                src = ast.unparse(node)
+                assert "confflow" not in src, src
+                assert "numpy" not in src, src
+    # Old alias values/types/__all__ preserved.
+    assert isinstance(cc.DEFAULT_SECTION_TOLERANCES, dict)
+    assert isinstance(cc.BACKEND_CHOICES, tuple)
+    assert "TEMPLATES_BY_SIZE" in rt.__all__
+    assert "BACKEND_NAME" in ts.__all__
+    # Tolerances stay single-authority (no duplicate set in constants).
+    from confflow.science.confgen.tolerances import ConfgenTolerances
+
+    assert ConfgenTolerances().bond_scale == 1.15
+
+
+def test_a5_contract_options_order_and_values() -> None:
+    from confflow.producer.contract import _confgen_section
+    from confflow.science.confgen.graph import CN_SHAPES, SUPPORTED_SHAPES
+    from confflow.science.confgen.registry import build_default_registry
+
+    section = _confgen_section()
+    assert list(section.keys()) == [
+        "schema_version",
+        "coordination_shapes",
+        "coordination_shapes_by_cn",
+        "ring_templates_by_size",
+        "torsion_models",
+        "treatments",
+        "coordination_backends",
+        "coordination_budgets",
+        "coordination_site_group_scope",
+        "result_provenance",
+        "report_provenance",
+        "tolerances",
+        "limits",
+        "description",
+    ]
+    assert section["coordination_shapes"] == sorted(SUPPORTED_SHAPES)
+    assert section["coordination_shapes_by_cn"] == {
+        str(k): list(v) for k, v in sorted(CN_SHAPES.items())
+    }
+    reg = build_default_registry()
+    owned: dict[str, Any] = {}
+    for desc in reg._ordered():
+        assert callable(desc.schema_constants)
+        assert callable(desc.contract_options)
+        owned.update(dict(desc.contract_options()))
+    for key in (
+        "coordination_shapes",
+        "coordination_shapes_by_cn",
+        "ring_templates_by_size",
+        "torsion_models",
+        "treatments",
+        "coordination_backends",
+        "coordination_budgets",
+        "coordination_site_group_scope",
+    ):
+        assert owned[key] == section[key]
+
+
+def test_a5_active_components_and_suppression_gate() -> None:
+    from confflow.science.confgen.registry import build_default_registry
+    from tests.v4.test_confgen_v3_core import _axis, _pentane, _torsion_spec
+
+    # Hand-constructed default stays () (old validation order preserved).
+    ctx0 = build_context(_pentane("h"), _torsion_spec(seed=1))
+    assert ctx0.active_components == ()
+    assert ctx0.registry is not None
+    # Registry order, not solver: torsions-only run reports single id.
+    assert build_default_registry().ids() == ("coordination", "rings", "torsions")
+    ctx1 = build_context(_pentane("p1"), _torsion_spec(_axis([2, 3], [0.0, 120.0], id="a")))
+    assert ctx1.active_components == ("torsions",)
+    # Coordination single-axis gate: combined axes fail via active tuple.
+    from types import SimpleNamespace
+
+    from confflow.science.confgen.coordination.stage import CoordinationStage
+
+    stage = CoordinationStage.__new__(CoordinationStage)
+    object.__setattr__(
+        stage, "_spec", SimpleNamespace(treatment="enumerate", shapes=("tetrahedral",))
+    )
+    target = SimpleNamespace(target_id="t", state_value={})
+    combined = SimpleNamespace(
+        resolved_spec={"rings": [{"id": "r"}], "torsions": []},
+        active_components=("coordination", "rings"),
+    )
+    assert stage.suppression_for_target(object(), target, combined) is None  # type: ignore[arg-type]
+    single_empty = SimpleNamespace(
+        resolved_spec={"rings": [], "torsions": []}, active_components=()
+    )
+    # Empty fallback preserves legacy presence check (no rings/torsions -> passes gate).
+    assert single_empty.active_components == ()

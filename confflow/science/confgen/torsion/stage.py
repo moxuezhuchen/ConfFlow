@@ -47,10 +47,12 @@ from confflow.science.torsion import (
     topological_distance_matrix,
 )
 
+from .constants import BACKEND_NAME
+
 __all__ = ["BACKEND_NAME", "TorsionStage"]
 
-#: Backend label stamped on every torsion realization result.
-BACKEND_NAME = "geometric-rodrigues-v3"
+#: Backend label (single authority in :mod:`torsion.constants`; re-exported
+#: here as the same object for historic import paths).
 
 _DEGENERATE_AXIS_NORM = 1e-12
 

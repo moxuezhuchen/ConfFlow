@@ -74,6 +74,7 @@ from ..graph import (
     ForbiddenTrans,
     TypedGraph,
 )
+from .constants import BACKEND_CHOICES, DEFAULT_SECTION_TOLERANCES
 from .enumeration import (
     canonical_representative,
     command_key,
@@ -111,14 +112,8 @@ HGEOM_HELPER_NOTE = (
 #: Section-level coordination tolerances (lane-owned; the frozen
 #: coordination_bond_atol / coordination_angle_atol_deg arrive via
 #: context.tolerances and govern intra-fragment integrity).
-DEFAULT_SECTION_TOLERANCES: dict[str, float] = {
-    "realize_tol": 0.45,
-    "reaction_tol": 0.25,
-    "clash_scale": 0.70,
-    "rmsd_tolerance": 0.35,
-    "margin_tolerance": 0.05,
-    "shape_margin_tolerance": 0.15,
-}
+#: Single authority lives in :mod:`coordination.constants`; re-exported
+#: here as the same object for historic import paths.
 
 _AXIS_SPEC_KEYS = (
     "metal_center",
@@ -134,7 +129,8 @@ _AXIS_SPEC_KEYS = (
 )
 
 #: Realization backend selection (section-level, lane-owned).
-BACKEND_CHOICES = ("rigid", "flexible", "rigid_then_flexible")
+#: Single authority lives in :mod:`coordination.constants`; re-exported
+#: here as the same object for historic import paths.
 
 
 def _resolve_shapes(spec: CoordinationSpec, shapes: Any) -> tuple[str, ...]:
@@ -856,8 +852,22 @@ class CoordinationStage(GenerationStage):
 
         if self._spec.treatment == "preserve_input":
             return None
-        resolved = context.resolved_spec
-        if list(resolved.get("rings", []) or []) or list(resolved.get("torsions", []) or []):
+        # A5 single-axis gate: kernel provides active_components in registry
+        # order; coordination only reads its own id tuple, never rings/torsions.
+        # Empty () is the pre-A5 hand-constructed default: fall back to the
+        # legacy presence check so old contexts stay byte-identical.
+        active = getattr(context, "active_components", ())
+        if active is None:
+            active = ()
+        try:
+            active_tuple = tuple(active)
+        except TypeError:
+            active_tuple = ()
+        if active_tuple == ():
+            resolved = context.resolved_spec
+            if list(resolved.get("rings", []) or []) or list(resolved.get("torsions", []) or []):
+                return None
+        elif active_tuple != ("coordination",):
             return None
         graph = self._check_context(context)
         try:

@@ -6,6 +6,11 @@ The ``factory`` body preserves the ``engine._load_stage`` rings branch
 verbatim (snapshot handling, lazy import with fail-closed
 ``UnsupportedAxisError``, original message); ``is_active`` preserves
 the ``engine._levels`` rings predicate.
+
+A5 lightweight: top level imports only this component's stdlib-only
+``constants.py`` plus the registry type. All runtime imports happen
+inside hook bodies when called, never at ``descriptor()`` build time.
+``schema_constants``/``contract_options`` read only ``constants.py``.
 """
 
 from __future__ import annotations
@@ -13,8 +18,9 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from confflow.science.confgen.kernel_records import InheritedScopeError, VerificationResult
 from confflow.science.confgen.registry import ComponentDescriptor
+
+from .constants import TEMPLATES_BY_SIZE
 
 __all__ = ["descriptor"]
 
@@ -52,6 +58,20 @@ def _describe_scope(resolved: Mapping[str, Any]) -> Any:
     return _impl(resolved)
 
 
+def _normalize_spec(raw: Mapping[str, Any], *, index_base: int) -> Mapping[str, Any]:
+    """Lazy proxy: normalize owned ``rings`` key only when called."""
+    from confflow.science.confgen.ring.spec import normalize_spec as _impl
+
+    return _impl(raw, index_base=index_base)
+
+
+def _validate_context(resolved: Mapping[str, Any], context: Any) -> None:
+    """Lazy proxy: ring context check (none at A4b)."""
+    from confflow.science.confgen.ring.spec import validate_context as _impl
+
+    return _impl(resolved, context)
+
+
 def _serialize_inherited_state(
     resolved: Mapping[str, Any], state_value: Any, context: Any
 ) -> Mapping[str, Any]:
@@ -70,10 +90,10 @@ def _serialize_inherited_state(
     return out
 
 
-def _verify_inherited_state(
-    structure: Any, state_value: Any, payload: Any, context: Any
-) -> VerificationResult:
+def _verify_inherited_state(structure: Any, state_value: Any, payload: Any, context: Any) -> Any:
     """Verify the carried rings slice (scope completeness only)."""
+    from confflow.science.confgen.kernel_records import InheritedScopeError, VerificationResult
+
     rings_value = dict(state_value or {}) if isinstance(state_value, Mapping) else {}
     if not rings_value:
         return VerificationResult(ok=True, evidence=())
@@ -102,10 +122,29 @@ def _verify_inherited_state(
     return VerificationResult(ok=True, evidence=())
 
 
+def _schema_constants() -> Mapping[str, Any]:
+    """Return lightweight ring vocabulary (no solver import)."""
+    sizes: dict[str, int] = {}
+    for size, names in TEMPLATES_BY_SIZE.items():
+        for name in names:
+            sizes[str(name)] = int(size)
+    return {
+        "template_sizes": sizes,
+        "templates_by_size": {str(k): tuple(v) for k, v in TEMPLATES_BY_SIZE.items()},
+    }
+
+
+def _contract_options() -> Mapping[str, Any]:
+    """Return the ring-owned slice of the producer contract."""
+    return {
+        "ring_templates_by_size": {
+            str(size): sorted(names) for size, names in sorted(TEMPLATES_BY_SIZE.items())
+        },
+    }
+
+
 def descriptor() -> ComponentDescriptor:
-    """Return the rings component descriptor."""
-    from confflow.science.confgen.ring.spec import normalize_spec as _normalize_spec
-    from confflow.science.confgen.ring.spec import validate_context as _validate_context
+    """Return the rings component descriptor (lightweight build)."""
 
     def is_active(resolved: Mapping[str, Any]) -> bool:
         rings = resolved.get("rings", [])
@@ -142,4 +181,6 @@ def descriptor() -> ComponentDescriptor:
         validate_context=_validate_context,
         serialize_inherited_state=_serialize_inherited_state,
         verify_inherited_state=_verify_inherited_state,
+        schema_constants=_schema_constants,
+        contract_options=_contract_options,
     )

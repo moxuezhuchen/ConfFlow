@@ -84,6 +84,16 @@ class ComponentDescriptor:
     # VerificationResult(ok, evidence) for geometry drift (empty when ok).
     serialize_inherited_state: Callable[..., Any] | None = None
     verify_inherited_state: Callable[..., Any] | None = None
+    # A5 lightweight-boundary hooks (optional for compat; built-ins always
+    # set them). schema_constants() returns only lightweight vocabulary
+    # (shapes, template sizes, models/treatments) read from the component's
+    # stdlib-only constants.py (plus the lane-B graph for coordination
+    # shapes, which is light and needs no new authority); contract_options()
+    # returns the component-owned slice of the producer contract section.
+    # Both must never import stage/realization/enumeration/hgeom; they are
+    # called lazily by schema/contract validators, never at registry build.
+    schema_constants: Callable[[], Mapping[str, Any]] | None = None
+    contract_options: Callable[[], Mapping[str, Any]] | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "spec_keys", tuple(self.spec_keys))

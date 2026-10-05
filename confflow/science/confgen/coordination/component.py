@@ -7,6 +7,14 @@ branch verbatim (snapshot handling, lazy import, the three fail-closed
 layers around ``adapt_to_core``, original messages); ``is_active``
 preserves the ``engine._levels`` coordination predicate including the
 ``treatment != "preserve_input"`` gate.
+
+A5 lightweight: top level imports only this component's stdlib-only
+``constants.py`` plus the registry type. All runtime imports (spec,
+scope, stage, graph) happen inside hook bodies when called, never at
+``descriptor()`` build time, so building the default registry loads no
+solver modules. ``schema_constants``/``contract_options`` read only
+lightweight constants (own ``constants.py`` plus lane-B ``graph.py``,
+which needs no new authority).
 """
 
 from __future__ import annotations
@@ -14,8 +22,9 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from confflow.science.confgen.kernel_records import InheritedScopeError, VerificationResult
 from confflow.science.confgen.registry import ComponentDescriptor
+
+from .constants import BACKEND_CHOICES, DEFAULT_SECTION_TOLERANCES
 
 __all__ = ["descriptor"]
 
@@ -41,6 +50,27 @@ def _describe_scope(resolved: Mapping[str, Any]) -> Any:
     return _impl(resolved)
 
 
+def _normalize_spec(raw: Mapping[str, Any], *, index_base: int) -> Mapping[str, Any]:
+    """Lazy proxy: normalize owned ``coordination`` key only when called."""
+    from confflow.science.confgen.coordination.spec import normalize_spec as _impl
+
+    return _impl(raw, index_base=index_base)
+
+
+def _validate_context(resolved: Mapping[str, Any], context: Any) -> None:
+    """Lazy proxy: coordination context check (none at A4b)."""
+    from confflow.science.confgen.coordination.spec import validate_context as _impl
+
+    return _impl(resolved, context)
+
+
+def _contribute_topology(resolved: Mapping[str, Any], build: Any) -> None:
+    """Lazy proxy: coordination topology overlay only when called."""
+    from confflow.science.confgen.coordination.spec import contribute_topology as _impl
+
+    return _impl(resolved, build)
+
+
 def _serialize_inherited_state(resolved: Mapping[str, Any], state_value: Any, context: Any) -> Any:
     """Build the public coordination scope payload (byte-identical)."""
     coordination = resolved.get("coordination")
@@ -63,10 +93,10 @@ def _serialize_inherited_state(resolved: Mapping[str, Any], state_value: Any, co
     return scope
 
 
-def _verify_inherited_state(
-    structure: Any, state_value: Any, payload: Any, context: Any
-) -> VerificationResult:
+def _verify_inherited_state(structure: Any, state_value: Any, payload: Any, context: Any) -> Any:
     """Verify the carried coordination slice (scope completeness only)."""
+    from confflow.science.confgen.kernel_records import InheritedScopeError, VerificationResult
+
     if state_value is None:
         return VerificationResult(ok=True, evidence=())
     resolved = context.resolved_spec
@@ -88,17 +118,34 @@ def _verify_inherited_state(
     )
 
 
+def _schema_constants() -> Mapping[str, Any]:
+    """Return lightweight coordination vocabulary (no solver import)."""
+    from confflow.science.confgen.graph import SUPPORTED_SHAPES
+
+    return {
+        "shapes": tuple(SUPPORTED_SHAPES),
+        "section_tolerances": dict(DEFAULT_SECTION_TOLERANCES),
+        "backends": tuple(BACKEND_CHOICES),
+    }
+
+
+def _contract_options() -> Mapping[str, Any]:
+    """Return the coordination-owned slice of the producer contract."""
+    from confflow.science.confgen.graph import CN_SHAPES, SUPPORTED_SHAPES
+
+    return {
+        "coordination_shapes": sorted(SUPPORTED_SHAPES),
+        "coordination_shapes_by_cn": {
+            str(number): list(names) for number, names in sorted(CN_SHAPES.items())
+        },
+        "coordination_backends": list(BACKEND_CHOICES),
+        "coordination_budgets": {"max_nfev": 120, "maxiter": 400},
+        "coordination_site_group_scope": "declared_topological_subgroup",
+    }
+
+
 def descriptor() -> ComponentDescriptor:
-    """Return the coordination component descriptor."""
-    from confflow.science.confgen.coordination.spec import (
-        contribute_topology as _contribute_topology,
-    )
-    from confflow.science.confgen.coordination.spec import (
-        normalize_spec as _normalize_spec,
-    )
-    from confflow.science.confgen.coordination.spec import (
-        validate_context as _validate_context,
-    )
+    """Return the coordination component descriptor (lightweight build)."""
 
     def is_active(resolved: Mapping[str, Any]) -> bool:
         coordination = resolved.get("coordination")
@@ -155,4 +202,6 @@ def descriptor() -> ComponentDescriptor:
         contribute_topology=_contribute_topology,
         serialize_inherited_state=_serialize_inherited_state,
         verify_inherited_state=_verify_inherited_state,
+        schema_constants=_schema_constants,
+        contract_options=_contract_options,
     )

@@ -227,6 +227,12 @@ class MolecularContext:
     # model->registry cycle). ``build_context`` always passes the resolved
     # instance explicitly.
     registry: ComponentRegistry | None = None
+    # A5 single-axis gate: ids of active components in registry order,
+    # determined by the registry (not the solver). Defaults to () for
+    # hand-constructed contexts; ``build_context`` always fills it explicitly
+    # after path expansion. Coordination reads
+    # ``active_components == (own id,)`` instead of rings/torsions presence.
+    active_components: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if not isinstance(self.structure, StructureRecord):
@@ -296,6 +302,16 @@ class MolecularContext:
             from confflow.science.confgen.registry import default_registry
 
             object.__setattr__(self, "registry", default_registry())
+        # A5: normalize active_components last (same compat rule: old
+        # hand-constructed contexts without the field stay valid as ()).
+        # Accepts tuple/list of str; None means ().
+        active = self.active_components
+        if active is None:
+            object.__setattr__(self, "active_components", ())
+        elif isinstance(active, (list, tuple)):
+            object.__setattr__(self, "active_components", tuple(str(v) for v in active))
+        else:
+            raise ValueError("active_components must be a tuple of component ids")
 
 
 def _expand_typed_paths(
@@ -493,6 +509,10 @@ def build_context(
         raise ValueError(
             "scoped atom references fail the graph authority audit: " + "; ".join(ref_problems[:5])
         )
+    # A5: active components in registry order (after path expansion, so
+    # path-expanded torsions count). Determined by the registry, not the
+    # solver; the coordination single-axis gate reads this tuple.
+    active_ids = tuple(_d.id for _d in resolved_registry._ordered() if _d.is_active(resolved))
     # A4b: component context validation (only checks that already ran at
     # context stage may live here; builtins are no-ops at A4b, so order and
     # bytes are unchanged). Hooks run in registry order after the typed
@@ -508,6 +528,7 @@ def build_context(
         inherited_scope=FrozenDict(scope),
         atom_refs=atom_refs,
         registry=resolved_registry,
+        active_components=active_ids,
     )
     for _descriptor in resolved_registry._ordered():
         _validate = _descriptor.validate_context
