@@ -16,16 +16,30 @@ from typing import Any
 from confflow.domain._immutable import FrozenDict
 
 __all__ = [
+    "BoundTelemetryEvent",
     "ComponentInheritedState",
     "ComponentStateKey",
     "InheritedScopeError",
     "KernelGenerationTarget",
     "KernelRun",
     "KernelWorkingRealization",
+    "RetryResult",
+    "TelemetryError",
+    "TelemetryRow",
     "TopologyBuildContext",
     "VerificationResult",
     "as_kernel_target",
 ]
+
+
+class TelemetryError(ValueError):
+    """Generic fail-closed error for malformed telemetry rows.
+
+    Distinct ``ValueError`` subclass so the engine can re-raise it
+    explicitly instead of swallowing it as ``stage_error``. Never
+    relaxes science judgements; terminal records keep their existing
+    semantics.
+    """
 
 
 class InheritedScopeError(ValueError):
@@ -229,6 +243,167 @@ class VerificationResult:
         if not isinstance(self.ok, bool):
             raise ValueError("ok must be a bool")
         object.__setattr__(self, "evidence", tuple(self.evidence))
+
+
+@dataclass(frozen=True, slots=True)
+class TelemetryRow:
+    """Component-owned generic telemetry row (L-D3 logic seam).
+
+    Opaque component vocabulary: ``kind`` is a component-owned label
+    (kernel never interprets it and never aggregates axis names);
+    ``attempts`` counts attempted starts represented by this row;
+    ``solve_successes`` counts geometry successes
+    (``outcome.status == "realized"`` with a structure) among them;
+    ``diagnostic`` is immutable JSON-compatible component data.
+    Identity (component/parent/target/phase) is bound by the engine,
+    never trusted from the caller.
+    """
+
+    kind: str
+    attempts: int = 1
+    solve_successes: int = 0
+    diagnostic: Mapping[str, Any] = field(default_factory=FrozenDict)
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.kind, str) or not self.kind:
+            raise TelemetryError("telemetry kind must be a non-empty string")
+        for name in ("attempts", "solve_successes"):
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise TelemetryError(f"telemetry {name} must be an integer >= 0")
+        if int(self.solve_successes) > int(self.attempts):
+            raise TelemetryError("telemetry solve_successes must not exceed attempts")
+        try:
+            frozen = _freeze_json(dict(self.diagnostic), path="$.diagnostic")
+        except ValueError as exc:
+            raise TelemetryError(str(exc)) from exc
+        object.__setattr__(self, "diagnostic", FrozenDict(frozen))
+
+
+@dataclass(frozen=True, slots=True)
+class BoundTelemetryEvent:
+    """Engine-bound telemetry event (L-D3 logic seam).
+
+    ``component_id``/``parent_target_id``/``target_id``/``ordinal``/
+    ``phase`` are bound by the engine at the real solve gate; the
+    kernel never interprets ``kind``. ``solve_successes`` is the
+    geometry-success count (outcome realized with structure);
+    ``accepted`` is the engine-audited publication flag and lives in
+    a separate column (never merged into success). Immutable.
+    """
+
+    component_id: str
+    parent_target_id: str | None
+    target_id: str
+    ordinal: int
+    phase: str
+    kind: str
+    attempts: int = 1
+    solve_successes: int = 0
+    accepted: bool = False
+    diagnostic: Mapping[str, Any] = field(default_factory=FrozenDict)
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.component_id, str) or not self.component_id:
+            raise TelemetryError("telemetry component_id must be a non-empty string")
+        if self.parent_target_id is not None and (
+            not isinstance(self.parent_target_id, str) or not self.parent_target_id
+        ):
+            raise TelemetryError("telemetry parent_target_id must be None or a non-empty string")
+        if not isinstance(self.target_id, str) or not self.target_id:
+            raise TelemetryError("telemetry target_id must be a non-empty string")
+        if isinstance(self.ordinal, bool) or not isinstance(self.ordinal, int) or self.ordinal < 0:
+            raise TelemetryError("telemetry ordinal must be an integer >= 0")
+        if not isinstance(self.phase, str) or not self.phase:
+            raise TelemetryError("telemetry phase must be a non-empty string")
+        if not isinstance(self.kind, str) or not self.kind:
+            raise TelemetryError("telemetry kind must be a non-empty string")
+        for name in ("attempts", "solve_successes"):
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise TelemetryError(f"telemetry {name} must be an integer >= 0")
+        if int(self.solve_successes) > int(self.attempts):
+            raise TelemetryError("telemetry solve_successes must not exceed attempts")
+        if not isinstance(self.accepted, bool):
+            raise TelemetryError("telemetry accepted must be a bool")
+        try:
+            frozen = _freeze_json(dict(self.diagnostic), path="$.diagnostic")
+        except ValueError as exc:
+            raise TelemetryError(str(exc)) from exc
+        object.__setattr__(self, "diagnostic", FrozenDict(frozen))
+
+
+@dataclass(frozen=True, slots=True)
+class RetryResult:
+    """Explicit frozen wrapper for phase-aware retry outcomes (L-D3).
+
+    Only this exact type is unwrapped by the engine; any other tuple
+    keeps the legacy plain-outcome semantics. ``outcome`` is the
+    optional solver outcome (``None`` declines the retry but keeps
+    ``telemetry``); ``telemetry`` is the frozen tuple of
+    component-owned :class:`TelemetryRow` entries (one per attempted
+    start, including failures). ``success_index`` optionally names the
+    position in ``telemetry`` of the successful start; when set it must
+    point at a row with ``attempts > 0`` and ``solve_successes > 0``
+    (a trailing zero-attempt diagnostic row is never selectable).
+    Without it the engine requires exactly one successful row
+    (unique-success rule, ambiguous payloads rejected loudly).
+    Malformed telemetry raises :class:`TelemetryError` visibly (never
+    ``stage_error``).
+    """
+
+    outcome: Any = None
+    telemetry: tuple[TelemetryRow, ...] = ()
+    success_index: int | None = None
+
+    def __post_init__(self) -> None:
+        outcome = self.outcome
+        if outcome is not None:
+            try:
+                from confflow.science.confgen.model import RealizationResult as _Outcome
+            except Exception:
+                _Outcome = None  # type: ignore[assignment]
+            if _Outcome is not None and not isinstance(outcome, _Outcome):
+                raise TelemetryError(
+                    "RetryResult outcome must be RealizationResult or None, "
+                    f"got {type(outcome).__name__}"
+                )
+            if _Outcome is None:
+                status = getattr(outcome, "status", None)
+                if not isinstance(status, str):
+                    raise TelemetryError("RetryResult outcome must carry a status string")
+        rows = self.telemetry
+        if not isinstance(rows, (tuple, list)):
+            raise TelemetryError("RetryResult telemetry must be a tuple of TelemetryRow")
+        frozen_rows: list[TelemetryRow] = []
+        for entry in list(rows):
+            if not isinstance(entry, TelemetryRow):
+                raise TelemetryError(
+                    "RetryResult telemetry entries must be TelemetryRow, "
+                    f"got {type(entry).__name__}"
+                )
+            frozen_rows.append(entry)
+        object.__setattr__(self, "telemetry", tuple(frozen_rows))
+        index = self.success_index
+        if index is None:
+            return
+        if isinstance(index, bool) or not isinstance(index, int):
+            raise TelemetryError("RetryResult success_index must be an int or None")
+        if index < 0 or index >= len(frozen_rows):
+            raise TelemetryError(
+                f"RetryResult success_index {index} out of range "
+                f"for {len(frozen_rows)} telemetry rows"
+            )
+        if outcome is None:
+            raise TelemetryError("RetryResult success_index requires a successful outcome")
+        chosen = frozen_rows[index]
+        if int(chosen.attempts) <= 0 or int(chosen.solve_successes) <= 0:
+            raise TelemetryError(
+                "RetryResult success_index must point at a row with "
+                "attempts > 0 and solve_successes > 0, "
+                f"got attempts={int(chosen.attempts)} "
+                f"solve_successes={int(chosen.solve_successes)}"
+            )
 
 
 @dataclass(slots=True)

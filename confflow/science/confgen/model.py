@@ -25,6 +25,7 @@ from enum import Enum
 from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:  # Annotation only; runtime uses local import (avoid model->registry cycle).
+    from confflow.science.confgen.kernel_records import RetryResult
     from confflow.science.confgen.registry import ComponentRegistry
 
 from confflow.domain._immutable import FrozenDict
@@ -697,6 +698,21 @@ class GenerationStage(ABC):
         """
         return None
 
+    def report_statistics(self, snapshot: tuple[Any, ...]) -> Mapping[str, Any] | None:
+        """Return this component's additive report fragment, if any (L-D3).
+
+        Generic logic seam: the engine passes a read-only tuple of bound
+        telemetry events for this component (possibly empty) and expects
+        either ``None`` (default: no fragment, golden bytes unchanged) or
+        a mapping fragment stored under
+        ``scope["component_statistics"][component_id]``. The engine writes
+        the new scope key only when at least one component returns a
+        non-empty mapping; fragments never overwrite existing scope or
+        terminal fields. The snapshot is read-only; stages must not
+        write caches here.
+        """
+        return None
+
     def retry_solve(
         self,
         parent: StageParentProtocol,
@@ -746,7 +762,7 @@ class GenerationStage(ABC):
         first_pass: tuple[RetryFirstPass, ...],
         phase_id: str,
         phase_snapshot: tuple[RetryFirstPass, ...],
-    ) -> RealizationResult | None:
+    ) -> RealizationResult | RetryResult | None:
         """Phase-aware alternate-start attempt for one failed target (optional).
 
         D0.2 generic protocol. The engine calls this once per phase, in
@@ -759,7 +775,11 @@ class GenerationStage(ABC):
         included; targets within one phase all see the same snapshot).
         The default delegates the generic phase to :meth:`retry_solve`
         and declines any other id, so stages overriding only
-        :meth:`retry_solve` keep D0 bytes exactly.
+        :meth:`retry_solve` keep D0 bytes exactly. L-D3 additionally
+        allows returning the frozen ``RetryResult`` wrapper (outcome
+        plus component-owned telemetry rows); plain outcomes and
+        ``None`` keep the legacy semantics and the old ``retry_solve``
+        direct API is unchanged.
         """
         if phase_id != RETRY_DEFAULT_PHASE:
             return None

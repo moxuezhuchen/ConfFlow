@@ -55,18 +55,23 @@ from confflow.science.confgen.accounting import (
     verify_terminal_equations,
 )
 from confflow.science.confgen.kernel_records import (
+    BoundTelemetryEvent,
     ComponentInheritedState,
     ComponentStateKey,
     InheritedScopeError,
     KernelGenerationTarget,
     KernelRun,
     KernelWorkingRealization,
+    RetryResult,
+    TelemetryError,
+    TelemetryRow,
     as_kernel_target,
 )
 from confflow.science.confgen.model import (
     ConfgenStateKey,
     GenerationStage,
     MolecularContext,
+    RealizationResult,
     TerminalStatus,
     WorkingRealization,
 )
@@ -1200,6 +1205,15 @@ class _RunState:
         self.realized_ok = 0
         self.failed_counts: dict[str, int] = {}
         self.deferred_parent_leaves = 0
+        # L-D3 run-local telemetry ledger (never shared, never cached on
+        # stage; discarded with the run on cancellation).
+        self.telemetry: list[BoundTelemetryEvent] = []
+        # L-D3 side channel: the retry solver records its own bound span
+        # here synchronously at solve return (before any child recursion
+        # appends descendant events), consumed immediately by the calling
+        # _expand_target. Tuple (span_start, span_end, selected_idx, phase)
+        # or None for legacy plain outcomes. Never crosses targets.
+        self._pending_retry_selection: tuple[int, int, int | None, str] | None = None
 
     # -- recursion -------------------------------------------------------
 
@@ -1364,16 +1378,82 @@ class _RunState:
             return
 
         outcome = None
+        tele_mark = len(self.telemetry)
+        own_mark_idx: int | None = None
+        own_mark_phase: str | None = None
         try:
             if solver is not None:
                 outcome = solver(parent, target, context)
+                pending = self._pending_retry_selection
+                self._pending_retry_selection = None
+                if pending is not None:
+                    span_start, span_end, selected, span_phase = pending
+                    if span_end == span_start:
+                        # Empty wrapper payload: fall back to one generic
+                        # legacy event on success (declined None keeps none).
+                        if outcome is not None:
+                            self._append_legacy_telemetry(
+                                component_id=axis,
+                                parent_target_id=parent_target_id,
+                                target_id=str(target.target_id),
+                                ordinal=int(target.ordinal),
+                                phase="retry",
+                                kind="legacy_retry",
+                                solve_success=self._geometry_success(outcome),
+                                accepted=False,
+                            )
+                            own_mark_idx = len(self.telemetry) - 1
+                            own_mark_phase = "retry"
+                    elif outcome is not None and self._geometry_success(outcome):
+                        if selected is None:
+                            raise TelemetryError(
+                                "retry telemetry has no selected successful row "
+                                f"for {str(target.target_id)!r}"
+                            )
+                        own_mark_idx = selected
+                        own_mark_phase = span_phase
+                elif outcome is not None and len(self.telemetry) == tele_mark:
+                    # Legacy plain-outcome retry entry: no component
+                    # payload, so the engine synthesizes one generic event.
+                    # Declined (None) appends nothing here.
+                    self._append_legacy_telemetry(
+                        component_id=axis,
+                        parent_target_id=parent_target_id,
+                        target_id=str(target.target_id),
+                        ordinal=int(target.ordinal),
+                        phase="retry",
+                        kind="legacy_retry",
+                        solve_success=self._geometry_success(outcome),
+                        accepted=False,
+                    )
+                    own_mark_idx = len(self.telemetry) - 1
+                    own_mark_phase = "retry"
             else:
+                # Input gate: count the attempt at actual call entry, so a
+                # throwing stage still leaves attempt=1. Policy/suppression
+                # gates above return before this point (attempt 0).
+                self._append_legacy_telemetry(
+                    component_id=axis,
+                    parent_target_id=parent_target_id,
+                    target_id=str(target.target_id),
+                    ordinal=int(target.ordinal),
+                    phase="input",
+                    kind="legacy_input",
+                    solve_success=False,
+                    accepted=False,
+                )
+                own_mark_idx = len(self.telemetry) - 1
+                own_mark_phase = "input"
                 outcome = stage.realize(parent, target, context)
+                self._update_telemetry_success(own_mark_idx, self._geometry_success(outcome))
         except Exception as exc:  # stage bug: account explicitly, never silent
+            if isinstance(exc, TelemetryError):
+                raise  # malformed telemetry propagates visibly, never stage_error
             if isinstance(exc, EngineCancelledError) and solver is not None:
                 raise  # retry path only: the probe propagates, never a record
             # Legacy path unchanged: even EngineCancelledError from a stage
-            # is recorded as stage_error, exactly as before D0.
+            # is recorded as stage_error, exactly as before D0. The input
+            # placeholder above already retains attempt=1 success=0.
             self._record_failure(
                 target,
                 axis,
@@ -1939,6 +2019,28 @@ class _RunState:
                 target.target_id,
                 level_targets,
             )
+        # L-D3: attribute publication to the own successful start only.
+        # The own ledger index was captured at solve return, before child
+        # recursion appended descendant events, so marking it can never
+        # attach acceptance to another target/component. Geometry success
+        # was fixed at the solve gate; accepted is set here only for the
+        # selected row (attempts>0 and solve_successes>0 re-validated).
+        # Failed candidates keep False. Failure paths above already
+        # returned without marking.
+        try:
+            if own_mark_idx is not None and own_mark_phase is not None:
+                self._mark_telemetry_accepted(
+                    own_mark_idx,
+                    component_id=axis,
+                    parent_target_id=parent_target_id,
+                    target_id=str(target.target_id),
+                    ordinal=int(target.ordinal),
+                    phase=own_mark_phase,
+                )
+        except (TelemetryError, EngineCancelledError):
+            raise
+        except Exception as exc:
+            raise TelemetryError(f"telemetry accept marking failed: {exc}") from exc
         return structure
 
     # -- helpers ----------------------------------------------------------
@@ -2106,6 +2208,206 @@ class _RunState:
         return any(
             isinstance(item, Mapping) and item.get("kind") == "stage_error" for item in evidence
         )
+
+    @staticmethod
+    def _geometry_success(outcome: Any) -> bool:
+        """Return True for solver geometry success (realized + structure)."""
+        try:
+            return bool(
+                getattr(outcome, "status", None) == "realized"
+                and getattr(outcome, "structure", None) is not None
+            )
+        except Exception:
+            return False
+
+    def _telemetry_snapshot(self) -> tuple[BoundTelemetryEvent, ...]:
+        """Return the run-local ledger as a read-only frozen snapshot."""
+        return tuple(self.telemetry)
+
+    def _append_legacy_telemetry(
+        self,
+        *,
+        component_id: str,
+        parent_target_id: str | None,
+        target_id: str,
+        ordinal: int,
+        phase: str,
+        kind: str,
+        solve_success: bool,
+        accepted: bool,
+    ) -> None:
+        """Append one engine-synthesized legacy event (L-D3).
+
+        Used for real solve entries without component payload: input
+        entries and legacy plain-outcome retries. ``solve_success`` is
+        geometry success; ``accepted`` is the audited publication flag
+        (separate columns, never merged).
+        """
+        self.telemetry.append(
+            BoundTelemetryEvent(
+                component_id=str(component_id),
+                parent_target_id=parent_target_id,
+                target_id=str(target_id),
+                ordinal=int(ordinal),
+                phase=str(phase),
+                kind=str(kind),
+                attempts=1,
+                solve_successes=1 if solve_success else 0,
+                accepted=bool(accepted),
+                diagnostic={},
+            )
+        )
+
+    def _bind_retry_rows(
+        self,
+        rows: tuple[TelemetryRow, ...],
+        *,
+        component_id: str,
+        parent_target_id: str | None,
+        target_id: str,
+        ordinal: int,
+        phase: str,
+    ) -> int:
+        """Validate component rows and append bound events (accepted=False).
+
+        Returns the number of appended events. Identity is bound by the
+        engine; row ``kind``/``attempts``/``solve_successes``/``diagnostic``
+        pass through opaquely (kernel never interprets them). Malformed
+        rows raise :class:`TelemetryError`.
+        """
+        if not isinstance(rows, (tuple, list)):
+            raise TelemetryError("retry telemetry must be a tuple of TelemetryRow")
+        count = 0
+        for entry in list(rows):
+            if not isinstance(entry, TelemetryRow):
+                raise TelemetryError(
+                    "retry telemetry entries must be TelemetryRow, " f"got {type(entry).__name__}"
+                )
+            self.telemetry.append(
+                BoundTelemetryEvent(
+                    component_id=str(component_id),
+                    parent_target_id=parent_target_id,
+                    target_id=str(target_id),
+                    ordinal=int(ordinal),
+                    phase=str(phase),
+                    kind=str(entry.kind),
+                    attempts=int(entry.attempts),
+                    solve_successes=int(entry.solve_successes),
+                    accepted=False,
+                    diagnostic=dict(entry.diagnostic),
+                )
+            )
+            count += 1
+        return count
+
+    def _update_telemetry_success(self, index: int, solve_success: bool) -> None:
+        """Update the geometry-success column of one own ledger event (L-D3).
+
+        Used for input entries counted at actual call entry (before the
+        call returns or throws); only the success flag is updated, the
+        attempt itself is never removed.
+        """
+        current = self.telemetry[index]
+        from dataclasses import replace as _replace_event
+
+        self.telemetry[index] = _replace_event(current, solve_successes=1 if solve_success else 0)
+
+    def _mark_telemetry_accepted(
+        self,
+        index: int,
+        *,
+        component_id: str,
+        parent_target_id: str | None,
+        target_id: str,
+        ordinal: int,
+        phase: str,
+    ) -> None:
+        """Attribute publication to one own selected event (L-D3).
+
+        Marks exactly the ledger event at ``index`` (captured at solve
+        return, before child recursion). The event identity is
+        re-validated against the engine-bound caller identity, and the
+        event must hold ``attempts > 0`` and ``solve_successes > 0``
+        (accepted implies a real geometry success; trailing zero-attempt
+        diagnostic rows are never selectable). Anything else raises
+        :class:`TelemetryError`. Never infers from the global last
+        event, which may belong to a descendant target/component.
+        """
+        current = self.telemetry[index]
+        if (
+            str(current.component_id) != str(component_id)
+            or current.parent_target_id != parent_target_id
+            or str(current.target_id) != str(target_id)
+            or int(current.ordinal) != int(ordinal)
+            or str(current.phase) != str(phase)
+        ):
+            raise TelemetryError(
+                "telemetry accept target mismatch: ledger identity drifted "
+                f"for {str(target_id)!r}"
+            )
+        if int(current.attempts) <= 0 or int(current.solve_successes) <= 0:
+            raise TelemetryError(
+                "telemetry accept requires attempts > 0 and solve_successes > 0, "
+                f"got attempts={int(current.attempts)} "
+                f"solve_successes={int(current.solve_successes)}"
+            )
+        if bool(current.accepted):
+            raise TelemetryError("telemetry event already accepted")
+        from dataclasses import replace as _replace_event
+
+        self.telemetry[index] = _replace_event(current, accepted=True)
+
+    def _component_statistics_section(self) -> dict[str, Any] | None:
+        """Build the additive ``component_statistics`` section (L-D3).
+
+        Groups the run-local ledger by engine-bound component id and
+        calls each bound stage's ``report_statistics`` hook with its
+        read-only slice. Only non-``None`` non-empty mapping fragments
+        are kept; the section is omitted entirely when empty so golden
+        bytes are unchanged. Never overwrites existing scope fields and
+        never lets the caller choose the component id.
+        """
+        grouped: dict[str, list[BoundTelemetryEvent]] = {}
+        for event in self.telemetry:
+            try:
+                ident = str(event.component_id)
+            except Exception:
+                continue
+            grouped.setdefault(ident, []).append(event)
+        bound = dict(zip(self._axes, self._stages))
+        collected: dict[str, Any] = {}
+        for axis in self._axes:
+            stage = bound.get(axis)
+            if stage is None:
+                continue
+            hook = self._hook_impl(axis, stage, "report_statistics")
+            if hook is None:
+                continue
+            snapshot = tuple(grouped.get(str(axis), ()))
+            try:
+                result = hook(snapshot)
+            except TelemetryError:
+                raise
+            except EngineCancelledError:
+                raise
+            except Exception as exc:
+                raise TelemetryError(
+                    f"report_statistics for {str(axis)!r} failed: "
+                    f"{type(exc).__name__}: {str(exc)[:200]}"
+                ) from exc
+            if result is None:
+                continue
+            if not isinstance(result, Mapping):
+                raise TelemetryError(
+                    f"report_statistics for {str(axis)!r} must return a mapping or None"
+                )
+            plain = dict(result)
+            if not plain:
+                continue
+            collected[str(axis)] = plain
+        if not collected:
+            return None
+        return collected
 
     def _primary_after(
         self,
@@ -2305,10 +2607,13 @@ class _RunState:
                     _table: Any = first_pass,
                     _phase: Any = phase_id,
                     _snap: Any = snapshot,
+                    _axis: Any = axis,
+                    _parent_tid: Any = parent_target_id,
                 ) -> Any:
+                    self._pending_retry_selection = None
                     if _phase == RETRY_DEFAULT_PHASE:
                         if _phase_hook is not None:
-                            return _phase_hook(
+                            raw = _phase_hook(
                                 solve_parent,
                                 solve_target,
                                 solve_context,
@@ -2317,27 +2622,115 @@ class _RunState:
                                 _phase,
                                 _snap,
                             )
-                        if _legacy is not None:
-                            return _legacy(
-                                solve_parent, solve_target, solve_context, _probe, _table
+                        elif _legacy is not None:
+                            raw = _legacy(solve_parent, solve_target, solve_context, _probe, _table)
+                        else:
+                            return None
+                    else:
+                        if _phase_hook is not None:
+                            raw = _phase_hook(
+                                solve_parent,
+                                solve_target,
+                                solve_context,
+                                _probe,
+                                _table,
+                                _phase,
+                                _snap,
                             )
+                        elif _legacy is not None:
+                            raise ValueError(
+                                f"retry phase {str(_phase)!r} has no phase-aware hook; "
+                                "refusing to reuse the legacy hook"
+                            )
+                        else:
+                            return None
+                    # L-D3: unwrap only the exact frozen wrapper; legacy
+                    # plain outcomes and None keep their semantics. Any
+                    # other type (including arbitrary tuples) fails
+                    # closed visibly via TelemetryError (never stage_error).
+                    # The own bound span and the selected successful row are
+                    # recorded synchronously here (before child recursion),
+                    # never inferred from the global last event later.
+                    if raw is None:
                         return None
-                    if _phase_hook is not None:
-                        return _phase_hook(
-                            solve_parent,
-                            solve_target,
-                            solve_context,
-                            _probe,
-                            _table,
-                            _phase,
-                            _snap,
+                    if isinstance(raw, RetryResult):
+                        try:
+                            tid = str(solve_target.target_id)
+                            ord_val = int(solve_target.ordinal)
+                        except Exception as exc:
+                            raise TelemetryError(
+                                "retry telemetry target identity unreadable: "
+                                f"{type(exc).__name__}"
+                            ) from exc
+                        span_start = len(self.telemetry)
+                        self._bind_retry_rows(
+                            tuple(raw.telemetry),
+                            component_id=str(_axis),
+                            parent_target_id=_parent_tid,
+                            target_id=tid,
+                            ordinal=ord_val,
+                            phase=str(_phase),
                         )
-                    if _legacy is not None:
-                        raise ValueError(
-                            f"retry phase {str(_phase)!r} has no phase-aware hook; "
-                            "refusing to reuse the legacy hook"
+                        span_end = len(self.telemetry)
+                        out = raw.outcome
+                        if out is None:
+                            self._pending_retry_selection = (
+                                span_start,
+                                span_end,
+                                None,
+                                str(_phase),
+                            )
+                            return None
+                        if not isinstance(out, RealizationResult):
+                            raise TelemetryError(
+                                "RetryResult outcome must be RealizationResult or None, "
+                                f"got {type(out).__name__}"
+                            )
+                        if not self._geometry_success(out):
+                            # Failure outcome: rows kept as failure starts;
+                            # no successful start exists to select.
+                            if raw.success_index is not None:
+                                raise TelemetryError(
+                                    "RetryResult success_index requires "
+                                    "a geometry-success outcome"
+                                )
+                            self._pending_retry_selection = (
+                                span_start,
+                                span_end,
+                                None,
+                                str(_phase),
+                            )
+                            return out
+                        selected: int | None = None
+                        if raw.success_index is not None:
+                            selected = span_start + int(raw.success_index)
+                        else:
+                            candidates = [
+                                idx
+                                for idx in range(span_start, span_end)
+                                if int(self.telemetry[idx].attempts) > 0
+                                and int(self.telemetry[idx].solve_successes) > 0
+                            ]
+                            if len(candidates) != 1:
+                                raise TelemetryError(
+                                    "retry telemetry holds "
+                                    f"{len(candidates)} successful rows for a "
+                                    "successful outcome; set success_index explicitly"
+                                )
+                            selected = candidates[0]
+                        self._pending_retry_selection = (
+                            span_start,
+                            span_end,
+                            selected,
+                            str(_phase),
                         )
-                    return None
+                        return out
+                    if isinstance(raw, RealizationResult):
+                        return raw
+                    raise TelemetryError(
+                        "retry hook returned unsupported type "
+                        f"{type(raw).__name__}; refusing to guess"
+                    )
 
                 accepted = self._expand_target(
                     level,
@@ -3203,6 +3596,18 @@ class _RunState:
             "breaking_pairs": breaking,
             "unsupported": [],
         }
+        # L-D3 additive statistics: read-only snapshot grouped per
+        # component; the new key appears only when at least one bound
+        # component hook returns a non-empty mapping. Default hooks
+        # return None, so all existing goldens stay byte-identical.
+        # Never overwrites existing scope fields.
+        component_stats = self._component_statistics_section()
+        if component_stats is not None:
+            if "component_statistics" in scope:
+                raise EngineConsistencyError(
+                    "scope already carries component_statistics; refusing overwrite"
+                )
+            scope["component_statistics"] = component_stats
         report = {
             "schema_version": 3,
             "axis_order": list(self._engine._registry.ids()),
