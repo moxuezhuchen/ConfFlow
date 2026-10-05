@@ -10,16 +10,21 @@ complete declared-group basis, otherwise conservative upper bounds.
 
 from __future__ import annotations
 
-import math
 import random
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
-from confflow.domain._immutable import FrozenDict
+if TYPE_CHECKING:  # Annotation only; runtime resolve via local import (avoid cycles).
+    from confflow.science.confgen.registry import ComponentRegistry
+
+from confflow.domain._immutable import FrozenDict, thaw_value
 from confflow.domain.structure import StructureRecord
 from confflow.domain.topology import TopologyPatch
 from confflow.science.confgen.model import AXIS_ORDER, SCHEMA_VERSION, StageEstimate
+from confflow.science.confgen.wire_v3_constants import (  # noqa: F401
+    WIRE_TOP_LEVEL_KEYS as _TOP_LEVEL_KEYS,  # noqa: F401
+)
 
 __all__ = [
     "MixedRadixGrid",
@@ -36,16 +41,25 @@ __all__ = [
     "sampling_of",
 ]
 
-_TOP_LEVEL_KEYS = frozenset(
+#: Compat alias: historical v3 spec top-level whitelist, re-exported
+#: from ``wire_v3_constants`` (pure constants only; no algorithm lives
+#: in the wire file). Imported above as ``_TOP_LEVEL_KEYS``. The real
+#: unknown-key gate is ``_GENERIC_TOP_LEVEL_KEYS | registry.spec_keys``.
+
+#: Spec-facing topology edge kinds (uppercase, matching the fixture
+#: convention). BREAKING is accepted and preserved losslessly in scope but
+#: has no lane B graph record yet (see core-api-ready.md open requests).
+TOPO_EDGE_KINDS: tuple[str, ...] = ("COVALENT", "COORDINATION", "FORMING", "BREAKING")
+
+#: Generic (non-component) top-level spec keys. Component keys come from
+#: ``registry`` descriptors (``spec_keys``); the union is the unknown-key
+#: whitelist. For the default registry the union equals ``_TOP_LEVEL_KEYS``
+#: exactly, so the unknown-key error text is byte-identical.
+_GENERIC_TOP_LEVEL_KEYS = frozenset(
     {
         "schema_version",
         "index_base",
         "index_convention",
-        "coordination",
-        "rings",
-        "torsions",
-        "paths",
-        "strict_path_bond_check",
         "topology",
         "stereochemistry",
         "exclusions",
@@ -56,10 +70,12 @@ _TOP_LEVEL_KEYS = frozenset(
     }
 )
 
-#: Spec-facing topology edge kinds (uppercase, matching the fixture
-#: convention). BREAKING is accepted and preserved losslessly in scope but
-#: has no lane B graph record yet (see core-api-ready.md open requests).
-TOPO_EDGE_KINDS: tuple[str, ...] = ("COVALENT", "COORDINATION", "FORMING", "BREAKING")
+#: Historical builtin defaults are now declared per descriptor
+#: (``ComponentDescriptor.spec_defaults`` in registry order). Custom
+#: components leave it empty so missing custom keys stay missing (no
+#: undeclared growth). ``coordination=None`` vs ``[]``/``False`` matches
+#: the pre-A4b ``normalize_spec`` output exactly; each call gets a fresh
+#: copy so runs never share mutable defaults.
 
 _TORSION_MODELS = (
     "relative_rotation_grid",
@@ -79,30 +95,36 @@ class PreflightLimitError(ValueError):
 # ---------------------------------------------------------------------------
 
 
-def _spec_has_indices(raw: Mapping[str, Any]) -> bool:
-    """Return True when any index-bearing section carries content."""
+def _spec_has_indices(raw: Mapping[str, Any], *, registry: ComponentRegistry | None = None) -> bool:
+    """Return True when any index-bearing section carries content.
+
+    AG1 generic: the topology section (bonds/add/del/atoms) stays here
+    (generic keys, never component-owned). Component sections delegate
+    to each descriptor's ``has_indices(raw)`` in
+    ``index_detection_order`` (builtins: torsions=10, coordination=20,
+    rings=30, preserving the historical T->C->R probe order after the
+    generic topology check). Each hook never raises (illegal shapes are
+    False) so the later normalize dispatch raises the first error
+    verbatim in registry order.
+    """
     topology = raw.get("topology")
     if isinstance(topology, Mapping):
         for key in ("bonds", "add_bond", "del_bond", "atoms"):
             entries = topology.get(key)
             if isinstance(entries, (list, tuple)) and len(entries) > 0:
                 return True
-    torsions = raw.get("torsions")
-    if isinstance(torsions, (list, tuple)) and len(torsions) > 0:
-        return True
-    paths = raw.get("paths")
-    if isinstance(paths, (list, tuple)) and len(paths) > 0:
-        return True
-    coordination = raw.get("coordination")
-    if isinstance(coordination, Mapping):
-        if coordination.get("metal_center") is not None:
+    from confflow.science.confgen.registry import resolve_registry
+
+    resolved_registry = resolve_registry(registry)
+    ordered = sorted(
+        resolved_registry.descriptors, key=lambda descriptor: descriptor.index_detection_order
+    )
+    for descriptor in ordered:
+        hook = descriptor.has_indices
+        if hook is None:
+            continue
+        if hook(raw):
             return True
-        sites = coordination.get("binding_sites")
-        if isinstance(sites, (list, tuple)) and len(sites) > 0:
-            return True
-    rings = raw.get("rings")
-    if isinstance(rings, (list, tuple)) and len(rings) > 0:
-        return True
     return False
 
 
@@ -176,49 +198,12 @@ class TorsionAxis:
             raise ValueError(f"rotate_side must be 'left' or 'right', got {self.rotate_side!r}")
 
 
-def _require_finite_angles(values: Any, *, path: str) -> tuple[float, ...]:
-    if isinstance(values, (str, bytes)) or not isinstance(values, Sequence):
-        raise ValueError(f"{path} must be a list of finite angles in degrees")
-    angles: list[float] = []
-    for index, item in enumerate(values):
-        if isinstance(item, bool) or not isinstance(item, (int, float)):
-            raise ValueError(f"{path}[{index}] must be a finite number, got {item!r}")
-        number = float(item)
-        if not math.isfinite(number):
-            raise ValueError(f"{path}[{index}] must be finite, got {item!r}")
-        angles.append(number)
-    if not angles:
-        raise ValueError(f"{path} must hold at least one angle")
-    return tuple(angles)
-
-
-def _reject_periodic_duplicates(values: Sequence[float], *, path: str) -> None:
-    """Reject identical circular grid points without merging nearby states."""
-    for index, value in enumerate(values):
-        for previous in values[:index]:
-            if (value - previous) % 360.0 == 0.0:
-                raise ValueError(f"{path}: periodic duplicate torsion angle {value}")
-
-
-def _require_index_list(
-    values: Any, *, path: str, count: int, n_atoms: int | None, index_base: int = 0
-) -> tuple[int, ...]:
-    """Validate indices in the declared base, return internal 0-based."""
-    if index_base not in (0, 1):
-        raise ValueError(f"{path}: index_base must be 0 or 1")
-    if isinstance(values, (str, bytes)) or not isinstance(values, Sequence):
-        raise ValueError(f"{path} must be a list of {count} atom indices")
-    items = list(values)
-    if len(items) != count:
-        raise ValueError(f"{path} must hold exactly {count} atom indices, got {len(items)}")
-    out: list[int] = []
-    for index, item in enumerate(items):
-        out.append(_convert_index(item, base=index_base, path=f"{path}[{index}]"))
-        if n_atoms is not None and out[-1] >= n_atoms:
-            raise ValueError(f"{path}[{index}] index {item} out of range for {n_atoms} atoms")
-    if len(set(out)) != len(out):
-        raise ValueError(f"{path} must hold distinct atoms, got {list(values)!r}")
-    return tuple(out)  # type: ignore[return-value]
+# NOTE (A4b-v2 move): ``_require_finite_angles``,
+# ``_reject_periodic_duplicates`` and ``_require_index_list`` now live in
+# ``torsion/spec.py`` (exclusive closure for ``resolve_torsion_axes``).
+# Shared ``_convert_index``/``_TORSION_MODELS``/``_TREATMENTS``/``TorsionAxis``
+# stay here for public-API compat (``torsion/stage.py`` imports from planner
+# with no whitelist change); torsion/spec lazily imports the shared names.
 
 
 def resolve_torsion_axes(
@@ -229,6 +214,12 @@ def resolve_torsion_axes(
 ) -> tuple[TorsionAxis, ...]:
     """Resolve torsion axis entries into :class:`TorsionAxis` records.
 
+    Compat delegation (AG2 generic): implementation is declared by the
+    owning component via ``registry.legacy_compat`` and loaded lazily
+    through ``resolve_compat`` (no kernel component import, no top-level
+    cost, no call cycle). Signature, ``__all__`` and public import path
+    are unchanged.
+
     Entries use the declared ``index_base`` (0 internal, 1 workflow) and are
     stored 0-based internally. Fail-closed checks: unique non-empty ids,
     known models/treatments, finite angles, distinct in-range indices,
@@ -236,147 +227,11 @@ def resolve_torsion_axes(
     map, no defaults), and duplicate bond axes (same unordered rotating
     pair twice).
     """
-    axes: list[TorsionAxis] = []
-    seen_ids: set[str] = set()
-    seen_bonds: dict[tuple[int, int], str] = {}
-    for position, entry in enumerate(entries):
-        path = f"$.torsions[{position}]"
-        if not isinstance(entry, Mapping):
-            raise ValueError(f"{path} must be a mapping")
-        unknown = sorted(
-            set(entry)
-            - {"id", "bond", "atoms", "model", "angles", "states", "treatment", "rotate_side"}
-        )
-        if unknown:
-            raise ValueError(f"{path} holds unknown keys {unknown}")
-        axis_id = entry.get("id", f"torsion-{position}")
-        if not isinstance(axis_id, str) or not axis_id:
-            raise ValueError(f"{path}.id must be a non-empty string")
-        if axis_id in seen_ids:
-            raise ValueError(f"duplicate torsion axis id {axis_id!r}")
-        seen_ids.add(axis_id)
-        model = entry.get("model", "relative_rotation_grid")
-        if model not in _TORSION_MODELS:
-            raise ValueError(f"{path}.model must be one of {_TORSION_MODELS}, got {model!r}")
-        treatment = entry.get("treatment", "enumerate")
-        if treatment not in _TREATMENTS:
-            raise ValueError(
-                f"{path}.treatment must be one of {_TREATMENTS}, got {treatment!r}; "
-                "unspecified/unsupported treatments fail closed"
-            )
-        rotate_side = entry.get("rotate_side", "left")
-        if rotate_side not in ("left", "right"):
-            raise ValueError(f"{path}.rotate_side must be 'left' or 'right'")
-        raw_bond = entry.get("bond")
-        raw_atoms = entry.get("atoms")
-        bond: tuple[int, int] | None = None
-        frame: tuple[int, int, int, int] | None = None
-        if model == "relative_rotation_grid":
-            if raw_bond is None:
-                raise ValueError(f"{path}: relative_rotation_grid requires 'bond'")
-            if raw_atoms is not None:
-                raise ValueError(f"{path}: relative_rotation_grid takes 'bond', not 'atoms'")
-            pair = _require_index_list(
-                raw_bond, path=f"{path}.bond", count=2, n_atoms=n_atoms, index_base=index_base
-            )
-            bond = (min(pair), max(pair)) if pair[0] != pair[1] else None
-            if bond is None:
-                raise ValueError(f"{path}.bond must name two distinct atoms")
-            # Preserve declaration order for the rotation axis direction.
-            bond = (pair[0], pair[1])
-        elif model == "absolute_dihedral_grid":
-            if raw_atoms is None:
-                raise ValueError(f"{path}: absolute_dihedral_grid requires 'atoms' (four indices)")
-            if raw_bond is not None:
-                raise ValueError(f"{path}: absolute_dihedral_grid takes 'atoms', not 'bond'")
-            frame = _require_index_list(
-                raw_atoms, path=f"{path}.atoms", count=4, n_atoms=n_atoms, index_base=index_base
-            )  # type: ignore[assignment]
-            assert frame is not None and len(frame) == 4
-            bond = (frame[1], frame[2])
-        else:  # chemical: opt-in named states, bond or four-atom frame
-            states = entry.get("states")
-            if not isinstance(states, Mapping) or not states:
-                raise ValueError(
-                    f"{path}: chemical model is opt-in and requires an explicit "
-                    "non-empty 'states' map of name -> angle"
-                )
-            names: list[str] = []
-            angles: list[float] = []
-            for name, angle in states.items():
-                if not isinstance(name, str) or not name:
-                    raise ValueError(f"{path}.states holds a non-string state name {name!r}")
-                if isinstance(angle, bool) or not isinstance(angle, (int, float)):
-                    raise ValueError(f"{path}.states[{name!r}] must be a finite angle")
-                if not math.isfinite(float(angle)):
-                    raise ValueError(f"{path}.states[{name!r}] must be finite")
-                names.append(name)
-                angles.append(float(angle))
-            _reject_periodic_duplicates(angles, path=f"{path}.states")
-            if raw_bond is not None and raw_atoms is not None:
-                raise ValueError(f"{path}: chemical takes 'bond' or 'atoms', not both")
-            if raw_bond is not None:
-                pair = _require_index_list(
-                    raw_bond, path=f"{path}.bond", count=2, n_atoms=n_atoms, index_base=index_base
-                )
-                if pair[0] == pair[1]:
-                    raise ValueError(f"{path}.bond must name two distinct atoms")
-                bond = (pair[0], pair[1])
-            elif raw_atoms is not None:
-                frame = _require_index_list(
-                    raw_atoms, path=f"{path}.atoms", count=4, n_atoms=n_atoms, index_base=index_base
-                )  # type: ignore[assignment]
-                assert frame is not None and len(frame) == 4
-                bond = (frame[1], frame[2])
-            else:
-                raise ValueError(f"{path}: chemical requires 'bond' or 'atoms'")
-            axes.append(
-                TorsionAxis(
-                    axis_id=axis_id,
-                    bond=bond,
-                    frame=frame,
-                    model=model,
-                    values=tuple(angles),
-                    state_names=tuple(names),
-                    treatment=treatment,
-                    rotate_side=rotate_side,
-                )
-            )
-            key = (min(bond), max(bond))
-            if key in seen_bonds:
-                raise ValueError(
-                    f"duplicate torsion bond axis {bond} "
-                    f"(axes {seen_bonds[key]!r} and {axis_id!r}); "
-                    "duplicate bond axes fail closed"
-                )
-            seen_bonds[key] = axis_id
-            continue
-        raw_angles = entry.get("angles")
-        if raw_angles is None:
-            raise ValueError(f"{path}: model {model!r} requires explicit 'angles'")
-        values = _require_finite_angles(raw_angles, path=f"{path}.angles")
-        _reject_periodic_duplicates(values, path=f"{path}.angles")
-        assert bond is not None
-        key = (min(bond), max(bond))
-        if key in seen_bonds:
-            raise ValueError(
-                f"duplicate torsion bond axis {bond} "
-                f"(axes {seen_bonds[key]!r} and {axis_id!r}); "
-                "duplicate bond axes fail closed"
-            )
-        seen_bonds[key] = axis_id
-        axes.append(
-            TorsionAxis(
-                axis_id=axis_id,
-                bond=bond,
-                frame=frame,
-                model=model,
-                values=values,
-                treatment=treatment,
-                rotate_side=rotate_side,
-            )
-        )
-    return tuple(axes)
+    from confflow.science.confgen.registry import resolve_compat
+
+    _impl = resolve_compat("resolve_torsion_axes")
+
+    return cast("tuple[TorsionAxis, ...]", _impl(entries, n_atoms=n_atoms, index_base=index_base))
 
 
 # ---------------------------------------------------------------------------
@@ -390,19 +245,41 @@ def _check_int(value: Any, *, path: str, minimum: int = 1) -> int:
     return value
 
 
-def normalize_spec(raw: Mapping[str, Any]) -> dict[str, Any]:
+def normalize_spec(
+    raw: Mapping[str, Any], *, registry: ComponentRegistry | None = None
+) -> dict[str, Any]:
     """Normalize a raw v3 spec into a JSON-compatible resolved spec.
 
     Unknown top-level keys fail closed. Torsion entries are fully resolved
     (finite angles, duplicate bonds rejected); coordination/ring sections
     pass through structurally -- semantic validation is owned by those
     lanes. Missing ``schema_version`` defaults to 3; any other value fails.
+
+    A4b component dispatch (V51): generic keys stay here; component-owned
+    keys (``coordination``/``rings``/``torsions``/``paths``/
+    ``strict_path_bond_check`` plus any custom ``spec_keys``) are normalized
+    by each descriptor's ``normalize_spec(raw, *, index_base)`` in registry
+    order. For the default registry that order is coordination(10) ->
+    rings(20) -> torsions(30), matching the pre-A4b C->R->T validation
+    order, so multi-error specs raise the same first error. Component
+    results are merged; a component returning an unowned key fails closed,
+    and a component missing an expected owned-present key or returning an
+    owned-but-not-in-raw key fails closed (exact expected vs partial).
+    Missing builtin keys are filled with historical defaults (None/[]/False)
+    so default output bytes never change; missing custom keys stay missing.
     """
+    from confflow.science.confgen.registry import resolve_registry
+
+    resolved_registry = resolve_registry(registry)
     if not isinstance(raw, Mapping):
         raise ValueError("spec must be a mapping")
-    unknown = sorted(set(raw) - _TOP_LEVEL_KEYS)
+    owned_keys: set[str] = set()
+    for _descriptor in resolved_registry.descriptors:
+        owned_keys.update(_descriptor.spec_keys)
+    allowed = set(_GENERIC_TOP_LEVEL_KEYS) | owned_keys
+    unknown = sorted(set(raw) - allowed)
     if unknown:
-        raise ValueError(f"spec holds unknown keys {unknown}; allowed {sorted(_TOP_LEVEL_KEYS)}")
+        raise ValueError(f"spec holds unknown keys {unknown}; allowed {sorted(allowed)}")
     version = raw.get("schema_version", SCHEMA_VERSION)
     if version != SCHEMA_VERSION:
         raise ValueError(f"spec schema_version must be {SCHEMA_VERSION}, got {version!r}")
@@ -418,7 +295,7 @@ def normalize_spec(raw: Mapping[str, Any]) -> dict[str, Any]:
     declared_base = raw.get("index_base")
     if declared_base is not None and declared_base not in (0, 1):
         raise ValueError("spec index_base must be 0 or 1 when declared")
-    if declared_base is None and _spec_has_indices(raw):
+    if declared_base is None and _spec_has_indices(raw, registry=resolved_registry):
         raise ValueError(
             "spec carries atom indices but declares no index_base; "
             "declare index_base: 0 or 1 explicitly"
@@ -430,109 +307,77 @@ def normalize_spec(raw: Mapping[str, Any]) -> dict[str, Any]:
     spec["index_convention"] = "internal-0-based:normalized"
     spec["index_base"] = 0
 
-    coordination = raw.get("coordination")
-    if coordination is not None and not isinstance(coordination, Mapping):
-        raise ValueError("spec coordination must be a mapping or null")
-    if isinstance(coordination, Mapping) and "index_base" in coordination:
-        raise ValueError(
-            "index convention is top-level only; coordination must not declare index_base"
-        )
-    spec["coordination"] = (
-        _convert_coordination(coordination, base=base) if coordination is not None else None
-    )
+    # Root compat (v2): preset builtin defaults in historical order first,
+    # so output key order never depends on input presence. Owned partials
+    # update existing keys without moving position; custom new keys insert
+    # in descriptor order. Order comes from each descriptor's
+    # ``spec_defaults`` declaration in registry order (= C->R->T for the
+    # default registry, matching history); no default literals live here.
+    # AG1 v2: defaults are stored frozen (tuple/FrozenDict) and thawed here
+    # into a fresh deep copy per run, so nested custom defaults never leak
+    # across runs and mutating one output never touches the cached
+    # registry. Thawed lists keep the legacy list type; insertion order is
+    # unchanged. A default for an unowned key or a repeated default key
+    # fails closed (customs cannot overwrite another owner).
+    _seen_defaults: set[str] = set()
+    for _descriptor in resolved_registry._ordered():
+        _owned = set(_descriptor.spec_keys)
+        for _key, _default in _descriptor.spec_defaults:
+            if _key not in _owned:
+                raise ValueError(
+                    f"component {_descriptor.id!r} declares default for unowned spec key "
+                    f"{_key!r}; owned {sorted(_owned)}"
+                )
+            if _key in _seen_defaults:
+                raise ValueError(
+                    f"duplicate spec default {_key!r} from component {_descriptor.id!r}; "
+                    "already filled"
+                )
+            _seen_defaults.add(_key)
+            spec[_key] = thaw_value(_default)
 
-    rings = raw.get("rings", [])
-    if not isinstance(rings, (list, tuple)):
-        raise ValueError("spec rings must be a list of ring declarations")
-    ring_entries: list[dict[str, Any]] = []
-    for index, entry in enumerate(rings):
-        if not isinstance(entry, Mapping):
-            raise ValueError(f"$.rings[{index}] must be a mapping")
-        if "index_base" in entry:
+    # Component-owned keys: dispatch in registry order (= C->R->T for the
+    # default registry). Each hook sees the whole raw spec plus the resolved
+    # top-level base and returns exactly its owned keys present in the input.
+    _filled_by_component: set[str] = set()
+    for _descriptor in resolved_registry._ordered():
+        hook = _descriptor.normalize_spec
+        if hook is None:
+            # No hook (e.g. legacy custom descriptors from A4a tests):
+            # pass owned values through unchanged when present (compat
+            # passowned, preserves old explicit pseudo-stage).
+            for _key in _descriptor.spec_keys:
+                if _key in raw:
+                    spec[_key] = raw[_key]
+                    _filled_by_component.add(_key)
+            continue
+        partial = hook(raw, index_base=base)
+        if not isinstance(partial, Mapping):
+            raise ValueError(f"component {_descriptor.id!r} normalize_spec must return a mapping")
+        for _key in partial.keys():
+            if _key not in _descriptor.spec_keys:
+                raise ValueError(
+                    f"component {_descriptor.id!r} returned unowned spec key {_key!r}; "
+                    f"owned {sorted(_descriptor.spec_keys)}"
+                )
+        _expected = {_k for _k in _descriptor.spec_keys if _k in raw}
+        _actual = set(partial.keys())
+        if _actual != _expected:
+            _missing = sorted(_expected - _actual)
+            _extra = sorted(_actual - _expected)
             raise ValueError(
-                "index convention is top-level only; ring entries must not declare index_base"
+                f"component {_descriptor.id!r} normalize_spec keys mismatch: "
+                f"expected {sorted(_expected)}, got {sorted(_actual)}; "
+                f"missing {_missing}; extra {_extra}"
             )
-        converted = dict(entry)
-        if entry.get("atoms") is not None:
-            converted["atoms"] = _convert_index_list(
-                entry["atoms"], base=base, path=f"$.rings[{index}].atoms"
-            )
-        ring_entries.append(converted)
-    spec["rings"] = ring_entries
-
-    torsions = raw.get("torsions", [])
-    if not isinstance(torsions, (list, tuple)):
-        raise ValueError("spec torsions must be a list of torsion declarations")
-    converted_torsions: list[dict[str, Any]] = []
-    for position, entry in enumerate(torsions):
-        if not isinstance(entry, Mapping):
-            raise ValueError(f"$.torsions[{position}] must be a mapping")
-        if "index_base" in entry:
-            raise ValueError(
-                "index convention is top-level only; torsion entries must not declare index_base"
-            )
-        converted = dict(entry)
-        if entry.get("bond") is not None:
-            converted["bond"] = _convert_index_list(
-                entry["bond"], base=base, path=f"$.torsions[{position}].bond"
-            )
-            if len(converted["bond"]) != 2:
-                raise ValueError(f"$.torsions[{position}].bond must hold exactly two indices")
-        if entry.get("atoms") is not None:
-            converted["atoms"] = _convert_index_list(
-                entry["atoms"], base=base, path=f"$.torsions[{position}].atoms"
-            )
-            if len(converted["atoms"]) != 4:
-                raise ValueError(f"$.torsions[{position}].atoms must hold exactly four indices")
-        converted_torsions.append(converted)
-    # Full torsion validation on internal 0-based entries (structure-
-    # independent part); index ranges re-checked with atom counts at stage.
-    resolve_torsion_axes(tuple(converted_torsions), index_base=0)
-    spec["torsions"] = converted_torsions
-
-    # Phase 0 input simplification: fresh path declarations are ALWAYS
-    # user-facing 1-based (independent of the step index_base) and convert
-    # explicitly with base 1 here. Entries already carrying the explicit
-    # ``internal-0-based:normalized`` marker re-validate as internal 0-based
-    # references with preserved source metadata (no double shift), so
-    # normalization is exactly idempotent. Typed scopes require explicit
-    # per-path sampling (bare paths only default in the legacy native mode,
-    # which expands them before reaching this typed boundary).
-    from confflow.science.confgen.torsion.paths import parse_path_declarations
-
-    raw_paths = raw.get("paths", [])
-    if raw_paths is None:
-        raw_paths = []
-    if not isinstance(raw_paths, (list, tuple)):
-        raise ValueError("spec paths must be a list of path declarations")
-    if raw_paths:
-        internal_paths = marker == "internal-0-based:normalized"
-        try:
-            typed_parsed = parse_path_declarations(
-                list(raw_paths),
-                index_base=0 if internal_paths else 1,
-                default_step=None,
-                source_prefix="$.paths",
-                internal=internal_paths,
-            )
-        except ValueError as exc:
-            raise ValueError(f"spec paths rejected: {exc}") from exc
-        spec["paths"] = [
-            {
-                "start": int(item.start),
-                "end": int(item.end),
-                "move": item.move,
-                "angles": [float(angle) for angle in item.angles],
-                "source": item.source,
-            }
-            for item in typed_parsed
-        ]
-    else:
-        spec["paths"] = []
-    strict_check = raw.get("strict_path_bond_check", False)
-    if type(strict_check) is not bool:
-        raise ValueError(f"$.strict_path_bond_check must be a boolean, got {strict_check!r}")
-    spec["strict_path_bond_check"] = bool(strict_check)
+        for _key in _descriptor.spec_keys:
+            if _key in partial:
+                if _key in _filled_by_component:
+                    raise ValueError(
+                        f"component {_descriptor.id!r} returned duplicate spec key {_key!r}"
+                    )
+                spec[_key] = partial[_key]
+                _filled_by_component.add(_key)
 
     topology = raw.get("topology", {})
     if not isinstance(topology, Mapping):
@@ -772,35 +617,11 @@ def _validate_atom_declaration(item: Any, *, path: str) -> dict[str, Any]:
     return shape
 
 
-def _convert_coordination(section: Mapping[str, Any], *, base: int) -> dict[str, Any]:
-    """Convert documented coordination index fields to internal 0-based.
-
-    Converted fields: ``metal_center``, ``binding_sites[].atoms``. Shapes
-    outside this documented contract fail closed when base==1 (never
-    silently leave 1-based indices unconverted); deeper semantic validation
-    stays lane B owned.
-    """
-    converted = dict(section)
-    if section.get("metal_center") is not None:
-        converted["metal_center"] = _convert_index(
-            section["metal_center"], base=base, path="$.coordination.metal_center"
-        )
-    sites = section.get("binding_sites")
-    if sites is not None:
-        if not isinstance(sites, (list, tuple)):
-            raise ValueError("$.coordination.binding_sites must be a list")
-        converted_sites: list[Any] = []
-        for position, site in enumerate(sites):
-            if not isinstance(site, Mapping):
-                raise ValueError(f"$.coordination.binding_sites[{position}] must be a mapping")
-            entry = dict(site)
-            if site.get("atoms") is not None:
-                entry["atoms"] = _convert_index_list(
-                    site["atoms"], base=base, path=f"$.coordination.binding_sites[{position}].atoms"
-                )
-            converted_sites.append(entry)
-        converted["binding_sites"] = converted_sites
-    return converted
+# NOTE (AG2 generic): the overlay implementation is declared by the
+# owning component via ``registry.legacy_compat``. The planner keeps the
+# old symbol/signature and loads it through ``resolve_compat`` (no kernel
+# component import); ``_build_typed_graph`` calls components via the
+# registry instance instead.
 
 
 def _overlay_declared_coordination_scope(
@@ -810,69 +631,29 @@ def _overlay_declared_coordination_scope(
     typed: dict[tuple[int, int, Any], Any],
     explicit_covalent: set[tuple[int, int]],
 ) -> None:
-    """Authoritatively type declared metal-site edges (perceived path only).
+    """Compat delegation for the moved overlay (AG2 generic).
 
-    Distance perception guesses every close pair COVALENT, including
-    metal-ligand contacts. The declared coordination scope (metal_center
-    plus binding-site donor atoms, internal 0-based) overrides the guess:
-    each metal-donor pair loses its guessed COVALENT edge/adjacency and
-    gains a COORDINATION record, so fragment decomposition and
-    ring/torsion mechanics never see metal-ligand pseudo-bonds. An
-    explicit COVALENT declaration for a declared metal-donor pair is a
-    contradiction and fails closed; perception guesses are overridden
-    silently. Pairs never declared stay exactly as perceived/corrected.
+    Implementation is declared by the owning component and loaded through
+    the registry compat lookup; this wrapper preserves the old
+    symbol/signature. New code should call the registry
+    ``contribute_topology`` hook via ``TopologyBuildContext``.
     """
-    from confflow.science.confgen.graph import EdgeType, TypedEdge
+    from confflow.science.confgen.kernel_records import TopologyBuildContext
+    from confflow.science.confgen.registry import resolve_compat
 
-    coordination = resolved.get("coordination") if isinstance(resolved, Mapping) else None
-    if not isinstance(coordination, Mapping):
-        return
-    metal = coordination.get("metal_center")
-    if metal is None:
-        return
-    if isinstance(metal, bool) or not isinstance(metal, int):
-        raise ValueError(f"resolved coordination metal_center malformed: {metal!r}")
-    if metal < 0 or metal >= n_atoms:
-        raise ValueError(f"resolved coordination metal_center out of range: {metal!r}")
-    sites = coordination.get("binding_sites")
-    if sites is None:
-        return
-    if not isinstance(sites, (list, tuple)):
-        raise ValueError("$.coordination.binding_sites must be a list")
-    donors: set[int] = set()
-    for position, site in enumerate(sites):
-        if not isinstance(site, Mapping):
-            raise ValueError(f"$.coordination.binding_sites[{position}] must be a mapping")
-        for atom in site.get("atoms") or []:
-            if isinstance(atom, bool) or not isinstance(atom, int):
-                raise ValueError(
-                    f"$.coordination.binding_sites[{position}].atoms holds "
-                    f"a non-integer index {atom!r}"
-                )
-            if atom < 0 or atom >= n_atoms:
-                raise ValueError(
-                    f"$.coordination.binding_sites[{position}] index {atom} "
-                    f"out of range for {n_atoms} atoms"
-                )
-            donors.add(int(atom))
-    for donor in sorted(donors):
-        if donor == metal:
-            raise ValueError("coordination scope binds the metal to itself")
-        pair = (min(metal, donor), max(metal, donor))
-        if pair in explicit_covalent:
-            raise ValueError(
-                f"topology declares COVALENT for pair {pair} inside the declared "
-                "coordination scope; contradictory kinds for one pair fail closed"
-            )
-        typed.pop((pair[0], pair[1], EdgeType.COVALENT), None)
-        adjacency[metal].discard(donor)
-        adjacency[donor].discard(metal)
-        typed[(pair[0], pair[1], EdgeType.COORDINATION)] = TypedEdge(
-            a=pair[0],
-            b=pair[1],
-            type=EdgeType.COORDINATION,
-            provenance="declared-binding-site",
-        )
+    def _check(value: int, path: str) -> None:
+        if value < 0 or value >= n_atoms:
+            raise ValueError(f"{path} index {value} out of range for {n_atoms} atoms")
+
+    build = TopologyBuildContext(
+        n_atoms=n_atoms,
+        adjacency=adjacency,
+        typed=typed,
+        explicit_covalent=explicit_covalent,
+        check_index=_check,
+    )
+    _impl = resolve_compat("overlay_declared_scope")
+    _impl(resolved, build)
 
 
 def _apply_structure_patch(
@@ -947,23 +728,76 @@ def _topo_edge(item: Any) -> tuple[tuple[int, int], Any, dict[str, Any]]:
     return (int(first), int(second)), EdgeType.COVALENT, {}
 
 
-def _graph_metal_center(resolved: Mapping[str, Any], n_atoms: int) -> int | None:
-    """Read the declared metal center (internal 0-based) from resolved scope."""
-    coordination = resolved.get("coordination") if isinstance(resolved, Mapping) else None
-    if not isinstance(coordination, Mapping):
-        return None
-    metal = coordination.get("metal_center")
-    if metal is None:
-        return None
-    if isinstance(metal, bool) or not isinstance(metal, int) or metal < 0 or metal >= n_atoms:
-        raise ValueError(f"resolved coordination metal_center out of range: {metal!r}")
-    return int(metal)
+def _collect_graph_metadata(
+    resolved: Mapping[str, Any], n_atoms: int, *, registry: ComponentRegistry
+) -> dict[str, Any]:
+    """Collect generic typed-graph metadata at the old metal-center site.
+
+    Loops descriptors in registry order; each ``graph_metadata`` returns
+    a mapping (e.g. ``{"metal_center": int}``) or None for no
+    contribution. Duplicate keys across components fail closed; a new
+    component with no contribution leaves the old graph unchanged.
+    Validation (range/type) lives in the owning component (coordination)
+    and raises here, at the pre-AG1 ``_graph_metal_center`` position
+    (before the explicit-bonds branch), never moved early to the overlay.
+    """
+    merged: dict[str, Any] = {}
+    for descriptor in registry._ordered():
+        hook = descriptor.graph_metadata
+        if hook is None:
+            continue
+        part = hook(resolved, n_atoms)
+        if part is None:
+            continue
+        if not isinstance(part, Mapping):
+            raise ValueError(
+                f"component {descriptor.id!r} graph_metadata must return a mapping or None"
+            )
+        for key, value in part.items():
+            if key in merged:
+                raise ValueError(
+                    f"duplicate graph metadata key {key!r} from component {descriptor.id!r}"
+                )
+            merged[key] = value
+    return merged
 
 
 def build_typed_graph(
-    structure: StructureRecord, topology: Mapping[str, Any], resolved: Mapping[str, Any]
+    structure: StructureRecord,
+    topology: Mapping[str, Any],
+    resolved: Mapping[str, Any],
+    *,
+    registry: ComponentRegistry | None = None,
 ) -> tuple[list[list[int]], Any]:
     """Build covalent adjacency plus the lane B typed-graph authority.
+
+    Public compat wrapper (A4a root ruling, V24): existing 3-positional-arg
+    calls keep working. ``registry`` defaults to ``None`` (resolved to the
+    shared immutable default); the resolved instance is threaded into the
+    private ``_build_typed_graph``. No component hook is called here (V50;
+    hooks land in A4b/A4c).
+    """
+    from confflow.science.confgen.registry import resolve_registry
+
+    resolved_registry = resolve_registry(registry)
+    return _build_typed_graph(structure, topology, resolved, registry=resolved_registry)
+
+
+def _build_typed_graph(
+    structure: StructureRecord,
+    topology: Mapping[str, Any],
+    resolved: Mapping[str, Any],
+    *,
+    registry: ComponentRegistry,
+) -> tuple[list[list[int]], Any]:
+    """Private typed-graph implementation (registry mandatory, keyword-only).
+
+    A4c: ``registry`` is the same instance threaded from ``build_context``
+    (never re-resolved); ``contribute_topology`` hooks run in registry order
+    at the pre-A4c overlay site (after structure patch, before graph
+    assembly) via a shared ``TopologyBuildContext`` (same objects, edge
+    order preserved). Only coordination contributes; generic topology
+    (bonds/add/del/patch) stays here.
 
     All entries arrive internal 0-based (normalize_spec converts under the
     single explicit top-level ``index_base``). Explicit ``topology["bonds"]``
@@ -988,7 +822,13 @@ def build_typed_graph(
         _check_patch_conflict(topology, structure, where="confgen v3 topology")
     except Exception as exc:
         raise ValueError(str(exc)) from exc
-    metal_center = _graph_metal_center(resolved, n_atoms)
+    # AG1 generic: collect typed-graph metadata at the pre-AG1
+    # _graph_metal_center site (same position, same timing, before the
+    # explicit-bonds branch). Only "metal_center" feeds the graph; other
+    # keys are ignored so new components without contribution leave the
+    # old graph unchanged.
+    _metadata = _collect_graph_metadata(resolved, n_atoms, registry=registry)
+    metal_center = _metadata.get("metal_center")
     tolerances = resolved.get("tolerances", {}) if isinstance(resolved, Mapping) else {}
     bond_scale = float(tolerances.get("bond_scale", 1.15))
 
@@ -1111,7 +951,19 @@ def build_typed_graph(
                 adjacency[second].discard(first)
                 typed.pop((pair[0], pair[1], EdgeType.COVALENT), None)
     _apply_structure_patch(structure, n_atoms, adjacency, typed, _check)
-    _overlay_declared_coordination_scope(resolved, n_atoms, adjacency, typed, explicit_covalent)
+    from confflow.science.confgen.kernel_records import TopologyBuildContext
+
+    build = TopologyBuildContext(
+        n_atoms=n_atoms,
+        adjacency=adjacency,
+        typed=typed,
+        explicit_covalent=explicit_covalent,
+        check_index=_check,
+    )
+    for _descriptor in registry._ordered():
+        _hook = _descriptor.contribute_topology
+        if _hook is not None:
+            _hook(resolved, build)
     atoms = [AtomRef(index=position, element=symbol) for position, symbol in enumerate(elements)]
     for decl in topology.get("atoms", []) or []:
         position = int(decl["index"])

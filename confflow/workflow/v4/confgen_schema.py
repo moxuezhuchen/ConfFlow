@@ -3,13 +3,16 @@
 The legacy native block remains a separate schema. These declarations expose
 only supported controls; atom references share one explicit index convention.
 
-Semantic validators source their vocabularies and defaults from the actual
-science authorities (never duplicated stale values):
+Semantic validators source their vocabularies and defaults from the
+component descriptors (lightweight ``schema_constants()``, never solver
+imports):
 
-- coordination shapes from ``confflow.science.confgen.graph`` (lane B);
-- ring templates from ``confflow.science.confgen.ring.templates`` (ring lane);
+- coordination shapes from the coordination descriptor (lane-B graph
+  authority, no new copy);
+- ring templates from the rings descriptor (stdlib-only name table);
+- torsion angle wrapping from the torsions descriptor (stdlib math);
 - global tolerances from ``confflow.science.confgen.tolerances`` (core lane);
-- coordination section tolerances from the coordination stage defaults.
+- coordination section tolerances from the coordination descriptor.
 
 Deeper geometric validation (bonded/ring/measurability checks, duplicate bond
 axes, conditional scope) stays lane-owned and runs at normalization and
@@ -30,7 +33,13 @@ Treatment = Literal["enumerate", "preserve_input"]
 
 def _coordination_section_defaults() -> dict[str, float]:
     """Return lane-owned coordination section tolerance defaults."""
-    from confflow.science.confgen.coordination.stage import DEFAULT_SECTION_TOLERANCES
+    from confflow.science.confgen.registry import build_default_registry
+
+    for _d in build_default_registry().descriptors:
+        if _d.id == "coordination" and _d.schema_constants is not None:
+            return dict(dict(_d.schema_constants()).get("section_tolerances", {}))
+    # Fallback (same authority, direct constants path; never stage).
+    from confflow.science.confgen.coordination.constants import DEFAULT_SECTION_TOLERANCES
 
     return dict(DEFAULT_SECTION_TOLERANCES)
 
@@ -57,24 +66,41 @@ def _global_tolerance_defaults() -> dict[str, float]:
 
 
 def _supported_shapes() -> tuple[str, ...]:
-    """Return registered coordination shape names (lane B authority)."""
+    """Return registered coordination shape names (via descriptor)."""
+    from confflow.science.confgen.registry import build_default_registry
+
+    for _d in build_default_registry().descriptors:
+        if _d.id == "coordination" and _d.schema_constants is not None:
+            return tuple(dict(_d.schema_constants()).get("shapes", ()))
     from confflow.science.confgen.graph import SUPPORTED_SHAPES
 
     return tuple(SUPPORTED_SHAPES)
 
 
 def _template_sizes() -> dict[str, int]:
-    """Return ring template name -> ring size (ring-lane authority)."""
-    from confflow.science.confgen.ring.templates import TEMPLATE_REGISTRY
+    """Return ring template name -> ring size (via descriptor)."""
+    from confflow.science.confgen.registry import build_default_registry
 
-    return {name: template.ring_size for name, template in TEMPLATE_REGISTRY.items()}
+    for _d in build_default_registry().descriptors:
+        if _d.id == "rings" and _d.schema_constants is not None:
+            return dict(dict(_d.schema_constants()).get("template_sizes", {}))
+    from confflow.science.confgen.ring.constants import TEMPLATES_BY_SIZE
+
+    return {name: size for size, names in TEMPLATES_BY_SIZE.items() for name in names}
 
 
 def _wrap_degrees(angle: float) -> float:
-    """Wrap an angle to (-180, 180] (science measurement convention)."""
-    from confflow.science.confgen.torsion.measure import wrap_degrees
+    """Wrap an angle to (-180, 180] (via torsion descriptor, stdlib only)."""
+    from confflow.science.confgen.registry import build_default_registry
 
-    return wrap_degrees(angle)
+    for _d in build_default_registry().descriptors:
+        if _d.id == "torsions" and _d.schema_constants is not None:
+            _fn = dict(_d.schema_constants()).get("wrap_degrees")
+            if callable(_fn):
+                return cast(float, _fn(angle))
+    from confflow.science.confgen.torsion.constants import wrap_degrees as _local
+
+    return _local(angle)
 
 
 class ConfgenSpecModel(BaseModel):

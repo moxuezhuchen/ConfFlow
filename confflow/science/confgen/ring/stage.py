@@ -37,7 +37,7 @@ from confflow.science.confgen.model import (
     PerceptionResult,
     RealizationResult,
     StageEstimate,
-    WorkingRealization,
+    StageParentProtocol,
 )
 from confflow.science.confgen.perception import drift_event
 from confflow.science.confgen.planner import MixedRadixGrid
@@ -123,6 +123,39 @@ class RingStage(GenerationStage):
         """Return the stage axis (``rings``)."""
         return "rings"
 
+    #: A3 dispatch hooks (engine-read; component owns its literals).
+    check_bond_integrity: bool = False
+    carries_inherited_locks: bool = False
+
+    def preserved_entries(self, resolved: Mapping[str, Any]) -> list[dict[str, Any]]:
+        """Return ring ``preserve_input`` entries (delegates to scope)."""
+        from confflow.science.confgen.ring.scope import preserved_entries as _entries
+
+        return _entries(resolved)
+
+    def report_section(self, resolved: Mapping[str, Any]) -> dict[str, Any] | None:
+        """Ring contributes no report section."""
+        from confflow.science.confgen.ring.scope import report_section as _section
+
+        return _section(resolved)
+
+    def describe_scope(self, resolved: Mapping[str, Any]) -> Mapping[str, Any] | None:
+        """Return the ring scope slice (delegates to scope)."""
+        from confflow.science.confgen.ring.scope import describe_scope as _describe
+
+        return _describe(resolved)
+
+    def fallback_lock(
+        self,
+        locked_state: Mapping[str, Any],
+        structure: Any,
+        context: MolecularContext,
+    ) -> tuple[str, list[dict[str, Any]], dict[str, Any], Any] | None:
+        """Verify ring ancestor locks without a stage hook (owns matcher)."""
+        from confflow.science.confgen.ring.scope import fallback_lock as _fallback
+
+        return _fallback(self, locked_state, structure, context)
+
     @property
     def specs(self) -> tuple[RingSpec, ...]:
         """Return normalized ring specs in stable (sorted-id) order."""
@@ -148,7 +181,7 @@ class RingStage(GenerationStage):
                 raise RingUnsupported(f"template_size_mismatch:{name}")
         return tuple(names)
 
-    def estimate(self, parent: WorkingRealization, context: MolecularContext) -> StageEstimate:
+    def estimate(self, parent: StageParentProtocol, context: MolecularContext) -> StageEstimate:
         """Symbolic declared count: product of per-system template options."""
         enumerated = self._enumerated()
         total = 1
@@ -177,7 +210,7 @@ class RingStage(GenerationStage):
         return StageEstimate(declared_count=total, upper_bound=total, exact=True, details=details)
 
     def enumerate_targets(
-        self, parent: WorkingRealization, context: MolecularContext
+        self, parent: StageParentProtocol, context: MolecularContext
     ) -> Iterator[GenerationTarget]:
         """Enumerate symbolic targets lazily in stable order (no geometry).
 
@@ -264,7 +297,7 @@ class RingStage(GenerationStage):
 
     def realize(
         self,
-        parent: WorkingRealization,
+        parent: StageParentProtocol,
         target: GenerationTarget,
         context: MolecularContext,
     ) -> RealizationResult:
@@ -420,7 +453,7 @@ class RingStage(GenerationStage):
         self,
         structure: StructureRecord,
         target: GenerationTarget,
-        parent: WorkingRealization,
+        parent: StageParentProtocol,
         context: MolecularContext,
     ) -> tuple[bool, dict[str, Any], list[dict[str, Any]]]:
         """Audit a fresh realization against its commanded target (engine hook).

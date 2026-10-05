@@ -19,10 +19,13 @@ Frozen semantics (see ``docs/plans/confgen-v3-upgrade.md``):
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any
+from typing import TYPE_CHECKING, Any, Protocol
+
+if TYPE_CHECKING:  # Annotation only; runtime uses local import (avoid model->registry cycle).
+    from confflow.science.confgen.registry import ComponentRegistry
 
 from confflow.domain._immutable import FrozenDict
 from confflow.domain.elements import canonical_element_symbol
@@ -34,6 +37,7 @@ from confflow.science.confgen.graph import (
     TypedEdge,
     TypedGraph,
 )
+from confflow.science.confgen.wire_v3_constants import V3_AXIS_ORDER as AXIS_ORDER
 
 __all__ = [
     "AXIS_ORDER",
@@ -60,9 +64,6 @@ __all__ = [
 
 #: ConfGen v3 schema version carried on every state key and spec.
 SCHEMA_VERSION: int = 3
-
-#: Fixed generation order: Coordination -> Ring -> Torsion.
-AXIS_ORDER: tuple[str, ...] = ("coordination", "rings", "torsions")
 
 #: Typed-graph authority lives in lane B ``graph.py``; core uses those
 #: classes directly (single authority, no competing definitions).
@@ -220,6 +221,18 @@ class MolecularContext:
     input_coords: tuple[tuple[float, float, float], ...]
     inherited_scope: Mapping[str, Any] = field(default_factory=FrozenDict)
     atom_refs: tuple[ScopedAtomRef, ...] = ()
+    # A4a registry channel: holds the resolved ComponentRegistry instance for
+    # this run. Defaults to None at construction for backward compat; the
+    # post-init fills the shared immutable default (local import, no top-level
+    # model->registry cycle). ``build_context`` always passes the resolved
+    # instance explicitly.
+    registry: ComponentRegistry | None = None
+    # A5 single-axis gate: ids of active components in registry order,
+    # determined by the registry (not the solver). Defaults to () for
+    # hand-constructed contexts; ``build_context`` always fills it explicitly
+    # after path expansion. Coordination reads
+    # ``active_components == (own id,)`` instead of rings/torsions presence.
+    active_components: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if not isinstance(self.structure, StructureRecord):
@@ -283,141 +296,22 @@ class MolecularContext:
                     "atom_refs disagree with the graph authority "
                     "(stale radius/environment for this structure)"
                 )
+        # A4a: fill default registry last so pre-existing error/order checks
+        # above are unchanged (V24 old hand-constructed contexts stay valid).
+        if self.registry is None:
+            from confflow.science.confgen.registry import default_registry
 
-
-def _expand_typed_paths(
-    resolved: dict[str, Any],
-    structure: StructureRecord,
-    adjacency: Sequence[Sequence[int]],
-) -> None:
-    """Expand Phase 0 path declarations into torsion axes (deferred).
-
-    Runs at context build time -- on the final working topology after
-    perception plus add/del_bond corrections -- with the SAME pure resolver
-    the legacy executor uses. Path-expanded rotors use the relative-rotation
-    grid model with ``rotate_side`` derived from the explicitly chosen
-    moving endpoint (``move=start`` behaves like the ``left`` side of the
-    traversal-ordered bond, ``move=end`` like ``right``). Any canonical-bond
-    collision with an explicitly declared torsion axis (any model) fails
-    closed with ``ROTOR_SAMPLING_CONFLICT``; identical path duplicates
-    deduplicate with merged provenance. The expansion record
-    (``paths_resolved``) audits rotors, warnings, and the topology digest.
-    """
-    from confflow.domain.elements import atomic_number
-    from confflow.science.bonds import covalent_radii
-    from confflow.science.confgen.planner import resolve_torsion_axes
-    from confflow.science.confgen.torsion.paths import (
-        ROTOR_SAMPLING_CONFLICT,
-        ParsedPath,
-        PathResolutionError,
-        canonical_grid_size,
-        canonicalize_rotors,
-        resolve_paths,
-    )
-
-    entries = resolved.get("paths") or []
-    parsed = [
-        ParsedPath(
-            start=int(item["start"]),
-            end=int(item["end"]),
-            move=str(item["move"]),
-            angles=tuple(float(a) for a in item["angles"]),
-            source=str(item.get("source", f"$.paths[{i}]")),
-            raw_start=int(item["start"]) + 1,
-            raw_end=int(item["end"]) + 1,
-        )
-        for i, item in enumerate(entries)
-    ]
-    n_atoms = len(structure.atoms)
-    try:
-        numbers = [atomic_number(symbol) for symbol in structure.atoms]
-        radii = covalent_radii(numbers)
-    except ValueError as exc:
-        raise ValueError(f"path short-bond assessment failed: {exc}") from exc
-    strict = bool(resolved.get("strict_path_bond_check", False))
-    try:
-        resolution = resolve_paths(
-            parsed,
-            [list(row) for row in adjacency],
-            n_atoms=n_atoms,
-            coords=[tuple(p) for p in structure.coordinates],
-            radii=list(radii),
-            strict_bond_check=strict,
-        )
-        rotors = canonicalize_rotors(resolution.rotors)
-    except PathResolutionError as exc:
-        raise ValueError(str(exc)) from exc
-    explicit: dict[tuple[int, int], str] = {}
-    for position, entry in enumerate(resolved.get("torsions", []) or []):
-        bond = entry.get("bond")
-        atoms = entry.get("atoms")
-        if bond is not None:
-            key = (min(int(bond[0]), int(bond[1])), max(int(bond[0]), int(bond[1])))
-        elif atoms is not None:
-            key = (min(int(atoms[1]), int(atoms[2])), max(int(atoms[1]), int(atoms[2])))
+            object.__setattr__(self, "registry", default_registry())
+        # A5: normalize active_components last (same compat rule: old
+        # hand-constructed contexts without the field stay valid as ()).
+        # Accepts tuple/list of str; None means ().
+        active = self.active_components
+        if active is None:
+            object.__setattr__(self, "active_components", ())
+        elif isinstance(active, (list, tuple)):
+            object.__setattr__(self, "active_components", tuple(str(v) for v in active))
         else:
-            continue
-        explicit[key] = str(entry.get("id", f"$.torsions[{position}]"))
-    typed_torsions = list(resolved.get("torsions", []) or [])
-    records: list[dict[str, Any]] = []
-    for ordinal, rotor in enumerate(rotors):
-        if rotor.bond in explicit:
-            raise ValueError(
-                f"{ROTOR_SAMPLING_CONFLICT}: path-expanded bond "
-                f"{rotor.bond[0] + 1}-{rotor.bond[1] + 1} "
-                f"({', '.join(rotor.sources)}) collides with explicitly "
-                f"declared torsion {explicit[rotor.bond]!r}; declare one "
-                "sampling per bond (grids are never unioned)"
-            )
-        first, second = rotor.ordered
-        axis_id = f"path{ordinal + 1}:{rotor.bond[0] + 1}-{rotor.bond[1] + 1}"
-        typed_torsions.append(
-            {
-                "id": axis_id,
-                "bond": [int(first), int(second)],
-                "model": "relative_rotation_grid",
-                "angles": [float(a) for a in rotor.angles],
-                "treatment": "enumerate",
-                "rotate_side": "left" if rotor.moving_atom == first else "right",
-            }
-        )
-        records.append(
-            {
-                "id": axis_id,
-                "bond": [rotor.bond[0] + 1, rotor.bond[1] + 1],
-                "ordered": [first + 1, second + 1],
-                "moving_atom": rotor.moving_atom + 1,
-                "moving": [a + 1 for a in rotor.moving],
-                "fixed": [a + 1 for a in rotor.fixed],
-                "angles": [float(a) for a in rotor.angles],
-                "sources": list(rotor.sources),
-                "index_base": 1,
-            }
-        )
-    resolve_torsion_axes(tuple(typed_torsions), index_base=0)
-    resolved["torsions"] = typed_torsions
-    resolved["paths_resolved"] = {
-        "driving_id": structure.id,
-        "driving_geometry_digest": structure.geometry_digest,
-        "atom_symbols": list(structure.atoms),
-        "declared_paths": [
-            {
-                "source": item.source,
-                "start": item.raw_start,
-                "end": item.raw_end,
-                "move": item.move,
-                "route": [atom + 1 for atom in item.route],
-                "angles": list(item.angles),
-                "index_base": 1,
-            }
-            for item in resolution.declared_paths
-        ],
-        "rotors": records,
-        "warnings": list(resolution.warnings),
-        "topology_digest": resolution.topology_digest,
-        "declared_cartesian_size": int(resolution.raw_cartesian_size),
-        "raw_cartesian_size": int(canonical_grid_size(rotors)),
-    }
+            raise ValueError("active_components must be a tuple of component ids")
 
 
 def build_context(
@@ -426,6 +320,7 @@ def build_context(
     input_state_key: ConfgenStateKey | None = None,
     *,
     inherited_scope: Mapping[str, Any] | None = None,
+    registry: ComponentRegistry | None = None,
 ) -> MolecularContext:
     """Build the immutable scientific context for one input structure.
 
@@ -450,17 +345,26 @@ def build_context(
     when any entry lacks defining metadata.
     """
     from confflow.science.confgen.planner import build_typed_graph, normalize_spec
+    from confflow.science.confgen.registry import resolve_registry
     from confflow.science.confgen.tolerances import resolve_tolerances
 
     if not isinstance(structure, StructureRecord):
         raise ValueError("structure must be a StructureRecord")
     if not isinstance(spec, Mapping):
         raise ValueError("spec must be a mapping")
-    resolved = normalize_spec(spec)
+    resolved_registry = resolve_registry(registry)
+    resolved = normalize_spec(spec, registry=resolved_registry)
     tolerances = resolve_tolerances(resolved.get("tolerances", {}))
-    adjacency, graph = build_typed_graph(structure, resolved.get("topology", {}), resolved)
-    if resolved.get("paths"):
-        _expand_typed_paths(resolved, structure, adjacency)
+    adjacency, graph = build_typed_graph(
+        structure, resolved.get("topology", {}), resolved, registry=resolved_registry
+    )
+    # AG1 generic: run each component expand hook in registry order
+    # (typed graph exists, context not yet built). Only torsions sets
+    # the hook (verbatim moved body); customs may add their own.
+    for _descriptor in resolved_registry._ordered():
+        _expand_hook = _descriptor.expand_context_spec
+        if _expand_hook is not None:
+            _expand_hook(resolved, structure, adjacency)
     key = input_state_key if input_state_key is not None else ConfgenStateKey()
     if not isinstance(key, ConfgenStateKey):
         raise ValueError("input_state_key must be a ConfgenStateKey")
@@ -475,7 +379,15 @@ def build_context(
         raise ValueError(
             "scoped atom references fail the graph authority audit: " + "; ".join(ref_problems[:5])
         )
-    return MolecularContext(
+    # A5: active components in registry order (after path expansion, so
+    # path-expanded torsions count). Determined by the registry, not the
+    # solver; the coordination single-axis gate reads this tuple.
+    active_ids = tuple(_d.id for _d in resolved_registry._ordered() if _d.is_active(resolved))
+    # A4b: component context validation (only checks that already ran at
+    # context stage may live here; builtins are no-ops at A4b, so order and
+    # bytes are unchanged). Hooks run in registry order after the typed
+    # graph exists; no normalize-stage check is moved later here.
+    provisional = MolecularContext(
         structure=structure,
         adjacency=tuple(tuple(row) for row in adjacency),
         graph=graph,
@@ -485,7 +397,14 @@ def build_context(
         input_coords=tuple(tuple(point) for point in structure.coordinates),
         inherited_scope=FrozenDict(scope),
         atom_refs=atom_refs,
+        registry=resolved_registry,
+        active_components=active_ids,
     )
+    for _descriptor in resolved_registry._ordered():
+        _validate = _descriptor.validate_context
+        if _validate is not None:
+            _validate(resolved, provisional)
+    return provisional
 
 
 @dataclass(frozen=True, slots=True)
@@ -622,6 +541,16 @@ class PerceptionResult:
         object.__setattr__(self, "boundary_flags", tuple(self.boundary_flags))
 
 
+class StageParentProtocol(Protocol):
+    """Structural parent view for stages (only ``structure``/``provenance``)."""
+
+    @property
+    def structure(self) -> StructureRecord: ...
+
+    @property
+    def provenance(self) -> Mapping[str, Any]: ...
+
+
 class GenerationStage(ABC):
     """Interface every generation stage (C/R/T) implements.
 
@@ -675,14 +604,75 @@ class GenerationStage(ABC):
     #: defined from the run input) must keep ``"input"``.
     lock_reference: str = "input"
 
+    #: Rigid bond-length integrity audit on fresh realizations (engine-read,
+    #: never set per call). Only torsion does rigid rotation, so only the
+    #: torsion stage opts into ``True``. The engine reads this attribute
+    #: (or the registry descriptor fallback for legacy stages without it)
+    #: and never compares axis strings itself. (FIX-1A A3.)
+    check_bond_integrity: bool = False
+
+    #: Whether this axis carries verified inherited locks into child keys
+    #: (engine-read). Only torsion carries inherited torsion locks; other
+    #: axes return ``False``. Legacy stages without the attribute resolve
+    #: via the registry descriptor; the kernel never guesses by id.
+    #: (FIX-1A A3.)
+    carries_inherited_locks: bool = False
+
+    def preserved_entries(self, resolved: Mapping[str, Any]) -> list[dict[str, Any]]:
+        """Return this stage's ``preserve_input`` entries (FIX-1A A3).
+
+        The engine concatenates every bound stage's entries generically
+        (reverse execution order preserves the legacy torsions-then-rings
+        byte order); each component owns its axis string and entry shape.
+        Default is no entries.
+        """
+        return []
+
+    def report_section(self, resolved: Mapping[str, Any]) -> dict[str, Any] | None:
+        """Return this stage's report fragment, if any (FIX-1A A3).
+
+        Only coordination contributes ``donor_configuration``; other
+        stages return ``None``. The engine merges fragments generically;
+        the wire adapter only converts key payloads (no new imports).
+        """
+        return None
+
+    def describe_scope(self, resolved: Mapping[str, Any]) -> Mapping[str, Any] | None:
+        """Return this stage's inherited-scope descriptor slice (FIX-1A A3).
+
+        Per-component scope helpers live in each component's ``scope.py``
+        and are owned there; the engine calls this hook generically when
+        present. Default ``None`` (no slice); A4d continues the opaque
+        inherited-state work without changing behavior here.
+        """
+        return None
+
+    def fallback_lock(
+        self,
+        locked_state: Mapping[str, Any],
+        structure: Any,
+        context: MolecularContext,
+    ) -> tuple[str, list[dict[str, Any]], dict[str, Any], Any] | None:
+        """Verify one ancestor lock without a ``verify_locked`` hook.
+
+        Component-owned fallback (FIX-1A A3). The ring component returns
+        the tolerance-aware matcher verdict verbatim; other components
+        return ``None`` so the engine uses the generic exact discrete
+        comparison. Legacy explicit stages without this hook resolve via
+        their registry descriptor; unknown axes keep the existing
+        fail-closed errors. The kernel never inspects source or guesses
+        by component id.
+        """
+        return None
+
     @abstractmethod
-    def estimate(self, parent: WorkingRealization, context: MolecularContext) -> StageEstimate:
+    def estimate(self, parent: StageParentProtocol, context: MolecularContext) -> StageEstimate:
         """Return the symbolic count estimate under *parent*."""
         raise NotImplementedError
 
     @abstractmethod
     def enumerate_targets(
-        self, parent: WorkingRealization, context: MolecularContext
+        self, parent: StageParentProtocol, context: MolecularContext
     ) -> Iterable[GenerationTarget]:
         """Enumerate symbolic targets lazily in stable order (no geometry)."""
         raise NotImplementedError
@@ -690,7 +680,7 @@ class GenerationStage(ABC):
     @abstractmethod
     def realize(
         self,
-        parent: WorkingRealization,
+        parent: StageParentProtocol,
         target: GenerationTarget,
         context: MolecularContext,
     ) -> RealizationResult:

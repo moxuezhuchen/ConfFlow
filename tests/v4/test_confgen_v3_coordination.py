@@ -2902,9 +2902,15 @@ def test_suppression_for_target_hook_proposes_and_refuses() -> None:
     # Combined axes fail closed.
     combined = dict(context.resolved_spec)
     combined["rings"] = [{"id": "R1", "atoms": [1, 2, 3, 4]}]
+    from dataclasses import replace
+
     from confflow.domain._immutable import FrozenDict
 
-    object.__setattr__(context, "resolved_spec", FrozenDict(dict(combined)))
+    context = replace(
+        context,
+        resolved_spec=FrozenDict(dict(combined)),
+        active_components=tuple(d.id for d in context.registry._ordered() if d.is_active(combined)),
+    )
     assert hook_stage.suppression_for_target(parent, suppressed_target, context) is None
 
 

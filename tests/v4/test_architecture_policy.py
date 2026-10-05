@@ -157,6 +157,28 @@ def _build_tree(root: Path, rule: dict, *, violate: bool) -> None:
     elif kind == "custom_numeric_dispatch":
         body = "def first(programs):\n    return programs[0]\n"
         _write(root, _anchor_file(scope), body if violate else "x = 1\n")
+    elif kind == "custom_confgen_axis_literals":
+        _write(root, _anchor_file(scope), 'x = "rings"\n' if violate else "x = 1\n")
+    elif kind == "custom_confgen_axis_attrs":
+        body = "def f(o):\n    return o.rings\n"
+        _write(root, _anchor_file(scope), body if violate else "x = 1\n")
+    elif kind == "custom_confgen_component_imports":
+        body = "from confflow.science.confgen.torsion import stage\n"
+        _write(root, _anchor_file(scope), body if violate else "x = 1\n")
+    elif kind == "custom_confgen_getattr_guard":
+        body = (
+            "def __getattr__(name):\n"
+            '    if name in ("InheritedTorsionLock", "ExtraLock"):\n'
+            "        from confflow.science.confgen.torsion.inherited import ExtraLock\n"
+            "        return ExtraLock\n"
+            "    raise AttributeError(name)\n"
+        )
+        _write(root, _anchor_file(scope), body if violate else "x = 1\n")
+    elif kind == "custom_confgen_target_owner":
+        body = "def as_kernel_target(t):\n    return t\n"
+        _write(root, _anchor_file(scope), body if violate else "x = 1\n")
+    elif kind == "custom_confgen_top_register":
+        _write(root, _anchor_file(scope), 'register("x")\n' if violate else "x = 1\n")
     elif kind == "custom_jobdesk_doubles":
         if violate:
             _write(root, rule["files"][0], "class JobdeskDouble:\n    import confflow\n")
@@ -602,6 +624,18 @@ def _banned_item(rule: dict) -> str:
         return "TaskRunner"
     if kind == "custom_task_dispatch":
         return "IRC"
+    if kind == "custom_confgen_axis_literals":
+        return "rings"
+    if kind == "custom_confgen_axis_attrs":
+        return ".rings"
+    if kind == "custom_confgen_component_imports":
+        return "confflow.science.confgen.torsion"
+    if kind == "custom_confgen_getattr_guard":
+        return "ExtraLock"
+    if kind == "custom_confgen_target_owner":
+        return "as_kernel_target"
+    if kind == "custom_confgen_top_register":
+        return "register"
     return "basename"
 
 
@@ -614,6 +648,12 @@ PROSE_KINDS = {
     "custom_filename_idioms",
     "custom_range_ordinal",
     "custom_numeric_dispatch",
+    "custom_confgen_axis_literals",
+    "custom_confgen_axis_attrs",
+    "custom_confgen_component_imports",
+    "custom_confgen_getattr_guard",
+    "custom_confgen_target_owner",
+    "custom_confgen_top_register",
 }
 PROSE_IDS = sorted(r["id"] for r in RULES if r["kind"] in PROSE_KINDS and not r.get("raw_text"))
 
@@ -1002,8 +1042,9 @@ def test_full_tree_scan_is_clean() -> None:
 
 def test_rule_count_matches_the_inventory() -> None:
     # 69 L0.4b rows + AP-033a (the const half of inventory row #33, split out
-    # honestly from the disk half AP-033 per the v3 root ruling).
-    assert RULE_COUNT == 70
+    # honestly from the disk half AP-033 per the v3 root ruling) + 6 A6
+    # G13/G14 confgen purity rules (AP-100..AP-105).
+    assert RULE_COUNT == 76
 
 
 def test_rule_ids_are_unique_and_sources_pinned() -> None:
@@ -1012,8 +1053,19 @@ def test_rule_ids_are_unique_and_sources_pinned() -> None:
     assert all(re.match(r"^#\d+$", r["source"]) for r in RULES)
 
 
-def test_no_g13_g14_rules_are_enabled() -> None:
-    assert not [r for r in RULES if "G13" in r["id"] or "G14" in r["id"]]
+def test_g13_g14_rules_are_enabled() -> None:
+    assert sorted(
+        r["id"]
+        for r in RULES
+        if r["id"] in ("AP-100", "AP-101", "AP-102", "AP-103", "AP-104", "AP-105")
+    ) == [
+        "AP-100",
+        "AP-101",
+        "AP-102",
+        "AP-103",
+        "AP-104",
+        "AP-105",
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -1844,3 +1896,85 @@ def test_thin_metrics_refuses_foreign_policy_tree(tmp_path: Path) -> None:
     )
     assert proc.returncode != 0, proc.stdout[-1000:]
     assert "authoritative policy not found" in (proc.stderr + proc.stdout)
+
+
+# ---------------------------------------------------------------------------
+# FIX-1A A2 scope policy (AST, small examples only; existing rules untouched).
+# ---------------------------------------------------------------------------
+
+
+def test_confgen_a2_scope_clean_on_real_tree() -> None:
+    from tools.architecture_policy import confgen_a2_violations
+
+    assert confgen_a2_violations(_REAL_ROOT) == []
+
+
+def _a2_fixture(tmp_path: Path, rel: str, content: str) -> Path:
+    for keep in (
+        "confflow/science/confgen/__init__.py",
+        "confflow/science/confgen/model.py",
+        "confflow/science/confgen/engine.py",
+        "confflow/science/confgen/kernel_records.py",
+        "confflow/science/confgen/accounting.py",
+        "confflow/science/confgen/registry.py",
+        "confflow/science/confgen/wire_v3.py",
+        "confflow/science/confgen/coordination/stage.py",
+        "confflow/science/confgen/ring/stage.py",
+        "confflow/science/confgen/torsion/stage.py",
+    ):
+        src = _REAL_ROOT / keep
+        dst = tmp_path / keep
+        if keep == rel:
+            continue
+        if src.is_file():
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            dst.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
+    target = tmp_path / rel
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(content, encoding="utf-8")
+    return tmp_path
+
+
+def test_confgen_a2_wire_isolation_fires() -> None:
+    import tempfile
+
+    from tools.architecture_policy import confgen_a2_wire_isolation_violations
+
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        _a2_fixture(
+            root,
+            "confflow/science/confgen/accounting.py",
+            "import confflow.science.confgen.wire_v3\n",
+        )
+        assert confgen_a2_wire_isolation_violations(root)
+
+
+def test_confgen_a2_attr_scope_fires() -> None:
+    import tempfile
+
+    from tools.architecture_policy import confgen_a2_attr_scope_violations
+
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        _a2_fixture(
+            root,
+            "confflow/science/confgen/kernel_records.py",
+            "def f(key):\n    return key.coordination\n",
+        )
+        assert confgen_a2_attr_scope_violations(root)
+
+
+def test_confgen_a2_stage_parent_fires() -> None:
+    import tempfile
+
+    from tools.architecture_policy import confgen_a2_stage_parent_violations
+
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        _a2_fixture(
+            root,
+            "confflow/science/confgen/ring/stage.py",
+            "def f(parent):\n    return parent.state_key\n",
+        )
+        assert confgen_a2_stage_parent_violations(root)

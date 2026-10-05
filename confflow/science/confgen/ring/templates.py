@@ -35,6 +35,7 @@ from functools import cache
 
 import numpy as np
 
+from .constants import TEMPLATES_BY_SIZE
 from .geometry import ring_torsions
 
 __all__ = [
@@ -274,12 +275,8 @@ def _build_registry() -> dict[str, RingTemplate]:
 #: Declared finite template registry (insertion order is stable).
 TEMPLATE_REGISTRY: dict[str, RingTemplate] = _build_registry()
 
-#: Templates per ring size, in stable declaration order.
-TEMPLATES_BY_SIZE: dict[int, tuple[str, ...]] = {
-    4: ("planar_4", "pucker_up_4", "pucker_down_4"),
-    5: ("planar_5", "envelope_5", "twist_5"),
-    6: ("chair_A_6", "chair_B_6", "boat_6", "twist_boat_6"),
-}
+#: Templates per ring size (single authority in :mod:`ring.constants`;
+#: re-exported here as the same object for historic import paths).
 
 
 def get_template(name: str) -> RingTemplate:

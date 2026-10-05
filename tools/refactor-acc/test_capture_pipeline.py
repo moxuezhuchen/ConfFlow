@@ -13,6 +13,7 @@ import os
 import re
 import subprocess
 import sys
+import xml.etree.ElementTree as ET
 from collections import Counter
 from pathlib import Path
 
@@ -252,6 +253,43 @@ def test_capture_success_binds_manifest_and_plain_tests_still_run(tmp_path: Path
     assert prov.verify_capture(capture, run_id="run-1", cf=cf, jd_src=_jd_src(cf)) == []
 
 
+def test_capture_explicit_scope_filters_write_out_only(tmp_path: Path) -> None:
+    cf = _fixture(tmp_path / "cf")
+    out = tmp_path / "out.json"
+    capture = tmp_path / "capture"
+    proc = _run_runner(
+        cf,
+        out,
+        _jdpin(cf),
+        *_capture_args(capture),
+        env={"CAP_SCOPE_GLOB": "tests/v4/test_confgen_alpha.py"},
+    )
+    assert proc.returncode == 0, proc.stderr
+    outcomes = json.loads((capture / "out.json").read_text())
+    assert len(outcomes) == 6
+    assert outcomes["tests/v4/test_confgen_alpha.py::test_alpha_one"] == "passed"
+    assert outcomes["tests/v4/test_confgen_alpha.py::test_alpha_two"] == "passed"
+    assert outcomes["tests/v4/test_confgen_beta.py::test_beta_one"] == "passed"
+    assert outcomes["tests/test_plain.py::test_plain_one"] == "passed"
+    assert outcomes["tests/test_plain.py::test_plain_engine"] == "passed"
+    manifest = json.loads((capture / "manifest.json").read_text())
+    assert manifest["status"] == "complete"
+    assert manifest["tally"] == {"passed": 6}
+    assert manifest["node_count"] == 6
+    names = {p.name for p in (capture / "engine_reports").glob("*.json")}
+    assert names == {
+        f"{_clean(n)}__{seq}.json"
+        for n, seq in (
+            ("tests/v4/test_confgen_alpha.py::test_alpha_one", 0),
+            ("tests/v4/test_confgen_alpha.py::test_alpha_two", 0),
+            ("tests/v4/test_confgen_alpha.py::test_alpha_two", 1),
+        )
+    }
+    assert not [p for p in names if "beta" in p]
+    assert not [p for p in names if "plain" in p]
+    assert prov.verify_capture(capture, run_id="run-1", cf=cf, jd_src=_jd_src(cf)) == []
+
+
 def test_failed_shard_produces_no_manifest_and_no_out(tmp_path: Path) -> None:
     cf = _fixture(tmp_path / "cf", failing=True)
     out = tmp_path / "out.json"
@@ -261,6 +299,53 @@ def test_failed_shard_produces_no_manifest_and_no_out(tmp_path: Path) -> None:
     assert not (capture / "manifest.json").exists()
     assert not out.exists()
     assert "CAPTURE FAILED" in proc.stderr
+
+
+def test_capture_failure_preserves_diagnostics_for_direct_locate(tmp_path: Path) -> None:
+    cf = _fixture(tmp_path / "cf", failing=True)
+    out = tmp_path / "out.json"
+    capture = tmp_path / "capture"
+    proc = _run_runner(cf, out, _jdpin(cf), *_capture_args(capture))
+    assert proc.returncode != 0
+    assert not (capture / "manifest.json").exists()
+    assert not out.exists()
+    assert "CAPTURE FAILED" in proc.stderr
+    diag = capture / "diagnostics"
+    assert diag.is_dir()
+    logs = sorted(diag.glob("shard*.log"))
+    xmls = sorted(diag.glob("shard*.xml"))
+    assert logs, "capture diagnostics must preserve shard stdout"
+    assert xmls, "capture diagnostics must preserve finished shard JUnit"
+    combined = "\n".join(p.read_text(errors="replace") for p in logs)
+    assert "FAILED" in combined
+    assert "test_plain_failing" in combined
+    found = False
+    for xml in xmls:
+        for case in ET.parse(xml).iter("testcase"):
+            if case.get("name") == "test_plain_failing":
+                assert case.find("failure") is not None or case.find("error") is not None
+                found = True
+    assert found, "diagnostic JUnit must contain the failing node"
+
+
+def test_capture_success_diagnostics_excluded_from_engine_reports(tmp_path: Path) -> None:
+    cf = _fixture(tmp_path / "cf")
+    out = tmp_path / "out.json"
+    capture = tmp_path / "capture"
+    proc = _run_runner(cf, out, _jdpin(cf), *_capture_args(capture))
+    assert proc.returncode == 0, proc.stderr
+    assert prov.verify_capture(capture, run_id="run-1", cf=cf, jd_src=_jd_src(cf)) == []
+    manifest = json.loads((capture / "manifest.json").read_text())
+    assert manifest["status"] == "complete"
+    diag = capture / "diagnostics"
+    assert diag.is_dir()
+    assert sorted(diag.glob("shard*.log")), "success run must still preserve shard stdout"
+    assert sorted(diag.glob("shard*.xml")), "success run must still preserve shard JUnit"
+    engine_names = {p.name for p in (capture / "engine_reports").glob("*.json")}
+    assert not [n for n in engine_names if n.startswith("shard")]
+    assert not [n for n in manifest["reports"] if n.startswith("shard")]
+    assert not list((capture / "engine_reports").glob("shard*.log"))
+    assert not list((capture / "engine_reports").glob("shard*.xml"))
 
 
 def test_missing_junit_aborts_without_manifest(tmp_path: Path) -> None:

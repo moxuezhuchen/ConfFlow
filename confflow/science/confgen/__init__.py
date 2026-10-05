@@ -31,12 +31,15 @@ from confflow.science.confgen.engine import (
     EngineCancelledError,
     EngineRun,
     InheritedScopeError,
-    InheritedTorsionLock,
     UnsupportedAxisError,
-    check_inherited_torsion_locks,
     combine_state_key,
-    inherited_torsion_locks,
     thaw_snapshot,
+)
+from confflow.science.confgen.kernel_records import (
+    ComponentStateKey,
+    KernelGenerationTarget,
+    KernelRun,
+    KernelWorkingRealization,
 )
 from confflow.science.confgen.model import (
     AXIS_ORDER,
@@ -80,6 +83,7 @@ __all__ = [
     "SUPPRESSED_BY_SYMMETRY",
     "AtomOrderViolationError",
     "AtomRef",
+    "ComponentStateKey",
     "ConfgenEngine",
     "ConfgenStateKey",
     "ConfgenTolerances",
@@ -90,6 +94,9 @@ __all__ = [
     "GenerationTarget",
     "InheritedScopeError",
     "InheritedTorsionLock",
+    "KernelGenerationTarget",
+    "KernelRun",
+    "KernelWorkingRealization",
     "MixedRadixGrid",
     "MolecularContext",
     "OrbitIdentity",
@@ -137,3 +144,28 @@ __all__ = [
 ]
 
 __version__ = "3.0.0-core"
+
+# A4d lazy compat (PEP 562): only the three moved torsion names are served
+# lazily; all other misses raise AttributeError (never ImportError).
+_INHERITED_LAZY_NAMES = frozenset(
+    {
+        "InheritedTorsionLock",
+        "inherited_torsion_locks",
+        "check_inherited_torsion_locks",
+    }
+)
+
+
+def __getattr__(name: str) -> object:
+    """Serve only the three moved torsion compat names lazily."""
+    if name not in _INHERITED_LAZY_NAMES:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    import importlib as _il
+
+    mod = _il.import_module("confflow.science.confgen.torsion.inherited")
+    try:
+        value = getattr(mod, name)
+    except AttributeError:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}") from None
+    globals()[name] = value
+    return value

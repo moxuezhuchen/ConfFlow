@@ -317,37 +317,43 @@ def _native_section() -> dict[str, Any]:
 
 
 def _confgen_section() -> dict[str, Any]:
-    """Build confgen v3 typed-option descriptors from the science registries.
+    """Build confgen v3 typed-option descriptors from the component registry.
 
-    Shapes come from the coordination lane authority, ring templates from
-    the ring-lane registry, and tolerances/limits defaults from the core
-    science authorities -- imported, never copied, so the published options
-    cannot drift from what the engine actually enforces.
+    Component-owned slices come from each descriptor's ``contract_options()``
+    (lightweight constants only, never stage/realization/enumeration/hgeom);
+    generic keys (tolerances/limits/provenance/description) stay here on the
+    existing authorities. Key order and values match the pre-A5 section
+    byte-for-byte; the merge walks the registry in order then emits the
+    frozen key sequence.
     """
     import dataclasses
 
-    from ..science.confgen.coordination.stage import BACKEND_CHOICES
-    from ..science.confgen.graph import CN_SHAPES, SUPPORTED_SHAPES
-    from ..science.confgen.ring.templates import TEMPLATES_BY_SIZE
+    from ..science.confgen.registry import default_registry
     from ..science.confgen.tolerances import ConfgenTolerances
     from ..workflow.v4.confgen_schema import ConfgenModelV3
 
+    registry = default_registry()
+    owned: dict[str, Any] = {}
+    for _descriptor in registry._ordered():
+        _options = _descriptor.contract_options
+        if _options is None:
+            continue
+        for _key, _value in dict(_options()).items():
+            if _key in owned:
+                raise ValueError(f"duplicate contract option {_key!r}")
+            owned[_key] = _value
     tolerances = ConfgenTolerances()
     probe = ConfgenModelV3.model_validate({"schema_version": 3})
-    return {
+    ordered: dict[str, Any] = {
         "schema_version": 3,
-        "coordination_shapes": sorted(SUPPORTED_SHAPES),
-        "coordination_shapes_by_cn": {
-            str(number): list(names) for number, names in sorted(CN_SHAPES.items())
-        },
-        "ring_templates_by_size": {
-            str(size): sorted(names) for size, names in sorted(TEMPLATES_BY_SIZE.items())
-        },
-        "torsion_models": ["relative_rotation_grid", "absolute_dihedral_grid", "chemical"],
-        "treatments": ["enumerate", "preserve_input"],
-        "coordination_backends": list(BACKEND_CHOICES),
-        "coordination_budgets": {"max_nfev": 120, "maxiter": 400},
-        "coordination_site_group_scope": "declared_topological_subgroup",
+        "coordination_shapes": owned["coordination_shapes"],
+        "coordination_shapes_by_cn": owned["coordination_shapes_by_cn"],
+        "ring_templates_by_size": owned["ring_templates_by_size"],
+        "torsion_models": owned["torsion_models"],
+        "treatments": owned["treatments"],
+        "coordination_backends": owned["coordination_backends"],
+        "coordination_budgets": owned["coordination_budgets"],
+        "coordination_site_group_scope": owned["coordination_site_group_scope"],
         "result_provenance": ["certificate_digest", "inherited_scope"],
         # JSON pointers into ``ensemble_report`` of scientific provenance
         # digests: published and consumed on purpose, not dead fields.
@@ -371,6 +377,7 @@ def _confgen_section() -> dict[str, Any]:
             "versioned adapter path."
         ),
     }
+    return ordered
 
 
 def _remote_section() -> dict[str, Any]:

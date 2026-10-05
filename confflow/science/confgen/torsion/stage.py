@@ -34,7 +34,7 @@ from confflow.science.confgen.model import (
     PerceptionResult,
     RealizationResult,
     StageEstimate,
-    WorkingRealization,
+    StageParentProtocol,
 )
 from confflow.science.confgen.planner import MixedRadixGrid, TorsionAxis, resolve_torsion_axes
 from confflow.science.confgen.torsion.measure import measure_dihedral, wrap_degrees
@@ -47,10 +47,12 @@ from confflow.science.torsion import (
     topological_distance_matrix,
 )
 
+from .constants import BACKEND_NAME
+
 __all__ = ["BACKEND_NAME", "TorsionStage"]
 
-#: Backend label stamped on every torsion realization result.
-BACKEND_NAME = "geometric-rodrigues-v3"
+#: Backend label (single authority in :mod:`torsion.constants`; re-exported
+#: here as the same object for historic import paths).
 
 _DEGENERATE_AXIS_NORM = 1e-12
 
@@ -81,6 +83,28 @@ class TorsionStage(GenerationStage):
     def axis(self) -> str:
         """Return the stage axis (``torsions``)."""
         return "torsions"
+
+    #: A3 dispatch hooks (engine-read; component owns its literals).
+    check_bond_integrity: bool = True
+    carries_inherited_locks: bool = True
+
+    def preserved_entries(self, resolved: Mapping[str, Any]) -> list[dict[str, Any]]:
+        """Return torsion ``preserve_input`` entries (delegates to scope)."""
+        from confflow.science.confgen.torsion.scope import preserved_entries as _entries
+
+        return _entries(resolved)
+
+    def report_section(self, resolved: Mapping[str, Any]) -> dict[str, Any] | None:
+        """Torsion contributes no report section."""
+        from confflow.science.confgen.torsion.scope import report_section as _section
+
+        return _section(resolved)
+
+    def describe_scope(self, resolved: Mapping[str, Any]) -> Mapping[str, Any] | None:
+        """Return the torsion scope slice (delegates to scope)."""
+        from confflow.science.confgen.torsion.scope import describe_scope as _describe
+
+        return _describe(resolved)
 
     def axis_ids(self, context: MolecularContext) -> tuple[str, ...]:
         """Return enumerate-axis ids for perception coverage checks."""
@@ -184,7 +208,7 @@ class TorsionStage(GenerationStage):
 
     # -- protocol ---------------------------------------------------------
 
-    def estimate(self, parent: WorkingRealization, context: MolecularContext) -> StageEstimate:
+    def estimate(self, parent: StageParentProtocol, context: MolecularContext) -> StageEstimate:
         """Symbolic joint-grid count (exact, complete declared group)."""
         axes = self._validated(context)
         enumerated = [axis for axis in axes if axis.treatment == "enumerate"]
@@ -228,7 +252,7 @@ class TorsionStage(GenerationStage):
         )
 
     def target_by_ordinal(
-        self, parent: WorkingRealization, ordinal: int, context: MolecularContext
+        self, parent: StageParentProtocol, ordinal: int, context: MolecularContext
     ) -> GenerationTarget:
         """Fetch one joint target lazily by ordinal (engine sampling path)."""
         axes = self._validated(context)
@@ -236,7 +260,7 @@ class TorsionStage(GenerationStage):
         return self._target_at(ordinal, enumerated)
 
     def enumerate_targets(
-        self, parent: WorkingRealization, context: MolecularContext
+        self, parent: StageParentProtocol, context: MolecularContext
     ) -> Iterator[GenerationTarget]:
         """Yield joint targets lazily in stable ordinal order (no geometry)."""
         axes = self._validated(context)
@@ -291,7 +315,7 @@ class TorsionStage(GenerationStage):
 
     def realize(
         self,
-        parent: WorkingRealization,
+        parent: StageParentProtocol,
         target: GenerationTarget,
         context: MolecularContext,
     ) -> RealizationResult:
@@ -506,7 +530,7 @@ class TorsionStage(GenerationStage):
         self,
         structure: StructureRecord,
         target: GenerationTarget,
-        parent: WorkingRealization,
+        parent: StageParentProtocol,
         context: MolecularContext,
     ) -> tuple[bool, dict[str, float], list[dict[str, Any]]]:
         """Audit a fresh realization against its commanded target.

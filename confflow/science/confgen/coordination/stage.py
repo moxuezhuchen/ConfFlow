@@ -51,8 +51,8 @@ from confflow.science.confgen.model import (
     GenerationStage,
     GenerationTarget,
     MolecularContext,
+    StageParentProtocol,
     StructureRecord,
-    WorkingRealization,
 )
 from confflow.science.confgen.model import (
     PerceptionResult as CorePerceptionResult,
@@ -74,6 +74,7 @@ from ..graph import (
     ForbiddenTrans,
     TypedGraph,
 )
+from .constants import BACKEND_CHOICES, DEFAULT_SECTION_TOLERANCES
 from .enumeration import (
     canonical_representative,
     command_key,
@@ -111,14 +112,8 @@ HGEOM_HELPER_NOTE = (
 #: Section-level coordination tolerances (lane-owned; the frozen
 #: coordination_bond_atol / coordination_angle_atol_deg arrive via
 #: context.tolerances and govern intra-fragment integrity).
-DEFAULT_SECTION_TOLERANCES: dict[str, float] = {
-    "realize_tol": 0.45,
-    "reaction_tol": 0.25,
-    "clash_scale": 0.70,
-    "rmsd_tolerance": 0.35,
-    "margin_tolerance": 0.05,
-    "shape_margin_tolerance": 0.15,
-}
+#: Single authority lives in :mod:`coordination.constants`; re-exported
+#: here as the same object for historic import paths.
 
 _AXIS_SPEC_KEYS = (
     "metal_center",
@@ -134,7 +129,8 @@ _AXIS_SPEC_KEYS = (
 )
 
 #: Realization backend selection (section-level, lane-owned).
-BACKEND_CHOICES = ("rigid", "flexible", "rigid_then_flexible")
+#: Single authority lives in :mod:`coordination.constants`; re-exported
+#: here as the same object for historic import paths.
 
 
 def _resolve_shapes(spec: CoordinationSpec, shapes: Any) -> tuple[str, ...]:
@@ -374,6 +370,28 @@ class CoordinationStage(GenerationStage):
         """Return the stage axis."""
         return "coordination"
 
+    #: A3 dispatch hooks (engine-read; component owns its literals).
+    check_bond_integrity: bool = False
+    carries_inherited_locks: bool = False
+
+    def preserved_entries(self, resolved: Mapping[str, Any]) -> list[dict[str, Any]]:
+        """Coordination contributes no preserved entries (matches engine)."""
+        from confflow.science.confgen.coordination.scope import preserved_entries as _entries
+
+        return _entries(resolved)
+
+    def report_section(self, resolved: Mapping[str, Any]) -> dict[str, Any] | None:
+        """Return the coordination report fragment (donor_configuration)."""
+        from confflow.science.confgen.coordination.scope import report_section as _section
+
+        return _section(resolved)
+
+    def describe_scope(self, resolved: Mapping[str, Any]) -> Mapping[str, Any] | None:
+        """Return the coordination scope slice (delegates to scope)."""
+        from confflow.science.confgen.coordination.scope import describe_scope as _describe
+
+        return _describe(resolved)
+
     def axis_ids(self, context: MolecularContext) -> tuple[str, ...]:
         """Return the observed-key fields for engine coverage checks."""
         _ = context
@@ -476,7 +494,7 @@ class CoordinationStage(GenerationStage):
                     audit["suppression_authority"] = "none (H_geom required)"
         return pipes
 
-    def estimate(self, parent: WorkingRealization, context: MolecularContext) -> CoreStageEstimate:
+    def estimate(self, parent: StageParentProtocol, context: MolecularContext) -> CoreStageEstimate:
         """Return the exact symbolic preflight count plus certificate."""
         self._check_context(context)
         if self._spec.treatment == "preserve_input":
@@ -528,7 +546,7 @@ class CoordinationStage(GenerationStage):
         )
 
     def enumerate_targets(
-        self, parent: WorkingRealization, context: MolecularContext
+        self, parent: StageParentProtocol, context: MolecularContext
     ) -> Iterator[GenerationTarget]:
         """Yield stable symbolic targets lazily (no geometry generation)."""
         self._check_context(context)
@@ -592,7 +610,7 @@ class CoordinationStage(GenerationStage):
 
     def realize(
         self,
-        parent: WorkingRealization,
+        parent: StageParentProtocol,
         target: GenerationTarget,
         context: MolecularContext,
     ) -> CoreRealizationResult:
@@ -689,7 +707,7 @@ class CoordinationStage(GenerationStage):
         self,
         native: Any,
         shape_name: str,
-        parent: WorkingRealization,
+        parent: StageParentProtocol,
         target: GenerationTarget,
         adjacency: Any,
         attempt_records: list[dict[str, Any]] | None = None,
@@ -809,7 +827,7 @@ class CoordinationStage(GenerationStage):
 
     def suppression_for_target(
         self,
-        parent: WorkingRealization,
+        parent: StageParentProtocol,
         target: GenerationTarget,
         context: MolecularContext,
     ) -> dict[str, Any] | None:
@@ -834,8 +852,22 @@ class CoordinationStage(GenerationStage):
 
         if self._spec.treatment == "preserve_input":
             return None
-        resolved = context.resolved_spec
-        if list(resolved.get("rings", []) or []) or list(resolved.get("torsions", []) or []):
+        # A5 single-axis gate: kernel provides active_components in registry
+        # order; coordination only reads its own id tuple, never rings/torsions.
+        # Empty () is the pre-A5 hand-constructed default: fall back to the
+        # legacy presence check so old contexts stay byte-identical.
+        active = getattr(context, "active_components", ())
+        if active is None:
+            active = ()
+        try:
+            active_tuple = tuple(active)
+        except TypeError:
+            active_tuple = ()
+        if active_tuple == ():
+            resolved = context.resolved_spec
+            if list(resolved.get("rings", []) or []) or list(resolved.get("torsions", []) or []):
+                return None
+        elif active_tuple != ("coordination",):
             return None
         graph = self._check_context(context)
         try:
@@ -963,7 +995,7 @@ class CoordinationStage(GenerationStage):
     def _target_by_class(
         self,
         context: MolecularContext,
-        parent: WorkingRealization,
+        parent: StageParentProtocol,
         pipe: dict[str, Any],
         class_id: str,
     ) -> GenerationTarget | None:
@@ -1029,7 +1061,7 @@ class CoordinationStage(GenerationStage):
         structure: StructureRecord,
         locked_state: Mapping[str, Any],
         context: MolecularContext,
-        parent: WorkingRealization | None = None,
+        parent: StageParentProtocol | None = None,
     ) -> tuple[bool, dict[str, Any], list[dict[str, Any]]]:
         """Verify a locked coordination ancestor state on fresh geometry.
 
@@ -1167,7 +1199,7 @@ class CoordinationStage(GenerationStage):
         self,
         structure: StructureRecord,
         target: GenerationTarget,
-        parent: WorkingRealization,
+        parent: StageParentProtocol,
         context: MolecularContext,
     ) -> tuple[bool, dict[str, Any], list[dict[str, Any]]]:
         """Compare commanded vs re-perceived indexed identity (engine hook).
