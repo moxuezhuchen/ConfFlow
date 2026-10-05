@@ -14,6 +14,7 @@ from __future__ import annotations
 import re
 import shutil
 import subprocess as _sp
+import sys
 from pathlib import Path
 
 import pytest
@@ -59,6 +60,23 @@ def _write(root: Path, relpath: str, content: str) -> None:
     path = root / relpath
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
+
+
+def _copy_scanner_tree(dest: Path) -> None:
+    """Copy the real thin scanner plus its policy authority into a fixture.
+
+    The thin ``scripts/v4_arch_scan.py`` loads ``tools/architecture_policy``
+    from its own tree, so a fixture must carry both files; otherwise the
+    fixture would silently bind back to the real tree.  Every fixture that
+    needs a working scanner uses this helper (never a script-only copy).
+    """
+    (dest / "scripts").mkdir(parents=True, exist_ok=True)
+    (dest / "tools").mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(_REAL_ROOT / "scripts/v4_arch_scan.py", dest / "scripts/v4_arch_scan.py")
+    shutil.copyfile(
+        _REAL_ROOT / "tools/architecture_policy.py",
+        dest / "tools/architecture_policy.py",
+    )
 
 
 def _fixture_scope(rule: dict) -> list[str]:
@@ -434,10 +452,7 @@ def _materialise(root: Path, files: dict[str, str], rule_id: str) -> None:
     for rel, content in files.items():
         _write(root, rel, content)
     if rule_id in _SCANNER_RT:
-        import shutil
-
-        (root / "scripts").mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(_REAL_ROOT / "scripts/v4_arch_scan.py", root / "scripts/v4_arch_scan.py")
+        _copy_scanner_tree(root)
 
 
 @pytest.mark.parametrize("rule_id", sorted(RUNTIME_SCENARIOS))
@@ -857,15 +872,53 @@ def test_ap094_v4_roots_are_pinned() -> None:
     ]
 
 
-def test_ap095_metrics_match_the_old_collect_exactly() -> None:
+def test_ap095_metrics_match_the_old_collect_exactly(tmp_path: Path) -> None:
+    # Independent synthetic tree with hand-computed expectations (no
+    # self-proof through the shared authority): three production modules,
+    # one import edge v4cli -> producer.contract, one orphan module.
+    # LOC counts every line including the trailing newline.
+    _write(tmp_path, "confflow/__init__.py", "")
+    _write(tmp_path, "confflow/v4cli.py", "import confflow.producer.contract\n")
+    _write(tmp_path, "confflow/producer/__init__.py", "")
+    _write(tmp_path, "confflow/producer/contract.py", "x = 1\n")
+    _write(tmp_path, "confflow/orphan.py", "x = 1\ny = 2\n")
+    # Stubs for the remaining pinned V4 roots (missing roots fail closed).
+    _write(tmp_path, "confflow/application/__init__.py", "")
+    _write(tmp_path, "confflow/application/v4_entry.py", "")
+    _write(tmp_path, "confflow/application/execution/__init__.py", "")
+    _write(tmp_path, "confflow/application/execution/workflow_adapter.py", "")
+    _write(tmp_path, "confflow/control_worker.py", "")
+    got = metrics_snapshot(tmp_path)
+    assert got["PHYSICAL_PRODUCTION_MODULES"] == 10
+    assert got["PHYSICAL_PRODUCTION_LOC"] == 4
+    assert got["V4_REACHABLE_MODULES"] == 9
+    assert got["V4_REACHABLE_LOC"] == 2
+    assert got["LEGACY_OR_NON_V4_REACHABLE_LOC"] == 2
+    assert got["v4_reachable"] == [
+        "confflow",
+        "confflow.application",
+        "confflow.application.execution",
+        "confflow.application.execution.workflow_adapter",
+        "confflow.application.v4_entry",
+        "confflow.control_worker",
+        "confflow.producer",
+        "confflow.producer.contract",
+        "confflow.v4cli",
+    ]
+
+
+def test_ap095_metrics_thin_collect_matches_snapshot_on_real_tree() -> None:
+    # The thin script forwards to the same authority: real-tree/synthetic
+    # parity is checked against the frozen old algorithm in the output
+    # reference diff log, not by calling the same authority twice.
     import importlib.util
     import sys
 
     spec = importlib.util.spec_from_file_location(
-        "metrics_reference", Path("scripts/architecture_metrics.py").resolve()
+        "metrics_thin", str(_REAL_ROOT / "scripts/architecture_metrics.py")
     )
     module = importlib.util.module_from_spec(spec)
-    sys.modules["metrics_reference"] = module
+    sys.modules["metrics_thin"] = module
     spec.loader.exec_module(module)
     root = Path(__file__).resolve().parents[2]
     old = module.collect(str(root))
@@ -1053,10 +1106,7 @@ def test_runtime_rule_fires_on_violating_fixture(rule_id: str, tmp_path: Path) -
     for relpath, content in RUNTIME_NEGATIVE_FIXTURES[rule_id].items():
         _write(tmp_path, relpath, content)
     if rule_id == "RT-096":
-        (tmp_path / "scripts").mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(
-            _REAL_ROOT / "scripts/v4_arch_scan.py", tmp_path / "scripts/v4_arch_scan.py"
-        )
+        _copy_scanner_tree(tmp_path)
     fired = [v["rule"] for v in scan_runtime(tmp_path)]
     assert rule_id in fired, f"{rule_id} did not fire on its violating fixture: {fired}"
 
@@ -1122,7 +1172,7 @@ def test_runtime_scanner_inproc_timeout_is_a_violation(tmp_path: Path, monkeypat
 def test_runtime_scanner_cli_timeout_is_a_violation(tmp_path: Path, monkeypatch) -> None:
     _blank_tree(tmp_path)
     (tmp_path / "scripts").mkdir()
-    shutil.copyfile(_REAL_ROOT / "scripts/v4_arch_scan.py", tmp_path / "scripts/v4_arch_scan.py")
+    _copy_scanner_tree(tmp_path)
     _only("RT-096", monkeypatch)
     real_run = _policy.subprocess.run
 
@@ -1321,8 +1371,7 @@ def _scanner_fixture(tmp_path: Path, *, evil: bool) -> Path:
     (tmp_path / "confflow/producer").mkdir(parents=True)
     (tmp_path / "confflow/__init__.py").write_text("")
     (tmp_path / "confflow/producer/__init__.py").write_text("")
-    (tmp_path / "scripts").mkdir()
-    shutil.copyfile(_REAL_ROOT / "scripts/v4_arch_scan.py", tmp_path / "scripts/v4_arch_scan.py")
+    _copy_scanner_tree(tmp_path)
     if evil:
         (tmp_path / "confflow/producer/evil.py").write_text("x = TaskRunner\n")
     return tmp_path
@@ -1364,3 +1413,360 @@ def test_runtime_scanner_gate_runs_both_gates(tmp_path: Path, monkeypatch) -> No
     assert len(calls) == 2, calls
     assert "-c" in calls[0], calls
     assert "v4_arch_scan.py" in calls[1][1], calls
+
+
+# ---------------------------------------------------------------------------
+# L0.4d2 legacy_cli compat profile: the thin CLI calls the same scan
+# implementation with profile="legacy_cli" + rule_ids AP-088/089/090/091/092.
+# ---------------------------------------------------------------------------
+
+_LEGACY_IDS = ["AP-088", "AP-089", "AP-090", "AP-091", "AP-092"]
+
+
+def _legacy_hits(root: Path) -> list[tuple]:
+    import tools.architecture_policy as policy
+
+    out = []
+    for v in policy.scan(root, rule_ids=_LEGACY_IDS, profile="legacy_cli"):
+        if v["rule"] == "AP-088":
+            out.append((v["path"], v["line"], "legacy-import", v["detail"]))
+        elif v["rule"] == "AP-089":
+            out.append((v["path"], v["line"], "legacy-analysis-persistence", v["detail"]))
+        elif v["rule"] == "AP-090":
+            out.append((v["path"], v["line"], v["detail"], v["match"]))
+        elif v["rule"] == "AP-091":
+            out.append((v["path"], v["line"], "retired-runtime-present", v["detail"]))
+        elif v["rule"] == "AP-092":
+            out.append((v["path"], v["line"], "retired-v1v2-token", v["detail"]))
+    return sorted(out)
+
+
+def _scoped_producer(root: Path) -> None:
+    _write(root, "confflow/__init__.py", "")
+    _write(root, "confflow/producer/__init__.py", "")
+
+
+def test_legacy_cli_trailing_comment_matches_old_and_default_still_fires(
+    tmp_path: Path,
+) -> None:
+    # The STOP_REPORT minimal counterexample: `x = TaskRunner  # trailing`
+    # is silent in the old scanner (whole-line blank quirk) and in the
+    # legacy profile, while the default profile still reports AP-090.
+    _scoped_producer(tmp_path)
+    _write(tmp_path, "confflow/producer/evil.py", "x = TaskRunner  # trailing comment\n")
+    assert _legacy_hits(tmp_path) == []
+    default = [v for v in scan(tmp_path) if v["rule"] == "AP-090"]
+    assert [(v["path"], v["line"], v["detail"]) for v in default] == [
+        ("confflow/producer/evil.py", 1, "legacy-TaskRunner")
+    ]
+
+
+def test_legacy_cli_retired_package_reports_init_while_default_ignores(
+    tmp_path: Path,
+) -> None:
+    # Package-only retired module: old + legacy report the __init__.py at
+    # line 1; the default disk_absent profile (module.py only) is unchanged.
+    _scoped_producer(tmp_path)
+    _write(tmp_path, "confflow/config/__init__.py", "")
+    _write(tmp_path, "confflow/config/canonical/__init__.py", "")
+    assert _legacy_hits(tmp_path) == [
+        (
+            "confflow/config/canonical/__init__.py",
+            1,
+            "retired-runtime-present",
+            "confflow.config.canonical",
+        )
+    ]
+    assert [v for v in scan(tmp_path) if v["rule"] == "AP-091"] == []
+
+
+def test_legacy_cli_relative_import_uses_old_package_basis(tmp_path: Path) -> None:
+    # `from ...workflow.engine import X` in confflow/producer/sub/mod.py:
+    # old basis resolves confflow.workflow.engine (fires); the default
+    # resolver keeps the file name (silent). Legacy follows the old basis.
+    _write(tmp_path, "confflow/__init__.py", "")
+    _write(tmp_path, "confflow/producer/__init__.py", "")
+    _write(tmp_path, "confflow/producer/sub/__init__.py", "")
+    _write(
+        tmp_path,
+        "confflow/producer/sub/mod.py",
+        "from ...workflow.engine import X\n",
+    )
+    assert _legacy_hits(tmp_path) == [
+        (
+            "confflow/producer/sub/mod.py",
+            1,
+            "legacy-import",
+            "confflow.workflow.engine",
+        )
+    ]
+    assert [v for v in scan(tmp_path) if v["rule"] == "AP-088"] == []
+
+
+def test_legacy_cli_prefix_boundary_matches_old_startswith(tmp_path: Path) -> None:
+    # Non-dot-boundary caliber: `import confflow.shared2extra` fires under
+    # the old plain startswith and the legacy profile, not by default.
+    _scoped_producer(tmp_path)
+    _write(tmp_path, "confflow/producer/e.py", "import confflow.shared2extra\n")
+    assert _legacy_hits(tmp_path) == [
+        (
+            "confflow/producer/e.py",
+            1,
+            "legacy-import",
+            "confflow.shared2extra",
+        )
+    ]
+    assert [v for v in scan(tmp_path) if v["rule"] == "AP-088"] == []
+
+
+def test_legacy_cli_fifteen_patterns_match_old_reference(tmp_path: Path) -> None:
+    # All 15 SCANNER_PATTERNS: plain code fires in both profiles; the same
+    # code with a trailing comment is silent in legacy (old quirk) and still
+    # fires by default. Comment-only, docstring, and Chinese-docstring lines
+    # stay silent in legacy.
+    import tools.architecture_policy as policy
+
+    _scoped_producer(tmp_path)
+    probes = {
+        "legacy-TaskRunner": "x = TaskRunner",
+        "legacy-CalcStepRunner": "x = CalcStepRunner",
+        "legacy-ResultsDB": "x = ResultsDB",
+        "legacy-WorkflowState": "x = WorkflowStateX",
+        "legacy-iprog": "x = iprog",
+        "legacy-itask": "x = itask",
+        "legacy-chk-from-step": "x = chk_from_step",
+        "legacy-result-xyz": "x = result.xyz",
+        "legacy-output-path": "x = output_path",
+        "legacy-orca-fallback": "x = default_orca",
+        "legacy-first-match": "x = first_match",
+        "legacy-fake-marker": "x = FAKE_MODE",
+        "legacy-stepresult-shortcut": "x = StepResult()",
+        "legacy-duplicate-authority": "register_executor()",
+        "legacy-silent-fallback": 'x = "silent fallback"',
+    }
+    assert [c for c, _ in policy.SCANNER_PATTERNS] == list(probes)
+    for index, (_check, code) in enumerate(probes.items()):
+        _write(tmp_path, f"confflow/producer/p{index}.py", f"{code}\n")
+        _write(tmp_path, f"confflow/producer/q{index}.py", f"{code}  # trailing\n")
+    _write(tmp_path, "confflow/producer/comment.py", "# TaskRunner ResultsDB\n")
+    _write(tmp_path, "confflow/producer/doc.py", '"""TaskRunner ResultsDB"""\nx = 1\n')
+    _write(tmp_path, "confflow/producer/cn.py", '"""中文 TaskRunner"""\nx = 1\n')
+    legacy = [h for h in _legacy_hits(tmp_path) if h[2].startswith("legacy-")]
+    assert sorted(h[2] for h in legacy) == sorted(probes)
+    assert all(h[1] == 1 and h[0].startswith("confflow/producer/p") for h in legacy)
+    expected_match = {
+        "legacy-TaskRunner": "TaskRunner",
+        "legacy-CalcStepRunner": "CalcStepRunner",
+        "legacy-ResultsDB": "ResultsDB",
+        "legacy-WorkflowState": "WorkflowStateX",
+        "legacy-iprog": "iprog",
+        "legacy-itask": "itask",
+        "legacy-chk-from-step": "chk_from_step",
+        "legacy-result-xyz": "result.xyz",
+        "legacy-output-path": "output_path",
+        "legacy-orca-fallback": "default_orca",
+        "legacy-first-match": "first_match",
+        "legacy-fake-marker": "FAKE_MODE",
+        "legacy-stepresult-shortcut": "StepResult(",
+        "legacy-duplicate-authority": "register_executor",
+        "legacy-silent-fallback": "silent fallback",
+    }
+    assert {(h[2], h[3]) for h in legacy} == set(expected_match.items())
+    default = [v for v in scan(tmp_path) if v["rule"] == "AP-090"]
+    assert len(default) == 2 * len(probes)
+
+
+def test_legacy_cli_output_matches_old_cli_fields_sort_exit_code(
+    tmp_path: Path,
+) -> None:
+    # Independent locked expectations (no /tmp old reference at test time):
+    # identical (path, line, check, text), identical sort, identical printed
+    # lines and exit codes (dirty + clean).
+    _scoped_producer(tmp_path)
+    _write(tmp_path, "confflow/analysis/__init__.py", "")
+    _write(tmp_path, "confflow/producer/a.py", "x = TaskRunner  # trailing\n")
+    _write(tmp_path, "confflow/producer/b.py", "x = TaskRunner\ny = ResultsDB\n")
+    _write(tmp_path, "confflow/producer/d.py", "x = load_workflow_definition\n")
+    _write(tmp_path, "confflow/producer/e.py", "import confflow.shared.foo\n")
+    _write(tmp_path, "confflow/analysis/f.py", "import confflow.persistence.store\n")
+    expected = [
+        (
+            "confflow/analysis/f.py",
+            1,
+            "legacy-analysis-persistence",
+            "confflow.persistence.store",
+        ),
+        ("confflow/producer/b.py", 1, "legacy-TaskRunner", "TaskRunner"),
+        ("confflow/producer/b.py", 2, "legacy-ResultsDB", "ResultsDB"),
+        (
+            "confflow/producer/d.py",
+            1,
+            "retired-v1v2-token",
+            "load_workflow_definition",
+        ),
+        ("confflow/producer/e.py", 1, "legacy-import", "confflow.shared.foo"),
+    ]
+    assert _legacy_hits(tmp_path) == expected
+    _copy_scanner_tree(tmp_path)
+    proc = _sp.run(
+        [sys.executable, str(tmp_path / "scripts/v4_arch_scan.py")],
+        cwd=str(tmp_path),
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    lines = [f"{p}:{n}:{c}:{t}" for p, n, c, t in expected]
+    assert proc.stdout.splitlines() == lines
+    assert proc.returncode == (1 if expected else 0)
+    if expected:
+        assert "FAIL" in proc.stderr
+    else:
+        assert "clean" in proc.stdout
+    for victim in ("confflow/producer/b.py", "confflow/producer/d.py"):
+        (tmp_path / victim).write_text("x = 1\n")
+    (tmp_path / "confflow/producer/e.py").write_text("x = 1\n")
+    (tmp_path / "confflow/analysis/f.py").write_text("x = 1\n")
+    proc = _sp.run(
+        [
+            sys.executable,
+            str(tmp_path / "scripts/v4_arch_scan.py"),
+            "--cf",
+            str(tmp_path),
+        ],
+        cwd=str(tmp_path),
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert proc.returncode == 0
+    assert "clean" in proc.stdout
+
+
+# ---------------------------------------------------------------------------
+# L0.4d2-v2: four follow-up gaps (independent expectations, no /tmp ref).
+# ---------------------------------------------------------------------------
+
+
+def test_default_ap090_dict_shape_has_no_match(tmp_path: Path) -> None:
+    # ROOT-v1 default_response gap: default AP-090 rows are exactly
+    # {rule, path, line, detail}; only legacy_cli may attach "match".
+    _scoped_producer(tmp_path)
+    _write(tmp_path, "confflow/producer/probe.py", "x = TaskRunner\n")
+    default = [v for v in scan(tmp_path) if v["rule"] == "AP-090"]
+    assert default == [
+        {
+            "rule": "AP-090",
+            "path": "confflow/producer/probe.py",
+            "line": 1,
+            "detail": "legacy-TaskRunner",
+        }
+    ]
+    legacy = [
+        v
+        for v in _policy.scan(tmp_path, rule_ids=_LEGACY_IDS, profile="legacy_cli")
+        if v["rule"] == "AP-090"
+    ]
+    assert legacy == [
+        {
+            "rule": "AP-090",
+            "path": "confflow/producer/probe.py",
+            "line": 1,
+            "detail": "legacy-TaskRunner",
+            "match": "TaskRunner",
+        }
+    ]
+
+
+def test_legacy_cli_ignores_pycache_but_keeps_normal_scope(tmp_path: Path) -> None:
+    # ROOT-v1 cache_source gap: __pycache__ .py files are skipped by legacy.
+    import tools.architecture_policy as policy
+
+    _scoped_producer(tmp_path)
+    cache_file = tmp_path / "confflow/producer/__pycache__/probe.py"
+    cache_file.parent.mkdir(parents=True, exist_ok=True)
+    cache_file.write_text("x = TaskRunner\n", encoding="utf-8")
+    assert policy.scan(tmp_path, rule_ids=_LEGACY_IDS, profile="legacy_cli") == []
+    # Normal in-scope file with the same violation still fires.
+    _write(tmp_path, "confflow/producer/real.py", "x = TaskRunner\n")
+    legacy = policy.scan(tmp_path, rule_ids=_LEGACY_IDS, profile="legacy_cli")
+    assert [(v["path"], v["line"]) for v in legacy] == [("confflow/producer/real.py", 1)]
+    # The thin wrapper count reuses the policy file discovery exactly.
+    import sys
+
+    sys.path.insert(0, str(_REAL_ROOT / "scripts"))
+    try:
+        import v4_arch_scan as scanner
+
+        assert [str(p) for p in scanner._iter_files(tmp_path)] == [
+            str(p) for p in policy.scope_files(tmp_path, profile="legacy_cli")
+        ]
+        assert not any("__pycache__" in str(p) for p in scanner._iter_files(tmp_path))
+    finally:
+        sys.path.pop(0)
+        sys.modules.pop("v4_arch_scan", None)
+
+
+def _other_policy_tree(dest: Path) -> None:
+    (dest / "tools").mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(
+        _REAL_ROOT / "tools/architecture_policy.py",
+        dest / "tools/architecture_policy.py",
+    )
+    (dest / "tools/__init__.py").write_text("", encoding="utf-8")
+
+
+def _thin_only_fixture(dest: Path, script: str) -> None:
+    (dest / "scripts").mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(_REAL_ROOT / script, dest / script)
+
+
+def test_thin_scan_refuses_foreign_policy_tree(tmp_path: Path) -> None:
+    # Fail closed: thin script without its own-tree policy must refuse even
+    # when PYTHONPATH offers another complete policy tree.
+    import os
+
+    other = tmp_path / "other"
+    _other_policy_tree(other)
+    fix = tmp_path / "fix"
+    _thin_only_fixture(fix, "scripts/v4_arch_scan.py")
+    assert not (fix / "tools/architecture_policy.py").exists()
+    env = dict(os.environ)
+    env["PYTHONPATH"] = str(other) + os.pathsep + env.get("PYTHONPATH", "")
+    proc = _sp.run(
+        [sys.executable, str(fix / "scripts/v4_arch_scan.py"), "--root", str(fix)],
+        cwd=str(fix),
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env=env,
+    )
+    assert proc.returncode != 0, proc.stdout[-1000:]
+    assert "authoritative policy not found" in (proc.stderr + proc.stdout)
+
+
+def test_thin_metrics_refuses_foreign_policy_tree(tmp_path: Path) -> None:
+    import os
+
+    other = tmp_path / "other"
+    _other_policy_tree(other)
+    fix = tmp_path / "fix"
+    _thin_only_fixture(fix, "scripts/architecture_metrics.py")
+    assert not (fix / "tools/architecture_policy.py").exists()
+    env = dict(os.environ)
+    env["PYTHONPATH"] = str(other) + os.pathsep + env.get("PYTHONPATH", "")
+    proc = _sp.run(
+        [
+            sys.executable,
+            str(fix / "scripts/architecture_metrics.py"),
+            "--root",
+            str(fix),
+            "--json",
+        ],
+        cwd=str(fix),
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env=env,
+    )
+    assert proc.returncode != 0, proc.stdout[-1000:]
+    assert "authoritative policy not found" in (proc.stderr + proc.stdout)

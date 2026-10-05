@@ -696,7 +696,17 @@ def _rel_module(relpath: str) -> str:
     return relpath[: -len(".py")].replace("/", ".")
 
 
-def _resolve_relative(relpath: str, level: int, module: str | None) -> str:
+def _resolve_relative(
+    relpath: str, level: int, module: str | None, resolver_style: str = "default"
+) -> str:
+    if resolver_style == "legacy_cli":
+        # Old scanner package basis: path-relative parent package (the file
+        # name itself is dropped, including ``__init__``), then level-1 up.
+        parts = _rel_module(relpath).split(".")
+        base_pkg = parts[:-1] if parts else []
+        up = level - 1
+        base = base_pkg[: len(base_pkg) - up] if up <= len(base_pkg) else []
+        return ".".join(base + ([module] if module else []))
     package_parts = _rel_module(relpath).split(".")
     if relpath.endswith("/__init__.py"):
         base = package_parts[: len(package_parts) - level]
@@ -705,11 +715,15 @@ def _resolve_relative(relpath: str, level: int, module: str | None) -> str:
     return ".".join(base + ([module] if module else []))
 
 
-def imports_of(tree: ast.AST, relpath: str) -> list[tuple[int, str, str]]:
+def imports_of(
+    tree: ast.AST, relpath: str, resolver_style: str = "default"
+) -> list[tuple[int, str, str]]:
     """Return (lineno, raw_module, resolved_module) for every import target.
 
     ``raw`` mirrors the original ``_imports`` (relative imports stay dotted);
-    ``resolved`` applies the original relative-import resolution.
+    ``resolved`` applies the original relative-import resolution.  The
+    ``legacy_cli`` resolver style uses the old scanner package basis
+    (file name dropped); the default keeps the existing AST semantics.
     """
     hits: list[tuple[int, str, str]] = []
     for node in ast.walk(tree):
@@ -719,7 +733,7 @@ def imports_of(tree: ast.AST, relpath: str) -> list[tuple[int, str, str]]:
         elif isinstance(node, ast.ImportFrom):
             raw = "." * node.level + (node.module or "")
             resolved = (
-                _resolve_relative(relpath, node.level, node.module)
+                _resolve_relative(relpath, node.level, node.module, resolver_style)
                 if node.level
                 else (node.module or "")
             )
@@ -773,7 +787,7 @@ def _docstring_byte_spans(tree: ast.AST, data: bytes) -> list[tuple[int, int]]:
     return spans
 
 
-def code_text(source: str) -> str:
+def code_text(source: str, profile: str = "default") -> str:
     """Return *source* with comments and docstrings blanked in place.
 
     Blanking happens on the UTF-8 byte buffer (AST columns are byte offsets
@@ -783,15 +797,22 @@ def code_text(source: str) -> str:
     and the original diagnostics line numbers.  Multi-byte characters are
     never split (spans align to token boundaries).  Non-docstring string
     constants are preserved.
+
+    The ``legacy_cli`` profile keeps the old scanner quirk on top of the
+    same single AST/tokenize pass: any line holding a COMMENT token and any
+    line touched by a docstring span is blanked whole (code on that line
+    included).  The default profile keeps the exact byte-span semantics.
     """
+    import bisect
     import io
     import tokenize
 
     data = bytearray(source.encode("utf-8"))
     tree = ast.parse(source)
 
+    src_lines = source.splitlines(keepends=True)
     line_starts = [0]
-    for line in source.splitlines(keepends=True):
+    for line in src_lines:
         line_starts.append(line_starts[-1] + len(line.encode("utf-8")))
 
     def char_to_byte(lineno: int, col: int) -> int:
@@ -805,9 +826,27 @@ def code_text(source: str) -> str:
             if data[index] != 0x0A:
                 data[index] = 0x20
 
-    for start, end in _docstring_byte_spans(tree, data):
+    spans = _docstring_byte_spans(tree, bytes(data))
+    tokens = list(tokenize.generate_tokens(io.StringIO(source).readline))
+    if profile == "legacy_cli":
+        # Same AST spans / COMMENT tokens, expanded to whole lines.
+        doc_lines: set[int] = set()
+        for start, end in spans:
+            if end <= start:
+                continue
+            first = bisect.bisect_right(line_starts, start) - 1
+            last = bisect.bisect_right(line_starts, max(end - 1, start)) - 1
+            for lineno in range(first + 1, last + 2):
+                doc_lines.add(lineno)
+        comment_lines = {tok.start[0] for tok in tokens if tok.type == tokenize.COMMENT}
+        for lineno in doc_lines | comment_lines:
+            if 1 <= lineno <= len(src_lines):
+                blank(line_starts[lineno - 1], line_starts[lineno])
+        return data.decode("utf-8")
+
+    for start, end in spans:
         blank(start, end)
-    for tok in tokenize.generate_tokens(io.StringIO(source).readline):
+    for tok in tokens:
         if tok.type == tokenize.COMMENT:
             start = char_to_byte(tok.start[0], tok.start[1])
             end = char_to_byte(tok.end[0], tok.end[1])
@@ -1612,19 +1651,38 @@ def _resolve_scope(scope, root: Path) -> list[str]:
     return scope
 
 
-def _file_iter(scope_resolved: list[str], root: Path):
+def _file_iter(scope_resolved: list[str], root: Path, *, skip_pycache: bool = False):
     for entry in scope_resolved:
         path = root / entry
         if not path.exists():
             continue  # scope files that do not exist in the tree are not scannable
         if path.suffix == ".py":
+            if skip_pycache and "__pycache__" in path.parts:
+                continue
             yield entry, path
         elif path.is_dir():
             for sub in sorted(path.rglob("*.py")):
+                if skip_pycache and "__pycache__" in sub.parts:
+                    continue
                 yield str(sub.relative_to(root)), sub
 
 
-def _match_import(module: str, rule: dict) -> bool:
+def scope_files(root: Path, *, profile: str = "default") -> list[Path]:
+    """File discovery backing the thin legacy CLI (single authority).
+
+    The ``legacy_cli`` profile skips ``__pycache__`` paths (old-scanner
+    caliber); the default profile keeps the historical walk unchanged.
+    Thin wrappers must call this instead of maintaining a second loop.
+    """
+    return [
+        path
+        for _, path in _file_iter(
+            list(SCANNER_SCOPE), Path(root), skip_pycache=(profile == "legacy_cli")
+        )
+    ]
+
+
+def _match_import(module: str, rule: dict, legacy_prefix: bool = False) -> bool:
     for self_prefix in rule.get("self_prefixes", []):
         if module == self_prefix or module.startswith(self_prefix + "."):
             return False
@@ -1632,6 +1690,10 @@ def _match_import(module: str, rule: dict) -> bool:
     if mode.startswith("allowed") and not (module == "confflow" or module.startswith("confflow.")):
         return False
     if mode == "forbidden_prefixes":
+        if legacy_prefix:
+            # Old scanner caliber: plain startswith, no dot boundary.
+            prefixes = rule["prefixes"]
+            return module.startswith(tuple(prefixes)) if prefixes else False
         for prefix in rule["prefixes"]:
             if module == prefix or module.startswith(prefix + "."):
                 return True
@@ -1655,45 +1717,90 @@ def _match_import(module: str, rule: dict) -> bool:
     return False
 
 
-def scan(root: Path) -> list[dict]:
-    """Run every static rule; return a list of violation dicts."""
-    root = Path(root)
-    violations: list[dict] = []
-    cache: dict[str, tuple[str, ast.AST]] = {}
+#: Old-scanner retired-module order (three tables concatenated, no
+#: dedup/sort): the legacy_cli disk profile reports in this order and keeps
+#: a duplicate entry's diagnostics instead of collapsing them.
+SCANNER_RETIRED_TRIPLE = [
+    *SCANNER_RETIRED_RUNTIME_MODULES,
+    *SCANNER_RETIRED_V3_WIRE_MODULES,
+    *SCANNER_RETIRED_V1_V2_WIRE_MODULES,
+]
 
-    def parsed(relpath: str) -> tuple[str, ast.AST]:
+#: Rule subset backing the legacy CLI compat profile (thin adapter only).
+LEGACY_CLI_RULE_IDS = ("AP-088", "AP-089", "AP-090", "AP-091", "AP-092")
+
+
+def scan(
+    root: Path,
+    rule_ids: list[str] | tuple[str, ...] | set[str] | None = None,
+    profile: str = "default",
+) -> list[dict]:
+    """Run every static rule; return a list of violation dicts.
+
+    ``rule_ids`` optionally restricts the run to a subset (used by the
+    legacy CLI adapter); ``profile`` selects ``"default"`` (existing
+    rule/AST semantics) or ``"legacy_cli"`` (explicit old-scanner compat:
+    whole-line comment/docstring blanking, old relative-import basis, old
+    plain-prefix matching, per-line vocab with real line numbers, retired
+    disk check on ``.py`` and ``__init__.py`` in triple order).  The
+    default profile判定 is unchanged.
+    """
+    root = Path(root)
+    legacy = profile == "legacy_cli"
+    selected = set(rule_ids) if rule_ids is not None else None
+    violations: list[dict] = []
+    cache: dict[str, tuple[str, ast.AST] | None] = {}
+
+    def parsed(relpath: str) -> tuple[str, ast.AST] | None:
         if relpath not in cache:
-            source = (root / relpath).read_text(encoding="utf-8")
-            cache[relpath] = (source, ast.parse(source))
+            try:
+                source = (root / relpath).read_text(encoding="utf-8")
+                cache[relpath] = (source, ast.parse(source))
+            except (OSError, SyntaxError, ValueError):
+                if not legacy:
+                    raise
+                # Old scanner caliber: an unparseable file is skipped whole
+                # (all legacy checks); the default profile keeps failing loud.
+                cache[relpath] = None
         return cache[relpath]
 
     for rule in RULES:
         kind = rule["kind"]
         rid = rule["id"]
+        if selected is not None and rid not in selected:
+            continue
         if kind == "imports":
             scope = _resolve_scope(rule["scope"], root)
             exempt = rule.get("exempt_imports", {})
             resolve_relative = rule.get("resolve_relative", False)
-            for relpath, _path in _file_iter(scope, root):
+            for relpath, _path in _file_iter(scope, root, skip_pycache=legacy):
                 if relpath in exempt:
                     continue
-                source, tree = parsed(relpath)
-                for lineno, raw, resolved in imports_of(tree, relpath):
+                row = parsed(relpath)
+                if row is None:
+                    continue
+                source, tree = row
+                for lineno, raw, resolved in imports_of(
+                    tree, relpath, "legacy_cli" if legacy else "default"
+                ):
                     module = resolved if resolve_relative else raw
                     allowed_here = any(
                         module == a or module.startswith(a + ".") for a in exempt.get(relpath, [])
                     )
                     if allowed_here:
                         continue
-                    if _match_import(module, rule):
+                    if _match_import(module, rule, legacy_prefix=legacy):
                         violations.append(
                             {"rule": rid, "path": relpath, "line": lineno, "detail": module}
                         )
         elif kind == "symbols":
             scope = _resolve_scope(rule["scope"], root)
             exempt = rule.get("exempt_symbols", {})
-            for relpath, _path in _file_iter(scope, root):
-                _, tree = parsed(relpath)
+            for relpath, _path in _file_iter(scope, root, skip_pycache=legacy):
+                row = parsed(relpath)
+                if row is None:
+                    continue
+                _, tree = row
                 used = symbols_used(tree)
                 banned = set(rule["forbidden"]) - set(exempt.get(relpath, []))
                 for symbol in sorted(used & banned):
@@ -1704,12 +1811,29 @@ def scan(root: Path) -> list[dict]:
             allowed_files = set(rule.get("allowed_files", []))
             exempt_files = set(rule.get("exempt_files", []))
             exempt_symbols = rule.get("exempt_symbols", {})
-            for relpath, _path in _file_iter(scope, root):
+            for relpath, _path in _file_iter(scope, root, skip_pycache=legacy):
                 if relpath in allowed_files or relpath in exempt_files:
                     continue
-                source, tree = parsed(relpath)
-                text = source if raw else code_text(source)
+                row = parsed(relpath)
+                if row is None:
+                    continue
+                source, tree = row
                 skip = set(exempt_symbols.get(relpath, []))
+                if legacy:
+                    if raw:
+                        lines = source.splitlines()
+                    else:
+                        lines = code_text(source, profile="legacy_cli").splitlines()
+                    for lineno, line in enumerate(lines, start=1):
+                        for token in rule["tokens"]:
+                            if token in skip:
+                                continue
+                            if token in line:
+                                violations.append(
+                                    {"rule": rid, "path": relpath, "line": lineno, "detail": token}
+                                )
+                    continue
+                text = source if raw else code_text(source)
                 for token in rule["tokens"]:
                     if token in skip:
                         continue
@@ -1720,17 +1844,42 @@ def scan(root: Path) -> list[dict]:
         elif kind == "patterns":
             scope = _resolve_scope(rule["scope"], root)
             compiled = [(check, re.compile(pattern)) for check, pattern in rule["patterns"]]
-            for relpath, _path in _file_iter(scope, root):
-                text = code_text((root / relpath).read_text(encoding="utf-8"))
+            for relpath, _path in _file_iter(scope, root, skip_pycache=legacy):
+                try:
+                    text = code_text(
+                        (root / relpath).read_text(encoding="utf-8"),
+                        profile="legacy_cli" if legacy else "default",
+                    )
+                except (OSError, SyntaxError, ValueError):
+                    if not legacy:
+                        raise
+                    continue
                 for lineno, line in enumerate(text.splitlines(), start=1):
                     for check, pattern in compiled:
-                        if pattern.search(line):
-                            violations.append(
-                                {"rule": rid, "path": relpath, "line": lineno, "detail": check}
-                            )
+                        match = pattern.search(line)
+                        if match:
+                            if legacy:
+                                violations.append(
+                                    {
+                                        "rule": rid,
+                                        "path": relpath,
+                                        "line": lineno,
+                                        "detail": check,
+                                        "match": match.group(0).strip(),
+                                    }
+                                )
+                            else:
+                                violations.append(
+                                    {
+                                        "rule": rid,
+                                        "path": relpath,
+                                        "line": lineno,
+                                        "detail": check,
+                                    }
+                                )
         elif kind == "custom_task_dispatch":
             scope = _resolve_scope(rule["scope"], root)
-            for relpath, _path in _file_iter(scope, root):
+            for relpath, _path in _file_iter(scope, root, skip_pycache=legacy):
                 for lineno, member in task_dispatch_offenders(
                     (root / relpath).read_text(encoding="utf-8")
                 ):
@@ -1739,7 +1888,7 @@ def scan(root: Path) -> list[dict]:
                     )
         elif kind == "custom_filename_idioms":
             scope = _resolve_scope(rule["scope"], root)
-            for relpath, _path in _file_iter(scope, root):
+            for relpath, _path in _file_iter(scope, root, skip_pycache=legacy):
                 for lineno, token in filename_pairing_offenders(
                     (root / relpath).read_text(encoding="utf-8")
                 ):
@@ -1749,7 +1898,7 @@ def scan(root: Path) -> list[dict]:
         elif kind == "custom_range_ordinal":
             scope = _resolve_scope(rule["scope"], root)
             allow = set(rule.get("allowlist", []))
-            for relpath, _path in _file_iter(scope, root):
+            for relpath, _path in _file_iter(scope, root, skip_pycache=legacy):
                 if relpath in allow:
                     continue
                 for function, lineno, index in range_ordinal_pairing_offenders(
@@ -1765,7 +1914,7 @@ def scan(root: Path) -> list[dict]:
                     )
         elif kind == "custom_numeric_dispatch":
             scope = _resolve_scope(rule["scope"], root)
-            for relpath, _path in _file_iter(scope, root):
+            for relpath, _path in _file_iter(scope, root, skip_pycache=legacy):
                 for lineno, base in numeric_dispatch_offenders(
                     (root / relpath).read_text(encoding="utf-8")
                 ):
@@ -1806,6 +1955,22 @@ def scan(root: Path) -> list[dict]:
             if rule.get("require_one"):
                 assert scanned >= 1, "expected at least one double file to exist"
         elif kind == "disk_absent":
+            if legacy and rid == "AP-091":
+                # Old scanner order and file probes: triple order (no
+                # dedup/sort), ``.py`` then ``__init__.py``, first hit only.
+                for module in SCANNER_RETIRED_TRIPLE:
+                    candidate = root / Path(module.replace(".", "/"))
+                    hit = None
+                    for path in (
+                        candidate.with_suffix(".py"),
+                        candidate / "__init__.py",
+                    ):
+                        if path.is_file():
+                            hit = str(path.relative_to(root))
+                            break
+                    if hit is not None:
+                        violations.append({"rule": rid, "path": hit, "line": 1, "detail": module})
+                continue
             for module in rule.get("modules", []):
                 if (root / (module.replace(".", "/") + ".py")).is_file():
                     violations.append(

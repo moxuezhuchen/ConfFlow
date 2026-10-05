@@ -940,13 +940,18 @@ class TestArchitectureScannerGate:
     """The entry-path scanner runs clean and fails on injected legacy code."""
 
     def test_architecture_scanner_gate(self) -> None:
-        sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
-        try:
-            import v4_arch_scan as scanner
-        finally:
-            sys.path.pop(0)
-        assert scanner.scan() == []
+        from tools.architecture_policy import LEGACY_CLI_RULE_IDS
+        from tools.architecture_policy import scan as policy_scan
+
         repo_root = Path(__file__).resolve().parents[2]
+        assert (
+            policy_scan(
+                repo_root,
+                rule_ids=list(LEGACY_CLI_RULE_IDS),
+                profile="legacy_cli",
+            )
+            == []
+        )
         completed = subprocess.run(
             [sys.executable, str(repo_root / "scripts" / "v4_arch_scan.py")],
             cwd=str(repo_root),
