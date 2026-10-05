@@ -4,7 +4,7 @@
  "branch": "fix/confgen-1a",
  "tested_sha": "681fac8ea569a04c6aa3f88fc6ec7138dffd6b6c",
  "tested_sha_short": "681fac8",
- "tested_tree": "unique writable product tree /tmp/fix1a-publish (HEAD verified 681fac8, clean before docs commit)",
+ "tested_tree": "/tmp/fix1a-exec",
  "run_id": "fix1a-root-final-2",
  "baseline_path": "/tmp/fix1a-final-root-run-v2/baseline",
  "baseline_source_layout": "/tmp/fix1a-baseline-final-output/baseline (B1, 104 files; layout copied)",
@@ -180,5 +180,6 @@
   "Large golden/out blobs NOT committed to git; only sha256 recorded here.",
   "This publish commit adds docs only; capture binding stays /tmp/fix1a-exec, must not be described as rebinding to the new publish commit.",
   "rpdd.xyz is CREST xTB1 output for rpdd.gjf input, energy default Hartree. CREST exists only on server; no local install/compute. Q9 missing data affects only R7, blocks nothing else."
- ]
+ ],
+ "publication_tree": "/tmp/fix1a-publish"
 }
