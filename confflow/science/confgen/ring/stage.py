@@ -67,6 +67,7 @@ from .realization import (
     RingTolerances,
     RingUnsupported,
     parse_ring_specs,
+    validate_ring_system,
 )
 
 __all__ = [
@@ -563,9 +564,26 @@ class RingStage(GenerationStage):
                 if self._specs
                 else frozenset()
             )
+            # R4G: overlapping systems fail closed (same check as the legacy
+            # multi-system realizer; per-spec validation alone cannot see a
+            # shared atom because ``others`` excludes the spec's own atoms).
+            _seen: dict[int, str] = {}
+            for _spec in self._specs:
+                for _atom in _spec.atoms:
+                    if _atom in _seen:
+                        raise RingUnsupported("overlapping_systems")
+                    _seen[_atom] = _spec.id
             for spec in self._specs:
                 others = set(all_ring_atoms) - set(spec.atoms)
                 if spec.treatment == "preserve_input":
+                    # R4G: same scope validation as the legacy realizer.
+                    validate_ring_system(
+                        spec,
+                        graph,
+                        elements,
+                        frozenset(others),
+                        coordination_atoms=coord_atoms,
+                    )
                     perception = perceive_ring(
                         working[list(spec.atoms)],
                         match_deg=self._match_deg,
@@ -607,6 +625,16 @@ class RingStage(GenerationStage):
                 solver_spec = replace(spec, atoms=tuple(int(a) for a in solver_atoms))
                 # Rigid units regenerated in solver order from the same
                 # original working geometry (locks' p/n consistent).
+                # R4G: same scope validation as the legacy realizer before
+                # solving (fused/chelate/overlap/nonbonded/size/template
+                # errors, identical messages); the CP solver is untouched.
+                validate_ring_system(
+                    spec,
+                    graph,
+                    elements,
+                    frozenset(others),
+                    coordination_atoms=coord_atoms,
+                )
                 try:
                     rigid = analyze_rigid_units(working, elements, graph, list(solver_atoms))
                 except ValueError as exc:
