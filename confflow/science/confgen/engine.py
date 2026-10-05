@@ -54,11 +54,17 @@ from confflow.science.confgen.accounting import (
     verify_count_equations,
     verify_terminal_equations,
 )
+from confflow.science.confgen.kernel_records import (
+    ComponentStateKey,
+    InheritedScopeError,
+    KernelGenerationTarget,
+    KernelRun,
+    KernelWorkingRealization,
+    as_kernel_target,
+)
 from confflow.science.confgen.model import (
-    AXIS_ORDER,
     ConfgenStateKey,
     GenerationStage,
-    GenerationTarget,
     MolecularContext,
     TerminalStatus,
     WorkingRealization,
@@ -111,10 +117,6 @@ class EngineConsistencyError(RuntimeError):
     """Raised when geometry DFS diverges from symbolic enumeration."""
 
 
-class InheritedScopeError(ValueError):
-    """Fail-closed error for unauditable chained (inherited) state."""
-
-
 @dataclass(frozen=True, slots=True)
 class InheritedTorsionLock:
     """One carried torsion axis audited against its prior absolute frame.
@@ -134,11 +136,14 @@ class InheritedTorsionLock:
     model: str
 
 
-def _key_nonempty(key: ConfgenStateKey) -> bool:
-    """Return True when the incoming state key carries any C/R/T entries."""
-    if key.coordination is not None:
+def _key_nonempty(key: ConfgenStateKey | ComponentStateKey) -> bool:
+    """Return True when the incoming state key carries any entries."""
+    if isinstance(key, ComponentStateKey):
+        return bool(dict(key.components))
+    payload = key.to_dict()
+    if payload.get("coordination") is not None:
         return True
-    return bool(key.rings) or bool(key.torsions)
+    return bool(payload.get("rings")) or bool(payload.get("torsions"))
 
 
 def _resolve_inherited_frame(
@@ -226,7 +231,8 @@ def inherited_torsion_locks(context: MolecularContext) -> list[InheritedTorsionL
             "INHERITED_STATE_SCOPE_MISSING: inherited scope has no torsion section"
         )
     locks: list[InheritedTorsionLock] = []
-    for axis_id, label in dict(key.torsions).items():
+    key_payload = key.to_dict()
+    for axis_id, label in dict(key_payload.get("torsions", {}) or {}).items():
         axis = str(axis_id)
         wounded = f"torsions.{axis}"
         descriptor = torsion_scope.get(axis)
@@ -358,7 +364,7 @@ def inherited_torsion_locks(context: MolecularContext) -> list[InheritedTorsionL
         for entry in (resolved.get("rings", []) or [])
         if isinstance(entry, Mapping)
     }
-    for ring_id in dict(key.rings):
+    for ring_id in dict(key_payload.get("rings", {}) or {}):
         if str(ring_id) in downstream_rings:
             continue  # active ring stage freshly realizes and audits it
         if not isinstance(ring_scope.get(str(ring_id)), Mapping):
@@ -370,7 +376,7 @@ def inherited_torsion_locks(context: MolecularContext) -> list[InheritedTorsionL
             "lane-owned state with no active downstream ring stage; "
             "re-enumerate it (carried lane audit hooks pending)"
         )
-    if key.coordination is not None:
+    if key_payload.get("coordination") is not None:
         coordination = resolved.get("coordination")
         active = (
             isinstance(coordination, Mapping)
@@ -456,32 +462,67 @@ def thaw_snapshot(resolved: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def combine_state_key(
-    parent_key: ConfgenStateKey, axis: str, state_value: Mapping[str, Any]
-) -> ConfgenStateKey:
-    """Merge a stage-local state value into the complete labeled key."""
-    if axis == "coordination":
-        return ConfgenStateKey(
-            coordination=dict(state_value),
-            rings=dict(parent_key.rings),
-            torsions=dict(parent_key.torsions),
-        )
-    if axis == "rings":
-        merged = dict(parent_key.rings)
-        merged.update(dict(state_value))
-        return ConfgenStateKey(
-            coordination=parent_key.coordination,
-            rings=merged,
-            torsions=dict(parent_key.torsions),
-        )
-    if axis == "torsions":
-        merged = dict(parent_key.torsions)
-        merged.update(dict(state_value))
-        return ConfgenStateKey(
-            coordination=parent_key.coordination,
-            rings=dict(parent_key.rings),
-            torsions=merged,
-        )
-    raise ValueError(f"unknown generation axis {axis!r}")
+    parent_key: ConfgenStateKey | ComponentStateKey,
+    axis: str,
+    state_value: Mapping[str, Any],
+    *,
+    registry: Any | None = None,
+) -> ConfgenStateKey | ComponentStateKey:
+    """Merge a stage-local state value into the complete labeled key.
+
+    v3 inputs return v3 keys with the frozen three-branch behavior;
+    generic inputs use ``descriptor.state_merge`` (replace vs merge).
+    """
+    if isinstance(parent_key, ConfgenStateKey):
+        payload = parent_key.to_dict()
+        if axis == "coordination":
+            return ConfgenStateKey(
+                coordination=dict(state_value),
+                rings=dict(payload.get("rings", {}) or {}),
+                torsions=dict(payload.get("torsions", {}) or {}),
+            )
+        if axis == "rings":
+            merged = dict(payload.get("rings", {}) or {})
+            merged.update(dict(state_value))
+            return ConfgenStateKey(
+                coordination=payload.get("coordination"),
+                rings=merged,
+                torsions=dict(payload.get("torsions", {}) or {}),
+            )
+        if axis == "torsions":
+            merged = dict(payload.get("torsions", {}) or {})
+            merged.update(dict(state_value))
+            return ConfgenStateKey(
+                coordination=payload.get("coordination"),
+                rings=dict(payload.get("rings", {}) or {}),
+                torsions=merged,
+            )
+        raise ValueError(f"unknown generation axis {axis!r}")
+    if not isinstance(parent_key, ComponentStateKey):
+        raise ValueError("parent_key must be a ConfgenStateKey or ComponentStateKey")
+    mode: str | None = None
+    if registry is not None:
+        for descriptor in registry.descriptors:
+            if descriptor.id == axis:
+                mode = str(descriptor.state_merge)
+                break
+        if mode is None:
+            raise ValueError(f"unknown generation axis {axis!r}")
+    else:
+        if axis == "coordination":
+            mode = "replace"
+        elif axis in ("rings", "torsions"):
+            mode = "merge"
+        else:
+            raise ValueError(f"unknown generation axis {axis!r}")
+    components = dict(parent_key.components)
+    if mode == "replace":
+        components[axis] = dict(state_value)
+    else:
+        existing = dict(components.get(axis, {}) or {})
+        existing.update(dict(state_value))
+        components[axis] = existing
+    return ComponentStateKey(components=components)
 
 
 @dataclass(frozen=True, slots=True)
@@ -648,8 +689,16 @@ class ConfgenEngine:
 
     def _levels(self, resolved: Mapping[str, Any]) -> list[tuple[str, GenerationStage]]:
         """Return active (axis, stage) levels in registry order."""
-        if self._explicit_stages is not None:
-            levels = [(stage.axis, stage) for stage in self._explicit_stages]
+        return self._levels_for(self._explicit_stages, resolved)
+
+    def _levels_for(
+        self,
+        explicit: Sequence[GenerationStage] | None,
+        resolved: Mapping[str, Any],
+    ) -> list[tuple[str, GenerationStage]]:
+        """Return levels for an explicit list (or the registry when None)."""
+        if explicit is not None:
+            levels = [(stage.axis, stage) for stage in explicit]
             axes = [axis for axis, _ in levels]
             if sorted(axes) != sorted(set(axes)):
                 raise ValueError("duplicate stage axes in explicit stage list")
@@ -664,8 +713,9 @@ class ConfgenEngine:
     def _preserve_input_run(
         self,
         context: MolecularContext,
+        initial_key: ComponentStateKey,
         inherited: Sequence[InheritedTorsionLock] = (),
-    ) -> EngineRun:
+    ) -> KernelRun:
         """Produce the single audited preserve-input leaf (zero axes)."""
         from confflow.domain.structure import StructureRecord
 
@@ -697,9 +747,9 @@ class ConfgenEngine:
             metadata=FrozenDict({"preserved": True, "backend": self._backend}),
             **inherit_topology_kwargs(context.structure, context.adjacency),
         )
-        leaf = WorkingRealization(
+        leaf = KernelWorkingRealization(
             structure=leaf_structure,
-            state_key=context.input_state_key,
+            state_key=initial_key,
             parent_realization_id=None,
             generation_axis=None,
             locked_axes=(),
@@ -719,7 +769,7 @@ class ConfgenEngine:
                 axis="preserve",
                 ordinal=0,
                 state_value=FrozenDict({}),
-                complete_key=FrozenDict(context.input_state_key.to_dict()),
+                complete_key=FrozenDict(initial_key.to_dict()),
                 status=TerminalStatus.PUBLISHED_LEAF,
                 reason="preserve_input",
             )
@@ -788,7 +838,7 @@ class ConfgenEngine:
         }
         report = {
             "schema_version": 3,
-            "axis_order": list(AXIS_ORDER),
+            "axis_order": list(self._registry.ids()),
             "levels": [],
             "counts": counts,
             "enumeration": enumeration,
@@ -871,7 +921,7 @@ class ConfgenEngine:
                 "seed": seed,
             },
         }
-        return EngineRun(
+        return KernelRun(
             leaves=(leaf,),
             target_records=tuple(records),
             report=FrozenDict(report),
@@ -882,7 +932,7 @@ class ConfgenEngine:
         self,
         stages: Sequence[GenerationStage],
         axes: Sequence[str],
-        root: WorkingRealization,
+        root: KernelWorkingRealization,
         context: MolecularContext,
     ) -> list[tuple[int, ...]]:
         """Enumerate exact conditional leaf paths symbolically (no geometry).
@@ -896,17 +946,21 @@ class ConfgenEngine:
         paths: list[tuple[int, ...]] = []
         last = len(stages) - 1
 
-        def rec(level: int, ghost: WorkingRealization, path: tuple[int, ...]) -> None:
-            for target in stages[level].enumerate_targets(ghost, context):
+        def rec(level: int, ghost: KernelWorkingRealization, path: tuple[int, ...]) -> None:
+            for raw_target in stages[level].enumerate_targets(ghost, context):  # type: ignore[arg-type]
+                target = as_kernel_target(raw_target)
                 child_path = path + (int(target.ordinal),)
                 if level == last:
                     paths.append(child_path)
                 else:
-                    ghost_child = WorkingRealization(
+                    ghost_child = KernelWorkingRealization(
                         structure=ghost.structure,
                         state_key=combine_state_key(
-                            ghost.state_key, axes[level], dict(target.state_value)
-                        ),
+                            ghost.state_key,
+                            axes[level],
+                            dict(target.state_value),
+                            registry=self._registry,
+                        ),  # type: ignore[arg-type]
                     )
                     rec(level + 1, ghost_child, child_path)
 
@@ -919,6 +973,47 @@ class ConfgenEngine:
         should_cancel: Callable[[], bool] | None = None,
     ) -> EngineRun:
         """Run the conditional DFS and return leaves plus audit records."""
+        from typing import cast
+
+        from confflow.science.confgen.wire_v3 import (
+            LegacyStageAdapter,
+            from_wire_key,
+            is_legacy_stage,
+            project_v3,
+        )
+
+        initial = from_wire_key(context.input_state_key)
+        overrides: Sequence[GenerationStage] | None = None
+        if self._explicit_stages is not None:
+            # Old explicit v3 stages speak legacy records; adapt at the
+            # wire boundary without mutating shared engine state. Generic
+            # stages (StageParentProtocol/kernel records, e.g. A6 dummy)
+            # pass through unwrapped.
+            adapted = [
+                LegacyStageAdapter(stage) if is_legacy_stage(stage) else stage
+                for stage in self._explicit_stages
+            ]
+            overrides = tuple(adapted)
+        kernel_run = self.run_kernel(
+            context, initial_key=initial, should_cancel=should_cancel, stage_overrides=overrides
+        )
+        return cast(EngineRun, project_v3(kernel_run))
+
+    def run_kernel(
+        self,
+        context: MolecularContext,
+        *,
+        initial_key: ComponentStateKey,
+        should_cancel: Callable[[], bool] | None = None,
+        stage_overrides: Sequence[GenerationStage] | None = None,
+    ) -> KernelRun:
+        """Run the generic kernel DFS and return generic records.
+
+        ``stage_overrides`` is internal-only (used by :meth:`run` for the
+        legacy wire adapter); public ``run_kernel`` explicit stages stay
+        generic with no auto-legacy wrapping. Never mutates
+        ``self._explicit_stages``.
+        """
         resolved = context.resolved_spec
         seed = resolved.get("seed")
         cap, sampling_seed = sampling_of(resolved)
@@ -927,9 +1022,12 @@ class ConfgenEngine:
             # The driving geometry must still embody the carried state;
             # otherwise the chain is refused before any geometry is spent.
             _validate_driving_inherited(context, inherited)
-        levels = self._levels(resolved)
+        if stage_overrides is not None:
+            levels = self._levels_for(tuple(stage_overrides), resolved)
+        else:
+            levels = self._levels(resolved)
         if not levels:
-            return self._preserve_input_run(context, inherited=inherited)
+            return self._preserve_input_run(context, initial_key, inherited=inherited)
         stages = [stage for _, stage in levels]
         axes = [axis for axis, _ in levels]
 
@@ -971,7 +1069,7 @@ class ConfgenEngine:
         if conditional:
             preflight_basis += "; conditional tree: root product is a conservative upper bound"
         grid = MixedRadixGrid(level_counts)
-        root = WorkingRealization(structure=context.structure, state_key=context.input_state_key)
+        root = KernelWorkingRealization(structure=context.structure, state_key=initial_key)
         if conditional:
             # EXACT symbolic conditional expansion (no geometry): enumerate
             # the key-driven tree to completion and count true leaf states.
@@ -1000,12 +1098,15 @@ class ConfgenEngine:
         # stream their lazy iterators with prefix filtering when capped.
         enum_counts: dict[int, int] = {}
 
-        def _level_targets(level: int, parent: WorkingRealization) -> Iterator[GenerationTarget]:
+        def _level_targets(
+            level: int, parent: KernelWorkingRealization
+        ) -> Iterator[KernelGenerationTarget]:
             stage = stages[level]
             prefix = _prefix_of(parent, level, axes)
             if conditional or stage.is_conditional(context):
                 # True symbolic C->R(C)->T(C,R): fresh enumeration per parent.
-                for target in stage.enumerate_targets(parent, context):
+                for raw_target in stage.enumerate_targets(parent, context):  # type: ignore[arg-type]
+                    target = as_kernel_target(raw_target)
                     if capped and target.ordinal not in allowed.get((level, prefix), set()):
                         continue
                     yield target
@@ -1019,17 +1120,18 @@ class ConfgenEngine:
                 else:
                     wanted = range(level_counts[level])
                 for ordinal in wanted:
-                    yield hook(parent, int(ordinal), context)
+                    yield as_kernel_target(hook(parent, int(ordinal), context))
                 return
             if level not in enum_counts:
-                enum_counts[level] = sum(1 for _ in stage.enumerate_targets(parent, context))
+                enum_counts[level] = sum(1 for _ in stage.enumerate_targets(parent, context))  # type: ignore[arg-type]
                 if enum_counts[level] != level_counts[level]:
                     raise ValueError(
                         f"stage {axes[level]!r} enumerated {enum_counts[level]} "
                         f"targets but declared {level_counts[level]}; "
                         "sampling math unsound"
                     )
-            for target in stage.enumerate_targets(parent, context):
+            for raw_target in stage.enumerate_targets(parent, context):  # type: ignore[arg-type]
+                target = as_kernel_target(raw_target)
                 if capped and target.ordinal not in allowed.get((level, prefix), set()):
                     continue
                 yield target
@@ -1062,7 +1164,11 @@ class ConfgenEngine:
         )
 
 
-def _prefix_of(parent: WorkingRealization, level: int, axes: Sequence[str]) -> tuple[int, ...]:
+def _prefix_of(
+    parent: KernelWorkingRealization | WorkingRealization,
+    level: int,
+    axes: Sequence[str],
+) -> tuple[int, ...]:
     """Recover the ancestor ordinal path prefix from realization provenance."""
     path = parent.provenance.get("path_ordinals", ())
     return tuple(int(value) for value in path[:level])
@@ -1103,7 +1209,7 @@ class _RunState:
         self._suppression_disabled = suppression_disabled
         self._visited_paths: list[tuple[int, ...]] = []
         self.records: list[TargetRecord] = []
-        self.leaves: list[WorkingRealization] = []
+        self.leaves: list[KernelWorkingRealization] = []
         self.drift_events: list[dict[str, Any]] = []
         self.proof_contradictions: list[dict[str, Any]] = []
         self.policy_excluded = 0
@@ -1117,12 +1223,12 @@ class _RunState:
     def run_level(
         self,
         level: int,
-        parent: WorkingRealization,
+        parent: KernelWorkingRealization,
         path: tuple[int, ...],
-        ancestors: tuple[WorkingRealization, ...],
+        ancestors: tuple[KernelWorkingRealization, ...],
         ancestor_specs: tuple[tuple[str, Mapping[str, Any], str | None], ...],
         parent_target_id: str | None,
-        level_targets: Callable[[int, WorkingRealization], Iterator[GenerationTarget]],
+        level_targets: Callable[[int, KernelWorkingRealization], Iterator[KernelGenerationTarget]],
     ) -> None:
         """Expand one DFS level under *parent*."""
         stage = self._stages[level]
@@ -1153,14 +1259,14 @@ class _RunState:
         stage: GenerationStage,
         axis: str,
         last: bool,
-        parent: WorkingRealization,
+        parent: KernelWorkingRealization,
         path: tuple[int, ...],
-        ancestors: tuple[WorkingRealization, ...],
+        ancestors: tuple[KernelWorkingRealization, ...],
         ancestor_specs: tuple[tuple[str, Mapping[str, Any], str | None], ...],
         parent_target_id: str | None,
-        target: GenerationTarget,
+        target: KernelGenerationTarget,
         exclusions: Sequence[Mapping[str, Any]],
-        level_targets: Callable[[int, WorkingRealization], Iterator[GenerationTarget]],
+        level_targets: Callable[[int, KernelWorkingRealization], Iterator[KernelGenerationTarget]],
     ) -> None:
         """Realize, audit, and account one target."""
         context = self._context
@@ -1175,7 +1281,9 @@ class _RunState:
                 ordinal=int(target.ordinal),
                 state_value=FrozenDict(state_dict),
                 complete_key=FrozenDict(
-                    combine_state_key(parent.state_key, axis, state_dict).to_dict()
+                    combine_state_key(
+                        parent.state_key, axis, state_dict, registry=self._engine._registry
+                    ).to_dict()
                 ),
                 status=TerminalStatus.REJECTED_BY_POLICY,
                 reason=f"rejected_by_policy:{reason}",
@@ -1285,7 +1393,9 @@ class _RunState:
                 ordinal=int(target.ordinal),
                 state_value=FrozenDict(state_dict),
                 complete_key=FrozenDict(
-                    combine_state_key(parent.state_key, axis, state_dict).to_dict()
+                    combine_state_key(
+                        parent.state_key, axis, state_dict, registry=self._engine._registry
+                    ).to_dict()
                 ),
                 status=status,
                 reason=outcome.reason,
@@ -1626,9 +1736,13 @@ class _RunState:
             # re-snapping a relative label against the new input reference
             # would let a new-reference 0 masquerade as the old label.
             merged_state[lock.axis_id] = lock.label
-        child_key = combine_state_key(parent.state_key, axis, merged_state)
+        child_key = combine_state_key(
+            parent.state_key, axis, merged_state, registry=self._engine._registry
+        )
         locked_contribution = merged_state
-        locked = tuple(a for a in AXIS_ORDER if a in (set(parent.locked_axes) | {axis}))
+        locked = tuple(
+            a for a in self._engine._registry.ids() if a in (set(parent.locked_axes) | {axis})
+        )
         child_provenance = {
             "seed": self._seed,
             "backend": self._engine._backend,
@@ -1636,7 +1750,7 @@ class _RunState:
             "parent_target_id": parent_target_id,
             "measured": dict(measured),
         }
-        child = WorkingRealization(
+        child = KernelWorkingRealization(
             structure=structure,
             state_key=child_key,
             parent_realization_id=parent.structure.id,
@@ -1655,7 +1769,7 @@ class _RunState:
             else:
                 leaf_ordinal = self._flat_index(child_path)
             self._visited_paths.append(child_path)
-            leaf = WorkingRealization(
+            leaf = KernelWorkingRealization(
                 structure=child.structure,
                 state_key=child.state_key,
                 parent_realization_id=child.parent_realization_id,
@@ -1936,10 +2050,10 @@ class _RunState:
 
     def _record_drift(
         self,
-        target: GenerationTarget,
+        target: KernelGenerationTarget,
         axis: str,
         state_dict: Mapping[str, Any],
-        parent: WorkingRealization,
+        parent: KernelWorkingRealization,
         parent_target_id: str | None,
         evidence: Sequence[Mapping[str, Any]],
         observed: Mapping[str, Any],
@@ -2010,10 +2124,10 @@ class _RunState:
         level: int,
         stage: GenerationStage,
         axis: str,
-        parent: WorkingRealization,
+        parent: KernelWorkingRealization,
         child_path: tuple[int, ...],
         parent_target_id: str | None,
-        target: GenerationTarget,
+        target: KernelGenerationTarget,
         state_dict: Mapping[str, Any],
     ) -> bool:
         """Consult the verified-symmetry hook; True when handled suppressed.
@@ -2087,7 +2201,9 @@ class _RunState:
         for witness_field in self._SUPPRESSION_REQUIRED_FIELDS:
             payload[witness_field] = record[witness_field]
         payload["parent_key"] = parent.state_key.to_dict()
-        suppressed_key = combine_state_key(parent.state_key, axis, state_dict)
+        suppressed_key = combine_state_key(
+            parent.state_key, axis, state_dict, registry=self._engine._registry
+        )
         self.records.append(
             TargetRecord(
                 target_id=target.target_id,
@@ -2106,17 +2222,17 @@ class _RunState:
 
     def _record_failure(
         self,
-        target: GenerationTarget,
+        target: KernelGenerationTarget,
         axis: str,
         state_dict: Mapping[str, Any],
-        parent: WorkingRealization,
+        parent: KernelWorkingRealization,
         parent_target_id: str | None,
         status: TerminalStatus,
         reason: str,
         evidence: Sequence[Mapping[str, Any]],
     ) -> None:
         """Append one failure record with the parent-derived complete key."""
-        key = combine_state_key(parent.state_key, axis, state_dict)
+        key = combine_state_key(parent.state_key, axis, state_dict, registry=self._engine._registry)
         self.records.append(
             TargetRecord(
                 target_id=target.target_id,
@@ -2139,7 +2255,7 @@ class _RunState:
         failed_id: str,
         reason: str,
         *,
-        parent: WorkingRealization,
+        parent: KernelWorkingRealization,
         axis: str,
         state_dict: Mapping[str, Any],
     ) -> None:
@@ -2217,7 +2333,7 @@ class _RunState:
         preflight: Any,
         preflight_exact: bool,
         preflight_basis: str,
-    ) -> EngineRun:
+    ) -> KernelRun:
         """Assemble leaves, compressed records, report, and certificates."""
         from dataclasses import replace as _replace
 
@@ -2459,7 +2575,7 @@ class _RunState:
         }
         report = {
             "schema_version": 3,
-            "axis_order": list(AXIS_ORDER),
+            "axis_order": list(self._engine._registry.ids()),
             "levels": list(self._axes),
             "counts": counts,
             "enumeration": enumeration,
@@ -2521,7 +2637,7 @@ class _RunState:
                 "seed": self._seed,
             },
         }
-        return EngineRun(
+        return KernelRun(
             leaves=leaves,
             target_records=tuple(records),
             report=FrozenDict(report),

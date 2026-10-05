@@ -38,6 +38,13 @@ from confflow.science.confgen.engine import (
     inherited_torsion_locks,
     thaw_snapshot,
 )
+from confflow.science.confgen.kernel_records import (
+    ComponentStateKey,
+    KernelGenerationTarget,
+    KernelRun,
+    KernelWorkingRealization,
+    as_kernel_target,
+)
 from confflow.science.confgen.model import (
     AXIS_ORDER,
     SCHEMA_VERSION,
@@ -80,6 +87,7 @@ __all__ = [
     "SUPPRESSED_BY_SYMMETRY",
     "AtomOrderViolationError",
     "AtomRef",
+    "ComponentStateKey",
     "ConfgenEngine",
     "ConfgenStateKey",
     "ConfgenTolerances",
@@ -90,6 +98,9 @@ __all__ = [
     "GenerationTarget",
     "InheritedScopeError",
     "InheritedTorsionLock",
+    "KernelGenerationTarget",
+    "KernelRun",
+    "KernelWorkingRealization",
     "MixedRadixGrid",
     "MolecularContext",
     "OrbitIdentity",
@@ -107,6 +118,7 @@ __all__ = [
     "UnsupportedAxisError",
     "WorkingRealization",
     "accounting",
+    "as_kernel_target",
     "build_certificate",
     "build_context",
     "build_typed_graph",

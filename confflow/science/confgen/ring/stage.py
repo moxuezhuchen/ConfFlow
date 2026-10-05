@@ -37,7 +37,7 @@ from confflow.science.confgen.model import (
     PerceptionResult,
     RealizationResult,
     StageEstimate,
-    WorkingRealization,
+    StageParentProtocol,
 )
 from confflow.science.confgen.perception import drift_event
 from confflow.science.confgen.planner import MixedRadixGrid
@@ -148,7 +148,7 @@ class RingStage(GenerationStage):
                 raise RingUnsupported(f"template_size_mismatch:{name}")
         return tuple(names)
 
-    def estimate(self, parent: WorkingRealization, context: MolecularContext) -> StageEstimate:
+    def estimate(self, parent: StageParentProtocol, context: MolecularContext) -> StageEstimate:
         """Symbolic declared count: product of per-system template options."""
         enumerated = self._enumerated()
         total = 1
@@ -177,7 +177,7 @@ class RingStage(GenerationStage):
         return StageEstimate(declared_count=total, upper_bound=total, exact=True, details=details)
 
     def enumerate_targets(
-        self, parent: WorkingRealization, context: MolecularContext
+        self, parent: StageParentProtocol, context: MolecularContext
     ) -> Iterator[GenerationTarget]:
         """Enumerate symbolic targets lazily in stable order (no geometry).
 
@@ -264,7 +264,7 @@ class RingStage(GenerationStage):
 
     def realize(
         self,
-        parent: WorkingRealization,
+        parent: StageParentProtocol,
         target: GenerationTarget,
         context: MolecularContext,
     ) -> RealizationResult:
@@ -420,7 +420,7 @@ class RingStage(GenerationStage):
         self,
         structure: StructureRecord,
         target: GenerationTarget,
-        parent: WorkingRealization,
+        parent: StageParentProtocol,
         context: MolecularContext,
     ) -> tuple[bool, dict[str, Any], list[dict[str, Any]]]:
         """Audit a fresh realization against its commanded target (engine hook).

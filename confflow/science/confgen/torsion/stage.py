@@ -34,7 +34,7 @@ from confflow.science.confgen.model import (
     PerceptionResult,
     RealizationResult,
     StageEstimate,
-    WorkingRealization,
+    StageParentProtocol,
 )
 from confflow.science.confgen.planner import MixedRadixGrid, TorsionAxis, resolve_torsion_axes
 from confflow.science.confgen.torsion.measure import measure_dihedral, wrap_degrees
@@ -184,7 +184,7 @@ class TorsionStage(GenerationStage):
 
     # -- protocol ---------------------------------------------------------
 
-    def estimate(self, parent: WorkingRealization, context: MolecularContext) -> StageEstimate:
+    def estimate(self, parent: StageParentProtocol, context: MolecularContext) -> StageEstimate:
         """Symbolic joint-grid count (exact, complete declared group)."""
         axes = self._validated(context)
         enumerated = [axis for axis in axes if axis.treatment == "enumerate"]
@@ -228,7 +228,7 @@ class TorsionStage(GenerationStage):
         )
 
     def target_by_ordinal(
-        self, parent: WorkingRealization, ordinal: int, context: MolecularContext
+        self, parent: StageParentProtocol, ordinal: int, context: MolecularContext
     ) -> GenerationTarget:
         """Fetch one joint target lazily by ordinal (engine sampling path)."""
         axes = self._validated(context)
@@ -236,7 +236,7 @@ class TorsionStage(GenerationStage):
         return self._target_at(ordinal, enumerated)
 
     def enumerate_targets(
-        self, parent: WorkingRealization, context: MolecularContext
+        self, parent: StageParentProtocol, context: MolecularContext
     ) -> Iterator[GenerationTarget]:
         """Yield joint targets lazily in stable ordinal order (no geometry)."""
         axes = self._validated(context)
@@ -291,7 +291,7 @@ class TorsionStage(GenerationStage):
 
     def realize(
         self,
-        parent: WorkingRealization,
+        parent: StageParentProtocol,
         target: GenerationTarget,
         context: MolecularContext,
     ) -> RealizationResult:
@@ -506,7 +506,7 @@ class TorsionStage(GenerationStage):
         self,
         structure: StructureRecord,
         target: GenerationTarget,
-        parent: WorkingRealization,
+        parent: StageParentProtocol,
         context: MolecularContext,
     ) -> tuple[bool, dict[str, float], list[dict[str, Any]]]:
         """Audit a fresh realization against its commanded target.

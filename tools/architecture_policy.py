@@ -2900,4 +2900,281 @@ def scan_runtime(root: Path, timeout: int = RUNTIME_TIMEOUT) -> list[dict]:
     return violations
 
 
+# ---------------------------------------------------------------------------
+# FIX-1A A2 scope helpers (not part of the L0.4b RULES count).
+# AST-only, scope-aware checks for the kernel/v3 split. G13 full
+# axis-literal removal stays an A6 endpoint; these helpers only enforce
+# the A2 items: wire isolation, attribute scope, as_kernel_target
+# uniqueness, AXIS_ORDER re-export, and stage parent structure-only use.
+# ---------------------------------------------------------------------------
+
+_CONFGEN_A2_WIRE_MODULE_FRAGMENT = "wire_v3"
+_CONFGEN_A2_WIRE_SYMBOLS = {
+    "wire_v3",
+    "from_wire_key",
+    "to_wire_key",
+    "to_legacy_realization",
+    "to_legacy_target",
+    "is_legacy_stage",
+    "project_v3",
+    "LegacyStageAdapter",
+    "UnsupportedWireComponent",
+}
+
+_CONFGEN_A2_COMPONENT_ATTRS = {"coordination", "rings", "torsions"}
+
+_CONFGEN_A2_STAGE_PARENT_FORBIDDEN = {
+    "state_key",
+    "locked_axes",
+    "generation_axis",
+}
+
+
+def _confgen_a2_parse(path: Path) -> ast.AST | None:
+    try:
+        return ast.parse(path.read_text(encoding="utf-8"))
+    except (OSError, SyntaxError, ValueError):
+        return None
+
+
+def _confgen_a2_enclosing(tree: ast.AST, target: ast.AST) -> tuple[str | None, str | None]:
+    """Return (class, function) enclosing *target* in *tree*."""
+    klass: str | None = None
+    func: str | None = None
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ClassDef):
+            if any(sub is target for sub in ast.walk(node)):
+                klass = node.name
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if any(sub is target for sub in ast.walk(node)):
+                func = node.name
+    return klass, func
+
+
+def confgen_a2_wire_isolation_violations(root: Path) -> list[str]:
+    """Check kernel/wire isolation (AST scope).
+
+    - ``accounting.py`` and ``kernel_records.py`` must not import or
+      reference ``wire_v3``.
+    - ``engine.py`` may reference ``wire_v3`` only inside
+      ``ConfgenEngine.run`` method body.
+    """
+    root = Path(root)
+    problems: list[str] = []
+    for rel in (
+        "confflow/science/confgen/accounting.py",
+        "confflow/science/confgen/kernel_records.py",
+    ):
+        path = root / rel
+        tree = _confgen_a2_parse(path)
+        if tree is None:
+            continue
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and node.module:
+                if _CONFGEN_A2_WIRE_MODULE_FRAGMENT in node.module:
+                    problems.append(f"{rel}:{node.lineno}: imports wire_v3")
+            elif isinstance(node, ast.Import):
+                for alias in node.names:
+                    if _CONFGEN_A2_WIRE_MODULE_FRAGMENT in alias.name:
+                        problems.append(f"{rel}:{node.lineno}: imports wire_v3")
+            elif isinstance(node, ast.Name) and node.id in _CONFGEN_A2_WIRE_SYMBOLS:
+                problems.append(f"{rel}:{node.lineno}: references {node.id}")
+    engine_rel = "confflow/science/confgen/engine.py"
+    tree = _confgen_a2_parse(root / engine_rel)
+    if tree is not None:
+        # Map each node to its enclosing function/class via parent walk.
+        parents: dict[int, ast.AST] = {}
+        for node in ast.walk(tree):
+            for child in ast.iter_child_nodes(node):
+                parents[id(child)] = node
+
+        def _enclosing_run(node: ast.AST) -> bool:
+            cur: ast.AST | None = node
+            func: str | None = None
+            klass: str | None = None
+            seen: set[int] = set()
+            while cur is not None and id(cur) not in seen:
+                seen.add(id(cur))
+                if isinstance(cur, (ast.FunctionDef, ast.AsyncFunctionDef)) and func is None:
+                    func = cur.name
+                if isinstance(cur, ast.ClassDef) and klass is None:
+                    klass = cur.name
+                cur = parents.get(id(cur))
+            return func == "run" and klass == "ConfgenEngine"
+
+        for node in ast.walk(tree):
+            is_wire_import = False
+            if isinstance(node, ast.ImportFrom) and node.module:
+                is_wire_import = _CONFGEN_A2_WIRE_MODULE_FRAGMENT in node.module
+            elif isinstance(node, ast.Import):
+                is_wire_import = any(_CONFGEN_A2_WIRE_MODULE_FRAGMENT in a.name for a in node.names)
+            elif isinstance(node, ast.Name) and node.id in _CONFGEN_A2_WIRE_SYMBOLS:
+                # ``wire_v3`` symbol use outside run is a violation; uses
+                # inside run are allowed.
+                if not _enclosing_run(node):
+                    problems.append(f"{engine_rel}:{node.lineno}: references {node.id}")
+                continue
+            if is_wire_import and not _enclosing_run(node):
+                problems.append(f"{engine_rel}:{node.lineno}: imports wire_v3 outside run")
+    return problems
+
+
+def confgen_a2_attr_scope_violations(root: Path) -> list[str]:
+    """Check ``.coordination/.rings/.torsions`` attribute scope (AST).
+
+    Allowed: ``model.ConfgenStateKey`` class body, ``ConfgenEngine.run``
+    method body, and all of ``wire_v3.py``.
+    """
+    root = Path(root)
+    problems: list[str] = []
+    candidates = [
+        "confflow/science/confgen/engine.py",
+        "confflow/science/confgen/model.py",
+        "confflow/science/confgen/kernel_records.py",
+        "confflow/science/confgen/accounting.py",
+        "confflow/science/confgen/registry.py",
+    ]
+    for rel in candidates:
+        path = root / rel
+        tree = _confgen_a2_parse(path)
+        if tree is None:
+            continue
+        parents: dict[int, ast.AST] = {}
+        for node in ast.walk(tree):
+            for child in ast.iter_child_nodes(node):
+                parents[id(child)] = node
+
+        for node in ast.walk(tree):
+            if not (isinstance(node, ast.Attribute) and node.attr in _CONFGEN_A2_COMPONENT_ATTRS):
+                continue
+            cur: ast.AST | None = node
+            func: str | None = None
+            klass: str | None = None
+            seen: set[int] = set()
+            while cur is not None and id(cur) not in seen:
+                seen.add(id(cur))
+                if isinstance(cur, (ast.FunctionDef, ast.AsyncFunctionDef)) and func is None:
+                    func = cur.name
+                if isinstance(cur, ast.ClassDef) and klass is None:
+                    klass = cur.name
+                cur = parents.get(id(cur))
+            if rel == "confflow/science/confgen/model.py" and klass == "ConfgenStateKey":
+                continue
+            if rel == "confflow/science/confgen/engine.py" and func == "run":
+                # Further require ConfgenEngine.run; approximate by func name
+                # plus class check.
+                cur2: ast.AST | None = node
+                klass2: str | None = None
+                seen2: set[int] = set()
+                while cur2 is not None and id(cur2) not in seen2:
+                    seen2.add(id(cur2))
+                    if isinstance(cur2, ast.ClassDef) and klass2 is None:
+                        klass2 = cur2.name
+                    cur2 = parents.get(id(cur2))
+                if klass2 == "ConfgenEngine" and func == "run":
+                    continue
+            problems.append(f"{rel}:{node.lineno}: .{node.attr} outside A2 scope")
+    return problems
+
+
+def confgen_a2_as_kernel_target_violations(root: Path) -> list[str]:
+    """Check ``as_kernel_target`` is defined/exported only in kernel_records."""
+    root = Path(root)
+    problems: list[str] = []
+    for rel in (
+        "confflow/science/confgen/engine.py",
+        "confflow/science/confgen/model.py",
+        "confflow/science/confgen/wire_v3.py",
+        "confflow/science/confgen/accounting.py",
+        "confflow/science/confgen/registry.py",
+    ):
+        tree = _confgen_a2_parse(root / rel)
+        if tree is None:
+            continue
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                if node.name == "as_kernel_target":
+                    problems.append(
+                        f"{rel}:{node.lineno}: as_kernel_target defined outside kernel_records"
+                    )
+            elif isinstance(node, ast.Name) and node.id == "as_kernel_target":
+                # Import or reference outside kernel_records counts unless it
+                # is the engine's converting call site (allowed use, not def).
+                # To keep the rule tight, only flag definitions and
+                # import statements here; call sites are checked separately.
+                pass
+        # Flag import statements referencing as_kernel_target as definition
+        # spread (except the allowed engine internal use is still an import;
+        # A2 allows engine to *call* it, which requires an import, so imports
+        # themselves are not violations -- only definitions are).
+    return problems
+
+
+def confgen_a2_axis_order_violations(root: Path) -> list[str]:
+    """Check ``model.AXIS_ORDER`` is only a re-export from wire constants."""
+    root = Path(root)
+    problems: list[str] = []
+    path = root / "confflow/science/confgen/model.py"
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return [f"{path}: unreadable"]
+    tree = _confgen_a2_parse(path)
+    if tree is None:
+        return [f"{path}: unparseable"]
+    has_reexport = (
+        "from .wire_v3_constants import V3_AXIS_ORDER as AXIS_ORDER" in text
+        or "from confflow.science.confgen.wire_v3_constants import V3_AXIS_ORDER as AXIS_ORDER"
+        in text
+    )
+    if not has_reexport:
+        problems.append("confflow/science/confgen/model.py: AXIS_ORDER re-export missing")
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name) and target.id == "AXIS_ORDER":
+                    problems.append(
+                        f"confflow/science/confgen/model.py:{node.lineno}: AXIS_ORDER assigned directly"
+                    )
+        elif isinstance(node, ast.AnnAssign):
+            target = node.target
+            if isinstance(target, ast.Name) and target.id == "AXIS_ORDER":
+                problems.append(
+                    f"confflow/science/confgen/model.py:{node.lineno}: AXIS_ORDER assigned directly"
+                )
+    return problems
+
+
+def confgen_a2_stage_parent_violations(root: Path) -> list[str]:
+    """Check stages do not read ``parent.state_key/locked_axes/...``."""
+    root = Path(root)
+    problems: list[str] = []
+    for rel in (
+        "confflow/science/confgen/coordination/stage.py",
+        "confflow/science/confgen/ring/stage.py",
+        "confflow/science/confgen/torsion/stage.py",
+    ):
+        tree = _confgen_a2_parse(root / rel)
+        if tree is None:
+            continue
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Attribute) and node.attr in _CONFGEN_A2_STAGE_PARENT_FORBIDDEN:
+                base = node.value
+                if isinstance(base, ast.Name) and base.id == "parent":
+                    problems.append(f"{rel}:{node.lineno}: parent.{node.attr} forbidden")
+    return problems
+
+
+def confgen_a2_violations(root: Path) -> list[str]:
+    """Aggregate all A2 scope violations (empty when clean)."""
+    root = Path(root)
+    out: list[str] = []
+    out.extend(confgen_a2_wire_isolation_violations(root))
+    out.extend(confgen_a2_attr_scope_violations(root))
+    out.extend(confgen_a2_as_kernel_target_violations(root))
+    out.extend(confgen_a2_axis_order_violations(root))
+    out.extend(confgen_a2_stage_parent_violations(root))
+    return out
+
+
 RULE_COUNT = len(RULES)

@@ -22,7 +22,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any
+from typing import Any, Protocol
 
 from confflow.domain._immutable import FrozenDict
 from confflow.domain.elements import canonical_element_symbol
@@ -34,6 +34,7 @@ from confflow.science.confgen.graph import (
     TypedEdge,
     TypedGraph,
 )
+from confflow.science.confgen.wire_v3_constants import V3_AXIS_ORDER as AXIS_ORDER
 
 __all__ = [
     "AXIS_ORDER",
@@ -60,9 +61,6 @@ __all__ = [
 
 #: ConfGen v3 schema version carried on every state key and spec.
 SCHEMA_VERSION: int = 3
-
-#: Fixed generation order: Coordination -> Ring -> Torsion.
-AXIS_ORDER: tuple[str, ...] = ("coordination", "rings", "torsions")
 
 #: Typed-graph authority lives in lane B ``graph.py``; core uses those
 #: classes directly (single authority, no competing definitions).
@@ -622,6 +620,16 @@ class PerceptionResult:
         object.__setattr__(self, "boundary_flags", tuple(self.boundary_flags))
 
 
+class StageParentProtocol(Protocol):
+    """Structural parent view for stages (only ``structure``/``provenance``)."""
+
+    @property
+    def structure(self) -> StructureRecord: ...
+
+    @property
+    def provenance(self) -> Mapping[str, Any]: ...
+
+
 class GenerationStage(ABC):
     """Interface every generation stage (C/R/T) implements.
 
@@ -676,13 +684,13 @@ class GenerationStage(ABC):
     lock_reference: str = "input"
 
     @abstractmethod
-    def estimate(self, parent: WorkingRealization, context: MolecularContext) -> StageEstimate:
+    def estimate(self, parent: StageParentProtocol, context: MolecularContext) -> StageEstimate:
         """Return the symbolic count estimate under *parent*."""
         raise NotImplementedError
 
     @abstractmethod
     def enumerate_targets(
-        self, parent: WorkingRealization, context: MolecularContext
+        self, parent: StageParentProtocol, context: MolecularContext
     ) -> Iterable[GenerationTarget]:
         """Enumerate symbolic targets lazily in stable order (no geometry)."""
         raise NotImplementedError
@@ -690,7 +698,7 @@ class GenerationStage(ABC):
     @abstractmethod
     def realize(
         self,
-        parent: WorkingRealization,
+        parent: StageParentProtocol,
         target: GenerationTarget,
         context: MolecularContext,
     ) -> RealizationResult:

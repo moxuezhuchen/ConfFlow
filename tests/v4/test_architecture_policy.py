@@ -1844,3 +1844,85 @@ def test_thin_metrics_refuses_foreign_policy_tree(tmp_path: Path) -> None:
     )
     assert proc.returncode != 0, proc.stdout[-1000:]
     assert "authoritative policy not found" in (proc.stderr + proc.stdout)
+
+
+# ---------------------------------------------------------------------------
+# FIX-1A A2 scope policy (AST, small examples only; existing rules untouched).
+# ---------------------------------------------------------------------------
+
+
+def test_confgen_a2_scope_clean_on_real_tree() -> None:
+    from tools.architecture_policy import confgen_a2_violations
+
+    assert confgen_a2_violations(_REAL_ROOT) == []
+
+
+def _a2_fixture(tmp_path: Path, rel: str, content: str) -> Path:
+    for keep in (
+        "confflow/science/confgen/__init__.py",
+        "confflow/science/confgen/model.py",
+        "confflow/science/confgen/engine.py",
+        "confflow/science/confgen/kernel_records.py",
+        "confflow/science/confgen/accounting.py",
+        "confflow/science/confgen/registry.py",
+        "confflow/science/confgen/wire_v3.py",
+        "confflow/science/confgen/coordination/stage.py",
+        "confflow/science/confgen/ring/stage.py",
+        "confflow/science/confgen/torsion/stage.py",
+    ):
+        src = _REAL_ROOT / keep
+        dst = tmp_path / keep
+        if keep == rel:
+            continue
+        if src.is_file():
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            dst.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
+    target = tmp_path / rel
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(content, encoding="utf-8")
+    return tmp_path
+
+
+def test_confgen_a2_wire_isolation_fires() -> None:
+    import tempfile
+
+    from tools.architecture_policy import confgen_a2_wire_isolation_violations
+
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        _a2_fixture(
+            root,
+            "confflow/science/confgen/accounting.py",
+            "import confflow.science.confgen.wire_v3\n",
+        )
+        assert confgen_a2_wire_isolation_violations(root)
+
+
+def test_confgen_a2_attr_scope_fires() -> None:
+    import tempfile
+
+    from tools.architecture_policy import confgen_a2_attr_scope_violations
+
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        _a2_fixture(
+            root,
+            "confflow/science/confgen/kernel_records.py",
+            "def f(key):\n    return key.coordination\n",
+        )
+        assert confgen_a2_attr_scope_violations(root)
+
+
+def test_confgen_a2_stage_parent_fires() -> None:
+    import tempfile
+
+    from tools.architecture_policy import confgen_a2_stage_parent_violations
+
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        _a2_fixture(
+            root,
+            "confflow/science/confgen/ring/stage.py",
+            "def f(parent):\n    return parent.state_key\n",
+        )
+        assert confgen_a2_stage_parent_violations(root)
