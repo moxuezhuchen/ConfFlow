@@ -1507,7 +1507,7 @@ def test_legacy_cli_trailing_comment_matches_old_and_default_still_fires(
     _scoped_producer(tmp_path)
     _write(tmp_path, "confflow/producer/evil.py", "x = TaskRunner  # trailing comment\n")
     assert _legacy_hits(tmp_path) == []
-    default = [v for v in scan(tmp_path) if v["rule"] == "AP-090"]
+    default = [v for v in scan(tmp_path, rule_ids=("AP-090",)) if v["rule"] == "AP-090"]
     assert [(v["path"], v["line"], v["detail"]) for v in default] == [
         ("confflow/producer/evil.py", 1, "legacy-TaskRunner")
     ]
@@ -1529,7 +1529,7 @@ def test_legacy_cli_retired_package_reports_init_while_default_ignores(
             "confflow.config.canonical",
         )
     ]
-    assert [v for v in scan(tmp_path) if v["rule"] == "AP-091"] == []
+    assert [v for v in scan(tmp_path, rule_ids=("AP-091",)) if v["rule"] == "AP-091"] == []
 
 
 def test_legacy_cli_relative_import_uses_old_package_basis(tmp_path: Path) -> None:
@@ -1552,7 +1552,7 @@ def test_legacy_cli_relative_import_uses_old_package_basis(tmp_path: Path) -> No
             "confflow.workflow.engine",
         )
     ]
-    assert [v for v in scan(tmp_path) if v["rule"] == "AP-088"] == []
+    assert [v for v in scan(tmp_path, rule_ids=("AP-088",)) if v["rule"] == "AP-088"] == []
 
 
 def test_legacy_cli_prefix_boundary_matches_old_startswith(tmp_path: Path) -> None:
@@ -1568,7 +1568,7 @@ def test_legacy_cli_prefix_boundary_matches_old_startswith(tmp_path: Path) -> No
             "confflow.shared2extra",
         )
     ]
-    assert [v for v in scan(tmp_path) if v["rule"] == "AP-088"] == []
+    assert [v for v in scan(tmp_path, rule_ids=("AP-088",)) if v["rule"] == "AP-088"] == []
 
 
 def test_legacy_cli_fifteen_patterns_match_old_reference(tmp_path: Path) -> None:
@@ -1624,7 +1624,7 @@ def test_legacy_cli_fifteen_patterns_match_old_reference(tmp_path: Path) -> None
         "legacy-silent-fallback": "silent fallback",
     }
     assert {(h[2], h[3]) for h in legacy} == set(expected_match.items())
-    default = [v for v in scan(tmp_path) if v["rule"] == "AP-090"]
+    default = [v for v in scan(tmp_path, rule_ids=("AP-090",)) if v["rule"] == "AP-090"]
     assert len(default) == 2 * len(probes)
 
 
@@ -1704,7 +1704,7 @@ def test_default_ap090_dict_shape_has_no_match(tmp_path: Path) -> None:
     # {rule, path, line, detail}; only legacy_cli may attach "match".
     _scoped_producer(tmp_path)
     _write(tmp_path, "confflow/producer/probe.py", "x = TaskRunner\n")
-    default = [v for v in scan(tmp_path) if v["rule"] == "AP-090"]
+    default = [v for v in scan(tmp_path, rule_ids=("AP-090",)) if v["rule"] == "AP-090"]
     assert default == [
         {
             "rule": "AP-090",
@@ -1727,6 +1727,28 @@ def test_default_ap090_dict_shape_has_no_match(tmp_path: Path) -> None:
             "match": "TaskRunner",
         }
     ]
+
+
+def test_l0_isolation_probe_does_not_borrow_host_jd(tmp_path: Path, monkeypatch) -> None:
+    # L0 CI isolation regression: isolated scanner tests must not borrow the
+    # host JD absolute double; AP-081 require_one stays strict.
+    import tools.architecture_policy as policy
+
+    rule = next(r for r in policy.RULES if r["id"] == "AP-081")
+    monkeypatch.setitem(rule, "files", ["tests/v4/__missing_l0_ci_isolation_probe__.py"])
+    _scoped_producer(tmp_path)
+    _write(tmp_path, "confflow/producer/probe.py", "x = TaskRunner\n")
+    isolated = [v for v in policy.scan(tmp_path, rule_ids=("AP-090",)) if v["rule"] == "AP-090"]
+    assert isolated == [
+        {
+            "rule": "AP-090",
+            "path": "confflow/producer/probe.py",
+            "line": 1,
+            "detail": "legacy-TaskRunner",
+        }
+    ]
+    with pytest.raises(AssertionError, match="expected at least one double"):
+        policy.scan(tmp_path, rule_ids=("AP-081",))
 
 
 def test_legacy_cli_ignores_pycache_but_keeps_normal_scope(tmp_path: Path) -> None:

@@ -99,3 +99,29 @@
   新增回归 + 旧 19 个 `test_runtime_rule_clean_and_mutant` 共 20 passed；
   `runtime_source_binding` 4 passed；ruff/black 通过；collect `309→310`，集成预期 `4664→4665`。
 - 未做：全量/golden/整 309 套未重跑，仍待根统一重跑；不称完成。
+
+## L0-ci-scope — 六 unrelated default 扫描 fixture 误触 AP-081 隔离（最小）
+
+- 基点 `86f6dfea4f2ac4788fc74b6173f7a2f8016d4ae1`，分支 `refactor/l0-ci-scope-proto`，工作树
+  `/tmp/l0-ci-scope-proto`，输出独占 `/tmp/l0-ci-scope-output`；主仓 main 和 PR 不动；
+  不正式提交/push/tag/amend；预演后清回基点干净（不 git clean）。
+- 根日志 `/tmp/l0-pr104-python311-fail.log`：`6 failed, 4623 passed, 25 skipped`；
+  六失败均为 `tests/v4/test_architecture_policy.py` 无关 default 扫描误触 AP-081
+  `require_one`（`expected at least one double file to exist`）：
+  trailing_comment / retired_package / relative_import / prefix_boundary / fifteen_patterns / dict_shape。
+- 根因：AP-081 `DOUBLE_FILES=["tests/v4/test_v46_cross_repo.py","/opt/jobdesk-v2-v4/..."]`；
+  合成 tmp tree 无 `tests/v4/test_v46_cross_repo.py` 且 CI 无绝对 JD 文件，故 `scanned=0` 断言；
+  本地真实 JD（绝对文件存在）经 `root/file` 绝对拼接掩盖缺口，属根验收缺口，必须真实记录。
+- 白名单仅 `tests/v4/test_architecture_policy.py` 与 `docs/confgen-fix/LOG.md`。
+  六测试 default `scan(tmp_path)` 改为 `scan(tmp_path, rule_ids=(其断言规则,))`：
+  AP-090×3（trailing_comment/fifteen_patterns/dict_shape）、AP-091×1（retired_package）、
+  AP-088×2（relative_import/prefix_boundary）；不改 assert/policy/rules/生产/legacy profile；
+  不 skip/bypass/放宽。
+- 新增必要回归 +1：`test_l0_isolation_probe_does_not_borrow_host_jd`，monkeypatch 将 AP-081
+  files 暂设为纯 fixture 内不存在的相对路径，证明隔离扫描不借主机 JD；同时断言单独
+  AP-081 扫描仍拒绝缺失 double（守卫未弱化）。未改真实 JD 目录。
+- 复现/验证（外部插件仅六 test 临时 monkeypatch AP-081 files=缺失相对路径，真实源不动）：
+  旧版六失败（与 CI 同断言）→ 新版同环境六通过，AP-081 护栏仍拒绝；
+  完整 policy 全节点实跑一次 `311 passed`（旧 310 + 新增 1）；ruff/black（--workers 1）必要文件通过；
+  测试均 pipefail/tee 全输出并记录真实 pytest 退出码。不跑全量/golden。
+- 计数实际变化：policy 模块 `310 → 311`（+1 隔离回归）；CI 六失败在同隔离环境下 `6 failed → 7 passed`（六修复+一新增）。
