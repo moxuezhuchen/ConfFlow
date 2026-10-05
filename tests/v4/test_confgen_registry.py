@@ -2527,3 +2527,358 @@ def test_a4c_custom_topology_probe_via_build_context_and_same_instance() -> None
     ] or True  # overlay present (perception-dependent prefix may vary, suffix must coordinate)
     # Coordination donors authoritative (metal 0 binds donor 1).
     assert 1 in ctx2.graph.coordination_donors()
+
+
+# ---------------------------------------------------------------------------
+# FIX-1A A4c-lazy: component packages are PEP 562 lazy (behavior unchanged).
+# ---------------------------------------------------------------------------
+
+_LAZY_REPO_ROOT = Path(__file__).resolve().parents[2]
+
+_LAZY_RING_ALL = [
+    "BACKEND_NAME",
+    "BOND_LENGTH",
+    "RingPerception",
+    "RingRealizeOutput",
+    "RingSpec",
+    "RingStage",
+    "RingTemplate",
+    "RingTolerances",
+    "RingGeometryFailure",
+    "RingNumericalFailure",
+    "RingUnsupported",
+    "TEMPLATE_REGISTRY",
+    "TEMPLATES_BY_SIZE",
+    "commanded_state_dict",
+    "get_template",
+    "parse_ring_specs",
+    "perceive_ring",
+    "realize_rings",
+    "realize_single_system",
+    "ring_diagnostics",
+    "ring_state_dict",
+    "ring_states_match",
+    "ring_torsions",
+    "template_bond_spread",
+    "template_coords",
+    "template_torsions",
+    "templates_for_size",
+    "validate_ring_system",
+]
+
+_LAZY_TORSION_ALL = [
+    "BACKEND_NAME",
+    "PATH_AMBIGUOUS",
+    "PATH_CROSSES_RING",
+    "PATH_DIRECTION_CONFLICT",
+    "PATH_DISCONNECTED",
+    "PATH_INVALID_ENDPOINT",
+    "PATH_SHORT_BOND",
+    "PATH_SHORT_BOND_RATIO",
+    "ROTOR_SAMPLING_CONFLICT",
+    "WARNING_SHORT_BOND",
+    "CanonicalRotor",
+    "PathResolution",
+    "PathResolutionError",
+    "ResolvedPath",
+    "TorsionStage",
+    "canonical_grid_size",
+    "canonicalize_rotors",
+    "measure_dihedral",
+    "parse_path_declarations",
+    "resolve_paths",
+    "topology_digest_of",
+    "wrap_degrees",
+]
+
+_LAZY_COORD_ALL = [
+    "shapes",
+    "enumeration",
+    "symmetry",
+    "perception",
+    "realization",
+    "hgeom",
+    "stage",
+]
+
+_LAZY_RING_DEF = {
+    "BACKEND_NAME": ("confflow.science.confgen.ring.stage", "BACKEND_NAME"),
+    "BOND_LENGTH": ("confflow.science.confgen.ring.templates", "BOND_LENGTH"),
+    "RingPerception": ("confflow.science.confgen.ring.perception", "RingPerception"),
+    "RingRealizeOutput": ("confflow.science.confgen.ring.realization", "RingRealizeOutput"),
+    "RingSpec": ("confflow.science.confgen.ring.realization", "RingSpec"),
+    "RingStage": ("confflow.science.confgen.ring.stage", "RingStage"),
+    "RingTemplate": ("confflow.science.confgen.ring.templates", "RingTemplate"),
+    "RingTolerances": ("confflow.science.confgen.ring.realization", "RingTolerances"),
+    "RingGeometryFailure": ("confflow.science.confgen.ring.realization", "RingGeometryFailure"),
+    "RingNumericalFailure": (
+        "confflow.science.confgen.ring.realization",
+        "RingNumericalFailure",
+    ),
+    "RingUnsupported": ("confflow.science.confgen.ring.realization", "RingUnsupported"),
+    "TEMPLATE_REGISTRY": ("confflow.science.confgen.ring.templates", "TEMPLATE_REGISTRY"),
+    "TEMPLATES_BY_SIZE": ("confflow.science.confgen.ring.templates", "TEMPLATES_BY_SIZE"),
+    "commanded_state_dict": (
+        "confflow.science.confgen.ring.perception",
+        "commanded_state_dict",
+    ),
+    "get_template": ("confflow.science.confgen.ring.templates", "get_template"),
+    "parse_ring_specs": ("confflow.science.confgen.ring.realization", "parse_ring_specs"),
+    "perceive_ring": ("confflow.science.confgen.ring.perception", "perceive_ring"),
+    "realize_rings": ("confflow.science.confgen.ring.realization", "realize_rings"),
+    "realize_single_system": (
+        "confflow.science.confgen.ring.realization",
+        "realize_single_system",
+    ),
+    "ring_diagnostics": ("confflow.science.confgen.ring.perception", "ring_diagnostics"),
+    "ring_state_dict": ("confflow.science.confgen.ring.perception", "ring_state_dict"),
+    "ring_states_match": ("confflow.science.confgen.ring.perception", "ring_states_match"),
+    "ring_torsions": ("confflow.science.confgen.ring.geometry", "ring_torsions"),
+    "template_bond_spread": (
+        "confflow.science.confgen.ring.templates",
+        "template_bond_spread",
+    ),
+    "template_coords": ("confflow.science.confgen.ring.templates", "template_coords"),
+    "template_torsions": ("confflow.science.confgen.ring.templates", "template_torsions"),
+    "templates_for_size": ("confflow.science.confgen.ring.templates", "templates_for_size"),
+    "validate_ring_system": (
+        "confflow.science.confgen.ring.realization",
+        "validate_ring_system",
+    ),
+}
+
+_LAZY_TORSION_DEF = {
+    "BACKEND_NAME": ("confflow.science.confgen.torsion.stage", "BACKEND_NAME"),
+    "PATH_AMBIGUOUS": ("confflow.science.confgen.torsion.paths", "PATH_AMBIGUOUS"),
+    "PATH_CROSSES_RING": ("confflow.science.confgen.torsion.paths", "PATH_CROSSES_RING"),
+    "PATH_DIRECTION_CONFLICT": (
+        "confflow.science.confgen.torsion.paths",
+        "PATH_DIRECTION_CONFLICT",
+    ),
+    "PATH_DISCONNECTED": ("confflow.science.confgen.torsion.paths", "PATH_DISCONNECTED"),
+    "PATH_INVALID_ENDPOINT": (
+        "confflow.science.confgen.torsion.paths",
+        "PATH_INVALID_ENDPOINT",
+    ),
+    "PATH_SHORT_BOND": ("confflow.science.confgen.torsion.paths", "PATH_SHORT_BOND"),
+    "PATH_SHORT_BOND_RATIO": (
+        "confflow.science.confgen.torsion.paths",
+        "PATH_SHORT_BOND_RATIO",
+    ),
+    "ROTOR_SAMPLING_CONFLICT": (
+        "confflow.science.confgen.torsion.paths",
+        "ROTOR_SAMPLING_CONFLICT",
+    ),
+    "WARNING_SHORT_BOND": ("confflow.science.confgen.torsion.paths", "WARNING_SHORT_BOND"),
+    "CanonicalRotor": ("confflow.science.confgen.torsion.paths", "CanonicalRotor"),
+    "PathResolution": ("confflow.science.confgen.torsion.paths", "PathResolution"),
+    "PathResolutionError": (
+        "confflow.science.confgen.torsion.paths",
+        "PathResolutionError",
+    ),
+    "ResolvedPath": ("confflow.science.confgen.torsion.paths", "ResolvedPath"),
+    "TorsionStage": ("confflow.science.confgen.torsion.stage", "TorsionStage"),
+    "canonical_grid_size": (
+        "confflow.science.confgen.torsion.paths",
+        "canonical_grid_size",
+    ),
+    "canonicalize_rotors": (
+        "confflow.science.confgen.torsion.paths",
+        "canonicalize_rotors",
+    ),
+    "measure_dihedral": ("confflow.science.confgen.torsion.measure", "measure_dihedral"),
+    "parse_path_declarations": (
+        "confflow.science.confgen.torsion.paths",
+        "parse_path_declarations",
+    ),
+    "resolve_paths": ("confflow.science.confgen.torsion.paths", "resolve_paths"),
+    "topology_digest_of": ("confflow.science.confgen.torsion.paths", "topology_digest_of"),
+    "wrap_degrees": ("confflow.science.confgen.torsion.measure", "wrap_degrees"),
+}
+
+
+def _lazy_run(probe: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [sys.executable, "-c", probe],
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=str(_LAZY_REPO_ROOT),
+    )
+
+
+def test_a4c_lazy_import_no_heavy_modules() -> None:
+    probe = (
+        "import sys; "
+        "import confflow.science.confgen.ring as r; "
+        "import confflow.science.confgen.torsion as t; "
+        "import confflow.science.confgen.coordination as c; "
+        "heavy=[m for m in sys.modules "
+        "if m.startswith('confflow.science.confgen.') "
+        "and (m.endswith('.stage') or m.endswith('.realization') "
+        "or m.endswith('.enumeration') or m.endswith('.hgeom'))]; "
+        "print(heavy)"
+    )
+    completed = _lazy_run(probe)
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.strip() == "[]", completed.stdout
+
+
+def test_a4c_lazy_all_order_and_unknown() -> None:
+    import confflow.science.confgen.coordination as _c
+    import confflow.science.confgen.ring as _r
+    import confflow.science.confgen.torsion as _t
+
+    assert list(_r.__all__) == _LAZY_RING_ALL
+    assert list(_t.__all__) == _LAZY_TORSION_ALL
+    assert list(_c.__all__) == _LAZY_COORD_ALL
+    for _mod in (_r, _t, _c):
+        with pytest.raises(AttributeError):
+            _ = _mod.__lazy_nonexistent_name__
+    probe = (
+        "import confflow.science.confgen.ring as r\n"
+        "try:\n"
+        "    r.__lazy_nonexistent_name__\n"
+        "except AttributeError:\n"
+        "    print('AttributeError')\n"
+        "else:\n"
+        "    print('NO-RAISE')"
+    )
+    completed = _lazy_run(probe)
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.strip() == "AttributeError", completed.stdout
+
+
+def test_a4c_lazy_is_definition_object() -> None:
+    for _name, (_mod, _attr) in _LAZY_RING_DEF.items():
+        probe = (
+            "import importlib; "
+            "pkg=importlib.import_module('confflow.science.confgen.ring'); "
+            f"via_pkg=getattr(pkg, '{_name}'); "
+            f"target=getattr(importlib.import_module('{_mod}'), '{_attr}'); "
+            "print(via_pkg is target)"
+        )
+        completed = _lazy_run(probe)
+        assert completed.returncode == 0, (_name, completed.stderr)
+        assert completed.stdout.strip() == "True", (_name, completed.stdout)
+    for _name, (_mod, _attr) in _LAZY_TORSION_DEF.items():
+        probe = (
+            "import importlib; "
+            "pkg=importlib.import_module('confflow.science.confgen.torsion'); "
+            f"via_pkg=getattr(pkg, '{_name}'); "
+            f"target=getattr(importlib.import_module('{_mod}'), '{_attr}'); "
+            "print(via_pkg is target)"
+        )
+        completed = _lazy_run(probe)
+        assert completed.returncode == 0, (_name, completed.stderr)
+        assert completed.stdout.strip() == "True", (_name, completed.stdout)
+    for _name in _LAZY_COORD_ALL:
+        probe = (
+            "import importlib; "
+            "pkg=importlib.import_module('confflow.science.confgen.coordination'); "
+            f"via_pkg=getattr(pkg, '{_name}'); "
+            f"target=importlib.import_module('confflow.science.confgen.coordination.{_name}'); "
+            "print(via_pkg is target)"
+        )
+        completed = _lazy_run(probe)
+        assert completed.returncode == 0, (_name, completed.stderr)
+        assert completed.stdout.strip() == "True", (_name, completed.stdout)
+
+
+def test_a4c_lazy_loads_only_needed_module() -> None:
+    probe = (
+        "import sys; "
+        "import confflow.science.confgen.ring as r; "
+        "assert 'confflow.science.confgen.ring.geometry' not in sys.modules; "
+        "assert 'confflow.science.confgen.ring.stage' not in sys.modules; "
+        "assert 'confflow.science.confgen.ring.realization' not in sys.modules; "
+        "_=r.ring_torsions; "
+        "print(('confflow.science.confgen.ring.geometry' in sys.modules, "
+        "'confflow.science.confgen.ring.stage' in sys.modules, "
+        "'confflow.science.confgen.ring.realization' in sys.modules))"
+    )
+    completed = _lazy_run(probe)
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.strip() == "(True, False, False)", completed.stdout
+    probe = (
+        "import sys; "
+        "import confflow.science.confgen.torsion as t; "
+        "_=t.wrap_degrees; "
+        "print(('confflow.science.confgen.torsion.measure' in sys.modules, "
+        "'confflow.science.confgen.torsion.stage' in sys.modules, "
+        "'confflow.science.confgen.torsion.paths' in sys.modules))"
+    )
+    completed = _lazy_run(probe)
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.strip() == "(True, False, False)", completed.stdout
+    probe = (
+        "import sys; "
+        "import confflow.science.confgen.coordination as c; "
+        "_=c.shapes; "
+        "print(('confflow.science.confgen.coordination.shapes' in sys.modules, "
+        "'confflow.science.confgen.coordination.stage' in sys.modules, "
+        "'confflow.science.confgen.coordination.enumeration' in sys.modules, "
+        "'confflow.science.confgen.coordination.hgeom' in sys.modules, "
+        "'confflow.science.confgen.coordination.realization' in sys.modules))"
+    )
+    completed = _lazy_run(probe)
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.strip() == "(True, False, False, False, False)", completed.stdout
+
+
+def test_a4c_lazy_star_import() -> None:
+    probe = (
+        "ns={}; exec('from confflow.science.confgen.ring import *', ns); "
+        "import confflow.science.confgen.ring as r; "
+        "print(all(k in ns for k in r.__all__)); "
+        "ns2={}; exec('from confflow.science.confgen.torsion import *', ns2); "
+        "import confflow.science.confgen.torsion as t; "
+        "print(all(k in ns2 for k in t.__all__)); "
+        "ns3={}; exec('from confflow.science.confgen.coordination import *', ns3); "
+        "import confflow.science.confgen.coordination as c; "
+        "print(all(k in ns3 for k in c.__all__))"
+    )
+    completed = _lazy_run(probe)
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.strip().splitlines() == ["True", "True", "True"], completed.stdout
+
+
+def test_a4c_lazy_default_registry_spec_not_stage() -> None:
+    probe = (
+        "import sys; "
+        "from confflow.science.confgen.registry import build_default_registry; "
+        "r=build_default_registry(); print(r.ids()); "
+        "heavy=[m for m in sys.modules "
+        "if m.startswith('confflow.science.confgen.') "
+        "and (m.endswith('.stage') or m.endswith('.realization') "
+        "or m.endswith('.enumeration') or m.endswith('.hgeom'))]; "
+        "print(heavy); "
+        "print(any(m.endswith('.spec') for m in sys.modules "
+        "if m.startswith('confflow.science.confgen.')))"
+    )
+    completed = _lazy_run(probe)
+    assert completed.returncode == 0, completed.stderr
+    lines = completed.stdout.strip().splitlines()
+    assert lines[0] == "('coordination', 'rings', 'torsions')", completed.stdout
+    assert lines[1] == "[]", completed.stdout
+    assert lines[2] == "True", completed.stdout
+
+
+def test_a4c_lazy_no_runtime_component_import() -> None:
+    for _pkg in ("ring", "torsion", "coordination"):
+        _path = _LAZY_REPO_ROOT / "confflow" / "science" / "confgen" / _pkg / "__init__.py"
+        _tree = ast.parse(_path.read_text())
+        for _node in _tree.body:
+            if isinstance(_node, (ast.ImportFrom, ast.Import)):
+                _src = ast.unparse(_node)
+                assert ".component" not in _src, _src
+                assert "ComponentDescriptor" not in _src, _src
+                assert ".stage" not in _src, _src
+                assert ".realization" not in _src, _src
+                assert ".enumeration" not in _src, _src
+                assert ".hgeom" not in _src, _src
+        _src_all = _path.read_text()
+        assert "__getattr__" in _src_all, _pkg
+        assert "AttributeError" in _src_all, _pkg
+        assert "importlib" in _src_all, _pkg
+        assert "_LAZY_" in _src_all, _pkg

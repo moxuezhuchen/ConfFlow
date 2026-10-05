@@ -11,6 +11,18 @@ geometric realization (:mod:`realization`), geometric symmetry verification
 
 from __future__ import annotations
 
+import importlib
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from . import enumeration as enumeration
+    from . import hgeom as hgeom
+    from . import perception as perception
+    from . import realization as realization
+    from . import shapes as shapes
+    from . import stage as stage
+    from . import symmetry as symmetry
+
 __all__ = [
     "shapes",
     "enumeration",
@@ -20,3 +32,26 @@ __all__ = [
     "hgeom",
     "stage",
 ]
+
+_LAZY_SUBMODULES: dict[str, str] = {
+    "shapes": ".shapes",
+    "enumeration": ".enumeration",
+    "symmetry": ".symmetry",
+    "perception": ".perception",
+    "realization": ".realization",
+    "hgeom": ".hgeom",
+    "stage": ".stage",
+}
+
+
+def __getattr__(name: str) -> Any:
+    module_name = _LAZY_SUBMODULES.get(name)
+    if module_name is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    module = importlib.import_module(module_name, package=__name__)
+    globals()[name] = module
+    return module
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | set(__all__))
