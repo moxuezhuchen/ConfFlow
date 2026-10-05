@@ -69,7 +69,12 @@ def build_intent_registry(
 
     Rejects duplicate keys (conflict), unknown executors, entries
     without a handler, and empty/duplicate fragment-key declarations.
-    No import side effects, no global state.
+    Only an explicit non-empty ``wire_block_key`` outside ``fragment_keys``
+    is rejected (empty derives from ``fragment_keys[0]`` so C2-era custom
+    descriptors stay constructible); per-executor effective wire-block keys
+    must agree (fail-closed at assembly).  Rejected-key entries must be
+    non-empty strings (empty tuple = no placement restriction).  No import
+    side effects, no global state.
     """
     seen: dict[str, CapabilityDescriptor] = {}
     for descriptor in descriptors:
@@ -86,8 +91,98 @@ def build_intent_registry(
             raise ValueError(f"CapabilityDescriptor {descriptor.key!r} carries no intent handler")
         if not descriptor.fragment_keys:
             raise ValueError(f"CapabilityDescriptor {descriptor.key!r} declares no fragment keys")
+        for item in tuple(descriptor.rejected_step_keys or ()):
+            if not isinstance(item, str) or not item.strip():
+                raise ValueError(
+                    f"CapabilityDescriptor {descriptor.key!r} carries bad rejected keys"
+                )
+        explicit = getattr(descriptor, "wire_block_key", "")
+        if (
+            isinstance(explicit, str)
+            and explicit
+            and explicit not in tuple(descriptor.fragment_keys)
+        ):
+            raise ValueError(
+                f"CapabilityDescriptor {descriptor.key!r} wire_block_key "
+                f"{explicit!r} not in fragment_keys {tuple(descriptor.fragment_keys)!r}"
+            )
         seen[descriptor.key] = descriptor
+    _check_executor_wire_consistency(seen)
     return IntentRegistry(entries=seen)
+
+
+def _effective_wire_block_key(descriptor: CapabilityDescriptor) -> str:
+    """Return the effective wire block key (explicit or ``fragment_keys[0]``)."""
+    try:
+        explicit = getattr(descriptor, "wire_block_key", "")
+    except Exception:
+        explicit = ""
+    if isinstance(explicit, str) and explicit:
+        return explicit
+    return tuple(descriptor.fragment_keys)[0]
+
+
+def _check_executor_wire_consistency(entries: Mapping[str, CapabilityDescriptor]) -> None:
+    """Fail closed when one executor maps to divergent wire-block keys.
+
+    Declared strategy: same-executor entries must share one effective key
+    (explicit or derived).  Divergent metadata is an assembly error, never a
+    silent compiler choice.
+    """
+    by_executor: dict[str, set[str]] = {}
+    for descriptor in entries.values():
+        by_executor.setdefault(descriptor.executor, set()).add(
+            _effective_wire_block_key(descriptor)
+        )
+    for executor, keys in by_executor.items():
+        if len(keys) != 1:
+            raise ValueError(
+                f"conflicting wire_block_key for executor {executor!r}: {sorted(keys)}"
+            )
+
+
+def wire_block_key_for_executor(registry: Any, executor: str) -> str | None:
+    """Return the consistent wire-block key for *executor* (total, no raise).
+
+    Queries the registry by executor (never by guessed card type, so recipe
+    base steps without ``_card_type`` resolve).  No entry for *executor*
+    falls back to the builtin default (``FRAGMENT_KEYS_BY_EXECUTOR`` first
+    item, owned by this assembly point); unknown executors yield ``None``.
+    Inconsistent same-executor metadata also falls back to the builtin
+    default (assembly rejects it, but the compiler stays total).
+    """
+    try:
+        entries = getattr(registry, "entries", None)
+    except Exception:
+        entries = None
+    found: set[str] = set()
+    if isinstance(entries, Mapping):
+        for descriptor in entries.values():
+            try:
+                if getattr(descriptor, "executor", None) != executor:
+                    continue
+                frag = tuple(getattr(descriptor, "fragment_keys", ()) or ())
+            except Exception:
+                continue
+            if not frag:
+                continue
+            try:
+                explicit = getattr(descriptor, "wire_block_key", "")
+            except Exception:
+                explicit = ""
+            found.add(explicit if isinstance(explicit, str) and explicit else frag[0])
+    if len(found) == 1:
+        only = next(iter(found))
+        return only if isinstance(only, str) and only else None
+    try:
+        default = FRAGMENT_KEYS_BY_EXECUTOR.get(executor)  # type: ignore[attr-defined]
+    except Exception:
+        default = None
+    if default:
+        return tuple(default)[0]
+    if len(found) > 1:
+        return sorted(found)[0]
+    return None
 
 
 #: Capability-owned fragment keys per runtime executor (single source).
@@ -109,8 +204,11 @@ def build_default_intent_registry() -> IntentRegistry:
     No test-local keys are referenced here.
     """
     from ...cards import CARD_TYPES, get_card
+    from .calculation import REJECTED_STEP_KEYS as _CALC_REJECTED
     from .calculation import calculation_fragment
+    from .confgen import REJECTED_STEP_KEYS as _CONFGEN_REJECTED
     from .confgen import confgen_fragment
+    from .transform import REJECTED_STEP_KEYS as _TRANSFORM_REJECTED
     from .transform import transform_fragment
 
     descriptors: list[CapabilityDescriptor] = []
@@ -123,10 +221,16 @@ def build_default_intent_registry() -> IntentRegistry:
             raise ValueError(f"unknown executor {executor!r} for card {card_type!r}") from exc
         if executor == "calculation":
             handler = calculation_fragment
+            rejected = tuple(sorted(set(_CALC_REJECTED)))
+            wire_block_key = str(fragment_keys[0])
         elif executor == "confgen":
             handler = confgen_fragment
+            rejected = tuple(sorted(set(_CONFGEN_REJECTED)))
+            wire_block_key = str(fragment_keys[0])
         elif executor == "structure_transform":
             handler = transform_fragment
+            rejected = tuple(sorted(set(_TRANSFORM_REJECTED)))
+            wire_block_key = str(fragment_keys[0])
         else:  # pragma: no cover - current cards only use the three above
             raise ValueError(f"unknown executor {executor!r} for card {card_type!r}")
         descriptors.append(
@@ -137,6 +241,8 @@ def build_default_intent_registry() -> IntentRegistry:
                 card=card,
                 fragment_keys=fragment_keys,
                 description=str(card.get("description", "")),
+                rejected_step_keys=rejected,
+                wire_block_key=wire_block_key,
             )
         )
     return build_intent_registry(descriptors)

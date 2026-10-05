@@ -1,0 +1,76 @@
+{
+  "analysis_pending": "no analysis public card in this card; runtime AnalysisItemAdapter exists; follow-ups must verify the real analysis descriptor->handler path and must not cancel PLAN scope",
+  "authoring_same_authority": "one explicit ExecutionRegistry instance flows to compile_intent(registry=) and describe_step(registry=); authoring.py untouched (already same registry); A1 compile/authoring only, full execute() is the A2 hard gate (never class instantiation)",
+  "base_head": "eb74a05e31a1e48560cfeaed2ef14d6d8184475b",
+  "branch": "refactor/l1-a1-proto",
+  "byte_compare": {
+    "boundary_full_sha256": "ee811b9995f49dec9668693d58e9f4d68fa170bfa232837486a8998b6aed9d20",
+    "contract_full_sha256": "2fe92022d2e9fa537b8ad11152d2b173c6f6572e0b0bd3950c7148c332ab43bc",
+    "digests_equal_old_new": true
+  },
+  "card": "L1-A1",
+  "checkpoints_in_repo": [
+    "docs/confgen-fix/checkpoints/L1-A1/MANIFEST.json",
+    "docs/confgen-fix/checkpoints/L1-A1/DIFF.md"
+  ],
+  "collect": {
+    "added": [
+      "tests/v4/test_l1_intent_capabilities.py::test_a1_custom_default_compat_compiles",
+      "tests/v4/test_l1_intent_capabilities.py::test_a1_descriptor_defaults_derive_from_fragment_first",
+      "tests/v4/test_l1_intent_capabilities.py::test_a1_explicit_illegal_wire_block_rejected",
+      "tests/v4/test_l1_intent_capabilities.py::test_a1_misplaced_before_handler_order",
+      "tests/v4/test_l1_intent_capabilities.py::test_a1_no_executor_branches_in_reject_path",
+      "tests/v4/test_l1_intent_capabilities.py::test_a1_recipe_base_adapter_preserved",
+      "tests/v4/test_l1_intent_capabilities.py::test_a1_rejected_sets_match_legacy_branches",
+      "tests/v4/test_l1_authoring_projection.py::test_dummy_compile_and_authoring_projection",
+      "tests/v4/test_l1_authoring_projection.py::test_dummy_dedicated_rejections",
+      "tests/v4/test_l1_authoring_projection.py::test_dummy_default_registry_failclosed_byte_identical",
+      "tests/v4/test_l1_authoring_projection.py::test_dummy_rejected_matches_transform_module",
+      "tests/v4/test_l1_authoring_projection.py::test_same_execution_registry_flows_to_both_seams"
+    ],
+    "added_count": 12,
+    "new_total": 5025,
+    "old_total": 5013,
+    "removed_count": 0
+  },
+  "counting": "framework development (6 prod files) is not the final experiment; final extension experiment counts git diff --stat <framework-base>..<experiment-HEAD> -- confflow/ non-test production files modified+added <= 1 (target 0)",
+  "descriptor_registry_justification": "rejected_step_keys default (); wire_block_key default '' deriving from fragment_keys[0] (C2 compat; only explicit outside fragment_keys rejected); builtin rejected sets verbatim old branches; per-executor wire consistency fail-closed at assembly with builtin-default fallback at runtime; compiler generic total reads, no executor branches, unknown empty preserved",
+  "executed_validations": {
+    "contract_boundary_digest_old_eq_new": true,
+    "necessary_tests": "397 passed (24 new+old C2/A1 + 11 C0/C1 compat + 64 producer_intent/regressions + 298 machine/authoring/intent_boundary/p0boundary)",
+    "new_capability_tests": "24 passed (12 preserved C2 + 7 new capability probes + 5 new authoring projection)",
+    "real_compile_old_eq_new": true,
+    "static": "ruff check clean; ruff format clean; black clean --workers 1; mypy clean --num-workers 1 (6 production files, single worker)"
+  },
+  "external_artifacts_dir": "/tmp/l1-a1-output",
+  "external_artifacts_sha256": {
+    "boundary.full.json": "ee811b9995f49dec9668693d58e9f4d68fa170bfa232837486a8998b6aed9d20",
+    "contract.full.json": "2fe92022d2e9fa537b8ad11152d2b173c6f6572e0b0bd3950c7148c332ab43bc",
+    "contract.json": "eeae863c64a3fdcf68248d92eb16e915aeaf546385daa0f14ad0cfb1315772f5"
+  },
+  "golden_changed": [],
+  "golden_unchanged_asserted": "contract/boundary digests old==new; no full/golden run here",
+  "note": "pre-rehearsal only; no commit/push/merge/tag/install; shared trees untouched; root dispatch review applied; deviations stop-and-report, no fabrication",
+  "plan": "docs/confgen-fix/PLAN.md L1 + /tmp/l1-a1-design-output/{DESIGN.md,WHITELIST.md,DUMMY-ACCEPTANCE.md} v2 (root corrections take precedence)",
+  "resources_untouched": true,
+  "scope": "L1-A1 logic only (R1 rejected metadata + R2 generic adapter + same-authority authoring); checkpoint/seed/recipe science stays A2; Gaussian stays G1b",
+  "type": "logic",
+  "whitelist_measured": {
+    "modified": [
+      "confflow/producer/intent/compiler.py (1740 lines; generic reject + generic adapter, no three-executor branches)",
+      "confflow/producer/intent/capabilities/descriptor.py (163 lines; 2 compat-default fields + effective key)",
+      "confflow/producer/intent/capabilities/registry.py (248 lines; same-if/elif assembly + consistency + executor query)",
+      "confflow/producer/intent/capabilities/calculation.py (129 lines; tail REJECTED_STEP_KEYS only)",
+      "confflow/producer/intent/capabilities/confgen.py (168 lines; tail REJECTED_STEP_KEYS only)",
+      "confflow/producer/intent/capabilities/transform.py (123 lines; tail REJECTED_STEP_KEYS only)"
+    ],
+    "new": [
+      "tests/v4/test_l1_authoring_projection.py (226 lines, 5 tests)",
+      "docs/confgen-fix/checkpoints/L1-A1/DIFF.md",
+      "docs/confgen-fix/checkpoints/L1-A1/MANIFEST.json"
+    ],
+    "tests_append_only": [
+      "tests/v4/test_l1_intent_capabilities.py (665 lines; original 12 preserved + 7 probes)"
+    ]
+  }
+}

@@ -974,6 +974,11 @@ def _resolve_card_and_entry(
 # path below.
 
 
+# Canonical R1 sources: ``capabilities/{calculation,confgen,transform}.py``
+# ``REJECTED_STEP_KEYS`` (verbatim old branches).  This set is kept for
+# compatible import paths and equals ``confgen REJECTED - {"preset"}`` ==
+# ``transform REJECTED - {"seed"}`` (locked by test); new code reads the
+# descriptor value, never branches on executor here.
 _CALC_ONLY_FIELDS = frozenset(
     {
         "program",
@@ -1011,21 +1016,95 @@ _RESERVED_FRAGMENT_KEYS = frozenset(
 )
 
 
+def _effective_wire_block_key(entry: Any) -> str | None:
+    """Return the descriptor effective wire-block key (total, never raises).
+
+    Explicit non-empty ``wire_block_key`` wins; empty derives from
+    ``fragment_keys[0]`` (C2 compat).  No executor hardcoding here.
+    """
+    try:
+        explicit = getattr(entry, "wire_block_key", "")
+    except Exception:
+        explicit = ""
+    if isinstance(explicit, str) and explicit:
+        return explicit
+    try:
+        frag = tuple(getattr(entry, "fragment_keys", ()) or ())
+    except Exception:
+        return None
+    return frag[0] if frag and isinstance(frag[0], str) else None
+
+
+def _adapter_from_wire(step: Mapping[str, Any], block_key: Any) -> str | None:
+    """Read ``execution_adapter`` from one wire block (total, never raises)."""
+    if not isinstance(block_key, str) or not block_key:
+        return None
+    try:
+        block = step.get(block_key)
+    except Exception:
+        return None
+    if isinstance(block, Mapping):
+        try:
+            return block.get("execution_adapter")  # type: ignore[return-value]
+        except Exception:
+            return None
+    return None
+
+
+def _wire_block_key_for_executor(intent_registry: Any, executor: str) -> str | None:
+    """Resolve the wire-block key by executor via the assembly point.
+
+    The compiler never hardcodes executor->block names; the mapping lives in
+    ``capabilities/registry.py`` (builtin defaults + per-executor consistency).
+    Total: unknown executors yield ``None`` (old unknown-executor empty set
+    analogue for adapters), never raises.
+    """
+    try:
+        from .capabilities.registry import wire_block_key_for_executor as _helper
+    except Exception:
+        return None
+    try:
+        return _helper(intent_registry, executor)
+    except Exception:
+        return None
+
+
 def _reject_misplaced_fields(
-    step: Mapping[str, Any], card_type: str, executor: str, step_id: str
+    step: Mapping[str, Any], card_type: str, executor: str, step_id: str, entry: Any = None
 ) -> None:
     """Reject scientific inputs the card's executor cannot consume.
 
     Silently discarding a user declaration (a seed on a transform, a
     program on a confgen) would pretend to honor science it drops.
+
+    R1: the rejected set comes from the descriptor (``entry``) when given;
+    the 4-positional-arg form stays usable via the builtin table fallback
+    (dict lookup, no executor branches; unknown executors stay empty).
+    Callers pass the resolved ``entry``; validation stays after card resolve
+    and before the handler (call-site order unchanged).
     """
-    if executor == "calculation":
-        misplaced = sorted(set(step) & {"preset"})
-    elif executor == "confgen":
-        misplaced = sorted(set(step) & (_CALC_ONLY_FIELDS | {"preset"}))
-    elif executor == "structure_transform":
-        misplaced = sorted(set(step) & (_CALC_ONLY_FIELDS | {"program", "seed"}))
+    rejected: Any = ()
+    if entry is not None:
+        try:
+            rejected = getattr(entry, "rejected_step_keys", ()) or ()
+        except Exception:
+            rejected = ()
     else:
+        try:
+            from .capabilities.calculation import REJECTED_STEP_KEYS as _CALC_REJ
+            from .capabilities.confgen import REJECTED_STEP_KEYS as _CONF_REJ
+            from .capabilities.transform import REJECTED_STEP_KEYS as _TR_REJ
+        except Exception:
+            rejected = ()
+        else:
+            rejected = {
+                "calculation": _CALC_REJ,
+                "confgen": _CONF_REJ,
+                "structure_transform": _TR_REJ,
+            }.get(executor, ())
+    try:
+        misplaced = sorted(set(step) & set(rejected))
+    except Exception:
         misplaced = []
     if misplaced:
         raise _fail(
@@ -1248,17 +1327,18 @@ def compile_intent(
     checkpoint_intents: dict[str, dict[str, Any]] = {}
     for step in wire_steps:
         # Recipe base steps (patched or pristine) are already strict wire.
+        # Adapter is read-only data via the executor-consistent block key
+        # (registry query, never a guessed card type: base steps carry no
+        # ``_card_type``).  Legality stays in bindings (requires_adapter).
         step_id = str(step.get("id"))
         if step_id in by_id:
             raise _fail(f"duplicate step id {step_id!r}", step_id=step_id)
         ordered_ids.append(step_id)
         by_id[step_id] = step
         wire_executors[step_id] = str(step.get("executor"))
-        calculation = step.get("calculation")
-        adapter = None
-        if isinstance(calculation, Mapping):
-            adapter = calculation.get("execution_adapter")
-        wire_adapters[step_id] = adapter
+        wire_adapters[step_id] = _adapter_from_wire(
+            step, _wire_block_key_for_executor(intent_registry, str(step.get("executor")))
+        )
         step.setdefault("_card_type", None)
         step.setdefault("_card_version", CARD_VERSION)
 
@@ -1301,7 +1381,7 @@ def compile_intent(
         except ValueError as exc:
             raise _fail(str(exc), step_id=step_id) from exc
         executor = str(card["executor"])
-        _reject_misplaced_fields(user, card_type, executor, step_id)
+        _reject_misplaced_fields(user, card_type, executor, step_id, _entry)
         # Generic dispatch: single handler call, no executor hardcoding.
         # The same explicit registry instance flows here; a second lookup of
         # the same key/executor must return the same descriptor.
@@ -1414,11 +1494,7 @@ def compile_intent(
         by_id[step_id] = wire
         ordered_ids.append(step_id)
         wire_executors[step_id] = executor
-        calculation = wire.get("calculation")
-        adapter_name: str | None = None
-        if isinstance(calculation, Mapping):
-            adapter_name = calculation.get("execution_adapter")
-        wire_adapters[step_id] = adapter_name
+        wire_adapters[step_id] = _adapter_from_wire(wire, _effective_wire_block_key(_entry))
 
     _auto_bindings(ordered_ids, by_id, wire_executors, wire_adapters, inputs, registry)
 

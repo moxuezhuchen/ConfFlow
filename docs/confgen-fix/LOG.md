@@ -361,3 +361,30 @@ R7 glucose 127/155 的 28 项召回缺口与未做种子优化后 RMSD 验证如
 - 冻结：`git diff --binary HEAD` 见 `/tmp/l1-c2-output/L1-C2-proto.diff`
   （含 new/modes；sha 见同目录 `SHA256SUMS`）。未提交/未推送/未合并/未打 tag；
   共享树与冻结基线未动。
+
+## L1-A1 — rejected metadata + generic adapter + same-authority authoring (logic, 预演冻结；根验收另行)
+
+- 基点正式 C2 `eb74a05e31a1e48560cfeaed2ef14d6d8184475b`；工作树 `/tmp/l1-a1-proto`
+  分支 `refactor/l1-a1-proto`；源 `/tmp/l1-c2-exec` 只读；输出 `/tmp/l1-a1-output` 独占。
+  设计 `/tmp/l1-a1-design-output/{DESIGN.md,WHITELIST.md,DUMMY-ACCEPTANCE.md}` v2 已读，
+  根纠正优先（6 文件精确白名单、兼容默认、派生默认、4 参保持、时点保持、无三分支、
+  executor 一致查询、缺 builtin 回退、resources/authoring 不动、A1 只 compile/authoring、
+  中央计数与终验计数分离、analysis 待续）。
+- 白名单实测（精确 6 prod，不采用文档矛盾口径）：改 `compiler.py`（1740 行，
+  通用拒放 + 通用 adapter，无三 executor 分支）；`capabilities/descriptor.py`（163 行，
+  两兼容默认字段 + 有效键）；`capabilities/registry.py`（248 行，同一 `if/elif` 装配 +
+  一致性 + executor 查询）；三模块仅尾部 `REJECTED_STEP_KEYS` + wire 注释
+  （calculation 129/confgen 168/transform 123，`_wire_*` 体/签名/`__module__` 不动）。
+  测试 `test_l1_intent_capabilities.py`（665 行，原 12 不删不放宽 + 7 探针）+
+  新 `test_l1_authoring_projection.py`（226 行，5 用例）；新检查点
+  `docs/confgen-fix/checkpoints/L1-A1/`。`resources.py`/`authoring.py` 等零改。
+  本卡不新增 analysis 公开 card；L1 尚有 A2/A3 及 analysis 验证未满足，不取消 PLAN 范围。
+- 自检（非根验收）：新 24（12 原 + 7 能力探针 + 5 authoring 投影）；必要 397
+  （24 + 11 C0/C1 + 64 intent/regressions + 298 machine/authoring/boundary）；
+  contract `2fe92022…`/boundary `ee811b99…` 原新逐字一致；collect 5013->5025（+12/-0）。
+  ruff check/format、black `--workers 1`、mypy `--num-workers 1`（6 生产文件）通过；
+  差分探针（错序/ recipe base adapter/ custom 默认兼容）已锁，根将独立重跑。
+- 冻结：`git diff --binary HEAD` 见 `/tmp/l1-a1-output/L1-A1-proto.diff`
+  （含 new/modes；sha 见同目录 `SHA256SUMS`）；生产-only
+  `L1-A1-production-only.diff`；正式提示词见 `FORMAL-PROMPT.md`
+  （尾行 Claude Sonnet 5.5）。未提交/未推送/未合并/未打 tag；共享树与冻结基线未动。

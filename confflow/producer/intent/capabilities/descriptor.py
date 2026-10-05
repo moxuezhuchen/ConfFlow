@@ -90,6 +90,15 @@ class CapabilityDescriptor:
     card: Mapping[str, Any]
     fragment_keys: tuple[str, ...] = ()
     description: str = ""
+    # L1-A1 (R1+R2, compat defaults): misplaced-field authority lives in
+    # each capability module's ``REJECTED_STEP_KEYS``; the descriptor only
+    # carries the assembled value (default empty = no placement restriction,
+    # builtin entries carry the verbatim old branch sets).  ``wire_block_key``
+    # defaults to ``""`` meaning "derive from ``fragment_keys[0]``" so C2-era
+    # custom descriptors without the new fields still construct/compile;
+    # only an explicit non-empty key outside ``fragment_keys`` is rejected.
+    rejected_step_keys: tuple[str, ...] = ()
+    wire_block_key: str = ""
 
     def __post_init__(self) -> None:
         if not isinstance(self.key, str) or not self.key.strip():
@@ -112,9 +121,27 @@ class CapabilityDescriptor:
             raise ValueError("CapabilityDescriptor fragment_keys carries duplicates")
         if not isinstance(self.description, str):
             raise ValueError("CapabilityDescriptor description must be a string")
+        if not isinstance(self.rejected_step_keys, (tuple, list, frozenset, set)):
+            raise ValueError("CapabilityDescriptor rejected_step_keys must be a tuple of strings")
+        rej = tuple(self.rejected_step_keys)
+        for item in rej:
+            if not isinstance(item, str) or not item.strip():
+                raise ValueError(
+                    "CapabilityDescriptor rejected_step_keys must be non-empty strings"
+                )
+        if len(set(rej)) != len(rej):
+            raise ValueError("CapabilityDescriptor rejected_step_keys carries duplicates")
+        if not isinstance(self.wire_block_key, str):
+            raise ValueError("CapabilityDescriptor wire_block_key must be a string")
         frozen = _freeze_mapping(dict(self.card))
         object.__setattr__(self, "card", frozen)
         object.__setattr__(self, "fragment_keys", tuple(frag))
+        object.__setattr__(self, "rejected_step_keys", tuple(rej))
+        if self.wire_block_key and self.wire_block_key not in tuple(frag):
+            raise ValueError(
+                f"CapabilityDescriptor wire_block_key {self.wire_block_key!r} "
+                f"not in fragment_keys {tuple(frag)!r}"
+            )
 
     def card_dict(self) -> dict[str, Any]:
         """Return an isolated mutable deep copy of the frozen card shape."""
@@ -122,3 +149,15 @@ class CapabilityDescriptor:
         if not isinstance(thawed, dict):
             raise ValueError("CapabilityDescriptor card did not thaw to a dict")
         return thawed
+
+    @property
+    def effective_wire_block_key(self) -> str:
+        """Return the wire block key (explicit or derived default).
+
+        Empty ``wire_block_key`` derives from ``fragment_keys[0]`` so C2-era
+        descriptors stay compilable without hardcoding an executor mapping
+        in the compiler.
+        """
+        if isinstance(self.wire_block_key, str) and self.wire_block_key:
+            return self.wire_block_key
+        return tuple(self.fragment_keys)[0]

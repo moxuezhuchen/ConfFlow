@@ -433,3 +433,233 @@ def test_light_toplevel_no_science_no_handler_side_effect() -> None:
     )
     proc2 = subprocess.run([sys.executable, "-c", code2], capture_output=True, text=True)
     assert proc2.returncode == 0, proc2.stdout + proc2.stderr
+
+
+# --- L1-A1 differential probes (append-only; original 12 untouched) ---
+
+
+def test_a1_rejected_sets_match_legacy_branches() -> None:
+    import confflow.producer.intent.capabilities.calculation as calc
+    import confflow.producer.intent.capabilities.confgen as cg
+    import confflow.producer.intent.capabilities.transform as tr
+
+    assert calc.REJECTED_STEP_KEYS == frozenset({"preset"})
+    assert cg.REJECTED_STEP_KEYS == frozenset(
+        {
+            "program",
+            "role",
+            "adapter",
+            "profile",
+            "checks",
+            "check_params",
+            "recovery",
+            "recovery_params",
+            "preset",
+        }
+    )
+    assert tr.REJECTED_STEP_KEYS == frozenset(
+        {
+            "program",
+            "role",
+            "adapter",
+            "profile",
+            "checks",
+            "check_params",
+            "recovery",
+            "recovery_params",
+            "seed",
+        }
+    )
+    # Old private face kept and equals the two 9-sets minus the extra key.
+    assert compiler._CALC_ONLY_FIELDS == frozenset(
+        {
+            "program",
+            "role",
+            "adapter",
+            "profile",
+            "checks",
+            "check_params",
+            "recovery",
+            "recovery_params",
+        }
+    )
+    assert set(cg.REJECTED_STEP_KEYS) - {"preset"} == set(compiler._CALC_ONLY_FIELDS)
+    assert set(tr.REJECTED_STEP_KEYS) - {"seed"} == set(compiler._CALC_ONLY_FIELDS)
+    # Builtin descriptor values are verbatim the module constants.
+    reg = build_default_intent_registry()
+    assert set(reg.resolve("sp").rejected_step_keys) == set(calc.REJECTED_STEP_KEYS)
+    assert set(reg.resolve("confgen").rejected_step_keys) == set(cg.REJECTED_STEP_KEYS)
+    assert set(reg.resolve("refine").rejected_step_keys) == set(tr.REJECTED_STEP_KEYS)
+
+
+def test_a1_descriptor_defaults_derive_from_fragment_first() -> None:
+    reg = build_default_intent_registry()
+    # Default builtin entries carry explicit keys equal to fragment_keys[0].
+    for key in ("sp", "confgen", "refine", "deduplicate"):
+        entry = reg.resolve(key)
+        assert entry.wire_block_key == entry.fragment_keys[0]
+        assert entry.effective_wire_block_key == entry.fragment_keys[0]
+        assert compiler._effective_wire_block_key(entry) == entry.fragment_keys[0]
+    # C2-era custom without new fields: defaults derive, no hardcoded executor.
+    probe = CapabilityDescriptor(
+        key="compat_probe",
+        executor="calculation",
+        intent_handler=reg.resolve("sp").intent_handler,
+        card=copy.deepcopy(CUSTOM_CARD),
+        fragment_keys=("calculation",),
+    )
+    assert probe.rejected_step_keys == ()
+    assert probe.wire_block_key == ""
+    assert probe.effective_wire_block_key == "calculation"
+    assert compiler._effective_wire_block_key(probe) == "calculation"
+    # transform-shaped custom derives its own first key.
+    tprobe = CapabilityDescriptor(
+        key="compat_t",
+        executor="structure_transform",
+        intent_handler=reg.resolve("refine").intent_handler,
+        card=copy.deepcopy(CUSTOM_CARD),
+        fragment_keys=("transform", "_preset_ref"),
+    )
+    assert tprobe.effective_wire_block_key == "transform"
+
+
+def test_a1_explicit_illegal_wire_block_rejected() -> None:
+    reg = build_default_intent_registry()
+    with pytest.raises(ValueError, match="wire_block_key"):
+        CapabilityDescriptor(
+            key="badblock",
+            executor="calculation",
+            intent_handler=reg.resolve("sp").intent_handler,
+            card=copy.deepcopy(CUSTOM_CARD),
+            fragment_keys=("calculation",),
+            wire_block_key="bogus",
+        )
+    bad = CapabilityDescriptor(
+        key="badblock2",
+        executor="calculation",
+        intent_handler=reg.resolve("sp").intent_handler,
+        card=copy.deepcopy(CUSTOM_CARD),
+        fragment_keys=("calculation",),
+        wire_block_key="calculation",
+    )
+    object.__setattr__(bad, "wire_block_key", "bogus")
+    with pytest.raises(ValueError, match="wire_block_key"):
+        build_intent_registry([*reg.entries.values(), bad])
+    # Per-executor divergence is fail-closed at assembly.
+    a = CapabilityDescriptor(
+        key="div_a",
+        executor="structure_transform",
+        intent_handler=reg.resolve("refine").intent_handler,
+        card=copy.deepcopy(CUSTOM_CARD),
+        fragment_keys=("transform", "_preset_ref"),
+        wire_block_key="transform",
+    )
+    b = CapabilityDescriptor(
+        key="div_b",
+        executor="structure_transform",
+        intent_handler=reg.resolve("refine").intent_handler,
+        card=copy.deepcopy(CUSTOM_CARD),
+        fragment_keys=("transform", "_preset_ref"),
+        wire_block_key="_preset_ref",
+    )
+    with pytest.raises(ValueError, match="conflicting wire_block_key"):
+        build_intent_registry([a, b])
+
+
+def test_a1_misplaced_before_handler_order() -> None:
+    # confgen step carrying both a misplaced key and a handler-level fault
+    # must report the misplaced error (card resolve -> reject -> handler).
+    both = _intent(
+        [
+            {
+                "id": "c1",
+                "card": "confgen@v1",
+                "program": "should-be-rejected",
+                "native": {},
+            }
+        ]
+    )
+    with pytest.raises(IntentCompilationError) as excinfo:
+        compile_intent(copy.deepcopy(both))
+    assert "cannot consume fields: program" in str(excinfo.value)
+    assert excinfo.value.step_id == "c1"
+    # Reverse: only the handler fault remains.
+    only_native = _intent([{"id": "c1", "card": "confgen@v1", "native": {}}])
+    with pytest.raises(IntentCompilationError) as excinfo2:
+        compile_intent(copy.deepcopy(only_native))
+    assert "cannot consume fields" not in str(excinfo2.value)
+    assert "non-empty native mapping" in str(excinfo2.value)
+    assert excinfo2.value.step_id == "c1"
+    # Old 4-positional-arg form stays usable; unknown executors stay empty.
+    try:
+        compiler._reject_misplaced_fields({"program": "x"}, "confgen", "confgen", "s1")
+    except IntentCompilationError as exc:
+        assert "program" in str(exc) and exc.step_id == "s1"
+    else:  # pragma: no cover
+        raise AssertionError("expected misplaced rejection")
+    compiler._reject_misplaced_fields({"program": "x"}, "bogus", "analysis", "s9")
+
+
+def test_a1_no_executor_branches_in_reject_path() -> None:
+    import inspect as _inspect
+
+    src = _inspect.getsource(compiler._reject_misplaced_fields)
+    assert '== "calculation"' not in src
+    assert "== 'calculation'" not in src
+    assert '== "confgen"' not in src
+    assert "== 'confgen'" not in src
+    assert '== "structure_transform"' not in src
+
+
+def test_a1_recipe_base_adapter_preserved() -> None:
+    doc = {
+        "schema": INTENT_SCHEMA,
+        "globals": {"charge": 0, "multiplicity": 1},
+        "recipe": "single_point",
+        "steps": [
+            {
+                "id": "single_point",
+                "card": "sp@v1",
+                "program": "orca",
+                "native": {"keyword": "B3LYP D3BJ SP"},
+            }
+        ],
+    }
+    out = compile_intent(copy.deepcopy(doc))
+    assert out["steps"][0]["calculation"]["execution_adapter"] == "standard"
+    assert compile_workflow(copy.deepcopy(out)).ok
+    # Custom registry missing every builtin still resolves the builtin
+    # default block key (never drops a shipped adapter to None).
+    reg = build_default_intent_registry()
+    only_t = build_intent_registry([reg.resolve("refine")])
+    assert compiler._wire_block_key_for_executor(only_t, "calculation") == "calculation"
+    base = {"id": "x", "executor": "calculation", "calculation": {"execution_adapter": "standard"}}
+    assert (
+        compiler._adapter_from_wire(
+            base, compiler._wire_block_key_for_executor(only_t, "calculation")
+        )
+        == "standard"
+    )
+    assert (
+        compiler._adapter_from_wire(base, compiler._wire_block_key_for_executor(only_t, "analysis"))
+        is None
+    )
+
+
+def test_a1_custom_default_compat_compiles() -> None:
+    # C2-style descriptor without the new fields still constructs/compiles.
+    custom = _custom_registry()
+    doc = _intent(
+        [
+            {
+                "id": "s1",
+                "card": f"{CUSTOM_KEY}@v1",
+                "program": "orca",
+                "native": {"keyword": "B3LYP D3BJ SP"},
+                "role": "myrole",
+            }
+        ]
+    )
+    out = compile_intent(copy.deepcopy(doc), intent_registry=custom)
+    assert compile_workflow(copy.deepcopy(out)).ok
+    assert out["steps"][0]["calculation"]["role"] == "probe_myrole"

@@ -110,6 +110,12 @@ def _wire_calculation(
 _resolve_program.__module__ = "confflow.producer.intent.compiler"
 _wire_calculation.__module__ = "confflow.producer.intent.compiler"
 
+#: Step keys this executor cannot consume (R1 authority, verbatim old branch).
+#: Old compiler branch was ``{"preset"}`` for ``calculation``.
+#: Wire block: ``"calculation"`` (= ``fragment_keys[0]`` for calculation cards;
+#: compiler derives via the descriptor effective key, no executor branch here).
+REJECTED_STEP_KEYS: frozenset = frozenset({"preset"})
+
 
 def calculation_fragment(
     step: Mapping[str, Any], card: dict[str, Any] | Mapping[str, Any], step_id: str

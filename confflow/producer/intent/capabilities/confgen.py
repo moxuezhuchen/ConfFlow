@@ -136,6 +136,24 @@ def _wire_confgen(step: Mapping[str, Any], step_id: str) -> dict[str, Any]:
 _legacy_paths_to_v3.__module__ = "confflow.producer.intent.compiler"
 _wire_confgen.__module__ = "confflow.producer.intent.compiler"
 
+#: Step keys this executor cannot consume (R1 authority, verbatim old branch).
+#: Old compiler branch was ``_CALC_ONLY_FIELDS | {"preset"}`` (9 keys).
+#: Wire block: ``"confgen"`` (= ``fragment_keys[0]`` for confgen cards;
+#: compiler derives via the descriptor effective key, no executor branch here).
+REJECTED_STEP_KEYS: frozenset = frozenset(
+    {
+        "program",
+        "role",
+        "adapter",
+        "profile",
+        "checks",
+        "check_params",
+        "recovery",
+        "recovery_params",
+        "preset",
+    }
+)
+
 
 def confgen_fragment(
     step: Mapping[str, Any], card: Mapping[str, Any] | dict[str, Any], step_id: str
