@@ -130,6 +130,15 @@ class ComponentDescriptor:
     # leave it empty so future components never auto-authorize new
     # topology_bonds inputs via spec_keys/contribute_topology).
     topology_input_keys: tuple[str, ...] = ()
+    # R5 generic input-diagnostics hook (optional for compat; default None).
+    # report_diagnostics(context) sees the driving MolecularContext and
+    # returns a JSON mapping or None. The kernel calls it generically per
+    # descriptor (never naming components, never importing them); only a
+    # non-empty mapping is written to report.component_diagnostics[id],
+    # fully empty stays omitted so existing report bytes are unchanged.
+    # Analysis failures must surface as an explicit {"error": ...} mapping,
+    # never as silent empty.
+    report_diagnostics: Callable[[Any], Mapping[str, Any] | None] | None = None
     # legacy_compat: (public_name, module, attr) triples for old public
     # compat entry points preserved in kernel wrappers. The strings live
     # here (component-owned); kernel wrappers look them up via

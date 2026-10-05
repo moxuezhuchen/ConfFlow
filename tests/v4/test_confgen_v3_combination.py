@@ -39,10 +39,12 @@ from confflow.science.confgen.model import (
 )
 from confflow.science.confgen.ring.geometry import dihedral_deg
 from confflow.science.confgen.ring.stage import RingStage
-from confflow.science.confgen.ring.templates import get_template, template_coords
+from tests.v4._helpers.ring_inputs import frozen_coords
 
 TORSION_ANGLES = (60.0, 180.0, 300.0)
 RING_TEMPLATES = ("chair_A_6", "chair_B_6")
+# R4 alias (Q3): chair_A_6->C_1, chair_B_6->C_0 (form identity).
+RING_FORMS = {("C", 1), ("C", 0)}
 
 
 def _chain(origin: np.ndarray, dihedral_deg_: float = 180.0) -> np.ndarray:
@@ -70,7 +72,7 @@ def _build_fixture(noise: float = 0.0, seed: int = 0) -> tuple[StructureRecord, 
     tetra = np.array([[1.0, 1.0, 1.0], [1.0, -1.0, -1.0], [-1.0, 1.0, -1.0], [-1.0, -1.0, 1.0]])
     tetra = tetra / np.linalg.norm(tetra[0]) * 2.0
     center = np.vstack([np.zeros((1, 3)), tetra])
-    ring = template_coords(get_template("chair_A_6")) + np.array([30.0, 0.0, 0.0])
+    ring = frozen_coords("chair_A_6") + np.array([30.0, 0.0, 0.0])
     chain_a = _chain(np.array([-30.0, 0.0, 0.0]))
     chain_b = _chain(np.array([0.0, 30.0, 0.0]))
     coords = np.vstack([center, ring, chain_a, chain_b])
@@ -183,17 +185,17 @@ def test_combination_36_leaves_real_stages() -> None:
         assert coordination["shape"] == "tetrahedral"
         coordinations.add(tuple(coordination["placement"]))
         ring = key["rings"]["ring1"]
-        assert ring["template"] in RING_TEMPLATES
+        assert (ring["form"], ring["index"]) in RING_FORMS
         assert ring["anchor"] == 5
         assert ring["direction"] == "as_given"
-        rings.add(ring["template"])
+        rings.add((ring["form"], ring["index"]))
         assert set(key["torsions"]) == {"t1", "t2"}
         for axis_id in ("t1", "t2"):
             value = float(key["torsions"][axis_id])
             assert min(abs((value - a + 180.0) % 360.0 - 180.0) for a in TORSION_ANGLES) < 1e-9
             torsions[(axis_id, round(value, 6))] += 1
     assert len(coordinations) == 2
-    assert rings == set(RING_TEMPLATES)
+    assert rings == RING_FORMS
     assert len(torsions) == 2 * 3
     assert all(count == 2 * 2 * 3 for count in torsions.values())
     combos = Counter()
@@ -304,8 +306,22 @@ def test_combination_adversarial_tamper_caught() -> None:
     )
     run = engine.run(context)
     published = [r for r in run.target_records if r.status.value == "published_leaf"]
-    kinds = Counter(r.status.value for r in run.target_records)
     assert len(published) < 36
-    assert kinds.get("failed_drift", 0) > 0
+    # R4 rewrite (Q3/CP boundary): the 0.30A tamper pushes the ring to the
+    # CP dead-zone/small-margin boundary, so the tampered branch routes to
+    # unresolved/ambiguous_perception (not failed_drift). Prove the tampered
+    # branch is unpublished with a specific AMBIGUOUS_KEY audit, and the
+    # healthy branch still publishes 18 leaves.
+    assert len(published) == 18
+    tampered = [
+        r for r in run.target_records if r.target_id == "rings:000000" and r.axis == "rings"
+    ]
+    assert len(tampered) == 2 and all(r.status.value == "unresolved" for r in tampered)
+    for rec in tampered:
+        assert rec.reason == "ambiguous_perception"
+        anomalies = [dict(e).get("anomaly") for e in rec.evidence]
+        assert "AMBIGUOUS_KEY" in anomalies
+    healthy = [r for r in run.target_records if r.target_id == "rings:000001" and r.axis == "rings"]
+    assert all(r.status.value == "expanded" for r in healthy)
     ok, _ = verify_terminal_equations(run.target_records)
     assert ok is True

@@ -1,0 +1,70 @@
+{
+ "card": "R4 checkpoint record (small manifest + DIFF only; golden bulk stays external)",
+ "contract_effect": {
+  "changed_paths": [
+   "/confgen/ring_forms_by_size",
+   "/contract_digest",
+   "/workflow_schema/$defs/RingGenerationSpec/properties/forms",
+   "/workflow_schema_sha256"
+  ],
+  "evidence": "/tmp/fix1r-r4-root-contract-diff-paths.json",
+  "note": "forms fields + hashes only; boundary.full.json unchanged; TS1 default/flexible/rigid unchanged at stage; final full/golden pending"
+ },
+ "counts": {
+  "checkpoint_entries": 26,
+  "checkpoint_ring_reports": 21,
+  "non_ring_unchanged": 72,
+  "ring_actual_changed": 13,
+  "ring_actual_same": 8,
+  "ring_allowed_change": 21,
+  "total_reports": 93
+ },
+ "external_checkpoint": "/tmp/fix1r-r4-root-checkpoint",
+ "external_manifest_sha256": "83353f9ba5c8957f7def878fc694cb38796876db0d71c25a58be74d6aa136168",
+ "files": {
+  "DIFF-SUMMARY.json": "8ce4e2d0e436b38d93b7d03a0778a1002f2f02f8d8f476fc3913dd62dec45ad8",
+  "boundary.full.json": "ee811b9995f49dec9668693d58e9f4d68fa170bfa232837486a8998b6aed9d20",
+  "collect.txt": "2276652fb777553bd3bb73e1ef5a5969660f3ef8f85a38a42ca986d5b9ccd708",
+  "contract.full.json": "2fe92022d2e9fa537b8ad11152d2b173c6f6572e0b0bd3950c7148c332ab43bc",
+  "contract.json": "08d51085cb4fea98b5c6e977345fbc339d4098a29e791b511e564b13dcd2c6a8",
+  "engine_reports/tests_v4_test_confgen_v3_combination.py_test_combination_36_leaves_real_stages__0.json": "9db4210a5a46a857c4228ff8cedfcc69a0fcc299b0ebea266017c70e2f742a5a",
+  "engine_reports/tests_v4_test_confgen_v3_combination.py_test_combination_36_leaves_real_stages__1.json": "9db4210a5a46a857c4228ff8cedfcc69a0fcc299b0ebea266017c70e2f742a5a",
+  "engine_reports/tests_v4_test_confgen_v3_combination.py_test_combination_adversarial_tamper_caught__0.json": "6f36974f18e89be3a3fe824569ec9018897fe747d7bf69f3a08f3b4f48d7152a",
+  "engine_reports/tests_v4_test_confgen_v3_combination.py_test_combination_perturbation_key_invariance__0.json": "9db4210a5a46a857c4228ff8cedfcc69a0fcc299b0ebea266017c70e2f742a5a",
+  "engine_reports/tests_v4_test_confgen_v3_combination.py_test_combination_perturbation_key_invariance__1.json": "6557491f4ec466572c86e10424d3848c66413d84f263270238b4b22529570fd3",
+  "engine_reports/tests_v4_test_confgen_v3_combination.py_test_combination_real_perception_locks__0.json": "9db4210a5a46a857c4228ff8cedfcc69a0fcc299b0ebea266017c70e2f742a5a",
+  "engine_reports/tests_v4_test_confgen_v3_core.py_test_chained_ring_enumeration_preserves_only_torsion_axis_locks__1.json": "611f1fbf3d1b89c0345f55ca6f8d641fdc5ba87dbe1b51619acbe1b13da5a4ef",
+  "engine_reports/tests_v4_test_confgen_v3_core.py_test_chained_ring_enumeration_preserves_only_torsion_axis_locks__2.json": "6c71be77ec392780b1771c3ca5819180ff0d5b7ce8cf11a77ab4bdd23dd1f02a",
+  "engine_reports/tests_v4_test_confgen_v3_core.py_test_conditional_exact_nine_not_twelve__0.json": "ad6f5e5f241b4edfaa87c4fde6e4fff044108057bab69f0e1620fb29d0f30288",
+  "engine_reports/tests_v4_test_confgen_v3_core.py_test_conditional_failed_top_parent_defers_exact_subtree__0.json": "5092b31ba3fbe9a5a44828fab96b08b730be2e393e3e45144ca33d886fc52d78",
+  "engine_reports/tests_v4_test_confgen_v3_core.py_test_conditional_failure_defers_exact_subtree__0.json": "98c0c5613aed415da117f53b0f17ff94b728c7278a09011e257c953feb9dd663",
+  "engine_reports/tests_v4_test_confgen_v3_core.py_test_engine_damaged_geometry_never_publishes__0.json": "fdb21a3b4b357adebcc28db51debecdc374a6037c6618281e53e68f9fb347f2d",
+  "engine_reports/tests_v4_test_confgen_v3_core.py_test_engine_ring_torsion_control_locks_hold__0.json": "ffa4a745d59394cc5df0f6be4cd7b6d7c0ac41cb62a16ab45074ea170b400c4a",
+  "engine_reports/tests_v4_test_confgen_v3_core.py_test_engine_rings_only_run__0.json": "588d797dc6935ec49fd18668d2e2da72d816b7e101af15c557b36fac9ddb097d",
+  "engine_reports/tests_v4_test_confgen_v3_core.py_test_inherited_adversarial_rotation_is_drift_never_stale__1.json": "4652e712067a261a6f9fd66655c737126aefbe7b5d7134b3afc1989adfa3b819",
+  "engine_reports/tests_v4_test_confgen_v3_core.py_test_inherited_adversarial_rotation_is_drift_never_stale__2.json": "591362e1681f8f7a8609250ef89a0a17e6134b12fed6c2f59dbb2b7414a21de7",
+  "engine_reports/tests_v4_test_confgen_v3_core.py_test_lock_reference_parent_uses_accepted_parent_geometry__0.json": "1fd2af9bc0eccc2418f38726cf905e8dba6eae5b123c3262f62f47f755f107c7",
+  "engine_reports/tests_v4_test_confgen_v3_core.py_test_lock_reference_parent_uses_accepted_parent_geometry__1.json": "1fd2af9bc0eccc2418f38726cf905e8dba6eae5b123c3262f62f47f755f107c7",
+  "engine_reports/tests_v4_test_confgen_v3_core.py_test_pinned_coordination_ring_damage_is_drift__0.json": "e6edb9a198a993766e2bf9171f6052ae758dd709e50323f076e84b98e1b982a0",
+  "engine_reports/tests_v4_test_confgen_v3_core.py_test_suppression_combined_axes_realize_normally__0.json": "02eabe8b971915caa5112c9e439023d8b64c82e7be23360b3b3d30f568867972",
+  "engine_reports/tests_v4_test_confgen_v3_integration.py_TestExecutorV3_test_nested_run_rows_carry_units__0.json": "877084853bd44fca7e7a6ef4cc43d4e47f997d2f53b61879fb3e4ef22e39b13d"
+ },
+ "note": "Large golden bytes are NOT vendored; verify with: cd /tmp/fix1r-r4-root-checkpoint && sha256sum -c against files above.",
+ "r4_stage": {
+  "collect": 4951,
+  "evidence": "/tmp/fix1r-r4-v4-output/ROOT-STAGE-ACCEPTANCE.json",
+  "patch_sha256": "52f9425141f306bec77298dc1bbeeeae759319c99af9ed8138c4a62491776ed7",
+  "root_tests_v3": 218,
+  "root_tests_v4": 11
+ },
+ "scope": "21 root-captured ring reports only; remaining 72 baseline frozen and prior broad diagnostic equal; full milestone capture pending",
+ "tested_branch": "fix/confgen-1r",
+ "tested_commits": {
+  "F1": "5e455aa0df433cebe8ff5cba0b590b6ce0eb626f",
+  "K0": "d964ba7e75999b6a7eb4fe48350b19dcdeae925f",
+  "R1": "70b0d4415134ea3230b0af6b7a81dabf90c43651",
+  "R2": "38b5d4a6443544741bfc9870ac4ad0838adf7c0e",
+  "R3": "f3c2eeffd06c83a159f5c7d4c21d1418661f31ab",
+  "R4": "27e046c138090e68d54b2d0a711b392c7af0a3d8"
+ }
+}

@@ -2969,7 +2969,7 @@ def _build_cr_system() -> dict[str, Any]:
     propagation — correctly detected as coordination change, not used here).
     Ring input geometry comes from the ring lane's own chair_A_6 template.
     """
-    from confflow.science.confgen.ring.templates import get_template, template_coords
+    from tests.v4._helpers.ring_inputs import frozen_coords
 
     tet = np.array([[1.0, 1.0, 1.0], [1.0, -1.0, -1.0], [-1.0, 1.0, -1.0], [-1.0, -1.0, 1.0]])
     tet = tet / np.linalg.norm(tet, axis=1, keepdims=True) * 2.0
@@ -3006,7 +3006,7 @@ def _build_cr_system() -> dict[str, Any]:
         elements.append("Cl")
         coords.append(spot)
         edges.append((0, idx, EdgeType.COORDINATION))
-    ring_xyz = np.array(template_coords(get_template("chair_A_6")), dtype=float)
+    ring_xyz = np.array(frozen_coords("chair_A_6"), dtype=float)
     ring_xyz = ring_xyz + np.array([12.0, 0.0, 0.0])
     base = len(elements)
     for k in range(6):
@@ -3110,7 +3110,9 @@ def test_coordination_ring_composition_lock_scope() -> None:
     seen_templates = set()
     for target in rtargets:
         out = rstage.realize(rparent, target, context)
-        template_name = str(dict(target.state_value)["R1"]["template"])
+        # R4 alias: chair_A_6->(C,1), chair_B_6->(C,0), boat_6->(B,3).
+        commanded = dict(dict(target.state_value)["R1"])
+        template_name = (str(commanded["form"]), int(commanded["index"]))
         seen_templates.add(template_name)
         assert out.status == "realized", (template_name, out.reason)
         assert out.structure is not None
@@ -3119,7 +3121,7 @@ def test_coordination_ring_composition_lock_scope() -> None:
         scope = evidence[0]["lock_scope_atoms"]
         assert all(a not in scope for a in system["ring"])
         assert evidence[0]["reference_source"] == "accepted-parent"
-    assert seen_templates == {"chair_A_6", "chair_B_6", "boat_6"}
+    assert seen_templates == {("C", 1), ("C", 0), ("B", 3)}
 
 
 def _audit_direct(

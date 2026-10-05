@@ -1,0 +1,50 @@
+{
+ "base": "10c7ffe0caf504be50228684a9b64e484b92fdeb",
+ "card": "R4G",
+ "collect": {
+  "added": 15,
+  "after": 4303,
+  "base": 4288,
+  "removed": 0
+ },
+ "contract": {
+  "boundary_cli_sha256": "7ca4da409699b9439587e35564805e3f7245b297900658c49e1c2e99cd2df780",
+  "contract_bytes_sha256": "2932161686d145f9a40f65450c3e9dfe99f4c0592cd57eac35de6177875cc2d3",
+  "contract_cli_sha256": "ee6489e4bec0ea3b77c9dfb205eecb520cad8ad310ab13feecbcaaa8013525dc",
+  "contract_digest": "02cfa4963fce7882064b3a89ac3a8d78bd336245c4ec9014557e793101e2de05"
+ },
+ "engine_reports": {
+  "tests_v4_test_confgen_v3_combination.py_test_combination_36_leaves_real_stages__0.json": "9db4210a5a46a857c4228ff8cedfcc69a0fcc299b0ebea266017c70e2f742a5a",
+  "tests_v4_test_confgen_v3_combination.py_test_combination_36_leaves_real_stages__1.json": "9db4210a5a46a857c4228ff8cedfcc69a0fcc299b0ebea266017c70e2f742a5a",
+  "tests_v4_test_confgen_v3_combination.py_test_combination_adversarial_tamper_caught__0.json": "6f36974f18e89be3a3fe824569ec9018897fe747d7bf69f3a08f3b4f48d7152a",
+  "tests_v4_test_confgen_v3_combination.py_test_combination_perturbation_key_invariance__0.json": "9db4210a5a46a857c4228ff8cedfcc69a0fcc299b0ebea266017c70e2f742a5a",
+  "tests_v4_test_confgen_v3_combination.py_test_combination_perturbation_key_invariance__1.json": "6557491f4ec466572c86e10424d3848c66413d84f263270238b4b22529570fd3",
+  "tests_v4_test_confgen_v3_combination.py_test_combination_real_perception_locks__0.json": "9db4210a5a46a857c4228ff8cedfcc69a0fcc299b0ebea266017c70e2f742a5a",
+  "tests_v4_test_confgen_v3_core.py_test_chained_ring_enumeration_preserves_only_torsion_axis_locks__0.json": "e4e04adf9925197e003fd328ea382cf95e6e0bd8e8db3909211f4f1dbf1565b0",
+  "tests_v4_test_confgen_v3_core.py_test_chained_ring_enumeration_preserves_only_torsion_axis_locks__1.json": "611f1fbf3d1b89c0345f55ca6f8d641fdc5ba87dbe1b51619acbe1b13da5a4ef",
+  "tests_v4_test_confgen_v3_core.py_test_chained_ring_enumeration_preserves_only_torsion_axis_locks__2.json": "6c71be77ec392780b1771c3ca5819180ff0d5b7ce8cf11a77ab4bdd23dd1f02a",
+  "tests_v4_test_confgen_v3_core.py_test_conditional_exact_nine_not_twelve__0.json": "ad6f5e5f241b4edfaa87c4fde6e4fff044108057bab69f0e1620fb29d0f30288",
+  "tests_v4_test_confgen_v3_core.py_test_conditional_failed_top_parent_defers_exact_subtree__0.json": "5092b31ba3fbe9a5a44828fab96b08b730be2e393e3e45144ca33d886fc52d78",
+  "tests_v4_test_confgen_v3_core.py_test_conditional_failure_defers_exact_subtree__0.json": "98c0c5613aed415da117f53b0f17ff94b728c7278a09011e257c953feb9dd663",
+  "tests_v4_test_confgen_v3_core.py_test_engine_damaged_geometry_never_publishes__0.json": "fdb21a3b4b357adebcc28db51debecdc374a6037c6618281e53e68f9fb347f2d",
+  "tests_v4_test_confgen_v3_core.py_test_engine_ring_torsion_control_locks_hold__0.json": "ffa4a745d59394cc5df0f6be4cd7b6d7c0ac41cb62a16ab45074ea170b400c4a",
+  "tests_v4_test_confgen_v3_core.py_test_engine_rings_only_run__0.json": "588d797dc6935ec49fd18668d2e2da72d816b7e101af15c557b36fac9ddb097d",
+  "tests_v4_test_confgen_v3_core.py_test_inherited_adversarial_rotation_is_drift_never_stale__0.json": "4a845675c23e62a62c9a83edf3752f24c14498f17f3fd290153f6cdf9eed9bb4",
+  "tests_v4_test_confgen_v3_core.py_test_inherited_adversarial_rotation_is_drift_never_stale__1.json": "4652e712067a261a6f9fd66655c737126aefbe7b5d7134b3afc1989adfa3b819",
+  "tests_v4_test_confgen_v3_core.py_test_inherited_adversarial_rotation_is_drift_never_stale__2.json": "591362e1681f8f7a8609250ef89a0a17e6134b12fed6c2f59dbb2b7414a21de7",
+  "tests_v4_test_confgen_v3_core.py_test_lock_reference_parent_uses_accepted_parent_geometry__0.json": "1fd2af9bc0eccc2418f38726cf905e8dba6eae5b123c3262f62f47f755f107c7",
+  "tests_v4_test_confgen_v3_core.py_test_lock_reference_parent_uses_accepted_parent_geometry__1.json": "1fd2af9bc0eccc2418f38726cf905e8dba6eae5b123c3262f62f47f755f107c7",
+  "tests_v4_test_confgen_v3_core.py_test_pinned_coordination_ring_damage_is_drift__0.json": "e6edb9a198a993766e2bf9171f6052ae758dd709e50323f076e84b98e1b982a0",
+  "tests_v4_test_confgen_v3_core.py_test_suppression_combined_axes_realize_normally__0.json": "02eabe8b971915caa5112c9e439023d8b64c82e7be23360b3b3d30f568867972",
+  "tests_v4_test_confgen_v3_integration.py_TestExecutorV3_test_nested_run_rows_carry_units__0.json": "877084853bd44fca7e7a6ef4cc43d4e47f997d2f53b61879fb3e4ef22e39b13d"
+ },
+ "scope": "16 nodes / 21 ring reports byte-equal; contract+boundary identical; collect +15/-0",
+ "status": "frozen on R5 formal HEAD (mechanical replay of DRAFT; rehearsal evidence kept under rehearsal_base)",
+ "rehearsal_base": "ccf167f227d21322d1a251591440e75f48123538",
+ "root_combined_review": {
+  "file": "/tmp/fix1r-r4g-output/ROOT-COMBINED-REVIEW.json",
+  "combined_tests": 30,
+  "existing_nodes": 16,
+  "existing_reports_byte_identical": 23
+ }
+}

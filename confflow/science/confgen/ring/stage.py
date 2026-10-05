@@ -2,7 +2,7 @@
 
 """ConfGen v3 ring-lane stage adapter (shared ``GenerationStage`` protocol).
 
-``RingStage`` wraps the pure ring science (templates/perception/realization)
+``RingStage`` wraps the pure ring science (CP forms/perception/realization)
 in the frozen core stage API from ``confflow.science.confgen.model``. There
 are no fallback/shadow dataclasses: a broken core integration fails closed at
 import time. Enumeration is a lazy generator per the frozen
@@ -10,12 +10,13 @@ import time. Enumeration is a lazy generator per the frozen
 sampling and deferred ranges are owned by the engine via core planner
 helpers, never by this stage).
 
-State identity is canonical (template id + canonical torsion descriptor +
-anchor + direction); treatment travels in scope/provenance (axis spec, target
-provenance, realization evidence), and measured torsions, confidence,
-margins, and boundary flags travel in perception diagnostics. Parent-lock
-and fresh-target audits run against measured torsions via the
-``verify_locked`` / ``audit_target`` hooks, never against snapped evidence.
+State identity is canonical R4 (form family + index + anchor + direction);
+treatment travels in scope/provenance (axis spec, target provenance,
+realization evidence), and measured CP/torsions, confidence, margins, and
+boundary flags travel in perception diagnostics. Parent-lock and
+fresh-target audits run against measured CP via ``verify_locked`` /
+``audit_target`` hooks (CP distance for n=5/6, sign+q gate for n=4), never
+against snapped evidence.
 
 Dependencies: stdlib + NumPy + frozen core model/planner/perception only;
 no legacy runner imports, no orchestration, no energy optimization.
@@ -42,16 +43,23 @@ from confflow.science.confgen.model import (
 from confflow.science.confgen.perception import drift_event
 from confflow.science.confgen.planner import MixedRadixGrid
 
+from .forms import (
+    alias_templates_to_forms,
+    constrained_forms,
+    default_forms,
+    expand_form_tokens,
+    form_name,
+)
 from .perception import (
     MARGIN_DEG_DEFAULT,
     MATCH_DEG_DEFAULT,
     REJECT_DEG_DEFAULT,
-    commanded_state_dict,
     perceive_ring,
     ring_diagnostics,
     ring_state_dict,
     ring_states_match,
 )
+from .puckering import CanonicalForm, canonical_forms
 from .realization import (
     RingGeometryFailure,
     RingNumericalFailure,
@@ -59,17 +67,98 @@ from .realization import (
     RingTolerances,
     RingUnsupported,
     parse_ring_specs,
-    realize_rings,
+    validate_ring_system,
 )
-from .templates import TEMPLATES_BY_SIZE, get_template
 
 __all__ = [
     "BACKEND_NAME",
     "RingStage",
+    "analyze_ring_input_diagnostics",
 ]
 
 #: Backend label stamped on every ring realization result.
-BACKEND_NAME = "geometric-template-kabsch-v1"
+BACKEND_NAME = "cp-constrained-v2"
+
+#: Component-local CP thresholds (degrees, n=5/6); not global tolerances.
+_CP_MATCH_DEG = 15.0
+_CP_MARGIN_DEG = 8.0
+_CP_REJECT_DEG = 35.0
+
+
+def analyze_ring_input_diagnostics(context: Any) -> Mapping[str, Any] | None:
+    """Analyze driving-input distortion for all ring specs (R5, R2 authority).
+
+    Pure input analysis over ``context.structure`` (the driving geometry,
+    never a realized output) using :func:`rigid_units.analyze_rigid_units`
+    with the stage covalent graph plus ``context.graph`` typed edges.
+    Both ``preserve_input`` and ``enumerate`` specs are covered. Ring atom
+    ids are global 0-based from the normalized resolved spec and are used
+    as-is (no solver-ordinal re-mapping; the solver traversal only permutes
+    order, never renumbers full coordinates).
+
+    Returns ``None`` when every spec is undistorted (callers omit the key
+    so existing report bytes stay identical), else ``{"index_base": 0,
+    "distorted_input": [...]}`` sorted by ``(ring_id, atom)`` with explicit
+    ``ring_id``/``atom``/``observed``/``expected``. Analysis errors raise
+    (never silent empty); the component hook converts them to an explicit
+    ``{"error": ...}`` mapping.
+    """
+    from collections.abc import Mapping as _Mapping
+
+    resolved = getattr(context, "resolved_spec", None)
+    if not isinstance(resolved, _Mapping):
+        raise ValueError("context has no resolved_spec mapping")
+    raw_rings = resolved.get("rings", [])
+    if raw_rings is None:
+        return None
+    if not isinstance(raw_rings, (list, tuple)):
+        raise ValueError("resolved rings section is not a list")
+    if len(raw_rings) == 0:
+        return None
+    structure = getattr(context, "structure", None)
+    if structure is None:
+        raise ValueError("context has no driving structure")
+    coords = np.asarray(structure.coordinates, dtype=float)
+    elements = [str(a) for a in structure.atoms]
+    adjacency = getattr(context, "covalent_adjacency", None)
+    if adjacency is None:
+        adjacency = getattr(context, "adjacency", None)
+    if adjacency is None:
+        raise ValueError("context has no adjacency")
+    covalent_graph = [sorted(set(int(v) for v in row)) for row in adjacency]
+    graph = getattr(context, "graph", None)
+    typed_edges: Any = None
+    if graph is not None:
+        edges = getattr(graph, "edges", None)
+        if edges is not None:
+            typed_edges = list(edges)
+    from .rigid_units import analyze_rigid_units
+
+    entries: list[dict[str, Any]] = []
+    for entry in raw_rings:
+        if not isinstance(entry, _Mapping):
+            raise ValueError(f"bad ring spec entry: {entry!r}")
+        ring_id = entry.get("id")
+        atoms_raw = entry.get("atoms")
+        if ring_id is None or atoms_raw is None:
+            raise ValueError(f"ring spec missing id/atoms: {entry!r}")
+        ring_atoms = [int(a) for a in list(atoms_raw)]
+        analysis = analyze_rigid_units(
+            coords, elements, covalent_graph, ring_atoms, typed_edges=typed_edges
+        )
+        for item in analysis.distorted_input:
+            entries.append(
+                {
+                    "ring_id": str(ring_id),
+                    "atom": int(item.atom),
+                    "observed": round(float(item.observed), 6),
+                    "expected": str(item.expected),
+                }
+            )
+    if not entries:
+        return None
+    entries.sort(key=lambda r: (str(r["ring_id"]), int(r["atom"])))
+    return {"index_base": 0, "distorted_input": entries}
 
 
 class RingStage(GenerationStage):
@@ -98,6 +187,7 @@ class RingStage(GenerationStage):
                     atoms=tuple(atom - 1 for atom in spec.atoms),
                     treatment=spec.treatment,
                     templates=spec.templates,
+                    forms=spec.forms,
                 )
                 for spec in specs
             )
@@ -108,15 +198,35 @@ class RingStage(GenerationStage):
         if not isinstance(tol, Mapping):
             raise RingUnsupported("tolerances must be a mapping")
         self._tolerances = RingTolerances(
-            ring_bond_atol=float(tol.get("ring_bond_atol", 0.08)),
             substituent_bond_atol=float(tol.get("substituent_bond_atol", 1e-6)),
             clash_threshold=float(tol.get("clash_threshold", 0.65)),
             frame_det_min=float(tol.get("frame_det_min", 1e-8)),
             link_bond_atol=float(tol.get("link_bond_atol", 0.15)),
         )
+        # R6: legacy ``ring_bond_atol`` key is accepted and ignored (schema/
+        # contract compat); the local field is retired with the old path.
+        # v4 priority: record whether clash_threshold was explicitly present
+        # in the raw mapping (an explicit .65 is explicit, not omitted).
+        self._stage_clash_explicit = "clash_threshold" in tol
         self._match_deg = float(tol.get("perception_match_deg", MATCH_DEG_DEFAULT))
         self._margin_deg = float(tol.get("perception_margin_deg", MARGIN_DEG_DEFAULT))
         self._reject_deg = float(tol.get("perception_reject_deg", REJECT_DEG_DEFAULT))
+
+    def _r3_tolerances(self, context: MolecularContext) -> Any:
+        """Explicit clash passthrough for R3 (default stays 0.65).
+
+        R3 already honors a ``ConfgenTolerances`` clash override; R4 must
+        not drop an explicitly declared threshold. Priority: an explicit
+        raw-stage value (key present, including an explicit .65) always
+        wins; only when the stage omits the key is the pipeline
+        ``context.tolerances.clash_threshold`` used. No new source is
+        invented; all other solver/numeric gates stay frozen.
+        """
+        if self._stage_clash_explicit:
+            explicit = float(self._tolerances.clash_threshold)
+        else:
+            explicit = float(context.tolerances.clash_threshold)
+        return replace(context.tolerances, clash_threshold=explicit)
 
     @property
     def axis(self) -> str:
@@ -164,43 +274,130 @@ class RingStage(GenerationStage):
     def _enumerated(self) -> tuple[RingSpec, ...]:
         return tuple(spec for spec in self._specs if spec.treatment == "enumerate")
 
+    @staticmethod
+    def _canonical_solver_order(atoms: tuple[int, ...] | list[int]) -> tuple[list[int], int, bool]:
+        """Canonical solver traversal for one ring (R4, no global resort).
+
+        Starts at the lowest global atom number: rotate the declared list
+        left until it leads, then compare the forward tuple with
+        ``[first] + reversed(rest)`` and take the lexicographically smaller
+        as ``solver_atoms``. Returns ``(solver_atoms, shift, reverse)``
+        where ``shift`` is left-shifts from declared to the rotated
+        (pre-reverse) order and ``reverse`` flags the mirror pick. The
+        combination order matches ``puckering.relabel`` (shift first, then
+        reverse), so ``relabel(form, shift, reverse)`` maps a declared
+        target to its canonical-solver target for the same physical state.
+        """
+        seq = [int(a) for a in atoms]
+        n = len(seq)
+        if n == 0:
+            return [], 0, False
+        m = min(seq)
+        pos = seq.index(m)
+        rotated = seq[pos:] + seq[:pos]
+        shift = int(pos % n)
+        forward = tuple(rotated)
+        reversed_cand = tuple([rotated[0]] + list(reversed(rotated[1:])))
+        if reversed_cand < forward:
+            return list(reversed_cand), shift, True
+        return list(forward), shift, False
+
+    def _base_forms(self, spec: RingSpec) -> tuple[CanonicalForm, ...]:
+        """Return declared base forms for one system (fail closed, no geometry)."""
+        n = len(spec.atoms)
+        if n not in (4, 5, 6):
+            raise RingUnsupported(f"unsupported_ring_size:{n}")
+        try:
+            if spec.forms:
+                return expand_form_tokens(list(spec.forms), n)
+            if spec.templates:
+                return alias_templates_to_forms(list(spec.templates), n)
+            return default_forms(n)
+        except KeyError as exc:
+            raise RingUnsupported(str(exc)) from exc
+
+    def _pinned_for_spec(
+        self, spec: RingSpec, parent: StageParentProtocol, context: MolecularContext
+    ) -> set[tuple[int, int]]:
+        """Return R2 pinned global pairs restricted to this ring (best effort)."""
+        try:
+            from .rigid_units import analyze_rigid_units
+
+            structure = parent.structure
+            coords = np.asarray(structure.coordinates, dtype=float)
+            elements = [str(a) for a in structure.atoms]
+            graph = self._covalent_graph(context)
+            analysis = analyze_rigid_units(coords, elements, graph, list(spec.atoms))
+            pinned: set[tuple[int, int]] = set()
+            ring_set = frozenset(int(a) for a in spec.atoms)
+            for unit in analysis.units:
+                for pair in unit.pinned_bonds:
+                    a, b = int(pair[0]), int(pair[1])
+                    if a in ring_set and b in ring_set:
+                        pinned.add((a, b) if a < b else (b, a))
+            return pinned
+        except Exception:
+            return set()
+
+    def _forms_for(
+        self, spec: RingSpec, parent: StageParentProtocol, context: MolecularContext
+    ) -> tuple[CanonicalForm, ...]:
+        """Combine base and constrained forms in stable canonical order."""
+        base = list(self._base_forms(spec))
+        # Explicit requests already include everything; constrained only adds
+        # when the base came from defaults (spec has neither forms nor templates).
+        # When the user explicitly declares forms/templates, honor exactly that
+        # set (plus nothing) so precise selectors stay precise.
+        if spec.forms or spec.templates:
+            return tuple(base)
+        n = len(spec.atoms)
+        pinned = self._pinned_for_spec(spec, parent, context)
+        extra = list(constrained_forms(n, pinned, [int(a) for a in spec.atoms]))
+        seen: dict[str, CanonicalForm] = {}
+        for form in base + extra:
+            key = form_name(form) if not (form.family == "P" and n in (5, 6)) else "P_0"
+            if key not in seen:
+                seen[key] = form
+        # Stable canonical order.
+        order = {form_name(f): i for i, f in enumerate(canonical_forms(n))}
+        order["P_0"] = -1
+
+        def _key(f: CanonicalForm) -> tuple[int, str]:
+            nm = form_name(f) if not (f.family == "P" and n in (5, 6)) else "P_0"
+            return (order.get(nm, 9999), nm)
+
+        return tuple(sorted(seen.values(), key=_key))
+
     def _options(self, spec: RingSpec) -> tuple[str, ...]:
-        """Return declared enumeration templates for one system (fail closed)."""
-        if spec.templates:
-            names = spec.templates
-        else:
-            names = TEMPLATES_BY_SIZE.get(len(spec.atoms), ())
-            if not names:
-                raise RingUnsupported(f"unsupported_ring_size:{len(spec.atoms)}")
-        for name in names:
-            try:
-                template = get_template(name)
-            except KeyError as exc:
-                raise RingUnsupported(f"unknown_template:{name}") from exc
-            if template.ring_size != len(spec.atoms):
-                raise RingUnsupported(f"template_size_mismatch:{name}")
-        return tuple(names)
+        """Return declared enumeration precise names (fail closed, symbolic).
+
+        Kept for backward-compatible callers; new code prefers _base_forms.
+        """
+        return tuple(form_name(f) for f in self._base_forms(spec))
 
     def estimate(self, parent: StageParentProtocol, context: MolecularContext) -> StageEstimate:
-        """Symbolic declared count: product of per-system template options."""
+        """Symbolic declared count: product of per-system form options."""
         enumerated = self._enumerated()
         total = 1
         unsupported: list[str] = []
         per_system: dict[str, Any] = {}
         for spec in enumerated:
             try:
-                options = self._options(spec)
+                options = self._forms_for(spec, parent, context)
             except RingUnsupported as exc:
                 unsupported.append(f"{spec.id}:{exc}")
                 per_system[spec.id] = {"options": 0, "reason": str(exc)}
                 total = 0
                 continue
-            per_system[spec.id] = {"options": len(options), "templates": list(options)}
+            per_system[spec.id] = {
+                "options": len(options),
+                "forms": [form_name(f) for f in options],
+            }
             total *= len(options)
         if not enumerated:
             total = 1 if self._specs else 0
         details: dict[str, Any] = {
-            "basis": "finite declared template product over isolated ring systems; "
+            "basis": "finite declared CP-form product over isolated ring systems; "
             "unsupported systems contribute zero with explicit reasons",
             "scope_coverage": "exact",
             "per_system": per_system,
@@ -212,16 +409,15 @@ class RingStage(GenerationStage):
     def enumerate_targets(
         self, parent: StageParentProtocol, context: MolecularContext
     ) -> Iterator[GenerationTarget]:
-        """Enumerate symbolic targets lazily in stable order (no geometry).
+        """Enumerate symbolic targets lazily in stable order (no solving).
 
         A generator over the mixed-radix ordinal space (last system fastest);
         the grid is never materialized. Commanded per-system states carry
-        canonical template descriptors; agreement with observed states is
-        checked tolerance-aware via ``ring_states_match``, never by exact
-        float equality.
+        R4 form identity; agreement with observed states is checked via CP
+        distance (n=5/6) or sign gate (n=4), never by float equality.
         """
         enumerated = self._enumerated()
-        option_lists = [self._options(spec) for spec in enumerated]
+        option_lists = [self._forms_for(spec, parent, context) for spec in enumerated]
         if not enumerated:
             yield GenerationTarget(
                 axis="rings",
@@ -234,12 +430,15 @@ class RingStage(GenerationStage):
         grid = MixedRadixGrid([len(options) for options in option_lists])
         for ordinal in grid.iter_indices():
             combo = grid.index_to_combo(ordinal)
-            state_value = {
-                spec.id: commanded_state_dict(
-                    option_lists[position][combo[position]], anchor=spec.atoms[0]
-                )
-                for position, spec in enumerate(enumerated)
-            }
+            state_value = {}
+            for position, spec in enumerate(enumerated):
+                form = option_lists[position][combo[position]]
+                state_value[spec.id] = {
+                    "form": form.family,
+                    "index": form.index,
+                    "anchor": spec.atoms[0],
+                    "direction": "as_given",
+                }
             yield GenerationTarget(
                 axis="rings",
                 target_id=f"rings:{ordinal:06d}",
@@ -295,35 +494,218 @@ class RingStage(GenerationStage):
                                     found.add(value)
         return frozenset(found)
 
+    def _form_for_assignment(self, spec: RingSpec, entry: Mapping[str, Any]) -> CanonicalForm:
+        """Resolve commanded state_value entry to a CanonicalForm (fail closed)."""
+        n = len(spec.atoms)
+        if "form" in entry:
+            family = str(entry.get("form"))
+            try:
+                index = int(entry.get("index", 0))
+            except (TypeError, ValueError) as exc:
+                raise RingUnsupported(f"bad form index:{entry!r}") from exc
+            if family == "flat":
+                raise RingUnsupported("flat is not realizable")
+            if family == "P" and n in (5, 6):
+                from .forms import _synthetic_planar
+
+                if index != 0:
+                    raise RingUnsupported(f"unknown form P:{index}")
+                return _synthetic_planar(n)
+            for form in canonical_forms(n):
+                if form.family == family and form.index == index:
+                    return form
+            raise RingUnsupported(f"unknown_form:{family}:{index}")
+        # Legacy template-shaped entry (alias rewrite period).
+        if "template" in entry:
+            try:
+                forms = alias_templates_to_forms([str(entry.get("template"))], n)
+            except KeyError as exc:
+                raise RingUnsupported(str(exc)) from exc
+            if len(forms) != 1:
+                raise RingUnsupported(f"ambiguous_template:{entry.get('template')!r}")
+            return forms[0]
+        raise RingUnsupported(f"missing_form:{spec.id}")
+
+    def _explicit_p(self, spec: RingSpec) -> bool:
+        """Whether the spec explicitly declares planar P."""
+        for token in list(spec.forms):
+            if str(token) in ("P", "P_0"):
+                return True
+        for token in list(spec.templates):
+            if str(token) in ("planar_4", "planar_5"):
+                return True
+        return False
+
     def realize(
         self,
         parent: StageParentProtocol,
         target: GenerationTarget,
         context: MolecularContext,
     ) -> RealizationResult:
-        """Realize one target; map every failure to an explicit status/reason."""
+        """Realize one target via CP-constrained solving (R3+R4)."""
         try:
+            from .realization import realize_cp_target
+            from .rigid_units import analyze_rigid_units
+
             structure = parent.structure
             coords = np.asarray(structure.coordinates, dtype=float)
             if not np.all(np.isfinite(coords)):
                 raise RingNumericalFailure("nonfinite")
             elements = [str(item) for item in structure.atoms]
             graph = self._covalent_graph(context)
+            coord_atoms = self._coordination_atoms(context)
             state_value = dict(target.state_value) or {}
-            assignment = {
-                ring_id: str(entry.get("template"))
-                for ring_id, entry in state_value.items()
-                if isinstance(entry, Mapping) and "template" in entry
-            }
-            output = realize_rings(
-                coords,
-                elements,
-                graph,
-                self._specs,
-                assignment,
-                tolerances=self._tolerances,
-                coordination_atoms=self._coordination_atoms(context),
+            # Preserve-input systems: measure and report unchanged.
+            working = np.asarray(coords, dtype=float).copy()
+            states: list[dict[str, object]] = []
+            audits: list[dict[str, object]] = []
+            preserved = True
+            all_ring_atoms = (
+                frozenset().union(*(frozenset(s.atoms) for s in self._specs))
+                if self._specs
+                else frozenset()
             )
+            # R4G: overlapping systems fail closed (same check as the legacy
+            # multi-system realizer; per-spec validation alone cannot see a
+            # shared atom because ``others`` excludes the spec's own atoms).
+            _seen: dict[int, str] = {}
+            for _spec in self._specs:
+                for _atom in _spec.atoms:
+                    if _atom in _seen:
+                        raise RingUnsupported("overlapping_systems")
+                    _seen[_atom] = _spec.id
+            for spec in self._specs:
+                others = set(all_ring_atoms) - set(spec.atoms)
+                if spec.treatment == "preserve_input":
+                    # R4G: same scope validation as the legacy realizer.
+                    validate_ring_system(
+                        spec,
+                        graph,
+                        elements,
+                        frozenset(others),
+                        coordination_atoms=coord_atoms,
+                    )
+                    perception = perceive_ring(
+                        working[list(spec.atoms)],
+                        match_deg=self._match_deg,
+                        ambiguity_margin_deg=self._margin_deg,
+                        reject_deg=self._reject_deg,
+                    )
+                    states.append(ring_state_dict(perception, anchor=spec.atoms[0]))
+                    audits.append(
+                        {
+                            "ring_id": spec.id,
+                            "treatment": spec.treatment,
+                            "preserved": True,
+                            "diagnostics": ring_diagnostics(perception),
+                        }
+                    )
+                    continue
+                if spec.id not in state_value:
+                    raise RingNumericalFailure(f"missing_assignment:{spec.id}")
+                entry = state_value[spec.id]
+                if not isinstance(entry, Mapping):
+                    raise RingNumericalFailure(f"missing_assignment:{spec.id}")
+                form = self._form_for_assignment(spec, entry)
+                # R4 canonical solver traversal (root direction): solver sees
+                # atoms starting at the lowest global id, forward vs reversed
+                # lexicographically minimal. Original declared traversal,
+                # enumeration StateKey, anchor/direction and pre-publish
+                # perception all stay in the declared order; only the R3
+                # solver call (and its R2 lock regeneration) uses canonical.
+                solver_atoms, shift, reverse = self._canonical_solver_order(spec.atoms)
+                if form.family == "P" and len(spec.atoms) in (5, 6):
+                    solver_form = form
+                else:
+                    try:
+                        from .puckering import relabel as _relabel
+
+                        solver_form = _relabel(form, shift=shift, reverse=reverse)
+                    except (ValueError, KeyError, AssertionError) as exc:
+                        raise RingUnsupported(f"relabel:{exc}") from exc
+                solver_spec = replace(spec, atoms=tuple(int(a) for a in solver_atoms))
+                # Rigid units regenerated in solver order from the same
+                # original working geometry (locks' p/n consistent).
+                # R4G: same scope validation as the legacy realizer before
+                # solving (fused/chelate/overlap/nonbonded/size/template
+                # errors, identical messages); the CP solver is untouched.
+                validate_ring_system(
+                    spec,
+                    graph,
+                    elements,
+                    frozenset(others),
+                    coordination_atoms=coord_atoms,
+                )
+                try:
+                    rigid = analyze_rigid_units(working, elements, graph, list(solver_atoms))
+                except ValueError as exc:
+                    raise RingNumericalFailure(f"rigid_units:{exc}") from exc
+                # Coordination overlap stays unsupported (lane ownership).
+                if frozenset(int(a) for a in spec.atoms) & coord_atoms:
+                    raise RingUnsupported("coordination_overlap")
+                pre = working.copy()
+                try:
+                    full_new, _rst, audit = realize_cp_target(
+                        working,
+                        elements,
+                        graph,
+                        solver_spec,
+                        solver_form,
+                        rigid_units=rigid,
+                        tolerances=self._r3_tolerances(context),
+                        additional_starts=(),
+                    )
+                except (RingGeometryFailure, RingNumericalFailure, RingUnsupported) as exc:
+                    # Attach audit when available; engine maps to statuses.
+                    raise exc
+                full_new = np.asarray(full_new, dtype=float)
+                # Cross-system protection: no other ring atom may have moved.
+                moved = [
+                    int(a) for a in others if float(np.linalg.norm(full_new[a] - working[a])) > 1e-9
+                ]
+                if moved:
+                    raise RingGeometryFailure(f"cross_system_damage:{moved[0]}")
+                # Linking-bond audit (acyclic links to other ring systems).
+                worst_link = 0.0
+                worst_pair: tuple[int, int] | None = None
+                for atom in spec.atoms:
+                    for nb in graph[int(atom)]:
+                        if nb not in others:
+                            continue
+                        old_len = float(np.linalg.norm(pre[int(atom)] - pre[int(nb)]))
+                        new_len = float(np.linalg.norm(full_new[int(atom)] - full_new[int(nb)]))
+                        drift = abs(new_len - old_len)
+                        if drift > worst_link:
+                            worst_link = drift
+                            worst_pair = (int(atom), int(nb))
+                audit = dict(audit)
+                audit["treatment"] = spec.treatment
+                # Canonical-solver provenance (do not misclaim original target):
+                # R3 solved solver_form in solver_atoms order; the declared
+                # StateKey below stays in the original traversal.
+                audit["declared_atoms"] = [int(a) for a in spec.atoms]
+                audit["solver_atoms"] = [int(a) for a in solver_atoms]
+                audit["traversal_shift"] = int(shift)
+                audit["traversal_reverse"] = bool(reverse)
+                audit["declared_form"] = f"{form.family}:{form.index}"
+                audit["solver_form"] = f"{solver_form.family}:{solver_form.index}"
+                audit["link_bond_drift"] = round(worst_link, 6)
+                if worst_pair is not None:
+                    audit["link_bond_pair"] = list(worst_pair)
+                if worst_link > float(self._tolerances.link_bond_atol):
+                    raise RingGeometryFailure(f"link_bond:{worst_link:.4f}")
+                working = full_new
+                states.append(
+                    {
+                        "form": form.family,
+                        "index": form.index,
+                        "anchor": spec.atoms[0],
+                        "direction": "as_given",
+                    }
+                )
+                audits.append(audit)
+                preserved = False
+            output_coords = tuple(tuple(float(v) for v in row) for row in working)
         except RingUnsupported as exc:
             return RealizationResult(
                 structure=None,
@@ -341,12 +723,18 @@ class RingStage(GenerationStage):
                 evidence=(),
             )
         except RingGeometryFailure as exc:
+            audit_payload: dict[str, object] = {}
+            try:
+                audit_payload = dict(getattr(exc, "audit", {}))
+            except Exception:
+                audit_payload = {}
+            evidence = (audit_payload,) if audit_payload else ()
             return RealizationResult(
                 structure=None,
                 status="geometry_failure",
                 reason=str(exc) or "geometry_failure",
                 backend=BACKEND_NAME,
-                evidence=(),
+                evidence=evidence,
             )
         except (ValueError, TypeError) as exc:
             return RealizationResult(
@@ -360,7 +748,7 @@ class RingStage(GenerationStage):
         try:
             new_structure = replace(
                 structure,
-                coordinates=output.coordinates,
+                coordinates=output_coords,
                 id=f"{parent_id}-rings-{target.ordinal:06d}",
                 parent_ids=tuple(structure.parent_ids) + (str(parent_id),),
             )
@@ -375,9 +763,9 @@ class RingStage(GenerationStage):
         return RealizationResult(
             structure=new_structure,
             status="realized",
-            reason="realized" if not output.preserved else "preserved_input",
+            reason="realized" if not preserved else "preserved_input",
             backend=BACKEND_NAME,
-            evidence=tuple(dict(audit) for audit in output.audits),
+            evidence=tuple(dict(audit) for audit in audits),
         )
 
     def perceive(self, structure: StructureRecord, context: MolecularContext) -> PerceptionResult:
@@ -395,15 +783,30 @@ class RingStage(GenerationStage):
                 ambiguity_margin_deg=self._margin_deg,
                 reject_deg=self._reject_deg,
             )
-            best_key[spec.id] = ring_state_dict(perception, anchor=spec.atoms[0])
+            # Explicit-P special: flat n=5/6 with P declared reports P_0.
+            if perception.best_form is None and self._explicit_p(spec):
+                best_key[spec.id] = {
+                    "form": "P",
+                    "index": 0,
+                    "anchor": spec.atoms[0],
+                    "direction": "as_given",
+                }
+            else:
+                best_key[spec.id] = ring_state_dict(perception, anchor=spec.atoms[0])
+                if perception.confidence == "ambiguous":
+                    overall = "ambiguous"
             diagnostics = ring_diagnostics(perception)
             margins[spec.id] = diagnostics["margin_deg"]
             raw_alternatives = cast("list[dict[str, Any]]", diagnostics["alternatives"])
             for entry in raw_alternatives:
                 alternatives.append({"ring_id": spec.id, **entry})
             for flag in perception.boundary_flags:
+                # Explicit-P flat is not a boundary for its own spec.
+                if flag == "flat" and self._explicit_p(spec):
+                    continue
                 flags.append(f"{spec.id}:{flag}")
-            if perception.confidence == "ambiguous":
+            # Flat without explicit P forces overall ambiguous.
+            if perception.best_form is None and not self._explicit_p(spec):
                 overall = "ambiguous"
         return PerceptionResult(
             best_key=best_key,
@@ -426,27 +829,18 @@ class RingStage(GenerationStage):
         return None
 
     def _lock_tolerance(self, context: MolecularContext) -> float:
-        """Return the frozen ring torsion audit tolerance (degrees)."""
-        return float(context.tolerances.ring_torsion_atol_deg)
+        """Return the R4 CP audit tolerance (degrees, n=5/6)."""
+        return float(_CP_MATCH_DEG)
 
     def _observed_measured(self, spec: RingSpec, coords: np.ndarray) -> tuple[Any, Any]:
-        """Perceive one system; return (perception, measured-state dict).
-
-        The measured-state dict mirrors the canonical key shape but carries
-        the ACTUAL measured torsions for tolerance-aware audit comparison.
-        """
+        """Perceive one system; return (perception, form-state observed)."""
         perception = perceive_ring(
             np.asarray(coords)[list(spec.atoms)],
             match_deg=self._match_deg,
             ambiguity_margin_deg=self._margin_deg,
             reject_deg=self._reject_deg,
         )
-        observed = {
-            "template": perception.best_template,
-            "torsions": [round(value, 6) for value in perception.torsions_deg],
-            "anchor": spec.atoms[0],
-            "direction": perception.direction,
-        }
+        observed = ring_state_dict(perception, anchor=spec.atoms[0])
         return perception, observed
 
     def audit_target(
@@ -456,15 +850,13 @@ class RingStage(GenerationStage):
         parent: StageParentProtocol,
         context: MolecularContext,
     ) -> tuple[bool, dict[str, Any], list[dict[str, Any]]]:
-        """Audit a fresh realization against its commanded target (engine hook).
+        """Audit a fresh realization against its commanded target (R4 CP).
 
         Returns ``(ok, canonical_measured_map, evidence)``. Every enumerated
-        system is re-perceived and its ACTUAL measured torsions are checked
-        against the commanded canonical state within
-        ``ring_torsion_atol_deg``; evidence carries measured torsions and
-        deviations (never snapped before verification). ``ok`` is False on
-        any mismatch or ambiguous measurement, and the engine routes that to
-        FAILED_DRIFT with observed/out-of-scope evidence.
+        system is re-perceived and its CP form is checked against the
+        commanded form (exact family/index/anchor/direction); evidence
+        carries measured CP and distances. ``ok`` is False on any mismatch
+        or ambiguous measurement, and the engine routes that to FAILED_DRIFT.
         """
         _ = parent
         coords = np.asarray(structure.coordinates, dtype=float)
@@ -478,7 +870,7 @@ class RingStage(GenerationStage):
             measured_map[spec.id] = ring_state_dict(perception, anchor=spec.atoms[0])
             commanded = commanded_map.get(spec.id)
             match, match_evidence = (
-                ring_states_match(commanded, observed, torsion_atol_deg=tolerance)
+                ring_states_match(commanded, observed)
                 if isinstance(commanded, Mapping)
                 else (False, {"reason": "missing_commanded_state"})
             )
@@ -487,21 +879,24 @@ class RingStage(GenerationStage):
                 ok = False
                 payload = drift_event(
                     axis=f"rings.{spec.id}",
-                    detail="realized ring state outside audit tolerance",
+                    detail="realized ring state outside CP audit tolerance",
                     expected=(
-                        (commanded or {}).get("template")
+                        f"{(commanded or {}).get('form')}:{(commanded or {}).get('index')}"
                         if isinstance(commanded, Mapping)
                         else None
                     ),
-                    measured=match_evidence.get("worst_torsion_deg"),
+                    measured=diagnostics.get("distance_deg"),
                     tolerance=tolerance,
                 )
                 payload["observed"] = measured_map[spec.id]
+                payload["measured_cp"] = diagnostics["measured_cp"]
                 payload["measured_torsions"] = diagnostics["measured_torsions"]
                 payload["match_evidence"] = dict(match_evidence)
                 payload["confidence"] = perception.confidence
                 payload["out_of_scope"] = perception.best_template != (
-                    commanded.get("template") if isinstance(commanded, Mapping) else None
+                    f"{commanded.get('form')}_{commanded.get('index')}"
+                    if isinstance(commanded, Mapping) and "form" in commanded
+                    else (commanded.get("template") if isinstance(commanded, Mapping) else None)
                 )
                 evidence.append(payload)
         return ok, measured_map, evidence
@@ -512,15 +907,13 @@ class RingStage(GenerationStage):
         locked_state: Mapping[str, Any],
         context: MolecularContext,
     ) -> tuple[bool, dict[str, Any], list[dict[str, Any]]]:
-        """Verify ancestor ring locks on a descendant geometry (engine hook).
+        """Verify ancestor ring locks via CP distance (R4).
 
-        Re-perceives every locked ring system and checks ACTUAL measured
-        torsions against the locked canonical states within
-        ``ring_torsion_atol_deg``. Returns ``(ok, snapped_map, evidence)``:
-        ``snapped`` carries canonical observed states for drift routing;
-        ambiguous measurement returns anomaly evidence so the engine marks
-        the descendant ambiguous (never a stale-key publication); unknown
-        ring ids return lock-error evidence (also engine-ambiguous).
+        Re-perceives every locked ring system and checks the measured CP
+        form against the locked form (exact family/index/anchor/direction;
+        perception already gates CP distance <=15 deg for reported states).
+        Returns ``(ok, snapped_map, evidence)``: ambiguous measurement
+        returns anomaly evidence; unknown ring ids return lock-error.
         """
         coords = np.asarray(structure.coordinates, dtype=float)
         tolerance = self._lock_tolerance(context)
@@ -552,26 +945,31 @@ class RingStage(GenerationStage):
                             "anomaly": "AMBIGUOUS_KEY",
                             "axis": f"rings.{spec.id}",
                             "detail": "ancestor ring lock perception ambiguous",
+                            "measured_cp": ring_diagnostics(perception)["measured_cp"],
                             "measured_torsions": ring_diagnostics(perception)["measured_torsions"],
                         }
                     ],
                 )
-            match, match_evidence = ring_states_match(
-                commanded, observed, torsion_atol_deg=tolerance
-            )
+            match, match_evidence = ring_states_match(commanded, observed)
             if not match:
                 payload = drift_event(
                     axis=f"rings.{spec.id}",
                     detail="ancestor ring lock drifted",
-                    expected=commanded.get("template") if isinstance(commanded, Mapping) else None,
-                    measured=match_evidence.get("worst_torsion_deg"),
+                    expected=(
+                        f"{commanded.get('form')}:{commanded.get('index')}"
+                        if isinstance(commanded, Mapping) and "form" in commanded
+                        else (commanded.get("template") if isinstance(commanded, Mapping) else None)
+                    ),
+                    measured=ring_diagnostics(perception).get("distance_deg"),
                     tolerance=tolerance,
                 )
                 payload["observed"] = snapped[spec.id]
-                payload["measured_torsions"] = ring_diagnostics(perception)["measured_torsions"]
+                payload["measured_cp"] = ring_diagnostics(perception)["measured_cp"]
                 payload["match_evidence"] = dict(match_evidence)
                 payload["out_of_scope"] = perception.best_template != (
-                    commanded.get("template") if isinstance(commanded, Mapping) else None
+                    f"{commanded.get('form')}_{commanded.get('index')}"
+                    if isinstance(commanded, Mapping) and "form" in commanded
+                    else (commanded.get("template") if isinstance(commanded, Mapping) else None)
                 )
                 evidence.append(payload)
         if evidence:

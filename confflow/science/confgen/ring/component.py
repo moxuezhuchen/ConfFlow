@@ -79,6 +79,23 @@ def _has_indices(raw: Mapping[str, Any]) -> bool:
     return _impl(raw)
 
 
+def _report_diagnostics(context: Any) -> Mapping[str, Any] | None:
+    """Lazy proxy: pure driving-input distorted analysis (R5).
+
+    Calls the stage pure helper on the same driving ``context`` (R2
+    authority, covalent graph + typed edges, preserve + enumerate covered,
+    global 0-based ids, deterministic sort). Returns ``None`` when empty
+    so the kernel omits the key; analysis errors surface as an explicit
+    ``{"error": ...}`` mapping, never silent empty.
+    """
+    from confflow.science.confgen.ring.stage import analyze_ring_input_diagnostics as _impl
+
+    try:
+        return _impl(context)
+    except Exception as exc:
+        return {"index_base": 0, "error": f"{type(exc).__name__}: {str(exc)[:300]}"}
+
+
 def _serialize_inherited_state(
     resolved: Mapping[str, Any], state_value: Any, context: Any
 ) -> Mapping[str, Any]:
@@ -135,17 +152,38 @@ def _schema_constants() -> Mapping[str, Any]:
     for size, names in TEMPLATES_BY_SIZE.items():
         for name in names:
             sizes[str(name)] = int(size)
+    # R4: forms vocabulary (authoritative regular forms) without importing
+    # solvers: sizes are fixed by R1 tables (4:3, 5:20, 6:38).
+    # v2 fix: name -> supporting size SET (5/6 share E_0..E_9 etc; a flat
+    # name->single-size map lets 6 overwrite 5). Explicit-P specials P/P_0
+    # for n=5/6 live outside the 20/38 catalogs but stay authorized.
+    from .forms import FORM_NAMES_BY_SIZE
+
+    _acc: dict[str, set[int]] = {}
+    for size, names in FORM_NAMES_BY_SIZE.items():
+        for name in names:
+            _acc.setdefault(str(name), set()).add(int(size))
+    for _p in ("P", "P_0"):
+        _acc.setdefault(_p, set()).update([4, 5, 6] if _p == "P" else [4, 5, 6])
+    form_sizes: dict[str, list[int]] = {name: sorted(sizes) for name, sizes in sorted(_acc.items())}
     return {
         "template_sizes": sizes,
         "templates_by_size": {str(k): tuple(v) for k, v in TEMPLATES_BY_SIZE.items()},
+        "form_sizes": form_sizes,
+        "forms_by_size": {str(k): tuple(v) for k, v in FORM_NAMES_BY_SIZE.items()},
     }
 
 
 def _contract_options() -> Mapping[str, Any]:
     """Return the ring-owned slice of the producer contract."""
+    from .forms import FORM_NAMES_BY_SIZE
+
     return {
         "ring_templates_by_size": {
             str(size): sorted(names) for size, names in sorted(TEMPLATES_BY_SIZE.items())
+        },
+        "ring_forms_by_size": {
+            str(size): list(names) for size, names in sorted(FORM_NAMES_BY_SIZE.items())
         },
     }
 
@@ -193,4 +231,5 @@ def descriptor() -> ComponentDescriptor:
         verify_inherited_state=_verify_inherited_state,
         schema_constants=_schema_constants,
         contract_options=_contract_options,
+        report_diagnostics=_report_diagnostics,
     )

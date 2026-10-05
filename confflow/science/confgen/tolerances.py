@@ -12,7 +12,7 @@ from __future__ import annotations
 import math
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, ClassVar
 
 __all__ = ["ConfgenTolerances", "resolve_tolerances"]
 
@@ -43,6 +43,12 @@ class ConfgenTolerances:
     ring_torsion_atol_deg: float = 10.0
     coordination_bond_atol: float = 0.05
     coordination_angle_atol_deg: float = 3.0
+
+    # R3 frozen numeric gate (Q13/V17): dimensionless Q/rbar threshold
+    # below which theta/phi are numerically undefined. ClassVar on
+    # purpose: NOT a dataclass field, NOT user-tunable, NOT part of
+    # fields/_KNOWN_KEYS/resolve/planner/schema/contract/serialization.
+    phase_defined_q_min: ClassVar[float] = 0.05
 
     def __post_init__(self) -> None:
         for name in (

@@ -1,0 +1,30 @@
+{
+  "card": "K0",
+  "type": "test-only",
+  "base": "f3c2eeffd06c83a159f5c7d4c21d1418661f31ab",
+  "branch": "fix/confgen-1r",
+  "scope": [
+    "tests/v4/test_confgen_k0_clash_diagnostic.py",
+    "docs/confgen-fix/checkpoints/K0/REPORT.md",
+    "docs/confgen-fix/checkpoints/K0/COUNTS.json",
+    "docs/confgen-fix/checkpoints/K0/MANIFEST.json"
+  ],
+  "provenance": {
+    "S1_frame_sha": "c4d6ff0ca8016bdf0eb7d02acf2f0582e9d1bcd03fcff9c13f8ef055c29dabb0",
+    "S2_frame_sha": "b977c19ae39008062b75d58ea176a2ac27c5df739bee59185161ac320ae5d07f",
+    "S3_sha": "b86ffcf10ed8576743a8bba6dae72e7ab281320246d88cbe8565a4c824149c73",
+    "rpdd_full_sha": "2078aca84ff293021553e3046920b9ceb787f7d04193d1f9efdd433705a1c7b1",
+    "mch_full_sha": "5db90a3c1eaf3f07039afd2068de6e39a6827a07deee0187e246868e6a57933d",
+    "S1_source": "tests/fixtures/confgen/ring/rpdd/crest_conformers.xyz frame0 (22 atoms)",
+    "S2_source": "/tmp/crest-q9-batch-monitor-output/raw_mch/crest_conformers.xyz frame0 (21 atoms, 6 frames total, frame0 CREST energy -22.39019388)",
+    "S3_source": "CC1=CC=CC=C1C2CCCCC2 RDKit ETKDGv3 randomSeed=20261005 useRandomCoords=True + MMFF opt maxIters=500 opt=0 (31 atoms)"
+  },
+  "grids": {"S1": 12, "S2": 24, "S3": 48, "total": 84},
+  "result": {"total_rescuable": 0, "decision": "K1K2 to FIX-2, R4 proceeds"},
+  "notes": [
+    "private XYZ frozen in test; no tmp/RDKit/file reads at runtime; test does not read docs/golden",
+    "only B-path mocks ring.realization.clash_pairs -> ([], False); thresholds/solver/other audits untouched",
+    "leaves use real TorsionStage.realize integrity+clash; ring atoms verified immobile",
+    "S3 B-leaf clashes C0@240 and TB5@180 are ring-pass/leaf-clash, not rescuable"
+  ]
+}

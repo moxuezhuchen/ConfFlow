@@ -540,6 +540,72 @@ def _validate_driving_generic(
         )
 
 
+def _collect_component_diagnostics(
+    registry: Any,
+    bound: Mapping[str, Any],
+    context: Any,
+) -> dict[str, Any]:
+    """Collect generic per-component input diagnostics (R5).
+
+    Loops registry descriptors in order without naming components or
+    importing them. Prefers a bound stage override named
+    ``report_diagnostics`` when present, else the descriptor hook. Only
+    non-empty mappings are kept; hook errors surface as explicit
+    ``{"error": ...}`` entries (never silent omission). Fully empty
+    returns ``{}`` so callers omit the report key and preserve bytes.
+    """
+    try:
+        ordered = list(registry._ordered())
+    except Exception:
+        try:
+            ordered = list(getattr(registry, "descriptors", ()) or ())
+        except Exception:
+            return {}
+    collected: dict[str, Any] = {}
+    for descriptor in ordered:
+        try:
+            ident = str(getattr(descriptor, "id", ""))
+        except Exception:
+            continue
+        if not ident:
+            continue
+        hook: Any = None
+        try:
+            stage = bound.get(ident) if isinstance(bound, Mapping) else None
+        except Exception:
+            stage = None
+        if stage is not None:
+            try:
+                cand = getattr(stage, "report_diagnostics", None)
+            except Exception:
+                cand = None
+            if callable(cand):
+                hook = cand
+        if hook is None:
+            try:
+                cand = getattr(descriptor, "report_diagnostics", None)
+            except Exception:
+                cand = None
+            if callable(cand):
+                hook = cand
+        if hook is None:
+            continue
+        try:
+            result = hook(context)
+        except Exception as exc:
+            collected[ident] = {"error": f"{type(exc).__name__}: {str(exc)[:300]}"}
+            continue
+        if result is None:
+            continue
+        if not isinstance(result, Mapping):
+            collected[ident] = {"error": f"bad_diagnostic_type:{type(result).__name__}"}
+            continue
+        if not dict(result):
+            continue
+        collected[ident] = dict(result)
+    return collected
+
+
 class ConfgenEngine:
     """Conditional DFS engine over C/R/T stage levels."""
 
@@ -811,6 +877,9 @@ class ConfgenEngine:
                 "seed": seed,
             },
         }
+        _component_diags = _collect_component_diagnostics(self._registry, {}, context)
+        if _component_diags:
+            report["component_diagnostics"] = _component_diags
         return KernelRun(
             leaves=(leaf,),
             target_records=tuple(records),
@@ -2700,6 +2769,11 @@ class _RunState:
                 "seed": self._seed,
             },
         }
+        _component_diags = _collect_component_diagnostics(
+            self._engine._registry, dict(zip(self._axes, self._stages)), self._context
+        )
+        if _component_diags:
+            report["component_diagnostics"] = _component_diags
         return KernelRun(
             leaves=leaves,
             target_records=tuple(records),
