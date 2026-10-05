@@ -251,3 +251,12 @@ A6正式SHA912e545807f81688236d1214a571e9a6e45ce312；根逐字核对通过。
 固定测试提交 `71cf6e241ebaccf0c4c914f616463fe4c77e1217`；后续收尾提交 `046c3eac01f1393d7f89edc0b9b5b6a83995827f` 仅文档，生产/测试/工具/脚本 diff 为空。根独立全量 4980 passed / 10 skipped（4990 节点，282s），capture complete、93 报告；golden true，added/different/missing 均空，TS1 default/rigid/flexible 和五契约摘要全部 ok。ruff/mypy（230 文件）/black（32 改动文件）通过，验收工具 25 passed。证据 `/tmp/fix1r-final-root-run/ROOT-ACCEPTANCE.json`；104 文件基线及逐文件 SHA 见 checkpoints/FIX1R-FINAL/MANIFEST.json。
 
 R7 glucose 127/155 的 28 项召回缺口与未做种子优化后 RMSD 验证如实保留；不调整科学门槛。根摘要脚本首次错误地把行清单 collect.json 当 JSON 解析，未写出验收结论即修正。最终验收通过，发布/合并尚待实际执行，其他里程碑仍未完成。
+
+## D1 — sigma-image retry (science, preview only — NOT submitted)
+
+- 基点 `9cf3f7c`（`fix/confgen-1d` D0）；预演分支 `refactor/fix1d-d1-proto`，正式线未动；冻结后精确清理回基点干净。证据 `/tmp/fix1d-d1-output/`（v2 件；v1 卡/提示词/补丁保留作未完成证据）。
+- 改动：`coordination/realization.py`（`initial_coordinates` 仅改 solver 起点，终审锚点仍为真正 parent；`None` 旧路径逐字保持）+ `coordination/stage.py`（`retry_solve`：首遍全 input-only 后按 ordinal 对失败 target 重试；完整原子 witness 经只读 `validate_full_witness` 的 `authority_valid` 门控；π 映 binding placement，坐标 σ 像仅初始化；顺序 source ordinal、witness 固定顺序，去重，预算 `1+|σ像|`；成功加 `retry_start=sigma_image:<id>`，失败 hook None；显式 rigid 不暗换 flexible；D2/D3 未实现 fail-closed）+ 新测试 17 节点 + `checkpoints/D1/{MANIFEST.json,DIFF.md}`。`symmetry`/容差/fixtures/registry/kernel 未碰；`component.py` 未需改动。
+- 根纠错：默认路径曾无条件写 `sigma_start_applied: False`（改原记录字节），已修正为显式起点才加字段，双树完整 outcome 字典 sha256 `7eaee718…` 字节一致；共享构建器甲基实验曾使科学基线 30→19 叶，已恢复单甲基体系，控制流多 witness 夹具隔离（`_witness_variants` 双位点作用），未放宽容差；轴向交换 witness 因改变位点作用无效，改用 x<->-y 反射（不同位点作用，构成真实多源顺序证据）。
+- 验证：新 17 passed；旧版基点跑新测试 14 failed/3 passed（失败 proof）；D0 20 passed；旧 coord witness/authority 子集 5 passed；ruff/mypy（生产两文件）/black 通过；TS1 三后端与基线字节一致（该 spec 无 runtime 完整 witness，诚实零变化；恢复证明由合成反射体系承担：000017<-000018，rigid 000017+000024）。
+- Golden 方向：26 候选恢复方向（首遍成功不变，仅 FAILED→REALIZED 新增）；67 + contract/boundary 不变；collect/out +17 节点精确对账，不称逐字不变。
+- 报告缺口：`sigma_skip_diagnosis` 仅进程内测试 pin，非运行时报告；按根排期决议（`/tmp/fix1d-reporting-deferred-note.md`）留 D3 随 `start_statistics` 接入，D3 allowlist 须含诊断/报告变更；本卡不宣称报告完成。D2 需 D1 全σ后第二 retry 槽位（本卡无 D2 码）。

@@ -703,6 +703,383 @@ class CoordinationStage(GenerationStage):
             native, shape_name, parent, target, context.adjacency, attempt_records=attempts
         )
 
+    def sigma_skip_diagnosis(
+        self,
+        *,
+        n_sources: int,
+        n_validated_witnesses: int,
+        n_candidates: int,
+        n_successes: int,
+    ) -> str:
+        """Return the in-process D1 skip/exhaustion label for one retry decision.
+
+        Pure function of counts (no instance or global state). It pins the
+        fail-closed branch in tests; it is NOT a runtime report — wiring the
+        skip diagnostic into engine/executor reports is deferred to D3 with
+        ``start_statistics`` (root batching decision), and no completion of
+        that reporting requirement is claimed here.
+        """
+        if n_sources <= 0:
+            return "sigma_image: skipped (no realized source)"
+        if n_validated_witnesses <= 0:
+            return "sigma_image: skipped (no full-atom witness)"
+        if n_candidates <= 0:
+            return "sigma_image: skipped (no placement match)"
+        if n_successes <= 0:
+            return "sigma_image: exhausted (all sigma starts failed)"
+        return f"sigma_image: realized from {int(n_successes)} candidate(s)"
+
+    def retry_solve(
+        self,
+        parent: StageParentProtocol,
+        target: GenerationTarget,
+        context: MolecularContext,
+        should_cancel: Any | None,
+        first_pass: Any,
+    ) -> CoreRealizationResult | None:
+        """D1 sigma-image retry for one failed coordination target.
+
+        Two-pass protocol (D0 hook): only first-pass solve failures reach
+        here, after the engine re-runs policy/suppression gates. ``first_pass``
+        is the immutable per-parent snapshot (every target terminal status,
+        reason, solver-error flag and, for successes, the accepted structure);
+        no instance or module-global cache is read or written.
+
+        Candidate construction (fixed order, deduped, budget ``1+|sigma|``):
+
+        * sources are first-pass published/expanded targets in source ordinal order;
+        * witnesses are the runtime-spec ``site_group.witnesses`` in declared
+          order, each strictly gated by ``validate_full_witness``
+          (``authority_valid`` required; stereo/geometric stay UNVERIFIED and
+          only qualify the start point);
+        * a source/witness pair qualifies only when its induced site action
+          maps the source binding placement onto the pending target placement
+          (canonical comparison under the shape proper-rotation group);
+        * the full-atom coordinate sigma image (``y[perm[i]] = x[i]``) is only
+          the solver start point; all restraint tables and the terminal audit
+          stay anchored at the true parent input via ``initial_coordinates``;
+        * explicit ``rigid`` backend never switches to flexible (rigid-only
+          attempts; ``None`` when rigid cannot satisfy); ``flexible`` and
+          ``rigid_then_flexible`` run the full flexible solve plus all
+          geometry/perception/lock audits through the engine post-solve path;
+        * D2 sibling starts (``<=3``) and D3 ``start_statistics`` are not
+          implemented here (fail-closed; see seam notes).
+
+        Success carries ``retry_start="sigma_image:<source_target_id>"`` in
+        the returned structure metadata (first-pass REALIZED records keep the
+        legacy format verbatim).  Decline (``None``) retains the original
+        failure record: no complete witness, no realized source, no placement
+        match, or every sigma start failing honestly.
+        """
+        from .symmetry import validate_full_witness
+
+        if getattr(target, "axis", None) != "coordination":
+            return None
+        try:
+            table = tuple(first_pass) if first_pass is not None else ()
+        except TypeError:
+            return None
+        # Current target must be a first-pass solve failure; realized targets
+        # never retry (engine already filters; double-guard here).
+        # Engine retryable set is exactly failed_geometry/failed_numerical/
+        # unresolved; solver-error (stage exception) records never retry.
+        current_status: str | None = None
+        current_solver_error = False
+        try:
+            current_ordinal = int(target.ordinal)  # type: ignore[attr-defined]
+        except (AttributeError, TypeError, ValueError):
+            return None
+        for entry in table:
+            try:
+                if int(entry.ordinal) == current_ordinal and str(entry.target_id) == str(
+                    target.target_id  # type: ignore[attr-defined]
+                ):
+                    current_status = str(entry.status)
+                    current_solver_error = bool(entry.solver_error)
+                    break
+            except (AttributeError, TypeError, ValueError):
+                continue
+        if current_status is None:
+            return None
+        if current_solver_error:
+            return None
+        if current_status not in (
+            "failed_geometry",
+            "failed_numerical",
+            "unresolved",
+        ):
+            return None
+        sources = []
+        for entry in table:
+            try:
+                status = str(entry.status)
+                structure = entry.structure
+            except AttributeError:
+                continue
+            if status not in ("published_leaf", "expanded") or structure is None:
+                continue
+            try:
+                sources.append((int(entry.ordinal), str(entry.target_id), structure))
+            except (TypeError, ValueError):
+                continue
+        sources.sort(key=lambda item: item[0])
+        if not sources:
+            return None
+        try:
+            graph = self._check_context(context)
+        except ValueError:
+            return None
+        witnesses = list(self._site_witnesses) if self._site_witnesses else []
+        if not witnesses:
+            return None
+        validated: list[dict[str, Any]] = []
+        for witness in witnesses:
+            try:
+                mapping = tuple(int(v) for v in witness["mapping"])
+                provenance = str(witness.get("provenance", ""))
+            except (KeyError, TypeError, ValueError):
+                continue
+            report = validate_full_witness(graph, self._spec, mapping, provenance)
+            if bool(report.get("authority_valid")):
+                validated.append({"mapping": mapping, "provenance": provenance})
+        if not validated:
+            return None
+        # Ordinal -> (placement, shape) map from the pure-symbolic enumeration.
+        try:
+            shape_of_target, _ = self._target_plan(target)  # type: ignore[arg-type]
+        except ValueError:
+            return None
+        try:
+            target_placement = tuple(int(v) for v in dict(target.state_value)["placement"])  # type: ignore[attr-defined]
+        except (KeyError, TypeError, ValueError):
+            return None
+        group = proper_rotation_group(shape_of_target)
+        target_canon = canonical_representative(target_placement, group)
+        ordinal_plan: dict[int, tuple[str, tuple[int, ...]]] = {}
+        try:
+            for item in self.enumerate_targets(parent, context):
+                try:
+                    ordinal_plan[int(item.ordinal)] = (
+                        str(normalize_command_key(dict(item.state_value))["shape"]),
+                        tuple(int(v) for v in dict(item.state_value)["placement"]),
+                    )
+                except (KeyError, TypeError, ValueError):
+                    continue
+        except ValueError:
+            return None
+        donor_order = list(self._spec.donor_indices)
+        position_of = {donor: pos for pos, donor in enumerate(donor_order)}
+
+        def _relabel(placement: Sequence[int], site_perm: Sequence[int]) -> tuple[int, ...]:
+            perm = tuple(int(v) for v in site_perm)
+            inv = [0] * len(perm)
+            for old, new in enumerate(perm):
+                inv[new] = old
+            current = tuple(int(v) for v in placement)
+            return tuple(current[inv[index]] for index in range(len(perm)))
+
+        candidates: list[tuple[str, Any]] = []
+        seen_images: set[bytes] = set()
+        for source_ordinal, source_id, source_structure in sources:
+            plan_entry = ordinal_plan.get(source_ordinal)
+            if plan_entry is None:
+                continue
+            source_shape, source_placement = plan_entry
+            if source_shape != shape_of_target:
+                continue
+            try:
+                source_coords = np.array(source_structure.coordinates, dtype=float)
+            except (AttributeError, TypeError, ValueError):
+                continue
+            if source_coords.shape[0] != graph.natoms:
+                continue
+            for witness in validated:
+                mapping = witness["mapping"]
+                action = graph.induced_site_action(mapping, donor_order)
+                if action is None:
+                    continue
+                try:
+                    site_perm = tuple(position_of[action[d]] for d in donor_order)
+                except KeyError:
+                    continue
+                image = _relabel(source_placement, site_perm)
+                if canonical_representative(image, group) != target_canon:
+                    continue
+                perm = tuple(int(v) for v in mapping)
+                try:
+                    inv_perm = [0] * len(perm)
+                    for old, new in enumerate(perm):
+                        inv_perm[new] = old
+                    sigma_coords = np.array(
+                        [source_coords[inv_perm[index]] for index in range(len(perm))],
+                        dtype=float,
+                    )
+                except (IndexError, TypeError, ValueError):
+                    continue
+                key = np.asarray(sigma_coords, dtype=float).tobytes()
+                if key in seen_images:
+                    continue
+                seen_images.add(key)
+                candidates.append((source_id, sigma_coords))
+        if not candidates:
+            return None
+        # Budget 1+|sigma|: the input-only attempt already ran; try each
+        # distinct sigma image once, in source-ordinal/witness order.
+        for source_id, sigma_coords in candidates:
+            if should_cancel is not None:
+                try:
+                    if bool(should_cancel()):
+                        from ..engine import EngineCancelledError
+
+                        raise EngineCancelledError("confgen run cancelled by probe")
+                except EngineCancelledError:
+                    raise
+                except Exception:
+                    pass
+            outcome = self._realize_with_sigma(
+                parent, target, context, shape_of_target, target_placement, sigma_coords
+            )
+            if (
+                outcome is not None
+                and outcome.status == "realized"
+                and outcome.structure is not None
+            ):
+                return self._with_retry_start(outcome, parent, target, context.adjacency, source_id)
+        return None
+
+    def _realize_with_sigma(
+        self,
+        parent: StageParentProtocol,
+        target: GenerationTarget,
+        context: MolecularContext,
+        shape_name: str,
+        placement: tuple[int, ...],
+        sigma_coords: Any,
+    ) -> CoreRealizationResult | None:
+        """Run the backend-faithful sigma-start solve (audit-anchored)."""
+        from .realization import realize_flexible as _flexible
+        from .realization import realize_target as _rigid
+
+        graph = self._check_context(context)
+        template = get_shape(shape_name)
+        coords = np.array(parent.structure.coordinates, dtype=float)
+
+        def _perceive_class(generated: np.ndarray) -> Any:
+            observed, record = self._observe(np.asarray(generated, dtype=float), shape_name)
+            return tuple(observed["placement"]), {
+                "unambiguous": record["unambiguous"],
+                "margin": record["margin"],
+            }
+
+        intra_bond = float(context.tolerances.coordination_bond_atol)
+        intra_angle = float(context.tolerances.coordination_angle_atol_deg)
+        options = {
+            "realize_tol": self._tolerances["realize_tol"],
+            "intra_bond_tol": intra_bond,
+            "intra_angle_tol_deg": intra_angle,
+            "reaction_tol": self._tolerances["reaction_tol"],
+            "clash_scale": self._tolerances["clash_scale"],
+        }
+        attempts: list[dict[str, Any]] = []
+        natives = []
+        if self._backend in ("rigid", "rigid_then_flexible"):
+            rigid = _rigid(
+                coords,
+                graph,
+                self._spec.metal_center,
+                self._spec.donor_indices,
+                self._spec.site_ids,
+                placement,
+                template,
+                target_id=target.target_id,  # type: ignore[attr-defined]
+                perceive=_perceive_class,
+                max_nfev=self._max_nfev,
+                initial_coordinates=np.asarray(sigma_coords, dtype=float),
+                **options,
+            )
+            natives.append(rigid)
+            attempts.append(_attempt_summary(rigid))
+            if rigid.status == "REALIZED" and self._backend == "rigid_then_flexible":
+                return self._wrap_native(
+                    rigid,
+                    shape_name,
+                    parent,
+                    target,
+                    context.adjacency,
+                    attempt_records=attempts,
+                )
+            if rigid.status == "REALIZED" and self._backend == "rigid":
+                return self._wrap_native(
+                    rigid,
+                    shape_name,
+                    parent,
+                    target,
+                    context.adjacency,
+                    attempt_records=attempts,
+                )
+        if self._backend in ("flexible", "rigid_then_flexible"):
+            flexible = _flexible(
+                coords,
+                graph,
+                self._spec.metal_center,
+                self._spec.donor_indices,
+                self._spec.site_ids,
+                placement,
+                template,
+                target_id=target.target_id,  # type: ignore[attr-defined]
+                perceive=_perceive_class,
+                maxiter=self._maxiter,
+                warm_max_nfev=self._max_nfev,
+                initial_coordinates=np.asarray(sigma_coords, dtype=float),
+                **options,
+            )
+            natives.append(flexible)
+            attempts.append(_attempt_summary(flexible))
+        if not natives:
+            return None
+        native = next((item for item in natives if item.status == "REALIZED"), natives[-1])
+        if native.status != "REALIZED":
+            return None
+        return self._wrap_native(
+            native, shape_name, parent, target, context.adjacency, attempt_records=attempts
+        )
+
+    def _with_retry_start(
+        self,
+        outcome: CoreRealizationResult,
+        parent: StageParentProtocol,
+        target: GenerationTarget,
+        adjacency: Any,
+        source_target_id: str,
+    ) -> CoreRealizationResult:
+        """Stamp a sigma-image success with retry provenance (new leaves only)."""
+        assert outcome.structure is not None
+        prior = dict(getattr(outcome.structure, "metadata", {}) or {})
+        prior["retry_start"] = f"sigma_image:{source_target_id}"
+        record = StructureRecord(
+            id=outcome.structure.id,
+            atoms=tuple(outcome.structure.atoms),
+            coordinates=tuple(tuple(point) for point in outcome.structure.coordinates),
+            charge=outcome.structure.charge,
+            multiplicity=outcome.structure.multiplicity,
+            parent_ids=tuple(outcome.structure.parent_ids),
+            source_step_id=outcome.structure.source_step_id,
+            metadata=prior,
+            **inherit_topology_kwargs(parent.structure, adjacency),
+        )
+        evidence = [dict(item) for item in tuple(outcome.evidence)]
+        if evidence:
+            evidence[0] = {**evidence[0], "retry_start": f"sigma_image:{source_target_id}"}
+        else:
+            evidence = [{"retry_start": f"sigma_image:{source_target_id}"}]
+        return CoreRealizationResult(
+            structure=record,
+            status=outcome.status,
+            reason=outcome.reason,
+            backend=outcome.backend,
+            evidence=tuple(evidence),
+        )
+
     def _wrap_native(
         self,
         native: Any,

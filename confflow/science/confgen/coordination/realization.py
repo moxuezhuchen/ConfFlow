@@ -332,6 +332,7 @@ def realize_target(
     weight_clash: float = 2.0,
     weight_reaction: float = 4.0,
     max_nfev: int = 120,
+    initial_coordinates: np.ndarray | None = None,
 ) -> RealizationResult:
     """Realize one labeled placement by rigid-fragment motion.
 
@@ -339,6 +340,12 @@ def realize_target(
     ``REALIZED`` additionally requires the re-perceived class to equal the
     target class, so an unchanged parent is never labeled realized without
     that gate.  Without a callback no ``REALIZED`` verdict is issued.
+
+    *initial_coordinates* (D1, optional) only changes the solver start
+    point: when given, the rigid pose iterates from that geometry while all
+    reference tables and the terminal audit stay anchored at *coordinates*
+    (the true parent input).  ``None`` keeps the legacy input-only path
+    verbatim.
     """
     coords = np.asarray(coordinates, dtype=float)
     donor_list = [int(d) for d in donors]
@@ -385,11 +392,28 @@ def realize_target(
     oriented = np.array([to_lab @ verts[place[i]] for i in range(len(donor_list))])
     oriented /= np.linalg.norm(oriented, axis=1, keepdims=True)
     targets = np.array([center + oriented[i] * ref_lengths[i] for i in range(len(donor_list))])
-    initial_donor_error = float(
-        np.max(np.linalg.norm(np.array([coords[d] for d in donor_list]) - targets, axis=1))
-    )
+    # D1 start/reference separation: reference tables stay at *coords*;
+    # only the pose start uses *initial_coordinates* when supplied.
+    # Legacy default path (None) keeps the original evidence shape verbatim:
+    # retry-specific keys are added only for an explicit sigma start.
+    sigma_start_applied: bool | None = None
+    if initial_coordinates is None:
+        start_coords = coords
+        initial_donor_error = float(
+            np.max(np.linalg.norm(np.array([coords[d] for d in donor_list]) - targets, axis=1))
+        )
+    else:
+        start_coords = np.asarray(initial_coordinates, dtype=float)
+        if start_coords.shape != coords.shape:
+            raise ValueError("initial_coordinates shape must match coordinates")
+        initial_donor_error = float(
+            np.max(
+                np.linalg.norm(np.array([start_coords[d] for d in donor_list]) - targets, axis=1)
+            )
+        )
+        sigma_start_applied = True
 
-    centroids = {i: coords[list(frag)].mean(axis=0) for i, frag in enumerate(plan.fragments)}
+    centroids = {i: start_coords[list(frag)].mean(axis=0) for i, frag in enumerate(plan.fragments)}
     movable = list(plan.movable)
     param_index = {frag: pos for pos, frag in enumerate(movable)}
     elements = graph.elements
@@ -419,7 +443,7 @@ def realize_target(
             (edge.a, edge.b, float(np.linalg.norm(coords[edge.a] - coords[edge.b])))
         )
 
-    base = coords.copy()
+    base = start_coords.copy()
 
     def _pose(vector: np.ndarray) -> np.ndarray:
         trial = base.copy()
@@ -508,6 +532,7 @@ def realize_target(
             "solver_converged": solve_info["evidence"].get("solver_converged"),
             "solver_message": solve_info["evidence"].get("solver_message"),
             "initial_donor_error": initial_donor_error,
+            **({"sigma_start_applied": True} if sigma_start_applied is True else {}),
             "fragment_plan": plan.to_dict(),
             "target_positions": [list(map(float, row)) for row in targets],
         },
@@ -584,6 +609,7 @@ def realize_flexible(
     clash_shortlist_cutoff: float = 5.0,
     maxiter: int = 400,
     warm_max_nfev: int = 40,
+    initial_coordinates: np.ndarray | None = None,
 ) -> RealizationResult:
     """Realize one placement by constrained internal-coordinate relaxation.
 
@@ -598,6 +624,11 @@ def realize_flexible(
     restraints.  Typed graph, reaction edges, and atom indices are preserved;
     the terminal audit (bonds/angles/stereo/clash/re-perception gate) is the
     same honest gate as the rigid backend.
+
+    *initial_coordinates* (D1, optional) only changes the solver start
+    point (warm rigid start included); all restraint tables and the terminal
+    audit stay anchored at *coordinates* (the true parent input).  ``None``
+    keeps the legacy input-only path verbatim.
     """
     from scipy.optimize import minimize
 
@@ -640,30 +671,66 @@ def realize_flexible(
     oriented = np.array([rotation.T @ verts[place[i]] for i in range(len(donor_list))])
     oriented /= np.linalg.norm(oriented, axis=1, keepdims=True)
     targets = np.array([center + oriented[i] * ref_lengths[i] for i in range(len(donor_list))])
-    initial_donor_error = float(
-        np.max(np.linalg.norm(np.array([coords[d] for d in donor_list]) - targets, axis=1))
-    )
+    if initial_coordinates is None:
+        sigma_init: np.ndarray | None = None
+        initial_donor_error = float(
+            np.max(np.linalg.norm(np.array([coords[d] for d in donor_list]) - targets, axis=1))
+        )
+    else:
+        sigma_init = np.asarray(initial_coordinates, dtype=float)
+        if sigma_init.shape != coords.shape:
+            raise ValueError("initial_coordinates shape must match coordinates")
+        initial_donor_error = float(
+            np.max(np.linalg.norm(np.array([sigma_init[d] for d in donor_list]) - targets, axis=1))
+        )
 
     # Warm start: full rigid verdict with the same perception gate; an
     # already-realized rigid pose when available, else the input geometry.
-    warm = realize_target(
-        coords,
-        graph,
-        metal,
-        donors,
-        site_ids,
-        placement,
-        template,
-        target_id=target_id,
-        perceive=perceive,
-        realize_tol=realize_tol,
-        intra_bond_tol=intra_bond_tol,
-        intra_angle_tol_deg=intra_angle_tol_deg,
-        reaction_tol=reaction_tol,
-        clash_scale=clash_scale,
-        max_nfev=warm_max_nfev,
-    )
-    start = np.array(warm.structure if warm.structure is not None else coords, dtype=float)
+    # D1: the warm rigid solve itself starts from the sigma image when given;
+    # the legacy default call keeps its original argument shape verbatim.
+    if sigma_init is None:
+        warm = realize_target(
+            coords,
+            graph,
+            metal,
+            donors,
+            site_ids,
+            placement,
+            template,
+            target_id=target_id,
+            perceive=perceive,
+            realize_tol=realize_tol,
+            intra_bond_tol=intra_bond_tol,
+            intra_angle_tol_deg=intra_angle_tol_deg,
+            reaction_tol=reaction_tol,
+            clash_scale=clash_scale,
+            max_nfev=warm_max_nfev,
+        )
+    else:
+        warm = realize_target(
+            coords,
+            graph,
+            metal,
+            donors,
+            site_ids,
+            placement,
+            template,
+            target_id=target_id,
+            perceive=perceive,
+            realize_tol=realize_tol,
+            intra_bond_tol=intra_bond_tol,
+            intra_angle_tol_deg=intra_angle_tol_deg,
+            reaction_tol=reaction_tol,
+            clash_scale=clash_scale,
+            max_nfev=warm_max_nfev,
+            initial_coordinates=sigma_init,
+        )
+    if warm.structure is not None:
+        start = np.array(warm.structure, dtype=float)
+    elif sigma_init is not None:
+        start = np.array(sigma_init, dtype=float)
+    else:
+        start = np.array(coords, dtype=float)
     rigid_warm_donor_error = float(
         np.max(np.linalg.norm(np.array([start[d] for d in donor_list]) - targets, axis=1))
     )
@@ -871,6 +938,7 @@ def realize_flexible(
             "solver_converged": solver_ok,
             "solver_message": solver_note,
             "initial_donor_error": initial_donor_error,
+            **({"sigma_start_applied": True} if sigma_init is not None else {}),
             "rigid_warm_donor_error": rigid_warm_donor_error,
             "rigid_warm_status": warm.status,
             "fragment_plan": plan.to_dict(),
