@@ -123,3 +123,7 @@ CAP-cleanup formal `/tmp/fix1a-cap-cleanup-formal-output/ROOT-ACCEPTANCE.json`�
 - 绑定声明：成功 capture 绑定对象仍是 `/tmp/fix1a-exec`（capture manifest cf_path），不是新发布提交；本最终提交额外差异仅发布文档（A6 MANIFEST + 本文件 + LOG.md），capture 绑定不动。不得虚称直接绑定新发布提交。
 - 历史保留：§6 首轮失败/补修记录原样保留，不删除不改写；本 §7 只新增最终验收事实。
 - 数据备注：rpdd.xyz 为 rpdd.gjf 输入的 CREST xTB1 输出，能量默认 Hartree；CREST 只有服务器有，本机不安装/计算；Q9 缺数据只影响 R7，不阻塞其他任务。
+
+## 8. CI 环境路径补修
+
+PR #105 旧提交81261ad的3.11/3.13/coverage日志各仅一失败：A1测试硬编码/tmp/fix1a-a1-proto；本机遗留目录掩盖了该缺陷，属于根验收疏漏。7d83888仅改该测试的仓库根定位和子进程来源断言，原零加载断言不变，产品/工具/节点集合均未改。根独立registry全文件119 passed（/tmp/fix1a-ci-path-root-tests.log），提交diff与冻结补丁逐字一致。既有681fac8全量/capture/golden继续绑定不动的已测树；发布候选额外增加这一测试可移植性补修，不能声称新提交直接具有旧capture绑定。新版本CI待完成。
