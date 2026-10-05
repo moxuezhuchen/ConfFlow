@@ -15,6 +15,7 @@ import fnmatch
 import json
 import os
 import re
+from functools import wraps
 from pathlib import Path
 from typing import Any
 
@@ -44,6 +45,7 @@ def pytest_configure(config: pytest.Config) -> None:
     _state["orig"] = original
     _state["scope"] = os.environ.get("CAP_SCOPE_GLOB", "")
 
+    @wraps(original)
     def wrapped(self: Any, *args: Any, **kwargs: Any) -> Any:
         run = original(self, *args, **kwargs)
         scope = _state.get("scope", "")
