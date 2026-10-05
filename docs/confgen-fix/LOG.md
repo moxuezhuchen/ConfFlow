@@ -158,3 +158,11 @@ A6正式SHA912e545807f81688236d1214a571e9a6e45ce312；根逐字核对通过。
 ### 首轮最终验收失败后补修
 
 见FIX1A-EXECUTION.md §6：冻结context测试夹具、继承报告字节恢复、失败诊断保留三项完成阶段验收。根独立1+5回归与28工具测试通过，4实际报告逐字等于B1；首轮失败无manifest，不计验收通过。新测试纯black排版AST一致；待第二轮全量/golden。
+
+## 最终根验收（run-id fix1a-root-final-2；失败/补修历史保留，只新增本段）
+
+- 被测 `/tmp/fix1a-publish` 分支 `fix/confgen-1a` HEAD `681fac8ea569a04c6aa3f88fc6ec7138dffd6b6c`；`/tmp/fix1a-exec` 为已验证 detached 树，本次绝不动其文件。
+- 实际结果（根现场文件，不重跑）：4862 节点，4852 passed / 10 skipped，wall 265s（run.log）；93 报告逐字等于 B1；golden 所有 TS1（default/flexible/rigid）与 contract 5 摘要 ok（golden.json/log）；旧节点结果不变、skip 集合不变（ROOT-NODE-AND-BINDING-VERIFY.json）。
+- 104 文件 checkpoint `/tmp/fix1a-final-root-run-v2/baseline`：布局复制 B1；engine_reports/out/current-jd-contract 取最终实际采集；collect.json 从最终 out 节点键排序生成；TS1/contract 复制 B1 字节（根 fresh golden 已现场验证相同，不伪称保存 fresh 临时输出）。发布清单 `docs/confgen-fix/checkpoints/A6/MANIFEST.json` 记录外部绝对路径、每文件 sha、tested SHA681fac8、证据路径、run-id、CF/JDcurrent/JDpin 角色；大 golden 不提交。
+- 本最终提交额外差异仅发布文档（A6 MANIFEST + FIX1A-EXECUTION.md + LOG.md）；capture 绑定仍是 `/tmp/fix1a-exec`，不动，不虚称直接绑定新发布提交。
+- 数据备注：rpdd.xyz 为 rpdd.gjf 输入的 CREST xTB1 输出，能量默认 Hartree；CREST 只有服务器有，本机不安装/计算；Q9 缺数据只影响 R7，不阻塞其他任务。

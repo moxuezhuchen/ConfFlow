@@ -107,3 +107,19 @@ CAP-cleanup formal `/tmp/fix1a-cap-cleanup-formal-output/ROOT-ACCEPTANCE.json`�
 - b6403f945e1380834a3c3ac62df54f59a7532a34保留失败stdout和JUnit。根28工具测试通过，失败仍无manifest，成功绑定验证不放宽。原runner吞stdout并删临时JUnit导致额外科学分片复跑，已如实补修。
 - 继承报告执行器曾搜索无关旧目录；根发现异常耗时后中断搜索、用精确源码锚点续接，原日志保留。
 - 最终ruff及完整mypy228通过；新继承报告测试black排版由根收尾，AST逐字等价。第二轮全量及golden尚待实际结果，不预先宣称通过。
+
+## 7. 最终根验收（run-id fix1a-root-final-2，实际运行；发布准备阶段不重跑全量）
+
+- 被测对象：唯一可写产品树 `/tmp/fix1a-publish`，分支 `fix/confgen-1a`，HEAD `681fac8ea569a04c6aa3f88fc6ec7138dffd6b6c`（干净）；` /tmp/fix1a-exec` 为已验证 detached 树（同 HEAD `681fac8…`，干净），本次准备绝不改其任何文件。
+- 实际根验收（以根现场文件为准）：
+  - `/tmp/fix1a-final-root-run-v2/ROOT-NODE-AND-BINDING-VERIFY.json`：nodes 4862，passed 4852 / skipped 10，baseline_nodes 4666，removed_node_rename 仅 `tests/v4/test_architecture_policy.py::test_no_g13_g14_rules_are_enabled`，old_outcomes_identical true，skip_set_identical true，capture_reports 93。
+  - `/tmp/fix1a-final-root-run-v2/run.log`：`{"passed": 4852, "skipped": 10} wall 265s`。
+  - `/tmp/fix1a-final-root-run-v2/golden.json`（= golden.log 字节）：ok true；ts1 default/flexible/rigid 全 ok；contract boundary_cli_sha256 / contract_bytes_sha256 / contract_cli_sha256 / contract_digest / jd_contract_key 全 ok；engine_reports added/different/missing/missing_allowed_removed 全空；contract_reference 为 `/tmp/fix1a-baseline-final-output/baseline/contract.json`；engine manifest sha `20aa8f1c…81fa0`，run-id `fix1a-root-final-2`。
+  - 93 份实际 capture 报告逐字等于 B1（`diff -rq` 一致；golden engine_reports 空差异佐证）；旧节点结果不变、skip 集合不变。
+- 104 文件 checkpoint：`/tmp/fix1a-final-root-run-v2/baseline`（新建，布局复制 B1 `/tmp/fix1a-baseline-final-output/baseline`，文件数 104 已确认）。
+  - engine_reports（93）/ out.json / current-jd-contract（3）取自最终实际采集（capture/engine_reports、`/tmp/fix1a-final-root-run-v2/out.json` = capture/out.json sha `80b73f6e…07d`、`/tmp/fix1a-final-root-run-v2/current-jd-contract`）；collect.json（4862 行）从最终 out 节点键排序生成（B1 collect 格式为换行分隔排序节点清单，已先阅读确认 B1 collect == sorted(B1 out keys)），sha `e2471efd…7e4` 与 capture manifest nodes_sha256 一致。
+  - TS1（3）/ contract.json / contract.full.json / boundary.full.json 复制 B1 字节；根 fresh golden 已现场验证相同（见上 golden 摘要），本检查点不伪称保存了 fresh 临时输出。
+- 发布树清单：`docs/confgen-fix/checkpoints/A6/MANIFEST.json`（本树新建），记录外部绝对路径及每文件 sha、tested SHA `681fac8` 全串、实际证据路径与 sha、run-id、CF（`/tmp/fix1a-exec`）/ JD 当前（current-jd-contract 基准）/ JD pin（`/opt/cf-worktrees/jd-pin/src`）角色；大 golden/out 不提交，仅记 sha。
+- 绑定声明：成功 capture 绑定对象仍是 `/tmp/fix1a-exec`（capture manifest cf_path），不是新发布提交；本最终提交额外差异仅发布文档（A6 MANIFEST + 本文件 + LOG.md），capture 绑定不动。不得虚称直接绑定新发布提交。
+- 历史保留：§6 首轮失败/补修记录原样保留，不删除不改写；本 §7 只新增最终验收事实。
+- 数据备注：rpdd.xyz 为 rpdd.gjf 输入的 CREST xTB1 输出，能量默认 Hartree；CREST 只有服务器有，本机不安装/计算；Q9 缺数据只影响 R7，不阻塞其他任务。
