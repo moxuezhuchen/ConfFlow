@@ -73,6 +73,7 @@ def _setup_capture(cf: Path, capture_arg: str, run_id: str, jdpin: str) -> dict:
             raise CaptureError(f"capture directory must live outside the {label}")
     capture_dir.mkdir(parents=True, exist_ok=True)
     (capture_dir / "shards").mkdir()
+    (capture_dir / "diagnostics").mkdir()
     return {
         "dir": capture_dir,
         "prov": prov,
@@ -194,14 +195,25 @@ def main(argv: list[str] | None = None) -> int:
         load[i] += weight[f]
     start = time.time()
     with tempfile.TemporaryDirectory() as tmp:
+        # Capture-only failure diagnostics: per-shard stdout is preserved to
+        # capture/diagnostics/shardN.log and each finished shard's JUnit is
+        # copied to capture/diagnostics/shardN.xml BEFORE any error return.
+        # Test execution, sharding, exit codes, manifest-last write, source
+        # binding and all non-capture behavior are unchanged.
+        diag_dir = capture["dir"] / "diagnostics" if capture else None
+        if diag_dir is not None:
+            diag_dir.mkdir(parents=True, exist_ok=True)
         procs = []
+        log_handles = []
         for i, files in enumerate(shards):
             if not files:
                 continue
             junit = Path(tmp) / f"shard{i}.xml"
             shard_env = env
             shard_cmd = [*base, "-q", f"--junitxml={junit}", *extra, *sorted(files)]
+            diag_xml = None
             if capture:
+                assert diag_dir is not None
                 shard_env = dict(env)
                 shard_env["PYTHONPATH"] = os.pathsep.join(
                     [str(capture["tools_dir"]), env.get("PYTHONPATH", "")]
@@ -212,18 +224,26 @@ def main(argv: list[str] | None = None) -> int:
                 # Scope filters report write-out only; all tests still execute.
                 shard_env["CAP_SCOPE_GLOB"] = env.get("CAP_SCOPE_GLOB", CONFGEN_SCOPE)
                 shard_cmd += ["-p", "capture_engine_reports"]
-            procs.append(
-                (
-                    junit,
-                    subprocess.Popen(shard_cmd, cwd=cf, env=shard_env, stdout=subprocess.DEVNULL),
-                )
-            )
-        for _, proc in procs:
+                diag_xml = diag_dir / f"shard{i}.xml"
+                log_path = diag_dir / f"shard{i}.log"
+                fh = open(log_path, "w", encoding="utf-8", errors="replace")
+                log_handles.append(fh)
+                proc = subprocess.Popen(shard_cmd, cwd=cf, env=shard_env, stdout=fh)
+            else:
+                proc = subprocess.Popen(shard_cmd, cwd=cf, env=shard_env, stdout=subprocess.DEVNULL)
+            procs.append((junit, proc, diag_xml))
+        for _, proc, _ in procs:
             proc.wait()
+        for fh in log_handles:
+            fh.close()
+        if capture:
+            for junit, _proc, diag_xml in procs:
+                if diag_xml is not None and junit.is_file():
+                    shutil.copyfile(junit, diag_xml)
         outcomes: dict[str, str] = {}
         seconds: dict[str, float] = defaultdict(float)
         junit_counter: Counter[str] = Counter()
-        for junit, proc in procs:
+        for junit, proc, _ in procs:
             if capture and proc.returncode != 0:
                 raise CaptureError(f"shard pytest exited {proc.returncode} (junit {junit.name})")
             if not junit.is_file():
