@@ -12,10 +12,13 @@ The old guards stay in place and keep running; this module never imports them.
 from __future__ import annotations
 
 import re
+import shutil
+import subprocess as _sp
 from pathlib import Path
 
 import pytest
 
+import tools.architecture_policy as _policy
 from tools.architecture_policy import (
     FORBIDDEN_SYMBOLS,
     METRIC_V4_ROOTS,
@@ -33,6 +36,7 @@ from tools.architecture_policy import (
 )
 
 CASES = Path(__file__).resolve().parent / "architecture_policy_cases"
+_REAL_ROOT = Path(__file__).resolve().parents[2]
 V46_STRICT_CANDIDATES = [
     "domain",
     "workflow/v4",
@@ -177,6 +181,310 @@ def _scan_rule(tmp_path: Path, rule: dict) -> list[str]:
         return [v["rule"] for v in policy.scan(tmp_path)]
     finally:
         policy.RULES = saved
+
+
+# ---------------------------------------------------------------------------
+# Runtime per-rule clean/mutant fixture trees (L0.4c-v2).
+#
+# Every entry is a COMPLETE minimal fixture for its rule: ``clean`` contains
+# every module the rule's cases touch, so each case really executes and the
+# rule must stay silent.  ``mutant`` re-declares exactly one file to inject a
+# single target violation and nothing else.  The test isolates the rule under
+# test by monkeypatching RUNTIME_RULES, so a violation can only come from the
+# target rule (a shared fixture can never let an unrelated rule pass for it).
+# ---------------------------------------------------------------------------
+
+INIT = ""
+
+_PUBLISH = "confflow.persistence.fsatomic.publish_bytes"
+_FSYNC = "confflow.persistence.fsatomic.fsync_directory"
+_PUBLISH_CONSUMERS = [
+    "confflow/application/v4_run.py",
+    "confflow/persistence/arbitration.py",
+    "confflow/persistence/generation.py",
+    "confflow/persistence/publication.py",
+    "confflow/persistence/run_state.py",
+    "confflow/producer/run_result.py",
+]
+_FSYNC_CONSUMERS = [
+    "confflow/application/execution/workflow_adapter.py",
+    "confflow/persistence/imports.py",
+]
+_RT038_CLEAN = {
+    "confflow/persistence/fsatomic.py": "def publish_bytes(path, data):\n    pass\n\n\ndef fsync_directory(path):\n    pass\n"
+}
+_RT038_CLEAN.update(
+    {rel: "from confflow.persistence.fsatomic import publish_bytes\n" for rel in _PUBLISH_CONSUMERS}
+)
+_RT038_CLEAN["confflow/application/execution/workflow_adapter.py"] = (
+    "from confflow.persistence.fsatomic import fsync_directory, publish_bytes\n"
+)
+_RT038_CLEAN["confflow/persistence/imports.py"] = (
+    "from confflow.persistence.fsatomic import fsync_directory\n"
+)
+
+_RT039_CLEAN = {
+    "confflow/programs/_naming.py": "def sanitize_job_name(name):\n    return name\n",
+    "confflow/programs/gaussian/rendering.py": (
+        "from confflow.programs._naming import sanitize_job_name\n"
+    ),
+    "confflow/programs/orca/rendering.py": (
+        "from confflow.programs._naming import sanitize_job_name\n"
+    ),
+}
+
+_RT043_CLEAN = {
+    "confflow/config/contract_schemas.py": (
+        'CONFIGURATION_VALIDATION_SCHEMA = "confflow.configuration-validation.v1"\n'
+        'EDITOR_MANIFEST_SCHEMA = "confflow.editor-manifest.v1"\n'
+        'RECIPE_CATALOG_SCHEMA = "confflow.recipe-catalog.v1"\n'
+    ),
+    "confflow/producer/contract.py": (
+        "from confflow.config.contract_schemas import CONFIGURATION_VALIDATION_SCHEMA\n"
+    ),
+    "confflow/producer/validation.py": (
+        "from confflow.config.contract_schemas import CONFIGURATION_VALIDATION_SCHEMA\n"
+        "VALIDATION_RESPONSE_SCHEMA = CONFIGURATION_VALIDATION_SCHEMA\n"
+    ),
+    "confflow/producer/manifest.py": (
+        "from confflow.config.contract_schemas import EDITOR_MANIFEST_SCHEMA\n"
+    ),
+    "confflow/producer/recipes.py": (
+        "from confflow.config.contract_schemas import RECIPE_CATALOG_SCHEMA\n"
+    ),
+}
+
+_RT047_ENTRIES = [
+    "confflow/v4cli.py",
+    "confflow/application/__init__.py",
+    "confflow/application/v4_entry.py",
+    "confflow/control_worker.py",
+]
+
+_RT065_MODULES = [
+    "confflow/execution/atom_mapping.py",
+    "confflow/execution/execution_adapters.py",
+    "confflow/execution/multi_output.py",
+    "confflow/execution/named_structures.py",
+    "confflow/execution/output_identity.py",
+    "confflow/execution/profile_ensemble.py",
+    "confflow/execution/profile_path_endpoints.py",
+    "confflow/programs/gaussian/named.py",
+    "confflow/programs/gaussian/path.py",
+    "confflow/programs/orca/ensemble_parse.py",
+    "confflow/programs/orca/goat.py",
+    "confflow/programs/orca/neb.py",
+    "confflow/programs/orca/path.py",
+]
+
+# RT-096 is a scanner gate; the fixture must carry the scanner itself.
+_RT096_CLEAN: dict[str, str] = {}
+
+RUNTIME_SCENARIOS: dict[str, dict[str, dict[str, str]]] = {
+    "RT-016": {
+        "clean": {"confflow/remote/__init__.py": INIT},
+        "mutant": {"confflow/remote/__init__.py": "__all__ = ['lease']\nlease = 1\n"},
+    },
+    "RT-017": {
+        "clean": {"confflow/domain/__init__.py": INIT, "confflow/core/__init__.py": INIT},
+        "mutant": {"confflow/domain/__init__.py": "import confflow.core\n"},
+    },
+    "RT-018": {
+        "clean": {
+            "confflow/workflow/v4/__init__.py": INIT,
+            "confflow/execution/__init__.py": INIT,
+        },
+        "mutant": {
+            "confflow/workflow/v4/__init__.py": "import confflow.calc\n",
+            "confflow/calc/__init__.py": INIT,
+        },
+    },
+    "RT-019": {
+        "clean": {
+            "confflow/remote/handoff.py": INIT,
+            "confflow/remote/staging.py": INIT,
+            "confflow/remote/transport.py": INIT,
+            "confflow/remote/worker.py": INIT,
+        },
+        "mutant": {
+            "confflow/remote/handoff.py": "import confflow.remote.lease\n",
+            "confflow/remote/lease.py": INIT,
+        },
+    },
+    "RT-020": {
+        "clean": {
+            "confflow/v4cli.py": INIT,
+            "confflow/application/__init__.py": INIT,
+            "confflow/application/v4_entry.py": INIT,
+            "confflow/application/execution/workflow_adapter.py": INIT,
+            "confflow/control_worker.py": INIT,
+        },
+        "mutant": {
+            "confflow/v4cli.py": "import confflow.fixture_agent\n",
+            "confflow/fixture_agent.py": INIT,
+        },
+    },
+    "RT-021": {
+        # An in-tree confflow package so require_import_fail cannot fall
+        # through to an installed confflow elsewhere on sys.path.
+        "clean": {"confflow/__init__.py": INIT},
+        "mutant": {
+            "confflow/__init__.py": INIT,
+            "confflow/workflow/engine.py": INIT,
+        },
+    },
+    "RT-031": {
+        "clean": {"confflow/__init__.py": INIT},
+        "mutant": {"confflow/__init__.py": INIT, "confflow/core/types.py": INIT},
+    },
+    "RT-038": {
+        "clean": dict(_RT038_CLEAN),
+        "mutant": {
+            "confflow/persistence/run_state.py": "def publish_bytes(path, data):\n    return 'copy'\n"
+        },
+    },
+    "RT-039": {
+        "clean": dict(_RT039_CLEAN),
+        "mutant": {
+            "confflow/programs/gaussian/rendering.py": "def sanitize_job_name(name):\n    return 'copy'\n"
+        },
+    },
+    "RT-040": {
+        "clean": {"confflow/producer/__init__.py": INIT},
+        "mutant": {
+            "confflow/producer/__init__.py": "import confflow.calc\n",
+            "confflow/calc/__init__.py": INIT,
+        },
+    },
+    "RT-041": {
+        "clean": {"confflow/producer/__init__.py": INIT, "confflow/producer/contract.py": INIT},
+        "mutant": {
+            "confflow/producer/__init__.py": "import confflow.config.canonical\n",
+            "confflow/config/canonical/__init__.py": INIT,
+        },
+    },
+    "RT-042": {
+        "clean": {"confflow/producer/__init__.py": INIT},
+        "mutant": {
+            "confflow/producer/__init__.py": "import confflow.calc.async_exec\n",
+            "confflow/calc/async_exec.py": INIT,
+        },
+    },
+    "RT-043": {
+        "clean": dict(_RT043_CLEAN),
+        # A same-valued but distinct string object: breaks the identity pin
+        # without changing any value, so only RT-043's identity op can fire.
+        "mutant": {
+            "confflow/producer/validation.py": (
+                "from confflow.config.contract_schemas import CONFIGURATION_VALIDATION_SCHEMA\n"
+                'VALIDATION_RESPONSE_SCHEMA = "".join(["confflow.configuration", "-validation.v1"])\n'
+            )
+        },
+    },
+    "RT-044": {
+        "clean": {
+            "confflow/config/__init__.py": INIT,
+            "confflow/config/contract_schemas.py": (
+                'CONFIGURATION_VALIDATION_SCHEMA = "confflow.configuration-validation.v1"\n'
+            ),
+        },
+        "mutant": {"confflow/config/__init__.py": "WorkflowConfig = 1\n"},
+    },
+    "RT-045": {
+        "clean": {"confflow/core/__init__.py": INIT},
+        "mutant": {
+            "confflow/core/__init__.py": "import confflow.config\n",
+            "confflow/config/__init__.py": INIT,
+        },
+    },
+    "RT-046": {
+        "clean": {
+            "confflow/application/__init__.py": INIT,
+            "confflow/application/execution/__init__.py": INIT,
+        },
+        "mutant": {
+            "confflow/application/__init__.py": "import confflow.application.execution\n",
+        },
+    },
+    "RT-047": {
+        "clean": {rel: INIT for rel in _RT047_ENTRIES},
+        "mutant": {
+            "confflow/v4cli.py": "import confflow.config.canonical\n",
+            "confflow/config/canonical/__init__.py": INIT,
+        },
+    },
+    "RT-065": {
+        "clean": {rel: INIT for rel in _RT065_MODULES},
+        "mutant": {
+            "confflow/execution/output_identity.py": "import confflow.config\n",
+            "confflow/config/__init__.py": INIT,
+        },
+    },
+    "RT-096": {
+        "clean": dict(_RT096_CLEAN),
+        "mutant": {"confflow/producer/evil.py": "x = TaskRunner\n"},
+    },
+}
+
+# RT-096 clean/mutant needs the real scanner copied into the fixture tree.
+_SCANNER_RT = {"RT-096"}
+
+
+def _materialise(root: Path, files: dict[str, str], rule_id: str) -> None:
+    for rel, content in files.items():
+        _write(root, rel, content)
+    if rule_id in _SCANNER_RT:
+        import shutil
+
+        (root / "scripts").mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(_REAL_ROOT / "scripts/v4_arch_scan.py", root / "scripts/v4_arch_scan.py")
+
+
+@pytest.mark.parametrize("rule_id", sorted(RUNTIME_SCENARIOS))
+def test_runtime_rule_clean_and_mutant(rule_id: str, tmp_path: Path, monkeypatch) -> None:
+    import tools.architecture_policy as policy
+
+    rule = next(r for r in policy.RUNTIME_RULES if r["id"] == rule_id)
+    scenario = RUNTIME_SCENARIOS[rule_id]
+    monkeypatch.setattr(policy, "RUNTIME_RULES", [rule])
+
+    clean_root = tmp_path / "clean"
+    clean_root.mkdir()
+    _materialise(clean_root, scenario["clean"], rule_id)
+    clean = scan_runtime(clean_root)
+    assert [
+        v for v in clean if v["rule"] == rule_id
+    ] == [], f"clean fixture fired {rule_id}: {[v for v in clean if v['rule'] == rule_id]}"
+
+    mutant_root = tmp_path / "mutant"
+    mutant_root.mkdir()
+    _materialise(mutant_root, scenario["clean"], rule_id)
+    _materialise(mutant_root, scenario["mutant"], rule_id)
+    mutant = scan_runtime(mutant_root)
+    fired = [v for v in mutant if v["rule"] == rule_id]
+    assert fired, f"mutant did not fire {rule_id}: {mutant}"
+    # Every case must have really executed.  ``require_import_fail`` reports
+    # ``error='importable'`` as its intended violation, so only genuine
+    # exceptions (an AttributeError/ImportError, i.e. a broken fixture) count
+    # as a false pass here.
+    crashed = [
+        v
+        for v in mutant
+        if "error" in v
+        and not (v.get("op") == "require_import_fail" and v.get("error") == "importable")
+    ]
+    assert not crashed, f"steps crashed instead of asserting: {crashed}"
+    if rule.get("kind") == "scanner_gate":
+        # A scanner gate reports through its two stages, not through op.
+        assert {v["stage"] for v in fired} == {"inproc", "cli"}, fired
+        assert all("TaskRunner" in v["detail"] for v in fired), fired
+    elif "legacy_debt" in rule:
+        # RT-040 measures the imported legacy set, not a step op.
+        assert all(v["stage"] == "debt" for v in fired), fired
+        assert all("legacy import debt changed" in v["detail"] for v in fired), fired
+    else:
+        # The target violation must carry the rule's own op, not a crash.
+        assert all(v.get("op") for v in fired), f"target violation has no op: {fired}"
 
 
 # ---------------------------------------------------------------------------
@@ -434,3 +742,458 @@ def test_rule_ids_are_unique_and_sources_pinned() -> None:
 
 def test_no_g13_g14_rules_are_enabled() -> None:
     assert not [r for r in RULES if "G13" in r["id"] or "G14" in r["id"]]
+
+
+# ---------------------------------------------------------------------------
+# Runtime import isolation (L0.4c): every rule must fire on its own
+# violating synthetic fixture tree through the real scan_runtime() entry
+# (fresh subprocess per case), and stay silent on the real tree.
+# ---------------------------------------------------------------------------
+
+from tools.architecture_policy import RUNTIME_RULES, scan_runtime  # noqa: E402
+
+RUNTIME_IDS = sorted(r["id"] for r in RUNTIME_RULES)
+
+_REAL_ROOT = Path(__file__).resolve().parents[2]
+
+INIT = ""
+
+RUNTIME_NEGATIVE_FIXTURES: dict[str, dict[str, str]] = {
+    "RT-016": {
+        "confflow/remote/__init__.py": '__all__ = ["lease"]\nlease = 1\n',
+    },
+    "RT-017": {
+        "confflow/domain/__init__.py": "import confflow.core\n",
+        "confflow/core/__init__.py": INIT,
+    },
+    "RT-018": {
+        "confflow/workflow/__init__.py": INIT,
+        "confflow/workflow/v4/__init__.py": "import confflow.workflow.v3_runtime\n",
+        "confflow/workflow/v3_runtime/__init__.py": INIT,
+        "confflow/execution/__init__.py": INIT,
+        "confflow/config/__init__.py": INIT,
+    },
+    "RT-019": {
+        "confflow/remote/__init__.py": INIT,
+        "confflow/remote/handoff.py": "import confflow.remote.lease\n",
+        "confflow/remote/lease.py": INIT,
+    },
+    "RT-020": {
+        "confflow/v4cli.py": "import confflow.fixture_agent\n",
+        "confflow/fixture_agent.py": INIT,
+        "confflow/application/__init__.py": INIT,
+        "confflow/application/execution/__init__.py": INIT,
+        "confflow/application/execution/workflow_adapter.py": INIT,
+        "confflow/control_worker.py": INIT,
+    },
+    "RT-021": {
+        "confflow/workflow/engine.py": INIT,
+    },
+    "RT-031": {
+        "confflow/config/canonical.py": INIT,
+    },
+    "RT-038": {
+        "confflow/persistence/__init__.py": INIT,
+        "confflow/persistence/fsatomic.py": (
+            "def publish_bytes(path, data):\n    raise NotImplementedError\n\n\n"
+            "def fsync_directory(path):\n    raise NotImplementedError\n"
+        ),
+        "confflow/persistence/run_state.py": (
+            "def publish_bytes(path, data):\n    return 'copy'\n"
+        ),
+    },
+    "RT-039": {
+        "confflow/programs/__init__.py": INIT,
+        "confflow/programs/_naming.py": "def sanitize_job_name(name):\n    return name\n",
+        "confflow/programs/gaussian/__init__.py": INIT,
+        "confflow/programs/gaussian/rendering.py": (
+            "def sanitize_job_name(name):\n    return 'copy'\n"
+        ),
+        "confflow/programs/orca/__init__.py": INIT,
+        "confflow/programs/orca/rendering.py": (
+            "from confflow.programs._naming import sanitize_job_name\n"
+        ),
+    },
+    "RT-040": {
+        "confflow/__init__.py": INIT,
+        "confflow/producer/__init__.py": "import confflow.calc\n",
+        "confflow/calc/__init__.py": INIT,
+    },
+    "RT-041": {
+        "confflow/producer/__init__.py": "import confflow.config.canonical.models\n",
+        "confflow/config/__init__.py": INIT,
+        "confflow/config/canonical/__init__.py": INIT,
+        "confflow/config/canonical/models.py": INIT,
+    },
+    "RT-042": {
+        "confflow/producer/__init__.py": "import confflow.calc.async_exec\n",
+        "confflow/calc/__init__.py": INIT,
+        "confflow/calc/async_exec.py": INIT,
+    },
+    "RT-043": {
+        "confflow/config/__init__.py": INIT,
+        "confflow/config/contract_schemas.py": (
+            'CONFIGURATION_VALIDATION_SCHEMA = "confflow.configuration-validation.v1"\n'
+            'EDITOR_MANIFEST_SCHEMA = "confflow.editor-manifest.v1"\n'
+            'RECIPE_CATALOG_SCHEMA = "confflow.recipe-catalog.v1"\n'
+        ),
+        "confflow/producer/__init__.py": INIT,
+        "confflow/producer/contract.py": ('CONFIGURATION_VALIDATION_SCHEMA = "copy"\n'),
+        "confflow/producer/manifest.py": (
+            'EDITOR_MANIFEST_SCHEMA = "confflow.editor-manifest.v1"\n'
+        ),
+        "confflow/producer/recipes.py": ('RECIPE_CATALOG_SCHEMA = "confflow.recipe-catalog.v1"\n'),
+        "confflow/producer/validation.py": (
+            'VALIDATION_RESPONSE_SCHEMA = "confflow.configuration-validation.v1"\n'
+        ),
+    },
+    "RT-044": {
+        "confflow/config/__init__.py": "WorkflowConfig = 1\n",
+    },
+    "RT-045": {
+        "confflow/core/__init__.py": "import confflow.config\n",
+        "confflow/config/__init__.py": INIT,
+    },
+    "RT-046": {
+        "confflow/application/__init__.py": "import confflow.application.execution.memory\n",
+        "confflow/application/execution/__init__.py": INIT,
+        "confflow/application/execution/memory.py": INIT,
+    },
+    "RT-047": {
+        "confflow/v4cli.py": "import confflow.config.canonical.models\n",
+        "confflow/config/__init__.py": INIT,
+        "confflow/config/canonical/__init__.py": INIT,
+        "confflow/config/canonical/models.py": INIT,
+    },
+    "RT-065": {
+        "confflow/execution/output_identity.py": "import confflow.calc\n",
+        "confflow/calc/__init__.py": INIT,
+    },
+    "RT-096": {
+        # The scanner gate only watches its SCOPE entry paths (v4cli,
+        # application, control, producer, remote, analysis) — not workflow/v4.
+        "confflow/producer/__init__.py": INIT,
+        "confflow/producer/evil.py": "x = TaskRunner\n",
+    },
+}
+
+
+@pytest.mark.parametrize("rule_id", RUNTIME_IDS)
+def test_runtime_rule_fires_on_violating_fixture(rule_id: str, tmp_path: Path) -> None:
+    # The fixture confflow must be a REGULAR package (root __init__), otherwise
+    # the namespace merge would resolve submodules from the real tree.
+    _write(tmp_path, "confflow/__init__.py", "")
+    for relpath, content in RUNTIME_NEGATIVE_FIXTURES[rule_id].items():
+        _write(tmp_path, relpath, content)
+    if rule_id == "RT-096":
+        (tmp_path / "scripts").mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(
+            _REAL_ROOT / "scripts/v4_arch_scan.py", tmp_path / "scripts/v4_arch_scan.py"
+        )
+    fired = [v["rule"] for v in scan_runtime(tmp_path)]
+    assert rule_id in fired, f"{rule_id} did not fire on its violating fixture: {fired}"
+
+
+def test_runtime_rules_are_clean_on_the_real_tree() -> None:
+    assert scan_runtime(_REAL_ROOT) == []
+
+
+# ---------------------------------------------------------------------------
+# L0.4c-v2 additions: timeout/launch handling, payload validation, source
+# binding, and per-rule clean/mutant fixture coverage through scan_runtime.
+# ---------------------------------------------------------------------------
+
+
+def _blank_tree(tmp_path: Path) -> Path:
+    (tmp_path / "confflow").mkdir(exist_ok=True)
+    (tmp_path / "confflow/__init__.py").write_text("")
+    return tmp_path
+
+
+def _only(rt_id: str, monkeypatch) -> None:
+    """Isolate one runtime rule so only it can report."""
+    rule = next(r for r in _policy.RUNTIME_RULES if r["id"] == rt_id)
+    monkeypatch.setattr(_policy, "RUNTIME_RULES", [rule])
+
+
+# --- #1 timeouts and launch errors -----------------------------------------
+
+
+def test_runtime_normal_case_timeout_is_a_violation(tmp_path: Path, monkeypatch) -> None:
+    _blank_tree(tmp_path)
+    _only("RT-016", monkeypatch)
+
+    def boom(*a, **kw):
+        raise _sp.TimeoutExpired(cmd=a[0], timeout=kw.get("timeout"))
+
+    monkeypatch.setattr(_policy.subprocess, "run", boom)
+    fired = scan_runtime(tmp_path)
+    assert fired, "a case timeout must be reported, never skipped"
+    for v in fired:
+        assert v["rule"] == "RT-016", v
+        assert v["stage"].startswith("case:"), v
+        assert "timeout after" in v["detail"], v
+
+
+def test_runtime_scanner_inproc_timeout_is_a_violation(tmp_path: Path, monkeypatch) -> None:
+    _blank_tree(tmp_path)
+    _only("RT-096", monkeypatch)
+    seen: list[str] = []
+
+    def boom(cmd, **kw):
+        seen.append(cmd[1] if len(cmd) > 1 and cmd[1] == "-c" else cmd[-1])
+        raise _sp.TimeoutExpired(cmd=cmd, timeout=kw.get("timeout"))
+
+    monkeypatch.setattr(_policy.subprocess, "run", boom)
+    fired = scan_runtime(tmp_path)
+    assert [v for v in fired if v["stage"] == "inproc"], fired
+    assert [v for v in fired if v["stage"] == "cli"], fired
+    assert all(v["rule"] == "RT-096" for v in fired), fired
+    assert all("timeout after" in v["detail"] for v in fired), fired
+
+
+def test_runtime_scanner_cli_timeout_is_a_violation(tmp_path: Path, monkeypatch) -> None:
+    _blank_tree(tmp_path)
+    (tmp_path / "scripts").mkdir()
+    shutil.copyfile(_REAL_ROOT / "scripts/v4_arch_scan.py", tmp_path / "scripts/v4_arch_scan.py")
+    _only("RT-096", monkeypatch)
+    real_run = _policy.subprocess.run
+
+    def cli_only_timeout(cmd, **kw):
+        if "-c" in cmd:
+            return real_run(cmd, **kw)
+        raise _sp.TimeoutExpired(cmd=cmd, timeout=kw.get("timeout"))
+
+    monkeypatch.setattr(_policy.subprocess, "run", cli_only_timeout)
+    fired = scan_runtime(tmp_path)
+    assert [v for v in fired if v["stage"] == "cli"], fired
+    # The inproc gate ran for real and passed, so the CLI timeout is isolated.
+    assert not [v for v in fired if v["stage"] == "inproc"], fired
+
+
+def test_runtime_launch_error_is_a_violation(tmp_path: Path, monkeypatch) -> None:
+    _blank_tree(tmp_path)
+    _only("RT-016", monkeypatch)
+
+    def boom(*a, **kw):
+        raise OSError("no such interpreter")
+
+    monkeypatch.setattr(_policy.subprocess, "run", boom)
+    fired = scan_runtime(tmp_path)
+    assert fired, "a launch failure must be reported, never skipped"
+    assert all("launch failed" in v["detail"] for v in fired), fired
+
+
+def test_runtime_scanner_launch_error_is_a_violation(tmp_path: Path, monkeypatch) -> None:
+    _blank_tree(tmp_path)
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / "scripts/v4_arch_scan.py").write_text("")
+    _only("RT-096", monkeypatch)
+
+    def boom(*a, **kw):
+        raise OSError("no such interpreter")
+
+    monkeypatch.setattr(_policy.subprocess, "run", boom)
+    fired = scan_runtime(tmp_path)
+    assert {v["stage"] for v in fired} == {"inproc", "cli"}, fired
+    assert all("launch failed" in v["detail"] for v in fired), fired
+
+
+# --- #2 payload structure validation ---------------------------------------
+
+
+class _FakeProc:
+    def __init__(self, stdout: str, returncode: int = 0, stderr: str = "") -> None:
+        self.stdout = stdout
+        self.returncode = returncode
+        self.stderr = stderr
+
+
+_BAD_PAYLOADS = [
+    ("", "empty output"),
+    ("not json at all\n", "non-JSON output"),
+    ("null\n", "null top level"),
+    ("[1, 2, 3]\n", "non-object top level"),
+    ('"a string"\n', "string top level"),
+    ("{}\n", "missing violations field"),
+    ('{"violations": null}\n', "null violations"),
+    ('{"violations": {}}\n', "object instead of list"),
+    ('{"violations": "none"}\n', "string instead of list"),
+    ('{"violations": [1]}\n', "non-object list element"),
+    ('{"violations": [["op"]]}\n', "nested list element"),
+    ('{"violations": [], "confflow_modules": 3}\n', "int confflow_modules"),
+    ('{"violations": [], "confflow_modules": [1]}\n', "non-str module entry"),
+    ('{"violations": [], "confflow_modules": "x"}\n', "string confflow_modules"),
+]
+
+
+@pytest.mark.parametrize("stdout,label", _BAD_PAYLOADS, ids=[p[1] for p in _BAD_PAYLOADS])
+def test_runtime_bad_payload_becomes_violation(
+    tmp_path: Path, monkeypatch, stdout: str, label: str
+) -> None:
+    _blank_tree(tmp_path)
+    _only("RT-016", monkeypatch)
+    monkeypatch.setattr(_policy.subprocess, "run", lambda *a, **kw: _FakeProc(stdout))
+    fired = scan_runtime(tmp_path)
+    assert fired, f"{label} must produce a violation, never a pass or a crash"
+    assert all(v["rule"] == "RT-016" for v in fired), fired
+    assert all("stage" in v and v["detail"] for v in fired), fired
+
+
+def test_runtime_bad_payload_does_not_crash_scan(tmp_path: Path, monkeypatch) -> None:
+    # The root counterexample: exit 0 with {"violations": null} raised TypeError.
+    _blank_tree(tmp_path)
+    _only("RT-016", monkeypatch)
+    monkeypatch.setattr(
+        _policy.subprocess,
+        "run",
+        lambda *a, **kw: _FakeProc('{"violations": null, "confflow_modules": null}\n'),
+    )
+    fired = scan_runtime(tmp_path)  # must not raise TypeError
+    assert fired and "violations must be a list" in fired[0]["detail"], fired
+
+
+def test_runtime_normal_payload_semantics_preserved(tmp_path: Path, monkeypatch) -> None:
+    # A well-formed empty payload stays a pass for the rule under test.
+    _blank_tree(tmp_path)
+    _only("RT-016", monkeypatch)
+    monkeypatch.setattr(
+        _policy.subprocess,
+        "run",
+        lambda *a, **kw: _FakeProc('{"violations": [], "confflow_modules": null}\n'),
+    )
+    assert scan_runtime(tmp_path) == []
+
+
+def test_runtime_real_violation_payload_is_reported(tmp_path: Path, monkeypatch) -> None:
+    # A well-formed payload that carries a violation still reports it.
+    _blank_tree(tmp_path)
+    _only("RT-016", monkeypatch)
+    monkeypatch.setattr(
+        _policy.subprocess,
+        "run",
+        lambda *a, **kw: _FakeProc(
+            '{"violations": [{"op": "forbid", "module": "confflow.core"}], '
+            '"confflow_modules": ["confflow"]}\n'
+        ),
+    )
+    fired = scan_runtime(tmp_path)
+    assert [v for v in fired if v["rule"] == "RT-016" and v["op"] == "forbid"], fired
+
+
+# --- #3 source binding (paired in-tree / outside-tree proof) ----------------
+
+
+def _source_binding_fixture(tmp_path: Path, *, outside: bool) -> Path:
+    """Build a tree whose confflow.domain either lives inside or outside it."""
+    checked = tmp_path / ("checked" if not outside else "checked")
+    (checked / "confflow/core").mkdir(parents=True)
+    (checked / "confflow/__init__.py").write_text("")
+    (checked / "confflow/core/__init__.py").write_text("")
+    domain_body = "import confflow.core\n"
+    if outside:
+        real = tmp_path / "outside"
+        (real / "confflow/domain").mkdir(parents=True)
+        (real / "confflow/domain/__init__.py").write_text(domain_body)
+        (checked / "confflow/domain").symlink_to(real / "confflow/domain", target_is_directory=True)
+    else:
+        (checked / "confflow/domain").mkdir(parents=True)
+        (checked / "confflow/domain/__init__.py").write_text(domain_body)
+    return checked
+
+
+def test_runtime_source_binding_accepts_in_tree_source(tmp_path: Path, monkeypatch) -> None:
+    # Paired positive: identical layout, no symlink -> the loaded confflow
+    # source really lives under the checked tree, so no source_binding fires.
+    checked = _source_binding_fixture(tmp_path, outside=False)
+    _only("RT-017", monkeypatch)
+    fired = scan_runtime(checked)
+    assert not [v for v in fired if "source_binding" in str(v)], fired
+
+
+def test_runtime_source_binding_rejects_outside_tree(tmp_path: Path, monkeypatch) -> None:
+    # Paired negative: confflow.domain is a symlink to a tree-outside copy.
+    checked = _source_binding_fixture(tmp_path, outside=True)
+    _only("RT-017", monkeypatch)
+    fired = scan_runtime(checked)
+    binding = [v for v in fired if "source_binding" in str(v)]
+    assert binding, fired
+    assert all(v["rule"] == "RT-017" for v in binding), binding
+    assert all("outside" in str(v) for v in binding), binding
+
+
+def test_runtime_source_binding_rejects_scanner_from_outside_tree(
+    tmp_path: Path, monkeypatch
+) -> None:
+    # The scanner module must come from the inspected tree's scripts/.
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "v4_arch_scan.py").write_text(
+        "def scan():\n    return []\n\n\ndef main():\n    print('OK: clean')\n    return 0\n"
+    )
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / "scripts/v4_arch_scan.py").symlink_to(outside / "v4_arch_scan.py")
+    _write(tmp_path, "confflow/__init__.py", INIT)
+    _only("RT-096", monkeypatch)
+    fired = scan_runtime(tmp_path)
+    assert any("scanner module outside checked scripts" in v["detail"] for v in fired), fired
+    assert any(v["stage"] == "inproc" for v in fired), fired
+    assert any("scanner script outside checked scripts" in v["detail"] for v in fired), fired
+
+
+def test_runtime_source_binding_clean_tree() -> None:
+    # The real tree has no out-of-tree sources: no source-binding violations.
+    violations = [v for v in scan_runtime(_REAL_ROOT) if "source_binding" in str(v)]
+    assert violations == []
+
+
+# --- RT-096 two gates verified separately ----------------------------------
+
+
+def _scanner_fixture(tmp_path: Path, *, evil: bool) -> Path:
+    (tmp_path / "confflow/producer").mkdir(parents=True)
+    (tmp_path / "confflow/__init__.py").write_text("")
+    (tmp_path / "confflow/producer/__init__.py").write_text("")
+    (tmp_path / "scripts").mkdir()
+    shutil.copyfile(_REAL_ROOT / "scripts/v4_arch_scan.py", tmp_path / "scripts/v4_arch_scan.py")
+    if evil:
+        (tmp_path / "confflow/producer/evil.py").write_text("x = TaskRunner\n")
+    return tmp_path
+
+
+def test_runtime_scanner_gate_inproc_detects_violation(tmp_path: Path, monkeypatch) -> None:
+    _scanner_fixture(tmp_path, evil=True)
+    _only("RT-096", monkeypatch)
+    fired = scan_runtime(tmp_path)
+    assert [v for v in fired if v["stage"] == "inproc"], fired
+
+
+def test_runtime_scanner_gate_cli_detects_violation(tmp_path: Path, monkeypatch) -> None:
+    _scanner_fixture(tmp_path, evil=True)
+    _only("RT-096", monkeypatch)
+    fired = scan_runtime(tmp_path)
+    assert [v for v in fired if v["stage"] == "cli"], fired
+
+
+def test_runtime_scanner_gate_clean_tree_passes(tmp_path: Path, monkeypatch) -> None:
+    _scanner_fixture(tmp_path, evil=False)
+    _only("RT-096", monkeypatch)
+    assert scan_runtime(tmp_path) == []
+
+
+def test_runtime_scanner_gate_runs_both_gates(tmp_path: Path, monkeypatch) -> None:
+    # Both gates run even when the first one fails; neither is skipped.
+    _scanner_fixture(tmp_path, evil=True)
+    _only("RT-096", monkeypatch)
+    calls: list[list[str]] = []
+    real_run = _policy.subprocess.run
+
+    def spy(cmd, **kw):
+        calls.append(list(cmd))
+        return real_run(cmd, **kw)
+
+    monkeypatch.setattr(_policy.subprocess, "run", spy)
+    scan_runtime(tmp_path)
+    assert len(calls) == 2, calls
+    assert "-c" in calls[0], calls
+    assert "v4_arch_scan.py" in calls[1][1], calls

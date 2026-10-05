@@ -13,7 +13,11 @@ ConfGen purity rules stay planned (A6); PEP 562 exceptions are NOT widened.
 from __future__ import annotations
 
 import ast
+import json
+import os
 import re
+import subprocess
+import sys
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
@@ -356,6 +360,18 @@ RETIRED_V1_V2_WIRE_TOKENS = [
 ]
 V2_MIGRATION_MODULES = ["confflow.config.canonical.v2_adapter"]
 V1_MIGRATION_MODULES = []
+PUBLISH_AUTHORITY_CONSUMERS = (
+    "confflow.persistence.run_state",
+    "confflow.persistence.publication",
+    "confflow.persistence.generation",
+    "confflow.persistence.arbitration",
+    "confflow.application.v4_run",
+    "confflow.producer.run_result",
+)
+FSYNC_DIRECTORY_CONSUMERS = (
+    "confflow.persistence.imports",
+    "confflow.application.execution.workflow_adapter",
+)
 CONSOLIDATED_AUTHORITY_SCOPES = [
     "confflow/domain",
     "confflow/execution",
@@ -2035,6 +2051,666 @@ def check_const_rules(root: Path) -> list[str]:
     elif not set(new46).isdisjoint(set(forbidden)):
         problems.append("AP-070: V46 new symbols overlap the forbidden symbol table")
     return problems
+
+
+# ---------------------------------------------------------------------------
+# Runtime import isolation (L0.4c): data + child-process executor.
+# Every case runs in a FRESH subprocess (cwd = the tree under inspection,
+# PYTHONPATH = tree + tools/refactor-acc/noeditable, PYTHONDONTWRITEBYTECODE=1,
+# QT_QPA_PLATFORM=offscreen) so sys.modules can never be polluted by the
+# parent test process.  A case fails on nonzero exit, timeout, or a source
+# binding mismatch; there is no skip path.
+# ---------------------------------------------------------------------------
+
+RUNTIME_TIMEOUT = 120  # mirrors the original gate semantics (#96)
+
+_RUNTIME_CHILD = (
+    "import importlib, json, os, sys\n"
+    "spec = json.loads(sys.argv[1])\n"
+    "violations = []\n"
+    "modules_out = None\n"
+    "def imp(m):\n"
+    "    return importlib.import_module(m)\n"
+    "if spec.get('cwd_must_be') and os.path.realpath(os.getcwd()) != os.path.realpath(spec['cwd_must_be']):\n"
+    "    violations.append({'op': 'cwd_mismatch', 'detail': os.getcwd()})\n"
+    "for step in spec.get('steps', []):\n"
+    "    op = step['op']\n"
+    "    try:\n"
+    "        if op == 'import':\n"
+    "            imp(step['module'])\n"
+    "        elif op == 'forbid':\n"
+    "            for m in sys.modules:\n"
+    "                hit = m in step.get('exact', [])\n"
+    "                if not hit:\n"
+    "                    for p in step.get('prefixes', []):\n"
+    "                        if m.startswith(p):\n"
+    "                            skip = any(m == e or m.startswith(e + '.') for e in step.get('except_prefixes', []))\n"
+    "                            hit = not skip\n"
+    "                            break\n"
+    "                if hit:\n"
+    "                    violations.append({'op': 'forbid', 'module': m})\n"
+    "        elif op == 'require_import_fail':\n"
+    "            try:\n"
+    "                imp(step['module'])\n"
+    "                violations.append({'op': op, 'module': step['module'], 'error': 'importable'})\n"
+    "            except ModuleNotFoundError:\n"
+    "                pass\n"
+    "            except Exception as exc:\n"
+    "                violations.append({'op': op, 'module': step['module'], 'error': type(exc).__name__})\n"
+    "        elif op == 'export_absent':\n"
+    "            mod = imp(step['module'])\n"
+    "            for name in step['names']:\n"
+    "                if name in getattr(mod, '__all__', []):\n"
+    "                    violations.append({'op': op, 'module': step['module'], 'name': name, 'how': '__all__'})\n"
+    "                if hasattr(mod, name):\n"
+    "                    violations.append({'op': op, 'module': step['module'], 'name': name, 'how': 'hasattr'})\n"
+    "        elif op == 'getattr_raises':\n"
+    "            mod = imp(step['module'])\n"
+    "            try:\n"
+    "                getattr(mod, step['name'])\n"
+    "                violations.append({'op': op, 'module': step['module'], 'name': step['name']})\n"
+    "            except AttributeError:\n"
+    "                pass\n"
+    "        elif op == 'identity':\n"
+    "            refs = step['refs']\n"
+    "            objects = [getattr(imp(r.rsplit('.', 1)[0]), r.rsplit('.', 1)[1]) for r in refs]\n"
+    "            authority = getattr(imp(step['authority'].rsplit('.', 1)[0]), step['authority'].rsplit('.', 1)[1])\n"
+    "            for ref, obj in zip(refs, objects):\n"
+    "                if obj is not authority:\n"
+    "                    violations.append({'op': op, 'ref': ref})\n"
+    "        elif op == 'value_eq':\n"
+    "            mod, attr = step['ref'].rsplit('.', 1)\n"
+    "            if getattr(imp(mod), attr) != step['value']:\n"
+    "                violations.append({'op': op, 'ref': step['ref']})\n"
+    "        elif op == 'print_confflow_modules':\n"
+    "            modules_out = sorted(m for m in sys.modules if m.startswith('confflow'))\n"
+    "    except Exception as exc:\n"
+    "        violations.append({'op': op, 'error': type(exc).__name__, 'detail': str(exc)[-200:]})\n"
+    "root_real = os.path.realpath(spec.get('source_binding_root', '/'))\n"
+    "for mname, mod in list(sys.modules.items()):\n"
+    "    if mname != 'confflow' and not mname.startswith('confflow.'):\n"
+    "        continue\n"
+    "    f = getattr(mod, '__file__', None)\n"
+    "    if f and not os.path.realpath(f).startswith(root_real + os.sep):\n"
+    "        violations.append({'op': 'source_binding', 'module': mname,\n"
+    "                           'file': os.path.realpath(f)})\n"
+    "    pkg_path = getattr(mod, '__path__', None)\n"
+    "    for pp in list(pkg_path or []):\n"
+    "        if not os.path.realpath(pp).startswith(root_real + os.sep):\n"
+    "            violations.append({'op': 'source_binding_path', 'module': mname,\n"
+    "                               'path': os.path.realpath(pp)})\n"
+    "print(json.dumps({'violations': violations, 'confflow_modules': modules_out}))\n"
+    "sys.exit(0 if not violations else 3)\n"
+)
+
+RUNTIME_RULES = [
+    {
+        "id": "RT-016",
+        "source": "#16",
+        "cases": [
+            [
+                {"op": "import", "module": "confflow.remote"},
+                {
+                    "op": "export_absent",
+                    "module": "confflow.remote",
+                    "names": ["lease", "supervision", "schema"],
+                },
+            ]
+        ],
+    },
+    {
+        "id": "RT-017",
+        "source": "#17",
+        "cases": [
+            [
+                {"op": "import", "module": "confflow.domain"},
+                {
+                    "op": "forbid",
+                    "exact": ["confflow.core"],
+                    "prefixes": ["confflow.config", "confflow.calc", "confflow.workflow"],
+                },
+            ]
+        ],
+    },
+    {
+        "id": "RT-018",
+        "source": "#18",
+        "cases": [
+            [
+                {"op": "import", "module": "confflow.workflow.v4"},
+                {"op": "import", "module": "confflow.execution"},
+                {
+                    "op": "forbid",
+                    "prefixes": ["confflow.workflow."],
+                    "except_prefixes": ["confflow.workflow.v4"],
+                    "exact": ["confflow.config"],
+                },
+                {"op": "forbid", "prefixes": ["confflow.calc"]},
+            ]
+        ],
+    },
+    {
+        "id": "RT-019",
+        "source": "#19",
+        "cases": [
+            [
+                {"op": "import", "module": "confflow.remote.handoff"},
+                {"op": "import", "module": "confflow.remote.staging"},
+                {"op": "import", "module": "confflow.remote.transport"},
+                {"op": "import", "module": "confflow.remote.worker"},
+                {
+                    "op": "forbid",
+                    "exact": [
+                        "confflow.remote.lease",
+                        "confflow.remote.supervision",
+                        "confflow.remote.schema",
+                    ],
+                },
+            ]
+        ],
+    },
+    {
+        "id": "RT-020",
+        "source": "#20",
+        "cases": [
+            [
+                {"op": "import", "module": "confflow.v4cli"},
+                {"op": "import", "module": "confflow.application.v4_entry"},
+                {"op": "import", "module": "confflow.application.execution.workflow_adapter"},
+                {"op": "import", "module": "confflow.control_worker"},
+                {
+                    "op": "forbid",
+                    "exact": [
+                        "confflow.application.execution.memory",
+                        "confflow.application.execution.synthetic_producer",
+                        "confflow.fixture_agent",
+                    ],
+                },
+            ]
+        ],
+    },
+    {
+        "id": "RT-021",
+        "source": "#21",
+        "cases": [
+            [{"op": "require_import_fail", "module": module}] for module in RETIRED_RUNTIME_MODULES
+        ],
+    },
+    {
+        "id": "RT-031",
+        "source": "#31",
+        "cases": [
+            [{"op": "require_import_fail", "module": module}]
+            for module in PUBLIC_V1_V2_WIRE_MODULES
+        ],
+    },
+    {
+        "id": "RT-038",
+        "source": "#38",
+        "cases": [
+            [
+                {"op": "import", "module": "confflow.persistence.fsatomic"},
+                *[{"op": "import", "module": m} for m in PUBLISH_AUTHORITY_CONSUMERS],
+                {
+                    "op": "identity",
+                    "authority": "confflow.persistence.fsatomic.publish_bytes",
+                    "refs": [f"{m}.publish_bytes" for m in PUBLISH_AUTHORITY_CONSUMERS],
+                },
+                *[{"op": "import", "module": m} for m in FSYNC_DIRECTORY_CONSUMERS],
+                {
+                    "op": "identity",
+                    "authority": "confflow.persistence.fsatomic.fsync_directory",
+                    "refs": [f"{m}.fsync_directory" for m in FSYNC_DIRECTORY_CONSUMERS],
+                },
+            ]
+        ],
+    },
+    {
+        "id": "RT-039",
+        "source": "#39",
+        "cases": [
+            [
+                {"op": "import", "module": "confflow.programs._naming"},
+                {"op": "import", "module": "confflow.programs.gaussian.rendering"},
+                {"op": "import", "module": "confflow.programs.orca.rendering"},
+                {
+                    "op": "identity",
+                    "authority": "confflow.programs._naming.sanitize_job_name",
+                    "refs": [
+                        "confflow.programs.gaussian.rendering.sanitize_job_name",
+                        "confflow.programs.orca.rendering.sanitize_job_name",
+                    ],
+                },
+            ]
+        ],
+    },
+    {
+        "id": "RT-040",
+        "source": "#40",
+        "cases": [
+            [{"op": "import", "module": "confflow.producer"}, {"op": "print_confflow_modules"}]
+        ],
+        "legacy_debt": KNOWN_PRODUCER_LEGACY_IMPORTS,
+    },
+    {
+        "id": "RT-041",
+        "source": "#41",
+        "cases": [
+            [
+                {"op": "import", "module": "confflow.producer"},
+                {
+                    "op": "forbid",
+                    "exact": ["confflow.config.canonical", "confflow.config.models"],
+                    "prefixes": ["confflow.config.canonical."],
+                },
+            ],
+            [
+                {"op": "import", "module": "confflow.producer.contract"},
+                {
+                    "op": "forbid",
+                    "exact": ["confflow.config.canonical", "confflow.config.models"],
+                    "prefixes": ["confflow.config.canonical."],
+                },
+            ],
+        ],
+    },
+    {
+        "id": "RT-042",
+        "source": "#42",
+        "cases": [
+            [
+                {"op": "import", "module": "confflow.producer"},
+                {
+                    "op": "forbid",
+                    "prefixes": [
+                        "confflow.calc",
+                        "confflow.blocks",
+                        "confflow.confts",
+                        "confflow.workflow.engine",
+                        "confflow.workflow.v3_runtime",
+                        "confflow.workflow.v3_dataflow",
+                        "confflow.workflow.binding_v2",
+                        "confflow.config.canonical",
+                    ],
+                },
+            ]
+        ],
+    },
+    {
+        "id": "RT-043",
+        "source": "#43",
+        "cases": [
+            [
+                {"op": "import", "module": "confflow.config.contract_schemas"},
+                {"op": "import", "module": "confflow.producer.contract"},
+                {"op": "import", "module": "confflow.producer.manifest"},
+                {"op": "import", "module": "confflow.producer.recipes"},
+                {"op": "import", "module": "confflow.producer.validation"},
+                {
+                    "op": "value_eq",
+                    "ref": "confflow.config.contract_schemas.CONFIGURATION_VALIDATION_SCHEMA",
+                    "value": "confflow.configuration-validation.v1",
+                },
+                {
+                    "op": "value_eq",
+                    "ref": "confflow.config.contract_schemas.EDITOR_MANIFEST_SCHEMA",
+                    "value": "confflow.editor-manifest.v1",
+                },
+                {
+                    "op": "value_eq",
+                    "ref": "confflow.config.contract_schemas.RECIPE_CATALOG_SCHEMA",
+                    "value": "confflow.recipe-catalog.v1",
+                },
+                {
+                    "op": "identity",
+                    "authority": "confflow.config.contract_schemas.CONFIGURATION_VALIDATION_SCHEMA",
+                    "refs": [
+                        "confflow.producer.contract.CONFIGURATION_VALIDATION_SCHEMA",
+                        "confflow.producer.validation.VALIDATION_RESPONSE_SCHEMA",
+                    ],
+                },
+                {
+                    "op": "identity",
+                    "authority": "confflow.config.contract_schemas.EDITOR_MANIFEST_SCHEMA",
+                    "refs": ["confflow.producer.manifest.EDITOR_MANIFEST_SCHEMA"],
+                },
+                {
+                    "op": "identity",
+                    "authority": "confflow.config.contract_schemas.RECIPE_CATALOG_SCHEMA",
+                    "refs": ["confflow.producer.recipes.RECIPE_CATALOG_SCHEMA"],
+                },
+            ]
+        ],
+    },
+    {
+        "id": "RT-044",
+        "source": "#44",
+        "cases": [
+            [
+                {"op": "import", "module": "confflow.config"},
+                {"op": "getattr_raises", "module": "confflow.config", "name": "WorkflowConfig"},
+                {"op": "getattr_raises", "module": "confflow.config", "name": "GlobalOptions"},
+                {"op": "getattr_raises", "module": "confflow.config", "name": "StepConfig"},
+                {"op": "getattr_raises", "module": "confflow.config", "name": "CalcStepParams"},
+                {
+                    "op": "getattr_raises",
+                    "module": "confflow.config",
+                    "name": "load_workflow_model",
+                },
+                {"op": "import", "module": "confflow.config.contract_schemas"},
+                {
+                    "op": "value_eq",
+                    "ref": "confflow.config.contract_schemas.CONFIGURATION_VALIDATION_SCHEMA",
+                    "value": "confflow.configuration-validation.v1",
+                },
+            ]
+        ],
+    },
+    {
+        "id": "RT-045",
+        "source": "#45",
+        "cases": [
+            [
+                {"op": "import", "module": "confflow.core"},
+                {
+                    "op": "forbid",
+                    "prefixes": ["confflow.config"],
+                    "exact": [
+                        "confflow.core.models",
+                        "confflow.core.types",
+                        "confflow.core.validation",
+                    ],
+                },
+            ]
+        ],
+    },
+    {
+        "id": "RT-046",
+        "source": "#46",
+        "cases": [
+            [
+                {"op": "import", "module": "confflow.application"},
+                {"op": "forbid", "exact": ["confflow.application.execution"]},
+                {"op": "import", "module": "confflow.application.execution"},
+                {
+                    "op": "forbid",
+                    "exact": [
+                        "confflow.application.execution.memory",
+                        "confflow.application.execution.synthetic_producer",
+                        "confflow.application.execution.sqlite",
+                        "confflow.application.execution.service",
+                        "confflow.application.execution.workflow_adapter",
+                    ],
+                },
+            ]
+        ],
+    },
+    {
+        "id": "RT-047",
+        "source": "#47",
+        "cases": [
+            [
+                {"op": "import", "module": "confflow.v4cli"},
+                {
+                    "op": "forbid",
+                    "exact": [
+                        "confflow.config.canonical",
+                        "confflow.core.models",
+                        "confflow.shared.config_validation",
+                    ],
+                    "prefixes": ["confflow.config.canonical."],
+                },
+            ],
+            [
+                {"op": "import", "module": "confflow.application.v4_entry"},
+                {
+                    "op": "forbid",
+                    "exact": [
+                        "confflow.config.canonical",
+                        "confflow.core.models",
+                        "confflow.shared.config_validation",
+                    ],
+                    "prefixes": ["confflow.config.canonical."],
+                },
+            ],
+            [
+                {"op": "import", "module": "confflow.control_worker"},
+                {
+                    "op": "forbid",
+                    "exact": [
+                        "confflow.config.canonical",
+                        "confflow.core.models",
+                        "confflow.shared.config_validation",
+                    ],
+                    "prefixes": ["confflow.config.canonical."],
+                },
+            ],
+        ],
+    },
+    {
+        "id": "RT-065",
+        "source": "#65",
+        "cases": [
+            [
+                {"op": "import", "module": module},
+                {
+                    "op": "forbid",
+                    "exact": ["confflow.core"],
+                    "prefixes": ["confflow.config", "confflow.calc", "confflow.workflow."],
+                    "except_prefixes": ["confflow.workflow.v4"],
+                },
+            ]
+            for module in V45_MODULES
+        ],
+    },
+    {"id": "RT-096", "source": "#96", "kind": "scanner_gate"},
+]
+
+_RUNNER_ALLOWED_WORKFLOW_V4_PREFIX = "confflow.workflow.v4"
+
+
+def _is_legacy_producer_dependency(module: str) -> bool:
+    """Mirror of the original producer legacy-dependency predicate."""
+    if module == "confflow.config.canonical" or module.startswith("confflow.config.canonical."):
+        return True
+    if module == "confflow.config.models":
+        return True
+    if module in {"confflow.core.models", "confflow.core.types", "confflow.core.validation"}:
+        return True
+    if module.startswith("confflow.workflow.") and not module.startswith(
+        _RUNNER_ALLOWED_WORKFLOW_V4_PREFIX
+    ):
+        return True
+    return module.startswith(("confflow.calc", "confflow.blocks", "confflow.confts"))
+
+
+def scan_runtime(root: Path, timeout: int = RUNTIME_TIMEOUT) -> list[dict]:
+    """Run every L0.4c runtime isolation rule in fresh subprocesses."""
+    root = Path(root).resolve()
+    env = dict(os.environ)
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
+    env["QT_QPA_PLATFORM"] = "offscreen"
+    # The inspected root must win, and the venv's editable-install finder must
+    # be disabled: otherwise a module deleted from ``root`` is still found in
+    # the /opt/ConfFlow checkout and a require_import_fail case passes falsely.
+    # The noeditable helper ships with this tool (not with the inspected tree),
+    # so it is located relative to the tool, not relative to ``root``.
+    noeditable = Path(__file__).resolve().parent / "refactor-acc" / "noeditable"
+    env["PYTHONPATH"] = os.pathsep.join(
+        [
+            str(root),
+            *([str(noeditable)] if noeditable.is_dir() else []),
+            env.get("PYTHONPATH", ""),
+        ]
+    )
+    violations: list[dict] = []
+
+    def run_child(spec: dict, stage: str) -> tuple[int | None, str]:
+        """Run one child; timeout/launch failures become violations, never skips."""
+        spec = dict(spec)
+        spec["cwd_must_be"] = str(root)
+        spec["source_binding_root"] = str(root)
+        try:
+            proc = subprocess.run(
+                [sys.executable, "-c", _RUNTIME_CHILD, json.dumps(spec)],
+                cwd=str(root),
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+        except subprocess.TimeoutExpired:
+            violations.append({"rule": rid, "stage": stage, "detail": f"timeout after {timeout}s"})
+            return None, ""
+        except OSError as exc:
+            violations.append({"rule": rid, "stage": stage, "detail": f"launch failed: {exc}"})
+            return None, ""
+        return proc.returncode, proc.stdout
+
+    def parse_child_payload(out: str, rid: str, stage: str) -> dict | None:
+        """Validate the child JSON structure; invalid payloads are failures."""
+        try:
+            payload = json.loads(out.strip().splitlines()[-1])
+        except (ValueError, IndexError):
+            violations.append(
+                {"rule": rid, "stage": stage, "detail": f"unparsable output: {out[-200:]}"}
+            )
+            return None
+        if not isinstance(payload, dict):
+            violations.append(
+                {"rule": rid, "stage": stage, "detail": "output is not a JSON object"}
+            )
+            return None
+        bad = payload.get("violations")
+        if not isinstance(bad, list) or not all(isinstance(v, dict) for v in bad):
+            violations.append(
+                {"rule": rid, "stage": stage, "detail": "violations must be a list of objects"}
+            )
+            return None
+        modules = payload.get("confflow_modules")
+        if modules is not None and not (
+            isinstance(modules, list) and all(isinstance(m, str) for m in modules)
+        ):
+            violations.append(
+                {"rule": rid, "stage": stage, "detail": "confflow_modules must be a list of str"}
+            )
+            return None
+        return payload
+
+    def run_scanner_child(stage: str, inproc: bool) -> subprocess.CompletedProcess | None:
+        """Run the scanner-gate child; timeout/launch failures become violations."""
+        scripts_real = os.path.realpath(root / "scripts")
+        if inproc:
+            # The scanner module itself must be loaded from the inspected tree's
+            # scripts/ directory, resolved through any symlink.
+            script = (
+                "import os, sys\n"
+                "scripts_real = os.path.realpath(sys.argv[1])\n"
+                "sys.path.insert(0, scripts_real)\n"
+                "import v4_arch_scan as scanner\n"
+                "mod_real = os.path.realpath(scanner.__file__)\n"
+                "if os.path.dirname(mod_real) != scripts_real:\n"
+                "    raise AssertionError(\n"
+                "        'scanner module outside checked scripts: %s' % mod_real\n"
+                "    )\n"
+                "hits = scanner.scan()\n"
+                "assert hits == [], hits\n"
+            )
+            cmd = [sys.executable, "-c", script, scripts_real]
+        else:
+            script_path = root / "scripts" / "v4_arch_scan.py"
+            script_real = os.path.realpath(script_path)
+            if os.path.dirname(script_real) != scripts_real:
+                violations.append(
+                    {
+                        "rule": rid,
+                        "stage": stage,
+                        "detail": f"scanner script outside checked scripts: {script_real}",
+                    }
+                )
+                return None
+            cmd = [sys.executable, script_real, "--cf", str(root)]
+        try:
+            return subprocess.run(
+                cmd, cwd=str(root), env=env, capture_output=True, text=True, timeout=timeout
+            )
+        except subprocess.TimeoutExpired:
+            violations.append({"rule": rid, "stage": stage, "detail": f"timeout after {timeout}s"})
+            return None
+        except OSError as exc:
+            violations.append({"rule": rid, "stage": stage, "detail": f"launch failed: {exc}"})
+            return None
+
+    for rule in RUNTIME_RULES:
+        rid = rule["id"]
+        if rule.get("kind") == "scanner_gate":
+            # Two independent gates (inproc scan, CLI); both are checked, and
+            # neither is skipped when the other fails.
+            proc = run_scanner_child("inproc", inproc=True)
+            if proc is not None and proc.returncode != 0:
+                violations.append(
+                    {
+                        "rule": rid,
+                        "stage": "inproc",
+                        "detail": f"inproc scan failed: {proc.stderr[-200:]}",
+                    }
+                )
+            cli = run_scanner_child("cli", inproc=False)
+            if cli is not None and (cli.returncode != 0 or "clean" not in cli.stdout):
+                violations.append(
+                    {"rule": rid, "stage": "cli", "detail": f"CLI gate failed: {cli.stdout[-100:]}"}
+                )
+            continue
+        for case in rule["cases"]:
+            code, out = run_child({"steps": case}, stage=f"case:{rule['source']}")
+            if code is None:
+                continue  # timeout/launch failure already recorded by run_child
+            payload = parse_child_payload(out, rid, stage=f"case:{rule['source']}")
+            if payload is None:
+                if code != 0:
+                    # No parsable payload and a nonzero exit: report the crash.
+                    violations.append(
+                        {
+                            "rule": rid,
+                            "stage": "case",
+                            "detail": f"child exit {code}: {out[-200:]}",
+                        }
+                    )
+                continue
+            # The child exits 3 precisely when it found violations, so the
+            # structured findings are merged (keeping op/module/ref) and the
+            # exit code alone is only reported when nothing was structured.
+            for v in payload["violations"]:
+                v["rule"] = rid
+                violations.append(v)
+            if code != 0 and not payload["violations"]:
+                violations.append(
+                    {
+                        "rule": rid,
+                        "stage": "case",
+                        "detail": f"child exit {code} with no reported violation",
+                    }
+                )
+            if "legacy_debt" in rule:
+                # The debt measurement MUST come from the same child that
+                # imported the producer (a fresh child would measure nothing).
+                observed = payload.get("confflow_modules")
+                if observed is None:
+                    violations.append(
+                        {"rule": rid, "stage": "debt", "detail": "module list unavailable"}
+                    )
+                else:
+                    debt = sorted(m for m in observed if _is_legacy_producer_dependency(m))
+                    expected = sorted(rule["legacy_debt"])
+                    if debt != expected:
+                        violations.append(
+                            {
+                                "rule": rid,
+                                "stage": "debt",
+                                "detail": f"legacy import debt changed: {debt}",
+                            }
+                        )
+    return violations
 
 
 RULE_COUNT = len(RULES)
