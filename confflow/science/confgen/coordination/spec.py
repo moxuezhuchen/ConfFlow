@@ -22,7 +22,51 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-__all__ = ["contribute_topology", "normalize_spec", "validate_context"]
+__all__ = [
+    "contribute_topology",
+    "graph_metadata",
+    "has_indices",
+    "normalize_spec",
+    "validate_context",
+]
+
+
+def has_indices(raw: Mapping[str, Any]) -> bool:
+    """Return True when raw coordination carries index-bearing content.
+
+    Mirrors the pre-AG1 ``planner._spec_has_indices`` coordination branch
+    exactly (never raises; illegal shapes are False so the later
+    normalize dispatch raises the first error verbatim).
+    """
+    coordination = raw.get("coordination")
+    if isinstance(coordination, Mapping):
+        if coordination.get("metal_center") is not None:
+            return True
+        sites = coordination.get("binding_sites")
+        if isinstance(sites, (list, tuple)) and len(sites) > 0:
+            return True
+    return False
+
+
+def graph_metadata(resolved: Mapping[str, Any], n_atoms: int) -> Mapping[str, Any] | None:
+    """Return generic typed-graph metadata owned by coordination.
+
+    Called at the pre-AG1 ``planner._graph_metal_center`` site (before
+    the explicit-bonds branch). Body mirrors that function verbatim
+    (single ``out of range`` message for every bad shape, including
+    bool/non-int); the overlay ``contribute_topology`` keeps its own
+    malformed/out-of-range checks at the later overlay site (never
+    moved early here).
+    """
+    coordination = resolved.get("coordination") if isinstance(resolved, Mapping) else None
+    if not isinstance(coordination, Mapping):
+        return None
+    metal = coordination.get("metal_center")
+    if metal is None:
+        return None
+    if isinstance(metal, bool) or not isinstance(metal, int) or metal < 0 or metal >= n_atoms:
+        raise ValueError(f"resolved coordination metal_center out of range: {metal!r}")
+    return {"metal_center": int(metal)}
 
 
 def _convert_coordination(section: Mapping[str, Any], *, base: int) -> dict[str, Any]:

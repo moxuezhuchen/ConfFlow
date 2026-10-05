@@ -71,6 +71,20 @@ def _contribute_topology(resolved: Mapping[str, Any], build: Any) -> None:
     return _impl(resolved, build)
 
 
+def _has_indices(raw: Mapping[str, Any]) -> bool:
+    """Lazy proxy: coordination index probe only when called."""
+    from confflow.science.confgen.coordination.spec import has_indices as _impl
+
+    return _impl(raw)
+
+
+def _graph_metadata(resolved: Mapping[str, Any], n_atoms: int) -> Any:
+    """Lazy proxy: coordination graph metadata only when called."""
+    from confflow.science.confgen.coordination.spec import graph_metadata as _impl
+
+    return _impl(resolved, n_atoms)
+
+
 def _serialize_inherited_state(resolved: Mapping[str, Any], state_value: Any, context: Any) -> Any:
     """Build the public coordination scope payload (byte-identical)."""
     coordination = resolved.get("coordination")
@@ -200,6 +214,10 @@ def descriptor() -> ComponentDescriptor:
         normalize_spec=_normalize_spec,
         validate_context=_validate_context,
         contribute_topology=_contribute_topology,
+        spec_defaults=(("coordination", None),),
+        has_indices=_has_indices,
+        index_detection_order=20,
+        graph_metadata=_graph_metadata,
         serialize_inherited_state=_serialize_inherited_state,
         verify_inherited_state=_verify_inherited_state,
         schema_constants=_schema_constants,

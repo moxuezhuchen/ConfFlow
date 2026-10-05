@@ -10,7 +10,6 @@ complete declared-group basis, otherwise conservative upper bounds.
 
 from __future__ import annotations
 
-import copy
 import random
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -19,10 +18,13 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:  # Annotation only; runtime resolve via local import (avoid cycles).
     from confflow.science.confgen.registry import ComponentRegistry
 
-from confflow.domain._immutable import FrozenDict
+from confflow.domain._immutable import FrozenDict, thaw_value
 from confflow.domain.structure import StructureRecord
 from confflow.domain.topology import TopologyPatch
 from confflow.science.confgen.model import AXIS_ORDER, SCHEMA_VERSION, StageEstimate
+from confflow.science.confgen.wire_v3_constants import (  # noqa: F401
+    WIRE_TOP_LEVEL_KEYS as _TOP_LEVEL_KEYS,  # noqa: F401
+)
 
 __all__ = [
     "MixedRadixGrid",
@@ -39,25 +41,10 @@ __all__ = [
     "sampling_of",
 ]
 
-_TOP_LEVEL_KEYS = frozenset(
-    {
-        "schema_version",
-        "index_base",
-        "index_convention",
-        "coordination",
-        "rings",
-        "torsions",
-        "paths",
-        "strict_path_bond_check",
-        "topology",
-        "stereochemistry",
-        "exclusions",
-        "tolerances",
-        "limits",
-        "sampling",
-        "seed",
-    }
-)
+#: Compat alias: historical v3 spec top-level whitelist, re-exported
+#: from ``wire_v3_constants`` (pure constants only; no algorithm lives
+#: in the wire file). Imported above as ``_TOP_LEVEL_KEYS``. The real
+#: unknown-key gate is ``_GENERIC_TOP_LEVEL_KEYS | registry.spec_keys``.
 
 #: Spec-facing topology edge kinds (uppercase, matching the fixture
 #: convention). BREAKING is accepted and preserved losslessly in scope but
@@ -83,18 +70,12 @@ _GENERIC_TOP_LEVEL_KEYS = frozenset(
     }
 )
 
-#: Historical builtin defaults filled by the planner when the owning
-#: component returns no value for a missing key (root compat ruling). Custom
-#: components never get defaults: missing custom keys stay missing (no
-#: undeclared growth). ``coordination=None`` vs ``[]``/``False`` matches the
-#: pre-A4b ``normalize_spec`` output exactly.
-_BUILTIN_SPEC_DEFAULTS: dict[str, Any] = {
-    "coordination": None,
-    "rings": [],
-    "torsions": [],
-    "paths": [],
-    "strict_path_bond_check": False,
-}
+#: Historical builtin defaults are now declared per descriptor
+#: (``ComponentDescriptor.spec_defaults`` in registry order). Custom
+#: components leave it empty so missing custom keys stay missing (no
+#: undeclared growth). ``coordination=None`` vs ``[]``/``False`` matches
+#: the pre-A4b ``normalize_spec`` output exactly; each call gets a fresh
+#: copy so runs never share mutable defaults.
 
 _TORSION_MODELS = (
     "relative_rotation_grid",
@@ -114,30 +95,36 @@ class PreflightLimitError(ValueError):
 # ---------------------------------------------------------------------------
 
 
-def _spec_has_indices(raw: Mapping[str, Any]) -> bool:
-    """Return True when any index-bearing section carries content."""
+def _spec_has_indices(raw: Mapping[str, Any], *, registry: ComponentRegistry | None = None) -> bool:
+    """Return True when any index-bearing section carries content.
+
+    AG1 generic: the topology section (bonds/add/del/atoms) stays here
+    (generic keys, never component-owned). Component sections delegate
+    to each descriptor's ``has_indices(raw)`` in
+    ``index_detection_order`` (builtins: torsions=10, coordination=20,
+    rings=30, preserving the historical T->C->R probe order after the
+    generic topology check). Each hook never raises (illegal shapes are
+    False) so the later normalize dispatch raises the first error
+    verbatim in registry order.
+    """
     topology = raw.get("topology")
     if isinstance(topology, Mapping):
         for key in ("bonds", "add_bond", "del_bond", "atoms"):
             entries = topology.get(key)
             if isinstance(entries, (list, tuple)) and len(entries) > 0:
                 return True
-    torsions = raw.get("torsions")
-    if isinstance(torsions, (list, tuple)) and len(torsions) > 0:
-        return True
-    paths = raw.get("paths")
-    if isinstance(paths, (list, tuple)) and len(paths) > 0:
-        return True
-    coordination = raw.get("coordination")
-    if isinstance(coordination, Mapping):
-        if coordination.get("metal_center") is not None:
+    from confflow.science.confgen.registry import resolve_registry
+
+    resolved_registry = resolve_registry(registry)
+    ordered = sorted(
+        resolved_registry.descriptors, key=lambda descriptor: descriptor.index_detection_order
+    )
+    for descriptor in ordered:
+        hook = descriptor.has_indices
+        if hook is None:
+            continue
+        if hook(raw):
             return True
-        sites = coordination.get("binding_sites")
-        if isinstance(sites, (list, tuple)) and len(sites) > 0:
-            return True
-    rings = raw.get("rings")
-    if isinstance(rings, (list, tuple)) and len(rings) > 0:
-        return True
     return False
 
 
@@ -307,7 +294,7 @@ def normalize_spec(
     declared_base = raw.get("index_base")
     if declared_base is not None and declared_base not in (0, 1):
         raise ValueError("spec index_base must be 0 or 1 when declared")
-    if declared_base is None and _spec_has_indices(raw):
+    if declared_base is None and _spec_has_indices(raw, registry=resolved_registry):
         raise ValueError(
             "spec carries atom indices but declares no index_base; "
             "declare index_base: 0 or 1 explicitly"
@@ -322,10 +309,31 @@ def normalize_spec(
     # Root compat (v2): preset builtin defaults in historical order first,
     # so output key order never depends on input presence. Owned partials
     # update existing keys without moving position; custom new keys insert
-    # in descriptor order. Order comes from _BUILTIN_SPEC_DEFAULTS only;
-    # no default literals scattered here.
-    for _key, _default in _BUILTIN_SPEC_DEFAULTS.items():
-        spec[_key] = copy.copy(_default) if isinstance(_default, list) else _default
+    # in descriptor order. Order comes from each descriptor's
+    # ``spec_defaults`` declaration in registry order (= C->R->T for the
+    # default registry, matching history); no default literals live here.
+    # AG1 v2: defaults are stored frozen (tuple/FrozenDict) and thawed here
+    # into a fresh deep copy per run, so nested custom defaults never leak
+    # across runs and mutating one output never touches the cached
+    # registry. Thawed lists keep the legacy list type; insertion order is
+    # unchanged. A default for an unowned key or a repeated default key
+    # fails closed (customs cannot overwrite another owner).
+    _seen_defaults: set[str] = set()
+    for _descriptor in resolved_registry._ordered():
+        _owned = set(_descriptor.spec_keys)
+        for _key, _default in _descriptor.spec_defaults:
+            if _key not in _owned:
+                raise ValueError(
+                    f"component {_descriptor.id!r} declares default for unowned spec key "
+                    f"{_key!r}; owned {sorted(_owned)}"
+                )
+            if _key in _seen_defaults:
+                raise ValueError(
+                    f"duplicate spec default {_key!r} from component {_descriptor.id!r}; "
+                    "already filled"
+                )
+            _seen_defaults.add(_key)
+            spec[_key] = thaw_value(_default)
 
     # Component-owned keys: dispatch in registry order (= C->R->T for the
     # default registry). Each hook sees the whole raw spec plus the resolved
@@ -719,17 +727,38 @@ def _topo_edge(item: Any) -> tuple[tuple[int, int], Any, dict[str, Any]]:
     return (int(first), int(second)), EdgeType.COVALENT, {}
 
 
-def _graph_metal_center(resolved: Mapping[str, Any], n_atoms: int) -> int | None:
-    """Read the declared metal center (internal 0-based) from resolved scope."""
-    coordination = resolved.get("coordination") if isinstance(resolved, Mapping) else None
-    if not isinstance(coordination, Mapping):
-        return None
-    metal = coordination.get("metal_center")
-    if metal is None:
-        return None
-    if isinstance(metal, bool) or not isinstance(metal, int) or metal < 0 or metal >= n_atoms:
-        raise ValueError(f"resolved coordination metal_center out of range: {metal!r}")
-    return int(metal)
+def _collect_graph_metadata(
+    resolved: Mapping[str, Any], n_atoms: int, *, registry: ComponentRegistry
+) -> dict[str, Any]:
+    """Collect generic typed-graph metadata at the old metal-center site.
+
+    Loops descriptors in registry order; each ``graph_metadata`` returns
+    a mapping (e.g. ``{"metal_center": int}``) or None for no
+    contribution. Duplicate keys across components fail closed; a new
+    component with no contribution leaves the old graph unchanged.
+    Validation (range/type) lives in the owning component (coordination)
+    and raises here, at the pre-AG1 ``_graph_metal_center`` position
+    (before the explicit-bonds branch), never moved early to the overlay.
+    """
+    merged: dict[str, Any] = {}
+    for descriptor in registry._ordered():
+        hook = descriptor.graph_metadata
+        if hook is None:
+            continue
+        part = hook(resolved, n_atoms)
+        if part is None:
+            continue
+        if not isinstance(part, Mapping):
+            raise ValueError(
+                f"component {descriptor.id!r} graph_metadata must return a mapping or None"
+            )
+        for key, value in part.items():
+            if key in merged:
+                raise ValueError(
+                    f"duplicate graph metadata key {key!r} from component {descriptor.id!r}"
+                )
+            merged[key] = value
+    return merged
 
 
 def build_typed_graph(
@@ -792,7 +821,13 @@ def _build_typed_graph(
         _check_patch_conflict(topology, structure, where="confgen v3 topology")
     except Exception as exc:
         raise ValueError(str(exc)) from exc
-    metal_center = _graph_metal_center(resolved, n_atoms)
+    # AG1 generic: collect typed-graph metadata at the pre-AG1
+    # _graph_metal_center site (same position, same timing, before the
+    # explicit-bonds branch). Only "metal_center" feeds the graph; other
+    # keys are ignored so new components without contribution leave the
+    # old graph unchanged.
+    _metadata = _collect_graph_metadata(resolved, n_atoms, registry=registry)
+    metal_center = _metadata.get("metal_center")
     tolerances = resolved.get("tolerances", {}) if isinstance(resolved, Mapping) else {}
     bond_scale = float(tolerances.get("bond_scale", 1.15))
 

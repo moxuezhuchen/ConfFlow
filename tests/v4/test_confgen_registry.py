@@ -2048,15 +2048,16 @@ def test_a4b_planner_keeps_public_torsion_api_and_no_overlay_move() -> None:
 def test_a4b_kernel_axis_literals_scoped_not_zero_relaxed() -> None:
     import ast as _ast
 
+    # AG1 generic: planner holds zero 3-axis literals (defaults/indices/
+    # metal moved to descriptors); model holds zero outside ConfgenStateKey
+    # (expand moved to torsion). The old "scoped literals remain" gate is
+    # superseded by test_ag1_kernel_axis_literals_generic_zero below.
     tree = _ast.parse(Path("confflow/science/confgen/planner.py").read_text())
     lits: list[str] = []
     for node in _ast.walk(tree):
         if isinstance(node, _ast.Constant) and node.value in ("coordination", "rings", "torsions"):
             lits.append(str(node.value))
-    # Remaining literals are scoped: whitelist/defaults, _spec_has_indices
-    # probes, exclusions AXIS_ORDER check, overlay/graph metal-center reads
-    # (A4c), and tolerance labels -- never a normalization dispatch.
-    assert lits, "expected scoped kernel literals to remain (no zero-relax)"
+    assert lits == [], f"AG1 planner must be generic, found {lits!r}"
     ns_node = next(
         n
         for n in tree.body
@@ -2238,10 +2239,32 @@ def test_a4b_v2_resolve_moved_delegation_and_no_cycle() -> None:
     assert isinstance(via_planner[0], planner.TorsionAxis)
     assert isinstance(via_spec[0], planner.TorsionAxis)
     assert type(via_planner[0]) is planner.TorsionAxis
-    # No spec -> planner -> spec call cycle: spec.normalize calls local impl.
+    # No spec -> planner -> spec call cycle in normalize: it calls local impl.
+    # AG1: torsion/spec.expand_context_spec keeps the verbatim moved body,
+    # which lazily imports planner.resolve_torsion_axes for the final
+    # validation (same as old model._expand_typed_paths). Allow exactly
+    # that one function-local import; normalize must still use the local.
     spec_src = Path(tspec.__file__).read_text()
-    assert "from confflow.science.confgen.planner import resolve_torsion_axes" not in spec_src
     assert "resolve_torsion_axes(tuple(converted_torsions)" in spec_src
+    spec_tree_for_ns = ast.parse(spec_src)
+    ns_fn = next(
+        n
+        for n in spec_tree_for_ns.body
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == "normalize_spec"
+    )
+    assert "from confflow.science.confgen.planner import resolve_torsion_axes" not in ast.unparse(
+        ns_fn
+    )
+    expand_fn = next(
+        n
+        for n in spec_tree_for_ns.body
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and n.name == "expand_context_spec"
+    )
+    assert "from confflow.science.confgen.planner import resolve_torsion_axes" in ast.unparse(
+        expand_fn
+    )
+    assert "confflow.science.confgen.torsion.paths" in ast.unparse(expand_fn)
     # Planner wrapper is delegation only (lazy import, no torsion logic).
     planner_src = Path(planner.__file__).read_text()
     assert "from confflow.science.confgen.torsion.spec import" in planner_src
@@ -3818,3 +3841,293 @@ def test_a5_active_components_and_suppression_gate() -> None:
     )
     # Empty fallback preserves legacy presence check (no rings/torsions -> passes gate).
     assert single_empty.active_components == ()
+
+
+# ---------------------------------------------------------------------------
+# FIX-1A AG1: planner/model remaining generalization (defaults/indexprobe/
+# metalcenter/paths). Behavior 100% unchanged; AG2 wrappers untouched.
+# ---------------------------------------------------------------------------
+
+
+def test_ag1_spec_defaults_declared_order_and_fresh_copy() -> None:
+    from confflow.science.confgen.registry import build_default_registry
+
+    registry = build_default_registry()
+    by_id = {desc.id: desc for desc in registry.descriptors}
+    # AG1 v2: descriptor defaults are stored frozen (tuple/FrozenDict, not
+    # legacy public baseline []); normalized output still uses fresh lists.
+    assert by_id["coordination"].spec_defaults == (("coordination", None),)
+    assert by_id["rings"].spec_defaults == (("rings", ()),)
+    assert by_id["torsions"].spec_defaults == (
+        ("torsions", ()),
+        ("paths", ()),
+        ("strict_path_bond_check", False),
+    )
+    # Registry order x declaration order == historical C/R/T/paths/strict.
+    ordered_keys: list[str] = []
+    for desc in registry._ordered():
+        ordered_keys.extend(k for k, _ in desc.spec_defaults)
+    assert ordered_keys == [
+        "coordination",
+        "rings",
+        "torsions",
+        "paths",
+        "strict_path_bond_check",
+    ]
+    out = normalize_spec({"index_base": 0})
+    assert out["coordination"] is None
+    assert out["rings"] == [] and out["torsions"] == [] and out["paths"] == []
+    assert out["strict_path_bond_check"] is False
+    assert type(out["rings"]) is list
+    # Fresh copy: mutating one output never leaks into the next run.
+    out["rings"].append({"atoms": [0]})
+    out2 = normalize_spec({"index_base": 0})
+    assert out2["rings"] == []
+    assert out["rings"] is not out2["rings"]
+    # Custom without spec_defaults stays missing (no undeclared growth).
+    custom = ComponentDescriptor(
+        id="probe",
+        order=40,
+        spec_keys=("probe_section",),
+        state_merge="merge",
+        is_active=lambda resolved: False,
+        factory=lambda resolved: (_ for _ in ()).throw(AssertionError("unused")),
+    )
+    assert custom.spec_defaults == ()
+    reg2 = build_default_registry().with_component(custom)
+    ctx = build_context(_a4a_probe_structure(), {"index_base": 0}, registry=reg2)
+    assert "probe_section" not in dict(ctx.resolved_spec)
+
+
+def test_ag1_top_level_keys_alias_and_allowed_generic() -> None:
+    import confflow.science.confgen.planner as planner
+    from confflow.science.confgen.wire_v3_constants import WIRE_TOP_LEVEL_KEYS
+
+    assert planner._TOP_LEVEL_KEYS is WIRE_TOP_LEVEL_KEYS
+    assert len(planner._TOP_LEVEL_KEYS) == 15
+    # Real gate stays GENERIC union owned_keys (unknown message byte-identical).
+    with pytest.raises(ValueError) as exc:
+        normalize_spec({"unknown_z": 1})
+    msg = str(exc.value)
+    assert "allowed" in msg
+    for legacy in ("coordination", "rings", "torsions", "paths", "strict_path_bond_check"):
+        assert f"'{legacy}'" in msg
+    # Module top never builds the default registry (empty-import baseline).
+    src = Path("confflow/science/confgen/planner.py").read_text()
+    tree = ast.parse(src)
+    for node in tree.body:
+        txt = ast.unparse(node)
+        assert "build_default_registry()" not in txt
+        assert "default_registry()" not in txt
+
+
+def test_ag1_has_indices_custom_channel_and_illegal_first_error() -> None:
+    # Custom has_indices=True triggers the missing-base gate via the real entry.
+    def _has(raw: Mapping[str, Any]) -> bool:
+        probe = raw.get("probe_section")
+        return isinstance(probe, (list, tuple)) and len(probe) > 0
+
+    def _ns(raw: Mapping[str, Any], *, index_base: int) -> Mapping[str, Any]:
+        if "probe_section" not in raw:
+            return {}
+        return {"probe_section": raw["probe_section"]}
+
+    probe = ComponentDescriptor(
+        id="probe",
+        order=40,
+        spec_keys=("probe_section",),
+        state_merge="merge",
+        is_active=lambda resolved: False,
+        factory=lambda resolved: (_ for _ in ()).throw(AssertionError("unused")),
+        normalize_spec=_ns,  # type: ignore[arg-type]
+        has_indices=_has,
+        index_detection_order=1000,
+    )
+    registry = build_default_registry().with_component(probe)
+    with pytest.raises(ValueError, match="declares no index_base"):
+        normalize_spec({"probe_section": [1]}, registry=registry)
+    # Empty custom carries no indices: no missing-base error.
+    out = normalize_spec({"index_base": 0, "probe_section": []}, registry=registry)
+    assert out["probe_section"] == []
+    # Illegal non-list inputs keep the old first error verbatim (C before R).
+    with pytest.raises(ValueError) as exc:
+        normalize_spec({"coordination": 42, "rings": "x"})
+    assert str(exc.value) == "spec coordination must be a mapping or null"
+    with pytest.raises(ValueError) as exc2:
+        normalize_spec({"index_base": 1, "torsions": [{"id": "a", "bond": [1]}], "rings": [42]})
+    assert str(exc2.value) == "$.rings[0] must be a mapping"
+    # Detection order preserves T->C->R after generic topology.
+    by_id = {d.id: d for d in build_default_registry().descriptors}
+    assert by_id["torsions"].index_detection_order == 10
+    assert by_id["coordination"].index_detection_order == 20
+    assert by_id["rings"].index_detection_order == 30
+
+
+def test_ag1_expand_custom_channel_via_build_context() -> None:
+    calls: list[list[str]] = []
+
+    def _expand(resolved: Any, structure: Any, adjacency: Any) -> None:
+        calls.append(sorted(resolved.keys()))
+        resolved["probe_section"] = {"expanded": True}
+
+    def _ns(raw: Mapping[str, Any], *, index_base: int) -> Mapping[str, Any]:
+        if "probe_section" not in raw:
+            return {}
+        return {"probe_section": dict(raw["probe_section"])}
+
+    probe = ComponentDescriptor(
+        id="probe",
+        order=40,
+        spec_keys=("probe_section",),
+        state_merge="merge",
+        is_active=lambda resolved: False,
+        factory=lambda resolved: (_ for _ in ()).throw(AssertionError("unused")),
+        normalize_spec=_ns,  # type: ignore[arg-type]
+        expand_context_spec=_expand,  # type: ignore[arg-type]
+    )
+    registry = build_default_registry().with_component(probe)
+    structure = _a4a_probe_structure()
+    ctx = build_context(structure, {"index_base": 0, "probe_section": {}}, registry=registry)
+    assert calls, "custom expand hook must run via build_context"
+    assert dict(ctx.resolved_spec)["probe_section"] == {"expanded": True}
+
+    # Overreach: unowned key from normalize still fails closed.
+    def _evil_ns(raw: Mapping[str, Any], *, index_base: int) -> Mapping[str, Any]:
+        return {"torsions": []}
+
+    evil = ComponentDescriptor(
+        id="evil",
+        order=41,
+        spec_keys=("evil_section",),
+        state_merge="merge",
+        is_active=lambda resolved: False,
+        factory=lambda resolved: (_ for _ in ()).throw(AssertionError("unused")),
+        normalize_spec=_evil_ns,  # type: ignore[arg-type]
+    )
+    with pytest.raises(ValueError, match="unowned spec key"):
+        normalize_spec({"index_base": 0}, registry=build_default_registry().with_component(evil))
+
+
+def test_ag1_graph_metadata_custom_channel_and_coordination_verbatim() -> None:
+    from confflow.science.confgen.planner import build_typed_graph
+
+    structure = _a4a_probe_structure()
+    resolved = normalize_spec({"index_base": 0})
+    adj_old, graph_old = build_typed_graph(structure, resolved.get("topology", {}), resolved)
+    assert graph_old.metal_center is None
+
+    # Custom with no contribution leaves the old graph unchanged.
+    def _none_meta(resolved: Mapping[str, Any], n_atoms: int) -> None:
+        return None
+
+    probe = ComponentDescriptor(
+        id="probe",
+        order=40,
+        spec_keys=("probe_section",),
+        state_merge="merge",
+        is_active=lambda resolved: False,
+        factory=lambda resolved: (_ for _ in ()).throw(AssertionError("unused")),
+        graph_metadata=_none_meta,  # type: ignore[arg-type]
+    )
+    registry = build_default_registry().with_component(probe)
+    adj_new, graph_new = build_typed_graph(
+        structure, resolved.get("topology", {}), resolved, registry=registry
+    )
+    assert adj_new == adj_old
+    assert list(graph_new.edges) == list(graph_old.edges)
+    assert graph_new.metal_center is None
+
+    # Duplicate metal_center across components fails closed.
+    def _dup_meta(resolved: Mapping[str, Any], n_atoms: int) -> Mapping[str, Any]:
+        return {"metal_center": 0}
+
+    dup = ComponentDescriptor(
+        id="dup",
+        order=40,
+        spec_keys=("dup_section",),
+        state_merge="merge",
+        is_active=lambda resolved: False,
+        factory=lambda resolved: (_ for _ in ()).throw(AssertionError("unused")),
+        graph_metadata=_dup_meta,  # type: ignore[arg-type]
+    )
+    coord_resolved = normalize_spec({"index_base": 1, "coordination": {"metal_center": 1}})
+    with pytest.raises(ValueError, match="duplicate graph metadata key"):
+        build_typed_graph(
+            structure,
+            coord_resolved.get("topology", {}),
+            coord_resolved,
+            registry=build_default_registry().with_component(dup),
+        )
+    # Coordination bad metal keeps the old single out-of-range message here.
+    bad = normalize_spec({"index_base": 1, "coordination": {"metal_center": 99}})
+    with pytest.raises(ValueError, match=r"resolved coordination metal_center out of range"):
+        build_typed_graph(structure, bad.get("topology", {}), bad)
+
+
+def test_ag1_kernel_axis_literals_generic_zero_and_ag2_residual() -> None:
+    tree = ast.parse(Path("confflow/science/confgen/planner.py").read_text())
+    lits = [
+        str(n.value)
+        for n in ast.walk(tree)
+        if isinstance(n, ast.Constant) and n.value in ("coordination", "rings", "torsions")
+    ]
+    assert lits == []
+    attrs = [
+        n.attr
+        for n in ast.walk(tree)
+        if isinstance(n, ast.Attribute) and n.attr in ("coordination", "rings", "torsions")
+    ]
+    assert attrs == []
+    mtree = ast.parse(
+        (Path(__file__).resolve().parents[2] / "confflow/science/confgen/model.py").read_text()
+    )
+    state_node = next(
+        n for n in mtree.body if isinstance(n, ast.ClassDef) and n.name == "ConfgenStateKey"
+    )
+    s, e = state_node.lineno, state_node.end_lineno
+    outside_c = [
+        str(n.value)
+        for n in ast.walk(mtree)
+        if isinstance(n, ast.Constant)
+        and n.value in ("coordination", "rings", "torsions")
+        and not (s <= n.lineno <= e)
+    ]
+    assert outside_c == []
+    outside_a = [
+        n.attr
+        for n in ast.walk(mtree)
+        if isinstance(n, ast.Attribute)
+        and n.attr in ("coordination", "rings", "torsions")
+        and not (s <= n.lineno <= e)
+    ]
+    assert outside_a == []
+    # Model reads no paths/torsions/strict strings and no torsion.paths import.
+    path_lits = [
+        str(n.value)
+        for n in ast.walk(mtree)
+        if isinstance(n, ast.Constant) and n.value in ("paths", "strict_path_bond_check")
+    ]
+    assert path_lits == []
+    for n in ast.walk(mtree):
+        if isinstance(n, (ast.Import, ast.ImportFrom)):
+            assert "torsion.paths" not in ast.unparse(n)
+    # AG2 residual: exactly the two compat wrappers keep direct imports (no new豁免).
+    psrc = Path("confflow/science/confgen/planner.py").read_text()
+    assert "from confflow.science.confgen.torsion.spec import" in psrc
+    assert "from confflow.science.confgen.coordination.spec import" in psrc
+    ptree = ast.parse(psrc)
+    direct: list[tuple[int, str]] = []
+    for n in ast.walk(ptree):
+        if isinstance(n, ast.ImportFrom) and (n.module or "").startswith(
+            "confflow.science.confgen."
+        ):
+            mod = n.module or ""
+            if mod.split(".")[-2] in ("coordination", "ring", "torsion") or mod.endswith(
+                (".coordination.spec", ".ring.spec", ".torsion.spec")
+            ):
+                direct.append((n.lineno, mod))
+    mods = sorted(m for _, m in direct)
+    assert mods == [
+        "confflow.science.confgen.coordination.spec",
+        "confflow.science.confgen.torsion.spec",
+    ], mods

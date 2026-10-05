@@ -72,6 +72,13 @@ def _validate_context(resolved: Mapping[str, Any], context: Any) -> None:
     return _impl(resolved, context)
 
 
+def _has_indices(raw: Mapping[str, Any]) -> bool:
+    """Lazy proxy: rings index probe only when called."""
+    from confflow.science.confgen.ring.spec import has_indices as _impl
+
+    return _impl(raw)
+
+
 def _serialize_inherited_state(
     resolved: Mapping[str, Any], state_value: Any, context: Any
 ) -> Mapping[str, Any]:
@@ -179,6 +186,9 @@ def descriptor() -> ComponentDescriptor:
         describe_scope=_describe_scope,
         normalize_spec=_normalize_spec,
         validate_context=_validate_context,
+        spec_defaults=(("rings", []),),
+        has_indices=_has_indices,
+        index_detection_order=30,
         serialize_inherited_state=_serialize_inherited_state,
         verify_inherited_state=_verify_inherited_state,
         schema_constants=_schema_constants,

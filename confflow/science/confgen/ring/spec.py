@@ -16,7 +16,19 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-__all__ = ["normalize_spec", "validate_context"]
+__all__ = ["has_indices", "normalize_spec", "validate_context"]
+
+
+def has_indices(raw: Mapping[str, Any]) -> bool:
+    """Return True when raw rings carry index-bearing content.
+
+    Mirrors the pre-AG1 ``planner._spec_has_indices`` rings branch
+    exactly (never raises; illegal shapes are False).
+    """
+    rings = raw.get("rings")
+    if isinstance(rings, (list, tuple)) and len(rings) > 0:
+        return True
+    return False
 
 
 def normalize_spec(raw: Mapping[str, Any], *, index_base: int) -> Mapping[str, Any]:

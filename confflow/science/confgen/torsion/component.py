@@ -59,6 +59,22 @@ def _validate_context(resolved: Mapping[str, Any], context: Any) -> None:
     return _impl(resolved, context)
 
 
+def _has_indices(raw: Mapping[str, Any]) -> bool:
+    """Lazy proxy: torsions/paths index probe only when called."""
+    from confflow.science.confgen.torsion.spec import has_indices as _impl
+
+    return _impl(raw)
+
+
+def _expand_context_spec(resolved: Any, structure: Any, adjacency: Any) -> None:
+    """Expand declared paths, preserving the legacy empty-path call guard."""
+    if not resolved.get("paths"):
+        return
+    from confflow.science.confgen.torsion.spec import expand_context_spec as _impl
+
+    return _impl(resolved, structure, adjacency)
+
+
 def _serialize_inherited_state(resolved: Mapping[str, Any], state_value: Any, context: Any) -> Any:
     """Descriptor hook: torsion public scope payload (lazy, no eager solver)."""
     from confflow.science.confgen.torsion.inherited import (
@@ -125,6 +141,10 @@ def descriptor() -> ComponentDescriptor:
         describe_scope=_describe_scope,
         normalize_spec=_normalize_spec,
         validate_context=_validate_context,
+        spec_defaults=(("torsions", []), ("paths", []), ("strict_path_bond_check", False)),
+        has_indices=_has_indices,
+        index_detection_order=10,
+        expand_context_spec=_expand_context_spec,
         serialize_inherited_state=_serialize_inherited_state,
         verify_inherited_state=_verify_inherited_state,
         schema_constants=_schema_constants,
