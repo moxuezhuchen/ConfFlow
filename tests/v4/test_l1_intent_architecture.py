@@ -26,7 +26,7 @@ def _write(root: Path, relpath: str, content: str) -> None:
 
 
 def _fired(root: Path) -> list[dict]:
-    return [v for v in scan(root) if v["rule"] == RULE_ID]
+    return scan(root, rule_ids=[RULE_ID])
 
 
 def test_ap106_rule_shape_uses_existing_imports_mechanism() -> None:
