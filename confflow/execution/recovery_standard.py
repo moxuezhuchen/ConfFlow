@@ -66,7 +66,6 @@ executor substitutes a step-bound ``TsRescueScanPolicy(adapter)``.
 from __future__ import annotations
 
 import math
-import re
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
@@ -75,7 +74,7 @@ import numpy as np
 from ..domain._immutable import FrozenDict
 from ..domain.diagnostics import Diagnostic, DiagnosticSeverity
 from ..domain.structure import Coordinates
-from .checks import CHECK_DEFAULTS
+from .checks import CHECK_DEFAULTS, parse_bond_atom_pair
 from .native import (
     GeometryOutput,
     MaterializedNativeInput,
@@ -188,31 +187,11 @@ def parse_ts_bond_atoms(value: Any) -> tuple[int, int] | None:
     least two positive integers (digit extraction).  Returns ``None`` when
     the value is missing, malformed, or names the same atom twice.
 
-    (Ported from the legacy analysis helper; the small numeric helpers in
-    this module are deliberately duplicated rather than imported from the
-    check layer so recovery never depends on check wiring.)
+    (Canonical implementation lives in :mod:`confflow.execution.checks` so
+    recovery shares the exact check-layer semantics without depending on
+    check wiring.)
     """
-    if value is None:
-        return None
-    numbers: list[int] = []
-    if isinstance(value, (list, tuple)):
-        for item in value:
-            try:
-                numbers.append(int(item))
-            except (TypeError, ValueError):
-                continue
-    else:
-        for match in re.findall(r"\d+", str(value)):
-            try:
-                numbers.append(int(match))
-            except (TypeError, ValueError):
-                continue
-    if len(numbers) < 2:
-        return None
-    first, second = numbers[0], numbers[1]
-    if first <= 0 or second <= 0 or first == second:
-        return None
-    return first, second
+    return parse_bond_atom_pair(value)
 
 
 def _gaussian_adapter() -> type[GaussianProgramAdapter]:

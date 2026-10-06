@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 
-"""Tests for core.data module."""
+"""Tests for science.data module."""
 
 from __future__ import annotations
 
 
 class TestData:
-    """Tests for core.data module."""
+    """Tests for science.data module."""
 
     def test_get_covalent_radius(self):
         """Test getting covalent radius."""
-        from confflow.core.data import get_covalent_radius
+        from confflow.science.data import get_covalent_radius
 
         assert get_covalent_radius(1) == 0.30  # H
         assert get_covalent_radius(6) == 0.77  # C
@@ -18,7 +18,7 @@ class TestData:
 
     def test_get_element_symbol(self):
         """Test getting element symbol."""
-        from confflow.core.data import get_element_symbol
+        from confflow.science.data import get_element_symbol
 
         assert get_element_symbol(1) == "H"
         assert get_element_symbol(6) == "C"
@@ -27,14 +27,14 @@ class TestData:
 
     def test_get_atomic_number(self):
         """Test getting atomic number."""
-        from confflow.core.data import get_atomic_number
+        from confflow.science.data import get_atomic_number
 
         assert get_atomic_number("H") == 1
         assert get_atomic_number("c") == 6
         assert get_atomic_number("Unknown") == 0
 
     def test_radii_sanity(self):
-        from confflow.core.data import GV_COVALENT_RADII
+        from confflow.science.data import GV_COVALENT_RADII
 
         assert len(GV_COVALENT_RADII) >= 100
         assert abs(GV_COVALENT_RADII[1] - 0.30) < 1e-12

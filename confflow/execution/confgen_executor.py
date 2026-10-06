@@ -48,13 +48,16 @@ from ..domain.work_item import RecoveryInfo, Timing, WorkItem, WorkItemResult
 from ..science.topology import (
     should_persist_working_graph,
 )
-from .native import NativeErrorCode
 from .output_identity import (
     CONFORMER_MEMBER_METADATA_KEY,
     conformer_output_id,
     endpoint_lineage,
 )
-from .work_item_executor import ItemExecutionContext, _diagnostic
+from .work_item_executor import (
+    ItemExecutionContext,
+    pure_cancelled_result,
+    pure_fail_result,
+)
 
 __all__ = [
     "ConfgenExecutor",
@@ -938,27 +941,12 @@ class ConfgenExecutor:
         monotonic_start: float,
         message: str,
     ) -> WorkItemResult:
-        timing = Timing(
-            started_at=wall_start,
-            finished_at=max(time.time(), wall_start),
-            duration_seconds=max(0.0, time.monotonic() - monotonic_start),
-        )
-        return WorkItemResult(
-            work_item_id=work_item.id,
-            status=WorkItemStatus.FAILED,
-            diagnostics=(
-                _diagnostic(
-                    NativeErrorCode.NATIVE_INPUT_ERROR,
-                    message,
-                    step_id=context.step_id,
-                    work_item_id=work_item.id,
-                    logical_key=work_item.logical_key,
-                ),
-            ),
-            timing=timing,
-            error=None,
-            recovery=RecoveryInfo(profile="none", attempted=False),
-            semantic_digest=work_item.semantic_digest,
+        return pure_fail_result(
+            work_item,
+            step_id=context.step_id,
+            wall_start=wall_start,
+            monotonic_start=monotonic_start,
+            message=message,
         )
 
     def _cancelled(
@@ -968,26 +956,9 @@ class ConfgenExecutor:
         wall_start: float,
         monotonic_start: float,
     ) -> WorkItemResult:
-        timing = Timing(
-            started_at=wall_start,
-            finished_at=max(time.time(), wall_start),
-            duration_seconds=max(0.0, time.monotonic() - monotonic_start),
-        )
-        return WorkItemResult(
-            work_item_id=work_item.id,
-            status=WorkItemStatus.CANCELLED,
-            diagnostics=(
-                _diagnostic(
-                    NativeErrorCode.CANCELLATION_ERROR,
-                    "work item cancelled",
-                    step_id=context.step_id,
-                    work_item_id=work_item.id,
-                    logical_key=work_item.logical_key,
-                    details={"confirmed": True},
-                ),
-            ),
-            timing=timing,
-            error=None,
-            recovery=RecoveryInfo(profile="none", attempted=False),
-            semantic_digest=work_item.semantic_digest,
+        return pure_cancelled_result(
+            work_item,
+            step_id=context.step_id,
+            wall_start=wall_start,
+            monotonic_start=monotonic_start,
         )
