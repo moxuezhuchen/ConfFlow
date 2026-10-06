@@ -106,20 +106,70 @@ def build_intent_registry(
                 f"CapabilityDescriptor {descriptor.key!r} wire_block_key "
                 f"{explicit!r} not in fragment_keys {tuple(descriptor.fragment_keys)!r}"
             )
+        seed_keys = tuple(getattr(descriptor, "seed_block_keys", ()) or ())
+        for item in seed_keys:
+            if not isinstance(item, str) or not item.strip():
+                raise ValueError(
+                    f"CapabilityDescriptor {descriptor.key!r} carries bad seed block keys"
+                )
+        if seed_keys:
+            outside = sorted(set(seed_keys) - set(tuple(descriptor.fragment_keys)))
+            if outside:
+                raise ValueError(
+                    f"CapabilityDescriptor {descriptor.key!r} seed_block_keys "
+                    f"{sorted(seed_keys)!r} not in fragment_keys "
+                    f"{tuple(descriptor.fragment_keys)!r}"
+                )
         seen[descriptor.key] = descriptor
     _check_executor_wire_consistency(seen)
+    _check_executor_seed_consistency(seen)
     return IntentRegistry(entries=seen)
 
 
 def _effective_wire_block_key(descriptor: CapabilityDescriptor) -> str:
-    """Return the effective wire block key (explicit or ``fragment_keys[0]``)."""
+    """Return the effective wire block key (explicit or ``fragment_keys[0]``).
+
+    Strict: missing ``wire_block_key`` derives compat ``fragment_keys[0]``;
+    present-but-non-string or explicit-outside-``fragment_keys`` raises
+    fail-closed (never silently derived). Missing/invalid ``fragment_keys``
+    also raises.
+    """
     try:
         explicit = getattr(descriptor, "wire_block_key", "")
-    except Exception:
-        explicit = ""
-    if isinstance(explicit, str) and explicit:
+    except Exception as exc:
+        raise ValueError(
+            f"CapabilityDescriptor {getattr(descriptor, 'key', '?')!r} wire_block_key unreadable"
+        ) from exc
+    if not isinstance(explicit, str):
+        raise ValueError(
+            f"CapabilityDescriptor {getattr(descriptor, 'key', '?')!r} "
+            f"wire_block_key must be a string, got {type(explicit).__name__}"
+        )
+    if explicit:
+        try:
+            frag = tuple(descriptor.fragment_keys)
+        except Exception as exc:
+            raise ValueError(
+                f"CapabilityDescriptor {getattr(descriptor, 'key', '?')!r} fragment_keys unreadable"
+            ) from exc
+        if explicit not in frag:
+            raise ValueError(
+                f"CapabilityDescriptor {getattr(descriptor, 'key', '?')!r} "
+                f"wire_block_key {explicit!r} not in fragment_keys {frag!r}"
+            )
         return explicit
-    return tuple(descriptor.fragment_keys)[0]
+    try:
+        frag = tuple(descriptor.fragment_keys)
+    except Exception as exc:
+        raise ValueError(
+            f"CapabilityDescriptor {getattr(descriptor, 'key', '?')!r} fragment_keys unreadable"
+        ) from exc
+    if not frag or not isinstance(frag[0], str) or not frag[0]:
+        raise ValueError(
+            f"CapabilityDescriptor {getattr(descriptor, 'key', '?')!r} "
+            "fragment_keys must start with a non-empty string"
+        )
+    return frag[0]
 
 
 def _check_executor_wire_consistency(entries: Mapping[str, CapabilityDescriptor]) -> None:
@@ -141,47 +191,220 @@ def _check_executor_wire_consistency(entries: Mapping[str, CapabilityDescriptor]
             )
 
 
-def wire_block_key_for_executor(registry: Any, executor: str) -> str | None:
-    """Return the consistent wire-block key for *executor* (total, no raise).
+def _effective_seed_block_keys(descriptor: Any) -> tuple[str, ...]:
+    """Return the effective seed block keys for one descriptor (strict).
 
-    Queries the registry by executor (never by guessed card type, so recipe
-    base steps without ``_card_type`` resolve).  No entry for *executor*
-    falls back to the builtin default (``FRAGMENT_KEYS_BY_EXECUTOR`` first
-    item, owned by this assembly point); unknown executors yield ``None``.
-    Inconsistent same-executor metadata also falls back to the builtin
-    default (assembly rejects it, but the compiler stays total).
+    Explicit non-empty ``seed_block_keys`` wins verbatim after validation
+    (non-string/duplicate/outside-``fragment_keys`` raises fail-closed).
+    Missing attribute derives the builtin compat default
+    (calculation/confgen ``(fragment_keys[0],)``, others ``()``).
+    Present-but-invalid (non-iterable, non-string items) raises instead of
+    pretending undeclared.
+    """
+    try:
+        has_attr = hasattr(descriptor, "seed_block_keys")
+    except Exception as exc:
+        raise ValueError("seed_block_keys unreadable") from exc
+    if not has_attr:
+        try:
+            executor = getattr(descriptor, "executor", "")
+            frag = tuple(getattr(descriptor, "fragment_keys", ()) or ())
+        except Exception as exc:
+            raise ValueError("seed descriptor metadata unreadable") from exc
+        if executor in ("calculation", "confgen") and frag:
+            first = frag[0]
+            if not isinstance(first, str) or not first:
+                raise ValueError("seed fragment_keys[0] must be a non-empty string")
+            return (first,)
+        return ()
+    try:
+        raw = descriptor.seed_block_keys
+    except Exception as exc:
+        raise ValueError("seed_block_keys unreadable") from exc
+    if raw is None:
+        try:
+            executor = getattr(descriptor, "executor", "")
+            frag = tuple(getattr(descriptor, "fragment_keys", ()) or ())
+        except Exception as exc:
+            raise ValueError("seed descriptor metadata unreadable") from exc
+        if executor in ("calculation", "confgen") and frag:
+            first = frag[0]
+            if not isinstance(first, str) or not first:
+                raise ValueError("seed fragment_keys[0] must be a non-empty string")
+            return (first,)
+        return ()
+    try:
+        explicit = tuple(raw or ())
+    except Exception as exc:
+        raise ValueError("seed_block_keys must be an iterable of strings") from exc
+    for item in explicit:
+        if not isinstance(item, str) or not item.strip():
+            raise ValueError("seed_block_keys must be non-empty strings")
+    if len(set(explicit)) != len(explicit):
+        raise ValueError("seed_block_keys carries duplicates")
+    if explicit:
+        try:
+            frag = tuple(getattr(descriptor, "fragment_keys", ()) or ())
+        except Exception as exc:
+            raise ValueError("seed descriptor fragment_keys unreadable") from exc
+        outside = sorted(set(explicit) - set(frag))
+        if outside:
+            raise ValueError(f"seed_block_keys {sorted(explicit)!r} not in fragment_keys {frag!r}")
+        return explicit
+    try:
+        executor = getattr(descriptor, "executor", "")
+        frag = tuple(getattr(descriptor, "fragment_keys", ()) or ())
+    except Exception as exc:
+        raise ValueError("seed descriptor metadata unreadable") from exc
+    if executor in ("calculation", "confgen") and frag:
+        first = frag[0]
+        if not isinstance(first, str) or not first:
+            raise ValueError("seed fragment_keys[0] must be a non-empty string")
+        return (first,)
+    return ()
+
+
+def _check_executor_seed_consistency(entries: Mapping[str, CapabilityDescriptor]) -> None:
+    """Fail closed when one executor maps to divergent seed block keys.
+
+    Same-executor entries must share one effective seed key tuple.
+    Divergent metadata is an assembly error, never a silent sorted-first
+    compiler choice.
+    """
+    by_executor: dict[str, set[tuple[str, ...]]] = {}
+    for descriptor in entries.values():
+        by_executor.setdefault(descriptor.executor, set()).add(
+            _effective_seed_block_keys(descriptor)
+        )
+    for executor, keys in by_executor.items():
+        if len(keys) != 1:
+            raise ValueError(
+                f"conflicting seed_block_keys for executor {executor!r}: "
+                f"{sorted(sorted(k) for k in keys)}"
+            )
+
+
+def rejected_step_keys_for_legacy_fallback(executor: str) -> frozenset[str]:
+    """Return the builtin rejected set for the legacy 4-arg fallback.
+
+    Explicit assembly point owning the old compiler branches: the three
+    builtin ``REJECTED_STEP_KEYS`` constants are read here, never in the
+    compiler.  Unknown executors yield an empty frozenset (old empty-set
+    analogue).  Internal module import errors and invalid declared metadata
+    propagate fail-closed and are never swallowed into an empty set (which
+    would silently drop science).
+    """
+    from .calculation import REJECTED_STEP_KEYS as _CALC_REJ
+    from .confgen import REJECTED_STEP_KEYS as _CONF_REJ
+    from .transform import REJECTED_STEP_KEYS as _TR_REJ
+
+    table: dict[str, Any] = {
+        "calculation": _CALC_REJ,
+        "confgen": _CONF_REJ,
+        "structure_transform": _TR_REJ,
+    }
+    raw = table.get(executor, ())
+    items = tuple(raw or ())
+    for item in items:
+        if not isinstance(item, str) or not item.strip():
+            raise ValueError(f"builtin rejected metadata for executor {executor!r} is invalid")
+    if len(set(items)) != len(items):
+        raise ValueError(f"builtin rejected metadata for executor {executor!r} carries duplicates")
+    return frozenset(items)
+
+
+def seed_block_keys_for_registry(registry: Any) -> tuple[str, ...]:
+    """Return the union seed block names declared by *registry* (ordered).
+
+    Strict: each descriptor's effective seed keys are read fail-closed
+    (declared-bad raises, old missing-field derives compat). Per-executor
+    divergence raises instead of silently merging. Empty registry (or
+    ``None``) falls back to the builtin default union so the compiler stays
+    usable without extra context. Order is the builtin declaration order
+    (``calculation`` then ``confgen``) to preserve the historical loop
+    order; unknown keys append sorted.
     """
     try:
         entries = getattr(registry, "entries", None)
-    except Exception:
-        entries = None
+    except Exception as exc:
+        raise ValueError("intent registry unreadable") from exc
+    if entries is None and registry is not None:
+        # Duck registry without entries: treat as empty (legal default path
+        # keeps old None behavior); only None and Mapping are expected.
+        # Non-mapping entries raises below via isinstance check.
+        pass
+    if not isinstance(entries, Mapping):
+        if registry is None or entries is None:
+            entries = {}
+        else:
+            raise ValueError("intent registry entries must be a mapping")
+    per_executor: dict[str, set[tuple[str, ...]]] = {}
+    collected: set[str] = set()
+    for descriptor in entries.values():
+        keys = _effective_seed_block_keys(descriptor)
+        try:
+            executor = getattr(descriptor, "executor", "")
+        except Exception as exc:
+            raise ValueError("seed descriptor executor unreadable") from exc
+        per_executor.setdefault(executor, set()).add(keys)
+        for key in keys:
+            if isinstance(key, str) and key:
+                collected.add(key)
+    for executor, keys in per_executor.items():
+        if len(keys) != 1:
+            raise ValueError(
+                f"conflicting seed_block_keys for executor {executor!r}: "
+                f"{sorted(sorted(k) for k in keys)}"
+            )
+    if not collected:
+        fallback: list[str] = []
+        for keys in SEED_BLOCK_KEYS_BY_EXECUTOR.values():
+            for key in keys:
+                if key not in fallback:
+                    fallback.append(key)
+        return tuple(fallback)
+    builtin_order = ["calculation", "confgen"]
+    ordered = [k for k in builtin_order if k in collected]
+    ordered.extend(sorted(k for k in collected if k not in set(builtin_order)))
+    return tuple(ordered)
+
+
+def wire_block_key_for_executor(registry: Any, executor: str) -> str | None:
+    """Return the consistent wire-block key for *executor* (fail-closed).
+
+    Queries the registry by executor (never by guessed card type, so recipe
+    base steps without ``_card_type`` resolve). No entry for *executor*
+    falls back to the builtin default (``FRAGMENT_KEYS_BY_EXECUTOR`` first
+    item, owned by this assembly point); unknown executors yield ``None``.
+    Same-executor divergence raises instead of silently picking
+    ``sorted-first`` or the builtin default.
+    """
+    try:
+        entries = getattr(registry, "entries", None)
+    except Exception as exc:
+        raise ValueError("intent registry unreadable") from exc
+    if not isinstance(entries, Mapping):
+        if registry is None or entries is None:
+            entries = {}
+        else:
+            raise ValueError("intent registry entries must be a mapping")
     found: set[str] = set()
-    if isinstance(entries, Mapping):
-        for descriptor in entries.values():
-            try:
-                if getattr(descriptor, "executor", None) != executor:
-                    continue
-                frag = tuple(getattr(descriptor, "fragment_keys", ()) or ())
-            except Exception:
-                continue
-            if not frag:
-                continue
-            try:
-                explicit = getattr(descriptor, "wire_block_key", "")
-            except Exception:
-                explicit = ""
-            found.add(explicit if isinstance(explicit, str) and explicit else frag[0])
+    for descriptor in entries.values():
+        try:
+            desc_executor = getattr(descriptor, "executor", None)
+        except Exception as exc:
+            raise ValueError("descriptor executor unreadable") from exc
+        if desc_executor != executor:
+            continue
+        found.add(_effective_wire_block_key(descriptor))
     if len(found) == 1:
         only = next(iter(found))
         return only if isinstance(only, str) and only else None
-    try:
-        default = FRAGMENT_KEYS_BY_EXECUTOR.get(executor)  # type: ignore[attr-defined]
-    except Exception:
-        default = None
+    if len(found) > 1:
+        raise ValueError(f"conflicting wire_block_key for executor {executor!r}: {sorted(found)}")
+    default = FRAGMENT_KEYS_BY_EXECUTOR.get(executor)
     if default:
         return tuple(default)[0]
-    if len(found) > 1:
-        return sorted(found)[0]
     return None
 
 
@@ -190,6 +413,14 @@ FRAGMENT_KEYS_BY_EXECUTOR: dict[str, tuple[str, ...]] = {
     "calculation": ("calculation",),
     "confgen": ("confgen",),
     "structure_transform": ("transform", "_preset_ref"),
+}
+
+#: Seed-bearing wire blocks per runtime executor (single source).
+#: Only calculation/confgen carry seed slots; transform carries none.
+SEED_BLOCK_KEYS_BY_EXECUTOR: dict[str, tuple[str, ...]] = {
+    "calculation": ("calculation",),
+    "confgen": ("confgen",),
+    "structure_transform": (),
 }
 
 
@@ -223,14 +454,17 @@ def build_default_intent_registry() -> IntentRegistry:
             handler = calculation_fragment
             rejected = tuple(sorted(set(_CALC_REJECTED)))
             wire_block_key = str(fragment_keys[0])
+            seed_block_keys = tuple(SEED_BLOCK_KEYS_BY_EXECUTOR["calculation"])
         elif executor == "confgen":
             handler = confgen_fragment
             rejected = tuple(sorted(set(_CONFGEN_REJECTED)))
             wire_block_key = str(fragment_keys[0])
+            seed_block_keys = tuple(SEED_BLOCK_KEYS_BY_EXECUTOR["confgen"])
         elif executor == "structure_transform":
             handler = transform_fragment
             rejected = tuple(sorted(set(_TRANSFORM_REJECTED)))
             wire_block_key = str(fragment_keys[0])
+            seed_block_keys = tuple(SEED_BLOCK_KEYS_BY_EXECUTOR["structure_transform"])
         else:  # pragma: no cover - current cards only use the three above
             raise ValueError(f"unknown executor {executor!r} for card {card_type!r}")
         descriptors.append(
@@ -243,6 +477,7 @@ def build_default_intent_registry() -> IntentRegistry:
                 description=str(card.get("description", "")),
                 rejected_step_keys=rejected,
                 wire_block_key=wire_block_key,
+                seed_block_keys=seed_block_keys,
             )
         )
     return build_intent_registry(descriptors)

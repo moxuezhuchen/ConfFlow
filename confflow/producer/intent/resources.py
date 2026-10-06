@@ -57,7 +57,10 @@ def _wire_scheduler(step: Mapping[str, Any], step_id: str) -> dict[str, Any] | N
 
 
 def _apply_machine_profile(
-    wire_steps: list[dict[str, Any]], machine_profile: Mapping[str, Any]
+    wire_steps: list[dict[str, Any]],
+    machine_profile: Mapping[str, Any],
+    *,
+    intent_registry: Any = None,
 ) -> dict[str, dict[str, Any]]:
     """Resolve operational resources via the resources lane (late import).
 
@@ -67,6 +70,14 @@ def _apply_machine_profile(
     ``sandbox``, ``allowed_executables``, and ``walltime_seconds``.  Only
     allowed ``ExecutionModel`` members are projected; explicit step
     ``execution`` entries win over profile values per key.
+
+    Program location comes from the same assembly channel
+    (``wire_block_key_for_executor``) with the compile-time
+    ``intent_registry`` instance. The two-positional call stays valid
+    (``intent_registry`` defaults to ``None`` → builtin defaults); compile
+    passes its unique registry explicitly. Assembly import/query failures
+    fail closed with step context and never continue with a guessed
+    default that would silently drop ``executable``.
     """
     try:
         from ..machine import resolve_machine_resources
@@ -133,11 +144,35 @@ def _apply_machine_profile(
             if isinstance(record, Mapping)
             else {}
         )
+        # L1-A2a v2: program extraction via the same assembly channel.
+        # The strict V4 builtin wire keys own the block location; query by
+        # step executor with the compile-time registry. Import/query
+        # failures fail closed (no except-to-None-and-continue); unknown
+        # executors legitimately yield None and keep program None.
+        try:
+            from .capabilities.registry import (
+                wire_block_key_for_executor as _assembly_block_key,
+            )
+        except Exception as exc:
+            raise _fail(
+                f"step {step_id!r}: machine program binding unavailable: {exc}",
+                step_id=step_id,
+            ) from exc
+        try:
+            _block_key = _assembly_block_key(intent_registry, str(step.get("executor")))
+        except IntentCompilationError:
+            raise
+        except Exception as exc:
+            raise _fail(
+                f"step {step_id!r}: machine program binding broken: {exc}",
+                step_id=step_id,
+            ) from exc
         program: str | None = None
-        calculation = step.get("calculation")
-        if isinstance(calculation, Mapping):
-            raw_program = calculation.get("program")
-            program = raw_program if isinstance(raw_program, str) else None
+        if isinstance(_block_key, str) and _block_key:
+            _owner_block = step.get(_block_key)
+            if isinstance(_owner_block, Mapping):
+                raw_program = _owner_block.get("program")
+                program = raw_program if isinstance(raw_program, str) else None
         explicit = step.get("execution")
         explicit_map = dict(explicit) if isinstance(explicit, Mapping) else {}
         execution: dict[str, Any] = {}

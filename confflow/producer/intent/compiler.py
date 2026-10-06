@@ -1056,17 +1056,13 @@ def _wire_block_key_for_executor(intent_registry: Any, executor: str) -> str | N
 
     The compiler never hardcodes executor->block names; the mapping lives in
     ``capabilities/registry.py`` (builtin defaults + per-executor consistency).
-    Total: unknown executors yield ``None`` (old unknown-executor empty set
-    analogue for adapters), never raises.
+    Unknown executors yield ``None`` (old unknown-executor empty set
+    analogue for adapters). Same-executor conflicts raise fail-closed
+    (never silent ``sorted-first``); assembly import failures also raise.
     """
-    try:
-        from .capabilities.registry import wire_block_key_for_executor as _helper
-    except Exception:
-        return None
-    try:
-        return _helper(intent_registry, executor)
-    except Exception:
-        return None
+    from .capabilities.registry import wire_block_key_for_executor as _helper
+
+    return _helper(intent_registry, executor)
 
 
 def _reject_misplaced_fields(
@@ -1078,10 +1074,11 @@ def _reject_misplaced_fields(
     program on a confgen) would pretend to honor science it drops.
 
     R1: the rejected set comes from the descriptor (``entry``) when given;
-    the 4-positional-arg form stays usable via the builtin table fallback
-    (dict lookup, no executor branches; unknown executors stay empty).
-    Callers pass the resolved ``entry``; validation stays after card resolve
-    and before the handler (call-site order unchanged).
+    the 4-positional-arg form delegates to the registry assembly helper
+    owning the builtin table (unknown executors stay empty).  Callers pass
+    the resolved ``entry``; validation stays after card resolve and before
+    the handler (call-site order unchanged).  Assembly/import failures
+    fail closed and never collapse into an empty set.
     """
     rejected: Any = ()
     if entry is not None:
@@ -1090,18 +1087,19 @@ def _reject_misplaced_fields(
         except Exception:
             rejected = ()
     else:
+        from .capabilities.registry import (
+            rejected_step_keys_for_legacy_fallback as _legacy_rejected,
+        )
+
         try:
-            from .capabilities.calculation import REJECTED_STEP_KEYS as _CALC_REJ
-            from .capabilities.confgen import REJECTED_STEP_KEYS as _CONF_REJ
-            from .capabilities.transform import REJECTED_STEP_KEYS as _TR_REJ
-        except Exception:
-            rejected = ()
-        else:
-            rejected = {
-                "calculation": _CALC_REJ,
-                "confgen": _CONF_REJ,
-                "structure_transform": _TR_REJ,
-            }.get(executor, ())
+            rejected = _legacy_rejected(executor)
+        except IntentCompilationError:
+            raise
+        except Exception as exc:
+            raise _fail(
+                f"step {step_id!r} ({card_type}) rejected-metadata unavailable: {exc}",
+                step_id=step_id,
+            ) from exc
     try:
         misplaced = sorted(set(step) & set(rejected))
     except Exception:
@@ -1115,6 +1113,16 @@ def _reject_misplaced_fields(
 
 # L1-C1: generic bindings/resources helpers live in .bindings/.resources;
 # re-exported above for compatible ``compiler`` import paths (``is`` holds).
+
+
+# L1-A2a compat: the seed-scope rule lives in ``producer.seeds``;
+# this wrapper preserves the old ``compiler._seed_scope`` import path
+# without reintroducing executor knowledge here (generic delegation only).
+def _seed_scope(step: Mapping[str, Any], source: str) -> str | None:
+    """Delegate to :func:`producer.seeds.seed_scope_for_step` (compat)."""
+    from ..seeds import seed_scope_for_step as _delegate
+
+    return _delegate(step, source)
 
 
 # ----------------------------------------------------------------------
@@ -1514,7 +1522,9 @@ def compile_intent(
     # Machine profile: operational resolution (resources lane).
     machine_prov: dict[str, dict[str, Any]] = {}
     if machine_profile is not None:
-        machine_prov = _apply_machine_profile(wire_document["steps"], machine_profile)
+        machine_prov = _apply_machine_profile(
+            wire_document["steps"], machine_profile, intent_registry=intent_registry
+        )
 
     # Checkpoints: semantic edges after the full wire exists.  The helper
     # compiles through the strict compiler, which refuses stochastic steps
@@ -1524,7 +1534,9 @@ def compile_intent(
     # final science; explicit seeds are never touched.
     if checkpoint_intents:
         from ..seeds import assign_seeds as _provisional_assign
+        from .capabilities.registry import seed_block_keys_for_registry as _seed_blocks
 
+        _seed_block_names = tuple(_seed_blocks(intent_registry))
         _prov_doc, _prov_prov = _provisional_assign(wire_document)
         _auto_ids = {
             str(step_id)
@@ -1546,7 +1558,7 @@ def compile_intent(
                 _prov_step = _prov_by_id.get(_sid, {})
                 if not isinstance(_prov_step, Mapping):
                     continue
-                for _block_name in ("calculation", "confgen"):
+                for _block_name in _seed_block_names:
                     _prov_block = _prov_step.get(_block_name)
                     _wire_block = _step.get(_block_name)
                     if (
@@ -1562,28 +1574,16 @@ def compile_intent(
                     continue
                 if str(_step.get("id")) not in _auto_ids:
                     continue
-                for _block_name in ("calculation", "confgen"):
+                for _block_name in _seed_block_names:
                     _wire_block = _step.get(_block_name)
                     if isinstance(_wire_block, dict) and "seed" in _wire_block:
                         del _wire_block["seed"]
 
     # Seeds: whole-workflow scientific identity (Phase 2).
     from ..seeds import SEED_VERSION, assign_seeds, seed_identity_for_step
+    from ..seeds import seed_scope_for_step as _seed_scope
 
     wire_document, seed_prov = assign_seeds(wire_document)
-
-    def _seed_scope(step: Mapping[str, Any], source: str) -> str | None:
-        if source == "none":
-            return None
-        executor = step.get("executor")
-        if executor == "confgen":
-            return "native_sampling"
-        if executor == "calculation":
-            calculation = step.get("calculation")
-            native = calculation.get("native") if isinstance(calculation, Mapping) else None
-            if isinstance(native, Mapping) and native.get("goat") is not None:
-                return "workflow_identity_only"
-        return None
 
     # Provenance into the valid nonsemantic container.  Existing
     # authoring keys (role_card/named_card/recipe_assignment from the

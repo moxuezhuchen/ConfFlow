@@ -388,3 +388,40 @@ R7 glucose 127/155 的 28 项召回缺口与未做种子优化后 RMSD 验证如
   （含 new/modes；sha 见同目录 `SHA256SUMS`）；生产-only
   `L1-A1-production-only.diff`；正式提示词见 `FORMAL-PROMPT.md`
   （尾行 Claude Sonnet 5.5）。未提交/未推送/未合并/未打 tag；共享树与冻结基线未动。
+
+## L1-A2a — seed/resource plumbing + A1 compat fallback closure (logic, 预演冻结；根验收另行)
+
+- 基点正式 A1 `ebbba518c437c8c1692b3517cd74a30c5f2e18db`；工作树 `/tmp/l1-a2a-proto`
+  分支 `refactor/l1-a2a-proto`；源 `/tmp/l1-a1-exec` 只读；输出 `/tmp/l1-a2a-output` 独占。
+  PLAN L1 + `/tmp/l1-a2-mandatory-root-note.md` + 设计 v2 A2 部分已读。
+  本卡只做种子/资源 plumbing 及 A1 兼容 fallback 收尾；recipe 长链另 A2b，
+  analysis/Dummy 终验另 A3，不偷取消。
+- 白名单实测（精确 5 prod）：改 `intent/compiler.py`（1742 行，拒放委托 + 种子块表 +
+  scope 委托）、`intent/resources.py`（260 行，程序经装配元数据）、
+  `intent/capabilities/descriptor.py`（214 行，`seed_block_keys` 兼容默认 + 有效键）、
+  `intent/capabilities/registry.py`（386 行，拒放装配 helper + 种子一致性 + 种子块查询 +
+  默认装配）、`producer/seeds.py`（422 行，`seed_scope_for_step` 逐字迁入）。
+  新 `tests/v4/test_l1_intent_seed_plumbing.py`（392 行，12 用例）；原 tests 只增不改；
+  新检查点 `docs/confgen-fix/checkpoints/L1-A2a/`。recipe rolecards/sciencepatch、
+  validation 规则一字不动；C0/C1/C2/A1 节点/断言保留。
+- 自检（非根验收）：新 12；必要 287；contract `2fe92022…`/boundary `ee811b99…`
+  原新逐字一致；collect 5025->5037（+12/-0）。ruff check/format、black `--workers 1`、
+  mypy `--num-workers 1` 通过；差分探针（valid/error、GOAT/typed 显式/派生、checkpoint
+  临时时序、machine 程序选型、未知旧兼容）基点->patch 一致，实测节点/异常已记入
+  MANIFEST（种子 `1687161672` 同值，不预填）。根将独立重跑。
+- 冻结：`git diff --binary HEAD` 见 `/tmp/l1-a2a-output/L1-A2a-proto.diff`
+  （含所有新 file/mode；sha 见同目录 `SHA256SUMS`）；正式提示词见 `FORMAL-PROMPT.md`
+  （尾行 Claude Sonnet）。未提交/未推送/未合并/未打 tag；共享树与冻结基线未动。
+
+## L1-A2a v2补修（根冻结v1反例后；v1证据保留未覆盖）
+
+- 根树`/tmp/l1-a2a-root-review`只读未动；源父仍ebbba；proto由v1 diff恢复后改。
+  v1 patch/SHA/FORMAL保留，v2另产`L1-A2a-v2.diff`/`SHA256SUMS-v2`/`FORMAL-PROMPT-v2.md`。
+- 真实反例`/tmp/l1-a2a-root-machine-probe.py`：旧父`executable=/opt/g16`，
+  冻结v1吞`ValueError`丢`executable`（`/tmp/l1-a2a-root-machine-{old,frozen}.json`），
+  v2 fail-closed报`IntentCompilationError`。resources import/query不再吞异常；
+  新增仅keyword `intent_registry=None`，compile实传唯一实例；自定义真实编译probe证必要。
+- 字符串检查改AST（Compare/常量/import/call作用域，忽略docstring/comments），旧断言保留。
+- 同executor冲突去`sorted-first`，非法fail-closed；合法default/鸭接口新旧probe保持；
+  seed区分兼容与坏声明。原12节点保持，新增4回归；必要291；契约3字节一致；collect
+  5025->5041（+16/-0）。ruff/mypy/black单worker通过。不跑全量/golden。未commit/push/tag。

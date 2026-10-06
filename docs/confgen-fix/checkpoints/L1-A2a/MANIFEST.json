@@ -1,0 +1,102 @@
+{
+ "base_head": "ebbba518c437c8c1692b3517cd74a30c5f2e18db",
+ "branch": "refactor/l1-a2a-proto",
+ "byte_compare": {
+  "boundary_full_sha256": "ee811b9995f49dec9668693d58e9f4d68fa170bfa232837486a8998b6aed9d20",
+  "contract_full_sha256": "2fe92022d2e9fa537b8ad11152d2b173c6f6572e0b0bd3950c7148c332ab43bc",
+  "digests_equal_old_new": true
+ },
+ "card": "L1-A2a v2",
+ "checkpoints_in_repo": [
+  "docs/confgen-fix/checkpoints/L1-A2a/MANIFEST.json",
+  "docs/confgen-fix/checkpoints/L1-A2a/DIFF.md"
+ ],
+ "collect": {
+  "added": [
+   "tests/v4/test_l1_intent_seed_plumbing.py::test_a2a_checkpoint_derived_seed_survives_edges",
+   "tests/v4/test_l1_intent_seed_plumbing.py::test_a2a_checkpoint_provisional_preserves_explicit",
+   "tests/v4/test_l1_intent_seed_plumbing.py::test_a2a_goat_explicit_derived_scope",
+   "tests/v4/test_l1_intent_seed_plumbing.py::test_a2a_machine_program_selection_declarative",
+   "tests/v4/test_l1_intent_seed_plumbing.py::test_a2a_reject_assembly_values_match_legacy",
+   "tests/v4/test_l1_intent_seed_plumbing.py::test_a2a_reject_fallback_delegates_no_branches",
+   "tests/v4/test_l1_intent_seed_plumbing.py::test_a2a_reject_invalid_builtin_fails_closed",
+   "tests/v4/test_l1_intent_seed_plumbing.py::test_a2a_same_execution_registry_instance",
+   "tests/v4/test_l1_intent_seed_plumbing.py::test_a2a_seed_block_conflict_fails_closed",
+   "tests/v4/test_l1_intent_seed_plumbing.py::test_a2a_seed_block_registry_defaults",
+   "tests/v4/test_l1_intent_seed_plumbing.py::test_a2a_seed_scope_moved_to_seeds",
+   "tests/v4/test_l1_intent_seed_plumbing.py::test_a2a_typed_confgen_seed_scope_and_explicit",
+   "tests/v4/test_l1_intent_seed_plumbing.py::test_a2a_v2_custom_descriptor_machine_probe",
+   "tests/v4/test_l1_intent_seed_plumbing.py::test_a2a_v2_machine_binding_broken_fails_closed",
+   "tests/v4/test_l1_intent_seed_plumbing.py::test_a2a_v2_seed_declared_bad_fails_closed",
+   "tests/v4/test_l1_intent_seed_plumbing.py::test_a2a_v2_wire_conflict_fails_closed"
+  ],
+  "added_count": 16,
+  "new_total": 5041,
+  "old_total": 5025,
+  "removed_count": 0
+ },
+ "differential_probes_measured": {
+  "base_tree": "/tmp/l1-a1-exec (read-only)",
+  "checkpoint_multi_edge_derived_seed": 1687161672,
+  "explicit_goat_seed": 777,
+  "explicit_typed_confgen_seed": 4242,
+  "machine_executable_gaussian": "/opt/g16",
+  "machine_executable_orca": "/opt/orca",
+  "misplaced_confgen_program": {
+   "class": "IntentCompilationError",
+   "field_path": null,
+   "message": "step 'c1' (confgen) cannot consume fields: program",
+   "module": "confflow.producer.intent",
+   "step_id": "c1"
+  },
+  "patch_tree": "/tmp/l1-a2a-proto",
+  "provisional_seed_identical_old_new": true,
+  "transform_seed_rejection": {
+   "class": "IntentCompilationError",
+   "message_prefix": "step 't1' (refine) cannot consume fields: seed",
+   "module": "confflow.producer.intent",
+   "step_id": "t1"
+  },
+  "unknown_executor_4arg": "no raise (empty set)",
+  "v2_machine_binding": {
+   "frozen_v1_executable": null,
+   "old_parent_executable": "/opt/g16",
+   "probe": "/tmp/l1-a2a-root-machine-probe.py",
+   "v2_exception": "IntentCompilationError step 's': machine program binding broken: descriptor binding broken"
+  }
+ },
+ "executed_validations": {
+  "contract_boundary_digest_old_eq_new": true,
+  "necessary_tests": "291 passed (16 new plumbing incl 4 v2 + compat + intent + machine + checkpoint + boundary)",
+  "new_plumbing_tests": "16 passed (12 v1 kept + 4 v2)",
+  "real_compile_old_eq_new": true,
+  "static": "ruff check clean; ruff format clean; black clean --workers 1; mypy clean --num-workers 1 (5 production files + 1 test, single worker)",
+  "v2_regressions": "root machine probe v2 raises IntentCompilationError (old /opt/g16, frozen silent drop); custom descriptor real compile executable /opt/orca; wire/seed conflicts raise; AST zero-checks ignore docstring/comments"
+ },
+ "external_artifacts_dir": "/tmp/l1-a2a-output",
+ "external_artifacts_sha256": {
+  "boundary.full.json": "ee811b9995f49dec9668693d58e9f4d68fa170bfa232837486a8998b6aed9d20",
+  "contract.full.json": "2fe92022d2e9fa537b8ad11152d2b173c6f6572e0b0bd3950c7148c332ab43bc",
+  "contract.json": "08d51085cb4fea98b5c6e977345fbc339d4098a29e791b511e564b13dcd2c6a8"
+ },
+ "golden_changed": [],
+ "golden_unchanged_asserted": "contract/boundary digests old==new with identical params; no full/golden run here",
+ "note": "v2补修；v1 patch/SHA/FORMAL保留未覆盖；no commit/push/merge/tag/install; root tree untouched",
+ "plan": "docs/confgen-fix/PLAN.md L1 + /tmp/l1-a2-mandatory-root-note.md + design v2 A2 (WHITELIST L1-A2 subset, recipe long-chain A2b and analysis/Dummy A3 explicitly excluded)",
+ "scope": "L1-A2a logic only: seed/resource plumbing + A1 compat fallback closure (reject delegation, provisional seed block tables, seed_scope relocation, program extraction); recipe rolecards/sciencepatch untouched; no validation registry copy into intent",
+ "type": "logic",
+ "whitelist_measured": {
+  "modified": [
+   "confflow/producer/intent/compiler.py (1740 lines; reject delegates, seed blocks via registry, scope delegates, machine passes intent_registry)",
+   "confflow/producer/intent/resources.py (271 lines; intent_registry keyword-only, import/query fail-closed)",
+   "confflow/producer/intent/capabilities/descriptor.py (214 lines; seed_block_keys compat)",
+   "confflow/producer/intent/capabilities/registry.py (483 lines; strict effective keys, conflict fail-closed, no sorted-first)",
+   "confflow/producer/seeds.py (422 lines; seed_scope_for_step)"
+  ],
+  "new": [
+   "tests/v4/test_l1_intent_seed_plumbing.py (602 lines, 16 tests: 12 v1 kept + 4 v2)",
+   "docs/confgen-fix/checkpoints/L1-A2a/DIFF.md (v1+v2)",
+   "docs/confgen-fix/checkpoints/L1-A2a/MANIFEST.json (v2)"
+  ]
+ }
+}

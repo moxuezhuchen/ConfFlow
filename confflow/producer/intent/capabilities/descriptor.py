@@ -99,6 +99,15 @@ class CapabilityDescriptor:
     # only an explicit non-empty key outside ``fragment_keys`` is rejected.
     rejected_step_keys: tuple[str, ...] = ()
     wire_block_key: str = ""
+    # L1-A2a (seed plumbing): seed-bearing wire blocks declared per
+    # descriptor.  Default ``()`` means "derive the builtin default for the
+    # executor" so C2/A1-era descriptors without the field stay
+    # constructible with no new required field: calculation/confgen derive
+    # ``(fragment_keys[0],)``, structure_transform derives ``()`` (no seed
+    # slot).  An explicit non-empty tuple must live inside
+    # ``fragment_keys``; the seeds authority (needs_seed/current/set) stays
+    # the sole science decider.
+    seed_block_keys: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if not isinstance(self.key, str) or not self.key.strip():
@@ -133,15 +142,31 @@ class CapabilityDescriptor:
             raise ValueError("CapabilityDescriptor rejected_step_keys carries duplicates")
         if not isinstance(self.wire_block_key, str):
             raise ValueError("CapabilityDescriptor wire_block_key must be a string")
+        if not isinstance(self.seed_block_keys, (tuple, list, frozenset, set)):
+            raise ValueError("CapabilityDescriptor seed_block_keys must be a tuple of strings")
+        seed_keys = tuple(self.seed_block_keys)
+        for item in seed_keys:
+            if not isinstance(item, str) or not item.strip():
+                raise ValueError("CapabilityDescriptor seed_block_keys must be non-empty strings")
+        if len(set(seed_keys)) != len(seed_keys):
+            raise ValueError("CapabilityDescriptor seed_block_keys carries duplicates")
         frozen = _freeze_mapping(dict(self.card))
         object.__setattr__(self, "card", frozen)
         object.__setattr__(self, "fragment_keys", tuple(frag))
         object.__setattr__(self, "rejected_step_keys", tuple(rej))
+        object.__setattr__(self, "seed_block_keys", tuple(seed_keys))
         if self.wire_block_key and self.wire_block_key not in tuple(frag):
             raise ValueError(
                 f"CapabilityDescriptor wire_block_key {self.wire_block_key!r} "
                 f"not in fragment_keys {tuple(frag)!r}"
             )
+        if seed_keys:
+            outside = sorted(set(seed_keys) - set(tuple(frag)))
+            if outside:
+                raise ValueError(
+                    f"CapabilityDescriptor seed_block_keys {sorted(seed_keys)!r} "
+                    f"not in fragment_keys {tuple(frag)!r}"
+                )
 
     def card_dict(self) -> dict[str, Any]:
         """Return an isolated mutable deep copy of the frozen card shape."""
@@ -161,3 +186,29 @@ class CapabilityDescriptor:
         if isinstance(self.wire_block_key, str) and self.wire_block_key:
             return self.wire_block_key
         return tuple(self.fragment_keys)[0]
+
+    @property
+    def effective_seed_block_keys(self) -> tuple[str, ...]:
+        """Return the seed-bearing wire blocks (explicit or derived default).
+
+        Empty ``seed_block_keys`` derives the builtin default for the
+        executor: calculation/confgen derive ``(fragment_keys[0],)``,
+        any other executor derives ``()`` (no seed slot, e.g. transform).
+        Explicit non-empty values are returned verbatim.
+        """
+        try:
+            explicit = tuple(self.seed_block_keys or ())
+        except Exception:
+            explicit = ()
+        if explicit:
+            return explicit
+        try:
+            executor = getattr(self, "executor", "")
+        except Exception:
+            executor = ""
+        if executor in ("calculation", "confgen"):
+            try:
+                return (tuple(self.fragment_keys)[0],)
+            except Exception:
+                return ()
+        return ()
