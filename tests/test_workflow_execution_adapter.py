@@ -902,3 +902,79 @@ def test_direct_adapter_late_checkpoint_after_failure_is_still_a_runner_error(tm
         "running",
         "failed",
     ]
+
+
+def _completed_spec(tmp_path: Path) -> tuple[WorkflowRunSpec, Path]:
+    input_xyz, config, work = _files(tmp_path)
+    work.mkdir(exist_ok=True)
+    spec = WorkflowRunSpec(
+        run_id="run-completed",
+        input_xyz=(str(input_xyz),),
+        config_file=str(config),
+        work_dir=str(work),
+    )
+    return spec, work
+
+
+def _attach(spec: WorkflowRunSpec, work: Path, service: object):
+    from confflow.application.execution.workflow_adapter import _load_completed_stats
+
+    return _load_completed_stats(service, "run-completed", str(work), spec)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    ("manifest_text", "reason"),
+    [
+        (None, "missing its manifest"),
+        ("not-json", "manifest is invalid"),
+        ("[1, 2]", "must be an object"),
+        ('{"status": "failed"}', "reports"),
+    ],
+)
+def test_completed_attach_fails_closed_on_unusable_manifest(
+    tmp_path: Path, manifest_text: str | None, reason: str
+):
+    """A completed aggregate never attaches without a valid completed manifest."""
+    spec, work = _completed_spec(tmp_path)
+    if manifest_text is not None:
+        (work / "run_result.json").write_text(manifest_text, encoding="utf-8")
+    with pytest.raises(ExecutionServiceError, match=reason) as caught:
+        _attach(spec, work, object())
+    assert caught.value.code is ErrorCode.ARTIFACT_INTEGRITY_FAILED
+
+
+def test_completed_attach_checks_identity_marker_and_terminal_artifacts(tmp_path: Path):
+    import types
+
+    from confflow.application.execution.workflow_adapter import _file_digest
+
+    spec, work = _completed_spec(tmp_path)
+    (work / "run_result.json").write_text('{"status": "completed"}', encoding="utf-8")
+    # Without a service projection the validated manifest payload is returned.
+    assert _attach(spec, work, object()) == {"status": "completed"}
+
+    identity = work / ".confflow_execution_identity.json"
+    identity.write_text("{broken", encoding="utf-8")
+    with pytest.raises(ExecutionServiceError, match="identity marker is invalid"):
+        _attach(spec, work, object())
+    identity.write_text('{"request_digest": "0"}', encoding="utf-8")
+    with pytest.raises(ExecutionServiceError, match="different workflow request"):
+        _attach(spec, work, object())
+    identity.unlink()
+
+    artifact_file = work / "result.xyz"
+    artifact_file.write_text("1\nr\nH 0 0 0\n", encoding="utf-8")
+
+    def service_for(size: int, digest: str):
+        record = types.SimpleNamespace(path="result.xyz", size=size, sha256=digest)
+        return types.SimpleNamespace(
+            artifacts=lambda _run_id: types.SimpleNamespace(artifacts=[record])
+        )
+
+    size = artifact_file.stat().st_size
+    good = _file_digest(str(artifact_file))
+    assert _attach(spec, work, service_for(size, good)) == {"status": "completed"}
+    with pytest.raises(ExecutionServiceError, match="missing or changed"):
+        _attach(spec, work, service_for(size + 1, good))
+    with pytest.raises(ExecutionServiceError, match="missing or changed"):
+        _attach(spec, work, service_for(size, "0" * 64))
