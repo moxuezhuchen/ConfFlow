@@ -27,8 +27,6 @@ ENTRY_MODULES = (
     "confflow.v4cli",
     "confflow.cli",
     "confflow.control_worker",
-    "confflow.fixture_agent",
-    "confflow.remote.worker",
     "confflow.worker_attempt",
 )
 

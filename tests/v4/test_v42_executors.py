@@ -905,3 +905,28 @@ class TestCancellation:
             assert item_result.status is WorkItemStatus.CANCELLED
             assert item_result.error is not None
             assert item_result.error.code == "cancellation_error"
+
+
+@pytest.mark.parametrize("executor_cls_name", ["TransformExecutor", "ConfgenExecutor"])
+def test_pure_executors_share_the_confirmed_cancelled_result(executor_cls_name: str) -> None:
+    """Pure executors report a confirmed CANCELLED item with no error or recovery."""
+    import time
+    import types
+
+    from confflow.domain.work_item import WorkItemStatus
+    from confflow.execution.confgen_executor import ConfgenExecutor
+    from confflow.execution.transform_executor import TransformExecutor
+
+    executor = {"TransformExecutor": TransformExecutor, "ConfgenExecutor": ConfgenExecutor}[
+        executor_cls_name
+    ]()
+    item = types.SimpleNamespace(id="w1", logical_key="lk", semantic_digest="sha256:" + "0" * 64)
+    context = types.SimpleNamespace(step_id="step-a")
+    result = executor._cancelled(item, context, time.time(), time.monotonic())
+    assert result.status is WorkItemStatus.CANCELLED
+    assert result.work_item_id == "w1"
+    assert result.error is None
+    assert result.recovery.attempted is False
+    assert str(result.diagnostics[0].code) == "cancellation_error"
+    assert result.diagnostics[0].details["confirmed"] is True
+    assert result.semantic_digest == "sha256:" + "0" * 64

@@ -2,18 +2,19 @@
 
 """Pin the V4 element table as the single authority.
 
-The V4 domain layer owns a dependency-free element table; ``confflow.science``
-re-exports the same object, and the ``confflow.core`` shim forwards it.  This
-test pins that the three import paths resolve to the identical object, so no
-duplicate table can silently drift.  Importing the implementation modules is
-allowed here because this file is a test, not core code.
+The V4 domain layer owns a dependency-free element table;
+``confflow.science.data`` re-exports the same object.  This test pins that
+the two import paths resolve to the identical object, so no duplicate table
+can silently drift.  (The historical ``confflow.core.data`` forwarding shim
+was retired by DIET-2 R1.5; its leg of this pin was removed with it.)
+Importing the implementation modules is allowed here because this file is a
+test, not core code.
 """
 
 from __future__ import annotations
 
 import pytest
 
-import confflow.core.data as legacy_data
 import confflow.science.data as science_data
 from confflow.domain import ELEMENT_SYMBOLS, atomic_number, canonical_element_symbol
 
@@ -23,9 +24,8 @@ NON_EMPTY_SYMBOLS: tuple[tuple[int, str], ...] = tuple(
 
 
 def test_v4_element_table_matches_legacy_periodic_symbols() -> None:
-    """The core/science/domain import paths yield the SAME table object."""
+    """The science/domain import paths yield the SAME table object."""
     assert ELEMENT_SYMBOLS is science_data.PERIODIC_SYMBOLS
-    assert ELEMENT_SYMBOLS is legacy_data.PERIODIC_SYMBOLS
 
 
 @pytest.mark.parametrize(("atomic", "symbol"), NON_EMPTY_SYMBOLS)

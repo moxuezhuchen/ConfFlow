@@ -36,7 +36,6 @@ expectation is zero (frequencies simply were not requested); the
 from __future__ import annotations
 
 import math
-import re
 from typing import Any
 
 import numpy as np
@@ -44,7 +43,7 @@ import numpy as np
 from ..domain._immutable import FrozenDict
 from ..domain.diagnostics import Diagnostic, DiagnosticSeverity
 from ..domain.structure import StructureRecord
-from .checks import CHECK_DEFAULTS, CheckContext, CheckOutcome
+from .checks import CHECK_DEFAULTS, CheckContext, CheckOutcome, parse_bond_atom_pair
 from .profile_standard import NATIVE_TERMINATION_CODE
 from .profiles import GeometrySemantics
 
@@ -165,27 +164,7 @@ def parse_bond_atoms(value: Any) -> tuple[int, int] | None:
     least two positive integers (digit extraction).  Returns ``None`` when
     the value is missing, malformed, or names the same atom twice.
     """
-    if value is None:
-        return None
-    numbers: list[int] = []
-    if isinstance(value, (list, tuple)):
-        for item in value:
-            try:
-                numbers.append(int(item))
-            except (TypeError, ValueError):
-                continue
-    else:
-        for match in re.findall(r"\d+", str(value)):
-            try:
-                numbers.append(int(match))
-            except (TypeError, ValueError):
-                continue
-    if len(numbers) < 2:
-        return None
-    first, second = numbers[0], numbers[1]
-    if first <= 0 or second <= 0 or first == second:
-        return None
-    return first, second
+    return parse_bond_atom_pair(value)
 
 
 def _float_param(value: Any) -> float | None:

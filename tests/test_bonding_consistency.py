@@ -7,7 +7,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from confflow.core.bonding import (
+from confflow.science.bonding import (
     UnknownElementError,
     build_adjacency,
     covalent_radius,

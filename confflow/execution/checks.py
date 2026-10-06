@@ -14,6 +14,7 @@ consumed by validation, documentation, and the checks themselves.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 
@@ -27,6 +28,7 @@ __all__ = [
     "CheckContext",
     "CheckOutcome",
     "ScientificCheck",
+    "parse_bond_atom_pair",
 ]
 
 
@@ -103,3 +105,28 @@ CHECK_DEFAULTS: dict[str, dict[str, Any]] = {
     "max_rmsd_from_input": {"threshold_angstrom": 1.0},
     "bond_drift": {"threshold_angstrom": 0.4},
 }
+
+
+def parse_bond_atom_pair(value: Any) -> tuple[int, int] | None:
+    """Parse a bond atom pair (1-based indices) from step parameters."""
+    if value is None:
+        return None
+    numbers: list[int] = []
+    if isinstance(value, (list, tuple)):
+        for item in value:
+            try:
+                numbers.append(int(item))
+            except (TypeError, ValueError):
+                continue
+    else:
+        for match in re.findall(r"\d+", str(value)):
+            try:
+                numbers.append(int(match))
+            except (TypeError, ValueError):
+                continue
+    if len(numbers) < 2:
+        return None
+    first, second = numbers[0], numbers[1]
+    if first <= 0 or second <= 0 or first == second:
+        return None
+    return first, second

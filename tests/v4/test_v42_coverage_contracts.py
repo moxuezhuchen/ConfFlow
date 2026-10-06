@@ -544,6 +544,7 @@ class TestKabschAndBonds:
             pytest.param(None, None, id="none"),
             pytest.param("no digits", None, id="no-digits"),
             pytest.param([1, "x", 2], (1, 2), id="skip-bad"),
+            pytest.param("9" * 5000 + " 3", None, id="oversized-digit-run-skipped"),
         ],
     )
     def test_parse_bond_atoms(self, value: Any, expected: Any) -> None:

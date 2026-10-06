@@ -20,7 +20,7 @@
      - `diff --prev A --cur B --declared N [--allowed-files f1,f2,...]`：输出新增节点、删除节点，检查删除数 == N，删除节点全部落在 `--allowed-files` 中；不满足时以非零退出。
   6. `golden_check.py --base DIR --cf DIR [--jd-src DIR] [--checkpoint FILE] [--removed-nodes FILE]`：重新生成 TS1 三份、engine 报告和 contract 摘要，与基线（或 `--checkpoint` 指定的 contract 检查点）逐字节比较。engine 报告缺失时，只有对应 nodeid 出现在 `--removed-nodes` 中才允许。新增报告一律报告为差异。
   7. `json_paths_diff.py OLD NEW`：输出 JSON pointer 级别的新增、删除、修改路径列表。
-  8. `reachability.py --cf DIR`：从 `confflow.main`、`confflow.v4cli`、`confflow.cli`、`confflow.control_worker`、`confflow.fixture_agent`、`confflow.remote.worker`、`confflow.worker_attempt` 出发，按 AST import 闭包计算可达模块（相对 import 要解析；`importlib.import_module("字面量")` 计入；各包 `_LAZY_EXPORTS` 表中的目标计入，前提是有模块以 `from <包> import <名字>` 使用它）。输出不可达模块列表。
+  8. `reachability.py --cf DIR`：从 `confflow.main`、`confflow.v4cli`、`confflow.cli`、`confflow.control_worker`、`confflow.worker_attempt` 出发，按 AST import 闭包计算可达模块（相对 import 要解析；`importlib.import_module("字面量")` 计入；各包 `_LAZY_EXPORTS` 表中的目标计入，前提是有模块以 `from <包> import <名字>` 使用它）。输出不可达模块列表。（R1.1/R1.2 已删除 `confflow.fixture_agent`、`confflow.remote.worker`，入口表同步移除。）
   9. `diff_guard.py --repo DIR --base SHA --head SHA --type TYPE --whitelist FILE`：供验收方使用，规则见 `ACCEPTANCE.md` §2。
 
 ## Plan2 分片 runner 补充（tools/refactor-acc/）

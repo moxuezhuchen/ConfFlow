@@ -51,7 +51,7 @@ confflow/
 - `confflow.domain` 不 import 任何其它 `confflow.*`（仅 stdlib、pydantic 之外的第三方：`rfc8785`）。
 - `confflow.workflow.v4` / `confflow.execution` 只允许 import `confflow.domain`、`confflow.execution`、`confflow.workflow.v4`。
 - 禁止 import 前缀：`confflow.config`、`confflow.core`、`confflow.shared`、`confflow.application`、`confflow.worker_*`、`confflow.control*`、`confflow.cli/main/contract/artifact_json`，以及全部 V2/V3 workflow 模块。
-- `confflow.domain` 中的元素表是 V4 自有的最小副本；`tests/v4/test_elements_drift.py` 与 `confflow.core.data.PERIODIC_SYMBOLS` 交叉校验，防止静默漂移（生产代码不 import legacy）。
+- `confflow.domain` 中的元素表是 V4 自有的最小副本；`tests/v4/test_elements_drift.py` 与 `confflow.science.data.PERIODIC_SYMBOLS` 交叉校验，防止静默漂移（R1.5 起 `confflow.core.data` 转发层已删除，生产代码只认 science 单一权威）。
 - `import confflow.workflow.v4` 在子进程中验证不会把 V3 runtime / 旧 config / calc 拉进 `sys.modules`。
 
 ## 2. 核心模型（事实）

@@ -318,3 +318,87 @@ def test_matcher_redundancy_and_fail_closed(tmp_path: Path) -> None:
         timeout=120,
     )
     assert proc.returncode == 2
+
+
+STRICT_MATCH_COLUMNS = [
+    "ref",
+    "ref_theta",
+    "ref_phi",
+    "ref_q_over_rbar",
+    "best_seed",
+    "min_cp_dist_deg",
+    "hit_lt15",
+]
+BASIN_MATCH_COLUMNS = [
+    "basin_nearest_form",
+    "basin_dist_deg",
+    "basin_dtheta_deg",
+    "basin_dphi_deg",
+    "basin_ok",
+]
+
+
+def _read_match_and_summary(outdir: Path) -> tuple[list[dict], dict]:
+    with open(outdir / "reference_match.csv") as f:
+        reader = csv.DictReader(f)
+        assert reader.fieldnames is not None
+        assert reader.fieldnames[: len(STRICT_MATCH_COLUMNS)] == STRICT_MATCH_COLUMNS
+        assert reader.fieldnames[len(STRICT_MATCH_COLUMNS) :] == BASIN_MATCH_COLUMNS
+        rows = list(reader)
+    summary = json.loads((outdir / "recall_summary.json").read_text())
+    return rows, summary
+
+
+def test_basin_parallel_small_system_strict_stays_authoritative(tmp_path: Path) -> None:
+    """Parallel output on a small system: strict stays the sole gate."""
+    res = _run_case(tmp_path, "thf", "crest-first", "explicit")
+    assert res["summary"]["recall"] == "1/1"
+    assert res["summary"]["basin_recall"] == "1/1"
+    assert res["summary"]["miss_basin_outside"] == 0
+    rows, summary = _read_match_and_summary(res["outdir"])
+    assert len(rows) == 1
+    assert summary["strict"]["threshold_deg"] == 15.0
+    assert summary["strict"]["recall"] == res["summary"]["recall"] == "1/1"
+    assert "never replace strict" in summary["strict"]["authority"]
+    assert summary["basin"]["recall"] == "1/1"
+    assert rows[0]["basin_ok"] == "1"
+
+
+def test_default_mode_basin_outside_branch_keeps_strict_gate(tmp_path: Path) -> None:
+    """Default-mode B gap: strict miss with basin_ok False, strict unchanged."""
+    res = _run_case(tmp_path, "methylcyclohexane", "crest-first", "default")
+    assert res["summary"]["recall"] == "5/6"
+    assert res["summary"]["basin_recall"] == "5/6"
+    assert res["summary"]["miss_basin_outside"] == 1
+    rows, summary = _read_match_and_summary(res["outdir"])
+    assert summary["strict"]["recall"] == "5/6"
+    misses = [r for r in rows if r["hit_lt15"] == "0"]
+    assert len(misses) == 1
+    assert misses[0]["basin_ok"] == "0"
+    assert misses[0]["basin_nearest_form"].startswith("B_")
+    assert summary["miss_class_counts"] == {"boat_zone": 1}
+
+
+def test_glucose_strict_and_basin_parallel_recall(tmp_path: Path) -> None:
+    """Glucose (2026-10-06 revision): strict 127/155 alongside basin 155/155."""
+    res = _run_case(tmp_path, "beta_d_glucopyranose", "crest-first", "explicit")
+    assert res["summary"]["published"] == 38
+    assert res["summary"]["recall"] == "127/155"
+    assert res["summary"]["basin_recall"] == "155/155"
+    assert res["summary"]["miss_basin_outside"] == 0
+    rows, summary = _read_match_and_summary(res["outdir"])
+    assert len(rows) == 155
+    assert summary["strict"]["recall"] == "127/155"
+    assert summary["basin"]["recall"] == "155/155"
+    assert summary["miss_class_counts"] == {
+        "boat_zone": 7,
+        "chair_flattened": 20,
+        "half_chair_region": 1,
+    }
+    misses = [r for r in rows if r["hit_lt15"] == "0"]
+    assert len(misses) == 28
+    assert all(r["basin_ok"] == "1" for r in misses)
+    fams = [r["basin_nearest_form"].rsplit("_", 1)[0] for r in misses]
+    assert fams.count("C") == 20
+    assert fams.count("B") + fams.count("TB") == 7
+    assert fams.count("H") == 1
