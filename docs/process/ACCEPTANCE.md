@@ -179,3 +179,9 @@ python3 $TOOLS/golden_check.py --base $BASE --cf <对应 CF 提交的工作树> 
 ## 8. 子系统覆盖率下限（DIET-2 P0.1b）
 
 卡片级验收的覆盖率三层检查中，第三层为子系统下限：`execution/`、`persistence/`、`workflow/`、`science/confgen/` 顶层 kernel 文件（组件子包 `coordination/`、`ring/`、`torsion/` 除外）的行覆盖率不得低于 `tools/coverage_baseline.json` 中 P0 一次性冻结值减 5 个百分点。本地运行 `python tools/subsystem_coverage.py check --xml coverage.xml --baseline tools/coverage_baseline.json`；CI 在 coverage job 的 Changed-line 步骤后对所有事件运行同一命令。基线冻结后不得重取，修改须写明理由并经用户确认。
+
+## 9. P0.2 行数预算（DIET-2）
+
+- `tools/loc_budget.json` 记录按附录 A 子系统划分的生产代码上限（`confflow/` 下 `.py` 物理行）与测试总行数上限（`tests/` 下 `.py` 物理行总数）；初始值为 P0.2 执行时的实测值，收紧规则（ratchet）见文件头。
+- `tools/architecture_policy.py` 的 AP-107 任一子系统或测试总数超上限即失败；AP-108（G16）新增按阶段命名（`tests/**/test_v4[0-9]_*.py`）或覆盖率命名（`*_coverage*.py`）的测试文件即失败，历史文件以 `grandfathered` 清单豁免，清单只许缩减。
+- 每张卡的提交信息记录 `Lines-Prod` / `Lines-Test`（按本文件口径）。
