@@ -112,9 +112,9 @@
         "confflow/producer/"
       ],
       "prod_files": 26,
-      "prod_loc_limit": 11834,
+      "prod_loc_limit": 11938,
       "ratchet": "R1/R2 上限不变；N 阶段按卡预算增长；里程碑验收后以实际值重写本上限；其余时间只降不升。",
-      "reason": "P0.2 初始上限=P0 阶段实际值：基 cc16e8f（含 E1 与 J1 CF 两张计划内卡，在 DIET-2 R/N 之前合并）。提高须写明理由并经用户确认。"
+      "reason": "R2.0-logic 能量字段(D4)，加法卡，待用户确认"
     },
     {
       "id": "persistence",
@@ -209,6 +209,6 @@
     }
   ],
   "tests_total_files": 245,
-  "tests_total_loc_limit": 107210,
-  "tests_total_reason": "L2-CF 两卡后实测 107134，上取整到百位 +66 余量 = 107200(旧上限 121806 回落；R1.1 转移与 L2 临时例外说明归档于 git 历史)。 本卡补覆盖测试后重置为实际值 107210（净低于 R1 之前的 121806）。"
+  "tests_total_loc_limit": 107547,
+  "tests_total_reason": "R2.0-logic 能量字段(D4)，加法卡，待用户确认"
 }

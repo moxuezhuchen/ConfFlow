@@ -454,6 +454,30 @@ def run_result_json_schema() -> dict[str, Any]:
             "producer_digest": {"type": ["string", "null"], "pattern": f"({digest_pattern})?"},
             "value_digest": {"type": ["string", "null"]},
             "identity_digest": {"type": ["string", "null"]},
+            # R2.0-logic (D4, additive): optional inline energies copied
+            # verbatim from the sibling ScientificResult values (Hartree).
+            # Missing keys are omitted, never null/0.  ``gibbs_correction``
+            # may be the ``g - e`` derived value (see profile_standard).
+            "energies": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["source"],
+                "properties": {
+                    "electronic_hartree": {"type": "number"},
+                    "gibbs_hartree": {"type": "number"},
+                    "gibbs_correction_hartree": {"type": "number"},
+                    "source": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "required": ["program"],
+                        "properties": {
+                            "program": {"type": "string", "minLength": 1},
+                            "method": {"type": "string", "minLength": 1},
+                            "adapter": {"type": "string", "minLength": 1},
+                        },
+                    },
+                },
+            },
         },
     }
     return {

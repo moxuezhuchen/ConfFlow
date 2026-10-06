@@ -45,13 +45,105 @@ from .contract import (
 RUN_RESULT_FILENAME = "run_result.json"
 
 
-def result_ref_entry(record: Any, *, origin: str | None = None) -> dict[str, Any]:
+#: Scientific-result kinds carrying Hartree energies inline-projected
+#: onto ResultRef wire entries (R2.0-logic D4, additive).
+_ENERGY_KIND_TO_KEY: dict[str, str] = {
+    "energy": "electronic_hartree",
+    "gibbs_energy": "gibbs_hartree",
+    "gibbs_correction": "gibbs_correction_hartree",
+}
+
+
+def _provenance_source(provenance: Any) -> dict[str, Any] | None:
+    """Return the wire ``source`` triple from a result provenance.
+
+    Only the provenance triple (program/method/adapter) is used; parser
+    fine-grained markers are never threaded here.  Missing members are
+    omitted; ``None`` is returned when no program is known.
+    """
+    if provenance is None:
+        return None
+    program = getattr(provenance, "program", None)
+    if not program:
+        return None
+    source: dict[str, Any] = {"program": program}
+    method = getattr(provenance, "method", None)
+    if method:
+        source["method"] = method
+    adapter = getattr(provenance, "adapter", None)
+    if adapter:
+        source["adapter"] = adapter
+    return source
+
+
+def _energies_by_subject(
+    records: Any,
+) -> dict[tuple[Any, Any], dict[str, Any]]:
+    """Group Hartree energies by ``(source_step_id, subject_structure_id)``.
+
+    Values are verbatim copies of the sibling ``ScientificResult`` values
+    (Hartree, no conversion, no differencing).  ``gibbs_correction`` may be
+    the ``g - e`` derived value published by the standard profile; this
+    projection does not distinguish derived from parsed corrections.
+    Every entry sharing one subject key receives the same ``energies``
+    object so consumers need no secondary join.
+    """
+    by_key: dict[tuple[Any, Any], dict[str, Any]] = {}
+    preferred: dict[tuple[Any, Any], Any] = {}
+    order = ("energy", "gibbs_energy", "gibbs_correction")
+    for record in records:
+        kind = getattr(record, "kind", None)
+        wire_key = _ENERGY_KIND_TO_KEY.get(str(kind))
+        if wire_key is None:
+            continue
+        key = (
+            getattr(record, "source_step_id", None),
+            getattr(record, "subject_structure_id", None),
+        )
+        bucket = by_key.setdefault(key, {})
+        # First value wins per wire key within one subject group; profile
+        # output carries at most one record per (kind, subject).
+        if wire_key not in bucket:
+            bucket[wire_key] = getattr(record, "value", None)
+        # Preferred provenance: "energy" first, then gibbs, then correction.
+        current = preferred.get(key)
+        candidate_rank = order.index(str(kind)) if str(kind) in order else 99
+        current_rank = (
+            order.index(str(getattr(current, "kind", None)))
+            if current is not None and str(getattr(current, "kind", None)) in order
+            else 99
+        )
+        if current is None or candidate_rank < current_rank:
+            preferred[key] = record
+    energies: dict[tuple[Any, Any], dict[str, Any]] = {}
+    for key, bucket in by_key.items():
+        entry: dict[str, Any] = {}
+        for wire_key in ("electronic_hartree", "gibbs_hartree", "gibbs_correction_hartree"):
+            value = bucket.get(wire_key)
+            if value is not None:
+                entry[wire_key] = value
+        if not entry:
+            continue
+        source = _provenance_source(getattr(preferred.get(key), "provenance", None))
+        if source is None:
+            continue
+        entry["source"] = source
+        energies[key] = entry
+    return energies
+
+
+def result_ref_entry(
+    record: Any, *, origin: str | None = None, energies: Mapping[str, Any] | None = None
+) -> dict[str, Any]:
     """Project one real ``ScientificResult`` onto its ResultRef wire entry.
 
     ``origin`` distinguishes the current generation's produced results
     (``"produced"``) from run-input references the analysis consumed
     (``"run_input"``), so the manifest's reference universe is explicit and
-    every analysis citation can be resolved by a consumer.
+    every analysis citation can be resolved by a consumer.  ``energies`` is
+    the pre-grouped inline object for this record's
+    ``(source_step_id, subject_structure_id)`` (R2.0 D4); when given it is
+    copied verbatim onto the entry.
     """
     if origin is not None and origin not in ("produced", "run_input"):
         raise ValueError(f"unknown result-ref origin {origin!r}")
@@ -69,6 +161,8 @@ def result_ref_entry(record: Any, *, origin: str | None = None) -> dict[str, Any
         raise ValueError("refusing to project a result without result_id (legacy record)")
     if origin is not None:
         entry["origin"] = origin
+    if energies is not None:
+        entry["energies"] = dict(energies)
     return entry
 
 
@@ -124,13 +218,20 @@ def result_ref_entries(
 
     The ordering is deterministic (step order, then result order, then the
     named run-input collections' own order), so manifest bytes never depend
-    on dict iteration order.
+    on dict iteration order.  Produced entries carry the optional R2.0
+    inline ``energies`` grouped per ``StepResult``; run-input refs never do.
     """
-    entries = [
-        result_ref_entry(record, origin="produced")
-        for step_result in step_results
-        for record in step_result.results
-    ]
+    entries: list[dict[str, Any]] = []
+    for step_result in step_results:
+        energies_map = _energies_by_subject(step_result.results)
+        for record in step_result.results:
+            key = (
+                getattr(record, "source_step_id", None),
+                getattr(record, "subject_structure_id", None),
+            )
+            entries.append(
+                result_ref_entry(record, origin="produced", energies=energies_map.get(key))
+            )
     entries.extend(
         result_ref_entry(record, origin="run_input")
         for record in _iter_run_input_results(run_input_results)
@@ -544,7 +645,13 @@ def build_runtime_manifest(
     plan: Any | None = None,
     group_entries: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """Build a manifest from real ``StepResult`` objects and verify its schema."""
+    """Build a manifest from real ``StepResult`` objects and verify its schema.
+
+    Top-level ``results[]`` entries carry an optional inline ``energies``
+    object (R2.0 D4, additive) grouped from the same ``StepResult`` by
+    ``(source_step_id, subject_structure_id)``; reaction-profile group
+    entries are preserved unchanged.
+    """
     import jsonschema
 
     semantic_digests = semantic_digests or {}
@@ -566,12 +673,23 @@ def build_runtime_manifest(
                 semantic_digest=semantic_digests.get(result.step_id),
             )
         )
+        base = len(results)
         for record in result.results:
             entry = result_ref_entry(record)
             if entry["result_id"] in seen_result_ids:
                 raise ValueError(f"duplicate result_id {entry['result_id']!r} across steps")
             seen_result_ids.add(entry["result_id"])
             results.append(entry)
+        # R2.0 D4: attach per-subject inline energies after identity is
+        # collected, so ordering/dedup semantics stay byte-identical apart
+        # from the additive key.
+        energies_map = _energies_by_subject(result.results)
+        if energies_map:
+            for entry in results[base:]:
+                key = (entry.get("source_step_id"), entry.get("subject_structure_id"))
+                grouped = energies_map.get(key)
+                if grouped is not None:
+                    entry["energies"] = dict(grouped)
         for artifact in result.artifacts:
             artifacts.append(artifact_entry(artifact))
     analyses: list[dict[str, Any]] = []
