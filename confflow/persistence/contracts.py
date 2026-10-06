@@ -14,7 +14,7 @@ workstreams can proceed in parallel without interface drift:
 - :class:`ReuseDecision` with machine-readable reason codes;
 - owner identity and liveness verdicts for abandoned ``RUNNING`` recovery;
 - the run-state record shape (load/save lives in ``run_state.py``);
-- the GC plan shape (planning/execution live in ``artifacts.py``).
+- the GC entry shape (retained contract type; planning/execution removed in R1.4).
 
 Dependency rule: this package imports only ``confflow.domain`` plus the
 standard library (``sqlite3`` in implementation modules only).  It never
@@ -37,7 +37,6 @@ from ..domain.errors import DomainError
 __all__ = [
     "ALLOWED_TRANSITIONS",
     "GCEntry",
-    "GCPlan",
     "OwnerIdentity",
     "OwnerVerdict",
     "PERSISTENCE_SCHEMA_VERSION",
@@ -484,26 +483,3 @@ class GCEntry:
             "locator_path": self.locator_path,
             "size_bytes": self.size_bytes,
         }
-
-
-@dataclass(frozen=True, slots=True)
-class GCPlan:
-    """A dry-runnable collection plan; applying it is a separate step."""
-
-    entries: tuple[GCEntry, ...] = ()
-
-    def __post_init__(self) -> None:
-        entries = tuple(self.entries)
-        for entry in entries:
-            if not isinstance(entry, GCEntry):
-                raise PersistenceError("entries members must be GCEntry")
-        object.__setattr__(self, "entries", entries)
-
-    @property
-    def artifact_ids(self) -> tuple[str, ...]:
-        """Return candidate artifact ids in plan order."""
-        return tuple(entry.artifact_id for entry in self.entries)
-
-    def to_dict(self) -> dict[str, Any]:
-        """Return a canonical, JSON-compatible representation."""
-        return {"entries": [entry.to_dict() for entry in self.entries]}
