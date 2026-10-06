@@ -210,6 +210,6 @@
     }
   ],
   "tests_total_files": 245,
-  "tests_total_loc_limit": 120786,
-  "tests_total_reason": "临时提高（待用户确认）：L2 投影新增约 220 行测试；随 T 阶段整合回落。"
+  "tests_total_loc_limit": 121190,
+  "tests_total_reason": "临时提高（待用户确认）：L2 投影与拒绝路径测试合计新增约 630 行；随 T 阶段整合回落至不高于 P0 基线 120560。"
 }
