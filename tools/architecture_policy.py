@@ -1679,6 +1679,28 @@ CONFGEN_G13_COMPONENT_FRAGS = (
     "confflow.science.confgen.torsion",
 )
 
+# ---------------------------------------------------------------------------
+# L1-A3c intent science isolation (PLAN; tool guard only, zero production
+# change). Scope pins the ACTUAL split intent package only
+# (confflow/producer/intent/**, 12 modules at e6b9f52), never the whole
+# producer tree. Mechanism reuses the existing AST import data rule
+# (kind=imports, forbidden_prefixes, resolve_relative=True): ast.walk covers
+# module/function/class scopes, Import + ImportFrom absolute targets,
+# relative targets via _resolve_relative, docstrings/comments excluded by
+# construction (AST nodes only). Dynamic importlib literals are NOT covered
+# by kind=imports (existing mechanism only handles them in the narrow
+# _confgen_component_import_hits path); no widening without basis.
+# v2: AP-106 sets per-rule resolver_style="legacy_cli", reusing the existing
+# legacy_cli package basis (drop filename, level-1 up) which matches
+# importlib.util.resolve_name Python semantics for normal modules,
+# capabilities-subdir modules and __init__ alike. No global default change:
+# rules without resolver_style keep legacy/default profile behavior, so old
+# rules/CLI/metrics outputs are unchanged (LEGACY_CLI_RULE_IDS still
+# AP-088..092 only). G13 scopes/exemptions untouched.
+# ---------------------------------------------------------------------------
+L1_INTENT_SCOPE = ["confflow/producer/intent"]
+L1_INTENT_SCIENCE_PREFIXES = ["confflow.science"]
+
 
 def _confgen_docstring_ids(tree: ast.AST) -> set[int]:
     """Return ids of Constant nodes that are docstrings (module/class/fn)."""
@@ -2113,6 +2135,18 @@ RULES.append(
         "scope": ["confflow/science/confgen"],
     }
 )
+RULES.append(
+    {
+        "id": "AP-106",
+        "kind": "imports",
+        "source": "#106",
+        "resolve_relative": True,
+        "resolver_style": "legacy_cli",
+        "scope": L1_INTENT_SCOPE,
+        "mode": "forbidden_prefixes",
+        "prefixes": L1_INTENT_SCIENCE_PREFIXES,
+    }
+)
 
 # ---------------------------------------------------------------------------
 # Scanner entry points
@@ -2256,6 +2290,14 @@ def scan(
             exempt: dict[str, list[str]] = rule.get("exempt_imports", {})
             precise: dict[str, list[str]] = rule.get("exempt_precise_imports", {})
             resolve_relative = rule.get("resolve_relative", False)
+            # Per-rule resolver_style (L1-A3c v2): when present it overrides
+            # the profile default; rules without it keep exact old behavior
+            # (legacy_cli under legacy profile, default otherwise), so old
+            # rules/CLI/metrics caliber is unchanged. No new scanner: reuses
+            # imports_of/_resolve_relative.
+            _style = rule.get("resolver_style")
+            if _style not in ("default", "legacy_cli"):
+                _style = "legacy_cli" if legacy else "default"
             for relpath, _path in _file_iter(scope, root, skip_pycache=legacy):
                 if relpath in exempt:
                     continue
@@ -2263,9 +2305,7 @@ def scan(
                 if row is None:
                     continue
                 source, tree = row
-                for lineno, raw, resolved in imports_of(
-                    tree, relpath, "legacy_cli" if legacy else "default"
-                ):
+                for lineno, raw, resolved in imports_of(tree, relpath, _style):
                     module = resolved if resolve_relative else raw
                     allowed_here = any(
                         module == a or module.startswith(a + ".") for a in exempt.get(relpath, [])

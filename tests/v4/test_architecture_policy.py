@@ -1043,8 +1043,9 @@ def test_full_tree_scan_is_clean() -> None:
 def test_rule_count_matches_the_inventory() -> None:
     # 69 L0.4b rows + AP-033a (the const half of inventory row #33, split out
     # honestly from the disk half AP-033 per the v3 root ruling) + 6 A6
-    # G13/G14 confgen purity rules (AP-100..AP-105).
-    assert RULE_COUNT == 76
+    # G13/G14 confgen purity rules (AP-100..AP-105) + 1 L1-A3c intent
+    # science isolation rule (AP-106, tool guard only).
+    assert RULE_COUNT == 77
 
 
 def test_rule_ids_are_unique_and_sources_pinned() -> None:
