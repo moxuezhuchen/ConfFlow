@@ -295,7 +295,7 @@ class TestRealControlCancel:
         assert ledger is not None and ledger.terminal_confirmed is True
         manifest = json.loads((run_root / RUN_RESULT_FILENAME).read_text())
         assert manifest["status"] == "completed"
-        published = detect_published(run_root=str(run_root), step_id="ts")
+        published = detect_published(run_root=str(run_root), step_id="optimize")
         assert published is not None
         assert manifest["steps"][0]["digest"] == published
 
@@ -351,9 +351,9 @@ class TestRealControlCancel:
         assert ledger is not None and ledger.terminal_confirmed is True
         manifest = json.loads((run_root / RUN_RESULT_FILENAME).read_text())
         assert manifest["status"] == "completed"
-        assert detect_published(run_root=str(run_root), step_id="ts") is not None
+        assert detect_published(run_root=str(run_root), step_id="optimize") is not None
         assert manifest["steps"][0]["digest"] == detect_published(
-            run_root=str(run_root), step_id="ts"
+            run_root=str(run_root), step_id="optimize"
         )
 
     def test_won_cancellation_reports_success_after_self_terminalization(
@@ -593,7 +593,7 @@ class TestStepPublicationFence:
         # is paused after its advisory ownership guard, before the real write.
         g2 = _run_doc(_doc(script, -59), run_root)
         assert g2.status == "completed"
-        digest_before = detect_published(run_root=str(run_root), step_id="ts")
+        digest_before = detect_published(run_root=str(run_root), step_id="optimize")
         assert digest_before is not None
         manifest_before = json.loads((run_root / RUN_RESULT_FILENAME).read_text())
         assert manifest_before["steps"][0]["digest"] == digest_before
@@ -602,7 +602,7 @@ class TestStepPublicationFence:
         thread.join(TIMEOUT)
         assert isinstance(results.get("g1_error"), arbitration.StaleGenerationError)
 
-        digest_after = detect_published(run_root=str(run_root), step_id="ts")
+        digest_after = detect_published(run_root=str(run_root), step_id="optimize")
         assert digest_after == digest_before, "the stale writer must not replace a byte"
         manifest_after = json.loads((run_root / RUN_RESULT_FILENAME).read_text())
         assert manifest_after["generation_id"] == g2.generation_id
@@ -744,7 +744,7 @@ class TestStepPublicationFence:
 
         def assert_consistent(generation: Any) -> None:
             manifest = json.loads((run_root / RUN_RESULT_FILENAME).read_text())
-            published = detect_published(run_root=str(run_root), step_id="ts")
+            published = detect_published(run_root=str(run_root), step_id="optimize")
             assert published is not None
             assert manifest["generation_id"] == generation.generation_id
             assert manifest["steps"][0]["digest"] == published

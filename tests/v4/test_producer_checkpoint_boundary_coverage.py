@@ -682,8 +682,10 @@ class TestChargeSpinLineageBranches:
         with pytest.raises(DomainError, match="inherited|charge|spin"):
             wire_checkpoint_reuse(doc, "s_opt", "s_freq")
 
-    def test_analysis_producer_artifact_edge_skipped(self) -> None:
-        from tests.v4._builders import analysis_step
+    def test_unrelated_side_branch_artifact_edge_skipped(self) -> None:
+        # R2.2: the unrelated side branch is a retained transform step
+        # (analysis retired); the checkpoint-wiring proof is unchanged.
+        from tests.v4._builders import transform_step
 
         doc = v4_doc(
             [
@@ -692,8 +694,9 @@ class TestChargeSpinLineageBranches:
                     bindings={"structure": {"source": {"run": "structures"}}},
                     native={"keyword": "B3LYP/6-31G* freq"},
                 ),
-                analysis_step(
-                    "s_an",
+                transform_step(
+                    "s_side",
+                    kind="deduplicate",
                     bindings={"structure": {"source": {"step": "s_freq", "port": "structures"}}},
                 ),
                 calc_step(
@@ -706,7 +709,7 @@ class TestChargeSpinLineageBranches:
         )
         assert compile_doc(doc).ok
         # Target still reaches the checkpoint source through structures, so
-        # the unrelated analysis branch must not disturb the proof.
+        # the unrelated side branch must not disturb the proof.
         wired = wire_checkpoint_reuse(doc, "s_opt", "s_freq")
         assert compile_doc(wired).ok
 

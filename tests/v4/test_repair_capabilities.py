@@ -52,7 +52,7 @@ class TestUnifiedResolution:
         by_string = registry.resolve_executor("calculation")
         assert by_enum.capability.value == "calculation"
         assert by_string.contract_version == by_enum.contract_version
-        for capability in ("calculation", "confgen", "analysis", "structure_transform"):
+        for capability in ("calculation", "confgen", "structure_transform"):
             assert registry.resolve_executor(capability).capability.value == capability
 
     def test_resolve_executor_rejects_unknown(self) -> None:
@@ -65,13 +65,17 @@ class TestUnifiedResolution:
     def test_resolve_profile_check_recovery_adapter(self) -> None:
         registry = default_registry()
         assert registry.resolve_profile("standard").name == "standard"
-        assert registry.resolve_profile("path_endpoints").name == "path_endpoints"
+        # R2.2: ensemble stays as the retained ConfGen result profile;
+        # path_endpoints and named_structures are retired.
         assert registry.resolve_profile("ensemble").name == "ensemble"
+        with pytest.raises(RegistryLookupError):
+            registry.resolve_profile("path_endpoints")
         assert registry.resolve_check("normal_termination").name == "normal_termination"
         assert registry.resolve_recovery("none").name == "none"
         assert registry.resolve_recovery("ts_rescue_scan").name == "ts_rescue_scan"
         assert registry.resolve_adapter("standard").name == "standard"
-        assert registry.resolve_adapter("named_structures").name == "named_structures"
+        with pytest.raises(RegistryLookupError):
+            registry.resolve_adapter("named_structures")
         with pytest.raises(RegistryLookupError):
             registry.resolve_profile("magic")
         with pytest.raises(RegistryLookupError):
@@ -108,9 +112,18 @@ class TestUnifiedResolution:
         assert callable(registry.adapter_implementation("standard"))
         assert registry.program_adapter("orca").program_name.value == "orca"
 
+    def test_orphaned_analysis_implementation_stays_importable(self) -> None:
+        # R2.2: the analysis executor is unregistered but its implementation
+        # is deleted only by R2.3a; the module keeps a plain-string
+        # capability so it stays importable (mypy-clean orphan).
+        from confflow.analysis.executor import AnalysisExecutor
+        from confflow.analysis.item_adapter import AnalysisItemAdapter
+
+        assert AnalysisExecutor.capability == "analysis"
+        assert AnalysisItemAdapter.capability == "analysis"
+
     def test_executor_implementations_resolve_from_same_entry(self) -> None:
         registry = default_registry()
-        from confflow.analysis.item_adapter import AnalysisItemAdapter
         from confflow.execution.confgen_executor import ConfgenExecutor
         from confflow.execution.transform_executor import TransformExecutor
         from confflow.execution.work_item_executor import WorkItemExecutor
@@ -118,10 +131,10 @@ class TestUnifiedResolution:
         assert registry.executor_implementation("calculation") is WorkItemExecutor
         assert registry.executor_implementation("confgen") is ConfgenExecutor
         assert registry.executor_implementation("structure_transform") is TransformExecutor
-        # Final contract (freeze §4.2/F): analysis dispatches via the
-        # in-package work-item adapter (same claim/commit/publish path),
-        # not the whole-set core directly.
-        assert registry.executor_implementation("analysis") is AnalysisItemAdapter
+        # R2.2: the analysis executor is unregistered (implementation
+        # orphaned for R2.3a).
+        with pytest.raises(RegistryLookupError):
+            registry.executor_implementation("analysis")
         with pytest.raises(RegistryLookupError):
             registry.executor_implementation("magic")
 
@@ -141,19 +154,18 @@ class TestUnifiedResolution:
 
 class TestOmittedCapabilitiesExcluded:
     def test_producer_contract_omits_unexecutable_capabilities(self) -> None:
+        # R2.2 声明：path_endpoints/named_structures/analysis 退役；
+        # ensemble 保留（留存 ConfGen 结果剖面）。
         envelope = build_configuration_contract_v4(producer_version="test")
         assert [entry["name"] for entry in envelope["result_profiles"]] == [
             "ensemble",
-            "path_endpoints",
             "standard",
         ]
         assert [entry["name"] for entry in envelope["execution_adapters"]] == [
-            "named_structures",
             "standard",
         ]
         assert [entry["program"] for entry in envelope["programs"]] == ["gaussian", "orca"]
         assert [entry["capability"] for entry in envelope["executors"]] == [
-            "analysis",
             "calculation",
             "confgen",
             "structure_transform",
@@ -323,48 +335,9 @@ class TestNativeModeProfileCombinations:
         assert not result.ok
         assert "incompatible_capability_combination" in reasons(result.errors)
 
-    def test_irc_with_path_endpoints_compiles(self) -> None:
-        doc = v4_doc(
-            [
-                calc_step(
-                    "s_irc",
-                    program="orca",
-                    bindings={"structure": {"source": {"run": "structures"}}},
-                    native={"keyword": "B3LYP IRC", "irc": {"direction": "both"}},
-                    profile="path_endpoints",
-                    checks=["normal_termination"],
-                )
-            ],
-            inputs=STRUCTURE_INPUTS,
-        )
-        assert compile_doc(doc).ok
-
-    def test_neb_with_ensemble_compiles(self) -> None:
-        doc = v4_doc(
-            [
-                calc_step(
-                    "s_neb",
-                    program="orca",
-                    adapter="named_structures",
-                    bindings={
-                        "reactant": {"source": {"run": "reactants"}, "pairing": "by_group_key"},
-                        "product": {"source": {"run": "products"}, "pairing": "by_group_key"},
-                    },
-                    native={
-                        "keyword": "B3LYP D3BJ NEB",
-                        "neb": {"n_images": 5},
-                        "atom_mapping": {"kind": "identity"},
-                    },
-                    profile="ensemble",
-                    checks=["normal_termination"],
-                )
-            ],
-            inputs={
-                "reactants": {"kind": "structure", "cardinality": "many"},
-                "products": {"kind": "structure", "cardinality": "many"},
-            },
-        )
-        assert compile_doc(doc).ok
+    # R2.2 (G18): test_irc_with_path_endpoints_compiles and
+    # test_neb_with_ensemble_compiles are retired with the
+    # path_endpoints profile and the named_structures adapter.
 
     def test_multiple_native_modes_rejected(self) -> None:
         doc = v4_doc(

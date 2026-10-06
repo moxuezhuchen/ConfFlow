@@ -529,130 +529,41 @@ class TestAssemblyGating:
         assert assembly.ok, [(d.code, d.details.get("reason")) for d in assembly.errors]
         assert [i.logical_key for i in assembly.for_step("s_sp")] == ["s_sp:s0"]
 
-    def test_ids_result_selector_filters_by_result_id(self) -> None:
-        from confflow.domain import ResultSet, ScientificResult, StepStatus, Unit
-        from confflow.workflow.v4 import (
-            MaterializedOutputs,
-            StepOutputs,
-            assemble_work_items,
-        )
-        from tests.v4._builders import (
-            analysis_step,
-            calc_step,
-            compile_doc,
-            run_inputs,
-            structure_set,
-            v4_doc,
-        )
-
-        prod_a = ScientificResult(
-            kind="energy",
-            value=-76.4,
-            unit=Unit.HARTREE,
-            subject_structure_id="s0",
-            source_step_id="s_opt",
-            result_id="res-low",
-        )
-        prod_b = ScientificResult(
-            kind="energy",
-            value=-76.5,
-            unit=Unit.HARTREE,
-            subject_structure_id="s0",
-            source_step_id="s_opt",
-            result_id="res-high",
-        )
-        doc = v4_doc(
-            [
-                calc_step("s_opt", bindings={"structure": {"source": {"run": "structures"}}}),
-                analysis_step(
-                    "s_report",
-                    bindings={
-                        "results": {
-                            "source": {
-                                "step": "s_opt",
-                                "port": "results",
-                                "select": {"ids": ["res-high"]},
-                            },
-                            "pairing": "single",
-                        }
-                    },
-                ),
-            ],
-            inputs={"structures": {"kind": "structure", "cardinality": "many"}},
-        )
-        compiled = compile_doc(doc)
-        assert compiled.ok, [(d.code, d.details.get("reason")) for d in compiled.errors]
-        plan = compiled.plan
-        assert plan is not None
-        structures = structure_set("s0")
-        assembly = assemble_work_items(
-            plan,
-            run_inputs(structures={"structures": structures}),
-            materialized=MaterializedOutputs(
-                steps=FrozenDict(
-                    {
-                        "s_opt": StepOutputs(
-                            step_id="s_opt",
-                            structures=structures,
-                            results=ResultSet.of(prod_a, prod_b),
-                            status=StepStatus.COMPLETED,
-                        )
-                    }
-                )
-            ),
-        )
-        assert assembly.ok, [(d.code, d.details.get("reason")) for d in assembly.errors]
-        report = assembly.for_step("s_report")
-        assert len(report) == 1
-        bound = report[0].named_inputs.results["results"]
-        assert [r.result_id for r in bound] == ["res-high"]
+    # R2.2 (G18): retired with the analysis executor: no retained
+    # executor consumes result-kind bindings, so the result-id
+    # selector assembly is unreachable until analysis returns.
 
     def test_group_key_change_moves_item_digest(self) -> None:
         from confflow.workflow.v4 import assemble_work_items
         from tests.v4._builders import calc_step, run_inputs, v4_doc
         from tests.v4._builders import structure as build_structure
 
+        # R2.2: vehicle is the retained standard adapter (named_structures
+        # retired); the group-key-moves-digest property is unchanged.
         doc = v4_doc(
             [
                 calc_step(
                     "s_ts",
-                    adapter="named_structures",
-                    bindings={
-                        "reactant": {
-                            "source": {"run": "reactants"},
-                            "pairing": "by_group_key",
-                        },
-                        "product": {
-                            "source": {"run": "products"},
-                            "pairing": "by_group_key",
-                        },
-                    },
+                    bindings={"structure": {"source": {"run": "structures"}}},
                 )
             ],
-            inputs={
-                "reactants": {"kind": "structure", "cardinality": "many"},
-                "products": {"kind": "structure", "cardinality": "many"},
-            },
+            inputs={"structures": {"kind": "structure", "cardinality": "many"}},
         )
         plan = self._compile(doc)
         first = assemble_work_items(
             plan,
             run_inputs(
-                structures={
-                    "reactants": StructureSet.of(build_structure("R1", group_key="g1")),
-                    "products": StructureSet.of(build_structure("P1", group_key="g1")),
-                }
+                structures={"structures": StructureSet.of(build_structure("R1", group_key="g1"))}
             ),
         )
         second = assemble_work_items(
             plan,
             run_inputs(
-                structures={
-                    "reactants": StructureSet.of(build_structure("R1", group_key="g2")),
-                    "products": StructureSet.of(build_structure("P1", group_key="g2")),
-                }
+                structures={"structures": StructureSet.of(build_structure("R1", group_key="g2"))}
             ),
         )
         assert first.ok and second.ok
         assert first.items[0].semantic_digest != second.items[0].semantic_digest
-        assert first.items[0].logical_key != second.items[0].logical_key
+        # Standard per-structure pairing keys items by structure id, so the
+        # logical key stays while the digest moves with the group identity.
+        assert first.items[0].logical_key == second.items[0].logical_key

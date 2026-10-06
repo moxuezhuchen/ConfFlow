@@ -17,20 +17,11 @@ from __future__ import annotations
 from confflow.domain import (
     ArtifactRef,
     ArtifactSet,
-    Cardinality,
     FrozenDict,
-    Pairing,
-    PortKind,
-    ResultSet,
     StructureSet,
 )
 from confflow.domain.artifact import ArtifactLocator
 from confflow.domain.completion import StepStatus
-from confflow.execution import (
-    ExecutorCapability,
-    PortSpec,
-    build_default_registry,
-)
 from confflow.workflow.v4 import (
     MaterializedOutputs,
     StepOutputs,
@@ -41,7 +32,6 @@ from tests.v4._builders import (
     checkpoint,
     checkpoint_set,
     compile_doc,
-    energy_result,
     run_inputs,
     structure,
     structure_set,
@@ -228,167 +218,8 @@ class TestCheckpointMatching:
         assert "cardinality_mismatch" in assembly_reasons(assembly)
 
 
-class TestNamedInputPairing:
-    """Scenario D: named structures require explicit pairing keys."""
-
-    def _doc(self) -> dict:
-        return v4_doc(
-            [
-                calc_step(
-                    "s_ts",
-                    adapter="named_structures",
-                    bindings={
-                        "reactant": {
-                            "source": {"run": "reactants"},
-                            "pairing": "by_group_key",
-                        },
-                        "product": {
-                            "source": {"run": "products"},
-                            "pairing": "by_group_key",
-                        },
-                    },
-                )
-            ],
-            inputs={
-                "reactants": {"kind": "structure", "cardinality": "many"},
-                "products": {"kind": "structure", "cardinality": "many"},
-            },
-        )
-
-    def test_without_group_keys_pairing_is_rejected(self) -> None:
-        plan = _compile(self._doc())
-        reactants = _structure_set_with_keys(["R1", "R2"], kind="methane")
-        products = _structure_set_with_keys(["P1", "P2"], kind="methane", offset=0.05)
-        assembly = assemble_work_items(
-            plan,
-            run_inputs(structures={"reactants": reactants, "products": products}),
-        )
-        assert not assembly.ok
-        assert assembly.items == ()
-        assert "pairing_undefined" in assembly_reasons(assembly)
-
-    def test_with_group_keys_materializes_pairs(self) -> None:
-        plan = _compile(self._doc())
-        reactants = _structure_set_with_keys(
-            ["R1", "R2"], kind="methane", group_keys={"R1": "g1", "R2": "g2"}
-        )
-        products = _structure_set_with_keys(
-            ["P1", "P2"],
-            kind="methane",
-            offset=0.05,
-            group_keys={"P1": "g1", "P2": "g2"},
-        )
-        assembly = assemble_work_items(
-            plan,
-            run_inputs(structures={"reactants": reactants, "products": products}),
-        )
-        assert assembly.ok, assembly_reasons(assembly)
-        assert [item.logical_key for item in assembly.items] == ["s_ts:g1", "s_ts:g2"]
-        first = assembly.items[0]
-        assert first.named_inputs.structures["reactant"].ids == ("R1",)
-        assert first.named_inputs.structures["product"].ids == ("P1",)
-        assert first.named_inputs.structures["reactant"].ids != (
-            first.named_inputs.structures["product"].ids
-        )
-
-    def test_atom_count_mismatch_rejected(self) -> None:
-        plan = _compile(self._doc())
-        reactants = _structure_set_with_keys(["R1"], kind="methane", group_keys={"R1": "g1"})
-        products = _structure_set_with_keys(["P1"], kind="water", group_keys={"P1": "g1"})
-        assembly = assemble_work_items(
-            plan,
-            run_inputs(structures={"reactants": reactants, "products": products}),
-        )
-        assert not assembly.ok
-        assert "atom_count_mismatch" in assembly_reasons(assembly)
-
-    def test_element_order_mismatch_rejected(self) -> None:
-        plan = _compile(self._doc())
-        reactant = structure("R1", kind="methane", group_key="g1")
-        reordered = type(reactant)(
-            id="P1",
-            atoms=tuple(reversed(reactant.atoms)),
-            coordinates=tuple(reversed(reactant.coordinates)),
-            group_key="g1",
-        )
-        assembly = assemble_work_items(
-            plan,
-            run_inputs(
-                structures={
-                    "reactants": StructureSet.of(reactant),
-                    "products": StructureSet.of(reordered),
-                }
-            ),
-        )
-        assert not assembly.ok
-        assert "element_mismatch" in assembly_reasons(assembly)
-
-    def test_two_per_structure_drivers_rejected(self) -> None:
-        # Final contract (freeze §8/A): test-only adapters must register a
-        # real runtime implementation atomically; the two-driver shape is
-        # then rejected at assembly with pairing_undefined.
-        from confflow.execution import execution_adapters as _adapters
-
-        registry = build_default_registry()
-        base = registry.adapter("named_structures")
-        registry.register_adapter(
-            type(base)(
-                name="two_drivers",
-                contract_version="test.contract.adapter.two_drivers.v1",
-                capability=ExecutorCapability.CALCULATION,
-                input_ports=(
-                    PortSpec(
-                        "reactant",
-                        PortKind.STRUCTURE,
-                        Cardinality.ONE,
-                        Pairing.PER_STRUCTURE,
-                    ),
-                    PortSpec(
-                        "product",
-                        PortKind.STRUCTURE,
-                        Cardinality.ONE,
-                        Pairing.PER_STRUCTURE,
-                    ),
-                ),
-            ),
-            _adapters.resolve_named_slot_sets,
-        )
-        doc = self._doc()
-        doc["steps"][0]["calculation"]["execution_adapter"] = "two_drivers"
-        plan = _compile(doc, registry=registry)
-        assembly = assemble_work_items(
-            plan,
-            run_inputs(
-                structures={
-                    "reactants": structure_set("R1"),
-                    "products": structure_set("P1"),
-                }
-            ),
-        )
-        assert not assembly.ok
-        assert "pairing_undefined" in assembly_reasons(assembly)
-
-
-def _structure_set_with_keys(
-    structure_ids: list[str],
-    *,
-    kind: str = "water",
-    offset: float = 0.0,
-    group_keys: dict[str, str] | None = None,
-) -> StructureSet:
-    """Build a structure set with optional per-id group keys."""
-    keys = group_keys or {}
-    return StructureSet.of(
-        *(
-            structure(
-                structure_id,
-                kind=kind,
-                offset=offset,
-                group_key=keys.get(structure_id),
-            )
-            for structure_id in structure_ids
-        )
-    )
+# R2.2 (G18): TestNamedInputPairing is retired with the named_structures
+# adapter (by_group_key named-slot pairing has no retained vehicle).
 
 
 class TestMaterializedChains:
@@ -581,7 +412,6 @@ class TestDigestInputs:
             execution={
                 "binding_id": "local",
                 "executable": "/opt/g16/g16",
-                "target": "node-a",
                 "walltime_seconds": 3600,
             }
         )
@@ -636,72 +466,5 @@ class TestDigestInputs:
         changed = self._item(native={"keyword": "M06-2X/6-31G* opt"})
         assert baseline.semantic_digest != changed.semantic_digest
 
-    def test_result_content_feeds_downstream_digest(self) -> None:
-        doc = v4_doc(
-            [
-                calc_step(
-                    "s_opt",
-                    bindings={"structure": {"source": {"run": "structures"}}},
-                ),
-                calc_step(
-                    "s_sp",
-                    bindings={"structure": {"source": {"step": "s_opt", "port": "structures"}}},
-                ),
-                {
-                    "id": "s_report",
-                    "executor": "analysis",
-                    "bindings": {
-                        "results": {
-                            "source": {"step": "s_opt", "port": "results"},
-                            "pairing": "single",
-                        }
-                    },
-                    "analysis": {"native": {}},
-                },
-            ],
-            inputs=STRUCTURE_INPUTS,
-        )
-        plan = _compile(doc)
-        structures = structure_set("s0")
-        first_results = ResultSet.of(
-            energy_result(-76.4, subject_structure_id="s0", source_step_id="s_opt")
-        )
-        second_results = ResultSet.of(
-            energy_result(-76.5, subject_structure_id="s0", source_step_id="s_opt")
-        )
-        first = assemble_work_items(
-            plan,
-            run_inputs(structures={"structures": structures}),
-            materialized=MaterializedOutputs(
-                steps=FrozenDict(
-                    {
-                        "s_opt": StepOutputs(
-                            step_id="s_opt",
-                            structures=structures,
-                            results=first_results,
-                            status=StepStatus.COMPLETED,
-                        )
-                    }
-                )
-            ),
-        )
-        second = assemble_work_items(
-            plan,
-            run_inputs(structures={"structures": structures}),
-            materialized=MaterializedOutputs(
-                steps=FrozenDict(
-                    {
-                        "s_opt": StepOutputs(
-                            step_id="s_opt",
-                            structures=structures,
-                            results=second_results,
-                            status=StepStatus.COMPLETED,
-                        )
-                    }
-                )
-            ),
-        )
-        assert first.ok and second.ok
-        first_report = first.for_step("s_report")[0]
-        second_report = second.for_step("s_report")[0]
-        assert first_report.semantic_digest != second_report.semantic_digest
+    # R2.2 (G18): retired with the analysis executor: no retained
+    # executor consumes result-kind bindings.

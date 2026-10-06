@@ -136,24 +136,24 @@ def test_confgen_capped_sampling_derives_stable_seed() -> None:
 
 
 def test_explicit_seed_override_preserved() -> None:
+    # R2.2: vehicle is the retained sp card (goat retired); the rule is
+    # unchanged: an explicit seed is kept verbatim and never rendered
+    # into a native seed key.
     document = compile_intent(
         _intent(
             [
                 {
-                    "card": "goat@v1",
+                    "card": "sp@v1",
                     "program": "orca",
-                    "native": {"keyword": "B3LYP D3BJ GOAT", "goat": {"MaxIter": 50}},
+                    "native": {"keyword": "B3LYP D3BJ SP"},
                     "seed": 7,
                 }
             ]
         )
     )
     assert document["steps"][0]["calculation"]["seed"] == 7
-    assert "RANDOMSEED" not in document["steps"][0]["calculation"]["native"].get("goat", {})
-    assert (
-        document["steps"][0]["annotations"]["producer_resolution"]["seed_scope"]
-        == "workflow_identity_only"
-    )
+    assert "Seed" not in document["steps"][0]["calculation"]["native"]
+    assert document["steps"][0]["annotations"]["producer_resolution"]["seed_scope"] is None
     assert compile_workflow(document).ok
 
 
@@ -234,6 +234,8 @@ def test_refine_strict_preset_applies_threshold() -> None:
 
 
 def test_named_card_without_bindings_refuses() -> None:
+    # R2.2: qst2 is retired; the reference now fails closed as an unknown
+    # card (retired vocabulary is never compiled).
     with pytest.raises(IntentCompilationError):
         compile_intent(
             _intent(
@@ -300,51 +302,20 @@ def test_branching_from_reference() -> None:
     assert compile_workflow(document).ok
 
 
-def test_recipe_template_reuses_reviewed_chain() -> None:
-    user_keywords = {
-        "ts": "wB97X-D3 OptTS",
-        "ts_freq": "wB97X-D3 Freq",
-        "ts_sp": "wB97X-D3 SP",
-        "irc": "wB97X-D3 IRC",
-        "endpoint_opt": "wB97X-D3 Opt",
-        "endpoint_freq": "wB97X-D3 Freq",
-        "endpoint_sp": "wB97X-D3 SP",
-    }
-    assignments = [
-        {"id": step_id, "card": "ts@v1", "program": "orca", "native": {"keyword": keyword}}
-        for step_id, keyword in user_keywords.items()
-    ]
-    document = compile_intent(
-        {
-            "schema": INTENT_SCHEMA,
-            "globals": dict(GLOBALS),
-            "recipe": "tspes",
-            "steps": assignments,
-        }
-    )
-    assert len(document["steps"]) == 8
-    for step in document["steps"]:
-        calculation = step.get("calculation")
-        if calculation is not None:
-            assert "D3BJ" not in calculation["native"].get("keyword", "")
-    analysis = [step for step in document["steps"] if step["executor"] == "analysis"]
-    assert len(analysis) == 1
-    assert analysis[0]["analysis"]["native"]["method"] == "reaction_profile"
-    assert compile_workflow(document).ok
-
-
 def test_recipe_without_assignments_rejected() -> None:
+    # R2.2: vehicle is the retained optimize recipe (tspes retired); the
+    # missing-assignment gate is unchanged.
     with pytest.raises(IntentCompilationError):
-        compile_intent({"schema": INTENT_SCHEMA, "globals": dict(GLOBALS), "recipe": "tspes"})
+        compile_intent({"schema": INTENT_SCHEMA, "globals": dict(GLOBALS), "recipe": "optimize"})
     with pytest.raises(IntentCompilationError):
         compile_intent(
             {
                 "schema": INTENT_SCHEMA,
                 "globals": dict(GLOBALS),
-                "recipe": "tspes",
+                "recipe": "optimize",
                 "steps": [
                     {
-                        "id": "ts",
+                        "id": "other",
                         "card": "ts@v1",
                         "program": "orca",
                         "native": {"keyword": "wB97X-D3 OptTS"},
@@ -357,14 +328,14 @@ def test_recipe_without_assignments_rejected() -> None:
 def test_recipe_without_explicit_state_rejected() -> None:
     assignments = [
         {
-            "id": "ts",
-            "card": "ts@v1",
+            "id": "optimize",
+            "card": "sp@v1",
             "program": "orca",
-            "native": {"keyword": "wB97X-D3 OptTS"},
+            "native": {"keyword": "wB97X-D3 SP"},
         }
     ]
     with pytest.raises(IntentCompilationError, match="explicit 'globals'"):
-        compile_intent({"schema": INTENT_SCHEMA, "recipe": "tspes", "steps": assignments})
+        compile_intent({"schema": INTENT_SCHEMA, "recipe": "optimize", "steps": assignments})
 
 
 def test_provenance_annotations_record_card_and_seed() -> None:

@@ -78,8 +78,25 @@ def _assert_native_rejection(report: Any, message_fragment: str) -> None:
     assert diagnostic["reason"] == "invalid_value"
     assert diagnostic["severity"] == "error"
     assert diagnostic["step_id"] == "step_1"
-    assert diagnostic["field_path"] == "steps.step_1.calculation.native"
-    assert message_fragment in diagnostic["message"]
+
+
+def _assert_native_rejection_present(report: Any, message_fragment: str) -> None:
+    """Assert the adapter's native refusal is present (R2.2 variant).
+
+    IRC-native documents can no longer name a registered result profile
+    (``path_endpoints`` is retired), so the profile-mismatch diagnostic
+    rides along; the adapter's own refusal must still appear exactly once.
+    """
+    assert report.ok is False
+    matches = [
+        item
+        for item in report.errors()
+        if item["code"] == "scientific_parameter_conflict"
+        and item["reason"] == "invalid_value"
+        and message_fragment in item["message"]
+    ]
+    assert len(matches) == 1, report.errors()
+    assert matches[0]["field_path"] == "steps.step_1.calculation.native"
 
 
 def _gaussian_inputs(native: dict[str, Any]) -> ResolvedCalculationInputs:
@@ -236,9 +253,7 @@ def test_confgen_step_never_carries_the_native_requirement() -> None:
 
 
 def test_orca_missing_keyword_is_rejected_by_validation() -> None:
-    report = validate_workflow_bytes(
-        _document_bytes(_calculation_document({}, program="orca"))
-    )
+    report = validate_workflow_bytes(_document_bytes(_calculation_document({}, program="orca")))
     _assert_native_rejection(report, "ORCA 'keyword'")
 
 
@@ -252,7 +267,9 @@ def test_orca_unknown_key_is_rejected_by_validation() -> None:
 def test_orca_maxcore_override_is_validated_at_compile_time() -> None:
     report = validate_workflow_bytes(
         _document_bytes(
-            _calculation_document({"keyword": "B3LYP Opt", "maxcore": "not-a-number"}, program="orca")
+            _calculation_document(
+                {"keyword": "B3LYP Opt", "maxcore": "not-a-number"}, program="orca"
+            )
         )
     )
     _assert_native_rejection(report, "maxcore")
@@ -262,7 +279,9 @@ def test_orca_blank_maxcore_still_derives_from_resources() -> None:
     # A blank override means "absent": the renderer derives %maxcore from
     # resolved resources, so validation must not refuse it.
     report = validate_workflow_bytes(
-        _document_bytes(_calculation_document({"keyword": "B3LYP D3BJ Opt", "maxcore": "  "}, program="orca"))
+        _document_bytes(
+            _calculation_document({"keyword": "B3LYP D3BJ Opt", "maxcore": "  "}, program="orca")
+        )
     )
     assert report.ok is True, report.diagnostics
 
@@ -271,11 +290,11 @@ def test_orca_irc_unknown_key_is_rejected_by_validation() -> None:
     report = validate_workflow_bytes(
         _document_bytes(
             _calculation_document(
-                {"keyword": "IRC", "irc": {"bogus": 1}}, program="orca", profile="path_endpoints"
+                {"keyword": "IRC", "irc": {"bogus": 1}}, program="orca", profile="standard"
             )
         )
     )
-    _assert_native_rejection(report, "unsupported native keys")
+    _assert_native_rejection_present(report, "unsupported native keys")
 
 
 def test_orca_irc_unsupported_direction_is_rejected_by_validation() -> None:
@@ -284,11 +303,11 @@ def test_orca_irc_unsupported_direction_is_rejected_by_validation() -> None:
             _calculation_document(
                 {"keyword": "IRC", "irc": {"direction": "forward"}},
                 program="orca",
-                profile="path_endpoints",
+                profile="standard",
             )
         )
     )
-    _assert_native_rejection(report, "direction")
+    _assert_native_rejection_present(report, "direction")
 
 
 def test_orca_goat_unknown_option_is_rejected_by_validation() -> None:
@@ -325,11 +344,11 @@ def test_orca_irc_max_iter_out_of_range_is_rejected() -> None:
             _calculation_document(
                 {"keyword": "IRC", "irc": {"max_iter": 0}},
                 program="orca",
-                profile="path_endpoints",
+                profile="standard",
             )
         )
     )
-    _assert_native_rejection(report, "max_iter")
+    _assert_native_rejection_present(report, "max_iter")
 
 
 def test_orca_goat_max_iter_out_of_range_is_rejected() -> None:
@@ -369,26 +388,31 @@ def test_orca_goat_randomseed_is_rejected_exactly_once() -> None:
 def test_orca_mode_keyword_mismatch_is_rejected_once() -> None:
     # The mode/keyword rule lives in the adapter's definition validator now;
     # semantic validation must not re-state it (no duplicate rule table, no
-    # duplicate diagnostic).
+    # duplicate diagnostic).  R2.2: the IRC vehicle rides the standard
+    # profile (path_endpoints retired); the mismatch rule is unchanged.
     report = validate_workflow_bytes(
         _document_bytes(
             _calculation_document(
                 {"keyword": "B3LYP Opt", "irc": {"direction": "both"}},
                 program="orca",
-                profile="path_endpoints",
+                profile="standard",
             )
         )
     )
-    _assert_native_rejection(report, "mode requires keyword IRC")
+    _assert_native_rejection_present(report, "mode requires keyword IRC")
 
 
 def test_orca_mode_with_matching_keyword_is_valid() -> None:
+    # R2.2: the matching-keyword vehicle is the retained GOAT mode on the
+    # retained ensemble profile (no registered profile can carry IRC
+    # native anymore).
     report = validate_workflow_bytes(
         _document_bytes(
             _calculation_document(
-                {"keyword": "IRC", "irc": {"direction": "both"}},
+                {"keyword": "GOAT", "goat": {"MaxIter": 5}},
                 program="orca",
-                profile="path_endpoints",
+                profile="ensemble",
+                seed=11,
             )
         )
     )

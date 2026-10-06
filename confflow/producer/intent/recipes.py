@@ -222,20 +222,6 @@ _CARD_DEF_KEYS = frozenset(
 )
 
 
-_TSPES_PURPOSE: dict[str, str] = {
-    "ts": "ts",
-    "ts_freq": "ts_freq",
-    "ts_sp": "sp",
-    "irc": "irc",
-    "endpoint_opt": "opt",
-    "endpoint_freq": "freq",
-    "endpoint_sp": "sp",
-}
-
-
-_RECIPE_CARDS_RECIPES: tuple[str, ...] = ("tspes",)
-
-
 def _require_identifier(value: Any, field_name: str) -> str:
     if not isinstance(value, str) or _IDENTIFIER_PATTERN.match(value) is None:
         raise _fail(
@@ -403,21 +389,16 @@ def select_family_native(
 def recipe_cards_to_role_cards(
     recipe_cards: Mapping[str, str], *, recipe_id: str
 ) -> dict[str, str]:
-    if recipe_id != "tspes":
-        raise _fail(f"intent 'recipe_cards' currently supports only 'tspes', got {recipe_id!r}")
-    try:
-        low = recipe_cards["low_level"]
-        high = recipe_cards["single_point"]
-    except KeyError as exc:
-        raise _fail(
-            "intent 'recipe_cards' for 'tspes' needs both 'low_level' and 'single_point'"
-        ) from exc
-    return {"ts": low, "freq": low, "opt": low, "irc": low, "sp": high}
+    # R2.2: the only supported recipe family ('tspes') is retired, so no
+    # recipe accepts the 'recipe_cards' normal mode anymore.  The lane
+    # stays fail-closed (never silently ignored) until R2.3 removes it.
+    raise _fail(
+        f"intent 'recipe_cards' is retired with recipe {recipe_id!r}: "
+        "no recipe accepts the normal mode anymore"
+    )
 
 
 def expected_purpose(step_id: str, base_role: str | None, *, recipe_id: str | None) -> str | None:
-    if recipe_id == "tspes" and step_id in _TSPES_PURPOSE:
-        return _TSPES_PURPOSE[step_id]
     return base_role
 
 

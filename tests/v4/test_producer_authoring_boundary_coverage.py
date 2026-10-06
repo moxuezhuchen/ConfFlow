@@ -82,20 +82,7 @@ def _capped_confgen(**step_extra: Any) -> dict[str, Any]:
     return _intent([step])
 
 
-def _tspes_assignments(keyword: str = "wB97X-D3") -> list[dict[str, Any]]:
-    return [
-        {"id": sid, "card": "ts@v1", "program": "orca", "native": {"keyword": f"{keyword} Opt"}}
-        for sid in ("ts", "ts_freq", "ts_sp", "irc", "endpoint_opt", "endpoint_freq", "endpoint_sp")
-    ]
-
-
-def _recipe_intent() -> dict[str, Any]:
-    return {
-        "schema": INTENT_SCHEMA,
-        "globals": dict(GLOBALS),
-        "recipe": "tspes",
-        "steps": _tspes_assignments(),
-    }
+# R2.2: the tspes assignment helpers are retired with the recipe.
 
 
 def _two_cards() -> dict[str, Any]:
@@ -186,9 +173,7 @@ def test_ts_freq_card_purpose_shape() -> None:
     assert card["check_params"] == {"imaginary_frequency_count": {"expected": 1}}
 
 
-@pytest.mark.parametrize("card_type", ["qst2", "qst3", "neb"])
-def test_named_structure_cards_require_explicit_bindings_flag(card_type: str) -> None:
-    assert get_card(card_type)["requires_explicit_bindings"] is True
+# R2.2 (G18): the named-structure cards (qst2/qst3/neb) are retired.
 
 
 @pytest.mark.parametrize("card_type", ["opt", "sp", "freq", "confgen", "refine", "deduplicate"])
@@ -275,7 +260,17 @@ def test_intent_catalog_shape_and_purity() -> None:
     assert catalog["preset_version"] == PRESET_VERSION
     assert {c["type"] for c in catalog["cards"]} == set(CARD_TYPES)
     assert {p["name"] for p in catalog["presets"]} == set(PRESET_TYPES)
-    assert "tspes" in catalog["supported_recipes"]
+    # R2.2 声明：目录剩 7 项，退役项不再出现。
+    assert catalog["supported_recipes"] == [
+        "optimize",
+        "single_point",
+        "frequency",
+        "opt_freq",
+        "transition_state",
+        "confgen_torsion",
+        "monomer_conformers",
+    ]
+    assert "tspes" not in catalog["supported_recipes"]
     assert catalog["schema_keys"] == sorted(catalog["schema_keys"])
     assert catalog["step_keys"] == sorted(catalog["step_keys"])
     before = copy.deepcopy(catalog)
@@ -428,23 +423,13 @@ def test_compile_intent_calc_native_missing_or_empty(native: Any) -> None:
     assert native == before
 
 
-def test_compile_intent_bogus_native_key_and_randomseed_second_authority() -> None:
+def test_compile_intent_bogus_native_key_rejected() -> None:
+    # R2.2: the RANDOMSEED second-authority guard is retired with GOAT;
+    # the bogus-key refusal is unchanged.
     with pytest.raises(IntentCompilationError):
         compile_intent(
             _intent(
                 [{"card": "opt@v1", "program": "orca", "native": {"keyword": "X", "bogus_key": 1}}]
-            )
-        )
-    with pytest.raises(IntentCompilationError, match="RANDOMSEED"):
-        compile_intent(
-            _intent(
-                [
-                    {
-                        "card": "goat@v1",
-                        "program": "orca",
-                        "native": {"keyword": "X", "goat": {"MaxIter": 5, "RANDOMSEED": 1}},
-                    }
-                ]
             )
         )
 
@@ -808,6 +793,8 @@ def test_compile_intent_branching_errors_fail_closed() -> None:
 
 
 def test_compile_intent_named_qst_without_bindings_refused() -> None:
+    # R2.2: qst2/neb are retired; the references now fail closed as unknown
+    # cards (retired vocabulary is never compiled).
     with pytest.raises(IntentCompilationError):
         compile_intent(
             _intent(
@@ -851,13 +838,20 @@ def test_compile_intent_unknown_recipe_and_missing_recipe_steps_shape() -> None:
         compile_intent(
             {"schema": INTENT_SCHEMA, "globals": dict(GLOBALS), "recipe": "nope", "steps": []}
         )
+    # R2.2: vehicle is the retained optimize recipe (tspes retired); the
+    # malformed-steps shape refusals are unchanged.
     with pytest.raises(IntentCompilationError):
         compile_intent(
-            {"schema": INTENT_SCHEMA, "globals": dict(GLOBALS), "recipe": "tspes", "steps": "x"}
+            {"schema": INTENT_SCHEMA, "globals": dict(GLOBALS), "recipe": "optimize", "steps": "x"}
         )
     with pytest.raises(IntentCompilationError):
         compile_intent(
-            {"schema": INTENT_SCHEMA, "globals": dict(GLOBALS), "recipe": "tspes", "steps": [42]}
+            {
+                "schema": INTENT_SCHEMA,
+                "globals": dict(GLOBALS),
+                "recipe": "optimize",
+                "steps": [42],
+            }
         )
     with pytest.raises(IntentCompilationError):
         compile_intent(
@@ -866,28 +860,36 @@ def test_compile_intent_unknown_recipe_and_missing_recipe_steps_shape() -> None:
 
 
 def test_compile_intent_recipe_requires_explicit_science_per_step() -> None:
+    # R2.2: vehicle is the retained optimize recipe (tspes retired).
     with pytest.raises(IntentCompilationError, match="missing"):
         compile_intent(
-            {"schema": INTENT_SCHEMA, "globals": dict(GLOBALS), "recipe": "tspes", "steps": []}
+            {"schema": INTENT_SCHEMA, "globals": dict(GLOBALS), "recipe": "optimize", "steps": []}
         )
-    partial = [{"id": "ts", "card": "ts@v1", "program": "orca", "native": {"keyword": "X OptTS"}}]
+    partial = [
+        {"id": "other", "card": "ts@v1", "program": "orca", "native": {"keyword": "X OptTS"}}
+    ]
     with pytest.raises(IntentCompilationError, match="missing"):
         compile_intent(
-            {"schema": INTENT_SCHEMA, "globals": dict(GLOBALS), "recipe": "tspes", "steps": partial}
+            {
+                "schema": INTENT_SCHEMA,
+                "globals": dict(GLOBALS),
+                "recipe": "optimize",
+                "steps": partial,
+            }
         )
 
 
 def test_compile_intent_recipe_assignment_needs_program_and_native() -> None:
     for bad in (
-        {"id": "ts", "card": "ts@v1", "native": {"keyword": "X"}},
-        {"id": "ts", "card": "ts@v1", "program": "orca"},
+        {"id": "optimize", "card": "opt@v1", "native": {"keyword": "X"}},
+        {"id": "optimize", "card": "opt@v1", "program": "orca"},
     ):
         with pytest.raises(IntentCompilationError, match="explicit program and native"):
             compile_intent(
                 {
                     "schema": INTENT_SCHEMA,
                     "globals": dict(GLOBALS),
-                    "recipe": "tspes",
+                    "recipe": "optimize",
                     "steps": [bad],
                 }
             )
@@ -901,7 +903,7 @@ def test_compile_intent_recipe_cards_need_recipe_and_known_cards() -> None:
                 "schema": INTENT_SCHEMA,
                 "globals": dict(GLOBALS),
                 "cards": cards,
-                "role_cards": {"ts": "low"},
+                "role_cards": {"opt": "low"},
                 "steps": [],
             }
         )
@@ -910,40 +912,35 @@ def test_compile_intent_recipe_cards_need_recipe_and_known_cards() -> None:
             {
                 "schema": INTENT_SCHEMA,
                 "globals": dict(GLOBALS),
-                "recipe": "tspes",
+                "recipe": "optimize",
                 "cards": cards,
-                "role_cards": {"ts": "missing"},
+                "role_cards": {"opt": "missing"},
                 "steps": [],
             }
         )
-    with pytest.raises(IntentCompilationError):
+    # R2.2: the recipe_cards normal mode is retired: any well-formed
+    # declaration fails closed with the retired message, regardless of shape.
+    for recipe_cards in (
+        {"low_level": "low", "single_point": "missing"},
+        {"low_level": "low"},
+    ):
+        with pytest.raises(IntentCompilationError, match="is retired"):
+            compile_intent(
+                {
+                    "schema": INTENT_SCHEMA,
+                    "globals": dict(GLOBALS),
+                    "recipe": "optimize",
+                    "cards": cards,
+                    "recipe_cards": recipe_cards,
+                    "steps": [],
+                }
+            )
+    with pytest.raises(IntentCompilationError, match="unknown members"):
         compile_intent(
             {
                 "schema": INTENT_SCHEMA,
                 "globals": dict(GLOBALS),
-                "recipe": "tspes",
-                "cards": cards,
-                "recipe_cards": {"low_level": "low", "single_point": "missing"},
-                "steps": [],
-            }
-        )
-    with pytest.raises(IntentCompilationError):
-        compile_intent(
-            {
-                "schema": INTENT_SCHEMA,
-                "globals": dict(GLOBALS),
-                "recipe": "tspes",
-                "cards": cards,
-                "recipe_cards": {"low_level": "low"},
-                "steps": [],
-            }
-        )
-    with pytest.raises(IntentCompilationError):
-        compile_intent(
-            {
-                "schema": INTENT_SCHEMA,
-                "globals": dict(GLOBALS),
-                "recipe": "tspes",
+                "recipe": "optimize",
                 "cards": cards,
                 "recipe_cards": {"bogus": "low", "single_point": "high"},
                 "steps": [],
@@ -951,92 +948,100 @@ def test_compile_intent_recipe_cards_need_recipe_and_known_cards() -> None:
         )
 
 
-def test_compile_intent_recipe_cards_reject_non_tspes_recipe() -> None:
+def test_compile_intent_recipe_cards_normal_mode_retired() -> None:
+    # R2.2: the recipe_cards normal mode is retired with tspes: every
+    # recipe, including tspes itself, fails closed with the retired message.
     from confflow.producer.intent import _recipe_cards_to_role_cards
 
-    with pytest.raises(IntentCompilationError):
-        _recipe_cards_to_role_cards(
-            {"low_level": "low", "single_point": "high"}, recipe_id="optimize"
-        )
+    for recipe_id in ("optimize", "tspes"):
+        with pytest.raises(IntentCompilationError, match="is retired"):
+            _recipe_cards_to_role_cards(
+                {"low_level": "low", "single_point": "high"}, recipe_id=recipe_id
+            )
 
 
 def test_compile_intent_role_cards_conflict_explicit_wins_and_purpose_checked() -> None:
+    # R2.2: vehicle is the retained optimize recipe (tspes retired); the
+    # explicit-wins and purpose-checked refusals are unchanged in shape.
     cards = {
         "low": {
             "card": "opt@v1",
             "program": "orca",
-            "native_by_role": {
-                "ts": {"keyword": "L OptTS"},
-                "ts_freq": {"keyword": "L Freq"},
-                "freq": {"keyword": "L Freq"},
-                "opt": {"keyword": "L Opt"},
-                "irc": {"keyword": "L IRC", "irc": {"direction": "both"}},
-            },
+            "native": {"keyword": "L Opt"},
         },
         "high": {"card": "sp@v1", "program": "orca", "native": {"keyword": "H SP"}},
-        "wrong": {"card": "opt@v1", "program": "orca", "native": {"keyword": "W Opt"}},
     }
     document = compile_intent(
         {
             "schema": INTENT_SCHEMA,
             "globals": dict(GLOBALS),
-            "recipe": "tspes",
+            "recipe": "optimize",
             "cards": cards,
-            "role_cards": {"ts": "low", "freq": "low", "opt": "low", "irc": "low", "sp": "high"},
-            "recipe_cards": {"low_level": "low", "single_point": "high"},
+            "role_cards": {"opt": "low"},
             "steps": [
                 {
-                    "id": "ts",
-                    "card": "ts@v1",
+                    "id": "optimize",
+                    "card": "opt@v1",
                     "program": "orca",
-                    "native": {"keyword": "Explicit OptTS"},
+                    "native": {"keyword": "Explicit Opt"},
                 }
             ],
         }
     )
     by_id = {s["id"]: s for s in document["steps"]}
-    assert by_id["ts"]["calculation"]["native"] == {"keyword": "Explicit OptTS"}
+    assert by_id["optimize"]["calculation"]["native"] == {"keyword": "Explicit Opt"}
     assert compile_workflow(document).ok
     with pytest.raises(IntentCompilationError):
         compile_intent(
             {
                 "schema": INTENT_SCHEMA,
                 "globals": dict(GLOBALS),
-                "recipe": "tspes",
+                "recipe": "optimize",
                 "cards": cards,
-                "role_cards": {
-                    "ts": "low",
-                    "freq": "wrong",
-                    "opt": "low",
-                    "irc": "low",
-                    "sp": "high",
-                },
+                "role_cards": {"opt": "high"},
                 "steps": [],
             }
         )
 
 
 def test_compile_intent_family_variant_step_id_wins_and_missing_variant() -> None:
+    # R2.2: vehicle is the retained optimize recipe (tspes retired); the
+    # step-id-wins and missing-variant refusals are unchanged in shape.
     cards = {
         "fam": {
             "card": "opt@v1",
             "program": "orca",
-            "native_by_role": {"ts": {"keyword": "F OptTS"}},
+            "native_by_role": {"optimize": {"keyword": "F Step"}},
         },
-        "tsfreq": {"card": "ts_freq@v1", "program": "orca", "native": {"keyword": "F Freq"}},
         "opt": {"card": "opt@v1", "program": "orca", "native": {"keyword": "F Opt"}},
-        "freq": {"card": "freq@v1", "program": "orca", "native": {"keyword": "F Freq"}},
-        "irc": {"card": "irc@v1", "program": "orca", "native": {"keyword": "F IRC"}},
-        "sp": {"card": "sp@v1", "program": "orca", "native": {"keyword": "F SP"}},
     }
-    with pytest.raises(IntentCompilationError, match="ts_freq"):
+    document = compile_intent(
+        {
+            "schema": INTENT_SCHEMA,
+            "globals": dict(GLOBALS),
+            "recipe": "optimize",
+            "cards": cards,
+            "role_cards": {"opt": "fam"},
+            "steps": [],
+        }
+    )
+    by_id = {s["id"]: s for s in document["steps"]}
+    assert by_id["optimize"]["calculation"]["native"] == {"keyword": "F Step"}
+    with pytest.raises(IntentCompilationError, match="opt"):
         compile_intent(
             {
                 "schema": INTENT_SCHEMA,
                 "globals": dict(GLOBALS),
-                "recipe": "tspes",
-                "cards": cards,
-                "role_cards": {"ts": "fam", "freq": "freq", "opt": "opt", "irc": "irc", "sp": "sp"},
+                "recipe": "optimize",
+                "cards": {
+                    "fam": {
+                        "card": "opt@v1",
+                        "program": "orca",
+                        "native_by_role": {"other": {"keyword": "O"}},
+                    },
+                    "opt": {"card": "opt@v1", "program": "orca", "native": {"keyword": "F Opt"}},
+                },
+                "role_cards": {"opt": "fam"},
                 "steps": [],
             }
         )
@@ -1098,13 +1103,13 @@ def test_compile_intent_named_cards_conflicts() -> None:
 
 def test_compile_intent_role_cards_shape_refusals() -> None:
     cards = _two_cards()
-    for bad_roles in ("x", [], {}, {"": "low"}, {"ts": "has@version"}, {"ts": ""}, {"ts": 42}):
+    for bad_roles in ("x", [], {}, {"": "low"}, {"opt": "has@version"}, {"opt": ""}, {"opt": 42}):
         with pytest.raises(IntentCompilationError):
             compile_intent(
                 {
                     "schema": INTENT_SCHEMA,
                     "globals": dict(GLOBALS),
-                    "recipe": "tspes",
+                    "recipe": "optimize",
                     "cards": cards,
                     "role_cards": bad_roles,
                     "steps": [],
@@ -1121,7 +1126,7 @@ def test_compile_intent_role_cards_shape_refusals() -> None:
                 {
                     "schema": INTENT_SCHEMA,
                     "globals": dict(GLOBALS),
-                    "recipe": "tspes",
+                    "recipe": "optimize",
                     "cards": cards,
                     "recipe_cards": bad_recipe_cards,
                     "steps": [],
@@ -1129,33 +1134,8 @@ def test_compile_intent_role_cards_shape_refusals() -> None:
             )
 
 
-def test_compile_intent_full_tspes_role_and_recipe_cards_agree() -> None:
-    cards = _two_cards()
-    roles = {"ts": "low", "freq": "low", "opt": "low", "irc": "low", "sp": "high"}
-    via_roles = compile_intent(
-        {
-            "schema": INTENT_SCHEMA,
-            "globals": dict(GLOBALS),
-            "recipe": "tspes",
-            "cards": cards,
-            "role_cards": roles,
-            "steps": [],
-        }
-    )
-    via_recipe = compile_intent(
-        {
-            "schema": INTENT_SCHEMA,
-            "globals": dict(GLOBALS),
-            "recipe": "tspes",
-            "cards": cards,
-            "recipe_cards": {"low_level": "low", "single_point": "high"},
-            "steps": [],
-        }
-    )
-    assert [s["id"] for s in via_roles["steps"]] == [s["id"] for s in via_recipe["steps"]]
-    assert len(via_roles["steps"]) == 8
-    assert compile_workflow(via_roles).ok
-    assert compile_workflow(via_recipe).ok
+# R2.2 (G18): test_compile_intent_full_tspes_role_and_recipe_cards_agree is
+# retired with the tspes recipe and the recipe_cards normal mode.
 
 
 # ----------------------------------------------------------------------
@@ -1164,9 +1144,10 @@ def test_compile_intent_full_tspes_role_and_recipe_cards_agree() -> None:
 
 
 def test_needs_seed_matrix() -> None:
+    # R2.2: a goat native mapping no longer selects stochastic handling.
     assert (
         needs_seed({"executor": "calculation", "calculation": {"native": {"goat": {"MaxIter": 1}}}})
-        is True
+        is False
     )
     assert (
         needs_seed({"executor": "calculation", "calculation": {"native": {"keyword": "X"}}})
@@ -1843,27 +1824,6 @@ def test_full_workflow_seed_invariance_end_to_end() -> None:
 # ----------------------------------------------------------------------
 
 
-def _r2_tspes_steps(**overrides: Any) -> list[dict[str, Any]]:
-    base = [
-        {"id": "ts", "card": "ts@v1", "program": "orca", "native": {"keyword": "E ts"}},
-        {"id": "ts_freq", "card": "ts_freq@v1", "program": "orca", "native": {"keyword": "E f"}},
-        {"id": "ts_sp", "card": "sp@v1", "program": "orca", "native": {"keyword": "E ts_sp"}},
-        {"id": "irc", "card": "irc@v1", "program": "orca", "native": {"keyword": "E irc"}},
-        {"id": "endpoint_opt", "card": "opt@v1", "program": "orca", "native": {"keyword": "E o"}},
-        {
-            "id": "endpoint_freq",
-            "card": "freq@v1",
-            "program": "orca",
-            "native": {"keyword": "E ef"},
-        },
-        {"id": "endpoint_sp", "card": "sp@v1", "program": "orca", "native": {"keyword": "E es"}},
-    ]
-    for step in base:
-        if step["id"] in overrides:
-            step.update(overrides[step["id"]])
-    return base
-
-
 def test_r2_chained_named_cards_replace_wholesale() -> None:
     before = {
         "schema": INTENT_SCHEMA,
@@ -2001,28 +1961,32 @@ def test_r2_named_family_variant_refusals(native_by_role: Any) -> None:
 
 
 def test_r2_recipe_patch_via_named_card_preserves_annotation() -> None:
-    steps = _r2_tspes_steps()
-    patched = {k: v for k, v in steps[4].items() if k not in ("program", "native")}
-    patched["card"] = "fam"
-    steps[4] = patched
+    # R2.2: vehicle is the retained optimize recipe (tspes retired).
     document = compile_intent(
         {
             "schema": INTENT_SCHEMA,
             "globals": dict(GLOBALS),
-            "recipe": "tspes",
+            "recipe": "optimize",
             "cards": {"fam": {"card": "opt@v1", "program": "orca", "native": {"keyword": "F Opt"}}},
-            "steps": steps,
+            "steps": [
+                {
+                    "id": "optimize",
+                    "card": "fam",
+                }
+            ],
         }
     )
     by_id = {s["id"]: s for s in document["steps"]}
-    assert by_id["endpoint_opt"]["calculation"]["native"] == {"keyword": "F Opt"}
-    resolution = by_id["endpoint_opt"]["annotations"]["producer_resolution"]
+    assert by_id["optimize"]["calculation"]["native"] == {"keyword": "F Opt"}
+    resolution = by_id["optimize"]["annotations"]["producer_resolution"]
     assert resolution["named_card"] == "fam"
     assert resolution["recipe_assignment"] is True
     assert compile_workflow(document).ok
 
 
 def test_r2_role_cards_full_operational_preservation() -> None:
+    # R2.2: vehicle is the retained optimize recipe (tspes retired); the
+    # input-immutability and operational-preservation assertions hold.
     cards = {
         "low": {
             "card": "opt@v1",
@@ -2031,107 +1995,83 @@ def test_r2_role_cards_full_operational_preservation() -> None:
             "overrides": {"charge": 1},
             "resources": {"cores_per_item": 2},
             "scheduler": {"max_parallel_items": 3},
-            "native_by_role": {
-                "ts": {"keyword": "L OptTS"},
-                "ts_freq": {"keyword": "L Freq"},
-                "freq": {"keyword": "L Freq"},
-                "opt": {"keyword": "L Opt"},
-                "irc": {"keyword": "L IRC", "irc": {"direction": "both"}},
-            },
+            "native": {"keyword": "L Opt"},
         },
-        "high": {"card": "sp@v1", "program": "orca", "native": {"keyword": "H SP"}},
     }
     before = {
         "schema": INTENT_SCHEMA,
         "globals": dict(GLOBALS),
-        "recipe": "tspes",
+        "recipe": "optimize",
         "cards": cards,
-        "role_cards": {"ts": "low", "freq": "low", "opt": "low", "irc": "low", "sp": "high"},
+        "role_cards": {"opt": "low"},
         "steps": [],
     }
     snapshot = copy.deepcopy(before)
     document = compile_intent(before)
     assert before == snapshot
     by_id = {s["id"]: s for s in document["steps"]}
-    assert by_id["ts"]["calculation"]["seed"] == 5
-    assert by_id["ts"]["calculation"]["overrides"] == {"charge": 1}
-    assert by_id["ts"]["resources"] == {"cores_per_item": 2}
-    assert by_id["ts"]["scheduler"] == {"max_parallel_items": 3}
-    assert by_id["ts"]["annotations"]["producer_resolution"]["family_variant"] == "ts"
+    assert by_id["optimize"]["calculation"]["seed"] == 5
+    assert by_id["optimize"]["calculation"]["overrides"] == {"charge": 1}
+    assert by_id["optimize"]["resources"] == {"cores_per_item": 2}
+    assert by_id["optimize"]["scheduler"] == {"max_parallel_items": 3}
+    assert by_id["optimize"]["annotations"]["producer_resolution"]["role_card"] == "low"
     assert compile_workflow(document).ok
 
 
 def test_r2_role_cards_scientific_defaults_preservation() -> None:
+    # R2.2: vehicle is the retained optimize recipe (tspes retired).
     cards = {
         "rich": {
-            "card": "ts@v1",
+            "card": "opt@v1",
             "program": "orca",
             "adapter": "standard",
             "profile": "standard",
             "checks": ["normal_termination"],
             "check_params": {},
             "recovery": "none",
-            "native": {"keyword": "R OptTS"},
+            "native": {"keyword": "R Opt"},
         },
-        "low": {
-            "card": "opt@v1",
-            "program": "orca",
-            "native_by_role": {
-                "ts_freq": {"keyword": "L Freq"},
-                "freq": {"keyword": "L Freq"},
-                "opt": {"keyword": "L Opt"},
-                "irc": {"keyword": "L IRC", "irc": {"direction": "both"}},
-                "sp": {"keyword": "L SP"},
-            },
-        },
-        "high": {"card": "sp@v1", "program": "orca", "native": {"keyword": "H SP"}},
     }
     document = compile_intent(
         {
             "schema": INTENT_SCHEMA,
             "globals": dict(GLOBALS),
-            "recipe": "tspes",
+            "recipe": "optimize",
             "cards": cards,
-            "role_cards": {
-                "ts": "rich",
-                "freq": "low",
-                "opt": "low",
-                "irc": "low",
-                "sp": "high",
-            },
+            "role_cards": {"opt": "rich"},
             "steps": [],
         }
     )
-    calc = {s["id"]: s for s in document["steps"]}["ts"]["calculation"]
+    calc = {s["id"]: s for s in document["steps"]}["optimize"]["calculation"]
     assert calc["execution_adapter"] == "standard"
     assert calc["result_profile"] == "standard"
     assert calc["checks"] == ["normal_termination"]
-    assert calc["native"] == {"keyword": "R OptTS"}
+    assert calc["native"] == {"keyword": "R Opt"}
     assert compile_workflow(document).ok
 
 
 def test_r2_role_cards_skip_ids_explicit_wins() -> None:
+    # R2.2: vehicle is the retained optimize recipe (tspes retired).
     cards = _two_cards()
     document = compile_intent(
         {
             "schema": INTENT_SCHEMA,
             "globals": dict(GLOBALS),
-            "recipe": "tspes",
+            "recipe": "optimize",
             "cards": cards,
-            "role_cards": {"ts": "low", "freq": "low", "opt": "low", "irc": "low", "sp": "high"},
+            "role_cards": {"opt": "low"},
             "steps": [
                 {
-                    "id": "ts",
-                    "card": "ts@v1",
+                    "id": "optimize",
+                    "card": "opt@v1",
                     "program": "orca",
-                    "native": {"keyword": "Explicit OptTS"},
+                    "native": {"keyword": "Explicit Opt"},
                 }
             ],
         }
     )
     by_id = {s["id"]: s for s in document["steps"]}
-    assert by_id["ts"]["calculation"]["native"] == {"keyword": "Explicit OptTS"}
-    assert by_id["endpoint_opt"]["calculation"]["native"] == {"keyword": "r2SCAN-3c Opt"}
+    assert by_id["optimize"]["calculation"]["native"] == {"keyword": "Explicit Opt"}
     assert compile_workflow(document).ok
 
 
@@ -2140,68 +2080,43 @@ def test_r2_role_cards_skip_ids_explicit_wins() -> None:
     [
         {
             "low": {"card": "opt@v1", "program": "orca", "native_by_role": {"ts": {"k": "v"}}},
-            "high": {"card": "sp@v1", "program": "orca", "native": {"keyword": "H SP"}},
-        },
-        {
-            "low": {
-                "card": "opt@v1",
-                "program": "orca",
-                "native_by_role": {
-                    "ts": {"keyword": "L"},
-                    "freq": {"keyword": "L"},
-                    "opt": {"keyword": "L"},
-                    "irc": {"keyword": "L"},
-                },
-            },
-            "high": {"card": "sp@v1", "program": "orca", "native": {"keyword": "H SP"}},
         },
         {
             "low": {"card": "opt@v1", "native": {"keyword": "L Opt"}},
-            "high": {"card": "sp@v1", "program": "orca", "native": {"keyword": "H SP"}},
         },
     ],
 )
 def test_r2_role_cards_family_and_science_refusals(cards: Any) -> None:
+    # R2.2: vehicle is the retained optimize recipe (tspes retired); the
+    # family-variant and missing-program refusals are unchanged in shape.
     with pytest.raises(IntentCompilationError):
         compile_intent(
             {
                 "schema": INTENT_SCHEMA,
                 "globals": dict(GLOBALS),
-                "recipe": "tspes",
+                "recipe": "optimize",
                 "cards": cards,
-                "role_cards": {
-                    "ts": "low",
-                    "freq": "low",
-                    "opt": "low",
-                    "irc": "low",
-                    "sp": "high",
-                },
+                "role_cards": {"opt": "low"},
                 "steps": [],
             }
         )
 
 
 def test_r2_role_cards_step_id_wins_over_role_purpose() -> None:
+    # R2.2: vehicle is the retained optimize recipe (tspes retired); the
+    # step-id-wins and role-purpose refusals are unchanged in shape.
     cards = {
         "optcard": {"card": "opt@v1", "program": "orca", "native": {"keyword": "Q Opt"}},
-        "freqcard": {"card": "freq@v1", "program": "orca", "native": {"keyword": "Q Freq"}},
-        "irccard": {"card": "irc@v1", "program": "orca", "native": {"keyword": "Q IRC"}},
-        "high": {"card": "sp@v1", "program": "orca", "native": {"keyword": "H SP"}},
+        "spcard": {"card": "sp@v1", "program": "orca", "native": {"keyword": "Q SP"}},
     }
     with pytest.raises(IntentCompilationError):
         compile_intent(
             {
                 "schema": INTENT_SCHEMA,
                 "globals": dict(GLOBALS),
-                "recipe": "tspes",
+                "recipe": "optimize",
                 "cards": cards,
-                "role_cards": {
-                    "ts": "optcard",
-                    "freq": "freqcard",
-                    "opt": "optcard",
-                    "irc": "irccard",
-                    "sp": "high",
-                },
+                "role_cards": {"opt": "spcard"},
                 "steps": [],
             }
         )
@@ -2209,24 +2124,13 @@ def test_r2_role_cards_step_id_wins_over_role_purpose() -> None:
         {
             "schema": INTENT_SCHEMA,
             "globals": dict(GLOBALS),
-            "recipe": "tspes",
+            "recipe": "optimize",
             "cards": cards,
-            "role_cards": {
-                "ts": "optcard",
-                "ts_freq": "optcard",
-                "freq": "freqcard",
-                "opt": "optcard",
-                "irc": "irccard",
-                "sp": "high",
-                "ts_sp": "high",
-                "endpoint_opt": "optcard",
-                "endpoint_freq": "freqcard",
-                "endpoint_sp": "high",
-            },
+            "role_cards": {"optimize": "spcard"},
             "steps": [],
         }
     )
-    assert len(document["steps"]) == 8
+    assert len(document["steps"]) == 1
     assert compile_workflow(document).ok
 
 
@@ -2388,45 +2292,57 @@ def test_r2_bogus_bindings_fail_strict_compilation() -> None:
 
 
 def test_r2_recipe_patch_rich_science_preserved() -> None:
-    ids = ["ts", "ts_freq", "ts_sp", "irc", "endpoint_opt", "endpoint_freq", "endpoint_sp"]
-    base = _r2_tspes_steps()
-    rich = dict(base[0])
-    rich.update(
-        {
-            "role": "ts",
-            "adapter": "standard",
-            "profile": "standard",
-            "checks": ["normal_termination"],
-            "check_params": {},
-            "recovery": "none",
-            "seed": 3,
-            "overrides": {"charge": 0},
-            "resources": {"cores_per_item": 1},
-            "scheduler": {"max_parallel_items": 2},
-        }
-    )
-    steps = [rich] + base[1:]
-    before = {"schema": INTENT_SCHEMA, "globals": dict(GLOBALS), "recipe": "tspes", "steps": steps}
+    # R2.2: vehicle is the retained optimize recipe (tspes retired); the
+    # rich-assignment patch assertions are unchanged in shape.
+    rich = {
+        "id": "optimize",
+        "card": "opt@v1",
+        "program": "orca",
+        "native": {"keyword": "E o"},
+        "role": "opt",
+        "adapter": "standard",
+        "profile": "standard",
+        "checks": ["normal_termination"],
+        "check_params": {},
+        "recovery": "none",
+        "seed": 3,
+        "overrides": {"charge": 0},
+        "resources": {"cores_per_item": 1},
+        "scheduler": {"max_parallel_items": 2},
+    }
+    before = {
+        "schema": INTENT_SCHEMA,
+        "globals": dict(GLOBALS),
+        "recipe": "optimize",
+        "steps": [rich],
+    }
     snapshot = copy.deepcopy(before)
     document = compile_intent(before)
     assert before == snapshot
-    calc = {s["id"]: s for s in document["steps"]}["ts"]["calculation"]
-    assert calc["role"] == "ts"
+    calc = {s["id"]: s for s in document["steps"]}["optimize"]["calculation"]
+    assert calc["role"] == "opt"
     assert calc["execution_adapter"] == "standard"
     assert calc["checks"] == ["normal_termination"]
     assert calc["seed"] == 3
     assert calc["overrides"] == {"charge": 0}
     assert compile_workflow(document).ok
-    assert [s["id"] for s in document["steps"]][:7] == ids
+    assert [s["id"] for s in document["steps"]] == ["optimize"]
 
 
 def test_r2_recipe_assignment_native_not_mapping() -> None:
-    steps = _r2_tspes_steps()
-    steps[0] = {"id": "ts", "card": "ts@v1", "program": "orca", "native": "x"}
+    steps = [{"id": "optimize", "card": "opt@v1", "program": "orca", "native": "x"}]
     with pytest.raises(IntentCompilationError):
         compile_intent(
-            {"schema": INTENT_SCHEMA, "globals": dict(GLOBALS), "recipe": "tspes", "steps": steps}
+            {
+                "schema": INTENT_SCHEMA,
+                "globals": dict(GLOBALS),
+                "recipe": "optimize",
+                "steps": steps,
+            }
         )
+
+
+# R2.2 (G18): test_r2_goat_seed_scope_workflow_identity is retired with GOAT.
 
 
 def test_r2_freeze_positive_and_empty_clear() -> None:
@@ -2471,23 +2387,6 @@ def test_r2_coerce_source_forms() -> None:
     assert compile_workflow(document).ok
     with pytest.raises(IntentCompilationError):
         compile_intent()
-
-
-def test_r2_goat_seed_scope_workflow_identity() -> None:
-    document = compile_intent(
-        _intent(
-            [
-                {
-                    "card": "goat@v1",
-                    "program": "orca",
-                    "native": {"keyword": "GOAT Opt", "goat": {"MaxIter": 5}},
-                }
-            ]
-        )
-    )
-    resolution = document["steps"][0]["annotations"]["producer_resolution"]
-    assert resolution["seed_scope"] == "workflow_identity_only"
-    assert compile_workflow(document).ok
 
 
 def test_r2_confgen_seed_scope_native_sampling() -> None:
@@ -2539,3 +2438,23 @@ def test_r2_machine_explicit_execution_wins() -> None:
     )
     assert document["steps"][0]["execution"]["env"] == {"A": "1"}
     assert compile_workflow(document).ok
+
+
+def test_r2_intent_execution_target_retired() -> None:
+    # R2.2: an explicit execution target in an intent step fails closed
+    # (the wire schema would also reject it, but the intent lane reports
+    # the retirement directly).
+    with pytest.raises(IntentCompilationError, match="retired"):
+        compile_intent(
+            _intent(
+                [
+                    {
+                        "card": "opt@v1",
+                        "program": "orca",
+                        "native": dict(OPT_NATIVE),
+                        "execution": {"target": "node-9"},
+                    }
+                ]
+            ),
+            machine_profile={"name": "box", "total_cores": 64, "total_memory": "256GiB"},
+        )

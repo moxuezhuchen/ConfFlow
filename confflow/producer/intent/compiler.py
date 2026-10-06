@@ -212,12 +212,9 @@ def intent_catalog() -> dict[str, Any]:
         "recipe_cards": {
             "top_key": "recipe_cards",
             "description": (
-                "Optional normal mode for reviewed recipes (currently 'tspes' "
-                "only): {low_level: '<family-card>', single_point: '<sp-card>'} "
-                "generates the role mapping mechanically (ts/freq/opt/irc from "
-                "the low-level family with ts_freq purpose special, sp from "
-                "the single-point card shared twice). Explicit 'role_cards' "
-                "still wins on conflicts."
+                "Retired in R2.2 with the 'tspes' recipe: no recipe accepts "
+                "the normal mode anymore, and declaring 'recipe_cards' "
+                "fails closed. Explicit 'role_cards' is the only shortcut."
             ),
         },
         "configuration_docs": {

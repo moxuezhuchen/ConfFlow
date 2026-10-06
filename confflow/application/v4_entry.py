@@ -111,24 +111,14 @@ def run_v4_document(
     owner_token: str = "formal",
     executables: dict[str, str] | None = None,
     supervisor: Any = None,
-    transport: Any = None,
     import_sources: Any = None,
     should_cancel: Any = None,
 ) -> Any:
-    """Run one V4 document through the single V4 application object.
-
-    Legacy ``transport`` seam (R1.2 retired remote delivery): only
-    ``None`` is accepted; any other value fails closed.
-    """
+    """Run one V4 document through the single V4 application object."""
     from ..domain._immutable import FrozenDict
-    from ..domain.errors import DomainError
     from ..execution.process import NativeProcessSupervisor
     from .v4_run import V4RunApplication, V4RunRequest
 
-    if transport is not None:
-        raise DomainError(
-            "transport is retired (R1.2): only transport=None " "(local execution) is accepted"
-        )
     require_v4_document(document)
     resolved_supervisor = supervisor if supervisor is not None else NativeProcessSupervisor()
     request = V4RunRequest(
@@ -231,15 +221,14 @@ def formal_v4_runner(
     on_step_status_change: Any = None,
     executables: dict[str, str] | None = None,
     supervisor: Any = None,
-    transport: Any = None,
     owner_token: str | None = None,
 ) -> dict[str, Any] | None:
     """Typed formal runner for the single V4 application.
 
     The parameters are the explicit service/supervision surface: run inputs,
     lifecycle beacons (``pause_beacon_file``/``cancel_beacon_file``), and
-    the V4 supervision seam (``supervisor``/``executables``/``transport``/
-    ``owner_token``; only ``transport=None`` is accepted).  Service-owned
+    the V4 supervision seam (``supervisor``/``executables``/
+    ``owner_token``).  Service-owned
     flags (``resume``/``verbose``/original inputs) stay on the service spec:
     this runner never read them, so they are not accepted here.
     ``on_step_status_change`` is accepted and ignored: progress publication
@@ -249,14 +238,9 @@ def formal_v4_runner(
     """
     del on_step_status_change
     from ..domain._immutable import FrozenDict
-    from ..domain.errors import DomainError
     from .v4_run import V4RunApplication, V4RunRequest
 
     resolved_executables = executables or {}
-    if transport is not None:
-        raise DomainError(
-            "transport is retired (R1.2): only transport=None " "(local execution) is accepted"
-        )
     resolved_owner = owner_token or "formal"
     if not config_file:
         raise _legacy_error("a V4 workflow document is required")

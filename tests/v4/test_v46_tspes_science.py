@@ -33,13 +33,7 @@ Wrong-leg outcomes the tests discriminate against: freq-only composite
 
 from __future__ import annotations
 
-import copy
 import hashlib
-import json
-import os
-import sys
-from dataclasses import replace
-from pathlib import Path
 from typing import Any
 
 import pytest
@@ -60,27 +54,17 @@ from confflow.analysis.thermochemistry import (
     resolve_node_gibbs,
     select_result,
 )
-from confflow.application.v4_run import (
-    RUN_RESULT_FILENAME,
-    V4RunApplication,
-    V4RunRequest,
-    import_xyz,
-)
 from confflow.domain import (
     FrozenDict,
     ResourceRequest,
     ResultSet,
     ScientificResult,
-    StructureSet,
     Unit,
 )
 from confflow.domain.result import make_result_id
 from confflow.execution import GeometryOutput, NativeResult, ProgramName, ResolvedCalculationInputs
-from confflow.execution.process import NativeProcessSupervisor
 from confflow.execution.profile_standard import PROFILES
 from confflow.execution.profiles import ProfileContext
-from confflow.producer import get_recipe_v4
-from confflow.workflow.v4.assembly import RunInputs
 from tests.v4._builders import structure
 
 # ---------------------------------------------------------------------------
@@ -507,137 +491,3 @@ else:
     os.environ['FAKE_MODE'] = 'success_opt'
 sys.exit(f.main(sys.argv))
 """
-
-
-def _install_asymmetric_orca(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Install the asymmetric dispatching ``orca`` first on PATH."""
-    fakes_dir = Path(__file__).resolve().parent / "fakes"
-    bin_dir = tmp_path / "bin-asym"
-    bin_dir.mkdir(parents=True, exist_ok=True)
-    wrapper = bin_dir / "orca"
-    wrapper.write_text(
-        f"#!{sys.executable}\n"
-        + DISPATCH_BODY.format(
-            fake_orca_path=str(fakes_dir / "fake_orca.py"),
-            fake_irc_path=str(fakes_dir / "fake_irc.py"),
-        )
-    )
-    wrapper.chmod(0o755)
-    monkeypatch.setenv("PATH", str(bin_dir) + os.pathsep + os.environ["PATH"])
-    monkeypatch.setenv("FAKE_IRC_ORDER", "reverse_first")
-
-
-def _asymmetric_inputs() -> Any:
-    """Build one TS run input with an explicit reaction group key."""
-    (record,) = tuple(import_xyz(WATER_XYZ, source_name="ts-asym.xyz"))
-    keyed = replace(record, group_key="rxn-asym", lineage_root_id="root-asym")
-    return StructureSet.of(keyed)
-
-
-def _asymmetric_document() -> dict[str, Any]:
-    """Return the catalog TSPES document plus required global defaults."""
-    document = copy.deepcopy(get_recipe_v4("tspes")["document"])
-    document["global"] = {"scientific_defaults": {"charge": 0, "multiplicity": 1}}
-    return document
-
-
-def _run_asymmetric_tspes(tmp_path: Path) -> tuple[Any, dict[str, Any]]:
-    """Run one asymmetric TSPES chain through the formal application."""
-    run_root = str(tmp_path / "run")
-    report = V4RunApplication(supervisor=NativeProcessSupervisor()).run(
-        V4RunRequest(
-            workflow_document=_asymmetric_document(),
-            run_inputs=RunInputs(structures=FrozenDict({"structures": _asymmetric_inputs()})),
-            run_root=run_root,
-        )
-    )
-    assert report.status == "completed", [
-        (step.step_id, dict(step.summary)) for step in report.step_results
-    ]
-    manifest = json.loads((Path(run_root) / RUN_RESULT_FILENAME).read_text())
-    return report, manifest
-
-
-class TestFormalTspesAsymmetric:
-    """Formal TSPES run: barrier 9.90 from SP legs + freq corrections."""
-
-    def test_formal_run_barrier_is_990(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        _install_asymmetric_orca(tmp_path, monkeypatch)
-        report, _ = _run_asymmetric_tspes(tmp_path)
-        by_id = {result.step_id: result for result in report.step_results}
-        analysis = by_id["reaction_profile"]
-        assert analysis.status.value == "completed"
-        by_kind = {record.kind: record for record in analysis.results}
-        assert set(by_kind) == {
-            KIND_BARRIER_FORWARD_ENDPOINT,
-            KIND_BARRIER_REVERSE_ENDPOINT,
-            KIND_ENDPOINT_GIBBS_DELTA,
-            KIND_ENDPOINT_ENERGY_DELTA,
-            KIND_REACTION_PROFILE,
-        }
-        assert by_kind[KIND_BARRIER_FORWARD_ENDPOINT].value == pytest.approx(9.90, abs=1e-6)
-        assert by_kind[KIND_BARRIER_REVERSE_ENDPOINT].value == pytest.approx(9.90, abs=1e-6)
-        assert by_kind[KIND_BARRIER_FORWARD_ENDPOINT].value == pytest.approx(
-            EXPECTED_BARRIER, abs=1e-6
-        )
-        profile = dict(by_kind[KIND_REACTION_PROFILE].value)
-        assert profile["group_key"] == GROUP_KEY
-        assert profile["gibbs_energy"]["ts"]["value"] == pytest.approx(-69.90, abs=1e-6)
-        assert profile["gibbs_energy"]["forward"]["value"] == pytest.approx(-79.80, abs=1e-6)
-        assert profile["gibbs_energy"]["reverse"]["value"] == pytest.approx(-79.80, abs=1e-6)
-        assert profile["electronic_energy"]["ts"]["value"] == pytest.approx(-70.0, abs=1e-9)
-        assert profile["electronic_energy"]["forward"]["value"] == pytest.approx(-80.0, abs=1e-9)
-        # The cited sources prove the composite legs: high-level SP
-        # electronic energies plus low-level frequency corrections.
-        assert profile["source_result_ids"] == sorted(profile["source_result_ids"])
-        cited = {str(item) for item in profile["source_result_ids"]}
-        step_kinds: dict[str, tuple[str | None, str]] = {}
-        for step_result in report.step_results:
-            for record in step_result.results:
-                if record.result_id in cited:
-                    step_kinds[record.result_id] = (
-                        record.source_step_id,
-                        record.kind,
-                    )
-        assert set(cited) == set(step_kinds)
-        legs = sorted(step_kinds.values())
-        assert legs == [
-            ("endpoint_freq", "gibbs_correction"),
-            ("endpoint_freq", "gibbs_correction"),
-            ("endpoint_sp", "energy"),
-            ("endpoint_sp", "energy"),
-            ("ts_freq", "gibbs_correction"),
-            ("ts_sp", "energy"),
-        ]
-
-    def test_durable_manifest_barrier_is_990(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        _install_asymmetric_orca(tmp_path, monkeypatch)
-        _, manifest = _run_asymmetric_tspes(tmp_path)
-        groups = [entry for entry in manifest["analyses"] if "group_key" in entry]
-        assert [entry["group_key"] for entry in groups] == [GROUP_KEY]
-        (entry,) = groups
-        assert entry["capability"] == "reaction_profile"
-        assert entry["step_id"] == "reaction_profile"
-        assert set(entry["barriers"]) == {"forward_endpoint", "reverse_endpoint"}
-        for barrier in entry["barriers"].values():
-            assert barrier["value"] == pytest.approx(9.90, abs=1e-6)
-            assert barrier["unit"] == "hartree"
-        published = {item["result_id"]: item for item in manifest.get("results", [])}
-        assert published
-        assert set(entry["source_result_ids"]) <= set(published)
-        cited_kinds = sorted(
-            (published[result_id]["source_step_id"], published[result_id]["kind"])
-            for result_id in entry["source_result_ids"]
-        )
-        assert cited_kinds == [
-            ("endpoint_freq", "gibbs_correction"),
-            ("endpoint_freq", "gibbs_correction"),
-            ("endpoint_sp", "energy"),
-            ("endpoint_sp", "energy"),
-            ("ts_freq", "gibbs_correction"),
-            ("ts_sp", "energy"),
-        ]

@@ -35,19 +35,15 @@ from confflow.workflow.v4.compiler import compile_workflow
 from confflow.workflow.v4.document import SCHEMA_ID
 from confflow.workflow.v4.parser import parse_workflow_document
 
-OLD12_SHA = "bc63fc178492ae7b853c1404b8a9c7f4741967a954cc8027d1f3892b5294b098"
-OLD12_IDS = (
+# R2.2 声明重钉：目录剩 7 项（irc/qst2/qst3/neb/goat/tspes 退役）；
+# 未动的前 6 个 recipe 字节不变（自身内容未改，只退役邻居）。
+OLD6_SHA = "8b62e352d4743202137423104b31895666d0ef9baab6f264f34a5a874be3190b"
+OLD6_IDS = (
     "optimize",
     "single_point",
     "frequency",
     "opt_freq",
     "transition_state",
-    "irc",
-    "qst2",
-    "qst3",
-    "neb",
-    "goat",
-    "tspes",
     "confgen_torsion",
 )
 
@@ -77,9 +73,9 @@ def _recipe() -> dict[str, Any]:
 
 
 class TestCatalogIdentity:
-    def test_is_13th_in_frozen_order(self) -> None:
+    def test_is_7th_in_frozen_order(self) -> None:
         assert RECIPE_IDS_V4[-1] == "monomer_conformers"
-        assert list(RECIPE_IDS_V4) == list(OLD12_IDS) + ["monomer_conformers"]
+        assert list(RECIPE_IDS_V4) == list(OLD6_IDS) + ["monomer_conformers"]
         catalog = build_recipe_catalog_v4()
         assert [r["id"] for r in catalog["recipes"]] == list(RECIPE_IDS_V4)
         assert catalog["schema"] == RECIPE_CATALOG_SCHEMA
@@ -101,30 +97,25 @@ class TestCatalogIdentity:
             "confgen.v3.torsions",
         }
 
-    def test_old12_bytes_unchanged(self) -> None:
+    def test_old6_bytes_unchanged(self) -> None:
         catalog = build_recipe_catalog_v4()
         old_only = {
             "schema": catalog["schema"],
             "workflow_schema_version": catalog["workflow_schema_version"],
             "label": catalog["label"],
-            "recipes": [r for r in catalog["recipes"] if r["id"] in OLD12_IDS],
+            "recipes": [r for r in catalog["recipes"] if r["id"] in OLD6_IDS],
         }
-        assert [r["id"] for r in old_only["recipes"]] == list(OLD12_IDS)
-        assert canonical_sha256(old_only) == OLD12_SHA
+        assert [r["id"] for r in old_only["recipes"]] == list(OLD6_IDS)
+        assert canonical_sha256(old_only) == OLD6_SHA
 
-    def test_14_cards_unchanged(self) -> None:
-        assert len(CARD_TYPES) == 14
+    def test_9_cards_unchanged(self) -> None:
+        assert len(CARD_TYPES) == 9
         assert tuple(sorted(CARD_TYPES)) == (
             "confgen",
             "deduplicate",
             "freq",
-            "goat",
-            "irc",
-            "neb",
             "opt",
             "opt_freq",
-            "qst2",
-            "qst3",
             "refine",
             "sp",
             "ts",
@@ -347,7 +338,7 @@ class TestFakeProtocolE2E:
 
 
 class TestJDConsumption:
-    def test_jd_parser_consumes_13_catalog_readonly(self) -> None:
+    def test_jd_parser_consumes_7_catalog_readonly(self) -> None:
         jd_src = os.environ.get("JOBDESK_V2_SRC", "/opt/jobdesk-v2-v4/src")
         if not Path(jd_src).is_dir():
             pytest.skip("JobDesk checkout absent")
@@ -368,7 +359,8 @@ class TestJDConsumption:
             )
             verified = parse_v4_contract_bytes(payload)
             assert verified.is_v4_capable
-            assert len(verified.recipe_ids) == 13
+            # R2.2 声明：目录剩 7 项。
+            assert len(verified.recipe_ids) == 7
             assert "monomer_conformers" in verified.recipe_ids
         finally:
             if sys_path_added:

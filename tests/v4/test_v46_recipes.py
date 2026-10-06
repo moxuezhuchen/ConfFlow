@@ -22,31 +22,15 @@ from confflow.workflow.v4.compiler import compile_workflow
 from confflow.workflow.v4.document import SCHEMA_ID
 from confflow.workflow.v4.parser import parse_workflow_document
 
+# R2.2 声明：irc/qst2/qst3/neb/goat/tspes 六个 recipe 退役，目录剩 7 项。
 EXPECTED_IDS = (
     "optimize",
     "single_point",
     "frequency",
     "opt_freq",
     "transition_state",
-    "irc",
-    "qst2",
-    "qst3",
-    "neb",
-    "goat",
-    "tspes",
     "confgen_torsion",
     "monomer_conformers",
-)
-
-TSPES_IDS = (
-    "ts",
-    "ts_freq",
-    "ts_sp",
-    "irc",
-    "endpoint_opt",
-    "endpoint_freq",
-    "endpoint_sp",
-    "reaction_profile",
 )
 
 
@@ -83,7 +67,7 @@ class TestCatalogShape:
         assert _by_id("optimize")["document"]["steps"][0]["id"] == "optimize"
 
     def test_get_recipe_v4_roundtrip(self) -> None:
-        assert get_recipe_v4("tspes")["id"] == "tspes"
+        assert get_recipe_v4("optimize")["id"] == "optimize"
         try:
             get_recipe_v4("no_such_recipe")
         except KeyError:
@@ -160,59 +144,3 @@ class TestNoHiddenBehavior:
             assert len(set(ids)) == len(ids), recipe["id"]
             for step_id in ids:
                 assert pattern.match(step_id), (recipe["id"], step_id)
-
-
-class TestTspesChain:
-    def test_tspes_is_the_real_chain(self) -> None:
-        document = _by_id("tspes")["document"]
-        assert [s["id"] for s in document["steps"]] == list(TSPES_IDS)
-        by_id = {s["id"]: s for s in document["steps"]}
-        assert by_id["ts"]["calculation"]["role"] == "ts"
-        assert by_id["ts"]["calculation"]["check_params"] == {
-            "imaginary_frequency_count": {"expected": 1}
-        }
-        for step_id in ("ts_freq", "ts_sp", "irc"):
-            assert by_id[step_id]["bindings"] == {
-                "structure": {"source": {"step": "ts", "port": "structures"}}
-            }, step_id
-        assert by_id["irc"]["calculation"]["result_profile"] == "path_endpoints"
-        assert by_id["endpoint_opt"]["bindings"] == {
-            "structure": {"source": {"step": "irc", "port": "structures"}}
-        }
-        assert by_id["endpoint_freq"]["bindings"] == {
-            "structure": {"source": {"step": "endpoint_opt", "port": "structures"}}
-        }
-        assert by_id["endpoint_sp"]["bindings"] == {
-            "structure": {"source": {"step": "endpoint_freq", "port": "structures"}}
-        }
-        analysis = by_id["reaction_profile"]
-        assert analysis["executor"] == "analysis"
-        assert analysis["bindings"] == {
-            "structures": {"source": {"step": "irc", "port": "structures"}},
-            "ts_structures": {"source": {"step": "ts", "port": "structures"}},
-            "lineage_structures": {"source": {"step": "endpoint_opt", "port": "structures"}},
-            "sp_structures": {"source": {"step": "endpoint_sp", "port": "structures"}},
-            "ts_sp_structures": {"source": {"step": "ts_sp", "port": "structures"}},
-            "results": {"source": {"step": "endpoint_freq", "port": "results"}},
-            "ts_results": {"source": {"step": "ts_freq", "port": "results"}},
-            "sp_results": {"source": {"step": "endpoint_sp", "port": "results"}},
-            "ts_sp_results": {"source": {"step": "ts_sp", "port": "results"}},
-        }
-        assert analysis["analysis"]["native"] == {
-            "method": "reaction_profile",
-            "energy_mode": "composite",
-            "electronic_result_kind": "energy",
-            "correction_result_kind": "gibbs_correction",
-            "electronic_source_steps": ["endpoint_sp", "ts_sp"],
-            "correction_source_steps": ["endpoint_freq", "ts_freq"],
-            "energy_fallback": "none",
-            "endpoint_assignment": {"forward": "unassigned", "reverse": "unassigned"},
-            "partial_policy": "require_complete",
-        }
-
-    def test_tspes_compiles_to_eight_planned_steps(self) -> None:
-        document = _by_id("tspes")["document"]
-        compiled = compile_workflow(document)
-        assert compiled.ok, [str(d) for d in compiled.diagnostics]
-        assert compiled.plan is not None
-        assert sorted(s.step_id for s in compiled.plan.steps) == sorted(TSPES_IDS)

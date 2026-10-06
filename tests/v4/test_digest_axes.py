@@ -105,7 +105,6 @@ class TestExecutionInertness:
                     "sandbox": "/scratch/sandbox",
                     "allowed_executables": ["/opt/g16/g16"],
                     "walltime_seconds": 7200,
-                    "target": "node-42",
                 }
             )
         )

@@ -94,17 +94,6 @@ H 0.760000 0.590000 0.000000
 H 0.760000 -0.590000 0.000000
 """
 
-TSPES_STEP_IDS = (
-    "ts",
-    "ts_freq",
-    "ts_sp",
-    "irc",
-    "endpoint_opt",
-    "endpoint_freq",
-    "endpoint_sp",
-    "reaction_profile",
-)
-
 
 def _install_fake_orca(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str) -> None:
     bin_dir = tmp_path / "bin"
@@ -169,13 +158,10 @@ class TestSingleAuthorityResolves:
             registry.executor(ExecutorCapability("no_such_executor"))
 
     def test_analysis_capability_matches_registry(self) -> None:
-        from confflow.analysis.registry import capabilities
-
+        # R2.2 声明：analysis 执行器能力退役，contract 不再广播分析能力
+        # （空数组保留键）；实现包随 R2.3a 删除。
         envelope = build_configuration_contract_v4(producer_version=PRODUCER_VERSION)
-        assert envelope["analysis_capabilities"]["capabilities"] == [
-            {"capability": item["capability"], "contract_version": item["contract_version"]}
-            for item in capabilities()
-        ]
+        assert envelope["analysis_capabilities"]["capabilities"] == []
         assert envelope["analysis_capabilities"]["source"] == "registry"
 
 
@@ -191,18 +177,13 @@ class TestEveryRecipeExecutable:
         return copy.deepcopy(recipe["document"])
 
     def test_every_recipe_through_the_wire(self) -> None:
+        # R2.2 声明：目录剩 7 项（irc/qst2/qst3/neb/goat/tspes 退役）。
         assert tuple(RECIPE_IDS_V4) == (
             "optimize",
             "single_point",
             "frequency",
             "opt_freq",
             "transition_state",
-            "irc",
-            "qst2",
-            "qst3",
-            "neb",
-            "goat",
-            "tspes",
             "confgen_torsion",
             "monomer_conformers",
         )
@@ -220,14 +201,6 @@ class TestEveryRecipeExecutable:
             assert tuple(sorted(report.step_ids)) == tuple(
                 sorted(step["id"] for step in document["steps"])
             )
-
-    def test_tspes_chain_shape_and_preflight(self) -> None:
-        document = self._contract_recipe_document("tspes")
-        assert [step["id"] for step in document["steps"]] == list(TSPES_STEP_IDS)
-        compiled = compile_workflow(document)
-        assert compiled.ok
-        assert compiled.plan is not None
-        assert sorted(step.step_id for step in compiled.plan.steps) == sorted(TSPES_STEP_IDS)
 
 
 # ---------------------------------------------------------------------------

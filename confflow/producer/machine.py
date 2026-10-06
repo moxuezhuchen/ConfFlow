@@ -55,17 +55,14 @@ MACHINE_RESOLUTION_VERSION = "confflow.producer.machine.v1"
 _CAPACITY_KEYS = frozenset({"name", "total_cores", "total_memory"})
 
 #: Profile keys that are operational only: recorded in provenance, never
-#: resolved into scientific wire.  ``remote`` is the human-facing alias for
-#: the endpoint locator the V4 execution binding calls ``target``; both are
-#: accepted and both stay provenance-only.
+#: resolved into scientific wire.  R2.2: the ``target``/``remote``/
+#: ``remote_target`` endpoint locator is retired with remote delivery;
+#: profiles declaring any of them fail closed in validation below.
 _OPERATIONAL_KEYS = frozenset(
     {
         "executable",
         "binding_id",
         "env",
-        "remote",
-        "remote_target",
-        "target",
         "sandbox",
         "allowed_executables",
         "walltime_seconds",
@@ -171,19 +168,12 @@ def _operational_record(profile: Mapping[str, Any]) -> dict[str, Any]:
             record["env"] = dict(env)
         else:
             record["env"] = None
-    for key in ("binding_id", "remote", "remote_target", "target", "sandbox"):
+    for key in ("binding_id", "sandbox"):
         if key in profile:
             locator = profile[key]
             if locator is not None and (not isinstance(locator, str) or not locator.strip()):
                 raise InvalidResourceError(f"profile {key!r} must be a non-empty string or None")
             record[key] = locator
-    targets = {record[key] for key in ("target", "remote", "remote_target") if record.get(key)}
-    if len(targets) > 1:
-        raise InvalidResourceError("profile target/remote/remote_target aliases conflict")
-    if targets:
-        record["target"] = next(iter(targets))
-    record.pop("remote", None)
-    record.pop("remote_target", None)
     if "allowed_executables" in profile:
         allowed = profile["allowed_executables"]
         if not isinstance(allowed, (list, tuple)) or any(
@@ -217,11 +207,9 @@ def resolve_machine_resources(
         is a plain string: it is never bound to a Python variable, per the
         architecture vocabulary gate.  Operational keys (``executable`` as
         a plain path string or as a per-program mapping of program names
-        to paths, ``binding_id``, ``env``, ``remote``/``remote_target``/
-        ``target`` endpoint aliases, ``sandbox``,
+        to paths, ``binding_id``, ``env``, ``sandbox``,
         ``allowed_executables``, ``walltime_seconds``) are validated and
-        carried into ``provenance`` only; the target aliases canonicalize
-        to ``target`` and conflict with each other when they disagree.
+        carried into ``provenance`` only.
         Any other key fails closed.
     resources :
         Per-item scientific request in the existing V4 wire shape:

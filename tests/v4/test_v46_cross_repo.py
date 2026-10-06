@@ -363,7 +363,11 @@ class JobdeskContractDouble:
     def build_tspes_workflow(
         contract: dict[str, Any], *, recipe_id: str = "tspes-default"
     ) -> dict[str, Any]:
-        """Build a V4 TSPES workflow document from the contract + one recipe."""
+        """Build a V4 opt/freq/sp workflow document from the contract + one recipe.
+
+        R2.2: the retired IRC + analysis tail is gone; the double now
+        authors the retained calculation chain (same wire discipline).
+        """
         JobdeskContractDouble.recipe(contract, recipe_id)  # structured failure first
         # Plain-dict V4 document: same shape the real builder helpers emit.
         bindings = {"structure": {"source": {"run": "structures"}}}
@@ -375,7 +379,7 @@ class JobdeskContractDouble:
                 "bindings": dict(bindings),
                 "calculation": {
                     "program": "orca",
-                    "role": "tspes",
+                    "role": "opt",
                     "execution_adapter": "standard",
                     "result_profile": profile,
                     "native": {"keyword": keyword},
@@ -392,16 +396,9 @@ class JobdeskContractDouble:
             "inputs": {"structures": {"kind": "structure", "cardinality": "many"}},
             "global": {"scientific_defaults": {"charge": 0, "multiplicity": 1}},
             "steps": [
-                _calc("s_irc", "path_endpoints", "IRC B3LYP D3BJ"),
                 _calc("s_opt", "standard", "B3LYP Opt"),
                 _calc("s_freq", "standard", "B3LYP Freq"),
                 _calc("s_sp", "standard", "B3LYP SP"),
-                {
-                    "id": "s_analysis",
-                    "executor": "analysis",
-                    "bindings": dict(bindings),
-                    "analysis": {"checks": [], "native": {}},
-                },
             ],
         }
 
@@ -988,11 +985,9 @@ class TestJobdeskSimulation:
         contract = JobdeskContractDouble.parse(contract_bytes)
         workflow = JobdeskContractDouble.build_tspes_workflow(contract)
         assert [step["id"] for step in workflow["steps"]] == [
-            "s_irc",
             "s_opt",
             "s_freq",
             "s_sp",
-            "s_analysis",
         ]
         workflow_bytes = JobdeskContractDouble.serialize_workflow(workflow)
         response = validate_workflow_bytes(workflow_bytes)
@@ -1005,7 +1000,7 @@ class TestJobdeskSimulation:
         edited = JobdeskContractDouble.edit_workflow_field(
             workflow, "s_opt", "calculation.native.keyword", "B3LYP Opt Tight"
         )
-        assert edited["steps"][1]["calculation"]["native"]["keyword"] == "B3LYP Opt Tight"
+        assert edited["steps"][0]["calculation"]["native"]["keyword"] == "B3LYP Opt Tight"
         ensure_valid(validate_workflow_bytes(JobdeskContractDouble.serialize_workflow(edited)))
 
     def test_validated_bytes_equal_submitted_bytes_gate(self) -> None:

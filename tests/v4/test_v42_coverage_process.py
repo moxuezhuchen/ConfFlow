@@ -265,7 +265,6 @@ class TestExecutionBindingMatrix:
             sandbox="/tmp",
             allowed_executables=("/bin/true",),
             walltime_seconds=60,
-            target="n1",
         )
         assert binding.walltime_seconds == 60
         assert binding.allowed_executables == ("t",) or binding.allowed_executables == (
@@ -536,7 +535,7 @@ class TestDescriptorMatrices:
                 requires_adapter=True,
             )
         ok = ExecutorContract(
-            capability=ExecutorCapability.ANALYSIS,
+            capability=ExecutorCapability.CALCULATION,
             contract_version="v",
             output_ports=(port,),
             input_ports=(port,),
