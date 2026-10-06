@@ -7,10 +7,10 @@ independent review, kept in the suite so the failures they proved can
 never regress.  Attack conditions are preserved verbatim:
 
 - R1: ambient/explicit/remote environment identity vs actual launch env.
-- R2: execution targets are executable constraints, never annotations.
+- R2: (retired in R2.2 with the ``target`` field and transport seam.)
 - R3: live cancellation reaches the running native process.
 - R4: analysis result references resolve against the published universe.
-- R5: plain XYZ TSPES input carries typed reaction-group identity.
+- R5: (retired in R2.2 with the tspes chain and live analysis.)
 - R6: a new run generation can never leave an old terminal manifest current.
 - R7: a durable worker bundle is reconciled before any retry attempt.
 
@@ -38,11 +38,9 @@ from confflow.application.v4_run import (
     import_xyz,
 )
 from confflow.domain import FrozenDict
-from confflow.domain.errors import DomainError
 from confflow.execution.process import NativeProcessSupervisor
 from confflow.persistence.contracts import store_path
 from confflow.persistence.work_items import SqliteWorkItemStore
-from confflow.producer import get_recipe_v4
 from confflow.workflow.v4.assembly import RunInputs
 from tests.v4._helpers.audit_native import (
     REPO_ROOT,
@@ -50,21 +48,10 @@ from tests.v4._helpers.audit_native import (
     _digest_over,
     _last_record,
     _launches,
-    _science_chain_native,
     _science_native,
     _single_step_doc,
     _stored_environment_digest,
-    _tspes_doc,
-    _tspes_inputs,
 )
-
-
-def _chain_launches(root: Path) -> int:
-    """Launch count of the full TSPES-chain fake native."""
-    count = root / "chain-count"
-    if not count.exists():
-        return 0
-    return len(count.read_text().splitlines())
 
 
 def _water_inputs() -> RunInputs:
@@ -74,8 +61,6 @@ def _water_inputs() -> RunInputs:
 def _run(
     doc: dict[str, Any],
     run_root: Path,
-    *,
-    transport: Any = None,
 ) -> Any:
     return V4RunApplication(supervisor=NativeProcessSupervisor()).run(
         V4RunRequest(
@@ -83,7 +68,6 @@ def _run(
             run_inputs=_water_inputs(),
             run_root=str(run_root),
             import_sources=FrozenDict({"structures": WATER_XYZ}),
-            transport=transport,
         )
     )
 
@@ -173,7 +157,7 @@ class TestR1EnvironmentIdentity:
         assert received["SCIENCE_ENV"] == "-77"
         assert received["AUDIT_R2_SENTINEL"] == "launch-only"
         assert received["BINDING_ONLY"] == "explicit"
-        assert _stored_environment_digest(run_root, "ts") == _digest_over(script, received)
+        assert _stored_environment_digest(run_root, "optimize") == _digest_over(script, received)
 
     def test_label_metadata_change_does_not_invalidate(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -204,139 +188,8 @@ def _clean_audit_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("AUDIT_R2_SENTINEL", raising=False)
 
 
-def _analysis_doc(target: str) -> tuple[dict[str, Any], RunInputs]:
-    """Build the frozen R2 pure-executor attack document.
-
-    One formal reaction-profile analysis step bound to run-input
-    structures/results, carrying a nonlocal execution target.  The target
-    must be an executable constraint even though the executor is pure.
-    """
-    from confflow.domain import ResultSet, ScientificResult, StructureSet
-    from confflow.domain.units import Unit
-    from tests.v4._builders import structure
-
-    step = copy.deepcopy(get_recipe_v4("tspes")["document"]["steps"][-1])
-    step["bindings"] = {
-        "structures": {"source": {"run": "structures"}},
-        "results": {"source": {"run": "results"}},
-    }
-    native = step["analysis"]["native"]
-    native.pop("electronic_source_steps", None)
-    native.pop("correction_source_steps", None)
-    step["execution"] = {"target": target}
-    doc = {
-        "schema": "confflow.workflow.v4",
-        "global": {"scientific_defaults": {"charge": 0, "multiplicity": 1}},
-        "inputs": {
-            "structures": {"kind": "structure", "cardinality": "many"},
-            "results": {"kind": "result", "cardinality": "many"},
-        },
-        "steps": [step],
-    }
-    t = structure("T", group_key="g")
-    f = structure("F", parent_ids=("T",), role="path_endpoint_forward", group_key="g")
-    r = structure("R", parent_ids=("T",), role="path_endpoint_reverse", group_key="g")
-    results = [
-        ScientificResult(
-            kind=kind,
-            value=value,
-            unit=Unit.HARTREE,
-            subject_structure_id=subject,
-            result_id=f"{subject}{kind}",
-        )
-        for subject, energy in (("T", -5.0), ("F", -10.0), ("R", -20.0))
-        for kind, value in (("energy", energy), ("gibbs_correction", 0.1))
-    ]
-    inputs = RunInputs(
-        structures=FrozenDict({"structures": StructureSet((t, f, r))}),
-        results=FrozenDict({"results": ResultSet(tuple(results))}),
-    )
-    return doc, inputs
-
-
-class TestR2TargetSemantics:
-    """R2: target is an executable constraint, never an annotation."""
-
-    def test_unknown_target_without_transport_fails_closed(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        script = _science_native(tmp_path)
-        monkeypatch.setenv("SCIENCE_ENV", "-11")
-        doc = _single_step_doc(script, env={"SCIENCE_ENV": "-11"})
-        doc["steps"][0]["execution"]["target"] = "nonexistent-cluster"
-        with pytest.raises(DomainError, match="no transport is configured"):
-            _run(doc, tmp_path / "run")
-        assert _launches(tmp_path) == 0
-
-    def test_retired_transport_keyword_is_rejected(self, tmp_path: Path) -> None:
-        """R1.2: remote delivery retired; only transport=None is accepted."""
-        from confflow.application.v4_entry import formal_v4_runner, run_v4_document
-
-        script = _science_native(tmp_path)
-        doc = _single_step_doc(script, env={"SCIENCE_ENV": "-11"})
-        with pytest.raises(DomainError, match="transport is retired"):
-            V4RunRequest(
-                workflow_document=doc,
-                run_inputs=_water_inputs(),
-                run_root=str(tmp_path / "run"),
-                transport=object(),
-            )
-        with pytest.raises(DomainError, match="transport is retired"):
-            run_v4_document(
-                doc,
-                run_inputs=_water_inputs(),
-                run_root=str(tmp_path / "run2"),
-                transport=object(),
-            )
-        with pytest.raises(DomainError, match="transport is retired"):
-            formal_v4_runner(
-                input_xyz=[],
-                config_file="dummy",
-                work_dir=str(tmp_path),
-                transport=object(),
-            )
-        from confflow.execution.binding_resolution import require_target_transport
-
-        with pytest.raises(DomainError, match="no transport is configured"):
-            require_target_transport("nonexistent-cluster", None)
-
-    def test_resolve_step_transport_rejects_retired_transport(self) -> None:
-        """R1.2 compat seam: a non-None transport fails closed with 0 launches."""
-        from confflow.execution import ExecutionBinding
-
-        binding = ExecutionBinding(binding_id="test")
-        with pytest.raises(DomainError, match="transport is retired"):
-            V4RunApplication._resolve_step_transport(binding, transport=object())
-
-    def test_resolve_step_transport_nonlocal_target_fails_closed(self) -> None:
-        """R1.2 compat seam: nonlocal target without transport fails closed."""
-        from confflow.execution import ExecutionBinding
-
-        binding = ExecutionBinding(binding_id="test", target="nonexistent-cluster")
-        with pytest.raises(DomainError, match="no transport is configured"):
-            V4RunApplication._resolve_step_transport(binding)
-
-    def test_pure_executor_nonlocal_target_fails_closed(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        doc, inputs = _analysis_doc("gpu01")
-        with pytest.raises(DomainError):
-            V4RunApplication(supervisor=NativeProcessSupervisor()).run(
-                V4RunRequest(workflow_document=doc, run_inputs=inputs, run_root=str(tmp_path))
-            )
-
-    def test_local_aliases_still_run_locally(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        script = _science_native(tmp_path)
-        monkeypatch.setenv("SCIENCE_ENV", "-12")
-        for index, alias in enumerate(("local", "localhost", "LOCAL")):
-            run_root = tmp_path / f"run-alias-{index}"
-            doc = _single_step_doc(script, env={"SCIENCE_ENV": "-12"})
-            doc["steps"][0]["execution"]["target"] = alias
-            report = _run(doc, run_root)
-            assert report.status == "completed"
-        assert _launches(tmp_path) == 3
+# R2.2 (G18): TestR2TargetSemantics and its _analysis_doc vehicle are retired
+# with the ``target`` field and the R1.2 transport compat seam.
 
 
 def _sleeping_native(root: Path, *, sleep_seconds: float) -> Path:
@@ -362,39 +215,64 @@ def _sleeping_native(root: Path, *, sleep_seconds: float) -> Path:
 class TestR4ResultReferenceIntegrity:
     """R4: analysis citations resolve against the published universe."""
 
+    # R2.2 (G18): no live analysis step can run (the ``analysis`` executor
+    # is unregistered), so the projector is driven with synthesized
+    # ``reaction_profile`` payloads.  The live-manifest end-to-end (which
+    # needed a real analysis run) is deleted; the citation-integrity
+    # assertions over the retained projector are preserved verbatim.
     @staticmethod
-    def _run_analysis(tmp_path: Path) -> tuple[Any, dict[str, Any]]:
-        doc, inputs = _analysis_doc("local")
-        run_root = tmp_path / "run"
-        report = V4RunApplication(supervisor=NativeProcessSupervisor()).run(
-            V4RunRequest(workflow_document=doc, run_inputs=inputs, run_root=str(run_root))
-        )
-        manifest = json.loads((run_root / RUN_RESULT_FILENAME).read_text())
-        return report, manifest
+    def _profile_step(
+        sources: list[Any] | None = None, *, extra_results: tuple[Any, ...] = ()
+    ) -> Any:
+        from confflow.domain import ResultSet, ScientificResult
+        from confflow.domain.units import Unit
 
-    def test_formal_manifest_publishes_and_resolves_every_citation(self, tmp_path: Path) -> None:
-        report, manifest = self._run_analysis(tmp_path)
-        assert report.status == "completed"
-        published = {entry["result_id"]: entry for entry in manifest["results"]}
-        run_input_ids = {
-            entry["result_id"]
-            for entry in manifest["results"]
-            if entry.get("origin") == "run_input"
-        }
-        assert run_input_ids == {
-            "Tenergy",
-            "Tgibbs_correction",
-            "Fenergy",
-            "Fgibbs_correction",
-            "Renergy",
-            "Rgibbs_correction",
-        }
-        groups = [entry for entry in manifest["analyses"] if "group_key" in entry]
-        assert groups, "the formal run must project its reaction group"
-        for group in groups:
-            for cited in group["source_result_ids"]:
-                assert cited in published, cited
-        assert set(groups[0]["source_result_ids"]) <= run_input_ids
+        energies = [
+            ScientificResult(
+                kind=kind,
+                value=value,
+                unit=Unit.HARTREE,
+                subject_structure_id=subject,
+                result_id=f"{subject}{kind}",
+            )
+            for subject in ("T", "F", "R")
+            for kind, value in (("energy", -5.0), ("gibbs_correction", 0.1))
+        ]
+        profile = ScientificResult(
+            kind="reaction_profile",
+            value=FrozenDict(
+                {
+                    "group_key": "g",
+                    "nodes": {"ts": "T", "forward": "F", "reverse": "R"},
+                    "electronic_energy": {"T": -5.0, "F": -10.0, "R": -20.0},
+                    "gibbs_energy": {"T": -4.9, "F": -9.8, "R": -19.7},
+                    "barriers": {
+                        "forward_endpoint": {"value": 5.0},
+                        "reverse_endpoint": {"value": 6.0},
+                    },
+                    "source_result_ids": list(sources) if sources is not None else ["Tenergy"],
+                }
+            ),
+            subject_structure_id="T",
+            result_id="profile-g",
+        )
+        return type(
+            "StepStub",
+            (),
+            {
+                "step_id": "s",
+                "results": ResultSet(tuple(energies) + (profile,) + tuple(extra_results)),
+                "structures": (),
+            },
+        )()
+
+    def test_projector_publishes_group_over_resolved_citations(self) -> None:
+        from confflow.producer.run_result import project_analysis_groups
+
+        groups = project_analysis_groups((self._profile_step(),))
+        assert len(groups) == 1
+        assert groups[0]["source_result_ids"] == ["Tenergy"]
+        assert groups[0]["group_key"] == "g"
 
     def test_projector_rejects_dangling_duplicate_typed_and_stale(self, tmp_path: Path) -> None:
         from dataclasses import replace
@@ -402,9 +280,8 @@ class TestR4ResultReferenceIntegrity:
         from confflow.domain import ResultSet
         from confflow.producer.run_result import project_analysis_groups
 
-        report, _manifest = self._run_analysis(tmp_path)
-        (step,) = report.step_results
-        profile = next(item for item in step.results if item.kind == "reaction_profile")
+        step = self._profile_step()
+        (profile,) = [item for item in step.results if item.kind == "reaction_profile"]
         for sources, expected in (
             (["NONEXISTENT"], "unresolved"),
             (["NONEXISTENT", "NONEXISTENT"], "duplicate"),
@@ -414,21 +291,26 @@ class TestR4ResultReferenceIntegrity:
             value = dict(profile.value)
             value["source_result_ids"] = sources
             changed = replace(profile, value=FrozenDict(value))
-            changed_step = replace(step, results=ResultSet((changed,)))
+            others = tuple(item for item in step.results if item is not profile)
+            changed_step = type(
+                "StepStub",
+                (),
+                {
+                    "step_id": step.step_id,
+                    "results": ResultSet((changed,) + others),
+                    "structures": (),
+                },
+            )()
             with pytest.raises(ValueError) as error:
                 project_analysis_groups((changed_step,))
             assert expected in str(error.value), (sources, error.value)
 
     def test_projector_rejects_wrong_subject_citation(self, tmp_path: Path) -> None:
-        from dataclasses import replace
 
-        from confflow.domain import ResultSet, ScientificResult
+        from confflow.domain import ScientificResult
         from confflow.domain.units import Unit
         from confflow.producer.run_result import project_analysis_groups
 
-        report, _manifest = self._run_analysis(tmp_path)
-        (step,) = report.step_results
-        profile = next(item for item in step.results if item.kind == "reaction_profile")
         foreign = ScientificResult(
             kind="energy",
             value=-99.0,
@@ -436,12 +318,9 @@ class TestR4ResultReferenceIntegrity:
             subject_structure_id="not-in-group",
             result_id="foreign-energy",
         )
-        value = dict(profile.value)
-        value["source_result_ids"] = ["foreign-energy"]
-        changed = replace(profile, value=FrozenDict(value))
-        changed_step = replace(step, results=ResultSet((changed, foreign)))
+        step = self._profile_step(sources=["foreign-energy"], extra_results=(foreign,))
         with pytest.raises(ValueError) as error:
-            project_analysis_groups((changed_step,))
+            project_analysis_groups((step,))
         assert "wrong-subject" in str(error.value)
 
     def test_reference_index_rejects_duplicate_produced_ids(self) -> None:
@@ -463,92 +342,21 @@ class TestR4ResultReferenceIntegrity:
         assert "duplicate" in str(error.value)
 
 
-class TestR5TypedGrouping:
-    """R5: plain XYZ carries typed reaction-group identity end to end."""
-
-    @staticmethod
-    def _plain_inputs(text: str) -> RunInputs:
-        return RunInputs(structures=FrozenDict({"structures": import_xyz(text)}))
-
-    @staticmethod
-    def _run_plain(doc: dict[str, Any], text: str, run_root: Path) -> Any:
-        return V4RunApplication(supervisor=NativeProcessSupervisor()).run(
-            V4RunRequest(
-                workflow_document=doc,
-                run_inputs=TestR5TypedGrouping._plain_inputs(text),
-                run_root=str(run_root),
-                import_sources=FrozenDict({"structures": text}),
-            )
-        )
-
-    def test_plain_xyz_derives_entity_group_identity(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        script = _science_chain_native(tmp_path)
-        doc = _tspes_doc(script, sp="-70", freq="-60")
-        run_root = tmp_path / "run"
-        report = self._run_plain(doc, WATER_XYZ, run_root)
-        assert report.status == "completed"
-        manifest = json.loads((run_root / RUN_RESULT_FILENAME).read_text())
-        groups = [entry for entry in manifest["analyses"] if "group_key" in entry]
-        assert len(groups) == 1
-        group = groups[0]
-        # The group key is the opaque imported entity id, not a position or
-        # filename; derived TS structures carry that root in their lineage.
-        assert len(group["group_key"]) == 32
-        assert all(char in "0123456789abcdef" for char in group["group_key"])
-        assert group["group_key"] in group["ts_structure_id"]
-        assert group["forward_endpoint_id"]
-        assert group["reverse_endpoint_id"]
-
-    def test_twenty_plain_ts_blocks_yield_twenty_groups(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        script = _science_chain_native(tmp_path)
-        doc = _tspes_doc(script, sp="-70", freq="-60")
-        blocks = []
-        for index in range(20):
-            shift = index * 0.013
-            blocks.append(
-                f"3\nts{index:02d}\n"
-                f"O {shift:.6f} 0.000000 0.000000\n"
-                f"H {0.76 + shift:.6f} 0.590000 0.000000\n"
-                f"H {0.76 + shift:.6f} -0.590000 0.000000\n"
-            )
-        text = "\n".join(blocks)
-        run_root = tmp_path / "run"
-        report = self._run_plain(doc, text, run_root)
-        assert report.status == "completed"
-        manifest = json.loads((run_root / RUN_RESULT_FILENAME).read_text())
-        groups = [entry for entry in manifest["analyses"] if "group_key" in entry]
-        assert len(groups) == 20
-        keys = {group["group_key"] for group in groups}
-        assert len(keys) == 20
-        assert all(group["group_key"] in group["ts_structure_id"] for group in groups)
-
-    def test_grouping_requirement_fails_closed_before_native(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        script = _science_chain_native(tmp_path)
-        doc = _tspes_doc(script, sp="-70", freq="-60")
-        # Remove the typed grouping contract: the workflow still needs
-        # reaction grouping, but the input cannot establish identity.
-        del doc["inputs"]["structures"]["grouping"]
-        run_root = tmp_path / "run"
-        with pytest.raises(DomainError) as error:
-            self._run_plain(doc, WATER_XYZ, run_root)
-        assert "reaction grouping" in str(error.value)
-        assert not (tmp_path / "chain-count").exists(), "native work must not start"
+# R2.2 (G18): TestR5TypedGrouping is retired: its end-to-end vehicle
+# (the tspes chain plus a live reaction-profile analysis) is gone.
 
 
 class TestR6GenerationLifecycle:
     """R6: a new generation can never leave an old manifest current."""
 
-    def _run_tspes(self, doc: dict[str, Any], run_root: Path) -> Any:
+    # R2.2: the generation-lifecycle vehicle is the retained single
+    # optimize step (the tspes chain is retired); the lifecycle
+    # assertions are unchanged in shape.
+    def _run_step(self, doc: dict[str, Any], run_root: Path) -> Any:
         return V4RunApplication(supervisor=NativeProcessSupervisor()).run(
             V4RunRequest(
                 workflow_document=doc,
-                run_inputs=_tspes_inputs(),
+                run_inputs=_water_inputs(),
                 run_root=str(run_root),
                 import_sources=FrozenDict({"structures": WATER_XYZ}),
             )
@@ -557,12 +365,12 @@ class TestR6GenerationLifecycle:
     def test_old_completed_generation_never_remains_current(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Case A: gen1 completed, gen2 fails downstream -> gen2 truth wins."""
+        """Case A: gen1 completed, gen2 fails at the step -> gen2 truth wins."""
         from confflow.persistence.generation import load_run_generation
 
-        script = _science_chain_native(tmp_path)
+        script = _science_native(tmp_path)
         run_root = tmp_path / "run"
-        first = self._run_tspes(_tspes_doc(script, sp="-70", freq="-60"), run_root)
+        first = self._run_step(_single_step_doc(script, env={"SCIENCE_ENV": "-70"}), run_root)
         assert first.status == "completed"
         first_manifest = json.loads((run_root / RUN_RESULT_FILENAME).read_text())
         first_generation = load_run_generation(str(run_root))
@@ -570,9 +378,9 @@ class TestR6GenerationLifecycle:
         assert first_generation.status == "completed"
         assert first_manifest["generation_id"] == first_generation.generation_id
 
-        failing = _tspes_doc(script, sp="-70", freq="invalid-number")
-        with pytest.raises(DomainError):
-            self._run_tspes(failing, run_root)
+        failing = _single_step_doc(script, env={"SCIENCE_ENV": "invalid-number"})
+        failed = self._run_step(failing, run_root)
+        assert failed.status == "failed"
 
         second_manifest = json.loads((run_root / RUN_RESULT_FILENAME).read_text())
         second_generation = load_run_generation(str(run_root))
@@ -582,47 +390,47 @@ class TestR6GenerationLifecycle:
         assert second_manifest["status"] == "failed"
         assert second_manifest["generation_id"] == second_generation.generation_id
         assert second_generation.manifest_generation_id == second_generation.generation_id
-        assert second_generation.failure["step_id"] == "reaction_profile"
-        assert second_generation.failure["blocked_downstream"] is True
+        # A plain step failure records no failure location (nothing was
+        # blocked downstream); the terminal failed truth still wins.
+        assert second_generation.failure is None
         step_statuses = {step["id"]: step["status"] for step in second_manifest["steps"]}
-        assert step_statuses["ts_freq"] == "failed"
-        assert "reaction_profile" not in step_statuses
+        assert step_statuses == {"optimize": "failed"}
 
     def test_fresh_upstream_failure_publishes_terminal_failed_generation(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Case B: upstream failed -> blocked downstream -> explicit terminal."""
+        """Case B: the step failed -> explicit terminal failed generation."""
         from confflow.persistence.generation import load_run_generation
 
-        script = _science_chain_native(tmp_path)
+        script = _science_native(tmp_path)
         run_root = tmp_path / "run"
-        doc = _tspes_doc(script, sp="-70", freq="invalid-number")
-        with pytest.raises(DomainError):
-            self._run_tspes(doc, run_root)
+        doc = _single_step_doc(script, env={"SCIENCE_ENV": "invalid-number"})
+        failed = self._run_step(doc, run_root)
+        assert failed.status == "failed"
         generation = load_run_generation(str(run_root))
         assert generation is not None and generation.status == "failed"
         manifest = json.loads((run_root / RUN_RESULT_FILENAME).read_text())
         assert manifest["status"] == "failed"
         assert manifest["generation_id"] == generation.generation_id
-        assert manifest["steps"], "the failed upstream step must be durable in the manifest"
+        assert manifest["steps"], "the failed step must be durable in the manifest"
 
     def test_successful_resume_is_a_new_completed_generation(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         from confflow.persistence.generation import load_run_generation
 
-        script = _science_chain_native(tmp_path)
+        script = _science_native(tmp_path)
         run_root = tmp_path / "run"
-        doc = _tspes_doc(script, sp="-70", freq="-60")
-        first = self._run_tspes(doc, run_root)
+        doc = _single_step_doc(script, env={"SCIENCE_ENV": "-70"})
+        first = self._run_step(doc, run_root)
         assert first.status == "completed"
-        first_launches = _chain_launches(tmp_path)
+        first_launches = _launches(tmp_path)
         assert first_launches > 0
         first_generation = load_run_generation(str(run_root))
-        second = self._run_tspes(doc, run_root)
+        second = self._run_step(doc, run_root)
         assert second.status == "completed"
         # A same-environment resume reuses every durable item: 0 relaunch.
-        assert _chain_launches(tmp_path) == first_launches
+        assert _launches(tmp_path) == first_launches
         second_generation = load_run_generation(str(run_root))
         assert second_generation is not None and second_generation.status == "completed"
         assert second_generation.generation_id != first_generation.generation_id
@@ -739,7 +547,7 @@ class TestR3LiveCancellation:
         assert _launches(tmp_path) == 0
         manifest = json.loads((run_root / RUN_RESULT_FILENAME).read_text())
         assert manifest["status"] == "cancelled"
-        with SqliteWorkItemStore.open(store_path(str(run_root), "ts")) as store:
+        with SqliteWorkItemStore.open(store_path(str(run_root), "optimize")) as store:
             assert store.list_items() == ()
 
     def test_cancel_between_items_keeps_durable_completed_item(
@@ -778,7 +586,7 @@ class TestR3LiveCancellation:
         statuses = {item.status for item in step_result.item_results}
         assert WorkItemStatus.COMPLETED in statuses
         assert WorkItemStatus.CANCELLED in statuses
-        with SqliteWorkItemStore.open(store_path(str(run_root), "ts")) as store:
+        with SqliteWorkItemStore.open(store_path(str(run_root), "optimize")) as store:
             completed = [
                 item_id
                 for item_id in store.list_items()
@@ -800,7 +608,9 @@ class TestR3LiveCancellation:
                 run_inputs=_water_inputs(),
                 run_root=str(run_root),
                 import_sources=FrozenDict({"structures": WATER_XYZ}),
-                should_cancel=lambda: (run_root / "steps" / "ts" / "step_result.json").exists(),
+                should_cancel=lambda: (
+                    run_root / "steps" / "optimize" / "step_result.json"
+                ).exists(),
             )
         )
         assert report.status == "cancelled"
@@ -808,6 +618,6 @@ class TestR3LiveCancellation:
         assert report.step_results[0].status.value == "completed"
         manifest = json.loads((run_root / RUN_RESULT_FILENAME).read_text())
         assert manifest["status"] == "cancelled"
-        with SqliteWorkItemStore.open(store_path(str(run_root), "ts")) as store:
+        with SqliteWorkItemStore.open(store_path(str(run_root), "optimize")) as store:
             (item_id,) = store.list_items()
             assert store.get_state(item_id).value == "completed"

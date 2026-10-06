@@ -9,7 +9,6 @@ import textwrap
 from pathlib import Path
 from typing import Any
 
-from confflow.application.v4_run import RunInputs, import_xyz
 from confflow.domain import FrozenDict
 from confflow.execution.environment import ExecutionEnvironment, measure_executable
 from confflow.persistence.contracts import store_path
@@ -74,9 +73,12 @@ def _last_record(root: Path) -> dict[str, Any]:
 
 
 def _single_step_doc(executable: Path, *, env: dict[str, str] | None = None) -> dict[str, Any]:
-    """Recipe-derived one-step document (the R1 attack shape)."""
-    doc = copy.deepcopy(get_recipe_v4("tspes")["document"])
-    doc["steps"] = doc["steps"][:1]
+    """Recipe-derived one-step document (the R1 attack shape).
+
+    R2.2: derived from the retained ``optimize`` recipe (the retired
+    ``tspes`` chain is gone with the recipe).
+    """
+    doc = copy.deepcopy(get_recipe_v4("optimize")["document"])
     doc["global"] = {"scientific_defaults": {"charge": 0, "multiplicity": 1}}
     execution: dict[str, Any] = {"executable": str(executable)}
     if env is not None:
@@ -94,67 +96,6 @@ def _stored_environment_digest(run_root: Path, step_id: str) -> str:
     digest = registered["environment_digest"]
     assert isinstance(digest, str) and digest.startswith("sha256:")
     return digest
-
-
-def _science_chain_native(root: Path) -> Path:
-    """Fake native for the full TSPES chain (freq failure switchable)."""
-    root.mkdir(parents=True, exist_ok=True)
-    script = root / "chain_orca"
-    script.write_text(textwrap.dedent(f"""\
-            #!{sys.executable}
-            import os, sys
-            from pathlib import Path
-            sys.path.insert(0, {str(REPO_ROOT)!r})
-            from tests.v4.fakes import fake_orca as f
-            counter = Path({str(root / "chain-count")!r})
-            lines = counter.read_text().splitlines() if counter.exists() else []
-            counter.write_text("\\n".join(lines + ["launch"]) + "\\n")
-            text = open(sys.argv[1]).read()
-            cwd = os.getcwd()
-            if "IRC" in text:
-                os.execv(sys.executable, [sys.executable, {str(REPO_ROOT / "tests/v4/fakes/fake_irc.py")!r}, *sys.argv[1:]])
-            if "Freq" in text:
-                os.environ["FAKE_MODE"] = "success_freq_noshift"
-                ts = "/ts_freq/" in cwd
-                f.ENERGY_HARTREE = float(os.environ["TS_FREQ_E"]) if ts else -65.0
-                f.GIBBS_CORRECTION = 0.10 if ts else 0.20
-            elif " SP" in text:
-                os.environ["FAKE_MODE"] = "success_sp"
-                f.ENERGY_HARTREE = float(os.environ["TS_SP_E"]) if "/ts_sp/" in cwd else -80.0
-            elif "OptTS" in text:
-                os.environ["FAKE_MODE"] = "ts_candidate"
-            else:
-                os.environ["FAKE_MODE"] = "success_opt"
-            sys.exit(f.main(sys.argv))
-            """))
-    script.chmod(0o755)
-    return script
-
-
-def _tspes_doc(script: Path, *, sp: str, freq: str) -> dict[str, Any]:
-
-    doc = copy.deepcopy(get_recipe_v4("tspes")["document"])
-    doc["global"] = {"scientific_defaults": {"charge": 0, "multiplicity": 1}}
-    for step in doc["steps"]:
-        if step["executor"] == "calculation":
-            step["execution"] = {
-                "executable": str(script),
-                "env": {"TS_SP_E": sp, "TS_FREQ_E": freq},
-            }
-    return doc
-
-
-def _tspes_inputs() -> RunInputs:
-    from dataclasses import replace as _replace
-
-    from confflow.domain import StructureSet
-
-    (record,) = tuple(import_xyz(WATER_XYZ))
-    # Stable group identity for this pre-R5 helper: a constant group key
-    # survives import-map reconciliation; lineage re-roots to the
-    # persisted entity id on both the fresh and resumed paths.
-    record = _replace(record, group_key="rxn")
-    return RunInputs(structures=FrozenDict({"structures": StructureSet.of(record)}))
 
 
 def _digest_over(executable: Path, env: dict[str, str]) -> str:

@@ -47,20 +47,16 @@ from confflow.execution.batch import BatchStepExecutor, StepExecutionRequest
 from confflow.execution.checks_standard import CHECKS
 from confflow.execution.output_identity import (
     CONFORMER_ROLE,
-    PATH_ENDPOINT_FORWARD_ROLE,
-    PATH_ENDPOINT_REVERSE_ROLE,
     conformer_output_id,
     endpoint_lineage,
-    endpoint_output_id,
     multi_output_structure_id,
 )
 from confflow.execution.process import NativeProcessSupervisor
 from confflow.execution.profile_ensemble import EnsembleProfile
-from confflow.execution.profile_path_endpoints import PathEndpointsProfile
 from confflow.execution.recovery_standard import RECOVERIES
 from confflow.execution.work_item_executor import WorkItemExecutor
 from confflow.persistence import OwnerIdentity
-from confflow.persistence.contracts import PersistenceError, store_path
+from confflow.persistence.contracts import store_path
 from confflow.persistence.reuse import build_producer_provenance
 from confflow.persistence.work_items import SqliteWorkItemStore
 from confflow.programs.registry import get_program_adapter
@@ -71,10 +67,6 @@ from tests.v4._builders import (
     run_inputs,
     structure,
     v4_doc,
-)
-from tests.v4.fakes.fake_irc import (
-    FORWARD_ENERGY,
-    REVERSE_ENERGY,
 )
 
 FAKES_DIR = Path(__file__).resolve().parent / "fakes"
@@ -115,23 +107,6 @@ def _native_count(count_file: Path) -> int:
     return len([line for line in count_file.read_text().splitlines() if line.strip()])
 
 
-def _irc_doc(*, step_id: str = "s_irc", profile: str = "path_endpoints") -> dict[str, Any]:
-    """Build a single-step IRC-shaped document."""
-    step = calc_step(
-        step_id,
-        program="orca",
-        adapter="standard",
-        profile=profile,
-        bindings={"structure": {"source": {"run": "structures"}}},
-        native={"keyword": "IRC B3LYP D3BJ", "irc": {"direction": "both"}},
-        checks=["normal_termination", "geometry_required"],
-        scheduler={"max_parallel_items": 8},
-        resources={"cores_per_item": 1, "memory_per_item": "1GB"},
-        execution={"binding_id": "test", "executable": "orca"},
-    )
-    return v4_doc([step], inputs=STRUCTURE_INPUTS)
-
-
 def _goat_doc() -> dict[str, Any]:
     """Build a single-step ensemble-shaped (GOAT) document."""
     step = calc_step(
@@ -148,32 +123,6 @@ def _goat_doc() -> dict[str, Any]:
         seed=7,
     )
     return v4_doc([step], inputs=STRUCTURE_INPUTS)
-
-
-def _qst_doc() -> dict[str, Any]:
-    """Build the QST2 document (reactant/product paired by group key)."""
-    step = calc_step(
-        "s_qst",
-        program="orca",
-        adapter="named_structures",
-        profile="path_endpoints",
-        bindings={
-            "reactant": {"source": {"run": "reactants"}, "pairing": "by_group_key"},
-            "product": {"source": {"run": "products"}, "pairing": "by_group_key"},
-        },
-        native={"keyword": "QST2 B3LYP"},
-        checks=["normal_termination"],
-        scheduler={"max_parallel_items": 4},
-        resources={"cores_per_item": 1, "memory_per_item": "1GB"},
-        execution={"binding_id": "test", "executable": "orca"},
-    )
-    return v4_doc(
-        [step],
-        inputs={
-            "reactants": {"kind": "structure", "cardinality": "many"},
-            "products": {"kind": "structure", "cardinality": "many"},
-        },
-    )
 
 
 def _compile(document: dict[str, Any]) -> Any:
@@ -351,54 +300,6 @@ def _stamped_results(
     return _ResultSet.of(*stamped)
 
 
-def _irc_result(item: Any, *, step_id: str = "s_irc") -> WorkItemResult:
-    """Build the rule-bound two-endpoint result for an IRC *item*."""
-    driving = item.named_inputs.structures["structure"][0]
-    parent_ids, lineage_root, group_key = endpoint_lineage(driving)
-    records = []
-    for direction, role, delta, _energy in (
-        ("forward", PATH_ENDPOINT_FORWARD_ROLE, 0.02, FORWARD_ENERGY),
-        ("reverse", PATH_ENDPOINT_REVERSE_ROLE, -0.02, REVERSE_ENERGY),
-    ):
-        record_id = endpoint_output_id(item.logical_key, direction)
-        records.append(
-            StructureRecord(
-                id=record_id,
-                atoms=tuple(driving.atoms),
-                coordinates=_shifted(tuple(driving.coordinates), delta),
-                charge=driving.charge,
-                multiplicity=driving.multiplicity,
-                parent_ids=parent_ids,
-                lineage_root_id=lineage_root,
-                source_step_id=step_id,
-                source_work_item_id=item.id,
-                role=role,
-                ordinal=0,
-                group_key=group_key,
-                metadata=FrozenDict({"direction": direction}),
-            )
-        )
-    results = _stamped_results(
-        records,
-        item,
-        step_id,
-        (FORWARD_ENERGY, REVERSE_ENERGY),
-        discriminator=lambda record: f"direction:{record.metadata.get('direction')}",
-    )
-    return WorkItemResult(
-        work_item_id=item.id,
-        status=WorkItemStatus.COMPLETED,
-        structures=StructureSet.of(*records),
-        results=results,
-        artifacts=ArtifactSet(),
-        diagnostics=(),
-        timing=Timing(started_at=1720000000.0, finished_at=1720000001.0, duration_seconds=1.0),
-        error=None,
-        recovery=RecoveryInfo(profile="none", attempted=False),
-        semantic_digest=item.semantic_digest,
-    )
-
-
 def _goat_result(item: Any, *, step_id: str = "s_goat", members: int = 3) -> WorkItemResult:
     """Build the rule-bound conformer-ensemble result for a GOAT *item*."""
     driving = item.named_inputs.structures["structure"][0]
@@ -534,130 +435,6 @@ def _reuse_hits(result: Any) -> int:
     )
 
 
-class TestIrcResume:
-    """IRC step resume: complete → 0 native, 19/20 → 1 native."""
-
-    def test_irc_complete_resumes_zero_native(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        wrapper, count_file = _install_irc(tmp_path, monkeypatch)
-        run_root = str(tmp_path / "run")
-        plan = _compile(_irc_doc())
-        structures = StructureSet.of(
-            *(
-                structure(
-                    f"ts{i:02d}",
-                    group_key=f"rxn-{i:02d}",
-                    lineage_root_id=f"root-{i:02d}",
-                    offset=float(i) * 0.013,
-                )
-                for i in range(20)
-            )
-        )
-        items = assemble(plan, run_inputs(structures={"structures": structures})).for_step("s_irc")
-        assert len(items) == 20
-        adapter = get_program_adapter("orca")  # real adapter: fakes speak real grammar
-        profile = PathEndpointsProfile()
-        checks = (CHECKS["normal_termination"], CHECKS["geometry_required"])
-        request = _request(
-            plan,
-            "s_irc",
-            tuple(items),
-            run_root,
-            wrapper,
-            adapter=adapter,
-            profile=profile,
-            checks=checks,
-        )
-        planned = next(step for step in plan.steps if step.step_id == "s_irc")
-        provenance = _provenance_for(request)
-        seeded_ids: list[str] = []
-        with SqliteWorkItemStore.open(store_path(run_root, "s_irc")) as store:
-            for item in items:
-                result = _irc_result(item)
-                seeded_ids.extend(record.id for record in result.structures)
-                _seed_completed(
-                    store,
-                    item,
-                    planned.step_semantic_digest,
-                    provenance,
-                    result,
-                    request.environment.digest(),
-                )
-            resumed = _batch().execute_step_resumable(
-                request, store=store, run_root=run_root, owner_token="ctl-resume"
-            )
-        assert resumed.summary["completed"] == 20
-        assert resumed.status is StepStatus.COMPLETED
-        assert _reuse_hits(resumed) == 20
-        assert _native_count(count_file) == 0
-        assert [record.id for record in resumed.structures] == seeded_ids
-
-    def test_19_of_20_resumes_single_native(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        wrapper, count_file = _install_irc(tmp_path, monkeypatch)
-        run_root = str(tmp_path / "run")
-        plan = _compile(_irc_doc())
-        structures = StructureSet.of(
-            *(structure(f"ts{i:02d}", group_key=f"rxn-{i:02d}") for i in range(20))
-        )
-        items = assemble(plan, run_inputs(structures={"structures": structures})).for_step("s_irc")
-        adapter = get_program_adapter("orca")  # real adapter: fakes speak real grammar
-        profile = PathEndpointsProfile()
-        checks = (CHECKS["normal_termination"], CHECKS["geometry_required"])
-        request = _request(
-            plan,
-            "s_irc",
-            tuple(items),
-            run_root,
-            wrapper,
-            adapter=adapter,
-            profile=profile,
-            checks=checks,
-        )
-        planned = next(step for step in plan.steps if step.step_id == "s_irc")
-        provenance = _provenance_for(request)
-        failed_item = next(item for item in items if item.logical_key == "s_irc:ts13")
-        with SqliteWorkItemStore.open(store_path(run_root, "s_irc")) as store:
-            for item in items:
-                if item.id == failed_item.id:
-                    _seed_failed(
-                        store,
-                        item,
-                        planned.step_semantic_digest,
-                        provenance,
-                        _failed_result(item),
-                        request.environment.digest(),
-                    )
-                else:
-                    _seed_completed(
-                        store,
-                        item,
-                        planned.step_semantic_digest,
-                        provenance,
-                        _irc_result(item),
-                        request.environment.digest(),
-                    )
-            resumed = _batch().execute_step_resumable(
-                request, store=store, run_root=run_root, owner_token="ctl-resume"
-            )
-        assert resumed.summary["completed"] == 20
-        assert resumed.status is StepStatus.COMPLETED
-        assert _reuse_hits(resumed) == 19
-        assert _native_count(count_file) == 1
-        assert len(tuple(resumed.structures)) == 40
-        retried = next(
-            result for result in resumed.item_results if result.work_item_id == failed_item.id
-        )
-        assert retried.is_completed
-        assert not any(d.code == "reuse_hit" for d in retried.diagnostics)
-        assert {record.role for record in retried.structures} == {
-            PATH_ENDPOINT_FORWARD_ROLE,
-            PATH_ENDPOINT_REVERSE_ROLE,
-        }
-
-
 class TestGoatResume:
     """GOAT step resume: complete → 0 native, ids stable."""
 
@@ -715,189 +492,7 @@ class TestGoatResume:
             assert sorted(record.ordinal for record in result.structures) == [0, 1, 2]
 
 
-class TestQstMappingResume:
-    """QST mapping stability controls reuse: same mapping reuses, moved digest invalidates."""
-
-    def _mapping(self, plan: Any, *, swapped: bool) -> tuple[Any, StructureSet, StructureSet]:
-        """Assemble QST items; *swapped* exchanges products across groups."""
-        reactants = StructureSet.of(
-            *(
-                structure(f"R{i}", kind="methane", group_key=f"g{i}", offset=0.1 * i)
-                for i in range(2)
-            )
-        )
-        products = StructureSet.of(
-            *(
-                structure(
-                    f"P{i}",
-                    kind="methane",
-                    group_key=f"g{1 - i}" if swapped else f"g{i}",
-                    offset=0.05 + 0.1 * i,
-                )
-                for i in range(2)
-            )
-        )
-        assembly = assemble(
-            plan, run_inputs(structures={"reactants": reactants, "products": products})
-        )
-        assert assembly.ok, [item.message for item in assembly.errors]
-        return assembly.for_step("s_qst"), reactants, products
-
-    def test_mapping_unchanged_reuses(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        wrapper, count_file = _install_irc(tmp_path, monkeypatch)
-        run_root = str(tmp_path / "run")
-        plan = _compile(_qst_doc())
-        items, _, _ = self._mapping(plan, swapped=False)
-        assert len(items) == 2
-        adapter = get_program_adapter("orca")  # real adapter: fakes speak real grammar
-        profile = PathEndpointsProfile()
-        checks = (CHECKS["normal_termination"],)
-        request = _request(
-            plan,
-            "s_qst",
-            tuple(items),
-            run_root,
-            wrapper,
-            adapter=adapter,
-            profile=profile,
-            checks=checks,
-        )
-        planned = next(step for step in plan.steps if step.step_id == "s_qst")
-        provenance = _provenance_for(request)
-        with SqliteWorkItemStore.open(store_path(run_root, "s_qst")) as store:
-            for item in items:
-                _seed_completed(
-                    store,
-                    item,
-                    planned.step_semantic_digest,
-                    provenance,
-                    _qst_result(item),
-                    request.environment.digest(),
-                )
-            resumed = _batch().execute_step_resumable(
-                request, store=store, run_root=run_root, owner_token="ctl-resume"
-            )
-        assert resumed.summary["completed"] == 2
-        assert _reuse_hits(resumed) == 2
-        assert _native_count(count_file) == 0
-        for result in resumed.item_results:
-            (record,) = tuple(result.structures)
-            assert record.group_key in ("g0", "g1")
-
-    def test_mapping_changed_invalidates(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        wrapper, count_file = _install_irc(tmp_path, monkeypatch)
-        run_root = str(tmp_path / "run")
-        plan = _compile(_qst_doc())
-        original, _, _ = self._mapping(plan, swapped=False)
-        moved, _, _ = self._mapping(plan, swapped=True)
-        assert {item.logical_key for item in moved} == {item.logical_key for item in original}
-        original_digests = {item.logical_key: item.semantic_digest for item in original}
-        moved_digests = {item.logical_key: item.semantic_digest for item in moved}
-        assert original_digests != moved_digests, "swapped mapping must move the digest"
-        adapter = get_program_adapter("orca")  # real adapter: fakes speak real grammar
-        profile = PathEndpointsProfile()
-        checks = (CHECKS["normal_termination"],)
-        planned = next(step for step in plan.steps if step.step_id == "s_qst")
-        with SqliteWorkItemStore.open(store_path(run_root, "s_qst")) as store:
-            seed_request = _request(
-                plan,
-                "s_qst",
-                tuple(original),
-                run_root,
-                wrapper,
-                adapter=adapter,
-                profile=profile,
-                checks=checks,
-            )
-            provenance = _provenance_for(seed_request)
-            for item in original:
-                _seed_completed(
-                    store,
-                    item,
-                    planned.step_semantic_digest,
-                    provenance,
-                    _qst_result(item),
-                    seed_request.environment.digest(),
-                )
-            resumed = None
-            with pytest.raises(PersistenceError, match="invalidate_input"):
-                resumed = _batch().execute_step_resumable(
-                    _request(
-                        plan,
-                        "s_qst",
-                        tuple(moved),
-                        run_root,
-                        wrapper,
-                        adapter=adapter,
-                        profile=profile,
-                        checks=checks,
-                    ),
-                    store=store,
-                    run_root=run_root,
-                    owner_token="ctl-resume",
-                )
-            assert resumed is None
-            # Invalidation is terminal for this generation: nothing
-            # re-executes natively and the stored generation is preserved.
-            assert _native_count(count_file) == 0
-            from confflow.persistence.contracts import StoredWorkItemStatus
-
-            assert len(store.list_items(StoredWorkItemStatus.COMPLETED)) == 2
-
-
-class TestEndpointIdStability:
-    """Endpoint ids are bit-identical across resume, order included."""
-
-    def test_ids_stable_across_resume(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        wrapper, count_file = _install_irc(tmp_path, monkeypatch)
-        run_root = str(tmp_path / "run")
-        plan = _compile(_irc_doc())
-        structures = StructureSet.of(
-            *(structure(f"ts{i:02d}", group_key=f"rxn-{i:02d}") for i in range(3))
-        )
-        items = assemble(plan, run_inputs(structures={"structures": structures})).for_step("s_irc")
-        adapter = get_program_adapter("orca")  # real adapter: fakes speak real grammar
-        profile = PathEndpointsProfile()
-        checks = (CHECKS["normal_termination"], CHECKS["geometry_required"])
-        request = _request(
-            plan,
-            "s_irc",
-            tuple(items),
-            run_root,
-            wrapper,
-            adapter=adapter,
-            profile=profile,
-            checks=checks,
-        )
-        planned = next(step for step in plan.steps if step.step_id == "s_irc")
-        provenance = _provenance_for(request)
-        expected = [
-            endpoint_output_id(item.logical_key, direction)
-            for item in sorted(items, key=lambda entry: entry.logical_key)
-            for direction in ("forward", "reverse")
-        ]
-        with SqliteWorkItemStore.open(store_path(run_root, "s_irc")) as store:
-            for item in items:
-                _seed_completed(
-                    store,
-                    item,
-                    planned.step_semantic_digest,
-                    provenance,
-                    _irc_result(item),
-                    request.environment.digest(),
-                )
-            first = _batch().execute_step_resumable(
-                request, store=store, run_root=run_root, owner_token="ctl-1"
-            )
-            second = _batch().execute_step_resumable(
-                request, store=store, run_root=run_root, owner_token="ctl-2"
-            )
-        assert [record.id for record in first.structures] == expected
-        assert [record.id for record in second.structures] == expected
-        assert _native_count(count_file) == 0
+# R2.2 (G18): TestIrcResume, TestQstMappingResume and TestEndpointIdStability
+# are retired with the path_endpoints profile and the named_structures
+# adapter. TestGoatResume stays: the ensemble profile is retained as the
+# ConfGen result profile.

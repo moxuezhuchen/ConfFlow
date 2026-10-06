@@ -29,7 +29,6 @@ from confflow.domain.work_item import WorkItem, WorkItemInputs
 from confflow.execution.binding_resolution import (
     BindingRequestDefaults,
     resolve_execution_binding,
-    resolve_remote_target_binding,
     validate_step_seed,
 )
 from confflow.execution.confgen_executor import ConfgenExecutor
@@ -341,18 +340,16 @@ def test_recovery_syntax_owned_by_adapter():
     )
 
 
-def test_binding_resolution_planned_wins_and_remote():
+def test_binding_resolution_planned_wins():
     planned = ExecutionBinding(
         binding_id="planned",
         executable="/opt/g16/g16",
         env=FrozenDict({"OMP": "4"}),
         walltime_seconds=3600,
-        target="hpc",
     )
     defaults = BindingRequestDefaults(
         executables={"orca": "/usr/bin/orca", "g16": "/other/g16"},
         env={"OMP": "1", "BASE": "yes"},
-        target="default",
         walltime_seconds=60,
     )
     resolved = resolve_execution_binding(
@@ -364,36 +361,26 @@ def test_binding_resolution_planned_wins_and_remote():
     assert resolved.executable == "/opt/g16/g16"
     assert resolved.env["OMP"] == "4"
     assert resolved.env["BASE"] == "yes"
-    assert resolved.target == "hpc"
     assert resolved.walltime_seconds == 3600
 
-    remote = resolve_remote_target_binding(
-        program="orca",
-        handoff_execution={
-            "executable": "/local/abs/orca",
-            "env": {"X": "1"},
-            "walltime_seconds": 100,
-            "target": "cluster",
-        },
-        target_default_executable="/opt/orca611/orca",
-    )
-    # Explicit requests are carried verbatim and fail closed remotely when
-    # absent on the target; only a missing request uses the target default.
-    # (No basename extraction: filename parsing must never decide launches.)
-    assert remote.executable == "/local/abs/orca"
-    assert remote.target == "cluster"
-    bare = resolve_remote_target_binding(
-        program="orca",
-        handoff_execution={"executable": "orca"},
-        target_default_executable="/opt/orca611/orca",
-    )
-    assert bare.executable == "orca"
-    fallback = resolve_remote_target_binding(
-        program="orca",
-        handoff_execution={"env": {"X": "1"}},
-        target_default_executable="/opt/orca611/orca",
-    )
-    assert fallback.executable == "/opt/orca611/orca"
+
+def test_binding_resolution_rejects_retired_target_fields() -> None:
+    """R2.2: mappings carrying the retired target fail closed explicitly."""
+    from confflow.domain.errors import DomainError
+
+    with pytest.raises(DomainError, match="retired field 'target'"):
+        resolve_execution_binding(
+            program="g16",
+            planned={"binding_id": "p", "target": "cluster"},
+            adapter_default_executable="g16",
+        )
+    with pytest.raises(DomainError, match="retired field 'target'"):
+        resolve_execution_binding(
+            program="g16",
+            planned=None,
+            defaults={"executables": {}, "env": {}, "target": "cluster"},
+            adapter_default_executable="g16",
+        )
 
 
 def test_validate_step_seed_typed():

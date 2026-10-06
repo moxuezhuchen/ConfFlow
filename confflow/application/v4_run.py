@@ -214,7 +214,6 @@ class V4RunRequest:
     owner_token: str = "v4-run"
     executables: FrozenDict = field(default_factory=FrozenDict)
     supervisor: Any = None
-    transport: Any = None
     import_sources: FrozenDict = field(default_factory=FrozenDict)
     should_cancel: Any = None
 
@@ -225,10 +224,6 @@ class V4RunRequest:
             raise DomainError("run_inputs must be RunInputs")
         if not self.run_root or not isinstance(self.run_root, str):
             raise DomainError("run_root must be a non-empty string")
-        if self.transport is not None:
-            raise DomainError(
-                "transport is retired (R1.2): only transport=None " "(local execution) is accepted"
-            )
         if self.should_cancel is not None and not callable(self.should_cancel):
             raise DomainError("should_cancel must be a callable probe or None")
         if not isinstance(self.executables, FrozenDict):
@@ -538,7 +533,6 @@ class V4RunApplication:
                 else {}
             ),
         )
-        self._preflight_targets(plan, request)
         self._preflight_grouping(plan, run_inputs)
         materialized = MaterializedOutputs.empty()
         step_results: list[Any] = []
@@ -751,39 +745,6 @@ class V4RunApplication:
     # Run-state and import persistence
     # ------------------------------------------------------------------
 
-    def _preflight_targets(self, plan: Any, request: V4RunRequest) -> None:
-        """Validate every planned step's target before any step executes.
-
-        Target is an executable constraint, never an annotation. Remote
-        delivery was retired in R1.2, so a nonlocal target on any step
-        fails closed (0 native launches); a pure executor has no remote
-        delivery at all, so a nonlocal target on it fails closed too.
-        Running this before the step loop guarantees 0 native launches
-        for a bad target anywhere in the plan (a typo on step 7 cannot
-        let steps 1-6 run first).
-        """
-        from ..execution.binding_resolution import (
-            is_local_target,
-            require_target_transport,
-        )
-
-        registry = self._active_registry
-        for planned in plan.steps:
-            execution = getattr(planned, "execution", None)
-            target = getattr(execution, "target", None) if execution is not None else None
-            if target is None or is_local_target(target):
-                continue
-            contract = registry.resolve_executor(planned.executor)
-            if contract.requires_adapter:
-                require_target_transport(target, None)
-                continue
-            capability = getattr(planned.executor, "value", str(planned.executor))
-            raise DomainError(
-                f"step {planned.step_id!r} targets {target!r} but pure executor "
-                f"{capability!r} has no remote delivery; refusing to run it "
-                "locally (0 native launches)"
-            )
-
     @staticmethod
     def _preflight_grouping(plan: Any, run_inputs: RunInputs) -> None:
         """Fail closed before any launch when grouping identity is missing.
@@ -980,17 +941,8 @@ class V4RunApplication:
                 ),
                 adapter_default_executable=adapter.default_executable,
             )
-            # Explicit target gate BEFORE measurement/launch: remote
-            # delivery was retired in R1.2, so nonlocal targets fail
-            # closed with 0 native launches (no silent local fallback).
-            # Local targets (omitted/"local"/"localhost") always run
-            # in-process.
-            from ..execution.binding_resolution import (
-                effective_native_env,
-                require_target_transport,
-            )
+            from ..execution.binding_resolution import effective_native_env
 
-            require_target_transport(binding.target, None)
             # ONE immutable native-environment snapshot per step.  Ambient
             # inheritance is explicit producer-side policy (os.environ) and
             # is fully digested; binding env wins on collision.  The SAME
@@ -1004,26 +956,11 @@ class V4RunApplication:
             )
             provenance = None
         else:
-            # Pure executors (confgen/transform/analysis): no native program,
+            # Pure executors (confgen/transform): no native program,
             # hence no binding and no binary measurement.  The measured
             # implementation environment uses the shared helper with the
             # real registered executor contract version, so implementation
-            # changes invalidate reuse.  Analysis dispatches through its
-            # in-package work-item adapter on the same lifecycle.
-            # Target is an executable constraint: a pure executor has no
-            # remote delivery, so a nonlocal target fails closed here too
-            # (defense in depth behind the application preflight).
-            planned_target = getattr(getattr(planned, "execution", None), "target", None)
-            if planned_target is not None:
-                from ..execution.binding_resolution import is_local_target
-
-                if not is_local_target(planned_target):
-                    capability = getattr(planned.executor, "value", str(planned.executor))
-                    raise DomainError(
-                        f"step {planned.step_id!r} targets {planned_target!r} but pure "
-                        f"executor {capability!r} has no remote delivery; refusing to "
-                        "run it locally (0 native launches)"
-                    )
+            # changes invalidate reuse.
             from ..execution.environment import build_pure_environment
             from ..persistence.reuse import build_producer_provenance
 
@@ -1087,32 +1024,6 @@ class V4RunApplication:
             )
 
     @staticmethod
-    def _resolve_step_transport(
-        binding: Any, transport: Any = None, store: Any = None, *, step_id: str = ""
-    ) -> Any:
-        """Resolve per-step delivery (R1.2: local-only, compat seam).
-
-        Local bindings always return ``None`` (in-process delivery).
-        A nonlocal binding fails closed BEFORE any native launch via
-        :func:`require_target_transport` with no transport. A non-``None``
-        *transport* fails closed: remote delivery was retired in R1.2.
-        Kept for callers that still pass the legacy keyword.
-        """
-        if transport is not None:
-            raise DomainError(
-                "transport is retired (R1.2): only transport=None " "(local execution) is accepted"
-            )
-        from ..execution.binding_resolution import (
-            is_local_target,
-            require_target_transport,
-        )
-
-        target = getattr(binding, "target", None) if binding is not None else None
-        if target is None or is_local_target(target):
-            return None
-        return require_target_transport(target, None)
-
-    @staticmethod
     def _measure_environment(
         *, planned: Any, binding: Any, adapter: Any, relevant_env: Any = None
     ) -> Any:
@@ -1137,7 +1048,7 @@ class V4RunApplication:
             relevant_env = effective_native_env(binding, inherit=os.environ)
         try:
             return EnvironmentMeasurer().build_environment(
-                candidate, adapter=adapter, target=binding.target, relevant_env=relevant_env
+                candidate, adapter=adapter, relevant_env=relevant_env
             )
         except DomainError as exc:
             raise DomainError(

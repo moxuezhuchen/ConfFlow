@@ -82,7 +82,6 @@ from ..domain.canonical import canonical_json_bytes
 from ..domain.diagnostics import Diagnostic, DiagnosticSeverity, diagnostic_sort_key
 from ..domain.result import ResultSet, ScientificResult
 from ..domain.structure import StructureRecord, StructureSet
-from ..execution.contracts import ExecutorCapability
 from ..execution.output_identity import (
     PATH_ENDPOINT_FORWARD_ROLE,
     PATH_ENDPOINT_REVERSE_ROLE,
@@ -485,7 +484,10 @@ class AnalysisExecutor:
 
     name: ClassVar[str] = "analysis"
     contract_version: ClassVar[str] = "confflow.contract.executor.analysis.v1"
-    capability: ClassVar[ExecutorCapability] = ExecutorCapability.ANALYSIS
+    # R2.2: the ExecutorCapability.ANALYSIS member is retired with the
+    # registry entry; the implementation (deleted by R2.3a) keeps a plain
+    # string capability so the orphaned module stays importable.
+    capability: ClassVar[str] = "analysis"
 
     def execute(
         self,

@@ -175,6 +175,11 @@ def _apply_machine_profile(
                 program = raw_program if isinstance(raw_program, str) else None
         explicit = step.get("execution")
         explicit_map = dict(explicit) if isinstance(explicit, Mapping) else {}
+        if "target" in explicit_map:
+            raise _fail(
+                f"step {step_id!r}: execution 'target' is retired with remote "
+                "delivery (R2.2); declare no target"
+            )
         execution: dict[str, Any] = {}
         execution["binding_id"] = (
             explicit_map.get("binding_id")
@@ -202,12 +207,12 @@ def _apply_machine_profile(
         )
         if not execution["env"]:
             execution.pop("env", None)
-        for key in ("sandbox", "allowed_executables", "walltime_seconds", "target"):
+        for key in ("sandbox", "allowed_executables", "walltime_seconds"):
             if key in explicit_map:
                 execution[key] = copy.deepcopy(explicit_map[key])
             elif operational.get(key) is not None:
                 execution[key] = copy.deepcopy(operational[key])
-        for key in ("executable", "sandbox", "allowed_executables", "walltime_seconds", "target"):
+        for key in ("executable", "sandbox", "allowed_executables", "walltime_seconds"):
             if execution.get(key) is None:
                 execution.pop(key, None)
         step["execution"] = execution

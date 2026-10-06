@@ -155,7 +155,8 @@ def test_closed_enum_boundary_truthful() -> None:
     from confflow.execution.contracts import ExecutorCapability
 
     caps = sorted(m.value for m in ExecutorCapability)
-    assert caps == ["analysis", "calculation", "confgen", "structure_transform"]
+    # R2.2: analysis retired.
+    assert caps == ["calculation", "confgen", "structure_transform"]
     assert "dummy" not in caps
     assert DUMMY_KEY not in caps
     assert set(ALLOWED_EXECUTORS) == {"calculation", "confgen", "structure_transform"}
@@ -166,12 +167,12 @@ def test_default_registry_has_no_dummy_and_catalog_stable() -> None:
 
     reg = build_default_intent_registry()
     assert sorted(reg.entries.keys()) == sorted(CARD_TYPES)
-    assert len(reg.entries) == 14
+    assert len(reg.entries) == 9
     assert DUMMY_KEY not in reg.entries
     assert reg.resolve(DUMMY_KEY) is None
     assert reg.execution_registry is None
     catalog = intent_catalog()
-    assert len(catalog["cards"]) == 14
+    assert len(catalog["cards"]) == 9
     assert [c["type"] for c in catalog["cards"]] == sorted(CARD_TYPES)
     assert DUMMY_KEY not in [c["type"] for c in catalog["cards"]]
 

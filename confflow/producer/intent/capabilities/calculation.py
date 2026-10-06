@@ -49,13 +49,6 @@ def _wire_calculation(
             f"step {step_id!r} requires an explicit non-empty native mapping",
             step_id=step_id,
         )
-    goat_section = native.get("goat")
-    if isinstance(goat_section, Mapping) and "RANDOMSEED" in goat_section:
-        raise _fail(
-            f"step {step_id!r}: native goat RANDOMSEED is a second seed authority; "
-            "set the step seed instead",
-            step_id=step_id,
-        )
     program_raw = step.get("program")
     if program_raw is None:
         raise _fail(f"step {step_id!r} requires an explicit program", step_id=step_id)

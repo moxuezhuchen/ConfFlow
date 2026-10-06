@@ -18,11 +18,11 @@ from typing import Any
 import pytest
 
 from confflow.application.v4_run import V4RunApplication, V4RunRequest, import_xyz
-from confflow.domain import FrozenDict, StructureSet
+from confflow.domain import FrozenDict
 from confflow.domain.errors import DomainError
 from confflow.execution.process import NativeProcessSupervisor
 from confflow.workflow.v4.assembly import RunInputs
-from tests.v4._builders import calc_step, structure, v4_doc
+from tests.v4._builders import calc_step, v4_doc
 
 FAKES_DIR = Path(__file__).resolve().parent / "fakes"
 FAKE_ORCA = FAKES_DIR / "fake_orca.py"
@@ -208,180 +208,8 @@ class TestV4RunApplication:
             )
 
 
-class TestV4AnalysisStep:
-    """Analysis through the orchestrator with deterministic subject ids."""
-
-    def _analysis_doc(self) -> dict[str, Any]:
-        """Build a one-TS IRC + reaction-profile document."""
-        irc = calc_step(
-            "s_irc",
-            program="orca",
-            bindings={"structure": {"source": {"run": "structures"}}},
-            native={"keyword": "B3LYP IRC", "irc": {"direction": "both"}},
-            profile="path_endpoints",
-            checks=["normal_termination"],
-            scheduler={"max_parallel_items": 1},
-            resources={"cores_per_item": 1, "memory_per_item": "1GB"},
-            execution={"binding_id": "test", "executable": "orca"},
-        )
-        analysis = {
-            "id": "s_an",
-            "executor": "analysis",
-            "bindings": {
-                "structures": {"source": {"step": "s_irc", "port": "structures"}},
-                "ts_structures": {"source": {"run": "structures"}},
-                "results": {"source": {"run": "gibbs"}},
-                "ts_results": {"source": {"run": "gibbs"}},
-            },
-            "analysis": {
-                "native": {"method": "reaction_profile", "energy_mode": "direct"},
-                "checks": [],
-            },
-        }
-        return v4_doc(
-            [irc, analysis],
-            inputs={
-                "structures": {"kind": "structure", "cardinality": "many"},
-                "gibbs": {"kind": "result", "cardinality": "many"},
-            },
-            global_config={"scientific_defaults": {"charge": 0, "multiplicity": 1}},
-        )
-
-    def _run_chain(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> tuple[Any, str, str, str, Any]:
-        from confflow.domain.result import ResultSet, ScientificResult, make_result_id
-        from confflow.domain.units import Unit
-
-        def _seeded(
-            kind: str, value: float, subject: str, unit: Any = Unit.HARTREE
-        ) -> ScientificResult:
-            # Production calc results always carry producer-scoped ResultRef
-            # identity; the run-input seeds mirror that stamping so the
-            # analysis profile can cite real ResultRef ids.
-            return ScientificResult(
-                kind=kind,
-                value=value,
-                unit=unit,
-                subject_structure_id=subject,
-                source_step_id="seed",
-                source_work_item_id="seed-0",
-                result_id=make_result_id(
-                    step_id="seed",
-                    work_item_id="seed-0",
-                    kind=kind,
-                    subject_structure_id=subject,
-                    producer_digest="sha256:" + "0" * 64,
-                ),
-            )
-
-        monkeypatch.setenv("FAKE_MODE", "success_opt")
-        wrapper = _wrapper(tmp_path, monkeypatch, "an", fake=FAKE_IRC)
-        run_root = str(tmp_path / "run")
-        forward_id = "s_irc:ts00:structure:path_endpoint_forward:0"
-        reverse_id = "s_irc:ts00:structure:path_endpoint_reverse:0"
-        structures = StructureSet.of(structure("ts00", group_key="rxn-00"))
-        gibbs = ResultSet.of(
-            _seeded("gibbs_energy", -76.0, "ts00"),
-            _seeded("gibbs_energy", -76.40, forward_id),
-            _seeded("gibbs_energy", -76.38, reverse_id),
-            _seeded("energy", -76.02, "ts00"),
-            _seeded("energy", -76.42, forward_id),
-            _seeded("energy", -76.40, reverse_id),
-        )
-        report = V4RunApplication(supervisor=NativeProcessSupervisor()).run(
-            V4RunRequest(
-                workflow_document=self._analysis_doc(),
-                run_inputs=RunInputs(
-                    structures=FrozenDict({"structures": structures}),
-                    results=FrozenDict({"gibbs": gibbs}),
-                ),
-                run_root=run_root,
-                executables=FrozenDict({"orca": str(wrapper)}),
-            )
-        )
-        return report, run_root, forward_id, reverse_id, gibbs
-
-    def test_irc_analysis_chain(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        report, run_root, forward_id, reverse_id, gibbs = self._run_chain(tmp_path, monkeypatch)
-        assert report.status == "completed"
-        by_id = {result.step_id: result for result in report.step_results}
-        assert by_id["s_an"].status.value == "completed"
-        kinds = {record.kind for record in by_id["s_an"].results}
-        assert {"barrier_forward_endpoint", "barrier_reverse_endpoint", "reaction_profile"} <= kinds
-        manifest = report.manifest.thaw()
-        # GAP1: the analysis step keeps its minimal ref AND projects one
-        # rich reaction-group entry from the actual analysis StepResult.
-        assert len(manifest["analyses"]) == 2
-        refs = [entry for entry in manifest["analyses"] if "group_key" not in entry]
-        groups = [entry for entry in manifest["analyses"] if "group_key" in entry]
-        assert refs == [{"capability": "analysis", "step_id": "s_an"}]
-        assert len(groups) == 1
-        group = groups[0]
-        assert group["capability"] == "reaction_profile"
-        assert group["step_id"] == "s_an"
-        assert group["group_key"] == "rxn-00"
-        assert group["ts_structure_id"] == "ts00"
-        assert group["forward_endpoint_id"] == forward_id
-        assert group["reverse_endpoint_id"] == reverse_id
-        assert set(group["barriers"]) == {"forward_endpoint", "reverse_endpoint"}
-        assert set(group["energies"]) >= {"electronic_energy", "gibbs_energy"}
-        assert group["assignment"] == "unassigned"
-        assert group["endpoint_assignment"] == {"forward": "unassigned", "reverse": "unassigned"}
-        assert group["source_result_ids"] == sorted(group["source_result_ids"])
-        assert group["source_result_ids"]
-        # The citations are the analysis's actual source ResultRef ids: the
-        # run-input seeds this analysis consumed (a fully step-sourced flow
-        # cites published step results instead; the 20-group TSPES E2E pins
-        # that case).
-        assert set(group["source_result_ids"]) == {
-            record.result_id for record in gibbs if record.result_id is not None
-        }
-        # The durable bytes validate against the actual producer schema.
-        import json as _json
-
-        import jsonschema as _jsonschema
-
-        from confflow.domain.canonical import canonical_json_bytes as _canonical
-        from confflow.producer.contract import run_result_json_schema as _schema
-
-        manifest_path = Path(run_root) / "run_result.json"
-        durable_bytes = manifest_path.read_bytes()
-        assert _canonical(_json.loads(durable_bytes.decode("utf-8"))) == durable_bytes
-        _jsonschema.validate(instance=_json.loads(durable_bytes.decode("utf-8")), schema=_schema())
-
-
-class TestV4AnalysisCrossRepo:
-    """Cross-repo: the same durable analysis bytes, read by REAL JobDesk."""
-
-    pytestmark = pytest.mark.cross_repo
-
-    def test_jobdesk_reads_irc_analysis_view(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, jobdesk: Any
-    ) -> None:
-        report, run_root, forward_id, reverse_id, _gibbs = TestV4AnalysisStep()._run_chain(
-            tmp_path, monkeypatch
-        )
-        assert report.status == "completed"
-        group = next(entry for entry in report.manifest.thaw()["analyses"] if "group_key" in entry)
-        durable_bytes = (Path(run_root) / "run_result.json").read_bytes()
-        view = jobdesk.parse_result_bytes(durable_bytes)
-        assert len(view.groups) == 1
-        seen = view.groups[0]
-        assert seen.group_key == "rxn-00"
-        assert seen.ts_structure_id == "ts00"
-        assert seen.forward_endpoint_id == forward_id
-        assert seen.reverse_endpoint_id == reverse_id
-        assert dict(seen.barriers)
-        assert dict(seen.energy_entries)
-        assert seen.assignment_display == "unassigned"
-        assert set(seen.source_result_ids) == set(group["source_result_ids"])
-        assert len(view.analyses) == 2
-        assert (view.analyses[0].capability, view.analyses[0].step_id) == ("analysis", "s_an")
-        assert (view.analyses[1].capability, view.analyses[1].step_id) == (
-            "reaction_profile",
-            "s_an",
-        )
+# R2.2 (G18): TestV4AnalysisStep and TestV4AnalysisCrossRepo are retired
+# with the IRC + reaction-profile analysis chain.
 
 
 class TestV4Cli:

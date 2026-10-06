@@ -34,7 +34,6 @@ from confflow.workflow.v4 import (
     validate_definition,
 )
 from tests.v4._builders import (
-    analysis_step,
     calc_step,
     codes,
     compile_doc,
@@ -90,18 +89,30 @@ class TestDeterministicCompile:
         assert first.plan.definition_digest == second.plan.definition_digest
 
     def test_document_order_does_not_change_execution_order(self) -> None:
-        steps = [analysis_step("s3"), analysis_step("s1"), analysis_step("s2")]
-        result = _compile_ok(v4_doc(list(steps)))
+        # R2.2: vehicle is retained calculation steps (analysis retired).
+        steps = [
+            calc_step("s3", bindings={"structure": {"source": {"run": "structures"}}}),
+            calc_step("s1", bindings={"structure": {"source": {"run": "structures"}}}),
+            calc_step("s2", bindings={"structure": {"source": {"run": "structures"}}}),
+        ]
+        result = _compile_ok(v4_doc(list(steps), inputs=STRUCTURE_INPUTS))
         assert result.plan is not None
         assert result.plan.execution_order == ("s1", "s2", "s3")
-        reordered = _compile_ok(v4_doc([steps[1], steps[2], steps[0]]))
+        reordered = _compile_ok(v4_doc([steps[1], steps[2], steps[0]], inputs=STRUCTURE_INPUTS))
         assert reordered.plan is not None
         assert reordered.plan.execution_order == ("s1", "s2", "s3")
         assert reordered.plan.definition_digest == result.plan.definition_digest
 
     def test_numeric_step_ids_sort_numerically(self) -> None:
         result = _compile_ok(
-            v4_doc([analysis_step("s10"), analysis_step("s2"), analysis_step("s1")])
+            v4_doc(
+                [
+                    calc_step("s10", bindings={"structure": {"source": {"run": "structures"}}}),
+                    calc_step("s2", bindings={"structure": {"source": {"run": "structures"}}}),
+                    calc_step("s1", bindings={"structure": {"source": {"run": "structures"}}}),
+                ],
+                inputs=STRUCTURE_INPUTS,
+            )
         )
         assert result.plan is not None
         assert result.plan.execution_order == ("s1", "s2", "s10")
@@ -268,20 +279,9 @@ class TestGraphValidation:
         assert "cardinality_error" in codes(result.errors)
         assert "required_input_missing" in _error_reasons(result)
 
-    def test_adapter_required_port_missing(self) -> None:
-        doc = v4_doc(
-            [
-                calc_step(
-                    "s_qst",
-                    adapter="named_structures",
-                    bindings={"reactant": {"source": {"run": "structures"}}},
-                )
-            ],
-            inputs=STRUCTURE_INPUTS,
-        )
-        result = compile_doc(doc)
-        assert not result.ok
-        assert "required_input_missing" in _error_reasons(result)
+    # R2.2 (G18): test_adapter_required_port_missing and
+    # test_named_structures_path_endpoints_profile_compiles are retired
+    # with the named_structures adapter and the path_endpoints profile.
 
     def test_role_selector_requires_advertised_role(self) -> None:
         doc = v4_doc(
@@ -510,9 +510,9 @@ class TestCapabilityVocabulary:
             [
                 {
                     "id": "s_bad",
-                    "executor": "analysis",
+                    "executor": "structure_transform",
                     "calculation": {"program": "g16"},
-                    "analysis": {"native": {}},
+                    "transform": {"kind": "refine"},
                 }
             ]
         )
@@ -546,43 +546,57 @@ class TestFailurePolicyCompilation:
     """Acceptance and partial-consumption are explicit, never guessed."""
 
     def _partial_producer(self, **completion: object) -> dict:
-        return {
-            "id": "s_a",
-            "executor": "analysis",
-            "analysis": {"native": {}},
-            "completion": {"mode": "allow_partial", **completion},
-        }
+        # R2.2: vehicle is a retained calculation producer (analysis
+        # retired); the acceptance-gate assertions are unchanged.
+        return calc_step(
+            "s_a",
+            bindings={"structure": {"source": {"run": "structures"}}},
+            completion={"mode": "allow_partial", **dict(completion)},
+        )
 
     def _consumer(self) -> dict:
-        return {
-            "id": "s_b",
-            "executor": "analysis",
-            "analysis": {"native": {}},
-            "bindings": {"results": {"source": {"step": "s_a", "port": "results"}}},
-        }
+        return transform_step(
+            "s_b",
+            bindings={"structure": {"source": {"step": "s_a", "port": "structures"}}},
+        )
 
     def test_partial_output_denied_blocks_consumers(self) -> None:
-        result = compile_doc(v4_doc([self._partial_producer(), self._consumer()]))
+        result = compile_doc(
+            v4_doc([self._partial_producer(), self._consumer()], inputs=STRUCTURE_INPUTS)
+        )
         assert not result.ok
         assert "partial_output_denied" in _error_reasons(result)
 
     def test_partial_consumption_must_be_declared(self) -> None:
         result = compile_doc(
-            v4_doc([self._partial_producer(partial_output="allow"), self._consumer()])
+            v4_doc(
+                [self._partial_producer(partial_output="allow"), self._consumer()],
+                inputs=STRUCTURE_INPUTS,
+            )
         )
         assert not result.ok
         assert "partial_consumption_undefined" in _error_reasons(result)
 
     def test_partial_consumption_accept_subset_compiles(self) -> None:
         consumer = self._consumer()
-        consumer["bindings"]["results"]["partial_consumption"] = "accept_subset"
-        result = compile_doc(v4_doc([self._partial_producer(partial_output="allow"), consumer]))
+        consumer["bindings"]["structure"]["partial_consumption"] = "accept_subset"
+        result = compile_doc(
+            v4_doc(
+                [self._partial_producer(partial_output="allow"), consumer],
+                inputs=STRUCTURE_INPUTS,
+            )
+        )
         assert result.ok, [(d.code, d.message) for d in result.errors]
 
     def test_partial_consumption_require_complete_compiles(self) -> None:
         consumer = self._consumer()
-        consumer["bindings"]["results"]["partial_consumption"] = "require_complete"
-        result = compile_doc(v4_doc([self._partial_producer(partial_output="allow"), consumer]))
+        consumer["bindings"]["structure"]["partial_consumption"] = "require_complete"
+        result = compile_doc(
+            v4_doc(
+                [self._partial_producer(partial_output="allow"), consumer],
+                inputs=STRUCTURE_INPUTS,
+            )
+        )
         assert result.ok, [(d.code, d.message) for d in result.errors]
 
     def test_minimum_success_with_require_all_rejected(self) -> None:
@@ -758,34 +772,6 @@ class TestDisabledStepSemantics:
         result = compile_doc(doc)
         assert result.ok
         assert "disabled_step_unused" in reasons(result.warnings)
-
-    def test_named_structures_path_endpoints_profile_compiles(self) -> None:
-        """QST2/QST3/NEB shapes are representable without execution."""
-        doc = v4_doc(
-            [
-                calc_step(
-                    "s_neb",
-                    adapter="named_structures",
-                    profile="path_endpoints",
-                    bindings={
-                        "reactant": {
-                            "source": {"run": "reactants"},
-                            "pairing": "by_group_key",
-                        },
-                        "product": {
-                            "source": {"run": "products"},
-                            "pairing": "by_group_key",
-                        },
-                    },
-                )
-            ],
-            inputs={
-                "reactants": {"kind": "structure", "cardinality": "many"},
-                "products": {"kind": "structure", "cardinality": "many"},
-            },
-        )
-        result = compile_doc(doc)
-        assert result.ok, [(d.code, d.details.get("reason"), d.message) for d in result.errors]
 
     def test_disabled_step_toggle_changes_definition_digest(self) -> None:
         enabled_doc = v4_doc(

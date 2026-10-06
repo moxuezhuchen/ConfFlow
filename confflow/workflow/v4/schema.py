@@ -256,7 +256,6 @@ class ExecutionModel(BaseModel):
     sandbox: str | None = None
     allowed_executables: list[str] = Field(default_factory=list)
     walltime_seconds: StrictInt | None = Field(default=None, ge=1)
-    target: str | None = None
 
 
 class StepModel(BaseModel):

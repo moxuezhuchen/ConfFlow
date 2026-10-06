@@ -36,13 +36,6 @@ Seed identity INCLUDES (per assigned step id):
 Seed identity EXCLUDES: all seeds, scheduler policy, machine/execution
 bindings, annotations, labels, output paths.
 
-GOAT boundary: the derived (or explicit) seed is materialized as
-``CalculationModel.seed`` — workflow identity only.  It is never injected
-into ``native.goat`` (ORCA ``RANDOMSEED`` is a boolean switch; installed
-ORCA 6.1.1 exposes no integer RNG seed), and no conformer-level native
-determinism is claimed.  Callers record
-``annotations.producer_resolution.seed_scope = "workflow_identity_only"``.
-
 Full-enumeration typed ConfGen (v3 without ``sampling.cap``) is
 deterministic and gets no seed.  Legacy ConfGen and capped typed ConfGen
 require a seed: an explicit step seed is preserved verbatim, otherwise one
@@ -279,27 +272,16 @@ def _confgen_block(step: Mapping[str, Any]) -> Mapping[str, Any] | None:
     return block if isinstance(block, Mapping) else None
 
 
-def _calculation_native(step: Mapping[str, Any]) -> Mapping[str, Any] | None:
-    block = step.get("calculation")
-    if not isinstance(block, Mapping):
-        return None
-    native = block.get("native")
-    return native if isinstance(native, Mapping) else None
-
-
 def needs_seed(step: Mapping[str, Any]) -> bool:
     """Return whether the wire *step* is stochastic and requires a seed.
 
     Mirrors the strict validation authority
-    (``workflow.v4.validation``: GOAT native mode, legacy ConfGen, typed v3
+    (``workflow.v4.validation``: legacy ConfGen, typed v3
     ``sampling.cap``).  The compiler stays authoritative; this only decides
     where derivation applies.
     """
     executor = step.get("executor")
     if executor == "calculation":
-        native = _calculation_native(step)
-        if isinstance(native, Mapping) and native.get("goat") is not None:
-            return True
         return False
     if executor == "confgen":
         block = _confgen_block(step)
@@ -342,22 +324,14 @@ def seed_scope_for_step(step: Mapping[str, Any], source: str) -> str | None:
 
     Moved verbatim from ``producer.intent.compiler`` (L1-A2a plumbing only):
     ``"none"`` source yields ``None``; confgen yields ``"native_sampling"``;
-    calculation with a ``goat`` native mapping yields
-    ``"workflow_identity_only"``; otherwise ``None``.  No derivation,
-    tolerance, or fixture rule is changed here; GOAT science judgment stays
-    in this seeds authority (mirroring :func:`needs_seed`), never copied
-    into a new intent table.
+    otherwise ``None``.  No derivation,
+    tolerance, or fixture rule is changed here.
     """
     if source == "none":
         return None
     executor = step.get("executor")
     if executor == "confgen":
         return "native_sampling"
-    if executor == "calculation":
-        calculation = step.get("calculation")
-        native = calculation.get("native") if isinstance(calculation, Mapping) else None
-        if isinstance(native, Mapping) and native.get("goat") is not None:
-            return "workflow_identity_only"
     return None
 
 
@@ -371,8 +345,7 @@ def assign_seeds(
     "seed_version": SEED_VERSION}``.  An explicit seed is always recorded
     as ``"explicit"`` and kept verbatim in the wire — even on steps that
     are not stochastically required (e.g. an uncapped typed ConfGen with
-    a user seed).  GOAT seeds land on ``calculation.seed`` only — native
-    mappings are never touched.
+    a user seed).
     """
     document = copy.deepcopy(dict(wire_document))
     raw_steps = document.get("steps")

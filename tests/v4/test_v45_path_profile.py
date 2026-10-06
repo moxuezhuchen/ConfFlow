@@ -186,11 +186,7 @@ class TestProfileContract:
             "confflow.contract.result_profile.path_endpoints.v1"
         )
 
-    def test_contract_matches_registry(self) -> None:
-        from confflow.execution import default_registry
-
-        spec = default_registry().profile("path_endpoints")
-        assert spec.contract_version == PATH_ENDPOINTS_PROFILE_CONTRACT
+    # R2.2 (G18): retired with the path_endpoints registry entry.
 
     def test_geometry_semantics_is_produced(self) -> None:
         assert apply_profile(full_result()).geometry_semantics is GeometrySemantics.PRODUCED

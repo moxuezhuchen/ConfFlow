@@ -13,8 +13,6 @@ invariance, and the architecture-scanner gate.
 from __future__ import annotations
 
 import hashlib
-import os
-import stat
 import subprocess
 import sys
 from pathlib import Path
@@ -26,74 +24,6 @@ from confflow.domain import FrozenDict, StructureSet
 
 FAKES_DIR = Path(__file__).resolve().parent / "fakes"
 FAKE_IRC = FAKES_DIR / "fake_irc.py"
-
-
-def _install_irc_wrapper(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, tag: str) -> Path:
-    """Install a counting fake-IRC executable; return its path.
-
-    The planned document binds the bare ``orca`` name (planned-wins over
-    the request executables map), so the wrapper directory is prepended
-    to ``PATH``: bare-name resolution must land on this counting fake,
-    never on a system ORCA/Gaussian install (or fail under minimal PATH).
-    """
-    bin_dir = tmp_path / f"bin-{tag}"
-    bin_dir.mkdir(parents=True, exist_ok=True)
-    wrapper = bin_dir / "orca"
-    count = tmp_path / f"{tag}.count"
-    count.write_text("")
-    wrapper.write_text(
-        "#!/bin/sh\n"
-        'base=$(basename "$1")\n'
-        f'printf \'%s\\n\' "$base" >> "{count}"\n'
-        f'exec python3 "{FAKE_IRC}" "$@"\n'
-    )
-    wrapper.chmod(0o755)
-    (tmp_path / f"{tag}.fails").write_text("")
-    monkeypatch.setenv("PATH", str(bin_dir) + os.pathsep + os.environ["PATH"])
-    monkeypatch.setenv("FAKE_IRC_MODE", "success")
-    monkeypatch.setenv("FAKE_IRC_ORDER", "reverse_first")
-    monkeypatch.setenv("IRC_FAIL_FILE", str(tmp_path / f"{tag}.fails"))
-    monkeypatch.setenv("FAKE_MODE", "success_opt")
-    assert os.access(wrapper, os.X_OK)
-    assert not bool(wrapper.stat().st_mode & (stat.S_IWGRP | stat.S_IWOTH))
-    return wrapper
-
-
-def _ts_set(count: int) -> StructureSet:
-    """Build *count* TS structures with stable ids, groups, and lineage."""
-    from tests.v4._builders import structure
-
-    width = max(2, len(str(count - 1)) if count > 1 else 2)
-    return StructureSet.of(
-        *(
-            structure(
-                f"ts{index:0{width}d}",
-                group_key=f"rxn-{index:0{width}d}",
-                lineage_root_id=f"root-{index:0{width}d}",
-                offset=float(index) * 0.013,
-            )
-            for index in range(count)
-        )
-    )
-
-
-def _irc_only_doc() -> dict[str, Any]:
-    """Build a single-step IRC document (DAG has exactly one step)."""
-    from tests.v4._builders import calc_step, v4_doc
-
-    irc = calc_step(
-        "s_irc",
-        program="orca",
-        adapter="standard",
-        profile="path_endpoints",
-        bindings={"structure": {"source": {"run": "structures"}}},
-        native={"keyword": "IRC B3LYP D3BJ", "irc": {"direction": "both"}},
-        checks=["normal_termination", "geometry_required"],
-        scheduler={"max_parallel_items": 8},
-        resources={"cores_per_item": 1, "memory_per_item": "1GB"},
-        execution={"binding_id": "test", "executable": "orca"},
-    )
-    return v4_doc([irc], inputs={"structures": {"kind": "structure", "cardinality": "many"}})
 
 
 def _reuse_inputs(**overrides: Any) -> Any:
@@ -154,62 +84,8 @@ def _named_record(
     )
 
 
-class TestFanoutStepCountStable:
-    """20 TS -> 40 IRC endpoints via the formal application path only."""
-
-    def test_20_ts_40_endpoints_dag_step_count_invariant(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        from confflow.application.v4_run import V4RunApplication, V4RunRequest
-        from confflow.domain.completion import StepStatus
-        from confflow.execution.process import NativeProcessSupervisor
-        from confflow.workflow.v4.assembly import RunInputs
-        from tests.v4._builders import assemble, compile_doc, run_inputs
-
-        wrapper = _install_irc_wrapper(tmp_path, monkeypatch, "fanout")
-        document = _irc_only_doc()
-        compiled = compile_doc(document)
-        assert compiled.ok, [(item.code, item.message) for item in compiled.errors]
-        assert compiled.plan is not None
-        plan = compiled.plan
-        assert len(plan.steps) == 1
-        assert plan.steps[0].step_id == "s_irc"
-
-        for count in (20, 40):
-            assembly = assemble(plan, run_inputs(structures={"structures": _ts_set(count)}))
-            assert assembly.ok
-            assert len(assembly.for_step("s_irc")) == count
-        # The DAG never grows with fanout: 20 and 40 inputs, still one step.
-        assert len(plan.steps) == 1
-
-        run_root = str(tmp_path / "run")
-        report = V4RunApplication(supervisor=NativeProcessSupervisor()).run(
-            V4RunRequest(
-                workflow_document=document,
-                run_inputs=RunInputs(structures=FrozenDict({"structures": _ts_set(20)})),
-                run_root=run_root,
-                executables=FrozenDict({"orca": str(wrapper)}),
-            )
-        )
-        assert report.status == "completed"
-        assert len(report.step_results) == 1
-        irc_result = report.step_results[0]
-        assert irc_result.status is StepStatus.COMPLETED
-        assert irc_result.summary["completed"] == 20
-        structures = tuple(irc_result.structures)
-        assert len(structures) == 40
-        roles = {record.role for record in structures}
-        assert roles == {"path_endpoint_forward", "path_endpoint_reverse"}
-        table: dict[tuple[str | None, str | None], Any] = {}
-        for record in structures:
-            key = (record.group_key, record.role)
-            assert key not in table, f"duplicate endpoint slot {key}"
-            table[key] = record
-        assert len(table) == 40
-        sample = table[("rxn-00", "path_endpoint_forward")]
-        assert sample.parent_ids == ("ts00",)
-        assert sample.lineage_root_id == "root-00"
-        assert sample.id == "s_irc:ts00:structure:path_endpoint_forward:0"
+# R2.2 (G18): TestFanoutStepCountStable is retired with the IRC
+# path_endpoints vehicle.
 
 
 class TestMissingRequiredInput:
@@ -549,50 +425,8 @@ class TestIrcMultiOutput:
         assert [record.id for record in ordered] == [forward.id, reverse.id]
 
 
-class TestAnalysisDurableReuse:
-    """Analysis reuse identity is the versioned definition digest."""
-
-    def test_analysis_durable_reuse(self) -> None:
-        from confflow.analysis.models import (
-            ANALYSIS_DEFINITION_DIGEST_KIND,
-            ANALYSIS_DEFINITION_DIGEST_KIND_V1,
-            AnalysisDefinition,
-        )
-        from confflow.domain import FrozenDict as _Frozen
-
-        class _Model:
-            def __init__(self, tag: str) -> None:
-                self.tag = tag
-
-            def compute(self, *args: Any, **kwargs: Any) -> Any:
-                raise AssertionError("not called")
-
-            def to_dict(self) -> dict[str, Any]:
-                return {"mode": self.tag}
-
-        base = AnalysisDefinition(
-            kind="reaction_profile", energy_model=_Model("a"), params=_Frozen({})
-        )
-        same = AnalysisDefinition(
-            kind="reaction_profile", energy_model=_Model("a"), params=_Frozen({})
-        )
-        changed_params = AnalysisDefinition(
-            kind="reaction_profile",
-            energy_model=_Model("a"),
-            params=_Frozen({"theory": "b2plyp"}),
-        )
-        changed_model = AnalysisDefinition(
-            kind="reaction_profile", energy_model=_Model("b"), params=_Frozen({})
-        )
-        assert base.semantic_digest() == same.semantic_digest()
-        assert base.semantic_digest() != changed_params.semantic_digest()
-        assert base.semantic_digest() != changed_model.semantic_digest()
-        assert ANALYSIS_DEFINITION_DIGEST_KIND != ANALYSIS_DEFINITION_DIGEST_KIND_V1
-        assert ANALYSIS_DEFINITION_DIGEST_KIND.startswith("confflow.analysis.definition.")
-
-        from confflow.analysis.executor import AnalysisExecutor
-
-        assert AnalysisExecutor.contract_version == "confflow.contract.executor.analysis.v1"
+# R2.2 (G18): TestAnalysisDurableReuse is retired with the analysis
+# implementation imports (orphaned for R2.3a).
 
 
 class TestEndpointAssignment:

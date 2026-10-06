@@ -24,16 +24,12 @@ from confflow.domain.canonical import canonical_json_bytes
 from confflow.producer.intent import INTENT_SCHEMA, compile_intent
 
 GLOBALS = {"charge": 0, "multiplicity": 1}
+# R2.2: the role-card vehicle is the retained single-step optimize recipe
+# (tspes retired); the machinery assertions are unchanged in shape.
 CARD_FOR = {
-    "ts": "ts@v1",
-    "ts_freq": "ts_freq@v1",
-    "ts_sp": "sp@v1",
-    "irc": "irc@v1",
-    "endpoint_opt": "opt@v1",
-    "endpoint_freq": "freq@v1",
-    "endpoint_sp": "sp@v1",
+    "optimize": "opt@v1",
 }
-CALC_IDS = ["ts", "ts_freq", "ts_sp", "irc", "endpoint_opt", "endpoint_freq", "endpoint_sp"]
+CALC_IDS = ["optimize"]
 
 
 def _u(sid, **kw):
@@ -53,25 +49,23 @@ def _quintuple(exc):
 
 
 def test_b2_role_cover_uncovered_sp_bytes() -> None:
-    user = [
-        _u(s, program="orca", native={"keyword": "B3LYP"}) for s in CALC_IDS if s != "endpoint_sp"
-    ]
+    # The base step is unmatched by user assignments, so the role card
+    # covers it.
     wire = compile_intent(
         {
             "schema": INTENT_SCHEMA,
-            "recipe": "tspes",
+            "recipe": "optimize",
             "globals": dict(GLOBALS),
             "cards": {
                 "fam_sp": {"card": "sp@v1", "program": "orca", "native": {"keyword": "FAMSP"}}
             },
-            "role_cards": {"sp": "fam_sp"},
-            "steps": user,
+            "role_cards": {"optimize": "fam_sp"},
+            "steps": [],
         }
     )
     by_id = {s["id"]: s for s in wire["steps"]}
-    assert by_id["endpoint_sp"]["calculation"]["native"] == {"keyword": "FAMSP"}
-    assert by_id["endpoint_sp"]["annotations"]["producer_resolution"]["role_card"] == "fam_sp"
-    assert by_id["ts"]["calculation"]["native"] == {"keyword": "B3LYP"}
+    assert by_id["optimize"]["calculation"]["native"] == {"keyword": "FAMSP"}
+    assert by_id["optimize"]["annotations"]["producer_resolution"]["role_card"] == "fam_sp"
 
 
 def test_b2_matched_skip_role_ignored() -> None:
@@ -79,96 +73,92 @@ def test_b2_matched_skip_role_ignored() -> None:
     wire = compile_intent(
         {
             "schema": INTENT_SCHEMA,
-            "recipe": "tspes",
+            "recipe": "optimize",
             "globals": dict(GLOBALS),
             "cards": {"fam": {"card": "sp@v1", "program": "orca", "native": {"keyword": "F"}}},
-            "role_cards": {"ts": "fam"},
+            "role_cards": {"optimize": "fam"},
             "steps": user,
         }
     )
     by_id = {s["id"]: s for s in wire["steps"]}
-    assert by_id["ts"]["calculation"]["native"] == {"keyword": "B3LYP"}
+    assert by_id["optimize"]["calculation"]["native"] == {"keyword": "B3LYP"}
 
 
 def test_b2_family_step_id_wins_and_variant_missing() -> None:
-    user = [
-        _u(s, program="orca", native={"keyword": "B3LYP"})
-        for s in CALC_IDS
-        if s not in ("ts_freq", "endpoint_freq")
-    ]
     fam = {
-        "card": "freq@v1",
+        "card": "opt@v1",
         "program": "orca",
-        "native_by_role": {"ts_freq": {"keyword": "F-TS_FREQ"}, "freq": {"keyword": "F-FREQ"}},
+        "native_by_role": {
+            "optimize": {"keyword": "F-STEP"},
+            "opt": {"keyword": "F-ROLE"},
+        },
     }
     wire = compile_intent(
         {
             "schema": INTENT_SCHEMA,
-            "recipe": "tspes",
+            "recipe": "optimize",
             "globals": dict(GLOBALS),
             "cards": {"fam_low": fam},
-            "role_cards": {"freq": "fam_low"},
-            "steps": user,
+            "role_cards": {"opt": "fam_low"},
+            "steps": [],
         }
     )
     by_id = {s["id"]: s for s in wire["steps"]}
-    assert by_id["ts_freq"]["calculation"]["native"] == {"keyword": "F-TS_FREQ"}
-    assert by_id["endpoint_freq"]["calculation"]["native"] == {"keyword": "F-FREQ"}
+    assert by_id["optimize"]["calculation"]["native"] == {"keyword": "F-STEP"}
     with pytest.raises(Exception) as ei:
         compile_intent(
             {
                 "schema": INTENT_SCHEMA,
-                "recipe": "tspes",
+                "recipe": "optimize",
                 "globals": dict(GLOBALS),
                 "cards": {
                     "fam_low": {
-                        "card": "freq@v1",
+                        "card": "opt@v1",
                         "program": "orca",
-                        "native_by_role": {"opt": {"keyword": "O"}},
+                        "native_by_role": {"other": {"keyword": "O"}},
                     }
                 },
-                "role_cards": {"freq": "fam_low"},
-                "steps": user,
+                "role_cards": {"opt": "fam_low"},
+                "steps": [],
             }
         )
     cls, mod, msg, sid, _ = _quintuple(ei.value)
     assert cls == "IntentCompilationError"
-    assert sid == "ts_freq"
-    assert "declares no native_by_role variant for 'freq'" in msg
+    assert sid == "optimize"
+    assert "declares no native_by_role variant for 'opt'" in msg
 
 
 def test_b2_plain_purpose_mismatch_via_role_vs_step_id() -> None:
-    user = [_u(s, program="orca", native={"keyword": "B3LYP"}) for s in CALC_IDS if s != "ts_freq"]
+    # Role-key mapping with a mismatched purpose fails; step-id mapping
+    # with the same card is an explicit, allowed override.
     with pytest.raises(Exception) as ei:
         compile_intent(
             {
                 "schema": INTENT_SCHEMA,
-                "recipe": "tspes",
+                "recipe": "optimize",
                 "globals": dict(GLOBALS),
                 "cards": {
-                    "plain_opt": {"card": "opt@v1", "program": "orca", "native": {"keyword": "O"}}
+                    "plain_sp": {"card": "sp@v1", "program": "orca", "native": {"keyword": "O"}}
                 },
-                "role_cards": {"freq": "plain_opt"},
-                "steps": user,
+                "role_cards": {"opt": "plain_sp"},
+                "steps": [],
             }
         )
     _, _, msg, sid, _ = _quintuple(ei.value)
-    assert sid == "ts_freq"
-    assert "needs purpose 'ts_freq' but card 'plain_opt' is 'opt'" in msg
+    assert sid == "optimize"
+    assert "needs purpose 'opt' but card 'plain_sp' is 'sp'" in msg
     wire = compile_intent(
         {
             "schema": INTENT_SCHEMA,
-            "recipe": "tspes",
+            "recipe": "optimize",
             "globals": dict(GLOBALS),
-            "cards": {
-                "plain_opt": {"card": "opt@v1", "program": "orca", "native": {"keyword": "O"}}
-            },
-            "role_cards": {"ts_freq": "plain_opt"},
-            "steps": user,
+            "cards": {"plain_sp": {"card": "sp@v1", "program": "orca", "native": {"keyword": "O"}}},
+            "role_cards": {"optimize": "plain_sp"},
+            "steps": [],
         }
     )
     by_id = {s["id"]: s for s in wire["steps"]}
-    assert by_id["ts_freq"]["calculation"]["native"] == {"keyword": "O"}
+    assert by_id["optimize"]["calculation"]["native"] == {"keyword": "O"}
 
 
 def test_b2_named_cards_chain_and_expand() -> None:
@@ -215,16 +205,17 @@ def test_b2_named_cards_chain_and_expand() -> None:
 
 
 def test_b2_recipe_cards_normal_mode_and_front_doors() -> None:
-    user = [_u(s, program="orca", native={"keyword": "B3LYP"}) for s in CALC_IDS]
+    # R2.2: the recipe_cards normal mode is retired with tspes (fail
+    # closed); the role_cards front door still rejects unknown cards.
     with pytest.raises(Exception) as ei:
         compile_intent(
             {
                 "schema": INTENT_SCHEMA,
-                "recipe": "tspes",
+                "recipe": "optimize",
                 "globals": dict(GLOBALS),
                 "cards": {"fam": {"card": "sp@v1", "program": "orca", "native": {"keyword": "F"}}},
                 "role_cards": {"bogus": "no_card"},
-                "steps": user,
+                "steps": [],
             }
         )
     assert "role_cards reference unknown cards" in str(ei.value)
@@ -232,47 +223,41 @@ def test_b2_recipe_cards_normal_mode_and_front_doors() -> None:
         compile_intent(
             {
                 "schema": INTENT_SCHEMA,
-                "recipe": "tspes",
-                "globals": {"charge": 0},
-                "recipe_cards": {"low_level": "c1"},
-                "steps": [_u("ts", program="orca", native={"keyword": "X"})],
+                "recipe": "optimize",
+                "globals": dict(GLOBALS),
+                "cards": {"fam": {"card": "sp@v1", "program": "orca", "native": {"keyword": "F"}}},
+                "recipe_cards": {"low_level": "fam", "single_point": "fam"},
+                "steps": [],
             }
         )
-    assert "needs both 'low_level' and 'single_point'" in str(ei2.value)
+    assert "intent 'recipe_cards' is retired" in str(ei2.value)
 
 
 def test_b2_resources_seed_provenance_preserved() -> None:
-    user = [
-        dict(
-            _u(
-                s,
-                program="orca",
-                native={"keyword": "B3LYP"},
-                resources={"cores_per_item": 2},
-                seed=7,
-            )
-        )
-        for s in CALC_IDS
-        if s != "endpoint_sp"
-    ]
     wire = compile_intent(
         {
             "schema": INTENT_SCHEMA,
-            "recipe": "tspes",
+            "recipe": "optimize",
             "globals": dict(GLOBALS),
             "cards": {
-                "fam_sp": {"card": "sp@v1", "program": "orca", "native": {"keyword": "FAMSP"}}
+                "fam_opt": {
+                    "card": "opt@v1",
+                    "program": "orca",
+                    "native": {"keyword": "FAMOPT"},
+                    "resources": {"cores_per_item": 2},
+                    "seed": 7,
+                }
             },
-            "role_cards": {"sp": "fam_sp"},
-            "steps": user,
+            "role_cards": {"opt": "fam_opt"},
+            "steps": [],
         }
     )
     by_id = {s["id"]: s for s in wire["steps"]}
-    assert by_id["ts"]["calculation"]["seed"] == 7
-    assert by_id["ts"]["resources"] == {"cores_per_item": 2}
-    res = by_id["endpoint_sp"]["annotations"]["producer_resolution"]
+    assert by_id["optimize"]["calculation"]["seed"] == 7
+    assert by_id["optimize"]["resources"] == {"cores_per_item": 2}
+    res = by_id["optimize"]["annotations"]["producer_resolution"]
     assert res["recipe_assignment"] is True
-    assert res["role_card"] == "fam_sp"
+    assert res["role_card"] == "fam_opt"
 
 
 def test_b2_wrappers_keep_signature_and_error_identity() -> None:
@@ -396,23 +381,25 @@ def test_b2_catalog_contract_bytes_unchanged() -> None:
     from confflow.producer.intent.compiler import intent_catalog
     from confflow.producer.recipes import recipe_catalog_sha256_v4
 
+    # R2.2 声明重钉：目录、卡片数与 guide 描述随收缩更新。
     assert (
         recipe_catalog_sha256_v4()
-        == "51c1483ffc5b114f34ca49c50e5e75d3cadbe6a2ea31a44281746fc714504f19"
+        == "df0b82e2d0ae49131affe47e69ac72a622385469e09747eeef7d7bebbe4a6766"
     )
     cat = intent_catalog()
     assert "sha256:" + hashlib.sha256(canonical_json_bytes(cat)).hexdigest() == (
-        "sha256:28225e1a432b6308230638d4166659b758bb73b29844da34de411081bdd23e96"
+        "sha256:9e5a479b3c9607fc5c09e2e1c16ef374acd69bfc921d1d2960aaaf8546ed0af4"
     )
-    assert len(cat["cards"]) == 14
+    assert len(cat["cards"]) == 9
     env = build_configuration_contract_v4(
         producer_version="test", producer_commit="test", producer_dirty=False
     )
     bdoc = boundary_document()
     # J1 声明新增（叠加 E1 recipe 目录）：authoring request/response operation enum 增加
     # "structure_preview"（boundary + contract 派生 sha 随之更新）。
+    # R2.2 声明重钉：contract 随暴露面收缩更新，boundary 不变。
     assert "sha256:" + hashlib.sha256(canonical_json_bytes(env)).hexdigest() == (
-        "sha256:d811e5e2feb1954728ae4468cc78887764e6535e7b7a47681e78fb2f881111c5"
+        "sha256:4adf01cbfce5b578346534336b296eda9286f6cb25d4954d22e1f0b88d81b527"
     )
     assert "sha256:" + hashlib.sha256(canonical_json_bytes(bdoc)).hexdigest() == (
         "sha256:d9b5282bb8d6d3b3694a76bea6931b3099902f36fc74e6fe0f46727a9905e0b2"

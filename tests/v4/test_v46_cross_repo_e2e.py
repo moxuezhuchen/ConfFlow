@@ -417,9 +417,10 @@ class TestRealContractRoundtrip:
 # 2. Recipe -> workflow -> REAL validator on the SAME bytes.
 # ---------------------------------------------------------------------------
 class TestRealRecipeToValidation:
-    def test_tspes_recipe_present_in_same_bytes(self, real_contract_bytes: bytes) -> None:
+    # R2.2: vehicle is the retained optimize recipe (tspes retired).
+    def test_optimize_recipe_present_in_same_bytes(self, real_contract_bytes: bytes) -> None:
         contract = JobdeskV4ConsumerDouble.parse(real_contract_bytes)
-        recipe = JobdeskV4ConsumerDouble.recipe(contract, "tspes")
+        recipe = JobdeskV4ConsumerDouble.recipe(contract, "optimize")
         assert recipe["required_fields"] == ["calc.program", "calc.native"]
         assert "document" in recipe and recipe["document"]["schema"] == "confflow.workflow.v4"
 
@@ -427,7 +428,7 @@ class TestRealRecipeToValidation:
         self, real_contract_bytes: bytes
     ) -> None:
         contract = JobdeskV4ConsumerDouble.parse(real_contract_bytes)
-        document = JobdeskV4ConsumerDouble.recipe_document(contract, "tspes")
+        document = JobdeskV4ConsumerDouble.recipe_document(contract, "optimize")
         compiled = compile_workflow(document)
         assert compiled.ok, [str(d) for d in compiled.diagnostics]
         workflow_bytes = JobdeskV4ConsumerDouble.serialize_workflow(document)
@@ -441,11 +442,11 @@ class TestRealRecipeToValidation:
 
     def test_edit_representative_field_then_revalidate(self, real_contract_bytes: bytes) -> None:
         contract = JobdeskV4ConsumerDouble.parse(real_contract_bytes)
-        document = JobdeskV4ConsumerDouble.recipe_document(contract, "tspes")
+        document = JobdeskV4ConsumerDouble.recipe_document(contract, "optimize")
         edited = JobdeskV4ConsumerDouble.edit_native_keyword(
-            document, "ts", "B3LYP D3BJ OptTS Tight"
+            document, "optimize", "B3LYP D3BJ Opt Tight"
         )
-        assert edited["steps"][0]["calculation"]["native"]["keyword"] == "B3LYP D3BJ OptTS Tight"
+        assert edited["steps"][0]["calculation"]["native"]["keyword"] == "B3LYP D3BJ Opt Tight"
         before = validate_workflow_bytes(JobdeskV4ConsumerDouble.serialize_workflow(document))
         after = validate_workflow_bytes(JobdeskV4ConsumerDouble.serialize_workflow(edited))
         _raise_for_report(before)
@@ -456,7 +457,7 @@ class TestRealRecipeToValidation:
     def test_validated_equals_submitted_gate(self, real_contract_bytes: bytes) -> None:
         contract = JobdeskV4ConsumerDouble.parse(real_contract_bytes)
         workflow_bytes = JobdeskV4ConsumerDouble.serialize_workflow(
-            JobdeskV4ConsumerDouble.recipe_document(contract, "tspes")
+            JobdeskV4ConsumerDouble.recipe_document(contract, "optimize")
         )
         report = validate_workflow_bytes(workflow_bytes)
         _raise_for_report(report)
@@ -469,11 +470,11 @@ class TestRealRecipeToValidation:
     def test_validated_not_submitted_tamper(self, real_contract_bytes: bytes) -> None:
         contract = JobdeskV4ConsumerDouble.parse(real_contract_bytes)
         workflow_bytes = JobdeskV4ConsumerDouble.serialize_workflow(
-            JobdeskV4ConsumerDouble.recipe_document(contract, "tspes")
+            JobdeskV4ConsumerDouble.recipe_document(contract, "optimize")
         )
         _raise_for_report(validate_workflow_bytes(workflow_bytes))
         receipt = {"workflow_sha256": "sha256:" + hashlib.sha256(workflow_bytes).hexdigest()}
-        tampered = workflow_bytes.replace(b"OptTS", b"OptTS-Evil")
+        tampered = workflow_bytes.replace(b"D3BJ Opt", b"D3BJ Opt-Evil")
         assert tampered != workflow_bytes
         with pytest.raises(E2EContractError) as excinfo:
             _submit_validated_workflow(receipt, tampered)
@@ -830,7 +831,7 @@ class TestFakeTspesChainToManifest:
     def _definition_digest(self, real_contract_bytes: bytes) -> str:
         contract = JobdeskV4ConsumerDouble.parse(real_contract_bytes)
         workflow_bytes = JobdeskV4ConsumerDouble.serialize_workflow(
-            JobdeskV4ConsumerDouble.recipe_document(contract, "tspes")
+            JobdeskV4ConsumerDouble.recipe_document(contract, "optimize")
         )
         report = validate_workflow_bytes(workflow_bytes)
         _raise_for_report(report)
@@ -956,7 +957,7 @@ class TestFailureMatrixE2E:
     def test_manifest_mismatch(self, real_contract_bytes: bytes) -> None:
         contract = JobdeskV4ConsumerDouble.parse(real_contract_bytes)
         workflow_bytes = JobdeskV4ConsumerDouble.serialize_workflow(
-            JobdeskV4ConsumerDouble.recipe_document(contract, "tspes")
+            JobdeskV4ConsumerDouble.recipe_document(contract, "optimize")
         )
         report = validate_workflow_bytes(workflow_bytes)
         _raise_for_report(report)
@@ -974,7 +975,7 @@ class TestFailureMatrixE2E:
     def test_artifact_checksum_mismatch(self, real_contract_bytes: bytes) -> None:
         contract = JobdeskV4ConsumerDouble.parse(real_contract_bytes)
         workflow_bytes = JobdeskV4ConsumerDouble.serialize_workflow(
-            JobdeskV4ConsumerDouble.recipe_document(contract, "tspes")
+            JobdeskV4ConsumerDouble.recipe_document(contract, "optimize")
         )
         report = validate_workflow_bytes(workflow_bytes)
         _raise_for_report(report)
