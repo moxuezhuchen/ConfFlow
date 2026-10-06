@@ -118,6 +118,14 @@ class CapabilityDescriptor:
     # never collapse into ``None``.
     requires_assignment: Callable[..., None] | None = None
     patch_recipe_step: Callable[..., Any] | None = None
+    # L1-A2b2 (role-card block hook): generic role-card orchestration calls
+    # this by wire executor.  ``None`` is a legal declaration ("this executor
+    # has no role-card science", e.g. confgen/transform today) and means skip
+    # (original non-calculation skip analogue).  Unknown executors resolve to
+    # ``None`` at query time; conflicts / non-callable declarations fail
+    # closed and never collapse into ``None``.  No science lives in the
+    # orchestrator; the hook owns the block patch.
+    apply_role_card_block: Callable[..., Any] | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.key, str) or not self.key.strip():
@@ -152,7 +160,7 @@ class CapabilityDescriptor:
             raise ValueError("CapabilityDescriptor rejected_step_keys carries duplicates")
         if not isinstance(self.wire_block_key, str):
             raise ValueError("CapabilityDescriptor wire_block_key must be a string")
-        for _hook_name in ("requires_assignment", "patch_recipe_step"):
+        for _hook_name in ("requires_assignment", "patch_recipe_step", "apply_role_card_block"):
             try:
                 _hook = getattr(self, _hook_name, None)
             except Exception as exc:

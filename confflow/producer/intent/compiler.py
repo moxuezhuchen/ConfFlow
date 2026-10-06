@@ -21,7 +21,6 @@ Everything heavy is imported lazily inside :func:`compile_intent`.
 from __future__ import annotations
 
 import copy
-import re
 from collections.abc import Mapping
 from typing import Any
 
@@ -29,6 +28,7 @@ from ..cards import CARD_TYPES, CARD_VERSION, get_card, parse_card_ref
 from ..presets import PRESET_VERSION, get_preset
 from .bindings import _auto_bindings, _registry_input_ports  # noqa: F401
 from .common import IntentCompilationError, _fail  # noqa: F401
+from .recipes import _CARD_DEF_KEYS, _require_identifier
 from .resources import (  # noqa: F401
     _apply_checkpoints,
     _apply_machine_profile,
@@ -87,8 +87,6 @@ _DEFAULT_INPUTS: dict[str, Any] = {
 
 _CHECKPOINT_MODES: tuple[str, ...] = ("checkpoint", "readfc", "rcfc")
 
-_IDENTIFIER_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,63}$")
-
 _STEP_KEYS = frozenset(
     {
         "id",
@@ -117,30 +115,6 @@ _STEP_KEYS = frozenset(
 
 _TOP_KEYS = frozenset(
     {"schema", "inputs", "globals", "recipe", "steps", "cards", "role_cards", "recipe_cards"}
-)
-
-#: Allowed members of one reusable card definition (named calculation
-#: template).  Identity/binding/wiring keys are forbidden here: a card
-#: fixes reusable science, never per-step placement.
-_CARD_DEF_KEYS = frozenset(
-    {
-        "card",
-        "role",
-        "program",
-        "native",
-        "native_by_role",
-        "resources",
-        "scheduler",
-        "overrides",
-        "seed",
-        "adapter",
-        "profile",
-        "checks",
-        "check_params",
-        "recovery",
-        "recovery_params",
-        "preset",
-    }
 )
 
 
@@ -251,15 +225,6 @@ def intent_catalog() -> dict[str, Any]:
             "workflow_schema": _WORKFLOW_SCHEMA,
         },
     }
-
-
-def _require_identifier(value: Any, field_name: str) -> str:
-    if not isinstance(value, str) or _IDENTIFIER_PATTERN.match(value) is None:
-        raise _fail(
-            f"{field_name} must match [A-Za-z][A-Za-z0-9_]{{0,63}}, got {value!r}",
-            field_path=field_name,
-        )
-    return value
 
 
 def _coerce_source(document: Any, intent: Any) -> Mapping[str, Any]:
@@ -445,169 +410,31 @@ def _validate_step_keys(step: Mapping[str, Any]) -> None:
 
 
 def _normalize_cards(raw: Any) -> dict[str, dict[str, Any]]:
-    """Validate top-level ``cards`` into name -> definition mappings."""
-    if raw is None:
-        return {}
-    if not isinstance(raw, Mapping):
-        raise _fail("intent 'cards' must be a mapping when declared")
-    out: dict[str, dict[str, Any]] = {}
-    for name, definition in raw.items():
-        _require_identifier(name, "card name")
-        if "@" in str(name):
-            raise _fail(f"card name {name!r} must be a bare identifier (no '@')")
-        if not isinstance(definition, Mapping):
-            raise _fail(f"card {name!r} must be a mapping", field_path=f"cards.{name}")
-        unknown = sorted(set(definition) - _CARD_DEF_KEYS)
-        if unknown:
-            raise _fail(
-                f"card {name!r} carries unknown members: {', '.join(unknown)}",
-                field_path=f"cards.{name}",
-            )
-        if definition.get("card") is None:
-            raise _fail(
-                f"card {name!r} must declare a base card '<type>@<version>' or another card name",
-                field_path=f"cards.{name}.card",
-            )
-        native = definition.get("native")
-        native_by_role = definition.get("native_by_role")
-        if native is not None and native_by_role is not None:
-            raise _fail(
-                f"card {name!r} declares both 'native' and 'native_by_role'; declare one",
-                field_path=f"cards.{name}",
-            )
-        if native is not None and not isinstance(native, Mapping):
-            raise _fail(f"card {name!r} native must be a mapping", field_path=f"cards.{name}")
-        if native_by_role is not None:
-            if not isinstance(native_by_role, Mapping) or not native_by_role:
-                raise _fail(
-                    f"card {name!r} native_by_role must be a non-empty mapping",
-                    field_path=f"cards.{name}",
-                )
-            for role_key, variant in native_by_role.items():
-                if not isinstance(role_key, str) or not role_key.strip():
-                    raise _fail(
-                        f"card {name!r} native_by_role keys must be non-empty strings",
-                        field_path=f"cards.{name}.native_by_role",
-                    )
-                if not isinstance(variant, Mapping) or not variant:
-                    raise _fail(
-                        f"card {name!r} native_by_role[{role_key!r}] must be a non-empty mapping",
-                        field_path=f"cards.{name}.native_by_role",
-                    )
-        out[str(name)] = copy.deepcopy(dict(definition))
-    return out
+    from .recipes import normalize_cards as _new
+
+    return _new(raw)
 
 
 def _resolve_named_cards(raw_cards: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
-    """Resolve chained named cards into inline-based expanded definitions.
+    from .recipes import resolve_named_cards as _new
 
-    A definition whose ``card`` holds ``'@'`` is inline (validated through
-    the card authority); otherwise it names another card and merges
-    recursively with the current definition winning (native replaces
-    wholesale).  Unknown refs and cycles fail closed.
-    """
-    resolved: dict[str, dict[str, Any]] = {}
-
-    def _resolve(name: str, stack: tuple[str, ...]) -> dict[str, Any]:
-        if name in resolved:
-            return copy.deepcopy(resolved[name])
-        if name in stack:
-            raise _fail(f"card chain cycle: {' -> '.join([*stack, name])}")
-        try:
-            definition = raw_cards[name]
-        except KeyError as exc:
-            raise _fail(f"unknown card reference {name!r}") from exc
-        base_ref = definition.get("card")
-        if not isinstance(base_ref, str) or not base_ref.strip():
-            raise _fail(f"card {name!r} base reference must be a non-empty string")
-        base_ref = base_ref.strip()
-        if "@" in base_ref:
-            try:
-                parse_card_ref(base_ref)
-            except ValueError as exc:
-                raise _fail(f"card {name!r} carries a bad card reference: {exc}") from exc
-            merged: dict[str, Any] = {"card": base_ref}
-            for key, value in definition.items():
-                if key == "card":
-                    continue
-                merged[key] = copy.deepcopy(value)
-            resolved[name] = copy.deepcopy(merged)
-            return copy.deepcopy(merged)
-        parent = _resolve(base_ref, (*stack, name))
-        merged = copy.deepcopy(parent)
-        for key, value in definition.items():
-            if key == "card":
-                continue
-            merged[key] = copy.deepcopy(value)
-        merged["card"] = parent["card"]
-        resolved[name] = copy.deepcopy(merged)
-        return copy.deepcopy(merged)
-
-    for card_name in raw_cards:
-        _resolve(card_name, ())
-    return resolved
+    return _new(raw_cards, parse_ref_fn=parse_card_ref)
 
 
 def _expand_named_step(
     step: Mapping[str, Any], resolved_cards: Mapping[str, dict[str, Any]]
 ) -> dict[str, Any]:
-    """Expand one step's named card ref against resolved cards.
+    from .recipes import expand_named_step as _new
 
-    Inline ``'<type>@<version>'`` (or type/version mappings) pass through
-    untouched.  A bare name merges the named template with explicit step
-    fields winning; ``native`` replaces wholesale per the documented rule.
-    """
-    ref = step.get("card")
-    if isinstance(ref, Mapping):
-        return dict(step)
-    if not isinstance(ref, str):
-        return dict(step)
-    if "@" in ref:
-        return dict(step)
-    name = ref.strip()
-    if not name:
-        return dict(step)
-    try:
-        template = resolved_cards[name]
-    except KeyError as exc:
-        raise _fail(
-            f"step {step.get('id')!r} references unknown card {ref!r}",
-            step_id=str(step.get("id")) if step.get("id") is not None else None,
-        ) from exc
-    expanded: dict[str, Any] = {}
-    for key, value in template.items():
-        if key == "card":
-            expanded["card"] = copy.deepcopy(value)
-        else:
-            expanded[key] = copy.deepcopy(value)
-    for key, value in step.items():
-        if key == "card":
-            continue
-        expanded[key] = copy.deepcopy(value)
-    expanded["card"] = copy.deepcopy(template["card"])
-    expanded["_named_card"] = name
-    return expanded
+    return _new(step, resolved_cards)
 
 
 def _select_family_native(
     template: Mapping[str, Any], role: str | None, *, context: str
 ) -> dict[str, Any] | None:
-    """Return the verbatim native variant for *role* from a family card."""
-    native_by_role = template.get("native_by_role")
-    if native_by_role is None:
-        native = template.get("native")
-        return copy.deepcopy(dict(native)) if isinstance(native, Mapping) else None
-    if not isinstance(native_by_role, Mapping):
-        raise _fail(f"{context}: family card native_by_role must be a mapping")
-    if role is None or role not in native_by_role:
-        raise _fail(
-            f"{context}: family card needs an explicit native_by_role entry for "
-            f"role {role!r} (no keyword guessing)"
-        )
-    variant = native_by_role[role]
-    if not isinstance(variant, Mapping):
-        raise _fail(f"{context}: native_by_role[{role!r}] must be a mapping")
-    return copy.deepcopy(dict(variant))
+    from .recipes import select_family_native as _new
+
+    return _new(template, role, context=context)
 
 
 def _normalize_role_cards(raw: Any) -> dict[str, str]:
@@ -624,23 +451,6 @@ def _normalize_role_cards(raw: Any) -> dict[str, str]:
             raise _fail(f"role_cards[{key!r}] must name a reusable card (bare name, no '@')")
         out[key.strip()] = value.strip()
     return out
-
-
-#: Reviewed TSPES calculation purpose per step id.  The purpose card owns
-#: the scientific defaults (adapter/profile/checks/check_params/recovery);
-#: user templates only override advanced fields explicitly.
-_TSPES_PURPOSE: dict[str, str] = {
-    "ts": "ts",
-    "ts_freq": "ts_freq",
-    "ts_sp": "sp",
-    "irc": "irc",
-    "endpoint_opt": "opt",
-    "endpoint_freq": "freq",
-    "endpoint_sp": "sp",
-}
-
-#: Recipes supporting the ``recipe_cards`` normal mode.
-_RECIPE_CARDS_RECIPES: tuple[str, ...] = ("tspes",)
 
 
 def _normalize_recipe_cards(raw: Any) -> dict[str, str]:
@@ -664,26 +474,15 @@ def _normalize_recipe_cards(raw: Any) -> dict[str, str]:
 def _recipe_cards_to_role_cards(
     recipe_cards: Mapping[str, str], *, recipe_id: str
 ) -> dict[str, str]:
-    """Generate the role mapping for the ``recipe_cards`` normal mode."""
-    if recipe_id != "tspes":
-        raise _fail(f"intent 'recipe_cards' currently supports only 'tspes', got {recipe_id!r}")
-    try:
-        low = recipe_cards["low_level"]
-        high = recipe_cards["single_point"]
-    except KeyError as exc:
-        raise _fail(
-            "intent 'recipe_cards' for 'tspes' needs both 'low_level' and 'single_point'"
-        ) from exc
-    # ts_freq purpose special rides the low-level family variant (step-id
-    # key wins inside _apply_role_cards); sp covers both single points.
-    return {"ts": low, "freq": low, "opt": low, "irc": low, "sp": high}
+    from .recipes import recipe_cards_to_role_cards as _new
+
+    return _new(recipe_cards, recipe_id=recipe_id)
 
 
 def _expected_purpose(step_id: str, base_role: str | None, *, recipe_id: str | None) -> str | None:
-    """Return the expected purpose card type for one recipe base step."""
-    if recipe_id == "tspes" and step_id in _TSPES_PURPOSE:
-        return _TSPES_PURPOSE[step_id]
-    return base_role
+    from .recipes import expected_purpose as _new
+
+    return _new(step_id, base_role, recipe_id=recipe_id)
 
 
 def _apply_role_cards(
@@ -694,185 +493,37 @@ def _apply_role_cards(
     skip_ids: set[str],
     recipe_id: str | None = None,
 ) -> set[str]:
-    """Apply reusable cards to uncovered recipe base steps in place.
+    from .capabilities.registry import build_default_intent_registry
+    from .capabilities.registry import role_block_for_executor as _role_block
+    from .capabilities.registry import wire_block_key_for_executor as _wkey
 
-    Coverage keys try the step id first, then the base calculation role;
-    step-id mapping wins over role mapping.  Family cards
-    (``native_by_role``) select the step-id variant first, then the role
-    variant, verbatim with no keyword editing; the purpose card follows
-    the selected variant key (``ts_freq`` steps need a ``ts_freq``
-    variant/purpose even when mapped through the ``freq`` role key).
-    Plain cards apply their native verbatim and their base type must match
-    the expected stage purpose unless mapped by explicit step id.
-    Purpose-card defaults (adapter/profile/checks/check_params/recovery)
-    always replace the catalog demo values; user template fields only
-    override them explicitly.  Returns the set of covered step ids.
-    """
-    covered: set[str] = set()
-    for base in wire_steps:
-        step_id = str(base.get("id"))
-        if step_id in skip_ids:
-            covered.add(step_id)
-            continue
-        calculation = base.get("calculation")
-        if not isinstance(calculation, Mapping):
-            continue
-        base_role = calculation.get("role")
-        base_role_str = base_role if isinstance(base_role, str) else None
-        card_name: str | None = None
-        via_step_id = False
-        if step_id in role_cards:
-            card_name = role_cards[step_id]
-            via_step_id = True
-        elif base_role_str is not None and base_role_str in role_cards:
-            card_name = role_cards[base_role_str]
-        if card_name is None:
-            continue
-        try:
-            template = resolved_cards[card_name]
-        except KeyError as exc:
-            raise _fail(
-                f"role_cards[{step_id!r}] references unknown card {card_name!r}",
-                step_id=step_id,
-            ) from exc
-        try:
-            template_type, template_version = parse_card_ref(template.get("card"))
-        except ValueError as exc:
-            raise _fail(f"card {card_name!r} carries a bad card reference: {exc}") from exc
-        if template_version != CARD_VERSION:
-            raise _fail(f"card {card_name!r} carries an unsupported version")
-        native_by_role = template.get("native_by_role")
-        is_family = isinstance(native_by_role, Mapping)
-        variant_key: str | None = None
-        purpose_type: str
-        native: dict[str, Any] | None = None
-        if is_family:
-            assert isinstance(native_by_role, Mapping)
-            if step_id in native_by_role:
-                variant_key = step_id
-            else:
-                variant_key = base_role_str
-            if variant_key is None or variant_key not in native_by_role:
-                raise _fail(
-                    f"step {step_id!r}: family card {card_name!r} declares no "
-                    f"native_by_role variant for "
-                    f"{variant_key!r} (step-id key wins, else role key; no guessing)",
-                    step_id=step_id,
-                )
-            variant = native_by_role[variant_key]
-            if not isinstance(variant, Mapping) or not variant:
-                raise _fail(
-                    f"step {step_id!r}: family card {card_name!r} variant "
-                    f"{variant_key!r} must be a non-empty mapping",
-                    step_id=step_id,
-                )
-            native = copy.deepcopy(dict(variant))
-            if variant_key in CARD_TYPES:
-                purpose_type = variant_key
-            else:
-                purpose_type = template_type
-            expected_purpose = _expected_purpose(step_id, base_role_str, recipe_id=recipe_id)
-            if expected_purpose is not None and purpose_type != expected_purpose:
-                raise _fail(
-                    f"step {step_id!r} needs purpose {expected_purpose!r} but family "
-                    f"card {card_name!r} selected variant {variant_key!r} "
-                    f"(purpose {purpose_type!r}); declare the {expected_purpose!r} "
-                    "variant explicitly",
-                    step_id=step_id,
-                )
-        else:
-            native_raw = template.get("native")
-            if not isinstance(native_raw, Mapping) or not native_raw:
-                raise _fail(
-                    f"step {step_id!r}: card {card_name!r} must declare an explicit "
-                    "non-empty native mapping (or native_by_role variant)",
-                    step_id=step_id,
-                )
-            native = copy.deepcopy(dict(native_raw))
-            purpose_type = template_type
-            expected = _expected_purpose(step_id, base_role_str, recipe_id=recipe_id)
-            if expected is not None and purpose_type != expected and not via_step_id:
-                raise _fail(
-                    f"step {step_id!r} needs purpose {expected!r} but card "
-                    f"{card_name!r} is {purpose_type!r}; map it by explicit "
-                    "step id when the mismatch is intended",
-                    step_id=step_id,
-                )
-        if purpose_type not in CARD_TYPES:
-            raise _fail(f"card {card_name!r} resolves to unknown purpose {purpose_type!r}")
-        try:
-            purpose = get_card(purpose_type, CARD_VERSION)
-        except ValueError as exc:
-            raise _fail(f"card {card_name!r} resolves to a bad purpose: {exc}") from exc
-        program = template.get("program")
-        if not isinstance(program, str) or not program.strip():
-            raise _fail(
-                f"step {step_id!r}: card {card_name!r} must declare an explicit program "
-                "(demo recipe science must not leak into production)",
-                step_id=step_id,
-            )
-        if not isinstance(native, Mapping) or not native:
-            raise _fail(
-                f"step {step_id!r}: card {card_name!r} must declare an explicit non-empty "
-                "native mapping (or native_by_role variant)",
-                step_id=step_id,
-            )
-        patched_calc = copy.deepcopy(dict(calculation))
-        from .capabilities.calculation import _resolve_program as _resolve_program_cap
+    _registry = build_default_intent_registry()
 
-        patched_calc["program"] = _resolve_program_cap(program, step_id=step_id)
-        patched_calc["native"] = copy.deepcopy(dict(native))
-        # Purpose-card scientific defaults replace catalog demo values;
-        # explicit template fields win over the purpose defaults.
-        patched_calc["execution_adapter"] = copy.deepcopy(
-            template.get("adapter", purpose["adapter"])
-        )
-        patched_calc["result_profile"] = copy.deepcopy(template.get("profile", purpose["profile"]))
-        if template.get("checks") is not None:
-            patched_calc["checks"] = copy.deepcopy(list(template["checks"]))
-        else:
-            patched_calc["checks"] = copy.deepcopy(list(purpose["checks"]))
-        if template.get("check_params") is not None:
-            patched_calc["check_params"] = copy.deepcopy(dict(template["check_params"]))
-        else:
-            patched_calc["check_params"] = copy.deepcopy(dict(purpose.get("check_params", {})))
-        if template.get("recovery") is not None:
-            recovery = dict(patched_calc.get("recovery", {}))
-            recovery["profile"] = copy.deepcopy(template["recovery"])
-            patched_calc["recovery"] = recovery
-        else:
-            patched_calc["recovery"] = {"profile": copy.deepcopy(purpose["recovery"])}
-        if template.get("recovery_params") is not None:
-            recovery = dict(patched_calc.get("recovery", {}))
-            recovery["params"] = copy.deepcopy(dict(template["recovery_params"]))
-            patched_calc["recovery"] = recovery
-        if template.get("seed") is not None:
-            patched_calc["seed"] = copy.deepcopy(template["seed"])
-        if template.get("overrides") is not None:
-            patched_calc["overrides"] = copy.deepcopy(dict(template["overrides"]))
-        base["calculation"] = patched_calc
-        if template.get("resources") is not None:
-            base["resources"] = copy.deepcopy(dict(template["resources"]))
-        if template.get("scheduler") is not None:
-            base["scheduler"] = copy.deepcopy(dict(template["scheduler"]))
-        annotations = dict(base.get("annotations") or {})
-        resolution = dict(annotations.get("producer_resolution") or {})
-        resolution["intent_schema"] = INTENT_SCHEMA
-        resolution["recipe_assignment"] = True
-        resolution["role_card"] = card_name
-        resolution["named_card"] = card_name
-        resolution["card_type"] = purpose_type
-        resolution["card_version"] = CARD_VERSION
-        if variant_key is not None:
-            resolution["family_variant"] = variant_key
-        resolution["purpose"] = purpose_type
-        annotations["producer_resolution"] = resolution
-        base["annotations"] = annotations
-        base["_named_card"] = card_name
-        base["_card_type"] = purpose_type
-        base["_card_version"] = CARD_VERSION
-        covered.add(step_id)
-    return covered
+    def _wire_key_of(_executor: str) -> str | None:
+        return _wkey(_registry, _executor)
+
+    def _role_block_of(_executor: str) -> Any | None:
+        return _role_block(_registry, _executor)
+
+    _card_access: dict[str, Any] = {
+        "parse_ref": parse_card_ref,
+        "get_card": get_card,
+        "card_types": CARD_TYPES,
+        "card_version": CARD_VERSION,
+        "intent_schema": INTENT_SCHEMA,
+    }
+    from .recipes import apply_role_cards as _new
+
+    return _new(
+        wire_steps,
+        role_cards,
+        resolved_cards,
+        skip_ids=skip_ids,
+        recipe_id=recipe_id,
+        role_block_of=_role_block_of,
+        card_access=_card_access,
+        wire_key_of=_wire_key_of,
+    )
 
 
 # ----------------------------------------------------------------------
@@ -1278,6 +929,7 @@ def compile_intent(
     # public wrappers keep their 3-param defaults via the default registry.)
     from .recipes import missing_recipe_assignments as _missing_generic
     from .recipes import run_recipe_lane as _run_recipe_lane
+    from .recipes import select_family_native as _select_new
 
     def _hooks_of(_executor: str) -> tuple[Any, Any] | None:
         from .capabilities.registry import recipe_hooks_for_executor as _query
@@ -1292,15 +944,32 @@ def compile_intent(
         user_steps,
         hooks_of=_hooks_of,
         wire_key_of=_wire_key_of,
-        select_family_native_fn=_select_family_native,
+        select_family_native_fn=_select_new,
     )
     if base_wire_steps and role_cards:
-        covered = _apply_role_cards(
+        from .capabilities.registry import role_block_for_executor as _role_block_new
+        from .recipes import apply_role_cards as _apply_new
+
+        _card_access: dict[str, Any] = {
+            "parse_ref": parse_card_ref,
+            "get_card": get_card,
+            "card_types": CARD_TYPES,
+            "card_version": CARD_VERSION,
+            "intent_schema": INTENT_SCHEMA,
+        }
+
+        def _role_block_of(_executor: str) -> Any | None:
+            return _role_block_new(intent_registry, _executor)
+
+        covered = _apply_new(
             wire_steps,
             role_cards,
             resolved_cards,
             skip_ids=set(matched),
             recipe_id=str(recipe_id).strip() if recipe_id is not None else None,
+            role_block_of=_role_block_of,
+            card_access=_card_access,
+            wire_key_of=_wire_key_of,
         )
         matched = set(matched) | set(covered)
     if base_wire_steps:
@@ -1360,7 +1029,7 @@ def compile_intent(
                     role_hint = None
             user = {
                 **user,
-                "native": _select_family_native(
+                "native": _select_new(
                     {"native_by_role": user["native_by_role"]},
                     role_hint if isinstance(role_hint, str) else None,
                     context=f"step {step_id!r}",

@@ -122,7 +122,8 @@ def build_intent_registry(
                 )
         # L1-A2b1: recipe hooks must be callable-or-None (fail-closed, never
         # silent None).  Missing attribute derives None for C2-era compat.
-        for _hook_name in ("requires_assignment", "patch_recipe_step"):
+        # L1-A2b2: role-card block hook follows the same rule (single hook).
+        for _hook_name in ("requires_assignment", "patch_recipe_step", "apply_role_card_block"):
             try:
                 _has = hasattr(descriptor, _hook_name)
             except Exception as exc:
@@ -145,6 +146,7 @@ def build_intent_registry(
     _check_executor_wire_consistency(seen)
     _check_executor_seed_consistency(seen)
     _check_executor_recipe_hooks_consistency(seen)
+    _check_executor_role_block_consistency(seen)
     return IntentRegistry(entries=seen)
 
 
@@ -361,6 +363,87 @@ def _check_executor_recipe_hooks_consistency(
             raise ValueError(f"conflicting recipe hooks for executor {executor!r}")
 
 
+def _role_block_of(descriptor: Any) -> Any:
+    """Return the role-card block hook (strict, callable-or-None).
+
+    Missing attribute derives ``None`` for C2-era compat; present-but-invalid
+    (non-callable, non-None) raises fail-closed and never collapses into a
+    silent skip.  Unreadable attributes also raise.
+    """
+    try:
+        has_attr = hasattr(descriptor, "apply_role_card_block")
+    except Exception as exc:
+        raise ValueError("role-card hook metadata unreadable") from exc
+    try:
+        hook = getattr(descriptor, "apply_role_card_block", None) if has_attr else None
+    except Exception as exc:
+        raise ValueError("role-card hook apply_role_card_block unreadable") from exc
+    if hook is not None and not callable(hook):
+        raise ValueError("role-card hook apply_role_card_block must be callable or None")
+    return hook
+
+
+def _check_executor_role_block_consistency(
+    entries: Mapping[str, CapabilityDescriptor],
+) -> None:
+    """Fail closed on divergent non-None role-card block hooks.
+
+    ``None`` is a legal declaration ("no role-card science for this card")
+    and coexists with a set hook for the same executor (C2-era custom cards
+    stay constructible; query returns the set hook).  Failure only when two
+    distinct non-None hooks exist for one executor.
+    """
+    by_executor: dict[str, set[int]] = {}
+    for descriptor in entries.values():
+        hook = _role_block_of(descriptor)
+        if hook is None:
+            continue
+        by_executor.setdefault(descriptor.executor, set()).add(id(hook))
+    for executor, keys in by_executor.items():
+        if len(keys) != 1:
+            raise ValueError(f"conflicting role-card hooks for executor {executor!r}")
+
+
+def role_block_for_executor(registry: Any, executor: str) -> Any | None:
+    """Return the consistent role-card block hook for *executor* (generic).
+
+    Queries by wire ``executor`` (never by guessed card type).  ``None``
+    means "no non-None hook declared for this executor" (today
+    confgen/transform all-None; C2-era ``None`` coexisting with a set
+    default) or "no entry for this executor" (unknown-executor analogue of
+    the old non-calculation early return) -- all skip.  Divergent non-None
+    hooks and present-but-non-callable declarations raise fail-closed and
+    never collapse into ``None``.
+    """
+    try:
+        entries = getattr(registry, "entries", None)
+    except Exception as exc:
+        raise ValueError("intent registry unreadable") from exc
+    if not isinstance(entries, Mapping):
+        if registry is None or entries is None:
+            return None
+        raise ValueError("intent registry entries must be a mapping")
+    found: list[Any] = []
+    for descriptor in entries.values():
+        try:
+            desc_executor = getattr(descriptor, "executor", None)
+        except Exception as exc:
+            raise ValueError("descriptor executor unreadable") from exc
+        if desc_executor != executor:
+            continue
+        hook = _role_block_of(descriptor)
+        if hook is None:
+            continue
+        found.append(hook)
+    if not found:
+        return None
+    first = found[0]
+    for hook in found[1:]:
+        if hook is not first:
+            raise ValueError(f"conflicting role-card hooks for executor {executor!r}")
+    return first
+
+
 def recipe_hooks_for_executor(registry: Any, executor: str) -> tuple[Any, Any] | None:
     """Return the consistent recipe hook pair for *executor* (generic query).
 
@@ -559,6 +642,7 @@ def build_default_intent_registry() -> IntentRegistry:
     """
     from ...cards import CARD_TYPES, get_card
     from .calculation import REJECTED_STEP_KEYS as _CALC_REJECTED
+    from .calculation import apply_role_card_block as _calc_role_block
     from .calculation import calculation_fragment
     from .calculation import patch_recipe_block as _calc_patch_block
     from .calculation import require_recipe_assignment as _calc_require
@@ -582,6 +666,7 @@ def build_default_intent_registry() -> IntentRegistry:
             seed_block_keys = tuple(SEED_BLOCK_KEYS_BY_EXECUTOR["calculation"])
             requires_assignment = _calc_require
             patch_recipe_step = _calc_patch_block
+            role_block = _calc_role_block
         elif executor == "confgen":
             handler = confgen_fragment
             rejected = tuple(sorted(set(_CONFGEN_REJECTED)))
@@ -589,6 +674,7 @@ def build_default_intent_registry() -> IntentRegistry:
             seed_block_keys = tuple(SEED_BLOCK_KEYS_BY_EXECUTOR["confgen"])
             requires_assignment = None
             patch_recipe_step = None
+            role_block = None
         elif executor == "structure_transform":
             handler = transform_fragment
             rejected = tuple(sorted(set(_TRANSFORM_REJECTED)))
@@ -596,6 +682,7 @@ def build_default_intent_registry() -> IntentRegistry:
             seed_block_keys = tuple(SEED_BLOCK_KEYS_BY_EXECUTOR["structure_transform"])
             requires_assignment = None
             patch_recipe_step = None
+            role_block = None
         else:  # pragma: no cover - current cards only use the three above
             raise ValueError(f"unknown executor {executor!r} for card {card_type!r}")
         descriptors.append(
@@ -611,6 +698,7 @@ def build_default_intent_registry() -> IntentRegistry:
                 seed_block_keys=seed_block_keys,
                 requires_assignment=requires_assignment,
                 patch_recipe_step=patch_recipe_step,
+                apply_role_card_block=role_block,
             )
         )
     return build_intent_registry(descriptors)

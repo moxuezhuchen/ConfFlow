@@ -193,3 +193,55 @@ def calculation_fragment(
     slot name.  Declared fragment keys: ``("calculation",)``.
     """
     return {"calculation": _wire_calculation(step, card, step_id)}
+
+
+def apply_role_card_block(
+    base_calculation: Mapping[str, Any],
+    template: Mapping[str, Any],
+    purpose: Mapping[str, Any],
+    selected_native: Any,
+    step_id: str,
+    *,
+    card_name: str,
+) -> dict[str, Any]:
+    program = template.get("program")
+    if not isinstance(program, str) or not program.strip():
+        raise _fail(
+            f"step {step_id!r}: card {card_name!r} must declare an explicit program "
+            "(demo recipe science must not leak into production)",
+            step_id=step_id,
+        )
+    if not isinstance(selected_native, Mapping) or not selected_native:
+        raise _fail(
+            f"step {step_id!r}: card {card_name!r} must declare an explicit non-empty "
+            "native mapping (or native_by_role variant)",
+            step_id=step_id,
+        )
+    patched_calc = copy.deepcopy(dict(base_calculation))
+    patched_calc["program"] = _resolve_program(program, step_id=step_id)
+    patched_calc["native"] = copy.deepcopy(dict(selected_native))
+    patched_calc["execution_adapter"] = copy.deepcopy(template.get("adapter", purpose["adapter"]))
+    patched_calc["result_profile"] = copy.deepcopy(template.get("profile", purpose["profile"]))
+    if template.get("checks") is not None:
+        patched_calc["checks"] = copy.deepcopy(list(template["checks"]))
+    else:
+        patched_calc["checks"] = copy.deepcopy(list(purpose["checks"]))
+    if template.get("check_params") is not None:
+        patched_calc["check_params"] = copy.deepcopy(dict(template["check_params"]))
+    else:
+        patched_calc["check_params"] = copy.deepcopy(dict(purpose.get("check_params", {})))
+    if template.get("recovery") is not None:
+        recovery = dict(patched_calc.get("recovery", {}))
+        recovery["profile"] = copy.deepcopy(template["recovery"])
+        patched_calc["recovery"] = recovery
+    else:
+        patched_calc["recovery"] = {"profile": copy.deepcopy(purpose["recovery"])}
+    if template.get("recovery_params") is not None:
+        recovery = dict(patched_calc.get("recovery", {}))
+        recovery["params"] = copy.deepcopy(dict(template["recovery_params"]))
+        patched_calc["recovery"] = recovery
+    if template.get("seed") is not None:
+        patched_calc["seed"] = copy.deepcopy(template["seed"])
+    if template.get("overrides") is not None:
+        patched_calc["overrides"] = copy.deepcopy(dict(template["overrides"]))
+    return patched_calc
