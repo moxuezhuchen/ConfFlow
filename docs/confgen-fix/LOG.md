@@ -282,3 +282,10 @@ R7 glucose 127/155 的 28 项召回缺口与未做种子优化后 RMSD 验证如
 - 改动：`coordination/stage.py` 唯一生产文件（`report_statistics` 只读聚合 `component_statistics.coordination`；`retry_solve_phase` sigma/sibling 仪器化单次求解+`RetryResult`+`success_index`，legacy override 探测后走旧 plain 路径单次求解不编数，`report_statistics` 见 legacy `retry` 相返 `None`；`retry_solve` 直接 API plain 不变；`retry_phases` 不变）+ 新测试 10 节点 + `checkpoints/D3/{MANIFEST.json,DIFF.md}`。kernel/model/wire/accounting/registry/容差/witness/fixtures 未碰；未新增 `retry_statistics.py`。
 - 根纠错：sigma 相曾绕过 `self.retry_solve` 致旧 `_MockSigmaStage.first_pass_seen` 为 None（5 失败）；已改 MRO 探测保留旧调用语义、不 double-solve、不塞假值；legacy 统计不可观测不以 sigma 0 伪装（返 `None`），内置统计完整。
 - 验证：新 10 passed；旧 77 passed（batch31+sigma17+sibling16+telemetry13）；collect 5077=5067+10；ruff/mypy/black（2 白名单文件，`--workers 1`）通过；TS1 default 单采 after（4 叶/8 失败不变，input 12/3/3、sigma 0、sibling 25/1/1、skip 17=9 sigma no-witness+8 sibling exhausted），strip `component_statistics` 后全部 target/leaves/certificate/report 字节等于冻结 before，contract/boundary 不变。
+
+## F-ledger — 记账缺口定点分析+修复预演（proto preview — NOT submitted）
+
+- 基点 `c9bbc9f8cc0ae94875aaaab180c8488f7ea81f25`（`fix/confgen-1d`）；预演树 `/tmp/fix1d-ledger-proto`（detached），正式线未动；证据 `/tmp/fix1d-ledger-output/`。冻结后精确恢复回父干净（只 `checkout` 本卡改动文件 + 删本卡新建文件，不过 `git clean`/rm 整树）。
+- 反例：真实根 `..._test_suppression_positive_control_real_stage_fewer_attempts__0.json` input 20 vs ledger 18/12（差 2 issued 后抑制）；spy kernel 直调 3 issued→ledger 2/1（差 1）复现，调用链 `run_level→_expand_target（先抑制后 input 门）→_retry_level（再抑制）→_supersede_failure` 删旧失败。
+- 改动（白名单）：`accounting.py`（`attempt_ledger_counts(..., issued_history=None)`，真 skip vs issued 后抑制分离，条件 `suppressed_after_issue` 键）+ `engine.py`（`_issued_history` 通用集，input 门 + retry 非 None 入账，`finish()` 传入并按真 skip 重算 `realization_attempts`）+ 新测试 5 节点 + `checkpoints/F-ledger/{DESIGN,CARD,DIFF,MANIFEST}.md`；`kernel_records.py`/组件实现/容差/fixtures 未动。
+- 验证：新 5 passed；旧实现跑新测试 2 failed/3 passed；`retry_statistics` 10 passed；core 抑制子集 10 passed；C2 阳性 1 passed；真实差分 issued 18→20/skipped 12→10/after 2/without 3→5/attempts 18→20，leaf 15/3/12 与 cert/count/terminal 全同；无重试 sha `6f64f6a49…` 逐字相同；ruff/mypy/black 通过。

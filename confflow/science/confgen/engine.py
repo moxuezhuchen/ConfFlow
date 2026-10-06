@@ -1214,6 +1214,13 @@ class _RunState:
         # _expand_target. Tuple (span_start, span_end, selected_idx, phase)
         # or None for legacy plain outcomes. Never crosses targets.
         self._pending_retry_selection: tuple[int, int, int | None, str] | None = None
+        # F-ledger first-issued history: one entry per target issuance that
+        # reached stage realization, keyed generically without component
+        # knowledge. Populated at the real solve gate only (input entry
+        # plus retry solver non-decline); policy/suppression gates return
+        # before this point and never populate. Retry multi-start rows
+        # stay in telemetry only and never expand this per-target set.
+        self._issued_history: set[tuple[Any, str, int]] = set()
 
     # -- recursion -------------------------------------------------------
 
@@ -1384,6 +1391,8 @@ class _RunState:
         try:
             if solver is not None:
                 outcome = solver(parent, target, context)
+                if outcome is not None:
+                    self._issued_history.add((parent_target_id, axis, int(target.ordinal)))
                 pending = self._pending_retry_selection
                 self._pending_retry_selection = None
                 if pending is not None:
@@ -1432,6 +1441,7 @@ class _RunState:
                 # Input gate: count the attempt at actual call entry, so a
                 # throwing stage still leaves attempt=1. Policy/suppression
                 # gates above return before this point (attempt 0).
+                self._issued_history.add((parent_target_id, axis, int(target.ordinal)))
                 self._append_legacy_telemetry(
                     component_id=axis,
                     parent_target_id=parent_target_id,
@@ -3510,12 +3520,22 @@ class _RunState:
         }
 
         # Realization certificate: per-target outcomes and equations.
+        # F-ledger: target-level ledger consumes the first-issued history
+        # so suppressed-after-issue counts as issued, never as skipped;
+        # leaf/count equations below stay over final terminals only.
+        from confflow.science.confgen.accounting import (
+            attempt_ledger_counts,
+            leaf_category_counts,
+        )
+
+        ledger = attempt_ledger_counts(records, issued_history=self._issued_history)
         realization = {
             "attempted": count_details.get("attempted"),
             "realized": self.realized_ok,
             "published": len(leaves),
             "suppressed": self.suppressed_count,
-            "realization_attempts": (count_details.get("attempted") or 0) - self.suppressed_count,
+            "realization_attempts": (count_details.get("attempted") or 0)
+            - int(ledger.get("suppressed_skipped", self.suppressed_count)),
             "failed": dict(self.failed_counts),
             "status_counts": status_counts,
             "terminal_equations_ok": terminal_ok,
@@ -3532,13 +3552,7 @@ class _RunState:
         # no ancestor plus descendant ever shares one leaf equation.
         # Attempt ledger (unit 2): issued per-level stage attempts only;
         # deferred ranges were never issued at any level.
-        from confflow.science.confgen.accounting import (
-            attempt_ledger_counts,
-            leaf_category_counts,
-        )
-
         leaf_cats = leaf_category_counts(records)
-        ledger = attempt_ledger_counts(records)
         leaf_certificate = {
             "total": leaf_total,
             "leaf_categories": leaf_cats["leaf_categories"],
