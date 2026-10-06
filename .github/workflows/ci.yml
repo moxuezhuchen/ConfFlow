@@ -87,6 +87,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
 
       - name: Setup Python
         uses: actions/setup-python@v7
@@ -101,6 +103,10 @@ jobs:
 
       - name: Coverage (gate)
         run: pytest tests/ --ignore=tests/test_install_release_wheel.py --cov=confflow --cov-report=term-missing --cov-report=xml
+
+      - name: Changed-line coverage (>= 85% of added/modified production lines)
+        if: github.event_name == 'pull_request'
+        run: python tools/changed_coverage.py --base "origin/${{ github.base_ref }}" --min 85
 
       - name: Upload coverage artifact
         uses: actions/upload-artifact@v7

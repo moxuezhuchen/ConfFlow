@@ -139,7 +139,7 @@ branch = true
 data_file = ".coverage_temp"
 
 [tool.coverage.report]
-fail_under = 85
+fail_under = 70
 show_missing = true
 exclude_also = [
     "@(numba\\.)?njit",
