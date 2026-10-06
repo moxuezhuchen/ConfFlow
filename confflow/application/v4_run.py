@@ -225,6 +225,10 @@ class V4RunRequest:
             raise DomainError("run_inputs must be RunInputs")
         if not self.run_root or not isinstance(self.run_root, str):
             raise DomainError("run_root must be a non-empty string")
+        if self.transport is not None:
+            raise DomainError(
+                "transport is retired (R1.2): only transport=None " "(local execution) is accepted"
+            )
         if self.should_cancel is not None and not callable(self.should_cancel):
             raise DomainError("should_cancel must be a callable probe or None")
         if not isinstance(self.executables, FrozenDict):
@@ -750,13 +754,13 @@ class V4RunApplication:
     def _preflight_targets(self, plan: Any, request: V4RunRequest) -> None:
         """Validate every planned step's target before any step executes.
 
-        Target is an executable constraint, never an annotation. A
-        nonlocal target on a native step requires a configured transport
-        that explicitly claims it; a pure executor has no remote delivery
-        at all, so a nonlocal target on it fails closed. Running this
-        before the step loop guarantees 0 native launches for a bad
-        target anywhere in the plan (a typo on step 7 cannot let steps
-        1-6 run first).
+        Target is an executable constraint, never an annotation. Remote
+        delivery was retired in R1.2, so a nonlocal target on any step
+        fails closed (0 native launches); a pure executor has no remote
+        delivery at all, so a nonlocal target on it fails closed too.
+        Running this before the step loop guarantees 0 native launches
+        for a bad target anywhere in the plan (a typo on step 7 cannot
+        let steps 1-6 run first).
         """
         from ..execution.binding_resolution import (
             is_local_target,
@@ -771,7 +775,7 @@ class V4RunApplication:
                 continue
             contract = registry.resolve_executor(planned.executor)
             if contract.requires_adapter:
-                require_target_transport(target, request.transport)
+                require_target_transport(target, None)
                 continue
             capability = getattr(planned.executor, "value", str(planned.executor))
             raise DomainError(
@@ -946,8 +950,6 @@ class V4RunApplication:
         registered contract version.  Every step then shares the same
         durable batch lifecycle, so analysis reuse, resume, and
         publication are identical to every other capability.
-        Remote delivery always binds the step-specific store: a
-        multi-step transport is rebound per step before dispatch.
         """
         registry = self._active_registry
         contract = registry.resolve_executor(planned.executor)
@@ -978,21 +980,21 @@ class V4RunApplication:
                 ),
                 adapter_default_executable=adapter.default_executable,
             )
-            # Explicit target gate BEFORE measurement/launch: nonlocal
-            # targets require a configured transport; otherwise fail closed
-            # with 0 native launches (no silent local fallback). Local
-            # targets (omitted/"local"/"localhost") always run in-process.
+            # Explicit target gate BEFORE measurement/launch: remote
+            # delivery was retired in R1.2, so nonlocal targets fail
+            # closed with 0 native launches (no silent local fallback).
+            # Local targets (omitted/"local"/"localhost") always run
+            # in-process.
             from ..execution.binding_resolution import (
                 effective_native_env,
                 require_target_transport,
             )
 
-            require_target_transport(binding.target, request.transport)
+            require_target_transport(binding.target, None)
             # ONE immutable native-environment snapshot per step.  Ambient
             # inheritance is explicit producer-side policy (os.environ) and
             # is fully digested; binding env wins on collision.  The SAME
-            # snapshot feeds measurement, the remote handoff envelope, the
-            # worker launch, and provenance — never two constructions.
+            # snapshot feeds measurement and provenance.
             native_env = FrozenDict(effective_native_env(binding, inherit=os.environ))
             environment = self._measure_environment(
                 planned=planned,
@@ -1082,22 +1084,24 @@ class V4RunApplication:
                 store=store,
                 run_root=run_root,
                 owner_token=request.owner_token,
-                transport=self._resolve_step_transport(
-                    binding, request.transport, store, step_id=planned.step_id
-                ),
             )
 
     @staticmethod
-    def _resolve_step_transport(binding: Any, transport: Any, store: Any, *, step_id: str) -> Any:
-        """Resolve per-step delivery, failing closed on nonlocal targets.
+    def _resolve_step_transport(
+        binding: Any, transport: Any = None, store: Any = None, *, step_id: str = ""
+    ) -> Any:
+        """Resolve per-step delivery (R1.2: local-only, compat seam).
 
-        Local bindings (``None``/``"local"``/``"localhost"``) always
-        return ``None`` (in-process delivery) so a configured remote
-        transport never hijacks local steps. Nonlocal bindings require
-        the configured *transport* (rebound to *store* via ``with_store``
-        when available); with no configured or no matching transport this
-        raises BEFORE any native launch.
+        Local bindings always return ``None`` (in-process delivery).
+        A nonlocal binding fails closed BEFORE any native launch via
+        :func:`require_target_transport` with no transport. A non-``None``
+        *transport* fails closed: remote delivery was retired in R1.2.
+        Kept for callers that still pass the legacy keyword.
         """
+        if transport is not None:
+            raise DomainError(
+                "transport is retired (R1.2): only transport=None " "(local execution) is accepted"
+            )
         from ..execution.binding_resolution import (
             is_local_target,
             require_target_transport,
@@ -1106,31 +1110,7 @@ class V4RunApplication:
         target = getattr(binding, "target", None) if binding is not None else None
         if target is None or is_local_target(target):
             return None
-        resolved = require_target_transport(target, transport)
-        # ``require`` returned the configured transport (or raised); rebind
-        # it to this step's store so imports commit into the right DB.
-        rebind = getattr(resolved, "with_store", None)
-        if callable(rebind):
-            try:
-                return rebind(store)
-            except Exception as exc:
-                raise DomainError(
-                    f"step {step_id!r} targets {target!r}: cannot bind transport: {exc}"
-                ) from exc
-        return resolved
-
-    @staticmethod
-    def _step_transport(transport: Any, store: Any) -> Any:
-        """Bind *transport* to the current step's store.
-
-        A remote transport that spans steps must import each step's
-        bundles into that step's store; siblings share delivery records
-        so duplicate delivery still converges without relaunch.
-        """
-        rebind = getattr(transport, "with_store", None)
-        if callable(rebind):
-            return rebind(store)
-        return transport
+        return require_target_transport(target, None)
 
     @staticmethod
     def _measure_environment(

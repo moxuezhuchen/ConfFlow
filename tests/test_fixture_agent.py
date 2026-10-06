@@ -5,7 +5,6 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import subprocess
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -13,15 +12,15 @@ from types import SimpleNamespace
 import pytest
 import rfc8785
 
-import confflow.fixture_agent as fixture_module
-from confflow.application.execution.synthetic_producer import (
+import tests.support.fixture_agent as fixture_module
+from confflow.application.execution.workflow_adapter import measure_executable
+from tests.support.fixture_agent import main as fixture_main
+from tests.support.synthetic_producer import (
     SYNTHETIC_ARTIFACT,
     SYNTHETIC_ARTIFACT_PATH,
     SYNTHETIC_ARTIFACT_SCHEMA,
     SYNTHETIC_ARTIFACT_TERMINAL,
 )
-from confflow.application.execution.workflow_adapter import measure_executable
-from confflow.fixture_agent import main as fixture_main
 
 
 @pytest.fixture(autouse=True)
@@ -61,29 +60,6 @@ def _invoke(capsys, args: list[str]) -> dict[str, object]:
     lines = captured.out.splitlines()
     assert len(lines) == 1, captured.out
     assert captured.err == ""
-    return json.loads(lines[0])
-
-
-def _installed_command(name: str) -> Path:
-    command = Path(sys.executable).with_name(name)
-    if not command.is_file():
-        pytest.skip(f"installed console script is unavailable: {command}")
-    return command
-
-
-def _run_json(command: Path, args: list[str], *, expected_code: int = 0) -> dict[str, object]:
-    environment = os.environ.copy()
-    environment.pop("PYTHONPATH", None)
-    completed = subprocess.run(
-        [str(command), *args],
-        check=False,
-        capture_output=True,
-        text=True,
-        env=environment,
-    )
-    assert completed.returncode == expected_code, completed.stderr + completed.stdout
-    lines = completed.stdout.splitlines()
-    assert len(lines) == 1, completed.stdout
     return json.loads(lines[0])
 
 
@@ -144,11 +120,6 @@ def test_fixture_actual_entrypoint_keeps_posix_reported_path_before_exe_sibling(
     assert fixture_module._actual_entrypoint() == str(reported.resolve())
     assert os.name == host_os_name
     assert Path(os.fspath(tmp_path)).is_dir()
-
-
-def test_fixture_console_script_is_declared_as_a_package_entrypoint():
-    pyproject = (Path(__file__).parents[1] / "pyproject.toml").read_text(encoding="utf-8")
-    assert 'confflow-fixture-agent = "confflow.fixture_agent:main"' in pyproject
 
 
 def test_fixture_cli_runs_one_json_control_chain_to_fixed_manifest(capsys, tmp_path: Path):
@@ -282,187 +253,3 @@ def test_fixture_cli_reuses_typed_error_response_for_unknown_run(capsys, tmp_pat
     response = json.loads(captured.out)
     assert response["ok"] is False
     assert response["error"]["code"] == "unknown_run"
-
-
-def test_installed_fixture_drop_in_cli_uses_capability_identity_and_completes(tmp_path: Path):
-    fixture = _installed_command("confflow-fixture-agent")
-    normal = _installed_command("confflow")
-    environment = os.environ.copy()
-    environment.pop("PYTHONPATH", None)
-    capability_process = subprocess.run(
-        [str(fixture), "--capabilities", "--json"],
-        check=False,
-        capture_output=True,
-        text=True,
-        env=environment,
-    )
-    assert capability_process.returncode == 0
-    capabilities = json.loads(capability_process.stdout)
-    executable = capabilities["executable"]
-    assert executable["path"] == str(fixture.resolve())
-    assert executable["realpath"] == str(fixture.resolve())
-    assert executable["device_inode"] == measure_executable(str(fixture)).device_inode
-
-    root = tmp_path / "fixture-state"
-    run_id = "run-installed-fixture"
-    request_path = tmp_path / "fixture-prepare.json"
-    request_path.write_text(
-        json.dumps(
-            _prepare_payload(
-                run_id,
-                {
-                    "sha256": executable["sha256"],
-                    "realpath": executable["realpath"],
-                    "device_inode": executable["device_inode"],
-                },
-            )
-        ),
-        encoding="utf-8",
-    )
-    prepared = _run_json(
-        fixture,
-        [
-            "control",
-            "prepare",
-            "--state-root",
-            str(root),
-            "--request",
-            str(request_path),
-            "--json",
-        ],
-    )
-    assert prepared["state"] == "prepared"
-    assert (
-        _run_json(
-            fixture,
-            ["control", "execute", "--state-root", str(root), "--run-id", run_id, "--json"],
-        )["state"]
-        == "completed"
-    )
-    assert (
-        _run_json(
-            fixture,
-            ["control", "status", "--state-root", str(root), "--run-id", run_id, "--json"],
-        )["state"]
-        == "completed"
-    )
-    events = _run_json(
-        fixture,
-        ["control", "events", "--state-root", str(root), "--run-id", run_id, "--json"],
-    )
-    assert events["revision"] == 5
-    artifacts = _run_json(
-        fixture,
-        ["control", "artifacts", "--state-root", str(root), "--run-id", run_id, "--json"],
-    )
-    assert len(artifacts["artifacts"]) == 1
-
-    normal_root = tmp_path / "normal-state"
-    normal_run_id = "run-installed-normal"
-    normal_identity = measure_executable(sys.executable)
-    normal_request = tmp_path / "normal-prepare.json"
-    normal_request.write_text(
-        json.dumps(
-            _prepare_payload(
-                normal_run_id,
-                {
-                    "sha256": normal_identity.sha256,
-                    "realpath": normal_identity.realpath,
-                    "device_inode": normal_identity.device_inode,
-                },
-            )
-        ),
-        encoding="utf-8",
-    )
-    _run_json(
-        normal,
-        [
-            "control",
-            "prepare",
-            "--state-root",
-            str(normal_root),
-            "--request",
-            str(normal_request),
-            "--json",
-        ],
-    )
-    assert (
-        _run_json(
-            normal,
-            [
-                "control",
-                "execute",
-                "--state-root",
-                str(normal_root),
-                "--run-id",
-                normal_run_id,
-                "--json",
-            ],
-        )["state"]
-        == "queued"
-    )
-
-
-@pytest.mark.parametrize("mismatch", ["python", "other_console", "tampered", "missing"])
-def test_installed_fixture_rejects_non_fixture_identity_without_worker(
-    tmp_path: Path, mismatch: str
-):
-    fixture = _installed_command("confflow-fixture-agent")
-    environment = os.environ.copy()
-    environment.pop("PYTHONPATH", None)
-    capability_process = subprocess.run(
-        [str(fixture), "--capabilities", "--json"],
-        check=False,
-        capture_output=True,
-        text=True,
-        env=environment,
-    )
-    capabilities = json.loads(capability_process.stdout)
-    executable = capabilities["executable"]
-    if mismatch == "python":
-        measured = measure_executable(sys.executable)
-        identity = {
-            "sha256": measured.sha256,
-            "realpath": measured.realpath,
-            "device_inode": measured.device_inode,
-        }
-    elif mismatch == "other_console":
-        measured = measure_executable(str(_installed_command("confflow")))
-        identity = {
-            "sha256": measured.sha256,
-            "realpath": measured.realpath,
-            "device_inode": measured.device_inode,
-        }
-    elif mismatch == "tampered":
-        identity = {
-            "sha256": "0" * 64,
-            "realpath": executable["realpath"],
-            "device_inode": executable["device_inode"],
-        }
-    else:
-        identity = {"sha256": executable["sha256"]}
-    root = tmp_path / f"state-{mismatch}"
-    run_id = f"run-{mismatch}-identity"
-    request_path = tmp_path / f"{mismatch}.json"
-    request_path.write_text(json.dumps(_prepare_payload(run_id, identity)), encoding="utf-8")
-    response = _run_json(
-        fixture,
-        [
-            "control",
-            "prepare",
-            "--state-root",
-            str(root),
-            "--request",
-            str(request_path),
-            "--json",
-        ],
-        expected_code=2,
-    )
-    assert response["error"]["code"] == "executable_identity_mismatch"
-    assert not (root.parent / f"run_{run_id}").exists()
-    execute = _run_json(
-        fixture,
-        ["control", "execute", "--state-root", str(root), "--run-id", run_id, "--json"],
-        expected_code=2,
-    )
-    assert execute["error"]["code"] == "unknown_run"

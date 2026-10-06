@@ -65,7 +65,6 @@ from .work_item_executor import ItemExecutionContext, WorkItemExecutor, _diagnos
 
 if TYPE_CHECKING:
     from ..persistence.work_items import SqliteWorkItemStore
-    from ..remote.transport import ExecutionTransport
     from ..workflow.v4.document import ScientificDefaults, ScientificDefinition
     from ..workflow.v4.plan import PlannedStep
 
@@ -378,7 +377,7 @@ class BatchStepExecutor:
         store: SqliteWorkItemStore,
         run_root: str,
         owner_token: str | None = None,
-        transport: ExecutionTransport | None = None,
+        transport: Any = None,
     ) -> StepResult:
         """Execute one step with durable per-item resume and reuse.
 
@@ -412,12 +411,11 @@ class BatchStepExecutor:
         owner_token : str | None
             Claim token binding this controller's claims; defaults to a
             step-scoped token.
-        transport : ExecutionTransport | None
-            Delivery seam for executed items.  ``None`` (default) executes
-            in-process through the configured :class:`WorkItemExecutor`;
-            a remote transport moves attempts through worker-handoff V2
-            with identical scientific semantics.  Reused, blocked, and
-            invalidated items never reach the transport.
+        transport : Any | None
+            Legacy transport seam (R1.2 retired remote delivery). Only
+            ``None`` (in-process execution) is accepted; any other value
+            fails closed. Reused, blocked, and invalidated items never
+            execute.
 
         Returns
         -------
@@ -439,16 +437,19 @@ class BatchStepExecutor:
                 "environment; environment=None is prohibited"
             )
         # Explicit target gate (defense in depth; the application resolves
-        # per-step delivery before reaching batch). A nonlocal binding
-        # without a transport that formally claims it must never execute
-        # locally: fail closed with 0 native launches instead of silently
-        # falling back.
+        # per-step delivery before reaching batch). Remote delivery was
+        # retired in R1.2: any nonlocal binding fails closed with 0 native
+        # launches instead of silently falling back.
+        if transport is not None:
+            raise PersistenceError(
+                "transport is retired (R1.2): only transport=None " "(local execution) is accepted"
+            )
         _binding_target = getattr(request.execution_binding, "target", None)
         if _binding_target is not None:
             from .binding_resolution import require_target_transport
 
             try:
-                require_target_transport(_binding_target, transport)
+                require_target_transport(_binding_target, None)
             except DomainError as exc:
                 raise PersistenceError(str(exc)) from exc
         validation_error = self._validate_request(request)
@@ -470,11 +471,9 @@ class BatchStepExecutor:
         environment = request.environment
         environment_digest = environment.digest()
         # ONE immutable native-environment snapshot per step.  The
-        # application measures the environment over exactly this mapping;
-        # the transport handoff carries exactly this mapping; the worker
-        # launches exactly this mapping.  Direct batch callers without a
-        # threaded snapshot get the producer-side rule (ambient + declared)
-        # built once here, so probe and launch can never diverge.
+        # application measures the environment over exactly this mapping.
+        # Direct batch callers without a threaded snapshot get the
+        # producer-side rule (ambient + declared) built once here.
         native_env = request.native_env
         if native_env is None and request.execution_binding is not None:
             from .binding_resolution import effective_native_env
@@ -482,38 +481,6 @@ class BatchStepExecutor:
             native_env = FrozenDict(
                 effective_native_env(request.execution_binding, inherit=os.environ)
             )
-        if transport is not None:
-            # Remote steps reuse against the TARGET environment, never the
-            # producer's local measurement: the probe asks the target host
-            # for its current execution identity (a file measurement, never
-            # a native launch) over the SAME effective env the worker will
-            # launch with (the producer snapshot plus target defaults). An
-            # unprobable target fails closed rather than silently
-            # substituting the producer environment.
-            probe = getattr(transport, "probe_environment_digest", None)
-            if callable(probe):
-                binding = request.execution_binding
-                handoff_env: dict[str, str] | None = None
-                if native_env is not None:
-                    handoff_env = {str(k): str(v) for k, v in native_env.items()}
-                elif binding is not None:
-                    handoff_env = dict(getattr(binding, "env", {}) or {})
-                try:
-                    probed_digest = probe(
-                        program=getattr(request.scientific, "program", None),
-                        capability=request.executor_capability,
-                        requested_executable=getattr(binding, "executable", None),
-                        handoff_env=handoff_env,
-                    )
-                except TypeError:
-                    # Back-compat for transports without the handoff_env seam.
-                    probed_digest = probe(
-                        program=getattr(request.scientific, "program", None),
-                        capability=request.executor_capability,
-                        requested_executable=getattr(binding, "executable", None),
-                    )
-                if probed_digest is not None:
-                    environment_digest = probed_digest
         provenance = self._current_provenance(request)
         context = ItemExecutionContext(
             step_id=step.step_id,
@@ -563,7 +530,6 @@ class BatchStepExecutor:
                     owner=owner,
                     environment_digest=environment_digest,
                     provenance=provenance,
-                    transport=transport,
                     should_cancel=cancelled,
                 )
             except (PersistenceError, CorruptStateError) as exc:
@@ -621,7 +587,7 @@ class BatchStepExecutor:
             # reports stay lifecycle/report data; they never counterfeit
             # durable publication.  Per-item reasons ride in the message so
             # controllers can distinguish invalidation (stale generation)
-            # from transport or blocking failures without a payload.
+            # from blocking failures without a payload.
             gap = Diagnostic(
                 code="publication_durability_gap",
                 message=(
@@ -686,23 +652,17 @@ class BatchStepExecutor:
         context: ItemExecutionContext,
         *,
         store: SqliteWorkItemStore,
-        transport: ExecutionTransport | None,
         should_cancel: Callable[[], bool],
         attempt: int | None = None,
     ) -> WorkItemResult:
-        """Launch one claimed item through the selected transport.
+        """Launch one claimed item in-process through the local executor.
 
-        ``None`` executes in-process through the configured executor; a
-        transport receives the real current attempt number so remote
-        launch identity aligns with the durable attempt the store just
-        opened.  The attempt is always read from the durable store, never
-        invented.
+        The attempt is always read from the durable store, never
+        invented. (R1.2 retired remote delivery; this seam is local-only.)
         """
         if attempt is None:
             attempt = store.get_registered(item.id)["current_attempt"]
-        if transport is None:
-            return self._executor.execute(item, context, should_cancel=should_cancel)
-        return transport.execute(item, context, attempt=int(attempt), should_cancel=should_cancel)
+        return self._executor.execute(item, context, should_cancel=should_cancel)
 
     def _reconcile_before_retry(
         self,
@@ -710,69 +670,24 @@ class BatchStepExecutor:
         context: ItemExecutionContext,
         *,
         store: SqliteWorkItemStore,
-        transport: ExecutionTransport | None,
         environment_digest: str | None,
     ) -> WorkItemResult | None:
-        """Import an abandoned attempt's durable result before any retry.
+        """Reconcile an abandoned attempt before retry (R1.2: always None).
 
-        Returns a durably committed COMPLETED result when the transport can
-        prove that the abandoned attempt already produced a complete,
-        identity-matching bundle (worker crash after durable packaging but
-        before producer import).  In that case the attempt is NOT advanced
-        and no native process is launched: the reconciliation imports once,
-        commits once, and every later resume reuses the committed row.
-
-        Returns ``None`` when there is no recoverable result, no transport,
-        or the transport cannot reconcile; the caller then follows the
-        normal mark-interrupted → claim-next-attempt → relaunch protocol.
-        A late bundle for a superseded attempt can never override a newer
-        valid completion: import verification rejects stale attempt
-        numbers, and a committed row short-circuits before this seam.
+        Remote delivery was retired, so there is no out-of-band bundle
+        to import; the caller always follows the normal
+        mark-interrupted → claim-next-attempt → relaunch protocol.
+        Kept as a seam so the RECOVER_ABANDONED path stays explicit.
         """
-        if transport is None:
-            return None
-        reconcile = getattr(transport, "reconcile_prior_attempts", None)
-        if not callable(reconcile):
-            return None
-        try:
-            attempts = store.get_attempts(item.id)
-            registered = store.get_registered(item.id)
-        except (PersistenceError, CorruptStateError):
-            return None
-        numbers = tuple(
-            int(entry.attempt_number)
-            for entry in attempts
-            if getattr(entry, "attempt_number", None) is not None
-        )
-        current = int(registered.get("current_attempt") or 0)
-        try:
-            result = reconcile(item, context, attempts=numbers, current_attempt=current)
-        except (PersistenceError, CorruptStateError):
-            return None
-        except Exception:
-            # Reconciliation is an optimization over the retry protocol:
-            # an unexpected transport fault must fall through to the
-            # normal (mark-interrupted, claim, relaunch) path, never kill
-            # the step.
-            return None
-        if not isinstance(result, WorkItemResult) or not result.is_completed:
-            return None
-        try:
-            store.record_finished(
-                result, environment_digest=self._commit_environment_digest(result)
-            )
-        except (PersistenceError, CorruptStateError):
-            return None
-        return result
+        return None
 
     @staticmethod
     def _commit_environment_digest(result: WorkItemResult) -> str | None:
         """Return the execution-environment override for committing *result*.
 
-        Remote delivery attaches the verified worker-measured environment
-        to the imported result metadata; the commit records where the
-        computation actually ran.  Local results carry no override and
-        keep the registration-time digest.
+        R1.2 retired remote delivery: local results carry no override and
+        keep the registration-time digest. The metadata-key lookup stays
+        so stale carriers fail closed to None instead of mis-committing.
         """
         try:
             metadata = result.metadata
@@ -780,7 +695,7 @@ class BatchStepExecutor:
             return None
         if not isinstance(metadata, Mapping):
             return None
-        from ..remote.staging import EXECUTION_ENVIRONMENT_METADATA_KEY
+        from .environment import EXECUTION_ENVIRONMENT_METADATA_KEY
 
         carried = metadata.get(EXECUTION_ENVIRONMENT_METADATA_KEY)
         if not isinstance(carried, Mapping):
@@ -906,7 +821,6 @@ class BatchStepExecutor:
         owner: OwnerIdentity,
         environment_digest: str | None,
         provenance: FrozenDict,
-        transport: ExecutionTransport | None,
         should_cancel: Callable[[], bool],
         _claim_retried: bool = False,
     ) -> tuple[WorkItemResult, bool]:
@@ -1020,22 +934,19 @@ class BatchStepExecutor:
                         item,
                         context,
                         store=store,
-                        transport=transport,
                         environment_digest=environment_digest,
                     )
                 if reconciled is not None:
                     return reconciled, True
                 store.mark_interrupted(item.id, reason=decision.reason)
             if store.claim(item.id, owner=owner):
-                # The real durable attempt just opened drives both the
-                # attempt-isolated execution directory (via the context)
-                # and the remote launch identity (via the transport).
+                # The real durable attempt just opened drives the
+                # attempt-isolated execution directory (via the context).
                 attempt = int(store.get_registered(item.id)["current_attempt"])
                 result = self._launch(
                     item,
                     replace(context, attempt=attempt),
                     store=store,
-                    transport=transport,
                     should_cancel=should_cancel,
                     attempt=attempt,
                 )
@@ -1053,7 +964,6 @@ class BatchStepExecutor:
                 environment_digest=environment_digest,
                 provenance=provenance,
                 run_root=run_root,
-                transport=transport,
                 should_cancel=should_cancel,
                 _claim_retried=_claim_retried,
             )
@@ -1119,13 +1029,10 @@ class BatchStepExecutor:
                     item,
                     replace(context, attempt=attempt),
                     store=store,
-                    transport=transport,
                     should_cancel=should_cancel,
                     attempt=attempt,
                 )
-                # Local commits keep the refreshed registration digest;
-                # remote commits override with the worker-measured digest
-                # (same effective env, measured target-side).
+                # Local commits keep the refreshed registration digest.
                 override = self._commit_environment_digest(result)
                 store.record_finished(result, environment_digest=override)
                 return result, True
@@ -1138,7 +1045,6 @@ class BatchStepExecutor:
                 environment_digest=environment_digest,
                 provenance=provenance,
                 run_root=run_root,
-                transport=transport,
                 should_cancel=should_cancel,
                 _claim_retried=_claim_retried,
             )
@@ -1168,7 +1074,6 @@ class BatchStepExecutor:
         environment_digest: str | None,
         provenance: FrozenDict,
         run_root: str,
-        transport: ExecutionTransport | None,
         should_cancel: Callable[[], bool],
         _claim_retried: bool = False,
     ) -> tuple[WorkItemResult, bool]:
@@ -1191,7 +1096,6 @@ class BatchStepExecutor:
                         item,
                         replace(context, attempt=attempt),
                         store=store,
-                        transport=transport,
                         should_cancel=should_cancel,
                         attempt=attempt,
                     )
@@ -1215,7 +1119,6 @@ class BatchStepExecutor:
                 owner=owner,
                 environment_digest=environment_digest,
                 provenance=provenance,
-                transport=transport,
                 should_cancel=should_cancel,
                 _claim_retried=True,
             )

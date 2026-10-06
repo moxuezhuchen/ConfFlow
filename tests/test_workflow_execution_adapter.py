@@ -15,7 +15,6 @@ from confflow.application.execution import (
     ExecutionLifecycle,
     ExecutionService,
     ExecutionServiceError,
-    InMemoryExecutionRepository,
     LaunchRequest,
     PrepareRequest,
     RunState,
@@ -32,6 +31,7 @@ from confflow.application.execution.workflow_adapter import (
 )
 from confflow.contract import OUTPUT_MANIFEST_SCHEMA
 from confflow.core.exceptions import ConfFlowError, StopRequestedError
+from tests.support.memory import InMemoryExecutionRepository
 
 
 def _files(tmp_path: Path) -> tuple[Path, Path, Path]:

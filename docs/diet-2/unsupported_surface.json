@@ -1,0 +1,216 @@
+{
+ "scope": "R1.0 unsupported-surface: interfaces that may be deleted in R1 without breaking promised science results or formal interfaces",
+ "status": "final",
+ "base_commit": "ee56fa00444de50581778735486faf83c9350bb6 (origin/main HEAD; R1.0 baseline)",
+ "verified_at": "ee56fa00444de50581778735486faf83c9350bb6",
+ "jobdesk_basis": "/opt/jobdesk-v2-v4 master=5c90732 read-only grep; integration/j1-j3=/tmp/jd-integ b648295 also zero-hit for all five patterns, does not affect list",
+ "discrepancies_vs_plan": [
+  "PLAN baseline 213b306 vs current ee56fa0 drift touches only confgen ring + confgen_executor/confgen_schema/tolerances + producer/contract.py ring_forms_by_size and the planned E1 recipe / J1 preview operation / P0 budgets; zero intersection with these 6 categories.",
+  "R1.0 text says lazy exports at application/execution/__init__.py:40-43; actual is :40-48 (9 SYNTHETIC_* entries) \u2014 wording drift, semantics identical.",
+  "R1.1 step 1 also moves memory.py (89 lines); listed here as U3b to remove scope ambiguity."
+ ],
+ "items": [
+  {
+   "id": "U1",
+   "kind": "console_script",
+   "path": "pyproject.toml:81 (confflow-fixture-agent = confflow.fixture_agent:main)",
+   "plan_ref": "R1.0 item 1a",
+   "reason": "Test-fixture standalone console entry; not a promised interface; retired with fixture_agent module.",
+   "evidence": {
+    "commands": [
+     "git grep -n \"confflow-fixture-agent\" -- pyproject.toml confflow"
+    ],
+    "files": [
+     "pyproject.toml:81 ([project.scripts] entry)",
+     "confflow/fixture_agent.py:27,53 (module self-description strings, not calls)"
+    ],
+    "hits_total": 3,
+    "note": "No production import/call of this console command; sole wiring is the pyproject entry."
+   },
+   "jobdesk_refs": {
+    "command": "git -C /opt/jobdesk-v2-v4 grep -n \"confflow-fixture-agent|confflow.fixture_agent\" master --",
+    "hits": 0
+   }
+  },
+  {
+   "id": "U2",
+   "kind": "module",
+   "path": "confflow/fixture_agent.py (77 lines)",
+   "plan_ref": "R1.0 item 1b",
+   "reason": "Test fixture packed in the production package (D2: move to tests/); 77 lines moved verbatim, imports only.",
+   "evidence": {
+    "commands": [
+     "git grep -n \"fixture_agent\" -- confflow",
+     "git grep -ln \"fixture_agent|synthetic_producer|SyntheticProducer\" -- tests"
+    ],
+    "files": [
+     "confflow/fixture_agent.py (77 lines, whole module)",
+     "confflow/application/execution/synthetic_producer.py (imported lazily inside fixture_agent.py:38, not top-level)"
+    ],
+    "hits_total": "0 content hits for underscore form in confflow (hyphen entry counted in U1); no production caller",
+    "note": "Only referenced by pyproject entry-point; guard tests tests/test_fixture_agent.py removed with it (G18)."
+   },
+   "jobdesk_refs": {
+    "command": "git -C /opt/jobdesk-v2-v4 grep -n \"confflow.fixture_agent|confflow-fixture-agent|fixture_agent\" master --",
+    "hits": 0,
+    "note": "R1.1 pre-check holds; may stay in R1, re-check at R2.0."
+   }
+  },
+  {
+   "id": "U3",
+   "kind": "module",
+   "path": "confflow/application/execution/synthetic_producer.py (450 lines) + __init__.py:40-48 lazy-export entries",
+   "plan_ref": "R1.0 item 2; R1.1 steps 1-2",
+   "reason": "Dev-fixture producer and its lazy exports; after R1.1 `import confflow.application.execution` must not load them.",
+   "evidence": {
+    "commands": [
+     "git grep -n \"synthetic_producer|SyntheticProducer|synthetic_agent_entry|open_synthetic_service\" -- confflow"
+    ],
+    "files": [
+     "confflow/application/execution/__init__.py:40-48 (9 lazy entries: SYNTHETIC_ARTIFACT* x6, SyntheticProducerExecutor, open_synthetic_service, synthetic_agent_entry) + :88,:92,:94 re-export names",
+     "confflow/application/execution/synthetic_producer.py (450 lines, exported module body)",
+     "confflow/fixture_agent.py:38 (function-local lazy import of synthetic_agent_entry)"
+    ],
+    "hits_total": "Zero production imports/constructions outside definition + export table + fixture_agent lazy import (excluding-filter grep returns empty)",
+    "note": "tests/test_synthetic_producer.py etc. switch to tests/support/ imports (R1.1 step 4)."
+   },
+   "jobdesk_refs": {
+    "command": "git -C /opt/jobdesk-v2-v4 grep -n \"synthetic_producer|SyntheticProducer|open_synthetic_service|synthetic_agent_entry\" master --",
+    "hits": 0,
+    "note": "Generic English `synthetic` has ~15 unrelated hits (imported_backend.py:82 docstring, GUI fallback/face text, docs rebuild log); none references the ConfFlow synthetic interface."
+   }
+  },
+  {
+   "id": "U3b",
+   "kind": "module",
+   "path": "confflow/application/execution/memory.py (89 lines)",
+   "plan_ref": "R1.1 step 1 (unnamed in R1.0 text; listed to remove scope ambiguity)",
+   "reason": "In-memory test repository moved out of the production package with the fixture; content verbatim.",
+   "evidence": {
+    "commands": [
+     "git grep -n \"InMemoryExecutionRepository\" -- confflow"
+    ],
+    "files": [
+     "confflow/application/execution/memory.py (89 lines; class at :13)",
+     "confflow/application/execution/__init__.py:18 (lazy entry), :71 (re-export name)"
+    ],
+    "hits_total": "No production caller outside the export table (memory store used by tests only)",
+    "note": "If reviewers deem it promised, move this single entry to R2."
+   },
+   "jobdesk_refs": {
+    "command": "git -C /opt/jobdesk-v2-v4 grep -n \"InMemoryExecutionRepository\" master --",
+    "hits": 0
+   }
+  },
+  {
+   "id": "U4",
+   "kind": "param",
+   "path": "confflow/application/v4_entry.py: run_v4_document.transport / formal_v4_runner kwargs[transport] (non-None usage)",
+   "plan_ref": "R1.0 item 3",
+   "reason": "No production caller passes non-None; after R1.2 the signature stays but only None is allowed (legacy-signature compatible) while the transport implementation is deleted.",
+   "evidence": {
+    "commands": [
+     "git grep -n \"def formal_v4_runner|def run_v4_document\" -- confflow",
+     "git grep -n \"transport\" -- confflow/application/v4_entry.py",
+     "git grep -n \"transport\" -- confflow/control_worker.py confflow/cli.py confflow/control.py confflow/v4cli.py",
+     "git grep -n \"RemoteTransport(\" -- confflow"
+    ],
+    "files": [
+     "confflow/application/v4_entry.py:106-114 (run_v4_document signature, transport: Any = None)",
+     "confflow/application/v4_entry.py:217-236 (formal_v4_runner reads kwargs.get(\"transport\"), default None)",
+     "confflow/application/v4_entry.py:132,299 (parameter passthrough only)",
+     "confflow/v4cli.py:244 (builds V4RunRequest without transport, i.e. None)",
+     "confflow/control_worker.py, cli.py, control.py, v4cli.py (zero transport hits)"
+    ],
+    "hits_total": "All production transport hits are parameter plumbing (v4_entry/v4_run/batch/binding_resolution) plus remote package definitions; none passes non-None",
+    "note": "confflow/remote/transport.py:396 RemoteTransport(...) is a same-object store rebinding (with_store clone), not external injection; non-local target still fails via require_target_transport empty branch (binding_resolution.py:173ff), satisfying the R1.2 behavior-invariant requirement. Non-None constructions appear only in ~15 test files."
+   },
+   "jobdesk_refs": {
+    "command": "git -C /opt/jobdesk-v2-v4 grep -n \"confflow.remote|RemoteTransport(\" master --",
+    "hits": 0,
+    "note": "JobDesk SSHRemoteTransport/RemoteTransportError is its own SSH layer (infrastructure/remote/ssh.py), unrelated; exact `confflow.remote|remote.staging|remote.transport|remote.worker` grep is also 0."
+   }
+  },
+  {
+   "id": "U5",
+   "kind": "module",
+   "path": "confflow/remote/{handoff,result_bundle,staging,transport,worker}.py + __init__.py non-envelope exports",
+   "plan_ref": "R1.0 item 4; R1.2",
+   "reason": "Production never constructs RemoteTransport (tests only); EXECUTION_ENVIRONMENT_METADATA_KEY moves to execution/environment, then delete.",
+   "evidence": {
+    "commands": [
+     "git grep -n \"RemoteTransport(\" -- confflow",
+     "git grep -n \"from.*remote|import.*remote\" -- confflow",
+     "git grep -n \"remote\" -- confflow/execution/batch.py confflow/producer/contract.py"
+    ],
+    "files": [
+     "confflow/remote/handoff.py (374)",
+     "confflow/remote/result_bundle.py (455)",
+     "confflow/remote/staging.py (1163; EXECUTION_ENVIRONMENT_METADATA_KEY defined :849)",
+     "confflow/remote/transport.py (1066; RemoteTransport defined :335)",
+     "confflow/remote/worker.py (1419)",
+     "confflow/remote/envelope.py (396, retained until R2.3f)",
+     "confflow/execution/batch.py:68 (ExecutionTransport type import), :783 (lazy EXECUTION_ENVIRONMENT_METADATA_KEY)",
+     "confflow/producer/contract.py:384-386,640,699 (envelope constants only, retained)"
+    ],
+    "hits_total": "RemoteTransport( has 1 hit in confflow (transport.py:396 self-clone); remaining remote references are exactly the 3 sites above (+ registry/v4cli comments)",
+    "note": "Counts match R1.2 verbatim; top-level worker_*.py is the control worker (D3 retained), unrelated."
+   },
+   "jobdesk_refs": {
+    "command": "git -C /opt/jobdesk-v2-v4 grep -n \"confflow.remote|remote.staging|remote.transport|remote.worker|RemoteTransport(\" master --",
+    "hits": 0,
+    "note": "Same as U4: JobDesk SSH layer is its own implementation."
+   }
+  },
+  {
+   "id": "U6",
+   "kind": "module",
+   "path": "confflow/release_dependencies.py (288) + scripts/install_release_wheel.py (711) (+ release/ lock files, release.yml, generate_dependency_locks.py)",
+   "plan_ref": "R1.0 item 5; R1.3",
+   "reason": "Offline install not used (D2/D6: server git clone + pip install .); docs/USAGE.md documents the server install.",
+   "evidence": {
+    "commands": [
+     "git grep -n \"release_dependencies|install_release_wheel|generate_dependency_locks\" -- confflow tools scripts .github"
+    ],
+    "files": [
+     "confflow/release_dependencies.py (288)",
+     "scripts/install_release_wheel.py (711; imports release_dependencies at :57)",
+     "scripts/generate_dependency_locks.py (178)",
+     "release/ (14 lock/checksum files)",
+     ".github/workflows/release.yml (498; imports validate_dependency_inputs at :160)",
+     ".github/workflows/ci.yml:86,109 + coverage_push.yml:30 (--ignore=tests/test_install_release_wheel.py)"
+    ],
+    "hits_total": "Zero callers in confflow; in tools only refactor-acc weights + reachability entries; in scripts only the installer itself",
+    "note": "R1.0 names 2 paths; R1.3 extends to locks/release.yml/CI ignores/tool entries, all covered here. Retained: install_provenance.py, __build__.py, setup.py commit stamping."
+   },
+   "jobdesk_refs": {
+    "command": "git -C /opt/jobdesk-v2-v4 grep -n \"release_dependencies|install_release_wheel\" master --",
+    "hits": 0
+   }
+  },
+  {
+   "id": "U7",
+   "kind": "function",
+   "path": "confflow/persistence/artifacts.py: plan_gc (:196-314), apply_gc (:317ff) (+ contracts.GCPlan :490)",
+   "plan_ref": "R1.0 item 6; R1.4",
+   "reason": "No production caller; verify_artifact retained.",
+   "evidence": {
+    "commands": [
+     "git grep -n \"plan_gc|apply_gc|GCPlan\" -- confflow",
+     "git grep -ln \"plan_gc|apply_gc\" -- tests tools scripts"
+    ],
+    "files": [
+     "confflow/persistence/artifacts.py:196-314 (plan_gc), :317ff (apply_gc), :69 (verify_artifact, retained)",
+     "confflow/persistence/contracts.py:490 (class GCPlan)",
+     "confflow/persistence/__init__.py:25-26,38,91,115,128 (re-exports only)"
+    ],
+    "hits_total": "Zero production calls outside definitions + re-exports; tests reference in 3 files (test_v43_artifacts, test_v43_coverage, test_v43_matrices; guard tests removed with code)",
+    "note": "Zero hits in tools/scripts/.github; no dangling imports after removal (re-verify at execution)."
+   },
+   "jobdesk_refs": {
+    "command": "git -C /opt/jobdesk-v2-v4 grep -n \"plan_gc|apply_gc|GCPlan\" master --",
+    "hits": 0
+   }
+  }
+ ]
+}

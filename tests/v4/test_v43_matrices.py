@@ -38,7 +38,7 @@ from confflow.persistence import (
     store_path,
     transition_step,
 )
-from confflow.persistence.artifacts import ArtifactIntegrityError, plan_gc
+from confflow.persistence.artifacts import ArtifactIntegrityError
 from confflow.persistence.recovery import owner_identity_current, reconcile_owner
 from confflow.persistence.work_items import SqliteWorkItemStore
 from tests.v4._helpers.publication_doubles import (
@@ -443,21 +443,6 @@ class TestForgedArtifactLocators:
         with pytest.raises(ArtifactIntegrityError):
             verify_artifact(run_root=run_root, ref=_forged_ref("forged", forged_kind, path, uri))
 
-    def test_forged_locators_rejected_in_planning(self, tmp_path: Path) -> None:
-        from confflow.domain.artifact import LocatorKind as _Kind
-        from confflow.domain.retention import RetentionClass as _RC
-
-        run_root = str(tmp_path / "run")
-        os.makedirs(os.path.join(run_root, "steps", "s_opt"))
-        ref = _forged_ref("forged", _Kind.RUN_RELATIVE, "../escape.out", None)
-        object.__setattr__(ref, "retention", _RC.TEMPORARY)
-        with pytest.raises(ArtifactIntegrityError):
-            plan_gc(
-                run_root=run_root,
-                candidates=(ref,),
-                consumed_ids=frozenset({"forged"}),
-            )
-
     def test_symlink_directory_rejected(self, tmp_path: Path) -> None:
         from confflow.persistence.artifacts import verify_artifact
 
@@ -731,7 +716,6 @@ class TestBatchSeams:
                 environment_digest=rival_request.environment.digest(),
                 provenance=BatchStepExecutor._current_provenance(context_request),
                 run_root=run_root,
-                transport=None,
                 should_cancel=lambda: False,
             )
             assert durable is True
@@ -775,7 +759,6 @@ class TestBatchSeams:
                 environment_digest=None,
                 provenance=FrozenDict({}),
                 run_root=run_root,
-                transport=None,
                 should_cancel=lambda: False,
                 _claim_retried=True,
             )
@@ -993,23 +976,6 @@ class TestRoundThree:
         with pytest.raises(ArtifactIntegrityError):
             verify_artifact(run_root=run_root, ref=ref)
 
-    def test_planning_locator_variants(self, tmp_path: Path) -> None:
-        from confflow.domain.artifact import LocatorKind as _Kind
-        from confflow.domain.retention import RetentionClass as _RC
-        from tests.v4._helpers.publication_doubles import _forged_ref as _forge
-
-        run_root = str(tmp_path / "run")
-        os.makedirs(os.path.join(run_root, "steps", "s_opt"))
-        for raw in ("/absolute/x.out", "a\\b.out", "C:drive.out"):
-            ref = _forge("forged", _Kind.RUN_RELATIVE, raw, None)
-            object.__setattr__(ref, "retention", _RC.TEMPORARY)
-            with pytest.raises(ArtifactIntegrityError):
-                plan_gc(
-                    run_root=run_root,
-                    candidates=(ref,),
-                    consumed_ids=frozenset({"forged"}),
-                )
-
     def test_reuse_extra_guards(self) -> None:
         from confflow.persistence.reuse import ReuseInputs as _Inputs
         from confflow.persistence.reuse import build_producer_provenance as _build
@@ -1221,7 +1187,6 @@ class TestRoundThree:
                 environment_digest=None,
                 provenance=FrozenDict({}),
                 run_root=run_root,
-                transport=None,
                 should_cancel=lambda: False,
             )
             assert durable is True

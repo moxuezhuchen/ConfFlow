@@ -28,9 +28,6 @@ from confflow.execution.transform_executor import TransformExecutor
 from confflow.persistence import imports as import_store
 from confflow.persistence import publication as publication_store
 from confflow.persistence import work_items as work_item_store
-from confflow.remote import staging as remote_staging
-from confflow.remote import worker as remote_worker
-from confflow.remote.envelope import StructureBundleEntry, bundle_entry_digest
 from confflow.science import topology as topology_authority
 from confflow.workflow.v4.assembly import RunInputs
 from confflow.workflow.v4.compiler import compile_workflow
@@ -313,21 +310,6 @@ class TestTopologySerialization:
     def test_publication_round_trip(self) -> None:
         rebuilt = publication_store._structure_record(self._patched().to_dict())
         assert rebuilt == self._patched()
-
-    def test_staging_round_trip(self) -> None:
-        built = remote_staging._build_structure_set([self._patched().to_dict()], what="structures")
-        assert list(built)[0] == self._patched()
-
-    def test_worker_allowlist_and_rebuild(self) -> None:
-        assert {"topology_patch", "working_topology"} <= remote_worker._STRUCTURE_FIELDS
-        record = self._patched()
-        payload = record.to_dict()
-        entry = StructureBundleEntry(
-            structure_id=record.id,
-            payload=payload,
-            digest=bundle_entry_digest("structure", payload),
-        )
-        assert remote_worker._structure_from_entry(entry) == record
 
     def test_import_reinstatement_preserves_patch(self, tmp_path: Any) -> None:
         fresh = StructureSet.of(

@@ -469,37 +469,3 @@ class TestGoatSeedSingleAuthority:
         )
         assert rebuilt is not None
         assert rebuilt.seed == 7
-
-    def test_remote_envelope_carries_seed_and_digest(self) -> None:
-        import hashlib
-
-        from confflow.domain.resources import ResourceRequest
-        from confflow.remote.transport import build_execution_definition
-
-        digest = "sha256:" + hashlib.sha256(b"goat-seed-7").hexdigest()
-
-        definition = build_execution_definition(
-            executor="native",
-            program="orca",
-            native={"keyword": "HF-3c GOAT", "goat": {"MaxIter": 5}},
-            seed=7,
-            transform=None,
-            execution_adapter="standard",
-            result_profile="ensemble",
-            checks=(),
-            check_params={},
-            recovery="none",
-            recovery_params={},
-            resources=ResourceRequest(cores_per_item=1, memory_per_item_bytes=2 * 1024**3),
-            handoff_executable=None,
-            handoff_env={},
-            handoff_walltime_seconds=None,
-            charge=0,
-            multiplicity=1,
-            freeze=None,
-            step_semantic_digest=digest,
-            contract_versions={},
-        )
-        assert definition.seed == 7
-        assert "goat" in definition.native
-        assert "RANDOMSEED" not in definition.native["goat"]

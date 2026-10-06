@@ -330,3 +330,65 @@ class TestSchedulerWidthReuseSafe:
         assert _reused_count(second) == 10
         assert supervisor2.submits == 0
         assert second.status is StepStatus.COMPLETED
+
+
+class TestRetiredDeliverySeams:
+    """R1.2: remote delivery retired; batch fails closed on any transport."""
+
+    def test_resumable_rejects_retired_transport_before_any_launch(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("FAKE_MODE", "success_opt")
+        run_root = str(tmp_path / "run")
+        plan = _compile(_document())
+        items = _items(plan, _structures(2))
+        store_file = store_path(run_root, STEP_ID)
+        supervisor = CountingSupervisor()
+
+        from confflow.persistence.contracts import PersistenceError
+
+        with SqliteWorkItemStore.open(store_file) as store:
+            with pytest.raises(PersistenceError, match="transport is retired"):
+                _batch(supervisor).execute_step_resumable(
+                    _request(plan, items, run_root),
+                    store=store,
+                    run_root=run_root,
+                    owner_token="controller-transport",
+                    transport=object(),
+                )
+        assert supervisor.submits == 0
+
+    def test_reconcile_before_retry_returns_none_without_side_effects(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Local-only retry needs no out-of-band bundle: always None, never raises."""
+        from confflow.execution.work_item_executor import ItemExecutionContext
+
+        monkeypatch.setenv("FAKE_MODE", "success_opt")
+        run_root = str(tmp_path / "run")
+        plan = _compile(_document())
+        items = _items(plan, _structures(1))
+        request = _request(plan, items, run_root)
+        assert request.environment is not None
+        context = ItemExecutionContext(
+            step_id=request.step.step_id,
+            scientific=request.scientific,
+            scientific_defaults=request.scientific_defaults,
+            adapter=request.adapter,
+            profile=request.profile,
+            checks=request.checks,
+            execution_binding=request.execution_binding,
+            run_root=run_root,
+            environment=request.environment,
+        )
+        store_file = store_path(run_root, STEP_ID)
+        with SqliteWorkItemStore.open(store_file) as store:
+            assert (
+                _batch(CountingSupervisor())._reconcile_before_retry(
+                    items[0],
+                    context,
+                    store=store,
+                    environment_digest=request.environment.digest(),
+                )
+                is None
+            )

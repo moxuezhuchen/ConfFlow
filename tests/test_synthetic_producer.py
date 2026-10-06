@@ -39,7 +39,14 @@ from confflow.application.execution import (
     SQLiteExecutionRepository,
     StateRoot,
 )
-from confflow.application.execution.synthetic_producer import (
+from confflow.application.execution.workflow_adapter import (
+    FileIdentityVerifier,
+    executor_identity,
+    measure_executable,
+    open_control_service,
+)
+from confflow.control import main as control_main
+from tests.support.synthetic_producer import (
     SYNTHETIC_ARTIFACT,
     SYNTHETIC_ARTIFACT_CONTENT,
     SYNTHETIC_ARTIFACT_PATH,
@@ -50,13 +57,6 @@ from confflow.application.execution.synthetic_producer import (
     open_synthetic_service,
     synthetic_agent_entry,
 )
-from confflow.application.execution.workflow_adapter import (
-    FileIdentityVerifier,
-    executor_identity,
-    measure_executable,
-    open_control_service,
-)
-from confflow.control import main as control_main
 
 TERMINAL = frozenset({RunState.COMPLETED, RunState.FAILED, RunState.CANCELLED})
 
@@ -684,7 +684,7 @@ def test_synthetic_agent_entry_terminal_attach_is_idempotent_without_execute(
     worker_count = executor.worker_count
 
     monkeypatch.setattr(
-        "confflow.application.execution.synthetic_producer.open_synthetic_service",
+        "tests.support.synthetic_producer.open_synthetic_service",
         lambda _state_root: service,
     )
 
@@ -720,7 +720,7 @@ def test_synthetic_agent_entry_uses_public_queued_consumer_api(tmp_path: Path, m
         return consume(value)
 
     monkeypatch.setattr(
-        "confflow.application.execution.synthetic_producer.open_synthetic_service",
+        "tests.support.synthetic_producer.open_synthetic_service",
         lambda _state_root: service,
     )
     monkeypatch.setattr(service, "consume_queued_launch", public_consume)

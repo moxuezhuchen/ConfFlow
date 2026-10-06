@@ -64,7 +64,6 @@ from confflow.persistence.contracts import PersistenceError, store_path
 from confflow.persistence.reuse import build_producer_provenance
 from confflow.persistence.work_items import SqliteWorkItemStore
 from confflow.programs.registry import get_program_adapter
-from confflow.remote.transport import RemoteTransport
 from tests.v4._builders import (
     assemble,
     calc_step,
@@ -657,81 +656,6 @@ class TestIrcResume:
             PATH_ENDPOINT_FORWARD_ROLE,
             PATH_ENDPOINT_REVERSE_ROLE,
         }
-
-    def test_remote_restart_reuses_without_duplicate(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        wrapper, count_file = _install_irc(tmp_path, monkeypatch)
-        run_root = str(tmp_path / "run")
-        plan = _compile(_irc_doc())
-        structures = StructureSet.of(
-            *(structure(f"ts{i:02d}", group_key=f"rxn-{i:02d}") for i in range(4))
-        )
-        items = assemble(plan, run_inputs(structures={"structures": structures})).for_step("s_irc")
-        adapter = get_program_adapter("orca")  # real adapter: fakes speak real grammar
-        profile = PathEndpointsProfile()
-        checks = (CHECKS["normal_termination"], CHECKS["geometry_required"])
-        planned = next(step for step in plan.steps if step.step_id == "s_irc")
-        with SqliteWorkItemStore.open(store_path(run_root, "s_irc")) as store:
-            first_request = _request(
-                plan,
-                "s_irc",
-                tuple(items),
-                run_root,
-                wrapper,
-                adapter=adapter,
-                profile=profile,
-                checks=checks,
-            )
-            provenance = _provenance_for(first_request)
-            for item in items:
-                _seed_completed(
-                    store,
-                    item,
-                    planned.step_semantic_digest,
-                    provenance,
-                    _irc_result(item),
-                    first_request.environment.digest(),
-                )
-            first_transport = RemoteTransport(
-                run_root=run_root, store=store, worker_root=str(tmp_path / "worker-a")
-            )
-            first = _batch().execute_step_resumable(
-                first_request,
-                store=store,
-                run_root=run_root,
-                owner_token="ctl-a",
-                transport=first_transport,
-            )
-            assert _reuse_hits(first) == 4
-            assert _native_count(count_file) == 0
-            # A restarted producer with a fresh transport and worker root
-            # recovers the prior results instead of relaunching.
-            second_transport = RemoteTransport(
-                run_root=run_root, store=store, worker_root=str(tmp_path / "worker-b")
-            )
-            second = _batch().execute_step_resumable(
-                _request(
-                    plan,
-                    "s_irc",
-                    tuple(items),
-                    run_root,
-                    wrapper,
-                    adapter=adapter,
-                    profile=profile,
-                    checks=checks,
-                ),
-                store=store,
-                run_root=run_root,
-                owner_token="ctl-b",
-                transport=second_transport,
-            )
-            assert _reuse_hits(second) == 4
-            assert _native_count(count_file) == 0
-            assert second.summary["completed"] == 4
-            assert [record.id for record in first.structures] == [
-                record.id for record in second.structures
-            ]
 
 
 class TestGoatResume:

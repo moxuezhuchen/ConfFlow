@@ -17,11 +17,11 @@ from confflow.application.execution import (
     ExecutionLifecycle,
     ExecutionService,
     ExecutionServiceError,
-    InMemoryExecutionRepository,
     LaunchReceipt,
     PrepareRequest,
     RunState,
 )
+from tests.support.memory import InMemoryExecutionRepository
 
 IDENTITY = ExecutableIdentity(sha256="e" * 64, realpath="/opt/g16/g16")
 

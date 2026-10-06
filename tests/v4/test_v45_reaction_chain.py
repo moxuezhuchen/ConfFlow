@@ -20,7 +20,7 @@ from typing import Any
 import pytest
 
 from confflow.domain import FrozenDict, StructureSet
-from confflow.domain.completion import StepStatus, WorkItemStatus
+from confflow.domain.completion import StepStatus
 from confflow.execution import ExecutionBinding
 from confflow.execution.batch import BatchStepExecutor, StepExecutionRequest
 from confflow.execution.checks_standard import CHECKS
@@ -31,7 +31,6 @@ from confflow.execution.work_item_executor import WorkItemExecutor
 from confflow.persistence.contracts import store_path
 from confflow.persistence.work_items import SqliteWorkItemStore
 from confflow.programs.registry import get_program_adapter
-from confflow.remote.transport import RemoteTransport
 from tests.v4._builders import (
     assemble,
     calc_step,
@@ -618,67 +617,6 @@ class TestRealNeb:
         # plus the native-reported highest-energy-image TS candidate.
         assert roles == ["neb_image"] * 7 + ["neb_ts_candidate"]
         assert _native_count(count_file) == 1
-
-
-class TestRealIrcRemoteParity:
-    """Local vs remote IRC through the real adapter and profile."""
-
-    def test_local_remote_identical(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("FAKE_MODE", "success_opt")
-        # The handoff carries the explicit wrapper path verbatim; the
-        # worker measures and launches it (shared filesystem), so the
-        # fake must exist at that absolute path.
-        wrapper, _count = _install_fake(tmp_path, monkeypatch, FAKE_IRC, "orca")
-        run_root = str(tmp_path / "run")
-        worker_root = str(tmp_path / "worker")
-        plan = _compile(_irc_doc())
-        structures = _ts_structures("ts", 2)
-        items = tuple(_assemble(plan, "s_irc", structures))
-        planned = plan.steps[0]
-
-        from confflow.execution.work_item_executor import ItemExecutionContext
-
-        context = ItemExecutionContext(
-            step_id="s_irc",
-            scientific=planned.scientific,
-            scientific_defaults=plan.scientific_defaults,
-            adapter=get_program_adapter("orca"),
-            profile=PROFILES["path_endpoints"],
-            checks=(CHECKS["normal_termination"],),
-            recovery=RECOVERIES["none"],
-            execution_binding=ExecutionBinding(
-                binding_id="test", executable=str(wrapper), env=FrozenDict({})
-            ),
-            run_root=run_root,
-            work_base=os.path.join(run_root, "work"),
-            supervisor=NativeProcessSupervisor(),
-            environment=None,
-            poll_interval_seconds=0.05,
-            executor_capability="calculation",
-        )
-        with SqliteWorkItemStore.open(store_path(run_root, "s_irc")) as store:
-            from confflow.persistence import OwnerIdentity
-
-            for item in items:
-                store.register_item(
-                    work_item_id=item.id,
-                    logical_key=item.logical_key,
-                    step_id=item.step_id,
-                    work_item_digest=item.semantic_digest,
-                    step_semantic_digest=planned.step_semantic_digest,
-                )
-                assert store.claim(item.id, owner=OwnerIdentity(owner_token="ctl"))
-            transport = RemoteTransport(run_root=run_root, store=store, worker_root=worker_root)
-            remote_results = [transport.execute(item, context, attempt=1) for item in items]
-        assert all(r.status is WorkItemStatus.COMPLETED for r in remote_results)
-        for item, remote in zip(items, remote_results):
-            assert remote.work_item_id == item.id
-            assert len(remote.structures) == 2
-            assert {s.role for s in remote.structures} == {
-                "path_endpoint_forward",
-                "path_endpoint_reverse",
-            }
-            assert remote.semantic_digest == item.semantic_digest
 
 
 class TestRealIrcIncomplete:

@@ -48,7 +48,7 @@ import shutil
 import threading
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Final
 
 from ..domain._immutable import FrozenDict
 from ..domain.errors import DomainError
@@ -56,12 +56,17 @@ from .contracts import ExecutionEnvironment
 from .native import ProgramAdapter
 
 __all__ = [
+    "EXECUTION_ENVIRONMENT_METADATA_KEY",
     "ExecutableIdentity",
     "EnvironmentMeasurer",
     "build_pure_environment",
     "measure_executable",
     "select_relevant_env",
 ]
+
+#: Metadata key carrying the verified worker-measured execution environment
+#: on an imported remote result, for the batch commit path.
+EXECUTION_ENVIRONMENT_METADATA_KEY: Final[str] = "remote_execution_environment"
 
 _HASH_CHUNK_BYTES = 1024 * 1024
 

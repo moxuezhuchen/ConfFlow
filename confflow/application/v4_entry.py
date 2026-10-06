@@ -115,11 +115,20 @@ def run_v4_document(
     import_sources: Any = None,
     should_cancel: Any = None,
 ) -> Any:
-    """Run one V4 document through the single V4 application object."""
+    """Run one V4 document through the single V4 application object.
+
+    Legacy ``transport`` seam (R1.2 retired remote delivery): only
+    ``None`` is accepted; any other value fails closed.
+    """
     from ..domain._immutable import FrozenDict
+    from ..domain.errors import DomainError
     from ..execution.process import NativeProcessSupervisor
     from .v4_run import V4RunApplication, V4RunRequest
 
+    if transport is not None:
+        raise DomainError(
+            "transport is retired (R1.2): only transport=None " "(local execution) is accepted"
+        )
     require_v4_document(document)
     resolved_supervisor = supervisor if supervisor is not None else NativeProcessSupervisor()
     request = V4RunRequest(
@@ -129,7 +138,6 @@ def run_v4_document(
         owner_token=owner_token,
         executables=FrozenDict(dict(executables or {})),
         supervisor=resolved_supervisor,
-        transport=transport,
         import_sources=FrozenDict(dict(import_sources or {})),
         should_cancel=should_cancel,
     )
@@ -224,8 +232,12 @@ def formal_v4_runner(**kwargs: Any) -> dict[str, Any] | None:
     ``executables``/``supervisor``/``transport``) and runs the single V4
     application.  Legacy-only callbacks are accepted and ignored: progress
     publication flows through the durable V4 store, not callbacks.
+    The legacy ``transport`` keyword is accepted for signature
+    compatibility but only ``None`` is allowed (R1.2 retired remote
+    delivery).
     """
     from ..domain._immutable import FrozenDict
+    from ..domain.errors import DomainError
     from .v4_run import V4RunApplication, V4RunRequest
 
     input_xyz = kwargs.get("input_xyz") or []
@@ -234,6 +246,10 @@ def formal_v4_runner(**kwargs: Any) -> dict[str, Any] | None:
     executables = kwargs.get("executables") or {}
     supervisor = kwargs.get("supervisor")
     transport = kwargs.get("transport")
+    if transport is not None:
+        raise DomainError(
+            "transport is retired (R1.2): only transport=None " "(local execution) is accepted"
+        )
     owner_token = kwargs.get("owner_token") or "formal"
     if not config_file:
         raise _legacy_error("a V4 workflow document is required")
@@ -296,7 +312,6 @@ def formal_v4_runner(**kwargs: Any) -> dict[str, Any] | None:
         owner_token=str(owner_token),
         executables=FrozenDict(dict(executables)),
         supervisor=resolved_supervisor,
-        transport=transport,
         import_sources=import_sources,
         should_cancel=should_cancel,
     )

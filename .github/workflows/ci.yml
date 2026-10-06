@@ -79,12 +79,8 @@ jobs:
         if: matrix.python-version == '3.11'
         run: mypy confflow
 
-      - name: Pytest (release wheel installer pinned to 3.12)
-        if: matrix.python-version == '3.12'
+      - name: Pytest
         run: pytest -q -n auto
-      - name: Pytest (matrix excluding release installer lock-dependent tests)
-        if: matrix.python-version != '3.12'
-        run: pytest -q -n auto --ignore=tests/test_install_release_wheel.py
 
   # Full coverage: main pushes and manual milestone gates only (not a PR requirement).
   coverage:
@@ -109,7 +105,7 @@ jobs:
           python -m pip check
 
       - name: Coverage (gate)
-        run: pytest tests/ -n auto --ignore=tests/test_install_release_wheel.py --cov=confflow --cov-report=term-missing --cov-report=xml
+        run: pytest tests/ -n auto --cov=confflow --cov-report=term-missing --cov-report=xml
 
       - name: Subsystem coverage floor
         run: python tools/subsystem_coverage.py check --xml coverage.xml --baseline tools/coverage_baseline.json

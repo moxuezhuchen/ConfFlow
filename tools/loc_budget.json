@@ -101,9 +101,9 @@
         "confflow/worker_*.py"
       ],
       "prod_files": 23,
-      "prod_loc_limit": 6217,
+      "prod_loc_limit": 5678,
       "ratchet": "R1/R2 上限不变；N 阶段按卡预算增长；里程碑验收后以实际值重写本上限；其余时间只降不升。",
-      "reason": "临时提高（待用户确认）：L2 第一张卡加法投影 v4_artifacts.py 新增约 400 行；L2 删除旧读取链的卡必须把本上限降回不高于 5815（P0 基线）。",
+      "reason": "R1.1 生产→测试转移后上限 5276(5815-539)；加 L2 第一张卡已批准的临时例外 +402 = 5678；L2 旧链删除卡必须降回 ≤5276 并撤销例外。",
       "temporary_until": "L2 old-chain deletion card"
     },
     {
@@ -204,12 +204,12 @@
       "label": "通用基础",
       "patterns": [],
       "prod_files": 48,
-      "prod_loc_limit": 14216,
+      "prod_loc_limit": 14139,
       "ratchet": "R1/R2 上限不变；N 阶段按卡预算增长；里程碑验收后以实际值重写本上限；其余时间只降不升。",
-      "reason": "P0.2 初始上限=P0 阶段实际值：基 cc16e8f（含 E1 与 J1 CF 两张计划内卡，在 DIET-2 R/N 之前合并）。提高须写明理由并经用户确认。"
+      "reason": "R1.1 生产→测试转移，合计不变，待用户确认：搬走 fixture_agent.py(77 行)，上限 14216-77=14139。"
     }
   ],
   "tests_total_files": 245,
-  "tests_total_loc_limit": 121190,
-  "tests_total_reason": "临时提高（待用户确认）：L2 投影与拒绝路径测试合计新增约 630 行；随 T 阶段整合回落至不高于 P0 基线 120560。"
+  "tests_total_loc_limit": 121806,
+  "tests_total_reason": "R1.1 转移 +616(120560→121176)，加 L2 临时例外 +630 = 121806；随 T 阶段/里程碑实际值重写后回落。"
 }

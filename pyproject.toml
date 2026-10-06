@@ -78,7 +78,6 @@ all = [
 [project.scripts]
 confflow = "confflow.main:main"
 confflow-control-worker = "confflow.control_worker:main"
-confflow-fixture-agent = "confflow.fixture_agent:main"
 
 [project.urls]
 Homepage = "https://github.com/moxuezhuchen/ConfFlow"

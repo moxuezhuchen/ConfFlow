@@ -2,8 +2,7 @@
 
 The full public surface stays importable, but it is resolved lazily (PEP 562):
 importing :mod:`confflow.application.execution` no longer eagerly executes the
-durable-service aggregate, the synthetic (dev-fixture) producer, or the
-in-memory test repository.  Import the concrete submodule when you need the
+durable-service aggregate. Import the concrete submodule when you need the
 implementation.
 """
 
@@ -15,7 +14,6 @@ from typing import Any
 _LAZY_EXPORTS: dict[str, tuple[str, str]] = {
     "ErrorCode": (".errors", "ErrorCode"),
     "ExecutionServiceError": (".errors", "ExecutionServiceError"),
-    "InMemoryExecutionRepository": (".memory", "InMemoryExecutionRepository"),
     "Artifact": (".models", "Artifact"),
     "ArtifactManifest": (".models", "ArtifactManifest"),
     "CancelReceipt": (".models", "CancelReceipt"),
@@ -37,15 +35,6 @@ _LAZY_EXPORTS: dict[str, tuple[str, str]] = {
     "SQLiteExecutionRepository": (".sqlite", "SQLiteExecutionRepository"),
     "RunPaths": (".state_root", "RunPaths"),
     "StateRoot": (".state_root", "StateRoot"),
-    "SYNTHETIC_ARTIFACT": (".synthetic_producer", "SYNTHETIC_ARTIFACT"),
-    "SYNTHETIC_ARTIFACT_CONTENT": (".synthetic_producer", "SYNTHETIC_ARTIFACT_CONTENT"),
-    "SYNTHETIC_ARTIFACT_PATH": (".synthetic_producer", "SYNTHETIC_ARTIFACT_PATH"),
-    "SYNTHETIC_ARTIFACT_SCHEMA": (".synthetic_producer", "SYNTHETIC_ARTIFACT_SCHEMA"),
-    "SYNTHETIC_ARTIFACT_TERMINAL": (".synthetic_producer", "SYNTHETIC_ARTIFACT_TERMINAL"),
-    "SYNTHETIC_CHECKPOINT_ID": (".synthetic_producer", "SYNTHETIC_CHECKPOINT_ID"),
-    "SyntheticProducerExecutor": (".synthetic_producer", "SyntheticProducerExecutor"),
-    "open_synthetic_service": (".synthetic_producer", "open_synthetic_service"),
-    "synthetic_agent_entry": (".synthetic_producer", "synthetic_agent_entry"),
     "ServiceWorkflowExecutor": (".workflow_adapter", "ServiceWorkflowExecutor"),
     "WorkflowRunSpec": (".workflow_adapter", "WorkflowRunSpec"),
     "build_workflow_service": (".workflow_adapter", "build_workflow_service"),
@@ -68,7 +57,6 @@ __all__ = [
     "ExecutionLifecycle",
     "ExecutionService",
     "ExecutionServiceError",
-    "InMemoryExecutionRepository",
     "LaunchReceipt",
     "LaunchRequest",
     "PrepareRequest",
@@ -79,19 +67,10 @@ __all__ = [
     "SQLiteExecutionRepository",
     "SharedFilesystemApproval",
     "StateRoot",
-    "SYNTHETIC_ARTIFACT",
-    "SYNTHETIC_ARTIFACT_CONTENT",
-    "SYNTHETIC_ARTIFACT_PATH",
-    "SYNTHETIC_ARTIFACT_SCHEMA",
-    "SYNTHETIC_ARTIFACT_TERMINAL",
-    "SYNTHETIC_CHECKPOINT_ID",
-    "SyntheticProducerExecutor",
     "WorkflowRunSpec",
     "build_workflow_service",
     "open_control_service",
-    "open_synthetic_service",
     "run_workflow_through_service",
-    "synthetic_agent_entry",
 ]
 
 

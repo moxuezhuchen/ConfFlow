@@ -371,13 +371,10 @@ RUNTIME_SCENARIOS: dict[str, dict[str, dict[str, str]]] = {
     },
     "RT-019": {
         "clean": {
-            "confflow/remote/handoff.py": INIT,
-            "confflow/remote/staging.py": INIT,
-            "confflow/remote/transport.py": INIT,
-            "confflow/remote/worker.py": INIT,
+            "confflow/remote/envelope.py": INIT,
         },
         "mutant": {
-            "confflow/remote/handoff.py": "import confflow.remote.lease\n",
+            "confflow/remote/envelope.py": "import confflow.remote.lease\n",
             "confflow/remote/lease.py": INIT,
         },
     },
@@ -1249,7 +1246,7 @@ RUNTIME_NEGATIVE_FIXTURES: dict[str, dict[str, str]] = {
     },
     "RT-019": {
         "confflow/remote/__init__.py": INIT,
-        "confflow/remote/handoff.py": "import confflow.remote.lease\n",
+        "confflow/remote/envelope.py": "import confflow.remote.lease\n",
         "confflow/remote/lease.py": INIT,
     },
     "RT-020": {

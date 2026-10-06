@@ -50,8 +50,8 @@ from confflow.persistence import (
     validate_run_root,
     wall_now,
 )
-from confflow.persistence.artifacts import ArtifactIntegrityError, apply_gc, plan_gc
-from confflow.persistence.contracts import GCEntry, GCPlan
+from confflow.persistence.artifacts import ArtifactIntegrityError
+from confflow.persistence.contracts import GCEntry
 from confflow.persistence.recovery import owner_identity_current, reconcile_owner
 from confflow.persistence.reuse import ReuseInputs, build_producer_provenance, evaluate_reuse
 from confflow.persistence.run_state import (
@@ -179,11 +179,8 @@ class TestContractValidation:
             GCEntry(artifact_id="", reason="x")
         with pytest.raises(PersistenceError):
             GCEntry(artifact_id="a", reason="  ")
-        with pytest.raises(PersistenceError):
-            GCPlan(entries=("nope",))  # type: ignore[list-item]
-        plan = GCPlan(entries=(GCEntry(artifact_id="a", reason="x", locator_path="/tmp/a"),))
-        assert plan.artifact_ids == ("a",)
-        assert plan.to_dict()["entries"][0]["artifact_id"] == "a"
+        entry = GCEntry(artifact_id="a", reason="x", locator_path="/tmp/a")
+        assert entry.to_dict()["artifact_id"] == "a"
 
 
 # ---------------------------------------------------------------------------
@@ -612,31 +609,6 @@ class TestArtifactEdges:
                 ref=self._ref(checksum="rot13:" + "a" * 32),
             )
 
-    def test_gc_edges(self, tmp_path: Path) -> None:
-        from confflow.domain.retention import RetentionClass
-
-        run_root = str(tmp_path / "run")
-        directory = Path(run_root) / "steps" / "s_opt"
-        directory.mkdir(parents=True)
-        (directory / "gone.out").write_bytes(b"")
-        temporary = ArtifactRef(
-            id="t1",
-            role="native_output",
-            locator=ArtifactLocator.run_relative("steps/s_opt/gone.out"),
-            retention=RetentionClass.TEMPORARY,
-        )
-        plan = plan_gc(run_root=run_root, candidates=(temporary,), consumed_ids=frozenset({"t1"}))
-        assert plan.artifact_ids == ("t1",)
-        forged = GCPlan(
-            entries=(
-                GCEntry(artifact_id="rel", reason="test", locator_path="relative/path"),
-                GCEntry(artifact_id="dir", reason="test", locator_path=str(directory)),
-            )
-        )
-        removed, failed = apply_gc(run_root=run_root, plan=forged)
-        assert removed == ()
-        assert set(failed) == {"rel", "dir"}
-
 
 # ---------------------------------------------------------------------------
 # Durable-runner seams through the real path
@@ -880,7 +852,6 @@ class TestDurableRunnerSeams:
                 environment_digest=None,
                 provenance=FrozenDict({}),
                 run_root=str(tmp_path / "run"),
-                transport=None,
                 should_cancel=lambda: False,
             )
             assert durable is False

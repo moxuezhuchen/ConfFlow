@@ -22,8 +22,6 @@ from __future__ import annotations
 
 from .artifacts import (
     ArtifactIntegrityError,
-    apply_gc,
-    plan_gc,
     verify_artifact,
 )
 from .contracts import (
@@ -35,7 +33,6 @@ from .contracts import (
     STEP_STORE_FILENAME,
     CorruptStateError,
     GCEntry,
-    GCPlan,
     OwnerIdentity,
     OwnerVerdict,
     PersistenceError,
@@ -88,7 +85,6 @@ from .work_items import SqliteWorkItemStore, StoredAttempt
 __all__ = [
     "ALLOWED_TRANSITIONS",
     "GCEntry",
-    "GCPlan",
     "ArtifactIntegrityError",
     "IMPORT_MAP_SCHEMA_VERSION",
     "OwnerIdentity",
@@ -112,7 +108,6 @@ __all__ = [
     "StepLifecycle",
     "StoredAttempt",
     "StoredWorkItemStatus",
-    "apply_gc",
     "build_producer_provenance",
     "detect_published",
     "ensure_step",
@@ -125,7 +120,6 @@ __all__ = [
     "load_published_step_result",
     "load_run_state",
     "owner_identity_current",
-    "plan_gc",
     "publish_step_result",
     "rebuild_step_result",
     "reconcile_owner",

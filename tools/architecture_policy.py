@@ -3136,13 +3136,10 @@ RUNTIME_RULES = [
     },
     {
         "id": "RT-019",
-        "source": "#19",
+        "source": "#19 (R1.2: remote package is envelope-only; handoff/staging/transport/worker retired)",
         "cases": [
             [
-                {"op": "import", "module": "confflow.remote.handoff"},
-                {"op": "import", "module": "confflow.remote.staging"},
-                {"op": "import", "module": "confflow.remote.transport"},
-                {"op": "import", "module": "confflow.remote.worker"},
+                {"op": "import", "module": "confflow.remote.envelope"},
                 {
                     "op": "forbid",
                     "exact": [
