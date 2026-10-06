@@ -300,6 +300,22 @@ class TestR2TargetSemantics:
         with pytest.raises(DomainError, match="no transport is configured"):
             require_target_transport("nonexistent-cluster", None)
 
+    def test_resolve_step_transport_rejects_retired_transport(self) -> None:
+        """R1.2 compat seam: a non-None transport fails closed with 0 launches."""
+        from confflow.execution import ExecutionBinding
+
+        binding = ExecutionBinding(binding_id="test")
+        with pytest.raises(DomainError, match="transport is retired"):
+            V4RunApplication._resolve_step_transport(binding, transport=object())
+
+    def test_resolve_step_transport_nonlocal_target_fails_closed(self) -> None:
+        """R1.2 compat seam: nonlocal target without transport fails closed."""
+        from confflow.execution import ExecutionBinding
+
+        binding = ExecutionBinding(binding_id="test", target="nonexistent-cluster")
+        with pytest.raises(DomainError, match="no transport is configured"):
+            V4RunApplication._resolve_step_transport(binding)
+
     def test_pure_executor_nonlocal_target_fails_closed(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
