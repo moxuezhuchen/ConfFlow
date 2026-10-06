@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import errno
 import hashlib
-import inspect
 import json
 import os
 import shutil
@@ -21,15 +20,9 @@ import threading
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any, NoReturn, Protocol
+from typing import Any, Protocol
 
 from ...artifact_json import write_atomic_json
-from ...contract import (
-    OUTPUT_MANIFEST_SCHEMA,
-    OUTPUT_MANIFEST_SCHEMA_V2,
-    WORKFLOW_STATS_SCHEMA,
-    WORKFLOW_STATS_SCHEMA_V2,
-)
 from ...core.exceptions import StopRequestedError
 from ...persistence import arbitration
 from ...persistence.fsatomic import fsync_directory
@@ -50,6 +43,7 @@ from .ports import IdentityVerifier, WorkflowExecutor
 from .service import ExecutionLifecycle, ExecutionService
 from .sqlite import SQLiteExecutionRepository
 from .state_root import RunPaths, StateRoot
+from .v4_artifacts import load_v4_completed_artifacts
 
 #: Control-channel pointer (under ``RunPaths.work``) naming the actual V4
 #: run root of a durable run.  It lets a cross-process ``control cancel``
@@ -243,6 +237,22 @@ def _commit_v4_terminal(
     lifecycle.failed(artifacts)
 
 
+def _terminal_artifacts_for_status(work_dir: str, v4_status: str) -> tuple[Artifact, ...]:
+    """Project terminal artifacts for one resolved V4 status.
+
+    Only ``completed`` reads the typed COMPLETED manifest projection, which
+    fails closed (missing/corrupt/unbound manifest raises
+    ``ARTIFACT_INTEGRITY_FAILED`` with no legacy fallback).  Any other
+    terminal status carries no completion artifacts: ``failed``/``partial``/
+    ``cancelled`` (and the fail-closed ``failed`` for an undeterminable
+    outcome) project as an empty set so the service lifecycle commits the
+    status itself instead of inventing completion evidence.
+    """
+    if v4_status != "completed":
+        return ()
+    return load_v4_completed_artifacts(work_dir)
+
+
 def step_record_identity(record: Any) -> str:
     """Return the durable step identity of a v1 or v2 state record (PD-8).
 
@@ -277,7 +287,6 @@ class WorkflowRunSpec:
     verbose: bool = False
     pause_beacon_file: str | None = None
     cancel_beacon_file: str | None = None
-    step_started_callback: Callable[[str, str, str], None] | None = None
     # The interactive CLI acquires this before converting any input files so
     # an active attempt protects the whole work-directory mutation boundary.
     work_directory_lease: _WorkDirectoryLease | None = None
@@ -364,7 +373,7 @@ class ServiceWorkflowExecutor(WorkflowExecutor):
         if service is None:  # pragma: no cover - callers guard this
             return
         try:
-            artifacts = _load_artifacts(self._spec.work_dir)
+            artifacts = _terminal_artifacts_for_status(self._spec.work_dir, winner)
         except ExecutionServiceError:
             artifacts = ()
         _commit_v4_terminal(
@@ -443,41 +452,31 @@ class ServiceWorkflowExecutor(WorkflowExecutor):
                 "input_xyz": list(self._spec.input_xyz),
                 "config_file": self._spec.config_file,
                 "work_dir": self._spec.work_dir,
-                "original_input_files": (
-                    None
-                    if self._spec.original_input_files is None
-                    else list(self._spec.original_input_files)
-                ),
-                "resume": self._spec.resume,
-                "verbose": self._spec.verbose,
                 "pause_beacon_file": self._spec.pause_beacon_file,
-                "step_started_callback": self._spec.step_started_callback,
+                # The typed V4 runner owns this supervision seam explicitly:
+                # cancel delivery (beacon pre-check plus live should_cancel
+                # polling) is real control flow, and the step-status hook
+                # carries the durable checkpoint projection for doubles.
+                # Service-owned flags (resume/verbose/original inputs) stay
+                # on the spec: the runner never read them.
+                "cancel_beacon_file": self._spec.cancel_beacon_file,
+                "on_step_status_change": checkpoint_update,
             }
-            parameters = inspect.signature(self._workflow_runner).parameters
-            accepts_keywords = any(
-                parameter.kind is inspect.Parameter.VAR_KEYWORD for parameter in parameters.values()
-            )
-            if "cancel_beacon_file" in parameters or accepts_keywords:
-                runner_kwargs["cancel_beacon_file"] = self._spec.cancel_beacon_file
-            if "on_step_status_change" in parameters or any(
-                parameter.kind is inspect.Parameter.VAR_KEYWORD for parameter in parameters.values()
-            ):
-                runner_kwargs["on_step_status_change"] = checkpoint_update
             self._result = self._workflow_runner(
                 **runner_kwargs,
             )
-            # Formal V4 runtime: the V4 application publishes run_result.json,
-            # not the legacy output_manifest.json. Project legacy manifests
-            # only as a tolerant historical read; a missing manifest is an
-            # empty artifact set, never a failure of a V4 run.
-            artifacts = _load_artifacts(self._spec.work_dir)
-            _write_execution_identity(self._spec)
             # F6: the V4 terminal status owns the service lifecycle. Only
             # status==completed may commit lifecycle.completed(); failed,
             # cancelled and partial each take their explicit branch in
             # _commit_v4_terminal so scientific failure never masquerades
             # as a completed service aggregate.
             v4_status = _resolve_v4_terminal_status(self._result, self._spec.work_dir)
+            # Formal V4 runtime: terminal artifacts come only from the typed
+            # V4 manifest projection. A missing or corrupt COMPLETED manifest
+            # fails closed here; non-completed statuses carry no completion
+            # artifacts, and there is no legacy manifest fallback.
+            artifacts = _terminal_artifacts_for_status(self._spec.work_dir, v4_status)
+            _write_execution_identity(self._spec)
             _commit_v4_terminal(
                 lifecycle=lifecycle,
                 service=service,
@@ -518,7 +517,10 @@ class ServiceWorkflowExecutor(WorkflowExecutor):
             if service is not None:
                 try:
                     try:
-                        failed_artifacts = _load_artifacts(self._spec.work_dir)
+                        failed_status = _resolve_v4_terminal_status(error, self._spec.work_dir)
+                        failed_artifacts = _terminal_artifacts_for_status(
+                            self._spec.work_dir, failed_status
+                        )
                     except ExecutionServiceError:
                         # A corrupt manifest must not leave the run without a
                         # terminal state: record the failure with no artifacts
@@ -771,7 +773,6 @@ def run_workflow_through_service(
     pause_beacon_file: str | None = None,
     cancel_beacon_file: str | None = None,
     original_input_files: Sequence[str] | None = None,
-    step_started_callback: Callable[[str, str, str], None] | None = None,
     work_directory_lease: _WorkDirectoryLease | None = None,
     workflow_runner: WorkflowRunner = default_workflow_runner,
 ) -> dict[str, Any] | None:
@@ -791,7 +792,6 @@ def run_workflow_through_service(
         verbose=verbose,
         pause_beacon_file=pause_beacon_file,
         cancel_beacon_file=cancel_beacon_file,
-        step_started_callback=step_started_callback,
         work_directory_lease=work_directory_lease,
     )
     service, executor = build_workflow_service(
@@ -1058,153 +1058,6 @@ def _request_digest(spec: WorkflowRunSpec) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
-def _load_artifacts_v1(payload: dict[str, Any], work_dir: str) -> tuple[Artifact, ...]:
-    """Legacy v1 projection — behavior byte-identical to the historical loader."""
-    terminals = payload.get("terminals")
-    if not isinstance(terminals, dict):
-        return ()
-    root = Path(work_dir).resolve()
-    artifacts: list[Artifact] = []
-    for terminal, values in terminals.items():
-        if not isinstance(terminal, str) or not isinstance(values, list):
-            continue
-        for value in values:
-            if not isinstance(value, str):
-                continue
-            candidate = (root / value).resolve()
-            try:
-                relative = candidate.relative_to(root).as_posix()
-            except ValueError:
-                continue
-            if not candidate.is_file():
-                continue
-            artifacts.append(
-                Artifact(
-                    terminal=terminal,
-                    path=relative,
-                    sha256=_file_digest(str(candidate)),
-                    size=candidate.stat().st_size,
-                    content_schema=OUTPUT_MANIFEST_SCHEMA,
-                )
-            )
-    return tuple(artifacts)
-
-
-_V2_TERMINAL_FIELDS = {"id", "label", "artifacts"}
-
-
-def _reject_manifest(message: str) -> NoReturn:
-    raise ExecutionServiceError(ErrorCode.ARTIFACT_INTEGRITY_FAILED, message)
-
-
-def _load_artifacts_v2(payload: dict[str, Any], work_dir: str) -> tuple[Artifact, ...]:
-    """Strict v2 projection — RFC §17 terminals ``[{id, label, artifacts}]``.
-
-    The manifest is never trusted: the closed field set is enforced, artifact
-    paths must be relative and stay inside the work root, and every declared
-    artifact must exist. Any violation fails closed instead of silently
-    dropping outputs.
-    """
-    unknown = sorted(set(payload) - {"content_schema", "terminals"})
-    if unknown:
-        _reject_manifest(f"output manifest v2 has unknown fields: {', '.join(unknown)}")
-    terminals = payload.get("terminals")
-    if not isinstance(terminals, list):
-        _reject_manifest("output manifest v2 'terminals' must be a list")
-    root = Path(work_dir).resolve()
-    artifacts: list[Artifact] = []
-    for terminal in terminals:
-        if not isinstance(terminal, dict):
-            _reject_manifest("output manifest v2 terminal must be an object")
-        unknown = sorted(set(terminal) - _V2_TERMINAL_FIELDS)
-        if unknown:
-            _reject_manifest(
-                f"output manifest v2 terminal has unknown fields: {', '.join(unknown)}"
-            )
-        step_id = terminal.get("id")
-        if not isinstance(step_id, str) or not step_id:
-            _reject_manifest("output manifest v2 terminal 'id' must be a non-empty string")
-        label = terminal.get("label")
-        if label is not None and not isinstance(label, str):
-            _reject_manifest(f"output manifest v2 terminal {step_id!r} label must be a string")
-        values = terminal.get("artifacts")
-        if not isinstance(values, list) or any(not isinstance(value, str) for value in values):
-            _reject_manifest(
-                f"output manifest v2 terminal {step_id!r} artifacts must be a list of strings"
-            )
-        for value in values:
-            if Path(value).is_absolute() or ".." in Path(value).parts:
-                _reject_manifest(
-                    f"output manifest v2 artifact path for terminal {step_id!r} "
-                    f"is not work-root relative: {value!r}"
-                )
-            candidate = (root / value).resolve()
-            try:
-                relative = candidate.relative_to(root).as_posix()
-            except ValueError:
-                _reject_manifest(
-                    f"output manifest v2 artifact path escapes the work root: {value!r}"
-                )
-            if not candidate.is_file():
-                _reject_manifest(
-                    f"output manifest v2 artifact for terminal {step_id!r} "
-                    f"is missing: {value!r}"
-                )
-            artifacts.append(
-                Artifact(
-                    terminal=step_id,
-                    path=relative,
-                    sha256=_file_digest(str(candidate)),
-                    size=candidate.stat().st_size,
-                    content_schema=OUTPUT_MANIFEST_SCHEMA_V2,
-                )
-            )
-    return tuple(artifacts)
-
-
-def _load_artifacts(work_dir: str) -> tuple[Artifact, ...]:
-    """Load run artifacts through strict schema/version dispatch (R4.5).
-
-    v1 manifests project through the untouched legacy reader, v2 manifests
-    through the strict stable-ID reader. Unknown or malformed schema
-    identifiers fail closed — a v2 parse failure is never silently re-read
-    as v1.
-    """
-    path = Path(work_dir) / "output_manifest.json"
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return ()
-    if not isinstance(payload, dict):
-        return ()
-    schema = payload.get("content_schema")
-    if schema == OUTPUT_MANIFEST_SCHEMA:
-        return _load_artifacts_v1(payload, work_dir)
-    if schema == OUTPUT_MANIFEST_SCHEMA_V2:
-        return _load_artifacts_v2(payload, work_dir)
-    _reject_manifest(
-        f"unsupported output manifest content_schema: {schema!r}; expected "
-        f"{OUTPUT_MANIFEST_SCHEMA!r} or {OUTPUT_MANIFEST_SCHEMA_V2!r}"
-    )
-
-
-def _load_stats(work_dir: str) -> dict[str, Any] | None:
-    path = Path(work_dir) / "workflow_stats.json"
-    try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
-    if not isinstance(value, dict):
-        return None
-    schema = value.get("content_schema")
-    if schema is not None and schema not in {WORKFLOW_STATS_SCHEMA, WORKFLOW_STATS_SCHEMA_V2}:
-        raise ExecutionServiceError(
-            ErrorCode.ARTIFACT_INTEGRITY_FAILED,
-            f"unsupported workflow stats content_schema: {schema!r}",
-        )
-    return value
-
-
 def _load_completed_stats(
     service: ExecutionService,
     run_id: str,
@@ -1213,56 +1066,35 @@ def _load_completed_stats(
 ) -> dict[str, Any] | None:
     """Attach to a completed formal V4 run via its durable manifest."""
     # Formal V4 runtime: the durable truth of a completed run is
-    # run_result.json published by the single V4 application. Legacy
-    # stats/state files are historical reads only and never gate a V4
-    # attach.
+    # run_result.json published by the single V4 application. There is no
+    # legacy fallback: a missing or corrupt manifest fails closed with
+    # ARTIFACT_INTEGRITY_FAILED, and a non-completed manifest behind a
+    # completed aggregate is corrupt (pre-fix masquerade, F6) and fails
+    # closed instead of attaching as success.
     v4_manifest = Path(work_dir) / "run_result.json"
-    if v4_manifest.is_file():
-        try:
-            payload = json.loads(v4_manifest.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as error:
-            raise ExecutionServiceError(
-                ErrorCode.ARTIFACT_INTEGRITY_FAILED,
-                f"Completed V4 run manifest is invalid: {v4_manifest}",
-            ) from error
-        if not isinstance(payload, dict):
-            raise ExecutionServiceError(
-                ErrorCode.ARTIFACT_INTEGRITY_FAILED,
-                f"Completed V4 run manifest must be an object: {v4_manifest}",
-            )
-        # F6 persistence: a service COMPLETED aggregate must agree with a
-        # completed V4 manifest. A failed/partial/cancelled manifest behind
-        # a completed aggregate is corrupt (pre-fix masquerade) and fails
-        # closed instead of attaching as success; restart/refresh therefore
-        # preserves the scientific failure instead of re-reporting success.
-        manifest_status = _v4_status_from_value(payload.get("status"))
-        if manifest_status is not None and manifest_status != "completed":
-            raise ExecutionServiceError(
-                ErrorCode.ARTIFACT_INTEGRITY_FAILED,
-                f"Completed run manifest reports {manifest_status!r}: {v4_manifest}",
-            )
-        return payload
-    stats = _load_stats(work_dir)
-    if stats is None:
+    if not v4_manifest.is_file():
         raise ExecutionServiceError(
             ErrorCode.ARTIFACT_INTEGRITY_FAILED,
-            f"Completed run is missing workflow stats: {run_id}",
+            f"Completed V4 run is missing its manifest: {v4_manifest}",
         )
-
-    declared_outputs = stats.get("final_outputs")
-    if not isinstance(declared_outputs, list):
-        declared_outputs = [stats.get("final_output")]
-    for output in declared_outputs:
-        if not isinstance(output, str):
-            continue
-        candidate = Path(output)
-        if not candidate.is_absolute():
-            candidate = Path(work_dir) / candidate
-        if not candidate.is_file() or candidate.stat().st_size <= 0:
-            raise ExecutionServiceError(
-                ErrorCode.ARTIFACT_INTEGRITY_FAILED,
-                f"Completed run output is missing or empty: {output}",
-            )
+    try:
+        payload = json.loads(v4_manifest.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise ExecutionServiceError(
+            ErrorCode.ARTIFACT_INTEGRITY_FAILED,
+            f"Completed V4 run manifest is invalid: {v4_manifest}",
+        ) from error
+    if not isinstance(payload, dict):
+        raise ExecutionServiceError(
+            ErrorCode.ARTIFACT_INTEGRITY_FAILED,
+            f"Completed V4 run manifest must be an object: {v4_manifest}",
+        )
+    manifest_status = _v4_status_from_value(payload.get("status"))
+    if manifest_status != "completed":
+        raise ExecutionServiceError(
+            ErrorCode.ARTIFACT_INTEGRITY_FAILED,
+            f"Completed run manifest reports {payload.get('status')!r}: {v4_manifest}",
+        )
 
     identity_path = Path(work_dir) / _EXECUTION_IDENTITY_FILE
     if identity_path.exists():
@@ -1281,28 +1113,11 @@ def _load_completed_stats(
                 f"Completed run belongs to a different workflow request: {run_id}",
             )
 
-    state_path = Path(work_dir) / ".workflow_state.json"
-    if state_path.exists():
-        try:
-            state_payload = json.loads(state_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as error:
-            raise ExecutionServiceError(
-                ErrorCode.ARTIFACT_INTEGRITY_FAILED,
-                f"Completed run workflow state is invalid: {state_path}",
-            ) from error
-        if not isinstance(state_payload, dict) or state_payload.get("final_status") != "completed":
-            raise ExecutionServiceError(
-                ErrorCode.ARTIFACT_INTEGRITY_FAILED,
-                f"Completed run workflow state is not complete: {state_path}",
-            )
-
-    # Test doubles and older adapters may not expose the terminal artifact
-    # projection.  The workflow stats checks above remain useful there; the
-    # durable service projection supplies stronger digest/size checks when it
-    # is available.
+    # The durable service projection supplies digest/size checks against
+    # the terminal artifact record when it is available.
     artifacts_method = getattr(service, "artifacts", None)
     if artifacts_method is None:
-        return stats
+        return payload
     manifest = artifacts_method(run_id)
     for artifact in manifest.artifacts:
         candidate = Path(work_dir) / artifact.path
@@ -1315,7 +1130,7 @@ def _load_completed_stats(
                 ErrorCode.ARTIFACT_INTEGRITY_FAILED,
                 f"Completed run artifact is missing or changed: {artifact.path}",
             )
-    return stats
+    return payload
 
 
 def _write_execution_identity(spec: WorkflowRunSpec) -> None:

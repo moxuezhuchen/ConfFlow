@@ -20,16 +20,15 @@ from confflow.application.execution import (
     RunState,
     ServiceWorkflowExecutor,
 )
+from confflow.application.execution import workflow_adapter as adapter_module
+from confflow.application.execution.v4_artifacts import load_v4_completed_artifacts
 from confflow.application.execution.workflow_adapter import (
     FileIdentityVerifier,
     WorkflowRunSpec,
-    _load_artifacts,
-    _load_stats,
     _resolve_executable,
     build_workflow_service,
     run_workflow_through_service,
 )
-from confflow.contract import OUTPUT_MANIFEST_SCHEMA
 from confflow.core.exceptions import ConfFlowError, StopRequestedError
 from tests.support.memory import InMemoryExecutionRepository
 
@@ -42,69 +41,47 @@ def _files(tmp_path: Path) -> tuple[Path, Path, Path]:
     return input_xyz, config, tmp_path / "work"
 
 
-def test_adapter_loaders_reject_malformed_manifests_and_stats(tmp_path: Path):
-    """Artifact and stats projections fail closed for malformed producer files."""
+def test_legacy_artifact_loaders_are_retired(tmp_path: Path):
+    """The legacy manifest chain is deleted; only the V4 projection remains.
+
+    Deletion reason (DESIGN §6): the v1 tolerant projection (missing files
+    and bad entries silently project to ``()``) conflicts with the
+    fail-closed V4 manifest, and the stats/state fallback contradicts
+    ``run_result.json`` as the durable truth. The V4 alternative coverage
+    is the fail-closed projection asserted below.
+    """
+    for retired in (
+        "_load_artifacts_v1",
+        "_load_artifacts_v2",
+        "_load_artifacts",
+        "_load_stats",
+    ):
+        assert not hasattr(adapter_module, retired), f"{retired} must stay deleted"
+
+
+def test_v4_completed_projection_fails_closed_without_legacy_fallback(tmp_path: Path):
+    """COMPLETED artifacts come only from the typed V4 manifest, fail-closed."""
     work = tmp_path / "work"
     work.mkdir()
-    manifest = work / "output_manifest.json"
-
-    manifest.write_text("not-json", encoding="utf-8")
-    assert _load_artifacts(str(work)) == ()
-    manifest.write_text(json.dumps({"content_schema": "wrong", "terminals": {}}), encoding="utf-8")
-    # unknown content_schema fails closed under strict version dispatch
+    # No manifest at all is "not published", never silent success and never
+    # a legacy-file read: the loader raises instead of returning ().
     with pytest.raises(ExecutionServiceError) as caught:
-        _load_artifacts(str(work))
+        load_v4_completed_artifacts(str(work))
+    assert caught.value.code is ErrorCode.INVALID_STATE_TRANSITION
+    # A corrupt manifest is an integrity failure, not a fallback trigger.
+    (work / "run_result.json").write_text("not-json", encoding="utf-8")
+    with pytest.raises(ExecutionServiceError) as caught:
+        load_v4_completed_artifacts(str(work))
     assert caught.value.code is ErrorCode.ARTIFACT_INTEGRITY_FAILED
-    manifest.write_text(
-        json.dumps({"content_schema": OUTPUT_MANIFEST_SCHEMA, "terminals": []}), encoding="utf-8"
-    )
-    assert _load_artifacts(str(work)) == ()
-    manifest.write_text(
-        json.dumps({"content_schema": OUTPUT_MANIFEST_SCHEMA, "terminals": {"step": "bad"}}),
+    # Legacy files are never consulted: their presence changes nothing.
+    (work / "output_manifest.json").write_text(
+        json.dumps({"content_schema": "confflow.output_manifest.v1", "terminals": {}}),
         encoding="utf-8",
     )
-    assert _load_artifacts(str(work)) == ()
-    manifest.write_text(
-        json.dumps({"content_schema": OUTPUT_MANIFEST_SCHEMA, "terminals": {"step": [1]}}),
-        encoding="utf-8",
-    )
-    assert _load_artifacts(str(work)) == ()
-    manifest.write_text(
-        json.dumps(
-            {"content_schema": OUTPUT_MANIFEST_SCHEMA, "terminals": {"step": ["../outside"]}}
-        ),
-        encoding="utf-8",
-    )
-    assert _load_artifacts(str(work)) == ()
-    manifest.write_text(
-        json.dumps({"content_schema": OUTPUT_MANIFEST_SCHEMA, "terminals": {"step": ["missing"]}}),
-        encoding="utf-8",
-    )
-    assert _load_artifacts(str(work)) == ()
-
-    output = work / "nested" / "output.xyz"
-    output.parent.mkdir()
-    output.write_text("output\n", encoding="utf-8")
-    manifest.write_text(
-        json.dumps(
-            {
-                "content_schema": OUTPUT_MANIFEST_SCHEMA,
-                "terminals": {"step": ["nested/output.xyz"]},
-            }
-        ),
-        encoding="utf-8",
-    )
-    artifacts = _load_artifacts(str(work))
-    assert len(artifacts) == 1
-    assert artifacts[0].path == "nested/output.xyz"
-
-    stats = work / "workflow_stats.json"
-    stats.write_text("not-json", encoding="utf-8")
-    assert _load_stats(str(work)) is None
-    stats.write_text("[]", encoding="utf-8")
-    assert _load_stats(str(work)) is None
-    stats.write_text(json.dumps({"steps": 1}), encoding="utf-8")
-    assert _load_stats(str(work)) == {"steps": 1}
+    (work / "workflow_stats.json").write_text(json.dumps({"steps": 1}), encoding="utf-8")
+    with pytest.raises(ExecutionServiceError) as caught:
+        load_v4_completed_artifacts(str(work))
+    assert caught.value.code is ErrorCode.ARTIFACT_INTEGRITY_FAILED
 
 
 def test_service_executor_launch_idempotency_and_wait_contract(

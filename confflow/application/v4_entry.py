@@ -222,35 +222,42 @@ def _build_run_inputs(
     )
 
 
-def formal_v4_runner(**kwargs: Any) -> dict[str, Any] | None:
-    """Drop-in formal runner with the legacy engine call signature.
+def formal_v4_runner(
+    input_xyz: Any = (),
+    config_file: str | None = None,
+    work_dir: str | None = None,
+    pause_beacon_file: str | None = None,
+    cancel_beacon_file: str | None = None,
+    on_step_status_change: Any = None,
+    executables: dict[str, str] | None = None,
+    supervisor: Any = None,
+    transport: Any = None,
+    owner_token: str | None = None,
+) -> dict[str, Any] | None:
+    """Typed formal runner for the single V4 application.
 
-    Accepts the historical ``run_workflow`` keyword surface (``input_xyz``,
-    ``config_file``, ``work_dir``, ``original_input_files``, ``resume``,
-    ``verbose``, ``pause_beacon_file``, ``cancel_beacon_file``,
-    ``step_started_callback``, ``on_step_status_change``, plus V4
-    ``executables``/``supervisor``/``transport``) and runs the single V4
-    application.  Legacy-only callbacks are accepted and ignored: progress
-    publication flows through the durable V4 store, not callbacks.
-    The legacy ``transport`` keyword is accepted for signature
-    compatibility but only ``None`` is allowed (R1.2 retired remote
-    delivery).
+    The parameters are the explicit service/supervision surface: run inputs,
+    lifecycle beacons (``pause_beacon_file``/``cancel_beacon_file``), and
+    the V4 supervision seam (``supervisor``/``executables``/``transport``/
+    ``owner_token``; only ``transport=None`` is accepted).  Service-owned
+    flags (``resume``/``verbose``/original inputs) stay on the service spec:
+    this runner never read them, so they are not accepted here.
+    ``on_step_status_change`` is accepted and ignored: progress publication
+    flows through the durable V4 store, not callbacks.  There is no
+    ``**kwargs`` catch-all and no ``step_started_callback``: unknown or
+    retired keywords fail closed with ``TypeError``.
     """
+    del on_step_status_change
     from ..domain._immutable import FrozenDict
     from ..domain.errors import DomainError
     from .v4_run import V4RunApplication, V4RunRequest
 
-    input_xyz = kwargs.get("input_xyz") or []
-    config_file = kwargs.get("config_file")
-    work_dir = kwargs.get("work_dir")
-    executables = kwargs.get("executables") or {}
-    supervisor = kwargs.get("supervisor")
-    transport = kwargs.get("transport")
+    resolved_executables = executables or {}
     if transport is not None:
         raise DomainError(
             "transport is retired (R1.2): only transport=None " "(local execution) is accepted"
         )
-    owner_token = kwargs.get("owner_token") or "formal"
+    resolved_owner = owner_token or "formal"
     if not config_file:
         raise _legacy_error("a V4 workflow document is required")
     if not work_dir:
@@ -267,15 +274,14 @@ def formal_v4_runner(**kwargs: Any) -> dict[str, Any] | None:
     from ..core.exceptions import StopRequestedError as _Stop
     from ..execution.cancellation import beacon_probe
 
-    cancel_beacon = kwargs.get("cancel_beacon_file")
-    for _beacon in (cancel_beacon, kwargs.get("pause_beacon_file")):
+    for _beacon in (cancel_beacon_file, pause_beacon_file):
         if _beacon and _os.path.exists(_beacon):
             raise _Stop(f"workflow stopped by beacon: {_beacon}")
     # Live cancellation: the SAME beacon the service/control cancel paths
     # touch is polled by every layer for the whole run, so a cancel during
     # a native execution terminates the process boundary instead of
     # waiting for the run to complete.
-    should_cancel = beacon_probe(cancel_beacon) if cancel_beacon else None
+    should_cancel = beacon_probe(cancel_beacon_file) if cancel_beacon_file else None
     xyz_texts: dict[str, str] = {}
     for path in list(input_xyz):
         try:
@@ -309,8 +315,8 @@ def formal_v4_runner(**kwargs: Any) -> dict[str, Any] | None:
         workflow_document=document,
         run_inputs=run_inputs,
         run_root=str(work_dir),
-        owner_token=str(owner_token),
-        executables=FrozenDict(dict(executables)),
+        owner_token=str(resolved_owner),
+        executables=FrozenDict(dict(resolved_executables)),
         supervisor=resolved_supervisor,
         import_sources=import_sources,
         should_cancel=should_cancel,

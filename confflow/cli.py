@@ -657,7 +657,6 @@ def main(
                     verbose=bool(args.verbose),
                     pause_beacon_file=os.path.join(work_dir, "PAUSE"),
                     cancel_beacon_file=os.path.join(work_dir, "CANCEL"),
-                    step_started_callback=None,
                     work_directory_lease=work_lease,
                     workflow_runner=run_workflow,
                 )

@@ -11,6 +11,7 @@ import signal
 import subprocess
 import sys
 import time
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -25,6 +26,7 @@ from confflow.cli import (
     main,
     stop_all_confflow_processes,
 )
+from tests.support.v4_manifest import publish_completed_v4_manifest
 
 
 def _v4_config(path):
@@ -225,7 +227,13 @@ def test_main_normal_path_still_calls_run_workflow(tmp_path):
         # Worker-D contract: V4 status owns the aggregate — a MagicMock
         # default (undeterminable) fails closed to FAILED, so the mock
         # must report an explicit completed V4 status for the rc==0 path.
-        mock_run.return_value = {"status": "completed"}
+        # L2-CF-delete: the success path also requires the typed COMPLETED
+        # manifest, so the mock publishes what the V4 application would.
+        def _completed_side_effect(**kwargs):
+            publish_completed_v4_manifest(Path(str(kwargs["work_dir"])))
+            return {"status": "completed"}
+
+        mock_run.side_effect = _completed_side_effect
         result = main([str(input_xyz), "-c", str(config_yaml), "-w", str(tmp_path / "work")])
 
     assert result == 0
@@ -287,17 +295,18 @@ H  -1   0.0 0.0 0.0
         input_xyz,
         config_file,
         work_dir,
-        original_input_files=None,
-        resume=False,
-        verbose=False,
         pause_beacon_file=None,
-        step_started_callback=None,
+        cancel_beacon_file=None,
+        on_step_status_change=None,
     ):
         seen["input_xyz"] = input_xyz
         seen["config_file"] = config_file
         seen["work_dir"] = work_dir
         # Worker-D contract: V4 status owns the aggregate — only an
         # explicit completed status yields rc 0 (None is undeterminable).
+        # L2-CF-delete: the success path also requires the typed COMPLETED
+        # manifest, so the double publishes what the V4 application would.
+        publish_completed_v4_manifest(Path(work_dir))
         return {"status": "completed"}
 
     monkeypatch.setattr(cli, "run_workflow", fake_run_workflow)
@@ -448,12 +457,17 @@ def test_main_missing_config(tmp_path):
     "flag,key,expected", [("--resume", "resume", True), ("--verbose", "verbose", True)]
 )
 def test_main_flags(flag, key, expected, input_xyz, tmp_path):
-    """Main forwards simple boolean flags to run_workflow as kwargs."""
+    """Main forwards simple boolean flags to the service facade as kwargs.
+
+    L2-CF-delete: ``resume``/``verbose`` are service-owned flags. The
+    typed formal runner never read them, so the adapter no longer forwards
+    them to the runner; they are asserted on the service facade instead.
+    """
     config_yaml = _v4_config(tmp_path / "config.yaml")
-    with patch("confflow.cli.run_workflow") as mock_run:
+    with patch("confflow.cli.run_workflow_through_service") as mock_facade:
         main([str(input_xyz), "-c", str(config_yaml), "-w", str(tmp_path / "work"), flag])
-        assert mock_run.called
-        args, kwargs = mock_run.call_args
+        assert mock_facade.called
+        args, kwargs = mock_facade.call_args
         assert kwargs[key] is expected
 
 

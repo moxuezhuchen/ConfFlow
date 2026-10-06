@@ -29,6 +29,7 @@ from confflow.control_worker import (
     run_control_worker,
 )
 from confflow.core.exceptions import StopRequestedError
+from tests.support.v4_manifest import publish_completed_v4_manifest
 
 pytestmark = pytest.mark.skipif(
     os.name != "posix", reason="control state-root contract requires POSIX"
@@ -161,10 +162,11 @@ def _canonical(value: object) -> bytes:
 def _complete_fake_worker(kwargs: dict[str, object]) -> dict[str, str]:
     work_dir = Path(str(kwargs["work_dir"]))
     work_dir.mkdir(parents=True, exist_ok=True)
-    staged_input = Path(str(kwargs["original_input_files"][0]))
+    staged_input = Path(str(kwargs["input_xyz"][0]))
     staged_input.with_name(f"{staged_input.stem}min.xyz").write_text(
         "1\nH\nH 0 0 0\n", encoding="utf-8"
     )
+    publish_completed_v4_manifest(work_dir)
     # Worker-D contract: V4 status owns the service aggregate; the adapter
     # only commits completed on an explicit ``status == "completed"`` (a
     # legacy ``{"ok": True}``/undeterminable outcome fails closed to FAILED).
@@ -234,11 +236,12 @@ def test_control_worker_consumes_existing_queued_token_without_prepare(tmp_path:
 
     def fake_runner(**kwargs):
         Path(kwargs["work_dir"]).mkdir(parents=True, exist_ok=True)
-        assert [Path(item).name for item in kwargs["original_input_files"]] == ["methane.xyz"]
-        staged_input = Path(kwargs["original_input_files"][0])
+        assert [Path(item).name for item in kwargs["input_xyz"]] == ["methane.xyz"]
+        staged_input = Path(kwargs["input_xyz"][0])
         staged_input.with_name(f"{staged_input.stem}min.xyz").write_text(
             "1\nH\nH 0 0 0\n", encoding="utf-8"
         )
+        publish_completed_v4_manifest(Path(str(kwargs["work_dir"])))
         # Worker-D contract: V4 status owns the aggregate — only an
         # explicit ``status == "completed"`` commits COMPLETED.
         return {"status": "completed"}
@@ -821,10 +824,11 @@ def test_control_worker_keeps_paused_attempt_until_formal_resume(tmp_path: Path)
             )
             raise StopRequestedError("pause")
         Path(kwargs["work_dir"]).mkdir(parents=True, exist_ok=True)
-        staged_input = Path(kwargs["original_input_files"][0])
+        staged_input = Path(kwargs["input_xyz"][0])
         staged_input.with_name(f"{staged_input.stem}min.xyz").write_text(
             "1\nH\nH 0 0 0\n", encoding="utf-8"
         )
+        publish_completed_v4_manifest(Path(str(kwargs["work_dir"])))
         # Worker-D contract: V4 status owns the aggregate — only an
         # explicit ``status == "completed"`` commits COMPLETED.
         return {"status": "completed"}
