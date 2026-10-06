@@ -71,6 +71,8 @@ __all__ = [
     "check_code",
     "error_result",
     "hashed_item_slug",
+    "pure_cancelled_result",
+    "pure_fail_result",
     "sanitize_job_name",
     "select_driving_structure",
 ]
@@ -200,6 +202,72 @@ def _diagnostic(
         logical_key=logical_key,
         field_path=field_path,
         details=FrozenDict(merged),
+    )
+
+
+def pure_fail_result(
+    work_item: WorkItem,
+    *,
+    step_id: str | None,
+    wall_start: float,
+    monotonic_start: float,
+    message: str,
+) -> WorkItemResult:
+    """Build the terminal FAILED result shared by pure (non-native) executors."""
+    timing = Timing(
+        started_at=wall_start,
+        finished_at=max(time.time(), wall_start),
+        duration_seconds=max(0.0, time.monotonic() - monotonic_start),
+    )
+    return WorkItemResult(
+        work_item_id=work_item.id,
+        status=WorkItemStatus.FAILED,
+        diagnostics=(
+            _diagnostic(
+                NativeErrorCode.NATIVE_INPUT_ERROR,
+                message,
+                step_id=step_id,
+                work_item_id=work_item.id,
+                logical_key=work_item.logical_key,
+            ),
+        ),
+        timing=timing,
+        error=None,
+        recovery=RecoveryInfo(profile="none", attempted=False),
+        semantic_digest=work_item.semantic_digest,
+    )
+
+
+def pure_cancelled_result(
+    work_item: WorkItem,
+    *,
+    step_id: str | None,
+    wall_start: float,
+    monotonic_start: float,
+) -> WorkItemResult:
+    """Build the terminal CANCELLED result shared by pure (non-native) executors."""
+    timing = Timing(
+        started_at=wall_start,
+        finished_at=max(time.time(), wall_start),
+        duration_seconds=max(0.0, time.monotonic() - monotonic_start),
+    )
+    return WorkItemResult(
+        work_item_id=work_item.id,
+        status=WorkItemStatus.CANCELLED,
+        diagnostics=(
+            _diagnostic(
+                NativeErrorCode.CANCELLATION_ERROR,
+                "work item cancelled",
+                step_id=step_id,
+                work_item_id=work_item.id,
+                logical_key=work_item.logical_key,
+                details={"confirmed": True},
+            ),
+        ),
+        timing=timing,
+        error=None,
+        recovery=RecoveryInfo(profile="none", attempted=False),
+        semantic_digest=work_item.semantic_digest,
     )
 
 
