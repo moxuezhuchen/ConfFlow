@@ -158,3 +158,18 @@ python3 $TOOLS/golden_check.py --base $BASE --cf <对应 CF 提交的工作树> 
 ```
 
 非 git 位置的改动（D11）同样记录前后文件的 sha256。
+
+---
+
+## 7. 两级验收（DIET-2 P0.4）
+
+> 本节为 `docs/diet-2/PLAN.md` P0.4 原文搬运，替代"每张卡都跑全量"。
+
+| 级别 | 何时 | 内容 |
+|---|---|---|
+| **卡片级** | 每张卡 | 受影响的测试（import 了被修改模块的测试文件，加上卡片点名的测试）；架构策略测试；P0.1 的覆盖率三层检查；与改动相关的 golden（改到 ConfGen 或执行引擎才跑 TS1 与 engine 报告；改到 producer、注册表或 schema 才跑 contract 与 boundary 摘要）；冒烟测试（`confflow --version`、`confflow --capabilities`、用模拟程序跑一个最小 V4 工作流） |
+| **里程碑级** | 里程碑的最后一张卡合并前 | 全量测试；全部 golden（TS1 三份、engine 报告、contract、boundary）；跨仓测试 |
+
+- 新增 `tools/affected_tests.py`：根据 `git diff` 中的生产模块，用 import 图找出受影响的测试文件。
+- 卡片级验收没有覆盖到的回归，只要在里程碑级被发现，就由造成它的那张卡返工；不允许在里程碑末尾以一张"修补卡"一并处理。
+- 验收：在 R1 的第一张卡上试用，记录卡片级与全量的耗时对比。
