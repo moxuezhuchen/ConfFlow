@@ -66,6 +66,7 @@ __all__ = [
     "derive_seed",
     "needs_seed",
     "seed_identity_for_step",
+    "seed_scope_for_step",
 ]
 
 #: Version of the seed derivation rule.
@@ -334,6 +335,30 @@ def _set_seed(step: dict[str, Any], seed: int) -> None:
         block = step.get("confgen")
         if isinstance(block, dict):
             block["seed"] = seed
+
+
+def seed_scope_for_step(step: Mapping[str, Any], source: str) -> str | None:
+    """Return the provenance seed scope for one wire step (verbatim C2 rule).
+
+    Moved verbatim from ``producer.intent.compiler`` (L1-A2a plumbing only):
+    ``"none"`` source yields ``None``; confgen yields ``"native_sampling"``;
+    calculation with a ``goat`` native mapping yields
+    ``"workflow_identity_only"``; otherwise ``None``.  No derivation,
+    tolerance, or fixture rule is changed here; GOAT science judgment stays
+    in this seeds authority (mirroring :func:`needs_seed`), never copied
+    into a new intent table.
+    """
+    if source == "none":
+        return None
+    executor = step.get("executor")
+    if executor == "confgen":
+        return "native_sampling"
+    if executor == "calculation":
+        calculation = step.get("calculation")
+        native = calculation.get("native") if isinstance(calculation, Mapping) else None
+        if isinstance(native, Mapping) and native.get("goat") is not None:
+            return "workflow_identity_only"
+    return None
 
 
 def assign_seeds(

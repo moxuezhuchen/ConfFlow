@@ -289,3 +289,157 @@ R7 glucose 127/155 的 28 项召回缺口与未做种子优化后 RMSD 验证如
 - 反例：真实根 `..._test_suppression_positive_control_real_stage_fewer_attempts__0.json` input 20 vs ledger 18/12（差 2 issued 后抑制）；spy kernel 直调 3 issued→ledger 2/1（差 1）复现，调用链 `run_level→_expand_target（先抑制后 input 门）→_retry_level（再抑制）→_supersede_failure` 删旧失败。
 - 改动（白名单）：`accounting.py`（`attempt_ledger_counts(..., issued_history=None)`，真 skip vs issued 后抑制分离，条件 `suppressed_after_issue` 键）+ `engine.py`（`_issued_history` 通用集，input 门 + retry 非 None 入账，`finish()` 传入并按真 skip 重算 `realization_attempts`）+ 新测试 5 节点 + `checkpoints/F-ledger/{DESIGN,CARD,DIFF,MANIFEST}.md`；`kernel_records.py`/组件实现/容差/fixtures 未动。
 - 验证：新 5 passed；旧实现跑新测试 2 failed/3 passed；`retry_statistics` 10 passed；core 抑制子集 10 passed；C2 阳性 1 passed；真实差分 issued 18→20/skipped 12→10/after 2/without 3→5/attempts 18→20，leaf 15/3/12 与 cert/count/terminal 全同；无重试 sha `6f64f6a49…` 逐字相同；ruff/mypy/black 通过。
+## L1-C0 — intent 包化制卡预演（move, executor self-check；根验收另行）
+
+- 基点 CF `c7728447162ee76877e38966f96e0417e779f39c`；工作树 `/tmp/l1-c0-proto`
+  分支 `refactor/l1-c0-proto`；输出 `/tmp/l1-c0-output`。AGENTS 缺失，
+  以 `docs/process/RULES.md` + `docs/process/ACCEPTANCE.md` 为准。JD 未动。
+- 白名单实测：删 `confflow/producer/intent.py`（2000 行）；
+  改 `confflow/producer/intent/compiler.py`（2000 行，18+/18- 仅 import 层级，
+  17 处）；新 `intent/__init__.py`（47 行，兼容 facade，四公开同 `__all__` 顺序
+  + 实际私有 `_recipe_cards_to_role_cards`，同对象 `is`，`__module__` 保持旧名，
+  root 裁决机械兼容元数据）；新 `tests/v4/test_l1_intent_package_compat.py`
+  （117 行，6 用例）；新检查点 `docs/confgen-fix/checkpoints/L1-C0/`。
+  `tools/architecture_policy.py` 与 `tests/v4/test_architecture_policy.py`
+  零改（目录 rglob 已覆盖，无 `intent.py` 字面规则）。
+- 自检（非根验收）：新 6 passed；producer_intent+regressions 64；
+  boundary_coverage+legacy_paths 290；checkpoints+terminal 75；
+  architecture_policy 333；boundaries+g13g14 30。
+  原/新真实编译产物 + catalog 逐字节等（sha256 `33240346…`）；
+  contract/boundary 四摘要原新一致；collect 4990 -> 4996（+6/−0）。
+  ruff/black/mypy 按单文件口径通过（compiler.py 保留基线 1056 长行原样）。
+- 冻结：`git diff --binary HEAD` 见 `/tmp/l1-c0-output/L1-C0-proto.diff`
+  （new file mode x2 起，rename 相似度 98%；sha 见同目录 `SHA256SUMS`）。
+  未提交/未推送/未合并/未打 tag；共享树与冻结基线未动。
+
+## L1-C1 — intent 通用 bindings/resources 机械拆分预演（move, executor self-check；根验收另行）
+
+- 基点正式 C0 `78ab3d5773c304a11f71f06775b9ef136cf80700`；工作树 `/tmp/l1-c1-proto`
+  分支 `refactor/l1-c1-proto`；输出 `/tmp/l1-c1-output`。三位置前检不存在通过；
+  不基于未冻结活跃 proto。PLAN L1 + L1-DESIGN-v2：v1 主循环改 resolve 属 C2，
+  C1 不引入 dispatch/registry/descriptor，不做能力 science 行为。
+- 白名单实测：改 `confflow/producer/intent/compiler.py`（1666 行，10+/344-，
+  仅新轻 imports + 删 8 已搬定义）；新 `intent/common.py`（48 行，仅
+  `IntentCompilationError`+`_fail`，真实依赖见 MANIFEST，root 审阅边界）、
+  `intent/bindings.py`（129 行，`_registry_input_ports`+`_auto_bindings`）、
+  `intent/resources.py`（236 行，`_wire_resources`+`_wire_scheduler`+
+  `_apply_machine_profile`+`_apply_checkpoints`通用编排，Gaussian 细节留 G1）；
+  新 `tests/v4/test_l1_intent_helpers_compat.py`（156 行，5 用例）；
+  新检查点 `docs/confgen-fix/checkpoints/L1-C1/`。`__init__.py`、
+  `tools/architecture_policy.py`、`tests/v4/test_architecture_policy.py`、
+  其他生产文件/oldtests 零改；policy scope 冲突无（333+7+25 通过），未扩大
+  science 豁免；helper 无回 import compiler。
+- 自检（非根验收）：新 5 + 旧 compat 6（11）；producer_intent 等 130；
+  authoring_boundary 等 433；policy 333+7+25。原/新真实编译产物 + catalog
+  逐字节等（`6ed711d1…`）；contract/boundary 全量与摘要原新一致；collect
+  4996 -> 5001（+5/−0）；AST 8 符号等价；ruff/black/mypy 按单文件口径通过；
+  旧导出 `is` 同一、无新 wrapper、签名等、`__module__`/pickle 兼容。
+- 冻结：`git diff --binary HEAD` 见 `/tmp/l1-c1-output/L1-C1-proto.diff`
+  （含 new/modes；sha 见同目录 `SHA256SUMS`）。未提交/未推送/未合并/未打 tag；
+  共享树与冻结基线未动。
+
+## L1-C2 — intent capability handler + explicit descriptor registry (logic, root dispatch fix; 根验收另行)
+
+- 基点正式 C1 `01a260d149c99ab8c0571e7eebb6f1bab827d504`；工作树 `/tmp/l1-c2-proto`
+  分支 `refactor/l1-c2-proto`；输出 `/tmp/l1-c2-output`。保留旧证据，不重建树。
+  PLAN L1 + L1-DESIGN-v2 + ROOT-DISPATCH-REVIEW（根裁决优先）：补修前
+  `compiler.py:1311-1320` 仍 `if executor==` 硬编码（仅换函数名），未验收；
+  已按根要求下放完整 fragment（calculation/confgen/transform+_preset_ref），
+  旧 `_wire_*` 原返回保持同对象/`__module__`，新增 `*_fragment` 适配器。
+- 白名单实测：改 `compiler.py`（1664 行，通用单次分派+`fragment_keys`/`_RESERVED`
+  校验合并）；新 `capabilities/{__init__(12),descriptor(124),registry(142),
+  calculation(123),confgen(150),transform(103)}`；新
+  `tests/v4/test_l1_intent_capabilities.py`（435 行，12 用例）；新检查点
+  `docs/confgen-fix/checkpoints/L1-C2/`。`common.py/__init__.py`、policy、
+  其他生产/旧测试零改；残留集中点（`_reject_misplaced_fields`、adapter提取、
+  checkpoint种子块、`_seed_scope`、recipe calculation赋值）已在 DIFF 逐项盘点，
+  不宣称清零，留 A1/C2b（根终审）。
+- 自检（非根验收）：新 12 + C0/C1 11（23）；producer等 141；authoring slice 302；
+  policy 333。原/新真实编译产物+catalog 逐字节等（`9b062a30…`）；
+  contract `2fe92022…`/boundary `ee811b99…` 原新一致；collect 5001->5013（+12/-0）。
+  ruff/mypy/black 单 worker 通过；schema导入无handler/solver纯度，无副作用。
+- 冻结：`git diff --binary HEAD` 见 `/tmp/l1-c2-output/L1-C2-proto.diff`
+  （含 new/modes；sha 见同目录 `SHA256SUMS`）。未提交/未推送/未合并/未打 tag；
+  共享树与冻结基线未动。
+
+## L1-A1 — rejected metadata + generic adapter + same-authority authoring (logic, 预演冻结；根验收另行)
+
+- 基点正式 C2 `eb74a05e31a1e48560cfeaed2ef14d6d8184475b`；工作树 `/tmp/l1-a1-proto`
+  分支 `refactor/l1-a1-proto`；源 `/tmp/l1-c2-exec` 只读；输出 `/tmp/l1-a1-output` 独占。
+  设计 `/tmp/l1-a1-design-output/{DESIGN.md,WHITELIST.md,DUMMY-ACCEPTANCE.md}` v2 已读，
+  根纠正优先（6 文件精确白名单、兼容默认、派生默认、4 参保持、时点保持、无三分支、
+  executor 一致查询、缺 builtin 回退、resources/authoring 不动、A1 只 compile/authoring、
+  中央计数与终验计数分离、analysis 待续）。
+- 白名单实测（精确 6 prod，不采用文档矛盾口径）：改 `compiler.py`（1740 行，
+  通用拒放 + 通用 adapter，无三 executor 分支）；`capabilities/descriptor.py`（163 行，
+  两兼容默认字段 + 有效键）；`capabilities/registry.py`（248 行，同一 `if/elif` 装配 +
+  一致性 + executor 查询）；三模块仅尾部 `REJECTED_STEP_KEYS` + wire 注释
+  （calculation 129/confgen 168/transform 123，`_wire_*` 体/签名/`__module__` 不动）。
+  测试 `test_l1_intent_capabilities.py`（665 行，原 12 不删不放宽 + 7 探针）+
+  新 `test_l1_authoring_projection.py`（226 行，5 用例）；新检查点
+  `docs/confgen-fix/checkpoints/L1-A1/`。`resources.py`/`authoring.py` 等零改。
+  本卡不新增 analysis 公开 card；L1 尚有 A2/A3 及 analysis 验证未满足，不取消 PLAN 范围。
+- 自检（非根验收）：新 24（12 原 + 7 能力探针 + 5 authoring 投影）；必要 397
+  （24 + 11 C0/C1 + 64 intent/regressions + 298 machine/authoring/boundary）；
+  contract `2fe92022…`/boundary `ee811b99…` 原新逐字一致；collect 5013->5025（+12/-0）。
+  ruff check/format、black `--workers 1`、mypy `--num-workers 1`（6 生产文件）通过；
+  差分探针（错序/ recipe base adapter/ custom 默认兼容）已锁，根将独立重跑。
+- 冻结：`git diff --binary HEAD` 见 `/tmp/l1-a1-output/L1-A1-proto.diff`
+  （含 new/modes；sha 见同目录 `SHA256SUMS`）；生产-only
+  `L1-A1-production-only.diff`；正式提示词见 `FORMAL-PROMPT.md`
+  （尾行 Claude Sonnet 5.5）。未提交/未推送/未合并/未打 tag；共享树与冻结基线未动。
+
+## L1-A2a — seed/resource plumbing + A1 compat fallback closure (logic, 预演冻结；根验收另行)
+
+- 基点正式 A1 `ebbba518c437c8c1692b3517cd74a30c5f2e18db`；工作树 `/tmp/l1-a2a-proto`
+  分支 `refactor/l1-a2a-proto`；源 `/tmp/l1-a1-exec` 只读；输出 `/tmp/l1-a2a-output` 独占。
+  PLAN L1 + `/tmp/l1-a2-mandatory-root-note.md` + 设计 v2 A2 部分已读。
+  本卡只做种子/资源 plumbing 及 A1 兼容 fallback 收尾；recipe 长链另 A2b，
+  analysis/Dummy 终验另 A3，不偷取消。
+- 白名单实测（精确 5 prod）：改 `intent/compiler.py`（1742 行，拒放委托 + 种子块表 +
+  scope 委托）、`intent/resources.py`（260 行，程序经装配元数据）、
+  `intent/capabilities/descriptor.py`（214 行，`seed_block_keys` 兼容默认 + 有效键）、
+  `intent/capabilities/registry.py`（386 行，拒放装配 helper + 种子一致性 + 种子块查询 +
+  默认装配）、`producer/seeds.py`（422 行，`seed_scope_for_step` 逐字迁入）。
+  新 `tests/v4/test_l1_intent_seed_plumbing.py`（392 行，12 用例）；原 tests 只增不改；
+  新检查点 `docs/confgen-fix/checkpoints/L1-A2a/`。recipe rolecards/sciencepatch、
+  validation 规则一字不动；C0/C1/C2/A1 节点/断言保留。
+- 自检（非根验收）：新 12；必要 287；contract `2fe92022…`/boundary `ee811b99…`
+  原新逐字一致；collect 5025->5037（+12/-0）。ruff check/format、black `--workers 1`、
+  mypy `--num-workers 1` 通过；差分探针（valid/error、GOAT/typed 显式/派生、checkpoint
+  临时时序、machine 程序选型、未知旧兼容）基点->patch 一致，实测节点/异常已记入
+  MANIFEST（种子 `1687161672` 同值，不预填）。根将独立重跑。
+- 冻结：`git diff --binary HEAD` 见 `/tmp/l1-a2a-output/L1-A2a-proto.diff`
+  （含所有新 file/mode；sha 见同目录 `SHA256SUMS`）；正式提示词见 `FORMAL-PROMPT.md`
+  （尾行 Claude Sonnet）。未提交/未推送/未合并/未打 tag；共享树与冻结基线未动。
+
+## L1-A2a v2补修（根冻结v1反例后；v1证据保留未覆盖）
+
+- 根树`/tmp/l1-a2a-root-review`只读未动；源父仍ebbba；proto由v1 diff恢复后改。
+  v1 patch/SHA/FORMAL保留，v2另产`L1-A2a-v2.diff`/`SHA256SUMS-v2`/`FORMAL-PROMPT-v2.md`。
+- 真实反例`/tmp/l1-a2a-root-machine-probe.py`：旧父`executable=/opt/g16`，
+  冻结v1吞`ValueError`丢`executable`（`/tmp/l1-a2a-root-machine-{old,frozen}.json`），
+  v2 fail-closed报`IntentCompilationError`。resources import/query不再吞异常；
+  新增仅keyword `intent_registry=None`，compile实传唯一实例；自定义真实编译probe证必要。
+- 字符串检查改AST（Compare/常量/import/call作用域，忽略docstring/comments），旧断言保留。
+- 同executor冲突去`sorted-first`，非法fail-closed；合法default/鸭接口新旧probe保持；
+  seed区分兼容与坏声明。原12节点保持，新增4回归；必要291；契约3字节一致；collect
+  5025->5041（+16/-0）。ruff/mypy/black单worker通过。不跑全量/golden。未commit/push/tag。
+## L1-G1a — pure Gaussian route机械搬移预演（move, executor self-check；根验收另行）
+
+- 基点 `/tmp/l1-exec @ 01a260d149c99ab8c0571e7eebb6f1bab827d504` 只读；工作树 `/tmp/l1-g1a-proto` 分支 `refactor/l1-g1a-proto` 独占；输出 `/tmp/l1-g1a-output` 独占。每命令显式 `cd`，HEAD/干净/三位置预检；C2独立，不改其树。
+- 读 `/tmp/l1-g1-design-output/{DESIGN-v2.md,WHITELIST-v2.md,ROOT-REVIEW-v2.md}`，只做G1a（三pure route函数+11常量+同形`_refuse`），不混G1b接口接线（stages/wrappers归G1b）。
+- 白名单实测：改 `confflow/producer/checkpoints.py`（1098->939行，27+/186-，仅删trio旧体+11常量定义、删`re`/`_irc_path`无用import、加一行policy重导出+镜像注释）；新 `confflow/programs/gaussian/checkpoint_policy.py`（226行，11常量值逐字节+`_refuse`+trio体AST原样，imports仅`__future__/re/domain.errors/.path/.rendering`，`_irc_path`/`_gaussian_rendering`同模块对象）；新 `tests/v4/test_l1_gaussian_policy_move.py`（192行，8用例）；新检查点 `docs/confgen-fix/checkpoints/L1-G1a/`。`__all__/version/modes/API/wire/lineage`全不改，旧私有`is`同一，`__module__`为定义处（policy）可记录，不改public module；旧tests不变。
+- 自检（非根验收）：trio+11 `is`同一，`_refuse`同形不同对象，AST 4+11等价，aliases同模块；固定语料28向量base/new return或exception type/message全等（readfc/rcfc/conflicts/unknown/linked-SP边，`B3LYP/SP`不动）；checkpoints(69)+boundary(68)+new(8)=145，intent+regressions 64，contracts 11；collect 5001->5009（+8/-0）；ruff/black/mypy(`-n 1`)生产 clean；contract/boundary字节不变（上测试+白名单外零改）；AST程序层无producer/workflow/science，producer仍有Gaussian分支属G1b（ProgramName/_QST/_LINK0，不假清零）。
+- 冻结：`git diff HEAD --binary -- confflow/producer/checkpoints.py confflow/programs/gaussian/checkpoint_policy.py` 见 `/tmp/l1-g1a-output/L1-G1a-production-only.diff`（含new/modes）；完整 `git diff HEAD --binary` 见 `/tmp/l1-g1a-output/L1-G1a-proto.diff`（含new/modes冻结，sha见`SHA256SUMS`）。未提交/未推送/未合并/未打tag；不跑全量/TS1/golden（L1里程碑根统一）；不扩大scope；proto结束恢复基点干净，不`git clean/install`/改已有证据。
+
+## L1-G1b — Gaussian阶段下沉预演v2补修（logic, executor self-check；根验收另行）
+
+- 基点固定 `ff8eff1d6173ddaa96a6ce3ed8631e63ff845f21`；工作树 `/tmp/l1-g1b-proto` 分支 `refactor/l1-g1b-proto` 独占；源 `/tmp/l1-g1a-exec` 只读；输出 `/tmp/l1-g1b-output`（v1 冻结保留不覆盖，v2 新文件交付）。每命令显式 `cd`。
+- 根裁决继续：v1 的 2FAILED 原证据真实重跑存 `/tmp/l1-g1b-output/v1_2FAILED_evidence.log`（2 failed/6 passed）；授权恰 2 处阶段断言迁移（节点保留，见 DIFF），pure 体/同对象/向量保留；进仓检查点 `docs/confgen-fix/checkpoints/L1-G1b/{MANIFEST.json,DIFF.md}` 在冻结 diff 内。
+- 实测：G1a8+G1b8+checkpoint/boundary+两policy兼容全绿；collect 5009->5020（+11/-0，ID 不 rename）；三契约字节一致；差分 9 项旧新一致（生产未改只做 source-binding 确认）；ruff/mypy/black 单 worker clean。根疏漏：G1a 阶段断言 + G1b 白名单遗漏该文件，现授权增强，疏漏归根不归执行器。
+
+## L1-G1b v3 — duck兼容去assert补修（logic, executor self-check；根验收另行）
+
+- 仅改 `policy.native_scientific_core` 去运行时 Mapping/frozenset asserts（静态 Any/Mapping+cast，运行时旧 `.items`+成员关系）；其它规则/顺序/wrapper/`native_of` 原样，不扩白名单。反例 `/tmp/l1-g1b-root-duck-probe.py`：Duck 旧 `{"basis":"x"}`、v2 新 `AssertionError`、v3 新同旧；`object()` 新旧同 `AttributeError` 同文。记录为真实反例。
+- 回归 `apply` +2（Duck 经旧 helper 路径 + plain 同文，原 8 不放宽）；G1a8+G1b10+checkpoint/boundary+两兼容 163 全绿，policy3 实测 3 passed；collect 5009->5022（+13/-0）；三契约字节一致；ruff/mypy/black 单 worker。

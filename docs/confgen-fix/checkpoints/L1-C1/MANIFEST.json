@@ -1,0 +1,90 @@
+{
+    "base_head": "78ab3d5773c304a11f71f06775b9ef136cf80700",
+    "branch": "refactor/l1-c1-proto",
+    "byte_compare": {
+        "contract_boundary": {
+            "boundary_full_sha256": "ee811b9995f49dec9668693d58e9f4d68fa170bfa232837486a8998b6aed9d20",
+            "contract_full_sha256": "2fe92022d2e9fa537b8ad11152d2b173c6f6572e0b0bd3950c7148c332ab43bc",
+            "digests_equal_old_new": true
+        },
+        "real_compile_wire_plus_catalog_sha256": "6ed711d12ffa7a36cdaf30b82cf196aceee6dbdb3518d3ad7966ed1cf7dd120f",
+        "wire_catalog_equal_old_new": true
+    },
+    "card": "L1-C1",
+    "checkpoints_in_repo": [
+        "docs/confgen-fix/checkpoints/L1-C1/MANIFEST.json",
+        "docs/confgen-fix/checkpoints/L1-C1/DIFF.md"
+    ],
+    "collect": {
+        "added": [
+            "tests/v4/test_l1_intent_helpers_compat.py::test_module_and_pickle_compat",
+            "tests/v4/test_l1_intent_helpers_compat.py::test_no_cycle_and_light_toplevel_imports",
+            "tests/v4/test_l1_intent_helpers_compat.py::test_old_compiler_paths_are_real_definitions",
+            "tests/v4/test_l1_intent_helpers_compat.py::test_real_compile_facade_vs_helpers_equal",
+            "tests/v4/test_l1_intent_helpers_compat.py::test_signatures_unchanged_no_wrappers"
+        ],
+        "added_count": 5,
+        "new_total": 5001,
+        "old_total": 4996,
+        "removed_count": 0
+    },
+    "common_boundary_justification": "AST closure: 6 helpers depend only on _fail/IntentCompilationError (plus copy/Mapping/Any and intra-group _registry_input_ports). Keeping them in compiler and importing compiler back would cycle (compiler -> helpers -> compiler). Duplicating _fail would break is-identity/pickle. Minimal common.py holds only IntentCompilationError+_fail (stdlib typing only); no solver/handler/registry/card/program/workflow/science knowledge. Bindings/resources top imports stay light (copy/collections.abc/typing+.common); heavy lanes (producer.machine/producer.checkpoints/workflow.v4.schema) stay function-local lazy, verbatim. For root review.",
+    "executed_validations": {
+        "ast_mechanical": "8 symbols AST-equal (IntentCompilationError/_fail + 6 helpers)",
+        "contract_boundary_digest_old_eq_new": true,
+        "necessary_tests": "producer_intent+regressions+machine+intent_boundary+p0boundary 130 passed; helpers+package compat 11 passed; authoring_boundary+legacy_paths+checkpoint_boundary+checkpoints+terminal 433 passed; policy 333+7+25 passed",
+        "new_compat_tests": "5 passed",
+        "real_compile_old_eq_new": true,
+        "static": "ruff check clean; ruff format clean; black clean; mypy clean (4 production files)"
+    },
+    "external_artifacts_dir": "/tmp/l1-c1-output",
+    "external_artifacts_note": "production evidence is L1-C1-production-only.diff (whitelist production paths only); full-tree proto diff L1-C1-proto.diff lives next to it with sha in SHA256SUMS (never referenced from inside the repo).",
+    "external_artifacts_sha256": {
+        "boundary.full.new.json": "ee811b9995f49dec9668693d58e9f4d68fa170bfa232837486a8998b6aed9d20",
+        "boundary.full.old.json": "ee811b9995f49dec9668693d58e9f4d68fa170bfa232837486a8998b6aed9d20",
+        "contract.full.new.json": "2fe92022d2e9fa537b8ad11152d2b173c6f6572e0b0bd3950c7148c332ab43bc",
+        "contract.full.old.json": "2fe92022d2e9fa537b8ad11152d2b173c6f6572e0b0bd3950c7148c332ab43bc",
+        "contract_digests_new.json": "08d51085cb4fea98b5c6e977345fbc339d4098a29e791b511e564b13dcd2c6a8",
+        "contract_digests_old.json": "08d51085cb4fea98b5c6e977345fbc339d4098a29e791b511e564b13dcd2c6a8",
+        "new_product.json": "6ed711d12ffa7a36cdaf30b82cf196aceee6dbdb3518d3ad7966ed1cf7dd120f",
+        "old_product.json": "6ed711d12ffa7a36cdaf30b82cf196aceee6dbdb3518d3ad7966ed1cf7dd120f"
+    },
+    "golden_changed": [],
+    "golden_unchanged_asserted": "contract/boundary digests + real intent wire+catalog bytes; full golden suite at milestone root only (not run here)",
+    "module_compat": {
+        "compiler_reexport_is_identity": true,
+        "facade_is_compiler": true,
+        "helpers_old_module": "confflow.producer.intent.compiler",
+        "is_identity": true,
+        "old_module": "confflow.producer.intent",
+        "pickle_old_path_roundtrip": true
+    },
+    "new_tests": [
+        "tests/v4/test_l1_intent_helpers_compat.py (5 tests)"
+    ],
+    "note": "pre-rehearsal only; no commit/push/merge/tag/install; shared trees untouched",
+    "old_private_import_monkeypatch_inventory": "sole private import tests/v4/test_producer_authoring_boundary_coverage.py:955 _recipe_cards_to_role_cards stays in compiler (not moved), facade re-export unchanged; grep monkeypatch/sys.modules on producer/intent paths: zero hits (only test_architecture_policy.py RUNTIME_RULES/subprocess/metrics_thin, unrelated); production lazy from .intent import in contract.py:633/authoring.py:1245 resolves to facade, unchanged",
+    "plan": "docs/confgen-fix/PLAN.md L1 + /tmp/l1-card-design-output/L1-DESIGN-v2.md C1 (generic bindings/resources only; no dispatch/registry/descriptor, no capability science; checkpoint here generic orchestration only, Gaussian details stay G1)",
+    "policy_files_unchanged": [
+        "tools/architecture_policy.py",
+        "tests/v4/test_architecture_policy.py"
+    ],
+    "policy_scope_conflict": "none observed (architecture_policy 333 + fix1a 7 + g13g14 25 passed; no new science/registry exemption added; no scope expansion)",
+    "scope": "L1-C1 mechanical only",
+    "type": "move",
+    "whitelist_measured": {
+        "modified": [
+            "confflow/producer/intent/compiler.py (1666 lines; 10+/344-; only new light imports + removal of 8 moved definitions)"
+        ],
+        "new": [
+            "confflow/producer/intent/common.py (48 lines; IntentCompilationError+_fail only)",
+            "confflow/producer/intent/bindings.py (129 lines; _registry_input_ports+_auto_bindings)",
+            "confflow/producer/intent/resources.py (236 lines; _wire_resources+_wire_scheduler+_apply_machine_profile+_apply_checkpoints)",
+            "tests/v4/test_l1_intent_helpers_compat.py (156 lines, 5 tests)"
+        ],
+        "unchanged_facade": [
+            "confflow/producer/intent/__init__.py (still only from .compiler; fmods=={.compiler} preserved)"
+        ]
+    },
+    "worktree": "/tmp/l1-c1-proto"
+}

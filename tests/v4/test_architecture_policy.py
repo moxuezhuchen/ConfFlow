@@ -1043,8 +1043,9 @@ def test_full_tree_scan_is_clean() -> None:
 def test_rule_count_matches_the_inventory() -> None:
     # 69 L0.4b rows + AP-033a (the const half of inventory row #33, split out
     # honestly from the disk half AP-033 per the v3 root ruling) + 6 A6
-    # G13/G14 confgen purity rules (AP-100..AP-105).
-    assert RULE_COUNT == 76
+    # G13/G14 confgen purity rules (AP-100..AP-105) + 1 L1-A3c intent
+    # science isolation rule (AP-106, tool guard only).
+    assert RULE_COUNT == 77
 
 
 def test_rule_ids_are_unique_and_sources_pinned() -> None:
@@ -1978,3 +1979,30 @@ def test_confgen_a2_stage_parent_fires() -> None:
             "def f(parent):\n    return parent.state_key\n",
         )
         assert confgen_a2_stage_parent_violations(root)
+
+
+# ---------------------------------------------------------------------------
+# L1-G1b Gaussian gates (mechanical sync; existing rules untouched).
+# ---------------------------------------------------------------------------
+
+
+def test_g1_gates_clean_on_real_tree() -> None:
+    from tools.architecture_policy import g1_violations
+
+    assert g1_violations(_REAL_ROOT) == []
+
+
+def test_g1_prod_authority_call_fires_on_real_violation(tmp_path: Path) -> None:
+    from tools.architecture_policy import g1_prod_authority_call_violations
+
+    _write(tmp_path, "confflow/__init__.py", "")
+    _write(tmp_path, "confflow/producer/__init__.py", "")
+    _write(tmp_path, "confflow/programs/__init__.py", "")
+    _write(tmp_path, "confflow/programs/gaussian/__init__.py", "")
+    _write(
+        tmp_path,
+        "confflow/producer/checkpoints.py",
+        "from confflow.programs.gaussian.rendering import resolve_write_chk\nx = resolve_write_chk({})\n",
+    )
+    _write(tmp_path, "confflow/programs/gaussian/checkpoint_policy.py", "x = 1\n")
+    assert g1_prod_authority_call_violations(tmp_path) != []

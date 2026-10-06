@@ -1679,6 +1679,28 @@ CONFGEN_G13_COMPONENT_FRAGS = (
     "confflow.science.confgen.torsion",
 )
 
+# ---------------------------------------------------------------------------
+# L1-A3c intent science isolation (PLAN; tool guard only, zero production
+# change). Scope pins the ACTUAL split intent package only
+# (confflow/producer/intent/**, 12 modules at e6b9f52), never the whole
+# producer tree. Mechanism reuses the existing AST import data rule
+# (kind=imports, forbidden_prefixes, resolve_relative=True): ast.walk covers
+# module/function/class scopes, Import + ImportFrom absolute targets,
+# relative targets via _resolve_relative, docstrings/comments excluded by
+# construction (AST nodes only). Dynamic importlib literals are NOT covered
+# by kind=imports (existing mechanism only handles them in the narrow
+# _confgen_component_import_hits path); no widening without basis.
+# v2: AP-106 sets per-rule resolver_style="legacy_cli", reusing the existing
+# legacy_cli package basis (drop filename, level-1 up) which matches
+# importlib.util.resolve_name Python semantics for normal modules,
+# capabilities-subdir modules and __init__ alike. No global default change:
+# rules without resolver_style keep legacy/default profile behavior, so old
+# rules/CLI/metrics outputs are unchanged (LEGACY_CLI_RULE_IDS still
+# AP-088..092 only). G13 scopes/exemptions untouched.
+# ---------------------------------------------------------------------------
+L1_INTENT_SCOPE = ["confflow/producer/intent"]
+L1_INTENT_SCIENCE_PREFIXES = ["confflow.science"]
+
 
 def _confgen_docstring_ids(tree: ast.AST) -> set[int]:
     """Return ids of Constant nodes that are docstrings (module/class/fn)."""
@@ -2113,6 +2135,18 @@ RULES.append(
         "scope": ["confflow/science/confgen"],
     }
 )
+RULES.append(
+    {
+        "id": "AP-106",
+        "kind": "imports",
+        "source": "#106",
+        "resolve_relative": True,
+        "resolver_style": "legacy_cli",
+        "scope": L1_INTENT_SCOPE,
+        "mode": "forbidden_prefixes",
+        "prefixes": L1_INTENT_SCIENCE_PREFIXES,
+    }
+)
 
 # ---------------------------------------------------------------------------
 # Scanner entry points
@@ -2256,6 +2290,14 @@ def scan(
             exempt: dict[str, list[str]] = rule.get("exempt_imports", {})
             precise: dict[str, list[str]] = rule.get("exempt_precise_imports", {})
             resolve_relative = rule.get("resolve_relative", False)
+            # Per-rule resolver_style (L1-A3c v2): when present it overrides
+            # the profile default; rules without it keep exact old behavior
+            # (legacy_cli under legacy profile, default otherwise), so old
+            # rules/CLI/metrics caliber is unchanged. No new scanner: reuses
+            # imports_of/_resolve_relative.
+            _style = rule.get("resolver_style")
+            if _style not in ("default", "legacy_cli"):
+                _style = "legacy_cli" if legacy else "default"
             for relpath, _path in _file_iter(scope, root, skip_pycache=legacy):
                 if relpath in exempt:
                     continue
@@ -2263,9 +2305,7 @@ def scan(
                 if row is None:
                     continue
                 source, tree = row
-                for lineno, raw, resolved in imports_of(
-                    tree, relpath, "legacy_cli" if legacy else "default"
-                ):
+                for lineno, raw, resolved in imports_of(tree, relpath, _style):
                     module = resolved if resolve_relative else raw
                     allowed_here = any(
                         module == a or module.startswith(a + ".") for a in exempt.get(relpath, [])
@@ -3730,6 +3770,170 @@ def confgen_a2_violations(root: Path) -> list[str]:
     out.extend(confgen_a2_as_kernel_target_violations(root))
     out.extend(confgen_a2_axis_order_violations(root))
     out.extend(confgen_a2_stage_parent_violations(root))
+    return out
+
+
+# ---------------------------------------------------------------------------
+# L1-G1 producer/policy Gaussian gates (AST only; docstrings/comments
+# excluded by construction because only Call/If/Compare/Import nodes match).
+# ---------------------------------------------------------------------------
+
+_G1_PROD_AUTHORITY_CALLS = frozenset(
+    {
+        "resolve_write_chk",
+        "coerce_section_lines",
+        "normalize_gaussian_keyword",
+        "parse_irc_route",
+        "unsupported_method_finding",
+    }
+)
+
+_G1_PROD_GAUSSIAN_NAMES = frozenset(
+    {
+        "ProgramName",
+        "_QST_TOKEN_RE",
+        "_OPT_PAREN_RE",
+        "_OPT_ASSIGN_RE",
+        "_OPT_BARE_RE",
+        "_FREQ_TOKEN_RE",
+        "_SP_MANAGED_RE",
+        "_IRC_MANAGED_RE",
+        "_IRC_ITEM_RE",
+        "_READFC_CONFLICTS",
+        "_RCFC_CONFLICTS",
+        "_LINK0_CHECKPOINT_RE",
+    }
+)
+
+
+def _g1_parse(path: Path) -> ast.AST | None:
+    try:
+        return ast.parse(path.read_text(encoding="utf-8"))
+    except (OSError, SyntaxError):
+        return None
+
+
+def g1_prod_authority_call_violations(root: Path) -> list[str]:
+    """G-PROD-1: producer must not call Gaussian authorities directly."""
+    rel = "confflow/producer/checkpoints.py"
+    tree = _g1_parse(Path(root) / rel)
+    if tree is None:
+        return [f"{rel}: unreadable"]
+    problems: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            func = node.func
+            name = ""
+            if isinstance(func, ast.Name):
+                name = func.id
+            elif isinstance(func, ast.Attribute):
+                name = func.attr
+            if name in _G1_PROD_AUTHORITY_CALLS:
+                problems.append(f"{rel}:{node.lineno}: direct Gaussian authority call {name}")
+    return problems
+
+
+def g1_prod_condition_violations(root: Path) -> list[str]:
+    """G-PROD-2: producer must not branch on Gaussian conditions."""
+    rel = "confflow/producer/checkpoints.py"
+    tree = _g1_parse(Path(root) / rel)
+    if tree is None:
+        return [f"{rel}: unreadable"]
+    problems: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.If, ast.While, ast.Assert)):
+            for sub in ast.walk(node.test):
+                if isinstance(sub, ast.Name) and sub.id in _G1_PROD_GAUSSIAN_NAMES:
+                    problems.append(f"{rel}:{node.lineno}: Gaussian condition {sub.id}")
+        elif isinstance(node, ast.Compare):
+            for sub in ast.walk(node):
+                if isinstance(sub, ast.Name) and sub.id in _G1_PROD_GAUSSIAN_NAMES:
+                    problems.append(f"{rel}:{node.lineno}: Gaussian compare {sub.id}")
+    return problems
+
+
+def g1_prod_import_violations(root: Path) -> list[str]:
+    """G-PROD-3: producer may import programs.gaussian only via policy."""
+    rel = "confflow/producer/checkpoints.py"
+    tree = _g1_parse(Path(root) / rel)
+    if tree is None:
+        return [f"{rel}: unreadable"]
+    problems: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            # Resolve relative to confflow/producer/checkpoints.py basis.
+            if node.level:
+                base = ["confflow", "producer"]
+                up = node.level - 1
+                base = base[: len(base) - up] if up <= len(base) else []
+                resolved = ".".join(base + ([node.module] if node.module else []))
+                # `from . import X` style: module is the package itself.
+                candidates = [resolved] + (
+                    [f"{resolved}.{a.name}" for a in node.names] if not node.module else []
+                )
+            else:
+                resolved = node.module or ""
+                candidates = [resolved]
+            for cand in candidates:
+                if (
+                    "programs.gaussian" in cand
+                    and cand != "confflow.programs.gaussian.checkpoint_policy"
+                ):
+                    problems.append(f"{rel}:{node.lineno}: forbidden Gaussian import {cand}")
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                if "programs.gaussian" in alias.name:
+                    problems.append(f"{rel}:{node.lineno}: forbidden Gaussian import {alias.name}")
+    return problems
+
+
+def g1_policy_import_violations(root: Path) -> list[str]:
+    """G-POL-1: policy must not import producer/workflow/science."""
+    rel = "confflow/programs/gaussian/checkpoint_policy.py"
+    tree = _g1_parse(Path(root) / rel)
+    if tree is None:
+        return [f"{rel}: unreadable"]
+    problems: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            mods: list[str] = []
+            if node.module:
+                # Reconstruct resolved module for relative imports.
+                if node.level:
+                    pkg = ["confflow", "programs", "gaussian"]
+                    up = node.level - 1
+                    # checkpoint_policy.py package is confflow.programs.gaussian
+                    base = pkg[: len(pkg) - up] if up <= len(pkg) else []
+                    mods.append(".".join(base + [node.module]))
+                else:
+                    mods.append(node.module)
+            else:
+                # `from . import X` / `from ...domain.errors import Y`
+                if node.level:
+                    pkg = ["confflow", "programs", "gaussian"]
+                    up = node.level - 1
+                    base = pkg[: len(pkg) - up] if up <= len(pkg) else []
+                    for alias in node.names:
+                        mods.append(".".join(base + [alias.name]) if base else alias.name)
+            for mod in mods:
+                if any(frag in mod for frag in ("producer", "workflow", "science")):
+                    # Allow prose in docstrings: ImportFrom is always code.
+                    problems.append(f"{rel}:{node.lineno}: forbidden policy import {mod}")
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                if any(frag in alias.name for frag in ("producer", "workflow", "science")):
+                    problems.append(f"{rel}:{node.lineno}: forbidden policy import {alias.name}")
+    return problems
+
+
+def g1_violations(root: Path) -> list[str]:
+    """Aggregate all L1-G1 Gaussian gate violations (empty when clean)."""
+    root = Path(root)
+    out: list[str] = []
+    out.extend(g1_prod_authority_call_violations(root))
+    out.extend(g1_prod_condition_violations(root))
+    out.extend(g1_prod_import_violations(root))
+    out.extend(g1_policy_import_violations(root))
     return out
 
 

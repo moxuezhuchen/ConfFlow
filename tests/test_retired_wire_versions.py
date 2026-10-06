@@ -169,7 +169,10 @@ class TestWorkflowDocumentVersionsRejected:
     def test_execution_refuses_before_any_side_effect(
         self, document: dict, tmp_path: Path, capsys
     ) -> None:
-        from confflow.cli import main as cli_main
+        # The CLI owns a process-wide logger.  Import it outside the temporary
+        # capsys stream so this test does not leave its singleton on a closed IO.
+        with capsys.disabled():
+            from confflow.cli import main as cli_main
 
         xyz = tmp_path / "input.xyz"
         xyz.write_text("1\nseed\nH 0 0 0\n", encoding="utf-8")
