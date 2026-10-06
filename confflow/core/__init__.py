@@ -7,11 +7,15 @@ type definitions, and validation.
 
 The historical ``from confflow.core import X`` surface is preserved, but it is
 resolved lazily (PEP 562): importing :mod:`confflow.core` no longer executes
-the implementation modules (``core.io``, ``core.data``, ...).  Import the concrete submodule when you need the
+the implementation modules (``core.io``, ``science.data``, ...).  Import the concrete submodule when you need the
 implementation.
 
 The ``core.types`` TypedDict module was retired by the Architecture Diet PR-9:
 it only described the released V1/V2 configuration wire, which is gone.
+The ``core.{bonding,constants,data}`` forwarding shims were retired by
+DIET-2 R1.5 (single authority: ``confflow.science.{bonding,constants,data}``);
+the lazy surface below now resolves directly to the science authority so
+``from confflow.core import X`` keeps returning the same objects.
 """
 
 from __future__ import annotations
@@ -20,15 +24,15 @@ import importlib
 from typing import Any
 
 _LAZY_EXPORTS: dict[str, tuple[str, str]] = {
-    # Constants
-    "HARTREE_TO_KCALMOL": (".constants", "HARTREE_TO_KCALMOL"),
-    # Data
-    "GV_COVALENT_RADII": (".data", "GV_COVALENT_RADII"),
-    "PERIODIC_SYMBOLS": (".data", "PERIODIC_SYMBOLS"),
-    "SYMBOL_TO_ATOMIC_NUMBER": (".data", "SYMBOL_TO_ATOMIC_NUMBER"),
-    "get_atomic_number": (".data", "get_atomic_number"),
-    "get_covalent_radius": (".data", "get_covalent_radius"),
-    "get_element_symbol": (".data", "get_element_symbol"),
+    # Constants (authority: confflow.science.constants)
+    "HARTREE_TO_KCALMOL": ("confflow.science.constants", "HARTREE_TO_KCALMOL"),
+    # Data (authority: confflow.science.data)
+    "GV_COVALENT_RADII": ("confflow.science.data", "GV_COVALENT_RADII"),
+    "PERIODIC_SYMBOLS": ("confflow.science.data", "PERIODIC_SYMBOLS"),
+    "SYMBOL_TO_ATOMIC_NUMBER": ("confflow.science.data", "SYMBOL_TO_ATOMIC_NUMBER"),
+    "get_atomic_number": ("confflow.science.data", "get_atomic_number"),
+    "get_covalent_radius": ("confflow.science.data", "get_covalent_radius"),
+    "get_element_symbol": ("confflow.science.data", "get_element_symbol"),
 }
 
 __all__ = [*sorted(_LAZY_EXPORTS)]

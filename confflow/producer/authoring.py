@@ -579,14 +579,6 @@ class _CandidateSource:
     run_input_grouping: str | None = None
 
 
-@dataclass(frozen=True, slots=True)
-class _CandidateEvaluation:
-    """One evaluated candidate: wire payload plus auto-wire inputs."""
-
-    payload: dict[str, Any]
-    trial_ok: bool
-
-
 def _declared_dependencies(definition: WorkflowDefinition) -> dict[str, tuple[str, ...]]:
     """Return the declared-bindings dependency adjacency.
 

@@ -713,36 +713,6 @@ def _check_charge_spin_compatibility(
         )
 
 
-def _explicit_charge_spin(document: Mapping[str, Any], step: Mapping[str, Any]) -> tuple[Any, Any]:
-    """Return the effective declared (charge, multiplicity) for *step*.
-
-    Bound-lineage DECLARED VALUE proof (override wins, then every bound
-    STRUCTURE root through STRUCTURE output ports; run globals are never
-    used to infer absolute actual charge).  ``None`` means unknown: the
-    caller fails closed unless same-lineage identity proves the exact
-    produced records are shared.  Structure-carried runtime values are
-    never guessed here; the runtime scientific resolver owns them.
-    """
-    steps_by_id: dict[str, Mapping[str, Any]] = {}
-    raw_steps = document.get("steps")
-    if isinstance(raw_steps, list):
-        for entry in raw_steps:
-            if isinstance(entry, Mapping) and isinstance(entry.get("id"), str):
-                steps_by_id[str(entry.get("id"))] = entry
-    inputs_by_name = _raw_inputs_by_name(document)
-    try:
-        registry = default_registry()
-    except Exception:
-        return None, None
-    charge_known, charge = _effective_declared_state(
-        document, steps_by_id, inputs_by_name, step, "charge", registry
-    )
-    spin_known, spin = _effective_declared_state(
-        document, steps_by_id, inputs_by_name, step, "multiplicity", registry
-    )
-    return (charge if charge_known else None, spin if spin_known else None)
-
-
 def _check_method_compatibility(
     document: Mapping[str, Any],
     source: Mapping[str, Any],
