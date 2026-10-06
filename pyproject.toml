@@ -57,6 +57,7 @@ dev = [
     "wheel",
     "pytest>=6.0.0",
     "pytest-cov>=7.1.0",
+    "pytest-xdist>=3.5.0",
     "black>=26.5.1",
     "ruff>=0.15.17",
     "mypy>=2.1.0,<2.2",
