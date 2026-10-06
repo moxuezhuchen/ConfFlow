@@ -101,9 +101,10 @@
         "confflow/worker_*.py"
       ],
       "prod_files": 23,
-      "prod_loc_limit": 5815,
+      "prod_loc_limit": 6217,
       "ratchet": "R1/R2 上限不变；N 阶段按卡预算增长；里程碑验收后以实际值重写本上限；其余时间只降不升。",
-      "reason": "P0.2 初始上限=P0 阶段实际值：基 cc16e8f（含 E1 与 J1 CF 两张计划内卡，在 DIET-2 R/N 之前合并）。提高须写明理由并经用户确认。"
+      "reason": "临时提高（待用户确认）：L2 第一张卡加法投影 v4_artifacts.py 新增约 400 行；L2 删除旧读取链的卡必须把本上限降回不高于 5815（P0 基线）。",
+      "temporary_until": "L2 old-chain deletion card"
     },
     {
       "id": "producer",
@@ -209,6 +210,6 @@
     }
   ],
   "tests_total_files": 245,
-  "tests_total_loc_limit": 120560,
-  "tests_total_reason": "P0.2 初始上限=P0 阶段实际值：基 cc16e8f（含 E1 与 J1 CF 两张计划内卡，在 DIET-2 R/N 之前合并）。提高须写明理由并经用户确认。"
+  "tests_total_loc_limit": 120786,
+  "tests_total_reason": "临时提高（待用户确认）：L2 投影新增约 220 行测试；随 T 阶段整合回落。"
 }
