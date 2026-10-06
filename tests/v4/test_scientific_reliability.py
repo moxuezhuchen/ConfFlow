@@ -455,34 +455,3 @@ def test_orca_current_identity_still_reuses():
     )
     decision = evaluate_reuse(current=inputs, stored=inputs, stored_status="completed")
     assert decision.decision.value == "reuse"
-
-
-@pytest.mark.parametrize(
-    ("recorded_parser", "accepted"),
-    [
-        ("confflow.program.orca.parser.v2", True),
-        ("confflow.program.orca.parser.v1", False),
-    ],
-)
-def test_orca_mixed_parser_handoff_is_rejected(recorded_parser, accepted):
-    from confflow.remote.worker import WorkerError, _resolve_program
-
-    adapter = OrcaProgramAdapter()
-    versions = {
-        "adapter": adapter.adapter_version,
-        "parser": recorded_parser,
-    }
-    if accepted:
-        assert _resolve_program("orca", versions).program_name.value == "orca"
-    else:
-        with pytest.raises(WorkerError, match="program parser"):
-            _resolve_program("orca", versions)
-
-
-def test_orca_handoff_without_parser_key_is_rejected():
-    """A handoff that does not pin parser semantics fails closed."""
-    from confflow.remote.worker import WorkerError, _resolve_program
-
-    adapter = OrcaProgramAdapter()
-    with pytest.raises(WorkerError, match="parser contract version is missing"):
-        _resolve_program("orca", {"adapter": adapter.adapter_version})

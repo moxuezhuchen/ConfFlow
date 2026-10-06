@@ -880,7 +880,6 @@ class TestDurableRunnerSeams:
                 environment_digest=None,
                 provenance=FrozenDict({}),
                 run_root=str(tmp_path / "run"),
-                transport=None,
                 should_cancel=lambda: False,
             )
             assert durable is False

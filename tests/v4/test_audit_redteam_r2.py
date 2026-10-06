@@ -15,9 +15,6 @@ from __future__ import annotations
 import copy
 import json
 import os
-import subprocess
-import sys
-import textwrap
 import time
 from pathlib import Path
 from typing import Any
@@ -33,12 +30,8 @@ from confflow.application.v4_run import (
 from confflow.domain import FrozenDict
 from confflow.domain.errors import DomainError
 from confflow.execution.process import NativeProcessSupervisor
-from confflow.persistence.contracts import store_path
-from confflow.persistence.work_items import SqliteWorkItemStore
-from confflow.remote.transport import RemoteTransport
 from confflow.workflow.v4.assembly import RunInputs
 from tests.v4._helpers.audit_native import (
-    REPO_ROOT,
     WATER_XYZ,
     _digest_over,
     _last_record,
@@ -54,14 +47,13 @@ from tests.v4._helpers.audit_native import (
 RED_TEAM_ENV = "CF_R2_REDTEAM_SCIENCE"
 
 
-def _run_redteam_step(doc: dict[str, Any], run_root: Path, transport: Any = None) -> Any:
+def _run_redteam_step(doc: dict[str, Any], run_root: Path) -> Any:
     return V4RunApplication(supervisor=NativeProcessSupervisor()).run(
         V4RunRequest(
             workflow_document=doc,
             run_inputs=RunInputs(structures=FrozenDict({"structures": import_xyz(WATER_XYZ)})),
             run_root=str(run_root),
             import_sources=FrozenDict({"structures": WATER_XYZ}),
-            transport=transport,
         )
     )
 
@@ -105,40 +97,13 @@ class TestRedTeamEnvironment:
 
 
 class TestRedTeamTarget:
-    def test_new_unknown_target_fails_closed_on_every_transport(self, tmp_path: Path) -> None:
-        from confflow.execution.work_item_executor import WorkItemExecutor
-        from confflow.remote.transport import LocalTransport
-
+    def test_new_unknown_target_fails_closed(self, tmp_path: Path) -> None:
+        """R1.2: nonlocal target fails closed with no transport (0 launches)."""
         script = _redteam_native(tmp_path)
-        for label, transport in (
-            ("absent", None),
-            ("local", LocalTransport(WorkItemExecutor())),
-        ):
-            doc = _single_step_doc(script)
-            doc["steps"][0]["execution"]["target"] = "cluster-r2-ghost"
-            with pytest.raises(DomainError):
-                _run_redteam_step(doc, tmp_path / label, transport)
-        run_root = tmp_path / "remote"
-        with SqliteWorkItemStore.open(store_path(str(run_root), "ts")) as store:
-            unnamed = RemoteTransport(
-                run_root=str(run_root),
-                store=store,
-                worker_root=str(tmp_path / "worker"),
-                target_name=None,
-            )
-            doc = _single_step_doc(script)
-            doc["steps"][0]["execution"]["target"] = "cluster-r2-ghost"
-            with pytest.raises(DomainError):
-                V4RunApplication(supervisor=NativeProcessSupervisor()).run(
-                    V4RunRequest(
-                        workflow_document=doc,
-                        run_inputs=RunInputs(
-                            structures=FrozenDict({"structures": import_xyz(WATER_XYZ)})
-                        ),
-                        run_root=str(run_root),
-                        transport=unnamed,
-                    )
-                )
+        doc = _single_step_doc(script)
+        doc["steps"][0]["execution"]["target"] = "cluster-r2-ghost"
+        with pytest.raises(DomainError, match="no transport is configured"):
+            _run_redteam_step(doc, tmp_path / "run")
         assert _launches(tmp_path) == 0
 
     def test_bad_target_on_a_later_step_launches_nothing(self, tmp_path: Path) -> None:
@@ -297,102 +262,3 @@ class TestRedTeamTspes:
         reverse = group["barriers"]["reverse_endpoint"]["value"]
         assert forward == pytest.approx(expected_barrier, abs=1e-9)
         assert reverse == pytest.approx(expected_barrier, abs=1e-9)
-
-
-class TestRedTeamRemoteCrashPoint:
-    """Crash AFTER the worker bundle import, BEFORE the producer commit."""
-
-    def test_crash_after_import_reconciles_without_relaunch(self, tmp_path: Path) -> None:
-        script = _science_native(tmp_path)
-        os.environ[RED_TEAM_ENV] = "-61"
-        try:
-            runner = tmp_path / "crash_after_import.py"
-            runner.write_text(textwrap.dedent(f"""\
-                    import copy, os, sys
-                    from pathlib import Path
-                    sys.path.insert(0, {str(REPO_ROOT)!r})
-                    import confflow.remote.staging as staging
-                    from confflow.application.v4_run import (
-                        V4RunApplication, V4RunRequest, import_xyz,
-                    )
-                    from confflow.domain import FrozenDict
-                    from confflow.execution.process import NativeProcessSupervisor
-                    from confflow.persistence.contracts import store_path
-                    from confflow.persistence.work_items import SqliteWorkItemStore
-                    from confflow.producer import get_recipe_v4
-                    from confflow.remote.transport import RemoteTransport
-                    from confflow.workflow.v4.assembly import RunInputs
-
-                    tmp = Path({str(tmp_path)!r})
-                    run_root = str(tmp / "run")
-                    doc = copy.deepcopy(get_recipe_v4("tspes")["document"])
-                    doc["steps"] = doc["steps"][:1]
-                    doc["global"] = {{"scientific_defaults": {{"charge": 0, "multiplicity": 1}}}}
-                    doc["steps"][0]["execution"] = {{
-                        "executable": str(tmp / "science_orca"),
-                        "target": "cluster",
-                    }}
-                    inputs = RunInputs(structures=FrozenDict({{
-                        "structures": import_xyz({WATER_XYZ!r}),
-                    }}))
-                    _real = staging.import_result_artifacts
-                    def crash_after_import(**kwargs):
-                        _real(**kwargs)
-                        os._exit(17)
-                    staging.import_result_artifacts = crash_after_import
-                    with SqliteWorkItemStore.open(store_path(run_root, "ts")) as store:
-                        transport = RemoteTransport(
-                            run_root=run_root,
-                            store=store,
-                            worker_root=str(tmp / "worker"),
-                            target_name="cluster",
-                        )
-                        V4RunApplication(supervisor=NativeProcessSupervisor()).run(
-                            V4RunRequest(
-                                workflow_document=doc,
-                                run_inputs=inputs,
-                                run_root=run_root,
-                                import_sources=FrozenDict({{"structures": {WATER_XYZ!r}}}),
-                                transport=transport,
-                            )
-                        )
-                    """))
-            crashed = subprocess.run(
-                [sys.executable, str(runner)],
-                env=dict(os.environ),  # identical env for the crashed attempt and the retry
-                capture_output=True,
-                text=True,
-                timeout=300,
-                start_new_session=True,
-            )
-            assert crashed.returncode == 17, crashed.stderr[-2000:]
-            assert _launches(tmp_path) == 1
-
-            run_root = tmp_path / "run"
-            doc = _single_step_doc(script, env={RED_TEAM_ENV: "-61"})
-            doc["steps"][0]["execution"]["target"] = "cluster"
-            with SqliteWorkItemStore.open(store_path(str(run_root), "ts")) as store:
-                transport = RemoteTransport(
-                    run_root=str(run_root),
-                    store=store,
-                    worker_root=str(tmp_path / "worker"),
-                    target_name="cluster",
-                )
-                report = V4RunApplication(supervisor=NativeProcessSupervisor()).run(
-                    V4RunRequest(
-                        workflow_document=doc,
-                        run_inputs=RunInputs(
-                            structures=FrozenDict({"structures": import_xyz(WATER_XYZ)})
-                        ),
-                        run_root=str(run_root),
-                        import_sources=FrozenDict({"structures": WATER_XYZ}),
-                        transport=transport,
-                    )
-                )
-                assert report.status == "completed"
-                assert _launches(tmp_path) == 1
-                (item_id,) = store.list_items()
-                attempts = store.get_attempts(item_id)
-                assert [entry.status.value for entry in attempts] == ["completed"]
-        finally:
-            os.environ.pop(RED_TEAM_ENV, None)

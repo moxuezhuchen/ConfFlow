@@ -175,33 +175,6 @@ class TestR1EnvironmentIdentity:
         assert received["BINDING_ONLY"] == "explicit"
         assert _stored_environment_digest(run_root, "ts") == _digest_over(script, received)
 
-    def test_remote_worker_launch_env_equals_probed_hash(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """R1 remote: worker launches exactly the probed producer snapshot."""
-        from confflow.remote.transport import RemoteTransport
-
-        script = _science_native(tmp_path)
-        monkeypatch.setenv("SCIENCE_ENV", "-88")
-        run_root = tmp_path / "run-remote"
-        doc = _single_step_doc(script)
-        doc["steps"][0]["execution"]["target"] = "cluster-audit"
-        with SqliteWorkItemStore.open(store_path(str(run_root), "ts")) as store:
-            transport = RemoteTransport(
-                run_root=str(run_root),
-                store=store,
-                worker_root=str(tmp_path / "worker"),
-                target_name="cluster-audit",
-                target_env={"TARGET_ONLY": "declared"},
-            )
-            report = _run(doc, run_root, transport=transport)
-        assert report.status == "completed"
-
-        received = _last_record(tmp_path)["env"]
-        assert received["SCIENCE_ENV"] == "-88"
-        assert received["TARGET_ONLY"] == "declared"
-        assert _stored_environment_digest(run_root, "ts") == _digest_over(script, received)
-
     def test_label_metadata_change_does_not_invalidate(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -291,69 +264,41 @@ class TestR2TargetSemantics:
         monkeypatch.setenv("SCIENCE_ENV", "-11")
         doc = _single_step_doc(script, env={"SCIENCE_ENV": "-11"})
         doc["steps"][0]["execution"]["target"] = "nonexistent-cluster"
-        with pytest.raises(DomainError):
+        with pytest.raises(DomainError, match="no transport is configured"):
             _run(doc, tmp_path / "run")
         assert _launches(tmp_path) == 0
 
-    def test_local_transport_rejects_nonlocal_target(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        from confflow.execution.work_item_executor import WorkItemExecutor
-        from confflow.remote.transport import LocalTransport
+    def test_retired_transport_keyword_is_rejected(self, tmp_path: Path) -> None:
+        """R1.2: remote delivery retired; only transport=None is accepted."""
+        from confflow.application.v4_entry import formal_v4_runner, run_v4_document
 
         script = _science_native(tmp_path)
-        monkeypatch.setenv("SCIENCE_ENV", "-11")
         doc = _single_step_doc(script, env={"SCIENCE_ENV": "-11"})
-        doc["steps"][0]["execution"]["target"] = "nonexistent-cluster"
-        with pytest.raises(DomainError):
-            _run(
+        with pytest.raises(DomainError, match="transport is retired"):
+            V4RunRequest(
+                workflow_document=doc,
+                run_inputs=_water_inputs(),
+                run_root=str(tmp_path / "run"),
+                transport=object(),
+            )
+        with pytest.raises(DomainError, match="transport is retired"):
+            run_v4_document(
                 doc,
-                tmp_path / "run",
-                transport=LocalTransport(WorkItemExecutor()),
+                run_inputs=_water_inputs(),
+                run_root=str(tmp_path / "run2"),
+                transport=object(),
             )
-        assert _launches(tmp_path) == 0
-
-    def test_unnamed_remote_transport_rejects_nonlocal_target(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        from confflow.remote.transport import RemoteTransport
-
-        script = _science_native(tmp_path)
-        monkeypatch.setenv("SCIENCE_ENV", "-11")
-        doc = _single_step_doc(script, env={"SCIENCE_ENV": "-11"})
-        doc["steps"][0]["execution"]["target"] = "nonexistent-cluster"
-        run_root = tmp_path / "run"
-        with SqliteWorkItemStore.open(store_path(str(run_root), "ts")) as store:
-            transport = RemoteTransport(
-                run_root=str(run_root),
-                store=store,
-                worker_root=str(tmp_path / "worker"),
-                target_name=None,
+        with pytest.raises(DomainError, match="transport is retired"):
+            formal_v4_runner(
+                input_xyz=[],
+                config_file="dummy",
+                work_dir=str(tmp_path),
+                transport=object(),
             )
-            with pytest.raises(DomainError):
-                _run(doc, run_root, transport=transport)
-        assert _launches(tmp_path) == 0
+        from confflow.execution.binding_resolution import require_target_transport
 
-    def test_named_remote_transport_rejects_target_mismatch(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        from confflow.remote.transport import RemoteTransport
-
-        script = _science_native(tmp_path)
-        monkeypatch.setenv("SCIENCE_ENV", "-11")
-        doc = _single_step_doc(script, env={"SCIENCE_ENV": "-11"})
-        doc["steps"][0]["execution"]["target"] = "cluster-typo"
-        run_root = tmp_path / "run"
-        with SqliteWorkItemStore.open(store_path(str(run_root), "ts")) as store:
-            transport = RemoteTransport(
-                run_root=str(run_root),
-                store=store,
-                worker_root=str(tmp_path / "worker"),
-                target_name="cluster-real",
-            )
-            with pytest.raises(DomainError):
-                _run(doc, run_root, transport=transport)
-        assert _launches(tmp_path) == 0
+        with pytest.raises(DomainError, match="no transport is configured"):
+            require_target_transport("nonexistent-cluster", None)
 
     def test_pure_executor_nonlocal_target_fails_closed(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -376,164 +321,6 @@ class TestR2TargetSemantics:
             report = _run(doc, run_root)
             assert report.status == "completed"
         assert _launches(tmp_path) == 3
-
-
-class TestR7RemoteReconciliation:
-    """R7: reconcile a durable worker bundle before advancing the attempt."""
-
-    @staticmethod
-    def _crash_runner(tmp_path: Path, *, mode: str) -> Path:
-        """Write the controller that dies at the chosen crash point.
-
-        ``import``: worker bundle is durable, controller dies before import
-        (the frozen R7 counterexample).  ``package``: worker dies mid-native
-        before any durable bundle exists (no recoverable result).
-        """
-        if mode == "import":
-            crash = "staging.import_result_artifacts = lambda **kwargs: os._exit(17)"
-        else:
-            crash = (
-                "import confflow.remote.result_bundle as result_bundle\n"
-                "                result_bundle.package_result_bundle = "
-                "lambda **kwargs: os._exit(17)"
-            )
-        runner = tmp_path / f"crash_controller_{mode}.py"
-        runner.write_text(textwrap.dedent(f"""\
-                import copy, os, sys
-                from pathlib import Path
-                sys.path.insert(0, {str(REPO_ROOT)!r})
-                import confflow.remote.staging as staging
-                from confflow.application.v4_run import (
-                    V4RunApplication, V4RunRequest, import_xyz,
-                )
-                from confflow.domain import FrozenDict
-                from confflow.execution.process import NativeProcessSupervisor
-                from confflow.persistence.contracts import store_path
-                from confflow.persistence.work_items import SqliteWorkItemStore
-                from confflow.producer import get_recipe_v4
-                from confflow.remote.transport import RemoteTransport
-                from confflow.workflow.v4.assembly import RunInputs
-
-                tmp = Path({str(tmp_path)!r})
-                run_root = str(tmp / "run")
-                doc = copy.deepcopy(get_recipe_v4("tspes")["document"])
-                doc["steps"] = doc["steps"][:1]
-                doc["global"] = {{"scientific_defaults": {{"charge": 0, "multiplicity": 1}}}}
-                doc["steps"][0]["execution"] = {{
-                    "executable": str(tmp / "science_orca"),
-                    "target": "cluster",
-                }}
-                inputs = RunInputs(structures=FrozenDict({{
-                    "structures": import_xyz({WATER_XYZ!r}),
-                }}))
-                {crash}
-                with SqliteWorkItemStore.open(store_path(run_root, "ts")) as store:
-                    transport = RemoteTransport(
-                        run_root=run_root,
-                        store=store,
-                        worker_root=str(tmp / "worker"),
-                        target_name="cluster",
-                    )
-                    V4RunApplication(supervisor=NativeProcessSupervisor()).run(
-                        V4RunRequest(
-                            workflow_document=doc,
-                            run_inputs=inputs,
-                            run_root=run_root,
-                            import_sources=FrozenDict({{"structures": {WATER_XYZ!r}}}),
-                            transport=transport,
-                        )
-                    )
-                """))
-        return runner
-
-    @staticmethod
-    def _resume_doc(script: Path, env_value: str) -> dict[str, Any]:
-        doc = _single_step_doc(script, env={"SCIENCE_ENV": env_value})
-        doc["steps"][0]["execution"]["target"] = "cluster"
-        return doc
-
-    def test_restart_imports_bundle_without_duplicate_native(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        import subprocess
-
-        from confflow.remote.transport import RemoteTransport
-
-        script = _science_native(tmp_path)
-        monkeypatch.setenv("SCIENCE_ENV", "-55")
-        runner = self._crash_runner(tmp_path, mode="import")
-        crashed = subprocess.run(
-            [sys.executable, str(runner)],
-            env=dict(os.environ),  # identical env for the crashed attempt and the retry
-            capture_output=True,
-            text=True,
-            timeout=300,
-            start_new_session=True,
-        )
-        assert crashed.returncode == 17, crashed.stderr[-2000:]
-        assert _launches(tmp_path) == 1
-
-        run_root = tmp_path / "run"
-        doc = self._resume_doc(script, "-55")
-        with SqliteWorkItemStore.open(store_path(str(run_root), "ts")) as store:
-            transport = RemoteTransport(
-                run_root=str(run_root),
-                store=store,
-                worker_root=str(tmp_path / "worker"),
-                target_name="cluster",
-            )
-            report = _run(doc, run_root, transport=transport)
-            assert report.status == "completed"
-            assert _launches(tmp_path) == 1
-            # Idempotent: repeated resume reuses the committed row.
-            report = _run(doc, run_root, transport=transport)
-            assert report.status == "completed"
-            assert _launches(tmp_path) == 1
-            (item_id,) = store.list_items()
-            attempts = store.get_attempts(item_id)
-            assert [entry.status.value for entry in attempts] == ["completed"]
-
-    def test_worker_crash_mid_native_still_retries_once(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """No durable bundle means the retry protocol still advances."""
-        import subprocess
-
-        from confflow.remote.transport import RemoteTransport
-
-        script = _science_native(tmp_path)
-        monkeypatch.setenv("SCIENCE_ENV", "-56")
-        runner = self._crash_runner(tmp_path, mode="package")
-        crashed = subprocess.run(
-            [sys.executable, str(runner)],
-            env=dict(os.environ),  # identical env for the crashed attempt and the retry
-            capture_output=True,
-            text=True,
-            timeout=300,
-            start_new_session=True,
-        )
-        assert crashed.returncode == 17, crashed.stderr[-2000:]
-        # The worker died before packaging anything durable: the retry is
-        # allowed to relaunch (the "no recoverable result" branch).
-        assert _launches(tmp_path) == 1
-        run_root = tmp_path / "run"
-        doc = self._resume_doc(script, "-56")
-        with SqliteWorkItemStore.open(store_path(str(run_root), "ts")) as store:
-            transport = RemoteTransport(
-                run_root=str(run_root),
-                store=store,
-                worker_root=str(tmp_path / "worker"),
-                target_name="cluster",
-            )
-            report = _run(doc, run_root, transport=transport)
-            assert report.status == "completed"
-            (item_id,) = store.list_items()
-            attempts = store.get_attempts(item_id)
-            assert [entry.status.value for entry in attempts] == [
-                "interrupted",
-                "completed",
-            ]
-        assert _launches(tmp_path) == 2
 
 
 def _sleeping_native(root: Path, *, sleep_seconds: float) -> Path:
