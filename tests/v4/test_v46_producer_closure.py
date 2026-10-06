@@ -204,6 +204,7 @@ class TestEveryRecipeExecutable:
             "goat",
             "tspes",
             "confgen_torsion",
+            "monomer_conformers",
         )
         for recipe_id in RECIPE_IDS_V4:
             document = self._contract_recipe_document(recipe_id)
