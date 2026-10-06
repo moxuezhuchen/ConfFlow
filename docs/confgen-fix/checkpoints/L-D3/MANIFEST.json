@@ -1,0 +1,45 @@
+{
+  "base": "51246ced0c190c2325a1a72b4e59f9965bcd645c",
+  "branch_rule": "formal line is fix/confgen-1d; refactor/fix1d-ld3-proto is preview-only, never merged",
+  "card": "L-D3",
+  "collect_out_rule": "test inventory/result metadata: exact added-node accounting (13 new nodes, all old nodes retained); byte-immutability is NOT claimed for collect.json/out.json",
+  "added_tests": [
+    "tests/v4/test_confgen_retry_telemetry.py::test_plain_one_phase_report_certificate_leaves_identical",
+    "tests/v4/test_confgen_retry_telemetry.py::test_wrapper_none_failure_kept_as_telemetry",
+    "tests/v4/test_confgen_retry_telemetry.py::test_wrapper_heal_accepted_only_on_success_start",
+    "tests/v4/test_confgen_retry_telemetry.py::test_input_gate_excludes_screened_targets",
+    "tests/v4/test_confgen_retry_telemetry.py::test_retry_accepted_marks_own_parent_not_descendant",
+    "tests/v4/test_confgen_retry_telemetry.py::test_retry_trailing_diagnostic_never_accepted",
+    "tests/v4/test_confgen_retry_telemetry.py::test_input_throwing_call_counted_and_screened_zero",
+    "tests/v4/test_confgen_retry_telemetry.py::test_telemetry_rows_immutable_and_bad_payload_rejected",
+    "tests/v4/test_confgen_retry_telemetry.py::test_multi_parent_and_reuse_isolated",
+    "tests/v4/test_confgen_retry_telemetry.py::test_cancel_propagates_without_partial",
+    "tests/v4/test_confgen_retry_telemetry.py::test_additive_report_no_overwrites",
+    "tests/v4/test_confgen_retry_telemetry.py::test_old_duck_stage_compat",
+    "tests/v4/test_confgen_retry_telemetry.py::test_explicit_stage_wire_adapter_forwards_statistics"
+  ],
+  "files": {
+    "confflow/science/confgen/kernel_records.py": "280723a6700971d94b0885160bbbd0c86973427883540bd1302622fc2a4d2916",
+    "confflow/science/confgen/model.py": "30751c5ef52c053e7e1d4be19d394056618214ced83cb328c23e3690c25ec4d2",
+    "confflow/science/confgen/engine.py": "15006d8d2b719a08ea425f07b1b2182216e0b8d8f86ace107eb0307808302076",
+    "confflow/science/confgen/wire_v3.py": "95c9ac6536430a2c7881ab5db1ca175ed5d105169d63728e881f33402a7f2f36",
+    "tests/v4/test_confgen_retry_telemetry.py": "76e47725dd480bdf110eff149016acfe00f93240f16ad57b9bdb30f8e7859bf1",
+    "docs/confgen-fix/LOG.md": "appended-L-D3-entry",
+    "docs/confgen-fix/checkpoints/L-D3/DIFF.md": "see-frozen-patch",
+    "docs/confgen-fix/checkpoints/L-D3/MANIFEST.json": "self"
+  },
+  "root_blockers_fixed": [
+    "accepted-attribution-descendant: own-index selection replaces global-last mark",
+    "accepted-attribution-diagnostic: success_index/unique-success validation, zero-attempt rows never accepted",
+    "input-throwing-call: entry-before-call increment, success updated after return, attempt1 success0 on stage_error"
+  ],
+  "verification": {
+    "new_tests": "13 passed",
+    "batch_stage": "31 passed",
+    "collect": "5051 = 5038 + 13",
+    "default_report_bytes": "sha256 fafd89af8cdf4b56346a6b023c052eacb6fc97bdc77a0f431fd1133a68d10af2 identical to base",
+    "ruff": "passed (5 whitelisted files)",
+    "mypy": "passed (4 production files)",
+    "black": "passed (5 whitelisted files)"
+  }
+}

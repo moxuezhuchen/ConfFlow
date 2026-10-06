@@ -339,25 +339,42 @@ def leaf_category_counts(records: Sequence[TargetRecord]) -> dict[str, Any]:
     }
 
 
-def attempt_ledger_counts(records: Sequence[TargetRecord]) -> dict[str, Any]:
+def attempt_ledger_counts(
+    records: Sequence[TargetRecord],
+    *,
+    issued_history: Sequence[tuple[Any, str, int]] | set[tuple[Any, str, int]] | None = None,
+) -> dict[str, Any]:
     """Count the AXIS-ATTEMPT ledger (issued stage attempts only).
 
     Every issued attempt is one singleton record that reached stage
     realization: internal expansions and published leaves are
     geometry-successful; terminal failures without geometry are not.
     Policy-screened targets (rejected before geometry), verified
-    suppressions (realization skipped by witness), and deferred
-    unissued ranges are separate units, never attempts. Attempts are
+    suppressions never issued (realization skipped by witness), and
+    deferred unissued ranges are separate units, never attempts.
+    A suppression whose ``(parent_target_id, axis, ordinal)`` appears in
+    ``issued_history`` was really issued (first-pass failure later
+    suppressed on retry): it counts as an issued attempt without
+    success (``suppressed_after_issue``), never as skipped. Attempts are
     per-level issuances along every explored path, so attempt counts
     exceed leaf counts by construction (one attempt per tree level per
-    path); deferred ranges were never issued at any level.
+    path); deferred ranges were never issued at any level. Retry
+    multi-start solver rows live in ``start_statistics`` and never enter
+    this target-level ledger. ``issued_history=None`` preserves the
+    legacy behavior (suppressed always skipped).
     """
+    issued_keys: set[tuple[Any, str, int]] | None = None
+    if issued_history is not None:
+        issued_keys = set(
+            (parent, str(axis), int(ordinal)) for parent, axis, ordinal in issued_history
+        )
     by_status: dict[str, int] = {}
     successful = 0
     internal_expanded = 0
     published = 0
     without_success = 0
     suppressed_skipped = 0
+    suppressed_after_issue = 0
     policy_screened = 0
     deferred_unissued = 0
     for record in records:
@@ -375,6 +392,19 @@ def attempt_ledger_counts(records: Sequence[TargetRecord]) -> dict[str, Any]:
             policy_screened += weight
             continue
         if status is TerminalStatus.SUPPRESSED_BY_VERIFIED_SYMMETRY:
+            if (
+                issued_keys is not None
+                and (
+                    record.parent_target_id,
+                    str(record.axis),
+                    int(record.ordinal),
+                )
+                in issued_keys
+            ):
+                suppressed_after_issue += weight
+                by_status[status.value] = by_status.get(status.value, 0) + weight
+                without_success += weight
+                continue
             suppressed_skipped += weight
             continue
         by_status[status.value] = by_status.get(status.value, 0) + weight
@@ -386,7 +416,7 @@ def attempt_ledger_counts(records: Sequence[TargetRecord]) -> dict[str, Any]:
                 published += weight
         else:
             without_success += weight
-    return {
+    result: dict[str, Any] = {
         "issued_attempts": successful + without_success,
         "geometry_successful": successful,
         "internal_expanded": internal_expanded,
@@ -397,6 +427,9 @@ def attempt_ledger_counts(records: Sequence[TargetRecord]) -> dict[str, Any]:
         "policy_screened": policy_screened,
         "deferred_unissued": deferred_unissued,
     }
+    if suppressed_after_issue:
+        result["suppressed_after_issue"] = suppressed_after_issue
+    return result
 
 
 def enumeration_digest(

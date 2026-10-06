@@ -398,6 +398,22 @@ class LegacyStageAdapter(GenerationStage):
             return _impl(resolved)
         return None
 
+    def report_statistics(self, snapshot: Any) -> Any:
+        """L-D3 hook: forward only when the wrapped stage overrides it.
+
+        Evidence for the forwarding: this adapter shadows the new
+        ``GenerationStage.report_statistics`` default (class-level
+        lookup succeeds on the adapter), so without an explicit
+        forwarder a legacy explicit stage overriding the hook would
+        never be reached via ``_hook_impl`` MRO detection. The
+        fallback keeps the old default ``None`` and performs no
+        component dispatch (registry/wire otherwise untouched).
+        """
+        legacy = object.__getattribute__(self, "_legacy")
+        if self._wrapped_overrides(legacy, "report_statistics"):
+            return legacy.report_statistics(snapshot)
+        return None
+
     def describe_scope(self, resolved: Any) -> Any:
         """A3 hook: wrapped slice when overridden, else component slice."""
         legacy = object.__getattribute__(self, "_legacy")

@@ -1,0 +1,51 @@
+{
+  "added_tests": [
+    "tests/v4/test_confgen_batch_stage.py::test_decline_path_byte_equivalent",
+    "tests/v4/test_confgen_batch_stage.py::test_root_counterexample_single_terminal_and_certificate",
+    "tests/v4/test_confgen_batch_stage.py::test_healed_equals_first_try_ideal",
+    "tests/v4/test_confgen_batch_stage.py::test_healed_record_takes_original_position",
+    "tests/v4/test_confgen_batch_stage.py::test_failed_retry_still_single_terminal",
+    "tests/v4/test_confgen_batch_stage.py::test_legacy_cancel_recorded_as_stage_error",
+    "tests/v4/test_confgen_batch_stage.py::test_cancel_in_retry_propagates_unwrapped",
+    "tests/v4/test_confgen_batch_stage.py::test_hook_receives_real_probe_and_hook_raise_propagates",
+    "tests/v4/test_confgen_batch_stage.py::test_excluded_targets_never_solved",
+    "tests/v4/test_confgen_batch_stage.py::test_suppression_fallback_and_success_preserved",
+    "tests/v4/test_confgen_batch_stage.py::test_stage_error_evidence_never_retried",
+    "tests/v4/test_confgen_batch_stage.py::test_drift_not_retried",
+    "tests/v4/test_confgen_batch_stage.py::test_first_pass_table_immutable_and_complete",
+    "tests/v4/test_confgen_batch_stage.py::test_two_level_combo_heal_revokes_deferred",
+    "tests/v4/test_confgen_batch_stage.py::test_two_parents_isolated_and_repeatable",
+    "tests/v4/test_confgen_batch_stage.py::test_new_seam_has_no_axis_names_or_component_imports",
+    "tests/v4/test_confgen_batch_stage.py::test_root_multi_failure_second_retry_relocates",
+    "tests/v4/test_confgen_batch_stage.py::test_mixed_retry_modes_multi_target",
+    "tests/v4/test_confgen_batch_stage.py::test_two_level_mixed_heal_and_failagain",
+    "tests/v4/test_confgen_batch_stage.py::test_two_level_decline_keeps_deferred"
+  ],
+  "base": "7338c4d2333ad20aa0ef57a3f18fa6814c03d3c7",
+  "card": "D0",
+  "files": {
+    "confflow/science/confgen/engine.py": "55fcd16b0681809e3c90476d347251ed7aca4d316265cbaa9f856b103c4f19b9",
+    "confflow/science/confgen/model.py": "d8f81cab5f9cf61fbfd298625d1bc45f5a40cf92fdc84670cec247ae20767fba",
+    "tests/v4/test_confgen_batch_stage.py": "34d71f6f2b300b48189dfe32c26af7bf155c59e5796c9d3515de9653dffc4a33"
+  },
+  "golden_changed": [],
+  "golden_unchanged_asserted": "all FIX-1R frozen baseline (/tmp/fix1r-final-root-run): no production stage overrides the hook, batch path never taken",
+  "type": "logic",
+  "v3_note": "v3 fixes the multi-replacement index-drift blocker (object-identity relocation), loud counters, no cross-parent diagnostic purge; v2 16-pass did NOT cover that boundary and is not root-accepted",
+  "root_stage": {
+    "tests_passed": 82,
+    "capture_nodes": 16,
+    "captured_reports": 23,
+    "report_differences": [],
+    "ruff": 0,
+    "mypy": 0,
+    "black": 0,
+    "diagnostic_runtime_proof": "/tmp/fix1d-d0-root-diagnostics-probe-v2.log",
+    "capture_runtime_proof": "/tmp/fix1d-d0-root-capture-v2.log",
+    "full_milestone": "pending D1-D3 integration",
+    "root_corrections": [
+      "Initial capture lacked plugin; invalid preliminary patch retained with INVALID marker; corrected capture v2 passed",
+      "Initial diagnostic probe invalid; corrected audit/preserved-state hook probe passed"
+    ]
+  }
+}

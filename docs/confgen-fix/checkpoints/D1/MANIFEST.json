@@ -1,0 +1,56 @@
+{
+  "added_tests": [
+    "tests/v4/test_confgen_retry_sigma.py::test_full_witness_valid_but_site_only_insufficient",
+    "tests/v4/test_confgen_retry_sigma.py::test_tampered_witness_refused_authority_and_fails_closed",
+    "tests/v4/test_confgen_retry_sigma.py::test_site_generators_without_witness_decline_with_diagnosis",
+    "tests/v4/test_confgen_retry_sigma.py::test_skip_diagnosis_branches_pinned",
+    "tests/v4/test_confgen_retry_sigma.py::test_real_solver_recovers_input_only_failure_with_retry_start",
+    "tests/v4/test_confgen_retry_sigma.py::test_real_solver_first_pass_leaves_byte_preserved",
+    "tests/v4/test_confgen_retry_sigma.py::test_real_solver_repeatable_and_rigid_honest",
+    "tests/v4/test_confgen_retry_sigma.py::test_initial_coordinates_equal_input_reproduces_default_dict",
+    "tests/v4/test_confgen_retry_sigma.py::test_distorted_sigma_start_fails_parent_anchored_audit",
+    "tests/v4/test_confgen_retry_sigma.py::test_first_pass_runs_fully_before_any_retry_and_sources_verified",
+    "tests/v4/test_confgen_retry_sigma.py::test_budget_order_and_dedup_per_target",
+    "tests/v4/test_confgen_retry_sigma.py::test_witness_declaration_order_and_source_ordinal_order",
+    "tests/v4/test_confgen_retry_sigma.py::test_declined_retry_keeps_single_original_failure_record",
+    "tests/v4/test_confgen_retry_sigma.py::test_cancel_between_sigma_candidates_propagates_without_partial",
+    "tests/v4/test_confgen_retry_sigma.py::test_retry_probe_cancel_direct",
+    "tests/v4/test_confgen_retry_sigma.py::test_two_parents_isolated_and_repeatable",
+    "tests/v4/test_confgen_retry_sigma.py::test_mock_heal_marks_only_new_leaves"
+  ],
+  "base": "9cf3f7ccb192839970cd6d38b93703986b29ea3a",
+  "branch_rule": "formal line is fix/confgen-1d; refactor/fix1d-d1-proto is preview-only, never merged",
+  "card": "D1",
+  "collect_out_rule": "test inventory/result metadata: exact added-node accounting (17 new nodes, all old nodes retained); byte-immutability is NOT claimed for collect.json/out.json",
+  "files": {
+    "confflow/science/confgen/coordination/realization.py": "e64cb05e069adf2c953677e427bb7996a57985a17d5a29903541ca3b592f59f3",
+    "confflow/science/confgen/coordination/stage.py": "91194d7c00e6c545387fddcae0bc17f167af07ab77068f016932c9cb1325244e",
+    "docs/confgen-fix/LOG.md": "appended-D1-entry",
+    "docs/confgen-fix/checkpoints/D1/DIFF.md": "eea08e2fada1c73c3ef9a4060106b9ab1743c1cffcd69fe268b4733311bc13f4",
+    "docs/confgen-fix/checkpoints/D1/MANIFEST.json": "self",
+    "tests/v4/test_confgen_retry_sigma.py": "9ec2566615681bb8be38af89dbb4c5f9dc5d46474dd0c30f5dd0e238862723a5"
+  },
+  "golden_changed_candidate": "26 coordination/combination engine reports (WITH set, recomputed predicate targets/levels/realization axis==coordination): recovery-only direction, first-pass successes byte-identical, only FAILED->REALIZED additions with retry_start",
+  "golden_unchanged_asserted": "67 non-coordination engine reports + contract.json + contract.full.json + boundary.full.json + current-jd-contract/* : any diff is a return",
+  "phase_seam": "D0 exposes exactly one retry pass. D2 must add a second retry slot AFTER the D1 sigma pass (D1-full-sigma then D2-full-sibling); no sibling logic in this card (fail-closed, no D2 code)",
+  "preview_evidence": "/tmp/fix1d-d1-output/ (00-BASELINE-FROZEN, 01-DEFAULT-PATH-DIFF-PROOF, 02-CALIBER-CORRECTION, 03-TS1-RUNS, 06-EVIDENCE-v2, OLD-VERSION-FAIL-v2.log, D1-v2.patch); superseded v1 card/prompt/patch retained there as incomplete evidence",
+  "reporting_deferred": "sigma_skip_diagnosis is an in-process test pin only, NOT a runtime report (root batching decision /tmp/fix1d-reporting-deferred-note.md). Wiring skip diagnostics into engine/executor reports closes in D3 with start_statistics; D3 science allowlist must include it. Helper tracked for removal/wiring at D3.",
+  "root_corrections": [
+    "realize_target/realize_flexible unconditionally added sigma_start_applied=False on the legacy path, changing original record bytes; fixed to explicit-start-only with full-dict dual-tree proof (sha256 7eaee718, byte-identical)",
+    "shared control/science builder methyl change shifted science baseline 30->19 leaves; science single-methyl system restored, control multi-witness fixtures isolated in _witness_variants",
+    "axial-swap second witness invalid (changed site action); replaced by x<->-y reflection with genuinely different site action for multi-source order proof"
+  ],
+  "static": {
+    "black": "pass",
+    "mypy": "pass (production two files only, per root scope)",
+    "ruff": "pass"
+  },
+  "tests": {
+    "coord_subset": "test_confgen_v3_coordination.py -k witness/authority/sigma/ts1_representatives: 5 passed",
+    "d0_batch": "tests/v4/test_confgen_batch_stage.py: 20 passed",
+    "new": "tests/v4/test_confgen_retry_sigma.py: 17 passed",
+    "old_version_proof": "new tests on base HEAD: 14 failed / 3 passed (OLD-VERSION-FAIL-v2.log)",
+    "ts1": "default/rigid/flexible stage runs byte-identical to baseline (no runtime witness in that spec, honest zero-change; see 03-TS1-RUNS.md)"
+  },
+  "type": "science"
+}

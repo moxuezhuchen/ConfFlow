@@ -1,0 +1,30 @@
+{
+  "added_tests": [
+    "tests/v4/test_confgen_ledger_suppressed_after_issue.py::test_suppressed_after_issue_counts_as_issued",
+    "tests/v4/test_confgen_ledger_suppressed_after_issue.py::test_legacy_counts_without_history_preserves_skip",
+    "tests/v4/test_confgen_ledger_suppressed_after_issue.py::test_no_retry_report_has_no_new_key",
+    "tests/v4/test_confgen_ledger_suppressed_after_issue.py::test_stage_error_still_issued_and_not_retryable",
+    "tests/v4/test_confgen_ledger_suppressed_after_issue.py::test_retry_cancellation_propagates_without_partial"
+  ],
+  "base": "c9bbc9f8cc0ae94875aaaab180c8488f7ea81f25",
+  "card": "F-ledger",
+  "files": {
+    "confflow/science/confgen/accounting.py": "caab5abc91ce85d1e725ec8d7f7c8930042b1d4eef9f126f2ecb9e01b791acee",
+    "confflow/science/confgen/engine.py": "773417374cc0806d61f51ace45e24c41d1e169dd653859517d4ca6e63f27fb4d",
+    "docs/confgen-fix/LOG.md": "5123fd10f082bb35e71f6c7252df993b49805be0232652107c92c55383c06436",
+    "docs/confgen-fix/checkpoints/F-ledger/CARD.md": "ed1d51f8f753340efd21ce089d8742324da37e12eb952e687823e4bf891f6357",
+    "docs/confgen-fix/checkpoints/F-ledger/DESIGN.md": "9eedab1dabdcdc4f0c87d19ed45a1c8a8f9b4b6e48552c5ea55abac5cd3324f9",
+    "docs/confgen-fix/checkpoints/F-ledger/DIFF.md": "c299693169e07e6c7d4d60f5ad52ee22d4e9f8c9f0ed6ac8f7796045a8a260f3",
+    "docs/confgen-fix/checkpoints/F-ledger/MANIFEST.json": "self",
+    "tests/v4/test_confgen_ledger_suppressed_after_issue.py": "76aa57e5d7ca2c49c614bb3f8ce2d07804e328f18e334c4c55ea3e6490227818"
+  },
+  "forbidden_untouched": [
+    "kernel_records.py",
+    "coordination/*",
+    "registry/wire/model/planner/tolerances/fixtures"
+  ],
+  "production_allowlist": [
+    "confflow/science/confgen/accounting.py",
+    "confflow/science/confgen/engine.py"
+  ]
+}

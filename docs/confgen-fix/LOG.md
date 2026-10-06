@@ -251,3 +251,41 @@ A6正式SHA912e545807f81688236d1214a571e9a6e45ce312；根逐字核对通过。
 固定测试提交 `71cf6e241ebaccf0c4c914f616463fe4c77e1217`；后续收尾提交 `046c3eac01f1393d7f89edc0b9b5b6a83995827f` 仅文档，生产/测试/工具/脚本 diff 为空。根独立全量 4980 passed / 10 skipped（4990 节点，282s），capture complete、93 报告；golden true，added/different/missing 均空，TS1 default/rigid/flexible 和五契约摘要全部 ok。ruff/mypy（230 文件）/black（32 改动文件）通过，验收工具 25 passed。证据 `/tmp/fix1r-final-root-run/ROOT-ACCEPTANCE.json`；104 文件基线及逐文件 SHA 见 checkpoints/FIX1R-FINAL/MANIFEST.json。
 
 R7 glucose 127/155 的 28 项召回缺口与未做种子优化后 RMSD 验证如实保留；不调整科学门槛。根摘要脚本首次错误地把行清单 collect.json 当 JSON 解析，未写出验收结论即修正。最终验收通过，发布/合并尚待实际执行，其他里程碑仍未完成。
+
+## D1 — sigma-image retry (science, preview only — NOT submitted)
+
+- 基点 `9cf3f7c`（`fix/confgen-1d` D0）；预演分支 `refactor/fix1d-d1-proto`，正式线未动；冻结后精确清理回基点干净。证据 `/tmp/fix1d-d1-output/`（v2 件；v1 卡/提示词/补丁保留作未完成证据）。
+- 改动：`coordination/realization.py`（`initial_coordinates` 仅改 solver 起点，终审锚点仍为真正 parent；`None` 旧路径逐字保持）+ `coordination/stage.py`（`retry_solve`：首遍全 input-only 后按 ordinal 对失败 target 重试；完整原子 witness 经只读 `validate_full_witness` 的 `authority_valid` 门控；π 映 binding placement，坐标 σ 像仅初始化；顺序 source ordinal、witness 固定顺序，去重，预算 `1+|σ像|`；成功加 `retry_start=sigma_image:<id>`，失败 hook None；显式 rigid 不暗换 flexible；D2/D3 未实现 fail-closed）+ 新测试 17 节点 + `checkpoints/D1/{MANIFEST.json,DIFF.md}`。`symmetry`/容差/fixtures/registry/kernel 未碰；`component.py` 未需改动。
+- 根纠错：默认路径曾无条件写 `sigma_start_applied: False`（改原记录字节），已修正为显式起点才加字段，双树完整 outcome 字典 sha256 `7eaee718…` 字节一致；共享构建器甲基实验曾使科学基线 30→19 叶，已恢复单甲基体系，控制流多 witness 夹具隔离（`_witness_variants` 双位点作用），未放宽容差；轴向交换 witness 因改变位点作用无效，改用 x<->-y 反射（不同位点作用，构成真实多源顺序证据）。
+- 验证：新 17 passed；旧版基点跑新测试 14 failed/3 passed（失败 proof）；D0 20 passed；旧 coord witness/authority 子集 5 passed；ruff/mypy（生产两文件）/black 通过；TS1 三后端与基线字节一致（该 spec 无 runtime 完整 witness，诚实零变化；恢复证明由合成反射体系承担：000017<-000018，rigid 000017+000024）。
+- Golden 方向：26 候选恢复方向（首遍成功不变，仅 FAILED→REALIZED 新增）；67 + contract/boundary 不变；collect/out +17 节点精确对账，不称逐字不变。
+- 报告缺口：`sigma_skip_diagnosis` 仅进程内测试 pin，非运行时报告；按根排期决议（`/tmp/fix1d-reporting-deferred-note.md`）留 D3 随 `start_statistics` 接入，D3 allowlist 须含诊断/报告变更；本卡不宣称报告完成。D2 需 D1 全σ后第二 retry 槽位（本卡无 D2 码）。
+
+## D2 — sibling-start retry (science, preview only — NOT submitted)
+
+- 基点 `51246ce`（`fix/confgen-1d` D1+D0.2）；预演树 `/tmp/fix1d-d2-proto`，正式线未动；冻结后精确清理回基点干净（只删本卡新建文件，不 `git clean`）。证据 `/tmp/fix1d-d2-output/`（00 基线冻结、01 callback、02 sigma 隔离、03 sibling、04 TS1 差分、05 D0、D2.patch；既有失败日志与 `ts1-default-new.json` 原样保留）。
+- 改动：`coordination/stage.py` 唯一生产文件（`retry_phases()->("sigma","sibling")`，`retry_solve_phase` 分发：sigma 沿用旧 `retry_solve` + 永久 `first_pass`，sibling 用冻结 `phase_snapshot` 审计源含 sigma 恢复者、按 source ordinal 至多 3、无 witness 要求；各源坐标仅 `initial_coordinates` 起点，锚点仍真 parent；显式 rigid 不转 flexible；成功 `retry_start="sibling:<id>"`，失败 None；取消在候选间传播；`_realize_with_sibling` 与 `_realize_with_sigma` 共享 `_realize_from_start` 同求解路径；`sibling_skip_diagnosis` 仅进程内 pin，D3 才接报告）+ `tests/v4/test_confgen_retry_sibling.py` 新 16 节点 + `tests/v4/test_confgen_retry_sigma.py` 窄 helper 隔离（`_SigmaOnlyStage` + `_run` 显式 sigma-only + `_MockSigmaStage` sigma-only，17 节点 ID 与断言全保留）+ `checkpoints/D2/{MANIFEST.json,DIFF.md}`。`realization.py` 复用 D1 接口未改；kernel/model/fixtures/schema/symmetry 未碰；无 Molassembler。
+- 根纠错三件：callback 自身抛取消变 `UnboundLocalError`（两 loop 改函数内无条件 lazy import 置回调前，取消重抛、非取消 policy 保持；根 probe 通过 exit 0）；D2 使 6/17 D1 失败（sibling 恢复方向）→ helper 隔离后 17/17（`engine.run()` 显式 stage 会进无 retry 转发的 `LegacyStageAdapter`，故 `_run` 走公开 `run_kernel` + 同 `project_v3`，已核实）；sibling 字节证明从重复运行补强为 sigma-only 真 input-only 基线对照（29 叶 id/坐标/metadata + 记录 status/reason 全 exact，+1 sibling 叶）。
+- 验证：sibling 新 16 passed；sigma 旧 17 passed（断言未弱化）；D0 batch 31 passed；ruff/black/mypy 三文件通过；TS1 default 实测 3→4 REALIZED（仅 `coordination:000001` FAILED→REALIZED，余 11 项 status/reason/evidence 全同，旧 3 叶 coords 全留，+1 新叶）；flexible/rigid TS1 与 93 报告 capture 未重跑（根 full/golden 拥有；候选方向沿根 preallowlist 26 恢复-only/67 不变）。
+- 报告缺口：`sibling_skip_diagnosis` 非运行时报告，D3 随 `start_statistics` 接入（D3 allowlist 须含）；本卡不宣称报告完成，不混入 D3。
+## L-D3 — generic retry telemetry logic seam (logic, preview only — NOT submitted)
+
+- 基点 `51246ced0c190c2325a1a72b4e59f9965bcd645c`（`fix/confgen-1d`）；预演分支 `refactor/fix1d-ld3-proto`，正式线未动；冻结后精确清理回基点干净。证据 `/tmp/fix1d-ld3-output/`（卡片/正式提示词/原始日志/报告/冻结补丁；`ROOT-REVIEW.md` 与 root 探针为根侧文件，原样保留）。
+- 改动（与 D2 生产文件不相交，`coordination/*`、registry/accounting/schema/容差未碰）：`kernel_records.py` 新增 frozen `TelemetryError`/`TelemetryRow`/`BoundTelemetryEvent`/`RetryResult(+success_index)`；`model.py` 新增 `GenerationStage.report_statistics` 缺省 `None` 及 `retry_solve_phase` 返回注解；`engine.py` 当次 `_RunState` 局部 ledger、真实 solve 门计数（input 先入账、wrapper 解包选定行）、`finish()` 只读快照按 component 分组、`scope.component_statistics` 纯 additive 合并；`wire_v3.py` 仅 `LegacyStageAdapter.report_statistics` 必要转发（旧缺省 `None`，无新 dispatch）；新测试 13 节点 + `checkpoints/L-D3/{MANIFEST.json,DIFF.md}`。
+- 根冻结裁决落实：`RetryResult(outcome optional, telemetry frozen tuple)` 明确识别，legacy plain outcome/`None` 与旧 `retry_solve` 直接 API 保持；kernel 只验证合法性与绑定身份，不解释 sigma/sibling，不聚合轴名；`geometry-success` 与 `accepted` 分列；payload 失败 start（含 outcome `None`）留遥测，`accepted` 仅归属返回成功 start（无成功 payload 则 generic legacy 事件）；`component_statistics` 仅非空 hook 返回才写入，默认无键，现有 golden 逐字节不变；取消沿现有语义无 partial；遥测错误经独立 `TelemetryError` 显式传播。
+- 根 blocker 修复（本修订）：删除全局-last `_mark_retry_accepted`，改为 solve 返回时同步记录 own span + selected 行、终审按索引 marking 并重验身份与 `attempts>0/solve_successes>0`（后代事件不可 steals，尾随零尝试诊断永不 accepted；`success_index` 缺省时唯一成功行校验，歧义 loud 拒绝）；input 调用门改为进入前先入账 `attempt=1`、返回后更新 success，抛异常保留 `success=0` 且 `stage_error` 记录语义逐字不变。
+- 验证：新 13 passed；D0.2 batch 31 passed；collect 5051 = 5038 + 13 精确对账；默认报告 sha256 `fafd89af…d10af2` 与基点逐字节一致；root 探针三场景（own-parent/trailing-diag/identity-mismatch）通过；ruff/mypy/black（白名单 5/4/5 文件）通过。不跑全量整仓/TS1/完整 golden，root 里程碑最终统一。
+
+## D3 — coordination start_statistics + skip wiring (science, preview only — NOT submitted)
+
+- 基点 `29f1ac2`（`fix/confgen-1d` D2+L-D3）；预演分支 `refactor/fix1d-d3-proto`，正式线未动；证据 `/tmp/fix1d-d3-output/`（00 允变清单、before/after TS1、D3-CARD、正式提示词、REPORT、原始日志、D3.patch；LEGACY-FIX 证据保留）。
+- 改动：`coordination/stage.py` 唯一生产文件（`report_statistics` 只读聚合 `component_statistics.coordination`；`retry_solve_phase` sigma/sibling 仪器化单次求解+`RetryResult`+`success_index`，legacy override 探测后走旧 plain 路径单次求解不编数，`report_statistics` 见 legacy `retry` 相返 `None`；`retry_solve` 直接 API plain 不变；`retry_phases` 不变）+ 新测试 10 节点 + `checkpoints/D3/{MANIFEST.json,DIFF.md}`。kernel/model/wire/accounting/registry/容差/witness/fixtures 未碰；未新增 `retry_statistics.py`。
+- 根纠错：sigma 相曾绕过 `self.retry_solve` 致旧 `_MockSigmaStage.first_pass_seen` 为 None（5 失败）；已改 MRO 探测保留旧调用语义、不 double-solve、不塞假值；legacy 统计不可观测不以 sigma 0 伪装（返 `None`），内置统计完整。
+- 验证：新 10 passed；旧 77 passed（batch31+sigma17+sibling16+telemetry13）；collect 5077=5067+10；ruff/mypy/black（2 白名单文件，`--workers 1`）通过；TS1 default 单采 after（4 叶/8 失败不变，input 12/3/3、sigma 0、sibling 25/1/1、skip 17=9 sigma no-witness+8 sibling exhausted），strip `component_statistics` 后全部 target/leaves/certificate/report 字节等于冻结 before，contract/boundary 不变。
+
+## F-ledger — 记账缺口定点分析+修复预演（proto preview — NOT submitted）
+
+- 基点 `c9bbc9f8cc0ae94875aaaab180c8488f7ea81f25`（`fix/confgen-1d`）；预演树 `/tmp/fix1d-ledger-proto`（detached），正式线未动；证据 `/tmp/fix1d-ledger-output/`。冻结后精确恢复回父干净（只 `checkout` 本卡改动文件 + 删本卡新建文件，不过 `git clean`/rm 整树）。
+- 反例：真实根 `..._test_suppression_positive_control_real_stage_fewer_attempts__0.json` input 20 vs ledger 18/12（差 2 issued 后抑制）；spy kernel 直调 3 issued→ledger 2/1（差 1）复现，调用链 `run_level→_expand_target（先抑制后 input 门）→_retry_level（再抑制）→_supersede_failure` 删旧失败。
+- 改动（白名单）：`accounting.py`（`attempt_ledger_counts(..., issued_history=None)`，真 skip vs issued 后抑制分离，条件 `suppressed_after_issue` 键）+ `engine.py`（`_issued_history` 通用集，input 门 + retry 非 None 入账，`finish()` 传入并按真 skip 重算 `realization_attempts`）+ 新测试 5 节点 + `checkpoints/F-ledger/{DESIGN,CARD,DIFF,MANIFEST}.md`；`kernel_records.py`/组件实现/容差/fixtures 未动。
+- 验证：新 5 passed；旧实现跑新测试 2 failed/3 passed；`retry_statistics` 10 passed；core 抑制子集 10 passed；C2 阳性 1 passed；真实差分 issued 18→20/skipped 12→10/after 2/without 3→5/attempts 18→20，leaf 15/3/12 与 cert/count/terminal 全同；无重试 sha `6f64f6a49…` 逐字相同；ruff/mypy/black 通过。

@@ -25,6 +25,7 @@ from enum import Enum
 from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:  # Annotation only; runtime uses local import (avoid model->registry cycle).
+    from confflow.science.confgen.kernel_records import RetryResult
     from confflow.science.confgen.registry import ComponentRegistry
 
 from confflow.domain._immutable import FrozenDict
@@ -42,6 +43,7 @@ from confflow.science.confgen.wire_v3_constants import V3_AXIS_ORDER as AXIS_ORD
 __all__ = [
     "AXIS_ORDER",
     "SCHEMA_VERSION",
+    "RETRY_DEFAULT_PHASE",
     "AtomRef",
     "EdgeType",
     "GenerationStage",
@@ -515,6 +517,37 @@ class RealizationResult:
 
 
 @dataclass(frozen=True, slots=True)
+class RetryFirstPass:
+    """Immutable first-pass snapshot row for one target (D0 protocol).
+
+    Built per parent from the input-only pass: the target's terminal
+    status value and reason, whether its failure came from a stage
+    exception (never science-retryable), and the accepted structure for
+    successes (``None`` otherwise). The engine hands the whole per-parent
+    table to :meth:`GenerationStage.retry_solve` so alternate starts
+    derive from explicit data, never shared caches.
+    """
+
+    target_id: str
+    ordinal: int
+    status: str
+    reason: str
+    solver_error: bool
+    structure: StructureRecord | None
+
+
+#: Generic default retry phase id (D0.2 protocol).
+#:
+#: Stages that only override :meth:`GenerationStage.retry_solve` run one
+#: phase with this id; the default :meth:`GenerationStage.retry_solve_phase`
+#: delegates to :meth:`GenerationStage.retry_solve` for exactly this id.
+#: Stage-owned multi-phase declarations use generic ids of their own
+#: choosing (non-empty unique strings, declaration order is execution
+#: order). The kernel never interprets ids beyond order/identity.
+RETRY_DEFAULT_PHASE: str = "default"
+
+
+@dataclass(frozen=True, slots=True)
 class PerceptionResult:
     """Stage-local perception of one realized structure."""
 
@@ -664,6 +697,93 @@ class GenerationStage(ABC):
         by component id.
         """
         return None
+
+    def report_statistics(self, snapshot: tuple[Any, ...]) -> Mapping[str, Any] | None:
+        """Return this component's additive report fragment, if any (L-D3).
+
+        Generic logic seam: the engine passes a read-only tuple of bound
+        telemetry events for this component (possibly empty) and expects
+        either ``None`` (default: no fragment, golden bytes unchanged) or
+        a mapping fragment stored under
+        ``scope["component_statistics"][component_id]``. The engine writes
+        the new scope key only when at least one component returns a
+        non-empty mapping; fragments never overwrite existing scope or
+        terminal fields. The snapshot is read-only; stages must not
+        write caches here.
+        """
+        return None
+
+    def retry_solve(
+        self,
+        parent: StageParentProtocol,
+        target: GenerationTarget,
+        context: MolecularContext,
+        should_cancel: CancelProbe | None,
+        first_pass: tuple[RetryFirstPass, ...],
+    ) -> RealizationResult | None:
+        """Alternate-start second attempt for one failed target (optional).
+
+        Two-pass hook (D0 protocol). The engine calls this only for targets
+        whose first (input-only) attempt ended in a solve-failure terminal
+        state, and only after re-running the policy/suppression gates, so an
+        excluded or suppressed target is never solved here. ``first_pass``
+        carries the immutable per-parent snapshot (every target's terminal
+        status, reason, solver-error flag and, for successes, the accepted
+        structure) so D1/D2 can derive alternate starts without any shared
+        cache. Returning ``None`` (the default) declines the retry and the
+        failure record stands. A returned outcome replaces the stale
+        failure (with its deferred subtree revoked and counters
+        reconciled) and travels the full post-solve path
+        (drift/lock/perception/audit accounting and child expansion), never
+        publishing directly. The hook receives the run's real cancellation
+        probe and must let ``EngineCancelledError`` propagate.
+        """
+        return None
+
+    def retry_phases(self) -> tuple[str, ...] | None:
+        """Declare stage-owned retry phases in execution order (optional).
+
+        D0.2 generic protocol. ``None`` (the default) means exactly one
+        generic phase (:data:`RETRY_DEFAULT_PHASE`) delegating to
+        :meth:`retry_solve`, preserving D0 single-stage bytes. A tuple
+        declares two or more generic phase ids; ids must be non-empty
+        unique strings and run in declaration order. The declaration is
+        stage-owned data only; the kernel validates fail-closed, keeps no
+        global or stage-instance run cache, and never interprets ids.
+        """
+        return None
+
+    def retry_solve_phase(
+        self,
+        parent: StageParentProtocol,
+        target: GenerationTarget,
+        context: MolecularContext,
+        should_cancel: CancelProbe | None,
+        first_pass: tuple[RetryFirstPass, ...],
+        phase_id: str,
+        phase_snapshot: tuple[RetryFirstPass, ...],
+    ) -> RealizationResult | RetryResult | None:
+        """Phase-aware alternate-start attempt for one failed target (optional).
+
+        D0.2 generic protocol. The engine calls this once per phase, in
+        declaration order, only for targets whose *current* terminal (at
+        that phase start) is a solve-failure terminal, and only after
+        re-running the policy/suppression gates via the full post-solve
+        path. ``first_pass`` is the permanent immutable input-only table;
+        ``phase_snapshot`` is the frozen per-phase table built from current
+        terminals at that phase start (prior-phase accepted structures
+        included; targets within one phase all see the same snapshot).
+        The default delegates the generic phase to :meth:`retry_solve`
+        and declines any other id, so stages overriding only
+        :meth:`retry_solve` keep D0 bytes exactly. L-D3 additionally
+        allows returning the frozen ``RetryResult`` wrapper (outcome
+        plus component-owned telemetry rows); plain outcomes and
+        ``None`` keep the legacy semantics and the old ``retry_solve``
+        direct API is unchanged.
+        """
+        if phase_id != RETRY_DEFAULT_PHASE:
+            return None
+        return self.retry_solve(parent, target, context, should_cancel, first_pass)
 
     @abstractmethod
     def estimate(self, parent: StageParentProtocol, context: MolecularContext) -> StageEstimate:
