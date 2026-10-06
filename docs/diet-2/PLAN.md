@@ -110,7 +110,7 @@ L3' TS1 原始日志外移、可选目录搬迁
 |---|---|
 | L1 | 改为 L1'：在 R2 之后进行；`tspes`、QST、NEB、GOAT、IRC 相关的 intent 和 checkpoint 逻辑已删除，不再拆分 |
 | L3 | 测试重组改由本文件的 T 阶段承担（方法改为"按独有覆盖贡献删除"）；剩余部分（TS1 原始日志外移、可选目录搬迁）为 L3' |
-| E1 | "预优化 → ConfGen"recipe 由 N2（脚本步骤可调用 xTB）与 N4 取代 |
+| E1 | 保留：只组合现有卡片的 recipe（`monomer_conformers`，畸变输入先 xTB 预优化再生成构象）；与 N4（已有构象集合的精炼）不重复 |
 | J3 | 不受影响；J1（GJF/INP 原子选择）、J2（confgen 下禁用 freeze）保留 |
 
 ### 1.4 新增规则（在 G1–G14 之外）
