@@ -1,0 +1,178 @@
+{
+ "base": "origin/main",
+ "capture": {
+  "manifest_sha256": "31aa3a8fbb2f28c02c3ebb6d42d3653d89c0c2d6f7e682969198ced4950f6f9e",
+  "reports": 93,
+  "run_id": "diet2-r1-0",
+  "scope_glob": "tests/v4/test_confgen_[pv]*.py"
+ },
+ "ckpt": "/tmp/ckpt/diet2/R1.0/",
+ "files": {
+  "boundary.full.json": "a724f15331515d12508f2daaa1c89a09bd710970c5841773c4879887f0b3f1ce",
+  "capture/engine_reports/tests_v4_test_confgen_paths_audit.py_test_runtime_diagnostics_show_resolved_chain_and_moving_endpoint_True__0.json": "73608019ed17e6aa231ac2988511be75090d50164503cd12e2b165b4412fa4af",
+  "capture/engine_reports/tests_v4_test_confgen_paths_audit.py_test_typed_declared_paths_audit__0.json": "75057bf825b2be86b04240f18b843b3a14eaa64d36f82b47a55aa796ecb87467",
+  "capture/engine_reports/tests_v4_test_confgen_paths_audit.py_test_typed_duplicated_paths_counts__0.json": "95271515c4ed09d425fd176b6a3ed64328314873e14f500526a0b5c1afbab446",
+  "capture/engine_reports/tests_v4_test_confgen_paths_audit.py_test_typed_short_bond_reported__0.json": "7e3ebb3592e034007b78b900fd52d244799dd6c7df33e43b2e96b9921d4bfd33",
+  "capture/engine_reports/tests_v4_test_confgen_paths_phase0.py_test_typed_paths_executor_publishes__0.json": "7b5e2f7660f6e0971a148fe7257dda5efc9e51829a6ea8ac2438e0fc0be8a9c5",
+  "capture/engine_reports/tests_v4_test_confgen_paths_typed.py_test_atom_ordering_is_preserved__0.json": "2b6a9af371ac1d898aae5a2b4c2f61896e083071a3bafd5e1597e84326876e8e",
+  "capture/engine_reports/tests_v4_test_confgen_paths_typed.py_test_explicit_single_nonzero_grid_rotates_once__0.json": "395824f321e637811ab8511858b12867f1610eba475b688929ee30ece394b80b",
+  "capture/engine_reports/tests_v4_test_confgen_paths_typed.py_test_explicit_zero_grid_is_one_valid_state__0.json": "6370ba04af781fbd72cf0da8c36182515fa0a8c0deb06ac5bcfacb81827ce184",
+  "capture/engine_reports/tests_v4_test_confgen_paths_typed.py_test_resolution_follows_the_driving_geometry__0.json": "57e433b608384f2e65bd20ac081b574fdaf3df7d58bd9cdc15ec65a9dc69d9d4",
+  "capture/engine_reports/tests_v4_test_confgen_paths_typed.py_test_short_bond_warns_and_strict_mode_refuses__0.json": "7e3ebb3592e034007b78b900fd52d244799dd6c7df33e43b2e96b9921d4bfd33",
+  "capture/engine_reports/tests_v4_test_confgen_paths_typed.py_test_upstream_driving_geometry_is_audited_by_its_own_identity__0.json": "f241e35b941c52e530d27d56b37e0d2e7e204a5c0d3e6bef1f617897cd3d0294",
+  "capture/engine_reports/tests_v4_test_confgen_v3_combination.py_test_combination_36_leaves_real_stages__0.json": "d0e7c2955b5ca64f6759cf4737e07498e8dd7ac05b464d04f2c16747e8c5727d",
+  "capture/engine_reports/tests_v4_test_confgen_v3_combination.py_test_combination_36_leaves_real_stages__1.json": "d0e7c2955b5ca64f6759cf4737e07498e8dd7ac05b464d04f2c16747e8c5727d",
+  "capture/engine_reports/tests_v4_test_confgen_v3_combination.py_test_combination_adversarial_tamper_caught__0.json": "1c647685d4fc693aaf3a6f26f629ba0fd17f00bd821b015e73e0b144dc31b023",
+  "capture/engine_reports/tests_v4_test_confgen_v3_combination.py_test_combination_perturbation_key_invariance__0.json": "d0e7c2955b5ca64f6759cf4737e07498e8dd7ac05b464d04f2c16747e8c5727d",
+  "capture/engine_reports/tests_v4_test_confgen_v3_combination.py_test_combination_perturbation_key_invariance__1.json": "5386992f5716ec9952500de08006da00de613dc83f363399d917a51b1176aaa5",
+  "capture/engine_reports/tests_v4_test_confgen_v3_combination.py_test_combination_real_perception_locks__0.json": "d0e7c2955b5ca64f6759cf4737e07498e8dd7ac05b464d04f2c16747e8c5727d",
+  "capture/engine_reports/tests_v4_test_confgen_v3_coordination.py_test_engine_default_registration_end_to_end__0.json": "f1d5b5661bf8fcdaa19b0eefec6a22af3f1e6afb4f95ba9118517f8a9828fa5c",
+  "capture/engine_reports/tests_v4_test_confgen_v3_core.py_test_chained_ring_enumeration_preserves_only_torsion_axis_locks__0.json": "e4e04adf9925197e003fd328ea382cf95e6e0bd8e8db3909211f4f1dbf1565b0",
+  "capture/engine_reports/tests_v4_test_confgen_v3_core.py_test_chained_ring_enumeration_preserves_only_torsion_axis_locks__1.json": "611f1fbf3d1b89c0345f55ca6f8d641fdc5ba87dbe1b51619acbe1b13da5a4ef",
+  "capture/engine_reports/tests_v4_test_confgen_v3_core.py_test_chained_ring_enumeration_preserves_only_torsion_axis_locks__2.json": "6c71be77ec392780b1771c3ca5819180ff0d5b7ce8cf11a77ab4bdd23dd1f02a",
+  "capture/engine_reports/tests_v4_test_confgen_v3_core.py_test_conditional_exact_nine_not_twelve__0.json": "ad6f5e5f241b4edfaa87c4fde6e4fff044108057bab69f0e1620fb29d0f30288",
+  "capture/engine_reports/tests_v4_test_confgen_v3_core.py_test_conditional_failed_top_parent_defers_exact_subtree__0.json": "5092b31ba3fbe9a5a44828fab96b08b730be2e393e3e45144ca33d886fc52d78",
+  "capture/engine_reports/tests_v4_test_confgen_v3_core.py_test_conditional_failure_defers_exact_subtree__0.json": "98c0c5613aed415da117f53b0f17ff94b728c7278a09011e257c953feb9dd663",
+  "capture/engine_reports/tests_v4_test_confgen_v3_core.py_test_coordination_engine_run_end_to_end__0.json": "9df71478d4ecca937763012f9d4903aae9e1d378f8e81686fd976213782cfd42",
+  "capture/engine_reports/tests_v4_test_confgen_v3_core.py_test_engine_clash_failures_stay_accounted__0.json": "85b9816ac30bac871ab499e7eaca4531ed6be282f028787c175959ef720b4fbf",
+  "capture/engine_reports/tests_v4_test_confgen_v3_core.py_test_engine_damaged_geometry_never_publishes__0.json": "fdb21a3b4b357adebcc28db51debecdc374a6037c6618281e53e68f9fb347f2d",
+  "capture/engine_reports/tests_v4_test_confgen_v3_core.py_test_engine_full_grid_run_and_certificate__0.json": "8826f25265be866f3b9e7ac982d7c9a4aebdb8ef9635d08a3c73df6f354ed179",
+  "capture/engine_reports/tests_v4_test_confgen_v3_core.py_test_engine_policy_exclusions_are_not_proofs__0.json": "2a9eb9aae81957bbfb830ec10c12bee4ca2396824af4c7d363e6e97d4cb23c2f",
+  "capture/engine_reports/tests_v4_test_confgen_v3_core.py_test_engine_preflight_limits_reject_before_geometry__0.json": "0640121c827080aa70c22ed48100a6d992bd5c085a4a1ecb9972b0ea2547268b",
+  "capture/engine_reports/tests_v4_test_confgen_v3_core.py_test_engine_preserve_input_and_chained_state__0.json": "96defa5202487649327a80e1762eb081ea8ad50c12675c464e79edf9fbc69ce5",
+  "capture/engine_reports/tests_v4_test_confgen_v3_core.py_test_engine_preserve_input_and_chained_state__1.json": "7c57d6e023eeed9445d9e6abd8225307eec90785f7081a5637474b58ca6d49a3",
+  "capture/engine_reports/tests_v4_test_confgen_v3_core.py_test_engine_preserve_input_and_chained_state__2.json": "6475678244ada51179ade717fef9a130319af3e215106dd49c0b9c2ef8ca8789",
+  "capture/engine_reports/tests_v4_test_confgen_v3_core.py_test_engine_proof_contradiction_invalidates_certificate__0.json": "0cee4b4f9a79b15511bb1a26141652e791bc2c7377d615e1f358ba5d0d7164f1",
+  "capture/engine_reports/tests_v4_test_confgen_v3_core.py_test_engine_ring_torsion_control_locks_hold__0.json": "ffa4a745d59394cc5df0f6be4cd7b6d7c0ac41cb62a16ab45074ea170b400c4a",
+  "capture/engine_reports/tests_v4_test_confgen_v3_core.py_test_engine_rings_only_run__0.json": "588d797dc6935ec49fd18668d2e2da72d816b7e101af15c557b36fac9ddb097d",
+  "capture/engine_reports/tests_v4_test_confgen_v3_core.py_test_engine_sampling_counts_targets_not_successes__0.json": "aa5c69be04fe7bdcaf432062946bfd79fd6a7498e628a93a9184c59d3052c332",
+  "capture/engine_reports/tests_v4_test_confgen_v3_core.py_test_engine_sampling_counts_targets_not_successes__1.json": "aa5c69be04fe7bdcaf432062946bfd79fd6a7498e628a93a9184c59d3052c332",
+  "capture/engine_reports/tests_v4_test_confgen_v3_core.py_test_engine_stamps_confgen_state_results__0.json": "cd7c4f2682a6f7d5dbf110bda5f7374d7be5939987720f61c927d639b150cbdf",
+  "capture/engine_reports/tests_v4_test_confgen_v3_core.py_test_inherited_adversarial_rotation_is_drift_never_stale__0.json": "4a845675c23e62a62c9a83edf3752f24c14498f17f3fd290153f6cdf9eed9bb4",
+  "capture/engine_reports/tests_v4_test_confgen_v3_core.py_test_inherited_adversarial_rotation_is_drift_never_stale__1.json": "4652e712067a261a6f9fd66655c737126aefbe7b5d7134b3afc1989adfa3b819",
+  "capture/engine_reports/tests_v4_test_confgen_v3_core.py_test_inherited_adversarial_rotation_is_drift_never_stale__2.json": "591362e1681f8f7a8609250ef89a0a17e6134b12fed6c2f59dbb2b7414a21de7",
+  "capture/engine_reports/tests_v4_test_confgen_v3_core.py_test_inherited_chemical_absolute_lock_carries__0.json": "b26bf29d83edb615c4374f595b9f380350dbc46246286a0baa17a50365ec89f0",
+  "capture/engine_reports/tests_v4_test_confgen_v3_core.py_test_inherited_chemical_absolute_lock_carries__1.json": "d546a530ee13b1d235f356aa5db52bfd9d75f1104f5766a11ac5e0efbec6eb87",
+  "capture/engine_reports/tests_v4_test_confgen_v3_core.py_test_inherited_relative_lock_rejects_new_reference_masquerade__0.json": "4a845675c23e62a62c9a83edf3752f24c14498f17f3fd290153f6cdf9eed9bb4",
+  "capture/engine_reports/tests_v4_test_confgen_v3_core.py_test_inherited_relative_lock_rejects_new_reference_masquerade__1.json": "092336eef769e219582727b17eba8e7483ff3c956dbc59bf83b4fc14639d5d8d",
+  "capture/engine_reports/tests_v4_test_confgen_v3_core.py_test_lock_reference_parent_uses_accepted_parent_geometry__0.json": "1fd2af9bc0eccc2418f38726cf905e8dba6eae5b123c3262f62f47f755f107c7",
+  "capture/engine_reports/tests_v4_test_confgen_v3_core.py_test_lock_reference_parent_uses_accepted_parent_geometry__1.json": "1fd2af9bc0eccc2418f38726cf905e8dba6eae5b123c3262f62f47f755f107c7",
+  "capture/engine_reports/tests_v4_test_confgen_v3_core.py_test_native_drift_into_proven_state_invalidates_certificate__0.json": "6ce2a508437b874dc41a527deb5e6925374384fb24363e747878d14db02de9ae",
+  "capture/engine_reports/tests_v4_test_confgen_v3_core.py_test_native_drift_matching_key_with_clash_is_unresolved__0.json": "08fd2234d798580bfb547cba342035af2b0af1aa2f6116aeecc992a8b30f69e4",
+  "capture/engine_reports/tests_v4_test_confgen_v3_core.py_test_native_drift_untrusted_quality_alerts_without_invalidating__0.json": "8759ea0ba5dcb3b851df2e5e1e7aab320a751798f0f13652392e383b74ad03bb",
+  "capture/engine_reports/tests_v4_test_confgen_v3_core.py_test_native_drift_with_observed_key_is_failed_drift__0.json": "cc49d4bbd8a924b3f231ce082dfd6ec9eb6b87fbcdf7c5388ca6d54bc0bda356",
+  "capture/engine_reports/tests_v4_test_confgen_v3_core.py_test_native_drift_without_observed_key_stays_geometry_failure__0.json": "aa51ed9f96b8a9a03c568c5a8b41b43134de2c23fb7565fc473960d1e268604e",
+  "capture/engine_reports/tests_v4_test_confgen_v3_core.py_test_no_suppression_without_witnesses_real_stage__0.json": "9df71478d4ecca937763012f9d4903aae9e1d378f8e81686fd976213782cfd42",
+  "capture/engine_reports/tests_v4_test_confgen_v3_core.py_test_pinned_coordination_ring_damage_is_drift__0.json": "e6edb9a198a993766e2bf9171f6052ae758dd709e50323f076e84b98e1b982a0",
+  "capture/engine_reports/tests_v4_test_confgen_v3_core.py_test_suppression_combined_axes_realize_normally__0.json": "02eabe8b971915caa5112c9e439023d8b64c82e7be23360b3b3d30f568867972",
+  "capture/engine_reports/tests_v4_test_confgen_v3_core.py_test_suppression_disabled_under_sampling_cap__0.json": "d4de2ceb240f7471921b166c9d335d454d03bf077fdc6afa0aab86418d0ecd76",
+  "capture/engine_reports/tests_v4_test_confgen_v3_core.py_test_suppression_disabled_with_top_level_exclusions__0.json": "35e4e0d6e82d96fcd2a02d5ba996507b8e45e3a83cf5a5194865ffda5cc59e6c",
+  "capture/engine_reports/tests_v4_test_confgen_v3_core.py_test_suppression_positive_control_real_stage_fewer_attempts__0.json": "51d59b3223cdb866741d96752a4abeb9fe5b74412e27ef11e3f2ce08c5649fd9",
+  "capture/engine_reports/tests_v4_test_confgen_v3_core.py_test_suppression_skips_only_verified_targets__0.json": "56f41d2aaeb73c8620506c8ba5232bc1090790d364897864d725ae739b9a674f",
+  "capture/engine_reports/tests_v4_test_confgen_v3_core.py_test_suppression_without_realized_representative_realizes__0.json": "6c00173e8be686724eb9892f65e76c4c8bf3a3594db219892d8d5b9179aa5848",
+  "capture/engine_reports/tests_v4_test_confgen_v3_core.py_test_zero_axes_with_incoming_key_validates_before_realized__0.json": "5790560ec7d5bf6b88ada3a4ba244ca7572d9719819b1d6c50ce72941757f4dc",
+  "capture/engine_reports/tests_v4_test_confgen_v3_core.py_test_zero_axes_with_incoming_key_validates_before_realized__1.json": "4b01159c130dbd7229e35f444cd34a138db1b420f4a2c23588b8477a908594b9",
+  "capture/engine_reports/tests_v4_test_confgen_v3_integration.py_TestChainedLocks_test_adversarial_rotation_cannot_publish_stale__0.json": "01961969545a4834cedef94f41b780d58837f98ebe3ebc23ec3cf0906fda445e",
+  "capture/engine_reports/tests_v4_test_confgen_v3_integration.py_TestChainedLocks_test_crafted_ring_and_coord_entries_audited__0.json": "3d96dbbaab962170a957063f02662b1943bbab9f0655439b70c42ef2d809b149",
+  "capture/engine_reports/tests_v4_test_confgen_v3_integration.py_TestChainedLocks_test_missing_scope_provenance_fails_closed__0.json": "3d96dbbaab962170a957063f02662b1943bbab9f0655439b70c42ef2d809b149",
+  "capture/engine_reports/tests_v4_test_confgen_v3_integration.py_TestChainedLocks_test_preserve_unchanged_passes_with_inherited_label__0.json": "01961969545a4834cedef94f41b780d58837f98ebe3ebc23ec3cf0906fda445e",
+  "capture/engine_reports/tests_v4_test_confgen_v3_integration.py_TestChainedLocks_test_preserve_unchanged_passes_with_inherited_label__1.json": "4218bbc90c44d470d0a79e41b2bf36b88abebae3fb31676a98e389dddee6f478",
+  "capture/engine_reports/tests_v4_test_confgen_v3_integration.py_TestChainedLocks_test_relative_omitted_fails__0.json": "3d96dbbaab962170a957063f02662b1943bbab9f0655439b70c42ef2d809b149",
+  "capture/engine_reports/tests_v4_test_confgen_v3_integration.py_TestChainedLocks_test_relative_preserve_consistent_passes__0.json": "3d96dbbaab962170a957063f02662b1943bbab9f0655439b70c42ef2d809b149",
+  "capture/engine_reports/tests_v4_test_confgen_v3_integration.py_TestChainedLocks_test_relative_preserve_consistent_passes__1.json": "0f6e110560adb05345d3885e388d3d538a1d33acc1f63e3629e72ee79c45d3e3",
+  "capture/engine_reports/tests_v4_test_confgen_v3_integration.py_TestChainedLocks_test_relative_preserve_drifted_blocked__0.json": "3d96dbbaab962170a957063f02662b1943bbab9f0655439b70c42ef2d809b149",
+  "capture/engine_reports/tests_v4_test_confgen_v3_integration.py_TestChainedLocks_test_relative_reenumerated_passes_fresh__0.json": "3d96dbbaab962170a957063f02662b1943bbab9f0655439b70c42ef2d809b149",
+  "capture/engine_reports/tests_v4_test_confgen_v3_integration.py_TestChainedLocks_test_relative_reenumerated_passes_fresh__1.json": "a31d800b1db9654885e6f4aab9f84f1d3143f4af44a32ecf8d57db64650c7c55",
+  "capture/engine_reports/tests_v4_test_confgen_v3_integration.py_TestChainedLocks_test_scope_persisted_in_provenance_not_key_or_metadata__0.json": "01961969545a4834cedef94f41b780d58837f98ebe3ebc23ec3cf0906fda445e",
+  "capture/engine_reports/tests_v4_test_confgen_v3_integration.py_TestChainedLocks_test_zero_axes_with_incoming_key_fails_closed__0.json": "3d96dbbaab962170a957063f02662b1943bbab9f0655439b70c42ef2d809b149",
+  "capture/engine_reports/tests_v4_test_confgen_v3_integration.py_TestExecutorV3_test_ambiguous_chained_state_rejected__0.json": "3d96dbbaab962170a957063f02662b1943bbab9f0655439b70c42ef2d809b149",
+  "capture/engine_reports/tests_v4_test_confgen_v3_integration.py_TestExecutorV3_test_deterministic_full_grid_no_seed__0.json": "3d96dbbaab962170a957063f02662b1943bbab9f0655439b70c42ef2d809b149",
+  "capture/engine_reports/tests_v4_test_confgen_v3_integration.py_TestExecutorV3_test_gzip_bytes_deterministic__0.json": "3d96dbbaab962170a957063f02662b1943bbab9f0655439b70c42ef2d809b149",
+  "capture/engine_reports/tests_v4_test_confgen_v3_integration.py_TestExecutorV3_test_gzip_bytes_deterministic__1.json": "3d96dbbaab962170a957063f02662b1943bbab9f0655439b70c42ef2d809b149",
+  "capture/engine_reports/tests_v4_test_confgen_v3_integration.py_TestExecutorV3_test_nested_run_rows_carry_units__0.json": "877084853bd44fca7e7a6ef4cc43d4e47f997d2f53b61879fb3e4ef22e39b13d",
+  "capture/engine_reports/tests_v4_test_confgen_v3_integration.py_TestExecutorV3_test_repeat_runs_are_identical__0.json": "3d96dbbaab962170a957063f02662b1943bbab9f0655439b70c42ef2d809b149",
+  "capture/engine_reports/tests_v4_test_confgen_v3_integration.py_TestExecutorV3_test_repeat_runs_are_identical__1.json": "3d96dbbaab962170a957063f02662b1943bbab9f0655439b70c42ef2d809b149",
+  "capture/engine_reports/tests_v4_test_confgen_v3_integration.py_TestExecutorV3_test_report_and_targets_artifacts__0.json": "3d96dbbaab962170a957063f02662b1943bbab9f0655439b70c42ef2d809b149",
+  "capture/engine_reports/tests_v4_test_confgen_v3_integration.py_TestExecutorV3_test_report_points_at_unit_sections__0.json": "c26a2cea3b1c0332bf5a2f6eb2e6b00ba451a7be40727efe5996b1a374e5dfed",
+  "capture/engine_reports/tests_v4_test_confgen_v3_integration.py_TestExecutorV3_test_result_provenance_carries_certificate__0.json": "3d96dbbaab962170a957063f02662b1943bbab9f0655439b70c42ef2d809b149",
+  "capture/engine_reports/tests_v4_test_confgen_v3_integration.py_TestExecutorV3_test_sampled_subset_sorted_and_stable__0.json": "c26a2cea3b1c0332bf5a2f6eb2e6b00ba451a7be40727efe5996b1a374e5dfed",
+  "capture/engine_reports/tests_v4_test_confgen_v3_integration.py_TestExecutorV3_test_sampled_subset_sorted_and_stable__1.json": "c26a2cea3b1c0332bf5a2f6eb2e6b00ba451a7be40727efe5996b1a374e5dfed",
+  "capture/engine_reports/tests_v4_test_confgen_v3_integration.py_TestExecutorV3_test_state_results_leaf_only_no_energy__0.json": "3d96dbbaab962170a957063f02662b1943bbab9f0655439b70c42ef2d809b149",
+  "capture/engine_reports/tests_v4_test_confgen_v3_integration.py_TestExecutorV3_test_subject_none_chained_rejected__0.json": "3d96dbbaab962170a957063f02662b1943bbab9f0655439b70c42ef2d809b149",
+  "capture/engine_reports/tests_v4_test_confgen_v3_integration.py_TestExecutorV3_test_upstream_state_chaining__0.json": "3d96dbbaab962170a957063f02662b1943bbab9f0655439b70c42ef2d809b149",
+  "capture/engine_reports/tests_v4_test_confgen_v3_integration.py_TestExecutorV3_test_upstream_state_chaining__1.json": "a31d800b1db9654885e6f4aab9f84f1d3143f4af44a32ecf8d57db64650c7c55",
+  "capture/engine_reports/tests_v4_test_confgen_v3_integration.py_TestProducerWiring_test_workflow_chaining_compiles_and_assembles__0.json": "3d96dbbaab962170a957063f02662b1943bbab9f0655439b70c42ef2d809b149",
+  "capture/manifest.json": "31aa3a8fbb2f28c02c3ebb6d42d3653d89c0c2d6f7e682969198ced4950f6f9e",
+  "capture/out.json": "00a918949e49ed06dff281c1d820d949b0251522df467a8dadd1b459d668ca1a",
+  "collect.json": "d7cc7151075899cfcd867641c16169983c03901efdae24d3aaa5491d087a411c",
+  "contract.full.json": "6b204b9deb0fde7238fab5ddf1057c1ab978806d7500e52010e00b27412d5abe",
+  "contract.json": "012af682a2853dcba5f7a97b11dd139ceb7a3a6b62b9184dd6970f415d494c9b",
+  "loc_table.json": "4bd623306cdedbb5a29a69d11af7b490f05e264e9c6058662714eadab9b66bdc",
+  "out.json": "00a918949e49ed06dff281c1d820d949b0251522df467a8dadd1b459d668ca1a",
+  "ts1/default.json": "2c9db6f0b2a5babd3d81f90022a082140c470553b1d019f97e8501221c0bc24a",
+  "ts1/flexible.json": "f31a965869efd7fde2b1a8d12f7a1bd7d4ff34a4583adb13b308d3ad2bf7befe",
+  "ts1/rigid.json": "3f3712116d68deea6761f644f4ad1d7dd93d310b18f937d3c87993c37c497def"
+ },
+ "head": "ee56fa00444de50581778735486faf83c9350bb6",
+ "loc": {
+  "method": "\u7269\u7406\u884c\uff08wc -l \u53e3\u5f84\uff1a\u7a7a\u884c\u3001\u6ce8\u91ca\u3001docstring\u3001import \u5168\u90e8\u8ba1\u5165\uff1b__pycache__ \u6392\u9664\uff1b\u65e0 trailing newline \u7684\u672b\u884c\u8ba1 1 \u884c\uff09\u3002\u5b50\u7cfb\u7edf\u6309\u9644\u5f55 A \u987a\u5e8f\u9996\u5339\u914d\u5f52\u5c5e\uff1apatterns \u542b glob\uff08fnmatch \u5168\u8def\u5f84\u5339\u914d\uff09\u3001\u4ee5 / \u7ed3\u5c3e\u8868\u76ee\u5f55\u524d\u7f00\u3001\u5176\u4f59\u4e3a\u6587\u4ef6/\u6a21\u5757\u524d\u7f00\uff08\u7cbe\u786e\u6587\u4ef6 rel==pat\u3001\u6216 rel==pat+'.py'\u3001\u6216 rel \u4ee5 pat+'/' \u5f00\u5934\uff09\u3002\u9644\u5f55 A \u6b63\u5219\u4e2d\u7684 worker_*.py \u8bb0\u4e3a confflow/worker_*.py\uff1b\u4e0d\u5e26\u6269\u5c55\u540d\u7684\u6761\u76ee\uff08\u5982 v4cli\u3001install_provenance\u3001__build__\u3001orca_blocks\u3001confgen_executor\uff09\u6309\u6a21\u5757\u524d\u7f00\u5339\u914d\u5176 .py \u6587\u4ef6\u3002",
+  "subsystems": {
+   "common": {
+    "actual": 14216,
+    "limit": 14216
+   },
+   "confgen": {
+    "actual": 26159,
+    "limit": 26159
+   },
+   "domain": {
+    "actual": 4500,
+    "limit": 4500
+   },
+   "entry_cli": {
+    "actual": 2920,
+    "limit": 2920
+   },
+   "execution": {
+    "actual": 11958,
+    "limit": 11958
+   },
+   "jobdesk_control": {
+    "actual": 5815,
+    "limit": 5815
+   },
+   "persistence": {
+    "actual": 6368,
+    "limit": 6368
+   },
+   "producer": {
+    "actual": 11834,
+    "limit": 11834
+   },
+   "programs": {
+    "actual": 7715,
+    "limit": 7715
+   },
+   "release_prov": {
+    "actual": 342,
+    "limit": 342
+   },
+   "workflow": {
+    "actual": 5926,
+    "limit": 5926
+   }
+  },
+  "tests_total": {
+   "actual": 120560,
+   "limit": 120560
+  }
+ },
+ "milestone": "DIET-2 R1.0",
+ "tests": {
+  "error": 0,
+  "failed": 0,
+  "nodes": 5642,
+  "passed": 5632,
+  "skipped": 10
+ }
+}
