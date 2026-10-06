@@ -219,7 +219,8 @@
             "validate_document",
             "check_compatibility",
             "compile_intent",
-            "preview_paths"
+            "preview_paths",
+            "structure_preview"
           ]
         },
         "parameters": {
@@ -312,7 +313,8 @@
             "validate_document",
             "check_compatibility",
             "compile_intent",
-            "preview_paths"
+            "preview_paths",
+            "structure_preview"
           ]
         },
         "request_document_digest": {

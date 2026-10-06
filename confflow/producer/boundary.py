@@ -281,6 +281,7 @@ def authoring_protocol_schema() -> dict[str, Any]:
         "check_compatibility",
         "compile_intent",
         "preview_paths",
+        "structure_preview",
     ]
     return {
         "request": {

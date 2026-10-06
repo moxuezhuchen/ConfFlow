@@ -1269,6 +1269,43 @@ def dispatch_request(data: bytes | bytearray | str) -> dict[str, Any]:
                 [_schema_problem(str(exc), field_path="parameters.native")],
             )
         return _envelope(operation, True, None, preview, [])
+    if operation == "structure_preview":
+        from .structure_preview import StructurePreviewError, structure_preview_request
+
+        try:
+            preview = structure_preview_request(params)
+        except StructurePreviewError as exc:
+            # New-op only: the shared Diagnostic serializer projects just
+            # code/severity/message/reason to the wire, so the native fields
+            # ride here as an already-wire mapping (the response schema does
+            # not forbid extra diagnostic members). Old operations keep the
+            # global serializer path verbatim.
+            diagnostic: dict[str, Any] = {
+                "code": DiagnosticCode.SCHEMA_ERROR.value,
+                "severity": DiagnosticSeverity.ERROR.value,
+                "step_id": None,
+                "field_path": "parameters.content_text",
+                "message": str(exc),
+                "reason": str(exc.code),
+                "details": {
+                    "native_code": str(exc.code),
+                    "line": exc.line,
+                    "source_label": exc.source_label,
+                    "field": exc.field,
+                    "filename": exc.filename,
+                    "source_format": exc.source_format,
+                },
+            }
+            return _envelope(operation, False, None, None, [diagnostic])
+        except (ValueError, DomainError) as exc:
+            return _envelope(
+                operation,
+                False,
+                None,
+                None,
+                [_schema_problem(str(exc), field_path="parameters.content_text")],
+            )
+        return _envelope(operation, True, None, preview, [])
     return _envelope(
         operation,
         False,
