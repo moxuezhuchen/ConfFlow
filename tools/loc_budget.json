@@ -1,0 +1,214 @@
+{
+  "_header": {
+    "basis_commit": "cc16e8f + J1 CF (integration/p0-j1)",
+    "coverage": "confflow/ 下全部 .py（含 __init__.py），tests/ 下全部 .py",
+    "generated": "P0.2 执行时实测值即初始上限（Q2 已确认）",
+    "method": "物理行（wc -l 口径：空行、注释、docstring、import 全部计入；__pycache__ 排除；无 trailing newline 的末行计 1 行）。子系统按附录 A 顺序首匹配归属：patterns 含 glob（fnmatch 全路径匹配）、以 / 结尾表目录前缀、其余为文件/模块前缀（精确文件 rel==pat、或 rel==pat+'.py'、或 rel 以 pat+'/' 开头）。附录 A 正则中的 worker_*.py 记为 confflow/worker_*.py；不带扩展名的条目（如 v4cli、install_provenance、__build__、orca_blocks、confgen_executor）按模块前缀匹配其 .py 文件。",
+    "ratchet": "P0 建立初始上限（本卡实测值）| R1、R2 代码只能减少，上限不变 | N1–N4 允许增长但单卡增量不得超过该卡已批准的行数预算 | 每个里程碑验收通过后把当时实际值写入本文件成为新的长期上限 | 之后只降不升。超出上述规则的任何提高，必须在本条目 reason 写明理由并经用户确认（Q2）。",
+    "scope": "DIET-2 P0.2 行数预算（docs/diet-2/PLAN.md P0.2、附录 A；Q2）",
+    "tests_method": "tests/ 下全部 .py 物理行总数（口径同上），单值 tests_total_loc_limit；不按子系统拆分。"
+  },
+  "grandfather_note": "AP-108（G16）只拦截新增的按阶段/轮次命名测试文件。仓库已有大量历史匹配文件，为避免追溯性失败，本清单豁免当前（P0.2 执行时）已存在的全部匹配文件。清单只许缩减：删除历史文件时同步删除对应条目；不得新增条目来豁免新文件（新文件必须改名、按行为命名并并入已有测试文件）。",
+  "grandfathered": [
+    "tests/test_changed_coverage.py",
+    "tests/test_subsystem_coverage.py",
+    "tests/v4/_helpers/v43_coverage.py",
+    "tests/v4/test_producer_authoring_boundary_coverage.py",
+    "tests/v4/test_producer_checkpoint_boundary_coverage.py",
+    "tests/v4/test_v42_adapters.py",
+    "tests/v4/test_v42_coverage_contracts.py",
+    "tests/v4/test_v42_coverage_exec.py",
+    "tests/v4/test_v42_coverage_process.py",
+    "tests/v4/test_v42_coverage_recovery.py",
+    "tests/v4/test_v42_coverage_render.py",
+    "tests/v4/test_v42_debt.py",
+    "tests/v4/test_v42_executors.py",
+    "tests/v4/test_v42_profiles_checks.py",
+    "tests/v4/test_v42_recovery.py",
+    "tests/v4/test_v43_abandoned.py",
+    "tests/v4/test_v43_artifacts.py",
+    "tests/v4/test_v43_coverage.py",
+    "tests/v4/test_v43_crash_matrix.py",
+    "tests/v4/test_v43_matrices.py",
+    "tests/v4/test_v43_publication.py",
+    "tests/v4/test_v43_resume.py",
+    "tests/v4/test_v43_reuse.py",
+    "tests/v4/test_v43_store.py",
+    "tests/v4/test_v44_artifact_flow.py",
+    "tests/v4/test_v44_claim.py",
+    "tests/v4/test_v44_coverage.py",
+    "tests/v4/test_v44_crash_matrix.py",
+    "tests/v4/test_v44_crash_matrix2.py",
+    "tests/v4/test_v44_faults.py",
+    "tests/v4/test_v44_handoff.py",
+    "tests/v4/test_v44_hardening.py",
+    "tests/v4/test_v44_parity.py",
+    "tests/v4/test_v44_resume_remote.py",
+    "tests/v4/test_v44_security.py",
+    "tests/v4/test_v44_staging.py",
+    "tests/v4/test_v44_worker.py",
+    "tests/v4/test_v45_atom_mapping.py",
+    "tests/v4/test_v45_gaussian_path.py",
+    "tests/v4/test_v45_goat.py",
+    "tests/v4/test_v45_multi_output.py",
+    "tests/v4/test_v45_named.py",
+    "tests/v4/test_v45_orca_path.py",
+    "tests/v4/test_v45_parity.py",
+    "tests/v4/test_v45_path_profile.py",
+    "tests/v4/test_v45_reaction_chain.py",
+    "tests/v4/test_v45_resume.py",
+    "tests/v4/test_v45_tspes.py",
+    "tests/v4/test_v46_analysis.py",
+    "tests/v4/test_v46_analysis_grouping.py",
+    "tests/v4/test_v46_application.py",
+    "tests/v4/test_v46_cross_repo.py",
+    "tests/v4/test_v46_cross_repo_e2e.py",
+    "tests/v4/test_v46_debt.py",
+    "tests/v4/test_v46_pes.py",
+    "tests/v4/test_v46_producer_closure.py",
+    "tests/v4/test_v46_producer_contract.py",
+    "tests/v4/test_v46_production_gates.py",
+    "tests/v4/test_v46_reaction.py",
+    "tests/v4/test_v46_recipes.py",
+    "tests/v4/test_v46_tspes_e2e.py",
+    "tests/v4/test_v46_tspes_science.py"
+  ],
+  "subsystems": [
+    {
+      "id": "confgen",
+      "label": "ConfGen",
+      "patterns": [
+        "confflow/science/confgen/",
+        "confflow/execution/confgen_executor",
+        "confflow/workflow/v4/confgen_schema",
+        "confflow/producer/path_preview",
+        "confflow/science/torsion.py"
+      ],
+      "prod_files": 49,
+      "prod_loc_limit": 26159,
+      "ratchet": "R1/R2 上限不变；N 阶段按卡预算增长；里程碑验收后以实际值重写本上限；其余时间只降不升。",
+      "reason": "P0.2 初始上限=P0 阶段实际值：基 cc16e8f（含 E1 与 J1 CF 两张计划内卡，在 DIET-2 R/N 之前合并）。提高须写明理由并经用户确认。"
+    },
+    {
+      "id": "jobdesk_control",
+      "label": "JobDesk 服务与控制面",
+      "patterns": [
+        "confflow/application/execution/",
+        "confflow/control.py",
+        "confflow/contract.py",
+        "confflow/config/",
+        "confflow/control_worker.py",
+        "confflow/worker_*.py"
+      ],
+      "prod_files": 23,
+      "prod_loc_limit": 5815,
+      "ratchet": "R1/R2 上限不变；N 阶段按卡预算增长；里程碑验收后以实际值重写本上限；其余时间只降不升。",
+      "reason": "P0.2 初始上限=P0 阶段实际值：基 cc16e8f（含 E1 与 J1 CF 两张计划内卡，在 DIET-2 R/N 之前合并）。提高须写明理由并经用户确认。"
+    },
+    {
+      "id": "producer",
+      "label": "producer",
+      "patterns": [
+        "confflow/producer/"
+      ],
+      "prod_files": 26,
+      "prod_loc_limit": 11834,
+      "ratchet": "R1/R2 上限不变；N 阶段按卡预算增长；里程碑验收后以实际值重写本上限；其余时间只降不升。",
+      "reason": "P0.2 初始上限=P0 阶段实际值：基 cc16e8f（含 E1 与 J1 CF 两张计划内卡，在 DIET-2 R/N 之前合并）。提高须写明理由并经用户确认。"
+    },
+    {
+      "id": "persistence",
+      "label": "持久化",
+      "patterns": [
+        "confflow/persistence/"
+      ],
+      "prod_files": 12,
+      "prod_loc_limit": 6368,
+      "ratchet": "R1/R2 上限不变；N 阶段按卡预算增长；里程碑验收后以实际值重写本上限；其余时间只降不升。",
+      "reason": "P0.2 初始上限=P0 阶段实际值：基 cc16e8f（含 E1 与 J1 CF 两张计划内卡，在 DIET-2 R/N 之前合并）。提高须写明理由并经用户确认。"
+    },
+    {
+      "id": "programs",
+      "label": "Gaussian/ORCA 适配",
+      "patterns": [
+        "confflow/programs/",
+        "confflow/shared/orca_blocks"
+      ],
+      "prod_files": 20,
+      "prod_loc_limit": 7715,
+      "ratchet": "R1/R2 上限不变；N 阶段按卡预算增长；里程碑验收后以实际值重写本上限；其余时间只降不升。",
+      "reason": "P0.2 初始上限=P0 阶段实际值：基 cc16e8f（含 E1 与 J1 CF 两张计划内卡，在 DIET-2 R/N 之前合并）。提高须写明理由并经用户确认。"
+    },
+    {
+      "id": "workflow",
+      "label": "V4 工作流编译",
+      "patterns": [
+        "confflow/workflow/"
+      ],
+      "prod_files": 14,
+      "prod_loc_limit": 5926,
+      "ratchet": "R1/R2 上限不变；N 阶段按卡预算增长；里程碑验收后以实际值重写本上限；其余时间只降不升。",
+      "reason": "P0.2 初始上限=P0 阶段实际值：基 cc16e8f（含 E1 与 J1 CF 两张计划内卡，在 DIET-2 R/N 之前合并）。提高须写明理由并经用户确认。"
+    },
+    {
+      "id": "execution",
+      "label": "执行引擎",
+      "patterns": [
+        "confflow/execution/"
+      ],
+      "prod_files": 24,
+      "prod_loc_limit": 11958,
+      "ratchet": "R1/R2 上限不变；N 阶段按卡预算增长；里程碑验收后以实际值重写本上限；其余时间只降不升。",
+      "reason": "P0.2 初始上限=P0 阶段实际值：基 cc16e8f（含 E1 与 J1 CF 两张计划内卡，在 DIET-2 R/N 之前合并）。提高须写明理由并经用户确认。"
+    },
+    {
+      "id": "domain",
+      "label": "领域模型",
+      "patterns": [
+        "confflow/domain/"
+      ],
+      "prod_files": 19,
+      "prod_loc_limit": 4500,
+      "ratchet": "R1/R2 上限不变；N 阶段按卡预算增长；里程碑验收后以实际值重写本上限；其余时间只降不升。",
+      "reason": "P0.2 初始上限=P0 阶段实际值：基 cc16e8f（含 E1 与 J1 CF 两张计划内卡，在 DIET-2 R/N 之前合并）。提高须写明理由并经用户确认。"
+    },
+    {
+      "id": "entry_cli",
+      "label": "运行入口与 CLI",
+      "patterns": [
+        "confflow/application/",
+        "confflow/v4cli",
+        "confflow/cli.py",
+        "confflow/main.py"
+      ],
+      "prod_files": 6,
+      "prod_loc_limit": 2920,
+      "ratchet": "R1/R2 上限不变；N 阶段按卡预算增长；里程碑验收后以实际值重写本上限；其余时间只降不升。",
+      "reason": "P0.2 初始上限=P0 阶段实际值：基 cc16e8f（含 E1 与 J1 CF 两张计划内卡，在 DIET-2 R/N 之前合并）。提高须写明理由并经用户确认。"
+    },
+    {
+      "id": "release_prov",
+      "label": "发布与安装溯源",
+      "patterns": [
+        "confflow/install_provenance",
+        "confflow/__build__"
+      ],
+      "prod_files": 2,
+      "prod_loc_limit": 342,
+      "ratchet": "R1/R2 上限不变；N 阶段按卡预算增长；里程碑验收后以实际值重写本上限；其余时间只降不升。",
+      "reason": "P0.2 初始上限=P0 阶段实际值：基 cc16e8f（含 E1 与 J1 CF 两张计划内卡，在 DIET-2 R/N 之前合并）。提高须写明理由并经用户确认。"
+    },
+    {
+      "id": "common",
+      "label": "通用基础",
+      "patterns": [],
+      "prod_files": 48,
+      "prod_loc_limit": 14216,
+      "ratchet": "R1/R2 上限不变；N 阶段按卡预算增长；里程碑验收后以实际值重写本上限；其余时间只降不升。",
+      "reason": "P0.2 初始上限=P0 阶段实际值：基 cc16e8f（含 E1 与 J1 CF 两张计划内卡，在 DIET-2 R/N 之前合并）。提高须写明理由并经用户确认。"
+    }
+  ],
+  "tests_total_files": 245,
+  "tests_total_loc_limit": 120560,
+  "tests_total_reason": "P0.2 初始上限=P0 阶段实际值：基 cc16e8f（含 E1 与 J1 CF 两张计划内卡，在 DIET-2 R/N 之前合并）。提高须写明理由并经用户确认。"
+}

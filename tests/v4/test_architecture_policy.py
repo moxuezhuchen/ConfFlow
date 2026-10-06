@@ -179,6 +179,36 @@ def _build_tree(root: Path, rule: dict, *, violate: bool) -> None:
         _write(root, _anchor_file(scope), body if violate else "x = 1\n")
     elif kind == "custom_confgen_top_register":
         _write(root, _anchor_file(scope), 'register("x")\n' if violate else "x = 1\n")
+    elif kind == "custom_loc_budget":
+        # Minimal P0.2 budget: one catch-all subsystem plus the tests total.
+        # Violating tree has more physical lines than the tiny limit; the
+        # clean tree fits inside a generous limit.
+        import json
+
+        limit = 3 if violate else 10_000
+        budget = {
+            "subsystems": [{"id": "common", "patterns": [], "prod_loc_limit": limit}],
+            "tests_total_loc_limit": 10_000,
+            "grandfathered": [],
+        }
+        _write(root, "tools/loc_budget.json", json.dumps(budget))
+        lines = "x = 1\n" * (6 if violate else 1)
+        _write(root, "confflow/hurt.py", lines)
+    elif kind == "custom_test_filename":
+        # AP-108 only fires on NEW stage-named files: the fixture budget
+        # carries an empty grandfathered list, so any matching name fires.
+        import json
+
+        budget = {
+            "subsystems": [],
+            "tests_total_loc_limit": 10_000,
+            "grandfathered": [],
+        }
+        _write(root, "tools/loc_budget.json", json.dumps(budget))
+        if violate:
+            _write(root, "tests/v4/test_v45_brand_new.py", "x = 1\n")
+        else:
+            _write(root, "tests/v4/test_behavior_named.py", "x = 1\n")
     elif kind == "custom_jobdesk_doubles":
         if violate:
             _write(root, rule["files"][0], "class JobdeskDouble:\n    import confflow\n")
@@ -1044,14 +1074,15 @@ def test_rule_count_matches_the_inventory() -> None:
     # 69 L0.4b rows + AP-033a (the const half of inventory row #33, split out
     # honestly from the disk half AP-033 per the v3 root ruling) + 6 A6
     # G13/G14 confgen purity rules (AP-100..AP-105) + 1 L1-A3c intent
-    # science isolation rule (AP-106, tool guard only).
-    assert RULE_COUNT == 77
+    # science isolation rule (AP-106, tool guard only) + 2 DIET-2 P0.2 rules
+    # (AP-107 LOC budget, AP-108 G16 new-filename guard).
+    assert RULE_COUNT == 79
 
 
 def test_rule_ids_are_unique_and_sources_pinned() -> None:
     assert len({r["id"] for r in RULES}) == RULE_COUNT
     assert all(re.match(r"^AP-\d{3}a?$", r["id"]) for r in RULES)  # AP-033a = const half of #33
-    assert all(re.match(r"^#\d+$", r["source"]) for r in RULES)
+    assert all(re.match(r"^#\d+$", r["source"]) or r["source"] == "DIET-2 P0.2" for r in RULES)
 
 
 def test_g13_g14_rules_are_enabled() -> None:
@@ -1067,6 +1098,124 @@ def test_g13_g14_rules_are_enabled() -> None:
         "AP-104",
         "AP-105",
     ]
+
+
+# ---------------------------------------------------------------------------
+# DIET-2 P0.2: LOC budget (AP-107) and G16 new-filename guard (AP-108).
+#
+# AP-108 only blocks NEW stage-named files: historical matches are exempt
+# through the grandfathered list in tools/loc_budget.json (the full set of
+# matches existing at P0.2). That list may only shrink — deleting a
+# historical file removes its entry; adding entries to excuse new files is
+# forbidden. New tests use behavior names and merge into existing files.
+# All scan() calls below pass rule_ids limited to the new rules, so they
+# never depend on the AP-081 /opt/jobdesk sibling checkout.
+# ---------------------------------------------------------------------------
+
+P02_RULE_IDS = ["AP-107", "AP-108"]
+
+
+def _write_p02_budget(
+    root: Path,
+    *,
+    subsystems: list[dict],
+    tests_limit: int,
+    grandfathered: list[str],
+) -> None:
+    import json
+
+    root.joinpath("tools").mkdir(parents=True, exist_ok=True)
+    root.joinpath("tools/loc_budget.json").write_text(
+        json.dumps(
+            {
+                "subsystems": subsystems,
+                "tests_total_loc_limit": tests_limit,
+                "grandfathered": grandfathered,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_p02_new_rules_are_registered() -> None:
+    kinds = {r["id"]: r["kind"] for r in RULES if r["id"] in P02_RULE_IDS}
+    assert kinds == {"AP-107": "custom_loc_budget", "AP-108": "custom_test_filename"}
+
+
+def test_p02_current_tree_is_clean_for_new_rules() -> None:
+    root = Path(__file__).resolve().parents[2]
+    assert scan(root, rule_ids=P02_RULE_IDS) == []
+
+
+def test_p02_grandfathered_covers_every_current_match() -> None:
+    import json
+    import re
+
+    root = Path(__file__).resolve().parents[2]
+    budget = json.loads((root / "tools/loc_budget.json").read_text(encoding="utf-8"))
+    current = sorted(
+        str(p.relative_to(root))
+        for p in (root / "tests").rglob("*.py")
+        if "__pycache__" not in p.parts
+        and (
+            re.match(r"test_v4[0-9]_.*\.py$", p.name)
+            or (p.name.endswith(".py") and "_coverage" in p.name)
+        )
+    )
+    assert current, "expected historical stage-named tests to exist"
+    assert set(current) <= set(budget["grandfathered"]), sorted(
+        set(current) - set(budget["grandfathered"])
+    )
+
+
+def test_p02_over_budget_subsystem_fires(tmp_path: Path) -> None:
+    _write_p02_budget(
+        tmp_path,
+        subsystems=[{"id": "common", "patterns": [], "prod_loc_limit": 3}],
+        tests_limit=10_000,
+        grandfathered=[],
+    )
+    _write(tmp_path, "confflow/hurt.py", "x = 1\n" * 6)
+    fired = [v for v in scan(tmp_path, rule_ids=["AP-107"]) if v["rule"] == "AP-107"]
+    assert fired, "a subsystem over its budget must fail AP-107"
+    assert any("common" in v["detail"] and "over budget" in v["detail"] for v in fired)
+
+
+def test_p02_over_budget_tests_total_fires(tmp_path: Path) -> None:
+    _write_p02_budget(
+        tmp_path,
+        subsystems=[],
+        tests_limit=2,
+        grandfathered=[],
+    )
+    _write(tmp_path, "confflow/hurt.py", "x = 1\n")
+    _write(tmp_path, "tests/test_behavior_named.py", "x = 1\n" * 5)
+    fired = [v for v in scan(tmp_path, rule_ids=["AP-107"]) if v["rule"] == "AP-107"]
+    assert fired, "a tests total over its budget must fail AP-107"
+    assert any("tests total" in v["detail"] and "over budget" in v["detail"] for v in fired)
+
+
+def test_p02_new_stage_named_files_fire(tmp_path: Path) -> None:
+    _write_p02_budget(
+        tmp_path, subsystems=[], tests_limit=10_000, grandfathered=["tests/v4/test_v45_old.py"]
+    )
+    _write(tmp_path, "tests/v4/test_v45_old.py", "x = 1\n")
+    _write(tmp_path, "tests/v4/test_v47_brand_new.py", "x = 1\n")
+    _write(tmp_path, "tests/v4/test_engine_recovery_coverage.py", "x = 1\n")
+    _write(tmp_path, "tests/v4/test_behavior_named.py", "x = 1\n")
+    fired = [v for v in scan(tmp_path, rule_ids=["AP-108"]) if v["rule"] == "AP-108"]
+    paths = sorted(v["path"] for v in fired)
+    assert "tests/v4/test_v47_brand_new.py" in paths
+    assert "tests/v4/test_engine_recovery_coverage.py" in paths
+    assert "tests/v4/test_v45_old.py" not in paths, "grandfathered names must stay silent"
+    assert "tests/v4/test_behavior_named.py" not in paths
+
+
+def test_p02_missing_budget_fails_closed(tmp_path: Path) -> None:
+    _write(tmp_path, "confflow/hurt.py", "x = 1\n")
+    fired_107 = [v for v in scan(tmp_path, rule_ids=["AP-107"]) if v["rule"] == "AP-107"]
+    fired_108 = [v for v in scan(tmp_path, rule_ids=["AP-108"]) if v["rule"] == "AP-108"]
+    assert fired_107 and fired_108, "a missing budget file must fail closed, never pass"
 
 
 # ---------------------------------------------------------------------------

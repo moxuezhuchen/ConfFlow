@@ -1,0 +1,116 @@
+{
+  "card": "J1-projection structure_preview shared parsing proto v2 unit repair (no submit/push/merge/tag)",
+  "status": "projection_proto_v2_not_submitted",
+  "base_parent": "ee21e8c34b2df0033cd8707e6c361f0a547a2256",
+  "base_parent_role": "formal parser parent (frozen ORCA single-inline-xyz default-Angstrom, 63 nodes)",
+  "base_branch_readonly": true,
+  "readonly_source": "/tmp/j1-parser-exec",
+  "proto_branch": "refactor/j1-projection-proto",
+  "proto_worktree": "/tmp/j1-projection-proto",
+  "exclusive_output": "/tmp/j1-projection-output-v2",
+  "original_output_kept_intact": "/tmp/j1-projection-output",
+  "prior_existence_check": {
+    "tmp_j1_projection_proto": "clean_at_ee21e8c_before_apply",
+    "tmp_j1_projection_output": "kept_intact",
+    "tmp_j1_projection_output_v2": "absent_before_create"
+  },
+  "cf_main": "c7728447162ee76877e38966f96e0417e779f39c (untouched, tracked clean)",
+  "agents_note": "/opt/ConfFlow/AGENTS.md and /tmp/j1-parser-exec/AGENTS.md both absent (record only)",
+  "whitelist_exactly_6_paths": [
+    "confflow/producer/structure_preview.py",
+    "tests/v4/test_structure_preview_parsing.py",
+    "confflow/core/gaussian_input.py",
+    "docs/confgen-fix/checkpoints/J1-projection/MANIFEST.json",
+    "docs/confgen-fix/checkpoints/J1-projection/DIFF.md",
+    "docs/confgen-fix/checkpoints/J1-projection/LOG.md"
+  ],
+  "whitelist_denies": [
+    "no authoring/boundary/contract changes (L1 concatenation + cross-warehouse pairing deferred)",
+    "no CF science/engine-runtime changes",
+    "no changes to frozen ORCA parser (63 nodes untouched)",
+    "no new dependencies, no CLI, no credential reads, no network",
+    "no full-warehouse full/golden runs",
+    "other CF/JD trees untouched; no git clean / whole-tree removal"
+  ],
+  "unit_repair": {
+    "counterexample": "/tmp/j1-projection-root-unit-counterexample.txt",
+    "root_negatives": [
+      "Units(Bohr) multiline",
+      "Units=(Bohr) multiline",
+      "Units=(AU) single",
+      "Units=(AU) multiline"
+    ],
+    "old_behavior": "BUG-ACCEPTED as Angstrom (see OLD_COUNTEREXAMPLE_PROBE.txt)",
+    "new_behavior": "REJECTED unsupported_unit (see NEW_COUNTEREXAMPLE_PROBE.txt)",
+    "boundary": "complete route # through continuation until blank, newlines included; units=X, units X, units(X), units=(X) with equals/parens/case/quotes/newline; bare bohr/AU in route refused; titles never scanned",
+    "strict_default_unchanged": "parse_gaussian_input_text AST v1 vs v2 identical; default output/exception probe identical",
+    "no_third_parser": "reuses _parse_tail_coordinates and shared authorities only"
+  },
+  "files": {
+    "confflow/producer/structure_preview.py": {
+      "mode": "644",
+      "sha256": "000b67d27426385007a8fade4485ce7e6b09df8c9c33771547c2bd0e8473e416",
+      "git_blob_sha": "a60b9fdcbb413c82685251d6cdb96290a021f4de",
+      "note": "unchanged from v1; thin projection; structure_preview_request only; same-authority reuse, no new parser"
+    },
+    "tests/v4/test_structure_preview_parsing.py": {
+      "mode": "644",
+      "sha256": "e08713a7761d5ef7f9078ae2b7048f1fc14a7d90bf6be7a7260efebb1cf6e3c3",
+      "git_blob_sha": "86be34d55a6f3ca6526e98a2b699ae26bcb1dba7",
+      "note": "43 nodes (v1 35 plus v2 8: 4 root negatives plus Angstrom paren/multiline plus title bohr/title Units free-text)"
+    },
+    "confflow/core/gaussian_input.py": {
+      "mode": "644",
+      "sha256": "ac65bf2bd8224c4012b44254d3728ba79f1d5b7b08b005a46f833021597a304a",
+      "git_blob_sha": "d8d867af433707c2504be6ac437e65058d204d11",
+      "note": "strict-only route-boundary unit repair plus _UNITS_PAREN_RE/_AU_TOKEN_RE/_strict_route_text; strict=False path byte-identical"
+    },
+    "docs/confgen-fix/checkpoints/J1-projection/DIFF.md": {
+      "mode": "644",
+      "sha256": "3562682e9c8fcde4d5ba462f5d3b1da3381efb05854dfaa705557586041ad14e",
+      "git_blob_sha": "9f1f05a0ff5c327f9e6fc0bc3522aa9a62ea08ec"
+    },
+    "docs/confgen-fix/checkpoints/J1-projection/LOG.md": {
+      "mode": "644",
+      "sha256": "5529d91fec7eea6d4122b0bfe25d3217f735430c882b8f7eebb52d5d7ec1b1b0",
+      "git_blob_sha": "9bd769b9ac36bddf73d40b55a04ad1229f6051fa"
+    },
+    "docs/confgen-fix/checkpoints/J1-projection/MANIFEST.json": {
+      "mode": "644",
+      "sha256": "self_excluded_verify_via_FREEZE_diff",
+      "note": "self sha excluded to avoid self-reference"
+    }
+  },
+  "evidence": {
+    "new_tests": 43,
+    "orca_frozen": 63,
+    "combined_new_plus_orca": 106,
+    "cli_test_cli": "52 passed + 1 skipped",
+    "cli_inclusive_three_files": "158 passed + 1 skipped",
+    "collect_parent": 5053,
+    "collect_proto": 5096,
+    "collect_delta": "+43/-0",
+    "ruff_mypy_black": "pass",
+    "runner": "pytest -o addopts= -p no:cacheprovider, fixed noeditable PYTHONPATH",
+    "old_counterexample": "4 BUG-ACCEPTED on v1 (OLD_COUNTEREXAMPLE_PROBE.txt)",
+    "new_counterexample": "4 REJECTED unsupported_unit on v2 (NEW_COUNTEREXAMPLE_PROBE.txt)",
+    "default_ast": "OLD vs NEW identical",
+    "default_probe": "OLD_DEFAULT_PROBE.txt vs NEW_DEFAULT_PROBE.txt identical"
+  },
+  "necessary_gates": [
+    "4 root negatives reject unsupported_unit",
+    "Angstrom paren/multiline accept",
+    "title bohr and title Units free-text accept",
+    "strict=False AST and default output/exception probe unchanged",
+    "new 43 pass, ORCA 63 pass, combined 106 pass, CLI 52 pass + 1 skipped",
+    "collect +43/-0 exact, ruff/mypy/black pass"
+  ],
+  "freeze": {
+    "method": "git add -N then git diff --binary HEAD verbatim (new/mode included)",
+    "output": "/tmp/j1-projection-output-v2/FREEZE.diff",
+    "format_note": "canonical patch format per /tmp/j1-parser-v2-root-canonical.patch; no separators/reorder/normalize"
+  },
+  "restore": "delete only self-built paths back to parent-clean; no git clean / whole-tree rm; previewed clean with HEAD ee21e8c and 6 whitelisted paths only",
+  "trailer": "Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>",
+  "scope_note": "parsing projection only; authoring/GUI pairing deferred; for root review, J1 GUI/authoring not claimed complete; each card one commit left for root next-stage authorization"
+}

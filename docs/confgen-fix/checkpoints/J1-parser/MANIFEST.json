@@ -1,0 +1,133 @@
+{
+  "card": "J1-parser v2 lexical repair freeze (no submit/push/merge/tag)",
+  "status": "frozen_proto_not_submitted",
+  "base_parent": "c7728447162ee76877e38966f96e0417e779f39c",
+  "base_branch": "main",
+  "base_branch_readonly": true,
+  "proto_branch": "refactor/j1-parser-proto",
+  "proto_worktree": "/tmp/j1-parser-proto",
+  "exclusive_output_v2": "/tmp/j1-parser-output-v2",
+  "exclusive_output_v1_preserved": "/tmp/j1-parser-output",
+  "root_review": "/tmp/j1-parser-root-review (read-only source of v1 bytes + frozen probe; never modified)",
+  "prior_existence_check_v2": {
+    "tmp_j1_parser_output_v2": "absent_before_create"
+  },
+  "whitelist_exactly_4_paths": [
+    "confflow/programs/orca/input_parsing.py",
+    "tests/v4/test_orca_input_parsing.py",
+    "docs/confgen-fix/checkpoints/J1-parser/MANIFEST.json",
+    "docs/confgen-fix/checkpoints/J1-parser/DIFF.md"
+  ],
+  "whitelist_denies": [
+    "LOG append deferred to future integration (this card does not touch LOG)",
+    "no changes to old production/test/fixture/authoring/contract/__init__",
+    "no producer/authoring/boundary/contract/routing changes (paired J1 follow-up)",
+    "no adapter/rendering/parsing behavior changes (read-only reuse)",
+    "no new dependencies, no CLI, no credential reads, no network",
+    "v1 external artifacts under /tmp/j1-parser-output not overwritten",
+    "other running CF trees never touched; no full/golden runs"
+  ],
+  "v1_baseline": {
+    "parser_sha256": "9a67f88aa74ab1fd4953499ec38c2c3f83ec2d09456ceb83455965d5f74562f6",
+    "parser_blob": "11851b674ec2dce07a39f9362693f6cc3c6f82d8",
+    "test_sha256": "30d46071d243f1d7ccafb35fe817fc7f99087aca47101a6dded8e97c94bd861f",
+    "test_blob": "9aade174b372b1e3f023ba0c15652191cdd13716",
+    "tests": 50
+  },
+  "files_v2": {
+    "confflow/programs/orca/input_parsing.py": {
+      "mode": "644",
+      "sha256": "e12e2f80a8eff3d36eca4e4c1b091f949c40f782d64d271ca34861f33a41f0d1",
+      "git_blob_sha": "288d2e3d3a24fb03d128bb2edbb2cb9a4d793a05"
+    },
+    "tests/v4/test_orca_input_parsing.py": {
+      "mode": "644",
+      "sha256": "702f311081383030ee0bb352e4568a2e94c0c3cd9112a922b5751a2d85ba5188",
+      "git_blob_sha": "62f079e9835067128ed2ceaf02f1e72a2b6889ba",
+      "note": "63 tests: original 50 nodes/assertions preserved + 13 new v2 nodes"
+    },
+    "docs/confgen-fix/checkpoints/J1-parser/MANIFEST.json": {
+      "mode": "644",
+      "sha256": "self_excluded_verify_via_FREEZE_v2_diff_and_CARD_v2",
+      "note": "self sha excluded to avoid self-reference"
+    },
+    "docs/confgen-fix/checkpoints/J1-parser/DIFF.md": {
+      "mode": "644",
+      "sha256": "2034227dd6546180724f3bbb67928cec538c786876f644699d97167566a1e8aa",
+      "note": "freeze record; full bytes in exclusive output FREEZE-v2.diff",
+      "git_blob_sha": "f2dd92b6ec9c34dc6180d895bf0bcec6b40a9c5b"
+    }
+  },
+  "root_counterexample": {
+    "probe_file": "/tmp/j1-parser-root-unit-frozen-probe.json",
+    "validity": "independent frozen-input counterexample only; first actor-cleared-proto ModuleNotFoundError probe is void and not evidence",
+    "finding": {
+      "units=\"bohr\"": "v1 ACCEPTED coords [[1.0,0,0]] (wrong)",
+      "units \"bohr\"": "v1 ACCEPTED coords [[1.0,0,0]] (wrong)",
+      "units=bohr": "v1 REJECTED unsupported_unit (correct)"
+    }
+  },
+  "root_cause": "_check_structured_unit_declarations stripped quoted spans from the whole line before regex, deleting quoted declaration values (units=\"bohr\" -> units= ), so the value regex naturally missed",
+  "lexical_fix": "strip trailing # comments outside quotes; match units =/space declarations on the code region with possibly-quoted values; ignore a match only when the units keyword itself sits inside a quoted title span; quoted values stay real declarations; !-line tokens checked on quote-stripped code; source_label never scanned",
+  "scope_unchanged": "established single inline * xyz default-Angstrom scope only; no new ORCA syntax supported",
+  "new_regressions": {
+    "count": 13,
+    "rejected_quoted": "units=\"bohr\" / units 'bohr' / bohrs plural eq+space / nm eq+space / unknown xyzzy eq+space, each with code+line+source+field+prefix",
+    "positive": "! HF # units=\"bohr\" inline comment, %base \"units=bohr\" quoted title, %base \"my bohr job\", pure # comment",
+    "label": "source_label units=\"bohr\" never triggers; wrong-label error still carries label",
+    "v1_failure": "all 8 quoted-decl cases ACCEPTED on v1 module bytes (direct import proof 8/8), REJECTED on v2",
+    "original_50": "all nodes and success/failure assertions preserved unchanged"
+  },
+  "units_equivalence": "default-Angstrom renderer water input parses byte-identical JSON on v1 vs v2 module bytes (subprocess PYTHONPATH isolation proof)",
+  "api_freeze_v2": {
+    "function": "parse_orca_input_text(text: str, *, source_label: str = 'text') -> dict",
+    "success_keys": [
+      "elements",
+      "coordinates",
+      "charge",
+      "multiplicity",
+      "source_format",
+      "warnings"
+    ],
+    "source_format": "orca-inp",
+    "error": "OrcaInputParseError(ValueError) with code/line/source_label/field/filename; native_input_error prefix; fields not text parsing",
+    "codes": [
+      "multiple_geometries",
+      "incomplete_geometry",
+      "empty_geometry",
+      "unknown_coordinate_token",
+      "unknown_element",
+      "invalid_coordinate",
+      "invalid_header",
+      "unsupported_unit",
+      "missing_external_context"
+    ]
+  },
+  "tests_v2": {
+    "runner": "pytest -o addopts= -p no:cacheprovider",
+    "pythonpath": "fixed noeditable tree per case (/tmp/j1-parser-proto for v2, /tmp/j1-parser-root-review for v1 proof)",
+    "new_file": "tests/v4/test_orca_input_parsing.py: 63 passed (50 preserved + 13 new)",
+    "existing_orca_k": "tests/v4 -k orca: 230 passed, 4160 deselected (217 old + 13 new)",
+    "collect_baseline": 4990,
+    "collect_after_v2": 5053,
+    "collect_delta": "+63 (new file only)",
+    "ruff": "pass on both new source+test files",
+    "mypy": "pass on both new source+test files",
+    "black": "pass (check clean)",
+    "no_full_golden": true
+  },
+  "not_started": [
+    "paired J1 producer structure_preview routing",
+    "JD atom-picker GUI chain",
+    "Bohr conversion (no CODATA constant added)",
+    "cross-repo picker integration"
+  ],
+  "submit": {
+    "committed": false,
+    "pushed": false,
+    "merged": false,
+    "tagged": false
+  },
+  "commit_trailer_reserved": "Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>",
+  "failure_reporting": "no fabrications; void first probe (actor-cleared ModuleNotFoundError) excluded from evidence by instruction"
+}

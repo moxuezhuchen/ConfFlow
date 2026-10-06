@@ -2149,6 +2149,164 @@ RULES.append(
 )
 
 # ---------------------------------------------------------------------------
+# DIET-2 P0.2 LOC budget (AP-107) and G16 new-filename guard (AP-108).
+# Authority: docs/diet-2/PLAN.md P0.2 + appendix A (not the L0.4a inventory,
+# so source pins "DIET-2 P0.2"). AST is not involved: both rules measure the
+# working tree on disk. Positive case: the real tree at the budget commit is
+# clean because every limit equals the measured actual. Negative cases: a
+# fixture tree with a shrunken limit (AP-107) or an unlisted matching name
+# (AP-108). AP-108 exempts the grandfathered list in tools/loc_budget.json
+# (all matches existing at P0.2); the list may only shrink — deleting a
+# historical file removes its entry, adding entries to excuse new files is
+# forbidden (see the JSON grandfather_note). G20 applies: compressing lines
+# to fit the budget counts as a violation of the budget's intent and is
+# judged in review, with black/ruff formatting unchanged.
+# ---------------------------------------------------------------------------
+
+LOC_BUDGET_FILE = "tools/loc_budget.json"
+
+
+def _loc_budget_load(root: Path) -> dict | None:
+    try:
+        data = json.loads((Path(root) / LOC_BUDGET_FILE).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return dict(data) if isinstance(data, dict) else None
+
+
+def _loc_budget_assign(rel: str, subsystems: list[dict]) -> str:
+    import fnmatch
+
+    for sub in subsystems:
+        for pat in sub.get("patterns", []):
+            if "*" in pat or "?" in pat or "[" in pat:
+                if fnmatch.fnmatch(rel, pat):
+                    return str(sub["id"])
+            elif pat.endswith("/"):
+                if rel.startswith(pat):
+                    return str(sub["id"])
+            elif rel == pat or rel == pat + ".py" or rel.startswith(pat + "/"):
+                return str(sub["id"])
+    return "common"
+
+
+def _loc_physical_lines(path: Path) -> int:
+    with open(path, encoding="utf-8") as handle:
+        return sum(1 for _ in handle)
+
+
+def _loc_budget_counts(root: Path, budget: dict) -> tuple[dict[str, int], int]:
+    root = Path(root)
+    subsystems = budget.get("subsystems", [])
+    actual: dict[str, int] = {sub["id"]: 0 for sub in subsystems}
+    for path in sorted((root / "confflow").rglob("*.py")):
+        if "__pycache__" in path.parts:
+            continue
+        rel = str(path.relative_to(root))
+        assigned = _loc_budget_assign(rel, subsystems)
+        actual[assigned] = actual.get(assigned, 0) + _loc_physical_lines(path)
+    tests_total = 0
+    tests_dir = root / "tests"
+    if tests_dir.is_dir():
+        for path in sorted(tests_dir.rglob("*.py")):
+            if "__pycache__" in path.parts:
+                continue
+            tests_total += _loc_physical_lines(path)
+    return actual, tests_total
+
+
+def loc_budget_violations(root: Path) -> list[dict]:
+    """AP-107: any subsystem (or the tests total) over its budget fails."""
+    budget = _loc_budget_load(root)
+    if budget is None:
+        return [
+            {
+                "rule": "AP-107",
+                "path": LOC_BUDGET_FILE,
+                "line": 0,
+                "detail": "loc budget file missing or unparsable",
+            }
+        ]
+    actual, tests_total = _loc_budget_counts(root, budget)
+    violations: list[dict] = []
+    for sub in budget.get("subsystems", []):
+        limit = sub.get("prod_loc_limit")
+        got = actual.get(sub["id"], 0)
+        if isinstance(limit, int) and got > limit:
+            violations.append(
+                {
+                    "rule": "AP-107",
+                    "path": f"subsystem:{sub['id']}",
+                    "line": 0,
+                    "detail": f"{sub['id']} prod LOC {got} over budget {limit}",
+                }
+            )
+    limit = budget.get("tests_total_loc_limit")
+    if isinstance(limit, int) and tests_total > limit:
+        violations.append(
+            {
+                "rule": "AP-107",
+                "path": "tests/",
+                "line": 0,
+                "detail": f"tests total LOC {tests_total} over budget {limit}",
+            }
+        )
+    return violations
+
+
+def _test_filename_is_banned(basename: str) -> bool:
+    if re.match(r"test_v4[0-9]_.*\.py$", basename):
+        return True
+    return basename.endswith(".py") and "_coverage" in basename
+
+
+def test_filename_violations(root: Path) -> list[dict]:
+    """AP-108 (G16): a NEW stage-named test file fails; listed ones pass."""
+    root = Path(root)
+    budget = _loc_budget_load(root)
+    if budget is None:
+        return [
+            {
+                "rule": "AP-108",
+                "path": LOC_BUDGET_FILE,
+                "line": 0,
+                "detail": "loc budget file missing or unparsable",
+            }
+        ]
+    grandfathered = set(budget.get("grandfathered", []))
+    violations: list[dict] = []
+    tests_dir = root / "tests"
+    if not tests_dir.is_dir():
+        return violations
+    for path in sorted(tests_dir.rglob("*.py")):
+        if "__pycache__" in path.parts:
+            continue
+        if not _test_filename_is_banned(path.name):
+            continue
+        rel = str(path.relative_to(root))
+        if rel not in grandfathered:
+            violations.append(
+                {"rule": "AP-108", "path": rel, "line": 0, "detail": "new stage-named test"}
+            )
+    return violations
+
+
+RULES.append(
+    {
+        "id": "AP-107",
+        "kind": "custom_loc_budget",
+        "source": "DIET-2 P0.2",
+    }
+)
+RULES.append(
+    {
+        "id": "AP-108",
+        "kind": "custom_test_filename",
+        "source": "DIET-2 P0.2",
+    }
+)
+
+# ---------------------------------------------------------------------------
 # Scanner entry points
 # ---------------------------------------------------------------------------
 
@@ -2642,6 +2800,10 @@ def scan(
                     violations.append(
                         {"rule": rid, "path": relpath, "line": lineno, "detail": detail}
                     )
+        elif kind == "custom_loc_budget":
+            violations.extend(loc_budget_violations(root))
+        elif kind == "custom_test_filename":
+            violations.extend(test_filename_violations(root))
         elif kind in ("const", "meta_case", "metric"):
             continue  # evaluated by check_const_rules / fixture cases / metrics
         else:

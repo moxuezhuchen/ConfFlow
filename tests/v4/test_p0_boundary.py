@@ -140,6 +140,7 @@ class TestPublishedSchemas:
             "check_compatibility",
             "compile_intent",
             "preview_paths",
+            "structure_preview",
         ]
 
     def test_schema_ids(self) -> None:
