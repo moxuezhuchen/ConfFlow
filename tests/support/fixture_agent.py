@@ -13,9 +13,9 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from . import cli
-from .control import _snapshot_response, _write_response, run_request
-from .core.contracts import ExitCode
+from confflow import cli
+from confflow.control import _snapshot_response, _write_response, run_request
+from confflow.core.contracts import ExitCode
 
 
 def _actual_entrypoint() -> str | None:
@@ -35,7 +35,7 @@ def _fixture_after_execute(
     _queued_response: dict[str, Any],
 ) -> dict[str, Any]:
     """Consume the same durable queued intent and return its final snapshot."""
-    from .application.execution.synthetic_producer import synthetic_agent_entry
+    from tests.support.synthetic_producer import synthetic_agent_entry
 
     snapshot = synthetic_agent_entry(state_root, run_id, identity_executable=identity_executable)
     return _snapshot_response("execute", snapshot)

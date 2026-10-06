@@ -45,8 +45,8 @@ try:
 except ImportError:  # pragma: no cover - non-POSIX platforms
     _fcntl = None  # type: ignore[assignment]
 
-from .errors import ErrorCode, ExecutionServiceError
-from .models import (
+from confflow.application.execution.errors import ErrorCode, ExecutionServiceError
+from confflow.application.execution.models import (
     TERMINAL_STATES,
     Artifact,
     CancelReceipt,
@@ -56,11 +56,11 @@ from .models import (
     RunSnapshot,
     RunState,
 )
-from .ports import WorkflowExecutor
-from .service import ExecutionLifecycle, ExecutionService
-from .sqlite import SQLiteExecutionRepository
-from .state_root import StateRoot
-from .workflow_adapter import FileIdentityVerifier
+from confflow.application.execution.ports import WorkflowExecutor
+from confflow.application.execution.service import ExecutionLifecycle, ExecutionService
+from confflow.application.execution.sqlite import SQLiteExecutionRepository
+from confflow.application.execution.state_root import StateRoot
+from confflow.application.execution.workflow_adapter import FileIdentityVerifier
 
 __all__ = [
     "SYNTHETIC_ARTIFACT",

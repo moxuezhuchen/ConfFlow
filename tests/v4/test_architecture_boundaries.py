@@ -165,22 +165,38 @@ class TestFacadeLazyIsolation:
         assert isinstance(HARTREE_TO_KCALMOL, float)
 
     def test_application_public_surface_still_importable(self) -> None:
+        import pytest
+
         from confflow.application import ExecutionService as AppExecutionService
         from confflow.application.execution import (
             ExecutionService,
-            InMemoryExecutionRepository,
             RunPaths,
             RunState,
-            SyntheticProducerExecutor,
             build_workflow_service,
         )
 
         assert ExecutionService is AppExecutionService
         assert RunState.__name__ == "RunState"
         assert RunPaths.__name__ == "RunPaths"
-        assert InMemoryExecutionRepository.__name__ == "InMemoryExecutionRepository"
-        assert SyntheticProducerExecutor.__name__ == "SyntheticProducerExecutor"
         assert callable(build_workflow_service)
+        # DIET-2 R1.1: the dev-fixture helpers left the production package
+        # for tests.support; the lazy facade must no longer resolve them.
+        import confflow.application.execution as execution
+
+        for removed in (
+            "InMemoryExecutionRepository",
+            "SyntheticProducerExecutor",
+            "open_synthetic_service",
+            "synthetic_agent_entry",
+            "SYNTHETIC_ARTIFACT",
+            "SYNTHETIC_ARTIFACT_CONTENT",
+            "SYNTHETIC_ARTIFACT_PATH",
+            "SYNTHETIC_ARTIFACT_SCHEMA",
+            "SYNTHETIC_ARTIFACT_TERMINAL",
+            "SYNTHETIC_CHECKPOINT_ID",
+        ):
+            with pytest.raises(AttributeError):
+                getattr(execution, removed)
 
 
 class TestPackaging:
