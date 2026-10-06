@@ -1,0 +1,30 @@
+{
+  "frozen": true,
+  "measured_at": "2026-10-06T09:23:05Z",
+  "note": "P0 一次性冻结，不随后续里程碑重取；修改须写明理由并经用户确认。",
+  "source_commit": "b771b524ff83a8be0d005e28f2004be68e0cb2de",
+  "subsystems": {
+    "confgen_kernel": {
+      "covered": 3490,
+      "percent": 86.75,
+      "valid": 4023
+    },
+    "execution": {
+      "covered": 4272,
+      "percent": 88.81,
+      "valid": 4810
+    },
+    "persistence": {
+      "covered": 2134,
+      "percent": 88.88,
+      "valid": 2401
+    },
+    "workflow": {
+      "covered": 2260,
+      "percent": 87.66,
+      "valid": 2578
+    }
+  },
+  "tolerance_pp": 5,
+  "xml_sha256": "672a4dd9fe8c36e7f28aa0eef723557571a5a47453d9713e286cb135d99ac4c2"
+}

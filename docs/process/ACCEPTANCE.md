@@ -173,3 +173,9 @@ python3 $TOOLS/golden_check.py --base $BASE --cf <对应 CF 提交的工作树> 
 - 新增 `tools/affected_tests.py`：根据 `git diff` 中的生产模块，用 import 图找出受影响的测试文件。
 - 卡片级验收没有覆盖到的回归，只要在里程碑级被发现，就由造成它的那张卡返工；不允许在里程碑末尾以一张"修补卡"一并处理。
 - 验收：在 R1 的第一张卡上试用，记录卡片级与全量的耗时对比。
+
+---
+
+## 8. 子系统覆盖率下限（DIET-2 P0.1b）
+
+卡片级验收的覆盖率三层检查中，第三层为子系统下限：`execution/`、`persistence/`、`workflow/`、`science/confgen/` 顶层 kernel 文件（组件子包 `coordination/`、`ring/`、`torsion/` 除外）的行覆盖率不得低于 `tools/coverage_baseline.json` 中 P0 一次性冻结值减 5 个百分点。本地运行 `python tools/subsystem_coverage.py check --xml coverage.xml --baseline tools/coverage_baseline.json`；CI 在 coverage job 的 Changed-line 步骤后对所有事件运行同一命令。基线冻结后不得重取，修改须写明理由并经用户确认。
