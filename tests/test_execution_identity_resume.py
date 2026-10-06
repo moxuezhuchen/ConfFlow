@@ -146,9 +146,10 @@ def test_completed_attach_rejects_missing_required_output(tmp_path: Path):
     def runner(**_kwargs):
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text("1\nresult\nH 0 0 0\n", encoding="utf-8")
-        (work / "workflow_stats.json").write_text(
-            '{"final_output": "' + str(output) + '"}', encoding="utf-8"
-        )
+        # NOTE (L2-CF-delete): no legacy workflow_stats.json fixture is
+        # written here. A resume without run_result.json is no longer legal,
+        # and this legacy document is refused at the V4 preflight before any
+        # attach could read it.
         return {"ok": True}
 
     common = dict(

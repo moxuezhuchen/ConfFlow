@@ -330,7 +330,7 @@ def _commit_cancel_or_manifest_winner(
     """
     from .application.execution.workflow_adapter import (
         ExecutionLifecycle,
-        _load_artifacts,
+        _terminal_artifacts_for_status,
     )
     from .application.v4_entry import terminalize_generation_for_durable_cancel
 
@@ -345,8 +345,8 @@ def _commit_cancel_or_manifest_winner(
     if status == "cancelled":
         return lifecycle.cancelled().state
     try:
-        artifacts = _load_artifacts(work_dir)
-    except Exception:  # noqa: BLE001 - a legacy manifest defect must not block the terminal commit
+        artifacts = _terminal_artifacts_for_status(work_dir, status)
+    except Exception:  # noqa: BLE001 - a V4 manifest defect must not block the terminal commit
         artifacts = ()
     if control_service.status(run_id).state is RunState.QUEUED:
         # A requeued (recovered) attempt whose producer already published a

@@ -6,6 +6,11 @@ These tests act as the guard for the JobDesk<->ConfFlow handshake on the
 ConfFlow side: any rename or removal of the names listed in
 ``confflow.contract.__all__`` is a wire-protocol break and must be
 coordinated with the JobDesk consumer.
+
+L2-CF-contract retired the legacy schema/filename constants (their only
+production consumer was the ``--capabilities`` announcement itself). The
+guard below pins the retired names as absent and the V4 filenames as the
+only advertised artifacts.
 """
 
 from __future__ import annotations
@@ -20,12 +25,21 @@ from confflow import contract
 
 
 def test_contract_public_api_is_exactly_what_we_expect():
-    """The public contract surface must include all versioned artifact schemas."""
+    """The public contract surface is the V4 handshake only."""
     assert contract.__all__ == [
+        "CAPABILITY_SCHEMA_VERSION",
+        "REQUIRED_COMMANDS",
+        "RUN_GENERATION_FILE",
+        "RUN_RESULT_FILE",
+    ]
+
+
+def test_legacy_contract_symbols_stay_retired():
+    """The L2-retired schema/filename constants must not come back."""
+    for retired in (
         "OUTPUT_MANIFEST_SCHEMA",
         "OUTPUT_MANIFEST_SCHEMA_V2",
         "OUTPUT_MANIFEST_FILE",
-        "CAPABILITY_SCHEMA_VERSION",
         "RUN_SUMMARY_SCHEMA",
         "WORKFLOW_STATS_SCHEMA",
         "WORKFLOW_STATS_SCHEMA_V2",
@@ -36,29 +50,21 @@ def test_contract_public_api_is_exactly_what_we_expect():
         "WORKFLOW_STATE_FILE",
         "RUN_REPORT_FILE",
         "RUN_MIN_XYZ_TEMPLATE",
-        "REQUIRED_COMMANDS",
-    ]
-
-
-def test_workflow_state_schema_versions_are_frozen():
-    """The two state schema families share one filename, dispatched by id."""
-    assert contract.WORKFLOW_STATE_SCHEMA == "confflow.workflow_state.v1"
-    assert contract.WORKFLOW_STATE_SCHEMA_V2 == "confflow.workflow_state.v2"
+    ):
+        assert retired not in contract.__all__, f"{retired} must stay retired"
+        assert not hasattr(contract, retired), f"contract.{retired} must stay deleted"
 
 
 def test_capability_schema_version_is_v4():
-    """Producer is locked to schema_version=4; JobDesk rejects any other value."""
+    """Producer stays at schema_version=4; no strict JD consumer needs a bump."""
     assert contract.CAPABILITY_SCHEMA_VERSION == 4
     assert isinstance(contract.CAPABILITY_SCHEMA_VERSION, int)
 
 
 def test_artifact_filenames_have_expected_values():
     """Producer-side artifact names are the contract; JobDesk matches these."""
-    assert contract.RUN_SUMMARY_FILE == "run_summary.json"
-    assert contract.WORKFLOW_STATS_FILE == "workflow_stats.json"
-    assert contract.WORKFLOW_STATE_FILE == ".workflow_state.json"
-    assert contract.RUN_REPORT_FILE == "{basename}.txt"
-    assert contract.RUN_MIN_XYZ_TEMPLATE == "{basename}min.xyz"
+    assert contract.RUN_RESULT_FILE == "run_result.json"
+    assert contract.RUN_GENERATION_FILE == "run_generation.json"
     assert contract.REQUIRED_COMMANDS == (
         "bash",
         "nohup",
@@ -68,9 +74,6 @@ def test_artifact_filenames_have_expected_values():
         "mktemp",
         "base64",
     )
-    assert contract.RUN_SUMMARY_SCHEMA == "confflow.run_summary.v1"
-    assert contract.WORKFLOW_STATS_SCHEMA == "confflow.workflow_stats.v1"
-    assert contract.WORKFLOW_STATE_SCHEMA == "confflow.workflow_state.v1"
 
 
 def test_contract_is_not_re_exported_from_package_root():
@@ -96,12 +99,8 @@ def test_cli_capability_payload_uses_contract_constants():
     payload = cli_module._CAPABILITY_PAYLOAD
     assert payload["schema_version"] == contract.CAPABILITY_SCHEMA_VERSION
     assert payload["artifacts"] == {
-        "run_summary": contract.RUN_SUMMARY_FILE,
-        "workflow_stats": contract.WORKFLOW_STATS_FILE,
-        "workflow_state": contract.WORKFLOW_STATE_FILE,
-        "run_report": contract.RUN_REPORT_FILE,
-        "min_xyz": contract.RUN_MIN_XYZ_TEMPLATE,
-        "output_manifest": contract.OUTPUT_MANIFEST_FILE,
+        "run_result": contract.RUN_RESULT_FILE,
+        "run_generation": contract.RUN_GENERATION_FILE,
     }
     assert set(payload["commands"]) == set(contract.REQUIRED_COMMANDS)
     assert all(isinstance(value, bool) for value in payload["commands"].values())

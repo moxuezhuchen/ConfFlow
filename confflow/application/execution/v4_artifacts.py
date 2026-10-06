@@ -1,9 +1,10 @@
-"""Typed V4 artifact projection for service/control_worker (L2 pre-card).
+"""Typed V4 artifact projection for service/control_worker (L2 delete card).
 
-Additive only: the legacy ``output_manifest.json`` chain in
-:mod:`confflow.application.execution.workflow_adapter` is untouched, and no
-contract/JD/runner signature changes.  This module provides the real V4
-mapping that the later delete card will switch call sites to.
+This module is the single terminal-artifact projection for the service and
+control worker: the legacy ``output_manifest.json`` / ``workflow_stats.json``
+/ ``.workflow_state.json`` chain in
+:mod:`confflow.application.execution.workflow_adapter` is retired, and no
+contract/JD/runner signature legacy remains on this path.
 
 Real anchors (fixed HEAD ``0d8486034ac5f026d9ce623cca1748f2691c8e13``):
 

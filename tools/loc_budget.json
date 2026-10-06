@@ -101,10 +101,9 @@
         "confflow/worker_*.py"
       ],
       "prod_files": 23,
-      "prod_loc_limit": 5678,
+      "prod_loc_limit": 5465,
       "ratchet": "R1/R2 上限不变；N 阶段按卡预算增长；里程碑验收后以实际值重写本上限；其余时间只降不升。",
-      "reason": "R1.1 生产→测试转移后上限 5276(5815-539)；加 L2 第一张卡已批准的临时例外 +402 = 5678；L2 旧链删除卡必须降回 ≤5276 并撤销例外。",
-      "temporary_until": "L2 old-chain deletion card"
+      "reason": "L2-CF 两卡后实测 5465(基线 5657-192：delete 卡删旧投影链约 170、contract 卡删旧常量约 22)。第一张卡临时例外 +402 已撤销(删 temporary_until)。5276 未达成：现 main 下域内可删旧链仅约 192 行(非 402)，差 189 行无更多域内旧链可删，见 L2CF 报告；后续卡补足后再降。"
     },
     {
       "id": "producer",
@@ -210,6 +209,6 @@
     }
   ],
   "tests_total_files": 245,
-  "tests_total_loc_limit": 121806,
-  "tests_total_reason": "R1.1 转移 +616(120560→121176)，加 L2 临时例外 +630 = 121806；随 T 阶段/里程碑实际值重写后回落。"
+  "tests_total_loc_limit": 107210,
+  "tests_total_reason": "L2-CF 两卡后实测 107134，上取整到百位 +66 余量 = 107200(旧上限 121806 回落；R1.1 转移与 L2 临时例外说明归档于 git 历史)。 本卡补覆盖测试后重置为实际值 107210（净低于 R1 之前的 121806）。"
 }
