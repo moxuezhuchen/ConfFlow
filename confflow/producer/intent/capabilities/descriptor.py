@@ -108,6 +108,16 @@ class CapabilityDescriptor:
     # ``fragment_keys``; the seeds authority (needs_seed/current/set) stays
     # the sole science decider.
     seed_block_keys: tuple[str, ...] = ()
+    # L1-A2b1 (recipe assignment hooks): generic recipe orchestration calls
+    # these by wire executor.  ``None`` is a legal capability declaration
+    # ("this executor needs no explicit recipe assignment", e.g. confgen /
+    # transform today) and means skip -- it is NOT a metadata-lookup failure.
+    # Unknown executors (no descriptor) also resolve to ``None`` at query
+    # time (old non-calculation early-return analogue); registry conflicts /
+    # import errors / non-callable declarations fail closed at assembly and
+    # never collapse into ``None``.
+    requires_assignment: Callable[..., None] | None = None
+    patch_recipe_step: Callable[..., Any] | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.key, str) or not self.key.strip():
@@ -142,6 +152,13 @@ class CapabilityDescriptor:
             raise ValueError("CapabilityDescriptor rejected_step_keys carries duplicates")
         if not isinstance(self.wire_block_key, str):
             raise ValueError("CapabilityDescriptor wire_block_key must be a string")
+        for _hook_name in ("requires_assignment", "patch_recipe_step"):
+            try:
+                _hook = getattr(self, _hook_name, None)
+            except Exception as exc:
+                raise ValueError(f"CapabilityDescriptor {_hook_name} unreadable") from exc
+            if _hook is not None and not callable(_hook):
+                raise ValueError(f"CapabilityDescriptor {_hook_name} must be callable or None")
         if not isinstance(self.seed_block_keys, (tuple, list, frozenset, set)):
             raise ValueError("CapabilityDescriptor seed_block_keys must be a tuple of strings")
         seed_keys = tuple(self.seed_block_keys)

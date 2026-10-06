@@ -120,9 +120,31 @@ def build_intent_registry(
                     f"{sorted(seed_keys)!r} not in fragment_keys "
                     f"{tuple(descriptor.fragment_keys)!r}"
                 )
+        # L1-A2b1: recipe hooks must be callable-or-None (fail-closed, never
+        # silent None).  Missing attribute derives None for C2-era compat.
+        for _hook_name in ("requires_assignment", "patch_recipe_step"):
+            try:
+                _has = hasattr(descriptor, _hook_name)
+            except Exception as exc:
+                raise ValueError(
+                    f"CapabilityDescriptor {descriptor.key!r} recipe hook unreadable"
+                ) from exc
+            if not _has:
+                continue
+            try:
+                _hook = getattr(descriptor, _hook_name)
+            except Exception as exc:
+                raise ValueError(
+                    f"CapabilityDescriptor {descriptor.key!r} recipe hook unreadable"
+                ) from exc
+            if _hook is not None and not callable(_hook):
+                raise ValueError(
+                    f"CapabilityDescriptor {descriptor.key!r} {_hook_name} must be callable or None"
+                )
         seen[descriptor.key] = descriptor
     _check_executor_wire_consistency(seen)
     _check_executor_seed_consistency(seen)
+    _check_executor_recipe_hooks_consistency(seen)
     return IntentRegistry(entries=seen)
 
 
@@ -284,6 +306,107 @@ def _check_executor_seed_consistency(entries: Mapping[str, CapabilityDescriptor]
             )
 
 
+def _recipe_hook_pair(descriptor: Any) -> tuple[Any, Any]:
+    """Return the (requires_assignment, patch_recipe_step) pair (strict).
+
+    Missing attributes derive ``None`` for C2-era compat; present-but-invalid
+    (non-callable, non-None) raises fail-closed and never collapses into a
+    silent skip.  Unreadable attributes also raise.
+    """
+    try:
+        has_req = hasattr(descriptor, "requires_assignment")
+        has_patch = hasattr(descriptor, "patch_recipe_step")
+    except Exception as exc:
+        raise ValueError("recipe hook metadata unreadable") from exc
+    try:
+        req = getattr(descriptor, "requires_assignment", None) if has_req else None
+    except Exception as exc:
+        raise ValueError("recipe hook requires_assignment unreadable") from exc
+    try:
+        patch = getattr(descriptor, "patch_recipe_step", None) if has_patch else None
+    except Exception as exc:
+        raise ValueError("recipe hook patch_recipe_step unreadable") from exc
+    if req is not None and not callable(req):
+        raise ValueError("recipe hook requires_assignment must be callable or None")
+    if patch is not None and not callable(patch):
+        raise ValueError("recipe hook patch_recipe_step must be callable or None")
+    return req, patch
+
+
+def _check_executor_recipe_hooks_consistency(
+    entries: Mapping[str, CapabilityDescriptor],
+) -> None:
+    """Fail closed on divergent non-None recipe hook pairs (b1, ROOT-relaxed).
+
+    ``None``/``None`` is a legal C2-era declaration ("no hooks for this card")
+    and coexists with set pairs for the same executor (old custom probes stay
+    constructible; query returns the set pair).  Failure only when two
+    distinct non-None pairs exist for one executor, or when a single
+    descriptor sets exactly one of the two hooks (must be set together).
+    """
+    by_executor: dict[str, set[tuple[int, int]]] = {}
+    for descriptor in entries.values():
+        req, patch = _recipe_hook_pair(descriptor)
+        if (req is None) != (patch is None):
+            raise ValueError(
+                f"conflicting recipe hooks for executor {descriptor.executor!r}: "
+                "requires_assignment/patch_recipe_step must be set together"
+            )
+        if req is None and patch is None:
+            continue
+        key = (id(req), id(patch))
+        by_executor.setdefault(descriptor.executor, set()).add(key)
+    for executor, keys in by_executor.items():
+        if len(keys) != 1:
+            raise ValueError(f"conflicting recipe hooks for executor {executor!r}")
+
+
+def recipe_hooks_for_executor(registry: Any, executor: str) -> tuple[Any, Any] | None:
+    """Return the consistent recipe hook pair for *executor* (generic query).
+
+    Queries by wire ``executor`` (never by guessed card type, so recipe base
+    steps without ``_card_type`` resolve).  ``None`` means "no non-None hooks
+    declared for this executor" (today confgen/transform all-None; C2-era
+    custom cards with ``None`` coexisting with set defaults) or "no entry
+    for this executor" (unknown-executor analogue of the old non-block early
+    return) -- all skip, preserving old bytes.  Divergent non-None pairs and
+    partial (one-set/one-None) descriptors raise fail-closed and never
+    collapse into ``None``.
+    """
+    try:
+        entries = getattr(registry, "entries", None)
+    except Exception as exc:
+        raise ValueError("intent registry unreadable") from exc
+    if not isinstance(entries, Mapping):
+        if registry is None or entries is None:
+            return None
+        raise ValueError("intent registry entries must be a mapping")
+    found: list[tuple[Any, Any]] = []
+    for descriptor in entries.values():
+        try:
+            desc_executor = getattr(descriptor, "executor", None)
+        except Exception as exc:
+            raise ValueError("descriptor executor unreadable") from exc
+        if desc_executor != executor:
+            continue
+        req, patch = _recipe_hook_pair(descriptor)
+        if (req is None) != (patch is None):
+            raise ValueError(
+                f"conflicting recipe hooks for executor {executor!r}: "
+                "requires_assignment/patch_recipe_step must be set together"
+            )
+        if req is None and patch is None:
+            continue
+        found.append((req, patch))
+    if not found:
+        return None
+    first_req, first_patch = found[0]
+    for req, patch in found[1:]:
+        if not (req is first_req and patch is first_patch):
+            raise ValueError(f"conflicting recipe hooks for executor {executor!r}")
+    return first_req, first_patch
+
+
 def rejected_step_keys_for_legacy_fallback(executor: str) -> frozenset[str]:
     """Return the builtin rejected set for the legacy 4-arg fallback.
 
@@ -437,6 +560,8 @@ def build_default_intent_registry() -> IntentRegistry:
     from ...cards import CARD_TYPES, get_card
     from .calculation import REJECTED_STEP_KEYS as _CALC_REJECTED
     from .calculation import calculation_fragment
+    from .calculation import patch_recipe_block as _calc_patch_block
+    from .calculation import require_recipe_assignment as _calc_require
     from .confgen import REJECTED_STEP_KEYS as _CONFGEN_REJECTED
     from .confgen import confgen_fragment
     from .transform import REJECTED_STEP_KEYS as _TRANSFORM_REJECTED
@@ -455,16 +580,22 @@ def build_default_intent_registry() -> IntentRegistry:
             rejected = tuple(sorted(set(_CALC_REJECTED)))
             wire_block_key = str(fragment_keys[0])
             seed_block_keys = tuple(SEED_BLOCK_KEYS_BY_EXECUTOR["calculation"])
+            requires_assignment = _calc_require
+            patch_recipe_step = _calc_patch_block
         elif executor == "confgen":
             handler = confgen_fragment
             rejected = tuple(sorted(set(_CONFGEN_REJECTED)))
             wire_block_key = str(fragment_keys[0])
             seed_block_keys = tuple(SEED_BLOCK_KEYS_BY_EXECUTOR["confgen"])
+            requires_assignment = None
+            patch_recipe_step = None
         elif executor == "structure_transform":
             handler = transform_fragment
             rejected = tuple(sorted(set(_TRANSFORM_REJECTED)))
             wire_block_key = str(fragment_keys[0])
             seed_block_keys = tuple(SEED_BLOCK_KEYS_BY_EXECUTOR["structure_transform"])
+            requires_assignment = None
+            patch_recipe_step = None
         else:  # pragma: no cover - current cards only use the three above
             raise ValueError(f"unknown executor {executor!r} for card {card_type!r}")
         descriptors.append(
@@ -478,6 +609,8 @@ def build_default_intent_registry() -> IntentRegistry:
                 rejected_step_keys=rejected,
                 wire_block_key=wire_block_key,
                 seed_block_keys=seed_block_keys,
+                requires_assignment=requires_assignment,
+                patch_recipe_step=patch_recipe_step,
             )
         )
     return build_intent_registry(descriptors)

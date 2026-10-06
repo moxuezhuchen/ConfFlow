@@ -110,6 +110,72 @@ def _wire_calculation(
 _resolve_program.__module__ = "confflow.producer.intent.compiler"
 _wire_calculation.__module__ = "confflow.producer.intent.compiler"
 
+
+def require_recipe_assignment(
+    user: Mapping[str, Any], base: Mapping[str, Any], step_id: str
+) -> None:
+    """Require explicit science for a recipe calculation assignment (L1-A2b1).
+
+    Capability-owned verbatim of the old ``compiler._require_recipe_assignment``:
+    reviewed recipes ship demo program/native placeholders so the catalog stays
+    compilable; an intent selecting a recipe must replace them on every
+    calculation step with the user's own explicit program and native mapping.
+    Non-calculation bases return silently (old early-return preserved).
+    Keywords are never transformed or guessed.  Real ``__module__`` is kept
+    (no old-path masquerade).
+    """
+    if not isinstance(base.get("calculation"), Mapping):
+        return
+    if user.get("program") is None or user.get("native") is None:
+        raise _fail(
+            f"step {step_id!r}: recipe assignments require explicit program and native "
+            "(demo recipe science must not leak into production)",
+            step_id=step_id,
+        )
+
+
+def patch_recipe_block(
+    calculation_block: Mapping[str, Any], user: Mapping[str, Any], step_id: str
+) -> dict[str, Any]:
+    """Patch one calculation wire block with user assignments (L1-A2b1, pure).
+
+    Capability-owned verbatim of the old ``compiler._patch_recipe_step``
+    calculation-mapping section (``program`` via ``_resolve_program``,
+    ``native`` whole-replace, ``role``/``adapter``/``profile``/``checks``/
+    ``check_params``/``recovery(+params)``/``seed``/``overrides``).
+    Takes the block mapping (not the whole step), returns a new dict.
+    Outer step fields (``_expanded``/resources/scheduler/annotations) stay in
+    the generic orchestrator ``producer/intent/recipes.py``.  Real
+    ``__module__`` is kept.
+    """
+    calculation = copy.deepcopy(dict(calculation_block))
+    if user.get("program") is not None:
+        calculation["program"] = _resolve_program(user["program"], step_id=step_id)
+    if user.get("native") is not None:
+        if not isinstance(user["native"], Mapping):
+            raise _fail(f"step {step_id!r} native must be a mapping", step_id=step_id)
+        calculation["native"] = copy.deepcopy(dict(user["native"]))
+    if user.get("role") is not None:
+        calculation["role"] = user["role"]
+    if user.get("adapter") is not None:
+        calculation["execution_adapter"] = copy.deepcopy(user["adapter"])
+    if user.get("profile") is not None:
+        calculation["result_profile"] = copy.deepcopy(user["profile"])
+    if user.get("checks") is not None:
+        calculation["checks"] = copy.deepcopy(list(user["checks"]))
+    if user.get("check_params") is not None:
+        calculation["check_params"] = copy.deepcopy(dict(user["check_params"]))
+    if user.get("recovery") is not None:
+        recovery = dict(calculation.get("recovery", {}))
+        recovery["profile"] = user["recovery"]
+        calculation["recovery"] = recovery
+    if user.get("seed") is not None:
+        calculation["seed"] = user["seed"]
+    if user.get("overrides") is not None:
+        calculation["overrides"] = copy.deepcopy(dict(user["overrides"]))
+    return calculation
+
+
 #: Step keys this executor cannot consume (R1 authority, verbatim old branch).
 #: Old compiler branch was ``{"preset"}`` for ``calculation``.
 #: Wire block: ``"calculation"`` (= ``fragment_keys[0]`` for calculation cards;

@@ -1272,40 +1272,28 @@ def compile_intent(
             raise _fail(f"cannot load the execution registry: {exc}") from exc
         registry = default_registry()
 
-    # Patch recipe base steps with user assignments keyed by id.
-    wire_steps: list[dict[str, Any]] = [copy.deepcopy(step) for step in base_wire_steps]
-    base_by_id = {str(step.get("id")): step for step in wire_steps if isinstance(step, dict)}
-    appended: list[dict[str, Any]] = []
-    matched: set[str] = set()
-    for user in user_steps:
-        explicit_id = str(user["id"])
-        if explicit_id in base_by_id:
-            base_calc = base_by_id[explicit_id].get("calculation")
-            base_role: str | None = None
-            if isinstance(base_calc, Mapping):
-                raw_role = base_calc.get("role")
-                base_role = raw_role if isinstance(raw_role, str) else None
-            if user.get("native") is None and isinstance(user.get("native_by_role"), Mapping):
-                user = {
-                    **user,
-                    "native": _select_family_native(
-                        {"native_by_role": user["native_by_role"]},
-                        base_role,
-                        context=f"step {explicit_id!r}",
-                    ),
-                }
-            _require_recipe_assignment(user, base_by_id[explicit_id], explicit_id)
-            _patch_recipe_step(base_by_id[explicit_id], user, explicit_id)
-            if isinstance(user.get("_named_card"), str):
-                base_by_id[explicit_id]["_named_card"] = user["_named_card"]
-                _annotations = dict(base_by_id[explicit_id].get("annotations") or {})
-                _resolution = dict(_annotations.get("producer_resolution") or {})
-                _resolution["named_card"] = user["_named_card"]
-                _annotations["producer_resolution"] = _resolution
-                base_by_id[explicit_id]["annotations"] = _annotations
-            matched.add(explicit_id)
-        else:
-            appended.append(user)
+    # Patch recipe base steps with user assignments keyed by id (L1-A2b1:
+    # generic hook dispatch by wire executor; no executor literal branch here.
+    # The same explicit intent_registry instance flows to every helper;
+    # public wrappers keep their 3-param defaults via the default registry.)
+    from .recipes import missing_recipe_assignments as _missing_generic
+    from .recipes import run_recipe_lane as _run_recipe_lane
+
+    def _hooks_of(_executor: str) -> tuple[Any, Any] | None:
+        from .capabilities.registry import recipe_hooks_for_executor as _query
+
+        return _query(intent_registry, _executor)
+
+    def _wire_key_of(_executor: str) -> str | None:
+        return _wire_block_key_for_executor(intent_registry, _executor)
+
+    wire_steps, base_by_id, matched, appended = _run_recipe_lane(
+        base_wire_steps,
+        user_steps,
+        hooks_of=_hooks_of,
+        wire_key_of=_wire_key_of,
+        select_family_native_fn=_select_family_native,
+    )
     if base_wire_steps and role_cards:
         covered = _apply_role_cards(
             wire_steps,
@@ -1316,11 +1304,7 @@ def compile_intent(
         )
         matched = set(matched) | set(covered)
     if base_wire_steps:
-        missing = sorted(
-            str(step.get("id"))
-            for step in base_wire_steps
-            if isinstance(step.get("calculation"), Mapping) and str(step.get("id")) not in matched
-        )
+        missing = _missing_generic(base_wire_steps, matched, hooks_of=_hooks_of)
         if missing:
             raise _fail(
                 "recipe requires explicit program/native assignments for every "
@@ -1677,64 +1661,64 @@ def compile_intent(
 def _require_recipe_assignment(
     user: Mapping[str, Any], base: Mapping[str, Any], step_id: str
 ) -> None:
-    """Require explicit science for a recipe calculation assignment.
+    """Require explicit science for a recipe assignment (L1-A2b1 compat wrapper).
 
-    Reviewed recipes ship demo program/native placeholders so the catalog
-    stays compilable; an intent that selects a recipe must replace them on
-    every calculation step with the user's own explicit program and native
-    mapping.  Keywords are never transformed or guessed from method text.
+    Same 3-param signature and same error order/text as before; behavior is
+    identical on all real wires.  Delegates to the generic hook from the
+    default registry by wire ``executor`` (never by guessed card type, no
+    component literal here): legal ``None`` hooks skip (old non-block early
+    analogue); unknown/no-executor wires skip (old baseline: reviewed bases
+    without hooks carry no assignment blocks).  Real ``compile_intent`` uses
+    the same custom registry explicitly (no default construction inside the
+    lane).  The wrapper is not the same object as the capability
+    implementation (no ``is`` promise); exceptions propagate unwrapped so the
+    five-tuple is byte-identical.
     """
-    if not isinstance(base.get("calculation"), Mapping):
+    try:
+        executor = base.get("executor") if isinstance(base, Mapping) else None
+    except Exception:
+        executor = None
+    if not isinstance(executor, str) or not executor:
         return
-    if user.get("program") is None or user.get("native") is None:
-        raise _fail(
-            f"step {step_id!r}: recipe assignments require explicit program and native "
-            "(demo recipe science must not leak into production)",
-            step_id=step_id,
-        )
+    from .capabilities.registry import build_default_intent_registry
+    from .capabilities.registry import recipe_hooks_for_executor as _query
+
+    hooks = _query(build_default_intent_registry(), executor)
+    if hooks is None:
+        return
+    require_fn, _patch_fn = hooks
+    if require_fn is None:
+        return
+    require_fn(user, base, step_id)
 
 
 def _patch_recipe_step(patched: dict[str, Any], user: Mapping[str, Any], step_id: str) -> None:
-    """Apply user card assignments onto one reviewed recipe step in place."""
-    patched["_expanded"] = True
-    calculation = patched.get("calculation")
-    if not isinstance(calculation, Mapping):
-        return
-    calculation = copy.deepcopy(dict(calculation))
-    if user.get("program") is not None:
-        from .capabilities.calculation import _resolve_program as _resolve_program_cap2
+    """Apply user assignments onto one recipe step (L1-A2b1 compat wrapper).
 
-        calculation["program"] = _resolve_program_cap2(user["program"], step_id=step_id)
-    if user.get("native") is not None:
-        if not isinstance(user["native"], Mapping):
-            raise _fail(f"step {step_id!r} native must be a mapping", step_id=step_id)
-        calculation["native"] = copy.deepcopy(dict(user["native"]))
-    if user.get("role") is not None:
-        calculation["role"] = user["role"]
-    if user.get("adapter") is not None:
-        calculation["execution_adapter"] = copy.deepcopy(user["adapter"])
-    if user.get("profile") is not None:
-        calculation["result_profile"] = copy.deepcopy(user["profile"])
-    if user.get("checks") is not None:
-        calculation["checks"] = copy.deepcopy(list(user["checks"]))
-    if user.get("check_params") is not None:
-        calculation["check_params"] = copy.deepcopy(dict(user["check_params"]))
-    if user.get("recovery") is not None:
-        recovery = dict(calculation.get("recovery", {}))
-        recovery["profile"] = user["recovery"]
-        calculation["recovery"] = recovery
-    if user.get("seed") is not None:
-        calculation["seed"] = user["seed"]
-    if user.get("overrides") is not None:
-        calculation["overrides"] = copy.deepcopy(dict(user["overrides"]))
-    patched["calculation"] = calculation
-    if user.get("resources") is not None:
-        patched["resources"] = copy.deepcopy(dict(user["resources"]))
-    if user.get("scheduler") is not None:
-        patched["scheduler"] = copy.deepcopy(dict(user["scheduler"]))
-    annotations = dict(patched.get("annotations") or {})
-    resolution = dict(annotations.get("producer_resolution") or {})
-    resolution["intent_schema"] = INTENT_SCHEMA
-    resolution["recipe_assignment"] = True
-    annotations["producer_resolution"] = resolution
-    patched["annotations"] = annotations
+    Same 3-param signature, same in-place ``None`` return, same error
+    order/text.  Delegates to the generic orchestrator
+    ``intent/recipes.py::apply_recipe_assignment`` with the block hook from
+    the default registry by wire ``executor`` (no component literal here).
+    Legal ``None`` hooks mark only ``_expanded`` (old early analogue).
+    Real ``compile_intent`` passes the same custom registry explicitly.
+    Not the same object as the new implementation (no ``is`` promise).
+    """
+    try:
+        executor = patched.get("executor") if isinstance(patched, Mapping) else None
+    except Exception:
+        executor = None
+    wire_key: str | None = None
+    patch_fn: Any = None
+    if isinstance(executor, str) and executor:
+        from .capabilities.registry import build_default_intent_registry
+        from .capabilities.registry import recipe_hooks_for_executor as _query2
+        from .capabilities.registry import wire_block_key_for_executor as _wkey
+
+        _registry = build_default_intent_registry()
+        hooks = _query2(_registry, executor)
+        if hooks is not None:
+            _req, patch_fn = hooks
+        wire_key = _wkey(_registry, executor)
+    from .recipes import apply_recipe_assignment as _apply_generic
+
+    _apply_generic(patched, user, step_id, patch_block_fn=patch_fn, wire_block_key=wire_key)
