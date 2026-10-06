@@ -12,6 +12,22 @@ confflow --version
 
 真实计算需要你自己安装并取得许可的 Gaussian 16 或 ORCA；ConfFlow 不随包提供它们。
 
+### 服务器安装方式
+
+服务器上使用源码安装，不使用离线 wheel 包安装：
+
+```bash
+git clone <confflow-仓库地址>     # 首次安装
+cd ConfFlow
+pip install .
+```
+
+更新时：
+
+```bash
+git pull && pip install .
+```
+
 ## 2. 工作流文档
 
 唯一受支持的格式是 V4（`schema: confflow.workflow.v4`，YAML 或 JSON）。一份文档由四部分组成：

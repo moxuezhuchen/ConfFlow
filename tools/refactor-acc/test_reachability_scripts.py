@@ -9,8 +9,7 @@ Card D tool test (tools/refactor-acc, not part of the product
 
 Covers: script roots under ``scripts/`` including subdirectories, literal
 ``importlib.import_module`` roots, unreferenced modules staying unreachable,
-the old CLI output format, and the real-repo ``release_dependencies``
-correction.
+and the old CLI output format.
 """
 
 from __future__ import annotations
@@ -94,23 +93,6 @@ def test_cli_output_format_preserved(tmp_path) -> None:
     )
     payload = json.loads(proc_json.stdout)
     assert payload["unreachable"] == ["confflow.orphan"]
-
-
-def test_release_dependencies_reachable_via_scripts_in_real_repo() -> None:
-    reach = _load_tool()
-    result = reach.compute(REPO_ROOT, "confflow")
-
-    entries = result["script_entry_modules"]
-    assert entries["scripts/install_release_wheel.py"] == [
-        "confflow.install_provenance",
-        "confflow.release_dependencies",
-    ]
-    # The former false negative is fixed...
-    assert "confflow.release_dependencies" not in result["unreachable"]
-    # ...without marking everything reachable: known test-only / analysis
-    # modules stay unreachable.
-    assert "confflow.analysis.pes" in result["unreachable"]
-    assert "confflow.application.execution.memory" in result["unreachable"]
 
 
 def test_script_import_through_lazy_facade_resolves_target(tmp_path) -> None:
