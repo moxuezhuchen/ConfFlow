@@ -657,13 +657,9 @@ def test_capabilities_flag_exits_zero_and_returns_json(monkeypatch, capsys):
 
     from confflow.contract import (
         CAPABILITY_SCHEMA_VERSION,
-        OUTPUT_MANIFEST_FILE,
         REQUIRED_COMMANDS,
-        RUN_MIN_XYZ_TEMPLATE,
-        RUN_REPORT_FILE,
-        RUN_SUMMARY_FILE,
-        WORKFLOW_STATE_FILE,
-        WORKFLOW_STATS_FILE,
+        RUN_GENERATION_FILE,
+        RUN_RESULT_FILE,
     )
 
     monkeypatch.setattr(sys, "argv", ["confflow", "--capabilities"])
@@ -683,12 +679,8 @@ def test_capabilities_flag_exits_zero_and_returns_json(monkeypatch, capsys):
     assert caps["dag"] is True
     artifacts = data["artifacts"]
     assert artifacts == {
-        "run_summary": RUN_SUMMARY_FILE,
-        "workflow_stats": WORKFLOW_STATS_FILE,
-        "workflow_state": WORKFLOW_STATE_FILE,
-        "run_report": RUN_REPORT_FILE,
-        "min_xyz": RUN_MIN_XYZ_TEMPLATE,
-        "output_manifest": OUTPUT_MANIFEST_FILE,
+        "run_result": RUN_RESULT_FILE,
+        "run_generation": RUN_GENERATION_FILE,
     }
     assert set(data["commands"]) == set(REQUIRED_COMMANDS)
     assert all(isinstance(value, bool) for value in data["commands"].values())
@@ -719,13 +711,9 @@ def test_capabilities_subprocess_stdout_is_pure_json():
 
     from confflow.contract import (
         CAPABILITY_SCHEMA_VERSION,
-        OUTPUT_MANIFEST_FILE,
         REQUIRED_COMMANDS,
-        RUN_MIN_XYZ_TEMPLATE,
-        RUN_REPORT_FILE,
-        RUN_SUMMARY_FILE,
-        WORKFLOW_STATE_FILE,
-        WORKFLOW_STATS_FILE,
+        RUN_GENERATION_FILE,
+        RUN_RESULT_FILE,
     )
 
     completed = subprocess.run(
@@ -753,12 +741,8 @@ def test_capabilities_subprocess_stdout_is_pure_json():
         ),
     }
     assert payload["artifacts"] == {
-        "run_summary": RUN_SUMMARY_FILE,
-        "workflow_stats": WORKFLOW_STATS_FILE,
-        "workflow_state": WORKFLOW_STATE_FILE,
-        "run_report": RUN_REPORT_FILE,
-        "min_xyz": RUN_MIN_XYZ_TEMPLATE,
-        "output_manifest": OUTPUT_MANIFEST_FILE,
+        "run_result": RUN_RESULT_FILE,
+        "run_generation": RUN_GENERATION_FILE,
     }
     assert set(payload["commands"]) == set(REQUIRED_COMMANDS)
     assert all(isinstance(value, bool) for value in payload["commands"].values())

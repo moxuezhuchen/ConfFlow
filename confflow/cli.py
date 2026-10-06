@@ -31,13 +31,9 @@ from .application.v4_entry import formal_v4_runner as run_workflow
 from .application.v4_entry import require_v4_document_file
 from .contract import (
     CAPABILITY_SCHEMA_VERSION,
-    OUTPUT_MANIFEST_FILE,
     REQUIRED_COMMANDS,
-    RUN_MIN_XYZ_TEMPLATE,
-    RUN_REPORT_FILE,
-    RUN_SUMMARY_FILE,
-    WORKFLOW_STATE_FILE,
-    WORKFLOW_STATS_FILE,
+    RUN_GENERATION_FILE,
+    RUN_RESULT_FILE,
 )
 from .core.contracts import ExitCode, cli_output_to_txt, output_txt_path_for_input
 from .core.exceptions import (
@@ -149,12 +145,8 @@ def _build_capability_payload(executable_override: str | None = None) -> dict[st
             ),
         },
         "artifacts": {
-            "run_summary": RUN_SUMMARY_FILE,
-            "workflow_stats": WORKFLOW_STATS_FILE,
-            "workflow_state": WORKFLOW_STATE_FILE,
-            "run_report": RUN_REPORT_FILE,
-            "min_xyz": RUN_MIN_XYZ_TEMPLATE,
-            "output_manifest": OUTPUT_MANIFEST_FILE,
+            "run_result": RUN_RESULT_FILE,
+            "run_generation": RUN_GENERATION_FILE,
         },
         "commands": {name: shutil.which(name) is not None for name in REQUIRED_COMMANDS},
         "build": build,
