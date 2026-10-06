@@ -28,6 +28,12 @@ class IntentRegistry:
     """Locally immutable card-key -> descriptor map (deeply frozen)."""
 
     entries: Mapping[str, CapabilityDescriptor]
+    # L1-A3a: optional explicit runtime registry binding.  ``None`` is the
+    # production default (no binding); a test-local registry built with
+    # ``execution_registry=<same ExecutionRegistry>`` reuses that instance
+    # in :func:`compile_intent` instead of silently building another
+    # default.  Stored verbatim, never copied.
+    execution_registry: Any = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.entries, Mapping):
@@ -64,6 +70,8 @@ class IntentRegistry:
 
 def build_intent_registry(
     descriptors: Iterable[CapabilityDescriptor],
+    *,
+    execution_registry: Any = None,
 ) -> IntentRegistry:
     """Build a locally immutable registry from explicit descriptors.
 
@@ -75,6 +83,15 @@ def build_intent_registry(
     must agree (fail-closed at assembly).  Rejected-key entries must be
     non-empty strings (empty tuple = no placement restriction).  No import
     side effects, no global state.
+
+    L1-A3a explicit channel: when ``execution_registry`` is given, each
+    descriptor executor is verified against that same
+    :class:`ExecutionRegistry`'s actually registered contract (including
+    the already-registered ``analysis`` capability) instead of the
+    builtin 3-item table; no second hardcoded table is built here.
+    When omitted, the legacy 3-allowed check and unknown-executor
+    message bytes are preserved verbatim.  The given instance (or
+    ``None``) is stored verbatim on the returned registry.
     """
     seen: dict[str, CapabilityDescriptor] = {}
     for descriptor in descriptors:
@@ -82,11 +99,34 @@ def build_intent_registry(
             raise ValueError("build_intent_registry needs CapabilityDescriptor items")
         if descriptor.key in seen:
             raise ValueError(f"conflicting CapabilityDescriptor key {descriptor.key!r}")
-        if descriptor.executor not in ALLOWED_EXECUTORS:
-            raise ValueError(
-                f"unknown executor {descriptor.executor!r} for key "
-                f"{descriptor.key!r}; expected one of {sorted(ALLOWED_EXECUTORS)}"
-            )
+        if execution_registry is None:
+            if descriptor.executor not in ALLOWED_EXECUTORS:
+                raise ValueError(
+                    f"unknown executor {descriptor.executor!r} for key "
+                    f"{descriptor.key!r}; expected one of {sorted(ALLOWED_EXECUTORS)}"
+                )
+        else:
+            try:
+                _resolve = getattr(execution_registry, "resolve_executor", None)
+            except Exception as exc:
+                raise ValueError(
+                    f"CapabilityDescriptor {descriptor.key!r} runtime registry unreadable"
+                ) from exc
+            if not callable(_resolve):
+                raise ValueError(
+                    f"CapabilityDescriptor {descriptor.key!r} runtime registry unreadable"
+                )
+            try:
+                _resolve(descriptor.executor)
+            except Exception as exc:
+                try:
+                    _names = sorted(execution_registry.capability_names)
+                except Exception:
+                    _names = []
+                raise ValueError(
+                    f"unknown executor {descriptor.executor!r} for key "
+                    f"{descriptor.key!r}; expected one of {_names}"
+                ) from exc
         if descriptor.intent_handler is None:
             raise ValueError(f"CapabilityDescriptor {descriptor.key!r} carries no intent handler")
         if not descriptor.fragment_keys:
@@ -147,7 +187,7 @@ def build_intent_registry(
     _check_executor_seed_consistency(seen)
     _check_executor_recipe_hooks_consistency(seen)
     _check_executor_role_block_consistency(seen)
-    return IntentRegistry(entries=seen)
+    return IntentRegistry(entries=seen, execution_registry=execution_registry)
 
 
 def _effective_wire_block_key(descriptor: CapabilityDescriptor) -> str:

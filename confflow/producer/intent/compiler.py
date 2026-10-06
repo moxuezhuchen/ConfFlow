@@ -620,9 +620,11 @@ def _resolve_card_and_entry(
 # L1-C2: capability wire builders live in
 # ``capabilities/{calculation,confgen,transform}.py`` (mechanical moves);
 # re-exported lazily via ``__getattr__`` above for compatible ``compiler``
-# import paths (``is`` holds, old ``__module__`` kept).  No analysis handler
-# is added: analysis executors stay fail-closed through the ``None``/unknown
-# path below.
+# import paths (``is`` holds, old ``__module__`` kept).  L1-A3a adds
+# ``capabilities/analysis.py`` (real handler, test-local only): analysis
+# executors stay fail-closed on the default registry through the
+# ``None``/unknown path below and are reachable only via an explicit
+# ``ExecutionRegistry`` binding.
 
 
 # Canonical R1 sources: ``capabilities/{calculation,confgen,transform}.py``
@@ -914,6 +916,22 @@ def compile_intent(
         except ImportError as exc:
             raise _fail(f"cannot load the intent registry: {exc}") from exc
         intent_registry = build_default_intent_registry()
+    # L1-A3a explicit runtime binding: the same ExecutionRegistry instance
+    # must flow through card/compile/authoring/runtime.  A bound intent
+    # registry reuses its instance when ``registry`` is omitted (never a
+    # silent second default); a supplied different instance fails closed.
+    try:
+        _bound_execution = getattr(intent_registry, "execution_registry", None)
+    except Exception:
+        _bound_execution = None
+    if _bound_execution is not None:
+        if registry is not None and registry is not _bound_execution:
+            raise _fail(
+                "intent registry is bound to a different execution registry instance; "
+                "pass the bound instance explicitly (no silent second default)",
+            )
+        if registry is None:
+            registry = _bound_execution
     user_steps = _allocate_ids(expanded_raw, intent_registry)
 
     if registry is None:
