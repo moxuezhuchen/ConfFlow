@@ -894,8 +894,9 @@ export BASE=$CKPT/<里程碑>/baseline
   2. **`phase_defined_q_min` 验证（不调参，V17）**：统计全部参考构象（CREST）的 Q / r̄ 分布与全部 published 种子的 Q / r̄ 分布，写进报告。判定：所有参考构象都必须高于门槛，且没有任何 published 种子是"振幅刚过门槛、但明显是平面化失败"的情况。任一条不满足，**R7 判失败**，在 LOG 中记录，由方案方另开 `science` 卡修改门槛；本卡不得修改任何常量。
   3. 召回率与冗余率需要对种子做 xTB 优化，再与 CREST 构象做 RMSD 匹配。xTB 不在本仓库中，也不能安装（G10）：工具输出种子文件和一个 `match_after_opt.py`，由用户在本地优化后计算。
   4. 仓库内的测试只断言 CP 层面的环召回：每个 CREST 构象的环 CP，与某个 published 种子的距离 < 15°。
+  - **2026-10-06 修订（用户决定）**：葡萄糖不要求 strict CP recall 达到 100%。`< 15°` 的 strict CP 召回保留为严格诊断指标，并列输出 basin recall（参考构象归属的最近正则形式是否有已发布种子）与 miss 分类；记录值：strict 127/155、basin 155/155。是否需要新增 ring seed，由 published 种子优化后的 CP 召回（D 诊断）决定；含氧六元环默认形式集加 B（A）另开卡评估、本缺口不以其关闭；畸变椅种子（C）在缺少稳定畸变盆能量证据前冻结。这些并列指标只进入 benchmark 工具输出，不进入 engine 报告，不改 golden。
 - 允许修改：`docs/confgen-fix/tools/**`、`tests/v4/test_confgen_ring_benchmark.py`（新）
-- 验收：rpdd、环己烷、甲基环己烷的环层面召回 100%；其余体系按 Q9 数据到位情况补充。
+- 验收：rpdd、环己烷、甲基环己烷的环层面召回 100%；其余体系按 Q9 数据到位情况补充（葡萄糖按上方 2026-10-06 修订：strict 与 basin 并列报告，不要求 strict 100%）。
 
 ---
 

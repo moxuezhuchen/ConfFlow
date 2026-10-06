@@ -24,6 +24,16 @@ Q/rbar 0.05 is FROZEN (ConfgenTolerances.phase_defined_q_min). Only a
 value strictly below fails the run. [0.05, 0.10) is a REVIEW hint, never
 a rejection threshold.
 
+Parallel recall (2026-10-06 R7 revision): strict CP recall (<15 deg) stays
+the SOLE gate and is reported exactly as before. Alongside it the tool
+reports basin recall: each reference is assigned to its nearest
+canonical_forms(n) precise form by cp_distance (existing puckering math
+only), and basin_ok means that precise (family, index) commands at least
+one published seed. Basin metrics are supplementary and never replace
+the strict gate. Per-reference basin columns are appended to
+reference_match.csv (existing columns keep order and values); aggregates
+and the per-miss classification go to recall_summary.json.
+
 Standard library + numpy only (via confflow APIs).
 """
 
@@ -53,6 +63,7 @@ from confflow.science.confgen.ring import forms as _formsmod  # noqa: E402
 from confflow.science.confgen.ring import puckering as _puckmod  # noqa: E402
 from confflow.science.confgen.ring.puckering import (  # noqa: E402
     CPCoords,
+    canonical_forms,
     cp_distance,
     cremer_pople,
 )
@@ -62,6 +73,27 @@ CP_HIT_DEG = 15.0
 QMIN = 0.05
 NEAR_BAND = 0.10
 MISSING = "missing:passed-not-stored"
+
+
+def _miss_class(family: str, dtheta_deg: float) -> str:
+    """Reporting-only miss taxonomy from the nearest ideal form.
+
+    Chair misses pointing at the equator (dtheta < 0) are the flattened
+    chair cluster; B/TB misses are the boat zone. This labels output rows
+    only and never changes matching.
+    """
+    if family == "C":
+        return "chair_flattened" if dtheta_deg < 0 else "chair_steepened"
+    if family in ("B", "TB"):
+        return "boat_zone"
+    if family == "E":
+        return "envelope_region"
+    if family == "H":
+        return "half_chair_region"
+    if family == "T":
+        return "twist_region"
+    return f"{family}_region"
+
 
 # Ring atoms are 0-based internal convention. Sources:
 # thf/mch/chexene/nap_L from /tmp/fix1r-r7-root-reference-precheck.json
@@ -458,6 +490,75 @@ def benchmark_case(
             }
         )
 
+    # Basin recall (supplementary; strict <15 deg above stays the sole gate).
+    # Nearest-form assignment uses existing canonical_forms/cp_distance only.
+    # basin_ok means the nearest precise (family, index) commands at least
+    # one published seed. dtheta/dphi are plain signed reporting offsets of
+    # the reference from its nearest ideal (phi wrapped to [-180, 180)).
+    forms = list(canonical_forms(n))
+    seed_forms: set[tuple[str, int]] = set()
+    for s in seeds:
+        try:
+            seed_forms.add((str(s["cmd"].get("form")), int(s["cmd"].get("index"))))
+        except (TypeError, ValueError):
+            continue
+    for r, m in zip(refs, match_rows):
+        a = CPCoords(n=n, q=r["q"], theta=r["theta"], phi=r["phi"])
+        near = min(forms, key=lambda f: float(cp_distance(a, f.cp_target)))
+        dist = float(cp_distance(a, near.cp_target))
+        dtheta = float(r["theta"]) - float(near.cp_target.theta)
+        dphi = (float(r["phi"]) - float(near.cp_target.phi) + 180.0) % 360.0 - 180.0
+        m["basin_nearest_form"] = f"{near.family}_{near.index}"
+        m["basin_dist_deg"] = dist
+        m["basin_dtheta_deg"] = dtheta
+        m["basin_dphi_deg"] = dphi
+        m["basin_ok"] = int((near.family, near.index) in seed_forms)
+
+    strict_hits = sum(r["hit_lt15"] for r in match_rows)
+    basin_covered = sum(int(m["basin_ok"]) for m in match_rows)
+    misses: list[dict] = []
+    for m in match_rows:
+        if m["hit_lt15"]:
+            continue
+        fam = str(m["basin_nearest_form"]).rsplit("_", 1)[0]
+        dist_v = m["min_cp_dist_deg"]
+        misses.append(
+            {
+                "ref": m["ref"],
+                "min_cp_dist_deg": (round(dist_v, 4) if isinstance(dist_v, float) else dist_v),
+                "basin_nearest_form": m["basin_nearest_form"],
+                "basin_dist_deg": round(float(m["basin_dist_deg"]), 4),
+                "basin_dtheta_deg": round(float(m["basin_dtheta_deg"]), 4),
+                "basin_ok": bool(m["basin_ok"]),
+                "miss_class": _miss_class(fam, float(m["basin_dtheta_deg"])),
+            }
+        )
+    miss_class_counts = {
+        c: sum(1 for m in misses if m["miss_class"] == c)
+        for c in sorted({m["miss_class"] for m in misses})
+    }
+    recall_summary = {
+        "system": system,
+        "n": n,
+        "input_mode": input_mode,
+        "forms_mode": forms_mode,
+        "strict": {
+            "threshold_deg": CP_HIT_DEG,
+            "recall": f"{strict_hits}/{len(refs)}",
+            "authority": "sole gate; basin metrics are supplementary and never replace strict",
+        },
+        "basin": {
+            "definition": (
+                "each reference assigned to nearest canonical_forms(n) precise "
+                "form by cp_distance; covered iff that (family, index) commands "
+                "at least one published seed"
+            ),
+            "recall": f"{basin_covered}/{len(refs)}",
+        },
+        "misses": misses,
+        "miss_class_counts": miss_class_counts,
+    }
+
     qrefs = [r["q_over_rbar"] for r in refs if r["q_over_rbar"] is not None]
     qseeds = [s["q_over_rbar"] for s in seeds]
     gate_fail = any(v < QMIN for v in qrefs) or any(v < QMIN for v in qseeds)
@@ -547,11 +648,18 @@ def benchmark_case(
                 "best_seed",
                 "min_cp_dist_deg",
                 "hit_lt15",
+                "basin_nearest_form",
+                "basin_dist_deg",
+                "basin_dtheta_deg",
+                "basin_dphi_deg",
+                "basin_ok",
             ],
         )
         w.writeheader()
         for r in match_rows:
             w.writerow({k: (round(v, 4) if isinstance(v, float) else v) for k, v in r.items()})
+    with open(out / "recall_summary.json", "w") as f:
+        json.dump(recall_summary, f, indent=1)
     with open(out / "failures.json", "w") as f:
         json.dump(
             {
@@ -603,6 +711,7 @@ def benchmark_case(
         "reference_match.csv",
         "failures.json",
         "run_meta.json",
+        "recall_summary.json",
     ]:
         p = out / name
         manifest["files"].append({"path": name, "sha256": sha256(p), "bytes": p.stat().st_size})
@@ -621,6 +730,8 @@ def benchmark_case(
         "targets": len(targets),
         "published": len(leaves),
         "recall": f"{hits}/{len(refs)}",
+        "basin_recall": f"{basin_covered}/{len(refs)}",
+        "miss_basin_outside": sum(1 for m in misses if not m["basin_ok"]),
         "failed": len(failed),
         "audit_complete": meta["audit_complete"],
         "audit_gaps": len(audit_gaps),
