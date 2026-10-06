@@ -66,8 +66,6 @@ message text as a protocol. Stable ``code`` values include
 from __future__ import annotations
 
 import math
-import os
-import tempfile
 from collections.abc import Mapping
 from typing import Any
 
@@ -302,10 +300,98 @@ def _preview_orca(content_text: str, *, filename: str, source_label: str) -> dic
     }
 
 
-def _preview_xyz(content_text: str, *, filename: str, source_label: str) -> dict[str, Any]:
-    """Project XYZ text through the strict shared file reader."""
-    from ..core.io import read_xyz_file
+def _parse_xyz_frames_strict(content_text: str) -> list[dict[str, Any]]:
+    """Split XYZ text into frames with strict file-reader semantics.
 
+    Frame structure (count header, comment line, truncation, trailing
+    content, multi-frame detection) mirrors the legacy strict XYZ file
+    reader line-for-line, while element and coordinate conversion reuses
+    the shared authorities (``canonicalize_element_symbol`` plus
+    ``coords_lines_to_array`` from the already-adopted
+    ``confflow.core.gaussian_input``) so this layer neither imports the
+    legacy file-reader module nor copies float-parsing logic.
+    ``ValueError`` messages reuse the legacy key phrases
+    (``no valid xyz frames``, ``missing comment``, ``incomplete frame``,
+    ``invalid element``, ``fewer than 4``) so the refusal-code mapping in
+    :func:`_preview_xyz` stays identical.
+    """
+    from ..core.elements import canonicalize_element_symbol
+    from ..core.gaussian_input import coords_lines_to_array
+
+    text_lines = content_text.splitlines()
+    total = len(text_lines)
+    position = 0
+    line_number = 0
+    frames: list[dict[str, Any]] = []
+    while True:
+        header: str | None = None
+        while position < total:
+            candidate = text_lines[position].strip()
+            position += 1
+            line_number += 1
+            if candidate:
+                header = candidate
+                break
+        if header is None:
+            break
+        if not header.isdigit():
+            raise ValueError(f"xyz text: line {line_number}: invalid atom-count line: {header!r}")
+        try:
+            num_atoms = int(header)
+        except ValueError:
+            raise ValueError(
+                f"xyz text: line {line_number}: cannot parse atom count: {header!r}"
+            ) from None
+        if position >= total:
+            raise ValueError(f"xyz text: line {line_number + 1}: missing comment line")
+        comment = text_lines[position].strip()
+        position += 1
+        line_number += 1
+        atoms: list[str] = []
+        coordinates: list[list[float]] = []
+        for _atom_offset in range(num_atoms):
+            if position >= total:
+                raise ValueError(
+                    f"xyz text: line {line_number + 1}: incomplete frame: declared "
+                    f"{num_atoms} atoms but file ended early"
+                )
+            raw = text_lines[position].strip()
+            position += 1
+            line_number += 1
+            parts = raw.split()
+            if len(parts) < 4:
+                raise ValueError(
+                    f"xyz text: line {line_number}: coordinate line has fewer than 4 "
+                    f"columns: {raw!r}"
+                )
+            try:
+                atom = canonicalize_element_symbol(parts[0])
+            except ValueError as exc:
+                raise ValueError(f"xyz text: line {line_number}: {exc}") from None
+            triple = coords_lines_to_array([raw])
+            if triple is None:
+                raise ValueError(
+                    f"xyz text: line {line_number}: cannot parse coordinates from line: " f"{raw!r}"
+                )
+            atoms.append(atom)
+            _symbol, x, y, z = triple[0]
+            coordinates.append([x, y, z])
+        frames.append(
+            {
+                "natoms": num_atoms,
+                "comment": comment,
+                "atoms": atoms,
+                "coords": coordinates,
+                "frame_index": len(frames),
+            }
+        )
+    if not frames:
+        raise ValueError("xyz text: no valid xyz frames found")
+    return frames
+
+
+def _preview_xyz(content_text: str, *, filename: str, source_label: str) -> dict[str, Any]:
+    """Project XYZ text through strict in-memory frame parsing."""
     if not content_text.strip():
         raise _fail(
             "empty_geometry",
@@ -315,37 +401,28 @@ def _preview_xyz(content_text: str, *, filename: str, source_label: str) -> dict
             filename=filename,
             source_format="xyz",
         )
-    fd, tmp_path = tempfile.mkstemp(suffix=".xyz", prefix="cf-preview-")
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            handle.write(content_text)
-        try:
-            frames = read_xyz_file(tmp_path, parse_metadata=False, strict=True)
-        except (ValueError, OSError) as exc:
-            message = str(exc).lower()
-            if "no valid xyz frames" in message:
-                code = "empty_geometry"
-            elif "incomplete frame" in message or "missing comment" in message:
-                code = "incomplete_geometry"
-            elif "invalid element" in message:
-                code = "unknown_element"
-            elif "fewer than 4" in message:
-                code = "unknown_coordinate_token"
-            else:
-                code = "invalid_coordinate"
-            raise _fail(
-                code,
-                f"xyz input refused: {exc}",
-                line=None,
-                source_label=source_label,
-                filename=filename,
-                source_format="xyz",
-            ) from None
-    finally:
-        try:
-            os.unlink(tmp_path)
-        except OSError:
-            pass
+        frames = _parse_xyz_frames_strict(content_text)
+    except (ValueError, OSError) as exc:
+        message = str(exc).lower()
+        if "no valid xyz frames" in message:
+            code = "empty_geometry"
+        elif "incomplete frame" in message or "missing comment" in message:
+            code = "incomplete_geometry"
+        elif "invalid element" in message:
+            code = "unknown_element"
+        elif "fewer than 4" in message:
+            code = "unknown_coordinate_token"
+        else:
+            code = "invalid_coordinate"
+        raise _fail(
+            code,
+            f"xyz input refused: {exc}",
+            line=None,
+            source_label=source_label,
+            filename=filename,
+            source_format="xyz",
+        ) from None
 
     if not frames:
         raise _fail(

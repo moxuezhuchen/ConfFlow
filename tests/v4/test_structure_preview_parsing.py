@@ -147,6 +147,59 @@ def test_xyz_high_precision_and_order() -> None:
     assert result["elements"] == ["H", "O", "H"]
 
 
+def test_xyz_matches_legacy_file_reader_on_representative_inputs(tmp_path) -> None:
+    """In-memory XYZ projection agrees with the legacy strict file reader.
+
+    The legacy ``read_xyz_file`` serves here only as a test oracle (tests
+    sit outside the producer import policy); production code never imports
+    ``confflow.core.io`` (RT-096 gate).
+    """
+    from confflow.core.io import read_xyz_file
+
+    cases = [
+        _xyz_minimal(),
+        _xyz_minimal(atoms="c 0.0 0.0 0.0\nH 0.0 0.0 1.089", comment=""),
+        "2\n  comment with spaces  \n  c   0.0  0.0  0.0  \nH 0 0 1\n\n\n",
+        "1\nsci\nFe -1.23e-2 +3.0E1 4.5\n",
+        "2\r\ncrlf\r\nC 0 0 0\r\nH 0 0 1\r\n",
+    ]
+    for text in cases:
+        probe = tmp_path / "oracle.xyz"
+        probe.write_text(text, encoding="utf-8")
+        (frame,) = read_xyz_file(str(probe), parse_metadata=False, strict=True)
+        result = structure_preview_request({"filename": "m.xyz", "content_text": text})
+        assert result["elements"] == frame["atoms"]
+        assert result["coordinates"] == frame["coords"]
+        assert ("xyz comment preserved as diagnostic only" in result["warnings"]) == bool(
+            frame["comment"].strip()
+        )
+
+    refusals = [
+        ("2\nc\nH 0 0 0\n", "incomplete_geometry"),
+        ("1\nc\nXx 0 0 0\n", "unknown_element"),
+        ("1\nc\nH 0 0\n", "unknown_coordinate_token"),
+        ("   \n", "empty_geometry"),
+    ]
+    for text, code in refusals:
+        probe = tmp_path / "oracle.xyz"
+        probe.write_text(text, encoding="utf-8")
+        with pytest.raises(ValueError):
+            read_xyz_file(str(probe), parse_metadata=False, strict=True)
+        with pytest.raises(StructurePreviewError) as excinfo:
+            structure_preview_request({"filename": "m.xyz", "content_text": text})
+        assert _err(excinfo).code == code
+
+    # Multi-frame documents: the legacy reader yields both frames while the
+    # preview refuses them as a whole (never first-frame-only).
+    multi = "1\nc1\nH 0 0 0\n1\nc2\nHe 0 0 1\n"
+    probe = tmp_path / "oracle.xyz"
+    probe.write_text(multi, encoding="utf-8")
+    assert len(read_xyz_file(str(probe), parse_metadata=False, strict=True)) == 2
+    with pytest.raises(StructurePreviewError) as excinfo:
+        structure_preview_request({"filename": "m.xyz", "content_text": multi})
+    assert _err(excinfo).code == "multiple_geometries"
+
+
 def test_inp_standard_matches_runtime_exact() -> None:
     """Single inline INP matches the frozen shared authority."""
     from confflow.programs.orca.input_parsing import parse_orca_input_text
