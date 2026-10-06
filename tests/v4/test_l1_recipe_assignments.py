@@ -172,14 +172,15 @@ def test_b1_catalog_bytes_unchanged() -> None:
         "goat",
         "tspes",
         "confgen_torsion",
+        "monomer_conformers",
     ]
     assert (
         recipe_catalog_sha256_v4()
-        == "bc63fc178492ae7b853c1404b8a9c7f4741967a954cc8027d1f3892b5294b098"
+        == "51c1483ffc5b114f34ca49c50e5e75d3cadbe6a2ea31a44281746fc714504f19"
     )
     cat = intent_catalog()
     assert "sha256:" + hashlib.sha256(canonical_json_bytes(cat)).hexdigest() == (
-        "sha256:f8d2c111f4d70a486b4d5f63b8f4a5588e088da7cfce562df3eb117182d45aa7"
+        "sha256:28225e1a432b6308230638d4166659b758bb73b29844da34de411081bdd23e96"
     )
 
 
@@ -192,7 +193,7 @@ def test_b1_contract_boundary_bytes_unchanged() -> None:
     )
     bdoc = boundary_document()
     assert "sha256:" + hashlib.sha256(canonical_json_bytes(env)).hexdigest() == (
-        "sha256:d9e5e048d6a7f6f3b38f78341b5d93edb1a78bc1cf5b6bbabe36d95c96316fc0"
+        "sha256:7ba4bd4893d9dc133cc376616bf052a235da6fc8ade235d57eb9042e365f7928"
     )
     assert "sha256:" + hashlib.sha256(canonical_json_bytes(bdoc)).hexdigest() == (
         "sha256:bdd15d9865eeda5dbf13bc2aea13fd021221d6d79917281fb5265fcb8c83d4cf"

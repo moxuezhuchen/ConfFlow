@@ -1264,14 +1264,16 @@ class TestProducerWiring:
         from confflow.producer.recipes import RECIPE_IDS_V4, build_recipe_catalog_v4
 
         catalog = {recipe["id"]: recipe for recipe in build_recipe_catalog_v4()["recipes"]}
-        # Original eleven keep their frozen orders; the new card sorts last.
+        # Original twelve keep their frozen orders; the new card sorts last.
         assert catalog["tspes"]["order"] == 110
         assert catalog["confgen_torsion"]["order"] == 120
-        assert list(RECIPE_IDS_V4).index("confgen_torsion") == len(RECIPE_IDS_V4) - 1
-        assert catalog["confgen_torsion"]["order"] > max(
+        assert catalog["monomer_conformers"]["order"] == 130
+        assert list(RECIPE_IDS_V4).index("monomer_conformers") == len(RECIPE_IDS_V4) - 1
+        assert list(RECIPE_IDS_V4).index("confgen_torsion") == len(RECIPE_IDS_V4) - 2
+        assert catalog["monomer_conformers"]["order"] > max(
             order
             for recipe_id, order in ((r["id"], r["order"]) for r in catalog.values())
-            if recipe_id != "confgen_torsion"
+            if recipe_id != "monomer_conformers"
         )
 
     def test_workflow_chaining_compiles_and_assembles(self) -> None:

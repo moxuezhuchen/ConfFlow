@@ -35,6 +35,7 @@ EXPECTED_IDS = (
     "goat",
     "tspes",
     "confgen_torsion",
+    "monomer_conformers",
 )
 
 TSPES_IDS = (

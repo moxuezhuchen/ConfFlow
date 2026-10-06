@@ -126,6 +126,93 @@ def _confgen_v3_recipe() -> dict[str, Any]:
     }
 
 
+def _monomer_conformers_recipe() -> dict[str, Any]:
+    """Build the XTB2-preopt -> ConfGen(ring+torsion) -> dedup recipe.
+
+    Pre-optimization uses the standard ORCA adapter with the opaque
+    ``XTB2 Opt`` keyword (rendered verbatim; no XTB2-specific adapter
+    branch). The ConfGen step consumes the ``preopt`` optimized product
+    (step-product reference, never the top-level run input) with one
+    explicit ring axis and one explicit torsion axis that the user must
+    confirm/replace for their seed structures. The final dedup step
+    consumes the ConfGen ensemble. ``required_fields``/``exposed_fields``
+    are editor prompts (not compiler gates); the legal replacement scope
+    is a wire-document copy with user axes recompiled through the V4
+    parser/compiler (calculation program/native via the intent recipe
+    assignment lane, ConfGen axes via direct document edit).
+    """
+    preopt = _calc_step(
+        "preopt",
+        program="orca",
+        role="opt",
+        bindings=_run_binding(),
+        native={"keyword": "XTB2 Opt"},
+        checks=["normal_termination", "geometry_required"],
+        label="XTB2 preopt",
+    )
+    confgen: dict[str, Any] = {
+        "id": "confgen",
+        "label": "Ring+torsion ensemble",
+        "executor": "confgen",
+        "bindings": {"structure": {"source": {"step": "preopt", "port": "structures"}}},
+        "confgen": {
+            "schema_version": 3,
+            # EXAMPLE AXES -- USER MUST CONFIRM/REPLACE. The example fits a
+            # propyl-cyclohexane-like 9-heavy-atom seed (isolated 6-ring
+            # 1-6 plus acyclic propyl tail 7-9; torsion 7-8 keeps a
+            # measurable 6-7-8-9 dihedral frame). Replace both axes with the
+            # user-confirmed ring/torsion declarations; empty axes are not a
+            # success signal.
+            "rings": [
+                {
+                    "id": "r1",
+                    "atoms": [1, 2, 3, 4, 5, 6],
+                    "templates": ["chair_A_6"],
+                    "treatment": "enumerate",
+                }
+            ],
+            "torsions": [
+                {
+                    "id": "t1",
+                    "bond": [7, 8],
+                    "model": "relative_rotation_grid",
+                    "angles": [0, 120, 240],
+                    "treatment": "enumerate",
+                }
+            ],
+        },
+    }
+    dedup: dict[str, Any] = {
+        "id": "dedup",
+        "label": "Deduplicate",
+        "executor": "structure_transform",
+        "bindings": {"structure": {"source": {"step": "confgen", "port": "structures"}}},
+        "transform": {"kind": "deduplicate", "native": {}},
+    }
+    return {
+        "id": "monomer_conformers",
+        "label": "Monomer Conformers (XTB2 preopt)",
+        "description": (
+            "ORCA XTB2 pre-optimization into a typed ConfGen ring+torsion "
+            "ensemble plus deduplication. Confirm/replace the example ring "
+            "(r1) and torsion (t1) axes for each seed structure; the ConfGen "
+            "step consumes the preopt optimized product."
+        ),
+        "category": "Conformers",
+        # Root decision: original twelve keep their orders; the new card goes
+        # last in catalog list order, so its order sits above confgen_torsion.
+        "order": 130,
+        "document": _document([preopt, confgen, dedup]),
+        "required_fields": [
+            "calc.program",
+            "calc.native",
+            "confgen.v3.rings",
+            "confgen.v3.torsions",
+        ],
+        "exposed_fields": list(_CALC_EXPOSED) + list(_CONFGEN_V3_EXPOSED),
+    }
+
+
 def _calc_step(
     step_id: str,
     *,
@@ -559,6 +646,7 @@ def _recipes() -> list[dict[str, Any]]:
         ),
         _tspes_recipe(),
         _confgen_v3_recipe(),
+        _monomer_conformers_recipe(),
     ]
 
 
@@ -576,6 +664,7 @@ RECIPE_IDS_V4: tuple[str, ...] = (
     "goat",
     "tspes",
     "confgen_torsion",
+    "monomer_conformers",
 )
 
 
