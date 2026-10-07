@@ -112,9 +112,9 @@
         "confflow/producer/"
       ],
       "prod_files": 26,
-      "prod_loc_limit": 11982,
+      "prod_loc_limit": 12083,
       "ratchet": "R1/R2 上限不变；N 阶段按卡预算增长；里程碑验收后以实际值重写本上限；其余时间只降不升。",
-      "reason": "N3 声明预算(生产≤350/测试≤500)"
+      "reason": "N3 声明预算(生产≤350/测试≤500) + N4 已批准预算(生产≤150，实际净增101：recipes.py +101)"
     },
     {
       "id": "persistence",
@@ -209,6 +209,6 @@
     }
   ],
   "tests_total_files": 246,
-  "tests_total_loc_limit": 108491,
-  "tests_total_reason": "N3 声明预算(生产≤350/测试≤500) + N1 已批准预算(测试≤400，增398) + T0 工具测试(≤150，增108)"
+  "tests_total_loc_limit": 108622,
+  "tests_total_reason": "N3 声明预算(生产≤350/测试≤500) + N1 已批准预算(测试≤400，增398) + T0 工具测试(≤150，增108) + N4 已批准预算(测试≤200，实际净增131：新增147/删除16)"
 }

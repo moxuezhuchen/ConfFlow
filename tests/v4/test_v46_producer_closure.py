@@ -171,6 +171,7 @@ class TestEveryRecipeExecutable:
 
     def test_every_recipe_through_the_wire(self) -> None:
         # R2.2 声明：目录剩 7 项（irc/qst2/qst3/neb/goat/tspes 退役）。
+        # N4 声明新增：ensemble_refine appended last，目录 7→8。
         assert tuple(RECIPE_IDS_V4) == (
             "optimize",
             "single_point",
@@ -179,6 +180,7 @@ class TestEveryRecipeExecutable:
             "transition_state",
             "confgen_torsion",
             "monomer_conformers",
+            "ensemble_refine",
         )
         for recipe_id in RECIPE_IDS_V4:
             document = self._contract_recipe_document(recipe_id)
