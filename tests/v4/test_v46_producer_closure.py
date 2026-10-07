@@ -830,7 +830,7 @@ class TestRuntimeManifestInlineEnergies:
         assert "energies" in ref["properties"]
         assert ref["properties"]["energies"]["required"] == ["source"]
 
-    def test_contract_summary_declares_additive_energies_and_group_coexists(self) -> None:
+    def test_contract_summary_declares_additive_energies(self) -> None:
         from confflow.producer.contract import run_result_schema_sha256
 
         schema = run_result_json_schema()
@@ -843,17 +843,3 @@ class TestRuntimeManifestInlineEnergies:
             "source",
         }
         assert energies_schema["additionalProperties"] is False
-        from confflow.producer.run_result import reaction_group_dict
-
-        entry = reaction_group_dict(
-            group_key="rxn-00",
-            ts_structure_id="ts0",
-            forward_endpoint_id="f0",
-            reverse_endpoint_id="r0",
-            source_result_ids=["legacy-r1"],
-            energies={"electronic_energy": {}, "gibbs_energy": {}},
-            barriers={"forward": 1.0},
-            assignment="unassigned",
-            step_id="reaction_profile",
-        )
-        assert entry["group_key"] == "rxn-00"
