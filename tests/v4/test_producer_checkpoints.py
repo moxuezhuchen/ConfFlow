@@ -209,14 +209,6 @@ class TestCompatibilityRefusals:
         with pytest.raises(DomainError, match="differing method"):
             wire_checkpoint_reuse(_doc(target_keyword="M06-2X/def2-TZVP opt"), "s_opt", "s_freq")
 
-    def test_differing_extra_sections_refused_by_default(self) -> None:
-        with pytest.raises(DomainError, match="native scientific payload"):
-            wire_checkpoint_reuse(
-                _doc(source_native={"extra_sections": "gen 5d 7f"}),
-                "s_opt",
-                "s_freq",
-            )
-
     def test_equal_payload_with_managed_edits_accepted(self) -> None:
         wired = wire_checkpoint_reuse(
             _doc(

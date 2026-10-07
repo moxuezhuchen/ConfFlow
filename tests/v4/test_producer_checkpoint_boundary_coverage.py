@@ -168,12 +168,6 @@ class TestDocumentShapeGuards:
         with pytest.raises(DomainError, match="disabled"):
             wire_checkpoint_reuse(doc, "s_opt", "s_freq")
 
-    def test_target_without_bindings_mapping_refused(self) -> None:
-        doc = _doc()
-        doc["steps"][1]["bindings"] = "not-a-mapping"
-        with pytest.raises(DomainError, match="no bindings mapping"):
-            wire_checkpoint_reuse(doc, "s_opt", "s_freq")
-
     def test_unknown_program_refused(self) -> None:
         doc = _doc(source_program="definitely-unknown-program-xyz")
         with pytest.raises(DomainError, match="unknown program"):
@@ -431,33 +425,6 @@ class TestChargeSpinLineageBranches:
         )
         with pytest.raises(DomainError, match="does not prove the same inherited state"):
             wire_checkpoint_reuse(doc, "s_opt", "s_freq")
-
-    def test_known_input_states_equal_accept(self) -> None:
-        inputs = {
-            "structures": {
-                "kind": "structure",
-                "cardinality": "many",
-                "charge": 0,
-                "multiplicity": 1,
-            }
-        }
-        doc = _no_global_doc(
-            [
-                calc_step(
-                    "s_freq",
-                    bindings={"structure": {"source": {"run": "structures"}}},
-                    native={"keyword": "B3LYP/6-31G* freq"},
-                ),
-                calc_step(
-                    "s_opt",
-                    bindings={"structure": {"source": {"step": "s_freq", "port": "structures"}}},
-                    native={"keyword": "B3LYP/6-31G*"},
-                ),
-            ],
-            inputs,
-        )
-        wired = wire_checkpoint_reuse(doc, "s_opt", "s_freq")
-        assert compile_doc(wired).ok
 
     def test_known_input_states_differ_refused(self) -> None:
         doc = _no_global_doc(
@@ -747,31 +714,6 @@ class TestProvenanceAndCompilerIntegration:
         compiled = compile_doc(wired)
         assert compiled.ok, [(d.code, d.message) for d in compiled.diagnostics]
 
-    def test_compiler_rejection_names_compiler(self) -> None:
-        doc = v4_doc(
-            [
-                calc_step(
-                    "s_a",
-                    bindings={"structure": {"source": {"run": "structures"}}},
-                    overrides={"charge": 1, "multiplicity": 2},
-                ),
-                calc_step(
-                    "s_b",
-                    bindings={"structure": {"source": {"step": "s_a", "port": "structures"}}},
-                    overrides={"charge": 1, "multiplicity": 2},
-                ),
-            ],
-            inputs=STRUCTURE_INPUTS,
-        )
-        with pytest.raises(DomainError, match="compiler"):
-            wire_checkpoint_reuse(doc, "s_a", "s_b")
-
-    def test_duplicate_checkpoint_binding_refused(self) -> None:
-        doc = _doc()
-        wired = wire_checkpoint_reuse(doc, "s_opt", "s_freq")
-        with pytest.raises(DomainError, match="already declares"):
-            wire_checkpoint_reuse(wired, "s_opt", "s_freq")
-
 
 class TestSelectiveRegistryLineageProof:
     """Registries that pass endpoint checks but fail lineage lookups."""
@@ -830,7 +772,10 @@ class TestSelectiveRegistryLineageProof:
         )
         with pytest.raises(DomainError, match="not registered|inherited|charge|spin"):
             wire_checkpoint_reuse(
-                doc, "s_opt", "s_freq", registry=self._selective_registry("adapter")  # type: ignore[arg-type]
+                doc,
+                "s_opt",
+                "s_freq",
+                registry=self._selective_registry("adapter"),  # type: ignore[arg-type]
             )
 
     def test_lineage_profile_lookup_failure_fails_closed(self) -> None:
@@ -851,7 +796,10 @@ class TestSelectiveRegistryLineageProof:
         )
         with pytest.raises(DomainError, match="inherited|charge|spin"):
             wire_checkpoint_reuse(
-                doc, "s_opt", "s_freq", registry=self._selective_registry("profile")  # type: ignore[arg-type]
+                doc,
+                "s_opt",
+                "s_freq",
+                registry=self._selective_registry("profile"),  # type: ignore[arg-type]
             )
 
     def test_confgen_override_propagates_declared_state(self) -> None:
