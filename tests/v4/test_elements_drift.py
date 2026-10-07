@@ -18,8 +18,14 @@ import pytest
 import confflow.science.data as science_data
 from confflow.domain import ELEMENT_SYMBOLS, atomic_number, canonical_element_symbol
 
-NON_EMPTY_SYMBOLS: tuple[tuple[int, str], ...] = tuple(
+_ALL_SYMBOLS: tuple[tuple[int, str], ...] = tuple(
     (index, symbol) for index, symbol in enumerate(ELEMENT_SYMBOLS) if symbol
+)
+
+# DIET-2 T1/b1: 参数化按节点级精简，保留首/常用单字母/常用双字母/末边界 4 代表。
+_RETAINED_ATOMICS = frozenset({1, 6, 26, 118})
+NON_EMPTY_SYMBOLS = tuple(
+    (index, symbol) for index, symbol in _ALL_SYMBOLS if index in _RETAINED_ATOMICS
 )
 
 

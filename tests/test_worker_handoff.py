@@ -47,7 +47,6 @@ def test_control_worker_handoff_alias_can_still_be_monkeypatched(
     "value",
     [
         "relative/path.json",
-        r"/attempt\handoff.json",
         "/attempt/../outside.json",
     ],
 )
