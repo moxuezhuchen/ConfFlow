@@ -54,8 +54,8 @@ def _auto_bindings(
     """Fill missing ``bindings`` with the linear-predecessor rule.
 
     Head step <- unique default run structure input; step N <- step N-1's
-    ``structures`` output.  ``from`` overrides the predecessor.  Named cards
-    always demand explicit bindings.  Anything else missing fails closed.
+    ``structures`` output.  ``from`` overrides the predecessor.
+    Anything else missing fails closed.
     """
     run_names = list(inputs)
     default_run = "structures" if "structures" in inputs else (run_names[0] if run_names else None)
@@ -63,12 +63,6 @@ def _auto_bindings(
         step = by_id[step_id]
         if step.get("bindings") is not None:
             continue
-        card_type = step.get("_card_type")
-        if card_type in ("qst2", "qst3", "neb"):
-            raise _fail(
-                f"step {step_id!r} ({card_type}) requires explicit reactant/product bindings",
-                step_id=step_id,
-            )
         executor = wire_executors[step_id]
         adapter_name = wire_adapters.get(step_id)
         required, _ = _registry_input_ports(executor, adapter_name, registry)

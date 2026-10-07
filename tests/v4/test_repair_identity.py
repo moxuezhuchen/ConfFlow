@@ -9,8 +9,6 @@ coverage (D owns those) and no registry/profile edits (A/C own those):
 - provenance-aware digests (entity/group/role/lineage + ResultRef/provenance);
 - status/cardinality gating with per-step scoped diagnostics;
 - IDS result filtering per requested id (MANY may select several distinct ids);
-- per-slot atom mapping applied before compatibility (uniform shorthand +
-  independent product/guess permutations, shared assembly/executor helper).
 """
 
 from __future__ import annotations
@@ -24,17 +22,6 @@ from confflow.domain import (
     make_result_id,
 )
 from confflow.domain.errors import InvalidResultError
-from confflow.execution.atom_mapping import (
-    AtomMapping,
-    normalize_to_per_slot,
-    parse_atom_mapping,
-    validate_mapping_for_slots,
-)
-from confflow.execution.named_structures import (
-    resolve_named_inputs,
-    validate_named_compatibility,
-    validate_slots_with_mapping,
-)
 
 
 def _energy(
@@ -244,87 +231,6 @@ class TestProvenanceAwareDigests:
         assert WORK_ITEM_DIGEST_KIND == "confflow.work_item.v2"
 
 
-class TestPerSlotAtomMapping:
-    REFERENCE = ("O", "H", "C")
-    PRODUCT = ("H", "C", "O")
-    GUESS = ("C", "O", "H")
-
-    def test_uniform_shorthand_normalizes_to_every_non_reference_slot(self) -> None:
-        mapping = parse_atom_mapping({"kind": "explicit_permutation", "permutation": [2, 0, 1]})
-        per_slot = normalize_to_per_slot(mapping, ("reactant", "product", "guess"))
-        assert per_slot == {"product": (2, 0, 1), "guess": (2, 0, 1)}
-
-    def test_independent_product_guess_permutations_validate(self) -> None:
-        mapping = parse_atom_mapping(
-            {
-                "kind": "explicit_permutation",
-                "permutations": {"product": [2, 0, 1], "guess": [1, 2, 0]},
-            }
-        )
-        per_slot = validate_mapping_for_slots(
-            mapping,
-            {"reactant": self.REFERENCE, "product": self.PRODUCT, "guess": self.GUESS},
-        )
-        assert per_slot == {"product": (2, 0, 1), "guess": (1, 2, 0)}
-
-    def test_dual_authority_is_rejected(self) -> None:
-        try:
-            parse_atom_mapping(
-                {
-                    "kind": "explicit_permutation",
-                    "permutation": [0, 1, 2],
-                    "permutations": {"product": [0, 1, 2]},
-                }
-            )
-        except Exception as exc:
-            assert getattr(exc, "code", "") == "atom_mapping_invalid"
-        else:  # pragma: no cover
-            raise AssertionError("dual authority must fail")
-
-    def test_shared_helper_orders_mapping_before_compatibility(self) -> None:
-        from confflow.domain import ResourceRequest, StructureRecord
-        from confflow.domain.work_item import WorkItem, WorkItemInputs, make_work_item_id
-
-        def record(rid: str, atoms: tuple[str, ...]) -> StructureRecord:
-            coords = tuple((float(i), 0.0, 0.0) for i in range(len(atoms)))
-            return StructureRecord(
-                id=rid,
-                atoms=atoms,
-                coordinates=coords,
-                charge=0,
-                multiplicity=1,
-                group_key="g1",
-            )
-
-        item = WorkItem(
-            id=make_work_item_id("qst:g1"),
-            logical_key="qst:g1",
-            step_id="qst",
-            named_inputs=WorkItemInputs(
-                structures=FrozenDict(
-                    {
-                        "reactant": StructureSet.of(record("r1", self.REFERENCE)),
-                        "product": StructureSet.of(record("p1", self.PRODUCT)),
-                    }
-                )
-            ),
-            resources=ResourceRequest(cores_per_item=2, memory_per_item_bytes=1024**3),
-            semantic_digest="sha256:" + "a" * 64,
-        )
-        resolved = resolve_named_inputs(item, require_guess=False)
-        mapping = parse_atom_mapping({"kind": "explicit_permutation", "permutation": [2, 0, 1]})
-        per_slot = validate_slots_with_mapping(resolved, mapping)
-        assert per_slot == {"product": (2, 0, 1)}
-        assert validate_named_compatibility(resolved) == (0, 1)
-        # Identity must still demand an explicit mapping for reordered slots.
-        try:
-            validate_slots_with_mapping(resolved, AtomMapping(kind="identity"))
-        except Exception as exc:
-            assert getattr(exc, "code", "") == "atom_mapping_required"
-        else:  # pragma: no cover
-            raise AssertionError("identity over reordered slots must fail")
-
-
 class TestAssemblyGating:
     """Assembly-level gating runs through the compile path (needs a healthy tree)."""
 
@@ -529,130 +435,41 @@ class TestAssemblyGating:
         assert assembly.ok, [(d.code, d.details.get("reason")) for d in assembly.errors]
         assert [i.logical_key for i in assembly.for_step("s_sp")] == ["s_sp:s0"]
 
-    def test_ids_result_selector_filters_by_result_id(self) -> None:
-        from confflow.domain import ResultSet, ScientificResult, StepStatus, Unit
-        from confflow.workflow.v4 import (
-            MaterializedOutputs,
-            StepOutputs,
-            assemble_work_items,
-        )
-        from tests.v4._builders import (
-            analysis_step,
-            calc_step,
-            compile_doc,
-            run_inputs,
-            structure_set,
-            v4_doc,
-        )
-
-        prod_a = ScientificResult(
-            kind="energy",
-            value=-76.4,
-            unit=Unit.HARTREE,
-            subject_structure_id="s0",
-            source_step_id="s_opt",
-            result_id="res-low",
-        )
-        prod_b = ScientificResult(
-            kind="energy",
-            value=-76.5,
-            unit=Unit.HARTREE,
-            subject_structure_id="s0",
-            source_step_id="s_opt",
-            result_id="res-high",
-        )
-        doc = v4_doc(
-            [
-                calc_step("s_opt", bindings={"structure": {"source": {"run": "structures"}}}),
-                analysis_step(
-                    "s_report",
-                    bindings={
-                        "results": {
-                            "source": {
-                                "step": "s_opt",
-                                "port": "results",
-                                "select": {"ids": ["res-high"]},
-                            },
-                            "pairing": "single",
-                        }
-                    },
-                ),
-            ],
-            inputs={"structures": {"kind": "structure", "cardinality": "many"}},
-        )
-        compiled = compile_doc(doc)
-        assert compiled.ok, [(d.code, d.details.get("reason")) for d in compiled.errors]
-        plan = compiled.plan
-        assert plan is not None
-        structures = structure_set("s0")
-        assembly = assemble_work_items(
-            plan,
-            run_inputs(structures={"structures": structures}),
-            materialized=MaterializedOutputs(
-                steps=FrozenDict(
-                    {
-                        "s_opt": StepOutputs(
-                            step_id="s_opt",
-                            structures=structures,
-                            results=ResultSet.of(prod_a, prod_b),
-                            status=StepStatus.COMPLETED,
-                        )
-                    }
-                )
-            ),
-        )
-        assert assembly.ok, [(d.code, d.details.get("reason")) for d in assembly.errors]
-        report = assembly.for_step("s_report")
-        assert len(report) == 1
-        bound = report[0].named_inputs.results["results"]
-        assert [r.result_id for r in bound] == ["res-high"]
+    # R2.2 (G18): retired with the analysis executor: no retained
+    # executor consumes result-kind bindings, so the result-id
+    # selector assembly is unreachable until analysis returns.
 
     def test_group_key_change_moves_item_digest(self) -> None:
         from confflow.workflow.v4 import assemble_work_items
         from tests.v4._builders import calc_step, run_inputs, v4_doc
         from tests.v4._builders import structure as build_structure
 
+        # R2.2: vehicle is the retained standard adapter (named_structures
+        # retired); the group-key-moves-digest property is unchanged.
         doc = v4_doc(
             [
                 calc_step(
                     "s_ts",
-                    adapter="named_structures",
-                    bindings={
-                        "reactant": {
-                            "source": {"run": "reactants"},
-                            "pairing": "by_group_key",
-                        },
-                        "product": {
-                            "source": {"run": "products"},
-                            "pairing": "by_group_key",
-                        },
-                    },
+                    bindings={"structure": {"source": {"run": "structures"}}},
                 )
             ],
-            inputs={
-                "reactants": {"kind": "structure", "cardinality": "many"},
-                "products": {"kind": "structure", "cardinality": "many"},
-            },
+            inputs={"structures": {"kind": "structure", "cardinality": "many"}},
         )
         plan = self._compile(doc)
         first = assemble_work_items(
             plan,
             run_inputs(
-                structures={
-                    "reactants": StructureSet.of(build_structure("R1", group_key="g1")),
-                    "products": StructureSet.of(build_structure("P1", group_key="g1")),
-                }
+                structures={"structures": StructureSet.of(build_structure("R1", group_key="g1"))}
             ),
         )
         second = assemble_work_items(
             plan,
             run_inputs(
-                structures={
-                    "reactants": StructureSet.of(build_structure("R1", group_key="g2")),
-                    "products": StructureSet.of(build_structure("P1", group_key="g2")),
-                }
+                structures={"structures": StructureSet.of(build_structure("R1", group_key="g2"))}
             ),
         )
         assert first.ok and second.ok
         assert first.items[0].semantic_digest != second.items[0].semantic_digest
-        assert first.items[0].logical_key != second.items[0].logical_key
+        # Standard per-structure pairing keys items by structure id, so the
+        # logical key stays while the digest moves with the group identity.
+        assert first.items[0].logical_key == second.items[0].logical_key

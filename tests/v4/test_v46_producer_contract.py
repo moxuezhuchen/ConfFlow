@@ -12,7 +12,6 @@ test failure, not a silent skew.
 from __future__ import annotations
 
 import copy
-import importlib
 import json
 from typing import Any
 
@@ -39,7 +38,6 @@ from confflow.producer import (
 from confflow.producer.contract import SCIENTIFIC_OVERRIDE_KEYS
 from confflow.producer.manifest import build_editor_manifest_v4
 from confflow.producer.recipes import build_recipe_catalog_v4
-from confflow.remote.envelope import HANDOFF_SCHEMA_V3, RESULT_SCHEMA_V3
 from confflow.workflow.v4.compiler import compile_workflow
 from confflow.workflow.v4.document import SCHEMA_ID, ScientificDefinition
 from confflow.workflow.v4.schema import TRANSFORM_KINDS, build_workflow_json_schema
@@ -70,7 +68,6 @@ REQUIRED_ENVELOPE_KEYS = (
     "result_schema",
     "result_schema_sha256",
     "validation_response_schema",
-    "remote_capability",
 )
 
 LEGACY_OUTPUT_TOKENS = (
@@ -239,42 +236,18 @@ class TestGeneratedFromRegistries:
         else:  # pragma: no cover - the domain must keep rejecting unknown keys
             raise AssertionError("ScientificDefinition accepted an unknown override")
 
-    def test_remote_capability_ids(self) -> None:
-        # Wave-2 E: the wire is V3 (executor capability, seed, execution
-        # request, true result identity); V2 bytes fail closed.
-        assert HANDOFF_SCHEMA_V3 == "confflow.control.worker-handoff.v3"
-        assert RESULT_SCHEMA_V3 == "confflow.control.worker-result.v3"
-        assert _envelope()["remote_capability"] == {
-            "handoff": HANDOFF_SCHEMA_V3,
-            "result": RESULT_SCHEMA_V3,
-        }
-
 
 class TestAnalysisCapabilities:
-    def test_frozen_reaction_profile_advertised(self) -> None:
+    # R2.2 声明：analysis 执行器能力退役，不再广播任何分析能力；
+    # analysis_capabilities 键本身保留，capabilities 为空数组（形状不变）。
+    def test_reaction_profile_no_longer_advertised(self) -> None:
         assert ANALYSIS_REACTION_PROFILE_CAPABILITY == "reaction_profile"
         assert (
             ANALYSIS_REACTION_PROFILE_CONTRACT == "confflow.contract.analysis.reaction_profile.v1"
         )
         envelope = _envelope()
-        assert envelope["analysis_capabilities"]["capabilities"] == [
-            {
-                "capability": "reaction_profile",
-                "contract_version": "confflow.contract.analysis.reaction_profile.v1",
-            }
-        ]
-
-    def test_registry_appearance_with_different_strings_fails_loudly(self) -> None:
-        try:
-            registry_module = importlib.import_module("confflow.analysis.registry")
-        except ImportError:
-            assert _envelope()["analysis_capabilities"]["source"] == "frozen"
-            return
-        capabilities = registry_module.capabilities()
-        by_name = {item["capability"]: item["contract_version"] for item in capabilities}
-        assert by_name.get("reaction_profile") == (
-            "confflow.contract.analysis.reaction_profile.v1"
-        ), "analysis registry appeared with different strings; update the frozen contract"
+        assert envelope["analysis_capabilities"]["capabilities"] == []
+        assert envelope["analysis_capabilities"]["source"] == "registry"
 
 
 class TestDriftGates:
@@ -429,7 +402,7 @@ class TestCrossRepoSelfVerify:
         assert envelope["contract_digest"] == contract_digest_of(envelope)
         for name in ("workflow_schema", "editor_manifest", "recipe_catalog", "result_schema"):
             assert envelope[f"{name}_sha256"] == canonical_sha256(envelope[name]), name
-        recipe = next(r for r in envelope["recipe_catalog"]["recipes"] if r["id"] == "tspes")
+        recipe = next(r for r in envelope["recipe_catalog"]["recipes"] if r["id"] == "optimize")
         compiled = compile_workflow(recipe["document"])
         assert compiled.ok, [str(d) for d in compiled.diagnostics]
         assert compiled.plan is not None

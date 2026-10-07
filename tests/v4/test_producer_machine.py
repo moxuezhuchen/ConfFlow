@@ -5,8 +5,7 @@
 Covers resolution arithmetic (CPU- vs memory-bound), oversized refusal,
 explicit overrides, ``on_failure`` preservation, strict field/bool/
 non-finite validation, the coordinated operational schema (per-program
-executable mapping, ``binding_id``, ``remote``/``remote_target``/``target``
-canonicalization), and the digest contract: operational changes are
+executable mapping and ``binding_id``), and the digest contract: operational changes are
 digest-inert while request changes move scientific digests.
 """
 
@@ -177,23 +176,8 @@ class TestOperationalSchema:
         out = resolve_machine_resources(_profile(binding_id="cluster-a"), _request())
         assert out["provenance"]["operational"]["binding_id"] == "cluster-a"
 
-    def test_target_aliases_canonicalize(self) -> None:
-        out = resolve_machine_resources(_profile(remote="node-7"), _request())
-        assert out["provenance"]["operational"]["target"] == "node-7"
-        assert "remote" not in out["provenance"]["operational"]
-        out = resolve_machine_resources(_profile(remote_target="node-9"), _request())
-        assert out["provenance"]["operational"]["target"] == "node-9"
-        assert "remote_target" not in out["provenance"]["operational"]
-
-    def test_target_alias_conflict_rejected(self) -> None:
-        with pytest.raises(InvalidResourceError, match="conflict"):
-            resolve_machine_resources(_profile(target="node-1", remote="node-2"), _request())
-        with pytest.raises(InvalidResourceError, match="conflict"):
-            resolve_machine_resources(_profile(target="node-1", remote_target="node-3"), _request())
-
-    def test_agreeing_aliases_canonicalize(self) -> None:
-        out = resolve_machine_resources(_profile(target="node-1", remote="node-1"), _request())
-        assert out["provenance"]["operational"]["target"] == "node-1"
+    # R2.2 (G18): target/remote/remote_target alias tests retired with
+    # the machine-profile target keys.
 
     def test_env_sandbox_and_limits_validated(self) -> None:
         out = resolve_machine_resources(
@@ -248,7 +232,6 @@ class TestDigestContract:
                 "binding_id": "cluster-a",
                 "executable": "/opt/g16/g16",
                 "env": {"GAUSS_SCRDIR": "/scratch"},
-                "target": "node-7",
             },
         )
         assert self._digests(plain) == self._digests(bound)

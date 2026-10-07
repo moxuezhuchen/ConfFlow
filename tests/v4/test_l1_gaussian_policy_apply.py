@@ -144,7 +144,7 @@ def test_wrappers_keep_signatures_and_wire() -> None:
     # New policy stages have different signatures: must not claim `is`.
     assert c._check_gaussian_sides.__module__ == "confflow.producer.checkpoints"
     assert c.CHECKPOINT_REUSE_VERSION == "confflow.producer.checkpoints.v1"
-    assert c.REUSE_MODES == ("checkpoint", "readfc", "rcfc")
+    assert c.REUSE_MODES == ("checkpoint", "readfc")
     assert c.__all__ == ["CHECKPOINT_REUSE_VERSION", "REUSE_MODES", "wire_checkpoint_reuse"]
 
 

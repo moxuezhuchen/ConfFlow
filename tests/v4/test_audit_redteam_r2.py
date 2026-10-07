@@ -12,7 +12,6 @@ fails, the corresponding contract is not actually closed.
 
 from __future__ import annotations
 
-import copy
 import json
 import os
 import time
@@ -28,7 +27,6 @@ from confflow.application.v4_run import (
     import_xyz,
 )
 from confflow.domain import FrozenDict
-from confflow.domain.errors import DomainError
 from confflow.execution.process import NativeProcessSupervisor
 from confflow.workflow.v4.assembly import RunInputs
 from tests.v4._helpers.audit_native import (
@@ -36,12 +34,9 @@ from tests.v4._helpers.audit_native import (
     _digest_over,
     _last_record,
     _launches,
-    _science_chain_native,
     _science_native,
     _single_step_doc,
     _stored_environment_digest,
-    _tspes_doc,
-    _tspes_inputs,
 )
 
 RED_TEAM_ENV = "CF_R2_REDTEAM_SCIENCE"
@@ -89,41 +84,14 @@ class TestRedTeamEnvironment:
             assert _launches(tmp_path) == 3
             received = _last_record(tmp_path)["env"]
             assert received[RED_TEAM_ENV] == "-99.5"
-            assert _stored_environment_digest(tmp_path / "explicit", "ts") == _digest_over(
+            assert _stored_environment_digest(tmp_path / "explicit", "optimize") == _digest_over(
                 script, received
             )
         finally:
             os.environ.pop(RED_TEAM_ENV, None)
 
 
-class TestRedTeamTarget:
-    def test_new_unknown_target_fails_closed(self, tmp_path: Path) -> None:
-        """R1.2: nonlocal target fails closed with no transport (0 launches)."""
-        script = _redteam_native(tmp_path)
-        doc = _single_step_doc(script)
-        doc["steps"][0]["execution"]["target"] = "cluster-r2-ghost"
-        with pytest.raises(DomainError, match="no transport is configured"):
-            _run_redteam_step(doc, tmp_path / "run")
-        assert _launches(tmp_path) == 0
-
-    def test_bad_target_on_a_later_step_launches_nothing(self, tmp_path: Path) -> None:
-        """A typo on step 2 must not let step 1 run first."""
-        script = _redteam_native(tmp_path)
-        doc = copy.deepcopy(_tspes_doc(script, sp="-70", freq="-60"))
-        # Make the *last* step (analysis) carry the bad target.
-        doc["steps"][-1]["execution"] = {"target": "cluster-r2-ghost"}
-        with pytest.raises(DomainError):
-            V4RunApplication(supervisor=NativeProcessSupervisor()).run(
-                V4RunRequest(
-                    workflow_document=doc,
-                    run_inputs=RunInputs(
-                        structures=FrozenDict({"structures": import_xyz(WATER_XYZ)})
-                    ),
-                    run_root=str(tmp_path / "run"),
-                    import_sources=FrozenDict({"structures": WATER_XYZ}),
-                )
-            )
-        assert not (tmp_path / "chain-count").exists()
+# R2.2 (G18): TestRedTeamTarget is retired with the ``target`` field.
 
 
 class TestRedTeamCancellation:
@@ -163,50 +131,8 @@ class TestRedTeamCancellation:
 
 
 class TestRedTeamReferences:
-    def test_cross_generation_citation_is_refused(self, tmp_path: Path) -> None:
-        """A citation that only existed in a prior generation must not resolve."""
-        from dataclasses import replace
-
-        from confflow.domain import ResultSet
-        from confflow.producer.run_result import (
-            build_result_reference_index,
-            project_analysis_groups,
-        )
-
-        script = _science_chain_native(tmp_path)
-        doc = _tspes_doc(script, sp="-70", freq="-60")
-        run_root = tmp_path / "run"
-        first = V4RunApplication(supervisor=NativeProcessSupervisor()).run(
-            V4RunRequest(
-                workflow_document=doc,
-                run_inputs=_tspes_inputs(),
-                run_root=str(run_root),
-                import_sources=FrozenDict({"structures": WATER_XYZ}),
-            )
-        )
-        assert first.status == "completed"
-        old_ids = {
-            item.result_id for step in first.step_results for item in step.results if item.result_id
-        }
-        assert old_ids
-        # A fresh generation's step set (the same step, no results) must not
-        # resolve any prior-generation citation.
-        step = next(
-            item
-            for item in first.step_results
-            if any(result.kind == "reaction_profile" for result in item.results)
-        )
-        empty_step = replace(step, results=ResultSet())
-        index = build_result_reference_index((empty_step,))
-        profile = next(item for item in step.results if item.kind == "reaction_profile")
-        value = dict(profile.value)
-        value["source_result_ids"] = [sorted(old_ids)[0]]
-        changed = replace(profile, value=FrozenDict(value))
-        with pytest.raises(ValueError) as error:
-            project_analysis_groups(
-                (replace(step, results=ResultSet((changed,))),), references=index
-            )
-        assert "unresolved" in str(error.value)
+    # R2.3a (G18): test_cross_generation_citation_is_refused retired with
+    # the reaction-profile projector and confflow.analysis.
 
     def test_duplicate_produced_and_input_citation_combo(self) -> None:
         from dataclasses import replace
@@ -239,26 +165,4 @@ class TestRedTeamReferences:
         assert "collides" in str(error.value)
 
 
-class TestRedTeamTspes:
-    def test_different_numbers_yield_matching_barriers(self, tmp_path: Path) -> None:
-        script = _science_chain_native(tmp_path)
-        doc = _tspes_doc(script, sp="-123.4", freq="-45.6")
-        run_root = tmp_path / "run"
-        report = V4RunApplication(supervisor=NativeProcessSupervisor()).run(
-            V4RunRequest(
-                workflow_document=doc,
-                run_inputs=RunInputs(structures=FrozenDict({"structures": import_xyz(WATER_XYZ)})),
-                run_root=str(run_root),
-                import_sources=FrozenDict({"structures": WATER_XYZ}),
-            )
-        )
-        assert report.status == "completed"
-        manifest = json.loads((run_root / RUN_RESULT_FILENAME).read_text())
-        (group,) = [entry for entry in manifest["analyses"] if "group_key" in entry]
-        # composite: TS electronic = TS SP (-123.4) plus TS correction (0.10);
-        # endpoint electronic = -80.0 plus endpoint correction (0.20).
-        expected_barrier = (-123.4 + 0.10) - (-80.0 + 0.20)
-        forward = group["barriers"]["forward_endpoint"]["value"]
-        reverse = group["barriers"]["reverse_endpoint"]["value"]
-        assert forward == pytest.approx(expected_barrier, abs=1e-9)
-        assert reverse == pytest.approx(expected_barrier, abs=1e-9)
+# R2.2 (G18): TestRedTeamTspes is retired with the tspes chain.

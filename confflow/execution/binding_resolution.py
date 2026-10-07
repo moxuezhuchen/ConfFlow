@@ -11,24 +11,17 @@ fields always win and request-level defaults only fill gaps.
 Rules (frozen):
 
 - ``executable``: planned absolute/PATH name wins; else the caller-supplied
-  program default map; else the adapter default.  Resolution never requires a
-  local absolute path to exist on a remote target: target-side callers pass
-  their own resolved executable and this function only carries the string.
+  program default map; else the adapter default.
 - ``env``: planned entries win over default entries.  The declared mapping
   is one layer of the effective native environment: producer-side callers
   explicitly add the ambient inheritance policy, and the complete
   resulting snapshot is digested and launched (see
   ``effective_native_env``).  Scientific recovery params can never inject
   or override binding environment (see ``work_item_executor``).
-- ``target`` / ``walltime_seconds`` / ``sandbox`` / ``allowed_executables``:
+- ``walltime_seconds`` / ``sandbox`` / ``allowed_executables``:
   planned values are preserved, never dropped; defaults fill only ``None``.
 - Seed propagation: the step ``seed`` is the single stochastic authority.
-  It travels as a typed resolved input; the native ``RANDOMSEED``
-  boolean switch (official ORCA 6.1 manual ``%goat`` Table 4.9: "set
-  it to false to have a deterministic GOAT run"; no numeric stream
-  semantics exist) is rendered exclusively by the program adapter as
-  ``false``.  This module never reads or writes native seed keys; it
-  only exposes the effective native mapping.
+  It travels as a typed resolved input.
 """
 
 from __future__ import annotations
@@ -44,10 +37,7 @@ from .contracts import ExecutionBinding
 __all__ = [
     "BindingRequestDefaults",
     "effective_native_env",
-    "is_local_target",
-    "require_target_transport",
     "resolve_execution_binding",
-    "resolve_remote_target_binding",
     "validate_step_seed",
 ]
 
@@ -58,7 +48,6 @@ class BindingRequestDefaults:
 
     executables: Mapping[str, str] = field(default_factory=dict)
     env: Mapping[str, str] = field(default_factory=dict)
-    target: str | None = None
     walltime_seconds: int | None = None
 
     def __post_init__(self) -> None:
@@ -73,32 +62,6 @@ def _planned_text(value: Any) -> str | None:
         return None
     text = str(value).strip()
     return text or None
-
-
-#: Canonical local-target aliases. ``None`` (omitted) and these names all
-#: mean in-process local delivery with identical semantics. Every other
-#: non-empty target string names a nonlocal endpoint and MUST resolve
-#: through a configured transport; otherwise execution fails closed before
-#: any native launch (no silent local fallback).
-_LOCAL_TARGET_ALIASES: frozenset[str] = frozenset({"local", "localhost"})
-
-
-def is_local_target(target: str | None) -> bool:
-    """Return whether *target* selects in-process local delivery.
-
-    Omitted (``None``) and explicit local aliases (``"local"``,
-    ``"localhost"``, case-insensitive, surrounding whitespace ignored)
-    are local with identical semantics. Any other non-empty string is a
-    nonlocal endpoint identifier requiring a configured transport.
-    """
-    if target is None:
-        return True
-    if not isinstance(target, str):
-        raise DomainError("target must be a string or None")
-    text = target.strip()
-    if not text:
-        return True
-    return text.lower() in _LOCAL_TARGET_ALIASES
 
 
 def effective_native_env(
@@ -170,46 +133,6 @@ def _validate_native_env_mapping(raw: Mapping[str, Any]) -> dict[str, str]:
     return effective
 
 
-def require_target_transport(target: str | None, transport: Any) -> Any:
-    """Resolve the delivery transport for *target*, failing closed.
-
-    Local targets (see :func:`is_local_target`) always return ``None``
-    (in-process delivery, never a remote transport). Nonlocal targets
-    require a configured *transport* that explicitly claims the target
-    through the formal ``supports_target`` interface. A transport without
-    that interface, or one whose claim is false, raises
-    :class:`DomainError` BEFORE any native launch: an explicit
-    ``target=nonexistent-cluster`` can never silently execute locally, and
-    an unnamed transport can never claim arbitrary targets.
-    """
-    if target is None or is_local_target(target):
-        return None
-    label = target.strip() if isinstance(target, str) else str(target)
-    if transport is None:
-        raise DomainError(
-            f"step targets {label!r} but no transport is configured; "
-            "refusing silent local fallback (0 native launches)"
-        )
-    supports = getattr(transport, "supports_target", None)
-    if not callable(supports):
-        raise DomainError(
-            f"step targets {label!r} but transport "
-            f"{type(transport).__name__!r} does not implement the formal "
-            "supports_target interface; refusing silent local fallback "
-            "(0 native launches)"
-        )
-    try:
-        ok = supports(label)
-    except Exception as exc:
-        raise DomainError(f"target {label!r} cannot be resolved to a transport: {exc}") from exc
-    if not ok:
-        raise DomainError(
-            f"step targets {label!r} but no matching transport claims it; "
-            "refusing silent local fallback (0 native launches)"
-        )
-    return transport
-
-
 def resolve_execution_binding(
     *,
     program: str,
@@ -227,8 +150,8 @@ def resolve_execution_binding(
         Per-step planned execution (``StepModel.execution`` equivalent).
         Every set field wins over defaults.
     defaults : BindingRequestDefaults | Mapping | None
-        Caller-level defaults (executables map, env, target, walltime).
-        A plain mapping may carry ``executables``/``env``/``target``/
+        Caller-level defaults (executables map, env, walltime).
+        A plain mapping may carry ``executables``/``env``/
         ``walltime_seconds`` keys.
     adapter_default_executable : str | None
         Adapter ``default_executable`` used as the last resort.
@@ -236,9 +159,8 @@ def resolve_execution_binding(
     Returns
     -------
     ExecutionBinding
-        Resolved binding preserving env/target/walltime/executable
-        identity.  No filesystem validation happens here, so remote
-        targets never need local absolute paths to resolve.
+        Resolved binding preserving env/walltime/executable
+        identity.  No filesystem validation happens here.
     """
     if not isinstance(program, str) or not program.strip():
         raise DomainError("program must be a non-empty string")
@@ -250,29 +172,35 @@ def resolve_execution_binding(
             "sandbox": planned.sandbox,
             "allowed_executables": list(planned.allowed_executables),
             "walltime_seconds": planned.walltime_seconds,
-            "target": planned.target,
             "metadata": dict(planned.metadata),
         }
     elif planned is None:
         planned_map = {}
     elif isinstance(planned, Mapping):
         planned_map = dict(planned)
+        if _planned_text(planned_map.get("target")) is not None:
+            raise DomainError(
+                "planned execution carries retired field 'target': "
+                "remote delivery was retired, declare no target"
+            )
     else:
         raise DomainError("planned must be an ExecutionBinding, a mapping, or None")
     if defaults is None:
         default_execs: Mapping[str, Any] = {}
         default_env: Mapping[str, Any] = {}
-        default_target: str | None = None
         default_walltime: int | None = None
     elif isinstance(defaults, BindingRequestDefaults):
         default_execs = defaults.executables
         default_env = defaults.env
-        default_target = defaults.target
         default_walltime = defaults.walltime_seconds
     elif isinstance(defaults, Mapping):
         default_execs = defaults.get("executables", {})
         default_env = defaults.get("env", {})
-        default_target = defaults.get("target")
+        if _planned_text(defaults.get("target")) is not None:
+            raise DomainError(
+                "defaults carry retired field 'target': "
+                "remote delivery was retired, declare no target"
+            )
         default_walltime = defaults.get("walltime_seconds")
         if not isinstance(default_execs, Mapping):
             raise DomainError("defaults executables must be a mapping")
@@ -302,7 +230,6 @@ def resolve_execution_binding(
     walltime = planned_map.get("walltime_seconds", None)
     if walltime is None:
         walltime = default_walltime
-    target = _planned_text(planned_map.get("target")) or _planned_text(default_target)
     sandbox = _planned_text(planned_map.get("sandbox"))
     binding_id = _planned_text(planned_map.get("binding_id")) or "resolved"
     allowed = tuple(
@@ -318,51 +245,7 @@ def resolve_execution_binding(
         sandbox=sandbox,
         allowed_executables=allowed,
         walltime_seconds=walltime,
-        target=target,
         metadata=FrozenDict({str(k): v for k, v in metadata.items()}),
-    )
-
-
-def resolve_remote_target_binding(
-    *,
-    program: str,
-    handoff_execution: Mapping[str, Any] | None,
-    target_default_executable: str,
-    target_env: Mapping[str, str] | None = None,
-) -> ExecutionBinding:
-    """Resolve the target-side binding for a remote handoff.
-
-    The handoff's requested executable is carried verbatim: an explicitly
-    requested path stays explicit and fails closed at measurement/launch
-    when it does not exist on the target — it is never silently rewritten
-    to another binary.  Only an absent request falls back to the target's
-    own configured default.  The requested value additionally rides as
-    audit provenance in metadata.  No filename parsing ever decides the
-    launch path.
-    """
-    if not isinstance(target_default_executable, str) or not target_default_executable.strip():
-        raise DomainError("target_default_executable must be a non-empty string")
-    base: dict[str, Any] = dict(handoff_execution) if handoff_execution else {}
-    requested = _planned_text(base.get("executable"))
-    target_default = target_default_executable.strip()
-    executable = requested if requested else target_default
-    env: dict[str, str] = {}
-    if target_env:
-        env.update({str(k): str(v) for k, v in dict(target_env).items()})
-    handoff_env = base.get("env", {})
-    if isinstance(handoff_env, Mapping):
-        env.update({str(k): str(v) for k, v in handoff_env.items()})
-    return ExecutionBinding(
-        binding_id=str(base.get("binding_id") or "remote-target"),
-        executable=executable,
-        env=FrozenDict(env),
-        sandbox=None,
-        allowed_executables=(),
-        walltime_seconds=base.get("walltime_seconds"),
-        target=_planned_text(base.get("target")),
-        metadata=FrozenDict(
-            {"program": program, "resolved": "remote-target", "requested_executable": requested}
-        ),
     )
 
 
@@ -370,12 +253,8 @@ def validate_step_seed(seed: Any) -> int | None:
     """Validate the typed step seed without touching native mappings.
 
     The step seed is the single stochastic authority and travels as a
-    typed resolved input (``ResolvedCalculationInputs.seed``).  The
-    native ``RANDOMSEED`` switch (official ORCA 6.1 manual ``%goat``
-    Table 4.9: a boolean randomization flag, deterministic when
-    ``false``; ORCA 6.1 exposes no numeric stream selection) is
-    rendered exclusively by the program adapter as ``false``; this
-    module never reads or writes ``goat``/``RANDOMSEED`` keys.
+    typed resolved input (``ResolvedCalculationInputs.seed``).
+    This module never reads or writes native seed keys.
 
     Seed rendering (honest contract): the program adapter requires
     the integer step seed and renders the deterministic boolean

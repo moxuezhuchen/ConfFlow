@@ -85,7 +85,7 @@ _DEFAULT_INPUTS: dict[str, Any] = {
     "structures": {"kind": "structure", "cardinality": "many", "grouping": "each_entity"}
 }
 
-_CHECKPOINT_MODES: tuple[str, ...] = ("checkpoint", "readfc", "rcfc")
+_CHECKPOINT_MODES: tuple[str, ...] = ("checkpoint", "readfc")
 
 _STEP_KEYS = frozenset(
     {
@@ -212,12 +212,9 @@ def intent_catalog() -> dict[str, Any]:
         "recipe_cards": {
             "top_key": "recipe_cards",
             "description": (
-                "Optional normal mode for reviewed recipes (currently 'tspes' "
-                "only): {low_level: '<family-card>', single_point: '<sp-card>'} "
-                "generates the role mapping mechanically (ts/freq/opt/irc from "
-                "the low-level family with ts_freq purpose special, sp from "
-                "the single-point card shared twice). Explicit 'role_cards' "
-                "still wins on conflicts."
+                "Retired in R2.2 with the 'tspes' recipe: no recipe accepts "
+                "the normal mode anymore, and declaring 'recipe_cards' "
+                "fails closed. Explicit 'role_cards' is the only shortcut."
             ),
         },
         "configuration_docs": {
@@ -620,11 +617,10 @@ def _resolve_card_and_entry(
 # L1-C2: capability wire builders live in
 # ``capabilities/{calculation,confgen,transform}.py`` (mechanical moves);
 # re-exported lazily via ``__getattr__`` above for compatible ``compiler``
-# import paths (``is`` holds, old ``__module__`` kept).  L1-A3a adds
-# ``capabilities/analysis.py`` (real handler, test-local only): analysis
-# executors stay fail-closed on the default registry through the
-# ``None``/unknown path below and are reachable only via an explicit
-# ``ExecutionRegistry`` binding.
+# import paths (``is`` holds, old ``__module__`` kept).  R2.3a: the
+# ``capabilities/analysis.py`` test-local handler is retired with
+# ``confflow.analysis``; analysis executors stay fail-closed on the
+# default registry through the ``None``/unknown path below.
 
 
 # Canonical R1 sources: ``capabilities/{calculation,confgen,transform}.py``

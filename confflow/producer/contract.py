@@ -21,7 +21,6 @@ No legacy truth is published: ``result.xyz``, ``failed.xyz``,
 from __future__ import annotations
 
 import copy
-import importlib
 from typing import Any
 
 from ..config.contract_schemas import CONFIGURATION_VALIDATION_SCHEMA
@@ -70,24 +69,15 @@ SCIENTIFIC_OVERRIDE_KEYS: tuple[str, ...] = ("charge", "multiplicity", "freeze")
 
 
 def _analysis_capabilities() -> tuple[list[dict[str, str]], str]:
-    """Return analysis capabilities plus their provenance.
+    """Return retired analysis capabilities plus their provenance.
 
-    The capabilities are imported from ``confflow.analysis.registry`` when
-    that module exists. The drift test fails loudly the moment the registry
-    appears with different strings.
+    R2.2 retires the ``analysis`` executor capability, so no analysis
+    capability is advertised.  The ``analysis_capabilities`` key itself is
+    retained with an empty list (never deleted) so consumers observe a
+    removal, not a shape change.  The ``confflow.analysis`` implementation
+    package is deleted by R2.3a.
     """
-    analysis_registry: Any = importlib.import_module("confflow.analysis.registry")
-    capabilities = analysis_registry.capabilities()
-    return (
-        [
-            {
-                "capability": str(item["capability"]),
-                "contract_version": str(item["contract_version"]),
-            }
-            for item in capabilities
-        ],
-        "registry",
-    )
+    return ([], "registry")
 
 
 def _port_dict(port: PortSpec) -> dict[str, Any]:
@@ -381,13 +371,6 @@ def _confgen_section() -> dict[str, Any]:
     return ordered
 
 
-def _remote_section() -> dict[str, Any]:
-    """Return the remote capability ids imported from the frozen envelope."""
-    from ..remote.envelope import HANDOFF_SCHEMA_V3, RESULT_SCHEMA_V3
-
-    return {"handoff": HANDOFF_SCHEMA_V3, "result": RESULT_SCHEMA_V3}
-
-
 def run_result_json_schema() -> dict[str, Any]:
     """Return the JSON Schema of the run-result manifest.
 
@@ -661,7 +644,6 @@ def build_configuration_contract_v4(
     manifest = build_editor_manifest_v4(registry=active)
     catalog = build_recipe_catalog_v4()
     analysis_capabilities, analysis_source = _analysis_capabilities()
-    remote = _remote_section()
     envelope: dict[str, Any] = {
         "content_schema": CONFIGURATION_CONTRACT_V4_SCHEMA,
         "producer": {
@@ -720,7 +702,6 @@ def build_configuration_contract_v4(
         "result_schema": run_result_json_schema(),
         "result_schema_sha256": run_result_schema_sha256(),
         "validation_response_schema": CONFIGURATION_VALIDATION_SCHEMA,
-        "remote_capability": remote,
         "transform_kinds": list(TRANSFORM_KINDS),
     }
     envelope["boundary"] = boundary_section()

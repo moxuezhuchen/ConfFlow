@@ -6,15 +6,12 @@ Adversarial closure over the formal production path only
 (``compile`` -> ``assemble`` -> ``V4RunApplication`` /
 ``BatchStepExecutor.execute_step_resumable``): every test drives real
 production seams. Covers the 18-item production-path checklist (one test
-each), the 20-TS -> 40-IRC-endpoint fanout with DAG step-count
-invariance, and the architecture-scanner gate.
+each) and the architecture-scanner gate.
 """
 
 from __future__ import annotations
 
 import hashlib
-import os
-import stat
 import subprocess
 import sys
 from pathlib import Path
@@ -23,77 +20,6 @@ from typing import Any
 import pytest
 
 from confflow.domain import FrozenDict, StructureSet
-
-FAKES_DIR = Path(__file__).resolve().parent / "fakes"
-FAKE_IRC = FAKES_DIR / "fake_irc.py"
-
-
-def _install_irc_wrapper(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, tag: str) -> Path:
-    """Install a counting fake-IRC executable; return its path.
-
-    The planned document binds the bare ``orca`` name (planned-wins over
-    the request executables map), so the wrapper directory is prepended
-    to ``PATH``: bare-name resolution must land on this counting fake,
-    never on a system ORCA/Gaussian install (or fail under minimal PATH).
-    """
-    bin_dir = tmp_path / f"bin-{tag}"
-    bin_dir.mkdir(parents=True, exist_ok=True)
-    wrapper = bin_dir / "orca"
-    count = tmp_path / f"{tag}.count"
-    count.write_text("")
-    wrapper.write_text(
-        "#!/bin/sh\n"
-        'base=$(basename "$1")\n'
-        f'printf \'%s\\n\' "$base" >> "{count}"\n'
-        f'exec python3 "{FAKE_IRC}" "$@"\n'
-    )
-    wrapper.chmod(0o755)
-    (tmp_path / f"{tag}.fails").write_text("")
-    monkeypatch.setenv("PATH", str(bin_dir) + os.pathsep + os.environ["PATH"])
-    monkeypatch.setenv("FAKE_IRC_MODE", "success")
-    monkeypatch.setenv("FAKE_IRC_ORDER", "reverse_first")
-    monkeypatch.setenv("IRC_FAIL_FILE", str(tmp_path / f"{tag}.fails"))
-    monkeypatch.setenv("FAKE_MODE", "success_opt")
-    assert os.access(wrapper, os.X_OK)
-    assert not bool(wrapper.stat().st_mode & (stat.S_IWGRP | stat.S_IWOTH))
-    return wrapper
-
-
-def _ts_set(count: int) -> StructureSet:
-    """Build *count* TS structures with stable ids, groups, and lineage."""
-    from tests.v4._builders import structure
-
-    width = max(2, len(str(count - 1)) if count > 1 else 2)
-    return StructureSet.of(
-        *(
-            structure(
-                f"ts{index:0{width}d}",
-                group_key=f"rxn-{index:0{width}d}",
-                lineage_root_id=f"root-{index:0{width}d}",
-                offset=float(index) * 0.013,
-            )
-            for index in range(count)
-        )
-    )
-
-
-def _irc_only_doc() -> dict[str, Any]:
-    """Build a single-step IRC document (DAG has exactly one step)."""
-    from tests.v4._builders import calc_step, v4_doc
-
-    irc = calc_step(
-        "s_irc",
-        program="orca",
-        adapter="standard",
-        profile="path_endpoints",
-        bindings={"structure": {"source": {"run": "structures"}}},
-        native={"keyword": "IRC B3LYP D3BJ", "irc": {"direction": "both"}},
-        checks=["normal_termination", "geometry_required"],
-        scheduler={"max_parallel_items": 8},
-        resources={"cores_per_item": 1, "memory_per_item": "1GB"},
-        execution={"binding_id": "test", "executable": "orca"},
-    )
-    return v4_doc([irc], inputs={"structures": {"kind": "structure", "cardinality": "many"}})
 
 
 def _reuse_inputs(**overrides: Any) -> Any:
@@ -154,62 +80,8 @@ def _named_record(
     )
 
 
-class TestFanoutStepCountStable:
-    """20 TS -> 40 IRC endpoints via the formal application path only."""
-
-    def test_20_ts_40_endpoints_dag_step_count_invariant(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        from confflow.application.v4_run import V4RunApplication, V4RunRequest
-        from confflow.domain.completion import StepStatus
-        from confflow.execution.process import NativeProcessSupervisor
-        from confflow.workflow.v4.assembly import RunInputs
-        from tests.v4._builders import assemble, compile_doc, run_inputs
-
-        wrapper = _install_irc_wrapper(tmp_path, monkeypatch, "fanout")
-        document = _irc_only_doc()
-        compiled = compile_doc(document)
-        assert compiled.ok, [(item.code, item.message) for item in compiled.errors]
-        assert compiled.plan is not None
-        plan = compiled.plan
-        assert len(plan.steps) == 1
-        assert plan.steps[0].step_id == "s_irc"
-
-        for count in (20, 40):
-            assembly = assemble(plan, run_inputs(structures={"structures": _ts_set(count)}))
-            assert assembly.ok
-            assert len(assembly.for_step("s_irc")) == count
-        # The DAG never grows with fanout: 20 and 40 inputs, still one step.
-        assert len(plan.steps) == 1
-
-        run_root = str(tmp_path / "run")
-        report = V4RunApplication(supervisor=NativeProcessSupervisor()).run(
-            V4RunRequest(
-                workflow_document=document,
-                run_inputs=RunInputs(structures=FrozenDict({"structures": _ts_set(20)})),
-                run_root=run_root,
-                executables=FrozenDict({"orca": str(wrapper)}),
-            )
-        )
-        assert report.status == "completed"
-        assert len(report.step_results) == 1
-        irc_result = report.step_results[0]
-        assert irc_result.status is StepStatus.COMPLETED
-        assert irc_result.summary["completed"] == 20
-        structures = tuple(irc_result.structures)
-        assert len(structures) == 40
-        roles = {record.role for record in structures}
-        assert roles == {"path_endpoint_forward", "path_endpoint_reverse"}
-        table: dict[tuple[str | None, str | None], Any] = {}
-        for record in structures:
-            key = (record.group_key, record.role)
-            assert key not in table, f"duplicate endpoint slot {key}"
-            table[key] = record
-        assert len(table) == 40
-        sample = table[("rxn-00", "path_endpoint_forward")]
-        assert sample.parent_ids == ("ts00",)
-        assert sample.lineage_root_id == "root-00"
-        assert sample.id == "s_irc:ts00:structure:path_endpoint_forward:0"
+# R2.2 (G18): TestFanoutStepCountStable is retired with the IRC
+# path_endpoints vehicle.
 
 
 class TestMissingRequiredInput:
@@ -219,10 +91,6 @@ class TestMissingRequiredInput:
         from confflow.domain import ResourceRequest
         from confflow.domain.errors import DomainError
         from confflow.domain.work_item import WorkItem, WorkItemInputs, make_work_item_id
-        from confflow.execution.named_structures import (
-            NamedStructureError,
-            resolve_named_inputs,
-        )
         from confflow.execution.work_item_executor import select_driving_structure
 
         empty = WorkItem(
@@ -235,10 +103,6 @@ class TestMissingRequiredInput:
         )
         with pytest.raises(DomainError):
             select_driving_structure(empty)
-        named = _named_item({"product": StructureSet.of(_named_record("p1"))})
-        with pytest.raises(NamedStructureError) as excinfo:
-            resolve_named_inputs(named, require_guess=False)
-        assert excinfo.value.code == "named_structure_missing"
 
 
 class TestChangedDefinition:
@@ -299,19 +163,8 @@ class TestChangedGroupLineage:
     """Group/lineage disagreement fails closed at pairing time."""
 
     def test_changed_group_lineage(self) -> None:
-        from confflow.execution.named_structures import (
-            NamedStructureError,
-            resolve_named_inputs,
-        )
         from confflow.execution.output_identity import endpoint_lineage
 
-        ports = {
-            "reactant": StructureSet.of(_named_record("r1", group_key="g1")),
-            "product": StructureSet.of(_named_record("p1", group_key="g2")),
-        }
-        with pytest.raises(NamedStructureError) as excinfo:
-            resolve_named_inputs(_named_item(ports), require_guess=False)
-        assert excinfo.value.code == "named_group_mismatch"
         driving = _named_record("ts00", group_key="rxn-00")
         lineage = endpoint_lineage(driving)
         assert lineage[0] == ("ts00",)
@@ -454,181 +307,11 @@ class TestWorkdirCollision:
         assert ctx1.attempt_dir(_Item()).endswith("attempt_0001")
 
 
-class TestMappedNamedStructures:
-    """Atom mapping validates before charge/multiplicity compatibility."""
+# R2.2 (G18): TestAnalysisDurableReuse is retired with the analysis
+# implementation imports (orphaned for R2.3a).
 
-    def test_mapped_named_structures(self) -> None:
-        from confflow.execution.atom_mapping import (
-            ATOM_MAPPING_REQUIRED,
-            AtomMapping,
-            AtomMappingError,
-        )
-        from confflow.execution.named_structures import (
-            validate_named_compatibility,
-            validate_slots_with_mapping,
-        )
-
-        ports = {
-            "reactant": StructureSet.of(_named_record("r1")),
-            "product": StructureSet.of(_named_record("p1")),
-        }
-        resolved_ok = _named_item(ports)
-        from confflow.execution.named_structures import resolve_named_inputs
-
-        resolved = resolve_named_inputs(resolved_ok, require_guess=False)
-        identity = AtomMapping(kind="identity", reference_slot="reactant")
-        assert validate_slots_with_mapping(resolved, identity) == {}
-        assert validate_named_compatibility(resolved) == (0, 1)
-
-        shuffled = {
-            "reactant": StructureSet.of(_named_record("r1", atoms=("O", "H", "H"))),
-            "product": StructureSet.of(_named_record("p1", atoms=("H", "O", "H"))),
-        }
-        resolved_shuffled = resolve_named_inputs(_named_item(shuffled), require_guess=False)
-        with pytest.raises(AtomMappingError) as excinfo:
-            validate_slots_with_mapping(resolved_shuffled, identity)
-        assert excinfo.value.code == ATOM_MAPPING_REQUIRED
-        explicit = AtomMapping(
-            kind="explicit_permutation",
-            permutation=(1, 0, 2),
-            reference_slot="reactant",
-        )
-        assert validate_slots_with_mapping(resolved_shuffled, explicit) is not None
-
-
-class TestIrcMultiOutput:
-    """IRC items yield exactly two marker-driven endpoints, never by order."""
-
-    def test_irc_multi_output(self) -> None:
-        from confflow.execution.multi_output import order_item_structures
-        from confflow.execution.output_identity import (
-            endpoint_output_id,
-            output_ordering_key,
-        )
-
-        logical = "s_irc:ts00"
-        assert endpoint_output_id(logical, "forward") == (
-            "s_irc:ts00:structure:path_endpoint_forward:0"
-        )
-        assert endpoint_output_id(logical, "reverse") == (
-            "s_irc:ts00:structure:path_endpoint_reverse:0"
-        )
-        assert output_ordering_key("path_endpoint_forward", 0) < output_ordering_key(
-            "path_endpoint_reverse", 0
-        )
-        with pytest.raises(ValueError):
-            endpoint_output_id(logical, "sideways")
-
-        records = tuple(
-            _named_record(
-                record_id,
-                group_key="rxn-00",
-            )
-            for record_id in ("b", "a")
-        )
-        from confflow.domain import StructureRecord
-
-        forward = StructureRecord(
-            id=endpoint_output_id(logical, "forward"),
-            atoms=("O", "H", "H"),
-            coordinates=((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)),
-            role="path_endpoint_forward",
-            group_key="rxn-00",
-            parent_ids=("ts00",),
-        )
-        reverse = StructureRecord(
-            id=endpoint_output_id(logical, "reverse"),
-            atoms=("O", "H", "H"),
-            coordinates=((0.0, 0.0, 1.0), (1.0, 0.0, 1.0), (0.0, 1.0, 1.0)),
-            role="path_endpoint_reverse",
-            group_key="rxn-00",
-            parent_ids=("ts00",),
-        )
-        assert len(records) == 2
-        ordered = order_item_structures(StructureSet.of(reverse, forward))
-        assert [record.id for record in ordered] == [forward.id, reverse.id]
-
-
-class TestAnalysisDurableReuse:
-    """Analysis reuse identity is the versioned definition digest."""
-
-    def test_analysis_durable_reuse(self) -> None:
-        from confflow.analysis.models import (
-            ANALYSIS_DEFINITION_DIGEST_KIND,
-            ANALYSIS_DEFINITION_DIGEST_KIND_V1,
-            AnalysisDefinition,
-        )
-        from confflow.domain import FrozenDict as _Frozen
-
-        class _Model:
-            def __init__(self, tag: str) -> None:
-                self.tag = tag
-
-            def compute(self, *args: Any, **kwargs: Any) -> Any:
-                raise AssertionError("not called")
-
-            def to_dict(self) -> dict[str, Any]:
-                return {"mode": self.tag}
-
-        base = AnalysisDefinition(
-            kind="reaction_profile", energy_model=_Model("a"), params=_Frozen({})
-        )
-        same = AnalysisDefinition(
-            kind="reaction_profile", energy_model=_Model("a"), params=_Frozen({})
-        )
-        changed_params = AnalysisDefinition(
-            kind="reaction_profile",
-            energy_model=_Model("a"),
-            params=_Frozen({"theory": "b2plyp"}),
-        )
-        changed_model = AnalysisDefinition(
-            kind="reaction_profile", energy_model=_Model("b"), params=_Frozen({})
-        )
-        assert base.semantic_digest() == same.semantic_digest()
-        assert base.semantic_digest() != changed_params.semantic_digest()
-        assert base.semantic_digest() != changed_model.semantic_digest()
-        assert ANALYSIS_DEFINITION_DIGEST_KIND != ANALYSIS_DEFINITION_DIGEST_KIND_V1
-        assert ANALYSIS_DEFINITION_DIGEST_KIND.startswith("confflow.analysis.definition.")
-
-        from confflow.analysis.executor import AnalysisExecutor
-
-        assert AnalysisExecutor.contract_version == "confflow.contract.executor.analysis.v1"
-
-
-class TestEndpointAssignment:
-    """Endpoint chemistry assignment defaults open, conflicts fail closed."""
-
-    def test_endpoint_assignment(self) -> None:
-        from confflow.analysis.models import (
-            ASSIGNMENT_UNASSIGNED,
-            AnalysisDefinition,
-            AnalysisError,
-        )
-        from confflow.domain import FrozenDict as _Frozen
-
-        class _Model:
-            def compute(self, *args: Any, **kwargs: Any) -> Any:
-                raise AssertionError("not called")
-
-            def to_dict(self) -> dict[str, Any]:
-                return {"mode": "stub"}
-
-        definition = AnalysisDefinition(kind="reaction_profile", energy_model=_Model())
-        assert definition.endpoint_assignment["forward"] == ASSIGNMENT_UNASSIGNED
-        assert definition.endpoint_assignment["reverse"] == ASSIGNMENT_UNASSIGNED
-        with pytest.raises(AnalysisError) as excinfo:
-            AnalysisDefinition(
-                kind="reaction_profile",
-                energy_model=_Model(),
-                endpoint_assignment=_Frozen({"forward": "reactant", "reverse": "reactant"}),
-            )
-        assert excinfo.value.code == "analysis_assignment_conflict"
-        ok = AnalysisDefinition(
-            kind="reaction_profile",
-            energy_model=_Model(),
-            endpoint_assignment=_Frozen({"forward": "reactant", "reverse": "product"}),
-        )
-        assert ok.assignment == "explicit"
+# R2.3a (G18): TestEndpointAssignment retired with confflow.analysis.models
+# (endpoint-assignment semantics only served the deleted analysis).
 
 
 class TestResultOrderInvariant:
@@ -637,14 +320,17 @@ class TestResultOrderInvariant:
     def test_result_order_invariant(self) -> None:
         from confflow.domain.result import ResultSet, ScientificResult, make_result_id
         from confflow.domain.units import Unit
+
+        # R2.3b/e (G18): retained conformer roles (path-endpoint roles
+        # are retired with IRC).
         from confflow.execution.multi_output import order_item_structures
-        from confflow.execution.output_identity import endpoint_output_id
+        from confflow.execution.output_identity import conformer_output_id
 
-        logical = "s_irc:ts01"
-        forward_id = endpoint_output_id(logical, "forward")
-        reverse_id = endpoint_output_id(logical, "reverse")
+        logical = "s_ens:seed01"
+        forward_id = conformer_output_id(logical, 0)
+        reverse_id = conformer_output_id(logical, 1)
 
-        def _record(record_id: str, role: str, x: float) -> Any:
+        def _record(record_id: str, role: str, x: float, ordinal: int) -> Any:
             from confflow.domain import StructureRecord
 
             return StructureRecord(
@@ -652,12 +338,13 @@ class TestResultOrderInvariant:
                 atoms=("O", "H", "H"),
                 coordinates=((x, 0.0, 0.0), (x + 1.0, 0.0, 0.0), (x, 1.0, 0.0)),
                 role=role,
-                group_key="rxn-01",
-                parent_ids=("ts01",),
+                ordinal=ordinal,
+                group_key="ens-01",
+                parent_ids=("seed01",),
             )
 
-        forward = _record(forward_id, "path_endpoint_forward", 0.0)
-        reverse = _record(reverse_id, "path_endpoint_reverse", 5.0)
+        forward = _record(forward_id, "conformer", 0.0, 0)
+        reverse = _record(reverse_id, "conformer", 5.0, 1)
         assert [
             record.id for record in order_item_structures(StructureSet.of(reverse, forward))
         ] == [
@@ -709,10 +396,6 @@ class TestAmbiguousResultFail:
             make_result_id,
         )
         from confflow.domain.units import Unit
-        from confflow.execution.named_structures import (
-            NamedStructureError,
-            resolve_named_inputs,
-        )
 
         digest = "sha256:" + hashlib.sha256(b"amb").hexdigest()
 
@@ -757,36 +440,22 @@ class TestAmbiguousResultFail:
         )
         _, _, ambiguous = dup_pool.select_ids((dup_id,))
         assert ambiguous == (dup_id,)
-        ports = {
-            "reactant": StructureSet.of(_named_record("r1"), _named_record("r2")),
-            "product": StructureSet.of(_named_record("p1")),
-        }
-        with pytest.raises(NamedStructureError) as excinfo:
-            resolve_named_inputs(_named_item(ports), require_guess=False)
-        assert excinfo.value.code == "named_structure_ambiguous"
 
 
-class TestGoatSeed:
-    """The typed step seed is the single stochastic authority."""
+class TestStepSeedValidation:
+    """The typed step seed keeps its single-authority validation."""
 
-    def test_goat_seed(self) -> None:
+    def test_step_seed_validation(self) -> None:
+        # R2.3e (G18): GOAT rendering is retired; the generic step-seed
+        # validation it shared with every stochastic executor stays.
         from confflow.domain.errors import DomainError
         from confflow.execution.binding_resolution import validate_step_seed
-        from confflow.programs.orca import goat
 
         assert validate_step_seed(None) is None
         assert validate_step_seed(7) == 7
         for bad in (True, False, "7", 7.0):
             with pytest.raises(DomainError):
                 validate_step_seed(bad)
-        first = goat.render_goat_blocks({"goat": {"RANDOMSEED": False, "MaxIter": 2}})
-        second = goat.render_goat_blocks({"goat": {"MaxIter": 2, "RANDOMSEED": False}})
-        assert first == second
-        with pytest.raises(ValueError):
-            goat.render_goat_blocks({"goat": {"Seed": 7}})
-        # Integers carry no documented seed semantics: only booleans render.
-        with pytest.raises(ValueError):
-            goat.render_goat_blocks({"goat": {"RANDOMSEED": 1}})
 
 
 class TestManifestSchema:

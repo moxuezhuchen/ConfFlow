@@ -25,7 +25,6 @@ from jsonschema import Draft202012Validator
 
 from confflow.domain.binding import SourceKind
 from confflow.domain.canonical import canonical_sha256
-from confflow.execution.registry import default_registry
 from confflow.producer.authoring import (
     AUTHORING_OPERATIONS,
     binding_candidates,
@@ -35,7 +34,6 @@ from confflow.producer.authoring import (
     validate_document,
 )
 from confflow.producer.boundary import authoring_protocol_schema
-from confflow.producer.recipes import get_recipe_v4
 from confflow.producer.validation import validate_workflow_bytes
 from confflow.workflow.v4 import compile_workflow
 from confflow.workflow.v4.document import SCHEMA_ID
@@ -265,81 +263,8 @@ class TestDifferentSources:
         assert {"step": "opt_1", "port": "artifacts"} in sources
 
 
-# ----------------------------------------------------------------------
-# 4: an analysis step is never a geometry source
-# ----------------------------------------------------------------------
-
-
-class TestAnalysisIsNotGeometry:
-    def test_analysis_step_is_not_offered_as_geometry_source(self) -> None:
-        registry = default_registry()
-        analysis_ports = registry.resolve_executor("analysis").output_ports
-        assert all(port.kind.value != "structure" for port in analysis_ports)
-        document = geometry_document(
-            steps=[
-                calc_step("opt_1", bindings={"structure": {"source": {"run": "structures"}}}),
-                analysis_step(
-                    "analysis_1",
-                    bindings={"structures": {"source": {"step": "opt_1", "port": "structures"}}},
-                ),
-                calc_step("sp_1", role="sp", keyword="B3LYP D3BJ SP"),
-            ]
-        )
-        response = binding_candidates(document, "sp_1", "structure")
-        assert response["ok"] is True
-        step_sources = [
-            item["source"]["step"]
-            for item in response["result"]
-            if item["source_kind"] == "step_output"
-        ]
-        assert "analysis_1" not in step_sources
-        assert "opt_1" in step_sources
-
-
-# ----------------------------------------------------------------------
-# 5: named reactant/product/guess via real recipes and registry facts
-# ----------------------------------------------------------------------
-
-
-class TestNamedStructures:
-    def test_named_reactant_product_guess_use_real_recipe_metadata(self) -> None:
-        qst3 = get_recipe_v4("qst3")["document"]
-        response = binding_candidates(qst3, "qst3", "reactant")
-        assert response["ok"] is True
-        reactant = candidate_for(response["result"], {"run": "reactants"})
-        assert reactant["pairing"] == "by_group_key"
-        assert reactant["effective_cardinality"] == "one"
-        assert reactant["compatibility"] == "compatible"
-        # The qst3 recipe declares the guess input, so the guess port is offered.
-        guess_response = binding_candidates(qst3, "qst3", "guess")
-        guess = candidate_for(guess_response["result"], {"run": "guesses"})
-        assert guess["pairing"] == "by_group_key"
-        assert guess["effective_cardinality"] == "optional"
-        # The qst2 recipe declares no guess input: no invented source exists.
-        qst2 = get_recipe_v4("qst2")["document"]
-        qst2_sources = [
-            item["source"] for item in binding_candidates(qst2, "qst2", "guess")["result"]
-        ]
-        assert {"run": "guesses"} not in qst2_sources
-
-    def test_group_key_ports_never_auto_wire_without_explicit_grouping(self) -> None:
-        qst3 = get_recipe_v4("qst3")["document"]
-        digest = dispatch_digest(qst3)
-        response = binding_candidates(
-            qst3,
-            "qst3",
-            "reactant",
-            action="add",
-            expected_document_digest=digest,
-        )
-        candidate = candidate_for(response["result"], {"run": "reactants"})
-        assert candidate["auto_wire"] is False
-        assert "external_grouping_guess_required" in candidate["auto_wire_reasons"]
-
-
-# ----------------------------------------------------------------------
-# 6-7: collection fan-out and cardinality/pairing metadata
-# ----------------------------------------------------------------------
+# R2.2 (G18): TestAnalysisIsNotGeometry and TestNamedStructures are retired
+# with the analysis executor and the qst2/qst3 recipes.
 
 
 class TestCollectionFanOut:

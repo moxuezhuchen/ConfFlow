@@ -135,7 +135,7 @@ def test_document_defaults_are_single_source() -> None:
     assert omitted.global_.scheduler.on_failure is None
     explicit = DocumentModel.model_validate(
         v4_doc(
-            [analysis_step("s1")],
+            [calc_step("s1")],
             global_config={
                 "resources": {
                     "cores_per_item": DEFAULT_CORES_PER_ITEM,
@@ -147,7 +147,18 @@ def test_document_defaults_are_single_source() -> None:
     )
     assert explicit.global_.resources.cores_per_item == DEFAULT_CORES_PER_ITEM
     assert explicit.global_.scheduler.on_failure is None
-    parsed = parse_workflow_document(base_document())
+    # R2.2: full validation needs a retained executor (analysis is
+    # unregistered); the shape assertions above keep the analysis vehicle.
+    valid_doc = v4_doc(
+        [
+            calc_step(
+                "s1",
+                bindings={"structure": {"source": {"run": "structures"}}},
+            )
+        ],
+        inputs={"structures": {"kind": "structure", "cardinality": "many"}},
+    )
+    parsed = parse_workflow_document(valid_doc)
     assert parsed.ok is True
     assert parsed.definition is not None
     validated = validate_definition(parsed.definition)
@@ -164,7 +175,10 @@ def test_step_resource_override_keeps_absent_fields_absent() -> None:
     """A memory-only step override never gains an injected core count."""
     document = v4_doc(
         [
-            analysis_step("s1"),
+            calc_step(
+                "s1",
+                bindings={"structure": {"source": {"run": "structures"}}},
+            ),
             calc_step(
                 "s2",
                 bindings={"structure": {"source": {"run": "structures"}}},

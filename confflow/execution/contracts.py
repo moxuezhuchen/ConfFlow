@@ -43,7 +43,6 @@ class ExecutorCapability(str, Enum):
 
     CALCULATION = "calculation"
     CONFGEN = "confgen"
-    ANALYSIS = "analysis"
     STRUCTURE_TRANSFORM = "structure_transform"
 
 
@@ -247,8 +246,7 @@ class ExecutionAdapterSpec:
     """Input-port contract of an execution adapter.
 
     Adapters describe *how* a step's inputs are supplied to a native program:
-    a single structure (``standard``), named structures for multi-reference
-    calculations (``named_structures``), or a native input template
+    a single structure (``standard``) or a native input template
     (``native_template``).
     """
 
@@ -381,12 +379,11 @@ class ExecutionBinding:
     sandbox: str | None = None
     allowed_executables: tuple[str, ...] = ()
     walltime_seconds: int | None = None
-    target: str | None = None
     metadata: FrozenDict = field(default_factory=FrozenDict)
 
     def __post_init__(self) -> None:
         _require_text(self.binding_id, "binding_id")
-        for name in ("executable", "sandbox", "target"):
+        for name in ("executable", "sandbox"):
             value = getattr(self, name)
             if value is not None:
                 _require_text(value, name)
@@ -415,7 +412,6 @@ class ExecutionBinding:
             "sandbox": self.sandbox,
             "allowed_executables": list(self.allowed_executables),
             "walltime_seconds": self.walltime_seconds,
-            "target": self.target,
             "metadata": self.metadata.thaw(),
         }
 

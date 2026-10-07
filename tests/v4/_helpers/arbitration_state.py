@@ -35,8 +35,8 @@ def _control_setup(tmp_path: Path, variable: str) -> dict[str, Any]:
 
     script = _native(tmp_path, variable)
     config = tmp_path / "workflow.json"
-    doc = copy.deepcopy(get_recipe_v4("tspes")["document"])
-    doc["steps"] = doc["steps"][:1]
+    # R2.2: vehicle is the retained optimize recipe (tspes retired).
+    doc = copy.deepcopy(get_recipe_v4("optimize")["document"])
     doc["global"] = {"scientific_defaults": {"charge": 0, "multiplicity": 1}}
     doc["steps"][0]["execution"] = {"executable": str(script)}
     config.write_text(json.dumps(doc), encoding="utf-8")

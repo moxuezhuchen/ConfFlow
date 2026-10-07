@@ -11,7 +11,6 @@ combinations fail closed at compile time with structured diagnostics.
 from __future__ import annotations
 
 import sys
-from typing import Any
 
 import pytest
 
@@ -30,19 +29,6 @@ from confflow.producer.contract import build_configuration_contract_v4  # noqa: 
 STRUCTURE_INPUTS = {"structures": {"kind": "structure", "cardinality": "many"}}
 
 
-def _goat_doc(**overrides: Any) -> dict[str, Any]:
-    native: dict[str, Any] = {"keyword": "B3LYP D3BJ GOAT", "goat": {"MaxIter": 50}}
-    params: dict[str, Any] = {
-        "program": "orca",
-        "bindings": {"structure": {"source": {"run": "structures"}}},
-        "native": native,
-        "profile": "ensemble",
-        "checks": ["normal_termination"],
-    }
-    params.update(overrides)
-    return v4_doc([calc_step("s_goat", **params)], inputs=STRUCTURE_INPUTS)
-
-
 class TestUnifiedResolution:
     def test_resolve_executor_accepts_enum_and_string(self) -> None:
         registry = default_registry()
@@ -52,7 +38,7 @@ class TestUnifiedResolution:
         by_string = registry.resolve_executor("calculation")
         assert by_enum.capability.value == "calculation"
         assert by_string.contract_version == by_enum.contract_version
-        for capability in ("calculation", "confgen", "analysis", "structure_transform"):
+        for capability in ("calculation", "confgen", "structure_transform"):
             assert registry.resolve_executor(capability).capability.value == capability
 
     def test_resolve_executor_rejects_unknown(self) -> None:
@@ -65,13 +51,17 @@ class TestUnifiedResolution:
     def test_resolve_profile_check_recovery_adapter(self) -> None:
         registry = default_registry()
         assert registry.resolve_profile("standard").name == "standard"
-        assert registry.resolve_profile("path_endpoints").name == "path_endpoints"
+        # R2.2: ensemble stays as the retained ConfGen result profile;
+        # path_endpoints and named_structures are retired.
         assert registry.resolve_profile("ensemble").name == "ensemble"
+        with pytest.raises(RegistryLookupError):
+            registry.resolve_profile("path_endpoints")
         assert registry.resolve_check("normal_termination").name == "normal_termination"
         assert registry.resolve_recovery("none").name == "none"
         assert registry.resolve_recovery("ts_rescue_scan").name == "ts_rescue_scan"
         assert registry.resolve_adapter("standard").name == "standard"
-        assert registry.resolve_adapter("named_structures").name == "named_structures"
+        with pytest.raises(RegistryLookupError):
+            registry.resolve_adapter("named_structures")
         with pytest.raises(RegistryLookupError):
             registry.resolve_profile("magic")
         with pytest.raises(RegistryLookupError):
@@ -108,9 +98,11 @@ class TestUnifiedResolution:
         assert callable(registry.adapter_implementation("standard"))
         assert registry.program_adapter("orca").program_name.value == "orca"
 
+    # R2.3a (G18): test_orphaned_analysis_implementation_stays_importable
+    # retired with confflow.analysis (R2.2 orphan, now deleted).
+
     def test_executor_implementations_resolve_from_same_entry(self) -> None:
         registry = default_registry()
-        from confflow.analysis.item_adapter import AnalysisItemAdapter
         from confflow.execution.confgen_executor import ConfgenExecutor
         from confflow.execution.transform_executor import TransformExecutor
         from confflow.execution.work_item_executor import WorkItemExecutor
@@ -118,10 +110,10 @@ class TestUnifiedResolution:
         assert registry.executor_implementation("calculation") is WorkItemExecutor
         assert registry.executor_implementation("confgen") is ConfgenExecutor
         assert registry.executor_implementation("structure_transform") is TransformExecutor
-        # Final contract (freeze §4.2/F): analysis dispatches via the
-        # in-package work-item adapter (same claim/commit/publish path),
-        # not the whole-set core directly.
-        assert registry.executor_implementation("analysis") is AnalysisItemAdapter
+        # R2.2: the analysis executor is unregistered (implementation
+        # orphaned for R2.3a).
+        with pytest.raises(RegistryLookupError):
+            registry.executor_implementation("analysis")
         with pytest.raises(RegistryLookupError):
             registry.executor_implementation("magic")
 
@@ -141,19 +133,18 @@ class TestUnifiedResolution:
 
 class TestOmittedCapabilitiesExcluded:
     def test_producer_contract_omits_unexecutable_capabilities(self) -> None:
+        # R2.2 声明：path_endpoints/named_structures/analysis 退役；
+        # ensemble 保留（留存 ConfGen 结果剖面）。
         envelope = build_configuration_contract_v4(producer_version="test")
         assert [entry["name"] for entry in envelope["result_profiles"]] == [
             "ensemble",
-            "path_endpoints",
             "standard",
         ]
         assert [entry["name"] for entry in envelope["execution_adapters"]] == [
-            "named_structures",
             "standard",
         ]
         assert [entry["program"] for entry in envelope["programs"]] == ["gaussian", "orca"]
         assert [entry["capability"] for entry in envelope["executors"]] == [
-            "analysis",
             "calculation",
             "confgen",
             "structure_transform",
@@ -238,35 +229,7 @@ class TestCompileRejections:
         assert compile_doc(doc).ok
 
 
-class TestGoatSeedValidation:
-    def test_goat_without_seed_rejected(self) -> None:
-        result = compile_doc(_goat_doc())
-        assert not result.ok
-        assert "seed_required" in reasons(result.errors)
-
-    def test_goat_with_seed_compiles(self) -> None:
-        assert compile_doc(_goat_doc(seed=11)).ok
-
-    def test_goat_native_seed_conflict_rejected(self) -> None:
-        # Any user-supplied native RANDOMSEED is a second seed authority
-        # and fails closed — set the step seed instead (the adapter
-        # renders the deterministic boolean flag itself).  The refusal is
-        # the adapter-owned native-definition requirement (one rule, one
-        # diagnostic).
-        doc = _goat_doc(seed=11)
-        doc["steps"][0]["calculation"]["native"]["goat"]["RANDOMSEED"] = 99
-        result = compile_doc(doc)
-        assert not result.ok
-        errors = result.errors
-        assert any("RANDOMSEED" in item.message for item in errors), errors
-
-    def test_goat_matching_native_seed_compiles(self) -> None:
-        # Even a matching native RANDOMSEED is a second authority: the
-        # adapter renders the step seed, never user native keys.
-        doc = _goat_doc(seed=11)
-        doc["steps"][0]["calculation"]["native"]["goat"]["RANDOMSEED"] = 11
-        assert not compile_doc(doc).ok
-
+class TestSeedValidation:
     def test_plain_calculation_seed_allowed(self) -> None:
         doc = v4_doc(
             [
@@ -299,20 +262,16 @@ class TestGoatSeedValidation:
 
 
 class TestNativeModeProfileCombinations:
-    def test_goat_requires_ensemble_profile(self) -> None:
-        doc = _goat_doc(seed=11, profile="standard")
-        result = compile_doc(doc)
-        assert not result.ok
-        assert "incompatible_capability_combination" in reasons(result.errors)
-
-    def test_irc_requires_path_endpoints_profile(self) -> None:
+    def test_neb_requires_ensemble_profile(self) -> None:
+        # R2.3b/e (G18): NEB is the retained ensemble consumer; a
+        # non-ensemble profile still fails the combination rule.
         doc = v4_doc(
             [
                 calc_step(
-                    "s_irc",
+                    "s_neb",
                     program="orca",
                     bindings={"structure": {"source": {"run": "structures"}}},
-                    native={"keyword": "B3LYP IRC", "irc": {"direction": "both"}},
+                    native={"keyword": "B3LYP NEB", "neb": {"n_images": 5}},
                     profile="standard",
                     checks=["normal_termination"],
                 )
@@ -322,49 +281,6 @@ class TestNativeModeProfileCombinations:
         result = compile_doc(doc)
         assert not result.ok
         assert "incompatible_capability_combination" in reasons(result.errors)
-
-    def test_irc_with_path_endpoints_compiles(self) -> None:
-        doc = v4_doc(
-            [
-                calc_step(
-                    "s_irc",
-                    program="orca",
-                    bindings={"structure": {"source": {"run": "structures"}}},
-                    native={"keyword": "B3LYP IRC", "irc": {"direction": "both"}},
-                    profile="path_endpoints",
-                    checks=["normal_termination"],
-                )
-            ],
-            inputs=STRUCTURE_INPUTS,
-        )
-        assert compile_doc(doc).ok
-
-    def test_neb_with_ensemble_compiles(self) -> None:
-        doc = v4_doc(
-            [
-                calc_step(
-                    "s_neb",
-                    program="orca",
-                    adapter="named_structures",
-                    bindings={
-                        "reactant": {"source": {"run": "reactants"}, "pairing": "by_group_key"},
-                        "product": {"source": {"run": "products"}, "pairing": "by_group_key"},
-                    },
-                    native={
-                        "keyword": "B3LYP D3BJ NEB",
-                        "neb": {"n_images": 5},
-                        "atom_mapping": {"kind": "identity"},
-                    },
-                    profile="ensemble",
-                    checks=["normal_termination"],
-                )
-            ],
-            inputs={
-                "reactants": {"kind": "structure", "cardinality": "many"},
-                "products": {"kind": "structure", "cardinality": "many"},
-            },
-        )
-        assert compile_doc(doc).ok
 
     def test_multiple_native_modes_rejected(self) -> None:
         doc = v4_doc(
@@ -387,10 +303,11 @@ class TestNativeModeProfileCombinations:
         )
         result = compile_doc(doc)
         assert not result.ok
-        # The adapter-owned native-definition requirement is the single
-        # report for this defect (P3 dedup); the outcome is unchanged.
+        # R2.3b/e: retired ``irc``/``goat`` keys are unknown native keys.
+        # The adapter-owned native-definition requirement is still the
+        # single report for this defect (P3 dedup); the outcome is unchanged.
         assert "invalid_value" in reasons(result.errors)
-        assert any("at most one path/ensemble mode" in item.message for item in result.errors)
+        assert any("unknown native keys" in item.message for item in result.errors)
 
     def test_non_mapping_mode_section_rejected(self) -> None:
         doc = v4_doc(
@@ -409,7 +326,12 @@ class TestNativeModeProfileCombinations:
         result = compile_doc(doc)
         assert not result.ok
         assert "invalid_value" in reasons(result.errors)
-        assert any("must be a mapping" in item.message for item in result.errors)
+        # R2.3d (G18): NEB is retired and `neb` left the native vocabulary,
+        # so a stale NEB section fails closed as an unknown key.
+        assert any(
+            "unknown native keys" in item.message and "neb" in item.message
+            for item in result.errors
+        )
 
 
 class TestCustomRegistryResolution:

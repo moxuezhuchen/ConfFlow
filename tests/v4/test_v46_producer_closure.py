@@ -37,11 +37,6 @@ from typing import Any
 
 import pytest
 
-from confflow.analysis.reaction import (  # noqa: E402
-    ReactionNodeGroup,
-    assemble_reaction_result,
-)
-from confflow.analysis.thermochemistry import EnergyModel  # noqa: E402
 from confflow.application.v4_run import (  # noqa: E402
     RUN_RESULT_FILENAME,
     V4RunApplication,
@@ -53,7 +48,6 @@ from confflow.domain.canonical import (  # noqa: E402
     canonical_json_bytes,
     canonical_sha256,
 )
-from confflow.domain.result import ResultSet  # noqa: E402
 from confflow.execution.contracts import ExecutorCapability  # noqa: E402
 from confflow.execution.process import NativeProcessSupervisor  # noqa: E402
 from confflow.execution.registry import default_registry  # noqa: E402
@@ -66,7 +60,6 @@ from confflow.producer import (  # noqa: E402
     generate_contract_bytes,
     get_recipe_v4,
     publish_manifest_atomically,
-    reaction_group_entry,
     run_result_json_schema,
     run_result_schema_sha256,
     validate_workflow_bytes,
@@ -93,17 +86,6 @@ O 0.000000 0.000000 0.000000
 H 0.760000 0.590000 0.000000
 H 0.760000 -0.590000 0.000000
 """
-
-TSPES_STEP_IDS = (
-    "ts",
-    "ts_freq",
-    "ts_sp",
-    "irc",
-    "endpoint_opt",
-    "endpoint_freq",
-    "endpoint_sp",
-    "reaction_profile",
-)
 
 
 def _install_fake_orca(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str) -> None:
@@ -169,13 +151,10 @@ class TestSingleAuthorityResolves:
             registry.executor(ExecutorCapability("no_such_executor"))
 
     def test_analysis_capability_matches_registry(self) -> None:
-        from confflow.analysis.registry import capabilities
-
+        # R2.2 声明：analysis 执行器能力退役，contract 不再广播分析能力
+        # （空数组保留键）；实现包随 R2.3a 删除。
         envelope = build_configuration_contract_v4(producer_version=PRODUCER_VERSION)
-        assert envelope["analysis_capabilities"]["capabilities"] == [
-            {"capability": item["capability"], "contract_version": item["contract_version"]}
-            for item in capabilities()
-        ]
+        assert envelope["analysis_capabilities"]["capabilities"] == []
         assert envelope["analysis_capabilities"]["source"] == "registry"
 
 
@@ -191,18 +170,13 @@ class TestEveryRecipeExecutable:
         return copy.deepcopy(recipe["document"])
 
     def test_every_recipe_through_the_wire(self) -> None:
+        # R2.2 声明：目录剩 7 项（irc/qst2/qst3/neb/goat/tspes 退役）。
         assert tuple(RECIPE_IDS_V4) == (
             "optimize",
             "single_point",
             "frequency",
             "opt_freq",
             "transition_state",
-            "irc",
-            "qst2",
-            "qst3",
-            "neb",
-            "goat",
-            "tspes",
             "confgen_torsion",
             "monomer_conformers",
         )
@@ -220,14 +194,6 @@ class TestEveryRecipeExecutable:
             assert tuple(sorted(report.step_ids)) == tuple(
                 sorted(step["id"] for step in document["steps"])
             )
-
-    def test_tspes_chain_shape_and_preflight(self) -> None:
-        document = self._contract_recipe_document("tspes")
-        assert [step["id"] for step in document["steps"]] == list(TSPES_STEP_IDS)
-        compiled = compile_workflow(document)
-        assert compiled.ok
-        assert compiled.plan is not None
-        assert sorted(step.step_id for step in compiled.plan.steps) == sorted(TSPES_STEP_IDS)
 
 
 # ---------------------------------------------------------------------------
@@ -281,7 +247,6 @@ def _runtime_manifest_from_run(
         step_results=tuple(result.step_results),
         published_digests=published,
         semantic_digests=semantic,
-        plan=None,
     )
     import jsonschema
 
@@ -429,8 +394,10 @@ class TestRealJobdeskConsumerTenSteps:
     (4) JobDesk authors a WorkflowDocument from a real recipe; (5) ConfFlow
     validates the EXACT SAME BYTES; (6) validated==submitted digest;
     (7) ConfFlow runs it; (8) durable manifest read; (9) JobDesk result
-    parser consumes; (10) view model shows status/diagnostics/TS/endpoints/
-    E-G/barriers/assignment/artifacts.
+    parser consumes; (10) view model shows run/step status and artifacts.
+
+    R2.3a: the enriched reaction-profile group step is retired with
+    ``confflow.analysis``; the manifest carries no groups.
     """
 
     pytestmark = pytest.mark.cross_repo
@@ -507,131 +474,24 @@ class TestRealJobdeskConsumerTenSteps:
         assert durable["definition_digest"] == report.definition_digest
         assert canonical_json_bytes(durable) == durable_bytes
 
-        # Enrich with a REAL reaction-profile group computed from the REAL
-        # run outputs (direct-mode Gibbs over three real subjects), then
-        # project the full runtime manifest and publish durably.
-        enriched = self._with_real_group(result, run_root, report.definition_digest)
-        enriched_bytes = canonical_json_bytes(enriched)
+        # (9) JobDesk real result parser consumes the durable manifest.
+        # R2.3a: no enriched reaction-profile group (analysis retired).
+        view = jobdesk.parse_result_bytes(durable_bytes)
+        assert view.run_id == durable["run_id"]
 
-        # (9) JobDesk real result parser consumes both manifests.
-        view_plain = jobdesk.parse_result_bytes(durable_bytes)
-        assert view_plain.run_id == durable["run_id"]
-        view = jobdesk.parse_result_bytes(enriched_bytes)
-        assert view.run_id == enriched["run_id"]
-
-        # (10) JobDesk view model shows run/step status, diagnostics, TS,
-        # endpoints, E/G, barriers, assignment, artifacts (verbatim producer
-        # values; JobDesk never recomputes science).
+        # (10) JobDesk view model shows run/step status, diagnostics and
+        # artifacts (verbatim producer values; JobDesk never recomputes
+        # science).
         assert view.status == "completed"
         assert view.status_view is not None
-        assert len(view.steps) == len(enriched["steps"])
+        assert len(view.steps) == len(durable["steps"])
         for step_view in view.steps:
             assert step_view.id and step_view.status_view is not None
-        assert len(view.artifacts) == len(enriched["artifacts"])
+        assert len(view.artifacts) == len(durable["artifacts"])
         assert all(item.locator and item.role for item in view.artifacts)
-        assert len(view.groups) == 1
-        group = view.groups[0]
-        assert group.group_key.startswith("rxn-")
-        assert group.ts_structure_id
-        assert group.forward_endpoint_id and group.reverse_endpoint_id
-        assert dict(group.barriers), "barriers must be displayed"
-        assert dict(group.energy_entries), "energies/Gibbs must be displayed"
-        assert group.assignment_display == "unassigned"
-        assert group.source_result_ids
 
-    def _with_real_group(
-        self, result: Any, run_root: str, definition_digest: str
-    ) -> dict[str, Any]:
-        from confflow.persistence.run_state import detect_published
-
-        (step_result,) = result.step_results
-        subjects = [record.id for record in tuple(step_result.structures)[:3]]
-        assert len(subjects) == 3
-        by_subject: dict[str, ResultSet] = {}
-        for subject in subjects:
-            pool = tuple(
-                record
-                for record in tuple(step_result.results)
-                if record.subject_structure_id == subject
-                and record.kind in ("energy", "gibbs_energy", "gibbs_correction")
-            )
-            assert pool, f"no real results for subject {subject!r}"
-            by_subject[subject] = ResultSet(tuple(pool))
-        group_model = ReactionNodeGroup(
-            group_key="rxn-00",
-            ts_structure_id=subjects[0],
-            forward_structure_id=subjects[1],
-            reverse_structure_id=subjects[2],
-        )
-        model = EnergyModel(
-            mode="composite",
-            electronic_selector="energy",
-            correction_selector="gibbs_correction",
-            fallback="none",
-        )
-        analysis = assemble_reaction_result(
-            group_model,
-            model,
-            by_subject,
-            analysis_step_id="reaction_profile",
-            endpoint_assignment={"forward": "unassigned", "reverse": "unassigned"},
-        )
-        assert analysis.ok, [(item.code, item.message) for item in analysis.diagnostics]
-        by_kind = {record.kind: record for record in analysis.results}
-        assert {"barrier_forward_endpoint", "barrier_reverse_endpoint"}.issubset(by_kind)
-        profile = by_kind["reaction_profile"]
-        profile_value = profile.value
-        assert isinstance(profile_value, dict)
-        barriers = {
-            "forward": by_kind["barrier_forward_endpoint"].value,
-            "reverse": by_kind["barrier_reverse_endpoint"].value,
-        }
-        energies = {
-            "gibbs_ts": next(
-                record.value
-                for record in analysis.results
-                if record.kind == "barrier_forward_endpoint"
-            ),
-            "profile": profile_value,
-        }
-        source_results = list(analysis.results)
-        group = reaction_group_entry(
-            group_key="rxn-00",
-            ts_structure_id=subjects[0],
-            forward_endpoint_id=subjects[1],
-            reverse_endpoint_id=subjects[2],
-            source_results=list(tuple(step_result.results)[:3]),
-            energies=energies,
-            barriers=barriers,
-            assignment=profile_value.get("assignment", "unassigned"),
-            step_id="reaction_profile",
-            provenance={
-                "contract": "confflow.contract.analysis.reaction_profile.v1",
-                "source_result_digests": [record.value_digest for record in source_results],
-            },
-        )
-        published = {step_result.step_id: detect_published(run_root, step_result.step_id)}
-        assert all(value is not None for value in published.values())
-        manifest = build_runtime_manifest(
-            run_id="closure-run",
-            status=result.status,
-            definition_digest=definition_digest,
-            producer_version=PRODUCER_VERSION,
-            step_results=tuple(result.step_results),
-            published_digests={key: str(value) for key, value in published.items()},
-            semantic_digests=(
-                {
-                    step_result.step_id: step_result.provenance.step_semantic_digest,
-                }
-                if step_result.provenance is not None
-                and step_result.provenance.step_semantic_digest
-                else {}
-            ),
-            plan=None,
-            group_entries=[group],
-        )
-        out_dir = str(Path(run_root).parent / "enriched")
-        return publish_manifest_atomically(manifest, out_dir)
+    # R2.3a (G18): _with_real_group retired with confflow.analysis and the
+    # reaction-profile group projection.
 
 
 # ---------------------------------------------------------------------------

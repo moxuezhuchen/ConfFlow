@@ -305,7 +305,7 @@ class TestMatrixACancelVsCompletion:
         report = _run_doc(
             _single_step_doc(script),
             run_root,
-            should_cancel=lambda: (run_root / "steps" / "ts" / "step_result.json").exists(),
+            should_cancel=lambda: (run_root / "steps" / "optimize" / "step_result.json").exists(),
         )
         assert report.status == "cancelled"
         assert _launches(tmp_path) == 1
@@ -591,22 +591,19 @@ class TestMatrixCGenerationWriters:
     def test_c5_g2_failed_g1_late_completed_manifest_rejected(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        from tests.v4._helpers.audit_native import (
-            _science_chain_native,
-            _tspes_doc,
-            _tspes_inputs,
-        )
-
-        chain = _science_chain_native(tmp_path)
+        # R2.2: the failing-generation vehicle is the retained single step
+        # (the tspes chain is retired); the arbitration shape is unchanged:
+        # G2 fails at its step while G1 is paused before manifest write.
+        chain = _science_native(tmp_path)
         run_root = tmp_path / "run"
         barrier = _PublicationBarrier(monkeypatch, position="before")
         results: dict[str, Any] = {}
 
-        def run_chain(doc: dict[str, Any]) -> Any:
+        def run_single(doc: dict[str, Any]) -> Any:
             return V4RunApplication(supervisor=NativeProcessSupervisor()).run(
                 V4RunRequest(
                     workflow_document=doc,
-                    run_inputs=_tspes_inputs(),
+                    run_inputs=_inputs(),
                     run_root=str(run_root),
                     import_sources=FrozenDict({"structures": WATER_XYZ}),
                 )
@@ -614,7 +611,7 @@ class TestMatrixCGenerationWriters:
 
         def g1() -> None:
             try:
-                results["g1"] = run_chain(_tspes_doc(chain, sp="-70", freq="-60"))
+                results["g1"] = run_single(_single_step_doc(chain))
             except Exception as exc:  # noqa: BLE001
                 results["g1_error"] = exc
 
@@ -622,12 +619,10 @@ class TestMatrixCGenerationWriters:
         thread.start()
         assert barrier.reached.wait(ARBITRATION_DEADLOCK_TIMEOUT)
 
-        # G2 is the SAME definition failing downstream (a failed producer
-        # blocks the analysis step).
-        from confflow.domain.errors import DomainError
-
-        with pytest.raises(DomainError):
-            run_chain(_tspes_doc(chain, sp="-70", freq="invalid-number"))
+        # G2 is the SAME definition failing at its step.
+        failing = _single_step_doc(chain, env={"SCIENCE_ENV": "invalid-number"})
+        failed = run_single(failing)
+        assert failed.status == "failed"
         g2 = _generation(run_root)
         assert g2.status == "failed"
 

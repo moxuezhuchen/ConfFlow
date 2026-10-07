@@ -343,7 +343,7 @@ def _v4_fields(registry: ExecutionRegistry) -> list[dict[str, Any]]:
             label="Role",
             description=(
                 "Scientific annotation of the step's intent (opt, sp, freq, ts, "
-                "irc, qst2, neb, ...). Never selects runtime behavior."
+                "opt_freq, ts_freq, ...). Never selects runtime behavior."
             ),
             value_type="string",
             editor="text",
@@ -608,17 +608,6 @@ def _v4_fields(registry: ExecutionRegistry) -> list[dict[str, Any]]:
             order=230,
         ),
         _step(
-            "calc.execution.target",
-            "/execution/target",
-            label="Target",
-            description="Scheduler target or queue for this step.",
-            value_type="string",
-            editor="text",
-            group="execution",
-            level="advanced",
-            order=240,
-        ),
-        _step(
             "confgen.seed",
             "/confgen/seed",
             label="Seed",
@@ -789,30 +778,6 @@ def _v4_fields(registry: ExecutionRegistry) -> list[dict[str, Any]]:
             order=10,
             choices=transform_choices,
         ),
-        _step(
-            "analysis.checks",
-            "/analysis/checks",
-            label="Analysis checks",
-            description="Acceptance checks applied to the analysis inputs.",
-            value_type="array",
-            editor="multi_select",
-            item_type="string",
-            group="analysis",
-            level="basic",
-            order=10,
-            choices=check_choices,
-        ),
-        _step(
-            "analysis.native",
-            "/analysis/native",
-            label="Native input",
-            description="Analysis native definition (method, options).",
-            value_type="object",
-            editor="json",
-            group="analysis",
-            level="basic",
-            order=20,
-        ),
     ]
     fields.append(
         {
@@ -872,7 +837,6 @@ def build_editor_manifest_v4(
             "calc": "calc",
             "confgen": "confgen",
             "transform": "transform",
-            "analysis": "analysis",
             "binding": "binding",
         },
         "fields": copy.deepcopy(fields),

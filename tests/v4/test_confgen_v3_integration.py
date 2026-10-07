@@ -1264,8 +1264,7 @@ class TestProducerWiring:
         from confflow.producer.recipes import RECIPE_IDS_V4, build_recipe_catalog_v4
 
         catalog = {recipe["id"]: recipe for recipe in build_recipe_catalog_v4()["recipes"]}
-        # Original twelve keep their frozen orders; the new card sorts last.
-        assert catalog["tspes"]["order"] == 110
+        # R2.2: tspes retired; the frozen orders of the rest hold, new card sorts last.
         assert catalog["confgen_torsion"]["order"] == 120
         assert catalog["monomer_conformers"]["order"] == 130
         assert list(RECIPE_IDS_V4).index("monomer_conformers") == len(RECIPE_IDS_V4) - 1

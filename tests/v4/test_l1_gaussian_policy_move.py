@@ -7,7 +7,7 @@ move keeps old ``producer.checkpoints`` private paths observable: same
 objects (``is``), unchanged signatures/bodies (AST-exact, verified here via
 ``inspect`` + fixed vectors), old ``__all__``/version/modes intact, private
 ``__module__`` now the definition site (policy), no science table copy, and
-the fixed readfc/rcfc/conflict/unknown-option/SP-edge corpus behaves
+the fixed readfc/conflict/unknown-option/SP-edge corpus behaves
 identically (return or exception type/message).
 """
 
@@ -17,18 +17,16 @@ import ast
 import inspect
 from pathlib import Path
 
-_TRIO = ("_add_opt_option", "_add_irc_rcfc", "_strip_managed_items")
+_TRIO = ("_add_opt_option", "_strip_managed_items")
 _CONSTANTS = (
     "_QST_TOKEN_RE",
     "_IRC_MANAGED_RE",
-    "_IRC_ITEM_RE",
     "_OPT_PAREN_RE",
     "_OPT_ASSIGN_RE",
     "_OPT_BARE_RE",
     "_FREQ_TOKEN_RE",
     "_SP_MANAGED_RE",
     "_READFC_CONFLICTS",
-    "_RCFC_CONFLICTS",
     "_LINK0_CHECKPOINT_RE",
 )
 _POLICY_MODULE = "confflow.programs.gaussian.checkpoint_policy"
@@ -44,10 +42,8 @@ def test_reexport_same_objects() -> None:
     # Light refusal is homomorphic, not the same object: each module owns one.
     assert producer._refuse is not policy._refuse
     # Authority aliases bind the same module objects (bodies unchanged).
-    import confflow.programs.gaussian.path as gaussian_path
     import confflow.programs.gaussian.rendering as gaussian_rendering
 
-    assert policy._irc_path is gaussian_path
     assert policy._gaussian_rendering is gaussian_rendering
 
 
@@ -73,7 +69,7 @@ def test_module_public_surface_unchanged() -> None:
         "wire_checkpoint_reuse",
     ]
     assert producer.CHECKPOINT_REUSE_VERSION == "confflow.producer.checkpoints.v1"
-    assert producer.REUSE_MODES == ("checkpoint", "readfc", "rcfc")
+    assert producer.REUSE_MODES == ("checkpoint", "readfc")
     # Private moved functions record the definition site; public surface does not move.
     import confflow.programs.gaussian.checkpoint_policy as policy
 
@@ -243,37 +239,6 @@ def test_readfc_fixed_vectors() -> None:
         assert "no Opt route item" in str(exc)
     else:
         raise AssertionError("expected no-Opt refusal")
-
-
-def test_rcfc_fixed_vectors() -> None:
-    import confflow.domain.errors as errors
-    import confflow.producer.checkpoints as producer
-
-    assert (
-        producer._add_irc_rcfc("B3LYP/6-31G* IRC(MaxPoints=20)", step_id="t1")
-        == "B3LYP/6-31G* IRC(MaxPoints=20,RCFC)"
-    )
-    assert producer._add_irc_rcfc("B3LYP/6-31G* IRC", step_id="t1") == "B3LYP/6-31G* IRC(RCFC)"
-    keyword = "B3LYP/6-31G* IRC(RCFC,MaxPoints=20)"
-    assert producer._add_irc_rcfc(keyword, step_id="t1") == keyword
-    try:
-        producer._add_irc_rcfc("B3LYP/6-31G* IRC(Forward)", step_id="t1")
-    except errors.InvalidBindingError as exc:
-        assert "explicit IRC direction" in str(exc)
-    else:
-        raise AssertionError("expected direction refusal")
-    try:
-        producer._add_irc_rcfc("B3LYP/6-31G* IRC(Bogus)", step_id="t1")
-    except errors.InvalidBindingError as exc:
-        assert "invalid IRC route" in str(exc)
-    else:
-        raise AssertionError("expected unknown-option refusal")
-    try:
-        producer._add_irc_rcfc("B3LYP/6-31G* opt", step_id="t1")
-    except errors.InvalidBindingError as exc:
-        assert "invalid IRC route" in str(exc)
-    else:
-        raise AssertionError("expected missing-IRC refusal")
 
 
 def test_strip_sp_edge_vectors() -> None:

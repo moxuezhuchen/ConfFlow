@@ -317,7 +317,6 @@ def _build_execution(step_id: str, model: Any) -> tuple[ExecutionBinding | None,
                 sandbox=model.sandbox,
                 allowed_executables=tuple(model.allowed_executables),
                 walltime_seconds=model.walltime_seconds,
-                target=model.target,
             ),
             [],
         )

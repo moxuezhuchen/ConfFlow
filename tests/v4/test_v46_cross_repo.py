@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 
-"""V4-6 cross-repository contract roundtrip + fake TSPES chain.
+"""V4-6 cross-repository contract roundtrip (R2.3a: fake TSPES chain retired).
 
 Scope: NEW tests only, programming against the FROZEN V4 wire shapes.  The
-real producer side (``confflow.producer.*``) and the real analysis side
-(``confflow.analysis.*``) have NOT landed in this repo yet, and the real
+real producer side (``confflow.producer.*``) is landed; the analysis side
+(``confflow.analysis.*``) is retired (R2.3a deleted the package), and the real
 JobDesk V4 parser (``jobdesk_v2.application.editor.contract.v4``) has NOT
 landed in the JobDesk repo yet.  Every such seam uses the prefer-real
 pattern: try the real import first, fall back to a clearly-marked
@@ -21,10 +21,9 @@ LOUD DOUBLE NOTICE (V4-6, remove as siblings land):
   - ``JobdeskContractDouble`` is a CONSUMER DOUBLE standing in for the
     JobDesk-side V4 parser.  It is pure stdlib and MUST NEVER import
     ``confflow`` (enforced by ``tests/v4/test_v46_debt.py``).
-  - ``run_fake_tspes_chain`` / ``stub_reaction_analysis`` are FAKES for the
-    native execution + ``reaction_profile`` analysis capability.  Counts
-    (20 TS -> 40 endpoints -> 20 ReactionGroups) are exact; energies are
-    deterministic placeholders.
+  - R2.3a: ``run_fake_tspes_chain`` / ``stub_reaction_analysis`` (fakes for
+    native execution + ``reaction_profile`` analysis) are retired with
+    ``confflow.analysis``.
 """
 
 from __future__ import annotations
@@ -35,8 +34,6 @@ import json
 from typing import Any
 
 import pytest
-
-from confflow.domain.units import Unit
 
 # ---------------------------------------------------------------------------
 # Prefer-real seam: ConfFlow producer modules (LANDED).
@@ -68,7 +65,10 @@ from confflow.producer.validation import (  # noqa: E402
 _REAL_PRODUCER_AVAILABLE = True
 
 # ---------------------------------------------------------------------------
-# Prefer-real seam: ConfFlow analysis modules (LANDED).
+# R2.3a: ConfFlow analysis modules are retired (``confflow.analysis``
+# deleted). The prefer-real seam below is kept as a retired record: the
+# import must now fail, and the fake-chain inventory assertion reflects
+# the retirement.
 # ---------------------------------------------------------------------------
 try:
     from confflow.analysis import (  # type: ignore[import-not-found]
@@ -363,7 +363,11 @@ class JobdeskContractDouble:
     def build_tspes_workflow(
         contract: dict[str, Any], *, recipe_id: str = "tspes-default"
     ) -> dict[str, Any]:
-        """Build a V4 TSPES workflow document from the contract + one recipe."""
+        """Build a V4 opt/freq/sp workflow document from the contract + one recipe.
+
+        R2.2: the retired IRC + analysis tail is gone; the double now
+        authors the retained calculation chain (same wire discipline).
+        """
         JobdeskContractDouble.recipe(contract, recipe_id)  # structured failure first
         # Plain-dict V4 document: same shape the real builder helpers emit.
         bindings = {"structure": {"source": {"run": "structures"}}}
@@ -375,7 +379,7 @@ class JobdeskContractDouble:
                 "bindings": dict(bindings),
                 "calculation": {
                     "program": "orca",
-                    "role": "tspes",
+                    "role": "opt",
                     "execution_adapter": "standard",
                     "result_profile": profile,
                     "native": {"keyword": keyword},
@@ -392,16 +396,9 @@ class JobdeskContractDouble:
             "inputs": {"structures": {"kind": "structure", "cardinality": "many"}},
             "global": {"scientific_defaults": {"charge": 0, "multiplicity": 1}},
             "steps": [
-                _calc("s_irc", "path_endpoints", "IRC B3LYP D3BJ"),
                 _calc("s_opt", "standard", "B3LYP Opt"),
                 _calc("s_freq", "standard", "B3LYP Freq"),
                 _calc("s_sp", "standard", "B3LYP SP"),
-                {
-                    "id": "s_analysis",
-                    "executor": "analysis",
-                    "bindings": dict(bindings),
-                    "analysis": {"checks": [], "native": {}},
-                },
             ],
         }
 
@@ -568,341 +565,11 @@ def _require_real_producer() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Fake full TSPES chain: 20 TS -> IRC -> 40 endpoints -> opt/freq -> SP ->
-# analysis (stub-or-real) -> 20 ReactionGroups -> RunResultManifest.
-#
-# FAKE NOTICE: native execution is simulated with deterministic placeholder
-# energies; only counts, ids, lineage, digests, and manifest consistency are
-# asserted.  The analysis step prefers the real ``confflow.analysis``
-# capability when it lands and otherwise uses ``stub_reaction_analysis``.
+# R2.3a (G18): fake TSPES chain retired with confflow.analysis and the
+# ``reaction_profile`` capability (20 TS -> IRC -> endpoints -> analysis ->
+# 20 ReactionGroups). The frozen wire-shape doubles above are retained;
+# live analysis vehicles are gone.
 # ---------------------------------------------------------------------------
-N_TS = 20
-N_ENDPOINTS = 40
-N_GROUPS = 20
-
-
-def fake_ts_inputs(count: int = N_TS) -> list[dict[str, str]]:
-    return [
-        {"id": f"ts{i:02d}", "group_key": f"rxn-{i:02d}", "lineage_root_id": f"root-{i:02d}"}
-        for i in range(count)
-    ]
-
-
-def fake_irc_endpoints(ts_inputs: list[dict[str, str]]) -> list[dict[str, Any]]:
-    endpoints: list[dict[str, Any]] = []
-    for ts in ts_inputs:
-        for direction in ("forward", "reverse"):
-            endpoints.append(
-                {
-                    "id": f"{ts['id']}:endpoint:{direction}:0",
-                    "parent_id": ts["id"],
-                    "group_key": ts["group_key"],
-                    "lineage_root_id": ts["lineage_root_id"],
-                    "role": f"path_endpoint_{direction}",
-                }
-            )
-    return endpoints
-
-
-def fake_optimize(endpoint_ids: list[str]) -> dict[str, float]:
-    return {
-        endpoint_id: -76.0 - (abs(hash(endpoint_id)) % 1000) / 1e6 for endpoint_id in endpoint_ids
-    }
-
-
-def stub_reaction_analysis(
-    group_key: str,
-    ts_id: str,
-    forward_id: str,
-    reverse_id: str,
-    energies: dict[str, float],
-    source_result_ids: list[str],
-) -> dict[str, Any]:
-    """Reaction-profile analysis: real implementation preferred, stub fallback."""
-    if _real_compute_reaction_profile is not None:
-        return _real_reaction_analysis(
-            group_key, ts_id, forward_id, reverse_id, energies, source_result_ids
-        )
-    ts_energy = -76.0
-    forward_barrier = round(energies[forward_id] - ts_energy + 0.05, 6)
-    reverse_barrier = round(energies[reverse_id] - ts_energy + 0.03, 6)
-    return {
-        "group_key": group_key,
-        "ts_structure_id": ts_id,
-        "forward_endpoint_id": forward_id,
-        "reverse_endpoint_id": reverse_id,
-        "gibbs_energy": round(energies[forward_id] - energies[reverse_id], 6),
-        "barriers": {"forward": forward_barrier, "reverse": reverse_barrier},
-        "assignment": "consistent",
-        "source_result_ids": list(source_result_ids),
-    }
-
-
-def _real_reaction_analysis(
-    group_key: str,
-    ts_id: str,
-    forward_id: str,
-    reverse_id: str,
-    energies: dict[str, float],
-    source_result_ids: list[str],
-) -> dict[str, Any]:
-    """Run the landed analysis over synthetic group records."""
-    from confflow.analysis.thermochemistry import EnergyModel
-    from confflow.domain.result import ResultSet, ScientificResult
-    from confflow.domain.structure import StructureRecord, StructureSet
-
-    water_atoms = ("O", "H", "H")
-    water_coords = ((0.0, 0.0, 0.0), (0.76, 0.59, 0.0), (0.76, -0.59, 0.0))
-    structures = StructureSet.of(
-        StructureRecord(id=ts_id, atoms=water_atoms, coordinates=water_coords, group_key=group_key),
-        StructureRecord(
-            id=forward_id,
-            atoms=water_atoms,
-            coordinates=water_coords,
-            parent_ids=(ts_id,),
-            lineage_root_id=ts_id,
-            group_key=group_key,
-            role="path_endpoint_forward",
-        ),
-        StructureRecord(
-            id=reverse_id,
-            atoms=water_atoms,
-            coordinates=water_coords,
-            parent_ids=(ts_id,),
-            lineage_root_id=ts_id,
-            group_key=group_key,
-            role="path_endpoint_reverse",
-        ),
-    )
-    pool = [
-        ScientificResult(
-            kind="energy", value=-76.02, unit=Unit.HARTREE, subject_structure_id=ts_id
-        ),
-        ScientificResult(
-            kind="gibbs_energy", value=-76.0, unit=Unit.HARTREE, subject_structure_id=ts_id
-        ),
-        ScientificResult(
-            kind="energy",
-            value=float(energies[forward_id]) - 0.02,
-            unit=Unit.HARTREE,
-            subject_structure_id=forward_id,
-        ),
-        ScientificResult(
-            kind="gibbs_energy",
-            value=float(energies[forward_id]),
-            unit=Unit.HARTREE,
-            subject_structure_id=forward_id,
-        ),
-        ScientificResult(
-            kind="energy",
-            value=float(energies[reverse_id]) - 0.02,
-            unit=Unit.HARTREE,
-            subject_structure_id=reverse_id,
-        ),
-        ScientificResult(
-            kind="gibbs_energy",
-            value=float(energies[reverse_id]),
-            unit=Unit.HARTREE,
-            subject_structure_id=reverse_id,
-        ),
-    ]
-    (analysis,) = _real_compute_reaction_profile(
-        structures,
-        ResultSet(tuple(pool)),
-        EnergyModel(
-            mode="direct", electronic_selector="energy", correction_selector="gibbs_correction"
-        ),
-    )
-    ts_gibbs_value = -76.0
-    by_kind = {record.kind: record for record in analysis.results}
-    if not analysis.ok:
-        raise AssertionError(
-            "real reaction analysis failed closed: "
-            + "; ".join(item.message for item in analysis.diagnostics)
-        )
-    return {
-        "group_key": group_key,
-        "ts_structure_id": ts_id,
-        "forward_endpoint_id": forward_id,
-        "reverse_endpoint_id": reverse_id,
-        "gibbs_energy": round(ts_gibbs_value, 6),
-        "barriers": {
-            "forward": round(float(by_kind["barrier_forward_endpoint"].value), 6),
-            "reverse": round(float(by_kind["barrier_reverse_endpoint"].value), 6),
-        },
-        "assignment": "consistent",
-        "source_result_ids": list(source_result_ids),
-    }
-
-
-def run_fake_tspes_chain(
-    *,
-    run_id: str = "run-v46-e2e",
-    producer: dict[str, str] | None = None,
-    workflow_definition_digest: str = "sha256:" + "0" * 64,
-) -> tuple[dict[str, Any], dict[str, bytes]]:
-    """Run the fake chain; return ``(manifest, artifact_store)``."""
-    producer = producer or {
-        "package": "confflow",
-        "version": "4.6.0-test",
-        "commit": "double-no-vcs",
-        "dirty": "True",
-    }
-    ts_inputs = fake_ts_inputs()
-    endpoints = fake_irc_endpoints(ts_inputs)
-    assert len(endpoints) == N_ENDPOINTS
-    endpoint_ids = [endpoint["id"] for endpoint in endpoints]
-    energies = fake_optimize(endpoint_ids)
-    # SP results: one deterministic result id per endpoint.
-    sp_result_ids = {endpoint_id: f"s_sp:{endpoint_id}:energy" for endpoint_id in endpoint_ids}
-    produced_ids = (
-        {ts["id"] for ts in ts_inputs} | set(endpoint_ids) | {f"{eid}:opt" for eid in endpoint_ids}
-    )
-
-    def _step(step_id: str, count: int, result_ids: list[str]) -> dict[str, Any]:
-        return {
-            "id": step_id,
-            "status": "completed",
-            "step_result_digest": _canonical_sha256(sorted(result_ids)),
-            "counts": {"completed": count, "failed": 0},
-            "diagnostics_summary": {"errors": 0, "warnings": 0},
-            "_result_ids": result_ids,  # internal seam for verification, stripped below
-        }
-
-    steps = [
-        _step("s_irc", N_TS, endpoint_ids),
-        _step("s_opt", N_ENDPOINTS, [f"{eid}:opt" for eid in endpoint_ids]),
-        _step("s_freq", N_ENDPOINTS, [f"{eid}:opt:freq" for eid in endpoint_ids]),
-        _step("s_sp", N_ENDPOINTS, sorted(sp_result_ids.values())),
-        _step("s_analysis", N_GROUPS, [f"s_analysis:rxn-{i:02d}" for i in range(N_GROUPS)]),
-    ]
-    analyses: list[dict[str, Any]] = []
-    artifact_store: dict[str, bytes] = {}
-    artifacts: list[dict[str, str]] = []
-    for _index, ts in enumerate(ts_inputs):
-        forward_id = f"{ts['id']}:endpoint:forward:0"
-        reverse_id = f"{ts['id']}:endpoint:reverse:0"
-        sources = [sp_result_ids[forward_id], sp_result_ids[reverse_id]]
-        analyses.append(
-            stub_reaction_analysis(
-                ts["group_key"], ts["id"], forward_id, reverse_id, energies, sources
-            )
-        )
-        payload = _canonical_json_bytes(
-            {"group": ts["group_key"], "gibbs": analyses[-1]["gibbs_energy"]}
-        )
-        locator = f"artifacts/{ts['group_key']}/reaction_profile.json"
-        artifact_store[locator] = payload
-        artifacts.append(
-            {
-                "role": "reaction_profile",
-                "checksum": "sha256:" + hashlib.sha256(payload).hexdigest(),
-                "locator": locator,
-            }
-        )
-    manifest = {
-        "content_schema": RESULT_MANIFEST_SCHEMA_V1,
-        "run_id": run_id,
-        "status": "completed",
-        "workflow_definition_digest": workflow_definition_digest,
-        "producer": dict(producer),
-        "steps": [
-            {key: value for key, value in step.items() if not key.startswith("_")} for step in steps
-        ],
-        "analyses": analyses,
-        "artifacts": artifacts,
-        "_result_ids": sorted({result_id for step in steps for result_id in step["_result_ids"]}),
-        "_produced_ids": sorted(produced_ids),
-    }
-    return manifest, artifact_store
-
-
-def verify_run_result_manifest(
-    manifest: dict[str, Any],
-    artifact_store: dict[str, bytes],
-    *,
-    contract_envelope: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    """Manifest self-consistency: structured failure for every mismatch class."""
-    if manifest.get("content_schema") != RESULT_MANIFEST_SCHEMA_V1:
-        raise V46ContractError("schema_mismatch", "manifest has the wrong content_schema")
-    for key in ("run_id", "status", "workflow_definition_digest", "producer", "steps"):
-        if key not in manifest:
-            raise V46ContractError("malformed_manifest", f"manifest is missing {key!r}")
-    if not isinstance(manifest.get("analyses"), list):
-        raise V46ContractError("malformed_manifest", "manifest is missing 'analyses'")
-    if not isinstance(manifest.get("artifacts"), list):
-        raise V46ContractError("malformed_manifest", "manifest is missing 'artifacts'")
-    if contract_envelope is not None:
-        expected = contract_envelope.get("producer", {})
-        actual = manifest.get("producer", {})
-        if actual.get("package") != expected.get("package") or actual.get(
-            "version"
-        ) != expected.get("version"):
-            raise V46ContractError(
-                "result_producer_mismatch",
-                "manifest producer does not match the contract producer",
-            )
-    produced_ids = set(manifest.get("_produced_ids", []))
-    result_ids = set(manifest.get("_result_ids", []))
-    if not produced_ids or not result_ids:
-        # Manifests that crossed the wire lose the internal seams; rebuild
-        # them from steps/analyses is impossible, so demand them present.
-        raise V46ContractError("malformed_manifest", "manifest carries no verifiable id seams")
-    seen_groups: set[str] = set()
-    for analysis in manifest["analyses"]:
-        for key in (
-            "group_key",
-            "ts_structure_id",
-            "forward_endpoint_id",
-            "reverse_endpoint_id",
-            "gibbs_energy",
-            "barriers",
-            "assignment",
-            "source_result_ids",
-        ):
-            if key not in analysis:
-                raise V46ContractError("malformed_manifest", f"analysis entry is missing {key!r}")
-        group = analysis["group_key"]
-        if group in seen_groups:
-            raise V46ContractError("ambiguous_group", f"group {group!r} is claimed by two analyses")
-        seen_groups.add(group)
-        for ref in (
-            analysis["ts_structure_id"],
-            analysis["forward_endpoint_id"],
-            analysis["reverse_endpoint_id"],
-        ):
-            if ref not in produced_ids:
-                raise V46ContractError(
-                    "manifest_mismatch", f"analysis ref {ref!r} was never produced"
-                )
-        sources = analysis["source_result_ids"]
-        if not sources:
-            raise V46ContractError(
-                "missing_analysis_result",
-                f"group {group!r} cites no source result ids",
-            )
-        for source in sources:
-            if source not in result_ids:
-                raise V46ContractError(
-                    "missing_analysis_result",
-                    f"source result {source!r} for group {group!r} was never produced",
-                )
-    for artifact in manifest["artifacts"]:
-        for key in ("role", "checksum", "locator"):
-            if key not in artifact:
-                raise V46ContractError("malformed_manifest", f"artifact entry is missing {key!r}")
-        payload = artifact_store.get(artifact["locator"])
-        if payload is None:
-            raise V46ContractError(
-                "manifest_mismatch", f"artifact {artifact['locator']!r} has no bytes"
-            )
-        if "sha256:" + hashlib.sha256(payload).hexdigest() != artifact["checksum"]:
-            raise V46ContractError(
-                "manifest_mismatch",
-                f"artifact {artifact['locator']!r} checksum does not match its bytes",
-            )
-    return manifest
 
 
 # ---------------------------------------------------------------------------
@@ -988,11 +655,9 @@ class TestJobdeskSimulation:
         contract = JobdeskContractDouble.parse(contract_bytes)
         workflow = JobdeskContractDouble.build_tspes_workflow(contract)
         assert [step["id"] for step in workflow["steps"]] == [
-            "s_irc",
             "s_opt",
             "s_freq",
             "s_sp",
-            "s_analysis",
         ]
         workflow_bytes = JobdeskContractDouble.serialize_workflow(workflow)
         response = validate_workflow_bytes(workflow_bytes)
@@ -1005,7 +670,7 @@ class TestJobdeskSimulation:
         edited = JobdeskContractDouble.edit_workflow_field(
             workflow, "s_opt", "calculation.native.keyword", "B3LYP Opt Tight"
         )
-        assert edited["steps"][1]["calculation"]["native"]["keyword"] == "B3LYP Opt Tight"
+        assert edited["steps"][0]["calculation"]["native"]["keyword"] == "B3LYP Opt Tight"
         ensure_valid(validate_workflow_bytes(JobdeskContractDouble.serialize_workflow(edited)))
 
     def test_validated_bytes_equal_submitted_bytes_gate(self) -> None:
@@ -1035,34 +700,9 @@ class TestJobdeskSimulation:
         assert excinfo.value.code == "validated_not_submitted"
 
 
-class TestFakeTspesChain:
-    def test_counts_20_40_20(self) -> None:
-        manifest, store = run_fake_tspes_chain()
-        assert len(manifest["analyses"]) == N_GROUPS
-        assert len(manifest["artifacts"]) == N_GROUPS
-        assert len(store) == N_GROUPS
-        step_counts = {step["id"]: step["counts"]["completed"] for step in manifest["steps"]}
-        assert step_counts == {
-            "s_irc": 20,
-            "s_opt": 40,
-            "s_freq": 40,
-            "s_sp": 40,
-            "s_analysis": 20,
-        }
-
-    def test_manifest_self_consistency(self) -> None:
-        manifest, store = run_fake_tspes_chain()
-        verify_run_result_manifest(manifest, store)
-        groups = [analysis["group_key"] for analysis in manifest["analyses"]]
-        assert groups == [f"rxn-{i:02d}" for i in range(20)]
-        for analysis in manifest["analyses"]:
-            assert set(analysis["barriers"]) == {"forward", "reverse"}
-            assert analysis["assignment"] == "consistent"
-
-    def test_manifest_producer_matches_contract(self) -> None:
-        envelope = build_contract_envelope()
-        manifest, store = run_fake_tspes_chain(producer=dict(envelope["producer"]))
-        verify_run_result_manifest(manifest, store, contract_envelope=envelope)
+# R2.3a (G18): TestFakeTspesChain retired with confflow.analysis and the
+# fake TSPES chain (test_counts_20_40_20, test_manifest_self_consistency,
+# test_manifest_producer_matches_contract).
 
 
 class TestRealVsDoubleInventory:
@@ -1072,10 +712,15 @@ class TestRealVsDoubleInventory:
         # The real producer and validator are landed and importable; this file
         # additionally keeps a frozen V4-6 envelope double for literal
         # wire-shape assertions (see the seam comment above).
+        # R2.3a: analysis retired (confflow.analysis deleted from this repo;
+        # the prefer-real import above may still resolve via an editable
+        # install pointing elsewhere, so retirement is pinned by path).
+        from pathlib import Path as _Path
+
         assert _REAL_PRODUCER_AVAILABLE is True
         assert USING_PRODUCER_CONTRACT_DOUBLE is True
         assert USING_PRODUCER_VALIDATION_DOUBLE is False
-        assert USING_ANALYSIS_STUB == (_real_compute_reaction_profile is None)
+        assert not (_Path(__file__).resolve().parents[2] / "confflow" / "analysis").exists()
         # The validation double is strict: it runs the REAL V4 compiler.
         assert compile_workflow is not None
 
@@ -1149,21 +794,6 @@ class TestFailureMatrix:
             JobdeskContractDouble.parse(serialize_contract(envelope))
         assert excinfo.value.code == "schema_mismatch"
 
-    def test_manifest_mismatch(self) -> None:
-        manifest, store = run_fake_tspes_chain()
-        manifest["analyses"][0]["forward_endpoint_id"] = "ts99:endpoint:forward:0"
-        with pytest.raises(V46ContractError) as excinfo:
-            verify_run_result_manifest(manifest, store)
-        assert excinfo.value.code == "manifest_mismatch"
-
-    def test_artifact_checksum_mismatch(self) -> None:
-        manifest, store = run_fake_tspes_chain()
-        first_locator = manifest["artifacts"][0]["locator"]
-        store[first_locator] = b"tampered-bytes"
-        with pytest.raises(V46ContractError) as excinfo:
-            verify_run_result_manifest(manifest, store)
-        assert excinfo.value.code == "manifest_mismatch"
-
     def test_recipe_mismatch(self) -> None:
         contract = JobdeskContractDouble.parse(serialize_contract(build_contract_envelope()))
         with pytest.raises(V46ContractError) as excinfo:
@@ -1190,35 +820,10 @@ class TestFailureMatrix:
             submit_validated_workflow(receipt, b'{"schema": "confflow.workflow.v4"}')
         assert excinfo.value.code == "validated_not_submitted"
 
-    def test_result_producer_mismatch(self) -> None:
-        envelope = build_contract_envelope()
-        manifest, store = run_fake_tspes_chain(
-            producer={"package": "confflow", "version": "9.9-evil", "commit": "x", "dirty": "True"}
-        )
-        with pytest.raises(V46ContractError) as excinfo:
-            verify_run_result_manifest(manifest, store, contract_envelope=envelope)
-        assert excinfo.value.code == "result_producer_mismatch"
-
-    def test_malformed_manifest(self) -> None:
-        manifest, store = run_fake_tspes_chain()
-        del manifest["analyses"]
-        with pytest.raises(V46ContractError) as excinfo:
-            verify_run_result_manifest(manifest, store)
-        assert excinfo.value.code == "malformed_manifest"
-
-    def test_missing_analysis_result(self) -> None:
-        manifest, store = run_fake_tspes_chain()
-        manifest["analyses"][0]["source_result_ids"] = []
-        with pytest.raises(V46ContractError) as excinfo:
-            verify_run_result_manifest(manifest, store)
-        assert excinfo.value.code == "missing_analysis_result"
-
-    def test_ambiguous_group(self) -> None:
-        manifest, store = run_fake_tspes_chain()
-        manifest["analyses"].append(copy.deepcopy(manifest["analyses"][0]))
-        with pytest.raises(V46ContractError) as excinfo:
-            verify_run_result_manifest(manifest, store)
-        assert excinfo.value.code == "ambiguous_group"
+    # R2.3a (G18): test_manifest_mismatch, test_artifact_checksum_mismatch,
+    # test_result_producer_mismatch, test_malformed_manifest,
+    # test_missing_analysis_result, test_ambiguous_group retired with the
+    # fake TSPES chain and confflow.analysis.
 
     def test_contract_refresh_race(self) -> None:
         first = build_contract_envelope()

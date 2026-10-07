@@ -3,7 +3,7 @@
 """L1-C2 capability handler + explicit descriptor registry (rehearsal).
 
 Proves the compiler channel dispatches through a frozen explicit
-``IntentRegistry``: default 14 cards byte-identical, custom test-local
+``IntentRegistry``: default 9 cards byte-identical (R2.2: 14 - retired 5), custom test-local
 handler/descriptor produces genuinely different observable output and
 rejection via the real ``compile_intent -> compile_workflow`` path (no
 mock dispatch, no ``cards.py`` dummy).  Production default never references
@@ -88,10 +88,10 @@ def _intent(steps):
     }
 
 
-def test_default_registry_has_exactly_14_no_dummy() -> None:
+def test_default_registry_has_exactly_9_no_dummy() -> None:
     reg = build_default_intent_registry()
     assert sorted(reg.entries.keys()) == sorted(CARD_TYPES)
-    assert len(reg.entries) == 14
+    assert len(reg.entries) == 9
     assert CUSTOM_KEY not in reg.entries
     assert "dummy-probe" not in reg.entries
     assert "dummy" not in set(reg.entries)
@@ -349,12 +349,12 @@ def test_unknown_capability_failclosed_and_no_catalog_growth() -> None:
     with pytest.raises(IntentCompilationError) as excinfo:
         compile_intent(_intent([{"card": "bogus@v1"}]))
     assert "unknown card type 'bogus'" in str(excinfo.value)
-    # Default catalog still exactly the 14 builtin cards.
+    # Default catalog still exactly the 9 builtin cards.
     from confflow.producer.intent import intent_catalog
 
     catalog = intent_catalog()
     assert [c["type"] for c in catalog["cards"]] == sorted(CARD_TYPES)
-    assert len(catalog["cards"]) == 14
+    assert len(catalog["cards"]) == 9
     assert CUSTOM_KEY not in [c["type"] for c in catalog["cards"]]
     with pytest.raises(ValueError):
         get_card("bogus")

@@ -248,12 +248,9 @@ class ExecutionRegistry:
         The returned object is the executor class recorded in the same
         atomic entry as the compiler's contract: ``calculation`` resolves
         to the native work-item executor, ``confgen`` to the deterministic
-        conformer-generation executor, ``structure_transform`` to the pure
-        structure-set transform executor, and ``analysis`` to the pure
-        analysis core (whose per-item adapter is owned by the analysis
-        package).  All four implement the shared
-        ``execute(work_item, context, *, should_cancel=None)`` seam,
-        except the analysis core, which executes whole-set analysis inputs
+        conformer-generation executor, and ``structure_transform`` to the
+        pure structure-set transform executor.  All three implement the
+        shared ``execute(work_item, context, *, should_cancel=None)`` seam
         (see the wave-1 integration report for the exact dispatch
         signatures owned by batch/application).
 
@@ -599,22 +596,15 @@ def _default_profiles(checks: tuple[str, ...]) -> tuple[ResultProfileSpec, ...]:
     # implementation and is omitted: it must not be declared-but-unexecutable.
     # When an opaque runtime exists, its descriptor and implementation are
     # registered atomically in ``build_default_registry`` below.
+    # R2.2: ``path_endpoints`` is retired with IRC (its only consumer).
+    # ``ensemble`` is RETAINED: the workflow parser hardcodes it as the
+    # result profile of every retained ConfGen step
+    # (``workflow/v4/parser.py``), so deleting the registry entry would
+    # break retained ConfGen compilation.  Its GOAT/NEB consumers are gone;
+    # the implementation (``profile_ensemble.py``) is deleted by R2.3e,
+    # which must then re-point ConfGen or keep a ConfGen-owned profile.
     return (
         _standard_profile(checks),
-        ResultProfileSpec(
-            name="path_endpoints",
-            contract_version="confflow.contract.result_profile.path_endpoints.v1",
-            supported_checks=(
-                "normal_termination",
-                "geometry_required",
-                "max_rmsd_from_input",
-                "bond_drift",
-            ),
-            provides_structures=True,
-            provides_results=True,
-            provides_artifacts=True,
-            description="Reaction-path endpoints (IRC/NEB): no frequency checks.",
-        ),
         ResultProfileSpec(
             name="ensemble",
             contract_version="confflow.contract.result_profile.ensemble.v1",
@@ -649,32 +639,6 @@ def _default_adapters() -> tuple[ExecutionAdapterSpec, ...]:
                 ),
             ),
             description="Single-structure native calculation with optional checkpoint.",
-        ),
-        ExecutionAdapterSpec(
-            name="named_structures",
-            contract_version="confflow.contract.adapter.named_structures.v1",
-            capability=ExecutorCapability.CALCULATION,
-            input_ports=(
-                _structure_port(
-                    "reactant",
-                    Cardinality.ONE,
-                    Pairing.BY_GROUP_KEY,
-                    "Reactant structure of the reaction (QST2/QST3/NEB).",
-                ),
-                _structure_port(
-                    "product",
-                    Cardinality.ONE,
-                    Pairing.BY_GROUP_KEY,
-                    "Product structure of the reaction (QST2/QST3/NEB).",
-                ),
-                _structure_port(
-                    "guess",
-                    Cardinality.OPTIONAL,
-                    Pairing.BY_GROUP_KEY,
-                    "Optional transition-state guess (QST3).",
-                ),
-            ),
-            description="Named-structure calculations paired by explicit group key.",
         ),
     )
 
@@ -769,74 +733,6 @@ def _default_executors() -> tuple[ExecutorContract, ...]:
                 "post-processing tail of a calculation."
             ),
         ),
-        ExecutorContract(
-            capability=ExecutorCapability.ANALYSIS,
-            contract_version="confflow.contract.executor.analysis.v1",
-            input_ports=(
-                _structure_port(
-                    "structure",
-                    Cardinality.OPTIONAL,
-                    Pairing.SINGLE,
-                    "Optional subject structure for the analysis.",
-                ),
-                _structure_port(
-                    "structures",
-                    Cardinality.MANY,
-                    Pairing.SINGLE,
-                    "Subject structures for the analysis (for example path endpoints).",
-                ),
-                _structure_port(
-                    "ts_structures",
-                    Cardinality.MANY,
-                    Pairing.SINGLE,
-                    "Transition-state structures referenced by endpoint parent links.",
-                ),
-                _structure_port(
-                    "lineage_structures",
-                    Cardinality.MANY,
-                    Pairing.SINGLE,
-                    "Intermediate optimized structures (for example endpoint "
-                    "optimization outputs) carried so frequency-measurement "
-                    "results resolve to their reaction node through parent-id "
-                    "lineage. Optional; absent bindings change nothing.",
-                ),
-                _structure_port(
-                    "sp_structures",
-                    Cardinality.MANY,
-                    Pairing.SINGLE,
-                    "Endpoint single-point output structures carried so "
-                    "high-level electronic results (which mint passthrough "
-                    "subjects) resolve to their reaction node through "
-                    "parent-id lineage. Optional; absent bindings change "
-                    "nothing.",
-                ),
-                _structure_port(
-                    "ts_sp_structures",
-                    Cardinality.MANY,
-                    Pairing.SINGLE,
-                    "Transition-state single-point output structures carried "
-                    "so high-level electronic results (which mint passthrough "
-                    "subjects) resolve to their reaction node through "
-                    "parent-id lineage. Optional; absent bindings change "
-                    "nothing.",
-                ),
-                _result_port("results", Cardinality.MANY, Pairing.SINGLE),
-                _result_port("ts_results", Cardinality.MANY, Pairing.SINGLE),
-                _result_port("sp_results", Cardinality.MANY, Pairing.SINGLE),
-                _result_port("ts_sp_results", Cardinality.MANY, Pairing.SINGLE),
-            ),
-            output_ports=(
-                _result_port("results", Cardinality.MANY, Pairing.BY_SUBJECT),
-                _artifact_port(
-                    "artifacts",
-                    Cardinality.MANY,
-                    Pairing.SINGLE,
-                    ("report",),
-                    "Analysis report artifacts.",
-                ),
-            ),
-            description="Analysis over structures, results, or artifacts.",
-        ),
     )
 
 
@@ -866,8 +762,11 @@ def build_default_registry() -> ExecutionRegistry:
     step's program adapter at resolve time.  A missing implementation is a
     loud :exc:`KeyError` here -- never a published-but-unexecutable
     capability downstream.
+
+    R2.3a: the ``analysis`` executor (``AnalysisItemAdapter``) stays
+    unregistered and its implementation package ``confflow.analysis``
+    is deleted.
     """
-    from ..analysis.item_adapter import AnalysisItemAdapter
     from . import execution_adapters as adapter_resolvers
     from .checks_standard import CHECKS
     from .confgen_executor import ConfgenExecutor
@@ -881,13 +780,11 @@ def build_default_registry() -> ExecutionRegistry:
         ExecutorCapability.CALCULATION: WorkItemExecutor,
         ExecutorCapability.CONFGEN: ConfgenExecutor,
         ExecutorCapability.STRUCTURE_TRANSFORM: TransformExecutor,
-        ExecutorCapability.ANALYSIS: AnalysisItemAdapter,
     }
     for contract in _default_executors():
         registry.register_executor(contract, executor_implementations[contract.capability])
     adapter_implementations = {
         "standard": adapter_resolvers.resolve_standard_structure,
-        "named_structures": adapter_resolvers.resolve_named_slot_sets,
     }
     for adapter in _default_adapters():
         registry.register_adapter(adapter, adapter_implementations[adapter.name])

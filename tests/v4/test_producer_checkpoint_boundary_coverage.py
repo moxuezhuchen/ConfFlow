@@ -5,8 +5,7 @@ Exercises uncovered semantic branches of
 ``confflow.producer.checkpoints.wire_checkpoint_reuse`` only through its
 public surface (plus ``compile_workflow`` as the strict-validation oracle):
 document/step shape guards, Gaussian/adapter/program vocabulary, Link0
-handling, ``Opt=`` assignment route edits, ``IRC=``/``IRC=(...)`` vote
-spans, charge/spin lineage proof (declared values, unknown states,
+handling, ``Opt=`` assignment route edits, charge/spin lineage proof (declared values, unknown states,
 duplicate/ambiguous roots, disabled producers, malformed bindings,
 same-lineage identity), native payload compatibility, provenance, and
 compiler-rejection integration.
@@ -399,75 +398,6 @@ class TestOptAssignRouteEdits:
             )
 
 
-class TestIrcEqualsRouteEdits:
-    def test_irc_equals_token_votes_rcfc(self) -> None:
-        wired = wire_checkpoint_reuse(
-            _doc(
-                source_keyword="B3LYP/6-31G* IRC",
-                target_keyword="B3LYP/6-31G* IRC=MaxPoints",
-            ),
-            "s_opt",
-            "s_freq",
-            mode="rcfc",
-        )
-        keyword = wired["steps"][1]["calculation"]["native"]["keyword"]
-        assert "RCFC" in keyword and "MaxPoints" in keyword
-        assert compile_doc(wired).ok
-
-    def test_irc_equals_paren_votes_rcfc(self) -> None:
-        wired = wire_checkpoint_reuse(
-            _doc(
-                source_keyword="B3LYP/6-31G* IRC",
-                target_keyword="B3LYP/6-31G* IRC=(MaxPoints=20)",
-            ),
-            "s_opt",
-            "s_freq",
-            mode="rcfc",
-        )
-        keyword = wired["steps"][1]["calculation"]["native"]["keyword"]
-        assert "RCFC" in keyword and "MaxPoints=20" in keyword
-        assert compile_doc(wired).ok
-
-    def test_irc_paren_with_options_votes_rcfc(self) -> None:
-        wired = wire_checkpoint_reuse(
-            _doc(
-                source_keyword="B3LYP/6-31G* IRC",
-                target_keyword="B3LYP/6-31G* IRC(MaxPoints=5)",
-            ),
-            "s_opt",
-            "s_freq",
-            mode="rcfc",
-        )
-        assert wired["steps"][1]["calculation"]["native"]["keyword"] == (
-            "B3LYP/6-31G* IRC(MaxPoints=5,RCFC)"
-        )
-        assert compile_doc(wired).ok
-
-    def test_irc_reverse_direction_refused(self) -> None:
-        with pytest.raises(DomainError, match="explicit IRC direction"):
-            wire_checkpoint_reuse(
-                _doc(
-                    source_keyword="B3LYP/6-31G* IRC",
-                    target_keyword="B3LYP/6-31G* IRC(Reverse)",
-                ),
-                "s_opt",
-                "s_freq",
-                mode="rcfc",
-            )
-
-    def test_irc_unknown_option_refused(self) -> None:
-        with pytest.raises(DomainError, match="invalid IRC route"):
-            wire_checkpoint_reuse(
-                _doc(
-                    source_keyword="B3LYP/6-31G* IRC",
-                    target_keyword="B3LYP/6-31G* IRC(BogusXYZ)",
-                ),
-                "s_opt",
-                "s_freq",
-                mode="rcfc",
-            )
-
-
 class TestChargeSpinLineageBranches:
     def test_matching_explicit_overrides_accept(self) -> None:
         doc = _doc(
@@ -682,8 +612,10 @@ class TestChargeSpinLineageBranches:
         with pytest.raises(DomainError, match="inherited|charge|spin"):
             wire_checkpoint_reuse(doc, "s_opt", "s_freq")
 
-    def test_analysis_producer_artifact_edge_skipped(self) -> None:
-        from tests.v4._builders import analysis_step
+    def test_unrelated_side_branch_artifact_edge_skipped(self) -> None:
+        # R2.2: the unrelated side branch is a retained transform step
+        # (analysis retired); the checkpoint-wiring proof is unchanged.
+        from tests.v4._builders import transform_step
 
         doc = v4_doc(
             [
@@ -692,8 +624,9 @@ class TestChargeSpinLineageBranches:
                     bindings={"structure": {"source": {"run": "structures"}}},
                     native={"keyword": "B3LYP/6-31G* freq"},
                 ),
-                analysis_step(
-                    "s_an",
+                transform_step(
+                    "s_side",
+                    kind="deduplicate",
                     bindings={"structure": {"source": {"step": "s_freq", "port": "structures"}}},
                 ),
                 calc_step(
@@ -706,7 +639,7 @@ class TestChargeSpinLineageBranches:
         )
         assert compile_doc(doc).ok
         # Target still reaches the checkpoint source through structures, so
-        # the unrelated analysis branch must not disturb the proof.
+        # the unrelated side branch must not disturb the proof.
         wired = wire_checkpoint_reuse(doc, "s_opt", "s_freq")
         assert compile_doc(wired).ok
 
@@ -804,25 +737,6 @@ class TestProvenanceAndCompilerIntegration:
         assert annotations["team.note"] == "keep-me"
         assert annotations["confflow.checkpoint_reuse"]["version"] == CHECKPOINT_REUSE_VERSION
         assert annotations["confflow.checkpoint_reuse"]["mode"] == "checkpoint"
-        assert compile_doc(wired).ok
-
-    def test_rcfc_provenance_mode_recorded(self) -> None:
-        wired = wire_checkpoint_reuse(
-            _doc(
-                source_keyword="B3LYP/6-31G* IRC",
-                target_keyword="B3LYP/6-31G* IRC",
-            ),
-            "s_opt",
-            "s_freq",
-            mode="rcfc",
-        )
-        annotation = wired["steps"][1]["annotations"]["confflow.checkpoint_reuse"]
-        assert annotation == {
-            "source_step": "s_freq",
-            "mode": "rcfc",
-            "allow_method_change": False,
-            "version": CHECKPOINT_REUSE_VERSION,
-        }
         assert compile_doc(wired).ok
 
     def test_wired_document_compiles_and_input_untouched(self) -> None:

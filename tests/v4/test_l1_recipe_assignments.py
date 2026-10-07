@@ -20,16 +20,12 @@ from confflow.domain.canonical import canonical_json_bytes
 from confflow.producer.intent import INTENT_SCHEMA, compile_intent
 
 GLOBALS = {"charge": 0, "multiplicity": 1}
+# R2.2: the recipe-lane vehicle is the retained single-step optimize recipe
+# (tspes retired); the lane assertions are unchanged in shape.
 CARD_FOR = {
-    "ts": "ts@v1",
-    "ts_freq": "ts_freq@v1",
-    "ts_sp": "sp@v1",
-    "irc": "irc@v1",
-    "endpoint_opt": "opt@v1",
-    "endpoint_freq": "freq@v1",
-    "endpoint_sp": "sp@v1",
+    "optimize": "opt@v1",
 }
-CALC_IDS = ["ts", "ts_freq", "ts_sp", "irc", "endpoint_opt", "endpoint_freq", "endpoint_sp"]
+CALC_IDS = ["optimize"]
 
 
 def _u(sid, **kw):
@@ -49,12 +45,16 @@ def _quintuple(exc):
 
 
 def test_b1_require_missing_program_and_native_atomically() -> None:
-    for bad in (_u("ts"), _u("ts", program="orca"), _u("ts", native={"keyword": "X"})):
+    for bad in (
+        _u("optimize"),
+        _u("optimize", program="orca"),
+        _u("optimize", native={"keyword": "X"}),
+    ):
         with pytest.raises(Exception) as ei:
             compile_intent(
                 {
                     "schema": INTENT_SCHEMA,
-                    "recipe": "tspes",
+                    "recipe": "optimize",
                     "globals": dict(GLOBALS),
                     "steps": [bad],
                 }
@@ -63,68 +63,70 @@ def test_b1_require_missing_program_and_native_atomically() -> None:
         assert cls == "IntentCompilationError"
         assert mod == "confflow.producer.intent"
         assert msg == (
-            "step 'ts': recipe assignments require explicit program and native "
+            "step 'optimize': recipe assignments require explicit program and native "
             "(demo recipe science must not leak into production)"
         )
-        assert sid == "ts"
+        assert sid == "optimize"
         assert fp is None
 
 
 def test_b1_patch_order_unknown_program_before_native_nonmapping() -> None:
+    # Program resolution precedes the native-mapping patch on the same step.
     doc = {
         "schema": INTENT_SCHEMA,
-        "recipe": "tspes",
+        "recipe": "optimize",
         "globals": dict(GLOBALS),
         "steps": [
-            _u("ts", program="no_such_program_xyz", native={"keyword": "B3LYP"}),
-            _u("ts_freq", program="orca", native="NOT_A_MAPPING"),
+            _u("optimize", program="no_such_program_xyz", native="NOT_A_MAPPING"),
         ],
     }
     with pytest.raises(Exception) as ei:
         compile_intent(doc)
     cls, mod, msg, sid, _ = _quintuple(ei.value)
-    assert sid == "ts"
+    assert sid == "optimize"
     assert "names unknown program 'no_such_program_xyz'" in msg
-    # Second step alone fails on native mapping.
+    # A well-formed program with a non-mapping native fails on the mapping.
     doc2 = {
         "schema": INTENT_SCHEMA,
-        "recipe": "tspes",
+        "recipe": "optimize",
         "globals": dict(GLOBALS),
         "steps": [
-            _u("ts", program="orca", native={"keyword": "B3LYP"}),
-            _u("ts_freq", program="orca", native="NOT_A_MAPPING"),
+            _u("optimize", program="orca", native="NOT_A_MAPPING"),
         ],
     }
     with pytest.raises(Exception) as ei2:
         compile_intent(doc2)
     _, _, msg2, sid2, _ = _quintuple(ei2.value)
-    assert sid2 == "ts_freq"
-    assert msg2 == "step 'ts_freq' native must be a mapping"
+    assert sid2 == "optimize"
+    assert msg2 == "step 'optimize' native must be a mapping"
 
 
 def test_b1_missing_gate_sorted_and_complete() -> None:
     with pytest.raises(Exception) as ei:
         compile_intent(
-            {"schema": INTENT_SCHEMA, "recipe": "tspes", "globals": dict(GLOBALS), "steps": []}
+            {"schema": INTENT_SCHEMA, "recipe": "optimize", "globals": dict(GLOBALS), "steps": []}
         )
     assert str(ei.value) == (
         "recipe requires explicit program/native assignments for every "
-        "calculation step (no demo science); missing: "
-        "endpoint_freq, endpoint_opt, endpoint_sp, irc, ts, ts_freq, ts_sp"
+        "calculation step (no demo science); missing: optimize"
     )
     with pytest.raises(Exception) as ei2:
         compile_intent(
             {
                 "schema": INTENT_SCHEMA,
-                "recipe": "tspes",
+                "recipe": "optimize",
                 "globals": dict(GLOBALS),
-                "steps": [_u("ts", program="orca", native={"keyword": "B3LYP"})],
+                "steps": [
+                    {
+                        "id": "other",
+                        "card": "opt@v1",
+                        "program": "orca",
+                        "native": {"keyword": "B3LYP"},
+                    }
+                ],
             }
         )
-    assert "missing: endpoint_freq, endpoint_opt, endpoint_sp, irc, ts_freq, ts_sp" in str(
-        ei2.value
-    )
-    assert "reaction_profile" not in str(ei2.value)
+    assert "missing: optimize" in str(ei2.value)
 
 
 def test_b1_valid_full_wire_bytes_stable() -> None:
@@ -139,48 +141,41 @@ def test_b1_valid_full_wire_bytes_stable() -> None:
         for sid in CALC_IDS
     ]
     wire = compile_intent(
-        {"schema": INTENT_SCHEMA, "recipe": "tspes", "globals": dict(GLOBALS), "steps": steps}
+        {"schema": INTENT_SCHEMA, "recipe": "optimize", "globals": dict(GLOBALS), "steps": steps}
     )
     digest = "sha256:" + hashlib.sha256(canonical_json_bytes(wire)).hexdigest()
-    assert digest == "sha256:2b29b03b489acd2249b325967f3e1b25b7d263822da0756e1462d0e0fde9bf12"
+    # R2.2 声明重钉：车辆换为 optimize 单步（tspes 退役），lane 形状不变。
+    assert digest == "sha256:61301ce417729ed56af2883475466f98c62a3e8d08f2b0d2e18def9f253d46a8"
     by_id = {s["id"]: s for s in wire["steps"]}
     for sid in CALC_IDS:
         res = by_id[sid]["annotations"]["producer_resolution"]
         assert res["recipe_assignment"] is True
         assert by_id[sid]["calculation"]["seed"] == 7
         assert "resources" in by_id[sid]
-    assert (
-        by_id["reaction_profile"]["annotations"]["producer_resolution"].get("recipe_assignment")
-        is None
-    )
 
 
 def test_b1_catalog_bytes_unchanged() -> None:
     from confflow.producer.intent.compiler import intent_catalog
     from confflow.producer.recipes import RECIPE_IDS_V4, recipe_catalog_sha256_v4
 
+    # R2.2 声明重钉：目录剩 7 项（irc/qst2/qst3/neb/goat/tspes 退役）。
     assert list(RECIPE_IDS_V4) == [
         "optimize",
         "single_point",
         "frequency",
         "opt_freq",
         "transition_state",
-        "irc",
-        "qst2",
-        "qst3",
-        "neb",
-        "goat",
-        "tspes",
         "confgen_torsion",
         "monomer_conformers",
     ]
+    # R2.2 声明重钉：目录与 recipe_cards 描述随收缩更新。
     assert (
         recipe_catalog_sha256_v4()
-        == "51c1483ffc5b114f34ca49c50e5e75d3cadbe6a2ea31a44281746fc714504f19"
+        == "df0b82e2d0ae49131affe47e69ac72a622385469e09747eeef7d7bebbe4a6766"
     )
     cat = intent_catalog()
     assert "sha256:" + hashlib.sha256(canonical_json_bytes(cat)).hexdigest() == (
-        "sha256:28225e1a432b6308230638d4166659b758bb73b29844da34de411081bdd23e96"
+        "sha256:9e5a479b3c9607fc5c09e2e1c16ef374acd69bfc921d1d2960aaaf8546ed0af4"
     )
 
 
@@ -194,10 +189,9 @@ def test_b1_contract_boundary_bytes_unchanged() -> None:
     bdoc = boundary_document()
     # J1 声明新增（叠加 E1 recipe 目录）：authoring request/response operation enum 增加
     # "structure_preview"（boundary + contract 派生 sha 随之更新）。
-    # R2.0 声明更新（R2.0-logic D4 加法卡）：result_schema 加可选 energies 白名单，
-    # contract 字节/result_schema_sha256/contract_digest 随之更新，boundary 不变。
+    # R2.2 声明重钉(叠加 R2.0-logic energies 白名单)：contract 随暴露面收缩与 energies 更新，boundary 不变。
     assert "sha256:" + hashlib.sha256(canonical_json_bytes(env)).hexdigest() == (
-        "sha256:5d79552b4b2cce4cd8a90c39bf28a976df077897b21348cb4d6374cf7d279691"
+        "sha256:ba8b1f34dbb2df41dae2ac8493a606b587e258f130ed3b4b87f67074b0ce9091"
     )
     assert "sha256:" + hashlib.sha256(canonical_json_bytes(bdoc)).hexdigest() == (
         "sha256:d9b5282bb8d6d3b3694a76bea6931b3099902f36fc74e6fe0f46727a9905e0b2"
@@ -281,7 +275,7 @@ def test_b1_custom_registry_spy_enters_hooks() -> None:
 
     steps = [_u(sid, program="orca", native={"keyword": f"B3LYP {sid}"}) for sid in CALC_IDS]
     wire = compile_intent(
-        {"schema": INTENT_SCHEMA, "recipe": "tspes", "globals": dict(GLOBALS), "steps": steps},
+        {"schema": INTENT_SCHEMA, "recipe": "optimize", "globals": dict(GLOBALS), "steps": steps},
         intent_registry=custom,
     )
     assert wire["schema"] == "confflow.workflow.v4"

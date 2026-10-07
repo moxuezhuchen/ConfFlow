@@ -16,10 +16,6 @@ subset of ``exposed_fields``), which names the editors the user must confirm
 before production use. A recipe pins only what makes it a different recipe
 plus those compile-required defaults -- never resources, scheduler widths, or
 execution bindings.
-
-The ``tspes`` recipe is the real transition-state-plus-path chain:
-TS opt, TS frequency, TS single-point branch, IRC, endpoint opt, endpoint
-frequency, endpoint single point, and a reaction-profile analysis.
 """
 
 from __future__ import annotations
@@ -96,8 +92,8 @@ def _confgen_v3_recipe() -> dict[str, Any]:
             "capped subsets). Confirm the bond selection for each structure."
         ),
         "category": "Conformers",
-        # Root decision: the original eleven keep their orders; the new card
-        # goes last in catalog list order, so its order sits above tspes (110).
+        # Root decision: the original recipes keep their orders; the new card
+        # goes last in catalog list order, so its order sits above the rest.
         "order": 120,
         "document": _document(
             [
@@ -199,7 +195,7 @@ def _monomer_conformers_recipe() -> dict[str, Any]:
             "step consumes the preopt optimized product."
         ),
         "category": "Conformers",
-        # Root decision: original twelve keep their orders; the new card goes
+        # Root decision: original recipes keep their orders; the new card goes
         # last in catalog list order, so its order sits above confgen_torsion.
         "order": 130,
         "document": _document([preopt, confgen, dedup]),
@@ -322,242 +318,8 @@ def _single_calc_recipe(
     }
 
 
-def _tspes_recipe() -> dict[str, Any]:
-    """Build the transition-state-plus-path (TSPES) chain recipe.
-
-    The real chain: TS optimization, TS frequency, a TS single-point branch,
-    IRC into forward/reverse endpoints, endpoint optimization, endpoint
-    frequency, endpoint single point, and a reaction-profile analysis over
-    the endpoint results.  The analysis binds the IRC endpoints plus the TS
-    (grouping triple with frozen roles and parent links), the frequency
-    results (Gibbs correction per node) plus the single-point results
-    (high-level electronic energy per node) for composite
-    ``G_high = E_high + correction``, and the endpoint-optimization
-    structures on the optional ``lineage_structures`` port: frequency legs
-    run as measurements binding their input entities, so the optimized
-    structures are the lineage records that resolve every frequency result
-    to its reaction node via parent-id lineage in the analysis executor.
-    The single-point branch outputs remain in the run
-    for explicit ResultRef pinning of the high-level ``E_high`` leg.  The
-    analysis consumes four result legs on four ports: low-level
-    frequency results (``results`` from ``endpoint_freq``,
-    ``ts_results`` from ``ts_freq``) carrying the Gibbs correction, and
-    high-level single-point results (``sp_results`` from
-    ``endpoint_sp``, ``ts_sp_results`` from ``ts_sp``) carrying the
-    high-level electronic energy.  The composite policy
-    (``G_high = E_high + correction``) admits the electronic leg only
-    from the single-point steps and the correction leg only from the
-    frequency steps via explicit source-step scopes, so same-kind
-    energies from different theory levels never collapse by
-    subject/kind first-match.  Single-point outputs mint passthrough
-    subjects (no geometry is parsed), so their structures ride the
-    ``sp_structures``/``ts_sp_structures`` ports beside the
-    ``lineage_structures`` optimization outputs: parent-id lineage then
-    resolves every high-level leg to its reaction node in the analysis
-    executor.  The PES is derived strictly from emitted
-    ``reaction_profile`` analysis results.
-    """
-    ts = _calc_step(
-        "ts",
-        program="orca",
-        role="ts",
-        bindings=_run_binding(),
-        native={"keyword": "B3LYP D3BJ OptTS"},
-        checks=["normal_termination", "imaginary_frequency_count"],
-        check_params={"imaginary_frequency_count": {"expected": 1}},
-        label="Transition state",
-    )
-    ts_freq = _calc_step(
-        "ts_freq",
-        program="orca",
-        role="freq",
-        bindings={"structure": {"source": {"step": "ts", "port": "structures"}}},
-        native={"keyword": "B3LYP D3BJ Freq"},
-        checks=["normal_termination", "frequencies_required"],
-        label="TS frequency",
-    )
-    ts_sp = _calc_step(
-        "ts_sp",
-        program="orca",
-        role="sp",
-        bindings={"structure": {"source": {"step": "ts", "port": "structures"}}},
-        native={"keyword": "B3LYP D3BJ SP"},
-        checks=["normal_termination"],
-        label="TS single point",
-    )
-    irc = _calc_step(
-        "irc",
-        program="orca",
-        role="irc",
-        bindings={"structure": {"source": {"step": "ts", "port": "structures"}}},
-        native={"keyword": "B3LYP D3BJ IRC", "irc": {"direction": "both"}},
-        checks=["normal_termination"],
-        profile="path_endpoints",
-        label="IRC",
-    )
-    endpoint_opt = _calc_step(
-        "endpoint_opt",
-        program="orca",
-        role="opt",
-        bindings={"structure": {"source": {"step": "irc", "port": "structures"}}},
-        native={"keyword": "B3LYP D3BJ Opt"},
-        checks=["normal_termination", "geometry_required"],
-        label="Endpoint optimization",
-    )
-    endpoint_freq = _calc_step(
-        "endpoint_freq",
-        program="orca",
-        role="freq",
-        bindings={"structure": {"source": {"step": "endpoint_opt", "port": "structures"}}},
-        native={"keyword": "B3LYP D3BJ Freq"},
-        checks=["normal_termination", "frequencies_required"],
-        label="Endpoint frequency",
-    )
-    endpoint_sp = _calc_step(
-        "endpoint_sp",
-        program="orca",
-        role="sp",
-        bindings={"structure": {"source": {"step": "endpoint_freq", "port": "structures"}}},
-        native={"keyword": "B3LYP D3BJ SP"},
-        checks=["normal_termination"],
-        label="Endpoint single point",
-    )
-    analysis: dict[str, Any] = {
-        "id": "reaction_profile",
-        "executor": "analysis",
-        "label": "Reaction profile",
-        "bindings": {
-            "structures": {"source": {"step": "irc", "port": "structures"}},
-            "ts_structures": {"source": {"step": "ts", "port": "structures"}},
-            "lineage_structures": {"source": {"step": "endpoint_opt", "port": "structures"}},
-            "sp_structures": {"source": {"step": "endpoint_sp", "port": "structures"}},
-            "ts_sp_structures": {"source": {"step": "ts_sp", "port": "structures"}},
-            "results": {"source": {"step": "endpoint_freq", "port": "results"}},
-            "ts_results": {"source": {"step": "ts_freq", "port": "results"}},
-            "sp_results": {"source": {"step": "endpoint_sp", "port": "results"}},
-            "ts_sp_results": {"source": {"step": "ts_sp", "port": "results"}},
-        },
-        "analysis": {
-            "native": {
-                "method": "reaction_profile",
-                "energy_mode": "composite",
-                "electronic_result_kind": "energy",
-                "correction_result_kind": "gibbs_correction",
-                "electronic_source_steps": ["endpoint_sp", "ts_sp"],
-                "correction_source_steps": ["endpoint_freq", "ts_freq"],
-                "energy_fallback": "none",
-                "endpoint_assignment": {"forward": "unassigned", "reverse": "unassigned"},
-                "partial_policy": "require_complete",
-            },
-            "checks": [],
-        },
-    }
-    exposed = list(_CALC_EXPOSED) + ["analysis.checks", "analysis.native"]
-    return {
-        "id": "tspes",
-        "label": "TS + Path Endpoints + SP",
-        "description": (
-            "Transition-state search with frequency confirmation, an IRC into "
-            "forward/reverse endpoints, endpoint optimization, frequency, and "
-            "single point, plus a reaction-profile analysis."
-        ),
-        "category": "Reaction path",
-        "order": 110,
-        "document": _document(
-            [ts, ts_freq, ts_sp, irc, endpoint_opt, endpoint_freq, endpoint_sp, analysis]
-        ),
-        "required_fields": list(_CALC_REQUIRED),
-        "exposed_fields": exposed,
-    }
-
-
-def _qst_inputs() -> dict[str, Any]:
-    """Return the reactant/product run-input declarations for QST/NEB."""
-    return {
-        "reactants": {"kind": "structure", "cardinality": "many"},
-        "products": {"kind": "structure", "cardinality": "many"},
-    }
-
-
-def _named_binding(port: str, run_input: str) -> dict[str, Any]:
-    """Return one named-structure binding paired by explicit group key."""
-    return {
-        port: {
-            "source": {"run": run_input},
-            "pairing": "by_group_key",
-            "cardinality": "one",
-        }
-    }
-
-
 def _recipes() -> list[dict[str, Any]]:
     """Build the full V4 recipe list (fresh objects on every call)."""
-    qst2 = _single_calc_recipe(
-        recipe_id="qst2",
-        label="QST2",
-        description="Two-ended transition-state search from reactant and product.",
-        category="Transition state",
-        order=60,
-        program="gaussian",
-        role="ts",
-        adapter="named_structures",
-        native={
-            "keyword": "B3LYP/6-31G(d) QST2 Opt",
-            "atom_mapping": {"kind": "identity"},
-        },
-        checks=["normal_termination", "imaginary_frequency_count"],
-        check_params={"imaginary_frequency_count": {"expected": 1}},
-        inputs=_qst_inputs(),
-        bindings={
-            **_named_binding("reactant", "reactants"),
-            **_named_binding("product", "products"),
-        },
-    )
-    qst3_inputs = {**_qst_inputs(), "guesses": {"kind": "structure", "cardinality": "many"}}
-    qst3 = _single_calc_recipe(
-        recipe_id="qst3",
-        label="QST3",
-        description="Three-ended transition-state search with an explicit guess.",
-        category="Transition state",
-        order=70,
-        program="gaussian",
-        role="ts",
-        adapter="named_structures",
-        native={
-            "keyword": "B3LYP/6-31G(d) QST3 Opt",
-            "atom_mapping": {"kind": "identity"},
-        },
-        checks=["normal_termination", "imaginary_frequency_count"],
-        check_params={"imaginary_frequency_count": {"expected": 1}},
-        inputs=qst3_inputs,
-        bindings={
-            **_named_binding("reactant", "reactants"),
-            **_named_binding("product", "products"),
-            **_named_binding("guess", "guesses"),
-        },
-    )
-    neb = _single_calc_recipe(
-        recipe_id="neb",
-        label="NEB",
-        description="Nudged elastic band path with reactant and product endpoints.",
-        category="Reaction path",
-        order=80,
-        program="orca",
-        role="neb",
-        adapter="named_structures",
-        profile="ensemble",
-        native={
-            "keyword": "B3LYP D3BJ NEB-TS",
-            "neb": {"n_images": 7, "neb_ts": True},
-            "atom_mapping": {"kind": "identity"},
-        },
-        checks=["normal_termination"],
-        inputs=_qst_inputs(),
-        bindings={
-            **_named_binding("reactant", "reactants"),
-            **_named_binding("product", "products"),
-        },
-    )
     return [
         _single_calc_recipe(
             recipe_id="optimize",
@@ -615,36 +377,6 @@ def _recipes() -> list[dict[str, Any]]:
             checks=["normal_termination", "imaginary_frequency_count"],
             check_params={"imaginary_frequency_count": {"expected": 1}},
         ),
-        _single_calc_recipe(
-            recipe_id="irc",
-            label="IRC",
-            description="Intrinsic reaction coordinate into forward/reverse endpoints.",
-            category="Reaction path",
-            order=55,
-            program="orca",
-            role="irc",
-            profile="path_endpoints",
-            native={"keyword": "B3LYP D3BJ IRC", "irc": {"direction": "both"}},
-            checks=["normal_termination"],
-        ),
-        qst2,
-        qst3,
-        neb,
-        _single_calc_recipe(
-            recipe_id="goat",
-            label="GOAT Conformers",
-            description="Global-optimization conformer ensemble for one structure.",
-            category="Conformers",
-            order=100,
-            program="orca",
-            role="goat",
-            profile="ensemble",
-            native={"keyword": "B3LYP D3BJ GOAT", "goat": {"MaxIter": 50}},
-            checks=["normal_termination"],
-            # Single stochastic authority for GOAT sampling (freeze §8/A).
-            seed=42,
-        ),
-        _tspes_recipe(),
         _confgen_v3_recipe(),
         _monomer_conformers_recipe(),
     ]
@@ -657,12 +389,6 @@ RECIPE_IDS_V4: tuple[str, ...] = (
     "frequency",
     "opt_freq",
     "transition_state",
-    "irc",
-    "qst2",
-    "qst3",
-    "neb",
-    "goat",
-    "tspes",
     "confgen_torsion",
     "monomer_conformers",
 )

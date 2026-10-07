@@ -216,41 +216,8 @@ def test_a2a_seed_block_conflict_fails_closed() -> None:
         build_intent_registry([a, b])
 
 
-def test_a2a_goat_explicit_derived_scope() -> None:
-    base = _intent(
-        [
-            {
-                "id": "g1",
-                "card": "goat@v1",
-                "program": "orca",
-                "native": {"keyword": "B3LYP GOAT", "goat": {"MaxIter": 50}},
-            }
-        ]
-    )
-    out = compile_intent(copy.deepcopy(base))
-    calc = out["steps"][0]["calculation"]
-    res = out["steps"][0]["annotations"]["producer_resolution"]
-    assert isinstance(calc["seed"], int)
-    assert res["seed_source"] == "derived"
-    assert res["seed_scope"] == "workflow_identity_only"
-    explicit = _intent(
-        [
-            {
-                "id": "g1",
-                "card": "goat@v1",
-                "program": "orca",
-                "seed": 777,
-                "native": {"keyword": "B3LYP GOAT", "goat": {"MaxIter": 50}},
-            }
-        ]
-    )
-    out2 = compile_intent(copy.deepcopy(explicit))
-    assert out2["steps"][0]["calculation"]["seed"] == 777
-    assert out2["steps"][0]["annotations"]["producer_resolution"]["seed_source"] == "explicit"
-    assert (
-        out2["steps"][0]["annotations"]["producer_resolution"]["seed_scope"]
-        == "workflow_identity_only"
-    )
+# R2.2 (G18): test_a2a_goat_explicit_derived_scope retired with the
+# goat card and the workflow_identity_only seed scope.
 
 
 def test_a2a_typed_confgen_seed_scope_and_explicit() -> None:
@@ -296,25 +263,18 @@ def test_a2a_seed_scope_moved_to_seeds() -> None:
     assert "seed_scope_for_step" in seeds_mod.__all__
     seeds_tree = _func_tree_without_docstring(seeds_mod.seed_scope_for_step)
     seeds_consts = _string_constants(seeds_tree)
-    assert "workflow_identity_only" in seeds_consts
+    # R2.2: the goat "workflow_identity_only" scope is retired with GOAT;
+    # confgen "native_sampling" stays the seeds-owned rule.
     assert "native_sampling" in seeds_consts
     # Compiler keeps only a delegating compat wrapper, no science branches.
     mod_tree = _func_tree_without_docstring(compiler._seed_scope)
     mod_consts = _string_constants(mod_tree)
     assert "native_sampling" not in mod_consts
-    assert "workflow_identity_only" not in mod_consts
     assert "seed_scope_for_step" in _call_names(mod_tree) or any(
         "seed_scope_for_step" in target for target in _import_targets(mod_tree)
     )
     # Behavior: none source yields None.
     assert seeds_mod.seed_scope_for_step({"executor": "confgen"}, "none") is None
-    assert (
-        seeds_mod.seed_scope_for_step(
-            {"executor": "calculation", "calculation": {"native": {"goat": {}}}},
-            "derived",
-        )
-        == "workflow_identity_only"
-    )
 
 
 def test_a2a_checkpoint_provisional_preserves_explicit() -> None:
@@ -407,7 +367,6 @@ def test_a2a_machine_program_selection_declarative() -> None:
         "total_cores": 8,
         "total_memory": "16GB",
         "executable": {"orca": "/opt/orca", "gaussian": "/opt/g16"},
-        "target": "local",
     }
     out = compile_intent(copy.deepcopy(doc), machine_profile=profile)
     assert out["steps"][0]["execution"]["executable"] == "/opt/orca"
@@ -538,7 +497,6 @@ def test_a2a_v2_custom_descriptor_machine_probe() -> None:
         "total_cores": 8,
         "total_memory": "16GB",
         "executable": {"orca": "/opt/orca", "gaussian": "/opt/g16"},
-        "target": "local",
     }
     out = compile_intent(
         copy.deepcopy(doc),

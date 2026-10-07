@@ -392,7 +392,7 @@ def test_race_x_stale_step_publication_refused(
     original_assemble = BatchStepExecutor._assemble
 
     def paused_assemble(self: Any, request: Any, collected: Any, errors: Any) -> Any:
-        if request.step.step_id == "ts" and not entered.is_set():
+        if request.step.step_id == "optimize" and not entered.is_set():
             entered.set()
             assert release.wait(TIMEOUT)
         return original_assemble(self, request, collected, errors)
@@ -431,7 +431,7 @@ def test_race_x_stale_step_publication_refused(
     assert isinstance(results.get("g1_error"), arbitration.StaleGenerationError)
     _assert_one_winner(run_root, RunState.COMPLETED)
     manifest = json.loads((run_root / RUN_RESULT_FILENAME).read_text())
-    published = detect_published(run_root=str(run_root), step_id="ts")
+    published = detect_published(run_root=str(run_root), step_id="optimize")
     assert manifest["steps"][0]["digest"] == published
     assert manifest["generation_id"] == g2.generation_id
 
