@@ -124,8 +124,8 @@ PACKAGE_ROOT = REPO_ROOT / "confflow"
 #: deliberately *not* a ban on the strings "v1"/"v2": the current producer
 #: protocol keeps ``confflow.configuration-validation.v1``,
 #: ``confflow.editor-manifest.v1``, ``confflow.recipe-catalog.v1`` and the
-#: ``confflow.contract.*.v1`` capability ids, and unrelated lines (control
-#: protocol, remote envelope) keep their own v1/v2 majors.
+#: ``confflow.contract.*.v1`` capability ids, and unrelated control-protocol
+#: lines keep their own v1/v2 majors.
 
 #: Architecture Diet PR-8 consolidated helper authorities.  Six byte-identical
 #: durable-publish copies (run_state/publication/generation/arbitration/
@@ -137,10 +137,8 @@ PACKAGE_ROOT = REPO_ROOT / "confflow"
 #: Consumer modules that must expose the authority object itself, never a copy.
 
 #: Production scopes scanned for regrown local helper copies.
-#: ``confflow.remote`` is intentionally excluded: its writers are
-#: deliberately self-contained (different O_EXCL/O_NOFOLLOW/mode/taxonomy
-#: semantics; deferred PR-8 audit boundary) and must not be conflated with the
-#: durable-publish authority.
+#: (R2.3f: ``confflow.remote`` was deleted, so there is no exclusion anymore;
+#: every remaining production scope is scanned.)
 
 #: Helper definitions that exist only in the PR-8 authority modules.
 
@@ -221,7 +219,6 @@ class TestPackaging:
             "confflow.workflow.v4",
             "confflow.persistence",
             "confflow.programs",
-            "confflow.remote",
         ):
             assert expected in packages, expected
 

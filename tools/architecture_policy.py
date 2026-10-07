@@ -35,14 +35,12 @@ SIX_ROOTS = [
     "confflow/workflow/v4",
     "confflow/persistence",
     "confflow/programs",
-    "confflow/remote",
 ]
 V4_ROOT = "confflow/workflow/v4"
 DOMAIN_ROOT = "confflow/domain"
 EXECUTION_ROOT = "confflow/execution"
 PERSISTENCE_ROOT = "confflow/persistence"
 PROGRAMS_ROOT = "confflow/programs"
-REMOTE_ROOT = "confflow/remote"
 APPLICATION_ROOT = "confflow/application"
 PRODUCER_ROOT = "confflow/producer"
 ANALYSIS_ROOT = "confflow/analysis"
@@ -268,6 +266,8 @@ RETIRED_RUNTIME_MODULES = [
     "confflow.workflow.dag",
     "confflow.workflow.dag.explicit",
     "confflow.workflow.dag.legacy",
+    "confflow.remote",
+    "confflow.remote.envelope",
     "confflow.remote.lease",
     "confflow.remote.supervision",
     "confflow.remote.schema",
@@ -391,29 +391,12 @@ DUPLICATE_ATOMIC_HELPER_MARKERS = [
 ]
 SANITIZER_AUTHORITY_PATH = "confflow/programs/_naming.py"
 DUPLICATE_SANITIZER_MARKER = "def sanitize_job_name("
-REMOTE_LEGACY_REMOTE_TOKENS = [
-    "input_xyz",
-    "workflow_config",
-    "TaskRunner",
-    "CalcStepRunner",
-    "TaskName",
-    "get_itask",
-    "GlobalOptions",
-    "ResultsDB",
-    "chk_from_step",
-    "backup_dir",
-    "ibkout",
-    "result.xyz",
-    "failed.xyz",
-    "output_path",
-]
 V45_SCAN_ROOTS = [
     "confflow/domain",
     "confflow/execution",
     "confflow/workflow/v4",
     "confflow/persistence",
     "confflow/programs",
-    "confflow/remote",
 ]
 V45_MODULES = [
     "confflow.execution.output_identity",
@@ -476,7 +459,6 @@ V46_STRICT_ROOT_CANDIDATES = [
     "producer",
     "persistence",
     "programs",
-    "remote",
 ]
 V46_NEW_SYMBOLS = ["iprog"]
 V46_LEGACY_TRUTH_TOKENS = ["result.xyz", "failed.xyz", "workflow_stats", "output_path", "min_xyz"]
@@ -503,7 +485,6 @@ SCANNER_SCOPE = [
     "confflow/application/execution",
     "confflow/control.py",
     "confflow/producer",
-    "confflow/remote",
 ]
 SCANNER_FORBIDDEN_IMPORT_PREFIXES = [
     "confflow.shared",
@@ -547,6 +528,8 @@ SCANNER_RETIRED_RUNTIME_MODULES = [
     "confflow.workflow.dag",
     "confflow.workflow.dag.explicit",
     "confflow.workflow.dag.legacy",
+    "confflow.remote",
+    "confflow.remote.envelope",
     "confflow.remote.lease",
     "confflow.remote.supervision",
     "confflow.remote.schema",
@@ -989,7 +972,7 @@ R.append(
         "id": "AP-002",
         "kind": "imports",
         "source": "#2",
-        "scope": [V4_ROOT, EXECUTION_ROOT, PERSISTENCE_ROOT, PROGRAMS_ROOT, REMOTE_ROOT],
+        "scope": [V4_ROOT, EXECUTION_ROOT, PERSISTENCE_ROOT, PROGRAMS_ROOT],
         "mode": "allowed_prefixes",
         "allowed": [
             "confflow.domain",
@@ -997,7 +980,6 @@ R.append(
             "confflow.workflow.v4",
             "confflow.persistence",
             "confflow.programs",
-            "confflow.remote",
         ],
         "exempt_imports": {
             "confflow/workflow/v4/confgen_schema.py": [
@@ -1078,17 +1060,6 @@ R.append(
         "mode": "forbidden_prefixes",
         "prefixes": FORBIDDEN_LEGACY_RUNTIME_PREFIXES,
         "forbidden_exact": EXTENDED_FORBIDDEN_LEGACY_MODULES,
-    }
-)
-R.append(
-    {
-        "id": "AP-015",
-        "kind": "imports",
-        "source": "#15",
-        "resolve_relative": True,
-        "scope": [REMOTE_ROOT],
-        "mode": "forbidden_substrings",
-        "substrings": ["compiler", "yaml"],
     }
 )
 R.append(
@@ -1384,7 +1355,7 @@ R.append(
         "id": "AP-008",
         "kind": "vocab",
         "source": "#8",
-        "scope": [EXECUTION_ROOT, V4_ROOT, PERSISTENCE_ROOT, PROGRAMS_ROOT, REMOTE_ROOT],
+        "scope": [EXECUTION_ROOT, V4_ROOT, PERSISTENCE_ROOT, PROGRAMS_ROOT],
         "tokens": ["output_path"],
     }
 )
@@ -1405,15 +1376,6 @@ R.append(
         "scope": [*EXTENDED_V4_PRODUCTION_ROOTS, *EXTENDED_V4_PRODUCTION_FILES],
         "tokens": LEGACY_FILENAME_TOKENS,
         "exempt_symbols": EXTENDED_LEGACY_TOKEN_EXEMPTIONS,
-    }
-)
-R.append(
-    {
-        "id": "AP-014",
-        "kind": "vocab",
-        "source": "#14",
-        "scope": [REMOTE_ROOT],
-        "tokens": REMOTE_LEGACY_REMOTE_TOKENS,
     }
 )
 R.append(
@@ -1531,7 +1493,7 @@ R.append(
         "id": "AP-051",
         "kind": "disk_present",
         "source": "#51",
-        "files": [f"{r}/__init__.py" for r in (DOMAIN_ROOT, EXECUTION_ROOT, V4_ROOT, REMOTE_ROOT)],
+        "files": [f"{r}/__init__.py" for r in (DOMAIN_ROOT, EXECUTION_ROOT, V4_ROOT)],
     }
 )
 R.append(
@@ -3069,20 +3031,6 @@ _RUNTIME_CHILD = (
 
 RUNTIME_RULES = [
     {
-        "id": "RT-016",
-        "source": "#16",
-        "cases": [
-            [
-                {"op": "import", "module": "confflow.remote"},
-                {
-                    "op": "export_absent",
-                    "module": "confflow.remote",
-                    "names": ["lease", "supervision", "schema"],
-                },
-            ]
-        ],
-    },
-    {
         "id": "RT-017",
         "source": "#17",
         "cases": [
@@ -3110,23 +3058,6 @@ RUNTIME_RULES = [
                     "exact": ["confflow.config"],
                 },
                 {"op": "forbid", "prefixes": ["confflow.calc"]},
-            ]
-        ],
-    },
-    {
-        "id": "RT-019",
-        "source": "#19 (R1.2: remote package is envelope-only; handoff/staging/transport/worker retired)",
-        "cases": [
-            [
-                {"op": "import", "module": "confflow.remote.envelope"},
-                {
-                    "op": "forbid",
-                    "exact": [
-                        "confflow.remote.lease",
-                        "confflow.remote.supervision",
-                        "confflow.remote.schema",
-                    ],
-                },
             ]
         ],
     },
