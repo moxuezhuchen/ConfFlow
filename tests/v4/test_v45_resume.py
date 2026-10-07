@@ -1,28 +1,21 @@
 #!/usr/bin/env python3
 
-"""V4-5 durable resume for multi-output producers.
+"""V4-5 durable resume for ensemble producers.
 
 All resume decisions run through the real production machinery
 (``BatchStepExecutor.execute_step_resumable`` + ``SqliteWorkItemStore`` +
 :func:`evaluate_reuse`); native invocations are counted at the process
 boundary via a logging wrapper, so duplicates fail loudly:
 
-- IRC complete → resume runs 0 native;
-- GOAT complete → resume runs 0 native;
-- 19/20 (one failed) → resume runs exactly 1 native;
-- remote IRC complete + producer restart (fresh transport, new worker root)
-  → full reuse, no duplicate launch;
+- ensemble complete → resume runs 0 native;
 - QST completed + atom mapping unchanged → reuse;
 - QST mapping changed (products swapped across groups) → invalidation, the
-  work-item digest moves, nothing executes;
-- endpoint ids are bit-identical across resume (order + ids).
+  work-item digest moves, nothing executes.
 
 Seeded completed results are synthetic-but-rule-bound (frozen
 :mod:`confflow.execution.output_identity` ids/lineage, real
 ``resolve_named_inputs``/``ts_output_lineage`` for QST); the register →
-decide → reuse-or-launch path they traverse is production code.  The IRC
-executor seam is the same test-local adapter as the TSPES file (blocked
-production seam: ``OrcaAdapter.parse_native_result`` IRC routing).
+decide → reuse-or-launch path they traverse is production code.
 """
 
 from __future__ import annotations
@@ -107,20 +100,24 @@ def _native_count(count_file: Path) -> int:
     return len([line for line in count_file.read_text().splitlines() if line.strip()])
 
 
-def _goat_doc() -> dict[str, Any]:
-    """Build a single-step ensemble-shaped (GOAT) document."""
+def _ensemble_doc() -> dict[str, Any]:
+    """Build a single-step ensemble-profile document.
+
+    R2.3b/e (G18): plain calculation on the retained ensemble profile
+    (IRC/GOAT native are retired); resume replays seeded ensemble
+    results with zero native launches.
+    """
     step = calc_step(
-        "s_goat",
+        "s_ens",
         program="orca",
         adapter="standard",
         profile="ensemble",
         bindings={"structure": {"source": {"run": "structures"}}},
-        native={"keyword": "GOAT B3LYP", "goat": {"MaxIter": 50}},
+        native={"keyword": "B3LYP Opt"},
         checks=["normal_termination", "geometry_required"],
         scheduler={"max_parallel_items": 4},
         resources={"cores_per_item": 1, "memory_per_item": "1GB"},
         execution={"binding_id": "test", "executable": "orca"},
-        seed=7,
     )
     return v4_doc([step], inputs=STRUCTURE_INPUTS)
 
@@ -300,8 +297,8 @@ def _stamped_results(
     return _ResultSet.of(*stamped)
 
 
-def _goat_result(item: Any, *, step_id: str = "s_goat", members: int = 3) -> WorkItemResult:
-    """Build the rule-bound conformer-ensemble result for a GOAT *item*."""
+def _goat_result(item: Any, *, step_id: str = "s_ens", members: int = 3) -> WorkItemResult:
+    """Build the rule-bound conformer-ensemble result for an ensemble *item*."""
     driving = item.named_inputs.structures["structure"][0]
     parent_ids, lineage_root, group_key = endpoint_lineage(driving)
     records = [
@@ -435,29 +432,29 @@ def _reuse_hits(result: Any) -> int:
     )
 
 
-class TestGoatResume:
-    """GOAT step resume: complete → 0 native, ids stable."""
+class TestEnsembleResume:
+    """Ensemble-profile step resume: complete → 0 native, ids stable."""
 
-    def test_goat_complete_resumes_zero_native(
+    def test_ensemble_complete_resumes_zero_native(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         wrapper, count_file = _install_irc(tmp_path, monkeypatch)
         run_root = str(tmp_path / "run")
-        plan = _compile(_goat_doc())
+        plan = _compile(_ensemble_doc())
         structures = StructureSet.of(
             *(
                 structure(f"seed-{i}", group_key=f"ens-{i}", lineage_root_id=f"root-{i}")
                 for i in range(4)
             )
         )
-        items = assemble(plan, run_inputs(structures={"structures": structures})).for_step("s_goat")
+        items = assemble(plan, run_inputs(structures={"structures": structures})).for_step("s_ens")
         assert len(items) == 4
         adapter = get_program_adapter("orca")  # real adapter: fakes speak real grammar
         profile = EnsembleProfile()
         checks = (CHECKS["normal_termination"], CHECKS["geometry_required"])
         request = _request(
             plan,
-            "s_goat",
+            "s_ens",
             tuple(items),
             run_root,
             wrapper,
@@ -465,9 +462,9 @@ class TestGoatResume:
             profile=profile,
             checks=checks,
         )
-        planned = next(step for step in plan.steps if step.step_id == "s_goat")
+        planned = next(step for step in plan.steps if step.step_id == "s_ens")
         provenance = _provenance_for(request)
-        with SqliteWorkItemStore.open(store_path(run_root, "s_goat")) as store:
+        with SqliteWorkItemStore.open(store_path(run_root, "s_ens")) as store:
             for item in items:
                 _seed_completed(
                     store,
@@ -494,5 +491,6 @@ class TestGoatResume:
 
 # R2.2 (G18): TestIrcResume, TestQstMappingResume and TestEndpointIdStability
 # are retired with the path_endpoints profile and the named_structures
-# adapter. TestGoatResume stays: the ensemble profile is retained as the
-# ConfGen result profile.
+# adapter. R2.3b/e: TestGoatResume becomes TestEnsembleResume on a plain
+# calculation (GOAT native retired); the ensemble profile and the
+# multi-output resume machinery are retained for NEB.

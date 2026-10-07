@@ -83,62 +83,21 @@ def _input_error(message: str) -> ValueError:
     return ValueError(f"{NativeErrorCode.NATIVE_INPUT_ERROR.value}: {message}")
 
 
-#: Refusal shared by the definition validator and the renderer: a user native
-#: RANDOMSEED is a second seed authority (one string, one rule).
-_GOAT_RANDOMSEED_MESSAGE = (
-    "native_input_error: native goat RANDOMSEED is a second seed authority; "
-    "set the step seed instead (compile-time validation rejects this key "
-    "before rendering)"
-)
-
-
-def _require_goat_seed(seed: object) -> int:
-    """Validate the single-authority GOAT seed for native rendering.
-
-    The typed step seed is required; the adapter renders the native
-    boolean switch deterministically as ``RANDOMSEED false``.  Per the
-    official ORCA 6.1 manual (``%goat`` Table 4.9), ``RANDOMSEED`` is
-    a boolean randomization switch (default ``true``): "set it to
-    false to have a deterministic GOAT run", with the caveat that
-    geometry optimization can change due to numerical differences so
-    it might not be fully deterministic in some cases.  ORCA 6.1
-    exposes no numeric stream-selection mechanism: the installed
-    6.1.1 binary's parser tolerates integers for this key, but live
-    probes show no stream-selection behavior, so the integer step
-    seed is never rendered as a native value.  It remains the
-    workflow-level stochastic authority — required here, folded into
-    the step semantic digest, carried in the remote envelope, and
-    preserved across recovery — so distinct seeds never share
-    identity even though they share native ``.inp`` bytes by design.
-    Whether the deterministic flag yields bit-identical ensembles on
-    larger search spaces is an open question — ConfFlow claims
-    best-effort same-input reproducibility only.
-    """
-    if seed is None or isinstance(seed, bool) or not isinstance(seed, int):
-        raise _input_error(
-            "GOAT sampling requires the explicit typed step seed (single authority); "
-            f"got {seed!r}"
-        )
-    return seed
-
-
 def _require_keyword_for_mode(keyword: str, mode: str) -> None:
-    """Require the job-type keyword matching a path/ensemble mode.
+    """Require the job-type keyword matching the NEB path mode.
 
-    Verified against the installed ORCA 6.1.1 binary: a ``%irc`` /
-    ``%neb`` / ``%goat`` block under a plain ``Opt`` keyword runs a
+    Verified against the installed ORCA 6.1.1 binary: a ``%neb``
+    block under a plain ``Opt`` keyword runs a
     plain optimization and silently ignores the block.  The keyword
-    must therefore name the job (``IRC`` / ``NEB`` / ``NEB-TS`` /
-    ``GOAT``); otherwise rendering refuses instead of launching a
+    must therefore name the job (``NEB`` / ``NEB-TS``);
+    otherwise rendering refuses instead of launching a
     silently wrong job.
     """
     tokens = keyword.split()
     upper = [token.upper() for token in tokens]
     required = {
-        "irc": ("IRC",),
         "neb": ("NEB",),
         "neb_ts": ("NEB-TS",),
-        "goat": ("GOAT",),
     }.get(mode)
     if required is None:
         return
@@ -154,8 +113,8 @@ def native_definition_errors(native: Any) -> tuple[str, ...]:
     """Return deterministic native-definition failures without rendering.
 
     The structure-independent half of ORCA native rendering: strict native
-    vocabulary, required non-empty keyword, block/path-mode option validation
-    (``irc``/``goat``/``neb`` sections) and deterministic option values.
+    vocabulary, required non-empty keyword, NEB block option validation
+    (``neb`` section) and deterministic option values.
     Semantic validation calls this through the adapter before a document can
     be submitted; the renderer refuses on the same render helpers, so the
     requirement is never stated twice.
@@ -179,21 +138,15 @@ def native_definition_errors(native: Any) -> tuple[str, ...]:
         resolve_blocks_text(native)
     except ValueError as exc:
         errors.append(str(exc))
-    modes = [key for key in ("irc", "neb", "goat") if native.get(key) is not None]
-    if len(modes) > 1:
-        errors.append(
-            f"native_input_error: ORCA accepts at most one path/ensemble mode, got {modes}; "
-            "one WorkItem carries one native mode"
-        )
-    elif modes:
-        mode = modes[0]
-        section = native.get(mode)
+    section = native.get("neb")
+    if section is not None:
+        mode = "neb"
         if not isinstance(section, Mapping):
             errors.append(f"native_input_error: ORCA '{mode}' native options must be a mapping")
         else:
             errors.extend(_path_mode_option_errors(mode, section))
             if keyword is not None:
-                if mode == "neb" and section.get("neb_ts", False) is True:
+                if section.get("neb_ts", False) is True:
                     mode = "neb_ts"
                 try:
                     _require_keyword_for_mode(keyword, mode)
@@ -211,28 +164,20 @@ def native_definition_errors(native: Any) -> tuple[str, ...]:
 
 
 def _path_mode_option_errors(mode: str, section: Mapping[str, Any]) -> tuple[str, ...]:
-    """Validate one path/ensemble mode section with the real render helpers.
+    """Validate the NEB mode section with the real render helper.
 
-    ``irc``/``goat``/``neb`` option validation is structure-independent, so
-    the definition validator exercises exactly the helpers the renderer calls.
+    ``neb`` option validation is structure-independent, so
+    the definition validator exercises exactly the helper the renderer calls.
     The NEB product endpoint name is a rendering decision, never a document
     member; a neutral valid name is used here and the product *structure*
     requirement stays in the runtime path.
     """
-    from .goat import render_goat_blocks
     from .neb import render_neb_blocks
-    from .path import render_irc_blocks
 
     try:
-        if mode == "irc":
-            render_irc_blocks(section)
-        elif mode == "goat":
-            if "RANDOMSEED" in section:
-                return (_GOAT_RANDOMSEED_MESSAGE,)
-            render_goat_blocks({"goat": dict(section)})
-        elif mode == "neb":
+        if mode == "neb":
             render_neb_blocks(section, product_xyz_name="neb_endpoint.xyz")
-        else:  # pragma: no cover - the caller only passes the three modes
+        else:  # pragma: no cover - the caller only passes "neb"
             return ()
     except ValueError as exc:
         return (str(exc),)
@@ -389,44 +334,22 @@ class OrcaProgramAdapter(ProgramAdapter):
     def _resolve_path_mode(
         inputs: ResolvedCalculationInputs, *, job: str
     ) -> tuple[str, str, tuple[InputFile, ...]]:
-        """Return ``(mode, extra_blocks, extra_files)`` for path/ensemble jobs.
+        """Return ``(mode, extra_blocks, extra_files)`` for NEB jobs.
 
-        At most one of the ``irc``/``neb``/``goat`` native sub-mappings may
+        At most the ``neb`` native sub-mapping may
         be present; NEB additionally requires named reactant/product slots
         and contributes the product endpoint XYZ file the ``%neb`` block
         points at.  Anything else is standard single-structure rendering.
         """
-        from .goat import render_goat_blocks
         from .neb import render_neb_blocks
-        from .path import render_irc_blocks
 
         native = inputs.native
-        modes = [key for key in ("irc", "neb", "goat") if native.get(key) is not None]
-        if len(modes) > 1:
-            raise _input_error(
-                f"ORCA accepts at most one path/ensemble mode, got {modes}; "
-                "one WorkItem carries one native mode"
-            )
-        if not modes:
+        if native.get("neb") is None:
             return "standard", "", ()
-        mode = modes[0]
+        mode = "neb"
         section = native.get(mode)
         if not isinstance(section, Mapping):
             raise _input_error(f"ORCA '{mode}' native options must be a mapping")
-        if mode == "irc":
-            return "irc", render_irc_blocks(section), ()
-        if mode == "goat":
-            _require_goat_seed(inputs.seed)
-            user_goat = dict(section)
-            if "RANDOMSEED" in user_goat:
-                raise ValueError(_GOAT_RANDOMSEED_MESSAGE)
-            # The step seed is workflow identity (digest/envelope), never
-            # a native stream selector: ORCA 6.1 defines RANDOMSEED as a
-            # boolean switch with no numeric stream semantics, so the
-            # adapter always renders the deterministic ``false`` flag.
-            user_goat["RANDOMSEED"] = False
-            blocks = render_goat_blocks({"goat": user_goat})
-            return "goat", blocks, ()
         slots = inputs.extra_structures
         product_set = slots.get("product") if hasattr(slots, "get") else None
         if product_set is None or len(product_set) == 0:
@@ -550,8 +473,8 @@ class OrcaProgramAdapter(ProgramAdapter):
 
         energies = parse_energies(text)
         terminated = termination_reached(text)
-        if mode in ("irc", "neb", "neb_ts", "goat"):
-            return self._parse_path_result(
+        if mode in ("neb", "neb_ts"):
+            return self._parse_neb_result(
                 text,
                 mode=mode,
                 work_dir=work_dir,
@@ -637,7 +560,7 @@ class OrcaProgramAdapter(ProgramAdapter):
             log_file_name=log_file_name,
         )
 
-    def _parse_path_result(
+    def _parse_neb_result(
         self,
         text: str,
         *,
@@ -648,29 +571,22 @@ class OrcaProgramAdapter(ProgramAdapter):
         materialized: MaterializedNativeInput,
         terminated: bool,
     ) -> NativeResult:
-        """Parse IRC/NEB/GOAT output into path/ensemble facts.
+        """Parse NEB output into ensemble facts.
 
-        Endpoints and members come exclusively from explicit native
-        direction/member markers; a missing marker is a parse error, never
-        an inference.  NEB images and GOAT conformers ride as ensemble
+        Members come exclusively from explicit native
+        member markers; a missing marker is a parse error, never
+        an inference.  NEB images ride as ensemble
         members with their semantic roles; an NEB-TS candidate appears only
         when the output explicitly reports an optimized TS.
         """
-        from ...execution.native import NativeEnsembleMember, NativePathEndpoint
-        from .ensemble_parse import parse_goat_ensemble
+        from ...execution.native import NativeEnsembleMember
         from .neb import parse_neb_images
-        from .path import parse_path_endpoints
 
         raw_atoms = materialized.metadata.get("input_atoms", [])
         atoms = tuple(str(symbol) for symbol in raw_atoms)
-        endpoints: tuple[NativePathEndpoint, ...] = ()
         members: tuple[NativeEnsembleMember, ...] = ()
         extra_metadata: dict[str, Any] = {"mode": mode}
-        if mode == "irc":
-            endpoints = parse_path_endpoints(
-                text, atoms=atoms, work_dir=work_dir, log_base=log_base
-            )
-        elif mode in ("neb", "neb_ts"):
+        if mode in ("neb", "neb_ts"):
             import dataclasses as _dataclasses
 
             from .neb import parse_neb_ts_candidate as _parse_neb_ts_candidate
@@ -710,17 +626,6 @@ class OrcaProgramAdapter(ProgramAdapter):
                     "native_parse_error: NEB-TS requested but the output reports "
                     "no highest-energy image / saddle point"
                 )
-        else:
-            ensemble_path = os.path.join(work_dir, f"{log_base}.finalensemble.xyz")
-            try:
-                with open(ensemble_path, encoding="utf-8") as handle:
-                    ensemble_xyz_text = handle.read()
-            except OSError as exc:
-                raise ValueError(
-                    "native_parse_error: GOAT run produced no "
-                    f"final-ensemble file {ensemble_path!r}: {exc}"
-                ) from exc
-            members = parse_goat_ensemble(text, ensemble_xyz_text=ensemble_xyz_text, atoms=atoms)
         produced: list[ProducedFile] = []
         for suffix, role in _OUTPUT_CANDIDATES:
             name = log_file_name if suffix == "out" else f"{log_base}.{suffix}"
@@ -745,11 +650,6 @@ class OrcaProgramAdapter(ProgramAdapter):
             energies_hartree=FrozenDict(
                 {
                     **{
-                        f"endpoint_{endpoint.direction}": endpoint.energy_hartree
-                        for endpoint in endpoints
-                        if endpoint.energy_hartree is not None
-                    },
-                    **{
                         f"member_{member.member_index}": member.energy_hartree
                         for member in members
                         if member.energy_hartree is not None
@@ -761,7 +661,7 @@ class OrcaProgramAdapter(ProgramAdapter):
             produced_files=tuple(produced),
             parser_diagnostics=(),
             log_file_name=log_file_name,
-            path_endpoints=endpoints,
+            path_endpoints=(),
             ensemble_members=members,
         )
 

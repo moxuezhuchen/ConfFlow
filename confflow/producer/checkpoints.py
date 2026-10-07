@@ -16,8 +16,6 @@ Authorities consulted (imported, never copied):
   ``checkpoint`` role) and the calculation ``artifacts`` output port roles;
 - :func:`confflow.programs.gaussian.rendering.resolve_write_chk` -- whether
   the source natively writes a checkpoint file;
-- :func:`confflow.programs.gaussian.path.parse_irc_route` -- IRC option
-  validation, direction-vote conflicts, and unknown-option refusal;
 - :func:`confflow.programs.gaussian.energy_semantics.unsupported_method_finding`
   -- method families whose final energy ConfFlow cannot publish;
 - :mod:`confflow.workflow.v4.graph` -- binding cardinality strengthening
@@ -87,22 +85,19 @@ from ..domain.errors import DomainError, InvalidBindingError
 from ..execution.contracts import ExecutorCapability
 from ..execution.registry import ExecutionRegistry, RegistryLookupError, default_registry
 
-# G1a: 11 canonical route constants + trio moved to
+# G1a: 9 canonical route constants + duo moved to
 # confflow.programs.gaussian.checkpoint_policy (same objects, bidirectional mirror).
 # G1b: Gaussian stages delegate to the same policy module (data values only).
 from ..programs.gaussian.checkpoint_policy import (  # noqa: F401
     _FREQ_TOKEN_RE,
-    _IRC_ITEM_RE,
     _IRC_MANAGED_RE,
     _LINK0_CHECKPOINT_RE,
     _OPT_ASSIGN_RE,
     _OPT_BARE_RE,
     _OPT_PAREN_RE,
     _QST_TOKEN_RE,
-    _RCFC_CONFLICTS,
     _READFC_CONFLICTS,
     _SP_MANAGED_RE,
-    _add_irc_rcfc,
     _add_opt_option,
     _strip_managed_items,
     check_native_payload_cores,
@@ -132,7 +127,7 @@ __all__ = [
 CHECKPOINT_REUSE_VERSION = "confflow.producer.checkpoints.v1"
 
 #: Supported reuse modes.
-REUSE_MODES: tuple[str, ...] = ("checkpoint", "readfc", "rcfc")
+REUSE_MODES: tuple[str, ...] = ("checkpoint", "readfc")
 
 #: Annotation key carrying the authoring-layer reuse provenance on the
 #: target step.  Annotations are digest-excluded by design; the
@@ -287,10 +282,6 @@ def _check_target_link0(target: Mapping[str, Any]) -> None:
 
 
 # G1a mirror: _add_opt_option lives in
-# confflow.programs.gaussian.checkpoint_policy; re-exported above (same object).
-
-
-# G1a mirror: _add_irc_rcfc lives in
 # confflow.programs.gaussian.checkpoint_policy; re-exported above (same object).
 
 
@@ -779,9 +770,8 @@ def wire_checkpoint_reuse(
         ``checkpoint`` role selector feeds the edge).
     mode :
         ``"checkpoint"`` wires restart data only; ``"readfc"`` additionally
-        inserts the ``ReadFC`` option into the target's ``Opt`` route item;
-        ``"rcfc"`` additionally inserts the ``RCFC`` vote into the target's
-        ``IRC`` route item.  The mode is user scientific intent and must be
+        inserts the ``ReadFC`` option into the target's ``Opt`` route item.
+        The mode is user scientific intent and must be
         passed explicitly by the caller.
     allow_method_change :
         Advanced explicit override.  When ``False`` (default), a known
@@ -859,8 +849,6 @@ def wire_checkpoint_reuse(
     target_native = _native_of(_calculation_block(target), target_step_id)
     if mode == "readfc":
         target_native["keyword"] = _add_opt_option(target_keyword, "ReadFC", step_id=target_step_id)
-    elif mode == "rcfc":
-        target_native["keyword"] = _add_irc_rcfc(target_keyword, step_id=target_step_id)
 
     target_bindings["checkpoint"] = {
         "source": {

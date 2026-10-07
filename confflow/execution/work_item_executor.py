@@ -1199,25 +1199,6 @@ class WorkItemExecutor:
             )
         )
         profile_output = self._resubject_restart_artifacts(profile_output, work_item)
-        if context.profile.name == "path_endpoints" and len(profile_output.structures) != 2:
-            return self._finish_error(
-                work_item,
-                context,
-                "incomplete_path",
-                "reaction-path profile did not yield exactly two endpoints; "
-                "refusing to emit a partial path",
-                wall_start,
-                monotonic_start,
-                diagnostics=tuple(
-                    list(base_diagnostics)
-                    + list(native_result.parser_diagnostics)
-                    + list(profile_output.diagnostics)
-                ),
-                details={
-                    "emitted_structures": len(profile_output.structures),
-                    "profile": context.profile.name,
-                },
-            )
         diagnostics = (
             list(base_diagnostics)
             + list(native_result.parser_diagnostics)

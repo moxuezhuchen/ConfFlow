@@ -397,16 +397,14 @@ class GaussianProgramAdapter:
 
     @staticmethod
     def _execution_mode(inputs: ResolvedCalculationInputs, keyword_line: str) -> str:
-        """Return the execution mode for these inputs: qst2/qst3/irc/standard.
+        """Return the execution mode for these inputs: qst2/qst3/standard.
 
         Named reactant/product slots select QST rendering (the route must
-        carry the matching QST flavor); otherwise an IRC route selects
-        single-structure IRC validation, and anything else is standard.
+        carry the matching QST flavor); anything else is standard.
         No task enum exists — the mode is a rendering decision derived
         from input shape plus native route vocabulary.
         """
         from .named import parse_qst_route
-        from .path import parse_irc_route
 
         slots = inputs.extra_structures
         reactant = slots.get("reactant")
@@ -418,11 +416,7 @@ class GaussianProgramAdapter:
             guess = slots.get("guess")
             has_guess = guess is not None and len(guess) > 0
             return parse_qst_route(keyword_line, has_guess=has_guess)
-        try:
-            parse_irc_route(keyword_line)
-        except ValueError:
-            return "standard"
-        return "irc"
+        return "standard"
 
     @staticmethod
     def _render_qst_input(
@@ -627,15 +621,6 @@ class GaussianProgramAdapter:
         semantics_problem = _energy_semantics.final_energy_semantics_problem(text, sources)
         committed = _parsing.parse_frequencies(text)
         frequencies = _parsing.true_vibrational_modes(committed)
-        mode = materialized.metadata.get("mode", "standard")
-        if mode == "irc":
-            return self._parse_irc_result(
-                text,
-                log_file_name=log_file_name,
-                log_path=log_path,
-                materialized=materialized,
-                job=_job_from_materialized(materialized),
-            )
         geometry = _parsing.parse_final_geometry(text)
         final_geometry: ParsedGeometry | None = None
         geometry_output = GeometryOutput.NONE
@@ -701,63 +686,6 @@ class GaussianProgramAdapter:
             produced_files=tuple(produced),
             parser_diagnostics=parser_diagnostics,
             log_file_name=log_file_name,
-        )
-
-    def _parse_irc_result(
-        self,
-        text: str,
-        *,
-        log_file_name: str,
-        log_path: str,
-        materialized: MaterializedNativeInput,
-        job: str,
-    ) -> NativeResult:
-        """Parse a Gaussian IRC log into path-endpoint facts.
-
-        Endpoints come exclusively from the explicit direction banners in
-        the log dialect; a missing direction is a parse error, never an
-        inference.  The executor's path profile turns these facts into
-        endpoint structures and fails the item when the set is partial.
-        """
-        from .path import irc_trajectory_facts, parse_irc_endpoints
-
-        raw_atoms = materialized.metadata.get("input_atoms", [])
-        atoms = tuple(str(symbol) for symbol in raw_atoms)
-        endpoints = parse_irc_endpoints(text, atoms=atoms)
-        facts = irc_trajectory_facts(text)
-        input_name = os.path.basename(materialized.main_input_name)
-        produced = [
-            ProducedFile(name=log_file_name, role="native_output"),
-            ProducedFile(name=input_name, role="native_input"),
-            ProducedFile(name=f"{job}.chk", role="checkpoint"),
-            ProducedFile(name=f"{job}.err", role="stderr"),
-        ]
-        metadata: dict[str, Any] = {
-            "program": ProgramName.GAUSSIAN.value,
-            "parser_version": PARSER_VERSION,
-            "log_file": log_file_name,
-            "mode": "irc",
-            "trajectory_points": facts.get("points", {}),
-            "trajectory_truncated": facts.get("truncated", False),
-        }
-        return NativeResult(
-            program=ProgramName.GAUSSIAN,
-            terminated_normally=_parsing.check_termination(log_path),
-            geometry_output=GeometryOutput.NONE,
-            final_geometry=None,
-            energies_hartree=FrozenDict(
-                {
-                    f"endpoint_{endpoint.direction}": endpoint.energy_hartree
-                    for endpoint in endpoints
-                    if endpoint.energy_hartree is not None
-                }
-            ),
-            frequencies_cm=(),
-            native_metadata=FrozenDict(metadata),
-            produced_files=tuple(produced),
-            parser_diagnostics=(),
-            log_file_name=log_file_name,
-            path_endpoints=endpoints,
         )
 
     def discover_artifacts(
