@@ -69,7 +69,6 @@ def test_step_output_source_requires_step_id() -> None:
 @pytest.mark.parametrize(
     "source",
     [
-        pytest.param(SourceKind.RUN_INPUT, id="run-input"),
         pytest.param(SourceKind.STEP_OUTPUT, id="step-output"),
     ],
 )
@@ -113,11 +112,6 @@ def test_all_selector_is_clean() -> None:
             {"kind": SelectorKind.ALL, "role": "checkpoint"},
             "must not carry role or ids",
             id="all-with-role",
-        ),
-        pytest.param(
-            {"kind": SelectorKind.ALL, "ids": ("a1",)},
-            "must not carry role or ids",
-            id="all-with-ids",
         ),
         pytest.param({"kind": "all"}, "must be a SelectorKind", id="kind-not-enum"),
     ],

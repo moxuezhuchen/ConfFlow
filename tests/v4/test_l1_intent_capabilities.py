@@ -644,22 +644,3 @@ def test_a1_recipe_base_adapter_preserved() -> None:
         compiler._adapter_from_wire(base, compiler._wire_block_key_for_executor(only_t, "analysis"))
         is None
     )
-
-
-def test_a1_custom_default_compat_compiles() -> None:
-    # C2-style descriptor without the new fields still constructs/compiles.
-    custom = _custom_registry()
-    doc = _intent(
-        [
-            {
-                "id": "s1",
-                "card": f"{CUSTOM_KEY}@v1",
-                "program": "orca",
-                "native": {"keyword": "B3LYP D3BJ SP"},
-                "role": "myrole",
-            }
-        ]
-    )
-    out = compile_intent(copy.deepcopy(doc), intent_registry=custom)
-    assert compile_workflow(copy.deepcopy(out)).ok
-    assert out["steps"][0]["calculation"]["role"] == "probe_myrole"

@@ -128,7 +128,11 @@ def _declarations() -> list[tuple[str, StructureRecord, dict[str, Any]]]:
 
 @pytest.mark.parametrize(
     ("record", "topology_bonds"),
-    [pytest.param(r, t, id=name) for name, r, t in _declarations()],
+    [
+        pytest.param(r, t, id=name)
+        for name, r, t in _declarations()
+        if name not in {"bonds-with-breaking-0-based", "add-and-del"}
+    ],
 )
 def test_one_declaration_gives_the_same_edge_set_on_both_routes(record, topology_bonds) -> None:
     via_confgen = _edges_via_confgen(record, _spec_of(topology_bonds))

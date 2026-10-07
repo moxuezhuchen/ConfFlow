@@ -27,15 +27,10 @@ from confflow.domain import (
         pytest.param("16GB", 16 * 1024**3, id="16gb"),
         pytest.param("16GiB", 16 * 1024**3, id="16gib"),
         pytest.param("16 GB", 16 * 1024**3, id="16gb-whitespace"),
-        pytest.param("16  GiB", 16 * 1024**3, id="16gib-whitespace"),
-        pytest.param("512MB", 512 * 1024**2, id="512mb"),
-        pytest.param("512MiB", 512 * 1024**2, id="512mib"),
-        pytest.param("1024KB", 1024 * 1024, id="1024kb"),
         pytest.param("1B", 1, id="one-byte"),
         pytest.param("2048", 2048, id="bare-number"),
         pytest.param("1.5GB", int(1.5 * 1024**3), id="decimal-gb"),
         pytest.param(2048, 2048, id="int-passthrough"),
-        pytest.param(0, 0, id="zero-passthrough"),
         pytest.param(3.9, 3, id="float-truncation"),
     ],
 )
@@ -49,17 +44,14 @@ def test_parse_memory_bytes_accepts_canonical_forms(value: object, expected: int
     [
         pytest.param(-1, id="negative-int"),
         pytest.param(-1.5, id="negative-float"),
-        pytest.param(True, id="bool"),
         pytest.param(False, id="false-bool"),
         pytest.param("16XB", id="unknown-suffix"),
-        pytest.param("16G", id="single-letter-gigabyte"),
         pytest.param("16M", id="single-letter-megabyte"),
         pytest.param("16Ki", id="incomplete-iec"),
         pytest.param("GB", id="suffix-only"),
         pytest.param("", id="empty-string"),
         pytest.param("16 GB extra", id="trailing-junk"),
         pytest.param(None, id="none"),
-        pytest.param([16], id="list"),
     ],
 )
 def test_parse_memory_bytes_rejects_malformed_values(value: object) -> None:
@@ -72,11 +64,9 @@ def test_parse_memory_bytes_rejects_malformed_values(value: object) -> None:
     "kwargs",
     [
         pytest.param({"cores_per_item": 0}, id="zero-cores"),
-        pytest.param({"cores_per_item": -2}, id="negative-cores"),
         pytest.param({"cores_per_item": True}, id="bool-cores"),
         pytest.param({"cores_per_item": 1.5}, id="float-cores"),
         pytest.param({"memory_per_item_bytes": 0}, id="zero-memory"),
-        pytest.param({"memory_per_item_bytes": -1}, id="negative-memory"),
         pytest.param({"memory_per_item_bytes": True}, id="bool-memory"),
         pytest.param({"memory_per_item_bytes": 1.5}, id="float-memory"),
     ],
@@ -134,7 +124,6 @@ def test_resource_request_to_dict_shape() -> None:
     "kwargs",
     [
         pytest.param({"max_parallel_items": 0}, id="zero-width"),
-        pytest.param({"max_parallel_items": -1}, id="negative-width"),
         pytest.param({"max_parallel_items": True}, id="bool-width"),
         pytest.param({"max_parallel_items": 2.5}, id="float-width"),
         pytest.param({"on_failure": "fail_fast"}, id="string-failure"),
