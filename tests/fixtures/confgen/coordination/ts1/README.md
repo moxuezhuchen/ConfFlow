@@ -44,8 +44,27 @@ The four 30->12 exclusions are deliberately tagged `REJECTED_BY_POLICY`, not `PR
 - `benchmark/expected_sigma_witness.json` -- full 122-atom topology automorphism witness.
 - `benchmark/scine_F1-F6_expected.json` -- SCINE assignment/index/vertex-map metadata.
 - `benchmark/verify_fixture.py` -- dependency-light self-check.
-- `source/si-rr-salanal2-r-end-spdd-ts1.log` -- raw Gaussian source log.
+- `source/si-rr-salanal2-r-end-spdd-ts1.log` -- raw Gaussian source log (external; not in working tree, see retrieval below).
 - `source/scine_F1-F6_report.txt` and `source/scine_generation_metadata.json` -- prior generation records.
+
+## External source log retrieval
+
+`source/si-rr-salanal2-r-end-spdd-ts1.log` (4581599 bytes,
+sha256 `5908d7fc95ad9b59dc0be3d2c7482f7360513bdc548d20479fc5307dbe2ff060`)
+is kept out of the working tree. No test or tool reads it at runtime;
+`structures/ts1_original.xyz` already carries the derived geometry and
+`benchmark/verify_fixture.py` skips the missing external entry with a
+`SKIP` notice (verifies sha256 when the file is present). To retrieve:
+
+```bash
+git show d5a40ae:tests/fixtures/confgen/coordination/ts1/source/si-rr-salanal2-r-end-spdd-ts1.log > /tmp/ts1-source.log
+sha256sum /tmp/ts1-source.log  # must equal the sha256 above
+```
+
+Alternate copy with identical bytes:
+`ts1_confgen_golden_fixture.zip` →
+`ts1_confgen_golden_fixture/source/si-rr-salanal2-r-end-spdd-ts1.log`
+(e.g. `python3 -c "import zipfile;open('/tmp/ts1-source.log','wb').write(zipfile.ZipFile('ts1_confgen_golden_fixture.zip').read('ts1_confgen_golden_fixture/source/si-rr-salanal2-r-end-spdd-ts1.log'))"`).
 
 ## Suggested ConfFlow destination
 

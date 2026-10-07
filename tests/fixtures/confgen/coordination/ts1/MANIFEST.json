@@ -4,8 +4,8 @@
   "files": [
     {
       "path": "README.md",
-      "bytes": 3458,
-      "sha256": "ead806d8842203728ea19eae3fd413ff5ae49b23b1370c93036eb07bd342ae5f"
+      "bytes": 4505,
+      "sha256": "41580c5f01be6df3d6f1ea387a1db35051b226cfe134941671d23a492aceff40"
     },
     {
       "path": "benchmark/coordination_constraints.json",
@@ -29,8 +29,8 @@
     },
     {
       "path": "benchmark/verify_fixture.py",
-      "bytes": 2525,
-      "sha256": "df550a296bb1d3c89d869a403f9e7f814c043001f56304463eeb261ac9f28515"
+      "bytes": 3110,
+      "sha256": "3c6a0bf17edc7ea28c6b7761662edc99c245fd9635793f0f770dbf01dcefbe8c"
     },
     {
       "path": "source/scine_F1-F6_report.txt",
@@ -45,7 +45,15 @@
     {
       "path": "source/si-rr-salanal2-r-end-spdd-ts1.log",
       "bytes": 4581599,
-      "sha256": "5908d7fc95ad9b59dc0be3d2c7482f7360513bdc548d20479fc5307dbe2ff060"
+      "sha256": "5908d7fc95ad9b59dc0be3d2c7482f7360513bdc548d20479fc5307dbe2ff060",
+      "external": {
+        "kind": "external-blob",
+        "retrieval": [
+          "git show d5a40ae:tests/fixtures/confgen/coordination/ts1/source/si-rr-salanal2-r-end-spdd-ts1.log",
+          "python3 -c \"import zipfile;open('/tmp/ts1-source.log','wb').write(zipfile.ZipFile('ts1_confgen_golden_fixture.zip').read('ts1_confgen_golden_fixture/source/si-rr-salanal2-r-end-spdd-ts1.log'))\""
+        ],
+        "note": "Not in working tree; verify any retrieved copy against sha256 above. No test or tool reads this file at runtime."
+      }
     },
     {
       "path": "structures/scine_F1.xyz",
