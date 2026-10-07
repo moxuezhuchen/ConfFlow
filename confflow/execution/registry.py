@@ -248,8 +248,9 @@ class ExecutionRegistry:
         The returned object is the executor class recorded in the same
         atomic entry as the compiler's contract: ``calculation`` resolves
         to the native work-item executor, ``confgen`` to the deterministic
-        conformer-generation executor, and ``structure_transform`` to the
-        pure structure-set transform executor.  All three implement the
+        conformer-generation executor, ``structure_transform`` to the
+        pure structure-set transform executor, and ``script`` to the
+        external-script executor.  All four implement the
         shared ``execute(work_item, context, *, should_cancel=None)`` seam
         (see the wave-1 integration report for the exact dispatch
         signatures owned by batch/application).
@@ -746,6 +747,38 @@ def _default_executors() -> tuple[ExecutorContract, ...]:
                 "post-processing tail of a calculation."
             ),
         ),
+        ExecutorContract(
+            capability=ExecutorCapability.SCRIPT,
+            contract_version="confflow.contract.executor.script.v1",
+            input_ports=(
+                _structure_port(
+                    "structure",
+                    Cardinality.ONE,
+                    Pairing.PER_STRUCTURE,
+                    "The single structure this script invocation is run for.",
+                ),
+            ),
+            output_ports=(
+                _structure_port(
+                    "structures",
+                    Cardinality.MANY,
+                    Pairing.PER_STRUCTURE,
+                    "Structure collection parsed from the declared multi-frame xyz.",
+                ),
+                _artifact_port(
+                    "artifacts",
+                    Cardinality.MANY,
+                    Pairing.BY_SUBJECT,
+                    (),
+                    "Saved script files; never bound downstream.",
+                ),
+                _result_port("summary", Cardinality.MANY, Pairing.BY_SUBJECT),
+            ),
+            description=(
+                "External script from the server registry (N2); one native "
+                "invocation per input structure with fixed output channels."
+            ),
+        ),
     )
 
 
@@ -785,6 +818,7 @@ def build_default_registry() -> ExecutionRegistry:
     from .confgen_executor import ConfgenExecutor
     from .profile_standard import PROFILES
     from .recovery_standard import NoneRecoveryPolicy, TsRescueScanPolicy
+    from .script_executor import ScriptExecutor
     from .transform_executor import TransformExecutor
     from .work_item_executor import WorkItemExecutor
 
@@ -793,6 +827,7 @@ def build_default_registry() -> ExecutionRegistry:
         ExecutorCapability.CALCULATION: WorkItemExecutor,
         ExecutorCapability.CONFGEN: ConfgenExecutor,
         ExecutorCapability.STRUCTURE_TRANSFORM: TransformExecutor,
+        ExecutorCapability.SCRIPT: ScriptExecutor,
     }
     for contract in _default_executors():
         registry.register_executor(contract, executor_implementations[contract.capability])

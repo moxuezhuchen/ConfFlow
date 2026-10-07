@@ -254,10 +254,21 @@ class ScientificDefinition:
     seed: int | None = None
     overrides: FrozenDict = field(default_factory=FrozenDict)
     transform: str | None = None
+    script_id: str | None = None
+    script_args: tuple[str, ...] = ()
+    script_outputs: FrozenDict = field(default_factory=FrozenDict)
 
     def __post_init__(self) -> None:
         for name in ("program", "role", "execution_adapter", "result_profile", "transform"):
             _require_optional_text(getattr(self, name), name)
+        _require_optional_text(self.script_id, "script_id")
+        script_args = tuple(self.script_args)
+        for index, entry in enumerate(script_args):
+            if not isinstance(entry, str) or not entry:
+                raise DomainError(f"script_args[{index}] must be a non-empty string")
+        object.__setattr__(self, "script_args", script_args)
+        if not isinstance(self.script_outputs, FrozenDict):
+            object.__setattr__(self, "script_outputs", FrozenDict(self.script_outputs))
         if not isinstance(self.recovery, str) or not self.recovery:
             raise DomainError("recovery must be a non-empty string")
         checks = tuple(self.checks)
@@ -326,7 +337,7 @@ class ScientificDefinition:
 
     def to_payload(self) -> dict[str, Any]:
         """Return the science payload used by step semantic digests."""
-        return {
+        payload: dict[str, Any] = {
             "program": self.program,
             "role": self.role,
             "execution_adapter": self.execution_adapter,
@@ -340,6 +351,13 @@ class ScientificDefinition:
             "overrides": dict(self.overrides),
             "transform": self.transform,
         }
+        # Script declarations ride the same digest axis; absent declarations
+        # keep the exact legacy shape so existing step digests never move.
+        if self.script_id is not None or self.script_args or self.script_outputs:
+            payload["script_id"] = self.script_id
+            payload["script_args"] = list(self.script_args)
+            payload["script_outputs"] = dict(self.script_outputs)
+        return payload
 
     def to_dict(self) -> dict[str, Any]:
         """Return a canonical, JSON-compatible representation."""

@@ -68,6 +68,8 @@ REQUIRED_ENVELOPE_KEYS = (
     "result_schema",
     "result_schema_sha256",
     "validation_response_schema",
+    # N2 声明新增：script_steps 静态段（能力/字段/三通道/占位符语义）。
+    "script_steps",
 )
 
 LEGACY_OUTPUT_TOKENS = (
@@ -226,6 +228,23 @@ class TestGeneratedFromRegistries:
             SCIENTIFIC_OVERRIDE_KEYS
         )
         assert envelope["transform_kinds"] == list(TRANSFORM_KINDS)
+
+    def test_script_steps_static_section(self) -> None:
+        # N2.6/W5 声明：静态段只描述 script 能力本身、步骤字段、三通道与
+        # 占位符语义；已登记脚本列表不进静态 contract。
+        envelope = _envelope()
+        section = envelope["script_steps"]
+        assert section["capability"] == "script"
+        assert section["step_fields"] == ["script", "args", "resources", "outputs"]
+        assert section["output_channels"] == ["artifacts", "structures", "summary"]
+        assert section["placeholders"] == ["input", "cores", "mem_gb", "item_id"]
+        assert set(section["channel_semantics"]) == {
+            "artifacts",
+            "structures",
+            "summary",
+        }
+        assert "registered_scripts" not in section
+        assert "registered_scripts" not in envelope
 
     def test_scientific_override_keys_match_domain_rule(self) -> None:
         assert SCIENTIFIC_OVERRIDE_KEYS == ("charge", "multiplicity", "freeze")

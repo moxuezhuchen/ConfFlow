@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from ...domain.binding import PortKind, SourceKind
+from ...domain.canonical import typed_digest
 from ...domain.diagnostics import Diagnostic, diagnostic_sort_key
 from ...domain.errors import DomainError
 from ...domain.resources import OnFailure, ResourceRequest, SchedulerPolicy
@@ -31,7 +32,14 @@ from ...execution.energy_filter import (
     parse_energy_params,
     uses_energy_params,
 )
+from ...execution.quota import QuotaError
 from ...execution.registry import ExecutionRegistry, RegistryLookupError, default_registry
+from ...execution.script_registry import (
+    SCRIPT_OUTPUT_CHANNELS,
+    ScriptEntry,
+    load_script_registry,
+    validate_script_args_template,
+)
 from .diagnostics import DiagnosticCode, DiagnosticReason, error
 from .document import (
     RunInputDeclaration,
@@ -521,6 +529,149 @@ def _proven_input_state(
     return relevant
 
 
+#: Digest domain marker folding a registered script's content hash into a
+#: script step's semantic digest, so edited scripts become new tasks.
+SCRIPT_STEP_DIGEST_KIND = "confflow.workflow.step.script.v1"
+
+
+def _validate_script_step(
+    step: StepDefinition,
+    scripts: Mapping[str, ScriptEntry],
+) -> tuple[str | None, list[Diagnostic]]:
+    """Check one script step against the server table; return its content hash."""
+    diagnostics: list[Diagnostic] = []
+    field_path = f"steps.{step.id}"
+    scientific = step.scientific
+    script_id = scientific.script_id if scientific is not None else None
+    if not script_id:
+        diagnostics.append(
+            error(
+                DiagnosticCode.CAPABILITY_ERROR,
+                DiagnosticReason.MISSING_EXECUTOR_BLOCK,
+                "script steps require a registered script id",
+                step_id=step.id,
+                field_path=field_path,
+            )
+        )
+        return None, diagnostics
+    entry = scripts.get(script_id)
+    if entry is None:
+        diagnostics.append(
+            error(
+                DiagnosticCode.CAPABILITY_ERROR,
+                DiagnosticReason.UNKNOWN_SCRIPT,
+                f"unknown script {script_id!r}; expected one of {sorted(scripts)}",
+                step_id=step.id,
+                field_path=f"{field_path}.script",
+                details={"allowed": sorted(scripts)},
+            )
+        )
+        return None, diagnostics
+    args = tuple(scientific.script_args) if scientific is not None else ()
+    try:
+        validate_script_args_template(args)
+    except DomainError as exc:
+        diagnostics.append(
+            error(
+                DiagnosticCode.CAPABILITY_ERROR,
+                DiagnosticReason.INVALID_SCRIPT_ARGS,
+                str(exc),
+                step_id=step.id,
+                field_path=f"{field_path}.args",
+            )
+        )
+    outputs = dict(scientific.script_outputs) if scientific is not None else {}
+    for channel in ("structures", "summary"):
+        declared = outputs.get(channel)
+        if declared is None:
+            continue
+        if (
+            not isinstance(declared, str)
+            or not declared
+            or declared.startswith(("/", "\\"))
+            or "/" in declared
+            or "\\" in declared
+            or declared == ".."
+            or "/../" in f"/{declared}/"
+        ):
+            diagnostics.append(
+                error(
+                    DiagnosticCode.CAPABILITY_ERROR,
+                    DiagnosticReason.INVALID_VALUE,
+                    f"script outputs.{channel} must be a flat file name, got {declared!r}",
+                    step_id=step.id,
+                    field_path=f"{field_path}.outputs.{channel}",
+                )
+            )
+    patterns = outputs.get("artifacts")
+    if patterns is not None:
+        if (
+            not isinstance(patterns, (list, tuple))
+            or not patterns
+            or not all(
+                isinstance(item, str) and item and not item.startswith(("/", "\\"))
+                for item in patterns
+            )
+        ):
+            diagnostics.append(
+                error(
+                    DiagnosticCode.CAPABILITY_ERROR,
+                    DiagnosticReason.INVALID_VALUE,
+                    "script outputs.artifacts must be a non-empty list of relative glob patterns",
+                    step_id=step.id,
+                    field_path=f"{field_path}.outputs.artifacts",
+                )
+            )
+    if any(item.is_error for item in diagnostics):
+        return None, diagnostics
+    return entry.sha256, diagnostics
+
+
+def _validate_script_output_bindings(
+    step: StepDefinition,
+    *,
+    all_steps: tuple[StepDefinition, ...],
+    registry: ExecutionRegistry,
+) -> list[Diagnostic]:
+    """Forbid downstream bindings to a script step's non-structures ports."""
+    diagnostics: list[Diagnostic] = []
+    try:
+        bindings = tuple(step.bindings)
+    except Exception:
+        return diagnostics
+    if not bindings:
+        return diagnostics
+    producers = {item.id: item for item in all_steps}
+    for binding in bindings:
+        source = binding.source
+        if source.kind is not SourceKind.STEP_OUTPUT or source.step_id is None:
+            continue
+        if source.port == "structures":
+            continue
+        producer = producers.get(source.step_id)
+        if producer is None:
+            continue
+        try:
+            capability, _, _ = resolve_executor_contract(producer, registry)
+        except Exception:
+            continue
+        if capability is ExecutorCapability.SCRIPT:
+            diagnostics.append(
+                error(
+                    DiagnosticCode.BINDING_ERROR,
+                    DiagnosticReason.SCRIPT_PORT_NOT_BINDABLE,
+                    f"script step {source.step_id!r} only exposes 'structures' downstream; "
+                    f"port {source.port!r} cannot be bound (fixed channels: "
+                    + ", ".join(SCRIPT_OUTPUT_CHANNELS)
+                    + ")",
+                    step_id=step.id,
+                    field_path=f"steps.{step.id}.bindings.{binding.target_port}",
+                    details={"producer_step_id": source.step_id, "port": source.port},
+                )
+            )
+    return diagnostics
+
+
 def _validate_filter_energy_binding(
     step: StepDefinition,
     *,
@@ -610,6 +761,7 @@ def _validate_step(
     *,
     input_declarations: Mapping[str, RunInputDeclaration] | None = None,
     all_steps: tuple[StepDefinition, ...] | None = None,
+    scripts: Mapping[str, ScriptEntry] | None = None,
 ) -> tuple[ValidatedStep | None, list[Diagnostic]]:
     diagnostics: list[Diagnostic] = []
     field_path = f"steps.{step.id}"
@@ -629,6 +781,10 @@ def _validate_step(
             )
         )
         return None, diagnostics
+    script_sha: str | None = None
+    if capability is ExecutorCapability.SCRIPT:
+        script_sha, script_diagnostics = _validate_script_step(step, scripts or {})
+        diagnostics.extend(script_diagnostics)
     if capability is ExecutorCapability.CALCULATION and not scientific.program:
         diagnostics.append(
             error(
@@ -926,6 +1082,9 @@ def _validate_step(
     diagnostics.extend(
         _validate_filter_energy_binding(step, all_steps=all_steps or (), registry=registry)
     )
+    diagnostics.extend(
+        _validate_script_output_bindings(step, all_steps=all_steps or (), registry=registry)
+    )
     for port in input_ports:
         if port.is_required and port.name not in bound_ports:
             diagnostics.append(
@@ -969,6 +1128,20 @@ def _validate_step(
         if registry.find_check(name) is not None
     )
     recovery_version = recovery.contract_version if recovery is not None else None
+    base_digest = step_semantic_digest(
+        step,
+        contract,
+        adapter,
+        profile,
+        resources,
+        check_versions=check_versions,
+        recovery_version=recovery_version,
+    )
+    if capability is ExecutorCapability.SCRIPT and script_sha is not None:
+        base_digest = typed_digest(
+            SCRIPT_STEP_DIGEST_KIND,
+            {"base": base_digest, "script_sha256": script_sha},
+        )
     validated = ValidatedStep(
         definition=step,
         executor=contract,
@@ -978,15 +1151,7 @@ def _validate_step(
         output_ports=contract.output_ports,
         resources=resources,
         scheduler=scheduler,
-        step_semantic_digest=step_semantic_digest(
-            step,
-            contract,
-            adapter,
-            profile,
-            resources,
-            check_versions=check_versions,
-            recovery_version=recovery_version,
-        ),
+        step_semantic_digest=base_digest,
         check_versions=check_versions,
         recovery_version=recovery_version,
     )
@@ -997,6 +1162,7 @@ def validate_definition(
     definition: WorkflowDefinition,
     *,
     registry: ExecutionRegistry | None = None,
+    script_registry: Mapping[str, ScriptEntry] | None = None,
 ) -> ValidationResult:
     """Resolve contracts and validate all non-topology semantics."""
     active = registry if registry is not None else default_registry()
@@ -1042,6 +1208,23 @@ def validate_definition(
     run_resources, run_scheduler = _resolve_run_policy(definition)
     steps: list[ValidatedStep] = []
     inputs_by_name = {item.name: item for item in definition.inputs}
+    if script_registry is not None:
+        script_table: Mapping[str, ScriptEntry] = script_registry
+    elif any(step.executor == ExecutorCapability.SCRIPT.value for step in definition.steps):
+        try:
+            script_table = load_script_registry()
+        except QuotaError as exc:
+            diagnostics.append(
+                error(
+                    DiagnosticCode.CAPABILITY_ERROR,
+                    DiagnosticReason.INVALID_VALUE,
+                    f"cannot load the server script registry: {exc}",
+                    field_path="steps",
+                )
+            )
+            script_table = {}
+    else:
+        script_table = {}
     for step in definition.steps:
         validated, step_diagnostics = _validate_step(
             step,
@@ -1051,6 +1234,7 @@ def validate_definition(
             definition.scientific_defaults,
             input_declarations=inputs_by_name,
             all_steps=tuple(definition.steps),
+            scripts=script_table,
         )
         diagnostics.extend(step_diagnostics)
         if validated is not None:

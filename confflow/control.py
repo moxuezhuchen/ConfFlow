@@ -287,12 +287,29 @@ def _dispatch(service: ExecutionService, request: dict[str, Any]) -> dict[str, A
     raise ControlRequestError(ErrorCode.INVALID_REQUEST, f"Unsupported operation: {operation}")
 
 
+def _registered_scripts() -> list[dict[str, str]]:
+    """List server-registered scripts; ``[]`` when none (never fails)."""
+    try:
+        from .execution.script_registry import load_script_registry
+    except Exception:  # pragma: no cover - import-time failure
+        return []
+    try:
+        entries = load_script_registry()
+    except Exception:
+        return []
+    return [
+        {"id": entry.id, "description": entry.description}
+        for entry in (entries[name] for name in sorted(entries))
+    ]
+
+
 def _capabilities_response() -> dict[str, Any]:
     return {
         "protocol_schema": PROTOCOL,
         "operation": "capabilities",
         "ok": True,
         "supported_protocols": [PROTOCOL],
+        "registered_scripts": _registered_scripts(),
     }
 
 

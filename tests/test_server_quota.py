@@ -9,6 +9,7 @@ import multiprocessing
 import os
 import signal
 import subprocess
+import sys
 import threading
 import time
 from pathlib import Path
@@ -35,6 +36,7 @@ from confflow.execution.quota import (
     ServerQuota,
     load_server_quota,
 )
+from confflow.execution.script_executor import ScriptExecutor
 from confflow.execution.work_item_executor import ItemExecutionContext, WorkItemExecutor
 from confflow.workflow.v4.document import ScientificDefaults, ScientificDefinition
 from tests.v4._builders import structure
@@ -396,3 +398,94 @@ class TestExecutorQuota:
             assert result.status.value == "cancelled"
         finally:
             manager.release(holder)
+
+
+def _script_config(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, script: Path, *, cores: int
+) -> None:
+    (tmp_path / "server.toml").write_text(
+        f"total_cores = {cores}\ntotal_memory = '192GB'\n\n"
+        f"[scripts.demo]\ncommand = [{json.dumps(sys.executable)}, {json.dumps(str(script))}]\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CONFFLOW_SERVER_CONFIG", str(tmp_path / "server.toml"))
+    monkeypatch.setenv("CONFFLOW_SERVER_STATE_DIR", str(tmp_path / "quota-state"))
+
+
+def _script_item(key: str, cores: int) -> WorkItem:
+    record = structure(f"s-{key}", charge=0, multiplicity=1)
+    named = WorkItemInputs(structures=FrozenDict({"structure": StructureSet.of(record)}))
+    digest = "sha256:" + hashlib.sha256(key.encode("utf-8")).hexdigest()
+    return WorkItem(
+        id=make_work_item_id(key),
+        logical_key=key,
+        step_id="step-script",
+        named_inputs=named,
+        resources=ResourceRequest(cores_per_item=cores, memory_per_item_bytes=_GIB),
+        semantic_digest=digest,
+        ordinal=0,
+    )
+
+
+def _script_context(supervisor: object, run_root: Path) -> ItemExecutionContext:
+    return ItemExecutionContext(
+        step_id="step-script",
+        scientific=ScientificDefinition(
+            script_id="demo",
+            script_args=("{input}",),
+            script_outputs=FrozenDict({"structures": "final.xyz"}),
+        ),
+        scientific_defaults=ScientificDefaults(),
+        adapter=None,  # type: ignore[arg-type]
+        profile=None,  # type: ignore[arg-type]
+        supervisor=supervisor,  # type: ignore[arg-type]
+        run_root=str(run_root),
+        poll_interval_seconds=0.01,
+    )
+
+
+class TestScriptQuota:
+
+    def test_script_task_waits_for_quota_release(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Script tasks queue behind the same N1 ledger as native programs."""
+        script = tmp_path / "demo.py"
+        script.write_text(
+            "open('final.xyz', 'w').write('1\\nframe\\nHe 0 0 0\\n')\n", encoding="utf-8"
+        )
+        _script_config(monkeypatch, tmp_path, script, cores=1)
+        manager = load_server_quota()
+        assert manager is not None
+        holder = manager.acquire(1, _GIB, "run", "holder")
+        box: dict = {}
+
+        def _run() -> None:
+            box["result"] = ScriptExecutor().execute(
+                _script_item("script-waiter", 1),
+                _script_context(NativeProcessSupervisor(), tmp_path),
+            )
+
+        thread = threading.Thread(target=_run, daemon=True)
+        thread.start()
+        try:
+            time.sleep(0.5)
+            assert "result" not in box, "script task ran while the only core was held"
+        finally:
+            manager.release(holder)
+        thread.join(timeout=20)
+        assert not thread.is_alive()
+        assert box["result"].status.value == "completed"
+
+    def test_script_oversized_request_fails_immediately(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        script = tmp_path / "demo.py"
+        script.write_text("pass\n", encoding="utf-8")
+        _script_config(monkeypatch, tmp_path, script, cores=2)
+        result = ScriptExecutor().execute(
+            _script_item("script-huge", 10**9),
+            _script_context(NativeProcessSupervisor(), tmp_path),
+        )
+        assert result.error is not None
+        assert result.error.code == "quota_exceeded"

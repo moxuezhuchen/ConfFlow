@@ -156,7 +156,9 @@ def test_closed_enum_boundary_truthful() -> None:
 
     caps = sorted(m.value for m in ExecutorCapability)
     # R2.2: analysis retired.
-    assert caps == ["calculation", "confgen", "structure_transform"]
+    # N2 声明新增 script 外部脚本能力（静态 contract 只描述能力本身；
+    # intent authoring 仍只支持原三能力，脚本步骤仅手写，故 ALLOWED_EXECUTORS 不变）。
+    assert caps == ["calculation", "confgen", "script", "structure_transform"]
     assert "dummy" not in caps
     assert DUMMY_KEY not in caps
     assert set(ALLOWED_EXECUTORS) == {"calculation", "confgen", "structure_transform"}
