@@ -261,6 +261,7 @@ def test_intent_catalog_shape_and_purity() -> None:
     assert {c["type"] for c in catalog["cards"]} == set(CARD_TYPES)
     assert {p["name"] for p in catalog["presets"]} == set(PRESET_TYPES)
     # R2.2 声明：目录剩 7 项，退役项不再出现。
+    # N4 声明新增：ensemble_refine appended last，目录 7→8。
     assert catalog["supported_recipes"] == [
         "optimize",
         "single_point",
@@ -269,6 +270,7 @@ def test_intent_catalog_shape_and_purity() -> None:
         "transition_state",
         "confgen_torsion",
         "monomer_conformers",
+        "ensemble_refine",
     ]
     assert "tspes" not in catalog["supported_recipes"]
     assert catalog["schema_keys"] == sorted(catalog["schema_keys"])

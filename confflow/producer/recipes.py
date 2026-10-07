@@ -74,6 +74,17 @@ _CONFGEN_V3_EXPOSED = [
 _CONFGEN_V3_REQUIRED = ["confgen.v3.torsions"]
 
 
+_FILTER_EXPOSED = [
+    "filter.energy_key",
+    "filter.energy_window_kcal",
+    "filter.lowest_n",
+    "filter.max_imaginary_count",
+    "filter.imaginary_threshold_cm1",
+]
+
+_FILTER_REQUIRED = ["filter.energy_window_kcal", "filter.lowest_n"]
+
+
 def _confgen_v3_recipe() -> dict[str, Any]:
     """Build the typed ConfGen v3 torsion-scan recipe.
 
@@ -206,6 +217,94 @@ def _monomer_conformers_recipe() -> dict[str, Any]:
             "confgen.v3.torsions",
         ],
         "exposed_fields": list(_CALC_EXPOSED) + list(_CONFGEN_V3_EXPOSED),
+    }
+
+
+def _ensemble_refine_recipe() -> dict[str, Any]:
+    """Build the ensemble-refinement recipe (N4).
+
+    Input is a multi-frame xyz (CREST/GOAT ensembles, thinned MD frames):
+    ``deduplicate`` -> ``opt`` -> RMSD ``refine`` -> ``freq`` -> energy
+    ``filter``. The filter's ``structure`` and ``results`` inputs both bind
+    the ``freq`` step explicitly, so the N3 same-step compile rule holds;
+    the ``refine`` leg therefore sits between ``opt`` and ``freq`` (RMSD
+    grouping collapses near-duplicate opt minima before the expensive
+    frequencies) rather than between ``freq`` and ``filter``. ``required_``
+    /``exposed_fields`` are editor prompts (not compiler gates); the legal
+    replacement scope is a wire-document copy recompiled through the V4
+    parser/compiler.
+    """
+    dedup: dict[str, Any] = {
+        "id": "dedup",
+        "label": "Deduplicate input frames",
+        "executor": "structure_transform",
+        "bindings": _run_binding(),
+        "transform": {"kind": "deduplicate", "native": {}},
+    }
+    opt = _calc_step(
+        "opt",
+        program="orca",
+        role="opt",
+        bindings={"structure": {"source": {"step": "dedup", "port": "structures"}}},
+        native={"keyword": "B3LYP D3BJ Opt"},
+        checks=["normal_termination", "geometry_required"],
+        label="Optimize each frame",
+    )
+    refine: dict[str, Any] = {
+        "id": "refine",
+        "label": "RMSD refinement",
+        "executor": "structure_transform",
+        "bindings": {"structure": {"source": {"step": "opt", "port": "structures"}}},
+        "transform": {"kind": "refine", "native": {"rmsd_threshold_angstrom": 0.25}},
+    }
+    freq = _calc_step(
+        "freq",
+        program="orca",
+        role="freq",
+        bindings={"structure": {"source": {"step": "refine", "port": "structures"}}},
+        native={"keyword": "B3LYP D3BJ Freq"},
+        checks=["normal_termination", "frequencies_required"],
+        label="Frequencies on refined minima",
+    )
+    select: dict[str, Any] = {
+        "id": "select",
+        "label": "Energy selection",
+        "executor": "structure_transform",
+        "bindings": {
+            "structure": {"source": {"step": "freq", "port": "structures"}},
+            "results": {"source": {"step": "freq", "port": "results"}},
+        },
+        "transform": {
+            "kind": "filter",
+            "native": {
+                "energy_key": "electronic",
+                "energy_window_kcal": 5.0,
+                "lowest_n": 10,
+                "max_imaginary_count": 0,
+            },
+        },
+    }
+    return {
+        "id": "ensemble_refine",
+        "label": "Ensemble Refine",
+        "description": (
+            "Refine a conformer ensemble from multi-frame xyz (CREST, GOAT, "
+            "or MD trajectories): deduplicate, optimize, RMSD-refine, "
+            "frequency check, then energy-window/lowest-N selection bound "
+            "to the freq results. Confirm energy_window_kcal/lowest_n for "
+            "the system. MD trajectories must be thinned to representative "
+            "frames before import (the xyz import path sets no frame-count "
+            "cap, so every frame would run opt+freq). The optional N2 "
+            "script pre-screen (e.g. xTB) is not part of this recipe: after "
+            "N2 merges, insert a script step between deduplicate and opt."
+        ),
+        "category": "Conformers",
+        # Root decision: original recipes keep their orders; the new card goes
+        # last in catalog list order, so its order sits above monomer_conformers.
+        "order": 140,
+        "document": _document([dedup, opt, refine, freq, select]),
+        "required_fields": list(_CALC_REQUIRED) + list(_FILTER_REQUIRED),
+        "exposed_fields": list(_CALC_EXPOSED) + list(_FILTER_EXPOSED),
     }
 
 
@@ -379,6 +478,7 @@ def _recipes() -> list[dict[str, Any]]:
         ),
         _confgen_v3_recipe(),
         _monomer_conformers_recipe(),
+        _ensemble_refine_recipe(),
     ]
 
 
@@ -391,6 +491,7 @@ RECIPE_IDS_V4: tuple[str, ...] = (
     "transition_state",
     "confgen_torsion",
     "monomer_conformers",
+    "ensemble_refine",
 )
 
 

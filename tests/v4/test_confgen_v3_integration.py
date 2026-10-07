@@ -1265,14 +1265,17 @@ class TestProducerWiring:
 
         catalog = {recipe["id"]: recipe for recipe in build_recipe_catalog_v4()["recipes"]}
         # R2.2: tspes retired; the frozen orders of the rest hold, new card sorts last.
+        # N4: ensemble_refine appended after monomer_conformers (order 140).
         assert catalog["confgen_torsion"]["order"] == 120
         assert catalog["monomer_conformers"]["order"] == 130
-        assert list(RECIPE_IDS_V4).index("monomer_conformers") == len(RECIPE_IDS_V4) - 1
-        assert list(RECIPE_IDS_V4).index("confgen_torsion") == len(RECIPE_IDS_V4) - 2
-        assert catalog["monomer_conformers"]["order"] > max(
+        assert catalog["ensemble_refine"]["order"] == 140
+        assert list(RECIPE_IDS_V4).index("ensemble_refine") == len(RECIPE_IDS_V4) - 1
+        assert list(RECIPE_IDS_V4).index("monomer_conformers") == len(RECIPE_IDS_V4) - 2
+        assert list(RECIPE_IDS_V4).index("confgen_torsion") == len(RECIPE_IDS_V4) - 3
+        assert catalog["ensemble_refine"]["order"] > max(
             order
             for recipe_id, order in ((r["id"], r["order"]) for r in catalog.values())
-            if recipe_id != "monomer_conformers"
+            if recipe_id != "ensemble_refine"
         )
 
     def test_workflow_chaining_compiles_and_assembles(self) -> None:

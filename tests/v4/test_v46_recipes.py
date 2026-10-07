@@ -31,6 +31,7 @@ EXPECTED_IDS = (
     "transition_state",
     "confgen_torsion",
     "monomer_conformers",
+    "ensemble_refine",
 )
 
 
