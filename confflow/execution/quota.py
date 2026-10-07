@@ -25,7 +25,15 @@ except ImportError:  # pragma: no cover - POSIX-only lock
 
 from ..domain.resources import parse_memory_bytes
 
-__all__ = ["QuotaCancelled", "QuotaError", "QuotaExceeded", "ServerQuota", "load_server_quota"]
+__all__ = [
+    "QuotaCancelled",
+    "QuotaError",
+    "QuotaExceeded",
+    "ServerQuota",
+    "load_server_quota",
+    "read_server_config_toml",
+    "server_config_path",
+]
 
 _CONFIG_ENV = "CONFFLOW_SERVER_CONFIG"
 _STATE_ENV = "CONFFLOW_SERVER_STATE_DIR"
@@ -89,23 +97,37 @@ def _group_alive(record: dict) -> bool:
     return _pid_alive(record.get("leader_pid"))
 
 
-def load_server_quota(config: str | Path | None = None) -> ServerQuota | None:
-    """Load the server quota, or return None when server.toml is absent."""
+def server_config_path(config: str | Path | None = None) -> Path:
+    """Return the server.toml path (explicit, env override, or default)."""
     override = config if config is not None else os.environ.get(_CONFIG_ENV)
-    path = Path(override) if override else Path.home() / ".config" / "confflow" / "server.toml"
-    if not path.is_file():
-        return None
+    if override:
+        return Path(override)
+    return Path.home() / ".config" / "confflow" / "server.toml"
+
+
+def read_server_config_toml(path: str | Path) -> dict:
+    """Read *path* as TOML, failing closed on unreadable content."""
+    location = Path(path)
     try:
         import tomllib as _toml
     except ImportError:
         import tomli as _toml  # type: ignore[import-not-found,no-redef]
     try:
-        with open(path, "rb") as handle:
+        with open(location, "rb") as handle:
             data = _toml.load(handle)
     except Exception as exc:
-        raise QuotaError(f"cannot read server config {path}: {exc}") from exc
+        raise QuotaError(f"cannot read server config {location}: {exc}") from exc
     if not isinstance(data, dict):
-        raise QuotaError(f"invalid server config {path}: top level must be a table")
+        raise QuotaError(f"invalid server config {location}: top level must be a table")
+    return data
+
+
+def load_server_quota(config: str | Path | None = None) -> ServerQuota | None:
+    """Load the server quota, or return None when server.toml is absent."""
+    path = server_config_path(config)
+    if not path.is_file():
+        return None
+    data = read_server_config_toml(path)
     raw_cores = data.get("total_cores")
     if isinstance(raw_cores, bool) or not isinstance(raw_cores, int) or raw_cores < 1:
         raise QuotaError(f"invalid server config {path}: 'total_cores' must be an integer >= 1")

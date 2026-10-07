@@ -403,7 +403,7 @@ def test_b2_catalog_contract_bytes_unchanged() -> None:
     # schema（旧条目保留，摘要更新；boundary 不变）。
     # N4 声明新增：recipe 目录 +1（ensemble_refine；boundary 不变）。
     assert "sha256:" + hashlib.sha256(canonical_json_bytes(env)).hexdigest() == (
-        "sha256:b9793524a6bb913e6b5cd5efe3c4dded2ba0373706e177a2acfdb0b0b79287ef"
+        "sha256:08f1ca2cdc8292d37eae191efba972490646876a44c20e9b8e252b623015ccf8"
     )
     assert "sha256:" + hashlib.sha256(canonical_json_bytes(bdoc)).hexdigest() == (
         "sha256:d9b5282bb8d6d3b3694a76bea6931b3099902f36fc74e6fe0f46727a9905e0b2"

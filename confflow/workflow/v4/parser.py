@@ -337,6 +337,7 @@ _EXECUTOR_BLOCK_BY_CAPABILITY = {
     "confgen": "confgen",
     "structure_transform": "transform",
     "analysis": "analysis",
+    "script": "script",
 }
 
 
@@ -356,6 +357,7 @@ def _build_scientific(
         "confgen": step.confgen,
         "transform": step.transform,
         "analysis": step.analysis,
+        "script": step.script,
     }
     present = [name for name, block in blocks.items() if block is not None]
     expected_block = _EXECUTOR_BLOCK_BY_CAPABILITY.get(step.executor)
@@ -370,6 +372,17 @@ def _build_scientific(
                 DiagnosticReason.MISPLACED_EXECUTOR_BLOCK,
                 f"executor {step.executor!r} must not declare blocks: "
                 + ", ".join(sorted(set(unexpected) or set(present))),
+                step_id=step.id,
+                field_path=field_path,
+            )
+        )
+        return None, True, diagnostics
+    if block_name != "script" and (list(step.args) or step.outputs is not None):
+        diagnostics.append(
+            error(
+                DiagnosticCode.CAPABILITY_ERROR,
+                DiagnosticReason.MISPLACED_EXECUTOR_BLOCK,
+                f"executor {step.executor!r} must not declare script args/outputs",
                 step_id=step.id,
                 field_path=field_path,
             )
@@ -465,6 +478,45 @@ def _build_scientific(
                 result_profile="standard",
                 native=FrozenDict(step.transform.native),
                 transform=step.transform.kind,
+            )
+        except DomainError as exc:
+            diagnostics.append(
+                error(
+                    DiagnosticCode.SCHEMA_ERROR,
+                    DiagnosticReason.INVALID_VALUE,
+                    str(exc),
+                    step_id=step.id,
+                    field_path=field_path,
+                )
+            )
+            return None, True, diagnostics
+        return scientific, True, diagnostics
+    if block_name == "script":
+        if step.script is None or not step.script.strip():
+            diagnostics.append(
+                error(
+                    DiagnosticCode.CAPABILITY_ERROR,
+                    DiagnosticReason.MISSING_EXECUTOR_BLOCK,
+                    "script steps require a registered script id",
+                    step_id=step.id,
+                    field_path=field_path,
+                )
+            )
+            return None, True, diagnostics
+        declared_outputs: dict[str, Any] = {}
+        if step.outputs is not None:
+            if step.outputs.artifacts is not None:
+                declared_outputs["artifacts"] = list(step.outputs.artifacts)
+            if step.outputs.structures is not None:
+                declared_outputs["structures"] = step.outputs.structures
+            if step.outputs.summary is not None:
+                declared_outputs["summary"] = step.outputs.summary
+        try:
+            scientific = ScientificDefinition(
+                result_profile="standard",
+                script_id=step.script,
+                script_args=tuple(step.args),
+                script_outputs=FrozenDict(declared_outputs),
             )
         except DomainError as exc:
             diagnostics.append(

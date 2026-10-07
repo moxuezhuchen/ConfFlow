@@ -74,11 +74,15 @@ def _compile_parsed(
     parsed: DocumentParseResult,
     *,
     registry: ExecutionRegistry | None,
+    script_registry: Any = None,
 ) -> CompileResult:
     if parsed.definition is None:
         return CompileResult(None, tuple(sorted(parsed.diagnostics, key=diagnostic_sort_key)))
     return compile_definition(
-        parsed.definition, registry=registry, parse_diagnostics=parsed.diagnostics
+        parsed.definition,
+        registry=registry,
+        parse_diagnostics=parsed.diagnostics,
+        script_registry=script_registry,
     )
 
 
@@ -87,9 +91,10 @@ def compile_definition(
     *,
     registry: ExecutionRegistry | None = None,
     parse_diagnostics: tuple[Diagnostic, ...] = (),
+    script_registry: Any = None,
 ) -> CompileResult:
     """Compile a canonical definition into an execution plan."""
-    validation = validate_definition(definition, registry=registry)
+    validation = validate_definition(definition, registry=registry, script_registry=script_registry)
     if validation.validated is None:
         return CompileResult(None, _merge(parse_diagnostics, validation.diagnostics))
     graph_result = build_binding_graph(validation.validated)
@@ -107,33 +112,43 @@ def compile_workflow(
     document: Mapping[str, Any] | DocumentParseResult,
     *,
     registry: ExecutionRegistry | None = None,
+    script_registry: Any = None,
 ) -> CompileResult:
     """Compile a raw document mapping (or parse result) into an execution plan."""
     if isinstance(document, DocumentParseResult):
-        return _compile_parsed(document, registry=registry)
+        return _compile_parsed(document, registry=registry, script_registry=script_registry)
     if not isinstance(document, Mapping):
         raise TypeError("compile_workflow expects a mapping or a DocumentParseResult")
-    return _compile_parsed(parse_workflow_document(document), registry=registry)
+    return _compile_parsed(
+        parse_workflow_document(document), registry=registry, script_registry=script_registry
+    )
 
 
 def compile_workflow_text(
     text: str,
     *,
     registry: ExecutionRegistry | None = None,
+    script_registry: Any = None,
 ) -> CompileResult:
     """Compile a YAML workflow document into an execution plan."""
-    return _compile_parsed(parse_workflow_text_document(text), registry=registry)
+    return _compile_parsed(
+        parse_workflow_text_document(text), registry=registry, script_registry=script_registry
+    )
 
 
 def compile_workflow_file(
     path: str | Path,
     *,
     registry: ExecutionRegistry | None = None,
+    script_registry: Any = None,
 ) -> CompileResult:
     """Compile a workflow YAML file into an execution plan."""
     parsed = load_definition_file(path)
     if parsed.definition is None:
         return CompileResult(None, tuple(sorted(parsed.diagnostics, key=diagnostic_sort_key)))
     return compile_definition(
-        parsed.definition, registry=registry, parse_diagnostics=parsed.diagnostics
+        parsed.definition,
+        registry=registry,
+        parse_diagnostics=parsed.diagnostics,
+        script_registry=script_registry,
     )

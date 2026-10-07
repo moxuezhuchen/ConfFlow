@@ -49,6 +49,7 @@ __all__ = [
     "RecoveryModel",
     "ResourcesModel",
     "SchedulerModel",
+    "ScriptOutputsModel",
     "SelectModel",
     "ScientificDefaultsModel",
     "SourceModel",
@@ -245,6 +246,33 @@ class AnalysisModel(BaseModel):
     check_params: dict[str, dict[str, Any]] = Field(default_factory=dict)
 
 
+class ScriptOutputsModel(BaseModel):
+    """Fixed output channels of a script step (N2.1/W4/G19: only these three)."""
+
+    model_config = _STRICT
+
+    artifacts: list[str] | None = None
+    structures: str | None = None
+    summary: str | None = None
+
+    @field_validator("artifacts")
+    @classmethod
+    def _validate_artifacts(cls, value: list[str] | None) -> list[str] | None:
+        if value is None:
+            return None
+        if not value:
+            raise ValueError("script outputs.artifacts must be a non-empty pattern list")
+        return value
+
+    @model_validator(mode="after")
+    def _check_filenames(self) -> ScriptOutputsModel:
+        for name in ("structures", "summary"):
+            value = getattr(self, name)
+            if value is not None and (not value or not value.strip()):
+                raise ValueError(f"script outputs.{name} must be a non-empty file name")
+        return self
+
+
 class ExecutionModel(BaseModel):
     """Machine-specific execution binding (never part of scientific digests)."""
 
@@ -272,6 +300,9 @@ class StepModel(BaseModel):
     confgen: ConfgenModelV3 | None = None
     transform: TransformModel | None = None
     analysis: AnalysisModel | None = None
+    script: str | None = None
+    args: list[str] = Field(default_factory=list)
+    outputs: ScriptOutputsModel | None = None
     resources: ResourcesModel | None = None
     scheduler: SchedulerModel | None = None
     completion: CompletionModel = Field(default_factory=CompletionModel)

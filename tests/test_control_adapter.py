@@ -99,11 +99,13 @@ def test_capabilities_is_one_stable_protocol_json_response(capsys):
     """Capabilities does not open state and emits no human-readable output."""
     assert main(["capabilities", "--json"]) == 0
     captured = capsys.readouterr()
+    # N2.6: the runtime script registry rides the capabilities response.
     assert json.loads(captured.out) == {
         "ok": True,
         "operation": "capabilities",
         "protocol_schema": "confflow.control.v1",
         "supported_protocols": ["confflow.control.v1"],
+        "registered_scripts": [],
     }
 
 

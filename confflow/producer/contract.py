@@ -44,6 +44,11 @@ from ..execution.contracts import (
     allowed_port_pairings,
 )
 from ..execution.registry import ExecutionRegistry, default_registry
+from ..execution.script_registry import (
+    SCRIPT_OUTPUT_CHANNELS,
+    SCRIPT_PLACEHOLDER_HELP,
+    SCRIPT_PLACEHOLDERS,
+)
 from ..workflow.v4.document import SCHEMA_ID
 from ..workflow.v4.schema import (
     TRANSFORM_KINDS,
@@ -239,6 +244,31 @@ def _resources_section() -> dict[str, Any]:
                 "description": "Scheduler-only failure behavior; digest-inert.",
             },
         ],
+    }
+
+
+def _script_section(registry: ExecutionRegistry) -> dict[str, Any]:
+    """Describe script steps statically (N2.6): capability, fields, channels.
+
+    Server-independent: the registered script table itself is runtime-only
+    (``confflow control capabilities`` ``registered_scripts``) and never
+    enters this contract.
+    """
+    contract = registry.executor(ExecutorCapability.SCRIPT)
+    return {
+        "capability": contract.capability.value,
+        "contract_version": contract.contract_version,
+        "step_fields": ["script", "args", "resources", "outputs"],
+        "output_channels": list(SCRIPT_OUTPUT_CHANNELS),
+        "channel_semantics": {
+            "structures": "Multi-frame xyz parsed as the step's structure collection; "
+            "the only channel downstream steps may bind.",
+            "summary": "A JSON object (<= 1 MiB) stored verbatim as the step's "
+            "machine-readable result; ConfFlow never interprets it.",
+            "artifacts": "Saved files matched by glob patterns; never bound downstream.",
+        },
+        "placeholders": list(SCRIPT_PLACEHOLDERS),
+        "placeholder_help": dict(SCRIPT_PLACEHOLDER_HELP),
     }
 
 
@@ -747,6 +777,7 @@ def build_configuration_contract_v4(
         "result_schema_sha256": run_result_schema_sha256(),
         "validation_response_schema": CONFIGURATION_VALIDATION_SCHEMA,
         "transform_kinds": list(TRANSFORM_KINDS),
+        "script_steps": _script_section(active),
     }
     envelope["boundary"] = boundary_section()
     envelope["contract_digest"] = canonical_sha256(
