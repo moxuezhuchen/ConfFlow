@@ -1927,6 +1927,30 @@ def test_l0_isolation_probe_does_not_borrow_host_jd(tmp_path: Path, monkeypatch)
         policy.scan(tmp_path, rule_ids=("AP-081",))
 
 
+def test_ap081_without_jd_checkout_skips_missing_sibling(tmp_path: Path, monkeypatch) -> None:
+    # DIET-2 cleanup: the JD sibling double is resolved via JOBDESK_V2_SRC
+    # (its parent dir) and skipped when absent; require_one counts only the
+    # in-repo double, so a tmp tree with the repo double and no JD checkout
+    # no longer fails for the missing sibling file.
+    import tools.architecture_policy as policy
+
+    _write(tmp_path, "tests/v4/test_v46_cross_repo.py", "class JobdeskDouble:\n    pass\n")
+    monkeypatch.setenv("JOBDESK_V2_SRC", str(tmp_path / "no-such-jd" / "src"))
+    assert policy.scan(tmp_path, rule_ids=("AP-081",)) == []
+
+    # The env wiring is real: a violating JD double under the env-derived
+    # repo root is still reported (proves the path is configurable, not
+    # hardcoded to /opt/jobdesk-v2-v4).
+    fake_src = tmp_path / "fake-jd" / "src"
+    (fake_src / "jobdesk_v2").mkdir(parents=True)
+    jd_file = tmp_path / "fake-jd" / "tests" / "application" / "test_confflow_v4_e2e.py"
+    jd_file.parent.mkdir(parents=True)
+    jd_file.write_text("class JobdeskDouble:\n    import confflow\n", encoding="utf-8")
+    monkeypatch.setenv("JOBDESK_V2_SRC", str(fake_src))
+    fired = [v for v in policy.scan(tmp_path, rule_ids=("AP-081",)) if v["rule"] == "AP-081"]
+    assert len(fired) == 1 and fired[0]["path"] == str(jd_file), fired
+
+
 def test_legacy_cli_ignores_pycache_but_keeps_normal_scope(tmp_path: Path) -> None:
     # ROOT-v1 cache_source gap: __pycache__ .py files are skipped by legacy.
     import tools.architecture_policy as policy

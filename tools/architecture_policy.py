@@ -466,10 +466,36 @@ V46_STRICT_ROOT_CANDIDATES = [
 V46_NEW_SYMBOLS = ["iprog"]
 V46_LEGACY_TRUTH_TOKENS = ["result.xyz", "failed.xyz", "workflow_stats", "output_path", "min_xyz"]
 ENGINE_IMPORT_ALLOWLIST = []
+#: In-repo double(s) for AP-081. ``require_one`` counts ONLY these
+#: repo-relative files, never a machine-local absolute path.
 DOUBLE_FILES = [
     "tests/v4/test_v46_cross_repo.py",
-    "/opt/jobdesk-v2-v4/tests/application/test_confflow_v4_e2e.py",
 ]
+#: JD-side double, relative to the JD repo root. The repo root is derived
+#: from the ``JOBDESK_V2_SRC`` environment variable (which names the JD
+#: ``src`` directory, so its parent is the repo root); when the variable is
+#: unset the legacy local default ``/opt/jobdesk-v2-v4`` applies. A missing
+#: sibling file is skipped per the long-standing "sibling-repo file lands in
+#: parallel" semantics and never counts toward ``require_one``.
+JD_E2E_DOUBLE_REL = "tests/application/test_confflow_v4_e2e.py"
+JD_REPO_ENV = "JOBDESK_V2_SRC"
+DEFAULT_JD_REPO_ROOT = "/opt/jobdesk-v2-v4"
+
+
+def _jobdesk_double_paths() -> list[Path]:
+    """Resolve the JD-side double file(s) for AP-081/AP-082.
+
+    When ``JOBDESK_V2_SRC`` is set (even to a nonexistent location) only
+    the env-derived candidate is used, so tests can point it at a fake or
+    missing checkout without the host default leaking in. Otherwise the
+    legacy local default is used when present.
+    """
+    explicit = os.environ.get(JD_REPO_ENV)
+    if explicit:
+        return [Path(explicit).parent / JD_E2E_DOUBLE_REL]
+    return [Path(DEFAULT_JD_REPO_ROOT) / JD_E2E_DOUBLE_REL]
+
+
 V46_E2E_DOUBLE_FILES = ["tests/v4/test_v46_cross_repo_e2e.py"]
 NUMERIC_DISPATCH_BASES = ["adapters", "checks", "executors", "profiles", "programs", "recoveries"]
 V46_MODULES = [
@@ -1173,6 +1199,7 @@ R.append(
         "kind": "custom_jobdesk_doubles",
         "source": "#81",
         "files": DOUBLE_FILES,
+        "jd_rel": JD_E2E_DOUBLE_REL,
         "require_one": True,
     }
 )
@@ -2550,13 +2577,13 @@ def scan(
                         {"rule": rid, "path": relpath, "line": lineno, "detail": base}
                     )
         elif kind == "custom_jobdesk_doubles":
-            scanned = 0
-            for file in rule["files"]:
-                path = root / file
-                if not path.is_file():
-                    continue  # sibling-repo file lands in parallel
-                scanned += 1
-                tree = ast.parse(path.read_text(encoding="utf-8"))
+            # AP-081/AP-082: the in-repo files under ``root`` count toward
+            # ``require_one``; the JD sibling file (outside ``root``) is
+            # resolved via JOBDESK_V2_SRC, skipped when absent, and never
+            # counts, so the gate no longer depends on a machine-local
+            # absolute path existing.
+            def _double_hits(source_path: Path, display: str, basis: str, rule_id: str) -> None:
+                tree = ast.parse(source_path.read_text(encoding="utf-8"))
                 for node in tree.body:
                     if isinstance(node, ast.ClassDef) and "jobdesk" in node.name.lower():
                         owners = [(node.name, node)]
@@ -2570,18 +2597,38 @@ def scan(
                     else:
                         owners = []
                     for owner, sub in owners:
-                        for lineno, _raw, module in imports_of(sub, file):
+                        for lineno, _raw, module in imports_of(sub, basis):
                             if module == "confflow" or module.startswith("confflow."):
                                 violations.append(
                                     {
-                                        "rule": rid,
-                                        "path": file,
+                                        "rule": rule_id,
+                                        "path": display,
                                         "line": lineno,
                                         "detail": f"{owner}:{module}",
                                     }
                                 )
+
+            scanned_repo = 0
+            for file in rule["files"]:
+                candidate = Path(file)
+                if candidate.is_absolute():
+                    # Pre-configurable legacy entry: optional, never counts.
+                    if not candidate.is_file():
+                        continue  # sibling-repo file lands in parallel
+                    _double_hits(candidate, file, file, rid)
+                    continue
+                path = root / file
+                if not path.is_file():
+                    continue  # sibling-repo file lands in parallel
+                scanned_repo += 1
+                _double_hits(path, file, file, rid)
+            if rid == "AP-081":
+                for jd_path in _jobdesk_double_paths():
+                    if not jd_path.is_file():
+                        continue  # sibling-repo file lands in parallel
+                    _double_hits(jd_path, str(jd_path), str(jd_path), rid)
             if rule.get("require_one"):
-                assert scanned >= 1, "expected at least one double file to exist"
+                assert scanned_repo >= 1, "expected at least one double file to exist"
         elif kind == "disk_absent":
             if legacy and rid == "AP-091":
                 # Old scanner order and file probes: triple order (no
