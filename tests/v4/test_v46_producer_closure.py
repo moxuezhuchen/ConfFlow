@@ -524,3 +524,322 @@ class TestJobdeskAcceptsActualWire:
         envelope["workflow_schema"]["title"] = "evil"
         with pytest.raises(jobdesk.ContractParseError):
             jobdesk.parse_v4_contract_bytes(canonical_json_bytes(envelope))
+
+
+# ---------------------------------------------------------------------------
+# 6. R2.0-logic D4: inline energies on top-level results[] (additive).
+# ---------------------------------------------------------------------------
+class TestRuntimeManifestInlineEnergies:
+    """Top-level ResultRef entries carry optional inline Hartree energies.
+
+    R2.0 D4 (additive, content_schema stays v1): at manifest build time the
+    sibling ScientificResult values of one ``(source_step_id, subject)``
+    group are projected verbatim onto every entry of that subject as
+    ``energies.{electronic,gibbs,gibbs_correction}_hartree`` plus a
+    provenance-triple ``source``.  Missing keys are omitted (never
+    null/0); ``gibbs_correction`` may be the ``g - e`` derived value.
+    Reaction-profile group entries coexist unchanged.
+    """
+
+    def _manifest_for_profile_output(
+        self, output: Any, *, step_id: str = "s_opt"
+    ) -> dict[str, Any]:
+        from confflow.domain import ArtifactSet, FrozenDict, ResultSet, StructureSet
+        from confflow.domain.completion import StepStatus
+        from confflow.domain.step_result import StepResult
+        from tests.v4._builders import checkpoint
+
+        subjects = [record.id for record in tuple(output.structures)]
+        assert subjects, "profile must emit one structure"
+        artifacts = ArtifactSet.of(
+            *(checkpoint(subject, producer_step_id=step_id) for subject in subjects)
+        )
+        step_result = StepResult(
+            step_id=step_id,
+            status=StepStatus.COMPLETED,
+            structures=StructureSet(tuple(output.structures)),
+            results=ResultSet(tuple(output.results)),
+            artifacts=artifacts,
+            summary=FrozenDict({"completed": 1, "failed": 0, "cancelled": 0}),
+        )
+        manifest = build_runtime_manifest(
+            run_id="r2e-energies",
+            status="completed",
+            definition_digest="sha256:" + "0" * 64,
+            producer_version=PRODUCER_VERSION,
+            step_results=(step_result,),
+            published_digests={step_id: "sha256:" + "a" * 64},
+        )
+        import jsonschema
+
+        jsonschema.validate(instance=manifest, schema=run_result_json_schema())
+        return manifest
+
+    def _apply_profile(
+        self,
+        native_result: Any,
+        *,
+        program: str,
+        keyword: str,
+        step_id: str = "s_opt",
+    ) -> Any:
+        from confflow.domain import ArtifactSet
+        from confflow.execution.profile_standard import PROFILES
+        from confflow.execution.profiles import ProfileContext
+
+        profile = PROFILES["standard"]
+        del program
+        return profile.apply(
+            ProfileContext(
+                work_item_id=f"wi:{step_id}:item0",
+                step_id=step_id,
+                logical_key=f"{step_id}:item0",
+                profile_name=profile.name,
+                profile_version=profile.contract_version,
+                native_result=native_result,
+                inputs=self._resolved_inputs(keyword, step_id),
+                discovered_artifacts=ArtifactSet(),
+                producer_digest="sha256:" + "1" * 64,
+            )
+        )
+
+    def _resolved_inputs(self, keyword: str, step_id: str) -> Any:
+        from confflow.domain import FrozenDict, ResourceRequest
+        from confflow.execution import ResolvedCalculationInputs
+        from tests.v4._builders import structure
+
+        return ResolvedCalculationInputs(
+            structure=structure("s0"),
+            charge=0,
+            multiplicity=1,
+            freeze=None,
+            resources=ResourceRequest.from_values(cores_per_item=4, memory_per_item="16GB"),
+            native=FrozenDict({"keyword": keyword}),
+            checkpoints=(),
+            step_id=step_id,
+            work_item_id=f"wi:{step_id}:item0",
+            logical_key=f"{step_id}:item0",
+        )
+
+    def test_gaussian_freq_fixture_roundtrip_carries_three_keys(self) -> None:
+        from confflow.execution import GeometryOutput, NativeResult, ProgramName
+        from confflow.programs.gaussian.parsing import parse_energies
+        from tests.v4.fakes import fake_g16
+
+        atoms = ("O", "H", "H")
+        coords = ((0.0, 0.0, 0.0), (0.76, 0.59, 0.0), (0.76, -0.59, 0.0))
+        log = fake_g16.render_log_text("success_freq", atoms, coords)
+        energies, _sources = parse_energies(log)
+        assert set(energies) >= {"electronic", "gibbs", "gibbs_correction"}
+        native = NativeResult(
+            program=ProgramName.GAUSSIAN,
+            terminated_normally=True,
+            geometry_output=GeometryOutput.NONE,
+            final_geometry=None,
+            energies_hartree=FrozenDict(energies),
+            frequencies_cm=(),
+            native_metadata=FrozenDict({}),
+            produced_files=(),
+            parser_diagnostics=(),
+            log_file_name="job.log",
+        )
+        output = self._apply_profile(native, program="gaussian", keyword="B3LYP Freq")
+        manifest = self._manifest_for_profile_output(output)
+        assert manifest["content_schema"] == RESULT_MANIFEST_SCHEMA
+        assert manifest["results"], "freq run must publish ResultRef entries"
+        by_id = {entry["result_id"]: entry for entry in manifest["results"]}
+        assert len(by_id) == len(manifest["results"])
+        subjects = {entry["subject_structure_id"] for entry in manifest["results"]}
+        assert len(subjects) == 1
+        first = manifest["results"][0]["energies"]
+        assert first["electronic_hartree"] == energies["electronic"]
+        assert first["gibbs_hartree"] == energies["gibbs"]
+        assert first["gibbs_correction_hartree"] == energies["gibbs_correction"]
+        assert first["source"]["program"] == "gaussian"
+        for entry in manifest["results"]:
+            assert entry["energies"] == first, "same subject shares one energies object"
+
+    def test_orca_freq_fixture_roundtrip_source_has_no_fine_grained_markers(self) -> None:
+        from confflow.domain import FrozenDict
+        from confflow.execution import GeometryOutput, NativeResult, ProgramName
+        from confflow.programs.orca.parsing import parse_energies
+        from tests.v4.fakes import fake_orca
+
+        atoms = ("O", "H", "H")
+        coords = ((0.0, 0.0, 0.0), (0.76, 0.59, 0.0), (0.76, -0.59, 0.0))
+        log = fake_orca.render_log_text("success_freq", atoms, coords)
+        energies = parse_energies(log)
+        assert set(energies) >= {"electronic", "gibbs", "gibbs_correction"}
+        native = NativeResult(
+            program=ProgramName.ORCA,
+            terminated_normally=True,
+            geometry_output=GeometryOutput.NONE,
+            final_geometry=None,
+            energies_hartree=FrozenDict(energies),
+            frequencies_cm=(),
+            native_metadata=FrozenDict({}),
+            produced_files=(),
+            parser_diagnostics=(),
+            log_file_name="job.out",
+        )
+        output = self._apply_profile(native, program="orca", keyword="B3LYP Freq")
+        manifest = self._manifest_for_profile_output(output, step_id="s_orca")
+        first = manifest["results"][0]["energies"]
+        assert first["source"]["program"] == "orca"
+        assert set(first["source"]) <= {"program", "method", "adapter"}
+        assert first["electronic_hartree"] == energies["electronic"]
+
+    def test_opt_sp_only_electronic_and_gibbs_keys_absent(self) -> None:
+        from confflow.domain import FrozenDict
+        from confflow.execution import GeometryOutput, NativeResult, ProgramName
+
+        for mode_energy in (-76.4589123456, -76.4601112223):
+            native = NativeResult(
+                program=ProgramName.GAUSSIAN,
+                terminated_normally=True,
+                geometry_output=GeometryOutput.NONE,
+                final_geometry=None,
+                energies_hartree=FrozenDict({"electronic": mode_energy}),
+                frequencies_cm=(),
+                native_metadata=FrozenDict({}),
+                produced_files=(),
+                parser_diagnostics=(),
+                log_file_name="job.log",
+            )
+            output = self._apply_profile(native, program="gaussian", keyword="B3LYP Opt")
+            manifest = self._manifest_for_profile_output(output)
+            for entry in manifest["results"]:
+                energies = entry.get("energies")
+                assert energies is not None
+                assert energies["electronic_hartree"] == mode_energy
+                assert "gibbs_hartree" not in energies
+                assert "gibbs_correction_hartree" not in energies
+                assert "null" not in json.dumps(energies)
+
+    def test_derived_correction_equals_g_minus_e(self) -> None:
+        from confflow.domain import FrozenDict
+        from confflow.execution import GeometryOutput, NativeResult, ProgramName
+
+        electronic = -76.4589123456
+        gibbs = -76.4440123456
+        native = NativeResult(
+            program=ProgramName.GAUSSIAN,
+            terminated_normally=True,
+            geometry_output=GeometryOutput.NONE,
+            final_geometry=None,
+            energies_hartree=FrozenDict({"electronic": electronic, "gibbs": gibbs}),
+            frequencies_cm=(),
+            native_metadata=FrozenDict({}),
+            produced_files=(),
+            parser_diagnostics=(),
+            log_file_name="job.log",
+        )
+        output = self._apply_profile(native, program="gaussian", keyword="B3LYP Freq")
+        manifest = self._manifest_for_profile_output(output)
+        first = manifest["results"][0]["energies"]
+        assert first["gibbs_correction_hartree"] == pytest.approx(gibbs - electronic)
+
+    def test_step_result_json_roundtrip_keeps_manifest(self, tmp_path: Path) -> None:
+        from confflow.domain import ArtifactSet, FrozenDict, ResultSet, StructureSet
+        from confflow.domain.completion import StepStatus
+        from confflow.domain.step_result import StepResult
+        from confflow.execution import GeometryOutput, NativeResult, ProgramName
+        from confflow.persistence.publication import (
+            load_published_step_result,
+            publish_step_result,
+        )
+        from tests.v4._builders import checkpoint
+
+        native = NativeResult(
+            program=ProgramName.GAUSSIAN,
+            terminated_normally=True,
+            geometry_output=GeometryOutput.NONE,
+            final_geometry=None,
+            energies_hartree=FrozenDict({"electronic": -76.46, "gibbs": -76.44}),
+            frequencies_cm=(),
+            native_metadata=FrozenDict({}),
+            produced_files=(),
+            parser_diagnostics=(),
+            log_file_name="job.log",
+        )
+        output = self._apply_profile(native, program="gaussian", keyword="B3LYP Freq")
+        record = tuple(output.structures)[0]
+        step_result = StepResult(
+            step_id="s_opt",
+            status=StepStatus.COMPLETED,
+            structures=StructureSet((record,)),
+            results=ResultSet(tuple(output.results)),
+            artifacts=ArtifactSet.of(checkpoint(record.id, producer_step_id="s_opt")),
+            summary=FrozenDict({"completed": 1, "failed": 0, "cancelled": 0}),
+        )
+        run_root = str(tmp_path / "run")
+        publish_step_result(run_root=run_root, step_id="s_opt", step_result=step_result)
+        reloaded = load_published_step_result(run_root=run_root, step_id="s_opt")
+        assert reloaded is not None
+        kwargs: dict[str, Any] = {
+            "run_id": "r2e-roundtrip",
+            "status": "completed",
+            "definition_digest": "sha256:" + "0" * 64,
+            "producer_version": PRODUCER_VERSION,
+            "published_digests": {"s_opt": "sha256:" + "a" * 64},
+        }
+        from confflow.producer.run_result import build_runtime_manifest as _build
+
+        before = _build(step_results=(step_result,), **kwargs)
+        after = _build(step_results=(reloaded,), **kwargs)
+        assert after == before
+        assert after["results"][0]["energies"]["electronic_hartree"] == -76.46
+
+    def test_old_manifest_without_energies_passes_new_schema(self) -> None:
+        import jsonschema
+
+        manifest = build_run_result_manifest(
+            run_id="legacy-run",
+            status="completed",
+            definition_digest="sha256:" + "0" * 64,
+            producer_version=PRODUCER_VERSION,
+            steps=[
+                {
+                    "id": "s",
+                    "status": "completed",
+                    "digest": "sha256:" + "a" * 64,
+                    "counts": {"completed": 1, "failed": 0, "cancelled": 0},
+                    "diagnostics": [],
+                }
+            ],
+            results=[
+                {
+                    "result_id": "legacy-r1",
+                    "kind": "energy",
+                    "subject_structure_id": "s0",
+                    "source_step_id": "s",
+                    "source_work_item_id": "w",
+                    "producer_digest": None,
+                    "value_digest": "sha256:" + "b" * 64,
+                    "identity_digest": "sha256:" + "c" * 64,
+                }
+            ],
+        )
+        jsonschema.validate(instance=manifest, schema=run_result_json_schema())
+        schema = run_result_json_schema()
+        assert schema["properties"]["content_schema"] == {"const": RESULT_MANIFEST_SCHEMA}
+        assert RESULT_MANIFEST_SCHEMA == "confflow.run_result_manifest.v1"
+        ref = schema["properties"]["results"]["items"]
+        assert ref["required"] == ["result_id", "kind"]
+        assert ref["additionalProperties"] is False
+        assert "energies" in ref["properties"]
+        assert ref["properties"]["energies"]["required"] == ["source"]
+
+    def test_contract_summary_declares_additive_energies(self) -> None:
+        from confflow.producer.contract import run_result_schema_sha256
+
+        schema = run_result_json_schema()
+        assert run_result_schema_sha256() == canonical_sha256(schema)
+        energies_schema = schema["properties"]["results"]["items"]["properties"]["energies"]
+        assert set(energies_schema["properties"]) == {
+            "electronic_hartree",
+            "gibbs_hartree",
+            "gibbs_correction_hartree",
+            "source",
+        }
+        assert energies_schema["additionalProperties"] is False
