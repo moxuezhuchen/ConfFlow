@@ -74,9 +74,7 @@ def test_native_failure_reason_reaches_step_and_manifest_diagnostics(
     report = V4RunApplication(supervisor=NativeProcessSupervisor()).run(
         V4RunRequest(
             workflow_document=document,
-            run_inputs=RunInputs(
-                structures=FrozenDict({"structures": import_xyz(_WATER_XYZ)})
-            ),
+            run_inputs=RunInputs(structures=FrozenDict({"structures": import_xyz(_WATER_XYZ)})),
             run_root=str(run_root),
             executables=FrozenDict({"g16": executable_name}),
         )
@@ -88,9 +86,7 @@ def test_native_failure_reason_reaches_step_and_manifest_diagnostics(
     item_error = step["item_results"][0]["error"]
     assert item_error is not None, "the failing native run must record an item error"
 
-    step_diagnostics = [
-        item for item in step["diagnostics"] if item["severity"] == "error"
-    ]
+    step_diagnostics = [item for item in step["diagnostics"] if item["severity"] == "error"]
     assert len(step_diagnostics) == 1, step_diagnostics
     diagnostic = step_diagnostics[0]
     assert diagnostic["code"] == item_error["code"]
@@ -153,7 +149,9 @@ def test_an_error_already_carried_by_the_item_is_not_duplicated() -> None:
             work_item_id="wi:sp:item0",
         ),
     )
-    assert _item_error_diagnostics(_failed_item(error=error, diagnostics=already), step_id="sp") == ()
+    assert (
+        _item_error_diagnostics(_failed_item(error=error, diagnostics=already), step_id="sp") == ()
+    )
 
 
 def test_completed_items_never_gain_an_error_diagnostic() -> None:
@@ -177,9 +175,7 @@ def test_an_error_only_failure_still_reaches_the_manifest(tmp_path: Path) -> Non
     report = V4RunApplication(supervisor=NativeProcessSupervisor()).run(
         V4RunRequest(
             workflow_document=document,
-            run_inputs=RunInputs(
-                structures=FrozenDict({"structures": import_xyz(_WATER_XYZ)})
-            ),
+            run_inputs=RunInputs(structures=FrozenDict({"structures": import_xyz(_WATER_XYZ)})),
             run_root=str(run_root),
             executables=FrozenDict({"g16": str(script)}),
         )
@@ -199,9 +195,7 @@ def test_an_error_only_failure_still_reaches_the_manifest(tmp_path: Path) -> Non
 
     manifest = json.loads((run_root / "run_result.json").read_text())
     manifest_errors = [
-        entry
-        for entry in manifest["steps"][0]["diagnostics"]
-        if entry["severity"] == "error"
+        entry for entry in manifest["steps"][0]["diagnostics"] if entry["severity"] == "error"
     ]
     assert len(manifest_errors) == 1, manifest_errors
     assert manifest_errors[0]["code"] == item["error"]["code"]
