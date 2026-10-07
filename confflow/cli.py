@@ -71,12 +71,7 @@ def _resolve_existing_executable(candidate: Path) -> str | None:
 
 
 def _resolved_confflow_executable(executable_override: str | None = None) -> str | None:
-    """Return the executable that actually invoked this capability probe.
-
-    Windows console launchers can report ``sys.argv[0]`` without the ``.exe``
-    suffix. Resolve that same-name sibling before considering the interpreter
-    directory or ``PATH`` so a side-by-side installation cannot be misbound.
-    """
+    """Return the executable that actually invoked this capability probe."""
     if executable_override is not None:
         return _resolve_existing_executable(Path(executable_override))
 
@@ -114,17 +109,7 @@ def _file_device_inode(path: str | None) -> str | None:
 
 
 def _build_capability_payload(executable_override: str | None = None) -> dict[str, Any]:
-    """Build the handshake payload with v3 compatibility and v4 provenance.
-
-    v4 adds ``producer.install_provenance`` as the source of truth for
-    the wheel filename and final SHA-256. When the file at
-    ``<sys.prefix>/share/confflow/install-provenance.json`` is missing
-    or invalid the payload surfaces the v4 diagnostic shape
-    (``wheel.filename/sha256 = null`` plus ``status`` /
-    ``reason_code``); JobDesk production gates must reject any
-    non-``verified`` status. ConfFlow never emits the literal string
-    ``"unbound"`` for either field.
-    """
+    """Build the handshake payload with v3 compatibility and v4 provenance."""
     executable = _resolved_confflow_executable(executable_override)
     build = {"commit": COMMIT, "dirty": DIRTY}
     version = __import__("confflow").__version__
@@ -189,14 +174,7 @@ logger = get_logger()
 
 
 def _resolve_default_work_dir(input_files: list[str]) -> str:
-    """Resolve the implicit CLI work_dir for the given inputs.
-
-    There is no sandbox-root preference any more: ``global.sandbox_root`` was a
-    member of the released V2 configuration wire, and a V4 workflow document
-    has no such member (its managed-path policy is ``global.sandbox``, which the
-    V4 application owns).  The historical hint read raw YAML without schema
-    validation, so it could never have honoured a V4 document anyway.
-    """
+    """Resolve the implicit CLI work_dir for the given inputs."""
     input_basename = os.path.splitext(os.path.basename(input_files[0]))[0]
     dirname = f"{input_basename}_work" if len(input_files) == 1 else f"{input_basename}_multi_work"
     return dirname
@@ -312,30 +290,7 @@ def _write_cli_error(output_path: str, exc: BaseException, hint: str | None = No
 def kill_proc_tree(
     pid: int, sig=signal.SIGTERM, include_parent=True, timeout=None, on_terminate=None
 ):
-    """Gracefully kill a process tree using psutil (including recursive children).
-
-    Sends the specified signal, waits for the given timeout, then sends
-    SIGKILL to any processes still alive.
-
-    Parameters
-    ----------
-    pid : int
-        The root process ID to kill.
-    sig : signal.Signals
-        Signal to send (default: SIGTERM).
-    include_parent : bool
-        Whether to include the parent process itself.
-    timeout : float or None
-        Seconds to wait for graceful termination.
-    on_terminate : callable or None
-        Ignored.
-
-    Returns
-    -------
-    tuple or None
-        (gone, alive) lists of terminated and still-alive processes,
-        or None if psutil is unavailable or process not found.
-    """
+    """Gracefully kill a process tree using psutil (including recursive children)."""
     del on_terminate
     if not psutil:
         return None
@@ -456,13 +411,7 @@ def stop_all_confflow_processes() -> int:
 
 
 def _file_content_binding(path: str) -> dict[str, str | int]:
-    """Return the ordered file identity used by a CLI execution request.
-
-    A path alone is not an execution identity: callers commonly reuse a work
-    directory after editing either the workflow or an input.  Keep the path,
-    byte length, and digest together so the request remains unambiguous even
-    when several files concatenate to the same byte stream.
-    """
+    """Return the ordered file identity used by a CLI execution request."""
     absolute = os.path.abspath(path)
     digest = hashlib.sha256()
     size = 0
@@ -480,13 +429,7 @@ def _service_run_id(
     *,
     original_input_files: list[str] | None = None,
 ) -> str:
-    """Derive a stable run ID bound to one exact CLI request.
-
-    The ordered descriptor list preserves both input order and file
-    boundaries.  ``original_input_files`` is included for Gaussian inputs so
-    changing source text that happens to convert to the same XYZ cannot reuse
-    a prior successful service record.
-    """
+    """Derive a stable run ID bound to one exact CLI request."""
     payload = {
         "config": _file_content_binding(config_file),
         "input_files": [_file_content_binding(path) for path in input_files],

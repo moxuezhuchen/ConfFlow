@@ -14,13 +14,7 @@ except ImportError:  # pragma: no cover - the worker is POSIX-only
 
 
 class TokenLaunchLease:
-    """Hold one kernel lease for a queued producer launch token.
-
-    The file remains as a diagnostic marker, while the POSIX advisory lock is
-    held for the lifetime of the worker. A competing process attaches without
-    starting another executor; a crashed process releases the lock in the
-    kernel so a queued token can be retried safely.
-    """
+    """Hold one kernel lease for a queued producer launch token."""
 
     def __init__(self, runs_root: str | Path, run_id: str, token: str) -> None:
         if not _safe_component(run_id) or not _safe_component(token):

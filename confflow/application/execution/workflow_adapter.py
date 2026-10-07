@@ -254,12 +254,7 @@ def _terminal_artifacts_for_status(work_dir: str, v4_status: str) -> tuple[Artif
 
 
 def step_record_identity(record: Any) -> str:
-    """Return the durable step identity of a v1 or v2 state record (PD-8).
-
-    V1 records answer ``name`` (the V2-workflow dirname-bound identity), V2
-    records answer ``id`` (the stable step ID). The label never enters a
-    durable service checkpoint id.
-    """
+    """Return the durable step identity of a v1 or v2 state record (PD-8)."""
     identity = getattr(record, "name", None) or getattr(record, "id", None)
     if not identity:
         raise ExecutionServiceError(
@@ -362,13 +357,7 @@ class ServiceWorkflowExecutor(WorkflowExecutor):
             raise self._error
 
     def _project_arbitrated_winner(self, winner: str, request: LaunchRequest) -> None:
-        """Project the run root's terminal winner onto the service aggregate.
-
-        The exception paths use this when the arbitration decision is already
-        durable (a cancellation or completion linearized before the runner
-        failed/stopped): the service commits the winner instead of inventing
-        a competing terminal state of its own.
-        """
+        """Project the run root's terminal winner onto the service aggregate."""
         service = self._service
         if service is None:  # pragma: no cover - callers guard this
             return
@@ -555,13 +544,7 @@ class _AgentControlExecutor(WorkflowExecutor):
         return LaunchReceipt(accepted=True)
 
     def ensure_cancelled(self, request: CancelRequest) -> CancelReceipt:
-        """Durably claim cancellation, then signal the worker to stop.
-
-        The run root's arbitration ledger owns the terminal winner: when the
-        producer already recorded a non-cancelled terminal, this cancel
-        loses and raises without touching the beacon.  The beacon itself is
-        only the live stop signal for the worker, never a winner authority.
-        """
+        """Durably claim cancellation, then signal the worker to stop."""
         run_root = resolve_control_run_root(self._state_root, request.run_id)
         if run_root is not None:
             winner = arbitration.record_cancel_intent(
@@ -590,14 +573,7 @@ _WORK_LOCKS_GUARD = threading.Lock()
 
 
 class _WorkDirectoryLease:
-    """Hold an advisory lock for the lifetime of one workflow attempt.
-
-    The service run ID is content-bound, so editing an input creates a new
-    durable record.  A work-directory lease keeps that identity change from
-    allowing two live attempts to mutate the same checkpoint and step files.
-    POSIX ``flock`` is process-crash safe; the in-process fallback only applies
-    on platforms without ``fcntl``.
-    """
+    """Hold an advisory lock for the lifetime of one workflow attempt."""
 
     def __init__(self, work_dir: str) -> None:
         self._path = Path(work_dir).resolve(strict=False) / ".confflow-work.lock"
@@ -926,13 +902,7 @@ def _prepare_failed_retry(
     fresh_execution: bool = False,
     retry_resume: bool = True,
 ) -> tuple[WorkflowRunSpec, ExecutionService, ServiceWorkflowExecutor, Any]:
-    """Create or attach a new durable attempt for a strict local CLI retry.
-
-    The control protocol intentionally keeps terminal states terminal.  The
-    local synchronous CLI can still offer ``--resume`` by creating a distinct
-    service record while passing ``resume=True`` to the existing workflow
-    engine.  Every prior terminal attempt remains queryable in the repository.
-    """
+    """Create or attach a new durable attempt for a strict local CLI retry."""
     del initial_service  # The candidate services share its durable repository root.
     for retry_number in range(1, 1000):
         retry_id = _failed_retry_run_id(spec.run_id, retry_number)

@@ -45,14 +45,7 @@ def run_worker_attempt(
     workflow_runner: WorkflowRunner,
     service_builder: ServiceBuilder,
 ) -> RunState | None:
-    """Consume and wait for one queued attempt after the caller acquired its lease.
-
-    None means that the executor wait completed and the caller should read
-    the durable repository projection.  A terminal snapshot is returned
-    without waiting, because a terminal queued call is an attach-only result.
-    Builder, consumer, and executor errors deliberately escape unchanged so
-    the surrounding lifecycle boundary retains its existing failure handling.
-    """
+    """Consume and wait for one queued attempt after the caller acquired its lease."""
     # Formal-runtime preflight (worker I): refuse a non-V4 workflow BEFORE
     # ensure_run_paths creates the run layout. The builder guard below
     # remains the mandatory lowest boundary; this is the worker-path

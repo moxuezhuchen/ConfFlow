@@ -1,24 +1,12 @@
 #!/usr/bin/env python3
 """Machine-readable configuration-contract command handlers (V4 only).
 
-The only supported configuration wire is V4.  ``confflow config contract
---json`` emits ``confflow.configuration-contract.v4`` -- the same canonical
-envelope ``confflow v4 contract --json`` emits -- and ``--version 4`` names it
-explicitly.
-
-The released V1 (``confflow.configuration-contract.v1``) and V2
-(``…-contract.v2``) documents, and the never-released V3 wire, were retired by
-the Architecture Diet (PR-7 retired V3, PR-9 retired V1/V2).  Asking for any
-of them now fails closed with the stable ``unsupported_workflow_version``
-code: no fallback to another version, no automatic upgrade, no parsing of the
-retired document, and no execution.
-
-The historical ``config validate --stdin`` handler validated the released V2
-document shape.  It has no V4 successor here on purpose: the producer-owned V4
-validator is reached through ``confflow v4 validate`` (or the
-``confflow.producer.validation`` module boundary JobDesk already uses), so a
-second V4 validation surface cannot drift from it.  The retired handler keeps
-its route and fails closed.
+Only wire is V4 (`confflow.configuration-contract.v4`); `config contract --json` emits the same
+canonical envelope as `v4 contract --json`; `--version 4` names it explicitly.
+Released V1/V2 and never-released V3 wires retired (PR-9/PR-7); any other `--version` fails
+closed with `unsupported_workflow_version`: no fallback, upgrade, parsing, or execution.
+No second V4 validation surface here (producer `v4 validate`/`producer.validation` is the
+authority, prevents drift); retired `config validate --stdin` keeps its route and fails closed.
 """
 
 from __future__ import annotations

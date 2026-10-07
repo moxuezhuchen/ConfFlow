@@ -71,13 +71,7 @@ def run_request(
     post_execute: Callable[[str, str, dict[str, Any]], dict[str, Any]] | None = None,
     identity_executable: str | None = None,
 ) -> tuple[int, dict[str, Any]]:
-    """Run one control operation without writing its protocol response.
-
-    The optional hook is reserved for an alternate executable that must hand
-    off a formally queued execute intent before emitting the one final control
-    response.  Parsing, schema validation, service dispatch, response
-    validation and exit-code mapping stay in this adapter.
-    """
+    """Run one control operation without writing its protocol response."""
     operation = _operation_hint(args_list)
     try:
         args = _parse_args(args_list)

@@ -48,12 +48,7 @@ def _cancel_owner_is_stopped(
 
 
 def _has_live_work_process(work_dir: str, *, owner: OwnerMarker = None) -> bool:
-    """Fail closed when a prior worker group or child owns the attempt directory.
-
-    os.killpg(..., 0) only probes process-group existence; this helper never
-    sends a termination signal. An operator or supervisor must drain an active
-    or detached child before lifecycle recovery can proceed.
-    """
+    """Fail closed when a prior worker group or child owns the attempt directory."""
     target = Path(work_dir).resolve(strict=False)
     owner_pgid = owner.get("pgid") if isinstance(owner, dict) else None
     if isinstance(owner_pgid, int) and owner_pgid > 0 and hasattr(os, "killpg"):

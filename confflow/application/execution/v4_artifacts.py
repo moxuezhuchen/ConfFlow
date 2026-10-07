@@ -1,57 +1,16 @@
-"""Typed V4 artifact projection for service/control_worker (L2 delete card).
+"""Typed V4 artifact projection for service/control_worker.
 
-This module is the single terminal-artifact projection for the service and
-control worker: the legacy ``output_manifest.json`` / ``workflow_stats.json``
-/ ``.workflow_state.json`` chain in
-:mod:`confflow.application.execution.workflow_adapter` is retired, and no
-contract/JD/runner signature legacy remains on this path.
-
-Real anchors (fixed HEAD ``0d8486034ac5f026d9ce623cca1748f2691c8e13``):
-
-- ``run_result.json`` shape: ``confflow/producer/contract.py:run_result_json_schema``
-  required ``content_schema/run_id/status/definition_digest/provenance/steps/
-  analyses/artifacts``; ``content_schema`` const
-  ``confflow.producer.boundary.RESULT_MANIFEST_SCHEMA``
-  (``confflow.run_result_manifest.v1``); artifact entry ``{role, checksum,
-  locator[, subject, fetch]}`` built by ``producer/run_result.py:artifact_entry``
-  from real ``ArtifactRef`` (``domain/artifact.py``); checksum ``sha256:<hex>``,
-  locator run-root-relative.
-- ``run_generation.json`` shape: ``persistence/generation.py:RunGeneration``
-  (``schema confflow.run_generation.v1``), statuses
-  ``{running, completed, partial, failed, cancelled}``; absent -> ``None``,
-  corrupt -> ``CorruptStateError`` (never treated as absent).
-- Durable winner: ``persistence/arbitration.current_terminal_status`` is the
-  single terminal authority (checked by ``_commit_v4_terminal``); a manifest
-  that disagrees with it is corrupt.
-- Service ``Artifact``: ``application/execution/models.py:Artifact``
-  ``(terminal, path, sha256, size, content_schema)``; ``sha256`` is bare
-  lower-case hex (``service.py:_is_digest``); ``terminal`` must satisfy the
-  frozen identifier grammar; ``path`` must satisfy ``_canonical_path``.
-
-Mapping (COMPLETED only):
-
-- ``manifest.status == "completed"`` -> project each ``artifacts[]`` entry:
-  ``terminal = role``, ``path = locator``, ``sha256 = checksum`` without the
-  ``sha256:`` prefix (lower-cased), ``size`` from bytes on disk,
-  ``content_schema = RESULT_MANIFEST_SCHEMA``.
-- Path/integrity: locator must be run-relative POSIX (no absolute, no drive,
-  no NUL, no ``..``/``.``/empty segments); resolved path must stay under the
-  work root and be a regular file; bytes checksum must equal the manifest
-  claim; empty artifact list is refused.
-- Binding: ``manifest.run_id``/``definition_digest``/``generation_id`` must
-  agree with the caller expectations and with ``run_generation.json`` when it
-  exists; a completed manifest behind a non-completed generation (or a
-  generation mismatch) fails closed.
-- Non-COMPLETED: ``failed``/``partial``/``cancelled`` manifests are never
-  projected as completed (``INVALID_STATE_TRANSITION``); ``running`` and
-  ``not-published`` (no manifest, generation running or absent) are
-  ``INVALID_STATE_TRANSITION`` with a ``No run_result.json published yet``
-  message -- never ``ARTIFACT_INTEGRITY_FAILED``.  Corrupt JSON, schema
-  violations, checksum mismatches, and binding mismatches are
-  ``ARTIFACT_INTEGRITY_FAILED`` (missing COMPLETED manifest when the caller
-  explicitly requires completion is also integrity failure only when a
-  terminal generation/manifest was expected; the loader below treats a
-  plain absent manifest as not-published so callers can distinguish).
+COMPLETED-only projection of run_result.json (confflow.run_result_manifest.v1, content_schema=RESULT_MANIFEST_SCHEMA,
+requires content_schema/run_id/status/definition_digest/provenance/steps/analyses/artifacts; entry {role,checksum,locator})
+onto Artifact(terminal=role,path=locator,sha256 sans prefix lower-cased,size from disk,schema=RESULT_MANIFEST_SCHEMA).
+Generation (confflow.run_generation.v1 statuses {running,completed,partial,failed,cancelled}): absent -> None, corrupt -> CorruptStateError, never absent.
+Invariant: arbitration.current_terminal_status is sole terminal authority; mismatch is corrupt.
+Binding fail-closed: run_id/definition_digest/generation_id must agree with caller and generation;
+completed manifest behind non-completed generation fails; empty artifact list refused.
+Safety fail-closed: locator run-relative POSIX canonical (no absolute/drive/NUL/.././empty), stays under
+work root, regular file, sha256:<hex> bytes match; terminal meets identifier grammar.
+State mapping: failed/partial/cancelled never projected (INVALID_STATE_TRANSITION); running/not-published/
+absent is INVALID_STATE_TRANSITION (`No run_result.json published yet`), never ARTIFACT_INTEGRITY_FAILED; corrupt JSON/schema/checksum/binding mismatches are ARTIFACT_INTEGRITY_FAILED; explicit-missing-completed with terminal expected is integrity, plain absent stays not-published.
 """
 
 from __future__ import annotations
@@ -113,15 +72,7 @@ def _path_invalid(message: str) -> ExecutionServiceError:
 
 
 def v4_publication_state(work_dir: str) -> str:
-    """Return the durable V4 publication state without raising for absence.
-
-    One of ``not-published`` (no manifest), ``running`` (generation running,
-    no terminal manifest), ``completed``/``partial``/``failed``/``cancelled``
-    (manifest status when the manifest names a known terminal status), or
-    ``corrupt`` (manifest present but unreadable/invalid/unknown status).
-    Generation and arbitration details are deliberately not merged here;
-    :func:`load_v4_completed_artifacts` enforces binding strictly.
-    """
+    """Return the durable V4 publication state without raising for absence."""
     manifest_path = Path(work_dir) / V4_RUN_RESULT_FILENAME
     if not manifest_path.is_file():
         try:
@@ -157,15 +108,7 @@ def load_v4_completed_artifacts(
     expected_definition_digest: str | None = None,
     expected_generation_id: str | None = None,
 ) -> tuple[Artifact, ...]:
-    """Project a COMPLETED V4 manifest onto service :class:`Artifact` tuples.
-
-    Only ``status == "completed"`` is projected.  Any other terminal status
-    raises ``INVALID_STATE_TRANSITION``; a missing manifest with no terminal
-    evidence raises ``INVALID_STATE_TRANSITION`` (not-published, never
-    corrupt); corrupt bytes, schema violations, checksum/path/binding
-    failures raise ``ARTIFACT_INTEGRITY_FAILED`` (paths raise
-    ``ARTIFACT_PATH_INVALID``).
-    """
+    """Project a COMPLETED V4 manifest onto service :class:`Artifact` tuples."""
     root = Path(work_dir).resolve(strict=False)
     manifest_path = Path(work_dir) / V4_RUN_RESULT_FILENAME
     if not manifest_path.is_file():
