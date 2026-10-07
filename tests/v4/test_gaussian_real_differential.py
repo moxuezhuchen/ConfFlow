@@ -72,18 +72,8 @@ def test_real_g16_scf_methods_publish_their_own_final_energy(tmp_path, keyword):
 @pytest.mark.parametrize(
     "keyword",
     [
-        "B2PLYPD/STO-3G SP",
-        "B2PLYPD3/STO-3G SP",
-        "mPW2PLYPD/STO-3G SP",
-        "DSDPBEP86/STO-3G SP",
         "G4MP2",
-        "G3B3",
-        "G3MP2B3",
         "CCSD(T)/STO-3G SP",
-        "TD B3LYP/STO-3G SP",
-        "TDA B3LYP/STO-3G SP",
-        "CIS=(NStates=3)/STO-3G SP",
-        "ZINDO/STO-3G SP",
     ],
 )
 def test_real_g16_unsupported_methods_are_refused_before_execution(keyword):

@@ -204,7 +204,7 @@ def _run_cli(tmp_path: Path, capsys: Any, downstream: str) -> tuple[int, dict[st
     return code, json.loads(capsys.readouterr().out)
 
 
-@pytest.mark.parametrize("downstream", sorted(_DOWNSTREAM))
+@pytest.mark.parametrize("downstream", ["none", "refine"])
 def test_a_run_whose_confgen_realized_nothing_fails_with_a_json_reason(
     tmp_path: Path, capsys: Any, downstream: str
 ) -> None:

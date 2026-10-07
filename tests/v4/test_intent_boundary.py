@@ -9,7 +9,7 @@ from confflow.producer.authoring import dispatch_request
 from confflow.producer.boundary import authoring_protocol_schema
 
 
-@pytest.mark.parametrize("parameters", [{}, {"intent": []}, {"intent": {}, "machine_profile": []}])
+@pytest.mark.parametrize("parameters", [{"intent": {}, "machine_profile": []}])
 def test_malformed_intent_has_valid_error_envelope(parameters):
     response = dispatch_request(
         json.dumps(

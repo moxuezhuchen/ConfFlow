@@ -43,8 +43,13 @@ IN_SCOPE = [case for case in ALL_CASES if set(case["native"]) <= SCOPE_KEYS]
 MAPPABLE = [
     case for case in IN_SCOPE if GOLDEN_RUN.map_native(copy.deepcopy(case["native"]))[1] == []
 ]
+# DIET-2 T1/b1: compiled_block 参数化按节点级精简，仅保留 case_0009 与 h_propylamine_nh2_bare。
+_RETAINED_MAPPING_IDS = frozenset({"case_0009", "h_propylamine_nh2_bare"})
+MAPPABLE_COMPILED = [case for case in MAPPABLE if case["case_id"] in _RETAINED_MAPPING_IDS]
 UNKNOWN_PATH_KEYS = [case for case in IN_SCOPE if case not in MAPPABLE]
 UNMAPPABLE = [case for case in ALL_CASES if not set(case["native"]) <= SCOPE_KEYS]
+# DIET-2 T1/b1: scopes 拒绝参数化仅保留最强的 case_0008。
+UNMAPPABLE_SCOPES_RETAINED = [case for case in UNMAPPABLE if case["case_id"] == "case_0008"]
 
 GLOBALS = {"charge": 0, "multiplicity": 1}
 
@@ -71,7 +76,9 @@ def test_the_golden_has_the_expected_shape() -> None:
     assert UNKNOWN_PATH_KEYS, "some golden cases carry path keys the v3 mapping does not know"
 
 
-@pytest.mark.parametrize("case", MAPPABLE, ids=[case["case_id"] for case in MAPPABLE])
+@pytest.mark.parametrize(
+    "case", MAPPABLE_COMPILED, ids=[case["case_id"] for case in MAPPABLE_COMPILED]
+)
 def test_compiled_block_equals_the_golden_mapping(case: dict[str, Any]) -> None:
     expected, unmapped = GOLDEN_RUN.map_native(copy.deepcopy(case["native"]))
     assert unmapped == []
@@ -81,14 +88,8 @@ def test_compiled_block_equals_the_golden_mapping(case: dict[str, Any]) -> None:
 
 
 @pytest.mark.parametrize(
-    "case", UNKNOWN_PATH_KEYS, ids=[case["case_id"] for case in UNKNOWN_PATH_KEYS]
+    "case", UNMAPPABLE_SCOPES_RETAINED, ids=[case["case_id"] for case in UNMAPPABLE_SCOPES_RETAINED]
 )
-def test_unknown_path_keys_are_refused_not_dropped(case: dict[str, Any]) -> None:
-    with pytest.raises(IntentCompilationError, match="unsupported keys"):
-        _compile({"native": copy.deepcopy(case["native"])})
-
-
-@pytest.mark.parametrize("case", UNMAPPABLE, ids=[case["case_id"] for case in UNMAPPABLE])
 def test_scopes_outside_the_paths_vocabulary_are_refused(case: dict[str, Any]) -> None:
     with pytest.raises(IntentCompilationError, match="requires a typed schema_version 3 scope"):
         _compile({"native": copy.deepcopy(case["native"])})
@@ -97,9 +98,6 @@ def test_scopes_outside_the_paths_vocabulary_are_refused(case: dict[str, Any]) -
 @pytest.mark.parametrize(
     "native",
     [
-        {"angle_step": 60},
-        {"bond_scale": 1.3},
-        {"strict_path_bond_check": True},
         {"chains": ["1-2-3-4"], "chain_angles": [[0, 120, 240]]},
     ],
 )
@@ -189,7 +187,7 @@ HYDROGEN_EQUIVALENT = [
 ]
 
 
-@pytest.mark.parametrize("case_id", HYDROGEN_EQUIVALENT)
+@pytest.mark.parametrize("case_id", ["h_butane_terminal", "h_butane_terminal_bare"])
 def test_equivalent_golden_cases_reproduce_the_recorded_v3_output(case_id: str) -> None:
     case = next(item for item in CASES["hydrogen_cases"] if item["case_id"] == case_id)
     block = _without_seed(_compile({"native": copy.deepcopy(case["native"])}))

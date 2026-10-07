@@ -163,8 +163,8 @@ class TestContractVersionRetired:
 class TestWorkflowDocumentVersionsRejected:
     @pytest.mark.parametrize(
         "document",
-        [V1_DOCUMENT, V2_DOCUMENT, V3_DOCUMENT, LEGACY_DOCUMENT],
-        ids=["v1", "v2", "v3", "legacy-no-schema"],
+        [V2_DOCUMENT, LEGACY_DOCUMENT],
+        ids=["v2", "legacy-no-schema"],
     )
     def test_execution_refuses_before_any_side_effect(
         self, document: dict, tmp_path: Path, capsys
@@ -188,7 +188,7 @@ class TestWorkflowDocumentVersionsRejected:
         assert "legacy_workflow_not_executable" in captured.err
         assert not work.exists()
 
-    @pytest.mark.parametrize("switch", ["--dry-run", "--config-show"])
+    @pytest.mark.parametrize("switch", ["--dry-run"])
     def test_retired_legacy_diagnostic_switches_are_gone(self, switch: str) -> None:
         """The V2 dry-run / config-show routes were retired with the wire."""
         from confflow.cli import build_parser

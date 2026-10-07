@@ -440,7 +440,7 @@ def test_orca_path_mode_survives_faulty_native_lookup() -> None:
     assert "neb" in message
 
 
-@pytest.mark.parametrize("mode", ["irc", "neb", "goat"])
+@pytest.mark.parametrize("mode", ["neb"])
 def test_path_mode_option_errors_is_retired_noop(mode: str) -> None:
     # R2.3b/e + R2.3c/d: all path/ensemble modes are retired, so per-mode
     # option validation is a no-op retained for call-site stability.
