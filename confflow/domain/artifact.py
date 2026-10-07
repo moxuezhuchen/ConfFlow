@@ -226,12 +226,7 @@ class ArtifactRef:
         return self.checksum is not None
 
     def digest_payload(self) -> dict[str, Any]:
-        """Return this artifact's contribution to a work-item digest.
-
-        The locator is deliberately excluded: moving identical bytes must not
-        invalidate reuse.  Content identity is the checksum; when a checksum
-        is not yet available, the artifact id and role still pin the reference.
-        """
+        """Return this artifact's contribution to a work-item digest."""
         return {
             "id": self.id,
             "role": self.role,

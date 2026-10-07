@@ -87,20 +87,7 @@ def freeze_value(value: Any) -> Any:
 
 
 def thaw_value(value: Any) -> Any:
-    """Convert frozen containers back into plain JSON-compatible data.
-
-    Parameters
-    ----------
-    value : Any
-        Value to convert.
-
-    Returns
-    -------
-    Any
-        Mappings become plain dicts and tuples become lists; sets, if ever
-        encountered, are emitted in canonical-byte order so payloads stay
-        deterministic across processes.  Other values are returned unchanged.
-    """
+    """Convert frozen containers back into plain JSON-compatible data."""
     if isinstance(value, Mapping):
         return {str(key): thaw_value(item) for key, item in value.items()}
     if isinstance(value, (set, frozenset)):

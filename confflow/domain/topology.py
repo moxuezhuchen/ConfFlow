@@ -109,11 +109,7 @@ class TopologyPatch:
                     )
 
     def same_semantics(self, other: TopologyPatch | None) -> bool:
-        """Return whether *other* declares identical edge corrections.
-
-        Provenance is nonsemantic and ignored: equal edge sets with
-        different provenance labels are the same scientific declaration.
-        """
+        """Return whether *other* declares identical edge corrections."""
         if other is None:
             return self.is_empty
         if not isinstance(other, TopologyPatch):
@@ -137,10 +133,7 @@ class TopologyPatch:
 
     @classmethod
     def from_dict(cls, payload: Mapping[str, Any] | None) -> TopologyPatch | None:
-        """Rebuild a patch from :meth:`to_dict` output, failing closed.
-
-        ``None`` rebuilds as ``None`` so absent legacy payloads stay absent.
-        """
+        """Rebuild a patch from :meth:`to_dict` output, failing closed."""
         if payload is None:
             return None
         if not isinstance(payload, Mapping):

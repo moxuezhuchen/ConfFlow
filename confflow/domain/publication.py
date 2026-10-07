@@ -2,12 +2,8 @@
 
 """Crash-consistency publication protocol for V4.
 
-The protocol fixes the only valid commit order for turning executed work items
-into a published step result.  Persistence is not implemented in V4-1, but the
-ordering is encoded as a state machine and as a durability check so future
-storage layers and tests share one authority.
-
-Frozen order:
+Frozen commit order (only valid order; enforced by state machine
+and durability check):
 
 1. work item execution finishes;
 2. produced artifacts are fully written;
@@ -38,12 +34,7 @@ __all__ = [
 
 
 def _require_result_identity(step_result: StepResult) -> None:
-    """Reject missing or duplicate production result ids before publication.
-
-    Stamping is the emitters' job (profiles, analysis); gating is here, at
-    the runtime boundary, so no caller can publish identity-less results
-    by merely carrying the optional field.
-    """
+    """Reject missing or duplicate production result ids before publication."""
     try:
         require_production_ids(step_result.results)
         for item in step_result.item_results:
