@@ -92,13 +92,7 @@ def rotating_side(
     near_sources: Sequence[int],
     far_sources: Sequence[int],
 ) -> list[int]:
-    """Return the 0-based indices rotating with a chain bond.
-
-    Source: the side-selection half of ``rotations._build_chain_rotations``:
-    atoms strictly closer (topologically) to the near side than the far
-    side rotate; the bond atoms themselves and every far-side chain atom
-    stay fixed.
-    """
+    """Return the 0-based indices rotating with a chain bond."""
     dist_near = bfs_distances(adjacency, near_sources)
     dist_far = bfs_distances(adjacency, far_sources)
     far_set = set(far_sources)
@@ -163,12 +157,7 @@ def clashes(
     topo: Sequence[Sequence[int]],
     threshold: float,
 ) -> bool:
-    """Return whether any non-bonded pair clashes.
-
-    Source: ``collision.check_clash_core``: pairs within
-    ``TOPO_IGNORE_HOPS`` topological hops are ignored, otherwise
-    ``dist < (R_i + R_j) * threshold`` is a clash.
-    """
+    """Return whether any non-bonded pair clashes."""
     n_atoms = int(coords.shape[0])
     for first in range(n_atoms):
         for second in range(first + 1, n_atoms):

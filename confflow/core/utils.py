@@ -2,19 +2,10 @@
 
 """ConfFlow public utilities module.
 
-This module contains two categories:
-
-1. **Backward-compatible re-exports** — re-exports public symbols from sub-modules
-   so that callers do not need to update their import paths.  Actual implementations
-   have been split into:
-
-   - ``core.exceptions``: exception class hierarchy
-   - ``core.logging``: ConfFlowLogger + get_logger
-   - ``core.parsers``: parse_iprog / itask / memory, parse_index_spec, format_*
-
-2. **Input validation utilities** — ``validate_xyz_file`` and the XYZ/geometry
-   checks used for CLI pre-flight checks.  They live here rather than in
-   ``validation.py`` to avoid circular imports.
+Backward-compatible re-exports (implementations split into
+`core.exceptions`, `core.logging`, `core.parsers`) so callers keep import
+paths, plus input-validation utilities (`validate_xyz_file`, XYZ/geometry
+checks) kept here to avoid circular imports with `validation.py`.
 """
 
 from __future__ import annotations
@@ -82,10 +73,7 @@ __all__ = [
 
 
 def index_to_letter_prefix(idx: int) -> str:
-    """Convert a 0-based index to an uppercase letter prefix.
-
-    Examples: 0 → "A", 1 → "B", … 25 → "Z", 26 → "AA", 27 → "AB".
-    """
+    """Convert a 0-based index to an uppercase letter prefix."""
     letters = ""
     n = idx
     while True:

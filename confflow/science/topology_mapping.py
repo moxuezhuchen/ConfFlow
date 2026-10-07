@@ -116,13 +116,7 @@ def _wl_fingerprint(
     atomic_numbers: tuple[int, ...],
     adjacency: tuple[tuple[int, ...], ...],
 ) -> bytes:
-    """Cross-graph comparable colour-refinement fingerprint (invariant).
-
-    Equal fingerprints only mean "candidate"; different fingerprints prove the
-    graphs are not isomorphic.  Because colour updates hash the previous colour
-    plus the sorted neighbour colours, the final colour multiset is independent
-    of any vertex numbering.
-    """
+    """Cross-graph comparable colour-refinement fingerprint (invariant)."""
     colors = [str(number) for number in atomic_numbers]
     rounds = min(_WL_ROUNDS, max(1, len(colors)))
     for _ in range(rounds):
@@ -215,11 +209,7 @@ def build_graph(
 
 
 def parse_bond_override(value: Any) -> list[tuple[int, int]]:
-    """Parse an ``AddBond``/``DelBond`` metadata value into 1-based pairs.
-
-    Accepts ``"1-2;3-4"`` (ConfGen output), a list of strings, or a list of
-    ``[a, b]`` pairs. Invalid tokens are ignored.
-    """
+    """Parse an ``AddBond``/``DelBond`` metadata value into 1-based pairs."""
     if value is None:
         return []
     if isinstance(value, (list, tuple)):
@@ -257,10 +247,7 @@ def apply_bond_overrides(
     add_bond: Sequence[tuple[int, int]],
     del_bond: Sequence[tuple[int, int]],
 ) -> GraphBuild:
-    """Return *build* with topology overrides applied to its adjacency.
-
-    ``add_bond``/``del_bond`` are 1-based pairs in the frame's own atom order.
-    """
+    """Return *build* with topology overrides applied to its adjacency."""
     graph = build.graph
     if graph is None or (not add_bond and not del_bond):
         return build
@@ -290,10 +277,7 @@ def apply_bond_overrides(
 
 
 def graph_from_adjacency(elements: Sequence[str], adjacency: Sequence[Sequence[int]]) -> Graph:
-    """Build a graph from explicit symbol/adjacency data (fixtures, tests).
-
-    The adjacency must be symmetric and free of self loops.
-    """
+    """Build a graph from explicit symbol/adjacency data (fixtures, tests)."""
     symbols = tuple(str(element) for element in elements)
     numbers = tuple(get_element_atomic_number(symbol) for symbol in symbols)
     n = len(symbols)
@@ -403,13 +387,7 @@ class MappingBudgetExceeded(Exception):
 
 
 class MappingSearch:
-    """Budgeted exact enumeration of element/edge-preserving bijections.
-
-    ``iter_mappings`` yields complete mappings of ``graph_a`` onto ``graph_b``.
-    Exhausting the generator means all mappings have been visited; hitting the
-    node budget raises :class:`MappingBudgetExceeded`, which callers must treat
-    as an incomplete (unresolved) search rather than a negative result.
-    """
+    """Budgeted exact enumeration of element/edge-preserving bijections."""
 
     def __init__(
         self,
@@ -630,12 +608,7 @@ def group_frames_by_topology(
     frames: Sequence[dict],
     node_budget: int = DEFAULT_MAPPING_NODE_BUDGET,
 ) -> list[TopologyCluster]:
-    """Partition frames into exact topology classes.
-
-    Frames without a valid graph become ``invalid`` singletons.  Frames whose
-    exact match cannot be completed within the budget become ``unresolved``
-    singletons; they are never merged into a confirmed class.
-    """
+    """Partition frames into exact topology classes."""
     clusters: list[TopologyCluster] = []
     for frame in frames:
         graph = frame.get("graph")

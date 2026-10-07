@@ -86,14 +86,7 @@ _console = Console(
 
 
 class _ConsoleProxy:
-    """A proxy that keeps Rich Console output bound to the *current* sys.stdout.
-
-    Why: pytest's `capsys` replaces `sys.stdout` per-test; a Console created at import-time
-    would otherwise keep writing to the original stdout (making `capsys.readouterr()` empty).
-
-    This proxy also helps CLI redirection: when CLI redirects sys.stdout to a txt file, all
-    `console.print()` calls follow automatically.
-    """
+    """A proxy that keeps Rich Console output bound to the *current* sys.stdout."""
 
     def __init__(self, inner: Console):
         self._inner = inner
@@ -162,24 +155,7 @@ def print_step_header(
 def wrap_text(
     text: str, width: int | None = None, initial_indent: str = "", subsequent_indent: str = ""
 ) -> list[str]:
-    """Wrap text to a fixed width to prevent long lines from breaking layout.
-
-    Parameters
-    ----------
-    text : str
-        The text to wrap.
-    width : int or None
-        Maximum line width (defaults to ``LINE_WIDTH``).
-    initial_indent : str
-        Indent string for the first line.
-    subsequent_indent : str
-        Indent string for subsequent lines.
-
-    Returns
-    -------
-    list[str]
-        Wrapped lines.
-    """
+    """Wrap text to a fixed width to prevent long lines from breaking layout."""
     use_width = width or LINE_WIDTH
     if text is None:
         return [initial_indent]
@@ -398,18 +374,7 @@ def format_conformer_table(conformers: list[dict]) -> str:
 
 
 class CalcProgressReporter:
-    """Plain-text periodic progress reporter for QM calculation tasks.
-
-    Prints one line every *report_every* completed tasks, plus a final summary.
-
-    Output format (during run)::
-
-        ·  opt1         10 / 42   ✔  9  ✘  1   elapsed 00:05:30  eta 00:17:42
-
-    Output format (on exit)::
-
-        ·  opt1         42 / 42   ✔ 39  ✘  3   total   00:23:08
-    """
+    """Plain-text periodic progress reporter for QM calculation tasks."""
 
     def __init__(self, total: int, label: str = "Calc", report_every: int | None = None) -> None:
         self.total = total
@@ -496,12 +461,7 @@ def create_progress():
 
 
 def redirect_console(stream=None) -> None:
-    """Force the underlying Rich Console to write to *stream*.
-
-    Also re-evaluates terminal capability: if *stream* is not a TTY (e.g. a
-    plain file), ANSI escape codes are suppressed so the .txt output stays
-    human-readable.
-    """
+    """Force the underlying Rich Console to write to *stream*."""
     if stream is None:
         stream = sys.stdout
     try:

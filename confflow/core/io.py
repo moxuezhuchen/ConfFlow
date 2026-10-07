@@ -183,28 +183,7 @@ def read_xyz_file(
     parse_metadata: bool = True,
     strict: bool = False,
 ) -> list[dict[str, Any]]:
-    """Read an XYZ file and return a list of conformers.
-
-    Parameters
-    ----------
-    filepath : str
-        Path to the XYZ file.
-    parse_metadata : bool
-        Whether to parse key=value metadata from comment lines.
-    strict : bool
-        When True, raise on malformed frames instead of silently skipping them.
-
-    Returns
-    -------
-    list[dict[str, Any]]
-        List of conformer dicts, each containing:
-
-        - ``natoms``: number of atoms
-        - ``comment``: raw comment line
-        - ``atoms``: list of atom symbols (standard capitalization)
-        - ``coords``: coordinate list ``[[x, y, z], ...]``
-        - ``metadata``: metadata dict (if *parse_metadata* is True)
-    """
+    """Read an XYZ file and return a list of conformers."""
     conformers = list(iter_xyz_frames(filepath, parse_metadata=parse_metadata, strict=strict))
 
     if strict and not conformers:
@@ -240,18 +219,7 @@ def canonicalize_xyz_coord_line(line: str) -> str:
 
 
 def append_xyz_conformer(filepath: str, coord_lines: list[str], comment: str) -> None:
-    """Append a single conformer block to an XYZ file.
-
-    Parameters
-    ----------
-    filepath : str
-        Target XYZ file path. Created if it does not exist.
-    coord_lines : list[str]
-        Coordinate lines, each formatted as ``"ATOM  x  y  z"`` strings,
-        matching the format stored in ``res["final_coords"]``.
-    comment : str
-        Comment line (second line of the XYZ block).
-    """
+    """Append a single conformer block to an XYZ file."""
     canonical_lines = [canonicalize_xyz_coord_line(line) for line in coord_lines]
     natoms = len(canonical_lines)
     with open(filepath, "a", encoding="utf-8") as f:
@@ -259,19 +227,7 @@ def append_xyz_conformer(filepath: str, coord_lines: list[str], comment: str) ->
 
 
 def write_xyz_file(filepath: str, conformers: list[dict[str, Any]], atomic: bool = True) -> None:
-    """Write conformers to an XYZ file.
-
-    Parameters
-    ----------
-    filepath : str
-        Output file path.
-    conformers : list[dict[str, Any]]
-        Conformer list; each element must contain ``natoms``, ``comment``,
-        ``atoms``, and ``coords``.
-    atomic : bool
-        Whether to use atomic write mode (write to a temporary file first,
-        then rename) to prevent corruption from concurrent writes.
-    """
+    """Write conformers to an XYZ file."""
 
     def _write_to_file(f):
         for conf in conformers:

@@ -115,12 +115,7 @@ def _element_distance_fingerprint(
     coords: np.ndarray,
     elements: Sequence[int] | None = None,
 ) -> np.ndarray:
-    """Rigid-invariant per-atom fingerprint: nearest distance per element.
-
-    The fingerprint is invariant under translation, rotation and atom
-    renumbering, so identical atoms of rigid copies receive identical rows.
-    It is used only to order the exact graph search (never to accept a match).
-    """
+    """Rigid-invariant per-atom fingerprint: nearest distance per element."""
     numbers = np.asarray(atomic_numbers)
     coordinates = np.asarray(coords, dtype=np.float64)
     if elements is None:
@@ -147,13 +142,7 @@ def _build_candidate_priority(
     cand_coords: np.ndarray,
     rep_coords: np.ndarray,
 ) -> dict[int, tuple[int, ...]] | None:
-    """Order search candidates by fingerprint similarity (heuristic only).
-
-    Every produced candidate list is still filtered and validated by the exact
-    graph search, so ordering cannot admit an illegal mapping.  The mapping
-    maps candidate indices to representative indices, so the candidate lists
-    are always representative indices; both sides keep all atoms (including H).
-    """
+    """Order search candidates by fingerprint similarity (heuristic only)."""
     positions_b: dict[int, list[int]] = {}
     for index in range(graph_representative.n):
         positions_b.setdefault(graph_representative.atomic_numbers[index], []).append(index)
@@ -196,15 +185,7 @@ def compare_frames(
     energy_tolerance: float = 0.05,
     node_budget: int = DEFAULT_MAPPING_NODE_BUDGET,
 ) -> PairVerdict:
-    """Decide whether *candidate* duplicates *representative* under legal mappings.
-
-    The bonding graph is authoritative: RMSD is only evaluated for complete
-    element/edge-preserving bijections.  The identity mapping is tried first
-    when it is legal; otherwise, or when it fails the cutoff, the bounded
-    mapping search continues.  A match yields a witness (not a proven global
-    minimum); exhausting the search yields ``distinct``; running out of budget
-    yields ``unresolved``.
-    """
+    """Decide whether *candidate* duplicates *representative* under legal mappings."""
     graph_candidate = _frame_graph(candidate)
     graph_representative = _frame_graph(representative)
     if graph_candidate is None or graph_representative is None:

@@ -18,14 +18,7 @@ __all__ = [
 
 
 class ConfFlowLogger:
-    """ConfFlow unified log manager.
-
-    Supports two run modes:
-
-    1. Standalone: full console + file logging.
-    2. Embedded (called by GibbsFlow, etc.): only uses the parent process
-       logging system.
-    """
+    """ConfFlow unified log manager."""
 
     _instance = None
     _initialized = False
@@ -147,10 +140,7 @@ class ConfFlowLogger:
                     pass
 
     def add_file_handler(self, log_file: str, level: int = logging.DEBUG):
-        """Add a file log handler.
-
-        Skipped in embedded mode (uses the parent process log file instead).
-        """
+        """Add a file log handler."""
         # Skip in embedded mode
         if ConfFlowLogger._embedded_mode:
             return

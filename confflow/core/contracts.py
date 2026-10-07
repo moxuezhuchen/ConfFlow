@@ -38,12 +38,7 @@ def output_txt_path_for_input(input_path: str) -> str:
 
 
 class _AnsiStripWriter:
-    """File-like wrapper that strips ANSI/VT100 escape sequences before writing.
-
-    Rich Console caches its colour-system at construction time (``_color_system``),
-    so changing ``_force_terminal`` after the fact is not enough to suppress escape
-    codes.  Stripping them here is therefore the most reliable solution.
-    """
+    """File-like wrapper that strips ANSI/VT100 escape sequences before writing."""
 
     _ANSI_RE = re.compile(r"\x1b\[[0-9;]*[a-zA-Z]")
 
@@ -65,11 +60,7 @@ class _AnsiStripWriter:
 
 @contextmanager
 def cli_output_to_txt(input_path: str) -> Iterator[str]:
-    """Redirect all stdout/stderr to a plain-text .txt file.
-
-    The terminal receives no output.
-    The .txt file path is ``<input_stem>.txt`` next to the input file.
-    """
+    """Redirect all stdout/stderr to a plain-text .txt file."""
     output_path = output_txt_path_for_input(input_path)
 
     nofollow = getattr(os, "O_NOFOLLOW", 0)

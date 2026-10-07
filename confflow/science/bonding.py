@@ -2,21 +2,13 @@
 
 """Coordinate-based bond perception shared across layers.
 
-The bonding rule is intentionally simple and identical everywhere:
-
-    a bond exists when ``min_distance < d < bond_scale * (r_i + r_j)``
-
-with covalent radii sourced from :data:`confflow.science.data.GV_COVALENT_RADII`.
-Callers keep their own ``bond_scale`` (confgen and refine use different
-defaults), but the radii source, the minimum-distance safeguard, and the
-unknown-element policy are centralised here so the same atoms/coordinates/scale
-always produce the same topology.
-
-Unknown elements (missing or zero radius) fail closed with
-:class:`UnknownElementError`; callers decide whether that is a hard error or an
-"invalid/unresolved" classification, but they must not silently invent a radius.
-
-SciPy/NumPy are imported lazily so importing ``confflow.science`` stays cheap.
+Bond exists when `min_distance < d < bond_scale * (r_i + r_j)` with radii
+from `confflow.science.data.GV_COVALENT_RADII`; callers keep own
+`bond_scale` but radii source, min-distance safeguard, and unknown-element
+policy stay centralised for identical results.
+Unknown elements (missing/zero radius) fail closed with
+`UnknownElementError`; callers must not silently invent a radius.
+SciPy/NumPy are imported lazily so `confflow.science` stays cheap.
 """
 
 from __future__ import annotations

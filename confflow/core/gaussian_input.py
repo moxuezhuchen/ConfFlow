@@ -35,14 +35,7 @@ _ANGSTROM_TOKENS: frozenset[str] = frozenset({"angstrom", "angstroms", "angs", "
 
 
 class GaussianInputStrictError(ValueError):
-    """Structured strict refusal for preview projection.
-
-    The human message always starts with ``native_input_error`` for
-    consistency with the ORCA shared parser. Producers and future
-    authoring consumers must read the structured ``code``/``line``/
-    ``source_label``/``field`` attributes, never parse the message
-    text as a protocol.
-    """
+    """Structured strict refusal for preview projection."""
 
     def __init__(
         self,
@@ -123,19 +116,7 @@ def _strict_route_text(lines: list[str]) -> tuple[str, list[int]]:
 
 
 def _strict_check_units(lines: list[str], *, source_label: str) -> None:
-    """Reject explicit non-Angstrom unit declarations (thin validation).
-
-    Route-only boundary: only the complete route logical block (``#``
-    through continuation lines until the blank line, newlines included)
-    is inspected. Structured shapes cover ``units = X``, ``units X``,
-    ``units(X)`` and ``units=(X)`` with optional quotes/case/parens and
-    cross-line whitespace. Bare ``bohr``/``AU`` tokens in route are also
-    refused. Titles and other free text are never scanned, so a bare
-    ``bohr`` or ``Units=Bohr`` in a title is diagnostic-only. Quoted
-    spans inside route are excluded lexically, but a quoted declaration
-    value (``units="bohr"``) stays a real declaration. ``source_label``
-    is diagnostic-only and never scanned.
-    """
+    """Reject explicit non-Angstrom unit declarations (thin validation)."""
     route_text, route_linenos = _strict_route_text(lines)
     if not route_text.strip():
         return
@@ -224,12 +205,7 @@ def parse_gaussian_input(filepath: str) -> dict[str, Any]:
 def parse_gaussian_input_text(
     text: str, source_label: str = "text", *, strict: bool = False
 ) -> dict[str, Any]:
-    """Parse Gaussian input text.
-
-    Prefer the charge/multiplicity line that is immediately followed by a
-    coordinate block. This avoids mistaking an all-numeric title line such
-    as ``1 1`` for the real QM header.
-    """
+    """Parse Gaussian input text."""
     from ..science.data import get_element_symbol
 
     def _looks_like_coordinate_line(raw_line: str) -> bool:

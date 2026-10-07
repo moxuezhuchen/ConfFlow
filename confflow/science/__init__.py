@@ -1,20 +1,13 @@
 #!/usr/bin/env python3
 
-"""ConfFlow V4 pure science package (wave-1 stream C, exclusive).
+"""ConfFlow V4 pure science package.
 
-Numeric geometry/graph algorithms owned by the V4 execution layer, with
-no dependency on legacy orchestration entrypoints (no
-``blocks.confgen`` generator/pools/CLI, no ``blocks.refine`` processor,
-no XYZ file I/O, no progress UI).  Allowed dependencies: stdlib, NumPy,
-SciPy (lazy), ``confflow.domain`` element data, and the in-package
-``confflow.science.bonding`` bond-perception authority (reached through
-:mod:`confflow.science.bonds`).
-
-Provenance: torsion mechanics extracted from the pure-numpy subset of
-``confflow.blocks.confgen`` (Rodrigues rotation, ring
-refusal, clash rule); clustering mechanics extracted from the pure
-subset of ``confflow.blocks.refine`` (bond rule, Kabsch formulation,
-mapping-gated comparison rule).  Each function cites its source.
+Numeric geometry/graph algorithms for V4 execution; no dependency on
+legacy orchestration (no `blocks.confgen`/`blocks.refine`, XYZ I/O,
+progress UI). Allowed: stdlib, NumPy, lazy SciPy, `confflow.domain`
+element data, in-package `bonding` via `confflow.science.bonds`.
+Torsion mechanics from pure-numpy `blocks.confgen` subset; clustering
+from pure `blocks.refine` subset; each function cites its source.
 """
 
 from __future__ import annotations

@@ -2,20 +2,12 @@
 
 """ConfFlow core package.
 
-Provides infrastructure-layer utilities: shared data, I/O, helper functions,
-type definitions, and validation.
-
-The historical ``from confflow.core import X`` surface is preserved, but it is
-resolved lazily (PEP 562): importing :mod:`confflow.core` no longer executes
-the implementation modules (``core.io``, ``science.data``, ...).  Import the concrete submodule when you need the
-implementation.
-
-The ``core.types`` TypedDict module was retired by the Architecture Diet PR-9:
-it only described the released V1/V2 configuration wire, which is gone.
-The ``core.{bonding,constants,data}`` forwarding shims were retired by
-DIET-2 R1.5 (single authority: ``confflow.science.{bonding,constants,data}``);
-the lazy surface below now resolves directly to the science authority so
-``from confflow.core import X`` keeps returning the same objects.
+Infrastructure utilities (data, I/O, helpers, types, validation).
+Historical `from confflow.core import X` surface preserved via lazy
+PEP 562 resolution without executing implementation modules; import the
+concrete submodule for implementation. `core.types` retired (PR-9);
+`core.{bonding,constants,data}` shims retired (DIET-2 R1.5) in favour of
+`confflow.science.{bonding,constants,data}` single authority.
 """
 
 from __future__ import annotations

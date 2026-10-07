@@ -67,11 +67,7 @@ class XYZFormatError(InputFileError):
 
 
 class ValidationError(ConfFlowError, ValueError):
-    """Validation error.
-
-    Inherits from both ConfFlowError and ValueError for compatibility
-    with either catch style.
-    """
+    """Validation error."""
 
     def __init__(self, param_name: str, message: str, value: Any = None):
         self.param_name = param_name
@@ -83,11 +79,7 @@ class ValidationError(ConfFlowError, ValueError):
 
 
 class ConfigurationError(ConfFlowError, ValueError):
-    """Configuration error.
-
-    Inherits from both ConfFlowError and ValueError for compatibility
-    with either catch style.
-    """
+    """Configuration error."""
 
     def __init__(self, message: str, errors: list[str] | None = None):
         self.errors = errors or []
